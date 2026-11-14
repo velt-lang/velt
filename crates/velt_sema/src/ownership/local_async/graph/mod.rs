@@ -50,6 +50,9 @@ pub(super) enum Node {
     /// The value made a dynamic one (`any`, `unknown`, `object`, `Function`) by the conversion
     /// numbered `0` (`Graph::dynamic`): it passes through to where the converted value goes.
     Dyn(u32),
+    /// The value matched by the `match` numbered `0` (`Graph::scrutinees`), when it isn't a
+    /// local: its bindings take its values (#2893).
+    Scrut(u32),
 }
 
 /// A dispatched call: the methods it may reach, the argument node at each position after the
@@ -125,6 +128,8 @@ pub(super) struct Graph {
     /// one. A crossing value of a dynamic type (`keepAndSpawn<unknown>(job)`) may hold any of them
     /// (#2865), and nothing else.
     pub dynamic: Vec<DynConv>,
+    /// How many [`Node::Scrut`] nodes there are.
+    pub scrutinees: u32,
     /// A [`Node::Dyn`] whose input is a call through a function value, with that call's
     /// [`Node::Callee`]: the dynamic result comes from the function, which crosses with it
     /// (`() => Job` called through a `() => unknown`).
@@ -377,11 +382,7 @@ impl Walk<'_, '_> {
             }
             E::Block(b) => self.block(b, to),
             E::Match { scrutinee, arms } => {
-                self.value(scrutinee, To::Drop);
-                let from = match &scrutinee.kind {
-                    E::Local(l, _) => Some(self.local(*l)),
-                    _ => None,
-                };
+                let from = Some(self.matched(scrutinee));
                 for a in arms {
                     self.bind_from(&a.pat, from);
                     if let Some(g) = &a.guard {
@@ -527,6 +528,9 @@ impl Walk<'_, '_> {
                     let i = self.g.node(Node::Local(c, cap.inner), cty);
                     let o = self.local(cap.outer);
                     self.g.srcs[i].push((o, None));
+                    // And back: what the closure assigns to the captured variable is the
+                    // outer variable's value too (`set = () => { u = job; }`, #2893).
+                    self.g.srcs[o].push((i, None));
                     inner.push(i);
                 }
             }

@@ -356,7 +356,18 @@ pub(super) fn fresh(cx: &mut Ctx, e: &Expr, memo: &mut Memo) -> bool {
             return true;
         }
     }
-    let Some(ds) = crate::fresh_returns::fresh_callees(e) else {
+    // A dispatched call (an interface's or a class's method, a bound one) returns a new value
+    // when every method it may reach does (`encoding.encoder()` making a new encoder, #2893).
+    let dispatched = match &e.kind {
+        E::Call {
+            callee:
+                callee @ (Callee::Virtual { .. } | Callee::Dyn { .. } | Callee::ParamMethod { .. }),
+            args,
+        } => Some(super::unknown_callees::dispatch_targets(cx, callee, args))
+            .filter(|t| !t.is_empty()),
+        _ => None,
+    };
+    let Some(ds) = dispatched.or_else(|| crate::fresh_returns::fresh_callees(e)) else {
         return false;
     };
     ds.into_iter().all(|d| {

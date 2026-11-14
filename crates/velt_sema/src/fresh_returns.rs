@@ -15,7 +15,8 @@ use velt_common::{Diagnostic, Span};
 
 use crate::ctx::Ctx;
 use crate::hir::{
-    Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, LocalId, Stmt, StmtKind as S, TyId, UseMode,
+    Block, Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, LocalId, Stmt, StmtKind as S, TyId,
+    TyKind, UseMode,
 };
 use crate::visit::{self, VisitMut};
 
@@ -41,6 +42,8 @@ pub(crate) fn fresh_callees(h: &Expr) -> Option<Vec<DefId>> {
         E::New { def, .. } => Some(vec![*def]),
         E::ArrayLit(_) | E::ConstArray(_) | E::AdtLit { .. } => Some(vec![]),
         E::Await(x) => fresh_callees(x),
+        // A conversion keeps the value: a new one converted to an interface or `any` is new.
+        E::ToDyn { expr: x, .. } | E::Upcast(x) => fresh_callees(x),
         E::Block(b) => b.value.as_deref().and_then(fresh_callees),
         _ => None,
     }
@@ -217,8 +220,9 @@ fn captured(cx: &Ctx, l: LocalId, uses: &Uses) -> bool {
 /// `Some(base classes)` when `new` of class `d` gives an object nothing else references,
 /// provided the base classes' constructors do too: its constructor uses `this` only as the base
 /// of field reads and writes, and as the receiver of `super(...)` (field initializers cannot use
-/// `this`). Passing `this` on, storing it, calling a method on it or capturing it lets it escape
-/// (`all.push(this)`).
+/// `this`). Passing `this` on, storing it or capturing it lets it escape (`all.push(this)`). A call
+/// of one of its own methods on `this` (`this.put(…)`) is allowed when every method the call may
+/// run uses its `this` the same way ([`keeps_this`], #2893).
 fn ctor_fresh(cx: &Ctx, d: DefId) -> Option<Vec<DefId>> {
     let Some(ctor) = cx.adt(d)?.ctor else {
         return Some(vec![]);
@@ -232,26 +236,111 @@ fn ctor_fresh(cx: &Ctx, d: DefId) -> Option<Vec<DefId>> {
         .map(|p| p.local)
         .filter(|_| f.self_ty.is_some())?;
     let mut body = f.body.block.clone();
+    let (ok, bases, methods) = this_uses(cx, this, &mut body, d);
+    let mut memo = FxHashMap::default();
+    (ok && methods.iter().all(|&m| keeps_this(cx, m, &mut memo))).then_some(bases)
+}
+
+/// How `body` uses its `this` (local `this`, of class `class`): whether only as the base of field
+/// reads and writes, the receiver of `super(...)` and of method calls; the classes whose
+/// constructors `super(...)` runs, and every method a call on `this` may run.
+fn this_uses(
+    cx: &Ctx,
+    this: LocalId,
+    body: &mut Block,
+    class: DefId,
+) -> (bool, Vec<DefId>, Vec<DefId>) {
     let mut w = ThisUses {
         cx,
         this,
+        class,
         total: 0,
         allowed: 0,
         bases: vec![],
         closures: vec![],
+        methods: vec![],
     };
-    visit::block(&mut body, &mut w);
+    visit::block(body, &mut w);
     let uses = Uses {
         closures: std::mem::take(&mut w.closures),
         ..Uses::default()
     };
-    (w.total == w.allowed && !captured(cx, this, &uses)).then_some(w.bases)
+    let ok = w.total == w.allowed && !captured(cx, this, &uses);
+    (ok, w.bases, w.methods)
+}
+
+/// Does method `m` keep its `this` to itself, as [`ctor_fresh`] requires of a constructor: used
+/// only as a field base and the receiver of methods that keep it too, never stored, returned,
+/// passed on or captured? A method being decided counts as keeping it (a cycle adds no escape).
+fn keeps_this(cx: &Ctx, m: DefId, memo: &mut FxHashMap<DefId, bool>) -> bool {
+    if let Some(&b) = memo.get(&m) {
+        return b;
+    }
+    memo.insert(m, true);
+    let b = (|| {
+        let Some(Some(Def::Fn(f))) = cx.defs.get(m.0 as usize) else {
+            return false;
+        };
+        if f.is_generator || f.is_async {
+            return false;
+        }
+        let Some(TyKind::Adt(class, _)) = f.self_ty.map(|t| cx.ty.kind(t)) else {
+            return false;
+        };
+        let Some(this) = f.params.first().map(|p| p.local) else {
+            return false;
+        };
+        let mut body = f.body.block.clone();
+        let (ok, _, methods) = this_uses(cx, this, &mut body, *class);
+        ok && methods.iter().all(|&x| keeps_this(cx, x, memo))
+    })();
+    memo.insert(m, b);
+    b
+}
+
+/// The methods a call of slot `slot` on a `class` object may run: the class's own and every
+/// subclass's override.
+fn slot_methods(cx: &Ctx, class: DefId, slot: u32) -> Vec<DefId> {
+    let extends = |i: usize| {
+        let mut c = DefId(i as u32);
+        for _ in 0..64 {
+            if c == class {
+                return true;
+            }
+            let Some(base) = cx.adt(c).and_then(|a| a.base) else {
+                return false;
+            };
+            let TyKind::Adt(b, _) = cx.ty.kind(base) else {
+                return false;
+            };
+            c = *b;
+        }
+        false
+    };
+    let mut out = vec![];
+    for i in 0..cx.defs.len() {
+        if extends(i) {
+            if let Some(&m) = cx
+                .adt(DefId(i as u32))
+                .and_then(|a| a.vtable.get(slot as usize))
+            {
+                if !out.contains(&m) {
+                    out.push(m);
+                }
+            }
+        }
+    }
+    out
 }
 
 /// How a constructor body uses its `this` (`ctor_fresh`).
 struct ThisUses<'c, 'm> {
     cx: &'c Ctx<'m>,
     this: LocalId,
+    /// The class `this` is (its methods' overrides are what a call on it may run).
+    class: DefId,
+    /// Every method a call on `this` may run (each must keep `this` too: [`keeps_this`]).
+    methods: Vec<DefId>,
     total: u32,
     allowed: u32,
     /// Classes whose constructors `super(...)` runs on `this`.
@@ -285,6 +374,29 @@ impl VisitMut for ThisUses<'_, '_> {
                     self.allowed += 1;
                     self.bases.push(owner);
                 }
+            }
+            // A method called on `this` (`this.put(…)`): allowed here, provided every method it
+            // may run keeps `this` too (`ctor_fresh`). Its other arguments count as usual.
+            E::Call {
+                callee: Callee::Def(c, _),
+                args,
+            } if args.first().is_some_and(|a| self.is_this(a))
+                && self.cx.fn_info(*c).kind == crate::defs::FnKind::Method =>
+            {
+                self.allowed += 1;
+                self.methods.push(*c);
+            }
+            E::Call {
+                callee: Callee::Virtual { slot },
+                args,
+            } if args.first().is_some_and(|a| self.is_this(a)) => {
+                self.allowed += 1;
+                let ms = slot_methods(self.cx, self.class, *slot);
+                if ms.is_empty() {
+                    // Not resolved: `this` escapes as far as this check knows.
+                    self.allowed -= 1;
+                }
+                self.methods.extend(ms);
             }
             _ => {}
         }

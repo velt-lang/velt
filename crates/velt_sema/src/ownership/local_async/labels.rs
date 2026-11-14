@@ -1,6 +1,7 @@
 //! The labels of [`super`]'s errors: where a value leaves its task, and why it gets there.
 
 use crate::ctx::Ctx;
+use crate::hir::{TyId, TyKind};
 
 use super::graph::{Boundary, Why};
 use super::types;
@@ -62,5 +63,24 @@ pub(in crate::ownership::local_async) fn reaches(cx: &Ctx, w: &Why) -> String {
     match holder {
         Some(h) => format!("but {h}, which {place}"),
         None => format!("but it {place}"),
+    }
+}
+
+/// The fix for a change to `name` of type `ty` that every call would make to its own copy.
+pub(super) fn share_fix(cx: &Ctx, name: &str, ty: TyId) -> String {
+    let rest = "or keep what changes in a `shared(...)` or an `Atomic`";
+    if name == "this" {
+        return format!(
+            "share the object the method runs on (create it as `shared(new Mutex(…))` and change it with `.with(…)`), pass what the handler needs as values, {rest}"
+        );
+    }
+    match cx.ty.kind(ty) {
+        TyKind::Adt(..) => format!(
+            "share the object, `const {name} = shared(new Mutex(new {}(…)))` changed with `{name}.with(…)`, {rest}",
+            cx.display(ty)
+        ),
+        _ => format!(
+            "share the value, `const {name} = shared(new Mutex(…))` changed with `{name}.with(…)`, {rest}"
+        ),
     }
 }

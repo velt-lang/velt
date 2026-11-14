@@ -8,6 +8,7 @@ use crate::defs::FnKind;
 use crate::hir::{Def, DefId, TyId, TyKind};
 
 use super::graph::Graph;
+use super::types;
 
 /// The function whose instantiations resolve the type parameters a type in function `c` mentions:
 /// the outermost function `c` is in, or the first generic closure on the way whose calls give its
@@ -99,4 +100,46 @@ pub(super) fn instances(cx: &mut Ctx, g: &Graph, c: DefId, ty: TyId) -> Vec<TyId
     out.sort_by_key(|t| t.0);
     out.dedup();
     out
+}
+
+/// The class of method `m`, with the number of its type parameters (the method's own come after).
+pub(super) fn method_class(cx: &Ctx, m: DefId) -> Option<(DefId, u32)> {
+    let Some(Def::Fn(f)) = &cx.defs[m.0 as usize] else {
+        return None;
+    };
+    match cx.ty.kind(f.self_ty?) {
+        TyKind::Adt(class, args) => Some((*class, args.len() as u32)),
+        _ => None,
+    }
+}
+
+/// Every instantiation of `class`, with the function it is made in: the type arguments of each
+/// `new` (or literal) of it, and of each subclass's `extends` (`class NumQueue extends
+/// AsyncQueue<number>`), followed through the subclass's own instantiations where that names the
+/// subclass's type parameters. `None` where none is seen (its objects come from somewhere the graph
+/// doesn't show) or the chain is too deep.
+pub(super) fn class_insts(
+    cx: &mut Ctx,
+    g: &Graph,
+    class: DefId,
+    depth: u32,
+) -> Option<Vec<(DefId, Vec<TyId>)>> {
+    if depth > 8 {
+        return None;
+    }
+    let mut out = g.news.get(&class).cloned().unwrap_or_default();
+    for (sub, base) in types::direct_subclasses(cx, class) {
+        let TyKind::Adt(_, bargs) = cx.ty.kind(base).clone() else {
+            continue;
+        };
+        if bargs.iter().any(|t| types::mentions_param(cx, *t)) {
+            for (caller, sargs) in class_insts(cx, g, sub, depth + 1)? {
+                let args = bargs.iter().map(|t| cx.subst(*t, &sargs)).collect();
+                out.push((caller, args));
+            }
+        } else {
+            out.push((sub, bargs));
+        }
+    }
+    (!out.is_empty()).then_some(out)
 }

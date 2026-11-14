@@ -1,0 +1,38 @@
+// A constructor that calls its own methods which only read and write `this`'s fields still makes
+// a new object (#2893, the shape of packages/web's compress middleware: `encoding.encoder()`
+// makes a new encoder whose constructor writes its header through its own methods). Each request
+// changes only its own new object, so the handler is accepted.
+import { serve } from "http-server";
+
+class Counter {
+  n = 0;
+  constructor(start: number) {
+    this.set(start);
+  }
+  set(v: number): void {
+    this.n = v;
+  }
+  bump(): void {
+    this.n++;
+  }
+}
+interface Factory {
+  make(): Counter;
+}
+class Fresh implements Factory {
+  start = 1;
+  make(): Counter {
+    return new Counter(this.start);
+  }
+}
+async function main() {
+  const f: Factory = new Fresh();
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const c = f.make();
+    c.bump();
+    return new Response(`${c.n}`);
+  });
+  const res = await fetch(`http://127.0.0.1:${server.port}/`);
+  console.log(await res.text());
+  server.close();
+}
