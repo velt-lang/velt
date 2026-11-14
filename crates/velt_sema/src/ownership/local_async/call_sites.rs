@@ -151,7 +151,11 @@ pub(super) fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> b
         // per group, not per call.
         let calls = (g.indirect_by_ty.iter())
             .filter(|(cty, _)| types::may_be(cx, ty, *cty))
-            .flat_map(|(_, calls)| calls.iter().map(|&ci| &g.indirect[ci]));
+            .flat_map(|(_, calls)| calls.iter())
+            // A wired call's arguments flow into the parameters of the closures it may reach
+            // (`graph::wire`): a crossing parameter makes its argument cross along that edge.
+            .filter(|&&ci| !g.wired[ci])
+            .map(|&ci| &g.indirect[ci]);
         let calls: Vec<_> = calls.collect();
         for call in calls {
             if unseen && !super::graph::untraced_input(g, call.callee) {
@@ -227,7 +231,7 @@ fn crossing_method_args(cx: &Ctx, g: &Graph, p: &mut Propagation) -> bool {
 /// capture locals back to the variables they capture, since a closure that assigns a captured
 /// variable changes the enclosing function's (a cell, `crate::moves`). A function's result is a
 /// sink unless the graph follows it to every caller ([`results_followed`]).
-fn forward(cx: &Ctx, g: &Graph) -> Forward {
+pub(super) fn forward(cx: &Ctx, g: &Graph) -> Forward {
     let mut edges = vec![vec![]; g.nodes.len()];
     for (m, srcs) in g.srcs.iter().enumerate() {
         for &(s, _) in srcs {
@@ -268,7 +272,7 @@ fn results_followed(cx: &Ctx, g: &Graph, d: DefId) -> bool {
 }
 
 /// The graph's edges forward ([`forward`]), and the nodes whose values reach a sink directly.
-struct Forward {
+pub(super) struct Forward {
     edges: Vec<Vec<usize>>,
     sink: Vec<bool>,
 }
@@ -280,14 +284,21 @@ struct Forward {
 /// value or a dispatched call, whose parameter the graph does not follow. A closure that
 /// captures it holds it in a capture local, which only that closure's body reads: followed like
 /// any local, so the flags the capturing closure takes (`Propagation::run`) don't count here.
-fn held_in_locals(g: &Graph, fwd: &Forward, n: usize) -> Option<FxHashSet<usize>> {
+pub(super) fn held_in_locals(g: &Graph, fwd: &Forward, n: usize) -> Option<FxHashSet<usize>> {
     let mut seen = FxHashSet::default();
     let mut work = vec![n];
     while let Some(m) = work.pop() {
         if !seen.insert(m) {
             continue;
         }
-        if fwd.sink[m] || matches!(g.nodes[m], Node::Arg(..) | Node::DArg(..)) {
+        // An argument of a wired call flows on into the parameters of the closures it may
+        // reach (`graph::wire`); another call's goes where the graph doesn't follow.
+        let unfollowed = match g.nodes[m] {
+            Node::Arg(ci, _) => !g.wired.get(ci as usize).copied().unwrap_or(false),
+            Node::DArg(..) => true,
+            _ => false,
+        };
+        if fwd.sink[m] || unfollowed {
             return None;
         }
         work.extend(fwd.edges[m].iter().copied().filter(|x| !seen.contains(x)));

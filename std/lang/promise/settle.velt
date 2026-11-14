@@ -98,33 +98,53 @@ export type Settlers<T, E> = { resolve: (value: T) => void; reject: (reason: E) 
 
 export function settlers<T, E>(slot: shared<Mutex<PromiseSlot<T, E>>>): Settlers<T, E> {
   const home = velt_rt_task_id();
-  const guard = shared(new Mutex<AbandonGuard<T, E>>(new AbandonGuard<T, E>(slot.clone())));
-  const forResolve = slot.clone();
-  const forReject = slot.clone();
-  const guardReject = guard.clone();
-  const resolve = (value: T) => {
+  const guard = abandonGuard<T, E>(slot);
+  // Kept in locals first: a helper's result stored straight into the record would be taken as
+  // stored for every caller of the helper, `runExecutor` included.
+  const resolve = resolver<T, E>(slot.clone(), guard.clone(), home);
+  const reject = rejecter<T, E>(slot.clone(), guard.clone(), home);
+  return { resolve: resolve, reject: reject };
+}
+
+// The guard that rejects the promise when its last settler is dropped unsettled.
+function abandonGuard<T, E>(
+  slot: shared<Mutex<PromiseSlot<T, E>>>,
+): shared<Mutex<AbandonGuard<T, E>>> {
+  return shared(new Mutex<AbandonGuard<T, E>>(new AbandonGuard<T, E>(slot.clone())));
+}
+
+// The promise's `resolve`, made on task `home`.
+function resolver<T, E>(
+  slot: shared<Mutex<PromiseSlot<T, E>>>,
+  guard: shared<Mutex<AbandonGuard<T, E>>>,
+  home: u64,
+): (value: T) => void {
+  return (value: T) => {
     const here = velt_rt_task_id();
     if (here == home || here == 0 || !needsTransfer(value)) {
       const v = here == home ? value : transfer(value);
-      openLatch(
-        guard.with((g) => forResolve.with((s) => s.settle({ status: "fulfilled", value: v }))),
-      );
+      openLatch(guard.with((g) => slot.with((s) => s.settle({ status: "fulfilled", value: v }))));
     } else {
-      const later = fulfillLater<T, E>(forResolve.clone(), guard.clone(), value);
+      const later = fulfillLater<T, E>(slot.clone(), guard.clone(), value);
     }
   };
-  const reject = (reason: E) => {
+}
+
+// The promise's `reject`, made on task `home`.
+function rejecter<T, E>(
+  slot: shared<Mutex<PromiseSlot<T, E>>>,
+  guard: shared<Mutex<AbandonGuard<T, E>>>,
+  home: u64,
+): (reason: E) => void {
+  return (reason: E) => {
     const here = velt_rt_task_id();
     if (here == home || here == 0 || !needsTransfer(reason)) {
       const r = here == home ? reason : transfer(reason);
-      openLatch(
-        guardReject.with((g) => forReject.with((s) => s.settle({ status: "rejected", reason: r }))),
-      );
+      openLatch(guard.with((g) => slot.with((s) => s.settle({ status: "rejected", reason: r }))));
     } else {
-      const later = rejectLater<T, E>(forReject.clone(), guardReject.clone(), reason);
+      const later = rejectLater<T, E>(slot.clone(), guard.clone(), reason);
     }
   };
-  return { resolve: resolve, reject: reject };
 }
 
 // Settle `slot` from a task other than the promise's own, once the settling task is done with
@@ -160,9 +180,12 @@ export function runExecutor<T, E>(
   executor: (resolve: (value: T) => void, reject: (reason: E) => void) => void throws E,
   slot: shared<Mutex<PromiseSlot<T, E>>>,
 ) {
-  const s = settlers<T, E>(slot.clone());
+  const home = velt_rt_task_id();
+  const guard = abandonGuard<T, E>(slot);
+  const resolve = resolver<T, E>(slot.clone(), guard.clone(), home);
+  const reject = rejecter<T, E>(slot.clone(), guard.clone(), home);
   try {
-    executor(s.resolve, s.reject);
+    executor(resolve, reject);
   } catch (e) {
     openLatch(slot.with((s) => s.settle({ status: "rejected", reason: e })));
   }

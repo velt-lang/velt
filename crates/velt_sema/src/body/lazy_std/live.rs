@@ -46,7 +46,7 @@ pub(crate) struct Live {
     /// The definitions below this one are seeded ([`seed`]; generated code is added later).
     seeded: usize,
     /// The live definitions.
-    live: FxHashSet<DefId>,
+    pub(super) live: FxHashSet<DefId>,
     /// Live definitions still to walk (some not checked yet).
     todo: Vec<DefId>,
     /// The types met in live code.

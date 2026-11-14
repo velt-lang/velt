@@ -1,0 +1,37 @@
+// A promise's `resolve` handed to the executor of `new Promise` and called there (#2952): the
+// graph follows it into the executor, so it isn't taken for the `ready` arm a generic helper
+// calls through a field, and the async closure kept in the cell, which changes what it
+// captured, stays on its task.
+interface Arms<T, R> {
+  ready: (v: T) => R;
+  pending: () => R;
+}
+function matchState<T, R>(v: T | null, arms: Arms<T, R>): R {
+  if (v === null) {
+    return arms.pending();
+  }
+  return arms.ready(v);
+}
+class Cell<T> {
+  v: T | null = null;
+  match<R>(arms: Arms<T, R>): R {
+    return matchState(this.v, arms);
+  }
+}
+async function main() {
+  let runId = 0;
+  const start = async (): Promise<void> => {
+    runId++;
+  };
+  const c = new Cell<() => Promise<void>>();
+  c.v = start;
+  const got = await new Promise<number>((resolve) => resolve(1));
+  const r = c.match({
+    ready: (f: () => Promise<void>): number => {
+      void f();
+      return 1;
+    },
+    pending: (): number => 0,
+  });
+  console.log(`r ${r} ${got} ${runId}`);
+}

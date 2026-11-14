@@ -215,6 +215,9 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
         }
     }
     let reported = callbacks::check_crossing_callbacks(cx, &g, &p.flags);
+    for &c in &g.skipped {
+        finish(cx, c, true, None);
+    }
     for (n, node) in g.nodes.iter().enumerate() {
         let Node::Lit(c) = *node else { continue };
         let why = p.why[n];
