@@ -66,6 +66,10 @@ export function run(e: usize, k: usize, mode: u32): void {
   if (m.ld(k + t.T_MICRO) !== 0 || m.ld(k + t.T_UNHANDLED) !== 0) {
     drain(e, k);
   }
+  if (mode !== 0 && mode !== t.M_LAZY) {
+    // Before anything below shows another thread that the poll ended (#2971).
+    wk.publishPolled(e);
+  }
   if (stdUsed("nodeTimers") && mode !== 0) {
     timersAfter(e, k);
   }

@@ -30,7 +30,8 @@ const BACKLOG: usize = 256;
  * One step of the worker: take the inbox, run the next ready task (sched_queue.velt), or, with
  * none, take over or borrow work from another worker, or park until a wake (inlined in its
  * loops). With other threads at the executor (`E_MODE`), the step also tells the monitor it
- * makes progress, publishes what its poll printed, and every few polls looks at the spread.
+ * makes progress and every few polls looks at the spread; what its poll printed is published at
+ * the poll's end (sched_wake.velt `publishPolled`).
  */
 @inline
 export function turn(e: usize): void {
@@ -319,15 +320,14 @@ function before(e: usize, k: usize): bool {
 }
 
 /**
- * After a poll, with other threads at the executor: the watch ends; what the poll printed is
- * published (the task may resume on another worker); every `HELP` polls, the spread.
+ * After a poll, with other threads at the executor: the watch ends; every `HELP` polls, the
+ * spread. (What the poll printed was published before its end: sched_wake.velt `publishPolled`.)
  */
 @noInline
 function after(e: usize, mode: u32, watched: bool): void {
   if (watched) {
     m.swap(e + t.E_WATCH, 0);
   }
-  wk.publish(e);
   m.st(e + t.E_POLLS, m.ld(e + t.E_POLLS) + 1);
   if ((mode & t.M_SPREAD) !== 0) {
     const left = m.ld(e + t.E_HELP) - 1;

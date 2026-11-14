@@ -253,6 +253,21 @@ export function publish(w: usize): void {
   }
 }
 
+/**
+ * What the poll that just ran on shared worker `w` printed (its microtasks too), published before
+ * the poll's end can be seen by another thread: before Node's timer order takes the task for not
+ * busy, its state lets another worker poll it, or its end wakes a joiner (sched_run.velt `run`).
+ * A task woken on another worker runs there next (`schedule`), so a line printed before an
+ * `await` would otherwise reach the shared buffer after what the task prints next there,
+ * whenever this thread was held up between the two (#2971). A lazy worker 0 publishes nothing
+ * per poll: its output reaches the others when it adopts the shared mode (sched_loop.velt
+ * `adopt`), so a task the rescue moved meanwhile may print there first (#2977).
+ */
+@inline
+export function publishPolled(w: usize): void {
+  publish(w);
+}
+
 /** Writes out what this thread printed (stdout is buffered per thread by the runtime). */
 @noInline
 export function handOffOutput(): void {
