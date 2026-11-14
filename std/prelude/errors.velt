@@ -6,6 +6,7 @@
 // extend it too.
 
 import { errorText } from "velt/lang/hooks/error";
+import { open } from "velt/lang/intrinsics";
 
 /**
  * The base class of errors: what std throws (`IoError`, `JsonError`, …) and what error classes
@@ -28,11 +29,13 @@ export class Error {
    * The kind of error: `"Error"`, `"TypeError"`, …; a subclass may assign its own
    * (`this.name = "AppError"`). `String(e)` and an uncaught error's report start with it.
    */
+  @open
   get name(): string {
     return this.#name;
   }
 
   /** Sets the name `String(e)` and an uncaught error's report start with. */
+  @open
   set name(value: string) {
     this.#name = value;
   }
