@@ -482,8 +482,10 @@ name in it. A deferred type lowering meets unreduced under such a value is a dia
   compiler-generated `Def::Enum` with `EnumDef::is_union = true`: one variant per member, in
   canonical order, each with exactly one payload (the member type); discriminant = variant index.
   Canonical form: nested unions and `| null` flattened, members deduplicated, `never` dropped,
-  sorted (types without type parameters first, then by interned `TyId`), so `A | B` and `B | A`
-  are the same `TyId`. The enum is generic over the type parameters its members mention
+  sorted (types without type parameters first, then by `Ctx::canon_key`, a spelling by structure
+  and qualified name that is the same in every program, built-in types first in a fixed order:
+  #2943), so `A | B` and `B | A` are the same `TyId`, and a union has its variants in the same
+  order whatever else the program interned. The enum is generic over the type parameters its members mention
   (renumbered by first occurrence, `args` = the outer params), like anonymous object types.
   `void` members are rejected. Exactly one non-null member is that type itself (`T | null` stays
   `Option<T>`); `null` plus several members is `Option<union>`.

@@ -172,9 +172,6 @@ impl<'h> Cx<'h> {
     /// `canon_union`): with plain members only, the deduplicated members' union (sema's def of
     /// that member list, else the first type seen with it), or the single member itself.
     fn canon_union(&mut self, d: DefId, args: &[TyId]) -> Option<TyId> {
-        if args.is_empty() {
-            return None;
-        }
         let hir::Def::Enum(e) = self.hir.def(d) else {
             return None;
         };
@@ -187,6 +184,18 @@ impl<'h> Cx<'h> {
             .filter(|v| v.name != UNION_VIEW_VARIANT)
             .map(|v| v.payload[0])
             .collect();
+        // A union without type arguments is its own canonical type unless a member has another
+        // (a field-only interface is its object type: `Mod<string> | string` is the union sema
+        // made of `{ default: string } | string`, whose variants may be in another order).
+        if args.is_empty() {
+            // A union that reaches itself (`type Json = … | Json[]`) is itself while its members
+            // are canonicalized; `canon` records the result when this returns.
+            let me = self.intern(TyKind::Adt(d, vec![]));
+            self.anon.memo.entry(me).or_insert(me);
+            if payloads.iter().all(|p| self.canon(*p) == *p) {
+                return None;
+            }
+        }
         let mut members: Vec<TyId> = vec![];
         for p in payloads {
             let m = self.subst_raw(p, args);

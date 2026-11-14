@@ -804,7 +804,7 @@ function describe<T, E>(o: Outcome<T, E>): string { return o.missing; }
 function main() { }"#,
     );
     assert!(
-        r.contains(r#"{ status: "ok"; value: T } | { status: "failed"; error: E }"#),
+        r.contains(r#"{ status: "failed"; error: E } | { status: "ok"; value: T }"#),
         "{r}"
     );
     let r = err_src(
@@ -813,7 +813,7 @@ function describe<A, B>(o: Outcome<B, A>): string { return o.missing; }
 function main() { }"#,
     );
     assert!(
-        r.contains(r#"{ status: "ok"; value: B } | { status: "failed"; error: A }"#),
+        r.contains(r#"{ status: "failed"; error: A } | { status: "ok"; value: B }"#),
         "{r}"
     );
 }

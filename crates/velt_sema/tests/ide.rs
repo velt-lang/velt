@@ -263,7 +263,8 @@ function main() { try { load(\"x\"); } catch (e) { console.log(e.message); } con
     let load = a.def_at(file, at(src, "load(\"x\")", 0, 0)).expect("load");
     assert_eq!(
         load.detail,
-        "function load(id: string): string throws NotFound | Forbidden"
+        // Sorted by name, as diagnostics show a union of named types (`display_union`).
+        "function load(id: string): string throws Forbidden | NotFound"
     );
     let safe = a.def_at(file, at(src, "safe()", 1, 0)).expect("safe");
     assert_eq!(safe.detail, "function safe(): i64");

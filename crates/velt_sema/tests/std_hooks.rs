@@ -236,8 +236,20 @@ fn same(p: &Program, t: TyId, env: Option<&Env>, want: &T, why: &mut String) -> 
                 && same(p, *r, env, ret, why)
                 && same(p, *e, env, throws.unwrap_or(&never), why)
         }
+        // A union is a set: its members are in canonical order (velt_sema `Ctx::canon_key`),
+        // the table's as written.
         (T::Union(ws), TyKind::Adt(d, args)) => match union_members(p, *d) {
-            Some(ms) => all(p, &ms, Some(&Env { args, outer: env }), ws, why),
+            Some(ms) => {
+                let env = Some(&Env { args, outer: env });
+                let mut positional = String::new();
+                all(p, &ms, env, ws, &mut positional) || {
+                    let set = same_set(p, &ms, env, ws);
+                    if !set {
+                        why.clone_from(&positional);
+                    }
+                    set
+                }
+            }
             None => false,
         },
         (T::Named(n, ws), TyKind::Adt(d, args) | TyKind::Dyn(d, args)) => {
@@ -249,6 +261,23 @@ fn same(p: &Program, t: TyId, env: Option<&Env>, want: &T, why: &mut String) -> 
         *why = format!("`{want}` is `{}` there", show(p, t, env));
     }
     ok
+}
+
+/// Does each of `ts` match a different one of `ws`, in any order?
+fn same_set(p: &Program, ts: &[TyId], env: Option<&Env>, ws: &[T]) -> bool {
+    let mut left: Vec<&T> = ws.iter().collect();
+    for t in ts {
+        let found = left
+            .iter()
+            .position(|w| same(p, *t, env, w, &mut String::new()));
+        match found {
+            Some(i) => {
+                left.remove(i);
+            }
+            None => return false,
+        }
+    }
+    left.is_empty()
 }
 
 fn all(p: &Program, ts: &[TyId], env: Option<&Env>, ws: &[T], why: &mut String) -> bool {
@@ -485,14 +514,8 @@ fn a_generic_union_is_compared_with_its_type_arguments() {
         })
         .expect("f");
     let x = f.params[1].ty;
-    // The order sema lists the members in (its canonical order).
-    let b_first = same(
-        &p,
-        x,
-        None,
-        &T::Union(&[T::Param(1), T::Str]),
-        &mut String::new(),
-    );
+    // The order sema lists the members in (its canonical order); the comparison takes either.
+    let b_first = show(&p, x, None) == "union(B, string)";
     let (right, wrong): (&[T], &[T]) = if b_first {
         (&[T::Param(1), T::Str], &[T::Param(0), T::Str])
     } else {

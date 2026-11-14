@@ -1,0 +1,22 @@
+// A field-only interface is its object type, so `string | Mod<string>` and the union a program
+// made of `string | { default: string }` are one type to lowering, whose variants sema may order
+// differently: a value built as one and passed as the other keeps its member (#2943). Expected
+// output: Node's.
+interface Mod<T> {
+  default: T;
+}
+
+function kind<T>(mod: T | Mod<T>): string {
+  return typeof mod;
+}
+
+function unwrap<T>(mod: T | { default: T }): T {
+  return (mod as { default: T }).default;
+}
+
+function main() {
+  console.log(unwrap<string>({ default: "s" }));
+  console.log(kind<string>("s"), kind<string>({ default: "t" }));
+  const u: string | Mod<string> = { default: "v" };
+  console.log(typeof u, unwrap<string>(u));
+}

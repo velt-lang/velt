@@ -214,6 +214,7 @@ pub(crate) struct Ctx<'m> {
     /// reads the constant inside a function value (`body::driver::ensure_global`).
     pub typing_globals: Vec<DefId>,
     pub unions: FxHashMap<Vec<TyId>, DefId>, // union enums by canonical member list (unions.rs)
+    pub canon_keys: FxHashMap<TyId, std::rc::Rc<str>>, // `Ctx::canon_key`, per type (canon_key.rs)
     pub recursive_unions: FxHashMap<u32, Option<TyId>>, // by alias (crate::recursive_unions)
     /// Generic recursive union aliases (`crate::recursive_unions`): whether alias `a` is one,
     /// and its union at each list of arguments.
@@ -605,6 +606,7 @@ impl<'m> Ctx<'m> {
             thread_local_uses: Vec::new(),
             typing_globals: Vec::new(),
             unions: FxHashMap::default(),
+            canon_keys: FxHashMap::default(),
             recursive_unions: FxHashMap::default(),
             generic_recursive: FxHashMap::default(),
             recursive_union_insts: FxHashMap::default(),

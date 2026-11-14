@@ -187,3 +187,46 @@ fn in_on_an_optional_field_that_may_hold_undefined_is_accepted() {
          function main() { const o = mk(); set(o); console.log(\"a b\" in o); }",
     );
 }
+
+/// The members of the union type `t`, as its variants hold them.
+fn union_variants(p: &Program, t: TyId) -> Vec<String> {
+    match p.types.kind(t) {
+        TyKind::Adt(d, _) => match p.def(*d) {
+            Def::Enum(e) if e.is_union => e.variants.iter().map(|v| v.name.clone()).collect(),
+            other => panic!("not a union: {other:?}"),
+        },
+        other => panic!("not a union: {other:?}"),
+    }
+}
+
+/// A union's variants are in an order that is the same in every program (#2943): it doesn't
+/// follow which members the program happened to make first. Here the second program makes `"b"`,
+/// `C` and `i64[]` long before it writes the union, the first makes them in the union.
+#[test]
+fn a_unions_variant_order_does_not_depend_on_what_the_program_made_first() {
+    let union = "class C { x = 1; }
+                 function f(u: \"b\" | C | i64[] | \"a\" | string | boolean) {}";
+    let (p1, t1) = params(union);
+    let (p2, t2) = params(&format!(
+        "function early(): i64[] {{ const xs: i64[] = []; const s: \"b\" = \"b\"; console.log(s, new C().x); return xs; }}
+         {union}"
+    ));
+    let order = union_variants(&p1, t1[0]);
+    assert_eq!(order, union_variants(&p2, t2[0]));
+    // The built-in types first, as `Types::new` makes them (`boolean | string`, as before), then
+    // literals by their spelling (strings quoted, numbers as written: `10` sorts before `9`).
+    assert_eq!(&order[..2], ["boolean", "string"], "{order:?}");
+    assert_eq!(&order[2..4], ["\"a\"", "\"b\""], "{order:?}");
+}
+
+/// A mapped type over `keyof X` has `X`'s fields in `X`'s order, as in TypeScript, whatever the
+/// order of the key union's members (#2943).
+#[test]
+fn a_mapped_type_keeps_the_source_field_order() {
+    let (p, t) = params(
+        "interface X { zeta: string; alpha: i64; mid: boolean }
+         function f(m: { [K in keyof X]: string }) {}",
+    );
+    let names: Vec<String> = fields(&p, t[0]).into_iter().map(|f| f.name).collect();
+    assert_eq!(names, ["zeta", "alpha", "mid"]);
+}
