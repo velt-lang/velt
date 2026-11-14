@@ -296,11 +296,7 @@ impl Run<'_> {
 
 /// Cases known to fail under the executor in Velt since #2649's switch, on one OS, in one mode:
 /// `(case, mode, OS, issue)`. Skipped there, with the issue named.
-const KNOWN_FAILING: &[(&str, Mode, &str, &str)] = &[
-    // Module state is lost across the JIT's hot swap on Windows.
-    ("root_script_state", Mode::Jit, "windows", "#2933"),
-    ("module_state_kept", Mode::Jit, "windows", "#2933"),
-];
+const KNOWN_FAILING: &[(&str, Mode, &str, &str)] = &[];
 
 #[test]
 fn reload_goldens() {
