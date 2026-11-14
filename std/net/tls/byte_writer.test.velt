@@ -1,0 +1,53 @@
+// velt/net (tests): `ByteWriter` (byte_writer.velt): `put` appends the bytes it is given,
+// copied at once, after whatever the writer holds, through every growth of its buffer.
+import { describe, expect, it } from "velt/test";
+import { ByteWriter } from "velt/net/tls/byte_writer";
+
+function bytes(n: usize, seed: u8): u8[] {
+  const out: u8[] = [];
+  for (let i: usize = 0; i < n; i++) {
+    out.push(((i as u8) * 31 + seed) as u8);
+  }
+  return out;
+}
+
+describe("ByteWriter.put", () => {
+  it("appends to an empty writer", () => {
+    const w = new ByteWriter();
+    w.put([1, 2, 3]);
+    expect(w.bytes).toEqual([1, 2, 3]);
+  });
+
+  it("appends after integers and an empty put", () => {
+    const w = new ByteWriter();
+    w.u8(9);
+    w.u16(0x0102);
+    w.put([]);
+    w.put([7, 8]);
+    expect(w.bytes).toEqual([9, 1, 2, 7, 8]);
+  });
+
+  it("keeps every byte through many puts", () => {
+    const w = new ByteWriter();
+    const want: u8[] = [];
+    for (let k: usize = 0; k < 40; k++) {
+      const b = bytes(k * 13 + 1, k as u8);
+      w.put(b);
+      for (const x of b) {
+        want.push(x);
+      }
+    }
+    expect(w.bytes.length).toBe(want.length);
+    expect(w.bytes).toEqual(want);
+  });
+
+  it("fills a vector's length prefix around what it put", () => {
+    const w = new ByteWriter();
+    const at = w.begin(3);
+    w.put(bytes(700, 5));
+    w.end(at, 3);
+    expect(w.bytes.length).toBe(703);
+    expect([w.bytes[0], w.bytes[1], w.bytes[2]]).toEqual([0, 2, 188]);
+    expect(w.bytes.slice(3)).toEqual(bytes(700, 5));
+  });
+});

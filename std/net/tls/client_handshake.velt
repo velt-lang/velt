@@ -9,6 +9,7 @@ import { p256Ecdh, p256PrivateKey, p256PublicKey } from "velt/crypto/p256";
 import { x25519 } from "velt/crypto/x25519";
 import { sha256 } from "velt/crypto/sha256";
 import { utf8Decode } from "velt/encoding/utf8";
+import { arrayMove, arrayReserve, arraySetLen } from "velt/lang/intrinsics";
 import {
   DECODE_ERROR,
   DECRYPT_ERROR,
@@ -125,9 +126,12 @@ export class ClientHandshake {
   }
 
   private add(m: u8[]) {
-    for (let i: usize = 0; i < m.length; i++) {
-      this.transcript.push(m[i]);
-    }
+    const at = this.transcript.length;
+    const n = m.length;
+    // At least doubled, as `push` grows: `arrayReserve` reserves exactly what it is asked for.
+    arrayReserve(this.transcript, n > at ? n : at);
+    arraySetLen(this.transcript, at + n);
+    arrayMove(this.transcript, at, m, 0, n);
   }
 
   private hash(): u8[] {
