@@ -359,6 +359,11 @@ export const TOUCHED: u32 = 2048;
  * its home and never moves. (16384 and 32768: sched_node_catch.velt's.)
  */
 export const ANCHORED: u32 = 4096;
+/**
+ * Woken in a batch (one poll woke it and others, sched_queue.velt `pushNext`): until its poll
+ * ends, the tasks it wakes queue behind the ones already waiting, not in the run-next slot.
+ */
+export const BATCHED: u32 = 65536;
 
 /**
  * The join slot's word (`T_JOIN_STATE`): its lock (guards `T_JOINER`), the root is done (the
