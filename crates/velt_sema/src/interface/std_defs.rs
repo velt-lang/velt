@@ -97,6 +97,14 @@ fn canonical(h: &mut Hashing<'_>, debug: &str) -> String {
             let hash = *tys.entry(n).or_insert_with(|| h.ty(TyId(n)));
             out.push_str(&format!("#{hash:x}"));
             rest = after;
+        } else if let Some((n, after)) = index_in(tail, EXPORTED) {
+            // An index into the program's C exports (`exportedAddress(f)`): the export it names.
+            out.push_str(EXPORTED);
+            match h.p.c_exports.get(n as usize) {
+                Some(e) => out.push_str(&e.name),
+                None => out.push_str(&n.to_string()),
+            }
+            rest = after;
         } else if let Some((n, after)) = index_in(tail, IMPL_INDEX) {
             // An index into the program's implementations, which differ between programs: the
             // implementation it names (interface, its arguments and the implementing type).
@@ -140,12 +148,15 @@ fn string_end(s: &str) -> usize {
     s.len()
 }
 
+/// How `exportedAddress(f)`'s index into `Program::c_exports` shows in the debug form.
+const EXPORTED: &str = "callee: Intrinsic(ExportedAddress), args: [Expr { kind: Lit(Int(";
+
 /// How an implementation's index (`ExprKind::ToDyn`) shows in the debug form.
 const IMPL_INDEX: &str = "impl_index: ";
 
 /// The position of the next string, `Span {`, `DefId(`, `TyId(` or implementation index in `s`.
 fn next_marker(s: &str) -> Option<usize> {
-    ["\"", "Span {", "DefId(", "TyId(", IMPL_INDEX]
+    ["\"", "Span {", "DefId(", "TyId(", IMPL_INDEX, EXPORTED]
         .iter()
         .filter_map(|m| s.find(m))
         .min()
