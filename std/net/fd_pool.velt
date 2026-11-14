@@ -1,0 +1,178 @@
+// velt/net (internal): the keep-alive pool of `fetch`'s connections on the reactor of the executor
+// in Velt (std/net/tcp_sched.velt's `park` and `unpark` for the sockets of ours;
+// std/net/http/fetch/client/dial_sched.velt makes them). The same rules as the runtime's pool,
+// which keeps the runtime's streams (crates/velt_rt/src/net/park.rs, whose comment explains
+// them): a stream parked under a key (an origin) goes to the next task that asks for that key,
+// most recently parked first; with `settled` (a request that may not be sent twice) only one idle
+// for at least `SETTLED_NS`; one idle longer than `MAX_IDLE_NS` is closed when its key is next
+// asked for; a key keeps at most `MAX_PER_KEY` streams; and every stream is looked at before it is
+// handed out (the end of the stream, unexpected bytes or an error close it instead).
+//
+// Process-wide, so any worker's task takes a stream another parked: a map behind a `Mutex` in a
+// static atomic (its word is in the program's data; the reference is released at exit for the
+// leak counters), as the HTTP/2 client's sessions are (std/net/http/fetch/client/h2/registry.velt).
+// The entries are handles: the sources stay on the reactor while parked.
+
+import { recv$net } from "#net-calls";
+import * as r from "#reactor";
+import * as io from "velt/lang/hooks/sched_io";
+import * as m from "velt/lang/hooks/sched_mem";
+import * as tb from "velt/lang/hooks/sched_io_table";
+import * as wt from "velt/lang/hooks/sched_io_wait";
+import * as fio from "velt/net/fd_io";
+
+/** The most idle streams kept per key; more are closed. */
+const MAX_PER_KEY: i64 = 512;
+/** A stream idle this long (nanoseconds) is closed rather than reused: 60 s. */
+const MAX_IDLE_NS: u64 = 60000000000;
+/** A stream idle this long (ns) has usually received a close sent after its response: 5 ms. */
+const SETTLED_NS: u64 = 5000000;
+/** `recv`'s flag that leaves the bytes it finds in the socket (2 on macOS, Linux and Windows). */
+const MSG_PEEK: i32 = 2;
+
+/** A parked stream: its handle, and when it was parked (`wt.now()`). */
+struct Idle {
+  h: u64;
+  since: u64;
+}
+
+/** What `unpark` took under the lock: the stream to hand out (0: none), and those to close. */
+struct Taken {
+  h: u64;
+  stale: u64[];
+}
+
+type Parked = Mutex<Map<string, Idle[]>>;
+
+/** The process's pool, made on first use. */
+const PARKED = new Atomic<shared<Parked> | null>(null);
+
+function parked(): shared<Parked> {
+  const found = PARKED.load("acquire");
+  if (found != null) {
+    return found;
+  }
+  // Two first calls race: one value wins, the other is dropped.
+  PARKED.compareExchange(
+    null,
+    shared(new Mutex<Map<string, Idle[]>>(new Map<string, Idle[]>())),
+    "acqrel",
+  );
+  const made = PARKED.load("acquire");
+  if (made == null) {
+    panic("ICE: the keep-alive pool is set once and never cleared");
+  }
+  return made;
+}
+
+/** Keeps idle stream `h` under `key` (closed instead when the key is full); the pool's from now. */
+export function park(h: u64, key: string): void {
+  const since = wt.now();
+  const kept = parked().with((map) => {
+    const list = map.get(key);
+    if (list == undefined) {
+      map.set(key, [{ h: h, since: since }]);
+      return true;
+    }
+    if ((list.length as i64) >= MAX_PER_KEY) {
+      return false;
+    }
+    list.push({ h: h, since: since });
+    return true;
+  });
+  if (!kept) {
+    fio.close(h);
+  }
+}
+
+/**
+ * The most recently parked stream under `key` that is still usable (with `settled`, the most
+ * recent one idle for at least `SETTLED_NS`), or 0. Streams found closed or idle too long are
+ * closed on the way.
+ */
+export function unpark(key: string, settled: bool): u64 {
+  while (true) {
+    const now = wt.now();
+    const taken = parked().with((map) => take(map, key, settled, now));
+    // Closed with the lock let go: closing hands this thread's output off.
+    for (const s of taken.stale) {
+      fio.close(s);
+    }
+    if (taken.h === 0) {
+      return 0;
+    }
+    if (idleOpen(taken.h)) {
+      return taken.h;
+    }
+    fio.close(taken.h);
+  }
+}
+
+/** `unpark`'s step under the lock. */
+function take(map: Map<string, Idle[]>, key: string, settled: bool, now: u64): Taken {
+  const stale: u64[] = [];
+  const list = map.get(key);
+  if (list == undefined) {
+    return { h: 0, stale: stale };
+  }
+  // Oldest first: those idle too long are at the front.
+  let expired: i64 = 0;
+  while (expired < (list.length as i64) && now - list[expired].since > MAX_IDLE_NS) {
+    stale.push(list[expired].h);
+    expired++;
+  }
+  if (expired > 0) {
+    list.splice(0, expired);
+  }
+  let i = (list.length as i64) - 1;
+  if (settled) {
+    while (i >= 0 && now - list[i].since < SETTLED_NS) {
+      i--;
+    }
+  }
+  let h: u64 = 0;
+  if (i >= 0) {
+    h = list[i].h;
+    list.splice(i, 1);
+  }
+  if (list.length == 0) {
+    map.delete(key);
+  }
+  return { h: h, stale: stale };
+}
+
+/**
+ * Whether idle stream `h` can carry another request: a look at its socket finds nothing yet (not
+ * the end of the stream, nor bytes nobody asked for, nor an error).
+ */
+function idleOpen(h: u64): bool {
+  const s = tb.enter(h);
+  if (s === 0) {
+    return false;
+  }
+  if ((m.ld32(s + io.S_FLAGS) & io.F_ABORTED) !== 0 || m.ld32(s + io.S_ERR) !== 0) {
+    tb.leave(s);
+    return false;
+  }
+  const probe = m.alloc(16);
+  let open = false;
+  while (true) {
+    // SAFETY: one byte at `probe`; the descriptor is open (the source is locked).
+    const n = unsafe { recv$net(m.ld(s + io.S_FD) as i32, m.ptr(probe), 1, MSG_PEEK) };
+    if (n >= 0) {
+      break;
+    }
+    const e = r.errno();
+    if (e === r.EAGAIN) {
+      io.notReady(s, io.READ | io.HUP | io.ERR);
+      open = true;
+      break;
+    }
+    if (e !== r.EINTR) {
+      break;
+    }
+  }
+  m.release(probe, 16);
+  tb.leave(s);
+  return open;
+}

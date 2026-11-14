@@ -8,22 +8,24 @@
 // every operation on such a handle runs here (std/net/fd_socket.velt, std/net/fd_io.velt), on the
 // worker, with no Rust in between. Everything else is handed to the runtime: TLS streams and
 // listeners (`connectTls`, `listenTls`: TLS in Velt over a plain stream is `startTls`), listeners
-// under `velt dev` (the supervisor hands them over, `devHandover`), `fetch`'s
-// pooled connections (`park`/`unpark`), and every socket on an OS without a reactor
-// (std/lang/hooks/reactor_none.velt). A stream of ours `park`ed for `fetch`'s keep-alive pool is
-// closed instead: the pool is the runtime's. What a runtime stream defers (`writeLater`) waits in
-// Velt and is handed to the runtime's `write` (std/net/rt_later.velt): the runtime sends its own
-// deferred bytes only after polls of its own tasks, which never run on this executor's worker.
+// under `velt dev` (the supervisor hands them over, `devHandover`), and every socket on an OS
+// without a reactor (std/lang/hooks/reactor_none.velt). `fetch`'s keep-alive pool (`park`/`unpark`)
+// is Velt's for the sockets of ours (std/net/fd_pool.velt: its `http:` connections,
+// std/net/http/fetch/client/dial_sched.velt) and the runtime's for its handles (`https:`). What a
+// runtime stream defers (`writeLater`) waits in Velt and is handed to the runtime's `write`
+// (std/net/rt_later.velt): the runtime sends its own deferred bytes only after polls of its own
+// tasks, which never run on this executor's worker.
 
 import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";
-import { stdUsed } from "velt/lang/intrinsics";
+import { noteStdUse, stdUsed } from "velt/lang/intrinsics";
 import { moduleStateUsed } from "velt/lang/intrinsics/task";
 import { schedWorkerCount } from "velt/lang/hooks/sched";
 import { processEnv } from "velt/lang/hooks/process";
 import * as io from "velt/lang/hooks/sched_io";
 import * as tb from "velt/lang/hooks/sched_io_table";
 import * as fio from "velt/net/fd_io";
+import * as pool from "velt/net/fd_pool";
 import * as fs from "velt/net/fd_socket";
 import { readableUntil } from "velt/net/fd_until";
 import * as rt from "velt/net/rt";
@@ -282,8 +284,10 @@ export async function velt_rt_tcp_alpn(s: u64): Promise<IoResult<string>> {
 }
 
 export function velt_rt_tcp_park(s: u64, key: string) {
+  // `fetch` parks here: it then dials plain TCP on the reactor (fetch/client/conn.velt `dial`).
+  noteStdUse("fetch-pool-reactor");
   if (tb.ours(s)) {
-    fio.close(s);
+    pool.park(s, key);
   } else {
     if (stdUsed("rt-later")) {
       lat.park(s, key);
@@ -294,7 +298,10 @@ export function velt_rt_tcp_park(s: u64, key: string) {
 }
 
 export function velt_rt_tcp_unpark(key: string, settled: u32): u64 {
-  return rt.velt_rt_tcp_unpark(key, settled);
+  // A key's streams are all of one kind (an `http:` origin's ours, an `https:` one's the
+  // runtime's): the runtime is asked only when Velt's pool has none.
+  const h = pool.unpark(key, settled !== 0);
+  return h !== 0 ? h : rt.velt_rt_tcp_unpark(key, settled);
 }
 
 export async function velt_rt_tcp_connect_tls(

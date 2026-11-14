@@ -111,6 +111,25 @@ export function adopt(fd: i32, flags: u32, ready: u32): IoResult<u64> {
 
 /** `connect("host:port")`: each address in turn, until one answers; the stream's handle. */
 export async function connect(addr: string): Promise<IoResult<u64>> {
+  return await connectUntil(addr, 0, 0);
+}
+
+/** What `connectUntil` fails with when its deadline passes first (no OS error has it). */
+export const TIMED_OUT: i32 = -1;
+
+/**
+ * `connect` given up at `deadline` (monotonic nanoseconds, `wt.now()`; 0: none) with `TIMED_OUT`,
+ * or once `cell` says so (0: no cell): raw memory, the word at 0 the handle of the socket
+ * connecting now (0 between addresses), the `u32` at 8 not 0 once the caller gave up. A caller
+ * gives up by setting that flag and closing the handle there (the wait sees its socket gone),
+ * then awaits the connect, which ends at once, before releasing `cell` (`fetch`'s connect on the
+ * reactor, std/net/http/fetch/client/dial_sched.velt).
+ */
+export async function connectUntil(
+  addr: string,
+  deadline: u64,
+  cell: usize,
+): Promise<IoResult<u64>> {
   // A connect hands work to the peer: what this thread printed comes first (fd_io.velt).
   const w = t.here();
   if (w !== 0 && (m.ld32(w + t.E_MODE) !== 0 || m.ld(w + t.E_LAZY) !== 0)) {
@@ -124,8 +143,12 @@ export async function connect(addr: string): Promise<IoResult<u64>> {
   let last: IoStatus = { code: 4, message: "could not resolve to any addresses" };
   let ai = list;
   while (ai !== 0) {
-    const r1 = await connectOne(ai);
-    if (r1.code === 0) {
+    if (cell !== 0 && m.ld32(cell + 8) !== 0) {
+      last = closed();
+      break;
+    }
+    const r1 = await connectOne(ai, deadline, cell);
+    if (r1.code === 0 || r1.code === TIMED_OUT) {
       // SAFETY: the list getaddrinfo made, freed once.
       unsafe {
         freeaddrinfo(m.ptr(list));
@@ -142,8 +165,8 @@ export async function connect(addr: string): Promise<IoResult<u64>> {
   return failed(last, 0);
 }
 
-/** Connects to the address of `addrinfo` `ai`: the handle, or the failure. */
-async function connectOne(ai: usize): Promise<IoResult<u64>> {
+/** Connects to the address of `addrinfo` `ai` (see `connectUntil`): the handle, or the failure. */
+async function connectOne(ai: usize, deadline: u64, cell: usize): Promise<IoResult<u64>> {
   const family = m.ld32(ai + AI_FAMILY) as i32;
   const protocol = m.ld32(ai + AI_PROTOCOL) as i32;
   // SAFETY: no precondition.
@@ -173,11 +196,23 @@ async function connectOne(ai: usize): Promise<IoResult<u64>> {
     return got;
   }
   const h = got.value;
+  if (cell !== 0) {
+    m.st(cell, h as usize);
+  }
   // SAFETY: `waitFor` makes a heap future, given up to the promise.
-  await unsafe { promiseAt<void>(wt.waitFor(h, io.K_WRITE, 0, 0)) };
+  await unsafe { promiseAt<void>(wt.waitFor(h, io.K_WRITE, 0, deadline)) };
+  if (cell !== 0) {
+    m.st(cell, 0);
+  }
   const s = tb.enter(h);
   if (s === 0) {
     return failed(closed(), 0);
+  }
+  if (deadline !== 0 && !wt.satisfied(s, io.K_WRITE, 0)) {
+    // The time ran out while connecting.
+    discard(h, s);
+    tb.leave(s);
+    return failed({ code: TIMED_OUT, message: "connect timed out" }, 0);
   }
   const word = m.zeroed(16);
   m.st32(word + 8, 4);
