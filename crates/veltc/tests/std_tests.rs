@@ -91,6 +91,7 @@ fn run_tests(dir: &Path, release: bool) -> Option<String> {
 /// Test files known to leave blocks unfreed under the executor in Velt since #2649's switch, with
 /// the issue that tracks it: their leak is reported, but doesn't fail the run.
 const KNOWN_LEAKS: &[(&str, &str)] = &[
+    ("tests/std/fetch/h2.test.velt", "#2842"),
     ("tests/std/fetch/wire.test.velt", "#2842"),
     ("tests/std/websocket/client.test.velt", "#2842"),
     ("std/net/tls/rfc8448.test.velt", "#2924"),
