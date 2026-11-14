@@ -128,14 +128,45 @@ impl PB {
         self.add_fn(f.build(vec![]));
     }
 
+    /// The cycle hooks of what `console.log` prints (std/lang/hooks/inspect_cycles.velt), which a
+    /// hand-built program has no std for: the programs here print no cyclic graph and no
+    /// container of more than 100 entries, so every object is printed (`inspectEnter` is true,
+    /// `inspectCircular` false) and the rest write nothing. Tests of the hooks themselves are
+    /// goldens (lang/inspect_cycles_std).
+    fn inspect_hooks(&mut self) {
+        let u64 = self.types.intern(TyKind::Int(IntTy::U64));
+        let t = self.t;
+        let hooks = [
+            (velt_common::std_hook!(inspect_enter), true, Some(true)),
+            (velt_common::std_hook!(inspect_circular), true, Some(false)),
+            (velt_common::std_hook!(inspect_leave), false, None),
+            (velt_common::std_hook!(inspect_more), true, None),
+        ];
+        for (hook, with_id, result) in hooks {
+            let rty = if result.is_some() { t.bool } else { t.unit };
+            let mut f = FB::new(hook, rty);
+            f.param("buf", t.str, PassMode::BorrowMut);
+            if with_id {
+                f.param("id", u64, PassMode::Copy);
+            }
+            let body = result.map(|b| vec![ret(Some(boolean(b, t)))]);
+            self.add_fn(f.build(body.unwrap_or_default()));
+        }
+    }
+
     pub fn finish(mut self) -> Program {
         self.console_writers();
+        self.inspect_hooks();
         // Sema demands the writers of a program that prints a number; a hand-built program says
         // so here, for the hooks it defines above.
         let mut hooks_demanded = velt_common::std_hooks::HookSet::default();
         for i in [
             velt_common::std_hooks::hook_index::int_write,
             velt_common::std_hooks::hook_index::uint_write,
+            velt_common::std_hooks::hook_index::inspect_enter,
+            velt_common::std_hooks::hook_index::inspect_circular,
+            velt_common::std_hooks::hook_index::inspect_leave,
+            velt_common::std_hooks::hook_index::inspect_more,
         ] {
             hooks_demanded.insert(i);
         }
