@@ -133,6 +133,8 @@ pub(crate) fn build_module_cached<M: Module>(
     let mut stats = CacheStats::default();
     let mut unwind = std::mem::take(&mut decls.eh_unwind);
     let mut eh = decls.eh.clone();
+    let seh = crate::eh_seh::applies(module);
+    let mut stopper = None;
     let mut lines = Vec::new();
     let defined: Vec<(FuncId, &vir::Function)> = (program.funcs.iter().enumerate())
         .filter_map(|(i, func)| Some((defs[i]?, func)))
@@ -173,7 +175,13 @@ pub(crate) fn build_module_cached<M: Module>(
         }
         defining += start.elapsed();
         stats.add(CacheStats::of(&[compiled.hit]));
-        unwind.extend(compiled.unwind);
+        match compiled.unwind {
+            // A function C calls stops a Velt panic's search on Windows x64 (eh_seh.rs).
+            Some(info) if seh && func.stops_unwind => {
+                unwind.push(crate::eh_seh::stop_unwind(module, &mut stopper, info)?);
+            }
+            info => unwind.extend(info),
+        }
         lines.extend(compiled.lines);
         Ok(())
     };
@@ -238,7 +246,8 @@ fn compile_function(
     let hit = compile_one(target.isa(), &mut ctx, &func.symbol, cache)?;
     // A function C calls has none, so an unwind can't pass it (`Function::stops_unwind`); on
     // Windows it keeps it, as the unwinder takes a function without one for a leaf and would
-    // misread the stack past it (c-ffi.md "Exported functions" says what happens there).
+    // misread the stack past it; on x64 a language handler stops a Velt panic there instead
+    // (eh_seh.rs `stop_unwind`, added where the function is defined).
     let windows =
         target.isa().triple().operating_system == target_lexicon::OperatingSystem::Windows;
     let unwind = match func.stops_unwind && !windows {

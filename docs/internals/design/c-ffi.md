@@ -605,8 +605,8 @@ function onRow(n: i32, row: Ptr<u8> | null): i32 { … }
   the function is `vir::Function::stops_unwind`:
   - **LLVM** (release builds, every target): each call in it is an `invoke` whose landing pad
     calls `abort`, as clang does for `noexcept` and Rust for `extern "C"`: `landingpad … cleanup`
-    with `rust_eh_personality` on Linux and macOS, `cleanuppad` with `__CxxFrameHandler3` on
-    Windows (Rust's panics are MSVC C++ exceptions there). The unwinder's first phase finds the
+    with `rust_eh_personality` on Linux and macOS, `cleanuppad` with `__C_specific_handler` on
+    Windows (below). The unwinder's first phase finds the
     `catchPanic`; the second one runs the landing pad, which aborts (SIGABRT, exit 134 on Unix).
     Leaving the function without unwind information was not enough: LLVM writes CFI for it with
     `-g`, and a call in tail position became a jump, which leaves no frame to stop at. An
@@ -614,13 +614,13 @@ function onRow(n: i32, row: Ptr<u8> | null): i32 { … }
   - **Cranelift** (debug builds) on Linux and macOS: no unwind information, so the unwinder finds
     no way past it and the runtime aborts ("failed to initiate panic, error 5").
   - **Cranelift on Windows** keeps its unwind information, whose absence would make the unwinder
-    take it for a leaf and misread the stack. So a debug build on Windows lets that panic unwind
-    through the C frames to the `catchPanic`: SEH pops C frames without handlers as `longjmp`
-    would, `catch_unwind` takes the panic, and the program goes on (the `catchPanic` rejects).
-    Whatever the C code held stays as it was (a lock, a half-updated structure). For C that is
-    defined at the Windows x64 ABI level; C++ built with `/EHsc` would be undefined behaviour
-    (vpm compiles only C). The fix is an `UNW_FLAG_EHANDLER` handler that aborts in the `.xdata`
-    the backend writes (`unwind/windows.rs`), a follow-up.
+    take it for a leaf and misread the stack. On x64 its `.xdata` names a language handler
+    (`velt_eh_stop`, velt_codegen_cl `eh_seh.rs`) that ends the process with 101 when the search
+    phase of a Velt panic (`RaiseException`, docs/internals/design/unwinding.md "Windows") reaches
+    the frame, as the search ending there does on Linux and macOS. On arm64 nothing is caught.
+  - **LLVM on Windows**: the abort pad is a `cleanuppad` under `__C_specific_handler` (a
+    termination handler, run for every exception that unwinds the frame); under
+    `__CxxFrameHandler3` it was skipped for an exception that is not C++, so a Velt panic passed.
 - **Its address**: `exportedAddress(f)` (std/lang/intrinsics, std only, unsafe) is the C
   function's address as a `usize`, for a C API taking a function pointer (`pthread_create`,
   `qsort`); its argument must name an `@export` function. A package gets the address from C

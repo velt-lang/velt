@@ -37,6 +37,7 @@ mod cpu_names;
 mod debug_info;
 mod dev;
 mod eh;
+mod eh_seh;
 mod entry;
 mod function;
 mod isa;

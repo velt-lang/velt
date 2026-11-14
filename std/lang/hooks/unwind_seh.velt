@@ -1,0 +1,177 @@
+// velt/lang/hooks (internal): Velt's exception under Windows' structured exceptions
+// (`#unwind-raise` on Windows; docs/internals/design/unwinding.md "Windows"). The object is laid
+// out as with the Itanium unwinder (a 32-byte header, then the message, NUL-terminated), so it is
+// read and freed the same way: the class `VELTPANC` at 0 and the object's own address at 8, the
+// one parameter of the `RaiseException` that raises it (code `0xE0564C54`,
+// `velt_vir::eh::SEH_CODE`). `velt_eh_try`'s filter takes only that code and hands the parameter
+// back, so whoever catches it frees it (`takePanic`). On Windows on arm64 `velt_eh_catches()` is 0
+// and nothing is raised.
+//
+// An unclaimed `RaiseException` never returns: the process's unhandled-exception filter ends it.
+// So the first raise installs one (`unclaimed`) that ends the process with 101 for Velt's code, as
+// an uncaught panic does elsewhere, and hands any other exception to the filter it replaced.
+
+import { Ptr, StrBytes, byteLength, readCString } from "velt/ffi";
+import { ptrAddress, ptrOf } from "velt/ffi/ptr";
+import { addressLoad, addressStore } from "velt/lang/intrinsics/address";
+import { addressCall, fnAddress } from "velt/lang/intrinsics/future";
+
+declare c("c") function malloc(n: usize): Ptr<u8> | null;
+declare c("c") function free(p: Ptr<u8>): void;
+declare c("c") function memcpy(dst: Ptr<u8>, src: StrBytes, n: usize): Ptr<u8>;
+declare c("c") function memset(p: Ptr<u8>, c: i32, n: usize): Ptr<u8>;
+declare c("c") function RaiseException(code: u32, flags: u32, count: u32, args: Ptr<u8>): void;
+declare c("c") function abort(): void;
+declare c("c") function SetUnhandledExceptionFilter(filter: usize): usize;
+declare c("c") function SwitchToThread(): i32;
+declare function velt_rt_exit(code: i32): never;
+declare function velt_rt_flush(): void;
+
+/** Ends the process at once (a panic during a cleanup): C's `abort`. */
+export function abortProcess(): never {
+  // SAFETY: `abort` takes nothing; it never returns.
+  unsafe {
+    abort();
+  }
+  velt_rt_exit(134);
+}
+
+/** Whether the frames a caught panic unwinds drop what they own: not on Windows, whose calls have no cleanup pads yet. */
+export function unwoundFramesDrop(): bool {
+  return false;
+}
+
+/** The header in front of the message, as with the Itanium unwinder (`velt_vir::eh::HEADER_SIZE`). */
+const HEADER: usize = 32;
+
+/** Velt's exception code (`velt_vir::eh::SEH_CODE`). */
+const CODE: u32 = 0xe0564c54;
+
+/** `EXCEPTION_NONCONTINUABLE`: the raise never returns to its caller once claimed. */
+const NONCONTINUABLE: u32 = 1;
+
+/** `unclaimed`'s install (`INSTALLED`): not begun, under way (one thread installs), done. */
+const NOT_INSTALLED: u32 = 0;
+const INSTALLING: u32 = 1;
+const DONE: u32 = 2;
+
+/**
+ * Where `unclaimed`'s install is, and the filter it replaced (0 for none). `PREVIOUS` is stored
+ * before `INSTALLED` turns `DONE` (release), so whoever reads `DONE` (acquire) reads it.
+ */
+const INSTALLED = new Atomic<u32>(NOT_INSTALLED);
+const PREVIOUS = new Atomic<u64>(0);
+
+/**
+ * The process's unhandled-exception filter once Velt's exception was raised: nobody claimed it
+ * (no `catchUnwind` up the stack, or a function C calls ended the search), so the process ends
+ * with 101, as an uncaught panic does (its message is printed already). Any other exception goes
+ * to the filter this one replaced, or the system's (`EXCEPTION_CONTINUE_SEARCH`).
+ */
+function unclaimed(at: usize): usize {
+  // SAFETY: the system passes `EXCEPTION_POINTERS`, whose first word is the exception record,
+  // whose first field is the code.
+  const code = unsafe { addressLoad<u32>(addressLoad<usize>(at)) };
+  if (code === CODE) {
+    velt_rt_flush();
+    velt_rt_exit(101);
+  }
+  // Another thread's exception can come here between `SetUnhandledExceptionFilter` and the store
+  // of the filter it replaced: that is read once the install is done.
+  awaitInstalled();
+  const previous = PREVIOUS.load("acquire") as usize;
+  if (previous !== 0) {
+    // SAFETY: the filter the system had, which takes `EXCEPTION_POINTERS`.
+    return unsafe { addressCall(previous, at) };
+  }
+  return 0;
+}
+
+/**
+ * Installs `unclaimed`, once, and returns when it is in place: a raise on another thread at the
+ * same moment waits for the thread that installs (whose raise, unclaimed, would otherwise reach
+ * the filter before it).
+ */
+function install(): void {
+  if (INSTALLED.load("acquire") === DONE) {
+    return;
+  }
+  if (INSTALLED.compareExchange(NOT_INSTALLED, INSTALLING) !== NOT_INSTALLED) {
+    awaitInstalled();
+    return;
+  }
+  // SAFETY: `unclaimed` takes `EXCEPTION_POINTERS` and returns a filter's answer, with the C
+  // calling convention (`fnAddress`).
+  const previous = unsafe { SetUnhandledExceptionFilter(fnAddress(unclaimed)) };
+  PREVIOUS.store(previous as u64, "relaxed");
+  INSTALLED.store(DONE, "release");
+}
+
+/**
+ * Waits until `install` is done (another thread installs: a few instructions without a lock or
+ * a wait of their own), spinning a while, then giving the core away between looks, as the
+ * scheduler's spin lock does (sched_mem.velt `spinLock`), so an installer the OS took off its
+ * core gets to run.
+ */
+function awaitInstalled(): void {
+  let spins: u32 = 0;
+  while (INSTALLED.load("acquire") !== DONE) {
+    if (spins < 64) {
+      spins++;
+    } else {
+      // SAFETY: no precondition.
+      unsafe {
+        SwitchToThread();
+      }
+    }
+  }
+}
+
+/**
+ * Raise Velt's exception with message `msg`. A frame claims it, or the process ends with 101
+ * (`unclaimed`); it returns only if the allocation failed.
+ */
+export function raise(msg: string): void {
+  install();
+  const n = byteLength(msg);
+  // SAFETY: the allocation holds the header, the message and its NUL; every pointer below
+  // stays inside it, and the raise owns it until the catch hands it back.
+  unsafe {
+    const e = malloc(HEADER + n + 1);
+    if (e === null) {
+      return;
+    }
+    memset(e, 0, HEADER);
+    memcpy(e, "VELTPANC", 8);
+    const at = ptrAddress(e);
+    addressStore<usize>(at + 8, at);
+    const text = ptrOf<u8>(at + HEADER);
+    memcpy(text, msg, n);
+    memset(ptrOf<u8>(at + HEADER + n), 0, 1);
+    RaiseException(CODE, NONCONTINUABLE, 1, ptrOf<u8>(at + 8));
+    free(e);
+  }
+}
+
+/**
+ * The message of the exception object at `e` (from `catchUnwind`), which stays the caller's.
+ * Unsafe: `e` must be a Velt exception that `catchUnwind` returned, not freed.
+ */
+export unsafe function panicText(e: usize): string {
+  // SAFETY: the caller's statement: `raise` wrote the NUL-terminated message after the header.
+  return unsafe { readCString(ptrOf<u8>(e + HEADER)) };
+}
+
+/**
+ * The message of the exception object at `e` (from `catchUnwind`), which it frees. Unsafe: `e`
+ * must be a Velt exception that `catchUnwind` returned, taken once.
+ */
+export unsafe function takePanic(e: usize): string {
+  // SAFETY: the caller's statement: `raise` wrote the NUL-terminated message after the header.
+  const msg = unsafe { readCString(ptrOf<u8>(e + HEADER)) };
+  // SAFETY: `raise` allocated it with malloc, and the caller takes it once.
+  unsafe {
+    free(ptrOf<u8>(e));
+  }
+  return msg;
+}

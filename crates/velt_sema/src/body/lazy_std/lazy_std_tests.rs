@@ -85,9 +85,11 @@ fn every_name_lowering_looks_up_is_a_helper() {
     // C preprocessor macros (`__AVX2__`, `__GCC_…`, `__ARM_FEATURE_…`), DWARF names and the C library's own
     // symbols (`errno`'s location, velt_vir `system/posix.rs`) and Mach-O segment and section
     // names (velt_codegen_cl `eh.rs`) are no definitions, nor is the import library's prefix of a
-    // Windows DLL's variable (velt_vir `lower/c_global.rs`).
+    // Windows DLL's variable (velt_vir `lower/c_global.rs`), nor the C runtime's handler of
+    // structured exceptions (velt_codegen_cl `eh_seh.rs`).
     const C_SYMBOLS: &[&str] = &[
         "__error",
+        "__C_specific_handler",
         "__errno_location",
         "__TEXT",
         "__gcc_except_tab",

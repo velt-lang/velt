@@ -25,6 +25,11 @@ export function abortProcess(): never {
   velt_rt_exit(134);
 }
 
+/** Whether the frames a caught panic unwinds drop what they own: their cleanup pads (#2667). */
+export function unwoundFramesDrop(): bool {
+  return true;
+}
+
 /** The unwinder's header in front of Velt's payload (`velt_vir::eh::HEADER_SIZE`). */
 const HEADER: usize = 32;
 
