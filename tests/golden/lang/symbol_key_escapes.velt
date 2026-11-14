@@ -19,7 +19,7 @@ function main() {
   console.log({ [G]: 2 });
   console.log({ [H]: 1, [I]: 2 });
   console.log({ [J]: "j", [I]: { [G]: [1, 2, 3] }, k: "a fairly long string value to break the line" });
-  console.log([A, C], { s: C });
+  console.log([C, F], { s: C });
 }
 
 main();

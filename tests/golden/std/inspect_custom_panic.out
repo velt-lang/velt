@@ -1,0 +1,5 @@
+caught panic
+<ref *1> N { name: 'z0', next: [Circular *1] }
+<ref *1> N { name: 'z1', next: [Circular *1] }
+<ref *1> N { name: 'z2', next: [Circular *1] }
+<ref *1> Holder { self: [Circular *1], bad: Bad1 }

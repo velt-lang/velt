@@ -1,0 +1,16 @@
+{
+  Symbol(a\b): 1,
+  Symbol(x\ny): 2,
+  Symbol(q"): 3,
+  Symbol(é): 4,
+  Symbol(tab\t): 5,
+  Symbol(): 6
+}
+{ Symbol(c\x01d): 2 }
+{ Symbol(del\x7F): 1, Symbol(it\'s \\ (a, b) [c] {d}: e): 2 }
+{
+  k: 'a fairly long string value to break the line',
+  Symbol(cr\r ff\f vt\x0B nul\x00 esc\x1B c1\x85): 'j',
+  Symbol(it\'s \\ (a, b) [c] {d}: e): { Symbol(c\x01d): [ 1, 2, 3 ] }
+}
+[ Symbol(q"), Symbol() ] { s: Symbol(q") }

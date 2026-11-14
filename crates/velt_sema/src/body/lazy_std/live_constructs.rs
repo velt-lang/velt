@@ -136,6 +136,32 @@ pub(crate) fn too_late(cx: &mut Ctx, assumed: &mut Assumed) -> bool {
     added
 }
 
+/// The hook that prints an array (std/lang/hooks/inspect.velt `inspectArray`), demanded with the
+/// other shapes but checked only once an array type is live: its `E[]` parameter makes the
+/// `Array` class live, which a program without arrays doesn't check. Lowering writes an array
+/// with its own glue where it is unchecked (the hook has a fallback).
+pub(super) const ARRAY_SHAPE: &str = "inspect_array";
+
+/// Marks the array hook ([`ARRAY_SHAPE`]) once its constructs are present and an array type is
+/// live: whether it was newly marked.
+pub(super) fn demand_array_shape(cx: &mut Ctx) -> bool {
+    use velt_common::std_hooks::{hook_index, HookSet, HOOKS};
+    let live = &cx.lazy.live;
+    let index = hook_index::inspect_array;
+    if live.finishing
+        || live.kinds & super::kind_bit(&TyKind::Array(TyId(0))) == 0
+        || !HookSet::demanded_by(demanded_for(live.present)).contains(index)
+    {
+        return false;
+    }
+    let h = &HOOKS[index];
+    cx.demand_std(&h.module());
+    match cx.std_def(&h.qualified()) {
+        Some(crate::ctx::Item::Def(d)) => super::mark(cx, d),
+        _ => false,
+    }
+}
+
 /// The constructs `present` demands the hooks of. The integer hooks act as one bit: a construct
 /// present demands them all, so that glue, which lowering makes per type, doesn't depend on each
 /// of its call sites being listed for the right construct (velt_common `hook_demand.rs`).

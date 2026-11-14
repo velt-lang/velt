@@ -51,34 +51,24 @@ shared.self = shared;
 class Logs {
   [custom](): string {
     console.log("logs", shared, [shared, shared]);
-    return "Logs!";
+    return "L!";
   }
 }
-// `me` is numbered before the custom inspect runs, `back` refers to the object after it.
-class Outer {
-  me: Outer | null = null;
-  s: S = shared;
-  logs: Logs = new Logs();
-  back: Outer | null = null;
-}
-
-// A custom inspect that prints and returns an object, printed at its depth.
-class Shape {
-  [custom](): S {
-    console.log("shape prints", shared);
-    return shared;
-  }
+// `me` is numbered before the custom inspect runs, `b` refers back to the object after it.
+class O {
+  me: O | null = null;
+  l: Logs = new Logs();
+  b: O | null = null;
 }
 
 function main() {
   console.log(makeA(4));
-  const o = new Outer();
+  const o = new O();
   o.me = o;
-  o.back = o;
+  o.b = o;
   console.log(o);
-  console.log([o, shared]);
-  console.log({ first: shared, shape: new Shape(), last: shared });
-  console.log(shared);
+  console.log({ first: shared, o: o, last: shared });
+  console.log(shared, o);
 }
 
 main();

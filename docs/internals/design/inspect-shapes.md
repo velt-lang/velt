@@ -56,9 +56,16 @@ in every program that prints a number (the hooks are demanded by `Format`), and 
 above call: the objects being printed and the `<ref *N>` numbers given so far (`inspectEnter`,
 `inspectLeave`, `inspectCircular`, `inspectBegin`, `inspectEnd`), and Node's `... n more items`
 (`inspectMore`). This was the runtime's (`velt_rt_strbuf_inspect_enter`, `_leave`, `_circular`,
-`_more`, deleted, #2196). The state is two blocks of words per thread, allocated at the first
-object entered and given back at the end of the top-level value, so the leak counters stay even;
-a value is printed on one thread with no await in between. A `<ref *N>` prefix is inserted by
+`_more`, deleted, #2196). The state is per thread: the three objects Node's depth limit lets be
+printed at once, in thread-locals, and a block of words for the `<ref *N>` numbers, allocated at
+the first cycle and given back at the end of the top-level value, so the leak counters stay even;
+a value is printed on one thread with no await in between. A custom inspect is user code that can
+print, and panic, during a print: lowering brackets its call with `inspectSave` and
+`inspectRestore`, so a value it prints starts from an empty state and is numbered from 1 (Node
+starts a fresh context per `console.log`), and the outer value's state comes back after it. A
+panic caught by `catchPanic` leaves the thread at that empty state (the saved one is abandoned with
+the rest of the print), and `inspectBegin` forgets any object a panic left marked as being
+printed, so the next value is numbered from 1. A `<ref *N>` prefix is inserted by
 taking the builder's text out (`velt_rt_strbuf_finish`) and appending it again around the prefix,
 as rare as a cycle. The runtime keeps `velt_rt_strbuf_inspect_begin` and `_atom` for its line
 breaking (`inspect_layout`), which is still Rust.
@@ -93,9 +100,8 @@ dispatch through the format slot.
 ## Order of work
 
 1. **Done here.** The intrinsic, the array and object hooks, checked on demand, and the cycles.
-2. **Loaded on demand.** The module has only functions, so it passes the (a1) rule of
-   `velt_loader::std_index`. Once #2345 lands, adding it to `ON_DEMAND_MODULES` removes the load
-   cost from a program that demands none of the hooks.
+2. **Done here: loaded on demand.** Both modules are in `ON_DEMAND_MODULES`: a program that
+   demands none of the hooks neither loads nor checks them.
 3. **The remaining kinds** in std, each with a golden where none prints it today.
 4. **Delete the glue**, once #2360 makes the live set a superset: the `fallback` flag goes, and with
    it `format_array.rs` and the entry loops of `format_map.rs`. velt_vir's no-std tests that print
