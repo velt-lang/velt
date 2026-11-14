@@ -1,0 +1,9 @@
+// A call that moves an object and lends a part of it: the callee pushes it and empties the array (#2531). Output checked against Node.
+function heap(a: string) { return a + "-".repeat(40); }
+function junk() { return heap("xxxxxxxxxxxxxxxxxxxxxxxxx").length; }
+class I2 { s: string = heap("a"); }
+class A2 { c: I2 = new I2(); xs: I2[] = [new I2(), new I2()]; name: string = heap("n"); }
+let hold: A2 | null = null;
+function take(q: A2, xs: A2[], v: string) { xs.push(q); xs.pop(); return v + "!"; }
+function t() { const a = new A2(); console.log(take(a, [], a.name)); }
+t();

@@ -1,0 +1,14 @@
+// A call that moves an object and lends a part of it: a narrowed owner given to a generic callee, a call inside a template literal and an async callee (#2531). Output checked against Node.
+function heap(a: string) { return a + "-".repeat(40); }
+function junk() { return heap("xxxxxxxxxxxxxxxxxxxxxxxxx").length; }
+class I2 { s: string = heap("a"); }
+class A2 { c: I2 = new I2(); xs: I2[] = [new I2(), new I2()]; name: string = heap("n"); }
+let hold: A2 | null = null;
+function take(q: A2, v: string) { hold = q; hold = null; junk(); return v + "!"; }
+async function takeA(q: A2, v: string) { hold = q; hold = null; junk(); return v + "!"; }
+function mk(): A2 | null { return new A2(); }
+async function t() { const o = mk(); if (o) { console.log(await takeA(o, o.name)); } }
+function g<T>(q: T, v: string) { let h: T | null = q; h = null; junk(); return v + "?"; }
+function u() { const o = mk(); if (o) { console.log(g(o, o.name)); } }
+function w() { const o = mk(); if (o !== null) { console.log(`${take(o, o.c.s)}`); } }
+t().then(() => { u(); w(); });

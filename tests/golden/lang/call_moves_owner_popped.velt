@@ -1,0 +1,10 @@
+// A call that moves an object and lends a part of it: another value moved beside a part of a local (#2531). Output checked against Node.
+function heap(a: string) { return a + "-".repeat(40); }
+function junk() { return heap("xxxxxxxxxxxxxxxxxxxxxxxxx").length; }
+class I2 { s: string = heap("a"); }
+class A2 { c: I2 = new I2(); xs: I2[] = [new I2(), new I2()]; name: string = heap("n"); }
+class B1 { a: A2 = new A2(); }
+let bh: B1 | null = null;
+function take(q: B1, v: string) { bh = q; bh = null; junk(); return v + "!"; }
+function t() { const b = new B1(); const bs = [b]; console.log(take(bs.pop()!, b.a.name)); }
+t();

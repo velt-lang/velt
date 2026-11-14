@@ -81,19 +81,12 @@ pub(super) fn root_local(e: &hir::Expr) -> Option<hir::LocalId> {
     match &e.kind {
         K::Local(l, _) => Some(*l),
         K::Field { base, .. } | K::Index { base, .. } => root_local(base),
-        K::Cast(x) | K::Upcast(x) | K::Downcast(x) | K::UnwrapSome(x, _) => root_local(x),
+        K::Cast(x)
+        | K::Upcast(x)
+        | K::Downcast(x)
+        | K::UnwrapSome(x, _)
+        | K::UnwrapVariant { expr: x, .. } => root_local(x),
         _ => None,
-    }
-}
-
-/// Can evaluating `e` move local `l` (and so free what it holds)? Conservative: shapes not
-/// listed may.
-pub(super) fn may_move_local(e: &hir::Expr, l: hir::LocalId) -> bool {
-    use hir::ExprKind as K;
-    match &e.kind {
-        K::Lit(_) | K::Global(_) | K::FnRef(..) => false,
-        K::Local(x, mode) => *x == l && *mode == hir::UseMode::Move,
-        _ => any_operand(e, &mut |x| may_move_local(x, l)).unwrap_or(true),
     }
 }
 
@@ -126,9 +119,9 @@ pub(super) fn assigns_local(e: &hir::Expr, l: hir::LocalId) -> bool {
 }
 
 /// Does `f` hold for an operand of `e`, for the shapes whose operands are all the evaluation
-/// does ([`may_move_local`], [`assigns_local`]): unary and binary operators, casts and wraps,
-/// field and index reads, conditionals, array literals and calls (their arguments, and the
-/// function value of an indirect call)? `None` for any other shape.
+/// does ([`may_move_local`](FnLower::may_move_local), [`assigns_local`]): unary and binary
+/// operators, casts and wraps, field and index reads, conditionals, array literals and calls
+/// (their arguments, and the function value of an indirect call)? `None` for any other shape.
 pub(super) fn any_operand(e: &hir::Expr, f: &mut dyn FnMut(&hir::Expr) -> bool) -> Option<bool> {
     use hir::ExprKind as K;
     Some(match &e.kind {
@@ -241,6 +234,60 @@ fn writes_local(e: &hir::Expr) -> bool {
 }
 
 impl FnLower<'_, '_> {
+    /// Can evaluating `e` move local `l` (and so free what it holds)? A read moved out of `l`
+    /// moves `l`: a narrowed `o: A2 | null` goes to a call as `UnwrapSome(o)` marked as the move.
+    /// A constructor call, a literal or a variant moves what its arguments move (`new R()`,
+    /// `{ id: 1 }` move nothing of the caller's), a `match` what its scrutinee, guards and arms
+    /// move, a closure the variables it captures by move or in a cell. Conservative: shapes not
+    /// listed may.
+    pub(super) fn may_move_local(&self, e: &hir::Expr, l: hir::LocalId) -> bool {
+        use hir::ExprKind as K;
+        use hir::UseMode::Move;
+        match &e.kind {
+            K::Lit(_) | K::Global(_) | K::FnRef(..) => false,
+            K::Local(x, mode) => *x == l && *mode == Move,
+            K::UnwrapSome(x, Move)
+            | K::UnwrapVariant {
+                expr: x,
+                mode: Move,
+                ..
+            }
+            | K::Field {
+                base: x,
+                mode: Move,
+                ..
+            }
+            | K::Index {
+                base: x,
+                mode: Move,
+                ..
+            } if root_local(x) == Some(l) => true,
+            K::New { args, .. }
+            | K::AdtLit { fields: args, .. }
+            | K::Variant { args, .. }
+            | K::Tuple(args) => args.iter().any(|x| self.may_move_local(x, l)),
+            K::ToDyn { expr: x, .. } => self.may_move_local(x, l),
+            // `e.over!`: what the arms bind is read from the scrutinee, moved only if it is.
+            K::Match { scrutinee, arms } => {
+                self.may_move_local(scrutinee, l)
+                    || arms.iter().any(|a| {
+                        a.guard.as_ref().is_some_and(|g| self.may_move_local(g, l))
+                            || self.may_move_local(&a.body, l)
+                    })
+            }
+            K::Throw(x) => self.may_move_local(x, l),
+            K::Closure(d) => {
+                let f = self.cx.fn_def(*d);
+                f.captures.iter().any(|c| {
+                    c.outer == l
+                        && (c.mode == hir::PassMode::Owned && !c.share
+                            || f.body.locals[c.inner.0 as usize].boxed)
+                })
+            }
+            _ => any_operand(e, &mut |x| self.may_move_local(x, l)).unwrap_or(true),
+        }
+    }
+
     /// [`Later::of`] in this program: a field read on a proxiable type (#823, proxy_typed.rs)
     /// may run a `get` trap, user code that may change any memory, like an `any` member read;
     /// an element read of an array view type (array_view.rs) may convert the element into the

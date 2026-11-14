@@ -407,7 +407,7 @@ impl FnLower<'_, '_> {
                 (t @ Ty::Agg(_), PassMode::Borrow | PassMode::BorrowMut) => {
                     let v = match how {
                         Stabilize::Share | Stabilize::Direct(_) => {
-                            let reach = self.arg_reach(how, args, i, changed);
+                            let reach = self.arg_reach(how, args, modes, i, changed);
                             self.stable_borrow_in(a, &args[i + 1..], true, reach)
                         }
                         Stabilize::Facts => self.stable_borrow_as(a, &args[i + 1..], false),
@@ -463,7 +463,7 @@ impl FnLower<'_, '_> {
                     let v = match m {
                         PassMode::Borrow | PassMode::BorrowMut if how != Stabilize::No => {
                             let share = how != Stabilize::Facts;
-                            let reach = self.arg_reach(how, args, i, changed);
+                            let reach = self.arg_reach(how, args, modes, i, changed);
                             let v = self.stable_borrow_in(a, &args[i + 1..], share, reach);
                             // A frozen one changes for nobody, and is not counted (frozen.rs);
                             // a number read out of one is still read now, before a later
@@ -592,8 +592,8 @@ impl FnLower<'_, '_> {
                 let rest = if transfer { &[][..] } else { &args[i + 1..] };
                 let sibling = args.len() > 1 && self.sibling_container(args, i);
                 let reach = ArgReach {
-                    callee: None,
                     sibling,
+                    ..ArgReach::default()
                 };
                 let v = self.stable_borrow_in(a, rest, true, reach);
                 if transfer {

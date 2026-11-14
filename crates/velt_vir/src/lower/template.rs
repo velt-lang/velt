@@ -18,7 +18,7 @@ use velt_sema::hir::{self, Intrinsic, TyId, TyKind};
 use super::hook_calls::Construct;
 use super::operand::proj;
 use super::rt::Rt;
-use super::sequence::{may_move_local, root_local, Later};
+use super::sequence::{root_local, Later};
 use super::{cint, ice, DropEntry, FnLower};
 use crate::vir::{BinOp, Operand, Place, Proj, Rvalue, Ty, STR_AGG};
 
@@ -187,7 +187,7 @@ impl FnLower<'_, '_> {
             let Part::Str(e) = &parts[i] else { continue };
             let Some(root) = root_local(e) else { continue };
             let moved = parts[i + 1..].iter().any(|p| match p {
-                Part::Str(x) | Part::Format(x, _) => may_move_local(x, root),
+                Part::Str(x) | Part::Format(x, _) => self.may_move_local(x, root),
                 Part::Text(_) => false,
             });
             later[i].locals |= moved;
