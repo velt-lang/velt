@@ -153,6 +153,7 @@ impl PB {
             counted_objects: Vec::new(),
             assigned_objects: Default::default(),
             changes_held: Default::default(),
+            glue_bodies: Default::default(),
             null_proto_records: false,
             fn_shapes: Default::default(),
             record_fills: false,

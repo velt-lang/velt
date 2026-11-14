@@ -280,6 +280,12 @@ impl FnCx<'_, '_> {
         mut class: impl FnMut(&mut Self, DefId, ast::Expr) -> hir::Expr,
         span: Span,
     ) -> hir::Expr {
+        // A library body with a dispatch over the program's classes is the program's glue.
+        if self.cx.scopes[self.module].is_library {
+            if let Some(d) = self.body_def {
+                self.cx.glue_bodies.insert(d);
+            }
+        }
         let sty = s.ty;
         let (l, mode) = self.option_binding(&s, sty, "<dyn>", false);
         let name = format!("<dyn@{}>", span.lo);

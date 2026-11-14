@@ -166,7 +166,8 @@ fn canonical(mut p: Box<velt_sema::hir::Program>) -> String {
         generated,
         decorators,
         assigned_objects,
-        changes_held
+        changes_held,
+        glue_bodies
     );
     for (name, set) in [
         (
