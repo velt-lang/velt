@@ -140,6 +140,10 @@ pub(super) struct Shapes {
     dicts: FxHashMap<(FuncId, Vec<TyId>), StaticId>,
     /// Memo of `mentions_ph`, by type index: 0 not known yet, 1 no, 2 yes.
     mentions: std::cell::RefCell<Vec<u8>>,
+    /// From the previous pass (`multi_pairs`): the `Map` type-argument pairs whose shared
+    /// instances stood for two per-type instances or more, by type name. `None` in the first
+    /// pass: everything that may share does.
+    pub(super) multi_hint: Option<rustc_hash::FxHashSet<(String, String)>>,
     /// Memo of `map_shares_at`.
     map_decided: FxHashMap<Vec<TyId>, bool>,
     /// Memo of `answers` for types without placeholders (key.rs).
@@ -357,9 +361,37 @@ impl Cx<'_> {
         if let Some(&b) = self.shapes.map_decided.get(targs) {
             return b;
         }
-        let b = targs.iter().all(|&t| self.map_shareable(t)) && self.map_agrees(targs);
+        let b = self.multi_allows(targs)
+            && targs.iter().all(|&t| self.map_shareable(t))
+            && self.map_agrees(targs);
         self.shapes.map_decided.insert(targs.to_vec(), b);
         b
+    }
+
+    /// Does the previous pass's hint let `targs` share? A shape with one member gains nothing
+    /// from its dictionary and costs its indirect calls (`multi_hint`).
+    fn multi_allows(&self, targs: &[TyId]) -> bool {
+        let (Some(hint), [k, v]) = (&self.shapes.multi_hint, targs) else {
+            return true;
+        };
+        hint.contains(&(self.type_key(*k), self.type_key(*v)))
+    }
+
+    /// At the end of a pass: the `Map` type-argument pairs of the shared instances that stood
+    /// for two per-type instances or more (the next pass's `multi_hint`).
+    pub(super) fn multi_pairs(&self) -> rustc_hash::FxHashSet<(String, String)> {
+        let mut out = rustc_hash::FxHashSet::default();
+        for inst in self.shapes.insts.values() {
+            if inst.dicts.len() < 2 || !self.map_family(inst.def) {
+                continue;
+            }
+            for (_, targs, _) in &inst.dicts {
+                if let [k, v] = targs[..] {
+                    out.insert((self.type_key(k), self.type_key(v)));
+                }
+            }
+        }
+        out
     }
 
     /// Does `Map<targs>` give the answers of the `Map` of the representatives its type
