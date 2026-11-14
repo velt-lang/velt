@@ -46,6 +46,7 @@ impl Ctx<'_> {
     pub(crate) fn reduce_spread(&mut self, op: TyId, args: Vec<TyId>, span: Span) -> TyId {
         let module = self.type_level.op_modules.get(&op).copied().unwrap_or(0);
         let mut out: Vec<ShapeField> = vec![];
+        let parts = args.clone();
         for part in args {
             // A class's optional field is an own property even while unset, so it is always
             // copied, its `undefined` too (`anon::has_presence`).
@@ -111,7 +112,11 @@ impl Ctx<'_> {
                 }
             }
         }
-        self.anon_type_with(&out, module)
+        let into = self.anon_type_with(&out, module);
+        // A converted value spread here shows the copy only where the object made is looked at
+        // (object_copies.rs `derived_targets`).
+        (self.object_copies.type_spreads).extend(parts.into_iter().map(|p| (p, span, into)));
+        into
     }
 
     /// Can a spread of object type `from` be built as object type `to`: the same field names,

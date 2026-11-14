@@ -73,6 +73,8 @@ impl FnCx<'_, '_> {
         let mut entries: Vec<(String, Value)> = vec![];
         let mut explicit: Vec<String> = vec![];
         let mut parts = vec![];
+        // The looks each spread recorded (`Seen::Spread`), given the literal's type at the end.
+        let mut looks: Vec<(usize, usize, Span)> = vec![];
         for p in props {
             let new: Vec<(String, Value)> = match p {
                 ast::ObjectProp::Spread(e) => {
@@ -95,7 +97,9 @@ impl FnCx<'_, '_> {
                         }
                         any => any,
                     };
+                    let seen = self.cx.object_copies.seen.len();
                     let fields = self.spread_fields(e, any, &mut lets, false);
+                    looks.push((seen, self.cx.object_copies.seen.len(), e.span));
                     parts.push(self.spread_part(e.span, &lets[before..], lets.len()));
                     (fields.into_iter())
                         .map(|(n, h, src)| (n, Value::Read(h, src)))
@@ -153,6 +157,7 @@ impl FnCx<'_, '_> {
             Some((d, slots)) => self.spread_struct(d, slots, entries, exp, span, &mut lets),
             None => self.spread_anon(entries, span, &mut lets),
         };
+        self.cx.object_copies.spread_into(&looks, lit.ty);
         self.with_lets(lets, lit)
     }
 
@@ -260,7 +265,7 @@ impl FnCx<'_, '_> {
             );
             return vec![];
         }
-        let seen = crate::object_copies::Seen::Spread;
+        let seen = crate::object_copies::Seen::Spread(None);
         self.cx.object_copies.observe(h.ty, e.span, seen);
         if super::object_keys::reevaluable(e) && self.may_be_typed_proxy(h.ty) {
             // A typed proxy's keys are what its traps list (`proxySpreadCheck`).

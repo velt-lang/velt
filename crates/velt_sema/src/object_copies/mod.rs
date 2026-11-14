@@ -15,8 +15,12 @@
 //!   or `==` of them, or a `Map`, `Set`, `WeakMap`, `WeakSet` or `WeakRef` keyed by them;
 //! - it prints, serializes (`JSON.stringify`) or lists the keys (`Object.keys`) of a value whose
 //!   type holds the converted-to type (Node shows the original's keys, in its order);
-//! - it spreads a value of the converted-to type into an object literal (Node copies the
-//!   original's fields, all of them);
+//! - it spreads a value of the converted-to type into an object literal and then prints,
+//!   serializes, lists the keys of, tests with `in`, converts to a dynamic type or spreads again
+//!   (where the result's type is not known) a value holding that literal, or converts it by copy
+//!   in turn and shows that: Node's spread copies the original's fields, all of them, in its
+//!   order (`derived_targets`; reading or writing the literal's fields shows nothing, as it is a
+//!   new object in Node too);
 //! - it tests a value of the converted-to type for a key the copy left out (`"y" in p`).
 //!
 //! The fix keeps Node's behavior: an object literal with the fields (`{ a: x.a }`) is a new
@@ -44,6 +48,8 @@ use crate::copy_flow::{CopyFlow, Store};
 use crate::ctx::Ctx;
 use crate::hir::{TyId, TyKind};
 use crate::object_views::Why;
+
+mod derived;
 
 /// One conversion that copied the fields `fields` of a `from` value into a new `to`.
 #[derive(Clone)]
@@ -95,8 +101,9 @@ pub(crate) enum Seen {
     Keys,
     /// `===` / `!==`.
     Identity,
-    /// `{ ...x }`: the top-level fields.
-    Spread,
+    /// `{ ...x }`: the top-level fields, into an object literal of the given type when it is
+    /// known (`FnCx::spread_object`; a spread in generic code or in JSX props has none).
+    Spread(Option<TyId>),
     /// `"k" in x` for a key `x`'s type lacks: `Copies::in_keys[i]`.
     In(u32),
     /// A dynamic value converted to this type (`AnyTo`): it may be any object a write through
@@ -142,6 +149,10 @@ pub(crate) struct Copies {
     pub makes_proxies: Option<bool>,
     /// Frozen objects seen as a type whose fields can be written (`object_views::check_frozen`).
     pub frozen: Vec<Frozen>,
+    /// Spreads in generic code as their instantiations reduce them (`Ctx::reduce_spread`): a part's
+    /// type, where the spread is written and the object type it makes. Reductions are kept once
+    /// made, so these are never rolled back; [`check`] adds them as `Seen::Spread(Some(_))`.
+    pub type_spreads: Vec<(TyId, Span, TyId)>,
 }
 
 /// An object `Object.freeze` froze, seen as type `to` whose fields can be written: an error once
@@ -199,6 +210,19 @@ impl Copies {
     pub(crate) fn observe(&mut self, t: TyId, span: Span, how: Seen) {
         self.seen.push((t, span, how));
     }
+
+    /// The spreads at `looks` (each the range of `seen` its source added, and its span) went into
+    /// an object literal of type `into`.
+    pub(crate) fn spread_into(&mut self, looks: &[(usize, usize, Span)], into: TyId) {
+        for &(from, to, at) in looks {
+            let end = to.min(self.seen.len());
+            for s in self.seen[from.min(end)..end].iter_mut() {
+                if s.1 == at && s.2 == Seen::Spread(None) {
+                    s.2 = Seen::Spread(Some(into));
+                }
+            }
+        }
+    }
 }
 
 /// Report the conversions whose copy the program could tell from the original (module docs).
@@ -213,15 +237,22 @@ pub(crate) fn check(cx: &mut Ctx) {
         mut view_casts,
         writes,
         frozen,
+        type_spreads,
         ..
     } = std::mem::take(&mut cx.object_copies);
+    let mut seen = seen;
+    seen.extend(
+        (type_spreads.iter()).map(|&(part, at, into)| (part, at, Seen::Spread(Some(into)))),
+    );
     let spans: Vec<(Span, TyId)> = copies.iter().map(|c| (c.span, c.to)).collect();
     let flow = match seen.iter().any(|s| matches!(s.2, Seen::Dynamic(_))) {
         true => CopyFlow::new(cx, &spans),
         false => CopyFlow::none(),
     };
+    let (spread_into, derived) = derived::derived_targets(cx, &copies, &seen);
     let looks = Dynamic {
         seen: &seen,
+        derived,
         sources: &dyn_sources,
         flow: &flow,
         held: Default::default(),
@@ -238,6 +269,8 @@ pub(crate) fn check(cx: &mut Ctx) {
         false => vec![],
     };
     let mut viewed: Vec<(&Copy, Why)> = vec![];
+    // The copies the loop below found a write or a look for.
+    let mut flagged = vec![false; copies.len()];
     // Conversions allowed only for proxies: a plain source throws instead of being copied.
     let mut strict = vec![];
     for (ci, c) in copies.iter().enumerate() {
@@ -261,6 +294,7 @@ pub(crate) fn check(cx: &mut Ctx) {
         }
         let proxy_only = proxies && !c.record && !built.iter().any(|&t| related(cx, t, c.from));
         if let Some(w) = assigned(cx, (c, ci), &writes, &looks) {
+            flagged[ci] = true;
             match views(cx, c) {
                 true => viewed.push((c, Why::Write(w))),
                 false if proxy_only && !c.generic => strict.push((c.span, c.to)),
@@ -270,9 +304,10 @@ pub(crate) fn check(cx: &mut Ctx) {
             .iter()
             .find(|s| sees(cx, (c, ci), s.0, s.2, &in_keys, &looks))
         {
+            flagged[ci] = true;
             let shown = matches!(
                 how,
-                Seen::Printed | Seen::Serialized | Seen::Keys | Seen::Spread
+                Seen::Printed | Seen::Serialized | Seen::Keys | Seen::Spread(_)
             );
             match views(cx, c) && !shown {
                 true => viewed.push((c, Why::Seen(t, span, how))),
@@ -281,6 +316,8 @@ pub(crate) fn check(cx: &mut Ctx) {
             }
         }
     }
+    // The object literals copies were spread into, where the program looks at one.
+    derived::report_looks(cx, &copies, &flagged, &spread_into, &seen, &in_keys, &looks);
     if !viewed.is_empty() {
         let done = crate::object_views::convert_to_views(cx, &viewed);
         view_casts.extend(done.iter().copied());
@@ -396,12 +433,17 @@ fn sees(
         Seen::Dynamic(_) | Seen::FromDynamic => false,
         // A copy of an object type's value (which has exactly its type's fields) with every
         // field in order shows what the original would, as one of a fresh source does.
-        Seen::Spread | Seen::Printed | Seen::Serialized | Seen::Keys
-            if c.in_order && (c.fresh || anon(cx, c.from)) =>
+        // Unless the source may itself be a spread result of a copy (`derived`), which lacks
+        // fields Node's object has.
+        Seen::Spread(_) | Seen::Printed | Seen::Serialized | Seen::Keys
+            if derived::exempt(cx, c, &looks.derived) =>
         {
             false
         }
-        Seen::Spread => {
+        // Into an object literal of a known type: shown only when that object is looked at
+        // ([`derived_targets`], checked after the copies).
+        Seen::Spread(Some(_)) if cx.dynamic(t).is_none() => false,
+        Seen::Spread(_) => {
             related(cx, t, c.to) || (cx.dynamic(t).is_some() && dynamic_holds(cx, c, ci, looks))
         }
         _ => {
@@ -414,6 +456,9 @@ fn sees(
 /// The dynamic conversions of a program and where their values come from.
 struct Dynamic<'a> {
     seen: &'a [(TyId, Span, Seen)],
+    /// The types of the object literals copies were spread into ([`derived_targets`]): a value of
+    /// one may lack fields Node's object has.
+    derived: Vec<TyId>,
     sources: &'a [Vec<Store>],
     flow: &'a CopyFlow,
     /// What the type walks below found, as each copy asks them of each look at a type:
@@ -605,7 +650,22 @@ fn report_write(cx: &mut Ctx, c: &Copy, w: &Write) {
 }
 
 fn report_seen(cx: &mut Ctx, c: &Copy, t: TyId, span: Span, how: Seen, in_keys: &[String]) {
-    let (from, to, shown) = (cx.display(c.from), cx.display(c.to), cx.display(t));
+    let (from, to) = (cx.display(c.from), cx.display(c.to));
+    let (what, why) = look_words(cx, t, how, in_keys);
+    let d = Diagnostic::error(
+        format!("a value of type `{from}` converts to `{to}` by copying its fields, and this program {what}: {why}"),
+        // A copy an interface's getter makes (`object_assigns.rs`) has no place of its own.
+        if c.span == Span::DUMMY { span } else { c.span },
+    )
+    .with_label(span, "here, or in the function this calls");
+    let d = with_notes(cx, d, c);
+    let d = cx.with_layout_note(d, c.to);
+    cx.error(d);
+}
+
+/// How the look `how` at a `t` reads in a diagnostic, and why it shows a copy.
+fn look_words(cx: &mut Ctx, t: TyId, how: Seen, in_keys: &[String]) -> (String, &'static str) {
+    let shown = cx.display(t);
     // `an` before a vowel sound: `an any`, `an unknown`, `a User`.
     let a = match shown.starts_with(['A', 'E', 'I', 'O', 'a', 'e', 'i', 'o'])
         || shown.starts_with("un")
@@ -622,7 +682,7 @@ fn report_seen(cx: &mut Ctx, c: &Copy, t: TyId, span: Span, how: Seen, in_keys: 
         // Never reported itself (`sees`).
         Seen::FromDynamic => format!("converts a dynamic value to {a} `{shown}`"),
         Seen::Dynamic(_) => format!("converts {a} `{shown}` to a dynamic type"),
-        Seen::Spread => format!("spreads {a} `{shown}`"),
+        Seen::Spread(_) => format!("spreads {a} `{shown}`"),
         Seen::In(i) => format!(
             "tests {a} `{shown}` for \"{}\" with `in`",
             in_keys[i as usize]
@@ -631,19 +691,11 @@ fn report_seen(cx: &mut Ctx, c: &Copy, t: TyId, span: Span, how: Seen, in_keys: 
     let why = match how {
         Seen::Identity => "two copies of one object are not `===`",
         Seen::Key => "two copies of one object are different keys",
-        Seen::Spread => "Node would copy all the original object's fields, in its order",
+        Seen::Spread(_) => "Node would copy all the original object's fields, in its order",
         Seen::In(_) => "the copy lacks the original's other fields, which Node would find",
         _ => "Node would show the original object's fields, in its order",
     };
-    let d = Diagnostic::error(
-        format!("a value of type `{from}` converts to `{to}` by copying its fields, and this program {what}: {why}"),
-        // A copy an interface's getter makes (`object_assigns.rs`) has no place of its own.
-        if c.span == Span::DUMMY { span } else { c.span },
-    )
-    .with_label(span, "here, or in the function this calls");
-    let d = with_notes(cx, d, c);
-    let d = cx.with_layout_note(d, c.to);
-    cx.error(d);
+    (what, why)
 }
 
 fn with_notes(cx: &mut Ctx, d: Diagnostic, c: &Copy) -> Diagnostic {
