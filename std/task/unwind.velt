@@ -10,15 +10,18 @@ import {
   enterCatch,
   leaveCatch,
   takePanic,
+  unwoundFramesDrop,
 } from "velt/lang/hooks/unwind";
+import { processEnv } from "velt/lang/hooks/process";
 
 declare function velt_rt_xfer_suspend(): u32;
 declare function velt_rt_xfer_resume(depth: u32): void;
 declare function velt_rt_xfer_end(): void;
+declare function velt_rt_write_str(stream: u32, s: string);
 
 /**
  * Whether `catchVeltPanic` catches here: false where generated code doesn't catch (WebAssembly,
- * Windows for now, the `velt dev` JIT), where a panic in `f` ends the process.
+ * Windows on arm64, the `velt dev` JIT), where a panic in `f` ends the process.
  */
 export function canCatchPanics(): bool {
   return catchesPanics();
@@ -28,9 +31,9 @@ export function canCatchPanics(): bool {
  * Calls `f`; returns null when it returns, or the panic's message when a Velt panic unwound out
  * of it (the message is printed to stderr when it happens, as an uncaught one is). What `f` was
  * doing is abandoned, not undone: the frames it unwound drop what they owned (their cleanup
- * pads), but a half-made change stays half made and a lock they held stays held. Any other
- * exception passes through. Where generated code doesn't catch (WebAssembly, Windows for now, the
- * `velt dev` JIT), `f` is called plainly and a panic in it ends the process as any other does.
+ * pads; on Windows, where calls have none, they leak it), but a half-made change stays half made
+ * and a lock they held stays held. Any other exception passes through. Where generated code
+ * doesn't catch (WebAssembly, Windows on arm64, the `velt dev` JIT), `f` is called plainly and a panic in it ends the process as any other does.
  */
 export function catchVeltPanic(f: () => void): string | null {
   // SAFETY: the exception object is taken once, below.
@@ -102,5 +105,11 @@ function caught() {
     for (let i: u32 = 0; i < depth; i++) {
       velt_rt_xfer_end();
     }
+  }
+  // Where the unwound frames had no cleanup pads (Windows) what they owned leaks and the counts
+  // don't balance: say so where the leak check reads them (std/test/plan.velt `leakedBlocks`), as
+  // the runtime's `panics caught=` does for its own catch.
+  if (!unwoundFramesDrop() && processEnv("VELT_RC_STATS") == "1") {
+    velt_rt_write_str(2, "rc stats: std caught a panic\n");
   }
 }

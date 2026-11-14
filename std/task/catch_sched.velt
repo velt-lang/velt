@@ -14,8 +14,8 @@
 // - `settled` waits for the guarded promise without claiming its result, through a header in its
 //   node (nothing allocated).
 //
-// Where generated code doesn't catch (`canCatchPanics()` false: Windows until its structured
-// exceptions are built, the `velt dev` JIT; WebAssembly never runs this executor), `caughtPoll`
+// Where generated code doesn't catch (`canCatchPanics()` false: Windows on arm64, the
+// `velt dev` JIT; WebAssembly never runs this executor), `caughtPoll`
 // is a plain poll and a panic ends the process as an uncaught one does.
 
 import { fnAddress, promiseAt, statePoll } from "velt/lang/intrinsics";

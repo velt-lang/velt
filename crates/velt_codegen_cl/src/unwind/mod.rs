@@ -32,6 +32,17 @@ pub(crate) type FunctionUnwind = (FuncId, u32, Unwind);
 pub(crate) enum Unwind {
     Cranelift(UnwindInfo),
     WindowsX64(Vec<u8>),
+    /// A Windows x64 record with a language handler and its data, whose image-relative
+    /// addresses the relocations fill (`velt_eh_try`, crate::eh_seh).
+    WindowsX64Handler(Vec<u8>, Vec<XdataReloc>),
+}
+
+/// An image-relative address in a `.xdata` record: `func`'s address plus `addend`, written at
+/// `offset` in the record.
+pub(crate) struct XdataReloc {
+    pub offset: u32,
+    pub func: FuncId,
+    pub addend: u32,
 }
 
 /// The unwind info of compiled `code` for `isa`, if it has any.

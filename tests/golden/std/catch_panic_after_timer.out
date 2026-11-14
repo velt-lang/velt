@@ -1,0 +1,6 @@
+sleep caught true after sleep(0)
+sleep and yield caught true after sleep(5) and yieldNow()
+setTimeout caught true after setTimeout
+spawn caught true after sleep(0)
+race caught true after sleep(0)
+end

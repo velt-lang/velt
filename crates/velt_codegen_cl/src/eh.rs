@@ -8,8 +8,10 @@
 //! (one call-site entry per call with a handler, in `udata4`) and defines the personality
 //! routine, which reads it: it claims only Velt's class, at a catch (`velt_eh_try`), and lands at
 //! cleanups in the cleanup phase. The `.eh_frame` writer gives those functions' FDEs a CIE naming
-//! the personality and an LSDA pointer (unwind/eh_frame.rs). Elsewhere (the JIT, WebAssembly,
-//! Windows) `velt_eh_try` is a plain call that returns null and nothing has a landing pad.
+//! the personality and an LSDA pointer (unwind/eh_frame.rs). In an object for Windows x64
+//! `velt_eh_try` is fixed machine code under `__C_specific_handler` (crate::eh_seh). Elsewhere
+//! (the JIT, WebAssembly, Windows on arm64) `velt_eh_try` is a plain call that returns null and
+//! nothing has a landing pad.
 
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{
@@ -122,6 +124,9 @@ pub(crate) fn define<M: Module>(
     eh_symbols: &mut Option<EhSymbols>,
     unwind: &mut Vec<FunctionUnwind>,
 ) -> CodegenResult<()> {
+    if crate::eh_seh::applies(module) {
+        return crate::eh_seh::define(module, try_fn, unwind);
+    }
     let catching = catches(module);
     let sig = crate::abi::make_signature(
         call_conv,
@@ -200,8 +205,9 @@ pub(crate) fn catches<M: Module>(module: &M) -> bool {
     Catching::of_triple(&triple) == Catching::Itanium && crate::tls::native(module)
 }
 
-/// `velt_eh_catches` (declared as `id`): returns 1 where this module's `velt_eh_try` catches, else
-/// 0; its unwind info goes to `unwind`.
+/// `velt_eh_catches` (declared as `id`): returns 1 where this module's `velt_eh_try` catches (with
+/// landing pads, or under Windows' structured exceptions), else 0; its unwind info goes to
+/// `unwind`.
 pub(crate) fn define_catches<M: Module>(
     module: &mut M,
     call_conv: CallConv,
@@ -216,7 +222,8 @@ pub(crate) fn define_catches<M: Module>(
     let mut b = FunctionBuilder::new(&mut ctx.func, &mut fctx);
     let entry = b.create_block();
     b.switch_to_block(entry);
-    let v = b.ins().iconst(types::I8, i64::from(catches(module)));
+    let catching = catches(module) || crate::eh_seh::applies(module);
+    let v = b.ins().iconst(types::I8, i64::from(catching));
     b.ins().return_(&[v]);
     b.seal_all_blocks();
     b.finalize();

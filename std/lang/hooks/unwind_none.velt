@@ -1,5 +1,5 @@
 // velt/lang/hooks (internal): where generated code doesn't catch Velt's exception (`#unwind-raise`
-// on Windows until its structured exceptions are built, and on WebAssembly;
+// on WebAssembly;
 // docs/internals/design/unwinding.md). `catchUnwind` is a plain call there and `enterCatch` never
 // counts a catch, so nothing is raised: a panic takes `velt_rt_panic`. No unwinder function is
 // named, so the program links where `_Unwind_RaiseException` doesn't exist.
@@ -9,6 +9,11 @@ declare function velt_rt_exit(code: i32): never;
 /** Never called (nothing unwinds here); ends the process. */
 export function abortProcess(): never {
   velt_rt_exit(134);
+}
+
+/** Whether the frames a caught panic unwinds drop what they own: nothing is caught here. */
+export function unwoundFramesDrop(): bool {
+  return false;
 }
 
 /** Never called (no catch counts here); raises nothing. */

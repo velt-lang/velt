@@ -161,6 +161,48 @@ declare void @_Unwind_SetGR(ptr, i32, i64)
 declare void @_Unwind_SetIP(ptr, i64)
 "#;
 
+/// `velt_eh_try` on Windows x64: `code(env)` as an `invoke` under `__C_specific_handler`, whose
+/// filter (`FILTER`) takes Velt's exception code only and leaves the exception object in `%slot`.
+/// The filter gets `EXCEPTION_POINTERS` (its first word: the `EXCEPTION_RECORD`, whose code is at
+/// 0 and first parameter at 32) and the frame of `velt_eh_try`.
+const SEH_TRY: &str = r#"define internal ptr @TRY(ptr %code, ptr %env) noinline ATTRS personality ptr @__C_specific_handler {
+entry:
+  %slot = alloca ptr, align 8
+  call void (...) @llvm.localescape(ptr %slot)
+  invoke void %code(ptr %env) to label %ok unwind label %dispatch
+ok:
+  ret ptr null
+dispatch:
+  %cs = catchswitch within none [label %handler] unwind to caller
+handler:
+  %cp = catchpad within %cs [ptr @FILTER]
+  catchret from %cp to label %caught
+caught:
+  %e = load volatile ptr, ptr %slot
+  ret ptr %e
+}
+define internal i32 @FILTER(ptr %info, ptr %frame) ATTRS {
+entry:
+  %fp = call ptr @llvm.eh.recoverfp(ptr @TRY, ptr %frame)
+  %slot = call ptr @llvm.localrecover(ptr @TRY, ptr %fp, i32 0)
+  %rec = load ptr, ptr %info
+  %code = load i32, ptr %rec
+  %ours = icmp eq i32 %code, SEHCODE
+  br i1 %ours, label %take, label %pass
+take:
+  %arg = getelementptr i8, ptr %rec, i64 32
+  %e = load ptr, ptr %arg
+  store volatile ptr %e, ptr %slot
+  ret i32 1
+pass:
+  ret i32 0
+}
+declare i32 @__C_specific_handler(...)
+declare void @llvm.localescape(...)
+declare ptr @llvm.localrecover(ptr, ptr, i32)
+declare ptr @llvm.eh.recoverfp(ptr, ptr)
+"#;
+
 /// The definitions of `velt_eh_try` and its personality, and of `velt_eh_catches`, for those the
 /// program calls.
 pub(crate) fn definitions(program: &vir::Program, target: &Target) -> String {
@@ -172,7 +214,7 @@ pub(crate) fn definitions(program: &vir::Program, target: &Target) -> String {
             out,
             "define linkonce_odr hidden zeroext i8 @{}() {FN_ATTRS} {{\n  ret i8 {}\n}}",
             eh::CATCHES,
-            u8::from(catching == Catching::Itanium)
+            u8::from(catching.catches())
         );
     }
     let catches = catching == Catching::Itanium;
@@ -187,6 +229,8 @@ pub(crate) fn definitions(program: &vir::Program, target: &Target) -> String {
     let try_fn = eh::TRY;
     if catches {
         out.push_str(&fill(ITANIUM_TRY));
+    } else if catching == Catching::Seh {
+        out.push_str(&fill(SEH_TRY));
     } else {
         let _ = writeln!(
             out,
@@ -203,5 +247,7 @@ fn fill(ir: &str) -> String {
     ir.replace("TRY", eh::TRY)
         .replace("PERSONALITY", eh::PERSONALITY)
         .replace("CLASS", &eh::CLASS.to_string())
+        .replace("SEHCODE", &(eh::SEH_CODE as i32).to_string())
+        .replace("FILTER", "velt_eh_filter")
         .replace("ATTRS", FN_ATTRS)
 }

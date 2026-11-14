@@ -20,6 +20,8 @@ struct Record {
     symbol: SymbolId,
     size: u32,
     xdata: Vec<u8>,
+    /// Image-relative addresses inside `xdata`: (offset, symbol, addend).
+    relocs: Vec<(u64, SymbolId, u64)>,
 }
 
 /// Append `.xdata` (unwind records) and `.pdata` (RUNTIME_FUNCTION entries) sections.
@@ -29,9 +31,20 @@ pub(super) fn add_windows_unwind_info(
 ) -> CodegenResult<()> {
     let mut records = Vec::new();
     for (id, size, info) in infos {
-        let xdata = match info {
-            Unwind::WindowsX64(record) => record.clone(),
-            Unwind::Cranelift(UnwindInfo::WindowsArm64(info)) => arm64_xdata(info, *size)?,
+        let (xdata, relocs) = match info {
+            Unwind::WindowsX64(record) => (record.clone(), vec![]),
+            Unwind::WindowsX64Handler(record, relocs) => {
+                let relocs = (relocs.iter())
+                    .map(|r| {
+                        let symbol = product.function_symbol(r.func);
+                        (u64::from(r.offset), symbol, u64::from(r.addend))
+                    })
+                    .collect();
+                (record.clone(), relocs)
+            }
+            Unwind::Cranelift(UnwindInfo::WindowsArm64(info)) => {
+                (arm64_xdata(info, *size)?, vec![])
+            }
             _ => continue,
         };
         let symbol = product.function_symbol(*id);
@@ -39,6 +52,7 @@ pub(super) fn add_windows_unwind_info(
             symbol,
             size: *size,
             xdata,
+            relocs,
         });
     }
     if records.is_empty() {
@@ -55,6 +69,9 @@ pub(super) fn add_windows_unwind_info(
     let xdata_symbol = obj.section_symbol(xdata);
     for record in records {
         let xdata_offset = obj.append_section_data(xdata, &record.xdata, 4);
+        for &(at, symbol, addend) in &record.relocs {
+            add_addr32nb(obj, xdata, xdata_offset + at, symbol, addend, typ)?;
+        }
         let entry = obj.append_section_data(pdata, &vec![0u8; entry_size], 4);
         let fields: &[(u64, SymbolId, u64)] = if entry_size == 12 {
             &[

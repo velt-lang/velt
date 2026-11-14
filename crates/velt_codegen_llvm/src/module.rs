@@ -143,7 +143,8 @@ pub(crate) fn emit_unit_capped(
         unit_defines_main(program, unit),
     ));
     out.push_str(&extern_declarations(program)?);
-    out.push_str(&crate::eh::definitions(program, target));
+    let eh_definitions = crate::eh::definitions(program, target);
+    out.push_str(&eh_definitions);
     for &i in &unit.declares {
         out.push_str(&function_declaration(program, i)?);
     }
@@ -189,7 +190,9 @@ pub(crate) fn emit_unit_capped(
         .collect();
     let stated = target.has_neon() && bodies.contains("\"target-features\"");
     for decl in &intrinsics.0 {
-        if declared_name(decl).is_some_and(|n| externs.contains(n)) {
+        // Or one the catch's definitions declare (`__C_specific_handler`, crate::eh).
+        let declared = |n: &str| eh_definitions.lines().any(|l| declared_name(l) == Some(n));
+        if declared_name(decl).is_some_and(|n| externs.contains(n) || declared(n)) {
             continue;
         }
         let _ = writeln!(out, "{}", with_target_features(decl, stated));

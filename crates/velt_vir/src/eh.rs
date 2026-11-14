@@ -10,7 +10,10 @@
 //! frame names [`PERSONALITY`], which the backend defines too: it claims only exceptions of
 //! [`CLASS`] (any other passes through, in the search phase already) and lands at the frame's one
 //! landing pad, calling only the unwinder's own functions (`_Unwind_SetIP` & co.), no runtime.
-//! Where nothing unwinds (WebAssembly, and Windows for now), `velt_eh_try` is a plain call that
+//! On Windows x64 the unwinder is SEH ([`Catching::Seh`]): std raises the exception with
+//! `RaiseException` ([`SEH_CODE`], the object's address its one parameter) and `velt_eh_try`'s
+//! frame names `__C_specific_handler` with a one-entry scope table whose filter takes only that
+//! code. Where nothing unwinds (WebAssembly, Windows on arm64), `velt_eh_try` is a plain call that
 //! returns null.
 //!
 //! [`CATCHES`] says which of the two a program's `velt_eh_try` is: std declares it as an extern
@@ -83,24 +86,43 @@ pub fn try_signature() -> (Vec<Ty>, Ty) {
     (vec![Ty::Ptr, Ty::Ptr], Ty::Ptr)
 }
 
+/// The exception code of Velt's exception under Windows' structured exceptions: `0xE0` (an
+/// application error, not continuable by convention) and the bytes `VLT`.
+pub const SEH_CODE: u32 = 0xE056_4C54;
+
 /// How a target catches: with the Itanium two-phase unwinder (`_Unwind_RaiseException`, DWARF
-/// CFI and GCC's LSDA: macOS, Linux and the other ELF targets), or not at all.
+/// CFI and GCC's LSDA: macOS, Linux and the other ELF targets), with Windows' structured
+/// exceptions (x64), or not at all.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Catching {
     Itanium,
-    /// No unwinding (WebAssembly), or not built yet (Windows, whose structured exceptions need
-    /// their own landing-pad lowering: the design's "Windows").
+    /// Windows x64: `RaiseException` and a `velt_eh_try` whose frame names
+    /// `__C_specific_handler` with a filter for [`SEH_CODE`]. Only `velt_eh_try` catches: calls
+    /// get no cleanup pads, so the frames a panic unwinds leak what they own.
+    Seh,
+    /// No unwinding (WebAssembly), or not built yet (Windows on arm64).
     None,
 }
 
 impl Catching {
     /// The way a target triple catches.
     pub fn of_triple(triple: &str) -> Catching {
-        if triple.starts_with("wasm") || triple.contains("windows") {
+        if triple.starts_with("wasm") {
             Catching::None
+        } else if triple.contains("windows") {
+            if triple.starts_with("x86_64") {
+                Catching::Seh
+            } else {
+                Catching::None
+            }
         } else {
             Catching::Itanium
         }
+    }
+
+    /// Whether `velt_eh_try` catches on this target (in an object; the JIT registers no tables).
+    pub fn catches(self) -> bool {
+        self != Catching::None
     }
 }
 
@@ -123,8 +145,9 @@ mod tests {
             Catching::of_triple("x86_64-unknown-linux-gnu"),
             Catching::Itanium
         );
+        assert_eq!(Catching::of_triple("x86_64-pc-windows-msvc"), Catching::Seh);
         assert_eq!(
-            Catching::of_triple("x86_64-pc-windows-msvc"),
+            Catching::of_triple("aarch64-pc-windows-msvc"),
             Catching::None
         );
         assert_eq!(Catching::of_triple("wasm32-wasip1"), Catching::None);

@@ -63,7 +63,7 @@ fn an_export_s_calls_abort_when_a_panic_unwinds_into_them() {
         ),
         (
             "x86_64-pc-windows-msvc",
-            "@__CxxFrameHandler3",
+            "@__C_specific_handler",
             "cleanuppad within none []",
         ),
     ] {
