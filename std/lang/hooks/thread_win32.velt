@@ -19,8 +19,8 @@ const STACK_SIZE_PARAM_IS_A_RESERVATION: u32 = 0x10000;
 /** `GetActiveProcessorCount`'s every processor group. */
 const ALL_PROCESSOR_GROUPS: u16 = 0xffff;
 
-// Handles are `usize`s, as the compiler's system functions have them (`CloseHandle`); pointers
-// `Ptr`s: one C symbol has one signature in a program.
+// Handles are `usize`s, as in std's other declarations of these symbols (`CloseHandle`);
+// pointers `Ptr`s: one C symbol has one signature in a program.
 declare c("c") function CreateThread(
   attributes: Ptr<u8>,
   stack: usize,

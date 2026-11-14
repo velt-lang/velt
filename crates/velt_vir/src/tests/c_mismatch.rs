@@ -4,7 +4,7 @@
 
 use velt_sema::hir::{self, Callee, ExprKind, StmtKind};
 
-use super::c_wasi::{check, lower_checked_for};
+use super::c_wasi::{check_for, lower_checked_for};
 
 const TARGET: &str = "aarch64-apple-darwin";
 
@@ -26,7 +26,7 @@ fn plain_fcntl(first: bool) -> String {
 fn a_plain_declaration_of_std_s_variadic_function_is_an_error_either_way() {
     for first in [true, false] {
         let src = plain_fcntl(first);
-        let (p, sm) = check(&src);
+        let (p, sm) = check_for(&src, TARGET);
         let e = lower_checked_for(&p, &sm, TARGET).expect_err(&src);
         // Reported once, at std's declaration (std/fs/fd/posix.velt), naming the program's.
         let want = "C function `fcntl` has two signatures: `fcntl(i32, i32, ...): i32` here, and `fcntl(i32, i32): i32` at ";
@@ -53,7 +53,7 @@ fn a_variadic_declaration_with_other_parameters_is_an_error_either_way() {
                 "import {",
                 "import { CVarArgs } from \"velt/ffi\";\nimport {",
             );
-        let (p, sm) = check(&src);
+        let (p, sm) = check_for(&src, TARGET);
         let e = lower_checked_for(&p, &sm, TARGET).expect_err(&src);
         assert!(
             e.contains("C function `fcntl` has two signatures")
@@ -96,7 +96,7 @@ fn a_variadic_call_without_its_fixed_arguments_is_an_error() {
         function main() {\n  const f = new CString(\"%d\");\n  \
         // SAFETY: a test of lowering only; never run.\n  \
         const n = unsafe { printf(f, 1 as i32) };\n  console.log(n);\n}\n";
-    let (mut p, sm) = check(src);
+    let (mut p, sm) = check_for(src, TARGET);
     let main = p.entry.expect("main");
     let hir::Def::Fn(f) = &mut p.defs[main.0 as usize] else {
         panic!("main is a function")
@@ -147,7 +147,7 @@ fn declarations_that_differ_from_std_s_are_errors() {
              const a: i32 = unsafe {{ {call} }};\n  \
              const fd = openSync(\"x\", \"r\");\n  fsyncSync(fd);\n  console.log(a);\n}}\n"
         );
-        let (p, sm) = check(&src);
+        let (p, sm) = check_for(&src, TARGET);
         let e = lower_checked_for(&p, &sm, TARGET).expect_err(&src);
         assert!(e.contains(shown), "{decl}:\n{e}");
         assert!(e.contains(note), "{decl}:\n{e}");
