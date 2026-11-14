@@ -1,0 +1,19 @@
+// A call that moves an object and lends a part of it: an owner moved inside a `new` or an object literal argument (#2531). Output checked against Node.
+function heap(a: string) { return a + "-".repeat(40); }
+function junk() { return heap("xxxxxxxxxxxxxxxxxxxxxxxxx").length; }
+class I2 { s: string = heap("a"); }
+class A2 { c: I2 = new I2(); xs: I2[] = [new I2(), new I2()]; name: string = heap("n"); }
+let hold: A2 | null = null;
+function take(q: A2, v: string) { hold = q; hold = null; junk(); return v + "!"; }
+class W { a: A2; constructor(a: A2) { this.a = a; } }
+let hw: W | null = null;
+let ho: { a: A2 } | null = null;
+function takeW(w: W, v: string) { hw = w; hw = null; junk(); return v + "!"; }
+function takeO(w: { a: A2 }, v: string) { ho = w; ho = null; junk(); return v + "?"; }
+function t() { const o = new A2(); console.log(takeW(new W(o), o.name)); }
+function u() { const o = new A2(); console.log(takeO({ a: o }, o.name)); }
+function takeW2(v: string, w: W) { hw = w; hw = null; junk(); return v + "#"; }
+function r() { const o = new A2(); console.log(takeW2(o.name, new W(o))); }
+t();
+u();
+r();

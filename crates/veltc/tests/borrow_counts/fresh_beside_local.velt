@@ -1,0 +1,12 @@
+// `fresh_beside.velt` with the values in locals first: the layout `fresh_beside` must match.
+class R { id: number; constructor(id: number) { this.id = id; } }
+class T {
+  routes: Map<string, R> = new Map();
+  os: Map<string, { id: number }> = new Map();
+  add(k: string) { const r = new R(1); this.routes.set(k, r); }
+}
+function fill(t: T) { const o = { id: 1 }; t.os.set("k", o); }
+const t = new T();
+t.add("a");
+fill(t);
+console.log(t.routes.size, t.os.size);

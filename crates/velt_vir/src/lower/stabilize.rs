@@ -18,7 +18,7 @@ use super::boxing::ShareKind;
 use super::call::Stabilize;
 use super::cint;
 use super::operand::proj;
-use super::sequence::{may_move_local, root_local};
+use super::sequence::root_local;
 use super::FnLower;
 use crate::vir::{BinOp, Const, Operand, Place, Proj, Rvalue, Ty};
 
@@ -523,8 +523,10 @@ impl FnLower<'_, '_> {
         let Some(l) = root_local(&args[i]) else {
             return self.beside(args, modes, i, PassMode::Owned);
         };
-        let moves = |j: usize| j != i && modes[j] == PassMode::Owned && may_move_local(&args[j], l);
-        (0..args.len()).any(moves) && self.holder_beside(args, i, moves)
+        let moves: Vec<bool> = (0..args.len())
+            .map(|j| j != i && modes[j] == PassMode::Owned && self.may_move_local(&args[j], l))
+            .collect();
+        moves.contains(&true) && self.holder_beside(args, i, |j| moves[j])
     }
 
     /// Is an argument other than `args[i]` passed as `mode`, and may it hold what `args[i]` is a
