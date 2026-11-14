@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# HTTPS /plaintext (bench/http/tls/server.velt): the default build (the runtime's tokio-rustls
-# listener) against the VELT_SCHEDULER=std build (the TLS server in Velt on the reactor), one
-# worker each (WORKERS). Two loads: keep-alive requests (CONNS connections) and one request per
+# HTTPS /plaintext (bench/http/tls/server.velt): the runtime's tokio-rustls listener against the
+# TLS server in Velt on the reactor, one worker each (WORKERS). The same compiler builds the server
+# twice: against the std of BASE (a revision from before the TLS server in Velt, whose `listenTls`
+# is the runtime's; default: the merge base with origin/main) and against this checkout's std. Two loads: keep-alive requests (CONNS connections) and one request per
 # connection (a full TLS 1.3 handshake each, X25519 + ECDSA P-256). Reports, per server and load,
 # the server's instructions per request (the difference of two runs of N1 and N2 requests, so
 # start-up cancels; macOS `/usr/bin/time -l`, Linux cachegrind) and req/s (best of
@@ -9,7 +10,7 @@
 # machine: compare instructions there).
 # The client is h2load over HTTP/1.1 (OpenSSL: TLS 1.3; oha on macOS speaks only TLS 1.2), with
 # `connection: close` for the handshake load.
-# Usage: bench/http/tls/run.sh   Knobs: WORKERS, CONNS, N1, N2, RUNS, RATE_REQUESTS,
+# Usage: bench/http/tls/run.sh   Knobs: BASE, WORKERS, CONNS, N1, N2, RUNS, RATE_REQUESTS,
 # RATE_HANDSHAKES, LOADS, VELT, H2LOAD, WORK.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -26,10 +27,13 @@ RUNS="${RUNS:-3}"
 RATE_REQUESTS="${RATE_REQUESTS:-100000}"
 RATE_HANDSHAKES="${RATE_HANDSHAKES:-3000}"
 LOADS="${LOADS:-keepalive handshake}"
+BASE="${BASE:-$(git -C "$ROOT" merge-base HEAD origin/main)}"
 
 echo "building into $WORK..." >&2
-"$VELT" build --release "$HERE/server.velt" -o "$WORK/https-rt" >&2
-VELT_SCHEDULER=std "$VELT" build --release "$HERE/server.velt" -o "$WORK/https-std" >&2
+mkdir -p "$WORK/base"
+git -C "$ROOT" archive "$BASE" std | tar -x -C "$WORK/base"
+VELT_STD="$WORK/base/std" "$VELT" build --release "$HERE/server.velt" -o "$WORK/https-rt" >&2
+VELT_STD="$ROOT/std" "$VELT" build --release "$HERE/server.velt" -o "$WORK/https-std" >&2
 
 PORT=0
 SERVER_PID=0

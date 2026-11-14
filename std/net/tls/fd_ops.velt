@@ -1,5 +1,5 @@
 // velt/net (internal): TLS streams and listeners on the reactor's sockets under the executor in
-// Velt (`VELT_SCHEDULER=std`, #2649): the TLS half of std/net/tcp_sched.velt. A listener that
+// Velt (#2649): the TLS half of std/net/tcp_sched.velt. A listener that
 // `listenTls` bound (std/net/tls/fd_server.velt) gives streams whose server handshake (#2392 step
 // 4) runs in Velt with their first operations; each stream is a `TlsSession` that reads and
 // writes its socket directly, waiting on the socket's readiness and nothing else (no task in
