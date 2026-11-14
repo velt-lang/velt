@@ -294,7 +294,8 @@ function runLocal(e: usize, mode: u32, first: usize): void {
       return;
     }
     if (own) {
-      // The I/O tick may have queued tasks: then the step queues this one behind them.
+      // The I/O tick may have queued tasks: then the step queues this one behind them. (Only one
+      // poll sooner than without this test: the next poll's `again` sees them and queues it.)
       if (ticked && !q.ownEmpty(e)) {
         return;
       }

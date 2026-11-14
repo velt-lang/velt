@@ -31,6 +31,21 @@ fn sched_spread_white_box_tests_pass() {
     );
 }
 
+/// The slot for the next task and the fair pass's clock, white-box
+/// (std_unix/lang/hooks/sched_queue.test.velt): after `NEXT_RUNS` tasks in a row from the slot
+/// the queues get their turn, on the locked path and the lock-free one, and an I/O tick with both
+/// queues holding tasks reads the clock, starts the fair wait, skips reads while it runs and
+/// starts the pass once it is due (#2786).
+#[cfg(unix)]
+#[test]
+fn sched_queue_white_box_tests_pass() {
+    runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
+    std_unix::velt_test_in_std_copy(
+        "lang/hooks/sched_queue.test.velt",
+        include_str!("std_unix/lang/hooks/sched_queue.test.velt"),
+    );
+}
+
 #[test]
 fn pinned_tasks_run_on_their_worker_and_wake_across_workers() {
     if !has_threads() {
