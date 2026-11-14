@@ -1,0 +1,196 @@
+// velt/net (internal): `listenTls` on the reactor under the executor in Velt (#2649): the TLS 1.3
+// server in Velt (#2392 step 4) for each accepted socket, and the TLS
+// operations of std/net/tcp_sched.velt (`extend TlsServer implements ReactorTls`, in place of
+// the stubs of std/net/tls/fd_hook.velt). Only the conditional global
+// std/prelude/global/tls_reactor.velt loads this file, so a program that can't listen with TLS
+// loads none of the server.
+
+import { IoError } from "velt/io/error";
+import { noteStdUse } from "velt/lang/intrinsics";
+import { IoResult } from "velt/native/result";
+import { IoStatus } from "velt/native/status";
+import * as fs from "velt/net/fd_socket";
+import { TcpStream } from "velt/net/tcp_stream";
+import { FdTlsConn } from "velt/net/tls/fd_conn";
+import { ReactorTls, TlsServer } from "velt/net/tls/fd_hook";
+import * as ops from "velt/net/tls/fd_ops";
+import { TlsSession, TlsSessions } from "velt/net/tls/fd_session";
+import { addListener, TlsListen } from "velt/net/tls/fd_table";
+import { ServerHandshake } from "velt/net/tls/server_handshake";
+import { ServerKey, serverKey } from "velt/net/tls/server_key";
+import { TlsEngine } from "velt/net/tls/tls_engine";
+
+/** How long an accepted stream's handshake may take (as the runtime's listener). */
+const HANDSHAKE_MS = 10000;
+
+/** The server sessions of one listener: its credentials and ALPN protocols. */
+export class FdServerSessions implements TlsSessions {
+  private key: ServerKey;
+  private protocols: string[];
+
+  constructor(key: ServerKey, protocols: string[]) {
+    this.key = key;
+    this.protocols = protocols;
+  }
+
+  /** The session of accepted socket `fd`; its handshake runs with its first operations. */
+  open(fd: u64): TlsSession {
+    return new FdTlsConn(
+      fd,
+      new TlsEngine(TcpStream.ofHandle(fd)),
+      new ServerHandshake(this.key, this.protocols),
+      (Date.now() as number) + HANDSHAKE_MS,
+    );
+  }
+}
+
+/**
+ * Binds a TLS listener on the reactor; null when the Velt server can't sign with the key (RSA, a
+ * curve other than P-256, Ed25519: the runtime's listener takes those). Throws `IoError`
+ * `EINVAL` for a certificate or key that is not valid PEM.
+ */
+export async function listenTls(
+  addr: string,
+  cert: string,
+  key: string,
+  alpn: string,
+): Promise<IoResult<u64> | null, IoError> {
+  const sk = serverKey(cert, key);
+  if (sk == null) {
+    return null;
+  }
+  const l = await fs.listenOn(addr);
+  if (l.code !== 0) {
+    return l;
+  }
+  const protocols = alpn == "" ? ([] as string[]) : alpn.split(",");
+  const sessions: TlsSessions = new FdServerSessions(sk, protocols);
+  const entry = shared(new Mutex<TlsListen>(new TlsListen(l.value, sessions)));
+  return fs.value(addListener(entry));
+}
+
+// The status of failure `e` for std/net/tcp_sched.velt, whose results carry codes: the runtime's
+// code of the `IoError`'s name; a TLS failure (`EPROTO`) is `EILSEQ`, as the runtime's TLS
+// listener reports it. The message is kept.
+function status(e: unknown): IoStatus {
+  if (!(e instanceof IoError)) {
+    return { code: 5, message: `TLS: ${e}` };
+  }
+  switch (e.code) {
+    case "EINVAL":
+      return { code: 4, message: e.message };
+    case "ETIMEDOUT":
+      return { code: 6, message: e.message };
+    case "ECONNRESET":
+      return { code: 8, message: e.message };
+    case "EPIPE":
+      return { code: 10, message: e.message };
+    case "EBADF":
+      return { code: 16, message: e.message };
+    default:
+      return { code: 5, message: e.message };
+  }
+}
+
+// The TLS server's operations for std/net/tcp_sched.velt (std/net/tls/fd_ops.velt).
+extend TlsServer implements ReactorTls {
+  async listen(
+    addr: string,
+    cert: string,
+    key: string,
+    alpn: string,
+  ): Promise<IoResult<u64> | null> {
+    // The program can listen with TLS on the reactor: tcp_sched's `stdUsed("reactorTls")`
+    // tests are true, so its operations check for TLS handles.
+    noteStdUse("reactorTls");
+    try {
+      return await listenTls(addr, cert, key, alpn);
+    } catch (e) {
+      return fs.failed(status(e), 0);
+    }
+  }
+  listenerFd(l: u64): u64 {
+    return ops.listenerFd(l);
+  }
+  closeListener(l: u64) {
+    ops.closeListener(l);
+  }
+  async accept(l: u64): Promise<IoResult<u64>> {
+    try {
+      return await ops.accept(l);
+    } catch (e) {
+      return fs.failed(status(e), 0);
+    }
+  }
+  async read(s: u64, max: u64): Promise<IoResult<u8[]>> {
+    try {
+      return await ops.read(s, max);
+    } catch (e) {
+      return fs.failed(status(e), []);
+    }
+  }
+  async readString(s: u64, max: u64): Promise<IoResult<string>> {
+    try {
+      return await ops.readString(s, max);
+    } catch (e) {
+      return fs.failed(status(e), "");
+    }
+  }
+  tryReadInto(s: u64, data: u8[], start: u64, end: u64): IoResult<i64> {
+    try {
+      return ops.tryReadInto(s, data, start, end);
+    } catch (e) {
+      return fs.failed(status(e), 0);
+    }
+  }
+  readyOrFd(s: u64): IoResult<u64> {
+    return ops.readyOrFd(s);
+  }
+  fdOf(s: u64): u64 {
+    return ops.fdOf(s);
+  }
+  async readable(s: u64): Promise<IoStatus> {
+    try {
+      return await ops.readable(s);
+    } catch (e) {
+      return status(e);
+    }
+  }
+  writeLaterRange(s: u64, data: u8[], start: u64, end: u64): IoResult<u64> {
+    try {
+      return ops.writeLaterRange(s, data, start, end);
+    } catch (e) {
+      return fs.failed(status(e), 0);
+    }
+  }
+  tryWriteRange(s: u64, data: u8[], start: u64, end: u64): u64 {
+    return ops.tryWriteRange(s, data, start, end);
+  }
+  async drained(s: u64, max: u64): Promise<IoStatus> {
+    try {
+      return await ops.drained(s, max);
+    } catch (e) {
+      return status(e);
+    }
+  }
+  async writeRange(s: u64, data: u8[], start: u64, end: u64): Promise<IoStatus> {
+    try {
+      return await ops.writeRange(s, data, start, end);
+    } catch (e) {
+      return status(e);
+    }
+  }
+  shutdown(s: u64): IoStatus {
+    return ops.shutdown(s);
+  }
+  async alpn(s: u64): Promise<IoResult<string>> {
+    try {
+      return await ops.alpn(s);
+    } catch (e) {
+      return fs.failed(status(e), "");
+    }
+  }
+  close(s: u64) {
+    ops.close(s);
+  }
+}

@@ -1,0 +1,175 @@
+// velt/net (internal): parsing a ClientHello (RFC 8446 §4.1.2) for the TLS 1.3 server (#2392 step
+// 4): what the server chooses from (versions, suites, groups and key shares, signature schemes,
+// ALPN) and what it echoes (the legacy session id).
+
+import { utf8Decode } from "velt/encoding/utf8";
+import { DECODE_ERROR, ILLEGAL_PARAMETER, PROTOCOL_VERSION, TlsFailure } from "velt/net/tls/alert";
+import { ByteReader } from "velt/net/tls/byte_reader";
+import {
+  EXT_ALPN,
+  EXT_COOKIE,
+  EXT_KEY_SHARE,
+  EXT_SERVER_NAME,
+  EXT_SIGNATURE_ALGORITHMS,
+  EXT_SUPPORTED_GROUPS,
+  EXT_SUPPORTED_VERSIONS,
+  SECP256R1,
+  X25519,
+} from "velt/net/tls/client_hello";
+
+/** The extension pre_shared_key, which must come last (RFC 8446 §4.2.11). */
+const EXT_PRE_SHARED_KEY: usize = 41;
+
+/** What a ClientHello offers. */
+export class ClientOffer {
+  /** The legacy session id, echoed by the ServerHello. */
+  sessionId: u8[] = [];
+  /** The cipher suites, in the client's order. */
+  suites: usize[] = [];
+  /** Whether supported_versions has TLS 1.3. */
+  tls13: bool = false;
+  /** supported_groups. */
+  groups: usize[] = [];
+  /** The key shares for X25519 and secp256r1 (empty when not sent). */
+  x25519Share: u8[] = [];
+  p256Share: u8[] = [];
+  /** signature_algorithms. */
+  schemes: usize[] = [];
+  /** The ALPN protocols, in the client's order. */
+  alpn: string[] = [];
+  /** The SNI host name ("" for none). */
+  serverName: string = "";
+  /** Whether the hello has a cookie (only a second one, after a HelloRetryRequest that sent one). */
+  cookie: bool = false;
+}
+
+/** The ClientHello in `body` (the message without its 4-byte header). */
+export function parseClientHello(body: u8[]): ClientOffer {
+  const r = new ByteReader(body, 0, body.length, "ClientHello");
+  const legacy = r.u16();
+  r.bytes(32);
+  const sid = r.vector(1);
+  if (sid.left() > 32) {
+    throw new TlsFailure(ILLEGAL_PARAMETER, "a legacy session id over 32 bytes");
+  }
+  const offer = new ClientOffer();
+  offer.sessionId = sid.bytes(sid.left());
+  const suites = r.vector(2);
+  while (suites.left() > 1) {
+    offer.suites.push(suites.u16());
+  }
+  suites.finish();
+  const comp = r.vector(1);
+  const methods = comp.bytes(comp.left());
+  if (r.left() == 0) {
+    // No extensions: an SSL 3.0 to TLS 1.2 client.
+    throw new TlsFailure(PROTOCOL_VERSION, "the client does not offer TLS 1.3");
+  }
+  const exts = r.vector(2);
+  r.finish();
+  const seen: usize[] = [];
+  while (exts.left() > 0) {
+    const type = exts.u16();
+    const e = exts.vector(2);
+    if (seen.includes(type)) {
+      throw new TlsFailure(ILLEGAL_PARAMETER, `the extension ${type} twice in the ClientHello`);
+    }
+    seen.push(type);
+    if (type == EXT_SUPPORTED_VERSIONS) {
+      const list = e.vector(1);
+      while (list.left() > 1) {
+        if (list.u16() == 0x0304) {
+          offer.tls13 = true;
+        }
+      }
+      list.finish();
+    } else if (type == EXT_SUPPORTED_GROUPS) {
+      const list = e.vector(2);
+      while (list.left() > 1) {
+        offer.groups.push(list.u16());
+      }
+      list.finish();
+    } else if (type == EXT_KEY_SHARE) {
+      readShares(e.vector(2), offer);
+    } else if (type == EXT_SIGNATURE_ALGORITHMS) {
+      const list = e.vector(2);
+      while (list.left() > 1) {
+        offer.schemes.push(list.u16());
+      }
+      list.finish();
+    } else if (type == EXT_ALPN) {
+      const list = e.vector(2);
+      while (list.left() > 0) {
+        const one = list.vector(1);
+        if (one.left() == 0) {
+          throw new TlsFailure(DECODE_ERROR, "an empty ALPN protocol name");
+        }
+        offer.alpn.push(utf8Decode(one.bytes(one.left())));
+      }
+    } else if (type == EXT_SERVER_NAME) {
+      const list = e.vector(2);
+      while (list.left() > 0) {
+        const kind = list.u8();
+        const name = list.vector(2);
+        const bytes = name.bytes(name.left());
+        if (kind == 0 && offer.serverName == "") {
+          offer.serverName = utf8Decode(bytes);
+        }
+      }
+    } else if (type == EXT_COOKIE) {
+      offer.cookie = true;
+      e.bytes(e.left());
+    } else {
+      if (type == EXT_PRE_SHARED_KEY && exts.left() > 0) {
+        throw new TlsFailure(ILLEGAL_PARAMETER, "pre_shared_key is not the last extension");
+      }
+      e.bytes(e.left());
+    }
+    e.finish();
+  }
+  if (!offer.tls13) {
+    throw new TlsFailure(
+      PROTOCOL_VERSION,
+      "the client does not offer TLS 1.3 (TLS 1.2 is not supported yet)",
+    );
+  }
+  // TLS 1.3 fixes these (§4.1.2): legacy_version 0x0303, and only the null compression method.
+  if (legacy != 0x0303) {
+    throw new TlsFailure(
+      PROTOCOL_VERSION,
+      `a ClientHello with legacy_version 0x${legacy.toString(16)}`,
+    );
+  }
+  if (methods.length != 1 || methods[0] != 0) {
+    throw new TlsFailure(ILLEGAL_PARAMETER, "a TLS 1.3 ClientHello with a compression method");
+  }
+  return offer;
+}
+
+// The key shares of a KeyShareClientHello: X25519's and secp256r1's are kept, others skipped.
+function readShares(list: ByteReader, offer: ClientOffer) {
+  const groups: usize[] = [];
+  while (list.left() > 0) {
+    const group = list.u16();
+    const key = list.vector(2);
+    if (groups.includes(group)) {
+      throw new TlsFailure(ILLEGAL_PARAMETER, "two key shares for one group");
+    }
+    groups.push(group);
+    const bytes = key.bytes(key.left());
+    if (group == X25519) {
+      if (bytes.length != 32) {
+        throw new TlsFailure(ILLEGAL_PARAMETER, "an X25519 key share that is not 32 bytes");
+      }
+      offer.x25519Share = bytes;
+    } else if (group == SECP256R1) {
+      if (bytes.length != 65 || bytes[0] != 4) {
+        throw new TlsFailure(
+          ILLEGAL_PARAMETER,
+          "a secp256r1 key share that is not an uncompressed point",
+        );
+      }
+      offer.p256Share = bytes;
+    }
+  }
+}

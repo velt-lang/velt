@@ -270,17 +270,25 @@ export class RecordWriter {
    * ClientHello, `minor` 1, else 0x0303).
    */
   async sendPlain(type: u8, content: u8[], minor: u8): Promise<void> {
-    const out: u8[] = [
-      type,
-      3,
-      minor,
-      ((content.length >> 8) & 0xff) as u8,
-      (content.length & 0xff) as u8,
-    ];
-    for (let i: usize = 0; i < content.length; i++) {
-      out.push(content[i]);
+    await this.t.writeBytes(plain(type, content, minor), 0);
+  }
+
+  /**
+   * Queues for the task's next wait, without waiting (over a transport that can): `content` in a
+   * plaintext record (`plaintext`), else protected records after a ChangeCipherSpec when `ccs`.
+   */
+  queue(type: u8, content: u8[], plaintext: bool, ccs: bool = false) {
+    const t = this.tryTransport();
+    t.writeBytesLater(plaintext ? plain(type, content, 3) : this.protect(type, content, ccs), 0);
+  }
+
+  /** Queues close_notify (once) for the task's next wait, without waiting. */
+  shutdownNow() {
+    if (this.shutDown || this.cipher == null || this.failure != null) {
+      return;
     }
-    await this.t.writeBytes(out, 0);
+    this.shutDown = true;
+    this.queue(ALERT, [1, CLOSE_NOTIFY], false);
   }
 
   /** Sends a ChangeCipherSpec record. */
@@ -350,8 +358,8 @@ export class RecordWriter {
   }
 
   /**
-   * `failed` for a caller that can't wait: the alert is queued whole behind what the socket holds,
-   * to go at the task's next wait.
+   * `failed` for a caller that can't wait: the alert is written now as far as the socket takes it
+   * (the transport closes next), and the rest queued whole behind it.
    */
   failedNow(e: unknown): IoError {
     const err = e instanceof IoError ? e : new IoError("EPROTO", `TLS: ${e}`);
@@ -362,7 +370,10 @@ export class RecordWriter {
         t != null && e instanceof TlsFailure && e.sendAlert && !this.shutDown && !this.turns.busy
       ) {
         try {
-          t.writeBytesLater(this.protect(ALERT, [2, e.alert]), 0);
+          const alert =
+            this.cipher != null ? this.protect(ALERT, [2, e.alert]) : plain(ALERT, [2, e.alert], 3);
+          const sent = t.tryWrite(alert, 0);
+          t.writeBytesLater(alert, sent as number);
         } catch (ignored) {
           // The peer may be gone already; the failure is what matters.
         }
@@ -371,4 +382,19 @@ export class RecordWriter {
     }
     return err;
   }
+}
+
+// One plaintext record of `type` with `content` (at most 16 KiB), record version 3.`minor`.
+function plain(type: u8, content: u8[], minor: u8): u8[] {
+  const out: u8[] = [
+    type,
+    3,
+    minor,
+    ((content.length >> 8) & 0xff) as u8,
+    (content.length & 0xff) as u8,
+  ];
+  for (let i: usize = 0; i < content.length; i++) {
+    out.push(content[i]);
+  }
+  return out;
 }

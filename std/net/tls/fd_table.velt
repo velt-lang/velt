@@ -1,0 +1,107 @@
+// velt/net (internal): the process's table of TLS streams and listeners on the reactor's sockets
+// under the executor in Velt (std/net/tls/fd_ops.velt), keyed by their handles: the top bit set
+// (so the runtime never sees them) and the low 32 bits zero (which no socket handle has), an id
+// above them. Process-wide, so a handle works on every worker; each entry has its own lock.
+
+import * as tb from "velt/lang/hooks/sched_io_table";
+import { TlsSession, TlsSessions } from "velt/net/tls/fd_session";
+
+/** A TLS stream's entry. */
+export type Conn = shared<Mutex<TlsSession>>;
+
+/** A `listenTls` listener: its socket, and what it makes of the sockets it accepts. */
+export class TlsListen {
+  fd: u64;
+  sessions: TlsSessions;
+
+  constructor(fd: u64, sessions: TlsSessions) {
+    this.fd = fd;
+    this.sessions = sessions;
+  }
+}
+
+/** A TLS listener's entry. */
+export type Listen = shared<Mutex<TlsListen>>;
+
+// The process's tables, made on first use: static atomics (their words are in the program's data).
+const CONNS = new Atomic<shared<Mutex<Map<u64, Conn>>> | null>(null);
+const LISTENERS = new Atomic<shared<Mutex<Map<u64, Listen>>> | null>(null);
+const NEXT = new Atomic<u64>(0);
+
+function conns(): shared<Mutex<Map<u64, Conn>>> {
+  const found = CONNS.load("acquire");
+  if (found != null) {
+    return found;
+  }
+  CONNS.compareExchange(null, shared(new Mutex<Map<u64, Conn>>(new Map<u64, Conn>())), "acqrel");
+  const made = CONNS.load("acquire");
+  if (made == null) {
+    panic("ICE: the TLS connections' table is set once and never cleared");
+  }
+  return made;
+}
+
+function listeners(): shared<Mutex<Map<u64, Listen>>> {
+  const found = LISTENERS.load("acquire");
+  if (found != null) {
+    return found;
+  }
+  LISTENERS.compareExchange(
+    null,
+    shared(new Mutex<Map<u64, Listen>>(new Map<u64, Listen>())),
+    "acqrel",
+  );
+  const made = LISTENERS.load("acquire");
+  if (made == null) {
+    panic("ICE: the TLS listeners' table is set once and never cleared");
+  }
+  return made;
+}
+
+// A new handle: the top bit, an id of 31 bits, the low 32 bits zero.
+function nextHandle(): u64 {
+  const id = (NEXT.add(1, "relaxed") % 0x7fffffff) + 1;
+  return tb.TAG | (id << 32);
+}
+
+/** Adds stream `c`: its handle. */
+export function addConn(c: Conn): u64 {
+  const h = nextHandle();
+  conns().with((m) => m.set(h, c));
+  return h;
+}
+
+/** The stream of handle `h`, or null once it is closed. */
+export function findConn(h: u64): Conn | null {
+  return conns().with((m) => m.get(h) ?? null);
+}
+
+/** Removes the stream of handle `h`: it, or null when it was gone already. */
+export function takeConn(h: u64): Conn | null {
+  return conns().with((m) => {
+    const e = m.get(h) ?? null;
+    m.delete(h);
+    return e;
+  });
+}
+
+/** Adds listener `l`: its handle. */
+export function addListener(l: Listen): u64 {
+  const h = nextHandle();
+  listeners().with((m) => m.set(h, l));
+  return h;
+}
+
+/** The listener of handle `h`, or null once it is closed. */
+export function findListener(h: u64): Listen | null {
+  return listeners().with((m) => m.get(h) ?? null);
+}
+
+/** Removes the listener of handle `h`: it, or null when it was gone already. */
+export function takeListener(h: u64): Listen | null {
+  return listeners().with((m) => {
+    const e = m.get(h) ?? null;
+    m.delete(h);
+    return e;
+  });
+}

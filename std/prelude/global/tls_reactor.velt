@@ -1,0 +1,6 @@
+// Global, conditional (crates/velt_loader/src/globals): the TLS 1.3 server in Velt on the reactor
+// (std/net/tls/fd_server.velt) for a program whose TCP functions are std/net/tcp_sched.velt (every
+// native program's) that names `cert`, the field every `listenTls` option has. Other programs
+// don't load the server: they have no `listenTls` to serve (std/net/tls/fd_hook.velt's stubs).
+// load when std/net/tcp_sched uses: cert
+import "velt/net/tls/fd_server";
