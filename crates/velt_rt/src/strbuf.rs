@@ -294,13 +294,6 @@ pub unsafe extern "C" fn velt_rt_strbuf_push_inspect_key(buf: *mut VeltStrBuf, s
     (*buf).push_with(|b| crate::inspect::push_inspect_key(b, (*s).as_bytes()));
 }
 
-/// Append node's `, ... n more items` after the first entries of an array, `Map` or `Set` of
-/// which `remaining` more are not shown (`maxArrayLength`).
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_strbuf_inspect_more(buf: *mut VeltStrBuf, remaining: u64) {
-    (*buf).push_with_ascii(|b| crate::inspect::push_more_items(b, remaining));
-}
-
 /// Append `JSON.stringify(value)` for a `json.Value` handle (a null handle appends `null`).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_strbuf_push_json_value(buf: *mut VeltStrBuf, h: u64) {

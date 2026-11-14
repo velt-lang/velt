@@ -641,3 +641,40 @@ fn a_member_read_through_any_in_reached_std_code_adds_the_member_slots() {
     assert!(!d.iter().any(|d| d.is_error()), "{d:?}");
     assert!(p.expect("checks").dyn_members.is_none());
 }
+
+#[test]
+fn printing_shapes_are_checked_once_live_code_may_print_an_object() {
+    // What `console.log` writes the same way for every type (std/lang/hooks/inspect.velt): checked
+    // where live code has an array or a struct or class, which a format function may print
+    // (velt_common `hook_demand.rs`), and left unchecked in a program with only scalars.
+    let shapes = [
+        "std/lang/hooks/inspect::openObject",
+        "std/lang/hooks/inspect::inspectArray",
+    ];
+    for src in [
+        "function main() {\n  console.log(\"hi\");\n}\n",
+        "function main() {\n  const n: number = 1.5;\n  console.log(n);\n}\n",
+    ] {
+        let p = ok_src(src);
+        for f in shapes {
+            assert!(
+                unchecked(&p).contains(&f.to_string()),
+                "{f} is checked: {src}"
+            );
+        }
+    }
+    for src in [
+        "function main() {\n  console.log({ a: 1 });\n}\n",
+        "function main() {\n  console.log([1]);\n}\n",
+        "class P {\n  x: number = 1;\n}\nfunction main() {\n  console.log(new P());\n}\n",
+        "function main() {\n  console.log(new Map<string, number>());\n}\n",
+    ] {
+        let p = ok_src(src);
+        for f in shapes {
+            assert!(
+                !unchecked(&p).contains(&f.to_string()),
+                "{f} is unchecked: {src}"
+            );
+        }
+    }
+}

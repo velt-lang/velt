@@ -7,4 +7,4 @@ true false { n: 1 }
 [ true, true ] [ { a: 1 }, { a: 2 } ]
 true true
 true { name: 'x' }
-true { a: 5, [Symbol(w)]: true }
+true { a: 5, Symbol(w): true }

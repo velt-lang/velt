@@ -45,4 +45,10 @@ pub const DELETED: &[&str] = &[
     "velt_rt_global_lock",
     "velt_rt_global_unlock",
     "velt_rt_global_chan",
+    // #1967: the cycles and the `... n more items` of what `console.log` prints
+    // (std/lang/hooks/inspect_cycles).
+    "velt_rt_strbuf_inspect_enter",
+    "velt_rt_strbuf_inspect_leave",
+    "velt_rt_strbuf_inspect_circular",
+    "velt_rt_strbuf_inspect_more",
 ];

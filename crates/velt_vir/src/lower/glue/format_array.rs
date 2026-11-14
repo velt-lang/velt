@@ -6,7 +6,6 @@
 use velt_sema::hir::TyId;
 
 use crate::lower::operand::proj;
-use crate::lower::rt::Rt;
 use crate::lower::{cint, FnLower};
 use crate::vir::{BinOp, Operand, Place, Proj, Rvalue, Ty};
 
@@ -89,7 +88,7 @@ impl FnLower<'_, '_> {
         self.branch(long, more_bb, close_bb);
         self.switch_to(more_bb);
         let remaining = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::Sub, len, limit));
-        self.call_rt(Rt::StrbufInspectMore, vec![buf.clone(), remaining], None);
+        self.inspect_more(buf, remaining);
         self.goto(close_bb);
         self.switch_to(close_bb);
         self.push_text(buf, " ]");

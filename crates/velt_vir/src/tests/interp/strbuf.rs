@@ -109,19 +109,9 @@ impl Interp<'_> {
                 self.write_bytes(a[0], &[0; 24]);
             }
             "velt_rt_str_eq" => return Some((self.str_bytes(a[0]) == self.str_bytes(a[1])) as u64),
-            // Cycle tracking for printing (velt_rt's strbuf.rs): the programs run here print
-            // no cyclic graphs, so every object is printed.
-            "velt_rt_strbuf_inspect_enter" => return Some(1),
-            "velt_rt_strbuf_inspect_begin" | "velt_rt_strbuf_inspect_leave" => {}
-            // Only line breaking reads these, and the interpreter does not break lines.
-            "velt_rt_strbuf_inspect_atom" => {}
-            "velt_rt_strbuf_inspect_circular" => return Some(0),
-            // Node's `maxArrayLength` (velt_rt's `inspect::push_more_items`).
-            "velt_rt_strbuf_inspect_more" => {
-                let s = if a[1] == 1 { "" } else { "s" };
-                let text = format!(", ... {} more item{s}", a[1]);
-                self.buf_push(a[0], text.as_bytes());
-            }
+            // The start of a printed value: only line breaking reads its pieces, and the
+            // interpreter does not break lines.
+            "velt_rt_strbuf_inspect_begin" | "velt_rt_strbuf_inspect_atom" => {}
             // Line breaking (velt_rt's inspect_layout): the programs run here print short values.
             "velt_rt_strbuf_len" => return Some(self.str_bytes(a[0]).len() as u64),
             "velt_rt_strbuf_inspect_layout" => {}
