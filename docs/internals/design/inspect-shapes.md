@@ -50,6 +50,17 @@ per instance: a leaf is appended in place, and anything else calls the type's fo
 | `inspectMap<K, V>(buf, m, depth)` | `Map(1) { 'a' => 1 }`, the first 100 live entries |
 | `inspectSet<T>(buf, m, id, depth)` | `Set(1) { 'a' }`, the first 100 live members |
 
+`std/lang/hooks/inspect_cycles.velt` keeps what a cycle needs, which lowering's glue and the hooks
+above call: the objects being printed and the `<ref *N>` numbers given so far (`inspectEnter`,
+`inspectLeave`, `inspectCircular`, `inspectBegin`, `inspectEnd`), and Node's `... n more items`
+(`inspectMore`). This was the runtime's (`velt_rt_strbuf_inspect_enter`, `_leave`, `_circular`,
+`_more`, deleted, #2196). The state is two blocks of words per thread, allocated at the first
+object entered and given back at the end of the top-level value, so the leak counters stay even;
+a value is printed on one thread with no await in between. A `<ref *N>` prefix is inserted by
+taking the builder's text out (`velt_rt_strbuf_finish`) and appending it again around the prefix,
+as rare as a cycle. The runtime keeps `velt_rt_strbuf_inspect_begin` and `_atom` for its line
+breaking (`inspect_layout`), which is still Rust.
+
 The design first kept #1990's `objectN` and `objectIdN` writers, one per field count, so that types
 with the same field types would share one instance. They were 560 of the 825 lines, and checking
 all 16 cost +23.9M instructions. Lowering writing the field sequence is what `main`'s glue already
@@ -58,7 +69,9 @@ did, so it adds nothing to what an object costs, and static key texts need no ne
 
 ### What a program pays
 
-The hooks list `constructs(Format, Dynamic)` (velt_common `hook_demand.rs`), so sema checks them
+The hooks list `constructs(Format, Dynamic)`; the cycle hooks other than `inspectBegin` and
+`inspectEnd` have no fallback, like the integer hooks, since every object lowering may enter
+demands them (velt_common `hook_demand.rs`), so sema checks them
 where live code has one of those. `Format` is present for any array, struct or class in live code,
 printed or not, because a class's table has a `format` slot, so being demanded is not by itself
 cheap: a program with a live class pays for checking the hooks even if it never prints. What
@@ -90,4 +103,6 @@ dispatch through the format slot.
 
 ## Measured
 
-The base/head table is not measured yet; `bench/inspect/rows.sh` and the programs next to it produce it.
+Run time on Windows (wall clock, release builds, interleaved best of 5): `bench/inspect/run_*.velt`
+through `bench/inspect/wall.sh`; the numbers are in the pull request. `bench/inspect/rows.sh`
+counts instructions on Linux.
