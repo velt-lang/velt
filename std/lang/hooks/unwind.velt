@@ -10,7 +10,7 @@
 
 import { abortProcess, raise } from "#unwind-raise";
 
-export { panicText, takePanic } from "#unwind-raise";
+export { panicText, takePanic, unwoundFramesDrop } from "#unwind-raise";
 
 declare function velt_rt_panic(msg: string): never;
 declare function velt_rt_exit(code: i32): never;

@@ -10,11 +10,14 @@ import {
   enterCatch,
   leaveCatch,
   takePanic,
+  unwoundFramesDrop,
 } from "velt/lang/hooks/unwind";
+import { processEnv } from "velt/lang/hooks/process";
 
 declare function velt_rt_xfer_suspend(): u32;
 declare function velt_rt_xfer_resume(depth: u32): void;
 declare function velt_rt_xfer_end(): void;
+declare function velt_rt_write_str(stream: u32, s: string);
 
 /**
  * Whether `catchVeltPanic` catches here: false where generated code doesn't catch (WebAssembly,
@@ -102,5 +105,11 @@ function caught() {
     for (let i: u32 = 0; i < depth; i++) {
       velt_rt_xfer_end();
     }
+  }
+  // Where the unwound frames had no cleanup pads (Windows) what they owned leaks and the counts
+  // don't balance: say so where the leak check reads them (std/test/plan.velt `leakedBlocks`), as
+  // the runtime's `panics caught=` does for its own catch.
+  if (!unwoundFramesDrop() && processEnv("VELT_RC_STATS") == "1") {
+    velt_rt_write_str(2, "rc stats: std caught a panic\n");
   }
 }

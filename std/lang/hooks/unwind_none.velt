@@ -11,6 +11,11 @@ export function abortProcess(): never {
   velt_rt_exit(134);
 }
 
+/** Whether the frames a caught panic unwinds drop what they own: nothing is caught here. */
+export function unwoundFramesDrop(): bool {
+  return false;
+}
+
 /** Never called (no catch counts here); raises nothing. */
 export function raise(msg: string): void {}
 

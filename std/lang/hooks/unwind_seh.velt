@@ -28,6 +28,11 @@ export function abortProcess(): never {
   velt_rt_exit(134);
 }
 
+/** Whether the frames a caught panic unwinds drop what they own: not on Windows, whose calls have no cleanup pads yet. */
+export function unwoundFramesDrop(): bool {
+  return false;
+}
+
 /** The header in front of the message, as with the Itanium unwinder (`velt_vir::eh::HEADER_SIZE`). */
 const HEADER: usize = 32;
 
