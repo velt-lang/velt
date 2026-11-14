@@ -357,13 +357,14 @@ impl Visit for Named<'_> {
 /// handled once. Returns whether a flag changed.
 fn crossing_results(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> bool {
     // Only a result the program keeps where the graph follows it: in a local, called again
-    // (`f()()`), made dynamic or matched. An argument of another call through a function value
-    // is always taken as stored there (`Arg`), whatever that callee does with it.
+    // (`f()()`), made dynamic, matched or returned straight on (`return f()`). An argument of
+    // another call through a function value is always taken as stored there (`Arg`), whatever
+    // that callee does with it.
     let mut todo: Vec<(usize, usize, u8)> = vec![];
     for (&m, cs) in &g.call_results {
         if !matches!(
             g.nodes[m],
-            Node::Local(..) | Node::Callee(_) | Node::Dyn(_) | Node::Scrut(_)
+            Node::Local(..) | Node::Callee(_) | Node::Dyn(_) | Node::Scrut(_) | Node::Ret(_)
         ) {
             continue;
         }

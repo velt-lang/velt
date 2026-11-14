@@ -1,0 +1,20 @@
+// A record's setter, defined with `Object.defineProperty`, that spawns the value it is given
+// (#2893): `r["k"] = job` runs the setter, so the job, which changes what it captured, is
+// refused. Std calls the setter through a generic function type, matched by type alone.
+type Job = () => Promise<void>;
+async function main() {
+  let n = 0;
+  const r: Record<string, Job> = {};
+  Object.defineProperty(r, "k", {
+    set: (v: Job) => {
+      spawn(v());
+    },
+    configurable: true,
+  });
+  const job: Job = async () => {
+    n++;
+  };
+  r["k"] = job;
+  await sleep(10);
+  console.log(`n ${n}`);
+}
