@@ -1,0 +1,41 @@
+// velt/crypto (tests): `ScalarP256.invert` (scalar_p256.velt): a times its inverse is 1 mod the
+// P-256 order n, for the edge scalars (1, 2, n - 1, n - 2, a digit pattern of each window) and
+// others.
+import { describe, expect, it } from "velt/test";
+import { hexDecode } from "velt/encoding/hex";
+import { ScalarP256 } from "velt/crypto/scalar_p256";
+
+function scalars(): string[] {
+  return [
+    "0000000000000000000000000000000000000000000000000000000000000001",
+    "0000000000000000000000000000000000000000000000000000000000000002",
+    "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632550",
+    "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc63254f",
+    "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+    "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+    "1111111111111111111111111111111111111111111111111111111111111111",
+    "c88f01f510d9ac3f70a292daa2316de544e9aab8afe84049c62a9c57862d1433",
+    "7d7dc5f71eb29ddaf80d6214632eeae03d9058af1fb6d22ed80badb62bc1a534",
+  ];
+}
+
+describe("ScalarP256.invert", () => {
+  it("gives the inverse mod n", () => {
+    const s = new ScalarP256(4);
+    for (const hex of scalars()) {
+      s.decode(0, hexDecode(hex), 0, 32, 3);
+      s.invert(1, 0);
+      s.mul(2, 0, 1);
+      expect(s.limbs(2, 3)).toEqual([1, 0, 0, 0]);
+    }
+  });
+
+  it("inverts in place", () => {
+    const s = new ScalarP256(4);
+    s.decode(0, hexDecode(scalars()[7]), 0, 32, 3);
+    s.decode(1, hexDecode(scalars()[7]), 0, 32, 3);
+    s.invert(0, 0);
+    s.mul(2, 0, 1);
+    expect(s.limbs(2, 3)).toEqual([1, 0, 0, 0]);
+  });
+});

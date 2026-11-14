@@ -2,7 +2,7 @@
 // in the Montgomery domain, with the textbook interleaved reduction (CIOS, the multiplier from
 // -n^-1 mod 2^64, since n has no special form). Carries are `(a < b) as u64` and the final
 // subtraction of n is a masked select, so multiplication is constant time; `invert` runs a
-// fixed square-and-multiply over the public exponent n - 2.
+// fixed 4-bit window over the public exponent n - 2.
 //
 // Registers of four limbs in one array, like `FeP256` (#2403).
 
@@ -141,23 +141,38 @@ export class ScalarP256 {
 
   /** `d = 1 / a` as a^(n - 2) (`d` not `a`); the exponent is public, so this branches on it. */
   invert(d: usize, a: usize) {
-    // d = 1 in the domain: R mod n is the Montgomery form of 1, which a * R2 * 1 gives.
-    let started = false;
-    for (let i: usize = 0; i < 256; i++) {
-      const bit = 255 - i;
-      if (started) {
-        this.mul(d, d, d);
-      }
-      if (((NM2[bit >> 6] >> ((bit & 63) as u64)) & 1) == 1) {
-        if (started) {
-          this.mul(d, d, a);
-        } else {
-          for (let k: usize = 0; k < 4; k++) {
-            this.r[4 * d + k] = this.r[4 * a + k];
-          }
-          started = true;
+    // A fixed 4-bit window over the public exponent n - 2 (#2955): a^1..a^15 first (14 products),
+    // then 4 squarings and at most one product per digit, 321 products in all where the bit-by-bit
+    // square-and-multiply took 423. The digits are public, so branching on them leaks nothing.
+    const t = new ScalarP256(16);
+    for (let k: usize = 0; k < 4; k++) {
+      t.r[4 + k] = this.r[4 * a + k];
+    }
+    t.mul(2, 1, 1);
+    for (let j: usize = 3; j < 16; j++) {
+      t.mul(j, j - 1, 1);
+    }
+    // The top digit of n - 2 is 15: the accumulator starts as a^15, in register 0.
+    let first = true;
+    for (let i: usize = 0; i < 64; i++) {
+      const at = 252 - 4 * i;
+      const digit = ((NM2[at >> 6] >> ((at & 63) as u64)) & 15) as usize;
+      if (first) {
+        for (let k: usize = 0; k < 4; k++) {
+          t.r[k] = t.r[4 * digit + k];
         }
+        first = false;
+        continue;
       }
+      for (let q = 0; q < 4; q++) {
+        t.mul(0, 0, 0);
+      }
+      if (digit !== 0) {
+        t.mul(0, 0, digit);
+      }
+    }
+    for (let k: usize = 0; k < 4; k++) {
+      this.r[4 * d + k] = t.r[k];
     }
   }
 }
