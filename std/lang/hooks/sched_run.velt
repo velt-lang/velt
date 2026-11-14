@@ -69,6 +69,10 @@ export function run(e: usize, k: usize, mode: u32): void {
   if (stdUsed("nodeTimers") && mode !== 0) {
     timersAfter(e, k);
   }
+  if ((m.ld32(k + t.T_FLAGS) & t.BATCHED) !== 0) {
+    // Its poll as part of a batch ends (sched_queue.velt `pushNext`).
+    m.and32(k + t.T_FLAGS, ~t.BATCHED);
+  }
   m.st(e + t.E_CURRENT, 0);
   // A lazy worker 0's look after the poll (sched_loop.velt `alone`) reads `E_MODE` after this, and
   // the monitor stores `E_MODE`, then reads `E_CURRENT` (sched_monitor_lazy.velt `lazyDuties`):

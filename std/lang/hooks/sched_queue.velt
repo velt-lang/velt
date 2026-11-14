@@ -89,21 +89,34 @@ export function pushIo(e: usize, k: usize): void {
 }
 
 /**
- * Makes task `k` (woken by the task running) the next to run; one there before joins the input.
- * Only with other threads at the queues (`E_MODE` not 0), where the slot keeps a wake on the
- * waker's worker: one thread queues a woken task at the end of the second queue, in the order of
- * the wakes (sched_task.velt `schedule`). With the slot, 64 callers making requests of 4 owner
- * tasks (bench/async/pingpong_pinned.velt) took a step of each owner per request instead of one
- * per batch (1.71G instructions against 1.34G).
+ * Makes task `k` (woken by the task running) the next to run, unless a task woken before it
+ * holds that slot: `k` then joins the input behind it, so tasks one poll wakes in turn run in
+ * turn, as Node runs the reactions of promises settled in turn (#2968; the later wake took the
+ * slot, and ran first). Both are marked BATCHED: until their poll ends, a task woken in a batch
+ * queues its own wakes behind the input too (sched_task.velt). Only with other threads at the queues (`E_MODE` not 0), where the slot
+ * keeps a wake on the waker's worker: one thread queues a woken task at the end of the second
+ * queue, in the order of the wakes (sched_task.velt `schedule`). With the slot, 64 callers making
+ * requests of 4 owner tasks (bench/async/pingpong_pinned.velt) took a step of each owner per
+ * request instead of one per batch (1.71G instructions against 1.34G).
  */
 @inline
 export function pushNext(e: usize, k: usize): void {
   const before = m.ld(e + t.E_NEXT);
+  if (before !== 0) {
+    m.or32(before + t.T_FLAGS, t.BATCHED);
+    m.or32(k + t.T_FLAGS, t.BATCHED);
+    pushIo(e, k);
+    return;
+  }
+  const cur = m.ld(e + t.E_CURRENT);
+  if (cur !== 0 && (m.ld32(cur + t.T_FLAGS) & t.BATCHED) !== 0) {
+    // Woken in a batch, the task running sends its own wake behind the batch's others (a caller
+    // answered with others reaches its owner after theirs, so the owner takes them in one turn).
+    pushIo(e, k);
+    return;
+  }
   m.st(e + t.E_NEXT, k);
   m.st(e + t.E_QSLOW, 1);
-  if (before !== 0) {
-    pushIo(e, before);
-  }
 }
 
 /** Takes the first task of the second queue (0: none; `mode` as `pushRest`'s). */
