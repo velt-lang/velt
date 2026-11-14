@@ -20,6 +20,7 @@ import * as mk from "./sched_make";
 import * as micro from "./sched_micro";
 import * as mod from "./sched_module";
 import * as node from "./sched_node";
+import * as wn from "./sched_node_woken";
 import * as nc from "./sched_node_catch";
 import * as order from "./sched_order";
 import * as q from "./sched_queue";
@@ -116,9 +117,9 @@ function runOther(e: usize, k: usize, fl: u32): void {
 function runWoken(e: usize, k: usize, fl: u32): void {
   t.flags(k, 0, t.POLLED);
   if ((fl & t.LOCALS) !== 0) {
-    let n = node.takeWoken(k);
+    let n = wn.takeWoken(k);
     while (n !== 0) {
-      const next = node.nextWoken(n);
+      const next = wn.nextWoken(n);
       node.run(k, n, true);
       node.release(n);
       drain(e, k);
@@ -381,6 +382,15 @@ function finish(e: usize, k: usize): void {
     return;
   }
   m.store32(k + t.T_STATE, t.DONE);
+  // A promise woken while it waited, that finished before the task took it (its owner adopted
+  // it, or a microtask ran it), is still on the woken stack with a reference: given back.
+  let n = wn.takeWoken(k);
+  while (n !== 0) {
+    const next = wn.nextWoken(n);
+    node.run(k, n, true);
+    node.release(n);
+    n = next;
+  }
   micro.free(k);
   // Not the root of `main`, or that root counted as live.
   if (m.ld32(e + t.E_SOLO) === 0) {
@@ -415,9 +425,13 @@ function finish(e: usize, k: usize): void {
 @noInline
 function mainFinish(e: usize, k: usize): void {
   const g = m.ld(e + t.E_MAIN);
+  // The promises left on its woken stack with a reference, as `finish` gives them back.
+  wn.giveBackWoken(k);
   micro.free(k);
   // Never the last reference: worker 0's is held until it sees `DONE`.
   wk.release(k);
+  // Worker 0 may give its reference back once it sees this, and `k` may be gone then: a wake
+  // that pushed after the take above is given back by worker 0 (sched.velt `schedBlockOn`).
   m.store32(k + t.T_STATE, t.DONE);
   if (e !== g) {
     // Worker 0 may sleep, woken at the root's end (`mainDone`) before this.

@@ -1,0 +1,28 @@
+// velt/lang/hooks (internal): `velt_rt_fut_peek` under the executor in Velt (sched.velt
+// `schedPeek`): whether a promise settled with its result still in its slot, which `console.log`
+// then prints (`Promise { 42 }`) without claiming it.
+
+import { Ptr } from "velt/ffi";
+import { fnAddress } from "velt/lang/intrinsics";
+import * as jn from "./sched_join";
+import * as m from "./sched_mem";
+import * as node from "./sched_node";
+
+// A pointer is `Ptr`, as in compiled code's declaration of this symbol.
+declare c("c") function velt_rt_fut_peek$rt(f: Ptr<u8>): u8;
+
+/**
+ * 1 when promise `f` settled with its result in its slot. A node of this executor's tells by its
+ * flags; a spawned task's handle prints as pending; anything else is the runtime's to tell (a
+ * leaf, a holder of a shared promise, a promise boxed off the worker).
+ */
+export function peek(f: usize): u32 {
+  if (m.ld(f) === fnAddress(node.nodePoll)) {
+    return node.peek(f) ? 1 : 0;
+  }
+  if (jn.isJoin(f)) {
+    return 0;
+  }
+  // SAFETY: `f` is a live heap future of the runtime's.
+  return unsafe { velt_rt_fut_peek$rt(m.ptr(f)) } as u32;
+}

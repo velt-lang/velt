@@ -304,6 +304,9 @@ hooks! {
     sched_detach => lang_hooks_sched, "schedDetach", sig((usize, usize) -> void), lowered;
     /// `velt_rt_futs_handled`'s: `(futs, n, quiet_drop)`.
     sched_handled => lang_hooks_sched, "schedHandled", sig((usize, u64, usize) -> void), lowered;
+    /// `velt_rt_fut_peek`'s (`console.log` of a promise): `(f)`, 1 when it settled with its result
+    /// in its slot.
+    sched_peek => lang_hooks_sched, "schedPeek", sig((usize) -> u32), lowered;
     /// `velt_rt_await_tick`'s: `(cx)`, the ticket; then `velt_rt_await_ready`'s: `(ticket, cx)`.
     sched_await_tick => lang_hooks_sched, "schedAwaitTick", sig((usize) -> u64), lowered;
     sched_await_ready => lang_hooks_sched, "schedAwaitReady", sig((u64, usize) -> u32), lowered;
