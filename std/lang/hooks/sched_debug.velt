@@ -2,7 +2,7 @@
 // (sched.velt, #2649, #2815). With `VELT_SCHED_DEBUG=<ms>` set, a thread of its own writes one
 // line to stderr every `<ms>` milliseconds: the monitor's state, a few counters of rare events
 // (the monitor's rescues and spare starts, its turns of a stalled worker's reactor, spin locks
-// that gave the core away), and per worker its park word, current task, inbox, queues, locks,
+// that gave the core away, Windows' poll requests lost and made anew), and per worker its park word, current task, inbox, queues, locks,
 // unparks, polls and progress, and its reactor's sources, waits and due writes. Unset, nothing
 // starts and nothing is counted but those rare events.
 
@@ -76,7 +76,7 @@ function sl(): usize {
 /** One line: the monitor's state and counters, then each started worker's. */
 function line(g: usize, at: usize): void {
   const n = m.load(g + t.E_STARTED);
-  let s = `sched ${at}ms ticks=${m.load(g + t.E_TICKS)} started=${n} monAsleep=${m.load32(g + t.E_MON_ASLEEP)} moving=${m.load(g + t.E_MOVING)} rescues=${RESCUES.load()} spares=${SPARES.load()} turns=${TURNS.load()} yields=${m.SPIN_YIELDS.load()}`;
+  let s = `sched ${at}ms ticks=${m.load(g + t.E_TICKS)} started=${n} monAsleep=${m.load32(g + t.E_MON_ASLEEP)} moving=${m.load(g + t.E_MOVING)} rescues=${RESCUES.load()} spares=${SPARES.load()} turns=${TURNS.load()} yields=${m.SPIN_YIELDS.load()} pollsLost=${m.POLLS_LOST.load()} pollsReopened=${m.POLLS_REOPENED.load()}`;
   for (let i: usize = 0; i < n; i++) {
     const w = t.worker(i);
     const b = m.ld(w + t.E_IO);

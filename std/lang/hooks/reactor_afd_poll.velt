@@ -228,8 +228,11 @@ export function drop(r: usize, p: usize): void {
   }
 }
 
-/** Wants the events behind readiness bits `bits` of request `p` (locked) again. */
-export function want(r: usize, p: usize, bits: u32): void {
+/**
+ * Wants the events behind readiness bits `bits` of request `p` (locked) again: 0, or the status
+ * of a submission that failed (`p` is freed then, and its socket has no poll).
+ */
+export function want(r: usize, p: usize, bits: u32): i32 {
   let w: u32 = WANT_ERR;
   if ((bits & (READ | HUP | ERR)) !== 0) {
     w = w | WANT_READ;
@@ -238,7 +241,7 @@ export function want(r: usize, p: usize, bits: u32): void {
     w = w | WANT_WRITE;
   }
   m.st32(p + P_WANT, m.ld32(p + P_WANT) | w);
-  update(r, p);
+  return update(r, p);
 }
 
 /**
@@ -284,7 +287,8 @@ function update(r: usize, p: usize): i32 {
     );
   }
   if (s !== 0 && s !== STATUS_PENDING) {
-    // No completion comes: the socket is closed or no socket.
+    // No completion comes: the socket is closed or no socket. Rare: counted for the debug view.
+    m.POLLS_LOST.add(1, "relaxed");
     forget(r, p);
     return s;
   }
@@ -322,7 +326,9 @@ export function completed(r: usize, p: usize, ev: usize): bool {
     events = 0;
   } else if (status < 0) {
     // The poll itself failed: the socket is broken, an error for whoever uses it next. Not
-    // submitted again (it would fail again, poll after poll).
+    // submitted again (it would fail again, poll after poll); an operation that finds the socket
+    // not ready asks for a new request (reactor_afd.velt `rearm`).
+    m.POLLS_LOST.add(1, "relaxed");
     forget(r, p);
     m.st(ev, source);
     m.st(ev + 8, bitsOf(POLL_CONNECT_FAIL) as usize);
@@ -336,12 +342,18 @@ export function completed(r: usize, p: usize, ev: usize): bool {
   }
   events = events & m.ld32(p + P_WANT);
   m.st32(p + P_WANT, m.ld32(p + P_WANT) & ~events);
-  update(r, p);
-  if (events === 0) {
+  let bits = bitsOf(events);
+  if (update(r, p) !== 0) {
+    // The next poll could not be submitted (`p` is freed): with no poll, nothing would wake the
+    // socket's waiters again (#2905). They try their operation once more: it works, fails with
+    // the socket's error, or finds it not ready and asks for a new request (`rearm`).
+    bits = bits | READ | WRITE;
+  }
+  if (bits === 0) {
     return false;
   }
   m.st(ev, source);
-  m.st(ev + 8, bitsOf(events) as usize);
+  m.st(ev + 8, bits as usize);
   return true;
 }
 

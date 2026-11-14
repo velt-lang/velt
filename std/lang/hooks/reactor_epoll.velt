@@ -340,5 +340,7 @@ export const REARMS: bool = false;
  */
 export const DEREGISTERS: bool = false;
 
-/** Nothing to ask again: the next edge reports the socket ready. */
-export function rearm(r: usize, fd: i32, source: usize, bits: u32): void {}
+/** Nothing to ask again: the next edge reports the socket ready (0: no error). */
+export function rearm(r: usize, fd: i32, source: usize, bits: u32): i32 {
+  return 0;
+}

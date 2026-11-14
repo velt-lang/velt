@@ -39,6 +39,8 @@ export const EINPROGRESS: i32 = 10035;
 export const EINTR: i32 = 10004;
 /** `WSAEMFILE`: no more sockets (an accepted handle too large for a descriptor). */
 const WSAEMFILE: i32 = 10024;
+/** `WSAENOTSOCK`: a socket whose poll can't be submitted (`rearm`). */
+const WSAENOTSOCK: i32 = 10038;
 /** No clock id on Windows (std/lang/hooks/os_win32.velt reads the performance counter). */
 export const MONOTONIC: i32 = 0;
 /** `send`'s flags: none (no SIGPIPE on Windows). */
@@ -276,15 +278,28 @@ export function del(r: usize, fd: i32): void {
 
 /**
  * Socket `fd` of `source` was found not ready for readiness bits `bits` (sched_io.velt
- * `notReady`, its source locked): its poll asks for them again.
+ * `notReady`, its source locked): its poll asks for them again. A socket whose request was lost
+ * (a poll or a submission failed: reactor_afd_poll.velt) gets a new one, since no event would
+ * ever come for it otherwise (#2905). 0, or an error when no poll could be submitted.
  */
-export function rearm(r: usize, fd: i32, source: usize, bits: u32): void {
+export function rearm(r: usize, fd: i32, source: usize, bits: u32): i32 {
   p.lock(r);
   const q = p.find(r, fd as usize);
-  if (q !== 0) {
-    p.want(r, q, bits);
-  }
+  const e = q !== 0 ? p.want(r, q, bits) : 1;
   p.unlock(r);
+  if (e === 0) {
+    return 0;
+  }
+  // Rare: counted for the debug view (sched_debug.velt).
+  m.POLLS_REOPENED.add(1, "relaxed");
+  const base = baseOf(fd as usize);
+  if (base === 0) {
+    return errno();
+  }
+  p.lock(r);
+  const o = p.open(r, fd as usize, base, source);
+  p.unlock(r);
+  return o === 0 ? 0 : WSAENOTSOCK;
 }
 
 /**

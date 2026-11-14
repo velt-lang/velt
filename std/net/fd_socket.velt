@@ -255,6 +255,12 @@ export async function accept(l: u64): Promise<IoResult<u64>> {
     if (s === 0) {
       return failed(closed(), 0);
     }
+    // A listener's only error: its reactor could not poll it (sched_io.velt `rearm`).
+    const se = m.ld32(s + io.S_ERR) as i32;
+    if (se !== 0) {
+      tb.leave(s);
+      return failed(osError(se), 0);
+    }
     if (!bd.spend()) {
       tb.leave(s);
       // SAFETY: `waitFor` makes a heap future, given up to the promise.

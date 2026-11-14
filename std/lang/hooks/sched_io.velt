@@ -415,9 +415,17 @@ export function notReady(s: usize, bit: u32): void {
   }
 }
 
+/**
+ * Asks `s`'s reactor for readiness `bit` again. When it can't (no poll could be submitted), the
+ * error is the socket's (`S_ERR`): it ends every wait on it, and the operations fail with it
+ * instead of waiting for an event that never comes (#2905).
+ */
 @noInline
 function rearm(s: usize, bit: u32): void {
-  r.rearm(m.ld(m.ld(s + S_IOB) + IO_REACTOR), m.ld(s + S_FD) as i32, s, bit);
+  const e = r.rearm(m.ld(m.ld(s + S_IOB) + IO_REACTOR), m.ld(s + S_FD) as i32, s, bit);
+  if (e !== 0 && m.ld32(s + S_ERR) === 0) {
+    m.st32(s + S_ERR, e as u32);
+  }
 }
 
 /** Wakes every waiter of `s`; each polls again and waits again when it must. */

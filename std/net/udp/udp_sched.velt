@@ -150,6 +150,12 @@ async function sendTo(u: u64, data: u8[], sa: usize, len: u32): Promise<IoResult
     if (s === 0) {
       return fs.failed(fs.closed(), 0);
     }
+    // Its only error: its reactor could not poll it (sched_io.velt `rearm`).
+    const se = m.ld32(s + io.S_ERR) as i32;
+    if (se !== 0) {
+      tb.leave(s);
+      return fs.failed(fs.osError(se), 0);
+    }
     const n = data.length;
     const p = n === 0 ? 0 : addressOf(data, 0);
     let sent: isize = 0;
@@ -189,6 +195,12 @@ export async function velt_rt_udp_recv_from(u: u64, max: u64): Promise<IoResult<
     if (s === 0) {
       m.release(sa, SA_SIZE + 8);
       return fs.failed(fs.closed(), noDatagram());
+    }
+    const se = m.ld32(s + io.S_ERR) as i32;
+    if (se !== 0) {
+      tb.leave(s);
+      m.release(sa, SA_SIZE + 8);
+      return fs.failed(fs.osError(se), noDatagram());
     }
     m.st32(sa + SA_SIZE, SA_SIZE as u32);
     const p = addressOf(buf, 0);
