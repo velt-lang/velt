@@ -12,6 +12,12 @@
 //!   callee keeps in memory across it. (The standard library's caller-tracking functions get an
 //!   instance per call site, track_caller.rs in velt_vir, so they meet the single-site rule;
 //!   this rule gives every program's loops the same, its own modules' functions included.)
+//!   A call that came into the loop with an inlined body, not one the caller's loop makes
+//!   itself, is inlined only up to `NESTED_LOOP_COST`, unless it passes a static (a literal key
+//!   the callee's tests fold, `passes_static`): the callee already chose which of its own
+//!   callees to take when it was optimized, and taking the rest again at the loop limit made a
+//!   17-line row parser 16 times its size (`Number`, 910 statements, twice, through the
+//!   `integer` helper its loop calls, #2707).
 //!
 //! Functions that never return normally (panic helpers, and `never` functions that throw) are
 //! never inlined: their calls are cold.
@@ -42,7 +48,9 @@
 mod splice;
 
 use rustc_hash::FxHashMap;
-use velt_vir::vir::{Callee, FuncId, Function, Inline, Program, Rvalue, Stmt, Terminator};
+use velt_vir::vir::{
+    Callee, Const, FuncId, Function, Inline, Operand, Program, Rvalue, Stmt, Terminator,
+};
 
 use crate::callgraph::{direct_calls, CallGraph};
 use crate::scc::on_cycle;
@@ -60,6 +68,11 @@ const LEAF_COST: u64 = 120;
 const ONCE_COST: u64 = 2_000;
 /// Callees called from a loop at most this big are inlined while the growth budget lasts.
 const LOOP_COST: u64 = 1_000;
+/// ...and those an inlined body brought into the loop, at most this big unless the call passes a
+/// static ([`passes_static`]; module docs): room for a JSON reader's steps (145 to 317), not for
+/// `Number` (910), a regex test (502) or `RegExp.execAt` (358). On the generated 3k-line
+/// application of #2707, clang retires 10.8% fewer instructions (76.3 G to 68.1 G).
+const NESTED_LOOP_COST: u64 = 350;
 /// Recursive callees at most this big are inlined into loops of outside callers (while the
 /// growth budget lasts).
 const RECURSIVE_COST: u64 = 200;
@@ -327,6 +340,10 @@ struct Site<'a> {
     caller: FuncId,
     caller_cost: u64,
     in_loop: bool,
+    /// The call came with an inlined body: the caller does not make it itself.
+    nested: bool,
+    /// The call passes a static (a string literal, a table): see [`passes_static`].
+    passes_static: bool,
     /// Recursive functions whose inlined bodies the call came with (this round).
     from: &'a [FuncId],
 }
@@ -385,7 +402,9 @@ fn decide(
         let ok = site.in_loop && size <= RECURSIVE_COST && size <= budget.remaining;
         return ok.then_some(Decision::Charged(size));
     }
-    let limit = if site.in_loop {
+    let limit = if site.in_loop && site.nested && !site.passes_static {
+        NESTED_LOOP_COST
+    } else if site.in_loop {
         LOOP_COST
     } else if size > SMALL_COST && is_leaf(program, target) {
         LEAF_COST
@@ -450,6 +469,8 @@ fn inline_into(
     let mut scan = vec![true; in_loop.len()];
     // Per block: the recursive functions whose inlined bodies it came with.
     let mut from: Vec<Vec<FuncId>> = vec![vec![]; in_loop.len()];
+    // Per block: whether it came with an inlined body.
+    let mut nested = vec![false; in_loop.len()];
     // The recursive functions this caller gets copies of in this round.
     let mut copied: Vec<FuncId> = vec![];
     let mut changed = false;
@@ -480,10 +501,16 @@ fn inline_into(
         if !splice::arity_matches(args, target) || gated_elsewhere {
             continue;
         }
+        // Only a nested call in a loop asks, and only of a callee the nested limit would refuse.
+        let size = cost(target);
+        let asks = in_loop[here] && nested[here] && size > NESTED_LOOP_COST && size <= LOOP_COST;
+        let passes_static = asks && passes_static(&program.funcs[fi], args);
         let site = Site {
             caller,
             caller_cost,
             in_loop: in_loop[here],
+            nested: nested[here],
+            passes_static,
             from: &from[here],
         };
         let Some(decision) = decide(state, program, callee, &site, budget) else {
@@ -515,6 +542,7 @@ fn inline_into(
         in_loop.resize(grown, in_loop[here]);
         scan.resize(grown, in_loop[here]);
         from.resize(grown, brings);
+        nested.resize(grown, true);
         caller_cost += cost(&body);
         changed = true;
     }
@@ -527,6 +555,36 @@ fn inline_into(
         }
     }
     changed
+}
+
+/// Whether a call in `func` with `args` passes a static (a string literal, a table): itself, or a
+/// local `func` stores one in, or the address of such a local (an `any` key is a pair whose second
+/// half is the key's text). A callee given a compile-time key folds its tests of it once inlined,
+/// so a nested call that passes one keeps the loop limit: a JSON tape's `find` (881 statements)
+/// looking up a literal name, a proxy's `get` trap reading a literal property.
+fn passes_static(func: &Function, args: &[Operand]) -> bool {
+    use velt_vir::vir::Local;
+    let is_static = |o: &Operand| matches!(o, Operand::Const(Const::Static(_), _));
+    if args.iter().any(is_static) {
+        return true;
+    }
+    let mut holds = rustc_hash::FxHashSet::<Local>::default();
+    let mut points: Vec<(Local, Local)> = vec![];
+    for s in func.blocks.iter().flat_map(|b| &b.stmts) {
+        match s {
+            Stmt::Assign(p, Rvalue::Use(o)) if is_static(o) => {
+                holds.insert(p.local);
+            }
+            Stmt::Assign(p, Rvalue::AddrOf(q)) if p.proj.is_empty() => {
+                points.push((p.local, q.local))
+            }
+            _ => {}
+        }
+    }
+    let held =
+        |l: Local| holds.contains(&l) || points.iter().any(|&(p, q)| p == l && holds.contains(&q));
+    args.iter()
+        .any(|a| matches!(a, Operand::Copy(p) if p.proj.is_empty() && held(p.local)))
 }
 
 /// Per block of `func`: whether it lies on a cycle of the control-flow graph (in a loop).
