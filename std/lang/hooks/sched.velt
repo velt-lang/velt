@@ -140,6 +140,7 @@ export function schedFinish(code: i32): void {
       loop.turn(e);
     }
   }
+  wk.settleWakes();
   // Streams dropped unclosed stay open to the end, as the runtime's: their buffers go now.
   tb.releaseBuffers();
   st.report();
