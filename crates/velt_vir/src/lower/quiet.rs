@@ -127,7 +127,7 @@ impl Cx<'_> {
             // A named literal is evaluated at each use, as the literal is.
             H::Global(d) => match self.hir.def(*d) {
                 hir::Def::Global(g) => {
-                    g.slot.is_none()
+                    !g.is_slot
                         && g.c_const.is_none()
                         && g.c_global.is_none()
                         && matches!(g.init.kind, H::Lit(_))

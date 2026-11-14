@@ -251,10 +251,7 @@ impl FnLower<'_, '_> {
 
     /// The slot of global `d` when it is a module-level `let`.
     pub(super) fn slot_of(&self, d: hir::DefId) -> Option<u32> {
-        match self.cx.hir.def(d) {
-            hir::Def::Global(g) => g.slot,
-            _ => None,
-        }
+        self.cx.slot_index.get(&d).copied()
     }
 
     /// Is the place `e` a module state slot (a module-level `let`, or a module `const` that is

@@ -300,7 +300,7 @@ impl FnLower<'_, '_> {
         if g.c_const.is_some() || g.c_global.is_some() {
             return self.c_value(d);
         }
-        if let Some(slot) = g.slot {
+        if let Some(slot) = self.slot_of(d) {
             // A module-level `let`: its slot, read in place (sema shares what it moves out).
             return Operand::Copy(self.module_slot(slot));
         }
@@ -370,7 +370,7 @@ impl FnLower<'_, '_> {
                 };
                 // A module-level `let` (its slot holds the array, which code may replace or
                 // modify) is never read from the stored initializer.
-                if g.slot.is_some() {
+                if g.is_slot {
                     self.cx.tables.insert(d, None);
                     return None;
                 }
