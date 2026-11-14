@@ -50,6 +50,72 @@ pub(crate) struct KeyNames {
     spelled: FxHashMap<String, String>,
     /// The `SymbolStatic` ids of the registry's symbols, by key.
     registered: FxHashMap<String, u128>,
+    /// The ids given out ([`KeyNames::own_id`], [`KeyNames::registered_id`]): a constant's or a
+    /// key's, so two never share one.
+    given: FxHashMap<u128, SymbolOwner>,
+}
+
+/// Whose a `SymbolStatic` id is.
+#[derive(Clone, PartialEq, Eq)]
+enum SymbolOwner {
+    Constant(DefId),
+    Key(String),
+}
+
+/// FNV-1a of `text`: a hash that is the same in every build of the compiler and every program.
+fn stable_hash(text: &str) -> u64 {
+    text.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| {
+        (h ^ b as u64).wrapping_mul(0x0100_0000_01b3)
+    })
+}
+
+impl KeyNames {
+    /// The `SymbolStatic` id of the symbol module constant `d` (qualified `name`) holds: from the
+    /// name, so it is the same in every program (#2943; it used to follow `d`'s number, which
+    /// depends on load order). Ids are only told apart, never ordered (velt_vir `record_key`).
+    fn own_id(&mut self, d: DefId, name: &str) -> u128 {
+        let span = (REGISTERED_IDS - CONSTANT_IDS) as u64;
+        let first = CONSTANT_IDS + (stable_hash(name) % span) as u128;
+        self.give(
+            first,
+            SymbolOwner::Constant(d),
+            CONSTANT_IDS,
+            REGISTERED_IDS,
+        )
+    }
+
+    /// The `SymbolStatic` id of the registry's symbol for `key` (`Symbol.for(key)`), from the key.
+    fn registered_id(&mut self, key: &str) -> u128 {
+        if let Some(&id) = self.registered.get(key) {
+            return id;
+        }
+        let first = REGISTERED_IDS + stable_hash(key) as u128;
+        let id = self.give(
+            first,
+            SymbolOwner::Key(key.to_string()),
+            REGISTERED_IDS,
+            u128::MAX,
+        );
+        self.registered.insert(key.to_string(), id);
+        id
+    }
+
+    /// `first`, or the next free id after it in `lo..hi` when another owner has it: a collision
+    /// of the hashes, which then makes the later one's id depend on the program, but no two
+    /// symbols the same record.
+    fn give(&mut self, first: u128, owner: SymbolOwner, lo: u128, hi: u128) -> u128 {
+        let mut id = first;
+        loop {
+            match self.given.get(&id) {
+                Some(o) if *o == owner => return id,
+                Some(_) => id = if id + 1 >= hi { lo } else { id + 1 },
+                None => {
+                    self.given.insert(id, owner);
+                    return id;
+                }
+            }
+        }
+    }
 }
 
 /// A string literal argument (`"d"`, or a template without substitutions).
@@ -132,16 +198,12 @@ impl Ctx<'_> {
     /// for it, so each use of the constant is the same symbol without a call.
     pub(crate) fn symbol_init(&mut self, d: DefId, ann: Option<TyId>) -> Option<hir::Expr> {
         let (id, desc) = match self.known_symbol(d)? {
-            KnownSymbol::Own(_, desc) => (CONSTANT_IDS + d.0 as u128, desc),
-            KnownSymbol::Registered(key) => {
-                let n = self.symbol_keys.registered.len() as u128;
-                let id = *self
-                    .symbol_keys
-                    .registered
-                    .entry(key.clone())
-                    .or_insert(REGISTERED_IDS + n);
-                (id, Some(key))
+            KnownSymbol::Own(_, desc) => {
+                let name = self.global(d)?.qual_name.clone();
+                let id = self.symbol_keys.own_id(d, &name);
+                (id, desc)
             }
+            KnownSymbol::Registered(key) => (self.symbol_keys.registered_id(&key), Some(key)),
         };
         // Interned only for a symbol constant: a program without symbols keeps its type ids.
         let sym = self.ty.intern(TyKind::Symbol);
