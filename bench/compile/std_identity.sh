@@ -7,7 +7,7 @@
 # Without PROGRAMs: every golden with a `.out` (tests/golden). Runs up to $JOBS (default 3) checks
 # at once, each writing its std definitions' hashes (VELT_STD_SUMMARY), names the programs that
 # failed to check (on stderr), then prints bench/compile/std_identity.py's report and exits with
-# its status.
+# its status. With VELT_STD_SUMMARY_EAGER=1 in the environment, both sides check all of std.
 set -euo pipefail
 VELT=$(realpath "$1"); WORK=$2; shift 2
 HERE=$(cd "$(dirname "$0")" && pwd); ROOT=$(cd "$HERE/../.." && pwd)

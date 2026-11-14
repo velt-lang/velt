@@ -110,7 +110,10 @@ hash per checked std definition to `<file>`:
 
 `bench/compile/std_identity.sh` compares every golden's std definitions with those of
 `velt check --std` and names each that differs, and how. `VELT_STD_SUMMARY_SHOW=<part>` writes a
-definition's hashed form, to diff the two.
+definition's hashed form, to diff the two. `VELT_STD_SUMMARY_EAGER=1` checks every std file with
+the program, as a cache of checked std would hold it, so a difference that only lazy checking makes
+(a std body checked from one program's call sites) drops out and what is left is what the program
+itself changes in std.
 
 A difference is a path by which a program changes std's checked form. Phase 2 removes them, and
 phase 3 serves nothing until the count is zero, or each remainder is a keyed variant.
