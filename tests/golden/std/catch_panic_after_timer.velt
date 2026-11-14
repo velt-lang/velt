@@ -1,0 +1,56 @@
+// `catchPanic` (#2008) catches a panic that comes after the promise waited for a timer, an
+// `setTimeout`, a spawned task or a `Promise.race`, not only after `yieldNow()`: the panicking poll
+// is the one the timer or the task's end woke, which still runs under the catch (#2925: on Windows
+// the structured exception has to reach the catch from there too).
+import { catchPanic, PanicError } from "velt/task";
+
+async function afterSleep(): Promise<string> {
+  await sleep(0);
+  panic("after sleep(0)");
+  return "never";
+}
+
+async function afterSleepAndYield(): Promise<string> {
+  await sleep(5);
+  await yieldNow();
+  panic("after sleep(5) and yieldNow()");
+  return "never";
+}
+
+async function afterTimeout(): Promise<string> {
+  await new Promise<void>((resolve) => {
+    setTimeout(() => resolve(), 1);
+  });
+  panic("after setTimeout");
+  return "never";
+}
+
+async function inSpawned(): Promise<string> {
+  return await spawn(afterSleep());
+}
+
+async function later(): Promise<string> {
+  await sleep(20);
+  return "later";
+}
+
+async function inRace(): Promise<string> {
+  return await Promise.race([afterSleep(), later()]);
+}
+
+async function report(name: string, body: () => Promise<string>) {
+  try {
+    console.log(name, await catchPanic(body));
+  } catch (e) {
+    console.log(name, "caught", e instanceof PanicError, (e as Error).message.split(" at ")[0]);
+  }
+}
+
+async function main() {
+  await report("sleep", () => afterSleep());
+  await report("sleep and yield", () => afterSleepAndYield());
+  await report("setTimeout", () => afterTimeout());
+  await report("spawn", () => inSpawned());
+  await report("race", () => inRace());
+  console.log("end");
+}

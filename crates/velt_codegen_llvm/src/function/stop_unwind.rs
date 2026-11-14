@@ -2,8 +2,11 @@
 //! unwinds into one aborts the process, as clang does for a `noexcept` function and Rust for an
 //! `extern "C"` one. Each call in it that can unwind is an `invoke` whose unwind edge goes to one
 //! landing pad calling `abort`, with the personality function of the runtime's panics: Rust's
-//! (`rust_eh_personality`, the runtime defines it) for the Itanium unwinder of Linux and macOS,
-//! `__CxxFrameHandler3` (a `cleanuppad`) for Windows' SEH panics.
+//! (`rust_eh_personality`, the runtime defines it) for the Itanium unwinder of Linux and macOS;
+//! on Windows a `cleanuppad` under `__C_specific_handler`, a termination handler (`__finally`),
+//! which runs for every exception that unwinds the frame: Velt's (`RaiseException`) and Rust's
+//! panics (C++ exceptions) alike. (`__CxxFrameHandler3` skips its cleanups for an exception that
+//! is not C++, so a Velt panic passed it.)
 //!
 //! Missing unwind information alone would not do: LLVM writes it anyway with `-g` (its CFI goes to
 //! `.eh_frame` as the other functions'), and a call in tail position becomes a jump, which leaves
@@ -22,7 +25,7 @@ const PAD: &str = "velt.abort";
 pub(super) enum Pad {
     /// Itanium: `landingpad … cleanup` with Rust's personality.
     Landing,
-    /// Windows: `cleanuppad` with the MSVC C++ personality Rust panics use.
+    /// Windows: `cleanuppad` under `__C_specific_handler`.
     Cleanup,
 }
 
@@ -38,7 +41,7 @@ impl Pad {
     fn personality(self) -> &'static str {
         match self {
             Pad::Landing => "@rust_eh_personality",
-            Pad::Cleanup => "@__CxxFrameHandler3",
+            Pad::Cleanup => "@__C_specific_handler",
         }
     }
 }

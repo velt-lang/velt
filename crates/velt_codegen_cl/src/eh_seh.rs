@@ -133,6 +133,94 @@ pub(crate) fn define<M: Module>(
     Ok(())
 }
 
+/// The language handler of a function C calls (`Function::stops_unwind`), in an object for
+/// Windows x64: a Velt panic must not unwind through the C frames above it (#2649 decision (b)),
+/// as on Linux and macOS, where such a function has no unwind entry and the search ends there.
+/// It keeps its unwind entry here (the unwinder would take it for a leaf and misread the stack),
+/// with this handler, which ends the process with 101 when the search phase reaches the frame
+/// with Velt's exception (the panic's message is printed already), and lets anything else
+/// through (`ExceptionContinueSearch`). Rust's panics passing it are unchanged.
+///
+/// ```text
+///  0: cmp dword [rcx], CODE    ; EXCEPTION_RECORD.ExceptionCode
+///  6: jne pass
+///  8: test byte [rcx+4], 0x66  ; ExceptionFlags: an unwind (not the search phase)
+/// 12: jnz pass
+/// 14: sub rsp, 40
+/// 18: mov ecx, 101
+/// 23: call velt_rt_exit
+/// 28: int3
+/// 29: pass: mov eax, 1
+/// 34: ret
+/// ```
+fn stopper_code() -> Vec<u8> {
+    let mut c = vec![0x81, 0x39];
+    c.extend(eh::SEH_CODE.to_le_bytes());
+    c.extend([
+        0x75, 0x15, // jne pass
+        0xF6, 0x41, 0x04, 0x66, // test byte [rcx+4], 0x66
+        0x75, 0x0F, // jnz pass
+        0x48, 0x83, 0xEC, 0x28, // sub rsp, 40
+        0xB9, 0x65, 0x00, 0x00, 0x00, // mov ecx, 101
+        0xE8, 0x00, 0x00, 0x00, 0x00, // call velt_rt_exit
+        0xCC, // int3
+        0xB8, 0x01, 0x00, 0x00, 0x00, // pass: mov eax, 1
+        0xC3, // ret
+    ]);
+    c
+}
+
+/// The offset of the call's 32-bit displacement in [`stopper_code`].
+const STOPPER_CALL: u32 = 24;
+
+/// `info`, the unwind info of a function C calls, with the handler above (defined in `module`
+/// the first time, kept in `stopper`); other unwind info as it is.
+pub(crate) fn stop_unwind<M: Module>(
+    module: &mut M,
+    stopper: &mut Option<FuncId>,
+    info: FunctionUnwind,
+) -> CodegenResult<FunctionUnwind> {
+    let (id, size, Unwind::WindowsX64(mut record)) = info else {
+        return Ok(info);
+    };
+    let handler = match *stopper {
+        Some(h) => h,
+        None => {
+            let sig = module.make_signature();
+            let h = module
+                .declare_function("velt_eh_stop", Linkage::Local, &sig)
+                .map_err(|e| format!("codegen: declaring `velt_eh_stop`: {e}"))?;
+            let mut exit_sig = module.make_signature();
+            exit_sig.params.push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I32,
+            ));
+            let exit = module
+                .declare_function("velt_rt_exit", Linkage::Import, &exit_sig)
+                .map_err(|e| format!("codegen: declaring `velt_rt_exit`: {e}"))?;
+            let reloc = cranelift_module::ModuleReloc {
+                offset: STOPPER_CALL,
+                kind: cranelift_codegen::binemit::Reloc::X86CallPCRel4,
+                name: exit.into(),
+                addend: -4,
+            };
+            module
+                .define_function_bytes(h, 16, &stopper_code(), &[reloc])
+                .map_err(|e| format!("codegen: defining `velt_eh_stop`: {e}"))?;
+            *stopper = Some(h);
+            h
+        }
+    };
+    record[0] |= 0x01 << 3; // UNW_FLAG_EHANDLER
+    let at = record.len() as u32;
+    record.extend([0; 4]);
+    let relocs = vec![XdataReloc {
+        offset: at,
+        func: handler,
+        addend: 0,
+    }];
+    Ok((id, size, Unwind::WindowsX64Handler(record, relocs)))
+}
+
 /// Whether `module`'s `velt_eh_try` is this one: an object for Windows x64.
 pub(crate) fn applies<M: Module>(module: &M) -> bool {
     let triple = module.isa().triple().to_string();
@@ -162,5 +250,17 @@ mod tests {
         let x = xdata();
         assert_eq!(x.len(), 32);
         assert_eq!(x[0], 0x19);
+    }
+
+    #[test]
+    fn stopper_layout() {
+        let c = stopper_code();
+        assert_eq!(c.len(), 35);
+        // Both branches land on `mov eax, 1; ret`; the call's displacement is where the
+        // relocation goes.
+        let pass = &[0xB8, 0x01, 0x00, 0x00, 0x00, 0xC3][..];
+        assert_eq!(&c[8 + c[7] as usize..], pass);
+        assert_eq!(&c[14 + c[13] as usize..], pass);
+        assert_eq!(c[STOPPER_CALL as usize - 1], 0xE8);
     }
 }

@@ -100,7 +100,9 @@ depends on the frames above `main`, which Velt doesn't control: the runtime's en
 abort-on-unwind landing pads Rust's personality claims for any class, so on Linux x86-64 with a
 debug runtime the process aborts there ("panic in a function that cannot unwind"); with other
 runtime builds the search reached the end of the stack and the raise returned. Tokio's task
-harness on worker threads catches too. So `panicRaise`'s exit 101 after a returned raise is a
+harness on worker threads catches too. On Windows an unclaimed `RaiseException` never returns;
+there an unhandled-exception filter std installs at the first raise exits with 101 instead
+("Windows" below). So `panicRaise`'s exit 101 after a returned raise is a
 fallback, not a guarantee: the guarantee is that it raises only when a `velt_eh_try` that
 catches is live, which then claims it.
 
@@ -327,8 +329,20 @@ Built for x64 (`velt_vir::eh::Catching::Seh`, #2925); Windows on arm64 stays `Ca
 - Calls get no cleanup pads (lowering adds edges only for `Catching::Itanium`): the frames a
   panic unwinds leak what they own, as everywhere before #2667. Under the executor in Velt no Rust frame is
   between the raise and the catch; a Rust `C-unwind` frame there would pass the exception in the
-  search phase (`__CxxFrameHandler3` claims C++ exceptions only). With LLVM a function C calls
-  (`@export`) aborts as on the other targets: its `cleanuppad` runs in the second phase.
+  search phase (`__CxxFrameHandler3` claims C++ exceptions only, and skips its cleanups for
+  other exceptions).
+- A function C calls (`@export`) stops a Velt panic as on the other targets (#2649 decision (b)):
+  with LLVM its abort pad is a `cleanuppad` under `__C_specific_handler` (a termination handler,
+  which runs for every exception that unwinds the frame; under `__CxxFrameHandler3` a Velt panic
+  passed it), so a catch above the C frames makes the second phase abort there; with Cranelift
+  its `.xdata` names a language handler (`velt_eh_stop`, `eh_seh.rs`) that ends the process with
+  101 when the search phase reaches the frame with Velt's code, as the search ending there does
+  on Linux and macOS.
+- An unclaimed raise never returns on Windows (the unhandled-exception filter ends the process
+  with the exception code), so the first raise installs a filter of its own
+  (`SetUnhandledExceptionFilter`, `unwind_seh.velt` `unclaimed`) that ends the process with 101
+  for Velt's code, as `panicRaise`'s fallback does elsewhere, and hands other exceptions to the
+  filter it replaced.
 
 **WebAssembly.** No unwinding (`velt_rt_wasm` aborts on a panic). `velt_eh_try` is a plain call.
 The exception-handling proposal (`exnref`, `try_table`) could later carry the same design.

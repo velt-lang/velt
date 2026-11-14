@@ -35,6 +35,11 @@ fn std_dir(dir: &test_dir::TestDir) -> PathBuf {
         std::fs::create_dir_all(std.join("zz_unwind")).unwrap();
         let probe = format!("{PROBE}{RAISE_FOREIGN}");
         std::fs::write(std.join("zz_unwind/index.velt"), probe).unwrap();
+        #[cfg(windows)]
+        {
+            std::fs::create_dir_all(std.join("zz_cframes")).unwrap();
+            std::fs::write(std.join("zz_cframes/index.velt"), C_FRAMES).unwrap();
+        }
     }
     std
 }
@@ -97,6 +102,32 @@ export function caughtAt(a: usize): string {
 
 "#;
 
+/// `velt/zz_cframes` (Windows): a panic in a function C calls, under C's `qsort`. Its own module:
+/// `@export` has no WebAssembly form, and the probe is built for WebAssembly too.
+#[cfg(windows)]
+const C_FRAMES: &str = r#"
+import { Ptr, export as cExport } from "velt/ffi";
+import { exportedAddress } from "velt/lang/intrinsics/address";
+
+declare c("c") function qsort(base: usize, n: usize, size: usize, cmp: usize): void;
+declare c("c") function calloc(n: usize, size: usize): usize;
+
+/** A comparator C calls, which panics. */
+@cExport("probe_cmp")
+function probeCmp(a: Ptr<u8> | null, b: Ptr<u8> | null): i32 {
+  panic("in a C callback");
+  return 0;
+}
+
+/** C's `qsort` of two elements with `probeCmp`, which panics inside it. */
+export function sortInC(): void {
+  // SAFETY: two zeroed 8-byte elements; `probeCmp` takes two element pointers.
+  unsafe {
+    qsort(calloc(2, 8), 2, 8, exportedAddress(probeCmp));
+  }
+}
+"#;
+
 /// The probe's `raiseForeign`: another language's exception, raised with the platform's unwinder.
 #[cfg(not(windows))]
 const RAISE_FOREIGN: &str = r#"
@@ -124,7 +155,7 @@ export function raiseForeign(): void {
 "#;
 
 /// On Windows: a structured exception of another code (`0xE0000001`), which the filter of
-/// `velt_eh_try` passes.
+/// `velt_eh_try` passes; and a panic with a catch counted but none under it.
 #[cfg(windows)]
 const RAISE_FOREIGN: &str = r#"
 declare c("c") function RaiseException(code: u32, flags: u32, count: u32, args: usize): void;
@@ -137,6 +168,14 @@ export function raiseForeign(): void {
     RaiseException(0xe0000001, 1, 0, 0);
   }
 }
+
+/** A panic with a catch counted on this thread but no `velt_eh_try` frame under it. */
+export function panicUnclaimed(): void {
+  if (enterCatch()) {
+    panic("unclaimed");
+  }
+}
+
 "#;
 
 const MAIN: &str = r#"
@@ -239,6 +278,65 @@ fn another_languages_exception_passes_the_catch() {
             "raising\n" => assert!(!out.status.success(), "{why}"),
             _ => panic!("{why}"),
         }
+    }
+}
+
+/// A panic in a function C calls never unwinds through the C frames, even with a catch above them
+/// (#2649 decision (b), c_export.rs on macOS and Linux): on Windows a debug build ends with 101
+/// and a release build aborts, and the catch never returns.
+#[cfg(windows)]
+#[test]
+fn a_panic_does_not_unwind_through_c_frames() {
+    let dir = test_dir::TestDir::new();
+    let main = r#"
+import { catchVeltPanic } from "velt/zz_unwind";
+import { sortInC } from "velt/zz_cframes";
+
+function main() {
+  const m = catchVeltPanic(() => { sortInC(); });
+  console.log("caught", m);
+}
+"#;
+    for args in [&["run"][..], &["run", "--release"][..]] {
+        let out = velt(&dir, main, args);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let why = format!("{args:?}: {:?}\n{stdout}{stderr}", out.status);
+        assert!(!out.status.success(), "{why}");
+        assert!(!stdout.contains("caught"), "{why}");
+        assert!(stderr.contains("panic: in a C callback"), "{why}");
+        if args.len() == 1 {
+            assert_eq!(out.status.code(), Some(101), "{why}");
+        }
+    }
+}
+
+/// A Velt panic nobody catches, raised as an exception (a catch is running, but on another
+/// path: here a task the catch doesn't guard), ends the process with 101 on Windows too, where an
+/// unclaimed `RaiseException` never returns.
+#[cfg(windows)]
+#[test]
+fn an_unclaimed_raise_exits_with_101() {
+    let dir = test_dir::TestDir::new();
+    let main = r#"
+import { catchVeltPanic, panicUnclaimed } from "velt/zz_unwind";
+
+function main() {
+  // The program catches (its panics are raised), then panics with a catch counted on this
+  // thread but no `velt_eh_try` frame under the panic: the raise is unclaimed.
+  console.log(catchVeltPanic(() => {}));
+  panicUnclaimed();
+  console.log("not reached");
+}
+"#;
+    for args in [&["run"][..], &["run", "--release"][..]] {
+        let out = velt(&dir, main, args);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let why = format!("{args:?}: {:?}\n{stdout}{stderr}", out.status);
+        assert_eq!(out.status.code(), Some(101), "{why}");
+        assert!(stderr.contains("panic: unclaimed"), "{why}");
+        assert!(!stdout.contains("not reached"), "{why}");
     }
 }
 
