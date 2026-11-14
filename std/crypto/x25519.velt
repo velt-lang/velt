@@ -1,45 +1,11 @@
 // velt/crypto (internal): X25519 Diffie-Hellman (RFC 7748 §5): the Montgomery ladder on
-// Curve25519's u-coordinate. Constant time: 255 ladder steps whatever the scalar, the scalar's
-// bits only drive a masked swap, and the inversion is a fixed chain.
+// Curve25519's u-coordinate. A public key (the base point's multiple) comes from precomputed
+// Edwards multiples instead (x25519_base.velt). Constant time: 255 ladder steps whatever the
+// scalar, the scalar's bits only drive a masked swap, and the inversion is a fixed chain.
 
 import { CryptoError } from "velt/crypto/errors";
 import { Fe25519 } from "velt/crypto/field25519";
-
-// The base point's u-coordinate, 9.
-const BASE: u8[] = [
-  9,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-];
+import { x25519BaseMultiply } from "velt/crypto/x25519_base";
 
 /**
  * X25519 (RFC 7748): the shared secret of the 32-byte private `scalar` and the peer's 32-byte
@@ -69,7 +35,7 @@ export function x25519PublicKey(scalar: u8[]): u8[] {
   if (scalar.length != 32) {
     throw new CryptoError(`X25519 needs a 32-byte scalar, got ${scalar.length}`);
   }
-  return ladder(scalar, BASE);
+  return x25519BaseMultiply(scalar);
 }
 
 // Registers of the ladder's field elements.

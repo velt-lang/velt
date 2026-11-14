@@ -1,6 +1,6 @@
 // X25519 (velt/crypto `x25519`, `x25519PublicKey`): RFC 7748 §5.2's vectors (single and
 // iterated) and §6.1's Diffie-Hellman example, plus the all-zero result TLS must reject.
-import { x25519, x25519PublicKey } from "velt/crypto";
+import { randomBytes, x25519, x25519PublicKey } from "velt/crypto";
 import { hexDecode, hexEncode } from "velt/encoding";
 import { describe, expect, it } from "velt/test";
 
@@ -8,7 +8,109 @@ function x(scalar: string, u: string): string {
   return hexEncode(x25519(hexDecode(scalar), hexDecode(u)));
 }
 
+// (scalar, public key) pairs computed independently (Python, RFC 7748's ladder) for the
+// fixed-base multiplication (std/crypto/x25519_base.velt, #2955): edge scalars (all zeros, all
+// ones, every nibble 7, 8, 0 or 15 so the signed digits carry) and random ones.
+const PUBLIC_KEYS: string[][] = [
+  [
+    "0000000000000000000000000000000000000000000000000000000000000000",
+    "2fe57da347cd62431528daac5fbb290730fff684afc4cfc2ed90995f58cb3b74",
+  ],
+  [
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "847c0d2c375234f365e660955187a3735a0f7613d1609d3a6a4d8c53aeaa5a22",
+  ],
+  [
+    "0800000000000000000000000000000000000000000000000000000000000000",
+    "422c8e7a6227d7bca1350b3e2bb7279f7897b87bb6854b783c60e80311ae3079",
+  ],
+  [
+    "7777777777777777777777777777777777777777777777777777777777777777",
+    "1cf579aba45a10ba1d1ef06d91fca2aa9ed0a1150515653155405d0b18cb9a67",
+  ],
+  [
+    "8888888888888888888888888888888888888888888888888888888888888888",
+    "30d3c865a48fceb3d6118577cf2e5f228d6ff69866264757785b253cb7a4806a",
+  ],
+  [
+    "8080808080808080808080808080808080808080808080808080808080808080",
+    "c84a0f784d9723c28577272ff700d42b6c923c23f5bdd38e933ac77d6ceb9157",
+  ],
+  [
+    "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+    "7e81e916e3afcdb31ef74d8db923f2ba15b82a1aa6594ea228dcdf27d7b54f6c",
+  ],
+  [
+    "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+    "b40c34835815ab31869f8f7b009199f7b10c45157794d57b37d5716862fad115",
+  ],
+  [
+    "01ec9a6a207fbc80e95877d92653ccc7e3624db084c44ca195f0c9fba8c8a85d",
+    "1b5832801de481a72bb5e36731a77815444c5de324b37a8e3097ec70e3629024",
+  ],
+  [
+    "2e978766721808263cbe182e383a4af4fd8da251823c016e43f68c75687b962e",
+    "9223b60e380e2979c1e592a695ccee044561c0bbdb825e3713857922a3b94318",
+  ],
+  [
+    "97b9cb933624348f3298532b0ac0f0037fb1b6252d819f53a183b83afc700d4b",
+    "4ac9212861b1837b5d68039e6016d4283d54a805863432598d47ddbc55f4cd67",
+  ],
+  [
+    "a5ae5b70f5d40275b3991155f88fa4578a588e0cf47145472c5e1cd18a187d46",
+    "f802813ef9333666f6e5a7cc88249af05630d6d2726c45806aa9cf4ae31e934d",
+  ],
+  [
+    "5324a2fe27dedc9456d17c605af9c4cc89ee2bba3549f7af00a1a52bb1fbd9e5",
+    "85965c037057f982c2a36e03aa0f7099da57803d5e53a7033d7d3418cd51470f",
+  ],
+  [
+    "a3b971cac37fd00ac5a30a070dc2cafa04cc3c60a6cad3f3af373b3d81cfc6dc",
+    "373c2fba9ce4295863d08437001a931dcad9aa8630ff961069e2babff2bd4751",
+  ],
+  [
+    "3101746a77a4ad1fdd504a0879b73968fa89cbafb31a18407830cba386951554",
+    "31b2c62df607af0c98b29645d7839172c24a8a11ae2e1164d49f9457a9b0980c",
+  ],
+  [
+    "1f58cece070c38a1e6fc2d357f65632c3cea7922c864327f4f9748d7e61ddb0d",
+    "9592c2bd413ec6e0207e91e2df28aa7f5f3bc777113c7799f37b99eb18a4a716",
+  ],
+  [
+    "9d504fe31582cff498d26e2ef83f1b7e251adec4a5034851ccfbc3e4a33007ed",
+    "baf10e25d93d08f7bb1abce73b1a1d1cbdf98f5f099ed090fcb57e5651755e44",
+  ],
+  [
+    "5c00411f8dbbd04ff05331a12cc4285cc138a6ea7edfa9053f401aabb6035ed2",
+    "523bb56c57d86bbcfa5d21cc930b2eefab943aa2151cbc8273c03bd6e585d91e",
+  ],
+  [
+    "66fe0b736ce3e40d46c3bc1f23b5c4adfa569f3520e3af45fe58b81bb6b4ca10",
+    "7536fdd35d7416d959ce23a439865729156d9d086acfdd2f7b83a2e5b0395d0b",
+  ],
+  [
+    "8e83d7053a86fc61582d97ba0f1bd36938d965f7f70c3fc357d0520d49273a14",
+    "52741a7e993fdb1f0713863061a9a3a8fa12b39b69149dd7556aed0b5253ba18",
+  ],
+];
+
+// The base point's u-coordinate, 9: `x25519` with it runs the ladder.
+const NINE = "0900000000000000000000000000000000000000000000000000000000000000";
+
 describe("x25519", () => {
+  it("derives public keys from the base point's table", () => {
+    for (const v of PUBLIC_KEYS) {
+      expect(hexEncode(x25519PublicKey(hexDecode(v[0])))).toBe(v[1]);
+    }
+  });
+
+  it("gives the ladder's public key for random scalars", () => {
+    for (let i = 0; i < 32; i++) {
+      const k = randomBytes(32);
+      expect(hexEncode(x25519PublicKey(k))).toBe(hexEncode(x25519(k, hexDecode(NINE))));
+    }
+  });
+
   it("matches RFC 7748 §5.2's two vectors", () => {
     expect(
       x(

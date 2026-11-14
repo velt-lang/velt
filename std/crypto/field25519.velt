@@ -9,9 +9,15 @@
 // loop has no array accesses inside (an output array argument cannot alias an input one, #2403,
 // so operations name registers by number and `mul(a, a, b)` works in place).
 //
+// `mul` and `square` are inlined everywhere (`@inline`): left to the inliner's growth budget, the
+// fixed-base multiplication's calls (x25519_base.velt) took it from the ladder's in a program with
+// both, and the ladder ran 78% longer.
+//
 // Bounds: `mul` and `square` take limbs below 2^54 (a reduced element, the sum of two, or a
 // difference from `sub`) and return limbs below 2^52; the 128-bit sums stay below 2^115, so a
 // carry `(l >> 51) | (h << 13)` loses nothing.
+
+import { inline } from "velt/lang/intrinsics";
 
 const M: u64 = 0x7ffffffffffff;
 
@@ -70,6 +76,7 @@ export class Fe25519 {
   }
 
   /** `d = a * b` mod p (`d` may be `a` or `b`); products past limb 4 wrap around times 19. */
+  @inline
   mul(d: usize, a: usize, b: usize) {
     const r = this.r;
     const oa = 5 * a;
@@ -122,6 +129,7 @@ export class Fe25519 {
   }
 
   /** `d = a^2` mod p: the 15 distinct products of `mul`'s 25. */
+  @inline
   square(d: usize, a: usize) {
     const r = this.r;
     const oa = 5 * a;
@@ -274,6 +282,48 @@ export class Fe25519 {
       this.r[5 * a + i] ^= x;
       this.r[5 * b + i] ^= x;
     }
+  }
+
+  /** Register `d` = 0. */
+  zero(d: usize) {
+    for (let i: usize = 0; i < 5; i++) {
+      this.r[5 * d + i] = 0;
+    }
+  }
+
+  /**
+   * `d |= (l0, .., l4) & mask` limb by limb (`mask` all ones or zero): a table select. The caller
+   * reads the table: a module constant passed as an argument would be copied at every call.
+   */
+  orLimbs(d: usize, l0: u64, l1: u64, l2: u64, l3: u64, l4: u64, mask: u64) {
+    const o = 5 * d;
+    this.r[o] |= l0 & mask;
+    this.r[o + 1] |= l1 & mask;
+    this.r[o + 2] |= l2 & mask;
+    this.r[o + 3] |= l3 & mask;
+    this.r[o + 4] |= l4 & mask;
+  }
+
+  /** `d = a` where `mask` is all ones, `d = b` where it is zero, without a branch. */
+  select(d: usize, a: usize, b: usize, mask: u64) {
+    for (let i: usize = 0; i < 5; i++) {
+      this.r[5 * d + i] = (this.r[5 * a + i] & mask) | (this.r[5 * b + i] & ~mask);
+    }
+  }
+
+  /**
+   * One pass of carries through register `d`: limbs below 2^54 come out below 2^51 + 2^8 (the
+   * top carry counts 19 times in limb 0), so a sum of two can be subtracted (`sub`) or added again.
+   */
+  carry(d: usize) {
+    const o = 5 * d;
+    let c: u64 = 0;
+    for (let i: usize = 0; i < 5; i++) {
+      const v = this.r[o + i] + c;
+      this.r[o + i] = v & M;
+      c = v >> 51;
+    }
+    this.r[o] += c * 19;
   }
 
   /**
