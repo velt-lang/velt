@@ -1,5 +1,5 @@
 // velt/net (internal): how std/net/tcp_sched.velt reaches the TLS server in Velt on the reactor
-// (`VELT_SCHEDULER=std`, #2649) without loading it. `TlsServer` has the operations of
+// (#2649) without loading it. `TlsServer` has the operations of
 // `ReactorTls`; here they are stubs (no TLS listener, no TLS handles). The server's own,
 // std/net/tls/fd_server.velt, are a more specific `extend` of `TlsServer`, which a program loads
 // only when it can listen with TLS: the conditional global std/prelude/global/tls_reactor.velt

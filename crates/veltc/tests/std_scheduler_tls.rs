@@ -1,9 +1,8 @@
 //! TLS listeners on the reactor of the executor in Velt (std/net/tls/fd_ops.velt, #2649): a
-//! program compiled with `VELT_SCHEDULER=std` serves `listenTls` with the TLS 1.3 server in Velt
-//! over the reactor's sockets (no runtime handle, no task in between), the runtime's otherwise.
-//! Each program is built both ways; the runtime's build runs at one worker, the std build at one
-//! and at four (killed after a minute: a lost wake hangs), and all must print the same. The std
-//! binary holds the Velt server, the other doesn't.
+//! native program serves `listenTls` with a P-256 key with the TLS 1.3 server in Velt over the
+//! reactor's sockets (no runtime handle, no task in between). Each program runs at one worker and
+//! at four (killed after a minute: a lost wake hangs) and must print the same, and its binary
+//! holds the Velt server.
 
 use std::path::Path;
 use std::process::Stdio;
@@ -24,24 +23,17 @@ fn tls_material() -> String {
     std::fs::read_to_string(manifest().join("../../tests/golden/std/_tls.velt")).unwrap()
 }
 
-/// `name.velt` built (with `VELT_SCHEDULER=std` when `std`): the binary's path.
-fn build(dir: &Path, name: &str, std: bool) -> std::path::PathBuf {
-    let exe = dir.join(format!(
-        "{name}{}{}",
-        if std { "_std" } else { "" },
-        if cfg!(windows) { ".exe" } else { "" }
-    ));
-    let mut b = command(env!("CARGO_BIN_EXE_velt"));
-    b.arg("build")
+/// `name.velt` built: the binary's path.
+fn build(dir: &Path, name: &str) -> std::path::PathBuf {
+    let exe = dir.join(format!("{name}{}", if cfg!(windows) { ".exe" } else { "" }));
+    let o = command(env!("CARGO_BIN_EXE_velt"))
+        .arg("build")
         .arg(dir.join(format!("{name}.velt")))
         .arg("-o")
         .arg(&exe)
         .current_dir(dir)
-        .env_remove("VELT_SCHEDULER");
-    if std {
-        b.env("VELT_SCHEDULER", "std");
-    }
-    let o = b.output().unwrap();
+        .output()
+        .unwrap();
     assert!(
         o.status.success(),
         "{name}: {}",
@@ -54,7 +46,6 @@ fn build(dir: &Path, name: &str, std: bool) -> std::path::PathBuf {
 fn run(exe: &Path, threads: u32) -> String {
     let mut child = command(exe)
         .env("VELT_THREADS", threads.to_string())
-        .env_remove("VELT_SCHEDULER")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -86,30 +77,19 @@ fn contains(hay: &[u8], needle: &[u8]) -> bool {
     hay.windows(needle.len()).any(|w| w == needle)
 }
 
-/// Builds `src` both ways and runs it: every run prints `want`, and only the std build has the
-/// TLS server in Velt.
-fn same_on_both(name: &str, src: &str, want: &str) {
-    if !cfg!(unix) {
-        // Windows has no reactor in Velt here: its sockets stay the runtime's in both builds.
-        return;
-    }
+/// Builds `src` and runs it at one worker and at four: every run prints `want`, and the binary
+/// has the TLS server in Velt.
+fn same_everywhere(name: &str, src: &str, want: &str) {
     runtime_support::build_native_runtime(manifest());
     let dir = test_dir::TestDir::new();
     std::fs::write(dir.path().join("_tls.velt"), tls_material()).unwrap();
     std::fs::write(dir.path().join(format!("{name}.velt")), src).unwrap();
-    let rt = build(dir.path(), name, false);
-    let std = build(dir.path(), name, true);
-    assert_eq!(run(&rt, 1), want, "{name}: the runtime's TLS");
-    assert_eq!(run(&std, 1), want, "{name}: TLS in Velt, one worker");
-    assert_eq!(run(&std, 4), want, "{name}: TLS in Velt, four workers");
-    let marker = b"tryServerHandshake";
+    let exe = build(dir.path(), name);
+    assert_eq!(run(&exe, 1), want, "{name}: one worker");
+    assert_eq!(run(&exe, 4), want, "{name}: four workers");
     assert!(
-        contains(&std::fs::read(&std).unwrap(), marker),
+        contains(&std::fs::read(&exe).unwrap(), b"tryServerHandshake"),
         "{name}: no TLS server in Velt"
-    );
-    assert!(
-        !contains(&std::fs::read(&rt).unwrap(), marker),
-        "{name}: the TLS server in Velt without the variable"
     );
 }
 
@@ -122,7 +102,7 @@ fn same_on_both(name: &str, src: &str, want: &str) {
 /// handshake is done.
 #[test]
 fn a_tls_echo_server_serves_clients_on_the_reactor() {
-    same_on_both(
+    same_everywhere(
         "tls_echo",
         r#"import { connect, connectTls, listenTls, startTls, TcpStream } from "velt/net";
 import { TEST_CA, TEST_CERT, TEST_KEY } from "./_tls";
@@ -288,7 +268,7 @@ async function main() {
 /// the wait only looks, has a limit or a signal.
 #[test]
 fn a_tls_stream_is_readable_when_a_read_finds_bytes() {
-    same_on_both(
+    same_everywhere(
         "tls_readable",
         r#"import { connectTls, listenTls } from "velt/net";
 import { TEST_CA, TEST_CERT, TEST_KEY } from "./_tls";
@@ -326,12 +306,9 @@ async function main() {
 
 /// A program that names no TLS option (`cert`) doesn't load the TLS server in Velt, nor the TLS
 /// operations its streams would check for (std/prelude/global/tls_reactor.velt): a plain TCP
-/// echo under `VELT_SCHEDULER=std` builds neither, and still runs.
+/// echo builds neither, and still runs.
 #[test]
 fn a_program_without_tls_options_builds_no_tls_server() {
-    if !cfg!(unix) {
-        return;
-    }
     runtime_support::build_native_runtime(manifest());
     let dir = test_dir::TestDir::new();
     std::fs::write(
@@ -355,7 +332,7 @@ async function main() {
 "#,
     )
     .unwrap();
-    let exe = build(dir.path(), "plain", true);
+    let exe = build(dir.path(), "plain");
     assert_eq!(run(&exe, 1), "hi\n");
     let bin = std::fs::read(&exe).unwrap();
     for marker in [&b"tryServerHandshake"[..], b"fd__ops", b"fd__server"] {

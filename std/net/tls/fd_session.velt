@@ -1,5 +1,5 @@
 // velt/net (internal): what std/net/tls/fd_ops.velt calls on a TLS stream and a TLS listener of
-// the reactor (`VELT_SCHEDULER=std`, #2649), as interfaces: the waits on the socket
+// the reactor (#2649), as interfaces: the waits on the socket
 // (fd_ops.velt) are written against these, and the TLS code behind them (the handshake, the
 // record layer, the crypto) is named only by std/net/tls/fd_server.velt, which makes the streams.
 

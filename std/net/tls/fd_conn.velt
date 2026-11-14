@@ -1,5 +1,5 @@
 // velt/net (internal): `FdTlsConn`, a TLS stream on one of the reactor's sockets under the executor
-// in Velt (`VELT_SCHEDULER=std`, #2649): the `TlsSession` a `listenTls` `TcpStream` handle stands
+// in Velt (#2649): the `TlsSession` a `listenTls` `TcpStream` handle stands
 // for there (std/net/tls/fd_ops.velt). It reads and writes the socket's descriptor
 // directly through `TcpStream`'s non-waiting operations, with no task in between: every
 // operation here returns at once, and the caller waits on the socket (readable, drained) without
