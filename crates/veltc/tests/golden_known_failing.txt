@@ -4,6 +4,7 @@
 #
 # <path from the repository root> #<issue> [os=macos,linux,windows]
 
+tests/golden/lang/script_closure_promise.velt                      #2966
 tests/golden/lang/promise_identity_bounded.velt                    #2909
 tests/golden/lang/promise_identity_compare_types.velt              #2909
 tests/golden/lang/promise_identity_converted.velt                  #2909
