@@ -13,7 +13,7 @@
 // leak counters), as the HTTP/2 client's sessions are (std/net/http/fetch/client/h2/registry.velt).
 // The entries are handles: the sources stay on the reactor while parked.
 
-import { Ptr } from "velt/ffi/ptr";
+import { recv$net } from "#net-calls";
 import * as r from "#reactor";
 import * as io from "velt/lang/hooks/sched_io";
 import * as m from "velt/lang/hooks/sched_mem";
@@ -21,15 +21,13 @@ import * as tb from "velt/lang/hooks/sched_io_table";
 import * as wt from "velt/lang/hooks/sched_io_wait";
 import * as fio from "velt/net/fd_io";
 
-declare c("c") function recv$net(fd: i32, buf: Ptr<u8>, n: usize, flags: i32): isize;
-
 /** The most idle streams kept per key; more are closed. */
 const MAX_PER_KEY: i64 = 512;
 /** A stream idle this long (nanoseconds) is closed rather than reused: 60 s. */
 const MAX_IDLE_NS: u64 = 60000000000;
 /** A stream idle this long (ns) has usually received a close sent after its response: 5 ms. */
 const SETTLED_NS: u64 = 5000000;
-/** `recv`'s flag that leaves the bytes it finds in the socket (the same on macOS and Linux). */
+/** `recv`'s flag that leaves the bytes it finds in the socket (2 on macOS, Linux and Windows). */
 const MSG_PEEK: i32 = 2;
 
 /** A parked stream: its handle, and when it was parked (`wt.now()`). */

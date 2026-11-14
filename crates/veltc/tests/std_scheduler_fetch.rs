@@ -199,10 +199,13 @@ async function main() {{
     // A POST is never sent again on another connection: one on a closed connection fails.
     console.log(await (await fetch(`${{base}}/${{i}}`, {{ method: \"POST\" }})).text());
     // The server has closed the connection before the pool looks at it (on loopback its FIN
-    // is in this side's queue once its close returns).
+    // is in this side's queue once its close returns). Then the parked connection must have
+    // settled (5 ms, fd_pool.velt `SETTLED_NS`), or the POST passes it over unseen and the peek
+    // that finds it closed is never reached: `sleep(10)` is a minimum wait for that, not a race.
     while (CLOSED.load() < i + 1) {{
       await yieldNow();
     }}
+    await sleep(10);
   }}
   l.close();
   const gone = await listen(\"127.0.0.1:0\");
