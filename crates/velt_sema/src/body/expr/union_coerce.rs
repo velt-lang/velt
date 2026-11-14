@@ -28,10 +28,13 @@ impl FnCx<'_, '_> {
         if self.cx.union_def(h.ty).is_some() {
             return self.retag(h, exp, &targets);
         }
-        if let Some(v) = targets.iter().position(|t| *t == h.ty) {
-            return Ok(self.union_variant(def, &args, v as u32, h, exp));
-        }
         let mut h = h;
+        if let Some(v) = self.closest_member(h.ty, &targets) {
+            match self.try_coerce_or_same(h, targets[v]) {
+                Ok(c) => return Ok(self.union_variant(def, &args, v as u32, c, exp)),
+                Err(back) => h = back,
+            }
+        }
         for (v, t) in targets.iter().enumerate() {
             match self.try_coerce(h, *t) {
                 Ok(c) => return Ok(self.union_variant(def, &args, v as u32, c, exp)),
@@ -39,6 +42,30 @@ impl FnCx<'_, '_> {
             }
         }
         Err(h)
+    }
+
+    /// The member of `targets` a value of type `ty` goes to before any other that would take it:
+    /// `ty` itself, or a literal's base type (`"s"` into `T | Mod<T>` at `T = string` is the
+    /// `string`). Members are in canonical order (`Ctx::canon_key`), not as written, so the first
+    /// member a value converts to is no better a choice than another; the one the value is
+    /// closest to is the same whatever the order.
+    fn closest_member(&mut self, ty: TyId, targets: &[TyId]) -> Option<usize> {
+        if let Some(v) = targets.iter().position(|t| *t == ty) {
+            return Some(v);
+        }
+        let hir::TyKind::Literal(lit) = self.cx.ty.kind(ty).clone() else {
+            return None;
+        };
+        let base = self.cx.lit_base(&lit);
+        targets.iter().position(|t| *t == base)
+    }
+
+    /// `h` as a `t`: itself when it is one, else converted (`try_coerce`).
+    fn try_coerce_or_same(&mut self, h: hir::Expr, t: TyId) -> Result<hir::Expr, hir::Expr> {
+        if h.ty == t {
+            return Ok(h);
+        }
+        self.try_coerce(h, t)
     }
 
     fn union_variant(
@@ -89,10 +116,13 @@ impl FnCx<'_, '_> {
             return Err(h);
         };
         self.map_members_in(h, exp, live, &mut |s, value| {
-            if let Some(j) = targets.iter().position(|t| *t == value.ty) {
-                return Some(s.union_variant(tdef, &targs, j as u32, value, exp));
-            }
             let mut value = value;
+            if let Some(j) = s.closest_member(value.ty, targets) {
+                match s.try_coerce_or_same(value, targets[j]) {
+                    Ok(c) => return Some(s.union_variant(tdef, &targs, j as u32, c, exp)),
+                    Err(back) => value = back,
+                }
+            }
             for (j, t) in targets.iter().enumerate() {
                 match s.try_coerce(value, *t) {
                     Ok(c) => return Some(s.union_variant(tdef, &targs, j as u32, c, exp)),

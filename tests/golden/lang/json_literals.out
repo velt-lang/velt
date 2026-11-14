@@ -4,12 +4,12 @@ true
 task b low [] red 10 normal
 {"kind":"task","title":"b","priority":"low","tags":[],"color":"red","level":10,"due":"normal"}
 expected "task" at $.kind
-expected one of "low", "normal", "high" at $.priority
-expected one of "low", "normal", "high" at $.priority
-expected one of "low", "normal", "high" at $.tags[1]
+expected one of "high", "low", "normal" at $.priority
+expected one of "high", "low", "normal" at $.priority
+expected one of "high", "low", "normal" at $.tags[1]
 expected one of "red", "green" at $.color
 expected one of 10, 20 at $.level
-expected one of "low", "normal", "high" at $.due
+expected one of "high", "low", "normal" at $.due
 Unexpected token 'l', ..."priority":lo}" is not valid JSON
 [ 'auto', 0, 1.5, false ]
 expected one of "auto", 0, 1.5, false at $

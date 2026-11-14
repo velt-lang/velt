@@ -489,6 +489,10 @@ impl Ctx<'_> {
             return self.ty.error;
         };
         let mut out: Vec<ShapeField> = vec![];
+        // Per field of `out`, where its key is among the source's fields (`[K in keyof X]`):
+        // the fields keep X's order, as in TypeScript, not the order of the key union's members
+        // (which is canonical, `Ctx::canon_key`, and so not the order they were written in).
+        let mut ranks: Vec<usize> = vec![];
         let mut key_tys: Vec<(String, TyId)> = vec![];
         for (key, kt) in keys {
             let mut inner = env.clone();
@@ -556,6 +560,11 @@ impl Ctx<'_> {
                     }
                     continue;
                 }
+                ranks.push(
+                    (source_fields.as_ref())
+                        .and_then(|fs| fs.iter().position(|f| f.name == key))
+                        .unwrap_or(usize::MAX),
+                );
                 out.push(ShapeField {
                     name,
                     ty: v,
@@ -564,6 +573,9 @@ impl Ctx<'_> {
                 });
             }
         }
+        let mut ranked: Vec<(usize, ShapeField)> = ranks.into_iter().zip(out).collect();
+        ranked.sort_by_key(|(rank, _)| *rank);
+        let mut out: Vec<ShapeField> = ranked.into_iter().map(|(_, f)| f).collect();
         // Integer keys come first, in ascending order, as JavaScript orders an object's keys.
         out.sort_by_key(|f| array_index(&f.name).map_or((1, 0), |i| (0, i)));
         let ty = self.anon_type_with(&out, env.module);

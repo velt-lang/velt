@@ -632,8 +632,13 @@ impl Ctx<'_> {
                 None => order.push((key, m)),
             }
         }
-        order.sort_by_key(|(k, _)| *k);
-        let order: Vec<TyId> = order.into_iter().map(|(_, m)| m).collect();
+        // The order `union_with` gives a union (`Ctx::canon_key` of the type each member stands
+        // for), so the solved union reads as the one written.
+        let mut keyed: Vec<(std::rc::Rc<str>, u32, TyId)> = (order.into_iter())
+            .map(|(k, m)| (self.canon_key(TyId(k)), m.0, m))
+            .collect();
+        keyed.sort();
+        let order: Vec<TyId> = keyed.into_iter().map(|k| k.2).collect();
         self.reorder_union_def(d, &order);
         u
     }
