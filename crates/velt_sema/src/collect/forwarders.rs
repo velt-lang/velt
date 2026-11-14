@@ -248,7 +248,6 @@ pub(crate) fn synth_method(
         self_ty: Some(self_ty),
         captures: vec![],
         shares_captures: false,
-        changes_held: false,
         body,
         throws: None,
         span,

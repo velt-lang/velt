@@ -329,7 +329,6 @@ fn adapter(
         self_ty: Some(self_ty),
         captures: vec![],
         shares_captures: false,
-        changes_held: false,
         body: hir::Body {
             locals,
             block: hir::Block {

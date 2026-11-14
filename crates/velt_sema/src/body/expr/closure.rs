@@ -687,7 +687,6 @@ impl FnCx<'_, '_> {
             self_ty: None,
             captures,
             shares_captures: false,
-            changes_held: false,
             body: hir::Body { locals, block },
             throws: None,
             span,
