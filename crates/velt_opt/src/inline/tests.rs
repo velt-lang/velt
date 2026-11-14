@@ -339,6 +339,32 @@ fn a_body_inlined_into_a_loop_has_its_calls_inlined_too() {
     );
 }
 
+#[test]
+fn a_large_callee_an_inlined_body_brings_into_a_loop_stays_a_call() {
+    // As above, but `leaf` is past `NESTED_LOOP_COST`: `outer` itself is inlined into the loop
+    // (the loop makes that call), the call of `leaf` it brings along stays a call.
+    let mut pb = ProgramBuilder::new();
+    let leaf = pb.add(adder(
+        "leaf",
+        NESTED_LOOP_COST as usize + 50,
+        Linkage::Internal,
+    ));
+    let outer = pb.add(caller_named("outer", &[leaf], 1, Linkage::Internal));
+    pb.add(caller_named("other", &[leaf], 1, Linkage::Export));
+    let looping = pb.add(looping_caller(&[outer, leaf]));
+    let mut p = pb.finish();
+    inline(&mut p);
+    let main = &p.funcs[looping.0 as usize];
+    assert_eq!(calls_to(main, outer), 0, "the loop's own call");
+    // The loop's two calls of `leaf` itself are inlined (it is under `LOOP_COST`); the two that
+    // came with `outer`'s copies stay calls.
+    assert_eq!(
+        calls_to(main, leaf),
+        2,
+        "the calls brought by outer's copies"
+    );
+}
+
 /// `caller` with another name and linkage, taking one `i64`.
 fn caller_named(name: &str, callees: &[FuncId], times: usize, linkage: Linkage) -> Function {
     let mut fb = FuncBuilder::new(name, &[Ty::I64], Ty::I64, linkage);
