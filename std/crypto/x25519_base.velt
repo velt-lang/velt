@@ -1,0 +1,164 @@
+// velt/crypto (internal): X25519's fixed-base multiplication, the public key of a scalar (#2955).
+// It is computed as ref10's `ge_scalarmult_base` does, on the twisted Edwards curve birationally
+// equivalent to Curve25519 (RFC 7748 §4.1), from x25519_base_table.velt's multiples of its base
+// point B, then mapped to the Montgomery u = (1 + y) / (1 - y) = (Z + Y) / (Z - Y).
+//
+// The clamped scalar is recoded into 64 signed radix-16 digits e_i in [-8, 8]. The odd digits'
+// multiples are added, the sum is multiplied by 16 (four doublings), and the even digits' are
+// added: 64 mixed additions and 4 doublings in extended coordinates (Hisil-Wong-Carter-Dawson),
+// whose formulas are complete, and one inversion. The ladder (x25519.velt) needs 255 steps and
+// the same inversion.
+//
+// Constant time: each digit's multiple is picked by a masked scan of its table's 8 entries and
+// the identity, a negative digit's negation is a masked swap and select, and nothing branches on
+// or indexes by the scalar.
+
+import { Fe25519 } from "velt/crypto/field25519";
+import { X25519_BASE } from "velt/crypto/x25519_base_table";
+
+// Registers: the accumulator (X : Y : Z : T), the completed point of ref10's `ge_p1p1`
+// ((X : Z), (Y : T)), the selected entry (y + x, y - x, 2 d x y), temporaries, and the
+// inversion's five scratch registers.
+const X: usize = 0;
+const Y: usize = 1;
+const Z: usize = 2;
+const T: usize = 3;
+const CX: usize = 4;
+const CY: usize = 5;
+const CZ: usize = 6;
+const CT: usize = 7;
+const YPX: usize = 8;
+const YMX: usize = 9;
+const XY2D: usize = 10;
+const A: usize = 11;
+const B: usize = 12;
+const C: usize = 13;
+const ZERO: usize = 14;
+const SCRATCH: usize = 15;
+const REGS: usize = SCRATCH + 5;
+
+/** The u-coordinate (32 bytes) of the base point times the clamped 32-byte `scalar`. */
+export function x25519BaseMultiply(scalar: u8[]): u8[] {
+  const k = scalar.slice();
+  k[0] &= 248;
+  k[31] &= 127;
+  k[31] |= 64;
+  const e = digits(k);
+  const f = new Fe25519(REGS);
+  // The identity: (0 : 1 : 1 : 0).
+  f.set(Y, 1);
+  f.set(Z, 1);
+  for (let i: usize = 1; i < 64; i += 2) {
+    pick(f, i >> 1, e[i]);
+    addEntry(f);
+  }
+  for (let j = 0; j < 4; j++) {
+    double(f);
+  }
+  for (let i: usize = 0; i < 64; i += 2) {
+    pick(f, i >> 1, e[i]);
+    addEntry(f);
+  }
+  // u = (Z + Y) / (Z - Y): 0 for the identity, as the ladder gives.
+  f.add(A, Z, Y);
+  f.sub(B, Z, Y);
+  f.invert(C, B, SCRATCH);
+  f.mul(A, A, C);
+  return f.encode(A);
+}
+
+// The 64 signed radix-16 digits of the clamped scalar `k` (little-endian), each in [-8, 8]:
+// sum e_i 16^i = k. Arithmetic only, no branch.
+function digits(k: u8[]): i64[] {
+  const e: i64[] = [];
+  for (let i: usize = 0; i < 32; i++) {
+    e.push((k[i] & 15) as i64);
+    e.push((k[i] >> 4) as i64);
+  }
+  let carry: i64 = 0;
+  for (let i: usize = 0; i < 63; i++) {
+    e[i] += carry;
+    carry = (e[i] + 8) >> 4;
+    e[i] -= carry << 4;
+  }
+  // k < 2^255, so the top digit is at most 7 before the carry.
+  e[63] += carry;
+  return e;
+}
+
+// YPX, YMX, XY2D = digit `d` times table `t`'s point: entry |d| - 1 (all 8 read), the identity
+// (1, 1, 0) for 0, negated for a negative digit (y + x and y - x swapped, 2 d x y negated).
+function pick(f: Fe25519, t: usize, d: i64) {
+  const neg = (d as u64) >> 63;
+  const abs = (((d as u64) ^ (0 - neg)) + neg) as u64;
+  f.zero(YPX);
+  f.zero(YMX);
+  f.zero(XY2D);
+  let at = 120 * t;
+  for (let j: u64 = 1; j < 9; j++) {
+    const x = j ^ abs;
+    // All ones when x == 0 (x is below 16, so x - 1 wraps only for 0).
+    const mask = 0 - ((x - 1) >> 63);
+    for (let r: usize = 0; r < 3; r++) {
+      const o = at + 5 * r;
+      f.orLimbs(
+        YPX + r,
+        X25519_BASE[o],
+        X25519_BASE[o + 1],
+        X25519_BASE[o + 2],
+        X25519_BASE[o + 3],
+        X25519_BASE[o + 4],
+        mask,
+      );
+    }
+    at += 15;
+  }
+  // The identity for a zero digit: y + x = y - x = 1 (2 d x y stays 0).
+  f.set(A, 1);
+  const none = 0 - ((abs - 1) >> 63);
+  f.select(YPX, A, YPX, none);
+  f.select(YMX, A, YMX, none);
+  f.swap(YPX, YMX, neg);
+  f.sub(A, ZERO, XY2D);
+  f.select(XY2D, A, XY2D, 0 - neg);
+}
+
+// The accumulator += the selected entry (ref10's `ge_madd`, then `ge_p1p1_to_p3`).
+function addEntry(f: Fe25519) {
+  f.add(A, Y, X);
+  f.mul(A, A, YPX); // (Y1 + X1)(y + x)
+  f.sub(B, Y, X);
+  f.mul(B, B, YMX); // (Y1 - X1)(y - x)
+  f.mul(C, XY2D, T); // 2 d x y T1
+  f.add(CT, Z, Z); // 2 Z1
+  f.sub(CX, A, B);
+  f.add(CY, A, B);
+  f.add(CZ, CT, C);
+  f.sub(CT, CT, C);
+  toExtended(f);
+}
+
+// The accumulator doubled (ref10's `ge_p2_dbl`, then `ge_p1p1_to_p3`).
+function double(f: Fe25519) {
+  f.square(A, X); // XX
+  f.square(B, Y); // YY
+  f.square(C, Z);
+  f.add(C, C, C); // 2 ZZ
+  f.add(CX, X, Y);
+  f.square(CX, CX); // (X + Y)^2
+  f.add(CY, B, A); // YY + XX
+  f.sub(CZ, B, A); // YY - XX
+  f.carry(CY);
+  f.carry(CZ);
+  f.sub(CX, CX, CY);
+  f.sub(CT, C, CZ);
+  toExtended(f);
+}
+
+// (X : Y : Z : T) = (CX CT : CY CZ : CZ CT : CX CY).
+function toExtended(f: Fe25519) {
+  f.mul(X, CX, CT);
+  f.mul(Y, CY, CZ);
+  f.mul(Z, CZ, CT);
+  f.mul(T, CX, CY);
+}
