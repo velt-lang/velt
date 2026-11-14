@@ -221,8 +221,8 @@ where
     unsafe { (api().spawn)(f) }
 }
 
-/// The runtime's worker this thread is (`None` off the workers, and with tokio's work-stealing
-/// scheduler): for per-worker state, like a pool handing a task a connection on its worker.
+/// The runtime's worker this thread is, for per-worker state. Always `None` since the runtime's
+/// tasks run on its one host (#2649 D1); kept for the libraries that call it.
 pub fn worker_index() -> Option<usize> {
     usize::try_from((api().worker_index)()).ok()
 }

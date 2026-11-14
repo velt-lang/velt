@@ -1,5 +1,5 @@
 //! The SDK's async I/O (`velt_native::{rt, net, time}`) against this runtime's table, on the
-//! scheduler the test process runs (the Velt backend's side runs in the native-package tests).
+//! host (a program's side runs in the native-package tests).
 
 use std::io::{Read, Write};
 use std::sync::OnceLock;

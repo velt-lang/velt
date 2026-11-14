@@ -4,7 +4,7 @@
 //! Programs run on the executor in Velt (std/lang/hooks/sched.velt). What is left here is the host
 //! of the runtime's Rust glue ([`host`], #2649 D1): one tokio runtime with one worker thread and
 //! tokio's blocking pool. Everything else in the crate goes through the functions here
-//! ([`spawn`], [`spawn_with`], [`spawn_blocking`], [`enter`], [`block_on`]) and the handles they
+//! ([`spawn`], [`spawn_blocking`], [`enter`], [`block_on`]) and the handles they
 //! give back ([`JoinHandle`], [`AbortHandle`]), never through tokio's own.
 //!
 //! The runtime starts lazily on first use and lives until the process exits (there is no
@@ -140,12 +140,11 @@ pub fn worker_count() -> usize {
         .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()))
 }
 
-/// `velt_rt_set_scheduler(kind)`: `velt_main` calls it with `1` first when the program pins a
-/// task (`spawn(…, { worker })`). The default executor keeps pinned tasks on their workers
-/// itself, so nothing changes; kept for the programs compiled to call it. `2`: the executor in
-/// Velt (std/lang/hooks/sched.velt, `VELT_SCHEDULER=std` at compile time) polls tasks on this
-/// thread from now on, so the leaves it polls find the runtime's timers and I/O here, as on a
-/// worker: this thread stays inside the runtime's tokio context for the rest of the process.
+/// `velt_rt_set_scheduler(kind)`: `1` is what `velt_main` of a program compiled before the switch
+/// calls first when the program pins a task (`spawn(…, { worker })`): nothing changes. `2`: the
+/// executor in Velt (std/lang/hooks/sched_workers.velt) polls tasks on this thread from now on,
+/// each of its workers calls it first, spares too: the thread enters the host's tokio context for
+/// the rest of the process, so the leaves it polls find the host's timers and I/O.
 ///
 /// `2` also marks the process as one whose tasks are the Velt executor's ([`velt_executor`]):
 /// they have no runtime task (`velt_rt_task_id` is 0 in all of them), so what the runtime keeps
@@ -161,7 +160,7 @@ pub extern "C-unwind" fn velt_rt_set_scheduler(kind: u32) {
 /// Set once by `velt_rt_set_scheduler(2)`, before the executor in Velt polls its first task.
 static VELT_EXECUTOR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Do the program's tasks run on the executor in Velt (`VELT_SCHEDULER=std` at compile time)?
+/// Do the program's tasks run on the executor in Velt (every program compiled since the switch)?
 pub(crate) fn velt_executor() -> bool {
     VELT_EXECUTOR.load(Ordering::Relaxed)
 }
@@ -208,16 +207,6 @@ where
     F::Output: Send + 'static,
 {
     JoinHandle(runtime().spawn(fut))
-}
-
-/// Like [`spawn`]; `make` learns whether the task will run on another worker than this thread's
-/// (never, on the host's one worker).
-pub fn spawn_with<F>(make: impl FnOnce(bool) -> F) -> JoinHandle<F::Output>
-where
-    F: Future + Send + 'static,
-    F::Output: Send + 'static,
-{
-    spawn(make(false))
 }
 
 /// Runs `f` on a thread that may block (file system, DNS, a native call), not on the worker.

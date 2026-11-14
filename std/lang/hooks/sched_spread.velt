@@ -1,5 +1,6 @@
 // velt/lang/hooks (internal): when the executor in Velt uses another worker (sched.velt, #2649
-// step 3), ported from the runtime's (velt_rt task/runtime/velt/spread.rs and worker.rs).
+// step 3), ported in #2706 from the runtime's executor (its spread.rs and worker.rs; that
+// executor was deleted in #2649 D1).
 //
 // Work stays on the worker that made it: on a core that keeps up, spreading only adds
 // cross-thread wakes and splits the writes it could batch (#717). So a worker measures how long

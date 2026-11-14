@@ -346,8 +346,8 @@ Since #2649's switch, a program for a native target runs on the executor in Velt
 (std/lang/hooks/sched*.velt): lowering calls its hooks where this section's symbols were called,
 and the compiler no longer reads `VELT_SCHEDULER` (it is accepted and ignored). The symbols below
 stay the ABI of WebAssembly programs (`velt_rt_wasm`) and of programs compiled before the switch
-until they go (#2649 D2b); the runtime's backends described after the table keep hosting its Rust
-glue (TLS, child processes and UDP on Windows, file streams, the native-package ABI) until #2649 D1.
+until they go (#2649 D2b); the host described after the table runs the runtime's Rust glue (TLS,
+child processes and UDP on Windows, file streams, the native-package ABI).
 
 | Symbol | Signature | Notes |
 |---|---|---|
@@ -360,17 +360,17 @@ glue (TLS, child processes and UDP on Windows, file streams, the native-package 
 | `velt_rt_keep_alive_release` | `()` | releases one reference taken with `velt_rt_keep_alive_acquire`; the caller keeps them balanced. On WebAssembly, `velt_rt_block_on` returns only once none is held. |
 | `velt_rt_timer_unref_due` | `() -> VeltFut*` (result `bool`) | a due `unref()`'d timer asks whether to drop its callback: true once the process was seen with nothing left that can happen (quiet.rs), as Node exits without running it (std/prelude/timers.velt). While nothing but running code may be left (a thread waits for the end, no keep-alive reference, no timer or I/O pending, nothing queued), it waits until the last worker parks, which records the end or wakes it. Ready at once with false on WebAssembly, whose one thread runs the timers and decides the end. |
 | `velt_rt_spawn_fut` | `(VeltFut* f, u64 result_size, void (*result_drop)(void* slot)) -> VeltFut*` | `spawn(p)` where `p` is already a heap future (boxed promise, leaf); takes ownership of `f`; `result_drop` as for `velt_rt_spawn` |
-| `velt_rt_spawn_target` | `(i64 worker)` | `spawn(p, { worker })` (#211): the next spawn on this thread pins its task to `worker`. Called right after the task's arguments are evaluated, immediately before `velt_rt_spawn` / `_transfer` / `_detached` / `_fut`. Out of range (`worker < 0` or `≥ velt_rt_worker_count()`): panic `spawn: worker <w> is out of range (the runtime has <n> workers)`. With the stealing scheduler the task is spawned as usual. Additive. |
-| `velt_rt_worker_count` | `() -> u64` | `workerCount()`: the per-core workers, or the stealing runtime's worker threads (1 on WebAssembly); the configured workers, fixed for the process (spare workers the Velt executor starts are not counted, #2371). Additive. |
-| `velt_rt_current_worker` | `() -> u64` | `currentWorker()`: the per-core worker running this task; with the stealing scheduler an index for this worker thread. Always below `velt_rt_worker_count()`: a spare worker of the Velt executor reports its index modulo the configured count. Additive. |
-| `velt_rt_set_scheduler` | `(u32 kind)` | `velt_main` calls it with `1` first, before anything starts the runtime, when the program pins a task (it references `velt_rt_spawn_target`). A no-op: the default scheduler keeps pinned tasks on their workers itself (kept for programs compiled to call it). Additive. |
+| `velt_rt_spawn_target` | `(i64 worker)` | `spawn(p, { worker })` (#211): the next spawn on this thread pins its task to `worker`. Called right after the task's arguments are evaluated, immediately before `velt_rt_spawn` / `_transfer` / `_detached` / `_fut`. Out of range (`worker < 0` or `≥ velt_rt_worker_count()`): panic `spawn: worker <w> is out of range (the runtime has <n> workers)`. In range, the task is spawned as usual (on the host). Additive. |
+| `velt_rt_worker_count` | `() -> u64` | `workerCount()` of a program compiled before the switch: the configured workers, `VELT_THREADS` or one per core, fixed for the process (1 on WebAssembly). Additive. |
+| `velt_rt_current_worker` | `() -> u64` | `currentWorker()` of a program compiled before the switch: an index for this thread, always below `velt_rt_worker_count()`. Additive. |
+| `velt_rt_set_scheduler` | `(u32 kind)` | `1`: what `velt_main` of a program compiled before the switch calls first when the program pins a task (it references `velt_rt_spawn_target`); a no-op. `2`: each thread of the executor in Velt calls it before it polls its first task (std/lang/hooks/sched_workers.velt, spare workers too): the thread enters the host's tokio context for the rest of the process, so the leaves it polls find the host's timers and I/O, and the runtime takes the process's tasks for the executor's (they have no runtime task). Additive. |
 
 Runtime (#2649 D1): the host of the runtime's Rust glue (`task/runtime/host.rs`), one tokio
 multi-thread runtime with one worker thread (`velt-host`, an 8 MiB stack) and tokio's blocking
 pool, started on first use. TLS, `fetch` over https, child processes and UDP on Windows, file
 streams, signals, the `velt dev` host and the native-package ABI run there, and so do the symbols
 above for programs compiled before the switch (deleted in #2649 D2b). Everything in the runtime
-goes through `task/runtime/` (`spawn`, `spawn_with`, `spawn_blocking`, `enter`, `block_on`, its
+goes through `task/runtime/` (`spawn`, `spawn_blocking`, `enter`, `block_on`, its
 `JoinHandle` / `AbortHandle`); nothing else names tokio's. `VELT_SCHEDULER` selects nothing.
 Programs run on the executor in Velt (std/lang/hooks/sched*.velt), with `VELT_THREADS` workers
 (a positive integer) or one per core. With more than one worker it rescues a stalled one

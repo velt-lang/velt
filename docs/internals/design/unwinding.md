@@ -79,8 +79,8 @@ except in the hole below.
 **Why the thread-local count.** On Itanium targets a Rust `catch_unwind` claims *every*
 exception in the search phase (Rust's personality doesn't look at the class) and then aborts
 on a foreign one ("Rust cannot catch foreign exceptions"). Under the runtime's executor such
-frames are on most stacks (tokio's task harness, `task/runtime/velt/task.rs`; the runtime's own
-catch). So a Velt exception is raised only when a Velt catch is the nearest catching frame,
+frames were on most stacks (tokio's task harness, the runtime's own task, deleted in #2649 D1;
+the runtime's own catch). So a Velt exception is raised only when a Velt catch is the nearest catching frame,
 which the count says: `catchUnwind` wraps synchronous code, so between it and the raise there
 are only compiled frames and Rust `C-unwind` frames without a catch. Without a catch the panic
 takes today's path (exit 101, or the runtime's `catchPanic` while it exists). The count also
