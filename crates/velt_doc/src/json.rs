@@ -372,7 +372,7 @@ fn member_key(parent: &DocItem, member: &DocItem) -> String {
     if kind_and_modifiers(member).0 == "setter" {
         return format!("{}:set", member.name);
     }
-    let is_static = |m: &DocItem| m.signature.starts_with("static ");
+    let is_static = |m: &DocItem| after_decorators(&m.signature).starts_with("static ");
     let clash = parent
         .members
         .iter()
@@ -564,7 +564,7 @@ const MODIFIERS: &[&str] = &[
 fn kind_and_modifiers(item: &DocItem) -> (&'static str, Vec<Json>) {
     let mut words: Vec<&str> = vec![];
     for line in item.signature.lines() {
-        for w in line.split_whitespace() {
+        for w in after_decorators(line).split_whitespace() {
             if !MODIFIERS.contains(&w) {
                 break;
             }
@@ -589,6 +589,47 @@ fn kind_and_modifiers(item: &DocItem) -> (&'static str, Vec<Json>) {
     (kind, modifiers)
 }
 
+/// `line` after the decorators it starts with (`@open `, `@export("f") `), which the signature
+/// shows before its modifiers and keyword.
+fn after_decorators(line: &str) -> &str {
+    let mut s = line.trim_start();
+    while let Some(rest) = s.strip_prefix('@') {
+        let name = rest
+            .find(|c: char| !(c.is_alphanumeric() || matches!(c, '_' | '$' | '.')))
+            .unwrap_or(rest.len());
+        let mut after = &rest[name..];
+        if after.starts_with('(') {
+            let (mut depth, mut quote, mut escaped, mut end) = (0usize, None, false, after.len());
+            for (i, c) in after.char_indices() {
+                if let Some(q) = quote {
+                    match c {
+                        _ if escaped => escaped = false,
+                        '\\' => escaped = true,
+                        _ if c == q => quote = None,
+                        _ => {}
+                    }
+                    continue;
+                }
+                match c {
+                    '"' | '\'' | '`' => quote = Some(c),
+                    '(' => depth += 1,
+                    ')' => {
+                        depth = depth.saturating_sub(1);
+                        if depth == 0 {
+                            end = i + 1;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            after = &after[end..];
+        }
+        s = after.trim_start();
+    }
+    s
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -607,6 +648,19 @@ mod tests {
             "{\n  \"a\": [\n    1,\n    null\n  ],\n  \"b\": \"q\\\"\\\\\\n\\u0001é\",\n  \
              \"c\": [],\n  \"d\": {},\n  \"e\": true\n}\n"
         );
+    }
+
+    #[test]
+    fn decorators_lead_the_modifiers() {
+        assert_eq!(
+            after_decorators("@open set name(v: string)"),
+            "set name(v: string)"
+        );
+        assert_eq!(
+            after_decorators("@export(\"a b)\") @inline static f(): void"),
+            "static f(): void"
+        );
+        assert_eq!(after_decorators("get name(): string"), "get name(): string");
     }
 
     #[test]

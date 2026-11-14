@@ -81,7 +81,7 @@ export {
   generatorThrow,
   generatorValue,
 } from "velt/lang/intrinsics/generator";
-export { inline, intrinsic, noInline } from "velt/lang/intrinsics/decorators";
+export { inline, intrinsic, noInline, open } from "velt/lang/intrinsics/decorators";
 export { abs, ceil, floor, round, sqrt, trunc } from "velt/lang/intrinsics/math";
 export { share, transfer } from "velt/lang/intrinsics/ownership";
 export {

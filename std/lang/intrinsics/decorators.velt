@@ -30,3 +30,11 @@ export declare decorator function noInline(): FunctionDecorator | MethodDecorato
  * callers must be unsafe code.
  */
 export declare decorator function intrinsic(): FunctionDecorator;
+
+/**
+ * On a std class's method or accessor that programs commonly override (`Error`'s `name`): its
+ * vtable slot exists in every program, whether or not anything overrides it, so the class and the
+ * std code calling it are compiled the same way in every program (#2943). A std method without it
+ * gets a slot only in a program that overrides it.
+ */
+export declare decorator function open(): MethodDecorator;

@@ -101,6 +101,15 @@ pub(crate) fn intrinsics<'m>(cx: &mut Ctx<'m>, from: u32) {
     }
 }
 
+/// Is `method` (of a class in `module`) marked `@open` (`decorator_open`): a vtable slot in every
+/// program, overridden or not (`collect::classes`)?
+pub(crate) fn is_open(cx: &Ctx, module: usize, method: &ast::Method) -> bool {
+    let Some(want) = role(cx, std_hook!(decorator_open)) else {
+        return false;
+    };
+    (method.decl.sig.decorators.iter()).any(|dec| written_def(cx, module, dec) == Some(want))
+}
+
 /// The `declare decorator function` decorator `dec` (written in module `m`) names, if it names
 /// one; what is wrong with it is reported where its uses are checked.
 fn written_def(cx: &Ctx, m: usize, dec: &ast::Decorator) -> Option<DefId> {

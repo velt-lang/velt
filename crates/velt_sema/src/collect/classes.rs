@@ -78,6 +78,10 @@ fn overridden_methods(cx: &mut Ctx, adts: &[DefId]) -> (Overridden, Overrides) {
             let module = cx.adt(d).expect("ICE: adt").module;
             let key = cx.method_key(module, name, m.is_setter);
             let implements = !m.is_static && implements_abstract(cx, d, &key);
+            // A std member marked `@open` has its slot whether or not anything overrides it.
+            if !m.is_static && cx.declared_in_std(d) && crate::decorators::is_open(cx, module, m) {
+                out.insert((introducer(cx, d, &key).unwrap_or(d), key.clone()));
+            }
             if !m.is_override && !implements && (m.is_static || !std_override(cx, d, &key)) {
                 continue;
             }

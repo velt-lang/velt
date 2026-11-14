@@ -735,6 +735,9 @@ hooks! {
     /// `@intrinsic declare function`: the declaration of a compiler intrinsic
     /// (`velt_sema` `intrinsic_decls.rs`).
     decorator_intrinsic => lang_intrinsics_decorators, "intrinsic", decorator;
+    /// `@open` on a std class's method or accessor: it has a vtable slot in every program,
+    /// overridden or not (`velt_sema` `collect/classes.rs`, #2943 D1).
+    decorator_open => lang_intrinsics_decorators, "open", decorator;
     // ffi/export.velt: `@export("c_name")`, a function C calls (#2203 step 5; `velt_sema`
     // `decorators/export.rs`, `velt_vir` lowering's `c_export.rs`).
     /// `@export("c_name")` on a top-level function: an unmangled symbol of that name with the C
