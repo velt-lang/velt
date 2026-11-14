@@ -223,6 +223,9 @@ function popSlow(e: usize, mode: u32): usize {
     }
     m.st(e + t.E_FAIR_LEFT, 0);
   }
+  // Plain: the worker's own thread under its queue lock. Other threads take the slot only under
+  // that lock (sched_take.velt `takeHalf`, `takeAll`), and its lock-free writers (`pushNext`,
+  // `popNextOwn`) are this thread.
   const next = m.ld(e + t.E_NEXT);
   if (next !== 0) {
     m.st(e + t.E_NEXT, 0);
