@@ -15,6 +15,8 @@ import {
 } from "velt/lang/intrinsics";
 import * as bd from "./sched_budget";
 import * as jn from "./sched_join";
+import * as lk from "./sched_lock";
+import * as me from "./sched_main_end";
 import * as m from "./sched_mem";
 import * as mk from "./sched_make";
 import * as micro from "./sched_micro";
@@ -313,7 +315,10 @@ function pollRootAgain(e: usize, k: usize): void {
   t.flags(k, t.POLLED, 0);
 }
 
-/** Task `k`'s root is done: its result to the join handle, its awaiter woken. */
+/**
+ * Task `k`'s root is done: its result to the join handle, its awaiter woken; at a lazy worker 0
+ * (sched_lock.velt) in line, without the slot's lock (`jn.joinDoneLazy`).
+ */
 function rootDone(e: usize, k: usize): void {
   const tr = m.ld(k + t.T_TRANSFER);
   if (tr !== 0) {
@@ -329,7 +334,7 @@ function rootDone(e: usize, k: usize): void {
     m.copy(k + t.T_SLOT, m.ld(k + t.T_ROOT), rsize);
   }
   if (t.has(k, t.ROOT)) {
-    mainDone(e, k);
+    me.mainDone(e, k);
     return;
   }
   t.flags(k, t.ROOT_DONE, 0);
@@ -349,37 +354,18 @@ function rootDone(e: usize, k: usize): void {
     }
     return;
   }
-  jn.joinDone(e, k);
-}
-
-/** `rootDone` of the root of `main` (task `k`, its result in place). */
-@noInline
-function mainDone(e: usize, k: usize): void {
-  const g = m.ld(e + t.E_MAIN);
-  if (e !== g) {
-    // The root ran on another worker (the monitor moved it): what it printed reaches the OS
-    // before worker 0 can see it done and end the process (stdout is buffered per thread).
-    wk.handOffOutput();
+  const kind = lk.kind();
+  if (kind === lk.LK_LAZY) {
+    jn.joinDoneLazy(e, k, kind);
+    return;
   }
-  // Worker 0 reads the flags from its loop (sched_task.velt `rootLeft`): counted live before it
-  // can see the root done, and both flags at once (an atomic or, ordered after the count).
-  if (m.ld(k + t.T_LOCALS) !== 0) {
-    // Its started promises keep running after `main`.
-    mk.liveUp(g, e);
-    m.or32(k + t.T_FLAGS, t.ROOT_DONE | t.COUNTED);
-  } else {
-    m.or32(k + t.T_FLAGS, t.ROOT_DONE);
-  }
-  if (e !== g) {
-    // The root ran on another worker (the monitor moved it): worker 0 waits for it.
-    wk.unpark(g);
-  }
+  jn.joinDone(e, k, kind);
 }
 
 /** Task `k` is done: its root and the promises it drives. */
 function finish(e: usize, k: usize): void {
   if ((m.ld32(k + t.T_FLAGS) & (t.ROOT | t.COUNTED)) === t.ROOT) {
-    mainFinish(e, k);
+    me.mainFinish(e, k);
     return;
   }
   m.store32(k + t.T_STATE, t.DONE);
@@ -413,31 +399,6 @@ function finish(e: usize, k: usize): void {
   // The only thread at the executor: worker 0's own count.
   m.st(e + t.E_LIVE, m.ld(e + t.E_LIVE) - 1);
   wk.release(k);
-}
-
-/**
- * `finish` of the root task of `main` (task `k`), not counted live: worker 0 waits for the state
- * `DONE` (sched_task.velt `rootLeft`), holding a reference of its own, and may end the program as
- * soon as it sees it. So that state comes last, after everything else the task gives back: a
- * last poll on another worker (the monitor moved it) that set it first left its microtask queue
- * and the executor's reference to free while worker 0 ended the program, 2 blocks the count
- * reported unfreed now and then (#2887).
- */
-@noInline
-function mainFinish(e: usize, k: usize): void {
-  const g = m.ld(e + t.E_MAIN);
-  // The promises left on its woken stack with a reference, as `finish` gives them back.
-  wn.giveBackWoken(k);
-  micro.free(k);
-  // Never the last reference: worker 0's is held until it sees `DONE`.
-  wk.release(k);
-  // Worker 0 may give its reference back once it sees this, and `k` may be gone then: a wake
-  // that pushed after the take above is given back by worker 0 (sched.velt `schedBlockOn`).
-  m.store32(k + t.T_STATE, t.DONE);
-  if (e !== g) {
-    // Worker 0 may sleep, woken at the root's end (`mainDone`) before this.
-    wk.unpark(g);
-  }
 }
 
 /**

@@ -10,6 +10,7 @@ import * as mon from "./sched_monitor";
 import * as q from "./sched_queue";
 import * as r from "#reactor";
 import * as rx from "./sched_relax";
+import * as st from "./sched_stats";
 import * as tq from "./sched_take";
 import * as t from "./sched_task";
 
@@ -40,8 +41,11 @@ const FAN_OUT_TICKS: usize = 50;
  * the poll still runs is read after the mode is stored, both ordered: the worker's look after
  * the poll, ordered after the poll's end (its task's state), then sees the mode, so it never
  * pops without the lock while tasks are taken.
+ *
+ * Whether the monitor watches closely (its next tick in `TICK`, not `LAZY_NAP`: sched_monitor.velt
+ * `monitorMain`): the same poll still runs with work waiting behind it, a rescue may come.
  */
-export function lazyDuties(g: usize, now: usize): void {
+export function lazyDuties(g: usize, now: usize): bool {
   const cur = m.load(g + t.E_CURRENT);
   // A poll that keeps spawning (its spawn count, `E_RLEN`, grows) is busy, not stalled.
   const tick =
@@ -58,7 +62,7 @@ export function lazyDuties(g: usize, now: usize): void {
     m.st(g + t.E_SEEN_TICK, tick);
     m.st(g + t.E_SEEN_AT, now);
     m.st(g + t.E_SEEN_CPU, 0);
-    return;
+    return false;
   }
   const seenAt = m.ld(g + t.E_SEEN_AT);
   if (m.ld(g + t.E_SEEN_CPU) === 0) {
@@ -66,19 +70,19 @@ export function lazyDuties(g: usize, now: usize): void {
     m.st(g + t.E_SEEN_CPU, cpuOf(g) | 1);
   }
   if (now < seenAt + mon.STALL_TICKS) {
-    return;
+    return true;
   }
   const fanOut = fanOutOnly(g);
   if (fanOut && now < seenAt + FAN_OUT_TICKS) {
-    return;
+    return true;
   }
   if (nothingWaits(g)) {
     // Nothing to move: the poll may run on, the worker stays lazy.
-    return;
+    return false;
   }
   if (!computed(g, fanOut ? FAN_OUT_TICKS : mon.STALL_TICKS)) {
     // The OS kept the thread off its core: not stalled (a spare would wait for a core too).
-    return;
+    return true;
   }
   if (m.load(g + t.E_LAZY) === t.LAZY_WATCH) {
     m.swap(g + t.E_LAZY, t.LAZY_TAKING);
@@ -91,6 +95,7 @@ export function lazyDuties(g: usize, now: usize): void {
   if (m.load(g + t.E_CURRENT) === cur) {
     lazyRescue(g, now);
   }
+  return true;
 }
 
 /** Worker `w`'s thread's CPU time (nanoseconds; 0: no clock). */
@@ -188,6 +193,9 @@ function lazyRescue(g: usize, now: usize): void {
   let helper = mon.helperFor(g, g, now);
   if (helper === 0) {
     helper = mon.startSpare(g, now);
+  }
+  if (helper !== 0) {
+    st.rescued();
   }
   while (k !== 0) {
     const next = m.ld(k + t.T_NEXT);

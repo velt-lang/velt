@@ -16,10 +16,12 @@ import * as wk from "./sched_wake";
 declare function velt_rt_flush(): void;
 declare function velt_rt_exit(code: i32): never;
 
-/** `rootDone`'s join slot of task `k` while other threads may reach it (or count operations). */
+/**
+ * `rootDone`'s join slot of task `k` while other threads may reach it: the operation of kind
+ * `kind` (sched_lock.velt `kind`, which `rootDone` read; a lazy one ends there, in line).
+ */
 @noInline
-export function joinDone(e: usize, k: usize): void {
-  const kind = lk.kind();
+export function joinDone(e: usize, k: usize, kind: u32): void {
   const s = mk.lockJoin(k, kind);
   const joiner = m.ld(k + t.T_JOINER);
   m.st(k + t.T_JOINER, 0);
@@ -75,14 +77,55 @@ export function joinDropSolo(f: usize): void {
   joinDropAs(f, lk.LK_NONE);
 }
 
+/**
+ * A join handle's poll for the tasks of a lazy worker 0 (sched_lock.velt `LK_LAZY`; `mk.task`
+ * gives them these): the operation counted in line, without `joinPoll`'s test and call. Right in
+ * every mode: once the monitor turned the locks on (`locksOn`), `kind` answers `LK_ON` and the
+ * slot is locked, as `joinPoll`'s; after a relax (sched_relax.velt) it counts again.
+ */
+@cExport("std_sched_join_poll_lazy")
+export function joinPollLazy(f: usize, cx: usize): u32 {
+  return joinPollAs(f, cx, lk.kind());
+}
+
+/** A join handle's drop for the tasks of a lazy worker 0 (as `joinPollLazy`). */
+@cExport("std_sched_join_drop_lazy")
+export function joinDropLazy(f: usize): void {
+  joinDropAs(f, lk.kind());
+}
+
 /** Is `f` a spawned task's join handle (its header a task's `T_JOIN`)? */
 export function isJoin(f: usize): bool {
   const poll = m.ld(f);
-  // SAFETY: `@export`ed functions (only their addresses are read).
-  if (unsafe { poll === exportedAddress(joinPoll) || poll === exportedAddress(joinPollSolo) }) {
-    return true;
+  // SAFETY: an `@export`ed function (only its address is read).
+  const polls = unsafe { exportedAddress(joinPoll) };
+  // SAFETY: as above.
+  const solo = unsafe { exportedAddress(joinPollSolo) };
+  // SAFETY: as above.
+  const lazy = unsafe { exportedAddress(joinPollLazy) };
+  return poll === polls || poll === solo || poll === lazy || poll === fnAddress(joinPanicked);
+}
+
+/**
+ * `rootDone`'s join slot of task `k` at a lazy worker 0 (sched_lock.velt `LK_LAZY`, the operation
+ * of kind `kind` counted): no lock, in line; the joiner is woken behind the tasks queued already,
+ * as `joinDone`'s.
+ */
+@inline
+export function joinDoneLazy(e: usize, k: usize, kind: u32): void {
+  const s = m.ld32(k + t.T_JOIN_STATE);
+  const joiner = m.ld(k + t.T_JOINER);
+  m.st(k + t.T_JOINER, 0);
+  m.st32(k + t.T_JOIN_STATE, (s | t.J_DONE) & ~t.J_LOCK);
+  lk.done(kind);
+  if (joiner !== 0) {
+    m.st32(e + t.E_DISPATCH, t.D_OUTPUT);
+    m.wakeOwned(joiner);
+    m.st32(e + t.E_DISPATCH, 0);
   }
-  return poll === fnAddress(joinPanicked);
+  if ((s & t.J_HANDLE) === 0) {
+    dropResult(k);
+  }
 }
 
 /** `joinPoll` while other threads may reach the slot (or a lazy worker 0 counts its operation). */
@@ -139,9 +182,9 @@ export function rootPanicked(e: usize, k: usize, x: usize): void {
   t.flags(k, t.ROOT_DONE | nc.T_PANICKED, 0);
   const kind = lk.kind();
   const s = mk.lockJoin(k, kind);
-  // The join raises the panic from a poll that may unwind: `joinPoll` and `joinPollSolo` are C's
-  // (`@export`), whose frames end any unwinding (rt_abi.md), so the handle's header gets
-  // `joinPanicked`.
+  // The join raises the panic from a poll that may unwind: `joinPoll`, `joinPollSolo` and
+  // `joinPollLazy` are C's (`@export`), whose frames end any unwinding (rt_abi.md), so the
+  // handle's header gets `joinPanicked`.
   m.st(k + t.T_JOIN, fnAddress(joinPanicked));
   const joiner = m.ld(k + t.T_JOINER);
   m.st(k + t.T_JOINER, 0);

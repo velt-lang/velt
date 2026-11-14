@@ -35,5 +35,4 @@ tests/golden/std/shared_fn_panic_caught_resource_interface.velt    #2925 os=wind
 tests/golden/std/shared_fn_spawn_after_caught_transfer_panic.velt  #2925 os=windows
 tests/golden/std/shared_fn_walk_after_caught_transfer_panic.velt   #2925 os=windows
 tests/golden/std/simd_half_range.velt                              #2925 os=windows
-tests/golden/std/task_spare_worker_index.velt                      #2915
 tests/golden/std/timer_spawned_busy.velt                           #2916 os=macos,windows
