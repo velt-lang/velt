@@ -1,5 +1,6 @@
 // velt/lang/hooks (internal): the I/O budget of a task poll in the executor in Velt (sched.velt,
-// #2815), as tokio's cooperative budget and the runtime's (velt_rt task/runtime/velt/coop.rs).
+// #2815), as tokio's cooperative budget and the runtime's executor had (its coop.rs, as of #2815;
+// that executor was deleted in #2649 D1).
 //
 // A read that finds bytes waiting completes without a wait, so a connection whose peer always has
 // sent more (a client faster than the server, or the server's thread taken off its core between

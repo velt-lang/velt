@@ -347,7 +347,7 @@ worker (2 ticks of 1 ms, half of the waiting tasks each time) moved them: 4 task
 2.3, 3.6 and 4.9 ms. Now a worker that starts the first poll of a spawned task with tasks never
 polled waiting behind it says so, the monitor checks it every 50 µs while it does, and once that
 poll has lasted 50 µs the waiting tasks never polled go to sleeping workers, one each
-(`velt_rt` `task/runtime/velt/monitor.rs`). Shorter polls (a burst of connections, a broadcast's
+(the runtime's executor's monitor then; std/lang/hooks/sched_monitor.velt now). Shorter polls (a burst of connections, a broadcast's
 flushers) move nothing, and the monitor checks that often only while such a poll runs and some
 worker sleeps: a program waiting on a 2 s timer, before or after a hundred bursts of 8 short
 spawns, used 0.00 s of CPU. The efficiency-core effect above did not reproduce on the

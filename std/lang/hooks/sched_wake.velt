@@ -66,8 +66,8 @@ export function release(t: usize): void {
 }
 
 /**
- * Queues scheduled task `t` (woken), as the runtime's (velt_rt task/runtime/velt/worker.rs
- * `queue`): from its home worker's thread, as input during a reactor turn or timers, as output
+ * Queues scheduled task `t` (woken), as the runtime's executor did (its worker.rs `queue`, ported
+ * in #2706, deleted in #2649 D1): from its home worker's thread, as input during a reactor turn or timers, as output
  * when room to write woke it, else in the slot for the task to run next (woken by the task
  * running; with one thread at the queues, at the end of the second queue instead); from another worker's thread running a task, in that worker's slot (it runs there
  * next and keeps its home) unless it may not move; else on its home's inbox, waking the home.

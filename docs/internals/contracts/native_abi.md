@@ -149,9 +149,9 @@ typedef struct VeltRtApi {
 
 The table's second part lets a library run async Rust on the program's scheduler, the way the
 runtime's own drivers do: its futures are polled inline by the task awaiting them, its sockets
-are the runtime's (on Velt's scheduler, registered with the worker's reactor; on tokio's, with
-tokio's), and a task it spawns runs on the worker that spawned it. Nothing Rust-specific
-crosses: a library carries its own std, possibly from another compiler.
+are the runtime's (registered with the reactor of the runtime's host, #2649 D1), and a task it
+spawns runs on the host. Nothing Rust-specific crosses: a library carries its own std, possibly
+from another compiler.
 
 ```c
 typedef uint32_t (*VeltPollFn)(void* state, void* cx, void* out);   // READY = 1, PENDING = 0
@@ -186,7 +186,7 @@ typedef struct { const void* runtime; const void* data; const VeltForeignWaker* 
     uint32_t (*sleep_poll)(void* s, const VeltWakerArg* w);
     void (*sleep_reset)(void* s, uint64_t deadline_ns);
     void (*sleep_drop)(void* s);
-    int64_t (*worker_index)(void);                    // -1 off the workers / on tokio's stealing
+    int64_t (*worker_index)(void);                    // -1: the host keeps no per-worker state
 ```
 
 - `fut_poll` makes a `VeltFut` from a library future: the runtime calls `poll(state, cx, out)`

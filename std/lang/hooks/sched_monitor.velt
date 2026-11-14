@@ -1,6 +1,6 @@
 // velt/lang/hooks (internal): the stall monitor of the executor in Velt (sched.velt, #2649 step
-// 3), a thread of its own (an `@export`ed function started like a worker), ported from the
-// runtime's (velt_rt task/runtime/velt/monitor.rs).
+// 3), a thread of its own (an `@export`ed function started like a worker), ported in #2706 from
+// the runtime's executor (its monitor.rs; that executor was deleted in #2649 D1).
 //
 // A worker that makes no progress holds back everything queued on it: a task that runs on without
 // returning from its poll, or a worker the OS took off its core. The monitor ticks every `TICK`

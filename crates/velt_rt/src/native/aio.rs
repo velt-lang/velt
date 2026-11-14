@@ -1,8 +1,8 @@
 //! Async building blocks for native libraries (native_abi.md "Async I/O"): futures the library
-//! polls itself, wakers, detached tasks, TCP streams and timers, all on whichever scheduler the
-//! program runs. A library's future is polled inline by the task awaiting it, its sockets are
-//! the runtime's own ([`crate::net::sys::TcpStream`]: on the Velt backend registered with the
-//! worker's reactor), so a driver in a package runs as fast as one built into the runtime.
+//! polls itself, wakers, detached tasks, TCP streams and timers. A library's future is polled
+//! inline by the task awaiting it, its sockets are the runtime's own
+//! ([`crate::net::sys::TcpStream`], registered with the host's reactor), so a driver in a
+//! package runs as fast as one built into the runtime.
 //!
 //! Nothing Rust-specific crosses: `cx` is the runtime's opaque poll context, a runtime waker is
 //! a `Waker` behind a pointer (owned ones boxed), a stream a `Box<TcpStream>`, a sleep a
@@ -303,8 +303,8 @@ impl Drop for Detached {
     }
 }
 
-/// `void spawn(VeltFut* f)`: runs `f` (result size 0) as a detached task, on this worker when
-/// called from one. The runtime frees it when it finishes.
+/// `void spawn(VeltFut* f)`: runs `f` (result size 0) as a detached task on the host. The
+/// runtime frees it when it finishes.
 pub unsafe extern "C" fn spawn(f: *mut VeltFut) {
     let mut task = Detached(f);
     // Detached: the join handle is dropped.
@@ -493,9 +493,9 @@ pub unsafe extern "C" fn sleep_drop(s: *mut c_void) {
     drop(Box::from_raw(s as *mut Sleep));
 }
 
-/// `i64 worker_index(void)`: the worker this thread is (-1 on other threads and with tokio's
-/// work-stealing scheduler): for keeping a library's per-worker state, like a pool that hands
-/// a task a connection driven on its own worker.
+/// `i64 worker_index(void)`: the worker this thread is, for keeping a library's per-worker state:
+/// always -1 since the runtime's host has no workers of its own to place work on (#2649 D1), so a
+/// library keeps one state for the process.
 pub extern "C" fn worker_index() -> i64 {
-    crate::task::runtime::current_worker().map_or(-1, |i| i as i64)
+    -1
 }
