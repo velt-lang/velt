@@ -5,6 +5,7 @@
 
 import { export as cExport } from "velt/ffi";
 import { inline, noInline } from "velt/lang/intrinsics";
+import { clearStdoutWritten, stdoutWrittenSince } from "./process";
 import * as io from "./sched_io";
 import * as m from "./sched_mem";
 import * as q from "./sched_queue";
@@ -270,15 +271,23 @@ export function publishPolled(w: usize): void {
 /**
  * `publish` at the points where work this thread made may run on another worker next: after a
  * poll whose task may resume elsewhere (sched_loop.velt `after`), a spawn, a wake sent to
- * another worker's inbox. Each goes through the runtime (a call, a check of its thread's
- * buffer and a swap on the latch).
- *
- * Hook point (#2786, for #2780): once every stdout write sets this thread's stdout mark
- * (#2780's `stdoutWritten` hook, lowered before each `console.log`, which sets `STDOUT_WRITTEN` in
- * process.velt), this tests the mark and publishes, clearing it, only when it is set.
+ * another worker's inbox, a task's end on another worker than worker 0. Only a thread that wrote
+ * to stdout since its last publish has anything to publish: every write of stdout from compiled
+ * code sets this thread's mark first (process.velt `stdoutWritten`), so a thread that wrote
+ * nothing pays one thread-local load and a branch, not the runtime's call (#2786). A mark left
+ * set by a publish that did not clear it (the runtime's) costs one publish of nothing.
  */
 @inline
 export function publishPrinted(w: usize): void {
+  if (stdoutWrittenSince()) {
+    publishMarked(w);
+  }
+}
+
+/** `publishPrinted` once the mark is seen set: cleared before the publish, which takes it all. */
+@noInline
+function publishMarked(w: usize): void {
+  clearStdoutWritten();
   publish(w);
 }
 
