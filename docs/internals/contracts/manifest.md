@@ -411,10 +411,15 @@ registry requirement that the locked version still meets, with that version in t
 its locked checksum, asks no registry (#2840): its dependencies are its cached `package.velt`'s and
 its native libraries the lock's, so a locked project whose packages are all cached installs,
 builds and runs offline or with the registry down (no yank warning then). When that leaves no
-solution, resolution runs again with every version the index has. Anything else reads the index;
-a registry that can't be reached fails with "cannot reach the registry <url> to read the index of
-`<name>`: …", then why `<name>` needs it (not locked yet; not cached, or no longer accepted) and to
-run `velt install` once it can be reached. Every registry package fetched is checked against its
+solution, resolution runs again with every version the index has; offline, the error of the first
+try comes first. Anything else reads the index; a registry that can't be reached (no connection, no
+answer) fails with "cannot reach the registry <url> to read the index of `<name>`: …", then why
+`<name>` needs it (not locked yet; not cached, its cached copy altered, or no longer accepted) and
+to run `velt install` once it can be reached; an answer that can't be read is "the registry <url>
+sent an index for `<name>` that can't be read: …". A dependency name an index lists that isn't a
+valid package name (`../x`) is refused before anything is fetched ("the registry `<url>` lists a
+dependency `<dep>` for `<name>` <version>, which is not a valid package name; …"). Every registry
+package fetched is checked against its
 index entry: the dependencies the index lists (and resolution followed) must be its
 `package.velt`'s, by name and requirement (as `semver::VersionReq`), else "the registry `<url>`
 lists other dependencies for `<name>` <version> than its package.velt declares: …" and nothing is

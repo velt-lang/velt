@@ -27,6 +27,11 @@ fn world() -> World {
 impl World {
     /// Create (or overwrite) library `name` at `version` with `deps` and publish it.
     fn publish_lib(&self, name: &str, version: &str, deps: &str, body: &str) {
+        self.publish_lib_to(&self.loc, name, version, deps, body);
+    }
+
+    /// [`World::publish_lib`] to the registry of `loc`.
+    fn publish_lib_to(&self, loc: &Locations, name: &str, version: &str, deps: &str, body: &str) {
         let root = self.dir.join("work").join(name);
         if !root.exists() {
             vpm::scaffold::new_package(&self.dir.join("work"), name, true).unwrap();
@@ -36,7 +41,7 @@ impl World {
         );
         std::fs::write(root.join(vpm::manifest::MANIFEST_FILE), manifest).unwrap();
         std::fs::write(root.join("src/lib.velt"), body).unwrap();
-        vpm::registry::publish(&root, &self.loc).unwrap();
+        vpm::registry::publish(&root, loc).unwrap();
     }
 
     fn app(&self) -> PathBuf {
@@ -433,5 +438,113 @@ fn locked_reports_a_changed_checksum() {
                 && err.contains(&format!("the registry has {sum}")),
             "--locked {locked}: {err}"
         );
+    }
+}
+
+/// A dependency name in an index is a path in the cache and the registry: one that isn't a valid
+/// package name (`../other/escape`, which would reach another registry next to the cache) is
+/// refused before anything is fetched, so nothing is written outside the cache.
+#[test]
+fn an_index_dependency_name_that_leads_out_of_the_cache_is_refused() {
+    let w = world();
+    let home = w.dir.join("velt-home");
+    let other = Locations {
+        registry: home.join("other"),
+        ..w.loc.clone()
+    };
+    w.publish_lib_to(&other, "escape", "0.1.0", "", "export const E: i64 = 1;\n");
+    w.publish_lib("lib", "0.1.0", "", "export const L: i64 = 1;\n");
+    w.add("lib", Some("^0.1"), None);
+    w.install(InstallOptions::default()).unwrap();
+    let lock = std::fs::read_to_string(w.app().join("velt.lock.json")).unwrap();
+    w.edit_index("lib", "0.1.0", |e| {
+        e["dependencies"] = serde_json::json!({ "../other/escape": "^0.1" });
+    });
+    std::fs::remove_dir_all(w.loc.cache.join("lib-0.1.0")).unwrap();
+    for update in [false, true] {
+        let err = w
+            .install(InstallOptions {
+                update,
+                ..Default::default()
+            })
+            .unwrap_err();
+        assert_eq!(
+            err,
+            format!(
+                "the registry `{}` lists a dependency `../other/escape` for `lib` 0.1.0, which is not a valid package name; nothing was installed, report this to the registry's operators",
+                w.loc.registry.display()
+            )
+        );
+        assert!(!home.join("other/escape-0.1.0").exists(), "update {update}");
+        assert!(!w.loc.cache.join("lib-0.1.0").exists(), "update {update}");
+        let read_lock = std::fs::read_to_string(w.app().join("velt.lock.json")).unwrap();
+        assert_eq!(read_lock, lock);
+    }
+}
+
+/// Offline, a resolution that fails with the locked versions in the cache reports its own error,
+/// not only that the registry can't be reached for the second try.
+#[test]
+fn offline_a_resolution_error_is_not_hidden_by_the_registry() {
+    let w = world();
+    w.publish_lib("greet", "0.1.0", "", "export const G: i64 = 1;\n");
+    w.add("greet", Some("^0.1"), None);
+    w.install(InstallOptions::default()).unwrap();
+    vpm::scaffold::new_package(&w.dir, "zz", true).unwrap();
+    w.add("zz", Some("^2"), Some("../zz"));
+    let online = w.install(InstallOptions::default()).unwrap_err();
+    assert!(online.contains("`zz ^2`"), "{online}");
+    let offline = w.install_offline(InstallOptions::default()).unwrap_err();
+    assert!(offline.starts_with(&format!("{online}\n")), "{offline}");
+    assert!(
+        offline.contains(
+            "`greet` needs the registry: velt.lock.json pins 0.1.0, but package.velt couldn't be resolved with only the locked versions in the cache (the error above)"
+        ),
+        "{offline}"
+    );
+}
+
+/// A cached copy of a locked version is used without the registry only while it hashes to the
+/// locked checksum: an altered copy (its sources, or a dependency added to its package.velt)
+/// needs the registry, and with the registry up it is fetched again; the lock stays.
+#[test]
+fn an_altered_cached_copy_is_not_used() {
+    let w = world();
+    w.publish_lib("evil", "1.0.0", "", "export const E: i64 = 1;\n");
+    w.publish_lib("lib", "1.0.0", "", "export const L: i64 = 1;\n");
+    w.add("lib", Some("^1"), None);
+    w.install(InstallOptions::default()).unwrap();
+    let read_lock = || std::fs::read_to_string(w.app().join("velt.lock.json")).unwrap();
+    let lock = read_lock();
+    let cached = w.loc.cache.join("lib-1.0.0");
+    let manifest = cached.join(vpm::manifest::MANIFEST_FILE);
+    let (source, original) = (
+        cached.join("src/lib.velt"),
+        std::fs::read(&manifest).unwrap(),
+    );
+    let tampers: [(&Path, &str); 2] = [
+        (&source, "export const L: i64 = 2;\n"),
+        (
+            &manifest,
+            "export const pkg: Package = { name: \"lib\", version: \"1.0.0\", dependencies: { evil: \"^1\" } };",
+        ),
+    ];
+    for (file, text) in tampers {
+        std::fs::write(file, text).unwrap();
+        let err = w.install_offline(InstallOptions::default()).unwrap_err();
+        assert!(
+            err.contains(&format!(
+                "`lib` needs the registry: velt.lock.json pins 1.0.0, which package.velt no longer accepts or whose copy in the cache (`{}`) doesn't match its locked checksum",
+                cached.display()
+            )),
+            "{err}"
+        );
+        assert!(!w.install(InstallOptions::default()).unwrap().lock_changed);
+        assert_eq!(read_lock(), lock);
+        assert_eq!(
+            std::fs::read_to_string(&source).unwrap(),
+            "export const L: i64 = 1;\n"
+        );
+        assert_eq!(std::fs::read(&manifest).unwrap(), original);
     }
 }

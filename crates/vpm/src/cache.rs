@@ -21,6 +21,11 @@ pub fn fetch(
     version: &Version,
     checksum: &str,
 ) -> Result<PathBuf, String> {
+    // The name becomes a path here and in the registry: `../elsewhere` would lead out of both
+    // (and an existing directory there would be replaced).
+    if !crate::manifest::is_valid_dependency_name(name) {
+        return Err(format!("`{name}` is not a valid package name"));
+    }
     let dir = loc.cached_package(name, version);
     if holds(&dir, checksum) {
         return Ok(dir);

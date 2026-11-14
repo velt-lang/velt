@@ -81,9 +81,23 @@ pub(crate) fn fetch_within(
 }
 
 /// How the error for a registry that couldn't be reached at all begins (no answer: the network
-/// is down, the name doesn't resolve, the connection or TLS fails); a registry that answers with
-/// an error status is not this.
+/// is down, the name doesn't resolve, the connection or TLS fails: [`no_answer`]); a registry
+/// that answers, with an error status or with a response that can't be read, is not this.
 pub(crate) const UNREACHABLE: &str = "cannot reach the registry";
+
+/// Whether a [`velt_http::fetch_within`] error (without its `METHOD url: ` prefix) means no
+/// answer came: connecting, sending (the TLS handshake included) or waiting for the response's
+/// head failed. A response that came but can't be read (too large, malformed) is an answer.
+fn no_answer(detail: &str) -> bool {
+    [
+        "cannot connect",
+        "cannot send",
+        "cannot read HTTP head",
+        "connection closed before the end of the HTTP head",
+    ]
+    .iter()
+    .any(|p| detail.starts_with(p))
+}
 
 fn api(url: &str, name: &str, rest: &str) -> String {
     format!("{}/api/v1/{name}/{rest}", url.trim_end_matches('/'))
@@ -102,8 +116,15 @@ pub fn read_index_within(
 ) -> Result<Option<Index>, String> {
     let target = api(url, name, "index");
     check_default_allowed(&target)?;
-    let resp = velt_http::fetch_within("GET", &target, &[], b"", limits)
-        .map_err(|e| format!("{UNREACHABLE} {url} to read the index of `{name}`: {e}"))?;
+    let resp = velt_http::fetch_within("GET", &target, &[], b"", limits).map_err(|e| {
+        let detail = e.strip_prefix(&format!("GET {target}: ")).unwrap_or(&e);
+        match no_answer(detail) {
+            true => format!("{UNREACHABLE} {url} to read the index of `{name}`: {e}"),
+            false => {
+                format!("the registry {url} sent an index for `{name}` that can't be read: {e}")
+            }
+        }
+    })?;
     match resp.status {
         // A server from before the index was JSON answers with `index.toml`, typed as TOML.
         200 if is_toml(resp.header("content-type")) => Err(format!(
@@ -538,5 +559,50 @@ mod tests {
         assert!(publish_readme(&url, "../x", "1.0.0", "").is_err());
         assert_eq!(log.lock().unwrap().len(), 3);
         server.stop();
+    }
+
+    /// Only a registry that doesn't answer is "cannot reach the registry": one whose answer can't
+    /// be read (too large, a malformed head) is told apart, without the advice to check the
+    /// network.
+    #[test]
+    fn an_index_answer_that_cant_be_read_is_not_an_unreachable_registry() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let answers = [
+            "HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n",
+            "HTTP/1.1 200 OK\r\nno colon here\r\n\r\n",
+        ];
+        let server = std::thread::spawn(move || {
+            for answer in answers {
+                let (mut stream, _) = listener.accept().unwrap();
+                let _ = stream.read(&mut [0; 1024]);
+                let _ = stream.write_all(answer.as_bytes());
+                let _ = stream.write_all(&[b'x'; 1000]);
+            }
+        });
+        let limits = velt_http::Limits {
+            max_body: 100,
+            ..velt_http::Limits::DEFAULT
+        };
+        for detail in ["exceeds the limit of 100", "malformed header line"] {
+            let err = super::read_index_within(&url, "lib", limits).unwrap_err();
+            assert!(
+                err.starts_with(&format!(
+                    "the registry {url} sent an index for `lib` that can't be read: "
+                )) && err.contains(detail),
+                "{err}"
+            );
+        }
+        server.join().unwrap();
+        // Nothing listens on port 1.
+        let err = super::read_index_within("http://127.0.0.1:1", "lib", limits).unwrap_err();
+        assert!(
+            err.starts_with(&format!(
+                "{} http://127.0.0.1:1 to read the index of `lib`: ",
+                super::UNREACHABLE
+            )),
+            "{err}"
+        );
     }
 }

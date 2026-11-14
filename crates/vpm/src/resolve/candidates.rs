@@ -107,6 +107,7 @@ impl<'a> Provider<'a> {
                         return Err(report::locked_elsewhere(&req.name, v, &self.loc.describe()));
                     }
                 }
+                let registry = self.loc.describe();
                 let Some(index) = self.index(&req.name)? else {
                     return Ok(vec![]);
                 };
@@ -132,7 +133,7 @@ impl<'a> Provider<'a> {
                             native_abi: e.native_abi,
                             listed: e.dependencies.clone(),
                         };
-                        registry_candidate(&req.name, e.semver(), source)
+                        registry_candidate(&req.name, e.semver(), source, &registry)
                     })
                     .collect()
             }
@@ -249,7 +250,7 @@ impl<'a> Provider<'a> {
             native_abi: None,
             listed: registry::index_dependencies(&manifest).ok()?,
         };
-        registry_candidate(name, version, source).ok()
+        registry_candidate(name, version, source, &self.loc.describe()).ok()
     }
 
     fn locked_version(&self, name: &str) -> Option<Version> {
@@ -280,13 +281,28 @@ impl<'a> Provider<'a> {
         let why = match (self.prefer, locked) {
             (None, _) => format!("there is no {LOCK_FILE} to use (or `velt update` ignores it)"),
             (Some(_), None) => format!("{LOCK_FILE} doesn't pin it yet"),
-            (Some(_), Some(p)) if self.use_cache => format!(
-                "{LOCK_FILE} pins {}, which package.velt no longer accepts or which isn't in the cache (`{}`)",
-                p.version,
-                self.loc.cache.display()
-            ),
+            (Some(_), Some(p)) if self.use_cache => {
+                let cached = Version::parse(&p.version)
+                    .ok()
+                    .map(|v| self.loc.cached_package(name, &v))
+                    .filter(|dir| dir.exists());
+                match cached {
+                    Some(dir) => format!(
+                        "{LOCK_FILE} pins {}, which package.velt no longer accepts or whose copy in the cache (`{}`) doesn't match its locked checksum",
+                        p.version,
+                        dir.display()
+                    ),
+                    None => format!(
+                        "{LOCK_FILE} pins {}, which package.velt no longer accepts or which isn't in the cache (`{}`)",
+                        p.version,
+                        self.loc.cache.display()
+                    ),
+                }
+            }
+            // Asked only when resolving with the locked versions in the cache failed (the error
+            // shown with this one: `solve_root`).
             (Some(_), Some(p)) => format!(
-                "{LOCK_FILE} pins {}, but the locked versions don't satisfy package.velt together",
+                "{LOCK_FILE} pins {}, but package.velt couldn't be resolved with only the locked versions in the cache (the error above)",
                 p.version
             ),
         };
@@ -471,14 +487,26 @@ pub(super) fn is_unreachable(e: &str) -> bool {
     e.starts_with(crate::remote::UNREACHABLE)
 }
 
-/// Registry package `name` `version` from `source` (a [`Source::Registry`]), depending on what its
-/// `listed` names.
-fn registry_candidate(name: &str, version: Version, source: Source) -> Result<Candidate, String> {
+/// Registry package `name` `version` from `source` (a [`Source::Registry`]) of `registry`,
+/// depending on what its `listed` names. A listed name that isn't a valid dependency name is
+/// refused here, before anything is fetched: it becomes a path in the cache and the registry
+/// (`../elsewhere` would lead out of them).
+fn registry_candidate(
+    name: &str,
+    version: Version,
+    source: Source,
+    registry: &str,
+) -> Result<Candidate, String> {
     let Source::Registry { listed, .. } = &source else {
         unreachable!("ICE: a registry candidate from another source");
     };
     let mut dependencies = vec![];
     for (dep, req) in listed {
+        if !crate::manifest::is_valid_dependency_name(dep) {
+            return Err(format!(
+                "the registry `{registry}` lists a dependency `{dep}` for `{name}` {version}, which is not a valid package name; nothing was installed, report this to the registry's operators"
+            ));
+        }
         let req =
             parse_req(req).map_err(|e| format!("registry index of `{name}` {version}: {e}"))?;
         dependencies.push((dep.clone(), Want::Registry(req)));

@@ -283,9 +283,15 @@ fn solve_root(
         // A locked version from the cache is the only candidate offered for its name; when that
         // leaves no solution (package.velt gained a requirement it doesn't meet), solve again
         // with every version the registry has, as without the cache.
-        Err(e) if provider.used_cache() && !candidates::is_unreachable(&e) => {
+        // Offline, that second solve fails on the index: the first error is the one to fix,
+        // shown with why the registry was needed.
+        Err(first) if provider.used_cache() && !candidates::is_unreachable(&first) => {
             provider.ask_registry();
-            solve(state, &mut provider)?
+            match solve(state, &mut provider) {
+                Ok(solved) => solved,
+                Err(e) if candidates::is_unreachable(&e) => return Err(format!("{first}\n{e}")),
+                Err(e) => return Err(e),
+            }
         }
         Err(e) => return Err(e),
     };
