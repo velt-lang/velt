@@ -334,10 +334,119 @@ async function main() {
 }
 "#;
 
+/// A line printed before an `await` comes before what the task prints after it, also when the
+/// task resumes on another worker. Sixteen waiters each send a resolver to one of four owners,
+/// print `a`, await, and print `b`; an owner on another worker resolves, and a task woken there
+/// runs there next. Before the fix, a poll's output was published only after its end showed
+/// (the task's state, Node's timer order): a worker held up in between let the task's next poll
+/// on another worker print first (#2971). Without the fix, the plain runs on a loaded Mac (load
+/// 20-50) failed one after another. Runs as
+/// [`mains_last_line_printed_on_another_worker_is_written`] does.
+#[test]
+fn a_line_printed_before_an_await_comes_first_when_the_task_resumes_elsewhere() {
+    if !has_threads() {
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let (code, out) = build_and_run(dir.path(), "resume", RESUME_ORDER, "4");
+    assert_eq!((code, in_task_order(&out)), (0, Ok(())), "resume order");
+    let lost = contended_runs_checked(dir.path(), "resume", "4", in_task_order);
+    assert!(lost.is_empty(), "{}", lost.join("\n"));
+}
+
+/// Whether every waiter's lines of [`RESUME_ORDER`] (`<id> a|b <round>`) come in its program's
+/// order, all of them there.
+fn in_task_order(out: &str) -> Result<(), String> {
+    let mut next = std::collections::HashMap::new();
+    for line in out.lines() {
+        let mut w = line.split(' ');
+        let (Some(id), Some(kind), Some(round)) = (w.next(), w.next(), w.next()) else {
+            return Err(format!("line {line:?}"));
+        };
+        let step = round.parse::<u64>().map_err(|_| format!("line {line:?}"))? * 2
+            + u64::from(kind == "b");
+        let want = next.entry(id.to_string()).or_insert(0u64);
+        if step != *want {
+            return Err(format!("{line:?} where step {want} of task {id} was due"));
+        }
+        *want += 1;
+    }
+    let short: Vec<_> = next.iter().filter(|(_, n)| **n != 2 * 5000).collect();
+    if next.len() != 16 || !short.is_empty() {
+        return Err(format!("{} tasks, short: {short:?}", next.len()));
+    }
+    Ok(())
+}
+
+/// The program of [`a_line_printed_before_an_await_comes_first_when_the_task_resumes_elsewhere`].
+const RESUME_ORDER: &str = r#"import { channel, Channel } from "velt/sync";
+
+async function waiter(id: i64, out: Channel<() => void>): Promise<void> {
+  for (let i: i64 = 0; i < 5000; i++) {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    out.trySend(() => resolve());
+    console.log(`${id} a ${i}`);
+    await promise;
+    console.log(`${id} b ${i}`);
+  }
+}
+
+async function owner(inbox: Channel<() => void>): Promise<void> {
+  while (true) {
+    const f = await inbox.receive();
+    if (f == null) {
+      return;
+    }
+    f();
+  }
+}
+
+async function main() {
+  const inboxes: Channel<() => void>[] = [];
+  const owners: Promise<void>[] = [];
+  for (let i = 0; i < 4; i++) {
+    const ch = channel<() => void>();
+    inboxes.push(ch);
+    owners.push(spawn(owner(ch)));
+  }
+  const waiters: Promise<void>[] = [];
+  for (let id: i64 = 0; id < 16; id++) {
+    waiters.push(spawn(waiter(id, inboxes[(id % 4) as i32])));
+  }
+  for (const w of waiters) {
+    await w;
+  }
+  for (const ch of inboxes) {
+    ch.close();
+  }
+  for (const o of owners) {
+    await o;
+  }
+}
+"#;
+
 /// Runs the std build of `name` (built in `dir`) with `threads` workers: on Linux 40 times with the
 /// program and two spinning threads on cores 0 and 1 (`sched_setaffinity`), elsewhere 10 plain
 /// runs (macOS cannot pin threads). The runs that did not print `want` with exit code 0.
 fn contended_runs(dir: &Path, name: &str, threads: &str, want: &str) -> Vec<String> {
+    contended_runs_checked(dir, name, threads, |out| {
+        if out == want {
+            Ok(())
+        } else {
+            Err(format!("{out:?}"))
+        }
+    })
+}
+
+/// [`contended_runs`] with `check` judging each run's stdout (exit code 0 required too): the runs
+/// it rejected, with its reason.
+fn contended_runs_checked(
+    dir: &Path,
+    name: &str,
+    threads: &str,
+    check: impl Fn(&str) -> Result<(), String>,
+) -> Vec<String> {
     let exe = dir.join(format!(
         "{name}_std{}",
         if cfg!(windows) { ".exe" } else { "" }
@@ -373,8 +482,10 @@ fn contended_runs(dir: &Path, name: &str, threads: &str, want: &str) -> Vec<Stri
         }
         let o = cmd.output().unwrap();
         let out = String::from_utf8_lossy(&o.stdout);
-        if (o.status.code(), out.as_ref()) != (Some(0), want) {
-            lost.push(format!("run {run}: {:?} {out:?}", o.status.code()));
+        match (o.status.code(), check(&out)) {
+            (Some(0), Ok(())) => {}
+            (code, Err(why)) => lost.push(format!("run {run}: {code:?} {why}")),
+            (code, Ok(())) => lost.push(format!("run {run}: exit {code:?}")),
         }
     }
     stop.store(true, std::sync::atomic::Ordering::Relaxed);
