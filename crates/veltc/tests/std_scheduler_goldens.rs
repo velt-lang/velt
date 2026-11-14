@@ -99,10 +99,6 @@ fn exe_name(dir: &Path, name: &str) -> PathBuf {
 
 #[test]
 fn goldens_that_failed_only_under_the_executor_in_velt_pass_under_it() {
-    if !cfg!(unix) {
-        // No executor in Velt on Windows on main yet (#2723).
-        return;
-    }
     runtime_support::build_native_runtime(manifest());
     let dir = test_dir::TestDir::new();
     let golden = manifest().join("../../tests/golden");
@@ -218,10 +214,6 @@ async function main() {
 
 #[test]
 fn an_uncaught_exit_in_a_poll_a_microtask_resumed_balances_the_block_counts() {
-    if !cfg!(unix) {
-        // No executor in Velt on Windows on main yet (#2723).
-        return;
-    }
     runtime_support::build_native_runtime(manifest());
     let dir = test_dir::TestDir::new();
     let file = dir.path().join("micro_exit.velt");
@@ -338,10 +330,6 @@ async function main() {
 /// Builds `src` as `name` and runs it at one worker and at four: exit 1 after `out`, the error
 /// reported, and the debug runtime's block counts balanced at both.
 fn exits_balanced(name: &str, src: &str, out: &str) {
-    if !cfg!(unix) {
-        // No executor in Velt on Windows on main yet (#2723).
-        return;
-    }
     runtime_support::build_native_runtime(manifest());
     let dir = test_dir::TestDir::new();
     let file = dir.path().join(format!("{name}.velt"));
@@ -369,4 +357,99 @@ fn an_uncaught_exit_reporting_a_held_promise_balances_the_block_counts() {
 #[test]
 fn an_uncaught_exit_while_main_sleeps_balances_the_block_counts() {
     exits_balanced("suspended_exit", SUSPENDED_EXIT, "dropping p\n");
+}
+
+/// #2962: what `main`'s suspended frame holds is not dropped at that exit (its blocks stay counted):
+/// dropping it would run code after the report, which Node never does. Each program here holds
+/// something whose drop runs code (a generator's `finally`, a `using` value's dispose, a spawned
+/// task's rejection, reported when its handle drops) while a dropped promise's rejection ends it.
+const HELD_GENERATOR: &str = r#"function* g(): Generator<number> {
+  try {
+    yield 1;
+    yield 2;
+  } finally {
+    console.log("generator finally ran");
+  }
+}
+async function fail(): Promise<void> {
+  throw new Error("boom");
+}
+async function main() {
+  const it = g();
+  console.log(it.next().value);
+  {
+    const p = fail();
+  }
+  await sleep(10);
+  console.log(it.next().value);
+}
+"#;
+
+const HELD_USING: &str = r#"class R {
+  [Symbol.dispose](): void {
+    console.log("disposed");
+  }
+}
+async function fail(): Promise<void> {
+  throw new Error("boom");
+}
+async function main() {
+  using r = new R();
+  {
+    const p = fail();
+  }
+  await sleep(10);
+}
+"#;
+
+const HELD_HANDLE: &str = r#"async function failT(): Promise<number> {
+  throw new Error("task");
+}
+async function fail(): Promise<void> {
+  throw new Error("boom");
+}
+async function main() {
+  const h = spawn(failT());
+  await sleep(5);
+  {
+    const p = fail();
+  }
+  await sleep(10);
+}
+"#;
+
+/// Builds `src` as `name` and runs it with the counters on at one worker and at four: exit 1
+/// after `out` (what Node prints), one uncaught report, nothing run after it.
+fn reports_once(name: &str, src: &str, out: &str) {
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let file = dir.path().join(format!("{name}.velt"));
+    std::fs::write(&file, src).unwrap();
+    let exe = exe_name(dir.path(), name);
+    build_std(&file, &exe);
+    for threads in ["1", "4"] {
+        let (code, got, err) = run(&exe, dir.path(), threads);
+        assert_eq!(code, 1, "{name}, VELT_THREADS={threads}: {err}");
+        assert_eq!(got, out, "{name}, VELT_THREADS={threads}: {err}");
+        assert_eq!(
+            err.matches("Uncaught ").count(),
+            1,
+            "{name}, VELT_THREADS={threads}: {err}"
+        );
+    }
+}
+
+#[test]
+fn an_uncaught_exit_runs_no_generator_finally_main_holds() {
+    reports_once("held_generator", HELD_GENERATOR, "1\n");
+}
+
+#[test]
+fn an_uncaught_exit_disposes_nothing_main_holds() {
+    reports_once("held_using", HELD_USING, "");
+}
+
+#[test]
+fn an_uncaught_exit_reports_no_rejection_of_a_handle_main_holds() {
+    reports_once("held_handle", HELD_HANDLE, "");
 }

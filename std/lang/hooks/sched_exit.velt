@@ -27,7 +27,6 @@
 //   left alone, and so is anything holding a waker of it (an I/O wait, a promise of the
 //   runtime's): those keep their references, and the block stays counted.
 
-import { stateDrop } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as micro from "./sched_micro";
 import * as nd from "./sched_node";
@@ -117,16 +116,6 @@ function root(g: usize): void {
   if (m.ld(g + t.E_CURRENT) !== k && m.cas32(k + t.T_STATE, t.IDLE, t.DONE) !== t.IDLE) {
     // Queued, or polled on another worker: its references are not this thread's.
     return;
-  }
-  const drop = m.ld(k + t.T_DROP);
-  if (drop !== 0 && rp.CHECKPOINT.get() === (k as u64)) {
-    // The exit came from the reports after its poll: `main`'s frame is suspended, not on the
-    // stack, and is dropped with what it holds (a promise, whose node the report marked taken,
-    // a sleep, which leaves the timers).
-    // SAFETY: the root's drop glue on its state, which has not finished and never runs again.
-    unsafe {
-      stateDrop(drop, m.ld(k + t.T_ROOT));
-    }
   }
   const tb = m.ld(g + t.E_TIMERS);
   if (tb !== 0) {

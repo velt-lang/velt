@@ -73,26 +73,19 @@ impl FnLower<'_, '_> {
         self.rvalue_temp(Ty::U64, Rvalue::Cast(op, Ty::U64))
     }
 
-    /// `velt_main`'s root task `poll` with its state at `state`, run to completion; `drop` is the
-    /// state's drop glue (0: none), which an uncaught exit from a checkpoint after its poll runs
-    /// for the leak counters (std sched_exit.velt, #2962). The last argument is 1 when tasks must
-    /// stay on their worker: a program that may give a declared function properties through
-    /// `any` reaches them in the runtime (fn_props.rs), under the runtime's module lock, which
-    /// worker 0 keeps.
-    pub(super) fn sched_block_on(&mut self, poll: Operand, drop: Operand, state: Operand) {
-        let (poll, drop, state) = (
-            self.as_usize(poll),
-            self.as_usize(drop),
-            self.as_usize(state),
-        );
+    /// `velt_main`'s root task `poll` with its state at `state`, run to completion. The third
+    /// argument is 1 when tasks must stay on their worker: a program that may give a declared
+    /// function properties through `any` reaches them in the runtime (fn_props.rs), under the
+    /// runtime's module lock, which worker 0 keeps.
+    pub(super) fn sched_block_on(&mut self, poll: Operand, state: Operand) {
+        let (poll, state) = (self.as_usize(poll), self.as_usize(state));
         let stay = cint(i128::from(self.cx.boxing.fn_props), Ty::U64);
-        let (poll, drop, state, stay) = (
+        let (poll, state, stay) = (
             ty::USize::arg(poll),
-            ty::USize::arg(drop),
             ty::USize::arg(state),
             ty::U64::arg(stay),
         );
-        hooks::sched_block_on(self, poll, drop, state, stay).emit(self);
+        hooks::sched_block_on(self, poll, state, stay).emit(self);
     }
 
     /// `spawn(f(...))` from an initial state: `velt_rt_spawn`'s arguments, then the result's

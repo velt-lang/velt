@@ -28,9 +28,7 @@ use super::hook_calls::{self as hooks, ty, HookTy};
 use super::operand::proj;
 use super::rt::Rt;
 use super::{cint, FnLower, ScopeKind, Work};
-use crate::vir::{
-    self, BinOp, FuncId, Function, Linkage, Operand, Place, Proj, Rvalue, Terminator, Ty,
-};
+use crate::vir::{self, BinOp, Function, Linkage, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
 impl<'c, 'h> FnLower<'c, 'h> {
     pub(super) fn build_main(cx: &'c mut super::Cx<'h>) -> Function {
@@ -68,7 +66,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let code = if lw.cx.reaches_tasks() {
             let s = lw.temp(sync_root_ty(abi.ret, abi.out, throws));
             let root = super::cfunc(lw.cx.func(Work::SyncMainRoot));
-            match lw.run_root(root, None, s) {
+            match lw.run_root(root, s) {
                 Some(_) => {
                     let code = lw.sync_main_tail(s, ret, throws);
                     lw.sched_finish(&code);
@@ -138,16 +136,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
         lw.finish("_Gsync_main_root".into(), vec![Ty::Ptr, Ty::Ptr], Ty::U32)
     }
 
-    /// The root task `poll` with its state in `s` (unpolled) and the state's drop glue `drop`
-    /// (the executor in Velt's only, `None` for a state with nothing to drop): natively
-    /// `velt_rt_block_on`, and the state's address (the code after it follows); on a JS host
-    /// `velt_rt_host_main`, and `None` (the runtime runs the code after it, `MainFinish`; module
-    /// docs).
-    fn run_root(&mut self, poll: Operand, drop: Option<FuncId>, s: vir::Local) -> Option<Operand> {
+    /// The root task `poll` with its state in `s` (unpolled): natively `velt_rt_block_on`, and
+    /// the state's address (the code after it follows); on a JS host `velt_rt_host_main`, and
+    /// `None` (the runtime runs the code after it, `MainFinish`; module docs).
+    fn run_root(&mut self, poll: Operand, s: vir::Local) -> Option<Operand> {
         let a = self.addr(Place::local(s));
         if self.std_sched() {
-            let drop = drop.map_or_else(|| cint(0, Ty::Ptr), super::cfunc);
-            self.sched_block_on(poll, drop, a.clone());
+            self.sched_block_on(poll, a.clone());
             return Some(a);
         }
         if !super::host::js_host(&self.cx.target) {
@@ -210,10 +205,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             .unwrap_or_else(|| super::ice("async main has no state layout"));
         let s = self.temp(Ty::Agg(info.state));
         self.init_state(&info, &Place::local(s), vec![]);
-        let drop = self
-            .std_sched()
-            .then(|| self.cx.func(Work::AsyncDrop(def, vec![])));
-        match self.run_root(super::cfunc(info.poll), drop, s) {
+        match self.run_root(super::cfunc(info.poll), s) {
             Some(a) => self.async_main_tail(def, a),
             None => cint(0, Ty::I32),
         }

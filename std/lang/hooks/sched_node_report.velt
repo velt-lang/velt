@@ -17,13 +17,6 @@ import * as t from "./sched_task";
 export const REPORTING = new ThreadLocal<u64>(0);
 
 /**
- * The task whose kept rejections this thread is reporting after its poll (`report`; 0: none): an
- * exit from there leaves its root's frame suspended, not on the stack, so the exit's give-back may
- * drop it (sched_exit.velt `root`).
- */
-export const CHECKPOINT = new ThreadLocal<u64>(0);
-
-/**
  * Drops node `n`'s result, which nobody claims. A promise that can reject is reported (by its
  * drop glue, when it holds an error) only once its task's microtasks are drained, as Node
  * reports a rejection nobody handled: until then a combinator may still take it (`handled`).
@@ -75,7 +68,6 @@ function dropNow(n: usize): void {
 
 /** Reports (drops) the rejected results task `task` kept, in the order they were kept. */
 export function report(task: usize): void {
-  CHECKPOINT.set(task as u64);
   let n = m.ld(task + t.T_UNHANDLED);
   m.st(task + t.T_UNHANDLED, 0);
   let rev: usize = 0;
@@ -92,5 +84,4 @@ export function report(task: usize): void {
     nd.release(rev);
     rev = next;
   }
-  CHECKPOINT.set(0);
 }
