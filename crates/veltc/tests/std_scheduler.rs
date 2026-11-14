@@ -823,19 +823,30 @@ fn a_long_poll_on_the_only_worker_starts_no_spare() {
     if !cfg!(any(target_os = "macos", target_os = "linux")) {
         return;
     }
+    // The rescue side depends on the monitor thread getting a CPU during the 100 ms poll, which a
+    // loaded 3-core macOS runner does not always give it (a merge queue run moved none): any of a
+    // few runs moving tasks shows the opt-in works.
     let exe = dir.path().join("no_spare_std");
-    let o = command(&exe)
-        .env("VELT_THREADS", "1")
-        .env("VELT_RESCUE", "1")
-        .env_remove("VELT_SCHEDULER")
-        .output()
-        .unwrap();
-    let out = String::from_utf8_lossy(&o.stdout);
-    assert!(o.status.success(), "VELT_RESCUE=1: {out}");
-    assert!(
-        out.starts_with("sum 299995, off worker 0 ") && !out.ends_with(" 0\n"),
-        "VELT_RESCUE=1 moves tasks to a spare: {out}"
-    );
+    let mut outs = Vec::new();
+    for _ in 0..5 {
+        let o = command(&exe)
+            .env("VELT_THREADS", "1")
+            .env("VELT_RESCUE", "1")
+            .env_remove("VELT_SCHEDULER")
+            .output()
+            .unwrap();
+        let out = String::from_utf8_lossy(&o.stdout).into_owned();
+        assert!(o.status.success(), "VELT_RESCUE=1: {out}");
+        assert!(
+            out.starts_with("sum 299995, off worker 0 "),
+            "VELT_RESCUE=1: {out}"
+        );
+        if !out.ends_with(" 0\n") {
+            return;
+        }
+        outs.push(out);
+    }
+    panic!("VELT_RESCUE=1 moves tasks to a spare in one of 5 runs: {outs:?}");
 }
 
 /// The program of [`a_long_poll_on_the_only_worker_starts_no_spare`].
