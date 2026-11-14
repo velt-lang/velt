@@ -49,9 +49,8 @@ impl PoolObj {
             .acquire_owned()
             .await
             .map_err(|_| closed())?;
-        let here = velt_native::rt::worker_index();
         loop {
-            let Some(conn) = self.take_idle(here) else {
+            let Some(conn) = self.take_idle() else {
                 break;
             };
             if !conn.is_closed() {
@@ -64,15 +63,9 @@ impl PoolObj {
         Ok((Arc::new(conn), permit))
     }
 
-    /// An idle connection: the most recently used one driven on worker `here`, else the most
-    /// recently used.
-    fn take_idle(&self, here: Option<usize>) -> Option<Arc<Conn>> {
-        let mut idle = self.idle.lock();
-        let at = here.and_then(|w| idle.iter().rposition(|c| c.driven_on(w)));
-        match at {
-            Some(i) => Some(idle.remove(i)),
-            None => idle.pop(),
-        }
+    /// An idle connection: the most recently used.
+    fn take_idle(&self) -> Option<Arc<Conn>> {
+        self.idle.lock().pop()
     }
 
     /// Return a connection after use (dropped if the pool ended or it is not reusable).

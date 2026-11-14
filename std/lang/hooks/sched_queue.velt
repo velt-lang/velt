@@ -1,8 +1,8 @@
 // velt/lang/hooks (internal): a worker's run queue in the executor in Velt (sched.velt, #2649
-// step 3), ported from the runtime's (velt_rt task/runtime/velt/queue.rs): input first (tasks
-// woken by I/O, timers or other threads), then output and the work tasks made (writers woken by
-// room to write; spawned, woken while they ran, moved over from another worker), each in the
-// order it came, both linked through the tasks' `T_NEXT`.
+// step 3), ported in #2706 from the runtime's executor (its queue.rs; deleted in #2649 D1):
+// input first (tasks woken by I/O, timers or other threads), then output and the work tasks made
+// (writers woken by room to write; spawned, woken while they ran, moved over from another
+// worker), each in the order it came, both linked through the tasks' `T_NEXT`.
 //
 // - A task woken by the task running runs next, from a one-task slot (`pushNext`), as with
 //   tokio's LIFO slot: a chain of request and reply between tasks does not wait behind the whole
