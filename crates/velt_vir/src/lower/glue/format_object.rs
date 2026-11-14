@@ -7,6 +7,7 @@ use velt_sema::hir::{AdtKind, TyId, TyKind};
 
 use crate::lower::glue::literals::inspect_key;
 use crate::lower::hook_calls::{self as hooks, ty, HookTy};
+use crate::lower::rt::Rt;
 use crate::lower::{cint, FnLower};
 use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Ty, STR_AGG};
 
@@ -154,10 +155,7 @@ impl FnLower<'_, '_> {
                 let (index, n, t) = &shown[i];
                 // Node 26 writes a symbol key as `Symbol(d): v`, without brackets.
                 let key = match velt_sema::property_order::symbol_key(n) {
-                    Some(k) => {
-                        let k = k.trim_start_matches('[').trim_end_matches(']');
-                        k.replace('\\', "\\\\").replace('\'', "\\'")
-                    }
+                    Some(k) => symbol_key_text(k.trim_start_matches('[').trim_end_matches(']')),
                     None => inspect_key(n),
                 };
                 (*index, key, *t)
@@ -183,8 +181,8 @@ impl FnLower<'_, '_> {
         };
         for (i, (index, n, t)) in shown.iter().enumerate() {
             let sep = if i > 0 { ", " } else { "" };
-            pending.push_str(&format!("{sep}{n}: "));
-            self.push_text(buf, &pending);
+            pending.push_str(sep);
+            self.push_key(buf, &pending, n);
             pending.clear();
             match self.accessor_label(ty, *index) {
                 Some(label) => self.push_text(buf, label),
@@ -195,6 +193,27 @@ impl FnLower<'_, '_> {
             }
         }
         self.push_text(buf, " }");
+    }
+
+    /// `before`, then the key `n` and its `: `. A symbol key whose description holds what line
+    /// breaking reads as structure (a quote, a bracket, `, `) is kept as one piece, as a custom
+    /// inspect's text is (`velt_rt_strbuf_inspect_atom`).
+    fn push_key(&mut self, buf: &Operand, before: &str, n: &str) {
+        let special = |c: char| " ,:<'\"`{[()]}".contains(c);
+        let kept = n
+            .strip_prefix("Symbol(")
+            .and_then(|d| d.strip_suffix(')'))
+            .is_some_and(|d| d.contains(special));
+        if !kept {
+            return self.push_text(buf, &format!("{before}{n}: "));
+        }
+        self.push_text(buf, before);
+        let start = self.temp(Ty::U64);
+        self.call_rt(Rt::StrbufLen, vec![buf.clone()], Some(Place::local(start)));
+        self.push_text(buf, n);
+        let start = Operand::Copy(Place::local(start));
+        self.call_rt(Rt::StrbufInspectAtom, vec![buf.clone(), start], None);
+        self.push_text(buf, ": ");
     }
 
     /// [`format_fields`](Self::format_fields) for a type with optional fields: which fields
@@ -230,10 +249,10 @@ impl FnLower<'_, '_> {
             let (first, rest, join) = (self.new_block(), self.new_block(), self.new_block());
             self.branch(Operand::Copy(Place::local(written)), rest, first);
             self.switch_to(first);
-            self.push_text(buf, &format!("{open}{n}: "));
+            self.push_key(buf, &open, n);
             self.goto(join);
             self.switch_to(rest);
-            self.push_text(buf, &format!(", {n}: "));
+            self.push_key(buf, ", ", n);
             self.goto(join);
             self.switch_to(join);
             self.assign(Place::local(written), Rvalue::Use(FnLower::ctrue()));
@@ -283,4 +302,26 @@ impl FnLower<'_, '_> {
             if matches!(self.cx.hir.def(d), velt_sema::hir::Def::Adt(a)
                 if a.kind == AdtKind::Struct && a.fields.is_empty()))
     }
+}
+
+/// A symbol key's `Symbol(d)` as Node writes it: with the escapes of its string keys
+/// (`strEscapeSequencesReplacer`: control characters, `'`, `\`, U+007F to U+009F), unquoted.
+fn symbol_key_text(k: &str) -> String {
+    let mut out = String::with_capacity(k.len());
+    for c in k.chars() {
+        match c {
+            '\u{8}' => out.push_str(r"\b"),
+            '\t' => out.push_str(r"\t"),
+            '\n' => out.push_str(r"\n"),
+            '\u{c}' => out.push_str(r"\f"),
+            '\r' => out.push_str(r"\r"),
+            '\'' => out.push_str(r"\'"),
+            '\\' => out.push_str(r"\\"),
+            '\0'..='\u{1f}' | '\u{7f}'..='\u{9f}' => {
+                out.push_str(&format!(r"\x{:02X}", c as u32));
+            }
+            c => out.push(c),
+        }
+    }
+    out
 }

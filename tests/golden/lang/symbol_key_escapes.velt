@@ -1,0 +1,25 @@
+// A symbol key's description as Node writes it: control characters, `'` and `\` escaped as in a
+// string key (`\b`, `\n`, `\t`, `\x01`, `\x7F`), unquoted, and a description with quotes,
+// brackets or commas kept as one piece when the object is broken across lines. A symbol value
+// prints its description raw.
+const A = Symbol("a\b");
+const B = Symbol("x\ny");
+const C = Symbol("q\"");
+const D = Symbol("é");
+const E = Symbol("tab\t");
+const F = Symbol("");
+const G = Symbol("c\u0001d");
+const H = Symbol("del\u007f");
+const I = Symbol("it's \\ (a, b) [c] {d}: e");
+const J = Symbol("cr\r ff\f vt\u000b nul\u0000 esc\u001b c1\u0085");
+
+function main() {
+  const o = { [A]: 1, [B]: 2, [C]: 3, [D]: 4, [E]: 5, [F]: 6 };
+  console.log(o);
+  console.log({ [G]: 2 });
+  console.log({ [H]: 1, [I]: 2 });
+  console.log({ [J]: "j", [I]: { [G]: [1, 2, 3] }, k: "a fairly long string value to break the line" });
+  console.log([A, C], { s: C });
+}
+
+main();
