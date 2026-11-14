@@ -6,9 +6,9 @@
 //! call site (`Work::Tracked`), whose location is a compile-time constant; copies that small
 //! cost little and are inlined anyway. A larger one has one instance that takes the location
 //! as a hidden last parameter, as Rust passes it (`srcloc::ARG_LOC`), so a program does not
-//! get a copy of its whole call tree per call site; inside it, calls of caller-tracking
-//! functions pass that parameter on. Indirect uses (function values, vtables) keep the
-//! ordinary instance.
+//! get a copy of its whole call tree per call site (in debug builds every one does,
+//! `tracks_by_arg`); inside it, calls of caller-tracking functions pass that parameter on.
+//! Indirect uses (function values, vtables) keep the ordinary instance.
 
 use velt_sema::hir::{self, DefId, Intrinsic};
 
@@ -55,8 +55,12 @@ impl Cx<'_> {
 
     /// Whether calls of `def` (caller-tracking) pass their location as a parameter: it is
     /// larger than `COPY_LIMIT` (module docs).
+    /// Builds that share generic instances by shape (debug builds, `shapes.wanted`) pass every
+    /// location as a parameter: a copy per call site is compiled again for each site and
+    /// nothing inlines it there (8% of a generated application's VIR, #2707).
     pub(super) fn tracks_by_arg(&mut self, def: DefId) -> bool {
-        self.tracks_caller(def) && self.tracked_size.get(&def).is_some_and(|&n| n > COPY_LIMIT)
+        self.tracks_caller(def)
+            && (self.shapes.wanted || self.tracked_size.get(&def).is_some_and(|&n| n > COPY_LIMIT))
     }
 }
 
