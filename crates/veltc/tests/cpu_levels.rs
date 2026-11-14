@@ -363,6 +363,9 @@ fn f16_fma_triples() {
 /// own instructions come in (on Apple arm64, `fmlal` always and `bfdot` for `dotAddFast` from the
 /// M2), and `dotAddFast`'s lanes still add up to the dot product.
 #[test]
+// On GitHub's x86_64 Linux runners the program built for `--cpu native` dies with no output now and
+// then (likely SIGILL: the VM reports CPU features it doesn't run), #2938.
+#[cfg_attr(all(target_os = "linux", target_arch = "x86_64"), ignore = "#2938")]
 fn half_dot_products_on_this_cpu_print_the_golden() {
     if !velt_codegen_llvm::available() {
         return;
