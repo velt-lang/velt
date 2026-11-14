@@ -46,10 +46,26 @@ impl FnLower<'_, '_> {
                 .is_some()
     }
 
-    /// Did sema check the executor's `sched_peek` (the program runs something on the executor)?
-    fn sched_peek_live(&self) -> bool {
-        let name = velt_common::std_hook!(sched_peek);
+    /// Did sema check the executor's hook `name` (the program runs something on the executor)?
+    /// A program that runs nothing on it neither loads nor checks its hooks (#2880).
+    fn sched_hook_live(&self, name: &str) -> bool {
         (self.cx.prelude_def(name)).is_some_and(|d| !self.cx.hir.unchecked.contains(&d))
+    }
+
+    /// The exit with 1 after an uncaught error's report: under the executor in Velt its hook
+    /// (`sched_exit`: the executor gives back the blocks it holds for the leak counters first),
+    /// else `velt_rt_exit`. A program sema found running nothing on the executor has no executor
+    /// blocks to give back, and its hooks are neither loaded nor checked (velt_sema `lazy_std`
+    /// `sched_hooks`, #2880): it calls `velt_rt_exit` too, in either std mode.
+    pub(super) fn exit_uncaught(&mut self) {
+        if !self.std_sched() || !self.sched_hook_live(velt_common::std_hook!(sched_exit)) {
+            return self.call_rt(Rt::Exit, vec![cint(1, Ty::I32)], None);
+        }
+        if self.dead() {
+            return;
+        }
+        hooks::sched_exit(self, ty::I32::arg(cint(1, Ty::I32))).emit(self);
+        self.terminate(crate::vir::Terminator::Unreachable);
     }
 
     /// `op` (a pointer or an integer) as a `usize` argument.
@@ -188,7 +204,7 @@ impl FnLower<'_, '_> {
         // A program that runs nothing on the executor has no node of it to peek at, and its hooks
         // are neither loaded nor checked (#2880): `console.log` of a promise there keeps the
         // runtime's peek, in either std mode.
-        if r == Rt::FutPeek && !self.sched_peek_live() {
+        if r == Rt::FutPeek && !self.sched_hook_live(velt_common::std_hook!(sched_peek)) {
             return Err((args, dest));
         }
         let ret = r.sig().2;

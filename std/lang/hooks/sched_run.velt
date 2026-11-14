@@ -165,8 +165,10 @@ function fireDue(e: usize, k: usize): void {
     }
     const w = sl.fire(k, f);
     if (w === k) {
-      pollRootAgain(e, k);
+      // The sleep's reference first (the executor's keeps `k`): an uncaught error in the poll
+      // ends the program, which gives back the references the executor holds (sched_exit.velt).
       wk.release(k);
+      pollRootAgain(e, k);
       drain(e, k);
       woken = m.load32(k + t.T_STATE) === t.NOTIFIED;
     } else {
@@ -296,8 +298,9 @@ function drain(e: usize, k: usize): void {
     // A microtask's job runs: a due sleep it polls does not fire itself (sched_sleep.velt).
     m.st(e + t.E_JOB, m.ld(e + t.E_JOB) + 1);
     if (w === k) {
-      pollRootAgain(e, k);
+      // The queue's reference first, as `fireDue`'s.
       wk.release(k);
+      pollRootAgain(e, k);
     } else if (node.ownNode(k, w)) {
       node.run(k, w, false);
       node.release(w);

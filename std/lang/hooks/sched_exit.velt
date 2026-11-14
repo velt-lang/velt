@@ -1,0 +1,116 @@
+// velt/lang/hooks (internal): uncaught errors under the executor in Velt (sched.velt, #2649,
+// #2701): the error a timer or microtask callback threw, reported at once (`uncaughtNow`), and
+// the end of the program after an uncaught error's report (`exitUncaught`). An unhandled
+// rejection (a started promise's result or a spawned task's that nobody claims, dropped by the
+// executor) and an error leaving a module state's initializer are reported by compiled code,
+// which then ends the process with 1 here instead of calling the runtime's `velt_rt_exit`
+// directly.
+//
+// Nothing runs at that exit, as in Node. The debug runtime's block counters (`VELT_RC_STATS=1`)
+// are read there, though, while the executor still holds blocks of its own that the runtime's
+// executor holds outside them (its tasks and sleeps are Rust allocations): the root task of
+// `main`, its pending sleeps, and the task whose result is being dropped. With the counters on,
+// those are given back first, so a program that frees what it allocates balances its counts at
+// that exit as it does on the runtime's executor. Only what no other thread can reach any more
+// is given back:
+// - the task whose dropped result reported (`E_DROPPING`, sched_join.velt `dropWith`): the
+//   reference the drop held (the join handle's, or the executor's while that task's root
+//   finished on this thread), as every other holder counts one of its own;
+// - on worker 0 (whose frame in `schedBlockOn` holds a reference to the root and never resumes),
+//   the root of `main` homed there, when it is being polled on this thread (the error was
+//   reported in its poll) or idle (taken out of the idle state, so a wake no longer queues it):
+//   its sleeps pending on this worker leave the timer list and give back their wakers, then the
+//   executor's reference and `schedBlockOn`'s go. A root queued or polled on another worker is
+//   left alone, and so is anything holding a waker of it (an I/O wait, a promise of the
+//   runtime's): those keep their references, and the block stays counted.
+
+import * as m from "./sched_mem";
+import * as micro from "./sched_micro";
+import { processEnv } from "./process";
+import * as sl from "./sched_sleep";
+import * as t from "./sched_task";
+import * as wk from "./sched_wake";
+
+/** The runtime's `velt_rt_uncaught_now`: the report shows where the callback threw. */
+declare c("c") function velt_rt_uncaught_now$rt(): void;
+
+/**
+ * `velt_rt_uncaught_now` on executor `e` (sched.velt `schedUncaughtNow`): the next rejection
+ * nobody handles is an error a timer or microtask callback threw, reported at once
+ * (sched_node.velt), not after the task's microtasks.
+ */
+export function uncaughtNow(e: usize): void {
+  m.st(e + t.E_UNCAUGHT, 1);
+  // SAFETY: the runtime's entry takes nothing; it records where the error was thrown.
+  unsafe {
+    velt_rt_uncaught_now$rt();
+  }
+}
+
+/** 1 once an exit gave back the executor's blocks (an error in that is not given back twice). */
+const GIVEN = new Atomic<u32>(0);
+
+/** Ends the program with `code` after an uncaught error was reported on this thread. */
+export function exitUncaught(code: i32): never {
+  const self = t.here();
+  if (self !== 0 && counting() && GIVEN.exchange(1, "acqrel") === 0) {
+    giveBack(self);
+  }
+  process.exit(code);
+}
+
+/** Are the debug runtime's block counters on (`VELT_RC_STATS=1`)? */
+function counting(): bool {
+  return processEnv("VELT_RC_STATS") === "1";
+}
+
+/** Gives back what the executor holds that no other thread reaches (module docs); `self` here. */
+function giveBack(self: usize): void {
+  const k = m.ld(self + t.E_DROPPING);
+  if (k !== 0) {
+    m.st(self + t.E_DROPPING, 0);
+    if (m.ld(self + t.E_CURRENT) === k) {
+      // Its root finished in this poll: `finish` never runs.
+      ended(k);
+    }
+    wk.release(k);
+  }
+  const g = t.main();
+  if (self === g) {
+    root(g);
+  }
+}
+
+/** Worker 0 (`g`, this thread) gives back the root of `main` when it is this thread's to give. */
+function root(g: usize): void {
+  const k = m.ld(g + t.E_ROOT);
+  if (k === 0 || t.has(k, t.ROOT_DONE) || m.ld(k + t.T_HOME) !== g) {
+    return;
+  }
+  if (m.ld(g + t.E_CURRENT) !== k && m.cas32(k + t.T_STATE, t.IDLE, t.DONE) !== t.IDLE) {
+    // Queued, or polled on another worker: its references are not this thread's.
+    return;
+  }
+  const tb = m.ld(g + t.E_TIMERS);
+  if (tb !== 0) {
+    sl.forget(tb, k);
+  }
+  ended(k);
+  // The executor's reference, then `schedBlockOn`'s.
+  wk.release(k);
+  wk.release(k);
+}
+
+/**
+ * Task `k` never runs again: its microtask queue goes, with the references its entries hold (to
+ * `k`, whose reference the caller still holds, or to promises it drives).
+ */
+function ended(k: usize): void {
+  let w = micro.pop(k);
+  while (w !== 0) {
+    m.wakerDrop(w);
+    w = micro.pop(k);
+  }
+  micro.free(k);
+  m.st(k + t.T_MICRO, 0);
+}

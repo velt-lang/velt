@@ -43,10 +43,29 @@ export function joinDone(e: usize, k: usize, kind: u32): void {
 export function dropResult(k: usize): void {
   const rdrop = m.ld(k + t.T_RESULT_DROP);
   if (rdrop !== 0 && (m.load32(k + t.T_JOIN_STATE) & nc.J_PANICKED) === 0) {
-    // SAFETY: the slot holds the result, which `rdrop` is the drop glue of.
-    unsafe {
-      stateDrop(rdrop, k + t.T_SLOT);
-    }
+    dropWith(k, rdrop);
+  }
+}
+
+/**
+ * `dropResult` with drop glue `rdrop`. The caller holds a reference to `k` (the join handle's, or
+ * the executor's while `k`'s root finishes) until the glue returns; a rejection the glue reports
+ * ends the program instead, which gives that reference back first (sched_exit.velt).
+ */
+@noInline
+function dropWith(k: usize, rdrop: usize): void {
+  const e = t.here();
+  let was: usize = 0;
+  if (e !== 0) {
+    was = m.ld(e + t.E_DROPPING);
+    m.st(e + t.E_DROPPING, k);
+  }
+  // SAFETY: the slot holds the result, which `rdrop` is the drop glue of.
+  unsafe {
+    stateDrop(rdrop, k + t.T_SLOT);
+  }
+  if (e !== 0) {
+    m.st(e + t.E_DROPPING, was);
   }
 }
 

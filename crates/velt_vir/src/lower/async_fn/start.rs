@@ -114,7 +114,7 @@ impl FnLower<'_, '_> {
         let ep = proj(&proj(&rp, Proj::Cast(ev)), Proj::Field(1));
         lw.report_uncaught(&ep, err);
         lw.drop_glue(ep, err);
-        lw.call_rt(Rt::Exit, vec![cint(1, Ty::I32)], None);
+        lw.exit_uncaught();
         lw.switch_to(ok_bb);
         lw.drop_glue(rp, slot);
         lw.terminate(Terminator::Return(unit()));

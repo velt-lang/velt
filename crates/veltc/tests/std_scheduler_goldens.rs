@@ -35,6 +35,13 @@ const GOLDENS: &[&str] = &[
     "lang/promise_shared",
     // http-server's readable wait with a signal (a `within` read twice).
     "std/http_server/serve_counts_hits",
+    // An uncaught rejection ends the program while the executor holds blocks the runtime's
+    // executor allocates outside the counters: they are given back first (sched_exit.velt). The
+    // task whose dropped result reports, resumed by its sleep (whose reference goes before the
+    // poll: sched_run.velt `fireDue`), with the root of `main` idle on a sleep; and the root of
+    // `main` reporting in its own poll, as it drops a finished task's handle.
+    "lang/spawn_handle_dropped_rejects",
+    "lang/spawn_handle_dropped_after_reject",
 ];
 
 /// `file` built with `VELT_SCHEDULER=std` (from its folder, so a golden finds its packages) into
@@ -183,5 +190,117 @@ fn a_maybe_promise_printed_by_a_program_without_tasks_builds_and_prints() {
             (0, "6\n"),
             "std up front: {eager}: {err}"
         );
+    }
+}
+
+/// The root of `main`, resumed from its microtask queue (its `await` queued behind a callback),
+/// drops the handle of a task that rejected: the report ends the program in that poll. The
+/// queue's reference to the root goes before the poll (sched_run.velt `drain`), so the exit gives
+/// back every reference to it and the block counts balance (they were one block short).
+const MICRO_EXIT: &str = r#"class Failed extends Error {}
+
+async function failing(): Promise<i64> {
+  throw new Failed("rejected");
+}
+
+async function main() {
+  {
+    const task = spawn(failing());
+    await sleep(10);
+    queueMicrotask(() => console.log("a microtask first"));
+    await Promise.resolve(0);
+    console.log("dropping the handle");
+  }
+  await sleep(60000);
+  console.log("unreachable");
+}
+"#;
+
+#[test]
+fn an_uncaught_exit_in_a_poll_a_microtask_resumed_balances_the_block_counts() {
+    if !cfg!(unix) {
+        // No executor in Velt on Windows on main yet (#2723).
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let file = dir.path().join("micro_exit.velt");
+    std::fs::write(&file, MICRO_EXIT).unwrap();
+    let exe = exe_name(dir.path(), "micro_exit");
+    build_std(&file, &exe);
+    for threads in ["1", "4"] {
+        let (code, out, err) = run(&exe, dir.path(), threads);
+        assert_eq!(code, 1, "VELT_THREADS={threads}: {err}");
+        assert_eq!(
+            out, "a microtask first\ndropping the handle\n",
+            "VELT_THREADS={threads}"
+        );
+        assert!(err.contains("Uncaught Failed [Error]: rejected"), "{err}");
+        // Counted with 1 worker, as the goldens' (module docs).
+        if threads == "1" {
+            let (a, f) = blocks(&err).expect("an rc stats line");
+            assert_eq!(a, f, "blocks not balanced: {err}");
+        }
+    }
+}
+
+/// A program that runs nothing on the executor (no async code, no timer) and ends on an error
+/// leaving a module state initializer.
+const NO_TASKS_EXIT: &str = r#"class Boom extends Error {}
+
+function make(): number {
+  throw new Boom("in a module initializer");
+}
+
+const x: number = make();
+
+function main() {
+  console.log(x);
+}
+"#;
+
+/// The uncaught exit of a program sema found running nothing on the executor calls the runtime's
+/// `velt_rt_exit`, not the executor's `sched_exit`, whose module isn't loaded then (#2880: its
+/// call was an internal compiler error), with std on demand and with std up front
+/// (`VELT_EAGER_STD=1`, where the module is loaded but its hooks left unchecked).
+#[test]
+fn an_uncaught_exit_of_a_program_without_tasks_builds_and_ends_with_1() {
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let file = dir.path().join("no_tasks_exit.velt");
+    std::fs::write(&file, NO_TASKS_EXIT).unwrap();
+    // The loader takes `VELT_EAGER_STD` set to anything for std up front.
+    for eager in [false, true] {
+        let exe = exe_name(dir.path(), &format!("no_tasks_exit_{eager}"));
+        let mut build = command(env!("CARGO_BIN_EXE_velt"));
+        build
+            .arg("build")
+            .arg(&file)
+            .arg("-o")
+            .arg(&exe)
+            .current_dir(dir.path())
+            .env("VELT_SCHEDULER", "std")
+            .env_remove("VELT_EAGER_STD");
+        if eager {
+            build.env("VELT_EAGER_STD", "1");
+        }
+        let o = build.output().unwrap();
+        assert!(
+            o.status.success(),
+            "std up front: {eager}: {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+        let (code, out, err) = run(&exe, dir.path(), "1");
+        assert_eq!(
+            (code, out.as_str()),
+            (1, ""),
+            "std up front: {eager}: {err}"
+        );
+        assert!(
+            err.contains("Uncaught Boom [Error]: in a module initializer"),
+            "{err}"
+        );
+        let (a, f) = blocks(&err).expect("an rc stats line");
+        assert_eq!(a, f, "blocks not balanced: {err}");
     }
 }
