@@ -214,7 +214,7 @@ fn a_unions_variant_order_does_not_depend_on_what_the_program_made_first() {
     let order = union_variants(&p1, t1[0]);
     assert_eq!(order, union_variants(&p2, t2[0]));
     // The built-in types first, as `Types::new` makes them (`boolean | string`, as before), then
-    // literals by value.
+    // literals by their spelling (strings quoted, numbers as written: `10` sorts before `9`).
     assert_eq!(&order[..2], ["boolean", "string"], "{order:?}");
     assert_eq!(&order[2..4], ["\"a\"", "\"b\""], "{order:?}");
 }

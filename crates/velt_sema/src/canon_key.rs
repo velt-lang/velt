@@ -144,7 +144,8 @@ impl Ctx<'_> {
             Some(DefInfo::Adt(a)) if a.kind == crate::hir::AdtKind::Anon => {
                 out.push('{');
                 for f in &a.fields {
-                    out.push_str(&f.name);
+                    // Quoted, so a name holding `:` or `;` can't read as two fields.
+                    out.push_str(&format!("{:?}", f.name));
                     out.push(':');
                     self.canon_into(f.ty, out, unions);
                     out.push(';');
@@ -172,7 +173,9 @@ impl Ctx<'_> {
             Some(DefInfo::Enum(e)) => e.qual_name.clone(),
             Some(DefInfo::Iface(i)) => i.qual_name.clone(),
             Some(DefInfo::Fn(f)) => f.name.clone(),
-            Some(DefInfo::Global(_)) | None => format!("def#{}", d.0),
+            Some(DefInfo::Global(g)) => g.qual_name.clone(),
+            // Not a definition sema made (an internal error elsewhere): no name to spell.
+            None => "?".to_string(),
         }
     }
 }
