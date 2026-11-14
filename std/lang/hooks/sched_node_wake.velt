@@ -3,6 +3,7 @@
 // once among its task's woken nodes (holding a reference) and wakes the task.
 
 import { export as cExport } from "velt/ffi";
+import { noInline } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as nd from "./sched_node";
 import * as wn from "./sched_node_woken";
@@ -17,7 +18,17 @@ export function nodeClone(w: usize): usize {
 
 @cExport("std_sched_node_wake")
 export function nodeWake(w: usize): void {
-  // Counted until the reference is back (sched_wake.velt `settleWakes`).
+  if (wk.counting()) {
+    countedWake(w);
+    return;
+  }
+  wake(w);
+  nd.release(w);
+}
+
+/** `nodeWake` with the block counters on: counted until the reference is back (sched_wake.velt). */
+@noInline
+function countedWake(w: usize): void {
   wk.wakingStarts();
   wake(w);
   nd.release(w);
