@@ -77,15 +77,23 @@ fn canonical(h: &mut Hashing<'_>, debug: &str) -> String {
     while let Some(at) = next_marker(rest) {
         out.push_str(&rest[..at]);
         let tail = &rest[at..];
-        if let Some(after) = tail.strip_prefix("Span {") {
+        if tail.starts_with('"') {
+            // A string (a literal's text, a name): copied as it is, so text in std that reads
+            // like a marker (`"DefId(1)"`) stays text.
+            let end = string_end(tail);
+            out.push_str(&tail[..end]);
+            rest = &tail[end..];
+        } else if let Some(after) = tail.strip_prefix("Span {") {
             // `Span { file: FileId(1), lo: 2, hi: 3 }`: no braces inside.
             let end = after.find('}').map_or(after.len(), |e| e + 1);
             rest = &after[end..];
-        } else if let Some((n, after)) = number_in(tail, "DefId(") {
+        } else if let Some((n, after)) = number_in(tail, "DefId(").filter(|(n, _)| in_defs(h, *n)) {
             out.push('@');
             out.push_str(h.name(DefId(n)));
             rest = after;
-        } else if let Some((n, after)) = number_in(tail, "TyId(") {
+        } else if let Some((n, after)) =
+            number_in(tail, "TyId(").filter(|(n, _)| (*n as usize) < h.p.types.len())
+        {
             let hash = *tys.entry(n).or_insert_with(|| h.ty(TyId(n)));
             out.push_str(&format!("#{hash:x}"));
             rest = after;
@@ -112,12 +120,32 @@ fn canonical(h: &mut Hashing<'_>, debug: &str) -> String {
     out
 }
 
+/// Is `n` a definition of the program (a number out of range is left as it is, not looked up)?
+fn in_defs(h: &Hashing<'_>, n: u32) -> bool {
+    (n as usize) < h.p.defs.len()
+}
+
+/// The length of the debug form of a string at the start of `s` (`"…"`, with `\"` and `\\`
+/// escapes), its quotes included; all of `s` when it isn't closed.
+fn string_end(s: &str) -> usize {
+    let bytes = s.as_bytes();
+    let mut i = 1;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => i += 2,
+            b'"' => return i + 1,
+            _ => i += 1,
+        }
+    }
+    s.len()
+}
+
 /// How an implementation's index (`ExprKind::ToDyn`) shows in the debug form.
 const IMPL_INDEX: &str = "impl_index: ";
 
-/// The position of the next `Span {`, `DefId(`, `TyId(` or implementation index in `s`.
+/// The position of the next string, `Span {`, `DefId(`, `TyId(` or implementation index in `s`.
 fn next_marker(s: &str) -> Option<usize> {
-    ["Span {", "DefId(", "TyId(", IMPL_INDEX]
+    ["\"", "Span {", "DefId(", "TyId(", IMPL_INDEX]
         .iter()
         .filter_map(|m| s.find(m))
         .min()
@@ -141,14 +169,17 @@ fn index_in<'s>(s: &'s str, prefix: &str) -> Option<(u32, &'s str)> {
 
 #[cfg(test)]
 mod tests {
-    use super::{index_in, next_marker, number_in};
+    use super::{index_in, next_marker, number_in, string_end};
 
     #[test]
     fn markers_and_numbers() {
         assert_eq!(next_marker("a TyId(3) DefId(1)"), Some(2));
+        assert_eq!(next_marker("x \"DefId(1)\""), Some(2));
         assert_eq!(next_marker("nothing"), None);
         assert_eq!(number_in("DefId(42) rest", "DefId("), Some((42, " rest")));
         assert_eq!(number_in("DefId(x)", "DefId("), None);
         assert_eq!(index_in("impl_index: 7 }", "impl_index: "), Some((7, " }")));
+        assert_eq!(string_end(r#""a\"DefId(1)" rest"#), 13);
+        assert_eq!(string_end(r#""a\\" b""#), 5);
     }
 }

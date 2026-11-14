@@ -118,6 +118,9 @@ phase 3 serves nothing until the count is zero, or each remainder is a keyed var
 ## Phases
 
 0. **Measure.** `bench/compile/edit_loop.sh` (the table above, per stage), the oracle, and this note.
+   Still open: a nightly job running both; `--timings` splitting sema and lowering by origin (app,
+   package, std; `-v` counts the lines loaded besides std so far); sigx-ssr in `edit_loop.sh`'s
+   default set, which needs its `pnpm install` first.
 1. **Stable identity** (#2930): def keys; class, static and module-state numbering by key; union
    tags in canonical order; named statics for encounter-order numbers.
 2. **Seal the boundary**, one change per path the oracle finds (D1-D4), with run-time benches
