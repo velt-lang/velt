@@ -68,9 +68,11 @@ impl FnCx<'_, '_> {
     /// A value of a type parameter bounded by a union (`k: K`, `K extends string | readonly
     /// unknown[]`) where a union holding every member of the bound is expected (the bound
     /// itself, or a wider union: `K | null` as `KeyValue | null`, #379): the value through an
-    /// `any`, converted as `as` converts it, which picks the member the instantiation is (each
-    /// instantiation is one of the bound's members, so the check never fails). `Err(h)` for any
-    /// other value.
+    /// `any`, converted as `as` converts it, which picks the member the instantiation is.
+    /// Only where every member of the bound has an exact run-time test (`exact_test`): an
+    /// instantiation is then one of them itself, so the check never fails, while an interface
+    /// or object type member would take a subtype that the test rejects, and an enum has no
+    /// test (#924). `Err(h)` for any other value.
     pub(crate) fn union_bound_value(
         &mut self,
         h: hir::Expr,
@@ -88,12 +90,16 @@ impl FnCx<'_, '_> {
             return Err(h);
         }
         let want = self.flat_members(exp);
-        let fits = self.flat_members(b).iter().all(|m| want.contains(m));
-        if !fits {
+        let have = self.flat_members(b);
+        let fits = have.iter().all(|m| want.contains(m));
+        if !fits || !have.iter().all(|&m| self.exact_test(m, 0)) {
             return Err(h);
         }
+        // Tested as the bound, whose members all have exact tests, then widened to `exp` by
+        // re-tagging, which needs no test of `exp`'s other members (an enum has none).
         let boxed = self.generic_as_any(h)?;
-        Ok(self.cast_dynamic(boxed, exp))
+        let bound = self.cast_dynamic(boxed, b);
+        self.try_coerce(bound, exp)
     }
 
     /// `t` without its `| null` (or `| undefined`).
@@ -105,5 +111,25 @@ impl FnCx<'_, '_> {
     fn flat_members(&mut self, t: TyId) -> Vec<TyId> {
         let t = self.flat_union(t);
         self.cx.union_members(t).unwrap_or_else(|| vec![t])
+    }
+
+    /// Does converting an `any` to `t` test for exactly `t` (a primitive, a literal, a class, an
+    /// array or union of such, or one of those or nothing), so that a value made as a `t` always
+    /// passes and nothing else does?
+    fn exact_test(&mut self, t: TyId, depth: u32) -> bool {
+        if depth > 8 {
+            return false;
+        }
+        if let Some(members) = self.cx.union_members(t) {
+            return members.iter().all(|&m| self.exact_test(m, depth + 1));
+        }
+        match self.cx.ty.kind(t).clone() {
+            TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Str | TyKind::Literal(_) => {
+                true
+            }
+            TyKind::Array(e) | TyKind::Option(e, _) => self.exact_test(e, depth + 1),
+            TyKind::Adt(d, _) => self.is_class_def(d) && self.cx.brand_base(t).is_none(),
+            _ => false,
+        }
     }
 }

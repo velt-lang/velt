@@ -1,0 +1,20 @@
+// A type parameter bounded by a union with an interface or object type member is not converted
+// to a wider union (#379, `union_bound_value`): an instantiation may be a subtype of that member
+// (a class implementing `P`, an object with more fields), which converting through an `any`
+// would reject at run time where Node passes it on. Velt refuses it at compile time instead;
+// tsc accepts both.
+interface P {
+  x: number;
+}
+
+function viaInterface<K extends P | string>(k: K | null): P | string | null {
+  return k;
+}
+
+type Pt = { x: number };
+
+function viaObject<K extends Pt | string>(k: K): Pt | string | boolean {
+  return k;
+}
+
+function main() {}
