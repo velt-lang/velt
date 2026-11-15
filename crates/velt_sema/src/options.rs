@@ -18,6 +18,10 @@ pub struct CheckOptions {
     /// unit, frozen, then the program checked against it; writes across the boundary are counted
     /// and printed. Needs every std module loaded and `eager_std`. Additive.
     pub units: bool,
+    /// With `units`: a key for std's sources (the caller's, e.g. a hash of their contents). A
+    /// long-lived caller that checks again keeps std's unit between checks under it
+    /// (`crate::std_unit`). Additive.
+    pub std_key: Option<u64>,
 }
 
 impl Default for CheckOptions {
@@ -27,6 +31,7 @@ impl Default for CheckOptions {
             eager_std: false,
             native_executor: true,
             units: false,
+            std_key: None,
         }
     }
 }

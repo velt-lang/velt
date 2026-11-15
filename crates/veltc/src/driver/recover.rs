@@ -48,6 +48,7 @@ pub(super) fn check_recovering_loaded(
         eager_std: scope.eager_std,
         units: scope.units,
         native_executor: super::native_executor(opts),
+        std_key: None,
     };
     // The recovered trees can hold shapes no clean parse produces: a type checker failure on
     // them costs these findings only, never the syntax errors already reported.

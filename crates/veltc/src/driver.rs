@@ -26,6 +26,7 @@ mod std_load;
 mod std_summary;
 use std_load::load_options;
 pub(crate) use std_load::StdLoad;
+mod units_twice;
 mod warm;
 pub use warm::{compile_for_jit_warm, copy_files};
 pub(crate) mod stamp;
@@ -400,8 +401,14 @@ fn sema_stage(
         eager_std: scope.eager_std,
         units: scope.units,
         native_executor: native_executor(opts),
+        std_key: None,
     };
     let packages = opts.packages.as_ref();
+    // EXPERIMENT (#2943): `VELT_UNITS_TWICE` (`units_twice`).
+    let mut sema_opts = sema_opts;
+    if scope.units && std::env::var_os("VELT_UNITS_TWICE").is_some() {
+        units_twice::run(sess, opts, loaded, &mut sema_opts, packages);
+    }
     sess.no_generators |= opts.no_generators;
     // With `VELT_EAGER_STD` the executor's modules are still served on demand
     // (`StdLoad::serve`); `velt check --std` loads everything up front.

@@ -99,6 +99,12 @@ pub(crate) struct Summaries {
     pub(crate) module_edges: crate::linked::ModuleEdges,
 }
 
+/// std's part of two per-module facts ([`Order::std_facts`]).
+pub(crate) type StdFacts<'a> = (
+    Vec<Option<&'a crate::namespaces::Private>>,
+    Vec<(&'a String, Vec<usize>)>,
+);
+
 /// The modules of a check by units in the order its contexts hold them: std's first, which
 /// std's unit is checked over alone, then the app's, added to a copy of std's frozen unit (with
 /// any generated module std's check added between them).
@@ -149,6 +155,21 @@ impl Order {
     pub(crate) fn in_app(&self, m: usize, base: usize) -> Option<usize> {
         self.in_std(m)
             .or_else(|| self.app.iter().position(|&a| a == m).map(|k| base + k))
+    }
+
+    /// std's part of the per-module facts `ns_private` and `global_ns` (by original module),
+    /// in std's order, for the key of std's unit (`crate::std_unit`).
+    pub(crate) fn std_facts<'a>(
+        &self,
+        ns_private: &'a [crate::namespaces::Private],
+        global_ns: &'a crate::namespaces::GlobalNamespaces,
+    ) -> StdFacts<'a> {
+        let private = self.std.iter().map(|&m| ns_private.get(m)).collect();
+        let mut names: Vec<(&String, Vec<usize>)> = (global_ns.iter())
+            .map(|(n, ms)| (n, ms.iter().filter_map(|&m| self.in_std(m)).collect()))
+            .collect();
+        names.sort();
+        (private, names)
     }
 
     /// Where the app's modules start in `cx` (after std's and the generated ones).

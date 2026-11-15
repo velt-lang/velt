@@ -137,12 +137,14 @@ mod recursive_aliases;
 mod recursive_unions;
 mod replaced_holders;
 mod resolve;
+mod rewrite_facts;
 mod rounds;
 mod script_locals;
 mod script_tdz;
 mod source_module;
 mod source_scans;
 mod std_load;
+mod std_unit;
 mod struct_tuples;
 mod suggest;
 mod symbols;
@@ -377,8 +379,38 @@ fn check_timed(
     // A check by units with std as a check of its own (`units::stage2`): the stage the next
     // round checks, and std's frozen unit the app's rounds start from.
     let stage = std::cell::Cell::new(units::Stage::Both);
-    let std_snap: std::cell::RefCell<Option<ctx::Ctx>> = Default::default();
     let order = (opts.units && units::stage2()).then(|| units::Order::of(modules, root));
+    // std's unit kept between checks (`std_unit`): its key, the cache (locked until every
+    // context made from it is dropped, so before them), and the copies of std's modules a unit
+    // made by this check is checked over and owns.
+    let found = rewrite_facts::Found {
+        ns_private: &ns_private,
+        global_ns: &global_ns,
+        gen_throw,
+        alias_blocked: &alias_blocked,
+        lifted: lifted.as_ref(),
+        overloaded: overloaded.as_ref(),
+        null_proto,
+        record_accessors,
+        ctor_reads,
+        brands: &brands,
+        global_props: &global_props,
+        recovered,
+        merge_diags: &merge_diags,
+        promoted: &chunks.promoted,
+        rmw: &asserted.rmw,
+        closures: closures.as_ref(),
+    };
+    let std_key = (order.as_ref())
+        .zip(opts.std_key)
+        .map(|(o, k)| found.std_key(k, opts, o, modules));
+    let mut held = std_unit::hold(std_key);
+    let mut std_copies = held.as_ref().map(|_| std_unit::copies(modules));
+    // SAFETY: the copies' contents stay at their heap address until the check ends: moved into
+    // the cache with their box (`std_unit::keep`), or dropped after every context.
+    let copies: Option<&[SourceModule]> =
+        (std_copies.as_deref()).map(|c| unsafe { &*(c as *const [SourceModule]) });
+    let std_snap: std::cell::RefCell<Option<ctx::Ctx>> = Default::default();
     let new_cx = |round: &'static str,
                   held_borrows: bool,
                   seeds: &throws::FnTypeSeeds,
@@ -392,9 +424,10 @@ fn check_timed(
         let fresh = from_std.is_none();
         let mut cx = match (from_std, &order) {
             (Some(cx), _) => cx,
-            (None, Some(o)) if stage.get() == units::Stage::Std => {
-                ctx::Ctx::over(o.std_modules(modules), 0)
-            }
+            (None, Some(o)) if stage.get() == units::Stage::Std => match copies {
+                Some(c) => ctx::Ctx::over(c.iter().collect(), 0),
+                None => ctx::Ctx::over(o.std_modules(modules), 0),
+            },
             (None, _) => ctx::Ctx::new(modules, root),
         };
         cx.units_stage = stage.get();
@@ -406,13 +439,8 @@ fn check_timed(
             if let Some(o) = &order {
                 o.add_app(&mut cx, modules);
                 let base = o.app_base(&cx);
-                cx.global_props = global_props.clone();
-                cx.objects.brands = brands.clone();
-                cx.ns_private = ns_private.clone();
-                cx.global_namespaces = global_ns.clone();
-                cx.recovered = (recovered.iter())
-                    .map(|&(m, src)| (m, collect::exports::words(src)))
-                    .collect();
+                generating::install(&mut cx, gen, generator.as_ref());
+                found.install(&mut cx, true);
                 units::remap_module_facts(&mut cx, &|m| o.in_app(m, base));
             }
         }
@@ -425,7 +453,10 @@ fn check_timed(
             cx.lazy.native_executor = opts.native_executor;
             body::lazy_std::assume(&mut cx, &assumed.borrow());
             cx.loads = loads;
-            generating::install(&mut cx, gen, generator.as_ref());
+            // std's unit takes nothing of a check's generator (`std_unit`).
+            if stage.get() != units::Stage::Std {
+                generating::install(&mut cx, gen, generator.as_ref());
+            }
             cx.union_views.assumed = views.clone();
             cx.fn_sites = throws::FnSites::new(seeds.clone(), last);
             cx.stack_budget = stack_budget;
@@ -433,35 +464,7 @@ fn check_timed(
             cx.body_records = kept::wanted(input).then(Default::default);
             cx.source_facts = facts.clone();
             cx.held_borrows = held_borrows;
-            cx.ns_private = ns_private.clone();
-            cx.global_namespaces = global_ns.clone();
-            cx.gen_throw = gen_throw;
-            cx.alias_blocked = alias_blocked.clone();
-            if let Some(l) = &lifted {
-                cx.generic_arrow_fns = l.local_fns.clone();
-                cx.generic_arrow_all = l.all_fns.clone();
-                cx.unsafe_arrow_fns = l.unsafe_fns.clone();
-            }
-            if let Some(o) = &overloaded {
-                cx.has_overloads = true;
-                cx.overloaded_methods = o.methods.clone();
-            }
-            cx.objects.null_proto_records = null_proto;
-            cx.objects.record_accessors = record_accessors;
-            cx.objects.ctor_reads = ctor_reads;
-            cx.objects.brands = brands.clone();
-            cx.global_props = global_props.clone();
-            cx.recovered = (recovered.iter())
-                .map(|&(m, src)| (m, collect::exports::words(src)))
-                .collect();
-            cx.diags.extend(merge_diags.iter().cloned());
-            cx.promoted_consts = chunks.promoted.clone();
-            cx.asserted_rmw = asserted.rmw.clone();
-            if let Some(c) = &closures {
-                cx.diags.extend(c.diags.iter().cloned());
-                cx.kept_nested = c.kept.clone();
-                cx.set_closure_groups(&c.groups);
-            }
+            found.install(&mut cx, stage.get() != units::Stage::Std);
         }
         if let (true, Some(o)) = (fresh, &order) {
             if stage.get() == units::Stage::Std {
@@ -488,14 +491,26 @@ fn check_timed(
     };
     // The check checked again, kept while that one runs: when that one reports an error this
     // one did not, this one's diagnostics stay the program's (`throws::adds_errors`).
-    if opts.units && units::stage2() {
-        stage.set(units::Stage::Std);
-        let mut std_cx = match rounds::run(&new_cx, &|_: &ctx::Ctx| false, &assumed, false, None) {
-            Ok((cx, _, _)) => cx,
-            Err(stopped) => return *stopped,
+    if order.is_some() {
+        let std_cx = match std_unit::take(&held, std_key) {
+            Some(cx) => cx,
+            None => {
+                stage.set(units::Stage::Std);
+                let run = rounds::run(&new_cx, &|_: &ctx::Ctx| false, &assumed, false, None);
+                let mut std_cx = match run {
+                    Ok((cx, _, _)) => cx,
+                    Err(stopped) => return *stopped,
+                };
+                std_cx.freeze_defs();
+                std_cx.unit_base = std_cx.defs.len() as u32;
+                if let (Some(k), Some(c)) = (std_key, std_copies.take()) {
+                    // SAFETY: std's stage was checked over `c` alone (`copies`), with no
+                    // generator, loads or diagnostics of the check installed.
+                    unsafe { std_unit::keep(&mut held, k, std_cx.clone(), c) };
+                }
+                std_cx
+            }
         };
-        std_cx.freeze_defs();
-        std_cx.unit_base = std_cx.defs.len() as u32;
         *std_snap.borrow_mut() = Some(std_cx);
         stage.set(units::Stage::App);
     }

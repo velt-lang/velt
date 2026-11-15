@@ -225,3 +225,37 @@ fn an_app_checked_by_units_sees_its_own_implementations_of_interfaces() {
         assert!(out.status.success(), "VELT_UNITS={units}:\n{stderr}");
     }
 }
+
+/// std's unit kept between two checks of one process (velt_sema `std_unit`) checks the program
+/// as the first check, which made the unit, did: the same diagnostics and the same lowering. The
+/// goldens are ones whose result depends on what std's unit keeps for the app's check (its
+/// summaries): a program that stores a promise's reject function, and one whose async closure
+/// crosses a thread through a generic std function.
+#[test]
+fn std_s_unit_kept_between_checks_checks_the_program_the_same() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let programs = [
+        ("examples", "todo_api.velt"),
+        ("tests/golden/lang", "promise_reject_stored.velt"),
+        (
+            "tests/golden/lang/errors",
+            "async_closure_crosses_generic.velt",
+        ),
+    ];
+    for (dir, file) in programs {
+        let out = no_window::command(env!("CARGO_BIN_EXE_velt"))
+            .args(["check", file])
+            .current_dir(root.join(dir))
+            .env("VELT_UNITS", "2")
+            .env("VELT_UNITS_TWICE", "1")
+            .env_remove("VELT_UNITS_FREEZE")
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("velt-units: second check"),
+            "{file}: {stderr}"
+        );
+        assert!(!stderr.contains("the checks differ"), "{file}: {stderr}");
+    }
+}
