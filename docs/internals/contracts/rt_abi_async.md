@@ -347,7 +347,7 @@ Since #2649's switch, a program for a native target runs on the executor in Velt
 and the compiler no longer reads `VELT_SCHEDULER` (it is accepted and ignored). The symbols below
 stay the ABI of WebAssembly programs (`velt_rt_wasm`) and of programs compiled before the switch
 until they go (#2649 D2b); the host described after the table runs the runtime's Rust glue (TLS,
-child processes and UDP on Windows, file streams, the native-package ABI).
+child processes on Windows, file streams, the native-package ABI).
 
 | Symbol | Signature | Notes |
 |---|---|---|
@@ -367,7 +367,7 @@ child processes and UDP on Windows, file streams, the native-package ABI).
 
 Runtime (#2649 D1): the host of the runtime's Rust glue (`task/runtime/host.rs`), one tokio
 multi-thread runtime with one worker thread (`velt-host`, an 8 MiB stack) and tokio's blocking
-pool, started on first use. TLS, `fetch` over https, child processes and UDP on Windows, file
+pool, started on first use. TLS, `fetch` over https, child processes on Windows, file
 streams, signals, the `velt dev` host and the native-package ABI run there, and so do the symbols
 above for programs compiled before the switch (deleted in #2649 D2b). Everything in the runtime
 goes through `task/runtime/` (`spawn`, `spawn_blocking`, `enter`, `block_on`, its
@@ -537,11 +537,11 @@ declarations (std/fs/fd/posix.velt), with the guards a C call needs in Velt besi
 ### 3.2 Object handles
 
 Runtime objects that Velt code holds (`VeltListener`, `VeltStream`, `VeltServer`, `VeltReq`,
-`VeltResp`, `VeltRegex`, `VeltChild`, `VeltUdp`, `VeltFileReader`,
+`VeltResp`, `VeltRegex`, `VeltChild`, `VeltFileReader`,
 `VeltFileWriter`, `VeltJson`) are **`uint64_t` handles**, 0 = none. Velt has no
 pointer type, so `std` stores them in `u64` fields and passes `u64` arguments; the runtime takes
 and returns the same `u64`, in argument lists, results and result slots alike.
-- Handles that `std` wraps in **Copy structs** (`VeltListener`, `VeltStream`, `VeltUdp`,
+- Handles that `std` wraps in **Copy structs** (`VeltListener`, `VeltStream`,
   `VeltChild`, `VeltFileReader`, `VeltFileWriter`) are keys into runtime handle tables
   (`velt_rt::registry::Key<T>`: generation, shard and slot), because Velt code may hold several copies:
   releasing one (`close`/`free`) makes every copy dead. Later operations fail with `EBADF`
