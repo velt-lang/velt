@@ -2,17 +2,17 @@
 //! https://veltlang.com/docs/std/task/). A signal is a reference-counted object: a flag, the abort reason, the tasks
 //! waiting for it, and the signals derived from it (`AbortSignal.any`). Cancellation is
 //! cooperative: aborting only sets the flag and wakes the waiters; Velt code reacts. No code
-//! pointers are stored (rt_abi_async.md §13.5): `AbortSignal.timeout` is a runtime timer task,
-//! which holds only a weak reference to its signal and is aborted when the signal is dropped, so
-//! a dropped signal with a long timeout frees its memory and its timer at once (#149).
+//! pointers are stored (rt_abi_async.md §13.5). `AbortSignal.timeout`'s timer is std's, one of
+//! Node's timers (std/task/signal_timeout.velt, #3029), which aborts the signal through
+//! `velt_rt_signal_abort`; std tells a wait for such a signal that a timer may abort it
+//! (`velt_rt_signal_wait`'s `timed`).
 //!
 //! A derived signal holds strong references to its sources until it is aborted (a source holds
-//! only a weak one back), so `AbortSignal.any([AbortSignal.timeout(50)])` keeps its timeout
-//! signal alive, and no cycle forms.
+//! only a weak one back), so a source aborted through another reference aborts it, and no cycle
+//! forms.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
-use std::time::Duration;
 
 use tokio::sync::Notify;
 
@@ -26,8 +26,6 @@ use crate::str::VeltStr;
 #[derive(Default, Clone)]
 struct Reason {
     text: String,
-    /// The delay of the `AbortSignal.timeout` that aborted it (also through `any`).
-    timeout_ms: Option<i64>,
 }
 
 /// An abort signal.
@@ -40,16 +38,6 @@ pub struct Signal {
     children: Mutex<Vec<Weak<Signal>>>,
     /// The signals this one was derived from (`AbortSignal.any`), until it is aborted.
     sources: Mutex<Vec<Arc<Signal>>>,
-    /// The timer task of an `AbortSignal.timeout` signal, aborted when the signal is dropped.
-    timer: std::sync::OnceLock<super::runtime::AbortHandle>,
-}
-
-impl Drop for Signal {
-    fn drop(&mut self) {
-        if let Some(t) = self.timer.get() {
-            t.abort();
-        }
-    }
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -61,7 +49,6 @@ impl Signal {
     pub(crate) fn abort_with(&self, text: &str) {
         self.abort(&Reason {
             text: text.to_string(),
-            timeout_ms: None,
         });
     }
 
@@ -85,12 +72,6 @@ impl Signal {
 
     fn is_aborted(&self) -> bool {
         self.aborted.load(Ordering::Acquire)
-    }
-
-    /// Will a timer abort it (an `AbortSignal.timeout`, or `AbortSignal.any` of one)?
-    fn timed(&self) -> bool {
-        !self.is_aborted()
-            && (self.timer.get().is_some() || lock(&self.sources).iter().any(|s| s.timed()))
     }
 
     fn reason(&self) -> Reason {
@@ -167,10 +148,7 @@ pub unsafe extern "C-unwind" fn velt_rt_signal_free(h: Handle<Signal>) {
 #[no_mangle]
 pub unsafe extern "C-unwind" fn velt_rt_signal_abort(h: Handle<Signal>, reason: *const VeltStr) {
     let text = (*reason).text_lossy().into_owned();
-    h.obj().abort(&Reason {
-        text,
-        timeout_ms: None,
-    });
+    h.obj().abort(&Reason { text });
 }
 
 /// Whether the signal is aborted.
@@ -191,27 +169,20 @@ pub unsafe extern "C-unwind" fn velt_rt_signal_reason(h: Handle<Signal>, out: *m
     out.write(VeltStr::from_vec(h.obj().reason().text.into_bytes()));
 }
 
-/// The delay of the `AbortSignal.timeout` that aborted the signal (directly or through
-/// `AbortSignal.any`), or -1 (not aborted, or aborted otherwise).
-///
-/// # Safety
-/// `h` must be a live signal handle.
-#[no_mangle]
-pub unsafe extern "C-unwind" fn velt_rt_signal_timeout_ms(h: Handle<Signal>) -> i64 {
-    h.obj().reason().timeout_ms.unwrap_or(-1)
-}
-
 /// A future (unit result) that completes once the signal is aborted (never, if it never is).
-/// Waiting for a signal a timer aborts keeps the process alive, like waiting for a timer
+/// `timed`: a timer may abort it (std/task/signal.velt: an `AbortSignal.timeout`, or an
+/// `AbortSignal.any` of one), so the wait keeps the process alive, like waiting for a timer
 /// (task/quiet.rs; Node unrefs that timer, but then nothing awaiting the signal would run); a
 /// signal only `abort()` can abort leaves that to whoever may call it.
 ///
 /// # Safety
 /// `h` must be a live signal handle.
 #[no_mangle]
-pub unsafe extern "C-unwind" fn velt_rt_signal_wait(h: Handle<Signal>) -> *mut VeltFut {
+pub unsafe extern "C-unwind" fn velt_rt_signal_wait(
+    h: Handle<Signal>,
+    timed: bool,
+) -> *mut VeltFut {
     let s = h.clone_arc();
-    let timed = s.timed();
     let wait = async move {
         loop {
             let aborted = s.notify.notified();
@@ -225,61 +196,6 @@ pub unsafe extern "C-unwind" fn velt_rt_signal_wait(h: Handle<Signal>) -> *mut V
         new_leaf(wait)
     } else {
         new_inner_leaf(wait)
-    }
-}
-
-/// `AbortSignal.timeout(ms)`: a new signal that a runtime timer aborts after `ms` milliseconds
-/// with `reason`. The timer holds only a weak reference, and dropping the signal aborts the
-/// timer: a signal nobody holds is freed at once, with its timer, not when the delay is up.
-///
-/// # Safety
-/// `reason` must be a valid string.
-#[no_mangle]
-pub unsafe extern "C-unwind" fn velt_rt_signal_timeout(
-    ms: i64,
-    reason: *const VeltStr,
-) -> Handle<Signal> {
-    let s = Arc::new(Signal::default());
-    let weak = Arc::downgrade(&s);
-    let reason = Reason {
-        text: (*reason).text_lossy().into_owned(),
-        timeout_ms: Some(ms),
-    };
-    let delay = Duration::from_millis(ms.max(0) as u64);
-    let live = live_timers::Live::new();
-    let task = super::runtime::spawn(async move {
-        let _live = live;
-        super::runtime::time::sleep(delay).await;
-        if let Some(s) = weak.upgrade() {
-            s.abort(&reason);
-        }
-    });
-    // The task never outlives the signal by more than its abort: it holds nothing else.
-    let _ = s.timer.set(task.abort_handle());
-    Handle::from_arc(s)
-}
-
-/// Live `AbortSignal.timeout` timer tasks, for the cost test (a count, not a time).
-mod live_timers {
-    #[cfg(test)]
-    pub(super) static LIVE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
-    /// Counts one live timer task while it exists (nothing outside tests).
-    pub(super) struct Live;
-
-    impl Live {
-        pub(super) fn new() -> Live {
-            #[cfg(test)]
-            LIVE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            Live
-        }
-    }
-
-    impl Drop for Live {
-        fn drop(&mut self) {
-            #[cfg(test)]
-            LIVE.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
-        }
     }
 }
 
@@ -307,7 +223,7 @@ pub unsafe extern "C-unwind" fn velt_rt_signal_any(
 mod tests {
     use super::*;
     use crate::task::{drop_fut, poll_fut, raw_cx, PENDING, READY};
-    use std::task::{Context, Poll, Waker};
+    use std::task::{Context, Waker};
 
     fn poll(f: *mut VeltFut) -> u32 {
         let mut cx = Context::from_waker(Waker::noop());
@@ -338,14 +254,13 @@ mod tests {
             let b = velt_rt_signal_new();
             let hs = VeltArray::from_vec(vec![a.bits(), b.bits()]);
             let any = velt_rt_signal_any(&hs);
-            let wait = velt_rt_signal_wait(any);
+            let wait = velt_rt_signal_wait(any, false);
             assert_eq!(poll(wait), PENDING);
             velt_rt_signal_abort(b, &reason);
             assert!(velt_rt_signal_aborted(any));
             assert!(!velt_rt_signal_aborted(a));
             assert_eq!(poll(wait), READY);
             assert_eq!(h_reason(any), "stop");
-            assert_eq!(velt_rt_signal_timeout_ms(any), -1);
             drop_fut(wait);
             for h in [a, b, any] {
                 velt_rt_signal_free(h);
@@ -358,78 +273,22 @@ mod tests {
     }
 
     #[test]
-    fn dropped_timeout_signals_free_their_timers() {
-        use std::sync::atomic::Ordering::SeqCst;
-        let reason = VeltStr::from_vec(b"late".to_vec());
-        crate::task::runtime::runtime().block_on(async {
-            const N: usize = 100_000;
-            let before = live_timers::LIVE.load(SeqCst);
-            for _ in 0..N {
-                // SAFETY: a fresh handle, freed at once (the last reference: the signal drops).
-                unsafe { velt_rt_signal_free(velt_rt_signal_timeout(600_000, &reason)) };
-            }
-            // Aborted tasks are dropped on their next turn: wait for that (the limit only turns
-            // a leak into a failure instead of a hang; it is not a timing window).
-            let t = std::time::Instant::now();
-            // Other tests may hold a few timeouts of their own meanwhile.
-            while live_timers::LIVE.load(SeqCst) > before + 100 {
-                assert!(
-                    t.elapsed() < Duration::from_secs(60),
-                    "{} of {N} dropped timeouts still hold their timer",
-                    live_timers::LIVE.load(SeqCst) - before
-                );
-                tokio::time::sleep(Duration::from_millis(1)).await;
-            }
-        });
-    }
-
-    #[test]
-    fn a_held_timeout_signal_still_aborts() {
-        let reason = VeltStr::from_vec(b"late".to_vec());
-        crate::task::runtime::runtime().block_on(async {
-            // SAFETY: handles are live until freed.
-            unsafe {
-                let t = velt_rt_signal_timeout(5, &reason);
-                let wait = velt_rt_signal_wait(t);
-                // A waiter holds the signal too: freeing the handle keeps the timer.
-                velt_rt_signal_free(t);
-                let done = std::future::poll_fn(|cx| match poll_fut(wait, raw_cx(cx).ptr()) {
-                    READY => Poll::Ready(()),
-                    _ => Poll::Pending,
-                });
-                let waited = tokio::time::timeout(Duration::from_secs(60), done).await;
-                drop_fut(wait);
-                assert!(waited.is_ok(), "the timeout never fired");
-            }
-        });
-    }
-
-    #[test]
     fn a_derived_signal_keeps_its_sources_alive() {
         let reason = VeltStr::from_vec(b"late".to_vec());
-        crate::task::runtime::runtime().block_on(async {
-            // SAFETY: handles are live until freed.
-            unsafe {
-                let t = velt_rt_signal_timeout(5, &reason);
-                let hs = VeltArray::from_vec(vec![t.bits()]);
-                let any = velt_rt_signal_any(&hs);
-                velt_rt_signal_free(t);
-                // Wait for the derived signal itself: it aborts only if it kept the freed timeout
-                // source alive. The limit only turns a hang (a source dropped too early) into a
-                // failure; it is not a timing window.
-                let wait = velt_rt_signal_wait(any);
-                let done = std::future::poll_fn(|cx| match poll_fut(wait, raw_cx(cx).ptr()) {
-                    READY => Poll::Ready(()),
-                    _ => Poll::Pending,
-                });
-                let waited = tokio::time::timeout(Duration::from_secs(60), done).await;
-                drop_fut(wait);
-                assert!(waited.is_ok(), "the timeout source never fired");
-                assert!(velt_rt_signal_aborted(any));
-                assert_eq!(h_reason(any), "late");
-                assert_eq!(velt_rt_signal_timeout_ms(any), 5);
-                velt_rt_signal_free(any);
-            }
-        });
+        // SAFETY: handles are live until freed.
+        unsafe {
+            let t = velt_rt_signal_new();
+            let other = velt_rt_signal_retain(t);
+            let hs = VeltArray::from_vec(vec![t.bits()]);
+            let any = velt_rt_signal_any(&hs);
+            // The derived signal's reference keeps the source linked after this handle goes:
+            // aborting it through the other one aborts the derived signal.
+            velt_rt_signal_free(t);
+            velt_rt_signal_abort(other, &reason);
+            assert!(velt_rt_signal_aborted(any));
+            assert_eq!(h_reason(any), "late");
+            velt_rt_signal_free(other);
+            velt_rt_signal_free(any);
+        }
     }
 }

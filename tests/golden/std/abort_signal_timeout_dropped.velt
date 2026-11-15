@@ -1,0 +1,12 @@
+// Timeouts nobody waits for keep nothing alive (#149, #3029): `main` returns at once, with many
+// long ones made and dropped and one still held, as in Node. Each timer stays in the order until
+// its delay is up, as a Node timer does. Valid TypeScript; prints what Node prints.
+const held = AbortSignal.timeout(600000);
+let made = 0;
+for (let i = 0; i < 100000; i++) {
+  const s = AbortSignal.timeout(600000);
+  if (!s.aborted) {
+    made++;
+  }
+}
+console.log("made", made, "held aborted:", held.aborted);

@@ -41,6 +41,7 @@ import {
   stdUsed,
 } from "velt/lang/intrinsics";
 import * as dt from "./sched_detach";
+import * as give from "./sched_order_give";
 import * as io from "./sched_io";
 import * as tb from "./sched_io_table";
 import * as wt from "./sched_io_wait";
@@ -249,6 +250,13 @@ export function mayPark(e: usize): bool {
       if (!t.has(root, t.ROOT_DONE)) {
         unfinished(e);
       }
+    }
+    // A counted run gives back the timers that would wait past the end (an `AbortSignal.timeout`
+    // nobody waits for): their turns complete, their tasks end, and the loop looks again.
+    if (stdUsed("nodeTimers") && wk.counting() && give.giveBackMarked()) {
+      return false;
+    }
+    if (root !== 0) {
       // The root is done, its task not (promises it started after the root's end wait for
       // ever): counted as live, so worker 0 stops waiting for its end (sched_task.velt
       // `rootLeft`). COUNTED means the live count was raised for it (sched_run.velt `finish`

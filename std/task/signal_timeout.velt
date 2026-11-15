@@ -1,0 +1,81 @@
+// velt/task (internal): the timer of an `AbortSignal.timeout` (signal.velt). It is one of Node's
+// timers, in the order `setTimeout`'s keep (std/prelude/timers.velt): by deadline, then in the
+// order they were made, so a timeout's abort comes after a `setTimeout` due earlier and before
+// one due later or made after it with the same delay, as in Node (#3029). Like Node's, the timer
+// doesn't keep the process alive; a wait for the signal does (signal.velt `whenAborted`).
+//
+// The timer runs in a task of its own, as the runtime's timer did, so a task that made the signal
+// and is dropped unfinished (a request handler whose client went away) doesn't take the timeout
+// with it: another task waiting for the signal still sees it abort. That task holds a reference
+// to the runtime signal of its own until the delay is up, so whatever still waits for the signal
+// (a `whenAborted()` of a temporary signal, an `AbortSignal.any` of it, a request) sees it
+// abort. A signal dropped before then keeps its timer and that reference until the delay is up,
+// as a Node timer does: memory for the timeouts made within one delay, nothing kept alive (a
+// spawned task is no handle).
+
+import { noteStdUse } from "velt/lang/intrinsics";
+import { giveBackAtExit } from "#timer-give-back";
+import { velt_rt_signal_abort, velt_rt_signal_free, velt_rt_signal_retain } from "velt/task/rt";
+
+declare function velt_rt_timer_new(ms: i64): u64;
+declare async function velt_rt_timer_turn(timer: u64, gate: u64): Promise<void>;
+declare function velt_rt_timer_free(timer: u64);
+
+/**
+ * The first byte of the runtime abort message of a timeout's signal, followed by its delay in
+ * milliseconds (std only: an `AbortSignal.any` it aborted reads it back into a `TimeoutError`;
+ * the signal itself keeps its delay). signal.velt escapes a user's reason that starts with it
+ * (`ESCAPE`).
+ */
+export const TIMEOUT_MARK: string = "\u0001";
+
+/** Arms runtime signal `handle` to abort `ms` milliseconds from now (at least 1: `setTimeout`). */
+export function arm(handle: u64, ms: i64) {
+  // The executor in Velt carries Node's timer order only for a program that gets here.
+  noteStdUse("nodeTimers");
+  const timer = velt_rt_timer_new(ms < 1 ? 1 : ms);
+  // A counted exit gives it back (not waiting for its delay to end).
+  giveBackAtExit(timer);
+  const armed = new Armed(timer, velt_rt_signal_retain(handle));
+  const task = spawn(fire(armed, ms));
+}
+
+// The timer's place in the order and its own reference to the signal, each given back once: as
+// the timer fires, or when its task is dropped unfinished. A run with the block counters on that
+// ends with the timer pending gives it back first (`#timer-give-back`: its turn completes), so
+// leak checks stay exact; otherwise the program just ends.
+class Armed {
+  timer: u64;
+  signal: u64;
+
+  constructor(timer: u64, signal: u64) {
+    this.timer = timer;
+    this.signal = signal;
+  }
+
+  [Symbol.dispose]() {
+    if (this.timer != 0) {
+      velt_rt_timer_free(this.timer);
+      this.timer = 0;
+    }
+    if (this.signal != 0) {
+      velt_rt_signal_free(this.signal);
+      this.signal = 0;
+    }
+  }
+}
+
+/** The delay of a timeout's abort message (`TIMEOUT_MARK`), or -1 for any other message. */
+export function timeoutMs(message: string): i64 {
+  if (!message.startsWith(TIMEOUT_MARK)) {
+    return -1;
+  }
+  return parseInt(message.slice(1), 10) as i64;
+}
+
+// Waits for the timer's turn and aborts the signal; `armed` gives both back at the end.
+async function fire(armed: Armed, ms: i64): Promise<void> {
+  using a = armed;
+  await velt_rt_timer_turn(a.timer, 0);
+  velt_rt_signal_abort(a.signal, `${TIMEOUT_MARK}${ms}`);
+}

@@ -1,0 +1,46 @@
+// velt/lang/hooks (internal): the Node timers a counted exit gives back (the debug runtime's block
+// counters, `VELT_RC_STATS=1`: sched_wake.velt `counting`). An `AbortSignal.timeout`'s timer
+// (std/task/signal_timeout.velt) waits in a task of its own until its delay is up, and keeps
+// nothing alive: a program may end before it, with its task, its turn and its signal still held.
+// When such a run ends (sched_end.velt `mayPark`), the marked timers leave the order and their
+// turns complete, so their tasks end and give back what they hold, and the end is looked for again.
+// Nothing changes without the counters: the program ends as soon as nothing keeps it alive, as
+// Node's does.
+
+import { noInline } from "velt/lang/intrinsics";
+import * as l from "./sched_order_list";
+import * as m from "./sched_mem";
+import * as order from "./sched_order";
+
+/** Timer `h` (the order's) is given back at a counted exit. */
+export function mark(h: usize): void {
+  m.st(h + l.H_GIVE, 1);
+}
+
+/** The marked timers still queued leave the order, their turns completing: true if there was one. */
+@noInline
+export function giveBackMarked(): bool {
+  const b = l.order();
+  if (b === 0) {
+    return false;
+  }
+  const marked: u64[] = [];
+  const k = l.lock(b);
+  let list = m.ld(b + l.O_FIRST);
+  while (list !== 0) {
+    let h = m.ld(list + l.L_FIRST);
+    while (h !== 0) {
+      if (m.ld(h + l.H_GIVE) !== 0) {
+        marked.push(h as u64);
+      }
+      h = m.ld(h + l.H_NEXT);
+    }
+    list = m.ld(list + l.L_NEXT);
+  }
+  l.unlock(b, k);
+  // Outside the lock: a clear takes it, and wakes the turn's task.
+  for (const h of marked) {
+    order.timerClear(h as usize);
+  }
+  return marked.length > 0;
+}

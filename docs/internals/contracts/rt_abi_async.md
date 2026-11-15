@@ -414,9 +414,11 @@ exit for the leak counters.
 Each signal's `u64` handle (an `Arc`) is owned by a private `shared` cell in std/task/signal.velt and
 released once, at the cell's last reference; no handle is public. Aborting sets a flag, stores
 the reason and wakes the waiters; it never cancels anything itself. No code pointers are
-stored: `AbortSignal.timeout` is a runtime timer task holding a weak reference, aborted (freed with
-its timer) when the signal is dropped. A signal made
-by `any` holds strong references to its sources until it is aborted (they hold weak ones back).
+stored. `AbortSignal.timeout`'s timer is std's, one of Node's timers (`velt_rt_timer_*`,
+std/task/signal_timeout.velt): its promise holds a reference to the signal until the delay is up
+and aborts it with `velt_rt_signal_abort` and a message carrying the delay, and std passes
+`timed` to a wait for it. A signal made by `any`
+holds strong references to its sources until it is aborted (they hold weak ones back).
 
 | Symbol | Signature | Notes |
 |---|---|---|
@@ -426,10 +428,8 @@ by `any` holds strong references to its sources until it is aborted (they hold w
 | `velt_rt_signal_abort` | `(u64 s, const VeltStr* reason)` | aborts it and the signals derived from it (`any`); a no-op if aborted |
 | `velt_rt_signal_aborted` | `(u64 s) -> bool` | |
 | `velt_rt_signal_reason` | `(u64 s, VeltStr* out)` | the reason (`""` while not aborted) |
-| `velt_rt_signal_timeout_ms` | `(u64 s) -> i64` | the `ms` of the `velt_rt_signal_timeout` signal that aborted it (directly or through `any`), else -1 |
-| `velt_rt_signal_wait` | `(u64 s) -> VeltFut*` | completes (unit) once aborted |
-| `velt_rt_signal_timeout` | `(i64 ms, const VeltStr* reason) -> u64` | a signal a timer aborts after `ms` |
-| `velt_rt_signal_any` | `(const VeltArray<u64>* signals) -> u64` | aborted with the first of `signals` that is (its reason and timeout); keeps them alive until then |
+| `velt_rt_signal_wait` | `(u64 s, bool timed) -> VeltFut*` | completes (unit) once aborted; `timed` (a timer may abort it): the wait keeps the process alive |
+| `velt_rt_signal_any` | `(const VeltArray<u64>* signals) -> u64` | aborted with the first of `signals` that is (its reason); keeps them alive until then |
 
 ### 2.4 Task groups (`taskScope`)
 

@@ -1,0 +1,13 @@
+// A pending `AbortSignal.timeout` nobody waits for keeps nothing alive, on every target: one
+// dropped and one whose wait lost a race let the program end at once (#3029: the timer runs in
+// a task of its own, which is no handle, as a Node timer that nothing awaits keeps nothing
+// alive). A wait for one keeps the program until it fires.
+async function main() {
+  const dropped = AbortSignal.timeout(600000);
+  await Promise.race([sleep(10), AbortSignal.timeout(600000).whenAborted()]);
+  console.log("the sleep won");
+  await AbortSignal.timeout(20).whenAborted();
+  console.log("a waited timeout fired; held one aborted:", dropped.aborted);
+}
+
+// timing: waits for a short timeout; the long ones must not hold the program

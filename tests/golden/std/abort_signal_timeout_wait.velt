@@ -1,0 +1,16 @@
+// Waiting for an `AbortSignal.timeout` keeps the process alive until it fires, also for a signal
+// nothing else holds and through `AbortSignal.any`, and a wait that loses a `Promise.race` is
+// dropped, so it lets the process end (#3029: the timer is one of std's, which keeps nothing
+// alive; the wait does). Race `whenAborted()` itself: a `.then` of it would keep waiting.
+async function main() {
+  await AbortSignal.timeout(20).whenAborted();
+  console.log("a temporary signal's timeout fired");
+  const either = AbortSignal.any([new AbortController().signal, AbortSignal.timeout(20)]);
+  await either.whenAborted();
+  console.log("an any of a timeout fired:", (either.reason as DOMException).name);
+  const long = AbortSignal.timeout(600000);
+  await Promise.race([sleep(10), long.whenAborted()]);
+  console.log("the sleep won, aborted:", long.aborted, "; the losing wait lets the program end");
+}
+
+// timing: waits for timeouts to fire; the losing wait is a ten-minute one

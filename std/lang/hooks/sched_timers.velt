@@ -6,8 +6,19 @@
 
 import * as off from "./sched_off";
 import * as order from "./sched_order";
+import * as give from "./sched_order_give";
 import * as t from "./sched_task";
 import * as workers from "./sched_workers";
+
+/**
+ * Timer `h` is given back at a counted exit (sched_order_give.velt): one of the order's (a
+ * runtime's handle, off every worker, is left alone).
+ */
+export function giveBackAtExit(h: u64): void {
+  if ((h & 1) !== 0) {
+    give.mark((h & ~1) as usize);
+  }
+}
 
 /** A Node timer due `ms` milliseconds from now, queued: its handle. */
 export function timerNew(ms: i64): u64 {

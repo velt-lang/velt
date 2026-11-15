@@ -1,0 +1,7 @@
+45 ms: aborted TimeoutError | not aborted
+80 ms, made after: aborted TimeoutError
+120 ms, made before: not aborted
+160 ms, any: not aborted
+240 ms, any: aborted TimeoutError
+350 ms: not aborted
+450 ms: aborted TimeoutError
