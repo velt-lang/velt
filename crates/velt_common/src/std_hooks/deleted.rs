@@ -51,4 +51,8 @@ pub const DELETED: &[&str] = &[
     "velt_rt_strbuf_inspect_leave",
     "velt_rt_strbuf_inspect_circular",
     "velt_rt_strbuf_inspect_more",
+    // #2196: `toString(radix)` (std/lang/hooks/number, velt/lang/number/radix).
+    "velt_rt_f64_to_radix",
+    "velt_rt_i64_to_radix",
+    "velt_rt_u64_to_radix",
 ];

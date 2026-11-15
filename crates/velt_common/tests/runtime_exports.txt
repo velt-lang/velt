@@ -92,7 +92,6 @@ velt_rt velt_rt_exit
 velt_rt velt_rt_f64_to_exponential
 velt_rt velt_rt_f64_to_fixed
 velt_rt velt_rt_f64_to_precision
-velt_rt velt_rt_f64_to_radix
 velt_rt velt_rt_flush
 velt_rt velt_rt_fnprop_delete
 velt_rt velt_rt_fnprop_get
@@ -166,7 +165,6 @@ velt_rt velt_rt_group_new
 velt_rt velt_rt_group_wait
 velt_rt velt_rt_host_clone
 velt_rt velt_rt_host_release
-velt_rt velt_rt_i64_to_radix
 velt_rt velt_rt_isatty
 velt_rt velt_rt_json_enter
 velt_rt velt_rt_json_error
@@ -462,7 +460,6 @@ velt_rt velt_rt_timer_new
 velt_rt velt_rt_timer_turn
 velt_rt velt_rt_timer_unref_due
 velt_rt velt_rt_tla_at
-velt_rt velt_rt_u64_to_radix
 velt_rt velt_rt_udp_bind
 velt_rt velt_rt_udp_close
 velt_rt velt_rt_udp_port
