@@ -1,6 +1,4 @@
-// check: unfreed blocks at most 9
-// (The two hour-long timeouts still pending when `main` returns keep their timers and signals, as
-// Node's timers do (#3029); back to no leaks once a counted exit gives pending timers back, #3032.)
+// check: no leaks
 // velt/task: an AbortController stops cooperative work (checked with `throwIfAborted()`, or
 // raced with `whenAborted()`), also in a spawned task sharing the signal; `AbortSignal.timeout`
 // and `AbortSignal.any` (which keeps its sources alive); `throwIfAborted()` throws

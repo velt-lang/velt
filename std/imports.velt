@@ -109,6 +109,12 @@ export const imports: Imports = {
     default: "./net/udp/rt.velt",
   },
   "#net-dns": { "std-scheduler": "./net/dns/rt_sched.velt", default: "./net/dns/rt.velt" },
+  // An `AbortSignal.timeout`'s timer, which a counted exit gives back (std/task/signal_timeout.velt):
+  // the executor in Velt's order marks it; elsewhere nothing is counted that way.
+  "#timer-give-back": {
+    "std-scheduler": "./task/timer_give_back_sched.velt",
+    default: "./task/timer_give_back_none.velt",
+  },
   // velt/fs's and velt/process's runtime functions: the runtime's (std/fs/rt.velt, std/process/
   // rt.velt), or, compiled with the executor in Velt (`VELT_SCHEDULER=std`), the same names with
   // whole-file operations and standard input read on its blocking pool (std/lang/hooks/
