@@ -449,6 +449,7 @@ impl FnLower<'_, '_> {
             &[velt_sema::hir::PassMode::Borrow],
             super::call::Stabilize::No,
             None,
+            0,
         );
         let b = argv.into_iter().next()?;
         self.push_text(&b, &text);

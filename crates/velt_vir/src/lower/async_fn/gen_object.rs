@@ -258,6 +258,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             &modes,
             crate::lower::call::Stabilize::Share,
             Some(def),
+            0,
         );
         let gty = self.cx.gen_class_ty(def, &targs);
         self.finish_call(vir::Callee::Func(fid), argv, gty, None)

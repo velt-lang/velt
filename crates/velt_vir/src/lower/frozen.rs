@@ -96,6 +96,76 @@ impl FnLower<'_, '_> {
         mask
     }
 
+    /// The mask of a direct call's params that get a table (`table_read`) of a counted array
+    /// type (`args` follow `skip` already lowered leading params). The table's header has no
+    /// count in front of it, so the callee must neither count nor change it: such a call goes
+    /// to a `Work::Frozen` instance with these params in its mask, which reads the table in
+    /// place, as it is read where the type is not counted (#3015). A param the callee changes
+    /// although it is `Borrow` (call.rs `call_def`), or one an async function keeps past the
+    /// call, gets the table evaluated instead.
+    pub(super) fn table_mask(
+        &mut self,
+        f: &hir::FnDef,
+        modes: &[PassMode],
+        args: &[hir::Expr],
+        skip: usize,
+    ) -> u64 {
+        if f.is_async || f.is_generator {
+            return 0;
+        }
+        let mut mask = 0u64;
+        for (i, (a, m)) in args.iter().zip(modes).enumerate() {
+            let at = i + skip;
+            let changed = f.body.locals[f.params[at].local.0 as usize].mutable;
+            if *m != PassMode::Borrow || at >= 64 || changed || !self.is_table(a) {
+                continue;
+            }
+            // A view's accesses tell it by the low bit of its data pointer, which a table of
+            // bytes may have; a lock set's write barrier reads the count word.
+            let ty = self.sub(a.ty);
+            if self.cx.boxed(ty) && !self.cx.array_view(ty) && !self.cx.lock_counted(ty) {
+                mask |= 1 << at;
+            }
+        }
+        mask
+    }
+
+    /// Table `a` (`table_read`) passed to a param in `mode` `Borrow`: the address of its read-only header,
+    /// when the type is not counted (the callee gets what a borrow passes) or the param is
+    /// `as_is` (a frozen instance's from `table_mask`). `None` otherwise: `a` is then lowered
+    /// as any other argument.
+    pub(super) fn table_arg(
+        &mut self,
+        a: &hir::Expr,
+        mode: PassMode,
+        as_is: bool,
+    ) -> Option<Operand> {
+        if mode != PassMode::Borrow || !(as_is && self.is_table(a) || self.inline_table(a)) {
+            return None;
+        }
+        let place = self
+            .table_read(a)
+            .unwrap_or_else(|| super::ice("table without data"));
+        Some(self.addr(place))
+    }
+
+    /// Is `a` a table (`table_read`) of a type that is not counted, whose header any borrow of
+    /// it may be given?
+    pub(super) fn inline_table(&mut self, a: &hir::Expr) -> bool {
+        let ty = self.sub(a.ty);
+        !self.cx.boxed(ty) && self.is_table(a)
+    }
+
+    /// `call` lowering a call whose code is not specialized for frozen arguments (through a
+    /// function value, a vtable or an interface): an argument frozen in the call these
+    /// arguments are lowered for gets a copy there, not the value as it is (`frozen_borrow`).
+    pub(super) fn unfrozen_args<R>(&mut self, call: impl FnOnce(&mut Self) -> R) -> R {
+        let outer = std::mem::replace(&mut self.frozen_args, false);
+        let r = call(self);
+        self.frozen_args = outer;
+        r
+    }
+
     /// A stabilized borrow of the frozen argument `a` (`stable_borrow`): the value itself for a
     /// frozen param of the callee (`frozen_args`) or one that holds no counted part, else a copy
     /// the call borrows (dropped with the statement).
