@@ -111,6 +111,12 @@ export function tryReadInto(h: u64, data: u8[], start: u64, end: u64): IoResult<
     unsafe {
       n = pipe ? read$net(fd, m.ptr(p), len) : recv$net(fd, m.ptr(p), len, 0);
     }
+    if (n > 0 && (n as usize) < len && !r.REARMS) {
+      // Fewer bytes than asked: the socket is drained, so the next read waits for the next edge
+      // instead of finding out with a read that fails (EAGAIN). Under the source's lock, so an
+      // edge after this read still sets the bit.
+      io.notReady(s, io.READ);
+    }
     if (n >= 0) {
       tb.leave(s);
       return value(n as i64);

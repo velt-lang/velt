@@ -38,7 +38,7 @@ export class RecordWriter {
   /** The write keys (null before the handshake keys). */
   cipher: RecordCipher | null;
   /** The application secret the write keys came from, and their suite. */
-  secret: u8[];
+  secret: u8[] | null;
   suite: usize;
   /** Records one write key seals before a KeyUpdate. */
   writeLimit: u64;
@@ -59,7 +59,7 @@ export class RecordWriter {
     this.t = t;
     this.direct = t.tryStream();
     this.cipher = null;
-    this.secret = [];
+    this.secret = null;
     this.suite = 0;
     this.writeLimit = KEY_RECORDS;
     this.buf = Buffer.alloc(BATCH * RECORD);
@@ -247,8 +247,8 @@ export class RecordWriter {
   }
 
   private nextWriter(): RecordCipher {
-    this.secret = nextSecret(this.secret);
-    const next = new RecordCipher(this.suite, this.secret);
+    this.secret = nextSecret(this.secret!);
+    const next = new RecordCipher(this.suite, this.secret!);
     this.cipher = next;
     this.updateOwed = false;
     return next;

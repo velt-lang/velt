@@ -21,7 +21,7 @@ export class FdTlsConn implements TlsSession {
   // Plaintext written before the write keys, sealed once they are there.
   private pending: u8[] = [];
   // A UTF-8 character cut off at the end of the last `readString` chunk.
-  private carry: u8[] = [];
+  private carry: u8[] | null = null;
   // When the handshake must be done (`Date.now()` milliseconds; 0 once it is).
   private due: number;
   // Why the connection failed, once it did.
@@ -142,9 +142,10 @@ export class FdTlsConn implements TlsSession {
    */
   text(bytes: u8[]): string | null {
     let all = bytes;
-    if (this.carry.length > 0) {
-      all = this.carry.concat(bytes);
-      this.carry = [];
+    const carry = this.carry;
+    if (carry != null) {
+      all = carry.concat(bytes);
+      this.carry = null;
       if (bytes.length == 0) {
         return utf8DecodeLossy(all);
       }

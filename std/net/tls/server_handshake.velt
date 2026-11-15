@@ -72,7 +72,7 @@ export class ServerHandshake {
   private state: i32 = WAIT_HELLO;
   private transcript: u8[] = [];
   /** The transcript's hash through the server's Finished, which the client's Finished covers. */
-  private flightHash: u8[] = [];
+  private flightHash: u8[] | null = null;
   private group: usize = 0;
   /** The legacy session id was not empty: middlebox compatibility (§D.4) is on. */
   compat: bool = false;
@@ -84,15 +84,18 @@ export class ServerHandshake {
   alpn: string | null = null;
   /** The SNI host name the client sent ("" for none). */
   serverName: string = "";
-  /** What to send, per the step `onMessage` returned. */
-  retry: u8[] = [];
-  hello: u8[] = [];
-  flight: u8[] = [];
+  /**
+   * What to send, per the step `onMessage` returned. These and the secrets are null until set
+   * (no array of their own meanwhile: an empty one costs a heap block where arrays are counted).
+   */
+  retry: u8[] | null = null;
+  hello: u8[] | null = null;
+  flight: u8[] | null = null;
   /** The traffic secrets, once known. */
-  serverHandshake: u8[] = [];
-  clientHandshake: u8[] = [];
-  serverApplication: u8[] = [];
-  clientApplication: u8[] = [];
+  serverHandshake: u8[] | null = null;
+  clientHandshake: u8[] | null = null;
+  serverApplication: u8[] | null = null;
+  clientApplication: u8[] | null = null;
 
   /** A handshake that presents `key` and chooses among `protocols` with ALPN (none: no ALPN). */
   constructor(key: ServerKey, protocols: string[]) {
@@ -236,12 +239,16 @@ export class ServerHandshake {
     for (let i = 0; i < 64; i++) {
       signed.push(0x20);
     }
-    for (const b of utf8Encode("TLS 1.3, server CertificateVerify")) {
-      signed.push(b);
+    // By index: a `for...of` over these arrays leaks them in a release build where `u8[]` is
+    // counted (#2455).
+    const context = utf8Encode("TLS 1.3, server CertificateVerify");
+    for (let i: usize = 0; i < context.length; i++) {
+      signed.push(context[i]);
     }
     signed.push(0);
-    for (const b of sha256(this.transcript)) {
-      signed.push(b);
+    const th = sha256(this.transcript);
+    for (let i: usize = 0; i < th.length; i++) {
+      signed.push(th[i]);
     }
     const sig = p256Sign(this.key.key, sha256(signed));
     const cv = new ByteWriter();
@@ -258,7 +265,7 @@ export class ServerHandshake {
     const fin = new ByteWriter();
     fin.u8(FINISHED);
     const fb = fin.begin(3);
-    fin.put(finishedMac(this.serverHandshake, sha256(this.transcript)));
+    fin.put(finishedMac(this.serverHandshake!, sha256(this.transcript)));
     fin.end(fb, 3);
     this.add(fin.bytes);
     w.put(fin.bytes);
@@ -319,7 +326,7 @@ export class ServerHandshake {
 
   private finished(m: u8[]): i32 {
     // Nothing joined the transcript since the server's Finished (no client certificate).
-    const expected = finishedMac(this.clientHandshake, this.flightHash);
+    const expected = finishedMac(this.clientHandshake!, this.flightHash!);
     let diff: u8 = m.length == 36 ? 0 : 1;
     for (let i: usize = 0; i < 32 && 4 + i < m.length; i++) {
       diff |= expected[i] ^ m[4 + i];

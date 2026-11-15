@@ -55,11 +55,13 @@ export class TlsEngine {
   out: RecordWriter;
   private hs: HandshakeBuffer;
   private suite: usize;
-  private readSecret: u8[];
+  // The read keys' secret, once known (null meanwhile, as `certificates`: an empty array is a heap
+  // block where arrays are counted).
+  private readSecret: u8[] | null;
   /** The protocol chosen with ALPN, or null. */
   alpn: string | null;
-  /** The server's certificate chain (DER, leaf first), unchecked with `verify: false`. */
-  certificates: u8[][];
+  /** The server's certificate chain (DER, leaf first), unchecked with `verify: false`; null on a server. */
+  certificates: u8[][] | null;
 
   /** A connection over `t`, before its handshake. */
   constructor(t: ByteStream) {
@@ -67,9 +69,9 @@ export class TlsEngine {
     this.out = new RecordWriter(t);
     this.hs = new HandshakeBuffer();
     this.suite = 0;
-    this.readSecret = [];
+    this.readSecret = null;
     this.alpn = null;
-    this.certificates = [];
+    this.certificates = null;
   }
 
   /**
@@ -100,7 +102,7 @@ export class TlsEngine {
           // The ChangeCipherSpec (once, in compatibility mode) goes out with the flight.
           await this.out.sendProtected(HANDSHAKE, h.lastFlight, compat && !ccsSent);
           this.readSecret = h.serverApplication;
-          this.r.cipher = new RecordCipher(h.suite, this.readSecret);
+          this.r.cipher = new RecordCipher(h.suite, this.readSecret!);
           this.out.secret = h.clientApplication;
           this.out.suite = h.suite;
           this.out.cipher = new RecordCipher(h.suite, h.clientApplication);
@@ -149,7 +151,7 @@ export class TlsEngine {
         const action = h.onMessage(this.hs.take());
         if (action == S_SEND_RETRY) {
           this.hs.checkEmpty();
-          out.queue(HANDSHAKE, h.retry, true);
+          out.queue(HANDSHAKE, h.retry!, true);
           if (h.compat) {
             out.queue(CHANGE_CIPHER_SPEC, [1], true);
             h.ccsSent = true;
@@ -157,17 +159,17 @@ export class TlsEngine {
         } else if (action == S_SEND_FLIGHT) {
           this.hs.checkEmpty();
           this.suite = h.suite;
-          out.queue(HANDSHAKE, h.hello, true);
-          out.cipher = new RecordCipher(h.suite, h.serverHandshake);
-          out.queue(HANDSHAKE, h.flight, false, h.compat && !h.ccsSent);
+          out.queue(HANDSHAKE, h.hello!, true);
+          out.cipher = new RecordCipher(h.suite, h.serverHandshake!);
+          out.queue(HANDSHAKE, h.flight!, false, h.compat && !h.ccsSent);
           out.secret = h.serverApplication;
           out.suite = h.suite;
-          out.cipher = new RecordCipher(h.suite, h.serverApplication);
-          r.cipher = new RecordCipher(h.suite, h.clientHandshake);
+          out.cipher = new RecordCipher(h.suite, h.serverApplication!);
+          r.cipher = new RecordCipher(h.suite, h.clientHandshake!);
         } else if (action == S_DONE) {
           this.hs.checkEmpty();
           this.readSecret = h.clientApplication;
-          r.cipher = new RecordCipher(h.suite, this.readSecret);
+          r.cipher = new RecordCipher(h.suite, this.readSecret!);
           r.handshaking = false;
           this.alpn = h.alpn;
         }
@@ -365,8 +367,8 @@ export class TlsEngine {
     checkKeyUpdate(m);
     // New read keys from the next record on (RFC 8446 §4.6.3).
     this.hs.checkEmpty();
-    this.readSecret = nextSecret(this.readSecret);
-    this.r.cipher = new RecordCipher(this.suite, this.readSecret);
+    this.readSecret = nextSecret(this.readSecret!);
+    this.r.cipher = new RecordCipher(this.suite, this.readSecret!);
     return m[4] == 1;
   }
 }
