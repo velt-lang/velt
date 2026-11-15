@@ -259,3 +259,20 @@ fn std_s_unit_kept_between_checks_checks_the_program_the_same() {
         assert!(!stderr.contains("the checks differ"), "{file}: {stderr}");
     }
 }
+
+/// std's stage seals the object layouts after its passes; the app's copy of std's unit unseals
+/// them, so the app's conversions put its own families in use (velt_sema
+/// `collect::extended_layouts`). Sealed, an extension the app converts to was refused.
+#[test]
+fn the_app_s_conversions_widen_its_own_layouts_after_std_s_unit() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/golden/lang");
+    let out = no_window::command(env!("CARGO_BIN_EXE_velt"))
+        .args(["check", "extended_layouts_values.velt"])
+        .current_dir(&dir)
+        .env("VELT_UNITS", "2")
+        .env_remove("VELT_UNITS_FREEZE")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+}

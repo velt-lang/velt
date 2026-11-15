@@ -437,6 +437,9 @@ fn check_timed(
             cx.held_borrows = held_borrows;
             // The app's modules after std's unit, with what the rewrites found of them.
             if let Some(o) = &order {
+                // std's stage sealed the layouts after its passes: the app's conversions may put
+                // its own families in use until its round seals them (`collect::extended_layouts`).
+                cx.objects.layouts.sealed = false;
                 o.add_app(&mut cx, modules);
                 let base = o.app_base(&cx);
                 generating::install(&mut cx, gen, generator.as_ref());
