@@ -119,9 +119,15 @@ export function maybeHelp(e: usize, mode: u32): void {
   saw(e, input, all);
   const skip = m.ld(e + t.E_W_SKIP);
   if (skip !== 0) {
-    m.st(e + t.E_W_SKIP, skip - 1);
-    return;
+    // Skipped until the monitor's next tick (seen at a poll's start): polls that turn slow
+    // after fast ones end the window a tick and `HELP` polls late at most.
+    if (m.ld(e + t.E_PROGRESS) === m.ld(e + t.E_W_TICK)) {
+      m.st(e + t.E_W_SKIP, skip - 1);
+      return;
+    }
+    m.st(e + t.E_W_SKIP, 0);
   }
+  m.st(e + t.E_W_TICK, m.ld(e + t.E_PROGRESS));
   if (!windowEnd(e, now(), polls) || all < 2) {
     return;
   }

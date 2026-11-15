@@ -20,7 +20,8 @@ mod test_dir;
 /// The borrowers' take, white-box (std_unix/lang/hooks/sched_spread.test.velt): on a worker
 /// block and tasks built by hand, the tasks that may not move stay where they were, in their
 /// order, and the worker is left alone only when the older half held tasks and all of them
-/// stayed. It imports the scheduler's modules, which only link on macOS and Linux.
+/// stayed; the window's skipped clock reads end at the monitor's next tick (#2981). It imports
+/// the scheduler's modules, which only link on macOS and Linux.
 #[cfg(unix)]
 #[test]
 fn sched_spread_white_box_tests_pass() {
@@ -35,7 +36,8 @@ fn sched_spread_white_box_tests_pass() {
 /// (std_unix/lang/hooks/sched_queue.test.velt): after `NEXT_RUNS` tasks in a row from the slot
 /// the queues get their turn, on the locked path and the lock-free one, and an I/O tick with both
 /// queues holding tasks reads the clock, starts the fair wait, skips reads while it runs and
-/// starts the pass once it is due (#2786).
+/// starts the pass once it is due (#2786); the skips end at the monitor's next tick, and without
+/// a monitor no read is skipped (#2981).
 #[cfg(unix)]
 #[test]
 fn sched_queue_white_box_tests_pass() {

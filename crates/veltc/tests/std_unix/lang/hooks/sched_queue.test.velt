@@ -3,7 +3,8 @@
 // block and tasks built by hand: the slot gives the queues their turn after `NEXT_RUNS` tasks in
 // a row, on the locked path and the lock-free one, and an I/O tick with both queues holding tasks
 // reads the clock, starts the fair wait, skips reads while the wait runs and starts the pass once
-// it is due. Run from a copy of std by crates/veltc/tests/std_scheduler_workers.rs (macOS and
+// it is due; a monitor's tick ends the skips (a change of pace, #2981), and without a monitor no
+// read is skipped. Run from a copy of std by crates/veltc/tests/std_scheduler_workers.rs (macOS and
 // Linux: the scheduler's modules don't link on Windows).
 import { describe, expect, it } from "velt/test";
 import * as m from "./sched_mem";
@@ -107,13 +108,38 @@ function past(at: usize): void {
   while (sp.now() <= at) {}
 }
 
+/**
+ * A worker block a monitor watches (more than one worker, or one rescued): its ticks, seen at the
+ * polls' start (`E_PROGRESS`), cap the fair pass's skipped clock reads in time.
+ */
+function watched(): usize {
+  const w = m.zeroed(t.E_SIZE);
+  m.st32(w + t.E_MODE, t.M_SHARED | t.M_MONITOR);
+  return w;
+}
+
+/**
+ * The turns (`tickTurned`) worker `w` takes until its fair pass starts, at most `max`, or
+ * `max + 1` if it does not.
+ */
+function turnsToPass(w: usize, max: i32): i32 {
+  for (let i: i32 = 1; i <= max; i++) {
+    tick.tickTurned(w);
+    if (m.ld(w + t.E_FAIR_LEFT) !== 0) {
+      return i;
+    }
+  }
+  return max + 1;
+}
+
 describe("velt/lang/hooks fair pass clock", () => {
   it("starts the wait at an I/O tick, then skips reads while it runs", () => {
-    const w = m.zeroed(t.E_SIZE);
+    const w = watched();
+    const mode = m.ld32(w + t.E_MODE);
     const input = task();
     const spawned = task();
     q.pushIo(w, input);
-    q.pushRest(w, spawned, 0);
+    q.pushRest(w, spawned, mode);
     tick.tickTurned(w);
     const at = m.ld(w + t.E_FAIR_AT);
     expect(at !== 0).toBe(true);
@@ -128,7 +154,7 @@ describe("velt/lang/hooks fair pass clock", () => {
     expect(m.ld(w + t.E_FAIR_SKIP)).toBe(skip - 1);
     expect(m.ld(w + t.E_FAIR_AT)).toBe(read);
     // The second queue ran out: the wait ends.
-    expect(q.popRest(w, 0)).toBe(spawned);
+    expect(q.popRest(w, mode)).toBe(spawned);
     tick.tickTurned(w);
     expect(m.ld(w + t.E_FAIR_DUE)).toBe(0);
     expect(m.ld(w + t.E_FAIR_SKIP)).toBe(0);
@@ -151,5 +177,43 @@ describe("velt/lang/hooks fair pass clock", () => {
     expect(q.pop(w, 0)).toBe(b);
     expect(q.pop(w, 0)).toBe(input);
     free(w, [input, a, b]);
+  });
+
+  it("reads the clock at the first turn after a monitor tick, however many reads it skips", () => {
+    const w = watched();
+    const mode = m.ld32(w + t.E_MODE);
+    const input = task();
+    const spawned = task();
+    q.pushIo(w, input);
+    q.pushRest(w, spawned, mode);
+    tick.tickTurned(w);
+    const at = m.ld(w + t.E_FAIR_AT);
+    past(at);
+    // Fast turns: the reads of the next turns are skipped.
+    tick.tickTurned(w);
+    expect(m.ld(w + t.E_FAIR_SKIP) > 1).toBe(true);
+    // The polls turn slow: the wait's 10 ms pass in a few turns, and the monitor ticks meanwhile
+    // (a poll's start notes its tick). The pass starts at the next turn, not after the skips.
+    m.st(w + t.E_FAIR_DUE, at);
+    m.st(w + t.E_PROGRESS, m.ld(w + t.E_PROGRESS) + 1);
+    expect(turnsToPass(w, 20)).toBe(1);
+    free(w, [input, spawned]);
+  });
+
+  it("skips no reads without a monitor, whose ticks would cap them in time", () => {
+    // One worker, not rescued (`E_MODE` 0): no tick tells a slow turn from a fast one.
+    const w = m.zeroed(t.E_SIZE);
+    const input = task();
+    const spawned = task();
+    q.pushIo(w, input);
+    q.pushRest(w, spawned, 0);
+    tick.tickTurned(w);
+    const at = m.ld(w + t.E_FAIR_AT);
+    past(at);
+    tick.tickTurned(w);
+    expect(m.ld(w + t.E_FAIR_SKIP)).toBe(0);
+    m.st(w + t.E_FAIR_DUE, at);
+    expect(turnsToPass(w, 20)).toBe(1);
+    free(w, [input, spawned]);
   });
 });
