@@ -146,9 +146,20 @@ impl Finder {
     fn find(&self, module_entry: &str) -> Option<Found> {
         let key = self.lookup_key(module_entry);
         let text = std::fs::read_to_string(self.manifest_path(&key)?).ok()?;
-        let manifest = Manifest::parse(&text)?;
-        if !manifest.files.iter().all(|f| unchanged(f)) {
-            return None;
+        let mut manifest = Manifest::parse(&text)?;
+        let mut restated = false;
+        for f in &mut manifest.files {
+            if let Some(fresh) = unchanged(f)? {
+                *f = fresh;
+                restated = true;
+            }
+        }
+        // The same contents with another size and time (a checkout or a copy): recorded, so the
+        // next build compares sizes and times again instead of hashing.
+        if restated {
+            if let Some(path) = self.manifest_path(&key) {
+                let _ = write_atomically(&path, &manifest.render());
+            }
         }
         let object_key = object_key(&key, &manifest.files);
         if object_key.hex() != manifest.object {
@@ -237,23 +248,20 @@ fn object_key(lookup: &Key, files: &[String]) -> Key {
     h.finish()
 }
 
-/// Is the file of stamp `file` entry `entry` as it records: the same size and time, or else the
-/// same hash?
-fn unchanged(entry: &str) -> bool {
-    let Some((head, path)) = entry.split_once('\t') else {
-        return false;
-    };
+/// Is the file of stamp `file` entry `entry` as it records: `Some(None)` with the same size and
+/// time, `Some(Some(entry))` (its entry now) with only the same hash, `None` when it changed.
+fn unchanged(entry: &str) -> Option<Option<String>> {
+    let (head, path) = entry.split_once('\t')?;
     let mut fields = head.split(' ').skip(1);
-    let (Some(hash), size, time) = (fields.next(), fields.next(), fields.next()) else {
-        return false;
-    };
+    let (hash, size, time) = (fields.next()?, fields.next(), fields.next());
     let path = Path::new(path);
     if let (Some((n, t)), Some(size), Some(time)) = (vpm::probe::stat(path), size, time) {
         if n.to_string() == size && t.to_string() == time {
-            return true;
+            return Some(None);
         }
     }
-    std::fs::read(path).is_ok_and(|bytes| vpm::probe::content_hash(&bytes) == hash)
+    let src = std::fs::read_to_string(path).ok()?;
+    (vpm::probe::content_hash(src.as_bytes()) == hash).then(|| Some(file_entry(path, &src)))
 }
 
 /// The build-stamp `file` entry of the std file at `path` holding `src`.
