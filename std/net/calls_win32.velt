@@ -19,6 +19,9 @@ const INVALID: usize = 0xffffffffffffffff;
 const WSAEMFILE: i32 = 10024;
 /** `WSAEMSGSIZE`: a datagram larger than the receive's buffer, which holds its first bytes. */
 const WSAEMSGSIZE: i32 = 10040;
+/** `WSAECONNRESET`, `WSAENETRESET`: an earlier datagram's ICMP error, reported by a receive. */
+const WSAECONNRESET: i32 = 10054;
+const WSAENETRESET: i32 = 10052;
 /** The most one `recv` or `send` passes (its length is an `int`). */
 const MOST: usize = 0x7fffffff;
 /** `FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS`. */
@@ -203,8 +206,11 @@ export function send$io(fd: i32, buf: Ptr<u8>, n: usize, flags: i32): isize {
 }
 
 /**
- * A datagram's receive. A datagram larger than the buffer fills it and fails with `WSAEMSGSIZE`
- * (the rest is dropped); that is the buffer's length here, as the C library's `recvfrom` cuts it.
+ * A datagram's receive (an unconnected UDP socket's). A datagram larger than the buffer fills it
+ * and fails with `WSAEMSGSIZE` (the rest is dropped); that is the buffer's length here, as the C
+ * library's `recvfrom` cuts it. An earlier send's ICMP error (`WSAECONNRESET`: no one at that
+ * port; `WSAENETRESET`: its time to live ran out) is skipped, as macOS and Linux report none on
+ * such a socket and Node (libuv) ignores them on Windows: the next datagram, or `WSAEWOULDBLOCK`.
  */
 export function recvfrom$net(
   fd: i32,
@@ -215,13 +221,28 @@ export function recvfrom$net(
   len: Ptr<u8>,
 ): isize {
   const most = n > MOST ? MOST : n;
-  // SAFETY: `buf` holds `n` bytes; the caller's address room and its `int` length.
-  const got = unsafe { recvfrom$win(fd as usize, buf, most as i32, flags, addr, len) };
-  // SAFETY: no precondition.
-  if (got < 0 && unsafe { WSAGetLastError$win() } === WSAEMSGSIZE) {
-    return most as isize;
+  // The caller's address room, which a failed receive may have shortened.
+  // SAFETY: the caller's `int` length.
+  const room = unsafe { addressLoad<i32>(Ptr.addressOf(len)) };
+  while (true) {
+    // SAFETY: `buf` holds `n` bytes; the caller's address room and its `int` length.
+    const got = unsafe { recvfrom$win(fd as usize, buf, most as i32, flags, addr, len) };
+    if (got >= 0) {
+      return got as isize;
+    }
+    // SAFETY: no precondition.
+    const e = unsafe { WSAGetLastError$win() };
+    if (e === WSAEMSGSIZE) {
+      return most as isize;
+    }
+    if (e !== WSAECONNRESET && e !== WSAENETRESET) {
+      return -1;
+    }
+    // SAFETY: as above.
+    unsafe {
+      addressStore<i32>(Ptr.addressOf(len), room);
+    }
   }
-  return got as isize;
 }
 
 /** A datagram's send (one larger than an `int` fails, as one over 64 KiB does). */

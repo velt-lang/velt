@@ -2,7 +2,9 @@
 // ways with their sender, a receive limit (Winsock fails a datagram larger than the buffer; the
 // socket keeps its first bytes and the sender, as the C library's `recvfrom` does), an empty
 // datagram, broadcast on and off, a close while a receive waits (it rejects with `EBADF`, #2821),
-// and the errors of a port in use, a closed socket and a datagram over 64 KiB.
+// a send to a port no one listens on (Windows reports its ICMP error to the next receive, which
+// skips it, as Node does), and the errors of a port in use, a closed socket and a datagram over
+// 64 KiB.
 import { bindUdp } from "velt/net/udp";
 import { describe, expect, it } from "velt/test";
 
@@ -71,6 +73,22 @@ describe("UDP sockets", () => {
     expect(code).toBe("EBADF");
     // Closing again is a no-op.
     a.close();
+  });
+
+  it("skips the ICMP error of a send to a port no one listens on", async () => {
+    const a = await bindUdp("127.0.0.1:0");
+    const gone = await bindUdp("127.0.0.1:0");
+    const port = gone.port;
+    gone.close();
+    await a.sendTextTo("nobody", `127.0.0.1:${port}`);
+    const b = await bindUdp("127.0.0.1:0");
+    const next = a.recvFrom();
+    await b.sendTextTo("hello", `127.0.0.1:${a.port}`);
+    const d = await next;
+    expect(d.text()).toBe("hello");
+    expect(d.addr).toBe(`127.0.0.1:${b.port}`);
+    a.close();
+    b.close();
   });
 
   it("reports a port in use, a closed socket and a datagram too large", async () => {
