@@ -213,6 +213,28 @@ export async function velt_rt_tcp_drained(s: u64, max: u64): Promise<IoStatus> {
   return stdUsed("reactorTls") && isTls(s) ? await TLS.drained(s, max) : await fio.drained(s, max);
 }
 
+// `velt_rt_tcp_readable_within` of TLS stream `s`: readable when a `tryRead` would find something.
+// A readable socket may hold part of a record, or its wait end on a used event (a re-armed poll),
+// so the stream is asked again after each wait, which repeats until the time runs out.
+async function tlsReadableWithin(s: u64, ms: i64, signal: u64): Promise<IoResult<u8>> {
+  const until = (Date.now() as number) + (ms as number);
+  for (let waited = false;; waited = true) {
+    const fd = TLS.readyOrFd(s);
+    if (fd.code !== 0) {
+      return fs.failed({ code: fd.code, message: fd.message }, 0);
+    }
+    const left = ms > 0 ? ((until - (Date.now() as number)) as i64) : ms;
+    // Ready; or `ms == 0` (only looks) and the socket was asked; or the time ran out.
+    if (fd.value == 0 || (ms == 0 && waited) || (ms > 0 && left <= 0)) {
+      return fs.value(fd.value == 0 ? 1 : 0);
+    }
+    const r = await velt_rt_tcp_readable_within(fd.value, left, signal);
+    if (r.code !== 0 || r.value == 0) {
+      return r;
+    }
+  }
+}
+
 export async function velt_rt_tcp_readable_within(
   s: u64,
   ms: i64,
@@ -222,15 +244,7 @@ export async function velt_rt_tcp_readable_within(
     return await rt.velt_rt_tcp_readable_within(s, ms, signal);
   }
   if (stdUsed("reactorTls") && isTls(s)) {
-    // Decrypted bytes or a whole record buffered: ready without the socket.
-    const fd = TLS.readyOrFd(s);
-    if (fd.code !== 0) {
-      return fs.failed({ code: fd.code, message: fd.message }, 0);
-    }
-    if (fd.value == 0) {
-      return fs.value(1);
-    }
-    return await velt_rt_tcp_readable_within(fd.value, ms, signal);
+    return await tlsReadableWithin(s, ms, signal);
   }
   if (signal === 0) {
     return await fio.readableWithin(s, ms);

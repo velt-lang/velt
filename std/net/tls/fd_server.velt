@@ -6,6 +6,7 @@
 // loads none of the server.
 
 import { IoError } from "velt/io/error";
+import { CLOSE_NOTIFY, TlsFailure } from "velt/net/tls/alert";
 import { noteStdUse } from "velt/lang/intrinsics";
 import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";
@@ -75,6 +76,11 @@ export async function listenTls(
 function status(e: unknown): IoStatus {
   if (!(e instanceof IoError)) {
     return { code: 5, message: `TLS: ${e}` };
+  }
+  // The peer went away without close_notify (`RecordReader.cut`): EOF, as the runtime's
+  // listener reports it, not a protocol error.
+  if (e instanceof TlsFailure && e.alert == CLOSE_NOTIFY && !e.sendAlert) {
+    return { code: 11, message: e.message };
   }
   switch (e.code) {
     case "EINVAL":

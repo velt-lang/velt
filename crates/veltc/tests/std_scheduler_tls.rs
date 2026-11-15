@@ -73,6 +73,9 @@ fn run(exe: &Path, threads: u32) -> String {
     String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n")
 }
 
+/// A message only the TLS server in Velt has (std/net/tls/fd_ops.velt), as data in every build.
+const SERVER_MARKER: &[u8] = b"the handshake timed out";
+
 fn contains(hay: &[u8], needle: &[u8]) -> bool {
     hay.windows(needle.len()).any(|w| w == needle)
 }
@@ -87,8 +90,9 @@ fn same_everywhere(name: &str, src: &str, want: &str) {
     let exe = build(dir.path(), name);
     assert_eq!(run(&exe, 1), want, "{name}: one worker");
     assert_eq!(run(&exe, 4), want, "{name}: four workers");
+    // A string the server embeds as data: function names are in the .pdb on Windows, not the .exe.
     assert!(
-        contains(&std::fs::read(&exe).unwrap(), b"tryServerHandshake"),
+        contains(&std::fs::read(&exe).unwrap(), SERVER_MARKER),
         "{name}: no TLS server in Velt"
     );
 }
@@ -263,6 +267,75 @@ async function main() {
     );
 }
 
+/// What a TLS server reports for a connection that ends badly, as the runtime's listener does: a
+/// plaintext request fails at its first bytes with decode_error (not after the handshake's time
+/// limit), a client that leaves during the handshake or after it without close_notify is an EOF,
+/// and a client's alert during the handshake (rustls refusing the server's certificate) is read,
+/// though unprotected, and named as the client's.
+#[test]
+fn a_tls_server_reports_what_ended_a_connection() {
+    same_everywhere(
+        "tls_ends",
+        r#"import { connect, connectTls, listenTls, startTls, TcpStream } from "velt/net";
+import { IoError } from "velt/io";
+import { TEST_CERT, TEST_KEY } from "./_tls";
+
+async function serve(conn: TcpStream): Promise<string> {
+  try {
+    await conn.read();
+    await conn.read();
+    conn.close();
+    return "read";
+  } catch (e) {
+    conn.close();
+    return e instanceof IoError ? `${e.code} ${e.message}` : `${e}`;
+  }
+}
+
+async function main() {
+  const l = await listenTls("127.0.0.1:0", { cert: TEST_CERT, key: TEST_KEY });
+  const server = spawn((async (): Promise<string[]> => {
+    const out: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      out.push(await serve(await l.accept()));
+    }
+    return out;
+  })());
+  // Not TLS: the server answers decode_error (alert 50) and ends.
+  const plain = await connect(`127.0.0.1:${l.port}`);
+  await plain.write("GET / HTTP/1.1\r\n\r\n");
+  const answer = await plain.read();
+  while ((await plain.read()).length > 0) {}
+  plain.close();
+  console.log(answer.join(","));
+  // Gone during the handshake.
+  const early = await connect(`127.0.0.1:${l.port}`);
+  early.close();
+  // rustls, which doesn't trust the test certificate, alerts during the handshake.
+  try {
+    await connectTls(`localhost:${l.port}`, {});
+  } catch (e) {
+    console.log("client refused");
+  }
+  // Gone after the handshake without close_notify.
+  const tcp = await connect(`127.0.0.1:${l.port}`);
+  const s = await startTls(tcp, { serverName: "localhost", verify: false });
+  await s.write("x");
+  s.close();
+  for (const line of await server) {
+    console.log(line);
+  }
+  l.close();
+}
+"#,
+        "21,3,3,0,2,2,50\nclient refused\n\
+         EILSEQ TLS: not a TLS record (no TLS version in its header)\n\
+         EOF TLS: the connection closed during the handshake\n\
+         EILSEQ TLS: the client sent the alert unknown_ca (48)\n\
+         EOF TLS: the connection closed without close_notify\n",
+    );
+}
+
 /// Readiness of a TLS stream is what a `tryRead` finds: nothing right after the handshake (the
 /// socket was read during it), something once the peer wrote, nothing after it was read, whether
 /// the wait only looks, has a limit or a signal.
@@ -335,7 +408,12 @@ async function main() {
     let exe = build(dir.path(), "plain");
     assert_eq!(run(&exe, 1), "hi\n");
     let bin = std::fs::read(&exe).unwrap();
-    for marker in [&b"tryServerHandshake"[..], b"fd__ops", b"fd__server"] {
+    for marker in [
+        SERVER_MARKER,
+        b"tryServerHandshake",
+        b"fd__ops",
+        b"fd__server",
+    ] {
         assert!(
             !contains(&bin, marker),
             "{}: built without TLS options",

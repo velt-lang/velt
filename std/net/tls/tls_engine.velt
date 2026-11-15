@@ -124,6 +124,7 @@ export class TlsEngine {
   tryServerHandshake(h: ServerHandshake): bool {
     const t = this.out.tryTransport();
     const r = this.r;
+    r.peer = "client";
     const out = this.out;
     try {
       while (!h.done()) {
