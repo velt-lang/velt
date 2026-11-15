@@ -54,6 +54,11 @@ pub(super) const ENVIRONMENT: &[(&str, &str)] = &[
          (`velt cache warm` sets it)",
     ),
     (
+        "VELT_PREBUILT_HOOKS",
+        "`0`: builds load the std modules of prebuilt hooks instead of linking their objects; \
+         `fill`: a build compiles and stores the objects it does not find",
+    ),
+    (
         "VELT_BUILD_STAMP",
         "`off`: compile even when nothing changed since the last build of the same output",
     ),

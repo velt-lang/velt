@@ -66,6 +66,7 @@ fn warm_inner(
             require_main: true,
             extra_roots: vec![],
             eager_std: false,
+            prebuilt: false,
         };
         let sema_opts = velt_sema::CheckOptions {
             require_main: scope.require_main,

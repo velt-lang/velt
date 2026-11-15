@@ -174,7 +174,7 @@ pub use generating::{check_generating, check_generating_kept, Checked};
 pub use kept::{KeptCheck, PendingKept, Refused};
 pub use kept_reload::member_name;
 pub use source_module::SourceModule;
-pub use std_load::{LoadFn, Loads, StdBatch, StdLoads};
+pub use std_load::{LoadFn, Loads, PrebuiltFn, StdBatch, StdLoads};
 pub use timings::check_rounds;
 pub use visit::rebase_detached_locals;
 

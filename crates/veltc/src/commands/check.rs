@@ -244,7 +244,11 @@ fn resolve(
     let (input, scope, same_path) = match &args.input {
         Some(file) => {
             super::project::check_input_file(file).map_err(BuildError::Failed)?;
-            (file.clone(), CheckScope::default(), vec![])
+            let scope = CheckScope {
+                prebuilt: true,
+                ..CheckScope::default()
+            };
+            (file.clone(), scope, vec![])
         }
         None => package_scope().map_err(BuildError::Failed)?,
     };
@@ -284,6 +288,7 @@ fn std_scope(
         require_main: false,
         extra_roots,
         eager_std: true,
+        prebuilt: false,
     };
     Ok((opts, scope, vec![]))
 }
@@ -427,6 +432,7 @@ fn package_scope() -> Result<(PathBuf, CheckScope, Vec<Vec<PathBuf>>), String> {
         require_main,
         extra_roots,
         eager_std: false,
+        prebuilt: true,
     };
     Ok((input, scope, same_path))
 }
