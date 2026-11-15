@@ -310,3 +310,13 @@ fn a_check_by_units_reports_what_std_s_unit_once_hid() {
         assert!(stderr.contains(said), "{file}:\n{stderr}");
     }
 }
+
+/// The app's unit is collected as a whole program's is: a type query in a signature that needs a
+/// body (`ReturnType<typeof f>` of a function declared later) waits until collection is done,
+/// though std's stage left bodies allowed (velt_sema `collect::collect_app`).
+#[test]
+fn a_type_query_in_the_app_s_signatures_waits_for_collection() {
+    let out = check_golden("lang/type_queries.velt", true);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+}

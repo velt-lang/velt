@@ -171,10 +171,19 @@ fn collect_added_in(cx: &mut Ctx, ms: &[usize], unit: Option<bool>) -> Added {
         modules: ms.first().copied().unwrap_or(cx.modules.len()),
     };
     let mut items = ItemDefs::new();
+    // The app's unit is collected as a whole program's is: a type query in a signature that
+    // needs a body defers it until collection is done (std's stage left bodies allowed).
+    let app = unit == Some(false);
+    if app {
+        cx.bodies_ok = false;
+    }
     declare::declare_added(cx, ms, &mut items);
     // A utility type in a field type asks for fields while shapes are being resolved.
     cx.shapes_done = false;
     collect_items(cx, &items, from);
+    if app {
+        cx.bodies_ok = true;
+    }
     sigs::fill_deferred(cx);
     cx.added_defs.push((from.defs, cx.info.len() as u32));
     from
