@@ -1,0 +1,32 @@
+// A class method's class type parameter resolved through the objects made of the class (#2952),
+// where the only `Queue<Job>` is made in a module-level initializer: the `new` there counts like
+// one in a function body, so `Queue<T>.push` forwards the job to `keepAndSpawn<T>`, and the job,
+// which modifies what it captured, is refused. The `Queue<number>` made in `main` must not be
+// taken for the only instance.
+type Job = () => Promise<void>;
+
+function keepAndSpawn<T>(x: T): void {
+  const box: T[] = [x];
+  const v = box[0];
+  spawn(async () => {
+    console.log(typeof v);
+  });
+}
+
+class Queue<T> {
+  push(x: T): void {
+    keepAndSpawn<T>(x);
+  }
+}
+
+const jobs = new Queue<Job>();
+
+async function main() {
+  let runs = 0;
+  new Queue<number>().push(1);
+  jobs.push(async (): Promise<void> => {
+    runs++;
+  });
+  await sleep(10);
+  console.log(`runs ${runs}`);
+}
