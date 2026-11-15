@@ -1,0 +1,5 @@
+// A program whose only cycle runs through one route (any_field): sema finds a live type that can
+// hold itself, so printing tracks it and writes <ref *1> and [Circular *1] as Node does.
+class Loose { v: any = 0; }
+function main() { const l = new Loose(); l.v = l; console.log(l); }
+main();

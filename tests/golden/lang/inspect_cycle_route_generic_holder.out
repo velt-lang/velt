@@ -1,0 +1,1 @@
+<ref *1> Boxed { box: Holder { value: [Circular *1] } }

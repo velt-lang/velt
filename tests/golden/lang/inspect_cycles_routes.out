@@ -1,0 +1,13 @@
+<ref *1> Derived { tag: 'base', back: [Circular *1] }
+<ref *1> Ring { next: [Circular *1] }
+<ref *1> Boxed { box: Holder { value: [Circular *1] } }
+<ref *1> Tree {
+  kids: [ Tree { kids: [], label: 'leaf' }, [Circular *1] ],
+  label: 'root'
+}
+<ref *1> Pair { other: [Circular *1] }
+<ref *1> Bag {
+  items: Map(1) { 'self' => [Circular *1] },
+  set: Set(1) { [Circular *1] }
+}
+<ref *1> Loose { v: [Circular *1] }

@@ -1,0 +1,2 @@
+in <ref *1> N { next: [Circular *1] }
+O { l: L!, x: 1 }

@@ -1,0 +1,5 @@
+// A program whose only cycle runs through one route (set): sema finds a live type that can
+// hold itself, so printing tracks it and writes <ref *1> and [Circular *1] as Node does.
+class Bag { set: Set<Bag> = new Set<Bag>(); }
+function main() { const g = new Bag(); g.set.add(g); console.log(g); }
+main();
