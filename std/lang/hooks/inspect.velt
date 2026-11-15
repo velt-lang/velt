@@ -6,9 +6,9 @@
 // (velt_common `std_hooks.rs`), so a program without arrays or objects does not pay for them.
 
 import { inspectNested } from "velt/lang/intrinsics";
-import { pushU64 } from "velt/lang/number/integer";
 
 declare function velt_rt_strbuf_push_str(buf: string, s: string);
+declare function velt_rt_strbuf_push_f64(buf: string, x: f64);
 
 /**
  * Opens an object that cannot hold itself: false past the depth limit, after `cut` (`[Name]`).
@@ -34,13 +34,18 @@ export function inspectArray<E>(buf: string, a: E[], depth: u32): void {
     return;
   }
   const c = depth + 1;
-  const shown = n > 100 ? 100 : n;
   velt_rt_strbuf_push_str(buf, "[ ");
-  for (let i: usize = 0; i < shown; i++) {
+  // `for…of` reads each element without a bounds check, whose message a program would compile.
+  let i: usize = 0;
+  for (const x of a) {
+    if (i == 100) {
+      break;
+    }
     if (i > 0) {
       velt_rt_strbuf_push_str(buf, ", ");
     }
-    inspectNested(buf, a[i], c);
+    inspectNested(buf, x, c);
+    i++;
   }
   if (n > 100) {
     const more = (n - 100) as u64;
@@ -52,7 +57,9 @@ export function inspectArray<E>(buf: string, a: E[], depth: u32): void {
 /** Node's `, ... n more items` (`, ... 1 more item`) after the first 100 entries of a container. */
 export function inspectMore(buf: string, remaining: u64): void {
   velt_rt_strbuf_push_str(buf, ", ... ");
-  pushU64(buf, remaining);
+  // As a number: its digits, without compiling std's integer printing into every program.
+  const n = remaining as f64;
+  velt_rt_strbuf_push_f64(buf, n);
   if (remaining == 1) {
     velt_rt_strbuf_push_str(buf, " more item");
   } else {
