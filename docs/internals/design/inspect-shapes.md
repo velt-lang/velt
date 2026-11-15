@@ -78,13 +78,19 @@ did, so it adds nothing to what an object costs, and static key texts need no ne
 
 ### What a program pays
 
-The hooks list `constructs(Format, Dynamic)`; the cycle hooks other than `inspectBegin` and
-`inspectEnd` have no fallback, like the integer hooks, since every object lowering may enter
-demands them (velt_common `hook_demand.rs`), so sema checks them
-where live code has one of those. `Format` is present for any array, struct or class in live code,
-printed or not, because a class's table has a `format` slot, so being demanded is not by itself
-cheap: a program with a live class pays for checking the hooks even if it never prints. What
-keeps this small is that the module is small.
+The hooks list `constructs(Format, Dynamic)`, but `Format` is present for any array, struct or
+class in live code, printed or not, so sema narrows two groups further (velt_sema `lazy_std`
+`live_constructs.rs`). `inspectArray` is checked only once an array type is live: its `E[]`
+parameter would make the `Array` class live in a program without arrays. The cycle hooks
+(inspect_cycles.velt: `openObject`, `inspectEnter`, `inspectLeave`, `inspectCircular`,
+`inspectSave`, `inspectRestore`, `inspectBegin`, `inspectEnd`) are checked only once a live type
+can hold itself: a walk over the live types finds a way from a class or struct instance, a `Map`
+or a `Set` back to itself, through fields, elements, entries, union members, each live subclass of
+a class, and for an `any` or an interface value the types live code puts into one (anything, once
+the program's own generic code puts a type parameter's value into one). Every hook in both groups
+has a fallback: lowering writes an array with its own glue, opens an object with `openPlain` (the
+depth limit only), and tracks no cycle. A program that prints `{ a: 1 }` or a class of scalars
+checks `openPlain` and nothing of inspect_cycles.velt, and does not load that module.
 
 ### What stays in Rust for now
 
