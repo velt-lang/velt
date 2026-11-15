@@ -1,0 +1,64 @@
+// The port of a "host:port" address (velt/net's `connect` and `listen`, velt/net/udp's `bindUdp`
+// and `sendTo`): decimal digits of a value from 0 to 65535, or `EINVAL` "invalid port value".
+// `getaddrinfo` would take a larger number cut to 16 bits (99999 became port 34463) or a service
+// name.
+import { connect, listen } from "velt/net";
+import { bindUdp } from "velt/net/udp";
+import { describe, expect, it } from "velt/test";
+
+const BAD = ["99999", "65536", "-1", "abc", "http", "0x50", " 80", "+"];
+
+/** The code and message `f` fails with ("ok" when it doesn't). */
+async function failure(f: () => Promise<void>): Promise<string> {
+  try {
+    await f();
+    return "ok";
+  } catch (e) {
+    return `${e.code} ${e.message}`;
+  }
+}
+
+describe("ports", () => {
+  it("refuses a UDP bind or send to a port out of range", async () => {
+    for (const p of BAD) {
+      const bound = await failure(async () => {
+        const s = await bindUdp(`127.0.0.1:${p}`);
+        s.close();
+      });
+      expect(`${p}: ${bound}`).toBe(`${p}: EINVAL invalid port value`);
+    }
+    const s = await bindUdp("127.0.0.1:0");
+    const sent = await failure(async () => {
+      await s.sendTextTo("x", "127.0.0.1:99999");
+    });
+    expect(sent).toBe("EINVAL invalid port value");
+    s.close();
+  });
+
+  it("refuses a TCP listen or connect to a port out of range", async () => {
+    for (const p of BAD) {
+      const listened = await failure(async () => {
+        const l = await listen(`127.0.0.1:${p}`);
+        l.close();
+      });
+      expect(`${p}: ${listened}`).toBe(`${p}: EINVAL invalid port value`);
+      const connected = await failure(async () => {
+        const c = await connect(`127.0.0.1:${p}`);
+        c.close();
+      });
+      expect(`${p}: ${connected}`).toBe(`${p}: EINVAL invalid port value`);
+    }
+  });
+
+  it("takes every port from 0 to 65535, a leading + and leading zeros", async () => {
+    const l = await listen("127.0.0.1:0");
+    const c = await connect(`127.0.0.1:+0${l.port}`);
+    c.close();
+    l.close();
+    const u = await bindUdp("127.0.0.1:00");
+    expect(u.port > 0).toBe(true);
+    // The highest port: sending to it needs no listener.
+    expect(await u.sendTextTo("x", "127.0.0.1:65535")).toBe(1);
+    u.close();
+  });
+});
