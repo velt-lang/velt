@@ -29,6 +29,7 @@ declare c("c") function velt_rt_fut_detach$rt(f: usize, qdrop: usize): void;
 declare c("c") function velt_rt_futs_handled$rt(futs: usize, n: u64, qdrop: usize): void;
 declare c("c") function velt_rt_fut_transfer$rt(f: usize, glue: usize): void;
 declare c("c") function velt_rt_fut_id$rt(f: usize): u64;
+declare c("c") function velt_rt_fut_alias$rt(w: usize, inner: usize, quiet: usize): void;
 declare c("c") function velt_rt_fut_share$rt(
   f: usize,
   size: u64,
@@ -135,4 +136,12 @@ export function share(f: usize, size: u64, share: usize, rdrop: usize): usize {
 export function futId(f: usize): u64 {
   // SAFETY: `f` is null or a live heap future.
   return unsafe { velt_rt_fut_id$rt(f) };
+}
+
+/** `velt_rt_fut_alias`, the runtime's: converted promise `w`, a runtime future, wraps `inner`. */
+export function alias(w: usize, inner: usize, quiet: usize): void {
+  // SAFETY: `w` and `inner` are live heap futures, `w` owned by the caller; `quiet` matches `w`.
+  unsafe {
+    velt_rt_fut_alias$rt(w, inner, quiet);
+  }
 }

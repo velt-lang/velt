@@ -265,6 +265,8 @@ export const E_NOBORROW: usize = 880;
  * task's reference back first (sched_exit.velt).
  */
 export const E_DROPPING: usize = 888;
+/** Handles of shared promises made now are views (sched_share_alias.velt `schedFutViews`). */
+export const E_VIEWS: usize = 896;
 /**
  * The fair pass's clock between two reads (sched_tick.velt `fairLook`): reactor turns left before
  * the next read, turns since the last, and the time of the last.

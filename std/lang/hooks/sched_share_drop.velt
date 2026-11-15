@@ -9,11 +9,19 @@ import { fnAddress, stateDrop } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as nd from "./sched_node";
 import * as sh from "./sched_share";
+import * as t from "./sched_task";
 import * as away from "./sched_share_away";
 import * as wt from "./sched_share_wait";
 
 /** Holder `f` of the promise of hub `h` gives up its role (dropped, or handed over). */
 export function release(h: usize, f: usize): void {
+  const cur = m.ld(t.exec() + t.E_CURRENT);
+  if (cur !== 0 && cur !== m.ld(h + sh.H_TASK) && !t.has(cur, t.TOUCHED)) {
+    // A holder reaches another task handed over (sched_share_hand.velt), which forwards it, or
+    // through module state, whose tasks hold the module lock in every poll and so run one at a
+    // time (rt_abi_async.md §1.2, sched_module.velt): anything else races the hub's own task.
+    panic("ICE: a shared promise's holder dropped on another task than the one it is shared on");
+  }
   const i = wt.waiterIndex(h, f);
   if (i < m.ld(h + sh.H_WLEN)) {
     wt.removeWaiter(h, i);
@@ -71,6 +79,6 @@ export function free(h: usize): void {
   if (cap !== 0) {
     m.release(m.ld(h + sh.H_WAITERS), 24 * cap);
   }
-  m.release(h, sh.H_BYTES);
+  sh.unwatch(h);
   nd.nodeDrop(f);
 }
