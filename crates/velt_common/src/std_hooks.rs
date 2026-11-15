@@ -85,6 +85,10 @@ hooks! {
     /// can't do in 64 bits, and `toFixed` through `any`.
     number_to_fixed => lang_hooks_number_digits, "toFixedText", sig((f64, i64) -> string),
         replaces("velt_rt_f64_to_fixed");
+    /// A decimal literal of `Number(s)` or `parseFloat(s)` (velt/lang/number/parse) that 64 bits
+    /// don't settle, from its bytes `start` to `end`.
+    number_parse_long => lang_hooks_number_parse, "longDecimalValue", sig((&string, usize, usize) -> f64),
+        replaces("velt_rt_parse_float");
     /// `s.localeCompare(t)` (only std calls it: the method, and `anyStr_localeCompare` for a
     /// string held as `any`).
     locale_order => lang_string_collate, "localeOrder", sig((&string, &string) -> i64),

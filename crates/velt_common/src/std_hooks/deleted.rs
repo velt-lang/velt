@@ -73,4 +73,6 @@ pub const DELETED: &[&str] = &[
     "velt_rt_f64_to_fixed",
     // #2196: `parseInt` (velt/lang/number/parse_int), which only std called.
     "velt_rt_parse_int",
+    // #2196: the decimals of `parseFloat` past 64 bits (std/lang/hooks/number_parse).
+    "velt_rt_parse_float",
 ];

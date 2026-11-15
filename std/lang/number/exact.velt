@@ -36,8 +36,8 @@ export struct Exact {
   e: i64;
 }
 
-// `limbs` (base 10^9, least significant first) times `f` (at most 2^32).
-function mulSmall(limbs: u64[], f: u64): void {
+/** `limbs` (base 10^9, least significant first) times `f` (at most 2^32). */
+export function mulSmall(limbs: u64[], f: u64): void {
   let carry: u64 = 0;
   const n = limbs.length;
   for (let i: usize = 0; i < n; i++) {

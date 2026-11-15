@@ -12,7 +12,7 @@ const texts: string[] = [
   "fffffffffffff", "1fffffffffffff", "20000000000001", "20000000000003", "f".repeat(300),
   "8".repeat(17), "zzzzzzzzzzzzzzzz", "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz", "1".repeat(70),
   "10000000000000000000000000000000000000000000000000000001", "z1", "2147483648",
-  " 5", "᠎5", "1_000", "٣", "10".repeat(40) + "1", "7fffffffffffffff",
+  "\u0085 5", "\u180e5", "1_000", "\u0663", "10".repeat(40) + "1", "7fffffffffffffff",
   "1" + "0".repeat(400), "0x1" + "0".repeat(13) + "08", "0x1" + "0".repeat(13) + "18",
   "0x1" + "0".repeat(13) + "0801", "0x" + "f".repeat(40), "z".repeat(12), "Z9",
 ];

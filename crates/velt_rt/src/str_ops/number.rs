@@ -1,5 +1,5 @@
-//! String → number conversions with exact JS semantics: `parseFloat` and `Number(s)`, for the
-//! decimals std's parser (velt/lang/number/parse) hands over: more than 19 significant digits.
+//! `Number(s)` with exact JS semantics, for compiled code that converts a string held as `any`
+//! (velt_vir `lower/any.rs`); std's `Number(s)` and `parseFloat` are velt/lang/number/parse.
 //!
 //! Decimal values are correctly rounded (Rust's `f64` parser, like V8). Power-of-two radixes are
 //! correctly rounded for any length; other radixes are exact below 2^128 and then continue in
@@ -7,10 +7,6 @@
 
 use super::{is_js_whitespace, text_lossy};
 use crate::str::VeltStr;
-
-fn trim_start_js(s: &str) -> &str {
-    s.trim_start_matches(is_js_whitespace)
-}
 
 fn digit_value(b: u8, radix: u32) -> Option<u32> {
     (b as char).to_digit(radix)
@@ -117,24 +113,6 @@ fn signed_infinity(negative: bool) -> f64 {
         f64::NEG_INFINITY
     } else {
         f64::INFINITY
-    }
-}
-
-/// `parseFloat(s)`: longest decimal prefix after leading whitespace; NaN if there is none.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_parse_float(s: *const VeltStr) -> f64 {
-    parse_float(&text_lossy(s))
-}
-
-fn parse_float(s: &str) -> f64 {
-    let s = trim_start_js(s).as_bytes();
-    let (negative, rest) = split_sign(s);
-    if rest.starts_with(b"Infinity") {
-        return signed_infinity(negative);
-    }
-    match decimal_prefix_len(rest) {
-        Some(n) => decimal_value(&s[..s.len() - rest.len() + n]),
-        None => f64::NAN,
     }
 }
 
