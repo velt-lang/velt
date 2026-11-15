@@ -379,3 +379,161 @@ async function main() {
   await m;
 }
 "#;
+
+/// What a task printed on a lazy worker 0 before an `await` comes out before what it prints after
+/// the rescue moved it to a spare (#2977): the line sat in worker 0's thread buffer while the
+/// spare published its own. The task can only finish while `main` spins if a rescue moved it, so
+/// each run that passes the rescue check crossed the hand-over; it marks that a poll after its
+/// second line, which the spare has published by then, so `main`'s line comes after it.
+#[test]
+fn a_line_printed_on_a_lazy_worker_comes_before_what_the_rescued_task_prints_next() {
+    if !has_threads() {
+        return;
+    }
+    let dir = test_dir::TestDir::new();
+    let exe = build_std(dir.path(), "moved_output", MOVED_OUTPUT);
+    for i in 0..RUNS {
+        let r = run(&exe, "1");
+        check(
+            &r,
+            &format!("run {i}"),
+            "before the await\nafter the await\nmain\n",
+            0,
+        );
+    }
+}
+
+/// The program of
+/// [`a_line_printed_on_a_lazy_worker_comes_before_what_the_rescued_task_prints_next`].
+const MOVED_OUTPUT: &str = r#"const MOVED = new Atomic<i64>(0);
+
+async function task(): Promise<void> {
+  console.log("before the await");
+  await yieldNow();
+  console.log("after the await");
+  // A poll later, so the spare has published that line (its poll's end) when `main` reads this.
+  await yieldNow();
+  MOVED.store(1);
+}
+
+async function main() {
+  const t = spawn(task());
+  // The task prints its first line here and queues behind `main` at its `await`.
+  await yieldNow();
+  // Only a rescue runs the task's second half while this poll spins.
+  while (MOVED.load() == 0) {}
+  console.log("main");
+  await t;
+}
+"#;
+
+/// Worker 0's output across its modes (#2977): lazy, made shared by a rescue in the middle of a
+/// poll, and lazy again once the spares retire (std/lang/hooks/sched_relax.velt), five rounds a
+/// run. Each round a task prints on lazy worker 0, is moved to a spare and prints there (the
+/// first line published after the poll that printed it); `main` prints in the poll the rescue made
+/// shared, after the hand-over (published when worker 0 takes on the shared mode), then lets the
+/// task print once more. No line may be lost or come out of order; two hand-overs at least mean
+/// worker 0 was lazy again after one, so its marks were set again (process.velt `setLazyWorker`).
+#[test]
+fn worker_0s_lines_keep_their_order_while_it_turns_shared_and_lazy_again() {
+    if !has_threads() {
+        return;
+    }
+    let dir = test_dir::TestDir::new();
+    let exe = build_std(dir.path(), "flip_output", FLIP_OUTPUT);
+    let want: String = (0..5)
+        .map(|r| {
+            format!(
+                "task {r} before\ntask {r} after\nmain {r} moved\ntask {r} last\nmain {r} done\n"
+            )
+        })
+        .collect();
+    for i in 0..RUNS {
+        let r = run(&exe, "1");
+        let what = format!("run {i}");
+        check(&r, &what, &want, 0);
+        assert!(
+            rescue_count(&r.err, "locks-on").is_some_and(|n| n >= 2),
+            "{what}: worker 0 was not lazy again after a rescue: {}",
+            r.err
+        );
+    }
+}
+
+/// The program of [`worker_0s_lines_keep_their_order_while_it_turns_shared_and_lazy_again`].
+const FLIP_OUTPUT: &str = r#"const MOVED = new Atomic<i64>(0);
+const GO = new Atomic<i64>(0);
+
+async function task(r: i64): Promise<void> {
+  console.log(`task ${r} before`);
+  await yieldNow();
+  // On a spare from here (only a rescue runs this while `main` spins).
+  console.log(`task ${r} after`);
+  // A poll later, so the spare has published that line when `main` reads this.
+  await yieldNow();
+  MOVED.store(r + 1);
+  while (GO.load() <= r) {}
+  console.log(`task ${r} last`);
+}
+
+async function main() {
+  for (let r = 0; r < 5; r++) {
+    const t = spawn(task(r));
+    // The task prints its first line here and queues behind `main` at its `await`.
+    await yieldNow();
+    while (MOVED.load() <= r) {}
+    // In the poll the rescue made shared: published when worker 0 takes that on, at this `await`.
+    console.log(`main ${r} moved`);
+    await yieldNow();
+    GO.store(r + 1);
+    await t;
+    console.log(`main ${r} done`);
+    // The spares go idle and retire; worker 0 becomes lazy again.
+    await sleep(40);
+  }
+}
+"#;
+
+/// A line printed in a lazy worker 0's poll comes out before what the tasks that poll spawns
+/// afterwards print, when the monitor moves them to a spare while the poll still runs (#2977):
+/// the poll spawns one task, prints, spawns seven more and spins until one of them has run, which
+/// only a rescue allows. The spawns after the line are queued where the monitor takes them from,
+/// so the line is published first (sched_wake.velt `pendOn`).
+#[test]
+fn a_line_printed_before_a_spawn_comes_first_when_the_rescue_moves_the_spawned_task() {
+    if !has_threads() {
+        return;
+    }
+    let dir = test_dir::TestDir::new();
+    let exe = build_std(dir.path(), "spawn_after_line", SPAWN_AFTER_LINE);
+    let want = format!("main before\n{}main after\n", "child\n".repeat(8));
+    for i in 0..RUNS {
+        let r = run(&exe, "1");
+        check(&r, &format!("run {i}"), &want, 0);
+    }
+}
+
+/// The program of
+/// [`a_line_printed_before_a_spawn_comes_first_when_the_rescue_moves_the_spawned_task`].
+const SPAWN_AFTER_LINE: &str = r#"const DONE = new Atomic<i64>(0);
+
+async function child(): Promise<void> {
+  console.log("child");
+  DONE.add(1);
+}
+
+async function main() {
+  const ts: Promise<void>[] = [];
+  ts.push(spawn(child()));
+  console.log("main before");
+  for (let i = 0; i < 7; i++) {
+    ts.push(spawn(child()));
+  }
+  // Only a rescue runs a child while this poll spins.
+  while (DONE.load() == 0) {}
+  for (const t of ts) {
+    await t;
+  }
+  console.log("main after");
+}
+"#;

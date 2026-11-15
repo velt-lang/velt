@@ -220,7 +220,7 @@ export function scheduleNew(w: usize, t: usize): void {
         }
         m.st(h + tk.E_PLIST_TAIL, t);
       } else {
-        pendStacked(h, t, n);
+        pendStacked(h, t);
       }
       tk.bump(h + tk.E_RLEN, 1);
       return;
@@ -258,21 +258,21 @@ function pend(w: usize, t: usize, d: u32): void {
 }
 
 /**
- * Pushes task `t`, spawned by lazy worker 0 `w`'s poll, its `n`th spawn (under `PEND_STACKED`),
- * on `E_PREST`, which the monitor may take.
+ * Pushes task `t`, spawned by lazy worker 0 `w`'s poll (one of its first `PEND_STACKED`), on
+ * `E_PREST`, which the monitor may take.
  */
 @noInline
-function pendStacked(w: usize, t: usize, n: usize): void {
-  if (n === 0) {
-    // The first task this poll spawns may start on a spare (the monitor's rescue): what this
-    // thread printed first (the runtime publishes at each spawn; here at each poll's first).
-    publishPrinted(w);
-  }
+function pendStacked(w: usize, t: usize): void {
   pendOn(w, t, tk.E_PREST);
 }
 
-/** Pushes task `k` on the stack of lazy worker 0 `w` at offset `at` (`E_PIO` or `E_PREST`). */
+/**
+ * Pushes task `k` on the stack of lazy worker 0 `w` at offset `at` (`E_PIO` or `E_PREST`), which
+ * the monitor may take while the poll still runs and start on a spare: what this thread printed
+ * is published first (#2977), at the cost of a thread-local load when it printed nothing.
+ */
 function pendOn(w: usize, k: usize, at: usize): void {
+  publishPrinted(w);
   m.pushStack(w + at, k, tk.T_NEXT);
 }
 
@@ -320,9 +320,10 @@ export function publish(w: usize): void {
  * thread was held up between the two (#2971). Every such poll, also one whose task runs again here
  * (`E_AGAIN`, the slot): other threads see its effects through module state, shared objects and the
  * process's end, not only when the task moves. Through the stdout mark (`publishPrinted`): a poll
- * that printed nothing costs a thread-local load. A lazy worker 0 publishes nothing per poll: its
- * output reaches the others when it adopts the shared mode (sched_loop.velt `adopt`), so a task the
- * rescue moved meanwhile may print there first (#2977).
+ * that printed nothing costs a thread-local load. A lazy worker 0 publishes after a poll that
+ * printed (sched_task.velt `PANY_PRINTED`, read by the look after it, sched_loop.velt `alone`) and
+ * before it queues a task where the monitor may take it during the poll (`pendOn`), so no task the
+ * rescue moves prints before what was printed ahead of it on worker 0 (#2977).
  */
 @inline
 export function publishPolled(w: usize): void {
