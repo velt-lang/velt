@@ -431,18 +431,10 @@ by `any` holds strong references to its sources until it is aborted (they hold w
 | `velt_rt_signal_timeout` | `(i64 ms, const VeltStr* reason) -> u64` | a signal a timer aborts after `ms` |
 | `velt_rt_signal_any` | `(const VeltArray<u64>* signals) -> u64` | aborted with the first of `signals` that is (its reason and timeout); keeps them alive until then |
 
-### 2.4 Task groups (`taskScope`)
+### 2.4 Task groups (`taskScope`) [removed, #2196]
 
-The live-children count of a `taskScope` (std/task/scope.velt), behind a registry key (a `TaskScope`
-copy used after its scope ended finds no group). No code pointers are stored.
-
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_rt_group_new` | `() -> u64` | a group with no children |
-| `velt_rt_group_enter` | `(u64 g) -> bool` | a child is about to start; false (nothing counted) once the group is closed or freed |
-| `velt_rt_group_leave` | `(u64 g)` | a child finished |
-| `velt_rt_group_wait` | `(u64 g) -> VeltFut*` | completes (unit) once no child is live, and closes the group then |
-| `velt_rt_group_free` | `(u64 g)` | the scope ended |
+The live-children count of a `taskScope` is std/task/group.velt (an atomic word and a channel the
+last child closes), on every target; the runtime has no `velt_rt_group_*` functions any more.
 
 ### 2.5 Turns a JS host drives (wasm32-unknown-unknown) [additive, #1737]
 
