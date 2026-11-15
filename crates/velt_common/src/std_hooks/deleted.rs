@@ -60,4 +60,6 @@ pub const DELETED: &[&str] = &[
     "velt_rt_f64_to_exponential",
     "velt_rt_f64_to_precision",
     "velt_rt_f64_to_fixed",
+    // #2196: `parseInt` (velt/lang/number/parse_int), which only std called.
+    "velt_rt_parse_int",
 ];

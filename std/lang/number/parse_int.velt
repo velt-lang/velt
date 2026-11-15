@@ -1,0 +1,151 @@
+// velt/lang/number (internal): `parseInt(s, radix)` in Velt (#2196), as V8 parses it
+// (`NumberParseIntHelper`): leading whitespace, a sign, a `0x` prefix when the radix is 0 or 16,
+// leading zeros, then the longest run of digits. Radix 10 and the powers of two are correctly
+// rounded; the other radixes add 32-bit parts in double arithmetic, as V8 does (the specification
+// allows an approximation there), so their digits past 2^53 round as Node's do.
+
+import { strByteAt, strByteLen } from "velt/lang/intrinsics";
+import { asciiText } from "velt/lang/number/ascii";
+import { decimalValue, parseFloatOf, skipSpace } from "velt/lang/number/parse";
+
+// The value of byte `c` as a digit of radix `radix`, or `radix` and up when it is none.
+function digitOf(c: u8, radix: u64): u64 {
+  if (c - 48 <= 9) {
+    return (c - 48) as u64;
+  }
+  const l = c | 0x20;
+  if (l - 97 <= 25) {
+    return (l - 87) as u64;
+  }
+  return 99;
+}
+
+/** `parseInt(s, radix)`: `radix` 0 is "not given" (10, or 16 after `0x`); NaN without digits. */
+export function parseIntOf(s: string, radix: i64): f64 {
+  const n = strByteLen(s);
+  let i = skipSpace(s, n);
+  let neg = false;
+  if (i < n) {
+    const c = strByteAt(s, i as u64);
+    if (c == 43 || c == 45) {
+      neg = c == 45;
+      i++;
+    }
+  }
+  // ToInt32(radix).
+  const ri = radix as i32;
+  if (ri != 0 && (ri < 2 || ri > 36)) {
+    return NaN;
+  }
+  let r = ri as u64;
+  if ((r == 0 || r == 16) && i + 1 < n && strByteAt(s, i as u64) == 48) {
+    if ((strByteAt(s, (i + 1) as u64) | 0x20) == 120) {
+      i += 2;
+      r = 16;
+    }
+  }
+  if (r == 0) {
+    r = 10;
+  }
+  // Leading zeros, then the digits.
+  let zeros = false;
+  while (i < n && strByteAt(s, i as u64) == 48) {
+    zeros = true;
+    i++;
+  }
+  let end = i;
+  while (end < n && digitOf(strByteAt(s, end as u64), r) < r) {
+    end++;
+  }
+  if (end == i) {
+    if (zeros) {
+      return neg ? -0.0 : 0.0;
+    }
+    return NaN;
+  }
+  let v: f64 = 0;
+  if (r == 10) {
+    v = decimalDigits(s, i, end);
+  } else if ((r & (r - 1)) == 0) {
+    v = powerOfTwoDigits(s, i, end, r);
+  } else {
+    v = genericDigits(s, i, end, r);
+  }
+  return neg ? -v : v;
+}
+
+// Bytes `start` to `end` of `s`, decimal digits without leading zeros, correctly rounded.
+function decimalDigits(s: string, start: usize, end: usize): f64 {
+  if (end - start <= 19) {
+    let w: u64 = 0;
+    for (let k = start; k < end; k++) {
+      w = w * 10 + ((strByteAt(s, k as u64) - 48) as u64);
+    }
+    const d = decimalValue(w, 0);
+    if (d.ok) {
+      return d.value;
+    }
+  }
+  // More than 19 digits: parsed as a decimal literal of them alone.
+  const len = end - start;
+  const bytes: u8[] = [];
+  for (let k = start; k < end; k++) {
+    bytes.push(strByteAt(s, k as u64));
+  }
+  return parseFloatOf(asciiText(bytes, len));
+}
+
+// Bytes `start` to `end` of `s`, digits of radix `r` (a power of two) without leading zeros,
+// correctly rounded: the top 64 bits, the rest folded into a sticky bit, rounded once by the
+// conversion to f64, then scaled by the bits left out.
+function powerOfTwoDigits(s: string, start: usize, end: usize, r: u64): f64 {
+  let bits: u64 = 1;
+  while (((1 as u64) << bits) < r) {
+    bits++;
+  }
+  let acc: u64 = 0;
+  let shift: i64 = 0;
+  let sticky: u64 = 0;
+  for (let k = start; k < end; k++) {
+    const d = digitOf(strByteAt(s, k as u64), r);
+    if ((acc >> (64 - bits)) == 0) {
+      acc = (acc << bits) | d;
+    } else {
+      shift += bits as i64;
+      sticky = sticky | (d != 0 ? 1 : 0);
+    }
+  }
+  let v = (acc | sticky) as f64;
+  // Times 2^shift in exact steps (past 2^1023 it is infinity, as it should be).
+  while (shift > 0) {
+    const k = shift > 1000 ? 1000 : shift;
+    v = v * f64.fromBits(((k + 0x3ff) as u64) << 52);
+    shift -= k;
+  }
+  return v;
+}
+
+// Bytes `start` to `end` of `s`, digits of radix `r` (not 10, not a power of two): V8's
+// `HandleGenericCase`, parts whose multiplier stays within 32 bits, each added to the result in
+// double arithmetic.
+function genericDigits(s: string, start: usize, end: usize, r: u64): f64 {
+  // 0xffffffff / 36.
+  const most: u64 = 119304647;
+  let result: f64 = 0;
+  let k = start;
+  while (k < end) {
+    let part: u64 = 0;
+    let multiplier: u64 = 1;
+    while (k < end) {
+      const m = multiplier * r;
+      if (m > most) {
+        break;
+      }
+      part = part * r + digitOf(strByteAt(s, k as u64), r);
+      multiplier = m;
+      k++;
+    }
+    result = result * (multiplier as f64) + (part as f64);
+  }
+  return result;
+}

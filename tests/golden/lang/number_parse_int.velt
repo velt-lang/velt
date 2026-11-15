@@ -1,0 +1,41 @@
+// `parseInt(s, radix)` (std/lang/number/parse_int, V8's algorithm), compared with Node:
+// whitespace, signs, `0x`, radix 0, 1, 37 and past 32 bits, partial strings, long digit runs in
+// every kind of radix.
+
+const texts: string[] = [
+  "", " ", "42", " 42", "\t\n\r 42", "\u00a0\u2028\ufeff42", "42px", "-42", "+42", "- 42", "--42",
+  "-0", "+0", "0", "00", "-00", "0x", "0X1f", "0x1F", "-0x1f", " +0xff", "0xg", "0b101", "0o17",
+  "1e3", "3.99", "-3.99", ".5", "Infinity", "-Infinity", "NaN", "abc", "zz", "ZZ", "  +12abc",
+  "9007199254740991", "9007199254740992", "9007199254740993", "9007199254740995",
+  "18446744073709551615", "18446744073709551616", "123456789012345678901234567890",
+  "1".repeat(400), "9".repeat(310), "0".repeat(400) + "5", "-" + "0".repeat(30) + "123",
+  "fffffffffffff", "1fffffffffffff", "20000000000001", "20000000000003", "f".repeat(300),
+  "8".repeat(17), "zzzzzzzzzzzzzzzz", "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz", "1".repeat(70),
+  "10000000000000000000000000000000000000000000000000000001", "z1", "2147483648",
+  " 5", "᠎5", "1_000", "٣", "10".repeat(40) + "1", "7fffffffffffffff",
+  "1" + "0".repeat(400), "0x1" + "0".repeat(13) + "08", "0x1" + "0".repeat(13) + "18",
+  "0x1" + "0".repeat(13) + "0801", "0x" + "f".repeat(40), "z".repeat(12), "Z9",
+];
+const radixes: i64[] = [0, 1, 2, 3, 7, 8, 10, 11, 16, 32, 36, 37, -1, 4294967312, -4294967286];
+
+for (const s of texts) {
+  const shown = s.length > 40 ? `${s.slice(0, 12)}…(${s.length})` : s;
+  for (const r of radixes) {
+    console.log(JSON.stringify(shown), r, parseInt(s, r));
+  }
+  console.log(JSON.stringify(shown), "omitted", parseInt(s), Number.parseInt(s));
+}
+
+// Generated digit runs in every radix, up to 40 digits.
+const digits = "0123456789abcdefghijklmnopqrstuvwxyz";
+let seed = 777;
+for (let i = 0; i < 300; i++) {
+  const r = 2 + (i % 35);
+  let s = "";
+  const len = 1 + (i % 40);
+  for (let k = 0; k < len; k++) {
+    seed = (seed * 1103 + 12347) % 1000003;
+    s += digits[seed % r];
+  }
+  console.log(r, s, parseInt(s, r), parseInt(`-${s.toUpperCase()}`, r));
+}
