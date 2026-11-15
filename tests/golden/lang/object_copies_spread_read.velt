@@ -1,0 +1,95 @@
+// A value converted by copying its fields (#650, #651) may be spread into an object literal whose
+// fields are only read or written: Node's spread copies all the original's fields, but nothing
+// here looks at the object's shape (#2956).
+type A = { a: number };
+type AB = A & { b: number };
+
+function wider(ab: AB): number {
+  const x: A = ab;
+  const y = { ...x, c: 3 };
+  y.c = y.c + 1;
+  return y.a + y.c;
+}
+
+type B = { b: number };
+type BC = B & { c: number };
+
+function mapped(bc: BC): number {
+  const xs: B[] = [bc];
+  const ys = xs.map((x) => ({ ...x, d: 1 }));
+  return ys.length + ys[0].b + ys[0].d;
+}
+
+type P = { x: number; y: number };
+type Q = { y: number; x: number };
+
+function reordered(q: Q): string {
+  const p: P = q;
+  const w = { ...p, w: 0 };
+  return `${w.x} ${w.y} ${w.w}`;
+}
+
+function sum(o: { a: number; c: number }): number {
+  return o.a * 10 + o.c;
+}
+
+function passed(ab: AB): number {
+  const x: A = ab;
+  return sum({ ...x, c: 2 });
+}
+
+async function later(ab: AB): Promise<number> {
+  const x: A = ab;
+  const y = await Promise.resolve({ ...x, c: 5 });
+  return y.a + y.c;
+}
+
+class Holder {
+  held: { a: number; c: number };
+  constructor(x: A) {
+    this.held = { ...x, c: 7 };
+  }
+  total(): number {
+    return this.held.a + this.held.c;
+  }
+}
+
+function kept(ab: AB): number {
+  const x: A = ab;
+  return new Holder(x).total();
+}
+
+function extend<T extends object>(t: T): T & { k: number } {
+  return { ...t, k: 1 };
+}
+
+function generic(ab: AB): number {
+  const x: A = ab;
+  return extend(x).a + extend(x).k;
+}
+
+// A field the copy left out, set after the spread: the same value in Node.
+function setAfter(ab: AB): number {
+  const x: A = ab;
+  const y = { ...x, b: 5 };
+  return y.a + y.b;
+}
+
+// A later spread whose type has `b` (required) sets it, in Node as here.
+function laterRequired(ab: AB, o: { b: number }): number {
+  const x: A = ab;
+  const y = { ...x, ...o };
+  return y.a + y.b;
+}
+
+async function main() {
+  console.log(wider({ a: 1, b: 2 }));
+  console.log(mapped({ b: 1, c: 2 }));
+  console.log(reordered({ y: 1, x: 2 }));
+  console.log(passed({ a: 4, b: 9 }));
+  console.log(await later({ a: 1, b: 2 }));
+  console.log(kept({ a: 3, b: 4 }));
+  console.log(generic({ a: 5, b: 6 }));
+  console.log(setAfter({ a: 1, b: 2 }));
+  console.log(laterRequired({ a: 1, b: 2 }, { b: 6 }));
+}

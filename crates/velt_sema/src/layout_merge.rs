@@ -287,7 +287,7 @@ pub(crate) fn check_looks(cx: &mut Ctx) {
         return;
     }
     let looks: Vec<(TyId, velt_common::Span, Seen)> = (cx.object_copies.seen.iter())
-        .filter(|s| matches!(s.2, Seen::Keys | Seen::Spread | Seen::In(_)))
+        .filter(|s| matches!(s.2, Seen::Keys | Seen::Spread(_) | Seen::In(_)))
         .cloned()
         .collect();
     let mut reported = vec![];
@@ -320,7 +320,7 @@ pub(crate) fn check_looks(cx: &mut Ctx) {
         let tn = cx.display(t);
         let what = match how {
             Seen::Keys => "lists the keys of",
-            Seen::Spread => "spreads",
+            Seen::Spread(_) => "spreads",
             _ => "tests a key of",
         };
         let ext = extension_with(cx, base, &field);

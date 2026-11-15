@@ -73,6 +73,10 @@ impl FnCx<'_, '_> {
         let mut entries: Vec<(String, Value)> = vec![];
         let mut explicit: Vec<String> = vec![];
         let mut parts = vec![];
+        // The looks each spread recorded (`Seen::Spread`), given the literal's type at the end, and
+        // the fields each property writes (for what is written after a spread).
+        let mut looks: Vec<(usize, usize, Span)> = vec![];
+        let mut writes: Vec<(Option<Span>, Vec<String>)> = vec![];
         for p in props {
             let new: Vec<(String, Value)> = match p {
                 ast::ObjectProp::Spread(e) => {
@@ -95,18 +99,28 @@ impl FnCx<'_, '_> {
                         }
                         any => any,
                     };
+                    let seen = self.cx.object_copies.seen.len();
                     let fields = self.spread_fields(e, any, &mut lets, false);
+                    looks.push((seen, self.cx.object_copies.seen.len(), e.span));
+                    // Only the fields it surely sets: not an optional one, nor one of a source
+                    // that may be missing (`T | undefined`, one branch of a conditional).
+                    let sure = fields
+                        .iter()
+                        .filter(|f| !f.2.optional && f.2.guard.is_none());
+                    writes.push((Some(e.span), sure.map(|f| f.0.clone()).collect()));
                     parts.push(self.spread_part(e.span, &lets[before..], lets.len()));
                     (fields.into_iter())
                         .map(|(n, h, src)| (n, Value::Read(h, src)))
                         .collect()
                 }
                 ast::ObjectProp::KeyValue(k, v) => {
+                    writes.push((None, vec![k.name.clone()]));
                     let effects = self.effects(v);
                     parts.push(Part::prop(k, Some(v), effects, lets.len()));
                     vec![(k.name.clone(), Value::Prop(k.clone(), Some(v)))]
                 }
                 ast::ObjectProp::Shorthand(k) => {
+                    writes.push((None, vec![k.name.clone()]));
                     let effects = self.name_effects(k);
                     parts.push(Part::prop(k, None, effects, lets.len()));
                     vec![(k.name.clone(), Value::Prop(k.clone(), None))]
@@ -153,6 +167,8 @@ impl FnCx<'_, '_> {
             Some((d, slots)) => self.spread_struct(d, slots, entries, exp, span, &mut lets),
             None => self.spread_anon(entries, span, &mut lets),
         };
+        self.cx.object_copies.spread_into(&looks, lit.ty);
+        self.cx.object_copies.written_after(&writes);
         self.with_lets(lets, lit)
     }
 
@@ -260,7 +276,7 @@ impl FnCx<'_, '_> {
             );
             return vec![];
         }
-        let seen = crate::object_copies::Seen::Spread;
+        let seen = crate::object_copies::Seen::Spread(None);
         self.cx.object_copies.observe(h.ty, e.span, seen);
         if super::object_keys::reevaluable(e) && self.may_be_typed_proxy(h.ty) {
             // A typed proxy's keys are what its traps list (`proxySpreadCheck`).

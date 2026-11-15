@@ -1,0 +1,40 @@
+object_copies_spread_over.velt:12:16: error: a value of type `AB` converts to `A` by copying its fields, and this program spreads it into an object with a field `b`: Node's spread would copy the original's `b` over that field
+object_copies_spread_over.velt:13:24: spread here, or in the function this calls
+  = note: set `b` after the spread (`{ ...x, b: … }`) to give it its own value
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `A` made from a `AB` value is a new object with the same field values
+  = note: build the new object explicitly, `{ a: ab.a }` (a new object in TypeScript too), or declare the parameter or variable as `AB`
+object_copies_spread_over.velt:18:16: error: a value of type `AB` converts to `A` by copying its fields, and this program spreads it into an object with a field `b`: Node's spread would copy the original's `b` over that field
+object_copies_spread_over.velt:20:21: spread here, or in the function this calls
+  = note: set `b` after the spread (`{ ...x, b: … }`) to give it its own value
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `A` made from a `AB` value is a new object with the same field values
+  = note: build the new object explicitly, `{ a: ab.a }` (a new object in TypeScript too), or declare the parameter or variable as `AB`
+object_copies_spread_over.velt:24:16: error: a value of type `AB` converts to `A` by copying its fields, and this program spreads it into an object with a field `b`: Node's spread would copy the original's `b` over that field
+object_copies_spread_over.velt:25:21: spread here, or in the function this calls
+  = note: set `b` after the spread (`{ ...x, b: … }`) to give it its own value
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `A` made from a `AB` value is a new object with the same field values
+  = note: build the new object explicitly, `{ a: ab.a }` (a new object in TypeScript too), or declare the parameter or variable as `AB`
+object_copies_spread_over.velt:29:16: error: a value of type `AB` converts to `A` by copying its fields, and this program spreads it into an object with a field `b`: Node's spread would copy the original's `b` over that field
+object_copies_spread_over.velt:31:21: spread here, or in the function this calls
+  = note: set `b` after the spread (`{ ...x, b: … }`) to give it its own value
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `A` made from a `AB` value is a new object with the same field values
+  = note: build the new object explicitly, `{ a: ab.a }` (a new object in TypeScript too), or declare the parameter or variable as `AB`
+object_copies_spread_over.velt:35:16: error: a value of type `AB` converts to `A` by copying its fields, and this program spreads it into an object with a field `b`: Node's spread would copy the original's `b` over that field
+object_copies_spread_over.velt:36:31: spread here, or in the function this calls
+  = note: set `b` after the spread (`{ ...x, b: … }`) to give it its own value
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `A` made from a `AB` value is a new object with the same field values
+  = note: build the new object explicitly, `{ a: ab.a }` (a new object in TypeScript too), or declare the parameter or variable as `AB`
+object_copies_spread_over.velt:41:16: error: a value of type `AB` converts to `A` by copying its fields, and this program spreads it into an object with a field `b`: Node's spread would copy the original's `b` over that field
+object_copies_spread_over.velt:42:23: spread here, or in the function this calls
+  = note: set `b` after the spread (`{ ...x, b: … }`) to give it its own value
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `A` made from a `AB` value is a new object with the same field values
+  = note: build the new object explicitly, `{ a: ab.a }` (a new object in TypeScript too), or declare the parameter or variable as `AB`
+object_copies_spread_over.velt:51:16: error: a value of type `AB` converts to `A` by copying its fields, and this program spreads it into an object with a field `b`: Node's spread would copy the original's `b` over that field
+object_copies_spread_over.velt:47:10: spread here, or in the function this calls
+  = note: set `b` after the spread (`{ ...x, b: … }`) to give it its own value
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `A` made from a `AB` value is a new object with the same field values
+  = note: build the new object explicitly, `{ a: ab.a }` (a new object in TypeScript too), or declare the parameter or variable as `AB`
+object_copies_spread_over.velt:57:33: error: a value of type `AB` converts to `A` by copying its fields, and this program spreads it into an object with a field `b`: Node's spread would copy the original's `b` over that field
+object_copies_spread_over.velt:58:24: spread here, or in the function this calls
+  = note: set `b` after the spread (`{ ...x, b: … }`) to give it its own value
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `A` made from a `AB` value is a new object with the same field values
+  = note: build the new object explicitly, `{ a: ab.a }` (a new object in TypeScript too), or declare the parameter or variable as `AB`
