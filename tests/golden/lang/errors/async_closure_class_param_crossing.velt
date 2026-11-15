@@ -1,0 +1,32 @@
+// A class method's class type parameter resolved through the objects made of the class (#2952):
+// `Queue<T>.push`, reached through an interface, forwards to `keepAndSpawn<T>`, and a queue is a
+// `Queue<Job>`, so the job pushed, which modifies what it captured, reaches the spawn: refused.
+type Job = () => Promise<void>;
+
+function keepAndSpawn<T>(x: T): void {
+  const box: T[] = [x];
+  const v = box[0];
+  spawn(async () => {
+    console.log(typeof v);
+  });
+}
+
+interface Sink<T> {
+  push(x: T): void;
+}
+
+class Queue<T> implements Sink<T> {
+  push(x: T): void {
+    keepAndSpawn<T>(x);
+  }
+}
+
+async function main() {
+  let runs = 0;
+  const s: Sink<Job> = new Queue<Job>();
+  s.push(async (): Promise<void> => {
+    runs++;
+  });
+  await sleep(10);
+  console.log(`runs ${runs}`);
+}

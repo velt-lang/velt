@@ -298,9 +298,20 @@ fn held_in_locals(g: &Graph, fwd: &Forward, n: usize) -> Option<FxHashSet<usize>
 /// Collects into `out` the functions that code outside every function body (module-level and
 /// field initializers) calls by name or uses as a value: called from where the graph does not
 /// follow, with no type arguments recorded.
-pub(super) fn named_outside_bodies(cx: &Ctx, out: &mut FxHashSet<DefId>) {
-    let mut named = Named(out);
-    for info in cx.info.iter() {
+pub(super) fn named_outside_bodies(
+    cx: &Ctx,
+    out: &mut FxHashSet<DefId>,
+    insts: &mut FxHashMap<DefId, Vec<(DefId, Vec<TyId>)>>,
+    news: &mut FxHashMap<DefId, Vec<(DefId, Vec<TyId>)>>,
+) {
+    let mut named = Named {
+        out,
+        insts,
+        news,
+        owner: DefId(0),
+    };
+    for (i, info) in cx.info.iter().enumerate() {
+        named.owner = DefId(i as u32);
         match info {
             DefInfo::Global(gi) => {
                 if let Some(init) = &gi.init {
@@ -316,10 +327,11 @@ pub(super) fn named_outside_bodies(cx: &Ctx, out: &mut FxHashSet<DefId>) {
             _ => {}
         }
     }
-    for def in cx.defs.iter().flatten() {
+    for (i, def) in cx.defs.iter().enumerate() {
+        named.owner = DefId(i as u32);
         match def {
-            Def::Global(gd) => walk::expr(&gd.init, &mut named),
-            Def::Adt(a) => {
+            Some(Def::Global(gd)) => walk::expr(&gd.init, &mut named),
+            Some(Def::Adt(a)) => {
                 for v in a.fields.iter().filter_map(|f| f.default.as_ref()) {
                     walk::expr(v, &mut named);
                 }
@@ -332,17 +344,37 @@ pub(super) fn named_outside_bodies(cx: &Ctx, out: &mut FxHashSet<DefId>) {
     }
 }
 
-/// Collects the functions an expression calls by name or uses as a value.
-struct Named<'a>(&'a mut FxHashSet<DefId>);
+/// Collects the functions an expression calls by name or uses as a value, and, as instantiations
+/// of a generic one (`Graph::insts`), the type arguments it names there, made by `owner` (#2952:
+/// `const renderer = createRenderer(nodeOps)` at module level is `createRenderer`'s only call);
+/// likewise the objects of generic classes and structs it makes (`Graph::news`).
+struct Named<'a> {
+    out: &'a mut FxHashSet<DefId>,
+    insts: &'a mut FxHashMap<DefId, Vec<(DefId, Vec<TyId>)>>,
+    news: &'a mut FxHashMap<DefId, Vec<(DefId, Vec<TyId>)>>,
+    owner: DefId,
+}
 
 impl Visit for Named<'_> {
     fn expr(&mut self, e: &Expr) {
         match &e.kind {
-            E::FnRef(d, _)
+            E::FnRef(d, targs)
             | E::Call {
-                callee: Callee::Def(d, _),
+                callee: Callee::Def(d, targs),
                 ..
-            } => _ = self.0.insert(*d),
+            } => {
+                self.out.insert(*d);
+                if !targs.is_empty() {
+                    let site = (self.owner, targs.clone());
+                    self.insts.entry(*d).or_default().push(site);
+                }
+            }
+            E::New { def, type_args, .. } | E::AdtLit { def, type_args, .. }
+                if !type_args.is_empty() =>
+            {
+                let site = (self.owner, type_args.clone());
+                self.news.entry(*def).or_default().push(site);
+            }
             _ => {}
         }
     }

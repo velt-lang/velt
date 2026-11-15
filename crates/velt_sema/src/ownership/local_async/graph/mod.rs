@@ -208,7 +208,7 @@ pub(super) fn build(cx: &Ctx) -> Graph {
         w.block(&f.body.block, To::Node(ret, None));
     }
     super::unknown_callees::mark(cx, &mut g);
-    super::call_sites::named_outside_bodies(cx, &mut g.held.referenced);
+    super::call_sites::named_outside_bodies(cx, &mut g.held.referenced, &mut g.insts, &mut g.news);
     dynamic::finish(cx, &mut g);
     g.dyn_calls.finish(cx);
     g
@@ -683,7 +683,9 @@ impl Walk<'_, '_> {
         // the walk doesn't see it (`super::generic_closures`).
         if matches!(i, Intrinsic::ToAny | Intrinsic::SpreadObject) {
             for a in args {
-                self.g.dyn_calls.escape(self.cx, a.ty, i == Intrinsic::ToAny);
+                self.g
+                    .dyn_calls
+                    .escape(self.cx, a.ty, i == Intrinsic::ToAny);
             }
         }
         // What only inspects a borrowed `any` (`typeof x`, `x === y`, `Array.isArray(x)`) keeps
