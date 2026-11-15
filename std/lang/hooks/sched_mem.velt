@@ -37,6 +37,13 @@ export function ptr(a: usize): Ptr<u8> {
   return unsafe { Ptr.at<u8>(a) };
 }
 
+/** Address `a` as a C pointer argument to a `T` (`declare c type`, or a number type). */
+@inline
+export function ptrTo<T>(a: usize): Ptr<T> {
+  // SAFETY: as `ptr`'s.
+  return unsafe { Ptr.at<T>(a) };
+}
+
 /** The address a C function returned; 0 for `NULL`. */
 @inline
 export function addr(p: Ptr<u8> | null): usize {

@@ -14,16 +14,22 @@ use super::{check_library, decl_of, zig_target, LibraryHeaders};
 /// targets load none of std's POSIX declarations (the `#fd-system` variant there declares
 /// nothing), only the C library's memory and string functions and `errno`'s location
 /// (velt/ffi's `#errno-location`); `<unwind.h>` has the Itanium unwinder's
-/// `_Unwind_RaiseException` (std/lang/hooks/unwind_itanium.velt).
+/// `_Unwind_RaiseException` (std/lang/hooks/unwind_itanium.velt); the socket headers
+/// (`<sys/socket.h>`, `<netdb.h>`, `<arpa/inet.h>`, and `<strings.h>` for `bcopy`) have velt/net's
+/// calls (std/net/calls_posix.velt).
 fn std_headers(target: &str) -> &'static [&'static str] {
     if target.contains("-windows") {
         &["<errno.h>", "<stdlib.h>", "<string.h>"]
     } else {
         &[
+            "<arpa/inet.h>",
             "<errno.h>",
             "<fcntl.h>",
+            "<netdb.h>",
             "<stdlib.h>",
             "<string.h>",
+            "<strings.h>",
+            "<sys/socket.h>",
             "<sys/stat.h>",
             "<unistd.h>",
             "<unwind.h>",
@@ -32,8 +38,8 @@ fn std_headers(target: &str) -> &'static [&'static str] {
 }
 
 /// The std files whose `declare c("c")` functions are checked, relative to std's root: those
-/// whose declarations match their headers today. The rest of std's declarations (sockets,
-/// threads, processes, the reactors, std's calls of the runtime) differ from their headers in
+/// whose declarations match their headers today. The rest of std's declarations (UDP sockets and
+/// `getaddrinfo`, threads, processes, the reactors, std's calls of the runtime) differ from their headers in
 /// ways #3022 lists, and are brought under the check file by file there. This list only grows:
 /// a file leaves it only when it no longer declares C functions.
 const CHECKED: &[&str] = &[
@@ -46,6 +52,7 @@ const CHECKED: &[&str] = &[
     "lang/hooks/sched_io_write.velt",
     "lang/hooks/sched_mem.velt",
     "lang/hooks/unwind_itanium.velt",
+    "net/calls_posix.velt",
     "net/fd_io.velt",
     "sync/slot.velt",
 ];
