@@ -151,16 +151,15 @@ fn a_later_timer_alone_after_a_held_one_wakes_the_task_at_its_deadline() {
         let later = leaf(&timers, later_at, &named("later", &log), &task);
         log.lock().unwrap().clear();
         assert_eq!(timers.fire(&task), Some(0));
-        // Firing held `b` back at the time it ran, no later than this.
-        let held_by = Instant::now();
         assert!(a.fired.load(Ordering::Acquire) && !b.fired.load(Ordering::Acquire));
         // The poll goes on and `b` is gone (polled and fired, or dropped).
         drop(b);
         timers.end_poll(&task);
-        // Unless the thread stalled until `later_at` before firing (then the end of the poll finds
-        // it held back too, and wakes the task), the later timer is not due: the tokio timer is
-        // armed for it.
-        if held_by < later_at {
+        // Firing and the end of the poll both ran by now. Unless the thread stalled until
+        // `later_at` before then (the end of the poll finds it due and wakes the task), the later
+        // timer is not due: the tokio timer is armed for it.
+        let polled_by = Instant::now();
+        if polled_by < later_at {
             assert!(log.lock().unwrap().is_empty(), "the later timer is not due");
             assert_eq!(
                 timers.state.lock().armed.as_ref().map(|a| a.1),
