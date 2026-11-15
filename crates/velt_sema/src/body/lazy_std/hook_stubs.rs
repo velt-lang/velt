@@ -18,10 +18,15 @@
 //! name), when no loader serves std modules on demand, and for a hook that a round before
 //! reached only after the passes that follow the check (`Assumed::hooks`): too late to load a
 //! module then, so the check runs again with it.
+//!
+//! A prebuilt hook (velt_common `std_hooks/prebuilt.rs`) whose module's object the build links
+//! is neither: its calls name a `declare function` typed the same way ([`declared`]), which
+//! never binds, and its module is never loaded. That function is a plain extern to the rest of
+//! the check and to lowering, which calls the object's entry point as it called the runtime's.
 
 use rustc_hash::FxHashMap;
 use velt_common::hook_sig::{FnSig, Mode, Sig, T};
-use velt_common::std_hooks::HOOKS;
+use velt_common::std_hooks::{prebuilt, HOOKS};
 use velt_common::Span;
 
 use crate::ctx::{Ctx, Item};
@@ -40,6 +45,9 @@ pub(crate) struct Stubs {
     /// Hooks a round before reached only after the passes: no stub for them, their modules are
     /// demanded when the call is checked (`Assumed::hooks`).
     at_check: Vec<usize>,
+    /// Per prebuilt hook asked about ([`declared`]): its declared function, `None` where the
+    /// build has no object of its module.
+    declared: FxHashMap<usize, Option<DefId>>,
 }
 
 impl Stubs {
@@ -118,6 +126,31 @@ pub(crate) fn stub(cx: &mut Ctx, index: usize, module: usize, span: Span) -> Opt
     cx.lazy.stubs.hooks.insert(d, (index, None));
     cx.lazy.stubs.first_call.insert(d, span);
     Some(d)
+}
+
+/// The function a `hookCall` of `HOOKS[index]` in `module` calls when the hook is prebuilt
+/// (velt_common `std_hooks/prebuilt.rs`) and the build links its module's object (the driver's
+/// [`crate::Loads::prebuilt`]): a `declare function` named by `prebuilt::symbol`, typed from the
+/// table, as the `velt_rt_*` extern the hook replaced was. The hook's module is not loaded for
+/// it. Made once per check; `None` otherwise, and the call goes on as for any hook.
+pub(crate) fn declared(cx: &mut Ctx, index: usize, module: usize) -> Option<DefId> {
+    if !HOOKS[index].prebuilt {
+        return None;
+    }
+    if let Some(&d) = cx.lazy.stubs.declared.get(&index) {
+        return d;
+    }
+    let linked = (cx.loads.and_then(|l| l.prebuilt)).is_some_and(|linked| linked(index));
+    let d = match (linked, &HOOKS[index].sig) {
+        (true, Sig::Fn(sig)) => stub_info(cx, index, sig, module).map(|mut f| {
+            f.name = prebuilt::symbol(&HOOKS[index]);
+            f.kind = FnKind::Extern;
+            cx.alloc_def(Span::DUMMY, DefInfo::Fn(Box::new(f)))
+        }),
+        _ => None,
+    };
+    cx.lazy.stubs.declared.insert(index, d);
+    d
 }
 
 /// The stub's signature: the table's, with its passing modes fixed.

@@ -6,7 +6,8 @@ use super::{Construct, Sig};
 
 /// One hook: its entry name, its module's canonical path, its name there, its signature, whether
 /// lowering calls it, whether lowering may find it missing and fall back to the runtime
-/// (`fallback`), the runtime externs it replaces and the benchmark that measures it.
+/// (`fallback`), whether a build may call a prebuilt object of its module instead (`prebuilt`),
+/// the runtime externs it replaces and the benchmark that measures it.
 #[derive(Clone, Copy, Debug)]
 pub struct Hook {
     /// The entry's name (`f64_to_string`).
@@ -38,6 +39,12 @@ pub struct Hook {
     /// The HIR constructs whose lowering calls it ([`crate::hook_demand`]): sema checks it only
     /// where live code has one, and lowering asserts that. None: always needed.
     pub constructs: &'static [Construct],
+    /// A build may call it in an object of its module compiled once ([`super::prebuilt`]): where
+    /// the build cache holds that object, a `hookCall` of it is a call of the declared function
+    /// [`super::prebuilt::symbol`] and the module is not loaded. Only for a function whose
+    /// parameters and result are numbers and strings ([`super::prebuilt::scalar`], checked when
+    /// the table is compiled).
+    pub prebuilt: bool,
 }
 
 impl Hook {
@@ -59,12 +66,13 @@ impl Hook {
 }
 
 /// An entry is `name => module, "item", sig(…)` (or `class`, `decorator`), then optional flags
-/// after commas, in any order: `lowered`, `fallback`, `replaces("velt_rt_…", …)`, `bench("row")`
-/// and `constructs(TextInt, …)` (the fields of [`Hook`]).
+/// after commas, in any order: `lowered`, `fallback`, `prebuilt`, `replaces("velt_rt_…", …)`,
+/// `bench("row")` and `constructs(TextInt, …)` (the fields of [`Hook`]).
 macro_rules! hooks {
     // Each flag is one of these (an unknown one fails here).
     (@flag lowered) => {};
     (@flag fallback) => {};
+    (@flag prebuilt) => {};
     (@flag replaces) => {};
     (@flag bench) => {};
     (@flag constructs) => {};
@@ -74,6 +82,9 @@ macro_rules! hooks {
     (@fallback) => { false };
     (@fallback fallback $($rest:tt)*) => { true };
     (@fallback $skip:tt $($rest:tt)*) => { hooks!(@fallback $($rest)*) };
+    (@prebuilt) => { false };
+    (@prebuilt prebuilt $($rest:tt)*) => { true };
+    (@prebuilt $skip:tt $($rest:tt)*) => { hooks!(@prebuilt $($rest)*) };
     (@replaces) => { &[] };
     (@replaces replaces ($($r:literal),* $(,)?) $($rest:tt)*) => { &[$($r),*] };
     (@replaces $skip:tt $($rest:tt)*) => { hooks!(@replaces $($rest)*) };
@@ -122,7 +133,21 @@ macro_rules! hooks {
             replaces: hooks!(@replaces $($flag $(($($arg)*))?)*),
             bench: hooks!(@bench $($flag $(($($arg)*))?)*),
             constructs: hooks!(@constructs $($flag $(($($arg)*))?)*),
+            prebuilt: hooks!(@prebuilt $($flag $(($($arg)*))?)*),
         }),*];
+
+        // A `prebuilt` entry takes and returns only numbers and strings: refused when the
+        // compiler is built, never by a build that would call it (`prebuilt::scalar`).
+        const _: () = {
+            let mut i = 0;
+            while i < HOOKS.len() {
+                assert!(
+                    !HOOKS[i].prebuilt || $crate::std_hooks::prebuilt::scalar(&HOOKS[i].sig),
+                    "a `prebuilt` hook takes and returns only numbers and strings"
+                );
+                i += 1;
+            }
+        };
 
         #[allow(non_camel_case_types, dead_code)]
         enum Index { $($name),* }

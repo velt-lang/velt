@@ -155,6 +155,10 @@ pub struct CheckScope {
     pub eager_std: bool,
     /// Check by units (`velt_sema::CheckOptions::units`; `VELT_UNITS` for `velt check`).
     pub units: bool,
+    /// A `hookCall` of a prebuilt hook may call its module's object, where the build cache holds
+    /// it, instead of loading the module (`std_cache::prebuilt`): builds that link, and `velt
+    /// check`.
+    pub prebuilt: bool,
 }
 
 /// What a successful build produced.
@@ -240,6 +244,8 @@ pub struct Session {
     pub cached: Option<(usize, usize, &'static str)>,
     /// Objects of std functions the program links instead of compiling (`std_cache`).
     pub std_objects: Vec<PathBuf>,
+    /// The prebuilt hook modules' objects the check found and called (`std_cache::prebuilt`).
+    pub(crate) prebuilt: Vec<(&'static str, std_cache::Found)>,
     /// This build's turn at its output (`std_cache::Place::lock`), until the build returns.
     pub turn: Option<std::fs::File>,
     /// What the program reaches outside itself (`outside::reaches`), when it was worked out
@@ -411,12 +417,15 @@ fn sema_stage(
     // (`StdLoad::serve`); `velt check --std` loads everything up front.
     let demands = !scope.eager_std;
     let generator_build = sess.generator_build;
+    let finder = (scope.prebuilt && !generator_build)
+        .then(|| std_cache::Finder::for_build(opts))
+        .flatten();
     let mut more = demands.then(|| {
         StdLoad::new(
             (&mut loaded.state, &loaded.modules),
             generator_build,
-            opts,
-            scope,
+            (opts, scope),
+            finder.as_ref(),
         )
     });
     let mut hir = crate::generate::check(
@@ -428,6 +437,9 @@ fn sema_stage(
         more.as_mut(),
     );
     sess.std_files = StdLoad::std_files(more, &loaded.modules);
+    if let Some(finder) = finder {
+        sess.prebuilt = std_cache::prebuilt_found(finder, &mut sess.generator_inputs);
+    }
     sess.native = crate::native::check_trust(
         &loaded.modules,
         &sess.sm,
@@ -495,6 +507,7 @@ fn compile_to_vir_linking(
         extra_roots: vec![],
         eager_std: false,
         units: false,
+        prebuilt: dest == VirFor::Link,
     };
     let checked = check_program(sess, opts, &scope)?;
     lower_checked(sess, opts, dest, checked)
@@ -620,6 +633,9 @@ fn lower_checked(
         Some(warm::DevOpt::Done(changed)) => sess.dev_changed = Some(changed),
         Some(warm::DevOpt::Whole) => warm::optimize_kept(sess, &mut program)?,
         None => std_cache::stage::optimize(sess, opts, &target, std_use, &mut program)?,
+    }
+    if dest == VirFor::Link {
+        std_cache::prebuilt_link(sess, opts, &target, &program)?;
     }
     if opts.report_numbers {
         sess.reports.push(crate::numbers_report::render(&program));

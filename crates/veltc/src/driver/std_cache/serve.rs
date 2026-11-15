@@ -35,7 +35,7 @@ pub(super) fn fill() -> bool {
 
 /// Whether objects built for the target's default CPU run wherever this build's program does: the
 /// program's CPU has everything the default requires.
-fn default_cpu_runs(opts: &BuildOptions, target: &str) -> bool {
+pub(super) fn default_cpu_runs(opts: &BuildOptions, target: &str) -> bool {
     let backend = crate::backend::Backend::Cranelift;
     let required = |cpu| backend.required_features(target, cpu);
     match (required(opts.cpu.as_deref()), required(None)) {

@@ -258,12 +258,17 @@ fn alone(mut alone: vir::Program, cg: &velt_codegen_cl::CodegenOptions) -> Resul
 /// Store `object` under `key`: the path of the cached file, which the link reads. Two builds
 /// storing one key at once both get the one valid entry (`Cache::put_file`).
 pub(super) fn store(cache: &Cache, key: &Key, object: &[u8]) -> Option<PathBuf> {
-    let name = format!("velt-stdfn-{}-{}.o", std::process::id(), key.hex());
+    store_kind(cache, KIND, key, object)
+}
+
+/// [`store`] as an entry of `kind`.
+pub(super) fn store_kind(cache: &Cache, kind: &str, key: &Key, object: &[u8]) -> Option<PathBuf> {
+    let name = format!("velt-{kind}-{}-{}.o", std::process::id(), key.hex());
     let tmp = std::env::temp_dir().join(name);
     std::fs::write(&tmp, object).ok()?;
-    let stored = cache.put_file(KIND, key, &tmp);
+    let stored = cache.put_file(kind, key, &tmp);
     let _ = std::fs::remove_file(&tmp);
-    stored.then(|| cache.path_of(KIND, key)).flatten()
+    stored.then(|| cache.path_of(kind, key)).flatten()
 }
 
 #[cfg(test)]

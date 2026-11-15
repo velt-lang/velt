@@ -117,6 +117,7 @@ fn command_line(std: &Path, root: &Path, overlay: &HashMap<PathBuf, String>) -> 
         Some(Loads {
             run: &serve,
             kept: &kept,
+            prebuilt: None,
         }),
     );
     let (_, _, _, served) = shared.into_inner().unwrap();
