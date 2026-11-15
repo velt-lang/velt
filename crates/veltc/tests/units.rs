@@ -281,7 +281,8 @@ fn the_app_s_conversions_widen_its_own_layouts_after_std_s_unit() {
 /// it once missed: what std's stage built on first use from its classes and aliases is built
 /// again with the app's (velt_sema `units`: the subclasses a `read` callback's value may hold,
 /// the read-only aliases), and an app closure passed to one of std's closures whose parameter
-/// crosses crosses too (`local_async` summaries).
+/// crosses crosses too, and so does what a closure kept in a std `Map` returns when called
+/// (`local_async` summaries).
 #[test]
 fn a_check_by_units_reports_what_std_s_unit_once_hid() {
     let errors =
@@ -295,6 +296,10 @@ fn a_check_by_units_reports_what_std_s_unit_once_hid() {
         (
             "async_closure_settles_from_field.velt",
             "cannot capture the generator `chunks`",
+        ),
+        (
+            "async_closure_fn_value_result_stored.velt",
+            "modifies captured `n`",
         ),
     ];
     for (file, said) in cases {

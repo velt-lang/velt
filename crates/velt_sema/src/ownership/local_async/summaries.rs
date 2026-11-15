@@ -84,16 +84,20 @@ pub(super) fn merge(cx: &Ctx, g: &mut graph::Graph) {
     g.dispatched.dedup();
     g.held.referenced.extend(s.referenced.iter().copied());
     // What a finished unit's function returns may come from its heap (`Map.get` gives what
-    // `Map.set` stored), which its summary does not follow: a value of unknown origin.
+    // `Map.set` stored), which its summary does not follow: a value of unknown origin. And a
+    // value passed to one of its parameters goes where this graph does not follow it on: it
+    // does not stay in locals (`call_sites::held_in_locals`).
     for n in 0..g.nodes.len() {
-        if let Node::Ret(f) = g.nodes[n] {
-            if f.0 < cx.unit_base {
+        match g.nodes[n] {
+            Node::Ret(f) if f.0 < cx.unit_base => {
                 g.unknown[n] = true;
                 let ty = g.tys[n];
                 if !g.inflows[n].contains(&(ty, None)) {
                     g.inflows[n].push((ty, None));
                 }
             }
+            Node::Local(f, _) if f.0 < cx.unit_base => g.held.escapes.push(n),
+            _ => {}
         }
     }
 }
