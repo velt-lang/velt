@@ -186,7 +186,9 @@ impl Cache {
 
     /// Store `value` as `key`'s entry of `kind` in place of the one there, for an entry that is
     /// not a pure function of its key (what a program's last build learned); `false` if it could
-    /// not be stored. Other processes that already read the old entry may keep seeing it.
+    /// not be stored. Other processes that already read the old entry may keep seeing it. Not
+    /// atomic: the old value is dropped before the new one is written, so a failed write leaves
+    /// no entry (a miss, as for a value that is being replaced because it is stale).
     pub fn replace_key(&self, kind: &str, key: &Key, value: &[u8]) -> bool {
         self.mark();
         let stored = if value.len() < LARGE {
