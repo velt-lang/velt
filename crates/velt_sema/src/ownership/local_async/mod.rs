@@ -99,11 +99,13 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
     cx.in_shared.clear();
     let mut g = crate::timings::pass("local_async::graph", || graph::build(cx));
     summaries::returns(cx, &mut g);
+    summaries::merge(cx, &mut g);
     let mut p = Propagation::new(cx, &g);
     for &(n, f, why) in &g.seeds {
         p.set(n, f, why);
     }
     summaries::seed(cx, &g, &mut p);
+    summaries::std_hits(cx, &mut p);
     let mut seen = FxHashMap::default();
     let mut fns: FxHashMap<TyId, Why> = FxHashMap::default();
     let mut rooted = 0;

@@ -276,3 +276,37 @@ fn the_app_s_conversions_widen_its_own_layouts_after_std_s_unit() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "{stderr}");
 }
+
+/// A check by units reports what a whole-program check reports in these goldens, each of which
+/// it once missed: what std's stage built on first use from its classes and aliases is built
+/// again with the app's (velt_sema `units`: the subclasses a `read` callback's value may hold,
+/// the read-only aliases), and an app closure passed to one of std's closures whose parameter
+/// crosses crosses too (`local_async` summaries).
+#[test]
+fn a_check_by_units_reports_what_std_s_unit_once_hid() {
+    let errors =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/golden/lang/errors");
+    let cases = [
+        (
+            "rwlock_read_hidden_q5.velt",
+            "a part of the value an `RwLock` holds",
+        ),
+        ("readonly_aliases.velt", "property 'add' does not exist"),
+        (
+            "async_closure_settles_from_field.velt",
+            "cannot capture the generator `chunks`",
+        ),
+    ];
+    for (file, said) in cases {
+        let out = no_window::command(env!("CARGO_BIN_EXE_velt"))
+            .args(["check", file])
+            .current_dir(&errors)
+            .env("VELT_UNITS", "2")
+            .env_remove("VELT_UNITS_FREEZE")
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "{file}: accepted\n{stderr}");
+        assert!(stderr.contains(said), "{file}:\n{stderr}");
+    }
+}

@@ -144,6 +144,27 @@ pub(super) fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> b
         };
         found.push((ty, k, p.why[i], c, None, true));
     }
+    // A finished unit's closure whose parameter crosses (`summaries`): made in bodies this graph
+    // doesn't walk, it is matched as a closure made where no walked body makes it.
+    for (c, k, why) in super::summaries::crossing_closure_params(cx) {
+        if g.ids.contains_key(&Node::Lit(c)) {
+            continue;
+        }
+        let ty = match p.unseen_types.get(&c) {
+            Some(&t) => t,
+            None => {
+                let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] else {
+                    continue;
+                };
+                let declared = &f.params[f.captures.len().min(f.params.len())..];
+                let params: Vec<_> = declared.iter().map(|p| p.ty).collect();
+                let t = fn_value_type(cx, c, params);
+                p.unseen_types.insert(c, t);
+                t
+            }
+        };
+        found.push((ty, k, why, c, None, true));
+    }
     // A closure with no literal node can only be reached through a callee that may hold a value
     // the graph doesn't trace (a field, a module binding, the heap).
     for (ty, k, why, c, reached, unseen) in found {

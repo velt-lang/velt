@@ -51,6 +51,12 @@ pub(super) fn instances(cx: &mut Ctx, g: &Graph, c: DefId, ty: TyId) -> Vec<TyId
             out.push(t);
             continue;
         }
+        // A finished unit's generic closure or method called through an interface: those calls
+        // are not followed here (`summaries::AsyncSummaries::dyn_owners`).
+        if f.0 < cx.unit_base && cx.unit_sums.async_summaries.dyn_owners.contains(&f) {
+            out.push(t);
+            continue;
+        }
         let mut sites = g.insts.get(&f).cloned().unwrap_or_default();
         // A generic closure's, or an implementation's generic method's, calls through its
         // interface (`generic_closures`), next to any direct ones.

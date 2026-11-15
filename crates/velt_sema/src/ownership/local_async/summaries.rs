@@ -1,12 +1,12 @@
 //! A finished unit's facts for the local async analysis (`crate::units`): what a later unit's
 //! graph takes in place of the unit's bodies ([`AsyncSummaries`]).
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::graph::{self, Node};
 use super::{Propagation, Why, CROSSES};
 use crate::ctx::Ctx;
-use crate::hir::{Def, DefId, LocalId};
+use crate::hir::{Def, DefId, LocalId, TyId};
 
 /// A parameter's summary: the parameter, its flags, why it got them, and why it
 /// is shared (`Propagation::why`, `Propagation::shared`).
@@ -20,6 +20,19 @@ type ParamFacts = (LocalId, u8, Option<Why>, Option<Why>);
 pub(crate) struct AsyncSummaries {
     params: FxHashMap<DefId, Vec<ParamFacts>>,
     rets: FxHashMap<DefId, Vec<LocalId>>,
+    /// The unit's crossing values of a generic type (`Propagation::hits`): what they carry
+    /// depends on the instantiations, which a later unit adds to, so its check resolves them
+    /// again with its own (`instances`), through the unit's edges below.
+    hits: Vec<(DefId, TyId, Why)>,
+    insts: FxHashMap<DefId, Vec<(DefId, Vec<TyId>)>>,
+    parent: FxHashMap<DefId, DefId>,
+    news: FxHashMap<DefId, Vec<(DefId, Vec<TyId>)>>,
+    dispatched: Vec<DefId>,
+    referenced: FxHashSet<DefId>,
+    /// The unit's generic closures and methods called through an interface
+    /// (`generic_closures::DynCalls::sites`): a later unit's check does not follow those calls,
+    /// so their type parameters stay generic there (any closure).
+    pub(super) dyn_owners: FxHashSet<DefId>,
 }
 
 /// The finished unit's functions the unit calls: their parameters flow to what they return.
@@ -53,9 +66,88 @@ pub(super) fn seed(cx: &Ctx, g: &graph::Graph, p: &mut Propagation) {
     }
 }
 
+/// The finished unit's edges for resolving its crossing values of a generic type, added to the
+/// unit's graph.
+pub(super) fn merge(cx: &Ctx, g: &mut graph::Graph) {
+    let s = &cx.unit_sums.async_summaries;
+    for (f, sites) in &s.insts {
+        g.insts.entry(*f).or_default().extend(sites.iter().cloned());
+    }
+    for (f, sites) in &s.news {
+        g.news.entry(*f).or_default().extend(sites.iter().cloned());
+    }
+    for (c, p) in &s.parent {
+        g.parent.entry(*c).or_insert(*p);
+    }
+    g.dispatched.extend(s.dispatched.iter().copied());
+    g.dispatched.sort_by_key(|d| d.0);
+    g.dispatched.dedup();
+    g.held.referenced.extend(s.referenced.iter().copied());
+    // What a finished unit's function returns may come from its heap (`Map.get` gives what
+    // `Map.set` stored), which its summary does not follow: a value of unknown origin.
+    for n in 0..g.nodes.len() {
+        if let Node::Ret(f) = g.nodes[n] {
+            if f.0 < cx.unit_base {
+                g.unknown[n] = true;
+                let ty = g.tys[n];
+                if !g.inflows[n].contains(&(ty, None)) {
+                    g.inflows[n].push((ty, None));
+                }
+            }
+        }
+    }
+}
+
+/// The finished unit's closures with a parameter that crosses, by the parameter's position
+/// among the declared ones, with why: their literals are in the finished unit's bodies, which
+/// this unit's graph does not walk (`call_sites::crossing_params`).
+pub(super) fn crossing_closure_params(cx: &Ctx) -> Vec<(DefId, usize, Option<Why>)> {
+    let mut out = vec![];
+    for (f, ps) in &cx.unit_sums.async_summaries.params {
+        if cx
+            .try_fn(*f)
+            .is_none_or(|i| i.kind != crate::defs::FnKind::Closure)
+        {
+            continue;
+        }
+        let Some(Def::Fn(fd)) = &cx.defs[f.0 as usize] else {
+            continue;
+        };
+        let declared = &fd.params[fd.captures.len().min(fd.params.len())..];
+        for (l, flags, why, _) in ps {
+            if flags & CROSSES == 0 {
+                continue;
+            }
+            if let Some(k) = declared.iter().position(|p| p.local == *l) {
+                out.push((*f, k, *why));
+            }
+        }
+    }
+    out.sort_by_key(|(f, k, _)| (f.0, *k));
+    out
+}
+
+/// The finished unit's crossing values of a generic type, resolved again with this unit's
+/// instantiations (`resolve_hits`).
+pub(super) fn std_hits(cx: &Ctx, p: &mut Propagation) {
+    p.hits
+        .extend(cx.unit_sums.async_summaries.hits.iter().copied());
+}
+
 /// This unit's [`AsyncSummaries`], from its settled graph.
 pub(super) fn of(cx: &Ctx, g: &graph::Graph, p: &Propagation) -> AsyncSummaries {
-    let mut out = AsyncSummaries::default();
+    let mut out = AsyncSummaries {
+        hits: p.hits.clone(),
+        insts: g.insts.clone(),
+        parent: g.parent.clone(),
+        news: g.news.clone(),
+        dispatched: g.dispatched.clone(),
+        referenced: g.held.referenced.clone(),
+        dyn_owners: (cx.fn_defs.iter().copied())
+            .filter(|&d| g.dyn_calls.sites(cx, g, d).is_some())
+            .collect(),
+        ..AsyncSummaries::default()
+    };
     let params = |d: DefId| match &cx.defs[d.0 as usize] {
         Some(Def::Fn(f)) => f.params.iter().map(|p| p.local).collect(),
         _ => vec![],
