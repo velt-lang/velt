@@ -1,0 +1,14 @@
+// A program whose only cycle runs through one route (an array field of a generic subclass, held as
+// its base by another class): sema follows the subclass's live instantiations, so printing tracks
+// it and writes <ref *1> and [Circular *1] as Node does.
+class Base { name: string = "b"; }
+class Sub<T> extends Base { list: T[] = []; }
+class Holder { item: Base | null = null; }
+function main() {
+  const h = new Holder();
+  const s = new Sub<Holder>();
+  s.list.push(h);
+  h.item = s;
+  console.log(h);
+}
+main();

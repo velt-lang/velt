@@ -224,7 +224,7 @@ pub(crate) fn live_defs(cx: &mut Ctx, unchecked: &FxHashSet<DefId>) -> Option<Fx
 pub(super) fn step(cx: &mut Ctx) -> Vec<TyId> {
     loop {
         walk_set(cx);
-        if !demand_hooks(cx) {
+        if !(demand_hooks(cx) | constructs::demand_gated(cx)) {
             return std::mem::take(&mut cx.lazy.live.texts);
         }
     }
@@ -257,7 +257,7 @@ fn demand_hooks(cx: &mut Ctx) -> bool {
         return false;
     }
     let mut marked = false;
-    for h in newly_demanded(before, now) {
+    for h in newly_demanded(before, now).filter(|h| !constructs::gated(h.name)) {
         cx.demand_std(&h.module());
         if let Some(crate::ctx::Item::Def(d)) = cx.std_def(&h.qualified()) {
             marked = true;
@@ -341,6 +341,7 @@ fn note_program_code(
     (types, conversions, into_any, first_text): (usize, usize, usize, usize),
 ) {
     cx.lazy.live.texts.extend(&w.texts[first_text..]);
+    constructs::note_program_dyn(cx, &w.into_any[into_any..]);
     if !cx.lazy.record_hooks {
         super::record_conversions::note_user_conversions(
             cx,
@@ -353,6 +354,7 @@ fn note_program_code(
 
 /// What `w` found is live.
 fn add_walk(cx: &mut Ctx, w: Walk) {
+    cx.lazy.dyn_held.extend(w.into_any.iter().map(|&(t, _)| t));
     for &t in &w.conversions {
         if !cx.lazy.record_conversion {
             let holds = super::holds_string_record(cx, t, &mut FxHashSet::default());
@@ -593,7 +595,7 @@ fn walk_expr(ty: &crate::types::Types, e: &hir::Expr, w: &mut Walk) {
             w.formats.extend(args.iter().map(|a| a.ty));
         }
         E::Call {
-            callee: Callee::Intrinsic(I::Inspect | I::ErrorText),
+            callee: Callee::Intrinsic(I::Inspect | I::InspectNested | I::ErrorText),
             args,
         } => w.formats.extend(args.iter().map(|a| a.ty)),
         E::Call {

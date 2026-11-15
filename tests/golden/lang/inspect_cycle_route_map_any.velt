@@ -1,0 +1,4 @@
+// A program whose only cycle runs through one route (map_any): sema finds a live type that can
+// hold itself, so printing tracks it and writes <ref *1> and [Circular *1] as Node does.
+function main() { const m = new Map<string, any>(); m.set("m", m); console.log(m); }
+main();

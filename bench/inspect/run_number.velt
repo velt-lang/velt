@@ -1,0 +1,5 @@
+function main(): void {
+  for (let i = 0; i < 20000; i++) {
+    console.log(i + 0.5);
+  }
+}

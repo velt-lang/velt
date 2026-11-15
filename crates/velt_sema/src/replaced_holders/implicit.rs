@@ -731,6 +731,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::WeakMapDelete
         | I::WeakMapValue
         | I::WeakRefNew
+        | I::InspectNested
         | I::WeakRefDeref => false,
         I::StrWord0 | I::StrWord1 | I::StrWord2 | I::StrDataAddress => false,
     }

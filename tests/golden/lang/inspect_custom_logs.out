@@ -1,0 +1,39 @@
+inner 1 <ref *1> A {
+  me: [Circular *1],
+  b: <ref *2> B { me: [Circular *2], c: C0 }
+}
+inner 2 <ref *1> A {
+  me: [Circular *1],
+  b: <ref *2> B { me: [Circular *2], c: C1 }
+}
+inner 3 <ref *1> A {
+  me: [Circular *1],
+  b: <ref *2> B { me: [Circular *2], c: C2 }
+}
+inner 4 <ref *1> A {
+  me: [Circular *1],
+  b: <ref *2> B { me: [Circular *2], c: C3 }
+}
+<ref *1> A {
+  me: [Circular *1],
+  b: <ref *2> B { me: [Circular *2], c: C4 }
+}
+logs <ref *1> S { name: 'shared', self: [Circular *1] } [
+  <ref *1> S { name: 'shared', self: [Circular *1] },
+  <ref *1> S { name: 'shared', self: [Circular *1] }
+]
+<ref *1> O { me: [Circular *1], l: L!, b: [Circular *1] }
+logs <ref *1> S { name: 'shared', self: [Circular *1] } [
+  <ref *1> S { name: 'shared', self: [Circular *1] },
+  <ref *1> S { name: 'shared', self: [Circular *1] }
+]
+{
+  first: <ref *1> S { name: 'shared', self: [Circular *1] },
+  o: <ref *2> O { me: [Circular *2], l: L!, b: [Circular *2] },
+  last: <ref *1> S { name: 'shared', self: [Circular *1] }
+}
+logs <ref *1> S { name: 'shared', self: [Circular *1] } [
+  <ref *1> S { name: 'shared', self: [Circular *1] },
+  <ref *1> S { name: 'shared', self: [Circular *1] }
+]
+<ref *1> S { name: 'shared', self: [Circular *1] } <ref *1> O { me: [Circular *1], l: L!, b: [Circular *1] }

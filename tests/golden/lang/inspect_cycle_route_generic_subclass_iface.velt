@@ -1,0 +1,14 @@
+// A program whose only cycle runs through one route (a generic subclass that is also an interface
+// value): sema follows the subclass's live instantiations, so printing tracks it and writes
+// <ref *1> and [Circular *1] as Node does.
+interface I { id(): number; }
+class Base implements I { name: string = "b"; id(): number { return 1; } }
+class Sub<T> extends Base { held: T | null = null; }
+function main() {
+  const s = new Sub<Base>();
+  const i: I = s;
+  s.held = s;
+  console.log(s);
+  console.log(i);
+}
+main();

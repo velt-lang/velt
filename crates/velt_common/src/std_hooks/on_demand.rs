@@ -14,6 +14,24 @@ pub const ON_DEMAND_FLOAT: &[&str] = &["number_text", "number_push", "float_text
 /// calls the runtime's printer while they are unchecked.
 pub const ON_DEMAND_WRITE: &[&str] = &["number_write", "whole_number_write"];
 
+/// Lowered hooks with a fallback that sema checks where live code has one of their `constructs`,
+/// by their entries' names: the shapes std/lang/hooks/inspect.velt writes for every type, which
+/// lowering writes with its own glue where one is unchecked (the array's only once an array type
+/// is live), and the cycle tracking of std/lang/hooks/inspect_cycles.velt, checked only where a
+/// live type can hold itself (velt_sema `lazy_std` `live_constructs.rs`).
+pub const INSPECT_SHAPES: &[&str] = &[
+    "open_plain",
+    "inspect_array",
+    "open_object",
+    "inspect_begin",
+    "inspect_end",
+    "inspect_save",
+    "inspect_restore",
+    "inspect_enter",
+    "inspect_leave",
+    "inspect_circular",
+];
+
 /// The std modules of hooks no program needs by default: not loaded with the prelude. Sema demands
 /// each when it finds the hook needed, during the check (#2161 (a1): `velt_sema` `std_load`), so
 /// each follows the rule of `velt_loader::std_index`. `VELT_EAGER_STD=1` loads them all up front,
@@ -25,6 +43,8 @@ pub const ON_DEMAND_MODULES: &[&str] = &[
     "std/lang/hooks/number_float",
     "std/lang/hooks/any_record",
     "std/lang/hooks/unwind",
+    "std/lang/hooks/inspect",
+    "std/lang/hooks/inspect_cycles",
 ];
 
 /// The qualified names of the hooks named in `names` ([`ON_DEMAND_FLOAT`]).

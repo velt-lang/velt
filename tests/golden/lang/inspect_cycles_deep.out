@@ -1,0 +1,183 @@
+<ref *1> N {
+  name: 'a0',
+  next: N {
+    name: 'a1',
+    next: N { name: 'a2', next: [N], up: [Circular *1], side: null },
+    up: null,
+    side: null
+  },
+  up: null,
+  side: null
+}
+<ref *1> N {
+  name: 'b0',
+  next: <ref *3> N {
+    name: 'b1',
+    next: <ref *2> N {
+      name: 'b2',
+      next: [N],
+      up: [Circular *1],
+      side: [Circular *2]
+    },
+    up: [Circular *1],
+    side: [Circular *3]
+  },
+  up: [Circular *1],
+  side: [Circular *1]
+}
+N {
+  name: 'c0',
+  next: N {
+    name: 'c1',
+    next: N { name: 'c2', next: [N], up: null, side: null },
+    up: null,
+    side: null
+  },
+  up: null,
+  side: null
+}
+[
+  <ref *1> N {
+    name: 'd0',
+    next: N { name: 'd1', next: [N], up: [N], side: [Circular *1] },
+    up: <ref *2> N { name: 's', next: null, up: null, side: [Circular *2] },
+    side: null
+  },
+  <ref *2> N { name: 's', next: null, up: null, side: [Circular *2] },
+  <ref *3> N {
+    name: 'd1',
+    next: N { name: 'd2', next: [N], up: [N], side: [Circular *3] },
+    up: <ref *2> N { name: 's', next: null, up: null, side: [Circular *2] },
+    side: <ref *1> N { name: 'd0', next: [Circular *3], up: [N], side: null }
+  }
+]
+{
+  x: N {
+    name: 'a2',
+    next: N { name: 'a3', next: [N], up: [N], side: null },
+    up: N { name: 'a0', next: [N], up: null, side: null },
+    side: null
+  },
+  y: <ref *3> N {
+    name: 'b3',
+    next: <ref *1> N { name: 'b4', next: null, up: [N], side: [Circular *1] },
+    up: <ref *2> N {
+      name: 'b0',
+      next: [N],
+      up: [Circular *2],
+      side: [Circular *2]
+    },
+    side: [Circular *3]
+  },
+  z: N {
+    name: 'c1',
+    next: N { name: 'c2', next: [N], up: null, side: null },
+    up: null,
+    side: null
+  },
+  w: <ref *5> N {
+    name: 'd2',
+    next: N { name: 'd3', next: [N], up: [N], side: null },
+    up: <ref *4> N { name: 's', next: null, up: null, side: [Circular *4] },
+    side: N { name: 'd1', next: [Circular *5], up: [N], side: [N] }
+  }
+}
+[
+  N {
+    name: 'a0',
+    next: N { name: 'a1', next: [N], up: null, side: null },
+    up: null,
+    side: null
+  },
+  N {
+    name: 'a0',
+    next: N { name: 'a1', next: [N], up: null, side: null },
+    up: null,
+    side: null
+  },
+  <ref *2> N {
+    name: 'b1',
+    next: <ref *1> N { name: 'b2', next: [N], up: [N], side: [Circular *1] },
+    up: <ref *3> N {
+      name: 'b0',
+      next: [Circular *2],
+      up: [Circular *3],
+      side: [Circular *3]
+    },
+    side: [Circular *2]
+  },
+  <ref *2> N {
+    name: 'b1',
+    next: <ref *1> N { name: 'b2', next: [N], up: [N], side: [Circular *1] },
+    up: <ref *3> N {
+      name: 'b0',
+      next: [Circular *2],
+      up: [Circular *3],
+      side: [Circular *3]
+    },
+    side: [Circular *2]
+  }
+]
+Map(3) {
+  'a' => N {
+    name: 'a0',
+    next: N { name: 'a1', next: [N], up: null, side: null },
+    up: null,
+    side: null
+  },
+  'c' => <ref *1> N {
+    name: 'c2',
+    next: N { name: 'c3', next: [N], up: [Circular *1], side: [N] },
+    up: null,
+    side: null
+  },
+  's' => <ref *2> N { name: 's', next: null, up: null, side: [Circular *2] }
+}
+[
+  [ [ [Array] ] ],
+  Set(2) {
+    <ref *1> N {
+      name: 'b0',
+      next: [N],
+      up: [Circular *1],
+      side: [Circular *1]
+    },
+    <ref *2> N { name: 'b2', next: [N], up: [N], side: [Circular *2] }
+  }
+]
+b2 <ref *4> N {
+  name: 'b2',
+  next: <ref *3> N {
+    name: 'b3',
+    next: <ref *1> N { name: 'b4', next: null, up: [N], side: [Circular *1] },
+    up: <ref *2> N {
+      name: 'b0',
+      next: [N],
+      up: [Circular *2],
+      side: [Circular *2]
+    },
+    side: [Circular *3]
+  },
+  up: <ref *2> N {
+    name: 'b0',
+    next: <ref *5> N {
+      name: 'b1',
+      next: [Circular *4],
+      up: [Circular *2],
+      side: [Circular *5]
+    },
+    up: [Circular *2],
+    side: [Circular *2]
+  },
+  side: [Circular *4]
+} N {
+  name: 'c5',
+  next: N { name: 'c6', next: null, up: null, side: null },
+  up: null,
+  side: null
+} N {
+  name: 'd4',
+  next: null,
+  up: <ref *1> N { name: 's', next: null, up: null, side: [Circular *1] },
+  side: null
+}

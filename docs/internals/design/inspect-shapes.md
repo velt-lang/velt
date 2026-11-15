@@ -1,0 +1,123 @@
+# Design: printing typed values with std shapes bound in lowering
+
+Status: step 1 implemented. Owners: `velt_vir` (`lower/glue/format*.rs`), `velt_sema` (the
+intrinsic, lazy std's reach), std (`velt/lang/hooks/inspect`). Issue: #1967. Related:
+[lazy std](lazy-std.md), [string building](string-building.md).
+
+## Problem
+
+`console.log`, `util.inspect`, `String(x)` of an object, templates and `assertEq`'s message are
+written by format glue that lowering generates in Rust (`glue/format*.rs`). #1967 moves them to
+std. The first attempt (draft #1990, a source generator writing `inspectNested<T>` per type) had
+Node's output and its run time was within the target, but its compile time was not:
+
+| Program | check warm | check cold | build cold |
+|---|---|---|---|
+| hello | +2.15% | +2.87% | +2.91% |
+| one printed object type | +3.85% | +655% | +615% |
+| about 80 printed types | +18.2% | +626% | +322% |
+| 30 tests with `assertEq` on objects | +6.73% | +24.2% | |
+
+None of that was the printing code. It had three causes:
+
+1. **A generator host on an empty cache:** about +2.6G instructions, 7 times a warm check, and CI
+   runs with an empty cache.
+2. **A checked body per printed type:** 0.3–0.6M instructions per function, whatever its body.
+3. **What every program loaded:** 825 lines of writers, and a walk of every expression.
+
+Lazy std (on-demand checking on `main`, on-demand loading in #2161) can only remove the third.
+
+## Decision
+
+**Printing is not a source generator.** What is the same for every type is std, written once and
+checked once, in a program that may print. What differs per type (which fields show and in what
+order, each key's text, the type's name, which member a union holds) is written by lowering from
+the type, as it computes the type's layout. There is no generated module, no demand per type and no
+host, so a cold build costs what a warm one does.
+
+`inspectNested<T>(buf, v, depth)` is an intrinsic (`Intrinsic::InspectNested`), which lowering binds
+per instance: a leaf is appended in place, and anything else calls the type's format function
+(`Glue::Format`, one per type, with the format slot's signature).
+
+### What std holds
+
+`std/lang/hooks/inspect.velt` has two hooks (velt_common `std_hooks.rs`):
+
+| Hook | Writes |
+|---|---|
+| `openObject(buf, cut, id, depth)` | the depth limit and the cycle check of an object |
+| `inspectArray<E>(buf, a, depth)` | `[ a, b ]`, the first 100 elements, `... n more items`, `[Array]` |
+
+`Map` and `Set` stay in lowering's glue for now: a hook taking a `Map` makes the `Map` class live
+in every program that prints a number (the hooks are demanded by `Format`), and with it what an
+`any` may hold. They move once a hook can be demanded where its class is live.
+
+`std/lang/hooks/inspect_cycles.velt` keeps what a cycle needs, which lowering's glue and the hooks
+above call: the objects being printed and the `<ref *N>` numbers given so far (`inspectEnter`,
+`inspectLeave`, `inspectCircular`, `inspectBegin`, `inspectEnd`), and Node's `... n more items`
+(`inspectMore`). This was the runtime's (`velt_rt_strbuf_inspect_enter`, `_leave`, `_circular`,
+`_more`, deleted, #2196). The state is per thread: the three objects Node's depth limit lets be
+printed at once, in thread-locals, and a block of words for the `<ref *N>` numbers, allocated at
+the first cycle and given back at the end of the top-level value, so the leak counters stay even;
+a value is printed on one thread with no await in between. A custom inspect is user code that can
+print, and panic, during a print: lowering brackets its call with `inspectSave` and
+`inspectRestore`, so a value it prints starts from an empty state and is numbered from 1 (Node
+starts a fresh context per `console.log`), and the outer value's state comes back after it. A
+panic caught by `catchPanic` leaves the thread at that empty state (the saved one is abandoned with
+the rest of the print), and `inspectBegin` forgets any object a panic left marked as being
+printed, so the next value is numbered from 1. A `<ref *N>` prefix is inserted by
+taking the builder's text out (`velt_rt_strbuf_finish`) and appending it again around the prefix,
+as rare as a cycle. The runtime keeps `velt_rt_strbuf_inspect_begin` and `_atom` for its line
+breaking (`inspect_layout`), which is still Rust.
+
+The design first kept #1990's `objectN` and `objectIdN` writers, one per field count, so that types
+with the same field types would share one instance. They were 560 of the 825 lines, and checking
+all 16 cost +23.9M instructions. Lowering writing the field sequence is what `main`'s glue already
+did, so it adds nothing to what an object costs, and static key texts need no new runtime function:
+`push_text` appends static bytes. So the writers and `velt_rt_strbuf_push_static` are gone.
+
+### What a program pays
+
+The hooks list `constructs(Format, Dynamic)`, but `Format` is present for any array, struct or
+class in live code, printed or not, so sema narrows two groups further (velt_sema `lazy_std`
+`live_constructs.rs`). `inspectArray` is checked only once an array type is live: its `E[]`
+parameter would make the `Array` class live in a program without arrays. The cycle hooks
+(inspect_cycles.velt: `openObject`, `inspectEnter`, `inspectLeave`, `inspectCircular`,
+`inspectSave`, `inspectRestore`, `inspectBegin`, `inspectEnd`) are checked only once a live type
+can hold itself: a walk over the live types finds a way from a class or struct instance, a `Map`
+or a `Set` back to itself, through fields, elements, entries, union members, each live subclass of
+a class (a generic one as each of its live instantiations, or anything once generic code has one
+at its own type parameters, whose instances only lowering makes), and for an `any` or an interface value the types live code puts into one (anything, once
+the program's own generic code puts a type parameter's value into one). Every hook in both groups
+has a fallback: lowering writes an array with its own glue, opens an object with `openPlain` (the
+depth limit only), and tracks no cycle. A program that prints `{ a: 1 }` or a class of scalars
+checks `openPlain` and nothing of inspect_cycles.velt, and does not load that module.
+
+### What stays in Rust for now
+
+The hooks have the `fallback` flag: where a hook is unchecked, lowering writes the same text with
+its own formatter. That covers a program built without std, and a value the live set misses:
+live code is not yet a superset of what lowering builds (#2360), and a demand narrower than the
+integer hooks' one bit could miss. A miss prints the same bytes.
+
+Still in lowering: `Map`, `Set` and their subclasses, `Record`, tuples, options and unions (which are
+dispatch, not shape), promises, functions, `JsonValue`, the inspect hook's result and `any`
+dispatch through the format slot.
+
+## Order of work
+
+1. **Done here.** The intrinsic, the array and object hooks, checked on demand, and the cycles.
+2. **Done here: loaded on demand.** Both modules are in `ON_DEMAND_MODULES`: a program that
+   demands none of the hooks neither loads nor checks them.
+3. **The remaining kinds** in std, each with a golden where none prints it today.
+4. **Delete the glue**, once #2360 makes the live set a superset: the `fallback` flag goes, and with
+   it `format_array.rs` and the entry loops of `format_map.rs`. velt_vir's no-std tests that print
+   objects move to goldens (decision on #1967).
+5. **deepEqual** moves to the same scheme (decision on #1967), which removes the equality host
+   that `main` builds on an empty cache (about +2.4G instructions).
+
+## Measured
+
+Run time on Windows (wall clock, release builds, interleaved best of 5): `bench/inspect/run_*.velt`
+through `bench/inspect/wall.sh`; the numbers are in the pull request. `bench/inspect/rows.sh`
+counts instructions on Linux.

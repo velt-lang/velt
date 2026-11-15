@@ -397,11 +397,7 @@ velt_rt velt_rt_strbuf_drop
 velt_rt velt_rt_strbuf_finish
 velt_rt velt_rt_strbuf_inspect_atom
 velt_rt velt_rt_strbuf_inspect_begin
-velt_rt velt_rt_strbuf_inspect_circular
-velt_rt velt_rt_strbuf_inspect_enter
 velt_rt velt_rt_strbuf_inspect_layout
-velt_rt velt_rt_strbuf_inspect_leave
-velt_rt velt_rt_strbuf_inspect_more
 velt_rt velt_rt_strbuf_len
 velt_rt velt_rt_strbuf_new
 velt_rt velt_rt_strbuf_push_bool

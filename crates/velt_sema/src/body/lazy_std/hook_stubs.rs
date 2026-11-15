@@ -49,6 +49,11 @@ impl Stubs {
         self.at_check = hooks.to_vec();
     }
 
+    /// Did a round before reach hook `index` only after the passes (`Assumed::hooks`)?
+    pub(super) fn assumed(&self, index: usize) -> bool {
+        self.at_check.contains(&index)
+    }
+
     /// Has the check made any stub?
     pub(super) fn any(&self) -> bool {
         !self.hooks.is_empty()

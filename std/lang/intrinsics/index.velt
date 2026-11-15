@@ -95,7 +95,7 @@ export {
   toAny,
 } from "velt/lang/intrinsics/reflect";
 export { hookCall } from "velt/lang/intrinsics/hook_call";
-export { errorText, inspect, throwLoc } from "velt/lang/intrinsics/report";
+export { errorText, inspect, inspectNested, throwLoc } from "velt/lang/intrinsics/report";
 export { strLoadPartialU8x16, strLoadU8x16, targetFeature } from "velt/lang/intrinsics/simd";
 export {
   strAsciiWords,

@@ -641,3 +641,111 @@ fn a_member_read_through_any_in_reached_std_code_adds_the_member_slots() {
     assert!(!d.iter().any(|d| d.is_error()), "{d:?}");
     assert!(p.expect("checks").dyn_members.is_none());
 }
+
+#[test]
+fn printing_shapes_are_checked_once_live_code_may_print_an_object() {
+    // What `console.log` writes the same way for every type (std/lang/hooks/inspect.velt): checked
+    // where live code has an array or a struct or class, which a format function may print
+    // (velt_common `hook_demand.rs`), and left unchecked in a program with only scalars. The
+    // array's only once an array type is live (its `E[]` makes the `Array` class live), and the
+    // cycle tracking (std/lang/hooks/inspect_cycles.velt) only once a live type can hold itself.
+    let plain = "std/lang/hooks/inspect::openPlain";
+    let array = "std/lang/hooks/inspect::inspectArray";
+    let tracked = [
+        "std/lang/hooks/inspect_cycles::openObject",
+        "std/lang/hooks/inspect_cycles::inspectEnter",
+        "std/lang/hooks/inspect_cycles::inspectSave",
+    ];
+    let checked = |p: &Program, f: &str| !unchecked(p).contains(&f.to_string());
+    for src in [
+        "function main() {\n  console.log(\"hi\");\n}\n",
+        "function main() {\n  const n: number = 1.5;\n  console.log(n);\n}\n",
+    ] {
+        let p = ok_src(src);
+        for f in [plain, array].iter().chain(&tracked) {
+            assert!(!checked(&p, f), "{f} is checked: {src}");
+        }
+    }
+    let object = "function main() {\n  console.log({ a: 1 });\n}\n";
+    let list = "function main() {\n  console.log([1]);\n}\n";
+    let map = "function main() {\n  console.log(new Map<string, number>());\n}\n";
+    let class = "class P {\n  x: number = 1;\n}\nfunction main() {\n  console.log(new P());\n}\n";
+    let node =
+        "class N {\n  next: N | null = null;\n}\nfunction main() {\n  console.log(new N());\n}\n";
+    let held = "class H {\n  v: any = 1;\n}\nfunction main() {\n  const h = new H();\n  h.v = h;\n  console.log(h);\n}\n";
+    let number = "class H {\n  v: any = 1;\n}\nfunction main() {\n  console.log(new H());\n}\n";
+    let generic = "class H {\n  v: any = 1;\n}\nfunction wrap<T>(x: T): any {\n  return x;\n}\n\
+                   function main() {\n  const h = new H();\n  h.v = wrap(h);\n  console.log(h);\n}\n";
+    let sub = "class B {\n  x: number = 1;\n}\nclass S extends B {\n  b: B | null = null;\n}\n\
+               function main() {\n  const b: B = new S();\n  console.log(b);\n}\n";
+    // A generic subclass whose type argument is how the value reaches itself, one made by generic
+    // code (its instance is lowering's), and one whose instances can't hold themselves.
+    let gsub = "class B {
+  n: string = \"b\";
+}
+class S<T> extends B {
+  x: T | null = null;
+}
+                function main() {
+  const s = new S<B>();
+  s.x = s;
+  console.log(s);
+}
+";
+    let gmade = "class B {
+  n: string = \"b\";
+}
+class S<T> extends B {
+  x: T | null = null;
+}
+                 class H {
+  b: B | null = null;
+}
+                 function mk<T>(v: T): B {
+  const s = new S<T>();
+  s.x = v;
+  return s;
+}
+                 function main() {
+  const h = new H();
+  h.b = mk(h);
+  console.log(h);
+}
+";
+    let gnum = "class B {
+  n: string = \"b\";
+}
+class S<T> extends B {
+  x: T | null = null;
+}
+                function main() {
+  const b: B = new S<number>();
+  console.log(b);
+}
+";
+    // (source, an array type is live (`None`: std's `any` code has some), a live type can hold
+    // itself); a `Map`'s code has arrays.
+    for (src, arrays, cycles) in [
+        (object, Some(false), false),
+        (list, Some(true), false),
+        (map, Some(true), false),
+        (class, Some(false), false),
+        (node, Some(false), true),
+        (held, None, true),
+        (number, None, false),
+        (generic, None, true),
+        (sub, Some(false), true),
+        (gsub, Some(false), true),
+        (gmade, Some(false), true),
+        (gnum, Some(false), false),
+    ] {
+        let p = ok_src(src);
+        assert!(checked(&p, plain), "{plain} is unchecked: {src}");
+        if let Some(arrays) = arrays {
+            assert_eq!(checked(&p, array), arrays, "{array}: {src}");
+        }
+        for f in tracked {
+            assert_eq!(checked(&p, f), cycles, "{f}: {src}");
+        }
+    }
+}

@@ -1,0 +1,52 @@
+// A panic in a custom inspect while an object is printed, caught by `catchPanic`: the prints
+// after it start their `<ref *N>` numbering from 1 again, as in Node (where the throw ends that
+// `console.log`), and give back what they allocate.
+import { catchPanic } from "velt/task";
+
+const custom = Symbol.for("nodejs.util.inspect.custom");
+let armed = true;
+
+class Bad {
+  [custom](): string {
+    const xs: number[] = [1];
+    const i = armed ? 5 : 0;
+    return "Bad" + xs[i]!;
+  }
+}
+class Holder {
+  self: Holder | null = null;
+  bad: Bad = new Bad();
+}
+class N {
+  name: string;
+  next: N | null = null;
+  constructor(n: string) {
+    this.name = n;
+  }
+}
+
+async function printIt(): Promise<number> {
+  const h = new Holder();
+  h.self = h;
+  console.log([h, h]);
+  return 1;
+}
+
+async function main() {
+  try {
+    await catchPanic(() => printIt());
+  } catch (e) {
+    console.log("caught panic");
+  }
+  armed = false;
+  for (let i = 0; i < 3; i++) {
+    const z = new N("z" + i);
+    z.next = z;
+    console.log(z);
+  }
+  const h = new Holder();
+  h.self = h;
+  console.log(h);
+}
+
+main();

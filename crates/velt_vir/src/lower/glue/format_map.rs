@@ -593,7 +593,7 @@ impl FnLower<'_, '_> {
         self.branch(long, more_bb, done);
         self.switch_to(more_bb);
         let remaining = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::Sub, size, limit));
-        self.call_rt(Rt::StrbufInspectMore, vec![buf.clone(), remaining], None);
+        self.inspect_more(buf, remaining);
         self.goto(done);
         self.switch_to(done);
     }
