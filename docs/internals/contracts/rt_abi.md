@@ -1024,10 +1024,8 @@ Declared in std (Velt signatures; `u8[]`/`string` are passed as in rt_abi_async.
   `toFixed` (velt/lang/number/fixed) calls it only for more than 19 digits, a result past 64
   bits, and 1e21 and up),
   `velt_rt_f64_to_exponential(x: f64, digits: i64): string` (JS `toExponential`; `digits < 0`:
-  omitted), `velt_rt_f64_to_precision(x: f64, precision: i64): string` (JS `toPrecision`),
-  `velt_rt_f64_to_radix(x: f64, radix: i64): string` (JS `toString(radix)` with V8's digits, for
-  a finite `x`; `radix` clamped to 2..36), `velt_rt_i64_to_radix(x: i64, radix: i64): string`
-  and `velt_rt_u64_to_radix(x: u64, radix: i64): string` (exact integer digits) (additive),
+  omitted), `velt_rt_f64_to_precision(x: f64, precision: i64): string` (JS `toPrecision`)
+  (additive; `toString(radix)` is std's, velt/lang/number/radix),
   `velt_rt_math_umulh(a: u64, b: u64): u64` (high 64 bits of the product),
   `velt_rt_math_f64_bits(x: f64): u64` and `velt_rt_math_bits_f64(b: u64): f64` (IEEE 754 bit
   casts, `x.toBits()` / `f64.fromBits(b)`; both backends emit them inline).

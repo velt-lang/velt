@@ -59,11 +59,14 @@ hooks! {
 
     // number.velt: numbers as text, and the conversions of a float index.
     /// `n.toString(radix)` of a float (`velt_sema` `builtins.rs`).
-    f64_to_string => lang_hooks_number, "f64ToString", sig((f64, f64) -> string);
+    f64_to_string => lang_hooks_number, "f64ToString", sig((f64, f64) -> string),
+        replaces("velt_rt_f64_to_radix");
     /// `n.toString(radix)` of a signed integer.
-    i64_to_string => lang_hooks_number, "i64ToString", sig((i64, f64) -> string);
+    i64_to_string => lang_hooks_number, "i64ToString", sig((i64, f64) -> string),
+        replaces("velt_rt_i64_to_radix");
     /// `n.toString(radix)` of an unsigned integer.
-    u64_to_string => lang_hooks_number, "u64ToString", sig((u64, f64) -> string);
+    u64_to_string => lang_hooks_number, "u64ToString", sig((u64, f64) -> string),
+        replaces("velt_rt_u64_to_radix");
     /// `Math.imul`-like `(a * b) | 0` of two int32 values (`velt_sema` `int32.rs`, `velt_opt`
     /// numrep).
     mul_to_int32 => lang_hooks_number, "mulToInt32", sig((f64, f64) -> i32), lowered;
