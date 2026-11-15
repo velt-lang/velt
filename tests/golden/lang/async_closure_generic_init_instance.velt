@@ -1,0 +1,40 @@
+// check: no leaks
+// A generic function whose only call is a module-level initializer (#2952: sigx's
+// `const renderer = createRenderer(nodeOps)`): its type arguments there are its instantiation, so
+// `keepAndSpawn<T>` in the closure it returns spawns a number, not a closure, and the counter's
+// closure, which modifies what it captured, stays on this task. Node prints the same.
+
+function keepAndSpawn<T>(x: T): void {
+  const box: T[] = [x];
+  const v = box[0];
+  spawn(async () => {
+    console.log(typeof v);
+  });
+}
+
+function makeRunner<T>(): (x: T) => void {
+  return (x: T): void => keepAndSpawn<T>(x);
+}
+
+const RUN: (x: number) => void = makeRunner<number>();
+
+class Counter {
+  bump: () => Promise<void> = async () => {};
+}
+
+function makeCounter(): Counter {
+  let runs = 0;
+  const c = new Counter();
+  c.bump = async (): Promise<void> => {
+    runs++;
+    console.log(`run ${runs}`);
+  };
+  return c;
+}
+
+async function main() {
+  const c = makeCounter();
+  await c.bump();
+  RUN(1);
+  await sleep(10);
+}

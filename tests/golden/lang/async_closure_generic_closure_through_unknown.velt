@@ -1,0 +1,41 @@
+// check: no leaks
+// A generic closure whose holder goes into `unknown` and back (#2952): it runs only through calls
+// of its generic function type, whose type arguments the walk records, so `keepAndSpawn<T>`
+// called from one with `T` a number spawns a number, not a closure, and the counter's closure,
+// which modifies what it captured, stays on this task. Node prints the same.
+
+function keepAndSpawn<T>(x: T): void {
+  const box: T[] = [x];
+  const v = box[0];
+  spawn(async () => {
+    console.log(typeof v);
+  });
+}
+
+interface Engine {
+  run: <T>(x: T) => void;
+}
+
+class Counter {
+  bump: () => Promise<void> = async () => {};
+}
+
+function makeCounter(): Counter {
+  let runs = 0;
+  const c = new Counter();
+  c.bump = async (): Promise<void> => {
+    runs++;
+    console.log(`run ${runs}`);
+  };
+  return c;
+}
+
+async function main() {
+  const engine: Engine = { run: <T>(x: T): void => keepAndSpawn<T>(x) };
+  const held: unknown = engine;
+  const back = held as Engine;
+  const c = makeCounter();
+  await c.bump();
+  back.run<number>(1);
+  await sleep(10);
+}

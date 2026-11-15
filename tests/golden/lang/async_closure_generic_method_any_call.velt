@@ -1,0 +1,31 @@
+// A generic method called straight through `any` with a job (#2952): the call is a TypeError
+// (#924) that reaches no method, so the job never reaches `keepAndSpawn<T>`'s spawn, and the
+// local-async check accepts the program (`docs/internals/contracts/hir_encodings.md`, "Generic
+// function values", Instances). Node runs the call (it prints `function`, then `runs 0`). When
+// #924 makes such a call work, `velt_sema`'s `local_async::generic_closures` must count it as an
+// instantiation and this program must become a refusal (an error golden).
+type Job = () => Promise<void>;
+
+function keepAndSpawn<T>(x: T): void {
+  const box: T[] = [x];
+  const v = box[0];
+  spawn(async () => {
+    console.log(typeof v);
+  });
+}
+
+async function main() {
+  let runs = 0;
+  const reader = {
+    read<T>(x: T): void {
+      keepAndSpawn<T>(x);
+    },
+  };
+  const a: any = reader;
+  console.log("before");
+  a.read(async (): Promise<void> => {
+    runs++;
+  });
+  await sleep(10);
+  console.log(`runs ${runs}`);
+}

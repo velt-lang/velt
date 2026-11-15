@@ -87,7 +87,16 @@ impl Cx<'_> {
 
     /// The index of type arguments `margs` in the tables of generic slot `key`, added to every
     /// table of the slot when new.
+    ///
+    /// Contract (`docs/internals/contracts/hir_encodings.md`, "Generic function values"): a list
+    /// enters a table only from a `Callee::Dyn` call, at that call's type arguments, which sema's
+    /// local-async check relies on. A call through `any` adds none (#924): implementing one must
+    /// change `velt_sema`'s `local_async::generic_closures` too.
     pub(in crate::lower) fn generic_slot_index(&mut self, key: SlotKey, margs: Vec<TyId>) -> u32 {
+        debug_assert!(
+            self.dyn_call_lookup,
+            "ICE: a generic slot's type arguments added outside a `Callee::Dyn` call"
+        );
         let key = self.slot_key(key);
         let g = self.lay.generic_slots.entry(key.clone()).or_default();
         if let Some(&i) = g.index.get(&margs) {
@@ -150,7 +159,9 @@ impl FnLower<'_, '_> {
         (iface, iargs, slot): SlotKey,
         margs: Vec<TyId>,
     ) -> Operand {
+        self.cx.dyn_call_lookup = true;
         let k = self.cx.generic_slot_index((iface, iargs, slot), margs);
+        self.cx.dyn_call_lookup = false;
         let table = self.dispatch(vtable, slot as i128);
         let off = crate::lower::cint(8 * k as i128, Ty::U64);
         let p = self.rvalue_temp(

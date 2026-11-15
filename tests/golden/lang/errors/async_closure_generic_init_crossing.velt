@@ -1,0 +1,31 @@
+// A generic function instantiated in a module-level initializer (#2952): `makeSink<Job>()` there
+// counts like a call in a function body, so the sink it returns forwards the job to
+// `keepAndSpawn<T>` with `T` the job's type, and the job, which modifies what it captured, is
+// refused. The `makeSink<number>()` call in `main` must not be taken for the only instance.
+type Job = () => Promise<void>;
+
+function keepAndSpawn<T>(x: T): void {
+  const box: T[] = [x];
+  const v = box[0];
+  spawn(async () => {
+    console.log(typeof v);
+  });
+}
+
+function makeSink<T>(): (x: T) => void {
+  return (x: T): void => {
+    keepAndSpawn<T>(x);
+  };
+}
+
+const jobSink = makeSink<Job>();
+
+async function main() {
+  let runs = 0;
+  makeSink<number>()(1);
+  jobSink(async (): Promise<void> => {
+    runs++;
+  });
+  await sleep(10);
+  console.log(`runs ${runs}`);
+}

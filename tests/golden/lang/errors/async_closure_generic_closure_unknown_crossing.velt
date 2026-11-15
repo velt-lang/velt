@@ -1,0 +1,34 @@
+// A generic closure whose holder goes into `unknown` and back, then called with a job as its type
+// argument (#2952): the call through its generic function type is recorded, so `keepAndSpawn<T>`
+// is instantiated with the job's type, and the job, which modifies what it captured, is refused.
+type Job = () => Promise<void>;
+
+function keepAndSpawn<T>(x: T): void {
+  const box: T[] = [x];
+  const v = box[0];
+  spawn(async () => {
+    console.log(typeof v);
+  });
+}
+
+interface Engine {
+  run: <T>(x: T) => void;
+}
+
+class Counter {
+  bump: Job = async () => {};
+}
+
+async function main() {
+  let runs = 0;
+  const c = new Counter();
+  c.bump = async (): Promise<void> => {
+    runs++;
+  };
+  const engine: Engine = { run: <T>(x: T): void => keepAndSpawn<T>(x) };
+  const held: unknown = engine;
+  const back = held as Engine;
+  back.run<Job>(c.bump);
+  await sleep(10);
+  console.log(`runs ${runs}`);
+}

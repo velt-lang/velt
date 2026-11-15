@@ -228,7 +228,7 @@ pub(super) fn build(cx: &Ctx) -> Graph {
         w.block(&f.body.block, To::Node(ret, None));
     }
     super::unknown_callees::mark(cx, &mut g);
-    super::call_sites::named_outside_bodies(cx, &mut g.held.referenced);
+    super::call_sites::named_outside_bodies(cx, &mut g.held.referenced, &mut g.insts, &mut g.news);
     dynamic::finish(cx, &mut g);
     g.dyn_calls.finish(cx);
     g
@@ -414,7 +414,7 @@ impl Walk<'_, '_> {
             // A generic function value converted to another type may be called where the walk
             // doesn't see it (`super::generic_closures`).
             E::Cast(x) | E::Upcast(x) | E::Downcast(x) => {
-                self.g.dyn_calls.escape(self.cx, x.ty);
+                self.g.dyn_calls.escape(self.cx, x.ty, false);
                 self.value(x, to)
             }
             // A value made a dynamic one (`any`, `unknown`, `object`): a dynamic call may reach
@@ -424,7 +424,7 @@ impl Walk<'_, '_> {
                 if !super::types::mentions_dynamic(self.cx, e.ty) {
                     return self.value(x, to);
                 }
-                self.g.dyn_calls.escape(self.cx, x.ty);
+                self.g.dyn_calls.escape(self.cx, x.ty, true);
                 // Only into a dynamic type itself: an interface whose type arguments mention one
                 // (`AsyncIterator<T, unknown>`) doesn't make the value a dynamic one. Nor does a
                 // function's conversion, unless it makes what the function returns dynamic
@@ -591,7 +591,9 @@ impl Walk<'_, '_> {
         // the walk doesn't see it (`super::generic_closures`).
         if matches!(i, Intrinsic::ToAny | Intrinsic::SpreadObject) {
             for a in args {
-                self.g.dyn_calls.escape(self.cx, a.ty);
+                self.g
+                    .dyn_calls
+                    .escape(self.cx, a.ty, i == Intrinsic::ToAny);
             }
         }
         // What only inspects a borrowed `any` (`typeof x`, `x === y`, `Array.isArray(x)`) keeps

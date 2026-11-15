@@ -1,0 +1,32 @@
+// A generic method of an object that goes into `any` and back to its interface, then called with a
+// job (#2952): the call after `as I` is recorded, so `keepAndSpawn<T>` is instantiated with the
+// job's type, and the job, which modifies what it captured, is refused.
+type Job = () => Promise<void>;
+
+function keepAndSpawn<T>(x: T): void {
+  const box: T[] = [x];
+  const v = box[0];
+  spawn(async () => {
+    console.log(typeof v);
+  });
+}
+
+interface Adapter {
+  mount<T>(x: T): void;
+}
+
+async function main() {
+  let runs = 0;
+  const o: Adapter = {
+    mount<T>(x: T): void {
+      keepAndSpawn<T>(x);
+    },
+  };
+  const a: any = o;
+  const back = a as Adapter;
+  back.mount<Job>(async (): Promise<void> => {
+    runs++;
+  });
+  await sleep(10);
+  console.log(`runs ${runs}`);
+}

@@ -387,6 +387,9 @@ struct Cx<'h> {
     numbered: rustc_hash::FxHashMap<(program::Numbered, u32), u32>,
     /// Sharing facts observed in this pass (boxing/).
     facts: boxing::Facts,
+    /// Set while a `Callee::Dyn` call looks up its entry in a generic slot's instantiation table
+    /// (glue/generic_slots.rs): the only way a list of type arguments enters one.
+    dyn_call_lookup: bool,
     /// Generic instances shared by shape in this pass (shape/).
     shapes: shape::Shapes,
     /// `Program::impls` indexes per interface (`impls_of`), built on first use.
