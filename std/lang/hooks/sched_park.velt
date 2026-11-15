@@ -4,6 +4,7 @@
 
 import { inline, noInline, stdUsed } from "velt/lang/intrinsics";
 import * as end from "./sched_end";
+import * as ex from "./sched_exit";
 import * as io from "./sched_io";
 import * as w from "./sched_io_write";
 import * as loop from "./sched_loop";
@@ -71,6 +72,7 @@ export function park(e: usize): void {
   const mode = m.ld32(e + t.E_MODE);
   if (m.load(e + t.E_INBOX) !== 0 || q.any(e) || !parkable(e)) {
     m.store32(e + t.E_PARK, 0);
+    ex.takeExit(e);
     m.st32(e + t.E_DISPATCH, 0);
     if (timers) {
       tookWork(e);
@@ -94,6 +96,7 @@ export function park(e: usize): void {
   }
   io.park(b, timeout, e + t.E_PARK, e + t.E_UNPARKS);
   m.store32(e + t.E_PARK, 0);
+  ex.takeExit(e);
   if (timers) {
     woke(e);
   }

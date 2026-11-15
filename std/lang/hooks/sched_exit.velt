@@ -23,10 +23,13 @@
 //   the root of `main` homed there, when it is being polled on this thread (the error was
 //   reported in its poll) or idle (taken out of the idle state, so a wake no longer queues it):
 //   its sleeps pending on this worker leave the timer list and give back their wakers, then the
-//   executor's reference and `schedBlockOn`'s go. A root queued or polled on another worker is
-//   left alone, and so is anything holding a waker of it (an I/O wait, a promise of the
-//   runtime's): those keep their references, and the block stays counted.
+//   executor's reference and `schedBlockOn`'s go. An error reported on another worker while
+//   worker 0 sleeps in its park hands the exit to worker 0, which gives the root back there
+//   (`handToMain`, #3017). A root queued or polled on another worker is left alone, and so is
+//   anything holding a waker of it (an I/O wait, a promise of the runtime's): those keep their
+//   references, and the block stays counted.
 
+import { inline, noInline } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as micro from "./sched_micro";
 import * as nd from "./sched_node";
@@ -56,13 +59,73 @@ export function uncaughtNow(e: usize): void {
 /** 1 once an exit gave back the executor's blocks (an error in that is not given back twice). */
 const GIVEN = new Atomic<u32>(0);
 
+/**
+ * The exit another worker hands to worker 0 (`handToMain`): its code + 1 (0: none), `TAKEN` once
+ * worker 0 took it.
+ */
+const HANDED = new Atomic<i32>(0);
+const TAKEN: i32 = -1;
+
 /** Ends the program with `code` after an uncaught error was reported on this thread. */
 export function exitUncaught(code: i32): never {
   const self = t.here();
   if (self !== 0 && counting() && GIVEN.exchange(1, "acqrel") === 0) {
     giveBack(self);
+    const g = t.main();
+    if (self !== g) {
+      handToMain(g, code);
+    }
   }
   process.exit(code);
+}
+
+/**
+ * The exit of an uncaught error reported on worker `self`, not worker 0 (`g`), with the counters
+ * on: the root of `main` and its sleeps are worker 0's to give back (`root`), so when worker 0
+ * sleeps in its park, it is woken to end the program itself (`takeExit`), and this thread waits
+ * for that. Otherwise (worker 0 runs a poll) the root is left alone, as before (#3017). The
+ * request's store, then the park word's load, against worker 0's store of its park word, then the
+ * request's load (sequentially consistent each): either this side sees worker 0 awake and takes
+ * the request back, or worker 0 sees it after its park.
+ */
+function handToMain(g: usize, code: i32): void {
+  // What this thread printed reaches the OS before worker 0 ends the program.
+  wk.handOffOutput();
+  HANDED.store(code + 1, "seqcst");
+  if (m.load32(g + t.E_PARK) !== 1) {
+    if (HANDED.compareExchange(code + 1, 0, "seqcst", "seqcst") === code + 1) {
+      return;
+    }
+  } else {
+    wk.unpark(g);
+  }
+  // Worker 0 took it and ends the program. A hang guard only: never reached unless it stops.
+  for (let i: u64 = 0; i < 100000000; i++) {
+    m.yieldCore();
+  }
+}
+
+/**
+ * Worker `e` (this thread) awake after its park, its park word down: when it is worker 0, an exit
+ * another worker handed it (`handToMain`) gives back the root of `main` and ends the program.
+ * One load otherwise.
+ */
+@inline
+export function takeExit(e: usize): void {
+  if (HANDED.load("seqcst") > 0) {
+    takeExitNow(e);
+  }
+}
+
+/** `takeExit` with an exit handed over: worker 0 claims it, unless it was taken back. */
+@noInline
+function takeExitNow(e: usize): void {
+  const c = HANDED.load("seqcst");
+  if (e !== t.main() || c <= 0 || HANDED.compareExchange(c, TAKEN, "seqcst", "seqcst") !== c) {
+    return;
+  }
+  root(e);
+  process.exit(c - 1);
 }
 
 /** Are the debug runtime's block counters on (`VELT_RC_STATS=1`)? */

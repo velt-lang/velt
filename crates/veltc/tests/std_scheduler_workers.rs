@@ -759,3 +759,51 @@ async function main() {
   console.log(`sum ${sum}`);
 }
 "#;
+
+/// A task whose handle was dropped rejects on worker 1 while `main` sleeps on worker 0: the
+/// uncaught-error exit gives back every block, as when the task rejects on worker 0. The root of
+/// `main` and its sleep are worker 0's to give back, so the exit used to leave them counted when
+/// it came from another worker (2 blocks, #3017; `lang/spawn_handle_dropped_rejects` when its
+/// task ran elsewhere); worker 0 now ends the program for it. Before the fix every run leaked.
+#[test]
+fn an_uncaught_rejection_on_another_worker_gives_back_mains_root() {
+    if !has_threads() {
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let counted = [("VELT_RT_DEBUG_ALLOC", "1"), ("VELT_RC_STATS", "1")];
+    for run in 0..3 {
+        let (code, out) = build_and_run_with(dir.path(), "far", FAR_REJECTION, "4", &counted);
+        let blocks = out
+            .split_whitespace()
+            .find_map(|w| w.strip_prefix("blocks="))
+            .and_then(|b| b.split_once('/'));
+        assert!(
+            code == 1
+                && out.starts_with("dropping the handle\n")
+                && out.contains("Uncaught Failed")
+                && blocks.is_some_and(|(a, f)| a == f),
+            "run {run}: exit {code}\n{out}"
+        );
+    }
+}
+
+/// The program of [`an_uncaught_rejection_on_another_worker_gives_back_mains_root`].
+const FAR_REJECTION: &str = r#"class Failed extends Error {}
+
+async function failing(ms: i64): Promise<i64> {
+  await sleep(ms);
+  throw new Failed(`lost after ${ms} ms`);
+}
+
+async function main() {
+  {
+    const task = spawn(failing(20), { worker: 1 });
+    console.log("dropping the handle");
+  }
+  // A hang guard: the rejection ends the process long before.
+  await sleep(60000);
+  console.log("unreachable");
+}
+"#;
