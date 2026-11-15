@@ -100,8 +100,9 @@ export const imports: Imports = {
   // The C library's socket functions those sockets call (std/net/fd_socket.velt, fd_io.velt,
   // fd_addr.velt, std/lang/hooks/sched_io_write.velt), or Winsock's under the same names.
   "#net-calls": { win32: "./net/calls_win32.velt", default: "./net/calls_posix.velt" },
-  // velt/net's UDP sockets and name lookups: the runtime's, or, compiled with the executor in
-  // Velt, non-blocking UDP sockets on its reactor and `getaddrinfo` on its blocking pool.
+  // velt/net's UDP sockets and name lookups: with the executor in Velt (every native build),
+  // non-blocking UDP sockets on its reactor and `getaddrinfo` on its blocking pool; elsewhere
+  // (WebAssembly) none, `ENOTSUP`.
   "#net-udp": { "std-scheduler": "./net/udp/udp_sched.velt", default: "./net/udp/rt.velt" },
   "#net-dns": { "std-scheduler": "./net/dns/rt_sched.velt", default: "./net/dns/rt.velt" },
   // velt/fs's and velt/process's runtime functions: the runtime's (std/fs/rt.velt, std/process/

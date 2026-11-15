@@ -1,6 +1,6 @@
 // velt/net/udp (internal): the UDP functions, in a build compiled with the executor in Velt
 // (`VELT_SCHEDULER=std`, #2649 step 4): the `std-scheduler` variant of `#net-udp`
-// (std/imports.velt), with the names and signatures of the runtime's (std/net/udp/rt.velt).
+// (std/imports.velt), with the names and signatures of the default variant's (std/net/udp/rt.velt).
 //
 // `bind` opens a non-blocking datagram socket on the executor's reactor (std/lang/hooks/
 // sched_io.velt: epoll, kqueue or Windows' AFD), registered as TCP's sockets are, with a handle

@@ -1311,8 +1311,9 @@ serves both forms; async reads run on the blocking pool; text is decoded lossily
 sockets on the reactor of the executor in Velt on every native OS (std/net/udp/udp_sched.velt;
 Windows' through AFD), and `velt/net/dns`'s lookups run `getaddrinfo` on its blocking pool
 (std/net/dns/lookup_sched.velt). `velt_rt_udp_bind`, `_port`, `_send_to`, `_recv_from`,
-`_set_broadcast`, `_close` and `velt_rt_dns_lookup` are no longer exported; std's default
-variants (std/net/udp/rt.velt, std/net/dns/rt.velt) still declare them, and no build links them.
+`_set_broadcast`, `_close` and `velt_rt_dns_lookup` are no longer exported. std's default
+variants (std/net/udp/rt.velt, std/net/dns/rt.velt: WebAssembly, whose runtime never had them)
+are Velt functions of the same names that fail with `ENOTSUP`.
 
 ### 14.7 File streams (`velt/fs`)
 
