@@ -100,6 +100,9 @@ impl Types {
     }
 
     pub fn kind(&self, t: TyId) -> &TyKind {
+        if crate::ctx::def_table::touch::on() {
+            crate::ctx::def_table::touch::ty(t.0 as usize);
+        }
         self.table.kind(t)
     }
 

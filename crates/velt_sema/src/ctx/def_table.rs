@@ -162,8 +162,23 @@ pub(crate) mod touch {
         static DEFS: RefCell<BTreeMap<&'static str, BTreeSet<usize>>> =
             const { RefCell::new(BTreeMap::new()) };
         static SCANS: RefCell<BTreeMap<String, usize>> = const { RefCell::new(BTreeMap::new()) };
+        static TYPES: Cell<usize> = const { Cell::new(0) };
+        static TYS: RefCell<BTreeSet<usize>> = const { RefCell::new(BTreeSet::new()) };
         static BY_SITE: RefCell<BTreeMap<String, BTreeSet<usize>>> =
             const { RefCell::new(BTreeMap::new()) };
+    }
+
+    /// A read of type `t`: counted when it is one of std's (below `start_types`' count).
+    pub(crate) fn ty(t: usize) {
+        if t < TYPES.with(Cell::get) {
+            TYS.with(|s| s.borrow_mut().insert(t));
+        }
+    }
+
+    /// Count reads of the first `n` types (std's unit's).
+    pub(crate) fn start_types(n: usize) {
+        TYPES.with(|c| c.set(n));
+        TYS.with(|s| s.borrow_mut().clear());
     }
 
     pub(crate) fn on() -> bool {
@@ -199,6 +214,9 @@ pub(crate) mod touch {
             return;
         }
         ON.with(|o| o.set(false));
+        let types = TYPES.with(Cell::get);
+        let read = TYS.with(|s| s.borrow().len());
+        eprintln!("velt-touch: {read:>6} of {types} std types read");
         DEFS.with(|d| {
             for (t, set) in d.borrow().iter() {
                 eprintln!(

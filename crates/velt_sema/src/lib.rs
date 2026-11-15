@@ -412,6 +412,7 @@ fn check_timed(
         (std_copies.as_deref()).map(|c| unsafe { &*(c as *const [SourceModule]) });
     let std_snap: std::cell::RefCell<Option<ctx::Ctx>> = Default::default();
     let touch_frozen = std::cell::Cell::new(0usize);
+    let touch_types = std::cell::Cell::new(0usize);
     let new_cx = |round: &'static str,
                   held_borrows: bool,
                   seeds: &throws::FnTypeSeeds,
@@ -516,9 +517,12 @@ fn check_timed(
             }
         };
         let frozen = std_cx.unit_base as usize;
+        let std_cx_types = std_cx.ty.table.len();
+        ctx::def_table::touch::start_types(std_cx_types);
         *std_snap.borrow_mut() = Some(std_cx);
         stage.set(units::Stage::App);
         touch_frozen.set(frozen);
+        touch_types.set(std_cx_types);
         ctx::def_table::touch::start();
     }
     let (cx, entry, generated) = match rounds::run(
@@ -540,6 +544,7 @@ fn check_timed(
         eprintln!("velt-touch: == the app's check (rounds)");
         ctx::def_table::touch::report(touch_frozen.get());
         ctx::def_table::touch::start();
+        ctx::def_table::touch::start_types(touch_types.get());
     }
     let (program, diags) = program::build_checked(cx, entry, generated);
     if ctx::def_table::touch::on() {
