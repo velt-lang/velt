@@ -63,6 +63,12 @@ pub(crate) struct FnTypeSeeds {
     /// declaration span: a call through the slot counts them from the start
     /// ([`Ctx::slot_hint`]).
     pub(super) slots: FxHashMap<(DefId, u32), (Span, Vec<Portable>)>,
+    /// The sites closures were created for, by the closures' spans, found through the
+    /// variable of the function type each was checked against: a check without variables
+    /// knows them only from here. Closures made at one span (a signature's adapters) each pick
+    /// the one their type is an instance of (`Ctx::closure_site_for`, #3033; unit-tested in
+    /// `fn_flows`, an end-to-end golden waits on #3038: #3042).
+    pub(super) closure_targets: FxHashMap<Span, Vec<Span>>,
     /// Check with the sets written in, without variables (`throws::vars`).
     no_vars: bool,
     /// The sites of std/proxy's `ProxyHandler` traps the previous check met.
@@ -139,6 +145,9 @@ pub(crate) struct FnSites {
     pub closure_rejects: Vec<(Span, TyId)>,
     /// The site each closure (by its span) was created for.
     pub(super) closure_sites: FxHashMap<Span, Span>,
+    /// The site each closure was created for by the variable of the function type it was
+    /// checked against: exact where spans are shared (a signature's adapters, #3033).
+    pub(super) closure_defs: FxHashMap<DefId, Span>,
     /// The closures that end in a rest parameter (`(...args) => …`): their function types do.
     pub rest_closures: FxHashSet<DefId>,
     /// Where the values of each site are stored (an argument read from a parameter), so what
@@ -499,6 +508,13 @@ impl Ctx<'_> {
                 None => return false,
             }
         }
+        // Where the value is stored is not known, but `used_as`'s error type is the variable of
+        // the site it was written at: that site. So an instance of a generic alias, whose site
+        // is written in terms of its parameters (`(...args: TArgs) => R` at `[T1]`, which the
+        // structural match below can't relate, #3033), takes the value's errors, and no other
+        // site does: a value converted into a site (an adapter, a callable's `#call`) flows
+        // there.
+        let site = site.or_else(|| self.var_site(used_as));
         // Stored into a known site: that one, and the sites its values flow to.
         if let Some(s) = site {
             self.add_to_site(s, &members);

@@ -155,6 +155,9 @@ impl FnCx<'_, '_> {
         let target = self.set_target(None);
         let h = self.closure_in(e, exp, escaping);
         self.set_target(target);
+        if let hir::ExprKind::Closure(d) = h.kind {
+            self.cx.note_closure_def(d, exp);
+        }
         h
     }
 

@@ -1,0 +1,37 @@
+// A function type with a type parameter's rest that throws (#3033) gives its errors to calls
+// through its own values only: a call through an unrelated function type with no known site
+// (`h(true)` in `g2`, which declares `throws never`) throws nothing. Velt-only (`throws never`).
+class E1 extends Error {
+  constructor(m: string) {
+    super(m);
+  }
+}
+
+type Fn<TArgs extends unknown[], R> = ((...args: TArgs) => R) & { token: string };
+
+function make(): Fn<[string], number> {
+  const f = (x: string): number => {
+    if (x === "") {
+      throw new E1("empty");
+    }
+    return x.length;
+  };
+  return Object.assign(f, { token: "t" });
+}
+
+function g2(hs: Array<(x: boolean) => string>): void throws never {
+  for (const h of hs) {
+    console.log(h(true));
+  }
+}
+
+function main(): void {
+  const w = make();
+  try {
+    console.log(w("ab"));
+    w("");
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+  g2([(b: boolean): string => b ? "y" : "n"]);
+}

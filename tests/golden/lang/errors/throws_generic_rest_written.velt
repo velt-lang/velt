@@ -1,0 +1,24 @@
+// A function type written with `throws` keeps exactly what it allows, also with a type
+// parameter's rest (#3033): a closure throwing `E1` is not a `Factory<[string], number>` whose
+// call allows only `RangeError`.
+class E1 extends Error {
+  constructor(m: string) {
+    super(m);
+  }
+}
+
+type Factory<TArgs extends unknown[], R> = ((...args: TArgs) => R throws RangeError) & {
+  token: string;
+};
+
+function make(): Factory<[string], number> {
+  const f = (x: string): number => {
+    if (x === "") {
+      throw new E1("empty");
+    }
+    return x.length;
+  };
+  return Object.assign(f, { token: "t" });
+}
+
+function main() {}
