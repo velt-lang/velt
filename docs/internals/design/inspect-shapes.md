@@ -86,7 +86,8 @@ parameter would make the `Array` class live in a program without arrays. The cyc
 `inspectSave`, `inspectRestore`, `inspectBegin`, `inspectEnd`) are checked only once a live type
 can hold itself: a walk over the live types finds a way from a class or struct instance, a `Map`
 or a `Set` back to itself, through fields, elements, entries, union members, each live subclass of
-a class, and for an `any` or an interface value the types live code puts into one (anything, once
+a class (a generic one as each of its live instantiations, or anything once generic code has one
+at its own type parameters, whose instances only lowering makes), and for an `any` or an interface value the types live code puts into one (anything, once
 the program's own generic code puts a type parameter's value into one). Every hook in both groups
 has a fallback: lowering writes an array with its own glue, opens an object with `openPlain` (the
 depth limit only), and tracks no cycle. A program that prints `{ a: 1 }` or a class of scalars

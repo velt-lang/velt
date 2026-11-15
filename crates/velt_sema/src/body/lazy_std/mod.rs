@@ -191,10 +191,10 @@ pub(crate) struct Lazy {
     dyn_held: FxHashSet<TyId>,
     dyn_generic: bool,
     /// Live types found unable to reach themselves (`live_constructs.rs` `may_cycle`), while
-    /// the live classes and `dyn_held` number `cycle_seen`; and whether one can, so the cycle
-    /// hooks are reached.
+    /// the live classes, `dyn_held`, `dyn_generic` and the live instantiations of generic
+    /// subclasses are `cycle_seen`; and whether one can, so the cycle hooks are reached.
     cycle_closed: FxHashSet<TyId>,
-    cycle_seen: (usize, usize),
+    cycle_seen: (usize, usize, bool, usize),
     cycles: bool,
     /// The live definitions, and the hooks their constructs demand ([`live`]).
     live: live::Live,
@@ -226,7 +226,7 @@ impl Lazy {
             dyn_held: FxHashSet::default(),
             dyn_generic: false,
             cycle_closed: FxHashSet::default(),
-            cycle_seen: (0, 0),
+            cycle_seen: (0, 0, false, 0),
             cycles: false,
             live: live::Live::new(),
             stubs: hook_stubs::Stubs::default(),

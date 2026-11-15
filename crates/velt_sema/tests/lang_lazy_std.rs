@@ -678,6 +678,51 @@ fn printing_shapes_are_checked_once_live_code_may_print_an_object() {
                    function main() {\n  const h = new H();\n  h.v = wrap(h);\n  console.log(h);\n}\n";
     let sub = "class B {\n  x: number = 1;\n}\nclass S extends B {\n  b: B | null = null;\n}\n\
                function main() {\n  const b: B = new S();\n  console.log(b);\n}\n";
+    // A generic subclass whose type argument is how the value reaches itself, one made by generic
+    // code (its instance is lowering's), and one whose instances can't hold themselves.
+    let gsub = "class B {
+  n: string = \"b\";
+}
+class S<T> extends B {
+  x: T | null = null;
+}
+                function main() {
+  const s = new S<B>();
+  s.x = s;
+  console.log(s);
+}
+";
+    let gmade = "class B {
+  n: string = \"b\";
+}
+class S<T> extends B {
+  x: T | null = null;
+}
+                 class H {
+  b: B | null = null;
+}
+                 function mk<T>(v: T): B {
+  const s = new S<T>();
+  s.x = v;
+  return s;
+}
+                 function main() {
+  const h = new H();
+  h.b = mk(h);
+  console.log(h);
+}
+";
+    let gnum = "class B {
+  n: string = \"b\";
+}
+class S<T> extends B {
+  x: T | null = null;
+}
+                function main() {
+  const b: B = new S<number>();
+  console.log(b);
+}
+";
     // (source, an array type is live (`None`: std's `any` code has some), a live type can hold
     // itself); a `Map`'s code has arrays.
     for (src, arrays, cycles) in [
@@ -690,6 +735,9 @@ fn printing_shapes_are_checked_once_live_code_may_print_an_object() {
         (number, None, false),
         (generic, None, true),
         (sub, Some(false), true),
+        (gsub, Some(false), true),
+        (gmade, Some(false), true),
+        (gnum, Some(false), false),
     ] {
         let p = ok_src(src);
         assert!(checked(&p, plain), "{plain} is unchecked: {src}");

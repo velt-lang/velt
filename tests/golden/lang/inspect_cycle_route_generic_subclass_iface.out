@@ -1,0 +1,2 @@
+<ref *1> Sub { name: 'b', held: [Circular *1] }
+<ref *1> Sub { name: 'b', held: [Circular *1] }

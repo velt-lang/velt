@@ -222,26 +222,56 @@ const CYCLE_DEPTH: u32 = 32;
 /// `[Circular *1]`)? Yes when a live type reaches itself through what it holds (fields, elements,
 /// entries, union members, for a class each live subclass, and for an `any` or an interface value
 /// what live code puts into one). A type parameter holds what its instances hold, and those are
-/// live types of their own. The types found closed are remembered while the live classes and
-/// what goes into an `any` don't change.
+/// live types of their own; a generic subclass met through its base is each of its live
+/// instantiations, or anything where generic code has one with its own parameters (lowering makes
+/// it per instance, which sema doesn't see). The types found closed are remembered while the live
+/// classes, what goes into an `any` and the live instantiations of generic subclasses don't
+/// change.
 fn may_cycle(cx: &mut Ctx) -> bool {
-    let seen = (cx.lazy.live.adts.len(), cx.lazy.dyn_held.len());
+    let mut types: Vec<TyId> = cx.lazy.live.types.iter().copied().collect();
+    let mut insts = Insts::default();
+    for &t in &types {
+        if let TyKind::Adt(d, args) = cx.ty.kind(t) {
+            if !args.is_empty() && cx.adt(*d).is_some_and(|a| a.base.is_some()) {
+                let mut open = false;
+                cx.ty.visit(t, &mut |k| {
+                    open |= matches!(k, TyKind::Param(_) | TyKind::Op(..))
+                });
+                let e = insts.entry(*d).or_default();
+                e.0.push(t);
+                e.1 |= open;
+            }
+        }
+    }
+    let seen = (
+        cx.lazy.live.adts.len(),
+        cx.lazy.dyn_held.len(),
+        cx.lazy.dyn_generic,
+        insts.values().map(|e| e.0.len()).sum(),
+    );
     if cx.lazy.cycle_seen != seen {
         cx.lazy.cycle_closed.clear();
         cx.lazy.cycle_seen = seen;
     }
-    let mut types: Vec<TyId> = cx.lazy.live.types.iter().copied().collect();
     types.retain(|&t| {
         !cx.lazy.cycle_closed.contains(&t) && !matches!(cx.ty.kind(t), TyKind::Dyn(..))
     });
     types.sort_unstable_by_key(|t| t.0);
+    for v in insts.values_mut() {
+        v.0.sort_unstable_by_key(|t| t.0);
+    }
     let mut closed = std::mem::take(&mut cx.lazy.cycle_closed);
     let mut path = Path::default();
     // An `any` or interface value at the top holds a value of some live type, checked as such.
-    let found = (types.into_iter()).any(|t| reaches_back(cx, t, &mut path, &mut closed, (0, 0)).0);
+    let found = (types.into_iter())
+        .any(|t| reaches_back(cx, t, (&mut path, &insts), &mut closed, (0, 0)).0);
     cx.lazy.cycle_closed = closed;
     found
 }
+
+/// The live instantiations of each generic subclass (a class with a base and type parameters), and
+/// whether one has a type parameter in it.
+type Insts = rustc_hash::FxHashMap<DefId, (Vec<TyId>, bool)>;
 
 /// The walk of [`may_cycle`]: the types on the way from a live type, each with how many objects
 /// lowering tracks (class and struct instances, `Map`s and `Set`s) come before it.
@@ -254,7 +284,7 @@ type Path = rustc_hash::FxHashMap<TyId, u32>;
 fn reaches_back(
     cx: &mut Ctx,
     t: TyId,
-    path: &mut Path,
+    (path, insts): (&mut Path, &Insts),
     closed: &mut rustc_hash::FxHashSet<TyId>,
     (depth, tracked): (u32, u32),
 ) -> (bool, bool) {
@@ -270,10 +300,10 @@ fn reaches_back(
     path.insert(t, tracked);
     let inner = tracked + is_tracked(cx, t) as u32;
     let (mut found, mut back) = (false, false);
-    match held(cx, t) {
+    match held(cx, t, insts) {
         Some(parts) => {
             for p in parts {
-                let (f, b) = reaches_back(cx, p, path, closed, (depth + 1, inner));
+                let (f, b) = reaches_back(cx, p, (path, insts), closed, (depth + 1, inner));
                 back |= b;
                 if f {
                     found = true;
@@ -301,7 +331,8 @@ fn is_tracked(cx: &Ctx, t: TyId) -> bool {
 }
 
 /// The types a value of type `t` holds and printing shows; `None` when it can hold anything.
-fn held(cx: &mut Ctx, t: TyId) -> Option<Vec<TyId>> {
+/// `insts`: the live instantiations of the generic subclasses.
+fn held(cx: &mut Ctx, t: TyId, insts: &Insts) -> Option<Vec<TyId>> {
     let kind = cx.ty.kind(t).clone();
     Some(match kind {
         // What live code puts into one; anything when the program's generic code puts a type
@@ -332,13 +363,15 @@ fn held(cx: &mut Ctx, t: TyId) -> Option<Vec<TyId>> {
                 .into_iter()
                 .filter(|s| cx.lazy.live.adts.contains(s))
             {
-                // A generic subclass by its fields, its own parameters left open.
-                match cx.adt(s) {
-                    Some(sa) if sa.generics.names.is_empty() => {
+                // A generic subclass as each of its live instantiations: its type arguments may
+                // be how a value reaches itself. Anything when generic code makes one.
+                match (cx.adt(s), insts.get(&s)) {
+                    (Some(sa), _) if sa.generics.names.is_empty() => {
                         parts.push(cx.ty.intern(TyKind::Adt(s, vec![])))
                     }
-                    Some(sa) => parts.extend(sa.fields.iter().map(|f| f.ty)),
-                    None => {}
+                    (Some(_), Some((_, true))) => return None,
+                    (Some(_), Some((ts, false))) => parts.extend(ts),
+                    _ => {}
                 }
             }
             parts
