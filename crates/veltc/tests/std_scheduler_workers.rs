@@ -25,7 +25,7 @@ mod test_dir;
 #[cfg(unix)]
 #[test]
 fn sched_spread_white_box_tests_pass() {
-    runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
+    runtime_support::build_native_runtime(manifest());
     std_unix::velt_test_in_std_copy(
         "lang/hooks/sched_spread.test.velt",
         include_str!("std_unix/lang/hooks/sched_spread.test.velt"),
@@ -40,7 +40,7 @@ fn sched_spread_white_box_tests_pass() {
 #[cfg(unix)]
 #[test]
 fn sched_queue_white_box_tests_pass() {
-    runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
+    runtime_support::build_native_runtime(manifest());
     std_unix::velt_test_in_std_copy(
         "lang/hooks/sched_queue.test.velt",
         include_str!("std_unix/lang/hooks/sched_queue.test.velt"),
