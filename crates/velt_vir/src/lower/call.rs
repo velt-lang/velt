@@ -256,7 +256,7 @@ impl FnLower<'_, '_> {
         let mut bufs = vec![];
         let argv = match foreign {
             true => self.foreign_args(&x.params, args, false, &mut bufs),
-            false => self.lower_args(args, &modes, Stabilize::No, None, !0),
+            false => self.lower_args(args, &modes, Stabilize::No, None, 0),
         };
         let fut = self.finish_call(vir::Callee::Extern(id), argv, x.ret, None);
         self.free_foreign_bufs(bufs);
@@ -583,7 +583,7 @@ impl FnLower<'_, '_> {
             // its read-only data, not a new array (sema rejects every use that could write or
             // keep a table, and an array with `cap == 0` owns no buffer to free).
             let table = match (mode, transfer) {
-                (Some(PassMode::Borrow), false) if self.is_table(a) => self.table_read(a),
+                (Some(PassMode::Borrow), false) if self.inline_table(a) => self.table_read(a),
                 _ => None,
             };
             let v = if let Some(p) = table {

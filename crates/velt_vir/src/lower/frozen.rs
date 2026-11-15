@@ -120,8 +120,10 @@ impl FnLower<'_, '_> {
             if *m != PassMode::Borrow || at >= 64 || changed || !self.is_table(a) {
                 continue;
             }
+            // A view's accesses tell it by the low bit of its data pointer, which a table of
+            // bytes may have; a lock set's write barrier reads the count word.
             let ty = self.sub(a.ty);
-            if self.cx.boxed(ty) {
+            if self.cx.boxed(ty) && !self.cx.array_view(ty) && !self.cx.lock_counted(ty) {
                 mask |= 1 << at;
             }
         }
@@ -130,25 +132,38 @@ impl FnLower<'_, '_> {
 
     /// Table `a` (`table_read`) passed to a param in `mode` `Borrow`: the address of its read-only header,
     /// when the type is not counted (the callee gets what a borrow passes) or the param is
-    /// `as_is` (an extern's, or a frozen instance's from `table_mask`). `None` otherwise: `a`
-    /// is then lowered as any other argument.
+    /// `as_is` (a frozen instance's from `table_mask`). `None` otherwise: `a` is then lowered
+    /// as any other argument.
     pub(super) fn table_arg(
         &mut self,
         a: &hir::Expr,
         mode: PassMode,
         as_is: bool,
     ) -> Option<Operand> {
-        if mode != PassMode::Borrow || !self.is_table(a) {
-            return None;
-        }
-        let ty = self.sub(a.ty);
-        if self.cx.boxed(ty) && !as_is {
+        if mode != PassMode::Borrow || !(as_is && self.is_table(a) || self.inline_table(a)) {
             return None;
         }
         let place = self
             .table_read(a)
             .unwrap_or_else(|| super::ice("table without data"));
         Some(self.addr(place))
+    }
+
+    /// Is `a` a table (`table_read`) of a type that is not counted, whose header any borrow of
+    /// it may be given?
+    pub(super) fn inline_table(&mut self, a: &hir::Expr) -> bool {
+        let ty = self.sub(a.ty);
+        !self.cx.boxed(ty) && self.is_table(a)
+    }
+
+    /// `call` lowering a call whose code is not specialized for frozen arguments (through a
+    /// function value, a vtable or an interface): an argument frozen in the call these
+    /// arguments are lowered for gets a copy there, not the value as it is (`frozen_borrow`).
+    pub(super) fn unfrozen_args<R>(&mut self, call: impl FnOnce(&mut Self) -> R) -> R {
+        let outer = std::mem::replace(&mut self.frozen_args, false);
+        let r = call(self);
+        self.frozen_args = outer;
+        r
     }
 
     /// A stabilized borrow of the frozen argument `a` (`stable_borrow`): the value itself for a

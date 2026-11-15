@@ -111,7 +111,19 @@ impl FnLower<'_, '_> {
         self.hold(rv, args[0].ty, later)
     }
 
+    /// A call through a vtable: its code takes no frozen arguments as they are (frozen.rs
+    /// `unfrozen_args`).
     pub(super) fn call_virtual(
+        &mut self,
+        slot: u32,
+        args: &[hir::Expr],
+        ty: TyId,
+        transfer: bool,
+    ) -> Operand {
+        self.unfrozen_args(|lw| lw.call_virtual_in(slot, args, ty, transfer))
+    }
+
+    fn call_virtual_in(
         &mut self,
         slot: u32,
         args: &[hir::Expr],
@@ -212,7 +224,20 @@ impl FnLower<'_, '_> {
         own.methods.iter().any(|m| m.name == field).then_some(field)
     }
 
+    /// A call through an interface value's table: its code takes no frozen arguments as they
+    /// are (frozen.rs `unfrozen_args`).
     pub(super) fn call_dyn(
+        &mut self,
+        slot: u32,
+        method_type_args: &[TyId],
+        args: &[hir::Expr],
+        ty: TyId,
+        transfer: bool,
+    ) -> Operand {
+        self.unfrozen_args(|lw| lw.call_dyn_in(slot, method_type_args, args, ty, transfer))
+    }
+
+    fn call_dyn_in(
         &mut self,
         slot: u32,
         method_type_args: &[TyId],
