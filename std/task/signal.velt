@@ -20,10 +20,12 @@ import { INSPECT } from "velt/lang/hooks/keys";
 // The message of the reason a timeout's signal gets, as in Node.
 const TIMEOUT_MESSAGE: string = "The operation was aborted due to timeout";
 
-// The message a plain `abort()` (no reason) gives the runtime signal, so that its reason, Node's
-// `AbortError`, is told apart from `abort("This operation was aborted")`, whose reason is that
-// string (an `AbortSignal.any` reads its first aborting source's message). It starts with a NUL
-// byte: the only collision is a user's reason equal to it byte for byte.
+/**
+ * The message a plain `abort()` (no reason) gives the runtime signal (std only), so that its
+ * reason, Node's `AbortError`, is told apart from `abort("This operation was aborted")`, whose
+ * reason is that string (an `AbortSignal.any` reads its first aborting source's message). It
+ * starts with a NUL byte: the only collision is a user's reason equal to it byte for byte.
+ */
 export const PLAIN_ABORT: string = "\u0000velt:abort()";
 
 // A signal's reason once there is one: allocated only then, so a signal never given or asked
