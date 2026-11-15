@@ -143,6 +143,9 @@ pub(super) struct Graph {
     /// The calls through function values (`Graph::indirect`), by the type called through, in the
     /// order the types first appear.
     pub indirect_by_ty: Vec<(TyId, Vec<usize>)>,
+    /// What each function's type is in its instantiations, as `super::instances` resolves it,
+    /// once per inference.
+    pub inst_cache: std::cell::RefCell<FxHashMap<(DefId, TyId), Vec<TyId>>>,
 }
 
 impl Graph {
@@ -208,7 +211,7 @@ pub(super) fn build(cx: &Ctx) -> Graph {
         w.block(&f.body.block, To::Node(ret, None));
     }
     super::unknown_callees::mark(cx, &mut g);
-    super::call_sites::named_outside_bodies(cx, &mut g.held.referenced);
+    super::call_sites::named_outside_bodies(cx, &mut g.held.referenced, &mut g.insts);
     dynamic::finish(cx, &mut g);
     g.dyn_calls.finish(cx);
     g

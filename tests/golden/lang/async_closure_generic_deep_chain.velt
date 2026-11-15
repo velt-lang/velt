@@ -1,0 +1,50 @@
+// check: no leaks
+// A type parameter resolved through six generic calls (#2952: sigx's `useData` reaches `signal<T>`
+// five calls down): `keepAndSpawn<T>` is only ever called with a number, so it spawns a number,
+// not a closure, and the counter's closure, which modifies what it captured, stays on this task.
+// Node prints the same.
+
+function keepAndSpawn<T>(x: T): void {
+  const box: T[] = [x];
+  const v = box[0];
+  spawn(async () => {
+    console.log(typeof v);
+  });
+}
+
+function l5<T>(x: T): void {
+  keepAndSpawn<T>(x);
+}
+function l4<T>(x: T): void {
+  l5<T>(x);
+}
+function l3<T>(x: T): void {
+  l4<T>(x);
+}
+function l2<T>(x: T): void {
+  l3<T>(x);
+}
+function l1<T>(x: T): void {
+  l2<T>(x);
+}
+
+class Counter {
+  bump: () => Promise<void> = async () => {};
+}
+
+function makeCounter(): Counter {
+  let runs = 0;
+  const c = new Counter();
+  c.bump = async (): Promise<void> => {
+    runs++;
+    console.log(`run ${runs}`);
+  };
+  return c;
+}
+
+async function main() {
+  const c = makeCounter();
+  await c.bump();
+  l1<number>(1);
+  await sleep(10);
+}
