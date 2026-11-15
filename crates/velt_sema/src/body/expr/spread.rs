@@ -102,7 +102,12 @@ impl FnCx<'_, '_> {
                     let seen = self.cx.object_copies.seen.len();
                     let fields = self.spread_fields(e, any, &mut lets, false);
                     looks.push((seen, self.cx.object_copies.seen.len(), e.span));
-                    writes.push((Some(e.span), fields.iter().map(|f| f.0.clone()).collect()));
+                    // Only the fields it surely sets: not an optional one, nor one of a source
+                    // that may be missing (`T | undefined`, one branch of a conditional).
+                    let sure = fields
+                        .iter()
+                        .filter(|f| !f.2.optional && f.2.guard.is_none());
+                    writes.push((Some(e.span), sure.map(|f| f.0.clone()).collect()));
                     parts.push(self.spread_part(e.span, &lets[before..], lets.len()));
                     (fields.into_iter())
                         .map(|(n, h, src)| (n, Value::Read(h, src)))

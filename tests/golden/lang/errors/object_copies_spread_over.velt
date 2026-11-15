@@ -52,8 +52,16 @@ function overGeneric(ab: AB): number {
   return merge({ b: 9 }, x).b;
 }
 
+// The copy spread through `A | undefined`, under a `b`.
+function overMaybe(ab: AB, on: boolean): number {
+  const x: A | undefined = on ? ab : undefined;
+  const y = { b: 9, ...x };
+  return y.b;
+}
+
 function main() {
   console.log(overBefore({ a: 1, b: 2 }), overSpread({ a: 1, b: 2 }), overParam({ a: 1, b: 2 }, { b: 9 }));
   console.log(overCopies({ a: 1, b: 2 }, { b: 9, z: 0 }), overOptional({ a: 1, b: 2 }), overGeneric({ a: 1, b: 2 }));
   overPartial({ a: 1, b: 2 });
+  console.log(overMaybe({ a: 1, b: 2 }, true));
 }

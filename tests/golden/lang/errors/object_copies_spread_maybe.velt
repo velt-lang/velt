@@ -1,0 +1,14 @@
+// A copy spread through `A | undefined`: when it is there, the spread copies the copy's fields,
+// and Node's the original's, so printing the object shows the copy (#2956). Node prints
+// `{ a: 1, b: 2, c: 3 }`.
+type A = { a: number };
+type AB = A & { b: number };
+
+function maybe(ab: AB, on: boolean) {
+  const x: A | undefined = on ? ab : undefined;
+  console.log({ ...x, c: 3 });
+}
+
+function main() {
+  maybe({ a: 1, b: 2 }, true);
+}

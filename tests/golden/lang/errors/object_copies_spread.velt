@@ -85,12 +85,6 @@ function copiedAgain(ab: AB) {
   console.log(z);
 }
 
-// Spread through `A | undefined`: the copy's object when it is there.
-function maybe(ab: AB, on: boolean) {
-  const x: A | undefined = on ? ab : undefined;
-  console.log({ ...x, c: 3 });
-}
-
 function main() {
   printed({ a: 1, b: 2 });
   serialized({ b: 1, c: 2 });
@@ -102,5 +96,4 @@ function main() {
   returned({ a: 1, b: 2 });
   generic({ a: 1, b: 2 });
   copiedAgain({ a: 1, b: 2 });
-  maybe({ a: 1, b: 2 }, true);
 }

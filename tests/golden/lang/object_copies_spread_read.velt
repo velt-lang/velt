@@ -75,6 +75,13 @@ function setAfter(ab: AB): number {
   return y.a + y.b;
 }
 
+// A later spread whose type has `b` (required) sets it, in Node as here.
+function laterRequired(ab: AB, o: { b: number }): number {
+  const x: A = ab;
+  const y = { ...x, ...o };
+  return y.a + y.b;
+}
+
 async function main() {
   console.log(wider({ a: 1, b: 2 }));
   console.log(mapped({ b: 1, c: 2 }));
@@ -84,4 +91,5 @@ async function main() {
   console.log(kept({ a: 3, b: 4 }));
   console.log(generic({ a: 5, b: 6 }));
   console.log(setAfter({ a: 1, b: 2 }));
+  console.log(laterRequired({ a: 1, b: 2 }, { b: 6 }));
 }

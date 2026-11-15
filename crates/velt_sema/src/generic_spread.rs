@@ -115,12 +115,15 @@ impl Ctx<'_> {
         let into = self.anon_type_with(&out, module);
         // A converted value spread here shows the copy only where the object made is looked at
         // (object_copies.rs `derived_targets`).
-        // Each part's later parts' fields: set after it, in Node as here.
+        // Each part's later parts' fields: set after it, in Node as here. Only the fields a part
+        // surely sets: not an optional one, nor any of a part that may be missing.
         let names: Vec<Vec<String>> = (parts.iter())
-            .map(|&p| {
-                (self.spread_part_fields(p).unwrap_or_default().iter())
+            .map(|&p| match self.ty.opt_payload(p) {
+                Some(_) => vec![],
+                None => (self.spread_part_fields(p).unwrap_or_default().iter())
+                    .filter(|f| !f.optional)
                     .map(|f| f.name.clone())
-                    .collect()
+                    .collect(),
             })
             .collect();
         for (i, &p) in parts.iter().enumerate() {

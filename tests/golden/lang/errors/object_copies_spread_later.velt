@@ -1,0 +1,50 @@
+// A copy spread before a spread that may not set the field the copy left out: an optional `b`, a
+// `Partial`, a source that may be `undefined`, one branch of a conditional, or a generic part
+// with `b?`. When it is missing, Node keeps the original's `b` from the copied spread, so a read
+// shows the copy (#2956). In Node each prints 2.
+type A = { a: number };
+type AB = A & { b: number };
+type B2 = { b: number };
+
+function merge<T extends object, U extends object>(t: T, u: U): T & U {
+  return { ...t, ...u };
+}
+
+type OB = { b?: number };
+
+function laterOptional(ab: AB, o: OB) {
+  const x: A = ab;
+  const y = { ...x, ...o };
+  console.log(y.b);
+}
+
+function laterPartial(ab: AB, o: Partial<AB>) {
+  const x: A = ab;
+  const y = { ...x, ...o };
+  console.log(y.b);
+}
+
+function laterMaybe(ab: AB, o: B2 | undefined) {
+  const x: A = ab;
+  const y = { ...x, ...o };
+  console.log(y.b);
+}
+
+function laterBranch(ab: AB, on: boolean) {
+  const x: A = ab;
+  const y = { ...x, ...(on ? { b: 7 } : {}) };
+  console.log(y.b);
+}
+
+function laterGeneric(ab: AB, o: { b?: number }) {
+  const x: A = ab;
+  console.log(merge(x, o).b);
+}
+
+function main() {
+  laterOptional({ a: 1, b: 2 }, {});
+  laterPartial({ a: 1, b: 2 }, {});
+  laterMaybe({ a: 1, b: 2 }, undefined);
+  laterBranch({ a: 1, b: 2 }, false);
+  laterGeneric({ a: 1, b: 2 }, {});
+}
