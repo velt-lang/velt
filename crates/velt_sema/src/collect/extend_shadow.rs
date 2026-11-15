@@ -13,9 +13,12 @@ use crate::defs::key_member_name;
 use crate::hir::{AdtKind, DefId};
 
 pub(super) fn check(cx: &mut Ctx, from: super::Added) {
-    // The instance members of `extend` blocks, by the class they extend: name, definition.
+    // The instance members of `extend` blocks, by the class they extend: name, definition. Every
+    // block collected so far, not only the new ones: in a check by units (`crate::units`) the
+    // app's classes meet std's `extend` blocks here (std's classes never see the app's blocks:
+    // `extend` resolves lexically).
     let mut extended: FxHashMap<DefId, Vec<(String, DefId)>> = FxHashMap::default();
-    for e in &cx.extensions[from.extensions..] {
+    for e in &cx.extensions {
         let Some((d, _)) = cx.class_of(e.target) else {
             continue;
         };

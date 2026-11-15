@@ -98,3 +98,59 @@ function main() {
         "the crossing wasn't counted:\n{stderr}"
     );
 }
+
+/// The repository's goldens directory.
+fn golden(path: &str) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/golden")
+        .join(path)
+}
+
+/// Checks the golden `path` (from its own directory, as goldens are) by units or not.
+fn check_golden(path: &str, units: bool) -> std::process::Output {
+    let file = golden(path);
+    let mut cmd = no_window::command(env!("CARGO_BIN_EXE_velt"));
+    cmd.arg("check")
+        .arg(file.file_name().unwrap())
+        .current_dir(file.parent().unwrap())
+        .env_remove("VELT_UNITS_FREEZE");
+    match units {
+        true => cmd.env("VELT_UNITS", "1"),
+        false => cmd.env_remove("VELT_UNITS"),
+    };
+    cmd.output().unwrap()
+}
+
+/// An app subclass redefining what a std `extend` block gives its base class is refused by units
+/// as by a whole-program check: the app's classes meet std's `extend` blocks.
+#[test]
+fn a_check_by_units_refuses_redefining_a_std_extend_member() {
+    let whole = check_golden("std/fetch_body_redefined.velt", false);
+    let units = check_golden("std/fetch_body_redefined.velt", true);
+    assert!(!whole.status.success());
+    assert!(
+        !units.status.success(),
+        "{}",
+        String::from_utf8_lossy(&units.stderr)
+    );
+    let shown = |o: &std::process::Output| {
+        String::from_utf8_lossy(&o.stderr)
+            .lines()
+            .filter(|l| l.contains("error"))
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(shown(&whole), shown(&units));
+}
+
+/// A golden whose object literals have the shape of one std made first: the app's check leaves
+/// the shape's field spans to std (`Ctx::declare_anon_fields`), so nothing crosses.
+#[test]
+fn an_object_shape_std_made_first_is_not_written_by_the_app() {
+    let out = check_golden("lang/_function_properties_generic_types.velt", true);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !stderr.contains("velt-units:"),
+        "the program's check wrote std's definitions:\n{stderr}"
+    );
+}
