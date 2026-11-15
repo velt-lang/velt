@@ -984,7 +984,6 @@ U+FFFD. "Omitted" JS arguments are passed as the value given in Notes.
 | `velt_rt_str_pad_start` / `_pad_end` | `(const VeltStr* s, i64 target, const VeltStr* fill, VeltStr* out)` | lengths in code units; the last partial `fill` is cut to the units missing, between the halves of a pair if need be (as JS); omitted `fill` = `" "` |
 | `velt_rt_str_char_code_at` | `(const VeltStr* s, i64 i) -> i64` | the UTF-16 code unit at `i`; -1 if out of range (JS: NaN). Generated code reads ASCII strings inline (rt_abi.md) |
 | `velt_rt_str_from_char_code` | `(i64 code, VeltStr* out)` | JS `ToUint16(code)`; a surrogate gives a lone surrogate, as JS; ASCII results are static (no allocation) |
-| `velt_rt_parse_int` | `(const VeltStr* s, i64 radix) -> f64` | exact JS `parseInt`: leading JS whitespace, sign, `0x` prefix (radix 0/16), radix `ToInt32`, 0 = omitted, outside 2..36 ⇒ NaN, longest digit prefix, none ⇒ NaN, `-0` kept. Correctly rounded for radix 10 and powers of two; other radixes exact below 2^128 (V8 is not correctly rounded there either). |
 | `velt_rt_parse_float` | `(const VeltStr* s) -> f64` | exact JS `parseFloat`: leading whitespace, longest `StrDecimalLiteral` prefix (incl. `Infinity`), else NaN |
 | `velt_rt_str_to_number` | `(const VeltStr* s) -> f64` | exact JS `Number(s)`: trimmed; `""` ⇒ 0; `0x`/`0o`/`0b` (unsigned); `±Infinity`; whole string must be a decimal literal, else NaN |
 | `velt_rt_str_array_drop` | `(VeltStrArray* a)` | already in §4 |

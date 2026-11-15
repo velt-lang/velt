@@ -221,7 +221,6 @@ velt_rt velt_rt_param_object
 velt_rt velt_rt_param_str
 velt_rt velt_rt_param_u64
 velt_rt velt_rt_parse_float
-velt_rt velt_rt_parse_int
 velt_rt velt_rt_perf_now
 velt_rt velt_rt_pow_f64
 velt_rt velt_rt_pow_i64

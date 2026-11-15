@@ -227,8 +227,8 @@ function space(s: string, i: usize, n: usize): usize {
   return 0;
 }
 
-// The first byte of `s` after its leading whitespace.
-function skipSpace(s: string, n: usize): usize {
+/** The first byte of `s` (`n` bytes) after its leading whitespace. */
+export function skipSpace(s: string, n: usize): usize {
   let i: usize = 0;
   while (i < n) {
     const k = space(s, i, n);

@@ -1,4 +1,5 @@
-//! String → number conversions with exact JS semantics: `parseInt`, `parseFloat`, `Number(s)`.
+//! String → number conversions with exact JS semantics: `parseFloat` and `Number(s)`, for the
+//! decimals std's parser (velt/lang/number/parse) hands over: more than 19 significant digits.
 //!
 //! Decimal values are correctly rounded (Rust's `f64` parser, like V8). Power-of-two radixes are
 //! correctly rounded for any length; other radixes are exact below 2^128 and then continue in
@@ -69,43 +70,6 @@ fn power_of_two_value(digits: &[u8], radix: u32) -> f64 {
         }
     }
     (acc | sticky as u128) as f64 * 2f64.powi(shift)
-}
-
-/// `parseInt(s, radix)`; pass `radix = 0` when JS omits it.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_parse_int(s: *const VeltStr, radix: i64) -> f64 {
-    parse_int(&text_lossy(s), radix)
-}
-
-fn parse_int(s: &str, radix: i64) -> f64 {
-    let mut s = trim_start_js(s).as_bytes();
-    let negative = s.first() == Some(&b'-');
-    if matches!(s.first(), Some(b'-' | b'+')) {
-        s = &s[1..];
-    }
-    // ToInt32(radix): 0 means "not given".
-    let mut radix = match radix as i32 {
-        0 => 0,
-        r @ 2..=36 => r as u32,
-        _ => return f64::NAN,
-    };
-    if (radix == 0 || radix == 16) && (s.starts_with(b"0x") || s.starts_with(b"0X")) {
-        s = &s[2..];
-        radix = 16;
-    }
-    if radix == 0 {
-        radix = 10;
-    }
-    let n = digits_len(s, radix);
-    if n == 0 {
-        return f64::NAN;
-    }
-    let v = digits_value(&s[..n], radix);
-    if negative {
-        -v
-    } else {
-        v
-    }
 }
 
 /// Length of the longest `StrUnsignedDecimalLiteral` prefix (digits, optional `.digits`,
