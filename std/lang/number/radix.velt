@@ -5,7 +5,13 @@
 // Integers are exact over the whole `i64` and `u64` range. `NaN`, the infinities and the radix's
 // range are the caller's (velt/lang/hooks/number).
 
-import { arraySetLen, arrayTruncate, arrayWithCapacity, floor, noInline } from "velt/lang/intrinsics";
+import {
+  arraySetLen,
+  arrayTruncate,
+  arrayWithCapacity,
+  floor,
+  noInline,
+} from "velt/lang/intrinsics";
 import { asciiText } from "velt/lang/number/ascii";
 
 // The digit `d` (0 to 35) as `0`-`9`, `a`-`z`.
