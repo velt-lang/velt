@@ -165,6 +165,7 @@ mod unique_symbols;
 mod units;
 mod utility_types;
 mod visit;
+mod visit_ref;
 mod void_fields;
 mod weak_threads;
 mod written_types;

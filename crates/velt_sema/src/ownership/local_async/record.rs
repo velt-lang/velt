@@ -93,11 +93,11 @@ pub(crate) fn record_changed_captures(cx: &mut Ctx) {
 /// Does the program put a value that may hold a function in `shared(...)`, outside a lock?
 fn shares_a_function(cx: &mut Ctx) -> bool {
     let mut tys: Vec<TyId> = vec![];
-    for i in 0..cx.defs.len() {
-        let Some(Def::Fn(mut f)) = cx.defs[i].take() else {
+    for def in cx.defs.iter() {
+        let Some(Def::Fn(f)) = def else {
             continue;
         };
-        visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
+        visit::exprs(&f.body.block, &mut |e: &Expr| {
             if let E::Call {
                 callee: crate::hir::Callee::Intrinsic(crate::hir::Intrinsic::SharedNew),
                 args,
@@ -106,7 +106,6 @@ fn shares_a_function(cx: &mut Ctx) -> bool {
                 tys.extend(args.iter().map(|a| a.ty));
             }
         });
-        cx.defs[i] = Some(Def::Fn(f));
     }
     let mut seen = FxHashSet::default();
     tys.into_iter().any(|t| may_hold_fn(cx, t, &mut seen))
