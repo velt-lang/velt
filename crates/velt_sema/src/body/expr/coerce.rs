@@ -94,6 +94,10 @@ impl FnCx<'_, '_> {
             Ok(s) => return Ok(s),
             Err(h) => h,
         };
+        let h = match self.union_bound_value(h, exp) {
+            Ok(u) => return Ok(u),
+            Err(h) => h,
+        };
         let fixed = matches!(self.cx.ty.kind(h.ty), TyKind::FnPtr { .. });
         let h = match fixed && self.cx.is_generic_fn(exp) {
             true => match self.fn_value_as_generic(h, exp) {
@@ -195,11 +199,13 @@ impl FnCx<'_, '_> {
                 false => Err(v),
             };
         }
-        // A function with properties as its plain function type: its function (#921).
+        // A function with properties as its plain function type: its function (#921). When
+        // that doesn't fit, the object itself is given back, so a union's other members (the
+        // callable object type at other type arguments, #379) can still take it.
         if self.cx.is_callable_object(h.ty) && matches!(self.cx.ty.kind(exp), TyKind::FnPtr { .. })
         {
-            let f = self.callable_as_fn(h);
-            return self.try_coerce(f, exp);
+            let f = self.callable_as_fn(h.clone());
+            return self.try_coerce(f, exp).map_err(|_| h);
         }
         // A function with properties as an object type with no call signature (`const o: O =
         // f` for `interface O { a: number }`): Velt would copy the properties into an object,

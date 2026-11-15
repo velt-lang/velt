@@ -1,0 +1,22 @@
+// A function with properties passed where a union holds both a plain function type and the
+// callable object type at other type arguments (#379, sigx's `useData(fn)`): the plain function
+// type doesn't take it (its result type differs), and the object itself goes on to the callable
+// member, `Ref<number>` as `Ref<unknown>`. Node prints the same.
+type Ref<R> = (() => R | Promise<R>) & { __key: string };
+
+function take(k: string | (() => string | null) | Ref<unknown>): string {
+  return typeof k === "string" ? k : "fn";
+}
+
+function key(k: Ref<unknown> | (() => string | null)): string {
+  return "key";
+}
+
+function mk(): Ref<number> {
+  return Object.assign(() => 7, { __key: "k" });
+}
+
+function main(): void {
+  const r = mk();
+  console.log(take(r), take("s"), key(r), r.__key, r());
+}
