@@ -5,7 +5,7 @@
 // builder, so a value has no builder of its own. Sema checks them where live code may print one
 // (velt_common `std_hooks.rs`), so a program without arrays or objects does not pay for them.
 
-import { inspectNested } from "velt/lang/intrinsics";
+import { inspectNested, noInline } from "velt/lang/intrinsics";
 
 declare function velt_rt_strbuf_push_str(buf: string, s: string);
 declare function velt_rt_strbuf_push_f64(buf: string, x: f64);
@@ -35,18 +35,7 @@ export function inspectArray<E>(buf: string, a: E[], depth: u32): void {
   }
   const c = depth + 1;
   velt_rt_strbuf_push_str(buf, "[ ");
-  // `for…of` reads each element without a bounds check, whose message a program would compile.
-  let i: usize = 0;
-  for (const x of a) {
-    if (i == 100) {
-      break;
-    }
-    if (i > 0) {
-      velt_rt_strbuf_push_str(buf, ", ");
-    }
-    inspectNested(buf, x, c);
-    i++;
-  }
+  inspectElements(buf, a, c);
   if (n > 100) {
     const more = (n - 100) as u64;
     inspectMore(buf, more);
@@ -64,5 +53,25 @@ export function inspectMore(buf: string, remaining: u64): void {
     velt_rt_strbuf_push_str(buf, " more item");
   } else {
     velt_rt_strbuf_push_str(buf, " more items");
+  }
+}
+
+/**
+ * The first 100 elements of `a`, at depth `c`, separated by `, `. `for…of` reads each element
+ * without a bounds check, whose message a program would compile; not inlined, so the optimizer
+ * goes over the loop once per element type, not at every place an array is printed.
+ */
+@noInline
+function inspectElements<E>(buf: string, a: E[], c: u32): void {
+  let i: usize = 0;
+  for (const x of a) {
+    if (i == 100) {
+      break;
+    }
+    if (i > 0) {
+      velt_rt_strbuf_push_str(buf, ", ");
+    }
+    inspectNested(buf, x, c);
+    i++;
   }
 }
