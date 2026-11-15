@@ -36,6 +36,7 @@ impl FnCx<'_, '_> {
                 .cx
                 .prelude_adt(velt_common::std_hook!(this_fn))
                 .is_none()
+            || (self.cx.units && !self.cx.uses_this_fn())
             || self.object_assign_callee(callee)
         {
             return false;
@@ -176,4 +177,41 @@ impl FnCx<'_, '_> {
         let o = self.expr(object, None, crate::body::Want::Borrow);
         self.with_temp("<this>", o, object.span, span, build)
     }
+}
+
+impl crate::ctx::Ctx<'_> {
+    /// Does the program have a function whose `this` is bound at the call (the condition
+    /// velt_loader's `has_this_fn` loads std/lang/this_fn on)? A check by units holds all of std,
+    /// that module included, so it asks the program's modules itself. Found once per context.
+    pub(crate) fn uses_this_fn(&self) -> bool {
+        *self.uses_this_fn.get_or_init(|| {
+            (self.modules.iter())
+                .filter(|m| !m.is_std)
+                .any(|m| has_this_fn(&m.ast))
+        })
+    }
+}
+
+/// A function expression (not a generator) with a `this` parameter, or a function declared with
+/// one that may be used as a value (not generic, async or a generator): velt_loader's
+/// `has_this_fn`.
+fn has_this_fn(module: &ast::Module) -> bool {
+    use velt_syntax::visit::{self, Visit};
+    struct Find(bool);
+    impl<'a> Visit<'a> for Find {
+        fn expr(&mut self, e: &'a ast::Expr) {
+            if let ast::ExprKind::Function(d) = &e.kind {
+                self.0 |= d.sig.this_param.is_some() && !d.sig.is_generator;
+            }
+        }
+        fn function(&mut self, sig: &'a ast::FnSig, _body: &'a ast::Block) {
+            self.0 |= sig.this_param.is_some()
+                && sig.generics.is_empty()
+                && !sig.is_async
+                && !sig.is_generator;
+        }
+    }
+    let mut find = Find(false);
+    visit::walk_module(module, &mut find);
+    find.0
 }

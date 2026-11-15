@@ -156,21 +156,22 @@ impl Ctx<'_> {
     /// `trySend`), by def: a user type of the same name, or another std type's `send`, is no
     /// channel.
     pub fn channel_sends(&self) -> Vec<DefId> {
-        let module = self
-            .modules
-            .iter()
-            .position(|m| m.is_std && m.path == velt_common::std_module!(sync_channel));
-        let channel = match module.and_then(|m| self.scopes[m].items.get("Channel")) {
-            Some(Item::Def(d)) => *d,
-            _ => return vec![],
+        // Found once: asked at every call of a std method.
+        let find = || {
+            let module = (self.modules.iter())
+                .position(|m| m.is_std && m.path == velt_common::std_module!(sync_channel));
+            let channel = match module.and_then(|m| self.scopes[m].items.get("Channel")) {
+                Some(Item::Def(d)) => *d,
+                _ => return vec![],
+            };
+            let Some(a) = self.adt(channel) else {
+                return vec![];
+            };
+            (["send", "trySend"].iter())
+                .filter_map(|n| a.methods.get(*n).map(|m| m.def))
+                .collect()
         };
-        let Some(a) = self.adt(channel) else {
-            return vec![];
-        };
-        ["send", "trySend"]
-            .iter()
-            .filter_map(|n| a.methods.get(*n).map(|m| m.def))
-            .collect()
+        self.channel_sends_memo.get_or_init(find).clone()
     }
 
     /// The prelude's `Generator<T, E>` class: what calling a generator creates.

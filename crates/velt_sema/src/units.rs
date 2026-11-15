@@ -49,8 +49,10 @@ pub(crate) fn check_definitions(cx: &mut Ctx) {
         cx.freeze_defs();
     }
     crate::timings::pass("units: app", || {
-        crate::script_tdz::check(cx);
-        let from = crate::collect::collect_app(cx, &app);
+        crate::timings::pass("units: app tdz", || crate::script_tdz::check(cx));
+        let from = crate::timings::pass("units: app collect", || {
+            crate::collect::collect_app(cx, &app)
+        });
         cx.collected_defs = cx.defs.len();
         // What std's check built on first use from the classes, implementations and `extend`
         // blocks it had: the app's add to them.
@@ -60,10 +62,13 @@ pub(crate) fn check_definitions(cx: &mut Ctx) {
         cx.classes_below.clear();
         cx.marked_aliases = Default::default();
         cx.native_libraries = Default::default();
+        cx.uses_this_fn = Default::default();
         crate::decorators::check(cx, from.defs);
         crate::global_this::declare(cx);
-        crate::body::check_added(cx, from);
-        crate::body::finish_bodies(cx, from.defs);
+        crate::timings::pass("units: app bodies", || crate::body::check_added(cx, from));
+        crate::timings::pass("units: app finish", || {
+            crate::body::finish_bodies(cx, from.defs)
+        });
     });
     if cx.units_stage == Stage::Both {
         cx.thaw_defs();

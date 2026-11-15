@@ -527,6 +527,10 @@ pub(crate) struct Ctx<'m> {
     pub js_api_modules: std::cell::OnceCell<FxHashMap<usize, Option<FxHashSet<String>>>>,
     /// Where the native libraries' modules are (`json::handles`): computed when first asked.
     pub native_libraries: std::cell::OnceCell<crate::json::handles::NativeLibraries>,
+    /// std's `Channel.send` and `trySend` (`Ctx::channel_sends`), found once.
+    pub channel_sends_memo: std::cell::OnceCell<Vec<DefId>>,
+    /// Whether the program has a function whose `this` is bound at the call (`uses_this_fn`).
+    pub uses_this_fn: std::cell::OnceCell<bool>,
     /// Each module's scopes below module level, for its decorators (`decorators::scope`):
     /// found for a module when one of them first asks.
     pub decorator_scopes: std::cell::RefCell<FxHashMap<usize, crate::decorators::Scopes>>,
@@ -772,6 +776,8 @@ impl<'m> Ctx<'m> {
             widening_values: Default::default(),
             js_api_modules: std::cell::OnceCell::new(),
             native_libraries: std::cell::OnceCell::new(),
+            channel_sends_memo: std::cell::OnceCell::new(),
+            uses_this_fn: std::cell::OnceCell::new(),
             decorator_scopes: Default::default(),
             literal_types: FxHashMap::default(),
             literal_found: FxHashMap::default(),

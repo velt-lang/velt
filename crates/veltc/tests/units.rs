@@ -325,3 +325,42 @@ fn a_type_query_in_the_app_s_signatures_waits_for_collection() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "{stderr}");
 }
+
+/// A check by units holds all of std, `std/lang/this_fn` included, but a member call goes through
+/// that module's `callOn` only in a program with a function whose `this` is bound at the call
+/// (velt_sema `Ctx::uses_this_fn`, velt_loader's `has_this_fn`). Before, every member call
+/// checked its object twice to find out, and a builder chain took twice as long per link: this
+/// one (26 links) took minutes.
+#[test]
+fn a_builder_chain_checks_in_linear_time_by_units() {
+    let dir = test_dir::TestDir::new();
+    let mut src = String::from("import { ArgParser } from \"velt/cli\";\nfunction main() {\n  const p = new ArgParser(\"a\", \"b\")");
+    for i in 0..26 {
+        src.push_str(&format!(
+            "\n    .flag(\"f{i}\", {{ short: \"a\", help: \"h\" }})"
+        ));
+    }
+    src.push_str(";\n  console.log(p != null);\n}\n");
+    std::fs::write(dir.path().join("main.velt"), src).unwrap();
+    let mut child = no_window::command(env!("CARGO_BIN_EXE_velt"))
+        .args(["check", "main.velt"])
+        .current_dir(dir.path())
+        .env("VELT_UNITS", "2")
+        .env_remove("VELT_UNITS_FREEZE")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let start = std::time::Instant::now();
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            assert!(status.success(), "the check failed");
+            return;
+        }
+        if start.elapsed() > std::time::Duration::from_secs(60) {
+            let _ = child.kill();
+            panic!("the chain's check took over a minute");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
