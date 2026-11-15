@@ -1020,12 +1020,8 @@ Declared in std (Velt signatures; `u8[]`/`string` are passed as in rt_abi_async.
   worked out once, right after that statement, when the rest of the block reads a byte of `s` and
   is quiet (`lower/quiet.rs`, strict): nothing there can grow a builder or replace what `s` borrows
   (`lower/str_data.rs`).
-- Numbers: `velt_rt_f64_to_fixed(x: f64, digits: i64): string` (JS `toFixed` rounding; std's
-  `toFixed` (velt/lang/number/fixed) calls it only for more than 19 digits, a result past 64
-  bits, and 1e21 and up),
-  `velt_rt_f64_to_exponential(x: f64, digits: i64): string` (JS `toExponential`; `digits < 0`:
-  omitted), `velt_rt_f64_to_precision(x: f64, precision: i64): string` (JS `toPrecision`)
-  (additive; `toString(radix)` is std's, velt/lang/number/radix),
+- Numbers (`toFixed`, `toExponential`, `toPrecision` and `toString(radix)` are std's:
+  velt/lang/number, velt/lang/hooks/number_digits):
   `velt_rt_math_umulh(a: u64, b: u64): u64` (high 64 bits of the product),
   `velt_rt_math_f64_bits(x: f64): u64` and `velt_rt_math_bits_f64(b: u64): f64` (IEEE 754 bit
   casts, `x.toBits()` / `f64.fromBits(b)`; both backends emit them inline).

@@ -66,4 +66,9 @@ pub const DELETED: &[&str] = &[
     "velt_rt_f64_to_radix",
     "velt_rt_i64_to_radix",
     "velt_rt_u64_to_radix",
+    // #2196: `toExponential`, `toPrecision` and `toFixed`'s exact digits
+    // (std/lang/hooks/number_digits, velt/lang/number/exact).
+    "velt_rt_f64_to_exponential",
+    "velt_rt_f64_to_precision",
+    "velt_rt_f64_to_fixed",
 ];
