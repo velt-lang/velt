@@ -5,7 +5,7 @@
 // Integers are exact over the whole `i64` and `u64` range. `NaN`, the infinities and the radix's
 // range are the caller's (velt/lang/hooks/number).
 
-import { arraySetLen, arrayTruncate, arrayWithCapacity, floor } from "velt/lang/intrinsics";
+import { arraySetLen, arrayTruncate, arrayWithCapacity, floor, noInline } from "velt/lang/intrinsics";
 import { asciiText } from "velt/lang/number/ascii";
 
 // The digit `d` (0 to 35) as `0`-`9`, `a`-`z`.
@@ -25,6 +25,7 @@ function exponentOf(x: f64): i64 {
 }
 
 /** `x.toString(radix)` of a finite `x`, `radix` 2 to 36. */
+@noInline
 export function f64Radix(x: f64, radix: i64): string {
   if (x == 0) {
     // -0 too.
@@ -114,6 +115,7 @@ export function f64Radix(x: f64, radix: i64): string {
 }
 
 /** `x.toString(radix)` of the integer `a` (its magnitude), after a `-` when `neg`; `radix` 2 to 36. */
+@noInline
 export function intRadix(neg: bool, a: u64, radix: i64): string {
   const r = radix as u64;
   // 64 digits in radix 2, and the sign.

@@ -1,14 +1,16 @@
 // velt/lang/hooks (internal): `toExponential`, `toPrecision` and the `toFixed` results past 64
 // bits, in Velt (#2196), with JavaScript's rounding: the exact value rounded to the digits asked
 // for, an exact tie away from zero (velt/lang/number/exact). `toExponential()` without digits
-// takes the shortest digits (velt/lang/number/shortest), as `String(x)` does. std reaches these by
-// role (`hookCall`), so only a program that calls one loads this module and the digit code.
+// takes the shortest digits, those of `String(x)`. std reaches these by role (`hookCall`), so only
+// a program that calls one loads this module and the digit code.
 
-import { arraySetLen, arrayTruncate, arrayWithCapacity } from "velt/lang/intrinsics";
+import { arrayTruncate, arrayWithCapacity, noInline, strByteAt, strByteLen } from "velt/lang/intrinsics";
 import { asciiText } from "velt/lang/number/ascii";
 import { exactDigits, roundDigits } from "velt/lang/number/exact";
-import { digitCount } from "velt/lang/number/integer";
-import { shortest } from "velt/lang/number/shortest";
+
+// `String(x)`, by the printer `${x}` falls back to: a template here would load std's float
+// printing (velt/lang/number/format) into every program that calls one of these.
+declare function velt_rt_str_from_f64(x: f64): string;
 
 /** `String(x)` of NaN and the infinities. */
 function special(x: f64): string {
@@ -44,23 +46,56 @@ function rounded(a: f64, n: i64): Rounded {
   return { digits, e: x.e };
 }
 
-/** The shortest digits of `a` (above 0) without trailing zeros, and the power of ten of the first. */
+/**
+ * The shortest digits of `a` (above 0, finite) without trailing zeros, and the power of ten of the
+ * first: read from `String(a)`, which holds exactly those digits.
+ */
 function shortestDigits(a: f64): Rounded {
-  const s = shortest(a);
-  let f = s.f;
-  let e = s.e;
-  while (f % 10 == 0) {
-    f = f / 10;
-    e++;
+  const s = velt_rt_str_from_f64(a);
+  const n = strByteLen(s);
+  const digits: u8[] = arrayWithCapacity(20);
+  let point = false;
+  // Digits before the point, and zeros after it before the first digit that isn't 0.
+  let whole: i64 = 0;
+  let zeros: i64 = 0;
+  let i: usize = 0;
+  while (i < n) {
+    const c = strByteAt(s, i as u64);
+    if (c == 46) {
+      point = true;
+    } else if (c - 48 <= 9) {
+      if (digits.length == 0 && c == 48) {
+        if (point) {
+          zeros++;
+        }
+      } else {
+        digits.push(c);
+        if (!point) {
+          whole++;
+        }
+      }
+    } else {
+      break;
+    }
+    i++;
   }
-  const k = digitCount(f) as usize;
-  const digits: u8[] = arrayWithCapacity(k);
-  arraySetLen(digits, k);
-  for (let i: usize = 0; i < k; i++) {
-    digits[k - 1 - i] = (48 + f % 10) as u8;
-    f = f / 10;
+  // `e+X` / `e-X`.
+  let exp: i64 = 0;
+  if (i < n) {
+    const neg = strByteAt(s, (i + 1) as u64) == 45;
+    for (let k = i + 2; k < n; k++) {
+      exp = exp * 10 + ((strByteAt(s, k as u64) - 48) as i64);
+    }
+    if (neg) {
+      exp = -exp;
+    }
   }
-  return { digits, e: e + (k as i64) - 1 };
+  let k = digits.length;
+  while (k > 1 && digits[k - 1] == 48) {
+    k--;
+  }
+  arrayTruncate(digits, k);
+  return { digits, e: (whole > 0 ? whole - 1 : -zeros - 1) + exp };
 }
 
 /** Appends `d.ddd` and `e+X` / `e-X` to `out`. */
@@ -93,6 +128,7 @@ function text(out: u8[]): string {
  * `x.toExponential(digits)`: `digits` (0 to 100) digits after the point; below 0, as many as tell
  * `x` apart (`toExponential()`). NaN and the infinities are `String(x)`.
  */
+@noInline
 export function toExponentialText(x: f64, digits: i64): string {
   if (!(x - x == 0)) {
     return special(x);
@@ -118,6 +154,7 @@ export function toExponentialText(x: f64, digits: i64): string {
  * `x.toPrecision(precision)`: `precision` (1 to 100) significant digits, in exponential notation
  * when the exponent is below -6 or at least `precision`. NaN and the infinities are `String(x)`.
  */
+@noInline
 export function toPrecisionText(x: f64, precision: i64): string {
   if (!(x - x == 0)) {
     return special(x);
@@ -162,10 +199,11 @@ export function toPrecisionText(x: f64, precision: i64): string {
  * `toFixed` (velt/lang/number/fixed) calls for the results its 64-bit path can't hold. From 1e21
  * up, and for NaN and the infinities, it is `String(x)`.
  */
+@noInline
 export function toFixedText(x: f64, digits: i64): string {
   const a = x < 0 ? -x : x;
   if (!(a < 1e21)) {
-    return `${x}`;
+    return velt_rt_str_from_f64(x);
   }
   // The integer `|x| * 10^digits` rounded: the exact digits down to the place of 10^-digits.
   let n: u8[] = [];
