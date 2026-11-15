@@ -17,7 +17,7 @@ use crate::inst_sites::guards_of;
 type Copy = (TyId, bool);
 
 /// The facts of one function body.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct Facts {
     copies: Vec<Copy>,
     /// Generic calls: callee, type arguments, span of the call.
@@ -134,7 +134,8 @@ fn is_empty_array(e: &Expr) -> bool {
 }
 
 /// The facts of every function body, in definition order (also `crate::weak_threads`).
-pub(crate) fn collect(cx: &mut Ctx) -> Vec<(DefId, Facts)> {
+/// The facts of each function body from definition `from` on.
+pub(crate) fn collect(cx: &mut Ctx, from: usize) -> Vec<(DefId, Facts)> {
     let ctors: FxHashMap<DefId, DefId> = (0..cx.info.len())
         .filter_map(|i| match &cx.info[i] {
             DefInfo::Adt(a) => a.ctor.map(|c| (DefId(i as u32), c)),
@@ -143,7 +144,7 @@ pub(crate) fn collect(cx: &mut Ctx) -> Vec<(DefId, Facts)> {
         .collect();
     let ctor_fns: FxHashSet<DefId> = ctors.values().copied().collect();
     let mut out = vec![];
-    for (i, d) in cx.defs.iter().enumerate() {
+    for (i, d) in cx.defs.iter().enumerate().skip(from) {
         let Some(Def::Fn(f)) = d else { continue };
         let mut facts = Facts::default();
         let guards = guards_of(&cx.ty, &f.body.block);

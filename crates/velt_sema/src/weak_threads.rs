@@ -41,6 +41,25 @@ enum Need {
     Source(DefId),
 }
 
+/// What one body crosses and converts, and the closures it hands to another task or to `with`
+/// or makes async ([`Found`]).
+#[derive(Clone, Default)]
+struct Scan {
+    needs: Vec<(TyId, Need)>,
+    task_fns: Vec<(DefId, Span)>,
+    lock_fns: Vec<DefId>,
+    async_fns: Vec<DefId>,
+}
+
+/// A finished unit's scans (`Ctx::weak_scans`, `crate::units`): what its bodies cross and
+/// convert, and their facts for the instantiations ([`crate::promise_copies::collect`]). Its
+/// bodies never change, so a later unit's check takes these in place of reading them again.
+#[derive(Clone, Default)]
+pub(crate) struct WeakScans {
+    bodies: Vec<(DefId, Scan)>,
+    facts: Vec<(DefId, crate::promise_copies::Facts)>,
+}
+
 /// The crossings and conversions of one body.
 struct Found<'a, 'm> {
     cx: &'a Ctx<'m>,
@@ -168,6 +187,65 @@ fn peel(mut e: &Expr) -> &Expr {
     }
 }
 
+/// The scan of each body: a finished unit's from its summary, the unit's own read here. std's
+/// stage keeps its scans and facts for the app's (computed whether or not its own check needs
+/// the facts: the app's may).
+fn scans(cx: &mut Ctx, sends: &[DefId]) -> Vec<(DefId, Scan)> {
+    use crate::units::Stage;
+    let from = match cx.units_stage {
+        Stage::App => cx.unit_base as usize,
+        Stage::Both | Stage::Std => 0,
+    };
+    let mut out = match cx.units_stage {
+        Stage::App => cx.weak_scans.bodies.clone(),
+        Stage::Both | Stage::Std => vec![],
+    };
+    for (i, d) in cx.defs.iter().enumerate().skip(from) {
+        let Some(Def::Fn(f)) = d else { continue };
+        let def = DefId(i as u32);
+        let std = cx.try_fn(def).is_some_and(|fi| cx.scopes[fi.module].is_std);
+        let mut found = Found {
+            cx: &*cx,
+            sends,
+            std,
+            needs: vec![],
+            task_fns: vec![],
+            lock_fns: vec![],
+            async_fns: vec![],
+            super_receivers: FxHashSet::default(),
+        };
+        crate::visit_ref::block(&f.body.block, &mut found);
+        let scan = Scan {
+            needs: found.needs,
+            task_fns: found.task_fns,
+            lock_fns: found.lock_fns,
+            async_fns: found.async_fns,
+        };
+        out.push((def, scan));
+    }
+    if cx.units_stage == Stage::Std {
+        let facts = crate::promise_copies::collect(cx, 0);
+        cx.weak_scans = WeakScans {
+            bodies: out.clone(),
+            facts,
+        };
+    }
+    out
+}
+
+/// The facts of every body for the instantiations: a finished unit's from its summary.
+fn facts(cx: &mut Ctx) -> Vec<(DefId, crate::promise_copies::Facts)> {
+    match cx.units_stage {
+        crate::units::Stage::App => {
+            let mut out = cx.weak_scans.facts.clone();
+            out.extend(crate::promise_copies::collect(cx, cx.unit_base as usize));
+            out
+        }
+        crate::units::Stage::Std => cx.weak_scans.facts.clone(),
+        crate::units::Stage::Both => crate::promise_copies::collect(cx, 0),
+    }
+}
+
 /// The captures of closure `n`: type, name and where the captured variable is declared.
 pub(crate) fn captures(cx: &Ctx, n: DefId) -> Vec<(TyId, String, Span)> {
     match &cx.defs[n.0 as usize] {
@@ -205,26 +283,12 @@ pub(crate) fn check(cx: &mut Ctx, recorded: crate::ownership::WeakCrossings) {
         own.entry(d).or_default().push((t, Need::Cross(what, at)));
     }
     let (mut lock_fns, mut task_fns, mut async_fns) = (vec![], vec![], vec![]);
-    for (i, d) in cx.defs.iter().enumerate() {
-        let Some(Def::Fn(f)) = d else { continue };
-        let def = DefId(i as u32);
-        let std = cx.try_fn(def).is_some_and(|fi| cx.scopes[fi.module].is_std);
-        let mut found = Found {
-            cx: &*cx,
-            sends: &sends,
-            std,
-            needs: vec![],
-            task_fns: vec![],
-            lock_fns: vec![],
-            async_fns: vec![],
-            super_receivers: FxHashSet::default(),
-        };
-        crate::visit_ref::block(&f.body.block, &mut found);
-        lock_fns.extend(std::mem::take(&mut found.lock_fns));
-        task_fns.extend(std::mem::take(&mut found.task_fns));
-        async_fns.extend(std::mem::take(&mut found.async_fns));
-        if !found.needs.is_empty() {
-            own.entry(def).or_default().extend(found.needs);
+    for (def, scan) in scans(cx, &sends) {
+        lock_fns.extend(scan.lock_fns);
+        task_fns.extend(scan.task_fns);
+        async_fns.extend(scan.async_fns);
+        if !scan.needs.is_empty() {
+            own.entry(def).or_default().extend(scan.needs);
         }
     }
     for n in lock_fns {
@@ -419,7 +483,7 @@ fn instantiations(
     concrete: &mut Vec<(Span, TyId, GenCopy, Option<DefId>)>,
     sources: &mut Vec<(DefId, TyId)>,
 ) {
-    let mut facts = crate::promise_copies::collect(cx);
+    let mut facts = facts(cx);
     let mut dispatch = Dispatch::default();
     for (_, fx) in &mut facts {
         for (t, span) in std::mem::take(&mut fx.dispatch) {

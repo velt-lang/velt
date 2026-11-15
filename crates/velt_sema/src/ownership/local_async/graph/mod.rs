@@ -178,7 +178,8 @@ const STORE: To = To::Flag(STORED, None);
 /// The graph of every checked function body.
 pub(super) fn build(cx: &Ctx) -> Graph {
     let mut g = Graph::default();
-    for i in 0..cx.defs.len() {
+    // The unit's bodies (`crate::units`): a finished unit's functions come with its summaries.
+    for i in cx.unit_base as usize..cx.defs.len() {
         let d = DefId(i as u32);
         let Some(Def::Fn(f)) = &cx.defs[i] else {
             continue;

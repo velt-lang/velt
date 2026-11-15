@@ -23,6 +23,7 @@ mod fn_values;
 mod infer;
 mod kept_fns;
 mod local_async;
+pub(crate) use local_async::AsyncSummaries;
 pub(crate) mod local_closures;
 mod locked;
 mod many;

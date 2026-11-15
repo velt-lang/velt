@@ -148,7 +148,10 @@ pub(crate) fn run(cx: &mut Ctx) {
         cx.gen.binding.bound = bound;
         match demand {
             Some(d) if !d.requests.is_empty() => {
-                if !generate(cx, generator, &d, &mut pending) {
+                let made = crate::timings::pass("generated::generate", || {
+                    generate(cx, generator, &d, &mut pending)
+                });
+                if !made {
                     break;
                 }
                 known = Some((found, keyed));

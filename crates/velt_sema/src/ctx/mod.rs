@@ -110,10 +110,16 @@ pub(crate) struct Ctx<'m> {
     /// record key, and the param calls that reach it (`record_keys`): that unit's summary, which
     /// a later unit's check starts from (`crate::units`).
     pub key_needs: crate::record_keys::KeyNeeds,
+    /// The same for the local async closures' analysis (`ownership::local_async`).
+    pub async_summaries: crate::ownership::AsyncSummaries,
     /// The same for `json`'s check.
     pub json_needs: crate::json::JsonNeeds,
     /// The same for `struct_tuples`' checks.
     pub tuple_summaries: crate::struct_tuples::Summaries,
+    /// The same for `weak_threads`' check.
+    pub weak_scans: crate::weak_threads::WeakScans,
+    /// The same for `module_state::check_locked_access`.
+    pub state_facts: crate::module_state::StateFacts,
     /// Which part of a check by units this context checks (`crate::units`).
     pub units_stage: crate::units::Stage,
     /// Where the unit being checked starts (`crate::units`): the passes after the bodies take
@@ -585,6 +591,9 @@ impl<'m> Ctx<'m> {
             key_needs: Default::default(),
             tuple_summaries: Default::default(),
             json_needs: Default::default(),
+            async_summaries: Default::default(),
+            weak_scans: Default::default(),
+            state_facts: Default::default(),
             units_stage: crate::units::Stage::Both,
             scopes: modules
                 .iter()
