@@ -1,7 +1,8 @@
 // velt/lang/hooks (tests): a borrower's take of a busy worker's input (sched_spread.velt `lend`,
 // sched_take.velt `take`) on a worker block and tasks built by hand: the tasks that may not move
 // stay where they were, in their order, and the worker is left alone (`E_NOBORROW`) only when
-// the older half held tasks and all of them stayed. Run from a copy of std by
+// the older half held tasks and all of them stayed; and the window's clock (`maybeHelp`): its
+// skipped reads end at a monitor's tick (a change of pace, #2981). Run from a copy of std by
 // crates/veltc/tests/std_scheduler_workers.rs (macOS and Linux: the scheduler's modules don't link
 // on Windows).
 import { describe, expect, it } from "velt/test";
@@ -104,5 +105,48 @@ describe("velt/lang/hooks lend", () => {
     expect(all.indexOf(m.ld(w + t.E_ITAIL))).toBe(1);
     expect(m.ld(w + t.E_ILEN)).toBe(1);
     free(w, all);
+  });
+});
+
+/** sched_spread.velt's measurement window (nanoseconds). */
+const WINDOW: usize = 10000000;
+
+/** Waits until the clock has reached `at` (no wait once it has). */
+function reach(at: usize): void {
+  while (sp.now() < at) {}
+}
+
+describe("velt/lang/hooks spread clock", () => {
+  it("reads the clock at the first look after a monitor tick, however many reads it skips", () => {
+    const mode = t.M_SHARED | t.M_MONITOR | t.M_SPREAD;
+    const w = m.zeroed(t.E_SIZE);
+    m.st32(w + t.E_MODE, mode);
+    const start = sp.now();
+    m.st(w + t.E_W_START, start);
+    reach(start + 1);
+    // Fast polls: a thousand in about no time; the next looks skip the clock.
+    m.st(w + t.E_POLLS, 1000);
+    sp.maybeHelp(w, mode);
+    const skip = m.ld(w + t.E_W_SKIP);
+    expect(skip > 1).toBe(true);
+    // With no tick seen since, a look skips the clock.
+    m.st(w + t.E_POLLS, 1016);
+    sp.maybeHelp(w, mode);
+    expect(m.ld(w + t.E_W_SKIP)).toBe(skip - 1);
+    expect(m.ld(w + t.E_W_START)).toBe(start);
+    // The polls turn slow: the window is over within a few looks (it started at the process's
+    // start, `WINDOW` ago at least), and the monitor ticked meanwhile (a poll's start notes its
+    // tick). The window ends at the next look, not after the skips.
+    reach(WINDOW);
+    m.st(w + t.E_W_START, 0);
+    m.st(w + t.E_PROGRESS, m.ld(w + t.E_PROGRESS) + 1);
+    let looks = 0;
+    while (m.ld(w + t.E_W_START) === 0 && looks < 20) {
+      m.st(w + t.E_POLLS, m.ld(w + t.E_POLLS) + 16);
+      sp.maybeHelp(w, mode);
+      looks++;
+    }
+    expect(looks).toBe(1);
+    m.release(w, t.E_SIZE);
   });
 });
