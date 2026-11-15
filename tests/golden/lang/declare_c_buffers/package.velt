@@ -1,0 +1,9 @@
+import type { Package } from "velt/package";
+
+export const pkg: Package = {
+  name: "declare-c-buffers",
+  version: "0.1.0",
+  // open, pread, pwrite, write, close and unlink, from the platform's C library, unchecked so the
+  // goldens need no zig for the headers.
+  native: { c: { c: { unchecked: true } } },
+};

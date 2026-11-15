@@ -106,7 +106,6 @@ impl PB {
                 params: vec![u32, ty, u8],
                 ret: self.t.unit,
                 is_async: false,
-                system: None,
                 host: None,
                 c: None,
                 is_decorator: false,

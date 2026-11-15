@@ -1,0 +1,96 @@
+// velt/fs (internal): the `#fd-system` variant of macOS (std/imports.velt): posix.velt's safe
+// functions, with macOS's `fcntl` commands and `struct stat`. `fsync` is `F_FULLFSYNC` (to the
+// disk itself), else `F_BARRIERFSYNC`, else `fsync`, as libuv does.
+
+import { arch } from "velt/os/machine";
+import { Stat } from "velt/fs/fd/system";
+import {
+  closeFd as posixCloseFd,
+  fcntlInt as posixFcntlInt,
+  fstatAt as posixFstatAt,
+  fsyncFd as posixFsyncFd,
+  lastError as posixLastError,
+  openPath as posixOpenPath,
+  readInto as posixReadInto,
+  truncateFd as posixTruncateFd,
+  unlinkPath as posixUnlinkPath,
+  writeFrom as posixWriteFrom,
+} from "velt/fs/fd/posix";
+
+/**
+ * The `fcntl` commands whose argument is an `int` (or none): `F_GETFD`, `F_SETFD`, `F_GETFL`,
+ * `F_SETFL`, `F_NOCACHE`, `F_FULLFSYNC`, `F_BARRIERFSYNC`.
+ */
+const INT_COMMANDS: i32[] = [1, 2, 3, 4, 48, 51, 85];
+const F_FULLFSYNC: i32 = 51;
+const F_BARRIERFSYNC: i32 = 85;
+
+function fullSync(fd: i32): i32 {
+  if (posixFcntlInt(fd, F_FULLFSYNC, 0, INT_COMMANDS) == 0) {
+    return 0;
+  }
+  if (posixFcntlInt(fd, F_BARRIERFSYNC, 0, INT_COMMANDS) == 0) {
+    return 0;
+  }
+  return posixFsyncFd(fd);
+}
+
+/** Flushes the file's data and metadata to the disk: 0, or -1. */
+export function syncAll(fd: i32): i32 {
+  return fullSync(fd);
+}
+
+/** Flushes the file's data to the disk: 0, or -1. */
+export function syncData(fd: i32): i32 {
+  return fullSync(fd);
+}
+
+/**
+ * `fstat(fd)`'s fields, or `null` (the error for `lastError()`). On arm64 `fstat` fills the
+ * 64-bit-inode `struct stat`; on x86-64 the symbol `fstat` is the 32-bit-inode one
+ * (`fstat$INODE64` is the other), with `st_mode` at 8, the times from 24 and `st_size` at 72.
+ */
+export function fstatFd(fd: i32): Stat | null {
+  if (arch() == "x64") {
+    return posixFstatAt(fd, 8, true, 72, 40);
+  }
+  return posixFstatAt(fd, 4, true, 96, 48);
+}
+
+// The functions both POSIX variants share, from posix.velt (a variant defines what it exports:
+// `velt check` compares the variants' own signatures).
+
+/** The `errno` of the last failed call of these functions on this thread. */
+export function lastError(): i32 {
+  return posixLastError();
+}
+
+/** `open(path, oflag, mode)`: a descriptor, or -1. */
+export function openPath(path: readonly u8[], oflag: i32, mode: u32): i32 {
+  return posixOpenPath(path, oflag, mode);
+}
+
+/** `close(fd)`: 0, or -1. */
+export function closeFd(fd: i32): i32 {
+  return posixCloseFd(fd);
+}
+
+/** `unlink(path)`: 0, or -1. */
+export function unlinkPath(path: readonly u8[]): i32 {
+  return posixUnlinkPath(path);
+}
+
+/** `read` (`at < 0`) or `pread` at `at` into the bytes `start..end` of `bytes`, or -1. */
+export function readInto(fd: i32, bytes: u8[], start: usize, end: usize, at: i64): isize {
+  return posixReadInto(fd, bytes, start, end, at);
+}
+
+/** `write` (`at < 0`) or `pwrite` at `at` of the bytes `start..end` of `bytes`, or -1. */
+export function writeFrom(fd: i32, bytes: readonly u8[], start: usize, end: usize, at: i64): isize {
+  return posixWriteFrom(fd, bytes, start, end, at);
+}
+
+/** `ftruncate(fd, length)`: 0, or -1. */
+export function truncateFd(fd: i32, length: i64): i32 {
+  return posixTruncateFd(fd, length);
+}

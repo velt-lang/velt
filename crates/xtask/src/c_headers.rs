@@ -31,6 +31,10 @@ const PATHS: &[&str] = &[
     "crates/vpm/src/manifest/c_library.rs",
     "crates/vpm/src/manifest/read/native.rs",
     "std/ffi/",
+    // std's own `declare c("c")` functions and the variants that load them per target
+    // (`velt native headers --std`, tests/c_headers.rs).
+    "std/fs/fd/",
+    "std/imports.velt",
     ".github/actions/zig/",
     // C variables (`declare c("lib") let`, tests/c_sources.rs): their lowering, the backends'
     // data imports, the dev JIT's lookup, the optimizer's and the std cache's handling of them.

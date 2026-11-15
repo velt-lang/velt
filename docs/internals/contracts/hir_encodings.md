@@ -354,9 +354,9 @@ declaration's `ExternFnDef` is never called. Its name maps to the `Intrinsic` in
   A rest parameter typed by a tuple is never interned: `Types::intern` spreads the tuple into
   `params` and clears `rest` (`(...a: [A, B]) => R` is `(a: A, b: B) => R`).
 - `declare function` params are never inferred modified: std passes out-parameters as fresh locals.
-  A `declare system function` (`ExternFnDef::system`, per param whether it was written
-  `readonly`) writes every non-Copy param not written `readonly` (its `u8[]` buffers and its
-  structs): callers pass those `BorrowMut`.
+  A host or C function (`ExternFnDef::host`, `ExternFnDef::c`) writes every buffer parameter
+  not written `readonly` (and a C function its `Out`/`OutPtr` parameters): callers pass those
+  `BorrowMut`.
   An argument of such a call for a `u8[]` parameter (a buffer or a path) is a `u8[]`, a value
   of a class extending `std/lang/typed_array/buffer_view::BufferView` (a typed array or `DataView`: the
   argument keeps its class type, with no conversion), or `Intrinsic::Subarray(xs, begin,

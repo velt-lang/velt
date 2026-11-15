@@ -241,7 +241,7 @@ fn is_test_runner(symbol: &str) -> bool {
 }
 
 /// What calling the extern `symbol` reaches, if anything. Only what is known to be pure is
-/// inside; a system function (`open`, `CreateFileW`), a native package's function and anything
+/// inside; a C function (`open`, `CreateFileW`), a native package's function and anything
 /// else unknown is outside.
 fn reason(symbol: &str) -> Option<String> {
     if let Some((_, what)) = IMPURE_IN_PURE_GROUP
@@ -251,7 +251,7 @@ fn reason(symbol: &str) -> Option<String> {
         return Some(what.to_string());
     }
     let Some(rest) = symbol.strip_prefix("velt_") else {
-        return Some(format!("a system function `{symbol}`"));
+        return Some(format!("a C function `{symbol}`"));
     };
     if let Some(runtime) = rest.strip_prefix("rt_") {
         let group = runtime.split('_').next().unwrap_or("");
@@ -397,9 +397,9 @@ mod tests {
         assert_eq!(outside("velt_rt_memory_rss"), "the environment");
         assert_eq!(outside("velt_rt_isatty"), "the environment");
         assert_eq!(outside("velt_rt_worker_count"), "the environment");
-        // System functions, native packages (also those named like Velt's own prefixes), and
+        // C functions, native packages (also those named like Velt's own prefixes), and
         // runtime functions not listed as pure.
-        assert_eq!(outside("open"), "a system function `open`");
+        assert_eq!(outside("open"), "a C function `open`");
         assert_eq!(outside("velt_sqlite__open"), "native code of `sqlite`");
         assert_eq!(outside("velt_sigx__get"), "native code of `sigx`");
         assert_eq!(outside("velt_simdjson__parse"), "native code of `simdjson`");

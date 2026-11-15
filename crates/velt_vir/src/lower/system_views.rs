@@ -1,4 +1,4 @@
-//! Views of bytes passed to a system function's buffer parameter (#1718; sema's
+//! Views of bytes passed to a C or host function's buffer parameter (#1718; sema's
 //! `body/expr/system_args.rs`): the address and the length of the bytes, with no copy.
 //!
 //! - `xs.subarray(begin, end)` of a `u8[]` (`Intrinsic::Subarray`): the bytes between JS's
@@ -13,9 +13,9 @@
 
 use velt_sema::hir::{self, Callee as HCallee, Intrinsic, TyId};
 
+use super::extern_args::Arg;
 use super::hook_calls::{self as hooks, ty, HookTy};
 use super::operand::proj;
-use super::system::Arg;
 use super::{cint, ice, FnLower};
 use crate::vir::{BinOp, Operand, Place, Proj, Rvalue, Terminator, Ty};
 

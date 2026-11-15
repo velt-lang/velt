@@ -1,0 +1,2 @@
+declare_system_removed.velt:3:9
+error: `declare system function` was removed: declare a C library function with `declare c("c")` in a package with native code (`native: { c: {} }`) and call it in an `unsafe` block; velt/fs and velt/os wrap the file functions and `lastOsError`

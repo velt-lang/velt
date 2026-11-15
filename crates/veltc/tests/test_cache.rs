@@ -134,14 +134,15 @@ fn the_leak_check_runs_what_an_ordinary_run_kept() {
     assert!(!out.contains("pure.test.velt (cached)"), "{out}");
 }
 
-/// A system function is outside the program: what it reads isn't covered by the program's bytes.
+/// A C function is outside the program: what it reads isn't covered by the program's bytes.
+/// std's `closeSync` calls the C library's `close`.
 #[cfg(unix)]
 #[test]
-fn a_test_calling_a_system_function_runs_every_time() {
+fn a_test_calling_a_c_function_runs_every_time() {
     let p = package();
     p.write(
         "tests/sys.test.velt",
-        "import { expect } from \"velt/test\";\n\ndeclare system function close(fd: i32): i32;\n\nexport function test_pid() {\n  expect(close(-1)).toBe(-1);\n}\n",
+        "import { expect } from \"velt/test\";\nimport { closeSync } from \"velt/fs\";\n\nexport function test_pid() {\n  let threw = false;\n  try {\n    closeSync(1000000);\n  } catch (e) {\n    threw = true;\n  }\n  expect(threw).toBe(true);\n}\n",
     );
     for _ in 0..2 {
         let running = p.running(&[]);
@@ -150,9 +151,7 @@ fn a_test_calling_a_system_function_runs_every_time() {
             .iter()
             .find(|l| l.starts_with("tests/sys.test.velt"));
         assert!(
-            sys.is_some_and(
-                |l| l.contains("not cacheable") && l.contains("a system function `close`")
-            ),
+            sys.is_some_and(|l| l.contains("not cacheable") && l.contains("a C function `close`")),
             "{running:?}"
         );
     }

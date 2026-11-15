@@ -275,7 +275,6 @@ pub(super) fn extern_fn(
         params,
         ret,
         is_async,
-        system: None,
         host: None,
         c: None,
         is_decorator: false,

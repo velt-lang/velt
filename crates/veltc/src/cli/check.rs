@@ -24,7 +24,7 @@ pub struct CheckArgs {
     pub std: bool,
     /// `--no-generators`: run no source generator; code that needs one is an error.
     pub no_generators: bool,
-    /// `--target <triple>`: check for that target (the `#name` variants it selects, the system
+    /// `--target <triple>`: check for that target (the `#name` variants it selects, the C
     /// functions it has); `None` → the host.
     pub target: Option<String>,
     /// `--perf`: run every `perf/…` rule, those on the optimized program too, and show their

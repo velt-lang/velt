@@ -149,7 +149,7 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   (`abstract x: T;`), whose decorators are a field's. `AST_FORMAT` 12. Sema records the uses in `Program::decorators` (hir_encodings.md
   "Decorators") and `DefKind::Decorator` names the declarations for editors.
 - `FnSig::host: Option<HostModule { module, span }>` (`ast.rs`): `declare host("<module>")
-  function name(…): R;`, an `ItemKind::ExternFn` like `declare system function` (`host` is a
+  function name(…): R;`, an `ItemKind::ExternFn` like `declare c("lib") function` (`host` is a
   word only between `declare` and `(`). Any module may declare one
   (https://veltlang.com/docs/reference/host-functions/).
 - `hir::ExternFnDef::host: Option<HostImport { module, params: Vec<HostTy>, ret: HostTy }>`
@@ -158,13 +158,13 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   `F64`, `Bool`, `Str`, `Bytes { readonly }`, `Ref { nullable }` for std's `HostRef`, `Void`). Not
   an extern of the link: sema has checked the types, and every declaration of one import has the
   same ones. Calls pass `u8[]` parameters `BorrowMut` and take views of bytes there, as for
-  system functions (hir_encodings.md).
+  C functions (hir_encodings.md).
 - `vir::ExternFn::host: Option<HostImport { module, name, params: Vec<HostValue>, ret }>`
   (`vir/host.rs`): the extern is that import, not a link symbol; its `symbol` only names it in
   the object. The extern's signature per value and the manifest the glue reads (the custom
   section `velt.host`, a line per import) are in `vir/host.rs`. Lowering makes one only for
-  `wasm32-unknown-unknown`; on any other target a reachable call is an error, as for a system
-  function the target lacks. The LLVM backend declares it with `wasm-import-module` /
+  `wasm32-unknown-unknown`; on any other target a reachable call is an error, as for a C
+  function the target can't call. The LLVM backend declares it with `wasm-import-module` /
   `wasm-import-name` and writes the manifest; other backends never see one.
 - Async host functions (#1737): `declare host("m") async function f(…): Promise<T>` has
   `ExternFnDef::is_async` with `host` (`HostImport::ret` is what `T` crosses as) and `ret`
@@ -183,8 +183,16 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   `Ptr<T>`, `Ptr<T> | null`, `null`). `vir::ExternFn::variadic` (additive) marks the extern:
   `params` are the fixed ones, and a call passes further scalars of type `I32`, `U32`, `I64`,
   `U64`, `F64` or `Ptr`, C's default argument promotions done (the verifier checks both).
-  Backends call it with the target's variadic convention; `declare system`'s variadic forms are
-  such externs too.
+  Backends call it with the target's variadic convention.
+- `declare system function` is gone (#2187 step 2): std's functions of the C library are
+  `declare c("c")` declarations (std/fs/fd/posix.velt), the guards the compiler's table enforced
+  are std's Velt wrappers, and the parser reports `declare system` as an error naming `declare
+  c("c")`. Removed: `ast::FnSig::is_system` (`AST_FORMAT` 16), `hir::ExternFnDef::system`,
+  velt_vir's `system` module (its table) and `lower/system.rs`; added: velt_vir's `c_abi`
+  (`errno`'s accessor per target, `host_triple`, `base_name`). `lastOsError()` is std's
+  `ThreadLocal` `OS_ERROR` (std/os/rt.velt), which lowering stores `errno` into after a
+  `declare c("c", { errno: true })` call (`c_abi::ERRNO_SLOT`; on Windows the C runtime's
+  `_errno()`, and `GetLastError()` for another library).
 - std's own host functions (#1785): the import modules `velt:fetch`
   (std/net/http/fetch/client/transport/js_host.velt), `fetch`'s transport on JS hosts, and
   `velt:random` (std/lang/random/seed_js.velt), `Math.random()`'s seed, which the glue provides

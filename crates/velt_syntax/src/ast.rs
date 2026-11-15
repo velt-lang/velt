@@ -90,7 +90,7 @@ pub enum ItemKind {
     /// `extend<T> Array<T> { methods }` — add methods to an existing type (used by std/prelude).
     Extend(ExtendDecl),
     /// `declare function name(a: i64): void;` — external C-ABI symbol (used by std for rt FFI);
-    /// `declare system function pread(...)` (`FnSig::is_system`) binds the platform's C library;
+    /// `declare c("lib") function f(...)` (`FnSig::c`) binds a C library's function;
     /// `@intrinsic declare function f(...)` declares a compiler intrinsic (sema knows the
     /// decorator by its hook role);
     /// `declare host("m") function f(...)` (`FnSig::host`) declares a function the JS host
@@ -181,10 +181,6 @@ pub struct FnSig {
     /// its body is one (docs/internals/design/c-ffi.md); `declare unsafe function`, allowed only
     /// on an `@intrinsic` declaration, likewise. Additive.
     pub is_unsafe: bool,
-    /// `declare system function`: a function of the platform's C library, checked against the
-    /// compiler's table of system functions (https://veltlang.com/docs/reference/system-functions/). Always `false`
-    /// for anything but a `declare` item.
-    pub is_system: bool,
     /// `declare decorator function name(key: string): FieldDecorator;`: a compile-time decorator,
     /// data that is never called (https://github.com/velt-lang/velt/issues/2203). Always `false`
     /// for anything but a `declare` item. Additive.

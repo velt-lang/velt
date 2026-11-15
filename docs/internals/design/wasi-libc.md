@@ -88,8 +88,10 @@ export function seedWord(): u64 {
    ("C functions in packages need a native target on `wasm32-wasip1` until their headers can be
    checked") until zig's `wasm32-wasi` headers are wired in. That is a follow-up, not needed for
    std.
-5. **`declare system`.** Not extended to wasm. The FFI design folds it into `declare c`, so a
-   wasip1 table for it would be work thrown away.
+5. **`declare system`.** Not extended to wasm, and gone since #2187 step 2: std's file
+   functions are `declare c("c")` on macOS and Linux, and fail with ENOSYS on wasip1 (the
+   `#fd-system` variant `unsupported.velt`) until a wasip1 variant reads wasi-libc's `struct
+   stat`.
 
 No linker change: `libc.a` is already on the link line, and library `c` adds nothing to
 `c_libs`.

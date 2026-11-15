@@ -1,16 +1,16 @@
 //! Calls of C functions (`declare c("lib") function`, docs/internals/design/c-ffi.md): a direct
 //! call with the target's C calling convention, the arguments as the declaration types them,
-//! and `errno` captured right after it, as for system functions (`lastOsError()` reads it).
+//! and `errno` captured right after it when the declaration asks (`lastOsError()` reads it).
 //! On `wasm32-wasip1`, std may call the C library `c`, which is wasi-libc
 //! (docs/internals/design/wasi-libc.md). Any other WebAssembly call can't be made: an error once
-//! lowering is done (system.rs `unavailable_diagnostics`). C constants (`declare c const`) are
+//! lowering is done (extern_args.rs `unavailable_diagnostics`). C constants (`declare c const`) are
 //! read here too.
 
 use velt_sema::hir::{self, CTy, DefId, IntTy, TyId, TyKind};
 
-use super::system::Arg;
+use super::extern_args::Arg;
 use super::{cint, ice, unit, Cx, FnLower};
-use crate::system;
+use crate::c_abi;
 use crate::vir::{self, BinOp, Operand, Place, Rvalue, Ty, STR_AGG};
 
 /// std's hooks that turn a `Ptr` into its address and back (std/ffi/ptr.velt).
@@ -285,7 +285,7 @@ impl FnLower<'_, '_> {
         // declaration that asks: it is a call and a store per C call, about 9% of a query that
         // reads a hundred rows from SQLite, whose failures come back as results.
         if c.errno {
-            self.capture_errno();
+            self.capture_errno(&c.library);
         }
         let Some(d) = dest else {
             return unit();
@@ -368,7 +368,7 @@ impl FnLower<'_, '_> {
     /// can. On `wasm32-wasip1` only std can, and only the C library `c` (wasi-libc, linked into
     /// every program): a package's declarations can't be checked against WASI's headers yet.
     pub(super) fn c_callable(&self, span: velt_common::Span, library: &str) -> bool {
-        if system::target_os(&self.cx.target).is_some() {
+        if c_abi::native(&self.cx.target) {
             return true;
         }
         wasi(&self.cx.target)
@@ -378,7 +378,7 @@ impl FnLower<'_, '_> {
 
     /// A read of the C constant `d` of type `ty` (`declare c const`): its value for this target,
     /// which C headers gave. A target without C headers can't read one: an error once lowering
-    /// is done (system.rs `unavailable_diagnostics`).
+    /// is done (extern_args.rs `unavailable_diagnostics`).
     pub(super) fn c_const(&mut self, d: DefId, c: hir::CConst, ty: TyId) -> Operand {
         let t = self.sub(ty);
         let vt = self.cx.ty(t);
@@ -555,7 +555,7 @@ pub(crate) struct CSig {
 
 impl Cx<'_> {
     /// The program's C function `symbol`, declared as `shown` at `at` (`variadic` or not), has
-    /// another signature than the compiler's own calls of it (std's system calls, the runtime's),
+    /// another signature than the compiler's own calls of it (the runtime's),
     /// which are `there_variadic` or not: an error at the declaration, once, whichever comes
     /// first.
     pub(super) fn runtime_c_clash(
@@ -701,5 +701,5 @@ fn c_name(t: CTy) -> &'static str {
 /// The link symbol of a declaration named `declared`: without a `$suffix`, so one module can
 /// declare one C function with several signatures (`objc_msgSend$rect`).
 fn base_symbol(declared: &str) -> &str {
-    system::base_name(declared)
+    c_abi::base_name(declared)
 }

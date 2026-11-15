@@ -16,8 +16,8 @@
 //
 // Functions are ws2_32's, ntdll's, kernel32's and the synchronization library's, all declared
 // from `c` (std names no other library), which the link resolves with those import libraries.
-// Handles (`HANDLE`, `SOCKET`) are `usize`s as the compiler's system functions have them, other
-// pointers `Ptr`s: one C symbol has one signature in a program.
+// Handles (`HANDLE`, `SOCKET`) are `usize`s, as in std's other declarations of these symbols,
+// other pointers `Ptr`s: one C symbol has one signature in a program.
 //
 // A timed wait shorter than the system timer's tick (about 15.6 ms) raises the process's timer
 // resolution first (`os.fineTimers`, wait_win32.velt, #2896): Windows ends a timeout at a tick.

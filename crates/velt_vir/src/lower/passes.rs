@@ -82,7 +82,7 @@ pub(super) fn lower_program_kept<'h>(
         cx.cell_checks = opts.cell_checks;
         cx.target = opts
             .target
-            .map_or_else(crate::system::host_triple, str::to_string);
+            .map_or_else(crate::c_abi::host_triple, str::to_string);
         cx.cpu_checks.no_extensions = opts.no_cpu_extensions;
         cx.jit = opts.jit;
         cx.no_await_steps = no_await_steps;
