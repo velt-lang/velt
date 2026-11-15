@@ -3,7 +3,7 @@
 //! - `<nn>.pack`: the values, one after the other;
 //! - `<nn>.idx`: one [`RECORD`]-byte record per value stored or used: its key, where it is in the
 //!   pack, its length, a checksum of it, and when it was stored or last used (minutes since 1970).
-//!   The last record of a key wins.
+//!   The last record of a key wins; one of length `GONE` removes the entry.
 //!
 //! One file per entry wasted half the disk: most compiled functions are a few hundred bytes to a
 //! few kilobytes, and every file takes at least a whole block.
@@ -32,6 +32,9 @@ use crate::{checksum, Key, LARGE, TOUCH_EVERY};
 pub(crate) const SHARDS: usize = 64;
 /// Bytes per index record: key (32), offset (8), length (4), checksum (8), time (4).
 pub(crate) const RECORD: usize = 56;
+
+/// The length in a record that removes its key's entry (`Packs::remove`).
+const GONE: u32 = u32::MAX;
 
 /// Where a value is, and when it was last used.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -109,6 +112,16 @@ impl Packs {
 
     /// Store `value` under `key` (nothing to do when this process already sees it).
     pub(crate) fn put(&self, key: &Key, value: &[u8]) -> bool {
+        self.store(key, value, false)
+    }
+
+    /// Store `value` under `key` in place of the value there (nothing to do when this process
+    /// already sees the same value).
+    pub(crate) fn replace(&self, key: &Key, value: &[u8]) -> bool {
+        self.store(key, value, true)
+    }
+
+    fn store(&self, key: &Key, value: &[u8], replace: bool) -> bool {
         let n = shard_of(key);
         let mut shard = self.shards[n]
             .lock()
@@ -116,13 +129,15 @@ impl Packs {
         let entries = shard
             .entries
             .get_or_insert_with(|| read_index(&self.idx(n)).unwrap_or_default());
-        if entries.contains_key(&key.0) {
+        let check = checksum(value);
+        let same = |e: &Entry| e.len as usize == value.len() && e.check == check;
+        if entries.get(&key.0).is_some_and(|e| !replace || same(e)) {
             return true;
         }
         let entry = Entry {
             offset: 0, // Set by `append`, under the lock.
             len: value.len() as u32,
-            check: checksum(value),
+            check,
             time: now_minutes(),
         };
         match self.append(n, Some(value), &[(key.0, entry)]) {
@@ -134,6 +149,27 @@ impl Packs {
             }
             Err(_) => false,
         }
+    }
+
+    /// Forget `key`'s entry: a record of length [`GONE`] hides the records before it.
+    pub(crate) fn remove(&self, key: &Key) {
+        let n = shard_of(key);
+        let mut shard = self.shards[n]
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let entries = shard
+            .entries
+            .get_or_insert_with(|| read_index(&self.idx(n)).unwrap_or_default());
+        if entries.remove(&key.0).is_none() {
+            return;
+        }
+        let gone = Entry {
+            offset: 0,
+            len: GONE,
+            check: 0,
+            time: now_minutes(),
+        };
+        let _ = self.append(n, None, &[(key.0, gone)]);
     }
 
     /// Under the shard's file lock: append `value` (if any) to the pack, then `records` to the
@@ -305,7 +341,12 @@ fn read_index(path: &Path) -> Option<HashMap<[u8; 32], Entry>> {
             check: u64::from_le_bytes(r[44..52].try_into().ok()?),
             time: u32::from_le_bytes(r[52..56].try_into().ok()?),
         };
-        entries.insert(key, entry);
+        // A removed entry (or a damaged record: packed values are under `LARGE` bytes).
+        if entry.len as usize >= LARGE {
+            entries.remove(&key);
+        } else {
+            entries.insert(key, entry);
+        }
     }
     Some(entries)
 }

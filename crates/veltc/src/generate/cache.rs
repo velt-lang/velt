@@ -109,15 +109,16 @@ pub(super) struct OfferFile {
     pub access: Vec<String>,
 }
 
-/// The key of program `root`'s offer.
-pub(super) fn offer_key(root: &Path, require_main: bool) -> Option<Key> {
+/// The key of program `root`'s offer, for checks that load every std module (`whole_std`) or
+/// only those the program uses: each kind of check needs its own instances.
+pub(super) fn offer_key(root: &Path, require_main: bool, whole_std: bool) -> Option<Key> {
     crate::build_cache::cache()?;
     let mut h = KeyHasher::new();
     h.part(b"generate-offer-v3");
     h.part(&crate::build_cache::compiler_identity().0);
     // Absolute: the same relative path in another directory is another program.
     h.part(vpm::relpath::absolute(root).as_os_str().as_encoded_bytes());
-    h.part(&[u8::from(require_main)]);
+    h.part(&[u8::from(require_main), u8::from(whole_std)]);
     Some(h.finish())
 }
 
@@ -180,5 +181,6 @@ pub(super) fn store_offer(key: &Key, offer: &Offer) {
     });
     let mut bytes = files_record(key, &offer.generator_files).into_bytes();
     bytes.extend_from_slice(v.to_string().as_bytes());
-    cache.put_key(OFFER_KIND, key, &bytes);
+    // In place of the last one: the program changed since, and needs other instances.
+    cache.replace_key(OFFER_KIND, key, &bytes);
 }

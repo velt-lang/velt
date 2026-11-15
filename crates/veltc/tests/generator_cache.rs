@@ -226,6 +226,47 @@ fn offered_code_is_used_only_while_it_fits() {
     assert_eq!(run(&dir, &cache), "User: name,age\nTeam: size\n");
 }
 
+/// `velt check -v main.velt` in `dir`: how many times the program was checked.
+fn checks(dir: &Path, cache: &Path) -> usize {
+    let out = Command::new(env!("CARGO_BIN_EXE_velt"))
+        .args(["check", "-v", "main.velt"])
+        .current_dir(dir)
+        .env("VELT_BUILD_CACHE", cache)
+        .output()
+        .expect("run velt");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    (stderr.lines())
+        .filter(|l| l.starts_with("velt: sema"))
+        .count()
+}
+
+/// A program that needs an instance its offer does not hold is checked again without the offer,
+/// and that check's code is offered next time in place of the old offer: the build after it is
+/// one check again, not two for as long as the cache lives.
+#[test]
+fn an_offer_that_no_longer_covers_the_program_is_replaced() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let dir = tmp.path().join("prog");
+    let cache = tmp.path().join("cache");
+    std::fs::create_dir_all(&dir).expect("dir");
+    std::fs::write(dir.join("gen.velt"), FIELDS).expect("gen");
+    let main = dir.join("main.velt");
+    let write = |text: String| std::fs::write(&main, text).expect("main");
+    write(program(
+        "class User { name = \"\"; }",
+        "console.log(fields<User>());",
+    ));
+    assert_eq!(checks(&dir, &cache), 1);
+    assert_eq!(checks(&dir, &cache), 1, "the offer covers the program");
+    write(program(
+        "class User { name = \"\"; }\nclass Team { size = 2; }",
+        "console.log(fields<User>()); console.log(fields<Team>());",
+    ));
+    assert_eq!(checks(&dir, &cache), 2, "the offer lacks `Team`'s instance");
+    assert_eq!(checks(&dir, &cache), 1, "the new offer has it");
+}
+
 /// Instances that need code are generated during the check that finds them, and their code is
 /// added to that check: a program with generated functions is checked once, as one without
 /// (docs/internals/design/source-generators.md "As built so far").
