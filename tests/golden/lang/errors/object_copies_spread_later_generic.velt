@@ -1,0 +1,18 @@
+// A copy spread in generic code before a part whose `b` is optional: when it is missing, Node
+// keeps the original's `b` from the copied spread, so a read shows the copy (#2956). Node prints
+// 2. A file of its own, so that no other spread of the copy's type stands in for `merge`'s.
+type A = { a: number };
+type AB = A & { b: number };
+
+function merge<T extends object, U extends object>(t: T, u: U): T & U {
+  return { ...t, ...u };
+}
+
+function laterGeneric(ab: AB, o: { b?: number }) {
+  const x: A = ab;
+  console.log(merge(x, o).b);
+}
+
+function main() {
+  laterGeneric({ a: 1, b: 2 }, {});
+}
