@@ -6,10 +6,11 @@
 // overload promises). Node prints the same.
 type KeyValue = string | readonly (string | number | boolean | null)[];
 type Falsy = false | null | undefined | "";
+type Fetcher<T, Arg> = (arg: Arg) => T;
 
 function useData<T>(key: string, fetcher: (k: string) => T): T | null;
 function useData<T, const K extends KeyValue>(key: () => K | Falsy, fetcher: (k: K) => T): T | null;
-function useData(key: string | (() => KeyValue | Falsy), fetcher: (k: any) => unknown): unknown {
+function useData(key: string | (() => KeyValue | Falsy), fetcher: Fetcher<unknown, any>): unknown {
   if (typeof key === "string") {
     return fetcher(key);
   }

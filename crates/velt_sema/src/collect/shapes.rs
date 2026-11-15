@@ -204,8 +204,8 @@ pub(crate) fn resolve_bounds(cx: &mut Ctx, gs: &[ast::GenericParam], env: &TyEnv
 /// Is every array type written anywhere in `t` read-only (`readonly T[]`, `ReadonlyArray<T>`),
 /// also inside their elements, function types and object types and through the program's type
 /// aliases (`Generics::readonly_arrays`, `FnCx::impl_params_read_only`)? `true` for a type
-/// that writes no array. `false` for a form whose arrays this can't see (a tuple, a qualified
-/// name, a generic alias, `typeof x`, an indexed, conditional or mapped type).
+/// that writes no array. `false` for a form whose arrays this can't see (a tuple with elements,
+/// a qualified name, `typeof x`, an indexed, conditional or mapped type).
 pub(crate) fn arrays_read_only(cx: &Ctx, t: &ast::TypeExpr, module: usize, depth: usize) -> bool {
     use ast::TypeExprKind as K;
     if depth > 8 {
@@ -232,6 +232,7 @@ pub(crate) fn arrays_read_only(cx: &Ctx, t: &ast::TypeExpr, module: usize, depth
         K::IndexSig { fields, value, .. } => {
             all(&mut fields.iter().map(|f| &f.ty).chain([&**value]))
         }
+        K::Tuple(es) if es.is_empty() => true,
         K::Literal(_)
         | K::KeyOf(_)
         | K::TemplateLiteral { .. }
@@ -242,9 +243,11 @@ pub(crate) fn arrays_read_only(cx: &Ctx, t: &ast::TypeExpr, module: usize, depth
             "ReadonlyArray" => all(&mut args.iter()),
             "Array" => false,
             name => match cx.lookup_type_item_at(module, name, path[0].span) {
+                // A generic alias's parameters stand for its arguments: its body and they.
                 Some(crate::ctx::Item::Alias(a)) => {
                     let alias = &cx.aliases[a as usize];
-                    args.is_empty() && arrays_read_only(cx, &alias.decl.ty, alias.module, depth + 1)
+                    arrays_read_only(cx, &alias.decl.ty, alias.module, depth + 1)
+                        && all(&mut args.iter())
                 }
                 // A primitive, a type parameter, a class, interface or enum: the value is
                 // converted as itself, not its fields'.
