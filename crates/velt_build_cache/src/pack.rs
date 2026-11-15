@@ -3,7 +3,8 @@
 //! - `<nn>.pack`: the values, one after the other;
 //! - `<nn>.idx`: one [`RECORD`]-byte record per value stored or used: its key, where it is in the
 //!   pack, its length, a checksum of it, and when it was stored or last used (minutes since 1970).
-//!   The last record of a key wins.
+//!   The last record of a key wins, unless it points below the one before (a touch of a value
+//!   replaced since); one of length `GONE` removes the entry.
 //!
 //! One file per entry wasted half the disk: most compiled functions are a few hundred bytes to a
 //! few kilobytes, and every file takes at least a whole block.
@@ -32,6 +33,9 @@ use crate::{checksum, Key, LARGE, TOUCH_EVERY};
 pub(crate) const SHARDS: usize = 64;
 /// Bytes per index record: key (32), offset (8), length (4), checksum (8), time (4).
 pub(crate) const RECORD: usize = 56;
+
+/// The length in a record that removes its key's entry (`Packs::remove`).
+const GONE: u32 = u32::MAX;
 
 /// Where a value is, and when it was last used.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -109,6 +113,16 @@ impl Packs {
 
     /// Store `value` under `key` (nothing to do when this process already sees it).
     pub(crate) fn put(&self, key: &Key, value: &[u8]) -> bool {
+        self.store(key, value, false)
+    }
+
+    /// Store `value` under `key` in place of the value there, whatever this process saw of it:
+    /// another process may have replaced it since.
+    pub(crate) fn replace(&self, key: &Key, value: &[u8]) -> bool {
+        self.store(key, value, true)
+    }
+
+    fn store(&self, key: &Key, value: &[u8], replace: bool) -> bool {
         let n = shard_of(key);
         let mut shard = self.shards[n]
             .lock()
@@ -116,7 +130,7 @@ impl Packs {
         let entries = shard
             .entries
             .get_or_insert_with(|| read_index(&self.idx(n)).unwrap_or_default());
-        if entries.contains_key(&key.0) {
+        if !replace && entries.contains_key(&key.0) {
             return true;
         }
         let entry = Entry {
@@ -134,6 +148,25 @@ impl Packs {
             }
             Err(_) => false,
         }
+    }
+
+    /// Forget `key`'s entry: a record of length [`GONE`] hides the records before it. Written
+    /// even when this process sees no entry: another process may have stored one since.
+    pub(crate) fn remove(&self, key: &Key) {
+        let n = shard_of(key);
+        let mut shard = self.shards[n]
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(entries) = &mut shard.entries {
+            entries.remove(&key.0);
+        }
+        let gone = Entry {
+            offset: 0, // The pack's length, set by `append`.
+            len: GONE,
+            check: 0,
+            time: now_minutes(),
+        };
+        let _ = self.append(n, None, &[(key.0, gone)]);
     }
 
     /// Under the shard's file lock: append `value` (if any) to the pack, then `records` to the
@@ -161,11 +194,15 @@ impl Packs {
             }
             None => None,
         };
+        // A removal is placed at the end of the pack: a value stored after it is not below it.
+        let end = || fs::metadata(self.pack(n)).map_or(0, |m| m.len());
         for (key, entry) in records {
-            last = Entry {
-                offset: offset.unwrap_or(entry.offset),
-                ..*entry
+            let offset = match (offset, entry.len) {
+                (Some(offset), _) => offset,
+                (None, GONE) => end(),
+                (None, _) => entry.offset,
             };
+            last = Entry { offset, ..*entry };
             encode(&mut out, key, &last);
         }
         // Opened for writing, not appending: on Windows, an append-only handle cannot truncate.
@@ -305,8 +342,17 @@ fn read_index(path: &Path) -> Option<HashMap<[u8; 32], Entry>> {
             check: u64::from_le_bytes(r[44..52].try_into().ok()?),
             time: u32::from_le_bytes(r[52..56].try_into().ok()?),
         };
-        entries.insert(key, entry);
+        // Values are appended, so a record below its key's last one is a stale reader's touch
+        // of a value replaced since (until garbage collection rewrites the shard).
+        if entries
+            .get(&key)
+            .is_none_or(|e: &Entry| entry.offset >= e.offset)
+        {
+            entries.insert(key, entry);
+        }
     }
+    // Removed entries, and damaged records: packed values are under `LARGE` bytes.
+    entries.retain(|_, e| (e.len as usize) < LARGE);
     Some(entries)
 }
 

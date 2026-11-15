@@ -45,6 +45,21 @@ pub(crate) fn put(dir: &Path, key: &Key, value: &[u8]) -> bool {
     whole || write_atomically(&path, &with_header(value)).is_ok()
 }
 
+/// Store `value` under `key` in place of the file there (unless it already holds `value`).
+pub(crate) fn replace(dir: &Path, key: &Key, value: &[u8]) -> bool {
+    let path = path(dir, key);
+    let same = fs::read(&path)
+        .ok()
+        .and_then(checked)
+        .is_some_and(|v| v == value);
+    same || write_atomically(&path, &with_header(value)).is_ok()
+}
+
+/// Remove `key`'s entry, if any.
+pub(crate) fn remove(dir: &Path, key: &Key) {
+    let _ = fs::remove_file(path(dir, key));
+}
+
 /// File entries (`Cache::put_file`): a plain file, which a linker can read as it is, and beside
 /// it a sidecar (`<name>.check`) holding the header. The time of use is the sidecar's: the file
 /// itself keeps its size and time for as long as it is cached, so a build that names it as an

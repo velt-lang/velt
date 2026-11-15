@@ -469,3 +469,81 @@ fn sizes() {
     assert_eq!(parse_size("lots"), None);
     assert_eq!(parse_size("-1G"), None);
 }
+
+/// `replace_key` puts a new value in place of the old one, also when it moves between the packs
+/// and the large files, and another process (a new `Cache`) sees only the new one.
+#[test]
+fn replaced_entries_are_read_back_new() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cache = Cache::new(tmp.path(), DEFAULT_LIMIT);
+    let key = Key::of(&[b"offer"]);
+    let large = vec![5; LARGE + 3];
+    assert!(cache.put_key("offer", &key, b"first"));
+    // `put_key` keeps what is there; `replace_key` does not.
+    assert!(cache.put_key("offer", &key, b"other"));
+    assert_eq!(cache.get_key("offer", &key).as_deref(), Some(&b"first"[..]));
+    assert!(cache.replace_key("offer", &key, b"second"));
+    assert_eq!(
+        cache.get_key("offer", &key).as_deref(),
+        Some(&b"second"[..])
+    );
+    let other = Cache::new(tmp.path(), DEFAULT_LIMIT);
+    assert_eq!(
+        other.get_key("offer", &key).as_deref(),
+        Some(&b"second"[..])
+    );
+    // Small to large and back.
+    assert!(cache.replace_key("offer", &key, &large));
+    assert_eq!(cache.get_key("offer", &key), Some(large.clone()));
+    let other = Cache::new(tmp.path(), DEFAULT_LIMIT);
+    assert_eq!(other.get_key("offer", &key), Some(large));
+    assert_eq!(other.usage().entries, 1);
+    assert!(cache.replace_key("offer", &key, b"third"));
+    let other = Cache::new(tmp.path(), DEFAULT_LIMIT);
+    assert_eq!(other.get_key("offer", &key).as_deref(), Some(&b"third"[..]));
+    assert_eq!(other.usage().entries, 1);
+    // Garbage collection keeps the last value.
+    other.collect_garbage(DEFAULT_LIMIT);
+    let other = Cache::new(tmp.path(), DEFAULT_LIMIT);
+    assert_eq!(other.get_key("offer", &key).as_deref(), Some(&b"third"[..]));
+}
+
+/// A process that saw no entry still removes the one another process stored since, when its
+/// replacement goes to the large files: a later reader gets the new value, not the packed one.
+#[test]
+fn a_replacement_removes_a_packed_value_this_process_never_saw() {
+    let tmp = tempfile::tempdir().unwrap();
+    let key = Key::of(&[b"offer"]);
+    let large = vec![5; LARGE + 3];
+    let a = Cache::new(tmp.path(), DEFAULT_LIMIT);
+    assert_eq!(a.get_key("offer", &key), None);
+    let b = Cache::new(tmp.path(), DEFAULT_LIMIT);
+    assert!(b.replace_key("offer", &key, b"small"));
+    assert!(a.replace_key("offer", &key, &large));
+    let reader = Cache::new(tmp.path(), DEFAULT_LIMIT);
+    assert_eq!(reader.get_key("offer", &key), Some(large));
+}
+
+/// A process whose index predates a replacement reads the old value and records its use: that
+/// record does not bring the old value back for later readers.
+#[test]
+fn a_stale_reader_s_use_does_not_bring_a_replaced_value_back() {
+    let tmp = tempfile::tempdir().unwrap();
+    let key = Key::of(&[b"offer"]);
+    // Another key in the same shard, to read the shard's index without reading `key`.
+    let other = (0u32..)
+        .map(|i| Key::of(&[&i.to_le_bytes()]))
+        .find(|k| k.0[0] == key.0[0] && *k != key)
+        .unwrap();
+    let w = Cache::new(tmp.path(), DEFAULT_LIMIT);
+    assert!(w.put_key("offer", &key, b"old"));
+    age(&w, "offer", &key, 48);
+    let stale = Cache::new(tmp.path(), DEFAULT_LIMIT);
+    assert_eq!(stale.get_key("offer", &other), None);
+    let w2 = Cache::new(tmp.path(), DEFAULT_LIMIT);
+    assert!(w2.replace_key("offer", &key, b"new"));
+    // Its own view is old; what it records must not be.
+    assert_eq!(stale.get_key("offer", &key).as_deref(), Some(&b"old"[..]));
+    let reader = Cache::new(tmp.path(), DEFAULT_LIMIT);
+    assert_eq!(reader.get_key("offer", &key).as_deref(), Some(&b"new"[..]));
+}
