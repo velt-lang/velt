@@ -118,6 +118,7 @@ impl<'h> Cx<'h> {
             symbol_records: Default::default(),
             boxing,
             facts: Default::default(),
+            dyn_call_lookup: false,
             shapes: Default::default(),
             iface_impls: None,
             ext_memo: Default::default(),

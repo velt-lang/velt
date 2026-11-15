@@ -423,6 +423,18 @@ the module state per function and type, whose initializer is the `ToDyn` of the 
 calling it (a class value's encoding, "Classes as values"), so every use is one value; so is
 a generic function declared in a function body, which captures nothing.
 
+Instances (additive, #2952). A generic closure runs only through `Callee::Dyn` calls of the
+generic function type it was made as, at those calls' `method_type_args`: lowering adds a list of
+type arguments to a slot's instantiation table only while it lowers a `Callee::Dyn` call (glue/
+generic_slots.rs, asserted in debug compilers), and a closure's `any` table (`ClosureAny`) is a
+copy for an instance its table already has. A generic function value that reaches `unknown` or
+`object` (holding it as `any` or `Function` is refused) comes back only by `u as G` to the type
+it was made as, and a call straight through `any` is a TypeError (#924). Converted to a function
+type of fixed types, it runs through the closure sema writes in the converting body, or as the
+named function instantiated there. velt_sema's local-async check relies on this
+(`local_async::generic_closures`): a call through `any` that instantiates a generic closure
+(#924) must change that check too.
+
 `Program::fresh_closures` (additive) maps closures to a `FreshClosure` (`hir/fresh.rs`), for
 the comparison of function values:
 - `New(ty)`: each evaluation is a new function where JavaScript has one, with the function type

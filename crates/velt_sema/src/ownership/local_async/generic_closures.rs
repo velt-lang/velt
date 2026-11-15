@@ -67,7 +67,14 @@ impl DynCalls {
     /// A value of type `ty` goes into `any` or is converted to another type: the interfaces it
     /// mentions escape, also through the fields of the objects it holds (a `(engine as any).run(…)`
     /// call reaches a generic function value in a field).
-    pub(super) fn escape(&mut self, cx: &Ctx, ty: TyId) {
+    ///
+    /// Into a dynamic type (`dynamic`: `any`, `unknown`, `object`), a generic function type and
+    /// a generic closure don't (#2952; `docs/internals/contracts/hir_encodings.md`): such a value
+    /// runs only through `Dyn` calls of the generic function type it was made as, whose type
+    /// arguments the walk records. Out of a dynamic type it comes back only by `u as G`, and a call
+    /// straight through `any` is a TypeError (#924); holding one as `any` or `Function` is refused.
+    /// An object type in it still escapes: a dynamic call may reach its methods (#2860).
+    pub(super) fn escape(&mut self, cx: &Ctx, ty: TyId, dynamic: bool) {
         let mut seen = FxHashSet::default();
         let mut work = vec![ty];
         while let Some(t) = work.pop() {
@@ -75,7 +82,9 @@ impl DynCalls {
                 continue;
             }
             cx.ty.visit(t, &mut |k| match k {
+                TyKind::Dyn(i, _) if dynamic && cx.is_generic_fn_iface(*i) => {}
                 TyKind::Dyn(i, _) => _ = self.escaped.insert(*i),
+                TyKind::Closure(c) if dynamic && generic_closure(cx, *c) => {}
                 TyKind::Closure(c) => _ = self.escaped_closures.insert(*c),
                 TyKind::Adt(d, _) => {
                     self.escaped_types.insert(*d);
@@ -129,7 +138,7 @@ impl DynCalls {
             }
         }
         for t in tys {
-            self.escape(cx, t);
+            self.escape(cx, t, false);
         }
     }
 
@@ -206,4 +215,9 @@ impl Visit for Outside<'_> {
             _ => {}
         }
     }
+}
+
+/// Is closure `c` generic (with type parameters of its own)?
+fn generic_closure(cx: &Ctx, c: DefId) -> bool {
+    matches!(&cx.defs[c.0 as usize], Some(Def::Fn(f)) if f.generics > 0)
 }
