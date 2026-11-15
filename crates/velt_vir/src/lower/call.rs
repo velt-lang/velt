@@ -96,8 +96,7 @@ impl FnLower<'_, '_> {
         let f = self.cx.fn_def(def);
         let modes: Vec<PassMode> = f.params[pre.len()..].iter().map(|p| p.mode).collect();
         let (ret, throws) = self.cx.call_sig(f);
-        // Frozen counted arguments, and tables of counted types, go to an instance that
-        // neither changes nor counts them.
+        // Frozen counted arguments and counted tables go to an instance that never counts them.
         let tables = self.table_mask(f, &modes, args, pre.len());
         let frozen = self.frozen_mask(&modes, args, pre.len()) | tables;
         let at = self.panic_loc().filter(|_| self.cx.tracks_caller(def));
