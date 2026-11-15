@@ -1,0 +1,74 @@
+// check: no leaks
+// A write of a member every member of a union has (#379, sigx's patchProp writes `value` on an
+// `HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement`): the field of whichever object
+// the union holds, in Node's order (the object, then the value once, then the write).
+interface Input {
+  kind: string;
+  value: string;
+}
+
+interface TextArea {
+  rows: number;
+  value: string;
+}
+
+// Interfaces with methods: values of them are written through the interface.
+interface Named {
+  label: string | null;
+  describe(): string;
+}
+
+interface Tagged {
+  label: string | null;
+  tag(): string;
+}
+
+class Field implements Named {
+  label: string | null = "field";
+  describe(): string {
+    return `field ${this.label}`;
+  }
+}
+
+class Badge implements Tagged {
+  label: string | null = "badge";
+  tag(): string {
+    return `badge ${this.label}`;
+  }
+}
+
+let evaluated = 0;
+function next(v: string): string {
+  evaluated++;
+  return v;
+}
+
+function set(el: Input | TextArea, v: string) {
+  el.value = next(v);
+}
+
+const input: Input = { kind: "text", value: "" };
+const area: TextArea = { rows: 3, value: "" };
+set(input, "a");
+set(area, "b");
+console.log(input.value, area.value, evaluated);
+
+const field = new Field();
+const badge = new Badge();
+let target: Named | Tagged = field;
+function swap(): string {
+  target = badge;
+  return "x";
+}
+// The object is `field`, read before `swap` makes `target` another.
+target.label = swap();
+console.log(field.label, badge.label);
+
+function clear(n: Named | Tagged, to: string | null): boolean {
+  if (n.label !== null) {
+    n.label = to;
+    return n.label === null;
+  }
+  return false;
+}
+console.log(clear(new Field(), null), clear(new Badge(), "y"));

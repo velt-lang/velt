@@ -239,6 +239,7 @@ mod union_compound;
 mod union_iface;
 mod union_text;
 mod union_view;
+mod union_write;
 mod unique_symbol_eq;
 pub(crate) mod virtual_defaults;
 mod widen_fresh;
