@@ -163,6 +163,7 @@ pub(crate) mod touch {
             const { RefCell::new(BTreeMap::new()) };
         static SCANS: RefCell<BTreeMap<String, usize>> = const { RefCell::new(BTreeMap::new()) };
         static TYPES: Cell<usize> = const { Cell::new(0) };
+        static FROZEN: Cell<usize> = const { Cell::new(0) };
         static TYS: RefCell<BTreeSet<usize>> = const { RefCell::new(BTreeSet::new()) };
         static BY_SITE: RefCell<BTreeMap<String, BTreeSet<usize>>> =
             const { RefCell::new(BTreeMap::new()) };
@@ -179,6 +180,29 @@ pub(crate) mod touch {
     pub(crate) fn start_types(n: usize) {
         TYPES.with(|c| c.set(n));
         TYS.with(|s| s.borrow_mut().clear());
+    }
+
+    /// Start counting the app's stage of a check by units, against std's `frozen` definitions
+    /// and `types` types.
+    pub(crate) fn begin(frozen: usize, types: usize) {
+        FROZEN.with(|f| f.set(frozen));
+        start_types(types);
+        start();
+    }
+
+    /// Report what `phase` of the app's stage read (when counting), and count the next one when
+    /// `more`.
+    pub(crate) fn phase(phase: &str, more: bool) {
+        if !on() {
+            return;
+        }
+        eprintln!("velt-touch: == {phase}");
+        report(FROZEN.with(Cell::get));
+        if more {
+            let types = TYPES.with(Cell::get);
+            start();
+            start_types(types);
+        }
     }
 
     pub(crate) fn on() -> bool {

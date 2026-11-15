@@ -219,9 +219,11 @@ pub(crate) fn remap_module_facts(cx: &mut Ctx, at: &dyn Fn(usize) -> Option<usiz
     cx.objects.brands.remap(at);
 }
 
-/// Keep the indexes of a finished unit (std's, as its stage ends) that a later unit's
-/// stage extends with its own definitions instead of walking every definition again.
-pub(crate) fn keep_indexes(cx: &mut Ctx) {
+/// Finish a unit (std's, as its stage ends): freeze its definitions, and keep the indexes a
+/// later unit's stage extends with its own definitions instead of walking every definition again.
+pub(crate) fn finish_unit(cx: &mut Ctx) {
+    cx.freeze_defs();
+    cx.unit_base = cx.defs.len() as u32;
     let generated = cx.generated_fns();
     cx.unit_sums.generated_fns = Some((generated, cx.info.len()));
 }

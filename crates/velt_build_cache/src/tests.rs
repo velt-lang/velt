@@ -483,9 +483,15 @@ fn replaced_entries_are_read_back_new() {
     assert!(cache.put_key("offer", &key, b"other"));
     assert_eq!(cache.get_key("offer", &key).as_deref(), Some(&b"first"[..]));
     assert!(cache.replace_key("offer", &key, b"second"));
-    assert_eq!(cache.get_key("offer", &key).as_deref(), Some(&b"second"[..]));
+    assert_eq!(
+        cache.get_key("offer", &key).as_deref(),
+        Some(&b"second"[..])
+    );
     let other = Cache::new(tmp.path(), DEFAULT_LIMIT);
-    assert_eq!(other.get_key("offer", &key).as_deref(), Some(&b"second"[..]));
+    assert_eq!(
+        other.get_key("offer", &key).as_deref(),
+        Some(&b"second"[..])
+    );
     // Small to large and back.
     assert!(cache.replace_key("offer", &key, &large));
     assert_eq!(cache.get_key("offer", &key), Some(large.clone()));

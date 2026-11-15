@@ -276,7 +276,7 @@ pub struct Request {
 }
 
 impl Ctx<'_> {
-    /// The functions with a generator: by units, a finished unit's (`crate::units::keep_indexes`)
+    /// The functions with a generator: by units, a finished unit's (`crate::units::finish_unit`)
     /// and the later definitions'.
     pub(crate) fn generated_fns(&self) -> FxHashSet<DefId> {
         let (mut set, from) = match (self.units_stage, &self.unit_sums.generated_fns) {

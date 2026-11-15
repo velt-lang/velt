@@ -411,8 +411,6 @@ fn check_timed(
     let copies: Option<&[SourceModule]> =
         (std_copies.as_deref()).map(|c| unsafe { &*(c as *const [SourceModule]) });
     let std_snap: std::cell::RefCell<Option<ctx::Ctx>> = Default::default();
-    let touch_frozen = std::cell::Cell::new(0usize);
-    let touch_types = std::cell::Cell::new(0usize);
     let new_cx = |round: &'static str,
                   held_borrows: bool,
                   seeds: &throws::FnTypeSeeds,
@@ -471,10 +469,8 @@ fn check_timed(
             cx.held_borrows = held_borrows;
             found.install(&mut cx, stage.get() != units::Stage::Std);
         }
-        if let (true, Some(o)) = (fresh, &order) {
-            if stage.get() == units::Stage::Std {
-                units::remap_module_facts(&mut cx, &|m| o.in_std(m));
-            }
+        if let (true, Some(o), units::Stage::Std) = (fresh, &order, stage.get()) {
+            units::remap_module_facts(&mut cx, &|m| o.in_std(m));
         }
         let cx_root = cx.root;
         let entry = timings::pass(round, || analyze(&mut cx, cx_root, root_mod, opts));
@@ -506,9 +502,7 @@ fn check_timed(
                     Ok((cx, _, _)) => cx,
                     Err(stopped) => return *stopped,
                 };
-                std_cx.freeze_defs();
-                std_cx.unit_base = std_cx.defs.len() as u32;
-                units::keep_indexes(&mut std_cx);
+                units::finish_unit(&mut std_cx);
                 if let (Some(k), Some(c)) = (std_key, std_copies.take()) {
                     // SAFETY: std's stage was checked over `c` alone (`copies`), with no
                     // generator, loads or diagnostics of the check installed.
@@ -517,14 +511,9 @@ fn check_timed(
                 std_cx
             }
         };
-        let frozen = std_cx.unit_base as usize;
-        let std_cx_types = std_cx.ty.table.len();
-        ctx::def_table::touch::start_types(std_cx_types);
+        ctx::def_table::touch::begin(std_cx.unit_base as usize, std_cx.ty.table.len());
         *std_snap.borrow_mut() = Some(std_cx);
         stage.set(units::Stage::App);
-        touch_frozen.set(frozen);
-        touch_types.set(std_cx_types);
-        ctx::def_table::touch::start();
     }
     let (cx, entry, generated) = match rounds::run(
         &new_cx,
@@ -541,17 +530,9 @@ fn check_timed(
     let kept = (kept::wanted(input) && none_generated && order.is_none())
         .then(|| kept::detach(cx.clone()));
     let checked = (modules.as_ptr(), modules.len());
-    if ctx::def_table::touch::on() {
-        eprintln!("velt-touch: == the app's check (rounds)");
-        ctx::def_table::touch::report(touch_frozen.get());
-        ctx::def_table::touch::start();
-        ctx::def_table::touch::start_types(touch_types.get());
-    }
+    ctx::def_table::touch::phase("the app's check (rounds)", true);
     let (program, diags) = program::build_checked(cx, entry, generated);
-    if ctx::def_table::touch::on() {
-        eprintln!("velt-touch: == the program's build");
-        ctx::def_table::touch::report(touch_frozen.get());
-    }
+    ctx::def_table::touch::phase("the program's build", false);
     if let Some(kept) = kept {
         let vec = |v: Option<Vec<SourceModule>>| -> kept::Stage {
             (v.as_ref().map(|m| m.as_ptr()), Box::new(v))

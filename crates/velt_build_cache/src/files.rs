@@ -48,7 +48,10 @@ pub(crate) fn put(dir: &Path, key: &Key, value: &[u8]) -> bool {
 /// Store `value` under `key` in place of the file there (unless it already holds `value`).
 pub(crate) fn replace(dir: &Path, key: &Key, value: &[u8]) -> bool {
     let path = path(dir, key);
-    let same = fs::read(&path).ok().and_then(checked).is_some_and(|v| v == value);
+    let same = fs::read(&path)
+        .ok()
+        .and_then(checked)
+        .is_some_and(|v| v == value);
     same || write_atomically(&path, &with_header(value)).is_ok()
 }
 
