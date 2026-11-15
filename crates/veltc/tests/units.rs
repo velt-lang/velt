@@ -93,8 +93,10 @@ function main() {
         .unwrap();
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "{stderr}");
+    // The report names the place by its source path, with the OS's separators.
+    let places = stderr.replace('\\', "/");
     assert!(
-        stderr.contains("velt-units:") && stderr.contains("collect/classes.rs"),
+        stderr.contains("velt-units:") && places.contains("collect/classes.rs"),
         "the crossing wasn't counted:\n{stderr}"
     );
 }
