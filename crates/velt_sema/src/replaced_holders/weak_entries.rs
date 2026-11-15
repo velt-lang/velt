@@ -28,7 +28,7 @@ pub(crate) fn weak_entries(cx: &mut Ctx) -> Vec<(Option<TyId>, TyId)> {
     // A finished unit's are its summary (`Ctx::weak_made`, `crate::units`), when its check
     // walked them: the unit's own bodies are walked, after it.
     let kept = match cx.units_stage {
-        crate::units::Stage::App => cx.weak_made.clone(),
+        crate::units::Stage::App => cx.unit_sums.weak_made.clone(),
         _ => None,
     };
     let from = if kept.is_some() {
@@ -48,7 +48,7 @@ pub(crate) fn weak_entries(cx: &mut Ctx) -> Vec<(Option<TyId>, TyId)> {
     }
     let made = f.made;
     if cx.units_stage == crate::units::Stage::Std {
-        cx.weak_made = Some(made.clone());
+        cx.unit_sums.weak_made = Some(made.clone());
     }
     let mut out = vec![];
     for t in made {

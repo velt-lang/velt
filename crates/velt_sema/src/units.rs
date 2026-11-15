@@ -70,3 +70,111 @@ pub(crate) fn check_definitions(cx: &mut Ctx) {
 pub(crate) fn stage2() -> bool {
     std::env::var_os("VELT_UNITS").is_some_and(|v| v == "2")
 }
+
+/// What a finished unit's check keeps for a later unit's: each pass's summary, which the later
+/// unit's check starts from instead of reading the finished unit's bodies again.
+#[derive(Clone, Default)]
+pub(crate) struct Summaries {
+    /// What each generic function of a finished unit needs of its type arguments to be a valid
+    /// record key, and the param calls that reach it (`record_keys`): that unit's summary, which
+    /// a later unit's check starts from (`crate::units`).
+    pub(crate) key_needs: crate::record_keys::KeyNeeds,
+    /// The same for the local async closures' analysis (`ownership::local_async`).
+    pub(crate) async_summaries: crate::ownership::AsyncSummaries,
+    /// The same for `json`'s check.
+    pub(crate) json_needs: crate::json::JsonNeeds,
+    /// The same for `struct_tuples`' checks.
+    pub(crate) tuple_summaries: crate::struct_tuples::Summaries,
+    /// The same for `weak_threads`' check.
+    pub(crate) weak_scans: crate::weak_threads::WeakScans,
+    /// The same for `module_state::check_locked_access`.
+    pub(crate) state_facts: crate::module_state::StateFacts,
+    /// The weak map types a finished unit's bodies make (`replaced_holders::implicit`).
+    pub(crate) weak_made: Option<Vec<crate::hir::TyId>>,
+    /// The same for `undefined_args`' walk of the definitions.
+    pub(crate) undefined_facts: crate::undefined_args::UndefinedFacts,
+    /// The same for the `with` checks' function summaries (`ownership::locked`).
+    pub(crate) lock_summaries: crate::ownership::LockSummaries,
+    /// The modules each module of a finished unit names (`crate::linked`).
+    pub(crate) module_edges: crate::linked::ModuleEdges,
+}
+
+/// The modules of a check by units in the order its contexts hold them: std's first, which
+/// std's unit is checked over alone, then the app's, added to a copy of std's frozen unit (with
+/// any generated module std's check added between them).
+pub(crate) struct Order {
+    std: Vec<usize>,
+    app: Vec<usize>,
+    root: usize,
+}
+
+impl Order {
+    pub(crate) fn of(modules: &[crate::SourceModule], root: usize) -> Order {
+        let (std, app) = (0..modules.len()).partition(|&m| modules[m].is_std);
+        Order { std, app, root }
+    }
+
+    pub(crate) fn std_modules<'m>(
+        &self,
+        modules: &'m [crate::SourceModule],
+    ) -> Vec<&'m crate::SourceModule> {
+        self.std.iter().map(|&m| &modules[m]).collect()
+    }
+
+    /// Add the app's modules to `cx`, std's unit (the root becomes its root).
+    pub(crate) fn add_app<'m>(&self, cx: &mut Ctx<'m>, modules: &'m [crate::SourceModule]) {
+        let base = cx.modules.len();
+        for &m in &self.app {
+            let module = &modules[m];
+            cx.modules.push(module);
+            cx.scopes.push(crate::ctx::ModuleScope {
+                is_std: module.is_std,
+                is_library: module.is_std || module.is_dependency,
+                ..Default::default()
+            });
+            cx.lazy.add_module();
+        }
+        cx.import_targets = crate::collect::exports::import_targets(&cx.modules);
+        if let Some(k) = self.app.iter().position(|&m| m == self.root) {
+            cx.root = base + k;
+        }
+    }
+
+    /// Where original module `m` is in std's unit (`None`: an app module).
+    pub(crate) fn in_std(&self, m: usize) -> Option<usize> {
+        self.std.iter().position(|&s| s == m)
+    }
+
+    /// Where original module `m` is once the app's modules were added at `base`.
+    pub(crate) fn in_app(&self, m: usize, base: usize) -> Option<usize> {
+        self.in_std(m)
+            .or_else(|| self.app.iter().position(|&a| a == m).map(|k| base + k))
+    }
+
+    /// Where the app's modules start in `cx` (after std's and the generated ones).
+    pub(crate) fn app_base(&self, cx: &Ctx) -> usize {
+        cx.modules.len() - self.app.len()
+    }
+}
+
+/// Put the facts the source rewrites found per module (by the modules' original indices) in
+/// `cx`'s order: original module `m` is `at(m)`, and one `at` drops is not in `cx`.
+pub(crate) fn remap_module_facts(cx: &mut Ctx, at: &dyn Fn(usize) -> Option<usize>) {
+    cx.recovered = std::mem::take(&mut cx.recovered)
+        .into_iter()
+        .filter_map(|(m, w)| Some((at(m)?, w)))
+        .collect();
+    let old = std::mem::take(&mut cx.ns_private);
+    let mut ns = vec![Default::default(); cx.modules.len()];
+    for (m, p) in old.into_iter().enumerate() {
+        if let Some(slot) = at(m).and_then(|i| ns.get_mut(i)) {
+            *slot = p;
+        }
+    }
+    cx.ns_private = ns;
+    for ms in cx.global_namespaces.values_mut() {
+        *ms = ms.iter().filter_map(|&m| at(m)).collect();
+    }
+    cx.global_props.remap(at);
+    cx.objects.brands.remap(at);
+}

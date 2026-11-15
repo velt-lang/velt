@@ -231,7 +231,7 @@ pub(crate) fn check_instantiations(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
         mut needs,
         // The param calls whose receiver is generic in each function.
         mut pneeds,
-    } = cx.key_needs.clone();
+    } = cx.unit_sums.key_needs.clone();
     // Concrete keys per (function, key): the span and origin to report a bad one with.
     let mut concrete: Vec<((DefId, TyId), Span, DefId)> = vec![];
     let mut seen: FxHashSet<(DefId, TyId, DefId)> = FxHashSet::default();
@@ -275,7 +275,7 @@ pub(crate) fn check_instantiations(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
     report(cx, &concrete);
     // std's unit keeps its summary for the app's check (`crate::units`).
     if cx.units_stage == crate::units::Stage::Std {
-        cx.key_needs = KeyNeeds { needs, pneeds };
+        cx.unit_sums.key_needs = KeyNeeds { needs, pneeds };
     }
     uses
 }

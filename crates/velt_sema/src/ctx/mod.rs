@@ -106,28 +106,8 @@ pub(crate) struct Ctx<'m> {
     pub def_spans: DefTable<Span>,
     /// The check is by units (`CheckOptions::units`, `crate::units`).
     pub units: bool,
-    /// What each generic function of a finished unit needs of its type arguments to be a valid
-    /// record key, and the param calls that reach it (`record_keys`): that unit's summary, which
-    /// a later unit's check starts from (`crate::units`).
-    pub key_needs: crate::record_keys::KeyNeeds,
-    /// The same for the local async closures' analysis (`ownership::local_async`).
-    pub async_summaries: crate::ownership::AsyncSummaries,
-    /// The same for `json`'s check.
-    pub json_needs: crate::json::JsonNeeds,
-    /// The same for `struct_tuples`' checks.
-    pub tuple_summaries: crate::struct_tuples::Summaries,
-    /// The same for `weak_threads`' check.
-    pub weak_scans: crate::weak_threads::WeakScans,
-    /// The same for `module_state::check_locked_access`.
-    pub state_facts: crate::module_state::StateFacts,
-    /// The weak map types a finished unit's bodies make (`replaced_holders::implicit`).
-    pub weak_made: Option<Vec<crate::hir::TyId>>,
-    /// The same for `undefined_args`' walk of the definitions.
-    pub undefined_facts: crate::undefined_args::UndefinedFacts,
-    /// The same for the `with` checks' function summaries (`ownership::locked`).
-    pub lock_summaries: crate::ownership::LockSummaries,
-    /// The modules each module of a finished unit names (`crate::linked`).
-    pub module_edges: crate::linked::ModuleEdges,
+    /// What finished units' checks keep for a later unit's (`crate::units`).
+    pub unit_sums: crate::units::Summaries,
     /// Which part of a check by units this context checks (`crate::units`).
     pub units_stage: crate::units::Stage,
     /// Where the unit being checked starts (`crate::units`): the passes after the bodies take
@@ -579,13 +559,26 @@ pub(crate) struct Ctx<'m> {
 
 impl<'m> Ctx<'m> {
     pub fn new(modules: &'m [SourceModule], root: usize) -> Self {
+        Self::over(modules.iter().collect(), root)
+    }
+
+    /// A context over `modules` (std's alone in a check by units, `crate::units`).
+    pub(crate) fn over(modules: Vec<&'m SourceModule>, root: usize) -> Self {
+        let import_targets = crate::collect::exports::import_targets(&modules);
+        let scopes = (modules.iter())
+            .map(|m| ModuleScope {
+                is_std: m.is_std,
+                is_library: m.is_std || m.is_dependency,
+                ..Default::default()
+            })
+            .collect();
         Ctx {
-            modules: modules.iter().collect(),
+            modules,
             fn_shapes: Default::default(),
             root,
             gen: Default::default(),
             export_memo: Default::default(),
-            import_targets: crate::collect::exports::import_targets(modules),
+            import_targets,
             loads: None,
             loads_added: 0,
             recursive_union_instances: 0,
@@ -596,25 +589,9 @@ impl<'m> Ctx<'m> {
             def_spans: DefTable::default(),
             units: false,
             unit_base: 0,
-            key_needs: Default::default(),
-            tuple_summaries: Default::default(),
-            json_needs: Default::default(),
-            async_summaries: Default::default(),
-            weak_scans: Default::default(),
-            state_facts: Default::default(),
-            module_edges: Default::default(),
-            lock_summaries: Default::default(),
-            undefined_facts: Default::default(),
-            weak_made: None,
+            unit_sums: Default::default(),
             units_stage: crate::units::Stage::Both,
-            scopes: modules
-                .iter()
-                .map(|m| ModuleScope {
-                    is_std: m.is_std,
-                    is_library: m.is_std || m.is_dependency,
-                    ..Default::default()
-                })
-                .collect(),
+            scopes,
             prelude: FxHashMap::default(),
             prelude_type_keys: false,
             aliases: vec![],

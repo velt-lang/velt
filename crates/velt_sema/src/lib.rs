@@ -378,6 +378,7 @@ fn check_timed(
     // round checks, and std's frozen unit the app's rounds start from.
     let stage = std::cell::Cell::new(units::Stage::Both);
     let std_snap: std::cell::RefCell<Option<ctx::Ctx>> = Default::default();
+    let order = (opts.units && units::stage2()).then(|| units::Order::of(modules, root));
     let new_cx = |round: &'static str,
                   held_borrows: bool,
                   seeds: &throws::FnTypeSeeds,
@@ -389,12 +390,31 @@ fn check_timed(
             _ => None,
         };
         let fresh = from_std.is_none();
-        let mut cx = from_std.unwrap_or_else(|| ctx::Ctx::new(modules, root));
+        let mut cx = match (from_std, &order) {
+            (Some(cx), _) => cx,
+            (None, Some(o)) if stage.get() == units::Stage::Std => {
+                ctx::Ctx::over(o.std_modules(modules), 0)
+            }
+            (None, _) => ctx::Ctx::new(modules, root),
+        };
         cx.units_stage = stage.get();
         if !fresh {
             cx.union_views.assumed = views.clone();
             cx.fn_sites.reseed(seeds.clone(), last);
             cx.held_borrows = held_borrows;
+            // The app's modules after std's unit, with what the rewrites found of them.
+            if let Some(o) = &order {
+                o.add_app(&mut cx, modules);
+                let base = o.app_base(&cx);
+                cx.global_props = global_props.clone();
+                cx.objects.brands = brands.clone();
+                cx.ns_private = ns_private.clone();
+                cx.global_namespaces = global_ns.clone();
+                cx.recovered = (recovered.iter())
+                    .map(|&(m, src)| (m, collect::exports::words(src)))
+                    .collect();
+                units::remap_module_facts(&mut cx, &|m| o.in_app(m, base));
+            }
         }
         if fresh {
             cx.units_stage = stage.get();
@@ -443,7 +463,13 @@ fn check_timed(
                 cx.set_closure_groups(&c.groups);
             }
         }
-        let entry = timings::pass(round, || analyze(&mut cx, root, root_mod, opts));
+        if let (true, Some(o)) = (fresh, &order) {
+            if stage.get() == units::Stage::Std {
+                units::remap_module_facts(&mut cx, &|m| o.in_std(m));
+            }
+        }
+        let cx_root = cx.root;
+        let entry = timings::pass(round, || analyze(&mut cx, cx_root, root_mod, opts));
         global_this::drop_site_errors(&mut cx);
         if let Some(o) = &overloaded {
             overloads::report_misfits(&mut cx.diags, &o.sig_spans);
@@ -469,7 +495,6 @@ fn check_timed(
             &|_: &ctx::Ctx| false,
             &assumed,
             false,
-            root,
             generator.as_ref(),
         ) {
             Ok((cx, _, _)) => cx,
@@ -485,7 +510,6 @@ fn check_timed(
         &doubt,
         &assumed,
         !recovered.is_empty(),
-        root,
         generator.as_ref(),
     ) {
         Ok(done) => done,
@@ -493,7 +517,8 @@ fn check_timed(
     };
     // A kept check (`kept`) of a check in which no generator ran.
     let none_generated = generator.as_ref().is_none_or(|g| g.kept().next().is_none());
-    let kept = (kept::wanted(input) && none_generated).then(|| kept::detach(cx.clone()));
+    let kept = (kept::wanted(input) && none_generated && order.is_none())
+        .then(|| kept::detach(cx.clone()));
     let checked = (modules.as_ptr(), modules.len());
     let (program, diags) = program::build_checked(cx, entry, generated);
     if let Some(kept) = kept {

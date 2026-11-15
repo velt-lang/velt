@@ -197,7 +197,7 @@ fn scans(cx: &mut Ctx, sends: &[DefId]) -> Vec<(DefId, Scan)> {
         Stage::Both | Stage::Std => 0,
     };
     let mut out = match cx.units_stage {
-        Stage::App => cx.weak_scans.bodies.clone(),
+        Stage::App => cx.unit_sums.weak_scans.bodies.clone(),
         Stage::Both | Stage::Std => vec![],
     };
     for (i, d) in cx.defs.iter().enumerate().skip(from) {
@@ -225,7 +225,7 @@ fn scans(cx: &mut Ctx, sends: &[DefId]) -> Vec<(DefId, Scan)> {
     }
     if cx.units_stage == Stage::Std {
         let facts = crate::promise_copies::collect(cx, 0);
-        cx.weak_scans = WeakScans {
+        cx.unit_sums.weak_scans = WeakScans {
             bodies: out.clone(),
             facts,
         };
@@ -237,11 +237,11 @@ fn scans(cx: &mut Ctx, sends: &[DefId]) -> Vec<(DefId, Scan)> {
 fn facts(cx: &mut Ctx) -> Vec<(DefId, crate::promise_copies::Facts)> {
     match cx.units_stage {
         crate::units::Stage::App => {
-            let mut out = cx.weak_scans.facts.clone();
+            let mut out = cx.unit_sums.weak_scans.facts.clone();
             out.extend(crate::promise_copies::collect(cx, cx.unit_base as usize));
             out
         }
-        crate::units::Stage::Std => cx.weak_scans.facts.clone(),
+        crate::units::Stage::Std => cx.unit_sums.weak_scans.facts.clone(),
         crate::units::Stage::Both => crate::promise_copies::collect(cx, 0),
     }
 }

@@ -79,7 +79,7 @@ impl Summaries {
             .collect();
         let mut s = Summaries {
             sums: match app {
-                true => cx.lock_summaries.0.clone(),
+                true => cx.unit_sums.lock_summaries.0.clone(),
                 false => FxHashMap::default(),
             },
             captures,
@@ -124,7 +124,7 @@ impl Summaries {
             }
             if !changed {
                 if cx.units_stage == crate::units::Stage::Std {
-                    cx.lock_summaries = LockSummaries(s.sums.clone());
+                    cx.unit_sums.lock_summaries = LockSummaries(s.sums.clone());
                 }
                 return s;
             }

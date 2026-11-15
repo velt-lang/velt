@@ -116,7 +116,7 @@ pub(crate) fn check_json_types(cx: &mut Ctx) {
     let mut rounds = Rounds::new(uses.len(), reads);
     let mut work = dispatch.work + uses.iter().map(|(_, u)| u.types.len() as u64).sum::<u64>();
     // What a finished unit's functions need (its summary), then the unit's own.
-    let mut needs: Needs = cx.json_needs.0.clone();
+    let mut needs: Needs = cx.unit_sums.json_needs.0.clone();
     let mut checked: FxHashSet<(TyId, Span, Need)> = FxHashSet::default();
     while let Some(i) = rounds.pop() {
         let (f, u) = &uses[i];
@@ -162,7 +162,7 @@ pub(crate) fn check_json_types(cx: &mut Ctx) {
     }
     add_work(Pass::Json, work);
     if cx.units_stage == crate::units::Stage::Std {
-        cx.json_needs = JsonNeeds(needs);
+        cx.unit_sums.json_needs = JsonNeeds(needs);
     }
 }
 

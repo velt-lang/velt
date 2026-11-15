@@ -330,7 +330,7 @@ fn refused_extends(cx: &mut Ctx, s: &Found) -> FxHashSet<DefId> {
 /// `uses`: the instantiation sites `record_keys` collected and resolved dynamic dispatch for.
 pub(crate) fn check_generic_bodies(cx: &mut Ctx, uses: &[(DefId, Uses)]) {
     // A finished unit's functions come with its summary (`crate::units`).
-    let mut s = Found::seeded(&cx.tuple_summaries.bodies);
+    let mut s = Found::seeded(&cx.unit_sums.tuple_summaries.bodies);
     for (f, u) in uses {
         let (mut w, mut own) = (Walk::default(), vec![]);
         for (t, span) in &u.types {
@@ -349,7 +349,7 @@ pub(crate) fn check_generic_bodies(cx: &mut Ctx, uses: &[(DefId, Uses)]) {
     }
     if s.needs.is_empty() {
         if cx.units_stage == crate::units::Stage::Std {
-            cx.tuple_summaries.bodies = s.summary();
+            cx.unit_sums.tuple_summaries.bodies = s.summary();
         }
         report(cx, vec![], s.limits);
         return;
@@ -374,7 +374,7 @@ pub(crate) fn check_generic_bodies(cx: &mut Ctx, uses: &[(DefId, Uses)]) {
     }
     add_work(Pass::StructTuples, s.work);
     if cx.units_stage == crate::units::Stage::Std {
-        cx.tuple_summaries.bodies = s.summary();
+        cx.unit_sums.tuple_summaries.bodies = s.summary();
     }
     report(cx, s.bad, s.limits);
 }
@@ -439,7 +439,7 @@ fn check_struct_given(
     note: &str,
     given: Given,
 ) {
-    let seed = cx.tuple_summaries.of(given).clone();
+    let seed = cx.unit_sums.tuple_summaries.of(given).clone();
     if sites.is_empty() && Found::is_empty_summary(&seed) {
         return;
     }
@@ -454,7 +454,7 @@ fn check_struct_given(
     carry(cx, uses, &FxHashSet::default(), &mut s, struct_given);
     add_work(Pass::StructTuples, s.work);
     if cx.units_stage == crate::units::Stage::Std {
-        *cx.tuple_summaries.of(given) = s.summary();
+        *cx.unit_sums.tuple_summaries.of(given) = s.summary();
     }
     s.bad.sort_by_key(|(s, _, _)| (s.file, s.lo));
     let mut reported: FxHashSet<Span> = FxHashSet::default();

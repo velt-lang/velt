@@ -75,7 +75,7 @@ pub(super) fn scan(cx: &mut Ctx, dispatch: &locked_props::Dispatch) -> Scanned {
     let app = cx.units_stage == Stage::App;
     let (mut facts, mut callbacks, mut init_callbacks) = match app {
         true => {
-            let s = &cx.state_facts;
+            let s = &cx.unit_sums.state_facts;
             (
                 s.facts.clone(),
                 s.fn_callbacks.clone(),
@@ -138,7 +138,7 @@ pub(super) fn scan(cx: &mut Ctx, dispatch: &locked_props::Dispatch) -> Scanned {
         facts.insert(DefId(i as u32), fd);
     }
     if cx.units_stage == Stage::Std {
-        cx.state_facts = StateFacts {
+        cx.unit_sums.state_facts = StateFacts {
             facts: facts.clone(),
             fn_callbacks: callbacks.clone(),
             init_callbacks: init_callbacks.clone(),

@@ -77,7 +77,7 @@ pub(crate) fn check_instantiations(cx: &mut Ctx) {
     if cx.units_stage == Stage::Std {
         let mut f = UndefinedFacts::default();
         facts(cx, 0, &mut f);
-        cx.undefined_facts = f;
+        cx.unit_sums.undefined_facts = f;
     }
     if !cx.writes_undefined {
         return;
@@ -88,9 +88,9 @@ pub(crate) fn check_instantiations(cx: &mut Ctx) {
         return;
     }
     let f = match cx.units_stage {
-        Stage::Std => cx.undefined_facts.clone(),
+        Stage::Std => cx.unit_sums.undefined_facts.clone(),
         Stage::App => {
-            let mut f = cx.undefined_facts.clone();
+            let mut f = cx.unit_sums.undefined_facts.clone();
             facts(cx, cx.unit_base as usize, &mut f);
             f
         }

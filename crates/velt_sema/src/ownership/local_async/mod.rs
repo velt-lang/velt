@@ -220,7 +220,7 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
         }
     }
     if cx.units_stage == crate::units::Stage::Std {
-        cx.async_summaries = summaries::of(cx, &g, &p);
+        cx.unit_sums.async_summaries = summaries::of(cx, &g, &p);
     }
     let reported = callbacks::check_crossing_callbacks(cx, &g, &p.flags);
     for (n, node) in g.nodes.iter().enumerate() {

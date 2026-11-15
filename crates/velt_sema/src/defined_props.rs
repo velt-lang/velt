@@ -46,6 +46,16 @@ pub(crate) struct Brands {
     pub direct: Vec<(usize, ast::Ident)>,
 }
 
+impl Brands {
+    /// With each module `m` as `at(m)` (`GlobalProps::remap`).
+    pub(crate) fn remap(&mut self, at: &dyn Fn(usize) -> Option<usize>) {
+        self.sites
+            .retain_mut(|b| at(b.module).map(|m| b.module = m).is_some());
+        self.direct
+            .retain_mut(|d| at(d.0).map(|m| d.0 = m).is_some());
+    }
+}
+
 /// The brands of `modules` (the program's own; std defines none), and the modules with each
 /// brand's field added to the type it is defined on (`None`: nothing to add).
 pub(crate) fn rewrite(modules: &[SourceModule]) -> (Brands, Option<Vec<SourceModule>>) {

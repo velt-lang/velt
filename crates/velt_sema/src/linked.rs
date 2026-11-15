@@ -32,7 +32,7 @@ pub(crate) fn linked(cx: &Ctx) -> Vec<bool> {
         (false, _) | (true, Stage::Std) => all,
         (true, Stage::Both) => reach(cx, &named(cx, 0)),
         (true, Stage::App) => {
-            let mut edges = cx.module_edges.0.clone();
+            let mut edges = cx.unit_sums.module_edges.0.clone();
             edges.extend(named(cx, cx.unit_base as usize).0);
             reach(cx, &ModuleEdges(edges))
         }
@@ -42,7 +42,7 @@ pub(crate) fn linked(cx: &Ctx) -> Vec<bool> {
 /// std's stage: its modules' edges, for the app's [`linked`].
 pub(crate) fn keep_edges(cx: &mut Ctx) {
     if cx.units && cx.units_stage == Stage::Std {
-        cx.module_edges = named(cx, 0);
+        cx.unit_sums.module_edges = named(cx, 0);
     }
 }
 

@@ -24,7 +24,7 @@ pub(crate) struct AsyncSummaries {
 
 /// The finished unit's functions the unit calls: their parameters flow to what they return.
 pub(super) fn returns(cx: &Ctx, g: &mut graph::Graph) {
-    for (f, ls) in &cx.async_summaries.rets {
+    for (f, ls) in &cx.unit_sums.async_summaries.rets {
         let Some(&r) = g.ids.get(&Node::Ret(*f)) else {
             continue;
         };
@@ -38,7 +38,7 @@ pub(super) fn returns(cx: &Ctx, g: &mut graph::Graph) {
 
 /// ... and their parameters cross, or are kept, as the finished unit found.
 pub(super) fn seed(cx: &Ctx, g: &graph::Graph, p: &mut Propagation) {
-    for (f, ps) in &cx.async_summaries.params {
+    for (f, ps) in &cx.unit_sums.async_summaries.params {
         for (l, flags, why, shared) in ps {
             let Some(&n) = g.ids.get(&Node::Local(*f, *l)) else {
                 continue;

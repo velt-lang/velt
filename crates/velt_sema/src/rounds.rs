@@ -33,7 +33,6 @@ pub(crate) fn run<'m>(
     doubt: &dyn Fn(&Ctx) -> bool,
     assumed: &RefCell<Assumed>,
     recovered: bool,
-    root: usize,
     generator: Option<&generated::Generator>,
 ) -> Result<(Ctx<'m>, Option<DefId>, generated::bind::Bound), Box<script_locals::Checked>> {
     // Function types written without `throws` throw what the closures stored into them throw
@@ -93,7 +92,7 @@ pub(crate) fn run<'m>(
             continue 'check;
         }
         if recovered || cx.diags.iter().any(|d| d.is_error()) {
-            let refused = script_locals::refused(&cx, root);
+            let refused = script_locals::refused(&cx, cx.root);
             return Err(Box::new(((None, cx.diags), refused)));
         }
         if let Some(out) = generating::stopped(generator) {
