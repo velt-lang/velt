@@ -36,8 +36,9 @@ export function arm(handle: u64, ms: i64) {
   const task = spawn(fire(armed, ms));
 }
 
-// The timer's place in the order and its own reference to the signal, each given back once:
-// as the timer fires, or when its task is dropped unfinished (the program ends first).
+// The timer's place in the order and its own reference to the signal, each given back once: as
+// the timer fires, or when its task is dropped unfinished. Not when the program ends with the
+// timer pending: a counted exit doesn't give pending timers back yet (#3032).
 class Armed {
   timer: u64;
   signal: u64;

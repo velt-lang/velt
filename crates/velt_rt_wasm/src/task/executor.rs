@@ -516,6 +516,24 @@ pub fn spawn_task(fut: *mut VeltFut, result_size: usize, join: Option<Rc<RefCell
     });
 }
 
+/// The task being polled, if `spawn` started it, no longer keeps the program going after `main`
+/// (it waits for a timer's turn: order.rs `velt_rt_timer_turn`, through
+/// local.rs `mark_starting_timer`).
+pub fn uncount_polled_spawn() {
+    with_exec(|e| {
+        // The root (`ROOT`, 0) is no spawned task.
+        let Some(&(id, _)) = e.polling.last().filter(|(id, _)| *id != ROOT) else {
+            return;
+        };
+        if let Some(Some(t)) = e.tasks.get_mut(id - 1) {
+            if t.spawned {
+                t.spawned = false;
+                e.spawned -= 1;
+            }
+        }
+    });
+}
+
 /// [`spawn`] for logical task `logical` (`None`: a new one). A started promise's driving task
 /// runs for the logical task that started it, as on native targets, where the task's own set
 /// drives it.

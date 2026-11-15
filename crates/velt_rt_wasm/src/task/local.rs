@@ -319,6 +319,10 @@ unsafe fn dispose(f: *mut VeltFut, delivered: bool, result_drop: Option<ResultDr
 type Watched = (*mut VeltFut, Rc<RefCell<Started>>);
 
 /// The promise being started runs a timer's callback (`velt_rt_timer_turn` in its first run).
+/// Outside a start, the task being polled waits for a timer's turn: a spawned one (std's
+/// `AbortSignal.timeout`, std/task/signal_timeout.velt) no longer keeps the program alive
+/// either, as natively, where a task is no handle and a timer keeps the process alive only
+/// through its keep-alive reference.
 pub(super) fn mark_starting_timer() {
     let st = STARTING.with(Cell::get);
     // SAFETY: the shared state of the promise whose first run `start` is doing.
@@ -328,6 +332,8 @@ pub(super) fn mark_starting_timer() {
             s.timer = true;
             executor::count_local(false);
         }
+    } else {
+        executor::uncount_polled_spawn();
     }
 }
 
