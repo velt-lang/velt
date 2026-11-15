@@ -21,7 +21,6 @@ tests/golden/lang/rwlock_read_tasks_stop.velt                      #2917 os=maco
 tests/golden/lang/promise_combinators_kept_array.velt               #2910
 tests/golden/lang/spawn_shared_promise_timer.velt                  #2910
 tests/golden/std/abort_signal_identity.velt                        #3011
-tests/golden/std/abort_signal_reasons.velt                         #3029
 tests/golden/std/fetch_abort_custom_reason.velt                    #3005
 tests/golden/std/net_tls.velt                                      #2842
 tests/golden/std/timer_spawned_busy.velt                           #2916 os=macos,windows

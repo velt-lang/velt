@@ -1,0 +1,19 @@
+// A string reason is that string, whatever its first character, also through `AbortSignal.any`
+// and also when it equals the message of a timeout's reason, as in Node (#3029: std marks its own
+// reasons in the runtime's abort message and escapes a user's that starts with a mark).
+// Valid TypeScript; prints what Node prints.
+const show = (label: string, r: any) => console.log(label, typeof r, JSON.stringify(r));
+
+for (const reason of [
+  "\u0000x",
+  "\u0001x",
+  "\u00012",
+  "\u0002x",
+  "The operation was aborted due to timeout",
+]) {
+  const c = new AbortController();
+  const either = AbortSignal.any([c.signal, AbortSignal.timeout(60000)]);
+  c.abort(reason);
+  show("direct", c.signal.reason);
+  show("any", either.reason);
+}

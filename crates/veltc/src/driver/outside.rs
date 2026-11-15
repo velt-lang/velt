@@ -85,9 +85,6 @@ const PURE_RUNTIME: &[&str] = &[
     "yield",
 ];
 
-/// Functions of a pure group that do reach outside, with what they reach.
-const IMPURE_IN_PURE_GROUP: &[(&str, &str)] = &[("velt_rt_signal_timeout", "the clock")];
-
 /// What the impure runtime groups reach, for the message (others: `a runtime function …`).
 const RUNTIME_REACH: &[(&str, &str)] = &[
     ("fs", "the file system"),
@@ -244,12 +241,6 @@ fn is_test_runner(symbol: &str) -> bool {
 /// inside; a system function (`open`, `CreateFileW`), a native package's function and anything
 /// else unknown is outside.
 fn reason(symbol: &str) -> Option<String> {
-    if let Some((_, what)) = IMPURE_IN_PURE_GROUP
-        .iter()
-        .find(|(p, _)| symbol.starts_with(p))
-    {
-        return Some(what.to_string());
-    }
     let Some(rest) = symbol.strip_prefix("velt_") else {
         return Some(format!("a system function `{symbol}`"));
     };
@@ -392,7 +383,6 @@ mod tests {
         assert_eq!(outside("velt_rt_tcp_connect"), "the network");
         assert_eq!(outside("velt_rt_perf_now"), "the clock");
         assert_eq!(outside("velt_rt_local_offset_minutes"), "the clock");
-        assert_eq!(outside("velt_rt_signal_timeout_ms"), "the clock");
         assert_eq!(outside("velt_rt_random_u64"), "random numbers");
         assert_eq!(outside("velt_rt_memory_rss"), "the environment");
         assert_eq!(outside("velt_rt_isatty"), "the environment");

@@ -12,11 +12,11 @@ export declare function velt_rt_signal_aborted(s: u64): bool;
 
 export declare function velt_rt_signal_reason(s: u64): string;
 
-export declare function velt_rt_signal_timeout_ms(s: u64): i64;
-
-export declare async function velt_rt_signal_wait(s: u64): Promise<void>;
-
-export declare function velt_rt_signal_timeout(ms: i64, reason: string): u64;
+/**
+ * Completes once `s` is aborted. `timed`: a timer may abort it (`AbortSignal.timeout`, or an
+ * `AbortSignal.any` of one), so the wait keeps the process alive, as a wait for a timer does.
+ */
+export declare async function velt_rt_signal_wait(s: u64, timed: bool): Promise<void>;
 
 export declare function velt_rt_signal_any(signals: u64[]): u64;
 

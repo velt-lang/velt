@@ -32,7 +32,7 @@ import * as rt from "velt/net/rt";
 import * as lat from "velt/net/rt_later";
 
 declare function velt_rt_signal_aborted(s: u64): bool;
-declare async function velt_rt_signal_wait(s: u64): Promise<void>;
+declare async function velt_rt_signal_wait(s: u64, timed: bool): Promise<void>;
 
 /**
  * Whether listeners come from `velt dev`'s supervisor (`VELT_DEV_SOCKET`, velt_rt's `dev::bind`),
@@ -193,9 +193,10 @@ export async function velt_rt_tcp_readable_within(
   if (ms < 0) {
     return await readableUntil(s, signal);
   }
-  // The signal's wait is the runtime's: whichever ends first ends the other (dropped).
+  // The signal's wait is the runtime's: whichever ends first ends the other (dropped). Not
+  // `timed`: the socket's wait keeps the process alive.
   const within = fio.readableWithin(s, ms);
-  await Promise.race([within.then((_) => {}), velt_rt_signal_wait(signal)]);
+  await Promise.race([within.then((_) => {}), velt_rt_signal_wait(signal, false)]);
   if (velt_rt_signal_aborted(signal)) {
     return fs.value(0);
   }

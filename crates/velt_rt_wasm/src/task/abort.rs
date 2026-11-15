@@ -1,8 +1,7 @@
 //! `velt_rt_signal_*` on the current-thread executor: `AbortController` / `AbortSignal` (see
 //! velt_rt's task/abort.rs). One thread, so a `RefCell` and one waker slot per pending wait
-//! (waiters.rs); `AbortSignal.timeout` is a timer task (spawned tasks don't keep the program
-//! alive), cancelled when its signal is dropped. A derived signal holds its sources until it is
-//! aborted, as natively.
+//! (waiters.rs). `AbortSignal.timeout`'s timer is std's (std/task/signal_timeout.velt), as
+//! natively. A derived signal holds its sources until it is aborted, as natively.
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -10,7 +9,7 @@ use std::task::{Context, Poll};
 
 use super::leaf::new_leaf;
 use super::waiters::{Slot, Waiters};
-use super::{executor, VeltFut};
+use super::VeltFut;
 use crate::handle::Handle;
 use crate::str::VeltStr;
 
@@ -18,7 +17,6 @@ use crate::str::VeltStr;
 #[derive(Default, Clone)]
 struct Reason {
     text: String,
-    timeout_ms: Option<i64>,
 }
 
 /// A signal (see velt_rt).
@@ -29,16 +27,6 @@ pub struct Signal {
     waiters: Waiters,
     children: RefCell<Vec<Weak<Signal>>>,
     sources: RefCell<Vec<Rc<Signal>>>,
-    /// The timer task of an `AbortSignal.timeout` signal, cancelled when the signal is dropped.
-    timer: Cell<Option<usize>>,
-}
-
-impl Drop for Signal {
-    fn drop(&mut self) {
-        if let Some(id) = self.timer.take() {
-            executor::cancel(id);
-        }
-    }
 }
 
 impl Signal {
@@ -108,10 +96,7 @@ pub unsafe extern "C" fn velt_rt_signal_free(h: Handle<Signal>) {
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_signal_abort(h: Handle<Signal>, reason: *const VeltStr) {
     let text = (*reason).to_string_lossy();
-    h.obj().abort(&Reason {
-        text,
-        timeout_ms: None,
-    });
+    h.obj().abort(&Reason { text });
 }
 
 /// # Safety
@@ -130,17 +115,13 @@ pub unsafe extern "C" fn velt_rt_signal_reason(h: Handle<Signal>, out: *mut Velt
     ));
 }
 
+/// `_timed` as natively; a wait here is a leaf either way (the host's event loop decides when the
+/// program ends).
+///
 /// # Safety
 /// `h` must be a live signal handle.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_signal_timeout_ms(h: Handle<Signal>) -> i64 {
-    h.obj().reason.borrow().timeout_ms.unwrap_or(-1)
-}
-
-/// # Safety
-/// `h` must be a live signal handle.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_signal_wait(h: Handle<Signal>) -> *mut VeltFut {
+pub unsafe extern "C" fn velt_rt_signal_wait(h: Handle<Signal>, _timed: bool) -> *mut VeltFut {
     let mut wait = Wait {
         s: rc(h),
         slot: Slot::default(),
@@ -152,32 +133,6 @@ pub unsafe extern "C" fn velt_rt_signal_wait(h: Handle<Signal>) -> *mut VeltFut 
         wait.slot.register(&wait.s.waiters, cx.waker());
         Poll::Pending
     })
-}
-
-/// # Safety
-/// `reason` must be a valid string.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_signal_timeout(ms: i64, reason: *const VeltStr) -> Handle<Signal> {
-    let s = Rc::new(Signal::default());
-    let weak = Rc::downgrade(&s);
-    let reason = Reason {
-        text: (*reason).to_string_lossy(),
-        timeout_ms: Some(ms),
-    };
-    let deadline = executor::new_timer(crate::platform::monotonic_ms() + ms.max(0) as f64);
-    let timer = new_leaf(move |cx: &mut Context<'_>| {
-        if executor::poll_timer(&deadline, cx).is_pending() {
-            return Poll::Pending;
-        }
-        if let Some(s) = weak.upgrade() {
-            // Done: dropping the signal now must not cancel the task that is running.
-            s.timer.set(None);
-            s.abort(&reason);
-        }
-        Poll::Ready(())
-    });
-    s.timer.set(Some(executor::spawn(timer, 0, None)));
-    handle(s)
 }
 
 /// # Safety
@@ -200,31 +155,4 @@ pub unsafe extern "C" fn velt_rt_signal_any(signals: *const U64Array) -> Handle<
         }
     }
     handle(child)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_dropped_timeout_signal_cancels_its_timer_task() {
-        let reason = VeltStr::from_vec(b"late".to_vec());
-        let before = executor::live_tasks();
-        for _ in 0..1000 {
-            // SAFETY: a fresh handle, freed at once (its last reference).
-            unsafe { velt_rt_signal_free(velt_rt_signal_timeout(600_000, &reason)) };
-        }
-        assert_eq!(
-            executor::live_tasks(),
-            before,
-            "timer tasks of dropped signals"
-        );
-        // A held one keeps its timer.
-        // SAFETY: as above, freed below.
-        let held = unsafe { velt_rt_signal_timeout(600_000, &reason) };
-        assert_eq!(executor::live_tasks(), before + 1);
-        // SAFETY: the last reference.
-        unsafe { velt_rt_signal_free(held) };
-        assert_eq!(executor::live_tasks(), before);
-    }
 }

@@ -336,8 +336,6 @@ velt_rt velt_rt_signal_free
 velt_rt velt_rt_signal_new
 velt_rt velt_rt_signal_reason
 velt_rt velt_rt_signal_retain
-velt_rt velt_rt_signal_timeout
-velt_rt velt_rt_signal_timeout_ms
 velt_rt velt_rt_signal_wait
 velt_rt velt_rt_sleep
 velt_rt velt_rt_spawn
@@ -628,8 +626,6 @@ velt_rt_wasm velt_rt_signal_free
 velt_rt_wasm velt_rt_signal_new
 velt_rt_wasm velt_rt_signal_reason
 velt_rt_wasm velt_rt_signal_retain
-velt_rt_wasm velt_rt_signal_timeout
-velt_rt_wasm velt_rt_signal_timeout_ms
 velt_rt_wasm velt_rt_signal_wait
 velt_rt_wasm velt_rt_sleep
 velt_rt_wasm velt_rt_spawn

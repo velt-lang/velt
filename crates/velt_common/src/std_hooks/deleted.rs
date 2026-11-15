@@ -51,4 +51,8 @@ pub const DELETED: &[&str] = &[
     "velt_rt_strbuf_inspect_leave",
     "velt_rt_strbuf_inspect_circular",
     "velt_rt_strbuf_inspect_more",
+    // #3029: `AbortSignal.timeout`'s timer, one of Node's timers now (std/task/signal_timeout),
+    // and its delay, which the abort message carries; only std called them.
+    "velt_rt_signal_timeout",
+    "velt_rt_signal_timeout_ms",
 ];
