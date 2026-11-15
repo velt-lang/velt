@@ -110,6 +110,8 @@ pub(crate) struct Ctx<'m> {
     /// record key, and the param calls that reach it (`record_keys`): that unit's summary, which
     /// a later unit's check starts from (`crate::units`).
     pub key_needs: crate::record_keys::KeyNeeds,
+    /// The same for `json`'s check.
+    pub json_needs: crate::json::JsonNeeds,
     /// The same for `struct_tuples`' checks.
     pub tuple_summaries: crate::struct_tuples::Summaries,
     /// Which part of a check by units this context checks (`crate::units`).
@@ -582,6 +584,7 @@ impl<'m> Ctx<'m> {
             unit_base: 0,
             key_needs: Default::default(),
             tuple_summaries: Default::default(),
+            json_needs: Default::default(),
             units_stage: crate::units::Stage::Both,
             scopes: modules
                 .iter()
