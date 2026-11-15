@@ -55,6 +55,7 @@ mod effects;
 mod fix;
 pub(crate) mod implicit;
 mod program;
+mod weak_entries;
 
 use implicit::Implicit;
 use program::Program;
