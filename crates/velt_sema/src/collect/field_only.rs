@@ -47,6 +47,7 @@ pub(super) fn declare(cx: &mut Ctx, from: u32) {
                 bounds: vec![],
                 defaults: vec![],
                 constraints: vec![],
+                readonly_arrays: 0,
             },
             fields: vec![],
             own_fields_start: 0,

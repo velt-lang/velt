@@ -23,6 +23,11 @@ pub(crate) struct Generics {
     /// a type argument must be assignable to it (`crate::constraints`). Empty when no parameter
     /// has one.
     pub constraints: Vec<Option<TyId>>,
+    /// Per parameter, whether every array its bound may be is written read-only (`T extends
+    /// string | readonly (string | number)[]`, also through aliases): a value of `T` converted
+    /// to a wider union (`union_bound_value`) may then be an array of a narrower element type,
+    /// which no code writes through. Bit `n` for parameter `n` (the first 64).
+    pub readonly_arrays: u64,
 }
 
 impl Generics {

@@ -193,6 +193,12 @@ pub(super) fn fill_sig(cx: &mut Ctx, d: DefId, sig: &ast::FnSig, owner: &Generic
         generics.constraints.extend(own.constraints);
         generics.constraints.resize(generics.len(), None);
     }
+    for (i, &r) in own.readonly_arrays.iter().enumerate() {
+        let n = owner.len() + i;
+        if r && n < 64 {
+            generics.readonly_arrays |= 1 << n;
+        }
+    }
     if sig.generics.iter().any(|g| g.default.is_some()) {
         let mut defaults = generics.defaults.clone();
         defaults.resize(owner.len(), None);

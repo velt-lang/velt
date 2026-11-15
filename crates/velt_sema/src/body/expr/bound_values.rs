@@ -1,6 +1,6 @@
 //! Values of a type parameter used as their bound's type (issue #1212): a function-type bound
 //! as that function; an array-type bound, and a union bound (#379), through an `any`, checked
-//! at run time.
+//! at run time (an array of elements of one layout, or read-only).
 
 use crate::body::FnCx;
 use crate::hir::{self, ExprKind as H, TyId, TyKind};
@@ -57,7 +57,16 @@ impl FnCx<'_, '_> {
         let Some(b) = self.cx.constraint_of(p).filter(|_| !interface_bound) else {
             return Err(h);
         };
-        if !matches!(self.cx.ty.kind(b), TyKind::Array(_)) || self.cx.has_type_params(b) {
+        let TyKind::Array(e) = *self.cx.ty.kind(b) else {
+            return Err(h);
+        };
+        if self.cx.has_type_params(b) {
+            return Err(h);
+        }
+        // An instantiation may be an array of a narrower element type (`number[]` for `(number |
+        // string)[]`), whose view stops writes of the wider elements: only an element type
+        // with one layout, or a bound written read-only (`union_bound_value`).
+        if !self.one_layout(e) && !self.cx.constraint_read_only(p) {
             return Err(h);
         }
         let span = h.span;
@@ -69,10 +78,14 @@ impl FnCx<'_, '_> {
     /// unknown[]`) where a union holding every member of the bound is expected (the bound
     /// itself, or a wider union: `K | null` as `KeyValue | null`, #379): the value through an
     /// `any`, converted as `as` converts it, which picks the member the instantiation is.
-    /// Only where every member of the bound has an exact run-time test (`exact_test`): an
-    /// instantiation is then one of them itself, so the check never fails, while an interface
-    /// or object type member would take a subtype that the test rejects, and an enum has no
-    /// test (#924). `Err(h)` for any other value.
+    /// Only where every member of the bound has an exact run-time test (`exact_test`), so an
+    /// instantiation passes the test: an interface or object type member would take a subtype
+    /// that the test rejects, and an enum has no test (#924). An array member may be an array of
+    /// a narrower element type (`number[]` for `(number | string)[]`), which converts as a view
+    /// that stops writes of the wider elements: it is taken only when its element can't be
+    /// narrower (one primitive type) or the bound's arrays are written read-only, so no code
+    /// writes through it (`Generics::readonly_arrays`, sigx's `KeyValue`). `Err(h)` for any other
+    /// value.
     pub(crate) fn union_bound_value(
         &mut self,
         h: hir::Expr,
@@ -92,7 +105,8 @@ impl FnCx<'_, '_> {
         let want = self.flat_members(exp);
         let have = self.flat_members(b);
         let fits = have.iter().all(|m| want.contains(m));
-        if !fits || !have.iter().all(|&m| self.exact_test(m, 0)) {
+        let read_only = self.cx.constraint_read_only(p);
+        if !fits || !have.iter().all(|&m| self.exact_test(m, read_only, 0)) {
             return Err(h);
         }
         // Tested as the bound, whose members all have exact tests, then widened to `exp` by
@@ -114,22 +128,37 @@ impl FnCx<'_, '_> {
     }
 
     /// Does converting an `any` to `t` test for exactly `t` (a primitive, a literal, a class, an
-    /// array or union of such, or one of those or nothing), so that a value made as a `t` always
-    /// passes and nothing else does?
-    fn exact_test(&mut self, t: TyId, depth: u32) -> bool {
+    /// array or union of such, or one of those or nothing), so that a value of a type `t` may be
+    /// instantiated with passes, and is used as a `t`? An array whose element type has members
+    /// or subtypes only when `read_only` (`union_bound_value`).
+    fn exact_test(&mut self, t: TyId, read_only: bool, depth: u32) -> bool {
         if depth > 8 {
             return false;
         }
         if let Some(members) = self.cx.union_members(t) {
-            return members.iter().all(|&m| self.exact_test(m, depth + 1));
+            return members
+                .iter()
+                .all(|&m| self.exact_test(m, read_only, depth + 1));
         }
         match self.cx.ty.kind(t).clone() {
             TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Str | TyKind::Literal(_) => {
                 true
             }
-            TyKind::Array(e) | TyKind::Option(e, _) => self.exact_test(e, depth + 1),
+            TyKind::Array(e) => {
+                (read_only || self.one_layout(e)) && self.exact_test(e, read_only, depth + 1)
+            }
+            TyKind::Option(e, _) => self.exact_test(e, read_only, depth + 1),
             TyKind::Adt(d, _) => self.is_class_def(d) && self.cx.brand_base(t).is_none(),
             _ => false,
         }
+    }
+
+    /// Is `e` an array element type no instantiation can make narrower with another layout (one
+    /// primitive type), so an array of it written through stays an array of it?
+    fn one_layout(&self, e: TyId) -> bool {
+        matches!(
+            self.cx.ty.kind(e),
+            TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Str
+        )
     }
 }

@@ -155,15 +155,21 @@ pub(crate) struct ParamBounds {
     /// Per parameter, a bound that is a type (`T extends Record<string, V>`); empty when no
     /// parameter has one. See `Generics::constraints`.
     pub constraints: Vec<Option<TyId>>,
+    /// Per parameter, `Generics::readonly_arrays`.
+    pub readonly_arrays: Vec<bool>,
 }
 
 pub(crate) fn resolve_bounds(cx: &mut Ctx, gs: &[ast::GenericParam], env: &TyEnv) -> ParamBounds {
     let mut out = ParamBounds {
         bounds: vec![],
         constraints: vec![],
+        readonly_arrays: vec![],
     };
     for (i, g) in gs.iter().enumerate() {
         let mut bounds = vec![];
+        let readonly = !g.bounds.is_empty()
+            && (g.bounds.iter()).all(|b| arrays_read_only(cx, b, env.module, 0));
+        out.readonly_arrays.push(readonly);
         for b in &g.bounds {
             let ty = cx.resolve_type(b, env);
             match as_bound(cx, ty) {
@@ -193,6 +199,35 @@ pub(crate) fn resolve_bounds(cx: &mut Ctx, gs: &[ast::GenericParam], env: &TyEnv
         out.constraints.resize(gs.len(), None);
     }
     out
+}
+
+/// Is every array type `t` may be written read-only (`readonly T[]`, `ReadonlyArray<T>`), also
+/// through the program's type aliases (`Generics::readonly_arrays`)? `true` for a type that
+/// writes no array.
+fn arrays_read_only(cx: &Ctx, t: &ast::TypeExpr, module: usize, depth: usize) -> bool {
+    use ast::TypeExprKind as K;
+    if depth > 8 {
+        return false;
+    }
+    match &t.kind {
+        K::Union(ms) => ms
+            .iter()
+            .all(|m| arrays_read_only(cx, m, module, depth + 1)),
+        K::Array(_) | K::Tuple(_) => false,
+        K::Named { path, args } if path.len() == 1 => match path[0].name.as_str() {
+            "ReadonlyArray" => true,
+            "Array" => false,
+            name if args.is_empty() => match cx.lookup_type_item_at(module, name, path[0].span) {
+                Some(crate::ctx::Item::Alias(a)) => {
+                    let alias = &cx.aliases[a as usize];
+                    arrays_read_only(cx, &alias.decl.ty, alias.module, depth + 1)
+                }
+                _ => true,
+            },
+            _ => true,
+        },
+        _ => true,
+    }
 }
 
 /// `ty` written as a bound: `Ok` with an interface bound, `Err` with a type that is no
