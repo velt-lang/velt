@@ -17,10 +17,20 @@ async function main() {
   ac.abort("stop");
   console.log("spawned task saw:", await waiter, "| local:", s.aborted);
 
-  const escaped = await taskScope(async (scope: TaskScope<never>): Promise<TaskScope<never>> => scope);
+  const escaped = await taskScope(
+    async (scope: TaskScope<never>): Promise<TaskScope<never>> => scope,
+  );
   console.log("escaped scope signal:", escaped.signal.aborted);
+  // An `AbortSignal.any` over a scope's signal has the same reason: an `AbortError`.
+  const anyOf = AbortSignal.any([escaped.signal]);
   escaped.cancel("late");
   console.log("after cancel:", escaped.signal.aborted, escaped.signal.reason);
+  console.log("any of it:", anyOf.reason);
+  await taskScope(async (scope: TaskScope<never>): Promise<void> => {
+    const any = AbortSignal.any([scope.signal]);
+    scope.cancel();
+    console.log("cancel():", scope.signal.reason, "| any:", any.reason);
+  });
 }
 
 // timing: an abort from another task; the same output in either order
