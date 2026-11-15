@@ -1,0 +1,76 @@
+// A `fetch` to a server that never answers rejects with its signal's reason, as in Node (#2991):
+// a `DOMException` named `TimeoutError` for `AbortSignal.timeout`, `AbortError` for `abort()`,
+// like `signal.reason` (the same object in Node: #3011). A custom reason stays `signal.reason`,
+// but `fetch` throws it wrapped, as an `AbortError` whose `cause` it is (#3005: Node throws the
+// value itself).
+// The server is velt/net's. The same requests in Node, to a `node:net` server that accepts and
+// never answers, print the same first two lines; the third is `custom: true undefined true`.
+import { channel } from "velt/sync";
+import { listen, TcpStream } from "velt/net";
+
+async function main() {
+  const server = await listen("127.0.0.1:0");
+  // Accepts the three requests and answers none, until `done`.
+  const done = channel<bool>();
+  const accepting = spawn(async () => {
+    const held: TcpStream[] = [];
+    for (let i = 0; i < 3; i++) {
+      held.push(await server.accept());
+    }
+    await done.receive();
+    for (const conn of held) {
+      conn.close();
+    }
+  });
+  const url = `http://127.0.0.1:${server.port}/`;
+
+  const t = AbortSignal.timeout(50);
+  try {
+    await fetch(url, { signal: t });
+    console.log("timeout: answered");
+  } catch (e) {
+    const x: any = e;
+    console.log(
+      "timeout:",
+      x.name,
+      x.message,
+      x instanceof DOMException,
+      x.code,
+      x.name === t.reason.name,
+    );
+  }
+
+  const c = new AbortController();
+  setTimeout(() => c.abort(), 50);
+  try {
+    await fetch(url, { signal: c.signal });
+    console.log("abort: answered");
+  } catch (e) {
+    const x: any = e;
+    console.log(
+      "abort:",
+      x.name,
+      x.message,
+      x instanceof DOMException,
+      x.code,
+      x.name === c.signal.reason.name,
+    );
+  }
+
+  const c2 = new AbortController();
+  const why = { why: "user" };
+  setTimeout(() => c2.abort(why), 50);
+  try {
+    await fetch(url, { signal: c2.signal });
+    console.log("custom: answered");
+  } catch (e) {
+    const x: any = e;
+    console.log("custom:", c2.signal.reason.why, x.name, x.cause?.why);
+  }
+
+  await done.send(true);
+  await accepting;
+  server.close();
+}
+
+// timing: aborts by timers while the server holds the requests; one order

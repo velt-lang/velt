@@ -1,0 +1,7 @@
+before undefined
+abort() AbortError "This operation was aborted" true 20
+throwIfAborted AbortError "This operation was aborted" true 20
+string text
+AbortSignal.abort() AbortError "This operation was aborted" true 20
+timeout TimeoutError "The operation was aborted due to timeout" true 23
+any TimeoutError "The operation was aborted due to timeout" true 23

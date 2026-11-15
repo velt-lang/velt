@@ -5,15 +5,21 @@ import { AbortError } from "velt/task/errors";
 import { AbortSignal } from "velt/task/signal";
 
 /**
- * Thrown by `timeout(p, ms)` when `p` does not settle in time, and by `throwIfAborted()` on a
- * signal that an `AbortSignal.timeout` aborted.
+ * Thrown by `timeout(p, ms)` when `p` does not settle in time ("timed out after <ms> ms"), and
+ * the reason of a signal an `AbortSignal.timeout` aborted ("The operation was aborted due to
+ * timeout", as in Node): a `DOMException` named `TimeoutError` (`code` 23).
  */
 export class TimeoutError extends AbortError {
-  ms: i64;
+  #ms: i64;
 
-  constructor(ms: i64) {
-    super(`timed out after ${ms} ms`);
-    this.ms = ms;
+  constructor(ms: i64, message: string | undefined = `timed out after ${ms} ms`) {
+    super(message, "TimeoutError");
+    this.#ms = ms;
+  }
+
+  /** The time limit that ran out, in milliseconds. */
+  get ms(): i64 {
+    return this.#ms;
   }
 }
 
