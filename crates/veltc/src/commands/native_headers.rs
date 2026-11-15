@@ -70,20 +70,26 @@ pub fn native_headers(std: bool) -> Result<(), String> {
 }
 
 /// `velt native headers --std`: std's C declarations, as each target's build loads them (its
-/// `#name` variants), against that target's C library headers.
+/// `#name` variants), against that target's C library headers. Every target is checked before
+/// it fails, so one run shows what each target's headers say.
 fn check_std() -> Result<(), String> {
+    let mut failed = vec![];
     for target in TARGETS {
         let mut sess = Session::new();
         let result = super::check::check_std_headers_for(&mut sess, target);
         if !matches!(result, Ok(())) {
+            eprintln!("velt: for {target}:");
             super::build::report(&sess, false);
-            return Err(match result {
-                Err(BuildError::Failed(msg)) => msg,
+            failed.push(match result {
+                Err(BuildError::Failed(msg)) => format!("{target}: {msg}"),
                 _ => {
                     format!("the standard library's C declarations don't match {target}'s headers")
                 }
             });
         }
+    }
+    if !failed.is_empty() {
+        return Err(failed.join("\n"));
     }
     style::status(
         "Checked",

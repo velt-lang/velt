@@ -264,7 +264,7 @@ pub fn check_declares(
         }
     }
     if let Some(root) = check_std {
-        headers::check_std(p, root, std_files, target, diags);
+        headers::check_std(p, sm, root, std_files, target, diags);
     }
     headers::check(p, sm, graph, std_files, target, diags)
 }

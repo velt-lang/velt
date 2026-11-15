@@ -245,13 +245,13 @@ export const EXITED: i32 = ESRCH;
  */
 export const SPAWN_FLAGS: i16 = 0x4000;
 
-declare c("c") function pipe$io(fds: Ptr<u8>): i32;
+declare c("c") function pipe$io(fds: Ptr<i32>): i32;
 declare c("c") function posix_spawn_file_actions_addinherit_np(fa: Ptr<u8>, fd: i32): i32;
 
 /** A pipe at `fds` (read end, write end), both close-on-exec; 0, or -1 with `errno` set. */
 export function pipeCloexec(fds: usize): i32 {
   // SAFETY: room for two descriptors.
-  if (unsafe { pipe$io(m.ptr(fds)) } !== 0) {
+  if (unsafe { pipe$io(Ptr.at<i32>(fds)) } !== 0) {
     return -1;
   }
   // SAFETY: F_SETFD takes an `int`, passed as C's `...` argument.

@@ -1311,7 +1311,9 @@ Step 1 lands in layers, each its own pull request:
       its `errno` (c_functions.rs's Windows test changed with it). The accessor per target is
       velt_vir's `c_abi`, the one fact of the C library lowering keeps.
     - **Header check**: std has no package.velt, so `velt native headers --std` checks std's
-      declarations on every target with the headers `native::headers::std_check::std_headers` lists
+      declarations in the files `native::headers::std_check::CHECKED` lists (the rest differ
+      from their headers in ways #3022 lists, and join that list file by file; it only grows)
+      on every target with the headers `native::headers::std_check::std_headers` lists
       (`<errno.h>`, `<fcntl.h>`, `<stdlib.h>`, `<string.h>`, `<sys/stat.h>`, `<unistd.h>`,
       `<unwind.h>`; Windows only `<errno.h>`, `<stdlib.h>` and `<string.h>`), each target
       loading its own `#fd-system`, `#errno-location` and `#unwind-raise` variants (std's

@@ -138,7 +138,7 @@ const PIDFD_OPEN: i64 = 434;
  */
 export function exitFd(pid: i32): i32 {
   // SAFETY: pidfd_open takes a process id and flags 0; the result is checked.
-  return unsafe { syscall(PIDFD_OPEN, pid as i64, 0, 0, 0, 0, 0) } as i32;
+  return unsafe { syscall(PIDFD_OPEN, pid as i64, 0 as i64) } as i32;
 }
 
 /** Watches pidfd `exit` (`exitFd`'s) in reactor `r`: readable once the child exited; 0 or errno. */
@@ -152,7 +152,7 @@ export const EXITED: i32 = -1;
 /** `posix_spawnattr_setflags`' extra flags for a child process: none (pipes are `pipe2`'s). */
 export const SPAWN_FLAGS: i16 = 0;
 
-declare c("c") function pipe2(fds: Ptr<u8>, flags: i32): i32;
+declare c("c") function pipe2(fds: Ptr<i32>, flags: i32): i32;
 
 /** `O_CLOEXEC`. */
 const O_CLOEXEC: i32 = 0x80000;
@@ -163,7 +163,7 @@ const O_CLOEXEC: i32 = 0x80000;
  */
 export function pipeCloexec(fds: usize): i32 {
   // SAFETY: room for two descriptors.
-  return unsafe { pipe2(m.ptr(fds), O_CLOEXEC) };
+  return unsafe { pipe2(Ptr.at<i32>(fds), O_CLOEXEC) };
 }
 
 /** Keeps descriptor `fd` the child's: nothing to do here (no `SPAWN_FLAGS`). */
@@ -254,7 +254,9 @@ export function prepare(fd: i32): i32 {
 const FUTEX_WAIT_PRIVATE: i64 = 128;
 const FUTEX_WAKE_PRIVATE: i64 = 129;
 
-declare c("c") function syscall(n: i64, a: i64, b: i64, c: i64, d: i64, e: i64, f: i64): i64;
+// `syscall` is variadic: each call passes the arguments its system call reads, as C's `...`
+// (#3021).
+declare c("c") function syscall(n: i64, ...args: CVarArgs): i64;
 
 /** The futex call's number on this architecture. */
 function futexNumber(): i64 {
@@ -269,7 +271,7 @@ export function wordWait(word: usize, expected: u32): void {
   const n = futexNumber();
   // SAFETY: `word` is an aligned word that lives as long as the process; no timeout.
   unsafe {
-    syscall(n, word as i64, FUTEX_WAIT_PRIVATE, expected as i64, 0, 0, 0);
+    syscall(n, word as i64, FUTEX_WAIT_PRIVATE, expected as i64, 0 as i64);
   }
 }
 
@@ -284,7 +286,7 @@ export function wordWaitFor(word: usize, expected: u32, us: u32): void {
   m.st(ts + 8, ((us % 1000000) * 1000) as usize);
   // SAFETY: as `wordWait`; a relative timespec at `ts`.
   unsafe {
-    syscall(n, word as i64, FUTEX_WAIT_PRIVATE, expected as i64, ts as i64, 0, 0);
+    syscall(n, word as i64, FUTEX_WAIT_PRIVATE, expected as i64, ts as i64);
   }
 }
 
@@ -293,7 +295,7 @@ export function wordWake(word: usize): void {
   const n = futexNumber();
   // SAFETY: as `wordWait`.
   unsafe {
-    syscall(n, word as i64, FUTEX_WAKE_PRIVATE, 1, 0, 0, 0);
+    syscall(n, word as i64, FUTEX_WAKE_PRIVATE, 1 as i64);
   }
 }
 

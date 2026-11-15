@@ -4,7 +4,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use velt_common::{Diagnostics, FileId};
+use velt_common::{Diagnostics, FileId, SourceMap};
 use velt_sema::hir;
 
 use super::{check_library, decl_of, zig_target, LibraryHeaders};
@@ -31,11 +31,49 @@ fn std_headers(target: &str) -> &'static [&'static str] {
     }
 }
 
-/// Check std's own C declarations (those in `std_files`; std at `root`) against the C library's
+/// The std files whose `declare c("c")` functions are checked, relative to std's root: those
+/// whose declarations match their headers today. The rest of std's declarations (sockets,
+/// threads, processes, the reactors, std's calls of the runtime) differ from their headers in
+/// ways #3022 lists, and are brought under the check file by file there. This list only grows:
+/// a file leaves it only when it no longer declares C functions.
+const CHECKED: &[&str] = &[
+    "ffi/errno_darwin.velt",
+    "ffi/errno_linux.velt",
+    "ffi/errno_windows.velt",
+    "ffi/read.velt",
+    "fs/fd/posix.velt",
+    "lang/hooks/sched_cells.velt",
+    "lang/hooks/sched_io_write.velt",
+    "lang/hooks/sched_mem.velt",
+    "lang/hooks/unwind_itanium.velt",
+    "net/fd_io.velt",
+    "sync/slot.velt",
+];
+
+/// `file` (std at `root`) is one [`CHECKED`] lists.
+fn is_checked(sm: &SourceMap, root: &Path, file: FileId) -> bool {
+    let path = &sm.get(file).path;
+    // The loader's path and `root` may reach std differently (a symlinked temporary directory).
+    let rel = match path.strip_prefix(root) {
+        Ok(rel) => rel.to_path_buf(),
+        Err(_) => match (path.canonicalize(), root.canonicalize()) {
+            (Ok(path), Ok(root)) => match path.strip_prefix(&root) {
+                Ok(rel) => rel.to_path_buf(),
+                Err(_) => return false,
+            },
+            _ => return false,
+        },
+    };
+    let rel = rel.to_string_lossy().replace('\\', "/");
+    CHECKED.contains(&rel.as_str())
+}
+
+/// Check std's own C declarations (those in `std_files` that [`CHECKED`] lists; std at `root`) against the C library's
 /// headers ([`std_headers`]) for `target`, as a package's are: `velt native headers --std`, with
 /// zig. Builds take them as checked. Nothing is remembered for a record: std has none.
 pub fn check_std(
     p: &hir::Program,
+    sm: &SourceMap,
     root: &Path,
     std_files: &HashSet<FileId>,
     target: &str,
@@ -44,7 +82,11 @@ pub fn check_std(
     let mut decls = vec![];
     for def in &p.defs {
         match decl_of(p, def) {
-            Some(("c", d)) if std_files.contains(&d.span.file) => decls.push(d),
+            Some(("c", d))
+                if std_files.contains(&d.span.file) && is_checked(sm, root, d.span.file) =>
+            {
+                decls.push(d)
+            }
             _ => {}
         }
     }
@@ -60,4 +102,28 @@ pub fn check_std(
         defines: &[],
     };
     check_library(root, "c", read, &decls, (zig_target, target), diags);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CHECKED;
+
+    /// A renamed or moved file would drop out of the check without a word: each one listed is
+    /// in std and declares C functions, and the list is sorted, each file once.
+    #[test]
+    fn every_checked_file_is_in_std_and_declares_c_functions() {
+        let std = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
+        for file in CHECKED {
+            let text = std::fs::read_to_string(std.join(file))
+                .unwrap_or_else(|e| panic!("std/{file}, which CHECKED lists: {e}"));
+            assert!(
+                text.contains("declare c(\"c\")"),
+                "std/{file} declares no C functions: take it out of CHECKED"
+            );
+        }
+        let mut sorted = CHECKED.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted, CHECKED, "CHECKED is sorted, each file once");
+    }
 }
