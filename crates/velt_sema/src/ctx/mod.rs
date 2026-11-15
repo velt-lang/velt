@@ -28,6 +28,15 @@ impl Ctx<'_> {
         self.info.is_frozen(d.0 as usize)
     }
 
+    /// The checked functions of the unit being checked (from [`Ctx::unit_base`] on): what a
+    /// pass over function bodies after the bodies' check goes through.
+    pub(crate) fn unit_fns(&self) -> Vec<DefId> {
+        (self.fn_defs.iter().copied())
+            .filter(|d| d.0 >= self.unit_base)
+            .filter(|d| self.fn_info(*d).state == crate::defs::BodyState::Done)
+            .collect()
+    }
+
     /// Lift the freeze: the passes that still run over every unit at once.
     pub(crate) fn thaw_defs(&mut self) {
         self.defs.thaw();
@@ -97,6 +106,9 @@ pub(crate) struct Ctx<'m> {
     pub def_spans: DefTable<Span>,
     /// The check is by units (`CheckOptions::units`, `crate::units`).
     pub units: bool,
+    /// Where the unit being checked starts (`crate::units`): the passes after the bodies take
+    /// their functions from here ([`Ctx::unit_fns`]). 0 in a whole-program check.
+    pub unit_base: u32,
     pub scopes: Vec<ModuleScope>,
     /// Exports of `std/prelude/*` modules, visible everywhere.
     pub prelude: FxHashMap<String, Item>,
@@ -559,6 +571,7 @@ impl<'m> Ctx<'m> {
             info: DefTable::default(),
             def_spans: DefTable::default(),
             units: false,
+            unit_base: 0,
             scopes: modules
                 .iter()
                 .map(|m| ModuleScope {

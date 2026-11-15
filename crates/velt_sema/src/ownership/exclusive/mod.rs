@@ -38,7 +38,6 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use velt_common::{Diagnostic, Span};
 
 use crate::ctx::Ctx;
-use crate::defs::BodyState;
 use crate::defs::FnKind;
 use crate::hir::{
     Callee, Capture, Def, DefId, Expr, ExprKind as E, FnDef, Intrinsic, LocalDef, LocalId,
@@ -54,12 +53,7 @@ use super::closure_names::Closures;
 use super::soft::make_share;
 
 pub(crate) fn check_exclusive(cx: &mut Ctx) {
-    let fns: Vec<DefId> = cx
-        .fn_defs
-        .iter()
-        .copied()
-        .filter(|d| cx.fn_info(*d).state == BodyState::Done)
-        .collect();
+    let fns: Vec<DefId> = cx.unit_fns();
     // Which closure a local names, for the closures and functions used as values of the
     // program (`Checker::relaxed_callee`): built once, when the first of them is checked, while
     // every body is in place.

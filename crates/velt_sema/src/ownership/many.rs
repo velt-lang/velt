@@ -15,7 +15,6 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use velt_common::{Diagnostic, Span};
 
 use crate::ctx::Ctx;
-use crate::defs::BodyState;
 use crate::defs::DefInfo;
 use crate::hir::{
     Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, LocalDef, LocalId, PassMode, Stmt,
@@ -28,12 +27,7 @@ use crate::visit::{self, VisitMut};
 /// Report closures reachable from several threads at once that capture a resource without
 /// `clone()` (module docs).
 pub(crate) fn check_many_threads(cx: &mut Ctx) {
-    let fns: Vec<DefId> = cx
-        .fn_defs
-        .iter()
-        .copied()
-        .filter(|d| cx.fn_info(*d).state == BodyState::Done)
-        .collect();
+    let fns: Vec<DefId> = cx.unit_fns();
     let mut checked = FxHashSet::default();
     for d in fns {
         let Some(Def::Fn(mut f)) = cx.defs[d.0 as usize].take() else {

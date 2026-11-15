@@ -23,8 +23,16 @@ pub(crate) fn check_definitions(cx: &mut Ctx) {
         crate::decorators::check(cx, 0);
         crate::body::expr::virtual_defaults::build_fill_bodies(cx, 0);
         crate::body::check_bodies(cx);
+        // EXPERIMENT (`VELT_UNITS=2`): std's passes after the bodies run in std's phase, and
+        // the app's run with std frozen, so the report names every pass that writes std.
+        if stage2() {
+            crate::analyze_after_bodies(cx);
+        }
     });
     cx.freeze_defs();
+    if stage2() {
+        cx.unit_base = cx.defs.len() as u32;
+    }
     crate::timings::pass("units: app", || {
         crate::script_tdz::check(cx);
         let from = crate::collect::collect_app(cx, &app);
@@ -34,5 +42,12 @@ pub(crate) fn check_definitions(cx: &mut Ctx) {
         crate::body::finish_bodies(cx, from.defs);
     });
     cx.collected_defs = cx.defs.len();
-    cx.thaw_defs();
+    if !stage2() {
+        cx.thaw_defs();
+    }
+}
+
+/// EXPERIMENT: `VELT_UNITS=2`.
+fn stage2() -> bool {
+    std::env::var_os("VELT_UNITS").is_some_and(|v| v == "2")
 }

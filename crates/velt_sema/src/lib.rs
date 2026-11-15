@@ -554,6 +554,8 @@ pub(crate) fn error_count(cx: &ctx::Ctx) -> usize {
 fn analyze_bodies(cx: &mut ctx::Ctx) {
     check_definitions(cx);
     analyze_after_bodies(cx);
+    // EXPERIMENT (`VELT_UNITS=2`): the passes above ran with std frozen.
+    cx.thaw_defs();
 }
 
 /// Every definition collected and every body checked.
@@ -574,7 +576,7 @@ fn check_definitions(cx: &mut ctx::Ctx) {
 }
 
 /// What follows the bodies' check: generated code, ownership and throws inferred, moves checked.
-fn analyze_after_bodies(cx: &mut ctx::Ctx) {
+pub(crate) fn analyze_after_bodies(cx: &mut ctx::Ctx) {
     generated_phase(cx);
     analyze_after_phase(cx);
 }
