@@ -1,0 +1,103 @@
+// velt/net (internal): the two connected sockets of `streamPair` (std/net/pair.velt) on Windows,
+// which has no `socketpair`: a loopback TCP connection. A listener on 127.0.0.1 (port the OS
+// picks, backlog 1), a blocking connect to it (loopback completes it in the kernel, before any
+// accept) and a blocking accept of exactly that connection: another local process connecting
+// first is accepted and closed, by its address. Then the listener closes, and both ends become
+// non-blocking and private to this process (`prepare`), with Nagle off as on accepted sockets.
+// Elsewhere: std/net/pair_posix.velt.
+
+import { IoResult } from "velt/native/result";
+import { bind, connect$net, getsockname, listen, socket } from "#net-calls";
+import * as r from "#reactor";
+import * as m from "velt/lang/hooks/sched_mem";
+import * as fs from "velt/net/fd_socket";
+
+const AF_INET: i32 = 2;
+const SOCK_STREAM: i32 = 1;
+const IPPROTO_TCP: i32 = 6;
+const TCP_NODELAY: i32 = 1;
+/** A `sockaddr_in`'s size. */
+const SIN_SIZE: usize = 16;
+/** 127.0.0.1 as `sin_addr` stores it (network order). */
+const LOOPBACK: u32 = 0x0100007f;
+/** Connections from elsewhere accepted (and closed) before ours, at most. */
+const STRANGERS: i32 = 64;
+
+/** Two connected stream sockets' descriptors, ready for the reactor. */
+export function connectedPair(): IoResult<i32[]> {
+  // Two addresses (the listener's, the accepted peer's) and their `int` lengths.
+  const sa = m.zeroed(64);
+  const mine = sa;
+  const peer = sa + 16;
+  const len = sa + 32;
+  m.st32(mine, AF_INET as u32);
+  m.st32(mine + 4, LOOPBACK);
+  // SAFETY: no precondition.
+  const l = unsafe { socket(AF_INET, SOCK_STREAM, IPPROTO_TCP) };
+  if (l < 0) {
+    return fail(sa, r.errno(), -1, -1, -1);
+  }
+  m.st32(len, SIN_SIZE as u32);
+  // SAFETY: a `sockaddr_in` (127.0.0.1, port 0) and its length; then its room and length word.
+  if (
+    unsafe { bind(l, m.ptr(mine), SIN_SIZE as u32) } !== 0 ||
+    unsafe { listen(l, 1) } !== 0 ||
+    unsafe { getsockname(l, m.ptr(mine), m.ptr(len)) } !== 0
+  ) {
+    return fail(sa, r.errno(), l, -1, -1);
+  }
+  // SAFETY: no precondition.
+  const c = unsafe { socket(AF_INET, SOCK_STREAM, IPPROTO_TCP) };
+  if (c < 0) {
+    return fail(sa, r.errno(), l, -1, -1);
+  }
+  // SAFETY: the listener's address, as getsockname filled it.
+  if (unsafe { connect$net(c, m.ptr(mine), SIN_SIZE as u32) } !== 0) {
+    return fail(sa, r.errno(), l, c, -1);
+  }
+  // The connecting end's own address: the peer address the accept must see.
+  m.st32(len, SIN_SIZE as u32);
+  // SAFETY: room for a `sockaddr_in` and its length word.
+  if (unsafe { getsockname(c, m.ptr(mine), m.ptr(len)) } !== 0) {
+    return fail(sa, r.errno(), l, c, -1);
+  }
+  let a: i32 = -1;
+  for (let tries = 0; tries <= STRANGERS && a < 0; tries++) {
+    m.st32(len, SIN_SIZE as u32);
+    const s = r.accept(l, peer, len);
+    if (s < 0) {
+      return fail(sa, r.errno(), l, c, -1);
+    }
+    // Same port and address (the family and port word, then the IPv4 address).
+    if (m.ld32(peer) === m.ld32(mine) && m.ld32(peer + 4) === m.ld32(mine + 4)) {
+      a = s;
+    } else {
+      fs.closeFd(s);
+    }
+  }
+  fs.closeFd(l);
+  if (a < 0) {
+    // Only strangers came: give up rather than wait on.
+    return fail(sa, 10061, -1, c, -1);
+  }
+  const e = r.prepare(c);
+  if (e !== 0) {
+    return fail(sa, e, -1, c, a);
+  }
+  fs.setOn(a, IPPROTO_TCP, TCP_NODELAY);
+  fs.setOn(c, IPPROTO_TCP, TCP_NODELAY);
+  m.release(sa, 64);
+  return fs.value<i32[]>([a, c]);
+}
+
+/** Frees `sa`, closes the sockets made so far (-1: none) and fails with error `e`. */
+function fail(sa: usize, e: i32, l: i32, c: i32, a: i32): IoResult<i32[]> {
+  const st = fs.osError(e);
+  for (const fd of [l, c, a]) {
+    if (fd >= 0) {
+      fs.closeFd(fd);
+    }
+  }
+  m.release(sa, 64);
+  return fs.failed<i32[]>(st, []);
+}

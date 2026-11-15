@@ -1,9 +1,10 @@
-//! Deferred writes on the runtime's streams under the executor in Velt (#2817): a program
-//! compiled with `VELT_SCHEDULER=std` keeps what `writeLater` queues on a runtime-owned stream
-//! (`streamPair`, `connectTls`) in Velt and hands it to the runtime's `write` once the poll ends
-//! (std/net/rt_later.velt): the runtime sends its own deferred bytes only after polls of its own
-//! tasks, which never run on the Velt worker. And the end of such a program gives back the send
-//! buffers of the reactor's sockets dropped without `close()` (sched_io_table.velt
+//! Deferred writes under the executor in Velt (#2817). On a runtime-owned stream (`connectTls`) a
+//! program compiled with `VELT_SCHEDULER=std` keeps what `writeLater` queues in Velt and hands it
+//! to the runtime's `write` once the poll ends (std/net/rt_later.velt): the runtime sends its own
+//! deferred bytes only after polls of its own tasks, which never run on the Velt worker. A
+//! `streamPair` is two of the reactor's sockets (std/net/pair.velt): the same programs on it check
+//! the reactor's deferred writes, closes and errors. And the end of such a program gives back the
+//! send buffers of the reactor's sockets dropped without `close()` (sched_io_table.velt
 //! `releaseBuffers`), which a leak check counts. Each program is built with the variable and
 //! runs with `VELT_THREADS=1` and `4` (the flusher is a task other workers may take; killed after
 //! a minute: lost bytes hang); it must print what Node prints.
@@ -154,7 +155,7 @@ fn rt_later_shadow_white_box_tests_pass() {
 /// them, `tryWrite` takes nothing while they wait, `close` sends them first, and 4 MiB go
 /// through with `drained` as backpressure.
 #[test]
-fn deferred_writes_on_a_runtime_stream_reach_the_peer() {
+fn deferred_writes_on_a_stream_pair_reach_the_peer() {
     prints(
         "pair_later",
         "import { streamPair, TcpStream } from \"velt/net\";
@@ -239,7 +240,7 @@ async function main() {
 }
 ",
         "read 5\none two three four\nping\n0\nx\nbye\nEBADF\n[ 4194304, 105628 ]\n",
-        b"rt_later",
+        b"pair_posix",
     );
 }
 
@@ -391,7 +392,7 @@ async function main() {
 }
 ",
         "writeLater EBADF\ntryWrite 0\nwrite EBADF\ndrained EBADF\npeer got 8388608\n",
-        b"rt_later",
+        b"pair_posix",
     );
     // Block counts not compared: a runtime thread still holding a waker of the finished reader
     // (its read waited on the closed stream) gives the reference back after the counts, at any
@@ -428,15 +429,15 @@ async function main() {
 }
 ",
         "read EBADF\npeer got 8388608\n",
-        b"rt_later",
+        b"pair_posix",
         Counted::Never,
     );
 }
 
-/// `writeLater` on a closed runtime stream reports `EBADF` every time, whether it deferred bytes
+/// `writeLater` on a closed stream reports `EBADF` every time, whether it deferred bytes
 /// before its close or not.
 #[test]
-fn write_later_on_a_closed_runtime_stream_reports_ebadf() {
+fn write_later_on_a_closed_stream_pair_end_reports_ebadf() {
     prints(
         "later_after_close",
         "import { streamPair } from \"velt/net\";
@@ -471,7 +472,7 @@ async function main() {
 }
 ",
         "EBADF\nEBADF\nEBADF\nEBADF\nfirst\nEBADF\nEBADF\n",
-        b"rt_later",
+        b"pair_posix",
     );
 }
 
@@ -492,15 +493,15 @@ async function main() {
 }
 ",
         "returning\n",
-        b"rt_later",
+        b"pair_posix",
         Counted::Never,
     );
 }
 
-/// A failed deferred write reports the runtime's status as it is (code and message), to
-/// `drained` and to the next `writeLater`.
+/// A failed deferred write reports the OS's status as it is (code and message), to `drained` and
+/// to the next `writeLater`.
 #[test]
-fn a_failed_deferred_write_reports_the_runtimes_status() {
+fn a_failed_deferred_write_reports_its_status() {
     prints(
         "later_error",
         "import { streamPair } from \"velt/net\";
@@ -525,17 +526,17 @@ async function main() {
   x.close();
 }
 ",
-        "drained EPIPE broken pipe\nwriteLater EPIPE broken pipe\n",
-        b"rt_later",
+        "drained EPIPE Broken pipe (os error 32)\nwriteLater EPIPE Broken pipe (os error 32)\n",
+        b"pair_posix",
     );
 }
 
-/// A program that ends with `process.exit` while a runtime stream with a deferred-write buffer
+/// A program that ends with `process.exit` while a stream with a deferred-write buffer
 /// is still open ends as the default build does. Its block counts are not compared: `process.exit`
 /// ends in the runtime with no hook of std's on the way, and other workers may still be using the
 /// buffers (sched_io_table.velt `releaseBuffers`).
 #[test]
-fn process_exit_with_an_open_runtime_stream_ends_the_program() {
+fn process_exit_with_an_open_stream_with_deferred_bytes_ends_the_program() {
     prints_counted(
         "later_process_exit",
         "import { streamPair } from \"velt/net\";
@@ -548,7 +549,7 @@ async function main() {
 }
 ",
         "kept\n",
-        b"rt_later",
+        b"pair_posix",
         Counted::Never,
     );
 }

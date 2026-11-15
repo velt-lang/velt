@@ -1,0 +1,97 @@
+// check: no leaks
+// velt/net streamPair: two connected streams. What one writes the other reads, both ways; neither
+// has a peer address; `shutdown` is the other's end of stream while it can still write back
+// (half-close); 4 MiB go through with a reader on another task; a read waiting when the other end
+// closes ends with end of stream; a write once the other end closed fails, and one on a closed
+// handle fails with EBADF.
+import { streamPair, TcpStream } from "velt/net";
+
+async function reader(s: TcpStream): Promise<string> {
+  let total = 0;
+  let sum = 0;
+  while (true) {
+    const chunk = await s.read();
+    if (chunk.length == 0) {
+      break;
+    }
+    total += chunk.length;
+    for (const b of chunk) {
+      sum = (sum + b) % 1000003;
+    }
+  }
+  return `${total} ${sum}`;
+}
+
+async function readAll(s: TcpStream): Promise<string> {
+  let text = "";
+  while (true) {
+    const t = await s.readString();
+    if (t == "") {
+      return text;
+    }
+    text += t;
+  }
+}
+
+async function main() {
+  // Both ways, and the half-close.
+  const [a, b] = streamPair();
+  await a.write("ping");
+  let got = "";
+  while (got.length < 4) {
+    got += await b.readString();
+  }
+  console.log("b got", got);
+  await b.write("pong");
+  got = "";
+  while (got.length < 4) {
+    got += await a.readString();
+  }
+  console.log("a got", got);
+  console.log("peers", JSON.stringify(a.peerAddr()), JSON.stringify(b.peerAddr()));
+  a.shutdown();
+  console.log("b reads", JSON.stringify(await readAll(b)));
+  await b.write("after the half-close");
+  b.shutdown();
+  console.log("a reads", JSON.stringify(await readAll(a)));
+  a.close();
+  b.close();
+
+  // 4 MiB to a reader on another task.
+  const [c, d] = streamPair();
+  const r = spawn(reader(d));
+  const chunk: u8[] = [];
+  for (let i = 0; i < 65536; i++) {
+    chunk.push((i % 251) as u8);
+  }
+  for (let i = 0; i < 64; i++) {
+    await c.writeBytes(chunk);
+  }
+  c.shutdown();
+  console.log("received", await r);
+  d.close();
+
+  // Writes once the other end closed: one of them fails.
+  let failed = false;
+  for (let i = 0; i < 100 && !failed; i++) {
+    try {
+      await c.write("x");
+    } catch (e) {
+      failed = true;
+    }
+  }
+  console.log("a write to a closed peer fails:", failed);
+  c.close();
+  try {
+    await c.write("z");
+  } catch (e) {
+    console.log("on a closed handle:", e.code, e.message);
+  }
+
+  // A read waiting when the other end closes.
+  const [e, f] = streamPair();
+  const waiting = spawn((async () => await f.readString())());
+  e.close();
+  console.log("the waiting read ends with", JSON.stringify(await waiting));
+  f.close();
+}

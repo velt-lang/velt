@@ -139,6 +139,8 @@ export const F_FLUSHING: u32 = 256;
  */
 export const F_POLLED: u32 = 512;
 export const F_NEXT_DONE: u32 = 1024;
+/** A `streamPair` end (std/net/pair.velt): it has no peer address, as an in-memory stream. */
+export const F_PAIR: u32 = 2048;
 
 /**
  * What a waiter waits for: readable, writable (a connect), its bytes written (`arg`: the count
