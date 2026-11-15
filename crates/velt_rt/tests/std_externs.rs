@@ -307,7 +307,17 @@ fn mismatches(defs: &BTreeMap<String, Vec<(Sig, PathBuf)>>, required: bool) -> V
 #[test]
 fn std_declarations_match_velt_rt() {
     let defs = rust_definitions(&runtime_sources("velt_rt"));
-    let bad = mismatches(&defs, true);
+    // What only velt_rt_wasm defines is declared for WebAssembly builds (std/fs/rt.velt's async
+    // leaves: a native build runs the sync ones on the executor's blocking pool), and checked
+    // against velt_rt_wasm below.
+    let wasm = rust_definitions(&runtime_sources("velt_rt_wasm"));
+    let bad: Vec<String> = mismatches(&defs, true)
+        .into_iter()
+        .filter(|m| {
+            let name = m.split_once(':').map_or("", |(n, _)| n);
+            !(m.ends_with(", not defined") && wasm.contains_key(name))
+        })
+        .collect();
     assert!(
         bad.is_empty(),
         "{} mismatches:\n{}",

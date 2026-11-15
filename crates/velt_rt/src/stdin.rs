@@ -1,18 +1,15 @@
 //! `std/stdin`: reading the process's standard input, line by line or all at once (as text or
 //! bytes).
 //!
-//! Reads go through one process-wide read-ahead buffer ([`INPUT`]), so sync and async reads can
+//! Reads go through one process-wide read-ahead buffer ([`INPUT`]), so `readLineSync` and the
+//! async reads (these functions on the executor's blocking pool: std/process/rt_sched.velt) can
 //! be mixed and see one consistent stream. A line already in the buffer is returned without
-//! touching the OS: an async `readLine` then completes at once instead of hopping to the
-//! blocking pool, and a line costs one memchr plus one copy into its string. Refills read 64 KiB
-//! at a time (terminal and pipe reads block on every platform, so async refills run on the
-//! blocking pool). Text is decoded as UTF-8, invalid bytes as U+FFFD.
+//! touching the OS, and costs one memchr plus one copy into its string. Refills read 64 KiB at a
+//! time. Text is decoded as UTF-8, invalid bytes as U+FFFD.
 
 use crate::bytes::VeltBytes;
 use crate::result::IoResult;
 use crate::str::VeltStr;
-use crate::task::leaf::{blocking_leaf, new_leaf, run_blocking};
-use crate::task::VeltFut;
 use parking_lot::Mutex;
 use std::io::Read;
 
@@ -148,44 +145,16 @@ pub unsafe extern "C" fn velt_rt_stdin_read_line_sync(out: *mut LineRead) {
     out.write(next_line());
 }
 
-/// Async `readLine` → result slot `LineRead`.
-#[no_mangle]
-pub extern "C" fn velt_rt_stdin_read_line() -> *mut VeltFut {
-    new_leaf(async {
-        // A buffered line needs no blocking read. `try_lock`: if another reader holds the
-        // buffer, wait for it on the blocking pool rather than on this worker.
-        let buffered = INPUT.try_lock().and_then(|mut input| input.take_line());
-        match buffered {
-            Some(line) => line_read(Ok(line)),
-            // Boxed: only a refill pays for the blocking read's future, and the leaf every
-            // buffered line allocates stays small (#2829).
-            None => Box::pin(run_blocking(next_line)).await,
-        }
-    })
-}
-
 /// All remaining input (sync) → `IoResult<VeltStr>` (no return value: std reads the code from `out`).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_stdin_read_all_sync(out: *mut IoResult<VeltStr>) {
     out.write(IoResult::from_io(read_all(), |s| s));
 }
 
-/// All remaining input (async) → `IoResult<VeltStr>`.
-#[no_mangle]
-pub extern "C" fn velt_rt_stdin_read_all() -> *mut VeltFut {
-    blocking_leaf(|| IoResult::from_io(read_all(), |s| s))
-}
-
 /// All remaining input as bytes (sync) → `IoResult<VeltBytes>` (the runtime's buffer, not a copy).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_stdin_read_all_bytes_sync(out: *mut IoResult<VeltBytes>) {
     out.write(IoResult::from_io(read_all_bytes(), |b| b));
-}
-
-/// All remaining input as bytes (async) → `IoResult<VeltBytes>`.
-#[no_mangle]
-pub extern "C" fn velt_rt_stdin_read_all_bytes() -> *mut VeltFut {
-    blocking_leaf(|| IoResult::from_io(read_all_bytes(), |b| b))
 }
 
 #[cfg(test)]

@@ -580,6 +580,10 @@ typedef struct { VeltStrArray names; VeltBytes kinds; } VeltDirents;  // 48 byte
 socket, device), 1 file, 2 directory, 3 symlink (not followed). The kind comes with the listing
 (`d_type`, or Windows' find data); only an entry of unknown type costs an `lstat`.
 
+velt_rt defines only the sync column: a native build runs it on the executor's blocking pool
+(std/fs/rt_sched.velt). The async column is velt_rt_wasm's (WebAssembly builds,
+std/fs/rt.velt) [velt_rt's async leaves removed, #2196].
+
 | Async (`-> VeltFut*`) | Sync (`..., out)`, returns nothing) | Result type |
 |---|---|---|
 | `velt_rt_fs_read_file(path)` | `velt_rt_fs_read_file_sync(path, out)` | `IoResult<VeltStr>` (`EILSEQ` if not UTF-8) |
@@ -1278,13 +1282,13 @@ are `IoResult` errors whose message starts with `spawn <program>: `.
 
 `typedef struct { IoResult<VeltStr> line; u8 eof; } LineRead;` (64 bytes): a line without its
 `\n`/`\r\n`; at end of input `eof = 1` and the line is empty. One process-wide buffered stream
-serves both forms; async reads run on the blocking pool; text is decoded lossily.
+serves both forms; an async read is the sync one on the executor's blocking pool
+(std/process/rt_sched.velt); text is decoded lossily. [The async leaves `velt_rt_stdin_read_line`,
+`_read_all` and `_read_all_bytes` were removed, #2196.]
 
 | Symbol | Signature |
 |---|---|
-| `velt_rt_stdin_read_line` | `() -> VeltFut*` (result `LineRead`) |
 | `velt_rt_stdin_read_line_sync` | `(LineRead* out)` |
-| `velt_rt_stdin_read_all` | `() -> VeltFut*` (result `IoResult<VeltStr>`) |
 | `velt_rt_stdin_read_all_sync` | `(IoResult<VeltStr>* out)` |
 
 ### 14.5 Machine facts (`velt/os`)
