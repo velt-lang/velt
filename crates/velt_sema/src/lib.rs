@@ -136,6 +136,7 @@ mod recursive_aliases;
 mod recursive_unions;
 mod replaced_holders;
 mod resolve;
+mod rounds;
 mod script_locals;
 mod script_tdz;
 mod source_module;
@@ -431,14 +432,6 @@ fn check_timed(
         std_load::report_added(&mut cx);
         (cx, entry)
     };
-    // Function types written without `throws` throw what the closures stored into them throw
-    // (`throws::fn_types`): check again while those sets grow.
-    let mut seeds = throws::FnTypeSeeds::default();
-    // Unions of interfaces made views of (`union_views`): their uses are checked again with
-    // arms for the view.
-    let mut views = union_views::Families::default();
-    let mut view_rounds = 0;
-    let (mut cx, mut entry) = new_cx("round: first", true, &seeds, false, &views);
     // A check with error-set variables that reports anything is checked again without them,
     // for its diagnostics (`FnSites::doubted`); not one that refuses script variables it then
     // moves into `main`, which is checked again anyway (`script_locals`).
@@ -449,80 +442,16 @@ fn check_timed(
     };
     // The check checked again, kept while that one runs: when that one reports an error this
     // one did not, this one's diagnostics stay the program's (`throws::adds_errors`).
-    let (mut first, mut kept_first) = (None, false);
-    // A check with sharing may grow the sets too: the checks after it share as well.
-    let (mut rounds, mut held) = (0, true);
-    let generated = 'check: loop {
-        loop {
-            // Views of new families (`union_views`) are checked again together with the growth of
-            // the throws sets, in one round.
-            let grown_views = cx.union_views_grown().filter(|_| view_rounds < VIEW_ROUNDS);
-            let grown_seeds = cx.fn_sites.grown();
-            if grown_views.is_some() || grown_seeds.is_some() {
-                if let Some(g) = grown_views {
-                    view_rounds += 1;
-                    views = g;
-                }
-                if let Some(g) = grown_seeds {
-                    rounds += 1;
-                    seeds = g;
-                }
-                let last = rounds == FN_SITE_ROUNDS;
-                (cx, entry) = new_cx("round: grown throws sets", held, &seeds, last, &views);
-            } else if held && retry_sharing(&cx) {
-                held = false;
-                let last = rounds == FN_SITE_ROUNDS;
-                (cx, entry) = new_cx("round: sharing retry", false, &seeds, last, &views);
-            } else if error_count(&cx) == 0
-                && body::lazy_std::too_late(&mut cx, &mut assumed.borrow_mut())
-            {
-                let last = rounds == FN_SITE_ROUNDS;
-                (cx, entry) = new_cx("round: known too late", held, &seeds, last, &views);
-            } else {
-                break;
-            }
-        }
-        union_views::finish(&mut cx);
-        cx.upcast_writes();
-        // What these passes and the rounds reported, as after the first check.
-        let doubted = "round: doubted throws variables";
-        if let Some((f, e)) = first.take().filter(|(f, _)| throws::adds_errors(f, &cx)) {
-            (cx, entry, kept_first) = (f, e, true);
-        } else if let Some(s) = cx.checked_again(doubt(&cx) && !kept_first) {
-            seeds = s;
-            let (c, e) = new_cx(doubted, held, &seeds, rounds == FN_SITE_ROUNDS, &views);
-            first = Some((
-                std::mem::replace(&mut cx, c),
-                std::mem::replace(&mut entry, e),
-            ));
-            continue 'check;
-        }
-        if !recovered.is_empty() || cx.diags.iter().any(|d| d.is_error()) {
-            let refused = script_locals::refused(&cx, root);
-            return ((None, cx.diags), refused);
-        }
-        if let Some(out) = generating::stopped(generator.as_ref()) {
-            return ((out, cx.diags), Default::default());
-        }
-        let generated =
-            match timings::pass("generated::instances", || generated::instances(&mut cx)) {
-                Ok(bound) => bound,
-                Err(demand) => {
-                    return (
-                        (Some(Checked::Demand(demand)), cx.diags),
-                        Default::default(),
-                    )
-                }
-            };
-        if let Some(s) = cx.checked_again(doubt(&cx) && !kept_first) {
-            seeds = s;
-            (cx, entry) = new_cx(doubted, held, &seeds, rounds == FN_SITE_ROUNDS, &views);
-            continue 'check;
-        }
-        if cx.diags.iter().any(|d| d.is_error()) {
-            return ((None, cx.diags), Default::default());
-        }
-        break generated;
+    let (cx, entry, generated) = match rounds::run(
+        &new_cx,
+        &doubt,
+        &assumed,
+        !recovered.is_empty(),
+        root,
+        generator.as_ref(),
+    ) {
+        Ok(done) => done,
+        Err(stopped) => return *stopped,
     };
     // A kept check (`kept`) of a check in which no generator ran.
     let none_generated = generator.as_ref().is_none_or(|g| g.kept().next().is_none());
@@ -579,7 +508,7 @@ pub(crate) const FN_SITE_ROUNDS: usize = 8;
 /// Rounds of checking that add families of union views (`union_views`): one per family a
 /// view is first made of in a `<view>` arm (converting a view to a wider union) at most; after
 /// the last, a use without an arm is an error.
-const VIEW_ROUNDS: usize = 4;
+pub(crate) const VIEW_ROUNDS: usize = 4;
 
 /// Steps 1–5 and the checks of the whole program: the entry point, if there is one.
 fn analyze(
@@ -612,7 +541,7 @@ fn analyze(
 /// `demote_local_closures` on reported an error, the program is checked again with them
 /// sharing, as it was before. Errors from the earlier passes (type errors) don't depend on
 /// borrowing and never cause a second check. The CLI and the IDE both use this rule.
-fn retry_sharing(cx: &ctx::Ctx) -> bool {
+pub(crate) fn retry_sharing(cx: &ctx::Ctx) -> bool {
     cx.held_borrows_used && cx.borrow_pass_errors
 }
 
