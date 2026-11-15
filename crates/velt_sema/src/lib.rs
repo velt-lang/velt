@@ -664,7 +664,10 @@ pub(crate) fn analyze_after_bodies(cx: &mut ctx::Ctx) {
 fn generated_phase(cx: &mut ctx::Ctx) {
     // Code is generated for a program (`crate::units`): std's unit holds no generated module,
     // so it outlives the check's generator; the app's stage generates for std's demands too.
+    // It still walks its bodies for the demand (`generated::demand::Walked`): the app's copy
+    // then walks only its own.
     if cx.units_stage == units::Stage::Std {
+        timings::pass("generated::demand", || generated::demand::compute(cx));
         return;
     }
     timings::pass("generated::phase", || generated::phase::run(cx));

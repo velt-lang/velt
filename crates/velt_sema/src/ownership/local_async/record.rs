@@ -43,6 +43,23 @@ pub(crate) fn record_changed_captures(cx: &mut Ctx) {
         .map(DefId)
         .filter(|d| matches!(&cx.defs[d.0 as usize], Some(Def::Fn(f)) if !f.captures.is_empty()))
         .collect();
+    let clones: Vec<(DefId, TyId)> = (base..cx.defs.len() as u32)
+        .map(DefId)
+        .filter_map(|d| match &cx.defs[d.0 as usize] {
+            Some(Def::Fn(f)) if f.name.ends_with(".clone") && f.self_ty.is_some() => {
+                f.self_ty.map(|t| (d, t))
+            }
+            _ => None,
+        })
+        .collect();
+    // The tables the walks read (`Memo`), made only when a walk runs: a unit with no closure
+    // that captures and no library `clone` has none to walk.
+    let walks = !closures.is_empty() || clones.iter().any(|(m, _)| in_library(cx, *m));
+    if !walks {
+        // Every `clone` here is the program's, which changes what it holds (below).
+        cx.changes_held.extend(clones.into_iter().map(|(m, _)| m));
+        return;
+    }
     let lits = std::rc::Rc::new(crate::timings::pass("local_async::literals", || {
         super::targets::Literals::scan(cx)
     }));
@@ -77,15 +94,6 @@ pub(crate) fn record_changed_captures(cx: &mut Ctx) {
         }
         cx.defs[c.0 as usize] = Some(Def::Fn(f));
     }
-    let clones: Vec<(DefId, TyId)> = (base..cx.defs.len() as u32)
-        .map(DefId)
-        .filter_map(|d| match &cx.defs[d.0 as usize] {
-            Some(Def::Fn(f)) if f.name.ends_with(".clone") && f.self_ty.is_some() => {
-                f.self_ty.map(|t| (d, t))
-            }
-            _ => None,
-        })
-        .collect();
     for (m, this) in clones {
         let changes = !in_library(cx, m) || {
             let mut mm = memo();
