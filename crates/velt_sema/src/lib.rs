@@ -490,13 +490,7 @@ fn check_timed(
     // one did not, this one's diagnostics stay the program's (`throws::adds_errors`).
     if opts.units && units::stage2() {
         stage.set(units::Stage::Std);
-        let mut std_cx = match rounds::run(
-            &new_cx,
-            &|_: &ctx::Ctx| false,
-            &assumed,
-            false,
-            generator.as_ref(),
-        ) {
+        let mut std_cx = match rounds::run(&new_cx, &|_: &ctx::Ctx| false, &assumed, false, None) {
             Ok((cx, _, _)) => cx,
             Err(stopped) => return *stopped,
         };
@@ -650,6 +644,11 @@ pub(crate) fn analyze_after_bodies(cx: &mut ctx::Ctx) {
 
 /// The generated code collected, checked and bound ([`generated::phase`]).
 fn generated_phase(cx: &mut ctx::Ctx) {
+    // Code is generated for a program (`crate::units`): std's unit holds no generated module,
+    // so it outlives the check's generator; the app's stage generates for std's demands too.
+    if cx.units_stage == units::Stage::Std {
+        return;
+    }
     timings::pass("generated::phase", || generated::phase::run(cx));
 }
 

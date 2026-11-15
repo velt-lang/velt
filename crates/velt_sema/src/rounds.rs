@@ -98,16 +98,21 @@ pub(crate) fn run<'m>(
         if let Some(out) = generating::stopped(generator) {
             return Err(Box::new(((out, cx.diags), Default::default())));
         }
-        let generated =
-            match timings::pass("generated::instances", || generated::instances(&mut cx)) {
-                Ok(bound) => bound,
-                Err(demand) => {
-                    return Err(Box::new((
-                        (Some(Checked::Demand(demand)), cx.diags),
-                        Default::default(),
-                    )))
-                }
-            };
+        // std's unit binds no instance: the app's stage does (`crate::units`).
+        let std_unit = cx.units_stage == crate::units::Stage::Std;
+        let generated = match std_unit {
+            true => Ok(Default::default()),
+            false => timings::pass("generated::instances", || generated::instances(&mut cx)),
+        };
+        let generated = match generated {
+            Ok(bound) => bound,
+            Err(demand) => {
+                return Err(Box::new((
+                    (Some(Checked::Demand(demand)), cx.diags),
+                    Default::default(),
+                )))
+            }
+        };
         if let Some(s) = cx.checked_again(doubt(&cx) && !kept_first) {
             seeds = s;
             (cx, entry) = new_cx(doubted, held, &seeds, rounds == FN_SITE_ROUNDS, &views);
