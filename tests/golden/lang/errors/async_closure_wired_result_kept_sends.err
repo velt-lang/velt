@@ -1,0 +1,1 @@
+async_closure_wired_result_kept_sends.velt:9:54: error: an async closure that may run on another thread cannot capture the generator `chunks`

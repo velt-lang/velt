@@ -1,0 +1,13 @@
+// The closure a closure read from a module binding returns (`mk(…)`), called at once with a job
+// (#2952): the sender handed to `mk` reaches it through the enclosing closure's parameter, and
+// sends the job to another task, so the job's closure, which captured a generator, is refused.
+import { channel } from "velt/sync";
+async function* gen(): AsyncGenerator<string> { yield "a"; yield "b"; }
+class Job { constructor(public run: () => Promise<void>) {} }
+const ch = channel<unknown>(1);
+const chunks = gen();
+const t = spawn((async () => { for await (const j of ch) { await (j as Job).run(); break; } })());
+const job = new Job(async () => { console.log((await chunks.next()).value); });
+const r = (settle: (x: unknown) => void): ((x: Job) => void) => (x: Job) => { settle(x); };
+const mk = r;
+mk((x: unknown) => { void ch.send(x); })(job); await t;

@@ -1,0 +1,16 @@
+// A job passed through two calls through function values whose callees the graph traces (#2952):
+// each argument flows into the parameter of the closure the call reaches, and the last one spawns
+// it, so the job that changes what it captured is refused.
+type Job = () => Promise<void>;
+async function main() {
+  let n = 0;
+  const run = (j: Job) => {
+    spawn(j());
+  };
+  const call = (f: (j: Job) => void, j: Job) => f(j);
+  call(run, async () => {
+    n++;
+  });
+  await sleep(10);
+  console.log(`n ${n}`);
+}

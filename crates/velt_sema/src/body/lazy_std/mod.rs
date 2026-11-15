@@ -45,6 +45,15 @@ pub(crate) use live::{
     Assumed,
 };
 
+/// Is `d` live (for the passes after [`finish_live`])? Lowering builds only live definitions (a
+/// debug compiler asserts it, `hir::Program::live`), so code that isn't live never runs.
+/// Everything is live when std isn't checked lazily. The local-async check leaves std bodies that
+/// aren't live out of its graph, so a gap in the live rules, a debug compiler's ICE, is a check
+/// that misses a closure in a release compiler (`VELT_LIVE_CHECK=1` asserts there too).
+pub(crate) fn is_live(cx: &Ctx, d: DefId) -> bool {
+    cx.lazy.modules.is_empty() || cx.lazy.live.live.contains(&d)
+}
+
 /// Std modules (path prefixes) whose free functions lowering looks up by name (`velt_vir`
 /// `STABLE_SORT`, the proxy and typed-array glue, the epoch sections' `pin`, `unpin` and `retire`,
 /// `this_fn`'s glue, the `HostRef` hooks of host function calls) and calls: roots of the live set.
