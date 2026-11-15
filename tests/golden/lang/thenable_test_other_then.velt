@@ -1,0 +1,17 @@
+// A thenable test through `any` on a union whose other member has a `then` of its own, or on one
+// that may be `undefined` (whose `.then` throws in Node), stays an error (#379).
+class Later {
+  then(f: () => void) {
+    f();
+  }
+}
+
+function describe(r: Promise<number> | Later): string {
+  return typeof (r as any).then === "function" ? "thenable" : "value";
+}
+
+function maybe(r: Promise<number> | (() => number) | undefined): boolean {
+  return typeof (r as any).then === "function";
+}
+
+console.log(describe(new Later()), typeof maybe);

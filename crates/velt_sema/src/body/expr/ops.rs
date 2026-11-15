@@ -340,6 +340,9 @@ impl FnCx<'_, '_> {
             }
             B::Eq | B::NotEq => {
                 if let Some((x, tag)) = typeof_compare(lhs, rhs) {
+                    if let Some(h) = self.thenable_test(x, tag, op == B::NotEq, span) {
+                        return h;
+                    }
                     return self.typeof_test(x, tag, op == B::NotEq, span);
                 }
                 if let Some(h) = self.method_value_identity(lhs, rhs, span) {

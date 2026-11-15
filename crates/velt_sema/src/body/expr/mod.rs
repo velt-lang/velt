@@ -221,6 +221,7 @@ mod sync;
 mod system_args;
 pub(crate) mod tasks;
 mod ternary;
+mod thenable_test;
 mod this_fn_call;
 mod this_fn_expr;
 mod this_param;
