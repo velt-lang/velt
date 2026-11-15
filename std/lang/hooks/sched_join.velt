@@ -276,8 +276,47 @@ function joinDropAs(f: usize, kind: u32): void {
     m.wakerDrop(joiner);
   }
   if ((s & (t.J_DONE | t.J_CLAIMED)) === t.J_DONE) {
+    if (keepDrop(k)) {
+      return;
+    }
     dropResult(k);
   }
+  wk.release(k);
+}
+
+/**
+ * The handle of task `k`, done, its result unclaimed, dropped during the poll of another task on
+ * this worker: the result is dropped once that poll's microtasks are drained, with the rejections
+ * nobody handled (sched_node_report.velt `report`, which calls `dropKept`), as Node reports a
+ * rejection only after the synchronous code: the drop glue of a rejection reports it and ends the
+ * program, which must not cut the poll short (#3027). Kept on the polled task's list, linked
+ * through `T_JOINER` (the handle, gone now, was its last writer), with the handle's reference.
+ * Whether it was kept.
+ */
+@noInline
+function keepDrop(k: usize): bool {
+  const e = t.here();
+  if (e === 0 || m.ld(k + t.T_RESULT_DROP) === 0) {
+    return false;
+  }
+  const cur = m.ld(e + t.E_CURRENT);
+  if (cur === 0 || cur === k || (m.load32(k + t.T_JOIN_STATE) & nc.J_PANICKED) !== 0) {
+    return false;
+  }
+  m.st(k + t.T_JOINER, m.ld(cur + t.T_UNHANDLED));
+  m.st(cur + t.T_UNHANDLED, k | KEPT);
+  return true;
+}
+
+/**
+ * The tag of a task `keepDrop` kept on a task's list of rejections (`T_UNHANDLED`), whose other
+ * entries are started promises' nodes (tasks and nodes are 8-byte aligned).
+ */
+export const KEPT: usize = 1;
+
+/** Drops the result of task `k` that `keepDrop` kept, then the handle's reference to `k`. */
+export function dropKept(k: usize): void {
+  dropResult(k);
   wk.release(k);
 }
 

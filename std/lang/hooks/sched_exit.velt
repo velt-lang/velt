@@ -29,8 +29,19 @@
 //   alone, and so is anything holding a waker of it (an I/O wait, a promise of the runtime's):
 //   those keep their references, and the block stays counted.
 //
-// The hand-over costs one load per park (`takeExit`, sched_park.velt); between two polls it
-// shares the look at `E_RELAX` the loop makes anyway (sched_loop.velt `turnShared`).
+// The hand-over costs two loads per park of worker 0 (`exitDue` before it sleeps, `takeExit`
+// after it, sched_park.velt) and one per park of another worker; between two polls it shares the
+// look at `E_RELAX` the loop makes anyway (sched_loop.velt `turnShared`). A worker on its way to
+// park, past its last look and before its park word is up, misses neither: `handToMain` stores
+// the request, then reads worker 0's park word; worker 0 stores its park word, then reads the
+// request (sched_park.velt `parkable`), all sequentially consistent, so either the reporting
+// worker wakes it or it sees the request and does not sleep, as with every other wake of a
+// parking worker.
+//
+// A spawned task's result dropped unclaimed during the poll of another task is dropped once that
+// poll's microtasks are drained (sched_join.velt `keepDrop`), with the rejections nobody handled:
+// a rejection then reports, and ends the program, after the synchronous code of the poll, as
+// Node reports one (#3027).
 
 import { atomicAddress, inline, noInline } from "velt/lang/intrinsics";
 import * as r from "#reactor";
@@ -98,7 +109,8 @@ export function exitUncaught(code: i32): never {
  * The exit of an uncaught error reported on worker `self`, not worker 0 (`g`), handed to worker 0,
  * as Node orders it (#3027): there the error can be reported only once `main`'s synchronous code
  * yields, with everything it printed out by then. So the request is stored, every worker's
- * `E_RELAX` gets `EXIT_DUE`, and worker 0 is woken if it sleeps in its park: it ends the program
+ * `E_RELAX` gets `EXIT_DUE`, and worker 0 is woken if its park word is up (one on its way to
+ * park reads the request after its park word went up: module docs): it ends the program
  * at the end of the poll it runs (its output published then, sched_wake.velt `publishPolled`),
  * or once awake, giving back the root of `main` with the counters on (`root`, #3017). The other
  * workers stop between two polls, so nothing else prints after the report. This thread stops

@@ -53,7 +53,8 @@ export function relaxDuties(g: usize, now: usize): bool {
     m.st(g + t.E_CALM, 0);
     return false;
   }
-  const relax = m.load32(g + t.E_RELAX);
+  // The relax's own states: an exit due (sched_exit.velt `EXIT_DUE`) leaves them as they are.
+  const relax = m.load32(g + t.E_RELAX) & ~ex.EXIT_DUE;
   if (relax === t.RELAX_DOING) {
     return true;
   }
@@ -116,7 +117,7 @@ export function idleDuties(g: usize): bool {
     m.ld(g + t.E_SPLIT) === 0 ||
     n < 2 ||
     m.load(g + t.E_LAZY) !== 0 ||
-    m.load32(g + t.E_RELAX) !== 0 ||
+    (m.load32(g + t.E_RELAX) & ~ex.EXIT_DUE) !== 0 ||
     m.load(g + t.E_MOVING) !== 0
   ) {
     return false;
