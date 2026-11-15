@@ -96,6 +96,61 @@ impl FnLower<'_, '_> {
         mask
     }
 
+    /// The mask of a direct call's params that get a table (`table_read`) of a counted array
+    /// type (`args` follow `skip` already lowered leading params). The table's header has no
+    /// count in front of it, so the callee must neither count nor change it: such a call goes
+    /// to a `Work::Frozen` instance with these params in its mask, which reads the table in
+    /// place, as it is read where the type is not counted (#3015). A param the callee changes
+    /// although it is `Borrow` (call.rs `call_def`), or one an async function keeps past the
+    /// call, gets the table evaluated instead.
+    pub(super) fn table_mask(
+        &mut self,
+        f: &hir::FnDef,
+        modes: &[PassMode],
+        args: &[hir::Expr],
+        skip: usize,
+    ) -> u64 {
+        if f.is_async || f.is_generator {
+            return 0;
+        }
+        let mut mask = 0u64;
+        for (i, (a, m)) in args.iter().zip(modes).enumerate() {
+            let at = i + skip;
+            let changed = f.body.locals[f.params[at].local.0 as usize].mutable;
+            if *m != PassMode::Borrow || at >= 64 || changed || !self.is_table(a) {
+                continue;
+            }
+            let ty = self.sub(a.ty);
+            if self.cx.boxed(ty) {
+                mask |= 1 << at;
+            }
+        }
+        mask
+    }
+
+    /// Table `a` (`table_read`) passed to a param in `mode` `Borrow`: the address of its read-only header,
+    /// when the type is not counted (the callee gets what a borrow passes) or the param is
+    /// `as_is` (an extern's, or a frozen instance's from `table_mask`). `None` otherwise: `a`
+    /// is then lowered as any other argument.
+    pub(super) fn table_arg(
+        &mut self,
+        a: &hir::Expr,
+        mode: PassMode,
+        as_is: bool,
+    ) -> Option<Operand> {
+        if mode != PassMode::Borrow || !self.is_table(a) {
+            return None;
+        }
+        let ty = self.sub(a.ty);
+        if self.cx.boxed(ty) && !as_is {
+            return None;
+        }
+        let place = self
+            .table_read(a)
+            .unwrap_or_else(|| super::ice("table without data"));
+        Some(self.addr(place))
+    }
+
     /// A stabilized borrow of the frozen argument `a` (`stable_borrow`): the value itself for a
     /// frozen param of the callee (`frozen_args`) or one that holds no counted part, else a copy
     /// the call borrows (dropped with the statement).
