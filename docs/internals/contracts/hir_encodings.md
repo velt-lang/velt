@@ -431,9 +431,13 @@ copy for an instance its table already has. A generic function value that reache
 `object` (holding it as `any` or `Function` is refused) comes back only by `u as G` to the type
 it was made as, and a call straight through `any` is a TypeError (#924). Converted to a function
 type of fixed types, it runs through the closure sema writes in the converting body, or as the
-named function instantiated there. velt_sema's local-async check relies on this
-(`local_async::generic_closures`): a call through `any` that instantiates a generic closure
-(#924) must change that check too.
+named function instantiated there. Likewise a generic method of an object type or class
+(`wrap<T>`): through `any` it can be neither read as a value nor called (`a.wrap(…)`,
+`a.wrap.call(…)`, an override reached through `any`: TypeError, #924), so it runs only through
+calls by name and `Dyn` calls (after `a as I`), at their type arguments; an object's own type
+arguments are what it was made with. velt_sema's local-async check relies on this
+(`local_async::generic_closures`): a call through `any` that instantiates a generic closure or
+method (#924) must change that check too.
 
 `Program::fresh_closures` (additive) maps closures to a `FreshClosure` (`hir/fresh.rs`), for
 the comparison of function values:
