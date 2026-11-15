@@ -535,11 +535,6 @@ impl Ctx<'_> {
         }
     }
 
-    /// Is interface `d` a generic function type made here?
-    pub(crate) fn is_generic_fn_iface(&self, d: DefId) -> bool {
-        self.generic_fns.made.contains_key(&d)
-    }
-
     /// Is `t` a generic function type?
     pub(crate) fn is_generic_fn(&self, t: TyId) -> bool {
         matches!(self.ty.kind(t), TyKind::Dyn(d, _) if self.generic_fns.made.contains_key(d))

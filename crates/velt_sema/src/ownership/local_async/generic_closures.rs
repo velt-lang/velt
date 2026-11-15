@@ -68,13 +68,17 @@ impl DynCalls {
     /// mentions escape, also through the fields of the objects it holds (a `(engine as any).run(…)`
     /// call reaches a generic function value in a field).
     ///
-    /// Into a dynamic type (`dynamic`: `any`, `unknown`, `object`), a generic function type and
-    /// a generic closure don't (#2952; `docs/internals/contracts/hir_encodings.md`): such a value
-    /// runs only through `Dyn` calls of the generic function type it was made as, whose type
-    /// arguments the walk records. Out of a dynamic type it comes back only by `u as G`, and a call
-    /// straight through `any` is a TypeError (#924); holding one as `any` or `Function` is refused.
-    /// An object type in it still escapes: a dynamic call may reach its methods (#2860).
+    /// Into a dynamic type (`dynamic`: `any`, `unknown`, `object`), nothing does (#2952;
+    /// `docs/internals/contracts/hir_encodings.md`): a generic function value, a generic closure
+    /// or a generic method runs only through `Dyn` calls of its type or calls by name, whose type
+    /// arguments the walk records. Out of a dynamic type a value comes back only by a conversion
+    /// to its type (`u as G`, `a as I`), and a call of a generic method or function value straight
+    /// through `any` is a TypeError (#924); holding a generic function value as `any` or
+    /// `Function` is refused. An object's own type arguments are what it was made with.
     pub(super) fn escape(&mut self, cx: &Ctx, ty: TyId, dynamic: bool) {
+        if dynamic {
+            return;
+        }
         let mut seen = FxHashSet::default();
         let mut work = vec![ty];
         while let Some(t) = work.pop() {
@@ -82,9 +86,7 @@ impl DynCalls {
                 continue;
             }
             cx.ty.visit(t, &mut |k| match k {
-                TyKind::Dyn(i, _) if dynamic && cx.is_generic_fn_iface(*i) => {}
                 TyKind::Dyn(i, _) => _ = self.escaped.insert(*i),
-                TyKind::Closure(c) if dynamic && generic_closure(cx, *c) => {}
                 TyKind::Closure(c) => _ = self.escaped_closures.insert(*c),
                 TyKind::Adt(d, _) => {
                     self.escaped_types.insert(*d);
@@ -215,9 +217,4 @@ impl Visit for Outside<'_> {
             _ => {}
         }
     }
-}
-
-/// Is closure `c` generic (with type parameters of its own)?
-fn generic_closure(cx: &Ctx, c: DefId) -> bool {
-    matches!(&cx.defs[c.0 as usize], Some(Def::Fn(f)) if f.generics > 0)
 }
