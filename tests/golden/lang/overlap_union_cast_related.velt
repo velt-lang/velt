@@ -1,0 +1,10 @@
+// A union cast to a union whose other members are related to the source's (an object type with
+// one more field) stays an error: only unrelated added members narrow to the common ones (#379).
+type Small = { a: number };
+type Big = { a: number; b: string };
+
+function widen(x: Small | string): Big | string {
+  return x as Big | string;
+}
+
+console.log(typeof widen);

@@ -1,0 +1,16 @@
+// A union cast to a union it overlaps, given a value outside the members both have: the
+// assertion fails (Velt checks it; Node would carry the function on as a key, #379).
+type KeyTuple = readonly (string | number | boolean | null)[];
+type KeyValue = string | KeyTuple;
+type KeyArg = string | (() => string);
+
+function use(k: KeyValue): string {
+  return typeof k === "string" ? k : k.join(",");
+}
+
+function resolveKey(keyArg: KeyArg): string {
+  return use(keyArg as KeyValue);
+}
+
+console.log(resolveKey("user:1"));
+console.log(resolveKey(() => "x"));

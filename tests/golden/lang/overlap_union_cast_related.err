@@ -1,0 +1,1 @@
+overlap_union_cast_related.velt:7:10: error: cannot cast `string | Small` as `string | Big`

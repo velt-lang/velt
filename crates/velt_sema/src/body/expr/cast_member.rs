@@ -459,7 +459,7 @@ impl FnCx<'_, '_> {
     }
 
     /// Does a value of `a` convert to `b`, or one of `b` to `a`?
-    fn comparable(&mut self, a: TyId, b: TyId, span: Span) -> bool {
+    pub(super) fn comparable(&mut self, a: TyId, b: TyId, span: Span) -> bool {
         if a == b {
             return true;
         }

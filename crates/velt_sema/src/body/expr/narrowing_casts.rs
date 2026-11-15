@@ -1,6 +1,7 @@
 //! Type assertions that narrow (https://veltlang.com/docs/reference/types/ "Type assertions"): `x as T` with
 //! `x: T | null` (or `| undefined`), `u as A` with `u` a union that has the member `A`, and
-//! `u as A | B` (also with `| undefined`) with `u` a union that has those members and more,
+//! `u as A | B` (also with `| undefined`) with `u` a union that has those members and more, or
+//! some of them (two unions that overlap: the value must be one of the members both have),
 //! and a tuple as a tuple whose elements are each one of these (or an `any` as a static type).
 //! `x as V` of a `U | undefined` where `U` and `V` differ only in `any` and `unknown`
 //! (`Record<string, unknown>` and `Record<string, any>`) checks `x` present, then views it.
@@ -357,8 +358,18 @@ impl FnCx<'_, '_> {
         let Some(have) = self.cx.union_members(from) else {
             return Err(h);
         };
-        let want = self.cx.union_members(to).unwrap_or_else(|| vec![to]);
-        if want.len() >= have.len() || !want.iter().all(|w| have.contains(w)) {
+        // The members both have: all of `to`'s (a sub-union), or some when the two overlap
+        // (`keyArg as KeyValue` of a `string | (() => K)` as a `string | KeyTuple`, #379), which
+        // tsc allows since the types are comparable. Either way the value must be one of them.
+        // An overlap only where each member `to` adds is unrelated to every member `h` has (no
+        // conversion either way), outside generic code: a related one (`{ a } | string` as
+        // `{ a; b } | string`, `Box<T>` as `Box<number>`) is for the other assertions.
+        let all = self.cx.union_members(to).unwrap_or_else(|| vec![to]);
+        let want: Vec<TyId> = all.iter().copied().filter(|w| have.contains(w)).collect();
+        if want.is_empty() || want.len() >= have.len() {
+            return Err(h);
+        }
+        if want.len() < all.len() && !self.unrelated_extra(&all, &have, span) {
             return Err(h);
         }
         if let (Some(n), None) = (from_n, to_n) {
@@ -410,6 +421,27 @@ impl FnCx<'_, '_> {
             arms,
         };
         Ok(self.mk(kind, target, span))
+    }
+
+    /// Are the members of `all` that `have` lacks each unrelated to every one of `have` (neither
+    /// converts to the other), with no type parameter on either side?
+    fn unrelated_extra(&mut self, all: &[TyId], have: &[TyId], span: Span) -> bool {
+        let generic = |s: &Self, t: TyId| {
+            let mut ps = vec![];
+            collect_params(&s.cx.ty, t, &mut ps);
+            !ps.is_empty()
+        };
+        if all.iter().chain(have).any(|&t| generic(self, t)) {
+            return false;
+        }
+        for &w in all.iter().filter(|w| !have.contains(w)) {
+            for &s in have {
+                if self.comparable(w, s, span) {
+                    return false;
+                }
+            }
+        }
+        true
     }
 
     /// Union value `h` as `to`, which has the members `want` of `h`'s: each of those converts,

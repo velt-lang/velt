@@ -1,0 +1,20 @@
+// check: no leaks
+// A union cast to a union it overlaps (sigx's useData key, #379), which tsc allows: the value is
+// one of the members both have, here a string.
+type KeyTuple = readonly (string | number | boolean | null)[];
+type KeyValue = string | KeyTuple;
+type KeyArg = string | (() => string) | { (): unknown; key: string };
+
+function use(k: KeyValue): string {
+  return typeof k === "string" ? k : k.join(",");
+}
+
+// `isStatic` says what the type can't: the key is a string.
+function resolveKey(keyArg: KeyArg, isStatic: boolean): string {
+  if (!isStatic) {
+    return "a function";
+  }
+  return use(keyArg as KeyValue);
+}
+
+console.log(resolveKey("user:1", true), resolveKey(() => "x", false));
