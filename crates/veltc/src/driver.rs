@@ -503,7 +503,7 @@ fn compile_to_vir_linking(
         require_main: true,
         extra_roots: vec![],
         eager_std: false,
-        prebuilt: dest == VirFor::Link,
+        prebuilt: dest == VirFor::Link && opts.emit == Emit::Exe,
     };
     let checked = check_program(sess, opts, &scope)?;
     lower_checked(sess, opts, dest, checked)

@@ -94,6 +94,8 @@ fn velt(dir: &Path, file: &str, src: &str, args: &[&str], env: &[(&str, &str)]) 
         .env("VELT_STD", std_in(dir))
         .env("VELT_BUILD_CACHE", dir.join("cache"))
         .env("VELT_STD_OBJECT_STATS", "1")
+        // A build the stamp finds up to date checks nothing: every build here compiles.
+        .env("VELT_BUILD_STAMP", "off")
         .env_remove("VELT_STD_OBJECT_FILL")
         .env_remove("VELT_PREBUILT_HOOKS")
         .env_remove("VELT_RT_LINK");
@@ -113,7 +115,6 @@ fn text(bytes: &[u8]) -> String {
 fn found(o: &Output) -> &'static str {
     let err = text(&o.stderr);
     if err.contains("prebuilt_probe: object found") {
-        assert!(err.contains("prebuilt hooks: 1 objects linked"), "{err}");
         "object"
     } else if err.contains("prebuilt_probe: no object") {
         "module"
@@ -128,25 +129,23 @@ const FILL: (&str, &str) = ("VELT_PREBUILT_HOOKS", "fill");
 /// calls the object. Same output, in debug and release builds, and `velt check` takes it too.
 #[test]
 fn a_prebuilt_hook_calls_its_object_and_loads_its_module_without_one() {
-    let dir = test_dir::TestDir::new();
-    let dir = dir.path();
-    for mode in [&["run"][..], &["run", "--release"]] {
+    // Release builds for the default CPU link what debug builds do: a cache each.
+    for mode in [&["run", "--release"][..], &["run"]] {
+        let tmp = test_dir::TestDir::new();
+        let dir = tmp.path();
         let off = velt(dir, "a.velt", FIRST, mode, &[("VELT_PREBUILT_HOOKS", "0")]);
         assert_eq!(text(&off.stdout), FIRST_OUT);
         assert!(!text(&off.stderr).contains("prebuilt_probe"));
         let filled = velt(dir, "a.velt", FIRST, mode, &[FILL]);
-        assert_eq!(
-            (found(&filled), text(&filled.stdout).as_str()),
-            ("module", FIRST_OUT)
-        );
+        assert_eq!((found(&filled), text(&filled.stdout).as_str()), ("module", FIRST_OUT));
         let served = velt(dir, "a.velt", FIRST, mode, &[]);
-        assert_eq!(
-            (found(&served), text(&served.stdout).as_str()),
-            ("object", FIRST_OUT)
-        );
+        assert_eq!((found(&served), text(&served.stdout).as_str()), ("object", FIRST_OUT));
+        assert!(text(&served.stderr).contains("prebuilt hooks: 1 objects linked"));
+        if mode == ["run"] {
+            let check = velt(dir, "a.velt", FIRST, &["check"], &[]);
+            assert_eq!(found(&check), "object");
+        }
     }
-    let check = velt(dir, "a.velt", FIRST, &["check"], &[]);
-    assert_eq!(found(&check), "object");
 }
 
 /// The object's key holds no program facts: the object stored for one program serves another
@@ -158,18 +157,9 @@ fn an_object_built_for_one_program_serves_another() {
     let filled = velt(dir, "a.velt", FIRST, &["run", "--release"], &[FILL]);
     assert_eq!(found(&filled), "module");
     let other = velt(dir, "b.velt", SECOND, &["run", "--release"], &[]);
-    assert_eq!(
-        (found(&other), text(&other.stdout).as_str()),
-        ("object", SECOND_OUT)
-    );
+    assert_eq!((found(&other), text(&other.stdout).as_str()), ("object", SECOND_OUT));
     // The module as a program loads it gives the same.
-    let loaded = velt(
-        dir,
-        "b.velt",
-        SECOND,
-        &["run", "--release"],
-        &[("VELT_PREBUILT_HOOKS", "0")],
-    );
+    let loaded = velt(dir, "b.velt", SECOND, &["run", "--release"], &[("VELT_PREBUILT_HOOKS", "0")]);
     assert_eq!(text(&loaded.stdout), SECOND_OUT);
 }
 
@@ -180,17 +170,16 @@ fn an_edited_std_file_retires_the_object() {
     let dir = test_dir::TestDir::new();
     let dir = dir.path();
     velt(dir, "a.velt", FIRST, &["run"], &[FILL]);
-    let served = velt(dir, "a.velt", FIRST, &["run"], &[]);
+    // With the build stamp: the std files the object came from are its inputs too.
+    let on = ("VELT_BUILD_STAMP", "on");
+    let served = velt(dir, "a.velt", FIRST, &["run"], &[on]);
     assert_eq!(found(&served), "object");
     let hooks = std_in(dir).join("lang/hooks/prebuilt_probe.velt");
     let src = std::fs::read_to_string(&hooks).unwrap();
-    let edited = src.replace(
-        "let text = x < 0 ? \"-\" : \"\";",
-        "let text = x < 0 ? \"~\" : \"\";",
-    );
+    let edited = src.replace("let text = x < 0 ? \"-\" : \"\";", "let text = x < 0 ? \"~\" : \"\";");
     assert_ne!(src, edited);
     std::fs::write(&hooks, edited).unwrap();
-    let stale = velt(dir, "a.velt", FIRST, &["run"], &[]);
+    let stale = velt(dir, "a.velt", FIRST, &["run"], &[on]);
     assert_eq!(found(&stale), "module");
     assert_eq!(text(&stale.stdout), FIRST_OUT.replace("-42", "~42"));
 }
@@ -205,13 +194,7 @@ fn webassembly_loads_the_module() {
     let dir = test_dir::TestDir::new();
     let dir = dir.path();
     velt(dir, "a.velt", FIRST, &["run", "--release"], &[FILL]);
-    let wasm = velt(
-        dir,
-        "a.velt",
-        FIRST,
-        &["run", "--target", "wasm32-wasip1"],
-        &[],
-    );
+    let wasm = velt(dir, "a.velt", FIRST, &["run", "--target", "wasm32-wasip1"], &[]);
     assert_eq!(text(&wasm.stdout), FIRST_OUT);
     assert!(!text(&wasm.stderr).contains("prebuilt_probe"));
 }
