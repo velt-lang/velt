@@ -194,6 +194,16 @@ pub(super) fn demand_gated(cx: &mut Ctx) -> bool {
     marked
 }
 
+/// Notes what the program's own code puts into an `any` (`into_any`, `(value, any)` types): a
+/// value of a type parameter makes an `any` able to hold anything ([`may_cycle`]).
+pub(super) fn note_program_dyn(cx: &mut Ctx, into_any: &[(TyId, TyId)]) {
+    for &(t, _) in into_any {
+        cx.ty.visit(t, &mut |k| {
+            cx.lazy.dyn_generic |= matches!(k, TyKind::Param(_))
+        });
+    }
+}
+
 /// Demands hook `index`'s module and marks the hook live: whether it wasn't.
 fn mark_hook(cx: &mut Ctx, index: usize) -> bool {
     let h = &velt_common::std_hooks::HOOKS[index];
@@ -210,14 +220,15 @@ const CYCLE_DEPTH: u32 = 32;
 
 /// Can a value of a live type hold itself, so that printing it must track cycles (`<ref *1>`,
 /// `[Circular *1]`)? Yes when a live type reaches itself through what it holds (fields, elements,
-/// entries, union members, and for a class each live subclass), or holds an `any` or an interface
-/// value, which can be anything. A type parameter holds what its instances hold, and those are
-/// live types of their own. The types found closed are remembered while the live classes don't
-/// change (a new subclass adds what a class can hold).
+/// entries, union members, for a class each live subclass, and for an `any` or an interface value
+/// what live code puts into one). A type parameter holds what its instances hold, and those are
+/// live types of their own. The types found closed are remembered while the live classes and
+/// what goes into an `any` don't change.
 fn may_cycle(cx: &mut Ctx) -> bool {
-    if cx.lazy.cycle_adts != cx.lazy.live.adts.len() {
+    let seen = (cx.lazy.live.adts.len(), cx.lazy.dyn_held.len());
+    if cx.lazy.cycle_seen != seen {
         cx.lazy.cycle_closed.clear();
-        cx.lazy.cycle_adts = cx.lazy.live.adts.len();
+        cx.lazy.cycle_seen = seen;
     }
     let mut types: Vec<TyId> = cx.lazy.live.types.iter().copied().collect();
     types.retain(|&t| {
@@ -225,44 +236,79 @@ fn may_cycle(cx: &mut Ctx) -> bool {
     });
     types.sort_unstable_by_key(|t| t.0);
     let mut closed = std::mem::take(&mut cx.lazy.cycle_closed);
-    let mut path = rustc_hash::FxHashSet::default();
+    let mut path = Path::default();
     // An `any` or interface value at the top holds a value of some live type, checked as such.
-    let found = (types.into_iter()).any(|t| reaches_back(cx, t, &mut path, &mut closed, 0));
+    let found = (types.into_iter()).any(|t| reaches_back(cx, t, &mut path, &mut closed, (0, 0)).0);
     cx.lazy.cycle_closed = closed;
     found
 }
 
-/// Does `t` (on the way from a live type, `path`) reach a type on `path`, or an `any`?
+/// The walk of [`may_cycle`]: the types on the way from a live type, each with how many objects
+/// lowering tracks (class and struct instances, `Map`s and `Set`s) come before it.
+type Path = rustc_hash::FxHashMap<TyId, u32>;
+
+/// Does `t` (on the way `path`, after `tracked` tracked objects) reach a type on `path` with a
+/// tracked object on the cycle? A cycle of arrays and `any`s alone is not tracked (lowering checks
+/// no array for one). Also whether the walk from `t` met the way back to a type on `path` at all:
+/// only a type whose walk met none is closed whatever the way to it.
 fn reaches_back(
     cx: &mut Ctx,
     t: TyId,
-    path: &mut rustc_hash::FxHashSet<TyId>,
+    path: &mut Path,
     closed: &mut rustc_hash::FxHashSet<TyId>,
-    depth: u32,
-) -> bool {
+    (depth, tracked): (u32, u32),
+) -> (bool, bool) {
     if closed.contains(&t) {
-        return false;
+        return (false, false);
     }
-    if depth > CYCLE_DEPTH || !path.insert(t) {
-        return true;
+    if depth > CYCLE_DEPTH {
+        return (true, true);
     }
-    let found = match held(cx, t) {
-        Some(parts) => (parts.into_iter()).any(|p| reaches_back(cx, p, path, closed, depth + 1)),
-        None => true,
-    };
+    if let Some(&before) = path.get(&t) {
+        return (tracked > before, true);
+    }
+    path.insert(t, tracked);
+    let inner = tracked + is_tracked(cx, t) as u32;
+    let (mut found, mut back) = (false, false);
+    match held(cx, t) {
+        Some(parts) => {
+            for p in parts {
+                let (f, b) = reaches_back(cx, p, path, closed, (depth + 1, inner));
+                back |= b;
+                if f {
+                    found = true;
+                    break;
+                }
+            }
+        }
+        None => found = true,
+    }
     path.remove(&t);
-    if !found {
+    if !found && !back {
         closed.insert(t);
     }
-    found
+    (found, back)
 }
 
-/// The types a value of type `t` holds and printing shows; `None` when it can hold anything (an
-/// `any`, an interface value).
+/// Does lowering track a value of type `t` for cycles (`format_once`): a class or struct
+/// instance, a `Map` or a `Set`?
+fn is_tracked(cx: &Ctx, t: TyId) -> bool {
+    match cx.ty.kind(t) {
+        TyKind::Map(..) => true,
+        TyKind::Adt(d, _) => cx.adt(*d).is_some(),
+        _ => false,
+    }
+}
+
+/// The types a value of type `t` holds and printing shows; `None` when it can hold anything.
 fn held(cx: &mut Ctx, t: TyId) -> Option<Vec<TyId>> {
     let kind = cx.ty.kind(t).clone();
     Some(match kind {
-        TyKind::Dyn(..) => return None,
+        // What live code puts into one; anything when the program's generic code puts a type
+        // parameter's value into one (its instances are not followed there). std's generic code
+        // keeps the `any`s it makes to itself.
+        TyKind::Dyn(..) if cx.lazy.dyn_generic => return None,
+        TyKind::Dyn(..) => cx.lazy.dyn_held.iter().copied().collect(),
         TyKind::Array(e) | TyKind::Option(e, _) | TyKind::Shared(e) => vec![e],
         TyKind::Tuple(es) => es,
         TyKind::Map(a, b) | TyKind::Result(a, b) | TyKind::Promise(a, b) => vec![a, b],

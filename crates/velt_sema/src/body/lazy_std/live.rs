@@ -341,6 +341,7 @@ fn note_program_code(
     (types, conversions, into_any, first_text): (usize, usize, usize, usize),
 ) {
     cx.lazy.live.texts.extend(&w.texts[first_text..]);
+    constructs::note_program_dyn(cx, &w.into_any[into_any..]);
     if !cx.lazy.record_hooks {
         super::record_conversions::note_user_conversions(
             cx,
@@ -353,6 +354,7 @@ fn note_program_code(
 
 /// What `w` found is live.
 fn add_walk(cx: &mut Ctx, w: Walk) {
+    cx.lazy.dyn_held.extend(w.into_any.iter().map(|&(t, _)| t));
     for &t in &w.conversions {
         if !cx.lazy.record_conversion {
             let holds = super::holds_string_record(cx, t, &mut FxHashSet::default());

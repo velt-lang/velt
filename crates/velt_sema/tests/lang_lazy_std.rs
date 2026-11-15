@@ -658,93 +658,43 @@ fn printing_shapes_are_checked_once_live_code_may_print_an_object() {
     ];
     let checked = |p: &Program, f: &str| !unchecked(p).contains(&f.to_string());
     for src in [
-        "function main() {
-  console.log(\"hi\");
-}
-",
-        "function main() {
-  const n: number = 1.5;
-  console.log(n);
-}
-",
+        "function main() {\n  console.log(\"hi\");\n}\n",
+        "function main() {\n  const n: number = 1.5;\n  console.log(n);\n}\n",
     ] {
         let p = ok_src(src);
         for f in [plain, array].iter().chain(&tracked) {
-            assert!(
-                unchecked(&p).contains(&f.to_string()),
-                "{f} is checked: {src}"
-            );
+            assert!(!checked(&p, f), "{f} is checked: {src}");
         }
     }
-    let class = "class P {
-  x: number = 1;
-}
-function main() {
-  console.log(new P());
-}
-";
-    let node = "class N {
-  next: N | null = null;
-}
-function main() {
-  console.log(new N());
-}
-";
-    let held = "class H {
-  v: any = 1;
-}
-function main() {
-  console.log(new H());
-}
-";
-    let sub = "class B {
-  x: number = 1;
-}
-class S extends B {
-  b: B | null = null;
-}
-               function main() {
-  const b: B = new S();
-  console.log(b);
-}
-";
-    // (source, an array type is live, a live type can hold itself)
+    let object = "function main() {\n  console.log({ a: 1 });\n}\n";
+    let list = "function main() {\n  console.log([1]);\n}\n";
+    let map = "function main() {\n  console.log(new Map<string, number>());\n}\n";
+    let class = "class P {\n  x: number = 1;\n}\nfunction main() {\n  console.log(new P());\n}\n";
+    let node =
+        "class N {\n  next: N | null = null;\n}\nfunction main() {\n  console.log(new N());\n}\n";
+    let held = "class H {\n  v: any = 1;\n}\nfunction main() {\n  const h = new H();\n  h.v = h;\n  console.log(h);\n}\n";
+    let number = "class H {\n  v: any = 1;\n}\nfunction main() {\n  console.log(new H());\n}\n";
+    let generic = "class H {\n  v: any = 1;\n}\nfunction wrap<T>(x: T): any {\n  return x;\n}\n\
+                   function main() {\n  const h = new H();\n  h.v = wrap(h);\n  console.log(h);\n}\n";
+    let sub = "class B {\n  x: number = 1;\n}\nclass S extends B {\n  b: B | null = null;\n}\n\
+               function main() {\n  const b: B = new S();\n  console.log(b);\n}\n";
+    // (source, an array type is live (`None`: std's `any` code has some), a live type can hold
+    // itself); a `Map`'s code has arrays.
     for (src, arrays, cycles) in [
-        (
-            "function main() {
-  console.log({ a: 1 });
-}
-",
-            false,
-            false,
-        ),
-        (
-            "function main() {
-  console.log([1]);
-}
-",
-            true,
-            false,
-        ),
-        (
-            "function main() {
-  console.log(new Map<string, number>());
-}
-",
-            false,
-            false,
-        ),
-        (class, false, false),
-        (node, false, true),
-        (held, false, true),
-        (sub, false, true),
+        (object, Some(false), false),
+        (list, Some(true), false),
+        (map, Some(true), false),
+        (class, Some(false), false),
+        (node, Some(false), true),
+        (held, None, true),
+        (number, None, false),
+        (generic, None, true),
+        (sub, Some(false), true),
     ] {
         let p = ok_src(src);
         assert!(checked(&p, plain), "{plain} is unchecked: {src}");
-        if !arrays {
-            assert!(!checked(&p, array), "{array} is checked: {src}");
-        } else {
-            assert!(checked(&p, array), "{array} is unchecked: {src}");
+        if let Some(arrays) = arrays {
+            assert_eq!(checked(&p, array), arrays, "{array}: {src}");
         }
         for f in tracked {
             assert_eq!(checked(&p, f), cycles, "{f}: {src}");

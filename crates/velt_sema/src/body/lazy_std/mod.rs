@@ -186,10 +186,15 @@ pub(crate) struct Lazy {
     /// Live code prints a float: `console.log`'s float writer is reached
     /// (`velt_common::std_hooks::ON_DEMAND_WRITE`).
     float_write: bool,
+    /// The types of the values live code puts into an `any` or an interface value (`ToDyn`),
+    /// and whether the program's own code puts a type parameter's value into one.
+    dyn_held: FxHashSet<TyId>,
+    dyn_generic: bool,
     /// Live types found unable to reach themselves (`live_constructs.rs` `may_cycle`), while
-    /// the live classes number `cycle_adts`; and whether one can, so the cycle hooks are reached.
+    /// the live classes and `dyn_held` number `cycle_seen`; and whether one can, so the cycle
+    /// hooks are reached.
     cycle_closed: FxHashSet<TyId>,
-    cycle_adts: usize,
+    cycle_seen: (usize, usize),
     cycles: bool,
     /// The live definitions, and the hooks their constructs demand ([`live`]).
     live: live::Live,
@@ -218,8 +223,10 @@ impl Lazy {
             sched_hooks: false,
             float_text: false,
             float_write: false,
+            dyn_held: FxHashSet::default(),
+            dyn_generic: false,
             cycle_closed: FxHashSet::default(),
-            cycle_adts: 0,
+            cycle_seen: (0, 0),
             cycles: false,
             live: live::Live::new(),
             stubs: hook_stubs::Stubs::default(),
