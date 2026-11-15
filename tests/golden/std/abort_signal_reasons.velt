@@ -24,12 +24,23 @@ c3.abort("text");
 console.log("string", c3.signal.reason);
 const pre = AbortSignal.abort();
 show("AbortSignal.abort()", pre.reason);
+// An `AbortSignal.any` has the reason of the source that aborted first, not the first in its list.
+const a = new AbortController();
+const b = new AbortController();
+const ab = AbortSignal.any([a.signal, b.signal]);
+b.abort("B");
+a.abort("A");
+console.log("any first aborted", ab.reason);
 const t = AbortSignal.timeout(10);
 setTimeout(
   () => {
     show("timeout", t.reason);
-    const a = AbortSignal.any([new AbortController().signal, t]);
-    show("any", a.reason);
+    show("any", AbortSignal.any([new AbortController().signal, t]).reason);
+    // Made after the timeout fired: aborted already, with its reason, whatever aborts next.
+    const x = new AbortController();
+    const late = AbortSignal.any([x.signal, t]);
+    x.abort("late");
+    show("any after timeout", late.reason);
   },
   50,
 );

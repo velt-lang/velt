@@ -19,10 +19,15 @@ export class AbortController {
 
   /**
    * Aborts the signal with `reason` (a no-op if it already is): `signal.reason` is that value,
-   * or Node's `AbortError` ("This operation was aborted") without one.
+   * or Node's `AbortError` ("This operation was aborted") without one. (A rest parameter, so
+   * that `abort()` without a reason allocates nothing: it is on hot paths, an h2 stream's waits.)
    */
-  abort(reason: any = undefined) {
-    this.#sig.abortWith(reason);
+  abort(...reason: any[]) {
+    if (reason.length == 0 || reason[0] === undefined) {
+      this.#sig.abortPlain();
+    } else {
+      this.#sig.abortWith(reason[0]);
+    }
   }
 
   /** How `console.log` shows the controller, like Node: its signal. */
