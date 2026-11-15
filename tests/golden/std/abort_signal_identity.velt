@@ -1,0 +1,21 @@
+// An aborted signal has one reason object, as in Node: every read of `signal.reason` is the same
+// object, `throwIfAborted()` throws it, and an `AbortSignal.any` has its source's. Velt reads
+// an equal copy each time (#3011, known failing). Valid TypeScript; prints what Node prints.
+const c = new AbortController();
+c.abort();
+console.log("same", c.signal.reason === c.signal.reason);
+try {
+  c.signal.throwIfAborted();
+} catch (e) {
+  console.log("throwIfAborted same", e === c.signal.reason);
+}
+const t = AbortSignal.timeout(10);
+setTimeout(
+  () => {
+    const a = AbortSignal.any([new AbortController().signal, t]);
+    console.log("any same", a.reason === t.reason);
+  },
+  50,
+);
+
+// timing: waits past an AbortSignal.timeout to read its reason

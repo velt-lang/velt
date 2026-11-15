@@ -13,7 +13,7 @@ import {
   velt_rt_signal_new,
   velt_rt_signal_retain,
 } from "velt/task/rt";
-import { AbortSignal, signalCell } from "velt/task/signal";
+import { ABORT_ERROR, AbortSignal, signalCell } from "velt/task/signal";
 import { spawnHandled } from "velt/lang/intrinsics";
 
 /**
@@ -51,7 +51,7 @@ class GroupObj {
 
   [Symbol.dispose]() {
     if (!this.ended) {
-      velt_rt_signal_abort(this.sig, "the task scope was cancelled");
+      velt_rt_signal_abort(this.sig, "\u0000the task scope was cancelled");
       velt_rt_group_free(this.group);
     }
     velt_rt_signal_free(this.sig);
@@ -126,7 +126,8 @@ export class TaskScope<E> {
 
   /** Aborts the scope's signal. */
   cancel(reason: string = DEFAULT_REASON) {
-    velt_rt_signal_abort(this.#sigH, reason);
+    // Marked: the reason is an `AbortError` with this message, also through an `AbortSignal.any`.
+    velt_rt_signal_abort(this.#sigH, ABORT_ERROR + reason);
   }
 }
 
@@ -161,7 +162,7 @@ async function scopeChild<T, E>(
   } catch (e) {
     recordFirst<E>(errors, e);
     if (cancelOnError) {
-      velt_rt_signal_abort(signal, "a task in the scope failed");
+      velt_rt_signal_abort(signal, "\u0000a task in the scope failed");
     }
     throw e;
   }
@@ -193,7 +194,7 @@ export async function taskScope<T, E>(
   } catch (e) {
     recordFirst<E>(errors, e);
     if (cancelOnError) {
-      velt_rt_signal_abort(h, "the task scope failed");
+      velt_rt_signal_abort(h, "\u0000the task scope failed");
     }
   }
   await velt_rt_group_wait(group.with((o) => o.key()));

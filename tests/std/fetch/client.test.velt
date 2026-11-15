@@ -547,7 +547,7 @@ describe("cancelling a fetch", () => {
 
   it("rejects with TimeoutError for a timeout signal", async () => {
     expect(await why(fetch(`${base}/hang`, { signal: AbortSignal.timeout(30) }))).toBe(
-      "TimeoutError: timed out after 30 ms",
+      "TimeoutError: The operation was aborted due to timeout",
     );
   });
 
