@@ -49,13 +49,3 @@ fn tcp_sends_publish_first() {
         publishes("connect", || velt_rt_tcp_connect(&addr));
     }
 }
-
-#[test]
-fn udp_send_publishes_first() {
-    let bytes = VeltBytes::from_vec(b"x".to_vec());
-    let addr = VeltStr::from_text("127.0.0.1:1");
-    // SAFETY: valid values; the handle is never open.
-    publishes("sendTo", || unsafe {
-        super::udp::velt_rt_udp_send_to(Key::NULL, &bytes, &addr)
-    });
-}

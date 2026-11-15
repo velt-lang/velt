@@ -102,12 +102,7 @@ export const imports: Imports = {
   "#net-calls": { win32: "./net/calls_win32.velt", default: "./net/calls_posix.velt" },
   // velt/net's UDP sockets and name lookups: the runtime's, or, compiled with the executor in
   // Velt, non-blocking UDP sockets on its reactor and `getaddrinfo` on its blocking pool.
-  // On Windows UDP stays the runtime's under it too (#2649: its Winsock port is a follow-up).
-  "#net-udp": {
-    win32: "./net/udp/rt.velt",
-    "std-scheduler": "./net/udp/udp_sched.velt",
-    default: "./net/udp/rt.velt",
-  },
+  "#net-udp": { "std-scheduler": "./net/udp/udp_sched.velt", default: "./net/udp/rt.velt" },
   "#net-dns": { "std-scheduler": "./net/dns/rt_sched.velt", default: "./net/dns/rt.velt" },
   // velt/fs's and velt/process's runtime functions: the runtime's (std/fs/rt.velt, std/process/
   // rt.velt), or, compiled with the executor in Velt (`VELT_SCHEDULER=std`), the same names with

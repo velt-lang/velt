@@ -17,6 +17,8 @@ import * as m from "velt/lang/hooks/sched_mem";
 const INVALID: usize = 0xffffffffffffffff;
 /** `WSAEMFILE`: no more sockets. */
 const WSAEMFILE: i32 = 10024;
+/** `WSAEMSGSIZE`: a datagram larger than the receive's buffer, which holds its first bytes. */
+const WSAEMSGSIZE: i32 = 10040;
 /** The most one `recv` or `send` passes (its length is an `int`). */
 const MOST: usize = 0x7fffffff;
 /** `FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS`. */
@@ -35,6 +37,7 @@ export declare c type addrinfo;
 // Winsock's own types: a `SOCKET` handle, `int` lengths, and `int *` for a length it writes.
 declare c("c") function socket$win(af: i32, kind: i32, protocol: i32): usize;
 declare c("c") function WSASetLastError$win(e: i32): void;
+declare c("c") function WSAGetLastError$win(): i32;
 declare c("c") function connect$win(s: usize, addr: Ptr<sockaddr>, len: i32): i32;
 declare c("c") function bind$win(s: usize, addr: Ptr<sockaddr>, len: i32): i32;
 declare c("c") function listen$win(s: usize, backlog: i32): i32;
@@ -57,6 +60,22 @@ declare c("c") function getpeername$win(s: usize, addr: Ptr<sockaddr>, len: Ptr<
 declare c("c") function closesocket$win(s: usize): i32;
 declare c("c") function recv$win(s: usize, buf: Ptr<u8>, len: i32, flags: i32): i32;
 declare c("c") function send$win(s: usize, buf: Ptr<u8>, len: i32, flags: i32): i32;
+declare c("c") function recvfrom$win(
+  s: usize,
+  buf: Ptr<u8>,
+  len: i32,
+  flags: i32,
+  from: Ptr<u8>,
+  fromlen: Ptr<u8>,
+): i32;
+declare c("c") function sendto$win(
+  s: usize,
+  buf: Ptr<u8>,
+  len: i32,
+  flags: i32,
+  to: Ptr<u8>,
+  tolen: i32,
+): i32;
 declare c("c") function shutdown$win(s: usize, how: i32): i32;
 declare c("c") function inet_ntop$win(
   family: i32,
@@ -181,6 +200,42 @@ export function send$io(fd: i32, buf: Ptr<u8>, n: usize, flags: i32): isize {
   const len = n > MOST ? MOST : n;
   // SAFETY: `buf` holds `n` bytes.
   return unsafe { send$win(fd as usize, buf, len as i32, flags) } as isize;
+}
+
+/**
+ * A datagram's receive. A datagram larger than the buffer fills it and fails with `WSAEMSGSIZE`
+ * (the rest is dropped); that is the buffer's length here, as the C library's `recvfrom` cuts it.
+ */
+export function recvfrom$net(
+  fd: i32,
+  buf: Ptr<u8>,
+  n: usize,
+  flags: i32,
+  addr: Ptr<u8>,
+  len: Ptr<u8>,
+): isize {
+  const most = n > MOST ? MOST : n;
+  // SAFETY: `buf` holds `n` bytes; the caller's address room and its `int` length.
+  const got = unsafe { recvfrom$win(fd as usize, buf, most as i32, flags, addr, len) };
+  // SAFETY: no precondition.
+  if (got < 0 && unsafe { WSAGetLastError$win() } === WSAEMSGSIZE) {
+    return most as isize;
+  }
+  return got as isize;
+}
+
+/** A datagram's send (one larger than an `int` fails, as one over 64 KiB does). */
+export function sendto$net(
+  fd: i32,
+  buf: Ptr<u8>,
+  n: usize,
+  flags: i32,
+  addr: Ptr<u8>,
+  len: u32,
+): isize {
+  const most = n > MOST ? MOST : n;
+  // SAFETY: `buf` holds `n` bytes; the caller's address and its length.
+  return unsafe { sendto$win(fd as usize, buf, most as i32, flags, addr, len as i32) } as isize;
 }
 
 export function shutdown$net(fd: i32, how: i32): i32 {

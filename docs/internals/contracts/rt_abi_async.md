@@ -1307,18 +1307,12 @@ serves both forms; async reads run on the blocking pool; text is decoded lossily
 
 ### 14.6 UDP and DNS (`velt/net/udp`, `velt/net/dns`)
 
-`VeltUdp` is an `Arc<tokio::net::UdpSocket>` (in-flight operations hold a clone).
-`typedef struct { VeltBytes data; VeltStr addr; } VeltDatagram;` (48 bytes; `addr` = `"ip:port"`).
-
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_rt_udp_bind` | `(const VeltStr* addr) -> VeltFut*` | `IoResult<VeltUdp>`; port 0 = any free port |
-| `velt_rt_udp_port` | `(VeltUdp u) -> u32` | |
-| `velt_rt_udp_send_to` | `(VeltUdp u, const VeltBytes* data, const VeltStr* addr) -> VeltFut*` | `IoResult<u64>` bytes sent; data and address copied, host names resolved |
-| `velt_rt_udp_recv_from` | `(VeltUdp u, u64 max) -> VeltFut*` | `IoResult<VeltDatagram>`, payload truncated to `max` (0 = 64 KiB) |
-| `velt_rt_udp_set_broadcast` | `(VeltUdp u, u8 on, VeltErr* out)` | |
-| `velt_rt_udp_close` | `(VeltUdp u)` | |
-| `velt_rt_dns_lookup` | `(const VeltStr* host) -> VeltFut*` | `IoResult<VeltStrArray>` of IP strings (system resolver, duplicates removed); `ENOENT` if unresolvable |
+**[non-additive, #2196]** Gone from the native runtime: `velt/net/udp`'s sockets are non-blocking
+sockets on the reactor of the executor in Velt on every native OS (std/net/udp/udp_sched.velt;
+Windows' through AFD), and `velt/net/dns`'s lookups run `getaddrinfo` on its blocking pool
+(std/net/dns/lookup_sched.velt). `velt_rt_udp_bind`, `_port`, `_send_to`, `_recv_from`,
+`_set_broadcast`, `_close` and `velt_rt_dns_lookup` are no longer exported; std's default
+variants (std/net/udp/rt.velt, std/net/dns/rt.velt) still declare them, and no build links them.
 
 ### 14.7 File streams (`velt/fs`)
 
