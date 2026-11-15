@@ -22,6 +22,9 @@
 ../../../tests/golden/lang/number_to_exponential_precision.velt
 ../../../tests/golden/lang/number_parse_int.velt
 ../../../tests/golden/lang/number_parse_long.velt
+# toFixed alone: there `u8[]` is laid out otherwise than in the golden above (inline, not
+# behind a pointer), so the release object of toFixed's exact printer has another key.
+../../../bench/stdport/to_fixed.velt
 #
 # The rest, greedily:
 ../../../tests/std/fetch/server_api.test.velt
