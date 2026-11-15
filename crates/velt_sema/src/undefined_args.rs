@@ -51,13 +51,34 @@ fn bits(n: Nothing) -> Mask {
 
 /// `masks[d][i] |= masks[from.0][from.1]` for `from` = (`def`, parameter), into = (`def`,
 /// parameter); `None` as the parameter: every parameter (a closure).
+#[derive(Clone)]
 struct Edge {
     from: (DefId, Option<u32>),
     into: DefId,
     into_param: Option<u32>,
 }
 
+/// What the walk of the definitions found (before the masks are passed along the edges): a
+/// finished unit's is its summary (`Ctx::undefined_facts`, `crate::units`), which a later unit's
+/// check extends with its own definitions', so it walks only those.
+#[derive(Clone, Default)]
+pub(crate) struct UndefinedFacts {
+    masks: FxHashMap<DefId, Vec<Mask>>,
+    edges: Vec<Edge>,
+    /// (definition, type arguments, span) of every instantiation the bodies make.
+    uses: Vec<(DefId, Vec<TyId>, Span)>,
+    ty_uses: Vec<(TyId, Span)>,
+    seen_tys: FxHashSet<TyId>,
+}
+
 pub(crate) fn check_instantiations(cx: &mut Ctx) {
+    use crate::units::Stage;
+    // std's stage walks its definitions for the app's whatever the program writes.
+    if cx.units_stage == Stage::Std {
+        let mut f = UndefinedFacts::default();
+        facts(cx, 0, &mut f);
+        cx.undefined_facts = f;
+    }
     if !cx.writes_undefined {
         return;
     }
@@ -66,16 +87,112 @@ pub(crate) fn check_instantiations(cx: &mut Ctx) {
     if !any {
         return;
     }
-    let mut masks: FxHashMap<DefId, Vec<Mask>> = FxHashMap::default();
-    let mut edges: Vec<Edge> = vec![];
-    // (definition, type arguments, span) of every instantiation the bodies make.
-    let mut uses: Vec<(DefId, Vec<TyId>, Span)> = vec![];
-    let mut ty_uses: Vec<(TyId, Span)> = vec![];
-    let mut seen_tys: FxHashSet<TyId> = FxHashSet::default();
-    for i in 0..cx.defs.len() {
+    let f = match cx.units_stage {
+        Stage::Std => cx.undefined_facts.clone(),
+        Stage::App => {
+            let mut f = cx.undefined_facts.clone();
+            facts(cx, cx.unit_base as usize, &mut f);
+            f
+        }
+        Stage::Both => {
+            let mut f = UndefinedFacts::default();
+            facts(cx, 0, &mut f);
+            f
+        }
+    };
+    let UndefinedFacts {
+        mut masks,
+        edges,
+        mut uses,
+        ty_uses,
+        ..
+    } = f;
+    let apart: FxHashSet<DefId> = (0..cx.defs.len() as u32)
+        .map(DefId)
+        .filter(|&d| keeps_null_apart(cx, d))
+        .collect();
+    propagate(&mut masks, &edges, &apart);
+    for (t, span) in ty_uses {
+        let mut stack = vec![t];
+        let mut walked = FxHashSet::default();
+        while let Some(t) = stack.pop() {
+            if !walked.insert(t) {
+                continue;
+            }
+            let k = cx.ty.kind(t).clone();
+            if let TyKind::Adt(d, args) = &k {
+                if !args.is_empty() {
+                    uses.push((*d, args.clone(), span));
+                }
+            }
+            stack.extend(children(&k));
+        }
+    }
+    let mut reported: FxHashSet<Span> = FxHashSet::default();
+    for (d, targs, span) in uses {
+        let Some(m) = masks.get(&d) else { continue };
+        let bad = targs.iter().enumerate().find_map(|(i, t)| {
+            let have = cx.ty.nothing_of(*t)?;
+            let m = m.get(i).copied().unwrap_or(0);
+            // A kept `U | undefined` at `U = T | null` is `T | null | undefined`, which holds
+            // the `T | null` apart (hir_encodings.md "Undefined"); a kept `U | null` at a `U`
+            // that allows `undefined` would read its own `null` as that `undefined`.
+            let kept = if have.has_undefined() { m & NULL } else { 0 };
+            let sorts = if have.has_undefined() { m & SORTS } else { 0 };
+            (kept | sorts != 0).then_some((*t, have, kept | sorts))
+        });
+        let Some((t, _, kept)) = bad else { continue };
+        if !reported.insert(span) {
+            continue;
+        }
+        let tn = cx.display(t);
+        let name = def_name(cx, d);
+        if kept & (NULL | UNDEFINED) == 0 {
+            cx.error(
+                Diagnostic::error(
+                    format!("`{tn}` as a type argument of `{name}` is not supported yet (#930)"),
+                    span,
+                )
+                .with_note(format!(
+                    "`{name}` sorts an array of that type parameter with a comparator; JavaScript never passes an `undefined` element to it and puts those elements last, which generic code does not do yet"
+                ))
+                .with_note(
+                    "sort where the element type is written with `undefined`: `xs.sort(cmp)` on a `(T | undefined)[]`",
+                ),
+            );
+            continue;
+        }
+        let other = if kept & NULL != 0 {
+            "null"
+        } else {
+            "undefined"
+        };
+        cx.error(
+            Diagnostic::error(
+                format!("`{tn}` as a type argument of `{name}` is not supported yet"),
+                span,
+            )
+            .with_note(format!(
+                "`{name}` keeps a `T | {other}` of that type parameter, whose `{other}` it could not tell from the value's `undefined` yet"
+            )),
+        );
+    }
+}
+
+/// Walk the definitions from `from` on into `f`: each one's direct masks, its edges, and its
+/// bodies' instantiations and expression types.
+fn facts(cx: &Ctx, from: usize, f: &mut UndefinedFacts) {
+    let UndefinedFacts {
+        masks,
+        edges,
+        uses,
+        ty_uses,
+        seen_tys,
+    } = f;
+    for i in from..cx.defs.len() {
         let d = DefId(i as u32);
         let (own, body) = match cx.defs.get(i) {
-            Some(Some(Def::Fn(f))) => fn_facts(f, &mut uses, &mut ty_uses, &mut seen_tys),
+            Some(Some(Def::Fn(f))) => fn_facts(f, uses, ty_uses, seen_tys),
             _ => match cx.adt(d) {
                 Some(a) if !a.generics.names.is_empty() => {
                     (a.fields.iter().map(|f| f.ty).collect(), vec![])
@@ -150,76 +267,6 @@ pub(crate) fn check_instantiations(cx: &mut Ctx) {
             }
             stack.extend(children(&k));
         }
-    }
-    let apart: FxHashSet<DefId> = (0..cx.defs.len() as u32)
-        .map(DefId)
-        .filter(|&d| keeps_null_apart(cx, d))
-        .collect();
-    propagate(&mut masks, &edges, &apart);
-    for (t, span) in ty_uses {
-        let mut stack = vec![t];
-        let mut walked = FxHashSet::default();
-        while let Some(t) = stack.pop() {
-            if !walked.insert(t) {
-                continue;
-            }
-            let k = cx.ty.kind(t).clone();
-            if let TyKind::Adt(d, args) = &k {
-                if !args.is_empty() {
-                    uses.push((*d, args.clone(), span));
-                }
-            }
-            stack.extend(children(&k));
-        }
-    }
-    let mut reported: FxHashSet<Span> = FxHashSet::default();
-    for (d, targs, span) in uses {
-        let Some(m) = masks.get(&d) else { continue };
-        let bad = targs.iter().enumerate().find_map(|(i, t)| {
-            let have = cx.ty.nothing_of(*t)?;
-            let m = m.get(i).copied().unwrap_or(0);
-            // A kept `U | undefined` at `U = T | null` is `T | null | undefined`, which holds
-            // the `T | null` apart (hir_encodings.md "Undefined"); a kept `U | null` at a `U`
-            // that allows `undefined` would read its own `null` as that `undefined`.
-            let kept = if have.has_undefined() { m & NULL } else { 0 };
-            let sorts = if have.has_undefined() { m & SORTS } else { 0 };
-            (kept | sorts != 0).then_some((*t, have, kept | sorts))
-        });
-        let Some((t, _, kept)) = bad else { continue };
-        if !reported.insert(span) {
-            continue;
-        }
-        let tn = cx.display(t);
-        let name = def_name(cx, d);
-        if kept & (NULL | UNDEFINED) == 0 {
-            cx.error(
-                Diagnostic::error(
-                    format!("`{tn}` as a type argument of `{name}` is not supported yet (#930)"),
-                    span,
-                )
-                .with_note(format!(
-                    "`{name}` sorts an array of that type parameter with a comparator; JavaScript never passes an `undefined` element to it and puts those elements last, which generic code does not do yet"
-                ))
-                .with_note(
-                    "sort where the element type is written with `undefined`: `xs.sort(cmp)` on a `(T | undefined)[]`",
-                ),
-            );
-            continue;
-        }
-        let other = if kept & NULL != 0 {
-            "null"
-        } else {
-            "undefined"
-        };
-        cx.error(
-            Diagnostic::error(
-                format!("`{tn}` as a type argument of `{name}` is not supported yet"),
-                span,
-            )
-            .with_note(format!(
-                "`{name}` keeps a `T | {other}` of that type parameter, whose `{other}` it could not tell from the value's `undefined` yet"
-            )),
-        );
     }
 }
 

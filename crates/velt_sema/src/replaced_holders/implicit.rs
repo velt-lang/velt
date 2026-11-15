@@ -477,8 +477,8 @@ pub(crate) fn weak_entries(cx: &mut Ctx) -> Vec<(Option<TyId>, TyId)> {
         /// The class types made with `new` that are a weak map or extend one.
         made: Vec<TyId>,
     }
-    impl crate::visit::VisitMut for Find<'_, '_> {
-        fn expr(&mut self, e: &mut Expr) {
+    impl crate::visit_ref::Visit for Find<'_, '_> {
+        fn expr(&mut self, e: &Expr) {
             if let E::New { def, .. } = &e.kind {
                 if self.cx.class_extends(*def, self.map) && !self.made.contains(&e.ty) {
                     self.made.push(e.ty);
@@ -489,19 +489,30 @@ pub(crate) fn weak_entries(cx: &mut Ctx) -> Vec<(Option<TyId>, TyId)> {
     let Some(map) = cx.prelude_adt("WeakMap") else {
         return vec![];
     };
-    let mut made = vec![];
-    for i in 0..cx.defs.len() {
-        let Some(Def::Fn(mut fd)) = cx.defs[i].take() else {
-            continue;
-        };
-        let mut f = Find {
-            cx,
-            map,
-            made: std::mem::take(&mut made),
-        };
-        crate::visit::block(&mut fd.body.block, &mut f);
-        made = f.made;
-        cx.defs[i] = Some(Def::Fn(fd));
+    // A finished unit's are its summary (`Ctx::weak_made`, `crate::units`), when its check
+    // walked them: the unit's own bodies are walked, after it.
+    let kept = match cx.units_stage {
+        crate::units::Stage::App => cx.weak_made.clone(),
+        _ => None,
+    };
+    let from = if kept.is_some() {
+        cx.unit_base as usize
+    } else {
+        0
+    };
+    let mut f = Find {
+        cx,
+        map,
+        made: kept.unwrap_or_default(),
+    };
+    for d in cx.defs.iter().skip(from) {
+        if let Some(Def::Fn(fd)) = d {
+            crate::visit_ref::block(&fd.body.block, &mut f);
+        }
+    }
+    let made = f.made;
+    if cx.units_stage == crate::units::Stage::Std {
+        cx.weak_made = Some(made.clone());
     }
     let mut out = vec![];
     for t in made {

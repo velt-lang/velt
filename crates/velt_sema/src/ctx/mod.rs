@@ -120,6 +120,10 @@ pub(crate) struct Ctx<'m> {
     pub weak_scans: crate::weak_threads::WeakScans,
     /// The same for `module_state::check_locked_access`.
     pub state_facts: crate::module_state::StateFacts,
+    /// The weak map types a finished unit's bodies make (`replaced_holders::implicit`).
+    pub weak_made: Option<Vec<crate::hir::TyId>>,
+    /// The same for `undefined_args`' walk of the definitions.
+    pub undefined_facts: crate::undefined_args::UndefinedFacts,
     /// The same for the `with` checks' function summaries (`ownership::locked`).
     pub lock_summaries: crate::ownership::LockSummaries,
     /// The modules each module of a finished unit names (`crate::linked`).
@@ -600,6 +604,8 @@ impl<'m> Ctx<'m> {
             state_facts: Default::default(),
             module_edges: Default::default(),
             lock_summaries: Default::default(),
+            undefined_facts: Default::default(),
+            weak_made: None,
             units_stage: crate::units::Stage::Both,
             scopes: modules
                 .iter()
