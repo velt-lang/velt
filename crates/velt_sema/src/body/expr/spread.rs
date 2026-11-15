@@ -73,8 +73,10 @@ impl FnCx<'_, '_> {
         let mut entries: Vec<(String, Value)> = vec![];
         let mut explicit: Vec<String> = vec![];
         let mut parts = vec![];
-        // The looks each spread recorded (`Seen::Spread`), given the literal's type at the end.
+        // The looks each spread recorded (`Seen::Spread`), given the literal's type at the end, and
+        // the fields each property writes (for what is written after a spread).
         let mut looks: Vec<(usize, usize, Span)> = vec![];
+        let mut writes: Vec<(Option<Span>, Vec<String>)> = vec![];
         for p in props {
             let new: Vec<(String, Value)> = match p {
                 ast::ObjectProp::Spread(e) => {
@@ -100,17 +102,20 @@ impl FnCx<'_, '_> {
                     let seen = self.cx.object_copies.seen.len();
                     let fields = self.spread_fields(e, any, &mut lets, false);
                     looks.push((seen, self.cx.object_copies.seen.len(), e.span));
+                    writes.push((Some(e.span), fields.iter().map(|f| f.0.clone()).collect()));
                     parts.push(self.spread_part(e.span, &lets[before..], lets.len()));
                     (fields.into_iter())
                         .map(|(n, h, src)| (n, Value::Read(h, src)))
                         .collect()
                 }
                 ast::ObjectProp::KeyValue(k, v) => {
+                    writes.push((None, vec![k.name.clone()]));
                     let effects = self.effects(v);
                     parts.push(Part::prop(k, Some(v), effects, lets.len()));
                     vec![(k.name.clone(), Value::Prop(k.clone(), Some(v)))]
                 }
                 ast::ObjectProp::Shorthand(k) => {
+                    writes.push((None, vec![k.name.clone()]));
                     let effects = self.name_effects(k);
                     parts.push(Part::prop(k, None, effects, lets.len()));
                     vec![(k.name.clone(), Value::Prop(k.clone(), None))]
@@ -158,6 +163,7 @@ impl FnCx<'_, '_> {
             None => self.spread_anon(entries, span, &mut lets),
         };
         self.cx.object_copies.spread_into(&looks, lit.ty);
+        self.cx.object_copies.written_after(&writes);
         self.with_lets(lets, lit)
     }
 

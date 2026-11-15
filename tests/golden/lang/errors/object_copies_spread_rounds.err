@@ -1,0 +1,5 @@
+object_copies_spread_rounds.velt:9:17: error: a value of type `{ a: f64; c: f64 }` converts to `AC` by copying its fields, it is spread into a `{ a: f64; c?: f64 | undefined; k: f64 }`, and this program prints a `{ a: f64; c?: f64 | undefined; k: f64 }`: Node's spread copies all the original object's fields, in its order, so that object would show them
+object_copies_spread_rounds.velt:10:18: spread here
+object_copies_spread_rounds.velt:11:15: and looked at here, or in the function this calls
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `AC` made from a `{ a: f64; c: f64 }` value is a new object with the same field values
+  = note: build the new object explicitly, `{ a: y.a, c: y.c }` (a new object in TypeScript too), or declare the parameter or variable as `{ a: f64; c: f64 }`

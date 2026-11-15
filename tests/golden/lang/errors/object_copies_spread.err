@@ -47,8 +47,13 @@ object_copies_spread.velt:70:10: spread here
 object_copies_spread.velt:75:15: and looked at here, or in the function this calls
   = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `A` made from a `AB` value is a new object with the same field values
   = note: build the new object explicitly, `{ a: ab.a }` (a new object in TypeScript too), or declare the parameter or variable as `AB`
-object_copies_spread.velt:82:16: error: a value of type `AB` converts to `A` by copying its fields, it is spread into a `{ a: f64; c: f64 }`, and this program tests a `{ a: f64; c: f64 }` for "b" with `in`: Node's spread copies all the original object's fields, in its order, so that object would show them
+object_copies_spread.velt:82:16: error: a value of type `AB` converts to `A` by copying its fields, it is spread into a `{ a?: f64 | undefined; c: f64 }`, and this program prints a `{ a?: f64 | undefined; c: f64 }`: Node's spread copies all the original object's fields, in its order, so that object would show them
 object_copies_spread.velt:83:18: spread here
-object_copies_spread.velt:38:15: and looked at here, or in the function this calls
+object_copies_spread.velt:91:15: and looked at here, or in the function this calls
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `A` made from a `AB` value is a new object with the same field values
+  = note: build the new object explicitly, `{ a: ab.a }` (a new object in TypeScript too), or declare the parameter or variable as `AB`
+object_copies_spread.velt:90:33: error: a value of type `AB` converts to `A` by copying its fields, it is spread into a `{ a?: f64 | undefined; c: f64 }`, and this program prints a `{ a?: f64 | undefined; c: f64 }`: Node's spread copies all the original object's fields, in its order, so that object would show them
+object_copies_spread.velt:91:20: spread here
+object_copies_spread.velt:91:15: and looked at here, or in the function this calls
   = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `A` made from a `AB` value is a new object with the same field values
   = note: build the new object explicitly, `{ a: ab.a }` (a new object in TypeScript too), or declare the parameter or variable as `AB`

@@ -68,6 +68,13 @@ function generic(ab: AB): number {
   return extend(x).a + extend(x).k;
 }
 
+// A field the copy left out, set after the spread: the same value in Node.
+function setAfter(ab: AB): number {
+  const x: A = ab;
+  const y = { ...x, b: 5 };
+  return y.a + y.b;
+}
+
 async function main() {
   console.log(wider({ a: 1, b: 2 }));
   console.log(mapped({ b: 1, c: 2 }));
@@ -76,4 +83,5 @@ async function main() {
   console.log(await later({ a: 1, b: 2 }));
   console.log(kept({ a: 3, b: 4 }));
   console.log(generic({ a: 5, b: 6 }));
+  console.log(setAfter({ a: 1, b: 2 }));
 }

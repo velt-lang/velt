@@ -1,0 +1,59 @@
+// A value converted by copying its fields (#650, #651), spread into an object whose type declares
+// a field the copy left out, with nothing after the spread setting it: Node's spread copies the
+// original's value over the earlier one, so even a read of that field shows the copy (#2956).
+// Each function converts once; in Node each reads the original's `b` (2).
+type A = { a: number };
+type AB = A & { b: number };
+
+type B2 = { b: number };
+type AOB = { a: number; b?: number };
+
+function overBefore(ab: AB): number {
+  const x: A = ab;
+  const y = { b: 9, ...x };
+  return y.b;
+}
+
+function overSpread(ab: AB): number {
+  const x: A = ab;
+  const d = { b: 9 };
+  return { ...d, ...x }.b;
+}
+
+function overParam(ab: AB, d: { b: number }): number {
+  const x: A = ab;
+  return { ...d, ...x }.b;
+}
+
+function overCopies(ab: AB, b0: { b: number; z: number }): number {
+  const x: A = ab;
+  const y: B2 = b0;
+  return { ...y, ...x }.b;
+}
+
+function overPartial(ab: AB) {
+  const x: A = ab;
+  const y: Partial<AB> = { ...x };
+  console.log(y.b);
+}
+
+function overOptional(ab: AB): number {
+  const x: A = ab;
+  const y: AOB = { ...x };
+  return y.b ?? -1;
+}
+
+function merge<T extends object, U extends object>(t: T, u: U): T & U {
+  return { ...t, ...u };
+}
+
+function overGeneric(ab: AB): number {
+  const x: A = ab;
+  return merge({ b: 9 }, x).b;
+}
+
+function main() {
+  console.log(overBefore({ a: 1, b: 2 }), overSpread({ a: 1, b: 2 }), overParam({ a: 1, b: 2 }, { b: 9 }));
+  console.log(overCopies({ a: 1, b: 2 }, { b: 9, z: 0 }), overOptional({ a: 1, b: 2 }), overGeneric({ a: 1, b: 2 }));
+  overPartial({ a: 1, b: 2 });
+}

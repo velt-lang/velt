@@ -152,7 +152,10 @@ pub(crate) struct Copies {
     /// Spreads in generic code as their instantiations reduce them (`Ctx::reduce_spread`): a part's
     /// type, where the spread is written and the object type it makes. Reductions are kept once
     /// made, so these are never rolled back; [`check`] adds them as `Seen::Spread(Some(_))`.
-    pub type_spreads: Vec<(TyId, Span, TyId)>,
+    pub type_spreads: Vec<(TyId, Span, TyId, Vec<String>)>,
+    /// Per spread in an object literal (by its span): the fields the literal writes after it
+    /// (`FnCx::spread_object`). Keyed by span, so a recheck writes the same entry again.
+    pub spread_after: FxHashMap<Span, Vec<String>>,
 }
 
 /// An object `Object.freeze` froze, seen as type `to` whose fields can be written: an error once
@@ -238,18 +241,41 @@ pub(crate) fn check(cx: &mut Ctx) {
         writes,
         frozen,
         type_spreads,
+        spread_after,
         ..
     } = std::mem::take(&mut cx.object_copies);
     let mut seen = seen;
     seen.extend(
-        (type_spreads.iter()).map(|&(part, at, into)| (part, at, Seen::Spread(Some(into)))),
+        (type_spreads.iter()).map(|&(part, at, into, _)| (part, at, Seen::Spread(Some(into)))),
+    );
+    // The spreads into a literal of a known type, with what each literal writes after them.
+    let mut spreads: Vec<derived::SpreadInto> = (seen.iter())
+        .filter_map(|&(part, at, how)| match how {
+            Seen::Spread(Some(into)) => Some((part, at, into)),
+            _ => None,
+        })
+        .filter(|s| !type_spreads.iter().any(|t| t.1 == s.1 && t.0 == s.0))
+        .map(|(part, at, into)| derived::SpreadInto {
+            part,
+            at,
+            into,
+            after: spread_after.get(&at).cloned().unwrap_or_default(),
+        })
+        .collect();
+    spreads.extend(
+        (type_spreads.into_iter()).map(|(part, at, into, after)| derived::SpreadInto {
+            part,
+            at,
+            into,
+            after,
+        }),
     );
     let spans: Vec<(Span, TyId)> = copies.iter().map(|c| (c.span, c.to)).collect();
     let flow = match seen.iter().any(|s| matches!(s.2, Seen::Dynamic(_))) {
         true => CopyFlow::new(cx, &spans),
         false => CopyFlow::none(),
     };
-    let (spread_into, derived) = derived::derived_targets(cx, &copies, &seen);
+    let (spread_into, derived, spread_over) = derived::derived_targets(cx, &copies, &spreads);
     let looks = Dynamic {
         seen: &seen,
         derived,
@@ -317,6 +343,13 @@ pub(crate) fn check(cx: &mut Ctx) {
         }
     }
     // The object literals copies were spread into, where the program looks at one.
+    // A spread whose literal declares a field the copy left out (read there, it shows the copy).
+    for (ci, c) in copies.iter().enumerate() {
+        if let (false, Some((at, field))) = (flagged[ci], &spread_over[ci]) {
+            derived::report_spread_over(cx, c, *at, field);
+            flagged[ci] = true;
+        }
+    }
     derived::report_looks(cx, &copies, &flagged, &spread_into, &seen, &in_keys, &looks);
     if !viewed.is_empty() {
         let done = crate::object_views::convert_to_views(cx, &viewed);
@@ -444,7 +477,8 @@ fn sees(
         // ([`derived_targets`], checked after the copies).
         Seen::Spread(Some(_)) if cx.dynamic(t).is_none() => false,
         Seen::Spread(_) => {
-            related(cx, t, c.to) || (cx.dynamic(t).is_some() && dynamic_holds(cx, c, ci, looks))
+            derived::spreads(cx, t, c.to)
+                || (cx.dynamic(t).is_some() && dynamic_holds(cx, c, ci, looks))
         }
         _ => {
             looks.holds(cx, t, c.to)

@@ -115,7 +115,18 @@ impl Ctx<'_> {
         let into = self.anon_type_with(&out, module);
         // A converted value spread here shows the copy only where the object made is looked at
         // (object_copies.rs `derived_targets`).
-        (self.object_copies.type_spreads).extend(parts.into_iter().map(|p| (p, span, into)));
+        // Each part's later parts' fields: set after it, in Node as here.
+        let names: Vec<Vec<String>> = (parts.iter())
+            .map(|&p| {
+                (self.spread_part_fields(p).unwrap_or_default().iter())
+                    .map(|f| f.name.clone())
+                    .collect()
+            })
+            .collect();
+        for (i, &p) in parts.iter().enumerate() {
+            let after: Vec<String> = names[i + 1..].iter().flatten().cloned().collect();
+            self.object_copies.type_spreads.push((p, span, into, after));
+        }
         into
     }
 
