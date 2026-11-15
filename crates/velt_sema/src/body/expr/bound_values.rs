@@ -71,9 +71,10 @@ impl FnCx<'_, '_> {
         // An instantiation may be an array of a narrower element type (`number[]` for `(number |
         // string)[]`), whose view stops writes of the wider elements: where the value may be
         // written through, only an element type with one layout, or a bound written read-only
-        // (`union_bound_value`). Reading it (`for...of`) is the same either way.
-        if writes
-            && !self.one_layout(e)
+        // (`union_bound_value`). Reading it (`for...of`) is the same either way, unless its
+        // elements hold arrays, which the loop's variable can write through (`exact_test`).
+        if !self.one_layout(e)
+            && (writes || !self.exact_test(e, false, 0))
             && !(self.cx.constraint_read_only(p) && self.impl_params_read_only())
         {
             return Err(h);

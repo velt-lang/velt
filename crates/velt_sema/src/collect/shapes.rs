@@ -243,14 +243,21 @@ pub(crate) fn arrays_read_only(cx: &Ctx, t: &ast::TypeExpr, module: usize, depth
             "ReadonlyArray" => all(&mut args.iter()),
             "Array" => false,
             name => match cx.lookup_type_item_at(module, name, path[0].span) {
-                // A generic alias's parameters stand for its arguments: its body and they.
+                // A generic alias's parameters stand for its arguments, or the defaults of
+                // those left out: its body and they.
                 Some(crate::ctx::Item::Alias(a)) => {
                     let alias = &cx.aliases[a as usize];
                     arrays_read_only(cx, &alias.decl.ty, alias.module, depth + 1)
                         && all(&mut args.iter())
+                        && alias.decl.generics.iter().skip(args.len()).all(|g| {
+                            (g.default.as_ref())
+                                .is_some_and(|t| arrays_read_only(cx, t, alias.module, depth + 1))
+                        })
                 }
-                // A primitive, a type parameter, a class, interface or enum: the value is
-                // converted as itself, not its fields'.
+                // A primitive, a class, interface or enum: the value is converted as itself,
+                // not its fields'. A type parameter (an alias's, or the implementation's): its
+                // argument is checked where it is written, and one inferred from a bound's
+                // value is that type parameter, not a union to convert into.
                 _ => all(&mut args.iter()),
             },
         },
