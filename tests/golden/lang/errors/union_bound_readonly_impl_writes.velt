@@ -1,0 +1,24 @@
+// A type parameter bounded by a union whose array is read-only, in an overload whose
+// implementation takes a mutable array (#379, `union_bound_value`): tsc relates the signature to
+// the implementation with `K` as `any`, so the read-only bound says nothing of what the
+// implementation writes, and it writes a `string` into what may be a `number[]`. Velt refuses
+// the conversion; tsc accepts it and Node prints `3 3`. An implementation whose arrays are
+// read-only too converts (`overload_union_bound_key`).
+function use(key: string): number;
+function use<K extends (string | readonly (number | string)[])>(key: () => K | null): number;
+function use(key: string | (() => string | (number | string)[] | null)): number {
+  if (typeof key === "string") {
+    return key.length;
+  }
+  const k = key();
+  if (k === null || typeof k === "string") {
+    return 0;
+  }
+  k.push("x");
+  return k.length;
+}
+
+function main(): void {
+  const a: number[] = [1, 2];
+  console.log(use(() => a), a.length);
+}

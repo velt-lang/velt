@@ -1,0 +1,41 @@
+// A type parameter bounded by an array of a union, or of a class, read by `for...of` (#1212,
+// `array_bound_value`): reading needs no check of the element type an instantiation narrows it
+// to (`number[]` for `(number | string)[]`, `Dog[]` for `Animal[]`), in a function, a generic
+// class's method and a generic arrow. Node prints the same.
+class Animal {
+  constructor(public name: string) {}
+}
+class Dog extends Animal {}
+
+function show<T extends (number | string)[]>(xs: T): string {
+  let out = "";
+  for (const x of xs) {
+    out += `${x};`;
+  }
+  return out;
+}
+
+class Names<T extends Animal[]> {
+  join(xs: T): string {
+    let out = "";
+    for (const a of xs) {
+      out += a.name;
+    }
+    return out;
+  }
+}
+
+function main(): void {
+  const ns: number[] = [1, 2];
+  console.log(show(ns), show(["a", 3]));
+  const dogs: Dog[] = [new Dog("rex"), new Dog("fido")];
+  console.log(new Names<Dog[]>().join(dogs));
+  const count = <T extends (number | string)[]>(xs: T): number => {
+    let n = 0;
+    for (const _ of xs) {
+      n++;
+    }
+    return n;
+  };
+  console.log(count(ns));
+}

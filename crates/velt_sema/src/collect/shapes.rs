@@ -201,32 +201,57 @@ pub(crate) fn resolve_bounds(cx: &mut Ctx, gs: &[ast::GenericParam], env: &TyEnv
     out
 }
 
-/// Is every array type `t` may be written read-only (`readonly T[]`, `ReadonlyArray<T>`), also
-/// through the program's type aliases (`Generics::readonly_arrays`)? `true` for a type that
-/// writes no array.
-fn arrays_read_only(cx: &Ctx, t: &ast::TypeExpr, module: usize, depth: usize) -> bool {
+/// Is every array type written anywhere in `t` read-only (`readonly T[]`, `ReadonlyArray<T>`),
+/// also inside their elements, function types and object types and through the program's type
+/// aliases (`Generics::readonly_arrays`, `FnCx::impl_params_read_only`)? `true` for a type
+/// that writes no array. `false` for a form whose arrays this can't see (a tuple, a qualified
+/// name, a generic alias, `typeof x`, an indexed, conditional or mapped type).
+pub(crate) fn arrays_read_only(cx: &Ctx, t: &ast::TypeExpr, module: usize, depth: usize) -> bool {
     use ast::TypeExprKind as K;
     if depth > 8 {
         return false;
     }
+    let all = |ts: &mut dyn Iterator<Item = &ast::TypeExpr>| {
+        for t in ts {
+            if !arrays_read_only(cx, t, module, depth + 1) {
+                return false;
+            }
+        }
+        true
+    };
     match &t.kind {
-        K::Union(ms) => ms
-            .iter()
-            .all(|m| arrays_read_only(cx, m, module, depth + 1)),
-        K::Array(_) | K::Tuple(_) => false,
+        K::Union(ms) | K::Intersection(ms) => all(&mut ms.iter()),
+        K::Function {
+            params,
+            ret,
+            throws,
+            ..
+        } => all(&mut params.iter().chain([&**ret]).chain(throws.as_deref())),
+        K::GenericFunction { ty, .. } => arrays_read_only(cx, ty, module, depth + 1),
+        K::Object(fields) => all(&mut fields.iter().map(|f| &f.ty)),
+        K::IndexSig { fields, value, .. } => {
+            all(&mut fields.iter().map(|f| &f.ty).chain([&**value]))
+        }
+        K::Literal(_)
+        | K::KeyOf(_)
+        | K::TemplateLiteral { .. }
+        | K::Null
+        | K::Undefined
+        | K::Void => true,
         K::Named { path, args } if path.len() == 1 => match path[0].name.as_str() {
-            "ReadonlyArray" => true,
+            "ReadonlyArray" => all(&mut args.iter()),
             "Array" => false,
-            name if args.is_empty() => match cx.lookup_type_item_at(module, name, path[0].span) {
+            name => match cx.lookup_type_item_at(module, name, path[0].span) {
                 Some(crate::ctx::Item::Alias(a)) => {
                     let alias = &cx.aliases[a as usize];
-                    arrays_read_only(cx, &alias.decl.ty, alias.module, depth + 1)
+                    args.is_empty() && arrays_read_only(cx, &alias.decl.ty, alias.module, depth + 1)
                 }
-                _ => true,
+                // A primitive, a type parameter, a class, interface or enum: the value is
+                // converted as itself, not its fields'.
+                _ => all(&mut args.iter()),
             },
-            _ => true,
         },
-        _ => true,
+        _ => false,
     }
 }
 

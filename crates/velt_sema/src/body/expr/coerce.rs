@@ -122,7 +122,7 @@ impl FnCx<'_, '_> {
         };
         // `T extends readonly number[]` where an array of the bound's elements is expected.
         let h = match self.array_bound_target(&h, exp) {
-            true => match self.array_bound_value(h) {
+            true => match self.array_bound_value(h, true) {
                 Ok(a) => return Ok(a),
                 Err(h) => h,
             },

@@ -47,9 +47,14 @@ impl FnCx<'_, '_> {
     /// A value of a type parameter bounded by an array type (`xs: T`, `T extends readonly
     /// number[]`) as that array type, where the body needs it as one (`for...of`, an argument
     /// of the bound's type; issue #1212): the value through an `any`, checked at run time as
-    /// `AnyTo` checks it (an instantiation at a tuple type stops with a `TypeError`).
+    /// `AnyTo` checks it (an instantiation at a tuple type stops with a `TypeError`). `writes`:
+    /// the value may be written through (not only read, as `for...of` reads it).
     /// `Err(h)` for any other value.
-    pub(crate) fn array_bound_value(&mut self, h: hir::Expr) -> Result<hir::Expr, hir::Expr> {
+    pub(crate) fn array_bound_value(
+        &mut self,
+        h: hir::Expr,
+        writes: bool,
+    ) -> Result<hir::Expr, hir::Expr> {
         let TyKind::Param(p) = *self.cx.ty.kind(h.ty) else {
             return Err(h);
         };
@@ -64,9 +69,13 @@ impl FnCx<'_, '_> {
             return Err(h);
         }
         // An instantiation may be an array of a narrower element type (`number[]` for `(number |
-        // string)[]`), whose view stops writes of the wider elements: only an element type
-        // with one layout, or a bound written read-only (`union_bound_value`).
-        if !self.one_layout(e) && !self.cx.constraint_read_only(p) {
+        // string)[]`), whose view stops writes of the wider elements: where the value may be
+        // written through, only an element type with one layout, or a bound written read-only
+        // (`union_bound_value`). Reading it (`for...of`) is the same either way.
+        if writes
+            && !self.one_layout(e)
+            && !(self.cx.constraint_read_only(p) && self.impl_params_read_only())
+        {
             return Err(h);
         }
         let span = h.span;
@@ -105,7 +114,7 @@ impl FnCx<'_, '_> {
         let want = self.flat_members(exp);
         let have = self.flat_members(b);
         let fits = have.iter().all(|m| want.contains(m));
-        let read_only = self.cx.constraint_read_only(p);
+        let read_only = self.cx.constraint_read_only(p) && self.impl_params_read_only();
         if !fits || !have.iter().all(|&m| self.exact_test(m, read_only, 0)) {
             return Err(h);
         }
@@ -114,6 +123,43 @@ impl FnCx<'_, '_> {
         let boxed = self.generic_as_any(h)?;
         let bound = self.cast_dynamic(boxed, b);
         self.try_coerce(bound, exp)
+    }
+
+    /// Is a bound's read-only array also read-only where the value goes? In a signature's body
+    /// (`crate::overloads`) only when every array in the implementation's parameter types is
+    /// written read-only: tsc relates a signature to its implementation with the type
+    /// parameters as `any`, so a read-only bound there says nothing of what the implementation
+    /// writes. Elsewhere `true`: tsc rejects a read-only array where a mutable one is expected
+    /// (TS4104). `false` for a method's signature (its implementation is not looked up).
+    fn impl_params_read_only(&mut self) -> bool {
+        // The body's own function, also inside the closures that convert its function values
+        // (`() => K | null` as the implementation's function type).
+        let Some(d) = self.body_def.filter(|_| self.cx.has_overloads) else {
+            return true;
+        };
+        let Some(src) = self.cx.fn_info(d).source else {
+            return true;
+        };
+        let name = &crate::body::defaults::fn_sig_ast(src).name.name;
+        let Some(base) = crate::overloads::sig_of(name) else {
+            return true;
+        };
+        let at = self.cx.fn_info(d).name_span;
+        if self.cx.fn_info(d).owner.is_some() {
+            return false;
+        }
+        let Some(crate::ctx::Item::Def(imp)) = self.cx.lookup_item_at(self.module, base, at) else {
+            return false;
+        };
+        let info = self.cx.fn_info(imp);
+        let Some(src) = info.source else {
+            return false;
+        };
+        let module = info.module;
+        crate::body::defaults::fn_sig_ast(src)
+            .params
+            .iter()
+            .all(|p| crate::collect::shapes::arrays_read_only(self.cx, &p.ty, module, 0))
     }
 
     /// `t` without its `| null` (or `| undefined`).
