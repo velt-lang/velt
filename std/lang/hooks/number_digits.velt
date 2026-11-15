@@ -4,7 +4,13 @@
 // takes the shortest digits, those of `String(x)`. std reaches these by role (`hookCall`), so only
 // a program that calls one loads this module and the digit code.
 
-import { arrayTruncate, arrayWithCapacity, noInline, strByteAt, strByteLen } from "velt/lang/intrinsics";
+import {
+  arrayTruncate,
+  arrayWithCapacity,
+  noInline,
+  strByteAt,
+  strByteLen,
+} from "velt/lang/intrinsics";
 import { asciiText } from "velt/lang/number/ascii";
 import { exactDigits, roundDigits } from "velt/lang/number/exact";
 
