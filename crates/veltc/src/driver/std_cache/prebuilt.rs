@@ -68,12 +68,22 @@ pub(crate) struct Finder {
 impl Finder {
     /// The finder of a build with `opts`, `None` where it uses no prebuilt objects (module docs).
     pub(crate) fn for_build(opts: &BuildOptions) -> Option<Finder> {
-        if super::wanted(opts) == Use::Off || prebuilt_off() {
+        // An executable as the std cache serves it; anything else is `velt check` (the driver
+        // asks for no other), which looks up what a debug build would.
+        let linking = opts.emit == crate::cli::Emit::Exe;
+        let wanted = match linking {
+            true => super::wanted(opts) != Use::Off,
+            false => {
+                let off = std::env::var("VELT_STD_OBJECT").is_ok_and(|v| v == "0");
+                !off && !velt_codegen_llvm::is_wasm(&opts.target())
+            }
+        };
+        if !wanted || prebuilt_off() {
             return None;
         }
         let target = opts.target();
         // A debug build links objects for the target's default CPU, where those run.
-        let cpu = match opts.release {
+        let cpu = match opts.release && linking {
             true => opts.cpu.clone(),
             false if super::serve::default_cpu_runs(opts, &target) => None,
             false => return None,
@@ -107,11 +117,7 @@ impl Finder {
         let found = seen.entry(h.module_entry).or_insert_with(|| {
             let found = self.find(h.module_entry);
             if super::stats() {
-                let what = if found.is_some() {
-                    "object found"
-                } else {
-                    "no object"
-                };
+                let what = if found.is_some() { "object found" } else { "no object" };
                 eprintln!("velt: prebuilt hooks: {}: {what}", h.module());
             }
             found
@@ -347,10 +353,7 @@ pub(crate) fn linked_objects(
 
 /// After a check with `finder`: fill what it missed (`VELT_STD_OBJECT_FILL`), and what it found,
 /// whose std files go to the build stamp's inputs `stamp`.
-pub(in crate::driver) fn found(
-    finder: Finder,
-    stamp: &mut Vec<String>,
-) -> Vec<(&'static str, Found)> {
+pub(in crate::driver) fn found(finder: Finder, stamp: &mut Vec<String>) -> Vec<(&'static str, Found)> {
     finder.fill();
     let found = finder.found();
     for (_, f) in &found {
@@ -375,8 +378,7 @@ pub(in crate::driver) fn link(
     if objects.is_empty() {
         return Ok(());
     }
-    let place =
-        OutputPaths::new(&opts.input, opts.output.as_deref(), opts.emit, target).std_objects();
+    let place = OutputPaths::new(&opts.input, opts.output.as_deref(), opts.emit, target).std_objects();
     if sess.turn.is_none() {
         sess.turn = place.lock(sess.verbose);
     }

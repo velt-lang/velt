@@ -20,7 +20,7 @@ use std::path::Path;
 
 use velt_common::hook_sig::{Mode, Sig, T};
 use velt_common::std_hooks::{prebuilt, HOOKS};
-use velt_vir::vir::{self, Linkage, Ty};
+use velt_vir::vir::{self, Callee, Const, Linkage, Operand, Terminator, Ty};
 
 use crate::driver::{check_program, BuildOptions, CheckScope, Session};
 
@@ -42,10 +42,7 @@ pub(super) fn build(
     cpu: Option<&str>,
 ) -> Result<Built, String> {
     let hooks: Vec<usize> = prebuilt::of_module(module_entry).map(|(i, _)| i).collect();
-    let first = hooks
-        .first()
-        .map(|&i| &HOOKS[i])
-        .ok_or("no prebuilt hook")?;
+    let first = hooks.first().map(|&i| &HOOKS[i]).ok_or("no prebuilt hook")?;
     let module = first.module();
     let spec = velt_common::std_modules::specifier(&module).ok_or("not a std module")?;
     let opts = BuildOptions {
@@ -64,8 +61,7 @@ pub(super) fn build(
         ..CheckScope::default()
     };
     let checked = check_program(&mut sess, &opts, &scope);
-    let hir =
-        checked.map_err(|_| format!("its world does not check:\n{}", sess.render_diagnostics()))?;
+    let hir = checked.map_err(|_| format!("its world does not check:\n{}", sess.render_diagnostics()))?;
     let files: Vec<String> = (sess.std_files.iter())
         .map(|&f| sess.sm.get(f))
         .filter(|f| f.path != opts.input)
@@ -89,6 +85,7 @@ pub(super) fn build(
     })?;
     drop(hir);
     program.files.clear();
+    program.funcs.iter_mut().for_each(|f| f.locs.clear());
     let entries = entry_points(&mut program, &hooks)?;
     velt_opt::optimize(&mut program, velt_opt::OptLevel::Speed);
     // The entry stays declared (`dead_funcs` drops a declaration nothing calls).
@@ -118,10 +115,7 @@ pub(super) fn build(
 /// zeros and empty strings (its code is dropped; it only makes them live).
 fn root_source(hooks: &[usize], spec: &str) -> String {
     let items: Vec<&str> = hooks.iter().map(|&i| HOOKS[i].item).collect();
-    let mut src = format!(
-        "import {{ {} }} from \"{spec}\";\n\nfunction main() {{\n",
-        items.join(", ")
-    );
+    let mut src = format!("import {{ {} }} from \"{spec}\";\n\nfunction main() {{\n", items.join(", "));
     for &i in hooks {
         let Sig::Fn(f) = &HOOKS[i].sig else { continue };
         let args: Vec<&str> = (f.params.iter())
@@ -193,21 +187,65 @@ fn crosses(sig: &velt_common::hook_sig::FnSig, params: &[Ty], ret: Ty) -> bool {
     each && result
 }
 
-/// `Err` where the object's code holds state a program shares with it (module docs).
+/// `Err` where the object's code (its optimized functions with bodies, and the statics they name)
+/// holds state a program shares with it (module docs).
 fn shares_nothing(program: &vir::Program) -> Result<(), String> {
+    let (externs, statics) = reached(program);
     let shared = ["velt_rt_module_state", "velt_tls_", "velt_rt_statics"];
-    if let Some(e) =
-        (program.externs.iter()).find(|e| shared.iter().any(|s| e.symbol.starts_with(s)))
+    if let Some(e) = (externs.iter().map(|&e| &program.externs[e]))
+        .find(|e| shared.iter().any(|s| e.symbol.starts_with(s)))
     {
         return Err(format!("its code reaches `{}`", e.symbol));
     }
-    if let Some(f) =
-        (program.funcs.iter()).find(|f| f.symbol.contains("schedModule") && !f.blocks.is_empty())
+    if let Some(f) = (program.funcs.iter())
+        .find(|f| f.symbol.contains("schedModule") && !f.blocks.is_empty())
     {
         return Err(format!("its code reaches module state (`{}`)", f.symbol));
     }
-    if (program.statics.iter()).any(|s| s.mutable.is_some() || s.linkage != Linkage::Internal) {
+    let shared_static = |s: &vir::StaticData| s.mutable.is_some() || s.linkage != Linkage::Internal;
+    if statics.iter().any(|&s| shared_static(&program.statics[s])) {
         return Err("its code reaches a static atomic or a named static".into());
     }
     Ok(())
+}
+
+/// The externs and statics the bodies of `program`'s functions name, directly or through the
+/// statics' relocations (the lists keep entries nothing names any more).
+fn reached(program: &vir::Program) -> (Vec<usize>, Vec<usize>) {
+    let mut externs = std::collections::BTreeSet::new();
+    let mut statics = std::collections::BTreeSet::new();
+    let mut pending = vec![];
+    for f in program.funcs.iter().filter(|f| !f.blocks.is_empty()) {
+        super::select::visit(f, &mut |op| match op {
+            Operand::Const(Const::Extern(e), _) => {
+                externs.insert(e.0 as usize);
+            }
+            Operand::Const(Const::Static(s), _) => pending.push(s.0 as usize),
+            _ => {}
+        });
+        for b in &f.blocks {
+            if let Terminator::Call {
+                callee: Callee::Extern(e),
+                ..
+            } = &b.term
+            {
+                externs.insert(e.0 as usize);
+            }
+        }
+    }
+    while let Some(s) = pending.pop() {
+        if !statics.insert(s) {
+            continue;
+        }
+        for (_, target) in &program.statics[s].relocs {
+            match target {
+                Const::Static(t) => pending.push(t.0 as usize),
+                Const::Extern(e) => {
+                    externs.insert(e.0 as usize);
+                }
+                _ => {}
+            }
+        }
+    }
+    (externs.into_iter().collect(), statics.into_iter().collect())
 }
