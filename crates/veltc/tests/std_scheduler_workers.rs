@@ -6,10 +6,11 @@
 //! `VELT_THREADS=4` and must print what Node prints. The tests with sockets are in
 //! std_scheduler_workers_net.rs.
 
-use std::path::Path;
-
 use no_window::command;
-use sched_workers_support::{build_and_run, build_and_run_with, has_threads, manifest, prints};
+use sched_workers_support::{
+    build_and_run, build_and_run_with, contended_runs, contended_runs_checked, has_threads,
+    manifest, prints,
+};
 
 mod no_window;
 mod runtime_support;
@@ -24,7 +25,7 @@ mod test_dir;
 #[cfg(unix)]
 #[test]
 fn sched_spread_white_box_tests_pass() {
-    runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
+    runtime_support::build_native_runtime(manifest());
     std_unix::velt_test_in_std_copy(
         "lang/hooks/sched_spread.test.velt",
         include_str!("std_unix/lang/hooks/sched_spread.test.velt"),
@@ -39,7 +40,7 @@ fn sched_spread_white_box_tests_pass() {
 #[cfg(unix)]
 #[test]
 fn sched_queue_white_box_tests_pass() {
-    runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
+    runtime_support::build_native_runtime(manifest());
     std_unix::velt_test_in_std_copy(
         "lang/hooks/sched_queue.test.velt",
         include_str!("std_unix/lang/hooks/sched_queue.test.velt"),
@@ -574,87 +575,6 @@ async function main() {
   }
 }
 "#;
-
-/// Runs the std build of `name` (built in `dir`) with `threads` workers: on Linux 40 times with the
-/// program and two spinning threads on cores 0 and 1 (`sched_setaffinity`), elsewhere 10 plain
-/// runs (macOS cannot pin threads). The runs that did not print `want` with exit code 0.
-fn contended_runs(dir: &Path, name: &str, threads: &str, want: &str) -> Vec<String> {
-    contended_runs_checked(dir, name, threads, |out| {
-        if out == want {
-            Ok(())
-        } else {
-            Err(format!("{out:?}"))
-        }
-    })
-}
-
-/// [`contended_runs`] with `check` judging each run's stdout (exit code 0 required too): the runs
-/// it rejected, with its reason.
-fn contended_runs_checked(
-    dir: &Path,
-    name: &str,
-    threads: &str,
-    check: impl Fn(&str) -> Result<(), String>,
-) -> Vec<String> {
-    let exe = dir.join(format!(
-        "{name}_std{}",
-        if cfg!(windows) { ".exe" } else { "" }
-    ));
-    let linux = cfg!(target_os = "linux");
-    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let burners: Vec<_> = (0..if linux { 2 } else { 0 })
-        .map(|_| {
-            let stop = stop.clone();
-            std::thread::spawn(move || {
-                pin_to_two_cores();
-                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
-                    std::hint::spin_loop();
-                }
-            })
-        })
-        .collect();
-    let mut lost = Vec::new();
-    for run in 0..if linux { 40 } else { 10 } {
-        let mut cmd = command(&exe);
-        cmd.env("VELT_THREADS", threads)
-            .env_remove("VELT_SCHEDULER");
-        #[cfg(target_os = "linux")]
-        {
-            use std::os::unix::process::CommandExt;
-            // SAFETY: only an affinity call between fork and exec.
-            unsafe {
-                cmd.pre_exec(|| {
-                    pin_to_two_cores();
-                    Ok(())
-                });
-            }
-        }
-        let o = cmd.output().unwrap();
-        let out = String::from_utf8_lossy(&o.stdout);
-        match (o.status.code(), check(&out)) {
-            (Some(0), Ok(())) => {}
-            (code, Err(why)) => lost.push(format!("run {run}: {code:?} {why}")),
-            (code, Ok(())) => lost.push(format!("run {run}: exit {code:?}")),
-        }
-    }
-    stop.store(true, std::sync::atomic::Ordering::Relaxed);
-    for b in burners {
-        b.join().unwrap();
-    }
-    lost
-}
-
-/// Pins the calling thread (or a child between fork and exec) to cores 0 and 1 (Linux only).
-fn pin_to_two_cores() {
-    #[cfg(target_os = "linux")]
-    // SAFETY: a zeroed `cpu_set_t` filled by the libc macros, passed with its size.
-    unsafe {
-        let mut set: libc::cpu_set_t = std::mem::zeroed();
-        libc::CPU_SET(0, &mut set);
-        libc::CPU_SET(1, &mut set);
-        libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set);
-    }
-}
 
 /// The program of [`mains_last_line_printed_on_another_worker_is_written`].
 const LAST_LINE: &str = r#"async function main() {

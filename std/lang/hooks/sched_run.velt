@@ -73,9 +73,8 @@ export function run(e: usize, k: usize, mode: u32): void {
   if (stdUsed("nodeTimers") && mode !== 0) {
     timersAfter(e, k);
   }
-  if ((m.ld32(k + t.T_FLAGS) & t.BATCHED) !== 0) {
-    // Its poll as part of a batch ends (sched_queue.velt `pushNext`).
-    m.and32(k + t.T_FLAGS, ~t.BATCHED);
+  if ((m.ld32(k + t.T_FLAGS) & (t.BATCHED | t.JOIN_DUE)) !== 0) {
+    jn.polledFlags(e, k, mode);
   }
   m.st(e + t.E_CURRENT, 0);
   // A lazy worker 0's look after the poll (sched_loop.velt `alone`) reads `E_MODE` after this, and
@@ -339,8 +338,9 @@ function pollRootAgain(e: usize, k: usize): void {
 }
 
 /**
- * Task `k`'s root is done: its result to the join handle, its awaiter woken; at a lazy worker 0
- * (sched_lock.velt) in line, without the slot's lock (`jn.joinDoneLazy`).
+ * Task `k`'s root is done: its result to the join handle, its awaiter woken; with the slot's
+ * locks on, at the poll's end (`jn.polledFlags`); at a lazy worker 0 (sched_lock.velt) in line,
+ * without the slot's lock (`jn.joinDoneLazy`).
  */
 function rootDone(e: usize, k: usize): void {
   const tr = m.ld(k + t.T_TRANSFER);
@@ -375,6 +375,11 @@ function rootDone(e: usize, k: usize): void {
     if ((s & t.J_HANDLE) === 0) {
       jn.dropResult(k);
     }
+    return;
+  }
+  if (lk.mode() === lk.LK_ON) {
+    // The slot ends at the poll's end, after its microtasks and the publish (`jn.polledFlags`).
+    m.or32(k + t.T_FLAGS, t.JOIN_DUE);
     return;
   }
   const kind = lk.kind();

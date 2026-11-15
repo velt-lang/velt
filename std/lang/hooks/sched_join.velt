@@ -199,7 +199,20 @@ export function rootPanicked(e: usize, k: usize, x: usize): void {
   m.st(k + t.T_POLL, x);
   m.inc(k + t.T_REFS);
   t.flags(k, t.ROOT_DONE | nc.T_PANICKED, 0);
-  const kind = lk.kind();
+  if (lk.mode() === lk.LK_ON) {
+    // The slot ends at the poll's end, as a finished root's (`polledFlags`).
+    m.or32(k + t.T_FLAGS, t.JOIN_DUE);
+    return;
+  }
+  panickedEnd(e, k, lk.kind());
+}
+
+/**
+ * The join slot of task `k`, whose root panicked (`rootPanicked`), ends (an operation of kind
+ * `kind`, sched_lock.velt): its joiner is woken.
+ */
+@noInline
+export function panickedEnd(e: usize, k: usize, kind: u32): void {
   const s = mk.lockJoin(k, kind);
   // The join raises the panic from a poll that may unwind: `joinPoll`, `joinPollSolo` and
   // `joinPollLazy` are C's (`@export`), whose frames end any unwinding (rt_abi.md), so the
@@ -278,4 +291,34 @@ export function joinHandled(f: usize, qdrop: usize): bool {
   }
   m.st(f - t.T_JOIN + t.T_RESULT_DROP, qdrop);
   return true;
+}
+
+/**
+ * The end of task `k`'s poll on worker `e` (sched_run.velt `run`, its `mode`), after its
+ * microtasks, with what the poll printed published: its poll as part of a batch ends
+ * (sched_queue.velt `pushNext`); the join slot of a root that finished in it ends now
+ * (sched_run.velt `rootDone`, flag `JOIN_DUE`). A joiner on another thread may resume as soon as
+ * the slot says done, without a wake (its first poll of the handle), so the slot says it only
+ * once the task's microtasks ran, as Node runs them before an awaiter's continuation, and their
+ * output and the root's is published, ahead of what the joiner prints (#3020).
+ */
+@noInline
+export function polledFlags(e: usize, k: usize, mode: u32): void {
+  const fl = m.ld32(k + t.T_FLAGS);
+  if ((fl & t.BATCHED) !== 0) {
+    m.and32(k + t.T_FLAGS, ~t.BATCHED);
+  }
+  if ((fl & t.JOIN_DUE) !== 0) {
+    m.and32(k + t.T_FLAGS, ~t.JOIN_DUE);
+    if (mode === 0 || mode === t.M_LAZY) {
+      // `run` published nothing for this poll (a worker out of the shared mode while the slots'
+      // locks are on: rescued during the poll, or after a rescue was taken back).
+      wk.publish(e);
+    }
+    if ((fl & nc.T_PANICKED) !== 0) {
+      panickedEnd(e, k, lk.kind());
+    } else {
+      joinDone(e, k, lk.kind());
+    }
+  }
 }
