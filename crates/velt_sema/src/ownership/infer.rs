@@ -19,7 +19,7 @@ use velt_common::{Diagnostic, Span};
 use crate::body::places::{is_place, place_root, set_place_mode};
 use crate::body::LocalKind;
 use crate::ctx::Ctx;
-use crate::defs::{BodyState, DefInfo};
+use crate::defs::DefInfo;
 use crate::hir::{
     Block, Callee, Def, DefId, Expr, ExprKind as E, FnDef, Intrinsic, LocalId, PassMode, Pat,
     PatKind, Stmt, StmtKind, UseMode,
@@ -27,11 +27,9 @@ use crate::hir::{
 use crate::visit::{self, VisitMut};
 
 pub(crate) fn infer_modes(cx: &mut Ctx) {
-    let fns: Vec<DefId> = cx
-        .fn_defs
-        .iter()
-        .copied()
-        .filter(|d| cx.fn_info(*d).state == BodyState::Done && cx.defs[d.0 as usize].is_some())
+    // The unit's functions (`crate::units`): a finished unit's modes are settled.
+    let fns: Vec<DefId> = (cx.unit_fns().into_iter())
+        .filter(|d| cx.defs[d.0 as usize].is_some())
         .collect();
     let dispatch = super::mutation::Dispatch::new(cx);
     super::kept_fns::find_parents(cx, &fns);

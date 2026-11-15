@@ -172,7 +172,9 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
     // on several threads (`crate::par`) and only read the HIR and these tables.
     let held = |c: DefId| cx.try_fn(c).is_some_and(|i| !i.escaping);
     let mut weight = 0;
-    let inputs: Vec<FnInput> = (cx.defs.iter().enumerate())
+    // The unit's bodies (`crate::units`): a finished unit's moves were checked with it.
+    let base = cx.unit_base as usize;
+    let inputs: Vec<FnInput> = (cx.defs.iter().enumerate().skip(base))
         .filter_map(|(i, d)| {
             let Some(Def::Fn(f)) = d else { return None };
             let def = DefId(i as u32);
