@@ -373,56 +373,74 @@ fn check_timed(
     }
     // What a round found it needed once it was too late to demand or check it.
     let assumed = std::cell::RefCell::new(body::lazy_std::Assumed::default());
+    // A check by units with std as a check of its own (`units::stage2`): the stage the next
+    // round checks, and std's frozen unit the app's rounds start from.
+    let stage = std::cell::Cell::new(units::Stage::Both);
+    let std_snap: std::cell::RefCell<Option<ctx::Ctx>> = Default::default();
     let new_cx = |round: &'static str,
                   held_borrows: bool,
                   seeds: &throws::FnTypeSeeds,
                   last: bool,
                   views: &union_views::Families| {
         timings::note_round();
-        let mut cx = ctx::Ctx::new(modules, root);
-        if opts.eager_std {
-            cx.lazy.on = false;
+        let from_std = match stage.get() {
+            units::Stage::App => std_snap.borrow().clone(),
+            _ => None,
+        };
+        let fresh = from_std.is_none();
+        let mut cx = from_std.unwrap_or_else(|| ctx::Ctx::new(modules, root));
+        cx.units_stage = stage.get();
+        if !fresh {
+            cx.union_views.assumed = views.clone();
+            cx.fn_sites.reseed(seeds.clone(), last);
+            cx.held_borrows = held_borrows;
         }
-        cx.units = opts.units;
-        cx.lazy.native_executor = opts.native_executor;
-        body::lazy_std::assume(&mut cx, &assumed.borrow());
-        cx.loads = loads;
-        generating::install(&mut cx, gen, generator.as_ref());
-        cx.union_views.assumed = views.clone();
-        cx.fn_sites = throws::FnSites::new(seeds.clone(), last);
-        cx.stack_budget = stack_budget;
-        // A check that keeps itself records its bodies, for the kept check to check them again.
-        cx.body_records = kept::wanted(input).then(Default::default);
-        cx.source_facts = facts.clone();
-        cx.held_borrows = held_borrows;
-        cx.ns_private = ns_private.clone();
-        cx.global_namespaces = global_ns.clone();
-        cx.gen_throw = gen_throw;
-        cx.alias_blocked = alias_blocked.clone();
-        if let Some(l) = &lifted {
-            cx.generic_arrow_fns = l.local_fns.clone();
-            cx.generic_arrow_all = l.all_fns.clone();
-            cx.unsafe_arrow_fns = l.unsafe_fns.clone();
-        }
-        if let Some(o) = &overloaded {
-            cx.has_overloads = true;
-            cx.overloaded_methods = o.methods.clone();
-        }
-        cx.objects.null_proto_records = null_proto;
-        cx.objects.record_accessors = record_accessors;
-        cx.objects.ctor_reads = ctor_reads;
-        cx.objects.brands = brands.clone();
-        cx.global_props = global_props.clone();
-        cx.recovered = (recovered.iter())
-            .map(|&(m, src)| (m, collect::exports::words(src)))
-            .collect();
-        cx.diags.extend(merge_diags.iter().cloned());
-        cx.promoted_consts = chunks.promoted.clone();
-        cx.asserted_rmw = asserted.rmw.clone();
-        if let Some(c) = &closures {
-            cx.diags.extend(c.diags.iter().cloned());
-            cx.kept_nested = c.kept.clone();
-            cx.set_closure_groups(&c.groups);
+        if fresh {
+            cx.units_stage = stage.get();
+            if opts.eager_std {
+                cx.lazy.on = false;
+            }
+            cx.units = opts.units;
+            cx.lazy.native_executor = opts.native_executor;
+            body::lazy_std::assume(&mut cx, &assumed.borrow());
+            cx.loads = loads;
+            generating::install(&mut cx, gen, generator.as_ref());
+            cx.union_views.assumed = views.clone();
+            cx.fn_sites = throws::FnSites::new(seeds.clone(), last);
+            cx.stack_budget = stack_budget;
+            // A check that keeps itself records its bodies, for the kept check to check them again.
+            cx.body_records = kept::wanted(input).then(Default::default);
+            cx.source_facts = facts.clone();
+            cx.held_borrows = held_borrows;
+            cx.ns_private = ns_private.clone();
+            cx.global_namespaces = global_ns.clone();
+            cx.gen_throw = gen_throw;
+            cx.alias_blocked = alias_blocked.clone();
+            if let Some(l) = &lifted {
+                cx.generic_arrow_fns = l.local_fns.clone();
+                cx.generic_arrow_all = l.all_fns.clone();
+                cx.unsafe_arrow_fns = l.unsafe_fns.clone();
+            }
+            if let Some(o) = &overloaded {
+                cx.has_overloads = true;
+                cx.overloaded_methods = o.methods.clone();
+            }
+            cx.objects.null_proto_records = null_proto;
+            cx.objects.record_accessors = record_accessors;
+            cx.objects.ctor_reads = ctor_reads;
+            cx.objects.brands = brands.clone();
+            cx.global_props = global_props.clone();
+            cx.recovered = (recovered.iter())
+                .map(|&(m, src)| (m, collect::exports::words(src)))
+                .collect();
+            cx.diags.extend(merge_diags.iter().cloned());
+            cx.promoted_consts = chunks.promoted.clone();
+            cx.asserted_rmw = asserted.rmw.clone();
+            if let Some(c) = &closures {
+                cx.diags.extend(c.diags.iter().cloned());
+                cx.kept_nested = c.kept.clone();
+                cx.set_closure_groups(&c.groups);
+            }
         }
         let entry = timings::pass(round, || analyze(&mut cx, root, root_mod, opts));
         global_this::drop_site_errors(&mut cx);
@@ -443,6 +461,18 @@ fn check_timed(
     };
     // The check checked again, kept while that one runs: when that one reports an error this
     // one did not, this one's diagnostics stay the program's (`throws::adds_errors`).
+    if opts.units && units::stage2() {
+        stage.set(units::Stage::Std);
+        let mut std_cx =
+            match rounds::run(&new_cx, &|_: &ctx::Ctx| false, &assumed, false, root, None) {
+                Ok((cx, _, _)) => cx,
+                Err(stopped) => return *stopped,
+            };
+        std_cx.freeze_defs();
+        std_cx.unit_base = std_cx.defs.len() as u32;
+        *std_snap.borrow_mut() = Some(std_cx);
+        stage.set(units::Stage::App);
+    }
     let (cx, entry, generated) = match rounds::run(
         &new_cx,
         &doubt,
@@ -530,6 +560,10 @@ fn analyze(
         analyze_after_phase(cx);
     } else {
         analyze_after_bodies(cx);
+    }
+    // std's unit alone has no root of its own (`crate::units`).
+    if cx.units_stage == units::Stage::Std {
+        return None;
     }
     let entry = main_fn::check_main(cx, root, root_mod, opts.require_main);
     alias_expand::check_unused_aliases(cx);
