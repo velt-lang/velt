@@ -27,17 +27,23 @@ const TEXT: usize = 512;
 /** This thread's buffer for `strerror`'s messages (0 until its first). */
 const TEXT_HERE = new ThreadLocal<u64>(0);
 
+/** C's `struct sockaddr`: velt/net passes the addresses of the ones it lays out. */
+export declare c type sockaddr;
+/** C's `struct addrinfo`: `getaddrinfo`'s results, which velt/net reads and frees. */
+export declare c type addrinfo;
+
+// Winsock's own types: a `SOCKET` handle, `int` lengths, and `int *` for a length it writes.
 declare c("c") function socket$win(af: i32, kind: i32, protocol: i32): usize;
 declare c("c") function WSASetLastError$win(e: i32): void;
-declare c("c") function connect$win(s: usize, addr: Ptr<u8>, len: i32): i32;
-declare c("c") function bind$win(s: usize, addr: Ptr<u8>, len: i32): i32;
+declare c("c") function connect$win(s: usize, addr: Ptr<sockaddr>, len: i32): i32;
+declare c("c") function bind$win(s: usize, addr: Ptr<sockaddr>, len: i32): i32;
 declare c("c") function listen$win(s: usize, backlog: i32): i32;
 declare c("c") function getsockopt$win(
   s: usize,
   level: i32,
   name: i32,
   value: Ptr<u8>,
-  len: Ptr<u8>,
+  len: Ptr<i32>,
 ): i32;
 declare c("c") function setsockopt$win(
   s: usize,
@@ -46,8 +52,8 @@ declare c("c") function setsockopt$win(
   value: Ptr<u8>,
   len: i32,
 ): i32;
-declare c("c") function getsockname$win(s: usize, addr: Ptr<u8>, len: Ptr<u8>): i32;
-declare c("c") function getpeername$win(s: usize, addr: Ptr<u8>, len: Ptr<u8>): i32;
+declare c("c") function getsockname$win(s: usize, addr: Ptr<sockaddr>, len: Ptr<i32>): i32;
+declare c("c") function getpeername$win(s: usize, addr: Ptr<sockaddr>, len: Ptr<i32>): i32;
 declare c("c") function closesocket$win(s: usize): i32;
 declare c("c") function recv$win(s: usize, buf: Ptr<u8>, len: i32, flags: i32): i32;
 declare c("c") function send$win(s: usize, buf: Ptr<u8>, len: i32, flags: i32): i32;
@@ -88,12 +94,12 @@ export function socket(family: i32, kind: i32, protocol: i32): i32 {
   return s as i32;
 }
 
-export function connect$net(fd: i32, addr: Ptr<u8>, len: u32): i32 {
+export function connect$net(fd: i32, addr: Ptr<sockaddr>, len: u32): i32 {
   // SAFETY: the caller's address and length.
   return unsafe { connect$win(fd as usize, addr, len as i32) };
 }
 
-export function bind(fd: i32, addr: Ptr<u8>, len: u32): i32 {
+export function bind(fd: i32, addr: Ptr<sockaddr>, len: u32): i32 {
   // SAFETY: the caller's address and length.
   return unsafe { bind$win(fd as usize, addr, len as i32) };
 }
@@ -103,9 +109,9 @@ export function listen(fd: i32, backlog: i32): i32 {
   return unsafe { listen$win(fd as usize, backlog) };
 }
 
-export function getsockopt(fd: i32, level: i32, name: i32, value: Ptr<u8>, len: Ptr<u8>): i32 {
-  // SAFETY: the caller's option room and its `int` length.
-  return unsafe { getsockopt$win(fd as usize, level, name, value, len) };
+export function getsockopt(fd: i32, level: i32, name: i32, value: Ptr<u8>, len: Ptr<u32>): i32 {
+  // SAFETY: the caller's option room and its length, which Winsock reads and writes as an `int`.
+  return unsafe { getsockopt$win(fd as usize, level, name, value, asInt(len)) };
 }
 
 export function setsockopt(fd: i32, level: i32, name: i32, value: Ptr<u8>, len: u32): i32 {
@@ -113,14 +119,22 @@ export function setsockopt(fd: i32, level: i32, name: i32, value: Ptr<u8>, len: 
   return unsafe { setsockopt$win(fd as usize, level, name, value, len as i32) };
 }
 
-export function getsockname(fd: i32, addr: Ptr<u8>, len: Ptr<u8>): i32 {
-  // SAFETY: the caller's address room and its `int` length.
-  return unsafe { getsockname$win(fd as usize, addr, len) };
+export function getsockname(fd: i32, addr: Ptr<sockaddr>, len: Ptr<u32>): i32 {
+  // SAFETY: the caller's address room and its length, an `int` to Winsock.
+  return unsafe { getsockname$win(fd as usize, addr, asInt(len)) };
 }
 
-export function getpeername(fd: i32, addr: Ptr<u8>, len: Ptr<u8>): i32 {
-  // SAFETY: the caller's address room and its `int` length.
-  return unsafe { getpeername$win(fd as usize, addr, len) };
+export function getpeername(fd: i32, addr: Ptr<sockaddr>, len: Ptr<u32>): i32 {
+  // SAFETY: the caller's address room and its length, an `int` to Winsock.
+  return unsafe { getpeername$win(fd as usize, addr, asInt(len)) };
+}
+
+/**
+ * A `socklen_t *` (velt/net's) as the `int *` Winsock reads and writes: the lengths are small
+ * (an address or an option), the same bits either way.
+ */
+function asInt(len: Ptr<u32>): Ptr<i32> {
+  return m.ptrTo<i32>(Ptr.addressOf(len));
 }
 
 /** The message of Winsock error `e` (this thread's buffer, until its next message). */
@@ -192,7 +206,7 @@ export function bcopy$text(src: StrBytes, dst: Ptr<u8>, n: usize): void {
   }
 }
 
-export declare c("c") function freeaddrinfo(ai: Ptr<u8>): void;
+export declare c("c") function freeaddrinfo(ai: Ptr<addrinfo>): void;
 
 /**
  * Is `getaddrinfo`'s failure an OS error, worded as one ("… (os error N)")? Yes: a Winsock error,

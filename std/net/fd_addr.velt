@@ -11,7 +11,7 @@ import { CString } from "velt/ffi/c_string";
 import { Ptr } from "velt/ffi/ptr";
 import { utf8DecodeLossy } from "velt/encoding/utf8";
 import { addressLoad, hookCall } from "velt/lang/intrinsics";
-import { GAI_OS_ERROR, freeaddrinfo, gai_strerror, inet_ntop } from "#net-calls";
+import { GAI_OS_ERROR, addrinfo, freeaddrinfo, gai_strerror, inet_ntop } from "#net-calls";
 import * as sys from "#net-sys";
 import * as m from "velt/lang/hooks/sched_mem";
 
@@ -22,7 +22,7 @@ const AI_NEXT: usize = 40;
 
 // Pointers are `Ptr`s, as in a program's own declarations of these symbols: one C symbol has one
 // signature in a program (Winsock's has the same). Addresses become `Ptr`s with `m.ptr` (0
-// passes `NULL`). The others are `#net-calls`'.
+// passes `NULL`), or `m.ptrTo` for a typed one. The others are `#net-calls`'.
 declare c("c") function getaddrinfo(
   host: CString,
   port: CString,
@@ -169,6 +169,6 @@ export function addrText(sa: usize): string {
 export function freeList(list: usize): void {
   // SAFETY: a list getaddrinfo made, freed once.
   unsafe {
-    freeaddrinfo(m.ptr(list));
+    freeaddrinfo(m.ptrTo<addrinfo>(list));
   }
 }
