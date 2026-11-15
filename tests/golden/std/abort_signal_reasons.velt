@@ -22,6 +22,11 @@ try {
 const c3 = new AbortController();
 c3.abort("text");
 console.log("string", c3.signal.reason);
+// A string equal to the default message is the reason itself, also through an `AbortSignal.any`.
+const d = new AbortController();
+const ds = AbortSignal.any([d.signal]);
+d.abort("This operation was aborted");
+console.log("default text", typeof d.signal.reason, typeof ds.reason);
 const pre = AbortSignal.abort();
 show("AbortSignal.abort()", pre.reason);
 // An `AbortSignal.any` has the reason of the source that aborted first, not the first in its list.

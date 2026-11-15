@@ -20,6 +20,12 @@ import { INSPECT } from "velt/lang/hooks/keys";
 // The message of the reason a timeout's signal gets, as in Node.
 const TIMEOUT_MESSAGE: string = "The operation was aborted due to timeout";
 
+// The message a plain `abort()` (no reason) gives the runtime signal, so that its reason, Node's
+// `AbortError`, is told apart from `abort("This operation was aborted")`, whose reason is that
+// string (an `AbortSignal.any` reads its first aborting source's message). It starts with a NUL
+// byte: the only collision is a user's reason equal to it byte for byte.
+export const PLAIN_ABORT: string = "\u0000velt:abort()";
+
 // A signal's reason once there is one: allocated only then, so a signal never given or asked
 // its reason costs what it did before.
 class Kept {
@@ -107,8 +113,8 @@ export class AbortSignal {
   }
 
   /**
-   * Why the signal was aborted (`undefined` while it is not), as in Node: the value passed to
-   * `abort(reason)`, else a `DOMException` named `AbortError` ("This
+   * Why the signal was aborted (`undefined` while it is not), as in Node: the string passed to
+   * `abort(reason)` (a string only, for now: #3014), else a `DOMException` named `AbortError` ("This
    * operation was aborted", or the scope's message for a `TaskScope`), or `TimeoutError` for an
    * `AbortSignal.timeout`. An `AbortSignal.any` has its first aborted source's reason. Each
    * read gives an equal copy (Node gives one object, `===`: #3011).
@@ -130,7 +136,8 @@ export class AbortSignal {
     if (ms >= 0) {
       return new TimeoutError(ms, TIMEOUT_MESSAGE);
     }
-    return new AbortError(velt_rt_signal_reason(this.handle()));
+    const message = velt_rt_signal_reason(this.handle());
+    return new AbortError(message == PLAIN_ABORT ? DEFAULT_REASON : message);
   }
 
   // Keeps the reason of the source among `signals` with handle `h` (aborted already) as this
@@ -148,8 +155,8 @@ export class AbortSignal {
 
   // The reason of the source that aborted this `AbortSignal.any` first, as Node keeps it, read
   // from the message the runtime aborted it with: a timeout's is a `TimeoutError`, the default
-  // one an `AbortError`, any other the string `abort(reason)` gave (so a source aborted with an
-  // object reads as its string: #3011). Nothing about the sources is stored here: an array
+  // one (`PLAIN_ABORT`) an `AbortError`, any other the string `abort(reason)` gave (reasons are
+  // strings, so that is exact: other values are #3014). Nothing about the sources is stored: an array
   // field costs allocations on every `any`, an h2 stream's wait among them.
   private anyReason(): any {
     const first = velt_rt_signal_reason(this.handle());
@@ -157,8 +164,8 @@ export class AbortSignal {
     if (ms >= 0 && first == TIMEOUT_MESSAGE) {
       return new TimeoutError(ms, TIMEOUT_MESSAGE);
     }
-    if (first == DEFAULT_REASON) {
-      return new AbortError(first);
+    if (first == PLAIN_ABORT) {
+      return new AbortError(DEFAULT_REASON);
     }
     return first;
   }
@@ -181,18 +188,28 @@ export class AbortSignal {
   // is kept: the reason is made when it is read.
   private abortPlain() {
     if (!this.aborted) {
-      velt_rt_signal_abort(this.handle(), DEFAULT_REASON);
+      velt_rt_signal_abort(this.handle(), PLAIN_ABORT);
+    }
+  }
+
+  // Aborts the signal with `reason`, `PLAIN_ABORT` for none (std only: `AbortController.abort`
+  // and `AbortSignal.abort`).
+  private abortAs(reason: string) {
+    if (reason == PLAIN_ABORT) {
+      this.abortPlain();
+    } else {
+      this.abortWith(reason);
     }
   }
 
   // Aborts the signal with `reason`, unless it is aborted already (std only: `abort(reason)`).
-  private abortWith(reason: any) {
+  private abortWith(reason: string) {
     if (this.aborted) {
       return;
     }
     // Kept first, so a task the abort wakes reads it.
     this.#cell.with((s) => s.keep(reason));
-    velt_rt_signal_abort(this.handle(), String(reason));
+    velt_rt_signal_abort(this.handle(), reason);
   }
 
   /**
@@ -234,13 +251,9 @@ export class AbortSignal {
   }
 
   /** A signal aborted already, with `reason` (Node's `AbortError` without one). */
-  static abort(reason?: any): AbortSignal {
+  static abort(reason: string = PLAIN_ABORT): AbortSignal {
     const s = new AbortSignal(signalCell(velt_rt_signal_new()));
-    if (reason === undefined) {
-      s.abortPlain();
-    } else {
-      s.abortWith(reason);
-    }
+    s.abortAs(reason);
     return s;
   }
 
