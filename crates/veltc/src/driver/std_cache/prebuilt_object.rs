@@ -42,7 +42,10 @@ pub(super) fn build(
     cpu: Option<&str>,
 ) -> Result<Built, String> {
     let hooks: Vec<usize> = prebuilt::of_module(module_entry).map(|(i, _)| i).collect();
-    let first = hooks.first().map(|&i| &HOOKS[i]).ok_or("no prebuilt hook")?;
+    let first = hooks
+        .first()
+        .map(|&i| &HOOKS[i])
+        .ok_or("no prebuilt hook")?;
     let module = first.module();
     let spec = velt_common::std_modules::specifier(&module).ok_or("not a std module")?;
     let opts = BuildOptions {
@@ -61,7 +64,8 @@ pub(super) fn build(
         ..CheckScope::default()
     };
     let checked = check_program(&mut sess, &opts, &scope);
-    let hir = checked.map_err(|_| format!("its world does not check:\n{}", sess.render_diagnostics()))?;
+    let hir =
+        checked.map_err(|_| format!("its world does not check:\n{}", sess.render_diagnostics()))?;
     let files: Vec<String> = (sess.std_files.iter())
         .map(|&f| sess.sm.get(f))
         .filter(|f| f.path != opts.input)
@@ -115,7 +119,10 @@ pub(super) fn build(
 /// zeros and empty strings (its code is dropped; it only makes them live).
 fn root_source(hooks: &[usize], spec: &str) -> String {
     let items: Vec<&str> = hooks.iter().map(|&i| HOOKS[i].item).collect();
-    let mut src = format!("import {{ {} }} from \"{spec}\";\n\nfunction main() {{\n", items.join(", "));
+    let mut src = format!(
+        "import {{ {} }} from \"{spec}\";\n\nfunction main() {{\n",
+        items.join(", ")
+    );
     for &i in hooks {
         let Sig::Fn(f) = &HOOKS[i].sig else { continue };
         let args: Vec<&str> = (f.params.iter())
@@ -197,8 +204,8 @@ fn shares_nothing(program: &vir::Program) -> Result<(), String> {
     {
         return Err(format!("its code reaches `{}`", e.symbol));
     }
-    if let Some(f) = (program.funcs.iter())
-        .find(|f| f.symbol.contains("schedModule") && !f.blocks.is_empty())
+    if let Some(f) =
+        (program.funcs.iter()).find(|f| f.symbol.contains("schedModule") && !f.blocks.is_empty())
     {
         return Err(format!("its code reaches module state (`{}`)", f.symbol));
     }

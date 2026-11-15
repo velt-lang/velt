@@ -117,7 +117,11 @@ impl Finder {
         let found = seen.entry(h.module_entry).or_insert_with(|| {
             let found = self.find(h.module_entry);
             if super::stats() {
-                let what = if found.is_some() { "object found" } else { "no object" };
+                let what = if found.is_some() {
+                    "object found"
+                } else {
+                    "no object"
+                };
                 eprintln!("velt: prebuilt hooks: {}: {what}", h.module());
             }
             found
@@ -353,7 +357,10 @@ pub(crate) fn linked_objects(
 
 /// After a check with `finder`: fill what it missed (`VELT_STD_OBJECT_FILL`), and what it found,
 /// whose std files go to the build stamp's inputs `stamp`.
-pub(in crate::driver) fn found(finder: Finder, stamp: &mut Vec<String>) -> Vec<(&'static str, Found)> {
+pub(in crate::driver) fn found(
+    finder: Finder,
+    stamp: &mut Vec<String>,
+) -> Vec<(&'static str, Found)> {
     finder.fill();
     let found = finder.found();
     for (_, f) in &found {
@@ -378,7 +385,8 @@ pub(in crate::driver) fn link(
     if objects.is_empty() {
         return Ok(());
     }
-    let place = OutputPaths::new(&opts.input, opts.output.as_deref(), opts.emit, target).std_objects();
+    let place =
+        OutputPaths::new(&opts.input, opts.output.as_deref(), opts.emit, target).std_objects();
     if sess.turn.is_none() {
         sess.turn = place.lock(sess.verbose);
     }
