@@ -418,7 +418,7 @@ fn check_timed(
                   views: &union_views::Families| {
         timings::note_round();
         let from_std = match stage.get() {
-            units::Stage::App => std_snap.borrow().clone(),
+            units::Stage::App => timings::pass("units: copy std", || std_snap.borrow().clone()),
             _ => None,
         };
         let fresh = from_std.is_none();
