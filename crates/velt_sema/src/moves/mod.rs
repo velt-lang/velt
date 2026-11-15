@@ -109,9 +109,12 @@ pub(crate) struct Outcome {
 
 /// Check every function body.
 pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
+    // The unit's functions (`crate::units`): the closures a function makes are of its unit, so
+    // the tables below need nothing of a finished unit.
+    let base = cx.unit_base as usize;
     let mut captures = FxHashMap::default();
     let mut escaping = FxHashSet::default();
-    for (i, d) in cx.defs.iter().enumerate() {
+    for (i, d) in cx.defs.iter().enumerate().skip(base) {
         if let Some(Def::Fn(f)) = d {
             let def = DefId(i as u32);
             captures.insert(def, f.captures.clone());
@@ -121,11 +124,9 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
         }
     }
     let never = cx.ty.never;
-    let local_tys: Vec<Vec<TyId>> = cx
-        .defs
-        .iter()
-        .map(|d| match d {
-            Some(Def::Fn(f)) => f.body.locals.iter().map(|l| l.ty).collect(),
+    let local_tys: Vec<Vec<TyId>> = (cx.defs.iter().enumerate())
+        .map(|(i, d)| match d {
+            Some(Def::Fn(f)) if i >= base => f.body.locals.iter().map(|l| l.ty).collect(),
             _ => vec![],
         })
         .collect();
@@ -361,7 +362,7 @@ fn per_iteration(cx: &mut Ctx) -> FxHashSet<(DefId, LocalId)> {
         }
     }
     let mut out = FxHashSet::default();
-    for (i, def) in cx.defs.iter().enumerate() {
+    for (i, def) in cx.defs.iter().enumerate().skip(cx.unit_base as usize) {
         let Some(Def::Fn(f)) = def else {
             continue;
         };
@@ -378,7 +379,7 @@ fn per_iteration(cx: &mut Ctx) -> FxHashSet<(DefId, LocalId)> {
 /// generators stay on the task that creates them, so their captures may live in cells.
 pub(crate) fn async_captured(cx: &mut Ctx) -> FxHashSet<(DefId, LocalId)> {
     let mut out = FxHashSet::default();
-    for i in 0..cx.defs.len() {
+    for i in cx.unit_base as usize..cx.defs.len() {
         let Some(Def::Fn(f)) = &cx.defs[i] else {
             continue;
         };
