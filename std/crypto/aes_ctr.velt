@@ -15,9 +15,13 @@ import { noInline } from "velt/lang/intrinsics";
 
 const RCON: u32[] = [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36];
 
-// The S-box on each byte of `x` (the key schedule's SubWord).
-function subWord(x: u32): u32 {
-  const q: u64[] = [x as u64, 0, 0, 0, 0, 0, 0, 0];
+// The S-box on each byte of `x` (the key schedule's SubWord), in `q`: eight words of scratch the
+// key schedule allocates once, not one array per call.
+function subWord(q: u64[], x: u32): u32 {
+  q[0] = x as u64;
+  for (let i: usize = 1; i < 8; i++) {
+    q[i] = 0;
+  }
   ortho(q);
   sbox(q);
   ortho(q);
@@ -38,13 +42,14 @@ export function aesKeyWords(key: u8[]): u32[] {
     w.push(load32le(key, 4 * i));
   }
   let tmp = w[nk - 1];
+  const q: u64[] = [0, 0, 0, 0, 0, 0, 0, 0];
   let j: usize = 0;
   let k: usize = 0;
   for (let i = nk; i < total; i++) {
     if (j == 0) {
-      tmp = subWord(tmp.rotateRight(8)) ^ RCON[k];
+      tmp = subWord(q, tmp.rotateRight(8)) ^ RCON[k];
     } else if (nk > 6 && j == 4) {
-      tmp = subWord(tmp);
+      tmp = subWord(q, tmp);
     }
     tmp ^= w[i - nk];
     w.push(tmp);
