@@ -63,9 +63,10 @@ impl Summaries {
             .fn_defs
             .iter()
             .copied()
+            .filter(|d| d.0 >= base)
             .filter(|d| {
                 let info = cx.fn_info(*d);
-                d.0 >= base && info.state == BodyState::Done && info.kind != FnKind::Closure
+                info.state == BodyState::Done && info.kind != FnKind::Closure
             })
             .collect();
         // A finished unit's closures come with its summary.

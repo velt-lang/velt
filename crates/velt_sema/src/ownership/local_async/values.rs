@@ -47,14 +47,14 @@ fn head(cx: &Ctx, t: TyId) -> Head {
 
 /// The program's function values of one arity. Each is listed once, under its first parameter
 /// that is not open (or in `open`), by its position in [`Literals`]' values.
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Arity {
     open: Vec<u32>,
     at: Vec<Position>,
 }
 
 /// The function values of an arity listed under a parameter position.
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Position {
     all: Vec<u32>,
     by_head: FxHashMap<Head, Vec<u32>>,
@@ -64,7 +64,7 @@ struct Position {
 
 /// The program's function values, so that a call's type tries only those that can accept it, not
 /// all of them.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct ValueIndex {
     list: Vec<(DefId, Vec<TyId>)>,
     has: rustc_hash::FxHashSet<DefId>,

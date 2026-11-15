@@ -44,7 +44,8 @@ pub(crate) use exclusive::check_exclusive;
 pub(crate) use infer::infer_modes;
 pub(crate) use kept_fns::KeptFns;
 pub(crate) use local_async::{
-    check_crossing_changes, infer_local_async, record_changed_captures, Crossing,
+    check_crossing_changes, infer_local_async, keep_unit_scans, record_changed_captures,
+    Crossing, KeptLiterals,
 };
 pub(crate) use local_closures::{demote_local_closures, held_closures, held_closures_by};
 pub(crate) use locked::{check_locked, LockSummaries, WeakCrossings};

@@ -11,6 +11,8 @@
 //! round loop. With all of std checked, the driver loads every std file (`velt check`'s
 //! `with_all_std`) and nothing is checked lazily (`body::lazy_std`).
 
+pub(crate) mod codec;
+
 use crate::ctx::Ctx;
 
 /// Which part of a check by units a context checks.
@@ -114,6 +116,11 @@ pub(crate) struct Summaries {
     /// A finished unit's functions with a generator, and how many definitions it has
     /// (`Ctx::generated_fns`).
     pub(crate) generated_fns: Option<(rustc_hash::FxHashSet<crate::hir::DefId>, usize)>,
+    /// A finished unit's scan for the changes analysis (`ownership::local_async`), as its
+    /// bodies' part, its initializers' part, and how many definitions it covers.
+    pub(crate) literals: Option<crate::ownership::KeptLiterals>,
+    /// The fields a finished unit's bodies feed with values that are not new (`local_async::fed`).
+    pub(crate) fed: Option<(rustc_hash::FxHashSet<(crate::hir::DefId, u32)>, usize)>,
     /// A finished unit's classes below each class (`Ctx::subclass_map`).
     pub(crate) subclasses: Option<crate::ctx::classes::SubclassMap>,
 }
@@ -226,6 +233,7 @@ pub(crate) fn finish_unit(cx: &mut Ctx) {
     cx.unit_base = cx.defs.len() as u32;
     let generated = cx.generated_fns();
     cx.unit_sums.generated_fns = Some((generated, cx.info.len()));
+    crate::ownership::keep_unit_scans(cx);
 }
 
 /// `VELT_UNITS_TOUCH`: report a phase of the app's stage, with what copying the std definitions

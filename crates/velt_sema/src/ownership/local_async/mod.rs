@@ -48,6 +48,15 @@
 mod summaries;
 
 pub(crate) use summaries::AsyncSummaries;
+
+/// A finished unit's literal scan (`targets::Literals::keep`).
+pub(crate) type KeptLiterals = (targets::Literals, targets::Literals, usize);
+
+/// Keep what a later unit's changes analysis needs of a finished unit's bodies.
+pub(crate) fn keep_unit_scans(cx: &mut Ctx) {
+    cx.unit_sums.literals = Some(targets::Literals::keep(cx));
+    cx.unit_sums.fed = Some(fed::keep(cx));
+}
 mod call_sites;
 mod callbacks;
 mod changes;

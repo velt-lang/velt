@@ -24,8 +24,30 @@ pub(super) type Field = (DefId, u32);
 pub(super) fn fed_fields(cx: &mut Ctx, keyed: FxHashSet<Field>) -> Option<FxHashSet<Field>> {
     // Fields fed by key (`self.out = v` through an `any`, a helper's `o[k] = v`): super::keyed.
     let mut fed = keyed;
+    // By units, a finished unit's bodies feed what its stage found (`keep`).
+    let from = match (cx.units_stage, &cx.unit_sums.fed) {
+        (crate::units::Stage::App, Some((kept, n))) => {
+            fed.extend(kept.iter().copied());
+            *n
+        }
+        _ => 0,
+    };
+    fed_from(cx, from, &mut fed)?;
+    Some(fed)
+}
+
+/// What a finished unit's stage keeps for a later unit's [`fed_fields`]: the fields its bodies
+/// feed (library code: never unknown), and how many definitions it covers.
+pub(crate) fn keep(cx: &mut Ctx) -> (FxHashSet<Field>, usize) {
+    let mut fed = FxHashSet::default();
+    let _ = fed_from(cx, 0, &mut fed);
+    (fed, cx.defs.len())
+}
+
+/// Add the fields the definitions from `from` on feed; `None` when one may feed any.
+fn fed_from(cx: &mut Ctx, from: usize, fed: &mut FxHashSet<Field>) -> Option<()> {
     let mut memo = Memo::default();
-    for i in 0..cx.defs.len() {
+    for i in from..cx.defs.len() {
         // Asked before the definition is taken out of `cx.defs`.
         let library = super::changes::in_library(cx, DefId(i as u32));
         let Some(def) = &cx.defs[i] else {
@@ -75,7 +97,7 @@ pub(super) fn fed_fields(cx: &mut Ctx, keyed: FxHashSet<Field>) -> Option<FxHash
             }
         }
     }
-    Some(fed)
+    Some(())
 }
 
 /// Is a value stored by `value` the request's own: one that holds no reference, or a new one?

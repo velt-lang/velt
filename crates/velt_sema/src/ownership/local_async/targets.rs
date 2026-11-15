@@ -41,8 +41,8 @@ pub(super) enum Read {
 
 /// The functions the literals of each object type store in each field: `None` when one stores
 /// a value that is not a closure or a named function, or a spread makes such an object.
-#[derive(Default)]
-pub(super) struct Literals {
+#[derive(Clone, Default)]
+pub(crate) struct Literals {
     fields: FxHashMap<(DefId, u32), Option<Vec<DefId>>>,
     /// Object types a spread makes: their fields hold what was copied.
     spread: Vec<DefId>,
@@ -104,10 +104,70 @@ impl Literals {
         }
     }
 
-    /// Scan the program's bodies (before any is taken out of `cx.defs`).
+    /// Scan the program's bodies (before any is taken out of `cx.defs`). By units, a finished
+    /// unit's bodies come from what its stage kept ([`Literals::keep`]): the parts are put
+    /// together in the order a scan of every body would find them.
     pub(super) fn scan(cx: &Ctx) -> Literals {
+        let kept = match cx.units_stage {
+            crate::units::Stage::App => cx.unit_sums.literals.as_ref(),
+            _ => None,
+        };
+        let mut out = match kept {
+            Some((defs, inits, n)) => {
+                let mut out = defs.clone();
+                out.append(Literals::scan_defs(cx, *n));
+                let mut inits = inits.clone();
+                inits.append(Literals::scan_inits(cx, *n));
+                out.append(inits);
+                out
+            }
+            None => {
+                let mut out = Literals::scan_defs(cx, 0);
+                out.append(Literals::scan_inits(cx, 0));
+                out
+            }
+        };
+        out.index = ValueIndex::of_values(cx, &out.values);
+        out.made_as = ValueIndex::of_types(cx, &out.made);
+        out
+    }
+
+    /// What a finished unit's stage keeps of its scan, for a later unit's ([`Literals::scan`]).
+    pub(crate) fn keep(cx: &Ctx) -> (Literals, Literals, usize) {
+        let n = cx.info.len();
+        (Literals::scan_defs(cx, 0), Literals::scan_inits(cx, 0), n)
+    }
+
+    /// Add what a scan of later definitions found.
+    fn append(&mut self, o: Literals) {
+        for (k, v) in o.fields {
+            let entry = self.fields.entry(k).or_insert_with(|| Some(vec![]));
+            match (entry.as_mut(), v) {
+                (Some(list), Some(more)) => list.extend(more),
+                _ => *entry = None,
+            }
+        }
+        self.spread.extend(o.spread);
+        self.from_any.extend(o.from_any);
+        self.values.extend(o.values);
+        self.made.extend(o.made);
+        self.to_any.extend(o.to_any);
+        self.outside |= o.outside;
+        self.stores_by_key |= o.stores_by_key;
+        for (b, subs) in o.subclasses {
+            self.subclasses.entry(b).or_default().extend(subs);
+        }
+        self.calls.extend(o.calls);
+        self.dispatch.extend(o.dispatch);
+        self.through_values.extend(o.through_values);
+        self.through_any.extend(o.through_any);
+        self.store_sites.extend(o.store_sites);
+    }
+
+    /// The scan of the bodies of the definitions from `from` on.
+    fn scan_defs(cx: &Ctx, from: usize) -> Literals {
         let mut out = Literals::default();
-        for (i, d) in cx.defs.iter().enumerate() {
+        for (i, d) in cx.defs.iter().enumerate().skip(from) {
             let def = DefId(i as u32);
             // Function values std makes reach the program only through std's API; they come
             // with its declared effects (step 2), not with this join.
@@ -132,11 +192,16 @@ impl Literals {
                 }
             }
         }
-        out.scan_initializers(cx);
-        out.index = ValueIndex::of_values(cx, &out.values);
-        out.made_as = ValueIndex::of_types(cx, &out.made);
-        // The classes, from sema's information: `cx.defs` holds no ADT yet at this point.
-        for (i, info) in cx.info.iter().enumerate() {
+        out
+    }
+
+    /// Scan the initializers each class from definition `from` on gives its own fields (`setup:
+    /// F = (xs) => …`), and those it gives fields it inherits: they make function values and
+    /// convert values too. Also each class's direct subclasses, from sema's information
+    /// (`cx.defs` holds no ADT yet at this point).
+    fn scan_inits(cx: &Ctx, from: usize) -> Literals {
+        let mut out = Literals::default();
+        for (i, info) in cx.info.iter().enumerate().skip(from) {
             let crate::defs::DefInfo::Adt(a) = info else {
                 continue;
             };
@@ -144,13 +209,12 @@ impl Literals {
                 out.subclasses.entry(b).or_default().push(DefId(i as u32));
             }
         }
+        out.scan_initializers(cx, from);
         out
     }
 
-    /// Scan the initializers each class gives its own fields (`setup: F = (xs) => …`), and those
-    /// it gives fields it inherits: they make function values and convert values too.
-    fn scan_initializers(&mut self, cx: &Ctx) {
-        for info in &cx.info {
+    fn scan_initializers(&mut self, cx: &Ctx, from: usize) {
+        for info in cx.info.iter().skip(from) {
             let crate::defs::DefInfo::Adt(a) = info else {
                 continue;
             };
