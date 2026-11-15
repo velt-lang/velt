@@ -26,7 +26,7 @@
 //! would invalidate a held reference is an error rather than undefined behaviour.
 
 mod sites;
-pub(super) mod walk;
+pub(crate) mod walk;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 

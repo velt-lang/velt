@@ -23,7 +23,7 @@ mod fn_values;
 mod infer;
 mod kept_fns;
 mod local_async;
-mod local_closures;
+pub(crate) mod local_closures;
 mod locked;
 mod many;
 mod mutation;

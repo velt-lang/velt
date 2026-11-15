@@ -116,8 +116,8 @@ use crate::resolve::TyEnv;
 pub(crate) use added_bodies::check_added;
 pub(crate) use defaults::param_defaults;
 pub(crate) use driver::{
-    check_bodies, ensure_body, ensure_global, field_defaults, holds_promise_by_value, printable,
-    promise_in_state,
+    check_bodies, ensure_body, ensure_global, field_defaults, finish_bodies,
+    holds_promise_by_value, printable, promise_in_state,
 };
 pub(crate) use expr::REPORTED;
 pub(crate) use frame::Frame;

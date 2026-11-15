@@ -11,6 +11,30 @@ use crate::SourceModule;
 
 mod access;
 mod classes;
+pub(crate) mod def_table;
+
+pub(crate) use def_table::DefTable;
+
+impl Ctx<'_> {
+    /// Freeze every definition there is now: a finished unit's (`crate::units`).
+    pub(crate) fn freeze_defs(&mut self) {
+        self.defs.freeze();
+        self.info.freeze();
+        self.def_spans.freeze();
+    }
+
+    /// Is `d` a finished unit's definition (`crate::units`), which nothing writes any more?
+    pub(crate) fn is_frozen(&self, d: DefId) -> bool {
+        self.info.is_frozen(d.0 as usize)
+    }
+
+    /// Lift the freeze: the passes that still run over every unit at once.
+    pub(crate) fn thaw_defs(&mut self) {
+        self.defs.thaw();
+        self.info.thaw();
+        self.def_spans.thaw();
+    }
+}
 
 /// A name visible at module level.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,10 +91,12 @@ pub(crate) struct Ctx<'m> {
     pub gen: crate::generated::Gen<'m>,
     pub ty: Types,
     /// Final HIR definitions, indexed by `DefId` (filled at the end).
-    pub defs: Vec<Option<Def>>,
+    pub defs: DefTable<Option<Def>>,
     /// Sema information per `DefId`.
-    pub info: Vec<DefInfo<'m>>,
-    pub def_spans: Vec<Span>,
+    pub info: DefTable<DefInfo<'m>>,
+    pub def_spans: DefTable<Span>,
+    /// The check is by units (`CheckOptions::units`, `crate::units`).
+    pub units: bool,
     pub scopes: Vec<ModuleScope>,
     /// Exports of `std/prelude/*` modules, visible everywhere.
     pub prelude: FxHashMap<String, Item>,
@@ -530,9 +556,10 @@ impl<'m> Ctx<'m> {
             recursive_union_instances: 0,
             added_defs: vec![],
             ty: Types::new(),
-            defs: vec![],
-            info: vec![],
-            def_spans: vec![],
+            defs: DefTable::default(),
+            info: DefTable::default(),
+            def_spans: DefTable::default(),
+            units: false,
             scopes: modules
                 .iter()
                 .map(|m| ModuleScope {

@@ -305,6 +305,19 @@ impl VisitMut for Exprs<'_> {
 }
 
 /// Visit every expression of a block (pre-order, including nested blocks and match arms).
+/// Calls `f` on every expression of `b`, reading: a pass that only reads a body (a frozen unit's
+/// body, `crate::units`, is read and never written) walks it with this.
+pub(crate) fn exprs(b: &Block, f: &mut dyn FnMut(&Expr)) {
+    use crate::ownership::local_closures::walk;
+    struct Exprs<'a>(&'a mut dyn FnMut(&Expr));
+    impl walk::Visit for Exprs<'_> {
+        fn expr(&mut self, e: &Expr) {
+            (self.0)(e);
+        }
+    }
+    walk::block(b, &mut Exprs(f));
+}
+
 pub(crate) fn exprs_mut(b: &mut Block, f: &mut dyn FnMut(&mut Expr)) {
     block(b, &mut Exprs(f));
 }

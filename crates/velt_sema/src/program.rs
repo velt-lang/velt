@@ -220,7 +220,7 @@ fn build(
     let any_fn_views = fn_views.into_program();
     let program = hir::Program {
         types: ty.table,
-        defs: (defs.into_iter())
+        defs: (defs.into_vec().into_iter())
             .map(|d| d.expect("ICE: definition left unfilled without an error"))
             .collect(),
         entry,

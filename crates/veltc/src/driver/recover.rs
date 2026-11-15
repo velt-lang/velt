@@ -46,6 +46,7 @@ pub(super) fn check_recovering_loaded(
     let sema_opts = velt_sema::CheckOptions {
         require_main: scope.require_main,
         eager_std: scope.eager_std,
+        units: scope.units,
         native_executor: super::native_executor(opts),
     };
     // The recovered trees can hold shapes no clean parse produces: a type checker failure on

@@ -42,6 +42,27 @@ pub(super) fn declare_all(cx: &mut Ctx, items: &mut ItemDefs) {
     collect_prelude(cx);
 }
 
+/// [`declare_all`] for std's modules alone (`crate::units`), the prelude collected; the app's
+/// modules are declared after std is frozen ([`declare_added`]).
+pub(super) fn declare_std(cx: &mut Ctx, items: &mut ItemDefs) {
+    let ms: Vec<usize> = (0..cx.modules.len())
+        .filter(|&m| cx.modules[m].is_std && !cx.is_generated_module(m))
+        .collect();
+    for &m in &ms {
+        let module = &cx.modules[m];
+        for item in &module.ast.items {
+            declare_item(cx, m, item, items);
+        }
+    }
+    super::nested::declare_nested(cx, items, &ms);
+    super::default_snapshots::declare(cx, items);
+    for &m in &ms {
+        super::imports::resolve_imports(cx, m);
+        super::imports::bind_jsx_runtime(cx, m);
+    }
+    collect_prelude(cx);
+}
+
 /// Declare the items of std modules `ms`, added during the check (`crate::std_load`), and resolve
 /// their imports. What the prelude exports does not change: none of them is in the prelude.
 pub(super) fn declare_added(cx: &mut Ctx, ms: &[usize], items: &mut ItemDefs) {

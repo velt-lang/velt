@@ -122,6 +122,7 @@ mod object_call_on;
 mod object_copies;
 mod object_ifaces;
 mod object_views;
+mod options;
 mod overload_adapter;
 mod overloads;
 mod ownership;
@@ -160,6 +161,7 @@ mod union_layouts;
 mod union_views;
 mod unions;
 mod unique_symbols;
+mod units;
 mod utility_types;
 mod visit;
 mod void_fields;
@@ -173,6 +175,7 @@ pub use dispatch::{instantiation_work, InstantiationWork};
 pub use generating::{check_generating, check_generating_kept, Checked};
 pub use kept::{KeptCheck, PendingKept, Refused};
 pub use kept_reload::member_name;
+pub use options::CheckOptions;
 pub use source_module::SourceModule;
 pub use std_load::{LoadFn, Loads, StdBatch, StdLoads};
 pub use timings::check_rounds;
@@ -202,32 +205,6 @@ pub(crate) fn stack_address() -> usize {
 /// Returns `Some(program)` iff there are no errors; warnings may accompany either outcome.
 pub fn check(modules: &[SourceModule], root: usize) -> (Option<hir::Program>, Diagnostics) {
     check_with(modules, root, CheckOptions::default())
-}
-
-/// What [`check_with`] requires of the program beyond being well-typed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CheckOptions {
-    /// The root module must define `main` (a program to build or run). Without it a root with no
-    /// `main` is a library module: every body is still checked and the program's `entry` is
-    /// `None`; a `main` that is there is validated either way.
-    pub require_main: bool,
-    /// Check every definition of std, also those the program never reaches (`velt check
-    /// --std`); otherwise std's bodies are checked as the program reaches them (lazy std).
-    pub eager_std: bool,
-    /// The program runs on the executor in Velt (std/lang/hooks/sched.velt): a native target.
-    /// Live code that runs something on it demands the executor's hooks. A wasm target keeps
-    /// `velt_rt_wasm`'s executor (#2649 step 6), so nothing demands them there.
-    pub native_executor: bool,
-}
-
-impl Default for CheckOptions {
-    fn default() -> Self {
-        Self {
-            require_main: true,
-            eager_std: false,
-            native_executor: true,
-        }
-    }
 }
 
 /// [`check`] with options (`velt check` checks library modules, which have no `main`).
@@ -275,6 +252,9 @@ fn check_on_current_thread(
         })
     });
     timings::finish();
+    if opts.units {
+        ctx::def_table::report();
+    }
     out
 }
 
@@ -401,6 +381,7 @@ fn check_timed(
         if opts.eager_std {
             cx.lazy.on = false;
         }
+        cx.units = opts.units;
         cx.lazy.native_executor = opts.native_executor;
         body::lazy_std::assume(&mut cx, &assumed.borrow());
         cx.loads = loads;
@@ -648,6 +629,10 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
 
 /// Every definition collected and every body checked.
 fn check_definitions(cx: &mut ctx::Ctx) {
+    if cx.units {
+        units::check_definitions(cx);
+        return;
+    }
     timings::pass("script_tdz::check", || script_tdz::check(cx));
     timings::pass("collect::collect", || collect::collect(cx));
     cx.collected_defs = cx.defs.len();

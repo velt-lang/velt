@@ -395,11 +395,16 @@ impl Ctx<'_> {
         let TyKind::Adt(d, _) = self.ty.kind(t).clone() else {
             return;
         };
-        let a = self.adt_mut(d);
-        if a.fields.iter().all(|f| f.span == Span::DUMMY) && a.fields.len() == spans.len() {
-            for (f, sp) in a.fields.iter_mut().zip(spans) {
-                f.span = *sp;
-            }
+        // A shape a finished unit made first keeps its spans (`crate::units`): a later unit
+        // never writes it.
+        let unspanned = self.adt(d).is_some_and(|a| {
+            a.fields.iter().all(|f| f.span == Span::DUMMY) && a.fields.len() == spans.len()
+        });
+        if !unspanned || self.is_frozen(d) {
+            return;
+        }
+        for (f, sp) in self.adt_mut(d).fields.iter_mut().zip(spans) {
+            f.span = *sp;
         }
     }
 

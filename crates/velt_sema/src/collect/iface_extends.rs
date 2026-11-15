@@ -21,7 +21,9 @@ pub(super) fn flatten_from(cx: &mut Ctx, from: u32) {
         .map(DefId)
         .filter(|d| cx.iface(*d).is_some_and(|i| i.decl.is_some()))
         .collect();
-    let mut done = vec![false; cx.info.len()];
+    // An interface collected before `from` was flattened then (by its own unit's collection, or
+    // before added std modules came): a parent there is read, never flattened again.
+    let mut done: Vec<bool> = (0..cx.info.len()).map(|i| (i as u32) < from).collect();
     for &d in &ifaces {
         flatten(cx, d, &mut done, &mut vec![]);
     }
