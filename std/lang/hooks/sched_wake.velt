@@ -21,8 +21,21 @@ export function wakerClone(w: usize): usize {
 
 @cExport("std_sched_waker_wake")
 export function wakerWake(w: usize): void {
+  if (COUNTING.load("relaxed") !== 0) {
+    countedWake(w);
+    return;
+  }
   wake(w);
   release(w);
+}
+
+/** `wakerWake` with the block counters on: counted until the reference is back. */
+@noInline
+function countedWake(w: usize): void {
+  WAKING.add(1);
+  wake(w);
+  release(w);
+  WAKING.sub(1);
 }
 
 @cExport("std_sched_waker_wake_by_ref")
@@ -33,6 +46,51 @@ export function wakerWakeByRef(w: usize): void {
 @cExport("std_sched_waker_drop")
 export function wakerDrop(w: usize): void {
   release(w);
+}
+
+/**
+ * The wakes by value under way (`wakerWake`, sched_node_wake.velt `nodeWake`), from any thread:
+ * a timer or I/O thread of the runtime's, or another worker. Such a wake gives its reference back
+ * after it woke the task, which may run, finish and end the program meanwhile: worker 0 waits
+ * for them at the end (`settleWakes`), or what they free counts as leaked (#2966). Only the
+ * debug runtime's block counters (`VELT_RC_STATS=1`) see that, so only then are they counted
+ * (`COUNTING`): a program without them pays one load per wake.
+ */
+const WAKING = new Atomic<u64>(0);
+
+/** Are wakes counted (`countWakes`)? Set once, before any worker or waker exists. */
+const COUNTING = new Atomic<u64>(0);
+
+/** The executor starts with the block counters on (sched_workers.velt): wakes are counted. */
+export function countWakes(): void {
+  COUNTING.store(1, "relaxed");
+}
+
+/** Are wakes counted? */
+@inline
+export function counting(): bool {
+  return COUNTING.load("relaxed") !== 0;
+}
+
+/** A counted wake by value starts (sched_node_wake.velt `nodeWake`). */
+export function wakingStarts(): void {
+  WAKING.add(1);
+}
+
+/** A counted wake by value gave its reference back. */
+export function wakingEnds(): void {
+  WAKING.sub(1);
+}
+
+/**
+ * The program ends (sched.velt `schedFinish`): once the wakes by value under way gave their
+ * references back. Each is a few steps with no wait; the core is given away meanwhile, so a
+ * waking thread the OS took off its core gets to finish.
+ */
+export function settleWakes(): void {
+  while (WAKING.load() !== 0) {
+    m.yieldCore();
+  }
 }
 
 /** Wakes task `t`: queued once if idle, polled again if running. */
