@@ -67,6 +67,7 @@ impl Walk<'_, '_> {
                     span: e.span,
                     library: self.library,
                     only: cell.then_some(self.d),
+                    slot: super::super::slots::callee_slot(self.cx, f),
                 });
                 if let To::Node(m, _) = to {
                     let callees = self.g.call_results.entry(m).or_default();

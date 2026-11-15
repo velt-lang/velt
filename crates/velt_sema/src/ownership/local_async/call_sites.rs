@@ -30,6 +30,8 @@ pub(super) struct Indirect {
     /// The function whose closures alone the callee may be (a variable of
     /// `crate::defined_accessors`), if known.
     pub only: Option<DefId>,
+    /// The field the callee is read from (`arms.ready(v)`), if it is one (`super::slots`).
+    pub slot: Option<super::slots::Slot>,
 }
 
 /// Where values go that the graph's edges don't show, for [`held_in_locals`].
@@ -146,6 +148,17 @@ pub(super) fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> b
     }
     // A closure with no literal node can only be reached through a callee that may hold a value
     // the graph doesn't trace (a field, a module binding, the heap).
+    // Per field read as a callee, what may be stored into it (`super::slots`).
+    let mut holders: FxHashMap<super::slots::Slot, Option<FxHashSet<DefId>>> =
+        FxHashMap::default();
+    let slotted = !found.is_empty() && g.indirect.iter().any(|c| c.slot.is_some());
+    let (generic, written) = match slotted {
+        true => (
+            g.slots.generic_open(cx, g),
+            super::slots::closure_written(cx, g),
+        ),
+        false => (None, FxHashSet::default()),
+    };
     for (ty, k, why, c, reached, unseen) in found {
         // Calls are grouped by the type called through (`Graph::indirect_by_ty`): one type test
         // per group, not per call.
@@ -158,6 +171,14 @@ pub(super) fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> b
             .map(|&ci| &g.indirect[ci]);
         let calls: Vec<_> = calls.collect();
         for call in calls {
+            if let Some(s) = call.slot {
+                let h = holders
+                    .entry(s)
+                    .or_insert_with(|| g.slots.holders(cx, g, s, &generic, &written));
+                if h.as_ref().is_some_and(|h| !h.contains(&c)) {
+                    continue;
+                }
+            }
             if unseen && !super::graph::untraced_input(g, call.callee) {
                 continue;
             }
@@ -264,7 +285,7 @@ pub(super) fn forward(cx: &Ctx, g: &Graph) -> Forward {
 /// called by name, with no more arguments than parameters, and never otherwise: not a method
 /// (dispatch, an interface), a closure or a function used as a value (calls through function
 /// values), nor a function nothing calls (`main`, what the host calls).
-fn results_followed(cx: &Ctx, g: &Graph, d: DefId) -> bool {
+pub(super) fn results_followed(cx: &Ctx, g: &Graph, d: DefId) -> bool {
     let free = matches!(&cx.defs[d.0 as usize], Some(Def::Fn(f)) if f.self_ty.is_none());
     free && !g.parent.contains_key(&d)
         && !g.held.referenced.contains(&d)

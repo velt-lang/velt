@@ -56,6 +56,7 @@ mod keyed;
 mod labels;
 mod reach;
 mod record;
+mod slots;
 mod targets;
 mod types;
 mod unknown_callees;

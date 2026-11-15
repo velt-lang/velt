@@ -84,6 +84,8 @@ pub(super) struct Graph {
     /// Calls through a function value: the callee's type, the argument nodes, and the call
     /// (span, in a library). A closure whose parameter crosses makes the matching argument cross.
     pub indirect: Vec<Indirect>,
+    /// What is stored into objects' fields, for calls of a field's function value.
+    pub slots: super::slots::Slots,
     /// The type arguments of every direct call of each generic function, with the function
     /// making the call (its own generic parameters may appear in them).
     pub insts: FxHashMap<DefId, Vec<(DefId, Vec<TyId>)>>,
@@ -229,6 +231,7 @@ pub(super) fn build(cx: &Ctx) -> Graph {
     }
     super::unknown_callees::mark(cx, &mut g);
     super::call_sites::named_outside_bodies(cx, &mut g.held.referenced);
+    g.slots.finish(cx);
     dynamic::finish(cx, &mut g);
     g.dyn_calls.finish(cx);
     g
@@ -415,12 +418,18 @@ impl Walk<'_, '_> {
             // doesn't see it (`super::generic_closures`).
             E::Cast(x) | E::Upcast(x) | E::Downcast(x) => {
                 self.g.dyn_calls.escape(self.cx, x.ty);
+                // An object's fields seen through another type are written where the walk
+                // doesn't see it (`super::slots`).
+                self.g.slots.open_type(self.cx, self.d, x);
+                self.g.slots.open_type(self.cx, self.d, e);
                 self.value(x, to)
             }
             // A value made a dynamic one (`any`, `unknown`, `object`): a dynamic call may reach
             // what it holds (`super::generic_closures`). A generic function value's own `ToDyn`
             // (its interface) is no conversion.
             E::ToDyn { expr: x, .. } => {
+                self.g.slots.open_type(self.cx, self.d, x);
+                self.g.slots.open_type(self.cx, self.d, e);
                 if !super::types::mentions_dynamic(self.cx, e.ty) {
                     return self.value(x, to);
                 }
@@ -471,8 +480,9 @@ impl Walk<'_, '_> {
                     let site = (self.d, type_args.clone());
                     self.g.news.entry(*def).or_default().push(site);
                 }
-                for x in xs {
+                for (i, x) in xs.iter().enumerate() {
                     self.value(x, STORE);
+                    self.slot_store(*def, i as u32, x);
                 }
                 self.unknown(e, to);
             }
@@ -491,6 +501,7 @@ impl Walk<'_, '_> {
                     _ => {
                         self.value(place, To::Drop);
                         self.value(value, STORE);
+                        self.slot_assign(place, value);
                     }
                 }
                 self.unknown(e, to);
@@ -533,6 +544,32 @@ impl Walk<'_, '_> {
                 self.unknown(e, to)
             }
             E::Lit(_) | E::ConstArray(_) | E::Global(_) => self.unknown(e, to),
+        }
+    }
+
+    /// `x` is stored into field `index` of an object of type `def` (`super::slots`).
+    fn slot_store(&mut self, def: DefId, index: u32, x: &Expr) {
+        let (d, f, g) = (self.d, self.f, &mut *self.g);
+        let what = super::slots::classify(x, &mut |e: &Expr| match &e.kind {
+            E::Local(l, _) => Some(g.node(Node::Local(d, *l), f.body.locals[l.0 as usize].ty)),
+            E::Closure(c) => g.ids.get(&Node::Lit(*c)).copied(),
+            _ => None,
+        });
+        self.g.slots.store(def, index, what);
+    }
+
+    /// `place = value` into an object: a field's store, or a computed key that opens the type.
+    fn slot_assign(&mut self, place: &Expr, value: &Expr) {
+        match &place.kind {
+            E::Field { base, index, .. } => {
+                if let crate::hir::TyKind::Adt(d, _) = self.cx.ty.kind(base.ty) {
+                    self.slot_store(*d, *index, value);
+                }
+            }
+            E::Index { base, .. } if matches!(self.cx.ty.kind(base.ty), crate::hir::TyKind::Adt(..)) => {
+                self.g.slots.open_type(self.cx, self.d, base)
+            }
+            _ => {}
         }
     }
 
@@ -587,6 +624,14 @@ impl Walk<'_, '_> {
     }
 
     fn intrinsic(&mut self, e: &Expr, i: Intrinsic, args: &[Expr], to: To) {
+        // An object an intrinsic moves into or out of `any` or copies into another object may
+        // have its fields written where the walk doesn't see it (`super::slots`).
+        if super::slots::converts(i) {
+            self.g.slots.open_type(self.cx, self.d, e);
+            for a in args {
+                self.g.slots.open_type(self.cx, self.d, a);
+            }
+        }
         // A generic function value going into `any` (or copied by a spread) may be called where
         // the walk doesn't see it (`super::generic_closures`).
         if matches!(i, Intrinsic::ToAny | Intrinsic::SpreadObject) {
