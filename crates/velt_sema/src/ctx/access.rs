@@ -49,6 +49,7 @@ impl<'m> Ctx<'m> {
         id
     }
 
+    #[track_caller]
     pub fn fn_info(&self, d: DefId) -> &FnInfo<'m> {
         match &self.info[d.0 as usize] {
             DefInfo::Fn(f) => f,
@@ -64,6 +65,7 @@ impl<'m> Ctx<'m> {
         }
     }
 
+    #[track_caller]
     pub fn try_fn(&self, d: DefId) -> Option<&FnInfo<'m>> {
         match &self.info[d.0 as usize] {
             DefInfo::Fn(f) => Some(f),
@@ -71,6 +73,7 @@ impl<'m> Ctx<'m> {
         }
     }
 
+    #[track_caller]
     pub fn adt(&self, d: DefId) -> Option<&AdtInfo<'m>> {
         match &self.info[d.0 as usize] {
             DefInfo::Adt(a) => Some(a),
@@ -86,6 +89,7 @@ impl<'m> Ctx<'m> {
         }
     }
 
+    #[track_caller]
     pub fn enum_info(&self, d: DefId) -> Option<&EnumInfo<'m>> {
         match &self.info[d.0 as usize] {
             DefInfo::Enum(e) => Some(e),
@@ -93,6 +97,7 @@ impl<'m> Ctx<'m> {
         }
     }
 
+    #[track_caller]
     pub fn iface(&self, d: DefId) -> Option<&IfaceInfo<'m>> {
         match &self.info[d.0 as usize] {
             DefInfo::Iface(i) => Some(i),
@@ -100,6 +105,7 @@ impl<'m> Ctx<'m> {
         }
     }
 
+    #[track_caller]
     pub fn global(&self, d: DefId) -> Option<&GlobalInfo<'m>> {
         match &self.info[d.0 as usize] {
             DefInfo::Global(g) => Some(g),

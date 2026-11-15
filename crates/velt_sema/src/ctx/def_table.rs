@@ -88,9 +88,45 @@ impl<T> From<Vec<T>> for DefTable<T> {
     }
 }
 
+impl<T> DefTable<T> {
+    /// Entry `i`, if there is one.
+    #[track_caller]
+    pub(crate) fn get(&self, i: usize) -> Option<&T> {
+        self.touched(i);
+        self.items.get(i)
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.items.len()
+    }
+
+    /// Every entry, to read.
+    #[track_caller]
+    pub(crate) fn iter(&self) -> std::slice::Iter<'_, T> {
+        self.scanned();
+        self.items.iter()
+    }
+
+    #[track_caller]
+    fn touched(&self, i: usize) {
+        if i < self.frozen_below as usize && touch::on() {
+            touch::def(std::any::type_name::<T>(), i, Location::caller());
+        }
+    }
+
+    #[track_caller]
+    fn scanned(&self) {
+        if self.frozen_below > 0 && touch::on() {
+            touch::scan(std::any::type_name::<T>(), Location::caller());
+        }
+    }
+}
+
 impl<T> Deref for DefTable<T> {
     type Target = [T];
+    #[track_caller]
     fn deref(&self) -> &[T] {
+        self.scanned();
         &self.items
     }
 }
@@ -98,15 +134,111 @@ impl<T> Deref for DefTable<T> {
 impl<'a, T> IntoIterator for &'a DefTable<T> {
     type Item = &'a T;
     type IntoIter = std::slice::Iter<'a, T>;
+    #[track_caller]
     fn into_iter(self) -> Self::IntoIter {
+        self.scanned();
         self.items.iter()
     }
 }
 
 impl<T> Index<usize> for DefTable<T> {
     type Output = T;
+    #[track_caller]
     fn index(&self, i: usize) -> &T {
+        self.touched(i);
         &self.items[i]
+    }
+}
+
+/// `VELT_UNITS_TOUCH` (#2943 M2 experiment): which frozen entries the app's stage reads, and
+/// where it reads whole tables, to size an on-disk unit that is decoded on demand.
+pub(crate) mod touch {
+    use std::cell::{Cell, RefCell};
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::panic::Location;
+
+    thread_local! {
+        static ON: Cell<bool> = const { Cell::new(false) };
+        static DEFS: RefCell<BTreeMap<&'static str, BTreeSet<usize>>> =
+            const { RefCell::new(BTreeMap::new()) };
+        static SCANS: RefCell<BTreeMap<String, usize>> = const { RefCell::new(BTreeMap::new()) };
+        static BY_SITE: RefCell<BTreeMap<String, BTreeSet<usize>>> =
+            const { RefCell::new(BTreeMap::new()) };
+    }
+
+    pub(crate) fn on() -> bool {
+        ON.with(Cell::get)
+    }
+
+    /// Start counting (the app's stage), when `VELT_UNITS_TOUCH` is set.
+    pub(crate) fn start() {
+        ON.with(|o| o.set(std::env::var_os("VELT_UNITS_TOUCH").is_some()));
+        DEFS.with(|d| d.borrow_mut().clear());
+        SCANS.with(|s| s.borrow_mut().clear());
+        BY_SITE.with(|s| s.borrow_mut().clear());
+    }
+
+    pub(crate) fn def(table: &'static str, i: usize, at: &'static Location<'static>) {
+        DEFS.with(|d| d.borrow_mut().entry(table).or_default().insert(i));
+        let key = format!("{} {}:{}", short(table), at.file(), at.line());
+        BY_SITE.with(|b| b.borrow_mut().entry(key).or_default().insert(i));
+    }
+
+    pub(crate) fn scan(table: &'static str, at: &'static Location<'static>) {
+        let key = format!("{} {}:{}", short(table), at.file(), at.line());
+        SCANS.with(|s| *s.borrow_mut().entry(key).or_default() += 1);
+    }
+
+    fn short(t: &str) -> &str {
+        t.rsplit("::").next().unwrap_or(t)
+    }
+
+    /// Print what was counted (`velt-touch:` lines) against `frozen` entries, and stop.
+    pub(crate) fn report(frozen: usize) {
+        if !on() {
+            return;
+        }
+        ON.with(|o| o.set(false));
+        DEFS.with(|d| {
+            for (t, set) in d.borrow().iter() {
+                eprintln!(
+                    "velt-touch: {:>6} of {frozen} frozen entries read  {}",
+                    set.len(),
+                    short(t)
+                );
+            }
+        });
+        BY_SITE.with(|s| {
+            // The working set: what the sites that read under half the entries read together.
+            for cut in [250, 500, 1000, 2000, frozen / 2] {
+                let mut set = BTreeSet::new();
+                let mut sites = 0;
+                for d in s.borrow().values().filter(|d| d.len() < cut) {
+                    set.extend(d.iter().copied());
+                    sites += 1;
+                }
+                eprintln!(
+                    "velt-touch: {:>6} entries read by the {sites} sites that read under {cut}",
+                    set.len()
+                );
+            }
+            let mut v: Vec<_> = s
+                .borrow()
+                .iter()
+                .map(|(k, d)| (d.len(), k.clone()))
+                .collect();
+            v.sort_by(|a, b| b.cmp(a));
+            for (n, k) in v.into_iter().take(40) {
+                eprintln!("velt-touch: site {n:>6}  {k}");
+            }
+        });
+        SCANS.with(|s| {
+            let mut v: Vec<_> = s.borrow().iter().map(|(k, n)| (*n, k.clone())).collect();
+            v.sort_by(|a, b| b.cmp(a));
+            for (n, k) in v {
+                eprintln!("velt-touch: scan {n:>6}  {k}");
+            }
+        });
     }
 }
 
