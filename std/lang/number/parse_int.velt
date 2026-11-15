@@ -4,7 +4,7 @@
 // rounded; the other radixes add 32-bit parts in double arithmetic, as V8 does (the specification
 // allows an approximation there), so their digits past 2^53 round as Node's do.
 
-import { strByteAt, strByteLen } from "velt/lang/intrinsics";
+import { noInline, strByteAt, strByteLen } from "velt/lang/intrinsics";
 import { asciiText } from "velt/lang/number/ascii";
 import { decimalValue, parseFloatOf, skipSpace } from "velt/lang/number/parse";
 
@@ -21,6 +21,7 @@ function digitOf(c: u8, radix: u64): u64 {
 }
 
 /** `parseInt(s, radix)`: `radix` 0 is "not given" (10, or 16 after `0x`); NaN without digits. */
+@noInline
 export function parseIntOf(s: string, radix: i64): f64 {
   const n = strByteLen(s);
   let i = skipSpace(s, n);

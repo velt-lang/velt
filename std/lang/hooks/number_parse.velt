@@ -6,7 +6,7 @@
 // integers (velt/lang/number/exact's base 10^9) and compared, one step at a time. std reaches it by
 // role (`hookCall`), so the code loads only in programs that parse such text.
 
-import { arrayWithCapacity, strByteAt } from "velt/lang/intrinsics";
+import { arrayWithCapacity, noInline, strByteAt } from "velt/lang/intrinsics";
 import { decide } from "velt/lang/number/eisel_lemire";
 import { mulSmall } from "velt/lang/number/exact";
 
@@ -177,6 +177,7 @@ function versusMidpoint(d: Digits, b: f64): i64 {
  * The value of the unsigned decimal literal at bytes `start` to `end` of `s` (velt/lang/number/
  * parse has checked it), correctly rounded: the decimals that parser hands over.
  */
+@noInline
 export function longDecimalValue(s: string, start: usize, end: usize): f64 {
   const d = digitsOf(s, start, end);
   const nd = d.digits.length as i64;
