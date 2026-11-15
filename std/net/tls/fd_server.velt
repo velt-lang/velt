@@ -92,7 +92,7 @@ function status(e: unknown): IoStatus {
   }
 }
 
-// The TLS server's operations for std/net/tcp_sched.velt (std/net/tls/fd_ops.velt).
+/** The TLS server's operations for std/net/tcp_sched.velt (std/net/tls/fd_ops.velt). */
 extend TlsServer implements ReactorTls {
   async listen(
     addr: string,

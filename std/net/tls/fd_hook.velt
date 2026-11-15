@@ -58,7 +58,7 @@ function closed(): IoStatus {
   return { code: 16, message: "handle is closed" };
 }
 
-// No TLS server loaded: no TLS listener, so no TLS handle reaches these but `listen`.
+/** No TLS server loaded: no TLS listener, so no TLS handle reaches these but `listen`. */
 extend<T extends TlsStubbed> T implements ReactorTls {
   async listen(
     addr: string,
