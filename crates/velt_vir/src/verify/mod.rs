@@ -152,7 +152,9 @@ const PARALLEL_MIN_FUNCTIONS: usize = 256;
 /// Functions a worker checks at a time.
 const FUNCTIONS_PER_CHUNK: usize = 32;
 
-/// The checks of function `i`.
+/// The checks of function `i`. Out of line: bench/compile/scale/yardstick.py counts the VIR
+/// verification by this function's instructions.
+#[inline(never)]
 fn check_function(p: &Program, i: usize, f: &Function, errs: &mut Vec<String>) {
     check_locs(p, f, errs);
     check_param_attrs(f, errs);

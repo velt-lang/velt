@@ -76,9 +76,12 @@ DUMP_AFTER = "*Session>::record_time"
 # The processes callgrind does not follow (they are counted by --children, or not at all): every
 # child but velt itself (the source generators' host).
 SKIP_CHILDREN = "*clang*,*cc,*gcc*,*ld,*ld.*,*lld*,*collect2*,*mold*"
-# Parts of `optimize`, by the inclusive instructions of their entry functions there.
+# Parts of `optimize`, by the inclusive instructions of their entry functions there; one not
+# found (renamed or inlined) stops the run, as its instructions would count as the rest.
+# VIR verification checks each function on every core: its per-function entry is counted, as a
+# thread's work is not inside the function that started the thread.
 OPTIMIZE_PARTS = [("numrep", "velt_opt::numrep::run"),
-                  ("VIR verify", "velt_vir::verify::verify_program_on::{closure#1}")]
+                  ("VIR verify", "velt_vir::verify::check_function")]
 
 
 # The only VELT_* variables passed on from the caller's environment: where the tools are. Any
@@ -172,6 +175,9 @@ def stages_of(parts, names, host, other=0):
         if name == "optimize":
             inc = inclusive(path, [f for _, f in OPTIMIZE_PARTS])
             for label, f in OPTIMIZE_PARTS:
+                if inc[f] == 0:
+                    sys.exit(f"`{f}` ({label}) is not in the callgrind dump of `optimize`: "
+                             "renamed or inlined now? Its instructions would count as the rest.")
                 stages[f"optimize: {label}"] = stages.get(f"optimize: {label}", 0) + inc[f]
                 n -= inc[f]
             name = "optimize: rest"
