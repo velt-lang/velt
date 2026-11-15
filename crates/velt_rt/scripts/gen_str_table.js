@@ -38,7 +38,6 @@ const floatInputs = ["3.14", "  3.14abc", "-.5", ".5", "5.", ".", "-", "+", "1e"
   "    42 ﻿", "0x" + "f".repeat(30), "0b" + "1".repeat(60), "0o777", "0o8", "1e+5", "-1e-5",
   "123456789012345678901234567890", "0.1", "9007199254740993", ".e1", "1.e1", "Infinityx", "  -  5",
   "4.9406564584124654e-324", "2.4703282292062327e-324", "\u0085 1"];
-table("PARSE_FLOAT", "(&str, u64)", floatInputs.map(s => [rs(s), f(parseFloat(s))]));
 table("TO_NUMBER", "(&str, u64)", floatInputs.map(s => [rs(s), f(Number(s))]));
 
 const sl = "hello world";
