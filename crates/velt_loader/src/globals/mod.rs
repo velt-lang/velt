@@ -48,6 +48,60 @@ pub(super) struct Global {
     pub code_only: bool,
 }
 
+#[cfg(test)]
+thread_local! {
+    /// How many times [`Said::due`] split a module's words (tests).
+    pub(super) static SPLITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// What the non-std modules scanned so far say to the conditional globals: each module's words
+/// are split once per load, not again each time the loader looks for globals due (once per
+/// extra root: `velt check` of every std file adds hundreds).
+#[derive(Default)]
+pub(super) struct Said {
+    /// `modules[..scanned]` are scanned.
+    scanned: usize,
+    /// The files of the conditional globals one of them mentions a word of.
+    files: HashSet<PathBuf>,
+}
+
+impl Said {
+    /// The files of the conditional globals of `globals` due: their std module is loaded and a
+    /// non-std module of `modules` (which only grows between calls) mentions one of their words.
+    pub fn due(
+        &mut self,
+        globals: &[Global],
+        modules: &[velt_sema::SourceModule],
+        sm: &velt_common::SourceMap,
+    ) -> HashSet<PathBuf> {
+        let loaded = |g: &Global| match &g.when {
+            Some((module, _)) => modules.iter().any(|m| m.is_std && m.path == *module),
+            None => false,
+        };
+        // Split the words of the modules added since only when a global could be due.
+        if (globals.iter()).any(|g| !self.files.contains(&g.file) && loaded(g)) {
+            let new = modules.get(self.scanned..).unwrap_or_default();
+            for m in new.iter().filter(|m| !m.is_std) {
+                let said = Words::of(&sm.get(m.file).src);
+                #[cfg(test)]
+                SPLITS.with(|n| n.set(n.get() + 1));
+                for g in globals {
+                    if let Some((_, words)) = &g.when {
+                        if words.iter().any(|w| mentions_word(&said, &m.ast, w)) {
+                            self.files.insert(g.file.clone());
+                        }
+                    }
+                }
+            }
+            self.scanned = modules.len();
+        }
+        (globals.iter())
+            .filter(|g| self.files.contains(&g.file) && loaded(g))
+            .map(|g| g.file.clone())
+            .collect()
+    }
+}
+
 /// The global modules under `<std>/prelude/global/`, sorted by file name (empty if none).
 pub(super) fn global_modules(std_root: &Path, parser: &StdParser) -> Vec<Global> {
     let Ok(entries) = vpm::probe::read_dir(&std_root.join("prelude").join("global")) else {
