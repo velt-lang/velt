@@ -1729,7 +1729,6 @@ dependencies = [
  "cc",
  "futures-util",
  "getrandom 0.4.3",
- "itoa",
  "libc",
  "libm",
  "libmimalloc-sys",
@@ -1740,7 +1739,6 @@ dependencies = [
  "parking_lot_core",
  "regex",
  "rustls",
- "ryu",
  "socket2",
  "tokio",
  "tokio-rustls",
@@ -1758,7 +1756,6 @@ dependencies = [
  "bytes",
  "futures-util",
  "getrandom 0.4.3",
- "itoa",
  "libc",
  "libm",
  "libmimalloc-sys",
@@ -1769,7 +1766,6 @@ dependencies = [
  "parking_lot_core",
  "regex",
  "rustls",
- "ryu",
  "socket2",
  "tokio",
  "tokio-rustls",
@@ -1787,7 +1783,6 @@ dependencies = [
  "bytes",
  "futures-util",
  "getrandom 0.4.3",
- "itoa",
  "libc",
  "libm",
  "libmimalloc-sys",
@@ -1798,7 +1793,6 @@ dependencies = [
  "parking_lot_core",
  "regex",
  "rustls",
- "ryu",
  "socket2",
  "tokio",
  "tokio-rustls",
@@ -1813,10 +1807,8 @@ dependencies = [
 name = "velt_rt_wasm"
 version = "0.6.0"
 dependencies = [
- "itoa",
  "libm",
  "memchr",
- "ryu",
  "velt_text",
 ]
 
