@@ -157,6 +157,8 @@ impl FnCx<'_, '_> {
             let fty = match self.cx.ty.kind(m).clone() {
                 TyKind::Dyn(..) => {
                     let f = self.iface_field_of(m, name)?;
+                    // A field the interface declares has a setter slot; an implementation with a
+                    // getter alone is refused by the arm's own write (`mark_part_written`).
                     if f.readonly || self.cx.setter_slot(f.iface, f.index).is_none() {
                         return None;
                     }

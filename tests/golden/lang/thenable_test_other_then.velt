@@ -1,5 +1,7 @@
 // A thenable test through `any` on a union whose other member has a `then` of its own, or on one
-// that may be `undefined` (whose `.then` throws in Node), stays an error (#379).
+// that may be `undefined` (whose `.then` throws in Node), or through `unknown` (tsc refuses
+// `.then` of an `unknown`), stays an error (#379). tsc accepts the first two: the refusals are
+// Velt's limitation, recorded here.
 class Later {
   then(f: () => void) {
     f();
@@ -14,4 +16,8 @@ function maybe(r: Promise<number> | (() => number) | undefined): boolean {
   return typeof (r as any).then === "function";
 }
 
-console.log(describe(new Later()), typeof maybe);
+function viaUnknown(r: Promise<number> | (() => number)): boolean {
+  return typeof (r as unknown).then === "function";
+}
+
+console.log(describe(new Later()), typeof maybe, typeof viaUnknown);

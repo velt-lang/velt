@@ -1,0 +1,25 @@
+// A thenable test through `any` in a program that declares a member named `then` stays an error
+// (#379): a function with properties that has a `then` (here `Thenish`, given where the plain
+// `ViewFn` is expected) is a function member with a `then`, which Node's test sees and an
+// `instanceof Promise` would not. tsc accepts the program; Node prints `true t`.
+type ViewFn = () => string;
+
+interface Thenish {
+  (): string;
+  then: (f: () => void) => void;
+}
+
+function isThen(r: Promise<ViewFn> | ViewFn): boolean {
+  return typeof (r as any).then === "function";
+}
+
+function mk(): Thenish {
+  const t = function () {
+    return "t";
+  } as Thenish;
+  t.then = (f) => f();
+  return t;
+}
+
+const t: ViewFn = mk();
+console.log(isThen(t), t());

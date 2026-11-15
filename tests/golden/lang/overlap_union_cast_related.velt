@@ -1,5 +1,6 @@
 // A union cast to a union whose other members are related to the source's (an object type with
 // one more field) stays an error: only unrelated added members narrow to the common ones (#379).
+// tsc accepts it: the refusal is Velt's limitation, recorded here.
 type Small = { a: number };
 type Big = { a: number; b: string };
 
