@@ -29,7 +29,7 @@ pub(crate) fn build_checked(
     generated: Bound,
 ) -> (hir::Program, Diagnostics) {
     if std::env::var_os(CLONE_CHECK_ENV).is_none() {
-        return build(cx, entry, generated);
+        return crate::timings::pass("program: build", || build(cx, entry, generated));
     }
     let twin = build(cx.clone(), entry, generated.clone());
     let out = build(cx, entry, generated);
@@ -179,10 +179,12 @@ fn build(
     entry: Option<hir::DefId>,
     mut generated: Bound,
 ) -> (hir::Program, Diagnostics) {
-    let unchecked = finalize::build_defs(&mut cx);
+    let unchecked = crate::timings::pass("program: build_defs", || finalize::build_defs(&mut cx));
     let hooks_demanded = body::lazy_std::hooks_demanded(&cx);
-    layout_merge::merge(&mut cx);
-    let type_names = readonly::erase(&mut cx, &mut generated);
+    crate::timings::pass("program: layout_merge", || layout_merge::merge(&mut cx));
+    let type_names = crate::timings::pass("program: readonly erase", || {
+        readonly::erase(&mut cx, &mut generated)
+    });
     cx.debug_distinct_variants();
     let module_state = module_state::build(&mut cx, entry);
     let type_ops = type_level::lowered_ops(&mut cx);
@@ -193,7 +195,9 @@ fn build(
     let (upcasts, upcast_impls) = cx.upcast_tables();
     let extension_impls = collect::ext_impls::hir_bounds(&cx);
     let dyn_bounds = collect::ext_impls::dyn_bounds(&mut cx);
-    let live = body::lazy_std::live_defs(&mut cx, &unchecked);
+    let live = crate::timings::pass("program: live_defs", || {
+        body::lazy_std::live_defs(&mut cx, &unchecked)
+    });
     let ctx::Ctx {
         ty,
         defs,
