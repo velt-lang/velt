@@ -28,6 +28,8 @@
 //   (`handToMain`, #3017). A root queued or polled on another worker is left alone, and so is
 //   anything holding a waker of it (an I/O wait, a promise of the runtime's): those keep their
 //   references, and the block stays counted.
+//
+// The hand-over costs one load per park without the counters too (`takeExit`, sched_park.velt).
 
 import { inline, noInline } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
