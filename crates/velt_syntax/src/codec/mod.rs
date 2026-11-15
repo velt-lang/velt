@@ -68,7 +68,75 @@ pub fn decode_module(bytes: &[u8], file: FileId) -> Option<ast::Module> {
     })
 }
 
-struct Writer {
+/// One AST node encoded on its own, with its spans in file `file`: a declaration a checked unit
+/// keeps (#2943 M2), without the rest of its module. Starts with [`FORMAT`] like a module.
+pub fn encode_fragment<T: Fragment>(node: &T, file: FileId) -> Vec<u8> {
+    let mut w = Writer {
+        out: Vec::with_capacity(256),
+        file,
+    };
+    w.out.extend_from_slice(FORMAT);
+    node.enc_fragment(&mut w);
+    w.out
+}
+
+/// The node [`encode_fragment`] encoded, with its spans in file `file`; `None` when `bytes` is
+/// not a whole encoding of this [`FORMAT`].
+pub fn decode_fragment<T: Fragment + Send>(bytes: &[u8], file: FileId) -> Option<T> {
+    let rest = bytes.strip_prefix(FORMAT.as_slice())?;
+    crate::on_parser_thread(|| {
+        let mut r = Reader {
+            bytes: rest,
+            pos: 0,
+            file,
+            depth: 0,
+            failed: false,
+        };
+        let node = T::dec_fragment(&mut r);
+        (!r.failed && r.pos == r.bytes.len()).then_some(node)
+    })
+}
+
+/// The AST nodes that can be encoded on their own ([`encode_fragment`]).
+pub trait Fragment: Sized + sealed::Sealed {
+    #[doc(hidden)]
+    fn enc_fragment(&self, w: &mut Writer);
+    #[doc(hidden)]
+    fn dec_fragment(r: &mut Reader) -> Self;
+}
+
+mod sealed {
+    pub trait Sealed {}
+}
+
+macro_rules! fragments {
+    ($($t:ident),*) => {$(
+        impl sealed::Sealed for ast::$t {}
+        impl Fragment for ast::$t {
+            fn enc_fragment(&self, w: &mut Writer) {
+                self.enc(w);
+            }
+            fn dec_fragment(r: &mut Reader) -> Self {
+                Codec::dec(r)
+            }
+        }
+    )*};
+}
+fragments!(
+    FnDecl,
+    FnSig,
+    Block,
+    TypeDecl,
+    EnumDecl,
+    InterfaceDecl,
+    TypeAlias,
+    TypeExpr,
+    Expr,
+    CLibrary
+);
+
+#[doc(hidden)]
+pub struct Writer {
     out: Vec<u8>,
     /// The file the module was parsed from: its spans are stored without it.
     file: FileId,
@@ -88,7 +156,8 @@ impl Writer {
     }
 }
 
-struct Reader<'a> {
+#[doc(hidden)]
+pub struct Reader<'a> {
     bytes: &'a [u8],
     pos: usize,
     file: FileId,

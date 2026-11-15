@@ -254,3 +254,32 @@ fn every_std_file_round_trips() {
 fn an_index_with_several_keys_does_not_grow_expressions() {
     assert!(std::mem::size_of::<crate::ast::ExprKind>() <= 256);
 }
+
+/// One declaration encodes on its own and comes back the same, in the decoding file.
+#[test]
+fn a_declaration_round_trips_as_a_fragment() {
+    let src = "type Pair<T = number> = { a: T; b: T[] };\n\
+               function f(x: number, ...rest: string[]): number { return x; }\n";
+    let file = FileId(3);
+    let (module, errors) = crate::parse_file(file, src);
+    assert!(errors.is_empty(), "{errors:?}");
+    for item in &module.items {
+        match &item.kind {
+            ast::ItemKind::TypeAlias(a) => {
+                let bytes = crate::encode_fragment(a, file);
+                let back: ast::TypeAlias = crate::decode_fragment(&bytes, file).expect("decodes");
+                assert_eq!(format!("{back:?}"), format!("{a:?}"));
+                assert!(
+                    crate::decode_fragment::<ast::TypeAlias>(&bytes[..bytes.len() - 1], file)
+                        .is_none()
+                );
+            }
+            ast::ItemKind::Function(f) => {
+                let bytes = crate::encode_fragment(f, file);
+                let back: ast::FnDecl = crate::decode_fragment(&bytes, file).expect("decodes");
+                assert_eq!(format!("{back:?}"), format!("{f:?}"));
+            }
+            _ => {}
+        }
+    }
+}
