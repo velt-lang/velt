@@ -192,6 +192,14 @@ fn an_edited_std_file_retires_the_object() {
     assert_eq!(found(&served), "object");
     let hooks = std_in(dir).join("lang/hooks/prebuilt_probe.velt");
     let src = std::fs::read_to_string(&hooks).unwrap();
+    // Another time, the same contents: the same object.
+    let file = std::fs::File::options().write(true).open(&hooks).unwrap();
+    let time = file.metadata().unwrap().modified().unwrap();
+    file.set_modified(time + std::time::Duration::from_secs(5))
+        .unwrap();
+    drop(file);
+    let touched = velt(dir, "a.velt", FIRST, &["run"], &[]);
+    assert_eq!(found(&touched), "object");
     let edited = src.replace(
         "let text = x < 0 ? \"-\" : \"\";",
         "let text = x < 0 ? \"~\" : \"\";",
