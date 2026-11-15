@@ -12,7 +12,6 @@ use velt_common::{Diagnostic, Span};
 
 use crate::ctx::Ctx;
 use crate::hir::{Callee, Def, Expr, ExprKind as E, Intrinsic, Pat, PatKind, Stmt, StmtKind, TyId};
-use crate::visit;
 
 pub(crate) fn check(cx: &mut Ctx) {
     if cx.atomic_ty().is_none() {
@@ -22,7 +21,8 @@ pub(crate) fn check(cx: &mut Ctx) {
     let mut frozen: Vec<(TyId, Span)> = vec![];
     // Shares that are the value of a `shared(...)`: `shared(a)` of an `Atomic` still used.
     let mut into_shared: Vec<Span> = vec![];
-    for d in cx.defs.iter_mut() {
+    // The unit's bodies (`crate::units`): a finished unit's were checked with it.
+    for d in cx.defs.iter().skip(cx.unit_base as usize) {
         let Some(Def::Fn(f)) = d else { continue };
         for c in f.captures.iter().filter(|c| c.share) {
             let l = &f.body.locals[c.inner.0 as usize];
@@ -31,9 +31,9 @@ pub(crate) fn check(cx: &mut Ctx) {
         // `const { hits } = c`: a binding of a destructuring declaration is another
         // reference to the field (a `for … of` binding of an element is the element in place).
         let mut lets = LetBindings(vec![]);
-        visit::block(&mut f.body.block, &mut lets);
+        crate::visit_ref::block(&f.body.block, &mut lets);
         found.extend(lets.0);
-        visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
+        crate::visit_ref::exprs(&f.body.block, &mut |e: &Expr| {
             if let E::Call {
                 callee: Callee::Intrinsic(Intrinsic::SharedNew),
                 args,
@@ -89,8 +89,8 @@ pub(crate) fn check(cx: &mut Ctx) {
 /// The bindings of the destructuring declarations (`LetPat`) visited, with their spans.
 struct LetBindings(Vec<(TyId, Span)>);
 
-impl visit::VisitMut for LetBindings {
-    fn stmt(&mut self, s: &mut Stmt) {
+impl crate::visit_ref::Visit for LetBindings {
+    fn stmt(&mut self, s: &Stmt) {
         if let StmtKind::LetPat { pat, .. } = &s.kind {
             bindings(pat, &mut self.0);
         }

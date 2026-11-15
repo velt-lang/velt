@@ -257,7 +257,7 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
     walk.ids.f = crate::copy_flow::GLOBAL;
     let mut inits: FxHashMap<DefId, (Uses, News, FxHashSet<TyId>)> = FxHashMap::default();
     let tys = walk.ids.tys;
-    for_each_init(tys, &mut cx.info, true, &mut |_, d, e| {
+    for_each_init(tys, &cx.info, true, &mut |_, d, e| {
         let (u, news, seen) = inits.entry(d).or_default();
         walk.expr(u, news, seen, e, 0);
     });

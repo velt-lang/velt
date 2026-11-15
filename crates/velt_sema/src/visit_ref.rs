@@ -164,6 +164,64 @@ pub(crate) fn pat<V: Visit + ?Sized>(p: &Pat, v: &mut V) {
     }
 }
 
+/// Calls `f` on every expression of `b` (pre-order, nested blocks included).
+pub(crate) fn exprs(b: &Block, f: &mut dyn FnMut(&Expr)) {
+    struct Exprs<'a>(&'a mut dyn FnMut(&Expr));
+    impl Visit for Exprs<'_> {
+        fn expr(&mut self, e: &Expr) {
+            (self.0)(e);
+        }
+    }
+    block(b, &mut Exprs(f));
+}
+
+/// Calls `f` on every expression of `e` (pre-order, `e` included).
+pub(crate) fn exprs_in(e: &Expr, f: &mut dyn FnMut(&Expr)) {
+    struct Exprs<'a>(&'a mut dyn FnMut(&Expr));
+    impl Visit for Exprs<'_> {
+        fn expr(&mut self, e: &Expr) {
+            (self.0)(e);
+        }
+    }
+    expr(e, &mut Exprs(f));
+}
+
+/// The `if` statements of `b` whose condition is `g(x) && MayHoldPrimitive(x)` (a type
+/// predicate on a value of a type parameter's type, hir_encodings.md "Type predicates on a type
+/// parameter"): for every expression in the `then` block of one, a bit per type parameter
+/// (`param_of` of the probe's type) whose instantiation with an object type drops it.
+/// Expressions are keyed by address: the caller walks `b` again, unchanged.
+pub(crate) fn primitive_guards(
+    b: &Block,
+    param_of: &dyn Fn(crate::hir::TyId) -> Option<u32>,
+) -> rustc_hash::FxHashMap<*const Expr, u64> {
+    struct Guards<'a> {
+        param_of: &'a dyn Fn(crate::hir::TyId) -> Option<u32>,
+        out: rustc_hash::FxHashMap<*const Expr, u64>,
+    }
+    impl Visit for Guards<'_> {
+        fn stmt(&mut self, s: &Stmt) {
+            let S::If { cond, then, .. } = &s.kind else {
+                return;
+            };
+            let p = crate::visit::guard_param(cond).and_then(|t| (self.param_of)(t));
+            let Some(bit) = p.and_then(|p| 1u64.checked_shl(p)) else {
+                return;
+            };
+            let out = &mut self.out;
+            exprs(then, &mut |e: &Expr| {
+                *out.entry(e as *const Expr).or_default() |= bit;
+            });
+        }
+    }
+    let mut g = Guards {
+        param_of,
+        out: Default::default(),
+    };
+    block(b, &mut g);
+    g.out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
