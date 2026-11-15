@@ -1,0 +1,13 @@
+// The closure a generic arrow called through a local returns, kept in a local and called through
+// it (#2952): the job it sends to another task, whose closure captured a generator, is refused.
+import { channel } from "velt/sync";
+async function* gen(): AsyncGenerator<string> { yield "a"; yield "b"; }
+class Job { constructor(public run: () => Promise<void>) {} }
+const ch = channel<unknown>(1);
+const chunks = gen();
+const t = spawn((async () => { for await (const j of ch) { await (j as Job).run(); break; } })());
+const job = new Job(async () => { console.log((await chunks.next()).value); });
+const r = <T>(settle: (x: unknown) => void): ((x: T) => void) => (x: T) => { settle(x); };
+const mk = r;
+const f = mk<Job>((x: unknown) => { void ch.send(x); });
+f(job); await t;
