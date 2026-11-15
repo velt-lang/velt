@@ -81,7 +81,11 @@ fn round_trip<T: Codec + std::fmt::Debug>(what: &str, v: &[T]) -> (usize, f64) {
         w.finish()
     };
     let (bytes, files) = encode();
-    assert_eq!(encode(), (bytes.clone(), files.clone()), "{what}: deterministic");
+    assert_eq!(
+        encode(),
+        (bytes.clone(), files.clone()),
+        "{what}: deterministic"
+    );
     let start = Instant::now();
     let mut r = Reader::new(&bytes, &files);
     let n = r.len();
@@ -112,16 +116,35 @@ fn check_program(p: &Program) {
     let (size, _) = round_trip("type", &types);
     eprintln!("units::codec: {} types: {size} bytes", types.len());
     // The element types of the program's tables.
-    round_trip("fn shape", &p.fn_shapes.values().cloned().collect::<Vec<_>>());
-    round_trip("fresh closure", &p.fresh_closures.values().copied().collect::<Vec<_>>());
-    round_trip("fn wrapper", &p.fn_wrappers.values().cloned().collect::<Vec<_>>());
-    round_trip("impl bounds", &p.extension_impls.values().cloned().collect::<Vec<_>>());
-    round_trip("cpu target", &p.cpu_targets.values().copied().collect::<Vec<_>>());
+    round_trip(
+        "fn shape",
+        &p.fn_shapes.values().cloned().collect::<Vec<_>>(),
+    );
+    round_trip(
+        "fresh closure",
+        &p.fresh_closures.values().copied().collect::<Vec<_>>(),
+    );
+    round_trip(
+        "fn wrapper",
+        &p.fn_wrappers.values().cloned().collect::<Vec<_>>(),
+    );
+    round_trip(
+        "impl bounds",
+        &p.extension_impls.values().cloned().collect::<Vec<_>>(),
+    );
+    round_trip(
+        "cpu target",
+        &p.cpu_targets.values().copied().collect::<Vec<_>>(),
+    );
     let decorators: Vec<_> = p.decorators.iter().map(|(k, v)| (*k, v.clone())).collect();
     round_trip("decorators", &decorators);
     round_trip("c export", &p.c_exports);
     round_trip("module state", std::slice::from_ref(&p.module_state));
-    let dyn_members: Vec<_> = p.dyn_members.iter().flat_map(|m| m.values().cloned()).collect();
+    let dyn_members: Vec<_> = p
+        .dyn_members
+        .iter()
+        .flat_map(|m| m.values().cloned())
+        .collect();
     round_trip("dyn members", &dyn_members);
 }
 

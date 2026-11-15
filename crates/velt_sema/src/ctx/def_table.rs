@@ -20,6 +20,8 @@ pub(crate) struct DefTable<T> {
     items: Vec<T>,
     /// Entries below this index belong to finished units: 0 while nothing is frozen.
     frozen_below: u32,
+    /// The same, kept through `thaw` (`touch`: what the app's stage reads of finished units).
+    unit_below: u32,
 }
 
 impl<T> Default for DefTable<T> {
@@ -27,6 +29,7 @@ impl<T> Default for DefTable<T> {
         DefTable {
             items: Vec::new(),
             frozen_below: 0,
+            unit_below: 0,
         }
     }
 }
@@ -35,6 +38,7 @@ impl<T> DefTable<T> {
     /// Freeze every entry there is now.
     pub(crate) fn freeze(&mut self) {
         self.frozen_below = self.items.len() as u32;
+        self.unit_below = self.frozen_below;
     }
 
     /// Lift the freeze (the program-level stage after every unit, which may write anywhere).
@@ -53,6 +57,7 @@ impl<T> DefTable<T> {
 
     #[track_caller]
     pub(crate) fn get_mut(&mut self, i: usize) -> Option<&mut T> {
+        self.touched(i);
         self.check(i);
         self.items.get_mut(i)
     }
@@ -60,6 +65,7 @@ impl<T> DefTable<T> {
     /// Every entry, to write: a whole-table write while a prefix is frozen is counted once.
     #[track_caller]
     pub(crate) fn iter_mut(&mut self) -> std::slice::IterMut<'_, T> {
+        self.scanned();
         if self.frozen_below > 0 {
             violation(Location::caller());
         }
@@ -94,6 +100,7 @@ impl<T> From<Vec<T>> for DefTable<T> {
         DefTable {
             items,
             frozen_below: 0,
+            unit_below: 0,
         }
     }
 }
@@ -119,14 +126,14 @@ impl<T> DefTable<T> {
 
     #[track_caller]
     fn touched(&self, i: usize) {
-        if i < self.frozen_below as usize && touch::on() {
+        if i < self.unit_below as usize && touch::on() {
             touch::def(std::any::type_name::<T>(), i, Location::caller());
         }
     }
 
     #[track_caller]
     fn scanned(&self) {
-        if self.frozen_below > 0 && touch::on() {
+        if self.unit_below > 0 && touch::on() {
             touch::scan(std::any::type_name::<T>(), Location::caller());
         }
     }
@@ -307,6 +314,7 @@ pub(crate) mod touch {
 impl<T> IndexMut<usize> for DefTable<T> {
     #[track_caller]
     fn index_mut(&mut self, i: usize) -> &mut T {
+        self.touched(i);
         self.check(i);
         &mut self.items[i]
     }
