@@ -120,6 +120,8 @@ pub(crate) struct Ctx<'m> {
     pub weak_scans: crate::weak_threads::WeakScans,
     /// The same for `module_state::check_locked_access`.
     pub state_facts: crate::module_state::StateFacts,
+    /// The same for the `with` checks' function summaries (`ownership::locked`).
+    pub lock_summaries: crate::ownership::LockSummaries,
     /// The modules each module of a finished unit names (`crate::linked`).
     pub module_edges: crate::linked::ModuleEdges,
     /// Which part of a check by units this context checks (`crate::units`).
@@ -597,6 +599,7 @@ impl<'m> Ctx<'m> {
             weak_scans: Default::default(),
             state_facts: Default::default(),
             module_edges: Default::default(),
+            lock_summaries: Default::default(),
             units_stage: crate::units::Stage::Both,
             scopes: modules
                 .iter()

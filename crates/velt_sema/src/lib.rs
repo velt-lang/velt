@@ -464,11 +464,17 @@ fn check_timed(
     // one did not, this one's diagnostics stay the program's (`throws::adds_errors`).
     if opts.units && units::stage2() {
         stage.set(units::Stage::Std);
-        let mut std_cx =
-            match rounds::run(&new_cx, &|_: &ctx::Ctx| false, &assumed, false, root, None) {
-                Ok((cx, _, _)) => cx,
-                Err(stopped) => return *stopped,
-            };
+        let mut std_cx = match rounds::run(
+            &new_cx,
+            &|_: &ctx::Ctx| false,
+            &assumed,
+            false,
+            root,
+            generator.as_ref(),
+        ) {
+            Ok((cx, _, _)) => cx,
+            Err(stopped) => return *stopped,
+        };
         std_cx.freeze_defs();
         std_cx.unit_base = std_cx.defs.len() as u32;
         *std_snap.borrow_mut() = Some(std_cx);

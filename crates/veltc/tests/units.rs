@@ -205,3 +205,23 @@ console.log(m.with((v) => v));
         assert!(out.status.success(), "VELT_UNITS={units}:\n{stderr}");
     }
 }
+
+/// The dispatch groups std's bodies were checked with know std's implementations only: once the
+/// app is collected they are built again, with its classes (velt_sema `units`). Before, the
+/// error types http-server's handlers saw through its own interfaces (`BodySink`) lacked what
+/// its implementations throw, and `examples/todo_api.velt` failed with "not known yet".
+#[test]
+fn an_app_checked_by_units_sees_its_own_implementations_of_interfaces() {
+    let examples = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
+    for units in ["1", "2"] {
+        let out = no_window::command(env!("CARGO_BIN_EXE_velt"))
+            .args(["check", "todo_api.velt"])
+            .current_dir(&examples)
+            .env("VELT_UNITS", units)
+            .env_remove("VELT_UNITS_FREEZE")
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "VELT_UNITS={units}:\n{stderr}");
+    }
+}

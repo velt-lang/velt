@@ -46,7 +46,7 @@ pub(crate) use local_async::{
     check_crossing_changes, infer_local_async, record_changed_captures, Crossing,
 };
 pub(crate) use local_closures::{demote_local_closures, held_closures, held_closures_by};
-pub(crate) use locked::{check_locked, WeakCrossings};
+pub(crate) use locked::{check_locked, LockSummaries, WeakCrossings};
 pub(crate) use many::{check_closure as check_copied_closure, check_many_threads, Copied};
 pub(crate) use shares::soften_moves;
 pub(crate) use soft::clone_reused;

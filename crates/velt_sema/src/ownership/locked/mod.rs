@@ -34,6 +34,8 @@ mod read_only;
 mod regions;
 mod stores;
 mod summary;
+
+pub(crate) use summary::LockSummaries;
 mod values;
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -51,13 +53,17 @@ pub(crate) type WeakCrossings = Vec<(DefId, crate::hir::TyId, crate::body::GenCo
 /// Check and rewrite every `with` callback (module docs). Returns the crossings for
 /// `crate::weak_threads`.
 pub(crate) fn check_locked(cx: &mut Ctx) -> WeakCrossings {
-    read_only::check(cx);
+    crate::timings::pass("locked::read_only", || read_only::check(cx));
     let mut res = values::Resolver::default();
-    let found = callbacks::find(cx, &mut res);
+    let found = crate::timings::pass("locked::callbacks", || callbacks::find(cx, &mut res));
     if found.callbacks.is_empty() && found.named.is_empty() && found.opaque.is_empty() {
+        // std's stage keeps its summaries for the app's, which may have callbacks.
+        if cx.units_stage == crate::units::Stage::Std {
+            summary::Summaries::compute(cx);
+        }
         return vec![];
     }
-    let summaries = summary::Summaries::compute(cx);
+    let summaries = crate::timings::pass("locked::summaries", || summary::Summaries::compute(cx));
     // Before the callbacks are rewritten: a candidate is checked as written. Only programs with
     // an opaque callback pay for the candidates.
     if !found.opaque.is_empty() {

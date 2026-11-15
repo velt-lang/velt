@@ -52,6 +52,9 @@ pub(crate) fn check_definitions(cx: &mut Ctx) {
         crate::script_tdz::check(cx);
         let from = crate::collect::collect_app(cx, &app);
         cx.collected_defs = cx.defs.len();
+        // The dispatch groups std's bodies used know std's implementations only: the app's
+        // classes implement std's interfaces and their own (`throws::groups`).
+        cx.groups = None;
         crate::decorators::check(cx, from.defs);
         crate::global_this::declare(cx);
         crate::body::check_added(cx, from);

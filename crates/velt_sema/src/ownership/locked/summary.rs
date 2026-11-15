@@ -37,6 +37,12 @@ pub(super) struct Summary {
     pub(super) promises: u64,
 }
 
+/// A finished unit's summaries (`Ctx::lock_summaries`, `crate::units`): a summary depends only
+/// on those of the functions it calls by name, and a unit calls a later unit's functions only
+/// through values and slots (unknown callees), so the unit's summaries are final.
+#[derive(Clone, Default)]
+pub(crate) struct LockSummaries(FxHashMap<DefId, Summary>);
+
 /// The summaries of the program's functions (not of closures, which are called as values).
 pub(super) struct Summaries {
     sums: FxHashMap<DefId, Summary>,
@@ -48,14 +54,18 @@ pub(super) struct Summaries {
 }
 
 impl Summaries {
+    /// The summaries: a finished unit's from its summary (`LockSummaries`), the unit's own
+    /// computed here. std's stage keeps its own for the app's.
     pub(super) fn compute(cx: &mut Ctx) -> Self {
+        let app = cx.units_stage == crate::units::Stage::App;
+        let base = if app { cx.unit_base } else { 0 };
         let fns: Vec<DefId> = cx
             .fn_defs
             .iter()
             .copied()
             .filter(|d| {
                 let info = cx.fn_info(*d);
-                info.state == BodyState::Done && info.kind != FnKind::Closure
+                d.0 >= base && info.state == BodyState::Done && info.kind != FnKind::Closure
             })
             .collect();
         let captures = (0..cx.defs.len())
@@ -68,7 +78,10 @@ impl Summaries {
             })
             .collect();
         let mut s = Summaries {
-            sums: FxHashMap::default(),
+            sums: match app {
+                true => cx.lock_summaries.0.clone(),
+                false => FxHashMap::default(),
+            },
             captures,
             assigned: crate::assigned_fields::assigned_objects(cx),
         };
@@ -110,6 +123,9 @@ impl Summaries {
                 }
             }
             if !changed {
+                if cx.units_stage == crate::units::Stage::Std {
+                    cx.lock_summaries = LockSummaries(s.sums.clone());
+                }
                 return s;
             }
         }
