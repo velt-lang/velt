@@ -94,7 +94,7 @@ pub(crate) struct Crossing {
 pub(crate) fn infer_local_async(cx: &mut Ctx) {
     cx.crossing_callbacks.clear();
     cx.in_shared.clear();
-    let g = graph::build(cx);
+    let g = crate::timings::pass("local_async::graph", || graph::build(cx));
     let mut p = Propagation::new(cx, &g);
     for &(n, f, why) in &g.seeds {
         p.set(n, f, why);

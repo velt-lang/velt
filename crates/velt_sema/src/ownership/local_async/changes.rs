@@ -100,7 +100,7 @@ pub(crate) fn check_crossing_changes(cx: &mut Ctx) {
         return;
     }
     // Before any body is taken out of `cx.defs` below, so that every store is seen.
-    let lits = std::rc::Rc::new(super::targets::Literals::scan(cx));
+    let lits = std::rc::Rc::new(crate::timings::pass("local_async::literals", || super::targets::Literals::scan(cx)));
     let roots: Vec<DefId> = list.iter().map(|x| x.closure).collect();
     let keyed = super::keyed::keyed_fields(cx, &lits, &roots);
     let fed = std::rc::Rc::new(super::fed::fed_fields(cx, keyed.keys().copied().collect()));
