@@ -88,7 +88,20 @@ impl Resolve {
             return (vec![t], usize::MAX);
         }
         self.budget -= 1;
-        let Some(sites) = sites(cx, g, f) else {
+        // A class method's class type parameters are what each object of the class is made
+        // with (`class_insts`: `new`, and each subclass's `extends`), however the method is
+        // reached: by name, by dispatch, or through `any`. Not a struct's or an object type's:
+        // a conversion from `any` makes those (`JSON.parse(t) as Envelope<K>`) with no `new`.
+        let class = match method_class(cx, f) {
+            Some((class, own))
+                if !types::mentions_param_from(cx, t, own)
+                    && cx.adt(class).is_some_and(|a| a.kind == crate::hir::AdtKind::Class) =>
+            {
+                class_insts(cx, g, class, 0)
+            }
+            _ => None,
+        };
+        let Some(sites) = class.or_else(|| sites(cx, g, f)) else {
             return (vec![t], usize::MAX);
         };
         self.on_stack.insert((f, t), depth);

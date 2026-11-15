@@ -302,10 +302,12 @@ pub(super) fn named_outside_bodies(
     cx: &Ctx,
     out: &mut FxHashSet<DefId>,
     insts: &mut FxHashMap<DefId, Vec<(DefId, Vec<TyId>)>>,
+    news: &mut FxHashMap<DefId, Vec<(DefId, Vec<TyId>)>>,
 ) {
     let mut named = Named {
         out,
         insts,
+        news,
         owner: DefId(0),
     };
     for (i, info) in cx.info.iter().enumerate() {
@@ -344,10 +346,12 @@ pub(super) fn named_outside_bodies(
 
 /// Collects the functions an expression calls by name or uses as a value, and, as instantiations
 /// of a generic one (`Graph::insts`), the type arguments it names there, made by `owner` (#2952:
-/// `const renderer = createRenderer(nodeOps)` at module level is `createRenderer`'s only call).
+/// `const renderer = createRenderer(nodeOps)` at module level is `createRenderer`'s only call);
+/// likewise the objects of generic classes and structs it makes (`Graph::news`).
 struct Named<'a> {
     out: &'a mut FxHashSet<DefId>,
     insts: &'a mut FxHashMap<DefId, Vec<(DefId, Vec<TyId>)>>,
+    news: &'a mut FxHashMap<DefId, Vec<(DefId, Vec<TyId>)>>,
     owner: DefId,
 }
 
@@ -364,6 +368,12 @@ impl Visit for Named<'_> {
                     let site = (self.owner, targs.clone());
                     self.insts.entry(*d).or_default().push(site);
                 }
+            }
+            E::New { def, type_args, .. } | E::AdtLit { def, type_args, .. }
+                if !type_args.is_empty() =>
+            {
+                let site = (self.owner, type_args.clone());
+                self.news.entry(*def).or_default().push(site);
             }
             _ => {}
         }

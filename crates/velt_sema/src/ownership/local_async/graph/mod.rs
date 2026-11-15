@@ -211,7 +211,12 @@ pub(super) fn build(cx: &Ctx) -> Graph {
         w.block(&f.body.block, To::Node(ret, None));
     }
     super::unknown_callees::mark(cx, &mut g);
-    super::call_sites::named_outside_bodies(cx, &mut g.held.referenced, &mut g.insts);
+    super::call_sites::named_outside_bodies(
+        cx,
+        &mut g.held.referenced,
+        &mut g.insts,
+        &mut g.news,
+    );
     dynamic::finish(cx, &mut g);
     g.dyn_calls.finish(cx);
     g
