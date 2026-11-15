@@ -47,7 +47,7 @@ export class ClientOffer {
 export function parseClientHello(body: u8[]): ClientOffer {
   const r = new ByteReader(body, 0, body.length, "ClientHello");
   const legacy = r.u16();
-  r.bytes(32);
+  r.skip(32);
   const sid = r.vector(1);
   if (sid.left() > 32) {
     throw new TlsFailure(ILLEGAL_PARAMETER, "a legacy session id over 32 bytes");
@@ -118,12 +118,12 @@ export function parseClientHello(body: u8[]): ClientOffer {
       }
     } else if (type == EXT_COOKIE) {
       offer.cookie = true;
-      e.bytes(e.left());
+      e.skip(e.left());
     } else {
       if (type == EXT_PRE_SHARED_KEY && exts.left() > 0) {
         throw new TlsFailure(ILLEGAL_PARAMETER, "pre_shared_key is not the last extension");
       }
-      e.bytes(e.left());
+      e.skip(e.left());
     }
     e.finish();
   }

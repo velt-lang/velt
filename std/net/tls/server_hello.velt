@@ -134,7 +134,7 @@ export function parseServerHello(
         const c = e.vector(2);
         cookie = c.bytes(c.left());
       } else {
-        e.bytes(e.left());
+        e.skip(e.left());
       }
       e.finish();
     }
