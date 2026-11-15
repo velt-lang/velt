@@ -262,6 +262,7 @@ struct Loader<'a, 'o> {
     dir_names: case::DirNames,
     /// The globals loaded on demand ([`globals`]) not loaded yet.
     globals: Vec<globals::Global>,
+    said: globals::Said,
     /// Dependencies already warned about for the old source extension.
     warned_old_extension: std::collections::HashSet<String>,
     /// npm packages found so far ([`vpm::npm`]).
@@ -440,27 +441,9 @@ impl Loader<'_, '_> {
         let Some(std) = self.opts.std_root.clone() else {
             return false;
         };
-        let (modules, sm) = (&self.modules, &*self.sm);
-        // Each non-std module's words, split once for every global's, when one is due.
-        let own: std::cell::OnceCell<Vec<(&ast::Module, globals::Words)>> = Default::default();
-        let own = || {
-            own.get_or_init(|| {
-                (modules.iter())
-                    .filter(|m| !m.is_std)
-                    .map(|m| (&m.ast, globals::Words::of(&sm.get(m.file).src)))
-                    .collect()
-            })
-        };
-        let due = |g: &globals::Global| {
-            let Some((module, words)) = &g.when else {
-                return false;
-            };
-            modules.iter().any(|m| m.is_std && m.path == *module)
-                && (own().iter())
-                    .any(|(ast, said)| words.iter().any(|w| globals::mentions_word(said, ast, w)))
-        };
+        let due = self.said.due(&self.globals, &self.modules, self.sm);
         let (wanted, rest): (Vec<_>, Vec<_>) =
-            std::mem::take(&mut self.globals).into_iter().partition(due);
+            (std::mem::take(&mut self.globals).into_iter()).partition(|g| due.contains(&g.file));
         self.globals = rest;
         let mut loaded = false;
         for g in wanted {

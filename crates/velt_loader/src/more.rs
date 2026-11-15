@@ -63,6 +63,7 @@ impl<'a, 'o> Loader<'a, 'o> {
             extra_phase: false,
             dir_names: state.dir_names,
             globals: vec![],
+            said: Default::default(),
             warned_old_extension: state.warned_old_extension,
             npm: state.npm,
             ambient: ambient::Ambients::new(opts.packages),
