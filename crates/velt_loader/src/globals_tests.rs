@@ -112,6 +112,69 @@ fn a_conditional_global_loads_with_its_module_and_a_word() {
     assert_eq!(paths(&l), ["main"]);
 }
 
+/// A tree with a conditional global (`web_bytes`: `std/web` and the word `bytes`).
+fn bytes_tree() -> Tree {
+    let t = Tree::new();
+    t.write(
+        "std/prelude/global/web.velt",
+        "export { Response } from \"velt/web\";\n",
+    );
+    t.write(
+        "std/prelude/global/web_bytes.velt",
+        "// load when std/web uses: bytes\nimport \"velt/web_bytes\";\n",
+    );
+    t.write("std/web.velt", "export class Response {}\n");
+    t.write("std/web_bytes.velt", "export const b = 1;\n");
+    t
+}
+
+/// The module and the word in different extra roots, in either order: the global loads.
+#[test]
+fn a_conditional_global_loads_for_a_word_and_its_module_in_other_extra_roots() {
+    let t = bytes_tree();
+    let root = t.write("p/main.velt", "function main() {}\n");
+    let word = t.write("p/word.velt", "export const bytes = 1;\n");
+    let module = t.write("p/module.velt", "export const r = new Response();\n");
+    for extra in [[word.clone(), module.clone()], [module, word]] {
+        let mut sm = SourceMap::new();
+        let mut diags = vec![];
+        let opts = LoadOptions {
+            std_root: Some(t.path("std")),
+            extra_roots: &extra,
+            ..Default::default()
+        };
+        let l = load_program(&mut sm, &root, opts, &mut diags).expect("loads");
+        assert!(diags.is_empty(), "{:?}", messages(&diags));
+        assert!(paths(&l).contains(&"std/web_bytes"), "{:?}", paths(&l));
+    }
+}
+
+/// Each non-std module's words are split once per load, not once per extra root: `velt check`
+/// of every std file adds hundreds of roots.
+#[test]
+fn many_extra_roots_split_each_module_s_words_once() {
+    let t = bytes_tree();
+    let root = t.write(
+        "p/main.velt",
+        "const r = new Response();\nfunction main() {}\n",
+    );
+    let extra: Vec<_> = (0..40)
+        .map(|i| t.write(&format!("p/m{i}.velt"), "export const n = 1;\n"))
+        .collect();
+    let mut sm = SourceMap::new();
+    let mut diags = vec![];
+    let opts = LoadOptions {
+        std_root: Some(t.path("std")),
+        extra_roots: &extra,
+        ..Default::default()
+    };
+    globals::SPLITS.with(|n| n.set(0));
+    let l = load_program(&mut sm, &root, opts, &mut diags).expect("loads");
+    assert!(diags.is_empty(), "{:?}", messages(&diags));
+    assert!(!paths(&l).contains(&"std/web_bytes"));
+    assert_eq!(globals::SPLITS.with(|n| n.get()), 41);
+}
+
 /// The modules of the repository's std a program loads whose paths start with one of
 /// `prefixes`.
 fn std_modules(main: &str, prefixes: &[&str]) -> Vec<String> {
