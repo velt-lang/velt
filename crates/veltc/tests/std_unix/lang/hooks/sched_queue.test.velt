@@ -4,12 +4,14 @@
 // a row, on the locked path and the lock-free one, and an I/O tick with both queues holding tasks
 // reads the clock, starts the fair wait, skips reads while the wait runs and starts the pass once
 // it is due; a monitor's tick ends the skips (a change of pace, #2981), and without a monitor no
-// read is skipped, nor on a lazy worker 0. Run from a copy of std by
+// read is skipped, nor on a lazy worker 0, also after a relax. Run from a copy of std by
 // crates/veltc/tests/std_scheduler_workers.rs (macOS and Linux: the scheduler's modules don't
 // link on Windows).
 import { describe, expect, it } from "velt/test";
+import * as lk from "./sched_lock";
 import * as m from "./sched_mem";
 import * as q from "./sched_queue";
+import * as rx from "./sched_relax";
 import * as sp from "./sched_spread";
 import * as t from "./sched_task";
 import * as tick from "./sched_tick";
@@ -237,5 +239,36 @@ describe("velt/lang/hooks fair pass clock", () => {
     m.st(w + t.E_TICKS, m.ld(w + t.E_TICKS) + 4);
     expect(turnsToPass(w, 20)).toBe(1);
     free(w, [input, spawned]);
+  });
+
+  it("drops a skip set while shared when worker 0 relaxes to lazy", () => {
+    // Tasks a relax makes worker 0's own (`T_HOME`, past `TASK`'s bytes).
+    const size = t.T_HOME + 8;
+    const w = watched();
+    const mode = m.ld32(w + t.E_MODE);
+    const input = m.zeroed(size);
+    const spawned = m.zeroed(size);
+    m.st32(input + t.T_FLAGS, t.STARTED);
+    m.st32(spawned + t.T_FLAGS, t.STARTED);
+    q.pushIo(w, input);
+    q.pushRest(w, spawned, mode);
+    tick.tickTurned(w);
+    const at = m.ld(w + t.E_FAIR_AT);
+    past(at);
+    tick.tickTurned(w);
+    expect(m.ld(w + t.E_FAIR_SKIP) > 1).toBe(true);
+    // The monitor asks the only worker (no spares started) to relax: it turns lazy.
+    m.swap(w + t.E_STARTED, 1);
+    m.store32(w + t.E_RELAX, t.RELAX_ASKED);
+    const locks = lk.mode();
+    expect(rx.relax(w)).toBe(true);
+    lk.setMode(locks);
+    expect(m.ld(w + t.E_FAIR_SKIP)).toBe(0);
+    // Lazy, the pass starts at the first turn once due, not after the skip set while shared.
+    m.st(w + t.E_FAIR_DUE, at);
+    expect(turnsToPass(w, 20)).toBe(1);
+    m.release(input, size);
+    m.release(spawned, size);
+    m.release(w, t.E_SIZE);
   });
 });

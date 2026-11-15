@@ -308,6 +308,9 @@ export function relax(g: usize): bool {
   homeAll(g, m.ld(g + t.E_IHEAD));
   homeAll(g, m.ld(g + t.E_HEAD));
   m.swap(g + t.E_WATCH, 0);
+  // A skip of the fair pass's clock reads set while shared ends: lazy, no tick would end it
+  // (sched_tick.velt `fairLook`).
+  m.st(g + t.E_FAIR_SKIP, 0);
   m.st(g + t.E_SEEN_CUR, 0);
   m.st(g + t.E_SEEN_CPU, 0);
   // The spares' last operations were released by their retirement, read above.
