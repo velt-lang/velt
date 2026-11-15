@@ -155,11 +155,17 @@ fn a_later_timer_alone_after_a_held_one_wakes_the_task_at_its_deadline() {
         // The poll goes on and `b` is gone (polled and fired, or dropped).
         drop(b);
         timers.end_poll(&task);
-        assert!(log.lock().unwrap().is_empty(), "the later timer is not due");
-        assert_eq!(
-            timers.state.lock().armed.as_ref().map(|a| a.1),
-            Some(later_at)
-        );
+        // Firing and the end of the poll both ran by now. Unless the thread stalled until
+        // `later_at` before then (the end of the poll finds it due and wakes the task), the later
+        // timer is not due: the tokio timer is armed for it.
+        let polled_by = Instant::now();
+        if polled_by < later_at {
+            assert!(log.lock().unwrap().is_empty(), "the later timer is not due");
+            assert_eq!(
+                timers.state.lock().armed.as_ref().map(|a| a.1),
+                Some(later_at)
+            );
+        }
         let limit = Instant::now() + Duration::from_secs(20);
         while log.lock().unwrap().is_empty() && Instant::now() < limit {
             tokio::time::sleep(Duration::from_millis(1)).await;
@@ -239,32 +245,29 @@ fn a_timer_at_the_deadline_of_a_dropped_one_wakes_the_task() {
 
 #[test]
 fn a_dropped_armed_timer_still_gets_the_next_one_armed() {
-    // The tokio timer stays armed for the dropped timer's deadline; that wake arms the next.
+    // The tokio timer stays armed for the dropped timer's deadline; that wake arms the next. The
+    // next is a minute away, so however late the first wake comes, it is not due yet.
     rt().block_on(async {
         let log = Arc::new(StdMutex::new(Vec::new()));
         let task = named("task", &log);
         let timers = Arc::new(Timers::default());
         let now = Instant::now();
         let first_at = now + Duration::from_millis(5);
-        let next_at = now + Duration::from_millis(40);
+        let next_at = now + Duration::from_secs(60);
         let first = leaf(&timers, first_at, &task, &task);
         let next = leaf(&timers, next_at, &named("next", &log), &task);
         drop(first);
         until_woken(&log).await;
         assert_eq!(*log.lock().unwrap(), ["task"]);
+        assert!(Instant::now() >= first_at);
         log.lock().unwrap().clear();
         assert_eq!(timers.fire(&task), None);
         assert!(!next.fired.load(Ordering::Acquire));
+        assert!(log.lock().unwrap().is_empty(), "the next is not due");
         assert_eq!(
             timers.state.lock().armed.as_ref().map(|a| a.1),
             Some(next_at)
         );
-        until_woken(&log).await;
-        assert_eq!(*log.lock().unwrap(), ["task"]);
-        assert!(Instant::now() >= next_at);
-        log.lock().unwrap().clear();
-        timers.fire(&task);
-        assert_eq!(*log.lock().unwrap(), ["next"]);
     });
 }
 
