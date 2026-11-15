@@ -329,7 +329,8 @@ fn refused_extends(cx: &mut Ctx, s: &Found) -> FxHashSet<DefId> {
 /// value, is an error where it is given.
 /// `uses`: the instantiation sites `record_keys` collected and resolved dynamic dispatch for.
 pub(crate) fn check_generic_bodies(cx: &mut Ctx, uses: &[(DefId, Uses)]) {
-    let mut s = Found::default();
+    // A finished unit's functions come with its summary (`crate::units`).
+    let mut s = Found::seeded(&cx.tuple_summaries.bodies);
     for (f, u) in uses {
         let (mut w, mut own) = (Walk::default(), vec![]);
         for (t, span) in &u.types {
@@ -347,6 +348,9 @@ pub(crate) fn check_generic_bodies(cx: &mut Ctx, uses: &[(DefId, Uses)]) {
         }
     }
     if s.needs.is_empty() {
+        if cx.units_stage == crate::units::Stage::Std {
+            cx.tuple_summaries.bodies = s.summary();
+        }
         report(cx, vec![], s.limits);
         return;
     }
@@ -369,6 +373,9 @@ pub(crate) fn check_generic_bodies(cx: &mut Ctx, uses: &[(DefId, Uses)]) {
         carry(cx, uses, &refused, &mut s, is_tuple);
     }
     add_work(Pass::StructTuples, s.work);
+    if cx.units_stage == crate::units::Stage::Std {
+        cx.tuple_summaries.bodies = s.summary();
+    }
     report(cx, s.bad, s.limits);
 }
 
@@ -384,7 +391,7 @@ pub(crate) fn check_field_writes(cx: &mut Ctx, uses: &[(DefId, Uses)]) {
     let what =
         "the function called here writes a field of a struct (`{}`), and struct fields are readonly";
     let note = "a struct value never changes: return a new value from the function, or make the type a class";
-    check_struct_given(cx, uses, writes, what, note);
+    check_struct_given(cx, uses, writes, what, note, Given::Writes);
 }
 
 /// A struct given for a type parameter a generic body makes a `Proxy` of (`new Proxy<T>(x, h)`):
@@ -395,7 +402,31 @@ pub(crate) fn check_proxy_targets(cx: &mut Ctx, uses: &[(DefId, Uses)]) {
     let what = "the function called here makes a `Proxy` of a struct (`{}`)";
     let note =
         "a struct is a value, with no identity for a proxy to stand for; make the type a class";
-    check_struct_given(cx, uses, targets, what, note);
+    check_struct_given(cx, uses, targets, what, note, Given::Targets);
+}
+
+/// Which of [`Summaries`] a [`check_struct_given`] reads and keeps.
+#[derive(Clone, Copy)]
+enum Given {
+    Writes,
+    Targets,
+}
+
+/// The finished units' summaries of this pass's checks (`Ctx::tuple_summaries`, `crate::units`).
+#[derive(Clone, Default)]
+pub(crate) struct Summaries {
+    bodies: carry::Summary,
+    writes: carry::Summary,
+    targets: carry::Summary,
+}
+
+impl Summaries {
+    fn of(&mut self, g: Given) -> &mut carry::Summary {
+        match g {
+            Given::Writes => &mut self.writes,
+            Given::Targets => &mut self.targets,
+        }
+    }
 }
 
 /// Carries `sites`, (function, type parameter), and reports where a struct is given for one
@@ -406,11 +437,13 @@ fn check_struct_given(
     sites: Vec<(DefId, TyId)>,
     what: &str,
     note: &str,
+    given: Given,
 ) {
-    if sites.is_empty() {
+    let seed = cx.tuple_summaries.of(given).clone();
+    if sites.is_empty() && Found::is_empty_summary(&seed) {
         return;
     }
-    let mut s = Found::default();
+    let mut s = Found::seeded(&seed);
     for (f, t) in sites {
         let n = s.needs.entry(f).or_default();
         if !n.contains(&(t, 0)) {
@@ -420,6 +453,9 @@ fn check_struct_given(
     let struct_given = |cx: &mut Ctx, t: TyId| cx.declared_struct(cx.ty.core(t).unwrap_or(t));
     carry(cx, uses, &FxHashSet::default(), &mut s, struct_given);
     add_work(Pass::StructTuples, s.work);
+    if cx.units_stage == crate::units::Stage::Std {
+        *cx.tuple_summaries.of(given) = s.summary();
+    }
     s.bad.sort_by_key(|(s, _, _)| (s.file, s.lo));
     let mut reported: FxHashSet<Span> = FxHashSet::default();
     for (span, t, _) in s.bad {

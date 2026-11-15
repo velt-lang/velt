@@ -58,6 +58,47 @@ pub(super) struct Found {
     pub(super) work: u64,
 }
 
+/// A finished unit's part of a [`Found`] (`crate::units`): what its functions store in struct
+/// fields, their param calls and conversions, which a later unit's check starts from.
+#[derive(Clone, Default)]
+pub(crate) struct Summary {
+    needs: FxHashMap<DefId, Vec<Need>>,
+    in_body: FxHashSet<(DefId, TyId)>,
+    pneeds: FxHashMap<DefId, Vec<ParamCall>>,
+    anys: FxHashMap<DefId, Vec<TyId>>,
+    dyn_ifaces: FxHashSet<DefId>,
+}
+
+impl Found {
+    /// What is known before a unit's check: the finished units' summary.
+    pub(super) fn seeded(s: &Summary) -> Found {
+        Found {
+            needs: s.needs.clone(),
+            in_body: s.in_body.clone(),
+            pneeds: s.pneeds.clone(),
+            anys: s.anys.clone(),
+            dyn_ifaces: s.dyn_ifaces.clone(),
+            ..Found::default()
+        }
+    }
+
+    /// Does it hold nothing?
+    pub(super) fn is_empty_summary(s: &Summary) -> bool {
+        s.needs.is_empty() && s.pneeds.is_empty() && s.anys.is_empty()
+    }
+
+    /// This unit's summary, for the units checked after it.
+    pub(super) fn summary(&self) -> Summary {
+        Summary {
+            needs: self.needs.clone(),
+            in_body: self.in_body.clone(),
+            pneeds: self.pneeds.clone(),
+            anys: self.anys.clone(),
+            dyn_ifaces: self.dyn_ifaces.clone(),
+        }
+    }
+}
+
 /// How a source's requirements reach a function.
 #[derive(Clone, Copy)]
 enum How {

@@ -68,6 +68,12 @@ pub(crate) fn collect(cx: &mut Ctx, signature: bool) -> Vec<(DefId, Uses)> {
     collect_with(cx, signature, 0, true, false, None)
 }
 
+/// [`collect`] of the definitions from `from` on: a check by units' later unit
+/// (`crate::units`), whose callees in a finished unit come with that unit's summaries.
+pub(crate) fn collect_unit(cx: &mut Ctx, signature: bool, from: usize) -> Vec<(DefId, Uses)> {
+    collect_with(cx, signature, from, true, false, None)
+}
+
 /// [`collect_from`] of the function bodies and module constants' initializers in `units` alone
 /// (without [`Uses::types`]).
 pub(crate) fn collect_units(cx: &mut Ctx, units: &FxHashSet<DefId>) -> Vec<(DefId, Uses)> {

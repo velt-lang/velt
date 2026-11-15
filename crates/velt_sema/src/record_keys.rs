@@ -196,9 +196,21 @@ type Need = (TyId, DefId, u64);
 /// and its guard bits.
 type Req = (TyId, Span, DefId, u64);
 
-/// Returns the instantiation sites it collected, which `struct_tuples` reads too.
+/// A unit's summary for this check (`Ctx::key_needs`): each function's needs and param calls.
+#[derive(Clone, Default)]
+pub(crate) struct KeyNeeds {
+    needs: FxHashMap<DefId, Vec<Need>>,
+    pneeds: FxHashMap<DefId, Vec<ParamCall>>,
+}
+
+/// Returns the instantiation sites it collected, which `struct_tuples` reads too. In a check by
+/// units (`crate::units`), the unit's own: a finished unit's functions come with its summary.
 pub(crate) fn check_instantiations(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
-    let mut uses = inst_sites::collect(cx, false);
+    let base = cx.unit_base as usize;
+    let mut uses = match base {
+        0 => inst_sites::collect(cx, false),
+        _ => inst_sites::collect_unit(cx, false, base),
+    };
     let mut memo: FxHashMap<TyId, Vec<TyId>> = FxHashMap::default();
     let mut dispatch = Dispatch::default();
     for (_, u) in &mut uses {
@@ -214,9 +226,12 @@ pub(crate) fn check_instantiations(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
         .flat_map(|(i, (_, u))| u.reads().map(move |d| (i, d)));
     let mut rounds = Rounds::new(uses.len(), reads);
     let mut work = dispatch.work;
-    let mut needs: FxHashMap<DefId, Vec<Need>> = FxHashMap::default();
-    // The param calls whose receiver is generic in each function.
-    let mut pneeds: FxHashMap<DefId, Vec<ParamCall>> = FxHashMap::default();
+    // What a finished unit's functions need (its summary), then the unit's own.
+    let KeyNeeds {
+        mut needs,
+        // The param calls whose receiver is generic in each function.
+        mut pneeds,
+    } = cx.key_needs.clone();
     // Concrete keys per (function, key): the span and origin to report a bad one with.
     let mut concrete: Vec<((DefId, TyId), Span, DefId)> = vec![];
     let mut seen: FxHashSet<(DefId, TyId, DefId)> = FxHashSet::default();
@@ -258,6 +273,10 @@ pub(crate) fn check_instantiations(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
     }
     add_work(Pass::RecordKeys, work);
     report(cx, &concrete);
+    // std's unit keeps its summary for the app's check (`crate::units`).
+    if cx.units_stage == crate::units::Stage::Std {
+        cx.key_needs = KeyNeeds { needs, pneeds };
+    }
     uses
 }
 

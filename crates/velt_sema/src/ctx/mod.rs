@@ -106,6 +106,12 @@ pub(crate) struct Ctx<'m> {
     pub def_spans: DefTable<Span>,
     /// The check is by units (`CheckOptions::units`, `crate::units`).
     pub units: bool,
+    /// What each generic function of a finished unit needs of its type arguments to be a valid
+    /// record key, and the param calls that reach it (`record_keys`): that unit's summary, which
+    /// a later unit's check starts from (`crate::units`).
+    pub key_needs: crate::record_keys::KeyNeeds,
+    /// The same for `struct_tuples`' checks.
+    pub tuple_summaries: crate::struct_tuples::Summaries,
     /// Which part of a check by units this context checks (`crate::units`).
     pub units_stage: crate::units::Stage,
     /// Where the unit being checked starts (`crate::units`): the passes after the bodies take
@@ -574,6 +580,8 @@ impl<'m> Ctx<'m> {
             def_spans: DefTable::default(),
             units: false,
             unit_base: 0,
+            key_needs: Default::default(),
+            tuple_summaries: Default::default(),
             units_stage: crate::units::Stage::Both,
             scopes: modules
                 .iter()
