@@ -1,0 +1,15 @@
+// A promise passed to a function returning it as `Promise<unknown>`, compared with the result,
+// then awaited (#2999): it read freed memory. Output checked against Node. Known failing under
+// #2909 (the identity of a converted promise and its caught rejection, on the executor in Velt).
+async function f(n: number): Promise<number> { await Promise.resolve(); return n; }
+async function bad(): Promise<number> { await Promise.resolve(); throw new Error("x"); }
+function widen(p: Promise<number>): Promise<unknown> { return p; }
+async function main() {
+  const p = f(1);
+  console.log(widen(p) === p);
+  const b = bad();
+  const wb = widen(b);
+  try { await b; } catch (e) { console.log("caught"); }
+  console.log(await p, wb === b);
+}
+main();

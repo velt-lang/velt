@@ -40,7 +40,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
     /// result is used as a value (not awaited or spawned right away), so `p` starts now.
     pub(super) fn promise_widen(&mut self, p: &hir::Expr, ty: TyId, start: bool) -> Operand {
         let (from, to) = (self.sub(p.ty), self.sub(ty));
-        let fut = self.take_promise(p);
+        let fut = self.held_promise(p);
         if self.dead() {
             return unit();
         }
@@ -87,6 +87,33 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let alias = vec![Operand::Copy(Place::local(d)), inner, quiet];
         self.call_rt(Rt::FutAlias, alias, None);
         self.owned_result(Some(d), to)
+    }
+
+    /// The promise `e` as an owned holder for a wrapper that converts it (`PromiseWiden`) or
+    /// stands for it (`PromiseSame`). A variable or field read without a move stays its owner's:
+    /// `widen(p)`, where `widen` borrows its `Promise<T, E>` param and `p` is awaited later, gets
+    /// a share of `p` (#2999), not `p` taken out of its place as an `await` takes it
+    /// ([`take_promise`](Self::take_promise)).
+    pub(super) fn held_promise(&mut self, e: &hir::Expr) -> Operand {
+        use hir::ExprKind as K;
+        use hir::UseMode::Move;
+        let kept = match &e.kind {
+            K::Local(_, m)
+            | K::Field { mode: m, .. }
+            | K::Index { mode: m, .. }
+            | K::UnwrapSome(_, m)
+            | K::UnwrapVariant { mode: m, .. } => *m != Move,
+            _ => false,
+        };
+        if !kept {
+            return self.take_promise(e);
+        }
+        let v = self.expr(e);
+        if self.dead() {
+            return v;
+        }
+        let ty = self.sub(e.ty);
+        self.share_value(v, ty)
     }
 
     /// `(state, cx) -> u32` of the widening wrapper (see module docs).

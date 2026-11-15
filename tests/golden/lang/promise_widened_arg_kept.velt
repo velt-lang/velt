@@ -1,0 +1,47 @@
+// A promise passed to a parameter whose type allows errors it never throws is converted for the
+// call, and the variable still holds it: awaiting it afterwards gets its value, stored, kept in
+// a field, a union and an array, awaited before the conversion, and a field or an element
+// converted (#2999). Output checked against Node.
+async function f(n: number): Promise<number> { await Promise.resolve(); return n; }
+async function maybe(n: number, fail: boolean): Promise<number> {
+  await Promise.resolve();
+  if (fail) throw new Error("x" + n);
+  return n;
+}
+function widen(p: Promise<number>): Promise<unknown> { return p; }
+function pass(p: Promise<number>): Promise<number> { return p; }
+function either(p: Promise<number>): Promise<number> | string { return p; }
+class Holder { p: Promise<number>; constructor(p: Promise<number>) { this.p = p; } }
+async function main() {
+  const p = f(1);
+  widen(p).then(() => {});
+  const b = maybe(2, false);
+  const wb = widen(b);
+  console.log(await p, await b);
+  const q = f(3);
+  const kept = pass(q);
+  const h = new Holder(q);
+  const u = either(q);
+  console.log(await q, await kept, await h.p, typeof u);
+  const r = f(4);
+  console.log(await r);
+  const wr = widen(r);
+  console.log(await r, await wr);
+  const xs = [f(5), maybe(6, false)];
+  const ws = xs.map((x) => widen(x));
+  console.log(await xs[0], await xs[1], ws.length);
+  let l = f(7);
+  const wl = widen(l);
+  console.log(await l, await wl);
+  const c = maybe(8, true);
+  try { await widen(c); } catch (e) { console.log("caught", (e as Error).message); }
+  try { await c; } catch (e) { console.log("caught again", (e as Error).message); }
+  console.log(await wb);
+  const hf = new Holder(f(9));
+  const wf = widen(hf.p);
+  console.log(await hf.p, await wf);
+  const ys = [f(10)];
+  const we = widen(ys[0]);
+  console.log(await ys[0], await we);
+}
+main();

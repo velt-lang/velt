@@ -29,7 +29,7 @@ impl FnLower<'_, '_> {
             return unit();
         }
         let w = self.copy_to_temp(fut, Ty::Ptr);
-        let held = self.take_promise(p);
+        let held = self.held_promise(p);
         if self.dead() {
             return unit();
         }
