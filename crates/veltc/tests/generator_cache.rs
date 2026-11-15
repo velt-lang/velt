@@ -253,7 +253,10 @@ fn an_offer_that_no_longer_covers_the_program_is_replaced() {
     std::fs::write(dir.join("gen.velt"), FIELDS).expect("gen");
     let main = dir.join("main.velt");
     let write = |text: String| std::fs::write(&main, text).expect("main");
-    write(program("class User { name = \"\"; }", "console.log(fields<User>());"));
+    write(program(
+        "class User { name = \"\"; }",
+        "console.log(fields<User>());",
+    ));
     assert_eq!(checks(&dir, &cache), 1);
     assert_eq!(checks(&dir, &cache), 1, "the offer covers the program");
     write(program(
