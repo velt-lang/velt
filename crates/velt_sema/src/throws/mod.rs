@@ -37,7 +37,7 @@ use velt_common::Span;
 
 pub(crate) use fn_types::FnSites;
 pub(crate) use fn_types::FnTypeSeeds;
-pub(crate) use groups::Groups;
+pub(crate) use groups::{Groups, UnitGroups};
 pub(crate) use infer::infer_all;
 pub(crate) use inits::InitsSeen;
 pub(crate) use promise_sites::written_init_type;

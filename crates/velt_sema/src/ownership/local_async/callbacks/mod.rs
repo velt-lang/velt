@@ -82,7 +82,7 @@ pub(super) fn check_crossing_callbacks(cx: &mut Ctx, g: &Graph, flags: &[u8]) ->
         bodies.homes = homes(cx, g);
     }
     let mut why: Vec<Option<Why>> = vec![None; g.nodes.len()];
-    let below = types::subclass_map(cx);
+    let below = cx.subclass_map().clone();
     let mut seen = FxHashMap::default();
     let mut fns: FxHashMap<TyId, Why> = FxHashMap::default();
     let mut rooted = 0;

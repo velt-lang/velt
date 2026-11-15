@@ -33,6 +33,8 @@ pub(crate) struct AsyncSummaries {
     /// (`generic_closures::DynCalls::sites`): a later unit's check does not follow those calls,
     /// so their type parameters stay generic there (any closure).
     pub(super) dyn_owners: FxHashSet<DefId>,
+    /// [`crossing_closure_params`], found once as the unit's stage ends.
+    pub(super) crossing: Vec<(DefId, usize, Option<Why>)>,
 }
 
 /// The finished unit's functions the unit calls: their parameters flow to what they return.
@@ -105,7 +107,12 @@ pub(super) fn merge(cx: &Ctx, g: &mut graph::Graph) {
 /// The finished unit's closures with a parameter that crosses, by the parameter's position
 /// among the declared ones, with why: their literals are in the finished unit's bodies, which
 /// this unit's graph does not walk (`call_sites::crossing_params`).
-pub(super) fn crossing_closure_params(cx: &Ctx) -> Vec<(DefId, usize, Option<Why>)> {
+pub(super) fn crossing_closure_params<'c>(cx: &'c Ctx<'_>) -> &'c [(DefId, usize, Option<Why>)] {
+    &cx.unit_sums.async_summaries.crossing
+}
+
+/// [`crossing_closure_params`] of the unit whose summaries were just made.
+pub(super) fn find_crossing_closure_params(cx: &Ctx) -> Vec<(DefId, usize, Option<Why>)> {
     let mut out = vec![];
     for (f, ps) in &cx.unit_sums.async_summaries.params {
         if cx

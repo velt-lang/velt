@@ -63,7 +63,8 @@ pub(crate) fn changes(cx: &Ctx, d: DefId) -> bool {
 /// nothing changes (a walk over who reads and calls what, so each is handled once). One that
 /// can't be kept (it holds a promise) is an error.
 pub(crate) fn keep_readers(cx: &mut Ctx) {
-    let consts: Vec<DefId> = (0..cx.info.len())
+    // Only constants outside std: a finished unit (std's) holds none.
+    let consts: Vec<DefId> = (cx.unit_base as usize..cx.info.len())
         .map(|i| DefId(i as u32))
         .filter(|&d| {
             cx.global(d).is_some_and(|g| {

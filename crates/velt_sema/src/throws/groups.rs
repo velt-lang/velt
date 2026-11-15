@@ -93,10 +93,38 @@ impl Groups {
     }
 }
 
+#[derive(Clone, Debug, Default)]
 struct UnionFind {
     ids: FxHashMap<Node, usize>,
     nodes: Vec<Node>,
     parent: Vec<usize>,
+}
+
+/// A finished unit's part of the groups (`crate::units`): the union-find after linking its
+/// interfaces, implementations and vtables, its bounds and roots, and what assembling the groups
+/// reads of its nodes. A later unit's build starts from it and links only its own definitions,
+/// instead of walking every definition of the finished unit again.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct UnitGroups {
+    uf: UnionFind,
+    bounds: Vec<(Node, GroupBound)>,
+    roots: Vec<DefId>,
+    upcasts: rustc_hash::FxHashSet<(DefId, DefId)>,
+    /// The implementations and definitions linked: later ones are a later unit's.
+    impls: usize,
+    defs: usize,
+    /// Per node of `uf`, and per root: what assembling the groups reads of it.
+    nodes: Vec<NodeFact>,
+    root_owners: FxHashMap<DefId, Option<(GroupOwner, bool)>>,
+}
+
+/// What assembling the groups reads of a node: a generator (no member), a member, or an
+/// interface method slot with its owner and whether it returns a promise.
+#[derive(Clone, Debug)]
+enum NodeFact {
+    Generator,
+    Member,
+    Slot(Option<(GroupOwner, bool)>),
 }
 
 impl UnionFind {
@@ -128,16 +156,22 @@ impl UnionFind {
     }
 }
 
-/// Build the groups; reports conflicting or generic bounds.
+/// Build the groups; reports conflicting or generic bounds. By units, the app's build starts
+/// from std's part (`UnitGroups`), which std's stage keeps.
 pub(crate) fn build(cx: &mut Ctx) -> Groups {
-    let mut uf = UnionFind {
-        ids: FxHashMap::default(),
-        nodes: vec![],
-        parent: vec![],
+    let from = match cx.units_stage {
+        crate::units::Stage::App => cx.unit_sums.groups.clone(),
+        _ => None,
     };
-    let mut bounds: Vec<(Node, GroupBound)> = vec![];
-    link_interfaces(cx, &mut uf, &mut bounds);
-    let roots = link_vtables(cx, &mut uf, &mut bounds);
+    let mut unit = from.unwrap_or_default();
+    let (impls, defs) = (unit.impls, unit.defs);
+    let mut uf = std::mem::take(&mut unit.uf);
+    let mut bounds = std::mem::take(&mut unit.bounds);
+    let mut roots = std::mem::take(&mut unit.roots);
+    link_interfaces(cx, &mut uf, &mut bounds, &mut unit.upcasts, (impls, defs));
+    roots.extend(link_vtables(cx, &mut uf, &mut bounds, defs));
+    let keep = (cx.units_stage == crate::units::Stage::Std)
+        .then(|| (uf.clone(), bounds.clone(), roots.clone()));
     let mut groups = Groups::default();
     let mut by_root: FxHashMap<usize, usize> = FxHashMap::default();
     for i in 0..uf.nodes.len() {
@@ -146,31 +180,29 @@ pub(crate) fn build(cx: &mut Ctx) -> Groups {
             groups.list.push(Group::default());
             groups.list.len() - 1
         });
-        match uf.nodes[i] {
-            Node::Def(d) if cx.try_fn(d).is_some_and(|f| f.is_generator) => {}
-            Node::Def(d) => {
+        if i >= unit.nodes.len() {
+            let fact = node_fact(cx, uf.nodes[i]);
+            unit.nodes.push(fact);
+        }
+        match (uf.nodes[i], &unit.nodes[i]) {
+            (Node::Def(_), NodeFact::Generator) => {}
+            (Node::Def(d), _) => {
                 groups.of.insert(d, g);
                 groups.list[g].members.push(d);
             }
-            Node::Slot(iface, s) => {
+            (Node::Slot(iface, s), fact) => {
                 groups.slots.insert((iface, s), g);
-                let Some(i) = cx.iface(iface) else { continue };
-                let Some(m) = i.methods.get(s as usize) else {
+                let NodeFact::Slot(Some((owner, promise))) = fact else {
                     continue;
                 };
-                let owner = GroupOwner {
-                    name: format!("{}.{}", i.name, m.name),
-                    interface: true,
-                    ret: m.ret,
-                };
-                if cx.ty.promise_payload(owner.ret).is_some() {
+                if *promise {
                     groups.list[g].promise = true;
                 }
-                groups.list[g].owner = Some(owner);
+                groups.list[g].owner = Some(owner.clone());
             }
         }
     }
-    for root in roots {
+    for &root in &roots {
         let Some(&g) = groups.of.get(&root) else {
             continue;
         };
@@ -178,17 +210,31 @@ pub(crate) fn build(cx: &mut Ctx) -> Groups {
         if g.owner.as_ref().is_some_and(|o| o.interface) {
             continue;
         }
-        let f = cx.fn_info(root);
-        let owner = GroupOwner {
-            name: f.name.rsplit("::").next().unwrap_or(&f.name).to_string(),
-            interface: false,
-            ret: f.ret,
+        let owned = match unit.root_owners.get(&root) {
+            Some(o) => o.clone(),
+            None => {
+                let o = root_owner(cx, root);
+                unit.root_owners.insert(root, o.clone());
+                o
+            }
         };
-        // Getters cannot be `async`: a getter's errors are thrown, whatever it returns.
-        if !f.is_getter && cx.ty.promise_payload(owner.ret).is_some() {
+        let Some((owner, promise)) = owned else {
+            continue;
+        };
+        if promise {
             g.promise = true;
         }
         g.owner = Some(owner);
+    }
+    if let Some((uf, bounds, roots)) = keep {
+        cx.unit_sums.groups = Some(UnitGroups {
+            uf,
+            bounds,
+            roots,
+            impls: cx.impls.len(),
+            defs: cx.info.len(),
+            ..unit
+        });
     }
     for (n, b) in bounds {
         let i = uf.id(n);
@@ -251,10 +297,48 @@ fn report(cx: &mut Ctx, d: Diagnostic) {
     }
 }
 
-fn link_interfaces(cx: &mut Ctx, uf: &mut UnionFind, bounds: &mut Vec<(Node, GroupBound)>) {
-    let impls: Vec<(DefId, Vec<DefId>)> = cx
-        .impls
-        .iter()
+/// What assembling the groups reads of node `n` (see [`NodeFact`]).
+fn node_fact(cx: &Ctx, n: Node) -> NodeFact {
+    match n {
+        Node::Def(d) if cx.try_fn(d).is_some_and(|f| f.is_generator) => NodeFact::Generator,
+        Node::Def(_) => NodeFact::Member,
+        Node::Slot(iface, s) => NodeFact::Slot(cx.iface(iface).and_then(|i| {
+            let m = i.methods.get(s as usize)?;
+            let owner = GroupOwner {
+                name: format!("{}.{}", i.name, m.name),
+                interface: true,
+                ret: m.ret,
+            };
+            let promise = cx.ty.promise_payload(owner.ret).is_some();
+            Some((owner, promise))
+        })),
+    }
+}
+
+/// The owner of the group of base method `root`, and whether its group returns promises.
+fn root_owner(cx: &Ctx, root: DefId) -> Option<(GroupOwner, bool)> {
+    let f = cx.try_fn(root)?;
+    let owner = GroupOwner {
+        name: f.name.rsplit("::").next().unwrap_or(&f.name).to_string(),
+        interface: false,
+        ret: f.ret,
+    };
+    // Getters cannot be `async`: a getter's errors are thrown, whatever it returns.
+    let promise = !f.is_getter && cx.ty.promise_payload(owner.ret).is_some();
+    Some((owner, promise))
+}
+
+/// Link the interface method slots with their implementations and defaults, for the
+/// implementations and definitions from `from` on (a later unit's), and the upcasts not in
+/// `seen` (which it extends).
+fn link_interfaces(
+    cx: &mut Ctx,
+    uf: &mut UnionFind,
+    bounds: &mut Vec<(Node, GroupBound)>,
+    seen: &mut rustc_hash::FxHashSet<(DefId, DefId)>,
+    from: (usize, usize),
+) {
+    let impls: Vec<(DefId, Vec<DefId>)> = (cx.impls.get(from.0..).unwrap_or_default().iter())
         .map(|imp| (imp.iface, imp.methods.clone()))
         .collect();
     for (iface, methods) in impls {
@@ -262,7 +346,7 @@ fn link_interfaces(cx: &mut Ctx, uf: &mut UnionFind, bounds: &mut Vec<(Node, Gro
             uf.union(Node::Slot(iface, slot as u32), Node::Def(m));
         }
     }
-    for i in 0..cx.info.len() {
+    for i in from.1..cx.info.len() {
         let DefInfo::Iface(info) = &cx.info[i] else {
             continue;
         };
@@ -282,6 +366,9 @@ fn link_interfaces(cx: &mut Ctx, uf: &mut UnionFind, bounds: &mut Vec<(Node, Gro
     }
     // A method of `want` is filled by the method of that name of `have` (`upcast_impl`).
     for (have, want) in cx.synth_ifaces.upcasts.clone() {
+        if !seen.insert((have, want)) {
+            continue;
+        }
         let (Some(h), Some(w)) = (cx.iface(have), cx.iface(want)) else {
             continue;
         };
@@ -299,9 +386,10 @@ fn link_vtables(
     cx: &mut Ctx,
     uf: &mut UnionFind,
     bounds: &mut Vec<(Node, GroupBound)>,
+    from: usize,
 ) -> Vec<DefId> {
     let mut roots = vec![];
-    for i in 0..cx.info.len() {
+    for i in from..cx.info.len() {
         let DefInfo::Adt(a) = &cx.info[i] else {
             continue;
         };

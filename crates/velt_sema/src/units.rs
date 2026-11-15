@@ -107,6 +107,15 @@ pub(crate) struct Summaries {
     pub(crate) lock_summaries: crate::ownership::LockSummaries,
     /// The modules each module of a finished unit names (`crate::linked`).
     pub(crate) module_edges: crate::linked::ModuleEdges,
+    /// A finished unit's part of the dispatch groups (`throws::groups`).
+    pub(crate) groups: Option<crate::throws::UnitGroups>,
+    /// A finished unit's dispatch groups for the modes' joins (`ownership::mutation`).
+    pub(crate) dispatch: Option<crate::ownership::UnitDispatch>,
+    /// A finished unit's functions with a generator, and how many definitions it has
+    /// (`Ctx::generated_fns`).
+    pub(crate) generated_fns: Option<(rustc_hash::FxHashSet<crate::hir::DefId>, usize)>,
+    /// A finished unit's classes below each class (`Ctx::subclass_map`).
+    pub(crate) subclasses: Option<crate::ctx::classes::SubclassMap>,
 }
 
 /// std's part of two per-module facts ([`Order::std_facts`]).
@@ -208,4 +217,11 @@ pub(crate) fn remap_module_facts(cx: &mut Ctx, at: &dyn Fn(usize) -> Option<usiz
     }
     cx.global_props.remap(at);
     cx.objects.brands.remap(at);
+}
+
+/// Keep the indexes of a finished unit (std's, as its stage ends) that a later unit's
+/// stage extends with its own definitions instead of walking every definition again.
+pub(crate) fn keep_indexes(cx: &mut Ctx) {
+    let generated = cx.generated_fns();
+    cx.unit_sums.generated_fns = Some((generated, cx.info.len()));
 }

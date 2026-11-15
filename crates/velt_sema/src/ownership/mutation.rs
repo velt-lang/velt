@@ -194,10 +194,38 @@ enum Group {
     },
 }
 
+/// A finished unit's dispatch groups for the modes' joins (`crate::units`): its vtable groups,
+/// and the implementations of each interface method slot, which a later unit's groups start from
+/// instead of walking the finished unit's definitions again.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct UnitDispatch {
+    vtables: Vec<Vec<DefId>>,
+    vtable_of: FxHashMap<DefId, usize>,
+    slots: FxHashMap<(DefId, usize), Vec<DefId>>,
+    /// The implementations and definitions it covers.
+    impls: usize,
+    defs: usize,
+}
+
 impl Dispatch {
-    /// The dispatch groups of the whole program.
-    pub(super) fn new(cx: &Ctx) -> Dispatch {
-        let mut groups: Vec<Group> = vtable_groups(cx).into_iter().map(Group::Vtable).collect();
+    /// The dispatch groups of the whole program (by units: those with a member of the unit
+    /// being checked, from what std's stage kept).
+    pub(super) fn new(cx: &mut Ctx) -> Dispatch {
+        let unit = match cx.units_stage {
+            crate::units::Stage::App => cx.unit_sums.dispatch.clone(),
+            _ => None,
+        };
+        let (vtables, slots) = match &unit {
+            Some(u) => (unit_vtable_groups(cx, u), unit_iface_slots(cx, u)),
+            None => {
+                let (v, s) = (vtable_groups(cx, 0), iface_slots(cx));
+                if cx.units_stage == crate::units::Stage::Std {
+                    cx.unit_sums.dispatch = Some(keep_dispatch(cx, &v, &s));
+                }
+                (v, s)
+            }
+        };
+        let mut groups: Vec<Group> = vtables.into_iter().map(Group::Vtable).collect();
         // A generated function and the generated bodies of its instances share one ABI: callers
         // are checked against the function, lowering calls the bodies (`crate::generated`).
         let mut generated: FxHashMap<DefId, Vec<DefId>> = FxHashMap::default();
@@ -207,7 +235,7 @@ impl Dispatch {
         let mut generated: Vec<Vec<DefId>> = generated.into_values().collect();
         generated.sort();
         groups.extend(generated.into_iter().map(Group::Vtable));
-        groups.extend(iface_slots(cx));
+        groups.extend(slots);
         // Only groups with a member of the unit being checked (`crate::units`): a finished
         // unit's groups were joined with it.
         let base = cx.unit_base;
@@ -280,8 +308,97 @@ impl Dispatch {
     }
 }
 
-/// Methods in the same vtable slot of a class and its base classes (union-find over vtables).
-fn vtable_groups(cx: &Ctx) -> Vec<Vec<DefId>> {
+/// What std's stage keeps of its groups ([`UnitDispatch`]).
+fn keep_dispatch(cx: &Ctx, vtables: &[Vec<DefId>], slots: &[Group]) -> UnitDispatch {
+    let mut unit = UnitDispatch {
+        vtables: vtables.to_vec(),
+        impls: cx.impls.len(),
+        defs: cx.info.len(),
+        ..UnitDispatch::default()
+    };
+    for (g, methods) in vtables.iter().enumerate() {
+        for &m in methods {
+            unit.vtable_of.insert(m, g);
+        }
+    }
+    for group in slots {
+        if let Group::Iface { iface, slot, .. } = group {
+            let impls = (cx.impls.iter())
+                .filter(|i| i.iface == *iface)
+                .filter_map(|i| i.methods.get(*slot).copied())
+                .collect();
+            unit.slots.insert((*iface, *slot), impls);
+        }
+    }
+    unit
+}
+
+/// The vtable groups of the classes after `unit`'s, each with the finished unit's group of its
+/// finished members (a class extending one of std's joins that slot's group).
+fn unit_vtable_groups(cx: &Ctx, unit: &UnitDispatch) -> Vec<Vec<DefId>> {
+    let mut out = vec![];
+    for mut group in vtable_groups(cx, unit.defs) {
+        let olds: Vec<usize> = (group.iter())
+            .filter_map(|m| unit.vtable_of.get(m).copied())
+            .collect();
+        for g in olds {
+            group.extend(unit.vtables[g].iter().copied());
+        }
+        group.sort_unstable();
+        group.dedup();
+        out.push(group);
+    }
+    out.sort_unstable();
+    out
+}
+
+/// The interface method slots with an implementation or a declaration after `unit`'s: a
+/// finished unit's slot with the finished implementations, then the later ones, and the default.
+fn unit_iface_slots(cx: &Ctx, unit: &UnitDispatch) -> Vec<Group> {
+    let mut slots: FxHashMap<(DefId, usize), Vec<DefId>> = FxHashMap::default();
+    let mut order: Vec<(DefId, usize)> = vec![];
+    for im in cx.impls.get(unit.impls..).unwrap_or_default() {
+        // The interface's slots only, as `iface_slots` takes them.
+        let declared = cx.iface(im.iface).map_or(0, |i| i.methods.len());
+        for (slot, &m) in im.methods.iter().enumerate().take(declared) {
+            let key = (im.iface, slot);
+            let list = slots.entry(key).or_insert_with(|| {
+                order.push(key);
+                unit.slots.get(&key).cloned().unwrap_or_default()
+            });
+            list.push(m);
+        }
+    }
+    for i in unit.defs..cx.info.len() {
+        let iface = DefId(i as u32);
+        let Some(info) = cx.iface(iface) else {
+            continue;
+        };
+        for slot in 0..info.methods.len() {
+            if let std::collections::hash_map::Entry::Vacant(e) = slots.entry((iface, slot)) {
+                e.insert(vec![]);
+                order.push((iface, slot));
+            }
+        }
+    }
+    order.sort_unstable();
+    (order.into_iter())
+        .map(|(iface, slot)| {
+            let mut methods = slots.remove(&(iface, slot)).unwrap_or_default();
+            let default = cx.iface(iface).and_then(|i| i.methods.get(slot)?.default);
+            methods.extend(default);
+            Group::Iface {
+                iface,
+                slot,
+                methods,
+            }
+        })
+        .collect()
+}
+
+/// Methods in the same vtable slot of a class and its base classes (union-find over vtables),
+/// for the classes from definition `from` on.
+fn vtable_groups(cx: &Ctx, from: usize) -> Vec<Vec<DefId>> {
     let mut parent: FxHashMap<DefId, DefId> = FxHashMap::default();
     fn find(parent: &FxHashMap<DefId, DefId>, mut d: DefId) -> DefId {
         while let Some(&p) = parent.get(&d) {
@@ -292,7 +409,7 @@ fn vtable_groups(cx: &Ctx) -> Vec<Vec<DefId>> {
         }
         d
     }
-    for i in 0..cx.info.len() {
+    for i in from..cx.info.len() {
         let Some(a) = cx.adt(DefId(i as u32)) else {
             continue;
         };

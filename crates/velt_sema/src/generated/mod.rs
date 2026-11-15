@@ -24,6 +24,7 @@ pub mod model;
 pub(crate) mod phase;
 pub mod spell;
 
+use rustc_hash::FxHashSet;
 use velt_common::{FileId, Span};
 
 use crate::ctx::Ctx;
@@ -275,7 +276,20 @@ pub struct Request {
 }
 
 impl Ctx<'_> {
+    /// The functions with a generator: by units, a finished unit's (`crate::units::keep_indexes`)
+    /// and the later definitions'.
+    pub(crate) fn generated_fns(&self) -> FxHashSet<DefId> {
+        let (mut set, from) = match (self.units_stage, &self.unit_sums.generated_fns) {
+            (crate::units::Stage::App, Some((s, n))) => (s.clone(), *n),
+            _ => (FxHashSet::default(), 0),
+        };
+        let later = (from as u32..self.info.len() as u32).map(DefId);
+        set.extend(later.filter(|d| self.generator_of(*d).is_some()));
+        set
+    }
+
     /// The generator spec of a generated function.
+    #[track_caller]
     pub(crate) fn generator_of(&self, d: DefId) -> Option<&velt_syntax::ast::GeneratorSpec> {
         match self.info.get(d.0 as usize)? {
             DefInfo::Fn(f) => match f.source {
@@ -571,7 +585,9 @@ fn check_throws(cx: &mut Ctx, bound: &bind::Bound) {
 fn functions(cx: &mut Ctx) -> (Vec<GenFunction>, rustc_hash::FxHashMap<DefId, usize>) {
     let mut out = vec![];
     let mut index = rustc_hash::FxHashMap::default();
-    for d in (0..cx.info.len() as u32).map(DefId) {
+    let mut generated: Vec<DefId> = cx.generated_fns().into_iter().collect();
+    generated.sort_unstable();
+    for d in generated {
         let Some(f) = gen_function(cx, d) else {
             continue;
         };

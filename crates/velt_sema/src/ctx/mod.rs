@@ -10,7 +10,7 @@ use crate::types::Types;
 use crate::SourceModule;
 
 mod access;
-mod classes;
+pub(crate) mod classes;
 pub(crate) mod def_table;
 
 pub(crate) use def_table::DefTable;

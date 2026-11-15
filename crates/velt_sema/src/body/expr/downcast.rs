@@ -278,15 +278,14 @@ impl FnCx<'_, '_> {
 
     /// Does class `class` or one of its subclasses implement interface `iface`?
     pub(super) fn class_tree_implements(&mut self, class: DefId, iface: DefId) -> bool {
-        let classes: Vec<DefId> = (0..self.cx.info.len() as u32)
-            .map(DefId)
-            .filter(|&d| {
-                self.cx
-                    .adt(d)
-                    .is_some_and(|a| a.kind == hir::AdtKind::Class)
-                    && self.cx.class_extends(d, class)
-            })
-            .collect();
+        let is_class = |cx: &crate::ctx::Ctx, d: DefId| {
+            cx.adt(d).is_some_and(|a| a.kind == hir::AdtKind::Class)
+        };
+        let mut classes: Vec<DefId> = self.cx.subclasses_of(class);
+        if is_class(self.cx, class) {
+            classes.push(class);
+        }
+        classes.sort_unstable();
         classes.into_iter().any(|d| {
             let n = self.cx.adt(d).map_or(0, |a| a.generics.len());
             let params: Vec<TyId> = (0..n as u32).map(|i| self.cx.ty.param(i)).collect();

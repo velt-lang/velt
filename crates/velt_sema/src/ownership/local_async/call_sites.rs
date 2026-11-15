@@ -146,7 +146,7 @@ pub(super) fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> b
     }
     // A finished unit's closure whose parameter crosses (`summaries`): made in bodies this graph
     // doesn't walk, it is matched as a closure made where no walked body makes it.
-    for (c, k, why) in super::summaries::crossing_closure_params(cx) {
+    for (c, k, why) in super::summaries::crossing_closure_params(cx).to_vec() {
         if g.ids.contains_key(&Node::Lit(c)) {
             continue;
         }

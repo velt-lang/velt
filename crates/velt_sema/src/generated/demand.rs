@@ -106,12 +106,8 @@ fn reaches_error(cx: &mut Ctx, targs: &[TyId], clean: &mut FxHashSet<TyId>) -> b
 }
 
 fn compute_with(cx: &mut Ctx, walked: &mut Walked) -> Vec<Instance> {
-    let generated: FxHashSet<DefId> = crate::timings::pass("demand::generated", || {
-        (0..cx.info.len() as u32)
-            .map(DefId)
-            .filter(|d| cx.generator_of(*d).is_some())
-            .collect()
-    });
+    let generated: FxHashSet<DefId> =
+        crate::timings::pass("demand::generated", || cx.generated_fns());
     if generated.is_empty() {
         return vec![];
     }

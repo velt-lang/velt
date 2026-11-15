@@ -270,9 +270,14 @@ impl Ctx<'_> {
     /// any member is collected, so [`Self::resolve_key`] needs no `&mut`.
     /// std's first: the keys of std's methods the compiler calls (std/lang/hooks/keys.velt) get
     /// their descriptions' first names, which velt_common's `std_key!` spells.
+    /// By units, std's unit named its keys already: the app's stage names its own.
     pub(crate) fn name_symbol_keys(&mut self) {
+        let from = match self.units_stage {
+            crate::units::Stage::App => self.unit_base as usize,
+            _ => 0,
+        };
         for std in [true, false] {
-            for i in 0..self.info.len() {
+            for i in from..self.info.len() {
                 let d = DefId(i as u32);
                 let Some(g) = self.global(d) else {
                     continue;

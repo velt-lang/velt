@@ -200,10 +200,7 @@ fn requirements(cx: &mut Ctx, u: &Uses, needs: &Needs) -> Vec<(TyId, Span, Need,
 fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
     let mut out = vec![];
     // Calls of generated functions look at their type arguments' shapes (`generated_look`).
-    let generated: FxHashSet<DefId> = (0..cx.info.len() as u32)
-        .map(DefId)
-        .filter(|d| cx.generator_of(*d).is_some())
-        .collect();
+    let generated: FxHashSet<DefId> = cx.generated_fns();
     // `JSON.parse<T>` calls the generated `parseJsonTop<T>` (velt/encoding/json): its calls
     // decode `T`, which extended layouts need to know (`layouts.parsed`).
     let parsers: FxHashSet<DefId> = generated

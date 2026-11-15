@@ -17,7 +17,8 @@ pub(super) struct Bodies {
 impl Bodies {
     pub(super) fn new(cx: &Ctx) -> Bodies {
         let mut out = Bodies::default();
-        for (i, def) in cx.defs.iter().enumerate() {
+        // A finished unit (std's) is library code.
+        for (i, def) in cx.defs.iter().enumerate().skip(cx.unit_base as usize) {
             let d = DefId(i as u32);
             let Some(Def::Fn(f)) = def else { continue };
             if in_library(cx, d) {

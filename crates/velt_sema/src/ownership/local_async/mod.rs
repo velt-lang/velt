@@ -95,6 +95,8 @@ pub(crate) struct Crossing {
 /// Decide which async closures are local, mark them (`FnDef::shares_captures`), and report the
 /// non-local ones that modify a captured variable.
 pub(crate) fn infer_local_async(cx: &mut Ctx) {
+    // The classes below each class, built once for the walks below (`types::subclasses_read`).
+    cx.subclass_map();
     cx.crossing_callbacks.clear();
     cx.in_shared.clear();
     let mut g = crate::timings::pass("local_async::graph", || graph::build(cx));
@@ -112,7 +114,7 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
     let mut resolved = 0;
     let mut dyn_done = 0;
     // The classes below each class, for the heap rule's walk of crossing types.
-    let below = types::subclass_map(cx);
+    let below = cx.subclass_map().clone();
     // The types a stored closure literal's type has in its function's instantiations, by the
     // function and the type.
     let mut lit_insts: FxHashMap<(DefId, TyId), Vec<TyId>> = FxHashMap::default();
@@ -223,6 +225,8 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
     }
     if cx.units_stage == crate::units::Stage::Std {
         cx.unit_sums.async_summaries = summaries::of(cx, &g, &p);
+        let crossing = summaries::find_crossing_closure_params(cx);
+        cx.unit_sums.async_summaries.crossing = crossing;
     }
     let reported = callbacks::check_crossing_callbacks(cx, &g, &p.flags);
     for (n, node) in g.nodes.iter().enumerate() {

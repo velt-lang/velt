@@ -22,7 +22,8 @@ pub(super) struct Closures {
 impl Closures {
     pub(super) fn of(cx: &Ctx) -> Closures {
         let mut out = Closures::default();
-        for &d in &cx.fn_defs {
+        // A finished unit (std's) has none of the program's closures.
+        for &d in cx.fn_defs.iter().filter(|d| d.0 >= cx.unit_base) {
             // Std's own closures are not followed: a call of one by the name it is bound to
             // keeps every conflict (`exclusive::Checker::relaxed_callee`). A program's closures
             // are created in the program's functions.

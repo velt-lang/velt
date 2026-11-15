@@ -65,7 +65,7 @@ pub(super) fn dispatch_targets(cx: &Ctx, callee: &Callee, args: &[Expr]) -> Vec<
         (Callee::ParamMethod { iface, slot, .. }, _) => impl_methods(*iface, *slot),
         (Callee::Virtual { slot }, Some(crate::hir::TyKind::Adt(class, _))) => {
             let mut classes = vec![class];
-            classes.extend(super::types::subclasses(cx, class));
+            classes.extend(super::types::subclasses_read(cx, class));
             (classes.iter())
                 .filter_map(|c| match &cx.info[c.0 as usize] {
                     DefInfo::Adt(a) => a.vtable.get(*slot as usize).copied(),

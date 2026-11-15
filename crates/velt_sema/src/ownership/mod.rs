@@ -28,6 +28,7 @@ pub(crate) mod local_closures;
 mod locked;
 mod many;
 mod mutation;
+pub(crate) use mutation::UnitDispatch;
 mod patch;
 mod shares;
 mod soft;

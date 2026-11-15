@@ -33,11 +33,11 @@ pub(crate) struct Facts {
     loops: FxHashSet<Span>,
 }
 
-struct Collect<'a> {
+struct Collect<'a, 'm> {
     facts: &'a mut Facts,
-    ctors: &'a FxHashMap<DefId, DefId>,
-    /// Constructors: `super(...)` passes `this` upcast to one.
-    ctor_fns: &'a FxHashSet<DefId>,
+    /// The definitions: a class's constructor, and whether a function is one (`super(...)`
+    /// passes `this` upcast to one), are read from them as calls reach them.
+    info: &'a crate::ctx::def_table::DefTable<DefInfo<'m>>,
     /// Spans of `this` upcast for a base constructor (`super(...)`), which is not a use of the
     /// subclass as its base: counting it would give every subclass constructor its overrides'
     /// copies.
@@ -46,7 +46,7 @@ struct Collect<'a> {
     guards: FxHashMap<*const Expr, u64>,
 }
 
-impl Collect<'_> {
+impl Collect<'_, '_> {
     fn call(&mut self, e: &Expr, d: DefId, targs: Vec<TyId>) {
         self.facts.calls.push((d, targs, e.span));
         let guard = self.guards.get(&(e as *const Expr)).copied().unwrap_or(0);
@@ -54,7 +54,7 @@ impl Collect<'_> {
     }
 }
 
-impl crate::visit_ref::Visit for Collect<'_> {
+impl crate::visit_ref::Visit for Collect<'_, '_> {
     fn stmt(&mut self, s: &crate::hir::Stmt) {
         if let StmtKind::ForOf { iter, .. } = &s.kind {
             self.facts.loops.insert(iter.span);
@@ -75,7 +75,8 @@ impl crate::visit_ref::Visit for Collect<'_> {
                 callee: Callee::Def(d, targs),
                 args,
             } => {
-                if self.ctor_fns.contains(d) {
+                let ctor = matches!(self.info.get(d.0 as usize), Some(DefInfo::Fn(f)) if f.kind == crate::defs::FnKind::Ctor);
+                if ctor {
                     if let Some(
                         recv @ Expr {
                             kind: E::Upcast(_), ..
@@ -97,7 +98,11 @@ impl crate::visit_ref::Visit for Collect<'_> {
                 type_args,
                 args,
             } if !type_args.is_empty() && !args.iter().all(is_empty_array) => {
-                if let Some(&ctor) = self.ctors.get(def) {
+                let ctor = match self.info.get(def.0 as usize) {
+                    Some(DefInfo::Adt(a)) => a.ctor,
+                    _ => None,
+                };
+                if let Some(ctor) = ctor {
                     let targs = type_args.clone();
                     self.call(e, ctor, targs);
                 }
@@ -136,13 +141,6 @@ fn is_empty_array(e: &Expr) -> bool {
 /// The facts of every function body, in definition order (also `crate::weak_threads`).
 /// The facts of each function body from definition `from` on.
 pub(crate) fn collect(cx: &mut Ctx, from: usize) -> Vec<(DefId, Facts)> {
-    let ctors: FxHashMap<DefId, DefId> = (0..cx.info.len())
-        .filter_map(|i| match &cx.info[i] {
-            DefInfo::Adt(a) => a.ctor.map(|c| (DefId(i as u32), c)),
-            _ => None,
-        })
-        .collect();
-    let ctor_fns: FxHashSet<DefId> = ctors.values().copied().collect();
     let mut out = vec![];
     for (i, d) in cx.defs.iter().enumerate().skip(from) {
         let Some(Def::Fn(f)) = d else { continue };
@@ -160,8 +158,7 @@ pub(crate) fn collect(cx: &mut Ctx, from: usize) -> Vec<(DefId, Facts)> {
             &f.body.block,
             &mut Collect {
                 facts: &mut facts,
-                ctors: &ctors,
-                ctor_fns: &ctor_fns,
+                info: &cx.info,
                 super_receivers: FxHashSet::default(),
                 guards,
             },

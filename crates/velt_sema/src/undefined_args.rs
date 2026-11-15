@@ -69,6 +69,8 @@ pub(crate) struct UndefinedFacts {
     uses: Vec<(DefId, Vec<TyId>, Span)>,
     ty_uses: Vec<(TyId, Span)>,
     seen_tys: FxHashSet<TyId>,
+    /// The definitions that keep a nothing apart from a missing entry ([`keeps_null_apart`]).
+    apart: FxHashSet<DefId>,
 }
 
 pub(crate) fn check_instantiations(cx: &mut Ctx) {
@@ -105,12 +107,9 @@ pub(crate) fn check_instantiations(cx: &mut Ctx) {
         edges,
         mut uses,
         ty_uses,
+        apart,
         ..
     } = f;
-    let apart: FxHashSet<DefId> = (0..cx.defs.len() as u32)
-        .map(DefId)
-        .filter(|&d| keeps_null_apart(cx, d))
-        .collect();
     propagate(&mut masks, &edges, &apart);
     for (t, span) in ty_uses {
         let mut stack = vec![t];
@@ -188,7 +187,13 @@ fn facts(cx: &Ctx, from: usize, f: &mut UndefinedFacts) {
         uses,
         ty_uses,
         seen_tys,
+        apart,
     } = f;
+    apart.extend(
+        (from as u32..cx.defs.len() as u32)
+            .map(DefId)
+            .filter(|&d| keeps_null_apart(cx, d)),
+    );
     for i in from..cx.defs.len() {
         let d = DefId(i as u32);
         let (own, body) = match cx.defs.get(i) {

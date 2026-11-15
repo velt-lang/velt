@@ -84,7 +84,7 @@ pub(super) fn adt_parts(cx: &mut Ctx, d: crate::hir::DefId, args: &[TyId]) -> Ve
 
 /// What a value of class, struct or union `d<args>` holds: its fields (with those of every
 /// subclass in `below`, whose own parameters are not followed) or its variants' payloads. The
-/// classes come from a map built once ([`subclass_map`]), where a walk over every definition per
+/// classes come from a map built once (`Ctx::subclass_map`), where a walk over every definition per
 /// class would cost too much.
 pub(super) fn adt_parts_below(
     cx: &mut Ctx,
@@ -117,31 +117,17 @@ pub(super) fn adt_parts_below(
     out
 }
 
-/// Every class that extends another, directly or not, by that other class ([`subclasses`] for
-/// every class at once): one walk over the definitions instead of one per class.
-pub(super) fn subclass_map(cx: &Ctx) -> FxHashMap<crate::hir::DefId, Vec<crate::hir::DefId>> {
-    let base_of = |i: usize| match &cx.info[i] {
-        DefInfo::Adt(a) => a.base.and_then(|b| match cx.ty.kind(b) {
-            TyKind::Adt(bd, _) => Some(*bd),
-            _ => None,
-        }),
-        _ => None,
-    };
-    let mut out: FxHashMap<crate::hir::DefId, Vec<crate::hir::DefId>> = FxHashMap::default();
-    for i in 0..cx.info.len() {
-        let mut b = base_of(i);
-        let mut hops = 0;
-        while let (Some(bd), true) = (b, hops <= 64) {
-            out.entry(bd).or_default().push(crate::hir::DefId(i as u32));
-            hops += 1;
-            b = base_of(bd.0 as usize);
-        }
-    }
-    out
+/// Every class that extends `d`, directly or not.
+pub(super) fn subclasses(cx: &mut Ctx, d: crate::hir::DefId) -> Vec<crate::hir::DefId> {
+    cx.subclasses_of(d)
 }
 
-/// Every class that extends `d`, directly or not.
-pub(super) fn subclasses(cx: &Ctx, d: crate::hir::DefId) -> Vec<crate::hir::DefId> {
+/// [`subclasses`] where the context can't be changed: from the map the analysis builds first
+/// (`super::infer_local_async`), else by a walk over the definitions.
+pub(super) fn subclasses_read(cx: &Ctx, d: crate::hir::DefId) -> Vec<crate::hir::DefId> {
+    if let Some(map) = &cx.subclasses {
+        return map.get(&d).cloned().unwrap_or_default();
+    }
     let base_of = |i: usize| match &cx.info[i] {
         DefInfo::Adt(a) => a.base.and_then(|b| match cx.ty.kind(b) {
             TyKind::Adt(bd, _) => Some(*bd),

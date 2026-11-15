@@ -41,7 +41,7 @@ pub(super) struct Summary {
 /// on those of the functions it calls by name, and a unit calls a later unit's functions only
 /// through values and slots (unknown callees), so the unit's summaries are final.
 #[derive(Clone, Default)]
-pub(crate) struct LockSummaries(FxHashMap<DefId, Summary>);
+pub(crate) struct LockSummaries(FxHashMap<DefId, Summary>, FxHashMap<DefId, Vec<LocalId>>);
 
 /// The summaries of the program's functions (not of closures, which are called as values).
 pub(super) struct Summaries {
@@ -68,15 +68,20 @@ impl Summaries {
                 d.0 >= base && info.state == BodyState::Done && info.kind != FnKind::Closure
             })
             .collect();
-        let captures = (0..cx.defs.len())
-            .filter_map(|i| match &cx.defs[i] {
+        // A finished unit's closures come with its summary.
+        let mut captures: FxHashMap<DefId, Vec<LocalId>> = match app {
+            true => cx.unit_sums.lock_summaries.1.clone(),
+            false => FxHashMap::default(),
+        };
+        captures.extend(
+            (base as usize..cx.defs.len()).filter_map(|i| match &cx.defs[i] {
                 Some(Def::Fn(f)) if !f.captures.is_empty() => Some((
                     DefId(i as u32),
                     f.captures.iter().map(|k| k.outer).collect(),
                 )),
                 _ => None,
-            })
-            .collect();
+            }),
+        );
         let mut s = Summaries {
             sums: match app {
                 true => cx.unit_sums.lock_summaries.0.clone(),
@@ -124,7 +129,8 @@ impl Summaries {
             }
             if !changed {
                 if cx.units_stage == crate::units::Stage::Std {
-                    cx.unit_sums.lock_summaries = LockSummaries(s.sums.clone());
+                    let captures = s.captures.clone();
+                    cx.unit_sums.lock_summaries = LockSummaries(s.sums.clone(), captures);
                 }
                 return s;
             }

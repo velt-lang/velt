@@ -508,6 +508,7 @@ fn check_timed(
                 };
                 std_cx.freeze_defs();
                 std_cx.unit_base = std_cx.defs.len() as u32;
+                units::keep_indexes(&mut std_cx);
                 if let (Some(k), Some(c)) = (std_key, std_copies.take()) {
                     // SAFETY: std's stage was checked over `c` alone (`copies`), with no
                     // generator, loads or diagnostics of the check installed.

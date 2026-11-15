@@ -450,30 +450,7 @@ fn part_holds_shared(cx: &mut Ctx, p: TyId, depth: u32) -> bool {
 
 /// The classes extending class `d`, directly or not.
 pub(super) fn subclasses(cx: &mut Ctx, d: DefId) -> Vec<DefId> {
-    if cx.subclasses.is_none() {
-        let mut map: FxHashMap<DefId, Vec<DefId>> = FxHashMap::default();
-        let base_of = |cx: &Ctx, c: DefId| {
-            cx.adt(c)
-                .and_then(|a| a.base)
-                .and_then(|b| cx.class_of(b))
-                .map(|(b, _)| b)
-        };
-        for s in (0..cx.info.len() as u32).map(DefId) {
-            let mut base = base_of(cx, s);
-            // Bounded like `Ctx::class_extends`.
-            for _ in 0..64 {
-                let Some(b) = base else { break };
-                map.entry(b).or_default().push(s);
-                base = base_of(cx, b);
-            }
-        }
-        cx.subclasses = Some(map);
-    }
-    cx.subclasses
-        .as_ref()
-        .and_then(|m| m.get(&d))
-        .cloned()
-        .unwrap_or_default()
+    cx.subclasses_of(d)
 }
 
 /// A store of a value reaching `b` into a place reaching `dest` crosses the boundary. A moved

@@ -13,7 +13,8 @@ pub(super) fn homes(cx: &Ctx, g: &Graph) -> FxHashMap<DefId, Vec<usize>> {
     let setters = setters(cx);
     let parents: FxHashSet<DefId> = g.parent.values().copied().collect();
     let mut homes: FxHashMap<DefId, Vec<usize>> = FxHashMap::default();
-    for (i, def) in cx.defs.iter().enumerate() {
+    // A finished unit (std's) is library code.
+    for (i, def) in cx.defs.iter().enumerate().skip(cx.unit_base as usize) {
         let d = DefId(i as u32);
         let Some(Def::Fn(f)) = def else { continue };
         if in_library(cx, d) || !parents.contains(&d) {
@@ -35,7 +36,7 @@ pub(super) fn homes(cx: &Ctx, g: &Graph) -> FxHashMap<DefId, Vec<usize>> {
 /// positions (`this` is 0).
 fn setters(cx: &Ctx) -> FxHashMap<DefId, Vec<usize>> {
     let mut out = FxHashMap::default();
-    for (i, def) in cx.defs.iter().enumerate() {
+    for (i, def) in cx.defs.iter().enumerate().skip(cx.unit_base as usize) {
         let d = DefId(i as u32);
         let Some(Def::Fn(f)) = def else { continue };
         if f.self_ty.is_none() || !f.captures.is_empty() || f.params.len() < 2 || in_library(cx, d)
