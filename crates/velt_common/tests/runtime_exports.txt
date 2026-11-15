@@ -89,9 +89,6 @@ velt_rt velt_rt_env_get
 velt_rt velt_rt_env_remove
 velt_rt velt_rt_env_set
 velt_rt velt_rt_exit
-velt_rt velt_rt_f64_to_exponential
-velt_rt velt_rt_f64_to_fixed
-velt_rt velt_rt_f64_to_precision
 velt_rt velt_rt_flush
 velt_rt velt_rt_fnprop_delete
 velt_rt velt_rt_fnprop_get

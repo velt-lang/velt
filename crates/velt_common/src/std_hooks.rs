@@ -74,6 +74,17 @@ hooks! {
     float_index => lang_hooks_number, "floatIndex", sig((f64) -> usize), lowered;
     /// A float position argument (`xs.at(i)`, `s.slice(i)`).
     float_position => lang_hooks_number, "floatPosition", sig((f64) -> usize);
+    // number_digits.velt: numbers rounded to a number of digits, which std calls by role.
+    /// `x.toExponential(digits)` (`digits` below 0: omitted; the prelude's method).
+    number_to_exponential => lang_hooks_number_digits, "toExponentialText", sig((f64, i64) -> string),
+        replaces("velt_rt_f64_to_exponential");
+    /// `x.toPrecision(precision)` (the prelude's method).
+    number_to_precision => lang_hooks_number_digits, "toPrecisionText", sig((f64, i64) -> string),
+        replaces("velt_rt_f64_to_precision");
+    /// `x.toFixed(digits)` from the exact digits: what std's `toFixed` (velt/lang/number/fixed)
+    /// can't do in 64 bits, and `toFixed` through `any`.
+    number_to_fixed => lang_hooks_number_digits, "toFixedText", sig((f64, i64) -> string),
+        replaces("velt_rt_f64_to_fixed");
     /// `s.localeCompare(t)` (only std calls it: the method, and `anyStr_localeCompare` for a
     /// string held as `any`).
     locale_order => lang_string_collate, "localeOrder", sig((&string, &string) -> i64),
