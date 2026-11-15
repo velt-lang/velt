@@ -1,13 +1,10 @@
-// `struct` declarations are Velt-only; an object literal builds a struct (#641).
+// `struct` declarations are Velt-only. No use of the struct's name follows: `tsc` can't see the type
+// the reported declaration makes, so each use would be a `tsc` error the lint doesn't report.
 
 export struct Point {
   //~^ struct
   x: number;
   y: number;
-}
-
-export function origin(): Point {
-  return { x: 0, y: 0 };
 }
 
 export type Size = { w: number; h: number };
