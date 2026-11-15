@@ -275,8 +275,8 @@ export const E_FAIR_AT: usize = 920;
 /** The spread's looks left before its next look at the clock (sched_spread.velt `windowEnd`). */
 export const E_W_SKIP: usize = 928;
 /**
- * The monitor's tick (`E_PROGRESS`) at the last read of the fair pass's clock, and of the
- * spread's: a tick since ends the skipped reads (sched_tick.velt `tickTurned`, sched_spread.velt
+ * The monitor's tick (`E_PROGRESS`, noted per poll with `M_MONITOR`) at the last read of the
+ * fair pass's clock, and of the spread's: a tick since ends the skipped reads (sched_tick.velt `tickTurned`, sched_spread.velt
  * `maybeHelp`).
  */
 export const E_FAIR_TICK: usize = 936;

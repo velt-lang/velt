@@ -4,8 +4,9 @@
 // a row, on the locked path and the lock-free one, and an I/O tick with both queues holding tasks
 // reads the clock, starts the fair wait, skips reads while the wait runs and starts the pass once
 // it is due; a monitor's tick ends the skips (a change of pace, #2981), and without a monitor no
-// read is skipped. Run from a copy of std by crates/veltc/tests/std_scheduler_workers.rs (macOS and
-// Linux: the scheduler's modules don't link on Windows).
+// read is skipped, nor on a lazy worker 0. Run from a copy of std by
+// crates/veltc/tests/std_scheduler_workers.rs (macOS and Linux: the scheduler's modules don't
+// link on Windows).
 import { describe, expect, it } from "velt/test";
 import * as m from "./sched_mem";
 import * as q from "./sched_queue";
@@ -213,6 +214,27 @@ describe("velt/lang/hooks fair pass clock", () => {
     tick.tickTurned(w);
     expect(m.ld(w + t.E_FAIR_SKIP)).toBe(0);
     m.st(w + t.E_FAIR_DUE, at);
+    expect(turnsToPass(w, 20)).toBe(1);
+    free(w, [input, spawned]);
+  });
+
+  it("skips no reads on a lazy worker 0, whose polls note no tick", () => {
+    // One worker, rescued (`VELT_RESCUE=1`): `E_MODE` 0 until a rescue, and the monitor ticks
+    // (`E_TICKS`), but its polls note no tick in `E_PROGRESS` that would end the skips.
+    const w = m.zeroed(t.E_SIZE);
+    m.st(w + t.E_LAZY, t.LAZY_WATCH);
+    const input = task();
+    const spawned = task();
+    q.pushIo(w, input);
+    q.pushRest(w, spawned, 0);
+    tick.tickTurned(w);
+    const at = m.ld(w + t.E_FAIR_AT);
+    past(at);
+    tick.tickTurned(w);
+    expect(m.ld(w + t.E_FAIR_SKIP)).toBe(0);
+    // The polls turn slow and the monitor ticks: the pass starts at the next turn.
+    m.st(w + t.E_FAIR_DUE, at);
+    m.st(w + t.E_TICKS, m.ld(w + t.E_TICKS) + 4);
     expect(turnsToPass(w, 20)).toBe(1);
     free(w, [input, spawned]);
   });

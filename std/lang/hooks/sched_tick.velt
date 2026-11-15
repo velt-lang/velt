@@ -134,8 +134,10 @@ export function tickTurned(e: usize): void {
  * The clock for the fair pass's wait (sched_queue.velt `tick`). While the wait runs, the turns
  * until the next read are half the time left over the time a turn took since the last read (at
  * most `FAIR_SKIP_MAX`): the pass starts at most a few turns late, and a turn of long polls
- * reads the clock each time. Only with a monitor, whose ticks end the skips when the pace
- * changes (`tickTurned`); without one (one worker, not rescued) each turn reads the clock.
+ * reads the clock each time. Only on a worker whose polls note the monitor's tick (`M_MONITOR`),
+ * which ends the skips when the pace changes (`tickTurned`); elsewhere each turn reads the clock:
+ * one worker, not rescued (no monitor), and a lazy worker 0 (its polls note no tick until a
+ * rescue gives it the shared mode).
  */
 @noInline
 function fairLook(e: usize): void {
@@ -151,8 +153,7 @@ function fairLook(e: usize): void {
   q.tick(e, mode);
   q.unlock(e, mode);
   const due = m.ld(e + t.E_FAIR_DUE);
-  const ticks = (mode & t.M_MONITOR) !== 0 || m.ld(e + t.E_LAZY) !== 0;
-  if (ticks && at !== 0 && turns !== 0 && due > now && now > at) {
+  if ((mode & t.M_MONITOR) !== 0 && at !== 0 && turns !== 0 && due > now && now > at) {
     const per = (now - at) / turns;
     const skip = per === 0 ? FAIR_SKIP_MAX : (due - now) / 2 / per;
     m.st(e + t.E_FAIR_SKIP, skip < FAIR_SKIP_MAX ? skip : FAIR_SKIP_MAX);
