@@ -18,6 +18,10 @@
 ../../../bench/stdport/fnv.velt
 ../../../bench/stdport/html_escape.velt
 ../../../bench/stdport/html_escape_jsx.velt
+../../../tests/golden/lang/number_to_string_radix.velt
+../../../tests/golden/lang/number_to_exponential_precision.velt
+../../../tests/golden/lang/number_parse_int.velt
+../../../tests/golden/lang/number_parse_long.velt
 #
 # The rest, greedily:
 ../../../tests/std/fetch/server_api.test.velt
