@@ -530,7 +530,7 @@ fn check_timed(
     let kept = (kept::wanted(input) && none_generated && order.is_none())
         .then(|| kept::detach(cx.clone()));
     let checked = (modules.as_ptr(), modules.len());
-    ctx::def_table::touch::phase("the app's check (rounds)", true);
+    units::touch_phase(&cx, "the app's check (rounds)", true);
     let (program, diags) = program::build_checked(cx, entry, generated);
     ctx::def_table::touch::phase("the program's build", false);
     if let Some(kept) = kept {

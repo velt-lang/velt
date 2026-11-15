@@ -227,3 +227,33 @@ pub(crate) fn finish_unit(cx: &mut Ctx) {
     let generated = cx.generated_fns();
     cx.unit_sums.generated_fns = Some((generated, cx.info.len()));
 }
+
+/// `VELT_UNITS_TOUCH`: report a phase of the app's stage, with what copying the std definitions
+/// it read costs (a floor for decoding them from an on-disk unit).
+pub(crate) fn touch_phase(cx: &Ctx, phase: &str, more: bool) {
+    use crate::ctx::def_table::touch;
+    if !touch::on() {
+        return;
+    }
+    let (defs, infos) = (touch::touched("Def>"), touch::touched("DefInfo<'_>"));
+    let t = std::time::Instant::now();
+    let copied: Vec<_> = defs.iter().map(|&i| cx.defs.items_at(i).clone()).collect();
+    let copied_infos: Vec<_> = infos.iter().map(|&i| cx.info.items_at(i).clone()).collect();
+    let took = t.elapsed();
+    eprintln!(
+        "velt-touch: copying the {} bodies and {} infos read takes {:.2} ms",
+        copied.len(),
+        copied_infos.len(),
+        took.as_secs_f64() * 1e3
+    );
+    drop((copied, copied_infos));
+    let t = std::time::Instant::now();
+    let all = (cx.defs.items_all().to_vec(), cx.info.items_all().to_vec());
+    let took_all = t.elapsed();
+    eprintln!(
+        "velt-touch: copying every definition ({}) takes {:.2} ms",
+        all.0.len(),
+        took_all.as_secs_f64() * 1e3
+    );
+    touch::phase(phase, more);
+}

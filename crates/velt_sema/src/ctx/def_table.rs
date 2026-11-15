@@ -66,6 +66,16 @@ impl<T> DefTable<T> {
         self.items.iter_mut()
     }
 
+    /// Entry `i`, uncounted (the probe's own reads).
+    pub(crate) fn items_at(&self, i: usize) -> &T {
+        &self.items[i]
+    }
+
+    /// Every entry, uncounted.
+    pub(crate) fn items_all(&self) -> &[T] {
+        &self.items
+    }
+
     /// The entries, for `hir::Program`.
     pub(crate) fn into_vec(self) -> Vec<T> {
         self.items
@@ -203,6 +213,16 @@ pub(crate) mod touch {
             start();
             start_types(types);
         }
+    }
+
+    /// The entries of `table` (its type name ends with `table`) read so far.
+    pub(crate) fn touched(table: &str) -> Vec<usize> {
+        DEFS.with(|d| {
+            (d.borrow().iter())
+                .find(|(t, _)| t.ends_with(table))
+                .map(|(_, s)| s.iter().copied().collect())
+                .unwrap_or_default()
+        })
     }
 
     pub(crate) fn on() -> bool {
