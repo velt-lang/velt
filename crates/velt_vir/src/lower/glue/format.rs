@@ -377,14 +377,16 @@ impl FnLower<'_, '_> {
         let (deep_bb, shallow_bb, done) = (self.new_block(), self.new_block(), self.new_block());
         self.branch(deep, deep_bb, shallow_bb);
         self.switch_to(deep_bb);
+        // Where the cycle hooks are unchecked no live type can hold itself: nothing is tracked.
         if let Some(p) = obj {
             let id = self.rvalue_temp(Ty::U64, Rvalue::Cast(p, Ty::U64));
             let (b, id) = (ty::Str::arg(buf.clone()), ty::U64::arg(id));
-            let circular = hooks::inspect_circular(self, Construct::Format, b, id);
-            let circular = circular.emit(self).op();
-            let cut_bb = self.new_block();
-            self.branch(circular, done, cut_bb);
-            self.switch_to(cut_bb);
+            if let Some(circular) = hooks::inspect_circular(self, b, id) {
+                let circular = circular.emit(self).op();
+                let cut_bb = self.new_block();
+                self.branch(circular, done, cut_bb);
+                self.switch_to(cut_bb);
+            }
         }
         self.push_text(buf, cut);
         self.goto(done);
@@ -479,10 +481,11 @@ impl FnLower<'_, '_> {
     /// (`Headers { a: '1' }`).
     fn format_inspect(&mut self, buf: &Operand, obj: Operand, ty: TyId, m: DefId, depth: &Operand) {
         // The method is user code: what it prints is numbered on its own (std's `inspectSave`).
-        let saved = hooks::inspect_save(self, Construct::Format).emit(self).op();
+        let saved = hooks::inspect_save(self).map(|save| save.emit(self).op());
         let (res, rty) = self.call_hook(m, obj, ty, None);
-        let saved = ty::U64::arg(saved);
-        _ = hooks::inspect_restore(self, Construct::Format, saved).emit(self);
+        if let Some(restore) = saved.and_then(|s| hooks::inspect_restore(self, ty::U64::arg(s))) {
+            _ = restore.emit(self);
+        }
         let name = self.cx.type_name(ty);
         if matches!(self.cx.kind(rty), TyKind::Str) {
             self.push_inspect_text(buf, &res);
@@ -555,8 +558,9 @@ impl FnLower<'_, '_> {
     /// Done printing the innermost object `format_once` or std's `openObject` started: its
     /// `<ref *N> ` prefix when something refers back to it (std/lang/hooks/inspect_cycles.velt).
     pub(super) fn inspect_leave(&mut self, buf: &Operand) {
-        let b = ty::Str::arg(buf.clone());
-        _ = hooks::inspect_leave(self, Construct::Format, b).emit(self);
+        if let Some(leave) = hooks::inspect_leave(self, ty::Str::arg(buf.clone())) {
+            _ = leave.emit(self);
+        }
     }
 
     /// Node's `, ... n more items` after the first 100 entries of a container, `remaining` (a
@@ -572,9 +576,11 @@ impl FnLower<'_, '_> {
     pub(super) fn format_once(&mut self, buf: &Operand, p: Operand, body: impl FnOnce(&mut Self)) {
         let id = self.rvalue_temp(Ty::U64, Rvalue::Cast(p, Ty::U64));
         let (b, id) = (ty::Str::arg(buf.clone()), ty::U64::arg(id));
-        let fresh = hooks::inspect_enter(self, Construct::Format, b, id)
-            .emit(self)
-            .op();
+        let Some(enter) = hooks::inspect_enter(self, b, id) else {
+            // No live type can hold itself (the cycle hooks are unchecked): nothing to track.
+            return body(self);
+        };
+        let fresh = enter.emit(self).op();
         let (print, done) = (self.new_block(), self.new_block());
         self.branch(fresh, print, done);
         self.switch_to(print);

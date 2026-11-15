@@ -1,9 +1,10 @@
 // velt/lang/hooks (internal): objects that hold themselves in what `console.log` and
 // `util.inspect` print. Node writes a reference back to an object being printed as
 // `[Circular *N]` and prefixes that object with `<ref *N> `, numbering once per top-level value.
-// Lowering's format glue (`velt_vir` `glue/format*.rs`) and inspect.velt report each class
-// instance, recursive object, `Map` and `Set` they start and finish (`inspectEnter`,
-// `inspectLeave`). The state is this thread's: a top-level value is printed on one thread, with
+// Lowering's format glue (`velt_vir` `glue/format*.rs`) reports each class instance, recursive
+// object, `Map` and `Set` it starts and finishes (`openObject`, `inspectEnter`, `inspectLeave`),
+// where sema found a live type that can hold itself; elsewhere nothing is tracked and this module
+// is not loaded. The state is this thread's: a top-level value is printed on one thread, with
 // no await in between. Node's depth limit enters at most three objects per value, kept in
 // thread-locals; the `<ref *N>` numbers are in a block of words, allocated only for a value with
 // a cycle and given back when the value is done. User code that runs during a print (a custom
@@ -200,6 +201,22 @@ export function inspectRestore(s: u64): void {
 }
 
 /**
+ * Opens the object with identity `id` (its address), one that may hold itself: false past the
+ * depth limit (after `[Circular *N]` when it is being printed, else `cut`, `[Name]`) and when it
+ * is being printed already (after `[Circular *N]`, marking the object it refers back to with
+ * `<ref *N>`). After a true, the caller ends the object with `inspectLeave`.
+ */
+export function openObject(buf: string, cut: string, id: u64, depth: u32): bool {
+  if (depth > 2) {
+    if (!inspectCircular(buf, id)) {
+      velt_rt_strbuf_push_str(buf, cut);
+    }
+    return false;
+  }
+  return inspectEnter(buf, id);
+}
+
+/**
  * Starts printing the object with identity `id` (its address): true, or, when it is being printed
  * already (the graph has a cycle), false after `[Circular *N]`; the caller then skips it. After a
  * true, the caller ends the object with `inspectLeave`.
@@ -270,15 +287,4 @@ export function inspectLeave(buf: string): void {
   pushU64(buf, n as u64);
   velt_rt_strbuf_push_str(buf, "> ");
   velt_rt_strbuf_push_str(buf, tail);
-}
-
-/** Node's `, ... n more items` (`, ... 1 more item`) after the first 100 entries of a container. */
-export function inspectMore(buf: string, remaining: u64): void {
-  velt_rt_strbuf_push_str(buf, ", ... ");
-  pushU64(buf, remaining);
-  if (remaining == 1) {
-    velt_rt_strbuf_push_str(buf, " more item");
-  } else {
-    velt_rt_strbuf_push_str(buf, " more items");
-  }
 }

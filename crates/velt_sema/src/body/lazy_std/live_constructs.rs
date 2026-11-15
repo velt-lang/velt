@@ -136,30 +136,171 @@ pub(crate) fn too_late(cx: &mut Ctx, assumed: &mut Assumed) -> bool {
     added
 }
 
-/// The hook that prints an array (std/lang/hooks/inspect.velt `inspectArray`), demanded with the
-/// other shapes but checked only once an array type is live: its `E[]` parameter makes the
-/// `Array` class live, which a program without arrays doesn't check. Lowering writes an array
-/// with its own glue where it is unchecked (the hook has a fallback).
-pub(super) const ARRAY_SHAPE: &str = "inspect_array";
+/// The hooks that print objects which hold themselves (std/lang/hooks/inspect_cycles.velt),
+/// demanded with the other shapes but checked only once a live type can hold itself
+/// ([`may_cycle`]). Lowering tracks no cycle where they are unchecked (they have a fallback).
+const CYCLE_HOOKS: [usize; 8] = {
+    use velt_common::std_hooks::hook_index as h;
+    [
+        h::open_object,
+        h::inspect_enter,
+        h::inspect_leave,
+        h::inspect_circular,
+        h::inspect_save,
+        h::inspect_restore,
+        h::inspect_begin,
+        h::inspect_end,
+    ]
+};
 
-/// Marks the array hook ([`ARRAY_SHAPE`]) once its constructs are present and an array type is
-/// live: whether it was newly marked.
-pub(super) fn demand_array_shape(cx: &mut Ctx) -> bool {
-    use velt_common::std_hooks::{hook_index, HookSet, HOOKS};
-    let live = &cx.lazy.live;
-    let index = hook_index::inspect_array;
-    if live.finishing
-        || live.kinds & super::kind_bit(&TyKind::Array(TyId(0))) == 0
-        || !HookSet::demanded_by(demanded_for(live.present)).contains(index)
-    {
-        return false;
+/// Is the hook named `name` one that [`demand_gated`] marks, not the constructs alone? Besides
+/// [`CYCLE_HOOKS`], the hook that prints an array (std/lang/hooks/inspect.velt `inspectArray`),
+/// checked only once an array type is live: its `E[]` parameter makes the `Array` class live,
+/// which a program without arrays doesn't check. Lowering writes an array with its own glue
+/// where it is unchecked.
+pub(super) fn gated(name: &str) -> bool {
+    use velt_common::std_hooks::{hook_index, HOOKS};
+    name == HOOKS[hook_index::inspect_array].name
+        || CYCLE_HOOKS.iter().any(|&i| HOOKS[i].name == name)
+}
+
+/// Marks the [`gated`] hooks once their constructs are present and what they print is live: an
+/// array type for the array's, a type that can hold itself for the cycle hooks. Whether any was
+/// newly marked. A type that can hold itself found only after the passes is left to the next
+/// round (`Assumed::hooks`).
+pub(super) fn demand_gated(cx: &mut Ctx) -> bool {
+    use velt_common::std_hooks::{hook_index, HookSet};
+    let demanded = HookSet::demanded_by(demanded_for(cx.lazy.live.present));
+    let mut marked = false;
+    let arrays = cx.lazy.live.kinds & super::kind_bit(&TyKind::Array(TyId(0))) != 0;
+    if arrays && demanded.contains(hook_index::inspect_array) && !cx.lazy.live.finishing {
+        marked |= mark_hook(cx, hook_index::inspect_array);
     }
-    let h = &HOOKS[index];
+    if cx.lazy.cycles || !demanded.contains(hook_index::inspect_enter) {
+        return marked;
+    }
+    let assumed = cx.lazy.stubs.assumed(hook_index::inspect_enter);
+    if !assumed && !may_cycle(cx) {
+        return marked;
+    }
+    cx.lazy.cycles = true;
+    if cx.lazy.live.finishing {
+        cx.lazy.live.late.hooks.extend(CYCLE_HOOKS);
+        return marked;
+    }
+    for i in CYCLE_HOOKS {
+        marked |= mark_hook(cx, i);
+    }
+    marked
+}
+
+/// Demands hook `index`'s module and marks the hook live: whether it wasn't.
+fn mark_hook(cx: &mut Ctx, index: usize) -> bool {
+    let h = &velt_common::std_hooks::HOOKS[index];
     cx.demand_std(&h.module());
     match cx.std_def(&h.qualified()) {
         Some(crate::ctx::Item::Def(d)) => super::mark(cx, d),
         _ => false,
     }
+}
+
+/// How deep [`reaches_back`] looks before it answers yes (a generic type can expand to a new
+/// type at every level).
+const CYCLE_DEPTH: u32 = 32;
+
+/// Can a value of a live type hold itself, so that printing it must track cycles (`<ref *1>`,
+/// `[Circular *1]`)? Yes when a live type reaches itself through what it holds (fields, elements,
+/// entries, union members, and for a class each live subclass), or holds an `any` or an interface
+/// value, which can be anything. A type parameter holds what its instances hold, and those are
+/// live types of their own. The types found closed are remembered while the live classes don't
+/// change (a new subclass adds what a class can hold).
+fn may_cycle(cx: &mut Ctx) -> bool {
+    if cx.lazy.cycle_adts != cx.lazy.live.adts.len() {
+        cx.lazy.cycle_closed.clear();
+        cx.lazy.cycle_adts = cx.lazy.live.adts.len();
+    }
+    let mut types: Vec<TyId> = cx.lazy.live.types.iter().copied().collect();
+    types.retain(|&t| {
+        !cx.lazy.cycle_closed.contains(&t) && !matches!(cx.ty.kind(t), TyKind::Dyn(..))
+    });
+    types.sort_unstable_by_key(|t| t.0);
+    let mut closed = std::mem::take(&mut cx.lazy.cycle_closed);
+    let mut path = rustc_hash::FxHashSet::default();
+    // An `any` or interface value at the top holds a value of some live type, checked as such.
+    let found = (types.into_iter()).any(|t| reaches_back(cx, t, &mut path, &mut closed, 0));
+    cx.lazy.cycle_closed = closed;
+    found
+}
+
+/// Does `t` (on the way from a live type, `path`) reach a type on `path`, or an `any`?
+fn reaches_back(
+    cx: &mut Ctx,
+    t: TyId,
+    path: &mut rustc_hash::FxHashSet<TyId>,
+    closed: &mut rustc_hash::FxHashSet<TyId>,
+    depth: u32,
+) -> bool {
+    if closed.contains(&t) {
+        return false;
+    }
+    if depth > CYCLE_DEPTH || !path.insert(t) {
+        return true;
+    }
+    let found = match held(cx, t) {
+        Some(parts) => (parts.into_iter()).any(|p| reaches_back(cx, p, path, closed, depth + 1)),
+        None => true,
+    };
+    path.remove(&t);
+    if !found {
+        closed.insert(t);
+    }
+    found
+}
+
+/// The types a value of type `t` holds and printing shows; `None` when it can hold anything (an
+/// `any`, an interface value).
+fn held(cx: &mut Ctx, t: TyId) -> Option<Vec<TyId>> {
+    let kind = cx.ty.kind(t).clone();
+    Some(match kind {
+        TyKind::Dyn(..) => return None,
+        TyKind::Array(e) | TyKind::Option(e, _) | TyKind::Shared(e) => vec![e],
+        TyKind::Tuple(es) => es,
+        TyKind::Map(a, b) | TyKind::Result(a, b) | TyKind::Promise(a, b) => vec![a, b],
+        TyKind::Adt(d, args) => {
+            if let Some(members) = cx.union_members(t) {
+                return Some(members);
+            }
+            if let Some(e) = cx.enum_info(d) {
+                let payloads: Vec<TyId> = (e.variants.iter())
+                    .flat_map(|v| v.payload.iter().copied())
+                    .collect();
+                return Some(payloads.into_iter().map(|p| cx.subst(p, &args)).collect());
+            }
+            let Some(a) = cx.adt(d) else {
+                return Some(vec![]);
+            };
+            let fields: Vec<TyId> = a.fields.iter().map(|f| f.ty).collect();
+            let mut parts: Vec<TyId> = fields.into_iter().map(|f| cx.subst(f, &args)).collect();
+            let subclasses = cx.lazy.subclasses.get(&d).cloned().unwrap_or_default();
+            for s in subclasses
+                .into_iter()
+                .filter(|s| cx.lazy.live.adts.contains(s))
+            {
+                // A generic subclass by its fields, its own parameters left open.
+                match cx.adt(s) {
+                    Some(sa) if sa.generics.names.is_empty() => {
+                        parts.push(cx.ty.intern(TyKind::Adt(s, vec![])))
+                    }
+                    Some(sa) => parts.extend(sa.fields.iter().map(|f| f.ty)),
+                    None => {}
+                }
+            }
+            parts
+        }
+        // Scalars, functions (printed by name) and type parameters (their instances are live
+        // types of their own).
+        _ => vec![],
+    })
 }
 
 /// The constructs `present` demands the hooks of. The integer hooks act as one bit: a construct

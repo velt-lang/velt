@@ -1,29 +1,25 @@
 // velt/lang/hooks (internal): what `console.log` and `util.inspect` write the same way for every
-// type (docs/internals/design/inspect-shapes.md): the depth limit, objects that hold themselves
-// (`<ref *1>`, `[Circular *1]`, through inspect_cycles.velt) and arrays. Lowering writes what differs per type
+// type (docs/internals/design/inspect-shapes.md): the depth limit, arrays and `... n more items`
+// (objects that hold themselves are inspect_cycles.velt's). Lowering writes what differs per type
 // around these (an object's fields, the member a union holds) and calls them with the line's own
 // builder, so a value has no builder of its own. Sema checks them where live code may print one
 // (velt_common `std_hooks.rs`), so a program without arrays or objects does not pay for them.
 
 import { inspectNested } from "velt/lang/intrinsics";
-import { inspectCircular, inspectEnter, inspectMore } from "velt/lang/hooks/inspect_cycles";
+import { pushU64 } from "velt/lang/number/integer";
 
 declare function velt_rt_strbuf_push_str(buf: string, s: string);
 
 /**
- * Opens the object with identity `id` (0: its values never hold themselves): false past the depth
- * limit (after `cut`, `[Name]`, or `[Circular *N]` when it is being written) and when it is being
- * written already (after `[Circular *N]`, marking the object it refers back to with `<ref *N>`).
- * After a true with an identity, the caller ends the object with `inspectLeave`.
+ * Opens an object that cannot hold itself: false past the depth limit, after `cut` (`[Name]`).
+ * An object that can is opened by inspect_cycles.velt's `openObject`.
  */
-export function openObject(buf: string, cut: string, id: u64, depth: u32): bool {
+export function openPlain(buf: string, cut: string, depth: u32): bool {
   if (depth > 2) {
-    if (id == 0 || !inspectCircular(buf, id)) {
-      velt_rt_strbuf_push_str(buf, cut);
-    }
+    velt_rt_strbuf_push_str(buf, cut);
     return false;
   }
-  return id == 0 || inspectEnter(buf, id);
+  return true;
 }
 
 /** An array: `[ a, b ]`, its first 100 elements, `[Array]` past the depth limit. */
@@ -51,4 +47,15 @@ export function inspectArray<E>(buf: string, a: E[], depth: u32): void {
     inspectMore(buf, more);
   }
   velt_rt_strbuf_push_str(buf, " ]");
+}
+
+/** Node's `, ... n more items` (`, ... 1 more item`) after the first 100 entries of a container. */
+export function inspectMore(buf: string, remaining: u64): void {
+  velt_rt_strbuf_push_str(buf, ", ... ");
+  pushU64(buf, remaining);
+  if (remaining == 1) {
+    velt_rt_strbuf_push_str(buf, " more item");
+  } else {
+    velt_rt_strbuf_push_str(buf, " more items");
+  }
 }

@@ -48,27 +48,32 @@ impl FnLower<'_, '_> {
             true => lw.format_fields_optional(buf, name, place, ty, &shown, &optional, child),
             false => lw.format_fields(buf, name, place, ty, &shown, child),
         };
-        // The depth limit and the cycle check, in std where the program has them checked.
-        let id = match &obj {
-            Some(p) => self.rvalue_temp(Ty::U64, Rvalue::Cast(p.clone(), Ty::U64)),
-            None => cint(0, Ty::U64),
-        };
+        // The depth limit and the cycle check, in std where the program has them checked: the
+        // cycle check only where a live type can hold itself (velt_sema `live_constructs.rs`).
         let cut_text = self.str_lit(&cut);
         let cut_text = self.operand_addr(cut_text, Ty::Agg(STR_AGG));
-        let open = hooks::open_object(
-            self,
-            ty::Str::arg(buf.clone()),
-            ty::Str::arg(cut_text),
-            ty::U64::arg(id),
-            ty::U32::arg(depth.clone()),
-        );
-        let Some(open) = open else {
+        let tracked = match &obj {
+            Some(p) => {
+                let id = self.rvalue_temp(Ty::U64, Rvalue::Cast(p.clone(), Ty::U64));
+                let (b, c) = (ty::Str::arg(buf.clone()), ty::Str::arg(cut_text.clone()));
+                hooks::open_object(self, b, c, ty::U64::arg(id), ty::U32::arg(depth.clone()))
+            }
+            None => None,
+        };
+        let open = match tracked {
+            Some(open) => Some((open.emit(self).op(), true)),
+            None => {
+                let (b, c) = (ty::Str::arg(buf.clone()), ty::Str::arg(cut_text));
+                let plain = hooks::open_plain(self, b, c, ty::U32::arg(depth.clone()));
+                plain.map(|open| (open.emit(self).op(), false))
+            }
+        };
+        let Some((open, tracked)) = open else {
             return self.within_depth(buf, depth, &cut, obj.clone(), |lw, child| match obj {
                 Some(p) => lw.format_once(buf, p, |lw| fields(lw, name, &child)),
                 None => fields(lw, name, &child),
             });
         };
-        let open = open.emit(self).op();
         let (body, done) = (self.new_block(), self.new_block());
         self.branch(open, body, done);
         self.switch_to(body);
@@ -77,7 +82,7 @@ impl FnLower<'_, '_> {
             Rvalue::Binary(BinOp::Add, depth.clone(), cint(1, Ty::U32)),
         );
         fields(self, name, &child);
-        if obj.is_some() {
+        if tracked {
             self.inspect_leave(buf);
         }
         self.goto(done);

@@ -267,40 +267,40 @@ hooks! {
     /// freed or moved.
     str_epoch => lang_hooks_process_statics, "STR_EPOCH", process_static, lowered;
 
-    // inspect_cycles.velt: objects that hold themselves in what `console.log` prints (`<ref *1>`,
-    // `[Circular *1]`), numbered once per top-level value, as Node does.
-    /// The start of a top-level value: the numbering starts over. Skipped where unchecked.
+    // inspect_cycles.velt: `<ref *1>` and `[Circular *1]`, checked only where a live type can hold
+    // itself (velt_sema `live_constructs.rs`); lowering tracks no cycle where they are unchecked.
+    /// The start of a top-level value: the numbering starts over.
     inspect_begin => lang_hooks_inspect_cycles, "inspectBegin", sig(() -> void), lowered, fallback,
         constructs(Format, Dynamic);
     /// The end of a top-level value: the numbering's block is given back.
     inspect_end => lang_hooks_inspect_cycles, "inspectEnd", sig(() -> void), lowered, fallback,
         constructs(Format, Dynamic);
     /// Before a user's custom inspect: the state, saved for `inspect_restore` and left empty.
-    inspect_save => lang_hooks_inspect_cycles, "inspectSave", sig(() -> u64), lowered,
+    inspect_save => lang_hooks_inspect_cycles, "inspectSave", sig(() -> u64), lowered, fallback,
         constructs(Format, Dynamic);
     /// After a user's custom inspect: the state `inspect_save` saved, back.
     inspect_restore => lang_hooks_inspect_cycles, "inspectRestore", sig((u64) -> void), lowered,
-        constructs(Format, Dynamic);
-    /// The start of an object that may hold itself: false after `[Circular *N]` when it is being
-    /// printed already.
+        fallback, constructs(Format, Dynamic);
+    /// The start of an object that may hold itself: false after `[Circular *N]` when it is open.
     inspect_enter => lang_hooks_inspect_cycles, "inspectEnter", sig((&mut string, u64) -> bool),
-        lowered, constructs(Format, Dynamic), replaces("velt_rt_strbuf_inspect_enter");
+        lowered, fallback, constructs(Format, Dynamic), replaces("velt_rt_strbuf_inspect_enter");
     /// The end of the innermost object `inspect_enter` started: its `<ref *N> ` prefix.
     inspect_leave => lang_hooks_inspect_cycles, "inspectLeave", sig((&mut string) -> void),
-        lowered, constructs(Format, Dynamic), replaces("velt_rt_strbuf_inspect_leave");
+        lowered, fallback, constructs(Format, Dynamic), replaces("velt_rt_strbuf_inspect_leave");
     /// Past the depth limit: `[Circular *N]` (true) when the object is being printed.
     inspect_circular => lang_hooks_inspect_cycles, "inspectCircular", sig((&mut string, u64) -> bool),
-        lowered, constructs(Format, Dynamic), replaces("velt_rt_strbuf_inspect_circular");
-    /// `, ... n more items` after the first 100 entries of an array, `Map` or `Set`.
-    inspect_more => lang_hooks_inspect_cycles, "inspectMore", sig((&mut string, u64) -> void),
-        lowered, constructs(Format, Dynamic), replaces("velt_rt_strbuf_inspect_more");
-
-    // inspect.velt: what `console.log` and `util.inspect` write the same way for every type
-    // (`velt_vir` `glue/format*.rs` write what differs per type around it). Checked where live
-    // code may print one; lowering's own glue writes the same where one is unchecked.
-    /// An object's depth limit and cycle check, before lowering writes its fields.
-    open_object => lang_hooks_inspect, "openObject", sig((&mut string, &string, u64, u32) -> bool),
+        lowered, fallback, constructs(Format, Dynamic), replaces("velt_rt_strbuf_inspect_circular");
+    /// An object that may hold itself: the depth limit and the cycle check, before its fields.
+    open_object => lang_hooks_inspect_cycles, "openObject", sig((&mut string, &string, u64, u32) -> bool),
         lowered, fallback, constructs(Format, Dynamic);
+
+    // inspect.velt: what `console.log` writes alike for every type (lowering's glue where unchecked).
+    /// An object that cannot hold itself: the depth limit, before lowering writes its fields.
+    open_plain => lang_hooks_inspect, "openPlain", sig((&mut string, &string, u32) -> bool),
+        lowered, fallback, constructs(Format, Dynamic);
+    /// `, ... n more items` after the first 100 entries of an array, `Map` or `Set`.
+    inspect_more => lang_hooks_inspect, "inspectMore", sig((&mut string, u64) -> void),
+        lowered, constructs(Format, Dynamic), replaces("velt_rt_strbuf_inspect_more");
     /// An array: `[ 1, 2 ]`, its first 100 elements, `[Array]` past the depth limit.
     inspect_array => lang_hooks_inspect, "inspectArray", sig(<A>(&mut string, &[A], u32) -> void),
         lowered, fallback, constructs(Format, Dynamic);

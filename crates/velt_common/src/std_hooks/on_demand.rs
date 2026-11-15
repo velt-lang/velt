@@ -16,13 +16,20 @@ pub const ON_DEMAND_WRITE: &[&str] = &["number_write", "whole_number_write"];
 
 /// Lowered hooks with a fallback that sema checks where live code has one of their `constructs`,
 /// by their entries' names: the shapes std/lang/hooks/inspect.velt writes for every type, which
-/// lowering writes with its own glue where one is unchecked, and the start and end of a top-level
-/// value (std/lang/hooks/inspect_cycles.velt), which a program that prints no object skips.
+/// lowering writes with its own glue where one is unchecked (the array's only once an array type
+/// is live), and the cycle tracking of std/lang/hooks/inspect_cycles.velt, checked only where a
+/// live type can hold itself (velt_sema `lazy_std` `live_constructs.rs`).
 pub const INSPECT_SHAPES: &[&str] = &[
-    "open_object",
+    "open_plain",
     "inspect_array",
+    "open_object",
     "inspect_begin",
     "inspect_end",
+    "inspect_save",
+    "inspect_restore",
+    "inspect_enter",
+    "inspect_leave",
+    "inspect_circular",
 ];
 
 /// The std modules of hooks no program needs by default: not loaded with the prelude. Sema demands

@@ -224,7 +224,7 @@ pub(crate) fn live_defs(cx: &mut Ctx, unchecked: &FxHashSet<DefId>) -> Option<Fx
 pub(super) fn step(cx: &mut Ctx) -> Vec<TyId> {
     loop {
         walk_set(cx);
-        if !(demand_hooks(cx) | constructs::demand_array_shape(cx)) {
+        if !(demand_hooks(cx) | constructs::demand_gated(cx)) {
             return std::mem::take(&mut cx.lazy.live.texts);
         }
     }
@@ -257,7 +257,7 @@ fn demand_hooks(cx: &mut Ctx) -> bool {
         return false;
     }
     let mut marked = false;
-    for h in newly_demanded(before, now).filter(|h| h.name != constructs::ARRAY_SHAPE) {
+    for h in newly_demanded(before, now).filter(|h| !constructs::gated(h.name)) {
         cx.demand_std(&h.module());
         if let Some(crate::ctx::Item::Def(d)) = cx.std_def(&h.qualified()) {
             marked = true;

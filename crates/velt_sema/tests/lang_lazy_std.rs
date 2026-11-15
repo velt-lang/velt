@@ -646,35 +646,108 @@ fn a_member_read_through_any_in_reached_std_code_adds_the_member_slots() {
 fn printing_shapes_are_checked_once_live_code_may_print_an_object() {
     // What `console.log` writes the same way for every type (std/lang/hooks/inspect.velt): checked
     // where live code has an array or a struct or class, which a format function may print
-    // (velt_common `hook_demand.rs`), and left unchecked in a program with only scalars.
-    let shapes = [
-        "std/lang/hooks/inspect::openObject",
-        "std/lang/hooks/inspect::inspectArray",
+    // (velt_common `hook_demand.rs`), and left unchecked in a program with only scalars. The
+    // array's only once an array type is live (its `E[]` makes the `Array` class live), and the
+    // cycle tracking (std/lang/hooks/inspect_cycles.velt) only once a live type can hold itself.
+    let plain = "std/lang/hooks/inspect::openPlain";
+    let array = "std/lang/hooks/inspect::inspectArray";
+    let tracked = [
+        "std/lang/hooks/inspect_cycles::openObject",
+        "std/lang/hooks/inspect_cycles::inspectEnter",
+        "std/lang/hooks/inspect_cycles::inspectSave",
     ];
+    let checked = |p: &Program, f: &str| !unchecked(p).contains(&f.to_string());
     for src in [
-        "function main() {\n  console.log(\"hi\");\n}\n",
-        "function main() {\n  const n: number = 1.5;\n  console.log(n);\n}\n",
+        "function main() {
+  console.log(\"hi\");
+}
+",
+        "function main() {
+  const n: number = 1.5;
+  console.log(n);
+}
+",
     ] {
         let p = ok_src(src);
-        for f in shapes {
+        for f in [plain, array].iter().chain(&tracked) {
             assert!(
                 unchecked(&p).contains(&f.to_string()),
                 "{f} is checked: {src}"
             );
         }
     }
-    // `inspectArray` (its `E[]` makes the `Array` class live) only once an array type is live.
-    let checked = |p: &Program, f: &str| !unchecked(p).contains(&f.to_string());
-    let class = "class P {\n  x: number = 1;\n}\nfunction main() {\n  console.log(new P());\n}\n";
-    for (src, array) in [
-        ("function main() {\n  console.log({ a: 1 });\n}\n", false),
-        ("function main() {\n  console.log([1]);\n}\n", true),
-        (class, false),
+    let class = "class P {
+  x: number = 1;
+}
+function main() {
+  console.log(new P());
+}
+";
+    let node = "class N {
+  next: N | null = null;
+}
+function main() {
+  console.log(new N());
+}
+";
+    let held = "class H {
+  v: any = 1;
+}
+function main() {
+  console.log(new H());
+}
+";
+    let sub = "class B {
+  x: number = 1;
+}
+class S extends B {
+  b: B | null = null;
+}
+               function main() {
+  const b: B = new S();
+  console.log(b);
+}
+";
+    // (source, an array type is live, a live type can hold itself)
+    for (src, arrays, cycles) in [
+        (
+            "function main() {
+  console.log({ a: 1 });
+}
+",
+            false,
+            false,
+        ),
+        (
+            "function main() {
+  console.log([1]);
+}
+",
+            true,
+            false,
+        ),
+        (
+            "function main() {
+  console.log(new Map<string, number>());
+}
+",
+            false,
+            false,
+        ),
+        (class, false, false),
+        (node, false, true),
+        (held, false, true),
+        (sub, false, true),
     ] {
         let p = ok_src(src);
-        assert!(checked(&p, shapes[0]), "{} is unchecked: {src}", shapes[0]);
-        assert_eq!(checked(&p, shapes[1]), array, "{}: {src}", shapes[1]);
+        assert!(checked(&p, plain), "{plain} is unchecked: {src}");
+        if !arrays {
+            assert!(!checked(&p, array), "{array} is checked: {src}");
+        } else {
+            assert!(checked(&p, array), "{array} is unchecked: {src}");
+        }
+        for f in tracked {
+            assert_eq!(checked(&p, f), cycles, "{f}: {src}");
+        }
     }
-    let p = ok_src("function main() {\n  console.log(new Map<string, number>());\n}\n");
-    assert!(checked(&p, shapes[0]), "{} is unchecked: Map", shapes[0]);
 }
