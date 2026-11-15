@@ -1,0 +1,76 @@
+// velt/lang/hooks (internal): the roles of a shared promise of the executor in Velt going away
+// (sched_share.velt): a holder dropped or handed over gives up its role, and the last one drops
+// the settled result, or, when nobody took it, gives it back to the node, whose own drop reports a
+// rejection nobody handled (as the runtime's task/shared.rs `release` does). The hub is freed
+// then, its node dropped as its owner drops it, unless the original handed to another task is
+// still held there (whichever of the two goes second frees it).
+
+import { fnAddress, stateDrop } from "velt/lang/intrinsics";
+import * as m from "./sched_mem";
+import * as nd from "./sched_node";
+import * as sh from "./sched_share";
+import * as away from "./sched_share_away";
+import * as wt from "./sched_share_wait";
+
+/** Holder `f` of the promise of hub `h` gives up its role (dropped, or handed over). */
+export function release(h: usize, f: usize): void {
+  const i = wt.waiterIndex(h, f);
+  if (i < m.ld(h + sh.H_WLEN)) {
+    wt.removeWaiter(h, i);
+    if (i === 0 && (m.load32(h + sh.H_FLAGS) & (sh.AWAY | sh.DONE)) === sh.AWAY) {
+      // The next waiter is woken by the node's finish now.
+      away.watch(h);
+    }
+  }
+  if (m.dec(h + sh.H_ROLES) !== 1) {
+    return;
+  }
+  const r = m.ld(h + sh.H_RESULT);
+  if (r !== 0) {
+    const rdrop = m.ld(h + sh.H_RDROP);
+    const n = m.ld(h + sh.H_NODE);
+    if (
+      (m.load32(h + sh.H_FLAGS) & sh.CLAIMED) === 0 && (m.load32(n + nd.N_FLAGS) & nd.STARTED) !== 0
+    ) {
+      // Nobody took it: back into the node, whose own drop reports a rejection nobody handled.
+      m.copy(n + nd.N_HEAD + 16, r, m.ld(h + sh.H_SIZE));
+      m.and32(n + nd.N_FLAGS, ~nd.DELIVERED);
+    } else if (rdrop !== 0) {
+      // SAFETY: the settled result nobody holds any more, `rdrop` its drop glue.
+      unsafe {
+        stateDrop(rdrop, r);
+      }
+    }
+    const size = m.ld(h + sh.H_SIZE);
+    m.release(r, size > 0 ? size : 1);
+    m.st(h + sh.H_RESULT, 0);
+  }
+  const fl = m.load32(h + sh.H_FLAGS);
+  if ((fl & sh.ORIG_OUT) !== 0 && (m.or32(h + sh.H_FLAGS, sh.ROLES_GONE) & sh.ORIG_GONE) === 0) {
+    // The original's holder on the other task frees the node and the hub as it goes.
+    return;
+  }
+  free(h);
+}
+
+/**
+ * Frees hub `h`: its node gets its entries back and is dropped as an owner drops it (a node that
+ * has not finished keeps running, its result dropped when it does).
+ */
+export function free(h: usize): void {
+  const n = m.ld(h + sh.H_NODE);
+  const f = n + nd.N_HEAD;
+  m.and32(n + nd.N_FLAGS, ~sh.HUB_HERE);
+  m.st(f, fnAddress(nd.nodePoll));
+  m.st(f + 8, fnAddress(nd.nodeDrop));
+  const len = m.ld(h + sh.H_WLEN);
+  for (let i: usize = 0; i < len; i++) {
+    m.wakerDrop(m.ld(wt.entry(h, i) + 8));
+  }
+  const cap = m.ld(h + sh.H_WCAP);
+  if (cap !== 0) {
+    m.release(m.ld(h + sh.H_WAITERS), 24 * cap);
+  }
+  m.release(h, sh.H_BYTES);
+  nd.nodeDrop(f);
+}

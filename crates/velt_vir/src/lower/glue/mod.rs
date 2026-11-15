@@ -88,6 +88,9 @@ pub(crate) enum Glue {
     /// `(src, dst)`: another reference to the value at `src` (`share_into`), the result glue of a
     /// shared promise (#212).
     ShareSlot,
+    /// `(src, dst) -> u32`: `ShareSlot` returning 1, for std code to call with `statePoll`'s
+    /// signature (a shared promise's hub under `VELT_SCHEDULER=std`, sched_share.velt, #2854).
+    SharePoll,
     Format,
     Eq,
     Same,
@@ -182,6 +185,7 @@ impl Glue {
             Glue::Clone => "clone",
             Glue::Share => "share",
             Glue::ShareSlot => "shareslot",
+            Glue::SharePoll => "sharepoll",
             Glue::Format => "format",
             Glue::Eq => "eq",
             Glue::Same => "same",
@@ -258,6 +262,7 @@ impl Glue {
             | Glue::ViewDrop
             | Glue::MirrorDrop => (vec![Ptr], Unit),
             Glue::Clone | Glue::Share | Glue::ShareSlot => (vec![Ptr, Ptr], Unit),
+            Glue::SharePoll => (vec![Ptr, Ptr], U32),
             Glue::ToAny | Glue::ToAnyParam | Glue::FromAny => (vec![Ptr, Ptr], Unit),
             Glue::ObjClone
             | Glue::DynClone
@@ -309,6 +314,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::Clone => lw.clone_body(args[0], args[1], ty),
             Glue::Share => lw.share_body(args[0], args[1], ty),
             Glue::ShareSlot => lw.share_slot_body(args[0], args[1], ty),
+            Glue::SharePoll => lw.share_poll_body(args[0], args[1], ty),
             Glue::Format => lw.format_body(a(0), args[1], a(2), ty),
             Glue::Eq => lw.eq_body(args[0], args[1], ty),
             Glue::Same => lw.same_body(args[0], args[1], ty),
