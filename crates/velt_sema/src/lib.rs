@@ -108,6 +108,7 @@ mod kept_reload;
 mod key_groups;
 mod known;
 mod layout_merge;
+mod linked;
 mod literals;
 mod main_fn;
 mod module_chunks;

@@ -168,3 +168,40 @@ fn an_app_interface_extending_std_ones_writes_nothing_of_std() {
         "the program's check wrote std's definitions:\n{stderr}"
     );
 }
+
+/// std is held whole in a check by units, but only the std modules the program links have state
+/// when it runs (velt_sema `linked`): a `with` callback that calls a function value is refused
+/// only when some state could be reached, and this program has none once its variable moves into
+/// `main` (as a whole-program check finds).
+#[test]
+fn std_state_the_program_does_not_link_is_not_module_state() {
+    let dir = test_dir::TestDir::new();
+    let src = r#"
+const m = shared(new Mutex<number>(0));
+let c = 1;
+const b = () => {
+  c++;
+};
+const mk = () => {
+  const add = () => c + 100;
+  m.with((v) => {
+    v += add();
+  });
+};
+b();
+mk();
+console.log(m.with((v) => v));
+"#;
+    std::fs::write(dir.path().join("main.velt"), src).unwrap();
+    for units in ["1", "2"] {
+        let out = no_window::command(env!("CARGO_BIN_EXE_velt"))
+            .args(["check", "main.velt"])
+            .current_dir(dir.path())
+            .env("VELT_UNITS", units)
+            .env_remove("VELT_UNITS_FREEZE")
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "VELT_UNITS={units}:\n{stderr}");
+    }
+}

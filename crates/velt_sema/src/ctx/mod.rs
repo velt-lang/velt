@@ -120,6 +120,8 @@ pub(crate) struct Ctx<'m> {
     pub weak_scans: crate::weak_threads::WeakScans,
     /// The same for `module_state::check_locked_access`.
     pub state_facts: crate::module_state::StateFacts,
+    /// The modules each module of a finished unit names (`crate::linked`).
+    pub module_edges: crate::linked::ModuleEdges,
     /// Which part of a check by units this context checks (`crate::units`).
     pub units_stage: crate::units::Stage,
     /// Where the unit being checked starts (`crate::units`): the passes after the bodies take
@@ -594,6 +596,7 @@ impl<'m> Ctx<'m> {
             async_summaries: Default::default(),
             weak_scans: Default::default(),
             state_facts: Default::default(),
+            module_edges: Default::default(),
             units_stage: crate::units::Stage::Both,
             scopes: modules
                 .iter()
