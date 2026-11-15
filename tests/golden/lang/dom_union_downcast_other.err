@@ -1,0 +1,1 @@
+dom_union_downcast_other.velt:8:11: error: cannot cast `Element` as `Counter | HTMLInputElement`
