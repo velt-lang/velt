@@ -17,6 +17,9 @@
 
 #![allow(dead_code)] // Until the unit is saved (#2943 M2).
 
+mod hir;
+#[cfg(test)]
+mod hir_tests;
 #[cfg(test)]
 mod tests;
 
@@ -274,6 +277,45 @@ impl Codec for i64 {
     }
 }
 
+/// 128-bit integers (`hir::Lit::Int`, literal types' and C constants' values) as LEB128 too:
+/// almost all are small.
+impl Codec for u128 {
+    fn enc(&self, w: &mut Writer) {
+        let mut v = *self;
+        while v >= 0x80 {
+            w.out.push(v as u8 | 0x80);
+            v >>= 7;
+        }
+        w.out.push(v as u8);
+    }
+    fn dec(r: &mut Reader) -> Self {
+        let mut v = 0u128;
+        let mut shift = 0;
+        loop {
+            let b = r.byte();
+            if shift == 126 && b > 3 {
+                r.fail();
+                return 0;
+            }
+            v |= u128::from(b & 0x7f) << shift;
+            if b < 0x80 {
+                return v;
+            }
+            shift += 7;
+        }
+    }
+}
+
+impl Codec for i128 {
+    fn enc(&self, w: &mut Writer) {
+        (((*self << 1) ^ (*self >> 127)) as u128).enc(w);
+    }
+    fn dec(r: &mut Reader) -> Self {
+        let v = u128::dec(r);
+        ((v >> 1) as i128) ^ -((v & 1) as i128)
+    }
+}
+
 impl Codec for f64 {
     fn enc(&self, w: &mut Writer) {
         w.out.extend_from_slice(&self.to_bits().to_le_bytes());
@@ -377,6 +419,21 @@ impl<T: Codec> Codec for Option<T> {
                 None
             }
         }
+    }
+}
+
+/// Byte arrays (`hir::Intrinsic::SimdShuffle`'s lanes) as their bytes.
+impl<const N: usize> Codec for [u8; N] {
+    fn enc(&self, w: &mut Writer) {
+        w.out.extend_from_slice(self);
+    }
+    fn dec(r: &mut Reader) -> Self {
+        let mut a = [0u8; N];
+        let b = r.take(N);
+        if b.len() == N {
+            a.copy_from_slice(b);
+        }
+        a
     }
 }
 

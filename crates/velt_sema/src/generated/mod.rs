@@ -292,17 +292,19 @@ impl Ctx<'_> {
     #[track_caller]
     pub(crate) fn generator_of(&self, d: DefId) -> Option<&velt_syntax::ast::GeneratorSpec> {
         match self.info.get(d.0 as usize)? {
-            DefInfo::Fn(f) => match f.source {
-                Some(FnSource::Decl(decl)) => decl.sig.generator.as_ref(),
-                _ => None,
-            },
+            DefInfo::Fn(f) => f.generator.as_ref(),
             _ => None,
         }
     }
 
     /// Does the program declare a generated function? (No cost for programs without one.)
     pub(crate) fn has_generated_fns(&self) -> bool {
-        self.modules.iter().any(|m| {
+        // By units, a finished unit's (std's) are listed; the app's modules are walked.
+        let (kept, from) = match (self.units_stage, &self.unit_sums.generated_fns) {
+            (crate::units::Stage::App, Some((s, _))) => (!s.is_empty(), self.app_module_base()),
+            _ => (false, 0),
+        };
+        kept || self.modules.iter().skip(from).any(|m| {
             m.ast.items.iter().any(|i| {
                 matches!(&i.kind, velt_syntax::ast::ItemKind::Function(f) if f.sig.generator.is_some())
             })

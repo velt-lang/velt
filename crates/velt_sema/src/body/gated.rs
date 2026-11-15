@@ -61,6 +61,10 @@ impl FnCx<'_, '_> {
     /// The target function `d` is gated on: its first statement names it (std functions only),
     /// calling what its module binds to the intrinsic `targetFeature`.
     pub(crate) fn fn_target(&self, d: DefId) -> Option<CpuTarget> {
+        // A finished unit's functions are checked: their targets are recorded (`cpu_targets`).
+        if d.0 < self.cx.unit_base {
+            return self.cx.cpu_targets.get(&d).copied();
+        }
         let f = self.cx.fn_info(d);
         if !self.cx.scopes[f.module].is_std {
             return None;

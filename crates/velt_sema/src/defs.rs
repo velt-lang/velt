@@ -248,6 +248,12 @@ pub(crate) struct FnInfo<'m> {
     pub intrinsic: Option<crate::intrinsic_decls::DeclaredIntrinsic>,
     /// `@intrinsic declare unsafe function`: a call needs unsafe code, as an unsafe function's.
     pub unsafe_intrinsic: bool,
+    /// Its declaration ends in a rest parameter (`...xs: T[]`), and is `unsafe`: read from the
+    /// declaration once, so callers (a later unit's, by units) need no AST.
+    pub rest: bool,
+    pub sig_unsafe: bool,
+    /// Its generator (`declare generated("./gen") function f<T>(): R`), from its declaration.
+    pub generator: Option<velt_syntax::ast::GeneratorSpec>,
     /// A `declare` function's written signature (`crate::decorators` reads its decorators, and
     /// whether it declares one); `None` for every other function.
     pub extern_sig: Option<&'m ast::FnSig>,

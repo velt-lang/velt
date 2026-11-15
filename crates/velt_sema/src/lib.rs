@@ -605,11 +605,10 @@ fn analyze(
     } else {
         analyze_after_bodies(cx);
     }
-    // std's unit alone has no root of its own (`crate::units`).
-    if cx.units_stage == units::Stage::Std {
-        return None;
-    }
-    let entry = main_fn::check_main(cx, root, root_mod, opts.require_main);
+    // std's unit alone has no root of its own (`crate::units`), but checks its own aliases.
+    let entry = (cx.units_stage != units::Stage::Std)
+        .then(|| main_fn::check_main(cx, root, root_mod, opts.require_main))
+        .flatten();
     alias_expand::check_unused_aliases(cx);
     entry
 }

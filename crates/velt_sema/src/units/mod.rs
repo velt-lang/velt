@@ -121,6 +121,8 @@ pub(crate) struct Summaries {
     pub(crate) literals: Option<crate::ownership::KeptLiterals>,
     /// The fields a finished unit's bodies feed with values that are not new (`local_async::fed`).
     pub(crate) fed: Option<(rustc_hash::FxHashSet<(crate::hir::DefId, u32)>, usize)>,
+    /// How many modules a finished unit has: later modules are a later unit's (or generated).
+    pub(crate) modules: usize,
     /// A finished unit's classes below each class (`Ctx::subclass_map`).
     pub(crate) subclasses: Option<crate::ctx::classes::SubclassMap>,
 }
@@ -231,6 +233,7 @@ pub(crate) fn remap_module_facts(cx: &mut Ctx, at: &dyn Fn(usize) -> Option<usiz
 pub(crate) fn finish_unit(cx: &mut Ctx) {
     cx.freeze_defs();
     cx.unit_base = cx.defs.len() as u32;
+    cx.unit_sums.modules = cx.modules.len();
     let generated = cx.generated_fns();
     cx.unit_sums.generated_fns = Some((generated, cx.info.len()));
     crate::ownership::keep_unit_scans(cx);
@@ -264,4 +267,14 @@ pub(crate) fn touch_phase(cx: &Ctx, phase: &str, more: bool) {
         took_all.as_secs_f64() * 1e3
     );
     touch::phase(phase, more);
+}
+
+impl Ctx<'_> {
+    /// The first module after a finished unit's (0 outside an app's stage by units).
+    pub(crate) fn app_module_base(&self) -> usize {
+        match self.units_stage {
+            Stage::App => self.unit_sums.modules,
+            _ => 0,
+        }
+    }
 }
