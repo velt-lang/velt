@@ -33,7 +33,8 @@ pub fn std_defs(p: &hir::Program) -> Vec<StdDef> {
     for (i, d) in p.defs.iter().enumerate() {
         let id = DefId(i as u32);
         let name = h.name(id);
-        if !name.starts_with("std/") || p.unchecked.contains(&id) {
+        // The program's glue (`Program::glue_bodies`) is the same in no two programs, by design.
+        if !name.starts_with("std/") || p.unchecked.contains(&id) || p.glue_bodies.contains(&id) {
             continue;
         }
         let interface = match d {

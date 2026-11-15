@@ -19,6 +19,7 @@ pub(super) fn facts(h: &mut Hashing) -> Vec<(&'static str, u64)> {
         counted_objects,        // "counted types"
         assigned_objects,       // "declarations" (a flag sema infers from every body)
         changes_held: _,        // Per function (`Hashing::function`).
+        glue_bodies: _,         // Bodies, which summaries leave to the per-function hashes.
         null_proto_records,     // "flags"
         record_fills,           // "flags"
         fn_shapes: _,           // Per function, through its span (`Hashing::function`).

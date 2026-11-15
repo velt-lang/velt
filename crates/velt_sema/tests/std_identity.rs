@@ -76,3 +76,19 @@ fn a_std_module_let_is_the_same_whatever_slots_come_first() {
     assert!(find(&a).is_some(), "{name} is not checked");
     assert_eq!(find(&a), find(&b));
 }
+
+/// A std body sema writes for the program (`Program::glue_bodies`: `anyString` dispatching over
+/// the program's classes) is left out: it is the same in no two programs, by design (#2943).
+#[test]
+fn the_programs_glue_is_not_compared() {
+    let src = "class C { toString(): string { return \"c\"; } }
+function main() { const x: any = new C(); console.log(String(x)); }";
+    let defs = std_defs(&ok_src(src));
+    let glue = "std/lang/hooks/any_text::anyString";
+    assert!(defs.iter().all(|d| d.name != glue), "{glue} is compared");
+    assert!(
+        defs.iter()
+            .any(|d| d.name.starts_with("std/lang/hooks/any_text::")),
+        "no other any_text definition is checked"
+    );
+}
