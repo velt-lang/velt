@@ -62,6 +62,7 @@ const LATE: &str = r#"class Failed extends Error {}
 
 const GO = new Atomic<i64>(0);
 const THROWN = new Atomic<i64>(0);
+const SINK = new Atomic<i64>(0);
 
 function busy(n: i64): i64 {
   let s: i64 = 0;
@@ -85,8 +86,8 @@ async function main() {
   GO.store(1);
   console.log("main line");
   while (THROWN.load() === 0) {}
-  // The report comes meanwhile, on worker 1.
-  busy(20000000);
+  // The report comes meanwhile, on worker 1 (the sum is stored, so the loop stays).
+  SINK.store(busy(20000000));
   console.log("main after busy");
   // A hang guard: the rejection ends the process at the end of this poll.
   await sleep(60000);
@@ -98,6 +99,8 @@ async function main() {
 /// to worker 0 and queued ahead of `main` by its `yieldNow`, rejects in its first poll; `main`
 /// then drops its handle and returns in the same poll.
 const EARLY: &str = r#"class Failed extends Error {}
+
+const SINK = new Atomic<i64>(0);
 
 function busy(n: i64): i64 {
   let s: i64 = 0;
@@ -117,7 +120,7 @@ async function main() {
     await yieldNow();
   }
   console.log("main line");
-  busy(2000000);
+  SINK.store(busy(2000000));
   console.log("main after busy");
 }
 "#;
