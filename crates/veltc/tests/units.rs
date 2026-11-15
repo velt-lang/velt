@@ -156,3 +156,15 @@ fn an_object_shape_std_made_first_is_not_written_by_the_app() {
         "the program's check wrote std's definitions:\n{stderr}"
     );
 }
+
+/// A golden whose interfaces extend std's: the app's collection reads std's flattened
+/// interfaces and never flattens them again (`collect::iface_extends`), so nothing crosses.
+#[test]
+fn an_app_interface_extending_std_ones_writes_nothing_of_std() {
+    let out = check_golden("lang/comparable.velt", true);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !stderr.contains("velt-units:"),
+        "the program's check wrote std's definitions:\n{stderr}"
+    );
+}
