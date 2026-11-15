@@ -6,6 +6,7 @@
 // sched_monitor.velt). The poll of a task is sched_run.velt's.
 
 import { inline, noInline } from "velt/lang/intrinsics";
+import * as ex from "./sched_exit";
 import * as m from "./sched_mem";
 import * as mon from "./sched_monitor";
 import * as pk from "./sched_park";
@@ -217,8 +218,9 @@ function fromInbox(e: usize): usize {
 /** `turn` with other threads at the executor (`mode`: its `E_MODE`). */
 @noInline
 function turnShared(e: usize, mode: u32): void {
-  // Worker 0 asked to leave the shared mode the rescue gave it (sched_relax.velt).
-  if (m.load32Relaxed(e + t.E_RELAX) !== 0 && rx.relax(e)) {
+  // Worker 0 asked to leave the shared mode the rescue gave it (sched_relax.velt), or an exit due
+  // (sched_exit.velt `handToMain`: this ends the program on worker 0 and stops another).
+  if (m.load32Relaxed(e + t.E_RELAX) !== 0 && relaxOrExit(e)) {
     return;
   }
   const again = m.ld(e + t.E_AGAIN);
@@ -381,4 +383,11 @@ function idle(e: usize, mode: u32): void {
     sp.publishIdle(e);
   }
   pk.park(e);
+}
+
+/** `turnShared`'s look found worker `e`'s `E_RELAX` set: an exit due first, else the relax. */
+@noInline
+function relaxOrExit(e: usize): bool {
+  ex.takeExit(e);
+  return rx.relax(e);
 }
