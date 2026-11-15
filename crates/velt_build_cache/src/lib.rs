@@ -184,6 +184,25 @@ impl Cache {
         stored
     }
 
+    /// Store `value` as `key`'s entry of `kind` in place of the one there, for an entry that is
+    /// not a pure function of its key (what a program's last build learned); `false` if it could
+    /// not be stored. Other processes that already read the old entry may keep seeing it.
+    pub fn replace_key(&self, kind: &str, key: &Key, value: &[u8]) -> bool {
+        self.mark();
+        let stored = if value.len() < LARGE {
+            files::remove(&self.large_dir(kind), key);
+            self.packs(kind).replace(key, value)
+        } else {
+            self.packs(kind).remove(key);
+            files::replace(&self.large_dir(kind), key, value)
+        };
+        if stored {
+            self.written
+                .fetch_add(value.len() as u64, Ordering::Relaxed);
+        }
+        stored
+    }
+
     /// Write the root's marker, once per process, before the first entry: into a new or empty
     /// root, or one holding only what the cache makes (a cache from before the marker). A root
     /// with other files is never adopted: entries are still stored there, but `clear` and garbage

@@ -469,3 +469,35 @@ fn sizes() {
     assert_eq!(parse_size("lots"), None);
     assert_eq!(parse_size("-1G"), None);
 }
+
+/// `replace_key` puts a new value in place of the old one, also when it moves between the packs
+/// and the large files, and another process (a new `Cache`) sees only the new one.
+#[test]
+fn replaced_entries_are_read_back_new() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cache = Cache::new(tmp.path(), DEFAULT_LIMIT);
+    let key = Key::of(&[b"offer"]);
+    let large = vec![5; LARGE + 3];
+    assert!(cache.put_key("offer", &key, b"first"));
+    // `put_key` keeps what is there; `replace_key` does not.
+    assert!(cache.put_key("offer", &key, b"other"));
+    assert_eq!(cache.get_key("offer", &key).as_deref(), Some(&b"first"[..]));
+    assert!(cache.replace_key("offer", &key, b"second"));
+    assert_eq!(cache.get_key("offer", &key).as_deref(), Some(&b"second"[..]));
+    let other = Cache::new(tmp.path(), DEFAULT_LIMIT);
+    assert_eq!(other.get_key("offer", &key).as_deref(), Some(&b"second"[..]));
+    // Small to large and back.
+    assert!(cache.replace_key("offer", &key, &large));
+    assert_eq!(cache.get_key("offer", &key), Some(large.clone()));
+    let other = Cache::new(tmp.path(), DEFAULT_LIMIT);
+    assert_eq!(other.get_key("offer", &key), Some(large));
+    assert_eq!(other.usage().entries, 1);
+    assert!(cache.replace_key("offer", &key, b"third"));
+    let other = Cache::new(tmp.path(), DEFAULT_LIMIT);
+    assert_eq!(other.get_key("offer", &key).as_deref(), Some(&b"third"[..]));
+    assert_eq!(other.usage().entries, 1);
+    // Garbage collection keeps the last value.
+    other.collect_garbage(DEFAULT_LIMIT);
+    let other = Cache::new(tmp.path(), DEFAULT_LIMIT);
+    assert_eq!(other.get_key("offer", &key).as_deref(), Some(&b"third"[..]));
+}

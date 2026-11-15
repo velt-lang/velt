@@ -60,7 +60,7 @@ pub(crate) fn check(
     // relative to its working directory.
     let root_path = (modules.get(root)).map(|m| vpm::relpath::absolute(&sess.sm.get(m.file).path));
     let offer_key = (declares.then_some(root_path).flatten())
-        .and_then(|p| cache::offer_key(&p, opts.require_main));
+        .and_then(|p| cache::offer_key(&p, opts.require_main, opts.eager_std));
     if let Some(offer) = offer_key.as_ref().and_then(cache::load_offer) {
         let mark = sess.diagnostics.len();
         let files = offer.generator_files.clone();
