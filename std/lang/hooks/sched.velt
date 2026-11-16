@@ -47,6 +47,8 @@ import * as st from "./sched_stats";
 import * as t from "./sched_task";
 import * as tm from "./sched_timers";
 import * as workers from "./sched_workers";
+// `spawn`'s hooks live in sched_spawn.velt; loaded with this module (std loaded up front too).
+export { schedSpawn, schedSpawnFut } from "./sched_spawn";
 import * as mk from "./sched_make";
 import * as wk from "./sched_wake";
 
@@ -124,7 +126,8 @@ export function schedFinish(code: i32): void {
   }
   mod.handOver();
   if (m.ld32(e + t.E_MODE) === 0 && m.ld(e + t.E_LAZY) === 0) {
-    while (m.ld(e + t.E_LIVE) !== 0) {
+    // Tasks spawned by threads that aren't workers count too (`E_LIVE_F`, sched_foreign.velt).
+    while (m.ld(e + t.E_LIVE) !== 0 || m.load(e + t.E_LIVE_F) !== 0) {
       loop.turnSolo(e);
     }
   } else {
@@ -144,70 +147,6 @@ export function schedFinish(code: i32): void {
   // Streams dropped unclosed stay open to the end, as the runtime's: their buffers go now.
   tb.releaseBuffers();
   st.report();
-}
-
-/**
- * `spawn(f(...))`: a task from the initial state at `state` (`size` bytes, aligned to at most 8 as
- * every value the compiler lays out, which the task's block is; moved in), scheduled now; its join handle, a heap future whose slot gets `rsize` bytes. A
- * result the handle never claims is dropped with `rdrop` (0: nothing to drop).
- */
-export function schedSpawn(
-  poll: usize,
-  drop: usize,
-  state: usize,
-  size: u64,
-  align: u64,
-  rsize: u64,
-  rdrop: usize,
-  transfer: usize,
-): usize {
-  if (align > 8) {
-    panic("ICE: a task's state aligned to more than 8 bytes");
-  }
-  // This thread's worker block (0 off the workers), read once (`exec`, and the queueing).
-  let w = t.here();
-  let e = w;
-  if (w === 0) {
-    e = exec();
-    w = t.here();
-  }
-  // The executor's reference and the handle's.
-  const k = mk.task(e, poll, drop, rsize, rdrop, size, 2);
-  m.st(k + t.T_TRANSFER, transfer);
-  m.copy(m.ld(k + t.T_ROOT), state, size as usize);
-  m.st(k + t.T_JOIN_STATE, t.J_HANDLE as usize);
-  nc.spawned(e, k);
-  mk.home(e, k);
-  mk.liveUp(m.ld(e + t.E_MAIN), e);
-  wk.scheduleNew(w, k);
-  return k + t.T_JOIN;
-}
-
-/**
- * `spawn(p)` of heap future `f` (a stored promise, a join handle, a leaf): a task polling it,
- * scheduled now; its join handle, whose slot gets `rsize` bytes (dropped with `rdrop` when
- * nobody claims them). The task's state is `f` and `rsize`, then the root's result.
- */
-export function schedSpawnFut(f: usize, rsize: u64, rdrop: usize): usize {
-  // This thread's worker block (0 off the workers), read once (`exec`, and the queueing).
-  let w = t.here();
-  let e = w;
-  if (w === 0) {
-    e = exec();
-    w = t.here();
-  }
-  const k = mk.task(e, fnAddress(run.futRootPoll), 0, rsize, rdrop, 16 + ((rsize + 15) & ~15), 2);
-  const at = m.ld(k + t.T_ROOT);
-  m.st(at, f);
-  m.st(at + 8, rsize as usize);
-  m.st(k + t.T_ROOT, at + 16);
-  m.st(k + t.T_JOIN_STATE, t.J_HANDLE as usize);
-  m.st(k + t.T_TRANSFER, 0);
-  nc.spawned(e, k);
-  mk.home(e, k);
-  mk.liveUp(m.ld(e + t.E_MAIN), e);
-  wk.scheduleNew(w, k);
-  return k + t.T_JOIN;
 }
 
 /**
@@ -292,13 +231,19 @@ export function schedStart(f: usize, rdrop: usize, rejecting: bool): void {
  * now (its result dropped quietly with `qdrop`), and keeps running; anything else is dropped.
  */
 export function schedDetach(f: usize, qdrop: usize): void {
-  const e = exec();
-  if (!t.onWorker() && m.ld(f) !== fnAddress(node.nodePoll) && !jn.isJoin(f)) {
-    // Off the worker: the runtime's box, or a leaf of its.
-    off.detach(f, qdrop);
-    return;
+  const isNode = m.ld(f) === fnAddress(node.nodePoll);
+  if (!t.onWorker()) {
+    if (!isNode && !jn.isJoin(f)) {
+      // Off the worker: the runtime's box, or a leaf of its.
+      off.detach(f, qdrop);
+      return;
+    }
+    if (isNode) {
+      // A started promise belongs to a worker's task; one never reaches another thread (#3085).
+      panic("ICE: a promise of the executor given up off its workers");
+    }
   }
-  if (m.ld(f) !== fnAddress(node.nodePoll)) {
+  if (!isNode) {
     // A spawned task's join handle: the task runs on, its rejection handled.
     jn.joinHandled(f, qdrop);
     // SAFETY: the caller owns `f`, a heap future, and gives it up.
@@ -307,6 +252,7 @@ export function schedDetach(f: usize, qdrop: usize): void {
     }
     return;
   }
+  const e = exec();
   const c = m.ld(e + nc.E_CATCHING) & ~1;
   node.start(m.ld(e + t.E_CURRENT), f, qdrop, false, fnAddress(node.nodePoll), c);
   node.nodeDrop(f);
@@ -325,6 +271,7 @@ export function schedPeek(f: usize): u32 {
 export function schedHandled(futs: usize, n: u64, qdrop: usize): void {
   if (!t.onWorker()) {
     off.handled(futs, n, qdrop);
+    return;
   }
   const poll = fnAddress(node.nodePoll);
   for (let i: usize = 0; i < (n as usize); i++) {
@@ -365,14 +312,14 @@ export function schedMicrotask(): usize {
 
 /** `velt_rt_keep_alive_acquire`: a ref'd timer keeps the process alive. */
 export function schedKeepAliveAcquire(): void {
-  exec();
-  end.keepAcquire(t.main());
+  // Worker 0's block (`E_MAIN` of this thread's): before the start, a C library's thread has
+  // only the pending one, which is its own `E_MAIN` (#3085).
+  end.keepAcquire(m.ld(exec() + t.E_MAIN));
 }
 
 /** `velt_rt_keep_alive_release`: the reference `schedKeepAliveAcquire` took, given back. */
 export function schedKeepAliveRelease(): void {
-  exec();
-  end.keepRelease(t.main());
+  end.keepRelease(m.ld(exec() + t.E_MAIN));
 }
 
 /** `velt_rt_timer_unref_due`: a heap future, whether a due `unref()`'d timer's process ends. */

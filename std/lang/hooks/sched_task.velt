@@ -286,7 +286,13 @@ export const E_FAIR_TICK: usize = 936;
 export const E_W_TICK: usize = 944;
 /** The waker table of a `Promise.all` join's children (sched_all.velt): process-wide, as `E_VT`. */
 export const E_ALL_VT: usize = 952;
-export const E_SIZE: usize = 984;
+/**
+ * Worker 0's live tasks spawned by threads that aren't workers (sched_foreign.velt, #3085), counted
+ * atomically: each counts here until its end (sched_run.velt, wherever it ran, a rescue's spare
+ * too), never in `E_LIVE`.
+ */
+export const E_LIVE_F: usize = 984;
+export const E_SIZE: usize = 992;
 /** The spawns of a lazy worker 0's poll that go on `E_PREST`, which the monitor may take. */
 export const PEND_STACKED: usize = 64;
 /** `E_LAZY`'s states. */
@@ -403,6 +409,12 @@ export const J_LOCK: u32 = 1;
 export const J_DONE: u32 = 2;
 export const J_HANDLE: u32 = 4;
 export const J_CLAIMED: u32 = 8;
+/**
+ * The task was spawned by a thread that isn't a worker (sched_foreign.velt, #3085): its handle may
+ * be dropped there while the task ends on a worker, so its slot always locks (sched_make.velt
+ * `lockJoin`), whatever the lock mode.
+ */
+export const J_FOREIGN: u32 = 64;
 
 /**
  * This thread's worker block; off the workers (a thread of the runtime's, a C library's),
