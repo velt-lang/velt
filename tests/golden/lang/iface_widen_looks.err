@@ -4,3 +4,4 @@
 17:68: error: this tests a key of a value of type
 19:23: error: this lists the keys of a value of type
 such objects can have `__name` (given through `InternalCtx`), and Node would show it here
+this spreads a value of type `{ el: string; update: () => void; __name?: string }`

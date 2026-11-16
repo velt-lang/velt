@@ -78,14 +78,15 @@ With the lookup alone, sigx's `ctx` still fails. It is an object literal convert
 - **Classes** are not widened (decided below). A class converted to `I` that lacks one of `J`'s optional fields, where the program casts `I` to `J`, is a compile error naming the class and the field. A class that declares the field itself implements `J` as it is.
 - An anonymous target (`rq as { _input?: unknown }`) where every member is optional and absent
   from `I` counts as an extension of `I`.
-- **Cost:** in a program with such a cast, every object of a type converted to `I` is larger by the added fields, written or not.
-  - Each optional field takes its `T | undefined` slot plus a presence flag, the layout #1383's widened layouts have.
-  - For one `string` field, measured on an Apple M-series Mac (release runtime, 2,000,000 `{ id, run }` literals converted to `Ctx`, each read 5 times):
-    - the struct grows from 24 to 64 bytes: a 32-byte option of the 24-byte string, and 8 bytes for the 1-byte flag after alignment;
-    - peak RSS goes from 115.5 MB to 195.0 MB (+40 bytes per object);
-    - instructions go from 415.6 M to 511.8 M (+23%; making and touching the larger objects).
+- **Layout:** each added field is held out of line (`hir::FieldDef::cell`). It's one pointer slot, `null` while the field was never written, pointing to a hidden one-field class that holds the value, made on the first write. The extension's implementation reads and writes through it, and reflection sees it as an optional field (velt_vir `cell_fields.rs`).
+- **Cost:** in a program with such a cast, every object of a type converted to `I` is one pointer larger per added field, written or not. A written field also costs its cell.
+  - Measured on an Apple M-series Mac (release runtime, 2,000,000 `{ id, run }` literals converted to `Ctx`, each read 5 times, one written):
+    - the struct grows from 24 to 32 bytes;
+    - peak RSS goes from 115.5 MB to 130.8 MB;
+    - instructions go from 426.8 M to 456.6 M (+7.0%).
+  - That's what an ordinary 8-byte field costs: the control, the same program with one more number field and no cast, measures 130.7 MB and 454.5 M. Of the +7.0%, 2.9 points are the checked cast's route through `any` (A1).
+  - Holding the fields inline instead (the option's slot plus a presence flag) cost 40 bytes per object: 195.0 MB and 511.8 M.
   - Programs without such a cast are unchanged.
-  - Smaller layouts are possible, as a layout change for #1383's families too: a presence-flagged slot without the option's own tag (−8 bytes), or the added fields in one block allocated on the first write (8 bytes per object until then). These are follow-ups.
 
 ## B. Setter slots for method members
 

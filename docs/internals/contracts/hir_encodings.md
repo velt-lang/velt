@@ -1264,6 +1264,15 @@ that was only variables solved empty is no error type (`FnDef::throws` is `None`
   `Object.defineProperty` adds without `enumerable: true` (`velt_sema::defined_props`, #922).
   It is an ordinary field otherwise; `console.log` (`format_object`) and spreads leave it out, as
   Node leaves out a non-enumerable property. Readers that ignore it show the brand.
+- `FieldDef::cell` (additive): a field a cast to an interface extension added to an object type
+  (velt_sema `object_widen`, #379), held out of line. Its `ty` is `C | null`, for a hidden class
+  `C` with one field holding the value (`T | undefined`). `null` means absent, and the cell is
+  made on the first write. Sema's implementations of the extension read and write it through
+  the cell. Lowering reads the flag only for reflection: printing, keys, `in`, `delete`, reads
+  and writes through `any`, and objects filled from an `any` or a `Record` see the field as an
+  optional field of the cell's field type, present while the cell is there (velt_vir
+  `cell_fields.rs`). Such a field has no presence flag. Readers that ignore the flag see the
+  cell itself.
 - `FieldDef::presence` (additive): every optional field whose type is an option (`a?: T`, read
   as `T | undefined`, and `a?: T | null`, read as `T | null | undefined`), in an object type,
   field-only interface or struct (not a class, whose optional field is an own property holding
