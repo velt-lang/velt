@@ -53,9 +53,11 @@ use crate::visit::{self, VisitMut};
 
 mod effects;
 mod fix;
+mod glue_args;
 pub(crate) mod implicit;
 mod program;
 
+use glue_args::glue_args;
 use implicit::Implicit;
 use program::Program;
 

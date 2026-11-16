@@ -103,11 +103,7 @@ declare c("c") function setsockopt$io(
 // The signature the compiler calls it with for `{ errno: true }` (velt_vir c_abi.rs): one C
 // symbol has one signature in a program.
 declare c("c") function __error(): Ptr<i32>;
-declare c("c") function accept$io(
-  fd: i32,
-  addr: Ptr<sockaddr> | null,
-  len: Ptr<u32> | null,
-): i32;
+declare c("c") function accept$io(fd: i32, addr: Ptr<sockaddr> | null, len: Ptr<u32> | null): i32;
 declare c("c") function close$io(fd: i32): i32;
 
 /** The calling thread's `errno`. */
@@ -301,14 +297,7 @@ export function wake(r: usize): void {
   // wake a worker while the process ends).
   // SAFETY: one change record.
   unsafe {
-    kevent$io(
-      m.ld(r + R_KQ) as i32,
-      m.ptrTo<kevent>(r + R_TRIGGER),
-      1,
-      null,
-      0,
-      null,
-    );
+    kevent$io(m.ld(r + R_KQ) as i32, m.ptrTo<kevent>(r + R_TRIGGER), 1, null, 0, null);
   }
 }
 

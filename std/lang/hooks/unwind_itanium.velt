@@ -7,7 +7,6 @@
 
 import { Ptr, StrBytes, byteLength, readCString } from "velt/ffi";
 
-
 declare c("c") function malloc(n: usize): Ptr<u8> | null;
 declare c("c") function free(p: Ptr<u8>): void;
 declare c("c") function memcpy(dst: Ptr<u8>, src: StrBytes, n: usize): Ptr<u8>;

@@ -52,7 +52,7 @@ impl Ctx<'_> {
             TyKind::Error => out.push_str("!02"),
             TyKind::Symbol => out.push_str("symbol"),
             TyKind::Ptr(p) => {
-                out.push_str("*");
+                out.push('*');
                 self.canon_into(*p, out, unions);
             }
             TyKind::Simd(s) => out.push_str(s.name()),

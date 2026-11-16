@@ -67,7 +67,7 @@ impl Effects {
                     self.type_args.extend(targs);
                 }
                 Callee::Intrinsic(i) => {
-                    if implicit::glue_args(*i) {
+                    if super::glue_args(*i) {
                         self.glue(cx, im, args);
                     }
                     self.resumes |= implicit::resumes(*i);
