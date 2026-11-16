@@ -920,13 +920,15 @@ number where the program has `intWrite`, else `wholeNumberWrite`).
 | `velt_rt_realloc` | `(void* p, uint64_t old_size, uint64_t align, uint64_t new_size) -> void*` |
 | `velt_rt_free` | `(void* p, uint64_t size, uint64_t align)` |
 
-A release build for a native target makes no such call (#2196): the optimizer's last step
-(`velt_opt` `heap_calls`) turns each into a call of std's hook for it (std/lang/hooks/heap.velt:
-`heapAlloc`, `heapRealloc`, `heapFree`), which calls mimalloc through `declare c` (`mi_malloc`,
-`mi_malloc_aligned`, `mi_realloc`, `mi_realloc_aligned`, `mi_free`, in the runtime's archive) with
-the same contract: a size of 0 gives `align` back and its free does nothing, an alignment of 8 or
-less takes the plain functions, a growth past the array length limit below and a request mimalloc
-refuses stop the program with the same messages (as Velt panics). The runtime's Rust uses mimalloc
+In a release build for a native target, an allocation of a constant size and every free call
+mimalloc directly (#2196): the optimizer's last step (`velt_opt` `heap_calls`) turns each into a
+call of std's hook for it (std/lang/hooks/heap.velt: `heapAlloc`, `heapFree`), which calls
+mimalloc through `declare c` (`mi_malloc`, `mi_malloc_aligned`, `mi_free`, in the runtime's
+archive) with the same contract: a size of 0 gives `align` back and its free does nothing, an
+alignment of 8 or less takes the plain function, and a request mimalloc refuses stops the program
+with the same message (as a Velt panic). Array buffers of a run-time length and array growth still
+call `velt_rt_alloc` / `velt_rt_realloc` (`heap_calls` says why); array growth calls
+`velt_rt_realloc` for an empty buffer too (an old size of 0 allocates). The runtime's Rust uses mimalloc
 too (its global allocator), so blocks still move both ways. Debug builds, the JIT, WebAssembly and
 a release build made with `VELT_RT_DEBUG_ALLOC=1` or `VELT_RC_STATS=1` set keep calling the
 runtime's functions, whose debug build checks and counts every block.

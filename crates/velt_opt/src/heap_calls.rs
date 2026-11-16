@@ -1,9 +1,18 @@
-//! The allocator through `declare c` (#2196): each call of the runtime's allocator
-//! (`velt_rt_alloc`, `velt_rt_realloc`, `velt_rt_free`; rt_abi.md "Memory") becomes a call of
-//! std's hook for it (std/lang/hooks/heap.velt: mimalloc, with the zero-size, length-limit and
-//! out-of-memory checks in Velt), which the backend inlines. Lowering puts the hooks in the
-//! program only when the build asks (`velt_vir::LowerOptions::heap_hooks`: release builds for
-//! native targets), so without them this does nothing.
+//! The allocator through `declare c` (#2196): calls of the runtime's allocator (`velt_rt_alloc`,
+//! `velt_rt_free`; rt_abi.md "Memory") become calls of std's hooks for them
+//! (std/lang/hooks/heap.velt: mimalloc, with the zero-size and out-of-memory checks in Velt),
+//! which the backend inlines. Lowering puts the hooks in the program only when the build asks
+//! (`velt_vir::LowerOptions::heap_hooks`: release builds for native targets), so without them
+//! this does nothing.
+//!
+//! An allocation becomes the hook's only when its size is a constant here (objects, closure
+//! environments, counted boxes), where the hook folds to the mimalloc call and its null check.
+//! An array buffer of a run-time length, and array growth (`velt_rt_realloc`), keep the
+//! runtime's calls: with std's hooks inlined there (or the reallocation out of line), LLVM
+//! compiled the loops that fill or push into such a buffer differently (a peeled first
+//! iteration and two more induction variables in the hot path; bench/hashmap.velt +4.7% and
+//! bench/closures.velt +4.1% by instructions), which the runtime's opaque, `allockind` calls
+//! don't cause.
 //!
 //! It runs last, once no pass reads the allocator calls any more (`heap_sroa`, `dead_fills`,
 //! `vtable_loads`, … find them by the runtime's symbols), and until then [`dead_funcs`]
@@ -150,11 +159,7 @@ fn rewrite(func: &mut Function, b: usize, params: &[Ty], hook: FuncId) {
     *next = new_next;
 }
 
-/// Whether the allocation ending a block asks for a size known here (an object, a closure's
-/// environment, a counted box, an array's first four elements): its hook folds to the mimalloc
-/// call. An array buffer of a length known only at run time stays the runtime's call: inlined,
-/// the hook's checks changed how LLVM compiled the loops that fill such a buffer (a peeled first
-/// iteration and more induction variables: bench/hashmap.velt +4.7% by instructions).
+/// Whether the allocation ending a block asks for a size known here (module docs).
 fn constant_size(term: &Terminator) -> bool {
     matches!(
         term,

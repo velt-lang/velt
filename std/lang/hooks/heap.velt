@@ -1,7 +1,9 @@
 // velt/lang/hooks (internal): the allocator of a release build's generated code, mimalloc called
 // through `declare c` (#2196). Lowering emits the runtime's allocator calls (`velt_rt_alloc`,
 // `velt_rt_realloc`, `velt_rt_free`; rt_abi.md "Memory"), which the optimizer reads, and its last
-// step makes each a call of the hook here (velt_opt `heap_calls`), inlined where it is called.
+// step makes an allocation of a known size and every free a call of the hook here (velt_opt
+// `heap_calls`), inlined where it is called. Array buffers of a run-time length and their growth
+// keep the runtime's calls for now (`heapRealloc` waits for that: see `heap_calls`).
 // Debug builds keep the runtime's, which checks and counts every block (`VELT_RT_DEBUG_ALLOC`,
 // `VELT_RC_STATS`): its Rust allocates and frees blocks generated code also uses.
 //

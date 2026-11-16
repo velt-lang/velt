@@ -212,7 +212,8 @@ hooks! {
     // last step (`heap_calls`) turns the runtime allocator calls lowering emits into these.
     /// `velt_rt_alloc`'s job: `(size, align)`, the block's address.
     heap_alloc => lang_hooks_heap, "heapAlloc", sig((u64, u64) -> u64), lowered;
-    /// `velt_rt_realloc`'s: `(p, old_size, align, new_size)`, the block's new address.
+    /// `velt_rt_realloc`'s: `(p, old_size, align, new_size)`, the block's new address. Not called
+    /// yet: array growth keeps the runtime's (velt_opt `heap_calls`).
     heap_realloc => lang_hooks_heap, "heapRealloc", sig((u64, u64, u64, u64) -> u64), lowered;
     /// `velt_rt_free`'s: `(p, size, align)`.
     heap_free => lang_hooks_heap, "heapFree", sig((u64, u64, u64) -> void), lowered;
