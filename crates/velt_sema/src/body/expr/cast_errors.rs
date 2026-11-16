@@ -62,6 +62,22 @@ impl FnCx<'_, '_> {
                 ));
             }
         }
+        // An interface extending the source's: a source that may be `undefined`, a target at
+        // other type arguments, or members the object has no room for.
+        if self.related_ifaces(from, to) && self.cx.ty.opt_payload(to).is_none() {
+            if let Some(core) = self.cx.ty.opt_payload(from) {
+                let c = self.cx.display(core);
+                return Some(format!(
+                    "a `{s}` may be `undefined`, which is no `{d}`; test it first (`if (x)`) and cast the `{c}`"
+                ));
+            }
+            if self.adds_required(from, to) {
+                let head = d.split('<').next().unwrap_or(&d).to_string();
+                return Some(format!(
+                    "a `{d}` is not a `{s}` (their type arguments differ), so the cast can't be checked; cast to `{head}` with the type arguments of `{s}`"
+                ));
+            }
+        }
         // An interface extending the source's, with members the object has no room for.
         if self.related_ifaces(from, to) {
             let have = self.object_members(from).unwrap_or_default();

@@ -1,0 +1,10 @@
+31:11: error: cannot cast `Shape` as `Named | Sided`
+32:11: error: cannot cast `Shape` as `Named | undefined`
+35:10: error: cannot cast `Shape | undefined` as `Named`
+a `Shape | undefined` may be `undefined`, which is no `Named`
+39:10: error: cannot cast `Source<f64>` as `Labeled<string>`
+a `Labeled<string>` is not a `Source<f64>` (their type arguments differ)
+43:10: error: cannot cast `Source<f64>` as `Labeled<any>`
+46:11: error: cannot cast `Shape` as `Tagged`
+`Tagged` adds `tag` to `Shape`: an object keeps the layout it was made with
+a `Labeled<any>` is not a `Source<f64>` (their type arguments differ)
