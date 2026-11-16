@@ -156,8 +156,25 @@ pub(crate) struct Dispatch {
 
 impl Dispatch {
     pub(crate) fn new(cx: &Ctx) -> Dispatch {
-        let mut virtuals: FxHashMap<(DefId, u32), Vec<DefId>> = FxHashMap::default();
-        for (i, info) in cx.info.iter().enumerate() {
+        // A finished unit's classes' are kept with it ([`Dispatch::unit_virtuals`]).
+        let (mut virtuals, from) = match &cx.unit_sums.virtuals {
+            Some(kept) => (kept.clone(), cx.unit_base as usize),
+            None => (FxHashMap::default(), 0),
+        };
+        Dispatch::virtuals_from(cx, from, &mut virtuals);
+        Dispatch::with_virtuals(cx, virtuals)
+    }
+
+    /// EXPERIMENT (#2943 M2): a finished unit's classes' slots, kept with it.
+    pub(crate) fn unit_virtuals(cx: &Ctx) -> FxHashMap<(DefId, u32), Vec<DefId>> {
+        let mut out = FxHashMap::default();
+        Dispatch::virtuals_from(cx, 0, &mut out);
+        out
+    }
+
+    /// The slots of the classes from definition `from` on, into `virtuals`.
+    fn virtuals_from(cx: &Ctx, from: usize, virtuals: &mut FxHashMap<(DefId, u32), Vec<DefId>>) {
+        for (i, info) in cx.info.iter().enumerate().skip(from) {
             let DefInfo::Adt(a) = info else { continue };
             for (slot, &m) in a.vtable.iter().enumerate() {
                 let mut cur = Some(DefId(i as u32));
@@ -172,6 +189,9 @@ impl Dispatch {
                 }
             }
         }
+    }
+
+    fn with_virtuals(cx: &Ctx, virtuals: FxHashMap<(DefId, u32), Vec<DefId>>) -> Dispatch {
         let mut impls: FxHashMap<DefId, Vec<usize>> = FxHashMap::default();
         for (i, imp) in cx.impls.iter().enumerate() {
             impls.entry(imp.iface).or_default().push(i);

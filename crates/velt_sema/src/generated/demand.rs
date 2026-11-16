@@ -47,7 +47,7 @@ pub(crate) struct Walked {
 /// module constant), callee and the range of its type arguments in `targs`, recorded once per
 /// body; and the callees of the calls in fields' defaults, listed again each time.
 #[derive(Clone, Default)]
-struct Calls {
+pub(crate) struct Calls {
     /// Per definition, whether its body (a function's, a module constant's initializer) is
     /// recorded: one checked on demand after an earlier computation is recorded when it is
     /// checked (a checked body does not change).
@@ -55,6 +55,68 @@ struct Calls {
     calls: Vec<(u32, DefId, std::ops::Range<usize>)>,
     targs: Vec<TyId>,
     fields: Vec<DefId>,
+    /// The callees of finished units' fields' defaults ([`unit_calls`]), and the definition
+    /// from which `fields` is listed again each time (the first not a finished unit's).
+    base_fields: Vec<DefId>,
+    fields_from: usize,
+    /// The finished units' classes' vtable slots ([`dispatch_targets`]).
+    base_targets: FxHashSet<DefId>,
+}
+
+impl crate::units::codec::Codec for Calls {
+    fn enc(&self, w: &mut crate::units::codec::Writer) {
+        let Calls {
+            done,
+            calls,
+            targs,
+            fields,
+            base_fields,
+            fields_from,
+            base_targets,
+        } = self;
+        done.enc(w);
+        let flat: Vec<(u32, DefId, usize, usize)> =
+            calls.iter().map(|(c, d, r)| (*c, *d, r.start, r.end)).collect();
+        flat.enc(w);
+        targs.enc(w);
+        fields.enc(w);
+        base_fields.enc(w);
+        fields_from.enc(w);
+        base_targets.enc(w);
+    }
+    fn dec(r: &mut crate::units::codec::Reader) -> Self {
+        use crate::units::codec::Codec;
+        let done = Codec::dec(r);
+        let flat: Vec<(u32, DefId, usize, usize)> = Codec::dec(r);
+        Calls {
+            done,
+            calls: flat.into_iter().map(|(c, d, s, e)| (c, d, s..e)).collect(),
+            targs: Codec::dec(r),
+            fields: Codec::dec(r),
+            base_fields: Codec::dec(r),
+            fields_from: Codec::dec(r),
+            base_targets: Codec::dec(r),
+        }
+    }
+}
+
+/// EXPERIMENT (#2943 M2): a finished unit's calls (`units::finish_unit`): every body recorded,
+/// so a later unit's [`may_reach`] starts from them and reads none of the finished unit's
+/// definitions.
+pub(crate) fn unit_calls(cx: &mut Ctx) -> Calls {
+    let mut c = cx.gen.binding.walked.calls.clone();
+    record_calls(cx, &mut c);
+    c.done.iter_mut().for_each(|d| *d = true);
+    c.base_fields = c.fields.clone();
+    c.base_targets = (cx.info.iter())
+        .filter_map(|i| match i {
+            crate::defs::DefInfo::Adt(a) => Some(a.vtable.iter().copied()),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    c.fields_from = cx.info.len();
+    c
 }
 
 /// Every concrete instance of a generated function the checked program reaches, in the order
@@ -110,6 +172,12 @@ fn compute_with(cx: &mut Ctx, walked: &mut Walked) -> Vec<Instance> {
         crate::timings::pass("demand::generated", || cx.generated_fns());
     if generated.is_empty() {
         return vec![];
+    }
+    // A later unit's calls start from the finished units' ([`unit_calls`]).
+    if walked.calls.done.is_empty() {
+        if let Some(c) = &cx.unit_sums.calls {
+            walked.calls = c.clone();
+        }
     }
     if walked.uses.is_empty() {
         let reach = crate::timings::pass("demand::may_reach", || {
@@ -298,9 +366,12 @@ fn record_calls(cx: &mut Ctx, recorded: &mut Calls) {
         calls,
         targs,
         fields,
+        base_fields,
+        fields_from,
+        ..
     } = recorded;
     done.resize(cx.info.len().max(cx.defs.len()), false);
-    fields.clear();
+    fields.clone_from(base_fields);
     fn callee(e: &crate::hir::Expr) -> Option<(DefId, &[TyId])> {
         match &e.kind {
             E::Call {
@@ -317,20 +388,30 @@ fn record_calls(cx: &mut Ctx, recorded: &mut Calls) {
             targs.extend_from_slice(args);
         }
     };
-    for (i, d) in cx.defs.iter().enumerate() {
-        if let (Some(Def::Fn(f)), false) = (d, done[i]) {
+    // Indexed, not iterated: a definition already recorded is not read (a finished unit's,
+    // decoded on demand, `DefTable`).
+    for i in 0..cx.defs.len() {
+        if done[i] {
+            continue;
+        }
+        if let Some(Def::Fn(f)) = &cx.defs[i] {
             done[i] = true;
             crate::visit_ref::exprs(&f.body.block, &mut |e| look(i as u32, e));
         }
     }
-    for (i, info) in cx.info.iter().enumerate() {
+    for i in 0..cx.info.len() {
+        let fields_due = i >= *fields_from;
+        if done[i] && !fields_due {
+            continue;
+        }
+        let info = &cx.info[i];
         if let crate::defs::DefInfo::Global(g) = info {
             if let (Some(init), false) = (g.init.as_ref(), done[i]) {
                 done[i] = true;
                 crate::visit_ref::exprs_in(init, &mut |e| look(i as u32, e));
             }
         }
-        if let crate::defs::DefInfo::Adt(a) = info {
+        if let (crate::defs::DefInfo::Adt(a), true) = (info, fields_due) {
             let start = a.own_fields_start;
             let own = a.fields[start..].iter().filter_map(|x| x.default.as_ref());
             let redefined = a.redefined.iter().filter_map(|r| r.init.as_ref());
@@ -474,13 +555,23 @@ fn propagate(
 
 /// Every method a dynamic call may run: the vtable entries of the classes and the methods of
 /// the interface implementations (what `Dispatch::targets` draws from).
-fn dispatch_targets(cx: &Ctx) -> FxHashSet<DefId> {
-    let mut out: FxHashSet<DefId> = FxHashSet::default();
-    for info in &cx.info {
-        if let crate::defs::DefInfo::Adt(a) = info {
+/// Every method in a class's vtable: the finished units' are kept with their calls
+/// ([`unit_calls`]), so their classes are not read.
+pub(crate) fn vtable_slots(cx: &Ctx) -> FxHashSet<DefId> {
+    let (mut out, from) = match &cx.unit_sums.calls {
+        Some(c) => (c.base_targets.clone(), c.fields_from),
+        None => (FxHashSet::default(), 0),
+    };
+    for i in from..cx.info.len() {
+        if let crate::defs::DefInfo::Adt(a) = &cx.info[i] {
             out.extend(a.vtable.iter().copied());
         }
     }
+    out
+}
+
+fn dispatch_targets(cx: &Ctx) -> FxHashSet<DefId> {
+    let mut out = vtable_slots(cx);
     for imp in &cx.impls {
         out.extend(imp.methods.iter().copied());
     }

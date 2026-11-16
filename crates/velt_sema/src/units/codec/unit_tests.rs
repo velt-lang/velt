@@ -44,6 +44,7 @@ fn round_trip(cx: &Ctx) -> Found {
     let arena = Arena::default();
     let start = Instant::now();
     // SAFETY: the decoded context is dropped in this function, before `arena`.
+    let bytes = std::rc::Rc::new(bytes);
     let decoded = unsafe { decode_unit(&bytes, &arena, cx.modules.clone()) };
     let decode_ms = start.elapsed().as_secs_f64() * 1e3;
     let decoded = decoded.expect("std's unit decodes whole");

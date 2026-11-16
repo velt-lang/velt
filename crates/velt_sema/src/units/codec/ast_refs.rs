@@ -45,7 +45,7 @@ impl Arena {
         unsafe { &*self.keep(v) }
     }
 
-    fn keep<T: 'static>(&self, v: T) -> *const T {
+    pub(super) fn keep<T: 'static>(&self, v: T) -> *const T {
         let b = Box::new(v);
         let p: *const T = &*b;
         self.nodes.borrow_mut().push(b);
@@ -69,46 +69,27 @@ impl<T: AstNode> Codec for &T {
     fn enc(&self, w: &mut Writer) {
         let key = (*self as *const T as usize, TypeId::of::<T>());
         if let Some(&i) = w.nodes.get(&key) {
-            w.uint(u64::from(i) + 1);
+            w.uint(u64::from(i));
             return;
         }
         let next = w.nodes.len() as u32;
         w.nodes.insert(key, next);
-        w.uint(0);
+        w.uint(u64::from(next));
+        // The fragment itself goes to the table ([`super::Frags`]).
         let file = self.file();
-        w.file(file);
+        let index = w.file_index(file);
         let bytes = velt_syntax::encode_fragment(&*self.kept(), file);
         let body = &bytes[velt_syntax::AST_FORMAT.len()..];
-        w.uint(body.len() as u64);
-        w.out.extend_from_slice(body);
+        w.frag_starts.push(w.frags.len() as u32);
+        super::push_uint(&mut w.frags, u64::from(index));
+        super::push_uint(&mut w.frags, body.len() as u64);
+        w.frags.extend_from_slice(body);
         w.ast_bytes += body.len();
     }
 
     fn dec(r: &mut Reader) -> Self {
-        let p = match r.uint() {
-            0 => {
-                let file = r.file();
-                let n = r.len();
-                let mut bytes = Vec::with_capacity(velt_syntax::AST_FORMAT.len() + n);
-                bytes.extend_from_slice(velt_syntax::AST_FORMAT);
-                bytes.extend_from_slice(r.take(n));
-                let node = (!r.failed)
-                    .then(|| velt_syntax::decode_fragment::<T>(&bytes, file))
-                    .flatten();
-                match (r.arena, node) {
-                    (Some(arena), Some(node)) => {
-                        let p = arena.keep(node);
-                        r.nodes.push((TypeId::of::<T>(), p.cast()));
-                        Some(p)
-                    }
-                    _ => None,
-                }
-            }
-            i => match r.nodes.get(i as usize - 1) {
-                Some(&(t, p)) if t == TypeId::of::<T>() => Some(p.cast::<T>()),
-                _ => None,
-            },
-        };
+        let i = r.uint() as usize;
+        let p = r.frags().and_then(|f| f.node::<T>(i));
         match p {
             // SAFETY: a node of the reader's arena (`Arena`'s contract, which
             // `Reader::with_arena`'s caller keeps).
@@ -123,12 +104,8 @@ impl<T: AstNode> Codec for &T {
 
 /// A placeholder node of type `T` for a damaged value: one leaked per failed decode (in the
 /// reader's arena when it has one).
-fn placeholder<'x, T: AstNode>(r: &Reader) -> &'x T {
-    match r.arena {
-        // SAFETY: as above.
-        Some(arena) => unsafe { &*arena.keep(T::placeholder()) },
-        None => Box::leak(Box::new(T::placeholder())),
-    }
+fn placeholder<'x, T: AstNode>(_: &Reader) -> &'x T {
+    Box::leak(Box::new(T::placeholder()))
 }
 
 /// A function's body as a unit keeps it: empty, at its place.

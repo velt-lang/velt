@@ -107,11 +107,12 @@ fn collect_with(
     let mut converts = cx.type_level.converts.clone();
     converts.extend(cx.type_level.inline.reads.iter().map(|(&k, &v)| (k, v)));
     let tys = &cx.ty;
-    for (i, d) in cx.defs.iter().enumerate().skip(from) {
-        let Some(Def::Fn(f)) = d else { continue };
+    for i in from..cx.defs.len() {
+        // Asked first: a definition not wanted is not read (decoded on demand, `DefTable`).
         if !wanted(DefId(i as u32)) {
             continue;
         }
+        let Some(Def::Fn(f)) = &cx.defs[i] else { continue };
         let mut u = Uses::default();
         let mut news = vec![];
         let mut seen: FxHashSet<TyId> = FxHashSet::default();
@@ -139,10 +140,8 @@ fn collect_with(
         out.push((DefId(i as u32), u, news));
     }
     let mut inits: FxHashMap<DefId, (Uses, News, FxHashSet<TyId>)> = FxHashMap::default();
-    for_each_init(&cx.ty, &cx.info, globals, &mut |tys, d, e| {
-        if (d.0 as usize) < from || !wanted(d) {
-            return;
-        }
+    let want = |d: DefId| (d.0 as usize) >= from && wanted(d);
+    for_each_init(&cx.ty, &cx.info, globals, &want, &mut |tys, d, e| {
         let (u, news, seen) = inits.entry(d).or_default();
         add_site(tys, u, news, seen, e, 0, types);
         if !converts.is_empty() {
@@ -151,11 +150,11 @@ fn collect_with(
     });
     // A module constant's initializer: lowering evaluates it where it is read
     // (`hir::GlobalDef::init`), in whichever function reads it, so it is a unit of its own.
-    for (i, info) in cx.info.iter().enumerate().skip(from) {
-        let DefInfo::Global(g) = info else { continue };
+    for i in from..cx.info.len() {
         if !wanted(DefId(i as u32)) {
             continue;
         }
+        let DefInfo::Global(g) = &cx.info[i] else { continue };
         let Some(init) = g.init.as_ref() else {
             continue;
         };
@@ -361,10 +360,17 @@ pub(crate) fn for_each_init(
     tys: &Types,
     infos: &crate::ctx::DefTable<DefInfo>,
     globals: bool,
+    want: &dyn Fn(DefId) -> bool,
     f: &mut dyn FnMut(&Types, DefId, &Expr),
 ) {
-    for (i, info) in infos.iter().enumerate() {
+    // Indexed, and `want` asked first: a definition not wanted is not read (a finished unit's,
+    // decoded on demand, `DefTable`).
+    for i in 0..infos.len() {
         let d = DefId(i as u32);
+        if !want(d) {
+            continue;
+        }
+        let info = &infos[i];
         if let DefInfo::Global(g) = info {
             if let Some(e) = g.init.as_ref().filter(|_| globals) {
                 crate::visit_ref::exprs_in(e, &mut |e| f(tys, d, e));

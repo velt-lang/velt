@@ -94,40 +94,12 @@ impl DynCalls {
 
     /// Code outside every function body: the interfaces any of its expressions mentions escape.
     pub(super) fn finish(&mut self, cx: &Ctx) {
-        let mut tys = vec![];
-        let mut outside = Outside(&mut tys);
-        for info in cx.info.iter() {
-            match info {
-                DefInfo::Global(gi) => {
-                    if let Some(init) = &gi.init {
-                        walk::expr(init, &mut outside);
-                    }
-                }
-                DefInfo::Adt(a) => {
-                    for v in a.fields.iter().filter_map(|f| f.default.as_ref()) {
-                        walk::expr(v, &mut outside);
-                    }
-                    for v in a.redefined.iter().filter_map(|r| r.init.as_ref()) {
-                        walk::expr(v, &mut outside);
-                    }
-                }
-                _ => {}
-            }
-        }
-        for def in cx.defs.iter().flatten() {
-            match def {
-                Def::Global(gd) => walk::expr(&gd.init, &mut outside),
-                Def::Adt(a) => {
-                    for v in a.fields.iter().filter_map(|f| f.default.as_ref()) {
-                        walk::expr(v, &mut outside);
-                    }
-                    for init in &a.inherited_inits {
-                        walk::expr(&init.init, &mut outside);
-                    }
-                }
-                _ => {}
-            }
-        }
+        // A finished unit's are kept with it ([`unit_outside_types`]).
+        let (mut tys, from) = match &cx.unit_sums.outside_tys {
+            Some(kept) => (kept.clone(), cx.unit_base as usize),
+            None => (vec![], 0),
+        };
+        outside_types(cx, from, &mut tys);
         for t in tys {
             self.escape(cx, t);
         }
@@ -204,6 +176,53 @@ impl Visit for Outside<'_> {
             } => self.0.extend(args.iter().map(|a| a.ty)),
             E::Cast(x) | E::Upcast(x) | E::Downcast(x) => self.0.push(x.ty),
             _ => {}
+        }
+    }
+}
+
+/// EXPERIMENT (#2943 M2): the types code outside a finished unit's bodies mentions
+/// ([`DynCalls::finish`]), kept with it.
+pub(crate) fn unit_outside_types(cx: &Ctx) -> Vec<TyId> {
+    let mut tys = vec![];
+    outside_types(cx, 0, &mut tys);
+    tys
+}
+
+/// The types code outside every function body mentions, of the definitions from `from` on.
+fn outside_types(cx: &Ctx, from: usize, tys: &mut Vec<TyId>) {
+    {
+        let mut outside = Outside(tys);
+        for info in cx.info.iter().skip(from) {
+            match info {
+                DefInfo::Global(gi) => {
+                    if let Some(init) = &gi.init {
+                        walk::expr(init, &mut outside);
+                    }
+                }
+                DefInfo::Adt(a) => {
+                    for v in a.fields.iter().filter_map(|f| f.default.as_ref()) {
+                        walk::expr(v, &mut outside);
+                    }
+                    for v in a.redefined.iter().filter_map(|r| r.init.as_ref()) {
+                        walk::expr(v, &mut outside);
+                    }
+                }
+                _ => {}
+            }
+        }
+        for def in cx.defs.iter().skip(from).flatten() {
+            match def {
+                Def::Global(gd) => walk::expr(&gd.init, &mut outside),
+                Def::Adt(a) => {
+                    for v in a.fields.iter().filter_map(|f| f.default.as_ref()) {
+                        walk::expr(v, &mut outside);
+                    }
+                    for init in &a.inherited_inits {
+                        walk::expr(&init.init, &mut outside);
+                    }
+                }
+                _ => {}
+            }
         }
     }
 }

@@ -85,10 +85,11 @@ pub(crate) fn final_hook(
     Some((m, ret))
 }
 
-/// Every class's own `toString` and `toJSON` instance methods, with their names.
+/// Every class's own `toString` and `toJSON` instance methods, with their names: of this unit's
+/// classes (a finished unit's were checked with it, `crate::units`).
 fn hook_methods(cx: &Ctx) -> Vec<(DefId, DefId, &'static str)> {
     let mut out = vec![];
-    for (i, info) in cx.info.iter().enumerate() {
+    for (i, info) in cx.info.iter().enumerate().skip(cx.unit_base as usize) {
         let DefInfo::Adt(a) = info else { continue };
         if a.kind != AdtKind::Class {
             continue;

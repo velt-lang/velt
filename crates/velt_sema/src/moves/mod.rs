@@ -124,9 +124,10 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
         }
     }
     let never = cx.ty.never;
-    let local_tys: Vec<Vec<TyId>> = (cx.defs.iter().enumerate())
-        .map(|(i, d)| match d {
-            Some(Def::Fn(f)) if i >= base => f.body.locals.iter().map(|l| l.ty).collect(),
+    // A finished unit's definitions are not read (decoded on demand, `DefTable`).
+    let local_tys: Vec<Vec<TyId>> = (0..cx.defs.len())
+        .map(|i| match (i >= base).then(|| &cx.defs[i]) {
+            Some(Some(Def::Fn(f))) => f.body.locals.iter().map(|l| l.ty).collect(),
             _ => vec![],
         })
         .collect();

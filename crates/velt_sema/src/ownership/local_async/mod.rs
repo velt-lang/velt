@@ -87,6 +87,8 @@ use instances::{class_insts, instances, method_class};
 pub(in crate::ownership::local_async) use labels::{reaches, with_why};
 use why::heap_reaches;
 
+pub(crate) use call_sites::unit_named_outside_bodies;
+pub(crate) use generic_closures::unit_outside_types;
 pub(crate) use changes::check_crossing_changes;
 pub(crate) use record::record_changed_captures;
 

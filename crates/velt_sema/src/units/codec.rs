@@ -36,6 +36,8 @@ mod unit;
 #[cfg(test)]
 mod unit_tests;
 
+use std::rc::Rc;
+
 use rustc_hash::{FxHashMap, FxHashSet};
 use velt_common::{FileId, Span};
 
@@ -50,9 +52,13 @@ pub(crate) struct Writer {
     /// The unit's file table: each file's index, in the order first met.
     files: FxHashMap<FileId, u32>,
     file_list: Vec<FileId>,
-    /// The AST nodes written so far, by address and type: each is written once, then referred
-    /// to by its number ([`ast_refs`]).
+    /// The AST nodes written so far, by address and type: each is written once, into
+    /// [`Writer::frags`], and referred to by its number ([`ast_refs`]).
     nodes: FxHashMap<(usize, std::any::TypeId), u32>,
+    /// The AST fragments: each one's file (an index into the file table), length and bytes.
+    frags: Vec<u8>,
+    /// Where each fragment starts in `frags`.
+    frag_starts: Vec<u32>,
     /// Write files as their ids, not through the table (a map key's sort key).
     raw_files: bool,
     /// How many of the bytes written are AST fragments ([`ast_refs`]).
@@ -66,26 +72,34 @@ impl Writer {
             files: FxHashMap::default(),
             file_list: vec![],
             nodes: FxHashMap::default(),
+            frags: vec![],
+            frag_starts: vec![],
             raw_files: false,
             ast_bytes: 0,
         }
     }
 
-    /// The bytes written, and the file table their spans index (the files in index order).
+    /// The bytes written, after the table of AST fragments they refer to ([`Frags`]), and the
+    /// file table their spans index (the files in index order).
     pub(crate) fn finish(self) -> (Vec<u8>, Vec<FileId>) {
-        (self.out, self.file_list)
+        let mut out = Vec::with_capacity(8 + 4 * self.frag_starts.len());
+        push_uint(&mut out, self.frag_starts.len() as u64);
+        for &s in &self.frag_starts {
+            push_uint(&mut out, u64::from(s));
+        }
+        push_uint(&mut out, self.frags.len() as u64);
+        out.reserve(self.frags.len() + self.out.len());
+        out.extend_from_slice(&self.frags);
+        out.extend_from_slice(&self.out);
+        (out, self.file_list)
     }
 
     fn byte(&mut self, b: u8) {
         self.out.push(b);
     }
 
-    fn uint(&mut self, mut v: u64) {
-        while v >= 0x80 {
-            self.out.push(v as u8 | 0x80);
-            v >>= 7;
-        }
-        self.out.push(v as u8);
+    fn uint(&mut self, v: u64) {
+        push_uint(&mut self.out, v);
     }
 
     fn file(&mut self, f: FileId) {
@@ -93,13 +107,28 @@ impl Writer {
             self.uint(u64::from(f.0));
             return;
         }
+        let i = self.file_index(f);
+        self.uint(u64::from(i));
+    }
+
+    /// `f`'s index in the file table (added when new).
+    fn file_index(&mut self, f: FileId) -> u32 {
         let next = self.file_list.len() as u32;
         let i = *self.files.entry(f).or_insert(next);
         if i == next {
             self.file_list.push(f);
         }
-        self.uint(u64::from(i));
+        i
     }
+}
+
+/// `v` as a LEB128 varint at the end of `out`.
+fn push_uint(out: &mut Vec<u8>, mut v: u64) {
+    while v >= 0x80 {
+        out.push(v as u8 | 0x80);
+        v >>= 7;
+    }
+    out.push(v as u8);
 }
 
 pub(crate) struct Reader<'a> {
@@ -110,23 +139,126 @@ pub(crate) struct Reader<'a> {
     depth: u32,
     /// The value is damaged: everything read from here on is zeros.
     failed: bool,
-    /// Where decoded AST nodes live (`None`: a value that borrows AST fails to decode).
-    arena: Option<&'a Arena>,
-    /// The AST nodes decoded so far, in the order written, with their types.
-    nodes: Vec<(std::any::TypeId, *const ())>,
+    /// The AST fragments the values refer to, decoded into their arena on first use
+    /// (`None`: a value that borrows AST fails to decode).
+    frags: Option<Rc<Frags>>,
+    /// Where tables decoded on demand read their entries from (`DefTable`'s codec; `None`:
+    /// tables are decoded whole).
+    pub(crate) src: Option<Rc<Src>>,
+}
+
+/// The AST fragments of an encoding ([`Writer::finish`]), each decoded into an [`Arena`] when a
+/// value first refers to it.
+pub(crate) struct Frags {
+    bytes: Rc<Vec<u8>>,
+    /// Where the fragments' bytes start in `bytes`.
+    base: usize,
+    starts: Vec<u32>,
+    files: Rc<Vec<FileId>>,
+    /// Where decoded nodes live (`Arena`'s contract: it outlives everything decoded).
+    arena: Option<*const Arena>,
+    /// Each fragment decoded so far, with its type.
+    nodes: std::cell::RefCell<Vec<Option<(std::any::TypeId, *const ())>>>,
+}
+
+impl Frags {
+    /// The fragment table at `pos` in `bytes`, and where what follows it starts; `None` when
+    /// it is damaged.
+    fn read(bytes: &Rc<Vec<u8>>, pos: usize, files: Rc<Vec<FileId>>, arena: Option<*const Arena>) -> Option<(Frags, usize)> {
+        let mut r = Reader::bare(&bytes[..], &[]);
+        r.pos = pos;
+        let n = r.len();
+        let starts: Vec<u32> = (0..n).map(|_| r.u32()).collect();
+        let size = r.len();
+        let base = r.pos;
+        r.take(size);
+        if r.failed {
+            return None;
+        }
+        let frags = Frags {
+            bytes: bytes.clone(),
+            base,
+            nodes: std::cell::RefCell::new(vec![None; starts.len()]),
+            starts,
+            files,
+            arena,
+        };
+        Some((frags, r.pos))
+    }
+
+    /// Fragment `i` as a `T`, decoded into the arena if it wasn't; `None` when there is no such
+    /// fragment, it is of another type or doesn't decode, or there is no arena.
+    pub(crate) fn node<T: AstNode>(&self, i: usize) -> Option<*const T> {
+        let id = std::any::TypeId::of::<T>();
+        if let Some(&Some((t, p))) = self.nodes.borrow().get(i) {
+            return (t == id).then_some(p.cast());
+        }
+        let arena = self.arena?;
+        let start = self.base + *self.starts.get(i)? as usize;
+        let mut r = Reader::bare(&self.bytes[..], &self.files);
+        r.pos = start;
+        let file = r.file();
+        let n = r.len();
+        let mut bytes = Vec::with_capacity(velt_syntax::AST_FORMAT.len() + n);
+        bytes.extend_from_slice(velt_syntax::AST_FORMAT);
+        bytes.extend_from_slice(r.take(n));
+        if r.failed {
+            return None;
+        }
+        // On sema's thread, whose stack is sema's (`SEMA_STACK_BYTES`): the fragment decodes
+        // right here, not on a parser thread of its own.
+        let node = velt_syntax::with_stack_of(crate::SEMA_STACK_BYTES, || {
+            velt_syntax::decode_fragment::<T>(&bytes, file)
+        })?;
+        // SAFETY: the arena outlives everything decoded with it (`Arena`'s contract).
+        let p = unsafe { (*arena).keep(node) };
+        self.nodes.borrow_mut()[i] = Some((id, p.cast()));
+        Some(p)
+    }
+}
+
+/// What a unit's tables decoded on demand read from: the whole encoding, its file table and
+/// fragments (`DefTable`'s codec).
+pub(crate) struct Src {
+    pub(crate) bytes: Rc<Vec<u8>>,
+    pub(crate) files: Rc<Vec<FileId>>,
+    pub(crate) frags: Rc<Frags>,
+}
+
+impl Src {
+    /// A reader of `bytes[range]` (an entry of a table), with the encoding's files and fragments.
+    pub(crate) fn reader(&self, range: std::ops::Range<usize>) -> Reader<'_> {
+        Reader {
+            frags: Some(self.frags.clone()),
+            ..Reader::bare(&self.bytes[range], &self.files)
+        }
+    }
 }
 
 impl<'a> Reader<'a> {
-    pub(crate) fn new(bytes: &'a [u8], files: &'a [FileId]) -> Reader<'a> {
+    /// A reader of `bytes` as they are (no fragment table in front).
+    pub(crate) fn bare(bytes: &'a [u8], files: &'a [FileId]) -> Reader<'a> {
         Reader {
             bytes,
             pos: 0,
             files,
             depth: 0,
             failed: false,
-            arena: None,
-            nodes: vec![],
+            frags: None,
+            src: None,
         }
+    }
+
+    /// A reader of what [`Writer::finish`] wrote: its values may not borrow AST nodes.
+    pub(crate) fn new(bytes: &'a [u8], files: &'a [FileId]) -> Reader<'a> {
+        let mut r = Reader::bare(bytes, files);
+        let n = r.len();
+        (0..n).for_each(|_| {
+            r.uint();
+        });
+        let size = r.len();
+        r.take(size);
+        r
     }
 
     /// A reader whose values may borrow AST nodes, decoded into `arena`.
@@ -141,10 +273,65 @@ impl<'a> Reader<'a> {
         files: &'a [FileId],
         arena: &'a Arena,
     ) -> Reader<'a> {
-        Reader {
-            arena: Some(arena),
-            ..Reader::new(bytes, files)
+        let owned = Rc::new(bytes.to_vec());
+        let files_rc = Rc::new(files.to_vec());
+        match Frags::read(&owned, 0, files_rc, Some(arena as *const Arena)) {
+            Some((frags, after)) => {
+                let mut r = Reader::bare(bytes, files);
+                r.pos = after;
+                r.frags = Some(Rc::new(frags));
+                r
+            }
+            None => {
+                let mut r = Reader::bare(bytes, files);
+                r.fail();
+                r
+            }
         }
+    }
+
+    /// A reader of a unit's encoding `bytes` from `pos` (where [`Writer::finish`]'s output
+    /// starts), whose tables are decoded on demand.
+    ///
+    /// # Safety
+    ///
+    /// As [`Reader::with_arena`]'s, for every value decoded from it, then or later.
+    pub(crate) unsafe fn over_unit(
+        bytes: &'a Rc<Vec<u8>>,
+        pos: usize,
+        files: &'a Rc<Vec<FileId>>,
+        arena: &'a Arena,
+    ) -> Reader<'a> {
+        let mut r = Reader::bare(&bytes[..], files);
+        match Frags::read(bytes, pos, files.clone(), Some(arena as *const Arena)) {
+            Some((frags, after)) => {
+                let frags = Rc::new(frags);
+                r.pos = after;
+                r.src = Some(Rc::new(Src {
+                    bytes: bytes.clone(),
+                    files: files.clone(),
+                    frags: frags.clone(),
+                }));
+                r.frags = Some(frags);
+            }
+            None => r.fail(),
+        }
+        r
+    }
+
+    /// The fragment table, for [`ast_refs`].
+    fn frags(&self) -> Option<&Frags> {
+        self.frags.as_deref()
+    }
+
+    /// Where the reader is.
+    pub(crate) fn pos(&self) -> usize {
+        self.pos
+    }
+
+    /// Whether it failed.
+    pub(crate) fn failed(&self) -> bool {
+        self.failed
     }
 
     /// Whether everything was read, undamaged.
@@ -219,7 +406,15 @@ impl<'a> Reader<'a> {
         n as usize
     }
 
-    fn take(&mut self, n: usize) -> &[u8] {
+    /// A varint that is an offset, not checked against the bytes left.
+    pub(crate) fn len_unchecked(&mut self) -> usize {
+        usize::try_from(self.uint()).unwrap_or_else(|_| {
+            self.fail();
+            0
+        })
+    }
+
+    pub(crate) fn take(&mut self, n: usize) -> &[u8] {
         if n > self.bytes.len() - self.pos {
             self.fail();
             return &[];
@@ -574,6 +769,8 @@ fn sorted_by_key<'v, K: Codec, V>(entries: impl Iterator<Item = (&'v K, V)>) -> 
         files: FxHashMap::default(),
         file_list: vec![],
         nodes: FxHashMap::default(),
+        frags: vec![],
+        frag_starts: vec![],
         raw_files: true,
         ast_bytes: 0,
     };

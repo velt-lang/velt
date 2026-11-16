@@ -80,15 +80,41 @@ pub trait Calls<'n> {
 }
 
 /// A param's reach passed on: to `param` of a callee, or argument `from_end` from its end.
-struct Edge {
+#[derive(Clone)]
+pub(crate) struct Edge {
     caller: DefId,
     bits: u64,
     param: Param,
 }
 
-enum Param {
+#[derive(Clone)]
+pub(crate) enum Param {
     At(usize),
     FromEnd(usize),
+}
+
+crate::units::codec::structs! {
+    Edge { caller, bits, param }
+    Scanned { direct, params, names, callers, method_callers, ctors }
+}
+
+crate::units::codec::enums! {
+    Param {
+        0 => At(i),
+        1 => FromEnd(k),
+    }
+}
+
+/// What the scan of some bodies found ([`scan_into`]), which [`solve`] takes: a finished unit
+/// keeps its own (`crate::units`), and a later unit's check adds its bodies' and solves again.
+#[derive(Clone, Default)]
+pub(crate) struct Scanned {
+    direct: FxHashMap<DefId, u64>,
+    params: FxHashMap<DefId, usize>,
+    names: FxHashMap<DefId, String>,
+    callers: FxHashMap<DefId, Vec<Edge>>,
+    method_callers: FxHashMap<String, Vec<Edge>>,
+    ctors: FxHashMap<DefId, DefId>,
 }
 
 /// What one body does with its params.
@@ -167,13 +193,25 @@ pub fn compute<'a>(
     fns: impl Iterator<Item = (DefId, &'a FnDef)>,
     calls: &dyn Calls<'a>,
 ) -> ValueParams {
-    let mut out: FxHashMap<DefId, u64> = FxHashMap::default();
-    let mut params: FxHashMap<DefId, usize> = FxHashMap::default();
-    let mut names: FxHashMap<DefId, &str> = FxHashMap::default();
-    let mut callers: FxHashMap<DefId, Vec<Edge>> = FxHashMap::default();
-    let mut method_callers: FxHashMap<&str, Vec<Edge>> = FxHashMap::default();
-    let mut ctors: FxHashMap<DefId, DefId> = FxHashMap::default();
-    let mut work = vec![];
+    let mut scanned = Scanned::default();
+    scan_into(fns, calls, &mut scanned);
+    solve(&scanned)
+}
+
+/// Scan the bodies `fns` into `into`.
+pub(crate) fn scan_into<'a>(
+    fns: impl Iterator<Item = (DefId, &'a FnDef)>,
+    calls: &dyn Calls<'a>,
+    into: &mut Scanned,
+) {
+    let Scanned {
+        direct: out,
+        params,
+        names,
+        callers,
+        method_callers,
+        ctors,
+    } = into;
     let fns: Vec<(DefId, &FnDef)> = fns.collect();
     let captures: FxHashMap<DefId, Vec<LocalId>> = (fns.iter())
         .filter(|(_, f)| !f.captures.is_empty())
@@ -181,7 +219,7 @@ pub fn compute<'a>(
         .collect();
     for (def, f) in fns {
         params.insert(def, f.params.len());
-        names.insert(def, member(&f.name));
+        names.insert(def, member(&f.name).to_string());
         let mut s = Scan {
             def,
             calls,
@@ -213,13 +251,27 @@ pub fn compute<'a>(
             callers.entry(callee).or_default().push(e);
         }
         for (name, e) in s.methods {
-            method_callers.entry(member(name)).or_default().push(e);
+            method_callers.entry(member(name).to_string()).or_default().push(e);
         }
         if s.direct != 0 {
             out.insert(def, s.direct);
-            work.push(def);
         }
     }
+}
+
+/// The params of each function that may reach a function value, from what the scans found.
+pub(crate) fn solve(scanned: &Scanned) -> ValueParams {
+    let Scanned {
+        direct,
+        params,
+        names,
+        callers,
+        method_callers,
+        ctors,
+    } = scanned;
+    let mut out = direct.clone();
+    let mut work: Vec<DefId> = out.keys().copied().collect();
+    work.sort_unstable();
     while let Some(d) = work.pop() {
         let bits = out.get(&d).copied().unwrap_or(0);
         let count = params.get(&d).copied().unwrap_or(0);
@@ -257,9 +309,9 @@ pub fn compute<'a>(
     }
     ValueParams {
         bits: out,
-        params,
+        params: params.clone(),
         methods,
-        ctors,
+        ctors: ctors.clone(),
     }
 }
 

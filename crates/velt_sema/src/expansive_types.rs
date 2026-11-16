@@ -63,14 +63,15 @@ pub(crate) fn check(cx: &mut Ctx) -> bool {
     }
     // The methods of an expansive type itself (and the closures in them) run only on its
     // values, which are reported where they are made.
-    let own_methods: FxHashSet<String> = (cx.info.iter())
+    let own_methods: FxHashSet<String> = (cx.info.iter().skip(cx.unit_base as usize))
         .filter_map(|i| match i {
             DefInfo::Fn(f) if f.owner.is_some_and(|o| bad.contains_key(&o)) => Some(f.name.clone()),
             _ => None,
         })
         .collect();
     let mut reported = false;
-    for i in 0..cx.defs.len() {
+    // A finished unit's functions mention none of a later unit's types.
+    for i in cx.unit_base as usize..cx.defs.len() {
         let d = DefId(i as u32);
         match &cx.info[i] {
             DefInfo::Fn(f) => {
@@ -122,8 +123,10 @@ pub(crate) fn check(cx: &mut Ctx) -> bool {
 /// parameters as `Param`).
 fn type_members(cx: &Ctx) -> Vec<(DefId, Vec<TyId>)> {
     let mut out = vec![];
-    for (i, info) in cx.info.iter().enumerate() {
-        let tys: Vec<TyId> = match info {
+    // A finished unit's types were checked with it, and none of them mentions a later unit's
+    // (`crate::units`): a cycle through a later unit's type is that unit's alone.
+    for i in cx.unit_base as usize..cx.info.len() {
+        let tys: Vec<TyId> = match &cx.info[i] {
             DefInfo::Adt(a) => (a.fields.iter().map(|f| f.ty)).chain(a.base).collect(),
             DefInfo::Enum(e) => (e.variants.iter())
                 .flat_map(|v| v.payload.iter().copied())

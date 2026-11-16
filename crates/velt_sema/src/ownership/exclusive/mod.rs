@@ -52,6 +52,22 @@ use uses::{Access, Aliases, Collector, Place, Proj, Use};
 use super::closure_names::Closures;
 use super::soft::make_share;
 
+/// [`crate::value_params::scan_into`] of the functions from definition `from` on.
+fn value_scan_from(cx: &Ctx, from: usize, into: &mut crate::value_params::Scanned) {
+    let fns = (from..cx.defs.len()).filter_map(|i| match &cx.defs[i] {
+        Some(Def::Fn(f)) => Some((DefId(i as u32), f)),
+        _ => None,
+    });
+    crate::value_params::scan_into(fns, &let_borrow::Checking(cx), into);
+}
+
+/// EXPERIMENT (#2943 M2): a finished unit's scan for the value params, kept with it.
+pub(crate) fn unit_value_scan(cx: &Ctx) -> crate::value_params::Scanned {
+    let mut out = Default::default();
+    value_scan_from(cx, 0, &mut out);
+    out
+}
+
 pub(crate) fn check_exclusive(cx: &mut Ctx) {
     let fns: Vec<DefId> = cx.unit_fns();
     // Which closure a local names, for the closures and functions used as values of the
@@ -59,12 +75,13 @@ pub(crate) fn check_exclusive(cx: &mut Ctx) {
     // every body is in place.
     let mut closures: Option<Closures> = None;
     let value_params = {
-        let cx = &*cx;
-        let fns = cx.defs.iter().enumerate().filter_map(|(i, d)| match d {
-            Some(Def::Fn(f)) => Some((DefId(i as u32), f)),
-            _ => None,
-        });
-        crate::value_params::compute(fns, &let_borrow::Checking(cx))
+        // A finished unit's scan is kept with it ([`unit_value_scan`]).
+        let (mut scanned, from) = match &cx.unit_sums.value_scan {
+            Some(kept) => (kept.clone(), cx.unit_base as usize),
+            None => (Default::default(), 0),
+        };
+        value_scan_from(cx, from, &mut scanned);
+        crate::value_params::solve(&scanned)
     };
     for d in fns {
         if closures.is_none() && !cx.modules[cx.fn_info(d).module].is_std && as_value(cx, d) {

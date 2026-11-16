@@ -40,7 +40,8 @@ use crate::types::collect_params;
 type Node = (DefId, u32);
 
 /// One place a body instantiates another definition.
-enum Site {
+#[derive(Clone)]
+pub(crate) enum Site {
     /// A generic function or method, with its type arguments.
     Call(DefId, Vec<TyId>),
     /// A closure: it runs with its enclosing function's type arguments.
@@ -106,17 +107,43 @@ pub(crate) fn check(cx: &mut Ctx) -> bool {
 /// cannot be part of a growing cycle).
 /// The instantiation sites of each generic body, with the type parameters whose primitive guard
 /// encloses each (a bit each).
-type Sites = Vec<(DefId, Vec<(Site, Span, u64)>)>;
+pub(crate) type Sites = Vec<(DefId, Vec<(Site, Span, u64)>)>;
+
+crate::units::codec::enums! {
+    Site {
+        0 => Closure(d),
+        1 => Call(g, targs),
+        2 => Object(t),
+        3 => Param(p),
+    }
+}
+
+/// EXPERIMENT (#2943 M2): a finished unit's sites (`units::finish_unit`), which a later unit's
+/// check starts from instead of reading the finished unit's bodies.
+pub(crate) fn unit_sites(cx: &mut Ctx) -> Sites {
+    collect_from(cx, 0)
+}
 
 /// Each site comes with its guard bits ([`Sites`]).
 fn collect(cx: &mut Ctx) -> Sites {
+    match cx.unit_sums.inst_sites.clone() {
+        Some(mut kept) => {
+            kept.extend(collect_from(cx, cx.unit_base as usize));
+            kept
+        }
+        None => collect_from(cx, 0),
+    }
+}
+
+/// [`collect`] of the definitions from `from` on.
+fn collect_from(cx: &mut Ctx, from: usize) -> Sites {
     let mut out = vec![];
     let tys = &cx.ty;
     let param_of = |t: TyId| match tys.kind(t) {
         TyKind::Param(p) => Some(*p),
         _ => None,
     };
-    for (i, d) in cx.defs.iter().enumerate() {
+    for (i, d) in cx.defs.iter().enumerate().skip(from) {
         let Some(Def::Fn(f)) = d else { continue };
         if f.generics == 0 {
             continue;

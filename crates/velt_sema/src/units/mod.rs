@@ -131,6 +131,22 @@ pub(crate) struct Summaries {
     pub(crate) modules: usize,
     /// A finished unit's classes below each class (`Ctx::subclass_map`).
     pub(crate) subclasses: Option<crate::ctx::classes::SubclassMap>,
+    /// A finished unit's calls, for the demand of generated functions (`generated::demand`).
+    pub(crate) calls: Option<crate::generated::demand::Calls>,
+    /// A finished unit's instantiation sites (`instantiation_cycles`).
+    pub(crate) inst_sites: Option<crate::instantiation_cycles::Sites>,
+    /// The functions a finished unit names outside its bodies (`ownership::local_async`).
+    pub(crate) outside_named: Option<rustc_hash::FxHashSet<crate::hir::DefId>>,
+    /// The types code outside a finished unit's bodies mentions (`ownership::local_async`).
+    pub(crate) outside_tys: Option<Vec<crate::hir::TyId>>,
+    /// A finished unit's module-level `let`s (`module_state::order`).
+    pub(crate) lets: Option<Vec<(usize, u32, crate::hir::DefId)>>,
+    /// How many types there were when the unit was finished.
+    pub(crate) types: usize,
+    /// A finished unit's scan for the value params (`ownership::exclusive`).
+    pub(crate) value_scan: Option<crate::value_params::Scanned>,
+    /// A finished unit's classes' slots (`locked_props::Dispatch`).
+    pub(crate) virtuals: Option<rustc_hash::FxHashMap<(crate::hir::DefId, u32), Vec<crate::hir::DefId>>>,
 }
 
 /// std's part of two per-module facts ([`Order::std_facts`]).
@@ -249,6 +265,14 @@ pub(crate) fn finish_unit(cx: &mut Ctx) {
     cx.unit_sums.modules = cx.modules.len();
     let generated = cx.generated_fns();
     cx.unit_sums.generated_fns = Some((generated, cx.info.len()));
+    cx.unit_sums.calls = Some(crate::generated::demand::unit_calls(cx));
+    cx.unit_sums.inst_sites = Some(crate::instantiation_cycles::unit_sites(cx));
+    cx.unit_sums.outside_named = Some(crate::ownership::unit_named_outside_bodies(cx));
+    cx.unit_sums.outside_tys = Some(crate::ownership::unit_outside_types(cx));
+    cx.unit_sums.lets = Some(crate::module_state::unit_lets(cx));
+    cx.unit_sums.types = cx.ty.table.len();
+    cx.unit_sums.value_scan = Some(crate::ownership::unit_value_scan(cx));
+    cx.unit_sums.virtuals = Some(crate::module_state::locked_props::Dispatch::unit_virtuals(cx));
     crate::ownership::keep_unit_scans(cx);
 }
 
@@ -259,6 +283,10 @@ pub(crate) fn touch_phase(cx: &Ctx, phase: &str, more: bool) {
     if !touch::on() {
         return;
     }
+    eprintln!(
+        "velt-touch: {:>6} entries decoded on demand ({phase})",
+        crate::ctx::def_table::decoded::get()
+    );
     let (defs, infos) = (touch::touched("Def>"), touch::touched("DefInfo<'_>"));
     let t = std::time::Instant::now();
     let copied: Vec<_> = defs.iter().map(|&i| cx.defs.items_at(i).clone()).collect();
@@ -272,7 +300,10 @@ pub(crate) fn touch_phase(cx: &Ctx, phase: &str, more: bool) {
     );
     drop((copied, copied_infos));
     let t = std::time::Instant::now();
-    let all = (cx.defs.items_all().to_vec(), cx.info.items_all().to_vec());
+    let all = (
+        cx.defs.items_all().cloned().collect::<Vec<_>>(),
+        cx.info.items_all().cloned().collect::<Vec<_>>(),
+    );
     let took_all = t.elapsed();
     eprintln!(
         "velt-touch: copying every definition ({}) takes {:.2} ms",
@@ -297,7 +328,9 @@ crate::units::codec::structs! {
     Summaries {
         key_needs, async_summaries, json_needs, tuple_summaries, weak_scans, state_facts,
         weak_made, undefined_facts, lock_summaries, module_edges, groups, dispatch, generated_fns,
-        literals, fed, modules, subclasses,
+        literals, fed, modules, subclasses, calls, inst_sites, outside_named,
+        outside_tys, lets, types, value_scan,
+        virtuals,
     }
 }
 
@@ -321,6 +354,7 @@ pub(crate) fn round_trip(cx: Ctx<'_>) -> Ctx<'_> {
     let arena: &'static codec::Arena = Box::leak(Box::default());
     let t = std::time::Instant::now();
     // SAFETY: the arena is leaked, so it outlives the context.
+    let bytes = std::rc::Rc::new(bytes);
     let decoded = unsafe { codec::decode_unit(&bytes, arena, cx.modules.clone()) };
     let took = t.elapsed();
     let Some(mut out) = decoded else {

@@ -43,7 +43,7 @@ pub(crate) unsafe fn load<'m>(
     modules: &[&'m SourceModule],
 ) -> Option<(Ctx<'m>, Vec<usize>)> {
     let t = std::time::Instant::now();
-    let bytes = std::fs::read(path).ok()?;
+    let bytes = std::rc::Rc::new(std::fs::read(path).ok()?);
     let read = t.elapsed();
     let by_path: rustc_hash::FxHashMap<&str, usize> = (modules.iter().enumerate())
         .map(|(i, m)| (m.path.as_str(), i))

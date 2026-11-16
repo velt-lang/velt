@@ -7,7 +7,9 @@
 //! here.
 //!
 //! The encoding: [`FORMAT`], the unit's file table (each file as the module it is the file of),
-//! then the fields in order. The modules themselves are the caller's ([`decode_unit`]).
+//! the AST fragments ([`super::Frags`]), then the fields in order. The modules themselves are
+//! the caller's ([`decode_unit`]). The definition tables ([`DefTable`]) keep where each entry
+//! is, and a decoded unit decodes an entry when the check first reads it.
 
 use velt_common::{Diagnostic, FileId, Fix, Label, Severity};
 
@@ -18,7 +20,7 @@ use crate::types::Types;
 use crate::SourceModule;
 
 /// The version of the encoding: the first bytes of every encoded unit.
-pub(crate) const FORMAT: &[u8; 8] = b"vunit\x00\x00\x02";
+pub(crate) const FORMAT: &[u8; 8] = b"vunit\x00\x00\x03";
 
 /// The fields of `Ctx` a unit saves (`save`), in order, then those it does not (`skip`: as
 /// `Ctx::over` makes them). Generates the field walk of the encoder and decoder.
@@ -40,7 +42,13 @@ macro_rules! unit_fields {
         }
 
         fn dec_fields(cx: &mut Ctx, r: &mut Reader) {
-            $(cx.$p = Codec::dec(r);)*
+            $(
+                cx.$p = Codec::dec(r);
+                if r.failed() && std::env::var_os("VELT_UNITS_DEBUG").is_some() {
+                    eprintln!("velt-units: decode failed at field {} (pos {})", stringify!($p), r.pos());
+                    return;
+                }
+            )*
             $(special::dec(stringify!($sp), &mut cx.$sp, r);)*
         }
     };
@@ -233,12 +241,12 @@ pub(crate) fn encode_unit_sized(cx: &Ctx) -> (Vec<u8>, Vec<(&'static str, usize)
 ///
 /// `arena` must outlive the context returned and every copy of it ([`Arena`]).
 pub(crate) unsafe fn decode_unit<'m>(
-    bytes: &[u8],
+    bytes: &std::rc::Rc<Vec<u8>>,
     arena: &Arena,
     modules: Vec<&'m SourceModule>,
 ) -> Option<Ctx<'m>> {
     let rest = bytes.strip_prefix(FORMAT.as_slice())?;
-    let mut head = Reader::new(rest, &[]);
+    let mut head = Reader::bare(rest, &[]);
     let n = head.len();
     let nfiles = head.len();
     if n != modules.len() || nfiles < n {
@@ -256,11 +264,12 @@ pub(crate) unsafe fn decode_unit<'m>(
     if head.failed {
         return None;
     }
-    let body = &rest[head.pos..];
+    let body_at = FORMAT.len() + head.pos;
+    let files = std::rc::Rc::new(files);
     let mut cx = Ctx::over(modules, 0);
     let done = velt_syntax::with_stack_of(crate::SEMA_STACK_BYTES, || {
         // SAFETY: the caller keeps `arena` alive longer than `cx` (above).
-        let mut r = unsafe { Reader::with_arena(body, &files, arena) };
+        let mut r = unsafe { Reader::over_unit(bytes, body_at, &files, arena) };
         for i in 0..n {
             if r.uint() != i as u64 {
                 return false;
@@ -343,22 +352,69 @@ impl Codec for Types {
     }
 }
 
+/// A table as its length, the byte size of its entries (8 bytes, so a reader skips them), the
+/// entries, then where each ends: a decoded unit's tables decode an entry on its first use
+/// ([`DefTable::lazy`]).
 impl<T: Codec> Codec for DefTable<T> {
     fn enc(&self, w: &mut Writer) {
-        let items = self.items_all();
-        w.uint(items.len() as u64);
-        for x in items {
+        w.uint(self.len() as u64);
+        let at = w.out.len();
+        w.out.extend_from_slice(&[0; 8]);
+        let start = w.out.len();
+        let mut ends = Vec::with_capacity(self.len());
+        for x in self.items_all() {
             x.enc(w);
+            ends.push((w.out.len() - start) as u64);
+        }
+        let size = (w.out.len() - start) as u64;
+        w.out[at..at + 8].copy_from_slice(&size.to_le_bytes());
+        for e in ends {
+            w.uint(e);
         }
     }
 
     fn dec(r: &mut Reader) -> Self {
+        let n = r.len();
+        let size = u64::from_le_bytes(r.take(8).try_into().unwrap_or([0; 8]));
+        let start = r.pos();
         let mut t = DefTable::default();
-        for x in Vec::<T>::dec(r) {
-            t.push(x);
+        match r.src.clone() {
+            Some(src) => {
+                r.take(usize::try_from(size).unwrap_or(usize::MAX));
+                let mut ends = Vec::with_capacity(n);
+                for _ in 0..n {
+                    ends.push(start + r.len_unchecked());
+                }
+                if r.failed() || ends.last().is_some_and(|&e| e != start + size as usize) {
+                    r.fail_damaged();
+                    return t;
+                }
+                return DefTable::lazy(n, crate::ctx::def_table::Lazy::new(src, start, ends, dec_entry::<T>));
+            }
+            None => {
+                for _ in 0..n {
+                    t.push(T::dec(r));
+                }
+                if r.pos() != start + size as usize {
+                    r.fail_damaged();
+                }
+                for _ in 0..n {
+                    r.len_unchecked();
+                }
+            }
         }
         t
     }
+}
+
+/// Entry `range` of a table of a unit decoded on demand (`src`'s bytes).
+fn dec_entry<T: Codec>(src: &super::Src, range: std::ops::Range<usize>) -> T {
+    let mut r = src.reader(range);
+    let x = T::dec(&mut r);
+    if !r.done() {
+        panic!("ICE: an entry of std's unit on disk does not decode");
+    }
+    x
 }
 
 super::structs! {
@@ -394,7 +450,7 @@ impl Codec for Box<str> {
 /// `bytes` is not of this [`FORMAT`]): [`decode_unit`] takes its modules in this order.
 pub(crate) fn unit_module_paths(bytes: &[u8]) -> Option<Vec<String>> {
     let rest = bytes.strip_prefix(FORMAT.as_slice())?;
-    let mut head = Reader::new(rest, &[]);
+    let mut head = Reader::bare(rest, &[]);
     let n = head.len();
     let nfiles = head.len();
     for _ in n..nfiles {

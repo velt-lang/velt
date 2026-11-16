@@ -40,10 +40,11 @@ pub(crate) use cells::{
     assignment_in, box_cells, enclosing_fns_from, unshareable_nested, unshareable_note,
     Unshareable, NESTED_ASSIGN,
 };
-pub(crate) use exclusive::check_exclusive;
+pub(crate) use exclusive::{check_exclusive, unit_value_scan};
 pub(crate) use infer::infer_modes;
 pub(crate) use kept_fns::KeptFns;
 pub(crate) use local_async::{
+    unit_named_outside_bodies, unit_outside_types,
     check_crossing_changes, infer_local_async, keep_unit_scans, record_changed_captures, Crossing,
     KeptLiterals,
 };

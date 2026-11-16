@@ -320,8 +320,27 @@ fn held_in_locals(g: &Graph, fwd: &Forward, n: usize) -> Option<FxHashSet<usize>
 /// field initializers) calls by name or uses as a value: called from where the graph does not
 /// follow, with no type arguments recorded.
 pub(super) fn named_outside_bodies(cx: &Ctx, out: &mut FxHashSet<DefId>) {
+    // A finished unit's are kept with it (`units::finish_unit`, [`unit_named_outside_bodies`]).
+    let from = match &cx.unit_sums.outside_named {
+        Some(kept) => {
+            out.extend(kept.iter().copied());
+            cx.unit_base as usize
+        }
+        None => 0,
+    };
+    named_outside_bodies_from(cx, from, out);
+}
+
+/// EXPERIMENT (#2943 M2): [`named_outside_bodies`] of a finished unit, kept with it.
+pub(crate) fn unit_named_outside_bodies(cx: &Ctx) -> FxHashSet<DefId> {
+    let mut out = FxHashSet::default();
+    named_outside_bodies_from(cx, 0, &mut out);
+    out
+}
+
+fn named_outside_bodies_from(cx: &Ctx, from: usize, out: &mut FxHashSet<DefId>) {
     let mut named = Named(out);
-    for info in cx.info.iter() {
+    for info in cx.info.iter().skip(from) {
         match info {
             DefInfo::Global(gi) => {
                 if let Some(init) = &gi.init {
@@ -337,7 +356,7 @@ pub(super) fn named_outside_bodies(cx: &Ctx, out: &mut FxHashSet<DefId>) {
             _ => {}
         }
     }
-    for def in cx.defs.iter().flatten() {
+    for def in cx.defs.iter().skip(from).flatten() {
         match def {
             Def::Global(gd) => walk::expr(&gd.init, &mut named),
             Def::Adt(a) => {

@@ -19,7 +19,7 @@ mod always;
 #[path = "module_state_facts.rs"]
 mod facts;
 #[path = "locked_props.rs"]
-mod locked_props;
+pub(crate) mod locked_props;
 #[path = "module_state_reach.rs"]
 mod reach;
 
@@ -27,17 +27,10 @@ use facts::Facts;
 pub(crate) use facts::StateFacts;
 use reach::{propagate, vars_reached, Reach};
 
-/// The module-level `let`s in initialization order (empty when there are none); reports reads
-/// of a `let` before its initializer runs.
-pub(crate) fn order(cx: &mut Ctx) -> Vec<DefId> {
-    crate::linked::keep_edges(cx);
-    // In a check by units, std is held whole: a std module the program does not link has no
-    // state when it runs (`crate::linked`).
-    let linked = crate::linked::linked(cx);
-    let lets: Vec<(usize, u32, DefId)> = cx
-        .info
-        .iter()
-        .enumerate()
+/// The module-level `let`s of the definitions from `from` on: module, where its initializer
+/// starts, and definition.
+fn lets_from(cx: &Ctx, from: usize) -> Vec<(usize, u32, DefId)> {
+    (cx.info.iter().enumerate().skip(from))
         .filter_map(|(i, d)| match d {
             // `import.meta` exists before the module's code runs (at its first use's position).
             DefInfo::Global(g) if g.stored => {
@@ -49,8 +42,28 @@ pub(crate) fn order(cx: &mut Ctx) -> Vec<DefId> {
             }
             _ => None,
         })
-        .filter(|(m, ..)| linked[*m] || !cx.modules[*m].is_std)
-        .collect();
+        .collect()
+}
+
+/// EXPERIMENT (#2943 M2): a finished unit's module-level `let`s ([`lets_from`]), kept with it.
+pub(crate) fn unit_lets(cx: &Ctx) -> Vec<(usize, u32, DefId)> {
+    lets_from(cx, 0)
+}
+
+/// The module-level `let`s in initialization order (empty when there are none); reports reads
+/// of a `let` before its initializer runs.
+pub(crate) fn order(cx: &mut Ctx) -> Vec<DefId> {
+    crate::linked::keep_edges(cx);
+    // In a check by units, std is held whole: a std module the program does not link has no
+    // state when it runs (`crate::linked`).
+    let linked = crate::linked::linked(cx);
+    // A finished unit's are kept with it ([`unit_lets`]).
+    let (mut lets, from) = match &cx.unit_sums.lets {
+        Some(kept) => (kept.clone(), cx.unit_base as usize),
+        None => (vec![], 0),
+    };
+    lets.extend(lets_from(cx, from));
+    lets.retain(|(m, ..)| linked[*m] || !cx.modules[*m].is_std);
     if lets.is_empty() {
         return Vec::new();
     }

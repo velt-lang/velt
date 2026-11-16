@@ -48,7 +48,12 @@ const LIMIT: &str = "this type is nested too deeply to tell whether a struct's f
 pub(crate) fn check_instantiations(cx: &mut Ctx) {
     let mut reported: FxHashSet<(DefId, String)> = FxHashSet::default();
     let n = cx.ty.table.len() as u32;
-    for i in 0..n {
+    // A finished unit's types were checked with it (`crate::units`).
+    let from = match cx.units_stage {
+        crate::units::Stage::App => cx.unit_sums.types as u32,
+        _ => 0,
+    };
+    for i in from..n {
         let t = TyId(i);
         let TyKind::Adt(d, args) = cx.ty.kind(t).clone() else {
             continue;

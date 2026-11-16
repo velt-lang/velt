@@ -55,7 +55,7 @@ pub(crate) fn std_unit<'m>(cx: Ctx<'m>) -> Ctx<'m> {
     if !hook.decoded {
         return cx;
     }
-    let bytes = encode_unit(&cx);
+    let bytes = std::rc::Rc::new(encode_unit(&cx));
     let arena: &'static Arena = Box::leak(Box::default());
     // SAFETY: the arena is leaked, so it outlives the context.
     let mut out =
