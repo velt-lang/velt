@@ -28,7 +28,7 @@ use rustc_hash::FxHashSet;
 use velt_common::{FileId, Span};
 
 use crate::ctx::Ctx;
-use crate::defs::{DefInfo, FnSource};
+use crate::defs::DefInfo;
 use crate::hir::{AdtKind, DefId};
 
 /// The name a generated module uses for a type it cannot import: `__qualified<"<module path>",

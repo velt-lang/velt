@@ -1,8 +1,6 @@
 //! The HIR of a real program, std's prelude included, comes back from its encoding as it was.
 
-#[allow(dead_code)]
-#[path = "../../../tests/common/programs.rs"]
-mod programs;
+use crate::script_locals::sema_tests::programs;
 
 use std::time::Instant;
 
