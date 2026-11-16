@@ -378,7 +378,13 @@ fn check_timed(
     let copies: Option<&[SourceModule]> =
         (std_copies.as_deref()).map(|c| unsafe { &*(c as *const [SourceModule]) });
     // A unit loaded from disk keeps its AST here (`units::disk`): it outlives every context.
-    let disk_arena = units::codec::Arena::default();
+    // With the experiment on, never freed: the process ends after the check, and freeing a
+    // whole std's AST costs more than a millisecond.
+    let kept_arena = units::codec::Arena::default();
+    let disk_arena: &units::codec::Arena = match std::env::var_os("VELT_UNITS_DISK") {
+        Some(_) => Box::leak(Box::default()),
+        None => &kept_arena,
+    };
     let disk = units::disk::path(opts, (order.is_some()).then_some(&found));
     // std's modules for its unit: std's own run's, or the loader's stubs as they are.
     let unit_mods: Vec<&SourceModule> = match std_mods {
@@ -387,7 +393,7 @@ fn check_timed(
     };
     // SAFETY: `disk_arena` is declared before every context and so outlives them.
     let load_unit =
-        || (disk.as_deref()).and_then(|p| unsafe { units::disk::load(p, &disk_arena, &unit_mods) });
+        || (disk.as_deref()).and_then(|p| unsafe { units::disk::load(p, disk_arena, &unit_mods) });
     let disk_loaded = load_unit();
     let from_disk = disk_loaded.is_some();
     if opts.std_stubbed && disk_loaded.is_none() {

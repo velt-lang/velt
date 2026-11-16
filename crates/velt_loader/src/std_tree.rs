@@ -131,6 +131,10 @@ impl StdTree {
     /// `path` relative to the root (`/`-separated) when it is below it as given or as its
     /// canonical path.
     fn below(&self, path: &Path) -> Option<String> {
+        // Most paths the loader asks about are the root joined with plain names.
+        if let Some(rel) = plain_below(path, &self.root).or_else(|| plain_below(path, &self.canonical)) {
+            return Some(rel.to_string());
+        }
         let path = if path.is_absolute() {
             vpm::relpath::normalize(path)
         } else {
@@ -152,45 +156,74 @@ impl StdTree {
     }
 }
 
+/// `path` below `root` as a `/`-separated string, when it is `root` joined with plain names
+/// (no `.` or `..`): a byte comparison, no normalizing.
+fn plain_below<'p>(path: &'p Path, root: &Path) -> Option<&'p str> {
+    let rest = path.as_os_str().as_encoded_bytes();
+    let rest = rest.strip_prefix(root.as_os_str().as_encoded_bytes())?;
+    let rest = match rest {
+        [] => "",
+        [b'/', rest @ ..] => std::str::from_utf8(rest).ok()?,
+        _ => return None,
+    };
+    let plain = !rest.ends_with('/')
+        && (rest.is_empty() || rest.split('/').all(|n| !n.is_empty() && n != "." && n != ".."));
+    plain.then_some(rest)
+}
+
+/// The installed snapshot ([`install`]) with what it answers precomputed.
+struct Installed {
+    tree: StdTree,
+    stubbed: BTreeSet<String>,
+    /// Each directory's names, sorted.
+    names: std::collections::HashMap<String, Vec<String>>,
+    files: std::collections::HashSet<String>,
+}
+
 /// The snapshot the loader answers from ([`install`]).
-static TREE: OnceLock<(StdTree, BTreeSet<String>)> = OnceLock::new();
+static TREE: OnceLock<Installed> = OnceLock::new();
 
 /// Answer the loader's questions about std's files from `tree` for the rest of the process.
 /// `stubbed`: the canonical paths of the std modules whose stubs the load is given, whose
 /// sources it then doesn't read.
 pub fn install(tree: StdTree, stubbed: BTreeSet<String>) {
-    let _ = TREE.set((tree, stubbed));
+    let mut names: std::collections::HashMap<String, Vec<String>> =
+        tree.dirs.keys().map(|d| (d.clone(), vec![])).collect();
+    for p in tree.dirs.keys().filter(|d| !d.is_empty()).chain(tree.files.keys()) {
+        let (dir, name) = p.rsplit_once('/').unwrap_or(("", p));
+        names.entry(dir.to_string()).or_default().push(name.to_string());
+    }
+    names.values_mut().for_each(|n| n.sort());
+    let files = tree.files.keys().cloned().collect();
+    let _ = TREE.set(Installed {
+        tree,
+        stubbed,
+        names,
+        files,
+    });
+}
+
+fn installed() -> Option<&'static Installed> {
+    (!vpm::probe::recording()).then_some(())?;
+    TREE.get()
 }
 
 fn tree() -> Option<&'static StdTree> {
-    (!vpm::probe::recording()).then_some(())?;
-    TREE.get().map(|(t, _)| t)
+    installed().map(|i| &i.tree)
 }
 
 /// Whether `path` is a file, when it is below the snapshot's root.
 pub(crate) fn is_file(path: &Path) -> Option<bool> {
-    let t = tree()?;
-    let rel = t.below(path)?;
-    Some(t.files.contains_key(&rel))
+    let i = installed()?;
+    let rel = i.tree.below(path)?;
+    Some(i.files.contains(&rel))
 }
 
 /// The names in directory `dir`, when it is below the snapshot's root.
 pub(crate) fn names(dir: &Path) -> Option<Vec<String>> {
-    let t = tree()?;
-    let rel = t.below(dir)?;
-    if !t.dirs.contains_key(&rel) {
-        return Some(vec![]);
-    }
-    let prefix = if rel.is_empty() { String::new() } else { format!("{rel}/") };
-    let child = |p: &String| -> Option<String> {
-        let rest = p.strip_prefix(&prefix)?;
-        (!rest.is_empty() && !rest.contains('/')).then(|| rest.to_string())
-    };
-    let mut out: Vec<String> = (t.dirs.keys().filter_map(child))
-        .chain(t.files.keys().filter_map(child))
-        .collect();
-    out.sort();
-    Some(out)
+    let i = installed()?;
+    let rel = i.tree.below(dir)?;
+    Some(i.names.get(&rel).cloned().unwrap_or_default())
 }
 
 /// The identity `file_key` gives `path` (its canonical path), when its directory is below the
@@ -208,7 +241,7 @@ pub(crate) fn key(path: &Path) -> Option<PathBuf> {
 /// Whether the load is given the stub of the std module at canonical path `canonical`, so it
 /// doesn't read its source.
 pub(crate) fn skips_read(canonical: &str) -> bool {
-    tree().is_some() && TREE.get().is_some_and(|(_, s)| s.contains(canonical))
+    installed().is_some_and(|i| i.stubbed.contains(canonical))
 }
 
 fn time(m: &std::fs::Metadata) -> u128 {

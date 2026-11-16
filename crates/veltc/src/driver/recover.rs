@@ -28,7 +28,12 @@ pub(super) fn check_recovering_loaded(
 ) -> Result<(velt_loader::Loaded, Result<(), BuildError>), BuildError> {
     let mut loaded = load_modules(sess, opts, scope)?;
     if !sess.has_errors() {
-        let checked = sema_stage(sess, opts, scope, &mut loaded).map(drop);
+        // EXPERIMENT (#2943 M2): a check by units ends the process right after; freeing the
+        // program (every std definition) is left to the process's end.
+        let checked = sema_stage(sess, opts, scope, &mut loaded).map(|p| match scope.units {
+            true => std::mem::forget(p),
+            false => drop(p),
+        });
         return Ok((loaded, checked));
     }
     let t = Instant::now();
