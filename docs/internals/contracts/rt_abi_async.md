@@ -580,31 +580,33 @@ typedef struct { VeltStrArray names; VeltBytes kinds; } VeltDirents;  // 48 byte
 socket, device), 1 file, 2 directory, 3 symlink (not followed). The kind comes with the listing
 (`d_type`, or Windows' find data); only an entry of unknown type costs an `lstat`.
 
-velt_rt defines only the sync column: a native build runs it on the executor's blocking pool
-(std/fs/rt_sched.velt). The async column is velt_rt_wasm's (WebAssembly builds,
-std/fs/rt.velt) [velt_rt's async leaves removed, #2196].
+velt_rt defines these sync functions: a native build runs them on the executor's blocking pool
+(std/fs/rt_sched.velt). Each has an async twin of the same name without `_sync`, taking the
+same arguments without `out` and returning a `VeltFut*` of the same result. Only velt_rt_wasm
+defines the twins (WebAssembly builds, std/fs/rt.velt) [velt_rt's async leaves removed, #2196],
+so they are not in this table, whose names the JIT host exports
+(crates/velt_rt_host/tests/abi_symbols.rs).
 
-| Async (`-> VeltFut*`) | Sync (`..., out)`, returns nothing) | Result type |
-|---|---|---|
-| `velt_rt_fs_read_file(path)` | `velt_rt_fs_read_file_sync(path, out)` | `IoResult<VeltStr>` (`EILSEQ` if not UTF-8) |
-| `velt_rt_fs_read_file_bytes(path)` | `velt_rt_fs_read_file_bytes_sync(path, out)` | `IoResult<VeltBytes>` |
-| `velt_rt_fs_write_file(path, data)` | `velt_rt_fs_write_file_sync(path, data, out)` | `IoResult<()>` (= `VeltErr`) |
-| `velt_rt_fs_append_file(path, data)` | `velt_rt_fs_append_file_sync(path, data, out)` | `IoResult<()>`; creates the file |
-| `velt_rt_fs_read_dir(path)` | `velt_rt_fs_read_dir_sync(path, out)` | `IoResult<VeltStrArray>` names, sorted |
-| `velt_rt_fs_read_dir_typed(path)` | `velt_rt_fs_read_dir_typed_sync(path, out)` | `IoResult<VeltDirents>` [additive, #692] |
-| `velt_rt_fs_stat(path)` | `velt_rt_fs_stat_sync(path, out)` | `IoResult<VeltStat>` (follows symlinks) |
-| `velt_rt_fs_lstat(path)` | `velt_rt_fs_lstat_sync(path, out)` | `IoResult<VeltStat>` (a symlink itself) [additive, #691] |
-| `velt_rt_fs_readlink(path)` | `velt_rt_fs_readlink_sync(path, out)` | `IoResult<VeltStr>`; `EINVAL` if not a symlink [additive, #691] |
-| `velt_rt_fs_realpath(path)` | `velt_rt_fs_realpath_sync(path, out)` | `IoResult<VeltStr>`: the absolute path with every symlink, `.` and `..` resolved; `ENOENT` if it (or a link's target) doesn't exist; Windows: without the `\\?\` prefix unless the path needs it (`C:\dir\f`, `\\server\share\f`). WebAssembly: as WASI reports it [additive, #2077] |
-| `velt_rt_fs_symlink(target, path)` | `velt_rt_fs_symlink_sync(target, path, out)` | `IoResult<()>`; Windows: a directory link if `target` is a directory, a relative target stored with `\` separators (as Node) [additive, #691] |
-| `velt_rt_fs_mkdir(path, u8 recursive)` | `velt_rt_fs_mkdir_sync(path, recursive, out)` | `IoResult<()>` |
-| `velt_rt_fs_remove(path, u8 recursive)` | `velt_rt_fs_remove_sync(path, recursive, out)` | `IoResult<()>`; file, symlink (the link only, a Windows directory link too), empty dir, or tree if recursive |
-| `velt_rt_fs_rename(from, to)` | `velt_rt_fs_rename_sync(from, to, out)` | `IoResult<()>` |
-| `velt_rt_fs_copy_file(from, to)` | `velt_rt_fs_copy_file_sync(from, to, out)` | `IoResult<()>` |
-| `velt_rt_fs_exists(path)` | `velt_rt_fs_exists_sync(path) -> u8` | `u8` (never fails) |
+| Sync (`..., out)`, returns nothing) | Result type |
+|---|---|
+| `velt_rt_fs_read_file_sync(path, out)` | `IoResult<VeltStr>` (`EILSEQ` if not UTF-8) |
+| `velt_rt_fs_read_file_bytes_sync(path, out)` | `IoResult<VeltBytes>` |
+| `velt_rt_fs_write_file_sync(path, data, out)` | `IoResult<()>` (= `VeltErr`) |
+| `velt_rt_fs_append_file_sync(path, data, out)` | `IoResult<()>`; creates the file |
+| `velt_rt_fs_read_dir_sync(path, out)` | `IoResult<VeltStrArray>` names, sorted |
+| `velt_rt_fs_read_dir_typed_sync(path, out)` | `IoResult<VeltDirents>` [additive, #692] |
+| `velt_rt_fs_stat_sync(path, out)` | `IoResult<VeltStat>` (follows symlinks) |
+| `velt_rt_fs_lstat_sync(path, out)` | `IoResult<VeltStat>` (a symlink itself) [additive, #691] |
+| `velt_rt_fs_readlink_sync(path, out)` | `IoResult<VeltStr>`; `EINVAL` if not a symlink [additive, #691] |
+| `velt_rt_fs_realpath_sync(path, out)` | `IoResult<VeltStr>`: the absolute path with every symlink, `.` and `..` resolved; `ENOENT` if it (or a link's target) doesn't exist; Windows: without the `\\?\` prefix unless the path needs it (`C:\dir\f`, `\\server\share\f`). WebAssembly: as WASI reports it [additive, #2077] |
+| `velt_rt_fs_symlink_sync(target, path, out)` | `IoResult<()>`; Windows: a directory link if `target` is a directory, a relative target stored with `\` separators (as Node) [additive, #691] |
+| `velt_rt_fs_mkdir_sync(path, recursive, out)` | `IoResult<()>` |
+| `velt_rt_fs_remove_sync(path, recursive, out)` | `IoResult<()>`; file, symlink (the link only, a Windows directory link too), empty dir, or tree if recursive |
+| `velt_rt_fs_rename_sync(from, to, out)` | `IoResult<()>` |
+| `velt_rt_fs_copy_file_sync(from, to, out)` | `IoResult<()>` |
+| `velt_rt_fs_exists_sync(path) -> u8` | `u8` (never fails) |
 
-All `path`/`from`/`to`/`data` parameters are `const VeltStr*`. Async variants run on tokio's
-blocking pool. Error messages are Node's: `<CODE>: <description>, <syscall> '<path>'` (plus
+All `path`/`from`/`to`/`data` parameters are `const VeltStr*`. Error messages are Node's: `<CODE>: <description>, <syscall> '<path>'` (plus
 ` -> '<to>'` for `rename`/`copyfile`/`symlink`), e.g. `ENOENT: no such file or directory, lstat 'x'` from
 `fs_remove`; the file streams' `open_read`/`open_write` (§14.7) use the same form. A failed
 read or write of an opened file names no path (`EISDIR: illegal operation on a directory,
