@@ -491,7 +491,11 @@ fn record_hooks_needed(cx: &Ctx) -> bool {
 pub(crate) fn stub_unreached(cx: &mut Ctx) -> FxHashSet<DefId> {
     let mut out = FxHashSet::default();
     // std's unit from disk is checked whole: nothing of it is deferred.
-    let from = if cx.std_from_disk { cx.unit_base as usize } else { 0 };
+    let from = if cx.std_from_disk {
+        cx.unit_base as usize
+    } else {
+        0
+    };
     for i in from..cx.info.len() {
         let d = DefId(i as u32);
         if cx.defs[i].is_some() || !deferred(cx, d) {

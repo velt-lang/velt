@@ -390,7 +390,10 @@ impl<T: Codec> Codec for DefTable<T> {
                     r.fail_damaged();
                     return t;
                 }
-                return DefTable::lazy(n, crate::ctx::def_table::Lazy::new(src, start, ends, dec_entry::<T>));
+                return DefTable::lazy(
+                    n,
+                    crate::ctx::def_table::Lazy::new(src, start, ends, dec_entry::<T>),
+                );
             }
             None => {
                 for _ in 0..n {

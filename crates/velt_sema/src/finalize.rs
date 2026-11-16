@@ -28,7 +28,11 @@ pub(crate) fn program_defs(cx: &Ctx) -> Vec<usize> {
         .map(|imp| imp.iface.0 as usize)
         .filter(|&i| i < base)
         .collect();
-    out.extend((cx.module_slots.iter()).map(|d| d.0 as usize).filter(|&i| i < base));
+    out.extend(
+        (cx.module_slots.iter())
+            .map(|d| d.0 as usize)
+            .filter(|&i| i < base),
+    );
     out.sort_unstable();
     out.dedup();
     out.extend(base..cx.info.len());

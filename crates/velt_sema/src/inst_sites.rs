@@ -112,7 +112,9 @@ fn collect_with(
         if !wanted(DefId(i as u32)) {
             continue;
         }
-        let Some(Def::Fn(f)) = &cx.defs[i] else { continue };
+        let Some(Def::Fn(f)) = &cx.defs[i] else {
+            continue;
+        };
         let mut u = Uses::default();
         let mut news = vec![];
         let mut seen: FxHashSet<TyId> = FxHashSet::default();
@@ -154,7 +156,9 @@ fn collect_with(
         if !wanted(DefId(i as u32)) {
             continue;
         }
-        let DefInfo::Global(g) = &cx.info[i] else { continue };
+        let DefInfo::Global(g) = &cx.info[i] else {
+            continue;
+        };
         let Some(init) = g.init.as_ref() else {
             continue;
         };

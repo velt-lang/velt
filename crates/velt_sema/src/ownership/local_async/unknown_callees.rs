@@ -15,7 +15,8 @@ pub(super) fn mark(cx: &Ctx, g: &mut Graph) {
     // The methods a virtual, interface or bounded call may reach: those in a class's vtable
     // (only methods overridden somewhere have a slot) and an interface's implementations. Their
     // instantiations aren't all shown by their direct calls (`super::resolve_hits`).
-    g.dispatched.extend(crate::generated::demand::vtable_slots(cx));
+    g.dispatched
+        .extend(crate::generated::demand::vtable_slots(cx));
     for i in &cx.impls {
         g.dispatched.extend(i.methods.iter().copied());
     }

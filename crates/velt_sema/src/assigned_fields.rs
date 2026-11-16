@@ -14,7 +14,11 @@ pub(crate) fn assigned_objects(cx: &mut Ctx) -> FxHashSet<DefId> {
     let mut out = FxHashSet::default();
     // With std's unit from disk (`velt check`), what lowering needs of std is not built
     // (`finalize::program_defs`).
-    let from = if cx.std_from_disk { cx.unit_base as usize } else { 0 };
+    let from = if cx.std_from_disk {
+        cx.unit_base as usize
+    } else {
+        0
+    };
     for def in cx.defs.iter().skip(from) {
         let Some(Def::Fn(f)) = def else {
             continue;

@@ -47,11 +47,16 @@ impl StdTree {
         let mut todo = vec![String::new()];
         while let Some(rel) = todo.pop() {
             let dir = tree.root.join(&rel);
-            tree.dirs.insert(rel.clone(), time(&std::fs::metadata(&dir).ok()?));
+            tree.dirs
+                .insert(rel.clone(), time(&std::fs::metadata(&dir).ok()?));
             for entry in std::fs::read_dir(&dir).ok()? {
                 let entry = entry.ok()?;
                 let name = entry.file_name().into_string().ok()?;
-                let sub = if rel.is_empty() { name } else { format!("{rel}/{name}") };
+                let sub = if rel.is_empty() {
+                    name
+                } else {
+                    format!("{rel}/{name}")
+                };
                 let meta = std::fs::symlink_metadata(entry.path()).ok()?;
                 if meta.is_dir() {
                     todo.push(sub);
@@ -91,7 +96,11 @@ impl StdTree {
 
     /// The tree as text ([`StdTree::decode`] reads it back).
     pub fn encode(&self) -> String {
-        let mut out = format!("{FORMAT}\n{}\n{}\n", self.root.display(), self.canonical.display());
+        let mut out = format!(
+            "{FORMAT}\n{}\n{}\n",
+            self.root.display(),
+            self.canonical.display()
+        );
         for (rel, t) in &self.dirs {
             out.push_str(&format!("d\t{t}\t{rel}\n"));
         }
@@ -132,7 +141,9 @@ impl StdTree {
     /// canonical path.
     fn below(&self, path: &Path) -> Option<String> {
         // Most paths the loader asks about are the root joined with plain names.
-        if let Some(rel) = plain_below(path, &self.root).or_else(|| plain_below(path, &self.canonical)) {
+        if let Some(rel) =
+            plain_below(path, &self.root).or_else(|| plain_below(path, &self.canonical))
+        {
             return Some(rel.to_string());
         }
         let path = if path.is_absolute() {
@@ -167,7 +178,10 @@ fn plain_below<'p>(path: &'p Path, root: &Path) -> Option<&'p str> {
         _ => return None,
     };
     let plain = !rest.ends_with('/')
-        && (rest.is_empty() || rest.split('/').all(|n| !n.is_empty() && n != "." && n != ".."));
+        && (rest.is_empty()
+            || rest
+                .split('/')
+                .all(|n| !n.is_empty() && n != "." && n != ".."));
     plain.then_some(rest)
 }
 
@@ -189,9 +203,17 @@ static TREE: OnceLock<Installed> = OnceLock::new();
 pub fn install(tree: StdTree, stubbed: BTreeSet<String>) {
     let mut names: std::collections::HashMap<String, Vec<String>> =
         tree.dirs.keys().map(|d| (d.clone(), vec![])).collect();
-    for p in tree.dirs.keys().filter(|d| !d.is_empty()).chain(tree.files.keys()) {
+    for p in tree
+        .dirs
+        .keys()
+        .filter(|d| !d.is_empty())
+        .chain(tree.files.keys())
+    {
         let (dir, name) = p.rsplit_once('/').unwrap_or(("", p));
-        names.entry(dir.to_string()).or_default().push(name.to_string());
+        names
+            .entry(dir.to_string())
+            .or_default()
+            .push(name.to_string());
     }
     names.values_mut().for_each(|n| n.sort());
     let files = tree.files.keys().cloned().collect();

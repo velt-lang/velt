@@ -146,7 +146,8 @@ pub(crate) struct Summaries {
     /// A finished unit's scan for the value params (`ownership::exclusive`).
     pub(crate) value_scan: Option<crate::value_params::Scanned>,
     /// A finished unit's classes' slots (`locked_props::Dispatch`).
-    pub(crate) virtuals: Option<rustc_hash::FxHashMap<(crate::hir::DefId, u32), Vec<crate::hir::DefId>>>,
+    pub(crate) virtuals:
+        Option<rustc_hash::FxHashMap<(crate::hir::DefId, u32), Vec<crate::hir::DefId>>>,
     /// A finished unit's part of the implicit calls (`replaced_holders::implicit`).
     pub(crate) implicit: Option<crate::replaced_holders::implicit::ImplicitScan>,
     /// A finished unit's host functions (`collect::host_sig`).
@@ -276,7 +277,9 @@ pub(crate) fn finish_unit(cx: &mut Ctx) {
     cx.unit_sums.lets = Some(crate::module_state::unit_lets(cx));
     cx.unit_sums.types = cx.ty.table.len();
     cx.unit_sums.value_scan = Some(crate::ownership::unit_value_scan(cx));
-    cx.unit_sums.virtuals = Some(crate::module_state::locked_props::Dispatch::unit_virtuals(cx));
+    cx.unit_sums.virtuals = Some(crate::module_state::locked_props::Dispatch::unit_virtuals(
+        cx,
+    ));
     cx.unit_sums.implicit = Some(crate::replaced_holders::implicit::unit_scan(cx));
     cx.unit_sums.host_fns = Some(crate::collect::host_sig::unit_host_fns(cx));
     crate::ownership::keep_unit_scans(cx);

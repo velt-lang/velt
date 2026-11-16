@@ -89,7 +89,6 @@ impl<T> Slots<T> {
         self.free.ready = self.ready.as_ptr();
     }
 
-
     /// `n` empty slots.
     pub(crate) fn empty(n: usize) -> Self {
         let v = (0..n).map(|_| MaybeUninit::uninit()).collect();

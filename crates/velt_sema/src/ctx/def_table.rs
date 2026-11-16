@@ -110,7 +110,10 @@ impl<T> DefTable<T> {
 
     #[cold]
     fn decode(&self, i: usize) -> &T {
-        let lazy = self.lazy.as_ref().expect("ICE: a definition table entry left empty");
+        let lazy = self
+            .lazy
+            .as_ref()
+            .expect("ICE: a definition table entry left empty");
         self.items.set(i, lazy.get(i));
         decoded::count();
         self.items.get(i).expect("ICE: decoded entry")
@@ -158,7 +161,9 @@ impl<T> DefTable<T> {
 
     /// Every entry, to write: a whole-table write while a prefix is frozen is counted once.
     #[track_caller]
-    pub(crate) fn iter_mut(&mut self) -> impl DoubleEndedIterator<Item = &mut T> + ExactSizeIterator {
+    pub(crate) fn iter_mut(
+        &mut self,
+    ) -> impl DoubleEndedIterator<Item = &mut T> + ExactSizeIterator {
         self.scanned();
         if self.frozen_below > 0 {
             violation(Location::caller());

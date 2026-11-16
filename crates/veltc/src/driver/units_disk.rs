@@ -42,7 +42,11 @@ pub(crate) fn std_tree() -> Option<&'static StdTree> {
         let dir = dir()?;
         let std = loader::std_root()?;
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        (crate::build_cache::compiler_identity().0, vpm::relpath::absolute(&std)).hash(&mut h);
+        (
+            crate::build_cache::compiler_identity().0,
+            vpm::relpath::absolute(&std),
+        )
+            .hash(&mut h);
         let path = dir.join(format!("{:016x}.tree", std::hash::Hasher::finish(&h)));
         let kept = (std::fs::read_to_string(&path).ok())
             .and_then(|text| StdTree::decode(&text))
@@ -75,7 +79,9 @@ pub(super) fn prepare(scope: &CheckScope) -> Option<Prepared> {
         let stubbed = stubs.keys().cloned().collect();
         loader::std_tree::install(tree.clone(), stubbed);
     }
-    let modules = stubs.as_ref().and_then(|_| read_modules(&modules_path(&dir, key), tree));
+    let modules = stubs
+        .as_ref()
+        .and_then(|_| read_modules(&modules_path(&dir, key), tree));
     Some(Prepared {
         key,
         stubs,
@@ -107,7 +113,9 @@ pub(super) fn save_modules(
     let mut out = format!("{MODULES_FORMAT}\n");
     for m in loaded.iter().filter(|m| m.is_std) {
         let file = &sm.get(m.file).path;
-        let Ok(rel) = vpm::relpath::absolute(file).strip_prefix(tree.root()).map(Path::to_path_buf)
+        let Ok(rel) = vpm::relpath::absolute(file)
+            .strip_prefix(tree.root())
+            .map(Path::to_path_buf)
         else {
             return;
         };
@@ -136,7 +144,9 @@ fn read_modules(path: &Path, tree: &StdTree) -> Option<Vec<loader::StdModule>> {
                 jsx_runtime: (!jsx.is_empty()).then(|| jsx.to_string()),
             }),
             ["I", spec, target] => {
-                out.last_mut()?.imports.push((spec.to_string(), target.to_string()));
+                out.last_mut()?
+                    .imports
+                    .push((spec.to_string(), target.to_string()));
             }
             _ => return None,
         }

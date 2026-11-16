@@ -251,7 +251,10 @@ pub(crate) fn scan_into<'a>(
             callers.entry(callee).or_default().push(e);
         }
         for (name, e) in s.methods {
-            method_callers.entry(member(name).to_string()).or_default().push(e);
+            method_callers
+                .entry(member(name).to_string())
+                .or_default()
+                .push(e);
         }
         if s.direct != 0 {
             out.insert(def, s.direct);

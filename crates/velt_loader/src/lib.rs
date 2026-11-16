@@ -409,9 +409,11 @@ impl Loader<'_, '_> {
     /// Load the std modules an earlier load loaded ([`LoadOptions::std_modules`]), each with its
     /// stub; whether there were any.
     fn inject_std(&mut self) -> bool {
-        let (Some(table), Some(stubs), Some(std)) =
-            (self.opts.std_modules, self.opts.std_stubs, self.opts.std_root.clone())
-        else {
+        let (Some(table), Some(stubs), Some(std)) = (
+            self.opts.std_modules,
+            self.opts.std_stubs,
+            self.opts.std_root.clone(),
+        ) else {
             return false;
         };
         for m in table {
@@ -431,7 +433,8 @@ impl Loader<'_, '_> {
                 imports: m.imports.clone(),
                 jsx_runtime: m.jsx_runtime.clone(),
             });
-            self.origins.push((m.file.clone(), Origin::Std(std.clone())));
+            self.origins
+                .push((m.file.clone(), Origin::Std(std.clone())));
         }
         true
     }

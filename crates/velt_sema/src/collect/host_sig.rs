@@ -255,7 +255,10 @@ pub(crate) fn same_imports(cx: &mut Ctx) {
         Some(kept) => (kept.clone(), cx.unit_base as usize),
         None => (vec![], 0),
     };
-    let defs = kept.into_iter().map(|d| d.0 as usize).chain(from..cx.info.len());
+    let defs = kept
+        .into_iter()
+        .map(|d| d.0 as usize)
+        .chain(from..cx.info.len());
     for i in defs {
         let crate::defs::DefInfo::Fn(f) = &cx.info[i] else {
             continue;

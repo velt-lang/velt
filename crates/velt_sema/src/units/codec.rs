@@ -164,7 +164,12 @@ pub(crate) struct Frags {
 impl Frags {
     /// The fragment table at `pos` in `bytes`, and where what follows it starts; `None` when
     /// it is damaged.
-    fn read(bytes: &Rc<Vec<u8>>, pos: usize, files: Rc<Vec<FileId>>, arena: Option<*const Arena>) -> Option<(Frags, usize)> {
+    fn read(
+        bytes: &Rc<Vec<u8>>,
+        pos: usize,
+        files: Rc<Vec<FileId>>,
+        arena: Option<*const Arena>,
+    ) -> Option<(Frags, usize)> {
         let mut r = Reader::bare(&bytes[..], &[]);
         r.pos = pos;
         let n = r.len();

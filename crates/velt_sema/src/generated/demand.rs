@@ -75,8 +75,10 @@ impl crate::units::codec::Codec for Calls {
             base_targets,
         } = self;
         done.enc(w);
-        let flat: Vec<(u32, DefId, usize, usize)> =
-            calls.iter().map(|(c, d, r)| (*c, *d, r.start, r.end)).collect();
+        let flat: Vec<(u32, DefId, usize, usize)> = calls
+            .iter()
+            .map(|(c, d, r)| (*c, *d, r.start, r.end))
+            .collect();
         flat.enc(w);
         targs.enc(w);
         fields.enc(w);

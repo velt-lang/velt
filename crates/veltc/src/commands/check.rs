@@ -339,7 +339,10 @@ fn without_other_variants(mut scope: CheckScope, opts: &driver::BuildOptions) ->
 /// Every file of the standard library at `std` (its tests and its import map aside), sorted.
 fn std_files(std: &Path) -> Result<Vec<PathBuf>, BuildError> {
     let found = discover::source_files(std).map_err(BuildError::Failed)?;
-    Ok(std_files_in(found, &std.join(vpm::imports::STD_IMPORTS_FILE)))
+    Ok(std_files_in(
+        found,
+        &std.join(vpm::imports::STD_IMPORTS_FILE),
+    ))
 }
 
 /// std's modules among `found` (`imports`: std's conditional imports, which are not one).
@@ -372,7 +375,10 @@ fn with_all_std(
     // EXPERIMENT (#2943 M2): std's files from the snapshot kept beside std's unit.
     let tree = units.then(driver::units_disk::std_tree).flatten();
     let mut files = match tree {
-        Some(tree) => std_files_in(tree.files().collect(), &tree.root().join(vpm::imports::STD_IMPORTS_FILE)),
+        Some(tree) => std_files_in(
+            tree.files().collect(),
+            &tree.root().join(vpm::imports::STD_IMPORTS_FILE),
+        ),
         None => std_files(&std)?,
     };
     if let Ok(src) = std::fs::read_to_string(&imports) {

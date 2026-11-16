@@ -771,17 +771,17 @@ fn scan_from(cx: &Ctx, from: usize, out: &mut ImplicitScan) {
     } = out;
     for (i, info) in cx.info.iter().enumerate().skip(from) {
         let DefInfo::Adt(a) = info else { continue };
-            let d = DefId(i as u32);
-            let get = |n: &str| a.methods.get(n).filter(|m| !m.is_static).map(|m| m.def);
-            let dispose: Vec<DefId> = get(crate::collect::DISPOSE).into_iter().collect();
-            let glue: Vec<DefId> = GLUE_HOOKS.iter().filter_map(|n| get(n)).collect();
-            if !dispose.is_empty() || !glue.is_empty() {
-                own.insert(d, (dispose, glue));
-            }
-            if let Some(&TyKind::Adt(b, _)) = a.base.map(|b| cx.ty.kind(b)) {
-                bases.push((d, b));
-            }
+        let d = DefId(i as u32);
+        let get = |n: &str| a.methods.get(n).filter(|m| !m.is_static).map(|m| m.def);
+        let dispose: Vec<DefId> = get(crate::collect::DISPOSE).into_iter().collect();
+        let glue: Vec<DefId> = GLUE_HOOKS.iter().filter_map(|n| get(n)).collect();
+        if !dispose.is_empty() || !glue.is_empty() {
+            own.insert(d, (dispose, glue));
         }
+        if let Some(&TyKind::Adt(b, _)) = a.base.map(|b| cx.ty.kind(b)) {
+            bases.push((d, b));
+        }
+    }
     for (i, def) in cx.defs.iter().enumerate().skip(from) {
         let Some(Def::Fn(f)) = def else { continue };
         if f.is_generator {

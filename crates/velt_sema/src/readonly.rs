@@ -70,7 +70,11 @@ pub(crate) fn erase(
     if !cx.fn_sites.vars.is_empty() {
         cx.name_unions_as_written(&solved);
     }
-    let from = if cx.std_from_disk { cx.unit_base as usize } else { 0 };
+    let from = if cx.std_from_disk {
+        cx.unit_base as usize
+    } else {
+        0
+    };
     let mut plan =
         crate::union_layouts::plan(&mut cx.ty, &twins, &mut cache, &cx.defs, &solved, from);
     let merged = std::mem::take(&mut plan.merged);
