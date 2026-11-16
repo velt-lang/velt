@@ -43,6 +43,12 @@ impl<'m> Ctx<'m> {
         local.contains('.') || names.contains(local)
     }
 
+    /// Fill the memo ([`Self::js_api_modules`]): a finished unit keeps it (std's modules alone
+    /// decide it), so a later unit's check does not build it again.
+    pub(crate) fn keep_js_api_modules(&self) {
+        self.js_api_modules();
+    }
+
     fn js_api_modules(&self) -> &FxHashMap<usize, Option<FxHashSet<String>>> {
         let modules = self.modules.clone();
         self.js_api_modules.get_or_init(|| {

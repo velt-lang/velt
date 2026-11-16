@@ -661,6 +661,20 @@ macro_rules! ids {
 }
 ids!(DefId, TyId, LocalId);
 
+/// A memo a unit keeps (`Ctx::js_api_modules`): as an `Option` of what it holds.
+impl<T: Codec + Clone> Codec for std::cell::OnceCell<T> {
+    fn enc(&self, w: &mut Writer) {
+        self.get().cloned().enc(w);
+    }
+    fn dec(r: &mut Reader) -> Self {
+        let cell = std::cell::OnceCell::new();
+        if let Some(v) = Option::<T>::dec(r) {
+            let _ = cell.set(v);
+        }
+        cell
+    }
+}
+
 impl<T: Codec> Codec for Option<T> {
     fn enc(&self, w: &mut Writer) {
         match self {

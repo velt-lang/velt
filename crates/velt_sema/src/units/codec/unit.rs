@@ -71,7 +71,7 @@ unit_fields! {
         decorator_uses, c_exports, enclosing_class, static_this, static_copies, static_copy_of,
         generator_values, overload_sets, callback_wrappers, kept_fns, kept_consts, symbol_keys,
         held_borrows_used, object_copies, method_facts, super_calls, type_defaults, diags,
-        widening_values, recursive_union_instances,
+        widening_values, recursive_union_instances, js_api_modules,
     ],
     // Saved in part (`special`).
     special: [sigq, type_level],
@@ -84,7 +84,7 @@ unit_fields! {
         // Memos, built again on demand.
         marked_aliases, extension_names, impl_index, ext_memo, ext_exists_memo, ext_memo_impls,
         canon_memo, canon_errors, canon_keys, primitive_statics, classes_below, groups,
-        shared_memo, pure_fns, subclasses, js_api_modules, native_libraries, channel_sends_memo,
+        shared_memo, pure_fns, subclasses, native_libraries, channel_sends_memo,
         uses_this_fn, decorator_scopes, export_memo,
         // State within one pass or one body's check, empty or spent when a unit is finished.
         bad_key_sites, closure_constraints, adapter_uses, in_blanket, impl_scope,

@@ -332,6 +332,7 @@ pub(crate) fn finish_unit(cx: &mut Ctx) {
         cx,
     ));
     cx.unit_sums.implicit = Some(crate::replaced_holders::implicit::unit_scan(cx));
+    cx.keep_js_api_modules();
     cx.unit_sums.host_fns = Some(crate::collect::host_sig::unit_host_fns(cx));
     crate::ownership::keep_unit_scans(cx);
 }
