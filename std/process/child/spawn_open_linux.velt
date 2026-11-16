@@ -1,0 +1,29 @@
+// velt/process/child (internal): `#spawn-open` on Linux: `posix_spawn_file_actions_addopen`, whose
+// `mode_t` is 32 bits here (std/process/child/spawn_posix.velt spawns the children).
+
+import { CString } from "velt/ffi/c_string";
+import { Ptr } from "velt/ffi/ptr";
+import * as m from "velt/lang/hooks/sched_mem";
+
+/** C's `posix_spawn_file_actions_t`. */
+declare c type posix_spawn_file_actions_t;
+
+declare c("c") function posix_spawn_file_actions_addopen(
+  fa: Ptr<posix_spawn_file_actions_t>,
+  fd: i32,
+  path: CString,
+  flags: i32,
+  mode: u32,
+): i32;
+
+/** `posix_spawn_file_actions_addopen` on the file-actions object at address `fa`. */
+export function addOpen(fa: usize, fd: i32, path: CString, flags: i32, mode: u32): i32 {
+  // SAFETY: the caller's initialized file-actions object and a NUL-terminated path.
+  return unsafe { posix_spawn_file_actions_addopen(
+    m.ptrTo<posix_spawn_file_actions_t>(fa),
+    fd,
+    path,
+    flags,
+    mode,
+  ) };
+}

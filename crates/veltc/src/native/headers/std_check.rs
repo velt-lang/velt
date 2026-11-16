@@ -26,11 +26,17 @@ fn std_headers(target: &str) -> &'static [&'static str] {
             "<errno.h>",
             "<fcntl.h>",
             "<netdb.h>",
+            "<pthread.h>",
+            "<sched.h>",
+            "<signal.h>",
+            "<spawn.h>",
             "<stdlib.h>",
             "<string.h>",
             "<strings.h>",
             "<sys/socket.h>",
             "<sys/stat.h>",
+            "<sys/wait.h>",
+            "<time.h>",
             "<unistd.h>",
             "<unwind.h>",
         ]
@@ -39,18 +45,20 @@ fn std_headers(target: &str) -> &'static [&'static str] {
 
 /// The std files whose `declare c("c")` functions are checked, relative to std's root: those
 /// whose declarations match their headers today. The rest of std's declarations (UDP sockets and
-/// `getaddrinfo`, threads, processes, the reactors, std's calls of the runtime) differ from their headers in
-/// ways #3022 lists, and are brought under the check file by file there. This list only grows:
-/// a file leaves it only when it no longer declares C functions.
+/// `getaddrinfo`, the reactors, std's calls of the runtime) differ from their headers in ways
+/// #3022 lists, and are brought under the check file by file there. This list only grows: a file
+/// leaves it only when it no longer declares C functions.
 const CHECKED: &[&str] = &[
     "ffi/errno_darwin.velt",
     "ffi/errno_linux.velt",
     "ffi/errno_windows.velt",
     "ffi/read.velt",
     "fs/fd/posix.velt",
+    "lang/hooks/os_posix.velt",
     "lang/hooks/sched_cells.velt",
     "lang/hooks/sched_io_write.velt",
     "lang/hooks/sched_mem.velt",
+    "lang/hooks/thread_posix.velt",
     "lang/hooks/unwind_itanium.velt",
     "net/calls_posix.velt",
     "net/fd_io.velt",
@@ -58,8 +66,22 @@ const CHECKED: &[&str] = &[
     "sync/slot.velt",
 ];
 
-/// `file` (std at `root`) is one [`CHECKED`] lists.
-fn is_checked(sm: &SourceMap, root: &Path, file: FileId) -> bool {
+/// The std files [`CHECKED`] would list but that only macOS and Linux builds reach: child
+/// processes on the executor's reactor (std/process/child/child_reactor.velt, a hook module the
+/// check loads on every target, and the files it imports). Windows builds keep the runtime's
+/// child processes (std/imports.velt `#child-rt`), so their POSIX calls are checked against
+/// macOS's and Linux's headers only. Sorted, each file once, as `CHECKED`.
+const CHECKED_POSIX: &[&str] = &[
+    "process/child/child_reactor.velt",
+    "process/child/child_record.velt",
+    "process/child/spawn_open_darwin.velt",
+    "process/child/spawn_open_linux.velt",
+    "process/child/spawn_posix.velt",
+];
+
+/// `file` (std at `root`) is one [`CHECKED`] lists, or, on a target other than Windows (`windows`
+/// false), one [`CHECKED_POSIX`] lists.
+fn is_checked(sm: &SourceMap, root: &Path, file: FileId, windows: bool) -> bool {
     let path = &sm.get(file).path;
     // The loader's path and `root` may reach std differently (a symlinked temporary directory).
     let rel = match path.strip_prefix(root) {
@@ -73,12 +95,13 @@ fn is_checked(sm: &SourceMap, root: &Path, file: FileId) -> bool {
         },
     };
     let rel = rel.to_string_lossy().replace('\\', "/");
-    CHECKED.contains(&rel.as_str())
+    CHECKED.contains(&rel.as_str()) || (!windows && CHECKED_POSIX.contains(&rel.as_str()))
 }
 
-/// Check std's own C declarations (those in `std_files` that [`CHECKED`] lists; std at `root`) against the C library's
-/// headers ([`std_headers`]) for `target`, as a package's are: `velt native headers --std`, with
-/// zig. Builds take them as checked. Nothing is remembered for a record: std has none.
+/// Check std's own C declarations (those in `std_files` that [`CHECKED`] lists, and on a target
+/// other than Windows [`CHECKED_POSIX`]; std at `root`) against the C library's headers
+/// ([`std_headers`]) for `target`, as a package's are: `velt native headers --std`, with zig.
+/// Builds take them as checked. Nothing is remembered for a record: std has none.
 pub fn check_std(
     p: &hir::Program,
     sm: &SourceMap,
@@ -91,7 +114,8 @@ pub fn check_std(
     for def in &p.defs {
         match decl_of(p, def) {
             Some(("c", d))
-                if std_files.contains(&d.span.file) && is_checked(sm, root, d.span.file) =>
+                if std_files.contains(&d.span.file)
+                    && is_checked(sm, root, d.span.file, target.contains("-windows")) =>
             {
                 decls.push(d)
             }
@@ -114,16 +138,17 @@ pub fn check_std(
 
 #[cfg(test)]
 mod tests {
-    use super::CHECKED;
+    use super::{CHECKED, CHECKED_POSIX};
 
     /// A renamed or moved file would drop out of the check without a word: each one listed is
-    /// in std and declares C functions, and the list is sorted, each file once.
+    /// in std and declares C functions, and each list is sorted, each file once, in one list.
     #[test]
     fn every_checked_file_is_in_std_and_declares_c_functions() {
         let std = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
-        for file in CHECKED {
-            let text = std::fs::read_to_string(std.join(file))
-                .unwrap_or_else(|e| panic!("std/{file}, which CHECKED lists: {e}"));
+        for file in CHECKED.iter().chain(CHECKED_POSIX) {
+            let text = std::fs::read_to_string(std.join(file)).unwrap_or_else(|e| {
+                panic!("std/{file}, which CHECKED or CHECKED_POSIX lists: {e}")
+            });
             assert!(
                 text.contains("declare c(\"c\")"),
                 "std/{file} declares no C functions: take it out of CHECKED"
@@ -133,5 +158,15 @@ mod tests {
         sorted.sort_unstable();
         sorted.dedup();
         assert_eq!(sorted, CHECKED, "CHECKED is sorted, each file once");
+        let mut sorted = CHECKED_POSIX.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(
+            sorted, CHECKED_POSIX,
+            "CHECKED_POSIX is sorted, each file once"
+        );
+        for file in CHECKED_POSIX {
+            assert!(!CHECKED.contains(file), "std/{file} is in both lists");
+        }
     }
 }

@@ -20,45 +20,61 @@ import { Ptr } from "velt/ffi/ptr";
 import { utf8Encode } from "velt/encoding/utf8";
 import { addressLoad, addressStore } from "velt/lang/intrinsics";
 import * as r from "#reactor";
+import { addOpen } from "#spawn-open";
 import * as m from "velt/lang/hooks/sched_mem";
 import * as wk from "velt/lang/hooks/sched_wake";
 import { CommandSpec } from "velt/process/child/spec";
 
 declare function velt_rt_env_all(): string[];
 
-declare c("c") function posix_spawn_file_actions_init(fa: Ptr<u8>): i32;
-declare c("c") function posix_spawn_file_actions_destroy(fa: Ptr<u8>): i32;
-declare c("c") function posix_spawn_file_actions_adddup2(fa: Ptr<u8>, fd: i32, to: i32): i32;
-declare c("c") function posix_spawn_file_actions_addopen(
-  fa: Ptr<u8>,
+// The headers' types (`velt native headers --std` checks this file:
+// crates/veltc/src/native/headers/std_check.rs); `posix_spawn_file_actions_addopen`, whose
+// `mode_t` differs between macOS and Linux, is `#spawn-open`'s.
+/** C's `posix_spawn_file_actions_t`, `posix_spawnattr_t` and `sigset_t`, in `OPAQUE` rooms. */
+declare c type posix_spawn_file_actions_t;
+declare c type posix_spawnattr_t;
+declare c type sigset_t;
+
+declare c("c") function posix_spawn_file_actions_init(fa: Ptr<posix_spawn_file_actions_t>): i32;
+declare c("c") function posix_spawn_file_actions_destroy(fa: Ptr<posix_spawn_file_actions_t>): i32;
+declare c("c") function posix_spawn_file_actions_adddup2(
+  fa: Ptr<posix_spawn_file_actions_t>,
   fd: i32,
-  path: CString,
-  flags: i32,
-  mode: u32,
+  to: i32,
 ): i32;
-declare c("c") function posix_spawn_file_actions_addchdir_np(fa: Ptr<u8>, path: CString): i32;
-declare c("c") function posix_spawnattr_init(attr: Ptr<u8>): i32;
-declare c("c") function posix_spawnattr_destroy(attr: Ptr<u8>): i32;
-declare c("c") function posix_spawnattr_setflags(attr: Ptr<u8>, flags: i16): i32;
-declare c("c") function posix_spawnattr_setsigdefault(attr: Ptr<u8>, set: Ptr<u8>): i32;
-declare c("c") function posix_spawnattr_setsigmask(attr: Ptr<u8>, set: Ptr<u8>): i32;
-declare c("c") function sigemptyset(set: Ptr<u8>): i32;
-declare c("c") function sigaddset(set: Ptr<u8>, sig: i32): i32;
-declare c("c") function posix_spawn(
-  pid: Ptr<u8>,
+declare c("c") function posix_spawn_file_actions_addchdir_np(
+  fa: Ptr<posix_spawn_file_actions_t>,
   path: CString,
-  fa: Ptr<u8>,
-  attr: Ptr<u8>,
-  argv: Ptr<u8>,
-  envp: Ptr<u8>,
+): i32;
+declare c("c") function posix_spawnattr_init(attr: Ptr<posix_spawnattr_t>): i32;
+declare c("c") function posix_spawnattr_destroy(attr: Ptr<posix_spawnattr_t>): i32;
+declare c("c") function posix_spawnattr_setflags(attr: Ptr<posix_spawnattr_t>, flags: i16): i32;
+declare c("c") function posix_spawnattr_setsigdefault(
+  attr: Ptr<posix_spawnattr_t>,
+  set: Ptr<sigset_t>,
+): i32;
+declare c("c") function posix_spawnattr_setsigmask(
+  attr: Ptr<posix_spawnattr_t>,
+  set: Ptr<sigset_t>,
+): i32;
+declare c("c") function sigemptyset(set: Ptr<sigset_t>): i32;
+declare c("c") function sigaddset(set: Ptr<sigset_t>, sig: i32): i32;
+// `argv` and `envp`: NULL-terminated arrays of NUL-terminated strings (`char *const []`).
+declare c("c") function posix_spawn(
+  pid: Ptr<i32>,
+  path: CString,
+  fa: Ptr<posix_spawn_file_actions_t>,
+  attr: Ptr<posix_spawnattr_t>,
+  argv: Ptr<Ptr<u8>>,
+  envp: Ptr<Ptr<u8>>,
 ): i32;
 declare c("c") function posix_spawnp(
-  pid: Ptr<u8>,
+  pid: Ptr<i32>,
   file: CString,
-  fa: Ptr<u8>,
-  attr: Ptr<u8>,
-  argv: Ptr<u8>,
-  envp: Ptr<u8>,
+  fa: Ptr<posix_spawn_file_actions_t>,
+  attr: Ptr<posix_spawnattr_t>,
+  argv: Ptr<Ptr<u8>>,
+  envp: Ptr<Ptr<u8>>,
 ): i32;
 declare c("c") function access(path: CString, mode: i32): i32;
 declare c("c") function close$child(fd: i32): i32;
@@ -234,7 +250,7 @@ function pipeFor(fa: usize, target: i32): i32 {
   r.prepare(parent);
   // SAFETY: `fa` is an initialized file-actions object.
   unsafe {
-    posix_spawn_file_actions_adddup2(m.ptr(fa), child, target);
+    posix_spawn_file_actions_adddup2(m.ptrTo<posix_spawn_file_actions_t>(fa), child, target);
   }
   // The child's end is the parent's to close once the child started: kept in the actions block's
   // tail (`OPAQUE` bytes on, one word per descriptor).
@@ -302,14 +318,14 @@ export function start(spec: CommandSpec, modes: u32): Started {
   // after; the paths are NUL-terminated; `cArgv` and `cEnv` are NULL-terminated arrays of
   // NUL-terminated strings.
   unsafe {
-    posix_spawn_file_actions_init(m.ptr(fa));
-    posix_spawnattr_init(m.ptr(attr));
-    sigemptyset(m.ptr(set));
-    posix_spawnattr_setsigmask(m.ptr(attr), m.ptr(set));
-    sigaddset(m.ptr(set), SIGPIPE);
-    posix_spawnattr_setsigdefault(m.ptr(attr), m.ptr(set));
+    posix_spawn_file_actions_init(m.ptrTo<posix_spawn_file_actions_t>(fa));
+    posix_spawnattr_init(m.ptrTo<posix_spawnattr_t>(attr));
+    sigemptyset(m.ptrTo<sigset_t>(set));
+    posix_spawnattr_setsigmask(m.ptrTo<posix_spawnattr_t>(attr), m.ptrTo<sigset_t>(set));
+    sigaddset(m.ptrTo<sigset_t>(set), SIGPIPE);
+    posix_spawnattr_setsigdefault(m.ptrTo<posix_spawnattr_t>(attr), m.ptrTo<sigset_t>(set));
     posix_spawnattr_setflags(
-      m.ptr(attr),
+      m.ptrTo<posix_spawnattr_t>(attr),
       POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK | r.SPAWN_FLAGS,
     );
   }
@@ -331,10 +347,7 @@ export function start(spec: CommandSpec, modes: u32): Started {
         out.stderr = parent;
       }
     } else if (mode === 2) {
-      // SAFETY: as above.
-      unsafe {
-        posix_spawn_file_actions_addopen(m.ptr(fa), i, devNull!, O_RDWR, 0);
-      }
+      addOpen(fa, i, devNull!, O_RDWR, 0);
     } else {
       r.spawnInherit(fa, i);
     }
@@ -342,18 +355,23 @@ export function start(spec: CommandSpec, modes: u32): Started {
   if (!failed && cwd != null) {
     // SAFETY: as above.
     unsafe {
-      posix_spawn_file_actions_addchdir_np(m.ptr(fa), cwd);
+      posix_spawn_file_actions_addchdir_np(m.ptrTo<posix_spawn_file_actions_t>(fa), cwd);
     }
   }
   if (!failed) {
     const pid = m.zeroed(16);
+    const pidAt = m.ptrTo<i32>(pid);
+    const faAt = m.ptrTo<posix_spawn_file_actions_t>(fa);
+    const attrAt = m.ptrTo<posix_spawnattr_t>(attr);
+    const argvAt = m.ptrTo<Ptr<u8>>(cArgv);
+    const envAt = m.ptrTo<Ptr<u8>>(cEnv);
     let rc: i32 = 0;
     // SAFETY: as above; `pid` has room for a `pid_t`.
     unsafe {
       if (program == "") {
-        rc = posix_spawnp(m.ptr(pid), file!, m.ptr(fa), m.ptr(attr), m.ptr(cArgv), m.ptr(cEnv));
+        rc = posix_spawnp(pidAt, file!, faAt, attrAt, argvAt, envAt);
       } else {
-        rc = posix_spawn(m.ptr(pid), file!, m.ptr(fa), m.ptr(attr), m.ptr(cArgv), m.ptr(cEnv));
+        rc = posix_spawn(pidAt, file!, faAt, attrAt, argvAt, envAt);
       }
     }
     if (rc === 0) {
@@ -376,8 +394,8 @@ export function start(spec: CommandSpec, modes: u32): Started {
   }
   // SAFETY: initialized above, not used after.
   unsafe {
-    posix_spawn_file_actions_destroy(m.ptr(fa));
-    posix_spawnattr_destroy(m.ptr(attr));
+    posix_spawn_file_actions_destroy(m.ptrTo<posix_spawn_file_actions_t>(fa));
+    posix_spawnattr_destroy(m.ptrTo<posix_spawnattr_t>(attr));
   }
   m.release(fa, OPAQUE + 16);
   m.release(attr, OPAQUE);
