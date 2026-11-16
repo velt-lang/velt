@@ -1,0 +1,18 @@
+// `as` from an interface to one that extends it with a required member, for interfaces of the
+// program's own (#379): `tsc` allows it unchecked, and Node goes on with the object as it is
+// (`y.b` reads `undefined`). Velt can't hold an `A` as a `B` it isn't, so it checks the cast and
+// stops with a TypeError, the decision on #379 (this was a compile error before).
+interface A {
+  a(): string;
+}
+interface B extends A {
+  b: number;
+}
+class C implements A {
+  a(): string {
+    return "a";
+  }
+}
+const x: A = new C();
+const y = x as B;
+console.log(y.a(), y.b);
