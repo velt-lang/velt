@@ -18,29 +18,45 @@ use super::{check_library, decl_of, zig_target, LibraryHeaders};
 /// `_Unwind_RaiseException` (std/lang/hooks/unwind_itanium.velt); the socket headers
 /// (`<sys/socket.h>`, `<netdb.h>`, `<arpa/inet.h>`, and `<strings.h>` for `bcopy`) have velt/net's
 /// calls (std/net/calls_posix.velt).
-fn std_headers(target: &str) -> &'static [&'static str] {
+fn std_headers(target: &str) -> Vec<&'static str> {
     if target.contains("-windows") {
-        &["<errno.h>", "<stdlib.h>", "<string.h>"]
-    } else {
-        &[
-            "<arpa/inet.h>",
-            "<errno.h>",
-            "<fcntl.h>",
-            "<netdb.h>",
-            "<pthread.h>",
-            "<sched.h>",
-            "<signal.h>",
-            "<spawn.h>",
-            "<stdlib.h>",
-            "<string.h>",
-            "<strings.h>",
-            "<sys/socket.h>",
-            "<sys/stat.h>",
-            "<sys/wait.h>",
-            "<time.h>",
-            "<unistd.h>",
-            "<unwind.h>",
-        ]
+        return vec!["<errno.h>", "<stdlib.h>", "<string.h>"];
+    }
+    let mut headers = vec![
+        "<arpa/inet.h>",
+        "<errno.h>",
+        "<fcntl.h>",
+        "<netdb.h>",
+        "<pthread.h>",
+        "<sched.h>",
+        "<signal.h>",
+        "<spawn.h>",
+        "<stdlib.h>",
+        "<string.h>",
+        "<strings.h>",
+        "<sys/socket.h>",
+        "<sys/stat.h>",
+        "<sys/wait.h>",
+        "<time.h>",
+        "<unistd.h>",
+        "<unwind.h>",
+    ];
+    // The reactors' (std/lang/hooks/reactor_kqueue.velt, reactor_epoll.velt).
+    if target.contains("-apple-") {
+        headers.extend(["<mach/mach.h>", "<sys/event.h>"]);
+    } else if target.contains("-linux") {
+        headers.extend(["<sys/epoll.h>", "<sys/eventfd.h>"]);
+    }
+    headers
+}
+
+/// The macros std's C calls are declared with on `target`: Linux's C libraries declare
+/// `accept4` and `pipe2` (the epoll reactor's, std/lang/hooks/reactor_epoll.velt) with
+/// `_GNU_SOURCE` only.
+fn std_defines(target: &str) -> Vec<(String, String)> {
+    match target.contains("-linux") {
+        true => vec![("_GNU_SOURCE".into(), "1".into())],
+        false => Vec::new(),
     }
 }
 
@@ -56,6 +72,8 @@ const CHECKED: &[&str] = &[
     "ffi/read.velt",
     "fs/fd/posix.velt",
     "lang/hooks/os_posix.velt",
+    "lang/hooks/reactor_epoll.velt",
+    "lang/hooks/reactor_kqueue.velt",
     "lang/hooks/sched_cells.velt",
     "lang/hooks/sched_end.velt",
     "lang/hooks/sched_exit.velt",
@@ -110,6 +128,23 @@ fn runtime_exports() -> &'static HashSet<&'static str> {
     })
 }
 
+/// C functions std calls that no public header declares, each with why std calls it anyway. The
+/// check skips exactly these names. Keep it short: an entry is a function std needs and the
+/// platform ships, but only in a private header.
+const NO_PUBLIC_HEADER: &[(&str, &str)] = &[
+    // macOS's futex (std/lang/hooks/reactor_kqueue.velt's park and wake): in libSystem, declared
+    // only by xnu's bsd/sys/ulock.h, which the SDK doesn't ship. libc++ and Rust's std call it
+    // the same way.
+    (
+        "__ulock_wait",
+        "macOS's futex wait, declared in xnu's bsd/sys/ulock.h only",
+    ),
+    (
+        "__ulock_wake",
+        "macOS's futex wake, declared in xnu's bsd/sys/ulock.h only",
+    ),
+];
+
 /// `file` (std at `root`) is one [`CHECKED`] lists, or, on a target other than Windows (`windows`
 /// false), one [`CHECKED_POSIX`] lists.
 fn is_checked(sm: &SourceMap, root: &Path, file: FileId, windows: bool) -> bool {
@@ -147,6 +182,7 @@ pub fn check_std(
             Some(("c", d))
                 if std_files.contains(&d.span.file)
                     && !runtime_exports().contains(d.name.as_str())
+                    && !NO_PUBLIC_HEADER.iter().any(|(name, _)| *name == d.name)
                     && is_checked(sm, root, d.span.file, target.contains("-windows")) =>
             {
                 decls.push(d)
@@ -163,7 +199,7 @@ pub fn check_std(
     let headers: Vec<String> = std_headers(target).iter().map(|h| h.to_string()).collect();
     let read = LibraryHeaders {
         headers: &headers,
-        defines: &[],
+        defines: &std_defines(target),
     };
     check_library(root, "c", read, &decls, (zig_target, target), diags);
 }
