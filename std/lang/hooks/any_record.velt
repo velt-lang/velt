@@ -2,7 +2,7 @@
 // such a record (#1219; velt_vir `any_to_record.rs`). Loaded when the check finds such a conversion
 // (velt_common `ON_DEMAND_MODULES`), so that other programs don't load these hooks.
 
-import { objectPrototypeKey } from "velt/lang/hooks/record";
+import { arrayIndex, objectPrototypeKey } from "velt/lang/hooks/record";
 
 /**
  * `x as Record<string, any>` of an `any` holding an object that is not such a record (an object
@@ -95,9 +95,10 @@ export function recordViewHasOne(s: RecordViewSource, k: string): bool {
 /** `v` written to the source under `k` (a `TypeError` where it can't hold it). */
 export function recordViewSetOne(s: RecordViewSource, k: string, v: any) {
   const t = s.target;
-  // An array's element by its index, as `anyEntry` reads it.
-  if (Array.isArray(t)) {
-    t[Number(k)] = v;
+  // An array's element by its index, as `anyEntry` reads it; any other key (`length`) as itself.
+  const i = Array.isArray(t) ? arrayIndex(k) : -1;
+  if (i >= 0) {
+    t[i] = v;
   } else {
     t[k] = v;
   }

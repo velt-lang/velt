@@ -12,4 +12,6 @@ function main(): void {
   console.log(a[0], a.length);
   a.push(4);
   console.log(r["3"], Object.keys(r).length);
+  r["length"] = 2;
+  console.log(a.length, a.join(","), Object.keys(r).join(","));
 }
