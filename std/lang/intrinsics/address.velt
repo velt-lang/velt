@@ -4,6 +4,7 @@
 // unsafe functions.
 
 import { intrinsic } from "./decorators";
+import type { Ptr } from "velt/ffi/ptr";
 import type { Copied } from "./modes";
 
 /**
@@ -78,6 +79,18 @@ export declare unsafe function addressAtomicCasWeak<T>(
   order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst",
   failure: "relaxed" | "acquire" | "seqcst",
 ): bool;
+
+/**
+ * The pointer to `address`, unchecked: velt/ffi's `Ptr.at` and `Ptr.orNull` test for 0 first.
+ * Unsafe: `address` must not be 0 (a `Ptr<T>` is never `NULL`), and a `T` must be there for the
+ * code that reads or writes through it.
+ */
+@intrinsic
+export declare unsafe function ptrFromAddress<T>(address: usize): Ptr<T>;
+
+/** The address `p` holds, 0 for `null` (velt/ffi's `Ptr.addressOf`). */
+@intrinsic
+export declare function ptrToAddress<T>(p: Ptr<T> | null): usize;
 
 /**
  * The address of the C function of `f`, a function decorated `@export("c_name")` (velt/ffi), for

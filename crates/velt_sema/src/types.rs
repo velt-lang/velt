@@ -302,7 +302,9 @@ impl Types {
             | TyKind::Dyn(_, args)
             | TyKind::Tuple(args)
             | TyKind::Op(_, args) => any(args),
-            TyKind::Array(e) | TyKind::Option(e, _) | TyKind::Shared(e) => any(&[*e]),
+            TyKind::Array(e) | TyKind::Option(e, _) | TyKind::Shared(e) | TyKind::Ptr(e) => {
+                any(&[*e])
+            }
             TyKind::Map(a, b) | TyKind::Result(a, b) => any(&[*a, *b]),
             _ => false,
         }
@@ -332,6 +334,7 @@ impl Types {
             TyKind::Option(e, n) => TyKind::Option(m(self, e), n),
             TyKind::Result(a, b) => TyKind::Result(m(self, a), m(self, b)),
             TyKind::Shared(e) => TyKind::Shared(m(self, e)),
+            TyKind::Ptr(e) => TyKind::Ptr(m(self, e)),
             _ => return t,
         };
         self.intern(nk)
@@ -355,6 +358,7 @@ impl Types {
             TyKind::Result(a, b) => TyKind::Result(m(self, a), m(self, b)),
             TyKind::Promise(v, e) => TyKind::Promise(m(self, v), m(self, e)),
             TyKind::Shared(e) => TyKind::Shared(m(self, e)),
+            TyKind::Ptr(e) => TyKind::Ptr(m(self, e)),
             TyKind::FnPtr {
                 params,
                 ret,
@@ -430,7 +434,7 @@ pub(crate) const MAX_ARG_DEPTH: u32 = 64;
 pub(crate) fn children(k: &TyKind) -> Vec<TyId> {
     match k {
         TyKind::Adt(_, a) | TyKind::Dyn(_, a) | TyKind::Tuple(a) | TyKind::Op(_, a) => a.clone(),
-        TyKind::Array(e) | TyKind::Option(e, _) | TyKind::Shared(e) => vec![*e],
+        TyKind::Array(e) | TyKind::Option(e, _) | TyKind::Shared(e) | TyKind::Ptr(e) => vec![*e],
         TyKind::Map(a, b) | TyKind::Result(a, b) | TyKind::Promise(a, b) => vec![*a, *b],
         TyKind::FnPtr {
             params,
@@ -474,6 +478,7 @@ pub(crate) fn map_children(k: &TyKind, f: &mut dyn FnMut(TyId) -> TyId) -> TyKin
         TyKind::Array(e) => TyKind::Array(f(*e)),
         TyKind::Option(e, n) => TyKind::Option(f(*e), *n),
         TyKind::Shared(e) => TyKind::Shared(f(*e)),
+        TyKind::Ptr(e) => TyKind::Ptr(f(*e)),
         TyKind::Map(a, b) => TyKind::Map(f(*a), f(*b)),
         TyKind::Result(a, b) => TyKind::Result(f(*a), f(*b)),
         TyKind::Promise(a, b) => TyKind::Promise(f(*a), f(*b)),

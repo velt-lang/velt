@@ -148,6 +148,7 @@ impl Ctx<'_> {
             TyKind::Array(e) => TyKind::Array(go(self, e)),
             TyKind::Option(e, n) => TyKind::Option(go(self, e), n),
             TyKind::Shared(e) => TyKind::Shared(go(self, e)),
+            TyKind::Ptr(e) => TyKind::Ptr(go(self, e)),
             TyKind::Promise(v, e) => TyKind::Promise(go(self, v), e),
             TyKind::Map(k, v) => TyKind::Map(go(self, k), go(self, v)),
             TyKind::Tuple(ts) => TyKind::Tuple(ts.into_iter().map(|e| go(self, e)).collect()),

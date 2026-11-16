@@ -267,6 +267,7 @@ pub(crate) fn erase_ty(
         TyKind::Result(a, b) => TyKind::Result(sub(ty, cache, a), sub(ty, cache, b)),
         TyKind::Promise(v, x) => TyKind::Promise(sub(ty, cache, v), sub(ty, cache, x)),
         TyKind::Shared(x) => TyKind::Shared(sub(ty, cache, x)),
+        TyKind::Ptr(x) => TyKind::Ptr(sub(ty, cache, x)),
         TyKind::FnPtr {
             params,
             ret,

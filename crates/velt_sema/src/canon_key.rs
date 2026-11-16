@@ -51,6 +51,10 @@ impl Ctx<'_> {
             TyKind::Never => out.push_str("!01"),
             TyKind::Error => out.push_str("!02"),
             TyKind::Symbol => out.push_str("symbol"),
+            TyKind::Ptr(p) => {
+                out.push_str("*");
+                self.canon_into(*p, out, unions);
+            }
             TyKind::Simd(s) => out.push_str(s.name()),
             TyKind::Param(i) => out.push_str(&format!("${i}")),
             TyKind::Literal(v) => match v {

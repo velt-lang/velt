@@ -162,7 +162,6 @@ table! {
     ffi_str_bytes => "ffi/str_bytes",
     ffi_c_string => "ffi/c_string",
     ffi_out => "ffi/out",
-    ffi_out_ptr => "ffi/out_ptr",
     ffi_export => "ffi/export",
     ffi_c_var_args => "ffi/c_var_args",
     /// `velt/host`: `HostRef`, the handle to a JS value host functions pass (https://veltlang.com/docs/reference/host-functions/).

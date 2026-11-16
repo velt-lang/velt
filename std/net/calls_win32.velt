@@ -89,12 +89,12 @@ declare c("c") function inet_ntop$win(
 declare c("c") function memmove$text(dst: Ptr<u8>, src: StrBytes, n: usize): Ptr<u8>;
 declare c("c") function FormatMessageA(
   flags: u32,
-  source: Ptr<u8>,
+  source: Ptr<u8> | null,
   id: u32,
   language: u32,
   buf: Ptr<u8>,
   size: u32,
-  args: Ptr<u8>,
+  args: Ptr<u8> | null,
 ): u32;
 
 export function socket(family: i32, kind: i32, protocol: i32): i32 {
@@ -169,7 +169,7 @@ export function strerror(e: i32): Ptr<u8> {
   let got: u32 = 0;
   // SAFETY: TEXT bytes at `buf`; no inserts are read.
   unsafe {
-    got = FormatMessageA(FROM_SYSTEM, m.ptr(0), e as u32, 0, m.ptr(buf), TEXT as u32, m.ptr(0));
+    got = FormatMessageA(FROM_SYSTEM, null, e as u32, 0, m.ptr(buf), TEXT as u32, null);
   }
   let n = got as usize;
   // The line break (and any space) at its end goes, as Rust trims it.

@@ -291,9 +291,9 @@ impl Ctx<'_> {
                 d == e && all(self, &xs, &ys, slots)
             }
             (TyKind::Tuple(xs), TyKind::Tuple(ys)) => all(self, &xs, &ys, slots),
-            (TyKind::Array(a), TyKind::Array(b)) | (TyKind::Shared(a), TyKind::Shared(b)) => {
-                self.unify(a, b, slots, depth + 1)
-            }
+            (TyKind::Array(a), TyKind::Array(b))
+            | (TyKind::Shared(a), TyKind::Shared(b))
+            | (TyKind::Ptr(a), TyKind::Ptr(b)) => self.unify(a, b, slots, depth + 1),
             (TyKind::Option(a, n), TyKind::Option(b, m)) => {
                 n == m && self.unify(a, b, slots, depth + 1)
             }

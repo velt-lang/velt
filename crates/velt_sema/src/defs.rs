@@ -312,9 +312,7 @@ impl FnInfo<'_> {
             let unwritten = |t: &crate::hir::CTy| {
                 !matches!(
                     t,
-                    crate::hir::CTy::Buf { readonly: false }
-                        | crate::hir::CTy::Out
-                        | crate::hir::CTy::OutPtr
+                    crate::hir::CTy::Buf { readonly: false } | crate::hir::CTy::Out
                 )
             };
             return Some(c.params.iter().map(unwritten).collect());

@@ -452,6 +452,7 @@ impl Ctx<'_> {
         t: &ast::TypeExpr,
     ) -> TyId {
         match item {
+            Item::Def(d) if self.is_ptr_decl(d) => self.ptr_type_written(&args, t),
             Item::Def(d) => self.def_type(d, name, args, t),
             Item::Alias(a) => {
                 let body = self.aliases[a as usize].decl.ty.span;

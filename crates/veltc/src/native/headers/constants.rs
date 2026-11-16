@@ -114,8 +114,20 @@ pub fn read(
         record.headers = headers;
         for (i, constant) in of_package {
             let d = &decls[i];
-            if let Some(v) = to_hir(&constant.value) {
-                values.push((d.def, v));
+            match to_hir(&constant.value) {
+                // A `Ptr<T>` is never `NULL`: its 0 would read as `null` (#3094).
+                Some(CValue::Address(0)) if !d.nullable => diags.push(
+                    Diagnostic::error(
+                        format!(
+                            "C constant `{}` is NULL on {zig_target}, but its declaration's type is `Ptr<T>`",
+                            d.name
+                        ),
+                        d.span,
+                    )
+                    .with_note("declare it `Ptr<T> | null`: a `Ptr<T>` is never NULL"),
+                ),
+                Some(v) => values.push((d.def, v)),
+                None => {}
             }
             record.values.insert(d.name.clone(), constant);
         }

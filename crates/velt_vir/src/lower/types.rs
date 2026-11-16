@@ -118,6 +118,7 @@ impl<'h> Cx<'h> {
             TyKind::Result(a, b) => TyKind::Result(c(self, a), c(self, b)),
             TyKind::Promise(v, e) => TyKind::Promise(c(self, v), c(self, e)),
             TyKind::Shared(e) => TyKind::Shared(c(self, e)),
+            TyKind::Ptr(e) => TyKind::Ptr(c(self, e)),
             TyKind::FnPtr {
                 params,
                 ret,
@@ -423,6 +424,7 @@ impl<'h> Cx<'h> {
             TyKind::Result(a, b) => TyKind::Result(s(self, a), s(self, b)),
             TyKind::Promise(v, e) => TyKind::Promise(s(self, v), s(self, e)),
             TyKind::Shared(e) => TyKind::Shared(s(self, e)),
+            TyKind::Ptr(e) => TyKind::Ptr(s(self, e)),
             TyKind::FnPtr {
                 params,
                 ret,
@@ -494,12 +496,21 @@ impl<'h> Cx<'h> {
         }
     }
 
+    /// Is `t` a C pointer, velt/ffi's `Ptr<T>` (#3094)?
+    pub(super) fn c_pointer(&self, t: TyId) -> bool {
+        let t = self.ph_rep(t);
+        matches!(self.types.kind(t), TyKind::Ptr(_))
+    }
+
     /// `Option<t>` uses the null pointer for none.
     pub(super) fn has_null_niche(&self, t: TyId) -> bool {
         let t = self.ph_rep(t);
         self.is_class(t)
             || self.boxed(t)
-            || matches!(self.types.kind(t), TyKind::Shared(_) | TyKind::Symbol)
+            || matches!(
+                self.types.kind(t),
+                TyKind::Shared(_) | TyKind::Symbol | TyKind::Ptr(_)
+            )
     }
 
     /// VIR type of a concrete HIR type. `Unit` and `Never` map to `Ty::Unit` (no value), and
@@ -516,6 +527,8 @@ impl<'h> Cx<'h> {
             TyKind::Str => Ty::Agg(STR_AGG),
             // The address of a symbol record (rt_abi.md "Symbols"), never null.
             TyKind::Symbol => Ty::Ptr,
+            // A C pointer (#3094), never `NULL`: `Ptr<T> | null` is the same word, 0 for `null`.
+            TyKind::Ptr(_) => Ty::Ptr,
             TyKind::Simd(_) => Ty::V128,
             // Literal types are zero-sized: the type is the value.
             TyKind::Unit | TyKind::Never | TyKind::Literal(_) => Ty::Unit,

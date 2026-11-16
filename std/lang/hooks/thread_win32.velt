@@ -22,12 +22,12 @@ const ALL_PROCESSOR_GROUPS: u16 = 0xffff;
 // Handles are `usize`s, as in std's other declarations of these symbols (`CloseHandle`);
 // pointers `Ptr`s: one C symbol has one signature in a program.
 declare c("c") function CreateThread(
-  attributes: Ptr<u8>,
+  attributes: Ptr<u8> | null,
   stack: usize,
   start: Ptr<u8>,
-  arg: Ptr<u8>,
+  arg: Ptr<u8> | null,
   flags: u32,
-  id: Ptr<u8>,
+  id: Ptr<u8> | null,
 ): usize;
 declare c("c") function CloseHandle(file: usize): i32;
 declare c("c") function GetActiveProcessorCount(group: u16): u32;
@@ -61,12 +61,12 @@ function startThread(start: usize, arg: usize): bool {
   // signature `CreateThread` calls; `arg` is passed through to it.
   unsafe {
     h = CreateThread(
-      m.ptr(0),
+      null,
       STACK,
       m.ptr(start),
-      m.ptr(arg),
+      m.ptrOrNull<u8>(arg),
       STACK_SIZE_PARAM_IS_A_RESERVATION,
-      m.ptr(0),
+      null,
     );
   }
   if (h === 0) {

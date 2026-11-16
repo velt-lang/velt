@@ -249,6 +249,7 @@ impl Implicit {
             | TyKind::Never
             | TyKind::Error
             | TyKind::Symbol
+            | TyKind::Ptr(_)
             | TyKind::Simd(_)
             | TyKind::Literal(_) => {}
             TyKind::Param(i) => match env.and_then(|e| e.get(*i as usize)) {
@@ -617,6 +618,8 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::AddressAtomicRmw
         | I::AddressAtomicCas
         | I::AddressAtomicCasWeak
+        | I::PtrFromAddress
+        | I::PtrToAddress
         | I::ExportedAddress
         | I::Exit
         | I::Panic
