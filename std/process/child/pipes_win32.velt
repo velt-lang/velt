@@ -177,8 +177,8 @@ function writeAllNow(h: usize, data: u8[]): IoStatus {
     const left = data.length - off;
     const n = left < MOST_WRITE ? left : MOST_WRITE;
     const put = new Out<u32>(0);
-    // SAFETY: `n` bytes of `data` from `off`; a synchronous handle, no OVERLAPPED.
     const done =
+      // SAFETY: `n` bytes of `data` from `off`; a synchronous handle, no OVERLAPPED.
       unsafe { WriteFile(
         m.ptrTo<void>(h),
         m.ptrTo<void>(addressOf(data, off as u64)),
