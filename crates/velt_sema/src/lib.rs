@@ -138,6 +138,7 @@ mod recursive_unions;
 mod replaced_holders;
 mod resolve;
 mod rewrite_facts;
+mod rewrites;
 mod rounds;
 mod script_locals;
 mod script_tdz;
@@ -277,62 +278,8 @@ fn check_timed(
     let generator = gen.and_then(|g| g.generate).map(generated::Generator::new);
     let input = modules;
     let rewrite_start = std::time::Instant::now();
-    let chunks = timings::pass("rewrite: module_chunks", || {
-        module_chunks::split(modules, root)
-    });
-    let modules = chunks.modules.as_deref().unwrap_or(modules);
-    let asserted = timings::pass("rewrite: asserted_targets", || {
-        asserted_targets::rewrite(modules)
-    });
-    let modules = asserted.modules.as_deref().unwrap_or(modules);
-    let mut merge_diags = chunks.diags.clone();
-    merge_diags.extend(timings::pass("rewrite: call_sigs::check", || {
-        call_sigs::check(modules)
-    }));
-    let destructured = timings::pass("rewrite: module_destructure", || {
-        module_destructure::rewrite(modules)
-    });
-    let modules = destructured.as_deref().unwrap_or(modules);
-    let global_ns = timings::pass("rewrite: global_namespaces", || {
-        namespaces::global_namespaces(modules)
-    });
-    let (flat, ns_private, diags) = timings::pass("rewrite: namespaces::flatten", || {
-        namespaces::flatten(modules)
-    });
-    merge_diags.extend(diags);
-    let modules = flat.as_deref().unwrap_or(modules);
-    let (merged, diags) = timings::pass("rewrite: interface_merge", || {
-        interface_merge::rewrite(modules)
-    });
-    merge_diags.extend(diags);
-    let modules = merged.as_deref().unwrap_or(modules);
-    let (callable, diags) = timings::pass("rewrite: call_sigs", || call_sigs::rewrite(modules));
-    merge_diags.extend(diags);
-    let modules = callable.as_deref().unwrap_or(modules);
-    let lifted = timings::pass("rewrite: generic_arrows", || generic_arrows::lift(modules));
-    let modules = lifted.as_ref().map_or(modules, |l| &l.modules[..]);
-    let overloaded = timings::pass("rewrite: overloads", || overloads::rewrite(modules));
-    let modules = overloaded.as_ref().map_or(modules, |o| &o.modules[..]);
-    let (rewritten, alias_blocked) = timings::pass("rewrite: recursive_aliases", || {
-        recursive_aliases::rewrite(modules)
-    });
-    let modules = rewritten.as_deref().unwrap_or(modules);
-    let (global_props, global_diags, globals) =
-        timings::pass("rewrite: global_this", || global_this::rewrite(modules));
-    merge_diags.extend(global_diags);
-    let modules = globals.as_deref().unwrap_or(modules);
-    let (accessor_diags, accessors) = timings::pass("rewrite: defined_accessors", || {
-        defined_accessors::rewrite(modules)
-    });
-    merge_diags.extend(accessor_diags);
-    let modules = accessors.as_deref().unwrap_or(modules);
-    let (brands, branded) =
-        timings::pass("rewrite: defined_props", || defined_props::rewrite(modules));
-    let modules = branded.as_deref().unwrap_or(modules);
-    let closures = timings::pass("rewrite: nested_closures", || {
-        nested_closures::rewrite(modules)
-    });
-    let modules = closures.as_ref().map_or(modules, |c| &c.modules[..]);
+    let rw = rewrites::run(modules, root);
+    let modules = rw.modules(input);
     let Some(root_mod) = modules.get(root) else {
         let d = Diagnostic::error("no root module to check", Span::DUMMY);
         return ((None, vec![d]), Default::default());
@@ -347,25 +294,26 @@ fn check_timed(
     // What a kept check's reload compares with the edited program's (`kept::probe`), which
     // stops here.
     let facts = kept::wants_facts(input).then(|| {
-        let lifted = lifted
+        let lifted = rw
+            .lifted
             .as_ref()
             .map(|l| (&l.local_fns, &l.all_fns, &l.unsafe_fns));
-        let closures = closures.as_ref().map(|c| (&c.diags, &c.kept, &c.groups));
+        let closures = rw.closures.as_ref().map(|c| (&c.diags, &c.kept, &c.groups));
         let rest: [&dyn std::fmt::Debug; 16] = [
             &null_proto,
             &ctor_reads,
             &record_accessors,
             &gen_throw,
-            &merge_diags,
-            &global_ns,
-            &ns_private,
-            &alias_blocked,
+            &rw.merge_diags,
+            &rw.global_ns,
+            &rw.ns_private,
+            &rw.alias_blocked,
             &lifted,
-            &overloaded.as_ref().map(|o| &o.methods),
-            &brands,
-            &global_props,
-            &chunks.promoted,
-            &asserted.rmw,
+            &rw.overloaded.as_ref().map(|o| &o.methods),
+            &rw.brands,
+            &rw.global_props,
+            &rw.chunks.promoted,
+            &rw.asserted.rmw,
             &closures,
             &root,
         ];
@@ -384,22 +332,22 @@ fn check_timed(
     // context made from it is dropped, so before them), and the copies of std's modules a unit
     // made by this check is checked over and owns.
     let found = rewrite_facts::Found {
-        ns_private: &ns_private,
-        global_ns: &global_ns,
+        ns_private: &rw.ns_private,
+        global_ns: &rw.global_ns,
         gen_throw,
-        alias_blocked: &alias_blocked,
-        lifted: lifted.as_ref(),
-        overloaded: overloaded.as_ref(),
+        alias_blocked: &rw.alias_blocked,
+        lifted: rw.lifted.as_ref(),
+        overloaded: rw.overloaded.as_ref(),
         null_proto,
         record_accessors,
         ctor_reads,
-        brands: &brands,
-        global_props: &global_props,
+        brands: &rw.brands,
+        global_props: &rw.global_props,
         recovered,
-        merge_diags: &merge_diags,
-        promoted: &chunks.promoted,
-        rmw: &asserted.rmw,
-        closures: closures.as_ref(),
+        merge_diags: &rw.merge_diags,
+        promoted: &rw.chunks.promoted,
+        rmw: &rw.asserted.rmw,
+        closures: rw.closures.as_ref(),
     };
     let std_key = (order.as_ref())
         .zip(opts.std_key)
@@ -475,7 +423,7 @@ fn check_timed(
         let cx_root = cx.root;
         let entry = timings::pass(round, || analyze(&mut cx, cx_root, root_mod, opts));
         global_this::drop_site_errors(&mut cx);
-        if let Some(o) = &overloaded {
+        if let Some(o) = &rw.overloaded {
             overloads::report_misfits(&mut cx.diags, &o.sig_spans);
             overload_adapter::check_identity(&mut cx, &o.adapted);
         }
@@ -485,7 +433,7 @@ fn check_timed(
     // A check with error-set variables that reports anything is checked again without them,
     // for its diagnostics (`FnSites::doubted`); not one that refuses script variables it then
     // moves into `main`, which is checked again anyway (`script_locals`).
-    let given = merge_diags.len() + closures.as_ref().map_or(0, |c| c.diags.len());
+    let given = rw.merge_diags.len() + rw.closures.as_ref().map_or(0, |c| c.diags.len());
     let doubt = |cx: &ctx::Ctx| {
         let moves = script_locals::moves_more(cx, &modules[root].ast);
         cx.diags.len() > given && !moves && !throws::first_check_only()
@@ -538,27 +486,27 @@ fn check_timed(
             (v.as_ref().map(|m| m.as_ptr()), Box::new(v))
         };
         let stages = vec![
-            vec(chunks.modules),
-            vec(asserted.modules),
-            vec(destructured),
-            vec(flat),
-            vec(merged),
-            vec(callable),
+            vec(rw.chunks.modules),
+            vec(rw.asserted.modules),
+            vec(rw.destructured),
+            vec(rw.flat),
+            vec(rw.merged),
+            vec(rw.callable),
             (
-                lifted.as_ref().map(|l| l.modules.as_ptr()),
-                Box::new(lifted),
+                rw.lifted.as_ref().map(|l| l.modules.as_ptr()),
+                Box::new(rw.lifted),
             ),
             (
-                overloaded.as_ref().map(|o| o.modules.as_ptr()),
-                Box::new(overloaded),
+                rw.overloaded.as_ref().map(|o| o.modules.as_ptr()),
+                Box::new(rw.overloaded),
             ),
-            vec(rewritten),
-            vec(globals),
-            vec(accessors),
-            vec(branded),
+            vec(rw.rewritten),
+            vec(rw.globals),
+            vec(rw.accessors),
+            vec(rw.branded),
             (
-                closures.as_ref().map(|c| c.modules.as_ptr()),
-                Box::new(closures),
+                rw.closures.as_ref().map(|c| c.modules.as_ptr()),
+                Box::new(rw.closures),
             ),
         ];
         let loads = loads.map(|l| l.kept.id());
