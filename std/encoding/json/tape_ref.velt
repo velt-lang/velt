@@ -7,8 +7,10 @@
 //
 // Reads never touch the tape's count. A `shared` handle read from a field is retained for the
 // statement (another owner of the object could replace it meanwhile), so each method here hands
-// `this.tape` to a function of this file, as an argument (`tape` is written only by the
-// constructor, so passing it takes no reference), which reads its parameter in place.
+// `this.tape` (or its arrays) straight to a reader of tape.velt, as an argument (`tape` is written
+// only by the constructor, so passing it takes no reference), which reads its parameter in place.
+// The readers every value read goes through take only the arrays, which makes them quiet: a call
+// that lends a place reached through `this` to any other function retains `this` for the call.
 //
 // The hash index of the wide objects (over `INDEX_THRESHOLD` keys) a task searched is the
 // `TapeRef`'s: at most one map per such object of the tape, each with one entry per key, so it
@@ -16,7 +18,22 @@
 // that document goes, and holds nothing of the tape (key texts and positions): it never keeps a
 // tape alive. A copy for another task takes the index made so far with it.
 
-import { FIND_WIDE, Tape } from "velt/encoding/json/tape";
+import {
+  FIND_OTHER,
+  FIND_WIDE,
+  Tape,
+  childIn,
+  countIn,
+  findIn,
+  findOther,
+  memberIn,
+  tapeKey,
+  tapeText,
+  wordKind,
+  wordNumber,
+  wordRawCount,
+  wordUnits,
+} from "velt/encoding/json/tape";
 import { tapeStringify, writeTape } from "velt/encoding/json/tape_write";
 import { inline, noInline } from "velt/lang/intrinsics";
 
@@ -32,59 +49,63 @@ export class TapeRef {
 
   @inline
   kind(v: u32): u64 {
-    return kindOf(this.tape, v);
+    return wordKind(this.tape.words, v);
   }
 
   @inline
   number(v: u32): f64 {
-    return numberOf(this.tape, v);
+    return wordNumber(this.tape.words, v);
   }
 
   @inline
   text(v: u32): string {
-    return textOf(this.tape, v);
+    return tapeText(this.tape, v);
   }
 
   @inline
   units(v: u32): i64 {
-    return unitsOf(this.tape, v);
+    return wordUnits(this.tape.words, v);
   }
 
-  @inline
   count(v: u32): i64 {
-    return countOf(this.tape, v);
+    return countIn(this.tape.words, this.tape.kids, v);
   }
 
-  @inline
   member(v: u32, i: i64): i64 {
-    return memberOf(this.tape, v, i);
+    return memberIn(this.tape.words, this.tape.kids, v, i);
   }
 
+  /** Element `i` of array `v`, or the value of member `i` of object `v`; -1 if there is none. */
   @inline
   child(v: u32, i: i64): i64 {
-    return childOf(this.tape, v, i);
+    return childIn(this.tape.words, this.tape.kids, v, i);
   }
 
   /** Appends value `v` as `JSON.stringify` writes it to the builder `out`. */
   write(out: string, v: u32): void {
-    writeOf(this.tape, out, v);
+    writeTape(this.tape, out, v);
   }
 
   /** Value `v`'s JSON text. */
   stringify(v: u32): string {
-    return stringifyOf(this.tape, v);
+    return tapeStringify(this.tape, v);
   }
 
   /** Object `v`'s value for `name` (the last, if repeated), or -1 (also when `v` is no object). */
   @inline
   find(v: u32, name: string): i64 {
-    const at = findOf(this.tape, v, name);
-    return at == FIND_WIDE ? this.findWide(v, name) : at;
+    const at = findIn(this.tape.words, this.tape.kids, this.tape.src, v, name);
+    return at == FIND_OTHER ? this.findSlow(v, name) : at;
   }
 
-  // `find` in an object over `INDEX_THRESHOLD` keys, through its hash index (made the first time).
+  // `find` where `findIn` can't answer: a key repeated or with escapes, a long name, or an object
+  // over `INDEX_THRESHOLD` keys, which goes through its hash index (made the first time).
   @noInline
-  private findWide(v: u32, name: string): i64 {
+  private findSlow(v: u32, name: string): i64 {
+    const other = findOther(this.tape, v, name);
+    if (other != FIND_WIDE) {
+      return other;
+    }
     let all = this.index;
     if (all == null) {
       all = new TapeIndex();
@@ -101,61 +122,13 @@ export class TapeRef {
   }
 }
 
-@inline
-function kindOf(t: shared<Tape>, v: u32): u64 {
-  return t.kind(v);
-}
-
-@inline
-function numberOf(t: shared<Tape>, v: u32): f64 {
-  return t.number(v);
-}
-
-@inline
-function textOf(t: shared<Tape>, v: u32): string {
-  return t.text(v);
-}
-
-@inline
-function unitsOf(t: shared<Tape>, v: u32): i64 {
-  return t.units(v);
-}
-
-@inline
-function countOf(t: shared<Tape>, v: u32): i64 {
-  return t.count(v);
-}
-
-@inline
-function memberOf(t: shared<Tape>, v: u32, i: i64): i64 {
-  return t.member(v, i);
-}
-
-@inline
-function childOf(t: shared<Tape>, v: u32, i: i64): i64 {
-  return t.child(v, i);
-}
-
-@inline
-function findOf(t: shared<Tape>, v: u32, name: string): i64 {
-  return t.find(v, name);
-}
-
-function writeOf(t: shared<Tape>, out: string, v: u32): void {
-  writeTape(t, out, v);
-}
-
-function stringifyOf(t: shared<Tape>, v: u32): string {
-  return tapeStringify(t, v);
-}
-
 // Object `v`'s key texts to their value positions, in order, so a repeated key ends at its last.
 function keyIndex(t: shared<Tape>, v: u32): Map<string, u32> {
   const m = new Map<string, u32>();
-  const n = t.rawCount(v) as usize;
+  const n = wordRawCount(t.words, v) as usize;
   for (let i: usize = 0; i < n; i++) {
-    const k = t.key(v, i);
-    m.set(t.text(k), k + 1);
+    const k = tapeKey(t, v, i);
+    m.set(tapeText(t, k), k + 1);
   }
   return m;
 }

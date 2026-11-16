@@ -4,8 +4,8 @@
 // with escapes, a wide object with its hash index made before or after the send, a child of a
 // larger document), the sender's copy stays usable, and an edit on either side never shows on the
 // other, also when both sides read and edit values of one document at the same time on two
-// workers. A value the sender keeps crosses as a copy that reads the same frozen tape; one it
-// gives up is moved.
+// workers. A value the sender keeps is shared: its frozen tape is not copied, only the value and
+// its task's handle on the tape, and both sides read the same tape; one it gives up is moved.
 import { channel, Channel } from "velt/sync";
 import { currentWorker, workerCount } from "velt/task";
 
@@ -79,7 +79,7 @@ async function main(): Promise<void> {
   const ch = channel<JsonValue>(8);
   const reader = spawn(describe(ch), { worker: other });
   for (const v of values) {
-    // Kept here (in `values`): the value crosses as a copy, read on the other side meanwhile.
+    // Kept here (in `values`): the value crosses sharing its tape, read on the other side meanwhile.
     await ch.send(v);
   }
   // Given up: moved.

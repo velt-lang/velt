@@ -17,7 +17,7 @@ import {
 import { utf8Substring } from "velt/encoding";
 import { FLAG_COMMENTS, FLAG_TRAILING_COMMAS } from "velt/encoding/json/reader";
 import { shortPath } from "velt/encoding/json/reader_ops";
-import { strByteAt, strByteLen } from "velt/lang/intrinsics";
+import { strByteAt } from "velt/lang/intrinsics";
 import {
   ESCAPED,
   ESCAPED_KEY,
@@ -33,6 +33,7 @@ import {
   T_TRUE,
   Tape,
 } from "velt/encoding/json/tape";
+import { TapeBuilder } from "velt/encoding/json/tape_builder";
 import { TapeError } from "velt/encoding/json/tape_error";
 
 declare function velt_rt_json_node_syntax(src: string, out: string): bool;
@@ -57,7 +58,7 @@ export function parseTape(src: string, maxDepth: u32, jsonc: u32 = 0): Tape | Ta
  * only whitespace may follow.
  */
 export function parseWith(sc: Scanner, maxDepth: u32, whole: boolean): Tape | TapeError {
-  const t = new Tape(sc.src);
+  const t = new TapeBuilder(sc.src);
   const limit: usize = maxDepth == 0 ? ~(0 as usize) : maxDepth as usize;
   // Open containers (their tape positions) and the members read so far, all open containers'
   // in one stack: a container's own start in it is `from`.
@@ -162,11 +163,11 @@ export function parseWith(sc: Scanner, maxDepth: u32, whole: boolean): Tape | Ta
     const where = shortPath(pathOf(t, open, from, pending, atValue));
     return new TapeError(`invalid JSON at ${where}: ${detail} (byte ${sc.at})`);
   }
-  return t;
+  return t.done();
 }
 
 // `"key" :` inside object `obj`: the key's string goes on the tape (its value follows it).
-function key(sc: Scanner, t: Tape, obj: u32, pending: u32[]): bool {
+function key(sc: Scanner, t: TapeBuilder, obj: u32, pending: u32[]): bool {
   if (sc.peekNonWs() != 34) {
     return sc.fail(EXPECTED_KEY);
   }
@@ -186,7 +187,7 @@ function key(sc: Scanner, t: Tape, obj: u32, pending: u32[]): bool {
 }
 
 // A string at the scanner (its opening quote) onto the tape.
-function str(sc: Scanner, t: Tape): bool {
+function str(sc: Scanner, t: TapeBuilder): bool {
   if (!sc.string(true)) {
     return false;
   }
@@ -203,7 +204,7 @@ function str(sc: Scanner, t: Tape): bool {
 }
 
 // One scalar whose first byte is `c` onto the tape.
-function scalar(sc: Scanner, t: Tape, c: i32): bool {
+function scalar(sc: Scanner, t: TapeBuilder, c: i32): bool {
   if (c == 34) {
     return str(sc, t);
   }
@@ -228,7 +229,7 @@ function scalar(sc: Scanner, t: Tape, c: i32): bool {
 }
 
 // The innermost open container is complete: its members move from `pending` to `kids`.
-function closeContainer(t: Tape, open: u32[], from: usize[], pending: u32[]) {
+function closeContainer(t: TapeBuilder, open: u32[], from: usize[], pending: u32[]) {
   const v = open.pop()!;
   const start = from.pop()!;
   const n = pending.length - start;
@@ -248,7 +249,7 @@ function closeContainer(t: Tape, open: u32[], from: usize[], pending: u32[]) {
 // An object's members in JSON order when its keys are not that already: array-index keys first
 // (ascending), then the others as written; a repeated key at its first place, holding the
 // position of its last occurrence (whose value counts, at `key + 1`).
-function orderMembers(t: Tape, v: u32, at: usize, n: usize) {
+function orderMembers(t: TapeBuilder, v: u32, at: usize, n: usize) {
   // Checked in place: only an object with a key that may be an index, or a repeated key, gets a
   // member list.
   let index = false;
@@ -296,7 +297,7 @@ function orderMembers(t: Tape, v: u32, at: usize, n: usize) {
 }
 
 // The distinct keys of a small object, each at its first place holding its last occurrence.
-function distinctKeys(t: Tape, at: usize, n: usize): u32[] {
+function distinctKeys(t: TapeBuilder, at: usize, n: usize): u32[] {
   const firsts: u32[] = [];
   for (let i: usize = 0; i < n; i++) {
     const k = t.kids[at + i];
@@ -317,11 +318,11 @@ function distinctKeys(t: Tape, at: usize, n: usize): u32[] {
 
 // Object `v`'s member list from its distinct keys `firsts` (in order of first occurrence):
 // array-index keys moved to the front, ascending, when `index`.
-function setMembers(t: Tape, v: u32, firsts: u32[], index: bool, repeated: bool) {
+function setMembers(t: TapeBuilder, v: u32, firsts: u32[], index: bool, repeated: bool) {
   const flags = repeated ? REPEATED | ORDERED : ORDERED;
   t.words[2 * (v as usize)] = t.words[2 * (v as usize)] | flags;
   if (!index) {
-    t.setMemberList(v, firsts);
+    t.addMemberList(firsts);
     return;
   }
   // Index keys sorted by value (each with its key position below), then the others.
@@ -342,18 +343,17 @@ function setMembers(t: Tape, v: u32, firsts: u32[], index: bool, repeated: bool)
       out.push(k);
     }
   }
-  t.setMemberList(v, out);
+  t.addMemberList(out);
 }
 
 // Key `k`'s value as an array index (`"0"`, `"17"`, below 2^32 - 1, no leading zero), or -1. Read
 // in place (an escaped key from its decoded text).
-function indexKey(t: Tape, k: u32): i64 {
+function indexKey(t: TapeBuilder, k: u32): i64 {
   const w = t.words[2 * (k as usize)];
   const p = t.words[2 * (k as usize) + 1];
-  const escaped = (w & ESCAPED) != 0;
-  const s = escaped ? t.decoded![p as usize] : t.src;
-  const start = escaped ? 0 : (p & 0xffffffff) as usize;
-  const end = escaped ? strByteLen(s) : (p >> 32) as usize;
+  const s = (w & ESCAPED) != 0 ? t.decoded : t.src;
+  const start = (p & 0xffffffff) as usize;
+  const end = (p >> 32) as usize;
   const n = end - start;
   if (n == 0 || n > 10) {
     return -1;
@@ -374,7 +374,7 @@ function indexKey(t: Tape, k: u32): i64 {
 // deep is not), an object's last key.
 function tooDeep(
   sc: Scanner,
-  t: Tape,
+  t: TapeBuilder,
   open: u32[],
   from: usize[],
   pending: u32[],
@@ -391,7 +391,7 @@ function tooDeep(
 // The path of the place being read, from the open containers, as the typed reader names it: with
 // `atValue`, the value being read (an array's element, an object's last key); otherwise the
 // innermost container (a failure between its members or at a key).
-function pathOf(t: Tape, open: u32[], from: usize[], pending: u32[], atValue: bool): string {
+function pathOf(t: TapeBuilder, open: u32[], from: usize[], pending: u32[], atValue: bool): string {
   let path = "$";
   const levels = atValue ? open.length : open.length > 0 ? open.length - 1 : 0;
   for (let i = 0; i < levels; i++) {
