@@ -390,12 +390,31 @@ impl FnCx<'_, '_> {
         let ps = self.props(props);
         let (mut fields, mut hs) = (vec![], vec![]);
         let dynamic = self.hint(exp).is_some_and(|t| self.cx.dynamic(t).is_some());
+        let mut method_sites = vec![];
         for (name, value) in &ps {
-            let h = self.anon_prop_value(name, *value, dynamic);
+            let mut h = self.anon_prop_value(name, *value, dynamic);
+            // A function stored under the name of a method the program writes as a property: a
+            // site, so what is assigned to the method reaches it (`iface_method_writes`).
+            if self.cx.written_method_name(&name.name)
+                && matches!(self.cx.ty.kind(h.ty), TyKind::FnPtr { .. })
+            {
+                // A site even while nothing reached it yet: the links to the method's site
+                // (`Ctx::link_method_sites`) are how anything does.
+                let site = self.cx.untyped_let_site(h.ty, name.span, self.module);
+                let at = self.cx.site_in(name.span, site);
+                self.flow_into(&h, at);
+                if site != h.ty {
+                    h = self.coerce(h, site);
+                }
+                method_sites.push((fields.len(), name.span));
+            }
             fields.push((name.name.clone(), h.ty));
             hs.push(h);
         }
         let (def, type_args) = self.anon_def(&fields);
+        for (i, at) in method_sites {
+            self.cx.note_method_field_site(def, i, at);
+        }
         self.note_anon_written(def, ps.iter().map(|(_, v)| *v));
         let ty = self.cx.ty.intern(TyKind::Adt(def, type_args.clone()));
         let kind = H::AdtLit {

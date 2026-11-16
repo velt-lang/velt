@@ -69,6 +69,10 @@ pub(crate) struct FnTypeSeeds {
     /// the one their type is an instance of (`Ctx::closure_site_for`, #3033; unit-tested in
     /// `fn_flows`, an end-to-end golden waits on #3038: #3042).
     pub(super) closure_targets: FxHashMap<Span, Vec<Span>>,
+    /// The names of interface methods the program writes as properties (`crate::iface_method_writes`):
+    /// an object literal's function property of such a name is a site from the next check on,
+    /// so what is assigned to the method reaches the field storing it.
+    pub(crate) methods: FxHashSet<String>,
     /// Check with the sets written in, without variables (`throws::vars`).
     no_vars: bool,
     /// The sites of std/proxy's `ProxyHandler` traps the previous check met.
@@ -398,6 +402,25 @@ impl Ctx<'_> {
             self.ty.inferred_fns.insert(t);
         }
         t
+    }
+
+    /// Method `name` of an interface is written as a property (`crate::iface_method_writes`):
+    /// remembered for the next check, which then makes object literals' function properties of
+    /// that name sites. A name new to this check asks for another one.
+    pub(crate) fn note_written_method(&mut self, name: &str) {
+        if self.fn_sites.seeds.methods.contains(name) {
+            return;
+        }
+        if self.fn_sites.found.methods.insert(name.to_string()) {
+            self.fn_sites.grew = true;
+            self.fn_sites.sites_grew = true;
+        }
+    }
+
+    /// Is `name` a method the previous check found written as a property (an object literal's
+    /// function property of that name is a site)?
+    pub(crate) fn written_method_name(&self, name: &str) -> bool {
+        self.fn_sites.seeds.methods.contains(name)
     }
 
     /// The function type `(params) => ret` of an interface method without a `throws` clause that

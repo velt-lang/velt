@@ -98,6 +98,44 @@ fn getter_ret(
     }
 }
 
+impl crate::body::FnCx<'_, '_> {
+    /// The literal's function values for methods the program writes as properties
+    /// (`crate::iface_method_writes`), each made a site at its own span, so what is assigned to
+    /// the method reaches the field storing it; with the values' field indices and sites.
+    #[allow(clippy::type_complexity)] // the literal's values, as `iface_object` keeps them
+    pub(super) fn method_value_sites(
+        &mut self,
+        mut values: Vec<(String, crate::hir::Expr, bool)>,
+        methods: &[super::iface_object::MethodSig],
+        slots: &[Option<Slot>],
+    ) -> (Vec<(String, crate::hir::Expr, bool)>, Vec<(usize, Span)>) {
+        let mut sites = vec![];
+        for (j, m) in methods.iter().enumerate() {
+            let Some(Some(Slot::Call(f))) = slots.get(j) else {
+                continue;
+            };
+            let f = *f as usize;
+            let Some((_, h, uses_this)) = values.get(f) else {
+                continue;
+            };
+            let fn_value = matches!(self.cx.ty.kind(h.ty), TyKind::FnPtr { .. });
+            if *uses_this || !fn_value || !self.cx.written_method_name(&m.name) {
+                continue;
+            }
+            let at = h.span;
+            let site = self.cx.untyped_let_site(h.ty, at, self.module);
+            let target = self.cx.site_in(at, site);
+            let h = values[f].1.clone();
+            self.flow_into(&h, target);
+            if site != h.ty {
+                values[f].1 = self.coerce(h, site);
+            }
+            sites.push((f, at));
+        }
+        (values, sites)
+    }
+}
+
 /// How an object literal written as an interface stores each method, should the program write
 /// one through an interface value (`crate::iface_method_writes`): a function value that doesn't
 /// use `this`, of the method's function type.

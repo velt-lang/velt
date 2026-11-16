@@ -52,6 +52,9 @@ pub(crate) struct MethodWrites {
     /// (interface, method) -> its function-type site and that site's module
     /// ([`Ctx::method_site`]).
     sites: FxHashMap<(DefId, usize), (Span, usize)>,
+    /// (object type, field) -> the site of the function stored there under a written method's
+    /// name (`body/expr/object.rs`), the first literal of that shape.
+    field_sites: FxHashMap<(DefId, usize), Span>,
 }
 
 impl Ctx<'_> {
@@ -125,6 +128,34 @@ impl Ctx<'_> {
         }
     }
 
+    /// Field `i` of object type `d` stores a function under a written method's name, and is the
+    /// site at `at` (`body/expr/object.rs`).
+    pub(crate) fn note_method_field_site(&mut self, d: DefId, i: usize, at: Span) {
+        self.method_writes.field_sites.entry((d, i)).or_insert(at);
+    }
+
+    /// Link the site of method `j` of `iface` with the sites of the fields its implementations
+    /// store it in, both ways: they throw the same errors (`throws/fn_flows.rs` `site_flow`).
+    fn link_method_sites(&mut self, iface: DefId, j: usize) {
+        let Some(m) = self.method_site_span(iface, j) else {
+            return;
+        };
+        let impls: Vec<u32> = (0..self.impls.len() as u32)
+            .filter(|&k| self.impls[k as usize].iface == iface)
+            .collect();
+        for k in impls {
+            let src =
+                (self.method_writes.sources.get(&k)).and_then(|s| s.get(j).copied().flatten());
+            let Some(s) = src else {
+                continue;
+            };
+            if let Some(&f) = self.method_writes.field_sites.get(&(s.d, s.index)) {
+                self.site_flow(m, f);
+                self.site_flow(f, m);
+            }
+        }
+    }
+
     /// The site span of method `j` of `iface` ([`Self::method_site`]), once written.
     pub(crate) fn method_site_span(&self, iface: DefId, j: usize) -> Option<Span> {
         self.method_writes.sites.get(&(iface, j)).map(|s| s.0)
@@ -185,6 +216,12 @@ impl Ctx<'_> {
     /// implementations get their method setters. Reports those that can't store it (once each),
     /// and returns false then.
     pub(crate) fn mark_method_written(&mut self, iface: DefId, j: usize, span: Span) -> bool {
+        if let Some(m) = self.iface(iface).and_then(|i| i.methods.get(j)) {
+            if m.throws.is_none() {
+                let name = m.name.clone();
+                self.note_written_method(&name);
+            }
+        }
         self.method_writes.written.entry(iface).or_insert(span);
         self.method_writes.methods.entry((iface, j)).or_insert(span);
         let impls: Vec<u32> = (0..self.impls.len() as u32)
@@ -194,6 +231,7 @@ impl Ctx<'_> {
         for k in impls {
             ok &= self.method_setters_of(k);
         }
+        self.link_method_sites(iface, j);
         ok
     }
 
@@ -452,6 +490,11 @@ impl Ctx<'_> {
             if self.methods_written(iface) {
                 self.method_setters_of(k);
             }
+        }
+        // Implementations made since the writes store the methods too.
+        let written: Vec<(DefId, usize)> = self.method_writes.methods.keys().copied().collect();
+        for (iface, j) in written {
+            self.link_method_sites(iface, j);
         }
     }
 
