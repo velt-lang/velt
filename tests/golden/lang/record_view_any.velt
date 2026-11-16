@@ -1,3 +1,4 @@
+// check: no leaks
 // A record of other values, or an object of an object literal type, where a record of `any` or
 // `unknown` values is expected, or converted from `any` to one, is a view of the one object
 // (#379, velt_vir lower/record_view.rs; sigx's `assignmentJs(…, patch)` and

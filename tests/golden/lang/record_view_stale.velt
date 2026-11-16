@@ -1,0 +1,22 @@
+// check: no leaks
+// A record view read whole, then its source changed through the original (a write, a new key and
+// a delete), then read whole again (#379, velt_vir lower/record_view.rs): every read of the whole
+// view sees the source as it is then, not as it was. Node prints the same.
+function main(): void {
+  const o: Record<string, number> = { a: 1, b: 2 };
+  const held: any = o;
+  const r = held as Record<string, any>;
+  console.log(Object.keys(r).join(","), JSON.stringify(r));
+  o["a"] = 10;
+  o["c"] = 3;
+  delete o["b"];
+  console.log(Object.keys(r).join(","));
+  console.log(Object.values(r).join(","));
+  console.log(Object.entries(r).map(([k, v]) => `${k}=${v}`).join(","));
+  console.log(JSON.stringify(r));
+  const seen: string[] = [];
+  for (const k in r) {
+    seen.push(k);
+  }
+  console.log(seen.join(","));
+}

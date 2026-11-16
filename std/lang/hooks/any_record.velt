@@ -95,7 +95,12 @@ export function recordViewHasOne(s: RecordViewSource, k: string): bool {
 /** `v` written to the source under `k` (a `TypeError` where it can't hold it). */
 export function recordViewSetOne(s: RecordViewSource, k: string, v: any) {
   const t = s.target;
-  t[k] = v;
+  // An array's element by its index, as `anyEntry` reads it.
+  if (Array.isArray(t)) {
+    t[Number(k)] = v;
+  } else {
+    t[k] = v;
+  }
 }
 
 /** The key `k` deleted from the source. */

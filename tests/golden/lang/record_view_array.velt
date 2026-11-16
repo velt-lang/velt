@@ -1,0 +1,15 @@
+// check: no leaks
+// A record view of an array an `any` holds (#379, velt_vir lower/record_view.rs): its keys are the
+// indices, a read or a write of one reaches that element of the one array. Node prints the same.
+// (`delete` of an element, which would leave a hole, stops with a `TypeError`, and printing the view
+// shows an object: documented differences.)
+function main(): void {
+  const a: number[] = [1, 2, 3];
+  const held: any = a;
+  const r = held as Record<string, any>;
+  console.log(r["1"], Object.keys(r).join(","));
+  r["0"] = 9;
+  console.log(a[0], a.length);
+  a.push(4);
+  console.log(r["3"], Object.keys(r).length);
+}
