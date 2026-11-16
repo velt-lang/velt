@@ -175,7 +175,8 @@ impl Ctx<'_> {
     /// implementations made before, of an interface with one of those fields, read it as absent
     /// and stop a write. Each is made again, and its slots replace the old ones, so the
     /// conversions that use it see the field.
-    pub(crate) fn rebuild_object_impls(&mut self, d: DefId, names: &[String]) {
+    /// Returns a field one of them can't hold as the type gets it (another type there).
+    pub(crate) fn rebuild_object_impls(&mut self, d: DefId, names: &[String]) -> Option<String> {
         let stale: Vec<(DefId, Vec<TyId>, bool, u32)> = (self.object_impls.made.iter())
             .filter_map(|(k, v)| (k.0 == d).then_some((k.1, k.2.clone(), k.3, (*v)?)))
             .collect();
@@ -189,12 +190,19 @@ impl Ctx<'_> {
             let self_ty = self.impls[old as usize].ty;
             let Some((plan, setters)) = self.object_impl_plan(d, self_ty, iface, &args, dynamic)
             else {
-                continue;
+                let fields = self
+                    .iface(iface)
+                    .map(|i| i.fields.clone())
+                    .unwrap_or_default();
+                return (fields.into_iter())
+                    .map(|f| f.name)
+                    .find(|n| names.contains(n));
             };
             let new = self.build_object_impl(d, self_ty, iface, &args, plan, setters);
             self.impls[old as usize].methods = self.impls[new as usize].methods.clone();
             self.copy_setter_sources(new, old);
         }
+        None
     }
 
     /// A value of interface `iface` cast to an extension (`ObjectImpls::downcast_from`).

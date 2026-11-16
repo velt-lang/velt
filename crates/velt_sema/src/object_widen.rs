@@ -41,8 +41,6 @@ pub(crate) struct Widen {
     pub widened: FxHashMap<DefId, usize>,
     /// The object types widened -> the first cast's target (`InternalCtx`), for diagnostics.
     pub by: FxHashMap<DefId, String>,
-    /// The implementations the program converts with (`ToDyn`), found once.
-    converted: Option<rustc_hash::FxHashSet<u32>>,
     /// (cast, implementation) pairs done.
     done: rustc_hash::FxHashSet<(usize, u32)>,
     /// The (interface, object type) pairs reported: one error per type, at the first cast.
@@ -57,32 +55,6 @@ pub(crate) enum Refusal {
     Conflict(String),
     /// A generic object literal type of its shape is laid out as it.
     GenericShape,
-}
-
-/// The implementation indices the program's conversions use (`ToDyn` in a body or a global's
-/// initializer).
-fn converted_impls(cx: &Ctx) -> rustc_hash::FxHashSet<u32> {
-    let mut out = rustc_hash::FxHashSet::default();
-    let mut note = |e: &crate::hir::Expr| {
-        if let crate::hir::ExprKind::ToDyn { impl_index, .. } = &e.kind {
-            out.insert(*impl_index);
-        }
-    };
-    for (i, def) in cx.defs.iter().enumerate() {
-        if let Some(crate::hir::Def::Fn(f)) = def {
-            crate::visit::exprs(&f.body.block, &mut note);
-        } else if let Some(crate::defs::DefInfo::Global(g)) = cx.info.get(i) {
-            if let Some(init) = &g.init {
-                let b = crate::hir::Block {
-                    stmts: vec![],
-                    value: Some(Box::new(init.clone())),
-                    span: init.span,
-                };
-                crate::visit::exprs(&b, &mut note);
-            }
-        }
-    }
-    out
 }
 
 impl Ctx<'_> {
@@ -114,14 +86,12 @@ impl Ctx<'_> {
     }
 
     /// Widen each object type with an implementation of an interface some cast asks to widen,
-    /// or of one extending it (module docs), once per cast and implementation. A class's
-    /// implementation counts only when the program converts with it.
+    /// or of one extending it (module docs), once per cast and implementation. Every class
+    /// implementing one is refused, converted or not: a conversion may be made where the class is
+    /// known only at lowering (a type parameter, `any`).
     pub(crate) fn widen_converted(&mut self) {
         if self.object_impls.widen.asks.is_empty() {
             return;
-        }
-        if self.object_impls.widen.converted.is_none() {
-            self.object_impls.widen.converted = Some(converted_impls(self));
         }
         let asks = self.object_impls.widen.asks.clone();
         for (k, a) in asks.iter().enumerate() {
@@ -132,11 +102,6 @@ impl Ctx<'_> {
                     continue;
                 }
                 if !self.object_impls.widen.done.insert((k, j)) {
-                    continue;
-                }
-                let converted =
-                    (self.object_impls.widen.converted.as_ref()).is_some_and(|c| c.contains(&j));
-                if self.class_of(ty).is_some() && !converted {
                     continue;
                 }
                 let r = match generics {
@@ -201,11 +166,13 @@ impl Ctx<'_> {
             return Err(Refusal::NoRoom);
         };
         let (kind, own) = (a.kind, a.fields.clone());
-        // A field of that name already there (its own, or one another cast added) must have the
-        // type the cast gives it: one slot can't hold both.
+        // A field another cast added must have the type this one gives it: one slot can't hold
+        // both. (A field the type declares itself is read as its implementations read it.)
+        let declared = (self.object_impls.widen.widened.get(&d).copied()).unwrap_or(own.len());
         for f in fields {
-            if let Some(g) = own.iter().find(|g| g.name == f.name) {
-                if !self.same_ty(g.ty, f.ty) {
+            let pos = own.iter().position(|g| g.name == f.name);
+            if let Some(i) = pos.filter(|&i| i >= declared) {
+                if !self.same_ty(own[i].ty, f.ty) {
                     return Err(Refusal::Conflict(f.name.clone()));
                 }
             }
@@ -239,8 +206,10 @@ impl Ctx<'_> {
             f.private_to = None;
             self.adt_mut(d).fields.push(f);
         }
-        self.rebuild_object_impls(d, &names);
-        Ok(())
+        match self.rebuild_object_impls(d, &names) {
+            Some(name) => Err(Refusal::Conflict(name)),
+            None => Ok(()),
+        }
     }
 
     /// Is there a generic object literal type with the field names and optional flags of `d`?

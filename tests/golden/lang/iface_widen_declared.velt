@@ -1,0 +1,16 @@
+// An object that declares the field an extension adds, cast to the extension (#379): its own
+// field is the extension's, and nothing is widened. As in Node.
+interface Ctx {
+  el: string;
+  update(): void;
+}
+
+interface InternalCtx extends Ctx {
+  __name?: string;
+}
+
+const o = { el: "x", update: () => {}, __name: "a" };
+const c: Ctx = o;
+console.log((c as InternalCtx).__name);
+(c as InternalCtx).__name = "b";
+console.log(o.__name);
