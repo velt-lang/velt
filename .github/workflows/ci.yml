@@ -330,6 +330,8 @@ jobs:
       VELT_VIR_IDENTITY: ${{ needs.queue-plan.outputs.vir_identity }}
       # The WebAssembly goldens run in shards of their own (`queue-golden`).
       VELT_WASM_GOLDENS: skip
+      # nextest stops at the first failing test (.config/nextest.toml): the entry drops anyway.
+      VELT_NEXTEST_PROFILE: queue
     # The slowest job (Windows) took 58 to 74 minutes on 2026-11-07, and 75 on a slower runner;
     # on 2026-11-16 it reached 101 minutes (tests 38 of them) and was cancelled in its doctests
     # with every test passing. A runner that hangs still fails the queue entry well within
