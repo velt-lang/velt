@@ -1,3 +1,4 @@
+// check: no leaks
 // An interface value asserted to an interface extending it with an optional field its object
 // lacks (#379): tsc allows it, and Node adds the property when it is written. Velt gives the
 // object types converted to `Ctx` room for `__name`, absent until written.

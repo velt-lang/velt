@@ -95,6 +95,8 @@ enum Fill {
     Absent(String, TyId),
     /// `set f(v)` writing field `.0` (of type `.1`; `.2`: the parameter is borrowed).
     Setter(usize, TyId, bool),
+    /// Added field `.0`, held out of line, of value type `.1` (`object_widen`).
+    Cell(usize, TyId),
     /// Method `.0` of the interface, the function in field `.1` (of type `.2`) taking `.3`
     /// arguments.
     Call(usize, usize, TyId, usize),
@@ -117,6 +119,8 @@ enum Store {
     /// In field `.0` (of type `.1`), the value (of the interface field's type `.2`) converted
     /// through `any`.
     Convert(usize, TyId, TyId),
+    /// In added field `.0`'s cell, of value type `.1` (`object_widen`).
+    Cell(usize, TyId),
 }
 
 impl Ctx<'_> {
@@ -411,6 +415,16 @@ impl Ctx<'_> {
         for f in &ifields {
             let want = self.subst(f.ty, &full);
             let payload = self.ty.opt_payload(want);
+            // A field a cast's extension added, held out of line (`object_widen`).
+            let cell = find(&f.name).and_then(|i| Some((i, self.cell_value_ty(d, i)?)));
+            if let Some((i, v)) = cell {
+                if !self.same_ty(v, want) {
+                    return None;
+                }
+                setters.push(Store::Cell(i, v));
+                plan.push(Fill::Cell(i, v));
+                continue;
+            }
             let fill = match find(&f.name) {
                 Some(i) if self.same_ty(fields[i].1, want) => {
                     setters.push(Store::Field(i, fields[i].1));
@@ -524,6 +538,7 @@ impl Ctx<'_> {
                 Fill::Setter(i, ty, borrowed) => {
                     field_setter_taking(self, d, self_ty, i, ty, borrowed)
                 }
+                Fill::Cell(i, v) => self.cell_getter(d, self_ty, i, v),
                 Fill::Call(j, i, fn_ty, takes) => {
                     self.fn_field_slot(d, self_ty, iface, &full, (j, i, fn_ty, takes))
                 }
@@ -562,6 +577,11 @@ impl Ctx<'_> {
                 },
                 Store::Convert(index, ty, want) => SetterSrc::Method {
                     def: self.convert_setter(d, self_ty, index, ty, want),
+                    d,
+                    name: self.adt(d).expect("ICE: adt").fields[index].name.clone(),
+                },
+                Store::Cell(index, v) => SetterSrc::Method {
+                    def: self.cell_setter(d, self_ty, index, v),
                     d,
                     name: self.adt(d).expect("ICE: adt").fields[index].name.clone(),
                 },

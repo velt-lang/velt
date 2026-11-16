@@ -1,3 +1,4 @@
+// check: no leaks
 // An object literal converted statically to the extension before another cast widens its type
 // (#379): its implementation, made while the program was checked, is made again with the field,
 // so the write through the cast is seen through the extension too, as in Node.

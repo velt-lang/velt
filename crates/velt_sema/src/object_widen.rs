@@ -20,7 +20,7 @@ use velt_common::{Diagnostic, Span};
 
 use crate::ctx::Ctx;
 use crate::defs::FieldInfo;
-use crate::hir::{AdtKind, DefId, TyId};
+use crate::hir::{AdtKind, Callee, DefId, Expr, ExprKind as H, Intrinsic, TyId, UseMode};
 
 /// A cast asking for room: the interface cast from, the optional fields the target adds, the
 /// two types as written (`Ctx`, `InternalCtx`) and where it is.
@@ -41,6 +41,11 @@ pub(crate) struct Widen {
     pub widened: FxHashMap<DefId, usize>,
     /// The object types widened -> the first cast's target (`InternalCtx`), for diagnostics.
     pub by: FxHashMap<DefId, String>,
+    /// Per value type (`string | undefined`): the class holding an added field's value out of
+    /// line and its type (`hir::FieldDef::cell`).
+    cells: FxHashMap<TyId, (DefId, TyId)>,
+    /// (object type, field index) of an added field -> the type the extension gives it.
+    pub values: FxHashMap<(DefId, usize), TyId>,
     /// (cast, implementation) pairs done.
     done: rustc_hash::FxHashSet<(usize, u32)>,
     /// The (interface, object type) pairs reported: one error per type, at the first cast.
@@ -182,7 +187,8 @@ impl Ctx<'_> {
             };
             let g = own[i].ty;
             let fits = match i >= declared {
-                true => self.same_ty(g, f.ty),
+                true => (self.object_impls.widen.values.get(&(d, i)).copied())
+                    .is_some_and(|v| self.same_ty(v, f.ty)),
                 false => {
                     self.same_ty(g, f.ty)
                         || self
@@ -223,10 +229,24 @@ impl Ctx<'_> {
             .entry(d)
             .or_insert(own.len());
         let names: Vec<String> = missing.iter().map(|f| f.name.clone()).collect();
+        let module = self.adt(d).map_or(0, |a| a.module);
         for f in missing {
-            let mut f = f.clone();
-            f.private_to = None;
-            self.adt_mut(d).fields.push(f);
+            let slot = self.cell_slot_ty(f.ty, module);
+            let at = self.adt(d).map_or(0, |a| a.fields.len());
+            self.object_impls.widen.values.insert((d, at), f.ty);
+            let cell = FieldInfo {
+                name: f.name.clone(),
+                ty: slot,
+                declared: slot,
+                span: f.span,
+                readonly: false,
+                optional: false,
+                has_default: false,
+                default: None,
+                default_throws: vec![],
+                private_to: None,
+            };
+            self.adt_mut(d).fields.push(cell);
         }
         match self.rebuild_object_impls(d, &names) {
             Some(name) => Err(Refusal::Conflict(name)),
@@ -262,6 +282,163 @@ impl Ctx<'_> {
                 && self.adt(g).is_some_and(|a| {
                     a.kind == AdtKind::Anon && a.generics.len() != 0 && shape(a, usize::MAX) == mine
                 })
+        })
+    }
+
+    /// The type of an added field's slot holding a value of type `value` out of line (`C |
+    /// null`, `hir::FieldDef::cell`): a class `C` with one field `v` of that type, one per value
+    /// type, so a slot is one pointer and its value is made on the first write.
+    fn cell_slot_ty(&mut self, value: TyId, module: usize) -> TyId {
+        if let Some(&(_, slot)) = self.object_impls.widen.cells.get(&value) {
+            return slot;
+        }
+        let d = self.hidden_struct_def("cell", &[("v".to_string(), value)], 0, module);
+        self.adt_mut(d).kind = AdtKind::Class;
+        let cell = self.ty.intern(crate::hir::TyKind::Adt(d, vec![]));
+        let slot = self.ty.option(cell);
+        self.object_impls.widen.cells.insert(value, (d, slot));
+        slot
+    }
+
+    /// Is field `f` of object type `d` one an extension's cast added, out of line
+    /// (`hir::FieldDef::cell`)?
+    pub(crate) fn cell_field(&self, d: DefId, f: &FieldInfo) -> bool {
+        let w = &self.object_impls.widen;
+        let Some(&n) = w.widened.get(&d) else {
+            return false;
+        };
+        (self
+            .adt(d)
+            .and_then(|a| a.fields.iter().position(|g| g.name == f.name)))
+        .is_some_and(|i| i >= n && w.values.contains_key(&(d, i)))
+    }
+
+    /// The value type of field `i` of object type `d` when it is an added field held out of line.
+    pub(crate) fn cell_value_ty(&self, d: DefId, i: usize) -> Option<TyId> {
+        self.object_impls.widen.values.get(&(d, i)).copied()
+    }
+
+    /// The getter of added field `i` (held out of line) of object type `d`, of type `value`:
+    /// `undefined` while there is no cell, else the cell's value.
+    pub(crate) fn cell_getter(&mut self, d: DefId, self_ty: TyId, i: usize, value: TyId) -> DefId {
+        let fname = self
+            .adt(d)
+            .map_or(String::new(), |a| a.fields[i].name.clone());
+        let slot = self.adt(d).map_or(value, |a| a.fields[i].ty);
+        let cell = self.ty.opt_payload(slot).unwrap_or(slot);
+        let copy = self.is_copy(value);
+        let bool_t = self.ty.bool_;
+        crate::collect::getters::value_getter(self, d, self_ty, &fname, value, |span| {
+            let this = local(0, UseMode::Borrow, self_ty, span);
+            let slot_e = field(this, i, UseMode::Borrow, slot, span);
+            let absent = intrinsic(Intrinsic::IsNull, vec![slot_e.clone()], bool_t, span);
+            let inner = Expr {
+                kind: H::UnwrapSome(Box::new(slot_e), UseMode::Borrow),
+                ty: cell,
+                span,
+            };
+            let read = match copy {
+                true => field(inner, 0, UseMode::Copy, value, span),
+                false => {
+                    let v = field(inner, 0, UseMode::Borrow, value, span);
+                    intrinsic(Intrinsic::Share, vec![v], value, span)
+                }
+            };
+            // `undefined` of the value type (also an `any`'s).
+            let undefined = intrinsic(Intrinsic::FieldAbsent, vec![], value, span);
+            Expr {
+                kind: H::If {
+                    cond: Box::new(absent),
+                    then: Box::new(undefined),
+                    els: Box::new(read),
+                },
+                ty: value,
+                span,
+            }
+        })
+    }
+
+    /// The setter of added field `i` (held out of line) of object type `d`, taking a `value`:
+    /// the first write makes the cell, a later one writes into it.
+    pub(crate) fn cell_setter(&mut self, d: DefId, self_ty: TyId, i: usize, value: TyId) -> DefId {
+        let fname = self
+            .adt(d)
+            .map_or(String::new(), |a| a.fields[i].name.clone());
+        let slot = self.adt(d).map_or(value, |a| a.fields[i].ty);
+        let cell = self.ty.opt_payload(slot).unwrap_or(slot);
+        let cell_def = match self.ty.kind(cell) {
+            crate::hir::TyKind::Adt(c, _) => *c,
+            _ => return crate::collect::getters::field_setter(self, d, self_ty, i, slot),
+        };
+        let unit = self.ty.unit;
+        let bool_t = self.ty.bool_;
+        crate::collect::getters::setter_def(self, d, self_ty, &fname, value, false, |span, copy| {
+            let this = |m| local(0, m, self_ty, span);
+            let arg = local(
+                1,
+                if copy { UseMode::Copy } else { UseMode::Move },
+                value,
+                span,
+            );
+            let slot_r = field(this(UseMode::Borrow), i, UseMode::Borrow, slot, span);
+            let absent = Expr {
+                kind: H::Call {
+                    callee: Callee::Intrinsic(Intrinsic::IsNull),
+                    args: vec![slot_r],
+                },
+                ty: bool_t,
+                span,
+            };
+            let made = Expr {
+                kind: H::AdtLit {
+                    def: cell_def,
+                    type_args: vec![],
+                    fields: vec![arg.clone()],
+                    converted: crate::hir::Conversion::No,
+                },
+                ty: cell,
+                span,
+            };
+            let first = Expr {
+                kind: H::Assign {
+                    place: Box::new(field(
+                        this(UseMode::BorrowMut),
+                        i,
+                        UseMode::BorrowMut,
+                        slot,
+                        span,
+                    )),
+                    value: Box::new(Expr {
+                        kind: H::WrapSome(Box::new(made)),
+                        ty: slot,
+                        span,
+                    }),
+                },
+                ty: unit,
+                span,
+            };
+            let slot_w = field(this(UseMode::BorrowMut), i, UseMode::BorrowMut, slot, span);
+            let inner = Expr {
+                kind: H::UnwrapSome(Box::new(slot_w), UseMode::BorrowMut),
+                ty: cell,
+                span,
+            };
+            let later = Expr {
+                kind: H::Assign {
+                    place: Box::new(field(inner, 0, UseMode::BorrowMut, value, span)),
+                    value: Box::new(arg),
+                },
+                ty: unit,
+                span,
+            };
+            Some((
+                H::If {
+                    cond: Box::new(absent),
+                    then: Box::new(first),
+                    els: Box::new(later),
+                },
+                unit,
+            ))
         })
     }
 
@@ -340,5 +517,39 @@ impl Ctx<'_> {
         self.error(
             Diagnostic::error(format!("cannot cast `{from}` as `{to}`"), span).with_note(note),
         );
+    }
+}
+
+/// `local #n` read as `mode`.
+fn local(n: u32, mode: UseMode, ty: TyId, span: Span) -> Expr {
+    Expr {
+        kind: H::Local(crate::hir::LocalId(n), mode),
+        ty,
+        span,
+    }
+}
+
+/// Field `i` of `base` read as `mode`.
+fn field(base: Expr, i: usize, mode: UseMode, ty: TyId, span: Span) -> Expr {
+    Expr {
+        kind: H::Field {
+            base: Box::new(base),
+            index: i as u32,
+            mode,
+        },
+        ty,
+        span,
+    }
+}
+
+/// A call of intrinsic `i`.
+fn intrinsic(i: Intrinsic, args: Vec<Expr>, ty: TyId, span: Span) -> Expr {
+    Expr {
+        kind: H::Call {
+            callee: Callee::Intrinsic(i),
+            args,
+        },
+        ty,
+        span,
     }
 }

@@ -1,3 +1,4 @@
+// check: no leaks
 // An object made as an interface value, cast to an extension adding an optional field (#379):
 // Node adds the property when it is written. Velt widens the object types converted to `Ctx`
 // (an object literal's type, through `unknown` or written as the interface itself):

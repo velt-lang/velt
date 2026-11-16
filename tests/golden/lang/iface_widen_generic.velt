@@ -1,3 +1,4 @@
+// check: no leaks
 // A cast to an extension adding an optional field, of values that reach the interface at other
 // type arguments (#379): the conversion wraps them in an adapter, and the objects inside are
 // widened. Node adds the property when it is written.

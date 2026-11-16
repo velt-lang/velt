@@ -111,9 +111,10 @@ impl FnLower<'_, '_> {
         if def.kind == AdtKind::Class {
             return vec![false; shown.len()];
         }
+        // A field held out of line (`FieldDef::cell`) shows while its cell is there.
         let flags: Vec<bool> = shown
             .iter()
-            .map(|(i, _, _)| def.fields[*i as usize].optional)
+            .map(|(i, _, _)| def.fields[*i as usize].optional || def.fields[*i as usize].cell)
             .collect();
         shown
             .iter()
@@ -263,7 +264,13 @@ impl FnLower<'_, '_> {
             self.assign(Place::local(written), Rvalue::Use(FnLower::ctrue()));
             match self.accessor_label(ty, *index) {
                 Some(label) => self.push_text(buf, label),
-                None => self.format_nested(buf, &fp, *t, child),
+                None => match self.cx.cell_field(ty, *index) {
+                    Some((cell, value)) => {
+                        let vp = self.cell_value_place(&fp, *t, cell);
+                        self.format_nested(buf, &vp, value, child);
+                    }
+                    None => self.format_nested(buf, &fp, *t, child),
+                },
             }
             self.goto(skip);
             self.switch_to(skip);

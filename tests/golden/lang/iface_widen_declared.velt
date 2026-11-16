@@ -1,3 +1,4 @@
+// check: no leaks
 // An object that declares the field an extension adds, cast to the extension (#379): its own
 // field is the extension's, and nothing is widened. As in Node.
 interface Ctx {

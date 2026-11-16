@@ -1,3 +1,4 @@
+// check: no leaks
 // An interface value cast to an object type whose fields are all optional and new to it (#379):
 // tsc allows `rq as { _input?: unknown }`, and Node adds the property when it is written. Velt
 // asserts the interface with both's members, widening the objects converted to `ServerCtx`.

@@ -80,6 +80,7 @@ mod call;
 mod callee;
 mod caller_aliases;
 mod caller_stores;
+mod cell_fields;
 mod cells;
 mod cfg;
 mod class_test;

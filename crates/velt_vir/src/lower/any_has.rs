@@ -219,7 +219,7 @@ impl FnLower<'_, '_> {
             .map(|(i, f)| {
                 (
                     f.name.clone(),
-                    f.optional && !class,
+                    (f.optional || f.cell) && !class,
                     f.private && i < std_prefix,
                 )
             })
