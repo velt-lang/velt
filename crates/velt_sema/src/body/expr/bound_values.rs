@@ -136,12 +136,13 @@ impl FnCx<'_, '_> {
         self.cx.union_members(t).unwrap_or_else(|| vec![t])
     }
 
-    /// Does converting an `any` to `t` test for exactly `t` (a primitive, a literal, a class, an
-    /// array or union of such, or one of those or nothing), so that a value of a type `t` may be
-    /// instantiated with passes, and is used as a `t`? Not an array: an instantiation may be an
-    /// array of a narrower element type (`number[]` for `(number | string)[]`, `"a"[]` for
-    /// `string[]`, whose literal elements are laid out differently), which a view of it as `t`
-    /// would write wider elements into (`union_bound_value`).
+    /// Does converting an `any` to `t` test for exactly `t` (a primitive, a literal, a class with
+    /// no type arguments, a union of such, or one of those or nothing), so that a value of a type
+    /// `t` may be instantiated with passes, and is used as a `t`? Not an array: an instantiation
+    /// may be an array of a narrower element type (`number[]` for `(number | string)[]`, `"a"[]`
+    /// for `string[]`, whose literal elements are laid out differently), which a view of it as
+    /// `t` would write wider elements into (`union_bound_value`). Not a generic class either,
+    /// for the same reason one level over (`Box<number>` for `Box<number | string>`).
     fn exact_test(&mut self, t: TyId, depth: u32) -> bool {
         if depth > 8 {
             return false;
@@ -154,7 +155,11 @@ impl FnCx<'_, '_> {
                 true
             }
             TyKind::Option(e, _) => self.exact_test(e, depth + 1),
-            TyKind::Adt(d, _) => self.is_class_def(d) && self.cx.brand_base(t).is_none(),
+            // A generic class's instantiation may be at narrower type arguments (`Box<number>`
+            // for `Box<number | string>`), which the test rejects.
+            TyKind::Adt(d, args) => {
+                args.is_empty() && self.is_class_def(d) && self.cx.brand_base(t).is_none()
+            }
             _ => false,
         }
     }

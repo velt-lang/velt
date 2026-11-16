@@ -1,0 +1,1 @@
+array_bound_for_of_generic.velt:15:19: error: cannot iterate over a value of type `T`
