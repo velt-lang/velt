@@ -11,6 +11,12 @@
 // the start of a UTF-8 character split across text reads, as the reactor's sources do
 // (std/net/fd_io.velt `readString`).
 //
+// A pipe's operations run one at a time, in the order they were called, as a Node stream's: each
+// takes a ticket when it is called, and its pool thread waits for its turn before it touches the
+// pipe. Two writes not awaited one by one would otherwise run on two threads in either order. A
+// job waits only for earlier tickets, whose jobs are queued already (one task's calls) or in the
+// same instant (another task's), so none waits on a job queued behind it.
+//
 // The end of a pipe (`ERROR_BROKEN_PIPE`: every handle to the child's end is closed) reads as
 // end of stream; a write to a pipe whose reader is gone fails with `EPIPE`.
 
@@ -22,6 +28,7 @@ import { Ptr } from "velt/ffi/ptr";
 import { arrayTruncate } from "velt/lang/intrinsics";
 import * as bl from "velt/lang/hooks/sched_blocking";
 import * as m from "velt/lang/hooks/sched_mem";
+import * as ww from "velt/lang/hooks/wait_win32";
 import { addressOf, incompleteTail } from "velt/net/fd_io";
 import { failed, ok, osError, value } from "velt/net/fd_socket";
 
@@ -44,6 +51,7 @@ declare c("c") function WriteFile(
 ): i32;
 declare c("c") function CloseHandle(h: Ptr<void>): i32;
 declare c("c") function GetLastError(): u32;
+declare c("c") function WakeByAddressAll(word: Ptr<u8>): void;
 
 const ERROR_BROKEN_PIPE: u32 = 109;
 /** A write's reader closed its end. */
@@ -52,12 +60,16 @@ const ERROR_NO_DATA: u32 = 232;
 const MOST_READ: u64 = 16777216;
 const MOST_WRITE: usize = 0x40000000;
 
-// The block: its count, the handle, the carried bytes of a split character and their count.
+// The block: its count, the handle, the carried bytes of a split character and their count, the
+// tickets.
 const P_REFS: usize = 0;
 const P_HANDLE: usize = 8;
 const P_CARRY: usize = 16;
 const P_CARRY_LEN: usize = 24;
-const P_SIZE: usize = 32;
+// The tickets of its operations: the next one to take, and the one whose turn it is.
+const P_NEXT: usize = 32;
+const P_SERVING: usize = 40;
+const P_SIZE: usize = 48;
 
 /** The calling thread's last Windows error (`GetLastError`), read right after the failed call. */
 export function lastError(): u32 {
@@ -177,27 +189,94 @@ function writeAllNow(h: usize, data: u8[]): IoStatus {
   return ok();
 }
 
-/** The next 1..max bytes of pipe block `p` (counted for the call; `max` 0: up to 64 KiB). */
-export async function read(p: usize, max: u64): Promise<IoResult<u8[]>> {
-  const want = max === 0 ? 65536 : max > MOST_READ ? MOST_READ : max;
-  const n = want as usize;
-  const h = m.ld(p + P_HANDLE);
-  return await bl.run<IoResult<u8[]>>(() => readChunk(h, n));
+/** Waits (on a pool thread) until it is ticket `t`'s turn on pipe block `p`. */
+function awaitTurn(p: usize, t: u32): void {
+  while (true) {
+    const now = m.load32(p + P_SERVING);
+    if (now === t) {
+      return;
+    }
+    ww.wordWait(p + P_SERVING, now);
+  }
 }
 
-/** Writes all of `data` to pipe block `p` (counted for the call). */
-export async function write(p: usize, data: u8[]): Promise<IoStatus> {
-  const h = m.ld(p + P_HANDLE);
-  return await bl.run<IoStatus>(() => writeAllNow(h, data));
+/** Ends the turn on pipe block `p`: the next ticket's operation goes on. */
+function endTurn(p: usize): void {
+  m.store32(p + P_SERVING, m.load32(p + P_SERVING) + 1);
+  // SAFETY: a word of the block, which the caller's count keeps alive.
+  unsafe {
+    WakeByAddressAll(m.ptr(p + P_SERVING));
+  }
+}
+
+/** The next ticket of pipe block `p`: operations run in the order they took them. */
+function ticket(p: usize): u32 {
+  return m.inc(p + P_NEXT) as u32;
+}
+
+/** Reads of pipe block `p` on a pool thread, in turn `t`; gives up the caller's count. */
+function readTurn(p: usize, t: u32, n: usize): IoResult<u8[]> {
+  awaitTurn(p, t);
+  const got = readChunk(m.ld(p + P_HANDLE), n);
+  endTurn(p);
+  drop(p);
+  return got;
+}
+
+/** `readString` of pipe block `p` on a pool thread, in turn `t`; gives up the caller's count. */
+function readStringTurn(p: usize, t: u32, n: usize): IoResult<string> {
+  awaitTurn(p, t);
+  const got = readStringNow(p, n);
+  endTurn(p);
+  drop(p);
+  return got;
+}
+
+/** A write of `data` to pipe block `p` on a pool thread, in turn `t`; gives up the count. */
+function writeTurn(p: usize, t: u32, data: u8[]): IoStatus {
+  awaitTurn(p, t);
+  const st = writeAllNow(m.ld(p + P_HANDLE), data);
+  endTurn(p);
+  drop(p);
+  return st;
+}
+
+/** The size of a read asked for `max` bytes (0: up to 64 KiB). */
+function sizeOf(max: u64): usize {
+  return (max === 0 ? 65536 : max > MOST_READ ? MOST_READ : max) as usize;
 }
 
 /**
- * The next chunk of pipe block `p` as UTF-8 (counted for the call): a character split across
- * reads waits in the block for the rest, one cut off by the end becomes U+FFFD. "" at the end.
+ * The next 1..max bytes of pipe block `p` (`max` 0: up to 64 KiB), whose count the caller gives
+ * up. A pipe's operations run one at a time, in the order they were called, as a Node stream's.
+ */
+export async function read(p: usize, max: u64): Promise<IoResult<u8[]>> {
+  const n = sizeOf(max);
+  const t = ticket(p);
+  return await bl.run<IoResult<u8[]>>(() => readTurn(p, t, n));
+}
+
+/** Writes all of `data` to pipe block `p`, whose count the caller gives up (in order: `read`). */
+export async function write(p: usize, data: u8[]): Promise<IoStatus> {
+  const t = ticket(p);
+  return await bl.run<IoStatus>(() => writeTurn(p, t, data));
+}
+
+/**
+ * The next chunk of pipe block `p` as UTF-8 (its count given up; in order: `read`): a character
+ * split across reads waits in the block for the rest, one cut off by the end becomes U+FFFD.
+ * "" at the end.
  */
 export async function readString(p: usize, max: u64): Promise<IoResult<string>> {
+  const n = sizeOf(max);
+  const t = ticket(p);
+  return await bl.run<IoResult<string>>(() => readStringTurn(p, t, n));
+}
+
+/** `readString` on the pool thread, in its turn. */
+function readStringNow(p: usize, n: usize): IoResult<string> {
   while (true) {
-    const got = await read(p, max);
+    const got = readChunk(m.ld(p + P_HANDLE), n);
     if (got.code !== 0) {
       return failed({ code: got.code, message: got.message }, "");
     }
@@ -238,13 +317,14 @@ export async function readString(p: usize, max: u64): Promise<IoResult<string>> 
   }
 }
 
-/** Everything left on pipe block `p` (0: none; counted for the call). */
+/** Everything left on pipe block `p` (0: none; the caller keeps its count). */
 export async function drain(p: usize): Promise<u8[]> {
   const all: u8[] = [];
   if (p === 0) {
     return all;
   }
   while (true) {
+    retain(p);
     const got = await read(p, 0);
     if (got.code !== 0 || got.value.length === 0) {
       return all;

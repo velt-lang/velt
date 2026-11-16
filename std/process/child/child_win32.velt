@@ -329,9 +329,7 @@ export async function velt_rt_child_read(c: u64, which: u32, max: u64): Promise<
   if (p.code !== 0) {
     return fs.failed({ code: p.code, message: p.message }, []);
   }
-  const got = await pw.read(p.value, max);
-  pw.drop(p.value);
-  return got;
+  return await pw.read(p.value, max);
 }
 
 export async function velt_rt_child_read_string(
@@ -343,9 +341,7 @@ export async function velt_rt_child_read_string(
   if (p.code !== 0) {
     return fs.failed({ code: p.code, message: p.message }, "");
   }
-  const got = await pw.readString(p.value, max);
-  pw.drop(p.value);
-  return got;
+  return await pw.readString(p.value, max);
 }
 
 export async function velt_rt_child_write(c: u64, data: string): Promise<IoStatus> {
@@ -353,9 +349,7 @@ export async function velt_rt_child_write(c: u64, data: string): Promise<IoStatu
   if (p.code !== 0) {
     return { code: p.code, message: p.message };
   }
-  const st = await pw.write(p.value, utf8Encode(data));
-  pw.drop(p.value);
-  return st;
+  return await pw.write(p.value, utf8Encode(data));
 }
 
 export async function velt_rt_child_close_stdin(c: u64): Promise<IoStatus> {
@@ -368,10 +362,9 @@ export async function velt_rt_child_close_stdin(c: u64): Promise<IoStatus> {
   return fs.ok();
 }
 
-/** Writes `input` to pipe block `p`, then closes it (a feeder of its own). */
+/** Writes `input` to pipe block `p` (its count given up), which then closes (a feeder). */
 async function feed(p: usize, input: u8[]): Promise<void> {
   const st = await pw.write(p, input);
-  pw.drop(p);
 }
 
 export async function velt_rt_child_output(
