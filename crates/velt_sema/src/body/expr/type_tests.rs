@@ -43,6 +43,9 @@ impl FnCx<'_, '_> {
             return h;
         }
         let s = self.type_test_operand(operand);
+        if self.reject_ptr_text(&s, "`typeof`: it is no JavaScript value") {
+            return self.error_expr(span);
+        }
         let s = self.param_as_any(s);
         let str_ = self.cx.ty.str_;
         let sty = s.ty;

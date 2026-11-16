@@ -547,7 +547,7 @@ impl FnCx<'_, '_> {
             }
             if let Some(e) = exprs.get(i) {
                 let h = self.printed_expr(e);
-                if self.reject_symbol_text(&h) {
+                if self.reject_symbol_text(&h) || self.reject_ptr_text(&h, "text") {
                     parts.push(self.error_expr(h.span));
                     continue;
                 }

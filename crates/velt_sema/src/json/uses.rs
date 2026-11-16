@@ -46,6 +46,18 @@ pub(super) fn uses_of(
     if let Some(a) = unlocked.filter(|a| param_in(tys, a.ty)) {
         u.direct.push((a.ty, a.span, Need::NoLock));
     }
+    // A type parameter converted to `any` or to text: it can't be a C pointer (#3094).
+    let converted = match &e.kind {
+        E::ToDyn { expr, .. } => Some(expr.as_ref()),
+        E::Call {
+            callee: Callee::Intrinsic(Intrinsic::ToString | Intrinsic::TemplateToString),
+            args,
+        } => args.first(),
+        _ => None,
+    };
+    if let Some(a) = converted.filter(|a| param_in(tys, a.ty)) {
+        u.direct.push((a.ty, a.span, Need::NoPtr));
+    }
     match &e.kind {
         E::Call {
             callee: Callee::Def(d, _),

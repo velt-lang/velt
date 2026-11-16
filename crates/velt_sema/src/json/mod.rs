@@ -50,6 +50,10 @@ enum Need {
     /// may be in it. Recorded only for a type parameter; concrete types are checked where
     /// they are read (`Ctx::holds_lock`).
     NoLock,
+    /// Converted to `any` or an interface, or to text (`String(x)`, a template): a C pointer
+    /// (`Ptr<T>`) can't be (#3094). Recorded only for a type parameter; concrete types are
+    /// refused where they are converted (`FnCx::reject_ptr_text`, `coerce.rs`).
+    NoPtr,
 }
 
 /// What a body constructs: the type, its arguments, the span and the guard bits, resolved by
@@ -140,6 +144,17 @@ pub(crate) fn check_json_types(cx: &mut Ctx) {
                             span,
                         )
                         .with_note("a value holding a lock is read only under it (`with`): pass what a callback returns instead"),
+                    );
+                }
+            } else if parse == Need::NoPtr {
+                if checked.insert((t, span, parse)) && cx.is_ptr_value(t) {
+                    let tn = cx.display(t);
+                    cx.error(
+                        Diagnostic::error(
+                            format!("a C pointer (`{tn}`) is converted to `any` or to text here, through a type parameter"),
+                            span,
+                        )
+                        .with_note("a pointer has no dynamic form and no text: `Ptr.addressOf(p)` gives its address"),
                     );
                 }
             } else if let Need::Json(_) = parse {

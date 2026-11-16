@@ -474,7 +474,10 @@ impl FnCx<'_, '_> {
         let s = self.cx.ty.str_;
         if op == B::Add
             && (l.ty == s) != (r.ty == s)
-            && (self.reject_symbol_text(&l) || self.reject_symbol_text(&r))
+            && (self.reject_symbol_text(&l)
+                || self.reject_symbol_text(&r)
+                || self.reject_ptr_text(&l, "text")
+                || self.reject_ptr_text(&r, "text"))
         {
             return self.error_expr(span);
         }
