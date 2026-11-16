@@ -1,9 +1,8 @@
 //! `Number(s)` with exact JS semantics, for compiled code that converts a string held as `any`
 //! (velt_vir `lower/any.rs`); std's `Number(s)` and `parseFloat` are velt/lang/number/parse.
 //!
-//! Decimal values are correctly rounded (Rust's `f64` parser, like V8). Power-of-two radixes are
-//! correctly rounded for any length; other radixes are exact below 2^128 and then continue in
-//! `f64` arithmetic (V8 is also approximate there).
+//! Decimal values are correctly rounded (Rust's `f64` parser, like V8); `0x`, `0o` and `0b`
+//! values are correctly rounded for any length.
 
 use super::{is_js_whitespace, text_lossy};
 use crate::str::VeltStr;
@@ -19,39 +18,8 @@ fn digits_len(s: &[u8], radix: u32) -> usize {
         .unwrap_or(s.len())
 }
 
-/// Value of a non-empty run of valid radix-`radix` digits.
-fn digits_value(digits: &[u8], radix: u32) -> f64 {
-    if radix == 10 {
-        if digits.len() <= 15 {
-            return digits.iter().fold(0u64, |a, &d| a * 10 + (d - b'0') as u64) as f64;
-        }
-        // SAFETY: ASCII digits only.
-        return unsafe { std::str::from_utf8_unchecked(digits) }
-            .parse()
-            .unwrap_or(f64::NAN);
-    }
-    if radix.is_power_of_two() {
-        return power_of_two_value(digits, radix);
-    }
-    let mut acc: u128 = 0;
-    for (i, &b) in digits.iter().enumerate() {
-        let d = digit_value(b, radix).unwrap_or(0) as u128;
-        match acc
-            .checked_mul(radix as u128)
-            .and_then(|a| a.checked_add(d))
-        {
-            Some(next) => acc = next,
-            None => {
-                return digits[i..].iter().fold(acc as f64, |f, &b| {
-                    f * radix as f64 + digit_value(b, radix).unwrap_or(0) as f64
-                })
-            }
-        }
-    }
-    acc as f64
-}
-
-/// Exact for any length: keep >= 123 significant bits, fold the rest into a sticky bit, and let
+/// Value of a non-empty run of valid digits in a power-of-two `radix` (16, 8 or 2), exact for
+/// any length: keep >= 123 significant bits, fold the rest into a sticky bit, and let
 /// the (round-to-nearest-even) `u128 → f64` conversion do the single rounding.
 fn power_of_two_value(digits: &[u8], radix: u32) -> f64 {
     let bits = radix.trailing_zeros();
@@ -138,7 +106,7 @@ fn str_to_number(s: &str) -> f64 {
         let digits = &s[2..];
         let valid = !digits.is_empty() && digits_len(digits, radix) == digits.len();
         return if valid {
-            digits_value(digits, radix)
+            power_of_two_value(digits, radix)
         } else {
             f64::NAN
         };
