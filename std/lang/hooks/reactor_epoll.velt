@@ -251,9 +251,9 @@ export function wake(r: usize): void {
  * and `len` are 0 (`NULL`) when the peer's address isn't wanted.
  */
 export function accept(fd: i32, addr: usize, len: usize): i32 {
-  // SAFETY: `addr` holds the `socklen_t` at `len` bytes, or both are NULL.
   const a = m.ptrOrNull<sockaddr>(addr);
   const l = m.ptrOrNull<u32>(len);
+  // SAFETY: `addr` holds the `socklen_t` at `len` bytes, or both are NULL.
   return unsafe { accept4(fd, a, l, SOCKET_FLAGS) };
 }
 
