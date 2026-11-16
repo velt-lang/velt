@@ -44,6 +44,8 @@ pub(crate) struct MethodWrites {
     done: FxHashSet<u32>,
     /// (implementation, method) pairs reported.
     reported: FxHashSet<(u32, usize)>,
+    /// Implementations whose field-setter part is placeholders ([`Ctx::field_setter_part`]).
+    placeholders: FxHashSet<u32>,
     /// Adapters (an `I<A>` as an `I<B>`, `body/expr/iface_adapt.rs`): their setters write the
     /// wrapped value's.
     adapters: FxHashMap<u32, crate::body::expr::iface_adapt_slots::AdapterParts>,
@@ -78,6 +80,31 @@ impl Ctx<'_> {
         self.method_writes.adapters.insert(index, p);
     }
 
+    /// Can a field of function type `field` store method `j` of `iface` (at `args`)? The same
+    /// parameters and result; the error types are compared by identity only, never unified (a
+    /// field's is inferred from what is stored into it, `crate::fn_sites`).
+    pub(crate) fn stores_method(
+        &mut self,
+        iface: DefId,
+        args: &[TyId],
+        j: usize,
+        field: TyId,
+    ) -> bool {
+        let Some(m) = self.method_fn_ty(iface, args, j) else {
+            return false;
+        };
+        let parts = |t: TyId, cx: &Self| match cx.ty.kind(t) {
+            crate::hir::TyKind::FnPtr {
+                params, ret, rest, ..
+            } => Some((params.clone(), *ret, *rest)),
+            _ => None,
+        };
+        match (parts(m, self), parts(field, self)) {
+            (Some(a), Some(b)) => a == b,
+            _ => false,
+        }
+    }
+
     /// Implementation `index` stores its interface's methods as `srcs` (in method order).
     pub(crate) fn note_method_sources(&mut self, index: u32, srcs: Vec<Option<MethodSrc>>) {
         self.method_writes.sources.insert(index, srcs);
@@ -98,10 +125,6 @@ impl Ctx<'_> {
     /// implementations get their method setters. Reports those that can't store it (once each),
     /// and returns false then.
     pub(crate) fn mark_method_written(&mut self, iface: DefId, j: usize, span: Span) -> bool {
-        // The field setters come first in the table.
-        if !self.mark_iface_written(iface, span) {
-            return false;
-        }
         self.method_writes.written.entry(iface).or_insert(span);
         self.method_writes.methods.entry((iface, j)).or_insert(span);
         let impls: Vec<u32> = (0..self.impls.len() as u32)
@@ -114,6 +137,60 @@ impl Ctx<'_> {
         ok
     }
 
+    /// Is implementation `k`'s field-setter part placeholders (below)?
+    pub(crate) fn method_writes_placeholder(&self, k: u32) -> bool {
+        self.method_writes.placeholders.contains(&k)
+    }
+
+    /// Implementation `k`, made with method setters by [`Self::upcast_method_setters`]: its
+    /// field-setter part is placeholders when no field of its interface is written.
+    pub(crate) fn note_placeholders(&mut self, k: u32, iface: DefId) {
+        if self.methods_written(iface) && !self.iface_written(iface) {
+            self.method_writes.placeholders.insert(k);
+        }
+    }
+
+    /// Implementation `k`'s placeholders were replaced by its field setters.
+    pub(crate) fn method_writes_filled(&mut self, k: u32) {
+        self.method_writes.placeholders.remove(&k);
+    }
+
+    /// The table's field-setter part for implementation `k`, when a method of its interface is
+    /// written and no field is: placeholders, never called, so field writes stay off (and their
+    /// checks unrun) until a field is written through the interface, which then replaces them
+    /// (`iface_writes.rs` `add_setters`). An interface whose fields are written gets its real
+    /// field setters instead.
+    fn field_setter_part(&mut self, k: u32) {
+        let iface = self.impls[k as usize].iface;
+        if self.iface_written(iface) {
+            self.add_setters_pub(k);
+            return;
+        }
+        let Some(info) = self.iface(iface) else {
+            return;
+        };
+        let (base, fields) = (info.methods.len() + info.fields.len(), info.fields.clone());
+        let imp = self.impls[k as usize].clone();
+        if imp.methods.len() != base {
+            return;
+        }
+        let crate::hir::TyKind::Adt(d, _) = *self.ty.kind(imp.ty) else {
+            return;
+        };
+        let mut targs = imp.iface_args.clone();
+        targs.push(imp.ty);
+        let mut defs = vec![];
+        for f in &fields {
+            let ty = self.subst(f.ty, &targs);
+            let name = format!("{} unset", f.name);
+            defs.push(crate::collect::getters::unused_setter(
+                self, d, imp.ty, &name, ty,
+            ));
+        }
+        self.impls[k as usize].methods.extend(defs);
+        self.method_writes.placeholders.insert(k);
+    }
+
     /// Give implementation `k`, of an interface whose methods are written, its method setters
     /// (once), and report each written method it can't store. Returns whether it stores all.
     fn method_setters_of(&mut self, k: u32) -> bool {
@@ -122,6 +199,7 @@ impl Ctx<'_> {
             return true;
         };
         let (methods, nfields) = (info.methods.clone(), info.fields.len());
+        self.field_setter_part(k);
         if let Some(p) = self.method_writes.adapters.get(&k).cloned() {
             return self.adapter_method_setters(k, &p, methods.len(), nfields);
         }
@@ -174,6 +252,13 @@ impl Ctx<'_> {
         if defs.len() == methods.len() {
             self.impls[k as usize].methods.extend(defs);
             self.groups = None;
+        } else if std::env::var_os("VELT_DEBUG_MW").is_some() {
+            let shown = self.display(ty);
+            eprintln!(
+                "method setters skipped for impl {k} of {shown}: {} of {}",
+                defs.len(),
+                methods.len()
+            );
         }
         ok
     }
@@ -257,6 +342,20 @@ impl Ctx<'_> {
             _ => return (vec![], srcs),
         };
         let mut defs = vec![];
+        // No field of `b` written: placeholders where its field setters go (the caller marks
+        // the new implementation, [`Self::note_placeholders`]).
+        if !self.iface_written(b) {
+            let fields = self.iface(b).map(|i| i.fields.clone()).unwrap_or_default();
+            let mut targs = args.to_vec();
+            targs.push(imp.ty);
+            for f in &fields {
+                let ty = self.subst(f.ty, &targs);
+                let name = format!("{} unset", f.name);
+                defs.push(crate::collect::getters::unused_setter(
+                    self, d, imp.ty, &name, ty,
+                ));
+            }
+        }
         for (j, m) in b_methods.iter().enumerate() {
             let name = format!("{}()", m.name);
             // `a`'s own setter of the method, when `a` is written through too.
@@ -291,8 +390,6 @@ impl Ctx<'_> {
         for k in 0..self.impls.len() as u32 {
             let iface = self.impls[k as usize].iface;
             if self.methods_written(iface) {
-                // Field setters first, as `mark_iface_written` gives the earlier ones.
-                self.add_setters_pub(k);
                 self.method_setters_of(k);
             }
         }

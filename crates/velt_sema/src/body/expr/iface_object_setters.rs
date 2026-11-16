@@ -114,8 +114,8 @@ fn literal_method_sources(
         let src = match slots.get(j).and_then(|s| s.as_ref()) {
             Some(Slot::Call(f)) if !uses_this.get(*f as usize).copied().unwrap_or(true) => {
                 let ty = field_tys[*f as usize].1;
-                (cx.method_fn_ty(iface, args, j))
-                    .filter(|m| cx.same_ty(*m, ty))
+                (cx.stores_method(iface, args, j, ty))
+                    .then_some(())
                     .map(|_| crate::iface_method_writes::MethodSrc {
                         d,
                         self_ty,

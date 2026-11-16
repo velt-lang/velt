@@ -528,15 +528,13 @@ impl Ctx<'_> {
         let mut msrcs = vec![];
         for (j, fill) in plan.iter().take(nmethods).enumerate() {
             let src = match *fill {
-                Fill::Call(_, i, fn_ty, _) => self.method_fn_ty(iface, args, j).and_then(|m| {
-                    self.same_ty(m, fn_ty)
-                        .then_some(crate::iface_method_writes::MethodSrc {
-                            d,
-                            self_ty,
-                            index: i,
-                            ty: fn_ty,
-                        })
-                }),
+                Fill::Call(_, i, fn_ty, _) => (self.stores_method(iface, args, j, fn_ty))
+                    .then_some(crate::iface_method_writes::MethodSrc {
+                        d,
+                        self_ty,
+                        index: i,
+                        ty: fn_ty,
+                    }),
                 _ => None,
             };
             msrcs.push(src);

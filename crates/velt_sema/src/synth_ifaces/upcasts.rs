@@ -450,6 +450,7 @@ impl Ctx<'_> {
         methods.extend(msetters);
         let new = self.impls.len() as u32;
         self.note_method_sources(new, msrcs);
+        self.note_placeholders(new, b);
         self.impls.push(ImplDef {
             ty: imp.ty,
             generics: imp.generics,
