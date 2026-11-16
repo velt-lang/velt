@@ -203,3 +203,70 @@ async function main(): Promise<i32> {
         (Some(0), "read contents\n600 ended\n")
     );
 }
+
+#[test]
+fn many_writes_in_flight_hold_one_pool_thread() {
+    // 2000 writes of a 1 KiB line not awaited one by one, while stdout is read: the child echoes
+    // each line, so the writes block on a full pipe until the read drains the child. Waiting for
+    // their turn on pool threads, the writes filled all 512 and the read never ran.
+    let dir = test_dir::TestDir::new();
+    let (code, out) = build_and_run(
+        dir.path(),
+        "flood",
+        r#"import { spawn } from "velt/process/child";
+import { argv, args, readLine } from "velt/process";
+
+async function main(): Promise<i32> {
+  if (args().length > 0) {
+    let line = await readLine();
+    while (line != null) {
+      console.log(line);
+      line = await readLine();
+    }
+    return 0;
+  }
+  const p = spawn(argv()[0].clone(), ["echo"], { stdin: "pipe", stdout: "pipe" });
+  const line = "x".repeat(1023);
+  const writes: Promise<void>[] = [];
+  for (let i = 0; i < 2000; i++) {
+    writes.push(p.write(`${line}\n`));
+  }
+  const fed = Promise.all<void>(writes).then((): string => "fed");
+  const drained = (async (): Promise<string> => {
+    let n = 0;
+    let chunk = await p.readStdout();
+    while (chunk != "") {
+      n += chunk.replaceAll("\r", "").length;
+      if (n >= 2000 * 1024) {
+        return `read ${n}`;
+      }
+      chunk = await p.readStdout();
+    }
+    return `ended at ${n}`;
+  })();
+  // timing: a 30 s bound on what takes well under a second; it only ends the broken case.
+  const timer = new Promise<string>((resolve) => {
+    setTimeout(() => resolve("stuck"), 30000);
+  });
+  const got = await Promise.race<string>([
+    Promise.all<string>([fed, drained]).then((r: string[]): string => r.join(" ")),
+    timer,
+  ]);
+  console.log(got);
+  if (got == "stuck") {
+    // The pool is wedged: nothing more would finish.
+    process.exit(1);
+  }
+  await p.closeStdin();
+  console.log(`exit ${await p.wait()}`);
+  p.close();
+  return 0;
+}
+"#,
+        &[],
+    );
+    assert_eq!(
+        (code, out.as_str()),
+        (Some(0), "fed read 2048000\nexit 0\n")
+    );
+}
