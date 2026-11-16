@@ -33,6 +33,7 @@ pub(super) fn load_options<'a>(
         // with laziness off (no live set demands the executor), load them up front too.
         demand_executor: !scope.eager_std && std::env::var_os("VELT_CHECK_ALL_STD").is_none(),
         std_stubs: None,
+        std_modules: None,
     }
 }
 

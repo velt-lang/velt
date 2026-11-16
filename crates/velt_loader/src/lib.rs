@@ -92,6 +92,16 @@ pub use std_root::{in_std, prelude_files, std_root};
 /// A std module's stub by its canonical path, decoded for its file ([`LoadOptions::std_stubs`]).
 pub type StdStubs<'f> = dyn Fn(&str, FileId) -> Option<ast::Module> + 'f;
 
+/// EXPERIMENT (#2943 M2): a std module as an earlier load loaded it ([`LoadOptions::std_modules`]).
+pub struct StdModule {
+    /// Canonical path (`std/fs`).
+    pub path: String,
+    /// Its file, below the std root.
+    pub file: PathBuf,
+    pub imports: Vec<(String, String)>,
+    pub jsx_runtime: Option<String>,
+}
+
 /// Inputs of [`load_program`] besides the root path.
 #[derive(Default)]
 pub struct LoadOptions<'a> {
@@ -140,6 +150,11 @@ pub struct LoadOptions<'a> {
     /// file's canonical path, that module is the file's, unparsed (the check takes the rest of
     /// std from the unit).
     pub std_stubs: Option<&'a StdStubs<'a>>,
+    /// With [`LoadOptions::std_stubs`] (#2943 M2): every std module as an earlier load loaded it,
+    /// in its order. They are the load's first modules, each with its stub, and nothing about them
+    /// is resolved again: an import of one finds it by its file. std's files then need no extra
+    /// roots, and the prelude and the globals are among them.
+    pub std_modules: Option<&'a [StdModule]>,
 }
 
 /// Result of loading a program: the modules and the index of the root (`main`).
@@ -187,7 +202,8 @@ pub fn load_program(
         .map(|o| o.iter().map(|(p, s)| (file_key(p), s.clone())).collect())
         .unwrap_or_default();
     let mut loader = Loader::new(sm, diags, &opts, overlay, LoadState::default());
-    if let Some(std) = &opts.std_root {
+    let injected = loader.inject_std();
+    if let (Some(std), false) = (&opts.std_root, injected) {
         match prelude_files(std) {
             Ok(files) => {
                 for file in files {
@@ -229,6 +245,10 @@ pub fn load_program(
     loader.resolve_all(&mut queue);
     loader.extra_phase = true;
     for file in opts.extra_roots {
+        // std's files are loaded already ([`LoadOptions::std_modules`]).
+        if injected && std_tree::is_file(file) == Some(true) {
+            continue;
+        }
         loader.add_extra_root(file, &origin, &mut queue);
         loader.resolve_all(&mut queue);
     }
@@ -384,6 +404,36 @@ impl Loader<'_, '_> {
                 queue.push_back(new);
             }
         }
+    }
+
+    /// Load the std modules an earlier load loaded ([`LoadOptions::std_modules`]), each with its
+    /// stub; whether there were any.
+    fn inject_std(&mut self) -> bool {
+        let (Some(table), Some(stubs), Some(std)) =
+            (self.opts.std_modules, self.opts.std_stubs, self.opts.std_root.clone())
+        else {
+            return false;
+        };
+        for m in table {
+            let file = self.sm.add(&m.file, String::new());
+            let Some(ast) = stubs(&m.path, file) else {
+                continue;
+            };
+            let index = self.modules.len();
+            self.by_file.insert(file_key(&m.file), index);
+            self.resolved.insert(index);
+            self.modules.push(SourceModule {
+                path: m.path.clone(),
+                is_std: true,
+                is_dependency: false,
+                file,
+                ast,
+                imports: m.imports.clone(),
+                jsx_runtime: m.jsx_runtime.clone(),
+            });
+            self.origins.push((m.file.clone(), Origin::Std(std.clone())));
+        }
+        true
     }
 
     /// Parse and register a module (`key`: its [`file_key`]); returns its index.

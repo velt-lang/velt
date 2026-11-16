@@ -68,5 +68,6 @@ pub(super) fn load_options<'a>(
         demand_std: loader::demand_std_on(),
         demand_executor: false,
         std_stubs: None,
+        std_modules: None,
     }
 }

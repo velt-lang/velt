@@ -393,15 +393,21 @@ fn load_modules(
         (stubs.and_then(|s| s.get(path))).and_then(|b| velt_syntax::decode_module(b, file))
     };
     let mut load = load_options(sess.generator_build, opts, scope);
+    let std_modules = (prepared.as_ref()).and_then(|p| p.modules.as_deref());
     if stubs.is_some() {
         load.std_stubs = Some(&decode);
         // std's variants were compared when its unit was made; stubs hold no exports to compare.
         load.check_variants = false;
+        load.std_modules = std_modules;
     }
     sess.units_stubbed = stubs.is_some();
     sess.units_std_key = prepared.as_ref().map(|p| p.key);
     let loaded = loader::load_program(&mut sess.sm, &opts.input, load, &mut sess.diagnostics)
         .map_err(BuildError::Failed)?;
+    // A load of all of std keeps std's modules for a later one ([`units_disk::save_modules`]).
+    if let (Some(p), false) = (&prepared, sess.units_stubbed) {
+        units_disk::save_modules(p.key, &loaded.modules, &sess.sm);
+    }
     sess.record("parse", t);
     Ok(loaded)
 }

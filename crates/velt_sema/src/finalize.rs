@@ -15,8 +15,9 @@ use crate::hooks;
 /// Returns the deferred std definitions nothing reached (`hir::Program::unchecked`), whose stubs
 /// it builds first (`body::lazy_std`).
 /// The definitions the program is built from: all, or with std's unit from disk (`velt check`,
-/// [`Ctx::std_from_disk`]), the app's and the std interfaces it implements (whose dispatch
-/// groups its methods join, which reports a disagreement there).
+/// [`Ctx::std_from_disk`]), the app's, the std interfaces it implements (whose dispatch groups
+/// its methods join, which reports a disagreement there) and std's module state slots (the
+/// program's module state holds them).
 pub(crate) fn program_defs(cx: &Ctx) -> Vec<usize> {
     let base = cx.unit_base as usize;
     if !cx.std_from_disk {
@@ -27,6 +28,7 @@ pub(crate) fn program_defs(cx: &Ctx) -> Vec<usize> {
         .map(|imp| imp.iface.0 as usize)
         .filter(|&i| i < base)
         .collect();
+    out.extend((cx.module_slots.iter()).map(|d| d.0 as usize).filter(|&i| i < base));
     out.sort_unstable();
     out.dedup();
     out.extend(base..cx.info.len());

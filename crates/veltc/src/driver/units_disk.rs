@@ -20,10 +20,12 @@ use velt_loader::std_tree::StdTree;
 
 use super::CheckScope;
 
-/// std's sources' key, with the stubs kept under it if any.
+/// std's sources' key, with the stubs kept under it if any, and std's modules as a load with
+/// all of std loaded them ([`save_modules`]).
 pub(super) struct Prepared {
     pub key: u64,
     pub stubs: Option<HashMap<String, Vec<u8>>>,
+    pub modules: Option<Vec<loader::StdModule>>,
 }
 
 /// The directory std's unit is kept in, when the experiment is on.
@@ -73,7 +75,73 @@ pub(super) fn prepare(scope: &CheckScope) -> Option<Prepared> {
         let stubbed = stubs.keys().cloned().collect();
         loader::std_tree::install(tree.clone(), stubbed);
     }
-    Some(Prepared { key, stubs })
+    let modules = stubs.as_ref().and_then(|_| read_modules(&modules_path(&dir, key), tree));
+    Some(Prepared {
+        key,
+        stubs,
+        modules,
+    })
+}
+
+fn modules_path(dir: &Path, key: u64) -> PathBuf {
+    dir.join(format!("{key:016x}.modules"))
+}
+
+const MODULES_FORMAT: &str = "velt-std-modules 1";
+
+/// Keep std's modules of a load with all of std loaded (`loaded`, files in `sm`) under std's
+/// sources' key, for a later load that takes them as they are (`LoadOptions::std_modules`):
+/// each module's path, file (below the std root), imports and JSX runtime.
+pub(super) fn save_modules(
+    key: u64,
+    loaded: &[velt_sema::SourceModule],
+    sm: &velt_common::SourceMap,
+) {
+    let (Some(dir), Some(tree)) = (dir(), std_tree()) else {
+        return;
+    };
+    let path = modules_path(&dir, key);
+    if path.exists() {
+        return;
+    }
+    let mut out = format!("{MODULES_FORMAT}\n");
+    for m in loaded.iter().filter(|m| m.is_std) {
+        let file = &sm.get(m.file).path;
+        let Ok(rel) = vpm::relpath::absolute(file).strip_prefix(tree.root()).map(Path::to_path_buf)
+        else {
+            return;
+        };
+        let jsx = m.jsx_runtime.as_deref().unwrap_or("");
+        out.push_str(&format!("M\t{}\t{}\t{jsx}\n", m.path, rel.display()));
+        for (spec, target) in &m.imports {
+            out.push_str(&format!("I\t{spec}\t{target}\n"));
+        }
+    }
+    write_whole(&path, out.as_bytes());
+}
+
+/// [`save_modules`]' modules, their files below `tree`'s root.
+fn read_modules(path: &Path, tree: &StdTree) -> Option<Vec<loader::StdModule>> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let mut lines = text.lines();
+    (lines.next()? == MODULES_FORMAT).then_some(())?;
+    let mut out: Vec<loader::StdModule> = vec![];
+    for line in lines {
+        let parts: Vec<&str> = line.split('\t').collect();
+        match parts.as_slice() {
+            ["M", path, file, jsx] => out.push(loader::StdModule {
+                path: path.to_string(),
+                file: tree.root().join(file),
+                imports: vec![],
+                jsx_runtime: (!jsx.is_empty()).then(|| jsx.to_string()),
+            }),
+            ["I", spec, target] => {
+                out.last_mut()?.imports.push((spec.to_string(), target.to_string()));
+            }
+            _ => return None,
+        }
+    }
+    Some(out)
 }
 
 /// Write `bytes` to `path` whole: to a temporary file, then renamed into place.

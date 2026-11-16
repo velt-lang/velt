@@ -9,7 +9,9 @@
 //! - interfaces (what an augmentation targets, `crate::interface_merge`);
 //! - overloaded functions and every class, without bodies (`overloads`: exported overload sets,
 //!   and each class's overloaded methods and base, which a subclass's walk follows by name);
-//! - module-level string constants (`global_this`'s keys).
+//! - module-level string constants (`global_this`'s keys);
+//! - `declare function`s and `unsafe` functions (without bodies): the driver's check of raw
+//!   native API (`veltc` `native::trust`) reads them from the modules it is given.
 //!
 //! A stub's own rewrites change nothing that matters: what they make of std is dropped, and std's
 //! facts come from std's stage. On disk, a unit keeps its stubs (they need no other std AST).
@@ -43,7 +45,10 @@ fn stub_item(i: &ast::Item) -> Option<ast::Item> {
     let kind = match &i.kind {
         I::Import(_) | I::TypeAlias(_) => i.kind.clone(),
         I::Interface(d) => I::Interface(d.kept().into_owned()),
-        I::Function(f) if !f.overloads.is_empty() => I::Function(f.kept().into_owned()),
+        I::Function(f) if !f.overloads.is_empty() || f.sig.is_unsafe => {
+            I::Function(f.kept().into_owned())
+        }
+        I::ExternFn(_) => i.kind.clone(),
         I::Class(d) => I::Class(d.kept().into_owned()),
         I::Struct(d) => I::Struct(d.kept().into_owned()),
         I::Var(v) if crate::global_this::keys::const_key(v).is_some() => i.kind.clone(),

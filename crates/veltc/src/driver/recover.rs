@@ -26,7 +26,15 @@ pub(super) fn check_recovering_loaded(
     opts: &BuildOptions,
     scope: &CheckScope,
 ) -> Result<(velt_loader::Loaded, Result<(), BuildError>), BuildError> {
+    let before = sess.diagnostics.len();
     let mut loaded = load_modules(sess, opts, scope)?;
+    // EXPERIMENT (#2943 M2): the recovered check has no std unit to take std's stubs from (it
+    // checks the modules it is given): std is loaded again, whole.
+    if sess.has_errors() && sess.units_stubbed {
+        sess.diagnostics.truncate(before);
+        sess.units_no_stubs = true;
+        loaded = load_modules(sess, opts, scope)?;
+    }
     if !sess.has_errors() {
         // EXPERIMENT (#2943 M2): a check by units ends the process right after; freeing the
         // program (every std definition) is left to the process's end.
