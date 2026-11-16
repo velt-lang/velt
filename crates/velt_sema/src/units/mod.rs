@@ -105,12 +105,20 @@ pub(crate) fn check_definitions(cx: &mut Ctx) {
 
 /// EXPERIMENT: `VELT_UNITS=2`, std checked as a check of its own (its rounds and passes), then
 /// the app's rounds from a copy of it.
-/// EXPERIMENT (#2943 D6, `VELT_UNITS_LIB=1`): the program's dependencies are in std's unit
-/// (the libraries' unit), checked and frozen with it, not with the app.
+/// EXPERIMENT (#2943 D6): the program's dependencies are in std's unit (the libraries' unit),
+/// checked and frozen with it, not with the app. On with `VELT_UNITS_LIB=1`, and with std's unit
+/// on disk (`VELT_UNITS_DISK`) unless `VELT_UNITS_LIB=0`.
 pub(crate) fn libraries() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("VELT_UNITS_LIB").is_some())
-        && !LIBS_OFF.load(std::sync::atomic::Ordering::Relaxed)
+    *ON.get_or_init(libraries_wanted) && !LIBS_OFF.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// [`libraries`]' setting (`VELT_UNITS_LIB`, `VELT_UNITS_DISK`).
+pub fn libraries_wanted() -> bool {
+    match std::env::var_os("VELT_UNITS_LIB") {
+        Some(v) => v != "0",
+        None => std::env::var_os("VELT_UNITS_DISK").is_some(),
+    }
 }
 
 /// Set when the dependencies' stage reported an error: the check is done again with them in

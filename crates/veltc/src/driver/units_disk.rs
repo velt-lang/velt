@@ -64,7 +64,7 @@ pub(crate) fn std_tree() -> Option<&'static StdTree> {
 /// Whether the dependencies are in std's unit (#2943 D6, `VELT_UNITS_LIB`, as sema's
 /// `units::libraries`).
 fn libraries() -> bool {
-    std::env::var_os("VELT_UNITS_LIB").is_some()
+    velt_sema::units_libraries_wanted()
 }
 
 /// The program's dependencies' source trees (`packages`; `input`: the root file, whose own

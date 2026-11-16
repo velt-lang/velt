@@ -85,6 +85,7 @@ pub mod value_params;
 pub use hook_calls::hook_args;
 pub use hooks::NAMES as HOOK_NAMES;
 pub use units::disk::{read_stubs as read_std_stubs, UNIT_NEEDED as STD_UNIT_NEEDED};
+pub use units::libraries_wanted as units_libraries_wanted;
 mod canon_key;
 mod glue_reach;
 pub mod ide;
