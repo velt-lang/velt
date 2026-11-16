@@ -1,0 +1,46 @@
+2026-11-16T12:48:07.4778740Z [36m==> goldens (debug + release)[0m
+2026-11-16T12:48:07.4779560Z     VELT_RT_PREBUILT=1 /Users/runner/work/velt/velt/target/debug/deps/golden-2a9b190825f26d0c --nocapture --exact golden
+2026-11-16T12:48:07.4811060Z 
+2026-11-16T12:48:07.4811530Z running 1 test
+2026-11-16T12:49:07.5731750Z test golden has been running for over 60 seconds
+2026-11-16T13:12:20.6829000Z golden: tests/golden/lang/promise_combinators_kept_array.velt passes: take it off golden_known_failing.txt (#2910)
+2026-11-16T13:12:20.6831440Z golden: tests/golden/lang/script_closure_promise.velt passes: take it off golden_known_failing.txt (#2966)
+2026-11-16T13:12:20.6836130Z 
+2026-11-16T13:12:20.6836770Z thread 'golden' (9441) panicked at crates/veltc/tests/golden.rs:184:9:
+2026-11-16T13:12:20.6837200Z 
+2026-11-16T13:12:20.6837590Z tests/golden/std/abort_signal_timeout_dropped.velt [--release]: exit -1 (want 0)
+2026-11-16T13:12:20.6838440Z --- want ---
+2026-11-16T13:12:20.6839100Z made 100000 held aborted: false
+2026-11-16T13:12:20.6839780Z --- got ---
+2026-11-16T13:12:20.6840750Z made 100000 held aborted: false
+2026-11-16T13:12:20.6841280Z --- stderr ---
+2026-11-16T13:12:20.6843160Z warning: `--release` linked a debug build of the runtime (/Users/runner/work/velt/velt/target/debug/libvelt_rt.a), which makes programs much slower; use a release `velt` (`cargo build --release -p veltc -p velt_rt`) or point $VELT_RT_LIB at a release runtime
+2026-11-16T13:12:20.6844420Z 
+2026-11-16T13:12:20.6848880Z (killed after 120 s)
+2026-11-16T13:12:20.6849210Z 
+2026-11-16T13:12:20.6849210Z 
+2026-11-16T13:12:20.6849850Z note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+2026-11-16T13:12:20.6850790Z golden: 2160 files, 1 failures, 1 failures in pending milestones and 0 known (VELT_GOLDEN_STRICT=1 to fail on them)
+2026-11-16T13:12:20.6875100Z test golden ... FAILED
+2026-11-16T13:12:20.6876250Z 
+2026-11-16T13:12:20.6876650Z failures:
+2026-11-16T13:12:20.6876980Z 
+2026-11-16T13:12:20.6877300Z failures:
+2026-11-16T13:12:20.6877880Z     golden
+2026-11-16T13:12:20.6878340Z 
+2026-11-16T13:12:20.6879050Z test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 5 filtered out; finished in 1452.96s
+2026-11-16T13:12:20.6879720Z 
+2026-11-16T13:12:20.6902340Z 
+2026-11-16T13:12:20.6902630Z steps:
+2026-11-16T13:12:20.6903160Z       0s  unpack golden.tar
+2026-11-16T13:12:20.6903990Z       0s  C bundle of packages/sqlite, before the goldens
+2026-11-16T13:12:20.6904560Z    1452s  goldens (debug + release)
+2026-11-16T13:12:20.6904970Z    1452s  total
+2026-11-16T13:12:20.6915950Z [31mFAILED: goldens (debug + release)[0m
+2026-11-16T13:12:20.7046510Z ##[error]Process completed with exit code 1.
+2026-11-16T13:12:20.7273430Z Prepare all required actions
+2026-11-16T13:12:20.7364330Z ##[group]Run ./.github/actions/fail-fast
+2026-11-16T13:12:20.7364700Z with:
+2026-11-16T13:12:20.7365000Z   job: golden shard 1/2 (macos-latest)
+2026-11-16T13:12:20.7365340Z env:
+2026-11-16T13:12:20.7365590Z   CARGO_INCREMENTAL: 0
