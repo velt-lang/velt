@@ -26,7 +26,9 @@ import * as wk from "./sched_wake";
  * (sched_task.velt `rootLeft`): the worker that ended it (sched_main_end.velt `mainDone`,
  * `mainFinish`) stores that, then wakes worker 0 only if its park word is up; read after the
  * word went up (both sequentially consistent, as the inbox and queue before), either that worker
- * sees the word and wakes worker 0, or worker 0 sees the root left here.
+ * sees the word and wakes worker 0, or worker 0 sees the root left here. An exit handed to
+ * worker 0 (sched_exit.velt `handToMain`) is looked at the same way, first: the reporting worker
+ * stores it, then wakes worker 0 only if its park word is up.
  */
 function parkable(e: usize): bool {
   const g = m.ld(e + t.E_MAIN);
@@ -34,6 +36,10 @@ function parkable(e: usize): bool {
   // workers do. A reader of a pipe waits for it, maybe for as long as the sleep (#2873).
   wk.handOffOutput();
   if (e === g) {
+    if (ex.exitDue()) {
+      // `park` takes it (`takeExit`) with its park word down.
+      return false;
+    }
     const root = m.ld(e + t.E_ROOT);
     if (root !== 0 && t.rootLeft(root, true)) {
       return false;

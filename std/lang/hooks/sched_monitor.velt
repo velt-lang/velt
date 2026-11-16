@@ -33,6 +33,7 @@ import { exportedAddress, noInline } from "velt/lang/intrinsics";
 import * as r from "#reactor";
 import * as th from "#sched-thread";
 import * as dbg from "./sched_debug";
+import * as ex from "./sched_exit";
 import * as io from "./sched_io";
 import * as lk from "./sched_lock";
 import * as m from "./sched_mem";
@@ -431,7 +432,9 @@ export function startSpare(g: usize, now: usize): usize {
   m.st(w + t.E_PROGRESS, now);
   m.store32(w + t.E_PARK, 0);
   m.swap(g + t.E_STARTED, i + 1);
-  if (!workers.startThread(w)) {
+  // Counted started, then the exit looked at, against the exit's store, then its read of the count
+  // (sched_exit.velt `handToMain`): either the spare gets `EXIT_DUE` or it never starts.
+  if (ex.exitDue() || !workers.startThread(w)) {
     // No thread: asleep for good, as far as the others can tell.
     m.store32(w + t.E_PARK, 1);
     return 0;

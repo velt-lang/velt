@@ -24,6 +24,7 @@
 // socket to a retired spare (sched_io_table.velt `join`).
 
 import { noInline } from "velt/lang/intrinsics";
+import * as ex from "./sched_exit";
 import * as io from "./sched_io";
 import * as w from "./sched_io_write";
 import * as lk from "./sched_lock";
@@ -52,7 +53,8 @@ export function relaxDuties(g: usize, now: usize): bool {
     m.st(g + t.E_CALM, 0);
     return false;
   }
-  const relax = m.load32(g + t.E_RELAX);
+  // The relax's own states: an exit due (sched_exit.velt `EXIT_DUE`) leaves them as they are.
+  const relax = m.load32(g + t.E_RELAX) & ~ex.EXIT_DUE;
   if (relax === t.RELAX_DOING) {
     return true;
   }
@@ -81,7 +83,7 @@ export function relaxDuties(g: usize, now: usize): bool {
     }
   }
   if (retired === n - 1) {
-    m.store32(g + t.E_RELAX, t.RELAX_ASKED);
+    m.or32(g + t.E_RELAX, t.RELAX_ASKED);
     return true;
   }
   const ticks = m.ld(g + t.E_CALM) + 1;
@@ -115,7 +117,7 @@ export function idleDuties(g: usize): bool {
     m.ld(g + t.E_SPLIT) === 0 ||
     n < 2 ||
     m.load(g + t.E_LAZY) !== 0 ||
-    m.load32(g + t.E_RELAX) !== 0 ||
+    (m.load32(g + t.E_RELAX) & ~ex.EXIT_DUE) !== 0 ||
     m.load(g + t.E_MOVING) !== 0
   ) {
     return false;
@@ -137,7 +139,7 @@ export function idleDuties(g: usize): bool {
     }
   }
   if (retired === n - 1) {
-    m.store32(g + t.E_RELAX, t.RELAX_ASKED);
+    m.or32(g + t.E_RELAX, t.RELAX_ASKED);
     return false;
   }
   if (open > 0) {
@@ -290,7 +292,7 @@ export function relax(g: usize): bool {
   const n = m.load(g + t.E_STARTED);
   for (let i: usize = 1; i < n; i++) {
     if (m.load32(t.worker(i) + t.E_RETIRED) !== t.R_RETIRED) {
-      m.store32(g + t.E_RELAX, 0);
+      m.and32(g + t.E_RELAX, ex.EXIT_DUE);
       return false;
     }
   }
@@ -318,7 +320,7 @@ export function relax(g: usize): bool {
   m.swap(g + t.E_LAZY, t.LAZY_WATCH);
   m.store32(g + t.E_MODE, 0);
   q.unlock(g, mode);
-  m.store32(g + t.E_RELAX, 0);
+  m.and32(g + t.E_RELAX, ex.EXIT_DUE);
   return true;
 }
 

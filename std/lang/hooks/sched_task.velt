@@ -227,7 +227,8 @@ export const E_STALL_SEEN: usize = 776;
  * which then runs no task and hands what reaches it to worker 0, until the monitor sets it back
  * to 0; `R_DECLINED` by a spare that keeps its tasks (a worker as any other: `R_AWAY` holds the
  * states in which it runs nothing). Worker 0's `E_RELAX`: the monitor asks it to leave the shared mode (`RELAX_ASKED`), it
- * does so between two polls (`RELAX_DOING`, then 0).
+ * does so between two polls (`RELAX_DOING`, then 0). Every worker's `E_RELAX` gets
+ * sched_exit.velt's `EXIT_DUE` when an exit is due, which the relax keeps.
  */
 export const E_RETIRED: usize = 784;
 export const E_RELAX: usize = 788;

@@ -1,9 +1,11 @@
 // velt/lang/hooks (internal): the result of a started promise of the executor in Velt that nobody
 // claims (sched_node.velt): dropped by its task, and a rejection reported as Node reports one
 // nobody handled, once the task's microtasks are drained (`report`), or at once for an error a
-// callback threw.
+// callback threw. A spawned task's result whose handle a poll drops waits there too
+// (sched_join.velt `keepDrop`).
 
-import { stateDrop } from "velt/lang/intrinsics";
+import { inline, stateDrop } from "velt/lang/intrinsics";
+import * as jn from "./sched_join";
 import * as m from "./sched_mem";
 import * as nd from "./sched_node";
 import * as aw from "./sched_node_await";
@@ -120,27 +122,49 @@ function dropNow(n: usize): void {
   }
 }
 
-/** Reports (drops) the rejected results task `task` kept, in the order they were kept. */
+/**
+ * Reports (drops) the rejected results task `task` kept, in the order they were kept: started
+ * promises' nodes, and spawned tasks whose handle a poll of `task` dropped (sched_join.velt
+ * `keepDrop`, tagged `KEPT`, linked through `T_JOINER`). Kept again while it runs (a dropped
+ * result holding a handle): reported too.
+ */
 export function report(task: usize): void {
-  let n = m.ld(task + t.T_UNHANDLED);
-  m.st(task + t.T_UNHANDLED, 0);
-  let rev: usize = 0;
-  while (n !== 0) {
-    const next = m.ld(n + nd.N_UNHANDLED_NEXT);
-    m.st(n + nd.N_UNHANDLED_NEXT, rev);
-    rev = n;
-    n = next;
-  }
-  while (rev !== 0) {
-    const next = m.ld(rev + nd.N_UNHANDLED_NEXT);
-    m.st(rev + nd.N_UNHANDLED_NEXT, 0);
-    const watched = (m.and32(rev + nd.N_FLAGS, ~WATCHED) & WATCHED) !== 0;
-    if (!watched || unclaimed(rev)) {
-      // A held rejection reported now is the owner's no more: its later drop leaves it.
-      m.or32(rev + nd.N_FLAGS, nd.DELIVERED);
-      dropNow(rev);
+  while (m.ld(task + t.T_UNHANDLED) !== 0) {
+    let n = m.ld(task + t.T_UNHANDLED);
+    m.st(task + t.T_UNHANDLED, 0);
+    let rev: usize = 0;
+    while (n !== 0) {
+      const at = nextAt(n);
+      const next = m.ld(at);
+      m.st(at, rev);
+      rev = n;
+      n = next;
     }
-    nd.release(rev);
-    rev = next;
+    while (rev !== 0) {
+      const at = nextAt(rev);
+      const next = m.ld(at);
+      m.st(at, 0);
+      if ((rev & jn.KEPT) !== 0) {
+        jn.dropKept(rev & ~jn.KEPT);
+      } else {
+        const watched = (m.and32(rev + nd.N_FLAGS, ~WATCHED) & WATCHED) !== 0;
+        if (!watched || unclaimed(rev)) {
+          // A held rejection reported now is the owner's no more: its later drop leaves it.
+          m.or32(rev + nd.N_FLAGS, nd.DELIVERED);
+          dropNow(rev);
+        }
+        nd.release(rev);
+      }
+      rev = next;
+    }
   }
+}
+
+/** Where entry `n` of a task's list of rejections (`report`) links to the next. */
+@inline
+function nextAt(n: usize): usize {
+  if ((n & jn.KEPT) !== 0) {
+    return (n & ~jn.KEPT) + t.T_JOINER;
+  }
+  return n + nd.N_UNHANDLED_NEXT;
 }
