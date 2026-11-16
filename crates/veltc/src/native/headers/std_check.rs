@@ -54,6 +54,7 @@ const CHECKED: &[&str] = &[
     "lang/hooks/unwind_itanium.velt",
     "net/calls_posix.velt",
     "net/fd_io.velt",
+    "net/udp/udp_sched.velt",
     "sync/slot.velt",
 ];
 

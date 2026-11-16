@@ -49,15 +49,15 @@ export declare c("c") function recvfrom$net(
   buf: Ptr<u8>,
   n: usize,
   flags: i32,
-  addr: Ptr<u8>,
-  len: Ptr<u8>,
+  addr: Ptr<sockaddr>,
+  len: Ptr<u32>,
 ): isize;
 export declare c("c") function sendto$net(
   fd: i32,
   buf: Ptr<u8>,
   n: usize,
   flags: i32,
-  addr: Ptr<u8>,
+  addr: Ptr<sockaddr>,
   len: u32,
 ): isize;
 export declare c("c") function shutdown$net(fd: i32, how: i32): i32;

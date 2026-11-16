@@ -1,6 +1,7 @@
 // velt/net/udp (internal): the UDP functions, in a build compiled with the executor in Velt
 // (`VELT_SCHEDULER=std`, #2649 step 4): the `std-scheduler` variant of `#net-udp`
-// (std/imports.velt), with the names and signatures of the default variant's (std/net/udp/rt.velt).
+// (std/imports.velt), with the names and signatures of the default variant's
+// (std/net/udp/rt.velt).
 //
 // `bind` opens a non-blocking datagram socket on the executor's reactor (std/lang/hooks/
 // sched_io.velt: epoll, kqueue or Windows' AFD), registered as TCP's sockets are, with a handle
@@ -16,7 +17,7 @@ import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";
 import { Ptr } from "velt/ffi/ptr";
 import { arrayTruncate, promiseAt } from "velt/lang/intrinsics";
-import { bind, recvfrom$net, sendto$net, setsockopt, socket } from "#net-calls";
+import { bind, recvfrom$net, sendto$net, setsockopt, sockaddr, socket } from "#net-calls";
 import * as r from "#reactor";
 import * as sys from "#net-sys";
 import * as io from "velt/lang/hooks/sched_io";
@@ -74,8 +75,9 @@ export async function velt_rt_udp_bind(addr: string): Promise<IoResult<u64>> {
     if (prep !== 0) {
       st = fs.osError(prep);
     } else {
+      const at = m.ptrTo<sockaddr>(m.ld(ai + sys.AI_ADDR));
       // SAFETY: the address and its length from getaddrinfo's entry.
-      if (unsafe { bind(fd, m.ptr(m.ld(ai + sys.AI_ADDR)), m.ld32(ai + AI_ADDRLEN)) } !== 0) {
+      if (unsafe { bind(fd, at, m.ld32(ai + AI_ADDRLEN)) } !== 0) {
         st = fs.osError(r.errno());
       }
     }
@@ -132,9 +134,10 @@ async function sendTo(u: u64, data: u8[], sa: usize, len: u32): Promise<IoResult
     const n = data.length;
     const p = n === 0 ? 0 : addressOf(data, 0);
     let sent: isize = 0;
+    const to = m.ptrTo<sockaddr>(sa);
     // SAFETY: `data` holds `n` bytes at `p` (none: no buffer read); the address is getaddrinfo's.
     unsafe {
-      sent = sendto$net(m.ld(s + io.S_FD) as i32, m.ptr(p), n, r.SEND_FLAGS, m.ptr(sa), len);
+      sent = sendto$net(m.ld(s + io.S_FD) as i32, m.ptr(p), n, r.SEND_FLAGS, to, len);
     }
     if (sent >= 0) {
       tb.leave(s);
@@ -174,10 +177,12 @@ export async function velt_rt_udp_recv_from(u: u64, max: u64): Promise<IoResult<
     }
     m.st32(sa + SA_SIZE, SA_SIZE as u32);
     const p = addressOf(buf, 0);
+    const peer = m.ptrTo<sockaddr>(sa);
+    const room = m.ptrTo<u32>(sa + SA_SIZE);
     let n: isize = 0;
     // SAFETY: `buf` holds `size` bytes at `p`; a sockaddr_storage and its length word.
     unsafe {
-      n = recvfrom$net(m.ld(s + io.S_FD) as i32, m.ptr(p), size, 0, m.ptr(sa), m.ptr(sa + SA_SIZE));
+      n = recvfrom$net(m.ld(s + io.S_FD) as i32, m.ptr(p), size, 0, peer, room);
     }
     if (n >= 0) {
       tb.leave(s);
