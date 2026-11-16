@@ -17,6 +17,7 @@ import {
 } from "velt/encoding/json/tape";
 import { TapeError } from "velt/encoding/json/tape_error";
 import { TapeRef } from "velt/encoding/json/tape_ref";
+import { inline } from "velt/lang/intrinsics";
 import {
   jsonValueEquals,
   jsonValueFrom,
@@ -27,7 +28,6 @@ import {
 import { JSON } from "velt/prelude/json/json";
 import { JsonError, JsonParseOptions } from "velt/prelude/json/json_error";
 import { JsonReplacer } from "velt/prelude/json/layout";
-import { tapeStringify, writeTape } from "velt/encoding/json/tape_write";
 import {
   JsonHandleSlot,
   treeDelete,
@@ -85,19 +85,23 @@ const KIND_OBJECT: u32 = 6;
  */
 export class JsonValue {
   #handle: u64;
-  #tape: TapeRef | null;
-  #node: u32;
+  #tape: TapeRef | null = null;
+  #node: u32 = 0;
 
-  // A `JsonValue` owning the runtime handle `h`, or value `node` of tape `t`.
-  private constructor(h: u64, t: TapeRef | null = null, node: u32 = 0) {
+  // A `JsonValue` owning the runtime handle `h` (0 for a tape value, which `onTape` fills in).
+  // Kept this small so that every `new` of it is inlined (the optimizer can then keep a value
+  // that never leaves its function out of the heap).
+  private constructor(h: u64) {
     this.#handle = h;
-    this.#tape = t;
-    this.#node = node;
   }
 
   // Value `node` of tape `t`.
+  @inline
   private static onTape(t: TapeRef, node: u32): JsonValue {
-    return new JsonValue(0, t, node);
+    const v = new JsonValue(0);
+    v.#tape = t;
+    v.#node = node;
+    return v;
   }
 
   /** Parses any JSON document, like `JSON.parseValue` (throws `JsonError`). */
@@ -161,7 +165,7 @@ export class JsonValue {
     if (t == null) {
       return;
     }
-    this.#handle = treeOf(t.tape, this.#node);
+    this.#handle = treeOf(t, this.#node);
     this.#tape = null;
   }
 
@@ -173,7 +177,7 @@ export class JsonValue {
   [JSON_RUNTIME_HANDLE](): u64 {
     const t = this.#tape;
     if (t != null) {
-      return treeOf(t.tape, this.#node);
+      return treeOf(t, this.#node);
     }
     return velt_rt_json_value_clone(this.#handle);
   }
@@ -191,7 +195,7 @@ export class JsonValue {
     const t = this.#tape;
     if (t != null) {
       const node = this.#node;
-      writeTape(t.tape, out, node);
+      t.write(out, node);
       return;
     }
     const h = this.#handle;
@@ -420,7 +424,7 @@ export class JsonValue {
   stringify(): string {
     const t = this.#tape;
     if (t != null) {
-      return tapeStringify(t.tape, this.#node);
+      return t.stringify(this.#node);
     }
     return velt_rt_json_value_stringify(this.#handle);
   }
@@ -451,8 +455,8 @@ export class JsonValue {
 }
 
 // A runtime tree made from value `node` of tape `t` (its JSON text, parsed by the runtime).
-function treeOf(t: Tape, node: u32): u64 {
-  const text = tapeStringify(t, node);
+function treeOf(t: TapeRef, node: u32): u64 {
+  const text = t.stringify(node);
   let slot: JsonHandleSlot = { handle: 0 };
   let err = "";
   if (!velt_rt_json_parse_value_with(text, 0, slot, err)) {
