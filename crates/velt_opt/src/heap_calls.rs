@@ -113,7 +113,7 @@ fn rewrite(func: &mut Function, b: usize, params: &[Ty], hook: FuncId) {
                 term: Terminator::Goto(next),
             });
             if has_locs {
-                func.locs.push(vec![term_loc.clone(), term_loc.clone()]);
+                func.locs.push(vec![term_loc, term_loc]);
             }
             (Some(Place::local(t)), back)
         }
@@ -123,7 +123,7 @@ fn rewrite(func: &mut Function, b: usize, params: &[Ty], hook: FuncId) {
         let locs = &mut func.locs[b];
         let at = locs.len().saturating_sub(1);
         for _ in &stmts {
-            locs.insert(at, term_loc.clone());
+            locs.insert(at, term_loc);
         }
     }
     let block = &mut func.blocks[b];
