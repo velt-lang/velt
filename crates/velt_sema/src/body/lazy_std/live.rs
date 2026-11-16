@@ -92,9 +92,6 @@ pub(crate) struct Live {
     /// Live code runs on the executor ([`Walk::tasks`]): the executor in Velt's hooks are needed
     /// (#2649 P3(a)).
     pub(super) tasks: bool,
-    /// EXPERIMENT (#2943 M3): the set was walked for a build by units ([`walk_units_set`]):
-    /// the hooks are those its constructs demand.
-    pub(super) units: bool,
 }
 
 impl Live {
@@ -172,7 +169,7 @@ impl Walk {
 pub(crate) fn demanded(cx: &Ctx) -> HookSet {
     #[cfg(test)]
     tests::note_demanded(cx);
-    match cx.lazy.modules.is_empty() && !cx.lazy.live.units {
+    match cx.lazy.modules.is_empty() {
         true => {
             let mut all = HookSet::default();
             // A build by units notes a live `catchUnwind` ([`note_catch_unwind`]).
@@ -187,27 +184,6 @@ pub(crate) fn demanded(cx: &Ctx) -> HookSet {
         }
         false => HookSet::demanded_by(demanded_for(cx.lazy.live.present)),
     }
-}
-
-/// EXPERIMENT (#2943 M3): a build by units (`units::reach`): lazy std's live walk over `set`
-/// (seeded with it, everything checked already), so that the hooks lowering may call are those
-/// its constructs demand ([`demanded`]), as for lazy std. What the walk adds is returned (the
-/// program takes it too).
-pub(crate) fn walk_units_set(cx: &mut Ctx, set: &FxHashSet<DefId>) -> Vec<DefId> {
-    cx.lazy.live.seeded = cx.info.len();
-    cx.lazy.live.units = true;
-    for &d in set {
-        if cx.lazy.live.live.insert(d) {
-            cx.lazy.live.todo.push(d);
-        }
-    }
-    walk_set(cx);
-    let mut added: Vec<DefId> = (cx.lazy.live.live.iter())
-        .filter(|d| !set.contains(d))
-        .copied()
-        .collect();
-    added.sort_unstable();
-    added
 }
 
 /// EXPERIMENT (#2943 M3): a build by units reaches a `catchUnwind` (`units::reach`): std's panic
@@ -832,7 +808,7 @@ crate::units::codec::structs! {
     Live {
         check, seeded, live, todo, types, adts, methods, impls, kinds, ifaces, gated, opened,
         waiting, texts, dynamic_classes, finishing, present, assumed, late, demanded, int_text,
-        prints_float, tasks, units,
+        prints_float, tasks,
     }
 }
 crate::units::codec::enums! {
