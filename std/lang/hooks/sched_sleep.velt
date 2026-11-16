@@ -128,7 +128,8 @@ function sleepPoll(f: usize, cx: usize): u32 {
     }
   }
   if (s === NEW) {
-    // Pending in this worker's timer block: its task stays on this worker.
+    // Pending in this worker's timer block: its task stays on this worker, unless an offer
+    // carries it with its sleeps (sched_sleep_carry.velt).
     sp.anchor();
     const e = t.exec();
     m.st(f + S_OWNER, m.ld(e + t.E_CURRENT));

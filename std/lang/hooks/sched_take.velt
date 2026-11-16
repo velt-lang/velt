@@ -2,7 +2,8 @@
 // them to another worker in the executor in Velt (sched.velt, #2649 step 3): halves for a worker
 // that borrows or a helper offered them (sched_spread.velt), fresh tasks for sleeping workers
 // and halves of a stalled worker's queues for a spare (sched_monitor.velt). Pinned and anchored
-// tasks never move.
+// tasks stay, except anchored ones an offer carries with their sleeps (`carry`,
+// sched_sleep_carry.velt).
 
 import * as m from "./sched_mem";
 import * as q from "./sched_queue";
@@ -10,8 +11,9 @@ import * as t from "./sched_task";
 
 /**
  * Takes up to `n` tasks from the front of a queue (`head` the offset of its head: input or
- * second), oldest first, as a chain through `T_NEXT`; those that may not move (pinned, anchored)
- * stay where they were, in their order. The queue is locked.
+ * second), oldest first, as a chain through `T_NEXT`; those that may not move (pinned, anchored;
+ * with `carry`, an offer's, only pinned ones and those anchored for good or with a sleep due) stay
+ * where they were, in their order. The queue is locked.
  */
 function take(e: usize, head: usize, n: usize, into: usize, carry: bool): usize {
   const io = head === t.E_IHEAD;

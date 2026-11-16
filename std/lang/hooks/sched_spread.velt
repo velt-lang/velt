@@ -15,7 +15,8 @@
 // took comes back), then borrows half of the input waiting on an awake worker with at least
 // `BORROW_MIN` waiting, as tokio's work stealing does: the borrowed tasks keep their home (their
 // sockets stay registered there, their next wake goes there). Pinned tasks and tasks anchored to
-// their worker (sched_task.velt `ANCHORED`) are never offered or borrowed.
+// their worker (sched_task.velt `ANCHORED`) are never borrowed; an offer takes an anchored one
+// only with its sleeps (sched_sleep_carry.velt), never one anchored for good (`FIXED`).
 
 import { inline, noInline } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
@@ -178,11 +179,9 @@ function offer(e: usize, mode: u32, helper: usize): void {
   }
   // Pushed oldest first: the helper's `steal` takes them in the order they waited.
   k = q.reverse(k);
+  sc.carry(e, k);
   while (k !== 0) {
     const next = m.ld(k + t.T_NEXT);
-    if (t.has(k, t.ANCHORED)) {
-      sc.carry(e, k);
-    }
     m.pushStack(e + t.E_OFFER, k, t.T_NEXT);
     k = next;
   }
@@ -278,8 +277,8 @@ export function borrow(e: usize): bool {
 
 /**
  * The task being polled on this thread makes per-worker timer state (a sleep, a wait with a
- * deadline): it is anchored to this worker from now on, its home if it ran here off
- * its home (no wake can queue it while it runs, so its home may change now).
+ * deadline): it is anchored to this worker (until an offer carries it with its sleeps), its
+ * home if it ran here off its home (no wake can queue it while it runs, so its home may change now).
  */
 export function anchor(): void {
   const e = t.exec();

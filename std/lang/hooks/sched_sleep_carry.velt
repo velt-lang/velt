@@ -3,8 +3,9 @@
 // touches the block (sched_sleep.velt), so the task was anchored there. An offer may move such a
 // task when it has no sleep due (its due list is empty) and its worker's block has no fired sleep
 // left unseen (`TM_UNSEEN` counts per block, and the poll that sees one may run elsewhere):
-// - `carry`, on the offering worker: its pending sleeps that task polled (`S_OWNER`) leave the
-//   block for a list in the task's `T_TIMERS`, in timer order, and the task is marked `CARRIED`.
+// - `carry`, on the offering worker: the pending sleeps of the offered tasks (the task that polled
+//   one, `S_OWNER`, or the one its waker wakes) leave the block, in one walk, for a list in their
+//   task's `T_TIMERS`, in timer order, and such a task is marked `CARRIED`.
 // - `adopt`, on the worker that polls it next (sched_run.velt `runWoken`), wherever the offer
 //   went (a helper's steal, or a retired spare's hand-on to worker 0): they join its block.
 // Each block is still touched by its own worker only, and the task's sleeps keep their order and
@@ -14,6 +15,7 @@
 import * as m from "./sched_mem";
 import * as sl from "./sched_sleep";
 import * as t from "./sched_task";
+import * as wk from "./sched_wake";
 
 /** May worker `e`'s offer carry anchored tasks' sleeps now (no fired sleep left unseen)? */
 export function canCarry(e: usize): bool {
@@ -21,28 +23,64 @@ export function canCarry(e: usize): bool {
   return b === 0 || m.ld(b + sl.TM_UNSEEN) === 0;
 }
 
-/** Worker `e` offers anchored task `k` (`t.carryable`): its pending sleeps go with it. */
-export function carry(e: usize, k: usize): void {
+/**
+ * Worker `e` offers the tasks of `chain` (linked through `T_NEXT`): the anchored ones
+ * (`t.carryable`) take their pending sleeps along. One walk over the block, however many tasks.
+ */
+export function carry(e: usize, chain: usize): void {
   const b = m.ld(e + t.E_TIMERS);
   if (b === 0) {
     return;
   }
-  // From the last, so the list comes out first to last.
-  let list: usize = 0;
+  let any = false;
+  let k = chain;
+  while (k !== 0) {
+    if (t.has(k, t.ANCHORED)) {
+      // Marks it for the walk; it keeps the flag only with sleeps to carry.
+      t.flags(k, t.CARRIED, 0);
+      any = true;
+    }
+    k = m.ld(k + t.T_NEXT);
+  }
+  if (!any) {
+    return;
+  }
+  // From the last, so each task's list comes out first to last.
   let f = m.ld(b + sl.TM_LAST);
   while (f !== 0) {
     const prev = m.ld(f + sl.S_PREV);
-    if (m.ld(f + sl.S_OWNER) === k) {
+    const o = owner(f);
+    if (o !== 0) {
       sl.unlinkPending(b, f);
-      m.st(f + sl.S_NEXT, list);
-      list = f;
+      m.st(f + sl.S_NEXT, m.ld(o + t.T_TIMERS));
+      m.st(o + t.T_TIMERS, f);
     }
     f = prev;
   }
-  if (list !== 0) {
-    m.st(k + t.T_TIMERS, list);
-    t.flags(k, t.CARRIED | t.LOCALS, 0);
+  k = chain;
+  while (k !== 0) {
+    if (t.has(k, t.CARRIED)) {
+      if (m.ld(k + t.T_TIMERS) === 0) {
+        t.flags(k, 0, t.CARRIED);
+      } else {
+        t.flags(k, t.LOCALS, 0);
+      }
+    }
+    k = m.ld(k + t.T_NEXT);
   }
+}
+
+/**
+ * The offered task pending sleep `f` goes with, or 0: the task that polled it into the block, or
+ * the one its waker wakes now (a sleep handed on to another task: its expiry touches that one).
+ */
+function owner(f: usize): usize {
+  const o = m.ld(f + sl.S_OWNER);
+  if (o !== 0 && t.has(o, t.CARRIED)) {
+    return o;
+  }
+  const w = wk.taskOf(sl.waiter(f));
+  return w !== 0 && t.has(w, t.CARRIED) ? w : 0;
 }
 
 /** Worker `e`, about to poll task `k`, takes the sleeps it carries into its timer block. */
