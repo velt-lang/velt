@@ -26,6 +26,7 @@ mod std_load;
 mod std_summary;
 use std_load::load_options;
 pub(crate) use std_load::StdLoad;
+mod units_disk;
 mod units_twice;
 mod warm;
 pub use warm::{compile_for_jit_warm, copy_files};
@@ -210,6 +211,11 @@ pub struct Session {
     pub kept: Option<velt_sema::KeptCheck>,
     /// Why a warm reload (`compile_for_jit_warm`) needs the cold front end.
     pub warm_refused: Option<String>,
+    /// EXPERIMENT (`driver::units_disk`): std's sources' key, whether std's modules were loaded
+    /// as stubs, and that they must not be (sema asked for std).
+    pub units_std_key: Option<u64>,
+    pub units_stubbed: bool,
+    pub units_no_stubs: bool,
     /// `velt dev`: keep the lowering of a JIT build ([`Session::kept_lowering`]).
     pub keep_lowering: bool,
     /// The kept lowering (velt_vir `KeptLowering`): a warm reload lowers its edited files into
@@ -376,7 +382,24 @@ fn load_modules(
 ) -> Result<loader::Loaded, BuildError> {
     stamp::check_fetched(opts).map_err(BuildError::Failed)?;
     let t = Instant::now();
-    let load = load_options(sess.generator_build, opts, scope);
+    let prepared = units_disk::prepare(scope);
+    if prepared.is_some() {
+        sess.record("units: std key and stubs", t);
+    }
+    let stubs = (prepared.as_ref())
+        .filter(|_| !sess.units_no_stubs)
+        .and_then(|p| p.stubs.as_ref());
+    let decode = |path: &str, file: velt_common::FileId| {
+        (stubs.and_then(|s| s.get(path))).and_then(|b| velt_syntax::decode_module(b, file))
+    };
+    let mut load = load_options(sess.generator_build, opts, scope);
+    if stubs.is_some() {
+        load.std_stubs = Some(&decode);
+        // std's variants were compared when its unit was made; stubs hold no exports to compare.
+        load.check_variants = false;
+    }
+    sess.units_stubbed = stubs.is_some();
+    sess.units_std_key = prepared.as_ref().map(|p| p.key);
     let loaded = loader::load_program(&mut sess.sm, &opts.input, load, &mut sess.diagnostics)
         .map_err(BuildError::Failed)?;
     sess.record("parse", t);
@@ -402,6 +425,7 @@ fn sema_stage(
         units: scope.units,
         native_executor: native_executor(opts),
         std_key: None,
+        std_stubbed: false,
     };
     let packages = opts.packages.as_ref();
     // EXPERIMENT (#2943): `VELT_UNITS_TWICE` (`units_twice`).
@@ -409,9 +433,9 @@ fn sema_stage(
     if scope.units && std::env::var_os("VELT_UNITS_TWICE").is_some() {
         units_twice::run(sess, opts, loaded, &mut sema_opts, packages);
     }
-    // EXPERIMENT (#2943 M2): `VELT_UNITS_DISK`, std's unit kept on disk, keyed by std's sources.
-    if scope.units && std::env::var_os("VELT_UNITS_DISK").is_some() {
-        sema_opts.std_key = Some(units_twice::std_sources_key(sess, loaded));
+    // EXPERIMENT (#2943 M2): `VELT_UNITS_DISK` (`units_disk`).
+    if sess.units_std_key.is_some() {
+        (sema_opts.std_key, sema_opts.std_stubbed) = (sess.units_std_key, sess.units_stubbed);
     }
     sess.no_generators |= opts.no_generators;
     // With `VELT_EAGER_STD` the executor's modules are still served on demand
@@ -435,6 +459,14 @@ fn sema_stage(
         more.as_mut(),
     );
     sess.std_files = StdLoad::std_files(more, &loaded.modules);
+    // std's modules were stubs, but no unit on disk fits this check: load std, check again.
+    let needed = |d: &velt_common::Diagnostic| d.message == velt_sema::STD_UNIT_NEEDED;
+    if sess.units_stubbed && sess.diagnostics.iter().any(needed) {
+        sess.diagnostics.retain(|d| !needed(d));
+        sess.units_no_stubs = true;
+        *loaded = load_modules(sess, opts, scope)?;
+        return sema_stage(sess, opts, scope, loaded);
+    }
     sess.native = crate::native::check_trust(
         &loaded.modules,
         &sess.sm,

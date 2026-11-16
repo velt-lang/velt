@@ -132,6 +132,10 @@ pub struct LoadOptions<'a> {
     /// Without [`Self::demand_std`]: leave the executor's modules ([`executor_module`]) to
     /// [`load_more`] still (`VELT_EAGER_STD`): a program loads some only when it calls them (#2649).
     pub demand_executor: bool,
+    /// std modules as a checked unit keeps them (#2943 M2): when it gives a module for a std
+    /// file's canonical path, that module is the file's, unparsed (the check takes the rest of
+    /// std from the unit).
+    pub std_stubs: Option<&'a dyn Fn(&str, FileId) -> Option<ast::Module>>,
 }
 
 /// Result of loading a program: the modules and the index of the root (`main`).
@@ -382,7 +386,10 @@ impl Loader<'_, '_> {
         let is_std = matches!(origin, Origin::Std(_));
         self.warn_old_extension(file, path, &origin);
         let plain_ts = vpm::sources::is_plain_ts(path);
-        let mut ast = if is_std {
+        let stub = (self.opts.std_stubs.filter(|_| is_std)).and_then(|f| f(&canonical, file));
+        let mut ast = if let Some(stub) = stub {
+            stub
+        } else if is_std {
             let src = &self.sm.get(file).src;
             let on_disk = !self.overlay.contains_key(&key);
             let (ast, parse_diags) = self.std_parser.parse(file, src, plain_ts, on_disk);

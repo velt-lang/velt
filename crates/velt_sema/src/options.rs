@@ -22,6 +22,10 @@ pub struct CheckOptions {
     /// long-lived caller that checks again keeps std's unit between checks under it
     /// (`crate::std_unit`). Additive.
     pub std_key: Option<u64>,
+    /// With `units`: std's modules are the stubs a unit on disk keeps (EXPERIMENT,
+    /// `crate::units::disk`), so std's unit must come from disk: the check refuses to check std
+    /// over them. Additive.
+    pub std_stubbed: bool,
 }
 
 impl Default for CheckOptions {
@@ -32,6 +36,7 @@ impl Default for CheckOptions {
             native_executor: true,
             units: false,
             std_key: None,
+            std_stubbed: false,
         }
     }
 }

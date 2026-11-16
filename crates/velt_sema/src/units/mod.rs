@@ -180,6 +180,13 @@ impl Order {
         }
     }
 
+    /// With std's modules in the order std's unit has them: `at[k]` is the position (in this
+    /// order's std modules) of the unit's module `k` (`units::disk::load`).
+    pub(crate) fn reorder_std(self, at: &[usize]) -> Order {
+        let std = at.iter().map(|&k| self.std[k]).collect();
+        Order { std, ..self }
+    }
+
     /// Where original module `m` is in std's unit (`None`: an app module).
     pub(crate) fn in_std(&self, m: usize) -> Option<usize> {
         self.std.iter().position(|&s| s == m)
@@ -342,7 +349,11 @@ pub(crate) fn split_inputs(
     Option<Vec<crate::SourceModule>>,
     Option<Vec<crate::SourceModule>>,
 ) {
-    let split = opts.units && stage2() && std::env::var_os("VELT_UNITS_SPLIT").is_some();
+    // std's modules that are stubs already (`CheckOptions::std_stubbed`) need neither.
+    let split = opts.units
+        && !opts.std_stubbed
+        && stage2()
+        && std::env::var_os("VELT_UNITS_SPLIT").is_some();
     if !split {
         return (None, None);
     }
@@ -351,4 +362,14 @@ pub(crate) fn split_inputs(
         .map(stubs::copy)
         .collect();
     (Some(stubs::stubbed(modules)), Some(std))
+}
+
+/// A unit loaded from disk (`units::disk::load`) as an app's round takes it.
+pub(crate) fn app_unit(
+    loaded: Option<(Ctx<'_>, Vec<usize>)>,
+    stack_budget: usize,
+) -> Option<Ctx<'_>> {
+    let (mut cx, _) = loaded?;
+    (cx.units, cx.units_stage, cx.stack_budget) = (true, Stage::Std, stack_budget);
+    Some(cx)
 }

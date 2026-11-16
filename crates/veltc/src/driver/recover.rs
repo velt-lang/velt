@@ -49,6 +49,7 @@ pub(super) fn check_recovering_loaded(
         units: scope.units,
         native_executor: super::native_executor(opts),
         std_key: None,
+        std_stubbed: false,
     };
     // The recovered trees can hold shapes no clean parse produces: a type checker failure on
     // them costs these findings only, never the syntax errors already reported.

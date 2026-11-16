@@ -67,5 +67,6 @@ pub(super) fn load_options<'a>(
         std_ast_cache: crate::build_cache::std_ast_cache(),
         demand_std: loader::demand_std_on(),
         demand_executor: false,
+        std_stubs: None,
     }
 }

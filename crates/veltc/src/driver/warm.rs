@@ -74,6 +74,7 @@ fn warm_inner(
             units: scope.units,
             native_executor: super::native_executor(opts),
             std_key: None,
+            std_stubbed: false,
         };
         let t = Instant::now();
         match reparsed(sess, kept, cold_files, &edited, sema_opts) {

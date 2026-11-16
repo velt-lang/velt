@@ -84,6 +84,7 @@ pub mod value_params;
 #[doc(hidden)]
 pub use hook_calls::hook_args;
 pub use hooks::NAMES as HOOK_NAMES;
+pub use units::disk::{read_stubs as read_std_stubs, UNIT_NEEDED as STD_UNIT_NEEDED};
 mod canon_key;
 mod glue_reach;
 pub mod ide;
@@ -378,7 +379,25 @@ fn check_timed(
         (std_copies.as_deref()).map(|c| unsafe { &*(c as *const [SourceModule]) });
     // A unit loaded from disk keeps its AST here (`units::disk`): it outlives every context.
     let disk_arena = units::codec::Arena::default();
-    let disk = units::disk::path(opts, std_found.as_ref());
+    let disk = units::disk::path(opts, (order.is_some()).then_some(&found));
+    // std's modules for its unit: std's own run's, or the loader's stubs as they are.
+    let unit_mods: Vec<&SourceModule> = match std_mods {
+        Some(m) => m.iter().collect(),
+        None => modules.iter().filter(|m| m.is_std).collect(),
+    };
+    // SAFETY: `disk_arena` is declared before every context and so outlives them.
+    let load_unit =
+        || (disk.as_deref()).and_then(|p| unsafe { units::disk::load(p, &disk_arena, &unit_mods) });
+    let disk_loaded = load_unit();
+    let from_disk = disk_loaded.is_some();
+    if opts.std_stubbed && disk_loaded.is_none() {
+        let d = Diagnostic::error(units::disk::UNIT_NEEDED, Span::DUMMY);
+        return ((None, vec![d]), Default::default());
+    }
+    let order = match (order, &disk_loaded) {
+        (Some(o), Some((_, at))) => Some(o.reorder_std(at)),
+        (o, _) => o,
+    };
     let std_snap: std::cell::RefCell<Option<ctx::Ctx>> = Default::default();
     let new_cx = |round: &'static str,
                   held_borrows: bool,
@@ -387,6 +406,11 @@ fn check_timed(
                   views: &union_views::Families| {
         timings::note_round();
         let from_std = match stage.get() {
+            // A unit from disk is taken by the first round, and decoded again for another.
+            units::Stage::App if from_disk => timings::pass("units: take std", || {
+                (std_snap.borrow_mut().take())
+                    .or_else(|| units::app_unit(load_unit(), stack_budget))
+            }),
             units::Stage::App => timings::pass("units: copy std", || std_snap.borrow().clone()),
             _ => None,
         };
@@ -467,9 +491,7 @@ fn check_timed(
     // one did not, this one's diagnostics stay the program's (`throws::adds_errors`).
     if order.is_some() {
         // SAFETY: `disk_arena` is declared before every context and so outlives them.
-        let loaded = (disk.as_deref())
-            .zip(std_mods)
-            .and_then(|(p, m)| unsafe { units::disk::load(p, &disk_arena, m) });
+        let loaded = disk_loaded.map(|(cx, _)| cx);
         let std_cx = match loaded.or_else(|| std_unit::take(&held, std_key)) {
             Some(mut cx) => {
                 (cx.units, cx.units_stage, cx.stack_budget) =
@@ -484,8 +506,8 @@ fn check_timed(
                     Err(stopped) => return *stopped,
                 };
                 units::finish_unit(&mut std_cx);
-                if let Some(p) = &disk {
-                    units::disk::save(p, &std_cx);
+                if let (Some(p), Some(k)) = (&disk, opts.std_key) {
+                    units::disk::save(p, &std_cx, stubbed.as_deref(), k);
                 }
                 if let (Some(k), Some(c)) = (std_key, std_copies.take()) {
                     // SAFETY: std's stage was checked over `c` alone (`copies`), with no

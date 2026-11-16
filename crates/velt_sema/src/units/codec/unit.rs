@@ -18,7 +18,7 @@ use crate::types::Types;
 use crate::SourceModule;
 
 /// The version of the encoding: the first bytes of every encoded unit.
-pub(crate) const FORMAT: &[u8; 8] = b"vunit\x00\x00\x01";
+pub(crate) const FORMAT: &[u8; 8] = b"vunit\x00\x00\x02";
 
 /// The fields of `Ctx` a unit saves (`save`), in order, then those it does not (`skip`: as
 /// `Ctx::over` makes them). Generates the field walk of the encoder and decoder.
@@ -210,6 +210,11 @@ pub(crate) fn encode_unit_sized(cx: &Ctx) -> (Vec<u8>, Vec<(&'static str, usize)
     for &f in &files[cx.modules.len().min(files.len())..] {
         head.uint(u64::from(f.0));
     }
+    // The modules' paths, in order: a decoder puts the modules it is given in this order
+    // ([`unit_module_paths`]).
+    for m in &cx.modules {
+        m.path.enc(&mut head);
+    }
     let mut out = head.out;
     out.extend_from_slice(&body);
     (out, sizes)
@@ -242,6 +247,11 @@ pub(crate) unsafe fn decode_unit<'m>(
     let mut files: Vec<FileId> = modules.iter().map(|m| m.file).collect();
     for _ in n..nfiles {
         files.push(FileId(head.u32()));
+    }
+    for m in &modules {
+        if String::dec(&mut head) != m.path {
+            return None;
+        }
     }
     if head.failed {
         return None;
@@ -378,4 +388,18 @@ impl Codec for Box<str> {
     fn dec(r: &mut Reader) -> Self {
         String::dec(r).into_boxed_str()
     }
+}
+
+/// The paths of the modules of the unit [`encode_unit`] encoded, in its order (`None` when
+/// `bytes` is not of this [`FORMAT`]): [`decode_unit`] takes its modules in this order.
+pub(crate) fn unit_module_paths(bytes: &[u8]) -> Option<Vec<String>> {
+    let rest = bytes.strip_prefix(FORMAT.as_slice())?;
+    let mut head = Reader::new(rest, &[]);
+    let n = head.len();
+    let nfiles = head.len();
+    for _ in n..nfiles {
+        head.u32();
+    }
+    let paths = (0..n).map(|_| String::dec(&mut head)).collect();
+    (!head.failed).then_some(paths)
 }

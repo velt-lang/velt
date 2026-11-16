@@ -32,6 +32,7 @@ pub(super) fn load_options<'a>(
         // demand still (`StdLoad::serve`). `velt check --std` and `VELT_CHECK_ALL_STD`, which check
         // with laziness off (no live set demands the executor), load them up front too.
         demand_executor: !scope.eager_std && std::env::var_os("VELT_CHECK_ALL_STD").is_none(),
+        std_stubs: None,
     }
 }
 
