@@ -1,5 +1,5 @@
-//! The command description std/child_process passes to the runtime, turned into a
-//! `std::process::Command` (shared by `spawn`, `output` and `output_sync`).
+//! The command description std/process/child passes to `execSync`, turned into a
+//! `std::process::Command`.
 
 use crate::str::VeltStr;
 use crate::str_array::VeltStrArray;
@@ -16,7 +16,8 @@ pub struct VeltCommand {
     pub cwd: VeltStr,
     /// Extra environment variables as `name, value, name, value, …`.
     pub env: VeltStrArray,
-    /// `stdin | stdout << 2 | stderr << 4`, each 0 = inherit, 1 = pipe, 2 = ignore (null).
+    /// `stdin | stdout << 2 | stderr << 4`, each 0 = inherit, 1 = pipe, 2 = ignore (null);
+    /// `execSync` pipes stdout and stderr whatever it says.
     pub stdio: u32,
     /// 1 = start from an empty environment (then only `env` is set).
     pub clear_env: u8,
@@ -27,8 +28,6 @@ const _: () = assert!(std::mem::size_of::<VeltCommand>() == 104);
 /// How one standard stream of the child is connected.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum StdioMode {
-    /// Shares the parent's stream.
-    Inherit,
     /// A pipe the parent reads or writes.
     Pipe,
     /// Connected to the null device.
@@ -36,17 +35,8 @@ pub enum StdioMode {
 }
 
 impl StdioMode {
-    fn from_bits(bits: u32) -> StdioMode {
-        match bits & 3 {
-            1 => StdioMode::Pipe,
-            2 => StdioMode::Ignore,
-            _ => StdioMode::Inherit,
-        }
-    }
-
     fn stdio(self) -> Stdio {
         match self {
-            StdioMode::Inherit => Stdio::inherit(),
             StdioMode::Pipe => Stdio::piped(),
             StdioMode::Ignore => Stdio::null(),
         }
@@ -68,12 +58,7 @@ unsafe fn strings(a: &VeltStrArray) -> Vec<String> {
 }
 
 impl VeltCommand {
-    /// The stdio modes of stdin, stdout and stderr.
-    pub fn modes(&self) -> [StdioMode; 3] {
-        [0, 2, 4].map(|shift| StdioMode::from_bits(self.stdio >> shift))
-    }
-
-    /// A `Command` with everything but stdio configured; `modes` overrides the spec's stdio.
+    /// A `Command` running the spec, its stdin, stdout and stderr connected as `modes` says.
     ///
     /// # Safety
     /// `self` must hold valid strings and string arrays (it is borrowed from Velt).
@@ -94,26 +79,5 @@ impl VeltCommand {
             .stdout(modes[1].stdio())
             .stderr(modes[2].stdio());
         cmd
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn stdio_bits() {
-        let spec = VeltCommand {
-            program: VeltStr::from_static(b"x"),
-            args: VeltStrArray::from_vec(vec![]),
-            cwd: VeltStr::empty(),
-            env: VeltStrArray::from_vec(vec![]),
-            stdio: 1 | (2 << 2),
-            clear_env: 0,
-        };
-        assert_eq!(
-            spec.modes(),
-            [StdioMode::Pipe, StdioMode::Ignore, StdioMode::Inherit]
-        );
     }
 }

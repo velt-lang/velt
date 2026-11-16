@@ -1,0 +1,69 @@
+// A child gets exactly the arguments it was given, whatever they hold: spaces, tabs, quotes,
+// backslashes (before a quote, at the end, doubled), nothing at all, and text that only a shell
+// would treat specially. On Windows a command line is one string the child's C runtime splits
+// again, so each argument is quoted as Node's libuv quotes it; elsewhere they pass as they are.
+// The child is this very program, which prints each argument it got as JSON.
+import { exec, execSync, spawn } from "velt/process/child";
+import { argv, args } from "velt/process";
+
+function weird(): string[] {
+  return [
+    "plain",
+    "a b",
+    "",
+    " ",
+    "q\"uote",
+    "\"",
+    "\"\"",
+    "back\\slash",
+    "trail\\",
+    "trail sp\\",
+    "end\\\\",
+    "\\\"",
+    "x\\\\\"y",
+    "a\\\\b c",
+    "tab\there",
+    "-e=\"x y\"",
+    "\\\\server\\share x",
+    "ünï cødé ✓",
+    "%PATH% $HOME *.txt ? ^&|<>",
+  ];
+}
+
+function report(a: string[]): string {
+  let out = `${a.length} args\n`;
+  for (const x of a) {
+    out += `${JSON.stringify(x)}\n`;
+  }
+  return out;
+}
+
+async function main(): Promise<i32> {
+  const a = args();
+  if (a.length > 0 && a[0] == "child") {
+    const rest: string[] = [];
+    for (let i = 1; i < a.length; i++) {
+      rest.push(a[i]);
+    }
+    process.stdout.write(report(rest));
+    return 0;
+  }
+  const self = argv()[0].clone();
+  const all = ["child", ...weird()];
+  const want = report(weird());
+  const r = await exec(self, all);
+  console.log(`exec ${r.code} ${r.stdout.replaceAll("\r\n", "\n") == want}`);
+  const s = execSync(self, all);
+  console.log(`execSync ${s.code} ${s.stdout.replaceAll("\r\n", "\n") == want}`);
+  const p = spawn(self, all, { stdout: "pipe" });
+  let out = "";
+  let chunk = await p.readStdout();
+  while (chunk != "") {
+    out += chunk;
+    chunk = await p.readStdout();
+  }
+  console.log(`spawn ${await p.wait()} ${out.replaceAll("\r\n", "\n") == want}`);
+  p.close();
+  process.stdout.write(r.stdout.replaceAll("\r\n", "\n"));
+  return 0;
+}

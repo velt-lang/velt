@@ -1,0 +1,414 @@
+// velt/process/child (internal): the child-process functions on Windows (`#child-os` of
+// std/process/child/child_reactor.velt), with the names and signatures of the runtime's
+// (std/process/child/rt.velt), instead of tokio's `process` on the runtime's threads.
+//
+// - A child starts with `CreateProcessW` (std/process/child/spawn_win32.velt). The reactor polls
+//   only sockets, so its exit is a `WaitForSingleObject` on its process handle, and its pipes
+//   blocking reads and writes (std/process/child/pipes_win32.velt), each on the executor's
+//   blocking pool (std/lang/hooks/sched_blocking.velt).
+// - A reaper task per child (spawned, so a running child keeps the process alive, as in Node and
+//   the runtime) waits for the exit and records the exit code; `wait`, `exitCode` and `kill`
+//   read what it found, or look themselves.
+// - `kill` is `TerminateProcess` whatever the signal (Windows has none), as libuv's is. As Node
+//   reports the signal of a child it terminated, the exit code is then the one a POSIX shell
+//   gives a death by that signal (128 + the signal), as on macOS and Linux.
+// - A child's handle is a source of the reactor's table that no reactor watches (its generation
+//   makes a handle used after `close` find nothing); the child's record (process handle and id,
+//   status, the signal it was killed with, the pipes) hangs off it and is counted: the handle and
+//   the reaper each hold it, and an operation in flight holds it while it runs. `close` releases
+//   the handle and the pipes; the child keeps running.
+// - `execSync` (`velt_rt_child_output_sync`) stays the runtime's: it blocks its thread anyway.
+
+import { IoResult } from "velt/native/result";
+import { IoStatus } from "velt/native/status";
+import { Out } from "velt/ffi/out";
+import { Ptr } from "velt/ffi/ptr";
+import { utf8DecodeLossy, utf8Encode } from "velt/encoding/utf8";
+import * as bl from "velt/lang/hooks/sched_blocking";
+import * as io from "velt/lang/hooks/sched_io";
+import * as m from "velt/lang/hooks/sched_mem";
+import * as tb from "velt/lang/hooks/sched_io_table";
+import * as fs from "velt/net/fd_socket";
+import * as pw from "velt/process/child/pipes_win32";
+import * as sw from "velt/process/child/spawn_win32";
+import { CommandSpec } from "velt/process/child/spec";
+import { RawOutput } from "./rt";
+
+declare c("c") function WaitForSingleObject(h: Ptr<void>, ms: u32): u32;
+declare c("c") function GetExitCodeProcess(h: Ptr<void>, code: Out<u32>): i32;
+declare c("c") function TerminateProcess(h: Ptr<void>, code: u32): i32;
+
+const INFINITE: u32 = 0xffffffff;
+const WAIT_OBJECT_0: u32 = 0;
+/** The status word while the child runs. */
+const RUNNING: usize = 0xffffffffffffffff;
+/** The status word once waiting for it failed. */
+const LOST: usize = 0xfffffffffffffffe;
+
+// The child's record: count, lock, process id, status (the exit code, or RUNNING or LOST), the
+// pipe blocks (0: not piped), the process handle, the signal it was terminated with (0: none).
+const C_REFS: usize = 0;
+const C_LOCK: usize = 8;
+const C_PID: usize = 16;
+const C_STATUS: usize = 24;
+const C_IN: usize = 32;
+const C_OUT: usize = 40;
+const C_ERR: usize = 48;
+const C_PROCESS: usize = 56;
+const C_SIGNAL: usize = 64;
+const C_SIZE: usize = 72;
+
+/** The record of handle `c`, counted for the caller (`release`); 0 once closed. */
+function acquire(c: u64): usize {
+  if (!tb.ours(c)) {
+    return 0;
+  }
+  const s = tb.enter(c);
+  if (s === 0) {
+    return 0;
+  }
+  const rec = m.ld(s + io.S_BUF);
+  if (rec !== 0) {
+    m.inc(rec + C_REFS);
+  }
+  tb.leave(s);
+  return rec;
+}
+
+/** Gives back one count of `rec`: the last closes the process handle and frees it. */
+function release(rec: usize): void {
+  if (m.dec(rec + C_REFS) === 1) {
+    pw.closeHandle(m.ld(rec + C_PROCESS));
+    m.release(rec, C_SIZE);
+  }
+}
+
+function lock(rec: usize): void {
+  if (m.cas32(rec + C_LOCK, 0, 1) !== 0) {
+    m.spinLock(rec + C_LOCK);
+  }
+}
+
+function unlock(rec: usize): void {
+  m.store32(rec + C_LOCK, 0);
+}
+
+/** Pipe block `at` of `rec` counted for the caller (`pw.drop`), or 0 when it is not piped. */
+function pipeOf(rec: usize, at: usize): usize {
+  lock(rec);
+  const p = m.ld(rec + at);
+  if (p !== 0) {
+    pw.retain(p);
+  }
+  unlock(rec);
+  return p;
+}
+
+/** Closes pipe `at` of `rec` (taken: later operations find it not piped). */
+function closePipe(rec: usize, at: usize): void {
+  lock(rec);
+  const p = m.swap(rec + at, 0);
+  unlock(rec);
+  if (p !== 0) {
+    pw.drop(p);
+  }
+}
+
+/** The text of a child's stream that is no pipe. */
+function notPiped(name: string): IoStatus {
+  return { code: 4, message: `the child's ${name} is not a pipe (spawn it with ${name}: "pipe")` };
+}
+
+/** The exit code of process `h` once it has ended (blocking: on a pool thread), or LOST. */
+function waitExit(h: usize): usize {
+  const code = new Out<u32>(0);
+  // SAFETY: a process handle the record keeps open while this runs.
+  unsafe {
+    if (
+      WaitForSingleObject(m.ptrTo<void>(h), INFINITE) !== WAIT_OBJECT_0 ||
+      GetExitCodeProcess(m.ptrTo<void>(h), code) === 0
+    ) {
+      return LOST;
+    }
+  }
+  return code.value as usize;
+}
+
+/** Records the end of `rec`'s child with exit code `code` (the first to see it records it). */
+function settle(rec: usize, code: usize): void {
+  lock(rec);
+  if (m.load(rec + C_STATUS) === RUNNING) {
+    const sig = m.ld(rec + C_SIGNAL);
+    m.swap(rec + C_STATUS, sig !== 0 && code !== LOST ? 128 + sig : code);
+  }
+  unlock(rec);
+}
+
+/** Has the child of `rec` ended? Records it now if it has. */
+function endedNow(rec: usize): bool {
+  if (m.load(rec + C_STATUS) !== RUNNING) {
+    return true;
+  }
+  const h = m.ld(rec + C_PROCESS);
+  // SAFETY: the record's process handle, open while it is counted.
+  if (unsafe { WaitForSingleObject(m.ptrTo<void>(h), 0) } === WAIT_OBJECT_0) {
+    settle(rec, waitExit(h));
+  }
+  return m.load(rec + C_STATUS) !== RUNNING;
+}
+
+/** Waits (on the blocking pool) until the child of `rec` has ended, and records it. */
+async function untilEnded(rec: usize): Promise<void> {
+  if (!endedNow(rec)) {
+    const h = m.ld(rec + C_PROCESS);
+    const code = await bl.run<usize>(() => waitExit(h));
+    settle(rec, code);
+  }
+}
+
+/** The reaper of `rec`'s child: records its end, then lets go of the record. */
+async function reap(rec: usize): Promise<void> {
+  await untilEnded(rec);
+  release(rec);
+}
+
+/** `spawn x: …` for a child that did not start. */
+function spawnError(program: string, got: sw.Started): IoStatus {
+  const st = pw.winError(got.error);
+  return {
+    code: st.code,
+    message: `spawn ${program}: ${got.message != "" ? got.message : st.message}`,
+  };
+}
+
+/** Starts `spec` with stdio `modes`: the counted record (the caller's count), or the failure. */
+function startChild(spec: CommandSpec, modes: u32): IoResult<usize> {
+  if (!bl.supported()) {
+    return fs.failed({ code: 12, message: `spawn ${spec.program}: not supported here` }, 0);
+  }
+  const got = sw.start(spec, modes);
+  if (got.process === 0) {
+    return fs.failed(spawnError(spec.program, got), 0);
+  }
+  const rec = m.zeroed(C_SIZE);
+  // The caller's count and the reaper's.
+  m.st(rec + C_REFS, 2);
+  m.st(rec + C_PID, got.pid as usize);
+  m.st(rec + C_STATUS, RUNNING);
+  m.st(rec + C_IN, pw.make(got.stdin));
+  m.st(rec + C_OUT, pw.make(got.stdout));
+  m.st(rec + C_ERR, pw.make(got.stderr));
+  m.st(rec + C_PROCESS, got.process);
+  const reaper = spawn(reap(rec));
+  return fs.value(rec);
+}
+
+/** Closes every pipe of `rec`. */
+function closePipes(rec: usize): void {
+  closePipe(rec, C_IN);
+  closePipe(rec, C_OUT);
+  closePipe(rec, C_ERR);
+}
+
+export function velt_rt_child_spawn(spec: CommandSpec): IoResult<u64> {
+  const got = startChild(spec, spec.stdio);
+  if (got.code !== 0) {
+    return fs.failed({ code: got.code, message: got.message }, 0);
+  }
+  const rec = got.value;
+  const s = tb.take();
+  if (s === 0) {
+    closePipes(rec);
+    release(rec);
+    return fs.failed({ code: 99, message: "too many open handles" }, 0);
+  }
+  m.st(s + io.S_BUF, rec);
+  m.st32(s + io.S_FLAGS, io.F_LISTENER);
+  tb.unlock(s);
+  return fs.value(tb.handleOf(s));
+}
+
+export function velt_rt_child_pid(c: u64): u32 {
+  const rec = acquire(c);
+  if (rec === 0) {
+    return 0;
+  }
+  const pid = m.ld32(rec + C_PID);
+  release(rec);
+  return pid;
+}
+
+export function velt_rt_child_exit_code(c: u64): i64 {
+  const rec = acquire(c);
+  if (rec === 0) {
+    return -1;
+  }
+  endedNow(rec);
+  const st = m.load(rec + C_STATUS);
+  release(rec);
+  return st === RUNNING || st === LOST ? -1 : st as i64;
+}
+
+export async function velt_rt_child_wait(c: u64): Promise<IoResult<i32>> {
+  const rec = acquire(c);
+  if (rec === 0) {
+    return fs.failed(fs.closed(), 0);
+  }
+  await untilEnded(rec);
+  const st = m.load(rec + C_STATUS);
+  release(rec);
+  if (st === LOST) {
+    return fs.failed({ code: 99, message: "waiting for the child failed" }, 0);
+  }
+  return fs.value(st as i32);
+}
+
+export function velt_rt_child_kill(c: u64, signal: i32): IoStatus {
+  const rec = acquire(c);
+  if (rec === 0) {
+    return fs.closed();
+  }
+  let st = fs.ok();
+  const h = m.ld(rec + C_PROCESS);
+  // Under the lock the end is not recorded meanwhile, so the signal is the one of a child this
+  // terminated (one that ended on its own refuses `TerminateProcess`).
+  lock(rec);
+  if (m.load(rec + C_STATUS) === RUNNING) {
+    // SAFETY: the record's process handle, open while it is counted.
+    if (unsafe { TerminateProcess(m.ptrTo<void>(h), 1) } !== 0) {
+      if (m.ld(rec + C_SIGNAL) === 0) {
+        m.st(rec + C_SIGNAL, signal as usize);
+      }
+    } else {
+      const e = pw.lastError();
+      // SAFETY: as above.
+      if (unsafe { WaitForSingleObject(m.ptrTo<void>(h), 0) } !== WAIT_OBJECT_0) {
+        st = pw.winError(e);
+      }
+    }
+  }
+  unlock(rec);
+  release(rec);
+  return st;
+}
+
+export function velt_rt_child_close(c: u64) {
+  if (!tb.ours(c)) {
+    return;
+  }
+  const s = tb.enter(c);
+  if (s === 0) {
+    return;
+  }
+  const rec = m.ld(s + io.S_BUF);
+  m.st(s + io.S_BUF, 0);
+  m.st32(s + io.S_FLAGS, 0);
+  tb.bump(s);
+  tb.give(s);
+  tb.leave(s);
+  if (rec !== 0) {
+    closePipes(rec);
+    release(rec);
+  }
+}
+
+/** The counted pipe block of `c` for `which` (1 stdout, 2 stderr, 0 stdin), or the failure. */
+function streamOf(c: u64, which: u32): IoResult<usize> {
+  const rec = acquire(c);
+  if (rec === 0) {
+    return fs.failed(fs.closed(), 0);
+  }
+  const p = pipeOf(rec, which === 0 ? C_IN : which === 2 ? C_ERR : C_OUT);
+  release(rec);
+  if (p === 0) {
+    return fs.failed(notPiped(which === 0 ? "stdin" : which === 2 ? "stderr" : "stdout"), 0);
+  }
+  return fs.value(p);
+}
+
+export async function velt_rt_child_read(c: u64, which: u32, max: u64): Promise<IoResult<u8[]>> {
+  const p = streamOf(c, which === 2 ? 2 : 1);
+  if (p.code !== 0) {
+    return fs.failed({ code: p.code, message: p.message }, []);
+  }
+  const got = await pw.read(p.value, max);
+  pw.drop(p.value);
+  return got;
+}
+
+export async function velt_rt_child_read_string(
+  c: u64,
+  which: u32,
+  max: u64,
+): Promise<IoResult<string>> {
+  const p = streamOf(c, which === 2 ? 2 : 1);
+  if (p.code !== 0) {
+    return fs.failed({ code: p.code, message: p.message }, "");
+  }
+  const got = await pw.readString(p.value, max);
+  pw.drop(p.value);
+  return got;
+}
+
+export async function velt_rt_child_write(c: u64, data: string): Promise<IoStatus> {
+  const p = streamOf(c, 0);
+  if (p.code !== 0) {
+    return { code: p.code, message: p.message };
+  }
+  const st = await pw.write(p.value, utf8Encode(data));
+  pw.drop(p.value);
+  return st;
+}
+
+export async function velt_rt_child_close_stdin(c: u64): Promise<IoStatus> {
+  const rec = acquire(c);
+  if (rec === 0) {
+    return fs.closed();
+  }
+  closePipe(rec, C_IN);
+  release(rec);
+  return fs.ok();
+}
+
+/** Writes `input` to pipe block `p`, then closes it (a feeder of its own). */
+async function feed(p: usize, input: u8[]): Promise<void> {
+  const st = await pw.write(p, input);
+  pw.drop(p);
+}
+
+export async function velt_rt_child_output(
+  spec: CommandSpec,
+  input: string,
+): Promise<IoResult<RawOutput>> {
+  const none: RawOutput = { code: 0, stdout: "", stderr: "" };
+  // Stdin is a pipe only when there is input; the child reads end of stream otherwise.
+  const modes: u32 = (input == "" ? 2 : 1) | (1 << 2) | (1 << 4);
+  const got = startChild(spec, modes);
+  if (got.code !== 0) {
+    return fs.failed({ code: got.code, message: got.message }, none);
+  }
+  const rec = got.value;
+  const stdin = m.swap(rec + C_IN, 0);
+  if (stdin !== 0) {
+    // Fed by a task of its own: a child that writes a lot before it reads its input must not
+    // block on a full stdout pipe while this one blocks writing to its stdin.
+    const feeder = spawn(feed(stdin, utf8Encode(input)));
+  }
+  const out = pipeOf(rec, C_OUT);
+  const err = pipeOf(rec, C_ERR);
+  const both = await Promise.all<u8[]>([pw.drain(out), pw.drain(err)]);
+  pw.drop(out);
+  pw.drop(err);
+  await untilEnded(rec);
+  const st = m.load(rec + C_STATUS);
+  closePipes(rec);
+  release(rec);
+  if (st === LOST) {
+    return fs.failed({ code: 99, message: "waiting for the child failed" }, none);
+  }
+  return fs.value<RawOutput>({
+    code: st as i32,
+    stdout: utf8DecodeLossy(both[0]),
+    stderr: utf8DecodeLossy(both[1]),
+  });
+}

@@ -1,0 +1,440 @@
+// velt/process/child (internal): starting a child process on Windows with `CreateProcessW`, for
+// the executor in Velt's child processes (std/process/child/child_win32.velt): the program found,
+// the command line quoted and the environment made as Node's libuv does
+// (std/process/child/command_line_win32.velt), its working directory, and its standard streams:
+// inherited (a copy of this program's handle), piped (an anonymous pipe, whose parent end
+// std/process/child/pipes_win32.velt reads or writes) or the null device (`NUL`).
+//
+// The child gets exactly its three handles: they are made inheritable and named in a
+// `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`, so a child started at the same time on another thread
+// never inherits this one's pipe ends (it would hold a pipe open, and the reader would never see
+// its end). The parent's ends are never inheritable.
+//
+// As Node does, a program named `*.bat` or `*.cmd` is refused (`EINVAL`): Windows would run it
+// through `cmd.exe`, which parses the command line by other rules; `execShell` runs one.
+//
+// `STARTUPINFOW`, `STARTUPINFOEXW` and `PROCESS_INFORMATION` are laid out in raw memory at the
+// Windows SDK's offsets for 64-bit Windows (winbase.h, processthreadsapi.h).
+
+import { OutPtr } from "velt/ffi/out_ptr";
+import { Out } from "velt/ffi/out";
+import { Ptr, ptrAddressOrZero } from "velt/ffi/ptr";
+import * as m from "velt/lang/hooks/sched_mem";
+import * as wk from "velt/lang/hooks/sched_wake";
+import * as cl from "velt/process/child/command_line_win32";
+import * as pw from "velt/process/child/pipes_win32";
+import { CommandSpec } from "velt/process/child/spec";
+
+/** C's `STARTUPINFOW` (also the head of `STARTUPINFOEXW`). */
+declare c type _STARTUPINFOW;
+/** C's `PROCESS_INFORMATION`. */
+declare c type _PROCESS_INFORMATION;
+/** C's `SECURITY_ATTRIBUTES`: never passed (handles are made inheritable by copying them). */
+declare c type _SECURITY_ATTRIBUTES;
+/** C's opaque attribute list of `STARTUPINFOEXW`. */
+declare c type _PROC_THREAD_ATTRIBUTE_LIST;
+
+declare c("c") function CreateProcessW(
+  application: Ptr<u16>,
+  commandLine: Ptr<u16>,
+  processAttributes: Ptr<_SECURITY_ATTRIBUTES> | null,
+  threadAttributes: Ptr<_SECURITY_ATTRIBUTES> | null,
+  inheritHandles: i32,
+  flags: u32,
+  environment: Ptr<void> | null,
+  currentDirectory: Ptr<u16> | null,
+  startup: Ptr<_STARTUPINFOW>,
+  info: Ptr<_PROCESS_INFORMATION>,
+): i32;
+declare c("c") function CreatePipe(
+  read: OutPtr<void>,
+  write: OutPtr<void>,
+  attributes: Ptr<_SECURITY_ATTRIBUTES> | null,
+  size: u32,
+): i32;
+declare c("c") function CreateFileW(
+  name: Ptr<u16>,
+  access: u32,
+  share: u32,
+  attributes: Ptr<_SECURITY_ATTRIBUTES> | null,
+  disposition: u32,
+  flags: u32,
+  template: Ptr<void> | null,
+): Ptr<void> | null;
+declare c("c") function DuplicateHandle(
+  sourceProcess: Ptr<void>,
+  source: Ptr<void>,
+  targetProcess: Ptr<void>,
+  target: OutPtr<void>,
+  access: u32,
+  inherit: i32,
+  options: u32,
+): i32;
+declare c("c") function GetCurrentProcess(): Ptr<void>;
+declare c("c") function GetStdHandle(which: u32): Ptr<void> | null;
+declare c("c") function InitializeProcThreadAttributeList(
+  list: Ptr<_PROC_THREAD_ATTRIBUTE_LIST> | null,
+  count: u32,
+  flags: u32,
+  size: Out<u64>,
+): i32;
+declare c("c") function UpdateProcThreadAttribute(
+  list: Ptr<_PROC_THREAD_ATTRIBUTE_LIST>,
+  flags: u32,
+  attribute: u64,
+  value: Ptr<void>,
+  size: u64,
+  previous: Ptr<void> | null,
+  returned: Ptr<u64> | null,
+): i32;
+declare c("c") function DeleteProcThreadAttributeList(list: Ptr<_PROC_THREAD_ATTRIBUTE_LIST>): void;
+declare c("c") function SetLastError(e: u32): void;
+
+const INVALID_HANDLE: usize = 0xffffffffffffffff;
+/** `STD_INPUT_HANDLE` (-10); output and error are the next two down. */
+const STD_INPUT_HANDLE: u32 = 0xfffffff6;
+const STARTF_USESTDHANDLES: u32 = 0x100;
+const CREATE_UNICODE_ENVIRONMENT: u32 = 0x400;
+const EXTENDED_STARTUPINFO_PRESENT: u32 = 0x80000;
+const PROC_THREAD_ATTRIBUTE_HANDLE_LIST: u64 = 0x20002;
+const DUPLICATE_CLOSE_SOURCE: u32 = 1;
+const DUPLICATE_SAME_ACCESS: u32 = 2;
+const GENERIC_READ_WRITE: u32 = 0xc0000000;
+const FILE_SHARE_READ_WRITE: u32 = 3;
+const OPEN_EXISTING: u32 = 3;
+/** A pipe's buffer, as the runtime's pipes had. */
+const PIPE_SIZE: u32 = 65536;
+const ERROR_FILE_NOT_FOUND: u32 = 2;
+export const ERROR_INVALID_PARAMETER: u32 = 87;
+
+// `STARTUPINFOEXW`: `cb`, `dwFlags`, the three handles, the attribute list.
+const SI_CB: usize = 0;
+const SI_FLAGS: usize = 60;
+const SI_STDIN: usize = 80;
+const SI_LIST: usize = 104;
+const SI_SIZE: usize = 104;
+const SIEX_SIZE: usize = 112;
+// `PROCESS_INFORMATION`: the process and thread handles, the process id.
+const PI_PROCESS: usize = 0;
+const PI_THREAD: usize = 8;
+const PI_PID: usize = 16;
+const PI_SIZE: usize = 24;
+
+/** A started child: its process handle and id, and the parent's end of each piped stream. */
+export class Started {
+  /** The process handle; 0 when it did not start (`error` says why). */
+  process: usize = 0;
+  pid: u32 = 0;
+  /** The Windows error it failed with, and the message when the system's is not the one. */
+  error: u32 = 0;
+  message: string = "";
+  /** The parent's pipe ends (0: not piped). */
+  stdin: usize = 0;
+  stdout: usize = 0;
+  stderr: usize = 0;
+}
+
+/** Does any text of `spec` hold a NUL (which no Windows string can)? */
+function holdsNul(spec: CommandSpec): bool {
+  if (spec.program.includes("\0") || spec.cwd.includes("\0")) {
+    return true;
+  }
+  for (const a of spec.args) {
+    if (a.includes("\0")) {
+      return true;
+    }
+  }
+  for (const v of spec.env) {
+    if (v.includes("\0")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * A copy of handle `h` the child can inherit (`close`: `h` is closed by the copy); 0 when `h`
+ * is none, and `INVALID_HANDLE` when the copy failed (`GetLastError` says why).
+ */
+function inheritable(h: usize, close: bool): usize {
+  if (h === 0 || h === INVALID_HANDLE) {
+    return 0;
+  }
+  const out = new OutPtr<void>();
+  let done: i32 = 0;
+  // SAFETY: `h` is a handle of this process; the copy goes to `out`.
+  unsafe {
+    const me = GetCurrentProcess();
+    done = DuplicateHandle(
+      me,
+      m.ptrTo<void>(h),
+      me,
+      out,
+      0,
+      1,
+      DUPLICATE_SAME_ACCESS | (close ? DUPLICATE_CLOSE_SOURCE : 0),
+    );
+  }
+  return done === 0 ? INVALID_HANDLE : ptrAddressOrZero<void>(out.value);
+}
+
+/**
+ * The child's handle for stream `i` (0 stdin, 1 stdout, 2 stderr) in `mode` (0 inherit, 1 pipe,
+ * 2 the null device), with the parent's end of a pipe in `out`; `INVALID_HANDLE` on failure.
+ */
+function streamFor(i: u32, mode: u32, out: Started): usize {
+  if (mode === 1) {
+    const r = new OutPtr<void>();
+    const w = new OutPtr<void>();
+    // SAFETY: two handles are written; no security attributes (not inheritable).
+    if (unsafe { CreatePipe(r, w, null, PIPE_SIZE) } === 0) {
+      return INVALID_HANDLE;
+    }
+    const readEnd = ptrAddressOrZero<void>(r.value);
+    const writeEnd = ptrAddressOrZero<void>(w.value);
+    const parent = i === 0 ? writeEnd : readEnd;
+    const child = inheritable(i === 0 ? readEnd : writeEnd, true);
+    if (child === INVALID_HANDLE) {
+      pw.closeHandle(parent);
+      return INVALID_HANDLE;
+    }
+    if (i === 0) {
+      out.stdin = parent;
+    } else if (i === 1) {
+      out.stdout = parent;
+    } else {
+      out.stderr = parent;
+    }
+    return child;
+  }
+  if (mode === 2) {
+    const name = cl.unitsOf("NUL");
+    const p = cl.wide(name);
+    let h: usize = 0;
+    // SAFETY: a NUL-terminated name; no security attributes or template.
+    unsafe {
+      h = ptrAddressOrZero<void>(
+        CreateFileW(
+          m.ptrTo<u16>(p),
+          GENERIC_READ_WRITE,
+          FILE_SHARE_READ_WRITE,
+          null,
+          OPEN_EXISTING,
+          0,
+          null,
+        ),
+      );
+    }
+    m.release(p, cl.wideSize(name));
+    if (h === INVALID_HANDLE || h === 0) {
+      return INVALID_HANDLE;
+    }
+    return inheritable(h, true);
+  }
+  // SAFETY: no precondition; the handle stays this program's.
+  const std = ptrAddressOrZero<void>(unsafe { GetStdHandle(STD_INPUT_HANDLE - i) });
+  return inheritable(std, false);
+}
+
+/** Closes the parent's pipe ends of `out` (it did not start). */
+function closeParentEnds(out: Started): void {
+  for (const h of [out.stdin, out.stdout, out.stderr]) {
+    if (h !== 0) {
+      pw.closeHandle(h);
+    }
+  }
+  out.stdin = 0;
+  out.stdout = 0;
+  out.stderr = 0;
+}
+
+/**
+ * Starts `spec` with stdio modes `modes` (`stdin | stdout << 2 | stderr << 4`; 0 inherit, 1
+ * pipe, 2 the null device): the child's process handle and id and the parent's ends of its
+ * pipes, or the Windows error it failed with.
+ */
+export function start(spec: CommandSpec, modes: u32): Started {
+  const out = new Started();
+  const lower = spec.program.toLowerCase();
+  if (lower.endsWith(".bat") || lower.endsWith(".cmd")) {
+    out.error = ERROR_INVALID_PARAMETER;
+    out.message = "batch files run only through a shell (execShell)";
+    return out;
+  }
+  if (holdsNul(spec)) {
+    out.error = ERROR_INVALID_PARAMETER;
+    out.message = "nul byte found in provided data";
+    return out;
+  }
+  const env = cl.environment(spec);
+  const program = cl.lookUp(spec, cl.lookUpVar(env, "PATH") ?? "");
+  if (program == null) {
+    out.error = ERROR_FILE_NOT_FOUND;
+    return out;
+  }
+  if (((modes >> 2) & 3) === 0 || ((modes >> 4) & 3) === 0) {
+    // The child's output comes after what this program printed before starting it.
+    wk.handOffOutput();
+  }
+  // The child's three handles, then the list of those it inherits.
+  const handles = m.zeroed(48);
+  let count: usize = 0;
+  for (let i: u32 = 0; i < 3; i++) {
+    const h = streamFor(i, (modes >> (2 * i)) & 3, out);
+    if (h === INVALID_HANDLE) {
+      out.error = pw.lastError();
+      break;
+    }
+    m.st(handles + 8 * (i as usize), h);
+    if (h !== 0) {
+      m.st(handles + 24 + 8 * count, h);
+      count++;
+    }
+  }
+  if (out.error === 0) {
+    launch(spec, program!, env, handles, count, out);
+  }
+  for (let i: usize = 0; i < 3; i++) {
+    const h = m.ld(handles + 8 * i);
+    if (h !== 0) {
+      pw.closeHandle(h);
+    }
+  }
+  m.release(handles, 48);
+  if (out.process === 0) {
+    closeParentEnds(out);
+  }
+  return out;
+}
+
+/**
+ * A `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` of the `count` handles at `at` (which stay alive while
+ * it is used): its block (its size, then the list at 8), or 0 on failure (`GetLastError`).
+ */
+function handleList(at: usize, count: usize): usize {
+  const size = new Out<u64>(0);
+  // SAFETY: asks only for the size of a list of one attribute (and fails, saying so).
+  unsafe {
+    InitializeProcThreadAttributeList(null, 1, 0, size);
+  }
+  const n = size.value as usize;
+  if (n === 0) {
+    return 0;
+  }
+  const block = m.zeroed(n + 8);
+  m.st(block, n);
+  const list = m.ptrTo<_PROC_THREAD_ATTRIBUTE_LIST>(block + 8);
+  // SAFETY: `n` bytes at `block + 8`, as asked for.
+  if (unsafe { InitializeProcThreadAttributeList(list, 1, 0, size) } === 0) {
+    m.release(block, n + 8);
+    return 0;
+  }
+  let set: i32 = 0;
+  // SAFETY: an initialized list; `count` handles at `at`, which outlive the list.
+  unsafe {
+    set = UpdateProcThreadAttribute(
+      list,
+      0,
+      PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+      m.ptrTo<void>(at),
+      8 * (count as u64),
+      null,
+      null,
+    );
+  }
+  if (set === 0) {
+    const e = pw.lastError();
+    freeList(block);
+    // The error the caller reads is the update's, not one the clean-up left.
+    // SAFETY: no precondition.
+    unsafe {
+      SetLastError(e);
+    }
+    return 0;
+  }
+  return block;
+}
+
+/** Deletes and frees a `handleList` block. */
+function freeList(block: usize): void {
+  // SAFETY: an initialized list, not used after.
+  unsafe {
+    DeleteProcThreadAttributeList(m.ptrTo<_PROC_THREAD_ATTRIBUTE_LIST>(block + 8));
+  }
+  m.release(block, m.ld(block) + 8);
+}
+
+/**
+ * `CreateProcessW` for `spec` running `program` with environment `env`, the child's handles at
+ * `handles` (stdin, stdout, stderr, then the `count` of them that are handles): fills `out`.
+ */
+function launch(
+  spec: CommandSpec,
+  program: string,
+  env: string[],
+  handles: usize,
+  count: usize,
+  out: Started,
+): void {
+  const appUnits = cl.unitsOf(program);
+  const app = cl.wide(appUnits);
+  const lineUnits = cl.unitsOf(cl.commandLine(spec));
+  const line = cl.wide(lineUnits);
+  const setEnv = spec.clearEnv || spec.env.length > 0;
+  const blockUnits: u16[] = setEnv ? cl.block(env) : [];
+  const envBlock = setEnv ? cl.wide(blockUnits) : 0;
+  const cwdUnits = cl.unitsOf(spec.cwd);
+  const cwd = spec.cwd != "" ? cl.wide(cwdUnits) : 0;
+  const si = m.zeroed(SIEX_SIZE);
+  const pi = m.zeroed(PI_SIZE);
+  // The list of the handles the child inherits (none: no list, and nothing inherited).
+  const list = count > 0 ? handleList(handles + 24, count) : 0;
+  if (count > 0 && list === 0) {
+    out.error = pw.lastError();
+  }
+  m.st32(si + SI_CB, (count > 0 ? SIEX_SIZE : SI_SIZE) as u32);
+  m.st32(si + SI_FLAGS, STARTF_USESTDHANDLES);
+  for (let i: usize = 0; i < 3; i++) {
+    m.st(si + SI_STDIN + 8 * i, m.ld(handles + 8 * i));
+  }
+  m.st(si + SI_LIST, list === 0 ? 0 : list + 8);
+  if (out.error === 0) {
+    let done: i32 = 0;
+    // SAFETY: NUL-terminated wide strings (the command line writable, as Windows wants it), a
+    // double-NUL-terminated environment block, and the startup and information blocks above.
+    unsafe {
+      done = CreateProcessW(
+        m.ptrTo<u16>(app),
+        m.ptrTo<u16>(line),
+        null,
+        null,
+        count > 0 ? 1 : 0,
+        CREATE_UNICODE_ENVIRONMENT | (count > 0 ? EXTENDED_STARTUPINFO_PRESENT : 0),
+        envBlock === 0 ? null : m.ptrTo<void>(envBlock),
+        cwd === 0 ? null : m.ptrTo<u16>(cwd),
+        m.ptrTo<_STARTUPINFOW>(si),
+        m.ptrTo<_PROCESS_INFORMATION>(pi),
+      );
+    }
+    if (done === 0) {
+      out.error = pw.lastError();
+    } else {
+      out.process = m.ld(pi + PI_PROCESS);
+      out.pid = m.ld32(pi + PI_PID);
+      pw.closeHandle(m.ld(pi + PI_THREAD));
+    }
+  }
+  if (list !== 0) {
+    freeList(list);
+  }
+  m.release(si, SIEX_SIZE);
+  m.release(pi, PI_SIZE);
+  m.release(app, cl.wideSize(appUnits));
+  m.release(line, cl.wideSize(lineUnits));
+  if (envBlock !== 0) {
+    m.release(envBlock, cl.wideSize(blockUnits));
+  }
+  if (cwd !== 0) {
+    m.release(cwd, cl.wideSize(cwdUnits));
+  }
+}

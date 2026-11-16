@@ -1,5 +1,8 @@
-// velt/process/child (internal): the runtime functions velt/process/child calls (rt_abi_async.md §14.3)
-// and the layouts they return.
+// velt/process/child (internal): the child-process functions where the executor in Velt doesn't
+// run (the default variant of `#child-rt`, std/imports.velt: WebAssembly), with the names and
+// signatures of the `std-scheduler` variant (std/process/child/child_sched.velt), and what both
+// share: the runtime's `execSync` (rt_abi_async.md §14.3) and the layout it returns. No child
+// can start there: `spawn` and `exec` fail with `ENOTSUP`, and no handle is open.
 
 import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";
@@ -13,44 +16,76 @@ export struct RawOutput {
   stderr: string;
 }
 
-export declare function velt_rt_child_spawn(spec: CommandSpec): IoResult<u64>;
-
-export declare function velt_rt_child_pid(c: u64): u32;
-
-export declare function velt_rt_child_exit_code(c: u64): i64;
-
-export declare async function velt_rt_child_wait(c: u64): Promise<IoResult<i32>>;
-
-export declare function velt_rt_child_kill(c: u64, signal: i32): IoStatus;
-
-export declare function velt_rt_child_close(c: u64);
-
-export declare async function velt_rt_child_read(
-  c: u64,
-  which: u32,
-  max: u64,
-): Promise<IoResult<u8[]>>;
-
-export declare async function velt_rt_child_read_string(
-  c: u64,
-  which: u32,
-  max: u64,
-): Promise<IoResult<string>>;
-
-export declare async function velt_rt_child_write(c: u64, data: string): Promise<IoStatus>;
-
-export declare async function velt_rt_child_close_stdin(c: u64): Promise<IoStatus>;
-
-export declare async function velt_rt_child_output(
-  spec: CommandSpec,
-  input: string,
-): Promise<IoResult<RawOutput>>;
-
 export declare function velt_rt_child_output_sync(
   spec: CommandSpec,
   input: string,
 ): IoResult<RawOutput>;
 
+/** The result of `raw`: its exit code unsigned, as Node reports a Windows code (0xC0000005). */
 export function resultOf(raw: RawOutput): ExecResult {
-  return new ExecResult(raw.code, raw.stdout, raw.stderr);
+  return new ExecResult((raw.code as u32) as number, raw.stdout, raw.stderr);
+}
+
+/** The status of starting `spec` here. */
+function unsupported(spec: CommandSpec): IoStatus {
+  return { code: 12, message: `spawn ${spec.program}: operation not supported on this platform` };
+}
+
+/** The status of a closed handle. */
+function closed(): IoStatus {
+  return { code: 16, message: "handle is closed" };
+}
+
+export function velt_rt_child_spawn(spec: CommandSpec): IoResult<u64> {
+  const st = unsupported(spec);
+  return { code: st.code, message: st.message, value: 0 };
+}
+
+export function velt_rt_child_pid(c: u64): u32 {
+  return 0;
+}
+
+export function velt_rt_child_exit_code(c: u64): i64 {
+  return -1;
+}
+
+export async function velt_rt_child_wait(c: u64): Promise<IoResult<i32>> {
+  const st = closed();
+  return { code: st.code, message: st.message, value: 0 };
+}
+
+export function velt_rt_child_kill(c: u64, signal: i32): IoStatus {
+  return closed();
+}
+
+export function velt_rt_child_close(c: u64) {}
+
+export async function velt_rt_child_read(c: u64, which: u32, max: u64): Promise<IoResult<u8[]>> {
+  const st = closed();
+  return { code: st.code, message: st.message, value: [] };
+}
+
+export async function velt_rt_child_read_string(
+  c: u64,
+  which: u32,
+  max: u64,
+): Promise<IoResult<string>> {
+  const st = closed();
+  return { code: st.code, message: st.message, value: "" };
+}
+
+export async function velt_rt_child_write(c: u64, data: string): Promise<IoStatus> {
+  return closed();
+}
+
+export async function velt_rt_child_close_stdin(c: u64): Promise<IoStatus> {
+  return closed();
+}
+
+export async function velt_rt_child_output(
+  spec: CommandSpec,
+  input: string,
+): Promise<IoResult<RawOutput>> {
+  const st = unsupported(spec);
+  return { code: st.code, message: st.message, value: { code: 0, stdout: "", stderr: "" } };
 }

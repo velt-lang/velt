@@ -1,17 +1,13 @@
-//! Run a command to completion and collect its output (`exec`/`execSync` in std): stdout and
-//! stderr are piped and read concurrently (so neither pipe can fill up and deadlock the child),
-//! optional input is written to stdin, and the result carries the exit code and both outputs
-//! as text (invalid UTF-8 becomes U+FFFD).
+//! Run a command to completion and collect its output, blocking the calling thread (`execSync`
+//! in std): stdout and stderr are piped and read concurrently (so neither pipe can fill up and
+//! deadlock the child), optional input is written to stdin from a thread of its own, and the
+//! result carries the exit code and both outputs as text (invalid UTF-8 becomes U+FFFD).
 
 use super::command::{StdioMode, VeltCommand};
-use super::{exit_code, spawn_error};
-use crate::result::IoResult;
+use crate::result::{IoResult, VeltErr};
 use crate::str::VeltStr;
-use crate::task::leaf::new_leaf;
-use crate::task::VeltFut;
 use std::io::Write;
 use std::process::Output;
-use tokio::io::AsyncWriteExt;
 
 /// `{ i32 code; u32 pad; VeltStr stdout; VeltStr stderr; }` — size 56, align 8.
 #[repr(C)]
@@ -24,6 +20,33 @@ pub struct VeltOutput {
     pub stdout: VeltStr,
     /// Everything the child wrote to stderr.
     pub stderr: VeltStr,
+}
+
+/// The exit code of a finished process; killed by a signal ⇒ `128 + signal` (shell convention).
+fn exit_code(status: std::process::ExitStatus) -> i32 {
+    if let Some(code) = status.code() {
+        return code;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(signal) = status.signal() {
+            return 128 + signal;
+        }
+    }
+    -1
+}
+
+/// Prefixes spawn errors with the program, like Node's `spawn x ENOENT`.
+fn spawn_error(program: &VeltStr, e: &std::io::Error) -> VeltErr {
+    // SAFETY: `program` is a valid string borrowed from the caller.
+    let name = unsafe { program.text_lossy() };
+    let mut err = VeltErr::from_io(e);
+    let message = format!("spawn {name}: {e}");
+    // SAFETY: `err.message` is an owned string created just above.
+    unsafe { crate::str::velt_rt_str_drop(&mut err.message) };
+    err.message = VeltStr::from_vec(message.into_bytes());
+    err
 }
 
 fn text(bytes: Vec<u8>) -> VeltStr {
@@ -56,42 +79,8 @@ unsafe fn command(spec: &VeltCommand, input: &[u8]) -> std::process::Command {
     spec.build([stdin, StdioMode::Pipe, StdioMode::Pipe])
 }
 
-/// `exec(cmd, args, opts)` → `IoResult<VeltOutput>` once the child has exited. `input` (a
-/// string, copied; empty = none) is written to its stdin, which is then closed. The spec is
-/// read at the call.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_child_output(
-    spec: *const VeltCommand,
-    input: *const VeltStr,
-) -> *mut VeltFut {
-    let input = (*input).to_string_lossy().into_bytes();
-    let cmd = command(&*spec, &input);
-    let program = VeltStr::from_bytes((*spec).program.as_bytes());
-    new_leaf(async move {
-        let r = run(tokio::process::Command::from(cmd), input).await;
-        let r = r.map(to_output).map_err(|e| spawn_error(&program, &e));
-        let mut program = program;
-        crate::str::velt_rt_str_drop(&mut program);
-        match r {
-            Ok(out) => IoResult::ok(out),
-            Err(e) => IoResult::err(e),
-        }
-    })
-}
-
-async fn run(mut cmd: tokio::process::Command, input: Vec<u8>) -> std::io::Result<Output> {
-    let mut child = cmd.spawn()?;
-    if let Some(mut stdin) = child.stdin.take() {
-        // Fed from its own task: a child that writes a lot before reading its input must not
-        // block on a full stdout pipe while we block writing to its stdin.
-        crate::task::runtime::spawn(async move {
-            let _ = stdin.write_all(&input).await;
-        });
-    }
-    child.wait_with_output().await
-}
-
-/// `execSync`: like `velt_rt_child_output`, blocking the calling thread.
+/// `execSync(cmd, args, opts)` → `IoResult<VeltOutput>` once the child has exited. `input` (a
+/// string, copied; empty = none) is written to its stdin, which is then closed.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_child_output_sync(
     spec: *const VeltCommand,

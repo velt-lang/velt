@@ -123,13 +123,17 @@ export const imports: Imports = {
   // sched_blocking.velt) instead of the runtime's leaves on tokio's blocking threads.
   "#fs-rt": { "std-scheduler": "./fs/rt_sched.velt", default: "./fs/rt.velt" },
   "#process-rt": { "std-scheduler": "./process/rt_sched.velt", default: "./process/rt.velt" },
-  // velt/process/child's runtime functions: the runtime's (tokio's processes), or, compiled with
-  // the executor in Velt, `posix_spawn` with the exit and the pipes on its reactor. On Windows
-  // child processes stay the runtime's under it too (#2649: `CreateProcess` is a follow-up).
+  // velt/process/child's runtime functions: the runtime's (std/process/child/rt.velt, which
+  // WebAssembly can't run), or, compiled with the executor in Velt, its own (child_sched.velt),
+  // which `#child-os` serves: `posix_spawn` with the exit and the pipes on its reactor, or on
+  // Windows `CreateProcessW` with the exit wait and the pipes on its blocking pool.
   "#child-rt": {
-    win32: "./process/child/rt.velt",
     "std-scheduler": "./process/child/child_sched.velt",
     default: "./process/child/rt.velt",
+  },
+  "#child-os": {
+    win32: "./process/child/child_win32.velt",
+    default: "./process/child/child_posix.velt",
   },
   // `fetch`'s plain-TCP connections: under the executor in Velt (every native build) sockets on
   // its reactor, pooled in Velt (`https:` stays the runtime's); otherwise the runtime's.

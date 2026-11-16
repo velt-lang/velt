@@ -27,9 +27,9 @@ fn has_threads() -> bool {
     cfg!(any(target_os = "macos", target_os = "linux", windows))
 }
 
-/// Child processes and signals in Velt are POSIX's (`posix_spawn`, `sigaction`): on Windows child
-/// processes stay the runtime's under `VELT_SCHEDULER=std` too (`#child-rt`, #2649), and a
-/// signal's exit code (128 + 15) is a POSIX one.
+/// Signals in Velt are POSIX's (`sigaction`), and so are the socket errors the tests below
+/// compare. Child processes run in Velt everywhere (`posix_spawn`, or `CreateProcessW` on
+/// Windows, where a terminated child reports 128 + the signal too).
 fn posix() -> bool {
     cfg!(any(target_os = "macos", target_os = "linux"))
 }
@@ -87,8 +87,8 @@ const POOL: &str = "sched__blockingN3run";
 /// them).
 fn assert_std_path(name: &str, exe: &Path, marks: &[&str]) {
     if cfg!(windows) {
-        // A PE executable names no Velt function, and child processes stay the runtime's there
-        // (`#child-rt`): the other suites look for the executor's panic locations instead.
+        // A PE executable names no Velt function: the other suites look for the executor's
+        // panic locations instead.
         return;
     }
     let bin = std::fs::read(exe).unwrap();
@@ -481,7 +481,7 @@ async function main() {
 
 #[test]
 fn child_processes_from_every_worker_run_and_report_their_exit() {
-    if !posix() {
+    if !has_threads() {
         return;
     }
     // The program runs itself as its children (no shell tools needed). 24 `exec`s at once from
@@ -545,7 +545,9 @@ async function parent(self: string) {
   console.log(`killed ${await k.wait()}`);
   k.close();
 
-  const slash = self.lastIndexOf("/");
+  const fwd = self.lastIndexOf("/");
+  const back = self.lastIndexOf("\\");
+  const slash = fwd > back ? fwd : back;
   const env = new Map<string, string>();
   env.set("PATH", self.slice(0, slash));
   const viaPath = await exec(self.slice(slash + 1), ["echo"], { input: "x", env: env });
@@ -574,7 +576,7 @@ async function main(): Promise<i32> {
 
 #[test]
 fn a_read_of_a_childs_silent_pipe_leaves_its_worker_free() {
-    if !posix() {
+    if !has_threads() {
         return;
     }
     // The parent starts reading the child's stdout before it writes the line the child waits
@@ -612,7 +614,7 @@ async function main(): Promise<i32> {
 
 #[test]
 fn a_nul_in_a_childs_working_directory_fails_its_start() {
-    if !posix() {
+    if !has_threads() {
         return;
     }
     // The cwd is a C string too: with a NUL in it the start fails, as the runtime's does, where

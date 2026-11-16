@@ -1260,25 +1260,15 @@ typedef struct {                 // std/process/child/spec.velt `CommandSpec` (1
 } VeltCommand;
 typedef struct { int32_t code; uint32_t pad; VeltStr stdout; VeltStr stderr; } VeltOutput;  // 56 bytes
 ```
-`VeltChild` is an `Arc`; in-flight operations hold a clone, so `close` is allowed any time. A
-runtime task owns the OS child and reaps it (no zombies), so dropping a handle never kills.
-Exit codes: the process's code, or `128 + signal` when killed by a signal (Unix). Spawn failures
-are `IoResult` errors whose message starts with `spawn <program>: `.
+Only `execSync` is the runtime's: `spawn` and `exec` are std's own on every native target
+(std/process/child/child_sched.velt: `posix_spawn` with the exit and the pipes on the executor's
+reactor on macOS and Linux, `CreateProcessW` with the exit wait and the pipes on its blocking
+pool on Windows). Exit codes: the process's code, or `128 + signal` when killed by a signal
+(Unix). Spawn failures are `IoResult` errors whose message starts with `spawn <program>: `.
 
 | Symbol | Signature | Notes |
 |---|---|---|
-| `velt_rt_child_spawn` | `(const VeltCommand* spec, IoResult<VeltChild>* out)` | spec copied |
-| `velt_rt_child_pid` | `(VeltChild c) -> u32` | |
-| `velt_rt_child_exit_code` | `(VeltChild c) -> i64` | -1 while running |
-| `velt_rt_child_wait` | `(VeltChild c) -> VeltFut*` | `IoResult<i32>` exit code |
-| `velt_rt_child_kill` | `(VeltChild c, i32 signal, VeltErr* out)` | Unix signal number (Windows: terminate); no-op once finished |
-| `velt_rt_child_close` | `(VeltChild c)` | releases the handle only |
-| `velt_rt_child_read` | `(VeltChild c, u32 which, u64 max) -> VeltFut*` | `which` 1 stdout / 2 stderr; `IoResult<VeltBytes>`, empty = EOF, `max` 0 = 64 KiB; `EINVAL` if not piped |
-| `velt_rt_child_read_string` | `(VeltChild c, u32 which, u64 max) -> VeltFut*` | `IoResult<VeltStr>`, split characters completed on the next read, `""` = EOF |
-| `velt_rt_child_write` | `(VeltChild c, const VeltStr* data) -> VeltFut*` | `IoResult<()>` to stdin (copied) |
-| `velt_rt_child_close_stdin` | `(VeltChild c) -> VeltFut*` | `IoResult<()>`; idempotent |
-| `velt_rt_child_output` | `(const VeltCommand* spec, const VeltStr* input) -> VeltFut*` | run to completion: stdout/stderr piped and drained concurrently, `input` (empty = none, stdin is then null) written then closed; `IoResult<VeltOutput>`, output decoded lossily; `spec.stdio` ignored |
-| `velt_rt_child_output_sync` | `(const VeltCommand* spec, const VeltStr* input, IoResult<VeltOutput>* out)` | same, blocking |
+| `velt_rt_child_output_sync` | `(const VeltCommand* spec, const VeltStr* input, IoResult<VeltOutput>* out)` | run to completion, blocking: stdout/stderr piped and drained concurrently, `input` (empty = none, stdin is then null) written then closed; output decoded lossily; `spec.stdio` ignored |
 
 ### 14.4 Standard input (`velt/process`)
 

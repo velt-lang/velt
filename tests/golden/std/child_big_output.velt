@@ -1,0 +1,88 @@
+// A child that writes far more than a pipe holds to stdout and stderr at once, and one that
+// writes a lot before it reads a lot of input: the parent reads both streams together and feeds
+// stdin from a task of its own, so neither side waits on a full pipe while the other waits on
+// it. The child is this very program, selected by its argument.
+import { exec, spawn } from "velt/process/child";
+import { argv, args, readAll } from "velt/process";
+
+/** A line of `n` copies of `c`. */
+function line(c: string, n: i64): string {
+  return c.repeat(n);
+}
+
+async function child(mode: string): Promise<i32> {
+  if (mode == "both") {
+    // 400 lines of 1000 bytes each to stdout and stderr, interleaved: 400 KB on each.
+    for (let i = 0; i < 400; i++) {
+      console.log(line("o", 999));
+      console.error(line("e", 999));
+    }
+    return 3;
+  }
+  if (mode == "first") {
+    // 300 KB of output before any input is read, then all of the input.
+    for (let i = 0; i < 300; i++) {
+      console.log(line("w", 999));
+    }
+    const input = await readAll();
+    console.log(`read ${input.length}`);
+    return 0;
+  }
+  return 1;
+}
+
+/** Everything a reader gives until it ends. */
+async function drain(next: () => Promise<string>): Promise<string> {
+  let all = "";
+  let chunk = await next();
+  while (chunk != "") {
+    all += chunk;
+    chunk = await next();
+  }
+  return all;
+}
+
+/** How many lines of `text` are `want` repeated, and how many lines it has. */
+function lines(text: string, want: string): string {
+  const all = text.replaceAll("\r\n", "\n").split("\n");
+  let right = 0;
+  for (const l of all) {
+    if (l == want) {
+      right++;
+    }
+  }
+  return `${right}/${all.length - 1}`;
+}
+
+async function parent(self: string) {
+  const r = await exec(self, ["both"]);
+  console.log(
+    `exec ${r.code} ${lines(r.stdout, line("o", 999))} ${lines(r.stderr, line("e", 999))}`,
+  );
+
+  const p = spawn(self, ["both"], { stdout: "pipe", stderr: "pipe" });
+  const both = await Promise.all<string>([
+    drain(() => p.readStdout()),
+    drain(() => p.readStderr()),
+  ]);
+  console.log(
+    `spawn ${await p.wait()} ${lines(both[0], line("o", 999))} ${lines(both[1], line("e", 999))}`,
+  );
+  p.close();
+
+  const input = line("i", 300000);
+  const f = await exec(self, ["first"], { input: input });
+  const out = f.stdout.replaceAll("\r\n", "\n");
+  console.log(
+    `fed ${f.code} ${lines(out.slice(0, 300000), line("w", 999))} ${out.slice(300000).trim()}`,
+  );
+}
+
+async function main(): Promise<i32> {
+  const a = args();
+  if (a.length > 0) {
+    return await child(a[0]);
+  }
+  await parent(argv()[0].clone());
+  return 0;
+}

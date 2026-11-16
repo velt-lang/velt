@@ -269,7 +269,7 @@ export function shutdown$io(fd: i32, how: i32): i32 {
   return unsafe { shutdown$win(fd as usize, how) };
 }
 
-/** No pipe is read here (child processes stay the runtime's on Windows): -1. */
+/** No pipe is read here (a child's pipes are read on the blocking pool on Windows): -1. */
 export function read$net(fd: i32, buf: Ptr<u8>, n: usize): isize {
   return -1;
 }
