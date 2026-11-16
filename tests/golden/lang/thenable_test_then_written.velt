@@ -1,6 +1,6 @@
 // check: no leaks
 // A thenable test through `any` on a function that was given a `then` through `any` (an index
-// with the key, or a computed one, #3050 review): the test asks the function whether it has a
+// with the key, or a computed one, #379): the test asks the function whether it has a
 // `then`, as Node's does, so it sees it; a promise's `then` is a function, and a plain function
 // has none.
 type ViewFn = () => string;
