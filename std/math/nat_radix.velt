@@ -4,7 +4,7 @@
 // below `SPLIT_LIMBS` limbs, and above it the number is split by `radix^(k 2^i)` (divide and
 // conquer), so the long divisions do the work in a few big steps.
 
-import { arraySetLen, arrayWithCapacity, strByteAt } from "velt/lang/intrinsics";
+import { arrayMove, arraySetLen, arrayWithCapacity, strByteAt } from "velt/lang/intrinsics";
 import { validToString } from "velt/encoding/utf8";
 import { natAddWordInto, natAssign, natOfWord, natUnfilled } from "velt/math/nat_add";
 import { natDivRem, natDivWordInto } from "velt/math/nat_div";
@@ -114,7 +114,7 @@ function writeSplit(
     i--;
   }
   const low = natUnfilled(0);
-  const high = natDivRem(x, powers[i], low);
+  const high = natDivRem(x, powers[i], low, true);
   writeSplit(low, radix, chunk, powers, i, buf, end);
   if (high.length > 0) {
     writeSplit(high, radix, chunk, powers, i, buf, end - (chunk.digits << i));
@@ -128,6 +128,21 @@ function powerOfTwoDigits(a: u64[], bits: u64, shift: u64): string {
   arraySetLen(buf, count);
   const mask: u64 = (1 << shift) - 1;
   const n = a.length;
+  if (64 % shift == 0) {
+    // Whole digits in every limb: each limb's from its low end, the top limb's up to `count`.
+    const per = (64 / shift) as usize;
+    let end = count;
+    for (let i: usize = 0; i < n; i++) {
+      let x = a[i];
+      const k = end < per ? end : per;
+      for (let d: usize = 0; d < k; d++) {
+        buf[end - 1 - d] = digitChar(x & mask);
+        x = x >> shift;
+      }
+      end -= k;
+    }
+    return validToString(buf);
+  }
   for (let d: usize = 0; d < count; d++) {
     const p = (d as u64) * shift;
     const limb = (p >> 6) as usize;
@@ -151,9 +166,8 @@ function digitsText(buf: u8[], start: usize, end: usize): string {
     return validToString(buf);
   }
   const out: u8[] = arrayWithCapacity(end - start);
-  for (let i = start; i < end; i++) {
-    out.push(buf[i]);
-  }
+  arraySetLen(out, end - start);
+  arrayMove(out, 0, buf, start, end - start);
   return validToString(out);
 }
 
@@ -176,11 +190,6 @@ function digitValue(c: u8): u64 {
  * is not a digit of the radix. There is at least one digit.
  */
 export function natParse(s: string, from: usize, to: usize, radix: u64): u64[] | null {
-  for (let i = from; i < to; i++) {
-    if (digitValue(strByteAt(s, i as u64)) >= radix) {
-      return null;
-    }
-  }
   const shift = bitsPerDigit(radix);
   if (shift != 0) {
     return parsePowerOfTwo(s, from, to, shift);
@@ -198,7 +207,11 @@ export function natParse(s: string, from: usize, to: usize, radix: u64): u64[] |
     let c: u64 = 0;
     let scale: u64 = 1;
     for (let i: usize = 0; i < part; i++) {
-      c = c * radix + digitValue(strByteAt(s, (at + i) as u64));
+      const v = digitValue(strByteAt(s, (at + i) as u64));
+      if (v >= radix) {
+        return null;
+      }
+      c = c * radix + v;
       scale *= radix;
     }
     natMulWordInto(out, scale);
@@ -210,14 +223,18 @@ export function natParse(s: string, from: usize, to: usize, radix: u64): u64[] |
 }
 
 // The digits `s[from..to]` in the radix `2^shift`, packed from the last one up.
-function parsePowerOfTwo(s: string, from: usize, to: usize, shift: u64): u64[] {
+function parsePowerOfTwo(s: string, from: usize, to: usize, shift: u64): u64[] | null {
   const out: u64[] = [];
+  const radix: u64 = 1 << shift;
   let word: u64 = 0;
   let filled: u64 = 0;
   let i = to;
   while (i > from) {
     i--;
     const v = digitValue(strByteAt(s, i as u64));
+    if (v >= radix) {
+      return null;
+    }
     word = word | (v << filled);
     filled += shift;
     if (filled >= 64) {

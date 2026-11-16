@@ -3,9 +3,9 @@
 // two multiplications (Möller and Granlund, "Improved division by invariant integers", 2011),
 // so no loop runs a hardware divide. Long divisors use Knuth's algorithm D (TAOCP 4.3.1).
 
-import { arrayTruncate, inline } from "velt/lang/intrinsics";
-import { natAssign, natCmp, natOfWord, natTrim, natUnfilled } from "velt/math/nat_add";
-import { natSubMulRow } from "velt/math/nat_mul";
+import { arraySetLen, arrayTruncate, inline } from "velt/lang/intrinsics";
+import { natAssign, natCmp, natTrim, natUnfilled } from "velt/math/nat_add";
+import { ldl, limbsAt, limbsIn, shlAt, shrAt, stl, subMulRowAt, sumAt } from "velt/math/nat_mem";
 
 const MAX: u64 = 0xffffffffffffffff;
 
@@ -118,44 +118,97 @@ export function natRemWord(a: u64[], d: u64): u64 {
 }
 
 /**
- * `a / b`, with `a % b` written to `rem`; `b` is not zero. Knuth's algorithm D on the operands
- * as they are: only the quotient estimates read their top words shifted so that `b`'s top limb
- * is normalized, which is all that normalizing them would change.
+ * `a / b` (`[]` unless `quotient`), with `a % b` written to `rem`, which is empty; `b` is not
+ * zero. Knuth's algorithm D, in `rem`'s buffer. The quotient estimates read the operands' top
+ * words as if `b`'s top limb were normalized (shifted up by its leading zeros); with enough steps
+ * to pay for it, both are copied shifted so that the steps read their words as they are, and the
+ * remainder is shifted back.
  */
-export function natDivRem(a: u64[], b: u64[], rem: u64[]): u64[] {
+export function natDivRem(a: u64[], b: u64[], rem: u64[], quotient: bool): u64[] {
   if (natCmp(a, b) < 0) {
     natAssign(rem, a);
     return [];
   }
   const n = b.length;
   if (n == 1) {
+    if (!quotient) {
+      const r = natRemWord(a, b[0]);
+      if (r != 0) {
+        rem.push(r);
+      }
+      return [];
+    }
     const q = natUnfilled(0);
     natAssign(q, a);
     const r = natDivWordInto(q, b[0]);
-    natAssign(rem, natOfWord(r));
+    if (r != 0) {
+      rem.push(r);
+    }
     return q;
   }
-  const m = a.length - n;
+  const len = a.length;
+  const m = len - n;
   const s = b[n - 1].leadingZeros() as u64;
-  // A copy of its own, so LLVM knows that the window it changes is no limb of `b`.
-  const u = natUnfilled(a.length + 1);
-  for (let i: usize = 0; i < a.length; i++) {
-    u[i] = a[i];
+  // The shift the copies get: all of `s` when the steps' shifted reads would cost more than
+  // shifting `b` and the remainder (about 20 instructions a step against 4 a limb, measured).
+  const t = (m + 1) * 6 > n + 24 ? s : 0;
+  // In `rem`: `u = a << t` with a limb above it, which the steps change, then `v = b << t`
+  // when `t` is not 0 (else `v` is `b`).
+  arraySetLen(rem, t == 0 ? len + 1 : len + 1 + n);
+  const up = limbsAt(rem);
+  stl(up, len, shlAt(up, limbsIn(a), len, t));
+  let vp = limbsIn(b);
+  if (t != 0) {
+    const sp = up + 8 * (len + 1);
+    shlAt(sp, vp, n, t);
+    vp = sp;
   }
-  u[a.length] = 0;
-  const q = natUnfilled(m + 1);
-  const v1 = topWord(b, n - 1, s);
-  const v0 = topWord(b, n - 2, s);
+  const q = natUnfilled(quotient ? m + 1 : 0);
+  const qp = quotient ? limbsAt(q) : 0;
+  if (t == s) {
+    divNormalized(up, vp, qp, m, n);
+  } else {
+    divLimbs(up, vp, qp, m, n, s);
+  }
+  // The remainder is the low `n` limbs of `u`, shifted back.
+  shrAt(up, up, n, t, 0);
+  arrayTruncate(rem, n);
+  natTrim(rem);
+  natTrim(q);
+  return q;
+}
+
+// `divLimbs` for operands already normalized: a copy of its own, whose reads are not shifted.
+function divNormalized(up: usize, vp: usize, qp: usize, m: usize, n: usize) {
+  divLimbs(up, vp, qp, m, n, 0);
+}
+
+// Word `i` of the limbs at `p` shifted up by `s` (below 64), without its overflow.
+@inline
+function topAt(p: usize, i: usize, s: u64): u64 {
+  if (s == 0) {
+    return ldl(p, i);
+  }
+  const below = i == 0 ? 0 : ldl(p, i - 1) >> (64 - s);
+  return (ldl(p, i) << s) | below;
+}
+
+// Algorithm D's steps at addresses: `q[0..m + 1] = u / v` (not written when `qp` is 0) and `u[0..n]` the remainder, for `v`
+// of `n` (at least 2) limbs, normalized when shifted up by `s`, and `u` of `m + n + 1` limbs whose
+// top one is below `v`'s top limb.
+@inline
+function divLimbs(up: usize, vp: usize, qp: usize, m: usize, n: usize, s: u64) {
+  const v1 = topAt(vp, n - 1, s);
+  const v0 = topAt(vp, n - 2, s);
   const rec = natReciprocal(v1);
   let j = m + 1;
   while (j > 0) {
     j--;
-    const u2 = topWord(u, j + n, s);
+    const u2 = topAt(up, j + n, s);
     let qh = MAX;
     if (u2 < v1) {
-      const u1 = topWord(u, j + n - 1, s);
-      const u0 = topWord(u, j + n - 2, s);
-      const qr = natDiv2By1(u2, u1, v1, rec);
+      const u0 = topAt(up, j + n - 2, s);
+      const qr = natDiv2By1(u2, topAt(up, j + n - 1, s), v1, rec);
       qh = qr[0];
       let rh = qr[1];
       // At most two corrections: while qh * v0 > rh * 2^64 + u0.
@@ -171,50 +224,24 @@ export function natDivRem(a: u64[], b: u64[], rem: u64[]): u64[] {
         }
       }
     }
-    const borrow = natSubMulRow(u, j, b, qh);
-    const top = u[j + n];
-    u[j + n] = top - borrow;
+    const w = up + 8 * j;
+    const borrow = subMulRowAt(w, vp, n, qh);
+    const top = ldl(w, n);
+    stl(w, n, top - borrow);
     if (top < borrow) {
-      // qh was one or two too large: add `b` back until the window turns non-negative.
+      // qh was one or two too large: add `v` back until the window turns non-negative.
       while (true) {
         qh -= 1;
-        const c = addRow(u, j, b, n);
-        const t = u[j + n] + c;
-        u[j + n] = t;
+        const c = sumAt(w, w, vp, n, 0);
+        const t = ldl(w, n) + c;
+        stl(w, n, t);
         if (t < c) {
           break;
         }
       }
     }
-    q[j] = qh;
+    if (qp != 0) {
+      stl(qp, j, qh);
+    }
   }
-  natTrim(q);
-  // The remainder is the low `n` limbs of `u`.
-  arrayTruncate(u, n);
-  natTrim(u);
-  natAssign(rem, u);
-  return q;
-}
-
-// Limb `i` of `x << s` (`s` < 64) without its overflow: the word a normalized quotient estimate
-// reads.
-function topWord(x: u64[], i: usize, s: u64): u64 {
-  if (s == 0) {
-    return x[i];
-  }
-  const below = i == 0 ? 0 : x[i - 1] >> (64 - s);
-  return (x[i] << s) | below;
-}
-
-// `r[at..at + n] += a[0..n]`; returns the carry out.
-function addRow(r: u64[], at: usize, a: u64[], n: usize): u64 {
-  let carry: u64 = 0;
-  for (let i: usize = 0; i < n; i++) {
-    const y = r[at + i];
-    const s = y + a[i];
-    const t = s + carry;
-    r[at + i] = t;
-    carry = ((s < y) as u64) + ((t < s) as u64);
-  }
-  return carry;
 }

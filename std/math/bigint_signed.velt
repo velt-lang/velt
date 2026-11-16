@@ -57,7 +57,7 @@ export function signedOp(an: bool, a: u64[], bn: bool, b: u64[], same: bool, op:
     storeReplace(out, an != bn, same ? natSquare(a) : natMul(a, b));
   } else if (op == DIV || op == REM) {
     const rem = natUnfilled(0);
-    const q = natDivRem(a, b, rem);
+    const q = natDivRem(a, b, rem, op == DIV);
     if (op == DIV) {
       storeReplace(out, an != bn, q);
     } else {

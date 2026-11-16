@@ -2,7 +2,8 @@
 // two's complement limbs that JS's bitwise operators on BigInts work on, and conversions to and
 // from `f64`.
 
-import { natTrim, natUnfilled, natZeros } from "velt/math/nat_add";
+import { natTrim, natUnfilled } from "velt/math/nat_add";
+import { limbsAt, limbsIn, shlAt, shrAt, stl, zeroLimbsAt } from "velt/math/nat_mem";
 
 /** The number of significant bits of `a`. */
 export function natBits(a: u64[]): u64 {
@@ -32,22 +33,10 @@ export function natShl(a: u64[], s: u64): u64[] {
     return [];
   }
   const words = (s >> 6) as usize;
-  const bits = s & 63;
-  const out = natZeros(n + words + 1);
-  if (bits == 0) {
-    for (let i: usize = 0; i < n; i++) {
-      out[i + words] = a[i];
-    }
-  } else {
-    const back = 64 - bits;
-    let carry: u64 = 0;
-    for (let i: usize = 0; i < n; i++) {
-      const x = a[i];
-      out[i + words] = (x << bits) | carry;
-      carry = x >> back;
-    }
-    out[n + words] = carry;
-  }
+  const out = natUnfilled(n + words + 1);
+  const o = limbsAt(out);
+  zeroLimbsAt(o, words);
+  stl(o, n + words, shlAt(o + 8 * words, limbsIn(a), n, s & 63));
   natTrim(out);
   return out;
 }
@@ -60,19 +49,8 @@ export function natShr(a: u64[], s: u64): u64[] {
     return [];
   }
   const w = words as usize;
-  const bits = s & 63;
   const out = natUnfilled(n - w);
-  if (bits == 0) {
-    for (let i = w; i < n; i++) {
-      out[i - w] = a[i];
-    }
-  } else {
-    const back = 64 - bits;
-    for (let i = w; i + 1 < n; i++) {
-      out[i - w] = (a[i] >> bits) | (a[i + 1] << back);
-    }
-    out[n - 1 - w] = a[n - 1] >> bits;
-  }
+  shrAt(limbsAt(out), limbsIn(a) + 8 * w, n - w, s & 63, 0);
   natTrim(out);
   return out;
 }
