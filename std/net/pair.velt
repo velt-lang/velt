@@ -6,14 +6,18 @@
 import { TcpStream } from "velt/net/tcp_stream";
 import * as io from "velt/lang/hooks/sched_io";
 import * as fs from "velt/net/fd_socket";
+import { pairUp } from "velt/net/fd_pair";
 import { connectedPair } from "#net-pair";
 
 /**
- * Two connected in-memory streams, as Node's `duplexPair()` (or a `socketpair`): what one
- * writes, the other reads, and one's `shutdown()` is the other's end of stream. Each is a
- * `TcpStream` like any other (close both). For a protocol carried inside another one: the HTTP/2
- * server gives a WebSocket over an HTTP/2 stream one end, and moves bytes between the other end
- * and the stream's frames. Panics when the OS refuses the sockets (out of descriptors).
+ * Two connected streams, as Node's `duplexPair()`: what one writes, the other reads, and one's
+ * `shutdown()` is the other's end of stream. Each is a `TcpStream` like any other (close both),
+ * on an OS socket: a `socketpair` on macOS and Linux, a loopback TCP connection on Windows, so
+ * each end holds a descriptor. Closing one end gives the other what was sent, then its end of
+ * stream; a write on the other end after that fails with `EPIPE`. For a protocol carried inside
+ * another one: the HTTP/2 server gives a WebSocket over an HTTP/2 stream one end, and moves bytes
+ * between the other end and the stream's frames. Panics when the OS refuses the sockets (out of
+ * descriptors).
  */
 export function streamPair(): [TcpStream, TcpStream] {
   if (!io.supported()) {
@@ -34,5 +38,6 @@ export function streamPair(): [TcpStream, TcpStream] {
     first.close();
     panic(`streamPair: ${b.message}`);
   }
+  pairUp(a.value, b.value);
   return [TcpStream.ofHandle(a.value), TcpStream.ofHandle(b.value)];
 }

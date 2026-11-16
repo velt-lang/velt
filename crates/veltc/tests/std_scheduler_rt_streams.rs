@@ -90,6 +90,24 @@ fn blocks(o: &Output) -> Option<(u64, u64)> {
     Some((a.parse().ok()?, f.parse().ok()?))
 }
 
+/// The marker of a `streamPair`'s code in Velt: std's file of the two sockets
+/// (std/net/pair_posix.velt), which a macOS or Linux binary names. None on Windows (empty): a
+/// Windows binary doesn't name std/net/pair_win32.velt, and there the runtime has no pair of its
+/// own either (`velt_rt_tcp_pair` is gone), so a `streamPair` that links is std's.
+const PAIR: &[u8] = if cfg!(windows) { b"" } else { b"pair_posix" };
+
+/// The marker of velt/net's listener in Velt (std/net/fd_socket.velt `listenOn`), which a macOS
+/// or Linux binary names; none on Windows (empty), whose binary doesn't, as for [`PAIR`].
+const LISTEN: &[u8] = if cfg!(windows) { b"" } else { b"listenOn" };
+
+/// A send to a closed peer's message: the OS's words for `EPIPE`, on Windows `WSAESHUTDOWN`'s
+/// (std/lang/hooks/reactor_afd.velt `EPIPE`).
+const EPIPE_MESSAGE: &str = if cfg!(windows) {
+    "A request to send or receive data was disallowed because the socket had already been shut down in that direction with a previous shutdown call. (os error 10058)"
+} else {
+    "Broken pipe (os error 32)"
+};
+
 /// Which runs of [`prints_counted`] must free every block they allocated.
 #[derive(Clone, Copy, PartialEq)]
 enum Counted {
@@ -108,10 +126,6 @@ fn prints(name: &str, src: &str, want: &str, marker: &[u8]) {
 
 /// [`prints`], with the block counts compared only in the runs `counted` names.
 fn prints_counted(name: &str, src: &str, want: &str, marker: &[u8], counted: Counted) {
-    if !cfg!(unix) {
-        // Windows has no reactor in Velt yet: its sockets stay the runtime's.
-        return;
-    }
     let dir = test_dir::TestDir::new();
     // The goldens' test certificate and key (`TEST_CA`, `TEST_CERT`, `TEST_KEY`).
     std::fs::write(
@@ -121,7 +135,10 @@ fn prints_counted(name: &str, src: &str, want: &str, marker: &[u8], counted: Cou
     .unwrap();
     let exe = build(dir.path(), name, src);
     let bin = std::fs::read(&exe).unwrap();
-    assert!(contains(&bin, marker), "{name}: its code in Velt");
+    assert!(
+        marker.is_empty() || contains(&bin, marker),
+        "{name}: its code in Velt"
+    );
     for threads in ["1", "4"] {
         let o = run(&exe, name, threads);
         let out = String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n");
@@ -240,7 +257,7 @@ async function main() {
 }
 ",
         "read 5\none two three four\nping\n0\nx\nbye\nEBADF\n[ 4194304, 105628 ]\n",
-        b"pair_posix",
+        PAIR,
     );
 }
 
@@ -340,7 +357,7 @@ async function main() {
 }
 ",
         "hello x\nkept\n",
-        b"listenOn",
+        LISTEN,
     );
 }
 
@@ -392,7 +409,7 @@ async function main() {
 }
 ",
         "writeLater EBADF\ntryWrite 0\nwrite EBADF\ndrained EBADF\npeer got 8388608\n",
-        b"pair_posix",
+        PAIR,
     );
     // Block counts not compared: a runtime thread still holding a waker of the finished reader
     // (its read waited on the closed stream) gives the reference back after the counts, at any
@@ -429,7 +446,7 @@ async function main() {
 }
 ",
         "read EBADF\npeer got 8388608\n",
-        b"pair_posix",
+        PAIR,
         Counted::Never,
     );
 }
@@ -472,7 +489,7 @@ async function main() {
 }
 ",
         "EBADF\nEBADF\nEBADF\nEBADF\nfirst\nEBADF\nEBADF\n",
-        b"pair_posix",
+        PAIR,
     );
 }
 
@@ -493,7 +510,7 @@ async function main() {
 }
 ",
         "returning\n",
-        b"pair_posix",
+        PAIR,
         Counted::Never,
     );
 }
@@ -526,8 +543,8 @@ async function main() {
   x.close();
 }
 ",
-        "drained EPIPE Broken pipe (os error 32)\nwriteLater EPIPE Broken pipe (os error 32)\n",
-        b"pair_posix",
+        &format!("drained EPIPE {EPIPE_MESSAGE}\nwriteLater EPIPE {EPIPE_MESSAGE}\n"),
+        PAIR,
     );
 }
 
@@ -549,7 +566,7 @@ async function main() {
 }
 ",
         "kept\n",
-        b"pair_posix",
+        PAIR,
         Counted::Never,
     );
 }

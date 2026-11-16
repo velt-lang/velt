@@ -90,6 +90,11 @@ export const S_ERR: usize = 80;
  * kept when it is reset (the table's `share` comes before the first source).
  */
 export const S_LOCKED: usize = 84;
+/**
+ * A `streamPair` end's (`F_PAIR`): the other end's handle (std/net/pair.velt). A runtime stream's
+ * shadow keeps its `NEXT` here (std/net/rt_later_shadow.velt); a source is never both.
+ */
+export const S_PEER: usize = 88;
 export const S_CARRY: usize = 96;
 export const S_CARRY_LEN: usize = 100;
 /**
@@ -139,8 +144,13 @@ export const F_FLUSHING: u32 = 256;
  */
 export const F_POLLED: u32 = 512;
 export const F_NEXT_DONE: u32 = 1024;
-/** A `streamPair` end (std/net/pair.velt): it has no peer address, as an in-memory stream. */
+/** A `streamPair` end (std/net/pair.velt): it has no peer address, as Node's `duplexPair()`. */
 export const F_PAIR: u32 = 2048;
+/**
+ * A `streamPair` end whose other end closed: its sends fail with `EPIPE`, as a `socketpair`'s
+ * do, on Windows too, whose loopback TCP takes a send after the peer's close (std/net/pair.velt).
+ */
+export const F_PEER_GONE: u32 = 4096;
 
 /**
  * What a waiter waits for: readable, writable (a connect), its bytes written (`arg`: the count

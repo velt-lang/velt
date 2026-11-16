@@ -2,8 +2,9 @@
 // velt/net streamPair: two connected streams. What one writes the other reads, both ways; neither
 // has a peer address; `shutdown` is the other's end of stream while it can still write back
 // (half-close); 4 MiB go through with a reader on another task; a read waiting when the other end
-// closes ends with end of stream; a write once the other end closed fails, and one on a closed
-// handle fails with EBADF.
+// closes ends with end of stream; an end closed with input it never read gives the other end what
+// it sent, then end of stream; a write once the other end closed fails with EPIPE (on Windows'
+// loopback connection too), and one on a closed handle fails with EBADF.
 import { streamPair, TcpStream } from "velt/net";
 
 async function reader(s: TcpStream): Promise<string> {
@@ -87,6 +88,50 @@ async function main() {
   } catch (e) {
     console.log("on a closed handle:", e.code, e.message);
   }
+
+  // An end closed while it holds input it never read: the other end reads what it sent, then
+  // end of stream (not a reset), and its writes fail.
+  const [g, h] = streamPair();
+  await g.write("hello from g");
+  await h.write("unread by g");
+  await g.readable();
+  g.close();
+  console.log("h reads", JSON.stringify(await readAll(h)));
+  try {
+    await h.write("to a closed end");
+    console.log("h's write after g's close: ok");
+  } catch (e) {
+    console.log("h's write after g's close:", e.code);
+  }
+  h.close();
+
+  // The other end closed, this end never shut down: the write fails with EPIPE, and so does
+  // the next.
+  const [i, j] = streamPair();
+  j.close();
+  for (let k = 0; k < 2; k++) {
+    try {
+      await i.write("x");
+      console.log("a write to a closed peer: ok");
+    } catch (e) {
+      console.log("a write to a closed peer:", e.code);
+    }
+  }
+  i.close();
+
+  // The other end aborted (still open): this end reads its end of stream, and its write fails
+  // with EPIPE.
+  const [k1, k2] = streamPair();
+  k2.abort();
+  console.log("after the abort, k1 reads", JSON.stringify(await readAll(k1)));
+  try {
+    await k1.write("x");
+    console.log("a write to an aborted peer: ok");
+  } catch (e) {
+    console.log("a write to an aborted peer:", e.code);
+  }
+  k1.close();
+  k2.close();
 
   // A read waiting when the other end closes.
   const [e, f] = streamPair();
