@@ -75,7 +75,13 @@ pub fn warm_command(background: bool) -> Result<(), String> {
     }
     let _ = std::fs::remove_dir_all(&out);
     // Every prebuilt hook module, whether a warm-up program calls one of its hooks or not.
-    let hooks_failed = if clang { prebuilt_hooks() } else { vec![] };
+    // In this process: an internal error there is one failure, not the end of the warm-up
+    // before its marker (every later warm-up would build everything again).
+    let hooks_failed = match clang {
+        true => std::panic::catch_unwind(prebuilt_hooks)
+            .unwrap_or_else(|_| vec!["the prebuilt hook modules: an internal error".into()]),
+        false => vec![],
+    };
     eprintln!(
         "velt: warmed the build cache with {} programs in {:.1}s",
         programs.len(),
@@ -89,19 +95,26 @@ pub fn warm_command(background: bool) -> Result<(), String> {
         std::fs::write(&marker, marker_text(&failed))
             .map_err(|e| format!("cannot write `{}`: {e}", marker.display()))?;
     }
-    if !failed.is_empty() {
-        return Err(format!(
+    failures(&failed, &hooks_failed).map_or(Ok(()), Err)
+}
+
+/// What a warm-up that had failures says: the programs that did not compile, then the prebuilt
+/// hook modules; `None` without either.
+fn failures(programs: &[String], hooks: &[String]) -> Option<String> {
+    let mut said = vec![];
+    if !programs.is_empty() {
+        said.push(format!(
             "some warm-up programs did not compile: {}",
-            failed.join(", ")
+            programs.join(", ")
         ));
     }
-    if !hooks_failed.is_empty() {
-        return Err(format!(
+    if !hooks.is_empty() {
+        said.push(format!(
             "some prebuilt hook modules did not compile: {}",
-            hooks_failed.join("; ")
+            hooks.join("; ")
         ));
     }
-    Ok(())
+    (!said.is_empty()).then(|| said.join("\n"))
 }
 
 /// The CPUs (and modes) whose prebuilt hook module objects `velt cache warm` stores: what a
@@ -303,6 +316,20 @@ mod tests {
                 warm.join("../g/c.velt")
             ]
         );
+    }
+
+    /// A failed program does not hide a failed prebuilt hook module.
+    #[test]
+    fn every_kind_of_failure_is_said() {
+        let (p, h) = (["a.velt".to_string()], ["m (native): why".to_string()]);
+        assert_eq!(failures(&[], &[]), None);
+        let both = failures(&p, &h).unwrap_or_default();
+        assert!(
+            both.contains("a.velt") && both.contains("m (native): why"),
+            "{both}"
+        );
+        assert!(failures(&[], &h).is_some_and(|s| s.contains("hook modules")));
+        assert!(failures(&p, &[]).is_some_and(|s| s.contains("programs")));
     }
 
     #[test]
