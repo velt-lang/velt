@@ -256,3 +256,7 @@ fn reached(program: &vir::Program) -> (Vec<usize>, Vec<usize>) {
     }
     (externs.into_iter().collect(), statics.into_iter().collect())
 }
+
+#[cfg(test)]
+#[path = "prebuilt_object_tests.rs"]
+mod tests;

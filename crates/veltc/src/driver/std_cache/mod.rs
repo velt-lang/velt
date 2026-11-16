@@ -34,7 +34,7 @@ mod statics;
 mod turn;
 
 pub(super) use prebuilt::{found as prebuilt_found, link as prebuilt_link};
-pub(crate) use prebuilt::{Finder, Found};
+pub(crate) use prebuilt::{warm as prebuilt_warm, Finder, Found};
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;

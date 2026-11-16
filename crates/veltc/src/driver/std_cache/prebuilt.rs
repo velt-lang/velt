@@ -20,6 +20,12 @@
 //! nothing. Its `file` entries go into the program's build stamp, so a changed std file rebuilds
 //! a program that linked the object.
 //!
+//! **Pinned.** Once sema has called the object's entry points, the build has to link it: a build
+//! that links takes the object found out of the cache's reach at once ([`pin`]: a hard link or a
+//! copy in a temporary directory the build holds), so another build's garbage collection or
+//! `velt clean --cache` between the check and the link cannot fail the build. An object that
+//! cannot be pinned is a miss, and the build loads the module.
+//!
 //! **Which builds.** Executables built with the std cache on (`std_cache::wanted`, so not for
 //! WebAssembly, whose programs load the module as before, nor `VELT_STD_OBJECT=0`), and `velt
 //! check`, which looks the object up as a debug build would and links nothing. Not a source
@@ -27,7 +33,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use velt_build_cache::{Key, KeyHasher};
 use velt_common::std_hooks::{prebuilt, HOOKS};
@@ -44,23 +50,40 @@ const MANIFEST_HEADER: &str = "velt prebuilt hook module 1";
 /// A module's object as a build found it.
 #[derive(Clone, Debug)]
 pub(crate) struct Found {
-    /// The cached object.
+    /// The object: pinned for a build that links ([`pin`]), else the cache's file.
     pub object: PathBuf,
     /// Per entry point: its symbol and its VIR signature (`entry` lines of the manifest).
     pub entries: Vec<String>,
     /// The manifest's `file` entries, for the program's build stamp.
     pub files: Vec<String>,
+    /// The temporary directory holding the pinned object, removed when the last copy goes.
+    pub _pinned: Option<Arc<Pinned>>,
+}
+
+/// A temporary directory of a build's own holding a pinned object ([`pin`]), removed when it is
+/// dropped.
+#[derive(Debug)]
+pub(crate) struct Pinned(PathBuf);
+
+impl Drop for Pinned {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
 /// What a build looks up, and what it found.
 pub(crate) struct Finder {
     cache: &'static velt_build_cache::Cache,
+    /// Where the manifests are: `<cache>/warm/hooks`.
+    manifests: PathBuf,
     /// The lookup key's parts every module shares.
     base: KeyHasher,
     std_root: PathBuf,
     /// The target and CPU objects are compiled for.
     target: String,
     cpu: Option<String>,
+    /// The build links what it finds: each object is pinned as it is found ([`pin`]).
+    linking: bool,
     /// Per module (its table entry): what was found, `None` for a miss.
     seen: Mutex<HashMap<&'static str, Option<Found>>>,
 }
@@ -89,6 +112,7 @@ impl Finder {
             false => return None,
         };
         let cache = crate::build_cache::cache()?;
+        let manifests = crate::build_cache::root()?.join("warm").join("hooks");
         let std_root = velt_loader::std_root()?;
         let mut base = KeyHasher::new();
         base.part(MANIFEST_HEADER.as_bytes())
@@ -99,10 +123,12 @@ impl Finder {
             .part(std_root.as_os_str().as_encoded_bytes());
         Some(Finder {
             cache,
+            manifests,
             base,
             std_root,
             target,
             cpu,
+            linking,
             seen: Mutex::default(),
         })
     }
@@ -136,16 +162,15 @@ impl Finder {
         h.finish()
     }
 
-    fn manifest_path(&self, key: &Key) -> Option<PathBuf> {
-        let root = crate::build_cache::root()?;
-        Some(root.join("warm").join("hooks").join(key.hex()))
+    fn manifest_path(&self, key: &Key) -> PathBuf {
+        self.manifests.join(key.hex())
     }
 
     /// The object of module `module_entry` when the cache holds one for the std files as they
-    /// are now.
+    /// are now, pinned where the build links.
     fn find(&self, module_entry: &str) -> Option<Found> {
         let key = self.lookup_key(module_entry);
-        let text = std::fs::read_to_string(self.manifest_path(&key)?).ok()?;
+        let text = std::fs::read_to_string(self.manifest_path(&key)).ok()?;
         let mut manifest = Manifest::parse(&text)?;
         let mut restated = false;
         for f in &mut manifest.files {
@@ -157,19 +182,22 @@ impl Finder {
         // The same contents with another size and time (a checkout or a copy): recorded, so the
         // next build compares sizes and times again instead of hashing.
         if restated {
-            if let Some(path) = self.manifest_path(&key) {
-                let _ = write_atomically(&path, &manifest.render());
-            }
+            let _ = write_atomically(&self.manifest_path(&key), &manifest.render());
         }
         let object_key = object_key(&key, &manifest.files);
         if object_key.hex() != manifest.object {
             return None;
         }
-        let object = self.cache.path_of(KIND, &object_key)?;
+        let cached = self.cache.path_of(KIND, &object_key)?;
+        let (object, pinned) = match self.linking {
+            true => pin(&cached).map(|(dir, object)| (object, Some(Arc::new(dir))))?,
+            false => (cached, None),
+        };
         Some(Found {
             object,
             entries: manifest.entries,
             files: manifest.files,
+            _pinned: pinned,
         })
     }
 
@@ -224,9 +252,29 @@ impl Finder {
             entries: built.entries,
             files: built.files,
         };
-        let path = self.manifest_path(&key).ok_or("no build cache")?;
+        let path = self.manifest_path(&key);
         write_atomically(&path, &manifest.render()).map_err(|e| format!("{}: {e}", path.display()))
     }
+}
+
+/// The cached object `cached` taken out of the cache's reach for this build: a hard link to it
+/// (a copy where the file system has none) in a temporary directory of the build's own, removed
+/// with the directory. `None` when it is gone already.
+fn pin(cached: &Path) -> Option<(Pinned, PathBuf)> {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let name = format!("velt-hook-{}-{n}", std::process::id());
+    let dir = std::env::temp_dir().join(name);
+    // A new directory only this user can write to: one that is there already (left by a killed
+    // process of the same id, or made by someone else) is a miss.
+    let mut builder = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    builder.create(&dir).ok()?;
+    let dir = Pinned(dir);
+    let to = dir.0.join("object");
+    let placed = std::fs::hard_link(cached, &to).or_else(|_| std::fs::copy(cached, &to).map(drop));
+    placed.ok().map(|()| (dir, to))
 }
 
 /// `VELT_PREBUILT_HOOKS=0`: no prebuilt objects (every hook module loaded as before).
@@ -402,12 +450,138 @@ pub(in crate::driver) fn link(
     if sess.std_objects.is_empty() {
         place.clear();
     }
-    for (n, from) in objects.iter().enumerate() {
-        let placed = place.put_named(&format!("hook{n}"), from);
-        sess.std_objects.push(placed.map_err(BuildError::Failed)?);
-    }
+    let placed = put(&place, &objects).map_err(BuildError::Failed)?;
+    sess.std_objects.extend(placed);
     if super::stats() {
         eprintln!("velt: prebuilt hooks: {} objects linked", objects.len());
     }
     Ok(())
+}
+
+/// Place `objects` (pinned when found) in `place` for the link, as `hook<n>`. An `Err` is this
+/// build's own output directory failing, not the cache.
+fn put(place: &super::Place, objects: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
+    (objects.iter().enumerate())
+        .map(|(n, from)| place.put_named(&format!("hook{n}"), from))
+        .collect()
+}
+
+/// `velt cache warm`: compile and store the object of every module with a `prebuilt` hook that
+/// the cache lacks, for a build like one with `opts` (`release` and `cpu` are what count), so a
+/// hook no warm-up program calls is served too. Per module: its name, and whether it was stored
+/// now (`Ok(false)`: there already) or why not.
+pub(crate) fn warm(opts: &BuildOptions) -> Vec<(String, Result<bool, String>)> {
+    let Some(mut finder) = Finder::for_build(opts) else {
+        return vec![];
+    };
+    // It links nothing: nothing to pin.
+    finder.linking = false;
+    let mut modules: Vec<&'static str> = (HOOKS.iter())
+        .filter(|h| h.prebuilt)
+        .map(|h| h.module_entry)
+        .collect();
+    modules.sort_unstable();
+    modules.dedup();
+    let each = |m: &'static str| match finder.find(m) {
+        Some(_) => Ok(false),
+        None => finder.fill_one(m).map(|()| true),
+    };
+    modules
+        .into_iter()
+        .map(|m| (m.to_string(), each(m)))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A finder over the cache in `dir` that links what it finds.
+    fn finder(dir: &Path) -> Finder {
+        let cache = velt_build_cache::Cache::new(&dir.join("cache"), u64::MAX);
+        Finder {
+            cache: Box::leak(Box::new(cache)),
+            manifests: dir.join("cache/warm/hooks"),
+            base: KeyHasher::new(),
+            std_root: dir.join("std"),
+            target: String::new(),
+            cpu: None,
+            linking: true,
+            seen: Mutex::default(),
+        }
+    }
+
+    /// An object found by the check and gone from the cache by the link (another build's
+    /// garbage collection, `velt clean --cache`) is still linked: sema has called it by then.
+    #[test]
+    fn an_object_gone_from_the_cache_by_the_link_is_still_linked() {
+        let tmp = tempfile::tempdir().unwrap();
+        let finder = finder(tmp.path());
+        let hook = prebuilt::of_symbol("velt_hook_prebuilt_probe_text").unwrap();
+        let (h, symbol) = (&HOOKS[hook], prebuilt::symbol(&HOOKS[hook]));
+        let line = entry_line(
+            &symbol,
+            &[vir::Ty::F64, vir::Ty::I64, vir::Ty::Ptr],
+            vir::Ty::Unit,
+        );
+        // What a fill stores: the object, and a manifest naming it (no std files).
+        let key = finder.lookup_key(h.module_entry);
+        let object_key = object_key(&key, &[]);
+        let built = tmp.path().join("built.o");
+        std::fs::write(&built, b"object bytes").unwrap();
+        assert!(finder.cache.put_file(KIND, &object_key, &built));
+        let manifest = Manifest {
+            object: object_key.hex(),
+            entries: vec![line],
+            files: vec![],
+        };
+        write_atomically(&finder.manifest_path(&key), &manifest.render()).unwrap();
+
+        assert!(finder.linked(hook));
+        finder.cache.clear().unwrap();
+        assert_eq!(finder.cache.path_of(KIND, &object_key), None);
+        let program = vir::Program {
+            externs: vec![vir::ExternFn {
+                symbol,
+                params: vec![vir::Ty::F64, vir::Ty::I64, vir::Ty::Ptr],
+                ret: vir::Ty::Unit,
+                noreturn: false,
+                host: None,
+                c_decl: None,
+                variadic: false,
+            }],
+            ..vir::Program::default()
+        };
+        let found = finder.found();
+        let objects = linked_objects(&program, &found).unwrap();
+        let place = super::super::Place {
+            dir: tmp.path().join("app.std"),
+            ext: "o".into(),
+        };
+        let placed = put(&place, &objects).unwrap();
+        assert_eq!(placed, [place.dir.join("hook0.o")]);
+        assert_eq!(std::fs::read(&placed[0]).unwrap(), b"object bytes");
+        // The pin goes with the build.
+        let pinned = found[0].1.object.clone();
+        drop(found);
+        drop(finder);
+        assert!(!pinned.exists());
+    }
+
+    /// An object gone before the check is a miss: the build loads the module.
+    #[test]
+    fn an_object_gone_before_the_check_is_a_miss() {
+        let tmp = tempfile::tempdir().unwrap();
+        let finder = finder(tmp.path());
+        let hook = prebuilt::of_symbol("velt_hook_prebuilt_probe_text").unwrap();
+        let key = finder.lookup_key(HOOKS[hook].module_entry);
+        let manifest = Manifest {
+            object: object_key(&key, &[]).hex(),
+            entries: vec![],
+            files: vec![],
+        };
+        write_atomically(&finder.manifest_path(&key), &manifest.render()).unwrap();
+        assert!(!finder.linked(hook));
+        assert!(finder.found().is_empty());
+    }
 }

@@ -537,6 +537,30 @@ break makes a stamp that never matches). The objects it names
   optimized code), and
   `velt: std cache: <n> no longer called`. The stamp's `outside` line is worked out before functions become declarations
   when one does, else after optimization, as without the cache.
+- Prebuilt hook modules (additive, #1728, #2196; velt_common `std_hooks/prebuilt.rs`, veltc
+  `std_cache/prebuilt.rs`; `VELT_PREBUILT_HOOKS=0` turns them off). Executables the std cache
+  serves (above; not WebAssembly, not `VELT_STD_OBJECT=0`) and `velt check` (as a debug build)
+  look up, for each on-demand std module with a `prebuilt` hook that the check calls by
+  `hookCall`, its object in the build cache (kind `stdhook`), under a manifest
+  `<cache>/warm/hooks/<hex>`: `<hex>` is BLAKE3 over the header `velt prebuilt hook module 1`,
+  `build_cache::compiler_identity()`, LLVM's optimization flag, the target, the CPU (a release
+  build's; a debug build's and `velt check`'s is the target's default, and a debug build for a
+  CPU without everything the default requires looks up nothing) and the std root, then the
+  module's table entry. The manifest lists the object's key, each entry point's VIR signature
+  (`entry <symbol> <params> -> <result>`) and every std file the object was compiled from as a
+  build-stamp `file` line; a file whose size or time differs is hashed, the same contents rewrite
+  the manifest with the new size and time, other contents find nothing. Found, the hook is called
+  as the extern `velt_hook_<entry>` (the module is not loaded), the object is hard-linked (copied
+  where the file system has none) into a temporary directory the build holds until it ends, so
+  the cache losing it before the link changes nothing (one gone already is a miss), and placed
+  for the link as `<object stem>.std/hook<n>.<o|obj>` after the std cache's objects; its std files
+  go into the build stamp's inputs. Not found, the build loads the module as without this. A miss
+  is compiled and stored (the object and its manifest) after the check with `VELT_PREBUILT_HOOKS=fill`
+  or `VELT_STD_OBJECT_FILL`, and clang found. `VELT_STD_OBJECT_STATS=1` prints, on stderr, per
+  module looked up `velt: prebuilt hooks: <module>: object found` or `velt: prebuilt hooks:
+  <module>: no object` (`<module>` its specifier, `velt/lang/hooks/…`), a fill that failed as
+  ``velt: prebuilt hooks: no object of `<entry>`: <why>``, and after optimization `velt: prebuilt
+  hooks: <n> objects linked` when the program still calls into any.
 - The launcher (additive, #948; crates/velt_launcher, binary `velt-launcher`, installed as
   `<root>/bin/velt[.exe]`; `<root>` is the launcher's grandparent directory, else it exits 1).
   A first argument `+<toolchain>` is removed and selects that toolchain (reason `+<toolchain>`);
@@ -715,7 +739,12 @@ break makes a stamp that never matches). The objects it names
   root's directory: `<prefix>/share/velt/warm`, or the checkout's) with a child `velt build
   <file> -o <tmp>/warm[.exe]` (an executable; `VELT_BUILD_STAMP=off`, `VELT_STD_OBJECT_FILL=1`, no `VELT_CPU`), once with `--cpu native` and once without, and
   with clang found the same again with `--release` (no `VELT_STD_OBJECT`; a build with
-  `VELT_STD_OBJECT_FILL` stores no LLVM codegen units, only `stdfn` entries), then
+  `VELT_STD_OBJECT_FILL` stores no LLVM codegen units, only `stdfn` entries, and the `stdhook`
+  objects of the prebuilt hook modules it calls and misses), then with clang found compiles, itself,
+  the object of every module with a `prebuilt` hook whose object the cache lacks (`stdhook`, with
+  its manifest; above), for `--release --cpu native` and for the target's default CPU (what debug
+  builds and release builds without `--cpu` link), whether a warm-up program calls its hooks or
+  not (a module that fails is reported, exit 1, after the rest), then
   writes the marker `<cache>/warm/<hex>` (BLAKE3 of the version line and the executable's size
   and time; `<hex>-objects` with clang found, whose builds store objects) and prints `velt: warmed the build cache with <n> programs in <s>s`. With the marker
   present it prints that the cache is warm and does nothing; one run per marker at a time

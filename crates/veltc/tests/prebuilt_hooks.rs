@@ -211,6 +211,47 @@ fn an_edited_std_file_retires_the_object() {
     assert_eq!(text(&stale.stdout), FIRST_OUT.replace("-42", "~42"));
 }
 
+/// `velt cache warm` stores the object of every prebuilt hook module, also one no warm-up
+/// program calls: a first build of a program calling the hooks finds it, in debug and release,
+/// for the default CPU and `--cpu native`.
+#[test]
+fn cache_warm_stores_every_prebuilt_module() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let share = dir.join("share");
+    std::fs::create_dir_all(share.join("warm")).unwrap();
+    std::fs::write(
+        share.join("warm/hello.velt"),
+        "function main() {\n  console.log(\"hi\");\n}\n",
+    )
+    .unwrap();
+    runtime_support::build_native_runtime(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
+    let warm = no_window::command(env!("CARGO_BIN_EXE_velt"))
+        .args(["cache", "warm"])
+        .current_dir(dir)
+        .env("VELT_STD", std_in(dir))
+        .env("VELT_SHARE", &share)
+        .env("VELT_BUILD_CACHE", dir.join("cache"))
+        .env_remove("VELT_STD_OBJECT_FILL")
+        .env_remove("VELT_PREBUILT_HOOKS")
+        .env_remove("VELT_RT_LINK")
+        .output()
+        .unwrap();
+    assert!(warm.status.success(), "{}", text(&warm.stderr));
+    for mode in [
+        &["run"][..],
+        &["run", "--release"],
+        &["run", "--release", "--cpu", "native"],
+    ] {
+        let served = velt(dir, "a.velt", FIRST, mode, &[]);
+        assert_eq!(
+            (found(&served), text(&served.stdout).as_str()),
+            ("object", FIRST_OUT),
+            "{mode:?}"
+        );
+    }
+}
+
 /// WebAssembly links no objects: the build loads the module, whatever the cache holds.
 #[test]
 fn webassembly_loads_the_module() {
