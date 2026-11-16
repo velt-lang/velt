@@ -204,11 +204,22 @@ pub(crate) fn walk_units_program(cx: &mut Ctx, entry: Option<DefId>) -> FxHashSe
     for d in cx.module_slots.clone() {
         mark(cx, d);
     }
+    let base = cx.unit_sums.lib_base.min(cx.unit_base as usize);
+    let base = match crate::units::libraries() {
+        true => base,
+        false => cx.unit_base as usize,
+    };
+    seed_units(cx, base);
     super::units_restart(cx);
     // Lazy std's loop: the walk, the hooks the constructs demand, and those that wait for what
     // the program does (the executor's, the record and number-text hooks, C's exports).
     super::reach(cx);
-    let live = cx.lazy.live.live.clone();
+    // The program's definitions are also the classes, structs and interfaces live code has
+    // values of: the passes that build the program (readonly erasure writing the solved error
+    // sets into field types, the layouts) read their definitions.
+    let mut live = cx.lazy.live.live.clone();
+    live.extend(cx.lazy.live.adts.iter().copied());
+    live.extend(cx.lazy.live.ifaces.iter().copied());
     if std::env::var_os("VELT_UNITS_REACH_STATS").is_some() {
         eprintln!(
             "velt-units: live walk: {} defs of {}",
@@ -830,7 +841,7 @@ mod roots;
 pub(super) use constructs::def_name;
 use constructs::{demanded_for, evaluate, format_bit};
 pub(crate) use constructs::{too_late, Assumed};
-use roots::seed;
+use roots::{seed, seed_units};
 
 #[cfg(test)]
 #[path = "live_tests.rs"]

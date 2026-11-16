@@ -42,6 +42,50 @@ pub(super) fn seed(cx: &mut Ctx) {
 /// function that takes a value only live code can give (an array, a class instance, an `any`) is
 /// live once live code has a value of that type ([`gate`]).
 fn seed_std(cx: &mut Ctx, from: usize) {
+    let hooks = seed_hooks(cx);
+    for i in from..cx.info.len() {
+        seed_named(cx, DefId(i as u32), &hooks);
+    }
+}
+
+/// EXPERIMENT (#2943 M3): [`seed`] for a build from std's unit on disk, without reading every
+/// definition (each read decodes it): the program's from `base` on (a dependency's in the first
+/// unit too), and of std, the top-level functions of the modules lowering looks into by name and
+/// the hooks. The module slots are marked by the caller.
+pub(super) fn seed_units(cx: &mut Ctx, base: usize) {
+    cx.lazy.live.seeded = cx.info.len();
+    cx.lazy.live.methods = None;
+    for i in base..cx.info.len() {
+        let module = match &cx.info[i] {
+            DefInfo::Fn(f) => f.module,
+            DefInfo::Global(g) => g.module,
+            _ => continue,
+        };
+        if !cx.modules[module].is_std || module == cx.root {
+            mark(cx, DefId(i as u32));
+        }
+    }
+    let hooks = seed_hooks(cx);
+    let mut named: Vec<DefId> = hooks.iter().copied().collect();
+    for m in 0..cx.modules.len().min(cx.scopes.len()) {
+        let module = &cx.modules[m];
+        if !module.is_std || m == cx.root || super::super::named_module(&module.path).is_none() {
+            continue;
+        }
+        named.extend(cx.scopes[m].items.values().filter_map(|item| match item {
+            crate::ctx::Item::Def(d) if (d.0 as usize) < base => Some(*d),
+            _ => None,
+        }));
+    }
+    named.sort_unstable();
+    named.dedup();
+    for d in named {
+        seed_named(cx, d, &hooks);
+    }
+}
+
+/// The hooks no construct lists ([`seed_std`]), some waiting for what the program does.
+fn seed_hooks(cx: &mut Ctx) -> FxHashSet<DefId> {
     let mut hooks = FxHashSet::default();
     for h in HOOKS
         .iter()
@@ -61,36 +105,39 @@ fn seed_std(cx: &mut Ctx, from: usize) {
             }
         }
     }
-    for i in from..cx.info.len() {
-        let d = DefId(i as u32);
-        let DefInfo::Fn(f) = &cx.info[i] else {
-            continue;
-        };
-        let m = &cx.modules[f.module];
-        // A method or a static method is live with its type; a closure with its function.
-        if !m.is_std
-            || f.module == cx.root
-            || f.owner.is_some()
-            || !matches!(f.kind, FnKind::Free | FnKind::Static)
-        {
-            continue;
-        }
-        // A build from std's unit on disk has no lazy module table (`live::walk_units_program`).
-        let named = match cx.lazy.modules.get(f.module).map(|m| &m.named) {
-            Some(super::super::Named::All) => true,
-            Some(super::super::Named::Helpers) => super::super::is_helper(&f.name),
-            Some(super::super::Named::None) => false,
-            None => match super::super::named_module(&m.path) {
-                Some(true) => true,
-                Some(false) => super::super::is_helper(&format!("{}::{}", m.path, f.name)),
-                None => false,
-            },
-        };
-        if named || hooks.contains(&d) {
-            match gate(cx, f) {
-                gates if gates.is_empty() => _ = mark(cx, d),
-                gates => cx.lazy.live.gated.push((d, gates)),
-            }
+    hooks
+}
+
+/// Std function `d`, if lowering looks it up by name (a helper of a module it looks into, or one
+/// of `hooks`): live, or once live code has a value it takes ([`gate`]).
+fn seed_named(cx: &mut Ctx, d: DefId, hooks: &FxHashSet<DefId>) {
+    let DefInfo::Fn(f) = &cx.info[d.0 as usize] else {
+        return;
+    };
+    let m = &cx.modules[f.module];
+    // A method or a static method is live with its type; a closure with its function.
+    if !m.is_std
+        || f.module == cx.root
+        || f.owner.is_some()
+        || !matches!(f.kind, FnKind::Free | FnKind::Static)
+    {
+        return;
+    }
+    // A build from std's unit on disk has no lazy module table (`live::walk_units_program`).
+    let named = match cx.lazy.modules.get(f.module).map(|m| &m.named) {
+        Some(super::super::Named::All) => true,
+        Some(super::super::Named::Helpers) => super::super::is_helper(&f.name),
+        Some(super::super::Named::None) => false,
+        None => match super::super::named_module(&m.path) {
+            Some(true) => true,
+            Some(false) => super::super::is_helper(&format!("{}::{}", m.path, f.name)),
+            None => false,
+        },
+    };
+    if named || hooks.contains(&d) {
+        match gate(cx, f) {
+            gates if gates.is_empty() => _ = mark(cx, d),
+            gates => cx.lazy.live.gated.push((d, gates)),
         }
     }
 }
