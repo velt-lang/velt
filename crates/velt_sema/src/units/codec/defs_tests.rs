@@ -110,7 +110,8 @@ fn encode_records(infos: &[DefInfo], aliases: &[AliasInfo]) -> (Vec<u8>, Vec<vel
 }
 
 fn round_trip(cx: &Ctx) -> Found {
-    let (infos, aliases) = (cx.info.items_all(), &cx.aliases[..]);
+    let infos: Vec<DefInfo> = cx.info.items_all().cloned().collect();
+    let (infos, aliases) = (&infos[..], &cx.aliases[..]);
     let (bytes, files) = encode_records(infos, aliases);
     let deterministic = encode_records(infos, aliases) == (bytes.clone(), files.clone());
     let arena = Arena::default();

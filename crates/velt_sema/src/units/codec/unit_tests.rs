@@ -76,7 +76,7 @@ fn round_trip(cx: &Ctx) -> Found {
         decode_ms,
         differs,
         deterministic,
-        tables_ok: types_ok && frozen && again == bytes,
+        tables_ok: types_ok && frozen && again == *bytes,
     }
 }
 
