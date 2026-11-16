@@ -90,11 +90,14 @@ fn blocks(o: &Output) -> Option<(u64, u64)> {
     Some((a.parse().ok()?, f.parse().ok()?))
 }
 
-/// The marker of a `streamPair`'s code in Velt: std's file of the two sockets
-/// (std/net/pair_posix.velt), which a macOS or Linux binary names. None on Windows (empty): a
-/// Windows binary doesn't name std/net/pair_win32.velt, and there the runtime has no pair of its
-/// own either (`velt_rt_tcp_pair` is gone), so a `streamPair` that links is std's.
-const PAIR: &[u8] = if cfg!(windows) { b"" } else { b"pair_posix" };
+/// The marker of a `streamPair`'s code in Velt: the symbols of std's file of the two sockets
+/// (std/net/pair_posix.velt), whose mangled names spell its module `pair__posix`
+/// (`_V3stdP3netP11pair__posixN13connectedPair`), which a macOS or Linux binary's symbol table
+/// holds. Not the file's name: only a Linux binary has that, in its DWARF; a macOS one leaves
+/// DWARF in the objects, and the file has no panic locations to name it. None on Windows
+/// (empty): a Windows binary names neither, and there the runtime has no pair of its own either
+/// (`velt_rt_tcp_pair` is gone), so a `streamPair` that links is std's.
+const PAIR: &[u8] = if cfg!(windows) { b"" } else { b"pair__posix" };
 
 /// The marker of velt/net's listener in Velt (std/net/fd_socket.velt `listenOn`), which a macOS
 /// or Linux binary names; none on Windows (empty), whose binary doesn't, as for [`PAIR`].
