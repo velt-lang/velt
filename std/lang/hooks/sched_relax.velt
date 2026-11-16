@@ -209,7 +209,7 @@ export function retiredLook(e: usize): void {
     // after the look below wakes it (the push comes before its wake's look at the park word).
     m.store32(e + t.E_PARK, 1);
     if (m.load(e + t.E_INBOX) !== 0 || q.any(e) || m.load32(e + t.E_RETIRED) !== t.R_RETIRED) {
-      m.store32(e + t.E_PARK, 0);
+      wk.awake(e);
       continue;
     }
     const b = m.ld(e + t.E_IO);

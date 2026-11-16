@@ -191,7 +191,7 @@ function startWorkers(e: usize): void {
     m.st32(w + t.E_MODE, mode | t.M_SPREAD);
     m.st(w + t.E_HELP, sp.HELP);
     m.st(w + t.E_W_START, sp.now());
-    // Asleep until its thread runs: a wake before that finds its park word up.
+    // Asleep until its thread runs (`workerMain`): a wake before that finds its park word up.
     m.st32(w + t.E_PARK, 1);
     m.st(ws + 8 * i, w);
   }
@@ -227,6 +227,13 @@ function workerMain(arg: Ptr<u8> | null): Ptr<u8> | null {
   io.installHere(m.ld(w + t.E_IO));
   // The runtime's leaves polled here find its timers and I/O.
   velt_rt_set_scheduler(2);
+  // Awake: its first turn may take work no wake brought (an offer it steals, input it borrows).
+  wk.awake(w);
+  if ((m.ld32(w + t.E_MODE) & t.M_MONITOR) !== 0) {
+    // The monitor may sleep, every park word read up while this thread had not run: it watches
+    // this worker's polls from now on, as after a park (sched_park.velt `park`).
+    mon.kick(m.ld(w + t.E_MAIN));
+  }
   while (true) {
     loop.turn(w);
   }

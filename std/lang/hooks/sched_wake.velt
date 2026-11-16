@@ -358,6 +358,21 @@ export function handOffOutput(): void {
   velt_rt_flush();
 }
 
+/**
+ * Worker `e` (this thread's) is awake with no wake from another thread: its thread starts (its
+ * park word is up until then), or its park finds work before it sleeps. The word goes down, then
+ * its count of wakes goes up, as at the end of a sleep (sched_io.velt `wait`). Worker 0's end
+ * scan (sched_end.velt `quiet`) takes a worker whose word it read up for asleep; what this worker
+ * runs next (its inbox, tasks it steals or borrows from another worker) may be gone from where
+ * the scan looks by the time it looks there, and the count read after the scan says the worker
+ * woke. Without it, a worker whose thread started late took `main`'s root at its first turn and
+ * ran it with its word still up, and the program ended with `main` running (#3076).
+ */
+export function awake(e: usize): void {
+  m.store32(e + tk.E_PARK, 0);
+  m.incOrdered(e + tk.E_UNPARKS);
+}
+
 /** Wakes worker `w` if it sleeps in its reactor (its park word is up). */
 export function unpark(w: usize): void {
   if (m.load32(w + tk.E_PARK) !== 1) {
