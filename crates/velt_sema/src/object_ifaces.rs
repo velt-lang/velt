@@ -171,6 +171,32 @@ impl Ctx<'_> {
         }
     }
 
+    /// The object type `d` was given the fields `names` (`crate::object_widen`): its
+    /// implementations made before, of an interface with one of those fields, read it as absent
+    /// and stop a write. Each is made again, and its slots replace the old ones, so the
+    /// conversions that use it see the field.
+    pub(crate) fn rebuild_object_impls(&mut self, d: DefId, names: &[String]) {
+        let stale: Vec<(DefId, Vec<TyId>, bool, u32)> = (self.object_impls.made.iter())
+            .filter_map(|(k, v)| (k.0 == d).then_some((k.1, k.2.clone(), k.3, (*v)?)))
+            .collect();
+        for (iface, args, dynamic, old) in stale {
+            let has = self
+                .iface(iface)
+                .is_some_and(|i| (i.fields.iter()).any(|f| names.contains(&f.name)));
+            if !has {
+                continue;
+            }
+            let self_ty = self.impls[old as usize].ty;
+            let Some((plan, setters)) = self.object_impl_plan(d, self_ty, iface, &args, dynamic)
+            else {
+                continue;
+            };
+            let new = self.build_object_impl(d, self_ty, iface, &args, plan, setters);
+            self.impls[old as usize].methods = self.impls[new as usize].methods.clone();
+            self.copy_setter_sources(new, old);
+        }
+    }
+
     /// A value of interface `iface` cast to an extension (`ObjectImpls::downcast_from`).
     pub(crate) fn note_iface_downcast(&mut self, iface: DefId) {
         self.object_impls.downcast_from.insert(iface);

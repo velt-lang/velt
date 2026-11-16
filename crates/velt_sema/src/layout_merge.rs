@@ -297,7 +297,8 @@ impl VisitMut for Renumber<'_> {
 /// field an extension adds and that the program may give a value ([`given_fields`]). Those list
 /// the type's own fields; Node's object would have the given one too.
 pub(crate) fn check_looks(cx: &mut Ctx) {
-    if !cx.objects.layouts.families.values().any(|f| f.used) {
+    let widened = !cx.object_impls.widen.widened.is_empty();
+    if !cx.objects.layouts.families.values().any(|f| f.used) && !widened {
         return;
     }
     let looks: Vec<(TyId, velt_common::Span, Seen)> = (cx.object_copies.seen.iter())
@@ -311,6 +312,13 @@ pub(crate) fn check_looks(cx: &mut Ctx) {
         let TyKind::Adt(d, _) = *cx.ty.kind(t) else {
             continue;
         };
+        if let Some((field, ext)) = widened_look(cx, d, &how) {
+            if !reported.contains(&span) {
+                reported.push(span);
+                report_look(cx, t, span, &how, &field, &ext);
+            }
+            continue;
+        }
         let Some(base) = used_family(cx, d) else {
             continue;
         };
@@ -331,27 +339,48 @@ pub(crate) fn check_looks(cx: &mut Ctx) {
             continue;
         };
         reported.push(span);
-        let tn = cx.display(t);
-        let what = match how {
-            Seen::Keys => "lists the keys of",
-            Seen::Spread(_) => "spreads",
-            _ => "tests a key of",
-        };
         let ext = extension_with(cx, base, &field);
-        let shown = cx.shown_name(&field);
-        cx.error(
-            velt_common::Diagnostic::error(
-                format!(
-                    "this {what} a value of type `{tn}`, which has its own fields only, but such objects can have `{shown}` (given through `{ext}`), and Node would show it here"
-                ),
-                span,
-            )
-            .with_note(format!(
-                "a `{tn}` converts to `{ext}` as the same object, which has room for `{shown}`"
-            ))
-            .with_note(format!("look at the value as `{ext}` (`v as {ext}`)")),
-        );
+        report_look(cx, t, span, &how, &field, &ext);
     }
+}
+
+/// For an object type widened for a cast (`crate::object_widen`): a field the cast added that
+/// the look at `how` misses, and the cast's target. Any of them may be written through the cast.
+fn widened_look(cx: &Ctx, d: DefId, how: &Seen) -> Option<(String, String)> {
+    let twin = cx.readonly_twins.get(&d).map_or(d, |t| t.0);
+    let w = &cx.object_impls.widen;
+    let n = *w.widened.get(&twin)?;
+    let added: Vec<String> = (cx.adt(twin)?.fields.iter().skip(n))
+        .map(|f| f.name.clone())
+        .collect();
+    let field = match how {
+        Seen::In(k) => (cx.object_copies.in_keys.get(*k as usize)).filter(|k| added.contains(k)),
+        _ => added.first(),
+    }?;
+    Some((field.clone(), w.by.get(&twin).cloned().unwrap_or_default()))
+}
+
+/// Report a look at a value of type `t` that misses `field`, which `ext` gives its objects.
+fn report_look(cx: &mut Ctx, t: TyId, span: velt_common::Span, how: &Seen, field: &str, ext: &str) {
+    let tn = cx.display(t);
+    let what = match how {
+        Seen::Keys => "lists the keys of",
+        Seen::Spread(_) => "spreads",
+        _ => "tests a key of",
+    };
+    let shown = cx.shown_name(field);
+    cx.error(
+        velt_common::Diagnostic::error(
+            format!(
+                "this {what} a value of type `{tn}`, which has its own fields only, but such objects can have `{shown}` (given through `{ext}`), and Node would show it here"
+            ),
+            span,
+        )
+        .with_note(format!(
+            "a `{tn}` converts to `{ext}` as the same object, which has room for `{shown}`"
+        ))
+        .with_note(format!("look at the value as `{ext}` (`v as {ext}`)")),
+    );
 }
 
 /// The base layout of the family in use that object type `d` is of.

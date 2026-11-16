@@ -1,0 +1,16 @@
+// Keys and spreads of an object type widened for a cast (#379): they list the type's own fields,
+// where Node's object would have the written one too, so each is refused, naming the cast.
+interface Ctx {
+  el: string;
+  update(): void;
+}
+
+interface InternalCtx extends Ctx {
+  __name?: string;
+}
+
+const o = { el: "x", update: () => {} };
+const c: Ctx = o;
+(c as InternalCtx).__name = "dbg";
+const copy = { ...o };
+console.log(Object.keys(o).join(","), Object.keys(copy).join(","), "__name" in o);

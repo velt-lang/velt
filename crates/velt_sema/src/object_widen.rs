@@ -39,10 +39,50 @@ pub(crate) struct Widen {
     pub asks: Vec<Ask>,
     /// The object types widened -> how many fields they declare (the added ones follow).
     pub widened: FxHashMap<DefId, usize>,
+    /// The object types widened -> the first cast's target (`InternalCtx`), for diagnostics.
+    pub by: FxHashMap<DefId, String>,
+    /// The implementations the program converts with (`ToDyn`), found once.
+    converted: Option<rustc_hash::FxHashSet<u32>>,
     /// (cast, implementation) pairs done.
     done: rustc_hash::FxHashSet<(usize, u32)>,
     /// The (interface, object type) pairs reported: one error per type, at the first cast.
     reported: rustc_hash::FxHashSet<(DefId, TyId)>,
+}
+
+/// Why an object type gets no room for a cast's fields.
+pub(crate) enum Refusal {
+    /// A class, an object literal using `this`, or another type with one layout.
+    NoRoom,
+    /// It has (or another cast gave it) a field of this name of another type.
+    Conflict(String),
+    /// A generic object literal type of its shape is laid out as it.
+    GenericShape,
+}
+
+/// The implementation indices the program's conversions use (`ToDyn` in a body or a global's
+/// initializer).
+fn converted_impls(cx: &Ctx) -> rustc_hash::FxHashSet<u32> {
+    let mut out = rustc_hash::FxHashSet::default();
+    let mut note = |e: &crate::hir::Expr| {
+        if let crate::hir::ExprKind::ToDyn { impl_index, .. } = &e.kind {
+            out.insert(*impl_index);
+        }
+    };
+    for (i, def) in cx.defs.iter().enumerate() {
+        if let Some(crate::hir::Def::Fn(f)) = def {
+            crate::visit::exprs(&f.body.block, &mut note);
+        } else if let Some(crate::defs::DefInfo::Global(g)) = cx.info.get(i) {
+            if let Some(init) = &g.init {
+                let b = crate::hir::Block {
+                    stmts: vec![],
+                    value: Some(Box::new(init.clone())),
+                    span: init.span,
+                };
+                crate::visit::exprs(&b, &mut note);
+            }
+        }
+    }
+    out
 }
 
 impl Ctx<'_> {
@@ -73,41 +113,70 @@ impl Ctx<'_> {
             .collect()
     }
 
-    /// Widen each object type with an implementation of an interface some cast asks to widen
-    /// (module docs), once per cast and implementation.
+    /// Widen each object type with an implementation of an interface some cast asks to widen,
+    /// or of one extending it (module docs), once per cast and implementation. A class's
+    /// implementation counts only when the program converts with it.
     pub(crate) fn widen_converted(&mut self) {
         if self.object_impls.widen.asks.is_empty() {
             return;
+        }
+        if self.object_impls.widen.converted.is_none() {
+            self.object_impls.widen.converted = Some(converted_impls(self));
         }
         let asks = self.object_impls.widen.asks.clone();
         for (k, a) in asks.iter().enumerate() {
             for j in 0..self.impls.len() as u32 {
                 let imp = &self.impls[j as usize];
-                if imp.iface != a.iface || imp.generics != 0 {
+                let (ty, iface, generics) = (imp.ty, imp.iface, imp.generics);
+                if !self.extends_or_is(iface, a.iface, 0) {
                     continue;
                 }
-                let ty = imp.ty;
                 if !self.object_impls.widen.done.insert((k, j)) {
                     continue;
                 }
-                if !self.widen_one(ty, &a.fields)
-                    && self.object_impls.widen.reported.insert((a.iface, ty))
-                {
-                    self.no_room(ty, &a.fields, &a.cast, a.span);
+                let converted =
+                    (self.object_impls.widen.converted.as_ref()).is_some_and(|c| c.contains(&j));
+                if self.class_of(ty).is_some() && !converted {
+                    continue;
+                }
+                let r = match generics {
+                    0 => self.widen_one(ty, &a.fields),
+                    _ if self.is_adapter(ty) => Ok(()),
+                    _ => Err(Refusal::NoRoom),
+                };
+                if r.is_ok() {
+                    if let crate::hir::TyKind::Adt(d, _) = *self.ty.kind(ty) {
+                        if self.object_impls.widen.widened.contains_key(&d) {
+                            let by = &mut self.object_impls.widen.by;
+                            by.entry(d).or_insert_with(|| a.cast.1.clone());
+                        }
+                    }
+                }
+                if let Err(why) = r {
+                    if self.object_impls.widen.reported.insert((a.iface, ty)) {
+                        self.no_room(ty, &a.fields, &a.cast, a.span, why);
+                    }
                 }
             }
         }
     }
 
-    /// Give the object type `ty` the `fields` it lacks; `false` when it can't have them.
-    fn widen_one(&mut self, ty: TyId, fields: &[FieldInfo]) -> bool {
-        // An adapter (an `I<A>` as an `I<B>`, `body/expr/iface_adapt.rs`) forwards to the value
-        // it wraps, whose own type is widened through its implementation; the run-time check
-        // looks through the adapter.
-        // Its struct, named `<interface> adapter` (which no source can name, for the space), holds
-        // the wrapped value in its one field `inner`; a rebuilt adapter's earlier struct keeps
-        // its implementation but leaves `Ctx::iface_adapters`.
-        let adapter = match self.ty.kind(ty) {
+    /// Is interface `d` the interface `base`, or does it extend it?
+    fn extends_or_is(&self, d: DefId, base: DefId, depth: u32) -> bool {
+        d == base
+            || depth < 64
+                && self.iface(d).is_some_and(|i| {
+                    (i.parents.iter()).any(|p| self.extends_or_is(p.iface, base, depth + 1))
+                })
+    }
+
+    /// An adapter (an `I<A>` as an `I<B>`, `body/expr/iface_adapt.rs`) forwards to the value it
+    /// wraps, whose own type is widened through its implementation; the run-time check looks
+    /// through the adapter. Its struct, named `<interface> adapter` (which no source can name, for
+    /// the space), holds the wrapped value in its one field `inner`; a rebuilt adapter's earlier
+    /// struct keeps its implementation but leaves `Ctx::iface_adapters`.
+    fn is_adapter(&self, ty: TyId) -> bool {
+        match self.ty.kind(ty) {
             crate::hir::TyKind::Adt(d, _) => self.adt(*d).is_some_and(|a| {
                 a.name.ends_with(" adapter")
                     && a.fields.len() == 1
@@ -115,43 +184,81 @@ impl Ctx<'_> {
                     && matches!(self.ty.kind(a.fields[0].ty), crate::hir::TyKind::Dyn(..))
             }),
             _ => false,
-        };
-        if adapter {
-            return true;
+        }
+    }
+
+    /// Give the object type `ty` the `fields` it lacks, or say why it can't have them.
+    fn widen_one(&mut self, ty: TyId, fields: &[FieldInfo]) -> Result<(), Refusal> {
+        if self.is_adapter(ty) {
+            return Ok(());
         }
         // A literal interface value (an object literal using `this`) or a function implements
         // the interface itself and gets no fields.
         let crate::hir::TyKind::Adt(d, args) = self.ty.kind(ty).clone() else {
-            return false;
+            return Err(Refusal::NoRoom);
         };
         let Some(a) = self.adt(d) else {
-            return false;
+            return Err(Refusal::NoRoom);
         };
         let (kind, own) = (a.kind, a.fields.clone());
+        // A field of that name already there (its own, or one another cast added) must have the
+        // type the cast gives it: one slot can't hold both.
+        for f in fields {
+            if let Some(g) = own.iter().find(|g| g.name == f.name) {
+                if !self.same_ty(g.ty, f.ty) {
+                    return Err(Refusal::Conflict(f.name.clone()));
+                }
+            }
+        }
         let missing: Vec<&FieldInfo> = (fields.iter())
             .filter(|f| !own.iter().any(|g| g.name == f.name))
             .collect();
         if missing.is_empty() {
-            return true;
+            return Ok(());
         }
         // An object literal's type, or the struct of one written as an interface with methods
         // (`body/expr/iface_object.rs`) whose methods don't use `this` (a value, which has presence
         // flags; one using `this` is laid out as a class).
         let literal = kind == AdtKind::Struct && self.literal_structs.contains(&d);
         if !(kind == AdtKind::Anon || literal) || !args.is_empty() || self.layout_family_of(d) {
-            return false;
+            return Err(Refusal::NoRoom);
+        }
+        // A generic object type of the same shape (`{ el: T; … }` from a generic function) is laid
+        // out as this type at its instances: it would need the fields too.
+        if kind == AdtKind::Anon && self.generic_shape_of(d) {
+            return Err(Refusal::GenericShape);
         }
         self.object_impls
             .widen
             .widened
             .entry(d)
             .or_insert(own.len());
+        let names: Vec<String> = missing.iter().map(|f| f.name.clone()).collect();
         for f in missing {
             let mut f = f.clone();
             f.private_to = None;
             self.adt_mut(d).fields.push(f);
         }
-        true
+        self.rebuild_object_impls(d, &names);
+        Ok(())
+    }
+
+    /// Is there a generic object literal type with the field names and optional flags of `d`?
+    fn generic_shape_of(&self, d: DefId) -> bool {
+        let shape = |a: &crate::defs::AdtInfo| -> Vec<(String, bool)> {
+            (a.fields.iter())
+                .map(|f| (f.name.clone(), f.optional))
+                .collect()
+        };
+        let Some(mine) = self.adt(d).map(shape) else {
+            return false;
+        };
+        (0..self.info.len() as u32).map(DefId).any(|g| {
+            g != d
+                && self.adt(g).is_some_and(|a| {
+                    a.kind == AdtKind::Anon && a.generics.len() != 0 && shape(a) == mine
+                })
+        })
     }
 
     /// Is `t` the struct of an object literal written as an interface, widened (module docs)? Its
@@ -175,7 +282,14 @@ impl Ctx<'_> {
     }
 
     /// The cast `cast` needs room for `fields` in objects of type `ty`, which can't have it.
-    fn no_room(&mut self, ty: TyId, fields: &[FieldInfo], cast: &(String, String), span: Span) {
+    fn no_room(
+        &mut self,
+        ty: TyId,
+        fields: &[FieldInfo],
+        cast: &(String, String),
+        span: Span,
+        why: Refusal,
+    ) {
         let (from, to) = cast;
         let lacks: Vec<String> = (fields.iter())
             .filter(|f| match self.ty.kind(ty) {
@@ -194,7 +308,15 @@ impl Ctx<'_> {
             crate::hir::TyKind::Adt(d, _) => self.literal_structs.contains(d),
             _ => false,
         };
-        let note = if hidden {
+        let note = if let Refusal::Conflict(name) = &why {
+            format!(
+                "`{shown}` is converted to `{from}` and has a field `{name}` of another type than `{to}` gives it (its own, or one another cast added): one field can't hold both"
+            )
+        } else if matches!(why, Refusal::GenericShape) {
+            format!(
+                "`{shown}` is converted to `{from}`, and a generic object literal of its shape is laid out as it, which would need {lacks} too; give the object a type of its own (an interface declaring {lacks}) where it is made"
+            )
+        } else if hidden {
             format!(
                 "an object literal written as a `{from}` whose methods use `this` has no {lacks}, and its object gets no fields it was made without; give the literal the type `{to}` where it is made (`const c: {to} = {{ … }}`)"
             )
