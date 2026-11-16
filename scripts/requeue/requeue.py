@@ -6,6 +6,9 @@ usage:
   requeue.py <run id>                          fetch the run and print the decision
   requeue.py fetch <run id> [<attempt>]        print the run as JSON (the fixtures' format)
   requeue.py decide <run.json> [<GITHUB_OUTPUT>]  print the decision for a saved run
+  requeue.py explain <run.json> <out.md> <run url> [<logs dir>]
+                                               write the pull request's comment for a run
+                                               that stays out (nothing when no job failed)
 
 The decision is `requeue` only when every job that failed or was cancelled, other than the jobs
 that only summarize others (`ci`, `golden (<os>) / goldens`), carries one of the annotations
@@ -15,7 +18,15 @@ or by the fail-fast action) keeps the pull request out of the queue: a real fail
 retried. With a GITHUB_OUTPUT file, `decide` appends `requeue=true|false`, `pr=<number>` and, to
 re-queue, `why=<what happened, in words>`.
 
-`fetch` needs `gh` (logged in, or GH_TOKEN). Run it with `python3 -I`.
+`explain` names, for a run that keeps its pull request out, each job whose step failed or that hit
+its time limit, the step, and the first failure lines of its log (failed tests, goldens, the
+xtask step that failed): the fail-fast action cancels every job, the failed one included, so the
+run's page shows only cancelled jobs. It reads each job's log from `<logs dir>/<job id>.log`, or
+fetches it. A run in which no job failed (the queue cancelled it because an entry ahead of it
+dropped) gets no comment.
+
+`fetch` and `explain` without a logs dir need `gh` (logged in, or GH_TOKEN). Run it with
+`python3 -I`.
 """
 
 import json
@@ -159,6 +170,101 @@ def report(run, output=None):
     return requeue
 
 
+# A job's time limit, in GitHub's annotation ("The job has exceeded the maximum execution time
+# of 30m0s").
+TIME_LIMIT = "has exceeded the maximum execution time"
+
+# The lines of a job's log that say what failed, after the timestamp: nextest's failed tests, a
+# golden's verdict and the line under it when the golden was killed, an xtask step's `FAILED:`
+# line, rustc's and clippy's errors.
+FAILURE_LINE = re.compile(
+    r"^\s*(?:(?:FAIL|TIMEOUT|SIGSEGV|SIGABRT|SIGKILL|SIGILL) \["
+    r"|(?:tests|examples)[\\/]\S+ \[[^\]]+\]: "
+    r"|\(killed after|FAILED: |error(?:\[E\d+\])?: (?!test run failed))"
+)
+ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+TIMESTAMP = re.compile(r"^\d{4}-\d\d-\d\dT[\d:.]+Z ?")
+MAX_LINES = 12
+MAX_WIDTH = 200
+
+
+def first_failures(log):
+    """The first lines of a job's log that say what failed, each once, without timestamps and at
+    most MAX_WIDTH characters: FAILURE_LINE's, and the message under a test's panic."""
+    found = []
+    panic = False
+    for line in log.splitlines():
+        line = ANSI.sub("", TIMESTAMP.sub("", line.rstrip())).strip()
+        take = FAILURE_LINE.match(line) or (panic and line)
+        if " panicked at " in line:
+            panic = True
+        elif line:
+            panic = False
+        if take:
+            if len(line) > MAX_WIDTH:
+                line = line[: MAX_WIDTH - 3] + "..."
+            if line not in found:
+                found.append(line)
+                if len(found) == MAX_LINES:
+                    break
+    return found
+
+
+def job_log(job_id, logs_dir):
+    if logs_dir:
+        path = os.path.join(logs_dir, f"{job_id}.log")
+        if not os.path.exists(path):
+            return ""
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.read()
+    # The logs are coloured: without the flag, `gh api` refuses to print them (gh 2.97), and a
+    # gh too old to know the flag prints them without it.
+    for flag in (["--allow-escape-sequences"], []):
+        path = f"repos/{REPO}/actions/jobs/{job_id}/logs"
+        out = subprocess.run(["gh", "api", *flag, path], capture_output=True)
+        if out.returncode == 0:
+            return out.stdout.decode("utf-8", errors="replace")
+    return ""
+
+
+def explain(run, run_url, logs_dir=None):
+    """The pull request's comment for a run that keeps it out of the queue, or None when no job
+    failed a step or hit its time limit."""
+    failed = []
+    for job in run["jobs"]:
+        if SUMMARY.match(job["name"]) or job["conclusion"] not in FAILED:
+            continue
+        limit = [a["message"] for a in job.get("annotations", []) if TIME_LIMIT in a["message"]]
+        if job["failed_steps"] or limit:
+            failed.append((job, limit))
+    if not failed:
+        return None
+    lines = [
+        f"The merge queue's run {run_url} failed, which takes this pull request out of the queue. "
+        "The fail-fast action cancelled the run's other jobs, so the run's page shows them all "
+        "as cancelled; this is what failed:",
+        "",
+    ]
+    for job, limit in failed:
+        what = (
+            f"step `{', '.join(job['failed_steps'])}` failed"
+            if job["failed_steps"]
+            else limit[0]
+        )
+        lines.append(f"- **{job['name']}**: {what}")
+        found = first_failures(job_log(job["id"], logs_dir)) if job["failed_steps"] else []
+        if found:
+            lines += ["  ```", *(f"  {line}" for line in found), "  ```"]
+    lines += [
+        "",
+        "The run tested this pull request merged with main and the entries ahead of it in the "
+        "queue: a failure in code it doesn't touch can come from one of them. Fix what failed "
+        "before queueing it again; queued again unchanged, it fails again "
+        "(docs/internals/maintaining.md, \"Triaging a merge queue failure\").",
+    ]
+    return "\n".join(lines) + "\n"
+
+
 def dump(run):
     """The run as JSON with a line per job (the fixtures stay short and diff well)."""
     head = {k: v for k, v in run.items() if k != "jobs"}
@@ -175,6 +281,11 @@ def main(argv):
     elif len(argv) >= 2 and argv[0] == "decide":
         with open(argv[1], encoding="utf-8") as f:
             report(json.load(f), argv[2] if len(argv) > 2 else None)
+    elif len(argv) >= 4 and argv[0] == "explain":
+        with open(argv[1], encoding="utf-8") as f:
+            text = explain(json.load(f), argv[3], argv[4] if len(argv) > 4 else None)
+        with open(argv[2], "w", encoding="utf-8", newline="\n") as f:
+            f.write(text or "")
     elif len(argv) == 1 and argv[0].isdigit():
         report(fetch(argv[0]))
     else:

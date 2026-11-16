@@ -349,7 +349,14 @@ The queue runs with fail-fast, and each entry is tested merged with the entries 
 one failure can cancel and fail the runs behind it. For each `QUEUE FAIL`:
 
 1. Find the job that failed first: its annotation says "failed (see its failed step); cancelling
-   the rest of the run"; the other failed jobs are cancellations.
+   the rest of the run"; the other failed jobs are cancellations. The fail-fast action cancels
+   the failed job too, so every job of the run shows as cancelled and the entry as UNMERGEABLE:
+   that is a failure, not a spurious drop. The `requeue` workflow comments on the pull request
+   with the failed job, its step and the first failure lines of its log; a run with no failed
+   step and no time limit was cancelled by the queue because an entry ahead of it dropped.
+   Never queue a pull request again unchanged after a failed step: it fails again (#3059 did,
+   2026-11-16) and restarts every entry behind it. Only a flaky test (below, with its issue) or
+   GitHub's infrastructure (the `requeue` workflow) justifies queueing the same commit again.
 2. Read its log (`gh run view <run> --job <job> --log`) and decide which pull request caused it:
    - **This pull request** (a test, the file-size rule, a conflict with what merged meanwhile):
      its author fixes it on the branch (merge `main`; split a file with headroom, not to exactly
@@ -374,6 +381,8 @@ was not acquired by Runner of type hosted even after multiple attempts", or an i
 GitHub Actions, and no other failure) needs no triage: the `requeue` workflow
 (.github/workflows/requeue.yml) puts the pull request back into the queue, at most twice per head
 commit, and comments on it. Re-queue by hand only when it says it gave up or could not enqueue.
+For any other failed run it comments what failed (`requeue.py explain`, tested on the saved runs
+and logs in scripts/requeue/fixtures).
 `python3 -I scripts/requeue/requeue.py <run id>` prints its decision for any run; a new
 infrastructure signature goes into `INFRASTRUCTURE` there with a saved run in
 scripts/requeue/fixtures and a case in crates/xtask/src/requeue_tests.rs.

@@ -1,0 +1,76 @@
+2026-11-16T09:53:32.9656326Z [32;1m        PASS[0m [   0.008s] (1870/5367) [35;1mvelt_rt[0m [36mweak::tests::values[0m[36m::[0m[34;1mnull_and_untraced_values_of_a_key_in_a_cycle[0m
+2026-11-16T09:53:32.9781988Z [32;1m        PASS[0m [   0.012s] (1871/5367) [35;1mvelt_rt::abi_symbols[0m [34;1mcomment_markers_in_literals_open_no_comment[0m
+2026-11-16T09:53:32.9850007Z [32;1m        PASS[0m [   0.006s] (1872/5367) [35;1mvelt_rt::abi_symbols[0m [34;1mcommented_out_functions_are_not_exported[0m
+2026-11-16T09:53:32.9903691Z [32;1m        PASS[0m [   0.005s] (1873/5367) [35;1mvelt_rt::abi_symbols[0m [34;1mcomments_between_the_attribute_and_the_function_are_skipped[0m
+2026-11-16T09:53:32.9957555Z [32;1m        PASS[0m [   0.005s] (1874/5367) [35;1mvelt_rt::abi_symbols[0m [34;1mother_items_after_the_attribute_are_not_functions[0m
+2026-11-16T09:53:33.0012792Z [32;1m        PASS[0m [   0.005s] (1875/5367) [35;1mvelt_rt::abi_symbols[0m [34;1munwinding_functions_are_exported_too[0m
+2026-11-16T09:53:34.5312844Z [32;1m        PASS[0m [   1.530s] (1876/5367) [35;1mvelt_rt::link_check[0m [34;1mconcurrent_tasks_never_interleave_within_a_line[0m
+2026-11-16T09:53:35.9230411Z [32;1m        PASS[0m [   1.388s] (1877/5367) [35;1mvelt_rt::link_check[0m [34;1mpiped_output_is_flushed_when_workers_idle[0m
+2026-11-16T09:53:42.3799255Z [33;1m        SLOW[0m [>180.000s] (─────────) [35;1mveltc::reload[0m [34;1mreload_goldens[0m
+2026-11-16T09:53:43.4230386Z [32;1m        PASS[0m [   7.502s] (1878/5367) [35;1mvelt_rt::link_check[0m [34;1mstaticlib_links_and_runs[0m
+2026-11-16T09:53:43.4689331Z [32;1m        PASS[0m [   0.047s] (1879/5367) [35;1mvelt_rt::std_externs[0m [34;1monly_the_wasm_bindings_may_declare_what_velt_rt_lacks[0m
+2026-11-16T09:53:43.6788969Z [32;1m        PASS[0m [   0.208s] (1880/5367) [35;1mvelt_rt::std_externs[0m [34;1mstd_declarations_match_velt_rt[0m
+2026-11-16T09:53:43.7859322Z [32;1m        PASS[0m [   0.107s] (1881/5367) [35;1mvelt_rt::std_externs[0m [34;1mstd_declarations_match_velt_rt_wasm[0m
+2026-11-16T09:53:43.8989226Z [32;1m        PASS[0m [   0.115s] (1882/5367) [35;1mvelt_rt::std_externs[0m [34;1mthe_parsers_see_the_whole_abi[0m
+2026-11-16T09:53:43.9709574Z [32;1m        PASS[0m [   0.071s] (1883/5367) [35;1mvelt_rt::std_externs[0m [34;1mvelt_rt_wasm_defines_what_mirrored_directories_export[0m
+2026-11-16T09:53:43.9950032Z [31;1m        FAIL[0m [   0.024s] (1884/5367) [35;1mvelt_rt_host::abi_symbols[0m [34;1mtable_covers_the_documented_abi[0m
+2026-11-16T09:53:44.0069733Z [31;1m [0m [31;1mstdout[0m [31;1m───[0m
+2026-11-16T09:53:44.0070234Z 
+2026-11-16T09:53:44.0070462Z     running 1 test
+2026-11-16T09:53:44.0071008Z     test table_covers_the_documented_abi ... FAILED
+2026-11-16T09:53:44.0071415Z 
+2026-11-16T09:53:44.0071577Z     failures:
+2026-11-16T09:53:44.0071792Z 
+2026-11-16T09:53:44.0071947Z     failures:
+2026-11-16T09:53:44.0072385Z         table_covers_the_documented_abi
+2026-11-16T09:53:44.0072728Z 
+2026-11-16T09:53:44.0073333Z     test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+2026-11-16T09:53:44.0074256Z     [0m
+2026-11-16T09:53:44.0074819Z [31;1m [0m [31;1mstderr[0m [31;1m───[0m
+2026-11-16T09:53:44.0075180Z 
+2026-11-16T09:53:44.0076123Z     [0m[31;1mthread 'table_covers_the_documented_abi' (193758) panicked at crates/velt_rt_host/tests/abi_symbols.rs:41:5:[0m
+2026-11-16T09:53:44.0080218Z     [31;1mdocumented but not exported: ["velt_rt_fs_append_file", "velt_rt_fs_copy_file", "velt_rt_fs_exists", "velt_rt_fs_lstat", "velt_rt_fs_mkdir", "velt_rt_fs_read_dir", "velt_rt_fs_read_dir_typed", "velt_rt_fs_read_file", "velt_rt_fs_read_file_bytes", "velt_rt_fs_readlink", "velt_rt_fs_realpath", "velt_rt_fs_remove", "velt_rt_fs_rename", "velt_rt_fs_stat", "velt_rt_fs_symlink", "velt_rt_fs_write_file"][0m
+2026-11-16T09:53:44.0083191Z     note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace[0m
+2026-11-16T09:53:44.0083788Z 
+2026-11-16T09:53:44.0098846Z [32;1m        PASS[0m [   0.009s] (1885/5367) [35;1mvelt_rt_host::manifest[0m [34;1mdependencies_match_velt_rt[0m
+2026-11-16T10:16:13.3195660Z [32;1m        PASS[0m [ 519.832s] (5367/5367) [35;1mveltc::std_tests[0m [34;1mstd_modules_pass_their_tests[0m
+2026-11-16T10:16:13.3199249Z ────────────
+2026-11-16T10:16:13.3200869Z [31;1m     Summary[0m [1996.020s] [1m5367[0m tests run: [1m5366[0m [32;1mpassed[0m ([1m20[0m [33;1mslow[0m), [1m1[0m [31;1mfailed[0m, [1m47[0m [33;1mskipped[0m
+2026-11-16T10:16:13.3202966Z [31;1m        FAIL[0m [   0.024s] (1884/5367) [35;1mvelt_rt_host::abi_symbols[0m [34;1mtable_covers_the_documented_abi[0m
+2026-11-16T10:16:13.3204153Z [31;1m [0m [31;1mstdout[0m [31;1m───[0m
+2026-11-16T10:16:13.3204533Z 
+2026-11-16T10:16:13.3204716Z     running 1 test
+2026-11-16T10:16:13.3205255Z     test table_covers_the_documented_abi ... FAILED
+2026-11-16T10:16:13.3205984Z 
+2026-11-16T10:16:13.3206163Z     failures:
+2026-11-16T10:16:13.3206378Z 
+2026-11-16T10:16:13.3206777Z     failures:
+2026-11-16T10:16:13.3207480Z         table_covers_the_documented_abi
+2026-11-16T10:16:13.3207843Z 
+2026-11-16T10:16:13.3208451Z     test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+2026-11-16T10:16:13.3209350Z     [0m
+2026-11-16T10:16:13.3209926Z [31;1m [0m [31;1mstderr[0m [31;1m───[0m
+2026-11-16T10:16:13.3210304Z 
+2026-11-16T10:16:13.3211242Z     [0m[31;1mthread 'table_covers_the_documented_abi' (193758) panicked at crates/velt_rt_host/tests/abi_symbols.rs:41:5:[0m
+2026-11-16T10:16:13.3215125Z     [31;1mdocumented but not exported: ["velt_rt_fs_append_file", "velt_rt_fs_copy_file", "velt_rt_fs_exists", "velt_rt_fs_lstat", "velt_rt_fs_mkdir", "velt_rt_fs_read_dir", "velt_rt_fs_read_dir_typed", "velt_rt_fs_read_file", "velt_rt_fs_read_file_bytes", "velt_rt_fs_readlink", "velt_rt_fs_realpath", "velt_rt_fs_remove", "velt_rt_fs_rename", "velt_rt_fs_stat", "velt_rt_fs_symlink", "velt_rt_fs_write_file"][0m
+2026-11-16T10:16:13.3218393Z     note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace[0m
+2026-11-16T10:16:13.3219004Z 
+2026-11-16T10:16:13.3640492Z [31;1merror[0m: test run failed
+2026-11-16T10:16:13.3661819Z 
+2026-11-16T10:16:13.3662178Z steps:
+2026-11-16T10:16:13.3662486Z       8s  cargo fmt --check
+2026-11-16T10:16:13.3662815Z       0s  timing lint
+2026-11-16T10:16:13.3663223Z     470s  build
+2026-11-16T10:16:13.3663488Z      53s  clippy
+2026-11-16T10:16:13.3663813Z       0s  cargo fmt --check (tests/difftest)
+2026-11-16T10:16:13.3664212Z       0s  clippy (tests/difftest)
+2026-11-16T10:16:13.3664631Z       0s  cargo fmt --check (packages/postgres/native)
+2026-11-16T10:16:13.3665069Z       5s  clippy (packages/postgres/native)
+2026-11-16T10:16:13.3665456Z    2003s  unit + integration tests
+2026-11-16T10:16:13.3665881Z    2539s  total
+2026-11-16T10:16:13.3695153Z [31mFAILED: unit + integration tests[0m
+2026-11-16T10:16:13.3944482Z ##[error]Process completed with exit code 1.
+2026-11-16T10:16:13.4673428Z Prepare all required actions
+2026-11-16T10:16:13.4789776Z ##[group]Run ./.github/actions/fail-fast
+2026-11-16T10:16:13.4790097Z with:
+2026-11-16T10:16:13.4790333Z   job: check (ubuntu-latest)
