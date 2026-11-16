@@ -143,6 +143,16 @@ impl<T> Slots<T> {
         self.sync();
     }
 
+    /// Every slot's value, the empty ones filled with `fill(i)` first.
+    pub(crate) fn into_vec_filling(self, fill: impl Fn(usize) -> T) -> Vec<T> {
+        for i in 0..self.len {
+            if !self.ready[i].get() {
+                self.set(i, fill(i));
+            }
+        }
+        self.into_vec()
+    }
+
     /// Every slot's value, when all are filled (panics otherwise).
     pub(crate) fn into_vec(self) -> Vec<T> {
         assert!(

@@ -170,6 +170,27 @@ impl<T> DefTable<T> {
         (0..n).map(move |i| unsafe { (*items).get_mut(i).expect("ICE: decoded entry") })
     }
 
+    /// The entries from `from` on, to write (the program's, `Ctx::program_from`).
+    #[track_caller]
+    pub(crate) fn iter_mut_from(
+        &mut self,
+        from: usize,
+    ) -> impl DoubleEndedIterator<Item = &mut T> + ExactSizeIterator {
+        if from == 0 {
+            self.scanned();
+            if self.frozen_below > 0 {
+                violation(Location::caller());
+            }
+        }
+        let n = self.items.len();
+        for i in from..n {
+            self.at(i);
+        }
+        let items: *mut Slots<T> = &mut self.items;
+        // SAFETY: each index is yielded once, so the `&mut`s don't overlap.
+        (from.min(n)..n).map(move |i| unsafe { (*items).get_mut(i).expect("ICE: decoded entry") })
+    }
+
     /// Entry `i`, uncounted (the probe's own reads).
     pub(crate) fn items_at(&self, i: usize) -> &T {
         self.at(i)
@@ -182,6 +203,11 @@ impl<T> DefTable<T> {
             front: 0,
             back: self.items.len(),
         }
+    }
+
+    /// The entries, those not decoded yet as `fill` makes them (not decoded).
+    pub(crate) fn into_vec_filling(self, fill: impl Fn(usize) -> T) -> Vec<T> {
+        self.items.into_vec_filling(fill)
     }
 
     /// The entries, for `hir::Program`.

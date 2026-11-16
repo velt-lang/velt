@@ -12,7 +12,10 @@ use crate::visit;
 /// The definitions of every type whose field is the target of an assignment in some body.
 pub(crate) fn assigned_objects(cx: &mut Ctx) -> FxHashSet<DefId> {
     let mut out = FxHashSet::default();
-    for def in cx.defs.iter() {
+    // With std's unit from disk (`velt check`), what lowering needs of std is not built
+    // (`finalize::program_defs`).
+    let from = if cx.std_from_disk { cx.unit_base as usize } else { 0 };
+    for def in cx.defs.iter().skip(from) {
         let Some(Def::Fn(f)) = def else {
             continue;
         };
@@ -31,7 +34,7 @@ pub(crate) fn assigned_objects(cx: &mut Ctx) -> FxHashSet<DefId> {
     // lays them out as one). Defs with the same field names must therefore agree, or the two
     // forms would be shared differently.
     let mut by_names: FxHashMap<Vec<String>, Vec<DefId>> = FxHashMap::default();
-    for (i, info) in cx.info.iter().enumerate() {
+    for (i, info) in cx.info.iter().enumerate().skip(from) {
         if let DefInfo::Adt(a) = info {
             if a.kind == AdtKind::Anon {
                 let names = a.fields.iter().map(|f| f.name.clone()).collect();

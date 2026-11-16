@@ -114,6 +114,10 @@ pub(crate) struct Ctx<'m> {
     /// Where the unit being checked starts (`crate::units`): the passes after the bodies take
     /// their functions from here ([`Ctx::unit_fns`]). 0 in a whole-program check.
     pub unit_base: u32,
+    /// EXPERIMENT (#2943 M2): the finished units come from std's unit on disk, for `velt check`
+    /// (`units::disk`): the program built leaves their definitions out (placeholders, nothing
+    /// decoded, [`crate::program`]).
+    pub std_from_disk: bool,
     pub scopes: Vec<ModuleScope>,
     /// Exports of `std/prelude/*` modules, visible everywhere.
     pub prelude: FxHashMap<String, Item>,
@@ -563,6 +567,15 @@ pub(crate) struct Ctx<'m> {
 }
 
 impl<'m> Ctx<'m> {
+    /// The first definition the program is built from: 0, or with std's unit from disk (`velt
+    /// check`), the app's first ([`Ctx::std_from_disk`], `finalize::program_defs`).
+    pub(crate) fn program_from(&self) -> usize {
+        match self.std_from_disk {
+            true => self.unit_base as usize,
+            false => 0,
+        }
+    }
+
     pub fn new(modules: &'m [SourceModule], root: usize) -> Self {
         Self::over(modules.iter().collect(), root)
     }
@@ -594,6 +607,7 @@ impl<'m> Ctx<'m> {
             def_spans: DefTable::default(),
             units: false,
             unit_base: 0,
+            std_from_disk: false,
             unit_sums: Default::default(),
             units_stage: crate::units::Stage::Both,
             scopes,

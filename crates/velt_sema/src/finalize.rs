@@ -14,6 +14,25 @@ use crate::hooks;
 
 /// Returns the deferred std definitions nothing reached (`hir::Program::unchecked`), whose stubs
 /// it builds first (`body::lazy_std`).
+/// The definitions the program is built from: all, or with std's unit from disk (`velt check`,
+/// [`Ctx::std_from_disk`]), the app's and the std interfaces it implements (whose dispatch
+/// groups its methods join, which reports a disagreement there).
+pub(crate) fn program_defs(cx: &Ctx) -> Vec<usize> {
+    let base = cx.unit_base as usize;
+    if !cx.std_from_disk {
+        return (0..cx.info.len()).collect();
+    }
+    let mut out: Vec<usize> = (cx.impls.iter())
+        .filter(|imp| imp.methods.iter().any(|m| m.0 as usize >= base))
+        .map(|imp| imp.iface.0 as usize)
+        .filter(|&i| i < base)
+        .collect();
+    out.sort_unstable();
+    out.dedup();
+    out.extend(base..cx.info.len());
+    out
+}
+
 pub(crate) fn build_defs(cx: &mut Ctx) -> rustc_hash::FxHashSet<DefId> {
     let unchecked = crate::body::lazy_std::stub_unreached(cx);
     let mut memo: FxHashMap<DefId, Vec<Option<hir::Expr>>> = FxHashMap::default();
@@ -27,7 +46,7 @@ pub(crate) fn build_defs(cx: &mut Ctx) -> rustc_hash::FxHashSet<DefId> {
             crate::collect::forwarders::await_forwarded(cx, d, ret, never, span);
         }
     }
-    for i in 0..cx.info.len() {
+    for i in program_defs(cx) {
         let d = DefId(i as u32);
         if cx.defs[i].is_some() {
             let mut throws = cx.try_fn(d).and_then(|f| f.throws);
@@ -312,7 +331,7 @@ fn adt_def(cx: &mut Ctx, d: DefId, memo: &mut FxHashMap<DefId, Vec<Option<hir::E
 /// `number | (() => number)`, whose function type's errors were a variable) is interned there,
 /// before it erases the definitions.
 pub(crate) fn build_late_enums(cx: &mut Ctx) {
-    for i in 0..cx.info.len() {
+    for i in cx.program_from()..cx.info.len() {
         if cx.defs[i].is_none() && matches!(cx.info[i], DefInfo::Enum(_)) {
             let d = DefId(i as u32);
             cx.defs[i] = Some(Def::Enum(enum_def(cx, d)));

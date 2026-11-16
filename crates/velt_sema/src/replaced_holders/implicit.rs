@@ -122,21 +122,29 @@ pub(crate) struct Implicit {
 impl Implicit {
     /// `weak_entries`: [`weak_entries`] of the program.
     pub(crate) fn new(cx: &Ctx, weak_entries: Vec<(Option<TyId>, TyId)>) -> Implicit {
-        let mut own: FxHashMap<DefId, (Vec<DefId>, Vec<DefId>)> = FxHashMap::default();
-        let mut bases: Vec<(DefId, DefId)> = Vec::new();
-        for (i, info) in cx.info.iter().enumerate() {
-            let DefInfo::Adt(a) = info else { continue };
-            let d = DefId(i as u32);
-            let get = |n: &str| a.methods.get(n).filter(|m| !m.is_static).map(|m| m.def);
-            let dispose: Vec<DefId> = get(crate::collect::DISPOSE).into_iter().collect();
-            let glue: Vec<DefId> = GLUE_HOOKS.iter().filter_map(|n| get(n)).collect();
-            if !dispose.is_empty() || !glue.is_empty() {
-                own.insert(d, (dispose, glue));
-            }
-            if let Some(&TyKind::Adt(b, _)) = a.base.map(|b| cx.ty.kind(b)) {
-                bases.push((d, b));
-            }
-        }
+        // A finished unit's part is kept with it ([`unit_scan`]).
+        let (mut scan, from) = match &cx.unit_sums.implicit {
+            Some(kept) => (kept.clone(), cx.unit_base as usize),
+            None => (ImplicitScan::default(), 0),
+        };
+        scan_from(cx, from, &mut scan);
+        let ImplicitScan {
+            own,
+            bases,
+            generators,
+            mut captures,
+        } = scan;
+        Implicit::from_scan(cx, weak_entries, own, bases, generators, &mut captures)
+    }
+
+    fn from_scan(
+        cx: &Ctx,
+        weak_entries: Vec<(Option<TyId>, TyId)>,
+        own: FxHashMap<DefId, (Vec<DefId>, Vec<DefId>)>,
+        bases: Vec<(DefId, DefId)>,
+        generators: Vec<DefId>,
+        captures: &mut Vec<TyId>,
+    ) -> Implicit {
         // Family: a class's bases and its subclasses, transitively.
         let parent: FxHashMap<DefId, DefId> = bases.iter().copied().collect();
         let mut children: FxHashMap<DefId, Vec<DefId>> = FxHashMap::default();
@@ -176,21 +184,9 @@ impl Implicit {
                 e.1.extend(&h.1);
             }
         }
-        let mut generators = Vec::new();
-        let mut captures = Vec::new();
-        for (i, def) in cx.defs.iter().enumerate() {
-            let Some(Def::Fn(f)) = def else { continue };
-            if f.is_generator {
-                generators.push(DefId(i as u32));
-            }
-            for c in &f.captures {
-                if let Some(l) = f.body.locals.get(c.inner.0 as usize) {
-                    captures.push(l.ty);
-                }
-            }
-        }
         captures.sort();
         captures.dedup();
+        let captures = std::mem::take(captures);
         let weak_map = cx.prelude_adt("WeakMap");
         let mut im = Implicit {
             hooks,
@@ -741,5 +737,60 @@ pub(super) fn glue_types(cx: &Ctx, a: &Expr, out: &mut Vec<TyId>) {
             }
         }
         _ => {}
+    }
+}
+
+/// What [`Implicit::new`] reads of the definitions: each class's own hooks, the classes'
+/// bases, the generators and the types of captured locals. A finished unit's is kept with it.
+#[derive(Clone, Default)]
+pub(crate) struct ImplicitScan {
+    own: FxHashMap<DefId, (Vec<DefId>, Vec<DefId>)>,
+    bases: Vec<(DefId, DefId)>,
+    generators: Vec<DefId>,
+    captures: Vec<TyId>,
+}
+
+crate::units::codec::structs! {
+    ImplicitScan { own, bases, generators, captures }
+}
+
+/// EXPERIMENT (#2943 M2): a finished unit's [`ImplicitScan`].
+pub(crate) fn unit_scan(cx: &Ctx) -> ImplicitScan {
+    let mut out = ImplicitScan::default();
+    scan_from(cx, 0, &mut out);
+    out
+}
+
+/// [`ImplicitScan`] of the definitions from `from` on, into `out`.
+fn scan_from(cx: &Ctx, from: usize, out: &mut ImplicitScan) {
+    let ImplicitScan {
+        own,
+        bases,
+        generators,
+        captures,
+    } = out;
+    for (i, info) in cx.info.iter().enumerate().skip(from) {
+        let DefInfo::Adt(a) = info else { continue };
+            let d = DefId(i as u32);
+            let get = |n: &str| a.methods.get(n).filter(|m| !m.is_static).map(|m| m.def);
+            let dispose: Vec<DefId> = get(crate::collect::DISPOSE).into_iter().collect();
+            let glue: Vec<DefId> = GLUE_HOOKS.iter().filter_map(|n| get(n)).collect();
+            if !dispose.is_empty() || !glue.is_empty() {
+                own.insert(d, (dispose, glue));
+            }
+            if let Some(&TyKind::Adt(b, _)) = a.base.map(|b| cx.ty.kind(b)) {
+                bases.push((d, b));
+            }
+        }
+    for (i, def) in cx.defs.iter().enumerate().skip(from) {
+        let Some(Def::Fn(f)) = def else { continue };
+        if f.is_generator {
+            generators.push(DefId(i as u32));
+        }
+        for c in &f.captures {
+            if let Some(l) = f.body.locals.get(c.inner.0 as usize) {
+                captures.push(l.ty);
+            }
+        }
     }
 }

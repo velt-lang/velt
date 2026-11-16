@@ -77,7 +77,8 @@ unit_fields! {
     special: [sigq, type_level],
     skip: [
         // The caller's (`decode_unit`), or set again by every check that uses the unit.
-        modules, root, gen, units, units_stage, unit_base, import_targets, loads, loads_added,
+        modules, root, gen, units, units_stage, unit_base, std_from_disk, import_targets, loads,
+        loads_added,
         stack_base, stack_budget, held_borrows, ide, body_records, source_facts, std_missed,
         kept_demand,
         // Memos, built again on demand.

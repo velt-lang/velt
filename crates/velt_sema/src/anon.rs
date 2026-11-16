@@ -633,7 +633,7 @@ impl Ctx<'_> {
 /// never sees them, and a shape must not resolve to one of them.
 pub(crate) fn concrete_shapes(cx: &Ctx) -> FxHashMap<Vec<(String, TyId, bool, bool)>, DefId> {
     let mut out = FxHashMap::default();
-    for (i, d) in cx.defs.iter().enumerate() {
+    for (i, d) in cx.defs.iter().enumerate().skip(cx.program_from()) {
         let id = DefId(i as u32);
         if let Some(crate::hir::Def::Adt(a)) = d {
             let replaced =
@@ -665,7 +665,7 @@ pub(crate) fn concrete_shapes(cx: &Ctx) -> FxHashMap<Vec<(String, TyId, bool, bo
 /// erasure replaced (`crate::union_layouts`) are left out: no type is one of them any more.
 pub(crate) fn concrete_unions(cx: &Ctx) -> FxHashMap<Vec<TyId>, DefId> {
     let mut out = FxHashMap::default();
-    for (i, d) in cx.defs.iter().enumerate() {
+    for (i, d) in cx.defs.iter().enumerate().skip(cx.program_from()) {
         let Some(crate::hir::Def::Enum(e)) = d else {
             continue;
         };

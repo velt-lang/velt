@@ -70,7 +70,9 @@ pub(crate) fn erase(
     if !cx.fn_sites.vars.is_empty() {
         cx.name_unions_as_written(&solved);
     }
-    let mut plan = crate::union_layouts::plan(&mut cx.ty, &twins, &mut cache, &cx.defs, &solved);
+    let from = if cx.std_from_disk { cx.unit_base as usize } else { 0 };
+    let mut plan =
+        crate::union_layouts::plan(&mut cx.ty, &twins, &mut cache, &cx.defs, &solved, from);
     let merged = std::mem::take(&mut plan.merged);
     cx.replaced_unions = std::mem::take(&mut plan.replaced);
     // Unions solving made (first written with an unsolved member) get their defs, erased below.
@@ -87,6 +89,7 @@ pub(crate) fn erase(
     for (t, _) in named.iter_mut() {
         *t = erase_ty(&mut cx.ty, &twins, &mut cache, *t);
     }
+    let from = cx.program_from();
     let Ctx {
         ty,
         defs,
@@ -96,7 +99,7 @@ pub(crate) fn erase(
         type_level,
         ..
     } = cx;
-    for def in defs.iter_mut().flatten() {
+    for def in defs.iter_mut_from(from).flatten() {
         match def {
             Def::Fn(f) => crate::union_layouts::renumber_block(&mut f.body.block, ty, &merged),
             Def::Global(g) => crate::union_layouts::renumber_expr(&mut g.init, ty, &merged),
@@ -127,7 +130,7 @@ pub(crate) fn erase(
         .map(|(_, to)| to)
         .collect();
     assigned_objects.extend(also);
-    for def in defs.iter_mut().flatten() {
+    for def in defs.iter_mut_from(from).flatten() {
         match def {
             Def::Fn(f) => {
                 for p in &mut f.params {

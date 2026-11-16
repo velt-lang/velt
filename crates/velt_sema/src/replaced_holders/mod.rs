@@ -368,7 +368,9 @@ impl VisitMut for Rhs<'_, '_> {
 /// [`Candidate`])? Most programs do not, and then nothing else needs to be looked at.
 fn any_candidate(cx: &mut Ctx) -> bool {
     let mut found = false;
-    for def in cx.defs.iter() {
+    // A finished unit's assignments were checked with it (`crate::units`): only this unit's
+    // make the check run.
+    for def in cx.defs.iter().skip(cx.unit_base as usize) {
         let Some(Def::Fn(f)) = def else {
             continue;
         };

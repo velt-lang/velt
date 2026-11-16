@@ -201,6 +201,7 @@ fn build(
     let live = crate::timings::pass("program: live_defs", || {
         body::lazy_std::live_defs(&mut cx, &unchecked)
     });
+    let from_disk = cx.std_from_disk.then_some(cx.unit_base as usize);
     let ctx::Ctx {
         ty,
         defs,
@@ -222,9 +223,24 @@ fn build(
         ..
     } = cx;
     let any_fn_views = fn_views.into_program();
+    // With std's unit from disk (`velt check`), std's definitions are left out: placeholders,
+    // never decoded (`finalize::program_defs`).
+    let defs = match from_disk {
+        Some(base) => {
+            let placeholder = || Some(placeholder_def(ty.unit));
+            let mut defs = defs.into_vec_filling(|_| placeholder());
+            for d in defs.iter_mut().take(base) {
+                if d.is_none() {
+                    *d = placeholder();
+                }
+            }
+            defs
+        }
+        None => defs.into_vec(),
+    };
     let program = hir::Program {
         types: ty.table,
-        defs: (defs.into_vec().into_iter())
+        defs: (defs.into_iter())
             .map(|d| d.expect("ICE: definition left unfilled without an error"))
             .collect(),
         entry,
@@ -270,6 +286,32 @@ fn build(
         c_exports: std::mem::take(&mut cx.c_exports),
     };
     (program, diags)
+}
+
+/// A definition std's unit from disk leaves out of a check's program (`finalize::program_defs`):
+/// a function of no params and an empty body, which nothing calls.
+fn placeholder_def(unit: hir::TyId) -> hir::Def {
+    hir::Def::Fn(hir::FnDef {
+        name: String::new(),
+        generics: 0,
+        params: vec![],
+        ret: unit,
+        is_async: false,
+        is_generator: false,
+        self_ty: None,
+        captures: vec![],
+        shares_captures: false,
+        body: hir::Body {
+            locals: vec![],
+            block: hir::Block {
+                stmts: vec![],
+                value: None,
+                span: velt_common::Span::DUMMY,
+            },
+        },
+        throws: None,
+        span: velt_common::Span::DUMMY,
+    })
 }
 
 #[cfg(test)]

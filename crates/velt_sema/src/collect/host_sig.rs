@@ -237,12 +237,27 @@ fn is_promise(cx: &Ctx, ty: TyId) -> bool {
 /// Every declaration of one host function (the same import module and name, in any modules)
 /// must have the same types, and pass each the same way (`u8[]` and `readonly u8[]` are one
 /// type but cross differently): the WebAssembly module imports it once.
+/// EXPERIMENT (#2943 M2): a finished unit's host functions, kept with it.
+pub(crate) fn unit_host_fns(cx: &Ctx) -> Vec<crate::hir::DefId> {
+    (cx.info.iter().enumerate())
+        .filter(|(_, i)| matches!(i, crate::defs::DefInfo::Fn(f) if f.host.is_some()))
+        .map(|(i, _)| crate::hir::DefId(i as u32))
+        .collect()
+}
+
 pub(crate) fn same_imports(cx: &mut Ctx) {
     type Sig = (Vec<TyId>, TyId, Vec<HostTy>, HostTy);
     let mut seen: rustc_hash::FxHashMap<(String, String), Sig> = Default::default();
     let mut errors = vec![];
-    for info in &cx.info {
-        let crate::defs::DefInfo::Fn(f) = info else {
+    // A finished unit's host functions are kept with it ([`unit_host_fns`]): its others are not
+    // read.
+    let (kept, from) = match &cx.unit_sums.host_fns {
+        Some(kept) => (kept.clone(), cx.unit_base as usize),
+        None => (vec![], 0),
+    };
+    let defs = kept.into_iter().map(|d| d.0 as usize).chain(from..cx.info.len());
+    for i in defs {
+        let crate::defs::DefInfo::Fn(f) = &cx.info[i] else {
             continue;
         };
         let Some(h) = &f.host else { continue };

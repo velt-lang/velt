@@ -44,6 +44,7 @@ pub(crate) fn plan(
     cache: &mut FxHashMap<TyId, TyId>,
     defs: &crate::ctx::DefTable<Option<Def>>,
     solved: &[(TyId, TyId)],
+    from: usize,
 ) -> Plan {
     let base = std::mem::take(cache);
     // A union whose solved form is itself (its variables are in its members' fields, which
@@ -52,11 +53,13 @@ pub(crate) fn plan(
         .filter(|(t, s)| t != s)
         .map(|(t, _)| *t)
         .collect();
-    let unions: Vec<DefId> = (defs.iter().enumerate())
+    // `from`: with std's unit from disk (`velt check`), std's definitions are left out of the
+    // program (`finalize::program_defs`).
+    let unions: Vec<DefId> = (defs.iter().enumerate().skip(from))
         .filter(|(_, d)| matches!(d, Some(Def::Enum(e)) if e.is_union && e.generics == 0))
         .map(|(i, _)| DefId(i as u32))
         .collect();
-    let anons: Vec<DefId> = (defs.iter().enumerate())
+    let anons: Vec<DefId> = (defs.iter().enumerate().skip(from))
         .filter(|(i, d)| {
             // Only plain shapes: nothing but their fields tells two of them apart.
             matches!(d, Some(Def::Adt(a)) if a.kind == AdtKind::Anon && a.generics == 0

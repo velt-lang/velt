@@ -418,7 +418,7 @@ pub(crate) fn dyn_bounds(cx: &mut Ctx) -> rustc_hash::FxHashMap<DefId, Vec<(DefI
         .flat_map(|&e| cx.extensions[e].generics.bounds.iter().flatten())
         .map(|b| b.iface)
         .collect();
-    for d in 0..cx.info.len() {
+    for d in cx.program_from()..cx.info.len() {
         let d = DefId(d as u32);
         let Some(n) = cx.iface(d).map(|i| i.generics.len()) else {
             continue;

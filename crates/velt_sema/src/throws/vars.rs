@@ -255,7 +255,7 @@ impl Ctx<'_> {
         }
         // Each def's shape, solved, and whether its fields hold variables.
         let mut shapes: Vec<(DefId, Vec<ShapeField>, bool)> = vec![];
-        for i in 0..self.info.len() {
+        for i in self.program_from()..self.info.len() {
             let d = DefId(i as u32);
             if self.seen_anon(d).is_none() {
                 continue;
