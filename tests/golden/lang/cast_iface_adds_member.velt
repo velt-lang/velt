@@ -1,14 +1,16 @@
-// An interface value asserted to an interface extending it with a member its object lacks:
-// tsc allows it, but an object keeps the layout it was made with, so a write through the
-// assertion would have nowhere to go. Refused, naming the member.
+// check: no leaks
+// An interface value asserted to an interface extending it with an optional field its object
+// lacks (#379): tsc allows it, and Node adds the property when it is written. Velt gives the
+// object types converted to `Ctx` room for `__name`, absent until written.
 interface Ctx {
-    el: string;
-    update(): void;
+  el: string;
+  update(): void;
 }
+
 interface InternalCtx extends Ctx {
-    __name?: string;
+  __name?: string;
 }
 
 const c = { el: "x", update: () => {} } as unknown as Ctx;
 (c as InternalCtx).__name = "dbg";
-console.log(c.el);
+console.log(c.el, (c as InternalCtx).__name);

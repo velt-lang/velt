@@ -473,7 +473,10 @@ impl FnLower<'_, '_> {
                 // nothing, whether absent or present).
                 let optional = f.optional;
                 let anon = self.cx.adt_def(d).kind == hir::AdtKind::Anon;
-                if anon && matches!(self.cx.kind(fty), TyKind::Unit) {
+                if let Some((cell, value)) = self.cx.cell_field(ty, i as u32) {
+                    let fp = self.field_place(&vp, ty, i as u32);
+                    self.any_get_cell(&fp, (fty, cell, value), &outp);
+                } else if anon && matches!(self.cx.kind(fty), TyKind::Unit) {
                     self.void_field_panic(name);
                     self.ret_status(ST_UNSUPPORTED);
                 } else if self.cx.any_boxable(fty) {

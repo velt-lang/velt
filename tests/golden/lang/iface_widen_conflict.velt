@@ -1,0 +1,21 @@
+// Two casts to extensions giving one field two types (#379): an object widened for the first
+// has no room for the second's, so the second cast is refused.
+interface Ctx {
+  el: string;
+  update(): void;
+}
+
+interface InternalCtx extends Ctx {
+  __name?: string;
+}
+
+interface Other extends Ctx {
+  __name?: number;
+}
+
+const o = { el: "x", update: () => {} } as unknown as Ctx;
+(o as InternalCtx).__name = "s";
+console.log((o as InternalCtx).__name);
+const p = { el: "y", update: () => {} } as unknown as Ctx;
+(p as Other).__name = 5;
+console.log((p as Other).__name);

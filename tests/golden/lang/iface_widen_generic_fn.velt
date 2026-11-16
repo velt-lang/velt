@@ -1,0 +1,19 @@
+// An object literal made in a generic function, cast to an extension adding a field (#379):
+// it is laid out per instance of the function's type parameters, so the cast is refused with
+// a note saying so. (Node prints `five 5`.)
+interface Box<T> {
+  v: T;
+  get(): T;
+}
+
+interface IBox<T> extends Box<T> {
+  __tag?: string;
+}
+
+function mk<T>(v: T): Box<T> {
+  return { v, get: () => v };
+}
+
+const b = mk(5);
+(b as IBox<number>).__tag = "five";
+console.log((b as IBox<number>).__tag, b.get());
