@@ -642,6 +642,34 @@ fn a_member_read_through_any_in_reached_std_code_adds_the_member_slots() {
     assert!(p.expect("checks").dyn_members.is_none());
 }
 
+/// [`ok_src`] of a build that links the prebuilt object of std's float printing
+/// (`number_shortest`, velt_common `std_hooks/prebuilt.rs`), as a build with a warm cache does: a
+/// float printed calls it and checks none of that printing.
+fn ok_src_prebuilt(src: &str) -> Program {
+    use velt_common::std_hooks::HOOKS;
+    let mut l = common::programs::load_src(src);
+    // Its module is not loaded: the build links the object instead.
+    l.modules
+        .retain(|m| m.path != "std/lang/hooks/number_shortest");
+    let none = |_: &[String]| None;
+    let kept = velt_sema::StdLoads::default();
+    let linked = |i: usize| HOOKS[i].name == "number_shortest";
+    let loads = velt_sema::Loads {
+        run: &none,
+        kept: &kept,
+        prebuilt: Some(&linked),
+    };
+    let opts = velt_sema::CheckOptions::default();
+    let gen = Default::default();
+    let (p, d) =
+        velt_sema::check_generating(&l.modules, l.root, opts, &gen, &[], None, Some(loads));
+    assert!(!d.iter().any(|d| d.is_error()), "{}", l.render(&d));
+    match p {
+        Some(velt_sema::Checked::Program(p)) => *p,
+        _ => panic!("no program: {src}"),
+    }
+}
+
 #[test]
 fn printing_shapes_are_checked_once_live_code_may_print_an_object() {
     // What `console.log` writes the same way for every type (std/lang/hooks/inspect.velt): checked
@@ -657,10 +685,13 @@ fn printing_shapes_are_checked_once_live_code_may_print_an_object() {
         "std/lang/hooks/inspect_cycles::inspectSave",
     ];
     let checked = |p: &Program, f: &str| !unchecked(p).contains(&f.to_string());
-    // (Not a printed float: it checks std's float printing, whose table lookups demand these,
-    // where the build cache holds no prebuilt object of it, as here.)
-    for src in ["function main() {\n  console.log(\"hi\");\n}\n"] {
-        let p = ok_src(src);
+    // Checked as a build that links std's float printing prebuilt ([`ok_src_prebuilt`]); for a
+    // build that doesn't, see `a_printed_float_without_the_prebuilt_printer_checks_it`.
+    for src in [
+        "function main() {\n  console.log(\"hi\");\n}\n",
+        "function main() {\n  const n: number = 1.5;\n  console.log(n);\n}\n",
+    ] {
+        let p = ok_src_prebuilt(src);
         for f in [plain, array].iter().chain(&tracked) {
             assert!(!checked(&p, f), "{f} is checked: {src}");
         }
@@ -738,7 +769,7 @@ class S<T> extends B {
         (gmade, Some(false), true),
         (gnum, Some(false), false),
     ] {
-        let p = ok_src(src);
+        let p = ok_src_prebuilt(src);
         assert!(checked(&p, plain), "{plain} is unchecked: {src}");
         if let Some(arrays) = arrays {
             assert_eq!(checked(&p, array), arrays, "{array}: {src}");
@@ -747,4 +778,22 @@ class S<T> extends B {
             assert_eq!(checked(&p, f), cycles, "{f}: {src}");
         }
     }
+}
+
+#[test]
+fn a_printed_float_without_the_prebuilt_printer_checks_it() {
+    // A build with no prebuilt object of std's float printing (no clang, or a cold cache; as
+    // `ok_src` checks) checks that printing where live code may print a float. Its table of
+    // powers of ten is a `u64[]`, so an array type is live and the array's printing shape is
+    // checked too. With the object linked, neither is.
+    let shortest = "std/lang/hooks/number_shortest::shortestText".to_string();
+    let array = "std/lang/hooks/inspect::inspectArray".to_string();
+    let src = "function main() {\n  console.log({ a: 1 });\n}\n";
+    let cold = unchecked(&ok_src(src));
+    assert!(
+        !cold.contains(&shortest) && !cold.contains(&array),
+        "{cold:?}"
+    );
+    let warm = unchecked(&ok_src_prebuilt(src));
+    assert!(warm.contains(&array), "{array} is checked");
 }
