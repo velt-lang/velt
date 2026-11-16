@@ -1,0 +1,15 @@
+b got ping
+a got pong
+peers "" ""
+b reads ""
+a reads "after the half-close"
+received 4194304 105628
+a write to a closed peer fails: true
+on a closed handle: EBADF handle is closed
+h reads "hello from g"
+h's write after g's close: EPIPE
+a write to a closed peer: EPIPE
+a write to a closed peer: EPIPE
+after the abort, k1 reads ""
+a write to an aborted peer: EPIPE
+the waiting read ends with ""

@@ -1,0 +1,10 @@
+// velt/net (internal): `streamPair`'s two ends (std/net/pair.velt) where the executor in Velt
+// doesn't run (the default variant of `#net-pair-ends`, std/imports.velt: WebAssembly). No
+// runtime has sockets there, so there is no pair to make.
+
+import { TcpStream } from "velt/net/tcp_stream";
+
+/** Panics: this platform has no sockets for a pair. */
+export function connectedEnds(): [TcpStream, TcpStream] {
+  panic("streamPair: this platform has no reactor for sockets");
+}

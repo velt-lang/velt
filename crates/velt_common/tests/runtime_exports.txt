@@ -398,7 +398,6 @@ velt_rt velt_rt_tcp_listen
 velt_rt velt_rt_tcp_listen_tls
 velt_rt velt_rt_tcp_listener_close
 velt_rt velt_rt_tcp_listener_port
-velt_rt velt_rt_tcp_pair
 velt_rt velt_rt_tcp_park
 velt_rt velt_rt_tcp_peer_addr
 velt_rt velt_rt_tcp_read

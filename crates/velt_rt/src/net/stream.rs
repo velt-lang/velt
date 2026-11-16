@@ -48,12 +48,7 @@ pub(crate) struct Ready {
 }
 
 impl Ready {
-    pub(crate) fn other(io: Box<dyn Transport>, peer: Option<SocketAddr>) -> Ready {
-        Ready::other_alpn(io, peer, Vec::new())
-    }
-
-    /// [`other`](Self::other) for a TLS stream whose handshake chose protocol `alpn` (empty:
-    /// none).
+    /// A TLS stream whose handshake chose protocol `alpn` (empty: none).
     pub(crate) fn other_alpn(
         io: Box<dyn Transport>,
         peer: Option<SocketAddr>,

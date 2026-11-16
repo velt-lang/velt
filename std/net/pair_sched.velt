@@ -1,0 +1,34 @@
+// velt/net (internal): `streamPair`'s two ends (std/net/pair.velt) where the executor in Velt
+// runs: two connected sockets (`#net-pair`: a `socketpair`, or on Windows a loopback
+// connection) adopted into its reactor's table as `F_PAIR` sources, each knowing the other
+// (std/net/fd_pair.velt).
+
+import { TcpStream } from "velt/net/tcp_stream";
+import * as io from "velt/lang/hooks/sched_io";
+import * as fs from "velt/net/fd_socket";
+import { pairUp } from "velt/net/fd_pair";
+import { connectedPair } from "#net-pair";
+
+/** Two connected streams on the reactor; panics when the OS refuses the sockets. */
+export function connectedEnds(): [TcpStream, TcpStream] {
+  if (!io.supported()) {
+    panic("streamPair: this platform has no reactor for sockets");
+  }
+  const fds = connectedPair();
+  if (fds.code !== 0) {
+    panic(`streamPair: ${fds.message}`);
+  }
+  const a = fs.adopt(fds.value[0], io.F_PAIR, io.READ | io.WRITE);
+  if (a.code !== 0) {
+    fs.closeFd(fds.value[1]);
+    panic(`streamPair: ${a.message}`);
+  }
+  const b = fs.adopt(fds.value[1], io.F_PAIR, io.READ | io.WRITE);
+  if (b.code !== 0) {
+    const first = TcpStream.ofHandle(a.value);
+    first.close();
+    panic(`streamPair: ${b.message}`);
+  }
+  pairUp(a.value, b.value);
+  return [TcpStream.ofHandle(a.value), TcpStream.ofHandle(b.value)];
+}

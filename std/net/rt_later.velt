@@ -1,5 +1,5 @@
 // velt/net (internal): deferred writes (`writeLater`, `drained`) on a stream the runtime owns
-// (`streamPair`, `connectTls`, a runtime TLS listener's streams) in a build with the executor in
+// (`connectTls`, a runtime TLS listener's streams) in a build with the executor in
 // Velt (`VELT_SCHEDULER=std`, std/net/tcp_sched.velt), #2817.
 //
 // The runtime collects such bytes on its thread's list and sends them after each poll of one of

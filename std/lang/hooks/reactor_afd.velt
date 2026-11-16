@@ -38,6 +38,11 @@ export const EAGAIN: i32 = 10035;
 export const EINPROGRESS: i32 = 10035;
 /** `WSAEINTR`. */
 export const EINTR: i32 = 10004;
+/**
+ * A send on a stream whose peer is gone (std/net/pair.velt): `WSAESHUTDOWN`, Winsock's nearest,
+ * which the runtime's codes call `EPIPE` too.
+ */
+export const EPIPE: i32 = 10058;
 /** `WSAEMFILE`: no more sockets (an accepted handle too large for a descriptor). */
 const WSAEMFILE: i32 = 10024;
 /** `WSAENOTSOCK`: a socket whose poll can't be submitted (`rearm`). */

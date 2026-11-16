@@ -32,6 +32,7 @@ describe("velt/net rt_later shadows", () => {
       io.F_FLUSHING,
       io.F_POLLED,
       io.F_NEXT_DONE,
+      io.F_PAIR,
     ];
     let seen: u32 = 0;
     for (const f of flags) {
