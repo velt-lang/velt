@@ -103,7 +103,13 @@ impl FnCx<'_, '_> {
             return Err(h);
         };
         let a = self.compared_operand(h, any);
-        Ok(self.intrinsic(hir::Intrinsic::AnyTo, vec![a], target, span))
+        // A checked assertion's failure, as the others say it (`downcast.rs`); a lib.dom value
+        // never reaches the check on a server.
+        let mut ops = vec![a];
+        if !dom {
+            ops.push(self.str_lit("type assertion failed", span));
+        }
+        Ok(self.intrinsic(hir::Intrinsic::AnyTo, ops, target, span))
     }
 
     /// The first member of `target` when `target` is a union of std `lib.dom` interfaces each

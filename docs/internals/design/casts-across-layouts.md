@@ -34,8 +34,12 @@ value as an `any`, converted to `J` (identity_eq.rs `related_iface_cast`, the ro
 already took):
 
 - the object implements `J`: the value is `(data, its J vtable)`, the same object, as in Node;
-- it doesn't: the program panics with `TypeError: the value is not a J (it is an object)`, the
-  message of any failed conversion of an `any` to `J`.
+- it doesn't: the program panics with `TypeError: type assertion failed: the value is not a J
+  (it is an object)`, as the other checked assertions do.
+
+What implements `J` is what a plain conversion to `J` takes: a class that declares
+`implements J` (itself or through a base class), since Velt's classes are nominal, or an object
+literal with `J`'s members. A class only shaped like `J` fails the check, where Node goes on.
 
 There is no new runtime Rust, no change to the vtable layout, and no cost in programs without
 such a cast. Where Node goes on and the check would stop the program:

@@ -1,1 +1,1 @@
-panic: TypeError: the value is not a Named (it is an object)
+panic: TypeError: type assertion failed: the value is not a Named (it is an object)
