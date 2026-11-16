@@ -91,7 +91,7 @@ export function pending(): usize {
 
 /** Whether the executor started (on the program's thread). */
 export function isStarted(): bool {
-  return t.exec() !== 0;
+  return t.startedOrdered();
 }
 
 /** A worker 0 block with what any thread may set: its waker tables and itself as `E_MAIN`. */

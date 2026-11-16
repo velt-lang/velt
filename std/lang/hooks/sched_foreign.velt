@@ -3,8 +3,8 @@
 // never starts the executor or becomes a worker (program_thread.velt): it makes the task for worker
 // 0's block (the one the program's thread starts, sched_workers.velt `pending`) and hands it over
 // through worker 0's inbox, which other threads push on atomically.
-// - The task counts in `E_LIVE_F`, atomically, before it is pushed; worker 0 takes that count as its
-//   own when it takes its inbox (sched_queue.velt `takeInbox`), and the program's end waits for it.
+// - The task counts in worker 0's `E_LIVE_F`, atomically, before it is pushed, and until it ends,
+//   wherever it runs (`ended`); the program's end waits for it.
 // - Its join handle's table always locks (sched_join.velt `joinPollForeign`), and so does the end
 //   of its slot on the worker (`J_FOREIGN`: sched_join.velt `kindFor`, sched_run.velt `rootDone`):
 //   the handle may be dropped on this thread while the task ends on a worker, in any lock mode.

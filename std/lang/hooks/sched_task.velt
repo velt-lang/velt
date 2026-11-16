@@ -440,7 +440,15 @@ export function main(): usize {
 /** Makes `e` worker 0's block, with this thread worker 0. */
 export function install(e: usize): void {
   WORKER.set(e as u64);
-  EXEC.store(e as u64, "release");
+  // Sequentially consistent, against a C library's thread's inbox push and then its load of
+  // `EXEC` (sched_workers.velt `isStarted`, #3085): either it sees the start and wakes worker 0, or
+  // worker 0, whose park word store and inbox load are sequentially consistent, sees the task.
+  EXEC.store(e as u64, "seqcst");
+}
+
+/** Whether the executor started: `EXEC`, sequentially consistent (`install`). */
+export function startedOrdered(): bool {
+  return EXEC.load("seqcst") !== 0;
 }
 
 /** Makes `w` this thread's worker block (a worker thread's start). */
