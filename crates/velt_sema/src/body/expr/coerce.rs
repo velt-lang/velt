@@ -44,6 +44,10 @@ impl FnCx<'_, '_> {
             h.ty = exp;
             return Ok(h);
         }
+        let h = match self.record_to_view(h, exp) {
+            Ok(r) => return Ok(r),
+            Err(h) => h,
+        };
         // An instance of a class to a brand of it whose object part every instance has.
         let h = match self.instance_brand_target(exp) {
             Some(base) => match self.try_coerce(h, base) {
