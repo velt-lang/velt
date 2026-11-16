@@ -96,6 +96,7 @@ const CHECKED: &[&str] = &[
     "net/udp/udp_sched.velt",
     "process/child/child_win32.velt",
     "process/child/command_line_win32.velt",
+    "process/child/exit_win32.velt",
     "process/child/handle_list_win32.velt",
     "process/child/pipes_win32.velt",
     "process/child/spawn_win32.velt",

@@ -120,4 +120,49 @@ async function main(): Promise<i32> {
     );
 }
 
+#[test]
+fn running_children_leave_the_blocking_pool_free() {
+    // 600 children wait on their stdin while a file is read on the blocking pool (512 threads at
+    // most). A wait on the pool per child would leave the read queued behind them until they
+    // end; it must finish while they run.
+    let dir = test_dir::TestDir::new();
+    let (code, out) = build_and_run(
+        dir.path(),
+        "starve",
+        r#"import { spawn, ChildProcess } from "velt/process/child";
+import { readFile, writeFileSync } from "velt/fs";
 
+async function main(): Promise<i32> {
+  writeFileSync("data.txt", "contents");
+  const kids: ChildProcess[] = [];
+  for (let i = 0; i < 600; i++) {
+    kids.push(spawn("sort", [], { stdin: "pipe", stdout: "ignore" }));
+  }
+  // The read is either done well before the children end, or stuck until they do: the timer
+  // only bounds the wait for the broken case. timing: a 20 s bound on a read of a few bytes.
+  const timer = new Promise<string>((resolve) => {
+    setTimeout(() => resolve("stuck"), 20000);
+  });
+  const read = readFile("data.txt").then((s: string): string => `read ${s}`);
+  console.log(await Promise.race<string>([read, timer]));
+  for (const k of kids) {
+    await k.closeStdin();
+  }
+  let ended = 0;
+  for (const k of kids) {
+    if ((await k.wait()) == 0) {
+      ended++;
+    }
+    k.close();
+  }
+  console.log(`${ended} ended`);
+  return 0;
+}
+"#,
+        &[],
+    );
+    assert_eq!(
+        (code, out.as_str()),
+        (Some(0), "read contents\n600 ended\n")
+    );
+}

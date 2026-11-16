@@ -29,6 +29,7 @@ import * as io from "velt/lang/hooks/sched_io";
 import * as m from "velt/lang/hooks/sched_mem";
 import * as tb from "velt/lang/hooks/sched_io_table";
 import * as fs from "velt/net/fd_socket";
+import * as ex from "velt/process/child/exit_win32";
 import * as pw from "velt/process/child/pipes_win32";
 import * as sw from "velt/process/child/spawn_win32";
 import { CommandSpec } from "velt/process/child/spec";
@@ -161,8 +162,14 @@ function endedNow(rec: usize): bool {
 async function untilEnded(rec: usize): Promise<void> {
   if (!endedNow(rec)) {
     const h = m.ld(rec + C_PROCESS);
-    const code = await bl.run<usize>(() => waitExit(h));
-    settle(rec, code);
+    // On the system's wait threads, not one of the blocking pool's per child; the pool only
+    // when no wait could be registered.
+    if (await ex.signaled(h)) {
+      settle(rec, waitExit(h));
+    } else {
+      const code = await bl.run<usize>(() => waitExit(h));
+      settle(rec, code);
+    }
   }
 }
 
