@@ -34,6 +34,15 @@ pub(crate) enum Stage {
 /// them is this program's (as lazy std checks them with the program's classes). Their bodies
 /// are kept with the unit (`codec::ast_refs`).
 fn check_dispatch_again(cx: &mut Ctx) {
+    // Only what is lowered needs it (not `velt check`), and only with classes of this unit's:
+    // without, the finished unit's dispatch already covers every class.
+    let base = cx.unit_base as usize;
+    let new_class = (base..cx.info.len()).any(|i| {
+        matches!(&cx.info[i], crate::defs::DefInfo::Adt(a) if a.kind == crate::hir::AdtKind::Class)
+    });
+    if cx.check_only || !new_class {
+        return;
+    }
     for d in cx.unit_sums.dispatch_fns.clone() {
         let Some(info) = cx.try_fn(d) else { continue };
         if info.source.is_none() {
