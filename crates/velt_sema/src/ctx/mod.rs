@@ -123,6 +123,9 @@ pub(crate) struct Ctx<'m> {
     /// EXPERIMENT (#2943 M3): with std's unit from disk in a build, the definitions the program
     /// is built from (`units::reach`); `None`: all ([`Ctx::in_program`]).
     pub program_set: Option<std::rc::Rc<FxHashSet<DefId>>>,
+    /// With [`Ctx::program_set`]: how many definitions there were when it was made. Those made
+    /// later (the program's build synthesizes some) are the program's too.
+    pub program_new_from: usize,
     /// The functions whose bodies hold a dispatch over the program's classes (`body::expr::
     /// object_own`): a finished unit keeps them (`units::Summaries::dispatch_fns`).
     pub program_dispatch: FxHashSet<DefId>,
@@ -593,16 +596,20 @@ impl<'m> Ctx<'m> {
     /// [`Ctx::program_from`] on)? Asked before the definition is read.
     pub(crate) fn in_program(&self, i: usize) -> bool {
         match &self.program_set {
-            Some(set) => set.contains(&DefId(i as u32)),
+            Some(set) => i >= self.program_new_from || set.contains(&DefId(i as u32)),
             None => i >= self.program_from(),
         }
     }
 
     /// [`Ctx::in_program`] as a closure that holds no borrow of the context.
     pub(crate) fn program_filter(&self) -> impl Fn(usize) -> bool {
-        let (set, from) = (self.program_set.clone(), self.program_from());
+        let (set, from, new) = (
+            self.program_set.clone(),
+            self.program_from(),
+            self.program_new_from,
+        );
         move |i| match &set {
-            Some(set) => set.contains(&DefId(i as u32)),
+            Some(set) => i >= new || set.contains(&DefId(i as u32)),
             None => i >= from,
         }
     }
@@ -654,6 +661,7 @@ impl<'m> Ctx<'m> {
             std_from_disk: false,
             check_only: false,
             program_set: None,
+            program_new_from: 0,
             program_dispatch: FxHashSet::default(),
             unit_sums: Default::default(),
             units_stage: crate::units::Stage::Both,

@@ -189,6 +189,7 @@ fn build(
             crate::units::reach::program_set(&mut cx, entry)
         });
         cx.program_set = Some(std::rc::Rc::new(set));
+        cx.program_new_from = cx.info.len().max(cx.defs.len());
     }
     let unchecked = crate::timings::pass("program: build_defs", || finalize::build_defs(&mut cx));
     let hooks_demanded = body::lazy_std::hooks_demanded(&cx);
@@ -212,6 +213,7 @@ fn build(
     finalize::build_named_types(&mut cx);
     let from_disk = cx.std_from_disk.then(|| cx.program_filter());
     let reached = cx.program_set.clone();
+    let (new_from, defs_len) = (cx.program_new_from, cx.defs.len());
     // With std's unit from disk (`velt check`), the process ends after the check: the context's
     // tables the program doesn't take are left to its end, not freed one by one.
     if from_disk.is_some() {
@@ -297,7 +299,11 @@ fn build(
         unchecked: unchecked.into_iter().collect(),
         hooks_demanded,
         live: match reached {
-            Some(set) => Some(set.iter().copied().collect()),
+            Some(set) => Some(
+                (set.iter().copied())
+                    .chain((new_from..defs_len).map(|i| hir::DefId(i as u32)))
+                    .collect(),
+            ),
             None => live.map(|l| l.into_iter().collect()),
         },
         any_fn_views,
