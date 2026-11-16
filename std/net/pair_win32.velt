@@ -38,12 +38,16 @@ export function connectedPair(): IoResult<i32[]> {
     return fail(sa, r.errno(), -1, -1, -1);
   }
   m.st32(len, SIN_SIZE as u32);
-  // SAFETY: a `sockaddr_in` (127.0.0.1, port 0) and its length; then its room and length word.
-  if (
-    unsafe { bind(l, m.ptr(mine), SIN_SIZE as u32) } !== 0 ||
-    unsafe { listen(l, 1) } !== 0 ||
-    unsafe { getsockname(l, m.ptr(mine), m.ptr(len)) } !== 0
-  ) {
+  // SAFETY: a `sockaddr_in` (127.0.0.1, port 0) and its length.
+  if (unsafe { bind(l, m.ptr(mine), SIN_SIZE as u32) } !== 0) {
+    return fail(sa, r.errno(), l, -1, -1);
+  }
+  // SAFETY: no precondition.
+  if (unsafe { listen(l, 1) } !== 0) {
+    return fail(sa, r.errno(), l, -1, -1);
+  }
+  // SAFETY: room for a `sockaddr_in` and its length word.
+  if (unsafe { getsockname(l, m.ptr(mine), m.ptr(len)) } !== 0) {
     return fail(sa, r.errno(), l, -1, -1);
   }
   // SAFETY: no precondition.

@@ -109,6 +109,9 @@ export const imports: Imports = {
   // `streamPair`'s two connected sockets (std/net/pair.velt): a `socketpair`, or on Windows,
   // which has none, a loopback connection.
   "#net-pair": { win32: "./net/pair_win32.velt", default: "./net/pair_posix.velt" },
+  // `streamPair`'s ends (std/net/pair.velt): with the executor in Velt (every native build) those
+  // sockets on its reactor; elsewhere (WebAssembly) none, a panic.
+  "#net-pair-ends": { "std-scheduler": "./net/pair_sched.velt", default: "./net/pair_none.velt" },
   // velt/net's UDP sockets and name lookups: with the executor in Velt (every native build),
   // non-blocking UDP sockets on its reactor and `getaddrinfo` on its blocking pool; elsewhere
   // (WebAssembly) none, `ENOTSUP`.

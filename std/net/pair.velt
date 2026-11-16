@@ -1,13 +1,12 @@
 // velt/net (internal): `streamPair`, two connected streams on the reactor of the executor in Velt
 // (std/lang/hooks/sched_io.velt): a `socketpair` on macOS and Linux, a loopback connection on
-// Windows (`#net-pair`). Both ends are the reactor's sockets, so every `TcpStream` operation on
-// them runs in Velt on the worker, as on a connected socket.
+// Windows. Both ends are the reactor's sockets, so every `TcpStream` operation on them runs in
+// Velt on the worker, as on a connected socket. The ends are made by `#net-pair-ends`:
+// std/net/pair_sched.velt where the executor in Velt runs (every native build), and
+// std/net/pair_none.velt elsewhere (WebAssembly), which has no sockets for them.
 
 import { TcpStream } from "velt/net/tcp_stream";
-import * as io from "velt/lang/hooks/sched_io";
-import * as fs from "velt/net/fd_socket";
-import { pairUp } from "velt/net/fd_pair";
-import { connectedPair } from "#net-pair";
+import { connectedEnds } from "#net-pair-ends";
 
 /**
  * Two connected streams, as Node's `duplexPair()`: what one writes, the other reads, and one's
@@ -20,24 +19,5 @@ import { connectedPair } from "#net-pair";
  * descriptors).
  */
 export function streamPair(): [TcpStream, TcpStream] {
-  if (!io.supported()) {
-    panic("streamPair: this platform has no reactor for sockets");
-  }
-  const fds = connectedPair();
-  if (fds.code !== 0) {
-    panic(`streamPair: ${fds.message}`);
-  }
-  const a = fs.adopt(fds.value[0], io.F_PAIR, io.READ | io.WRITE);
-  if (a.code !== 0) {
-    fs.closeFd(fds.value[1]);
-    panic(`streamPair: ${a.message}`);
-  }
-  const b = fs.adopt(fds.value[1], io.F_PAIR, io.READ | io.WRITE);
-  if (b.code !== 0) {
-    const first = TcpStream.ofHandle(a.value);
-    first.close();
-    panic(`streamPair: ${b.message}`);
-  }
-  pairUp(a.value, b.value);
-  return [TcpStream.ofHandle(a.value), TcpStream.ofHandle(b.value)];
+  return connectedEnds();
 }
