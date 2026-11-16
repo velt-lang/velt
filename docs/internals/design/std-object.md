@@ -288,9 +288,15 @@ with everything it reaches, into one object (`std_cache/prebuilt.rs`, `prebuilt_
   go into the program's build stamp. Refused: an entry not lowered as the convention says, and code
   sharing state with the program (module state, thread-local values, static atomics such as the
   process statics, named statics).
-- **Filled** by `velt cache warm` (`VELT_STD_OBJECT_FILL`) or `VELT_PREBUILT_HOOKS=fill` after a
-  build that missed; `VELT_PREBUILT_HOOKS=0` turns it off. WebAssembly links no objects and loads
-  the module. `velt check` looks the object up as a debug build would.
+- **Pinned.** Once sema has called the entry points the build must link the object, so a build
+  that links hard-links (or copies) the object it finds into a temporary directory it holds until
+  it is done: another build's garbage collection or `velt clean --cache` before the link can't fail
+  it. An object it can't pin is a miss.
+- **Filled** by `velt cache warm`, which compiles every prebuilt module's object directly (for the
+  default CPU and for `--cpu native`), whether a warm-up program calls its hooks or not; by a
+  warm-up build (`VELT_STD_OBJECT_FILL`) or `VELT_PREBUILT_HOOKS=fill` after a build that missed.
+  `VELT_PREBUILT_HOOKS=0` turns it off. WebAssembly links no objects and loads the module. `velt
+  check` looks the object up as a debug build would.
 
 ## What stays in the program, and what goes to the object
 

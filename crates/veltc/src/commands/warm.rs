@@ -9,6 +9,8 @@
 //! objects optimized by LLVM (`VELT_STD_OBJECT_FILL`, `std_cache::serve`), so its debug builds
 //! run them too; and then each again in release, for the same two CPUs, which stores the objects
 //! of the std functions marked `@noInline` that release builds link (`std_cache::no_inline`).
+//! With clang it then compiles the object of every prebuilt hook module (`std_cache::prebuilt`)
+//! the cache lacks, whether a warm-up program calls its hooks or not.
 //! A marker per
 //! toolchain (`<cache>/warm/<key>`) makes later runs return at once, also after a run where some
 //! programs failed but not all (the marker names them: they would only fail again); the toolchain installers
@@ -72,6 +74,8 @@ pub fn warm_command(background: bool) -> Result<(), String> {
         }
     }
     let _ = std::fs::remove_dir_all(&out);
+    // Every prebuilt hook module, whether a warm-up program calls one of its hooks or not.
+    let hooks_failed = if clang { prebuilt_hooks() } else { vec![] };
     eprintln!(
         "velt: warmed the build cache with {} programs in {:.1}s",
         programs.len(),
@@ -91,7 +95,41 @@ pub fn warm_command(background: bool) -> Result<(), String> {
             failed.join(", ")
         ));
     }
+    if !hooks_failed.is_empty() {
+        return Err(format!(
+            "some prebuilt hook modules did not compile: {}",
+            hooks_failed.join("; ")
+        ));
+    }
     Ok(())
+}
+
+/// The CPUs (and modes) whose prebuilt hook module objects `velt cache warm` stores: what a
+/// release build with `--cpu native` links, and what every other build links (a debug build's
+/// object is the default CPU's, which a release build without `--cpu` links too).
+const HOOK_BUILDS: [(bool, Option<&str>); 2] = [(true, Some("native")), (false, None)];
+
+/// Compile and store the object of every prebuilt hook module the cache lacks
+/// (`std_cache::prebuilt`), for each of [`HOOK_BUILDS`]: a warm-up program reaches only some of
+/// them. The modules that failed, with why.
+fn prebuilt_hooks() -> Vec<String> {
+    let mut failed = vec![];
+    for (release, cpu) in HOOK_BUILDS {
+        let opts = crate::driver::BuildOptions {
+            release,
+            cpu: cpu.map(str::to_string),
+            ..crate::driver::BuildOptions::default()
+        };
+        for (module, stored) in crate::driver::prebuilt_warm(&opts) {
+            if let Err(why) = stored {
+                failed.push(format!(
+                    "{module} ({}): {why}",
+                    cpu.unwrap_or("default CPU")
+                ));
+            }
+        }
+    }
+    failed
 }
 
 /// What the marker holds: this velt's version line, then the warm-up programs that failed.
