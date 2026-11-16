@@ -148,3 +148,122 @@ fn new_local(func: &mut Function, ty: Ty) -> velt_vir::vir::Local {
     func.locals.push(LocalDecl::new(ty, None));
     velt_vir::vir::Local(func.locals.len() as u32 - 1)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testkit::builder::*;
+    use crate::testkit::validate::assert_valid;
+
+    fn hook(name: &str, params: &[Ty], ret: Ty) -> Function {
+        let mut fb = FuncBuilder::internal(&velt_vir::mangle::mangle(name), params, ret);
+        let b = fb.block();
+        let out = match ret {
+            Ty::Unit => Operand::Const(velt_vir::vir::Const::Unit, Ty::Unit),
+            _ => copy_local(fb.param(0)),
+        };
+        fb.ret(b, out);
+        fb.finish()
+    }
+
+    /// `main` allocates, grows and frees through the runtime's externs; with `hooks` the program
+    /// has std's hooks too.
+    fn program(hooks: bool) -> Program {
+        let mut pb = ProgramBuilder::new();
+        let alloc = pb.ext("velt_rt_alloc", &[Ty::U64, Ty::U64], Ty::Ptr, false);
+        let realloc = pb.ext(
+            "velt_rt_realloc",
+            &[Ty::Ptr, Ty::U64, Ty::U64, Ty::U64],
+            Ty::Ptr,
+            false,
+        );
+        let free = pb.ext(
+            "velt_rt_free",
+            &[Ty::Ptr, Ty::U64, Ty::U64],
+            Ty::Unit,
+            false,
+        );
+        if hooks {
+            let u = Ty::U64;
+            pb.add(hook(velt_common::std_hook!(heap_alloc), &[u, u], u));
+            pb.add(hook(velt_common::std_hook!(heap_realloc), &[u, u, u, u], u));
+            pb.add(hook(
+                velt_common::std_hook!(heap_free),
+                &[u, u, u],
+                Ty::Unit,
+            ));
+        }
+        let mut fb = FuncBuilder::export("main", &[], Ty::Unit);
+        let p = fb.local(Ty::Ptr);
+        let b = fb.block();
+        let args = vec![int(16, Ty::U64), int(8, Ty::U64)];
+        let b = fb.call(b, Callee::Extern(alloc), args, Some(p));
+        let args = vec![
+            copy_local(p),
+            int(16, Ty::U64),
+            int(8, Ty::U64),
+            int(64, Ty::U64),
+        ];
+        let b = fb.call(b, Callee::Extern(realloc), args, Some(p));
+        let args = vec![copy_local(p), int(64, Ty::U64), int(8, Ty::U64)];
+        let b = fb.call(b, Callee::Extern(free), args, None);
+        fb.ret(b, Operand::Const(velt_vir::vir::Const::Unit, Ty::Unit));
+        pb.add(fb.finish());
+        pb.finish()
+    }
+
+    fn callees(f: &Function) -> Vec<Callee> {
+        f.blocks
+            .iter()
+            .filter_map(|b| match &b.term {
+                Terminator::Call { callee, .. } => Some(callee.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn each_allocator_call_becomes_its_hooks() {
+        let mut p = program(true);
+        assert!(run(&mut p));
+        assert_valid(&p);
+        let main = p.funcs.iter().find(|f| f.symbol == "main").unwrap();
+        assert_eq!(
+            callees(main),
+            [
+                Callee::Func(FuncId(0)),
+                Callee::Func(FuncId(1)),
+                Callee::Func(FuncId(2))
+            ]
+        );
+        // The pointer argument of the realloc and the free, and the two results, cast.
+        let casts = main.blocks.iter().flat_map(|b| &b.stmts);
+        assert_eq!(
+            casts
+                .filter(|s| matches!(s, Stmt::Assign(_, Rvalue::Cast(..))))
+                .count(),
+            4
+        );
+        // Nothing left to do.
+        assert!(!run(&mut p));
+    }
+
+    #[test]
+    fn without_the_hooks_nothing_changes() {
+        let mut p = program(false);
+        assert!(!run(&mut p));
+        let main = p.funcs.iter().find(|f| f.symbol == "main").unwrap();
+        assert!(callees(main).iter().all(|c| matches!(c, Callee::Extern(_))));
+    }
+
+    #[test]
+    fn unused_functions_keep_a_hook_while_its_extern_is_called() {
+        let mut p = program(true);
+        crate::dead_funcs::run(&mut p);
+        assert_eq!(p.funcs.len(), 4, "the hooks stay for heap_calls");
+        run(&mut p);
+        crate::dead_funcs::run(&mut p);
+        assert_eq!(p.funcs.len(), 4, "the hooks are called");
+        assert_valid(&p);
+    }
+}
