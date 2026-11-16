@@ -569,8 +569,23 @@ pub(crate) struct Ctx<'m> {
 impl<'m> Ctx<'m> {
     /// The first definition the program is built from: 0, or with std's unit from disk (`velt
     /// check`), the app's first ([`Ctx::std_from_disk`], `finalize::program_defs`).
+    /// The first definition whose body the async closures' analysis walks
+    /// (`ownership::local_async`): the unit's, or with the dependencies in std's unit
+    /// (`units::libraries`), theirs too (frozen, only read); std's come with its summaries.
+    pub(crate) fn walked_from(&self) -> u32 {
+        let lib = self.unit_sums.lib_base as u32;
+        let libs = crate::units::libraries() && lib > 0 && lib < self.unit_base;
+        match (libs, self.units_stage) {
+            (true, crate::units::Stage::App) => lib,
+            _ => self.unit_base,
+        }
+    }
+
     pub(crate) fn program_from(&self) -> usize {
         match self.std_from_disk {
+            // The dependencies in the unit are the program's (`units::libraries`): their
+            // declarations are checked against their libraries, their code lowered.
+            true if crate::units::libraries() => self.unit_sums.lib_base,
             true => self.unit_base as usize,
             false => 0,
         }

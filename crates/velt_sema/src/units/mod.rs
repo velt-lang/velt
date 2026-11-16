@@ -47,6 +47,9 @@ pub(crate) fn check_definitions(cx: &mut Ctx) {
             crate::body::expr::virtual_defaults::build_fill_bodies(cx, 0);
             crate::body::check_bodies(cx);
         });
+        // Where the dependencies' definitions start: the program of a check from disk is built
+        // from them on (`Ctx::program_from`).
+        cx.unit_sums.lib_base = cx.defs.len();
         if !libs.is_empty() {
             crate::timings::pass("units: libraries", || {
                 let from = crate::collect::collect_app(cx, &libs);
@@ -107,6 +110,19 @@ pub(crate) fn check_definitions(cx: &mut Ctx) {
 pub(crate) fn libraries() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("VELT_UNITS_LIB").is_some())
+        && !LIBS_OFF.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Set when the dependencies' stage reported an error: the check is done again with them in
+/// the app's unit, so that the app's errors are reported with theirs (as a check without
+/// [`libraries`] does). For the rest of the process.
+static LIBS_OFF: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// [`LIBS_OFF`]; whether the dependencies were in std's unit until now.
+pub(crate) fn libraries_off(modules: &[crate::SourceModule]) -> bool {
+    let had = libraries() && modules.iter().any(|m| m.is_dependency);
+    LIBS_OFF.store(true, std::sync::atomic::Ordering::Relaxed);
+    had
 }
 
 /// Whether module `m` is in the first unit (std's, with the dependencies under [`libraries`]).
@@ -176,6 +192,8 @@ pub(crate) struct Summaries {
     pub(crate) lets: Option<Vec<(usize, u32, crate::hir::DefId)>>,
     /// How many types there were when the unit was finished.
     pub(crate) types: usize,
+    /// Where a finished unit's dependencies' definitions start (its std's end, [`libraries`]).
+    pub(crate) lib_base: usize,
     /// A finished unit's scan for the value params (`ownership::exclusive`).
     pub(crate) value_scan: Option<crate::value_params::Scanned>,
     /// A finished unit's classes' slots (`locked_props::Dispatch`).
@@ -371,7 +389,7 @@ crate::units::codec::structs! {
         key_needs, async_summaries, json_needs, tuple_summaries, weak_scans, state_facts,
         weak_made, undefined_facts, lock_summaries, module_edges, groups, dispatch, generated_fns,
         literals, fed, modules, subclasses, calls, inst_sites, outside_named,
-        outside_tys, lets, types, value_scan,
+        outside_tys, lets, types, lib_base, value_scan,
         virtuals, implicit, host_fns,
     }
 }
@@ -403,6 +421,7 @@ fn summary_sizes(s: &Summaries) {
         outside_tys,
         lets,
         types,
+        lib_base,
         value_scan,
         virtuals,
         implicit,
@@ -438,6 +457,7 @@ fn summary_sizes(s: &Summaries) {
         outside_tys,
         lets,
         types,
+        lib_base,
         value_scan,
         virtuals,
         implicit,

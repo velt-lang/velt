@@ -139,10 +139,9 @@ pub(super) fn save_modules(
     };
     let path = modules_path(&dir, key);
     let mut out = format!("{MODULES_FORMAT}\n");
-    for m in loaded
-        .iter()
-        .filter(|m| m.is_std || (m.is_dependency && libraries()))
-    {
+    // std's alone: the dependencies' modules are loaded from their sources (the driver's checks
+    // of native code and trust read their bodies, which stubs leave out).
+    for m in loaded.iter().filter(|m| m.is_std) {
         let file = vpm::relpath::absolute(&sm.get(m.file).path);
         let jsx = m.jsx_runtime.as_deref().unwrap_or("");
         if m.is_dependency {

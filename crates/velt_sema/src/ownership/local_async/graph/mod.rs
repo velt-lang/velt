@@ -179,7 +179,7 @@ const STORE: To = To::Flag(STORED, None);
 pub(super) fn build(cx: &Ctx) -> Graph {
     let mut g = Graph::default();
     // The unit's bodies (`crate::units`): a finished unit's functions come with its summaries.
-    for i in cx.unit_base as usize..cx.defs.len() {
+    for i in cx.walked_from() as usize..cx.defs.len() {
         let d = DefId(i as u32);
         let Some(Def::Fn(f)) = &cx.defs[i] else {
             continue;

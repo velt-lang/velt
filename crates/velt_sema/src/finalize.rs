@@ -35,7 +35,9 @@ pub(crate) fn program_defs(cx: &Ctx) -> Vec<usize> {
     );
     out.sort_unstable();
     out.dedup();
-    out.extend(base..cx.info.len());
+    out.extend(cx.program_from()..cx.info.len());
+    out.sort_unstable();
+    out.dedup();
     out
 }
 

@@ -510,6 +510,10 @@ fn check_timed(
                 let run = rounds::run(&new_cx, &|_: &ctx::Ctx| false, &assumed, false, None);
                 let mut std_cx = match run {
                     Ok((cx, _, _)) => cx,
+                    // An error in a dependency (`units::libraries`): checked with the app.
+                    Err(_) if units::libraries_off(input) => {
+                        return check_timed(input, root, opts, recovered, gen, loads, stack_budget)
+                    }
                     Err(stopped) => return *stopped,
                 };
                 units::finish_unit(&mut std_cx);
