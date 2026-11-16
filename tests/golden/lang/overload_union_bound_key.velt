@@ -1,0 +1,39 @@
+// TypeScript-form overloads that tsc accepts against a wider implementation (#379, sigx's
+// `useData`): a reactive key `() => K | Falsy` with `K extends KeyValue` converts into the
+// implementation's `string | (() => KeyValue | Falsy)`, each `K` becoming the member it is at run
+// time; and an implementation that returns `unknown` gives each overload its result as `as`
+// converts it (checked at run time where Node doesn't check: the implementation returns what the
+// overload promises). A key with an array member doesn't convert: an instantiation could be an
+// array of a narrower element type that the implementation writes into
+// (`errors/union_bound_mutable_array`, #3061). Node prints the same.
+type KeyValue = string | number;
+type Falsy = false | null | undefined | "";
+type Fetcher<T, Arg> = (arg: Arg) => T;
+
+function useData<T>(key: string, fetcher: (k: string) => T): T | null;
+function useData<T, const K extends KeyValue>(key: () => K | Falsy, fetcher: (k: K) => T): T | null;
+function useData(key: string | (() => KeyValue | Falsy), fetcher: Fetcher<unknown, any>): unknown {
+  if (typeof key === "string") {
+    return fetcher(key);
+  }
+  const k = key();
+  if (k === false || k === null || k === undefined || k === "") {
+    return null;
+  }
+  return fetcher(k);
+}
+
+function load<T>(key: string, fetch: (k: string) => T): T;
+function load(key: string, fetch: (k: string) => unknown): unknown {
+  return fetch(key);
+}
+
+function main(): void {
+  const id = 7;
+  console.log(useData("users", (k: string) => k.length));
+  console.log(useData(() => (id > 5 ? `user/${id}` : null), (k: string) => `got ${k}`));
+  console.log(useData(() => (id > 9 ? "never" : null), (k: string) => k));
+  console.log(useData(() => id * 2, (k: number) => k + 1));
+  const n = load("count", (k: string) => k.length + 1);
+  console.log(n + 1, load("name", (k: string) => k.toUpperCase()));
+}

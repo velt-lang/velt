@@ -1,0 +1,23 @@
+// A type parameter bounded by a union with a generic class member (#379, `union_bound_value`): an
+// instantiation may be the class at narrower type arguments (`Box<number>` for `Box<number |
+// string>`), which the run-time test of the member rejects and whose field can't hold the
+// `string` written through it. Velt refuses the conversion; tsc accepts it and Node prints `x`.
+class Box<T> {
+  v: T;
+  constructor(v: T) {
+    this.v = v;
+  }
+}
+
+function via<K extends string | Box<number | string>>(k: K): string | Box<number | string> | null {
+  return k;
+}
+
+function main(): void {
+  const b = new Box<number>(1);
+  const r = via(b);
+  if (r instanceof Box) {
+    r.v = "x";
+  }
+  console.log(b.v);
+}

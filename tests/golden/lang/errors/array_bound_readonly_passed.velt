@@ -1,0 +1,17 @@
+// A value of a type parameter with a read-only array bound passed where a mutable array is
+// expected (#1212, `array_bound_value`): tsc refuses it (TS2345), but Velt doesn't check that,
+// so the callee could write a `string` into an instantiation's `number[]`. Velt refuses the
+// conversion.
+function push(x: (number | string)[]): void {
+  x.push("x");
+}
+
+function g<T extends readonly (number | string)[]>(xs: T): void {
+  push(xs);
+}
+
+function main(): void {
+  const a: number[] = [1, 2];
+  g(a);
+  console.log(a.length);
+}

@@ -1,0 +1,16 @@
+// A value of a type parameter with a read-only union bound returned as a mutable array (#379,
+// `union_bound_value`): tsc refuses it (TS2322, read-only into mutable), but Velt doesn't check
+// that, so the caller could write a `string` into an instantiation's `number[]`. Velt refuses the
+// conversion.
+function f<K extends string | readonly (number | string)[]>(k: K): string | (number | string)[] | null {
+  return k;
+}
+
+function main(): void {
+  const a: number[] = [1, 2];
+  const r = f(a);
+  if (r !== null && typeof r !== "string") {
+    r.push("x");
+  }
+  console.log(a.length);
+}

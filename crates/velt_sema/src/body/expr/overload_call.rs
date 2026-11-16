@@ -275,11 +275,16 @@ impl FnCx<'_, '_> {
     }
 
     /// `return e;` in a signature's body: the implementation's result as the signature's
-    /// result type `ret`, tested when it is a wider union (`checked_narrow`).
+    /// result type `ret`, tested when it is a wider union (`checked_narrow`), or converted as
+    /// `as` converts when the implementation returns `unknown` or `any` (checked at run time;
+    /// TypeScript relates the two either way, TS2394, and Node never tests the value).
     pub(crate) fn signature_result(&mut self, e: &ast::Expr, ret: TyId) -> hir::Expr {
         let h = self.expr(e, None, Want::Move);
         if self.cx.ty.has_error(h.ty) {
             return h;
+        }
+        if self.cx.dynamic(h.ty).is_some() && self.cx.dynamic(ret).is_none() {
+            return self.cast_dynamic(h, ret);
         }
         match self.try_coerce(h, ret) {
             Ok(h) => h,

@@ -1,0 +1,28 @@
+// As `union_bound_mutable_array` with a class element: `K extends string | Foo[]` instantiated
+// with `Bar[]`, where the implementation pushes a `Foo`. Refused; Node prints `2`.
+class Foo {
+  x = 1;
+}
+
+class Bar extends Foo {
+  y = 2;
+}
+
+function use(key: string): number;
+function use<K extends (string | Foo[])>(key: () => K | null): number;
+function use(key: string | (() => string | Foo[] | null)): number {
+  if (typeof key === "string") {
+    return key.length;
+  }
+  const k = key();
+  if (k === null || typeof k === "string") {
+    return 0;
+  }
+  k.push(new Foo());
+  return k.length;
+}
+
+function main(): void {
+  const r: Bar[] = [new Bar()];
+  console.log(use(() => r));
+}

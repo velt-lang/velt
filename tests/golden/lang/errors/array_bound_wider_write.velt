@@ -1,0 +1,14 @@
+// A type parameter bounded by an array of a union (`K extends (number | string)[]`) used as its
+// bound (`array_bound_value`, #1212): an instantiation may be a `number[]`, through which the
+// bound's `push("x")` can't write. Refused at compile time (it stopped with a `TypeError` at run
+// time before #379's round 2); Node prints `3 3`.
+function addX<K extends (number | string)[]>(k: K): number {
+  const xs: (number | string)[] = k;
+  xs.push("x");
+  return xs.length;
+}
+
+function main(): void {
+  const a: number[] = [1, 2];
+  console.log(addX(a), a.length);
+}

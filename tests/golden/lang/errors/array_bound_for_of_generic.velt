@@ -1,0 +1,25 @@
+// A type parameter bounded by an array of a generic class, read by `for...of` (#1212,
+// `array_bound_value`): an instantiation's elements may be the class at narrower type arguments
+// (`Box<number>` for `Box<number | string>`), which the run-time test of the element rejects and
+// whose field can't hold the `string` written through the loop's variable. Velt refuses it; tsc
+// accepts it and Node prints `yy y`.
+class Box<T> {
+  v: T;
+  constructor(v: T) {
+    this.v = v;
+  }
+}
+
+function setAll<T extends Box<number | string>[]>(xs: T): string {
+  let out = "";
+  for (const b of xs) {
+    b.v = "y";
+    out += b.v;
+  }
+  return out;
+}
+
+function main(): void {
+  const bs = [new Box<number>(1), new Box<number>(2)];
+  console.log(setAll(bs), bs[0].v);
+}
