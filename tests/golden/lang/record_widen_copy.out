@@ -1,0 +1,5 @@
+<meta name="description" content="A page">
+<link rel="stylesheet" href="/a.css">
+<style media="print">p{}</style>
+<base href="/root/">
+name,content print

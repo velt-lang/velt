@@ -1,0 +1,10 @@
+// A record where a record of a wider value type is expected is a copy, which a later write to
+// the record shows (Node prints y: one record).
+const held: Record<string, string | boolean | undefined>[] = [];
+function keep(r: Record<string, string | boolean | undefined>): void {
+  held.push(r);
+}
+const attrs: Record<string, string | undefined> = { a: "x" };
+keep(attrs);
+attrs["a"] = "y";
+console.log(held[0]["a"]);
