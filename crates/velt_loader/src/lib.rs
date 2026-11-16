@@ -88,6 +88,9 @@ pub use spec::{resolve_spec, ModuleRef};
 pub use std_ast::StdAstCache;
 pub use std_root::{in_std, prelude_files, std_root};
 
+/// A std module's stub by its canonical path, decoded for its file ([`LoadOptions::std_stubs`]).
+pub type StdStubs<'f> = dyn Fn(&str, FileId) -> Option<ast::Module> + 'f;
+
 /// Inputs of [`load_program`] besides the root path.
 #[derive(Default)]
 pub struct LoadOptions<'a> {
@@ -135,7 +138,7 @@ pub struct LoadOptions<'a> {
     /// std modules as a checked unit keeps them (#2943 M2): when it gives a module for a std
     /// file's canonical path, that module is the file's, unparsed (the check takes the rest of
     /// std from the unit).
-    pub std_stubs: Option<&'a dyn Fn(&str, FileId) -> Option<ast::Module>>,
+    pub std_stubs: Option<&'a StdStubs<'a>>,
 }
 
 /// Result of loading a program: the modules and the index of the root (`main`).
