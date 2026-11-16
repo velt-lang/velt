@@ -762,7 +762,7 @@ macro_rules! enums {
 #[allow(unused_imports)]
 pub(crate) use {enums, structs, tuples};
 
-pub(crate) use ast_refs::Arena;
+pub(crate) use ast_refs::{Arena, AstNode};
 #[allow(unused_imports)] // Until the unit is saved (#2943 M2).
 pub(crate) use unit::{decode_unit, encode_unit, encode_unit_sized};
 

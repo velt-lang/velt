@@ -12,6 +12,7 @@
 //! `with_all_std`) and nothing is checked lazily (`body::lazy_std`).
 
 pub(crate) mod codec;
+pub(crate) mod stubs;
 
 use crate::ctx::Ctx;
 
@@ -329,4 +330,24 @@ pub(crate) fn round_trip(cx: Ctx<'_>) -> Ctx<'_> {
     out.units_stage = cx.units_stage;
     out.stack_budget = cx.stack_budget;
     out
+}
+
+/// The rewrites' inputs by units with `VELT_UNITS_SPLIT` (`crate::rewrites`, #2943 M2): the
+/// modules with std's as stubs, for the app's run, and std's modules alone, for std's.
+pub(crate) fn split_inputs(
+    opts: crate::CheckOptions,
+    modules: &[crate::SourceModule],
+) -> (
+    Option<Vec<crate::SourceModule>>,
+    Option<Vec<crate::SourceModule>>,
+) {
+    let split = opts.units && stage2() && std::env::var_os("VELT_UNITS_SPLIT").is_some();
+    if !split {
+        return (None, None);
+    }
+    let std = (modules.iter())
+        .filter(|m| m.is_std)
+        .map(stubs::copy)
+        .collect();
+    (Some(stubs::stubbed(modules)), Some(std))
 }

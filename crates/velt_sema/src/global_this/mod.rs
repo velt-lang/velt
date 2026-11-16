@@ -26,7 +26,7 @@
 //! Velt has (`globalThis.setTimeout`) is that global. Programs that don't name `globalThis` are
 //! not rewritten.
 
-mod keys;
+pub(crate) mod keys;
 mod walk;
 
 pub(crate) use walk::{DEFINE_KEY_CHECK, DELETE_KEY_CHECK, KEY_CHECK};

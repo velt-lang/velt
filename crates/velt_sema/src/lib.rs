@@ -278,8 +278,20 @@ fn check_timed(
     let generator = gen.and_then(|g| g.generate).map(generated::Generator::new);
     let input = modules;
     let rewrite_start = std::time::Instant::now();
-    let rw = rewrites::run(modules, root);
-    let modules = rw.modules(input);
+    // By units with `VELT_UNITS_SPLIT` (#2943 M2): the rewrites run once over std alone (std's
+    // stage) and once over the app with std's modules as stubs (`units::stubs`).
+    let (stubbed, std_input) = units::split_inputs(opts, input);
+    let rw = rewrites::run(stubbed.as_deref().unwrap_or(input), root);
+    let std_rw = std_input.as_deref().map(|s| rewrites::run(s, s.len()));
+    let modules = rw.modules(stubbed.as_deref().unwrap_or(input));
+    let std_mods = (std_rw.as_ref())
+        .zip(std_input.as_deref())
+        .map(|(r, i)| r.modules(i));
+    let merged = std_rw.as_ref().map(|s| units::stubs::merge(s, &rw, input));
+    let lifted = merged
+        .as_ref()
+        .map_or(rw.lifted.as_ref(), |m| m.lifted.as_ref());
+    let overloaded = (merged.as_ref()).map_or(rw.overloaded.as_ref(), |m| m.overloaded.as_ref());
     let Some(root_mod) = modules.get(root) else {
         let d = Diagnostic::error("no root module to check", Span::DUMMY);
         return ((None, vec![d]), Default::default());
@@ -335,9 +347,11 @@ fn check_timed(
         ns_private: &rw.ns_private,
         global_ns: &rw.global_ns,
         gen_throw,
-        alias_blocked: &rw.alias_blocked,
-        lifted: rw.lifted.as_ref(),
-        overloaded: rw.overloaded.as_ref(),
+        alias_blocked: merged
+            .as_ref()
+            .map_or(&rw.alias_blocked, |m| &m.alias_blocked),
+        lifted,
+        overloaded,
         null_proto,
         record_accessors,
         ctor_reads,
@@ -353,7 +367,9 @@ fn check_timed(
         .zip(opts.std_key)
         .map(|(o, k)| found.std_key(k, opts, o, modules));
     let mut held = std_unit::hold(std_key);
-    let mut std_copies = held.as_ref().map(|_| std_unit::copies(modules));
+    let mut std_copies = held
+        .as_ref()
+        .map(|_| std_unit::copies(std_mods.unwrap_or(modules)));
     // SAFETY: the copies' contents stay at their heap address until the check ends: moved into
     // the cache with their box (`std_unit::keep`), or dropped after every context.
     let copies: Option<&[SourceModule]> =
@@ -372,9 +388,10 @@ fn check_timed(
         let fresh = from_std.is_none();
         let mut cx = match (from_std, &order) {
             (Some(cx), _) => cx,
-            (None, Some(o)) if stage.get() == units::Stage::Std => match copies {
-                Some(c) => ctx::Ctx::over(c.iter().collect(), 0),
-                None => ctx::Ctx::over(o.std_modules(modules), 0),
+            (None, Some(o)) if stage.get() == units::Stage::Std => match (copies, std_mods) {
+                (Some(c), _) => ctx::Ctx::over(c.iter().collect(), 0),
+                (None, Some(m)) => ctx::Ctx::over(m.iter().collect(), 0),
+                (None, None) => ctx::Ctx::over(o.std_modules(modules), 0),
             },
             (None, _) => ctx::Ctx::new(modules, root),
         };
@@ -423,7 +440,7 @@ fn check_timed(
         let cx_root = cx.root;
         let entry = timings::pass(round, || analyze(&mut cx, cx_root, root_mod, opts));
         global_this::drop_site_errors(&mut cx);
-        if let Some(o) = &rw.overloaded {
+        if let Some(o) = overloaded {
             overloads::report_misfits(&mut cx.diags, &o.sig_spans);
             overload_adapter::check_identity(&mut cx, &o.adapted);
         }

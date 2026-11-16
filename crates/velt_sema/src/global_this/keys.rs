@@ -82,7 +82,7 @@ pub(super) fn visible_consts(
 /// The name and string of `const K = "k";`: a key of `globalThis` where `K` is in scope. A
 /// constant declared with a type (`const K: string = "k"`) is not one, as in TypeScript, unless
 /// the type is the string itself (`const K: "k" = "k"`).
-pub(super) fn const_key(v: &ast::VarDecl) -> Option<(String, String)> {
+pub(crate) fn const_key(v: &ast::VarDecl) -> Option<(String, String)> {
     let (ast::VarKind::Const, ast::PatternKind::Ident(n), Some(init)) =
         (v.kind, &v.pattern.kind, &v.init)
     else {
