@@ -37,7 +37,7 @@ use crate::vir::{BinOp, BlockId, Const, Operand, Place, Proj, Rvalue, Ty};
 /// Whether the program has record views at all (its calls: `hook_calls.rs`).
 const VIEW_NEW: &str = velt_common::std_hook!(record_view_new);
 /// The hook class a view's field 4 points at.
-const VIEW_SOURCE: &str = velt_common::std_hook!(record_view_source);
+pub(super) const VIEW_SOURCE: &str = velt_common::std_hook!(record_view_source);
 /// The record field that holds a view's source (std/prelude/record.velt).
 const VIEW_FIELD: u32 = 4;
 
