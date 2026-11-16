@@ -1,0 +1,3 @@
+24:2: error: cannot cast `Ctx` as `InternalCtx`
+class `Real` is converted to `Ctx` and doesn't declare `__name`: a class's objects get no fields it doesn't declare; declare `__name` on `Real`
+an object literal written as a `Ctx` whose methods use `this` has no `__name`, and its object gets no fields it was made without; give the literal the type `InternalCtx` where it is made

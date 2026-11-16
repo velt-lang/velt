@@ -24,7 +24,8 @@ pub(crate) fn merge(cx: &mut Ctx) {
         .filter(|(_, f)| f.used)
         .map(|(d, _)| *d)
         .collect();
-    if used.is_empty() {
+    let widened = cx.object_impls.widen.widened.clone();
+    if used.is_empty() && widened.is_empty() {
         return;
     }
     let mut remap: FxHashMap<DefId, Remap> = FxHashMap::default();
@@ -129,6 +130,19 @@ pub(crate) fn merge(cx: &mut Ctx) {
         for (view, g) in views {
             let own = field_names(cx, view);
             remap.insert(view, Remap::new(g, &own, &names, false));
+        }
+    }
+    // Object types widened for a cast to an extension (`crate::object_widen`): the added fields
+    // follow their own, so only their literals (and their readonly views') change.
+    for d in widened.keys() {
+        let names = field_names(cx, *d);
+        let views: Vec<DefId> = (cx.readonly_twins.iter())
+            .filter(|(v, t)| t.0 == *d && **v != *d)
+            .map(|(v, _)| *v)
+            .collect();
+        for s in views.into_iter().chain([*d]) {
+            let own = field_names(cx, s);
+            remap.insert(s, Remap::new(*d, &own, &names, s != *d));
         }
     }
     let field_tys: FxHashMap<DefId, Vec<TyId>> = (remap.values())

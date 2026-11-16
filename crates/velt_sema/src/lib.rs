@@ -122,6 +122,7 @@ mod object_call_on;
 mod object_copies;
 mod object_ifaces;
 mod object_views;
+mod object_widen;
 mod options;
 mod overload_adapter;
 mod overloads;

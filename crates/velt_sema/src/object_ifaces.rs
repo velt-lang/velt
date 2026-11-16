@@ -49,6 +49,8 @@ pub(crate) struct ObjectImpls {
     /// The interfaces whose values are cast to an extension (`shape as Named`, #379): the object
     /// types implementing one are sources, since the cast converts through `any`.
     downcast_from: FxHashSet<DefId>,
+    /// The object types widened for casts to extensions adding optional fields (`object_widen`).
+    pub widen: crate::object_widen::Widen,
     /// Those written with type parameters (`o as Box<T>` in `view<T>`, `o as T`): the targets
     /// are also those they become where their definitions are instantiated (#1909).
     generic_targets: FxHashSet<TyId>,
@@ -270,7 +272,9 @@ impl Ctx<'_> {
         let TyKind::Adt(d, targs) = self.ty.kind(self_ty).clone() else {
             return None;
         };
-        if !targs.is_empty() || !self.is_object_type(self_ty) {
+        if !targs.is_empty()
+            || !(self.is_object_type(self_ty) || self.widened_literal_struct(self_ty))
+        {
             return None;
         }
         if args.iter().any(|a| self.has_type_params(*a)) {
@@ -630,6 +634,8 @@ pub(crate) fn make_dynamic_object_impls(cx: &mut Ctx) {
     let mut done: FxHashSet<(TyId, DefId, Vec<TyId>)> = FxHashSet::default();
     let mut scanned = 0;
     loop {
+        // Before the implementations of the extensions are made: their objects' new fields.
+        cx.widen_converted();
         // The object types made as an interface some value of is cast to an extension, including
         // those whose implementations the last round made.
         if !cx.object_impls.downcast_from.is_empty() {
@@ -641,6 +647,8 @@ pub(crate) fn make_dynamic_object_impls(cx: &mut Ctx) {
             for t in from {
                 if cx.is_object_type(t) {
                     cx.note_dyn_object_source(t);
+                } else if cx.widened_literal_struct(t) && !cx.object_impls.sources.contains(&t) {
+                    cx.object_impls.sources.push(t);
                 }
             }
         }
@@ -651,11 +659,21 @@ pub(crate) fn make_dynamic_object_impls(cx: &mut Ctx) {
         }
         let sources = cx.object_impls.sources.clone();
         let mut made_any = false;
-        for t in sources {
-            for (iface, args) in targets.clone() {
-                if done.insert((t, iface, args.clone())) {
-                    made_any = true;
-                    dynamic_object_impl(cx, t, iface, &args);
+        // The interfaces cast to an extension adding fields first: the object types implementing
+        // them are widened before their implementations of the extensions are made.
+        let widened_from = cx.widened_ifaces();
+        let (first, rest): (Vec<_>, Vec<_>) =
+            (targets.iter().cloned()).partition(|(i, _)| widened_from.contains(i));
+        for (k, pass) in [first, rest].into_iter().enumerate() {
+            if k == 1 && !widened_from.is_empty() {
+                cx.widen_converted();
+            }
+            for &t in &sources {
+                for (iface, args) in pass.iter().cloned() {
+                    if done.insert((t, iface, args.clone())) {
+                        made_any = true;
+                        dynamic_object_impl(cx, t, iface, &args);
+                    }
                 }
             }
         }
