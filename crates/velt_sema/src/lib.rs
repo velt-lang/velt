@@ -363,6 +363,8 @@ fn check_timed(
         rmw: &rw.asserted.rmw,
         closures: rw.closures.as_ref(),
     };
+    // std's stage takes std's own facts when the rewrites ran per unit, with the app's flags.
+    let std_found = std_rw.as_ref().map(|s| units::stubs::std_found(s, &found));
     let std_key = (order.as_ref())
         .zip(opts.std_key)
         .map(|(o, k)| found.std_key(k, opts, o, modules));
@@ -432,9 +434,12 @@ fn check_timed(
             cx.body_records = kept::wanted(input).then(Default::default);
             cx.source_facts = facts.clone();
             cx.held_borrows = held_borrows;
-            found.install(&mut cx, stage.get() != units::Stage::Std);
+            match (&std_found, stage.get()) {
+                (Some(f), units::Stage::Std) => f.install(&mut cx, false),
+                _ => found.install(&mut cx, stage.get() != units::Stage::Std),
+            }
         }
-        if let (true, Some(o), units::Stage::Std) = (fresh, &order, stage.get()) {
+        if let (true, Some(o), units::Stage::Std, None) = (fresh, &order, stage.get(), &std_found) {
             units::remap_module_facts(&mut cx, &|m| o.in_std(m));
         }
         let cx_root = cx.root;

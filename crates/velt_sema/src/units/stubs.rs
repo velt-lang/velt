@@ -149,3 +149,30 @@ pub(crate) fn merge(
         alias_blocked,
     }
 }
+
+/// The facts std's stage takes when the rewrites ran per unit: those of std's own run (`std`,
+/// already in std's module order), and of the app's only the four flags of the source scans,
+/// which change how std's bodies are checked (`source_scans`, part of std's unit's key).
+pub(crate) fn std_found<'a>(
+    std: &'a crate::rewrites::Rewritten,
+    app: &crate::rewrite_facts::Found<'a>,
+) -> crate::rewrite_facts::Found<'a> {
+    crate::rewrite_facts::Found {
+        ns_private: &std.ns_private,
+        global_ns: &std.global_ns,
+        gen_throw: app.gen_throw,
+        alias_blocked: &std.alias_blocked,
+        lifted: std.lifted.as_ref(),
+        overloaded: std.overloaded.as_ref(),
+        null_proto: app.null_proto,
+        record_accessors: app.record_accessors,
+        ctor_reads: app.ctor_reads,
+        brands: &std.brands,
+        global_props: &std.global_props,
+        recovered: &[],
+        merge_diags: &std.merge_diags,
+        promoted: &std.chunks.promoted,
+        rmw: &std.asserted.rmw,
+        closures: std.closures.as_ref(),
+    }
+}
