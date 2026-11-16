@@ -92,10 +92,11 @@ impl FnCx<'_, '_> {
             let h = self.related_iface_cast(h, first, span)?;
             return self.try_coerce(h, target);
         }
-        if !self.related_ifaces(h.ty, target)
-            || self.cx.ty.opt_payload(target).is_some()
-            || !(self.both_std_dom(h.ty, target) || self.adds_required(h.ty, target))
-        {
+        if !self.related_ifaces(h.ty, target) || self.cx.ty.opt_payload(target).is_some() {
+            return Err(h);
+        }
+        let dom = self.both_std_dom(h.ty, target);
+        if !dom && !self.checked_downcast(h.ty, target, span) {
             return Err(h);
         }
         let Some(any) = self.any_ty() else {
@@ -124,9 +125,30 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// Is `from as to` (interface types, `to` extending `from`'s interface) a cast Velt checks at
+    /// run time ([`Self::related_iface_cast`])? `from` holds no `undefined` (which Node passes on),
+    /// `to` adds a required member, and a `to` is a `from` as it is (`Source<number>` takes no
+    /// `Labeled<string>`, which `tsc` refuses too). Records the conversion: `to` as a target of
+    /// conversions from `any`, and `from`'s interface as one cast from, so that every object type
+    /// made as a `from` gets its implementation of `to` when it fits (`object_ifaces.rs`).
+    fn checked_downcast(&mut self, from: TyId, to: TyId, span: velt_common::Span) -> bool {
+        let TyKind::Dyn(have, _) = *self.cx.ty.kind(from) else {
+            return false;
+        };
+        if !self.adds_required(from, to) || self.cx.assigns(to, from, self.module) != Some(true) {
+            return false;
+        }
+        self.note_dynamic_iface(to, span);
+        self.note_object_fill(to);
+        self.note_fn_views(to, span);
+        self.cx.note_dyn_object_target(to);
+        self.cx.note_iface_downcast(have);
+        true
+    }
+
     /// Does interface type `to` declare a required member that `from` lacks (`name()` of `Named`
     /// over `Shape`)? A value lacking one is not a `to` in Node either ([`Self::related_iface_cast`]).
-    fn adds_required(&mut self, from: TyId, to: TyId) -> bool {
+    pub(super) fn adds_required(&mut self, from: TyId, to: TyId) -> bool {
         let have = self.object_members(from).unwrap_or_default();
         let want = self.object_members(to).unwrap_or_default();
         (want.iter()).any(|m| !m.2 && !have.iter().any(|h| h.0 == m.0))

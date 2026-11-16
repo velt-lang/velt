@@ -5,3 +5,6 @@ true true
 cell1 sub2 lit3
 sub
 cell a
+shaped
+a! a! true true lit
+k! k! true true box k!

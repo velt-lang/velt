@@ -1,6 +1,8 @@
-// Interface assertions Velt doesn't check yet (#379): to a union of extensions (there is no
-// run-time test of a value for one of several interfaces yet), and to an extension with
-// `undefined`.
+// Interface assertions Velt doesn't check (#379), each a compile error: to a union of extensions
+// (there is no run-time test of a value for one of several interfaces yet), to an extension with
+// `undefined`, from a value that may be `undefined` (which Node passes on), to an extension at
+// other type arguments (no object is both), and to one adding only optional members (Node adds
+// them when written; the object has no room for them).
 interface Shape {
   area(): number;
 }
@@ -13,7 +15,33 @@ interface Sided extends Shape {
   sides: number;
 }
 
+interface Tagged extends Shape {
+  tag?: string;
+}
+
+interface Source<T> {
+  get(): T;
+}
+
+interface Labeled<T> extends Source<T> {
+  label(): string;
+}
+
 const s: Shape = { area: () => 1, name: () => "n" } as Named;
 const u = s as (Named | Sided);
 const m = s as (Named | undefined);
-console.log(u, m);
+
+function f(x: Shape | undefined): Named {
+  return x as Named;
+}
+
+function g(x: Source<number>): Labeled<string> {
+  return x as Labeled<string>;
+}
+
+function h(x: Source<number>): Labeled<any> {
+  return x as Labeled<any>;
+}
+
+const t = s as Tagged;
+console.log(u, m, t);

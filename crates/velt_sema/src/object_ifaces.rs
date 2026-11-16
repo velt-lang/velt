@@ -46,6 +46,9 @@ pub(crate) struct ObjectImpls {
     seen: FxHashSet<TyId>,
     /// The interfaces (with their arguments) dynamic values are converted to.
     targets: Vec<(DefId, Vec<TyId>)>,
+    /// The interfaces whose values are cast to an extension (`shape as Named`, #379): the object
+    /// types implementing one are sources, since the cast converts through `any`.
+    downcast_from: FxHashSet<DefId>,
     /// Those written with type parameters (`o as Box<T>` in `view<T>`, `o as T`): the targets
     /// are also those they become where their definitions are instantiated (#1909).
     generic_targets: FxHashSet<TyId>,
@@ -164,6 +167,11 @@ impl Ctx<'_> {
                 _ => {}
             }
         }
+    }
+
+    /// A value of interface `iface` cast to an extension (`ObjectImpls::downcast_from`).
+    pub(crate) fn note_iface_downcast(&mut self, iface: DefId) {
+        self.object_impls.downcast_from.insert(iface);
     }
 
     /// A dynamic value converted to `t` (module docs): recorded when it is an interface type,
@@ -620,7 +628,22 @@ pub(crate) fn make_dynamic_object_impls(cx: &mut Ctx) {
     // converting to it stays a `TypeError`.
     let mut targets: Vec<(DefId, Vec<TyId>)> = vec![];
     let mut done: FxHashSet<(TyId, DefId, Vec<TyId>)> = FxHashSet::default();
+    let mut scanned = 0;
     loop {
+        // The object types made as an interface some value of is cast to an extension, including
+        // those whose implementations the last round made.
+        if !cx.object_impls.downcast_from.is_empty() {
+            let from: Vec<TyId> = (cx.impls[scanned..].iter())
+                .filter(|i| i.generics == 0 && cx.object_impls.downcast_from.contains(&i.iface))
+                .map(|i| i.ty)
+                .collect();
+            scanned = cx.impls.len();
+            for t in from {
+                if cx.is_object_type(t) {
+                    cx.note_dyn_object_source(t);
+                }
+            }
+        }
         for t in std::mem::take(&mut cx.object_impls.targets) {
             if !targets.contains(&t) && !cx.ty.args_too_deep(&t.1) {
                 targets.push(t);

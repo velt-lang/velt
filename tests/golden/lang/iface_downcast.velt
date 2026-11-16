@@ -1,7 +1,8 @@
 // An interface value asserted to an interface extending it with a required member (#379): tsc
 // allows it, and Velt checks at run time that the object implements the extension. A class, an
-// object literal made as the extension, a subclass through its base class's implementation, and
-// generic interfaces; the result is the same object.
+// object literal made as the extension or only shaped like it, a subclass through its base
+// class's implementation, and generic interfaces. The result is the same object: `===` holds, and
+// a write through the extension shows through the base and the original.
 interface Shape {
   area(): number;
 }
@@ -87,3 +88,37 @@ if (maybe) {
 }
 const strs: Source<string> = new Cell("a");
 console.log((strs as Labeled<string>).label(), (strs as Labeled<string>).get());
+
+const shaped = { area: () => 1, name: () => "shaped" };
+const asShape: Shape = shaped;
+console.log((asShape as Named).name());
+
+interface Base {
+  tag: string;
+  area(): number;
+}
+
+interface Ext extends Base {
+  extra(): string;
+}
+
+class Box implements Ext {
+  tag: string;
+  constructor(tag: string) {
+    this.tag = tag;
+  }
+  area(): number {
+    return 1;
+  }
+  extra(): string {
+    return "box " + this.tag;
+  }
+}
+
+const o: Ext = { tag: "a", area: () => 1, extra: () => "lit" };
+for (const v of [o, new Box("k")] as Ext[]) {
+  const b: Base = v;
+  const e = b as Ext;
+  e.tag = e.tag + "!";
+  console.log(b.tag, v.tag, e === v, (b as Ext) === v, e.extra());
+}

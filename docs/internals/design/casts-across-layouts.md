@@ -45,6 +45,18 @@ such a cast. Where Node goes on and the check would stop the program:
   object lacking it fails in Node too, when the member is used).
 - A **union** of extensions or `J | undefined`: there is no run-time test of an `any` for one of
   several interfaces yet (#924), so these stay `cannot cast` outside lib.dom.
+- A source that may be **`undefined`**: Node passes it on, and an `any` holding `undefined` is no
+  `J`. The note says to test it first.
+- `J` at **other type arguments** than `I` (`Source<number> as Labeled<string>`, which `tsc`
+  refuses too, or `as Labeled<any>`): no object is both, so it stays `cannot cast`.
+
+An object type that is only shaped like `J` (made as an `I`, never converted to `J`) gets its
+implementation of `J` too: each object type implementing an interface the program casts from is
+recorded as a value `any` may hold (object_ifaces.rs `downcast_from`).
+
+**Cost:** about 30 instructions (3 ns) per cast on an Apple M-series machine with a few
+implementing types, measured on a 10-million-cast loop; the check compares one descriptor per type
+the program's `any` values may hold, in order, so it grows with that count.
 
 ## A, continued. Widening the objects converted to the base
 
