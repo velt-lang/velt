@@ -1,6 +1,6 @@
 # Casts across layouts: interface downcasts, widened objects, method writes, promise views
 
-Status: approved 2026-11-16 (#379, sigx's "casts across layouts" kit group), with the decisions under "Decisions" below. Nothing here is implemented yet; the order is A1, A2, B, E1, D.
+Status: approved 2026-11-16 (#379, sigx's "casts across layouts" kit group), with the decisions under "Decisions" below. The order is A1, A2, B, E1, D; A1 is implemented.
 
 ## Why
 
@@ -26,22 +26,25 @@ vtable is the one for the static interface. Related interfaces don't convert to 
 types, and #1383 (collect/extended_layouts.rs) lets a base and its optional-only extensions
 share one layout.
 
-**Mechanism (after .NET).** In .NET every object's type has an interface map, and `castclass`
-or `isinst` looks the target interface up in it at run time. Velt does the same behind
-TypeScript's syntax:
+**Mechanism.** A run-time check, as .NET's `castclass` does with its interface maps. A1 needs no
+new table: the conversion of an `any` to an interface (any_iface.rs) already is one. It compares
+the `any`'s descriptor with that of each type the program's `any` values may hold, and takes that
+type's own implementation of the interface. So `x as J`, where `x: I` and `J` extends `I`, is the
+value as an `any`, converted to `J` (identity_eq.rs `related_iface_cast`, the route lib.dom casts
+already took):
 
-- Every vtable gets one more word: a pointer to its concrete type's **interface map**. That is
-  static data, sorted by interface id, holding `(interface id, vtable)` for every interface the
-  type is converted to in the program, or that a cast in the program asks for.
-- `x as J`, where `x: I` and `J` extends `I` (or `I` extends `J`), looks up `J` in the map of
-  `x`'s vtable:
-  - found: the value is `(data, that vtable)`, the same object, as in Node;
-  - not found: the program panics with `TypeError: type assertion failed: the value is not a J`,
-    like the other checked assertions (narrowing_casts.rs).
-- The lookup is a binary search over a few entries, done in generated code over static tables.
-  There is no new runtime Rust.
-- `x as J` where `J` is a union of related interfaces looks each member up in order.
-- **Programs without such a cast** get no maps and no extra word; the pass is skipped.
+- the object implements `J`: the value is `(data, its J vtable)`, the same object, as in Node;
+- it doesn't: the program panics with `TypeError: the value is not a J (it is an object)`, the
+  message of any failed conversion of an `any` to `J`.
+
+There is no new runtime Rust, no change to the vtable layout, and no cost in programs without
+such a cast. Where Node goes on and the check would stop the program:
+
+- `J` adds only **optional** members: Node adds them when written. Such a cast stays `cannot cast`
+  until A2 widens the objects, so A1 takes only an extension that adds a required member (an
+  object lacking it fails in Node too, when the member is used).
+- A **union** of extensions or `J | undefined`: there is no run-time test of an `any` for one of
+  several interfaces yet (#924), so these stay `cannot cast` outside lib.dom.
 
 ## A, continued. Widening the objects converted to the base
 
@@ -50,7 +53,7 @@ With the lookup alone, sigx's `ctx` still fails. It is an object literal convert
 
 - For each cast `I → J` in the program where `J` adds only **optional** members to `I`, every
   concrete type the program converts to `I` gets room for `J`'s optional fields: hidden slots,
-  absent until written. It then implements `J`, so its interface map has a `J` vtable.
+  absent until written. It then implements `J`, so the check of A1 finds its `J` vtable.
 - This is #1383's widening, carried from field-only interfaces to every object type converted to
   an interface with methods. The rules are #1383's:
   - one layout per base family;
@@ -106,8 +109,7 @@ default `P = unknown`, and differ only at other instantiations.
   - a promise view (D) for promises;
   - for function types, part 2 (below).
 - **Contract:** adding `Intrinsic::SameType` changes the `hir` contract
-  (`docs/internals/contracts`), and the interface maps and setter slots change the vtable layout
-  in `vir`.
+  (`docs/internals/contracts`), and the setter slots change the vtable layout in `vir`.
 - **Part 2, function views (not proposed):** a function cast to another parameter type is a
   wrapper that converts each argument. Its identity differs from the original's (`===`), which
   Node would not show. It stays a compile error at instantiations where the types differ, with an
@@ -115,8 +117,7 @@ default `P = unknown`, and differ only at other instantiations.
 
 ## Order and size
 
-1. **A1:** interface maps and checked downcasts, with goldens. Also lib.dom casts, which can then
-   stop going through `any`.
+1. **A1:** checked downcasts to extensions adding a required member, with goldens.
 2. **A2:** widening the converted object types, and anonymous all-optional targets.
 3. **B:** setter slots for method members, and the class refusal.
 4. **E1:** the `SameType` intrinsic, identity at equal instantiations.

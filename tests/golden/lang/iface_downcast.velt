@@ -1,0 +1,89 @@
+// An interface value asserted to an interface extending it with a required member (#379): tsc
+// allows it, and Velt checks at run time that the object implements the extension. A class, an
+// object literal made as the extension, a subclass through its base class's implementation, and
+// generic interfaces; the result is the same object.
+interface Shape {
+  area(): number;
+}
+
+interface Named extends Shape {
+  name(): string;
+}
+
+interface Sided extends Shape {
+  sides: number;
+}
+
+class Square implements Named {
+  s: number;
+  constructor(s: number) {
+    this.s = s;
+  }
+  area(): number {
+    return this.s * this.s;
+  }
+  name(): string {
+    return "square";
+  }
+}
+
+function describe(s: Shape): string {
+  return (s as Named).name() + " " + s.area();
+}
+
+const tri: Named = { area: () => 6, name: () => "triangle" };
+const shapes: Shape[] = [new Square(3), tri];
+for (const s of shapes) {
+  console.log(describe(s));
+}
+
+const sided: Sided = { area: () => 4, sides: 4 };
+const s2: Shape = sided;
+console.log((s2 as Sided).sides, (s2 as Sided).area());
+const same: Shape = shapes[0];
+console.log((same as Named) === (same as Named), (same as Named) === (shapes[0] as Named));
+
+interface Source<T> {
+  get(): T;
+}
+
+interface Labeled<T> extends Source<T> {
+  label(): string;
+}
+
+class Cell<T> implements Labeled<T> {
+  v: T;
+  constructor(v: T) {
+    this.v = v;
+  }
+  get(): T {
+    return this.v;
+  }
+  label(): string {
+    return "cell";
+  }
+}
+
+class Sub extends Cell<number> {
+  override label(): string {
+    return "sub";
+  }
+}
+
+const xs: Source<number>[] = [
+  new Cell(1),
+  new Sub(2),
+  { get: () => 3, label: () => "lit" } as Labeled<number>,
+];
+let out = "";
+for (const s of xs) {
+  const l = s as Labeled<number>;
+  out += l.label() + l.get() + " ";
+}
+console.log(out.trim());
+const maybe: Source<number> | undefined = xs[1];
+if (maybe) {
+  console.log((maybe as Labeled<number>).label());
+}
+const strs: Source<string> = new Cell("a");
+console.log((strs as Labeled<string>).label(), (strs as Labeled<string>).get());

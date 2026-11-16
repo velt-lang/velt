@@ -44,8 +44,9 @@ impl FnCx<'_, '_> {
     }
 
     /// Are `a` and `b` (or what they hold besides `null`/`undefined`) two interfaces, one
-    /// extending the other (`Node` and `Comment`)? Such values don't convert to each other yet
-    /// (`iface_notes`), so `===` compares them as `any` values: the object each points at.
+    /// extending the other (`Node` and `Comment`)? Such values don't convert to each other
+    /// implicitly (`iface_notes`); `as` checks one at run time ([`Self::related_iface_cast`]), and
+    /// `===` compares them as `any` values: the object each points at.
     pub(super) fn related_ifaces(&self, a: TyId, b: TyId) -> bool {
         let iface = |t: TyId| {
             let t = self.cx.ty.core(t).unwrap_or(t);
@@ -71,13 +72,16 @@ impl FnCx<'_, '_> {
                 .any(|p| p.iface == base || self.iface_extends(p.iface, base, depth + 1))
     }
 
-    /// `e as B` for an `A` value where `B` extends `A`, both of std's `lib.dom` interfaces
-    /// (`node as HTMLElement`), which `tsc` allows since one is assignable to the other: the value
-    /// as an `any`, converted to `B` (`Err`: not such a pair). No such value exists on a server, so
-    /// the conversion never runs; between other interfaces it is still `cannot cast`, since the
-    /// check would stop a program where Node goes on. `B` may be a union of such interfaces
-    /// (`dom as HTMLInputElement | HTMLTextAreaElement`, #379): the value converts to the first,
-    /// as the member of the union it is then.
+    /// `e as B` for an `A` value where `B` extends `A` (`shape as Named`), which `tsc` allows since
+    /// one is assignable to the other: the value as an `any`, converted to `B` (`Err`: not such a
+    /// pair). The conversion checks at run time that the object implements `B`, and a value that
+    /// doesn't stops the program with a `TypeError` (#379). Node goes on there and fails only when
+    /// a member `B` adds is used; so outside std's `lib.dom` (whose values a server never holds) `B`
+    /// must add a required member, which such a value lacks. A `B` that adds only optional ones
+    /// stays `cannot cast`: Node adds them when written, and a Velt object has no room for them.
+    /// For `lib.dom`, `B` may be a union of such interfaces (`dom as HTMLInputElement |
+    /// HTMLTextAreaElement`): the value converts to the first, as the member of the union it is
+    /// then ([`Self::related_dom_union`]).
     pub(super) fn related_iface_cast(
         &mut self,
         h: hir::Expr,
@@ -90,7 +94,7 @@ impl FnCx<'_, '_> {
         }
         if !self.related_ifaces(h.ty, target)
             || self.cx.ty.opt_payload(target).is_some()
-            || !self.both_std_dom(h.ty, target)
+            || !(self.both_std_dom(h.ty, target) || self.adds_required(h.ty, target))
         {
             return Err(h);
         }
@@ -102,7 +106,10 @@ impl FnCx<'_, '_> {
     }
 
     /// The first member of `target` when `target` is a union of std `lib.dom` interfaces each
-    /// related to `from`'s (`related_ifaces`), and `from` is one too.
+    /// related to `from`'s (`related_ifaces`), and `from` is one too. Only there: converting to
+    /// the first member would stop a program whose value is another member, and no `lib.dom`
+    /// value exists on a server. Other unions stay `cannot cast` (no run-time test of an `any` for
+    /// one of several interfaces yet, #924).
     fn related_dom_union(&mut self, from: TyId, target: TyId) -> Option<TyId> {
         if self.cx.ty.opt_payload(target).is_some() {
             return None;
@@ -115,6 +122,14 @@ impl FnCx<'_, '_> {
             true => members.first().copied(),
             false => None,
         }
+    }
+
+    /// Does interface type `to` declare a required member that `from` lacks (`name()` of `Named`
+    /// over `Shape`)? A value lacking one is not a `to` in Node either ([`Self::related_iface_cast`]).
+    fn adds_required(&mut self, from: TyId, to: TyId) -> bool {
+        let have = self.object_members(from).unwrap_or_default();
+        let want = self.object_members(to).unwrap_or_default();
+        (want.iter()).any(|m| !m.2 && !have.iter().any(|h| h.0 == m.0))
     }
 
     /// Are `a` and `b` (or what they hold besides `null`/`undefined`) both of std's `lib.dom`

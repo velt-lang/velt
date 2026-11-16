@@ -1,0 +1,19 @@
+// Interface assertions Velt doesn't check yet (#379): to a union of extensions (there is no
+// run-time test of a value for one of several interfaces yet), and to an extension with
+// `undefined`.
+interface Shape {
+  area(): number;
+}
+
+interface Named extends Shape {
+  name(): string;
+}
+
+interface Sided extends Shape {
+  sides: number;
+}
+
+const s: Shape = { area: () => 1, name: () => "n" } as Named;
+const u = s as (Named | Sided);
+const m = s as (Named | undefined);
+console.log(u, m);
