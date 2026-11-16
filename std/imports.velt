@@ -66,6 +66,12 @@ export const imports: Imports = {
     win32: "./lang/hooks/thread_win32.velt",
     default: "./lang/hooks/thread_none.velt",
   },
+  // `posix_spawn_file_actions_addopen`, whose `mode_t` is 16 bits on macOS and 32 on Linux
+  // (std/process/child/spawn_posix.velt, which only those load).
+  "#spawn-open": {
+    darwin: "./process/child/spawn_open_darwin.velt",
+    default: "./process/child/spawn_open_linux.velt",
+  },
   // velt/net's TCP functions: the runtime's (std/net/rt.velt), or, compiled with the executor in
   // Velt (`VELT_SCHEDULER=std`, the `std-scheduler` condition), non-blocking sockets on its
   // reactor (std/net/tcp_sched.velt), which hands the runtime's handles (TLS, `fetch`'s pool) and

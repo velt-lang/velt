@@ -17,7 +17,7 @@ import * as fs from "velt/net/fd_socket";
 import * as sp from "velt/process/child/spawn_posix";
 import { CommandSpec } from "velt/process/child/spec";
 
-declare c("c") function waitpid(pid: i32, status: Ptr<u8>, options: i32): i32;
+declare c("c") function waitpid(pid: i32, status: Ptr<i32>, options: i32): i32;
 declare c("c") function write$child(fd: i32, buf: Ptr<u8>, n: usize): isize;
 /** The address of a byte array's elements (a copy of nothing returns its destination). */
 declare c("c") function memset$bytes(dst: u8[], c: i32, n: usize): Ptr<u8>;
@@ -149,7 +149,7 @@ export function reapNow(rec: usize): bool {
   if (m.load(rec + C_STATUS) === RUNNING) {
     const st = m.zeroed(16);
     // SAFETY: room for the status `int`.
-    const got = unsafe { waitpid(m.ld32(rec + C_PID) as i32, m.ptr(st), WNOHANG) };
+    const got = unsafe { waitpid(m.ld32(rec + C_PID) as i32, m.ptrTo<i32>(st), WNOHANG) };
     const w = m.ld32(st);
     m.release(st, 16);
     if (got > 0) {

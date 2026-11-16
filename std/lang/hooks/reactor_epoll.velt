@@ -27,6 +27,8 @@ export const SEND_FLAGS: i32 = 0x4000;
 export const SOCKET_FLAGS: i32 = 0x80800;
 /** `sysconf`'s name of the online cores (`_SC_NPROCESSORS_ONLN`; 0: none). */
 export const SC_NPROCESSORS_ONLN: i32 = 84;
+/** `pthread_attr_setdetachstate`'s detached state (`PTHREAD_CREATE_DETACHED`; 0: no pthreads). */
+export const PTHREAD_CREATE_DETACHED: i32 = 1;
 
 // Readiness bits of an event (sched_io.velt).
 const READ: u32 = 1;
