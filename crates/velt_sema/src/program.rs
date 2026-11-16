@@ -185,8 +185,12 @@ fn build(
     // EXPERIMENT (#2943 M3): a build from std's unit on disk is made of what lowering may reach
     // (`units::reach`); its set is lowering's live set, which lowering checks against.
     if cx.std_from_disk && !cx.check_only {
-        let set = crate::timings::pass("program: reach", || {
-            crate::units::reach::program_set(&mut cx, entry)
+        // `VELT_UNITS_LIVE_WALK=1`: lazy std's live walk instead, from its own roots (the
+        // program's code, the named helpers, the hooks its constructs demand).
+        let lazy_walk = std::env::var_os("VELT_UNITS_LIVE_WALK").is_some();
+        let set = crate::timings::pass("program: reach", || match lazy_walk {
+            true => body::lazy_std::walk_units_program(&mut cx, entry),
+            false => crate::units::reach::program_set(&mut cx, entry),
         });
         cx.program_set = Some(std::rc::Rc::new(set));
         cx.program_new_from = cx.info.len().max(cx.defs.len());

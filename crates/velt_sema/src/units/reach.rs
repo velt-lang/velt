@@ -14,7 +14,7 @@
 //! payloads, and for each interface its implementations (and the implementations of every live
 //! type).
 
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::ctx::{Ctx, Item};
 use crate::defs::DefInfo;
@@ -111,6 +111,33 @@ pub(crate) fn program_set(cx: &mut Ctx, entry: Option<DefId>) -> FxHashSet<DefId
     }
     if walk.catches {
         crate::body::lazy_std::note_catch_unwind(cx);
+    }
+    if std::env::var_os("VELT_UNITS_REACH_STATS").is_some() {
+        let std_defs = (walk.live.iter()).filter(|d| (d.0 as usize) < base).count();
+        let by_module = {
+            let mut m: FxHashMap<&str, usize> = FxHashMap::default();
+            for d in walk.live.iter().filter(|d| (d.0 as usize) < base) {
+                let module = match &cx.info[d.0 as usize] {
+                    DefInfo::Fn(f) => f.module,
+                    DefInfo::Global(g) => g.module,
+                    DefInfo::Adt(a) => a.module,
+                    _ => continue,
+                };
+                *m.entry(cx.modules[module].path.as_str()).or_default() += 1;
+            }
+            let mut v: Vec<_> = m.into_iter().collect();
+            v.sort_by(|a, b| b.1.cmp(&a.1));
+            v.truncate(25);
+            v
+        };
+        eprintln!(
+            "velt-units: reach: {} defs ({std_defs} below the unit base {base}, of {})",
+            walk.live.len(),
+            cx.info.len()
+        );
+        for (m, n) in by_module {
+            eprintln!("velt-units: reach:   {n:6} {m}");
+        }
     }
     walk.live
 }

@@ -92,6 +92,9 @@ pub(crate) struct Live {
     /// Live code runs on the executor ([`Walk::tasks`]): the executor in Velt's hooks are needed
     /// (#2649 P3(a)).
     pub(super) tasks: bool,
+    /// EXPERIMENT (#2943 M3): a build from std's unit on disk walked this set
+    /// ([`walk_units_program`]): the hooks are those its constructs demand.
+    pub(super) units: bool,
 }
 
 impl Live {
@@ -169,7 +172,7 @@ impl Walk {
 pub(crate) fn demanded(cx: &Ctx) -> HookSet {
     #[cfg(test)]
     tests::note_demanded(cx);
-    match cx.lazy.modules.is_empty() {
+    match cx.lazy.modules.is_empty() && !cx.lazy.live.units {
         true => {
             let mut all = HookSet::default();
             // A build by units notes a live `catchUnwind` ([`note_catch_unwind`]).
@@ -184,6 +187,36 @@ pub(crate) fn demanded(cx: &Ctx) -> HookSet {
         }
         false => HookSet::demanded_by(demanded_for(cx.lazy.live.present)),
     }
+}
+
+/// EXPERIMENT (#2943 M3): the definitions of a build from std's unit on disk, by lazy std's live
+/// walk from its own roots ([`seed`]: the program's code, the module slots, the helpers lowering
+/// looks up by name) and the hooks its constructs demand; all of std is checked already, so
+/// nothing is checked here. [`demanded`] then gives those hooks only.
+pub(crate) fn walk_units_program(cx: &mut Ctx, entry: Option<DefId>) -> FxHashSet<DefId> {
+    cx.lazy.live = Live {
+        units: true,
+        ..Live::default()
+    };
+    if let Some(e) = entry {
+        mark(cx, e);
+    }
+    for d in cx.module_slots.clone() {
+        mark(cx, d);
+    }
+    super::units_restart(cx);
+    // Lazy std's loop: the walk, the hooks the constructs demand, and those that wait for what
+    // the program does (the executor's, the record and number-text hooks, C's exports).
+    super::reach(cx);
+    let live = cx.lazy.live.live.clone();
+    if std::env::var_os("VELT_UNITS_REACH_STATS").is_some() {
+        eprintln!(
+            "velt-units: live walk: {} defs of {}",
+            live.len(),
+            cx.info.len()
+        );
+    }
+    live
 }
 
 /// EXPERIMENT (#2943 M3): a build by units reaches a `catchUnwind` (`units::reach`): std's panic
@@ -808,7 +841,7 @@ crate::units::codec::structs! {
     Live {
         check, seeded, live, todo, types, adts, methods, impls, kinds, ifaces, gated, opened,
         waiting, texts, dynamic_classes, finishing, present, assumed, late, demanded, int_text,
-        prints_float, tasks,
+        prints_float, tasks, units,
     }
 }
 crate::units::codec::enums! {

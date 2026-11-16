@@ -42,7 +42,7 @@ pub(crate) use hook_stubs::stub as hook_stub;
 
 pub(crate) use live::{
     assume, demanded as hooks_demanded, finish as finish_live, live_defs, note_catch_unwind,
-    reach_again, too_late, Assumed,
+    reach_again, too_late, walk_units_program, Assumed,
 };
 
 /// Std modules (path prefixes) whose free functions lowering looks up by name (`velt_vir`
@@ -341,7 +341,8 @@ pub(crate) fn deferred(cx: &Ctx, d: DefId) -> bool {
 /// Work the live set out, with the definitions it adds checked, and the hooks that wait for what
 /// the program does, until nothing new is reached. Each definition is walked once.
 pub(crate) fn reach(cx: &mut Ctx) {
-    if cx.lazy.modules.is_empty() {
+    // A build from std's unit on disk walks without a module table (`live::walk_units_program`).
+    if cx.lazy.modules.is_empty() && !cx.lazy.live.units {
         return;
     }
     loop {
@@ -435,6 +436,12 @@ const SCHED_CELL_HOOKS: &[&str] = &[
 /// when live code runs on it (`live::Live::tasks`: async code, or an extern the executor serves). A
 /// program without such code doesn't load the executor; lowering then keeps the runtime's
 /// module state (velt_vir `module_state.rs`), and never calls a task or timer hook (#2649 P3(a)).
+/// EXPERIMENT (#2943 M3): a build from std's unit on disk starts the hooks that wait for what the
+/// program does again: none is live yet.
+pub(super) fn units_restart(cx: &mut Ctx) {
+    (cx.lazy.record_hooks, cx.lazy.sched_hooks) = (false, false);
+}
+
 fn sched_hooks(cx: &mut Ctx, found: &mut Vec<DefId>) {
     let wanted = cx.lazy.live.tasks && cx.lazy.native_executor;
     if cx.lazy.sched_hooks || !wanted {

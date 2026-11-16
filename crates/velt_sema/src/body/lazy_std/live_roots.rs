@@ -75,10 +75,16 @@ fn seed_std(cx: &mut Ctx, from: usize) {
         {
             continue;
         }
-        let named = match cx.lazy.modules[f.module].named {
-            super::super::Named::All => true,
-            super::super::Named::Helpers => super::super::is_helper(&f.name),
-            super::super::Named::None => false,
+        // A build from std's unit on disk has no lazy module table (`live::walk_units_program`).
+        let named = match cx.lazy.modules.get(f.module).map(|m| &m.named) {
+            Some(super::super::Named::All) => true,
+            Some(super::super::Named::Helpers) => super::super::is_helper(&f.name),
+            Some(super::super::Named::None) => false,
+            None => match super::super::named_module(&m.path) {
+                Some(true) => true,
+                Some(false) => super::super::is_helper(&format!("{}::{}", m.path, f.name)),
+                None => false,
+            },
         };
         if named || hooks.contains(&d) {
             match gate(cx, f) {
