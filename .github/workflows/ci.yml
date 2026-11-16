@@ -326,10 +326,11 @@ jobs:
       VELT_VIR_IDENTITY: ${{ needs.queue-plan.outputs.vir_identity }}
       # The WebAssembly goldens run in shards of their own (`queue-golden`).
       VELT_WASM_GOLDENS: skip
-    # The slowest job (Windows) took 58 to 74 minutes on 2026-11-07, and 75 on a slower runner,
-    # cancelled in its last steps with every test passing so far: a runner that hangs still fails
-    # the queue entry well within two hours.
-    timeout-minutes: 100
+    # The slowest job (Windows) took 58 to 74 minutes on 2026-11-07, and 75 on a slower runner;
+    # on 2026-11-16 it reached 101 minutes (tests 38 of them) and was cancelled in its doctests
+    # with every test passing. A runner that hangs still fails the queue entry well within
+    # two and a half hours.
+    timeout-minutes: 130
     steps:
       # With its parent: std-lint compares the allow lists with the change's base (`HEAD^1`).
       - uses: actions/checkout@v4
