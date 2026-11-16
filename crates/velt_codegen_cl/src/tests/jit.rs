@@ -164,7 +164,7 @@ pub(super) fn stub_symbols() -> [(&'static str, *const u8); 27] {
         ("velt_rt_write_str", rt_write_str as *const u8),
         ("velt_test_write_i64", rt_write_i64 as *const u8),
         ("velt_test_write_u64", rt_write_u64 as *const u8),
-        ("velt_rt_write_f64", rt_write_f64 as *const u8),
+        ("velt_test_write_f64", rt_write_f64 as *const u8),
         ("velt_rt_write_bool", rt_write_bool as *const u8),
         ("velt_rt_write_byte", rt_write_byte as *const u8),
         ("velt_rt_flush", rt_flush as *const u8),

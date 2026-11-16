@@ -4,7 +4,7 @@
 //! Keys are the column names verbatim (escaped once per query, not per row), so a column maps
 //! to the field of the same name; `AS` renames. Encoding: integers as exact i64 digits (decoded
 //! losslessly by `read_i64`, even beyond 2^53); floats in their shortest round-trip form
-//! (ryu, integral values as integers), with NaN and ±Infinity as `null`; text escaped like
+//! (shortest digits, integral values as integers), with NaN and ±Infinity as `null`; text escaped like
 //! `JSON.stringify` (invalid UTF-8 becomes U+FFFD); blobs as arrays of byte values (a `u8[]`).
 
 use crate::json_escape::push_json_string;
@@ -138,8 +138,8 @@ impl<O: Out> RowWriter<O> {
 
     /// A float (`null` if not finite: JSON has no NaN or Infinity). Only the decoder reads this
     /// text, so it need not look like JavaScript's: an integral value within ±2^53 is written
-    /// as an integer (it still decodes into an integer field), anything else as ryu's shortest
-    /// round-trip form as is (`1.5`, `1e-7`), skipping `push_f64`'s JS-style reshaping.
+    /// as an integer (it still decodes into an integer field), anything else in its shortest
+    /// round-trip form (`push_f64`'s).
     pub fn float(&mut self, v: f64) {
         self.key();
         if !v.is_finite() {
@@ -147,8 +147,7 @@ impl<O: Out> RowWriter<O> {
         } else if v.fract() == 0.0 && v.abs() < MAX_EXACT_INT {
             crate::fmt::push_i64(&mut self.buf, v as i64);
         } else {
-            self.buf
-                .extend(ryu::Buffer::new().format_finite(v).as_bytes());
+            crate::fmt::push_f64(&mut self.buf, v);
         }
     }
 

@@ -71,8 +71,8 @@ lowering calls them only where it has a value of their type, which makes them li
 
 Two kinds of hook wait for what the program does, because lowering can do without them: the record
 hooks (`RECORD_HOOKS`, a conversion to a record whose hooks are unchecked stays a `TypeError`) and the
-float hooks (`ON_DEMAND_FLOAT`, std's own text conversions use the runtime's printer where one is
-unchecked). Their walk waits until `reach` finds that the program needs them.
+float printing inline at the program's conversions (`ON_DEMAND_FLOAT`; where it is unchecked,
+lowering calls `numberText` / `numberPush`, which reach it by role, prebuilt). Their walk waits until `reach` finds that the program needs them.
 
 ### When the rules have a gap
 
@@ -196,10 +196,11 @@ more with `Format` assumed (`too_late`). Live code is a superset of what lowerin
 own and the std code it reaches (`velt_sema` `body/lazy_std/live.rs`), std's own conversions
 included, so hello world checks none of std's integer printing. The integer hooks (`console.log`'s
 integer writers among them) act as one bit: a program demands none of them or all of them
-(`live_constructs.rs` `demanded_for`). `console.log`'s float writers are not among them: they wait
-for live code that prints a float (`ON_DEMAND_WRITE`, `number_text.rs`), and hold no integer
-printing (whole numbers have a writer of their own), so a program that prints only floats loads
-none.
+(`live_constructs.rs` `demanded_for`). The float hooks (`numberText`, `numberPush`,
+`numberInspectPush`, `console.log`'s float writers) are a bit of their own, `TextFloat`: demanded by
+a conversion, glue or print of a value that may hold a float, and by `Format` and `Dynamic`. The
+float writers hold no integer printing (whole numbers have a writer of their own), so a program
+that prints only floats loads none.
 
 `host_async` is not moved: `velt/host/promise` loads `velt/io/error`, whose `IoError` extends the
 prelude's `Error`, which the rule excludes. It keeps its trigger below until (a2) (#2161 step 4).

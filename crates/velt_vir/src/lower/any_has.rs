@@ -23,7 +23,6 @@ use super::any_has_builtin::{ARRAY_PROTO, FN_OWN_UNKNOWN, FN_PROTO_NAMES, PROMIS
 use super::any_proxy::ProxyKey;
 use super::glue::Glue;
 use super::operand::proj;
-use super::rt::Rt;
 use super::{cint, FnLower};
 use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Terminator, Ty, STR_AGG};
 
@@ -72,7 +71,7 @@ impl FnLower<'_, '_> {
             self.goto(done);
             self.switch_to(n_bb);
             let num = self.any_key_number(&kp);
-            self.call_rt(Rt::StrFromF64, vec![num, ksa.clone()], None);
+            self.float_text_into(num, Place::local(ks));
             self.assign(kslot.clone(), Rvalue::Use(ksa));
             self.goto(done);
             self.switch_to(bad);

@@ -382,7 +382,7 @@ impl FnLower<'_, '_> {
                 NullKey::Num(i) => {
                     let ks = self.temp(Ty::Agg(STR_AGG));
                     let ka = self.addr(Place::local(ks));
-                    self.call_rt(Rt::StrFromF64, vec![i.clone(), ka.clone()], None);
+                    self.float_text_into(i.clone(), Place::local(ks));
                     ka
                 }
             };

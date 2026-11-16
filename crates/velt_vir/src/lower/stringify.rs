@@ -45,6 +45,13 @@ impl FnLower<'_, '_> {
         Operand::Copy(Place::local(out))
     }
 
+    /// `String(v)` of the `f64` `v` into the string at `out` by std's float hook
+    /// (velt/lang/hooks/number_text): what a float converts to where std's float printing isn't
+    /// loaded inline, and the text of a numeric key read through `any` or a proxy.
+    pub(super) fn float_text_into(&mut self, v: Operand, out: Place) {
+        hooks::number_text(self, Construct::TextFloat, ty::F64::arg(v)).emit_to(self, out);
+    }
+
     /// The text of the number, boolean or string `v` (of type `aty`) into the string local
     /// `out`, as `stringify` makes it.
     pub(super) fn scalar_text_into(&mut self, v: Operand, aty: TyId, out: crate::vir::Local) {
@@ -65,11 +72,9 @@ impl FnLower<'_, '_> {
             }
             TyKind::Float(_) => {
                 let v = self.float_as_f64(v, aty);
-                let call = hooks::float_text(self, ty::F64::arg(v.clone()))
-                    .or_else(|| hooks::number_text(self, ty::F64::arg(v.clone())));
-                match call {
+                match hooks::float_text(self, ty::F64::arg(v.clone())) {
                     Some(c) => c.emit_to(self, Place::local(out)),
-                    None => self.call_rt(Rt::StrFromF64, vec![v, o], None),
+                    None => self.float_text_into(v, Place::local(out)),
                 }
             }
             TyKind::Bool => self.call_rt(Rt::StrFromBool, vec![v, o], None),

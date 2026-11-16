@@ -1,22 +1,14 @@
 // velt/lang/hooks (internal): `toExponential`, `toPrecision` and the `toFixed` results past 64
 // bits, in Velt (#2196), with JavaScript's rounding: the exact value rounded to the digits asked
 // for, an exact tie away from zero (velt/lang/number/exact). `toExponential()` without digits
-// takes the shortest digits, those of `String(x)`. std reaches these by role (`hookCall`), so only
-// a program that calls one loads this module and the digit code.
+// takes the shortest digits, those of `String(x)` (velt/lang/number/shortest). std reaches these
+// by role (`hookCall`), so only a program that calls one loads this module and the digit code.
 
-import {
-  arrayTruncate,
-  arrayWithCapacity,
-  noInline,
-  strByteAt,
-  strByteLen,
-} from "velt/lang/intrinsics";
+import { arrayTruncate, arrayWithCapacity, noInline } from "velt/lang/intrinsics";
 import { asciiText } from "velt/lang/number/ascii";
 import { exactDigits, roundDigits } from "velt/lang/number/exact";
-
-// `String(x)`, by the printer `${x}` falls back to: a template here would load std's float
-// printing (velt/lang/number/format) into every program that calls one of these.
-declare function velt_rt_str_from_f64(x: f64): string;
+import { f64Text } from "velt/lang/number/format";
+import { shortest } from "velt/lang/number/shortest";
 
 /** `String(x)` of NaN and the infinities. */
 function special(x: f64): string {
@@ -54,54 +46,29 @@ function rounded(a: f64, n: i64): Rounded {
 
 /**
  * The shortest digits of `a` (above 0, finite) without trailing zeros, and the power of ten of the
- * first: read from `String(a)`, which holds exactly those digits.
+ * first: those of `String(a)` (velt/lang/number/shortest).
  */
 function shortestDigits(a: f64): Rounded {
-  const s = velt_rt_str_from_f64(a);
-  const n = strByteLen(s);
-  const digits: u8[] = arrayWithCapacity(20);
-  let point = false;
-  // Digits before the point, and zeros after it before the first digit that isn't 0.
-  let whole: i64 = 0;
-  let zeros: i64 = 0;
-  let i: usize = 0;
-  while (i < n) {
-    const c = strByteAt(s, i as u64);
-    if (c == 46) {
-      point = true;
-    } else if (c - 48 <= 9) {
-      if (digits.length == 0 && c == 48) {
-        if (point) {
-          zeros++;
-        }
-      } else {
-        digits.push(c);
-        if (!point) {
-          whole++;
-        }
-      }
-    } else {
-      break;
-    }
-    i++;
+  const sh = shortest(a);
+  let m = sh.f;
+  let e = sh.e;
+  while (m % 10 == 0) {
+    m = m / 10;
+    e++;
   }
-  // `e+X` / `e-X`.
-  let exp: i64 = 0;
-  if (i < n) {
-    const neg = strByteAt(s, (i + 1) as u64) == 45;
-    for (let k = i + 2; k < n; k++) {
-      exp = exp * 10 + ((strByteAt(s, k as u64) - 48) as i64);
-    }
-    if (neg) {
-      exp = -exp;
-    }
+  // At most 17 digits: the highest power of ten in `m`, then each digit from the first.
+  let p: u64 = 1;
+  let k: i64 = 1;
+  while (m / p >= 10) {
+    p = p * 10;
+    k++;
   }
-  let k = digits.length;
-  while (k > 1 && digits[k - 1] == 48) {
-    k--;
+  const digits: u8[] = arrayWithCapacity(k as usize);
+  while (p > 0) {
+    digits.push((48 + (m / p) % 10) as u8);
+    p = p / 10;
   }
-  arrayTruncate(digits, k);
-  return { digits, e: (whole > 0 ? whole - 1 : -zeros - 1) + exp };
+  return { digits, e: e + k - 1 };
 }
 
 /** Appends `d.ddd` and `e+X` / `e-X` to `out`. */
@@ -209,7 +176,7 @@ export function toPrecisionText(x: f64, precision: i64): string {
 export function toFixedText(x: f64, digits: i64): string {
   const a = x < 0 ? -x : x;
   if (!(a < 1e21)) {
-    return velt_rt_str_from_f64(x);
+    return f64Text(x);
   }
   // The integer `|x| * 10^digits` rounded: the exact digits down to the place of 10^-digits.
   let n: u8[] = [];

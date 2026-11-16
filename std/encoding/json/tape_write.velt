@@ -3,7 +3,7 @@
 
 import { copyRun, nextEscape, writeString } from "velt/encoding/json/writer";
 import { putDecimal, shortNumber } from "velt/encoding/json/writer_number";
-import { arraySetLen, arrayWithCapacity, strByteLen } from "velt/lang/intrinsics";
+import { arraySetLen, arrayWithCapacity, hookCall, strByteAt, strByteLen } from "velt/lang/intrinsics";
 import {
   ESCAPED,
   ORDERED,
@@ -22,12 +22,10 @@ declare function velt_rt_strbuf_new(cap: u64, out: string);
 
 declare function velt_rt_strbuf_push_u8s(out: string, bytes: u8[], len: u64, units: u64);
 
-declare function velt_rt_bytes_put_f64(bytes: u8[], at: u64, v: f64): u64;
-
 /**
  * `Tape.write`'s byte buffer: it goes to the builder once a round of the walk starts past
- * `OUT_CAP` bytes, and a round writes at most `OUT_ROOM` bytes (a number takes 32 for the
- * runtime's printer), but for strings, which check their own length.
+ * `OUT_CAP` bytes, and a round writes at most `OUT_ROOM` bytes (a number takes at most 25), but
+ * for strings, which check their own length.
  */
 export const OUT_CAP: usize = 2048;
 
@@ -80,7 +78,8 @@ export function textExtra(w: u64, p: u64, len: usize): u64 {
 
 /**
  * A number as `JSON.stringify` writes it, into `buf` at `o` (32 bytes of room); the position
- * after it. From its digits when it has at most 15, else by the runtime's general printer.
+ * after it. From its digits when it has at most 15, else by std's float printing, by role
+ * (`number_shortest`: JSON doesn't load it).
  */
 export function putNumber(buf: u8[], o: usize, x: f64): usize {
   if (x != x || x == Infinity || x == -Infinity) {
@@ -90,9 +89,18 @@ export function putNumber(buf: u8[], o: usize, x: f64): usize {
   if (!d.ok) {
     // More than 15 digits, or out of the plain range: the general printer (not 0, which is an
     // integer).
-    return velt_rt_bytes_put_f64(buf, o as u64, x) as usize;
+    return putAscii(buf, o, hookCall("number_shortest", x));
   }
   return putDecimal(buf, o, d.neg, d.m, d.k);
+}
+
+/** The ASCII text `s` (at most 25 bytes) into `buf` at `o`; the position after it. */
+function putAscii(buf: u8[], o: usize, s: string): usize {
+  const n = strByteLen(s);
+  for (let i: usize = 0; i < n; i++) {
+    buf[o + i] = strByteAt(s, i as u64);
+  }
+  return o + n;
 }
 
 /** `null`, `true` or `false` (kind `k`) into `buf` at `o`; the position after it. */

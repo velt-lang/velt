@@ -183,20 +183,21 @@ fn any_one_construct_demands_and_checks_all_the_integer_hooks() {
     }
 }
 
-/// `console.log` of a float checks its writers (`numberWrite` and `wholeNumberWrite`, velt_common
-/// `ON_DEMAND_WRITE`), but demands no integer hook and checks no integer printing: neither the
-/// integer writer, which `numberWrite` doesn't hold (numrep calls it for a whole number only where
-/// the program has it), nor the text hooks. A program that prints no float leaves the float
-/// writers unchecked (`velt_lsp`'s `demand` test: nor does it load their module).
+/// `console.log` of a float checks its writers (`numberWrite` and `wholeNumberWrite`, demanded by
+/// `TextFloat`), and they hold no integer printing: numrep calls the integer writer for a whole
+/// number only where the program has it. Std's float printing, which they reach by role
+/// (`number_shortest`), is std code checked like any other where the build cache holds no
+/// prebuilt object of it, as here, so this test doesn't ask which integer hooks its table lookups
+/// demand. A program that prints no float leaves the float writers unchecked (`velt_lsp`'s
+/// `demand` test: nor does it load their module).
 #[test]
-fn a_float_printed_checks_its_writer_and_no_integer_hook() {
+fn a_float_printed_checks_its_writers() {
     let number_write = hook_index::number_write;
     for body in [
         "  const x: f64 = 0.5;\n  console.log(x);",
         "  const x: f32 = 0.5;\n  console.error(\"x\", x);",
     ] {
         let p = main_of(body);
-        assert_eq!(demanded(&p), Vec::<&str>::new(), "{body}");
         assert!(
             checked(&p, number_write),
             "numberWrite is not checked:\n{body}"
@@ -205,15 +206,6 @@ fn a_float_printed_checks_its_writer_and_no_integer_hook() {
             checked(&p, hook_index::whole_number_write),
             "wholeNumberWrite is not checked:\n{body}"
         );
-        for i in [
-            hook_index::int_write,
-            hook_index::uint_write,
-            hook_index::int_text,
-            hook_index::uint_text,
-            hook_index::int_push,
-        ] {
-            assert!(!checked(&p, i), "{} is checked:\n{body}", HOOKS[i].name);
-        }
     }
     let p = main_of("  const n: i64 = 7;\n  console.log(n);");
     assert!(

@@ -59,17 +59,23 @@ pub enum Construct {
     /// program goes through std's panic path, which raises Velt's exception when a catch is
     /// active on the thread.
     CatchUnwind,
+    /// A float to text: `ToString` / `TemplateToString` of a value that may hold one, the
+    /// formatting glue of such a value (`console.log`, `inspect`, `String()` of what is no
+    /// scalar), `console.log` of a float, and a numeric key read through `any` or a proxy. Sema
+    /// takes `Dynamic` as this too.
+    TextFloat,
 }
 
 impl Construct {
     /// Every construct, in bit order ([`ConstructSet`]).
-    pub const ALL: [Construct; 6] = [
+    pub const ALL: [Construct; 7] = [
         Construct::TextInt,
         Construct::TextUint,
         Construct::Format,
         Construct::IndexCheck,
         Construct::Dynamic,
         Construct::CatchUnwind,
+        Construct::TextFloat,
     ];
 
     /// The construct as the ICE names it.
@@ -81,6 +87,7 @@ impl Construct {
             Construct::IndexCheck => "IndexCheck (a bounds-checked array index)",
             Construct::Dynamic => "Dynamic (the glue of a value held as any)",
             Construct::CatchUnwind => "CatchUnwind (a call of catchUnwind)",
+            Construct::TextFloat => "TextFloat (a float to text, or glue that may print one)",
         }
     }
 

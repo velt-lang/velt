@@ -587,7 +587,7 @@ fn walk_expr(ty: &crate::types::Types, e: &hir::Expr, w: &mut Walk) {
             callee: Callee::Intrinsic(I::Print | I::PrintErr),
             args,
         } => {
-            // A float is written by `numberWrite`, which waits for this (`number_text.rs`); a
+            // A float is written by `numberWrite`, which this demands (`TextFloat`); a
             // type parameter's instance may be one.
             let float =
                 |k: &TyKind| matches!(k, TyKind::Float(_) | TyKind::Param(_) | TyKind::Op(..));

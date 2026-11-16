@@ -1,0 +1,203 @@
+// Floats as text, as Node prints them (#2196): `String(x)`, a template, `console.log`, an array
+// printed and `JSON.stringify`, for doubles over the whole exponent range (generated, each
+// `m * 2^e`), subnormals, every power of two, the powers of ten, integers near 2^53 and
+// 10^21, -0, NaN and the infinities; then `toString(radix)` for every radix and `toFixed`,
+// `toPrecision` and `toExponential` at every digit count around rounding boundaries.
+
+// MINSTD: every product below 2^47, so exact in a double.
+let seed = 20261116;
+function next(): number {
+  seed = (seed * 48271) % 2147483647;
+  return seed;
+}
+
+// 2^e by halving or doubling (each step exact, also into the subnormals).
+function pow2(e: number): number {
+  let p = 1;
+  if (e >= 0) {
+    for (let i = 0; i < e; i++) {
+      p = p * 2;
+    }
+  } else {
+    for (let i = 0; i < -e; i++) {
+      p = p / 2;
+    }
+  }
+  return p;
+}
+
+// m * 2^e, one halving or doubling at a time (into the subnormals each halving rounds).
+function scale(m: number, e: number): number {
+  let x = m;
+  if (e >= 0) {
+    for (let i = 0; i < e; i++) {
+      x = x * 2;
+    }
+  } else {
+    for (let i = 0; i < -e; i++) {
+      x = x / 2;
+    }
+  }
+  return x;
+}
+
+// A random 53-bit significand with its top bit set: 2^52 + 26 bits * 2^26 + 26 bits.
+function significand(): number {
+  const hi = next() % 67108864;
+  const lo = next() % 67108864;
+  return 4503599627370496 + hi * 67108864 + lo;
+}
+
+function show(x: number): void {
+  const s = String(x);
+  const t = `${x}`;
+  const j = JSON.stringify(x);
+  console.log(s, t === s ? "=" : t, j === s ? "=" : j, x);
+}
+
+console.log("-- special");
+for (const x of [0, -0, NaN, Infinity, -Infinity, 0.1, 0.2, 0.1 + 0.2, 1 / 3, 2 / 3, -1.5]) {
+  show(x);
+}
+console.log([0, -0, NaN, Infinity, -Infinity, 0.5, -0.5]);
+console.log(JSON.stringify([0, -0, NaN, Infinity, -Infinity, 0.5, 1e21, 1e-7]));
+
+console.log("-- random over the exponent range");
+for (let i = 0; i < 1500; i++) {
+  const m = significand();
+  // e from -1126 (deep into the subnormals) to 971 (the largest doubles).
+  const e = (next() % 2098) - 1126;
+  const x = scale(m, e);
+  show(i % 2 == 0 ? x : -x);
+}
+
+console.log("-- random short significands");
+for (let i = 0; i < 300; i++) {
+  const m = next() % 100000;
+  const e = (next() % 200) - 100;
+  show(m * pow2(e));
+}
+
+console.log("-- subnormals");
+const tiny = pow2(-1074);
+for (const k of [1, 2, 3, 4, 5, 7, 9, 10, 99, 1000, 4503599627370495, 4503599627370496]) {
+  show(k * tiny);
+}
+for (let i = 0; i < 100; i++) {
+  show((next() * 2097152 + next() % 2097152) * tiny);
+}
+
+console.log("-- powers of two");
+for (let e = -1074; e <= 1023; e++) {
+  const p = pow2(e);
+  console.log(e, String(p), String(p * 3), `${p * 1.5}`);
+}
+
+console.log("-- powers of ten");
+for (let k = -324; k <= 309; k++) {
+  const p = Number("1e" + k);
+  console.log(k, String(p), String(p * 3), String(-p / 7));
+}
+
+console.log("-- integers near 2^53, 2^64 and 10^21");
+const two53 = pow2(53);
+for (let k = -12; k <= 12; k++) {
+  show(two53 + k);
+  show(two53 * 2 + k * 2);
+}
+for (const x of [
+  pow2(63),
+  pow2(64),
+  pow2(64) - 2048,
+  999999999999999900000,
+  999999999999999999999,
+  1e21,
+  1e21 + 131072,
+  123456789012345680000,
+  1e20,
+  1e-6,
+  1e-7,
+  0.000001,
+  0.0000012345,
+  0.00000012345,
+  1.7976931348623157e308,
+  2.2250738585072014e-308,
+  2.225073858507201e-308,
+  4.9406564584124654e-324,
+  9007199254740993,
+  5e-324,
+]) {
+  show(x);
+}
+
+console.log("-- toString(radix)");
+const radixValues = [
+  0,
+  -0,
+  1,
+  -255,
+  0.5,
+  0.1,
+  -3.75,
+  1 / 3,
+  123456.789,
+  pow2(53) - 1,
+  pow2(70),
+  1e21,
+  1e-7,
+  5e-324,
+  1.7976931348623157e308,
+  NaN,
+  Infinity,
+  -Infinity,
+];
+for (let r = 2; r <= 36; r++) {
+  const parts: string[] = [];
+  for (const x of radixValues) {
+    parts.push(x.toString(r));
+  }
+  console.log(r, parts.join(" "));
+}
+
+console.log("-- toFixed, toPrecision, toExponential");
+const digitValues = [
+  0,
+  -0,
+  0.5,
+  1.5,
+  2.5,
+  -2.5,
+  1.005,
+  1.45,
+  1.55,
+  0.000001234,
+  123.456,
+  999.995,
+  9.995,
+  0.1 + 0.2,
+  1 / 3,
+  123456789.5,
+  5e-324,
+  1e21,
+  1.7976931348623157e308,
+  NaN,
+  -Infinity,
+];
+for (const x of digitValues) {
+  const fixed: string[] = [];
+  const exp: string[] = [];
+  const prec: string[] = [];
+  for (let d = 0; d <= 100; d += 1) {
+    if (d <= 25 || d % 11 == 0 || d == 100) {
+      fixed.push(x.toFixed(d));
+      exp.push(x.toExponential(d));
+    }
+    if (d >= 1 && (d <= 25 || d % 11 == 0 || d == 100)) {
+      prec.push(x.toPrecision(d));
+    }
+  }
+  console.log(String(x), x.toExponential());
+  console.log("  fixed", fixed.join(" "));
+  console.log("  exp", exp.join(" "));
+  console.log("  prec", prec.join(" "));
+}

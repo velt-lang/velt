@@ -127,6 +127,49 @@ impl PB {
         self.add_fn(f.build(vec![]));
     }
 
+    /// The float hooks of templates, `String()` and formatting glue (velt_common `std_hooks.rs`
+    /// `number_text`, `number_push`, `number_inspect_push`), which a hand-built program has no std
+    /// for: each forwards to an extern the interpreter formats with (`velt_test_str_from_f64`,
+    /// `velt_test_strbuf_push_f64`, `velt_test_strbuf_push_inspect_f64`), so these tests keep
+    /// printing floats (#2196). Tests of the hooks themselves are goldens.
+    fn float_hooks(&mut self) {
+        let t = self.t;
+        let extern_fn = |pb: &mut Self, symbol: &str, params: Vec<TyId>, ret: TyId| {
+            let ext = pb.declare();
+            pb.defs[ext.0 as usize] = Some(Def::ExternFn(ExternFnDef {
+                name: symbol.into(),
+                symbol: symbol.into(),
+                params,
+                ret,
+                is_async: false,
+                host: None,
+                c: None,
+                is_decorator: false,
+                span: SP,
+            }));
+            ext
+        };
+        let text = extern_fn(self, "velt_test_str_from_f64", vec![t.f64], t.str);
+        let mut f = FB::new(velt_common::std_hook!(number_text), t.str);
+        let x = f.param("x", t.f64, PassMode::Copy);
+        let body = vec![ret(Some(call(text, vec![f.cp(x)], t.str)))];
+        self.add_fn(f.build(body));
+        for (hook, symbol) in [
+            (velt_common::std_hook!(number_push), "velt_test_strbuf_push_f64"),
+            (
+                velt_common::std_hook!(number_inspect_push),
+                "velt_test_strbuf_push_inspect_f64",
+            ),
+        ] {
+            let ext = extern_fn(self, symbol, vec![t.str, t.f64], t.unit);
+            let mut f = FB::new(hook, t.unit);
+            let buf = f.param("buf", t.str, PassMode::BorrowMut);
+            let x = f.param("x", t.f64, PassMode::Copy);
+            let body = vec![se(call(ext, vec![f.bm(buf), f.cp(x)], t.unit))];
+            self.add_fn(f.build(body));
+        }
+    }
+
     /// The cycle hooks of what `console.log` prints (std/lang/hooks/inspect_cycles.velt), which a
     /// hand-built program has no std for: the programs here print no cyclic graph and no
     /// container of more than 100 entries, so every object is printed (`inspectEnter` is true,
@@ -161,6 +204,7 @@ impl PB {
 
     pub fn finish(mut self) -> Program {
         self.console_writers();
+        self.float_hooks();
         self.inspect_hooks();
         // Sema demands the writers of a program that prints a number; a hand-built program says
         // so here, for the hooks it defines above.
@@ -168,6 +212,10 @@ impl PB {
         for i in [
             velt_common::std_hooks::hook_index::int_write,
             velt_common::std_hooks::hook_index::uint_write,
+            velt_common::std_hooks::hook_index::number_write,
+            velt_common::std_hooks::hook_index::number_text,
+            velt_common::std_hooks::hook_index::number_push,
+            velt_common::std_hooks::hook_index::number_inspect_push,
             velt_common::std_hooks::hook_index::inspect_enter,
             velt_common::std_hooks::hook_index::inspect_circular,
             velt_common::std_hooks::hook_index::inspect_leave,

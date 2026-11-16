@@ -2,7 +2,7 @@
 // std's float printing (velt/lang/number/format: the shortest digits, in Velt). Loaded and checked
 // once the program converts a value that may hold a float (velt_common `ON_DEMAND_MODULES`,
 // `ON_DEMAND_FLOAT`); lowering then prefers these to `numberText`/`numberPush`
-// (velt/lang/hooks/number_text), which send such a float to the runtime's printer.
+// (velt/lang/hooks/number_text), which reach the same printing by role, out of line.
 
 import { f64Text, pushF64 } from "velt/lang/number/format";
 import { intPush, intText, whole } from "velt/lang/hooks/number_text";

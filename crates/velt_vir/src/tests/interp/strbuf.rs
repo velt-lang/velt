@@ -1,8 +1,8 @@
 //! Emulated string builder (rt_abi_async.md §12.1) and `velt_rt_str_eq`. A builder is an owned
 //! `VeltStr`; every push reallocates (simple, and leak/double-free checked like any string).
 
-use super::rt::{inspect_num, js_num};
 use super::Interp;
+use super::rt::{inspect_num, js_num};
 
 /// `JSON.stringify` of a string: quotes and the escapes of §12.1.
 pub(super) fn json_quote(s: &[u8]) -> Vec<u8> {
@@ -55,11 +55,11 @@ impl Interp<'_> {
                 };
                 self.buf_push(a[0], &s);
             }
-            "velt_rt_strbuf_push_f64" => {
+            "velt_test_strbuf_push_f64" => {
                 let text = js_num(f64::from_bits(a[1]));
                 self.buf_push(a[0], text.as_bytes());
             }
-            "velt_rt_strbuf_push_inspect_f64" => {
+            "velt_test_strbuf_push_inspect_f64" => {
                 let text = inspect_num(f64::from_bits(a[1]));
                 self.buf_push(a[0], text.as_bytes());
             }
@@ -68,15 +68,6 @@ impl Interp<'_> {
                     self.heap_free(p);
                 }
                 self.write_bytes(a[0], &[0; 24]);
-            }
-            "velt_rt_strbuf_push_json_f64" => {
-                let v = f64::from_bits(a[1]);
-                let text = if v.is_finite() {
-                    js_num(v)
-                } else {
-                    "null".into()
-                };
-                self.buf_push(a[0], text.as_bytes());
             }
             "velt_rt_strbuf_push_bool" => {
                 let text: &[u8] = if a[1] & 1 == 1 { b"true" } else { b"false" };

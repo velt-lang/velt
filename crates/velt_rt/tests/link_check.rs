@@ -17,13 +17,11 @@ const PRELUDE: &str = r#"
 #include <stdint.h>
 typedef struct { uint8_t* ptr; uint64_t len; uint64_t cap; } VeltStr;
 void velt_rt_write_str(uint32_t, const VeltStr*);
-void velt_rt_write_f64(uint32_t, double);
 void velt_rt_write_bool(uint32_t, uint8_t);
 void velt_rt_write_byte(uint32_t, uint8_t);
 void velt_rt_flush(void);
 void velt_rt_str_concat(const VeltStr*, const VeltStr*, VeltStr*);
 void velt_rt_str_append(VeltStr*, const VeltStr*);
-void velt_rt_str_from_f64(double, VeltStr*);
 void velt_rt_str_drop(VeltStr*);
 int32_t velt_rt_str_cmp(const VeltStr*, const VeltStr*);
 void* velt_rt_alloc(uint64_t, uint64_t);
@@ -31,7 +29,6 @@ void velt_rt_free(void*, uint64_t, uint64_t);
 void velt_rt_panic(const VeltStr*);
 void velt_rt_exit(int32_t);
 int64_t velt_rt_pow_i64(int64_t, int64_t);
-double velt_rt_pow_f64(double, double);
 // An ASCII literal: `w1` packs the UTF-16 length (high half) and the byte length (low half).
 #define LIT(s) { (uint8_t*)(s), ((uint64_t)(sizeof(s) - 1) << 32) | (sizeof(s) - 1), 0 }
 // An integer's decimal digits through `velt_rt_write_str`, as std's `intWrite` writes them (the
@@ -56,20 +53,19 @@ void velt_rt_block_on(PollFn, void*);
 
 const HELLO: &str = r#"
 int32_t velt_main(void) {
-    VeltStr a = LIT("Hello, "), b = LIT("world"), c, f;
+    // Floats' text is std's (velt/lang/number/format): the line keeps them as literals.
+    VeltStr a = LIT("Hello, "), b = LIT("world"), c, f = LIT("0.30000000000000004 1e+21 ");
     velt_rt_str_concat(&a, &b, &c);
     velt_rt_str_append(&c, &b);
     velt_rt_write_str(1, &c); velt_rt_write_byte(1, '\n');
     velt_rt_str_drop(&c);
     write_i64(1, -42); velt_rt_write_byte(1, ' ');
     write_u64(1, 18446744073709551615ull); velt_rt_write_byte(1, ' ');
-    velt_rt_write_f64(1, 0.1 + 0.2); velt_rt_write_byte(1, ' ');
-    velt_rt_write_f64(1, velt_rt_pow_f64(10.0, 21.0)); velt_rt_write_byte(1, ' ');
+    velt_rt_write_str(1, &f);
     velt_rt_write_bool(1, 1); velt_rt_write_byte(1, ' ');
     write_i64(1, velt_rt_pow_i64(2, 62)); velt_rt_write_byte(1, '\n');
-    velt_rt_str_from_f64(1.5e-7, &f);
-    velt_rt_write_str(1, &f); velt_rt_write_byte(1, '\n');
-    velt_rt_str_drop(&f);
+    VeltStr g = LIT("1.5e-7");
+    velt_rt_write_str(1, &g); velt_rt_write_byte(1, '\n');
     void* p = velt_rt_alloc(1024, 16);
     velt_rt_free(p, 1024, 16);
     VeltStr e = LIT("to stderr");

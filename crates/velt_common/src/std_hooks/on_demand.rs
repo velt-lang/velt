@@ -2,17 +2,12 @@
 //! `std_hooks` for size).
 
 /// Lowered hooks that sema checks only once the program's own code converts a value that may hold
-/// a float to text (`velt_sema` `lazy_std`), by their entries' names: the float hooks, whose whole
-/// numbers take std's integer printing, and, where the program loaded it, std's float printing
-/// (velt/lang/number/format, `shortest`, the table of powers of ten). Lowering calls the runtime's
-/// printer where one is unchecked. The integer hooks have no fallback (#2197): sema checks them
-/// where live code has one of their `constructs` ([`crate::hook_demand`]).
-pub const ON_DEMAND_FLOAT: &[&str] = &["number_text", "number_push", "float_text", "float_push"];
-
-/// The lowered hook that sema checks only once live code prints a float (`velt_sema` `lazy_std`):
-/// `console.log`'s float writer and its whole-number writer, which hold no integer hook. Lowering
-/// calls the runtime's printer while they are unchecked.
-pub const ON_DEMAND_WRITE: &[&str] = &["number_write", "whole_number_write"];
+/// a float to text (`velt_sema` `lazy_std`), by their entries' names: std's float printing
+/// (velt/lang/number/format, `shortest`, the table of powers of ten) inline at the program's
+/// conversions. Lowering calls `number_text` / `number_push` where one is unchecked, which sema
+/// checks where live code has a `TextFloat` construct ([`crate::hook_demand`]) and which reach
+/// that printing by role (`number_shortest`, prebuilt).
+pub const ON_DEMAND_FLOAT: &[&str] = &["float_text", "float_push"];
 
 /// Lowered hooks with a fallback that sema checks where live code has one of their `constructs`,
 /// by their entries' names: the shapes std/lang/hooks/inspect.velt writes for every type, which
@@ -48,6 +43,7 @@ pub const ON_DEMAND_MODULES: &[&str] = &[
     "std/lang/hooks/prebuilt_probe",
     "std/lang/hooks/number_digits",
     "std/lang/hooks/number_parse",
+    "std/lang/hooks/number_shortest",
 ];
 
 /// The qualified names of the hooks named in `names` ([`ON_DEMAND_FLOAT`]).

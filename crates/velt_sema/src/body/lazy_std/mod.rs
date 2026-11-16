@@ -189,12 +189,9 @@ pub(crate) struct Lazy {
     record_hooks: bool,
     /// Have [`SCHED_HOOKS`] been reached?
     sched_hooks: bool,
-    /// The program's code converts a value that may hold a float to text: the float hooks are
-    /// reached (`velt_common::std_hooks::ON_DEMAND_FLOAT`).
+    /// The program's code converts a value that may hold a float to text: std's float printing
+    /// is reached (`velt_common::std_hooks::ON_DEMAND_FLOAT`).
     float_text: bool,
-    /// Live code prints a float: `console.log`'s float writer is reached
-    /// (`velt_common::std_hooks::ON_DEMAND_WRITE`).
-    float_write: bool,
     /// The types of the values live code puts into an `any` or an interface value (`ToDyn`),
     /// and whether the program's own code puts a type parameter's value into one.
     dyn_held: FxHashSet<TyId>,
@@ -231,7 +228,6 @@ impl Lazy {
             record_hooks: false,
             sched_hooks: false,
             float_text: false,
-            float_write: false,
             dyn_held: FxHashSet::default(),
             dyn_generic: false,
             cycle_closed: FxHashSet::default(),
@@ -378,7 +374,6 @@ pub(crate) fn reach(cx: &mut Ctx) {
             }
         }
         number_text::reach_hooks(cx, texts, &mut found);
-        number_text::reach_writer(cx, &mut found);
         // A std function C calls (`@export`) is live though no checked code refers to it.
         found.extend(cx.c_exports.iter().map(|e| e.def));
         sched_hooks(cx, &mut found);
