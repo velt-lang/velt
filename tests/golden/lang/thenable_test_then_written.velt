@@ -1,0 +1,19 @@
+// check: no leaks
+// A thenable test through `any` on a function that was given a `then` through `any` (an index
+// with the key, or a computed one, #3050 review): the test asks the function whether it has a
+// `then`, as Node's does, so it sees it; a promise's `then` is a function, and a plain function
+// has none.
+type ViewFn = () => string;
+function isP(r: Promise<ViewFn> | ViewFn): boolean {
+  return typeof (r as any).then === "function";
+}
+function notP(r: Promise<ViewFn> | ViewFn): boolean {
+  return typeof (r as any).then !== "function";
+}
+const f: ViewFn = () => "f";
+(f as any)["then"] = () => {};
+const g: ViewFn = () => "g";
+const k = "th" + "en";
+(g as any)[k] = () => {};
+const h: ViewFn = () => "h";
+console.log(isP(f), isP(g), isP(h), notP(h), isP(Promise.resolve(h)), notP(Promise.resolve(h)));

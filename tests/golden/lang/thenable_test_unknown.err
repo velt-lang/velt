@@ -1,0 +1,2 @@
+thenable_test_unknown.velt:6:18: error: cannot cast `Promise<f64> | () => f64` as `any`
+thenable_test_unknown.velt:10:18: error: cannot cast `Promise<f64> | () => f64` as `unknown`

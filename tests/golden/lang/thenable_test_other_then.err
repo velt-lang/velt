@@ -1,3 +1,1 @@
-thenable_test_other_then.velt:12:18: error: cannot cast `Later | Promise<f64>` as `any`
-thenable_test_other_then.velt:16:18: error: cannot cast `Promise<f64> | () => f64` as `any`
-thenable_test_other_then.velt:20:18: error: cannot cast `Promise<f64> | () => f64` as `unknown`
+thenable_test_other_then.velt:11:18: error: cannot cast `Later | Promise<f64>` as `any`
