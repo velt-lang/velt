@@ -73,10 +73,13 @@ export function heapAlloc(size: u64, align: u64): u64 {
 
 /**
  * The block `p` of `old` bytes (from `heapAlloc` or the runtime, with `align`) grown or shrunk to
- * `size` bytes, what `velt_rt_realloc` does: generated code reallocates only to grow an array, so
- * past the length limit it stops here with the `RangeError` lowering's own checks report.
+ * `size` bytes, what `velt_rt_realloc` does: generated code reallocates only to grow an array (an
+ * empty one too: an `old` of 0 allocates), so past the length limit it stops here with the
+ * `RangeError` lowering's own checks report. Out of line, as the runtime's was: it is the rare
+ * path of every `push`, and inlined there LLVM kept more induction variables in the loop's hot
+ * path (two more instructions per `push` in bench/closures.velt).
  */
-@inline
+@noInline
 export function heapRealloc(p: u64, old: u64, align: u64, size: u64): u64 {
   if (size > MAX_ARRAY_BYTES) {
     arrayTooLong();
