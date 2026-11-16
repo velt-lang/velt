@@ -179,6 +179,7 @@ pub use kept_reload::member_name;
 pub use options::CheckOptions;
 pub use source_module::SourceModule;
 pub use std_load::{LoadFn, Loads, StdBatch, StdLoads};
+pub use throws::closure_site_defs;
 pub use timings::check_rounds;
 pub use visit::rebase_detached_locals;
 

@@ -1,0 +1,33 @@
+// A closure stored into an instance of a generic callable alias written with a type parameter's
+// rest (`Factory<[string], number>` of `((...args: TArgs) => R) & { token: string }`, as sigx's
+// `FactoryFunction`) throws into the site of that written function type, which its variable
+// names, though the structural match of sites can't relate the instance `(string) => number` to
+// `(...args: TArgs) => R` (#3033): calls through the value throw what `f` throws. Node prints
+// the same.
+class E1 extends Error {
+  constructor(m: string) {
+    super(m);
+  }
+}
+
+type Factory<TArgs extends unknown[], R> = ((...args: TArgs) => R) & { token: string };
+
+function make(): Factory<[string], number> {
+  const f = (x: string): number => {
+    if (x === "") {
+      throw new E1("empty");
+    }
+    return x.length;
+  };
+  return Object.assign(f, { token: "t" });
+}
+
+function main(): void {
+  const g = make();
+  console.log(g("abc"), g.token);
+  try {
+    g("");
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+}

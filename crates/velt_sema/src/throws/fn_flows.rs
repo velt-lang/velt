@@ -15,7 +15,87 @@ use super::fn_types::Portable;
 use crate::ctx::Ctx;
 use crate::hir::{DefId, TyId, TyKind};
 
+/// How many closures this process has recorded as throwing into the site their expected
+/// function type's variable names (`Ctx::note_closure_def`): for tests, as `check_rounds`.
+static CLOSURE_DEFS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// [`CLOSURE_DEFS`]'s count so far.
+pub fn closure_site_defs() -> usize {
+    CLOSURE_DEFS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 impl Ctx<'_> {
+    /// The structural matches of this check (`seed_fn_sites`) whose value reached no site
+    /// through its variable: added to their sites.
+    pub(crate) fn flush_structural(&mut self) {
+        for (v, spans, members) in std::mem::take(&mut self.fn_sites.structural) {
+            if self.fn_sites.var_values.contains(&v) {
+                continue;
+            }
+            for s in spans {
+                self.add_to_site(s, &members);
+            }
+        }
+    }
+
+    /// `from` and `to` are function types that differ only in what they throw: `Some(true)`
+    /// when `to` allows every error of `from` (a value converts through a wrapper), else
+    /// `Some(false)`, after adding `from`'s errors to the sites `to` may come from (a value of a
+    /// function type stored into one written without `throws`).
+    pub(crate) fn fn_throws_differ(&mut self, from: TyId, to: TyId) -> Option<bool> {
+        let (
+            TyKind::FnPtr {
+                params: p,
+                ret: r,
+                throws: e,
+                rest: pr,
+            },
+            TyKind::FnPtr {
+                params: q,
+                ret: s,
+                throws: f,
+                rest: qr,
+            },
+        ) = (self.ty.kind(from).clone(), self.ty.kind(to).clone())
+        else {
+            return None;
+        };
+        let promise_err = |cx: &mut Self, t: TyId| match cx.rejection_error(t) {
+            Some(e) => {
+                let never = cx.ty.never;
+                match cx.ty.kind(t) {
+                    TyKind::Promise(v, _) => (*v, Some(e)),
+                    _ => (cx.with_rejection_error(t, never), Some(e)),
+                }
+            }
+            None => (t, None),
+        };
+        let ((rv, re), (sv, se)) = (promise_err(self, r), promise_err(self, s));
+        if p != q || pr != qr || rv != sv || re.is_some() != se.is_some() || (e == f && re == se) {
+            return None;
+        }
+        let have = self.join_errors(Some(e), re);
+        let want = self.join_errors(Some(f), se);
+        if self.error_outside(want, have).is_none() {
+            return Some(true);
+        }
+        if let Some(have) = have {
+            let site = self.target_site(to);
+            self.seed_fn_sites(to, have, site, Some(from));
+        }
+        Some(false)
+    }
+
+    /// The site whose error-set variable is function type `t`'s error type, if it is one
+    /// (`throws::vars`).
+    pub(crate) fn var_site(&self, t: TyId) -> Option<Span> {
+        let TyKind::FnPtr { throws, .. } = self.ty.kind(t) else {
+            return None;
+        };
+        let n = self.err_var(*throws)?;
+        self.fn_sites.vars.get(n as usize).copied()
+    }
+
     /// The type of the parameter or field named at `name` is written at `ty`.
     pub(crate) fn note_written_type(&mut self, name: Span, ty: Span) {
         if name != Span::DUMMY && ty != Span::DUMMY {
@@ -92,8 +172,84 @@ impl Ctx<'_> {
 
     /// The site closure `d` was created for.
     pub(crate) fn closure_site(&self, d: DefId) -> Option<Span> {
+        if let Some(&s) = self.fn_sites.closure_defs.get(&d) {
+            return Some(s);
+        }
         let span = self.fn_info(d).span;
         self.fn_sites.closure_sites.get(&span).copied()
+    }
+
+    /// Closure `d` was checked against function type `exp`: when `exp`'s error type is a
+    /// site's variable, `d` throws into that site (`closure_site`). Not an `async` closure,
+    /// whose errors reject its promise, nor a generator, whose errors come out of `next()`:
+    /// neither throws where it is called.
+    pub(crate) fn note_closure_def(&mut self, d: DefId, exp: Option<TyId>) {
+        let f = self.fn_info(d);
+        if f.is_async || f.is_generator {
+            return;
+        }
+        if let Some(s) = exp.and_then(|t| self.var_site(t)) {
+            CLOSURE_DEFS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.fn_sites.closure_defs.insert(d, s);
+            let span = self.fn_info(d).span;
+            let known = self.fn_sites.found.closure_targets.entry(span).or_default();
+            if !known.contains(&s) {
+                known.push(s);
+            }
+        }
+    }
+
+    /// The site closure `d`, used as a value of function type `used_as`, throws into: the one
+    /// its type's variable named in this check, else the one an earlier check found for its
+    /// span that `used_as` is an instance of, else the site it was stored into.
+    pub(crate) fn closure_site_for(&self, d: DefId, used_as: TyId) -> Option<Span> {
+        if let Some(&s) = self.fn_sites.closure_defs.get(&d) {
+            return Some(s);
+        }
+        let span = self.fn_info(d).span;
+        (self.earlier_closure_site(span, used_as)).or_else(|| self.closure_site(d))
+    }
+
+    /// Of the sites earlier checks found for the closures made at `span`
+    /// (`FnTypeSeeds::closure_targets`), the one whose written type `used_as` is a value of.
+    fn earlier_closure_site(&self, span: Span, used_as: TyId) -> Option<Span> {
+        let earlier = self.fn_sites.seeds.closure_targets.get(&span)?;
+        earlier.iter().copied().find(|&s| {
+            (self.fn_sites.sites.iter()).any(|&(at, g)| {
+                at == s && (self.site_matches(g, used_as, 0) || self.instance_of_site(g, used_as))
+            })
+        })
+    }
+
+    /// Is function type `t` an instance of site type `g`, written in terms of type parameters
+    /// whose rest parameter is one (`(...args: TArgs) => R` at `TArgs = [T1]`)? Only for a site
+    /// already known to be `t`'s: matching every site this way would relate any function type to
+    /// such a site (#3033).
+    pub(super) fn instance_of_site(&self, g: TyId, t: TyId) -> bool {
+        let (
+            TyKind::FnPtr {
+                params: p,
+                ret: r,
+                rest: true,
+                ..
+            },
+            TyKind::FnPtr {
+                params: q, ret: s, ..
+            },
+        ) = (self.ty.kind(g), self.ty.kind(t))
+        else {
+            return false;
+        };
+        let Some((last, fixed)) = p.split_last() else {
+            return false;
+        };
+        matches!(self.ty.kind(*last), TyKind::Param(_))
+            && q.len() >= fixed.len()
+            && fixed
+                .iter()
+                .zip(q)
+                .all(|(a, b)| self.site_matches(*a, *b, 0))
+            && self.site_matches(*r, *s, 0)
     }
 
     /// Values read from site `from` are stored into site `to`.
@@ -377,5 +533,53 @@ impl crate::body::FnCx<'_, '_> {
             return None;
         }
         (self.cx.decl_site(p.span, p.ty)).or_else(|| self.cx.written_range(p.span))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use velt_common::{FileId, Span};
+
+    use crate::ctx::Ctx;
+    use crate::hir::TyKind;
+
+    /// Two closures made at one span (a signature's adapters) throw into different sites; a
+    /// check without variables picks, from the sites earlier checks found for that span, the one
+    /// the closure's type is a value of: `(string) => number`, an instance of `(...args: A) =>
+    /// R`, not of `(ctx: number, ...args: number[]) => R` (#3033).
+    #[test]
+    fn a_closure_made_at_a_shared_span_throws_into_the_site_its_type_is_an_instance_of() {
+        let mut cx = Ctx::new(&[], 0);
+        let ty = &mut cx.ty;
+        let (a, r) = (ty.intern(TyKind::Param(0)), ty.intern(TyKind::Param(1)));
+        let (never, f64_, str_) = (ty.never, ty.f64, ty.str_);
+        let numbers = ty.intern(TyKind::Array(f64_));
+        let rest_site = ty.intern(TyKind::FnPtr {
+            params: vec![a],
+            ret: r,
+            throws: never,
+            rest: true,
+        });
+        let setup_site = ty.intern(TyKind::FnPtr {
+            params: vec![f64_, numbers],
+            ret: r,
+            throws: never,
+            rest: true,
+        });
+        let used = ty.intern(TyKind::FnPtr {
+            params: vec![str_],
+            ret: f64_,
+            throws: never,
+            rest: false,
+        });
+        let at = |lo: u32| Span::new(FileId(0), lo, lo + 10);
+        let (closures, setup, factory) = (at(0), at(100), at(200));
+        cx.fn_sites.sites = vec![(setup, setup_site), (factory, rest_site)];
+        (cx.fn_sites.seeds.closure_targets).insert(closures, vec![setup, factory]);
+        assert_eq!(cx.earlier_closure_site(closures, used), Some(factory));
+        // No earlier site for the span, or none the type is a value of: none.
+        assert_eq!(cx.earlier_closure_site(at(300), used), None);
+        (cx.fn_sites.seeds.closure_targets).insert(closures, vec![setup]);
+        assert_eq!(cx.earlier_closure_site(closures, used), None);
     }
 }

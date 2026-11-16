@@ -25,10 +25,6 @@ use std::sync::Mutex;
 /// first diagnostic message that differs (nothing that depends on the OS).
 const KNOWN: &[(&str, Kind)] = &[
     (
-        "golden/bugs/lower_adapted_closure_kept.velt",
-        Kind::Vir("callsIt state"),
-    ),
-    (
         "golden/lang/any_fn_members.velt",
         Kind::Vir("_V4read_T16bool_20_7c_20f64"),
     ),
