@@ -3,5 +3,6 @@ SIGTERM 143 143
 SIGKILL 137 137
 own 42
 after 42 42
+negative true true true
 cwd 0 true
 ignored 5
