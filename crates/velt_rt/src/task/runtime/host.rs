@@ -1,6 +1,6 @@
 //! The runtime's one host for its Rust glue (#2649 D1): a tokio runtime with one worker thread
 //! and tokio's blocking pool, for everything that still uses tokio's own types (TLS, the HTTP
-//! client's https, child processes and UDP on Windows, file streams, signals, the dev host, the
+//! client's https, child processes on Windows, file streams, signals, the dev host, the
 //! native-package ABI, blocking work). Programs run on the executor in Velt (std/lang/hooks/
 //! sched.velt); the host's I/O and timers wake their tasks across threads.
 

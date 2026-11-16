@@ -80,7 +80,6 @@ velt_rt velt_rt_deep_eq_enter
 velt_rt velt_rt_deep_eq_leave
 velt_rt velt_rt_dev_server_drained
 velt_rt velt_rt_dev_server_stop
-velt_rt velt_rt_dns_lookup
 velt_rt velt_rt_drop_drain
 velt_rt velt_rt_drop_queue
 velt_rt velt_rt_drop_state
@@ -461,12 +460,6 @@ velt_rt velt_rt_timer_turn
 velt_rt velt_rt_timer_unref_due
 velt_rt velt_rt_tla_at
 velt_rt velt_rt_u64_to_radix
-velt_rt velt_rt_udp_bind
-velt_rt velt_rt_udp_close
-velt_rt velt_rt_udp_port
-velt_rt velt_rt_udp_recv_from
-velt_rt velt_rt_udp_send_to
-velt_rt velt_rt_udp_set_broadcast
 velt_rt velt_rt_uncaught_now
 velt_rt velt_rt_uncaught_report
 velt_rt velt_rt_unhandled_defer

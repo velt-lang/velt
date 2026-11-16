@@ -87,9 +87,8 @@ const POOL: &str = "sched__blockingN3run";
 /// them).
 fn assert_std_path(name: &str, exe: &Path, marks: &[&str]) {
     if cfg!(windows) {
-        // A PE executable names no Velt function, and UDP and child processes stay the runtime's
-        // there (`#net-udp`, `#child-rt`): the other suites look for the executor's panic
-        // locations instead.
+        // A PE executable names no Velt function, and child processes stay the runtime's there
+        // (`#child-rt`): the other suites look for the executor's panic locations instead.
         return;
     }
     let bin = std::fs::read(exe).unwrap();

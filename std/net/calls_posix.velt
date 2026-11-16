@@ -43,6 +43,23 @@ export declare c("c") function close$net(fd: i32): i32;
 export declare c("c") function close$io(fd: i32): i32;
 export declare c("c") function recv$net(fd: i32, buf: Ptr<u8>, n: usize, flags: i32): isize;
 export declare c("c") function send$io(fd: i32, buf: Ptr<u8>, n: usize, flags: i32): isize;
+/** A datagram's receive and send (UDP sockets: std/net/udp/udp_sched.velt). */
+export declare c("c") function recvfrom$net(
+  fd: i32,
+  buf: Ptr<u8>,
+  n: usize,
+  flags: i32,
+  addr: Ptr<sockaddr>,
+  len: Ptr<u32>,
+): isize;
+export declare c("c") function sendto$net(
+  fd: i32,
+  buf: Ptr<u8>,
+  n: usize,
+  flags: i32,
+  addr: Ptr<sockaddr>,
+  len: u32,
+): isize;
 export declare c("c") function shutdown$net(fd: i32, how: i32): i32;
 export declare c("c") function shutdown$io(fd: i32, how: i32): i32;
 /** A pipe's read (a child process's: std/process/child/child_sched.velt). */

@@ -17,6 +17,11 @@ import * as m from "velt/lang/hooks/sched_mem";
 const INVALID: usize = 0xffffffffffffffff;
 /** `WSAEMFILE`: no more sockets. */
 const WSAEMFILE: i32 = 10024;
+/** `WSAEMSGSIZE`: a datagram larger than the receive's buffer, which holds its first bytes. */
+const WSAEMSGSIZE: i32 = 10040;
+/** `WSAECONNRESET`, `WSAENETRESET`: an earlier datagram's ICMP error, reported by a receive. */
+const WSAECONNRESET: i32 = 10054;
+const WSAENETRESET: i32 = 10052;
 /** The most one `recv` or `send` passes (its length is an `int`). */
 const MOST: usize = 0x7fffffff;
 /** `FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS`. */
@@ -35,6 +40,7 @@ export declare c type addrinfo;
 // Winsock's own types: a `SOCKET` handle, `int` lengths, and `int *` for a length it writes.
 declare c("c") function socket$win(af: i32, kind: i32, protocol: i32): usize;
 declare c("c") function WSASetLastError$win(e: i32): void;
+declare c("c") function WSAGetLastError$win(): i32;
 declare c("c") function connect$win(s: usize, addr: Ptr<sockaddr>, len: i32): i32;
 declare c("c") function bind$win(s: usize, addr: Ptr<sockaddr>, len: i32): i32;
 declare c("c") function listen$win(s: usize, backlog: i32): i32;
@@ -57,6 +63,22 @@ declare c("c") function getpeername$win(s: usize, addr: Ptr<sockaddr>, len: Ptr<
 declare c("c") function closesocket$win(s: usize): i32;
 declare c("c") function recv$win(s: usize, buf: Ptr<u8>, len: i32, flags: i32): i32;
 declare c("c") function send$win(s: usize, buf: Ptr<u8>, len: i32, flags: i32): i32;
+declare c("c") function recvfrom$win(
+  s: usize,
+  buf: Ptr<u8>,
+  len: i32,
+  flags: i32,
+  from: Ptr<sockaddr>,
+  fromlen: Ptr<i32>,
+): i32;
+declare c("c") function sendto$win(
+  s: usize,
+  buf: Ptr<u8>,
+  len: i32,
+  flags: i32,
+  to: Ptr<sockaddr>,
+  tolen: i32,
+): i32;
 declare c("c") function shutdown$win(s: usize, how: i32): i32;
 declare c("c") function inet_ntop$win(
   family: i32,
@@ -181,6 +203,60 @@ export function send$io(fd: i32, buf: Ptr<u8>, n: usize, flags: i32): isize {
   const len = n > MOST ? MOST : n;
   // SAFETY: `buf` holds `n` bytes.
   return unsafe { send$win(fd as usize, buf, len as i32, flags) } as isize;
+}
+
+/**
+ * A datagram's receive (an unconnected UDP socket's). A datagram larger than the buffer fills it
+ * and fails with `WSAEMSGSIZE` (the rest is dropped); that is the buffer's length here, as the C
+ * library's `recvfrom` cuts it. An earlier send's ICMP error (`WSAECONNRESET`: no one at that
+ * port; `WSAENETRESET`: its time to live ran out) is skipped, as macOS and Linux report none on
+ * such a socket and Node (libuv) ignores them on Windows: the next datagram, or `WSAEWOULDBLOCK`.
+ */
+export function recvfrom$net(
+  fd: i32,
+  buf: Ptr<u8>,
+  n: usize,
+  flags: i32,
+  addr: Ptr<sockaddr>,
+  len: Ptr<u32>,
+): isize {
+  const most = n > MOST ? MOST : n;
+  // The caller's address room, which a failed receive may have shortened.
+  // SAFETY: the caller's length.
+  const room = unsafe { addressLoad<u32>(Ptr.addressOf(len)) };
+  while (true) {
+    // SAFETY: `buf` holds `n` bytes; the caller's address room and its `int` length.
+    const got = unsafe { recvfrom$win(fd as usize, buf, most as i32, flags, addr, asInt(len)) };
+    if (got >= 0) {
+      return got as isize;
+    }
+    // SAFETY: no precondition.
+    const e = unsafe { WSAGetLastError$win() };
+    if (e === WSAEMSGSIZE) {
+      return most as isize;
+    }
+    if (e !== WSAECONNRESET && e !== WSAENETRESET) {
+      return -1;
+    }
+    // SAFETY: as above.
+    unsafe {
+      addressStore<u32>(Ptr.addressOf(len), room);
+    }
+  }
+}
+
+/** A datagram's send (one larger than an `int` fails, as one over 64 KiB does). */
+export function sendto$net(
+  fd: i32,
+  buf: Ptr<u8>,
+  n: usize,
+  flags: i32,
+  addr: Ptr<sockaddr>,
+  len: u32,
+): isize {
+  const most = n > MOST ? MOST : n;
+  // SAFETY: `buf` holds `n` bytes; the caller's address and its length.
+  return unsafe { sendto$win(fd as usize, buf, most as i32, flags, addr, len as i32) } as isize;
 }
 
 export function shutdown$net(fd: i32, how: i32): i32 {
