@@ -1,0 +1,127 @@
+// velt/lang/hooks (tests): the allocator hooks of release builds (heap.velt), run by
+// `velt test std/`: the blocks they give, the zero-size and alignment cases, growth and shrinking,
+// and the length-limit and out-of-memory stops (caught with `catchVeltPanic` where generated code
+// can catch a panic).
+import { describe, expect, it } from "velt/test";
+import { addressLoad, addressStore } from "velt/lang/intrinsics";
+import { canCatchPanics, catchVeltPanic } from "velt/task/unwind";
+import { heapAlloc, heapFree, heapRealloc } from "velt/lang/hooks/heap";
+
+/** The message of the panic `f` ends in (without the location after it), or "" when it returns. */
+function panicOf(f: () => void): string {
+  const m = catchVeltPanic(f);
+  if (m === null) {
+    return "";
+  }
+  const at = m.lastIndexOf(" at ");
+  return at < 0 ? m : m.slice(0, at);
+}
+
+/** Writes `n` words `i * 3 + 1` from `p`. */
+function fill(p: u64, n: u64): void {
+  for (let i: u64 = 0; i < n; i++) {
+    // SAFETY: `p` holds at least `n` words.
+    unsafe {
+      addressStore<u64>((p + i * 8) as usize, i * 3 + 1);
+    }
+  }
+}
+
+/** Whether the `n` words from `p` are what `fill` wrote. */
+function filled(p: u64, n: u64): boolean {
+  for (let i: u64 = 0; i < n; i++) {
+    // SAFETY: as in `fill`.
+    if (unsafe { addressLoad<u64>((p + i * 8) as usize) } != i * 3 + 1) {
+      return false;
+    }
+  }
+  return true;
+}
+
+const LIMIT_MESSAGE =
+  "RangeError: Invalid array length: an array holds at most 2^52 - 1 elements, and its elements at most 2^52 - 1 bytes";
+
+describe("heapAlloc", () => {
+  it("gives a size of 0 no memory: its alignment, which a free of size 0 ignores", () => {
+    expect(heapAlloc(0, 8)).toBe(8);
+    expect(heapAlloc(0, 1)).toBe(1);
+    expect(heapAlloc(0, 64)).toBe(64);
+    heapFree(8, 0, 8);
+    heapFree(0, 0, 1);
+  });
+
+  it("gives distinct blocks aligned as asked", () => {
+    for (const align of [1, 2, 4, 8, 16, 32, 64, 4096] as u64[]) {
+      const a = heapAlloc(24, align);
+      const b = heapAlloc(24, align);
+      expect(a != b).toBe(true);
+      expect(a % align).toBe(0);
+      expect(b % align).toBe(0);
+      fill(a, 3);
+      fill(b, 3);
+      expect(filled(a, 3) && filled(b, 3)).toBe(true);
+      heapFree(a, 24, align);
+      heapFree(b, 24, align);
+    }
+  });
+
+  it("stops the program when there is no block that large", () => {
+    if (!canCatchPanics()) {
+      return;
+    }
+    expect(panicOf(() => heapAlloc(1152921504606846976, 8))).toBe(
+      "memory allocation of 1152921504606846976 bytes failed",
+    );
+    expect(panicOf(() => heapAlloc(1152921504606846976, 64))).toBe(
+      "memory allocation of 1152921504606846976 bytes failed",
+    );
+  });
+});
+
+describe("heapRealloc", () => {
+  it("grows and shrinks a block, keeping its contents", () => {
+    for (const align of [8, 64] as u64[]) {
+      let p = heapAlloc(16, align);
+      fill(p, 2);
+      p = heapRealloc(p, 16, align, 1048576);
+      expect(p % align).toBe(0);
+      expect(filled(p, 2)).toBe(true);
+      fill(p, 131072);
+      p = heapRealloc(p, 1048576, align, 32);
+      expect(filled(p, 4)).toBe(true);
+      heapFree(p, 32, align);
+    }
+  });
+
+  it("allocates for an empty block and frees for a size of 0", () => {
+    const p = heapRealloc(8, 0, 8, 40);
+    expect(p != 8).toBe(true);
+    fill(p, 5);
+    expect(heapRealloc(p, 40, 8, 0)).toBe(8);
+    expect(heapRealloc(16, 0, 16, 0)).toBe(16);
+  });
+
+  it("stops past the length limit with the RangeError of an array that long", () => {
+    if (!canCatchPanics()) {
+      return;
+    }
+    const p = heapAlloc(16, 8);
+    expect(panicOf(() => heapRealloc(p, 16, 8, 4503599627370496))).toBe(LIMIT_MESSAGE);
+    expect(panicOf(() => heapRealloc(8, 0, 8, 9223372036854775808))).toBe(LIMIT_MESSAGE);
+    heapFree(p, 16, 8);
+  });
+
+  it("stops the program when the block can't grow that large", () => {
+    if (!canCatchPanics()) {
+      return;
+    }
+    const p = heapAlloc(16, 8);
+    expect(panicOf(() => heapRealloc(p, 16, 8, 4503599627370495))).toBe(
+      "memory allocation of 4503599627370495 bytes failed",
+    );
+    // mimalloc keeps the block when it can't grow it.
+    fill(p, 2);
+    expect(filled(p, 2)).toBe(true);
+    heapFree(p, 16, 8);
+  });
+});

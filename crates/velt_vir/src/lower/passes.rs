@@ -80,6 +80,7 @@ pub(super) fn lower_program_kept<'h>(
         cx.value_params = value_params.take();
         cx.native_inits = opts.native_inits.to_vec();
         cx.cell_checks = opts.cell_checks;
+        cx.heap_hooks = opts.heap_hooks;
         cx.target = opts
             .target
             .map_or_else(crate::c_abi::host_triple, str::to_string);

@@ -514,6 +514,21 @@ fn compile_to_vir_linking(
     lower_checked(sess, opts, dest, checked)
 }
 
+/// Whether generated code allocates with mimalloc directly, through std's hooks
+/// (`velt_vir::LowerOptions::heap_hooks`, #2196), rather than through the runtime's allocator:
+/// release builds for native targets. Not under the JIT (`velt dev`) nor on WebAssembly, whose
+/// runtimes keep their own; nor when the build asks a debug runtime to check or count every block
+/// (`VELT_RT_DEBUG_ALLOC=1`, `VELT_RC_STATS=1` set for the build), since its Rust allocates and
+/// frees blocks that generated code also uses.
+fn heap_hooks(opts: &BuildOptions, dest: VirFor, target: &str) -> bool {
+    let set = |name: &str| std::env::var_os(name).is_some_and(|v| v == "1");
+    opts.release
+        && dest != VirFor::Jit
+        && !velt_codegen_llvm::is_wasm(target)
+        && !set("VELT_RT_DEBUG_ALLOC")
+        && !set("VELT_RC_STATS")
+}
+
 /// Lowering, verification and the optimizer for a checked program (`compile_to_vir_linking`).
 fn lower_checked(
     sess: &mut Session,
@@ -562,6 +577,7 @@ fn lower_checked(
         no_cpu_extensions: Backend::of_build(opts) == Backend::Cranelift,
         counted_seed: seed_in.as_ref(),
         jit: dest == VirFor::Jit,
+        heap_hooks: heap_hooks(opts, dest, &target),
     };
     let mut dev_opt = None;
     let lowered = match warm::lower_kept(sess, &mut hir, &lower_opts, seed_in.is_some()) {

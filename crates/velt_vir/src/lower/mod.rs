@@ -251,6 +251,9 @@ struct Cx<'h> {
     /// Report every use of a captured variable's cell to the debug runtime (cells.rs,
     /// `LowerOptions::cell_checks`).
     cell_checks: bool,
+    /// Lower std's allocator hooks with the first runtime allocator call of each kind
+    /// (`LowerOptions::heap_hooks`).
+    heap_hooks: bool,
     /// The target triple, for C and host functions (`LowerOptions::target`).
     target: String,
     /// CPU checks known while lowering (cpu_checks.rs).
