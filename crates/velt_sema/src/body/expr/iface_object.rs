@@ -479,10 +479,10 @@ impl FnCx<'_, '_> {
         let this_of = |j: u32| takes[j as usize].then_some((dyn_self, impl_index));
         let setters = super::iface_object_setters::literal_setters(
             self.cx,
-            (iface, methods.len()),
+            (iface, &niargs, methods.len()),
             &slots,
             &field_tys,
-            (d, self_ty),
+            (d, self_ty, impl_index),
             &this_of,
             span,
         );

@@ -112,6 +112,9 @@ fn iface_def(cx: &mut Ctx, d: DefId) -> InterfaceDef {
         true => cx.setter_fields(d),
         false => vec![],
     };
+    // A method written as a property: one setter per method, after the field setters
+    // (`iface_method_writes`).
+    let method_setters = cx.methods_written(d);
     let i = cx.iface(d).expect("ICE: interface info");
     InterfaceDef {
         name: i.qual_name.clone(),
@@ -153,6 +156,14 @@ fn iface_def(cx: &mut Ctx, d: DefId) -> InterfaceDef {
                 promise: false,
                 throws: None,
             }))
+            .chain(
+                (i.methods.iter().filter(|_| method_setters)).map(|m| InterfaceMethodDef {
+                    name: format!("<set {}()>", m.name),
+                    default: None,
+                    promise: false,
+                    throws: None,
+                }),
+            )
             .collect(),
         span: i.span,
     }

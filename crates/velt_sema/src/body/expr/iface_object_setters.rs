@@ -11,14 +11,26 @@ use crate::iface_writes::SetterSrc;
 /// slots of `crate::iface_writes`: a plain value in its field of struct `d`, a `get f()` through
 /// the `set f(v)` stored next to it, or missing.
 pub(super) fn literal_setters(
-    cx: &crate::ctx::Ctx,
-    (iface, n_methods): (DefId, usize),
+    cx: &mut crate::ctx::Ctx,
+    (iface, args, n_methods): (DefId, &[TyId], usize),
     slots: &[Option<Slot>],
     field_tys: &[(String, TyId)],
-    (d, self_ty): (DefId, TyId),
+    (d, self_ty, impl_index): (DefId, TyId, u32),
     this_of: &dyn Fn(u32) -> Option<(TyId, u32)>,
     span: Span,
 ) -> Vec<SetterSrc> {
+    let uses_this: Vec<bool> = (0..field_tys.len() as u32)
+        .map(|j| this_of(j).is_some())
+        .collect();
+    let msrcs = literal_method_sources(
+        cx,
+        (iface, args, n_methods),
+        slots,
+        field_tys,
+        &uses_this,
+        (d, self_ty),
+    );
+    cx.note_method_sources(impl_index, msrcs);
     let names: Vec<(String, bool)> = cx.iface(iface).map_or(vec![], |i| {
         i.fields
             .iter()
@@ -84,4 +96,36 @@ fn getter_ret(
         TyKind::FnPtr { ret, .. } => Some(*ret),
         _ => None,
     }
+}
+
+/// How an object literal written as an interface stores each method, should the program write
+/// one through an interface value (`crate::iface_method_writes`): a function value that doesn't
+/// use `this`, of the method's function type.
+fn literal_method_sources(
+    cx: &mut crate::ctx::Ctx,
+    (iface, args, n_methods): (DefId, &[TyId], usize),
+    slots: &[Option<Slot>],
+    field_tys: &[(String, TyId)],
+    uses_this: &[bool],
+    (d, self_ty): (DefId, TyId),
+) -> Vec<Option<crate::iface_method_writes::MethodSrc>> {
+    let mut out = vec![];
+    for j in 0..n_methods {
+        let src = match slots.get(j).and_then(|s| s.as_ref()) {
+            Some(Slot::Call(f)) if !uses_this.get(*f as usize).copied().unwrap_or(true) => {
+                let ty = field_tys[*f as usize].1;
+                (cx.method_fn_ty(iface, args, j))
+                    .filter(|m| cx.same_ty(*m, ty))
+                    .map(|_| crate::iface_method_writes::MethodSrc {
+                        d,
+                        self_ty,
+                        index: *f as usize,
+                        ty,
+                    })
+            }
+            _ => None,
+        };
+        out.push(src);
+    }
+    out
 }

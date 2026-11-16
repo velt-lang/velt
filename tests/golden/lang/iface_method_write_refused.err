@@ -1,0 +1,4 @@
+23:3: error: cannot assign to method `update` of `Ctx`
+class `Real` implements `Ctx` with a method `update`, which its objects share through the class
+an object literal written as `Ctx` defines `update` as a method using `this`
+`{ el: string; update: () => f64 }` implements `Ctx` without a field of `update`'s function type to replace

@@ -23,6 +23,9 @@ pub(crate) struct IfaceField {
     pub readonly: bool,
     /// The receiver is a type parameter (a `ParamMethod` call), else an interface value.
     pub on_param: bool,
+    /// A method member written as a property (`crate::iface_method_writes`): `index` is the
+    /// method's, `ty` its function type.
+    pub method: bool,
 }
 
 impl FnCx<'_, '_> {
@@ -50,6 +53,7 @@ impl FnCx<'_, '_> {
                     ty: f.ty,
                     readonly: f.readonly,
                     on_param: true,
+                    method: false,
                 });
             }
             _ => return None,
@@ -70,15 +74,45 @@ impl FnCx<'_, '_> {
                 ty,
                 readonly,
                 on_param,
+                method: false,
             });
         }
         None
     }
 
+    /// The method member `name` that values of type `t` (an interface value) may be assigned
+    /// as a property (`crate::iface_method_writes`): not a getter, setter or generic method.
+    pub(crate) fn iface_method_member_of(&mut self, t: TyId, name: &str) -> Option<IfaceField> {
+        let TyKind::Dyn(d, args) = self.cx.ty.kind(t).clone() else {
+            return None;
+        };
+        let info = self.cx.iface(d)?;
+        let j = (info.methods.iter()).position(|m| {
+            m.name == name
+                && !m.is_getter
+                && m.generics.names.is_empty()
+                && !m.name.starts_with("set ")
+        })?;
+        let ty = self.cx.method_fn_ty(d, &args, j)?;
+        Some(IfaceField {
+            iface: d,
+            args,
+            index: j,
+            ty,
+            readonly: false,
+            on_param: false,
+            method: true,
+        })
+    }
+
     /// Is `x.prop` (`x` of type `t`) a field written through an interface? A writable one gives
     /// the interface its setter slots; a `readonly` one is reported (`Some(false)`).
     pub(super) fn iface_write_target(&mut self, t: TyId, prop: &ast::Ident) -> Option<bool> {
-        let f = self.iface_field_of(t, &prop.name)?;
+        let Some(f) = self.iface_field_of(t, &prop.name) else {
+            // A method member written as a property: its implementations get method setters.
+            let m = self.iface_method_member_of(t, &prop.name)?;
+            return Some(self.cx.mark_method_written(m.iface, m.index, prop.span));
+        };
         if f.readonly {
             self.cx.error(
                 Diagnostic::error(
@@ -131,7 +165,11 @@ impl FnCx<'_, '_> {
         arg: &ast::Expr,
         span: Span,
     ) -> hir::Expr {
-        let Some(slot) = self.cx.setter_slot(f.iface, f.index) else {
+        let slot = match f.method {
+            true => self.cx.method_setter_slot(f.iface, f.index),
+            false => self.cx.setter_slot(f.iface, f.index),
+        };
+        let Some(slot) = slot else {
             self.check_args_loose(std::slice::from_ref(arg));
             return self.error_expr(span);
         };

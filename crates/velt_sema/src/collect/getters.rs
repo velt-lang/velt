@@ -198,6 +198,45 @@ pub(crate) fn field_setter(cx: &mut Ctx, d: DefId, self_ty: TyId, index: usize, 
 
 /// [`field_setter`] for the slot of an interface's `set name(v)` method, whose parameter is
 /// borrowed when `borrowed` (the field gets a share of it).
+/// [`field_setter`] named `<set {name}>` (a method member's setter, `crate::iface_method_writes`).
+pub(crate) fn field_setter_named(
+    cx: &mut Ctx,
+    d: DefId,
+    self_ty: TyId,
+    index: usize,
+    ty: TyId,
+    name: &str,
+) -> DefId {
+    let unit = cx.ty.unit;
+    setter_def(cx, d, self_ty, name, ty, false, |span, copy| {
+        let this = hir::Expr {
+            kind: H::Local(LocalId(0), UseMode::BorrowMut),
+            ty: self_ty,
+            span,
+        };
+        let place = hir::Expr {
+            kind: H::Field {
+                base: Box::new(this),
+                index: index as u32,
+                mode: UseMode::BorrowMut,
+            },
+            ty,
+            span,
+        };
+        let mode = if copy { UseMode::Copy } else { UseMode::Move };
+        let value = hir::Expr {
+            kind: H::Local(LocalId(1), mode),
+            ty,
+            span,
+        };
+        let assign = H::Assign {
+            place: Box::new(place),
+            value: Box::new(value),
+        };
+        Some((assign, unit))
+    })
+}
+
 pub(crate) fn field_setter_taking(
     cx: &mut Ctx,
     d: DefId,
