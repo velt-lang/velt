@@ -1,0 +1,20 @@
+// A record where a record of a wider value type is expected is a copy. A reader that awaits lets
+// other code run while the copy lives: here a task started before, which nothing the reader calls
+// reaches, writes the record (Node prints x y: one record).
+const attrs: Record<string, string | undefined>[] = [{ a: "x" }];
+
+async function writer(): Promise<void> {
+  await Promise.resolve();
+  attrs[0]["a"] = "y";
+}
+
+async function show(r: Record<string, string | boolean | undefined>): Promise<string> {
+  const before = String(r["a"]);
+  await Promise.resolve();
+  await Promise.resolve();
+  return `${before} ${String(r["a"])}`;
+}
+
+const written = writer();
+show(attrs[0]).then((s) => console.log(s));
+void written;

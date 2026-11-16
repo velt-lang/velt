@@ -10,6 +10,7 @@
 //! A record of `any` or `unknown` values is a view of the one record instead (#379), a generic
 //! record converts per instantiation, and a fresh record is no copy anyone could tell.
 
+use velt_common::Span;
 use velt_syntax::ast;
 
 use crate::body::FnCx;
@@ -65,9 +66,15 @@ impl FnCx<'_, '_> {
             generic: false,
             record: true,
         });
+        // Only the copy itself has the conversion's span and type (`copy_flow` finds it by
+        // them): the literal that builds it is at the conversion's start.
+        let start = Span {
+            hi: span.lo,
+            ..span
+        };
         let copy = self.with_temp("<record>", h, span, span, |s, r| {
             let spread = vec![ast::ObjectProp::Spread(r.clone())];
-            let lit = super::setters::synth(ast::ExprKind::Object(spread), span);
+            let lit = super::setters::synth(ast::ExprKind::Object(spread), start);
             let v = s.expr(&lit, Some(target), crate::body::Want::Move);
             s.coerce(v, target)
         });

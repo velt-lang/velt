@@ -1,0 +1,40 @@
+// check: no leaks
+// A record where a record of a wider value type is expected is a copy (#379). It is no error when
+// nothing that runs while the copy lives could tell it from the record: here the copy only goes to
+// a function that reads it, and the program's writes to such records, its write through `any` and
+// its identity test run before or after (sigx's head.ts `serializeAttrs`). Node prints the same.
+interface Meta {
+  name?: string;
+  [key: string]: string | undefined;
+}
+
+function serializeAttrs(obj: Record<string, string | boolean | undefined>): string {
+  return Object.entries(obj)
+    .filter(([k, v]) => v !== undefined && v !== false && k !== "priority")
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([k, v]) => (v === true ? k : `${k}="${String(v)}"`))
+    .join(" ");
+}
+
+let last: Record<string, string | boolean | undefined> | null = null;
+function remember(r: Record<string, string | boolean | undefined>): boolean {
+  const same = r === last;
+  last = r;
+  return same;
+}
+
+function main(): void {
+  const metas: Meta[] = [{ name: "description", content: "A page" }];
+  // Writes to records of both types, and through `any`, outside the copies' lifetimes.
+  metas[0]["content"] = "The page";
+  const flags: Record<string, string | boolean | undefined> = { async: true };
+  flags["defer"] = false;
+  const loose: any = { a: 1 };
+  loose["a"] = 2;
+  for (const meta of metas) {
+    console.log(`<meta ${serializeAttrs(meta)}>`);
+  }
+  const rest: Record<string, string | undefined> = { rel: "icon", href: "/f.ico" };
+  console.log(`<link ${serializeAttrs(rest)}>`);
+  console.log(serializeAttrs(flags), remember(flags), remember(flags), loose["a"]);
+}

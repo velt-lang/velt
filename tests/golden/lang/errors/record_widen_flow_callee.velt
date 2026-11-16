@@ -1,0 +1,16 @@
+// A record where a record of a wider value type is expected is a copy, which a write to the
+// record shows when it runs while the copy lives: here a function the reader calls (Node prints
+// x y: one record).
+const attrs: Record<string, string | undefined>[] = [{ a: "x" }];
+
+function touch(): void {
+  attrs[0]["a"] = "y";
+}
+
+function show(r: Record<string, string | boolean | undefined>): string {
+  const before = String(r["a"]);
+  touch();
+  return `${before} ${String(r["a"])}`;
+}
+
+console.log(show(attrs[0]));

@@ -50,6 +50,7 @@ use crate::hir::{TyId, TyKind};
 use crate::object_views::Why;
 
 mod derived;
+mod record_flow;
 mod record_widen;
 
 /// One conversion that copied the fields `fields` of a `from` value into a new `to`.
@@ -300,37 +301,15 @@ pub(crate) fn check(cx: &mut Ctx) {
     let mut flagged = vec![false; copies.len()];
     // Conversions allowed only for proxies: a plain source throws instead of being copied.
     let mut strict = vec![];
+    let lives = record_widen::lives(cx, (&copies, &spans), &record_writes, &writes, &seen);
     for (ci, c) in copies.iter().enumerate() {
-        if c.record {
-            let written = match record_widen::of_record(cx, c) {
-                true => record_widen::written(cx, (c, ci), &record_writes, &writes, &looks),
-                false => record_writes
-                    .iter()
-                    .find(|w| record_widen::related_base(cx, w.0, c.to))
-                    .map(|w| w.1),
-            };
-            if let Some(at) = written {
-                record_widen::report_write(cx, c, at);
-                continue;
-            }
-            // Identity: the record is another object, which a dynamic value may hold.
-            let shown = seen.iter().find(|s| {
-                matches!(s.2, Seen::Identity | Seen::Key)
-                    && compared(cx, s.0, &mut FxHashSet::default())
-                        .into_iter()
-                        .any(|m| cx.dynamic(m).is_some() || record_widen::related_base(cx, m, c.to))
-            });
-            match shown {
-                Some(&(t, span, how)) if record_widen::of_record(cx, c) => {
-                    record_widen::report_identity(cx, c, t, span, how);
-                    continue;
-                }
-                Some(&(t, span, how)) => {
-                    report_seen(cx, c, t, span, how, &in_keys);
-                    continue;
-                }
-                None => {}
-            }
+        let record = (&record_writes[..], &writes[..], &seen[..]);
+        // A copy of a record's entries has them all, in order: only its own rules apply.
+        if c.record
+            && (record_widen::refused(cx, (c, ci), record, &in_keys, &looks, lives.as_ref())
+                || record_widen::of_record(cx, c))
+        {
+            continue;
         }
         let proxy_only = proxies && !c.record && !built.iter().any(|&t| related(cx, t, c.from));
         if let Some(w) = assigned(cx, (c, ci), &writes, &looks) {

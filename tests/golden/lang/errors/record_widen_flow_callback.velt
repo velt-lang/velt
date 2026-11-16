@@ -1,0 +1,16 @@
+// A record where a record of a wider value type is expected is a copy. A reader that calls a
+// function value of unknown origin (one kept in an array) may run any code while the copy lives,
+// so a write to the record anywhere may show it (Node prints x y: one record).
+const attrs: Record<string, string | undefined>[] = [{ a: "x" }];
+const hooks: (() => void)[] = [];
+hooks.push(() => {
+  attrs[0]["a"] = "y";
+});
+
+function show(r: Record<string, string | boolean | undefined>): string {
+  const before = String(r["a"]);
+  hooks[0]();
+  return `${before} ${String(r["a"])}`;
+}
+
+console.log(show(attrs[0]));

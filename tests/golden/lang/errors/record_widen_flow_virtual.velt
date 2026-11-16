@@ -1,0 +1,21 @@
+// A record where a record of a wider value type is expected is a copy. A reader that calls a
+// method chosen at run time may run any override while the copy lives, so a write to the record
+// anywhere may show it (Node prints x y: one record).
+const attrs: Record<string, string | undefined>[] = [{ a: "x" }];
+
+class Step {
+  run(): void {}
+}
+class Rewrite extends Step {
+  override run(): void {
+    attrs[0]["a"] = "y";
+  }
+}
+
+function show(r: Record<string, string | boolean | undefined>, s: Step): string {
+  const before = String(r["a"]);
+  s.run();
+  return `${before} ${String(r["a"])}`;
+}
+
+console.log(show(attrs[0], new Rewrite()));

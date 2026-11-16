@@ -29,6 +29,9 @@ pub(crate) enum Store {
     Heap,
     /// The value an object conversion built (`Copies::copies[i]`).
     Copy(u32),
+    /// Function `d` as a value (a closure or a function reference), for which calls through a
+    /// function value may call it (`FlowGraph::reach`).
+    Fn(DefId),
 }
 
 /// The function a constant's initializer is evaluated in, for [`Store::Local`].
@@ -55,12 +58,20 @@ fn collect_sources(f: DefId, e: &Expr, copies: &[(Span, TyId)], out: &mut Vec<St
             out.push(s);
         }
     };
+    // A record copy (`object_copies::record_widen`, the block that builds it) or a record cast
+    // (`x as Record<K, V>`, the conversion through `any`): the expression at the copy's span, of
+    // its type.
+    if let (false, Some(i)) = (matches!(e.kind, E::AdtLit { .. }), copy_index(e, copies)) {
+        add(Store::Copy(i), out);
+        return;
+    }
     match &e.kind {
         E::AdtLit { converted, .. } if *converted != Conversion::No => {
             if let Some(i) = copy_index(e, copies) {
                 add(Store::Copy(i), out);
             }
         }
+        E::Closure(d) | E::FnRef(d, _) => add(Store::Fn(*d), out),
         E::Local(l, _) => add(Store::Local(f, *l), out),
         E::Call {
             callee: Callee::Intrinsic(Intrinsic::Share),
@@ -152,6 +163,13 @@ fn keeps_nothing(i: Intrinsic) -> bool {
             | Intrinsic::AnyReflectInfo
             | Intrinsic::AnyReflectCount
             | Intrinsic::AnyReflectName
+            // A record view's operations on the record (`velt_vir` record_view.rs) keep none of
+            // it; a write's value and a spread's entries go to the source (below).
+            | Intrinsic::RecordViewIs
+            | Intrinsic::RecordViewGet
+            | Intrinsic::RecordViewHas
+            | Intrinsic::RecordViewDelete
+            | Intrinsic::RecordViewSync
     )
 }
 
@@ -247,6 +265,12 @@ impl VisitMut for Edges<'_> {
                 callee: Callee::Intrinsic(i),
                 ..
             } if keeps_nothing(*i) || *i == Intrinsic::Share => {}
+            // A view's write keeps its value (the record is not kept), a view's spread the other
+            // record's entries.
+            E::Call {
+                callee: Callee::Intrinsic(Intrinsic::RecordViewSet | Intrinsic::RecordViewFlush),
+                args,
+            } => args.iter().skip(1).for_each(|a| self.flow(a, Store::Heap)),
             E::Call { args, .. } => args.iter().for_each(|a| self.flow(a, Store::Heap)),
             E::AdtLit {
                 fields: xs,
@@ -277,87 +301,57 @@ pub(crate) struct CopyFlow {
     reach: Vec<Option<FxHashSet<Store>>>,
 }
 
+/// The program's value flow between stores: the edges [`CopyFlow`] follows, for questions about
+/// any store (`object_copies::record_flow`).
+pub(crate) struct FlowGraph {
+    to: FxHashMap<Store, Vec<Store>>,
+    from: FxHashMap<Store, Vec<Store>>,
+}
+
+impl FlowGraph {
+    /// Every store a value in `start` may reach, `start` among them (the heap stops the walk).
+    pub(crate) fn reach(&self, start: &[Store]) -> FxHashSet<Store> {
+        walk(&self.to, start)
+    }
+
+    /// Every store whose value may be in one of `start`, `start` among them.
+    pub(crate) fn origins(&self, start: &[Store]) -> FxHashSet<Store> {
+        walk(&self.from, start)
+    }
+
+    /// The flow of the program checked so far, with the copies at `copies`.
+    pub(crate) fn build(cx: &mut Ctx, copies: &[(Span, TyId)]) -> FlowGraph {
+        let to = edges(cx, copies);
+        let mut from: FxHashMap<Store, Vec<Store>> = FxHashMap::default();
+        for (&a, bs) in &to {
+            for &b in bs {
+                from.entry(b).or_default().push(a);
+            }
+        }
+        FlowGraph { to, from }
+    }
+}
+
+fn walk(edges: &FxHashMap<Store, Vec<Store>>, start: &[Store]) -> FxHashSet<Store> {
+    let mut seen: FxHashSet<Store> = FxHashSet::default();
+    let mut work = start.to_vec();
+    while let Some(s) = work.pop() {
+        if seen.insert(s) && s != Store::Heap {
+            work.extend(edges.get(&s).into_iter().flatten().copied());
+        }
+    }
+    seen
+}
+
 impl CopyFlow {
     /// Build the flow for the copies at `copies` (span and converted-to type, in
     /// `Copies::copies` order).
     pub(crate) fn new(cx: &mut Ctx, copies: &[(Span, TyId)]) -> CopyFlow {
-        let mut params: FxHashMap<DefId, Vec<LocalId>> = FxHashMap::default();
-        let mut captures: Vec<(DefId, LocalId, LocalId)> = vec![];
-        for (i, d) in cx.defs.iter().enumerate() {
-            if let Some(Def::Fn(f)) = d {
-                let d = DefId(i as u32);
-                params.insert(d, f.params.iter().map(|p| p.local).collect());
-                captures.extend(f.captures.iter().map(|c| (d, c.outer, c.inner)));
-            }
-        }
-        let mut edges = Edges {
-            f: GLOBAL,
-            copies,
-            params: &params,
-            to: FxHashMap::default(),
-        };
-        for (i, d) in cx.defs.iter_mut().enumerate() {
-            if let Some(Def::Fn(f)) = d {
-                edges.f = DefId(i as u32);
-                visit::block(&mut f.body.block, &mut edges);
-                if let Some(v) = &f.body.block.value {
-                    edges.flow(v, Store::Ret(edges.f));
-                }
-            }
-        }
-        // Methods may be called virtually or through an interface.
-        for (i, d) in cx.defs.iter().enumerate() {
-            if let Some(Def::Fn(f)) = d {
-                if f.self_ty.is_some() {
-                    edges.called_anywhere(DefId(i as u32));
-                }
-            }
-        }
-        edges.f = GLOBAL;
-        for i in cx.info.iter_mut() {
-            if let crate::defs::DefInfo::Global(g) = i {
-                if let Some(e) = &mut g.init {
-                    visit::expr(e, &mut edges);
-                    edges.flow(e, Store::Heap);
-                }
-            }
-        }
-        // A closure's captures are its enclosing function's variables: both ways. The
-        // enclosing function is found from the closure expression.
-        let mut outer: FxHashMap<DefId, DefId> = FxHashMap::default();
-        for (i, d) in cx.defs.iter_mut().enumerate() {
-            if let Some(Def::Fn(f)) = d {
-                visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
-                    if let E::Closure(c) = e.kind {
-                        outer.insert(c, DefId(i as u32));
-                    }
-                });
-            }
-        }
-        for (c, o, inner) in captures {
-            match outer.get(&c) {
-                Some(&f) => {
-                    edges.link(Store::Local(f, o), Store::Local(c, inner));
-                    edges.link(Store::Local(c, inner), Store::Local(f, o));
-                }
-                None => edges.link(Store::Heap, Store::Local(c, inner)),
-            }
-        }
-        let to = edges.to;
+        let to = edges(cx, copies);
         let reach = (0..copies.len() as u32)
             .map(|i| {
-                let mut seen: FxHashSet<Store> = FxHashSet::default();
-                let mut work = vec![Store::Copy(i)];
-                while let Some(s) = work.pop() {
-                    if !seen.insert(s) {
-                        continue;
-                    }
-                    if s == Store::Heap {
-                        return None;
-                    }
-                    work.extend(to.get(&s).into_iter().flatten().copied());
-                }
-                Some(seen)
+                let seen = walk(&to, &[Store::Copy(i)]);
+                (!seen.contains(&Store::Heap)).then_some(seen)
             })
             .collect();
         CopyFlow { reach }
@@ -375,4 +369,71 @@ impl CopyFlow {
             _ => true,
         }
     }
+}
+
+/// The edges between stores of the program checked so far, with the copies at `copies`.
+fn edges(cx: &mut Ctx, copies: &[(Span, TyId)]) -> FxHashMap<Store, Vec<Store>> {
+    let mut params: FxHashMap<DefId, Vec<LocalId>> = FxHashMap::default();
+    let mut captures: Vec<(DefId, LocalId, LocalId)> = vec![];
+    for (i, d) in cx.defs.iter().enumerate() {
+        if let Some(Def::Fn(f)) = d {
+            let d = DefId(i as u32);
+            params.insert(d, f.params.iter().map(|p| p.local).collect());
+            captures.extend(f.captures.iter().map(|c| (d, c.outer, c.inner)));
+        }
+    }
+    let mut edges = Edges {
+        f: GLOBAL,
+        copies,
+        params: &params,
+        to: FxHashMap::default(),
+    };
+    for (i, d) in cx.defs.iter_mut().enumerate() {
+        if let Some(Def::Fn(f)) = d {
+            edges.f = DefId(i as u32);
+            visit::block(&mut f.body.block, &mut edges);
+            if let Some(v) = &f.body.block.value {
+                edges.flow(v, Store::Ret(edges.f));
+            }
+        }
+    }
+    // Methods may be called virtually or through an interface.
+    for (i, d) in cx.defs.iter().enumerate() {
+        if let Some(Def::Fn(f)) = d {
+            if f.self_ty.is_some() {
+                edges.called_anywhere(DefId(i as u32));
+            }
+        }
+    }
+    edges.f = GLOBAL;
+    for i in cx.info.iter_mut() {
+        if let crate::defs::DefInfo::Global(g) = i {
+            if let Some(e) = &mut g.init {
+                visit::expr(e, &mut edges);
+                edges.flow(e, Store::Heap);
+            }
+        }
+    }
+    // A closure's captures are its enclosing function's variables: both ways. The
+    // enclosing function is found from the closure expression.
+    let mut outer: FxHashMap<DefId, DefId> = FxHashMap::default();
+    for (i, d) in cx.defs.iter_mut().enumerate() {
+        if let Some(Def::Fn(f)) = d {
+            visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
+                if let E::Closure(c) = e.kind {
+                    outer.insert(c, DefId(i as u32));
+                }
+            });
+        }
+    }
+    for (c, o, inner) in captures {
+        match outer.get(&c) {
+            Some(&f) => {
+                edges.link(Store::Local(f, o), Store::Local(c, inner));
+                edges.link(Store::Local(c, inner), Store::Local(f, o));
+            }
+            None => edges.link(Store::Heap, Store::Local(c, inner)),
+        }
+    }
+    edges.to
 }

@@ -59,11 +59,15 @@ impl FnCx<'_, '_> {
         }
         let from = h.ty;
         let source = self.place_text(&h);
-        let view = self.through_any(h, target)?;
+        let mut view = self.through_any(h, target)?;
         match record {
             // A record of `any` or `unknown` values is a view of the object (record_view_cast.rs).
             true if self.record_of_dynamic(core) => self.cx.any_unknown_views = true,
-            true => self.note_record_copy(from, core, source, span),
+            true => {
+                // The record is at the cast (`copy_flow` finds the copy by its span and type).
+                view.span = span;
+                self.note_record_copy(from, core, source, span)
+            }
             false => self.cx.object_copies.view_casts.push((span, core)),
         }
         Ok(view)
