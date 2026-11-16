@@ -92,6 +92,13 @@ pub(crate) struct FnSites {
     /// What a check without variables would have added to `found` for the stores the
     /// variables took (`promise_vars`): added to it when the program is checked again.
     pub(super) quiet: FxHashMap<Span, Vec<Portable>>,
+    /// The function values (by type) converted in this check into a site its variable names
+    /// (`seed_fn_sites`): what they throw has its destination.
+    pub(super) var_values: FxHashSet<TyId>,
+    /// Structural matches of a converted value's errors (its type, the sites, the errors),
+    /// added at the end of the check unless the value reached a site through its variable
+    /// ([`Ctx::flush_structural`]).
+    pub(super) structural: Vec<(TyId, Vec<Span>, Vec<Portable>)>,
     pub(super) grew: bool,
     /// A site's set grew (not only a hint for the next check).
     pub(super) sites_grew: bool,
@@ -500,7 +507,13 @@ impl Ctx<'_> {
     /// allow it: add `err` to the sites `used_as` may come from. False when no site matches or
     /// `err` can't be kept (then the use is reported). Any thrown type another check can hold is
     /// kept (`null`, a string, a class), as JavaScript may throw any value.
-    pub(crate) fn seed_fn_sites(&mut self, used_as: TyId, err: TyId, site: Option<Span>) -> bool {
+    pub(crate) fn seed_fn_sites(
+        &mut self,
+        used_as: TyId,
+        err: TyId,
+        site: Option<Span>,
+        value: Option<TyId>,
+    ) -> bool {
         let mut members = vec![];
         for m in self.error_members(err) {
             match self.port_thrown(m) {
@@ -517,6 +530,7 @@ impl Ctx<'_> {
         let site = site.or_else(|| self.var_site(used_as));
         // Stored into a known site: that one, and the sites its values flow to.
         if let Some(s) = site {
+            self.fn_sites.var_values.extend(value);
             self.add_to_site(s, &members);
             return true;
         }
@@ -524,6 +538,15 @@ impl Ctx<'_> {
             .filter(|(_, g)| self.site_matches(*g, used_as, 0))
             .map(|(s, _)| *s)
             .collect();
+        // A value of type `value` (a conversion's source) may also be converted into a site
+        // its variable names in this check: then that is where it goes, and a same-shaped site
+        // no such value reaches doesn't take its errors (#3054). Decided at the end of the
+        // check.
+        if let Some(v) = value {
+            let found = !matching.is_empty();
+            self.fn_sites.structural.push((v, matching, members));
+            return found;
+        }
         for &s in &matching {
             self.add_to_site(s, &members);
         }
@@ -703,54 +726,6 @@ impl Ctx<'_> {
             Portable::Option(e, n) => TyKind::Option(self.unport(e)?, *n),
         };
         Some(self.ty.intern(k))
-    }
-
-    /// `from` and `to` are function types that differ only in what they throw: `Some(true)`
-    /// when `to` allows every error of `from` (a value converts through a wrapper), else
-    /// `Some(false)`, after adding `from`'s errors to the sites `to` may come from (a value of a
-    /// function type stored into one written without `throws`).
-    pub(crate) fn fn_throws_differ(&mut self, from: TyId, to: TyId) -> Option<bool> {
-        let (
-            TyKind::FnPtr {
-                params: p,
-                ret: r,
-                throws: e,
-                rest: pr,
-            },
-            TyKind::FnPtr {
-                params: q,
-                ret: s,
-                throws: f,
-                rest: qr,
-            },
-        ) = (self.ty.kind(from).clone(), self.ty.kind(to).clone())
-        else {
-            return None;
-        };
-        let promise_err = |cx: &mut Self, t: TyId| match cx.rejection_error(t) {
-            Some(e) => {
-                let never = cx.ty.never;
-                match cx.ty.kind(t) {
-                    TyKind::Promise(v, _) => (*v, Some(e)),
-                    _ => (cx.with_rejection_error(t, never), Some(e)),
-                }
-            }
-            None => (t, None),
-        };
-        let ((rv, re), (sv, se)) = (promise_err(self, r), promise_err(self, s));
-        if p != q || pr != qr || rv != sv || re.is_some() != se.is_some() || (e == f && re == se) {
-            return None;
-        }
-        let have = self.join_errors(Some(e), re);
-        let want = self.join_errors(Some(f), se);
-        if self.error_outside(want, have).is_none() {
-            return Some(true);
-        }
-        if let Some(have) = have {
-            let site = self.target_site(to);
-            self.seed_fn_sites(to, have, site);
-        }
-        Some(false)
     }
 }
 

@@ -1,6 +1,8 @@
 // A function type with a type parameter's rest that throws (#3033) gives its errors to calls
 // through its own values only: a call through an unrelated function type with no known site
-// (`h(true)` in `g2`, which declares `throws never`) throws nothing. Velt-only (`throws never`).
+// (`h(true)` in `g2`), through one of the same shape (`cb` in `plain`, `(x: string) => number`
+// like the factory's instance) and through another rest alias whose values never throw (`viaOther`)
+// throws nothing, each declaring `throws never`. Velt-only (`throws never`).
 class E1 extends Error {
   constructor(m: string) {
     super(m);
@@ -19,6 +21,21 @@ function make(): Fn<[string], number> {
   return Object.assign(f, { token: "t" });
 }
 
+type Other<TArgs extends unknown[], R> = ((...args: TArgs) => R) & { tag: string };
+
+function other(): Other<[string], number> {
+  const f = (x: string): number => x.length * 2;
+  return Object.assign(f, { tag: "o" });
+}
+
+function plain(cb: (x: string) => number): number throws never {
+  return cb("abc");
+}
+
+function viaOther(o: Other<[string], number>): number throws never {
+  return o("abcd");
+}
+
 function g2(hs: Array<(x: boolean) => string>): void throws never {
   for (const h of hs) {
     console.log(h(true));
@@ -34,4 +51,6 @@ function main(): void {
     console.log("caught", (e as Error).message);
   }
   g2([(b: boolean): string => b ? "y" : "n"]);
+  console.log(plain((x: string): number => x.length));
+  console.log(viaOther(other()), w.token);
 }

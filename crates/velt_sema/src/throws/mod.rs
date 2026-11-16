@@ -17,6 +17,7 @@
 mod checks;
 mod conventions;
 mod fn_flows;
+pub use fn_flows::closure_site_defs;
 mod fn_types;
 mod generator_sites;
 mod groups;

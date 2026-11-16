@@ -15,7 +15,77 @@ use super::fn_types::Portable;
 use crate::ctx::Ctx;
 use crate::hir::{DefId, TyId, TyKind};
 
+/// How many closures this process has recorded as throwing into the site their expected
+/// function type's variable names (`Ctx::note_closure_def`): for tests, as `check_rounds`.
+static CLOSURE_DEFS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// [`CLOSURE_DEFS`]'s count so far.
+pub fn closure_site_defs() -> usize {
+    CLOSURE_DEFS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 impl Ctx<'_> {
+    /// The structural matches of this check (`seed_fn_sites`) whose value reached no site
+    /// through its variable: added to their sites.
+    pub(crate) fn flush_structural(&mut self) {
+        for (v, spans, members) in std::mem::take(&mut self.fn_sites.structural) {
+            if self.fn_sites.var_values.contains(&v) {
+                continue;
+            }
+            for s in spans {
+                self.add_to_site(s, &members);
+            }
+        }
+    }
+
+    /// `from` and `to` are function types that differ only in what they throw: `Some(true)`
+    /// when `to` allows every error of `from` (a value converts through a wrapper), else
+    /// `Some(false)`, after adding `from`'s errors to the sites `to` may come from (a value of a
+    /// function type stored into one written without `throws`).
+    pub(crate) fn fn_throws_differ(&mut self, from: TyId, to: TyId) -> Option<bool> {
+        let (
+            TyKind::FnPtr {
+                params: p,
+                ret: r,
+                throws: e,
+                rest: pr,
+            },
+            TyKind::FnPtr {
+                params: q,
+                ret: s,
+                throws: f,
+                rest: qr,
+            },
+        ) = (self.ty.kind(from).clone(), self.ty.kind(to).clone())
+        else {
+            return None;
+        };
+        let promise_err = |cx: &mut Self, t: TyId| match cx.rejection_error(t) {
+            Some(e) => {
+                let never = cx.ty.never;
+                match cx.ty.kind(t) {
+                    TyKind::Promise(v, _) => (*v, Some(e)),
+                    _ => (cx.with_rejection_error(t, never), Some(e)),
+                }
+            }
+            None => (t, None),
+        };
+        let ((rv, re), (sv, se)) = (promise_err(self, r), promise_err(self, s));
+        if p != q || pr != qr || rv != sv || re.is_some() != se.is_some() || (e == f && re == se) {
+            return None;
+        }
+        let have = self.join_errors(Some(e), re);
+        let want = self.join_errors(Some(f), se);
+        if self.error_outside(want, have).is_none() {
+            return Some(true);
+        }
+        if let Some(have) = have {
+            let site = self.target_site(to);
+            self.seed_fn_sites(to, have, site, Some(from));
+        }
+        Some(false)
+    }
+
     /// The site whose error-set variable is function type `t`'s error type, if it is one
     /// (`throws::vars`).
     pub(crate) fn var_site(&self, t: TyId) -> Option<Span> {
@@ -119,6 +189,7 @@ impl Ctx<'_> {
             return;
         }
         if let Some(s) = exp.and_then(|t| self.var_site(t)) {
+            CLOSURE_DEFS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             self.fn_sites.closure_defs.insert(d, s);
             let span = self.fn_info(d).span;
             let known = self.fn_sites.found.closure_targets.entry(span).or_default();

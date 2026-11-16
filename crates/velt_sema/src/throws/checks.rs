@@ -77,6 +77,7 @@ pub(super) fn check_all(cx: &mut Ctx, fns: &[DefId], groups: &Groups) {
     for (d, what) in std::mem::take(&mut cx.iface_generators) {
         iface_generator(cx, d, &what);
     }
+    cx.flush_structural();
     // The program is checked again with the solved sets also when this check grew a set
     // the variables don't hold (a closure's error a site's type can't keep): the next check
     // has no variables, and starts from what they found.
@@ -146,7 +147,8 @@ fn clause_violation(cx: &mut Ctx, d: DefId, m: TyId, allowed: Option<TyId>, clau
         // A function type written without `throws` throws what is stored into it: the program
         // is checked again with this one's errors (`fn_types`), which drops this report.
         let site = cx.closure_site_for(d, used_as);
-        let matched = own_final(cx, d).is_some_and(|own| cx.seed_fn_sites(used_as, own, site));
+        let matched =
+            own_final(cx, d).is_some_and(|own| cx.seed_fn_sites(used_as, own, site, None));
         let inferred = cx.ty.inferred_fns.contains(&used_as);
         // As written: error-set variables (`vars`) allow nothing.
         let never = cx.ty.never;
@@ -208,7 +210,7 @@ pub(super) fn seed_stored(cx: &mut Ctx, fns: &[DefId]) -> bool {
         if let (Some(own), Some(_)) = (own, cx.error_outside(decl.ty, own)) {
             let used_as = closure_type(cx, d, decl.ty);
             let site = cx.closure_site_for(d, used_as);
-            cx.seed_fn_sites(used_as, own, site);
+            cx.seed_fn_sites(used_as, own, site, None);
         }
     }
     cx.fn_sites.added > before
