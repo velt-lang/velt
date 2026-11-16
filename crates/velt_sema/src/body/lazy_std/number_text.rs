@@ -41,7 +41,12 @@ const MAX_DEPTH: u32 = 32;
 /// else (an object, whose class may have a subclass with a float field, `any`, a type parameter) may,
 /// and is printed through glue that can reach a float. A wrong `false` would leave a float hook
 /// lowering calls undemanded, which lowering reports as an internal error.
-pub(super) fn may_hold_float(cx: &mut Ctx, t: TyId, seen: &mut FxHashSet<TyId>, depth: u32) -> bool {
+pub(super) fn may_hold_float(
+    cx: &mut Ctx,
+    t: TyId,
+    seen: &mut FxHashSet<TyId>,
+    depth: u32,
+) -> bool {
     if depth > MAX_DEPTH {
         return true;
     }

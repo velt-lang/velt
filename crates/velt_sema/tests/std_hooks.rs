@@ -408,11 +408,7 @@ fn lazy_std_checks_the_lowered_hooks_of_the_values_a_program_has() {
         .collect();
     assert_eq!(
         unchecked,
-        [
-            "panic_raise",
-            "class_object",
-            "host_ref_handle"
-        ]
+        ["panic_raise", "class_object", "host_ref_handle"]
     );
 }
 
