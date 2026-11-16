@@ -173,7 +173,8 @@ target's runtime library (`velt-<version>-target-<triple>.tar.gz`, a release ass
 host's, `velt_link` takes the runtime from there only (`host.rs`: same architecture, OS and C
 library as the host, the vendor field ignored) and never the shared runtime, so a cross build
 links statically. Code generation needs nothing more: both backends take the target triple, and
-the standard library asks the runtime for the platform at run time (`velt_rt_os_platform`).
+the standard library picks its per-platform and per-processor code at compile time from the
+target's import conditions (`vpm::imports::conditions`: `darwin`/`linux`/`win32`, `x64`/`arm64`).
 
 `release.yml` checks it end to end: `cross-build` installs every other target's pack into the
 Linux x86_64, macOS arm64 and Windows toolchains and builds hello and `examples/http_hello.velt`

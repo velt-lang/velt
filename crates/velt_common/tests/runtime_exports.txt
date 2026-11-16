@@ -134,7 +134,6 @@ velt_rt velt_rt_futs_handled
 velt_rt velt_rt_host_clone
 velt_rt velt_rt_host_release
 velt_rt velt_rt_i64_to_radix
-velt_rt velt_rt_isatty
 velt_rt velt_rt_json_enter
 velt_rt velt_rt_json_error
 velt_rt velt_rt_json_leave
@@ -230,11 +229,6 @@ velt_rt velt_rt_mutex_lock_checked
 velt_rt velt_rt_mutex_unlock
 velt_rt velt_rt_native_api
 velt_rt velt_rt_native_check
-velt_rt velt_rt_os_arch
-velt_rt velt_rt_os_cpu_count
-velt_rt velt_rt_os_hostname
-velt_rt velt_rt_os_platform
-velt_rt velt_rt_os_tmpdir
 velt_rt velt_rt_panic
 velt_rt velt_rt_param_bool
 velt_rt velt_rt_param_bytes

@@ -1,0 +1,5 @@
+// velt/os (internal): the processor of a build for x86-64 (`#os-arch`'s `x64` variant,
+// std/imports.velt).
+
+/** This build's processor, as Node's `process.arch` names it. */
+export const ARCH: string = "x64";

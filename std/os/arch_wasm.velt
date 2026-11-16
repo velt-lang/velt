@@ -1,0 +1,5 @@
+// velt/os (internal): the processor of a WebAssembly build (`#os-arch`'s `wasm` variant,
+// std/imports.velt). Node has no name for it: Velt says what the target is.
+
+/** This build's processor: "wasm32". */
+export const ARCH: string = "wasm32";

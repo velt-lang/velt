@@ -1,0 +1,7 @@
+import { arch, availableParallelism, eol, hostname, platform, tmpdir } from "velt/os";
+
+function main() {
+  console.log(
+    JSON.stringify([platform(), arch(), availableParallelism(), hostname(), tmpdir(), eol()]),
+  );
+}

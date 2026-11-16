@@ -1,0 +1,42 @@
+// velt/process (internal): whether a file descriptor is a terminal on macOS and Linux (`#tty`'s
+// native variant, std/imports.velt), through the C library's `isatty`.
+
+declare c("c") function isatty(fd: i32): i32;
+
+// Per standard stream (0, 1, 2): 0 not asked yet, 1 not a terminal, 2 a terminal. Node fixes
+// `isTTY` when it makes `process.stdout`, so a CLI may ask on every write (to colour its output)
+// for the price of a load.
+const STDIN = new Atomic<u8>(0);
+const STDOUT = new Atomic<u8>(0);
+const STDERR = new Atomic<u8>(0);
+
+/** Whether `fd` is open and refers to a terminal. */
+function probe(fd: i32): bool {
+  // SAFETY: isatty only inspects the descriptor; a closed or negative one is just "no".
+  return unsafe { isatty(fd) } === 1;
+}
+
+/** `probe(fd)`, asked once and kept in `slot`. */
+function cached(slot: Atomic<u8>, fd: i32): bool {
+  const known = slot.load("relaxed");
+  if (known !== 0) {
+    return known === 2;
+  }
+  const tty = probe(fd);
+  slot.store(tty ? 2 : 1, "relaxed");
+  return tty;
+}
+
+/** Whether file descriptor `fd` is a terminal (cached for 0, 1 and 2). */
+export function isTerminal(fd: i32): bool {
+  if (fd === 0) {
+    return cached(STDIN, 0);
+  }
+  if (fd === 1) {
+    return cached(STDOUT, 1);
+  }
+  if (fd === 2) {
+    return cached(STDERR, 2);
+  }
+  return probe(fd);
+}

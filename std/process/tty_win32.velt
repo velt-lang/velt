@@ -1,0 +1,52 @@
+// velt/process (internal): whether a file descriptor is a terminal on Windows (`#tty`'s win32
+// variant, std/imports.velt): a standard stream whose handle is a console (`GetConsoleMode`
+// succeeds), as libuv decides it for Node. Only 0, 1 and 2 can be terminals here: other numbers
+// are no handles.
+
+import { Out } from "velt/ffi/out";
+
+declare c("c") function GetStdHandle(which: u32): usize;
+declare c("c") function GetConsoleMode(console: usize, mode: Out<u32>): i32;
+
+// Per standard stream (0, 1, 2): 0 not asked yet, 1 not a terminal, 2 a terminal (as on POSIX,
+// std/process/tty_posix.velt).
+const STDIN = new Atomic<u8>(0);
+const STDOUT = new Atomic<u8>(0);
+const STDERR = new Atomic<u8>(0);
+
+/**
+ * Whether standard stream `fd`'s handle (`STD_INPUT_HANDLE` is -10, then -11 and -12) is a
+ * console.
+ */
+function probe(fd: i32): bool {
+  const which = (-10 - fd) as u32;
+  const mode = new Out<u32>(0);
+  // SAFETY: a handle GetStdHandle returns (or an invalid one, which only fails the call), and room
+  // for the mode.
+  return unsafe { GetConsoleMode(GetStdHandle(which), mode) } !== 0;
+}
+
+/** `probe(fd)`, asked once and kept in `slot`. */
+function cached(slot: Atomic<u8>, fd: i32): bool {
+  const known = slot.load("relaxed");
+  if (known !== 0) {
+    return known === 2;
+  }
+  const tty = probe(fd);
+  slot.store(tty ? 2 : 1, "relaxed");
+  return tty;
+}
+
+/** Whether file descriptor `fd` is a terminal (cached; only 0, 1 and 2 can be). */
+export function isTerminal(fd: i32): bool {
+  if (fd === 0) {
+    return cached(STDIN, 0);
+  }
+  if (fd === 1) {
+    return cached(STDOUT, 1);
+  }
+  if (fd === 2) {
+    return cached(STDERR, 2);
+  }
+  return false;
+}

@@ -670,12 +670,16 @@ joins the graceful stop through velt/dev (std/dev), on `velt_rt_dev_server_stop`
 | `velt_rt_env_all` | `(VeltStrArray* out)` | `[name0, value0, name1, value1, …]` in the OS's order; names starting with `=` (Windows' per-drive entries) left out; lossy UTF-8. wasm: WASI's environment, empty in the browser |
 | `velt_rt_process_cwd` | `(IoResult<VeltStr>* out)` | |
 | `velt_rt_process_chdir` | `(const VeltStr* path, VeltErr* out)` | |
-| `velt_rt_isatty` | `(i32 fd) -> u8` | 1 if `fd` is a terminal (Node's `tty.isatty`); cached for 0, 1, 2; on Windows other numbers are 0 [additive, #693] |
 | `velt_rt_perf_now` | `() -> f64` | `performance.now()`: ms since process start, monotonic |
 | `velt_rt_date_now` | `() -> i64` | `Date.now()`: ms since the Unix epoch |
 | `velt_rt_exit` | see rt_abi.md | |
 | `velt_rt_memory_rss` | `() -> i64` | `process.memoryUsage().rss`: resident set size in bytes from the OS (`/proc/self/statm`, `task_info`, `GetProcessMemoryInfo`); 0 if unknown. wasm: the linear memory size |
 | `velt_rt_memory_heap` | `() -> i64` | `heapUsed`: mimalloc's committed heap bytes (Windows: the process's private committed bytes); without mimalloc, the RSS. wasm: the linear memory size |
+
+**[non-additive, #2196]** Whether a file descriptor is a terminal (Node's `tty.isatty`) is std
+code on native targets (`#tty`: std/process/tty_posix.velt over `isatty`, tty_win32.velt over
+`GetConsoleMode`, each cached for 0, 1 and 2); `velt_rt_isatty(i32 fd) -> u8` is the WebAssembly
+runtime's only (std/process/tty_wasm.velt).
 
 ## 9. Shared state and helpers (sync)
 
@@ -1285,13 +1289,11 @@ serves both forms; an async read is the sync one on the executor's blocking pool
 
 ### 14.5 Machine facts (`velt/os`)
 
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_rt_os_platform` | `(VeltStr* out)` | static `darwin` / `linux` / `win32` / Rust OS name |
-| `velt_rt_os_arch` | `(VeltStr* out)` | static `arm64` / `x64` / Rust arch name |
-| `velt_rt_os_cpu_count` | `() -> u64` | available parallelism, ≥ 1 |
-| `velt_rt_os_tmpdir` | `(VeltStr* out)` | no trailing separator |
-| `velt_rt_os_hostname` | `(VeltStr* out)` | `""` if unknown |
+**[non-additive, #2196]** Gone from the native runtime: `velt/os`'s facts are std code over the C
+library and Win32 (`#os-sys`: std/os/sys_darwin.velt, sys_linux.velt, sys_win32.velt; on
+WebAssembly sys_wasm.velt), and its architecture is the build's `x64` or `arm64` condition
+(`#os-arch`). `velt_rt_os_platform`, `velt_rt_os_arch`, `velt_rt_os_cpu_count`,
+`velt_rt_os_tmpdir` and `velt_rt_os_hostname` no longer exist.
 
 ### 14.6 UDP and DNS (`velt/net/udp`, `velt/net/dns`)
 

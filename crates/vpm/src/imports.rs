@@ -27,12 +27,12 @@ pub const STD_IMPORTS_FILE: &str = "imports.velt";
 pub const DEFAULT: &str = "default";
 
 /// The built-in conditions, which the target sets. `native` and `wasm` split the targets;
-/// `darwin`, `linux` and `win32` (Node's `process.platform` names) refine `native`; `wasi`
-/// (`wasm32-wasip1`) and `js` (`wasm32-unknown-unknown`, a module the JavaScript glue runs)
-/// refine `wasm`. A variant may also name a host package's condition (`crate::host`), which only
+/// `darwin`, `linux` and `win32` (Node's `process.platform` names) refine `native`, and so do
+/// `x64` and `arm64` (Node's `process.arch` names), the processor; `wasi` (`wasm32-wasip1`) and
+/// `js` (`wasm32-unknown-unknown`, a module the JavaScript glue runs) refine `wasm`. A variant may also name a host package's condition (`crate::host`), which only
 /// a `--host` build for that package has, as Node's custom conditions.
 pub const CONDITIONS: &[&str] = &[
-    "native", "darwin", "linux", "win32", "wasm", "wasi", "js", DEFAULT,
+    "native", "darwin", "linux", "win32", "x64", "arm64", "wasm", "wasi", "js", DEFAULT,
 ];
 
 /// The condition of a native build compiled with the executor in Velt (`VELT_SCHEDULER=std`,
@@ -84,6 +84,11 @@ pub fn conditions(triple: &str, host: Option<&str>) -> Vec<String> {
             out.push("linux");
         } else if triple.contains("-windows") {
             out.push("win32");
+        }
+        if triple.starts_with("x86_64") {
+            out.push("x64");
+        } else if triple.starts_with("aarch64") || triple.starts_with("arm64") {
+            out.push("arm64");
         }
     }
     out.extend(host);
@@ -257,11 +262,11 @@ mod tests {
         let native = conditions("aarch64-apple-darwin", None);
         assert_eq!(
             with_std_scheduler(native.clone(), true),
-            ["native", "darwin", STD_SCHEDULER, "default"]
+            ["native", "darwin", "arm64", STD_SCHEDULER, "default"]
         );
         assert_eq!(
             with_std_scheduler(native, false),
-            ["native", "darwin", "default"]
+            ["native", "darwin", "arm64", "default"]
         );
         let js = conditions("wasm32-unknown-unknown", None);
         assert_eq!(with_std_scheduler(js.clone(), true), js);
@@ -274,15 +279,27 @@ mod tests {
     fn conditions_per_target() {
         assert_eq!(
             conditions("aarch64-apple-darwin", None),
-            ["native", "darwin", "default"]
+            ["native", "darwin", "arm64", "default"]
+        );
+        assert_eq!(
+            conditions("x86_64-apple-darwin", None),
+            ["native", "darwin", "x64", "default"]
         );
         assert_eq!(
             conditions("x86_64-unknown-linux-gnu", None),
-            ["native", "linux", "default"]
+            ["native", "linux", "x64", "default"]
+        );
+        assert_eq!(
+            conditions("aarch64-unknown-linux-musl", None),
+            ["native", "linux", "arm64", "default"]
         );
         assert_eq!(
             conditions("x86_64-pc-windows-msvc", None),
-            ["native", "win32", "default"]
+            ["native", "win32", "x64", "default"]
+        );
+        assert_eq!(
+            conditions("aarch64-pc-windows-msvc", None),
+            ["native", "win32", "arm64", "default"]
         );
         assert_eq!(
             conditions("wasm32-wasip1", None),
@@ -377,7 +394,7 @@ mod tests {
         );
         assert_eq!(
             conditions("aarch64-apple-macos", None),
-            ["native", "darwin", "default"]
+            ["native", "darwin", "arm64", "default"]
         );
         // Any WebAssembly triple is `wasm`, never `native`.
         assert_eq!(
