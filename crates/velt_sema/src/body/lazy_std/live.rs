@@ -172,8 +172,10 @@ pub(crate) fn demanded(cx: &Ctx) -> HookSet {
     match cx.lazy.modules.is_empty() {
         true => {
             let mut all = HookSet::default();
+            // A build by units notes a live `catchUnwind` ([`note_catch_unwind`]).
+            let catches = cx.lazy.live.present & Construct::CatchUnwind.bit() != 0;
             let catch_only = |h: &velt_common::std_hooks::Hook| {
-                h.constructs == [Construct::CatchUnwind].as_slice()
+                !catches && h.constructs == [Construct::CatchUnwind].as_slice()
             };
             for (i, _) in HOOKS.iter().enumerate().filter(|(_, h)| !catch_only(h)) {
                 all.insert(i);
@@ -182,6 +184,12 @@ pub(crate) fn demanded(cx: &Ctx) -> HookSet {
         }
         false => HookSet::demanded_by(demanded_for(cx.lazy.live.present)),
     }
+}
+
+/// EXPERIMENT (#2943 M3): a build by units reaches a `catchUnwind` (`units::reach`): std's panic
+/// path is demanded ([`demanded`]).
+pub(crate) fn note_catch_unwind(cx: &mut Ctx) {
+    cx.lazy.live.present |= Construct::CatchUnwind.bit();
 }
 
 /// Start this check with what an earlier round learned too late ([`too_late`]).

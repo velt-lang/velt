@@ -66,6 +66,7 @@ pub(crate) fn program_set(cx: &mut Ctx, entry: Option<DefId>) -> FxHashSet<DefId
         seen_types: FxHashSet::default(),
         ifaces: FxHashSet::default(),
         adts: FxHashSet::default(),
+        catches: false,
     };
     let below = cx.subclass_map().clone();
     loop {
@@ -108,6 +109,9 @@ pub(crate) fn program_set(cx: &mut Ctx, entry: Option<DefId>) -> FxHashSet<DefId
             break;
         }
     }
+    if walk.catches {
+        crate::body::lazy_std::note_catch_unwind(cx);
+    }
     walk.live
 }
 
@@ -118,6 +122,8 @@ struct Walk {
     seen_types: FxHashSet<TyId>,
     ifaces: FxHashSet<DefId>,
     adts: FxHashSet<DefId>,
+    /// A `catchUnwind` was reached: std's panic path is demanded.
+    catches: bool,
 }
 
 impl Walk {
@@ -206,6 +212,13 @@ impl Walk {
                 self.ifaces.insert(*iface);
                 self.todo.push(*iface);
             }
+            E::Call {
+                callee:
+                    Callee::Intrinsic(
+                        crate::hir::Intrinsic::CatchUnwind | crate::hir::Intrinsic::CatchUnwindAt,
+                    ),
+                ..
+            } => self.catches = true,
             E::Global(d) | E::Closure(d) => self.todo.push(*d),
             E::AdtLit { def, .. } | E::Variant { def, .. } | E::New { def, .. } => {
                 self.todo.push(*def)
