@@ -167,14 +167,29 @@ impl Ctx<'_> {
         };
         let (kind, own) = (a.kind, a.fields.clone());
         // A field another cast added must have the type this one gives it: one slot can't hold
-        // both. (A field the type declares itself is read as its implementations read it.)
+        // both. A field the type declares itself must be one the extension's implementation can
+        // read as its field: of its type, of it without `undefined` (`__name: string` for
+        // `__name?: string`), or one a plain assignment keeps.
         let declared = (self.object_impls.widen.widened.get(&d).copied()).unwrap_or(own.len());
+        let module = a.module;
         for f in fields {
-            let pos = own.iter().position(|g| g.name == f.name);
-            if let Some(i) = pos.filter(|&i| i >= declared) {
-                if !self.same_ty(own[i].ty, f.ty) {
-                    return Err(Refusal::Conflict(f.name.clone()));
+            let Some(i) = own.iter().position(|g| g.name == f.name) else {
+                continue;
+            };
+            let g = own[i].ty;
+            let fits = match i >= declared {
+                true => self.same_ty(g, f.ty),
+                false => {
+                    self.same_ty(g, f.ty)
+                        || self
+                            .ty
+                            .opt_payload(f.ty)
+                            .is_some_and(|p| self.same_ty(g, p))
+                        || self.assigns(g, f.ty, module).is_some()
                 }
+            };
+            if !fits {
+                return Err(Refusal::Conflict(f.name.clone()));
             }
         }
         let missing: Vec<&FieldInfo> = (fields.iter())
@@ -213,19 +228,22 @@ impl Ctx<'_> {
     }
 
     /// Is there a generic object literal type with the field names and optional flags of `d`?
+    /// Its declared fields count (the shape `Ctx::anon` keeps it under), not those a widening
+    /// added.
     fn generic_shape_of(&self, d: DefId) -> bool {
-        let shape = |a: &crate::defs::AdtInfo| -> Vec<(String, bool)> {
-            (a.fields.iter())
+        let shape = |a: &crate::defs::AdtInfo, n: usize| -> Vec<(String, bool)> {
+            (a.fields.iter().take(n))
                 .map(|f| (f.name.clone(), f.optional))
                 .collect()
         };
-        let Some(mine) = self.adt(d).map(shape) else {
+        let n = (self.object_impls.widen.widened.get(&d).copied()).unwrap_or(usize::MAX);
+        let Some(mine) = self.adt(d).map(|a| shape(a, n)) else {
             return false;
         };
         (0..self.info.len() as u32).map(DefId).any(|g| {
             g != d
                 && self.adt(g).is_some_and(|a| {
-                    a.kind == AdtKind::Anon && a.generics.len() != 0 && shape(a) == mine
+                    a.kind == AdtKind::Anon && a.generics.len() != 0 && shape(a, usize::MAX) == mine
                 })
         })
     }
