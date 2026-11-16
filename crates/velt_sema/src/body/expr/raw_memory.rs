@@ -1,8 +1,9 @@
 //! The intrinsics on raw memory (std/lang/intrinsics/address.velt and atomic.velt's
 //! `atomicAddress`, docs/internals/design/intrinsics.md "Memory at an address"): what their
 //! declarations cannot say. `addressLoad<T>` and `addressStore<T>` move one number or `bool`;
-//! the `ptrAtomic*` ones work on an integer, and their orderings (and `ptrAtomicRmw`'s operation)
-//! are string literals that become the integer literals the `Atomic*` intrinsics take; and
+//! the `addressAtomic*` ones work on an integer, and their orderings (and `addressAtomicRmw`'s
+//! operation) are string literals that become the integer literals the `Atomic*` intrinsics
+//! take; and
 //! `atomicAddress` takes only an `Atomic` that cannot move.
 
 use velt_common::{Diagnostic, Span};
@@ -29,11 +30,11 @@ impl FnCx<'_, '_> {
                 self.raw_type_error(i, t, ok, "a number type or `bool`", span)?;
                 Some(args)
             }
-            I::PtrAtomicLoad
-            | I::PtrAtomicStore
-            | I::PtrAtomicRmw
-            | I::PtrAtomicCas
-            | I::PtrAtomicCasWeak => {
+            I::AddressAtomicLoad
+            | I::AddressAtomicStore
+            | I::AddressAtomicRmw
+            | I::AddressAtomicCas
+            | I::AddressAtomicCasWeak => {
                 let ok = t.is_none_or(|t| self.raw_value_ty(t, true));
                 self.raw_type_error(i, t, ok, "an integer type", span)?;
                 self.ptr_atomic_args(i, args)
@@ -98,9 +99,9 @@ impl FnCx<'_, '_> {
         None
     }
 
-    /// The arguments of a `ptrAtomic*` call with its string literal orderings (and operation)
-    /// as the `Atomic*` intrinsics' integer literals: `(p, order)`, `(p, v, order)`,
-    /// `(p, v, op, order)` for `ptrAtomicRmw(p, op, v, order)`, `(p, expected, v, order,
+    /// The arguments of an `addressAtomic*` call with its string literal orderings (and
+    /// operation) as the `Atomic*` intrinsics' integer literals: `(a, order)`, `(a, v, order)`,
+    /// `(a, v, op, order)` for `addressAtomicRmw(a, op, v, order)`, `(a, expected, v, order,
     /// failure)`.
     fn ptr_atomic_args(
         &mut self,
@@ -108,9 +109,9 @@ impl FnCx<'_, '_> {
         mut args: Vec<hir::Expr>,
     ) -> Option<Vec<hir::Expr>> {
         let literals = match i {
-            Intrinsic::PtrAtomicLoad => vec![1],
-            Intrinsic::PtrAtomicStore => vec![2],
-            Intrinsic::PtrAtomicRmw => vec![1, 3],
+            Intrinsic::AddressAtomicLoad => vec![1],
+            Intrinsic::AddressAtomicStore => vec![2],
+            Intrinsic::AddressAtomicRmw => vec![1, 3],
             _ => vec![3, 4],
         };
         for at in literals {
@@ -119,14 +120,14 @@ impl FnCx<'_, '_> {
                 return None;
             }
             let n = match (i, at) {
-                (Intrinsic::PtrAtomicRmw, 1) => self
+                (Intrinsic::AddressAtomicRmw, 1) => self
                     .literal_string(a)
                     .and_then(|s| RMW.iter().position(|m| *m == s)),
                 _ => self.ordering_of(a).map(usize::from),
             };
             let Some(n) = n else {
                 let what = match (i, at) {
-                    (Intrinsic::PtrAtomicRmw, 1) => "an operation",
+                    (Intrinsic::AddressAtomicRmw, 1) => "an operation",
                     _ => "an ordering",
                 };
                 self.cx.error(
@@ -137,8 +138,8 @@ impl FnCx<'_, '_> {
             };
             args[at] = self.u8_lit(n as u8, a.span);
         }
-        if i == Intrinsic::PtrAtomicRmw {
-            // `(p, op, v, order)` → `AtomicRmw`'s `(p, v, op, order)`.
+        if i == Intrinsic::AddressAtomicRmw {
+            // `(a, op, v, order)` → `AtomicRmw`'s `(a, v, op, order)`.
             args.swap(1, 2);
         }
         Some(args)

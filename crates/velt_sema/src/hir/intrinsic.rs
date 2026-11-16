@@ -379,22 +379,22 @@ pub enum Intrinsic {
     /// checks it): `v` written at `address`, unchecked (intrinsics.md "Memory at an address").
     /// Additive.
     AddressStore,
-    /// std only: `ptrAtomicLoad<T>(p: Ptr<T>, order: u8) -> T`, `T` an integer type: as
-    /// `AtomicLoad` on the integer `p` points to (its address is `p`'s one field). Sema turns the
+    /// std only: `addressAtomicLoad<T>(address: usize, order: u8) -> T`, `T` an integer type:
+    /// as `AtomicLoad` on the integer at `address`, `T` being the call's type. Sema turns the
     /// declaration's string literal orderings into the `Atomic*` intrinsics' integer literals.
-    /// Additive.
-    PtrAtomicLoad,
-    /// `(p: Ptr<T>, v: T, order: u8)`: as `AtomicStore` at `p`. Additive.
-    PtrAtomicStore,
-    /// `(p: Ptr<T>, v: T, op: u8, order: u8) -> T`: as `AtomicRmw` at `p` (the declaration's
-    /// `(p, op, v, order)` reordered by sema, `op` a literal as `AtomicRmw` numbers it).
-    /// Additive.
-    PtrAtomicRmw,
-    /// `(p: Ptr<T>, expected: T, v: T, order: u8, failure: u8) -> T`: as `AtomicCas` at `p`.
-    /// Additive.
-    PtrAtomicCas,
-    /// As `PtrAtomicCas`, `-> bool` (may fail spuriously). Additive.
-    PtrAtomicCasWeak,
+    /// Renamed from `PtrAtomicLoad`, which took a `Ptr<T>` (#3094).
+    AddressAtomicLoad,
+    /// `(address: usize, v: T, order: u8)`: as `AtomicStore` at `address`, `T` being `v`'s type.
+    AddressAtomicStore,
+    /// `(address: usize, v: T, op: u8, order: u8) -> T`: as `AtomicRmw` at `address` (the
+    /// declaration's `(address, op, v, order)` reordered by sema, `op` a literal as `AtomicRmw`
+    /// numbers it).
+    AddressAtomicRmw,
+    /// `(address: usize, expected: T, v: T, order: u8, failure: u8) -> T`: as `AtomicCas` at
+    /// `address`.
+    AddressAtomicCas,
+    /// As `AddressAtomicCas`, `-> bool` (may fail spuriously), `T` being `expected`'s type.
+    AddressAtomicCasWeak,
     /// std only: `atomicAddress<T>(a: borrow Atomic<T>) -> usize`: the address of `a`'s word.
     /// Sema allows only an `Atomic` of a 32- or 64-bit integer that cannot move: a static atomic
     /// (`Global(d)`), or a field (of a field…) of the value of `SharedRead`. Additive.

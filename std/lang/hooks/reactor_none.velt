@@ -2,8 +2,7 @@
 // over an IOCP port is #2649 step 2's: owner decision (c)): no sockets (`SUPPORTED` false, so
 // velt/net keeps the runtime's), and the worker's idle wait spins until another thread wakes it.
 
-import { Ptr } from "velt/ffi";
-import { atomicSpinHint, ptrAtomicLoad } from "velt/lang/intrinsics";
+import { addressAtomicLoad, atomicSpinHint } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 
 /** Does this OS have the reactor? Not here: sockets stay the runtime's. */
@@ -47,7 +46,7 @@ export function wait(r: usize, timeoutMs: i64): usize {
     return 0;
   }
   // SAFETY: the block's first word, changed atomically.
-  while (unsafe { ptrAtomicLoad(Ptr.at<u32>(r), "seqcst") } === 0) {
+  while (unsafe { addressAtomicLoad<u32>(r, "seqcst") } === 0) {
     atomicSpinHint();
   }
   m.store32(r, 0);

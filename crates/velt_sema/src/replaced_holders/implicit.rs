@@ -612,11 +612,11 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::AddressLoad
         | I::AddressStore
         | I::AtomicAddress
-        | I::PtrAtomicLoad
-        | I::PtrAtomicStore
-        | I::PtrAtomicRmw
-        | I::PtrAtomicCas
-        | I::PtrAtomicCasWeak
+        | I::AddressAtomicLoad
+        | I::AddressAtomicStore
+        | I::AddressAtomicRmw
+        | I::AddressAtomicCas
+        | I::AddressAtomicCasWeak
         | I::ExportedAddress
         | I::Exit
         | I::Panic

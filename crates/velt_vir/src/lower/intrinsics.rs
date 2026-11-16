@@ -24,13 +24,13 @@ impl FnLower<'_, '_> {
                 | I::AtomicCasWeak
                 | I::AtomicFence
                 | I::AtomicSpinHint
-                | I::PtrAtomicLoad
-                | I::PtrAtomicStore
-                | I::PtrAtomicRmw
-                | I::PtrAtomicCas
-                | I::PtrAtomicCasWeak,
+                | I::AddressAtomicLoad
+                | I::AddressAtomicStore
+                | I::AddressAtomicRmw
+                | I::AddressAtomicCas
+                | I::AddressAtomicCasWeak,
                 _,
-            ) => self.atomic_intrinsic(i, args),
+            ) => self.atomic_intrinsic(i, args, ty),
             (I::AtomicAddress, [a]) => self.atomic_address(a, ty),
             (I::AddressStore, [a, v]) => self.address_store(a, v),
             (I::FutPoll, [f, cx]) => self.fut_intrinsic(f, Some(cx)),

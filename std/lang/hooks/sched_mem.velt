@@ -8,15 +8,15 @@
 
 import { Ptr } from "velt/ffi";
 import {
+  addressAtomicCas,
+  addressAtomicLoad,
+  addressAtomicRmw,
+  addressAtomicStore,
   addressCall,
   addressLoad,
   addressStore,
   inline,
   noInline,
-  ptrAtomicCas,
-  ptrAtomicLoad,
-  ptrAtomicRmw,
-  ptrAtomicStore,
   rawAlloc,
   rawFree,
   stateDrop,
@@ -162,13 +162,13 @@ export function st32(a: usize, v: u32): void {
 @inline
 export function load(a: usize): usize {
   // SAFETY: an aligned word every thread changes atomically.
-  return unsafe { ptrAtomicLoad(Ptr.at<usize>(a), "seqcst") };
+  return unsafe { addressAtomicLoad<usize>(a, "seqcst") };
 }
 
 @inline
 export function load32(a: usize): u32 {
   // SAFETY: as `load`.
-  return unsafe { ptrAtomicLoad(Ptr.at<u32>(a), "seqcst") };
+  return unsafe { addressAtomicLoad<u32>(a, "seqcst") };
 }
 
 /**
@@ -178,13 +178,13 @@ export function load32(a: usize): u32 {
 @inline
 export function loadRelaxed(a: usize): usize {
   // SAFETY: as `load`.
-  return unsafe { ptrAtomicLoad(Ptr.at<usize>(a), "relaxed") };
+  return unsafe { addressAtomicLoad<usize>(a, "relaxed") };
 }
 
 @inline
 export function load32Relaxed(a: usize): u32 {
   // SAFETY: as `load`.
-  return unsafe { ptrAtomicLoad(Ptr.at<u32>(a), "relaxed") };
+  return unsafe { addressAtomicLoad<u32>(a, "relaxed") };
 }
 
 /**
@@ -195,7 +195,7 @@ export function load32Relaxed(a: usize): u32 {
 export function storeRelease(a: usize, v: usize): void {
   // SAFETY: as `load`.
   unsafe {
-    ptrAtomicStore(Ptr.at<usize>(a), v, "release");
+    addressAtomicStore<usize>(a, v, "release");
   }
 }
 
@@ -203,7 +203,7 @@ export function storeRelease(a: usize, v: usize): void {
 export function store32(a: usize, v: u32): void {
   // SAFETY: as `load`.
   unsafe {
-    ptrAtomicStore(Ptr.at<u32>(a), v, "seqcst");
+    addressAtomicStore<u32>(a, v, "seqcst");
   }
 }
 
@@ -211,14 +211,14 @@ export function store32(a: usize, v: u32): void {
 @inline
 export function cas32(a: usize, expected: u32, v: u32): u32 {
   // SAFETY: as `load`.
-  return unsafe { ptrAtomicCas(Ptr.at<u32>(a), expected, v, "seqcst", "seqcst") };
+  return unsafe { addressAtomicCas<u32>(a, expected, v, "seqcst", "seqcst") };
 }
 
 /** Makes the word at `a` `v` if it is `expected`; the value it had. */
 @inline
 export function cas(a: usize, expected: usize, v: usize): usize {
   // SAFETY: as `load`.
-  return unsafe { ptrAtomicCas(Ptr.at<usize>(a), expected, v, "seqcst", "seqcst") };
+  return unsafe { addressAtomicCas<usize>(a, expected, v, "seqcst", "seqcst") };
 }
 
 /** Spin locks that gave the core away (sched_debug.velt's view). */
@@ -259,42 +259,42 @@ export function yieldCore(): void {
 @inline
 export function incOrdered(a: usize): usize {
   // SAFETY: as `load`.
-  return unsafe { ptrAtomicRmw(Ptr.at<usize>(a), "add", 1, "seqcst") };
+  return unsafe { addressAtomicRmw<usize>(a, "add", 1, "seqcst") };
 }
 
 /** Adds 1 to the count at `a`; the count before. */
 @inline
 export function inc(a: usize): usize {
   // SAFETY: as `load`.
-  return unsafe { ptrAtomicRmw(Ptr.at<usize>(a), "add", 1, "relaxed") };
+  return unsafe { addressAtomicRmw<usize>(a, "add", 1, "relaxed") };
 }
 
 /** Takes 1 from the count at `a`; the count before. */
 @inline
 export function dec(a: usize): usize {
   // SAFETY: as `load`.
-  return unsafe { ptrAtomicRmw(Ptr.at<usize>(a), "sub", 1, "acqrel") };
+  return unsafe { addressAtomicRmw<usize>(a, "sub", 1, "acqrel") };
 }
 
 /** Sets the bits `v` in the `u32` at `a`; the word before. */
 @inline
 export function or32(a: usize, v: u32): u32 {
   // SAFETY: as `load`.
-  return unsafe { ptrAtomicRmw(Ptr.at<u32>(a), "or", v, "seqcst") };
+  return unsafe { addressAtomicRmw<u32>(a, "or", v, "seqcst") };
 }
 
 /** Clears the bits not in `v` in the `u32` at `a`; the word before. */
 @inline
 export function and32(a: usize, v: u32): u32 {
   // SAFETY: as `load`.
-  return unsafe { ptrAtomicRmw(Ptr.at<u32>(a), "and", v, "seqcst") };
+  return unsafe { addressAtomicRmw<u32>(a, "and", v, "seqcst") };
 }
 
 /** Makes the word at `a` `v`; the word before. */
 @inline
 export function swap(a: usize, v: usize): usize {
   // SAFETY: as `load`.
-  return unsafe { ptrAtomicRmw(Ptr.at<usize>(a), "exchange", v, "seqcst") };
+  return unsafe { addressAtomicRmw<usize>(a, "exchange", v, "seqcst") };
 }
 
 /** Pushes `t` on the stack whose head is at `head`, linked through `t + next`. */
@@ -303,7 +303,7 @@ export function pushStack(head: usize, t: usize, next: usize): void {
   while (true) {
     st(t + next, h);
     // SAFETY: as `load`.
-    const was = unsafe { ptrAtomicCas(Ptr.at<usize>(head), h, t, "seqcst", "seqcst") };
+    const was = unsafe { addressAtomicCas<usize>(head, h, t, "seqcst", "seqcst") };
     if (was === h) {
       return;
     }
@@ -315,7 +315,7 @@ export function pushStack(head: usize, t: usize, next: usize): void {
 @inline
 export function takeStack(head: usize): usize {
   // SAFETY: as `load`.
-  return unsafe { ptrAtomicRmw(Ptr.at<usize>(head), "exchange", 0, "seqcst") };
+  return unsafe { addressAtomicRmw<usize>(head, "exchange", 0, "seqcst") };
 }
 
 /** One more reference to waker `w`. */

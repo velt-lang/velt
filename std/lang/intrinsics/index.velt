@@ -8,14 +8,14 @@
 // and packages cannot (`velt/lang` is internal), so they use the public APIs instead.
 
 export {
+  addressAtomicCas,
+  addressAtomicCasWeak,
+  addressAtomicLoad,
+  addressAtomicRmw,
+  addressAtomicStore,
   addressLoad,
   addressStore,
   exportedAddress,
-  ptrAtomicCas,
-  ptrAtomicCasWeak,
-  ptrAtomicLoad,
-  ptrAtomicRmw,
-  ptrAtomicStore,
 } from "velt/lang/intrinsics/address";
 export {
   anyDelete,

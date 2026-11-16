@@ -88,16 +88,20 @@ so their callers are unsafe code with a `// SAFETY:` comment, as for `addressLoa
   `*(T*)address`, so every backend (LLVM, Cranelift, and wasm through LLVM) emits a plain store.
   Sema holds `T` of both to a number type or `bool`, and refuses a type parameter (an instance
   with a class would move an owned reference as raw bytes): nothing that owns memory or holds a
-  reference crosses as raw bytes. (The `ptrAtomic*` ones accept a type parameter, since their
+  reference crosses as raw bytes. (The `addressAtomic*` ones accept a type parameter, since their
   lowering checks each instance is an integer.)
-- `ptrAtomicLoad`, `ptrAtomicStore`, `ptrAtomicRmw`, `ptrAtomicCas`, `ptrAtomicCasWeak` take a
-  `Ptr<T>` for an integer `T` and do what `Atomic<T>`'s methods do, on the integer it points to:
-  the same `velt_atomic_*` operations (velt_vir `atomic.rs`), so the same single instructions
-  with the ordering the call names. The orderings, and `ptrAtomicRmw`'s operation (`"add"`,
-  `"exchange"`, …), are string literal parameters as on `Atomic`; the declaration's union types
-  reject an ordering the operation cannot have, and sema turns the literals into the integer
-  literals the atomic intrinsics take (a value that is not a literal is an error). The `Ptr` is
-  the caller's promise that an aligned `T` is there and that every thread changes it atomically.
+- `addressAtomicLoad<T>`, `addressAtomicStore<T>`, `addressAtomicRmw<T>`, `addressAtomicCas<T>`
+  and `addressAtomicCasWeak<T>` take an address (`usize`) of an integer `T` and do what
+  `Atomic<T>`'s methods do on it: the same `velt_atomic_*` operations (velt_vir `atomic.rs`), so
+  the same single instructions with the ordering the call names. `T` is the call's: written
+  (`addressAtomicLoad<u32>(a, "acquire")`) or inferred from the value or the expected result.
+  The orderings, and `addressAtomicRmw`'s operation (`"add"`, `"exchange"`, …), are string
+  literal parameters as on `Atomic`; the declaration's union types reject an ordering the
+  operation cannot have, and sema turns the literals into the integer literals the atomic
+  intrinsics take (a value that is not a literal is an error). The call is the caller's promise
+  that an aligned `T` is at the address and that every thread changes it atomically. They took a
+  `Ptr<T>` until #3094: the executor, channels and string crumbs work on addresses they
+  allocated, not on C pointers, and made a `Ptr` only to call them.
 - `atomicAddress(a: Atomic<T>): usize` gives the address of an `Atomic`'s word for the OS's
   wait and wake calls (`futex`, `__ulock_wait`, `WaitOnAddress`). An address is only useful
   while the word stays where it is, so sema accepts two places and nothing else, by the shape of
