@@ -38,12 +38,14 @@ impl IoTypes {
         let status = canonical(&native.join("status.velt"));
         for (i, def) in p.defs.iter().enumerate() {
             let Def::Adt(a) = def else { continue };
-            let file = canonical(&sm.get(a.span.file).path);
-            let id = Some(DefId(i as u32));
-            match a.name.rsplit("::").next() {
-                Some("IoResult") if file == result => io.io_result = id,
-                Some("IoStatus") if file == status => io.io_status = id,
-                _ => {}
+            // The name first: a canonical path costs a file system round trip per definition.
+            let (want, slot) = match a.name.rsplit("::").next() {
+                Some("IoResult") => (&result, &mut io.io_result),
+                Some("IoStatus") => (&status, &mut io.io_status),
+                _ => continue,
+            };
+            if canonical(&sm.get(a.span.file).path) == *want {
+                *slot = Some(DefId(i as u32));
             }
         }
         io

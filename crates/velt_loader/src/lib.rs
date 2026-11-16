@@ -68,6 +68,7 @@ mod spec;
 mod std_ast;
 pub mod std_index;
 mod std_root;
+pub mod std_tree;
 mod variants;
 mod visibility;
 mod wanted;
@@ -317,6 +318,15 @@ struct Loader<'a, 'o> {
 
 impl Loader<'_, '_> {
     /// Contents of `path`: the overlay's if it has the file, else the disk's.
+    /// [`Loader::read`] of a module's file for [`Loader::add`]: a std file whose stub the load
+    /// may be given is not read (`add` reads one it has no stub for after all).
+    fn read_module(&self, path: &Path) -> std::io::Result<String> {
+        if self.opts.std_stubs.is_some() && std_tree::is_file(path) == Some(true) {
+            return Ok(String::new());
+        }
+        self.read(path)
+    }
+
     fn read(&self, path: &Path) -> std::io::Result<String> {
         // `file_key` costs a filesystem round trip (a few hundred µs on Windows).
         if self.overlay.is_empty() {
@@ -330,7 +340,7 @@ impl Loader<'_, '_> {
 
     /// Load prelude module `file`; returns its index (`None` after reporting a read error).
     fn load_prelude(&mut self, file: &Path, std: &Path) -> Option<usize> {
-        match self.read(file) {
+        match self.read_module(file) {
             Ok(src) => {
                 let origin = Origin::Std(std.to_path_buf());
                 let canonical = origin.canonical(file);
@@ -385,8 +395,13 @@ impl Loader<'_, '_> {
         canonical: String,
         origin: Origin,
     ) -> usize {
-        let file = self.sm.add(path, src);
         let is_std = matches!(origin, Origin::Std(_));
+        let src = if is_std && src.is_empty() && !std_tree::skips_read(&canonical) {
+            vpm::probe::read_to_string(path).unwrap_or_default()
+        } else {
+            src
+        };
+        let file = self.sm.add(path, src);
         self.warn_old_extension(file, path, &origin);
         let plain_ts = vpm::sources::is_plain_ts(path);
         let stub = (self.opts.std_stubs.filter(|_| is_std)).and_then(|f| f(&canonical, file));
@@ -475,7 +490,7 @@ impl Loader<'_, '_> {
         if let (Some(std), Some(std_key)) = (&self.opts.std_root, &self.std_key) {
             if key.starts_with(std_key) {
                 let std = Origin::Std(std.clone());
-                match self.read(file) {
+                match self.read_module(file) {
                     Ok(src) => {
                         let canonical = std.canonical(file);
                         let index = self.add(file, key, src, canonical, std);
@@ -715,7 +730,7 @@ impl Loader<'_, '_> {
         if let Some(&existing) = self.by_file.get(&key) {
             return Some(existing);
         }
-        let src = match self.read(&file) {
+        let src = match self.read_module(&file) {
             Ok(s) => s,
             Err(e) => {
                 return self.error(

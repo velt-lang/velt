@@ -35,9 +35,14 @@ pub(super) fn first_existing(
     })
 }
 
+/// Whether `file` is a file (std's snapshot answers for std, [`crate::std_tree`]).
+fn is_file(file: &Path) -> bool {
+    crate::std_tree::is_file(file).unwrap_or_else(|| vpm::probe::is_file(file))
+}
+
 /// Whether `file` is on disk under exactly this name (the part below `base`, case included).
 pub(super) fn on_disk_exactly(dir_names: &DirNames, file: &Path, base: &Path) -> bool {
-    vpm::probe::is_file(file) && !matches!(dir_names.case_of(file, base), Case::Differs(_))
+    is_file(file) && !matches!(dir_names.case_of(file, base), Case::Differs(_))
 }
 
 impl Loader<'_, '_> {
@@ -81,7 +86,7 @@ impl Loader<'_, '_> {
     /// Whether `file` exists under exactly this name (the part below `base`, case included), on
     /// disk or in the overlay.
     fn exists_exactly(&self, file: &Path, base: &Path) -> bool {
-        if vpm::probe::is_file(file) {
+        if is_file(file) {
             return on_disk_exactly(&self.dir_names, file, base);
         }
         // A file only in the overlay: its key is the path as the editor spells it.

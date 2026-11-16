@@ -122,7 +122,8 @@ fn note(path: &Path, add: impl FnOnce(&mut Seen, OsString)) {
     });
 }
 
-fn recording() -> bool {
+/// Whether [`record`] is noting what the calls look at (on this thread).
+pub fn recording() -> bool {
     SEEN.with(|s| s.borrow().is_some())
 }
 

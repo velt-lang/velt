@@ -26,7 +26,7 @@ mod std_load;
 mod std_summary;
 use std_load::load_options;
 pub(crate) use std_load::StdLoad;
-mod units_disk;
+pub(crate) mod units_disk;
 mod units_twice;
 mod warm;
 pub use warm::{compile_for_jit_warm, copy_files};

@@ -28,6 +28,9 @@ pub fn check_command(args: &CheckArgs) -> ExitCode {
     }
     let mut sess = Session::new();
     let (result, lint) = check_and_lint(&mut sess, args, false);
+    // EXPERIMENT (#2943 M2): std's sources, unread with std's unit from disk, for the messages.
+    let shown: Vec<Diagnostic> = sess.diagnostics.iter().chain(&lint).cloned().collect();
+    driver::units_disk::fill_sources(&mut sess.sm, &shown);
     report_and_exit(&sess, args, result, &lint, None)
 }
 
@@ -335,8 +338,13 @@ fn without_other_variants(mut scope: CheckScope, opts: &driver::BuildOptions) ->
 
 /// Every file of the standard library at `std` (its tests and its import map aside), sorted.
 fn std_files(std: &Path) -> Result<Vec<PathBuf>, BuildError> {
-    let mut files: Vec<PathBuf> = discover::source_files(std)
-        .map_err(BuildError::Failed)?
+    let found = discover::source_files(std).map_err(BuildError::Failed)?;
+    Ok(std_files_in(found, &std.join(vpm::imports::STD_IMPORTS_FILE)))
+}
+
+/// std's modules among `found` (`imports`: std's conditional imports, which are not one).
+fn std_files_in(found: Vec<PathBuf>, imports: &Path) -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> = found
         .into_iter()
         .filter(|f| {
             let name = f.file_name().map(|n| n.to_string_lossy().into_owned());
@@ -344,10 +352,9 @@ fn std_files(std: &Path) -> Result<Vec<PathBuf>, BuildError> {
         })
         .collect();
     // std's conditional imports are data the loader reads, as a manifest is, not a module.
-    let imports = std.join(vpm::imports::STD_IMPORTS_FILE);
-    files.retain(|f| *f != imports);
+    files.retain(|f| f != imports);
     files.sort();
-    Ok(files)
+    files
 }
 
 /// `VELT_STD_SUMMARY_EAGER` (the std identity oracle's whole-std mode, #2943): the program with
@@ -361,15 +368,29 @@ fn with_all_std(
         BuildError::Failed("cannot find the standard library; set VELT_STD".into())
     })?;
     let imports = std.join(vpm::imports::STD_IMPORTS_FILE);
-    let mut files = std_files(&std)?;
+    let units = std::env::var_os("VELT_UNITS").is_some();
+    // EXPERIMENT (#2943 M2): std's files from the snapshot kept beside std's unit.
+    let tree = units.then(driver::units_disk::std_tree).flatten();
+    let mut files = match tree {
+        Some(tree) => std_files_in(tree.files().collect(), &tree.root().join(vpm::imports::STD_IMPORTS_FILE)),
+        None => std_files(&std)?,
+    };
     if let Ok(src) = std::fs::read_to_string(&imports) {
         let map = vpm::manifest::read::read_std_imports(velt_common::FileId(0), &src);
         let unused = unselected_variants(&std, &map.unwrap_or_default(), &opts.target());
-        files.retain(|f| !unused.contains(&file_key(f)));
+        match tree {
+            // No links below the snapshot's root: a file's key is the root's joined with it.
+            Some(tree) => {
+                let canonical = file_key(tree.root());
+                let key = |f: &Path| f.strip_prefix(tree.root()).map(|r| canonical.join(r));
+                files.retain(|f| key(f).map_or(true, |k| !unused.contains(&k)));
+            }
+            None => files.retain(|f| !unused.contains(&file_key(f))),
+        }
     }
     scope.extra_roots.extend(files);
     scope.eager_std = true;
-    scope.units = std::env::var_os("VELT_UNITS").is_some();
+    scope.units = units;
     Ok(scope)
 }
 

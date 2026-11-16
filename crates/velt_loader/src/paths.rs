@@ -26,6 +26,9 @@ pub(crate) fn shown_in_package(file: &Path) -> String {
 /// of the std root: on Windows a canonical path is a verbatim one (`\\?\C:\…`), and on any
 /// system the directory may be reached through a link.
 pub(crate) fn file_key(path: &Path) -> PathBuf {
+    if let Some(key) = crate::std_tree::key(path) {
+        return key;
+    }
     if let Ok(p) = std::fs::canonicalize(path) {
         return p;
     }

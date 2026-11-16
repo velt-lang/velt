@@ -70,6 +70,9 @@ impl DirNames {
 
 /// The names in `dir` (the empty path is the current directory).
 fn list(dir: &Path) -> Vec<String> {
+    if let Some(names) = crate::std_tree::names(dir) {
+        return names;
+    }
     let dir = if dir.as_os_str().is_empty() {
         Path::new(".")
     } else {
