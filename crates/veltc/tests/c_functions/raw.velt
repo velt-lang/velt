@@ -1,9 +1,9 @@
-import { CString, Out, OutPtr, Ptr, byteLength, readBytes, readCString, readUtf8 } from "velt/ffi";
+import { CString, Out, Ptr, byteLength, readBytes, readCString, readUtf8 } from "velt/ffi";
 
 declare c type FILE;
 
 declare c("c") function strlen(s: CString): usize;
-declare c("c") function strtoll(s: CString, end: OutPtr<u8>, base: i32): i64;
+declare c("c") function strtoll(s: CString, end: Out<Ptr<u8> | null>, base: i32): i64;
 declare c("c") function getenv(name: CString): Ptr<u8> | null;
 declare c("c") function malloc(n: usize): Ptr<u8> | null;
 declare c("c") function memcpy(dst: Ptr<u8>, src: CString, n: usize): Ptr<u8>;
@@ -17,7 +17,7 @@ export function length(s: string): usize {
 
 export function parse(s: string): [i64, string] {
   const text = new CString(s);
-  const end = new OutPtr<u8>();
+  const end = new Out<Ptr<u8> | null>(null);
   // SAFETY: `text` is NUL-terminated; strtoll writes where it stopped, inside `text`, which
   // lives until the read below.
   const n = unsafe { strtoll(text, end, 10) };
@@ -67,7 +67,7 @@ export function exponent(x: f64): [f64, i32] {
 
 /// A negative result through `long long`, 64 bits on every target (C's `long` is 32 on Windows).
 export function negativeHex(): i64 {
-  const end = new OutPtr<u8>();
+  const end = new Out<Ptr<u8> | null>(null);
   // SAFETY: the CString is NUL-terminated and lives through the call.
   return unsafe { strtoll(new CString("  -0x1F rest"), end, 16) };
 }

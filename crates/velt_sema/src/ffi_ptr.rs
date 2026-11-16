@@ -16,14 +16,42 @@ impl Ctx<'_> {
         self.std_def(std_hook!(ffi_ptr_type)) == Some(Item::Def(d))
     }
 
-    /// The type `Ptr<args…>` written at `t`: the pointer kind of its one argument.
+    /// The type `Ptr<args…>` written at `t`: the pointer kind of its one argument, which is
+    /// what C can point at where it is known (a type parameter is checked in the C signature
+    /// or C struct it reaches, `collect::c_sig`).
     pub(crate) fn ptr_type_written(&mut self, args: &[TyId], t: &ast::TypeExpr) -> TyId {
-        match args {
-            [pointee] => self.ty.intern(TyKind::Ptr(*pointee)),
-            _ => {
-                self.arity_error("Ptr", 1, args.len(), t);
-                self.ty.error
-            }
+        let [pointee] = args else {
+            self.arity_error("Ptr", 1, args.len(), t);
+            return self.ty.error;
+        };
+        if !self.c_pointee_written(*pointee) {
+            let shown = self.display(*pointee);
+            self.error(
+                Diagnostic::error(format!("a C pointer can't point at `{shown}`"), t.span)
+                    .with_note("`Ptr<T>` points at a number, `bool`, `void`, a `declare c type`, a `declare c struct` or another pointer: C has no other values"),
+            );
+            return self.ty.error;
+        }
+        self.ty.intern(TyKind::Ptr(*pointee))
+    }
+
+    /// Can C point at a `t`, as far as is known where a `Ptr<t>` is written? A type parameter,
+    /// an error and a definition not collected yet pass; a type C has no values of doesn't.
+    fn c_pointee_written(&self, t: TyId) -> bool {
+        match self.ty.kind(t) {
+            TyKind::Int(_)
+            | TyKind::Float(_)
+            | TyKind::Bool
+            | TyKind::Unit
+            | TyKind::Ptr(_)
+            | TyKind::Param(_)
+            | TyKind::Error
+            | TyKind::Op(..) => true,
+            TyKind::Option(inner, _) => matches!(self.ty.kind(*inner), TyKind::Ptr(_)),
+            TyKind::Adt(d, _) => self
+                .adt(*d)
+                .is_none_or(|a| a.decl.is_none_or(|t| t.c_type || t.c_struct)),
+            _ => false,
         }
     }
 

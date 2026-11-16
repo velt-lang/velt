@@ -69,12 +69,12 @@ fn zig() -> Option<PathBuf> {
     zig_env::zig("run clang")
 }
 
-const DECLS: &str = r#"import { CString, OutPtr, Ptr } from "velt/ffi";
+const DECLS: &str = r#"import { CString, Out, Ptr } from "velt/ffi";
 
 declare c type thing;
 
 declare c("c") function strlen(s: CString): usize;
-declare c("c") function strtoll(s: CString, end: OutPtr<u8>, base: i32): i64;
+declare c("c") function strtoll(s: CString, end: Out<Ptr<u8> | null>, base: i32): i64;
 declare c("c") function frexp(x: f64, exp: i32[]): f64;
 declare c("c") function labs(x: i64): i64;
 declare c("c") function malloc(n: usize): Ptr<u8> | null;
@@ -526,13 +526,13 @@ fn an_out_pointer_is_the_pointer_c_can_write() {
     let header = "typedef struct stmt stmt;\nint prep(stmt *db, const char *sql, int n, stmt **out, const char **tail);\nint fixed(char *const *tail);\n";
     let files = [("native/p.h", header)];
     let native = ", native: { c: { c: { headers: [\"<string.h>\"] }, p: { system: { default: \"p\" }, headers: [\"native/p.h\"] } } }";
-    let lib = "import { OutPtr, Ptr } from \"velt/ffi\";\n\ndeclare c type stmt;\n\ndeclare c(\"p\") function prep(db: Ptr<stmt>, sql: Ptr<u8>, n: i32, out: OutPtr<stmt>, tail: OutPtr<u8>): i32;\n";
+    let lib = "import { Out, Ptr } from \"velt/ffi\";\n\ndeclare c type stmt;\n\ndeclare c(\"p\") function prep(db: Ptr<stmt>, sql: Ptr<u8>, n: i32, out: Out<Ptr<stmt> | null>, tail: Out<Ptr<u8> | null>): i32;\n";
     let args = ["check", "--target", "x86_64-unknown-linux-gnu"];
     let text = format!("{lib}{DECLS_STRLEN}{LEN}");
     project(dir.path(), native, &text, &files, ALLOW);
     let o = velt(dir.path(), &home, &args);
     assert!(o.status.success(), "{}", output(&o));
-    let wrong = "declare c(\"p\") function fixed(tail: OutPtr<u8>): i32;\n";
+    let wrong = "declare c(\"p\") function fixed(tail: Out<Ptr<u8> | null>): i32;\n";
     let text = format!("{lib}{wrong}{DECLS_STRLEN}{LEN}");
     project(dir.path(), native, &text, &files, ALLOW);
     let o = velt(dir.path(), &home, &args);
