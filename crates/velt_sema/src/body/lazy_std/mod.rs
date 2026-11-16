@@ -260,6 +260,12 @@ pub(crate) fn called_by_name(path: &str) -> bool {
     (BY_NAME.iter().chain(HELPERS)).any(|p| in_module(path, p))
 }
 
+/// Is `path` a std module lowering looks into by name, or the prelude's or the hooks' (`BY_NAME`,
+/// `HELPERS`; `units::reach` takes them whole)?
+pub(crate) fn named_module(path: &str) -> bool {
+    (BY_NAME.iter().chain(HELPERS)).any(|p| in_module(path, p))
+}
+
 /// Is `path` the std module or directory `p`, or inside it (`std/lang/sort` is not in
 /// `std/lang/so`)?
 fn in_module(path: &str, p: &str) -> bool {
@@ -491,12 +497,10 @@ fn record_hooks_needed(cx: &Ctx) -> bool {
 pub(crate) fn stub_unreached(cx: &mut Ctx) -> FxHashSet<DefId> {
     let mut out = FxHashSet::default();
     // std's unit from disk is checked whole: nothing of it is deferred.
-    let from = if cx.std_from_disk {
-        cx.unit_base as usize
-    } else {
-        0
-    };
-    for i in from..cx.info.len() {
+    for i in cx.program_from()..cx.info.len() {
+        if !cx.in_program(i) {
+            continue;
+        }
         let d = DefId(i as u32);
         if cx.defs[i].is_some() || !deferred(cx, d) {
             continue;

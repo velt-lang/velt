@@ -182,6 +182,14 @@ fn build(
     entry: Option<hir::DefId>,
     mut generated: Bound,
 ) -> (hir::Program, Diagnostics) {
+    // EXPERIMENT (#2943 M3): a build from std's unit on disk is made of what lowering may reach
+    // (`units::reach`); its set is lowering's live set, which lowering checks against.
+    if cx.std_from_disk && !cx.check_only {
+        let set = crate::timings::pass("program: reach", || {
+            crate::units::reach::program_set(&mut cx, entry)
+        });
+        cx.program_set = Some(std::rc::Rc::new(set));
+    }
     let unchecked = crate::timings::pass("program: build_defs", || finalize::build_defs(&mut cx));
     let hooks_demanded = body::lazy_std::hooks_demanded(&cx);
     crate::timings::pass("program: layout_merge", || layout_merge::merge(&mut cx));
@@ -201,7 +209,9 @@ fn build(
     let live = crate::timings::pass("program: live_defs", || {
         body::lazy_std::live_defs(&mut cx, &unchecked)
     });
-    let from_disk = cx.std_from_disk.then_some(cx.unit_base as usize);
+    finalize::build_named_types(&mut cx);
+    let from_disk = cx.std_from_disk.then(|| cx.program_filter());
+    let reached = cx.program_set.clone();
     // With std's unit from disk (`velt check`), the process ends after the check: the context's
     // tables the program doesn't take are left to its end, not freed one by one.
     if from_disk.is_some() {
@@ -233,11 +243,11 @@ fn build(
     // With std's unit from disk (`velt check`), std's definitions are left out: placeholders,
     // never decoded (`finalize::program_defs`).
     let defs = match from_disk {
-        Some(base) => {
+        Some(keep) => {
             let placeholder = || Some(placeholder_def(ty.unit));
             let mut defs = defs.into_vec_filling(|_| placeholder());
-            for d in defs.iter_mut().take(base) {
-                if d.is_none() {
+            for (i, d) in defs.iter_mut().enumerate() {
+                if d.is_none() && !keep(i) {
                     *d = placeholder();
                 }
             }
@@ -286,7 +296,10 @@ fn build(
         lock_free_callbacks: lock_free_callbacks.into_iter().collect(),
         unchecked: unchecked.into_iter().collect(),
         hooks_demanded,
-        live: live.map(|l| l.into_iter().collect()),
+        live: match reached {
+            Some(set) => Some(set.iter().copied().collect()),
+            None => live.map(|l| l.into_iter().collect()),
+        },
         any_fn_views,
         generated: generated.into_iter().collect(),
         decorators: std::mem::take(&mut cx.decorator_uses).into_iter().collect(),

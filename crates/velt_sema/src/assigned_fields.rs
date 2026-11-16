@@ -14,13 +14,12 @@ pub(crate) fn assigned_objects(cx: &mut Ctx) -> FxHashSet<DefId> {
     let mut out = FxHashSet::default();
     // With std's unit from disk (`velt check`), what lowering needs of std is not built
     // (`finalize::program_defs`).
-    let from = if cx.std_from_disk {
-        cx.unit_base as usize
-    } else {
-        0
-    };
-    for def in cx.defs.iter().skip(from) {
-        let Some(Def::Fn(f)) = def else {
+    let from = cx.program_from();
+    for i in from..cx.defs.len() {
+        if !cx.in_program(i) {
+            continue;
+        }
+        let Some(Def::Fn(f)) = &cx.defs[i] else {
             continue;
         };
         visit::exprs(&f.body.block, &mut |e: &Expr| {
@@ -38,8 +37,11 @@ pub(crate) fn assigned_objects(cx: &mut Ctx) -> FxHashSet<DefId> {
     // lays them out as one). Defs with the same field names must therefore agree, or the two
     // forms would be shared differently.
     let mut by_names: FxHashMap<Vec<String>, Vec<DefId>> = FxHashMap::default();
-    for (i, info) in cx.info.iter().enumerate().skip(from) {
-        if let DefInfo::Adt(a) = info {
+    for i in from..cx.info.len() {
+        if !cx.in_program(i) {
+            continue;
+        }
+        if let DefInfo::Adt(a) = &cx.info[i] {
             if a.kind == AdtKind::Anon {
                 let names = a.fields.iter().map(|f| f.name.clone()).collect();
                 by_names.entry(names).or_default().push(DefId(i as u32));

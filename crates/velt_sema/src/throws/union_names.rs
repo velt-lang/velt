@@ -28,6 +28,9 @@ impl Ctx<'_> {
         // An anonymous object type's fields with variables are their solved types, as erasing
         // makes them (`crate::readonly::erase`): it is shown by them, as the unions holding it.
         for i in self.program_from()..self.info.len() {
+            if !self.in_program(i) {
+                continue;
+            }
             let d = crate::hir::DefId(i as u32);
             let Some(a) = self.adt(d).filter(|a| a.kind == crate::hir::AdtKind::Anon) else {
                 continue;
@@ -57,6 +60,9 @@ impl Ctx<'_> {
         }
         let marked = self.ty.inferred_fns.clone();
         for i in self.program_from()..self.info.len() {
+            if !self.in_program(i) {
+                continue;
+            }
             let d = crate::hir::DefId(i as u32);
             let Some(e) = self
                 .enum_info(d)
@@ -129,8 +135,11 @@ impl Ctx<'_> {
             return;
         }
         let mut unions = vec![];
-        for (i, d) in self.defs.iter().enumerate().skip(self.program_from()) {
-            let Some(crate::hir::Def::Enum(h)) = d else {
+        for i in self.program_from()..self.defs.len() {
+            if !self.in_program(i) {
+                continue;
+            }
+            let Some(crate::hir::Def::Enum(h)) = &self.defs[i] else {
                 continue;
             };
             let d = crate::hir::DefId(i as u32);

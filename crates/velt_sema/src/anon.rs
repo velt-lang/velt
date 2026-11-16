@@ -633,9 +633,12 @@ impl Ctx<'_> {
 /// never sees them, and a shape must not resolve to one of them.
 pub(crate) fn concrete_shapes(cx: &Ctx) -> FxHashMap<Vec<(String, TyId, bool, bool)>, DefId> {
     let mut out = FxHashMap::default();
-    for (i, d) in cx.defs.iter().enumerate().skip(cx.program_from()) {
+    for i in cx.program_from()..cx.defs.len() {
+        if !cx.in_program(i) {
+            continue;
+        }
         let id = DefId(i as u32);
-        if let Some(crate::hir::Def::Adt(a)) = d {
+        if let Some(crate::hir::Def::Adt(a)) = &cx.defs[i] {
             let replaced =
                 cx.readonly_twins.contains_key(&id) || cx.fn_sites.solved_anons.contains(&id);
             if a.kind == AdtKind::Anon && a.generics == 0 && !replaced {
@@ -665,8 +668,11 @@ pub(crate) fn concrete_shapes(cx: &Ctx) -> FxHashMap<Vec<(String, TyId, bool, bo
 /// erasure replaced (`crate::union_layouts`) are left out: no type is one of them any more.
 pub(crate) fn concrete_unions(cx: &Ctx) -> FxHashMap<Vec<TyId>, DefId> {
     let mut out = FxHashMap::default();
-    for (i, d) in cx.defs.iter().enumerate().skip(cx.program_from()) {
-        let Some(crate::hir::Def::Enum(e)) = d else {
+    for i in cx.program_from()..cx.defs.len() {
+        if !cx.in_program(i) {
+            continue;
+        }
+        let Some(crate::hir::Def::Enum(e)) = &cx.defs[i] else {
             continue;
         };
         if !e.is_union || e.generics != 0 || cx.replaced_unions.contains(&DefId(i as u32)) {

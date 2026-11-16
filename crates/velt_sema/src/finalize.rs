@@ -20,7 +20,12 @@ use crate::hooks;
 /// program's module state holds them).
 pub(crate) fn program_defs(cx: &Ctx) -> Vec<usize> {
     let base = cx.unit_base as usize;
-    if !cx.std_from_disk {
+    if let Some(set) = &cx.program_set {
+        let mut out: Vec<usize> = set.iter().map(|d| d.0 as usize).collect();
+        out.sort_unstable();
+        return out;
+    }
+    if !cx.std_from_disk || !cx.check_only {
         return (0..cx.info.len()).collect();
     }
     let mut out: Vec<usize> = (cx.impls.iter())
@@ -117,6 +122,40 @@ pub(crate) fn build_defs(cx: &mut Ctx) -> rustc_hash::FxHashSet<DefId> {
     }
     crate::collect::host_sig::same_imports(cx);
     unchecked
+}
+
+/// EXPERIMENT (#2943 M3): with the program built from a set (`Ctx::program_set`), the
+/// definitions the final type table names that the set left out: lowering may lay out any type
+/// of the table, so each is built as a type (its methods stay placeholders). Added to the set.
+pub(crate) fn build_named_types(cx: &mut Ctx) {
+    let Some(set) = cx.program_set.clone() else {
+        return;
+    };
+    let mut memo: FxHashMap<DefId, Vec<Option<hir::Expr>>> = FxHashMap::default();
+    let mut added = vec![];
+    let mut seen = rustc_hash::FxHashSet::default();
+    for i in 0..cx.ty.table.len() as u32 {
+        let (hir::TyKind::Adt(d, _) | hir::TyKind::Dyn(d, _)) = cx.ty.kind(hir::TyId(i)).clone()
+        else {
+            continue;
+        };
+        if set.contains(&d) || !seen.insert(d) || cx.defs[d.0 as usize].is_some() {
+            continue;
+        }
+        let def = match &cx.info[d.0 as usize] {
+            DefInfo::Adt(_) => Def::Adt(adt_def(cx, d, &mut memo)),
+            DefInfo::Enum(_) => Def::Enum(enum_def(cx, d)),
+            DefInfo::Iface(_) => Def::Interface(iface_def(cx, d)),
+            _ => continue,
+        };
+        cx.defs[d.0 as usize] = Some(def);
+        added.push(d);
+    }
+    if !added.is_empty() {
+        let mut set = (*set).clone();
+        set.extend(added);
+        cx.program_set = Some(std::rc::Rc::new(set));
+    }
 }
 
 /// The `hir::InterfaceDef` of interface `d` (fields become getter slots after the methods, and
@@ -340,6 +379,9 @@ fn adt_def(cx: &mut Ctx, d: DefId, memo: &mut FxHashMap<DefId, Vec<Option<hir::E
 /// before it erases the definitions.
 pub(crate) fn build_late_enums(cx: &mut Ctx) {
     for i in cx.program_from()..cx.info.len() {
+        if !cx.in_program(i) {
+            continue;
+        }
         if cx.defs[i].is_none() && matches!(cx.info[i], DefInfo::Enum(_)) {
             let d = DefId(i as u32);
             cx.defs[i] = Some(Def::Enum(enum_def(cx, d)));

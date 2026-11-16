@@ -118,6 +118,11 @@ pub(crate) struct Ctx<'m> {
     /// (`units::disk`): the program built leaves their definitions out (placeholders, nothing
     /// decoded, [`crate::program`]).
     pub std_from_disk: bool,
+    /// EXPERIMENT (#2943): the check only checks (`CheckOptions::check_only`).
+    pub check_only: bool,
+    /// EXPERIMENT (#2943 M3): with std's unit from disk in a build, the definitions the program
+    /// is built from (`units::reach`); `None`: all ([`Ctx::in_program`]).
+    pub program_set: Option<std::rc::Rc<FxHashSet<DefId>>>,
     pub scopes: Vec<ModuleScope>,
     /// Exports of `std/prelude/*` modules, visible everywhere.
     pub prelude: FxHashMap<String, Item>,
@@ -581,7 +586,28 @@ impl<'m> Ctx<'m> {
         }
     }
 
+    /// Is definition `i` one the program is built from ([`Ctx::program_set`], or from
+    /// [`Ctx::program_from`] on)? Asked before the definition is read.
+    pub(crate) fn in_program(&self, i: usize) -> bool {
+        match &self.program_set {
+            Some(set) => set.contains(&DefId(i as u32)),
+            None => i >= self.program_from(),
+        }
+    }
+
+    /// [`Ctx::in_program`] as a closure that holds no borrow of the context.
+    pub(crate) fn program_filter(&self) -> impl Fn(usize) -> bool {
+        let (set, from) = (self.program_set.clone(), self.program_from());
+        move |i| match &set {
+            Some(set) => set.contains(&DefId(i as u32)),
+            None => i >= from,
+        }
+    }
+
     pub(crate) fn program_from(&self) -> usize {
+        if self.program_set.is_some() || !self.check_only {
+            return 0;
+        }
         match self.std_from_disk {
             // The dependencies in the unit are the program's (`units::libraries`): their
             // declarations are checked against their libraries, their code lowered.
@@ -623,6 +649,8 @@ impl<'m> Ctx<'m> {
             units: false,
             unit_base: 0,
             std_from_disk: false,
+            check_only: false,
+            program_set: None,
             unit_sums: Default::default(),
             units_stage: crate::units::Stage::Both,
             scopes,

@@ -315,6 +315,9 @@ pub(crate) fn dyn_members(cx: &mut Ctx) -> Option<FxHashMap<DefId, Vec<DynMember
     }
     let mut out = FxHashMap::default();
     for i in cx.program_from()..cx.info.len() {
+        if !cx.in_program(i) {
+            continue;
+        }
         let d = DefId(i as u32);
         let Some(a) = cx.adt(d) else { continue };
         let generics = a.generics.names.len() as u32;

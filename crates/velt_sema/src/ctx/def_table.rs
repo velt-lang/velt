@@ -175,25 +175,24 @@ impl<T> DefTable<T> {
         (0..n).map(move |i| unsafe { (*items).get_mut(i).expect("ICE: decoded entry") })
     }
 
-    /// The entries from `from` on, to write (the program's, `Ctx::program_from`).
+    /// The entries `keep` keeps, to write (the program's, `Ctx::program_filter`).
     #[track_caller]
-    pub(crate) fn iter_mut_from(
-        &mut self,
-        from: usize,
-    ) -> impl DoubleEndedIterator<Item = &mut T> + ExactSizeIterator {
-        if from == 0 {
-            self.scanned();
-            if self.frozen_below > 0 {
-                violation(Location::caller());
-            }
+    pub(crate) fn iter_mut_where<'s>(
+        &'s mut self,
+        keep: &dyn Fn(usize) -> bool,
+    ) -> impl Iterator<Item = &'s mut T> {
+        if self.frozen_below > 0 {
+            violation(Location::caller());
         }
         let n = self.items.len();
-        for i in from..n {
+        let kept: Vec<usize> = (0..n).filter(|&i| keep(i)).collect();
+        for &i in &kept {
             self.at(i);
         }
         let items: *mut Slots<T> = &mut self.items;
         // SAFETY: each index is yielded once, so the `&mut`s don't overlap.
-        (from.min(n)..n).map(move |i| unsafe { (*items).get_mut(i).expect("ICE: decoded entry") })
+        kept.into_iter()
+            .map(move |i| unsafe { (*items).get_mut(i).expect("ICE: decoded entry") })
     }
 
     /// Entry `i`, uncounted (the probe's own reads).

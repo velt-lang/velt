@@ -142,6 +142,9 @@ impl Ctx<'_> {
         let n = self.info.len();
         let mut anons = vec![];
         for i in self.program_from()..n {
+            if !self.in_program(i) {
+                continue;
+            }
             let d = crate::hir::DefId(i as u32);
             let Some(a) = self.adt(d) else {
                 continue;
@@ -197,6 +200,9 @@ impl Ctx<'_> {
             }
         }
         for i in self.program_from()..n {
+            if !self.in_program(i) {
+                continue;
+            }
             let d = crate::hir::DefId(i as u32);
             let Some(e) = self.enum_info(d).filter(|e| e.is_union) else {
                 continue;
