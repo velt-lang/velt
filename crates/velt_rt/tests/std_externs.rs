@@ -87,11 +87,19 @@ fn velt_class(ty: &str) -> String {
 }
 
 /// `symbol -> (params, result)` of every `declare function` under `std/` (not `declare c`,
-/// `declare host` and the compiler's own).
+/// `declare host` and the compiler's own). A symbol several files declare keeps one of them.
 fn velt_declarations() -> BTreeMap<String, (Sig, PathBuf)> {
+    velt_declaration_list()
+        .into_iter()
+        .map(|(name, sig, path)| (name, (sig, path)))
+        .collect()
+}
+
+/// Every `declare function` under `std/` as in `velt_declarations`, one entry per declaring file.
+fn velt_declaration_list() -> Vec<(String, Sig, PathBuf)> {
     let mut paths = vec![];
     files(&repo().join("std"), "velt", &mut paths);
-    let mut out = BTreeMap::new();
+    let mut out = vec![];
     for path in paths {
         let text = std::fs::read_to_string(&path).expect("read std source");
         let mut rest = text.as_str();
@@ -152,7 +160,7 @@ fn velt_declarations() -> BTreeMap<String, (Sig, PathBuf)> {
                 }
                 c => c.to_string(),
             };
-            out.insert(name, ((params, ret), path.clone()));
+            out.push((name, (params, ret), path.clone()));
         }
     }
     out
@@ -304,16 +312,69 @@ fn mismatches(defs: &BTreeMap<String, Vec<(Sig, PathBuf)>>, required: bool) -> V
     out
 }
 
+/// The one std file whose declarations velt_rt may lack: std/fs/rt.velt (`#fs-rt`), the
+/// bindings WebAssembly builds use. Its async leaves are velt_rt_wasm's alone: a native build
+/// imports only the file's `*_sync` twins and runs them on the executor's blocking pool (#2196).
+const WASM_ONLY_BINDINGS: &str = "std/fs/rt.velt";
+
+/// Whether `name`, declared in `paths` and not defined by velt_rt, is a WebAssembly-only leaf:
+/// declared in `WASM_ONLY_BINDINGS` and nowhere else, and defined by velt_rt_wasm (whose check
+/// below verifies its signature). A declaration velt_rt lacks in any other std file is a
+/// mistake, even when velt_rt_wasm has it.
+fn wasm_only_leaf(
+    name: &str,
+    paths: &[PathBuf],
+    wasm: &BTreeMap<String, Vec<(Sig, PathBuf)>>,
+) -> bool {
+    let Ok(bindings) = repo().join(WASM_ONLY_BINDINGS).canonicalize() else {
+        return false;
+    };
+    let only_bindings = !paths.is_empty()
+        && paths
+            .iter()
+            .all(|p| p.canonicalize().is_ok_and(|p| p == bindings));
+    only_bindings && wasm.contains_key(name)
+}
+
 #[test]
 fn std_declarations_match_velt_rt() {
     let defs = rust_definitions(&runtime_sources("velt_rt"));
-    let bad = mismatches(&defs, true);
+    let wasm = rust_definitions(&runtime_sources("velt_rt_wasm"));
+    let mut declared_in: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
+    for (name, _, path) in velt_declaration_list() {
+        declared_in.entry(name).or_default().push(path);
+    }
+    let bad: Vec<String> = mismatches(&defs, true)
+        .into_iter()
+        .filter(|m| {
+            let name = m.split_once(':').map_or("", |(n, _)| n);
+            let paths = declared_in.get(name).map_or(&[][..], Vec::as_slice);
+            !(m.ends_with(", not defined") && wasm_only_leaf(name, paths, &wasm))
+        })
+        .collect();
     assert!(
         bad.is_empty(),
         "{} mismatches:\n{}",
         bad.len(),
         bad.join("\n")
     );
+}
+
+/// The exemption covers std/fs/rt.velt only: the same name declared in another std file (a
+/// native-only file declaring what velt_rt removed), alone or besides std/fs/rt.velt, is not
+/// exempt, nor is a name velt_rt_wasm doesn't define.
+#[test]
+fn only_the_wasm_bindings_may_declare_what_velt_rt_lacks() {
+    let wasm = rust_definitions(&runtime_sources("velt_rt_wasm"));
+    let name = "velt_rt_fs_read_file";
+    assert!(wasm.contains_key(name), "velt_rt_wasm defines {name}");
+    let bindings = repo().join(WASM_ONLY_BINDINGS);
+    let other = repo().join("std/process/rt.velt");
+    assert!(wasm_only_leaf(name, std::slice::from_ref(&bindings), &wasm));
+    assert!(!wasm_only_leaf(name, std::slice::from_ref(&other), &wasm));
+    assert!(!wasm_only_leaf(name, &[bindings.clone(), other], &wasm));
+    assert!(!wasm_only_leaf(name, &[], &wasm));
+    assert!(!wasm_only_leaf("velt_rt_no_such_leaf", &[bindings], &wasm));
 }
 
 /// velt_rt_wasm compiles velt_rt's portable modules from their sources (checked above) and

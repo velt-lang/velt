@@ -26,15 +26,27 @@ export struct LineRead {
   eof: bool;
 }
 
-export declare async function velt_rt_stdin_read_line(): Promise<LineRead>;
+/** The sync read (the runtime has no async one: a native build reads on the executor's
+ * blocking pool, std/process/rt_sched.velt). */
+export async function velt_rt_stdin_read_line(): Promise<LineRead> {
+  return velt_rt_stdin_read_line_sync();
+}
 
 export declare function velt_rt_stdin_read_line_sync(): LineRead;
 
-export declare async function velt_rt_stdin_read_all(): Promise<IoResult<string>>;
+/** The sync read (the runtime has no async one: a native build reads on the executor's
+ * blocking pool, std/process/rt_sched.velt). */
+export async function velt_rt_stdin_read_all(): Promise<IoResult<string>> {
+  return velt_rt_stdin_read_all_sync();
+}
 
 export declare function velt_rt_stdin_read_all_sync(): IoResult<string>;
 
-export declare async function velt_rt_stdin_read_all_bytes(): Promise<IoResult<u8[]>>;
+/** The sync read (the runtime has no async one: a native build reads on the executor's
+ * blocking pool, std/process/rt_sched.velt). */
+export async function velt_rt_stdin_read_all_bytes(): Promise<IoResult<u8[]>> {
+  return velt_rt_stdin_read_all_bytes_sync();
+}
 
 export declare function velt_rt_stdin_read_all_bytes_sync(): IoResult<u8[]>;
 
