@@ -9,6 +9,14 @@ fn main() -> ExitCode {
     // The launcher counts launchers running one another (#948); a toolchain ends the chain, so
     // a `velt` that a program it runs starts again counts from zero. Before any thread starts.
     std::env::remove_var("VELT_LAUNCHER_HOPS");
+    // EXPERIMENT (#2943 M4): `VELT_UNITS_DISK=auto` keeps std's unit in the build cache
+    // (`<cache>/units`); resolved here, before any thread starts, for the driver and sema.
+    if std::env::var_os("VELT_UNITS_DISK").is_some_and(|v| v == "auto") {
+        match veltc::build_cache::root() {
+            Some(root) => std::env::set_var("VELT_UNITS_DISK", root.join("units")),
+            None => std::env::remove_var("VELT_UNITS_DISK"),
+        }
+    }
     // WebAssembly compiles with the pinned zig when no `llc` and `opt` are found (#2587).
     velt_codegen_llvm::set_zig(pinned_zig);
     // `--workspace`, `-p` and `--affected` choose the members a command runs on (#1855).
