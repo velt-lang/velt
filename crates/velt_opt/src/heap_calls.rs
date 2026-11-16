@@ -73,6 +73,9 @@ fn run_func(pairs: &[(ExternId, FuncId)], externs: &[ExternFn], func: &mut Funct
         let Some(&(e, hook)) = pairs.iter().find(|(x, _)| x == e) else {
             continue;
         };
+        if externs[e.0 as usize].symbol == "velt_rt_alloc" && !constant_size(&func.blocks[b].term) {
+            continue;
+        }
         rewrite(func, b, &externs[e.0 as usize].params, hook);
         changed = true;
     }
@@ -145,6 +148,18 @@ fn rewrite(func: &mut Function, b: usize, params: &[Ty], hook: FuncId) {
     *args = new_args;
     *dest = new_dest;
     *next = new_next;
+}
+
+/// Whether the allocation ending a block asks for a size known here (an object, a closure's
+/// environment, a counted box, an array's first four elements): its hook folds to the mimalloc
+/// call. An array buffer of a length known only at run time stays the runtime's call: inlined,
+/// the hook's checks changed how LLVM compiled the loops that fill such a buffer (a peeled first
+/// iteration and more induction variables: bench/hashmap.velt +4.7% by instructions).
+fn constant_size(term: &Terminator) -> bool {
+    matches!(
+        term,
+        Terminator::Call { args, .. } if matches!(args.first(), Some(Operand::Const(..)))
+    )
 }
 
 fn new_local(func: &mut Function, ty: Ty) -> velt_vir::vir::Local {
