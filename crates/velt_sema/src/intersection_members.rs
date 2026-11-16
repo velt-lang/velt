@@ -150,18 +150,6 @@ impl Ctx<'_> {
         f.generics.constraints.get(n as usize).copied().flatten()
     }
 
-    /// Is every array the bound of type parameter `n` of the function being checked may be
-    /// written read-only (`Generics::readonly_arrays`)? `false` in a generic closure.
-    pub(crate) fn constraint_read_only(&self, n: u32) -> bool {
-        if self.closure_constraints.is_some() {
-            return false;
-        }
-        let Some(&d) = self.checking.last() else {
-            return false;
-        };
-        (self.try_fn(d)).is_some_and(|f| n < 64 && f.generics.readonly_arrays >> n & 1 == 1)
-    }
-
     /// Is every value of bound `b` a string: `string`, string literal types and unions of them,
     /// or a deferred alias whose body is an intersection with `string` (`… & string`)?
     pub(crate) fn string_bound(&mut self, b: TyId) -> bool {

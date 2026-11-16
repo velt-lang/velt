@@ -52,7 +52,7 @@ pub(crate) enum Resolved {
         iface: DefId,
         iface_args: Vec<TyId>,
         slot: u32,
-        method: Box<IfaceMethod>,
+        method: IfaceMethod,
     },
     Builtin(BuiltinMethod),
 }
@@ -166,7 +166,7 @@ impl FnCx<'_, '_> {
                     iface: b.iface,
                     iface_args: b.args.clone(),
                     slot: slot as u32,
-                    method: Box::new(i.methods[slot].clone()),
+                    method: i.methods[slot].clone(),
                 });
             }
         }

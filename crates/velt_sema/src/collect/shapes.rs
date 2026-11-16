@@ -155,21 +155,15 @@ pub(crate) struct ParamBounds {
     /// Per parameter, a bound that is a type (`T extends Record<string, V>`); empty when no
     /// parameter has one. See `Generics::constraints`.
     pub constraints: Vec<Option<TyId>>,
-    /// Per parameter, `Generics::readonly_arrays`.
-    pub readonly_arrays: Vec<bool>,
 }
 
 pub(crate) fn resolve_bounds(cx: &mut Ctx, gs: &[ast::GenericParam], env: &TyEnv) -> ParamBounds {
     let mut out = ParamBounds {
         bounds: vec![],
         constraints: vec![],
-        readonly_arrays: vec![],
     };
     for (i, g) in gs.iter().enumerate() {
         let mut bounds = vec![];
-        let readonly = !g.bounds.is_empty()
-            && (g.bounds.iter()).all(|b| arrays_read_only(cx, b, env.module, 0));
-        out.readonly_arrays.push(readonly);
         for b in &g.bounds {
             let ty = cx.resolve_type(b, env);
             match as_bound(cx, ty) {
@@ -199,70 +193,6 @@ pub(crate) fn resolve_bounds(cx: &mut Ctx, gs: &[ast::GenericParam], env: &TyEnv
         out.constraints.resize(gs.len(), None);
     }
     out
-}
-
-/// Is every array type written anywhere in `t` read-only (`readonly T[]`, `ReadonlyArray<T>`),
-/// also inside their elements, function types and object types and through the program's type
-/// aliases (`Generics::readonly_arrays`, `FnCx::impl_params_read_only`)? `true` for a type
-/// that writes no array. `false` for a form whose arrays this can't see (a tuple with elements,
-/// a qualified name, `typeof x`, an indexed, conditional or mapped type).
-pub(crate) fn arrays_read_only(cx: &Ctx, t: &ast::TypeExpr, module: usize, depth: usize) -> bool {
-    use ast::TypeExprKind as K;
-    if depth > 8 {
-        return false;
-    }
-    let all = |ts: &mut dyn Iterator<Item = &ast::TypeExpr>| {
-        for t in ts {
-            if !arrays_read_only(cx, t, module, depth + 1) {
-                return false;
-            }
-        }
-        true
-    };
-    match &t.kind {
-        K::Union(ms) | K::Intersection(ms) => all(&mut ms.iter()),
-        K::Function {
-            params,
-            ret,
-            throws,
-            ..
-        } => all(&mut params.iter().chain([&**ret]).chain(throws.as_deref())),
-        K::GenericFunction { ty, .. } => arrays_read_only(cx, ty, module, depth + 1),
-        K::Object(fields) => all(&mut fields.iter().map(|f| &f.ty)),
-        K::IndexSig { fields, value, .. } => {
-            all(&mut fields.iter().map(|f| &f.ty).chain([&**value]))
-        }
-        K::Tuple(es) if es.is_empty() => true,
-        K::Literal(_)
-        | K::KeyOf(_)
-        | K::TemplateLiteral { .. }
-        | K::Null
-        | K::Undefined
-        | K::Void => true,
-        K::Named { path, args } if path.len() == 1 => match path[0].name.as_str() {
-            "ReadonlyArray" => all(&mut args.iter()),
-            "Array" => false,
-            name => match cx.lookup_type_item_at(module, name, path[0].span) {
-                // A generic alias's parameters stand for its arguments, or the defaults of
-                // those left out: its body and they.
-                Some(crate::ctx::Item::Alias(a)) => {
-                    let alias = &cx.aliases[a as usize];
-                    arrays_read_only(cx, &alias.decl.ty, alias.module, depth + 1)
-                        && all(&mut args.iter())
-                        && alias.decl.generics.iter().skip(args.len()).all(|g| {
-                            (g.default.as_ref())
-                                .is_some_and(|t| arrays_read_only(cx, t, alias.module, depth + 1))
-                        })
-                }
-                // A primitive, a class, interface or enum: the value is converted as itself,
-                // not its fields'. A type parameter (an alias's, or the implementation's): its
-                // argument is checked where it is written, and one inferred from a bound's
-                // value is that type parameter, not a union to convert into.
-                _ => all(&mut args.iter()),
-            },
-        },
-        _ => false,
-    }
 }
 
 /// `ty` written as a bound: `Ok` with an interface bound, `Err` with a type that is no

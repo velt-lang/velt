@@ -1,6 +1,7 @@
 //! Values of a type parameter used as their bound's type (issue #1212): a function-type bound
 //! as that function; an array-type bound, and a union bound (#379), through an `any`, checked
-//! at run time (an array of elements of one layout, or read-only).
+//! at run time (an array bound only of one primitive element type where it may be written,
+//! #3062; a union bound with no array member).
 
 use crate::body::FnCx;
 use crate::hir::{self, ExprKind as H, TyId, TyKind};
@@ -70,13 +71,12 @@ impl FnCx<'_, '_> {
         }
         // An instantiation may be an array of a narrower element type (`number[]` for `(number |
         // string)[]`), whose view stops writes of the wider elements: where the value may be
-        // written through, only an element type with one layout, or a bound written read-only
-        // (`union_bound_value`). Reading it (`for...of`) is the same either way, unless its
-        // elements hold arrays, which the loop's variable can write through (`exact_test`).
-        if !self.one_layout(e)
-            && (writes || !self.exact_test(e, false, 0))
-            && !(self.cx.constraint_read_only(p) && self.impl_params_read_only())
-        {
+        // written through, only an element type with one layout. A bound written read-only
+        // doesn't make it safe: Velt doesn't check that a read-only array stays one (TS4104),
+        // so a cast or a call can still write through it. Reading it (`for...of`) is the same
+        // either way, unless its elements hold arrays, which the loop's variable can write
+        // through (`exact_test`).
+        if !self.one_layout(e) && (writes || !self.exact_test(e, 0)) {
             return Err(h);
         }
         let span = h.span;
@@ -91,11 +91,11 @@ impl FnCx<'_, '_> {
     /// Only where every member of the bound has an exact run-time test (`exact_test`), so an
     /// instantiation passes the test: an interface or object type member would take a subtype
     /// that the test rejects, and an enum has no test (#924). An array member may be an array of
-    /// a narrower element type (`number[]` for `(number | string)[]`), which converts as a view
-    /// that stops writes of the wider elements: it is taken only when its element can't be
-    /// narrower (one primitive type) or the bound's arrays are written read-only, so no code
-    /// writes through it (`Generics::readonly_arrays`, sigx's `KeyValue`). `Err(h)` for any other
-    /// value.
+    /// a narrower element type (`number[]` for `(number | string)[]`, `"a"[]` for `string[]`),
+    /// which converts as a view that stops writes of the wider elements, so a bound with an
+    /// array member is refused, also one written read-only: Velt doesn't check that a read-only
+    /// array stays one (TS4104, #3061), so a cast or a call can still write through it.
+    /// `Err(h)` for any other value.
     pub(crate) fn union_bound_value(
         &mut self,
         h: hir::Expr,
@@ -115,8 +115,7 @@ impl FnCx<'_, '_> {
         let want = self.flat_members(exp);
         let have = self.flat_members(b);
         let fits = have.iter().all(|m| want.contains(m));
-        let read_only = self.cx.constraint_read_only(p) && self.impl_params_read_only();
-        if !fits || !have.iter().all(|&m| self.exact_test(m, read_only, 0)) {
+        if !fits || !have.iter().all(|&m| self.exact_test(m, 0)) {
             return Err(h);
         }
         // Tested as the bound, whose members all have exact tests, then widened to `exp` by
@@ -124,43 +123,6 @@ impl FnCx<'_, '_> {
         let boxed = self.generic_as_any(h)?;
         let bound = self.cast_dynamic(boxed, b);
         self.try_coerce(bound, exp)
-    }
-
-    /// Is a bound's read-only array also read-only where the value goes? In a signature's body
-    /// (`crate::overloads`) only when every array in the implementation's parameter types is
-    /// written read-only: tsc relates a signature to its implementation with the type
-    /// parameters as `any`, so a read-only bound there says nothing of what the implementation
-    /// writes. Elsewhere `true`: tsc rejects a read-only array where a mutable one is expected
-    /// (TS4104). `false` for a method's signature (its implementation is not looked up).
-    fn impl_params_read_only(&mut self) -> bool {
-        // The body's own function, also inside the closures that convert its function values
-        // (`() => K | null` as the implementation's function type).
-        let Some(d) = self.body_def.filter(|_| self.cx.has_overloads) else {
-            return true;
-        };
-        let Some(src) = self.cx.fn_info(d).source else {
-            return true;
-        };
-        let name = &crate::body::defaults::fn_sig_ast(src).name.name;
-        let Some(base) = crate::overloads::sig_of(name) else {
-            return true;
-        };
-        let at = self.cx.fn_info(d).name_span;
-        if self.cx.fn_info(d).owner.is_some() {
-            return false;
-        }
-        let Some(crate::ctx::Item::Def(imp)) = self.cx.lookup_item_at(self.module, base, at) else {
-            return false;
-        };
-        let info = self.cx.fn_info(imp);
-        let Some(src) = info.source else {
-            return false;
-        };
-        let module = info.module;
-        crate::body::defaults::fn_sig_ast(src)
-            .params
-            .iter()
-            .all(|p| crate::collect::shapes::arrays_read_only(self.cx, &p.ty, module, 0))
     }
 
     /// `t` without its `| null` (or `| undefined`).
@@ -176,32 +138,30 @@ impl FnCx<'_, '_> {
 
     /// Does converting an `any` to `t` test for exactly `t` (a primitive, a literal, a class, an
     /// array or union of such, or one of those or nothing), so that a value of a type `t` may be
-    /// instantiated with passes, and is used as a `t`? An array whose element type has members
-    /// or subtypes only when `read_only` (`union_bound_value`).
-    fn exact_test(&mut self, t: TyId, read_only: bool, depth: u32) -> bool {
+    /// instantiated with passes, and is used as a `t`? Not an array: an instantiation may be an
+    /// array of a narrower element type (`number[]` for `(number | string)[]`, `"a"[]` for
+    /// `string[]`, whose literal elements are laid out differently), which a view of it as `t`
+    /// would write wider elements into (`union_bound_value`).
+    fn exact_test(&mut self, t: TyId, depth: u32) -> bool {
         if depth > 8 {
             return false;
         }
         if let Some(members) = self.cx.union_members(t) {
-            return members
-                .iter()
-                .all(|&m| self.exact_test(m, read_only, depth + 1));
+            return members.iter().all(|&m| self.exact_test(m, depth + 1));
         }
         match self.cx.ty.kind(t).clone() {
             TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Str | TyKind::Literal(_) => {
                 true
             }
-            TyKind::Array(e) => {
-                (read_only || self.one_layout(e)) && self.exact_test(e, read_only, depth + 1)
-            }
-            TyKind::Option(e, _) => self.exact_test(e, read_only, depth + 1),
+            TyKind::Option(e, _) => self.exact_test(e, depth + 1),
             TyKind::Adt(d, _) => self.is_class_def(d) && self.cx.brand_base(t).is_none(),
             _ => false,
         }
     }
 
-    /// Is `e` an array element type no instantiation can make narrower with another layout (one
-    /// primitive type), so an array of it written through stays an array of it?
+    /// Is `e` one primitive type, so an array of it can't be instantiated with a narrower element
+    /// type of another member (`number[]` for `(number | string)[]`)? An array of its literal
+    /// types still can (`"a"[]` for `string[]`, #3062).
     fn one_layout(&self, e: TyId) -> bool {
         matches!(
             self.cx.ty.kind(e),

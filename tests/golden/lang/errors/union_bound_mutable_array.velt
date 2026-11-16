@@ -2,7 +2,8 @@
 // an instantiation may be an array of a narrower element type (`number[]` for `(number |
 // string)[]`), and the implementation writes a `string` through it, which the narrower array
 // can't hold. Velt refuses the conversion; tsc accepts it and Node prints `3 3`. A bound whose
-// arrays are read-only converts (`overload_union_bound_key`).
+// arrays are of one primitive type converts (`overload_union_bound_key`); one written read-only
+// doesn't (`union_bound_readonly_cast`).
 function use(key: string): number;
 function use<K extends (string | (number | string)[])>(key: () => K | null): number;
 function use(key: string | (() => string | (number | string)[] | null)): number {

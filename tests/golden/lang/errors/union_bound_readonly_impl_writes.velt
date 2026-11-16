@@ -2,8 +2,8 @@
 // implementation takes a mutable array (#379, `union_bound_value`): tsc relates the signature to
 // the implementation with `K` as `any`, so the read-only bound says nothing of what the
 // implementation writes, and it writes a `string` into what may be a `number[]`. Velt refuses
-// the conversion; tsc accepts it and Node prints `3 3`. An implementation whose arrays are
-// read-only too converts (`overload_union_bound_key`).
+// the conversion; tsc accepts it and Node prints `3 3`. An array member converts only when its
+// element is one primitive type (`overload_union_bound_key`).
 function use(key: string): number;
 function use<K extends (string | readonly (number | string)[])>(key: () => K | null): number;
 function use(key: string | (() => string | (number | string)[] | null)): number {

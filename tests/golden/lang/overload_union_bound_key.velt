@@ -3,8 +3,10 @@
 // implementation's `string | (() => KeyValue | Falsy)`, each `K` becoming the member it is at run
 // time; and an implementation that returns `unknown` gives each overload its result as `as`
 // converts it (checked at run time where Node doesn't check: the implementation returns what the
-// overload promises). Node prints the same.
-type KeyValue = string | readonly (string | number | boolean | null)[];
+// overload promises). A key with an array member doesn't convert: an instantiation could be an
+// array of a narrower element type that the implementation writes into
+// (`errors/union_bound_mutable_array`, #3061). Node prints the same.
+type KeyValue = string | number;
 type Falsy = false | null | undefined | "";
 type Fetcher<T, Arg> = (arg: Arg) => T;
 
@@ -31,8 +33,7 @@ function main(): void {
   console.log(useData("users", (k: string) => k.length));
   console.log(useData(() => (id > 5 ? `user/${id}` : null), (k: string) => `got ${k}`));
   console.log(useData(() => (id > 9 ? "never" : null), (k: string) => k));
-  const parts = (): readonly (string | number)[] => ["user", id];
-  console.log(useData(parts, (k: readonly (string | number)[]) => k.length * 2));
+  console.log(useData(() => id * 2, (k: number) => k + 1));
   const n = load("count", (k: string) => k.length + 1);
   console.log(n + 1, load("name", (k: string) => k.toUpperCase()));
 }
