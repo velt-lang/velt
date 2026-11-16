@@ -1,6 +1,10 @@
 //! `velt_rt_all` / `velt_rt_all_or_reject`: `Promise.all` over a runtime-sized array of heap
 //! futures.
 //!
+//! On native targets the executor in Velt joins in Velt (std/lang/hooks/sched_all.velt); its
+//! only call of these is for code the runtime's executor runs off every worker
+//! (std/lang/hooks/sched_off.velt). They go when that path moves (#2196).
+//!
 //! Fixed-arity `Promise.all([a(), b()])` is compiled inline (children embedded in the parent state,
 //! each polled until done: no allocation). For arrays, polling every child on every wake-up would be
 //! quadratic, so the runtime drives them through `FuturesUnordered`, which only re-polls the

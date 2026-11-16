@@ -34,6 +34,8 @@ declare c("c") function velt_rt_all_with_drop$rt(
   results: usize,
   rdrop: usize,
 ): usize;
+declare c("c") function velt_rt_race$rt(futs: usize, n: u64, size: u64): usize;
+declare c("c") function velt_rt_race_ok$rt(futs: usize, n: u64, size: u64, rdrop: usize): usize;
 declare c("c") function velt_rt_all_or_reject$rt(
   futs: usize,
   n: u64,
@@ -134,6 +136,17 @@ export function all(
       return velt_rt_all_or_reject$rt(futs, n, size, results, rdrop);
     }
     return velt_rt_all_with_drop$rt(futs, n, size, results, rdrop);
+  }
+}
+
+/** The runtime's race over the `n` futures at `futs` (sched_race.velt `schedRace`). */
+export function race(futs: usize, n: u64, size: u64, rdrop: usize, firstOk: bool): usize {
+  // SAFETY: `futs` holds `n` heap futures.
+  unsafe {
+    if (firstOk) {
+      return velt_rt_race_ok$rt(futs, n, size, rdrop);
+    }
+    return velt_rt_race$rt(futs, n, size);
   }
 }
 

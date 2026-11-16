@@ -1,0 +1,34 @@
+// `Promise.race` over an array (the race in Velt, sched_race.velt): a settled input wins over one
+// that settles later, whichever comes first in the array; the losers run on (#2196). The second
+// race's loser prints nothing: when its later steps run next to the race's reaction differs from
+// Node's by a few microtask steps (#752).
+async function after(label: string, n: number): Promise<string> {
+  for (let i = 0; i < n; i++) {
+    await null;
+  }
+  console.log(`${label} done`);
+  return label;
+}
+
+async function quiet(label: string, n: number): Promise<string> {
+  for (let i = 0; i < n; i++) {
+    await null;
+  }
+  return label;
+}
+
+async function main() {
+  const a: Promise<string>[] = [after("slow", 3), after("fast", 1)];
+  console.log(`first: ${await Promise.race(a)}`);
+  const b: Promise<string>[] = [quiet("late", 2), Promise.resolve("settled")];
+  console.log(`second: ${await Promise.race(b)}`);
+  const r = Promise.withResolvers<string>();
+  const c: Promise<string>[] = [r.promise, after("racer", 2)];
+  const won = Promise.race(c);
+  r.resolve("resolved");
+  console.log(`third: ${await won}`);
+  for (let i = 0; i < 6; i++) {
+    await null;
+  }
+  console.log("end");
+}
