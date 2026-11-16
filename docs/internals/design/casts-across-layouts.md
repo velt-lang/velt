@@ -1,6 +1,6 @@
 # Casts across layouts: interface downcasts, widened objects, method writes, promise views
 
-Status: proposal (#379, sigx's "casts across layouts" kit group). Nothing here is implemented yet.
+Status: approved 2026-11-16 (#379, sigx's "casts across layouts" kit group), with the decisions under "Decisions" below. Nothing here is implemented yet; the order is A1, A2, B, E1, D.
 
 ## Why
 
@@ -56,9 +56,7 @@ With the lookup alone, sigx's `ctx` still fails. It is an object literal convert
   - one layout per base family;
   - extensions that disagree on a field's type keep their own layout;
   - absent fields are not printed, serialized or listed.
-- **Classes** converted to `I` get the same hidden slots, as Node's instances take new
-  properties. A class that declares a field of that name with another type keeps its layout, and
-  its downcast fails at run time as above.
+- **Classes** are not widened (decided below). A class converted to `I` that lacks one of `J`'s optional fields, where the program casts `I` to `J`, is a compile error naming the class and the field. A class that declares the field itself implements `J` as it is.
 - An anonymous target (`rq as { _input?: unknown }`) where every member is optional and absent
   from `I` counts as an extension of `I`.
 - **Cost:** objects of a widened type are larger by the added slots; nothing else changes.
@@ -129,11 +127,8 @@ and the kit count. Steps 1–3 clear renderer.ts 1074, 1221 and 1233, hydrate-co
 server index.ts 315 (five errors). Steps 4–5 clear app-config.ts 173, and 363 at sigx's default
 `P`.
 
-## Open questions
+## Decisions (2026-11-16)
 
-- Should the downcast's run-time failure be a `TypeError` panic (as other checked assertions) or a
-  compile error where the program converts to `I` a type that can't implement `J`? This proposal
-  takes the panic, which matches the other assertions; the compile error would be stricter than
-  tsc.
-- Should widening reach classes (hidden slots in every instance) or stop at object types and
-  object literals? This proposal includes classes, since Node's instances take new properties.
+- **A failed downcast** is a `TypeError` panic (`type assertion failed: the value is not a J`), like the other checked assertions, and not a compile error.
+- **Widening** covers object types and object literals only, not classes. A class that would need a new field is a compile error naming the class and the field.
+- **The contract changes** (vtable layout in `vir`, `Intrinsic::SameType` in `hir`) are accepted. Each PR names the ones it makes.
