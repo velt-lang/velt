@@ -1,0 +1,81 @@
+// velt/lang/hooks (internal): `spawn` on a thread that isn't one of the executor in Velt's workers
+// (sched.velt, #2649, #3085): a C library's thread calling an exported function. Such a thread
+// never starts the executor or becomes a worker (program_thread.velt): it makes the task for worker
+// 0's block (the one the program's thread starts, sched_workers.velt `pending`) and hands it over
+// through worker 0's inbox, which other threads push on atomically.
+// - The task counts in worker 0's `E_LIVE_F`, atomically, before it is pushed, and until it ends,
+//   wherever it runs (`ended`); the program's end waits for it.
+// - Its join handle's table always locks (sched_join.velt `joinPollForeign`), and so does the end
+//   of its slot on the worker (`J_FOREIGN`: sched_join.velt `kindFor`, sched_run.velt `rootDone`):
+//   the handle may be dropped on this thread while the task ends on a worker, in any lock mode.
+// - Worker 0 is woken only once the executor started; before that, the program's thread takes the
+//   inbox when it starts.
+// - It runs outside any `catch` (worker 0's catch state is not this thread's).
+
+import { exportedAddress, fnAddress } from "velt/lang/intrinsics";
+import * as jn from "./sched_join";
+import * as mk from "./sched_make";
+import * as m from "./sched_mem";
+import * as run from "./sched_run";
+import * as t from "./sched_task";
+import * as wk from "./sched_wake";
+import * as workers from "./sched_workers";
+
+/** `schedSpawn` on a thread that isn't a worker: the handle (as `schedSpawn`'s). */
+export function spawn(
+  poll: usize,
+  drop: usize,
+  state: usize,
+  size: u64,
+  rsize: u64,
+  rdrop: usize,
+  transfer: usize,
+): usize {
+  const g = workers.pending();
+  const k = mk.task(g, poll, drop, rsize, rdrop, size, 2);
+  m.st(k + t.T_TRANSFER, transfer);
+  m.copy(m.ld(k + t.T_ROOT), state, size as usize);
+  return handOver(g, k);
+}
+
+/** `schedSpawnFut` on a thread that isn't a worker: the handle (as `schedSpawnFut`'s). */
+export function spawnFut(f: usize, rsize: u64, rdrop: usize): usize {
+  const g = workers.pending();
+  const k = mk.task(g, fnAddress(run.futRootPoll), 0, rsize, rdrop, 16 + ((rsize + 15) & ~15), 2);
+  const at = m.ld(k + t.T_ROOT);
+  m.st(at, f);
+  m.st(at + 8, rsize as usize);
+  m.st(k + t.T_ROOT, at + 16);
+  m.st(k + t.T_TRANSFER, 0);
+  return handOver(g, k);
+}
+
+/** Task `k` of worker 0 (`g`): its handle's table and slot, counted, pushed on `g`'s inbox. */
+function handOver(g: usize, k: usize): usize {
+  // SAFETY: `@export`ed functions of a heap future's poll and drop signatures.
+  unsafe {
+    m.st(k + t.T_JOIN, exportedAddress(jn.joinPollForeign));
+    m.st(k + t.T_JOIN + 8, exportedAddress(jn.joinDropForeign));
+  }
+  m.st(k + t.T_JOIN_STATE, (t.J_HANDLE | t.J_FOREIGN) as usize);
+  // Counted before it can be taken: worker 0 never sees the task without its count.
+  m.inc(g + t.E_LIVE_F);
+  m.pushStack(g + t.E_INBOX, k, t.T_NEXT);
+  if (workers.isStarted()) {
+    wk.unpark(g);
+  }
+  return k + t.T_JOIN;
+}
+
+/**
+ * Such a task `k` ended on worker `e` (worker 0 is `g`): the executor's reference goes first, then
+ * its count, and worker 0, which may wait for the last live task in `schedFinish`, is woken when
+ * it was that.
+ */
+export function ended(e: usize, g: usize, k: usize): void {
+  wk.release(k);
+  m.dec(g + t.E_LIVE_F);
+  if (e !== g && mk.live(g) === 0) {
+    wk.unpark(g);
+  }
+}

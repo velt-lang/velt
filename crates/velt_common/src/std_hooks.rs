@@ -209,10 +209,13 @@ hooks! {
     /// otherwise.
     panic_raise => lang_hooks_unwind, "panicRaise", sig((&string) -> never), lowered, constructs(CatchUnwind);
     // sched.velt: the executor in Velt (#2649), with `VELT_SCHEDULER=std` ([`std_scheduler`]).
+    /// The program's thread, marked by `velt_main` first thing (#3085): the executor's worker 0
+    /// starts only there (program_thread.velt).
+    program_thread => lang_hooks_program_thread, "programThread", sig(() -> void), lowered;
     /// `velt_rt_block_on`'s job: `(poll, state)`.
     sched_block_on => lang_hooks_sched, "schedBlockOn", sig((usize, usize, u64) -> void), lowered;
     /// `velt_rt_spawn`'s: `(poll, drop, state, size, align, result_size, result_drop)`, the handle.
-    sched_spawn => lang_hooks_sched, "schedSpawn", sig((usize, usize, usize, u64, u64, u64, usize, usize) -> usize), lowered;
+    sched_spawn => lang_hooks_sched_spawn, "schedSpawn", sig((usize, usize, usize, u64, u64, u64, usize, usize) -> usize), lowered;
     /// `velt_rt_yield_now`'s: `(cx)`; then the end of `velt_main` with its exit code (0: the
     /// tasks left run).
     sched_yield => lang_hooks_sched, "schedYield", sig((usize) -> void), lowered;
@@ -261,7 +264,7 @@ hooks! {
     sched_tla_at => lang_hooks_sched, "schedTlaAt", sig((&string) -> void), lowered;
     /// `velt_rt_spawn_fut`'s: `(f, result_size, result_drop)`, the handle; then
     /// `velt_rt_spawn_target`'s (`(worker)`: the next spawn is pinned to that worker).
-    sched_spawn_fut => lang_hooks_sched, "schedSpawnFut", sig((usize, u64, usize) -> usize), lowered;
+    sched_spawn_fut => lang_hooks_sched_spawn, "schedSpawnFut", sig((usize, u64, usize) -> usize), lowered;
     sched_pinned => lang_hooks_sched, "schedPinned", sig((i64) -> void), lowered;
     /// `velt_rt_sleep`'s: `(ms)`, a heap future; then the Node timer order's `velt_rt_timer_new`,
     /// `_turn`, `_again`, `_clear`, `_free`, then `velt_rt_uncaught_now`.
