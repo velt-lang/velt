@@ -58,9 +58,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 2026-11-13 (owner, #2649 switch): pull requests run lint only; the merge queue runs the
-        # whole gate on three OSes. Put test and golden back when the move is done.
-        part: [lint]
+        # The tests and goldens run here again (2026-11-16): with lint only (#2901, 2026-11-13 to
+        # 11-16), every bug a test catches reached the merge queue first, where 23 of 97 dropped
+        # or restarted queue runs failed on the pull request's own code and 9 more on an entry
+        # ahead's. Only approved pull requests run CI (the maintainer cancels the rest), so this
+        # costs an approved pull request about 45 minutes of one Linux runner. `pr-windows` stays
+        # off: the queue covers Windows.
+        part: [lint, test, golden]
     runs-on: ubuntu-latest
     # A change to velt_common or sema selects the whole suite: its test part alone runs about
     # 70 minutes on a hosted runner, and the changed tests then repeat under load (#2652 hit 90).
@@ -174,7 +178,7 @@ jobs:
   # package is a dependency, at a canonical path). Any other change starts no Windows runner.
   pr-windows:
     needs: pr-plan
-    # Off while pull requests run lint only (the `pr` job); the merge queue covers Windows.
+    # Off since 2026-11-13 (#2901): the merge queue covers Windows, where runners are scarcer.
     if: >-
       false && (
       needs.pr-plan.outputs.repeat == 'true' || needs.pr-plan.outputs.windows_packages != ''
