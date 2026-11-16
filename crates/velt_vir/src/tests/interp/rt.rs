@@ -257,6 +257,10 @@ impl Interp<'_> {
     }
 
     fn realloc(&mut self, p: u64, old: u64, new: u64) -> u64 {
+        // An old size of 0 allocates, as `velt_rt_realloc` does (array growth from empty).
+        if old == 0 {
+            return self.heap_alloc(new);
+        }
         assert_eq!(
             self.allocs.get(&p).copied(),
             Some(old.max(1)),

@@ -18,9 +18,8 @@ use velt_vir::vir::{
 };
 
 /// The runtime allocator's externs and std's hook for each.
-const HOOKS: [(&str, &str); 3] = [
+const HOOKS: [(&str, &str); 2] = [
     ("velt_rt_alloc", velt_common::std_hook!(heap_alloc)),
-    ("velt_rt_realloc", velt_common::std_hook!(heap_realloc)),
     ("velt_rt_free", velt_common::std_hook!(heap_free)),
 ];
 
@@ -51,8 +50,12 @@ pub(crate) fn run(program: &mut Program) -> bool {
         return false;
     }
     let mut changed = false;
-    for func in &mut program.funcs {
-        changed |= run_func(&pairs, &program.externs, func);
+    let hooks: Vec<FuncId> = pairs.iter().map(|&(_, h)| h).collect();
+    for (i, func) in program.funcs.iter_mut().enumerate() {
+        // A hook's own calls stay (it is what they become).
+        if !hooks.contains(&FuncId(i as u32)) {
+            changed |= run_func(&pairs, &program.externs, func);
+        }
     }
     changed
 }
@@ -186,7 +189,6 @@ mod tests {
         if hooks {
             let u = Ty::U64;
             pb.add(hook(velt_common::std_hook!(heap_alloc), &[u, u], u));
-            pb.add(hook(velt_common::std_hook!(heap_realloc), &[u, u, u, u], u));
             pb.add(hook(
                 velt_common::std_hook!(heap_free),
                 &[u, u, u],
@@ -232,17 +234,18 @@ mod tests {
             callees(main),
             [
                 Callee::Func(FuncId(0)),
-                Callee::Func(FuncId(1)),
-                Callee::Func(FuncId(2))
+                Callee::Extern(ExternId(1)),
+                Callee::Func(FuncId(1))
             ]
         );
-        // The pointer argument of the realloc and the free, and the two results, cast.
+        // The reallocation stays the runtime's. The pointer argument of the free and the
+        // allocation's result, cast.
         let casts = main.blocks.iter().flat_map(|b| &b.stmts);
         assert_eq!(
             casts
                 .filter(|s| matches!(s, Stmt::Assign(_, Rvalue::Cast(..))))
                 .count(),
-            4
+            2
         );
         // Nothing left to do.
         assert!(!run(&mut p));
@@ -260,10 +263,10 @@ mod tests {
     fn unused_functions_keep_a_hook_while_its_extern_is_called() {
         let mut p = program(true);
         crate::dead_funcs::run(&mut p);
-        assert_eq!(p.funcs.len(), 4, "the hooks stay for heap_calls");
+        assert_eq!(p.funcs.len(), 3, "the hooks stay for heap_calls");
         run(&mut p);
         crate::dead_funcs::run(&mut p);
-        assert_eq!(p.funcs.len(), 4, "the hooks are called");
+        assert_eq!(p.funcs.len(), 3, "the hooks are called");
         assert_valid(&p);
     }
 }

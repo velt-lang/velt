@@ -118,7 +118,47 @@ export function heapFree(p: u64, size: u64, align: u64): void {
 /** Stops the program: mimalloc has no block of `size` bytes (the runtime's message). */
 @noInline
 function outOfMemory(size: u64): never {
-  panic(`memory allocation of ${size} bytes failed`);
+  panic("memory allocation of " + decimal(size) + " bytes failed");
+}
+
+/**
+ * `n` in decimal, by hand: a template, or a digit read from an array (its bounds check), would
+ * load the number printing hooks into every program that is checked, as this module is
+ * (velt_lsp's `demand` tests).
+ */
+function decimal(n: u64): string {
+  let s = digit(n % 10);
+  let rest = n / 10;
+  while (rest > 0) {
+    s = digit(rest % 10) + s;
+    rest = rest / 10;
+  }
+  return s;
+}
+
+function digit(d: u64): string {
+  if (d < 5) {
+    if (d == 0) {
+      return "0";
+    }
+    if (d == 1) {
+      return "1";
+    }
+    if (d == 2) {
+      return "2";
+    }
+    return d == 3 ? "3" : "4";
+  }
+  if (d == 5) {
+    return "5";
+  }
+  if (d == 6) {
+    return "6";
+  }
+  if (d == 7) {
+    return "7";
+  }
+  return d == 8 ? "8" : "9";
 }
 
 /** Stops the program: an array's buffer past the length limit. */
