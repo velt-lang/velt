@@ -613,6 +613,9 @@ impl FnCx<'_, '_> {
             return None;
         }
         let keys = self.object_key_names(t, span)?;
+        // It lists the source's keys: one of a type widened for a cast to an extension has the
+        // written fields too (`layout_merge::check_looks` reports it).
+        (self.cx.object_copies).observe(t, span, crate::object_copies::Seen::Keys);
         let a = match self.cx.ty.kind(t) {
             TyKind::Adt(d, _) => self.cx.adt(*d),
             _ => None,

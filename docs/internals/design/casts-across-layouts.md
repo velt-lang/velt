@@ -78,7 +78,14 @@ With the lookup alone, sigx's `ctx` still fails. It is an object literal convert
 - **Classes** are not widened (decided below). A class converted to `I` that lacks one of `J`'s optional fields, where the program casts `I` to `J`, is a compile error naming the class and the field. A class that declares the field itself implements `J` as it is.
 - An anonymous target (`rq as { _input?: unknown }`) where every member is optional and absent
   from `I` counts as an extension of `I`.
-- **Cost:** objects of a widened type are larger by the added slots; nothing else changes.
+- **Cost:** in a program with such a cast, every object of a type converted to `I` is larger by the added fields, written or not.
+  - Each optional field takes its `T | undefined` slot plus a presence flag, the layout #1383's widened layouts have.
+  - For one `string` field, measured on an Apple M-series Mac (release runtime, 2,000,000 `{ id, run }` literals converted to `Ctx`, each read 5 times):
+    - the struct grows from 24 to 64 bytes: a 32-byte option of the 24-byte string, and 8 bytes for the 1-byte flag after alignment;
+    - peak RSS goes from 115.5 MB to 195.0 MB (+40 bytes per object);
+    - instructions go from 415.6 M to 511.8 M (+23%; making and touching the larger objects).
+  - Programs without such a cast are unchanged.
+  - Smaller layouts are possible, as a layout change for #1383's families too: a presence-flagged slot without the option's own tag (−8 bytes), or the added fields in one block allocated on the first write (8 bytes per object until then). These are follow-ups.
 
 ## B. Setter slots for method members
 

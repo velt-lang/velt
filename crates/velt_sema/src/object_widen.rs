@@ -55,6 +55,9 @@ pub(crate) enum Refusal {
     Conflict(String),
     /// A generic object literal type of its shape is laid out as it.
     GenericShape,
+    /// An object literal made in a generic function: laid out per instance of its type
+    /// parameters.
+    GenericInstance,
 }
 
 impl Ctx<'_> {
@@ -107,6 +110,7 @@ impl Ctx<'_> {
                 let r = match generics {
                     0 => self.widen_one(ty, &a.fields),
                     _ if self.is_adapter(ty) => Ok(()),
+                    _ if self.is_literal_type(ty) => Err(Refusal::GenericInstance),
                     _ => Err(Refusal::NoRoom),
                 };
                 if r.is_ok() {
@@ -202,7 +206,10 @@ impl Ctx<'_> {
         // (`body/expr/iface_object.rs`) whose methods don't use `this` (a value, which has presence
         // flags; one using `this` is laid out as a class).
         let literal = kind == AdtKind::Struct && self.literal_structs.contains(&d);
-        if !(kind == AdtKind::Anon || literal) || !args.is_empty() || self.layout_family_of(d) {
+        if (kind == AdtKind::Anon || literal) && !args.is_empty() {
+            return Err(Refusal::GenericInstance);
+        }
+        if !(kind == AdtKind::Anon || literal) || self.layout_family_of(d) {
             return Err(Refusal::NoRoom);
         }
         // A generic object type of the same shape (`{ el: T; … }` from a generic function) is laid
@@ -224,6 +231,16 @@ impl Ctx<'_> {
         match self.rebuild_object_impls(d, &names) {
             Some(name) => Err(Refusal::Conflict(name)),
             None => Ok(()),
+        }
+    }
+
+    /// Is `ty` an object literal's type, or the struct of one written as an interface?
+    fn is_literal_type(&self, ty: TyId) -> bool {
+        match self.ty.kind(ty) {
+            crate::hir::TyKind::Adt(d, _) => self
+                .adt(*d)
+                .is_some_and(|a| a.kind == AdtKind::Anon || self.literal_structs.contains(d)),
+            _ => false,
         }
     }
 
@@ -303,13 +320,17 @@ impl Ctx<'_> {
             format!(
                 "`{shown}` is converted to `{from}`, and a generic object literal of its shape is laid out as it, which would need {lacks} too; give the object a type of its own (an interface declaring {lacks}) where it is made"
             )
+        } else if matches!(why, Refusal::GenericInstance) {
+            format!(
+                "an object literal made in a generic function is converted to `{from}`, and is laid out per instance of the function's type parameters, so it gets no fields it was made without; give the literal the type `{to}` (with the function's type parameters) where it is made"
+            )
         } else if hidden {
             format!(
                 "an object literal written as a `{from}` whose methods use `this` has no {lacks}, and its object gets no fields it was made without; give the literal the type `{to}` where it is made (`const c: {to} = {{ … }}`)"
             )
         } else if self.class_of(ty).is_some() {
             format!(
-                "class `{shown}` is converted to `{from}` and doesn't declare {lacks}: a class's objects get no fields it doesn't declare; declare {lacks} on `{shown}` (optional is fine)"
+                "class `{shown}` implements `{from}` and doesn't declare {lacks}: a class's objects get no fields it doesn't declare; declare {lacks} on `{shown}` (optional is fine)"
             )
         } else {
             format!(
