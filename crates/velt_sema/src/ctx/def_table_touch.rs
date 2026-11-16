@@ -6,7 +6,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::panic::Location;
 
 thread_local! {
-    static ON: Cell<bool> = const { Cell::new(false) };
     static DEFS: RefCell<BTreeMap<&'static str, BTreeSet<usize>>> =
         const { RefCell::new(BTreeMap::new()) };
     static SCANS: RefCell<BTreeMap<String, usize>> = const { RefCell::new(BTreeMap::new()) };
@@ -63,13 +62,19 @@ pub(crate) fn touched(table: &str) -> Vec<usize> {
     })
 }
 
+/// Whether counting is on (a global, not a thread's: every table read asks, so it must cost
+/// nothing; only sema's thread counts).
+static ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[inline]
 pub(crate) fn on() -> bool {
-    ON.with(Cell::get)
+    ON.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Start counting (the app's stage), when `VELT_UNITS_TOUCH` is set.
 pub(crate) fn start() {
-    ON.with(|o| o.set(std::env::var_os("VELT_UNITS_TOUCH").is_some()));
+    let on = std::env::var_os("VELT_UNITS_TOUCH").is_some();
+    ON.store(on, std::sync::atomic::Ordering::Relaxed);
     DEFS.with(|d| d.borrow_mut().clear());
     SCANS.with(|s| s.borrow_mut().clear());
     BY_SITE.with(|s| s.borrow_mut().clear());
@@ -95,7 +100,7 @@ pub(crate) fn report(frozen: usize) {
     if !on() {
         return;
     }
-    ON.with(|o| o.set(false));
+    ON.store(false, std::sync::atomic::Ordering::Relaxed);
     let types = TYPES.with(Cell::get);
     let read = TYS.with(|s| s.borrow().len());
     eprintln!(

@@ -90,7 +90,7 @@ pub use std_ast::StdAstCache;
 pub use std_root::{in_std, prelude_files, std_root};
 
 /// A std module's stub by its canonical path, decoded for its file ([`LoadOptions::std_stubs`]).
-pub type StdStubs<'f> = dyn Fn(&str, FileId) -> Option<ast::Module> + 'f;
+pub type StdStubs<'f> = dyn Fn(&str, FileId) -> Option<ast::Module> + Sync + 'f;
 
 /// EXPERIMENT (#2943 M2): a std module as an earlier load loaded it ([`LoadOptions::std_modules`]).
 pub struct StdModule {
@@ -266,6 +266,40 @@ pub fn load_program(
     })
 }
 
+/// The stubs of `table`'s modules (in `files`), decoded on a few threads with the parser's stack.
+fn decode_stubs(
+    table: &[StdModule],
+    files: &[FileId],
+    stubs: &StdStubs,
+) -> Vec<Option<ast::Module>> {
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get().min(4));
+    let chunk = table.len().div_ceil(threads).max(1);
+    let decode = |range: std::ops::Range<usize>| -> Vec<Option<ast::Module>> {
+        let bytes = velt_syntax::PARSER_STACK_BYTES;
+        velt_syntax::with_stack_of(bytes, || {
+            range.map(|i| stubs(&table[i].path, files[i])).collect()
+        })
+    };
+    let parts: Option<Vec<Vec<Option<ast::Module>>>> = std::thread::scope(|s| {
+        let handles: Vec<_> = (0..table.len())
+            .step_by(chunk)
+            .map(|lo| {
+                let range = lo..(lo + chunk).min(table.len());
+                std::thread::Builder::new()
+                    .name("velt-stubs".into())
+                    .stack_size(velt_syntax::PARSER_STACK_BYTES)
+                    .spawn_scoped(s, move || decode(range))
+            })
+            .collect();
+        handles.into_iter().map(|h| h.ok()?.join().ok()).collect()
+    });
+    // A thread that could not start: decode on this one.
+    parts.map_or_else(
+        || decode(0..table.len()),
+        |p| p.into_iter().flatten().collect(),
+    )
+}
+
 struct Loader<'a, 'o> {
     /// The modules of the load [`load_more`] goes on from: `modules` holds only their paths,
     /// imports and files, these their syntax (empty in [`load_program`]).
@@ -416,13 +450,17 @@ impl Loader<'_, '_> {
         ) else {
             return false;
         };
-        for m in table {
-            let file = self.sm.add(&m.file, String::new());
-            let Some(ast) = stubs(&m.path, file) else {
+        let files: Vec<FileId> = (table.iter())
+            .map(|m| self.sm.add(&m.file, String::new()))
+            .collect();
+        let asts = decode_stubs(table, &files, stubs);
+        for ((m, file), ast) in table.iter().zip(files).zip(asts) {
+            let Some(ast) = ast else {
                 continue;
             };
             let index = self.modules.len();
-            self.by_file.insert(file_key(&m.file), index);
+            let key = (std_tree::canonical_of(&m.file)).unwrap_or_else(|| file_key(&m.file));
+            self.by_file.insert(key, index);
             self.resolved.insert(index);
             self.modules.push(SourceModule {
                 path: m.path.clone(),

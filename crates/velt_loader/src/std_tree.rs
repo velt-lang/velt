@@ -74,13 +74,29 @@ impl StdTree {
     /// added or removed.
     pub fn fresh(&self) -> bool {
         let canonical = std::fs::canonicalize(&self.root).ok();
-        canonical.as_deref() == Some(self.canonical.as_path())
-            && (self.dirs.iter()).all(|(rel, &t)| {
-                std::fs::metadata(self.root.join(rel)).is_ok_and(|m| m.is_dir() && time(&m) == t)
-            })
-            && (self.files.iter()).all(|(rel, &(len, t))| {
+        if canonical.as_deref() != Some(self.canonical.as_path()) {
+            return false;
+        }
+        let dirs_ok = (self.dirs.iter()).all(|(rel, &t)| {
+            std::fs::metadata(self.root.join(rel)).is_ok_and(|m| m.is_dir() && time(&m) == t)
+        });
+        // A `stat` per file, on a few threads (about a thousand files).
+        let files: Vec<(&String, &(u64, u128))> = self.files.iter().collect();
+        let threads = std::thread::available_parallelism().map_or(1, |n| n.get().min(4));
+        let chunk = files.len().div_ceil(threads).max(1);
+        let same = |part: &[(&String, &(u64, u128))]| {
+            part.iter().all(|(rel, &(len, t))| {
                 std::fs::symlink_metadata(self.root.join(rel))
                     .is_ok_and(|m| m.is_file() && (m.len(), time(&m)) == (len, t))
+            })
+        };
+        dirs_ok
+            && std::thread::scope(|s| {
+                let handles: Vec<_> = files
+                    .chunks(chunk)
+                    .map(|c| s.spawn(move || same(c)))
+                    .collect();
+                handles.into_iter().all(|h| h.join().unwrap_or(false))
             })
     }
 
@@ -237,6 +253,13 @@ fn installed() -> Option<&'static Installed> {
 
 fn tree() -> Option<&'static StdTree> {
     installed().map(|i| &i.tree)
+}
+
+/// The canonical path of `path`, a path the snapshot's root as given joined with plain names:
+/// no normalizing (the injected std modules', `LoadOptions::std_modules`).
+pub(crate) fn canonical_of(path: &Path) -> Option<PathBuf> {
+    let t = tree()?;
+    plain_below(path, &t.root).map(|rel| t.canonical.join(rel))
 }
 
 /// Whether `path` is a file, when it is below the snapshot's root.
