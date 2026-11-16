@@ -173,13 +173,13 @@ mod tests {
     use super::{runtime_exports, CHECKED, CHECKED_POSIX};
 
     /// The skip is by membership: a symbol the runtime exports is skipped, one with its prefix
-    /// that it doesn't export (deleted with #3029) is checked, as is a C library function.
+    /// that it doesn't export is checked, as is a C library function.
     #[test]
     fn only_the_runtime_s_exports_are_skipped() {
         let exports = runtime_exports();
         assert!(exports.contains("velt_rt_timer_new"));
         assert!(exports.contains("velt_rt_sleep"));
-        assert!(!exports.contains("velt_rt_signal_timeout"));
+        assert!(!exports.contains("velt_rt_not_exported"));
         assert!(!exports.contains("strlen"));
         // The WebAssembly runtime's lines are not velt_rt's.
         assert!(!exports.contains("velt_host_alloc"));
