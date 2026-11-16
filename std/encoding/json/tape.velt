@@ -4,9 +4,14 @@
 // strings with escapes are decoded while parsing), and each array's elements and each object's keys
 // listed together in one array of positions, so `at(i)` is O(1).
 //
-// A tape's values never change after it is built (only `find` adds the hash index of a large
-// object it searches); values share it. Editing a value (`set`, `push`, …) turns that value into
-// the runtime's tree (prelude `JsonValue`), so it never shows through the tape.
+// Frozen once parsed (#3098): only the parser writes a tape (tape_parse.velt: the words, the
+// kids, `decoded`, `ordered`), on its own task, before `JsonValue` puts it in a `shared(...)`.
+// From then on every task reads it through that `shared<Tape>` (tape_ref.velt), with no writes and
+// no count changes (sema refuses writes through a shared value; lowering reads it frozen), so the
+// values of a document sent to other tasks share one tape instead of copying it. Anything a
+// reader would add later belongs to the task, not the tape: the hash index of a wide object lives
+// in the task's `TapeRef`. Editing a value (`set`, `push`, …) turns that value into the runtime's
+// tree (prelude `JsonValue`), so it never shows through the tape.
 
 import { noInline, strByteAt, strByteLen, strLoadPartialU8x16 } from "velt/lang/intrinsics";
 
@@ -14,8 +19,10 @@ declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string
 declare function velt_simd_u8x16_eq(a: u8x16, b: u8x16): mask8x16;
 declare function velt_simd_mask8x16_all(m: mask8x16): bool;
 
-/** Objects with more keys than this get a hash index (`find`), built on their first lookup. */
+/** Objects with more keys than this get a hash index (`TapeRef.find`), built on their first lookup. */
 export const INDEX_THRESHOLD: usize = 16;
+/** What `Tape.find` returns for an object over `INDEX_THRESHOLD` keys: look it up in the index. */
+export const FIND_WIDE: i64 = -2;
 /** Value kinds (the low byte of a value's first word). */
 export const T_NULL: u64 = 1;
 export const T_FALSE: u64 = 2;
@@ -60,10 +67,6 @@ export class Tape {
    *  occurrence (whose value is the one that counts), at the place of its first. Made with
    *  the first such object, so a tape without one (and its copy) allocates no map. */
   ordered: Map<u32, u32[]> | null = null;
-  /** The hash index of each object over `INDEX_THRESHOLD` keys that `find` was asked about:
-   *  key text to the value's position (a repeated key's last). A cache: the tape is unchanged.
-   *  Made with the first such lookup. */
-  index: Map<u32, Map<string, u32>> | null = null;
 
   constructor(src: string) {
     this.src = src;
@@ -100,7 +103,10 @@ export class Tape {
     return (this.words[2 * (v as usize)] >> 32) as i64;
   }
 
-  /** Object `v`'s value for `name` (the last, if repeated), or -1 (also when `v` is no object). */
+  /**
+   * Object `v`'s value for `name` (the last, if repeated), or -1 (also when `v` is no object); for
+   * an object over `INDEX_THRESHOLD` keys, `FIND_WIDE` (`TapeRef.find` asks its hash index).
+   */
   find(v: u32, name: string): i64 {
     const w = this.words[2 * (v as usize)];
     if ((w & 0xff) != T_OBJECT) {
@@ -129,9 +135,8 @@ export class Tape {
     return -1;
   }
 
-  // `find` in an object over `INDEX_THRESHOLD` keys, through its hash index (made the first
-  // time), or in a small one with a repeated or escaped key, or of a name over 16 bytes (out of
-  // line: `find` stays small).
+  // `find` in a small object with a repeated or escaped key, or of a name over 16 bytes, and
+  // `FIND_WIDE` for an object over `INDEX_THRESHOLD` keys (out of line: `find` stays small).
   @noInline
   private findOther(v: u32, name: string): i64 {
     const n = this.rawCount(v) as usize;
@@ -146,24 +151,12 @@ export class Tape {
       }
       return -1;
     }
-    let all = this.index;
-    if (all == null) {
-      all = new Map<u32, Map<string, u32>>();
-      this.index = all;
-    }
-    let ix = all.get(v);
-    if (ix == undefined) {
-      const m = new Map<string, u32>();
-      // In order, so a repeated key ends at its last value.
-      for (let i: usize = 0; i < n; i++) {
-        const k = this.kids[first + i];
-        m.set(this.text(k), k + 1);
-      }
-      all.set(v, m);
-      ix = m;
-    }
-    const at = ix.get(name);
-    return at == undefined ? -1 : at as i64;
+    return FIND_WIDE;
+  }
+
+  /** Key `i` of object `v` (`i` below its `rawCount`), as written. */
+  key(v: u32, i: usize): u32 {
+    return this.kids[(this.words[2 * (v as usize) + 1] as usize) + i];
   }
 
   /** Whether key string `k` is `name`, compared in place. */

@@ -16,6 +16,7 @@ import {
   Tape,
 } from "velt/encoding/json/tape";
 import { TapeError } from "velt/encoding/json/tape_error";
+import { TapeRef } from "velt/encoding/json/tape_ref";
 import {
   jsonValueEquals,
   jsonValueFrom,
@@ -76,25 +77,26 @@ const KIND_OBJECT: u32 = 6;
  * std makes one: the constructor is private, so no class can extend `JsonValue`.
  *
  * Two forms (#1660). A parsed value is a position on a tape (velt/encoding/json/tape): reading it makes
- * nothing, and its children share the tape. A value built or edited here (`object()`, `set`, …)
+ * nothing, and its children share the tape. The tape is frozen and shared between tasks: a value
+ * sent to another task reads the same tape there (velt/encoding/json/tape_ref, #3098). A value built or edited here (`object()`, `set`, …)
  * or read from a database driver is a tree of reference-counted runtime nodes behind `#handle`
  * (which stays the first field: compiled glue writes it); an edit turns a tape value into such
  * a tree first, so it never shows through the tape.
  */
 export class JsonValue {
   #handle: u64;
-  #tape: Tape | null;
+  #tape: TapeRef | null;
   #node: u32;
 
   // A `JsonValue` owning the runtime handle `h`, or value `node` of tape `t`.
-  private constructor(h: u64, t: Tape | null = null, node: u32 = 0) {
+  private constructor(h: u64, t: TapeRef | null = null, node: u32 = 0) {
     this.#handle = h;
     this.#tape = t;
     this.#node = node;
   }
 
   // Value `node` of tape `t`.
-  private static onTape(t: Tape, node: u32): JsonValue {
+  private static onTape(t: TapeRef, node: u32): JsonValue {
     return new JsonValue(0, t, node);
   }
 
@@ -105,7 +107,7 @@ export class JsonValue {
     if (r instanceof TapeError) {
       throw new JsonError(r.message);
     }
-    return JsonValue.onTape(r as Tape, 0);
+    return JsonValue.onTape(new TapeRef(shared(r as Tape)), 0);
   }
 
   // A `JsonValue` owning `h`, or null for the runtime's null handle.
@@ -159,7 +161,7 @@ export class JsonValue {
     if (t == null) {
       return;
     }
-    this.#handle = treeOf(t, this.#node);
+    this.#handle = treeOf(t.tape, this.#node);
     this.#tape = null;
   }
 
@@ -171,7 +173,7 @@ export class JsonValue {
   [JSON_RUNTIME_HANDLE](): u64 {
     const t = this.#tape;
     if (t != null) {
-      return treeOf(t, this.#node);
+      return treeOf(t.tape, this.#node);
     }
     return velt_rt_json_value_clone(this.#handle);
   }
@@ -189,7 +191,7 @@ export class JsonValue {
     const t = this.#tape;
     if (t != null) {
       const node = this.#node;
-      writeTape(t, out, node);
+      writeTape(t.tape, out, node);
       return;
     }
     const h = this.#handle;
@@ -418,7 +420,7 @@ export class JsonValue {
   stringify(): string {
     const t = this.#tape;
     if (t != null) {
-      return tapeStringify(t, this.#node);
+      return tapeStringify(t.tape, this.#node);
     }
     return velt_rt_json_value_stringify(this.#handle);
   }
