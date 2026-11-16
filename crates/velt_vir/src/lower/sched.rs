@@ -213,6 +213,8 @@ impl FnLower<'_, '_> {
                 | Rt::All
                 | Rt::AllWithDrop
                 | Rt::AllOrReject
+                | Rt::Race
+                | Rt::RaceOk
                 | Rt::FutTransfer
                 | Rt::FutId
                 | Rt::FutAlias
@@ -385,6 +387,25 @@ impl FnLower<'_, '_> {
                         ty::USize::arg(results),
                         ty::USize::arg(rdrop),
                         ty::Bool::arg(reject),
+                    );
+                    Some(c.emit(self).op())
+                }
+                // `Promise.race` and `Promise.any` over an array (sched_race.velt `schedRace`):
+                // `velt_rt_race` has no reject drop.
+                (Rt::Race | Rt::RaceOk, [futs, n, size, rest @ ..]) => {
+                    let rdrop = match rest {
+                        [d] => self.as_usize(d.clone()),
+                        _ => self.as_usize(cint(0, Ty::Ptr)),
+                    };
+                    let futs = self.as_usize(futs.clone());
+                    let first_ok = Operand::Const(Const::Bool(r == Rt::RaceOk), Ty::Bool);
+                    let c = hooks::sched_race(
+                        self,
+                        ty::USize::arg(futs),
+                        ty::U64::arg(n.clone()),
+                        ty::U64::arg(size.clone()),
+                        ty::USize::arg(rdrop),
+                        ty::Bool::arg(first_ok),
                     );
                     Some(c.emit(self).op())
                 }

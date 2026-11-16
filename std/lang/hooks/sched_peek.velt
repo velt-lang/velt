@@ -5,6 +5,7 @@
 import { Ptr } from "velt/ffi";
 import { fnAddress } from "velt/lang/intrinsics";
 import * as jn from "./sched_join";
+import * as rc from "./sched_race";
 import * as m from "./sched_mem";
 import * as node from "./sched_node";
 import * as sh from "./sched_share";
@@ -25,7 +26,8 @@ export function peek(f: usize): u32 {
   if (m.ld(f) === fnAddress(sh.holderPoll)) {
     return sh.peek(f) ? 1 : 0;
   }
-  if (jn.isJoin(f)) {
+  if (jn.isJoin(f) || rc.isRace(f)) {
+    // Pending until awaited, as the runtime's peek of its race says.
     return 0;
   }
   // SAFETY: `f` is a live heap future of the runtime's.

@@ -236,6 +236,9 @@ hooks! {
     /// `velt_rt_all`'s, `_with_drop`'s and `_or_reject`'s: `(futs, n, result_size, results,
     /// result_drop, reject)`, the join's heap future (#2944).
     sched_all => lang_hooks_sched_all, "schedAll", sig((usize, u64, u64, usize, usize, bool) -> usize), lowered;
+    /// `velt_rt_race`'s and `velt_rt_race_ok`'s: `(futs, n, result_size, reject_drop, first_ok)`,
+    /// the race's heap future (#2196).
+    sched_race => lang_hooks_sched_race, "schedRace", sig((usize, u64, u64, usize, bool) -> usize), lowered;
     /// `velt_rt_fut_peek`'s (`console.log` of a promise): `(f)`, 1 when it settled with its result
     /// in its slot.
     sched_peek => lang_hooks_sched, "schedPeek", sig((usize) -> u32), lowered;

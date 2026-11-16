@@ -1,0 +1,24 @@
+// A select loop: 200000 rounds, each racing a channel's receive against a stop signal that never
+// fires, as a reader with a cancel does; a second task sends (#2196).
+import { channel, Channel } from "velt/sync";
+
+async function produce(c: Channel<i64>, n: i64): Promise<void> {
+  for (let i: i64 = 0; i < n; i++) {
+    c.trySend(i);
+    await yieldNow();
+  }
+}
+
+async function main() {
+  const n: i64 = 200000;
+  const c = channel<i64>();
+  const stop = Promise.withResolvers<i64 | null>();
+  const p = spawn(produce(c, n));
+  let total: i64 = 0;
+  for (let i: i64 = 0; i < n; i++) {
+    const ps: Promise<i64 | null>[] = [c.receive(), stop.promise];
+    total += (await Promise.race(ps)) ?? 0;
+  }
+  await p;
+  console.log(total);
+}

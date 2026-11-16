@@ -426,6 +426,7 @@ const SCHED_HOOKS: &[&str] = &[
     velt_common::std_hook!(sched_pinned),
     velt_common::std_hook!(sched_sleep),
     velt_common::std_hook!(sched_all),
+    velt_common::std_hook!(sched_race),
     velt_common::std_hook!(sched_timer_new),
     velt_common::std_hook!(sched_timer_turn),
     velt_common::std_hook!(sched_timer_again),

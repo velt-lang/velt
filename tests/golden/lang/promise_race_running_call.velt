@@ -1,0 +1,28 @@
+// `Promise.race` over an array: an input that settles after the race is made, while an async
+// call earlier in the array still waits at an `await`, wins in Node. Velt runs the call on in
+// the race's first poll, where its `await null` doesn't yield (#752), so it wins (#3079).
+async function ok(label: string, n: number): Promise<string> {
+  for (let i = 0; i < n; i++) {
+    await null;
+  }
+  return label;
+}
+
+async function main() {
+  const p0 = ok("a0", 1);
+  const r1 = Promise.withResolvers<string>();
+  const p1 = r1.promise;
+  p1.then(() => {});
+  const r2 = Promise.withResolvers<string>();
+  const p2 = r2.promise;
+  p2.then(() => {});
+  const ps: Promise<string>[] = [p0, p1, p2];
+  const race = Promise.race(ps);
+  const t = race.then((v) => console.log(`won ${v}`));
+  r2.resolve("r2");
+  await null;
+  await null;
+  await null;
+  r1.resolve("r1");
+  await t;
+}

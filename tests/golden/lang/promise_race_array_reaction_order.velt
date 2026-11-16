@@ -1,0 +1,15 @@
+// Two `Promise.race`s over arrays whose inputs resolve in the other order: their reactions run
+// in the order the inputs resolved (#1362's `race` case, #2196).
+async function main() {
+  const a = Promise.withResolvers<number>();
+  const b = Promise.withResolvers<number>();
+  const as: Promise<number>[] = [a.promise];
+  const bs: Promise<number>[] = [b.promise];
+  const ta = Promise.race(as).then(() => console.log("race a"));
+  const tb = Promise.race(bs).then(() => console.log("race b"));
+  b.resolve(1);
+  a.resolve(2);
+  await ta;
+  await tb;
+  console.log("end");
+}

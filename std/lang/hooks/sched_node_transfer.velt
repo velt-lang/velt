@@ -13,6 +13,7 @@ import * as jn from "./sched_join";
 import * as m from "./sched_mem";
 import * as nd from "./sched_node";
 import * as off from "./sched_off";
+import * as rc from "./sched_race";
 import * as x from "./sched_node_ext";
 import * as al from "./sched_share_alias";
 import * as sh from "./sched_share";
@@ -33,6 +34,15 @@ export function schedTransfer(f: usize, glue: usize): void {
   if (m.ld(f) === fnAddress(sh.holderPoll)) {
     // A holder of a shared promise (sched_share_hand.velt).
     shh.handOver(f, glue);
+  } else if (rc.isRace(f)) {
+    // A race: the winner's result is a child's (the runtime's `pass_transfer`).
+    const n = rc.childCount(f);
+    for (let i: usize = 0; i < n; i++) {
+      const k = rc.childAt(f, i);
+      if (k !== 0) {
+        schedTransfer(k, glue);
+      }
+    }
   } else if (!transfer(f, glue, fnAddress(nd.nodePoll)) && !jn.isJoin(f)) {
     off.transfer(f, glue);
   }

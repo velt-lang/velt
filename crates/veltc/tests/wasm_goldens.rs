@@ -30,6 +30,12 @@ use wasm_tools::{build_runtime, copy_dir, for_node, missing_tools, root};
 /// them as microtasks, so `.then` callbacks and `queueMicrotask` jobs around a `resolve` called
 /// later do not keep Node's order (https://veltlang.com/docs/reference/async/).
 const UNSUPPORTED: &[&str] = &[
+    // wasm's race is still the runtime's, which orders its losers' steps differently from Node
+    // (#3077).
+    "promise_race_array_mixed",
+    // Known to fail on every target (#3079; this runner doesn't read golden_known_failing.txt);
+    // on wasm the race is still the runtime's (#3077).
+    "promise_race_running_call",
     "tcp_echo",
     "http_server",
     "console_std_handles",

@@ -1,0 +1,26 @@
+// `Promise.any` over an array: the first input that fulfills wins, rejections before it are
+// skipped; when all reject, it rejects (#2196).
+async function fail(label: string, n: number): Promise<string> {
+  for (let i = 0; i < n; i++) {
+    await null;
+  }
+  throw new Error(label);
+}
+
+async function ok(label: string, n: number): Promise<string> {
+  for (let i = 0; i < n; i++) {
+    await null;
+  }
+  return label;
+}
+
+async function main() {
+  const ps: Promise<string>[] = [fail("a", 1), ok("b", 3), fail("c", 2)];
+  console.log(await Promise.any(ps));
+  const all: Promise<string>[] = [fail("x", 1), fail("y", 2)];
+  try {
+    await Promise.any(all);
+  } catch (e) {
+    console.log("all rejected");
+  }
+}
