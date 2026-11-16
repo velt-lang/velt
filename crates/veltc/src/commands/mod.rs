@@ -7,7 +7,7 @@
 //! [`crate::cli`].
 
 mod build;
-mod check;
+pub(crate) mod check;
 mod clean;
 pub mod cpu;
 mod create;

@@ -26,6 +26,10 @@ pub struct CheckOptions {
     /// `crate::units::disk`), so std's unit must come from disk: the check refuses to check std
     /// over them. Additive.
     pub std_stubbed: bool,
+    /// The caller only checks (`velt check`): no program is lowered. With std's unit from disk
+    /// (EXPERIMENT, `crate::units::disk`), the program then leaves std's definitions out
+    /// (`Ctx::std_from_disk`). Additive.
+    pub check_only: bool,
 }
 
 impl Default for CheckOptions {
@@ -37,6 +41,7 @@ impl Default for CheckOptions {
             units: false,
             std_key: None,
             std_stubbed: false,
+            check_only: false,
         }
     }
 }

@@ -255,6 +255,9 @@ pub struct Session {
     /// This builds a source generator host, whose generators must not reach outside the
     /// program (no I/O, clock, randomness or native code: [`check_generator_host`]).
     pub generator_build: bool,
+    /// EXPERIMENT (#2943): this session only checks (`velt check`, [`recover`]): sema's
+    /// `CheckOptions::check_only`.
+    pub check_only: bool,
     /// Run no source generator: what would need one is an error ([`BuildOptions::no_generators`]).
     pub no_generators: bool,
     /// The errors source generators gave (also in `diagnostics`): what they reported, and their
@@ -432,6 +435,7 @@ fn sema_stage(
         native_executor: native_executor(opts),
         std_key: None,
         std_stubbed: false,
+        check_only: sess.check_only,
     };
     let packages = opts.packages.as_ref();
     // EXPERIMENT (#2943): `VELT_UNITS_TWICE` (`units_twice`).
@@ -539,6 +543,13 @@ fn compile_to_vir_linking(
         extra_roots: vec![],
         eager_std: false,
         units: false,
+    };
+    // EXPERIMENT (#2943 M3, `VELT_UNITS_BUILD=1` with `VELT_UNITS`): a build checks by units,
+    // with every std file, as `velt check` does (`commands::check::with_all_std`).
+    let by_units = std::env::var_os("VELT_UNITS_BUILD").is_some() && !sess.generator_build;
+    let scope = match by_units {
+        true => crate::commands::check::with_all_std(scope, opts)?,
+        false => scope,
     };
     let checked = check_program(sess, opts, &scope)?;
     lower_checked(sess, opts, dest, checked)

@@ -363,7 +363,7 @@ fn std_files_in(found: Vec<PathBuf>, imports: &Path) -> Vec<PathBuf> {
 /// `VELT_STD_SUMMARY_EAGER` (the std identity oracle's whole-std mode, #2943): the program with
 /// every std file, each std definition checked whether or not the program reaches it, as a cache
 /// of checked std holds std. A source generator's host is built apart and doesn't see it.
-fn with_all_std(
+pub(crate) fn with_all_std(
     mut scope: CheckScope,
     opts: &driver::BuildOptions,
 ) -> Result<CheckScope, BuildError> {

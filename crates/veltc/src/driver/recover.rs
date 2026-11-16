@@ -26,6 +26,7 @@ pub(super) fn check_recovering_loaded(
     opts: &BuildOptions,
     scope: &CheckScope,
 ) -> Result<(velt_loader::Loaded, Result<(), BuildError>), BuildError> {
+    sess.check_only = true;
     let before = sess.diagnostics.len();
     let mut loaded = load_modules(sess, opts, scope)?;
     // EXPERIMENT (#2943 M2): the recovered check has no std unit to take std's stubs from (it
@@ -63,6 +64,7 @@ pub(super) fn check_recovering_loaded(
         native_executor: super::native_executor(opts),
         std_key: None,
         std_stubbed: false,
+        check_only: false,
     };
     // The recovered trees can hold shapes no clean parse produces: a type checker failure on
     // them costs these findings only, never the syntax errors already reported.

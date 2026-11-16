@@ -503,7 +503,7 @@ fn check_timed(
             Some(mut cx) => {
                 (cx.units, cx.units_stage, cx.stack_budget) =
                     (true, units::Stage::Std, stack_budget);
-                cx.std_from_disk = from_disk;
+                cx.std_from_disk = from_disk && opts.check_only;
                 cx
             }
             None => {
