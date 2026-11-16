@@ -1,5 +1,6 @@
 // `Promise.all` over an array takes an input that rejected when it was made over one that rejects
-// later, as Node subscribes in array order (#2857, #2944).
+// later, and of two that rejected when it was made the first in the array, as Node subscribes in
+// array order (#2857, #2944).
 async function failLater(e: string): Promise<string> {
   await null;
   await null;
@@ -20,6 +21,21 @@ async function main() {
   const settled: Promise<string>[] = [failLater("late"), Promise.reject<string>(new Error("settled"))];
   try {
     await Promise.all(settled);
+  } catch (e) {
+    console.log((e as Error).message);
+  }
+  const two: Promise<string>[] = [failNow("first"), failNow("second")];
+  try {
+    await Promise.all(two);
+  } catch (e) {
+    console.log((e as Error).message);
+  }
+  const rs: Promise<string>[] = [
+    Promise.reject<string>(new Error("r1")),
+    Promise.reject<string>(new Error("r2")),
+  ];
+  try {
+    await Promise.all(rs);
   } catch (e) {
     console.log((e as Error).message);
   }

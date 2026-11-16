@@ -298,10 +298,12 @@ function register(j: usize, w: usize): void {
 }
 
 /**
- * Drops waker `old`, swapped out of join `j`'s `J_WAKER`, once no wake reads it: a wake counted
- * itself in `J_WAKING` before it read the waker (both sequentially consistent, against the swap,
- * then this load), so either it read the new one or it is counted here. A wake is a few steps
- * with no wait; the core is given away meanwhile.
+ * Drops waker `old`, swapped out of join `j`'s `J_WAKER`, once no wake reads it. A wake's
+ * increment of `J_WAKING` and its load of the waker are sequentially consistent, as are this
+ * swap and the load of the count below (Dekker's argument): either the wake read the new waker,
+ * or it is counted here. Its decrement (acquire and release) comes after it used the waker, so
+ * a count of 0 seen here means it is done with it. A wake is a few steps with no wait; the core
+ * is given away meanwhile.
  */
 function dropAwaiter(j: usize, old: usize): void {
   if (old === 0) {
