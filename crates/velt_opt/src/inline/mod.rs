@@ -22,16 +22,22 @@
 //! The budget is the program's: it may at most double in size, plus `BUDGET_SLACK`. Callers are
 //! visited bottom-up, so spent first come, first served, the first ones (deep library code, glue)
 //! could spend it all before a program's own code, nearer the top, got a turn (#2753). So a round
-//! whose calls could want more than is left sets aside for every caller what it wants (`wants`:
-//! the calls in its body that would be charged), and when they want more than is left, no more
-//! than a level set so that what is set aside adds up to it (a max-min fair share,
-//! `Budget::share`). A caller may spend what is set aside for it and whatever no caller still to
-//! come has set aside, so what one leaves unspent goes to the next: a hot loop that wants little
-//! gets it whatever else the program holds, and only callers wanting more than the level wait for
-//! what others leave. `wants` is an estimate, not a bound (callees grow before their callers are
-//! visited, one called once becomes free, and the calls an inlined body brings along are not
-//! seen), so a program whose callers' wants fit is inlined as first come, first served would only
-//! as far as the estimate is right (all of `bench/` that never runs out is).
+//! whose calls could want more than is left sets aside for each of the program's own functions
+//! what it wants (`wants`: the calls in its body that would be charged, each callee at the size it
+//! will have when the caller is visited, with what its own visit inlines), and when they want more
+//! than is left, no more than a level set so that what is set aside adds up to it (a max-min fair
+//! share, `Budget::share`). A caller may spend what is set aside for it and whatever no caller
+//! still to come has set aside, so what one leaves unspent goes to the next: a hot loop that wants
+//! little gets it whatever else the program holds, and only callers wanting more than the level
+//! wait for what others leave. The standard library's functions and generated glue get nothing
+//! set aside: among themselves they spend first come, first served as before, from what the
+//! program's own code doesn't want. Sharing among them too moved the budget from the instances
+//! whose inlined code folds away to those whose code stays (`bench/btree`: the `u64` map's
+//! internals to the `string` map's, 14% more code for the same budget, and 10% more to build).
+//! `wants` is an estimate, not a bound (one called once becomes free, a callee's growth is what
+//! its own visit would inline with the budget unlimited, and the calls an inlined body brings
+//! along are not counted), so a program whose own functions' wants fit is inlined as first come,
+//! first served would only as far as the estimate is right.
 //!
 //! Functions that never return normally (panic helpers, and `never` functions that throw) are
 //! never inlined: their calls are cold.
@@ -257,7 +263,7 @@ pub(crate) fn run(program: &mut Program, budget: &mut Budget, served: crate::Ser
         call_sites: graph.call_sites.clone(),
         address_taken: graph.address_taken,
     };
-    let wants = wants(program, &mut state, budget);
+    let wants = wants(program, &mut state, budget, &sccs);
     budget.share(wants);
     let mut changed = false;
     for scc in &sccs {
@@ -429,6 +435,8 @@ struct Site<'a> {
     from: &'a [FuncId],
     /// What the caller may still be charged ([`Budget::room`]).
     room: u64,
+    /// The callee's size: its [`cost`], or in [`wants`] the size it will have by then.
+    size: u64,
 }
 
 fn decide(
@@ -463,7 +471,7 @@ fn decide(
             return None;
         }
     }
-    let size = cost(target);
+    let size = site.size;
     if size <= TRIVIAL_COST || (target.inline == Inline::Always && !recursive) {
         return Some(Decision::Free);
     }
@@ -598,6 +606,7 @@ fn inline_into(
             passes_static,
             from: &from[here],
             room: budget.room(),
+            size,
         };
         let Some(decision) = decide(state, program, callee, &site, budget) else {
             continue;
@@ -677,13 +686,15 @@ fn passes_static(func: &Function, args: &[Operand]) -> bool {
         .any(|a| matches!(a, Operand::Copy(p) if p.proj.is_empty() && held(p.local)))
 }
 
-/// Per function, what this round would charge it with the budget unlimited: the sizes of the calls
-/// in its body that [`decide`] charges for. All zero when the round's calls can't want more than
-/// is left (each charged call costs at most its callee's size, up to `LOOP_COST`), which spares
-/// the work. An estimate, not a bound: a callee may grow before its caller is visited (charged its
-/// larger size, or past its limit not at all), one called once may become free, and the calls an
-/// inlined body brings along are not counted.
-fn wants(program: &Program, state: &mut State, budget: &Budget) -> Vec<u64> {
+/// Per function of the program's own (not [`library`]), what this round would charge it with the
+/// budget unlimited: the sizes of the calls in its body that [`decide`] charges for. Callers are
+/// visited bottom-up, so a callee has grown by then: it counts at its size plus what its own visit
+/// would inline (`Map.get` with its lookup), else a hot loop's share falls short of the call it
+/// was set aside for. All zero when the round's calls can't want more than is left (each charged
+/// call costs at most its callee's size, up to `LOOP_COST`), which spares the work. An estimate,
+/// not a bound: one called once may become free, and the calls an inlined body brings along are
+/// not counted.
+fn wants(program: &Program, state: &mut State, budget: &Budget, sccs: &[Vec<FuncId>]) -> Vec<u64> {
     let n = program.funcs.len();
     let most: u64 = (program.funcs.iter())
         .flat_map(direct_calls)
@@ -697,13 +708,16 @@ fn wants(program: &Program, state: &mut State, budget: &Budget) -> Vec<u64> {
         .map(|f| (!f.blocks.is_empty()).then(|| loop_blocks(f)))
         .collect();
     let mut wants = vec![0; n];
-    for (fi, func) in program.funcs.iter().enumerate() {
+    // Per function, its size once visited.
+    let mut grown: Vec<u64> = program.funcs.iter().map(cost).collect();
+    for &caller in sccs.iter().flatten() {
+        let fi = caller.0 as usize;
+        let func = &program.funcs[fi];
         let Some(in_loop) = &state.loops[fi] else {
             continue;
         };
-        let caller = FuncId(fi as u32);
         let caller_cost = cost(func);
-        let mut want = 0;
+        let (mut want, mut growth) = (0, 0);
         for (callee, bi) in calls(program, func) {
             let site = Site {
                 caller,
@@ -713,14 +727,30 @@ fn wants(program: &Program, state: &mut State, budget: &Budget) -> Vec<u64> {
                 passes_static: false,
                 from: &[],
                 room: u64::MAX,
+                size: grown[callee.0 as usize],
             };
-            if let Some(Decision::Charged(size)) = decide(state, program, callee, &site, budget) {
-                want += size;
+            match decide(state, program, callee, &site, budget) {
+                Some(Decision::Charged(size)) => {
+                    want += size;
+                    growth += size;
+                }
+                Some(Decision::Free) => growth += site.size,
+                None => {}
             }
         }
-        wants[fi] = want;
+        grown[fi] += growth;
+        if !library(func) {
+            wants[fi] = want;
+        }
     }
     wants
+}
+
+/// Whether `func` is the standard library's or generated glue (`_G…`: drop, clone, the closures'
+/// environments), not the program's own code: it gets nothing set aside ([`wants`]).
+fn library(func: &Function) -> bool {
+    let s = &func.symbol;
+    s.starts_with("_V3std") || s.starts_with(GENERATED_STD) || s.starts_with("_G")
 }
 
 /// The direct calls in `func` that could be inlined into it (as [`inline_into`] filters them), with
