@@ -223,8 +223,10 @@ function veltBusy(g: usize, self: usize): bool {
  * Worker 0 (`e`, its park word up) sees nothing that can still happen: true when that holds for
  * the whole scan. The workers are read one after another, so a worker read as idle may be woken
  * before another is read (by a worker that then parks, or by a thread of the runtime's): every
- * wake of a parked worker counts in its `E_UNPARKS`, and a worker going idle unparks worker 0,
- * so the scan counts only when no worker was woken meanwhile and worker 0 is still parked.
+ * wake of a parked worker counts in its `E_UNPARKS`, so does a worker taking its park word down
+ * itself (its thread's start, a park that found work: sched_wake.velt `awake`), and a worker
+ * going idle unparks worker 0, so the scan counts only when no worker was woken meanwhile and
+ * worker 0 is still parked.
  */
 function quiet(e: usize): bool {
   const before = unparks(e);

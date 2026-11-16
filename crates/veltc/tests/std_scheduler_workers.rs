@@ -8,8 +8,8 @@
 
 use no_window::command;
 use sched_workers_support::{
-    build_and_run, build_and_run_with, contended_runs, contended_runs_checked, has_threads,
-    manifest, prints,
+    build_and_run, build_and_run_with, contended_runs, contended_runs_checked, contended_runs_spun,
+    has_threads, manifest, prints, Spin,
 };
 
 mod no_window;
@@ -876,5 +876,70 @@ async function main() {
   // A hang guard: the rejection ends the process long before.
   await sleep(60000);
   console.log("unreachable");
+}
+"#;
+
+/// A worker whose thread starts late borrows tasks at its first turn, before anything woke it:
+/// the end detection must see it awake (#3076). `main` waits for tasks that were woken from
+/// worker 1 into worker 0's input, which a late thread borrows and runs. Its park word stayed up
+/// from before its thread ran, so worker 0, out of work, read every other worker as asleep and
+/// ended the program with `main` waiting: nothing printed, exit code 0. On Linux, 40 runs at 128
+/// workers on two cores where two processes spin (many threads start late there): without the
+/// fix 17 runs in 80 printed nothing, none with it (x86_64; `race_select` under cachegrind lost
+/// the same way, about 1 run in 150).
+#[test]
+fn a_worker_that_borrows_before_its_first_park_is_awake() {
+    if !has_threads() {
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let (code, out) = build_and_run(dir.path(), "borrow", LATE_BORROW, "128");
+    assert_eq!((code, out.as_str()), (0, "done true\n"), "late borrow");
+    let want = |out: &str| match out {
+        "done true\n" => Ok(()),
+        _ => Err(format!("{out:?}")),
+    };
+    let lost = contended_runs_spun(dir.path(), "borrow", "128", Spin::Processes, want);
+    assert!(lost.is_empty(), "{}", lost.join("\n"));
+}
+
+/// The program of [`a_worker_that_borrows_before_its_first_park_is_awake`].
+const LATE_BORROW: &str = r#"function burn(n: i64): i64 {
+  let s: i64 = 0;
+  for (let i: i64 = 0; i < n; i++) {
+    s = (s * 31 + i) % 1000000007;
+  }
+  return s;
+}
+
+async function child(i: i64): Promise<i64> {
+  return i;
+}
+
+// Woken from worker 1 (its child's end) into worker 0's input, which an idle worker borrows.
+async function waiter(c: Promise<i64>, rounds: i64): Promise<i64> {
+  let s = await c;
+  for (let i: i64 = 0; i < rounds; i++) {
+    s = (s + burn(5000)) % 1000000007;
+    await yieldNow();
+  }
+  return s;
+}
+
+async function main() {
+  const ws: Promise<i64>[] = [];
+  for (let i: i64 = 0; i < 16; i++) {
+    ws.push(spawn(waiter(spawn(child(i), { worker: 1 }), 100)));
+  }
+  let s: i64 = 0;
+  for (let i: i64 = 0; i < 50; i++) {
+    s = (s + burn(5000)) % 1000000007;
+    await yieldNow();
+  }
+  for (const w of ws) {
+    s = (s + (await w)) % 1000000007;
+  }
+  console.log(`done ${s >= 0}`);
 }
 "#;

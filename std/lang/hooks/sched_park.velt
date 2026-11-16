@@ -71,7 +71,7 @@ export function park(e: usize): void {
   m.store32(e + t.E_PARK, 1);
   const mode = m.ld32(e + t.E_MODE);
   if (m.load(e + t.E_INBOX) !== 0 || q.any(e) || !parkable(e)) {
-    m.store32(e + t.E_PARK, 0);
+    wk.awake(e);
     ex.takeExit(e);
     m.st32(e + t.E_DISPATCH, 0);
     if (timers) {

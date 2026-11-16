@@ -89,13 +89,45 @@ pub fn contended_runs_checked(
     threads: &str,
     check: impl Fn(&str) -> Result<(), String>,
 ) -> Vec<String> {
+    contended_runs_spun(dir, name, threads, Spin::Threads, check)
+}
+
+/// What spins on cores 0 and 1 while [`contended_runs_spun`] runs a program there.
+#[allow(dead_code)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Spin {
+    /// Two threads of the test process.
+    Threads,
+    /// Two processes of their own (`sh`). The program's threads start later behind these: the
+    /// end of #3076's program was lost in 17 runs of 80 with them, in none of 160 with threads.
+    Processes,
+}
+
+/// [`contended_runs_checked`] with `spin` spinning on the two cores (Linux only).
+#[allow(dead_code)]
+pub fn contended_runs_spun(
+    dir: &Path,
+    name: &str,
+    threads: &str,
+    spin: Spin,
+    check: impl Fn(&str) -> Result<(), String>,
+) -> Vec<String> {
+    let mut spinners = Spinners(Vec::new());
+    if cfg!(target_os = "linux") && spin == Spin::Processes {
+        for _ in 0..2 {
+            let mut c = std::process::Command::new("sh");
+            c.args(["-c", "while :; do :; done"]);
+            pin_child(&mut c);
+            spinners.0.push(c.spawn().expect("sh"));
+        }
+    }
     let exe = dir.join(format!(
         "{name}_std{}",
         if cfg!(windows) { ".exe" } else { "" }
     ));
     let linux = cfg!(target_os = "linux");
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let burners: Vec<_> = (0..if linux { 2 } else { 0 })
+    let burners: Vec<_> = (0..if linux && spin == Spin::Threads { 2 } else { 0 })
         .map(|_| {
             let stop = stop.clone();
             std::thread::spawn(move || {
@@ -111,17 +143,7 @@ pub fn contended_runs_checked(
         let mut cmd = super::no_window::command(&exe);
         cmd.env("VELT_THREADS", threads)
             .env_remove("VELT_SCHEDULER");
-        #[cfg(target_os = "linux")]
-        {
-            use std::os::unix::process::CommandExt;
-            // SAFETY: only an affinity call between fork and exec.
-            unsafe {
-                cmd.pre_exec(|| {
-                    pin_to_two_cores();
-                    Ok(())
-                });
-            }
-        }
+        pin_child(&mut cmd);
         let o = cmd.output().unwrap();
         let out = String::from_utf8_lossy(&o.stdout);
         match (o.status.code(), check(&out)) {
@@ -134,7 +156,37 @@ pub fn contended_runs_checked(
     for b in burners {
         b.join().unwrap();
     }
+    drop(spinners);
     lost
+}
+
+/// The spinning processes of [`Spin::Processes`], stopped when dropped (a failing test too).
+#[allow(dead_code)]
+struct Spinners(Vec<std::process::Child>);
+
+impl Drop for Spinners {
+    fn drop(&mut self) {
+        for c in &mut self.0 {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+    }
+}
+
+/// Pins the child `cmd` starts to cores 0 and 1 (Linux only).
+#[allow(dead_code, unused_variables)]
+fn pin_child(cmd: &mut std::process::Command) {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::process::CommandExt;
+        // SAFETY: only an affinity call between fork and exec.
+        unsafe {
+            cmd.pre_exec(|| {
+                pin_to_two_cores();
+                Ok(())
+            });
+        }
+    }
 }
 
 /// Pins the calling thread (or a child between fork and exec) to cores 0 and 1 (Linux only).
