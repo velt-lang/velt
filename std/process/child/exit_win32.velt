@@ -1,0 +1,96 @@
+// velt/process/child (internal): waiting for a Windows child's exit without holding a thread
+// (std/process/child/child_win32.velt). The process handle's wait is registered with the system's
+// wait threads (`RegisterWaitForSingleObject`, which waits for up to 63 objects per thread), and
+// their callback, a Velt function exported to C, gives the waiting task its item through a
+// `HandOff` (std/sync/hand_off.velt), as a blocking-pool thread gives a job's result: a running
+// child holds no thread of the executor's blocking pool, which stays free for files, standard
+// input and name lookups however many children run.
+//
+// A registered wait holds a keep-alive reference until its callback has run, so a running child
+// keeps the process alive, as in Node.
+
+import { Ptr, export as cExport } from "velt/ffi";
+import { OutPtr } from "velt/ffi/out_ptr";
+import { exportedAddress, slotPut, slotSize, slotTake } from "velt/lang/intrinsics";
+import * as end from "velt/lang/hooks/sched_end";
+import * as m from "velt/lang/hooks/sched_mem";
+import * as t from "velt/lang/hooks/sched_task";
+import * as wk from "velt/lang/hooks/sched_wake";
+import { HandOff, parkAfterWake } from "velt/sync/hand_off";
+
+declare c("c") function RegisterWaitForSingleObject(
+  wait: OutPtr<void>,
+  object: Ptr<void>,
+  callback: Ptr<void>,
+  context: Ptr<void>,
+  ms: u32,
+  flags: u32,
+): i32;
+declare c("c") function UnregisterWait(wait: Ptr<void>): i32;
+
+const INFINITE: u32 = 0xffffffff;
+/** `WT_EXECUTEINWAITTHREAD | WT_EXECUTEONLYONCE`: the callback is short, and runs once. */
+const WAIT_FLAGS: u32 = 0xc;
+
+/**
+ * Waits until the object of handle `h` (a process) is signaled, holding no thread meanwhile;
+ * false, at once, when no wait could be registered (the caller then waits another way).
+ */
+export async function signaled(h: usize): Promise<bool> {
+  const done = shared(new HandOff<bool>());
+  const n = m.zeroed(slotSize<() => void>());
+  // SAFETY: `n` has room for the closure and holds none; the callback takes it, once.
+  unsafe {
+    slotPut<() => void>(n, () => {
+      const left = done.give(true);
+    });
+  }
+  end.keepAcquire(t.main());
+  const w = new OutPtr<void>();
+  let registered: i32 = 0;
+  // SAFETY: `h` is a handle the caller keeps open until this returns; `exited` has the C
+  // signature of a `WAITORTIMERCALLBACK` (a pointer and a `BOOLEAN`, no result).
+  unsafe {
+    registered = RegisterWaitForSingleObject(
+      w,
+      m.ptrTo<void>(h),
+      m.ptrTo<void>(exportedAddress(exited)),
+      m.ptrTo<void>(n),
+      INFINITE,
+      WAIT_FLAGS,
+    );
+  }
+  if (registered === 0) {
+    // SAFETY: put above, and no callback can take it.
+    const job = unsafe { slotTake<() => void>(n) };
+    m.release(n, slotSize<() => void>());
+    end.keepRelease(t.main());
+    return false;
+  }
+  await parkAfterWake<bool>(done);
+  const wait = w.value;
+  if (wait != null) {
+    // SAFETY: the registered wait, which has run its callback; unregistered once.
+    unsafe {
+      UnregisterWait(wait);
+    }
+  }
+  return true;
+}
+
+/** The wait's callback, on a system wait thread: runs the closure at `context`. */
+@cExport("std_child_exited")
+function exited(context: Ptr<u8> | null, timedOut: u8): void {
+  fire(m.addr(context));
+}
+
+/** Gives the waiter its item (the closure at `n`, freed), then the keep-alive reference back. */
+function fire(n: usize): void {
+  // SAFETY: `signaled` put a closure there; this callback runs once.
+  const job = unsafe { slotTake<() => void>(n) };
+  m.release(n, slotSize<() => void>());
+  job();
+  const g = t.main();
+  end.keepRelease(g);
+  wk.unpark(g);
+}

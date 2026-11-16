@@ -249,7 +249,7 @@ export async function readString(h: u64, max: u64): Promise<IoResult<string>> {
 }
 
 /** How many bytes at the end of `b` start a UTF-8 character that is not complete yet (0..3). */
-function incompleteTail(b: u8[]): usize {
+export function incompleteTail(b: u8[]): usize {
   const n = b.length;
   let i: usize = 0;
   while (i < 3 && i < n) {

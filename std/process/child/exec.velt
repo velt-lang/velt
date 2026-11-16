@@ -5,7 +5,8 @@ import { unwrapIo } from "velt/native/result";
 import { platform } from "velt/os/machine";
 import { ExecOptions } from "velt/process/child/exec_options";
 import { ExecResult } from "velt/process/child/exec_result";
-import { resultOf, velt_rt_child_output, velt_rt_child_output_sync } from "#child-rt";
+import { resultOf, velt_rt_child_output } from "#child-rt";
+import { outputSync } from "#exec-sync";
 import { specOf } from "velt/process/child/spec";
 import { arrayRemove } from "velt/lang/intrinsics";
 
@@ -22,7 +23,7 @@ export async function exec(
 /** `exec` that blocks the calling thread (for scripts and CLIs). */
 export function execSync(program: string, args: string[] = [], opts: ExecOptions = {}): ExecResult {
   const spec = specOf(program, args, opts.cwd, opts.env, opts.clearEnv ?? false, 0);
-  return resultOf(unwrapIo(velt_rt_child_output_sync(spec, opts.input ?? "")));
+  return resultOf(unwrapIo(outputSync(spec, opts.input ?? "")));
 }
 
 function shellArgs(command: string): string[] {
