@@ -1,0 +1,120 @@
+// check: no leaks
+// BigInt digits against Node: every radix both ways, parsing (signs, whitespace, either case,
+// errors with JS's message), numbers to and from BigInts (ties to even, Infinity), shifts that
+// round toward -Infinity, the bitwise operators on negatives and asIntN/asUintN at their edges.
+import { BigInt } from "velt/math";
+
+const pow2 = (k: i64): BigInt => new BigInt(1).shl(k);
+
+function main() {
+  const values = [
+    new BigInt(0),
+    new BigInt(35),
+    new BigInt(-36),
+    pow2(64).subInt(1),
+    pow2(64).neg(),
+    new BigInt(3).pow(200),
+    new BigInt(-7).pow(301),
+  ];
+  for (const v of values) {
+    let line = "";
+    for (let r: i64 = 2; r <= 36; r++) {
+      const s = v.toString(r);
+      const back = BigInt.parse(s, r);
+      line += ` ${r}:${s.length}:${s.slice(0, 12)}${back.equals(v) ? "" : "!"}`;
+    }
+    console.log(line.slice(1));
+  }
+  console.log(new BigInt(10).pow(400).toString(7).slice(0, 50));
+  console.log(
+    new BigInt(-255).toString(16),
+    new BigInt(255).toString(2),
+    new BigInt(-35).toString(36),
+  );
+  for (const s of ["  -0012  ", "+42", "-0", "ZZ", "zz", "\t\n99\n"]) {
+    console.log(BigInt.parse(s, s.includes("z") || s.includes("Z") ? 36 : 10).toString());
+  }
+  for (const s of ["12x", "", "-", "1 2", "0x10", "1_000"]) {
+    try {
+      BigInt.parse(s);
+    } catch (e) {
+      console.log(e.message);
+    }
+  }
+  // Numbers: exact, rounded half to even, and past the range of a double.
+  for (const k of [52, 53, 54, 64, 100, 1023, 1024] as i64[]) {
+    const p = pow2(k);
+    console.log(k, p.toNumber(), p.addInt(1).toNumber(), p.subInt(1).neg().toNumber());
+  }
+  console.log(
+    pow2(54).addInt(2).toNumber(),
+    pow2(54).addInt(6).toNumber(),
+    pow2(1024).subInt(1).toNumber(),
+  );
+  console.log(pow2(1024).sub(pow2(970)).toNumber(), pow2(1024).sub(pow2(971)).toNumber());
+  // Ties past 64 bits go to the even neighbour; a bit below the half rounds up.
+  const half = pow2(47);
+  console.log(
+    pow2(100).add(half).toNumber(),
+    pow2(100).add(half.mulInt(3)).toNumber(),
+    pow2(100).add(half).addInt(1).toNumber(),
+    pow2(100).add(half).subInt(1).toNumber(),
+  );
+  for (const x of [0, -0, 1, -1e20, 2 ** 70, 1.7976931348623157e308, 9007199254740993]) {
+    console.log(BigInt.fromNumber(x).toString());
+  }
+  // Shifts round toward -Infinity; a negative count shifts the other way.
+  for (const v of [
+    new BigInt(-1),
+    new BigInt(-5),
+    pow2(64).neg(),
+    pow2(64).addInt(1).neg(),
+    new BigInt(5),
+  ]) {
+    console.log(
+      v.shr(1).toString(),
+      v.shr(64).toString(),
+      v.shr(65).toString(),
+      v.shl(-1).toString(),
+      v.shr(-3).toString(),
+    );
+  }
+  // Bitwise operators as on two's complement, infinitely sign-extended.
+  const ops = [
+    new BigInt(12),
+    new BigInt(-12),
+    pow2(64).subInt(1),
+    pow2(64).neg(),
+    new BigInt(0),
+    new BigInt(-1),
+  ];
+  for (const a of ops) {
+    let line = `${a.not().toString()}`;
+    for (const b of ops) {
+      line += ` ${a.and(b).toString(16)},${a.or(b).toString(16)},${a.xor(b).toString(16)}`;
+    }
+    console.log(line);
+  }
+  // asIntN / asUintN at their edges.
+  const wraps = [
+    new BigInt(0),
+    new BigInt(-1),
+    pow2(63),
+    pow2(63).neg(),
+    pow2(64),
+    pow2(64).subInt(1),
+    pow2(127).neg().subInt(1),
+  ];
+  for (const v of wraps) {
+    let line = "";
+    for (const bits of [0, 1, 7, 63, 64, 65, 128, 200] as i64[]) {
+      line += ` ${BigInt.asIntN(bits, v).toString()} ${BigInt.asUintN(bits, v).toString()}`;
+    }
+    console.log(line.slice(1));
+  }
+  console.log(
+    BigInt.asUintN(9007199254740991, new BigInt(5)).toString(),
+    BigInt.asIntN(9007199254740991, new BigInt(-5)).toString(),
+  );
+  console.log(pow2(64).neg().toI64(), pow2(64).addInt(5).toI64(), pow2(63).toI64());
+}

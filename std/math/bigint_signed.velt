@@ -1,0 +1,203 @@
+// velt/math (internal): `BigInt`'s operations on signs and magnitudes (nat_add.velt), with JS's
+// results: truncating division, a remainder with the dividend's sign, shifts that round toward
+// -Infinity, and bitwise operators on two's complement as if infinitely sign-extended. Results go
+// to a new number's block (bigint_store.velt) or, for `+=`, to the first magnitude in place.
+
+import {
+  natAdd,
+  natAddInto,
+  natCmp,
+  natOfWord,
+  natSub,
+  natSubFromInto,
+  natSubInto,
+  natUnfilled,
+  natAssign,
+} from "velt/math/nat_add";
+import {
+  natBits,
+  natFromTwos,
+  natLowBitsSet,
+  natPowerOfTwo,
+  natShl,
+  natShr,
+  natToTwos,
+} from "velt/math/nat_bits";
+import { natDivRem } from "velt/math/nat_div";
+import { natMul, natSquare } from "velt/math/nat_mul";
+import { storeReplace } from "velt/math/bigint_store";
+
+export const ADD: u32 = 0;
+export const SUB: u32 = 1;
+export const MUL: u32 = 2;
+export const DIV: u32 = 3;
+export const REM: u32 = 4;
+export const AND: u32 = 5;
+export const OR: u32 = 6;
+export const XOR: u32 = 7;
+
+/** V8's largest BigInt, in bits: a longer result is JS's "Maximum BigInt size exceeded". */
+export const MAX_BITS: u64 = 1 << 30;
+
+/**
+ * `(an, a) op (bn, b)` into the block `out`; `same` says that `b` is `a`. A divisor is not zero
+ * (the caller checks, to panic before it takes a magnitude out).
+ */
+export function signedOp(an: bool, a: u64[], bn: bool, b: u64[], same: bool, op: u32, out: usize) {
+  if (op == ADD || op == SUB) {
+    const bs = op == SUB ? !bn : bn;
+    if (an == bs) {
+      storeReplace(out, an, natAdd(a, b));
+    } else if (natCmp(a, b) >= 0) {
+      storeReplace(out, an, natSub(a, b));
+    } else {
+      storeReplace(out, bs, natSub(b, a));
+    }
+  } else if (op == MUL) {
+    storeReplace(out, an != bn, same ? natSquare(a) : natMul(a, b));
+  } else if (op == DIV || op == REM) {
+    const rem = natUnfilled(0);
+    const q = natDivRem(a, b, rem);
+    if (op == DIV) {
+      storeReplace(out, an != bn, q);
+    } else {
+      storeReplace(out, an, rem);
+    }
+  } else {
+    bitwise(an, a, bn, b, op, out);
+  }
+}
+
+/** `(an, a) += (bn, b)` with `a` changed in place (`b` is another array); returns the sign. */
+export function signedAddInto(an: bool, a: u64[], bn: bool, b: u64[]): bool {
+  if (an == bn) {
+    natAddInto(a, b);
+    return an && a.length > 0;
+  }
+  if (natCmp(a, b) >= 0) {
+    natSubInto(a, b);
+    return an && a.length > 0;
+  }
+  natSubFromInto(a, b);
+  return bn;
+}
+
+/** -1, 0 or 1 as `(negative, a)` is less than, equal to or greater than `k`. */
+export function signedCompareInt(negative: bool, a: u64[], k: i64): i64 {
+  if (negative != (k < 0)) {
+    return negative ? -1 : 1;
+  }
+  // The signs agree: compare the magnitudes.
+  const m: u64 = k < 0 ? 0 - (k as u64) : k as u64;
+  const n = a.length;
+  const low: u64 = n == 0 ? 0 : a[0];
+  const c: i64 = n > 1 || low > m ? 1 : low < m ? -1 : 0;
+  return negative ? -c : c;
+}
+
+/** `a ** e` for `e >= 0`, or null when the result would pass `MAX_BITS`. */
+export function signedPow(a: u64[], e: i64): u64[] | null {
+  const k0 = e as u64;
+  const bits = natBits(a);
+  if (bits > 1 && k0 > MAX_BITS) {
+    return null;
+  }
+  // Bits of the result, at most: (bits) * e.
+  if (bits > 1 && (bits - 1) * k0 > MAX_BITS) {
+    return null;
+  }
+  let result = natOfWord(1);
+  let base = natUnfilled(0);
+  natAssign(base, a);
+  let k = k0;
+  while (k != 0) {
+    if ((k & 1) != 0) {
+      result = natMul(result, base);
+    }
+    k = k >> 1;
+    if (k != 0) {
+      base = natSquare(base);
+    }
+  }
+  return result;
+}
+
+/**
+ * `(negative, a) << n` (`left`) or `>> n` into `out`; a negative `n` shifts the other way.
+ * Returns false when the result would pass `MAX_BITS` (`out` unchanged).
+ */
+export function signedShift(negative: bool, a: u64[], n: i64, left: bool, out: usize): bool {
+  const up = left == (n >= 0);
+  const s: u64 = n < 0 ? 0 - (n as u64) : n as u64;
+  if (up) {
+    if (a.length == 0) {
+      return true;
+    }
+    if (s > MAX_BITS) {
+      return false;
+    }
+    storeReplace(out, negative, natShl(a, s));
+    return true;
+  }
+  const limbs = natShr(a, s);
+  // Floors, like JS: a negative number that loses set bits rounds down.
+  if (negative && natLowBitsSet(a, s)) {
+    natAddInto(limbs, [1]);
+  }
+  storeReplace(out, negative, limbs);
+  return true;
+}
+
+/**
+ * JS's `asIntN` (`signed`) and `asUintN`: `(negative, a) mod 2^bits` into `out`. Returns false
+ * when the result would pass `MAX_BITS`.
+ */
+export function signedWrap(negative: bool, a: u64[], bits: u64, signed: bool, out: usize): bool {
+  if (bits == 0) {
+    return true;
+  }
+  const used = natBits(a);
+  // Already in range: below 2^(bits - 1) in magnitude (or -2^(bits - 1)) when signed, a
+  // non-negative below 2^bits when not.
+  const fits =
+    signed
+      ? used < bits || (used == bits && negative && natPowerOfTwo(a))
+      : !negative && used <= bits;
+  if (fits) {
+    const copy = natUnfilled(0);
+    natAssign(copy, a);
+    storeReplace(out, negative, copy);
+    return true;
+  }
+  if (bits > MAX_BITS) {
+    return false;
+  }
+  const words = ((bits + 63) / 64) as usize;
+  const len = a.length;
+  const t = natToTwos(a, negative, (words > len ? words : len) + 1);
+  t.truncate(words as i64);
+  const top = bits - 64 * ((words as u64) - 1);
+  const mask: u64 = top == 64 ? 0xffffffffffffffff : (1 << top) - 1;
+  const high = t[words - 1] & mask;
+  if (signed && ((high >> (top - 1)) & 1) != 0) {
+    t[words - 1] = high | ~mask;
+  } else {
+    t[words - 1] = high;
+    t.push(0);
+  }
+  const sign = natFromTwos(t);
+  storeReplace(out, sign, t);
+  return true;
+}
+
+// JS's `&`, `|` and `^` on two's complement, as if infinitely sign-extended.
+function bitwise(an: bool, a: u64[], bn: bool, b: u64[], op: u32, out: usize) {
+  const n = (a.length > b.length ? a.length : b.length) + 1;
+  const x = natToTwos(a, an, n);
+  const y = natToTwos(b, bn, n);
+  for (let i: usize = 0; i < n; i++) {
+    x[i] = op == AND ? x[i] & y[i] : op == OR ? x[i] | y[i] : x[i] ^ y[i];
+  }
+  const sign = natFromTwos(x);
+  storeReplace(out, sign, x);
+}

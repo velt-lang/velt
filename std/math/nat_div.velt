@@ -1,0 +1,220 @@
+// velt/math (internal): magnitude division (nat_add.velt says what a magnitude is). A limb
+// quotient divides 128 bits by a normalized 64-bit divisor (top bit set) with its reciprocal and
+// two multiplications (Möller and Granlund, "Improved division by invariant integers", 2011),
+// so no loop runs a hardware divide. Long divisors use Knuth's algorithm D (TAOCP 4.3.1).
+
+import { arrayTruncate, inline } from "velt/lang/intrinsics";
+import { natAssign, natCmp, natOfWord, natTrim, natUnfilled } from "velt/math/nat_add";
+import { natSubMulRow } from "velt/math/nat_mul";
+
+const MAX: u64 = 0xffffffffffffffff;
+
+/**
+ * The reciprocal of the normalized `d`: `floor((2^128 - 1) / d) - 2^64`. Found once per divisor
+ * by long division on 32-bit halves (Hacker's Delight, `divlu`).
+ */
+export function natReciprocal(d: u64): u64 {
+  const dh = d >> 32;
+  const dl = d & 0xffffffff;
+  // (~d : 2^64 - 1) / d, with ~d < d.
+  const u1 = ~d;
+  let q1 = u1 / dh;
+  let r = u1 - q1 * dh;
+  while (q1 >> 32 != 0 || q1 * dl > ((r << 32) | 0xffffffff)) {
+    q1 -= 1;
+    r += dh;
+    if (r >> 32 != 0) {
+      break;
+    }
+  }
+  const mid = (u1 << 32) + 0xffffffff - q1 * d;
+  let q0 = mid / dh;
+  r = mid - q0 * dh;
+  while (q0 >> 32 != 0 || q0 * dl > ((r << 32) | 0xffffffff)) {
+    q0 -= 1;
+    r += dh;
+    if (r >> 32 != 0) {
+      break;
+    }
+  }
+  return (q1 << 32) + q0;
+}
+
+/** `(u1 : u0) / d` and its remainder, for the normalized `d` with reciprocal `v` and `u1 < d`. */
+@inline
+export function natDiv2By1(u1: u64, u0: u64, d: u64, v: u64): [u64, u64] {
+  const p0 = v * u1;
+  const s = p0 + u0;
+  let q = Math.umulh(v, u1) + u1 + ((s < p0) as u64) + 1;
+  let r = u0 - q * d;
+  if (r > s) {
+    q -= 1;
+    r += d;
+  }
+  if (r >= d) {
+    q += 1;
+    r -= d;
+  }
+  return [q, r];
+}
+
+/** `a /= d` in place for `d > 0`; returns the remainder. */
+export function natDivWordInto(a: u64[], d: u64): u64 {
+  const n = a.length;
+  if (n == 0) {
+    return 0;
+  }
+  const s = d.leadingZeros() as u64;
+  const dn = d << s;
+  const v = natReciprocal(dn);
+  let r: u64 = 0;
+  if (s == 0) {
+    let i = n;
+    while (i > 0) {
+      i--;
+      const qr = natDiv2By1(r, a[i], dn, v);
+      a[i] = qr[0];
+      r = qr[1];
+    }
+  } else {
+    const back = 64 - s;
+    r = a[n - 1] >> back;
+    let i = n - 1;
+    while (i > 0) {
+      const lo = (a[i] << s) | (a[i - 1] >> back);
+      const qr = natDiv2By1(r, lo, dn, v);
+      a[i] = qr[0];
+      r = qr[1];
+      i--;
+    }
+    const qr = natDiv2By1(r, a[0] << s, dn, v);
+    a[0] = qr[0];
+    r = qr[1] >> s;
+  }
+  natTrim(a);
+  return r;
+}
+
+/** `a % d` for `d > 0`, without changing `a`. */
+export function natRemWord(a: u64[], d: u64): u64 {
+  const n = a.length;
+  const s = d.leadingZeros() as u64;
+  const dn = d << s;
+  const v = natReciprocal(dn);
+  // Each limb reduced against the normalized divisor: r * 2^64 + x mod dn, then the shift.
+  let r: u64 = 0;
+  let i = n;
+  while (i > 0) {
+    i--;
+    const x = a[i];
+    if (s == 0) {
+      r = natDiv2By1(r, x, dn, v)[1];
+    } else {
+      const hi = (r << s) | (x >> (64 - s));
+      r = natDiv2By1(hi, x << s, dn, v)[1] >> s;
+    }
+  }
+  return r;
+}
+
+/**
+ * `a / b`, with `a % b` written to `rem`; `b` is not zero. Knuth's algorithm D on the operands
+ * as they are: only the quotient estimates read their top words shifted so that `b`'s top limb
+ * is normalized, which is all that normalizing them would change.
+ */
+export function natDivRem(a: u64[], b: u64[], rem: u64[]): u64[] {
+  if (natCmp(a, b) < 0) {
+    natAssign(rem, a);
+    return [];
+  }
+  const n = b.length;
+  if (n == 1) {
+    const q = natUnfilled(0);
+    natAssign(q, a);
+    const r = natDivWordInto(q, b[0]);
+    natAssign(rem, natOfWord(r));
+    return q;
+  }
+  const m = a.length - n;
+  const s = b[n - 1].leadingZeros() as u64;
+  // A copy of its own, so LLVM knows that the window it changes is no limb of `b`.
+  const u = natUnfilled(a.length + 1);
+  for (let i: usize = 0; i < a.length; i++) {
+    u[i] = a[i];
+  }
+  u[a.length] = 0;
+  const q = natUnfilled(m + 1);
+  const v1 = topWord(b, n - 1, s);
+  const v0 = topWord(b, n - 2, s);
+  const rec = natReciprocal(v1);
+  let j = m + 1;
+  while (j > 0) {
+    j--;
+    const u2 = topWord(u, j + n, s);
+    let qh = MAX;
+    if (u2 < v1) {
+      const u1 = topWord(u, j + n - 1, s);
+      const u0 = topWord(u, j + n - 2, s);
+      const qr = natDiv2By1(u2, u1, v1, rec);
+      qh = qr[0];
+      let rh = qr[1];
+      // At most two corrections: while qh * v0 > rh * 2^64 + u0.
+      while (true) {
+        const hi = Math.umulh(qh, v0);
+        if (hi < rh || (hi == rh && qh * v0 <= u0)) {
+          break;
+        }
+        qh -= 1;
+        rh += v1;
+        if (rh < v1) {
+          break;
+        }
+      }
+    }
+    const borrow = natSubMulRow(u, j, b, qh);
+    const top = u[j + n];
+    u[j + n] = top - borrow;
+    if (top < borrow) {
+      // qh was one or two too large: add `b` back until the window turns non-negative.
+      while (true) {
+        qh -= 1;
+        const c = addRow(u, j, b, n);
+        const t = u[j + n] + c;
+        u[j + n] = t;
+        if (t < c) {
+          break;
+        }
+      }
+    }
+    q[j] = qh;
+  }
+  natTrim(q);
+  // The remainder is the low `n` limbs of `u`.
+  arrayTruncate(u, n);
+  natTrim(u);
+  natAssign(rem, u);
+  return q;
+}
+
+// Limb `i` of `x << s` (`s` < 64) without its overflow: the word a normalized quotient estimate
+// reads.
+function topWord(x: u64[], i: usize, s: u64): u64 {
+  if (s == 0) {
+    return x[i];
+  }
+  const below = i == 0 ? 0 : x[i - 1] >> (64 - s);
+  return (x[i] << s) | below;
+}
+
+// `r[at..at + n] += a[0..n]`; returns the carry out.
+function addRow(r: u64[], at: usize, a: u64[], n: usize): u64 {
+  let carry: u64 = 0;
+  for (let i: usize = 0; i < n; i++) {
+    const y = r[at + i];
+    const s = y + a[i];
+    const t = s + carry;
+    r[at + i] = t;
+    carry = ((s < y) as u64) + ((t < s) as u64);
+  }
+  return carry;
+}

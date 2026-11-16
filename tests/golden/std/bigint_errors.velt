@@ -1,0 +1,46 @@
+// BigInt's errors carry Node's messages: division by zero, a negative exponent, a radix out of
+// range, a number that is not an integer and a result past V8's largest BigInt are RangeErrors
+// (panics, caught here with `catchPanic`); a string that is not a number throws `BigIntError`
+// with SyntaxError's message. Mixing a BigInt with a number is a compile error
+// (lang/errors/operator_bigint.velt), as Node's TypeError.
+import { BigInt } from "velt/math";
+import { catchPanic, PanicError } from "velt/task";
+
+async function report(name: string, body: () => Promise<string, Error>) {
+  try {
+    console.log(name, await catchPanic(body));
+  } catch (e) {
+    if (e instanceof PanicError) {
+      console.log(name, e.message.split(" at ")[0]);
+    } else {
+      console.log(name, "other error:", (e as Error).message);
+    }
+  }
+}
+
+async function main() {
+  const zero = new BigInt(0);
+  const seven = new BigInt(7);
+  await report("div", async () => seven.div(zero).toString());
+  await report("rem", async () => seven.rem(zero).toString());
+  await report("divAssign", async () => {
+    const x = seven.clone();
+    x.divAssign(zero);
+    return x.toString();
+  });
+  await report("remInt", async () => seven.remInt(0).toString());
+  await report("pow", async () => seven.pow(-1).toString());
+  await report("radix 1", async () => seven.toString(1));
+  await report("radix 37", async () => seven.toString(37));
+  await report("fromNumber 1.5", async () => BigInt.fromNumber(1.5).toString());
+  await report("fromNumber NaN", async () => BigInt.fromNumber(NaN).toString());
+  await report("fromNumber -Infinity", async () => BigInt.fromNumber(-Infinity).toString());
+  await report("shl", async () => seven.shl(1 << 31).toString());
+  await report("asUintN", async () => BigInt.asUintN(9007199254740991, new BigInt(-1)).toString());
+  await report("asIntN", async () => BigInt.asIntN(-1, seven).toString());
+  try {
+    BigInt.parse("1.5");
+  } catch (e) {
+    console.log("parse", e.message);
+  }
+}

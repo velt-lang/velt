@@ -1,0 +1,93 @@
+// check: no leaks
+// BigInt arithmetic on 64-bit limbs against Node (the same steps with JS `BigInt`s): operands at
+// limb boundaries, powers of two, every sign of a division, an add-back of algorithm D, and
+// products, quotients and text past the Karatsuba and divide-and-conquer sizes, printed as their
+// decimal length, both ends and a remainder.
+import { BigInt } from "velt/math";
+
+const big = (s: string): BigInt => BigInt.parse(s);
+const pow2 = (k: i64): BigInt => new BigInt(1).shl(k);
+
+function show(label: string, x: BigInt) {
+  const s = x.toString();
+  if (s.length <= 60) {
+    console.log(label, s);
+    return;
+  }
+  const r = x.rem(big("1000000007")).toString();
+  console.log(label, s.length, s.slice(0, 20), s.slice(s.length - 20), r);
+}
+
+function main() {
+  // Limb boundaries.
+  const edges = [pow2(64).subInt(1), pow2(64), pow2(64).addInt(1), pow2(128).subInt(1), pow2(63)];
+  for (const a of edges) {
+    for (const b of edges) {
+      show("+", a.add(b));
+      show("-", a.sub(b));
+      show("*", a.mul(b));
+      show("/", a.div(b));
+      show("%", a.rem(b));
+    }
+  }
+  // Every sign of a truncating division and its remainder.
+  for (const x of [7, -7, 6, -6] as i64[]) {
+    for (const y of [2, -2, 3, -3, 7, -7, 8] as i64[]) {
+      const a = new BigInt(x);
+      const b = new BigInt(y);
+      console.log(x, y, a.div(b).toString(), a.rem(b).toString());
+    }
+  }
+  const huge = pow2(200).addInt(12345);
+  for (const s of [1, -1] as i64[]) {
+    for (const t of [1, -1] as i64[]) {
+      const a = huge.mulInt(s);
+      const b = pow2(70).subInt(3).mulInt(t);
+      console.log(a.div(b).toString(), a.rem(b).toString());
+    }
+  }
+  // Quotient limbs that algorithm D estimates one too high, so it adds the divisor back.
+  const d = BigInt.parse("800000000000000080000000000000010000000000000000", 16);
+  for (const t of [0, 1, 2] as i64[]) {
+    const n = pow2(255).add(new BigInt(t).shl(64));
+    console.log(n.div(d).toString(16), n.rem(d).toString(16));
+  }
+  // Big operands: 3^k and 7^k, past every threshold.
+  let a = new BigInt(3);
+  let b = new BigInt(7);
+  for (const k of [10, 100, 1000, 3000, 9000, 20000] as i64[]) {
+    a = new BigInt(3).pow(k);
+    b = new BigInt(7).pow(k).subInt(1);
+    show(`3^${k}`, a);
+    show("a*b", a.mul(b));
+    show("a*a", a.mul(a));
+    show("b/a", b.div(a));
+    show("b%a", b.rem(a));
+    show("b*b/(a+1)", b.mul(b).div(a.addInt(1)));
+    show("b*b%(a+1)", b.mul(b).rem(a.addInt(1)));
+    show("-b/a", b.neg().div(a));
+    show("-b%-a", b.neg().rem(a.neg()));
+  }
+  // A long operand times a short one, and division by one limb.
+  const long = new BigInt(11).pow(30000);
+  show("long*short", long.mul(new BigInt(13).pow(50)));
+  show("long/word", long.divInt(1000000007));
+  show("long%word", long.remInt(-1000000007));
+  show("long/short", long.div(new BigInt(13).pow(50)));
+  // 30!, in place.
+  const f = new BigInt(1);
+  for (let k: i64 = 1; k <= 30; k++) {
+    f.mulIntAssign(k);
+  }
+  f.addAssign(f);
+  f.subIntAssign(1);
+  f.mulAssign(f);
+  console.log(f.toString(), f.compareTo(f.addInt(1)), f.compareToInt(-5));
+  f.subAssign(f);
+  console.log(f.toString(), f.compareToInt(0));
+  console.log(
+    new BigInt(-2).pow(63).toString(),
+    new BigInt(0).pow(0).toString(),
+    new BigInt(-3).pow(5).toString(),
+  );
+}

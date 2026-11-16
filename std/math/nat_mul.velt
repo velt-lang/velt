@@ -1,0 +1,236 @@
+// velt/math (internal): magnitude products (nat_add.velt says what a magnitude is). Each limb
+// product is 128 bits: `*` gives the low half and `Math.umulh` the high one, which LLVM merges
+// into one widening multiply. Schoolbook below `KARATSUBA_LIMBS` limbs, Karatsuba above, and a
+// long operand times a short one in chunks of the short one's length.
+
+import { natAddAt, natAddInto, natSlice, natSubAt, natTrim, natZeros } from "velt/math/nat_add";
+
+/** Below this many limbs in the shorter operand, schoolbook beats Karatsuba (measured). */
+const KARATSUBA_LIMBS: usize = 40;
+
+/** `a *= k` in place. */
+export function natMulWordInto(a: u64[], k: u64) {
+  if (k == 0) {
+    a.truncate(0);
+    return;
+  }
+  const n = a.length;
+  let carry: u64 = 0;
+  for (let i: usize = 0; i < n; i++) {
+    const x = a[i];
+    const lo = x * k;
+    const t = lo + carry;
+    carry = Math.umulh(x, k) + ((t < lo) as u64);
+    a[i] = t;
+  }
+  if (carry != 0) {
+    a.push(carry);
+  }
+}
+
+/**
+ * `r[at..at + a.length] += a * k`; returns the carry out of the top limb. The inner loop of every
+ * product.
+ */
+export function natAddMulRow(r: u64[], at: usize, a: u64[], k: u64): u64 {
+  const n = a.length;
+  let carry: u64 = 0;
+  for (let i: usize = 0; i < n; i++) {
+    const x = a[i];
+    const lo = x * k;
+    const s = lo + carry;
+    const y = r[at + i];
+    const t = s + y;
+    r[at + i] = t;
+    carry = Math.umulh(x, k) + ((s < lo) as u64) + ((t < y) as u64);
+  }
+  return carry;
+}
+
+/** `r[at..at + a.length] -= a * k`; returns the borrow out of the top limb. */
+export function natSubMulRow(r: u64[], at: usize, a: u64[], k: u64): u64 {
+  const n = a.length;
+  let borrow: u64 = 0;
+  for (let i: usize = 0; i < n; i++) {
+    const x = a[i];
+    const lo = x * k;
+    const s = lo + borrow;
+    const y = r[at + i];
+    r[at + i] = y - s;
+    borrow = Math.umulh(x, k) + ((s < lo) as u64) + ((y < s) as u64);
+  }
+  return borrow;
+}
+
+/** `a * b`. */
+export function natMul(a: u64[], b: u64[]): u64[] {
+  if (a.length == 0 || b.length == 0) {
+    return [];
+  }
+  return a.length < b.length ? mulOrdered(b, a) : mulOrdered(a, b);
+}
+
+// `a * b` for `a` at least as long as `b`, neither zero.
+function mulOrdered(a: u64[], b: u64[]): u64[] {
+  const n = a.length;
+  const m = b.length;
+  if (m < KARATSUBA_LIMBS) {
+    const out = natZeros(n + m);
+    schoolbook(out, a, b);
+    natTrim(out);
+    return out;
+  }
+  if (2 * m <= n) {
+    return mulUnbalanced(a, b);
+  }
+  return karatsuba(a, b);
+}
+
+// `out += a * b` (`out` has room for `a.length + b.length` limbs and is zero above `a.length`).
+function schoolbook(out: u64[], a: u64[], b: u64[]) {
+  const n = a.length;
+  const m = b.length;
+  for (let j: usize = 0; j < m; j++) {
+    out[j + n] = natAddMulRow(out, j, a, b[j]);
+  }
+}
+
+// `a * b` for `b` at most half as long as `a`: `a` in chunks of `b`'s length.
+function mulUnbalanced(a: u64[], b: u64[]): u64[] {
+  const n = a.length;
+  const m = b.length;
+  const out = natZeros(n + m + 1);
+  let at: usize = 0;
+  while (at < n) {
+    const end = at + m < n ? at + m : n;
+    const part = natSlice(a, at, end);
+    if (part.length > 0) {
+      natAddAt(out, at, mulOrdered2(part, b));
+    }
+    at = end;
+  }
+  natTrim(out);
+  return out;
+}
+
+// `a * b` with either one the longer.
+function mulOrdered2(a: u64[], b: u64[]): u64[] {
+  return a.length < b.length ? mulOrdered(b, a) : mulOrdered(a, b);
+}
+
+// Karatsuba: `a = a1 B^h + a0`, `b = b1 B^h + b0`, and the middle product from
+// `(a0 + a1)(b0 + b1) - a0 b0 - a1 b1`. `b` is more than half as long as `a`, so `b1` is not zero.
+function karatsuba(a: u64[], b: u64[]): u64[] {
+  const n = a.length;
+  const m = b.length;
+  const h = (n + 1) / 2;
+  const a0 = natSlice(a, 0, h);
+  const a1 = natSlice(a, h, n);
+  const b0 = natSlice(b, 0, h);
+  const b1 = natSlice(b, h, m);
+  const z0 = natMul(a0, b0);
+  const z2 = natMul(a1, b1);
+  natAddInto(a0, a1);
+  natAddInto(b0, b1);
+  const z1 = natMul(a0, b0);
+  const out = natZeros(n + m + 1);
+  copyAt(out, 0, z0);
+  copyAt(out, 2 * h, z2);
+  natSubAt(z1, 0, z0);
+  natSubAt(z1, 0, z2);
+  natTrim(z1);
+  natAddAt(out, h, z1);
+  natTrim(out);
+  return out;
+}
+
+/** `a * a`: the same as `natMul(a, a)`, with the symmetric half of the products done once. */
+export function natSquare(a: u64[]): u64[] {
+  const n = a.length;
+  if (n == 0) {
+    return [];
+  }
+  if (n >= KARATSUBA_LIMBS) {
+    return karatsubaSquare(a);
+  }
+  const out = natZeros(2 * n);
+  // The products above the diagonal, once, then doubled.
+  for (let i: usize = 0; i + 1 < n; i++) {
+    out[i + n] = addMulFrom(out, i, a, i + 1, n, a[i]);
+  }
+  shiftLeftOne(out);
+  let carry: u64 = 0;
+  for (let i: usize = 0; i < n; i++) {
+    const x = a[i];
+    const lo = x * x;
+    const hi = Math.umulh(x, x);
+    const y0 = out[2 * i];
+    const s0 = y0 + lo;
+    const t0 = s0 + carry;
+    out[2 * i] = t0;
+    const c0 = ((s0 < y0) as u64) + ((t0 < s0) as u64);
+    const y1 = out[2 * i + 1];
+    const s1 = y1 + hi;
+    const t1 = s1 + c0;
+    out[2 * i + 1] = t1;
+    carry = ((s1 < y1) as u64) + ((t1 < s1) as u64);
+  }
+  natTrim(out);
+  return out;
+}
+
+// `out[at + from..at + n] += a[from..n] * k`, a row of a square's upper triangle; returns the
+// carry.
+function addMulFrom(out: u64[], at: usize, a: u64[], from: usize, n: usize, k: u64): u64 {
+  let carry: u64 = 0;
+  for (let i: usize = from; i < n; i++) {
+    const x = a[i];
+    const lo = x * k;
+    const s = lo + carry;
+    const y = out[at + i];
+    const t = s + y;
+    out[at + i] = t;
+    carry = Math.umulh(x, k) + ((s < lo) as u64) + ((t < y) as u64);
+  }
+  return carry;
+}
+
+// `a <<= 1` over its whole length (the top bit is known to be zero).
+function shiftLeftOne(a: u64[]) {
+  let carry: u64 = 0;
+  const n = a.length;
+  for (let i: usize = 0; i < n; i++) {
+    const x = a[i];
+    a[i] = (x << 1) | carry;
+    carry = x >> 63;
+  }
+}
+
+// Karatsuba for a square: `(a0 + a1)^2 - a0^2 - a1^2` is the middle term.
+function karatsubaSquare(a: u64[]): u64[] {
+  const n = a.length;
+  const h = (n + 1) / 2;
+  const a0 = natSlice(a, 0, h);
+  const a1 = natSlice(a, h, n);
+  const z0 = natSquare(a0);
+  const z2 = natSquare(a1);
+  natAddInto(a0, a1);
+  const z1 = natSquare(a0);
+  const out = natZeros(2 * n + 1);
+  copyAt(out, 0, z0);
+  copyAt(out, 2 * h, z2);
+  natSubAt(z1, 0, z0);
+  natSubAt(z1, 0, z2);
+  natTrim(z1);
+  natAddAt(out, h, z1);
+  natTrim(out);
+  return out;
+}
+
+// `out[at..] = x` (those limbs of `out` are zero).
+function copyAt(out: u64[], at: usize, x: u64[]) {
+  const m = x.length;
+  for (let i: usize = 0; i < m; i++) {
+    out[at + i] = x[i];
+  }
+}

@@ -25,8 +25,6 @@
 //! `ENOTSUP` (`net.rs`), so programs that only build `Response`s run.
 #![allow(clippy::missing_safety_doc)]
 
-#[path = "../../velt_rt/src/bigint.rs"]
-pub mod bigint;
 #[path = "../../velt_rt/src/bytes.rs"]
 pub mod bytes;
 #[path = "../../velt_rt/src/bytes_ops.rs"]
