@@ -139,9 +139,15 @@ pub(super) fn save_modules(
     };
     let path = modules_path(&dir, key);
     let mut out = format!("{MODULES_FORMAT}\n");
-    // std's alone: the dependencies' modules are loaded from their sources (the driver's checks
-    // of native code and trust read their bodies, which stubs leave out).
-    for m in loaded.iter().filter(|m| m.is_std) {
+    // std's, and the dependencies' modules without `unsafe` code ([`libraries`]): the driver's
+    // trust check reads the bodies of the others (`native::check_trust`), which stubs leave out.
+    let stubbed = |m: &velt_sema::SourceModule| {
+        m.is_std
+            || (m.is_dependency
+                && libraries()
+                && crate::native::first_unsafe_code(&m.ast).is_none())
+    };
+    for m in loaded.iter().filter(|m| stubbed(m)) {
         let file = vpm::relpath::absolute(&sm.get(m.file).path);
         let jsx = m.jsx_runtime.as_deref().unwrap_or("");
         if m.is_dependency {
