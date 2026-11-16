@@ -1,0 +1,16 @@
+// check: no leaks
+// A union with a promise member cast to `any` to read `.then` (a promise test): checked as
+// `instanceof Promise` since #379, as the promise is the union's only member with a `then`
+// (other cases stay refused: thenable_test_other_then.velt).
+type View = () => string | null;
+
+function setup(): View | Promise<View> {
+    return () => null;
+}
+
+const r = setup();
+if (r && typeof (r as any).then === "function") {
+    console.log("promise");
+} else {
+    console.log("view");
+}

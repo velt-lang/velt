@@ -12,6 +12,7 @@ use crate::defs::{Bound, ParamSig};
 use crate::hir::{self, Callee, DefId, ExprKind as H, PassMode, TyId, TyKind};
 
 /// A field of an interface, as a value of type `T extends I` or `I` sees it.
+#[derive(Clone)]
 pub(crate) struct IfaceField {
     pub iface: DefId,
     pub args: Vec<TyId>,

@@ -356,7 +356,7 @@ impl FnCx<'_, '_> {
     }
 
     /// The type local `l` reads as here (null, union member and subclass narrowing applied).
-    fn narrowed_local_ty(&mut self, l: LocalId) -> TyId {
+    pub(crate) fn narrowed_local_ty(&mut self, l: LocalId) -> TyId {
         let t = match self.token_global_ty(l) {
             Some(t) => t,
             None => self.local_ty(l),

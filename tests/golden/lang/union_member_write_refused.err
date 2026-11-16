@@ -1,0 +1,2 @@
+union_member_write_refused.velt:16:6: error: no field `value` on type `Input | Label`
+union_member_write_refused.velt:20:6: error: cannot assign `value` of a union value `Fixed | Input`

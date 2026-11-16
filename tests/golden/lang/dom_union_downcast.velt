@@ -1,0 +1,9 @@
+// check: no leaks
+// An element cast to a union of the elements that extend it (sigx's patchProp, #379), which tsc
+// allows: no DOM value exists on a server, so the conversion never runs, as for one interface.
+function setValue(dom: Element, v: string) {
+  (dom as HTMLInputElement).checked = true;
+  (dom as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement).value = v;
+}
+
+console.log(typeof setValue);

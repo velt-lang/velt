@@ -75,13 +75,19 @@ impl FnCx<'_, '_> {
     /// (`node as HTMLElement`), which `tsc` allows since one is assignable to the other: the value
     /// as an `any`, converted to `B` (`Err`: not such a pair). No such value exists on a server, so
     /// the conversion never runs; between other interfaces it is still `cannot cast`, since the
-    /// check would stop a program where Node goes on.
+    /// check would stop a program where Node goes on. `B` may be a union of such interfaces
+    /// (`dom as HTMLInputElement | HTMLTextAreaElement`, #379): the value converts to the first,
+    /// as the member of the union it is then.
     pub(super) fn related_iface_cast(
         &mut self,
         h: hir::Expr,
         target: TyId,
         span: velt_common::Span,
     ) -> Result<hir::Expr, hir::Expr> {
+        if let Some(first) = self.related_dom_union(h.ty, target) {
+            let h = self.related_iface_cast(h, first, span)?;
+            return self.try_coerce(h, target);
+        }
         if !self.related_ifaces(h.ty, target)
             || self.cx.ty.opt_payload(target).is_some()
             || !self.both_std_dom(h.ty, target)
@@ -93,6 +99,22 @@ impl FnCx<'_, '_> {
         };
         let a = self.compared_operand(h, any);
         Ok(self.intrinsic(hir::Intrinsic::AnyTo, vec![a], target, span))
+    }
+
+    /// The first member of `target` when `target` is a union of std `lib.dom` interfaces each
+    /// related to `from`'s (`related_ifaces`), and `from` is one too.
+    fn related_dom_union(&mut self, from: TyId, target: TyId) -> Option<TyId> {
+        if self.cx.ty.opt_payload(target).is_some() {
+            return None;
+        }
+        let members = self.cx.union_members(target)?;
+        let all = members
+            .iter()
+            .all(|&m| self.related_ifaces(from, m) && self.both_std_dom(from, m));
+        match all {
+            true => members.first().copied(),
+            false => None,
+        }
     }
 
     /// Are `a` and `b` (or what they hold besides `null`/`undefined`) both of std's `lib.dom`

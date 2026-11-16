@@ -1,0 +1,19 @@
+// check: no leaks
+// A program's own `EventListener` (an interface with a method, not a function type) wins over
+// the standard library's: an interface extending it is an ordinary interface (#379).
+interface EventListener {
+  handleEvent(name: string): string;
+}
+
+interface Logger extends EventListener {
+  level: string;
+}
+
+const logger: Logger = {
+  level: "info",
+  handleEvent(name: string): string {
+    return `${this.level}: ${name}`;
+  },
+};
+
+console.log(logger.handleEvent("ping"));
