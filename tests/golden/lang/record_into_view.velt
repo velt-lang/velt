@@ -1,7 +1,8 @@
 // A `Record<string, unknown>` where an interface with named members and an `any` index signature
 // is expected (#379, sigx's `jsx(component, props)` with props revived as a record): TypeScript
 // assigns one to the other, and the value is the same record seen with the named members
-// (`crate::index_signatures`), its `unknown` values as `any` ones. Node prints the same.
+// (`crate::index_signatures`), its `unknown` values as `any` ones: writes through either name,
+// a new key or an overwrite, show in the other, and the two are `===`. Node prints the same.
 interface Props {
   children?: string;
   [key: string]: any;
@@ -9,6 +10,12 @@ interface Props {
 
 function render(props: Props | null): string {
   return props === null ? "none" : Object.keys(props).join(",");
+}
+
+function tag(props: Props, raw: Record<string, unknown>): boolean {
+  props["d"] = 4;
+  props["a"] = "over";
+  return (props as unknown) === (raw as unknown);
 }
 
 function label(props: Props): string {
@@ -22,4 +29,5 @@ function main(): void {
   console.log(label(kids));
   raw["c"] = true;
   console.log(render(raw));
+  console.log(tag(raw, raw), raw["a"], raw["d"], render(raw));
 }
