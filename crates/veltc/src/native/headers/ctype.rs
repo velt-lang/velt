@@ -43,6 +43,9 @@ pub struct Headers {
     enums: HashMap<String, EnumDef>,
     /// Enums without a tag, by clang's id, until a typedef names them.
     unnamed_enums: HashMap<String, EnumDef>,
+    /// Transparent unions without a tag, by clang's id → their first member's type, as written,
+    /// until a typedef names them.
+    unnamed_transparent: HashMap<String, String>,
 }
 
 /// What an enum's width comes from, as written.
@@ -143,13 +146,23 @@ impl Headers {
                 if let (Some(name), Some(ty)) =
                     (node["name"].as_str(), node["type"]["qualType"].as_str())
                 {
-                    self.typedefs.insert(name.to_string(), ty.to_string());
                     // `typedef enum { A } mode;`: clang prints the type as `enum mode`.
                     let id = node["inner"][0]["decl"]["id"].as_str().unwrap_or_default();
                     if let Some(def) = self.unnamed_enums.get(id) {
                         self.enums.insert(name.to_string(), def.clone());
                     }
+                    // A transparent union is passed as its first member (glibc's
+                    // `__SOCKADDR_ARG`, `struct sockaddr *` to the C ABI): the typedef names that.
+                    let ty = self.unnamed_transparent.get(id).map_or(ty, String::as_str);
+                    self.typedefs.insert(name.to_string(), ty.to_string());
                 }
+            }
+            Some("RecordDecl") if node["name"].as_str().is_none() => {
+                if let Some(first) = transparent_union_member(node) {
+                    let id = node["id"].as_str().unwrap_or_default().to_string();
+                    self.unnamed_transparent.insert(id, first);
+                }
+                self.nested_enums(node);
             }
             _ => self.nested_enums(node),
         }
@@ -323,6 +336,17 @@ impl Headers {
             _ => CType::Unknown(base),
         }
     }
+}
+
+/// The type of `node`'s first member, as written, when `node` is a transparent union
+/// (`__attribute__((transparent_union))`), which the C ABI passes as that member.
+fn transparent_union_member(node: &Value) -> Option<String> {
+    let inner = node["inner"].as_array()?;
+    if node["tagUsed"] != "union" || !inner.iter().any(|n| n["kind"] == "TransparentUnionAttr") {
+        return None;
+    }
+    let first = inner.iter().find(|n| n["kind"] == "FieldDecl")?;
+    first["type"]["qualType"].as_str().map(str::to_string)
 }
 
 /// A C type, typedefs resolved.
@@ -555,234 +579,5 @@ fn short(file: &str) -> &str {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The shape of clang's dump: the file is printed once, then left out.
-    fn headers() -> Headers {
-        let json = serde_json::json!({ "inner": [
-            { "kind": "TypedefDecl", "name": "__size_t", "loc": { "file": "/z/stddef.h", "line": 3 },
-              "type": { "qualType": "unsigned long" } },
-            { "kind": "TypedefDecl", "name": "size_t", "loc": { "line": 4 }, "type": { "qualType": "__size_t" } },
-            { "kind": "TypedefDecl", "name": "sqlite3", "loc": { "file": "/p/native/sqlite3.h", "line": 10 },
-              "type": { "qualType": "struct sqlite3" } },
-            { "kind": "TypedefDecl", "name": "sqlite3_int64", "loc": { "line": 11 }, "type": { "qualType": "long long" } },
-            { "kind": "FunctionDecl", "name": "sqlite3_bind_text", "loc": { "line": 4581 },
-              "type": { "qualType": "int (sqlite3 *, int, const char *, int, void (*)(void *))" },
-              "inner": [
-                { "kind": "ParmVarDecl", "loc": { "line": 4581 }, "type": { "qualType": "sqlite3 *" } },
-                { "kind": "ParmVarDecl", "loc": { "line": 4581 }, "type": { "qualType": "int" } },
-                { "kind": "ParmVarDecl", "loc": { "line": 4581 }, "type": { "qualType": "const char *" } },
-                { "kind": "ParmVarDecl", "loc": { "line": 4581 }, "type": { "qualType": "int" } },
-                { "kind": "ParmVarDecl", "loc": { "line": 4581 }, "type": { "qualType": "void (*)(void *)" } }
-              ] },
-            { "kind": "FunctionDecl", "name": "printf", "loc": { "file": "/z/stdio.h", "line": 7 },
-              "type": { "qualType": "int (const char *restrict, ...)" },
-              "inner": [ { "kind": "ParmVarDecl", "type": { "qualType": "const char *restrict" } } ] }
-        ]});
-        Headers::from_json(&json)
-    }
-
-    #[test]
-    fn functions_and_their_places_are_read() {
-        let h = headers();
-        let f = &h.functions["sqlite3_bind_text"];
-        assert_eq!(f.ret, "int");
-        assert_eq!(f.params.len(), 5);
-        assert!(!f.variadic);
-        assert_eq!(f.at, "sqlite3.h:4581");
-        let p = &h.functions["printf"];
-        assert!(p.variadic);
-        assert_eq!(p.at, "stdio.h:7");
-    }
-
-    #[test]
-    fn attributes_are_not_the_parameters_or_the_result() {
-        let split = |ty: &str| split_function_type(ty);
-        let none = Vec::<String>::new;
-        assert_eq!(
-            split("long (const char *, int)"),
-            ("long".into(), false, none())
-        );
-        assert_eq!(
-            split("int (void) __attribute__((cdecl))"),
-            ("int".into(), false, vec!["cdecl".into()])
-        );
-        assert_eq!(
-            split("char *(const char *) __attribute__((__cdecl__))"),
-            ("char *".into(), false, vec!["cdecl".into()])
-        );
-        assert_eq!(
-            split("int (const char *, ...) __attribute__((cdecl)) __attribute__((noreturn))"),
-            ("int".into(), true, vec!["cdecl".into(), "noreturn".into()])
-        );
-        assert_eq!(
-            split("int (int) __attribute__((ms_abi))"),
-            ("int".into(), false, vec!["ms_abi".into()])
-        );
-        assert_eq!(
-            split("__attribute__((preserve_most)) int (int)"),
-            ("int".into(), false, vec!["preserve_most".into()])
-        );
-        assert_eq!(
-            split("int (int) __attribute__((pcs(\"aapcs\")))"),
-            ("int".into(), false, vec!["pcs(\"aapcs\")".into()])
-        );
-        assert_eq!(
-            split("int (const char *, ...)"),
-            ("int".into(), true, none())
-        );
-        assert_eq!(
-            split("void (void (*)(int, ...))"),
-            ("void".into(), false, none())
-        );
-        assert_eq!(split("int"), ("int".into(), false, none()));
-    }
-
-    /// What clang prints for the enums of a header.
-    #[test]
-    fn an_enum_is_as_wide_as_its_type_says() {
-        let constant = |ty: &str| serde_json::json!({ "kind": "EnumConstantDecl", "type": { "qualType": ty } });
-        let json = serde_json::json!({ "inner": [
-            { "kind": "EnumDecl", "name": "plain", "inner": [constant("int")] },
-            { "kind": "EnumDecl", "name": "wide", "inner": [constant("int"), constant("unsigned long")] },
-            { "kind": "EnumDecl", "name": "fixed", "fixedUnderlyingType": { "qualType": "long long" }, "inner": [constant("long long")] },
-            { "kind": "EnumDecl", "name": "bytes", "fixedUnderlyingType": { "qualType": "char" } },
-            { "kind": "EnumDecl", "name": "bytes" },
-            { "kind": "EnumDecl", "name": "tiny", "inner": [{ "kind": "PackedAttr" }, constant("int")] },
-            { "kind": "EnumDecl", "name": "byte", "inner": [{ "kind": "ModeAttr" }, constant("int")] },
-            { "kind": "EnumDecl", "id": "0x1", "inner": [constant("long long")] },
-            { "kind": "TypedefDecl", "name": "mode", "type": { "qualType": "enum mode" },
-              "inner": [{ "kind": "EnumType", "decl": { "id": "0x1", "kind": "EnumDecl", "name": "" } }] },
-            { "kind": "RecordDecl", "name": "s", "inner": [
-                { "kind": "EnumDecl", "name": "inside", "inner": [constant("long")] }
-            ] }
-        ]});
-        let h = Headers::from_json(&json);
-        let e = |bits, signed| CType::Enum { bits, signed };
-        assert_eq!(h.resolve("enum plain", 64), e(32, None));
-        assert_eq!(h.resolve("enum wide", 64), e(64, None));
-        assert_eq!(h.resolve("enum fixed", 64), e(64, Some(true)));
-        assert_eq!(h.resolve("enum bytes", 64), e(8, None));
-        assert_eq!(h.resolve("mode", 64), e(64, None));
-        assert_eq!(h.resolve("enum inside", 64), e(64, None));
-        assert_eq!(h.resolve("enum inside", 32), e(32, None));
-        assert_eq!(
-            h.resolve("enum only_named", 64),
-            CType::Unknown("enum only_named".into())
-        );
-        assert_eq!(
-            h.resolve("enum tiny", 64),
-            CType::Unknown("packed enum tiny".into())
-        );
-        assert_eq!(
-            h.resolve("enum byte", 64),
-            CType::Unknown("mode enum byte".into())
-        );
-    }
-
-    #[test]
-    fn const_is_about_what_the_pointer_points_at() {
-        let json = serde_json::json!({ "inner": [
-            { "kind": "TypedefDecl", "name": "fixed_text", "type": { "qualType": "char *const" } },
-            { "kind": "TypedefDecl", "name": "text", "type": { "qualType": "const char *" } }
-        ]});
-        let h = Headers::from_json(&json);
-        let is_const = |written: &str| match h.resolve(written, 64) {
-            CType::Pointer { is_const, .. } => is_const,
-            other => panic!("{other:?}"),
-        };
-        for yes in [
-            "const char *",
-            "char const *",
-            "char *const *",
-            "const char *const *",
-            "fixed_text *",
-        ] {
-            assert!(is_const(yes), "{yes}");
-        }
-        for no in [
-            "char *",
-            "const char **",
-            "text *",
-            "char *const",
-            "const char *restrict *",
-        ] {
-            assert!(!is_const(no), "{no}");
-        }
-    }
-
-    #[test]
-    fn types_resolve_per_target() {
-        let h = headers();
-        let size = |bits| CType::Int {
-            bits,
-            signed: false,
-            names: vec!["size_t".into(), "__size_t".into()],
-            plain_char: false,
-        };
-        assert_eq!(h.resolve("size_t", 64), size(64));
-        assert_eq!(h.resolve("size_t", 32), size(32));
-        assert!(matches!(
-            h.resolve("long", 32),
-            CType::Int {
-                bits: 32,
-                signed: true,
-                ..
-            }
-        ));
-        assert!(matches!(
-            h.resolve("sqlite3_int64", 32),
-            CType::Int { bits: 64, .. }
-        ));
-        assert!(matches!(
-            h.resolve("char", 64),
-            CType::Int {
-                plain_char: true,
-                ..
-            }
-        ));
-        match h.resolve("const char *restrict", 64) {
-            CType::Pointer {
-                pointee, is_const, ..
-            } => {
-                assert!(is_const);
-                assert!(matches!(*pointee, CType::Int { bits: 8, .. }));
-            }
-            other => panic!("{other:?}"),
-        }
-        match h.resolve("sqlite3 **", 64) {
-            CType::Pointer {
-                pointee, is_const, ..
-            } => {
-                assert!(!is_const);
-                match *pointee {
-                    CType::Pointer {
-                        pointee_names,
-                        pointee,
-                        ..
-                    } => {
-                        assert_eq!(pointee_names, ["sqlite3"]);
-                        assert_eq!(*pointee, CType::Named("sqlite3".into()));
-                    }
-                    other => panic!("{other:?}"),
-                }
-            }
-            other => panic!("{other:?}"),
-        }
-        assert_eq!(h.resolve("void (*)(void *)", 64), CType::FunctionPointer);
-        assert!(matches!(
-            h.resolve("char *const", 64),
-            CType::Pointer {
-                is_const: false,
-                ..
-            }
-        ));
-        assert_eq!(h.resolve("_Bool", 64), CType::Bool);
-        assert_eq!(
-            h.resolve("enum mode", 64),
-            CType::Unknown("enum mode".into())
-        );
-        assert_eq!(h.resolve("__int128", 64), CType::Unknown("__int128".into()));
-    }
-}
+#[path = "ctype_tests.rs"]
+mod tests;
