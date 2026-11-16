@@ -123,6 +123,9 @@ pub(crate) struct Ctx<'m> {
     /// EXPERIMENT (#2943 M3): with std's unit from disk in a build, the definitions the program
     /// is built from (`units::reach`); `None`: all ([`Ctx::in_program`]).
     pub program_set: Option<std::rc::Rc<FxHashSet<DefId>>>,
+    /// The functions whose bodies hold a dispatch over the program's classes (`body::expr::
+    /// object_own`): a finished unit keeps them (`units::Summaries::dispatch_fns`).
+    pub program_dispatch: FxHashSet<DefId>,
     pub scopes: Vec<ModuleScope>,
     /// Exports of `std/prelude/*` modules, visible everywhere.
     pub prelude: FxHashMap<String, Item>,
@@ -651,6 +654,7 @@ impl<'m> Ctx<'m> {
             std_from_disk: false,
             check_only: false,
             program_set: None,
+            program_dispatch: FxHashSet::default(),
             unit_sums: Default::default(),
             units_stage: crate::units::Stage::Both,
             scopes,

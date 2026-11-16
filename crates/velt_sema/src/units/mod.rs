@@ -29,6 +29,23 @@ pub(crate) enum Stage {
     App,
 }
 
+/// The finished units' functions whose bodies dispatch over the program's classes
+/// ([`Summaries::dispatch_fns`]), checked again with this unit's classes: what lowering builds of
+/// them is this program's (as lazy std checks them with the program's classes). Their bodies
+/// are kept with the unit (`codec::ast_refs`).
+fn check_dispatch_again(cx: &mut Ctx) {
+    for d in cx.unit_sums.dispatch_fns.clone() {
+        let Some(info) = cx.try_fn(d) else { continue };
+        if info.source.is_none() {
+            continue;
+        }
+        crate::ctx::def_table::crossing();
+        cx.defs[d.0 as usize] = None;
+        cx.fn_info_mut(d).state = crate::defs::BodyState::Unchecked;
+        crate::body::ensure_body(cx, d);
+    }
+}
+
 /// [`crate::check_definitions`] by units: std collected and checked, frozen, then the app.
 pub(crate) fn check_definitions(cx: &mut Ctx) {
     let app: Vec<usize> = (0..cx.modules.len())
@@ -98,6 +115,7 @@ pub(crate) fn check_definitions(cx: &mut Ctx) {
         crate::timings::pass("units: app finish", || {
             crate::body::finish_bodies(cx, from.defs)
         });
+        check_dispatch_again(cx);
     });
     if cx.units_stage == Stage::Both {
         cx.thaw_defs();
@@ -201,6 +219,9 @@ pub(crate) struct Summaries {
     pub(crate) lets: Option<Vec<(usize, u32, crate::hir::DefId)>>,
     /// How many types there were when the unit was finished.
     pub(crate) types: usize,
+    /// A finished unit's functions whose bodies dispatch over the program's classes: checked
+    /// again in a later unit's stage ([`check_dispatch_again`]); the unit keeps their bodies.
+    pub(crate) dispatch_fns: Vec<crate::hir::DefId>,
     /// Where a finished unit's dependencies' definitions start (its std's end, [`libraries`]).
     pub(crate) lib_base: usize,
     /// A finished unit's scan for the value params (`ownership::exclusive`).
@@ -342,6 +363,9 @@ pub(crate) fn finish_unit(cx: &mut Ctx) {
     ));
     cx.unit_sums.implicit = Some(crate::replaced_holders::implicit::unit_scan(cx));
     cx.keep_js_api_modules();
+    let mut dispatch: Vec<crate::hir::DefId> = cx.program_dispatch.iter().copied().collect();
+    dispatch.sort_unstable();
+    cx.unit_sums.dispatch_fns = dispatch;
     cx.unit_sums.host_fns = Some(crate::collect::host_sig::unit_host_fns(cx));
     crate::ownership::keep_unit_scans(cx);
 }
@@ -399,7 +423,7 @@ crate::units::codec::structs! {
         key_needs, async_summaries, json_needs, tuple_summaries, weak_scans, state_facts,
         weak_made, undefined_facts, lock_summaries, module_edges, groups, dispatch, generated_fns,
         literals, fed, modules, subclasses, calls, inst_sites, outside_named,
-        outside_tys, lets, types, lib_base, value_scan,
+        outside_tys, lets, types, lib_base, dispatch_fns, value_scan,
         virtuals, implicit, host_fns,
     }
 }
@@ -432,6 +456,7 @@ fn summary_sizes(s: &Summaries) {
         lets,
         types,
         lib_base,
+        dispatch_fns,
         value_scan,
         virtuals,
         implicit,
@@ -468,6 +493,7 @@ fn summary_sizes(s: &Summaries) {
         lets,
         types,
         lib_base,
+        dispatch_fns,
         value_scan,
         virtuals,
         implicit,

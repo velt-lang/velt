@@ -108,6 +108,17 @@ fn placeholder<'x, T: AstNode>(_: &Reader) -> &'x T {
     Box::leak(Box::new(T::placeholder()))
 }
 
+thread_local! {
+    /// The function declarations (by address) whose bodies an encoding keeps whole
+    /// ([`keep_bodies`]).
+    static KEEP_BODIES: RefCell<rustc_hash::FxHashSet<usize>> = RefCell::default();
+}
+
+/// Keep the bodies of the declarations at `addresses` in what is encoded until the next call.
+pub(crate) fn keep_bodies(addresses: rustc_hash::FxHashSet<usize>) {
+    KEEP_BODIES.with(|k| *k.borrow_mut() = addresses);
+}
+
 /// A function's body as a unit keeps it: empty, at its place.
 pub(super) fn no_body(b: &ast::Block) -> ast::Block {
     ast::Block {
@@ -154,7 +165,11 @@ impl AstNode for ast::FnDecl {
         self.sig.name.span.file
     }
     fn kept(&self) -> Cow<'_, Self> {
-        Cow::Owned(kept_fn(self))
+        // A body a later unit's stage checks again (`units::Summaries::dispatch_fns`) is kept.
+        match KEEP_BODIES.with(|k| k.borrow().contains(&(self as *const _ as usize))) {
+            true => Cow::Borrowed(self),
+            false => Cow::Owned(kept_fn(self)),
+        }
     }
     fn placeholder() -> Self {
         sampled!(ast::ItemKind::Function(d) => d)

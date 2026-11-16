@@ -77,7 +77,7 @@ unit_fields! {
     special: [sigq, type_level],
     skip: [
         // The caller's (`decode_unit`), or set again by every check that uses the unit.
-        modules, root, gen, units, units_stage, unit_base, std_from_disk, check_only, program_set, import_targets, loads,
+        modules, root, gen, units, units_stage, unit_base, std_from_disk, check_only, program_set, program_dispatch, import_targets, loads,
         loads_added,
         stack_base, stack_budget, held_borrows, ide, body_records, source_facts, std_missed,
         kept_demand,
@@ -202,6 +202,14 @@ pub(crate) fn encode_unit(cx: &Ctx) -> Vec<u8> {
 /// [`encode_unit`], with the bytes each saved field took (and last, how many of them are AST
 /// fragments).
 pub(crate) fn encode_unit_sized(cx: &Ctx) -> (Vec<u8>, Vec<(&'static str, usize)>) {
+    // The bodies a later unit's stage checks again are kept (`units::Summaries::dispatch_fns`).
+    let keep = (cx.unit_sums.dispatch_fns.iter())
+        .filter_map(|&d| match cx.try_fn(d)?.source? {
+            crate::defs::FnSource::Decl(f) => Some(f as *const _ as usize),
+            _ => None,
+        })
+        .collect();
+    super::ast_refs::keep_bodies(keep);
     let mut w = Writer::new();
     let mut sizes = vec![];
     // The modules' files first, in order: a decoder maps them to the modules it is given.

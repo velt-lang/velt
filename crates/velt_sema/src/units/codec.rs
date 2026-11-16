@@ -20,7 +20,7 @@
 
 #![allow(dead_code)] // Until the unit is saved (#2943 M2).
 
-mod ast_refs;
+pub(crate) mod ast_refs;
 mod defs;
 #[cfg(test)]
 mod defs_tests;

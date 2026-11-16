@@ -280,6 +280,11 @@ impl FnCx<'_, '_> {
         mut class: impl FnMut(&mut Self, DefId, ast::Expr) -> hir::Expr,
         span: Span,
     ) -> hir::Expr {
+        // A dispatch over the program's classes: a finished unit's body that writes one is
+        // checked again in a later unit's stage, with that unit's classes (`units`).
+        if let Some(d) = self.body_def {
+            self.cx.program_dispatch.insert(d);
+        }
         let sty = s.ty;
         let (l, mode) = self.option_binding(&s, sty, "<dyn>", false);
         let name = format!("<dyn@{}>", span.lo);
