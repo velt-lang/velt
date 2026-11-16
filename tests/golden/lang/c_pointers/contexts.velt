@@ -1,0 +1,87 @@
+// A C pointer (`Ptr<T>`, #3094) is one word in every context, and `Ptr<T> | null` the same word
+// with 0 as `null`: it prints as `Ptr(0x…)`, compares and hashes by address, narrows, is a
+// truthy value, keeps its value through generic code, closures, an `await` and another worker,
+// and a class that holds one still converts to `any`.
+// No address here is read through: they are fixed numbers, so the output is the same everywhere.
+import { Ptr } from "velt/ffi";
+import { workerCount } from "velt/task";
+
+declare c type FILE;
+
+class Handle {
+  file: Ptr<FILE> | null;
+  name: string;
+  constructor(file: Ptr<FILE> | null, name: string) {
+    this.file = file;
+    this.name = name;
+  }
+}
+
+function first<T>(xs: T[]): T {
+  return xs[0];
+}
+
+function at(a: usize): Ptr<FILE> {
+  // SAFETY: never read through; only the address is printed and compared.
+  return unsafe { Ptr.at<FILE>(a) };
+}
+
+function orNull(a: usize): Ptr<FILE> | null {
+  // SAFETY: as in `at`.
+  return unsafe { Ptr.orNull<FILE>(a) };
+}
+
+async function addressOn(p: Ptr<FILE>): Promise<usize> {
+  return Ptr.addressOf(p);
+}
+
+async function later(p: Ptr<FILE>): Promise<usize> {
+  await Promise.resolve(0);
+  return Ptr.addressOf(p);
+}
+
+async function main() {
+  const p = at(0x7ffd5e8c1a30);
+  const q = at(0x1000);
+  const none = orNull(0);
+  console.log(p, q, none);
+  console.log([p, none], { file: q });
+  console.log(Ptr.addressOf(p) === 0x7ffd5e8c1a30, Ptr.addressOf(none));
+
+  // Compared and hashed by address.
+  console.log(p === at(0x7ffd5e8c1a30), p === q, none === null, orNull(0x1000) === q);
+  const seen = new Set<Ptr<FILE>>([p, q, at(0x1000)]);
+  const names = new Map<Ptr<FILE>, string>([[p, "stack"], [q, "page"]]);
+  console.log(seen.size, names.get(at(0x1000)), [p, q].includes(at(0x7ffd5e8c1a30)));
+
+  // Narrowed, and truthy.
+  const maybe: Ptr<FILE> | null = orNull(0x2000);
+  if (maybe !== null) {
+    console.log("not null", Ptr.addressOf(maybe));
+  }
+  if (maybe) {
+    console.log("truthy");
+  }
+  if (!none) {
+    console.log("null is falsy");
+  }
+  console.log(none ?? q);
+
+  // In a class, an array, spread and destructured, through generics and a closure.
+  const h = new Handle(p, "out");
+  const copy = { ...{ file: q, n: 1 } };
+  const { file } = copy;
+  const pick = () => h.file;
+  console.log(h.file, file, first([q, p]), pick());
+
+  // A class holding a pointer converts to `any`, as one holding a SIMD vector does: its keys
+  // list the field and it prints, but the pointer itself never becomes a dynamic value.
+  const a: any = h;
+  console.log(Object.keys(a), a.name);
+  console.log(a);
+
+  // Across an `await`, and on another worker.
+  console.log(await later(p));
+  const w = await spawn(addressOn(q), { worker: workerCount() - 1 });
+  console.log(w);
+}

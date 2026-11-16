@@ -1,0 +1,7 @@
+// The rules for C pointers (#3094) are the binding package's errors, reported before the program
+// runs.
+import { show } from "clib";
+
+function main() {
+  show();
+}

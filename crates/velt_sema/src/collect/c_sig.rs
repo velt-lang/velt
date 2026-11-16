@@ -195,16 +195,18 @@ fn param(cx: &mut Ctx, module: usize, name: &str, p: &ast::Param, ty: TyId) -> C
         struct_by_value(cx, name, &shown, p.ty.span);
         return CTy::Void;
     }
-    cx.error(
-        Diagnostic::error(
-            format!(
-                "parameter `{}` of C function `{name}` has type `{shown}`, which cannot cross to C",
-                p.name.name
-            ),
-            p.ty.span,
-        )
-        .with_note(format!("a C function takes {ALLOWED}")),
+    let d = Diagnostic::error(
+        format!(
+            "parameter `{}` of C function `{name}` has type `{shown}`, which cannot cross to C",
+            p.name.name
+        ),
+        p.ty.span,
     );
+    let d = match out_refusal(cx, ty) {
+        Some(why) => d.with_note(why),
+        None => d.with_note(format!("a C function takes {ALLOWED}")),
+    };
+    cx.error(d);
     CTy::Void
 }
 
@@ -382,6 +384,23 @@ fn by_address(cx: &Ctx, ty: TyId) -> Option<CTy> {
         OUT if args.first().is_some_and(|t| out_value(cx, *t)) => Some(CTy::Out),
         _ => None,
     }
+}
+
+/// Why an `Out<T>` C can't write is refused, when `ty` is one: a non-null pointer (C may write
+/// `NULL`), or a value whose word C writing would forge (a class, a `symbol`, a `shared<T>`).
+fn out_refusal(cx: &Ctx, ty: TyId) -> Option<&'static str> {
+    let TyKind::Adt(d, args) = cx.ty.kind(ty) else {
+        return None;
+    };
+    if cx.adt(*d)?.qual_name != OUT {
+        return None;
+    }
+    let value = *args.first()?;
+    Some(if is_c_ptr(cx, value) {
+        "C may write `NULL` into an `Out` of a pointer: declare it `Out<Ptr<T> | null>`"
+    } else {
+        "C writes an `Out<T>` of a number, `bool` or `Ptr<T> | null`: anything else C wrote would forge a Velt value (a reference, a symbol)"
+    })
 }
 
 /// May C write the `value` of an `Out<T>` of type `ty`? A number, a `bool`, or a pointer that may

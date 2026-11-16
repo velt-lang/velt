@@ -1,0 +1,14 @@
+Ptr(0x7ffd5e8c1a30) Ptr(0x1000) null
+[ Ptr(0x7ffd5e8c1a30), null ] { file: Ptr(0x1000) }
+true 0
+true false true true
+2 page true
+not null 8192
+truthy
+null is falsy
+Ptr(0x1000)
+Ptr(0x7ffd5e8c1a30) Ptr(0x1000) Ptr(0x1000) Ptr(0x7ffd5e8c1a30)
+[ 'file', 'name' ] out
+Handle { file: Ptr(0x7ffd5e8c1a30), name: 'out' }
+140726189693488
+4096

@@ -1,0 +1,28 @@
+_clib/src/lib.velt:34:24: error: cannot convert to or from JSON: `Ptr<FILE>` has no JSON form
+  = note: JSON supports numbers, boolean, string, literal types, enums, arrays, tuples, `T | null`, `Map<string, T>`, structs, classes and object literals of those, and `JsonValue`
+_clib/src/lib.velt:13:36: error: parameter `p` of C function `setNull` has type `Out<Ptr<FILE>>`, which cannot cross to C
+  = note: C may write `NULL` into an `Out` of a pointer: declare it `Out<Ptr<T> | null>`
+_clib/src/lib.velt:14:38: error: parameter `p` of C function `setObject` has type `Out<Holder>`, which cannot cross to C
+  = note: C writes an `Out<T>` of a number, `bool` or `Ptr<T> | null`: anything else C wrote would forge a Velt value (a reference, a symbol)
+_clib/src/lib.velt:29:18: error: a C pointer (`Ptr<FILE>`) has no text
+  = note: `Ptr.addressOf(p)` gives its address, a number; `console.log(p)` shows it
+_clib/src/lib.velt:29:30: error: a C pointer (`Ptr<FILE>`) has no text
+  = note: `Ptr.addressOf(p)` gives its address, a number; `console.log(p)` shows it
+_clib/src/lib.velt:29:42: error: a C pointer (`Ptr<FILE>`) has no text
+  = note: `Ptr.addressOf(p)` gives its address, a number; `console.log(p)` shows it
+_clib/src/lib.velt:29:52: error: a C pointer (`Ptr<FILE>`) has no `typeof`: it is no JavaScript value
+  = note: `Ptr.addressOf(p)` gives its address, a number; `console.log(p)` shows it
+_clib/src/lib.velt:30:15: error: cannot apply binary operator `<` to type `Ptr<FILE>`
+  = note: a C pointer is compared only with `===` and `!==`: `Ptr.addressOf(p)` gives its address, a number
+_clib/src/lib.velt:30:28: error: mismatched types
+  = note: expected Ptr<FILE>, found Ptr<DIR>
+_clib/src/lib.velt:31:18: error: a C pointer (`Ptr<FILE>`) can't be converted to `any`
+  = note: a pointer has no dynamic form: keep it typed, or pass `Ptr.addressOf(p)`, its address
+_clib/src/lib.velt:32:22: error: a C pointer (`Ptr<FILE>`) can't be converted to `unknown`
+  = note: a pointer has no dynamic form: keep it typed, or pass `Ptr.addressOf(p)`, its address
+_clib/src/lib.velt:33:21: error: a C pointer (`Ptr<FILE>`) can't be converted to `object`
+  = note: a pointer has no dynamic form: keep it typed, or pass `Ptr.addressOf(p)`, its address
+_clib/src/lib.velt:35:15: error: a C pointer (`Ptr<FILE>`) is converted to `any` or to text here, through a type parameter
+  = note: a pointer has no dynamic form and no text: `Ptr.addressOf(p)` gives its address
+_clib/src/lib.velt:35:25: error: a C pointer (`Ptr<FILE>`) is converted to `any` or to text here, through a type parameter
+  = note: a pointer has no dynamic form and no text: `Ptr.addressOf(p)` gives its address
