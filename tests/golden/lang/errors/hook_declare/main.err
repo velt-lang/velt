@@ -1,0 +1,1 @@
+main.velt:4:18: error: `velt_hook_prebuilt_probe_text` is the entry point of a prebuilt std hook: no module may declare it
