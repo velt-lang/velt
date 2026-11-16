@@ -100,6 +100,9 @@ pub struct StdModule {
     pub file: PathBuf,
     pub imports: Vec<(String, String)>,
     pub jsx_runtime: Option<String>,
+    /// A dependency's module (#2943 D6): the package's name as imported and its source
+    /// directory; `None`: std's.
+    pub package: Option<(String, PathBuf)>,
 }
 
 /// Inputs of [`load_program`] besides the root path.
@@ -464,15 +467,21 @@ impl Loader<'_, '_> {
             self.resolved.insert(index);
             self.modules.push(SourceModule {
                 path: m.path.clone(),
-                is_std: true,
-                is_dependency: false,
+                is_std: m.package.is_none(),
+                is_dependency: m.package.is_some(),
                 file,
                 ast,
                 imports: m.imports.clone(),
                 jsx_runtime: m.jsx_runtime.clone(),
             });
-            self.origins
-                .push((m.file.clone(), Origin::Std(std.clone())));
+            let origin = match &m.package {
+                Some((name, src)) => Origin::Package {
+                    name: name.clone(),
+                    src: src.clone(),
+                },
+                None => Origin::Std(std.clone()),
+            };
+            self.origins.push((m.file.clone(), origin));
         }
         true
     }

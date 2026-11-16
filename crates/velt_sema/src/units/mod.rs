@@ -31,7 +31,11 @@ pub(crate) enum Stage {
 /// [`crate::check_definitions`] by units: std collected and checked, frozen, then the app.
 pub(crate) fn check_definitions(cx: &mut Ctx) {
     let app: Vec<usize> = (0..cx.modules.len())
-        .filter(|&m| !cx.modules[m].is_std && !cx.is_generated_module(m))
+        .filter(|&m| !in_first_unit(cx.modules[m]) && !cx.is_generated_module(m))
+        .collect();
+    // The dependencies in std's unit ([`libraries`]): collected and checked after std's own.
+    let libs: Vec<usize> = (0..cx.modules.len())
+        .filter(|&m| !cx.modules[m].is_std && in_first_unit(cx.modules[m]))
         .collect();
     if cx.units_stage != Stage::App {
         crate::timings::pass("units: std", || {
@@ -43,6 +47,23 @@ pub(crate) fn check_definitions(cx: &mut Ctx) {
             crate::body::expr::virtual_defaults::build_fill_bodies(cx, 0);
             crate::body::check_bodies(cx);
         });
+        if !libs.is_empty() {
+            crate::timings::pass("units: libraries", || {
+                let from = crate::collect::collect_app(cx, &libs);
+                cx.collected_defs = cx.defs.len();
+                cx.groups = None;
+                cx.subclasses = None;
+                cx.primitive_statics = None;
+                cx.classes_below.clear();
+                cx.marked_aliases = Default::default();
+                cx.native_libraries = Default::default();
+                cx.uses_this_fn = Default::default();
+                crate::decorators::check(cx, from.defs);
+                crate::global_this::declare(cx);
+                crate::body::check_added(cx, from);
+                crate::body::finish_bodies(cx, from.defs);
+            });
+        }
     }
     if cx.units_stage == Stage::Std {
         // The passes after the bodies run for std alone (`crate::analyze`); it is frozen once
@@ -81,6 +102,18 @@ pub(crate) fn check_definitions(cx: &mut Ctx) {
 
 /// EXPERIMENT: `VELT_UNITS=2`, std checked as a check of its own (its rounds and passes), then
 /// the app's rounds from a copy of it.
+/// EXPERIMENT (#2943 D6, `VELT_UNITS_LIB=1`): the program's dependencies are in std's unit
+/// (the libraries' unit), checked and frozen with it, not with the app.
+pub(crate) fn libraries() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("VELT_UNITS_LIB").is_some())
+}
+
+/// Whether module `m` is in the first unit (std's, with the dependencies under [`libraries`]).
+pub(crate) fn in_first_unit(m: &crate::SourceModule) -> bool {
+    m.is_std || (m.is_dependency && libraries())
+}
+
 pub(crate) fn stage2() -> bool {
     #[cfg(test)]
     if codec::hook::installed() {
@@ -171,7 +204,7 @@ pub(crate) struct Order {
 
 impl Order {
     pub(crate) fn of(modules: &[crate::SourceModule], root: usize) -> Order {
-        let (std, app) = (0..modules.len()).partition(|&m| modules[m].is_std);
+        let (std, app) = (0..modules.len()).partition(|&m| in_first_unit(&modules[m]));
         Order { std, app, root }
     }
 
@@ -475,7 +508,7 @@ pub(crate) fn split_inputs(
         return (None, None);
     }
     let std = (modules.iter())
-        .filter(|m| m.is_std)
+        .filter(|m| in_first_unit(m))
         .map(stubs::copy)
         .collect();
     (Some(stubs::stubbed(modules)), Some(std))

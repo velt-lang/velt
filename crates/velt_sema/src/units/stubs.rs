@@ -65,7 +65,7 @@ fn stub_item(i: &ast::Item) -> Option<ast::Item> {
 /// they are.
 pub(crate) fn stubbed(modules: &[SourceModule]) -> Vec<SourceModule> {
     (modules.iter())
-        .map(|m| match m.is_std {
+        .map(|m| match super::in_first_unit(m) {
             true => stub(m),
             false => copy(m),
         })
@@ -103,7 +103,7 @@ pub(crate) fn merge(
     use rustc_hash::FxHashSet;
     use velt_common::Span;
     let std_files: FxHashSet<velt_common::FileId> = (modules.iter())
-        .filter(|m| m.is_std)
+        .filter(|m| super::in_first_unit(m))
         .map(|m| m.file)
         .collect();
     let own = |s: &Span| !std_files.contains(&s.file);

@@ -61,7 +61,30 @@ pub(crate) fn std_tree() -> Option<&'static StdTree> {
     .as_ref()
 }
 
-pub(super) fn prepare(scope: &CheckScope) -> Option<Prepared> {
+/// Whether the dependencies are in std's unit (#2943 D6, `VELT_UNITS_LIB`, as sema's
+/// `units::libraries`).
+fn libraries() -> bool {
+    std::env::var_os("VELT_UNITS_LIB").is_some()
+}
+
+/// The program's dependencies' source trees (`packages`; `input`: the root file, whose own
+/// package is not one), for the unit's key ([`libraries`]).
+fn dependency_trees(packages: Option<&vpm::PackageGraph>, input: &Path) -> Option<Vec<StdTree>> {
+    let Some(graph) = packages else {
+        return Some(vec![]);
+    };
+    let own = graph.enclosing_package(input).map(|p| p.root.clone());
+    let mut out = vec![];
+    for p in graph.packages() {
+        if Some(&p.root) == own.as_ref() {
+            continue;
+        }
+        out.push(StdTree::walk(&p.root.join(vpm::manifest::SRC_DIR))?);
+    }
+    Some(out)
+}
+
+pub(super) fn prepare(scope: &CheckScope, opts: &super::BuildOptions) -> Option<Prepared> {
     if !scope.units {
         return None;
     }
@@ -72,6 +95,11 @@ pub(super) fn prepare(scope: &CheckScope) -> Option<Prepared> {
     // Every std file's path, length and time of change (not its contents: reading every std
     // file to key it costs more than the rest of the load).
     tree.encode().hash(&mut h);
+    if libraries() {
+        for t in dependency_trees(opts.packages.as_ref(), &opts.input)? {
+            t.encode().hash(&mut h);
+        }
+    }
     let key = std::hash::Hasher::finish(&h);
     let stubs: Option<HashMap<String, Vec<u8>>> =
         velt_sema::read_std_stubs(&dir, key).map(|s| s.into_iter().collect());
@@ -97,30 +125,40 @@ const MODULES_FORMAT: &str = "velt-std-modules 1";
 
 /// Keep std's modules of a load with all of std loaded (`loaded`, files in `sm`) under std's
 /// sources' key, for a later load that takes them as they are (`LoadOptions::std_modules`):
-/// each module's path, file (below the std root), imports and JSX runtime.
+/// each module's path, file, imports and JSX runtime, and a dependency's package
+/// ([`libraries`]). Written again by each such load: the dependencies' modules an app reaches
+/// may change.
 pub(super) fn save_modules(
     key: u64,
     loaded: &[velt_sema::SourceModule],
     sm: &velt_common::SourceMap,
+    packages: Option<&vpm::PackageGraph>,
 ) {
     let (Some(dir), Some(tree)) = (dir(), std_tree()) else {
         return;
     };
     let path = modules_path(&dir, key);
-    if path.exists() {
-        return;
-    }
     let mut out = format!("{MODULES_FORMAT}\n");
-    for m in loaded.iter().filter(|m| m.is_std) {
-        let file = &sm.get(m.file).path;
-        let Ok(rel) = vpm::relpath::absolute(file)
-            .strip_prefix(tree.root())
-            .map(Path::to_path_buf)
-        else {
-            return;
-        };
+    for m in loaded
+        .iter()
+        .filter(|m| m.is_std || (m.is_dependency && libraries()))
+    {
+        let file = vpm::relpath::absolute(&sm.get(m.file).path);
         let jsx = m.jsx_runtime.as_deref().unwrap_or("");
-        out.push_str(&format!("M\t{}\t{}\t{jsx}\n", m.path, rel.display()));
+        if m.is_dependency {
+            let Some(p) = packages.and_then(|g| g.package_of(&file)) else {
+                return;
+            };
+            let src = p.root.join(vpm::manifest::SRC_DIR);
+            let name = m.path.split('/').next().unwrap_or(&m.path);
+            let (path, file, src) = (&m.path, file.display(), src.display());
+            out.push_str(&format!("P\t{path}\t{file}\t{jsx}\t{name}\t{src}\n"));
+        } else {
+            let Ok(rel) = file.strip_prefix(tree.root()) else {
+                return;
+            };
+            out.push_str(&format!("M\t{}\t{}\t{jsx}\n", m.path, rel.display()));
+        }
         for (spec, target) in &m.imports {
             out.push_str(&format!("I\t{spec}\t{target}\n"));
         }
@@ -142,6 +180,14 @@ fn read_modules(path: &Path, tree: &StdTree) -> Option<Vec<loader::StdModule>> {
                 file: tree.root().join(file),
                 imports: vec![],
                 jsx_runtime: (!jsx.is_empty()).then(|| jsx.to_string()),
+                package: None,
+            }),
+            ["P", path, file, jsx, name, src] => out.push(loader::StdModule {
+                path: path.to_string(),
+                file: PathBuf::from(file),
+                imports: vec![],
+                jsx_runtime: (!jsx.is_empty()).then(|| jsx.to_string()),
+                package: Some((name.to_string(), PathBuf::from(src))),
             }),
             ["I", spec, target] => {
                 out.last_mut()?

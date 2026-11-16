@@ -80,9 +80,11 @@ pub(crate) fn save(
 ) {
     write_whole(path, &codec::encode_unit(cx));
     let stubs = path.with_file_name(format!("{std_key:016x}.stubs"));
-    if let (Some(modules), false) = (modules, stubs.exists()) {
+    // Written again by every check that saves a unit: the modules in it may have changed
+    // (the dependencies an app reaches, `units::libraries`).
+    if let Some(modules) = modules {
         let mut out = STUBS_FORMAT.to_vec();
-        for m in modules.iter().filter(|m| m.is_std) {
+        for m in modules.iter().filter(|m| crate::units::in_first_unit(m)) {
             let ast = velt_syntax::encode_module(&m.ast, m.file);
             for part in [m.path.as_bytes(), &ast[..]] {
                 out.extend_from_slice(&(part.len() as u64).to_le_bytes());

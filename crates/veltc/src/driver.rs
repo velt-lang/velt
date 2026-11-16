@@ -382,7 +382,7 @@ fn load_modules(
 ) -> Result<loader::Loaded, BuildError> {
     stamp::check_fetched(opts).map_err(BuildError::Failed)?;
     let t = Instant::now();
-    let prepared = units_disk::prepare(scope);
+    let prepared = units_disk::prepare(scope, opts);
     if prepared.is_some() {
         sess.record("units: std key and stubs", t);
     }
@@ -406,7 +406,7 @@ fn load_modules(
         .map_err(BuildError::Failed)?;
     // A load of all of std keeps std's modules for a later one ([`units_disk::save_modules`]).
     if let (Some(p), false) = (&prepared, sess.units_stubbed) {
-        units_disk::save_modules(p.key, &loaded.modules, &sess.sm);
+        units_disk::save_modules(p.key, &loaded.modules, &sess.sm, opts.packages.as_ref());
     }
     sess.record("parse", t);
     Ok(loaded)

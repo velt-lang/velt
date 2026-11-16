@@ -89,7 +89,7 @@ pub(crate) unsafe fn keep(held: &mut Held, key: u64, cx: Ctx<'_>, modules: Box<[
 
 /// std's modules of `modules`, copied for a unit to own.
 pub(crate) fn copies(modules: &[SourceModule]) -> Box<[SourceModule]> {
-    (modules.iter().filter(|m| m.is_std))
+    (modules.iter().filter(|m| crate::units::in_first_unit(m)))
         .map(|m| SourceModule {
             path: m.path.clone(),
             is_std: m.is_std,

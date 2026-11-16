@@ -389,7 +389,7 @@ fn check_timed(
     // std's modules for its unit: std's own run's, or the loader's stubs as they are.
     let unit_mods: Vec<&SourceModule> = match std_mods {
         Some(m) => m.iter().collect(),
-        None => modules.iter().filter(|m| m.is_std).collect(),
+        None => modules.iter().filter(|m| units::in_first_unit(m)).collect(),
     };
     // SAFETY: `disk_arena` is declared before every context and so outlives them.
     let load_unit =
