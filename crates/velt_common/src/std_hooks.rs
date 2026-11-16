@@ -224,6 +224,9 @@ hooks! {
     sched_fut_views => lang_hooks_sched_share_alias, "schedFutViews", sig((u8) -> void), lowered;
     /// `velt_rt_futs_handled`'s: `(futs, n, quiet_drop)`.
     sched_handled => lang_hooks_sched, "schedHandled", sig((usize, u64, usize) -> void), lowered;
+    /// `velt_rt_all`'s, `_with_drop`'s and `_or_reject`'s: `(futs, n, result_size, results,
+    /// result_drop, reject)`, the join's heap future (#2944).
+    sched_all => lang_hooks_sched_all, "schedAll", sig((usize, u64, u64, usize, usize, bool) -> usize), lowered;
     /// `velt_rt_fut_peek`'s (`console.log` of a promise): `(f)`, 1 when it settled with its result
     /// in its slot.
     sched_peek => lang_hooks_sched, "schedPeek", sig((usize) -> u32), lowered;

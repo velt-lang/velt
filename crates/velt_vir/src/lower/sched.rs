@@ -210,6 +210,9 @@ impl FnLower<'_, '_> {
                 | Rt::FutStart
                 | Rt::FutStartRejecting
                 | Rt::FutDetach
+                | Rt::All
+                | Rt::AllWithDrop
+                | Rt::AllOrReject
                 | Rt::FutTransfer
                 | Rt::FutId
                 | Rt::FutAlias
@@ -360,6 +363,30 @@ impl FnLower<'_, '_> {
                             .emit(self)
                             .op(),
                     )
+                }
+                // `Promise.all` over an array (sched_all.velt `schedAll`, #2944): `velt_rt_all` has
+                // no result drop.
+                (
+                    Rt::All | Rt::AllWithDrop | Rt::AllOrReject,
+                    [futs, n, size, results, rest @ ..],
+                ) => {
+                    let rdrop = match rest {
+                        [d] => self.as_usize(d.clone()),
+                        _ => self.as_usize(cint(0, Ty::Ptr)),
+                    };
+                    let (futs, results) =
+                        (self.as_usize(futs.clone()), self.as_usize(results.clone()));
+                    let reject = Operand::Const(Const::Bool(r == Rt::AllOrReject), Ty::Bool);
+                    let c = hooks::sched_all(
+                        self,
+                        ty::USize::arg(futs),
+                        ty::U64::arg(n.clone()),
+                        ty::U64::arg(size.clone()),
+                        ty::USize::arg(results),
+                        ty::USize::arg(rdrop),
+                        ty::Bool::arg(reject),
+                    );
+                    Some(c.emit(self).op())
                 }
                 (Rt::AwaitReady, [ticket, cx]) => {
                     let (ticket, cx) = (ticket.clone(), self.as_usize(cx.clone()));

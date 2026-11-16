@@ -110,6 +110,7 @@ table! {
     lang_hooks_proxy => "lang/hooks/proxy",
     lang_hooks_record => "lang/hooks/record",
     lang_hooks_sched => "lang/hooks/sched",
+    lang_hooks_sched_all => "lang/hooks/sched_all",
     lang_hooks_sched_blocking => "lang/hooks/sched_blocking",
     lang_hooks_sched_cells => "lang/hooks/sched_cells",
     lang_hooks_sched_io => "lang/hooks/sched_io",

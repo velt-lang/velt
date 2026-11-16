@@ -283,7 +283,9 @@ export const E_W_SKIP: usize = 928;
  */
 export const E_FAIR_TICK: usize = 936;
 export const E_W_TICK: usize = 944;
-export const E_SIZE: usize = 952;
+/** The waker table of a `Promise.all` join's children (sched_all.velt): process-wide, as `E_VT`. */
+export const E_ALL_VT: usize = 952;
+export const E_SIZE: usize = 984;
 /** The spawns of a lazy worker 0's poll that go on `E_PREST`, which the monitor may take. */
 export const PEND_STACKED: usize = 64;
 /** `E_LAZY`'s states. */

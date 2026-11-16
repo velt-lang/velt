@@ -1,0 +1,8 @@
+// `Promise.all` over an empty array settles with an empty array (#2944).
+async function main() {
+  const ps: Promise<number>[] = [];
+  const all = Promise.all(ps);
+  console.log("made");
+  const vs = await all;
+  console.log(vs.length);
+}

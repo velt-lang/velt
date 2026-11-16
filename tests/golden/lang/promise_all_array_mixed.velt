@@ -1,0 +1,20 @@
+// `Promise.all` over an array (the join, not the in-place literal form): plain async calls,
+// settled promises and promises resolved later, in one array; results in array order, the
+// children's lines in the order they ran (#2944).
+async function after(label: string, n: number): Promise<string> {
+  for (let i = 0; i < n; i++) {
+    await null;
+  }
+  console.log(`${label} done`);
+  return label;
+}
+
+async function main() {
+  const r = Promise.withResolvers<string>();
+  const ps: Promise<string>[] = [after("slow", 3), Promise.resolve("ready"), r.promise, after("fast", 1)];
+  const all = Promise.all(ps);
+  console.log("made");
+  r.resolve("later");
+  const vs = await all;
+  console.log(vs.join(","));
+}
