@@ -88,35 +88,31 @@ pub(crate) fn fn_type(sig: &ast::FnSig, span: Span) -> ast::TypeExpr {
 /// alias, or `None` when there is none; with the errors found.
 pub(crate) fn rewrite(modules: &[SourceModule]) -> (Option<Vec<SourceModule>>, Vec<Diagnostic>) {
     let fn_bases = function_names(modules);
-    let callable = |i: &ast::Item| match &i.kind {
-        ast::ItemKind::Interface(d) => {
-            !d.call_sigs.is_empty() || d.extends.iter().any(|b| names_function(b, &fn_bases))
-        }
+    // The names are the program's (`function_names`): a std interface that extends one of std's
+    // own interfaces of the same name (`Arithmetic<T> extends Add<T>`) is not a function.
+    let is_callable = |d: &ast::InterfaceDecl, std: bool| {
+        !d.call_sigs.is_empty() || (!std && d.extends.iter().any(|b| names_function(b, &fn_bases)))
+    };
+    let callable = |i: &ast::Item, std: bool| match &i.kind {
+        ast::ItemKind::Interface(d) => is_callable(d, std),
         _ => false,
     };
-    if !modules.iter().any(|m| m.ast.items.iter().any(callable)) {
+    if !(modules.iter()).any(|m| m.ast.items.iter().any(|i| callable(i, m.is_std))) {
         return (None, vec![]);
     }
     // Each module on its own (`crate::par`), the errors in module order.
     let done = crate::par::map(modules, crate::par::module_weight(modules), |m| {
         let mut diags = vec![];
         let mut ast = m.ast.clone();
-        if ast.items.iter().any(callable) {
+        if ast.items.iter().any(|i| callable(i, m.is_std)) {
             let items = std::mem::take(&mut ast.items);
             ast.items = items
                 .into_iter()
                 .map(|item| match item.kind {
-                    ast::ItemKind::Interface(d)
-                        if !d.call_sigs.is_empty()
-                            || d.extends.iter().any(|b| names_function(b, &fn_bases)) =>
-                    {
-                        ast::Item {
-                            kind: ast::ItemKind::TypeAlias(interface_alias(
-                                d, item.span, &mut diags,
-                            )),
-                            ..item
-                        }
-                    }
+                    ast::ItemKind::Interface(d) if is_callable(&d, m.is_std) => ast::Item {
+                        kind: ast::ItemKind::TypeAlias(interface_alias(d, item.span, &mut diags)),
+                        ..item
+                    },
                     _ => item,
                 })
                 .collect();
@@ -398,3 +394,7 @@ pub(crate) fn check(modules: &[SourceModule]) -> Vec<Diagnostic> {
     });
     found.into_iter().flatten().collect()
 }
+
+#[cfg(test)]
+#[path = "call_sigs_tests.rs"]
+mod tests;
