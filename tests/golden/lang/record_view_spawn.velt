@@ -1,0 +1,21 @@
+// check: no leaks
+// A record view sent to another task (#379, velt_vir lower/record_view.rs): it arrives as a plain
+// record of the source's entries then, as a value sent to a worker is a structured clone in
+// Node; the sender's object is no longer reached from there, and a later conversion of it is a
+// new view. Velt-only (`spawn`).
+async function keysThere(v: Record<string, any>): Promise<string> {
+  v["there"] = 1;
+  return Object.keys(v).join(",");
+}
+
+function view(held: any): Record<string, any> {
+  return held as Record<string, any>;
+}
+
+async function main(): Promise<void> {
+  const src: Record<string, number> = { a: 1 };
+  const held: any = src;
+  console.log(await spawn(keysThere(view(held))));
+  src["b"] = 2;
+  console.log(Object.keys(src).join(","), Object.keys(view(held)).join(","));
+}

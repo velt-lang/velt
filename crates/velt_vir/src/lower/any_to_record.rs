@@ -60,6 +60,12 @@ impl FnLower<'_, '_> {
         let (yes, no) = (self.new_block(), self.new_block());
         self.branch(is_obj, yes, no);
         self.switch_to(yes);
+        // A record type with `any` values is a view of the object (record_view.rs).
+        if of_any && self.cx.record_view(ty) {
+            self.record_view_make(p, ty, out, done);
+            self.switch_to(no);
+            return;
+        }
         // The hooks borrow the `any` (velt_common's table), which this function owns.
         let arg = ty::Any::arg(self.addr(p.clone()));
         let r = match of_any {

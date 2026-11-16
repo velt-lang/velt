@@ -103,7 +103,10 @@ impl Cx<'_> {
         // `Proxy` and `Reflect` (std/lang/proxy/index.velt) and the other classes of `numbered_last` are
         // numbered last, so the classes of programs that don't use them keep their ids.
         let mut roots: Vec<DefId> = children.get(&None).cloned().unwrap_or_default();
-        roots.sort_by_key(|&d| (self.view_class(d), self.numbered_last(d)));
+        // A record view's source (record_view.rs) is the very last: its hook module is read on
+        // demand, so a program without views (and with std read up front) has it or not.
+        let view_source = |d: DefId| matches!(self.hir.def(d), hir::Def::Adt(a) if a.name == super::record_view::VIEW_SOURCE);
+        roots.sort_by_key(|&d| (view_source(d), self.view_class(d), self.numbered_last(d)));
         for &root in roots.iter().rev() {
             stack.push((root, false));
         }

@@ -26,7 +26,12 @@ pub(super) fn note_user_conversions(
         cx.lazy.generic_any = to.iter().chain(&held).any(|&t| has_param(cx, t));
     }
     if !cx.lazy.record_conversion {
-        cx.lazy.record_conversion = held.iter().any(|&t| holds_record_inside(cx, t));
+        // An `any` converted to a record with string keys (a copy, or a view of the object:
+        // velt_vir record_view.rs) needs the hooks too.
+        cx.lazy.record_conversion = held.iter().any(|&t| holds_record_inside(cx, t))
+            || to
+                .iter()
+                .any(|&t| matches!(cx.record_type_args(t), Some((k, _)) if k == cx.ty.str_));
     }
 }
 

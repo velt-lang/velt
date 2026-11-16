@@ -717,7 +717,10 @@ impl FnLower<'_, '_> {
         }
         let (ok_bb, bad_bb, done) = (self.new_block(), self.new_block(), self.new_block());
         match self.cx.kind(ty) {
-            TyKind::Adt(..) => self.cx.note_proxy_target(ty),
+            TyKind::Adt(..) => {
+                self.cx.note_proxy_target(ty);
+                self.cx.note_record_view(ty);
+            }
             TyKind::Array(_) => self.cx.note_array_view(ty),
             _ => {}
         }

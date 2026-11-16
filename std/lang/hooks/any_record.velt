@@ -2,6 +2,8 @@
 // such a record (#1219; velt_vir `any_to_record.rs`). Loaded when the check finds such a conversion
 // (velt_common `ON_DEMAND_MODULES`), so that other programs don't load these hooks.
 
+import { arrayIndex, objectPrototypeKey } from "velt/lang/hooks/record";
+
 /**
  * `x as Record<string, any>` of an `any` holding an object that is not such a record (an object
  * literal, a class instance, an array): a new record of its own enumerable entries, in its
@@ -32,4 +34,93 @@ export function anyToRecord<V>(o: any): Record<string, V> {
  */
 function anyEntry(o: any, k: string): any {
   return Array.isArray(o) ? o[Number(k)] : o[k];
+}
+
+// Record views (#379; velt_vir `lower/record_view.rs`): `x as Record<string, any>` of an `any`
+// holding an object or another record is a view of that one object, as in Node, not a copy. The
+// view is a record whose entries are a mirror of the source's: lowering keeps the source in the
+// record, sends a keyed read or write to the source (`recordViewGetOne` and the others) and
+// rebuilds the mirror before a read of the whole record (`recordViewSyncAll`), through `any`. A write
+// the source can't hold (a key an object type has no field for, a value of another type) stops
+// with a `TypeError` where Node goes on.
+
+/** The source of a record view: the object an `any` held when it was converted. */
+export class RecordViewSource {
+  target: any;
+
+  constructor(target: any) {
+    this.target = target;
+  }
+}
+
+/** The source of a view of the object `o` holds (moved in). */
+export function recordViewNew(o: any): RecordViewSource {
+  return new RecordViewSource(o);
+}
+
+/**
+ * A view's record (lowering keeps the source `s` in it): its mirror empty, as a keyed read or
+ * write goes to the source, and a read of the whole record rebuilds the mirror first.
+ */
+export function recordViewMake(s: RecordViewSource): Record<string, any> {
+  const r: Record<string, any> = {};
+  return r;
+}
+
+/** A new mirror of the source `s`, in its order (lowering puts it in place of the old one). */
+export function recordViewSyncAll(s: RecordViewSource): Map<string, any> {
+  const m: Map<string, any> = new Map();
+  for (const k of Object.keys(s.target)) {
+    m.set(k, anyEntry(s.target, k));
+  }
+  return m;
+}
+
+/**
+ * The source's own entry `k`, or `undefined`: a member every object inherits (`toString`) only as
+ * an own key, tested first (reading it is a method); any other key one read through `any`.
+ */
+export function recordViewGetOne(s: RecordViewSource, k: string): any {
+  if (objectPrototypeKey(k) && !Object.hasOwn(s.target, k)) {
+    return undefined;
+  }
+  return anyEntry(s.target, k);
+}
+
+/** Whether the source has the own key `k`. */
+export function recordViewHasOne(s: RecordViewSource, k: string): bool {
+  return Object.hasOwn(s.target, k);
+}
+
+/** `v` written to the source under `k` (a `TypeError` where it can't hold it). */
+export function recordViewSetOne(s: RecordViewSource, k: string, v: any) {
+  const t = s.target;
+  // An array's element by its index, as `anyEntry` reads it; any other key (`length`) as itself.
+  const i = Array.isArray(t) ? arrayIndex(k) : -1;
+  if (i >= 0) {
+    t[i] = v;
+  } else {
+    t[k] = v;
+  }
+}
+
+/** The key `k` deleted from the source. */
+export function recordViewDeleteOne(s: RecordViewSource, k: string) {
+  const t = s.target;
+  delete t[k];
+}
+
+/** The mirror's entries for the keys of `keys` (what a spread wrote) written to the source. */
+export function recordViewWriteAll(
+  s: RecordViewSource,
+  m: Map<string, any>,
+  keys: Map<string, any>,
+) {
+  const t = s.target;
+  for (const k of keys.keys()) {
+    // A key `RECORD_SET` wrote on the way went to the source already, not to the mirror.
+    if (m.has(k)) {
+      t[k] = m.get(k);
+    }
+  }
 }

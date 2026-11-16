@@ -141,6 +141,14 @@ pub(crate) fn is_helper(qualified: &str) -> bool {
 pub(crate) const RECORD_HOOKS: &[&str] = &[
     velt_common::std_hook!(any_to_record_any),
     velt_common::std_hook!(any_to_record),
+    velt_common::std_hook!(record_view_new),
+    velt_common::std_hook!(record_view_make),
+    velt_common::std_hook!(record_view_sync_all),
+    velt_common::std_hook!(record_view_get_one),
+    velt_common::std_hook!(record_view_has_one),
+    velt_common::std_hook!(record_view_set_one),
+    velt_common::std_hook!(record_view_delete_one),
+    velt_common::std_hook!(record_view_write_all),
 ];
 
 /// Which free functions of a module lowering looks up by name.

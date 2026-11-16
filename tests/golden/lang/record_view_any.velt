@@ -1,0 +1,73 @@
+// check: no leaks
+// A record of other values, or an object of an object literal type, where a record of `any` or
+// `unknown` values is expected, or converted from `any` to one, is a view of the one object
+// (#379, velt_vir lower/record_view.rs; sigx's `assignmentJs(…, patch)` and
+// `createBoundaryRefresh({ components })`): reads see the source's current entries, writes reach
+// it (a spread writes only its own keys), two conversions of one object are `===`, only own keys
+// are entries, and a view dropped leaves the next conversion a new one. Node prints the same.
+class Rec {
+  constructor(public id: number) {}
+}
+
+function dump(values: Record<string | number, unknown>): string {
+  return JSON.stringify(values);
+}
+
+function count(components: Record<string, unknown>): number {
+  return Object.keys(components).length;
+}
+
+function mark(r: Record<string, unknown>): void {
+  r["seen"] = true;
+  delete r["gone"];
+}
+
+function readAndAdd(v: Record<string, unknown>): string {
+  const r = v["3"] as Rec | undefined;
+  v["4"] = new Rec(4);
+  return `${r?.id} ${Object.keys(v).join(",")}`;
+}
+
+function assign(v: Record<string, unknown>): void {
+  Object.assign(v, { b: 3 });
+}
+
+function keysOf(held: any): string {
+  const r = held as Record<string, any>;
+  return Object.keys(r).join(",");
+}
+
+function Poll(): string {
+  return "poll";
+}
+
+const components = { Poll };
+
+function main(): void {
+  const patch: Record<number, Rec> = {};
+  patch[3] = new Rec(3);
+  console.log(dump(patch));
+  console.log(readAndAdd(patch), Object.keys(patch).join(","));
+
+  console.log(count(components));
+
+  const orig: Record<string, number | boolean> = { a: 1, gone: 2 };
+  mark(orig);
+  console.log(Object.keys(orig).join(","), orig["seen"]);
+  assign(orig);
+  console.log(Object.keys(orig).join(","), orig["b"]);
+
+  // Each conversion is dropped before the next: a new view of the same object each time.
+  const held: any = orig;
+  for (let i = 0; i < 3; i++) {
+    console.log(keysOf(held));
+  }
+
+  const r = held as Record<string, any>;
+  orig["c"] = 3;
+  console.log(r["c"], (r as unknown) === (held as Record<string, any> as unknown));
+  console.log("toString" in r, Object.hasOwn(r, "toString"));
+  delete orig["a"];
+  console.log(r["a"], Object.keys(r).join(","));
+  console.log(r);
+}
