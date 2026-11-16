@@ -260,10 +260,15 @@ pub(crate) fn called_by_name(path: &str) -> bool {
     (BY_NAME.iter().chain(HELPERS)).any(|p| in_module(path, p))
 }
 
-/// Is `path` a std module lowering looks into by name, or the prelude's or the hooks' (`BY_NAME`,
-/// `HELPERS`; `units::reach` takes them whole)?
-pub(crate) fn named_module(path: &str) -> bool {
-    (BY_NAME.iter().chain(HELPERS)).any(|p| in_module(path, p))
+/// Which of std module `path`'s free functions lowering looks up by name (`units::reach`):
+/// `Some(true)`: all of them ([`BY_NAME`]); `Some(false)`: the compiler's helpers among them
+/// ([`HELPERS`], [`is_helper`]); `None`: none.
+pub(crate) fn named_module(path: &str) -> Option<bool> {
+    match () {
+        _ if BY_NAME.iter().any(|p| in_module(path, p)) => Some(true),
+        _ if HELPERS.iter().any(|p| in_module(path, p)) => Some(false),
+        _ => None,
+    }
 }
 
 /// Is `path` the std module or directory `p`, or inside it (`std/lang/sort` is not in
@@ -378,7 +383,7 @@ pub(crate) fn reach(cx: &mut Ctx) {
 
 /// The executor in Velt's hooks (velt_common `std_hooks.rs`, `sched_*`), which lowering calls on a
 /// native target ([`sched_hooks`]).
-const SCHED_HOOKS: &[&str] = &[
+pub(crate) const SCHED_HOOKS: &[&str] = &[
     velt_common::std_hook!(sched_block_on),
     velt_common::std_hook!(sched_spawn),
     velt_common::std_hook!(sched_yield),

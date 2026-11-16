@@ -31,24 +31,32 @@ pub(crate) fn program_set(cx: &mut Ctx, entry: Option<DefId>) -> FxHashSet<DefId
     let mut todo: Vec<DefId> = (base..cx.info.len()).map(|i| DefId(i as u32)).collect();
     todo.extend(entry);
     todo.extend(cx.module_slots.iter().copied());
+    // The std functions lowering looks up by name, as lazy std's roots (`Mode::named`), and
+    // every hook (lazy std demands those the program's constructs need: all is a superset).
     for m in 0..cx.modules.len().min(cx.scopes.len()) {
-        if !cx.modules[m].is_std || !crate::body::lazy_std::named_module(&cx.modules[m].path) {
+        let module = cx.modules[m];
+        if !module.is_std {
             continue;
         }
-        todo.extend(cx.scopes[m].items.values().filter_map(|i| match i {
-            Item::Def(d) => Some(*d),
-            Item::Alias(_) => None,
-        }));
-    }
-    let hook_modules: FxHashSet<String> = (velt_common::std_hooks::HOOKS.iter())
-        .map(|h| h.module())
-        .collect();
-    for m in 0..cx.modules.len().min(cx.scopes.len()) {
-        if cx.modules[m].is_std && hook_modules.contains(&cx.modules[m].path) {
-            todo.extend(cx.scopes[m].items.values().filter_map(|i| match i {
-                Item::Def(d) => Some(*d),
-                Item::Alias(_) => None,
-            }));
+        // The hooks' modules whole: their code reaches functions by name (`hookCall`'s stubs).
+        let hooks_dir = module.path.starts_with(velt_common::std_dir!(lang_hooks));
+        let named = match hooks_dir {
+            true => Some(true),
+            false => crate::body::lazy_std::named_module(&module.path),
+        };
+        for (name, item) in &cx.scopes[m].items {
+            let Item::Def(d) = item else { continue };
+            let qualified = format!("{}::{name}", module.path);
+            let root = match named {
+                Some(true) => true,
+                Some(false) => crate::body::lazy_std::is_helper(&qualified),
+                None => false,
+            };
+            let hook = velt_common::std_hooks::find(&qualified).is_some()
+                || crate::body::lazy_std::SCHED_HOOKS.contains(&qualified.as_str());
+            if root || hook {
+                todo.push(*d);
+            }
         }
     }
     let mut walk = Walk {
