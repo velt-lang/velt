@@ -262,19 +262,50 @@ impl Finder {
 /// with the directory. `None` when it is gone already.
 fn pin(cached: &Path) -> Option<(Pinned, PathBuf)> {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    static SWEPT: std::sync::Once = std::sync::Once::new();
+    let temp = std::env::temp_dir();
+    SWEPT.call_once(|| sweep_stale_pins(&temp, std::time::SystemTime::now()));
     let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let name = format!("velt-hook-{}-{n}", std::process::id());
-    let dir = std::env::temp_dir().join(name);
+    let dir = temp.join(format!("{PIN_PREFIX}{}-{n}", std::process::id()));
     // A new directory only this user can write to: one that is there already (left by a killed
     // process of the same id, or made by someone else) is a miss.
-    let mut builder = std::fs::DirBuilder::new();
     #[cfg(unix)]
-    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
-    builder.create(&dir).ok()?;
+    let created =
+        std::os::unix::fs::DirBuilderExt::mode(&mut std::fs::DirBuilder::new(), 0o700).create(&dir);
+    #[cfg(not(unix))]
+    let created = std::fs::DirBuilder::new().create(&dir);
+    created.ok()?;
     let dir = Pinned(dir);
     let to = dir.0.join("object");
     let placed = std::fs::hard_link(cached, &to).or_else(|_| std::fs::copy(cached, &to).map(drop));
     placed.ok().map(|()| (dir, to))
+}
+
+/// What the name of every pin directory ([`pin`]) starts with: `velt-hook-<pid>-<n>`.
+const PIN_PREFIX: &str = "velt-hook-";
+
+/// How old a pin directory has to be to be taken as left by a build that was killed: older than
+/// any build runs.
+const STALE_PIN: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+
+/// Remove the pin directories in `temp` last changed more than [`STALE_PIN`] before `now`: a build
+/// killed between its check and its end (`kill -9`, Ctrl-C) leaves its own, holding a hard link
+/// to an object (which keeps the cache's file alive) or a copy of one. Once per process, at its
+/// first pin. A directory it can't remove (another user's) stays.
+fn sweep_stale_pins(temp: &Path, now: std::time::SystemTime) {
+    let Ok(entries) = std::fs::read_dir(temp) else {
+        return;
+    };
+    for e in entries.flatten() {
+        if !e.file_name().to_string_lossy().starts_with(PIN_PREFIX) {
+            continue;
+        }
+        let changed = e.metadata().and_then(|m| m.modified());
+        let stale = changed.is_ok_and(|t| now.duration_since(t).is_ok_and(|age| age > STALE_PIN));
+        if stale && e.file_type().is_ok_and(|t| t.is_dir()) {
+            let _ = std::fs::remove_dir_all(e.path());
+        }
+    }
 }
 
 /// `VELT_PREBUILT_HOOKS=0`: no prebuilt objects (every hook module loaded as before).
@@ -566,6 +597,44 @@ mod tests {
         drop(found);
         drop(finder);
         assert!(!pinned.exists());
+    }
+
+    /// Set the time `dir` last changed to `by` ago.
+    fn backdate(dir: &Path, by: std::time::Duration) {
+        #[cfg(unix)]
+        let f = std::fs::File::open(dir).unwrap();
+        #[cfg(windows)]
+        let f = {
+            use std::os::windows::fs::OpenOptionsExt;
+            // FILE_WRITE_ATTRIBUTES, FILE_FLAG_BACKUP_SEMANTICS (a directory).
+            (std::fs::OpenOptions::new().access_mode(0x100))
+                .custom_flags(0x0200_0000)
+                .open(dir)
+                .unwrap()
+        };
+        f.set_modified(std::time::SystemTime::now() - by).unwrap();
+    }
+
+    /// A pin directory a killed build left goes once it is older than any build runs; a fresh
+    /// one (a build running now) and other directories stay.
+    #[test]
+    fn a_stale_pin_directory_is_swept() {
+        let tmp = tempfile::tempdir().unwrap();
+        let day = std::time::Duration::from_secs(24 * 60 * 60);
+        let dir = |name: &str, age| {
+            let d = tmp.path().join(name);
+            std::fs::create_dir(&d).unwrap();
+            std::fs::write(d.join("object"), b"object bytes").unwrap();
+            backdate(&d, age);
+            d
+        };
+        let stale = dir("velt-hook-4242-0", day * 2);
+        let fresh = dir("velt-hook-4243-0", day / 2);
+        let other = dir("other-4242-0", day * 2);
+        sweep_stale_pins(tmp.path(), std::time::SystemTime::now());
+        assert!(!stale.exists());
+        assert!(fresh.join("object").exists());
+        assert!(other.join("object").exists());
     }
 
     /// An object gone before the check is a miss: the build loads the module.
