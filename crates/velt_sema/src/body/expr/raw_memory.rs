@@ -3,8 +3,7 @@
 //! declarations cannot say. `addressLoad<T>` and `addressStore<T>` move one number or `bool`;
 //! the `addressAtomic*` ones work on an integer, and their orderings (and `addressAtomicRmw`'s
 //! operation) are string literals that become the integer literals the `Atomic*` intrinsics
-//! take; and
-//! `atomicAddress` takes only an `Atomic` that cannot move.
+//! take; and `atomicAddress` takes only an `Atomic` that cannot move.
 
 use velt_common::{Diagnostic, Span};
 
@@ -60,7 +59,7 @@ impl FnCx<'_, '_> {
 
     /// Can a raw read or write move a `T`: a number type or `bool` (an integer type, for an
     /// atomic one)? A type parameter passes only for the atomic ones, whose lowering checks each
-    /// instance (another type is an ICE there, `ptr_word`). `addressLoad` / `addressStore` refuse
+    /// instance (another type is an ICE there, `address_word`). `addressLoad` / `addressStore` refuse
     /// it: an instance with a class would move an owned reference as raw bytes.
     fn raw_value_ty(&self, t: TyId, int_only: bool) -> bool {
         let ty = &self.cx.ty;

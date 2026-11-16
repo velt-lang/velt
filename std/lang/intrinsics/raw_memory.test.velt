@@ -87,32 +87,30 @@ describe("velt/lang/intrinsics memory at an address", () => {
     expect(raw !== null).toBe(true);
     if (raw !== null) {
       const at = Ptr.addressOf(raw);
-      const p = at;
-      const q = at + 8;
       // SAFETY: `at` has 16 bytes, aligned, that only this thread uses, changed atomically.
       unsafe {
-        addressAtomicStore<u64>(p, 10, "release");
-        expect(addressAtomicLoad<u64>(p, "acquire")).toBe(10);
-        expect(addressAtomicRmw<u64>(p, "add", 5, "acqrel")).toBe(10);
-        expect(addressAtomicRmw<u64>(p, "sub", 1, "relaxed")).toBe(15);
-        expect(addressAtomicRmw<u64>(p, "exchange", 3, "seqcst")).toBe(14);
-        expect(addressAtomicRmw<u64>(p, "or", 12, "seqcst")).toBe(3);
-        expect(addressAtomicRmw<u64>(p, "and", 6, "seqcst")).toBe(15);
-        expect(addressAtomicRmw<u64>(p, "xor", 5, "seqcst")).toBe(6);
-        expect(addressAtomicLoad<u64>(p, "seqcst")).toBe(3);
-        expect(addressAtomicCas<u64>(p, 3, 9, "acqrel", "acquire")).toBe(3);
-        expect(addressAtomicCas<u64>(p, 3, 1, "seqcst", "relaxed")).toBe(9);
+        addressAtomicStore<u64>(at, 10, "release");
+        expect(addressAtomicLoad<u64>(at, "acquire")).toBe(10);
+        expect(addressAtomicRmw<u64>(at, "add", 5, "acqrel")).toBe(10);
+        expect(addressAtomicRmw<u64>(at, "sub", 1, "relaxed")).toBe(15);
+        expect(addressAtomicRmw<u64>(at, "exchange", 3, "seqcst")).toBe(14);
+        expect(addressAtomicRmw<u64>(at, "or", 12, "seqcst")).toBe(3);
+        expect(addressAtomicRmw<u64>(at, "and", 6, "seqcst")).toBe(15);
+        expect(addressAtomicRmw<u64>(at, "xor", 5, "seqcst")).toBe(6);
+        expect(addressAtomicLoad<u64>(at, "seqcst")).toBe(3);
+        expect(addressAtomicCas<u64>(at, 3, 9, "acqrel", "acquire")).toBe(3);
+        expect(addressAtomicCas<u64>(at, 3, 1, "seqcst", "relaxed")).toBe(9);
         let swapped = false;
         while (!swapped) {
-          swapped = addressAtomicCasWeak<u64>(p, 9, 2, "seqcst", "seqcst");
+          swapped = addressAtomicCasWeak<u64>(at, 9, 2, "seqcst", "seqcst");
         }
-        expect(addressAtomicLoad<u64>(p, "relaxed")).toBe(2);
+        expect(addressAtomicLoad<u64>(at, "relaxed")).toBe(2);
         // A signed `T` compares signed.
-        addressAtomicStore<i32>(q, -5, "seqcst");
-        expect(addressAtomicRmw<i32>(q, "max", -7, "seqcst")).toBe(-5);
-        expect(addressAtomicRmw<i32>(q, "min", -7, "seqcst")).toBe(-5);
-        expect(addressAtomicLoad<i32>(q, "seqcst")).toBe(-7);
-        expect(addressAtomicRmw<i32>(q, "max", 1, "seqcst")).toBe(-7);
+        addressAtomicStore<i32>(at + 8, -5, "seqcst");
+        expect(addressAtomicRmw<i32>(at + 8, "max", -7, "seqcst")).toBe(-5);
+        expect(addressAtomicRmw<i32>(at + 8, "min", -7, "seqcst")).toBe(-5);
+        expect(addressAtomicLoad<i32>(at + 8, "seqcst")).toBe(-7);
+        expect(addressAtomicRmw<i32>(at + 8, "max", 1, "seqcst")).toBe(-7);
         expect(addressLoad<i32>(at + 8)).toBe(1);
       }
       // SAFETY: `raw` came from malloc.
@@ -125,16 +123,15 @@ describe("velt/lang/intrinsics memory at an address", () => {
   it("atomicAddress gives the word of a static atomic", () => {
     const at = atomicAddress(WORD);
     expect(at === atomicAddress(WORD)).toBe(true);
-    const p = at;
     // SAFETY: a static atomic's word lives as long as the program, a u32, changed atomically.
     unsafe {
-      expect(addressAtomicLoad<u32>(p, "seqcst")).toBe(7);
-      addressAtomicStore<u32>(p, 8, "seqcst");
+      expect(addressAtomicLoad<u32>(at, "seqcst")).toBe(7);
+      addressAtomicStore<u32>(at, 8, "seqcst");
     }
     expect(WORD.load()).toBe(8);
     WORD.add(2);
     // SAFETY: as above.
-    expect(unsafe { addressAtomicRmw<u32>(p, "add", 1, "seqcst") }).toBe(10);
+    expect(unsafe { addressAtomicRmw<u32>(at, "add", 1, "seqcst") }).toBe(10);
     expect(WORD.load()).toBe(11);
     // A C function writes the word through the address: every byte 1.
     // SAFETY: the word is 4 bytes, and nothing else changes it meanwhile.
