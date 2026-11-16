@@ -12,6 +12,7 @@
 //! `with_all_std`) and nothing is checked lazily (`body::lazy_std`).
 
 pub(crate) mod codec;
+pub(crate) mod disk;
 pub(crate) mod stubs;
 
 use crate::ctx::Ctx;

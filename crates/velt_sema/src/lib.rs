@@ -376,6 +376,9 @@ fn check_timed(
     // the cache with their box (`std_unit::keep`), or dropped after every context.
     let copies: Option<&[SourceModule]> =
         (std_copies.as_deref()).map(|c| unsafe { &*(c as *const [SourceModule]) });
+    // A unit loaded from disk keeps its AST here (`units::disk`): it outlives every context.
+    let disk_arena = units::codec::Arena::default();
+    let disk = units::disk::path(opts, std_found.as_ref());
     let std_snap: std::cell::RefCell<Option<ctx::Ctx>> = Default::default();
     let new_cx = |round: &'static str,
                   held_borrows: bool,
@@ -463,8 +466,16 @@ fn check_timed(
     // The check checked again, kept while that one runs: when that one reports an error this
     // one did not, this one's diagnostics stay the program's (`throws::adds_errors`).
     if order.is_some() {
-        let std_cx = match std_unit::take(&held, std_key) {
-            Some(cx) => cx,
+        // SAFETY: `disk_arena` is declared before every context and so outlives them.
+        let loaded = (disk.as_deref())
+            .zip(std_mods)
+            .and_then(|(p, m)| unsafe { units::disk::load(p, &disk_arena, m) });
+        let std_cx = match loaded.or_else(|| std_unit::take(&held, std_key)) {
+            Some(mut cx) => {
+                (cx.units, cx.units_stage, cx.stack_budget) =
+                    (true, units::Stage::Std, stack_budget);
+                cx
+            }
             None => {
                 stage.set(units::Stage::Std);
                 let run = rounds::run(&new_cx, &|_: &ctx::Ctx| false, &assumed, false, None);
@@ -473,6 +484,9 @@ fn check_timed(
                     Err(stopped) => return *stopped,
                 };
                 units::finish_unit(&mut std_cx);
+                if let Some(p) = &disk {
+                    units::disk::save(p, &std_cx);
+                }
                 if let (Some(k), Some(c)) = (std_key, std_copies.take()) {
                     // SAFETY: std's stage was checked over `c` alone (`copies`), with no
                     // generator, loads or diagnostics of the check installed.

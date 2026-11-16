@@ -19,12 +19,7 @@ pub(super) fn run(
     sema_opts: &mut velt_sema::CheckOptions,
     packages: Option<&vpm::PackageGraph>,
 ) {
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    for m in loaded.modules.iter().filter(|m| m.is_std) {
-        m.path.hash(&mut h);
-        sess.sm.get(m.file).src.hash(&mut h);
-    }
-    sema_opts.std_key = Some(h.finish());
+    sema_opts.std_key = Some(std_sources_key(sess, loaded));
     let sema_opts = *sema_opts;
     let before = sess.diagnostics.len();
     let t1 = Instant::now();
@@ -78,4 +73,15 @@ pub(super) fn run(
         }
     }
     sess.diagnostics.truncate(before);
+}
+
+/// A key for the std modules of `loaded`: their paths and sources, and the compiler.
+pub(super) fn std_sources_key(sess: &Session, loaded: &loader::Loaded) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    crate::build_cache::compiler_identity().0.hash(&mut h);
+    for m in loaded.modules.iter().filter(|m| m.is_std) {
+        m.path.hash(&mut h);
+        sess.sm.get(m.file).src.hash(&mut h);
+    }
+    h.finish()
 }

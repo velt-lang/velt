@@ -409,6 +409,10 @@ fn sema_stage(
     if scope.units && std::env::var_os("VELT_UNITS_TWICE").is_some() {
         units_twice::run(sess, opts, loaded, &mut sema_opts, packages);
     }
+    // EXPERIMENT (#2943 M2): `VELT_UNITS_DISK`, std's unit kept on disk, keyed by std's sources.
+    if scope.units && std::env::var_os("VELT_UNITS_DISK").is_some() {
+        sema_opts.std_key = Some(units_twice::std_sources_key(sess, loaded));
+    }
     sess.no_generators |= opts.no_generators;
     // With `VELT_EAGER_STD` the executor's modules are still served on demand
     // (`StdLoad::serve`); `velt check --std` loads everything up front.
