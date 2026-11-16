@@ -53,7 +53,7 @@ pub fn build_and_run_with(
 }
 
 /// Builds and runs `src` with 4 workers: it prints `want` and exits with 0.
-#[allow(dead_code)] // std_scheduler_exit_order uses none of the plain runs
+#[allow(dead_code)] // std_scheduler_join_order and std_scheduler_exit_order use none of the plain runs
 pub fn prints(name: &str, src: &str, want: &str) {
     super::runtime_support::build_native_runtime(manifest());
     let dir = super::test_dir::TestDir::new();
