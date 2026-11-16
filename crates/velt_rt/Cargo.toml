@@ -41,8 +41,6 @@ windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Netwo
 
 [features]
 # mimalloc is the global allocator by default; build with --no-default-features for the system allocator.
-# Release programs for native targets call mimalloc's own functions (std/lang/hooks/heap.velt), so
-# a runtime built without it links only debug builds.
 default = ["mimalloc"]
 mimalloc = ["dep:mimalloc", "dep:libmimalloc-sys"]
 
