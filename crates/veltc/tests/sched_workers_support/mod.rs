@@ -118,6 +118,7 @@ pub fn contended_runs_spun(
             let mut c = std::process::Command::new("sh");
             c.args(["-c", "while :; do :; done"]);
             pin_child(&mut c);
+            die_with_parent(&mut c);
             spinners.0.push(c.spawn().expect("sh"));
         }
     }
@@ -169,6 +170,28 @@ impl Drop for Spinners {
         for c in &mut self.0 {
             let _ = c.kill();
             let _ = c.wait();
+        }
+    }
+}
+
+/// The child `cmd` starts is killed when the thread that started it ends, a test binary killed
+/// with SIGKILL too (Linux only, where [`Spin::Processes`] spins): no spinner outlives its test.
+#[allow(dead_code, unused_variables)]
+fn die_with_parent(cmd: &mut std::process::Command) {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::process::CommandExt;
+        let parent = std::process::id() as libc::pid_t;
+        // SAFETY: only `prctl` and `getppid` between fork and exec.
+        unsafe {
+            cmd.pre_exec(move || {
+                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
+                if libc::getppid() != parent {
+                    // The parent died before the call.
+                    libc::_exit(1);
+                }
+                Ok(())
+            });
         }
     }
 }

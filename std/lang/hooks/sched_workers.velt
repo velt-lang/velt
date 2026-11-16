@@ -224,6 +224,11 @@ function workerMain(arg: Ptr<u8> | null): Ptr<u8> | null {
   velt_rt_set_scheduler(2);
   // Awake: its first turn may take work no wake brought (an offer it steals, input it borrows).
   wk.awake(w);
+  if ((m.ld32(w + t.E_MODE) & t.M_MONITOR) !== 0) {
+    // The monitor may sleep, every park word read up while this thread had not run: it watches
+    // this worker's polls from now on, as after a park (sched_park.velt `park`).
+    mon.kick(m.ld(w + t.E_MAIN));
+  }
   while (true) {
     loop.turn(w);
   }
