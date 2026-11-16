@@ -76,4 +76,6 @@ the program idles in an `await`.
 ## Allocator
 The staticlib embeds mimalloc as Rust's global allocator (feature `mimalloc`, on by default; it
 compiles its C sources with the MSVC/cc toolchain at build time and needs no extra native libs).
-Build with `--no-default-features` to use the system allocator instead.
+Build with `--no-default-features` to use the system allocator instead. Release builds call
+mimalloc's `mi_*` functions directly when the runtime they link has them (rt_abi.md "Memory");
+with such a runtime they keep calling `velt_rt_alloc` / `velt_rt_free`.

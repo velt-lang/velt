@@ -7,7 +7,12 @@
 //! What the goldens can't reach is checked here: a size of 0, alignments past 8, growing and
 //! shrinking with the contents kept, a reallocation past the array length limit and one larger
 //! than memory, each stop with the runtime's message. And which builds call the hooks: release
-//! builds, not debug ones, nor a release build asked to count blocks (`VELT_RC_STATS=1`).
+//! builds, not debug ones, nor a release build asked to count blocks (`VELT_RC_STATS=1`), nor one
+//! linked against a debug runtime, whose checks and counts are asked for when the program runs.
+//!
+//! The runtime these tests link is the profile's own: a debug one under `cargo test`. The probes
+//! set `VELT_HEAP_HOOKS=1`, which makes a release build call the hooks with it too (they never
+//! run with `VELT_RT_DEBUG_ALLOC` or `VELT_RC_STATS` set).
 
 use std::path::Path;
 use std::process::Output;
@@ -60,6 +65,14 @@ function main() {
   // A size of 0 takes no memory: its alignment comes back, and its free does nothing.
   console.log(alloc(0, 8), alloc(0, 1), alloc(0, 64));
   free(8, 0, 8);
+  // Not even a live block's: it stays, with its contents, and the next allocation is another.
+  const kept = alloc(24, 8);
+  fill(kept, 3);
+  free(kept, 0, 8);
+  const next = alloc(24, 8);
+  console.log(next != kept, filled(kept, 3));
+  // `kept` stays (freeing it here would free it twice if the free of size 0 had taken it).
+  free(next, 24, 8);
   // Distinct blocks, aligned as asked.
   const aligns: u64[] = [1, 8, 16, 64, 4096];
   for (const align of aligns) {
@@ -92,6 +105,7 @@ function main() {
 
 const EXPECTED: &str = "\
 8 1 64
+true true
 1 true 0 0 true
 8 true 0 0 true
 16 true 0 0 true
@@ -126,7 +140,8 @@ fn probe_std(dir: &test_dir::TestDir) {
 }
 
 /// `velt <args>` over `main` (written as `name`.velt) with the probe std, without the variables
-/// that keep the runtime's allocator in a release build.
+/// that keep the runtime's allocator in a release build, and with the hooks on whichever runtime
+/// is linked.
 fn velt(dir: &test_dir::TestDir, name: &str, main: &str, args: &[&str]) -> Output {
     let file = format!("{name}.velt");
     std::fs::write(dir.path().join(&file), main).unwrap();
@@ -135,6 +150,7 @@ fn velt(dir: &test_dir::TestDir, name: &str, main: &str, args: &[&str]) -> Outpu
         .arg(&file)
         .env("VELT_STD", dir.path().join("std"))
         .env("VELT_BUILD_CACHE", "off")
+        .env("VELT_HEAP_HOOKS", "1")
         .env_remove("VELT_RC_STATS")
         .env_remove("VELT_RT_DEBUG_ALLOC")
         .current_dir(dir.path())
@@ -169,6 +185,14 @@ fn stops(dir: &test_dir::TestDir, name: &str, body: &str, message: &str) {
     assert_eq!(out.status.code(), Some(101), "{name}: {stdout}\n{stderr}");
     assert_eq!(stdout, "before\n", "{name}: {stderr}");
     assert!(stderr.contains(message), "{name}: {stderr}");
+    // Out of memory stops as the runtime's allocator does: the message alone, no location.
+    if message.starts_with("memory allocation") {
+        let line = format!("panic: {message}\n");
+        assert!(
+            stderr.replace("\r\n", "\n").contains(&line),
+            "{name}: {stderr}"
+        );
+    }
 }
 
 #[test]
@@ -209,7 +233,7 @@ fn past_the_limit_or_memory_the_program_stops_with_the_runtimes_messages() {
 
 /// The VIR of `main` built with `args` (and `env` set) calls the runtime's allocator, or std's
 /// hooks in its place.
-fn calls(dir: &test_dir::TestDir, args: &[&str], env: Option<(&str, &str)>) -> (bool, bool) {
+fn calls(dir: &test_dir::TestDir, args: &[&str], env: &[(&str, &str)]) -> (bool, bool) {
     let main = "class Point {\n  constructor(public x: number, public y: number) {}\n}\n\
                 function main() {\n  const ps: Point[] = [];\n  for (let i = 0; i < 3; i++) {\n    \
                 ps.push(new Point(i, i));\n  }\n  console.log(ps.length);\n}\n";
@@ -220,10 +244,11 @@ fn calls(dir: &test_dir::TestDir, args: &[&str], env: Option<(&str, &str)>) -> (
         .arg("points.velt")
         .env("VELT_STD", dir.path().join("std"))
         .env("VELT_BUILD_CACHE", "off")
+        .env_remove("VELT_HEAP_HOOKS")
         .env_remove("VELT_RC_STATS")
         .env_remove("VELT_RT_DEBUG_ALLOC")
         .current_dir(dir.path());
-    if let Some((k, v)) = env {
+    for (k, v) in env {
         cmd.env(k, v);
     }
     let vir = text("vir", &cmd.output().unwrap());
@@ -238,11 +263,94 @@ fn calls(dir: &test_dir::TestDir, args: &[&str], env: Option<(&str, &str)>) -> (
 fn release_builds_call_the_hooks_and_debug_builds_the_runtime() {
     let dir = test_dir::TestDir::new();
     probe_std(&dir);
-    assert_eq!(calls(&dir, &["--release"], None), (false, true));
-    assert_eq!(calls(&dir, &[], None), (true, false));
+    let on = ("VELT_HEAP_HOOKS", "1");
+    assert_eq!(calls(&dir, &["--release"], &[on]), (false, true));
+    assert_eq!(calls(&dir, &[], &[on]), (true, false));
     // Asked to count or check blocks, a release build keeps the runtime's allocator.
-    let counted = Some(("VELT_RC_STATS", "1"));
-    assert_eq!(calls(&dir, &["--release"], counted), (true, false));
-    let checked = Some(("VELT_RT_DEBUG_ALLOC", "1"));
-    assert_eq!(calls(&dir, &["--release"], checked), (true, false));
+    let counted = ("VELT_RC_STATS", "1");
+    assert_eq!(calls(&dir, &["--release"], &[on, counted]), (true, false));
+    let checked = ("VELT_RT_DEBUG_ALLOC", "1");
+    assert_eq!(calls(&dir, &["--release"], &[on, checked]), (true, false));
+    assert_eq!(
+        calls(&dir, &["--release"], &[("VELT_HEAP_HOOKS", "0")]),
+        (true, false)
+    );
+    // Without the variable, the runtime decides: a debug one (this profile's) keeps its
+    // allocator, so the program may still run with its checks and counts.
+    let plain = calls(&dir, &["--release"], &[]);
+    if cfg!(debug_assertions) {
+        assert_eq!(plain, (true, false));
+    }
+}
+
+const COUNTED: &str = r#"
+class Point {
+  constructor(public x: number, public y: number) {}
+}
+
+function main() {
+  let sum = 0;
+  const seen = new Map<string, number>();
+  for (let i = 0; i < 1000; i++) {
+    const p = new Point(i, i + 1);
+    const parts = ("a" + i + ",b,c,d").split(",");
+    const add = (n: number) => n + p.x + p.y;
+    seen.set(parts[0], add(parts.length));
+    const bytes = new TextEncoder().encode(parts[0]);
+    const parsed = JSON.parse("[" + i + ", 2]") as number[];
+    sum += bytes.length + parsed[0];
+  }
+  console.log(seen.size, sum);
+}
+"#;
+
+/// A release program built as usual, then run with the debug runtime's checks and counts asked
+/// for (`bench/rc_stats.ps1`, `bench/structs/run.sh`): with a debug runtime linked, it runs and
+/// counts every object, as before the hooks; with a release one, whose allocator neither checks
+/// nor counts, it runs.
+#[test]
+fn a_release_build_on_a_debug_runtime_runs_with_its_checks_and_counts() {
+    let dir = test_dir::TestDir::new();
+    std::fs::write(dir.path().join("counted.velt"), COUNTED).unwrap();
+    let std = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
+    let exe = dir
+        .path()
+        .join(format!("counted{}", std::env::consts::EXE_SUFFIX));
+    let built = no_window::command(env!("CARGO_BIN_EXE_velt"))
+        .args(["build", "--release", "counted.velt", "-o"])
+        .arg(&exe)
+        .env("VELT_STD", &std)
+        .env("VELT_BUILD_CACHE", "off")
+        .env_remove("VELT_HEAP_HOOKS")
+        .env_remove("VELT_RC_STATS")
+        .env_remove("VELT_RT_DEBUG_ALLOC")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    text("build", &built);
+    let ran = no_window::command(&exe)
+        .env("VELT_RC_STATS", "1")
+        .env("VELT_RT_DEBUG_ALLOC", "1")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert_eq!(text("run", &ran), "1000 503390\n");
+    if !cfg!(debug_assertions) {
+        return;
+    }
+    let stderr = String::from_utf8_lossy(&ran.stderr);
+    assert!(!stderr.contains("debug-alloc"), "{stderr}");
+    let blocks = stderr
+        .lines()
+        .rev()
+        .find(|l| l.starts_with("rc stats:"))
+        .and_then(|l| l.split_whitespace().find_map(|w| w.strip_prefix("blocks=")))
+        .and_then(|b| b.split_once('/'))
+        .and_then(|(a, f)| Some((a.parse::<u64>().ok()?, f.parse::<u64>().ok()?)));
+    let Some((allocated, freed)) = blocks else {
+        panic!("no `rc stats` blocks report: {stderr}");
+    };
+    // At least one block per Point, closure and array made in the loop, each freed.
+    assert!(allocated >= 3000, "{stderr}");
+    assert_eq!(allocated, freed, "{stderr}");
 }

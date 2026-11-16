@@ -4,8 +4,10 @@
 // step makes an allocation of a known size and every free a call of the hook here (velt_opt
 // `heap_calls`), inlined where it is called. Array buffers of a run-time length and their growth
 // keep the runtime's calls for now (`heapRealloc` waits for that: see `heap_calls`).
-// Debug builds keep the runtime's, which checks and counts every block (`VELT_RT_DEBUG_ALLOC`,
-// `VELT_RC_STATS`): its Rust allocates and frees blocks generated code also uses.
+// Debug builds, and release builds that link a debug runtime, keep the runtime's, which checks and
+// counts every block when the program runs with `VELT_RT_DEBUG_ALLOC` or `VELT_RC_STATS` set: its
+// Rust allocates and frees blocks generated code also uses. So does a runtime built without
+// mimalloc (veltc's driver/heap_hooks.rs).
 //
 // mimalloc is in the runtime's archive, also as the Rust global allocator, so a block from either
 // side is freed by the other. Every `mi_malloc` block is aligned to 8; a larger alignment takes
@@ -25,6 +27,10 @@ declare c("c") function mi_realloc_aligned(
   alignment: usize,
 ): Ptr<u8> | null;
 declare c("c") function mi_free(p: Ptr<u8> | null): void;
+
+declare function velt_rt_exit(code: i32): never;
+declare function velt_rt_flush(): void;
+declare function velt_rt_write_str(stream: u32, s: string);
 
 /** The alignment of every `mi_malloc` block. */
 const MIN_ALIGN: u64 = 8;
@@ -119,10 +125,16 @@ export function heapFree(p: u64, size: u64, align: u64): void {
   }
 }
 
-/** Stops the program: mimalloc has no block of `size` bytes (the runtime's message). */
+/**
+ * Stops the program: mimalloc has no block of `size` bytes. As the runtime's allocator does
+ * (`fatal`), with its message and exit code, and not as a panic: a `catchUnwind` running doesn't
+ * catch it, and the message names no location.
+ */
 @noInline
 function outOfMemory(size: u64): never {
-  panic("memory allocation of " + decimal(size) + " bytes failed");
+  velt_rt_flush();
+  velt_rt_write_str(2, "panic: memory allocation of " + decimal(size) + " bytes failed\n");
+  velt_rt_exit(101);
 }
 
 /**

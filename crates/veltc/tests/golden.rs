@@ -58,6 +58,9 @@
 //! (`VELT_RT_DEBUG_ALLOC=1`, `crates/velt_rt/src/debug_alloc.rs`): a use after free, double free
 //! or buffer overflow aborts with `velt debug-alloc: ...`. Set `VELT_RT_DEBUG_ALLOC=0` to turn it
 //! off, or `=1` to check the release-mode runs too.
+//! Release-mode builds allocate through std's heap hooks (`VELT_HEAP_HOOKS=1`) although the
+//! runtime they link is this profile's (a debug one under `cargo test`), unless the variable is
+//! set already; with `VELT_RT_DEBUG_ALLOC=1` or `VELT_RC_STATS=1` set, they don't.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -406,6 +409,7 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
                 false => {
                     let mut cmd = crate::no_window::command(velt);
                     cmd.arg("run").args(mode).arg(f);
+                    heap_hooks(&mut cmd, mode);
                     cmd
                 }
                 true => {
@@ -414,6 +418,7 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
                     let exe = dir.join(format!("{stem}{}", std::env::consts::EXE_SUFFIX));
                     let mut build = crate::no_window::command(velt);
                     build.arg("build").args(mode);
+                    heap_hooks(&mut build, mode);
                     // As `velt run` builds to run here: a debug build for this CPU. (`velt run`
                     // leaves out the variable descriptions for debuggers, which `velt build`
                     // has no flag for; they must not change what a program does.)
@@ -631,7 +636,14 @@ fn leaked_blocks(stderr: &str, allowed: u64) -> Option<String> {
     }
 }
 
-/// The build modes to check: `VELT_GOLDEN_MODES=debug` or `release` (the fast gate checks debug
+/// A release build (`mode`) calls std's heap hooks with the debug runtime too (the header).
+fn heap_hooks(cmd: &mut Command, mode: Option<&str>) {
+    if mode.is_some() && std::env::var_os("VELT_HEAP_HOOKS").is_none() {
+        cmd.env("VELT_HEAP_HOOKS", "1");
+    }
+}
+
+/// The build modes to check:`VELT_GOLDEN_MODES=debug` or `release` (the fast gate checks debug
 /// only); both by default.
 fn modes() -> Vec<Option<&'static str>> {
     match std::env::var("VELT_GOLDEN_MODES").as_deref() {
