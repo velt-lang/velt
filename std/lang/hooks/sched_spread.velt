@@ -22,6 +22,7 @@ import * as m from "./sched_mem";
 import * as mon from "./sched_monitor";
 import * as q from "./sched_queue";
 import * as sl from "./sched_sleep";
+import * as sc from "./sched_sleep_carry";
 import * as tq from "./sched_take";
 import * as t from "./sched_task";
 import * as wk from "./sched_wake";
@@ -164,10 +165,13 @@ export function sleepingHelper(e: usize): usize {
   return best;
 }
 
-/** Offers half of worker `e`'s waiting tasks (not pinned or anchored ones) and wakes `helper`. */
+/**
+ * Offers half of worker `e`'s waiting tasks (not pinned ones, nor anchored ones unless they can
+ * carry their sleeps: sched_sleep_carry.velt) and wakes `helper`.
+ */
 function offer(e: usize, mode: u32, helper: usize): void {
   q.lock(e, mode);
-  let k = tq.takeHalf(e, false);
+  let k = tq.takeHalf(e, false, sc.canCarry(e));
   q.unlock(e, mode);
   if (k === 0) {
     return;
@@ -176,6 +180,9 @@ function offer(e: usize, mode: u32, helper: usize): void {
   k = q.reverse(k);
   while (k !== 0) {
     const next = m.ld(k + t.T_NEXT);
+    if (t.has(k, t.ANCHORED)) {
+      sc.carry(e, k);
+    }
     m.pushStack(e + t.E_OFFER, k, t.T_NEXT);
     k = next;
   }
@@ -283,6 +290,23 @@ export function anchor(): void {
   if (k === 0 || t.has(k, t.ANCHORED)) {
     return;
   }
+  anchorTo(e, k);
+}
+
+/**
+ * As `anchor`, for good (`FIXED`): a wait whose deadline lives in this worker's I/O block, or an
+ * unref'd timer's look; an offer never carries such a task.
+ */
+export function anchorFixed(): void {
+  const e = t.exec();
+  if (e === 0) {
+    return;
+  }
+  const k = m.ld(e + t.E_CURRENT);
+  if (k === 0 || t.has(k, t.FIXED)) {
+    return;
+  }
+  t.flags(k, t.FIXED, 0);
   anchorTo(e, k);
 }
 

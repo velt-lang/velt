@@ -13,7 +13,7 @@ import * as t from "./sched_task";
  * second), oldest first, as a chain through `T_NEXT`; those that may not move (pinned, anchored)
  * stay where they were, in their order. The queue is locked.
  */
-function take(e: usize, head: usize, n: usize, into: usize): usize {
+function take(e: usize, head: usize, n: usize, into: usize, carry: bool): usize {
   const io = head === t.E_IHEAD;
   const tail = io ? t.E_ITAIL : t.E_TAIL;
   const len = io ? t.E_ILEN : t.E_RLEN;
@@ -26,7 +26,7 @@ function take(e: usize, head: usize, n: usize, into: usize): usize {
   let i: usize = 0;
   while (i < n && k !== 0) {
     const next = m.ld(k + t.T_NEXT);
-    if (t.movable(k)) {
+    if (t.movable(k) || (carry && t.carryable(k))) {
       m.st(k + t.T_NEXT, chain);
       chain = k;
       taken++;
@@ -66,7 +66,7 @@ function take(e: usize, head: usize, n: usize, into: usize): usize {
  * a chain newest first; pinned and anchored tasks stay.
  */
 export function takeHalfInput(e: usize): usize {
-  return take(e, t.E_IHEAD, m.ld(e + t.E_ILEN) / 2, 0);
+  return take(e, t.E_IHEAD, m.ld(e + t.E_ILEN) / 2, 0, false);
 }
 
 /**
@@ -74,7 +74,7 @@ export function takeHalfInput(e: usize): usize {
  * or rounded up (`up`: from a stalled worker, whose slot joins the input first); a chain newest
  * first. The second queue's share leaves the fair pass.
  */
-export function takeHalf(e: usize, up: bool): usize {
+export function takeHalf(e: usize, up: bool, carry: bool): usize {
   if (up) {
     // Swapped: the worker queues and takes its slot's task without the lock (sched_queue.velt),
     // so the look before it is an atomic read too, from this thread (the monitor's).
@@ -94,8 +94,8 @@ export function takeHalf(e: usize, up: bool): usize {
   const rest = up ? (nr + 1) / 2 : nr / 2;
   const left = m.ld(e + t.E_FAIR_LEFT);
   m.st(e + t.E_FAIR_LEFT, left > rest ? left - rest : 0);
-  const chain = take(e, t.E_IHEAD, up ? (ni + 1) / 2 : ni / 2, 0);
-  return take(e, t.E_HEAD, rest, chain);
+  const chain = take(e, t.E_IHEAD, up ? (ni + 1) / 2 : ni / 2, 0, carry);
+  return take(e, t.E_HEAD, rest, chain, carry);
 }
 
 /**

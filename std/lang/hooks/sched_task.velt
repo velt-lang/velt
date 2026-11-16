@@ -390,9 +390,18 @@ export const TOUCHED: u32 = 2048;
 /**
  * Anchored to its home worker: it made a sleep or a wait with a deadline, which
  * live in that worker's timer block or I/O block and touch the task from there; it runs only on
- * its home and never moves. (16384 and 32768: sched_node_catch.velt's.)
+ * its home. Only an offer moves it, with its sleeps (sched_sleep_carry.velt), unless it is `FIXED`.
+ * (16384 and 32768: sched_node_catch.velt's.)
  */
 export const ANCHORED: u32 = 4096;
+/** Anchored for good: a wait with a deadline in its worker's I/O block, or an unref'd timer's look. */
+export const FIXED: u32 = 262144;
+/**
+ * Offered with its pending sleeps, which it carries in `T_TIMERS` (it has none due): the worker
+ * that polls it next takes them into its timer block first (sched_sleep_carry.velt `adopt`). Set
+ * with `LOCALS`, so a poll checks one flag for both (sched_run.velt `run`).
+ */
+export const CARRIED: u32 = 524288;
 /**
  * Woken in a batch (one poll woke it and others, sched_queue.velt `pushNext`): until its poll
  * ends, the tasks it wakes queue behind the ones already waiting, not in the run-next slot.
@@ -500,6 +509,14 @@ export function has(t: usize, f: u32): bool {
 @inline
 export function movable(k: usize): bool {
   return (m.ld32(k + T_FLAGS) & (PINNED | ANCHORED)) === 0;
+}
+
+/**
+ * May an offer move task `k`, anchored or not (sched_spread.velt `offer`)? Not pinned or anchored
+ * for good, and no sleep of it due (its due list, `T_TIMERS`, is where it carries the others).
+ */
+export function carryable(k: usize): bool {
+  return (m.ld32(k + T_FLAGS) & (PINNED | FIXED)) === 0 && m.ld(k + T_TIMERS) === 0;
 }
 
 /** Is task `k` fresh: spawned and never polled? */

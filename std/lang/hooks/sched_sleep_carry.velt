@@ -1,0 +1,64 @@
+// velt/lang/hooks (internal): an anchored task offered to another worker takes its sleeps along
+// (#3097). A sleep lives in the timer block of the worker that polled it, and only that worker
+// touches the block (sched_sleep.velt), so the task was anchored there. An offer may move such a
+// task when it has no sleep due (its due list is empty) and its worker's block has no fired sleep
+// left unseen (`TM_UNSEEN` counts per block, and the poll that sees one may run elsewhere):
+// - `carry`, on the offering worker: its pending sleeps that task polled (`S_OWNER`) leave the
+//   block for a list in the task's `T_TIMERS`, in timer order, and the task is marked `CARRIED`.
+// - `adopt`, on the worker that polls it next (sched_run.velt `runWoken`), wherever the offer
+//   went (a helper's steal, or a retired spare's hand-on to worker 0): they join its block.
+// Each block is still touched by its own worker only, and the task's sleeps keep their order and
+// numbers, so they fire as Node's timers do (in deadline order, created first on a tie).
+// Tasks anchored for good (`FIXED`: an I/O wait with a deadline, an unref'd timer's look) stay.
+
+import * as m from "./sched_mem";
+import * as sl from "./sched_sleep";
+import * as t from "./sched_task";
+
+/** May worker `e`'s offer carry anchored tasks' sleeps now (no fired sleep left unseen)? */
+export function canCarry(e: usize): bool {
+  const b = m.ld(e + t.E_TIMERS);
+  return b === 0 || m.ld(b + sl.TM_UNSEEN) === 0;
+}
+
+/** Worker `e` offers anchored task `k` (`t.carryable`): its pending sleeps go with it. */
+export function carry(e: usize, k: usize): void {
+  const b = m.ld(e + t.E_TIMERS);
+  if (b === 0) {
+    return;
+  }
+  // From the last, so the list comes out first to last.
+  let list: usize = 0;
+  let f = m.ld(b + sl.TM_LAST);
+  while (f !== 0) {
+    const prev = m.ld(f + sl.S_PREV);
+    if (m.ld(f + sl.S_OWNER) === k) {
+      sl.unlinkPending(b, f);
+      m.st(f + sl.S_NEXT, list);
+      list = f;
+    }
+    f = prev;
+  }
+  if (list !== 0) {
+    m.st(k + t.T_TIMERS, list);
+    t.flags(k, t.CARRIED | t.LOCALS, 0);
+  }
+}
+
+/** Worker `e`, about to poll task `k`, takes the sleeps it carries into its timer block. */
+export function adopt(e: usize, k: usize): void {
+  t.flags(k, 0, t.CARRIED);
+  let f = m.ld(k + t.T_TIMERS);
+  m.st(k + t.T_TIMERS, 0);
+  const b = sl.block(e);
+  while (f !== 0) {
+    const next = m.ld(f + sl.S_NEXT);
+    // Numbers from the block it came from: this block's next sleeps come after them on a tie.
+    const seq = m.ld(f + sl.S_SEQ);
+    if (seq > m.ld(b + sl.TM_SEQ)) {
+      m.st(b + sl.TM_SEQ, seq);
+    }
+    sl.insert(b, f);
+    f = next;
+  }
+}

@@ -1,0 +1,62 @@
+// check: no leaks
+// check: also with VELT_THREADS=4
+// timing: the three sleeps of a round fall due in one tick, which is what this checks
+// A task whose sleeps anchor it to its worker may still move when that worker offers work to an
+// idle one: its sleeps go with it (#3097). Three sleeps due in one tick resume in order, each
+// followed by the microtasks its callback queued, as Node's timers do, wherever the task runs.
+// Busy tasks keep worker 0 saturated, so it offers half of its queue, the sleeper included, while
+// the sleeper yields with its sleeps pending. (Node: run with `sleep` and `yieldNow` defined as
+// a `setTimeout` and a `setImmediate` promise.)
+class Gate {
+  stop: Atomic<i64> = new Atomic<i64>(0);
+}
+
+// Keeps its worker's queue long: a short run, then a yield, until the gate says stop.
+async function busy(gate: shared<Gate>): Promise<void> {
+  while (gate.stop.load() == 0) {
+    let x = 0;
+    for (let i = 0; i < 20000; i++) {
+      x += i % 7;
+    }
+    if (x < 0) {
+      console.log("never");
+    }
+    await yieldNow();
+  }
+}
+
+async function sleeper(round: i64): Promise<void> {
+  const all = Promise.all([
+    sleep(20).then(() => {
+      console.log(`round ${round}: a`);
+      queueMicrotask(() => console.log(`round ${round}: a's microtask`));
+    }),
+    sleep(20).then(() => {
+      console.log(`round ${round}: b`);
+      queueMicrotask(() => console.log(`round ${round}: b's microtask`));
+    }),
+    sleep(20).then(() => {
+      console.log(`round ${round}: c`);
+      queueMicrotask(() => console.log(`round ${round}: c's microtask`));
+    }),
+  ]);
+  // Queued again and again while its sleeps wait: the busy worker may offer it meanwhile.
+  for (let i = 0; i < 200; i++) {
+    await yieldNow();
+  }
+  await all;
+}
+
+async function main() {
+  const gate = shared(new Gate());
+  const busyOnes: Promise<void>[] = [];
+  for (let i = 0; i < 16; i++) {
+    busyOnes.push(spawn(busy(gate)));
+  }
+  for (let round = 0; round < 4; round++) {
+    await spawn(sleeper(round));
+  }
+  gate.stop.store(1);
+  await Promise.all(busyOnes);
+  console.log("done");
+}

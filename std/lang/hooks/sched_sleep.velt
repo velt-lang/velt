@@ -47,13 +47,15 @@ export const TM_SIZE: usize = 296;
 // A sleep: its deadline (nanoseconds), number, waker, links (the pending list, or its task's due
 // list), state, and the task whose due list holds it.
 const S_DEADLINE: usize = 16;
-const S_SEQ: usize = 24;
+export const S_SEQ: usize = 24;
 const S_WAKER: usize = 32;
-const S_PREV: usize = 40;
-const S_NEXT: usize = 48;
+export const S_PREV: usize = 40;
+export const S_NEXT: usize = 48;
 const S_STATE: usize = 56;
 const S_TASK: usize = 64;
-const S_SIZE: usize = 72;
+/** The task that polled it into its worker's timer block (sched_sleep_carry.velt `carry`). */
+export const S_OWNER: usize = 72;
+const S_SIZE: usize = 80;
 
 // A sleep's states: not polled yet; pending; due (on its task's due list); fired (counted in
 // `TM_UNSEEN` until its leaf sees it); seen.
@@ -100,6 +102,7 @@ export function sleep(e: usize, ms: i64): usize {
   m.st(f + S_NEXT, 0);
   m.st(f + S_STATE, NEW);
   m.st(f + S_TASK, 0);
+  m.st(f + S_OWNER, 0);
   return f;
 }
 
@@ -127,7 +130,9 @@ function sleepPoll(f: usize, cx: usize): u32 {
   if (s === NEW) {
     // Pending in this worker's timer block: its task stays on this worker.
     sp.anchor();
-    insert(block(t.exec()), f);
+    const e = t.exec();
+    m.st(f + S_OWNER, m.ld(e + t.E_CURRENT));
+    insert(block(e), f);
   }
   return 0;
 }
@@ -179,7 +184,7 @@ function before(a: usize, d: usize, seq: usize): bool {
 }
 
 /** Puts sleep `f` among the pending ones of block `b`, in order (its place found from the end). */
-function insert(b: usize, f: usize): void {
+export function insert(b: usize, f: usize): void {
   const d = m.ld(f + S_DEADLINE);
   const seq = m.ld(f + S_SEQ);
   let at = m.ld(b + TM_LAST);
@@ -203,7 +208,7 @@ function insert(b: usize, f: usize): void {
   m.st(f + S_STATE, PENDING);
 }
 
-function unlinkPending(b: usize, f: usize): void {
+export function unlinkPending(b: usize, f: usize): void {
   const prev = m.ld(f + S_PREV);
   const next = m.ld(f + S_NEXT);
   if (prev === 0) {
