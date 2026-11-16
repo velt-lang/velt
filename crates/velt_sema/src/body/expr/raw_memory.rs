@@ -37,7 +37,7 @@ impl FnCx<'_, '_> {
             | I::AddressAtomicCasWeak => {
                 let ok = t.is_none_or(|t| self.raw_value_ty(t, true));
                 self.raw_type_error(i, t, ok, "an integer type", span)?;
-                self.ptr_atomic_args(i, args)
+                self.address_atomic_args(i, args)
             }
             I::AtomicAddress => {
                 let a = args.first()?;
@@ -103,7 +103,7 @@ impl FnCx<'_, '_> {
     /// operation) as the `Atomic*` intrinsics' integer literals: `(a, order)`, `(a, v, order)`,
     /// `(a, v, op, order)` for `addressAtomicRmw(a, op, v, order)`, `(a, expected, v, order,
     /// failure)`.
-    fn ptr_atomic_args(
+    fn address_atomic_args(
         &mut self,
         i: Intrinsic,
         mut args: Vec<hir::Expr>,
