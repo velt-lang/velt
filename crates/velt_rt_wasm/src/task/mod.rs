@@ -14,7 +14,6 @@ pub mod abort;
 pub mod all;
 pub mod boxed;
 pub mod executor;
-pub mod group;
 pub mod identity;
 pub mod latch;
 pub mod leaf;

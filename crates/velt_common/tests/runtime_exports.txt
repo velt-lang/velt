@@ -158,11 +158,6 @@ velt_rt velt_rt_fut_start_rejecting
 velt_rt velt_rt_fut_transfer
 velt_rt velt_rt_fut_views
 velt_rt velt_rt_futs_handled
-velt_rt velt_rt_group_enter
-velt_rt velt_rt_group_free
-velt_rt velt_rt_group_leave
-velt_rt velt_rt_group_new
-velt_rt velt_rt_group_wait
 velt_rt velt_rt_host_clone
 velt_rt velt_rt_host_release
 velt_rt velt_rt_i64_to_radix
@@ -558,11 +553,6 @@ velt_rt_wasm velt_rt_fut_start_rejecting
 velt_rt_wasm velt_rt_fut_transfer
 velt_rt_wasm velt_rt_fut_views
 velt_rt_wasm velt_rt_futs_handled
-velt_rt_wasm velt_rt_group_enter
-velt_rt_wasm velt_rt_group_free
-velt_rt_wasm velt_rt_group_leave
-velt_rt_wasm velt_rt_group_new
-velt_rt_wasm velt_rt_group_wait
 velt_rt_wasm velt_rt_host_clone
 velt_rt_wasm velt_rt_host_main
 velt_rt_wasm velt_rt_host_promise
