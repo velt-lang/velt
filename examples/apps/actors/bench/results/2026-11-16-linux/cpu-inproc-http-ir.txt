@@ -1,0 +1,161 @@
+######## main inproc 17:23:29
+velt4 warm c=1 cpu_us/call=1.95 user_us/call=1.95 wall_ms(N2)=450
+velt1 warm c=1 cpu_us/call=1.65 user_us/call=1.65 wall_ms(N2)=360
+node warm c=1 cpu_us/call=0.65 user_us/call=0.70 wall_ms(N2)=250
+velt4 warm c=64 cpu_us/call=1.65 user_us/call=1.65 wall_ms(N2)=360
+velt1 warm c=64 cpu_us/call=1.40 user_us/call=1.40 wall_ms(N2)=300
+node warm c=64 cpu_us/call=0.65 user_us/call=0.70 wall_ms(N2)=260
+velt4 warm c=512 cpu_us/call=2.80 user_us/call=2.80 wall_ms(N2)=440
+velt1 warm c=512 cpu_us/call=1.55 user_us/call=1.55 wall_ms(N2)=350
+node warm c=512 cpu_us/call=0.70 user_us/call=0.55 wall_ms(N2)=240
+velt4 fan c=1 cpu_us/call=2.15 user_us/call=2.15 wall_ms(N2)=470
+velt1 fan c=1 cpu_us/call=1.80 user_us/call=1.75 wall_ms(N2)=400
+node fan c=1 cpu_us/call=0.50 user_us/call=0.45 wall_ms(N2)=280
+velt4 fan c=64 cpu_us/call=2.75 user_us/call=2.60 wall_ms(N2)=630
+velt1 fan c=64 cpu_us/call=2.35 user_us/call=2.30 wall_ms(N2)=570
+node fan c=64 cpu_us/call=0.50 user_us/call=0.35 wall_ms(N2)=280
+velt4 fan c=512 cpu_us/call=4.45 user_us/call=4.75 wall_ms(N2)=1040
+velt1 fan c=512 cpu_us/call=2.80 user_us/call=2.75 wall_ms(N2)=970
+node fan c=512 cpu_us/call=0.60 user_us/call=0.60 wall_ms(N2)=270
+######## oct inproc 17:23:42
+velt4 warm c=1 cpu_us/call=8.15 user_us/call=5.10 wall_ms(N2)=1490
+velt1 warm c=1 cpu_us/call=1.60 user_us/call=1.60 wall_ms(N2)=360
+node warm c=1 cpu_us/call=0.35 user_us/call=0.40 wall_ms(N2)=220
+velt4 warm c=64 cpu_us/call=5.50 user_us/call=5.05 wall_ms(N2)=380
+velt1 warm c=64 cpu_us/call=1.45 user_us/call=1.45 wall_ms(N2)=320
+node warm c=64 cpu_us/call=0.20 user_us/call=0.25 wall_ms(N2)=210
+velt4 warm c=512 cpu_us/call=5.65 user_us/call=4.95 wall_ms(N2)=420
+velt1 warm c=512 cpu_us/call=1.45 user_us/call=1.45 wall_ms(N2)=330
+node warm c=512 cpu_us/call=0.69 user_us/call=0.60 wall_ms(N2)=270
+velt4 fan c=1 cpu_us/call=8.85 user_us/call=5.20 wall_ms(N2)=1680
+velt1 fan c=1 cpu_us/call=1.85 user_us/call=1.85 wall_ms(N2)=430
+node fan c=1 cpu_us/call=0.65 user_us/call=0.50 wall_ms(N2)=300
+velt4 fan c=64 cpu_us/call=5.00 user_us/call=4.90 wall_ms(N2)=300
+velt1 fan c=64 cpu_us/call=1.90 user_us/call=1.90 wall_ms(N2)=440
+node fan c=64 cpu_us/call=0.70 user_us/call=0.65 wall_ms(N2)=300
+velt4 fan c=512 cpu_us/call=4.60 user_us/call=4.55 wall_ms(N2)=310
+velt1 fan c=512 cpu_us/call=1.90 user_us/call=1.85 wall_ms(N2)=470
+node fan c=512 cpu_us/call=1.00 user_us/call=0.80 wall_ms(N2)=350
+######## main inproc 17:23:56
+velt4 warm c=1 cpu_us/call=2.20 user_us/call=2.20 wall_ms(N2)=480
+velt1 warm c=1 cpu_us/call=1.70 user_us/call=1.70 wall_ms(N2)=370
+node warm c=1 cpu_us/call=0.45 user_us/call=0.40 wall_ms(N2)=220
+velt4 warm c=64 cpu_us/call=1.60 user_us/call=1.60 wall_ms(N2)=340
+velt1 warm c=64 cpu_us/call=1.60 user_us/call=1.60 wall_ms(N2)=340
+node warm c=64 cpu_us/call=0.35 user_us/call=0.20 wall_ms(N2)=220
+velt4 warm c=512 cpu_us/call=2.85 user_us/call=2.85 wall_ms(N2)=470
+velt1 warm c=512 cpu_us/call=1.65 user_us/call=1.65 wall_ms(N2)=350
+node warm c=512 cpu_us/call=0.70 user_us/call=0.60 wall_ms(N2)=260
+velt4 fan c=1 cpu_us/call=2.20 user_us/call=2.15 wall_ms(N2)=490
+velt1 fan c=1 cpu_us/call=2.00 user_us/call=2.00 wall_ms(N2)=460
+node fan c=1 cpu_us/call=0.50 user_us/call=0.70 wall_ms(N2)=290
+velt4 fan c=64 cpu_us/call=2.80 user_us/call=2.80 wall_ms(N2)=640
+velt1 fan c=64 cpu_us/call=2.15 user_us/call=2.15 wall_ms(N2)=520
+node fan c=64 cpu_us/call=0.70 user_us/call=0.70 wall_ms(N2)=290
+velt4 fan c=512 cpu_us/call=4.30 user_us/call=4.75 wall_ms(N2)=950
+velt1 fan c=512 cpu_us/call=2.55 user_us/call=2.60 wall_ms(N2)=960
+node fan c=512 cpu_us/call=0.70 user_us/call=0.65 wall_ms(N2)=290
+######## oct inproc 17:24:10
+velt4 warm c=1 cpu_us/call=8.70 user_us/call=4.95 wall_ms(N2)=1600
+velt1 warm c=1 cpu_us/call=1.65 user_us/call=1.65 wall_ms(N2)=360
+node warm c=1 cpu_us/call=0.55 user_us/call=0.50 wall_ms(N2)=230
+velt4 warm c=64 cpu_us/call=5.60 user_us/call=4.90 wall_ms(N2)=410
+velt1 warm c=64 cpu_us/call=1.35 user_us/call=1.35 wall_ms(N2)=290
+node warm c=64 cpu_us/call=0.30 user_us/call=0.30 wall_ms(N2)=210
+velt4 warm c=512 cpu_us/call=6.29 user_us/call=5.60 wall_ms(N2)=470
+velt1 warm c=512 cpu_us/call=1.40 user_us/call=1.40 wall_ms(N2)=310
+node warm c=512 cpu_us/call=0.70 user_us/call=0.55 wall_ms(N2)=280
+velt4 fan c=1 cpu_us/call=8.35 user_us/call=4.95 wall_ms(N2)=1610
+velt1 fan c=1 cpu_us/call=2.50 user_us/call=2.50 wall_ms(N2)=540
+node fan c=1 cpu_us/call=0.69 user_us/call=0.70 wall_ms(N2)=310
+velt4 fan c=64 cpu_us/call=4.80 user_us/call=4.80 wall_ms(N2)=290
+velt1 fan c=64 cpu_us/call=2.00 user_us/call=2.00 wall_ms(N2)=440
+node fan c=64 cpu_us/call=0.55 user_us/call=0.50 wall_ms(N2)=270
+velt4 fan c=512 cpu_us/call=4.55 user_us/call=4.40 wall_ms(N2)=290
+velt1 fan c=512 cpu_us/call=2.20 user_us/call=2.15 wall_ms(N2)=540
+node fan c=512 cpu_us/call=0.45 user_us/call=0.55 wall_ms(N2)=290
+######## main http 17:24:24
+velt noop c=16 n=40000 ok=40000 cpu_us/req=21.2 user_us/req=12.0 rps=49342.7532 p50=0.2957 ms p99=0.7527 ms peakMB=8
+velt noop c=64 n=40000 ok=40000 cpu_us/req=25.5 user_us/req=16.5 rps=47245.3080 p50=1.1720 ms p99=4.4420 ms peakMB=12
+velt noop c=256 n=40000 ok=40000 cpu_us/req=30.0 user_us/req=18.8 rps=43722.9574 p50=5.5231 ms p99=12.0523 ms peakMB=22
+velt incr c=64 n=40000 ok=40000 cpu_us/req=21.5 user_us/req=12.8 rps=54382.8928 p50=1.0783 ms p99=3.2532 ms peakMB=22
+velt1 noop c=16 n=40000 ok=40000 cpu_us/req=16.2 user_us/req=9.8 rps=62125.9577 p50=0.2427 ms p99=0.4203 ms peakMB=8
+velt1 noop c=64 n=40000 ok=40000 cpu_us/req=13.5 user_us/req=9.0 rps=74935.9098 p50=0.8105 ms p99=1.4798 ms peakMB=11
+velt1 noop c=256 n=40000 ok=40000 cpu_us/req=17.8 user_us/req=12.2 rps=56629.5945 p50=3.8845 ms p99=8.0131 ms peakMB=20
+velt1 incr c=64 n=40000 ok=40000 cpu_us/req=18.2 user_us/req=12.2 rps=56077.9338 p50=1.1010 ms p99=2.1286 ms peakMB=20
+######## oct http 17:24:35
+velt noop c=16 n=40000 ok=40000 cpu_us/req=25.2 user_us/req=17.0 rps=88682.9454 p50=0.1502 ms p99=0.5814 ms peakMB=19
+velt noop c=64 n=40000 ok=40000 cpu_us/req=19.0 user_us/req=12.0 rps=126713.4614 p50=0.4304 ms p99=1.6406 ms peakMB=21
+velt noop c=256 n=40000 ok=40000 cpu_us/req=18.8 user_us/req=13.5 rps=38656.9296 p50=0.0008 sec p99=0.0039 sec peakMB=23
+velt incr c=64 n=40000 ok=40000 cpu_us/req=20.8 user_us/req=14.5 rps=117335.1692 p50=0.4736 ms p99=1.6721 ms peakMB=26
+velt1 noop c=16 n=40000 ok=40000 cpu_us/req=23.2 user_us/req=15.5 rps=96231.9629 p50=0.1418 ms p99=0.5084 ms peakMB=20
+velt1 noop c=64 n=40000 ok=40000 cpu_us/req=18.8 user_us/req=13.8 rps=107773.9291 p50=0.4877 ms p99=2.4088 ms peakMB=20
+velt1 noop c=256 n=40000 ok=40000 cpu_us/req=21.5 user_us/req=16.5 rps=38501.8531 p50=0.0012 sec p99=0.0052 sec peakMB=25
+velt1 incr c=64 n=40000 ok=40000 cpu_us/req=25.2 user_us/req=18.8 rps=97081.3761 p50=0.5658 ms p99=2.0192 ms peakMB=27
+node noop c=16 n=40000 ok=40000 cpu_us/req=184.0 user_us/req=161.0 rps=6385.0788 p50=2.0409 ms p99=7.1517 ms peakMB=231
+node noop c=64 n=40000 ok=40000 cpu_us/req=163.5 user_us/req=146.5 rps=7234.4377 p50=8.0163 ms p99=18.8344 ms peakMB=241
+node noop c=256 n=40000 ok=40000 cpu_us/req=160.2 user_us/req=143.5 rps=7341.7463 p50=0.0263 sec p99=0.0658 sec peakMB=259
+node incr c=64 n=40000 ok=40000 cpu_us/req=179.0 user_us/req=159.2 rps=6459.0120 p50=8.8211 ms p99=21.0737 ms peakMB=294
+bare noop c=16 n=40000 ok=40000 cpu_us/req=29.5 user_us/req=20.5 rps=35180.4042 p50=0.4081 ms p99=0.9686 ms peakMB=68
+bare noop c=64 n=40000 ok=40000 cpu_us/req=31.2 user_us/req=21.8 rps=31620.0468 p50=1.8090 ms p99=4.3589 ms peakMB=69
+bare noop c=256 n=40000 ok=40000 cpu_us/req=36.2 user_us/req=23.2 rps=27753.5120 p50=0.0067 sec p99=0.0193 sec peakMB=79
+######## main http 17:25:21
+velt noop c=16 n=40000 ok=40000 cpu_us/req=22.2 user_us/req=11.5 rps=44894.9373 p50=0.3333 ms p99=0.6856 ms peakMB=8
+velt noop c=64 n=40000 ok=40000 cpu_us/req=21.0 user_us/req=13.2 rps=47850.9378 p50=1.2066 ms p99=2.9741 ms peakMB=11
+velt noop c=256 n=40000 ok=40000 cpu_us/req=16.8 user_us/req=11.0 rps=59691.4172 p50=4.0377 ms p99=7.0512 ms peakMB=20
+velt incr c=64 n=40000 ok=40000 cpu_us/req=17.0 user_us/req=10.5 rps=58470.1932 p50=1.0183 ms p99=2.3656 ms peakMB=20
+velt1 noop c=16 n=40000 ok=40000 cpu_us/req=16.5 user_us/req=9.8 rps=59800.1548 p50=0.2490 ms p99=0.4913 ms peakMB=8
+velt1 noop c=64 n=40000 ok=40000 cpu_us/req=13.2 user_us/req=8.2 rps=75393.5503 p50=0.8097 ms p99=1.4621 ms peakMB=11
+velt1 noop c=256 n=40000 ok=40000 cpu_us/req=15.2 user_us/req=10.0 rps=66325.4271 p50=3.5883 ms p99=10.6624 ms peakMB=20
+velt1 incr c=64 n=40000 ok=40000 cpu_us/req=15.0 user_us/req=9.5 rps=67155.4933 p50=0.9158 ms p99=1.5653 ms peakMB=20
+######## oct http 17:25:31
+velt noop c=16 n=40000 ok=40000 cpu_us/req=28.2 user_us/req=19.2 rps=78121.4896 p50=0.1681 ms p99=0.7234 ms peakMB=19
+velt noop c=64 n=40000 ok=40000 cpu_us/req=19.2 user_us/req=14.0 rps=122326.6478 p50=0.4470 ms p99=1.5881 ms peakMB=19
+velt noop c=256 n=40000 ok=40000 cpu_us/req=18.0 user_us/req=13.2 rps=38663.2772 p50=0.0011 sec p99=0.0051 sec peakMB=25
+velt incr c=64 n=40000 ok=40000 cpu_us/req=20.8 user_us/req=15.0 rps=118725.8860 p50=0.4478 ms p99=1.8189 ms peakMB=26
+velt1 noop c=16 n=40000 ok=40000 cpu_us/req=23.8 user_us/req=15.0 rps=91804.2693 p50=0.1432 ms p99=0.5466 ms peakMB=20
+velt1 noop c=64 n=40000 ok=40000 cpu_us/req=21.5 user_us/req=14.2 rps=108672.5076 p50=0.4852 ms p99=2.0010 ms peakMB=20
+velt1 noop c=256 n=40000 ok=40000 cpu_us/req=18.0 user_us/req=12.2 rps=38779.4558 p50=0.0008 sec p99=0.0035 sec peakMB=27
+velt1 incr c=64 n=40000 ok=40000 cpu_us/req=22.8 user_us/req=16.2 rps=108403.1845 p50=0.4973 ms p99=1.9124 ms peakMB=27
+node noop c=16 n=40000 ok=40000 cpu_us/req=171.0 user_us/req=150.5 rps=6939.5344 p50=1.7989 ms p99=6.9233 ms peakMB=236
+node noop c=64 n=40000 ok=40000 cpu_us/req=162.2 user_us/req=146.8 rps=7139.7900 p50=7.7463 ms p99=22.8466 ms peakMB=242
+node noop c=256 n=40000 ok=40000 cpu_us/req=155.5 user_us/req=138.5 rps=7560.1440 p50=0.0262 sec p99=0.0633 sec peakMB=243
+node incr c=64 n=40000 ok=40000 cpu_us/req=171.8 user_us/req=154.2 rps=6917.2665 p50=8.1163 ms p99=21.9912 ms peakMB=296
+bare noop c=16 n=40000 ok=40000 cpu_us/req=30.2 user_us/req=19.0 rps=34150.9509 p50=0.4121 ms p99=1.0560 ms peakMB=68
+bare noop c=64 n=40000 ok=40000 cpu_us/req=29.8 user_us/req=19.8 rps=33435.5520 p50=1.8367 ms p99=3.2813 ms peakMB=70
+bare noop c=256 n=40000 ok=40000 cpu_us/req=35.0 user_us/req=24.2 rps=28843.9853 p50=8.0222 ms p99=15.1877 ms peakMB=80
+######## main ir 17:26:15
+velt1 fan 1 10000 148487495
+velt1 fan 1 60000 758066965
+velt1 fan 64 10000 362093602
+velt1 fan 64 60000 1031787778
+velt1 warm 1 10000 122010953
+velt1 warm 1 60000 725526842
+velt1 warm 64 10000 113883113
+velt1 warm 64 60000 675501278
+velt4 fan 1 10000 152572623
+velt4 fan 1 60000 780107332
+velt4 fan 64 10000 358700117
+velt4 fan 64 60000 1039143175
+velt4 warm 1 10000 125713863
+velt4 warm 1 60000 747299045
+velt4 warm 64 10000 124941623
+velt4 warm 64 60000 694358356
+######## oct ir 17:27:33
+velt1 fan 1 10000 130413673
+velt1 fan 1 60000 674003789
+velt1 fan 64 10000 151197659
+velt1 fan 64 60000 692325695
+velt1 warm 1 10000 109609926
+velt1 warm 1 60000 650801551
+velt1 warm 64 10000 93364211
+velt1 warm 64 60000 551232814
+velt4 fan 1 10000 130529364
+velt4 fan 1 60000 673293022
+velt4 fan 64 10000 159633949
+velt4 fan 64 60000 694858175
+velt4 warm 1 10000 112318119
+velt4 warm 1 60000 663785108
+velt4 warm 64 10000 93309161
+velt4 warm 64 60000 549433702
+######## done 17:28:47

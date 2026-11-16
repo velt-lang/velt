@@ -1,0 +1,39 @@
+# pinA: the runtime.velt hunk only. pinB: both hunks.
+--- a/src/runtime.velt
++++ b/src/runtime.velt
+@@ -21,6 +21,7 @@
+ import { channel, Channel } from "velt/sync";
+ import { Ticker } from "velt/time";
+ import { fnv1a64 } from "velt/hash";
++import { workerCount } from "velt/task";
+ 
+ // ---------------------------------------------------------------------------------------------
+ // Errors and replies
+@@ -795,7 +796,7 @@
+   const router: Router = { inboxes: inboxes };
+   const done = channel<i64>();
+   for (let i = 0; i < n; i++) {
+-    spawn(runShard<C>(i, opts, inboxes[i], controls[i], router, config, done));
++    spawn(runShard<C>(i, opts, inboxes[i], controls[i], router, config, done), { worker: i % workerCount() });
+   }
+   return { router: router, controls: controls, done: done };
+ }
+--- a/src/bench.velt
++++ b/src/bench.velt
+@@ -4,6 +4,7 @@
+ import { Value } from "velt/encoding/json";
+ import { channel, Channel } from "velt/sync";
+ import { Host, Router } from "./runtime";
++import { workerCount } from "velt/task";
+ 
+ struct LoopResult {
+   ops: i64;
+@@ -225,7 +226,7 @@
+   const tasks: Promise<i64>[] = [];
+   const per = Math.trunc(n / c);
+   for (let w = 0; w < c; w++) {
+-    tasks.push(spawn(fixedCaller(host.router, keys, args, w as usize, per)));
++    tasks.push(spawn(fixedCaller(host.router, keys, args, w as usize, per), { worker: w % workerCount() }));
+   }
+   let done: i64 = 0;
+   for (const d of await Promise.all(tasks)) {

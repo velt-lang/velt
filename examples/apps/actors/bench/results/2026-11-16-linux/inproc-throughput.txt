@@ -1,0 +1,279 @@
+######## main inproc.sh 17:33:17
+== velt, all cores
+velt actors: 4 shards, 2000 ms per level
+▸ dispatch/warm-actor (one key)
+    c=1/ops_per_sec  485.8k
+    c=1/p50  1.8µs   c=1/p99  2.9µs
+    c=64/ops_per_sec  580.2k
+    c=64/p50  131.0µs   c=64/p99  262.2µs
+    c=512/ops_per_sec  399.7k
+    c=512/p50  1.14ms   c=512/p99  1.99ms
+▸ dispatch/fan-out-actors (1000 keys)
+    c=1/ops_per_sec  442.2k
+    c=1/p50  1.9µs   c=1/p99  3.5µs
+    c=64/ops_per_sec  339.8k
+    c=64/p50  171.6µs   c=64/p99  345.7µs
+    c=512/ops_per_sec  289.2k
+    c=512/p50  1.58ms   c=512/p99  3.60ms
+▸ activation/cold-cycle (c=1: activate a new key, then deactivate it)
+    cycles_per_sec  203.7k   p50  4.2µs
+▸ mem/per-actor-footprint n=20000 (Tiny)
+    activations_per_sec(c=64)  263.9k   live 19968   rss_delta/actor  1231 B
+▸ mem/per-actor-footprint n=100000 (Tiny)
+    activations_per_sec(c=64)  273.7k   live 99968   rss_delta/actor  1276 B
+turns 8538500, activations 528254, deactivations 528254
+== velt, one core
+velt actors: 1 shards, 2000 ms per level
+▸ dispatch/warm-actor (one key)
+    c=1/ops_per_sec  527.9k
+    c=1/p50  1.7µs   c=1/p99  4.3µs
+    c=64/ops_per_sec  609.3k
+    c=64/p50  110.4µs   c=64/p99  226.1µs
+    c=512/ops_per_sec  432.3k
+    c=512/p50  1.13ms   c=512/p99  2.69ms
+▸ dispatch/fan-out-actors (1000 keys)
+    c=1/ops_per_sec  439.2k
+    c=1/p50  2.1µs   c=1/p99  4.4µs
+    c=64/ops_per_sec  330.5k
+    c=64/p50  167.7µs   c=64/p99  331.6µs
+    c=512/ops_per_sec  202.3k
+    c=512/p50  2.05ms   c=512/p99  4.66ms
+▸ activation/cold-cycle (c=1: activate a new key, then deactivate it)
+    cycles_per_sec  189.3k   p50  4.5µs
+▸ mem/per-actor-footprint n=20000 (Tiny)
+    activations_per_sec(c=64)  254.9k   live 19968   rss_delta/actor  1389 B
+▸ mem/per-actor-footprint n=100000 (Tiny)
+    activations_per_sec(c=64)  268.2k   live 99968   rss_delta/actor  1243 B
+turns 8311112, activations 499442, deactivations 499442
+== node (@sigx/actors benchmarks)
+5 scenario(s), 3 interleaved round(s)
+  warmup dispatch/warm-actor
+  warmup dispatch/warm-actor-deadline
+  warmup dispatch/fan-out-actors
+  warmup activation/cold-cycle
+  warmup mem/per-actor-footprint
+  round 1/3 complete
+  round 2/3 complete
+  round 3/3 complete
+  gc pass complete
+
+v22.23.4 linux/x64 · Intel(R) Xeon(R) Processor @ 2.10GHz
+conditions: production · commit 6a94345 · 3 runs × 400ms
+⚠ THE MACHINE WAS BUSY: the actor-free probe varied 14% across rounds, so something else was competing for the CPU. Repetitions are interleaved and reported as medians, which absorbs some of this — but treat small differences as meaningless. Close other applications and re-run before trusting anything under ~20%.
+
+▸ dispatch/warm-actor — host.dispatch() to one warm activation, no deadline (callTimeoutMs: 0)
+    c=1/ops_per_sec              1.59M  ±11%
+    c=1/p50_ms                   0.6µs
+    c=1/p99_ms                   1.6µs  ±17%
+    c=1/p999_ms                 14.2µs
+    c=1/max_ms                 595.1µs  ±55%
+    c=64/ops_per_sec             1.46M  ±12%
+    c=64/p50_ms                 55.5µs  ±22%
+    c=64/p99_ms                135.4µs  ±30%
+    c=64/p999_ms               638.7µs  ±29%
+    c=64/max_ms                1.080ms  ±21%
+    c=512/ops_per_sec            1.32M  ±27%
+    c=512/p50_ms               412.5µs  ±11%
+    c=512/p99_ms               1.157ms
+    c=512/p999_ms              4.072ms  ±24%
+    c=512/max_ms               4.204ms  ±35%
+    gc/pause_ms               90.050ms
+    gc/collections        258.00 count
+    gc/major_collections    0.00 count
+
+▸ dispatch/warm-actor-deadline — same call with the PRODUCTION callTimeoutMs (30000ms) — the call-deadline tax
+    c=1/ops_per_sec             718.5k  ±14%
+    c=1/p50_ms                   1.3µs  ±53%
+    c=1/p99_ms                   2.4µs  ±72%
+    c=1/p999_ms                 22.3µs  ±46%
+    c=1/max_ms                 1.001ms  (noise ≫ signal)
+    c=64/ops_per_sec            753.5k  ±14%
+    c=64/p50_ms                 81.5µs
+    c=64/p99_ms                207.3µs  ±19%
+    c=64/p999_ms               563.3µs  ±35%
+    c=64/max_ms                1.351ms  (noise ≫ signal)
+    c=512/ops_per_sec           671.9k
+    c=512/p50_ms               667.0µs  ±10%
+    c=512/p99_ms               2.082ms  ±36%
+    c=512/p999_ms              3.641ms  ±11%
+    c=512/max_ms               3.761ms  ±12%
+    gc/pause_ms              110.970ms
+    gc/collections        214.00 count
+    gc/major_collections    2.00 count
+
+▸ dispatch/fan-out-actors — host.dispatch() round-robin across 1 000 warm activations
+    c=1/ops_per_sec              1.22M
+    c=1/p50_ms                   0.8µs  ±41%
+    c=1/p99_ms                   2.0µs  ±29%
+    c=1/p999_ms                 21.4µs  ±25%
+    c=1/max_ms                 587.0µs  (noise ≫ signal)
+    c=64/ops_per_sec             1.54M  ±17%
+    c=64/p50_ms                 50.0µs
+    c=64/p99_ms                129.5µs  ±16%
+    c=64/p999_ms               501.5µs
+    c=64/max_ms                1.055ms  (noise ≫ signal)
+    c=512/ops_per_sec            1.17M  ±25%
+    c=512/p50_ms               482.7µs  ±43%
+    c=512/p99_ms               1.428ms  ±24%
+    c=512/p999_ms              2.883ms  ±25%
+    c=512/max_ms               2.924ms  ±26%
+    gc/pause_ms              122.395ms
+    gc/collections        201.00 count
+    gc/major_collections    2.00 count
+
+▸ activation/cold-cycle — activate a fresh key + deactivate it — Activation.create, storage load, teardown
+    cycles_per_sec               41.0k  ±20%
+    p50_ms                      17.6µs  ±22%
+    p99_ms                      56.8µs
+    gc/pause_ms               95.191ms
+    gc/collections         27.00 count
+    gc/major_collections    4.00 count
+
+▸ mem/per-actor-footprint — heapUsed delta per live activation, tiny vs ~200-row state
+    tiny/bytes_per_actor        5.5 KiB
+    large/bytes_per_actor      50.9 KiB
+    gc/pause_ms              1978.041ms
+    gc/collections         142.00 count
+    gc/major_collections    18.00 count
+
+results → /tmp/claude-0/-home-user-velt/8700d54d-e520-556f-9eeb-18b56ed85b28/scratchpad/res/inproc-main/inproc-node.json
+######## oct inproc.sh 17:35:05
+== velt, all cores
+velt actors: 4 shards, 2000 ms per level
+▸ dispatch/warm-actor (one key)
+    c=1/ops_per_sec  138.9k
+    c=1/p50  4.2µs   c=1/p99  21.2µs
+    c=64/ops_per_sec  475.0k
+    c=64/p50  122.6µs   c=64/p99  329.7µs
+    c=512/ops_per_sec  550.1k
+    c=512/p50  935.9µs   c=512/p99  4.57ms
+▸ dispatch/fan-out-actors (1000 keys)
+    c=1/ops_per_sec  128.0k
+    c=1/p50  5.1µs   c=1/p99  23.1µs
+    c=64/ops_per_sec  797.0k
+    c=64/p50  62.6µs   c=64/p99  317.7µs
+    c=512/ops_per_sec  775.3k
+    c=512/p50  349.6µs   c=512/p99  3.43ms
+▸ activation/cold-cycle (c=1: activate a new key, then deactivate it)
+    cycles_per_sec  59.2k   p50  16.3µs
+▸ mem/per-actor-footprint n=20000 (Tiny)
+    activations_per_sec(c=64)  510.4k   live 19968   rss_delta/actor  1095 B
+▸ mem/per-actor-footprint n=100000 (Tiny)
+    activations_per_sec(c=64)  485.6k   live 99968   rss_delta/actor  1224 B
+turns 8837685, activations 239283, deactivations 239283
+== velt, one core
+velt actors: 1 shards, 2000 ms per level
+▸ dispatch/warm-actor (one key)
+    c=1/ops_per_sec  544.1k
+    c=1/p50  1.7µs   c=1/p99  3.8µs
+    c=64/ops_per_sec  682.6k
+    c=64/p50  98.7µs   c=64/p99  341.2µs
+    c=512/ops_per_sec  518.1k
+    c=512/p50  238.1µs   c=512/p99  44.52ms
+▸ dispatch/fan-out-actors (1000 keys)
+    c=1/ops_per_sec  543.2k
+    c=1/p50  1.8µs   c=1/p99  2.8µs
+    c=64/ops_per_sec  494.5k
+    c=64/p50  222.4µs   c=64/p99  326.9µs
+    c=512/ops_per_sec  378.7k
+    c=512/p50  515.3µs   c=512/p99  51.80ms
+▸ activation/cold-cycle (c=1: activate a new key, then deactivate it)
+    cycles_per_sec  217.8k   p50  4.0µs
+▸ mem/per-actor-footprint n=20000 (Tiny)
+    activations_per_sec(c=64)  314.0k   live 19968   rss_delta/actor  1804 B
+▸ mem/per-actor-footprint n=100000 (Tiny)
+    activations_per_sec(c=64)  266.3k   live 99968   rss_delta/actor  1153 B
+turns 10268972, activations 556495, deactivations 556495
+== node (@sigx/actors benchmarks)
+5 scenario(s), 3 interleaved round(s)
+  warmup dispatch/warm-actor
+  warmup dispatch/warm-actor-deadline
+  warmup dispatch/fan-out-actors
+  warmup activation/cold-cycle
+  warmup mem/per-actor-footprint
+  round 1/3 complete
+  round 2/3 complete
+  round 3/3 complete
+  gc pass complete
+
+v22.23.4 linux/x64 · Intel(R) Xeon(R) Processor @ 2.10GHz
+conditions: production · commit 6a94345 · 3 runs × 400ms
+⚠ THE MACHINE WAS BUSY: the actor-free probe varied 34% across rounds, so something else was competing for the CPU. Repetitions are interleaved and reported as medians, which absorbs some of this — but treat small differences as meaningless. Close other applications and re-run before trusting anything under ~20%.
+
+▸ dispatch/warm-actor — host.dispatch() to one warm activation, no deadline (callTimeoutMs: 0)
+    c=1/ops_per_sec              1.66M  ±11%
+    c=1/p50_ms                   0.6µs  ±14%
+    c=1/p99_ms                   1.3µs  ±43%
+    c=1/p999_ms                  8.1µs  (noise ≫ signal)
+    c=1/max_ms                 471.0µs  (noise ≫ signal)
+    c=64/ops_per_sec             1.51M
+    c=64/p50_ms                 48.5µs
+    c=64/p99_ms                 96.1µs  ±18%
+    c=64/p999_ms               462.4µs  (noise ≫ signal)
+    c=64/max_ms                1.092ms  (noise ≫ signal)
+    c=512/ops_per_sec            1.46M  ±11%
+    c=512/p50_ms               396.3µs  ±54%
+    c=512/p99_ms               1.036ms  ±57%
+    c=512/p999_ms              3.096ms  (noise ≫ signal)
+    c=512/max_ms               3.300ms  (noise ≫ signal)
+    gc/pause_ms               77.122ms
+    gc/collections        267.00 count
+    gc/major_collections    0.00 count
+
+▸ dispatch/warm-actor-deadline — same call with the PRODUCTION callTimeoutMs (30000ms) — the call-deadline tax
+    c=1/ops_per_sec             844.6k
+    c=1/p50_ms                   1.1µs
+    c=1/p99_ms                   2.0µs  ±30%
+    c=1/p999_ms                 19.8µs  ±76%
+    c=1/max_ms                 664.6µs  (noise ≫ signal)
+    c=64/ops_per_sec            797.9k  ±29%
+    c=64/p50_ms                 82.1µs
+    c=64/p99_ms                204.0µs  ±52%
+    c=64/p999_ms               619.8µs  ±31%
+    c=64/max_ms                829.3µs  (noise ≫ signal)
+    c=512/ops_per_sec           798.3k
+    c=512/p50_ms               614.4µs  ±22%
+    c=512/p99_ms               2.000ms  ±55%
+    c=512/p999_ms              4.740ms  ±30%
+    c=512/max_ms               4.878ms  ±28%
+    gc/pause_ms              112.720ms
+    gc/collections        274.00 count
+    gc/major_collections    2.00 count
+
+▸ dispatch/fan-out-actors — host.dispatch() round-robin across 1 000 warm activations
+    c=1/ops_per_sec              1.41M
+    c=1/p50_ms                   0.7µs
+    c=1/p99_ms                   1.6µs  ±14%
+    c=1/p999_ms                 19.1µs  ±12%
+    c=1/max_ms                 446.3µs  (noise ≫ signal)
+    c=64/ops_per_sec             1.28M  ±36%
+    c=64/p50_ms                 52.5µs
+    c=64/p99_ms                136.1µs  ±86%
+    c=64/p999_ms               499.3µs  ±14%
+    c=64/max_ms                1.039ms  (noise ≫ signal)
+    c=512/ops_per_sec            1.30M  ±26%
+    c=512/p50_ms               420.7µs  ±16%
+    c=512/p99_ms               1.103ms  ±27%
+    c=512/p999_ms              2.402ms  ±56%
+    c=512/max_ms               2.512ms  ±66%
+    gc/pause_ms               98.816ms
+    gc/collections        226.00 count
+    gc/major_collections    2.00 count
+
+▸ activation/cold-cycle — activate a fresh key + deactivate it — Activation.create, storage load, teardown
+    cycles_per_sec               52.6k  ±16%
+    p50_ms                      12.3µs  ±14%
+    p99_ms                      47.3µs  ±17%
+    gc/pause_ms               77.815ms
+    gc/collections         25.00 count
+    gc/major_collections    4.00 count
+
+▸ mem/per-actor-footprint — heapUsed delta per live activation, tiny vs ~200-row state
+    tiny/bytes_per_actor        5.5 KiB
+    large/bytes_per_actor      50.9 KiB
+    gc/pause_ms              1903.108ms
+    gc/collections         139.00 count
+    gc/major_collections    18.00 count
+
+results → /tmp/claude-0/-home-user-velt/8700d54d-e520-556f-9eeb-18b56ed85b28/scratchpad/res/inproc-oct/inproc-node.json
+######## done 17:36:50
