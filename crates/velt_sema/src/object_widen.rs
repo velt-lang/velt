@@ -300,17 +300,11 @@ impl Ctx<'_> {
         slot
     }
 
-    /// Is field `f` of object type `d` one an extension's cast added, out of line
+    /// Is field `i` of object type `d` one an extension's cast added, out of line
     /// (`hir::FieldDef::cell`)?
-    pub(crate) fn cell_field(&self, d: DefId, f: &FieldInfo) -> bool {
+    pub(crate) fn cell_field(&self, d: DefId, i: usize) -> bool {
         let w = &self.object_impls.widen;
-        let Some(&n) = w.widened.get(&d) else {
-            return false;
-        };
-        (self
-            .adt(d)
-            .and_then(|a| a.fields.iter().position(|g| g.name == f.name)))
-        .is_some_and(|i| i >= n && w.values.contains_key(&(d, i)))
+        w.widened.get(&d).is_some_and(|&n| i >= n) && w.values.contains_key(&(d, i))
     }
 
     /// The value type of field `i` of object type `d` when it is an added field held out of line.

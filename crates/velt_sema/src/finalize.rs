@@ -256,7 +256,8 @@ fn adt_def(cx: &mut Ctx, d: DefId, memo: &mut FxHashMap<DefId, Vec<Option<hir::E
         .fields
         .iter()
         .zip(defaults)
-        .map(|(f, default)| FieldDef {
+        .enumerate()
+        .map(|(i, (f, default))| FieldDef {
             name: f.name.clone(),
             ty: f.ty,
             default,
@@ -264,7 +265,7 @@ fn adt_def(cx: &mut Ctx, d: DefId, memo: &mut FxHashMap<DefId, Vec<Option<hir::E
             private: f.private_to.is_some(),
             presence: crate::anon::has_presence(&cx.ty, a.kind, f),
             hidden: hidden.contains(&f.name),
-            cell: cx.cell_field(d, f),
+            cell: cx.cell_field(d, i),
         })
         .collect();
     let declared_struct = a.kind == AdtKind::Struct && a.decl.is_some() && !cx.place_struct(d);
