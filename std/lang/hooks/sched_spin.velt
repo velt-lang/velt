@@ -1,0 +1,59 @@
+// velt/lang/hooks (internal): a worker of the executor in Velt with nothing to run spins a little
+// before it sleeps in its reactor (sched_park.velt `park`, #3097). A task woken from another
+// worker reaches it through its inbox (sched_wake.velt `toInbox`); while the worker spins, its park
+// word stays down, so the waker only pushes, with no system call, and the worker takes the task
+// without a kernel wake-up and a context switch: the cost of a call to a task on another worker
+// at low load, where the reply comes back within microseconds.
+// - The budget (`E_SPIN`, nanoseconds) adapts: it doubles, up to `MAX`, when a spin found work,
+//   and halves when one did not, down to off; a park that ended soon after it began (an unpark
+//   within `2 * MAX`) turns it back on at `MIN`. An idle worker spins a few tens of microseconds
+//   once, then sleeps as before.
+// - Only with several workers (`E_MODE` not 0 or lazy): one worker has nobody to wake it.
+
+import * as m from "./sched_mem";
+import * as sl from "./sched_sleep";
+import * as t from "./sched_task";
+
+const START: usize = 20000;
+const MAX: usize = 50000;
+const MIN: usize = 2000;
+/** Spinning is off until a short park turns it back on (0 is "not set yet": `START`). */
+const OFF: usize = 1;
+
+/** Worker `e`, out of work, spins up to its budget for a task pushed on its inbox: whether one came. */
+export function spin(e: usize): bool {
+  let budget = m.ld(e + t.E_SPIN);
+  if (budget === OFF) {
+    return false;
+  }
+  if (budget === 0) {
+    budget = START;
+  }
+  const start = sl.clock() as usize;
+  let i: u32 = 0;
+  while (true) {
+    if (m.load(e + t.E_INBOX) !== 0) {
+      m.st(e + t.E_SPIN, budget * 2 > MAX ? MAX : budget * 2);
+      return true;
+    }
+    i++;
+    // The clock every 32 looks: a look is a load, a clock read tens of nanoseconds.
+    if ((i & 31) === 0 && (sl.clock() as usize) - start >= budget) {
+      break;
+    }
+  }
+  m.st(e + t.E_SPIN, budget / 2 < MIN ? OFF : budget / 2);
+  return false;
+}
+
+/** Is worker `e`'s spinning off (a park then times itself: `woke`)? */
+export function off(e: usize): bool {
+  return m.ld(e + t.E_SPIN) === OFF;
+}
+
+/** Worker `e`, its spinning off, woke from a park that began at `at` (`sl.clock`): a short one turns it back on. */
+export function woke(e: usize, at: usize): void {
+  if ((sl.clock() as usize) - at < 2 * MAX) {
+    m.st(e + t.E_SPIN, MIN);
+  }
+}
