@@ -151,6 +151,7 @@ mod proxy_write;
 mod quiet;
 mod rc;
 mod receiver;
+mod record_view;
 mod reg_args;
 mod replaceable;
 mod rt;

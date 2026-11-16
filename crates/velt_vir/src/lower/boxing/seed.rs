@@ -241,6 +241,7 @@ impl Cx<'_> {
             proxy_class: _,
             proxy_traced: _,
             array_views,
+            record_views,
             lock_values,
             lock_roots,
             lock_boxes,
@@ -261,6 +262,7 @@ impl Cx<'_> {
                 types(&mut array_views.iter()),
                 types(&mut lock_values.iter()),
                 types(&mut lock_boxes.iter()),
+                types(&mut record_views.iter()),
             ],
             defs: vec![
                 defs(&mut roots.iter()),
@@ -332,6 +334,7 @@ impl Cx<'_> {
         b.array_views.extend(t(4));
         b.lock_values.extend(t(5));
         b.lock_boxes.extend(t(6));
+        b.record_views.extend(t(7));
         let d = |i: usize| {
             (seed.defs.get(i).into_iter().flatten()).filter_map(|n| defs.get(n).copied())
         };

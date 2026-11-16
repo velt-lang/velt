@@ -450,6 +450,10 @@ impl FnLower<'_, '_> {
         map: TyId,
     ) -> (Place, TyId) {
         let vp = self.any_value_place(data, ty);
+        if record {
+            // A record view's mirror up to date first (record_view.rs).
+            self.record_view_sync_glue(&vp, ty);
+        }
         match record {
             true => (self.field_place(&vp, ty, 0), map),
             false => (vp, map),

@@ -199,6 +199,7 @@ mod record_logical;
 mod record_present;
 mod record_props;
 mod record_view;
+mod record_view_cast;
 mod regex_args;
 mod rest_forms;
 mod rest_shapes;

@@ -1633,6 +1633,24 @@ that was only variables solved empty is no error type (`FnDef::throws` is `None`
   array of the mirror (a transfer in place leaves the table first). Sema writes a cast
   `xs as U[]` of an `S[]` with comparable element types (or to a union with one array member
   `U[]`) as `AnyTo(U[], xs as any)`, upcast to the union.
+- Record views (#379, velt_vir `lower/record_view.rs`, std/lang/hooks/any_record.velt;
+  additive): the record types with `any` values (after `unknown` is erased) that `AnyTo` targets
+  in the program's own code are *view types*. `AnyTo` to one of an `any` holding an object or
+  another record is a view of that object, not a copy: a `Record<string, any>` whose entries
+  (field 0) mirror the source's and whose field 4 (`view`, a `u64`, 0 in every other record) is a
+  counted pointer to the hook object `RecordViewSource` (`target`: the source as an `any`).
+  Sema converts a record of other values, or an object of an object literal type, where such a
+  record is expected through `any` the same way. std's `Record` methods call seven intrinsics:
+  `RecordViewIs(r)` (a test of field 4) guards `RecordViewGet`, `RecordViewHas`, `RecordViewSet`
+  and `RecordViewDelete` (a key read, tested, written or deleted on the source through `any`);
+  `RecordViewSync(r)` (the mirror rebuilt from the source, before a read of the whole record) and
+  `RecordViewFlush(r, other)` (the keys of a record spread into the view written to the source)
+  test field 4 themselves. In any other record type `RecordViewIs` and `RecordViewHas` are `false`,
+  `RecordViewGet` a zero value (behind that `false`) and the others no code at all. The glue that
+  reads field 0 directly (formatting, `AnyReflect`, deep copy) syncs a view first, and a deep copy
+  or a view sent to another task is a plain record (field 4 zero).
+  Identity: the runtime's object view table (rt_abi.md "Views"), keyed by the source object's
+  address with bit 0 set; the view's drop removes its entry and releases the source.
 - Object conversions (#650, #651; sema `body/expr/object_copy.rs`): an object type converted to
   another object type whose fields it has (in another order, or only some of them) is an
   `AdtLit` of the expected type with `converted: Conversion::Copy`, whose fields each read the

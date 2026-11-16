@@ -1,0 +1,39 @@
+// velt/lang/intrinsics (internal): record views (#379; velt_vir lower/record_view.rs). A record
+// an `any` is converted to with `any` values is a view of the object the `any` holds: its entries
+// are a mirror of the source's. std's `Record` methods call these around their reads and writes;
+// each is nothing for a plain record, and no code at all in a record type no conversion makes a
+// view (lowering expands them per instantiation).
+
+import { intrinsic } from "./decorators";
+import type { Owned } from "./modes";
+
+/** A view's mirror rebuilt from its source, in the source's order. */
+@intrinsic
+export declare function recordViewSync<K, V>(r: Record<K, V>);
+
+/** Whether `r` is a view (in a record type no conversion makes a view: `false`). */
+@intrinsic
+export declare function recordViewIs<K, V>(r: Record<K, V>): bool;
+
+/** The view `r`'s source's own entry `key`, or `undefined` (through `any`). */
+@intrinsic
+export declare function recordViewGet<K, V>(r: Record<K, V>, key: K): V | undefined;
+
+/** Whether the view `r`'s source has the own key `key`. */
+@intrinsic
+export declare function recordViewHas<K, V>(r: Record<K, V>, key: K): bool;
+
+/** `value` written to the view `r`'s source under `key` (a `TypeError` where it can't hold it). */
+@intrinsic
+export declare function recordViewSet<K, V>(r: Record<K, V>, key: K, value: Owned<V>);
+
+/** `key` deleted from the view `r`'s source. */
+@intrinsic
+export declare function recordViewDelete<K, V>(r: Record<K, V>, key: K);
+
+/**
+ * A view's mirror entries for the keys of `other` written to its source (a spread or
+ * `Object.assign` of `other` into the view).
+ */
+@intrinsic
+export declare function recordViewFlush<K, V>(r: Record<K, V>, other: Record<K, V>);

@@ -283,6 +283,11 @@ impl FnLower<'_, '_> {
         };
         // A view leaves the cache of views (any_view.rs).
         self.proxy_unview(this.clone(), d);
+        // A record view leaves it too, and releases its source (record_view.rs).
+        if self.cx.record_view(ty) {
+            let r = self.record_place(this.clone());
+            self.record_view_drop(&r, ty);
+        }
         let Some(m) = self.cx.dispose_of(d) else {
             return;
         };
