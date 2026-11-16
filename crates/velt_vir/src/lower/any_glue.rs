@@ -474,19 +474,8 @@ impl FnLower<'_, '_> {
                 let optional = f.optional;
                 let anon = self.cx.adt_def(d).kind == hir::AdtKind::Anon;
                 if let Some((cell, value)) = self.cx.cell_field(ty, i as u32) {
-                    // Held out of line: the cell's value while it is there, else `undefined`.
                     let fp = self.field_place(&vp, ty, i as u32);
-                    let present = self.option_is_some(&fp, fty);
-                    let (yes, no) = (self.new_block(), self.new_block());
-                    self.branch(present, yes, no);
-                    self.switch_to(yes);
-                    let cp = self.cell_value_place(&fp, fty, cell);
-                    let v = self.share_value(Operand::Copy(cp), value);
-                    self.any_box_with(v, value, &outp, true);
-                    self.ret_status(ST_OK);
-                    self.switch_to(no);
-                    self.any_nothing_into(Nothing::Undefined, &outp);
-                    self.ret_status(ST_OK);
+                    self.any_get_cell(&fp, (fty, cell, value), &outp);
                 } else if anon && matches!(self.cx.kind(fty), TyKind::Unit) {
                     self.void_field_panic(name);
                     self.ret_status(ST_UNSUPPORTED);

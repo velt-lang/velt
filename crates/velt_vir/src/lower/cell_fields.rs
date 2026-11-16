@@ -30,6 +30,28 @@ impl Cx<'_> {
 }
 
 impl FnLower<'_, '_> {
+    /// Read a field held out of line, whose slot (of type `slot`) is at `fp`, into the `any` at
+    /// `out`: the cell's value while it is there, else `undefined`. Returns the status
+    /// (`any_glue.rs`).
+    pub(super) fn any_get_cell(
+        &mut self,
+        fp: &Place,
+        (slot, cell, value): (TyId, TyId, TyId),
+        out: &Place,
+    ) {
+        let present = self.option_is_some(fp, slot);
+        let (yes, no) = (self.new_block(), self.new_block());
+        self.branch(present, yes, no);
+        self.switch_to(yes);
+        let cp = self.cell_value_place(fp, slot, cell);
+        let v = self.share_value(Operand::Copy(cp), value);
+        self.any_box_with(v, value, out, true);
+        self.ret_status(super::any_member::ST_OK);
+        self.switch_to(no);
+        self.any_nothing_into(velt_sema::hir::Nothing::Undefined, out);
+        self.ret_status(super::any_member::ST_OK);
+    }
+
     /// Write the `any` `v` into field `index` of the object at `vp` (of type `ty`), held out of
     /// line in a cell of type `cell` (the slot's type `slot`, the value's `value`): into the
     /// cell while it is there, else into a new one. Returns the status (`any_set.rs`).
