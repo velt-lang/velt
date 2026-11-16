@@ -3,6 +3,7 @@
 
 use std::collections::HashSet;
 use std::path::Path;
+use std::sync::OnceLock;
 
 use velt_common::{Diagnostics, FileId, SourceMap};
 use velt_sema::hir;
@@ -56,13 +57,26 @@ const CHECKED: &[&str] = &[
     "fs/fd/posix.velt",
     "lang/hooks/os_posix.velt",
     "lang/hooks/sched_cells.velt",
+    "lang/hooks/sched_end.velt",
+    "lang/hooks/sched_exit.velt",
+    "lang/hooks/sched_id.velt",
     "lang/hooks/sched_io_write.velt",
     "lang/hooks/sched_mem.velt",
+    "lang/hooks/sched_module.velt",
+    "lang/hooks/sched_node_loc.velt",
+    "lang/hooks/sched_off.velt",
+    "lang/hooks/sched_peek.velt",
+    "lang/hooks/sched_read.velt",
+    "lang/hooks/sched_wake.velt",
+    "lang/hooks/sched_workers.velt",
     "lang/hooks/thread_posix.velt",
     "lang/hooks/unwind_itanium.velt",
     "net/calls_posix.velt",
     "net/fd_io.velt",
+    "net/fd_until.velt",
+    "net/rt_later_flush.velt",
     "net/udp/udp_sched.velt",
+    "sync/output.velt",
     "sync/slot.velt",
 ];
 
@@ -78,6 +92,23 @@ const CHECKED_POSIX: &[&str] = &[
     "process/child/spawn_open_linux.velt",
     "process/child/spawn_posix.velt",
 ];
+
+/// The symbols the runtime (velt_rt) exports: velt_common's tests/runtime_exports.txt, which its
+/// test `the_runtime_exports_only_what_runtime_exports_lists` keeps equal to the built runtime's
+/// exports. std calls them through `declare c("c")` (the executor in Velt's hooks reaching the
+/// runtime), and no C header declares them, so the check skips exactly these: by membership,
+/// not by a `velt_rt_` prefix, as the runtime moves into std (#2196) and a symbol it no longer
+/// exports is checked like any other (#3022).
+fn runtime_exports() -> &'static HashSet<&'static str> {
+    static EXPORTS: OnceLock<HashSet<&'static str>> = OnceLock::new();
+    EXPORTS.get_or_init(|| {
+        include_str!("../../../../velt_common/tests/runtime_exports.txt")
+            .lines()
+            .filter_map(|l| l.strip_prefix("velt_rt "))
+            .map(str::trim)
+            .collect()
+    })
+}
 
 /// `file` (std at `root`) is one [`CHECKED`] lists, or, on a target other than Windows (`windows`
 /// false), one [`CHECKED_POSIX`] lists.
@@ -115,6 +146,7 @@ pub fn check_std(
         match decl_of(p, def) {
             Some(("c", d))
                 if std_files.contains(&d.span.file)
+                    && !runtime_exports().contains(d.name.as_str())
                     && is_checked(sm, root, d.span.file, target.contains("-windows")) =>
             {
                 decls.push(d)
@@ -138,7 +170,20 @@ pub fn check_std(
 
 #[cfg(test)]
 mod tests {
-    use super::{CHECKED, CHECKED_POSIX};
+    use super::{runtime_exports, CHECKED, CHECKED_POSIX};
+
+    /// The skip is by membership: a symbol the runtime exports is skipped, one with its prefix
+    /// that it doesn't export is checked, as is a C library function.
+    #[test]
+    fn only_the_runtime_s_exports_are_skipped() {
+        let exports = runtime_exports();
+        assert!(exports.contains("velt_rt_timer_new"));
+        assert!(exports.contains("velt_rt_sleep"));
+        assert!(!exports.contains("velt_rt_not_exported"));
+        assert!(!exports.contains("strlen"));
+        // The WebAssembly runtime's lines are not velt_rt's.
+        assert!(!exports.contains("velt_host_alloc"));
+    }
 
     /// A renamed or moved file would drop out of the check without a word: each one listed is
     /// in std and declares C functions, and each list is sorted, each file once, in one list.

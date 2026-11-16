@@ -922,6 +922,21 @@ fn std_s_c_declarations_match_every_target_s_headers() {
         "{}",
         output(&o)
     );
+    // The runtime's exports are skipped by membership, not by their prefix: one it doesn't export
+    // is checked like any other C function, and no header declares it (#3022).
+    std::fs::write(&posix, std::fs::read_to_string(&posix).unwrap().replace(
+        "\ndeclare c(\"c\") function pread$wrong(fd: i32, buf: u8[], nbyte: usize, offset: i32): isize;\n",
+        "\ndeclare c(\"c\") function velt_rt_not_exported$x(a: i64): i64;\n",
+    ))
+    .unwrap();
+    let o = run();
+    assert!(!o.status.success(), "{}", output(&o));
+    assert!(
+        output(&o).contains("`velt_rt_not_exported` is not declared"),
+        "{}",
+        output(&o)
+    );
+    assert!(!output(&o).contains("pread"), "{}", output(&o));
 }
 
 fn copy_tree(from: &Path, to: &Path) {
