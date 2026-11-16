@@ -370,3 +370,10 @@ fn origin_note(cx: &Ctx, origin: DefId, here: DefId) -> Option<String> {
     let std = name.starts_with(velt_common::std_modules::CANONICAL_PREFIX);
     (origin != here && !std).then(|| format!("required because `{name}` uses it as a `Record` key"))
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    KeyNeeds {
+        needs, pneeds,
+    }
+}

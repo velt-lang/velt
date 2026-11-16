@@ -10,7 +10,7 @@ use crate::hir::{Program, TyId, TyKind};
 /// Classes with a base, an interface and its implementations, a generic function, enums and a
 /// union, closures that capture, async code, `try`, a pattern, module state and a large number
 /// table: most HIR shapes, besides the prelude's.
-const SRC: &str = r#"
+pub(super) const SRC: &str = r#"
 interface Shape { area(): number; name(): string }
 class Circle implements Shape {
     constructor(public r: number) {}

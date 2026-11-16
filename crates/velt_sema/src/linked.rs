@@ -184,3 +184,8 @@ impl crate::visit_ref::Visit for Names<'_, '_> {
         }
     }
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::tuples! {
+    ModuleEdges(f0)
+}

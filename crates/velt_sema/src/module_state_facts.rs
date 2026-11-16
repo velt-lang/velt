@@ -399,3 +399,20 @@ impl crate::visit::VisitMut for FactsOf<'_, '_> {
         }
     }
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    StateFacts {
+        facts, fn_callbacks, init_callbacks,
+    }
+    Facts {
+        direct, vars, made, values, edges, tys, resumes, props, slots, written,
+    }
+}
+crate::units::codec::enums! {
+    Edge {
+        0 => Def(f0),
+        1 => Virtual(f0, f1),
+        2 => Iface(f0, f1),
+    }
+}

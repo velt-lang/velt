@@ -200,3 +200,10 @@ pub(super) fn of(cx: &Ctx, g: &graph::Graph, p: &Propagation) -> AsyncSummaries 
     }
     out
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    AsyncSummaries {
+        params, rets, hits, insts, parent, news, dispatched, referenced, dyn_owners, crossing,
+    }
+}

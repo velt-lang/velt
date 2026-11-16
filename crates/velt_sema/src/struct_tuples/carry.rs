@@ -511,3 +511,10 @@ pub(super) fn carry(
     }
     s.work += reach.work;
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    Summary {
+        needs, in_body, pneeds, anys, dyn_ifaces,
+    }
+}

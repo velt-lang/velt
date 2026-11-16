@@ -446,3 +446,13 @@ fn def_name(cx: &Ctx, d: DefId) -> String {
     };
     full.rsplit("::").next().unwrap_or(full).to_string()
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    UndefinedFacts {
+        masks, edges, uses, ty_uses, seen_tys, apart,
+    }
+    Edge {
+        from, into, into_param,
+    }
+}

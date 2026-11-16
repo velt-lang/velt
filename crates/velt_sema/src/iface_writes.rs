@@ -620,3 +620,21 @@ impl Ctx<'_> {
         synth_method(self, &host, self_ty, name, params, unit, false, target)
     }
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    IfaceWrites {
+        written, sources, parts, copied_names, fields, unwritable, array_reads,
+    }
+}
+crate::units::codec::enums! {
+    SetterSrc {
+        0 => Field { d, self_ty, index, ty },
+        1 => Call { d, self_ty, index, fn_ty, param, this },
+        2 => Method { def, d, name },
+        3 => GetterOnly { d, self_ty, name, ty },
+        4 => Adapter { parts, field },
+        5 => Missing { span, name },
+        6 => Unwritable { span, name, d, self_ty, ty },
+    }
+}

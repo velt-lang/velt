@@ -555,3 +555,19 @@ fn instantiations(
         }
     }
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    WeakScans {
+        bodies, facts,
+    }
+    Scan {
+        needs, task_fns, lock_fns, async_fns,
+    }
+}
+crate::units::codec::enums! {
+    Need {
+        0 => Cross(f0, f1),
+        1 => Source(f0),
+    }
+}

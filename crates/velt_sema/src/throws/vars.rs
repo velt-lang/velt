@@ -680,3 +680,11 @@ impl Ctx<'_> {
         }
     }
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    VarSets {
+        parent, members, edges, closures, assumed, exact, plain, first, plain_defs, mentions,
+        unsupported,
+    }
+}

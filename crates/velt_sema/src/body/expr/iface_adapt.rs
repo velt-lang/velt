@@ -796,3 +796,10 @@ fn undefined_after(arrow: ast::Expr, undefined: bool, span: velt_common::Span) -
     }
     arrow
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    Adapter {
+        def, impl_index,
+    }
+}

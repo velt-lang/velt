@@ -709,3 +709,33 @@ fn built_types(cx: &mut Ctx) -> Vec<TyId> {
     }
     v.0.into_iter().collect()
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    Copies {
+        copies, writes, seen, in_keys, in_optional, null_literals, record_writes, view_casts,
+        view_pairs, proxies, dyn_sources, makes_proxies, frozen,
+    }
+    Copy {
+        from, to, fields, absent, span, source, fresh, in_order, generic, record,
+    }
+    Write {
+        ty, name, span, dynamic,
+    }
+    Frozen {
+        from, to, span, existing,
+    }
+}
+crate::units::codec::enums! {
+    Seen {
+        0 => Printed,
+        1 => Serialized,
+        2 => Keys,
+        3 => Identity,
+        4 => Spread,
+        5 => In(f0),
+        6 => FromDynamic,
+        7 => Dynamic(f0),
+        8 => Key,
+    }
+}

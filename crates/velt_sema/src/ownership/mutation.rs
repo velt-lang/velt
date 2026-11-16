@@ -607,3 +607,10 @@ mod tests {
         assert_eq!(raise, &group[..]);
     }
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    UnitDispatch {
+        vtables, vtable_of, slots, impls, defs,
+    }
+}

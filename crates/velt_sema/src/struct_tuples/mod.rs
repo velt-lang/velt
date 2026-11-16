@@ -498,3 +498,10 @@ fn report(cx: &mut Ctx, mut bad: Vec<(Span, TyId, Site)>, mut limits: Vec<Span>)
         );
     }
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    Summaries {
+        bodies, writes, targets,
+    }
+}

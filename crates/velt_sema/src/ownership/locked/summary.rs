@@ -446,3 +446,13 @@ impl VisitMut for Walk<'_, '_, '_> {
         }
     }
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    Summary {
+        flows, promises,
+    }
+}
+crate::units::codec::tuples! {
+    LockSummaries(f0, f1)
+}

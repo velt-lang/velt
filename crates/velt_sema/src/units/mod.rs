@@ -80,6 +80,10 @@ pub(crate) fn check_definitions(cx: &mut Ctx) {
 /// EXPERIMENT: `VELT_UNITS=2`, std checked as a check of its own (its rounds and passes), then
 /// the app's rounds from a copy of it.
 pub(crate) fn stage2() -> bool {
+    #[cfg(test)]
+    if codec::hook::installed() {
+        return true;
+    }
     std::env::var_os("VELT_UNITS").is_some_and(|v| v == "2")
 }
 
@@ -276,5 +280,14 @@ impl Ctx<'_> {
             Stage::App => self.unit_sums.modules,
             _ => 0,
         }
+    }
+}
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    Summaries {
+        key_needs, async_summaries, json_needs, tuple_summaries, weak_scans, state_facts,
+        weak_made, undefined_facts, lock_summaries, module_edges, groups, dispatch, generated_fns,
+        literals, fed, modules, subclasses,
     }
 }

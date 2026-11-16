@@ -506,3 +506,30 @@ fn impl_args(cx: &mut Ctx, iface: DefId, m: DefId) -> Option<Vec<TyId>> {
     let args = iface_args_of(cx, own, iface, 0)?;
     Some(args.iter().map(|a| cx.subst(*a, &own_args)).collect())
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    UnitGroups {
+        uf, bounds, roots, upcasts, impls, defs, nodes, root_owners,
+    }
+    GroupBound {
+        decl, owner, iface,
+    }
+    GroupOwner {
+        name, interface, ret,
+    }
+    UnionFind {
+        ids, nodes, parent,
+    }
+}
+crate::units::codec::enums! {
+    Node {
+        0 => Def(f0),
+        1 => Slot(f0, f1),
+    }
+    NodeFact {
+        0 => Generator,
+        1 => Member,
+        2 => Slot(f0),
+    }
+}

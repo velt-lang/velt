@@ -658,3 +658,11 @@ fn dynamic_object_impl(cx: &mut Ctx, t: TyId, iface: DefId, args: &[TyId]) {
         }
     }
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    ObjectImpls {
+        made, sources, seen, targets, generic_targets, param_fillable, assign_setters, kept_fns,
+        throw_checks, fresh_checks,
+    }
+}

@@ -14,14 +14,27 @@
 //!   later unit's definitions and types are added after its own.
 //! - A damaged or cut value decodes to zeros and the whole decode to `None` (never a panic); a
 //!   store must check its entries' integrity (the build cache's checksums do).
+//! - The AST a unit's definition records borrow (`'m`) is stored as fragments
+//!   ([`velt_syntax::encode_fragment`]), each once, and decoded into an [`Arena`] the caller
+//!   keeps ([`ast_refs`]).
 
 #![allow(dead_code)] // Until the unit is saved (#2943 M2).
 
+mod ast_refs;
+mod defs;
+#[cfg(test)]
+mod defs_tests;
 mod hir;
 #[cfg(test)]
 mod hir_tests;
 #[cfg(test)]
+pub(crate) mod hook;
+mod tables;
+#[cfg(test)]
 mod tests;
+mod unit;
+#[cfg(test)]
+mod unit_tests;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use velt_common::{FileId, Span};
@@ -37,6 +50,13 @@ pub(crate) struct Writer {
     /// The unit's file table: each file's index, in the order first met.
     files: FxHashMap<FileId, u32>,
     file_list: Vec<FileId>,
+    /// The AST nodes written so far, by address and type: each is written once, then referred
+    /// to by its number ([`ast_refs`]).
+    nodes: FxHashMap<(usize, std::any::TypeId), u32>,
+    /// Write files as their ids, not through the table (a map key's sort key).
+    raw_files: bool,
+    /// How many of the bytes written are AST fragments ([`ast_refs`]).
+    pub(crate) ast_bytes: usize,
 }
 
 impl Writer {
@@ -45,6 +65,9 @@ impl Writer {
             out: Vec::with_capacity(1 << 16),
             files: FxHashMap::default(),
             file_list: vec![],
+            nodes: FxHashMap::default(),
+            raw_files: false,
+            ast_bytes: 0,
         }
     }
 
@@ -66,6 +89,10 @@ impl Writer {
     }
 
     fn file(&mut self, f: FileId) {
+        if self.raw_files {
+            self.uint(u64::from(f.0));
+            return;
+        }
         let next = self.file_list.len() as u32;
         let i = *self.files.entry(f).or_insert(next);
         if i == next {
@@ -83,6 +110,10 @@ pub(crate) struct Reader<'a> {
     depth: u32,
     /// The value is damaged: everything read from here on is zeros.
     failed: bool,
+    /// Where decoded AST nodes live (`None`: a value that borrows AST fails to decode).
+    arena: Option<&'a Arena>,
+    /// The AST nodes decoded so far, in the order written, with their types.
+    nodes: Vec<(std::any::TypeId, *const ())>,
 }
 
 impl<'a> Reader<'a> {
@@ -93,6 +124,26 @@ impl<'a> Reader<'a> {
             files,
             depth: 0,
             failed: false,
+            arena: None,
+            nodes: vec![],
+        }
+    }
+
+    /// A reader whose values may borrow AST nodes, decoded into `arena`.
+    ///
+    /// # Safety
+    ///
+    /// The AST references in the values it decodes are given any lifetime (`'m`) and point into
+    /// `arena`: every such value (a decoded `Ctx<'m>`, a `DefInfo<'m>`, ...) must be dropped
+    /// before `arena` is ([`Arena`]).
+    pub(crate) unsafe fn with_arena(
+        bytes: &'a [u8],
+        files: &'a [FileId],
+        arena: &'a Arena,
+    ) -> Reader<'a> {
+        Reader {
+            arena: Some(arena),
+            ..Reader::new(bytes, files)
         }
     }
 
@@ -385,6 +436,16 @@ impl Codec for Span {
     }
 }
 
+/// A file (a map key: `throws::FnSites::by_file`), through the unit's file table.
+impl Codec for FileId {
+    fn enc(&self, w: &mut Writer) {
+        w.file(*self);
+    }
+    fn dec(r: &mut Reader) -> Self {
+        r.file()
+    }
+}
+
 /// Ids of a unit's own tables, stored as they are.
 macro_rules! ids {
     ($($t:ident),*) => {$(
@@ -449,6 +510,17 @@ impl<T: Codec> Codec for Box<T> {
     }
 }
 
+/// A cell's contents (the caches of `ownership::local_async::targets::Literals`): no identity
+/// is shared through one.
+impl<T: Codec> Codec for std::cell::RefCell<T> {
+    fn enc(&self, w: &mut Writer) {
+        self.borrow().enc(w);
+    }
+    fn dec(r: &mut Reader) -> Self {
+        std::cell::RefCell::new(T::dec(r))
+    }
+}
+
 impl<T: Codec> Codec for Vec<T> {
     fn enc(&self, w: &mut Writer) {
         w.uint(self.len() as u64);
@@ -493,11 +565,38 @@ impl<A: Codec, B: Codec, C: Codec> Codec for (A, B, C) {
 }
 
 /// Maps and sets are stored sorted by key, so that the same unit always encodes to the same
-/// bytes (a hash map's order changes from run to run).
-impl<K: Codec + Ord + std::hash::Hash + Eq + Clone, V: Codec> Codec for FxHashMap<K, V> {
+/// bytes (a hash map's order changes from run to run): by the bytes each key encodes to, with its
+/// spans' files as their ids (keys need no `Ord`: spans have none).
+fn sorted_by_key<'v, K: Codec, V>(entries: impl Iterator<Item = (&'v K, V)>) -> Vec<(&'v K, V)> {
+    let mut entries: Vec<(&K, V)> = entries.collect();
+    let mut w = Writer {
+        out: vec![],
+        files: FxHashMap::default(),
+        file_list: vec![],
+        nodes: FxHashMap::default(),
+        raw_files: true,
+        ast_bytes: 0,
+    };
+    let mut at = vec![0];
+    for (k, _) in &entries {
+        k.enc(&mut w);
+        at.push(w.out.len());
+    }
+    let key = |i: usize| &w.out[at[i]..at[i + 1]];
+    let mut order: Vec<usize> = (0..entries.len()).collect();
+    order.sort_by(|&i, &j| key(i).cmp(key(j)));
+    let mut rank = vec![0; entries.len()];
+    for (r, &i) in order.iter().enumerate() {
+        rank[i] = r;
+    }
+    let mut ranked: Vec<(usize, (&K, V))> = rank.into_iter().zip(entries.drain(..)).collect();
+    ranked.sort_unstable_by_key(|e| e.0);
+    ranked.into_iter().map(|(_, e)| e).collect()
+}
+
+impl<K: Codec + std::hash::Hash + Eq, V: Codec> Codec for FxHashMap<K, V> {
     fn enc(&self, w: &mut Writer) {
-        let mut v: Vec<(&K, &V)> = self.iter().collect();
-        v.sort_by(|a, b| a.0.cmp(b.0));
+        let v = sorted_by_key(self.iter());
         w.uint(v.len() as u64);
         for (k, val) in v {
             k.enc(w);
@@ -517,12 +616,11 @@ impl<K: Codec + Ord + std::hash::Hash + Eq + Clone, V: Codec> Codec for FxHashMa
     }
 }
 
-impl<K: Codec + Ord + std::hash::Hash + Eq + Clone> Codec for FxHashSet<K> {
+impl<K: Codec + std::hash::Hash + Eq> Codec for FxHashSet<K> {
     fn enc(&self, w: &mut Writer) {
-        let mut v: Vec<&K> = self.iter().collect();
-        v.sort();
+        let v = sorted_by_key(self.iter().map(|k| (k, ())));
         w.uint(v.len() as u64);
-        for k in v {
+        for (k, ()) in v {
             k.enc(w);
         }
     }
@@ -538,11 +636,67 @@ impl<K: Codec + Ord + std::hash::Hash + Eq + Clone> Codec for FxHashSet<K> {
     }
 }
 
-/// `Codec` for structs: `Name { field, … }`, in declaration order.
+impl<K: Codec + Ord, V: Codec> Codec for std::collections::BTreeMap<K, V> {
+    fn enc(&self, w: &mut Writer) {
+        w.uint(self.len() as u64);
+        for (k, v) in self {
+            k.enc(w);
+            v.enc(w);
+        }
+    }
+    fn dec(r: &mut Reader) -> Self {
+        r.enter();
+        let n = r.len();
+        let mut out = std::collections::BTreeMap::new();
+        for _ in 0..n {
+            let k = K::dec(r);
+            out.insert(k, V::dec(r));
+        }
+        r.leave();
+        out
+    }
+}
+
+impl<K: Codec + Ord> Codec for std::collections::BTreeSet<K> {
+    fn enc(&self, w: &mut Writer) {
+        w.uint(self.len() as u64);
+        for k in self {
+            k.enc(w);
+        }
+    }
+    fn dec(r: &mut Reader) -> Self {
+        r.enter();
+        let n = r.len();
+        let mut out = std::collections::BTreeSet::new();
+        for _ in 0..n {
+            out.insert(K::dec(r));
+        }
+        r.leave();
+        out
+    }
+}
+
+impl<A: Codec, B: Codec, C: Codec, D: Codec> Codec for (A, B, C, D) {
+    fn enc(&self, w: &mut Writer) {
+        self.0.enc(w);
+        self.1.enc(w);
+        self.2.enc(w);
+        self.3.enc(w);
+    }
+    fn dec(r: &mut Reader) -> Self {
+        let a = A::dec(r);
+        let b = B::dec(r);
+        let c = C::dec(r);
+        (a, b, c, D::dec(r))
+    }
+}
+
+/// `Codec` for structs: `Name { field, … }`, in declaration order (`Name<'_> { … }` for one
+/// that borrows AST).
 #[allow(unused_macros)]
 macro_rules! structs {
-    ($($ty:ident { $($f:ident),* $(,)? })*) => {$(
-        impl $crate::units::codec::Codec for $ty {
+    ($($ty:ident $(<$lt:lifetime>)? { $($f:ident),* $(,)? })*) => {$(
+        impl $crate::units::codec::Codec for $ty $(<$lt>)? {
             fn enc(&self, w: &mut $crate::units::codec::Writer) {
                 let $ty { $($f),* } = self;
                 $($crate::units::codec::Codec::enc($f, w);)*
@@ -555,15 +709,31 @@ macro_rules! structs {
     )*};
 }
 
+/// `Codec` for tuple structs: `Name(a, b)`, the fields named in order.
+#[allow(unused_macros)]
+macro_rules! tuples {
+    ($($ty:ident $(<$lt:lifetime>)? ( $($f:ident),* $(,)? ))*) => {$(
+        impl $crate::units::codec::Codec for $ty $(<$lt>)? {
+            fn enc(&self, w: &mut $crate::units::codec::Writer) {
+                let $ty ( $($f),* ) = self;
+                $($crate::units::codec::Codec::enc($f, w);)*
+            }
+            fn dec(r: &mut $crate::units::codec::Reader) -> Self {
+                $ty ( $({ let $f = $crate::units::codec::Codec::dec(r); $f }),* )
+            }
+        }
+    )*};
+}
+
 /// `Codec` for enums: `Name { tag => Unit, tag => Tuple(a, b), tag => Fields { x, y } }`. Tag 0
 /// is a variant whose fields decode from zeros without recursing (a damaged value reads on as
 /// zeros).
 #[allow(unused_macros)]
 macro_rules! enums {
-    ($($ty:ident {
+    ($($ty:ident $(<$lt:lifetime>)? {
         $($tag:literal => $v:ident $(( $($t:ident),* ))? $({ $($f:ident),* })?),* $(,)?
     })*) => {$(
-        impl $crate::units::codec::Codec for $ty {
+        impl $crate::units::codec::Codec for $ty $(<$lt>)? {
             fn enc(&self, w: &mut $crate::units::codec::Writer) {
                 match self {
                     $($ty::$v $(( $($t),* ))? $({ $($f),* })? => {
@@ -590,7 +760,11 @@ macro_rules! enums {
 }
 
 #[allow(unused_imports)]
-pub(crate) use {enums, structs};
+pub(crate) use {enums, structs, tuples};
+
+pub(crate) use ast_refs::Arena;
+#[allow(unused_imports)] // Until the unit is saved (#2943 M2).
+pub(crate) use unit::{decode_unit, encode_unit};
 
 impl Reader<'_> {
     /// Mark the value damaged (the macros' unknown tag).

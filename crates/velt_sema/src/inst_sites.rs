@@ -606,3 +606,10 @@ pub(crate) fn guards_of(
     };
     crate::visit_ref::primitive_guards(b, &param_of)
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    ParamCall {
+        recv, iface, slot, margs,
+    }
+}

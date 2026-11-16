@@ -784,3 +784,17 @@ impl<'m> Ctx<'m> {
         }
     }
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    ModuleScope {
+        items, exports, namespaces, namespace_aliases, type_only, via_export_type, is_std,
+        is_library, type_keys,
+    }
+}
+crate::units::codec::enums! {
+    Item {
+        0 => Def(f0),
+        1 => Alias(f0),
+    }
+}

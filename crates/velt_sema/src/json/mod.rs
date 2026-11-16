@@ -382,3 +382,15 @@ impl Ctx<'_> {
         self.adt(d).is_some_and(|a| self.scopes[a.module].is_std)
     }
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::tuples! {
+    JsonNeeds(f0)
+}
+crate::units::codec::enums! {
+    Need {
+        0 => Json(f0),
+        1 => Seen(f0),
+        2 => NoLock,
+    }
+}

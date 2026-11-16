@@ -42,7 +42,10 @@ pub(crate) fn build_checked(
 /// What differs between two programs: the first part (a field of the program, or the
 /// diagnostics) whose contents differ, maps and sets compared without their order, with the text
 /// of each side around the first difference.
-fn differs(a: &(hir::Program, Diagnostics), b: &(hir::Program, Diagnostics)) -> Option<String> {
+pub(crate) fn differs(
+    a: &(hir::Program, Diagnostics),
+    b: &(hir::Program, Diagnostics),
+) -> Option<String> {
     let ((pa, da), (pb, db)) = (a, b);
     let mut pa = parts(pa);
     let mut pb = parts(pb);

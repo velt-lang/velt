@@ -9,7 +9,7 @@ use velt_syntax::ast;
 use crate::hir::{self, AdtKind, DefId, PassMode, TyId};
 
 /// Generic parameters of a definition: `TyKind::Param(i)` is `names[i]`.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 pub(crate) struct Generics {
     pub names: Vec<String>,
     /// Interface bounds per parameter (`T extends A & B`).
@@ -53,7 +53,7 @@ pub(crate) struct Bound {
     pub args: Vec<TyId>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct ParamSig {
     pub name: String,
     pub span: Span,
@@ -66,7 +66,7 @@ pub(crate) struct ParamSig {
 }
 
 /// The `this` parameter of a method.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct ThisSig {
     pub ty: TyId,
     pub mode: PassMode,
@@ -123,7 +123,7 @@ pub(crate) enum RetWant {
 }
 
 /// Where a function's body comes from.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) enum FnSource<'m> {
     Decl(&'m ast::FnDecl),
     Default(&'m ast::FnSig, &'m ast::Block),
@@ -203,7 +203,7 @@ pub(crate) struct DeclaredThrows {
     pub from_body: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct FnInfo<'m> {
     /// Fully qualified name (see `hir::FnDef::name`).
     pub name: String,
@@ -376,7 +376,7 @@ pub(crate) struct MethodRef {
     pub is_static: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct FieldInfo {
     pub name: String,
     /// The type a read gives: `declared`, or `declared | null` for an optional field.
@@ -411,7 +411,7 @@ pub(crate) struct Redefined {
     pub throws: Vec<ThrowSrc>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct AdtInfo<'m> {
     pub name: String,
     pub qual_name: String,
@@ -441,7 +441,7 @@ pub(crate) struct AdtInfo<'m> {
     pub decl: Option<&'m ast::TypeDecl>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct VariantInfo {
     pub name: String,
     pub payload: Vec<TyId>,
@@ -450,7 +450,7 @@ pub(crate) struct VariantInfo {
     pub str_value: Option<String>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct EnumInfo<'m> {
     pub name: String,
     pub qual_name: String,
@@ -464,7 +464,7 @@ pub(crate) struct EnumInfo<'m> {
 
 /// Signature of an interface method (in terms of the interface's generics; the implementor
 /// is `Param(generics.len())`).
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct IfaceMethod {
     pub name: String,
     pub span: Span,
@@ -484,7 +484,7 @@ pub(crate) struct IfaceMethod {
     pub throws: Option<DeclaredThrows>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct IfaceInfo<'m> {
     pub name: String,
     pub qual_name: String,
@@ -500,7 +500,7 @@ pub(crate) struct IfaceInfo<'m> {
     pub decl: Option<&'m ast::InterfaceDecl>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct GlobalInfo<'m> {
     pub name: String,
     pub qual_name: String,
@@ -523,7 +523,7 @@ pub(crate) struct GlobalInfo<'m> {
 }
 
 /// Source of a constant: a module-level `const`, or a `static readonly` field of a type.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct GlobalSrc<'m> {
     pub ann: Option<&'m ast::TypeExpr>,
     pub init: Option<&'m ast::Expr>,
@@ -538,7 +538,7 @@ pub(crate) struct GlobalSrc<'m> {
     pub c_global: Option<(&'m ast::CLibrary, bool)>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) enum DefInfo<'m> {
     Fn(Box<FnInfo<'m>>),
     Adt(Box<AdtInfo<'m>>),
@@ -548,7 +548,7 @@ pub(crate) enum DefInfo<'m> {
 }
 
 /// A type alias `type X<T> = ...` (expanded where it is used).
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct AliasInfo<'m> {
     pub module: usize,
     pub decl: &'m ast::TypeAlias,
@@ -563,7 +563,7 @@ pub(crate) struct AliasInfo<'m> {
 }
 
 /// An `extend<G> Target { methods }` block.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct Extension {
     pub generics: Generics,
     /// Target type pattern (uses `Param(0..generics)`).

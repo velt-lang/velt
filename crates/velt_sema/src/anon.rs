@@ -716,3 +716,14 @@ pub(crate) fn has_presence(ty: &crate::types::Types, kind: AdtKind, f: &FieldInf
 pub(crate) fn absent_is_null(ty: &crate::types::Types, kind: AdtKind, f: &FieldInfo) -> bool {
     f.optional && kind != AdtKind::Class && !has_presence(ty, kind, f)
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    ObjectState {
+        frozen, frozen_defs, null_proto_records, record_accessors, ctor_reads, record_fills,
+        brands, hidden, layouts, class_values, expansive_cut,
+    }
+    ShapeField {
+        name, ty, readonly, optional,
+    }
+}

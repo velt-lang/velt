@@ -167,3 +167,10 @@ pub(crate) fn collect(cx: &mut Ctx, from: usize) -> Vec<(DefId, Facts)> {
     }
     out
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    Facts {
+        copies, calls, guards, closures, dispatch, dyn_calls, loops,
+    }
+}
