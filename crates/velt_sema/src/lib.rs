@@ -461,6 +461,7 @@ fn check_timed(
         };
         #[cfg(test)]
         let std_cx = units::codec::hook::std_unit(std_cx);
+        let std_cx = units::round_trip(std_cx);
         ctx::def_table::touch::begin(std_cx.unit_base as usize, std_cx.ty.table.len());
         *std_snap.borrow_mut() = Some(std_cx);
         stage.set(units::Stage::App);

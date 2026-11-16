@@ -291,3 +291,35 @@ crate::units::codec::structs! {
         literals, fed, modules, subclasses,
     }
 }
+
+/// EXPERIMENT (`VELT_UNITS_ROUNDTRIP=1`, #2943 M2): the app's stage starts from std's unit
+/// encoded and decoded in this process, as a unit loaded from disk would be; prints its size and
+/// what encoding and decoding took (`velt-units:` lines). The decoded unit's arena is leaked.
+pub(crate) fn round_trip(cx: Ctx<'_>) -> Ctx<'_> {
+    if std::env::var_os("VELT_UNITS_ROUNDTRIP").is_none() {
+        return cx;
+    }
+    let t = std::time::Instant::now();
+    let bytes = codec::encode_unit(&cx);
+    let encoded = t.elapsed();
+    let arena: &'static codec::Arena = Box::leak(Box::default());
+    let t = std::time::Instant::now();
+    // SAFETY: the arena is leaked, so it outlives the context.
+    let decoded = unsafe { codec::decode_unit(&bytes, arena, cx.modules.clone()) };
+    let took = t.elapsed();
+    let Some(mut out) = decoded else {
+        eprintln!("velt-units: std's unit did not decode; checking on the unit itself");
+        return cx;
+    };
+    eprintln!(
+        "velt-units: std's unit {} bytes, encoded in {:.1} ms, decoded in {:.1} ms",
+        bytes.len(),
+        encoded.as_secs_f64() * 1e3,
+        took.as_secs_f64() * 1e3
+    );
+    // What the check set when it made std's context, which an app's round keeps (`new_cx`).
+    out.units = cx.units;
+    out.units_stage = cx.units_stage;
+    out.stack_budget = cx.stack_budget;
+    out
+}
