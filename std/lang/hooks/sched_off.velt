@@ -27,6 +27,20 @@ declare c("c") function velt_rt_fut_start$rt(f: usize, rdrop: usize): void;
 declare c("c") function velt_rt_fut_start_rejecting$rt(f: usize, rdrop: usize): void;
 declare c("c") function velt_rt_fut_detach$rt(f: usize, qdrop: usize): void;
 declare c("c") function velt_rt_futs_handled$rt(futs: usize, n: u64, qdrop: usize): void;
+declare c("c") function velt_rt_all_with_drop$rt(
+  futs: usize,
+  n: u64,
+  size: u64,
+  results: usize,
+  rdrop: usize,
+): usize;
+declare c("c") function velt_rt_all_or_reject$rt(
+  futs: usize,
+  n: u64,
+  size: u64,
+  results: usize,
+  rdrop: usize,
+): usize;
 declare c("c") function velt_rt_fut_transfer$rt(f: usize, glue: usize): void;
 declare c("c") function velt_rt_fut_id$rt(f: usize): u64;
 declare c("c") function velt_rt_fut_alias$rt(w: usize, inner: usize, quiet: usize): void;
@@ -102,6 +116,24 @@ export function detach(f: usize, qdrop: usize): void {
   // SAFETY: the caller owns `f`, a heap future, and gives it up.
   unsafe {
     velt_rt_fut_detach$rt(f, qdrop);
+  }
+}
+
+/** The runtime's `Promise.all` join over the `n` futures at `futs` (sched_all.velt `schedAll`). */
+export function all(
+  futs: usize,
+  n: u64,
+  size: u64,
+  results: usize,
+  rdrop: usize,
+  reject: bool,
+): usize {
+  // SAFETY: `futs` holds `n` heap futures, `results` `n` slots of `size` bytes.
+  unsafe {
+    if (reject) {
+      return velt_rt_all_or_reject$rt(futs, n, size, results, rdrop);
+    }
+    return velt_rt_all_with_drop$rt(futs, n, size, results, rdrop);
   }
 }
 

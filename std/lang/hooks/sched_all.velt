@@ -1,0 +1,365 @@
+// velt/lang/hooks (internal): `Promise.all` over an array under the executor in Velt (sched.velt,
+// #2649, #2944): `velt_rt_all`'s, `_with_drop`'s and `_or_reject`'s job (`schedAll`), a join
+// that polls only the children that woke.
+//
+// A join is a heap future (rt_abi_async.md §1, a unit result) and its children's records, in one
+// allocation. Lowering wraps it as it wrapped the runtime's (a boxed promise, which settles
+// through its node), so the join only drives the children:
+// - Each child is polled with a `cx` of its own: the awaiter's await word, and the child's record
+//   as its waker (a table of the executor's, `E_ALL_VT`, like a task's or a started promise's).
+//   A wake pushes the record on the join's ready stack once (`C_QUEUED`) and wakes the join's
+//   awaiter. Children may be woken from any thread (a leaf of the runtime's), so nothing on the
+//   wake path is a task-side operation (no `sched_lock.velt` lock): the stack is atomic, and a
+//   wake reads the awaiter's waker counted in `J_WAKING`; the poll that replaces it, or the drop
+//   that clears it, swaps it out and waits until no wake is reading before dropping the old one.
+// - The first poll polls every child in array order, as Node subscribes in array order: an input
+//   that settled already settles on that pass, so it wins over one that rejects later (#2857).
+//   Later polls take the ready stack in wake order and poll only those, one batch a poll. Unlike
+//   the runtime's join, it spends no cooperative budget: a pass over children that are ready
+//   finishes in one poll, as Node runs their reactions in one turn of its microtask queue.
+// - A finished child's result moves to its slot of the caller's buffer. With `reject` (promises
+//   that can reject: `Result` slots, tag byte 0 when fulfilled), the first child that rejects
+//   settles the join: its result moves to slot 0, the other finished results are dropped, and
+//   the unfinished children are given up in array order (dropped: a started promise runs on, as
+//   with the runtime's `give_up`).
+// - Dropped before it completes, the join drops its unfinished children in array order and the
+//   finished results (`rdrop`). Clones of the children's wakers keep the allocation alive: the
+//   join's reference count holds one for the join and one per clone.
+// Off every worker (code the runtime's executor runs on its own threads, sched_off.velt) it is the
+// runtime's join.
+
+import { export as cExport } from "velt/ffi";
+import {
+  addressLoad,
+  fnAddress,
+  futDrop,
+  futPoll,
+  inline,
+  noInline,
+  stateDrop,
+} from "velt/lang/intrinsics";
+import * as m from "./sched_mem";
+import * as off from "./sched_off";
+import * as t from "./sched_task";
+import * as wk from "./sched_wake";
+
+// The join: its heap future's header (poll, drop; the unit result takes no room), then the
+// children's count, the result size, the results, the result drop (0: none), whether a rejection
+// settles it, the children left, whether the first pass ran, the ready stack, the awaiter's
+// waker, the reference count, the state, the wakes reading the awaiter's waker, the `cx` the
+// children are polled with
+// (the awaiter's await word, the child's record), then the children's records.
+const J_N: usize = 16;
+const J_SIZE: usize = 24;
+const J_RESULTS: usize = 32;
+const J_RDROP: usize = 40;
+const J_REJECT: usize = 48;
+const J_LEFT: usize = 56;
+const J_STARTED: usize = 64;
+const J_READY: usize = 72;
+const J_WAKER: usize = 80;
+const J_REFS: usize = 88;
+const J_STATE: usize = 96;
+const J_WAKING: usize = 104;
+const J_CX: usize = 112;
+const J_KIDS: usize = 128;
+
+// A child's record (its waker): the table, the join, the child's future (0 once it finished or was
+// given up), the ready stack's link, whether it is on that stack, whether its result is in its
+// slot (not handed to the awaiter yet).
+const C_VT: usize = 0;
+const C_JOIN: usize = 8;
+const C_FUT: usize = 16;
+const C_NEXT: usize = 24;
+const C_QUEUED: usize = 32;
+const C_DONE: usize = 40;
+const C_SIZE: usize = 48;
+
+// The join's states: running; complete (every result is the awaiter's, or the rejection in slot
+// 0 is); dropped.
+const RUNNING: usize = 0;
+const COMPLETE: usize = 1;
+const DROPPED: usize = 2;
+
+/**
+ * `velt_rt_all*`'s job: a join over the `n` futures at `futs` (theirs now; the pointer array stays
+ * the caller's), each result of `size` bytes moved to `results + i * size`; `rdrop` drops one
+ * (0: nothing to drop); `reject`: the first rejection settles it.
+ */
+export function schedAll(
+  futs: usize,
+  count: u64,
+  bytes: u64,
+  results: usize,
+  rdrop: usize,
+  reject: bool,
+): usize {
+  if (!t.onWorker()) {
+    return off.all(futs, count, bytes, results, rdrop, reject);
+  }
+  const n = count as usize;
+  const size = bytes as usize;
+  const j = m.alloc(J_KIDS + n * C_SIZE);
+  m.st(j, fnAddress(joinPoll));
+  m.st(j + 8, fnAddress(joinDrop));
+  m.st(j + J_N, n);
+  m.st(j + J_SIZE, size);
+  m.st(j + J_RESULTS, results);
+  m.st(j + J_RDROP, rdrop);
+  m.st(j + J_REJECT, reject ? 1 : 0);
+  m.st(j + J_LEFT, n);
+  m.st(j + J_STARTED, 0);
+  m.st(j + J_READY, 0);
+  m.st(j + J_WAKER, 0);
+  m.st(j + J_REFS, 1);
+  m.st(j + J_STATE, RUNNING);
+  m.st(j + J_WAKING, 0);
+  m.st(j + J_CX, 0);
+  m.st(j + J_CX + 8, 0);
+  const vt = t.main() + t.E_ALL_VT;
+  for (let i: usize = 0; i < n; i++) {
+    const c = kid(j, i);
+    m.st(c + C_VT, vt);
+    m.st(c + C_JOIN, j);
+    m.st(c + C_FUT, m.ld(futs + 8 * i));
+    m.st(c + C_NEXT, 0);
+    m.st(c + C_QUEUED, 0);
+    m.st(c + C_DONE, 0);
+  }
+  return j;
+}
+
+/** Child `i`'s record of join `j`. */
+@inline
+function kid(j: usize, i: usize): usize {
+  return j + J_KIDS + i * C_SIZE;
+}
+
+/** The poll of join `j`: 1 once it settled. */
+function joinPoll(j: usize, cx: usize): u32 {
+  if (m.ld(j + J_STATE) !== RUNNING) {
+    return 1;
+  }
+  register(j, m.ld(cx + 8));
+  m.st(j + J_CX, m.ld(cx));
+  if (m.ld(j + J_STARTED) === 0) {
+    m.st(j + J_STARTED, 1);
+    const n = m.ld(j + J_N);
+    for (let i: usize = 0; i < n; i++) {
+      if (pollKid(j, kid(j, i))) {
+        return 1;
+      }
+    }
+  }
+  // One batch a poll: a child woken during it (one that yields wakes itself) woke the awaiter
+  // too, so it runs at the join's next poll, after the other tasks ready now.
+  let c = reverse(m.takeStack(j + J_READY));
+  while (c !== 0) {
+    const next = m.ld(c + C_NEXT);
+    // Off the stack before its poll: a wake during the poll queues it again.
+    m.swap(c + C_QUEUED, 0);
+    if (m.ld(c + C_FUT) !== 0 && pollKid(j, c)) {
+      return 1;
+    }
+    c = next;
+  }
+  if (m.ld(j + J_LEFT) === 0) {
+    m.st(j + J_STATE, COMPLETE);
+    return 1;
+  }
+  return 0;
+}
+
+/** The ready stack from `c` (newest first), in wake order. */
+function reverse(c: usize): usize {
+  let prev: usize = 0;
+  while (c !== 0) {
+    const next = m.ld(c + C_NEXT);
+    m.st(c + C_NEXT, prev);
+    prev = c;
+    c = next;
+  }
+  return prev;
+}
+
+/** Polls child `c` of join `j`: whether the join settled (every child done, or a rejection). */
+function pollKid(j: usize, c: usize): bool {
+  const f = m.ld(c + C_FUT);
+  m.st(j + J_CX + 8, c);
+  // SAFETY: `f` is a live heap future the join owns, `j + J_CX` a `cx` of two words.
+  const ready = unsafe { futPoll(f, j + J_CX) };
+  if (ready !== 1) {
+    return false;
+  }
+  const size = m.ld(j + J_SIZE);
+  const i = (c - j - J_KIDS) / C_SIZE;
+  const slot = m.ld(j + J_RESULTS) + i * size;
+  if (size !== 0) {
+    m.copy(slot, f + 16, size);
+  }
+  m.st(c + C_FUT, 0);
+  // SAFETY: the join owns `f`, finished, its result moved out.
+  unsafe {
+    futDrop(f);
+  }
+  m.st(j + J_LEFT, m.ld(j + J_LEFT) - 1);
+  // SAFETY: slot `i` holds the child's `Result`, its tag byte first.
+  const rejected = size !== 0 && unsafe { addressLoad<u8>(slot) } !== 0;
+  if (m.ld(j + J_REJECT) !== 0 && rejected) {
+    rejectWith(j, i);
+    return true;
+  }
+  m.st(c + C_DONE, 1);
+  if (m.ld(j + J_LEFT) === 0) {
+    m.st(j + J_STATE, COMPLETE);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Child `i` of join `j` rejected (its result in slot `i`): the result moves to slot 0, the other
+ * unfinished children are given up in array order, the other finished results are dropped.
+ */
+@noInline
+function rejectWith(j: usize, i: usize): void {
+  const size = m.ld(j + J_SIZE);
+  const results = m.ld(j + J_RESULTS);
+  const rdrop = m.ld(j + J_RDROP);
+  const n = m.ld(j + J_N);
+  // As the runtime's join: the unfinished children are given up first, then the other finished
+  // results are dropped.
+  giveUpAll(j);
+  for (let k: usize = 0; k < n; k++) {
+    const c = kid(j, k);
+    if (m.ld(c + C_DONE) !== 0) {
+      m.st(c + C_DONE, 0);
+      if (rdrop !== 0) {
+        // SAFETY: slot `k` holds child `k`'s result, which nobody else owns.
+        unsafe {
+          stateDrop(rdrop, results + k * size);
+        }
+      }
+    }
+  }
+  if (i !== 0) {
+    m.copy(results, results + i * size, size);
+  }
+  m.st(j + J_STATE, COMPLETE);
+}
+
+/** The unfinished children of join `j`, given up (dropped) in array order. */
+function giveUpAll(j: usize): void {
+  const n = m.ld(j + J_N);
+  for (let k: usize = 0; k < n; k++) {
+    const c = kid(j, k);
+    const f = m.ld(c + C_FUT);
+    if (f !== 0) {
+      m.st(c + C_FUT, 0);
+      // SAFETY: the join owns `f`; a started promise runs on without its handle.
+      unsafe {
+        futDrop(f);
+      }
+    }
+  }
+}
+
+/** The drop of join `j`: unfinished children and finished results go, then its reference. */
+function joinDrop(j: usize): void {
+  if (m.ld(j + J_STATE) === RUNNING) {
+    giveUpAll(j);
+    const rdrop = m.ld(j + J_RDROP);
+    if (rdrop !== 0) {
+      const size = m.ld(j + J_SIZE);
+      const results = m.ld(j + J_RESULTS);
+      const n = m.ld(j + J_N);
+      for (let k: usize = 0; k < n; k++) {
+        if (m.ld(kid(j, k) + C_DONE) !== 0) {
+          // SAFETY: slot `k` holds child `k`'s result; the join was dropped before handing it on.
+          unsafe {
+            stateDrop(rdrop, results + k * size);
+          }
+        }
+      }
+    }
+  }
+  m.st(j + J_STATE, DROPPED);
+  dropAwaiter(j, m.swap(j + J_WAKER, 0));
+  release(j);
+}
+
+/** Join `j`'s awaiter is the one with waker `w` (borrowed): a clone kept, the old one dropped. */
+function register(j: usize, w: usize): void {
+  if (m.ld(j + J_WAKER) === w) {
+    // Only the poll changes it, so the old value is still its own.
+    return;
+  }
+  dropAwaiter(j, m.swap(j + J_WAKER, m.wakerClone(w)));
+}
+
+/**
+ * Drops waker `old`, swapped out of join `j`'s `J_WAKER`, once no wake reads it. A wake's
+ * increment of `J_WAKING` and its load of the waker are sequentially consistent, as are this
+ * swap and the load of the count below (Dekker's argument): either the wake read the new waker,
+ * or it is counted here. Its decrement (acquire and release) comes after it used the waker, so
+ * a count of 0 seen here means it is done with it. A wake is a few steps with no wait; the core
+ * is given away meanwhile.
+ */
+function dropAwaiter(j: usize, old: usize): void {
+  if (old === 0) {
+    return;
+  }
+  while (m.load(j + J_WAKING) !== 0) {
+    m.yieldCore();
+  }
+  m.wakerDrop(old);
+}
+
+/** Gives a reference to join `j` back: the last frees it. */
+function release(j: usize): void {
+  if (m.dec(j + J_REFS) === 1) {
+    m.release(j, J_KIDS + m.ld(j + J_N) * C_SIZE);
+  }
+}
+
+@cExport("std_sched_all_clone")
+export function allClone(c: usize): usize {
+  m.inc(m.ld(c + C_JOIN) + J_REFS);
+  return c;
+}
+
+@cExport("std_sched_all_wake")
+export function allWake(c: usize): void {
+  if (wk.counting()) {
+    // The program's end waits for wakes by value under way (sched_wake.velt `settleWakes`).
+    wk.wakingStarts();
+    allWakeByRef(c);
+    allDrop(c);
+    wk.wakingEnds();
+    return;
+  }
+  allWakeByRef(c);
+  allDrop(c);
+}
+
+/** A child woke: on its join's ready stack once, and the join's awaiter woken. */
+@cExport("std_sched_all_wake_by_ref")
+export function allWakeByRef(c: usize): void {
+  if (m.cas(c + C_QUEUED, 0, 1) !== 0) {
+    return;
+  }
+  const j = m.ld(c + C_JOIN);
+  m.pushStack(j + J_READY, c, C_NEXT);
+  // Counted while it reads and wakes the awaiter's waker (`dropAwaiter`).
+  m.incOrdered(j + J_WAKING);
+  const w = m.load(j + J_WAKER);
+  if (w !== 0) {
+    m.wakeByRef(w);
+  }
+  m.dec(j + J_WAKING);
+}
+
+@cExport("std_sched_all_drop")
+export function allDrop(c: usize): void {
+  release(m.ld(c + C_JOIN));
+}
