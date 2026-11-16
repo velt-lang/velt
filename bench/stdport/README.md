@@ -253,3 +253,20 @@ The decoder keeps the bit reader, output position and command state in locals of
 decodes prefix codes with one table lookup (two for codes over 8 bits) as the reference decoder
 does; the input sits in a buffer of its own followed by zeros, so the bit reader loads 8 bytes
 at a time with no check per byte and finds out afterwards whether a step read past the input.
+
+## pow
+
+`pow` is `**` on floats (`Math.pow`), the runtime's `velt_rt_pow_f64` before #1676 (fdlibm's
+`pow`, from the `libm` crate, which the Rust port calls), now std/lang/math/pow.velt: glibc's
+algorithm, whose results Node prints on Linux. Instructions executed (cachegrind, i9-8950HK,
+Linux x86-64, release builds of `main` at f46948718 and of the port, 3 interleaved runs, each
+the same):
+
+| benchmark | Velt before | Velt | Velt without FMA | Rust | Velt / Rust |
+|---|---:|---:|---:|---:|---:|
+| pow | 619.2 M | 290.3 M | 769.8 M | 575.1 M | 0.50 |
+
+The default x86-64 level has no FMA, so `pow` runs a copy compiled for it where the CPU has it
+(every x86-64 CPU since 2013); without (the third column, `VELT_SIMD_DISABLE=clmul`), each of
+its twenty `fma`s is a call of C's `fma`. On arm64, and with `--cpu x86-64-v3`, every `fma` is
+one instruction.

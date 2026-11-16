@@ -218,7 +218,7 @@ export function probe(): i64 {
         MAIN_PROBE,
         &[
             "`targetFeature` must be the first statement of a function (not a method or closure)",
-            "`targetFeature` takes the target as a string literal: one of sha-arm, sha-x86, clmul-x86, clmul-arm, aes-x86, aes-arm",
+            "`targetFeature` takes the target as a string literal: one of sha-arm, sha-x86, clmul-x86, clmul-arm, aes-x86, aes-arm, fma-x86",
         ],
     );
 }

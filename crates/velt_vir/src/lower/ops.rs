@@ -1,8 +1,10 @@
-//! Binary operators: plain VIR arithmetic/comparisons, checked integer division, `**` via the
-//! runtime, and string comparison/concatenation via the runtime.
+//! Binary operators: plain VIR arithmetic/comparisons, checked integer division, `**` (std's
+//! `powF64` on floats, the runtime on integers), and string comparison/concatenation via the
+//! runtime.
 
 use velt_sema::hir::{self, TyId, TyKind};
 
+use super::hook_calls::{self as hooks, ty, HookTy};
 use super::rt::Rt;
 use super::{cint, ice, FnLower};
 use crate::vir::{self, BlockId, Const, Operand, Place, Rvalue, Ty};
@@ -187,17 +189,24 @@ impl FnLower<'_, '_> {
         Operand::Copy(Place::local(res))
     }
 
-    /// `a ** b` via `velt_rt_pow_i64`/`_f64`, widening to 64 bits and casting back.
+    /// `a ** b`, widening to 64 bits and casting back: std's `powF64` on floats (V8's
+    /// `Math.pow`, std/lang/math/pow.velt), `velt_rt_pow_i64` on integers.
     fn pow(&mut self, l: Operand, r: Operand, t: Ty) -> Operand {
-        let (wide, rt) = if t.is_float() {
-            (Ty::F64, Rt::PowF64)
-        } else {
-            (Ty::I64, Rt::PowI64)
-        };
+        let wide = if t.is_float() { Ty::F64 } else { Ty::I64 };
         let a = self.cast_to(l, t, wide);
         let b = self.cast_to(r, t, wide);
         let res = self.temp(wide);
-        self.call_rt(rt, vec![a, b], Some(Place::local(res)));
+        if t.is_float() {
+            hooks::pow_f64(
+                self,
+                hooks::Construct::PowFloat,
+                ty::F64::arg(a),
+                ty::F64::arg(b),
+            )
+            .emit_to(self, Place::local(res));
+        } else {
+            self.call_rt(Rt::PowI64, vec![a, b], Some(Place::local(res)));
+        }
         self.cast_to(Operand::Copy(Place::local(res)), wide, t)
     }
 }

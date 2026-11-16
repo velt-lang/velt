@@ -1,6 +1,6 @@
 //! The CPU extensions beyond the 128-bit baseline that some SIMD operations use (#1330): the SHA
 //! instructions, carry-less multiplication and the AES rounds (#2401), and the instructions of
-//! each.
+//! each; and x86's FMA, which std's `pow` is compiled for where the CPU has it (#1676).
 
 /// A CPU extension beyond the 128-bit baseline that some operations use (#1330).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -20,21 +20,26 @@ pub enum Ext {
     /// The ARMv8 AES instructions with PMULL (FEAT_AES and FEAT_PMULL, LLVM's `aes`; FEAT_PMULL
     /// implies FEAT_AES), so a function gated on it also has [`Ext::ClmulArm`].
     AesArm,
+    /// x86's fused multiply-add (FMA3) with the AVX it needs: no SIMD instructions of its own,
+    /// but `MathOp::FmaF64` is one `vfmadd` in a function gated on it (std's `pow`). Every arm64
+    /// CPU has FMA, so it needs no extension there.
+    FmaX86,
 }
 
 impl Ext {
     /// Every extension.
-    pub const ALL: [Ext; 6] = [
+    pub const ALL: [Ext; 7] = [
         Ext::ShaArm,
         Ext::ShaX86,
         Ext::ClmulX86,
         Ext::ClmulArm,
         Ext::AesX86,
         Ext::AesArm,
+        Ext::FmaX86,
     ];
 
     /// The name `targetFeature` takes: `sha-arm`, `sha-x86`, `clmul-x86`, `clmul-arm`,
-    /// `aes-x86`, `aes-arm`.
+    /// `aes-x86`, `aes-arm`, `fma-x86`.
     pub fn name(self) -> &'static str {
         match self {
             Ext::ShaArm => "sha-arm",
@@ -43,6 +48,7 @@ impl Ext {
             Ext::ClmulArm => "clmul-arm",
             Ext::AesX86 => "aes-x86",
             Ext::AesArm => "aes-arm",
+            Ext::FmaX86 => "fma-x86",
         }
     }
 
@@ -57,10 +63,11 @@ impl Ext {
     }
 
     /// Whether the runtime keeps a flag byte for it ([`Ext::flag_symbol`]). The AES extensions
-    /// have none (no new runtime code, #2241): their check is true only where the build
-    /// guarantees them, and velt/simd computes the run-time answer in Velt (std/simd/aes.velt).
+    /// and FMA have none (no new runtime code, #2241): their check is true only where the build
+    /// guarantees them, and std computes the run-time answer in Velt (std/simd/aes.velt,
+    /// std/lang/math/fma_check.velt).
     pub fn has_flag(self) -> bool {
-        !matches!(self, Ext::AesX86 | Ext::AesArm)
+        !matches!(self, Ext::AesX86 | Ext::AesArm | Ext::FmaX86)
     }
 
     /// The extension `targetFeature(name)` names.
@@ -77,7 +84,7 @@ impl Ext {
             Ext::ShaX86 => "velt_cpu_sha_x86",
             Ext::ClmulX86 => "velt_cpu_clmul_x86",
             Ext::ClmulArm => "velt_cpu_clmul_arm",
-            Ext::AesX86 | Ext::AesArm => "",
+            Ext::AesX86 | Ext::AesArm | Ext::FmaX86 => "",
         }
     }
 
@@ -91,7 +98,7 @@ impl Ext {
     pub fn on_arch(self, arch: &str) -> bool {
         match self {
             Ext::ShaArm | Ext::ClmulArm | Ext::AesArm => arch == "aarch64",
-            Ext::ShaX86 | Ext::ClmulX86 | Ext::AesX86 => arch == "x86_64",
+            Ext::ShaX86 | Ext::ClmulX86 | Ext::AesX86 | Ext::FmaX86 => arch == "x86_64",
         }
     }
 
@@ -105,6 +112,7 @@ impl Ext {
             Ext::ClmulX86 => "+pclmul",
             Ext::ClmulArm | Ext::AesArm => "+aes",
             Ext::AesX86 => "+aes",
+            Ext::FmaX86 => "+fma",
         }
     }
 
@@ -117,6 +125,7 @@ impl Ext {
             Ext::ClmulX86 => "+pclmul,+ssse3,+sse4.1",
             Ext::ClmulArm | Ext::AesArm => "+aes",
             Ext::AesX86 => "+aes,+pclmul,+ssse3,+sse4.1",
+            Ext::FmaX86 => "+fma,+avx,+ssse3,+sse4.1",
         }
     }
 }

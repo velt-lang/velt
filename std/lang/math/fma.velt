@@ -1,0 +1,13 @@
+// velt/lang/math (internal): the fused multiply-add `a * b + c`, rounded once.
+
+import { inline } from "velt/lang/intrinsics";
+
+// The compiler's operation (velt_vir `MathOp::FmaF64`): one instruction where the target has FMA,
+// C's `fma` elsewhere. Correctly rounded either way, so the bits are the same everywhere.
+declare function velt_math_fma_f64(a: f64, b: f64, c: f64): f64;
+
+/** `a * b + c` rounded once (C's `fma`, IEEE 754's fusedMultiplyAdd). */
+@inline
+export function fma(a: f64, b: f64, c: f64): f64 {
+  return velt_math_fma_f64(a, b, c);
+}
