@@ -89,6 +89,10 @@ impl FnCx<'_, '_> {
         target: TyId,
         span: velt_common::Span,
     ) -> Result<hir::Expr, hir::Expr> {
+        // `rq as { _input?: unknown }`: the interface with both's members, which extends `rq`'s.
+        if let Some(meet) = self.optional_object_target(h.ty, target, span) {
+            return self.related_iface_cast(h, meet, span);
+        }
         if let Some(first) = self.related_dom_union(h.ty, target) {
             let h = self.related_iface_cast(h, first, span)?;
             return self.try_coerce(h, target);
@@ -159,6 +163,35 @@ impl FnCx<'_, '_> {
         self.cx.note_dyn_object_target(to);
         self.cx.note_iface_downcast(have);
         true
+    }
+
+    /// For `from as to`, where `from` is an interface with methods and `to` an object type whose
+    /// fields are all optional and none of `from`'s (`rq as { _input?: unknown }`), as tsc allows:
+    /// the interface with the members of both (`synth_ifaces::meet_iface`), an extension of
+    /// `from`'s interface, which the cast then asserts as [`Self::related_iface_cast`] does.
+    fn optional_object_target(
+        &mut self,
+        from: TyId,
+        to: TyId,
+        span: velt_common::Span,
+    ) -> Option<TyId> {
+        if !self.cx.is_method_iface(from) || !self.cx.is_object_type(to) {
+            return None;
+        }
+        let TyKind::Adt(d, _) = *self.cx.ty.kind(to) else {
+            return None;
+        };
+        let have = self.object_members(from).unwrap_or_default();
+        let fields = self.cx.adt(d)?.fields.clone();
+        let fits = !fields.is_empty()
+            && (fields.iter()).all(|f| f.optional && !have.iter().any(|h| h.0 == f.name));
+        if !fits {
+            return None;
+        }
+        match self.cx.meet_iface(from, to, self.module, span)? {
+            Ok(t) if matches!(self.cx.ty.kind(t), TyKind::Dyn(..)) => Some(t),
+            _ => None,
+        }
     }
 
     /// The fields interface type `to` adds to `from`, when it adds only optional fields (no
