@@ -55,6 +55,9 @@ pub(crate) struct MethodWrites {
     /// (object type, field) -> the site of the function stored there under a written method's
     /// name (`body/expr/object.rs`), the first literal of that shape.
     field_sites: FxHashMap<(DefId, usize), Span>,
+    /// (adapter, method) whose setter is the empty one: the method was not written when the
+    /// adapter's setters were made.
+    adapter_unused: FxHashSet<(u32, usize)>,
 }
 
 impl Ctx<'_> {
@@ -126,6 +129,49 @@ impl Ctx<'_> {
             Some(t) => Some(t),
             None => self.method_fn_ty(iface, args, j),
         }
+    }
+
+    /// The sites of the written methods named `name`, and of the fields storing them: where a
+    /// write of `name` through `any` stores its value (`body/expr/dynamic_write.rs`).
+    pub(crate) fn method_sites_named(&self, name: &str) -> Vec<Span> {
+        let w = &self.method_writes;
+        let mut out = vec![];
+        for (&(iface, j), &(span, _)) in &w.sites {
+            let named =
+                (self.iface(iface).and_then(|i| i.methods.get(j))).is_some_and(|m| m.name == name);
+            if named {
+                out.push(span);
+            }
+        }
+        for (&(d, i), &span) in &w.field_sites {
+            let named = (self.adt(d).and_then(|a| a.fields.get(i))).is_some_and(|f| f.name == name);
+            if named && !out.contains(&span) {
+                out.push(span);
+            }
+        }
+        // A user interface's method of that name, written in the program (the previous check
+        // found it): its site is its declaration, whether or not this check reached the write
+        // yet; the links carry the errors on to the fields.
+        if self.written_method_name(name) {
+            for d in 0..self.info.len() {
+                let Some(i) = self.iface(DefId(d as u32)) else {
+                    continue;
+                };
+                if self.scopes.get(i.module).is_none_or(|s| s.is_std) {
+                    continue;
+                }
+                for m in i
+                    .methods
+                    .iter()
+                    .filter(|m| m.name == name && m.throws.is_none())
+                {
+                    if !out.contains(&m.span) {
+                        out.push(m.span);
+                    }
+                }
+            }
+        }
+        out
     }
 
     /// Field `i` of object type `d` stores a function under a written method's name, and is the
@@ -372,37 +418,86 @@ impl Ctx<'_> {
         nfields: usize,
     ) -> bool {
         let have = self.impls[k as usize].methods.len();
-        if have != nmethods + 2 * nfields || !self.method_writes.done.insert(k) {
-            return true;
-        }
+        let base = nmethods + 2 * nfields;
         let iface = self.impls[k as usize].iface;
         let names: Vec<String> = (self.iface(iface).into_iter())
             .flat_map(|i| i.methods.iter().map(|m| m.name.clone()))
             .collect();
+        // Built before: a method written since gets its real setter in place of the empty one.
+        if have == base + nmethods {
+            let mut ok = true;
+            for (j, name) in names.iter().enumerate() {
+                let late = self.method_writes.methods.contains_key(&(iface, j))
+                    && self.method_writes.adapter_unused.remove(&(k, j));
+                if late {
+                    ok &= self.adapter_method_slot(k, p, (j, name), base);
+                }
+            }
+            return ok;
+        }
+        if have != base || !self.method_writes.done.insert(k) {
+            return true;
+        }
         let mut ok = true;
         let mut defs = vec![];
         for (j, name) in names.iter().enumerate() {
+            let args = self.impls[k as usize].iface_args.clone();
+            let Some(fty) = self.method_fn_ty(iface, &args, j) else {
+                return ok;
+            };
+            // Only a written method's setter writes the wrapped value's: the others are never
+            // called, so they are not checked (their conversions would make closures of their own).
+            let empty = crate::collect::getters::unused_setter;
+            if !self.method_writes.methods.contains_key(&(iface, j)) {
+                self.method_writes.adapter_unused.insert((k, j));
+                defs.push(empty(self, p.def, p.self_ty, &format!("{name}()"), fty));
+                continue;
+            }
             match crate::body::expr::iface_adapt_slots::adapter_method_setter(self, p, j) {
                 Some(def) => defs.push(def),
                 None => {
-                    if let Some(&span) = self.method_writes.methods.get(&(iface, j)) {
-                        ok = false;
-                        if self.method_writes.reported.insert((k, j)) {
-                            self.cannot_store_method(k, name, span);
-                        }
-                    }
-                    let args = self.impls[k as usize].iface_args.clone();
-                    let Some(fty) = self.method_fn_ty(iface, &args, j) else {
-                        return ok;
-                    };
-                    let setter = crate::collect::getters::unused_setter;
-                    defs.push(setter(self, p.def, p.self_ty, &format!("{name}()"), fty));
+                    ok = false;
+                    self.report_method(k, j, name);
+                    defs.push(empty(self, p.def, p.self_ty, &format!("{name}()"), fty));
                 }
             }
         }
         self.impls[k as usize].methods.extend(defs);
         self.groups = None;
         ok
+    }
+
+    /// Adapter `k`'s setter of method `j` (`name`), written after the adapter's setters were
+    /// made: the real one replaces the empty one at `base + j`. False when it can't be made.
+    fn adapter_method_slot(
+        &mut self,
+        k: u32,
+        p: &crate::body::expr::iface_adapt_slots::AdapterParts,
+        (j, name): (usize, &str),
+        base: usize,
+    ) -> bool {
+        match crate::body::expr::iface_adapt_slots::adapter_method_setter(self, p, j) {
+            Some(def) => {
+                self.impls[k as usize].methods[base + j] = def;
+                self.groups = None;
+                true
+            }
+            None => {
+                self.report_method(k, j, name);
+                false
+            }
+        }
+    }
+
+    /// Report, once, that implementation `k` can't store method `j` (`name`) written in the
+    /// program.
+    fn report_method(&mut self, k: u32, j: usize, name: &str) {
+        let iface = self.impls[k as usize].iface;
+        if let Some(&span) = self.method_writes.methods.get(&(iface, j)) {
+            if self.method_writes.reported.insert((k, j)) {
+                self.cannot_store_method(k, name, span);
+            }
+        }
     }
 
     /// The method setters of an implementation of `b` made of implementation `index` (of an

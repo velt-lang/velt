@@ -129,7 +129,26 @@ impl FnCx<'_, '_> {
                 as_value,
             );
         }
+        // A write of a method the program also writes through an interface value
+        // (`iface_method_writes`): the value is stored into that method's site (a closure made
+        // here throws into it), and flows into the fields storing it, so the object's field
+        // may hold it.
+        let sites = match &key {
+            WriteKey::Str(hir::Expr {
+                kind: H::Lit(hir::Lit::Str(name)),
+                ..
+            }) => self.cx.method_sites_named(name),
+            _ => vec![],
+        };
+        let outer = sites.first().map(|s| self.set_target(Some(*s)));
         let v = self.expr(value, Some(value_ty.unwrap_or(any)), Want::Move);
+        if let Some(outer) = outer {
+            self.set_target(outer);
+        }
+        for site in &sites {
+            self.flow_into(&v, Some(*site));
+            self.cx.add_thrown_to_site(*site, v.ty);
+        }
         if self.cx.ty.is_bottom(v.ty) {
             return (self.error_expr(span), false);
         }
