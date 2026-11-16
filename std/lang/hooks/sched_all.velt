@@ -25,7 +25,8 @@
 // - Dropped before it completes, the join drops its unfinished children in array order and the
 //   finished results (`rdrop`). Clones of the children's wakers keep the allocation alive: the
 //   join's reference count holds one for the join and one per clone.
-// Off the worker (a pinned spawn's code) it is the runtime's join.
+// Off every worker (code the runtime's executor runs on its own threads, sched_off.velt) it is the
+// runtime's join.
 
 import { export as cExport } from "velt/ffi";
 import {
