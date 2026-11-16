@@ -343,6 +343,79 @@ crate::units::codec::structs! {
     }
 }
 
+/// `VELT_UNITS_ROUNDTRIP=sizes`: the bytes each summary takes.
+fn summary_sizes(s: &Summaries) {
+    use codec::Codec;
+    let Summaries {
+        key_needs,
+        async_summaries,
+        json_needs,
+        tuple_summaries,
+        weak_scans,
+        state_facts,
+        weak_made,
+        undefined_facts,
+        lock_summaries,
+        module_edges,
+        groups,
+        dispatch,
+        generated_fns,
+        literals,
+        fed,
+        modules,
+        subclasses,
+        calls,
+        inst_sites,
+        outside_named,
+        outside_tys,
+        lets,
+        types,
+        value_scan,
+        virtuals,
+        implicit,
+        host_fns,
+    } = s;
+    let mut sizes: Vec<(&str, usize)> = vec![];
+    macro_rules! size { ($($f:ident),*) => {$(
+        let mut w = codec::Writer::new();
+        $f.enc(&mut w);
+        sizes.push((stringify!($f), w.finish().0.len()));
+    )*} }
+    size!(
+        key_needs,
+        async_summaries,
+        json_needs,
+        tuple_summaries,
+        weak_scans,
+        state_facts,
+        weak_made,
+        undefined_facts,
+        lock_summaries,
+        module_edges,
+        groups,
+        dispatch,
+        generated_fns,
+        literals,
+        fed,
+        modules,
+        subclasses,
+        calls,
+        inst_sites,
+        outside_named,
+        outside_tys,
+        lets,
+        types,
+        value_scan,
+        virtuals,
+        implicit,
+        host_fns
+    );
+    sizes.sort_by_key(|s| std::cmp::Reverse(s.1));
+    for (f, n) in sizes {
+        eprintln!("velt-units: {n:>9} bytes  unit_sums.{f}");
+    }
+}
+
 /// EXPERIMENT (`VELT_UNITS_ROUNDTRIP=1`, #2943 M2): the app's stage starts from std's unit
 /// encoded and decoded in this process, as a unit loaded from disk would be; prints its size and
 /// what encoding and decoding took (`velt-units:` lines). The decoded unit's arena is leaked.
@@ -354,6 +427,7 @@ pub(crate) fn round_trip(cx: Ctx<'_>) -> Ctx<'_> {
     let (bytes, sizes) = codec::encode_unit_sized(&cx);
     let encoded = t.elapsed();
     if std::env::var_os("VELT_UNITS_ROUNDTRIP").is_some_and(|v| v == "sizes") {
+        summary_sizes(&cx.unit_sums);
         let mut sizes = sizes;
         sizes.sort_by_key(|s| std::cmp::Reverse(s.1));
         for (field, n) in sizes.iter().take(25) {

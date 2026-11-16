@@ -423,6 +423,12 @@ fn unselected_variants(
 }
 
 fn file_key(f: &Path) -> PathBuf {
+    // EXPERIMENT (#2943 M2): a std file's from std's snapshot, when there is one.
+    if let Some(tree) = driver::units_disk::std_tree() {
+        if let Ok(rel) = vpm::relpath::absolute(f).strip_prefix(tree.root()) {
+            return tree.canonical().join(rel);
+        }
+    }
     std::fs::canonicalize(f).unwrap_or_else(|_| f.to_path_buf())
 }
 

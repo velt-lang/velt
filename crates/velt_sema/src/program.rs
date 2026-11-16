@@ -202,6 +202,13 @@ fn build(
         body::lazy_std::live_defs(&mut cx, &unchecked)
     });
     let from_disk = cx.std_from_disk.then_some(cx.unit_base as usize);
+    // With std's unit from disk (`velt check`), the process ends after the check: the context's
+    // tables the program doesn't take are left to its end, not freed one by one.
+    if from_disk.is_some() {
+        std::mem::forget(std::mem::take(&mut cx.info));
+        std::mem::forget(std::mem::take(&mut cx.unit_sums));
+        std::mem::forget(std::mem::take(&mut cx.scopes));
+    }
     let ctx::Ctx {
         ty,
         defs,

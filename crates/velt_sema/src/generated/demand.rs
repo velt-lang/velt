@@ -352,6 +352,13 @@ fn may_reach(cx: &mut Ctx, generated: &FxHashSet<DefId>, recorded: &mut Calls) -
     if elsewhere {
         return Reach::All;
     }
+    // EXPERIMENT (#2943 M2): with std's unit from disk (`velt check`), std's own concrete calls
+    // are std's: its instances were its unit's, and a check of the app demands only what the
+    // app's code reaches (as a check with std loaded lazily does).
+    if cx.std_from_disk {
+        let base = cx.unit_base;
+        concrete.retain(|d| d.0 >= base);
+    }
     if concrete.is_empty() {
         return Reach::None;
     }

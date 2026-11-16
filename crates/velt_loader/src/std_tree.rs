@@ -89,6 +89,11 @@ impl StdTree {
         &self.root
     }
 
+    /// The root's canonical path (no links below it: a file's is this joined with the rest).
+    pub fn canonical(&self) -> &Path {
+        &self.canonical
+    }
+
     /// The files below the root, as paths below [`StdTree::root`], in order.
     pub fn files(&self) -> impl Iterator<Item = PathBuf> + '_ {
         self.files.keys().map(|rel| self.root.join(rel))
