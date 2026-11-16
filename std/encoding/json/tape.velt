@@ -8,7 +8,7 @@
 // object it searches); values share it. Editing a value (`set`, `push`, …) turns that value into
 // the runtime's tree (prelude `JsonValue`), so it never shows through the tape.
 
-import { strByteAt, strByteLen, strLoadPartialU8x16 } from "velt/lang/intrinsics";
+import { noInline, strByteAt, strByteLen, strLoadPartialU8x16 } from "velt/lang/intrinsics";
 
 declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
 declare function velt_simd_u8x16_eq(a: u8x16, b: u8x16): mask8x16;
@@ -52,14 +52,18 @@ export class Tape {
   src: string;
   words: u64[] = [];
   kids: u32[] = [];
-  decoded: string[] = [];
+  /** The text of the strings that had escapes (such a string's second word indexes it). Made
+   *  with the first one: a tape without escapes (and its copy) allocates no array for it. */
+  decoded: string[] | null = null;
   /** Objects whose members are not their keys in order (index-like or repeated keys, flagged
    *  `ORDERED`): one key position per distinct key, in JS order; a repeated key's is its last
-   *  occurrence (whose value is the one that counts), at the place of its first. */
-  ordered: Map<u32, u32[]> = new Map<u32, u32[]>();
+   *  occurrence (whose value is the one that counts), at the place of its first. Made with
+   *  the first such object, so a tape without one (and its copy) allocates no map. */
+  ordered: Map<u32, u32[]> | null = null;
   /** The hash index of each object over `INDEX_THRESHOLD` keys that `find` was asked about:
-   *  key text to the value's position (a repeated key's last). A cache: the tape is unchanged. */
-  index: Map<u32, Map<string, u32>> = new Map<u32, Map<string, u32>>();
+   *  key text to the value's position (a repeated key's last). A cache: the tape is unchanged.
+   *  Made with the first such lookup. */
+  index: Map<u32, Map<string, u32>> | null = null;
 
   constructor(src: string) {
     this.src = src;
@@ -85,7 +89,7 @@ export class Tape {
     const w = this.words[2 * (v as usize)];
     const p = this.words[2 * (v as usize) + 1];
     if ((w & ESCAPED) != 0) {
-      return this.decoded[p as usize];
+      return this.decoded![p as usize];
     }
     // The range lies between a string's quotes: whole characters, no check needed.
     return velt_rt_str_byte_slice(this.src, p & 0xffffffff, p >> 32);
@@ -128,6 +132,7 @@ export class Tape {
   // `find` in an object over `INDEX_THRESHOLD` keys, through its hash index (made the first
   // time), or in a small one with a repeated or escaped key, or of a name over 16 bytes (out of
   // line: `find` stays small).
+  @noInline
   private findOther(v: u32, name: string): i64 {
     const n = this.rawCount(v) as usize;
     const first = this.words[2 * (v as usize) + 1] as usize;
@@ -141,7 +146,12 @@ export class Tape {
       }
       return -1;
     }
-    let ix = this.index.get(v);
+    let all = this.index;
+    if (all == null) {
+      all = new Map<u32, Map<string, u32>>();
+      this.index = all;
+    }
+    let ix = all.get(v);
     if (ix == undefined) {
       const m = new Map<string, u32>();
       // In order, so a repeated key ends at its last value.
@@ -149,7 +159,7 @@ export class Tape {
         const k = this.kids[first + i];
         m.set(this.text(k), k + 1);
       }
-      this.index.set(v, m);
+      all.set(v, m);
       ix = m;
     }
     const at = ix.get(name);
@@ -161,7 +171,7 @@ export class Tape {
     const p = this.words[2 * (k as usize) + 1];
     const w = this.words[2 * (k as usize)];
     if ((w & ESCAPED) != 0) {
-      return this.decoded[p as usize] == name;
+      return this.decoded![p as usize] == name;
     }
     const start = (p & 0xffffffff) as usize;
     const n = strByteLen(name);
@@ -204,7 +214,7 @@ export class Tape {
     const w = this.words[2 * (k as usize)];
     const p = this.words[2 * (k as usize) + 1];
     if ((w & ESCAPED) != 0) {
-      const d = this.decoded[p as usize];
+      const d = this.decoded![p as usize];
       return d.length > 0 && d.charCodeAt(0) - 48 >= 0 && d.charCodeAt(0) - 48 <= 9;
     }
     const start = (p & 0xffffffff) as usize;
@@ -216,7 +226,29 @@ export class Tape {
     if ((this.words[2 * (v as usize)] & ORDERED) == 0) {
       return null;
     }
-    return this.ordered.get(v) ?? null;
+    const o = this.ordered;
+    return o == null ? null : o.get(v) ?? null;
+  }
+
+  /** Adds the text of a string that had escapes; returns its index in `decoded`. */
+  addDecoded(text: string): u64 {
+    let d = this.decoded;
+    if (d == null) {
+      d = [];
+      this.decoded = d;
+    }
+    d.push(text);
+    return (d.length - 1) as u64;
+  }
+
+  /** Records object `v`'s member list (`members`; the caller flags it `ORDERED`). */
+  setMemberList(v: u32, list: u32[]) {
+    let o = this.ordered;
+    if (o == null) {
+      o = new Map<u32, u32[]>();
+      this.ordered = o;
+    }
+    o.set(v, list);
   }
 
   /** The number of members: elements, an object's distinct keys. */
