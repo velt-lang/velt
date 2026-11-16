@@ -135,6 +135,12 @@ export const imports: Imports = {
     win32: "./process/child/child_win32.velt",
     default: "./process/child/child_posix.velt",
   },
+  // `execSync`'s start: the runtime's, after the program is found and checked as `exec` does it
+  // on Windows; elsewhere the runtime's alone.
+  "#exec-sync": {
+    win32: "./process/child/exec_sync_win32.velt",
+    default: "./process/child/exec_sync.velt",
+  },
   // `fetch`'s plain-TCP connections: under the executor in Velt (every native build) sockets on
   // its reactor, pooled in Velt (`https:` stays the runtime's); otherwise the runtime's.
   "#fetch-dial": {

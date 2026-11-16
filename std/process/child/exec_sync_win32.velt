@@ -1,0 +1,30 @@
+// velt/process/child (internal): `execSync`'s start on Windows (`#exec-sync`, std/imports.velt).
+// The runtime's `velt_rt_child_output_sync` runs it, but the program is found first as `exec`
+// and `spawn` find it (Node's libuv lookup, std/process/child/command_line_win32.velt), and a
+// batch file is refused (`EINVAL`) as they refuse it, so the three agree: Rust's `Command` would
+// look elsewhere and run a batch file through `cmd.exe`.
+
+import { IoResult } from "velt/native/result";
+import * as cl from "velt/process/child/command_line_win32";
+import { CommandSpec } from "velt/process/child/spec";
+import * as sw from "velt/process/child/spawn_win32";
+import { RawOutput, velt_rt_child_output_sync } from "./rt";
+
+/** Runs `spec` to completion with `input`, blocking the calling thread. */
+export function outputSync(spec: CommandSpec, input: string): IoResult<RawOutput> {
+  const got = new sw.Started();
+  const program = sw.resolve(spec, cl.environment(spec), got);
+  if (program == null) {
+    const st = sw.failure(spec.program, got);
+    return { code: st.code, message: st.message, value: { code: 0, stdout: "", stderr: "" } };
+  }
+  const found: CommandSpec = {
+    program: program,
+    args: spec.args.clone(),
+    cwd: spec.cwd.clone(),
+    env: spec.env.clone(),
+    stdio: spec.stdio,
+    clearEnv: spec.clearEnv,
+  };
+  return velt_rt_child_output_sync(found, input);
+}

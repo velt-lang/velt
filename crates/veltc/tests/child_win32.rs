@@ -121,6 +121,43 @@ async function main(): Promise<i32> {
 }
 
 #[test]
+fn execsync_finds_a_program_as_exec_does() {
+    // A program in the child's working directory, given by a bare name: libuv's lookup (Node's)
+    // looks there first; Rust's `Command`, which `execSync` runs, would not.
+    let dir = test_dir::TestDir::new();
+    let (code, out) = build_and_run(
+        dir.path(),
+        "finder",
+        r#"import { exec, execSync } from "velt/process/child";
+import { argv, args, cwd } from "velt/process";
+import { copyFileSync, existsSync, mkdirSync } from "velt/fs";
+
+async function main(): Promise<i32> {
+  if (args().length > 0) {
+    console.log("found");
+    return 0;
+  }
+  mkdirSync("sub");
+  copyFileSync(argv()[0], "sub\\helper.exe");
+  // A debug build loads the runtime's DLL from beside it or from its working directory.
+  if (existsSync("velt_rt_shared.dll")) {
+    copyFileSync("velt_rt_shared.dll", "sub\\velt_rt_shared.dll");
+  }
+  const opts = { cwd: `${cwd()}\\sub` };
+  console.log(`exec ${(await exec("helper", ["x"], opts)).stdout.trim()}`);
+  console.log(`execSync ${execSync("helper", ["x"], opts).stdout.trim()}`);
+  return 0;
+}
+"#,
+        &[],
+    );
+    assert_eq!(
+        (code, out.as_str()),
+        (Some(0), "exec found\nexecSync found\n")
+    );
+}
+
+#[test]
 fn running_children_leave_the_blocking_pool_free() {
     // 600 children wait on their stdin while a file is read on the blocking pool (512 threads at
     // most). A wait on the pool per child would leave the read queued behind them until they
