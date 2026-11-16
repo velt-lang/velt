@@ -61,10 +61,11 @@ export function heapAlloc(size: u64, align: u64): u64 {
     return align;
   }
   let p: u64;
-  // SAFETY: plain allocations; the result is checked.
   if (align <= MIN_ALIGN) {
+    // SAFETY: a plain allocation; the result is checked.
     p = addr(unsafe { mi_malloc(size as usize) });
   } else {
+    // SAFETY: as above; `align` is a power of two.
     p = addr(unsafe { mi_malloc_aligned(size as usize, align as usize) });
   }
   if (p == 0) {
@@ -94,10 +95,11 @@ export function heapRealloc(p: u64, old: u64, align: u64, size: u64): u64 {
     return align;
   }
   let q: u64;
-  // SAFETY: `p` is a live block of mimalloc's (the caller's contract); the result is checked.
   if (align <= MIN_ALIGN) {
+    // SAFETY: `p` is a live block of mimalloc's (the caller's contract); the result is checked.
     q = addr(unsafe { mi_realloc(ptr(p), size as usize) });
   } else {
+    // SAFETY: as above; `align` is a power of two.
     q = addr(unsafe { mi_realloc_aligned(ptr(p), size as usize, align as usize) });
   }
   if (q == 0) {

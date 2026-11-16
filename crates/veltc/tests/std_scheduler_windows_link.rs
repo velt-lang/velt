@@ -85,7 +85,8 @@ async function main() {
             .filter(|l| l.starts_with("declare "))
             .filter_map(|l| l.split('@').nth(1)?.split('(').next())
             .map(|n| n.trim_matches('"'))
-            .filter(|n| !n.starts_with("velt_") && !n.starts_with("llvm."))
+            // mimalloc's functions (std's allocator hooks) are in the runtime's archive.
+            .filter(|n| !n.starts_with("velt_") && !n.starts_with("llvm.") && !n.starts_with("mi_"))
             .filter(|n| !exported.contains(*n))
             .collect();
         assert!(missing.is_empty(), "release: {release}: {missing:?}");
