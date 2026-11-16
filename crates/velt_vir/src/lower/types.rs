@@ -7,7 +7,8 @@
 //! - struct / anon / tuple → inline aggregate; class → `Ptr` to a heap object;
 //! - numeric / string enum (no variant has a payload) → `I64` discriminant (string enums: the
 //!   member index); unions → tagged aggregate (tag `u32` = variant index, then the payload);
-//! - `T | null` → `Ptr` (null = none) when `T` is a class or `shared<T>`, else `{ bool, T }`;
+//! - `T | null` → `Ptr` (null = none) when `T` is a class, `shared<T>`, `symbol` or a C pointer
+//!   (`Ptr<T>`, #3094; type_kinds.rs `has_null_niche`), else `{ bool, T }`;
 //! - `Result<T, E>` → tagged aggregate (tag `u8`: 0 = Ok, 1 = Err);
 //! - `T[]` → `{ ptr, len: u64, cap: u64 }`; `shared<T>` → `Ptr` to `{ count: u64, value: T }`;
 //! - `Promise<T>` (a promise *value*: stored, passed, not awaited in place) → `Ptr` to a heap
