@@ -228,6 +228,19 @@ export function block(env: string[]): u16[] {
   return out;
 }
 
+/**
+ * Does `name` name a batch file (`.bat` or `.cmd`, any case)? As Windows opens it: without the
+ * dots and spaces at its end (`x.bat.` and `x.bat ` open `x.bat`).
+ */
+export function isBatch(name: string): bool {
+  let end = name.length as i64;
+  while (end > 0 && (name[end - 1] == "." || name[end - 1] == " ")) {
+    end--;
+  }
+  const lower = name.slice(0, end).toLowerCase();
+  return lower.endsWith(".bat") || lower.endsWith(".cmd");
+}
+
 /** Does `path` name a file (not a directory) that exists? */
 function isFile(path: string): bool {
   const units = unitsOf(path);

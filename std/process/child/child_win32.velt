@@ -172,15 +172,6 @@ async function reap(rec: usize): Promise<void> {
   release(rec);
 }
 
-/** `spawn x: …` for a child that did not start. */
-function spawnError(program: string, got: sw.Started): IoStatus {
-  const st = pw.winError(got.error);
-  return {
-    code: st.code,
-    message: `spawn ${program}: ${got.message != "" ? got.message : st.message}`,
-  };
-}
-
 /** Starts `spec` with stdio `modes`: the counted record (the caller's count), or the failure. */
 function startChild(spec: CommandSpec, modes: u32): IoResult<usize> {
   if (!bl.supported()) {
@@ -188,7 +179,7 @@ function startChild(spec: CommandSpec, modes: u32): IoResult<usize> {
   }
   const got = sw.start(spec, modes);
   if (got.process === 0) {
-    return fs.failed(spawnError(spec.program, got), 0);
+    return fs.failed(sw.failure(spec.program, got), 0);
   }
   const rec = m.zeroed(C_SIZE);
   // The caller's count and the reaper's.

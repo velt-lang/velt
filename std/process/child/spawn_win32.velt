@@ -18,6 +18,7 @@
 
 import { OutPtr } from "velt/ffi/out_ptr";
 import { Ptr, ptrAddressOrZero } from "velt/ffi/ptr";
+import { IoStatus } from "velt/native/status";
 import * as m from "velt/lang/hooks/sched_mem";
 import * as wk from "velt/lang/hooks/sched_wake";
 import * as cl from "velt/process/child/command_line_win32";
@@ -86,6 +87,8 @@ const OPEN_EXISTING: u32 = 3;
 const PIPE_SIZE: u32 = 65536;
 const ERROR_FILE_NOT_FOUND: u32 = 2;
 export const ERROR_INVALID_PARAMETER: u32 = 87;
+/** Why a batch file doesn't start. */
+const BATCH: string = "batch files run only through a shell (execShell)";
 
 // `STARTUPINFOEXW`: `cb`, `dwFlags`, the three handles, the attribute list.
 const SI_CB: usize = 0;
@@ -228,6 +231,46 @@ function closeParentEnds(out: Started): void {
   out.stderr = 0;
 }
 
+/** `spawn x: …` for a child of `program` that did not start (`got`). */
+export function failure(program: string, got: Started): IoStatus {
+  const st = pw.winError(got.error);
+  return {
+    code: st.code,
+    message: `spawn ${program}: ${got.message != "" ? got.message : st.message}`,
+  };
+}
+
+/**
+ * The program `spec` runs (with environment `env`), found as libuv finds it; null with `out`'s
+ * error set when it holds a NUL, is not found, or is a batch file. Node refuses a batch file
+ * (`EINVAL`): Windows would run it through `cmd.exe`, which reads the command line by its own
+ * rules, so an argument could run commands. Both the name given and the file found are looked
+ * at, since Windows drops trailing dots and spaces from a name (`x.bat.` opens `x.bat`).
+ */
+export function resolve(spec: CommandSpec, env: string[], out: Started): string | null {
+  if (cl.isBatch(spec.program)) {
+    out.error = ERROR_INVALID_PARAMETER;
+    out.message = BATCH;
+    return null;
+  }
+  if (holdsNul(spec)) {
+    out.error = ERROR_INVALID_PARAMETER;
+    out.message = "nul byte found in provided data";
+    return null;
+  }
+  const program = cl.lookUp(spec, cl.lookUpVar(env, "PATH") ?? "");
+  if (program == null) {
+    out.error = ERROR_FILE_NOT_FOUND;
+    return null;
+  }
+  if (cl.isBatch(program)) {
+    out.error = ERROR_INVALID_PARAMETER;
+    out.message = BATCH;
+    return null;
+  }
+  return program;
+}
+
 /**
  * Starts `spec` with stdio modes `modes` (`stdin | stdout << 2 | stderr << 4`; 0 inherit, 1
  * pipe, 2 the null device): the child's process handle and id and the parent's ends of its
@@ -235,21 +278,9 @@ function closeParentEnds(out: Started): void {
  */
 export function start(spec: CommandSpec, modes: u32): Started {
   const out = new Started();
-  const lower = spec.program.toLowerCase();
-  if (lower.endsWith(".bat") || lower.endsWith(".cmd")) {
-    out.error = ERROR_INVALID_PARAMETER;
-    out.message = "batch files run only through a shell (execShell)";
-    return out;
-  }
-  if (holdsNul(spec)) {
-    out.error = ERROR_INVALID_PARAMETER;
-    out.message = "nul byte found in provided data";
-    return out;
-  }
   const env = cl.environment(spec);
-  const program = cl.lookUp(spec, cl.lookUpVar(env, "PATH") ?? "");
+  const program = resolve(spec, env, out);
   if (program == null) {
-    out.error = ERROR_FILE_NOT_FOUND;
     return out;
   }
   if (((modes >> 2) & 3) === 0 || ((modes >> 4) & 3) === 0) {
