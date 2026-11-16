@@ -1,0 +1,25 @@
+// check: no leaks
+// A method the program writes through an interface value, written again through `any` with a
+// function that throws (#379): the value joins the method's inferred error set, so the object's
+// field may hold it, and the error reaches the caller's `catch`, as in Node.
+interface Ctx {
+  el: string;
+  update(): void;
+}
+
+class Failure extends Error {}
+
+const lit = { el: "a", update: () => {} };
+const ctx: Ctx = lit as unknown as Ctx;
+ctx.update = () => {
+  console.log("through the interface");
+};
+ctx.update();
+(ctx as any).update = () => {
+  throw new Failure("via any");
+};
+try {
+  ctx.update();
+} catch (e) {
+  console.log("caught", e instanceof Failure, (e as Error).message);
+}

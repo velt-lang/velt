@@ -1,0 +1,71 @@
+// check: no leaks
+// A method written through an interface value with a function that throws (#379): the method has
+// no `throws` clause, so what it throws is inferred from what the program assigns to it and from
+// the fields storing it, which share that set. The error reaches the caller's `catch`, as in Node:
+// through an object literal converted through `unknown`, one written as the interface, a value
+// converted from an extension, and an adapter (another instantiation of a generic interface).
+// Also the reverse: a field that throws, replaced by a function that doesn't.
+interface Ctx {
+  el: string;
+  update(): void;
+}
+
+interface Named extends Ctx {
+  name(): string;
+}
+
+interface Gen<P = unknown> {
+  props: P;
+  update(): void;
+}
+
+class Failure extends Error {}
+
+function attempt(what: string, f: () => void): void {
+  try {
+    f();
+    console.log(what, "ok");
+  } catch (e) {
+    console.log(what, "caught", e instanceof Failure, (e as Error).message);
+  }
+}
+
+const lit = { el: "a", update: () => {} };
+const viaUnknown: Ctx = lit as unknown as Ctx;
+viaUnknown.update = () => {
+  throw new Failure("unknown");
+};
+attempt("through unknown", () => viaUnknown.update());
+
+const written: Ctx = { el: "w", update: () => {} };
+written.update = () => {
+  throw new Failure("written");
+};
+attempt("written as the interface", () => written.update());
+
+const n: Named = { el: "n", update: () => {}, name: () => "n" };
+const up: Ctx = n;
+up.update = () => {
+  throw new Failure("upcast");
+};
+attempt("through an upcast", () => n.update());
+
+function setup(c: Gen): void {
+  c.update = () => {
+    throw new Failure("adapter");
+  };
+}
+
+const typed: Gen<{ a: number }> = { props: { a: 1 }, update: () => {} };
+setup(typed);
+attempt("through an adapter", () => typed.update());
+
+const throwing: Ctx = {
+  el: "t",
+  update: () => {
+    throw new Failure("before");
+  },
+};
+attempt("before the write", () => throwing.update());
+throwing.update = () => {};
+attempt("after the write", () => throwing.update());

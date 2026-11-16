@@ -131,6 +131,19 @@ impl Ctx<'_> {
         }
     }
 
+    /// The methods the program writes through interface values, as `` `update` of `Ctx` ``, in
+    /// source order: what the limit of the function-type inference names (`throws/checks.rs`).
+    pub(crate) fn written_methods_shown(&self) -> Vec<String> {
+        let mut ms: Vec<(Span, String)> = (self.method_writes.methods.iter())
+            .filter_map(|(&(iface, j), &at)| {
+                let i = self.iface(iface)?;
+                Some((at, format!("`{}` of `{}`", i.methods.get(j)?.name, i.name)))
+            })
+            .collect();
+        ms.sort_by_key(|(at, _)| (at.file, at.lo));
+        ms.into_iter().map(|(_, s)| s).collect()
+    }
+
     /// The sites of the written methods named `name`, and of the fields storing them: where a
     /// write of `name` through `any` stores its value (`body/expr/dynamic_write.rs`).
     pub(crate) fn method_sites_named(&self, name: &str) -> Vec<Span> {
@@ -174,6 +187,15 @@ impl Ctx<'_> {
         out
     }
 
+    /// Is interface `d` the interface `base`, or does it extend it?
+    fn extends_or_is_iface(&self, d: DefId, base: DefId, depth: u32) -> bool {
+        d == base
+            || depth < 64
+                && self.iface(d).is_some_and(|i| {
+                    (i.parents.iter()).any(|p| self.extends_or_is_iface(p.iface, base, depth + 1))
+                })
+    }
+
     /// Field `i` of object type `d` stores a function under a written method's name, and is the
     /// site at `at` (`body/expr/object.rs`).
     pub(crate) fn note_method_field_site(&mut self, d: DefId, i: usize, at: Span) {
@@ -182,14 +204,27 @@ impl Ctx<'_> {
 
     /// Link the site of method `j` of `iface` with the sites of the fields its implementations
     /// store it in, both ways: they throw the same errors (`throws/fn_flows.rs` `site_flow`).
+    /// Also those of interfaces extending `iface`, the method of that name: a value of one
+    /// converted to `iface` is written through it, and called through its own slot.
     fn link_method_sites(&mut self, iface: DefId, j: usize) {
         let Some(m) = self.method_site_span(iface, j) else {
             return;
         };
-        let impls: Vec<u32> = (0..self.impls.len() as u32)
-            .filter(|&k| self.impls[k as usize].iface == iface)
+        let Some(name) = (self.iface(iface).and_then(|i| i.methods.get(j))).map(|m| m.name.clone())
+        else {
+            return;
+        };
+        let impls: Vec<(u32, usize)> = (0..self.impls.len() as u32)
+            .filter_map(|k| {
+                let d = self.impls[k as usize].iface;
+                if !self.extends_or_is_iface(d, iface, 0) {
+                    return None;
+                }
+                let at = self.iface(d)?.methods.iter().position(|x| x.name == name)?;
+                Some((k, at))
+            })
             .collect();
-        for k in impls {
+        for (k, j) in impls {
             let src =
                 (self.method_writes.sources.get(&k)).and_then(|s| s.get(j).copied().flatten());
             let Some(s) = src else {
@@ -396,13 +431,6 @@ impl Ctx<'_> {
         if defs.len() == methods.len() {
             self.impls[k as usize].methods.extend(defs);
             self.groups = None;
-        } else if std::env::var_os("VELT_DEBUG_MW").is_some() {
-            let shown = self.display(ty);
-            eprintln!(
-                "method setters skipped for impl {k} of {shown}: {} of {}",
-                defs.len(),
-                methods.len()
-            );
         }
         ok
     }
