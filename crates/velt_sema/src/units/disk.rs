@@ -111,10 +111,7 @@ const STUBS_FORMAT: &[u8; 8] = b"vstub\x00\x00\x01";
 /// The stubs of std's modules kept under std's sources' key `std_key` in `dir` ([`save`]): each
 /// module's path with its stub, encoded (`velt_syntax::decode_module` decodes it for the file
 /// the module has in a load); `None` when there are none.
-pub fn read_stubs(
-    dir: &std::path::Path,
-    std_key: u64,
-) -> Option<std::collections::HashMap<String, Vec<u8>>> {
+pub fn read_stubs(dir: &std::path::Path, std_key: u64) -> Option<Vec<(String, Vec<u8>)>> {
     let bytes = std::fs::read(dir.join(format!("{std_key:016x}.stubs"))).ok()?;
     let mut rest = bytes.strip_prefix(STUBS_FORMAT.as_slice())?;
     let mut take = || -> Option<Vec<u8>> {
@@ -124,9 +121,9 @@ pub fn read_stubs(
         rest = tail;
         Some(part.to_vec())
     };
-    let mut out = std::collections::HashMap::new();
+    let mut out = vec![];
     while let Some(path) = take() {
-        out.insert(String::from_utf8(path).ok()?, take()?);
+        out.push((String::from_utf8(path).ok()?, take()?));
     }
     Some(out)
 }

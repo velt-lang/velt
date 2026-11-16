@@ -42,6 +42,6 @@ pub(super) fn prepare(scope: &CheckScope) -> Option<Prepared> {
         (meta.map(|m| m.len()), changed).hash(&mut h);
     }
     let key = std::hash::Hasher::finish(&h);
-    let stubs = velt_sema::read_std_stubs(Path::new(&dir), key);
+    let stubs = velt_sema::read_std_stubs(Path::new(&dir), key).map(|s| s.into_iter().collect());
     Some(Prepared { key, stubs })
 }
