@@ -142,7 +142,7 @@ impl FnCx<'_, '_> {
         if let Some(f) = self.iface_field_of(obj.ty, &prop.name) {
             return self.iface_setter_call(obj, f, arg, span);
         }
-        if let Some(m) = self.iface_method_member_of(obj.ty, &prop.name) {
+        if let Some(m) = self.iface_method_member_of(obj.ty, &prop.name, prop.span) {
             return self.iface_setter_call(obj, m, arg, span);
         }
         self.abstract_in_ctor(&obj, &prop.name, true, prop.span);

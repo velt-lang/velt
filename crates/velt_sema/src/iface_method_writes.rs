@@ -49,6 +49,9 @@ pub(crate) struct MethodWrites {
     /// Adapters (an `I<A>` as an `I<B>`, `body/expr/iface_adapt.rs`): their setters write the
     /// wrapped value's.
     adapters: FxHashMap<u32, crate::body::expr::iface_adapt_slots::AdapterParts>,
+    /// (interface, method) -> its function-type site and that site's module
+    /// ([`Ctx::method_site`]).
+    sites: FxHashMap<(DefId, usize), (Span, usize)>,
 }
 
 impl Ctx<'_> {
@@ -68,6 +71,63 @@ impl Ctx<'_> {
             throws,
             rest: false,
         }))
+    }
+
+    /// The function-type site of method `j` of `iface`, written as a property at `at` in module
+    /// `module`, when it has no `throws` clause: its declaration, or (an interface of a module
+    /// without sites, std's) the first write, which is the same in every check. `None` with a
+    /// clause.
+    pub(crate) fn method_site(
+        &mut self,
+        iface: DefId,
+        j: usize,
+        at: Span,
+        module: usize,
+    ) -> Option<(Span, usize)> {
+        if let Some(&s) = self.method_writes.sites.get(&(iface, j)) {
+            return Some(s);
+        }
+        let info = self.iface(iface)?;
+        let m = info.methods.get(j)?;
+        if m.throws.is_some() {
+            return None;
+        }
+        let (decl, home) = (m.span, info.module);
+        let user = self.scopes.get(home).is_some_and(|s| !s.is_std);
+        let site = match user {
+            true => (decl, home),
+            false => (at, module),
+        };
+        self.method_writes.sites.insert((iface, j), site);
+        Some(site)
+    }
+
+    /// The function type of method `j` of `iface` (at `args`) written as a property at `at` in
+    /// module `module`: what its setter takes. Without a `throws` clause it is the method's
+    /// function-type site ([`Self::method_site`]), whose errors are inferred from what the
+    /// program assigns to it (`throws/fn_types.rs` `method_site_ty`).
+    pub(crate) fn method_site_fn_ty(
+        &mut self,
+        iface: DefId,
+        args: &[TyId],
+        j: usize,
+        (at, module): (Span, usize),
+    ) -> Option<TyId> {
+        let Some((span, home)) = self.method_site(iface, j, at, module) else {
+            return self.method_fn_ty(iface, args, j);
+        };
+        let m = self.iface(iface)?.methods.get(j)?.clone();
+        let params: Vec<TyId> = m.params.iter().map(|p| self.subst(p.ty, args)).collect();
+        let ret = self.subst(m.ret, args);
+        match self.method_site_ty(params, ret, span, home) {
+            Some(t) => Some(t),
+            None => self.method_fn_ty(iface, args, j),
+        }
+    }
+
+    /// The site span of method `j` of `iface` ([`Self::method_site`]), once written.
+    pub(crate) fn method_site_span(&self, iface: DefId, j: usize) -> Option<Span> {
+        self.method_writes.sites.get(&(iface, j)).map(|s| s.0)
     }
 
     /// Implementation `index` is an adapter of parts `p`: its method setters write the wrapped

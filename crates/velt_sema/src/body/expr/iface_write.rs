@@ -81,8 +81,14 @@ impl FnCx<'_, '_> {
     }
 
     /// The method member `name` that values of type `t` (an interface value) may be assigned
-    /// as a property (`crate::iface_method_writes`): not a getter, setter or generic method.
-    pub(crate) fn iface_method_member_of(&mut self, t: TyId, name: &str) -> Option<IfaceField> {
+    /// as a property (`crate::iface_method_writes`) at `at`: not a getter, setter or generic
+    /// method. Its type is the method's function-type site when it has no `throws` clause.
+    pub(crate) fn iface_method_member_of(
+        &mut self,
+        t: TyId,
+        name: &str,
+        at: Span,
+    ) -> Option<IfaceField> {
         let TyKind::Dyn(d, args) = self.cx.ty.kind(t).clone() else {
             return None;
         };
@@ -93,7 +99,7 @@ impl FnCx<'_, '_> {
                 && m.generics.names.is_empty()
                 && !m.name.starts_with("set ")
         })?;
-        let ty = self.cx.method_fn_ty(d, &args, j)?;
+        let ty = self.cx.method_site_fn_ty(d, &args, j, (at, self.module))?;
         Some(IfaceField {
             iface: d,
             args,
@@ -110,7 +116,7 @@ impl FnCx<'_, '_> {
     pub(super) fn iface_write_target(&mut self, t: TyId, prop: &ast::Ident) -> Option<bool> {
         let Some(f) = self.iface_field_of(t, &prop.name) else {
             // A method member written as a property: its implementations get method setters.
-            let m = self.iface_method_member_of(t, &prop.name)?;
+            let m = self.iface_method_member_of(t, &prop.name, prop.span)?;
             return Some(self.cx.mark_method_written(m.iface, m.index, prop.span));
         };
         if f.readonly {
@@ -197,7 +203,20 @@ impl FnCx<'_, '_> {
             rest: false,
             defaults: vec![],
         };
+        // A method written as a property stores the value into its function-type site
+        // (`throws/fn_flows.rs` `stored_into`): what it throws joins the method's errors.
+        let site = match f.method {
+            true => self.cx.method_site_span(f.iface, f.index),
+            false => None,
+        };
+        let outer = site.map(|s| self.set_target(Some(s)));
         let ck = self.check_call(&c, vec![], std::slice::from_ref(arg), None, span);
+        if let Some(outer) = outer {
+            self.set_target(outer);
+            if let Some(v) = ck.args.first() {
+                self.flow_into(v, site);
+            }
+        }
         let recv = self.receiver(recv, None, PassMode::BorrowMut, false);
         let mut args = vec![recv];
         args.extend(ck.args);
