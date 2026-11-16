@@ -25,11 +25,16 @@
 mod compile;
 mod key;
 mod no_inline;
+mod prebuilt;
+mod prebuilt_object;
 mod select;
 mod serve;
 pub(super) mod stage;
 mod statics;
 mod turn;
+
+pub(super) use prebuilt::{found as prebuilt_found, link as prebuilt_link};
+pub(crate) use prebuilt::{warm as prebuilt_warm, Finder, Found};
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -175,7 +180,12 @@ impl Place {
 
     /// Link (or copy) the cached file `from` in as object `n`.
     fn put(&self, n: usize, from: &std::path::Path) -> Result<PathBuf, String> {
-        let to = self.dir.join(format!("{n}.{}", self.ext));
+        self.put_named(&n.to_string(), from)
+    }
+
+    /// Link (or copy) the cached file `from` in as object `name`.
+    fn put_named(&self, name: &str, from: &std::path::Path) -> Result<PathBuf, String> {
+        let to = self.dir.join(format!("{name}.{}", self.ext));
         let placed = std::fs::create_dir_all(&self.dir).and_then(|()| {
             std::fs::hard_link(from, &to).or_else(|_| std::fs::copy(from, &to).map(drop))
         });

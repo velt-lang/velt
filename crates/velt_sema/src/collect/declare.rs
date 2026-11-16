@@ -237,6 +237,20 @@ pub(super) fn new_def<'m>(
                     s.name.span,
                 );
             }
+            // A prebuilt hook's entry point: a build that links its object declares it itself, typed
+            // from the table (velt_common `std_hooks/prebuilt.rs`); another declaration would clash.
+            if s.name
+                .name
+                .starts_with(velt_common::std_hooks::prebuilt::PREFIX)
+            {
+                cx.err(
+                    format!(
+                        "`{}` is the entry point of a prebuilt std hook: no module may declare it",
+                        s.name.name
+                    ),
+                    s.name.span,
+                );
+            }
             let mut info = fn_placeholder(
                 s.name.name.clone(),
                 s.name.span,

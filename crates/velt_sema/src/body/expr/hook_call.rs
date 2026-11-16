@@ -4,7 +4,9 @@
 //! then an ordinary call of the hook's definition, checked against its declaration: the result is
 //! a plain call, so lowering knows nothing of it. A prelude method can so reach code that is
 //! loaded only by the programs that call the method (#2198); `@hook` (#2203 step 3) can replace
-//! it without a change of behaviour.
+//! it without a change of behaviour. A prebuilt hook (velt_common `std_hooks/prebuilt.rs`) whose
+//! module's object the build links is a call of a declared function instead, as a runtime extern
+//! is: its module is not loaded.
 
 use velt_common::hook_sig::Sig;
 use velt_common::std_hooks::HOOKS;
@@ -47,6 +49,11 @@ impl FnCx<'_, '_> {
         // Not loaded: the live walk loads it once live code calls it (`lazy_std/hook_stubs.rs`).
         let loaded = crate::collect::exports::std_module(self.cx, &h.module()).is_some();
         if !loaded {
+            // Prebuilt, its module's object linked: a call of the declared function, the module
+            // never loaded (`lazy_std/hook_stubs.rs` `declared`).
+            if let Some(d) = crate::body::lazy_std::declared_hook(self.cx, index, self.module) {
+                return self.fn_call(d, &name, type_args, rest, exp, span);
+            }
             if let Some(stub) =
                 crate::body::lazy_std::hook_stub(self.cx, index, self.module, first.span)
             {

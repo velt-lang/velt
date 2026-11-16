@@ -106,13 +106,20 @@ fn check_without_generators(
 ) -> Option<hir::Program> {
     let t = Instant::now();
     let has_more = more.is_some();
+    let finder = more.as_ref().and_then(|m| m.prebuilt);
+    let linked = |hook: usize| finder.is_some_and(|f| f.linked(hook));
+    let prebuilt = finder.map(|_| &linked as &velt_sema::PrebuiltFn);
     let shared = std::sync::Mutex::new((&mut *sess, more));
     let serve = |demanded: &[String]| {
         let mut guard = shared.lock().ok()?;
         let (sess, more) = &mut *guard;
         Some(more.as_mut()?.serve(sess, demanded))
     };
-    let loads = has_more.then_some(velt_sema::Loads { run: &serve, kept });
+    let loads = has_more.then_some(velt_sema::Loads {
+        run: &serve,
+        kept,
+        prebuilt,
+    });
     let (out, diags) =
         velt_sema::check_generating(modules, root, opts, &GenInput::default(), &[], None, loads);
     let (sess, _) = shared.into_inner().ok()?;
@@ -178,13 +185,20 @@ fn check_offered(
     };
     let t = Instant::now();
     let has_more = more.is_some();
+    let finder = more.as_ref().and_then(|m| m.prebuilt);
+    let linked = |hook: usize| finder.is_some_and(|f| f.linked(hook));
+    let prebuilt = finder.map(|_| &linked as &velt_sema::PrebuiltFn);
     let shared = std::sync::Mutex::new((&mut *sess, more));
     let serve = |demanded: &[String]| {
         let mut guard = shared.lock().ok()?;
         let (sess, more) = &mut *guard;
         Some(more.as_mut()?.serve(sess, demanded))
     };
-    let loads = has_more.then_some(velt_sema::Loads { run: &serve, kept });
+    let loads = has_more.then_some(velt_sema::Loads {
+        run: &serve,
+        kept,
+        prebuilt,
+    });
     let keep = shared.lock().ok()?.0.keep_check;
     let ((out, diags), pending) = match keep {
         true => velt_sema::check_generating_kept(all, root, opts, &input, given, None, loads),
@@ -246,6 +260,9 @@ fn rounds(
     (more, kept): MoreStd,
 ) -> Option<hir::Program> {
     let has_more = more.is_some();
+    let finder = more.as_ref().and_then(|m| m.prebuilt);
+    let linked = |hook: usize| finder.is_some_and(|f| f.linked(hook));
+    let prebuilt = finder.map(|_| &linked as &velt_sema::PrebuiltFn);
     let keep = sess.keep_check;
     let mut owned: Option<Vec<SourceModule>> = None;
     for round in 1..=MAX_ROUNDS + 1 {
@@ -269,7 +286,11 @@ fn rounds(
             let (sess, _, _, more) = &mut *guard;
             Some(more.as_mut()?.serve(sess, demanded))
         };
-        let loads = has_more.then_some(velt_sema::Loads { run: &serve, kept });
+        let loads = has_more.then_some(velt_sema::Loads {
+            run: &serve,
+            kept,
+            prebuilt,
+        });
         // The first check of the program's own modules, with nothing generated yet, can be
         // kept (`velt_sema::kept`).
         let keep = keep && round == 1 && sources.is_empty();

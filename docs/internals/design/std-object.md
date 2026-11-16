@@ -263,6 +263,41 @@ a build by reason):
   specializes them for the closure their caller passes and inlines it; compiled on their own,
   `Array.map` and `Map.upsert` ran 3-6% slower.
 
+### Prebuilt hook modules
+
+The objects above replace codegen only: sema, lowering and velt_opt of a served function still run
+in every build. For std code that replaces runtime Rust (#2196) that is most of the cost (#3039:
+one `toPrecision` call, +21.8% release build). So an on-demand hook module whose `prebuilt` hooks
+(velt_common `std_hooks/prebuilt.rs`) take and return only numbers and strings is compiled once,
+with everything it reaches, into one object (`std_cache/prebuilt.rs`, `prebuilt_object.rs`; kind
+`stdhook`):
+
+- **Front end skipped.** When a check meets a `hookCall` of such a hook and the cache holds its
+  module's object, sema types the call against a `declare function` named `velt_hook_<entry>`
+  (`lazy_std/hook_stubs.rs` `declared`), as it typed the `velt_rt_*` extern the hook replaced; the
+  module is never loaded, checked, lowered or optimized, and the link adds the object. Without the
+  object the build loads the module as for any hook: no output depends on the cache.
+- **No program facts.** Numbers cross by value; a `&string` as the address of the caller's string,
+  borrowed; a `string` result through a trailing out-pointer the callee fills (the runtime string
+  externs' convention). Nothing a program decides (counted types, the layout of `u8[]`,
+  `noalias`/`readonly`/`frozen`) reaches the object's code, which is compiled in a world of its own:
+  a root in the std root calling each hook once, everything internal but the entry points. Its key
+  names the compiler, LLVM's optimization flag, the target, the CPU (the default one for debug
+  builds, which link the same optimized object, #2528), the std root and the module; a manifest
+  under it lists the std files the world loaded (hash, size, time), which a build checks, and which
+  go into the program's build stamp. Refused: an entry not lowered as the convention says, and code
+  sharing state with the program (module state, thread-local values, static atomics such as the
+  process statics, named statics).
+- **Pinned.** Once sema has called the entry points the build must link the object, so a build
+  that links hard-links (or copies) the object it finds into a temporary directory it holds until
+  it is done: another build's garbage collection or `velt clean --cache` before the link can't fail
+  it. An object it can't pin is a miss.
+- **Filled** by `velt cache warm`, which compiles every prebuilt module's object directly (for the
+  default CPU and for `--cpu native`), whether a warm-up program calls its hooks or not; by a
+  warm-up build (`VELT_STD_OBJECT_FILL`) or `VELT_PREBUILT_HOOKS=fill` after a build that missed.
+  `VELT_PREBUILT_HOOKS=0` turns it off. WebAssembly links no objects and loads the module. `velt
+  check` looks the object up as a debug build would.
+
 ## What stays in the program, and what goes to the object
 
 | Std function | Where its code is | Why |

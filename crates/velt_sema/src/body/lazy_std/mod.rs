@@ -38,7 +38,7 @@ mod record_conversions;
 
 use record_conversions::holds_string_record;
 
-pub(crate) use hook_stubs::stub as hook_stub;
+pub(crate) use hook_stubs::{declared as declared_hook, stub as hook_stub};
 
 pub(crate) use live::{
     assume, demanded as hooks_demanded, finish as finish_live, live_defs, reach_again, too_late,

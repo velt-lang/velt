@@ -133,6 +133,15 @@ hooks! {
     float_push => lang_hooks_number_float, "floatPush", sig((&mut string, f64) -> void), lowered, fallback,
         replaces("velt_rt_strbuf_push_f64"), bench("float_to_string");
 
+    // prebuilt_probe.velt: the test of prebuilt hook modules (`prebuilt`), nothing else: no std
+    // code calls them; veltc's test `prebuilt_hooks.rs` calls them by role from a std of its own.
+    /// The first `digits` digits of `x`'s whole part (`|x|` below 2^53), from an `u8[]`.
+    prebuilt_probe_text => lang_hooks_prebuilt_probe, "probeText", sig((f64, i64) -> string),
+        prebuilt;
+    /// The decimal digits of `s` from byte `start` to `end`, as a number.
+    prebuilt_probe_value => lang_hooks_prebuilt_probe, "probeValue",
+        sig((&string, usize, usize) -> f64), prebuilt;
+
     // process_statics.velt: the process-wide statics the runtime reads (#2779), whose addresses
     // `velt_main` hands it first thing (`velt_rt_statics`).
     /// The epoch of the runtime's cache of the last position translation (`velt_rt`
@@ -673,6 +682,7 @@ pub use scheduler::{std_scheduler, SCHEDULER_ENV, SCHED_EXTERNS, SCHED_UNREF_DUE
 mod lookup;
 pub use lookup::{find, is_lowered};
 mod on_demand;
+pub mod prebuilt;
 pub use on_demand::{
     on_demand, INSPECT_SHAPES, ON_DEMAND_FLOAT, ON_DEMAND_MODULES, ON_DEMAND_WRITE,
 };

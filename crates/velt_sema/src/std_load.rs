@@ -96,11 +96,20 @@ impl Default for StdLoads {
     }
 }
 
+/// Whether the build links the object of a prebuilt hook's module (velt_common
+/// `std_hooks/prebuilt.rs`), by the hook's index in `HOOKS`: then a `hookCall` of it is a call
+/// of the declared function `prebuilt::symbol`, and its module is not loaded. Called on sema's
+/// thread when a check first meets a `hookCall` of such a hook whose module isn't loaded; the
+/// driver answers the same for every check of one program.
+pub type PrebuiltFn<'a> = dyn Fn(usize) -> bool + Sync + 'a;
+
 /// How a check loads what it demands: the driver's callback, and what it served so far.
 #[derive(Clone, Copy)]
 pub struct Loads<'a> {
     pub run: &'a LoadFn<'a>,
     pub kept: &'a StdLoads,
+    /// Which prebuilt hooks the build calls in their objects (`None`: none).
+    pub prebuilt: Option<&'a PrebuiltFn<'a>>,
 }
 
 impl<'a> Loads<'a> {
