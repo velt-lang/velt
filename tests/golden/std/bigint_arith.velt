@@ -30,6 +30,18 @@ function main() {
       show("%", a.rem(b));
     }
   }
+  // A borrow run through a limb that is equal on both sides: out of place, in place, and into
+  // the other operand (`q - p` changes `q`'s magnitude to `p`'s less it).
+  const p = pow2(128).add(pow2(64).mulInt(7));
+  const q = pow2(64).mulInt(7).addInt(1);
+  show("p-q", p.sub(q));
+  const inPlace = p.clone();
+  inPlace.subAssign(q);
+  show("p-=q", inPlace);
+  const into = q.clone();
+  into.subAssign(p);
+  show("q-=p", into);
+  show("p+-q", p.add(q.neg()));
   // Every sign of a truncating division and its remainder.
   for (const x of [7, -7, 6, -6] as i64[]) {
     for (const y of [2, -2, 3, -3, 7, -7, 8] as i64[]) {

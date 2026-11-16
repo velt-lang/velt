@@ -41,6 +41,16 @@ function main() {
       console.log(e.message);
     }
   }
+  // A digit outside the radix, in the first chunk, a later one, and a power-of-two radix.
+  const texts = ["7", "123456789012345678901234567890129", "12g", "1021", "fF", "zz"];
+  const radices: i64[] = [4, 9, 16, 2, 16, 35];
+  for (let i = 0; i < texts.length; i++) {
+    try {
+      console.log(BigInt.parse(texts[i], radices[i]).toString());
+    } catch (e) {
+      console.log(e.message);
+    }
+  }
   // Numbers: exact, rounded half to even, and past the range of a double.
   for (const k of [52, 53, 54, 64, 100, 1023, 1024] as i64[]) {
     const p = pow2(k);

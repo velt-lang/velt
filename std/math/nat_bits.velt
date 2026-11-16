@@ -3,7 +3,7 @@
 // from `f64`.
 
 import { natTrim, natUnfilled } from "velt/math/nat_add";
-import { limbsAt, limbsIn, shlAt, shrAt, stl, zeroLimbsAt } from "velt/math/nat_mem";
+import { shlRow, shrRow, zeroRow } from "#nat-rows";
 
 /** The number of significant bits of `a`. */
 export function natBits(a: u64[]): u64 {
@@ -34,9 +34,8 @@ export function natShl(a: u64[], s: u64): u64[] {
   }
   const words = (s >> 6) as usize;
   const out = natUnfilled(n + words + 1);
-  const o = limbsAt(out);
-  zeroLimbsAt(o, words);
-  stl(o, n + words, shlAt(o + 8 * words, limbsIn(a), n, s & 63));
+  zeroRow(out, 0, words);
+  out[n + words] = shlRow(out, words, a, 0, n, s & 63);
   natTrim(out);
   return out;
 }
@@ -50,7 +49,7 @@ export function natShr(a: u64[], s: u64): u64[] {
   }
   const w = words as usize;
   const out = natUnfilled(n - w);
-  shrAt(limbsAt(out), limbsIn(a) + 8 * w, n - w, s & 63, 0);
+  shrRow(out, 0, a, w, n - w, s & 63, 0);
   natTrim(out);
   return out;
 }

@@ -279,3 +279,27 @@ export function zeroLimbsAt(o: usize, n: usize) {
     stl(o, i, 0);
   }
 }
+
+/**
+ * `o[2 i..2 i + 2] += a[i]^2` at addresses for each `i` below `n`, the carry run from each pair to
+ * the next (the diagonal of a square, `o` of `2 n` limbs); returns the carry out of the top.
+ */
+export function addSquaresAt(o: usize, a: usize, n: usize): u64 {
+  let carry: u64 = 0;
+  for (let i: usize = 0; i < n; i++) {
+    const x = ldl(a, i);
+    const lo = x * x;
+    const hi = Math.umulh(x, x);
+    const y0 = ldl(o, 2 * i);
+    const s0 = y0 + lo;
+    const t0 = s0 + carry;
+    stl(o, 2 * i, t0);
+    const c0 = ((s0 < y0) as u64) + ((t0 < s0) as u64);
+    const y1 = ldl(o, 2 * i + 1);
+    const s1 = y1 + hi;
+    const t1 = s1 + c0;
+    stl(o, 2 * i + 1, t1);
+    carry = ((s1 < y1) as u64) + ((t1 < s1) as u64);
+  }
+  return carry;
+}

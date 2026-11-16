@@ -19,6 +19,12 @@ Cannot convert - to a BigInt
 Cannot convert 1 2 to a BigInt
 Cannot convert 0x10 to a BigInt
 Cannot convert 1_000 to a BigInt
+Cannot convert 7 to a BigInt
+Cannot convert 123456789012345678901234567890129 to a BigInt
+Cannot convert 12g to a BigInt
+Cannot convert 1021 to a BigInt
+255
+Cannot convert zz to a BigInt
 52 4503599627370496 4503599627370497 -4503599627370495
 53 9007199254740992 9007199254740992 -9007199254740991
 54 18014398509481984 18014398509481984 -18014398509481984

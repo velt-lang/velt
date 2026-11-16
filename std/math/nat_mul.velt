@@ -3,17 +3,7 @@
 // into one widening multiply. Schoolbook below `KARATSUBA_LIMBS` limbs, Karatsuba above, and a
 // long operand times a short one in chunks of the short one's length.
 
-import {
-  addMulRowAt,
-  copyLimbsAt,
-  doubleAt,
-  ldl,
-  limbsAt,
-  limbsCheck,
-  limbsIn,
-  mulWordAt,
-  stl,
-} from "velt/math/nat_mem";
+import { copyRow, mulRows, mulWordRow, squareRows } from "#nat-rows";
 import { natAddAt, natAddInto, natSlice, natSubAt, natTrim, natZeros } from "velt/math/nat_add";
 
 /** Below this many limbs in the shorter operand, schoolbook beats Karatsuba (measured). */
@@ -25,8 +15,7 @@ export function natMulWordInto(a: u64[], k: u64) {
     a.truncate(0);
     return;
   }
-  const ap = limbsAt(a);
-  const carry = mulWordAt(ap, ap, a.length, k);
+  const carry = mulWordRow(a, k);
   if (carry != 0) {
     a.push(carry);
   }
@@ -58,15 +47,7 @@ function mulOrdered(a: u64[], b: u64[]): u64[] {
 
 // `out += a * b` (`out` has room for `a.length + b.length` limbs and is zero above `a.length`).
 function schoolbook(out: u64[], a: u64[], b: u64[]) {
-  const n = a.length;
-  const m = b.length;
-  limbsCheck(out, 0, n + m);
-  const o = limbsAt(out);
-  const ap = limbsIn(a);
-  const bp = limbsIn(b);
-  for (let j: usize = 0; j < m; j++) {
-    stl(o, j + n, addMulRowAt(o + 8 * j, ap, n, ldl(bp, j)));
-  }
+  mulRows(out, a, b);
 }
 
 // `a * b` for `b` at most half as long as `a`: `a` in chunks of `b`'s length.
@@ -128,30 +109,7 @@ export function natSquare(a: u64[]): u64[] {
     return karatsubaSquare(a);
   }
   const out = natZeros(2 * n);
-  const o = limbsAt(out);
-  const ap = limbsIn(a);
-  // The products above the diagonal, once, then doubled: row `i` is `a[i + 1..n] * a[i]` at
-  // limb `2 i + 1`, its carry the limb `i + n` (each below `2 n`).
-  for (let i: usize = 0; i + 1 < n; i++) {
-    stl(o, i + n, addMulRowAt(o + 8 * (2 * i + 1), ap + 8 * (i + 1), n - i - 1, ldl(ap, i)));
-  }
-  doubleAt(o, 2 * n);
-  let carry: u64 = 0;
-  for (let i: usize = 0; i < n; i++) {
-    const x = ldl(ap, i);
-    const lo = x * x;
-    const hi = Math.umulh(x, x);
-    const y0 = ldl(o, 2 * i);
-    const s0 = y0 + lo;
-    const t0 = s0 + carry;
-    stl(o, 2 * i, t0);
-    const c0 = ((s0 < y0) as u64) + ((t0 < s0) as u64);
-    const y1 = ldl(o, 2 * i + 1);
-    const s1 = y1 + hi;
-    const t1 = s1 + c0;
-    stl(o, 2 * i + 1, t1);
-    carry = ((s1 < y1) as u64) + ((t1 < s1) as u64);
-  }
+  squareRows(out, a);
   natTrim(out);
   return out;
 }
@@ -179,7 +137,5 @@ function karatsubaSquare(a: u64[]): u64[] {
 
 // `out[at..] = x` (those limbs of `out` are zero).
 function copyAt(out: u64[], at: usize, x: u64[]) {
-  const m = x.length;
-  limbsCheck(out, at, m);
-  copyLimbsAt(limbsAt(out) + 8 * at, limbsIn(x), m);
+  copyRow(out, at, x, 0, x.length);
 }
