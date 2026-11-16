@@ -764,7 +764,7 @@ pub(crate) use {enums, structs, tuples};
 
 pub(crate) use ast_refs::Arena;
 #[allow(unused_imports)] // Until the unit is saved (#2943 M2).
-pub(crate) use unit::{decode_unit, encode_unit};
+pub(crate) use unit::{decode_unit, encode_unit, encode_unit_sized};
 
 impl Reader<'_> {
     /// Mark the value damaged (the macros' unknown tag).

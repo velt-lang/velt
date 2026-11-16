@@ -300,8 +300,15 @@ pub(crate) fn round_trip(cx: Ctx<'_>) -> Ctx<'_> {
         return cx;
     }
     let t = std::time::Instant::now();
-    let bytes = codec::encode_unit(&cx);
+    let (bytes, sizes) = codec::encode_unit_sized(&cx);
     let encoded = t.elapsed();
+    if std::env::var_os("VELT_UNITS_ROUNDTRIP").is_some_and(|v| v == "sizes") {
+        let mut sizes = sizes;
+        sizes.sort_by_key(|s| std::cmp::Reverse(s.1));
+        for (field, n) in sizes.iter().take(25) {
+            eprintln!("velt-units: {n:>9} bytes  {field}");
+        }
+    }
     let arena: &'static codec::Arena = Box::leak(Box::default());
     let t = std::time::Instant::now();
     // SAFETY: the arena is leaked, so it outlives the context.
