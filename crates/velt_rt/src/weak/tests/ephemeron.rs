@@ -40,8 +40,7 @@ fn raw_and_proxy_are_both_freed() {
     in_every_order(2, |m| {
         let raw = new_obj(&[]);
         let p = proxy_of(m, raw, std::ptr::null_mut());
-        // The value is traced on its key's first decrement, not at insert.
-        assert!(is_marked(raw) && !is_marked(p));
+        assert!(is_marked(raw) && is_marked(p));
         vec![raw, p]
     });
 }
@@ -257,66 +256,22 @@ fn a_path_added_after_insert_is_found_by_the_next_trial() {
 
 #[test]
 fn a_path_added_after_the_last_trial_delays_the_free() {
-    // The gap: references to the key that a value gains after the last trial or examination
-    // through it raise the key's count above what the table knows, so dropping the outside
-    // reference runs no trial and the pair is kept (a leak, never a use-after-free). It is freed
-    // once the extra reference goes (that release runs the trial), or with the entry or the map.
+    // The gap: references to the key that a value gains after the last trial through it raise
+    // the key's count above what the table knows, so dropping the outside reference runs no
+    // trial and the pair is kept (a leak, never a use-after-free). It is freed once the extra
+    // reference goes (that release runs the trial), or with the entry or the map.
     no_leak(|| {
         let m = obj_map();
         let raw = new_obj(&[]);
         release(proxy_of(m, raw, std::ptr::null_mut()));
-        release(retain(raw)); // the key's first decrement: the entry is examined
         let p = get(m, raw).expect("the key is held");
         release(p); // the entry keeps it
-        assert!(is_marked(p), "on the path back to the key");
         set_field(p, 2, retain(raw));
         let before = live();
         release(raw);
         assert_eq!(live(), before, "kept while the extra path exists");
         set_field(p, 2, std::ptr::null_mut());
         assert_eq!(live(), before - 2);
-        finish(&[m]);
-    });
-}
-
-#[test]
-fn a_path_added_before_the_first_decrement_is_found() {
-    // The entry is examined on its key's first decrement, so a path the value gains before
-    // then counts like one it had at insert.
-    no_leak(|| {
-        let m = obj_map();
-        let raw = new_obj(&[]);
-        release(proxy_of(m, raw, std::ptr::null_mut()));
-        let p = get(m, raw).expect("the key is held");
-        release(p);
-        assert!(!is_marked(p), "not traced yet");
-        set_field(p, 2, retain(raw));
-        let before = live();
-        release(raw);
-        assert_eq!(live(), before - 2, "both paths were counted");
-        assert_eq!(weakmap_len(m), 0);
-        finish(&[m]);
-    });
-}
-
-#[test]
-fn an_entry_that_is_no_cycle_is_never_traced() {
-    // A value that refers to other objects only: the key's last release frees it and deletes
-    // the entry without tracing the value (the common case: a handler over other objects).
-    no_leak(|| {
-        let m = obj_map();
-        let raw = new_obj(&[]);
-        let other = new_obj(&[]);
-        let v = new_obj(&[retain(other)]);
-        let traced = traced();
-        set(m, raw, v);
-        release(other);
-        assert!(!is_marked(v) && !is_marked(other));
-        let before = live();
-        release(raw);
-        assert_eq!(live(), before - 3, "the key, the value and what it held");
-        assert_eq!(super::traced(), traced, "nothing was traced");
-        assert_eq!(weakmap_len(m), 0);
         finish(&[m]);
     });
 }

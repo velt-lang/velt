@@ -24,13 +24,6 @@ const SIZE: u64 = 8 + std::mem::size_of::<Obj>() as u64;
 thread_local! {
     /// Test objects allocated and not yet freed on this thread.
     static LIVE: Cell<i64> = const { Cell::new(0) };
-    /// Calls of [`trace_obj`] on this thread.
-    static TRACED: Cell<u64> = const { Cell::new(0) };
-}
-
-/// Calls of [`trace_obj`] on this thread so far.
-pub(super) fn traced() -> u64 {
-    TRACED.with(Cell::get)
 }
 
 pub(super) fn live() -> i64 {
@@ -122,7 +115,6 @@ unsafe fn destroy(obj: *mut u8) {
 
 /// `Obj`'s trace glue.
 pub(super) unsafe extern "C" fn trace_obj(obj: *mut u8, visit: VisitFn, ctx: *mut c_void) {
-    TRACED.with(|t| t.set(t.get() + 1));
     for f in (*(obj as *mut Obj)).fields {
         if !f.is_null() {
             visit(ctx, f, Some(TraceFn(trace_obj)));
