@@ -1,0 +1,21 @@
+// velt/os (internal): the machine facts macOS and Linux read the same way, through the C library
+// (`#os-sys`' darwin and linux variants: sys_darwin.velt, sys_linux.velt).
+
+import { utf8DecodeLossy } from "velt/encoding/utf8";
+
+declare c("c") function gethostname(name: u8[], len: usize): i32;
+
+/** The longest host name POSIX promises room for (`HOST_NAME_MAX` is 255 on Linux and macOS). */
+const NAME_ROOM: usize = 256;
+
+/** The machine's host name, as `gethostname` gives it; "" if it fails. */
+export function hostname(): string {
+  const buf: u8[] = new Array<u8>(NAME_ROOM).fill(0);
+  // SAFETY: `buf` holds NAME_ROOM bytes, which is the length passed.
+  if (unsafe { gethostname(buf, NAME_ROOM) } !== 0) {
+    return "";
+  }
+  // A name that fills the buffer may come without its NUL: it ends at the buffer's end.
+  const end = buf.indexOf(0);
+  return utf8DecodeLossy(end < 0 ? buf : buf.slice(0, end));
+}

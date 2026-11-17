@@ -96,7 +96,6 @@ const RUNTIME_REACH: &[(&str, &str)] = &[
     ("child", "child processes"),
     ("env", "the environment"),
     ("process", "the environment"),
-    ("os", "the environment"),
     ("isatty", "the environment"),
     ("memory", "the environment"),
     ("worker", "the environment"),

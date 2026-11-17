@@ -1,0 +1,76 @@
+// velt/os (internal): the machine facts on Windows (`#os-sys`' win32 variant, std/imports.velt),
+// through Win32 and Winsock, as libuv reads them for Node.
+
+import { Out } from "velt/ffi/out";
+import { wideText } from "velt/ffi/wide";
+import { windowsTmpdir } from "./tmpdir";
+import { startWinsock } from "./winsock_win32";
+
+declare c("c") function GetCurrentProcess(): usize;
+declare c("c") function GetProcessAffinityMask(
+  process: usize,
+  processMask: Out<usize>,
+  systemMask: Out<usize>,
+): i32;
+declare c("c") function GetHostNameW(name: u16[], units: i32): i32;
+declare c("c") function GetWindowsDirectoryW(path: u16[], units: u32): u32;
+
+/** Node's `process.platform` name of Windows. */
+export const PLATFORM: string = "win32";
+
+/**
+ * Logical CPUs this process may use, at least 1: the CPUs of its affinity mask, as libuv's
+ * `uv_available_parallelism` counts them for Node's `os.availableParallelism()` (a mask covers
+ * one processor group, up to 64 CPUs).
+ */
+export function cpuCount(): i64 {
+  const process = new Out<usize>(0);
+  const system = new Out<usize>(0);
+  // SAFETY: the pseudo-handle of this process, which needs no closing, and room for both masks.
+  const ok = unsafe { GetProcessAffinityMask(GetCurrentProcess(), process, system) };
+  let n: i64 = 0;
+  if (ok !== 0) {
+    let mask = process.value;
+    while (mask !== 0) {
+      mask = mask & (mask - 1);
+      n++;
+    }
+  }
+  return n < 1 ? 1 : n;
+}
+
+/** Room for a host name, in UTF-16 code units (256 is what `GetHostNameW` documents). */
+const NAME_UNITS: usize = 256;
+
+/**
+ * The machine's host name, as Winsock's `GetHostNameW` gives it (Node's `os.hostname()`); ""
+ * if unknown. Winsock is started once per process (std/os/winsock_win32.velt).
+ */
+export function hostname(): string {
+  if (!startWinsock()) {
+    return "";
+  }
+  const buf: u16[] = new Array<u16>(NAME_UNITS).fill(0);
+  // SAFETY: room for NAME_UNITS code units, the count passed.
+  const r = unsafe { GetHostNameW(buf, NAME_UNITS as i32) };
+  return r === 0 ? wideText(buf) : "";
+}
+
+/** Room for a path, in UTF-16 code units (`MAX_PATH`). */
+const PATH_UNITS: usize = 260;
+
+/**
+ * The Windows directory (`C:\Windows`), as `GetWindowsDirectoryW` gives it; "C:\Windows" if it
+ * fails.
+ */
+function windowsDirectory(): string {
+  const buf: u16[] = new Array<u16>(PATH_UNITS).fill(0);
+  // SAFETY: room for PATH_UNITS code units, the count passed.
+  const n = unsafe { GetWindowsDirectoryW(buf, PATH_UNITS as u32) };
+  return n === 0 || n >= (PATH_UNITS as u32) ? "C:\\Windows" : wideText(buf);
+}
+
+/** The directory for temporary files, as Node's `os.tmpdir()` finds it. */
+export function tmpdir(): string {
+  return windowsTmpdir(windowsDirectory);
+}

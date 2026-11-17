@@ -10,7 +10,7 @@
 
 import { CVarArgs } from "velt/ffi/c_var_args";
 import { Ptr } from "velt/ffi/ptr";
-import { velt_rt_os_arch } from "velt/os/rt";
+import { ARCH } from "#os-arch";
 import * as m from "./sched_mem";
 
 // The headers' types (`velt native headers --std` checks this file:
@@ -108,7 +108,7 @@ export function open(): usize {
   m.st(r + R_EP, ep as usize);
   m.st(r + R_EVFD, evfd as usize);
   m.st(r + R_ONE, 1);
-  const packed = velt_rt_os_arch() === "x64";
+  const packed = ARCH === "x64";
   m.st(r + R_STRIDE, packed ? 12 : 16);
   m.st(r + R_DATA, packed ? 4 : 8);
   ctl(r, EPOLL_CTL_ADD, evfd, EPOLLIN | EPOLLET, 0);
@@ -272,7 +272,7 @@ declare c("c") function syscall(n: i64, ...args: CVarArgs): i64;
 
 /** The futex call's number on this architecture. */
 function futexNumber(): i64 {
-  return velt_rt_os_arch() === "arm64" ? 98 : 202;
+  return ARCH === "arm64" ? 98 : 202;
 }
 
 /**
@@ -315,7 +315,7 @@ declare c("c") function clock_gettime$io(clock: i32, ts: Ptr<timespec>): i32;
 
 /** The gettid call's number on this architecture. */
 function gettidNumber(): i64 {
-  return velt_rt_os_arch() === "arm64" ? 178 : 186;
+  return ARCH === "arm64" ? 178 : 186;
 }
 
 /**

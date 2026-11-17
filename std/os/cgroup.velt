@@ -1,0 +1,123 @@
+// velt/os (internal): the CPU quota of this process' cgroup on Linux, which caps
+// `availableParallelism()` as libuv's `uv_available_parallelism` caps Node's (sys_linux.velt).
+// cgroup v2: `cpu.max` ("<quota> <period>" or "max <period>") in the process' cgroup and each
+// ancestor up to the root, the smallest quota counting; cgroup v1: `cpu.cfs_quota_us` over
+// `cpu.cfs_period_us` of the `cpu` controller's cgroup, also on a hybrid system whose unified
+// hierarchy is empty. A quota under one CPU counts as 1.
+//
+// Where this differs from libuv (and so from Node), on purpose: Velt gives what the kernel
+// enforces. With nested v2 limits (a slice at 400% holding a scope at 200%), libuv returns the
+// outermost quota (Node 26 says 4, Velt 2). With a v1 quota under one CPU, libuv drops the cap
+// (every CPU), Velt says 1. Node 24's libuv also dropped the cap for a v2 quota under one CPU;
+// Node 26's gives 1, as Velt does.
+
+import { velt_rt_fs_read_file_sync } from "#fs-rt";
+
+/** The text of `path`, or null when it can't be read (it doesn't exist, most often). */
+function readOrNull(path: string): string | null {
+  const r = velt_rt_fs_read_file_sync(path);
+  return r.code === 0 ? r.value : null;
+}
+
+/** The text of `path`, or "" when it can't be read. */
+function read(path: string): string {
+  const text = readOrNull(path);
+  return text === null ? "" : text;
+}
+
+/** The integer `s` spells, spaces around it aside (digits, an optional leading "-"), or null. */
+function integer(s: string): i64 | null {
+  const t = s.trim();
+  const negative = t.startsWith("-");
+  const digits = negative ? t.slice(1) : t;
+  if (digits.length === 0 || digits.length > 18) {
+    return null;
+  }
+  let n: i64 = 0;
+  for (let i: i64 = 0; i < (digits.length as i64); i++) {
+    const c = digits.charCodeAt(i) as i64;
+    if (c < 48 || c > 57) {
+      return null;
+    }
+    n = n * 10 + (c - 48);
+  }
+  return negative ? -n : n;
+}
+
+/** A v2 `cpu.max`'s whole CPUs (at least 1), or 0 for "no limit" or a file that doesn't parse. */
+function v2Limit(text: string): i64 {
+  const parts = text.trim().split(" ");
+  if (parts.length !== 2 || parts[0] === "max") {
+    return 0;
+  }
+  const quota = integer(parts[0]);
+  const period = integer(parts[1]);
+  if (quota === null || period === null || quota <= 0 || period <= 0) {
+    return 0;
+  }
+  const cpus = quota / period;
+  return cpus < 1 ? 1 : cpus;
+}
+
+/**
+ * The v2 limit of the cgroup at `path` ("/a/b") and its ancestors: the smallest; 0 for none, -1
+ * when `path` is no v2 cgroup here (a hybrid system's empty unified hierarchy, whose
+ * `/sys/fs/cgroup` holds the v1 controllers).
+ */
+function v2Quota(path: string): i64 {
+  const root = "/sys/fs/cgroup";
+  // Not really a cgroup without its `cgroup.controllers` (libuv's test too).
+  if (readOrNull(`${root}${path === "/" ? "" : path}/cgroup.controllers`) === null) {
+    return -1;
+  }
+  let limit: i64 = 0;
+  let dir = path;
+  while (true) {
+    const here = v2Limit(read(`${root}${dir === "/" ? "" : dir}/cpu.max`));
+    if (here > 0 && (limit === 0 || here < limit)) {
+      limit = here;
+    }
+    if (dir === "/" || dir.length === 0) {
+      return limit;
+    }
+    const up = dir.lastIndexOf("/");
+    dir = up <= 0 ? "/" : dir.slice(0, up);
+  }
+}
+
+/** The v1 limit of the `cpu` controller's cgroup at `path`: whole CPUs (at least 1); 0 for none. */
+function v1Quota(path: string): i64 {
+  const dir = `/sys/fs/cgroup/cpu${path === "/" ? "" : path}`;
+  const quota = integer(read(`${dir}/cpu.cfs_quota_us`));
+  const period = integer(read(`${dir}/cpu.cfs_period_us`));
+  if (quota === null || period === null || quota <= 0 || period <= 0) {
+    return 0;
+  }
+  const cpus = quota / period;
+  return cpus < 1 ? 1 : cpus;
+}
+
+/**
+ * The whole CPUs this process' cgroup may use, or 0 when no quota limits it (or there is no
+ * cgroup to read: not Linux, no `/proc`).
+ */
+export function cpuQuota(): i64 {
+  const lines = read("/proc/self/cgroup").split("\n");
+  for (const line of lines) {
+    // "0::/path": the unified (v2) hierarchy, unless it is a hybrid system's empty one.
+    if (line.startsWith("0::")) {
+      const v2 = v2Quota(line.slice(3));
+      if (v2 >= 0) {
+        return v2;
+      }
+    }
+  }
+  for (const line of lines) {
+    // "4:cpu,cpuacct:/path": a v1 hierarchy; the one whose controllers include `cpu`.
+    const fields = line.split(":");
+    if (fields.length >= 3 && fields[1].split(",").includes("cpu")) {
+      return v1Quota(fields.slice(2).join(":"));
+    }
+  }
+  return 0;
+}

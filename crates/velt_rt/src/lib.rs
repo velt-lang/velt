@@ -49,7 +49,6 @@ pub mod memory_usage;
 pub mod mutex;
 pub mod native;
 pub mod net;
-pub mod os;
 pub mod panic;
 pub mod process;
 pub mod proxy_array;

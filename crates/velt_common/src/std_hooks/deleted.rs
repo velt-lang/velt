@@ -7,6 +7,13 @@
 /// replaced extern is defined by `velt_rt` unless it is listed here, and that one listed here is
 /// defined nowhere and named by no compiler source, runtime or std file.
 pub const DELETED: &[&str] = &[
+    // #2196: velt/os's facts (std/os/sys_*.velt over the C library and Win32, the build's
+    // `x64`/`arm64` condition for the architecture), which only std called.
+    "velt_rt_os_platform",
+    "velt_rt_os_arch",
+    "velt_rt_os_cpu_count",
+    "velt_rt_os_tmpdir",
+    "velt_rt_os_hostname",
     // #2197: integers as text (std/lang/hooks/number_text, velt/lang/number/integer).
     "velt_rt_str_from_i64",
     "velt_rt_str_from_u64",

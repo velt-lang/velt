@@ -4,9 +4,9 @@
 
 import { unwrapIo } from "velt/native/result";
 import { IoError } from "velt/io/error";
+import { isatty } from "velt/process/tty";
 import {
   lineOf,
-  velt_rt_isatty,
   velt_rt_stdin_read_all,
   velt_rt_stdin_read_all_bytes,
   velt_rt_stdin_read_all_bytes_sync,
@@ -19,7 +19,7 @@ import {
 export struct Stdin {
   /** Whether standard input is a terminal (Node's `process.stdin.isTTY`). Cached. */
   get isTTY(): bool {
-    return velt_rt_isatty(0);
+    return isatty(0);
   }
 }
 
