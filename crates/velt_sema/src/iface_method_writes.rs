@@ -63,6 +63,9 @@ pub(crate) struct MethodWrites {
     refusals: FxHashMap<(DefId, usize), Vec<String>>,
     /// The refusals were reported: a later one is reported at once.
     refusals_reported: bool,
+    /// (method site, object type, field, field type): fields storing a written method that are
+    /// not sites ([`Ctx::check_unlinked_fields`]).
+    unlinked: Vec<(Span, DefId, usize, TyId)>,
 }
 
 impl Ctx<'_> {
@@ -239,15 +242,64 @@ impl Ctx<'_> {
             };
             // The site of the function an object literal stored there (`body/expr/object.rs`), or
             // that of the field's written function type (`type H = { update: () => void }`).
-            let declared = (self.adt(s.d).and_then(|a| a.fields.get(s.index))).map(|f| f.ty);
+            let declared =
+                (self.adt(s.d).and_then(|a| a.fields.get(s.index))).map(|f| (f.span, f.declared));
             let f = (self.method_writes.field_sites.get(&(s.d, s.index)).copied())
-                .or_else(|| declared.and_then(|t| self.var_site(t)))
+                .or_else(|| declared.and_then(|(at, t)| self.decl_site(at, t)))
+                .or_else(|| declared.and_then(|(_, t)| self.var_site(t)))
                 .or_else(|| self.var_site(s.ty));
-            if let Some(f) = f.filter(|&f| f != m) {
-                self.site_flow(m, f);
-                self.site_flow(f, m);
+            match f {
+                Some(f) if f != m => {
+                    self.site_flow(m, f);
+                    self.site_flow(f, m);
+                }
+                Some(_) => {}
+                // A field whose function type has a `throws` clause (or is written in std): what
+                // is assigned must fit it ([`Self::check_unlinked_fields`]).
+                None => {
+                    let entry = (m, s.d, s.index, s.ty);
+                    if !self.method_writes.unlinked.contains(&entry) {
+                        self.method_writes.unlinked.push(entry);
+                    }
+                }
             }
         }
+    }
+
+    /// The fields storing a written method that are not sites: what the functions assigned to
+    /// the method throw must fit the field's function type, or the write is refused.
+    fn check_unlinked_fields(&mut self) {
+        let unlinked = std::mem::take(&mut self.method_writes.unlinked);
+        for &(m, d, index, fty) in &unlinked {
+            let crate::hir::TyKind::FnPtr { throws, .. } = *self.ty.kind(fty) else {
+                continue;
+            };
+            let thrown = self.site_errors(m);
+            let Some(bad) = self.error_outside(Some(throws), thrown) else {
+                continue;
+            };
+            let at = (self.method_writes.sites.iter())
+                .find(|(_, &(s, _))| s == m)
+                .and_then(|(key, _)| self.method_writes.methods.get(key).copied());
+            let Some(at) = at else {
+                continue;
+            };
+            let Some(a) = self.adt(d) else {
+                continue;
+            };
+            let owner = a.name.clone();
+            let field = (a.fields.get(index)).map_or(String::new(), |f| f.name.clone());
+            let (bad, fty) = (self.display(bad), self.display(fty));
+            self.error(
+                Diagnostic::error(
+                    format!("a function assigned to method `{field}` throws `{bad}`, which a field storing it does not allow"),
+                    at,
+                )
+                .with_note(format!("`{owner}` stores it in its field `{field}` of type `{fty}`"))
+                .with_note(format!("catch the error inside the assigned function, or add `{bad}` to that field's `throws`")),
+            );
+        }
+        self.method_writes.unlinked = unlinked;
     }
 
     /// The site span of method `j` of `iface` ([`Self::method_site`]), once written.
@@ -637,6 +689,7 @@ impl Ctx<'_> {
         for (iface, j) in written {
             self.link_method_sites(iface, j);
         }
+        self.check_unlinked_fields();
         self.report_refusals();
     }
 

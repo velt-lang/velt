@@ -336,6 +336,13 @@ impl Ctx<'_> {
         }
     }
 
+    /// What the functions stored into site `s` throw, once the bodies are checked: what a field
+    /// with its own `throws` clause must allow to store a written method
+    /// (`crate::iface_method_writes`).
+    pub(crate) fn site_errors(&mut self, s: Span) -> Option<TyId> {
+        self.site_set(s)
+    }
+
     /// What is stored into site `s`, as found so far.
     pub(super) fn site_set(&mut self, s: Span) -> Option<TyId> {
         if let Some(e) = self.fn_sites.indirect_sites.get(&s) {
