@@ -11,10 +11,10 @@ they run concurrently. With several workers (`workerCount()`: `VELT_THREADS`, el
 core) each connection is served on a task of its own, which gets the next worker in turn and
 stays there, as in thread-per-core servers, so a handler that computes for a long time holds
 back the other connections on its worker. A program with module state (a module-level `let`, or
-a module constant computed at startup) keeps its connections on one worker for now: its
-handlers would wait for each other on the process-wide lock that guards module state, and serve
-fewer requests than on one worker (until that lock is replaced, #2726); pass such state to the
-handler as a captured value to use every core. A listening server keeps the process alive after
+a module constant computed at startup) spreads its connections too, but its handlers that touch
+module state take the process-wide lock that guards it for each poll, so they wait for each
+other on it; pass such state to the handler as a captured value to use every core. A listening
+server keeps the process alive after
 `main` returns, like Node, until `server.close()`; dropping the `HttpServer` value does not stop
 it. A
 `main` that fails (an uncaught error, or a nonzero exit code) ends the process at once, servers

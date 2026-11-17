@@ -1,0 +1,56 @@
+// A program with module state spreads a server's connections over the workers too (#2726 (c)),
+// as connections_spread_over_workers.velt does without it: each connection is a task of its own,
+// pinned to the workers in turn. Its handlers touch module state, so each of their polls holds
+// the process-wide module lock: the connections wait for each other on it, but every request
+// still counts once in the module-level `let`.
+import { HttpRequest, HttpResponse, serveHttp } from "http-server";
+import { connect, listen, spreadsConnections, TcpStream } from "velt/net";
+import { currentWorker, workerCount } from "velt/task";
+
+// Module state: a module-level `let`, written by every handler.
+let served = 0;
+
+async function readAll(conn: TcpStream): Promise<string> {
+  let out = "";
+  while (true) {
+    const text = await conn.readString();
+    if (text == "") {
+      return out;
+    }
+    out += text;
+  }
+}
+
+// The bodies of the responses in `text`.
+function bodies(text: string): string[] {
+  return text
+    .split("HTTP/1.1 200 OK")
+    .slice(1)
+    .map((r: string): string => r.slice(r.indexOf("\r\n\r\n") + 4));
+}
+
+async function main() {
+  console.log(`spreads connections: ${spreadsConnections()}`);
+  const probe = await listen("127.0.0.1:0");
+  console.log(`a worker to spread over for each worker: ${probe.workers() == workerCount()}`);
+  probe.close();
+  const server = await serveHttp({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {
+    served++;
+    res.send(`${currentWorker()}`);
+  });
+  const n = workerCount();
+  const seen = new Set<string>();
+  for (let i: i64 = 0; i < n; i++) {
+    const c = await connect(`127.0.0.1:${server.port}`);
+    // Two requests, pipelined; the second closes the connection.
+    await c.write(
+      "GET /a HTTP/1.1\r\nHost: x\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+    );
+    const b = bodies(await readAll(c));
+    c.close();
+    seen.add(b[0]);
+  }
+  console.log(`every worker served a connection: ${seen.size == (n as number)}`);
+  console.log(`every request counted: ${served == 2 * n}`);
+  await server.shutdown();
+}
