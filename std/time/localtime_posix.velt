@@ -1,0 +1,69 @@
+// velt/time (internal): the local time zone's offset on macOS and Linux (`#localtime`'s native
+// variant, std/imports.velt): the C library's `localtime_r`, which reads `TZ` and the system zone
+// (and keeps them, as the C library does), and its `tm_gmtoff`.
+
+import { Ptr } from "velt/ffi/ptr";
+import { addressLoad, addressStore } from "velt/lang/intrinsics";
+
+/** C's `struct tm`. */
+declare c type tm;
+
+declare c("c") function localtime_r(time: Ptr<i64>, result: Ptr<tm>): Ptr<tm> | null;
+declare c("c") function calloc$time(n: usize, size: usize): Ptr<u8> | null;
+
+/** Where the `time_t` is in a thread's buffer (`BUFFER`), and its `struct tm` after it. */
+const TIME_AT: usize = 0;
+const TM_AT: usize = 8;
+
+/** A thread's buffer: the `time_t` and room for a `struct tm` (56 bytes on all of them). */
+const BUFFER_BYTES: usize = 72;
+
+/** Where `tm_gmtoff` (a `long`) is: after nine `int`s and their padding, on all of them. */
+const TM_GMTOFF: usize = 40;
+
+/**
+ * This thread's buffer for `localtime_r` (0 before its first use): from the C library, kept for
+ * the thread's life, so a `Date` getter allocates nothing (`getHours()` asks for the offset on
+ * every call).
+ */
+const BUFFER = new ThreadLocal<u64>(0);
+
+/** This thread's buffer, made on first use; 0 when the C library has no memory. */
+function buffer(): usize {
+  let p = BUFFER.get() as usize;
+  if (p === 0) {
+    // SAFETY: calloc has no precondition; its result is checked.
+    const block = unsafe { calloc$time(1, BUFFER_BYTES) };
+    if (block === null) {
+      return 0;
+    }
+    p = Ptr.addressOf(block);
+    BUFFER.set(p as u64);
+  }
+  return p;
+}
+
+/**
+ * Minutes added to UTC to get local time at `epochMs` (milliseconds since the Unix epoch); 0
+ * when the C library can't say (a time outside its range).
+ */
+export function localOffsetMinutes(epochMs: i64): i32 {
+  const p = buffer();
+  if (p === 0) {
+    return 0;
+  }
+  const secs: i64 = epochMs >= 0 ? epochMs / 1000 : -((999 - epochMs) / 1000);
+  // SAFETY: the `time_t` of this thread's buffer.
+  unsafe {
+    addressStore<i64>(p + TIME_AT, secs);
+  }
+  // SAFETY: this thread's buffer holds the `time_t` and room for the `struct tm`.
+  const time = unsafe { Ptr.at<i64>(p + TIME_AT) };
+  // SAFETY: as above.
+  const tmAt = unsafe { Ptr.at<tm>(p + TM_AT) };
+  // SAFETY: both point into this thread's buffer, which only this call uses.
+  const result = unsafe { localtime_r(time, tmAt) };
+  // SAFETY: inside the buffer; localtime_r filled the `struct tm` when it returned non-NULL.
+  const offset = result === null ? 0 : unsafe { addressLoad<i64>(p + TM_AT + TM_GMTOFF) };
+  return (offset / 60) as i32;
+}

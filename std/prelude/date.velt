@@ -14,9 +14,9 @@ import { DateParts, partsOf, epochMsOf, monthShort, weekdayShort } from "velt/ti
 import { pad, offsetString, isoString, httpString } from "velt/time/format";
 import { parseIso, parseHttp } from "velt/time/parse";
 import { INSPECT } from "velt/lang/hooks/keys";
+import { localOffsetMinutes } from "#localtime";
 
 declare function velt_rt_date_now(): i64;
-declare function velt_rt_local_offset_minutes(epochMs: i64): i32;
 
 // The largest distance from the epoch a JS date can be (100,000,000 days).
 const MAX_TIME: f64 = 8640000000000000.0;
@@ -205,7 +205,8 @@ export class Date implements Comparable<Date> {
     if (this.t != this.t) {
       return this.t;
     }
-    return -(localOffset(this.t as i64) as f64);
+    // Negated as an integer: UTC is 0, not -0 (Node's `getTimezoneOffset()`).
+    return (-localOffset(this.t as i64)) as f64;
   }
 
   /**
@@ -535,7 +536,7 @@ function fullYear(y: f64): f64 {
 
 // Minutes added to UTC to get local time at epoch time `t`.
 function localOffset(t: i64): i64 {
-  return velt_rt_local_offset_minutes(t) as i64;
+  return localOffsetMinutes(t) as i64;
 }
 
 // The epoch time of a local date-time `local` (its fields read as if they were UTC). Around a DST

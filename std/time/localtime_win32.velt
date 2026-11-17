@@ -1,0 +1,176 @@
+// velt/time (internal): the local time zone's offset on Windows (`#localtime`'s win32 variant,
+// std/imports.velt). `TZ` when it names UTC or a fixed offset (std/time/tz_fixed.velt), else the
+// system time zone (`GetDynamicTimeZoneInformation`), applied to the instant with
+// `SystemTimeToTzSpecificLocalTimeEx`, which follows the zone's per-year daylight-saving rules.
+// The zone is read once per process, as the C library keeps `TZ` on macOS and Linux. The offset
+// is the difference between the local and the UTC wall-clock time.
+
+import { Ptr } from "velt/ffi/ptr";
+import { addressLoad, addressStore } from "velt/lang/intrinsics";
+import { processEnv } from "velt/lang/hooks/process";
+import { fixedOffset } from "./tz_fixed";
+
+/** Win32's `DYNAMIC_TIME_ZONE_INFORMATION` (432 bytes), `SYSTEMTIME` (16) and `FILETIME` (8). */
+declare c type DYNAMIC_TIME_ZONE_INFORMATION;
+declare c type SYSTEMTIME;
+declare c type FILETIME;
+
+declare c("c") function GetDynamicTimeZoneInformation(
+  info: Ptr<DYNAMIC_TIME_ZONE_INFORMATION>,
+): u32;
+declare c("c") function SystemTimeToTzSpecificLocalTimeEx(
+  zone: Ptr<DYNAMIC_TIME_ZONE_INFORMATION>,
+  utc: Ptr<SYSTEMTIME>,
+  local: Ptr<SYSTEMTIME>,
+): i32;
+declare c("c") function FileTimeToSystemTime(time: Ptr<FILETIME>, system: Ptr<SYSTEMTIME>): i32;
+declare c("c") function SystemTimeToFileTime(system: Ptr<SYSTEMTIME>, time: Ptr<FILETIME>): i32;
+declare c("c") function calloc$time(n: usize, size: usize): Ptr<u8> | null;
+declare c("c") function free$time(p: Ptr<u8> | null): void;
+
+/** `sizeof(DYNAMIC_TIME_ZONE_INFORMATION)`. */
+const ZONE_BYTES: usize = 432;
+
+/** Where `Bias` and `StandardBias` (minutes west of UTC, `LONG`s) are in it. */
+const ZONE_BIAS: usize = 0;
+const ZONE_STANDARD_BIAS: usize = 84;
+
+/** `GetDynamicTimeZoneInformation`'s failure result. */
+const TIME_ZONE_ID_INVALID: u32 = 0xffffffff;
+
+/** Seconds from 1601-01-01 (the `FILETIME` epoch) to 1970-01-01. */
+const EPOCH_DIFF_SECS: i64 = 11644473600;
+
+/** The largest seconds since 1601 whose 100 ns ticks fit a `FILETIME` Windows converts (2^63). */
+const MAX_FILETIME_SECS: i64 = 922337203685;
+
+// The process' zone, read once: KIND 0 not read yet, 1 a fixed offset (FIXED, seconds east of
+// UTC), 2 the system zone (its information at ZONE, from the C library: it lives as long as the
+// process), 3 none (Windows can't report one: local time is UTC). Writers set FIXED or ZONE
+// before KIND.
+const KIND = new Atomic<u8>(0);
+const FIXED = new Atomic<i32>(0);
+const ZONE = new Atomic<u64>(0);
+
+/** Reads the zone into KIND, FIXED and ZONE; a thread that loses the race keeps the winner's. */
+function readZone(): u8 {
+  const tz = processEnv("TZ");
+  const fixed = tz === undefined ? null : fixedOffset(tz);
+  if (fixed !== null) {
+    FIXED.store(fixed, "relaxed");
+    KIND.store(1, "release");
+    return 1;
+  }
+  // SAFETY: calloc has no precondition; its result is checked.
+  const block = unsafe { calloc$time(1, ZONE_BYTES) };
+  if (block === null) {
+    return 3;
+  }
+  const at = Ptr.addressOf(block);
+  // SAFETY: `at` holds a zeroed DYNAMIC_TIME_ZONE_INFORMATION, which the call fills.
+  const id = unsafe { GetDynamicTimeZoneInformation(Ptr.at<DYNAMIC_TIME_ZONE_INFORMATION>(at)) };
+  if (id === TIME_ZONE_ID_INVALID) {
+    // SAFETY: the block calloc gave above, which nothing else has seen.
+    unsafe {
+      free$time(block);
+    }
+    KIND.store(3, "release");
+    return 3;
+  }
+  if (ZONE.compareExchange(0, at as u64, "acqrel", "acquire") !== 0) {
+    // Another thread stored its copy first: keep that one.
+    // SAFETY: as above; this one was never published.
+    unsafe {
+      free$time(block);
+    }
+  }
+  KIND.store(2, "release");
+  return 2;
+}
+
+/**
+ * This thread's buffer for the conversion (0 before its first use): the UTC FILETIME at 0, the
+ * UTC SYSTEMTIME at 8, the local SYSTEMTIME at 24 and the local FILETIME at 40. From the C
+ * library and kept for the thread's life, so a `Date` getter allocates nothing.
+ */
+const BUFFER = new ThreadLocal<u64>(0);
+
+/** This thread's buffer, made on first use; 0 when the C library has no memory. */
+function buffer(): usize {
+  let p = BUFFER.get() as usize;
+  if (p === 0) {
+    // SAFETY: calloc has no precondition; its result is checked.
+    const block = unsafe { calloc$time(1, 48) };
+    if (block === null) {
+      return 0;
+    }
+    p = Ptr.addressOf(block);
+    BUFFER.set(p as u64);
+  }
+  return p;
+}
+
+/** The offset, in seconds, of the system zone at `zone` at `unixSecs`. */
+function offsetIn(zone: usize, unixSecs: i64): i32 {
+  // SAFETY: `zone` holds the zone's information, which lives as long as the process.
+  const bias = unsafe { addressLoad<i32>(zone + ZONE_BIAS) };
+  // SAFETY: as above.
+  const standardBias = unsafe { addressLoad<i32>(zone + ZONE_STANDARD_BIAS) };
+  const standard = -(bias + standardBias) * 60;
+  const since1601 = unixSecs + EPOCH_DIFF_SECS;
+  if (since1601 < 0 || since1601 > MAX_FILETIME_SECS) {
+    return standard;
+  }
+  const utcTicks = since1601 * 10000000;
+  const p = buffer();
+  if (p === 0) {
+    return standard;
+  }
+  // SAFETY: inside the buffer; a FILETIME is its 64-bit tick count, little-endian.
+  unsafe {
+    addressStore<i64>(p, utcTicks);
+  }
+  // SAFETY: this thread's buffer holds a FILETIME at 0 and 40 and a SYSTEMTIME at 8 and 24.
+  const utcTime = unsafe { Ptr.at<FILETIME>(p) };
+  // SAFETY: as above.
+  const utc = unsafe { Ptr.at<SYSTEMTIME>(p + 8) };
+  // SAFETY: as above.
+  const local = unsafe { Ptr.at<SYSTEMTIME>(p + 24) };
+  // SAFETY: as above.
+  const localTime = unsafe { Ptr.at<FILETIME>(p + 40) };
+  // SAFETY: the zone's information lives as long as the process.
+  const info = unsafe { Ptr.at<DYNAMIC_TIME_ZONE_INFORMATION>(zone) };
+  // SAFETY: each pointer is its own struct in the buffer (or the zone's), as above; only this
+  // call uses the buffer.
+  let ok = unsafe { FileTimeToSystemTime(utcTime, utc) } !== 0;
+  if (ok) {
+    // SAFETY: as above.
+    ok = unsafe { SystemTimeToTzSpecificLocalTimeEx(info, utc, local) } !== 0;
+  }
+  if (ok) {
+    // SAFETY: as above.
+    ok = unsafe { SystemTimeToFileTime(local, localTime) } !== 0;
+  }
+  // SAFETY: inside the buffer, which SystemTimeToFileTime filled when `ok`.
+  const localTicks = ok ? unsafe { addressLoad<i64>(p + 40) } : 0;
+  return ok ? ((localTicks - utcTicks) / 10000000) as i32 : standard;
+}
+
+/**
+ * Minutes added to UTC to get local time at `epochMs` (milliseconds since the Unix epoch);
+ * outside `SYSTEMTIME`'s range (before 1601, after 30827) the zone's standard offset.
+ */
+export function localOffsetMinutes(epochMs: i64): i32 {
+  const secs: i64 = epochMs >= 0 ? epochMs / 1000 : -((999 - epochMs) / 1000);
+  let kind = KIND.load("acquire");
+  if (kind === 0) {
+    kind = readZone();
+  }
+  if (kind === 1) {
+    return FIXED.load("relaxed") / 60;
+  }
+  if (kind === 2) {
+    return offsetIn(ZONE.load("acquire") as usize, secs) / 60;
+  }
+  return 0;
+}

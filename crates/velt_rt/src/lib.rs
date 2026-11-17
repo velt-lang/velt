@@ -42,7 +42,6 @@ mod inspect_cycles;
 mod inspect_layout;
 pub mod io;
 pub mod json;
-pub mod localtime;
 pub mod math;
 pub mod mem;
 pub mod memory_usage;
