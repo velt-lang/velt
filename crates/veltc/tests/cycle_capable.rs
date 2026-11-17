@@ -6,9 +6,8 @@
 mod no_window;
 mod test_dir;
 
-/// The `velt: cycle-capable types:` line lowering prints for `src` (`VELT_DEBUG_COUNTED=1`).
-/// Type names may contain commas (object types), so the line is kept whole.
-fn cycle_capable(src: &str) -> String {
+/// What lowering prints for `src` under `VELT_DEBUG_COUNTED=1` (stderr).
+fn debug_out(src: &str) -> String {
     let dir = test_dir::TestDir::new();
     std::fs::write(dir.path().join("main.velt"), src).unwrap();
     let out = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
@@ -17,8 +16,15 @@ fn cycle_capable(src: &str) -> String {
         .current_dir(dir.path())
         .output()
         .unwrap();
-    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
     assert!(out.status.success(), "{stderr}");
+    stderr
+}
+
+/// The `velt: cycle-capable types:` line lowering prints for `src` (`VELT_DEBUG_COUNTED=1`).
+/// Type names may contain commas (object types), so the line is kept whole.
+fn cycle_capable(src: &str) -> String {
+    let stderr = debug_out(src);
     stderr
         .lines()
         .find_map(|l| l.strip_prefix("velt: cycle-capable types:"))
@@ -31,6 +37,11 @@ fn cycle_capable(src: &str) -> String {
 /// of a longer name)?
 fn has(line: &str, name: &str) -> bool {
     line.split(", ").any(|e| e == name)
+}
+
+/// Does an entry of `line` name closure environments (of any function type)?
+fn has_closures(line: &str) -> bool {
+    line.contains("closure environments of")
 }
 
 #[test]
@@ -69,8 +80,8 @@ fn a_const_used_by_its_own_closures_closes_a_cycle() {
     );
     // The literal's method environment holds the cell of `app`, which holds the literal: the
     // cycle is made of blocks counted whatever their type, with no counted type in it.
-    assert!(has(&c, "closure environments"), "{c}");
-    assert!(has(&c, "interface and dynamic values"), "{c}");
+    assert!(has_closures(&c), "{c}");
+    assert!(has(&c, "`App` interface values"), "{c}");
 }
 
 #[test]
@@ -83,7 +94,7 @@ fn a_closure_kept_in_an_array_it_captures_closes_a_cycle() {
            console.log(handlers[0]());
          }",
     );
-    assert!(has(&c, "closure environments"), "{c}");
+    assert!(has_closures(&c), "{c}");
 }
 
 #[test]
@@ -236,4 +247,134 @@ fn a_class_hierarchy_alone_is_not_a_cycle() {
          }",
     );
     assert_eq!(c, "", "nothing here can form a cycle");
+
+// Step 2: closures told apart by the function type they were made at, interface values by
+// their interface.
+
+/// A listener type that may throw: a closure that doesn't is wrapped to fit it (#2688), and the
+/// wrapper captures the closure.
+const LISTENER: &str = "type Listener = (n: number) => void throws unknown;";
+
+#[test]
+fn a_wrapper_alone_does_not_make_closures_cycle_capable() {
+    let c = cycle_capable(&format!(
+        "{LISTENER}
+         function main() {{
+           const ls: Listener[] = [];
+           const f = (n: number) => {{ console.log(n); }};
+           ls.push(f);
+           const g = (n: number) => {{ console.log(n + 1); }};
+           ls.push(g);
+           for (const l of ls) l(1);
+           console.log(ls.length);
+         }}"
+    ));
+    assert!(!has_closures(&c), "{c}");
+}
+
+#[test]
+fn a_cycle_through_a_wrapper_is_still_found() {
+    // The view holds the wrapper, the wrapper the closure, and the closure the view.
+    let c = cycle_capable(&format!(
+        "{LISTENER}
+         class View {{ n: number = 0; listeners: Listener[] = []; }}
+         function main() {{
+           const v = new View();
+           const keep = [v, v];
+           const f = (n: number) => {{ v.n += n; }};
+           v.listeners.push(f);
+           for (const l of v.listeners) l(1);
+           console.log(keep.length, v.n);
+         }}"
+    ));
+    assert!(has(&c, "class View"), "{c}");
+    assert!(has_closures(&c), "{c}");
+}
+
+#[test]
+fn a_closure_of_another_function_type_does_not_close_a_cycle() {
+    // `View` holds closures of `() => void`; the closure capturing a `View` is a
+    // `(n: number) => number`, which no `View` can hold.
+    let c = cycle_capable(
+        "class View {
+           n: number = 0;
+           onTick: (() => void)[] = [];
+         }
+         function main() {
+           const v = new View();
+           const keep = [v, v];
+           let ticks = 0;
+           v.onTick.push(() => { ticks += 1; });
+           const scale = (n: number): number => n * v.n;
+           for (const t of v.onTick) t();
+           console.log(keep.length, scale(2), ticks);
+         }",
+    );
+    assert!(!has(&c, "class View"), "{c}");
+}
+
+#[test]
+fn an_interface_value_reaches_only_its_own_implementations() {
+    // `Holder` holds `Shape`s; only a `Listener` refers back to a `Holder`.
+    let c = cycle_capable(
+        "interface Shape { area(): number; }
+         interface Listener { fire(): void; }
+         class Square implements Shape { s: number = 2; area(): number { return this.s * this.s; } }
+         class Holder { shapes: Shape[] = []; n: number = 0; }
+         class Watch implements Listener {
+           h: Holder;
+           constructor(h: Holder) { this.h = h; }
+           fire() { this.h.n += 1; }
+         }
+         function main() {
+           const h = new Holder();
+           const keep = [h, h];
+           h.shapes.push(new Square());
+           const w: Listener = new Watch(h);
+           w.fire();
+           console.log(keep.length, h.shapes[0].area(), h.n);
+         }",
+    );
+    assert!(!has(&c, "class Holder"), "{c}");
+}
+
+#[test]
+fn each_cycle_capable_type_has_its_sites() {
+    let out = debug_out(
+        "class TreeNode {
+           parent: TreeNode | null = null;
+           children: TreeNode[] = [];
+           add(c: TreeNode) { c.parent = this; this.children.push(c); }
+         }
+         function main() {
+           const root = new TreeNode();
+           const kid = new TreeNode();
+           root.add(kid);
+           console.log(root.children.length);
+         }",
+    );
+    let line = out
+        .lines()
+        .find_map(|l| l.strip_prefix("velt: cycle-capable sites: class TreeNode: "))
+        .unwrap_or_else(|| panic!("no sites for TreeNode:\n{out}"));
+    // The two `new TreeNode()` of `main` (lines 7 and 8), and nothing else.
+    assert_eq!(line.matches("main.velt:").count(), 2, "{line}");
+    assert!(
+        line.contains("main.velt:7:") && line.contains("main.velt:8:"),
+        "{line}"
+    );
+}
+
+#[test]
+fn a_function_holding_itself_as_a_property_closes_a_cycle() {
+    // #1780: the property table of `f`'s environment holds `f` as an `any`.
+    let c = cycle_capable(
+        "function make(): number {
+           const f: any = function () { return 1; };
+           f.self = f;
+           return 1;
+         }
+         function main() { console.log(make()); }",
+    );
+    assert!(has_closures(&c), "{c}");
 }

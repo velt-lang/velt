@@ -289,6 +289,9 @@ struct Cx<'h> {
     /// This pass only finds the counted types (`lower_program`): functions leave out the work
     /// that finds none, the versions of their view loops (view_unswitch.rs).
     facts_only: bool,
+    /// Record where values are made, for the cycle-capable types' sites (`VELT_DEBUG_COUNTED`,
+    /// boxing/cycles_sites.rs).
+    cycle_sites: bool,
     /// The functions of this facts-only pass whose view loops are left to version once the
     /// counted types are complete, and those of the functions being built (deferred_versions.rs).
     deferred: FxHashMap<FuncId, deferred_versions::Deferred>,

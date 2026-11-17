@@ -154,6 +154,7 @@ impl FnLower<'_, '_> {
         let prev = self.enter_span(e.span);
         let site = self.enter_site(e.span);
         let v = self.expr_at(e);
+        self.note_alloc_site(e);
         self.restore_loc(prev);
         self.cx.user_site = site;
         if cfg!(debug_assertions) {

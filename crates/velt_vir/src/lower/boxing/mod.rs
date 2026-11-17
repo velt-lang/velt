@@ -9,6 +9,9 @@
 //! representation everywhere.
 
 mod cycles;
+mod cycles_keys;
+mod cycles_scc;
+mod cycles_sites;
 mod kinds;
 mod locks;
 mod module_reach;
@@ -28,6 +31,7 @@ use velt_sema::hir::{self, AdtKind, DefId, TyId, TyKind};
 
 use super::Cx;
 
+pub(super) use cycles_keys::CycleKey;
 pub(super) use kinds::ShareKind;
 pub(super) use seed::without_seed;
 pub use seed::CountedSeed;
@@ -338,6 +342,14 @@ pub(super) struct Facts {
     pub(super) lock_values: FxHashSet<TyId>,
     /// Code in read mode called a function through a pointer (`Boxing::read_indirect`).
     pub(super) read_indirect: bool,
+    /// Closure environments built, `(key, closure, type arguments)`: the key is the function
+    /// type the closure was made at (cycles_keys.rs; `None`: a generic closure's own type).
+    pub(super) closure_envs: FxHashSet<(Option<CycleKey>, DefId, Vec<TyId>)>,
+    /// `(interface, concrete type)` of the implementation tables built (cycles.rs).
+    pub(super) iface_impls: FxHashSet<(DefId, TyId)>,
+    /// Where values of each type are made (`new`, literals, closures), recorded only for
+    /// `VELT_DEBUG_COUNTED` (cycles_sites.rs).
+    pub(super) alloc_sites: FxHashSet<(TyId, velt_common::Span)>,
 }
 
 impl Cx<'_> {
