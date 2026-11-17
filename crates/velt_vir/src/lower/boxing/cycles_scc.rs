@@ -84,9 +84,14 @@ pub(super) fn cyclic_components(
     (out, edges)
 }
 
-/// A shortest cycle through `from` that stays inside `comp`, as the nodes it passes (`from`
-/// first, not repeated at the end); empty when there is none.
-pub(super) fn cycle_through(from: usize, comp: &[usize], edges: &[Vec<usize>]) -> Vec<usize> {
+/// A shortest cycle through `from` that stays inside the component `comp` (its nodes, a set the
+/// caller builds once), as the nodes it passes (`from` first, not repeated at the end); empty
+/// when there is none.
+pub(super) fn cycle_through(
+    from: usize,
+    comp: &std::collections::HashSet<usize>,
+    edges: &[Vec<usize>],
+) -> Vec<usize> {
     let mut prev: std::collections::HashMap<usize, usize> = Default::default();
     let mut queue = std::collections::VecDeque::from([from]);
     while let Some(v) = queue.pop_front() {
@@ -153,8 +158,9 @@ mod tests {
     fn the_cycle_through_a_node_is_a_shortest_one() {
         // 0 -> 1 -> 2 -> 0 and 0 -> 3 -> 0: the shortest cycle through 0 passes 3.
         let edges: Vec<Vec<usize>> = vec![vec![1, 3], vec![2], vec![0], vec![0]];
-        assert_eq!(cycle_through(0, &[0, 1, 2, 3], &edges), vec![0, 3]);
-        assert_eq!(cycle_through(1, &[0, 1, 2, 3], &edges), vec![1, 2, 0]);
-        assert!(cycle_through(0, &[0, 1], &edges).is_empty());
+        let all = [0, 1, 2, 3].into_iter().collect();
+        assert_eq!(cycle_through(0, &all, &edges), vec![0, 3]);
+        assert_eq!(cycle_through(1, &all, &edges), vec![1, 2, 0]);
+        assert!(cycle_through(0, &[0, 1].into_iter().collect(), &edges).is_empty());
     }
 }

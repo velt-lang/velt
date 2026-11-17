@@ -3,7 +3,7 @@
 //! `new` expressions, literals and closures that make its values, so a benchmark row's cost
 //! can be traced to the code that pays it. Recorded only under that variable.
 
-use velt_sema::hir::{self, TyId, TyKind};
+use velt_sema::hir::{self, DefId, TyId, TyKind};
 
 use super::cycles::CycleCapable;
 use crate::lower::{Cx, FnLower};
@@ -32,13 +32,14 @@ impl Cx<'_> {
         let mut sites: Vec<(String, String)> = vec![];
         let recorded: Vec<_> = self.facts.alloc_sites.iter().copied().collect();
         for (t, span) in recorded {
-            let Some(name) = self.cycle_entry_name(c, t) else {
+            let names = self.cycle_entry_names(c, t);
+            if names.is_empty() {
                 continue;
-            };
+            }
             let at = (self.locs.as_ref())
                 .and_then(|m| m.loc(span).map(|l| m.describe(l)))
                 .unwrap_or_else(|| "?".to_string());
-            sites.push((name, at));
+            sites.extend(names.into_iter().map(|n| (n, at.clone())));
         }
         sites.sort();
         sites.dedup();
@@ -55,24 +56,41 @@ impl Cx<'_> {
         out
     }
 
-    /// The display name of the entry of `c` a value of `t` is counted under, if any.
-    fn cycle_entry_name(&mut self, c: &CycleCapable, t: TyId) -> Option<String> {
-        if let TyKind::Adt(d, _) = self.kind(t) {
-            if self.is_class(t) {
+    /// The display names of the entries of `c` a value of `t` is counted under: its class,
+    /// its type or its closures' key, and the interfaces and dynamic values it is held as.
+    fn cycle_entry_names(&mut self, c: &CycleCapable, t: TyId) -> Vec<String> {
+        let mut out = vec![];
+        match self.kind(t) {
+            TyKind::Adt(d, _) if self.is_class(t) => {
                 let root = self.class_root(d);
-                return c.roots.contains(&root).then(|| self.class_name(root));
+                if c.roots.contains(&root) {
+                    out.push(self.class_name(root));
+                }
             }
-        }
-        if c.tys.contains(&t) {
-            return Some(self.type_name(t));
-        }
-        let key = match self.kind(t) {
             // A generic closure's own type: the environments without a key.
-            TyKind::Closure(_) => None,
-            _ => Some(self.cycle_key(t)?),
-        };
-        c.closures
-            .contains(&key)
-            .then(|| self.closure_set_name(&key))
+            TyKind::Closure(_) if c.closures.contains(&None) => {
+                out.push(self.closure_set_name(&None));
+            }
+            TyKind::FnPtr { .. } => {
+                let key = self.cycle_key(t);
+                if key.is_some() && c.closures.contains(&key) {
+                    out.push(self.closure_set_name(&key));
+                }
+            }
+            _ if c.tys.contains(&t) => out.push(self.type_name(t)),
+            _ => {}
+        }
+        // The value may be held as an interface value (a table of a cycle-capable interface was
+        // built for its type) or as a dynamic value (an `any` table was).
+        let mut ifaces: Vec<DefId> = (self.facts.iface_impls.iter())
+            .filter(|&&(d, i)| i == t && c.ifaces.contains(&d))
+            .map(|&(d, _)| d)
+            .collect();
+        ifaces.sort_by_key(|d| d.0);
+        out.extend(ifaces.into_iter().map(|d| self.iface_entry_name(d)));
+        if c.dynamics && self.facts.dyn_types.contains(&t) {
+            out.push("dynamic values".into());
+        }
+        out
     }
 }

@@ -135,11 +135,12 @@ impl Cx<'_> {
         });
         let mut witnesses = vec![];
         for comp in comps.iter().filter(|_| witness) {
+            let members: std::collections::HashSet<usize> = comp.iter().copied().collect();
             for &i in comp {
                 if matches!(g.nodes[i], Node::Ty(t) if !self.counted(t)) {
                     continue;
                 }
-                let path = cycle_through(i, comp, &edges);
+                let path = cycle_through(i, &members, &edges);
                 let names: Vec<String> = (path.iter().chain(path.first()))
                     .map(|&n| self.node_name(&g.nodes[n]))
                     .collect();
@@ -181,7 +182,7 @@ impl Cx<'_> {
                 _ => self.type_name(*t),
             },
             Node::Closures(k) => self.closure_set_name(k),
-            Node::Iface(d) => format!("`{}` interface values", self.adt_or_iface_name(*d)),
+            Node::Iface(d) => self.iface_entry_name(*d),
             Node::Dynamics => "dynamic values".into(),
         }
     }
@@ -195,16 +196,18 @@ impl Cx<'_> {
         names.extend(tys.into_iter().map(|t| self.type_name(t)));
         let keys: Vec<Option<CycleKey>> = c.closures.iter().cloned().collect();
         names.extend(keys.iter().map(|k| self.closure_set_name(k)));
-        names.extend(c.ifaces.iter().map(|&d| {
-            let name = &self.adt_or_iface_name(d);
-            format!("`{name}` interface values")
-        }));
+        names.extend(c.ifaces.iter().map(|&d| self.iface_entry_name(d)));
         if c.dynamics {
             names.push("dynamic values".into());
         }
         names.sort();
         let sites = self.cycle_site_lines(&c);
         (names, sites, witnesses)
+    }
+
+    /// How the boxes of interface `d`'s values are named.
+    pub(in crate::lower) fn iface_entry_name(&self, d: DefId) -> String {
+        format!("`{}` interface values", self.adt_or_iface_name(d))
     }
 
     /// `class Name` of the class `d`.

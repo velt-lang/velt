@@ -476,3 +476,21 @@ fn an_interface_key_leads_to_its_entries_from_its_implementation() {
     );
     assert!(has(&c, "class Note"), "{c}");
 }
+
+#[test]
+fn interface_values_have_the_sites_of_the_values_they_hold() {
+    // The literal is held as an `App` interface value: its site is that entry's too.
+    let out = debug_out(
+        "interface App { name: string; use(p: (a: App) => void): App; }
+         function makeApp(name: string): App {
+           const app: App = { name, use(p) { p(app); return app; } };
+           return app;
+         }
+         function main() { makeApp(\"x\").use((x) => console.log(x.name)); }",
+    );
+    let line = out
+        .lines()
+        .find_map(|l| l.strip_prefix("velt: cycle-capable sites: `App` interface values: "))
+        .unwrap_or_else(|| panic!("no sites for `App` interface values:\n{out}"));
+    assert!(line.contains("main.velt:3:"), "{line}");
+}
