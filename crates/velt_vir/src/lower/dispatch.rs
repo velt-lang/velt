@@ -83,7 +83,7 @@ impl FnLower<'_, '_> {
     /// (through the vtable's clone glue when the static type is a base class or an interface),
     /// which the caller releases before the task starts, as for the arguments (transfer.rs).
     fn receiver(&mut self, recv: &hir::Expr, transfer: bool) -> Operand {
-        let v = if super::call::is_moved(recv) {
+        let v = if super::moved_args::is_moved(recv) {
             let v = self.consume(recv);
             let ty = self.sub(recv.ty);
             self.own_value(v, ty)
@@ -147,7 +147,7 @@ impl FnLower<'_, '_> {
         // so it is stabilized as a class method's receiver is (`lower_args`): a receiver read
         // through a counted object, a cell or module state is shared for the call, then held
         // against the arguments.
-        let rv = match !transfer && !super::call::is_moved(recv) {
+        let rv = match !transfer && !super::moved_args::is_moved(recv) {
             true => self.stable_borrow(recv, &args[1..]),
             false => self.receiver(recv, transfer),
         };
