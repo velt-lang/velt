@@ -10,6 +10,7 @@ import { p256Sign } from "velt/crypto/ecdsa_p256_sign";
 import { p256Ecdh, p256PrivateKey, p256PublicKey } from "velt/crypto/p256";
 import { randomBytes } from "velt/crypto/random";
 import { sha256 } from "velt/crypto/sha256";
+import { sha384 } from "velt/crypto/sha512";
 import { arrayMove, arrayReserve, arraySetLen } from "velt/lang/intrinsics";
 import { x25519, x25519PublicKey } from "velt/crypto/x25519";
 import { utf8Encode } from "velt/encoding/utf8";
@@ -39,7 +40,12 @@ import {
 } from "velt/net/tls/client_hello";
 import { ClientOffer, parseClientHello } from "velt/net/tls/client_hello_parse";
 import { expandLabel, finishedMac, handshakeSecret, masterSecret } from "velt/net/tls/key_schedule";
-import { AES_128_GCM_SHA256, CHACHA20_POLY1305_SHA256 } from "velt/net/tls/record_cipher";
+import {
+  AES_128_GCM_SHA256,
+  AES_256_GCM_SHA384,
+  CHACHA20_POLY1305_SHA256,
+  hashLength,
+} from "velt/net/tls/record_cipher";
 import { HRR_RANDOM } from "velt/net/tls/server_hello";
 import { ServerKey } from "velt/net/tls/server_key";
 
@@ -193,10 +199,10 @@ export class ServerHandshake {
     const hello = serverHello(randomBytes(32), offer.sessionId, this.suite, group, ours);
     this.add(hello);
     this.hello = hello;
-    const hs = handshakeSecret(secret, 32);
-    const h1 = sha256(this.transcript);
-    this.clientHandshake = expandLabel(hs, "c hs traffic", h1, 32);
-    this.serverHandshake = expandLabel(hs, "s hs traffic", h1, 32);
+    const hs = handshakeSecret(secret, hashLength(this.suite));
+    const h1 = this.hashOf(this.transcript);
+    this.clientHandshake = expandLabel(hs, "c hs traffic", h1, h1.length);
+    this.serverHandshake = expandLabel(hs, "s hs traffic", h1, h1.length);
     const w = new ByteWriter();
     // EncryptedExtensions: ALPN's choice, if any.
     const ee = new ByteWriter();
@@ -246,7 +252,7 @@ export class ServerHandshake {
       signed.push(context[i]);
     }
     signed.push(0);
-    const th = sha256(this.transcript);
+    const th = this.hashOf(this.transcript);
     for (let i: usize = 0; i < th.length; i++) {
       signed.push(th[i]);
     }
@@ -265,16 +271,16 @@ export class ServerHandshake {
     const fin = new ByteWriter();
     fin.u8(FINISHED);
     const fb = fin.begin(3);
-    fin.put(finishedMac(this.serverHandshake!, sha256(this.transcript)));
+    fin.put(finishedMac(this.serverHandshake!, this.hashOf(this.transcript)));
     fin.end(fb, 3);
     this.add(fin.bytes);
     w.put(fin.bytes);
     this.flight = w.bytes;
     const master = masterSecret(hs);
-    const h2 = sha256(this.transcript);
+    const h2 = this.hashOf(this.transcript);
     this.flightHash = h2;
-    this.clientApplication = expandLabel(master, "c ap traffic", h2, 32);
-    this.serverApplication = expandLabel(master, "s ap traffic", h2, 32);
+    this.clientApplication = expandLabel(master, "c ap traffic", h2, h2.length);
+    this.serverApplication = expandLabel(master, "s ap traffic", h2, h2.length);
     this.state = WAIT_FINISHED;
     return S_SEND_FLIGHT;
   }
@@ -295,9 +301,10 @@ export class ServerHandshake {
       );
     }
     this.group = group;
-    // The transcript restarts with message_hash(ClientHello1) (§4.4.1).
-    const first = sha256(m);
-    this.transcript = [254, 0, 0, 32];
+    // The transcript restarts with message_hash(ClientHello1) (§4.4.1), with the chosen
+    // suite's hash.
+    const first = this.hashOf(m);
+    this.transcript = [254, 0, 0, first.length as u8];
     this.add(first);
     const w = new ByteWriter();
     w.u8(SERVER_HELLO);
@@ -324,11 +331,17 @@ export class ServerHandshake {
     return S_SEND_RETRY;
   }
 
+  // The hash of `bytes` with the chosen suite's hash.
+  private hashOf(bytes: u8[]): u8[] {
+    return this.suite == AES_256_GCM_SHA384 ? sha384(bytes) : sha256(bytes);
+  }
+
   private finished(m: u8[]): i32 {
     // Nothing joined the transcript since the server's Finished (no client certificate).
     const expected = finishedMac(this.clientHandshake!, this.flightHash!);
-    let diff: u8 = m.length == 36 ? 0 : 1;
-    for (let i: usize = 0; i < 32 && 4 + i < m.length; i++) {
+    const n = expected.length;
+    let diff: u8 = m.length == 4 + n ? 0 : 1;
+    for (let i: usize = 0; i < n && 4 + i < m.length; i++) {
       diff |= expected[i] ^ m[4 + i];
     }
     if (diff != 0) {
@@ -359,13 +372,13 @@ export class ServerHandshake {
 // The client's first suite that this server has.
 function chooseSuite(offered: usize[]): usize {
   for (const s of offered) {
-    if (s == AES_128_GCM_SHA256 || s == CHACHA20_POLY1305_SHA256) {
+    if (s == AES_128_GCM_SHA256 || s == AES_256_GCM_SHA384 || s == CHACHA20_POLY1305_SHA256) {
       return s;
     }
   }
   throw new TlsFailure(
     HANDSHAKE_FAILURE,
-    "no cipher suite in common (the server has TLS_AES_128_GCM_SHA256 and TLS_CHACHA20_POLY1305_SHA256)",
+    "no cipher suite in common (the server has TLS_AES_128_GCM_SHA256, TLS_AES_256_GCM_SHA384 and TLS_CHACHA20_POLY1305_SHA256)",
   );
 }
 
