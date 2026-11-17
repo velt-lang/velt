@@ -25,9 +25,13 @@
 //! while it is.
 //!
 //! A family is *owned* when every path that gave the increment's reference back goes on to a
-//! release of its own before it returns: it then had a second reference all the while the
-//! increment's was held. Its values never leave it, so nothing else can give that reference
-//! back, and no call can free the object while the copy is used.
+//! release of its own before it returns, through a member whose value was in the family at
+//! the increment: it then had a second reference all the while the increment's was held. Its
+//! values never leave it, so nothing else can give that reference back, and no call can free
+//! the object while the copy is used. A member written since from outside the family (the
+//! root's field loaded again: `c = *slot; *slot = null; release c`, a field taken) proves
+//! nothing: that reference was the field's during the window, and a call could have replaced
+//! the field and released it. Its release stays, like any of the family's own.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -74,6 +78,9 @@ impl Bits {
 struct Sets {
     may: Bits,
     must: Bits,
+    /// The members that may hold a value written from outside the family since the increment
+    /// (or with none yet).
+    late: Bits,
     /// Per member, the first member of its class of equal values.
     class: Vec<u32>,
 }
@@ -83,6 +90,7 @@ impl Sets {
         Sets {
             may: Bits::empty(n),
             must: Bits::empty(n),
+            late: Bits::empty(n),
             class: (0..n as u32).collect(),
         }
     }
@@ -105,12 +113,13 @@ impl Sets {
         if from == Some(d) {
             return;
         }
-        let (may, must) = match from {
-            Some(m) => (self.may.get(m), self.must.get(m)),
-            None => (may, must),
+        let (may, must, late) = match from {
+            Some(m) => (self.may.get(m), self.must.get(m), self.late.get(m)),
+            None => (may, must, may),
         };
         self.may.put(d, may);
         self.must.put(d, must);
+        self.late.put(d, late);
         // Out of its class (whose first member it may have been), into the source's.
         let rest = self.equals(d).into_iter().find(|&j| j != d);
         for j in 0..self.class.len() {
@@ -130,7 +139,7 @@ impl Sets {
 
     /// Adds what `other` allows; whether anything changed.
     fn join(&mut self, other: &Sets) -> bool {
-        let grew = self.may.union(&other.may);
+        let grew = self.may.union(&other.may) | self.late.union(&other.late);
         let mut shrank = false;
         for (a, b) in self.must.0.iter_mut().zip(&other.must.0) {
             shrank |= *a & !*b != 0;
@@ -310,6 +319,10 @@ impl Cx<'_> {
                         if let Some(after) = st.after.take() {
                             join_sets(&mut st.held, &after);
                         }
+                        // What the members hold now is in the family at the increment.
+                        if let Some(held) = &mut st.held {
+                            held.late = Bits::empty(index.len());
+                        }
                     }
                     Event::Write {
                         member,
@@ -360,7 +373,10 @@ impl Cx<'_> {
                     // this gives back another one, the family's own.
                     own.insert(b);
                 }
-                if holds(&st.after) {
+                // Through a member that held the object at the increment, it is the second
+                // reference the family had all along. Through one written since, it proves
+                // nothing (a field taken): the path still owes such a release.
+                if holds(&st.after) && !st.after.as_ref().is_some_and(|s| s.late.get(m)) {
                     if let Some(after) = st.after.take() {
                         join_sets(&mut st.free, &after);
                     }

@@ -63,7 +63,8 @@
 //! Release-mode builds allocate through std's heap hooks (`VELT_HEAP_HOOKS=1`) although the
 //! runtime they link is this profile's (a debug one under `cargo test`), unless the variable is
 //! set already; with `VELT_RT_DEBUG_ALLOC=1` or `VELT_RC_STATS=1` set, they don't, and neither
-//! does a golden that asks for a leak check.
+//! does a golden that asks for a leak check (the hooks themselves are tested in
+//! `tests/heap_hooks.rs`, and by the release runs of every other golden).
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

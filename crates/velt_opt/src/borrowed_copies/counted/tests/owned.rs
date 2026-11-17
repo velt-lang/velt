@@ -25,6 +25,9 @@ enum Owner {
     /// `FieldReleasedTwice` returning early between the releases: on that path the family had
     /// no reference of its own, so a freeing call while the increment's is held keeps the count.
     FieldReleasedTwiceOrNot,
+    /// `FieldReleasedTwice` with a freeing call between the two releases: it runs once the
+    /// increment's reference is back, so it is not looked at.
+    FieldReleasedTwiceCallBetween,
     /// `r = this.data`, released through the copy on one path and through `r` on the other.
     FieldReleasedOnEitherPath,
 }
@@ -81,6 +84,9 @@ fn owned(owner: Owner) -> Vec<bool> {
             b = fb.call(b, Callee::Func(k.freeing), vec![copy_local(this)], None);
             read_len(&mut fb, &k, b, r);
         }
+        if owner == Owner::FieldReleasedTwiceCallBetween {
+            b = fb.call(b, Callee::Func(k.freeing), vec![copy_local(this)], None);
+        }
         if owner == Owner::FieldReleasedTwiceOrNot {
             let [early, on] = [fb.block(), fb.block()];
             fb.branch(b, either, early, on);
@@ -125,6 +131,10 @@ fn a_family_keeps_the_release_of_a_reference_of_its_own() {
         (Owner::FieldReleasedOnEitherPath, vec![true, true, true]),
         // The copy's release is the increment's; the owner's stays and frees the object.
         (Owner::FieldReleasedTwice, vec![true, true, false]),
+        (
+            Owner::FieldReleasedTwiceCallBetween,
+            vec![true, true, false],
+        ),
         (Owner::Fresh, vec![true, true, false]),
         (Owner::FreshUsedAfterTheCopy, vec![true, true, false]),
         (Owner::FreshFreeingCallWhileHeld, vec![true, true, false]),
@@ -132,4 +142,57 @@ fn a_family_keeps_the_release_of_a_reference_of_its_own() {
     ] {
         assert_eq!(owned(owner), gone, "{owner:?}");
     }
+}
+
+/// `slot = &this.data; r = *slot; r.count++; c = r; [freeing(this)]; x = c.len; release c;
+/// [c = *slot; *slot = null; release c]; return x`: whether the increment and its release
+/// are gone. The bracketed release is of a field taken after the copy gave its reference
+/// back, with no null test (a value that is never null).
+fn field_taken(take: bool, freeing_while_held: bool) -> bool {
+    let k = kit();
+    let mut fb = FuncBuilder::export("f", &[Ty::Ptr], Ty::U64);
+    let this = fb.param(0);
+    let [slot, c] = [Ty::Ptr, Ty::Ptr].map(|t| fb.local(t));
+    let mut b = fb.block();
+    fb.assign(b, slot, Rvalue::AddrOf(field_of(this, k.obj, 0)));
+    let field = deref(slot, Ty::Ptr);
+    let (r, q) = share(&mut fb, b, field.clone());
+    fb.assign(b, c, Rvalue::Use(copy_local(r)));
+    if freeing_while_held {
+        b = fb.call(b, Callee::Func(k.freeing), vec![copy_local(this)], None);
+    }
+    let x = read_len(&mut fb, &k, b, c);
+    let (mut b, q2) = release(&mut fb, b, c, k.free);
+    if take {
+        fb.assign(b, c, Rvalue::Use(copy_place(field.clone())));
+        fb.push(b, Stmt::Assign(field, Rvalue::Use(int(0, Ty::Ptr))));
+        let [q3, cnt, c1, m] = [Ty::Ptr, Ty::U64, Ty::Bool, Ty::U64].map(|t| fb.local(t));
+        let [last, dec, exit] = [fb.block(), fb.block(), fb.block()];
+        fb.assign(b, q3, bin(BinOp::PtrAdd, copy_local(c), int(-8, Ty::I64)));
+        fb.assign(b, cnt, Rvalue::Use(copy_place(count(q3))));
+        fb.assign(b, c1, bin(BinOp::Eq, copy_local(cnt), int(1, Ty::U64)));
+        fb.branch(b, c1, last, dec);
+        let args = vec![copy_local(q3), int(32, Ty::U64), int(8, Ty::U64)];
+        let freed = fb.call(last, Callee::Extern(k.free), args, None);
+        fb.goto(freed, exit);
+        fb.assign(dec, m, bin(BinOp::Sub, copy_local(cnt), int(1, Ty::U64)));
+        fb.push(dec, Stmt::Assign(count(q3), Rvalue::Use(copy_local(m))));
+        fb.goto(dec, exit);
+        b = exit;
+    }
+    fb.ret(b, copy_local(x));
+    let mut pb = k.pb;
+    let f = pb.add(fb.finish());
+    decide(pb.finish(), f, &[[q, q2]])[0]
+}
+
+#[test]
+fn a_field_taken_after_the_copy_does_not_make_the_family_owned() {
+    // The field held the second reference while the copy was used, and `freeing` may replace
+    // the field and release it: the copy keeps its count, taken afterwards or not.
+    assert!(!field_taken(false, true));
+    assert!(!field_taken(true, true));
+    // With nothing that frees while the copy is used, it borrows either way.
+    assert!(field_taken(false, false));
+    assert!(field_taken(true, false));
 }
