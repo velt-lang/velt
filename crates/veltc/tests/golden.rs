@@ -26,7 +26,8 @@
 //!   `// requires: unix` is skipped on Windows (POSIX C functions, `velt/fs`'s fd API), and
 //!   `// requires: windows` everywhere else (Windows-only functions).
 //! - A golden whose first lines contain `// check: no leaks` must free every block it allocates
-//!   (`VELT_RC_STATS=1` with the debug runtime: `blocks=A/F` with A = F) in its debug run. Tasks
+//!   and every heap string buffer (`VELT_RC_STATS=1` with the debug runtime: `blocks=A/F` with
+//!   A = F, and `alloc=` equal to `free=`) in its debug run. Tasks
 //!   still running when `main` returns are waited for (up to a minute) while blocks are unfreed;
 //!   the count is taken at a moment when every block was freed, or once no task can run any
 //!   more (blocks held by tasks that wait forever, or by pending `unref()`'d timers, count as
@@ -619,21 +620,26 @@ fn too_many_strings(stderr: &str, limit: u64) -> Option<String> {
     }
 }
 
-/// The leak in a `rc stats: ... blocks=A/F` report: more than `allowed` blocks allocated but
-/// not freed, or no report.
+/// The leak in a `rc stats: ... alloc=A free=F blocks=A/F` report: more than `allowed` blocks
+/// allocated but not freed, a heap string buffer allocated but not freed (strings have no
+/// allowance: nothing keeps one on purpose), or no report.
 fn leaked_blocks(stderr: &str, allowed: u64) -> Option<String> {
-    let counts = stderr
-        .lines()
-        .rev()
-        .find(|l| l.starts_with("rc stats:"))
-        .and_then(|l| l.split_whitespace().find_map(|w| w.strip_prefix("blocks=")))
-        .and_then(|b| b.split_once('/'));
+    let Some(report) = stderr.lines().rev().find(|l| l.starts_with("rc stats:")) else {
+        return Some("leak check: no `rc stats` report on stderr".into());
+    };
+    let field = |name: &str| report.split_whitespace().find_map(|w| w.strip_prefix(name));
     let unfreed = |a: &str, f: &str| a.parse::<u64>().ok()?.checked_sub(f.parse().ok()?);
-    match counts {
+    let blocks = match field("blocks=").and_then(|b| b.split_once('/')) {
         Some((a, f)) if unfreed(a, f).is_some_and(|n| n <= allowed) => None,
         Some((a, f)) => Some(format!("leak: {a} blocks allocated, {f} freed")),
-        None => Some("leak check: no `rc stats` report on stderr".into()),
-    }
+        None => Some("leak check: no block counts in the `rc stats` report".into()),
+    };
+    let strings = match (field("alloc="), field("free=")) {
+        (Some(a), Some(f)) if unfreed(a, f) == Some(0) => None,
+        (Some(a), Some(f)) => Some(format!("leak: {a} heap strings allocated, {f} freed")),
+        _ => Some("leak check: no string counts in the `rc stats` report".into()),
+    };
+    blocks.or(strings)
 }
 
 /// A release build (`mode`) calls std's heap hooks with the debug runtime too (the header).

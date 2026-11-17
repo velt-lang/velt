@@ -1,0 +1,37 @@
+// check: no leaks
+// The text `inspect` builds, an error's text and a throw's location are strings their user
+// drops (#3126): every `velt/test` matcher builds its messages with them, also when it
+// passes, and so does `assertEq` when it fails. Texts over 30 bytes are on the heap.
+import { expect } from "velt/test";
+
+class Point {
+  x = 1;
+  label = "a point with a long label, well over thirty bytes";
+}
+
+function fail(): number {
+  throw new RangeError("a message of more than thirty characters, on the heap");
+}
+
+function main() {
+  let failed = 0;
+  for (let i = 0; i < 3; i++) {
+    try {
+      assertEq(
+        "a long string of more than thirty characters",
+        "b long string of more than thirty characters",
+      );
+    } catch (e) {
+      failed++;
+    }
+    expect("a long string of more than thirty characters").toBeDefined();
+    expect(new Point()).toEqual(new Point());
+    expect(() => fail()).toThrow("a message of more than thirty characters, on the heap");
+    try {
+      expect(new Point().label).toBe("another long string of more than thirty characters");
+    } catch (e) {
+      failed++;
+    }
+  }
+  console.log(failed);
+}
