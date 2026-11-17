@@ -70,6 +70,9 @@ impl Cx<'_> {
         }
         if self.traceable(t) && !self.weak_refs_of(None, t).is_empty() {
             WeakSlot::Trace(Const::Func(self.func(Work::Glue(Glue::Trace, t))))
+        } else if !self.traceable(t) && !self.traced_classes(None, t).is_empty() {
+            // A class with subclasses: by the object's class (glue/trace_class.rs).
+            WeakSlot::Trace(Const::Func(self.func(Work::Glue(Glue::TraceClass, t))))
         } else {
             WeakSlot::Opaque
         }

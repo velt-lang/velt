@@ -122,6 +122,10 @@ pub(super) struct Boxing {
     /// Environments and captured variables' cells may be weakly held (some are traced): their
     /// releases take the three-way sequence (rc.rs `release_weak`).
     pub(super) weak_envs: bool,
+    /// In a program with weak references: the concrete classes of each hierarchy with a vtable
+    /// (by root class) the program built, which a value of one of its classes may be: the trace
+    /// glue dispatches on them (glue/trace_class.rs). Empty in every other program.
+    pub(super) class_traced: FxHashMap<DefId, Vec<TyId>>,
     /// Interfaces whose values are converted to `any` / `unknown`: their tables hold the
     /// `any` table of their concrete type (`Cx::vtable`, `make_dyn`).
     pub(super) dyn_to_any: FxHashSet<DefId>,

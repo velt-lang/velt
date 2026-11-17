@@ -1,0 +1,51 @@
+// check: no leaks
+// A weak map value whose field has a base class type and holds a subclass object that refers
+// back to the key: the trace glue goes by the object's class, so the ephemeron cycle is found
+// and freed (#3119 step 3, #989).
+class Raw {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+class Part {
+  name: string = "part";
+}
+
+class Back extends Part {
+  raw: Raw;
+  constructor(raw: Raw) {
+    super();
+    this.raw = raw;
+  }
+}
+
+class Plain extends Part {
+  v: number = 1;
+}
+
+class Holder {
+  part: Part;
+  constructor(part: Part) {
+    this.part = part;
+  }
+}
+
+function track(cache: WeakMap<Raw, Holder>, n: number): WeakRef<Raw> {
+  const raw = new Raw(n);
+  const holder = new Holder(new Back(raw));
+  cache.set(raw, holder);
+  const other = new Raw(n + 1);
+  const plain = new Holder(new Plain());
+  cache.set(other, plain);
+  console.log(cache.get(raw)!.part.name, cache.has(other));
+  return new WeakRef(raw);
+}
+
+function main() {
+  const cache = new WeakMap<Raw, Holder>();
+  const r = track(cache, 3);
+  console.log("key freed:", r.deref() == null);
+  console.log("map still in use:", cache.has(new Raw(0)));
+}

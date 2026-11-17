@@ -24,6 +24,7 @@
 //! | ManyCheck | `(p: ptr)`                         | panic if `*p` holds a function value that cannot be called from several threads, and in the strict walk what a call's copy would break (many.rs) |
 //! | Trace     | `(obj: ptr, visit: ptr, ctx: ptr)` | weak maps: visit the counted objects `obj` refers to (trace.rs) |
 //! | TraceIn   | `(p: ptr, visit: ptr, ctx: ptr)`   | the same for an inline value at `p`      |
+//! | TraceClass | `(obj: ptr, visit: ptr, ctx: ptr)` | Trace of a class with subclasses: by its dynamic class (trace_class.rs) |
 //! | WeakRetain / WeakRelease | `(word: u64)`       | retain / release a weak map value word   |
 //! | WeakBoxTrace | `(box: ptr, visit: ptr, ctx: ptr)` | Trace of a boxed weak map value       |
 //! | ProxyGet / ProxySet | `(proxy: ptr, key: ptr, v: ptr)` | a field of type `ty` through a typed proxy's `get` / `set` trap (proxy_typed.rs) |
@@ -54,6 +55,7 @@ mod many;
 mod slot_uses;
 mod thunk;
 mod trace;
+mod trace_class;
 mod trace_env;
 mod transfer;
 mod transfer_env;
@@ -119,6 +121,7 @@ pub(crate) enum Glue {
     ManyCheckStrict,
     Trace,
     TraceIn,
+    TraceClass,
     WeakRetain,
     WeakRelease,
     WeakBoxTrace,
@@ -211,6 +214,7 @@ impl Glue {
             Glue::ManyCheckStrict => "manycheckstrict",
             Glue::Trace => "trace",
             Glue::TraceIn => "tracein",
+            Glue::TraceClass => "traceclass",
             Glue::WeakRetain => "weakretain",
             Glue::WeakRelease => "weakrelease",
             Glue::WeakBoxTrace => "weakboxtrace",
@@ -275,7 +279,9 @@ impl Glue {
                 (vec![Ptr, Ptr], Bool)
             }
             Glue::Hash | Glue::BitsHash => (vec![Ptr], U64),
-            Glue::Trace | Glue::TraceIn | Glue::WeakBoxTrace => (vec![Ptr, Ptr, Ptr], Unit),
+            Glue::Trace | Glue::TraceIn | Glue::TraceClass | Glue::WeakBoxTrace => {
+                (vec![Ptr, Ptr, Ptr], Unit)
+            }
             Glue::WeakRetain | Glue::WeakRelease => (vec![U64], Unit),
             Glue::AnyTruthy => (vec![Ptr], Bool),
             Glue::AnySame => (vec![Ptr, Ptr, U8], Bool),
@@ -343,6 +349,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             }
             Glue::Trace => lw.trace_body(args[0], args[1], args[2], ty),
             Glue::TraceIn => lw.trace_in_body(args[0], args[1], args[2], ty),
+            Glue::TraceClass => lw.trace_class_body(args[0], args[1], args[2], ty),
             Glue::WeakBoxTrace => lw.weak_box_trace_body(args[0], args[1], args[2], ty),
             Glue::WeakRetain => lw.weak_retain_body(args[0], ty),
             Glue::WeakRelease => lw.weak_release_body(args[0], ty),

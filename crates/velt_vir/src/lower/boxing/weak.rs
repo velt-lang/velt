@@ -5,8 +5,8 @@
 //! They are the counted types of weak keys and `WeakRef` targets, and every counted type
 //! reachable from a weak map's key and value types the way the trace glue walks objects
 //! (glue/trace.rs): through fields, elements and payloads stored inline, up to the next counted
-//! object. A class in a hierarchy with a vtable is weak-capable but traced as opaque (its glue
-//! is null), so nothing is reached through it. A program without `WeakMap`, `WeakSet` or
+//! object. A class in a hierarchy with a vtable is traced by its dynamic class
+//! (glue/trace_class.rs), so what any of its built classes refers to is reached through it. A program without `WeakMap`, `WeakSet` or
 //! `WeakRef` notes no seeds and has no weak-capable types: it compiles exactly as before.
 
 use rustc_hash::FxHashSet;
@@ -166,11 +166,25 @@ impl Cx<'_> {
     }
 
     /// The counted types an object of the counted type `t` refers to directly (what its trace
-    /// glue visits); none for an opaque one.
+    /// glue visits). For a class with subclasses, what an object of any of its built classes
+    /// refers to (glue/trace_class.rs).
     pub(in crate::lower) fn weak_refs_of(&mut self, b: Option<&Boxing>, t: TyId) -> Vec<TyId> {
         if !self.traceable(t) {
-            return vec![];
+            let mut out: Vec<TyId> = vec![];
+            for c in self.traced_classes(b, t) {
+                for r in self.exact_refs_of(b, c) {
+                    if !out.contains(&r) {
+                        out.push(r);
+                    }
+                }
+            }
+            return out;
         }
+        self.exact_refs_of(b, t)
+    }
+
+    /// The counted types an object whose type is exactly `t` refers to directly.
+    pub(in crate::lower) fn exact_refs_of(&mut self, b: Option<&Boxing>, t: TyId) -> Vec<TyId> {
         let mut out = vec![];
         let mut seen = FxHashSet::default();
         let parts = match self.kind(t) {
@@ -204,6 +218,24 @@ impl Cx<'_> {
             .collect()
     }
 
+    /// The concrete classes of each hierarchy with a vtable that this pass built a vtable for
+    /// (sorted, so the fixed point compares equal across passes): what a value of one of its
+    /// classes may be (glue/trace_class.rs).
+    fn classes_by_root(&mut self) -> rustc_hash::FxHashMap<velt_sema::hir::DefId, Vec<TyId>> {
+        let mut built: Vec<TyId> = self.facts.vtable_types.iter().copied().collect();
+        built.sort_by_key(|t| t.0);
+        let mut out: rustc_hash::FxHashMap<velt_sema::hir::DefId, Vec<TyId>> = Default::default();
+        for c in built {
+            if let TyKind::Adt(d, _) = self.kind(c) {
+                if self.is_class(c) && self.has_header(d) {
+                    let root = self.class_root(d);
+                    out.entry(root).or_default().push(c);
+                }
+            }
+        }
+        out
+    }
+
     /// Display names of the weak-capable types (`VELT_DEBUG_COUNTED=1`).
     pub(in crate::lower) fn weak_names(&self) -> Vec<String> {
         let roots = self
@@ -229,6 +261,7 @@ impl Cx<'_> {
         if !self.facts.weak_seeds.is_empty() || next.weak_object {
             next.env_traced = self.closures_by_key();
             next.weak_envs = !next.env_traced.is_empty();
+            next.class_traced = self.classes_by_root();
         }
         let mut seeds: Vec<TyId> = self.facts.weak_seeds.iter().copied().collect();
         if next.weak_object {

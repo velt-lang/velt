@@ -150,7 +150,7 @@ and the analysis itself are computed only under that variable (`Cx::cycle_facts`
 compiles do none of it; step 7 records them always and moves the analysis into the
 counted-types fixed point (`close_boxing`), once code generation depends on it.
 
-## 2. Trace glue for every cycle-capable type (step 3; closures implemented)
+## 2. Trace glue for every cycle-capable type (step 3; closures and classes implemented)
 
 The collector and the weak core find cycles the same way: by asking each object which counted
 objects it owns, through compiler-generated trace glue (`rt_abi.md`, "Weak references"). Today
@@ -174,9 +174,13 @@ complete for every type a cycle-capable type reaches:
   get `RC_WEAK`, so in a program with such glue their releases take the three-way sequence
   (`Boxing::weak_envs`, program-wide, so no shape question depends on it), and the transfer
   glue gives up a shared environment through its drop entry instead of a raw decrement.
-- **Class hierarchies.** A `SLOT_TRACE` vtable slot (next to `SLOT_DROP`, `SLOT_TRANSFER`)
-  holds each concrete class's glue, demanded like `SLOT_FORMAT`; a field of a class type with
-  a vtable dispatches through it, as drop and transfer already do.
+- **Class hierarchies (implemented, `glue/trace_class.rs`).** A value of a class type with
+  subclasses may be an object of any of them, with fields its type lacks. The vtable has no
+  free slot for a trace entry (its nine hidden slots are taken, and the runtime knows their
+  offsets), so `Glue::TraceClass` dispatches on the object's header, its class's vtable: it
+  compares it with the vtables of the classes of the hierarchy the program built that are the
+  class or extend it (`Boxing::class_traced`) and calls that class's exact glue. An `any`
+  table's weak word uses the same glue for such a class.
 - **Interface values and `any`.** The interface table gets the same slot; `any` tables already
   carry a trace word when `object` is a weak key (`weak_object.rs`), and get it whenever a
   dynamic value can reach a cycle-capable type.
@@ -537,7 +541,7 @@ types and pay nothing when it lands.
 | #1780 (3) `f.self = f`, self-capturing function expressions | step 7 |
 | #2438 (last item), #2726 (1) a captured cycle copied per call | step 7 (the copies are freed; #2726 removes the copies) |
 | #955 (1) a strong cycle through a weak key | step 7 (the collection clears the `WeakRef`) |
-| #989 (2) tracing through closures and class hierarchies | step 3 (closures done) |
+| #989 (2) tracing through closures and class hierarchies | step 3 (done) |
 | #989 (4) ephemeron cycles across maps | step 7 |
 | #508 (3) `clone()` of a cyclic graph | step 8 |
 

@@ -2,9 +2,9 @@
 //!
 //! - **Trace** `(obj, visit, ctx)` of a counted type calls `visit(ctx, child, child_trace)` once
 //!   for each counted object `obj` refers to through its fields, elements and payloads stored
-//!   inline (up to the next counted object), with the child's own trace glue, or null for an
-//!   opaque child (a class with a vtable, whose dynamic class may have more fields, or one that
-//!   refers to nothing). A function value leads to its closure's environment (trace_env.rs);
+//!   inline (up to the next counted object), with the child's own trace glue (for a class with
+//!   subclasses, one that dispatches on the object's class, trace_class.rs), or null for a child
+//!   that refers to nothing. A function value leads to its closure's environment (trace_env.rs);
 //!   interface values, uncounted objects and `shared` values are not looked into: a reference left out only makes its target look referenced
 //!   from outside, which keeps it alive (a leak at worst, never a free of something live).
 //!   `TraceIn` is the same walk over an inline value at a pointer (a glue function per type, so
@@ -26,7 +26,14 @@ use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Terminator, Ty};
 impl FnLower<'_, '_> {
     /// Trace glue of the counted type `ty`, or null when its objects are opaque.
     pub(in crate::lower) fn trace_fn(&mut self, ty: TyId) -> Operand {
-        if !self.cx.traceable(ty) || self.cx.weak_refs_of(None, ty).is_empty() {
+        if !self.cx.traceable(ty) {
+            // A class with subclasses: by its dynamic class (trace_class.rs).
+            if self.cx.traced_classes(None, ty).is_empty() {
+                return cint(0, Ty::Ptr);
+            }
+            return cfunc(self.cx.func(Work::Glue(Glue::TraceClass, ty)));
+        }
+        if self.cx.weak_refs_of(None, ty).is_empty() {
             return cint(0, Ty::Ptr);
         }
         cfunc(self.cx.func(Work::Glue(Glue::Trace, ty)))
