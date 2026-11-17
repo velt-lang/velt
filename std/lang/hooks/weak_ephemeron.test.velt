@@ -39,11 +39,13 @@ function inEveryOrder(n: usize, build: (m: u32) => usize[]): bool {
 
 describe("the ephemeron rule", () => {
   it("frees a raw object and its proxy", () => {
-    expect(inEveryOrder(2, (m) => {
-      const raw = plain();
-      const p = proxyOf(m, raw, 0);
-      return [raw, p];
-    })).toBe(true);
+    expect(
+      inEveryOrder(2, (m) => {
+        const raw = plain();
+        const p = proxyOf(m, raw, 0);
+        return [raw, p];
+      }),
+    ).toBe(true);
   });
 
   it("keeps the proxy while its key lives", () => {
@@ -77,14 +79,16 @@ describe("the ephemeron rule", () => {
 
   it("frees a chain of entries", () => {
     // A -> B (B holds A), B -> C (C holds B): the outside may hold any of them.
-    expect(inEveryOrder(3, (m) => {
-      const a = plain();
-      const b = newObj(retain(a), 0, 0);
-      set(m, a, retain(b));
-      const c = newObj(retain(b), 0, 0);
-      set(m, b, retain(c));
-      return [a, b, c];
-    })).toBe(true);
+    expect(
+      inEveryOrder(3, (m) => {
+        const a = plain();
+        const b = newObj(retain(a), 0, 0);
+        set(m, a, retain(b));
+        const c = newObj(retain(b), 0, 0);
+        set(m, b, retain(c));
+        return [a, b, c];
+      }),
+    ).toBe(true);
   });
 
   it("keeps a whole chain while its end is held", () => {
@@ -106,23 +110,27 @@ describe("the ephemeron rule", () => {
 
   it("frees nested reactive objects", () => {
     // raw1.child = raw2, and both have proxies in the same cache.
-    expect(inEveryOrder(4, (m) => {
-      const raw2 = plain();
-      const raw1 = newObj(retain(raw2), 0, 0);
-      const p1 = proxyOf(m, raw1, 0);
-      const p2 = proxyOf(m, raw2, 0);
-      return [raw1, raw2, p1, p2];
-    })).toBe(true);
+    expect(
+      inEveryOrder(4, (m) => {
+        const raw2 = plain();
+        const raw1 = newObj(retain(raw2), 0, 0);
+        const p1 = proxyOf(m, raw1, 0);
+        const p2 = proxyOf(m, raw2, 0);
+        return [raw1, raw2, p1, p2];
+      }),
+    ).toBe(true);
   });
 
   it("frees a handler that captures the target", () => {
     // proxy -> handler -> raw: the handler is on a path back to the key.
-    expect(inEveryOrder(3, (m) => {
-      const raw = plain();
-      const handler = newObj(retain(raw), 0, 0);
-      const p = proxyOf(m, raw, retain(handler));
-      return [raw, handler, p];
-    })).toBe(true);
+    expect(
+      inEveryOrder(3, (m) => {
+        const raw = plain();
+        const handler = newObj(retain(raw), 0, 0);
+        const p = proxyOf(m, raw, retain(handler));
+        return [raw, handler, p];
+      }),
+    ).toBe(true);
   });
 
   it("leaves a handler shared outside the cycles alone", () => {
@@ -214,12 +222,14 @@ describe("the ephemeron rule", () => {
   it("finds a path added after the insert at the next trial", () => {
     // The proxy gains a second reference to its key after the insert. The release of the proxy
     // runs a trial (the key is still held outside), which records the key's new level.
-    expect(inEveryOrder(2, (m) => {
-      const raw = plain();
-      const p = proxyOf(m, raw, 0);
-      setField(p, 2, retain(raw));
-      return [raw, p];
-    })).toBe(true);
+    expect(
+      inEveryOrder(2, (m) => {
+        const raw = plain();
+        const p = proxyOf(m, raw, 0);
+        setField(p, 2, retain(raw));
+        return [raw, p];
+      }),
+    ).toBe(true);
   });
 
   it("delays the free of a path added after the last trial", () => {

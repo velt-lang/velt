@@ -9,8 +9,53 @@
 // `(object, references, trace)` triples, or 0). Values are released by the caller once the lock
 // is given back: `release` queues them in the header (weak.velt `take`).
 
-import { H_MAPS, H_MCAP, H_MFREE, H_MNEXT, H_REFS, H_REL_FN, H_REL_MORE, H_REL_VALUE, R_KEYED, R_KEYED_MORE, R_MEMBER_MAP, R_MEMBER_MORE, R_REF, R_REF_MORE, find, hint, listAt, listLen, listRemove, memberKey, memberMap, membersLen, memberRemove, remove, setHint, settle } from "./weak_records";
-import { W, alloc, copy, free, ld, ld64, slotOf, st, st64, vat, vecFree, vecLen, vecPop, vecPush, vlen, vset, vtruncate } from "./weak_mem";
+import {
+  H_MAPS,
+  H_MCAP,
+  H_MFREE,
+  H_MNEXT,
+  H_REFS,
+  H_REL_FN,
+  H_REL_MORE,
+  H_REL_VALUE,
+  R_KEYED,
+  R_KEYED_MORE,
+  R_MEMBER_MAP,
+  R_MEMBER_MORE,
+  R_REF,
+  R_REF_MORE,
+  find,
+  hint,
+  listAt,
+  listLen,
+  listRemove,
+  memberKey,
+  memberMap,
+  membersLen,
+  memberRemove,
+  remove,
+  setHint,
+  settle,
+} from "./weak_records";
+import {
+  W,
+  alloc,
+  copy,
+  free,
+  ld,
+  ld64,
+  slotOf,
+  st,
+  st64,
+  vat,
+  vecFree,
+  vecLen,
+  vecPop,
+  vecPush,
+  vlen,
+  vset,
+  vtruncate,
+} from "./weak_mem";
 
 // A map block.
 export const M_KEY_TRACE: usize = 0;
@@ -39,7 +84,13 @@ export function mapOf(h: usize, id: u32): usize {
 }
 
 /** A new map with this glue (each 0 or a function's address). */
-export function mapNew(h: usize, keyTrace: usize, retain: usize, release: usize, trace: usize): u32 {
+export function mapNew(
+  h: usize,
+  keyTrace: usize,
+  retain: usize,
+  release: usize,
+  trace: usize,
+): u32 {
   const b = alloc(MAP);
   st(b + M_KEY_TRACE, keyTrace);
   st(b + M_RETAIN, retain);

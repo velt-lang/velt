@@ -4,7 +4,6 @@
 import { weakMapDelete, weakMapHas, weakMapSet } from "velt/lang/intrinsics";
 import { weakMapDrop } from "velt/lang/hooks/weak";
 
-
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
 /**

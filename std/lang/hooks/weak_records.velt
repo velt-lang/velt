@@ -12,7 +12,29 @@
 // `WeakRef`s. Each list keeps its first item in the record and the rest in a vector, so a record
 // of an object in one map with one `WeakRef` allocates nothing of its own.
 
-import { RC_COUNT, RC_WEAK, W, alloc, copy, free, ld, ld32, ld64, rcWord, slotOf, st, st32, st64, vecAt, vecFree, vecLen, vecPop, vecPush, vecRemove, vecRemovePair } from "./weak_mem";
+import {
+  RC_COUNT,
+  RC_WEAK,
+  W,
+  alloc,
+  copy,
+  free,
+  ld,
+  ld32,
+  ld64,
+  rcWord,
+  slotOf,
+  st,
+  st32,
+  st64,
+  vecAt,
+  vecFree,
+  vecLen,
+  vecPop,
+  vecPush,
+  vecRemove,
+  vecRemovePair,
+} from "./weak_mem";
 
 /** The header's address (0 until the first weak operation). */
 const STATE = new Atomic<u64>(0);

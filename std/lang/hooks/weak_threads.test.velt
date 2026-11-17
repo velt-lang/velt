@@ -174,7 +174,12 @@ describe("values whose release reaches the weak core", () => {
   });
 
   it("drops another map from a released value", () => {
-    const outer = weakMapNew(fnAddress(traceObj), fnAddress(retainNothing), fnAddress(dropMapValue), 0);
+    const outer = weakMapNew(
+      fnAddress(traceObj),
+      fnAddress(retainNothing),
+      fnAddress(dropMapValue),
+      0,
+    );
     const inner = objMap();
     const a = plain();
     let b = plain();

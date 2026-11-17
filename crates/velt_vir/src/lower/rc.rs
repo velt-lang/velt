@@ -6,8 +6,8 @@
 //! readers of an `RwLock` share: their count operations go through `velt_rt_lk_*`, which leave
 //! the shared ones alone in a `read` callback (the `_of` variants, given the object's type).
 
-use super::operand::proj;
 use super::hook_calls::{self as hooks, ty, HookTy};
+use super::operand::proj;
 use super::rt::Rt;
 use super::{cfunc, cint, ice, FnLower, Glue, LkMode, Work};
 use crate::vir::{BinOp, Operand, Place, Proj, Rvalue, Ty};

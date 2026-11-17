@@ -33,7 +33,22 @@ import * as wm from "./weak_maps";
 import * as wr from "./weak_refs";
 import * as rec from "./weak_records";
 import { members, trial } from "./weak_trial";
-import { count, free, ld, ld64, lock, rcWord, st, st64, unlock, vat, vlen, vpush, vswapRemove, vtruncate } from "./weak_mem";
+import {
+  count,
+  free,
+  ld,
+  ld64,
+  lock,
+  rcWord,
+  st,
+  st64,
+  unlock,
+  vat,
+  vlen,
+  vpush,
+  vswapRemove,
+  vtruncate,
+} from "./weak_mem";
 
 /** This thread holds the lock (a re-entry would deadlock). */
 const LOCKED = new ThreadLocal<bool>(false);

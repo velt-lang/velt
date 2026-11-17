@@ -24,7 +24,6 @@ import { weakMapDrop } from "velt/lang/hooks/weak";
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
-
 /**
  * A map from objects to values that does not keep its keys alive: an entry goes away when its
  * key is freed. Keys are compared by identity. Not iterable and without `size`, as in JS.

@@ -28,8 +28,8 @@
 use velt_sema::hir::{self, DefId, Nothing, TyId, TyKind};
 
 use super::glue::Glue;
-use super::operand::proj;
 use super::hook_calls::{self as hooks, ty, HookTy};
+use super::operand::proj;
 use super::{cint, Cx, FnLower, Work};
 use crate::vir::{BinOp, Const, Operand, Place, Proj, Rvalue, Terminator, Ty};
 

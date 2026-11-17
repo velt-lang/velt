@@ -118,7 +118,11 @@ impl FnLower<'_, '_> {
 
     /// `addressCallWord(f, a)` and `addressCall3(f, a, b, c)`: the call of the C function at
     /// address `f`, which takes `args` (each converted to its VIR type) and returns nothing.
-    pub(super) fn address_call_void(&mut self, f: &hir::Expr, args: &[(&hir::Expr, Ty)]) -> Operand {
+    pub(super) fn address_call_void(
+        &mut self,
+        f: &hir::Expr,
+        args: &[(&hir::Expr, Ty)],
+    ) -> Operand {
         let v = self.expr(f);
         let target = self.rvalue_temp(Ty::Ptr, Rvalue::Cast(v, Ty::Ptr));
         let ops: Vec<Operand> = (args.iter())

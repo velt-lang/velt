@@ -6,7 +6,14 @@
 // given back when it empties. A field is a word of 8 bytes on every target, so a layout is the
 // same on wasm32, where an address is 4 of them.
 
-import { addressAtomicCas, addressAtomicRmw, addressLoad, addressStore, inline, noInline } from "velt/lang/intrinsics";
+import {
+  addressAtomicCas,
+  addressAtomicRmw,
+  addressLoad,
+  addressStore,
+  inline,
+  noInline,
+} from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as r from "#reactor";
 

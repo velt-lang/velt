@@ -21,9 +21,39 @@
 // Every mistake this can make is a leak, never a use-after-free: the only action is deleting
 // entries of keys found dead, and deleting an entry only gives up the map's own reference.
 
-import { G_LIVE, G_TO_KEY, NONE, add, addInternal, edge, expand, graph, indexOf, internal, len, marked, nextWork, obj, overflow, reach, root, trace } from "./weak_graph";
+import {
+  G_LIVE,
+  G_TO_KEY,
+  NONE,
+  add,
+  addInternal,
+  edge,
+  expand,
+  graph,
+  indexOf,
+  internal,
+  len,
+  marked,
+  nextWork,
+  obj,
+  overflow,
+  reach,
+  root,
+  trace,
+} from "./weak_graph";
 import { E_VALUE, M_KEY_TRACE, M_VALUE_TRACE, del, entryOf, mapOf } from "./weak_maps";
-import { R_KEYED, R_TRACE, find, listAt, listLen, memberKey, memberMap, membersLen, node, setObserved } from "./weak_records";
+import {
+  R_KEYED,
+  R_TRACE,
+  find,
+  listAt,
+  listLen,
+  memberKey,
+  memberMap,
+  membersLen,
+  node,
+  setObserved,
+} from "./weak_records";
 import { count, ld, ld64, vpush } from "./weak_mem";
 
 /**

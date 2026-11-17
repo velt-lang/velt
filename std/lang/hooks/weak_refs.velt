@@ -7,8 +7,32 @@
 // descriptor). The target's record lists the slots, so freeing it clears them (weak_maps.velt
 // `forget`).
 
-import { H_FCAP, H_FFREE, H_FNEXT, H_REFS, R_REF, find, listPush, listRemove, node, settle } from "./weak_records";
-import { W, alloc, copy, free, ld, ld64, rcWord, st, st64, vecLen, vecPop, vecPush } from "./weak_mem";
+import {
+  H_FCAP,
+  H_FFREE,
+  H_FNEXT,
+  H_REFS,
+  R_REF,
+  find,
+  listPush,
+  listRemove,
+  node,
+  settle,
+} from "./weak_records";
+import {
+  W,
+  alloc,
+  copy,
+  free,
+  ld,
+  ld64,
+  rcWord,
+  st,
+  st64,
+  vecLen,
+  vecPop,
+  vecPush,
+} from "./weak_mem";
 
 /** Bit 0 of a target's word: a typed proxy (the counted object is the word with it clear). */
 export const TAG: usize = 1;
