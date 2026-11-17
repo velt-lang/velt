@@ -3,7 +3,9 @@
 // An object stands for any counted type (a raw object, a proxy cell holding its target, a
 // handler): a count word and three strong reference fields (0: none). `release` is the release
 // sequence lowering emits for a weak-capable type (lower/rc.rs), and `traceObj`, `retainValue`
-// and `releaseValue` are the glue it makes for one (rt_abi.md "Weak references").
+// and `releaseValue` are the glue it makes for one (rt_abi.md "Weak references"). Glue written in
+// Velt takes 64-bit words where the compiler's takes pointers, which is the same call on a 64-bit
+// target only: these tests run natively.
 
 import { addressCall3, fnAddress, rawAlloc, rawFree } from "velt/lang/intrinsics";
 import { weakMapDrop, weakMapGet, weakMapHas, weakMapNew, weakMapSet, weakRelease, weakTracked } from "./weak";
@@ -92,7 +94,8 @@ export function traceObj(obj: usize, visit: usize, ctx: usize): void {
   for (let i: usize = 0; i < 3; i++) {
     const f = field(obj, i);
     if (f !== 0) {
-      // SAFETY: `visit` is the core's callback, taking its context, a child and its glue.
+      // SAFETY: `visit` is the core's callback, taking its context, a child and its glue (as
+      // 64-bit words, which pointers are on the targets these tests run on).
       unsafe {
         addressCall3(visit, ctx, f, fnAddress(traceObj));
       }

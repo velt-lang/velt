@@ -183,14 +183,19 @@ export function nextWork(g: usize): usize {
 
 export const NONE: usize = ROOM;
 
-/** `visit(ctx, child, trace)`: trace glue's report of a strong reference (rt_abi.md). */
-function visit(ctx: usize, child: usize, t: usize): void {
+/**
+ * `visit(ctx, child, trace)`: trace glue's report of a strong reference (rt_abi.md "Weak
+ * references"). Its words are 64-bit on every target, as the glue passes them, so the indirect
+ * call matches on wasm32 too.
+ */
+function visit(ctx: u64, child: u64, t: u64): void {
   if (child === 0) {
     return;
   }
-  const j = add(ctx, child, t);
+  const g = ctx as usize;
+  const j = add(g, child as usize, t as usize);
   if (j !== ROOM) {
-    edge(ctx, ld(ctx + G_CURRENT), j);
+    edge(g, ld(g + G_CURRENT), j);
   }
 }
 

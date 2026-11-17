@@ -264,7 +264,8 @@ directly. `weak T` fields (#11) will use it too. Design: [weak-refs.md](../desig
   today.
 - **Trace glue** per counted type that can be a weak key or value, or be reached from one:
   `void trace(uint8_t* obj, VisitFn visit, void* ctx)` calls `visit(ctx, child, child_trace)` once
-  for each counted reference `obj` owns (`child_trace` may be null: opaque). Map values are
+  for each counted reference `obj` owns (`child_trace` may be null: opaque), each argument a
+  `uint64_t` (a pointer widened: on wasm32 an indirect call must match the callee's signature). Map values are
   retained with `void retain(uint64_t value)` and released with `void release(uint64_t value)`.
   These are C functions the core calls through their addresses (`addressCall3`,
   `addressCallWord`); `visit` is a std function (`fnAddress`).

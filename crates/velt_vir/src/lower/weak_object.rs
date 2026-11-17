@@ -299,11 +299,7 @@ impl FnLower<'_, '_> {
         );
         self.when(held, done);
         let tf = self.weak_word_trace(word);
-        let (visit, cx) = (
-            Operand::Copy(Place::local(tv.0)),
-            Operand::Copy(Place::local(tv.1)),
-        );
-        self.call_entry(visit, vec![cx, data, tf], vec![Ty::Ptr; 3], Ty::Unit);
+        self.call_visit(tv, data, tf);
         self.goto(done);
         self.switch_to(done);
     }
