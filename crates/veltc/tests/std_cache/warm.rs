@@ -82,7 +82,10 @@ fn the_warm_up_stores_what_release_builds_link() {
         .output()
         .unwrap();
     assert!(warm.status.success(), "{}", text(&warm.stderr));
-    let built = release_default(dir, "a.velt", "a", &cache, &[]);
+    // With prebuilt hook modules on, as for the warm-up: it stored the object of the one
+    // `toFixed` reaches, not that module's functions.
+    let on = [("VELT_PREBUILT_HOOKS", "1")];
+    let built = release_default(dir, "a.velt", "a", &cache, &on);
     let (found, compiled) = counts(&built);
     assert!(found > 0 && compiled == 0, "{}", text(&built.stderr));
     assert_eq!(left(&built), 0, "{}", text(&built.stderr));
