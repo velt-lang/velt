@@ -13,6 +13,7 @@
 //   (sched_sleep_carry.velt); a pinned one, or one anchored for good, stays.
 
 import * as m from "./sched_mem";
+import * as mon from "./sched_monitor";
 import * as sc from "./sched_sleep_carry";
 import * as sp from "./sched_spread";
 import * as t from "./sched_task";
@@ -32,6 +33,11 @@ export function gathers(e: usize, g: usize): bool {
   }
   const woken = m.load(e + t.E_UNPARKS) - m.ld(e + t.E_W_UNPARKS);
   if (woken * 100 < polls * WOKEN_PCT) {
+    return false;
+  }
+  // Not to a lazy worker 0 (a spare's tasks are the ones a rescue took off it), nor to one in a
+  // poll the monitor finds stalled: they would wait for that poll, which may wait for them.
+  if (m.load(g + t.E_LAZY) !== 0 || mon.stalled(g, m.load(g + t.E_TICKS))) {
     return false;
   }
   return m.load(g + t.E_QUEUED) < sp.BORROW_MIN;

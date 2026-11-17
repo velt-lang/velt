@@ -65,6 +65,16 @@ export function park(e: usize): void {
   if (io.anyDue(b)) {
     w.flushDue(b);
   }
+  const mode = m.ld32(e + t.E_MODE);
+  // Several workers: a task woken from another one may come within microseconds (sched_spin.velt).
+  const spins = mode !== 0 && mode !== t.M_LAZY;
+  if (spins && sn.spin(e)) {
+    m.st32(e + t.E_DISPATCH, 0);
+    if (timersAny(e)) {
+      tookWork(e);
+    }
+    return;
+  }
   let timeout: i64 = -1;
   const timers = timersAny(e);
   if (timers) {
@@ -74,16 +84,6 @@ export function park(e: usize): void {
       tookWork(e);
       return;
     }
-  }
-  const mode = m.ld32(e + t.E_MODE);
-  // Several workers: a task woken from another one may come within microseconds (sched_spin.velt).
-  const spins = mode !== 0 && mode !== t.M_LAZY;
-  if (spins && sn.spin(e)) {
-    m.st32(e + t.E_DISPATCH, 0);
-    if (timers) {
-      tookWork(e);
-    }
-    return;
   }
   m.store32(e + t.E_PARK, 1);
   if (m.load(e + t.E_INBOX) !== 0 || q.any(e) || !parkable(e)) {
