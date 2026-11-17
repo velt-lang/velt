@@ -355,11 +355,15 @@ export function closeListener(l: u64): void {
   }
 }
 
-/** The peer's "ip:port" of stream `h` ("" once closed). */
+/** The peer's "ip:port" of stream `h` ("" once closed, and for a `streamPair` end). */
 export function peerOf(h: u64): string {
   // Held while its descriptor is used, as `portOf`'s.
   const s = tb.hold(h);
   if (s === 0) {
+    return "";
+  }
+  if ((m.ld32(s + io.S_FLAGS) & io.F_PAIR) !== 0) {
+    tb.leave(s);
     return "";
   }
   const sa = m.zeroed(SA_SIZE + 8);

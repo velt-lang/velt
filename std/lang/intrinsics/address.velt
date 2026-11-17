@@ -4,7 +4,6 @@
 // unsafe functions.
 
 import { intrinsic } from "./decorators";
-import type { Ptr } from "velt/ffi/ptr";
 import type { Copied } from "./modes";
 
 /**

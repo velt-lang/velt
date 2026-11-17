@@ -29,6 +29,8 @@ export const SUPPORTED: bool = true;
 export const EAGAIN: i32 = 35;
 export const EINPROGRESS: i32 = 36;
 export const EINTR: i32 = 4;
+/** A send on a stream whose peer is gone. */
+export const EPIPE: i32 = 32;
 /** `CLOCK_MONOTONIC`. */
 export const MONOTONIC: i32 = 6;
 /** `send`'s flags: none (SIGPIPE is off per socket, `SO_NOSIGPIPE`). */

@@ -1,0 +1,41 @@
+// velt/net (internal): the two connected sockets of `streamPair` (std/net/pair.velt) on macOS and
+// Linux: a `socketpair` of Unix stream sockets, made non-blocking (and on macOS close-on-exec and
+// SIGPIPE-free) as the reactor's other sockets are. Windows has no `socketpair`:
+// std/net/pair_win32.velt.
+
+import { IoResult } from "velt/native/result";
+import { Ptr } from "velt/ffi/ptr";
+import * as r from "#reactor";
+import * as m from "velt/lang/hooks/sched_mem";
+import * as fs from "velt/net/fd_socket";
+
+/** Two connected sockets, their descriptors at `fds`. */
+declare c("c") function socketpair(family: i32, kind: i32, protocol: i32, fds: Ptr<u8>): i32;
+
+const AF_UNIX: i32 = 1;
+const SOCK_STREAM: i32 = 1;
+
+/** Two connected stream sockets' descriptors, ready for the reactor. */
+export function connectedPair(): IoResult<i32[]> {
+  const sv = m.zeroed(16);
+  // SAFETY: room for the two `int` descriptors.
+  const rc = unsafe { socketpair(AF_UNIX, SOCK_STREAM | r.SOCKET_FLAGS, 0, m.ptr(sv)) };
+  if (rc !== 0) {
+    const st = fs.osError(r.errno());
+    m.release(sv, 16);
+    return fs.failed<i32[]>(st, []);
+  }
+  const a = m.ld32(sv) as i32;
+  const b = m.ld32(sv + 4) as i32;
+  m.release(sv, 16);
+  let e = r.prepare(a);
+  if (e === 0) {
+    e = r.prepare(b);
+  }
+  if (e !== 0) {
+    fs.closeFd(a);
+    fs.closeFd(b);
+    return fs.failed<i32[]>(fs.osError(e), []);
+  }
+  return fs.value<i32[]>([a, b]);
+}

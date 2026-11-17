@@ -17,7 +17,7 @@
 
 import { Ptr } from "velt/ffi/ptr";
 import { inline, noInline } from "velt/lang/intrinsics";
-import { close$io, send$io, shutdown$io } from "#net-calls";
+import { close$io, recv$net, send$io, shutdown$io } from "#net-calls";
 import * as r from "#reactor";
 import * as io from "./sched_io";
 import * as m from "./sched_mem";
@@ -105,6 +105,10 @@ export function sendNow(s: usize, p: usize, n: usize): usize {
 
 /** One `send`: the bytes taken, 0 when the socket takes none now (or it failed: `S_ERR`). */
 function sendSome(s: usize, p: usize, n: usize): isize {
+  if ((m.ld32(s + io.S_FLAGS) & io.F_PEER_GONE) !== 0) {
+    fail(s, r.EPIPE);
+    return 0;
+  }
   while (true) {
     // SAFETY: `p` holds `n` bytes; the descriptor is the source's, open.
     const k = unsafe { send$io(m.ld(s + io.S_FD) as i32, m.ptr(p), n, r.SEND_FLAGS) };
@@ -190,12 +194,44 @@ function finish(s: usize, fl: u32): void {
   }
   if ((fl & io.F_CLOSING) !== 0 && (m.ld32(s + io.S_FLAGS) & io.F_DUE) === 0) {
     tb.closing(s);
+    if ((fl & io.F_PAIR) !== 0) {
+      drainInput(fd);
+    }
     // SAFETY: the source's descriptor, closed once: the source goes with it.
     unsafe {
       close$io(fd);
     }
     io.free(s);
   }
+}
+
+/** The most a `streamPair` end reads away before it closes: 64 reads of 64 KiB. */
+const DRAIN_READS: i32 = 64;
+const DRAIN_SIZE: usize = 64 * 1024;
+
+/**
+ * Reads away what a `streamPair` end's socket holds unread before it closes (std/net/pair.velt).
+ * Closing a socket with unread input resets the connection: the other end then reads
+ * `ECONNRESET` in place of its end of stream (a `socketpair` on Linux), and on Windows' loopback
+ * TCP loses what it had not read yet. Writing is shut down first, so the end of stream is queued
+ * behind the bytes sent. Bounded: an end its peer keeps writing to closes after `DRAIN_READS`.
+ */
+@noInline
+function drainInput(fd: i32): void {
+  const buf = m.alloc(DRAIN_SIZE);
+  // SAFETY: the source's descriptor, open; `buf` holds `DRAIN_SIZE` bytes. The socket is
+  // non-blocking: a read with nothing there fails at once.
+  unsafe {
+    shutdown$io(fd, 1);
+  }
+  for (let i = 0; i < DRAIN_READS; i++) {
+    // SAFETY: as above.
+    const k = unsafe { recv$net(fd, m.ptr(buf), DRAIN_SIZE, 0) };
+    if (k <= 0 && !(k < 0 && r.errno() === r.EINTR)) {
+      break;
+    }
+  }
+  m.release(buf, DRAIN_SIZE);
 }
 
 /** Sends every due source's buffer (the end of a poll, before the worker waits). */
