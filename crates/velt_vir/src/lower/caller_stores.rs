@@ -65,7 +65,7 @@ impl FnLower<'_, '_> {
     }
 
     /// Is `e` a variable `plain_made` finds (through a share)?
-    fn plain_made_value(&mut self, e: &hir::Expr) -> bool {
+    pub(super) fn plain_made_value(&mut self, e: &hir::Expr) -> bool {
         let mut x = e;
         while let K::Call {
             callee: hir::Callee::Intrinsic(Intrinsic::Share),

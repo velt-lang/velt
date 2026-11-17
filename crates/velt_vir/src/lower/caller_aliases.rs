@@ -285,7 +285,8 @@ impl Bindings {
 
 impl FnLower<'_, '_> {
     /// Is `l` a variable of this `read` callback that holds only what the callback made of
-    /// literals (`const c = [[i, n]]`), and that nothing changes or captures? Stored into the
+    /// literals (`const c = [[i, n]]`) and explicit copies (`const c = structuredClone(x.items)`),
+    /// and that nothing changes or captures? Stored into the
     /// caller's containers it holds nothing of the caller's or the store's, so it needs no
     /// transfer: it stays the reader's own (`LOCAL`), which code outside read mode ignores and
     /// a later transfer clears (caller_stores.rs `keep_for_caller`).
@@ -330,8 +331,8 @@ impl FnLower<'_, '_> {
             .is_some_and(|p| p.contains(&l))
     }
 
-    /// Is `e` an array or object literal of such literals and of values that reach no
-    /// lock-set object (numbers, strings)?
+    /// Is `e` an array or object literal of such literals, of explicit copies and of values that
+    /// reach no lock-set object (numbers, strings), or an explicit copy itself?
     fn plain_literal(&mut self, e: &hir::Expr) -> bool {
         match &e.kind {
             K::ArrayLit(xs) | K::Tuple(xs) | K::AdtLit { fields: xs, .. } => xs.iter().all(|x| {
@@ -342,7 +343,7 @@ impl FnLower<'_, '_> {
                 let t = self.sub(x.ty);
                 !self.cx.reaches_lock_set(t) || self.plain_literal(&x)
             }),
-            _ => false,
+            _ => self.explicit_copy(e),
         }
     }
 }

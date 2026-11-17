@@ -12,6 +12,9 @@ use super::operand::proj;
 use super::FnLower;
 use crate::vir::{BinOp, Operand, Place, Proj, Rvalue, Ty};
 
+/// The prelude's `structuredClone` (std/prelude/clone.velt), which returns `value.clone()`.
+const STRUCTURED_CLONE: &str = "std/prelude/clone::structuredClone";
+
 impl FnLower<'_, '_> {
     /// Can the result of type `ty` of a call changing the caller's containers, given `args`
     /// passed by `modes`, be handed to the reader (`hand_to_reader`): none to hand, `hand_ok`,
@@ -40,11 +43,13 @@ impl FnLower<'_, '_> {
                 .all(|(a, m)| *m == PassMode::Owned || self.lent_fresh(a))
     }
 
-    /// Is the argument `a` outside the lock set, the caller's place, or made here of literals
-    /// and what sema transferred (a rest parameter's array literal, call.rs `lent_copy`)?
+    /// Is the argument `a` outside the lock set, the caller's place, or made here of literals,
+    /// explicit copies (`explicit_copy`, #1992) and what sema transferred (a rest parameter's
+    /// array literal, call.rs `lent_copy`), also through a variable holding only such a value
+    /// and used for nothing else (`plain_made`)?
     fn lent_fresh(&mut self, a: &hir::Expr) -> bool {
         let t = self.sub(a.ty);
-        if !self.cx.reaches_lock_set(t) || self.captured_root(a) {
+        if !self.cx.reaches_lock_set(t) || self.captured_root(a) || self.plain_made_value(a) {
             return true;
         }
         match &a.kind {
@@ -55,6 +60,22 @@ impl FnLower<'_, '_> {
                 callee: hir::Callee::Intrinsic(Intrinsic::Transfer),
                 ..
             } => true,
+            _ => self.explicit_copy(a),
+        }
+    }
+
+    /// Is `e` an explicit copy (`structuredClone(x.items.slice())`, `x.clone()`)? New objects
+    /// all the way down, whatever they are copies of: in a `read` callback, the reader's own.
+    pub(super) fn explicit_copy(&mut self, e: &hir::Expr) -> bool {
+        match &e.kind {
+            K::Call {
+                callee: hir::Callee::Intrinsic(Intrinsic::Clone),
+                ..
+            } => true,
+            K::Call {
+                callee: hir::Callee::Def(d, _),
+                ..
+            } => self.cx.fn_def(*d).name == STRUCTURED_CLONE,
             _ => false,
         }
     }
