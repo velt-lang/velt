@@ -1823,6 +1823,7 @@ version = "0.6.0"
 dependencies = [
  "rustc-hash",
  "velt_common",
+ "velt_text",
 ]
 
 [[package]]
@@ -1882,6 +1883,7 @@ dependencies = [
  "velt_link",
  "velt_loader",
  "velt_sema",
+ "velt_syntax",
 ]
 
 [[package]]

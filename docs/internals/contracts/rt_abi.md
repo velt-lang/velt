@@ -207,7 +207,6 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
 |---|---|---|
 | `velt_rt_str_concat` | `(const VeltStr* a, const VeltStr* b, VeltStr* out)` | new string (an empty operand: the other one, shared) |
 | `velt_rt_str_append` | `(VeltStr* s, const VeltStr* t)` | `s += t` on the owned string `*s`, whose old value is dead: in place when `*s` is inline with room or holds the only reference to its heap buffer (which grows geometrically); a static or shared `*s` is first copied into a buffer of its own. `t` may be `s` or lie in `*s`'s buffer. Emitted for `s += x`, `s = s + x` and `` s = `${s}${x}` `` on variables and fields (rt_abi_async.md §12.1) |
-| `velt_rt_str_from_f64` | `(double v, VeltStr* out)` | JS `Number.prototype.toString` formatting (inline). The integer forms (`str_from_i64` / `_u64`) are gone: an integer's text is std's `intText` / `uintText` (velt/lang/hooks/number_text, #2197) |
 | `velt_rt_str_from_bool` | `(uint8_t v, VeltStr* out)` | `true`/`false` (static) |
 | `velt_rt_str_clone` | `(const VeltStr* s, VeltStr* out)` | a copy: bitwise, plus count +1 for heap strings (never a deep copy); generated code calls it for heap strings only (`(int64_t)w2 > 0`) and copies the three words of any other |
 | `velt_rt_str_own` | `(const VeltStr* s, VeltStr* out)` | like `str_clone`, but a static-form string (which may borrow memory, e.g. a JSON key pointing into the parsed text) is copied into an inline or heap string |
@@ -216,6 +215,8 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
 | `velt_rt_str_char_code_at` | `(const VeltStr* s, int64_t i) -> int64_t` | the UTF-16 code unit at `i` (a supplementary character gives its high or low surrogate), -1 out of range; generated code calls it for non-ASCII strings only |
 | `velt_rt_str_byte_length` | `(const VeltStr* s) -> uint64_t` | the UTF-8 length: the stored byte length, O(1) (generated code reads it inline, above) |
 | `velt_rt_str_hash` | `(const VeltStr* s) -> uint64_t` | hash of the bytes (`Map`/`Set` keys; fixed seed) |
+
+A number has no text here: an integer's is std's `intText` / `uintText` (velt/lang/hooks/number_text, #2197), a float's std's `numberText` / `floatText` over velt/lang/number/format (std/lang/hooks/number_shortest's `shortestText` where the printer isn't loaded, #2196).
 
 ## Counted objects [semantics stage 2]
 Compiled code only (no runtime functions): values the program shares
@@ -923,7 +924,6 @@ through `any` never call them.
 | Symbol | Signature |
 |---|---|
 | `velt_rt_write_str` | `(uint32_t stream, const VeltStr* s)` |
-| `velt_rt_write_f64` | `(uint32_t stream, double v)` — `console.log` formatting (`1`, `1.5`, `1e+21`, `NaN`, `-0`); called by std's `numberWrite` for a float that is not a whole number below 2^53 or is `-0`, and by lowering where sema left `numberWrite` unchecked |
 | `velt_rt_write_bool` | `(uint32_t stream, uint8_t v)` |
 | `velt_rt_write_byte` | `(uint32_t stream, uint8_t b)` — used for `' '` and `'\n'` |
 | `velt_rt_flush` | `(void)` |

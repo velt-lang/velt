@@ -7,7 +7,7 @@ use velt_sema::hir::{LitValue, TyId, TyKind};
 
 use crate::lower::rt::Rt;
 use crate::lower::FnLower;
-use crate::vir::{self, Const, Operand, Place, Terminator, Ty, STR_AGG};
+use crate::vir::{self, Operand, Place, Terminator, Ty, STR_AGG};
 
 impl FnLower<'_, '_> {
     /// The literal type of union variant `v` of `ty`, if that member is a literal type.
@@ -29,9 +29,9 @@ impl FnLower<'_, '_> {
             LitValue::Str(s) => self.push_text(buf, s),
             LitValue::Bool(b) => self.push_text(buf, if *b { "true" } else { "false" }),
             LitValue::Int(_, n) => self.push_text(buf, &n.to_string()),
+            // Its text now: `String(x)` (`-0` is `0`).
             LitValue::Float(_, bits) => {
-                let f = Operand::Const(Const::Float(f64::from_bits(*bits)), Ty::F64);
-                self.call_rt(Rt::StrbufPushF64, vec![buf.clone(), f], None);
+                self.push_text(buf, &velt_syntax::js_number(f64::from_bits(*bits)))
             }
         }
     }
@@ -46,10 +46,11 @@ impl FnLower<'_, '_> {
             }
             LitValue::Bool(b) => self.push_text(buf, if *b { "true" } else { "false" }),
             LitValue::Int(_, n) => self.push_text(buf, &n.to_string()),
-            LitValue::Float(_, bits) => {
-                let f = Operand::Const(Const::Float(f64::from_bits(*bits)), Ty::F64);
-                self.call_rt(Rt::StrbufPushJsonF64, vec![buf.clone(), f], None);
-            }
+            // `String(x)`, `null` for NaN and the infinities.
+            LitValue::Float(_, bits) => match f64::from_bits(*bits) {
+                x if x.is_finite() => self.push_text(buf, &velt_syntax::js_number(x)),
+                _ => self.push_text(buf, "null"),
+            },
         }
     }
 
