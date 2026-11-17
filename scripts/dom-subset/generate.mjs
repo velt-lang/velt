@@ -481,9 +481,8 @@ const header = (mod) =>
 // scripts/dom-subset/names.txt: do not edit, change the list and run the script.
 // ${LICENCE}
 `;
-// The globals load for a name in code only (velt_loader `globals/code_only.rs`): `Node`, `Text`,
-// `Range` and `Window` are everyday words in comments.
-const CODE_ONLY = "// load for: a name in code, not in a comment";
+// Like every global, these load for a name in code only (velt_loader `globals/in_code.rs`):
+// `Node`, `Text`, `Range` and `Window` are everyday words in comments.
 const files = new Map();
 let bytes = "";
 const index = [];
@@ -510,7 +509,7 @@ for (const [g, what] of GROUPS) {
   const list = names.filter((t) => !INTERNAL.has(t)).map((t) => `  ${t},`).join(NL);
   files.set(`std/lang/dom/${g}.velt`, header(`// velt/lang/dom (internal): the types of TypeScript's \`lib.dom\` that code shared between server and${NL}// browser names: ${what}.${NL}// Velt has no DOM, so no value of these types is made here: they describe what such code reads${NL}// on a value that comes from elsewhere.`) + NL + imp + (imp ? NL : "") + body + NL);
   const global = g === "types" ? "dom" : `dom_${g}`;
-  files.set(`std/prelude/global/${global}.velt`, header(`// Global (loaded when a module names one of these in code): the types of TypeScript's \`lib.dom\`${NL}// that code shared between server and browser names: ${what}. Types only: Velt has no DOM.`) + `${CODE_ONLY}${NL}${NL}export {${NL}${list}${NL}} from "velt/lang/dom/${g}";${NL}`);
+  files.set(`std/prelude/global/${global}.velt`, header(`// Global (loaded when a module names one of these in code): the types of TypeScript's \`lib.dom\`${NL}// that code shared between server and browser names: ${what}. Types only: Velt has no DOM.`) + `${NL}export {${NL}${list}${NL}} from "velt/lang/dom/${g}";${NL}`);
   index.push(`export {${NL}${list}${NL}} from "velt/lang/dom/${g}";${NL}`);
 }
 files.set("std/lang/dom/index.velt", header("// velt/lang/dom: the types of TypeScript's `lib.dom` that code shared with the browser names.") + NL + index.join(""));
