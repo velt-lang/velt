@@ -35,11 +35,12 @@ impl Ctx<'_> {
         self.ty.intern(TyKind::Ptr(*pointee))
     }
 
-    /// `ty`, an alias expanded where `t` is written, or the error type if a `Ptr<T>` in its body
-    /// now points at what C has no values of: `type P<T> = Ptr<T>` written `P<string>`. The
-    /// alias's body was checked with `T` unknown (`ptr_type_written`); a pointee that still
-    /// mentions a type parameter is checked where that one is instantiated (`json`).
-    pub(crate) fn alias_pointees(&mut self, ty: TyId, t: &ast::TypeExpr) -> TyId {
+    /// Reports a `Ptr<T>` in `ty`, an alias expanded where `t` is written, that now points at
+    /// what C has no values of: `type P<T> = Ptr<T>` written `P<string>`, or through another
+    /// alias. Its body was checked with `T` unknown (`ptr_type_written`); a pointee that still
+    /// mentions a type parameter is checked where that one is instantiated (`json`). The type
+    /// stays as expanded, so nothing else about the use is reported for it.
+    pub(crate) fn alias_pointees(&mut self, ty: TyId, t: &ast::TypeExpr) {
         let mut todo = vec![(ty, 0u32)];
         let mut seen: rustc_hash::FxHashSet<TyId> = rustc_hash::FxHashSet::default();
         while let Some((u, depth)) = todo.pop() {
@@ -54,7 +55,7 @@ impl Ctx<'_> {
                         Diagnostic::error(format!("a C pointer can't point at `{shown}`"), t.span)
                             .with_note("an alias's `Ptr<T>` is instantiated here: `Ptr<T>` points at a number, `bool`, `void`, a `declare c type`, a `declare c struct` or another pointer"),
                     );
-                    return self.ty.error;
+                    return;
                 }
             }
             todo.extend(
@@ -63,7 +64,6 @@ impl Ctx<'_> {
                     .map(|c| (c, depth + 1)),
             );
         }
-        ty
     }
 
     /// Can C point at a `t`, as far as is known where a `Ptr<t>` is written? A type parameter,

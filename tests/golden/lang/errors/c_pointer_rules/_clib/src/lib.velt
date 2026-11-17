@@ -49,6 +49,8 @@ function asRec<T>(a: any): Record<string, T> {
 }
 
 type P<T> = Ptr<T>;
+type PP<T> = Ptr<P<T> | null>;
+type Q<T> = P<T>[];
 
 function unused<T>(p: Ptr<T> | null): void {}
 
@@ -81,6 +83,8 @@ export function show(): void {
   console.log(asRec<Ptr<FILE> | null>(a));
   console.log(mk<string>(16), mk<Holder>(16));
   const x: P<string> | null = null;
+  const z: PP<string> | null = null;
+  const y: Q<Holder> = [];
   unused<string>(null);
-  console.log(x);
+  console.log(x, z, y);
 }

@@ -457,13 +457,15 @@ impl Ctx<'_> {
             Item::Alias(a) => {
                 let body = self.aliases[a as usize].decl.ty.span;
                 self.fn_sites.alias_written.insert(t.span, body);
-                // Only type arguments can make a pointee C has no values of.
-                let generic = !args.is_empty();
+                // Checked once, at the outermost use, which is the code that chose the type
+                // arguments: an alias in another alias's body is expanded with them, and its
+                // own span is in the alias's file.
+                let outermost = self.type_level.alias_site.is_none();
                 let ty = self.expand_alias(a, args, t);
-                match generic {
-                    true => self.alias_pointees(ty, t),
-                    false => ty,
+                if outermost {
+                    self.alias_pointees(ty, t);
                 }
+                ty
             }
         }
     }

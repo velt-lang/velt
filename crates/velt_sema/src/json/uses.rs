@@ -55,8 +55,9 @@ pub(super) fn uses_of(
             args,
         } => args.first().map(|a| (a.ty, a.span, PtrUse::ToText)),
         // Only where an instance could put a pointer: the parameter itself or an element of
-        // it, which a view reads through `any` (`a as T`, `a as T[]`, `a as Record<string, T>`). Recording an object type (`o as Box<T>`, a literal's view)
-        // would substitute, and so make, every instance of it at every call.
+        // it, which a view reads through `any` (`a as T`, `a as T[]`, `a as Record<string,
+        // T>`). Recording an object type (`o as Box<T>`, a literal's view) would substitute,
+        // and so make, every instance of it at every call.
         E::Call {
             callee: Callee::Intrinsic(Intrinsic::AnyTo),
             ..
