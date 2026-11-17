@@ -730,8 +730,8 @@ at most 2^53 - 3 (all an index running to `len` inclusive needs). A typed array'
 below 2^52 for the same reason (its buffer is a `u8[]`). `velt_rt_bytes_zeroed(n)` and
 `velt_rt_bytes_uninit(n)` check `n` against the limit too. A buffer within the limit that the target cannot allocate is out of
 memory (`velt_rt_alloc` above), never a smaller block: on wasm32 a byte size past 2^31 - 1
-stops the program there, in `velt_rt_realloc`, in `velt_rt_bytes_zeroed`, `velt_rt_bytes_uninit` and in
-`velt_rt_bytes_concat`.
+stops the program there, in `velt_rt_realloc`, in `velt_rt_bytes_zeroed` and in
+`velt_rt_bytes_uninit` (which `u8[]`'s `concat` allocates with).
 
 ## Array methods on a proxy [additive, #823]
 
@@ -997,16 +997,13 @@ Declared in std (Velt signatures; `u8[]`/`string` are passed as in rt_abi_async.
 `u64`), checked against the runtime by `crates/velt_rt/tests/std_externs.rs`:
 - `u8[]` (`std/prelude/bytes.velt`): `velt_rt_bytes_zeroed(n: u64): u8[]`,
   `velt_rt_bytes_uninit(n: u64): u8[]` (contents not set: `Buffer.allocUnsafe`),
-  `velt_rt_bytes_index_of(b: u8[], byte: u8, from: i64): i64`,
-  `velt_rt_bytes_last_index_of(b: u8[], byte: u8, from: i64): i64` (−1 if absent),
   `velt_rt_bytes_set(dst: u8[], src: u8[], offset: u64): bool` (false: out of range),
   `velt_rt_bytes_copy(dst: u8[], src: u8[], targetStart: i64, sourceStart: i64, sourceEnd: i64): i64`
   (Node's `src.copy(dst, …)`: the bytes copied, −1 for a position out of range),
   `velt_rt_bytes_copy_within(b: u8[], target: i64, start: i64, end: i64)`,
-  `velt_rt_bytes_fill(b: u8[], byte: u8, start: i64, end: i64)`,
-  `velt_rt_bytes_slice(b: u8[], start: i64, end: i64): u8[]`,
-  `velt_rt_bytes_concat(a: u8[], b: u8[]): u8[]`. XOR masking (`xorMask`) is Velt code on SIMD
-  vectors there, and UTF-8 validation (`utf8Valid`, the WebSocket reader) in
+  `velt_rt_bytes_slice(b: u8[], start: i64, end: i64): u8[]`. Searching (`indexOf`,
+  `lastIndexOf`, `includes`), filling and concatenating (`std/lang/bytes/search.velt`,
+  `copy.velt`) and XOR masking (`xorMask`) are Velt code on SIMD vectors, and UTF-8 validation (`utf8Valid`, the WebSocket reader) in
   `std/encoding/utf8.velt`.
 - For protocols written in Velt (`u8[]`'s `utf8Slice` in `std/prelude/bytes.velt`;
   `std/net/websocket/text.velt`), on a range `[start, end)` (relative indices) so no slice is made:
