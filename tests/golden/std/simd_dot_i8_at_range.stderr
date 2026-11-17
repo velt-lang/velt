@@ -1,0 +1,1 @@
+RangeError: dotI8At: 3 values from index 6 pass the end (length 8)
