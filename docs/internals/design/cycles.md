@@ -73,7 +73,7 @@ does in Node, so a program Node runs in bounded memory must run in bounded memor
 Not goals: a tracing collector; collecting cycles that go through `shared` values (each side
 is a separate copy with an atomic count; documented below); `FinalizationRegistry`.
 
-## 1. Cycle-capable types (step 1, implemented)
+## 1. Cycle-capable types (steps 1 and 2, implemented)
 
 A cycle needs an object with two owners, one inside the cycle and one that let go, so every
 cycle contains at least one **counted block**: an object of a counted type, or one of the
@@ -94,8 +94,11 @@ reference to a value of `B`" (`velt_vir` `lower/boxing/cycles.rs`):
 | class | the types of its fields; and, for a class with subclasses, every built subclass (an object of that type may be one, with more fields); never the class itself or a base class, since "is a" is not "owns" |
 | object type, tuple, struct, `T \| null`, union, `Result` | their parts |
 | `T[]`, `Map<K, V>`, `Set<T>`, other std containers | their elements, keys and values (a std container's type arguments) |
-| function value (`FnPtr`, `Closure`) | the *closures* node: the environment of any closure of the program, a counted block, with edges to every type a closure environment captures (a captured variable's cell is counted too) |
-| interface value, `any`, `unknown`, `object` | the *dynamics* node: the value of any of them, possibly a counted box, with edges to every concrete type a vtable or `any` table was built for |
+| function value of type `F` | the *closures of `F`'s key* (below) and the *generic closures*: environments, counted blocks, with edges to what they capture (a captured variable's cell is counted too) |
+| generic function value | the closures of its interface's key, the generic closures, and its interface's node |
+| interface value of interface `I` | the *`I` node*: its value, possibly a counted box, with edges to every concrete type an `I` table was built for and to the nodes of the interfaces converted to `I` |
+| `any`, `unknown`, `object` | the *dynamics* node: edges to every type an `any` table was built for, the nodes of the interfaces converted to `any`, and the generic closures |
+| closure environment, in a program that writes properties of functions through `any` | the dynamics node: its properties are `any` values it owns (`f.self = f`, #1780; velt_rt `fn_props.rs`) |
 | `Promise<T, E>` | `T`, `E` (see below for what a pending promise owns) |
 | generator object (`Generator`, `AsyncGenerator`) | its fields, and the state of the generator function it runs, which follows them: every local of the generator functions made at that class type |
 | `shared<T>` | none: a shared value is a copy with an atomic count; cycles through it are out of scope |
@@ -111,23 +114,40 @@ reports those references (a never-settling promise that nothing but its own cycl
 is the one case it matters for), with a test either way.
 
 **The set.** A counted type is **cycle-capable** when it lies on a cycle of this graph: in a
-strongly connected component with more than one node, or with an edge to itself. So are
-closure environments (with cells) and dynamic values' boxes when their node does. Tarjan's
-algorithm finds the components in time linear in the graph, which is linear in the program's
-types. Classes are decided per hierarchy (by root class), as counting is, since a release
-through a base class type may release a subclass object.
+strongly connected component with more than one node, or with an edge to itself. So are the
+closure environments of a key (with their cells) and an interface's or `any`'s boxes when
+their node does. Tarjan's algorithm finds the components in time linear in the graph, which is
+linear in the program's types (`cycles_scc.rs`). Classes are decided per hierarchy (by root
+class), as counting is, since a release through a base class type may release a subclass
+object.
 
-The two summary nodes are coarse: a function value may be any closure of the program, and an
-interface value any type a table was built for. That is sound (a block that cannot be in a
-cycle is never in the set) but puts blocks in the set that a finer analysis would leave out,
-and the collector's cost goes with the set. Step 2 splits the closures node by function type
-(each environment under the function types its closure converts to, `fresh_fns.rs`'s `FnKey`
-edges) and the dynamics node by interface (the types converted to each, `ToDyn`).
+**Closures by key (step 2, `cycles_keys.rs`).** Step 1 had one node for every closure of the
+program, which made every program with a function wrapper cycle-capable: sema's wrappers
+(#2688: a closure that doesn't throw, converted to a function type that may) are closures
+capturing the function they wrap, so "any closure" captured "any closure". Step 2 files each
+environment under the key of the function type its closure was made at (the closure
+expression's type, substituted). The key is sound because sema never uses a function value
+as one of another type as it is (velt_sema `fn_widen.rs`): every conversion that changes what
+a function takes, returns or throws makes a wrapper, a closure of the target's key capturing
+the source. The few retypes sema makes without a wrapper keep the key equal, by its
+definition: error-set variables (`TyKind::Op`) are one marker, a `never` result is `void`, a
+generic function value's key is its interface alone, and erasure and `sub` make readonly
+twins, `unknown` and `any`, brands and the two forms of an object type one type. Closures
+whose own type is not a function type of fixed types (generic closures) have no key, and
+every function value and dynamic value may lead to them.
+
+**Interfaces by interface.** An interface value leads to the types its own tables were built
+for and to the interfaces converted to it (`Upcast`), not to every implementation of every
+interface.
 
 `VELT_DEBUG_COUNTED=1` prints the set (`velt: cycle-capable types: …`) next to the counted and
-weak-capable types; `crates/veltc/tests/cycle_capable.rs` checks it on the shapes above and on
-programs that must have none, and each edge kind has a test that fails without it. Step 1
-changes no code generation and computes the set only when asked; step 5 moves it into the
+weak-capable types, then a line per entry with where its values are made
+(`velt: cycle-capable sites: class View: src/view.velt:12:13, …`: `new`, literals, closures;
+`cycles_sites.rs`). `crates/veltc/tests/cycle_capable.rs` checks the set on the shapes above
+and on programs that must have none, and each edge kind, each split and the wrapper edge has a
+test that fails without it. The analysis changes no code generation, and both the facts it reads
+and the analysis itself are computed only under that variable (`Cx::cycle_facts`), so other
+compiles do none of it; step 5 records them always and moves the analysis into the
 counted-types fixed point (`close_boxing`), once code generation depends on it.
 
 ## 2. Trace glue for every cycle-capable type (step 3)
