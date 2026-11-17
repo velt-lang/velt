@@ -63,12 +63,16 @@ impl FnCx<'_, '_> {
             slots[k] = Some(self.cx.subst(*d, &before));
         }
         // An overload signature calling its implementation: a type parameter of the
-        // implementation that the signature's parameters leave open is `void` (TypeScript
-        // infers `unknown`), as in `function f(x: string): string;` over
-        // `function f<T>(x: string | T[]): string | T`.
+        // implementation that the signature's parameters leave open is its constraint (or the
+        // interfaces it extends), as TypeScript infers it (`A extends unknown[]` over a signature
+        // without `A`), and else `void` (TypeScript's `unknown`), as in
+        // `function f(x: string): string;` over `function f<T>(x: string | T[]): string | T`.
         if slots.iter().any(Option::is_none) && self.signature_body().is_some() {
-            for slot in slots.iter_mut().filter(|s| s.is_none()) {
-                *slot = Some(self.cx.ty.unit);
+            for k in 0..slots.len() {
+                if slots[k].is_none() {
+                    let written = self.written_slot(c, k, slots, velt_common::Span::DUMMY);
+                    slots[k] = Some(written.flatten().unwrap_or(self.cx.ty.unit));
+                }
             }
         }
     }
@@ -347,6 +351,26 @@ impl FnCx<'_, '_> {
         known: &[Option<TyId>],
         span: velt_common::Span,
     ) -> Option<TyId> {
+        if let Some(written) = self.written_slot(c, k, known, span) {
+            return written;
+        }
+        let error_slot = c.params.iter().any(|p| error_only(self.cx, p.ty, k as u32));
+        if error_slot {
+            return None;
+        }
+        let defs = self.cx.any?;
+        Some(self.cx.ty.intern(TyKind::Dyn(defs.unknown, vec![])))
+    }
+
+    /// What the declaration writes for slot `k`: its default, its constraint, or the interfaces
+    /// it extends (`None`: nothing; `Some(None)`: that still depends on a slot `known` lacks).
+    fn written_slot(
+        &mut self,
+        c: &Callable,
+        k: usize,
+        known: &[Option<TyId>],
+        span: velt_common::Span,
+    ) -> Option<Option<TyId>> {
         let bounds = c.bounds.get(k).map_or(&[][..], Vec::as_slice);
         let parts: Vec<TyId> = (bounds.iter())
             .map(|b| self.cx.ty.intern(TyKind::Dyn(b.iface, b.args.clone())))
@@ -361,27 +385,20 @@ impl FnCx<'_, '_> {
             (_, Some(Some(b))) => Some(*b),
             _ => interface,
         };
-        if let Some(t) = written {
-            let mut names = vec![];
-            crate::types::collect_params(&self.cx.ty, t, &mut names);
-            let open = names
-                .iter()
-                .any(|&n| !known.get(n as usize).is_some_and(|s| s.is_some()));
-            if open {
-                return None;
-            }
-            let t = self.cx.subst_known(t, known);
-            // The function may convert an `any` to it (`g({ n: 1 } as any)`), as for an explicit
-            // type argument.
-            self.cx.note_dyn_object_target(t);
-            return Some(t);
+        let t = written?;
+        let mut names = vec![];
+        crate::types::collect_params(&self.cx.ty, t, &mut names);
+        let open = names
+            .iter()
+            .any(|&n| !known.get(n as usize).is_some_and(|s| s.is_some()));
+        if open {
+            return Some(None);
         }
-        let error_slot = c.params.iter().any(|p| error_only(self.cx, p.ty, k as u32));
-        if error_slot {
-            return None;
-        }
-        let defs = self.cx.any?;
-        Some(self.cx.ty.intern(TyKind::Dyn(defs.unknown, vec![])))
+        let t = self.cx.subst_known(t, known);
+        // The function may convert an `any` to it (`g({ n: 1 } as any)`), as for an explicit type
+        // argument.
+        self.cx.note_dyn_object_target(t);
+        Some(Some(t))
     }
 
     /// Is `arg` a bare `undefined` (or `null`) passed for a parameter of type `pty` that has

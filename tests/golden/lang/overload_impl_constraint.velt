@@ -1,0 +1,21 @@
+// An overload signature whose parameters leave a type parameter of the implementation open: the
+// implementation is called with that parameter at its constraint, as TypeScript infers it
+// (`A extends unknown[]` is `unknown[]`), or `void` where it has none.
+function count(name: string): number;
+function count<A extends unknown[]>(name: string | A): number {
+  return typeof name === "string" ? name.length : name.length * 10;
+}
+
+function pick(x: string): string;
+function pick<T extends string = "fallback">(x: string, y?: T): string {
+  return y ?? x;
+}
+
+function label(x: string): string;
+function label<T>(x: string | T[]): string | T {
+  return typeof x === "string" ? x.toUpperCase() : x[0];
+}
+
+console.log(count("abc"));
+console.log(pick("given"));
+console.log(label("ok"));
