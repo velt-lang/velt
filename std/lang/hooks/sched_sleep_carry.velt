@@ -12,6 +12,7 @@
 // numbers, so they fire as Node's timers do (in deadline order, created first on a tie).
 // Tasks anchored for good (`FIXED`: an I/O wait with a deadline, an unref'd timer's look) stay.
 
+import { inline } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as sl from "./sched_sleep";
 import * as t from "./sched_task";
@@ -85,6 +86,14 @@ function owner(f: usize): usize {
   }
   const o = m.ld(f + sl.S_OWNER);
   return o !== 0 && t.has(o, t.CARRIED) ? o : 0;
+}
+
+/** Worker `e`, about to poll task `k` (flags `fl`): the sleeps it carries, if any, join its block. */
+@inline
+export function adoptCarried(e: usize, k: usize, fl: u32): void {
+  if ((fl & t.CARRIED) !== 0) {
+    adopt(e, k);
+  }
 }
 
 /** Worker `e`, about to poll task `k`, takes the sleeps it carries into its timer block. */
