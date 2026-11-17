@@ -232,7 +232,8 @@ Decisions and their rationale, including what is still planned:
   side table and the ephemeron rule under `WeakMap`, `WeakSet`, `WeakRef` and `weak T` (runtime
   prototype, issues #823 and #11).
 - [Reference cycles](design/cycles.md): which types can form cycles, a collector confined to
-  them, and `weak T` fields and variables (proposed, issues #3119 and #11; step 1, the analysis, implemented).
+  them, and `weak T` fields and variables (accepted, issues #3119 and #11; step 1, the
+  analysis, implemented).
 - [The JSON engine](design/json-engine.md): key matching, a SIMD scanner, a tape for
   `JsonValue`, bytes and streams, and compile-time `@json.*` decorators borrowed from
   System.Text.Json (proposed, issue #1655).

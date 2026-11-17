@@ -30,8 +30,9 @@ What disappears: `.clone()` for strings, getters returning fields, `for...of` el
 escaping-closure capture error (`let count = 0; const inc = () => count++` works; a captured
 variable that is modified gets a counted box only when the closure escapes).
 
-What stays: no GC, no pauses, deterministic `[Symbol.dispose]()` (it runs when the last
-reference goes away), inline values, `noalias` and exclusivity where uniqueness is proven,
+What stays: no tracing GC, no stop-the-world pauses, deterministic `[Symbol.dispose]()` (it
+runs when the last reference goes away; for cyclic garbage, at the collection that frees it,
+[cycles.md](cycles.md)), inline values, `noalias` and exclusivity where uniqueness is proven,
 compile-time thread safety.
 
 ## Reference cycles

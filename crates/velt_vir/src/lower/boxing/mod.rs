@@ -338,6 +338,9 @@ pub(super) struct Facts {
     pub(super) lock_values: FxHashSet<TyId>,
     /// Code in read mode called a function through a pointer (`Boxing::read_indirect`).
     pub(super) read_indirect: bool,
+    /// Generator objects made, `(generator class type, generator function, type arguments)`:
+    /// the object holds the function's state after its fields (cycles.rs).
+    pub(super) gen_frames: FxHashSet<(TyId, DefId, Vec<TyId>)>,
 }
 
 impl Cx<'_> {
