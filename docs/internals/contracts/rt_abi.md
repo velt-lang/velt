@@ -409,8 +409,9 @@ The operations are externs `velt_simd_<type>_<op>` (`velt_simd_u8x16_add`,
 them**: `velt_vir::simd` gives each symbol's operation and VIR signature (`SimdCall`), the
 verifier rejects a `velt_simd_*` extern that is not one, and both backends emit every call
 inline. They never cross the C ABI, so no target's vector calling convention is involved.
-A 256-bit vector (`f32x8`, #3140) [additive] is no VIR type: it is a value of two `V128` halves,
-the low lanes first (32 bytes), and `velt_simd_f32x8_<op>` (`SimdCall::Wide`, `velt_vir::simd::wide`)
+A 256-bit vector (`f32x8`, #3140) [additive] is not a VIR type: it is a value of two `V128` halves,
+the low lanes first (32 bytes, 8-byte aligned as a `V128` is; the helpers' loads and stores are
+unaligned), and `velt_simd_f32x8_<op>` (`SimdCall::Wide`, `velt_vir::simd::wide`)
 takes it by address: each vector operand of the 128-bit operation is a `Ptr` to such a value, and a
 vector result is written through one more `Ptr`, the last parameter (`add(a, b, out)`,
 `splat(x, out)`, `load(array, at, out)`, `store(v, array, at)`). The operation reads the 32 bytes at

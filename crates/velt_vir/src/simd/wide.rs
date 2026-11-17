@@ -1,7 +1,7 @@
 //! The 256-bit vector types (`f32x8`, #3140): what each `velt_simd_<type>_<op>` extern of one
 //! means. VIR has no 256-bit type. A wide vector is a value of two 128-bit halves in memory,
-//! the low lanes first (32 bytes, aligned to 16), and its operations take it by address:
-//! every vector operand of the 128-bit operation is a `Ptr` to such a value, and a vector
+//! the low lanes first (32 bytes, aligned as a `V128` is: to 8), and its operations take it by
+//! address: every vector operand of the 128-bit operation is a `Ptr` to such a value, and a vector
 //! result is written through one more `Ptr`, the last parameter.
 //!
 //! A wide operation reads the 32 bytes at each operand pointer (and what the 128-bit operation

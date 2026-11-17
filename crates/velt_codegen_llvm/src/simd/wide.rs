@@ -23,7 +23,8 @@ pub(super) fn vector(b: &mut Body, lanes: Lanes, op: Op, arch: Arch) {
     let ints = format!("<{n} x i{}>", lanes.bits());
     let suffix = format!("v{n}f{}", lanes.bits());
     let align = lanes.bits() / 8;
-    // Every operand is read before the result is written, whatever the pointers are.
+    // Every operand is read before the result is written, whatever the pointers are. `align 1`:
+    // a wide value is aligned as its halves are (8), below what a `ymm` load could assume.
     let operands: Vec<String> = wide::operands(op)
         .map(|i| b.inst(format!("load {ty}, ptr %a{i}, align 1")))
         .collect();
