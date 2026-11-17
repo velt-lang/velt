@@ -10,6 +10,9 @@ use crate::body::FnCx;
 use crate::ctx::{Ctx, Item};
 use crate::hir::{self, DefId, TyId, TyKind};
 
+/// The note of a pointee refused where an alias is used or declared.
+const ALIAS_NOTE: &str = "an alias's `Ptr<T>` is instantiated here: `Ptr<T>` points at a number, `bool`, `void`, a `declare c type`, a `declare c struct` or another pointer";
+
 impl Ctx<'_> {
     /// Is `d` std's declaration of `Ptr` (`std/ffi/ptr.velt`)?
     pub(crate) fn is_ptr_decl(&self, d: DefId) -> bool {
@@ -26,10 +29,14 @@ impl Ctx<'_> {
         };
         if !self.c_pointee_written(*pointee) {
             let shown = self.display(*pointee);
-            self.error(
-                Diagnostic::error(format!("a C pointer can't point at `{shown}`"), t.span)
+            // In an alias's body expanded with a use's type arguments: at that use.
+            let d = match self.type_level.ptr_site {
+                Some(at) => Diagnostic::error(format!("a C pointer can't point at `{shown}`"), at)
+                    .with_note(ALIAS_NOTE),
+                None => Diagnostic::error(format!("a C pointer can't point at `{shown}`"), t.span)
                     .with_note("`Ptr<T>` points at a number, `bool`, `void`, a `declare c type`, a `declare c struct` or another pointer: C has no other values"),
-            );
+            };
+            self.error(d);
             return self.ty.error;
         }
         self.ty.intern(TyKind::Ptr(*pointee))
@@ -40,7 +47,7 @@ impl Ctx<'_> {
     /// alias. Its body was checked with `T` unknown (`ptr_type_written`); a pointee that still
     /// mentions a type parameter is checked where that one is instantiated (`json`). The type
     /// stays as expanded, so nothing else about the use is reported for it.
-    pub(crate) fn alias_pointees(&mut self, ty: TyId, t: &ast::TypeExpr) {
+    pub(crate) fn alias_pointees(&mut self, ty: TyId, at: velt_common::Span) {
         let mut todo = vec![(ty, 0u32)];
         let mut seen: rustc_hash::FxHashSet<TyId> = rustc_hash::FxHashSet::default();
         while let Some((u, depth)) = todo.pop() {
@@ -52,8 +59,8 @@ impl Ctx<'_> {
                 if !mentions_param(&self.ty, p) && !self.c_pointee_written(p) {
                     let shown = self.display(p);
                     self.error(
-                        Diagnostic::error(format!("a C pointer can't point at `{shown}`"), t.span)
-                            .with_note("an alias's `Ptr<T>` is instantiated here: `Ptr<T>` points at a number, `bool`, `void`, a `declare c type`, a `declare c struct` or another pointer"),
+                        Diagnostic::error(format!("a C pointer can't point at `{shown}`"), at)
+                            .with_note(ALIAS_NOTE),
                     );
                     return;
                 }

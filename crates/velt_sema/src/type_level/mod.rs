@@ -56,6 +56,10 @@ pub(crate) struct State {
     /// While an alias is expanded: the outermost use of an alias, as written, where a
     /// type-level form that can't be evaluated is reported.
     pub(crate) alias_site: Option<Span>,
+    /// While an alias written with type arguments is expanded: that outermost use, where a
+    /// `Ptr<T>` in its body (also through a conditional type) whose pointee they made one C
+    /// has no values of is reported (`Ctx::ptr_type_written`, #3094).
+    pub(crate) ptr_site: Option<Span>,
     /// While a call's argument is checked against its parameter's type: the argument, where a
     /// deferred intersection that can't be reduced at these type arguments is reported.
     pub(crate) use_site: Option<Span>,
