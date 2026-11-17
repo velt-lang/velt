@@ -18,7 +18,8 @@ class Handler {
 }
 
 function track(cache: WeakMap<Raw, Handler>, raw: Raw): i64 {
-  cache.set(raw, new Handler(() => raw.n + 1));
+  const handler = new Handler(() => raw.n + 1);
+  cache.set(raw, handler);
   return cache.get(raw)!.read();
 }
 
