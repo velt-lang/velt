@@ -20,12 +20,7 @@ export class TapeBuilder {
 
   /** The finished tape, sharing this builder's arrays (the builder is not used after). */
   done(): Tape {
-    return {
-      src: this.src,
-      words: this.words,
-      kids: this.kids,
-      decoded: this.decoded,
-    };
+    return { src: this.src, words: this.words, kids: this.kids, decoded: this.decoded };
   }
 
   kind(v: u32): u64 {

@@ -281,7 +281,8 @@ function writeFrom(
     n += comma;
     comma = 1;
     const c = (info & 0xffffffff) as u32;
-    const m = (info & IS_ORDERED) != 0 ? memberIn(words, kids, c, cur as i64) as u32 : kids[cur as usize];
+    const m =
+      (info & IS_ORDERED) != 0 ? memberIn(words, kids, c, cur as i64) as u32 : kids[cur as usize];
     cur++;
     if ((info & IS_OBJECT) != 0) {
       // The key, its colon, then its value next round.
