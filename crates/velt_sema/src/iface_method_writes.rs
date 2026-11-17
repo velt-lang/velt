@@ -58,6 +58,11 @@ pub(crate) struct MethodWrites {
     /// (adapter, method) whose setter is the empty one: the method was not written when the
     /// adapter's setters were made.
     adapter_unused: FxHashSet<(u32, usize)>,
+    /// (interface, method) -> why implementations can't store it, one line each, reported as one
+    /// error at the write once every implementation exists ([`Ctx::finish_method_setters`]).
+    refusals: FxHashMap<(DefId, usize), Vec<String>>,
+    /// The refusals were reported: a later one is reported at once.
+    refusals_reported: bool,
 }
 
 impl Ctx<'_> {
@@ -389,11 +394,11 @@ impl Ctx<'_> {
             .filter(|((i, _), _)| *i == iface)
             .map(|((_, j), s)| (*j, *s))
             .collect();
-        for (j, span) in written {
+        for (j, _) in written {
             if srcs.get(j).copied().flatten().is_none() {
                 ok = false;
                 if self.method_writes.reported.insert((k, j)) {
-                    self.cannot_store_method(k, &methods[j].name, span);
+                    self.cannot_store_method(k, j);
                 }
             }
         }
@@ -454,11 +459,11 @@ impl Ctx<'_> {
         // Built before: a method written since gets its real setter in place of the empty one.
         if have == base + nmethods {
             let mut ok = true;
-            for (j, name) in names.iter().enumerate() {
+            for j in 0..names.len() {
                 let late = self.method_writes.methods.contains_key(&(iface, j))
                     && self.method_writes.adapter_unused.remove(&(k, j));
                 if late {
-                    ok &= self.adapter_method_slot(k, p, (j, name), base);
+                    ok &= self.adapter_method_slot(k, p, j, base);
                 }
             }
             return ok;
@@ -485,7 +490,7 @@ impl Ctx<'_> {
                 Some(def) => defs.push(def),
                 None => {
                     ok = false;
-                    self.report_method(k, j, name);
+                    self.report_method(k, j);
                     defs.push(empty(self, p.def, p.self_ty, &format!("{name}()"), fty));
                 }
             }
@@ -495,13 +500,13 @@ impl Ctx<'_> {
         ok
     }
 
-    /// Adapter `k`'s setter of method `j` (`name`), written after the adapter's setters were
-    /// made: the real one replaces the empty one at `base + j`. False when it can't be made.
+    /// Adapter `k`'s setter of method `j`, written after the adapter's setters were made: the
+    /// real one replaces the empty one at `base + j`. False when it can't be made.
     fn adapter_method_slot(
         &mut self,
         k: u32,
         p: &crate::body::expr::iface_adapt_slots::AdapterParts,
-        (j, name): (usize, &str),
+        j: usize,
         base: usize,
     ) -> bool {
         match crate::body::expr::iface_adapt_slots::adapter_method_setter(self, p, j) {
@@ -511,7 +516,7 @@ impl Ctx<'_> {
                 true
             }
             None => {
-                self.report_method(k, j, name);
+                self.report_method(k, j);
                 false
             }
         }
@@ -519,12 +524,11 @@ impl Ctx<'_> {
 
     /// Report, once, that implementation `k` can't store method `j` (`name`) written in the
     /// program.
-    fn report_method(&mut self, k: u32, j: usize, name: &str) {
+    fn report_method(&mut self, k: u32, j: usize) {
         let iface = self.impls[k as usize].iface;
-        if let Some(&span) = self.method_writes.methods.get(&(iface, j)) {
-            if self.method_writes.reported.insert((k, j)) {
-                self.cannot_store_method(k, name, span);
-            }
+        let written = self.method_writes.methods.contains_key(&(iface, j));
+        if written && self.method_writes.reported.insert((k, j)) {
+            self.cannot_store_method(k, j);
         }
     }
 
@@ -619,12 +623,58 @@ impl Ctx<'_> {
         for (iface, j) in written {
             self.link_method_sites(iface, j);
         }
+        self.report_refusals();
     }
 
-    /// Implementation `k` can't store method `name` written at `span`.
-    fn cannot_store_method(&mut self, k: u32, name: &str, span: Span) {
+    /// One error per written method some implementations can't store, at its first write, with a
+    /// note naming each of them (in source order of the writes).
+    fn report_refusals(&mut self) {
+        self.method_writes.refusals_reported = true;
+        let mut all: Vec<((DefId, usize), Vec<String>)> =
+            std::mem::take(&mut self.method_writes.refusals)
+                .into_iter()
+                .collect();
+        all.sort_by_key(|(key, _)| {
+            let at = self.method_writes.methods.get(key).copied();
+            at.map(|s| (s.file, s.lo))
+        });
+        for ((iface, j), whys) in all {
+            let Some(&span) = self.method_writes.methods.get(&(iface, j)) else {
+                continue;
+            };
+            let Some(i) = self.iface(iface) else {
+                continue;
+            };
+            let iname = i.name.clone();
+            let Some(name) = i.methods.get(j).map(|m| m.name.clone()) else {
+                continue;
+            };
+            let mut diag = Diagnostic::error(
+                format!("cannot assign to method `{name}` of `{iname}`"),
+                span,
+            );
+            for why in whys {
+                diag = diag.with_note(format!(
+                    "{why}; a write through the interface could not reach it"
+                ));
+            }
+            self.error(diag.with_note(format!(
+                "make `{name}` a field of function type (`{name}: () => …`) where the object is made"
+            )));
+        }
+    }
+
+    /// Implementation `k` can't store its interface's method `j`, written in the program: recorded,
+    /// and reported with the others ([`Ctx::report_refusals`]).
+    fn cannot_store_method(&mut self, k: u32, j: usize) {
         let ty = self.impls[k as usize].ty;
         let iface = self.impls[k as usize].iface;
+        let Some(name) = (self.iface(iface))
+            .and_then(|i| i.methods.get(j))
+            .map(|m| m.name.clone())
+        else {
+            return;
+        };
         let shown = self.display(ty);
         let iname = self.iface(iface).map_or(String::new(), |i| i.name.clone());
         let literal = match self.ty.kind(ty) {
@@ -640,10 +690,12 @@ impl Ctx<'_> {
         } else {
             format!("`{shown}` implements `{iname}` without a field of `{name}`'s function type to replace")
         };
-        self.error(
-            Diagnostic::error(format!("cannot assign to method `{name}` of `{iname}`"), span)
-                .with_note(format!("{what}; a write through the interface could not reach it"))
-                .with_note(format!("make `{name}` a field of function type (`{name}: () => …`) where the object is made")),
-        );
+        let whys = self.method_writes.refusals.entry((iface, j)).or_default();
+        if !whys.contains(&what) {
+            whys.push(what);
+        }
+        if self.method_writes.refusals_reported {
+            self.report_refusals();
+        }
     }
 }
