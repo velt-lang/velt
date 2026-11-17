@@ -44,15 +44,17 @@ function buffer(): usize {
 }
 
 /**
- * Minutes added to UTC to get local time at `epochMs` (milliseconds since the Unix epoch); 0
- * when the C library can't say (a time outside its range).
+ * Seconds added to UTC to get local time at `epochMs` (milliseconds since the Unix epoch): whole
+ * minutes in today's zones, with seconds in a local mean time (before about 1900); 0 when the C
+ * library can't say (a time outside its range).
  */
-export function localOffsetMinutes(epochMs: i64): i32 {
+export function localOffsetSeconds(epochMs: i64): i32 {
   const p = buffer();
   if (p === 0) {
     return 0;
   }
-  const secs: i64 = epochMs >= 0 ? epochMs / 1000 : -((999 - epochMs) / 1000);
+  // Rounded down to the second, before the epoch too (no overflow near the i64 limits).
+  const secs: i64 = epochMs / 1000 - (epochMs % 1000 < 0 ? 1 : 0);
   // SAFETY: the `time_t` of this thread's buffer.
   unsafe {
     addressStore<i64>(p + TIME_AT, secs);
@@ -65,5 +67,10 @@ export function localOffsetMinutes(epochMs: i64): i32 {
   const result = unsafe { localtime_r(time, tmAt) };
   // SAFETY: inside the buffer; localtime_r filled the `struct tm` when it returned non-NULL.
   const offset = result === null ? 0 : unsafe { addressLoad<i64>(p + TM_AT + TM_GMTOFF) };
-  return (offset / 60) as i32;
+  return offset as i32;
+}
+
+/** Windows' test hook (localtime_win32.velt): no named zones here. */
+export function offsetInZone(key: string, unixSecs: i64): i32 | null {
+  return null;
 }

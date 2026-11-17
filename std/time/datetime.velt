@@ -22,7 +22,7 @@ import { isoString, httpString, formatPattern } from "velt/time/format";
 import { parseIso, parseHttp } from "velt/time/parse";
 import { Duration } from "velt/time/duration";
 import { DateTimeError } from "velt/time/errors";
-import { localOffsetMinutes } from "#localtime";
+import { localOffsetSeconds } from "#localtime";
 
 /**
  * Calendar fields of a DateTime: `year month(1-12) day hour minute second millisecond
@@ -105,7 +105,8 @@ export struct DateTime implements Comparable<DateTime> {
 
   /** Minutes added to UTC to get local time at this instant (e.g. 60 for UTC+01:00). */
   get localOffsetMinutes(): i64 {
-    return localOffsetMinutes(this.ms) as i64;
+    // Whole minutes, truncated toward zero (a local mean time's seconds drop).
+    return (localOffsetSeconds(this.ms) / 60) as i64;
   }
 
   /** UTC year. */

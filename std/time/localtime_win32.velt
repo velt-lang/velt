@@ -6,6 +6,7 @@
 // is the difference between the local and the UTC wall-clock time.
 
 import { Ptr } from "velt/ffi/ptr";
+import { wideText } from "velt/ffi/wide";
 import { addressLoad, addressStore } from "velt/lang/intrinsics";
 import { processEnv } from "velt/lang/hooks/process";
 import { fixedOffset } from "./tz_fixed";
@@ -23,6 +24,10 @@ declare c("c") function SystemTimeToTzSpecificLocalTimeEx(
   utc: Ptr<SYSTEMTIME>,
   local: Ptr<SYSTEMTIME>,
 ): i32;
+declare c("c") function EnumDynamicTimeZoneInformation(
+  index: u32,
+  info: Ptr<DYNAMIC_TIME_ZONE_INFORMATION>,
+): u32;
 declare c("c") function FileTimeToSystemTime(time: Ptr<FILETIME>, system: Ptr<SYSTEMTIME>): i32;
 declare c("c") function SystemTimeToFileTime(system: Ptr<SYSTEMTIME>, time: Ptr<FILETIME>): i32;
 declare c("c") function calloc$time(n: usize, size: usize): Ptr<u8> | null;
@@ -34,6 +39,10 @@ const ZONE_BYTES: usize = 432;
 /** Where `Bias` and `StandardBias` (minutes west of UTC, `LONG`s) are in it. */
 const ZONE_BIAS: usize = 0;
 const ZONE_STANDARD_BIAS: usize = 84;
+
+/** Where `TimeZoneKeyName` (128 `WCHAR`s, the zone's registry key) is in it. */
+const ZONE_KEY_NAME: usize = 172;
+const ZONE_KEY_UNITS: usize = 128;
 
 /** `GetDynamicTimeZoneInformation`'s failure result. */
 const TIME_ZONE_ID_INVALID: u32 = 0xffffffff;
@@ -64,6 +73,7 @@ function readZone(): u8 {
   // SAFETY: calloc has no precondition; its result is checked.
   const block = unsafe { calloc$time(1, ZONE_BYTES) };
   if (block === null) {
+    KIND.store(3, "release");
     return 3;
   }
   const at = Ptr.addressOf(block);
@@ -110,9 +120,10 @@ function buffer(): usize {
   return p;
 }
 
-/** The offset, in seconds, of the system zone at `zone` at `unixSecs`. */
+/** The offset, in seconds, at `unixSecs` of the zone whose information is at `zone`. */
 function offsetIn(zone: usize, unixSecs: i64): i32 {
-  // SAFETY: `zone` holds the zone's information, which lives as long as the process.
+  // SAFETY: `zone` holds a zone's information (the process' own, or `offsetInZone`'s block),
+  // live during the call.
   const bias = unsafe { addressLoad<i32>(zone + ZONE_BIAS) };
   // SAFETY: as above.
   const standardBias = unsafe { addressLoad<i32>(zone + ZONE_STANDARD_BIAS) };
@@ -138,7 +149,7 @@ function offsetIn(zone: usize, unixSecs: i64): i32 {
   const local = unsafe { Ptr.at<SYSTEMTIME>(p + 24) };
   // SAFETY: as above.
   const localTime = unsafe { Ptr.at<FILETIME>(p + 40) };
-  // SAFETY: the zone's information lives as long as the process.
+  // SAFETY: as above.
   const info = unsafe { Ptr.at<DYNAMIC_TIME_ZONE_INFORMATION>(zone) };
   // SAFETY: each pointer is its own struct in the buffer (or the zone's), as above; only this
   // call uses the buffer.
@@ -157,20 +168,58 @@ function offsetIn(zone: usize, unixSecs: i64): i32 {
 }
 
 /**
- * Minutes added to UTC to get local time at `epochMs` (milliseconds since the Unix epoch);
+ * Seconds added to UTC to get local time at `epochMs` (milliseconds since the Unix epoch);
  * outside `SYSTEMTIME`'s range (before 1601, after 30827) the zone's standard offset.
  */
-export function localOffsetMinutes(epochMs: i64): i32 {
-  const secs: i64 = epochMs >= 0 ? epochMs / 1000 : -((999 - epochMs) / 1000);
+export function localOffsetSeconds(epochMs: i64): i32 {
+  // Rounded down to the second, before the epoch too (no overflow near the i64 limits).
+  const secs: i64 = epochMs / 1000 - (epochMs % 1000 < 0 ? 1 : 0);
   let kind = KIND.load("acquire");
   if (kind === 0) {
     kind = readZone();
   }
   if (kind === 1) {
-    return FIXED.load("relaxed") / 60;
+    return FIXED.load("relaxed");
   }
   if (kind === 2) {
-    return offsetIn(ZONE.load("acquire") as usize, secs) / 60;
+    return offsetIn(ZONE.load("acquire") as usize, secs);
   }
   return 0;
+}
+
+/**
+ * For std/time/localtime.test.velt: the offset, in seconds, of the installed zone whose registry
+ * key is `key` ("W. Europe Standard Time") at `unixSecs`, whatever the machine's own zone; null
+ * when no such zone is installed.
+ */
+export function offsetInZone(key: string, unixSecs: i64): i32 | null {
+  // SAFETY: calloc has no precondition; its result is checked.
+  const block = unsafe { calloc$time(1, ZONE_BYTES) };
+  if (block === null) {
+    return null;
+  }
+  const at = Ptr.addressOf(block);
+  let found = false;
+  let index: u32 = 0;
+  while (!found) {
+    // SAFETY: `at` is a DYNAMIC_TIME_ZONE_INFORMATION's room, which each call overwrites.
+    const info = unsafe { Ptr.at<DYNAMIC_TIME_ZONE_INFORMATION>(at) };
+    // SAFETY: as above; a non-zero result (ERROR_NO_MORE_ITEMS) ends the enumeration.
+    if (unsafe { EnumDynamicTimeZoneInformation(index, info) } !== 0) {
+      break;
+    }
+    const units: u16[] = [];
+    for (let i: usize = 0; i < ZONE_KEY_UNITS; i++) {
+      // SAFETY: inside the block, whose key name the call filled.
+      units.push(unsafe { addressLoad<u16>(at + ZONE_KEY_NAME + 2 * i) });
+    }
+    found = wideText(units) === key;
+    index += 1;
+  }
+  const offset = found ? offsetIn(at, unixSecs) : null;
+  // SAFETY: the block calloc gave above, which nothing else has seen.
+  unsafe {
+    free$time(block);
+  }
+  return offset;
 }
