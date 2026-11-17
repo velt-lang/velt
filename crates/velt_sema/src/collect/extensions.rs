@@ -107,7 +107,8 @@ pub(super) fn extension<'m>(
 }
 
 fn module_prefix(cx: &Ctx, m: usize) -> String {
-    if m == cx.root {
+    // Std's unit qualifies its root module's names too (`Ctx::qualify`).
+    if m == cx.root && cx.units_stage != crate::units::Stage::Std {
         String::new()
     } else {
         format!("{}::", cx.modules[m].path)

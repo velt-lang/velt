@@ -134,7 +134,9 @@ impl<'m> Ctx<'m> {
 
     /// Fully qualified name of a module-level item.
     pub fn qualify(&self, module: usize, name: &str) -> String {
-        if module == self.root {
+        // Std's unit has no program: its root (module 0) is a std module, whose names are
+        // qualified as in any other check (passes match std methods by their `std/` names).
+        if module == self.root && self.units_stage != crate::units::Stage::Std {
             name.to_string()
         } else {
             format!("{}::{}", self.modules[module].path, name)
