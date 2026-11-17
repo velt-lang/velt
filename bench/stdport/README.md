@@ -259,14 +259,18 @@ at a time with no check per byte and finds out afterwards whether a step read pa
 `pow` is `**` on floats (`Math.pow`), the runtime's `velt_rt_pow_f64` before #1676 (fdlibm's
 `pow`, from the `libm` crate, which the Rust port calls), now std/lang/math/pow.velt: glibc's
 algorithm, whose results Node prints on Linux. Instructions executed (cachegrind, i9-8950HK,
-Linux x86-64, release builds of `main` at f46948718 and of the port, 3 interleaved runs, each
-the same):
+Linux x86-64; `main` at cee20ee5a with its runtime built in the release profile, and the port;
+2 runs each, the same):
 
 | benchmark | Velt before | Velt | Velt without FMA | Rust | Velt / Rust |
 |---|---:|---:|---:|---:|---:|
-| pow | 619.2 M | 290.3 M | 769.8 M | 575.1 M | 0.50 |
+| pow | 619.2 M | 280.3 M | 611.8 M | 575.1 M | 0.49 |
 
 The default x86-64 level has no FMA, so `pow` runs a copy compiled for it where the CPU has it
-(every x86-64 CPU since 2013); without (the third column, `VELT_SIMD_DISABLE=clmul`), each of
-its twenty `fma`s is a call of C's `fma`. On arm64, and with `--cpu x86-64-v3`, every `fma` is
-one instruction.
+(every x86-64 CPU since 2013). Without (the third column, `VELT_SIMD_DISABLE=clmul`), where each
+of its twenty `fma`s would be a call of C's `fma` (a software routine on such a CPU),
+std/lang/math/pow_fast.velt computes the same bits from unfused steps whose roundings it checks.
+On arm64, and with `--cpu x86-64-v3`, every `fma` is one instruction.
+
+On wasm32-wasip1, which has no `fma` instruction (wasmtime, its compile included on both sides),
+the same program takes 1,637.6 M instructions before and 1,669.5 M with the port.

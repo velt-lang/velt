@@ -59,8 +59,11 @@ fn every_release_path_gives_nodes_bits() {
 }
 
 /// CPUs with and without FMA, which a machine with it can only show under an emulator: without it
-/// the check must be false, or the first `vfmadd` is an illegal instruction. Runs where QEMU is
-/// installed.
+/// the check must be false, or the first `vfmadd` is an illegal instruction, and the copy without
+/// FMA must give the same bits. Runs on x86-64 Linux where QEMU's user mode is installed
+/// (`qemu-user-static`); the CI runners don't have it, so there it passes without running (the
+/// skip is printed, `cargo test -- --nocapture` shows it). Run it on a machine with QEMU after
+/// changing std/lang/math/pow.velt, fma.velt or fma_check.velt.
 #[test]
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 fn cpus_with_and_without_fma_under_qemu() {
@@ -71,7 +74,7 @@ fn cpus_with_and_without_fma_under_qemu() {
             .is_ok_and(|o| o.status.success())
     });
     let Some(qemu) = found else {
-        eprintln!("skipped: no qemu-x86_64");
+        eprintln!("SKIPPED cpus_with_and_without_fma_under_qemu: no qemu-x86_64 (install qemu-user-static)");
         return;
     };
     let (source, want) = golden();

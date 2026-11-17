@@ -1,4 +1,5 @@
-// velt/lang/math (internal): the fused multiply-add `a * b + c`, rounded once.
+// velt/lang/math (internal): the fused multiply-add `a * b + c`, rounded once, and the exact
+// steps `pow`'s copy for targets without it is made of (std/lang/math/pow_fast.velt).
 
 import { inline } from "velt/lang/intrinsics";
 
@@ -10,4 +11,59 @@ declare function velt_math_fma_f64(a: f64, b: f64, c: f64): f64;
 @inline
 export function fma(a: f64, b: f64, c: f64): f64 {
   return velt_math_fma_f64(a, b, c);
+}
+
+// 2^27 + 1: multiplying by it splits a double into two halves of 26 bits (Veltkamp).
+const SPLIT: f64 = 134217729.0;
+
+/** The upper 26 bits of `a` (Veltkamp's split); `a - splitHi(a)` is the rest, exactly. */
+@inline
+export function splitHi(a: f64): f64 {
+  const c = a * SPLIT;
+  return c - (c - a);
+}
+
+/**
+ * `a * b - p` exactly, where `p` is `a * b` rounded (Dekker's product error; exact unless it falls
+ * below the normal range).
+ */
+@inline
+export function productError(a: f64, b: f64, p: f64): f64 {
+  const ah = splitHi(a);
+  const al = a - ah;
+  const bh = splitHi(b);
+  const bl = b - bh;
+  return ah * bh - p + ah * bl + al * bh + al * bl;
+}
+
+/**
+ * `fma(a, b, c)`'s result from double operations only (Boldo and Melquiond, "Emulation of FMA and
+ * correctly rounded sums: proved algorithms using rounding to odd", IEEE Trans. Computers 57(4),
+ * 2008): `a * b` exactly as `p + e` (Dekker), `c + p` exactly as `s + t` (Knuth's two-sum), then
+ * `s` plus `t + e` rounded to odd. Correct while nothing overflows and no error term falls below
+ * the normal range, the sign of a zero result aside (+0 for -0 * x + -0).
+ */
+@inline
+export function fmaSoft(a: f64, b: f64, c: f64): f64 {
+  const p = a * b;
+  const e = productError(a, b, p);
+  const s = c + p;
+  const sb = s - c;
+  return s + addOdd(c - (s - sb) + (p - sb), e);
+}
+
+/**
+ * `a + b` rounded to odd: rounded to nearest, then, if that was inexact and its last bit is even,
+ * moved one unit toward the exact sum (`fmaSoft`).
+ */
+@inline
+export function addOdd(a: f64, b: f64): f64 {
+  const v = a + b;
+  const vb = v - a;
+  const err = a - (v - vb) + (b - vb);
+  const bits = v.toBits();
+  if (err == 0.0 || (bits & 1) != 0) {
+    return v;
+  }
+  return f64.fromBits((err > 0.0) == (v > 0.0) ? bits + 1 : bits - 1);
 }

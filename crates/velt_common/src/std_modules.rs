@@ -143,6 +143,7 @@ table! {
     lang_proxy_traps => "lang/proxy/traps",
     /// The prelude `Map`'s internals (std/lang/map/*.velt).
     lang_map => "lang/map",
+    lang_math_fma_check => "lang/math/fma_check",
     lang_record => "lang/record",
     lang_sort => "lang/sort",
     lang_sort_stable => "lang/sort/stable",
@@ -192,7 +193,6 @@ table! {
     simd => "simd",
     simd_aes => "simd/aes",
     simd_clmul => "simd/clmul",
-    lang_math_fma_check => "lang/math/fma_check",
     simd_sha => "simd/sha",
     sync_channel => "sync/channel",
     sync_epoch => "sync/epoch",

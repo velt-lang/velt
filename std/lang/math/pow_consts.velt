@@ -1,0 +1,31 @@
+// velt/lang/math (internal): the constants of `pow` (std/lang/math/pow.velt and pow_fast.velt),
+// Arm's optimized-routines values (math/pow.c, math/exp_data.c; MIT, see NOTICE).
+
+// log: x = 2^k z with z in [OFF, 2 OFF), split into 128 subintervals (POW_LOG).
+export const OFF: u64 = 0x3fe6955500000000;
+// ln 2 in two parts; LN2_HI has 42 significant bits, so k LN2_HI is exact for |k| < 2^11.
+export const LN2_HI: f64 = 0.69314718055989033;
+export const LN2_LO: f64 = 5.4979230187083712e-14;
+// The logarithm's polynomial, scaled as the evaluation uses it (A0 is -0.5).
+export const A0: f64 = -0.5;
+export const A1: f64 = -0.66666666666666785;
+export const A2: f64 = 0.50000000000000067;
+export const A3: f64 = 0.79999999953239764;
+export const A4: f64 = -0.66666666634877392;
+export const A5: f64 = -1.1429096284595011;
+export const A6: f64 = 1.0000415263675542;
+// exp: x = k ln2/128 + r, with 2^(k/128) from EXP_TAB.
+export const INV_LN2_N: f64 = 184.66496523378731;
+// -ln2/128 in two parts; the first has 36 significant bits, so k NEG_LN2_HI_N is exact for
+// |k| < 2^17 (|x| < 709).
+export const NEG_LN2_HI_N: f64 = -0.0054152123481117087;
+export const NEG_LN2_LO_N: f64 = -1.2864023111638346e-14;
+// 1.5 * 2^52: adding it rounds to an integer, kept in the low bits.
+export const SHIFT: f64 = 6755399441055744.0;
+export const C2: f64 = 0.49999999999996786;
+export const C3: f64 = 0.16666666666665886;
+export const C4: f64 = 0.041666680841067401;
+export const C5: f64 = 0.0083333358530595491;
+// The sign of a negative result, added to the exponent bits of the scale.
+export const SIGN_BIAS: u64 = 0x40000;
+export const ONE_BITS: u64 = 0x3ff0000000000000;

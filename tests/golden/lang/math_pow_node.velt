@@ -157,4 +157,36 @@ function main() {
     }
     console.log(line(row));
   }
+
+  // Pairs whose result changes when one step of glibc's FMA build is computed another way: x * x
+  // for the exponent 2 left out (glibc's own pow differs), the subnormal path's product fused,
+  // and each `fma` whose unfused variant changes any of 4 million fuzzed results (lo3, lo, exp's
+  // polynomial, the last step, the overflow path's). Read from an array, so no constant folding
+  // stands in for the run time.
+  console.log("rounding steps:");
+  const pairs = [
+    -3.105736295771281e-132,
+    2,
+    -1.273727269109014e153,
+    2,
+    2.6863845739988436e-225,
+    1.3696908310738714,
+    -6.883842987072273e60,
+    -5,
+    1.0136683913308693,
+    49820.64920400518,
+    1.0041893391049237,
+    -37922.56540026558,
+    0.9984895903013353,
+    -51156.30372982558,
+    1.00000000716076,
+    -724055487.097801,
+    50.56944101453189,
+    178.31013463468292,
+  ];
+  const steps: number[] = [];
+  for (let i = 0; i < pairs.length; i += 2) {
+    steps.push(pairs[i] ** pairs[i + 1]);
+  }
+  console.log(line(steps));
 }
