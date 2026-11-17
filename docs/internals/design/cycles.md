@@ -1,9 +1,10 @@
 # Design: reference cycles (cycle-capable types, a collector for them, and `weak`)
 
-Status: proposed (#3119, for #11). Step 1 (the cycle-capability analysis, below) is
-implemented; the rest is planned. This note replaces the "without a
-collector" plan in [semantics.md](semantics.md#reference-cycles--without-a-collector), which
-needs the owner's sign-off (decision 1).
+Status: proposed (#3119, for #11), with the design review on #3119 folded in. Step 1 (the
+cycle-capability analysis, below) is implemented; the rest is planned. This note replaces the
+"without a collector" plan in
+[semantics.md](semantics.md#reference-cycles--without-a-collector), which needs the owner's
+sign-off (decision 1).
 
 ## The problem
 
@@ -156,7 +157,7 @@ weak maps also find cycles through handler closures and class hierarchies (#989 
 Synchronous cycle collection by trial deletion (Bacon and Rajan 2001; the scheme of Nim's ORC),
 restricted to cycle-capable types. The weak core's ephemeron trial (`velt_rt` `weak/trial.rs`)
 is already this algorithm over one small subgraph; the collector generalizes it to a root set
-and shares its graph code.
+and shares its graph code. Both are written in std, not in `velt_rt` (section 3.5).
 
 ### 3.1 Possible roots and the count word
 
@@ -170,7 +171,7 @@ puts their kind in the set (their drop entries take the same sequence, `closure.
 c = *rc
 if c as i64 > BUFFERED + 1 { *rc = c - 1 }                       // already a possible root
 else if c == 1             { drop the fields; free }             // unique: as today
-else                       { if velt_rt_cycle_release(obj, desc) { drop the fields; free } }
+else                       { if cycleRelease(obj, desc) { drop the fields; free } }  // std hook
 ```
 
 `BUFFERED` is bit 60 of the count word (the count proper keeps bits 0..59; bits 61 and 62 are
@@ -189,36 +190,82 @@ word with 1 (a buffered object is never taken as unique, so copy-on-write copies
 transfer deep-copies it; the copy is unbuffered), and every raw decrement site uses the
 sequence above.
 
-**Descriptors.** The root set needs to know how to trace, dispose and drop an object, and the
-header has only the count. Each cycle-capable type gets a static descriptor
-`{ trace, dispose, drop_fields }` (the drop glue split at the point where `obj_drop_body`
-already separates the dispose call from the field drops), passed to `velt_rt_cycle_release`
-and reported by `visit` for children. The weak core's `TraceFn` is the descriptor's first
-field, so weak maps keep working with either.
+**Descriptors.** The root set needs to know how to trace, dispose, drop and free an object,
+and the header has only the count. Each cycle-capable type gets a static descriptor
+`{ trace, dispose, drop_fields, free }` (the drop glue split at the point where
+`obj_drop_body` already separates the dispose call from the field drops; `free` knows the
+block's size), passed to the `cycleRelease` hook and reported by `visit` for children. The
+weak core's `TraceFn` is the descriptor's first field, so weak maps keep working with either.
 
-### 3.2 The root set belongs to the task
+### 3.2 Which blocks a collection may touch
 
-Counted objects are used by one task at a time with plain counts; a task may resume on another
-worker after an `await`, but never runs on two at once. So the root set is per task: it lives
-in the task's context (`velt_rt` `task/local`, `TaskCx`; the same field in the node of the
-executor in Velt, #2649), and the cold call finds it through the current-task pointer the
-executor already sets. Code outside any task (synchronous `main`, runtime clean-up) uses a
-per-thread set. No lock is taken.
+A trial reads every count in its graph and frees what it finds dead, so it is sound only while
+no other thread reads or writes those counts. The rule:
 
-Two places hand objects between tasks without a transfer, and both close their roots first:
+**A collection runs on the task that owns its root set, inside one of that task's polls, and
+traverses only blocks with plain counts that no other task can reach while it runs. Every
+other block it meets is external: never entered, never counted as internal, never
+decremented, never freed.** A wrong "external" only keeps garbage; the rule never frees a
+live block.
 
-- **`Mutex.with`** opens a nested root set for the callback and collects it before the unlock
-  (the walk at the end of `with` already runs there), so no root of the locked value is left
-  in a task's set after another task can lock it.
+Blocks other tasks can reach, by the shared-state model of #2726 (option (c)), and how a
+collection keeps out of them:
+
+- **`shared<T>` and atomically counted values** (strings, values that crossed threads): trace
+  glue never reports them (section 1 gives `shared<T>` no edges), so no graph contains them.
+- **Frozen read-only shared state** (module state and handler captures that are only read
+  after initialisation, read on every core with no lock, #2726 (c) step 3): freezing marks a
+  block in its header before another task can see it (an immortal count, as the static atomics
+  and strings have), and the trial reads the header with an atomic load and stops at a marked
+  block.
+- **Written shared state behind a lock**: today the process-wide module lock (rt_abi.md
+  "Module state": a task that touched module state holds it for every later poll) and
+  `Mutex.with`; under #2726 (c) one lock per independent piece, held until the next `await`,
+  with objects taken out of it marked at run time (#2730). Taking such a lock opens a **lock
+  scope**: a root recorded while it is held goes to the scope's root set, not the task's, and
+  the scope's set is collected **while the lock is still held**, just before it is released
+  (the end of `with`, the end of the poll for the module lock, before the `await` for a
+  per-piece lock). That collection touches the locked state with the lock held, so no other
+  task touches it meanwhile. A collection outside the scope stops at a marked block. Until
+  #2730's marks exist, the module lock covers the gap: a task that can reach a module-state
+  block holds the module lock in every poll, so any collection it runs holds it too.
+- **Blocks moved to another task** (spawn arguments, channel messages, promise results): a
+  transfer moves a block in place only when its whole count word is 1, and a buffered block's
+  word never is (its `BUFFERED` bit is set), so **a buffered block never moves**: the transfer
+  deep-copies it (the copy is unbuffered and belongs to the receiver), and the sender's
+  reference is released through the sequence of 3.1, on the sender. A block moved in place had
+  that one reference only, so no block of the sender reaches it afterwards.
+- **Tasks that move between workers** (spawned tasks are stolen; connections stay on their
+  worker): the root set is a word of the task block (`T_CYCLES` in the executor in Velt,
+  std/lang/hooks/sched_task.velt), found through the worker's current task (`E_CURRENT`) at
+  each cold call and each collection, never cached in a thread-local across polls, so it
+  moves with the task. Code outside any task (a synchronous `main` before it starts a task, the
+  executor's own clean-up) uses its worker block's set (`E_CYCLES`). On WebAssembly (one
+  thread, the runtime's executor) there is one set for the process.
 - **`RwLock` read mode** shares objects between readers with the lock-set bits; a cycle-capable
   type makes its lock exclusive (as a weak-capable one does today), so read mode never sees one.
 
+Steps 4 and 5 add a soak test per case, run with `VELT_THREADS=4` and the debug allocator:
+cycles made and dropped inside `Mutex.with` by 8 tasks; a module-level registry whose cyclic
+entries tasks replace; cyclic graphs sent between tasks (spawn arguments, channels) while the
+sender holds buffered roots in them; and a spawn storm whose tasks are stolen between workers
+with root sets pending. Each checks `blocks=A/F` with A = F and no `ICE:`.
+
 ### 3.3 A collection
 
-It runs when the root set reaches a threshold, when the task ends, when a `with` scope closes,
-and before the program exits (so `VELT_RC_STATS` balances). The threshold adapts as Nim's
-does: it starts at 4,096 roots and doubles while collections free less than a quarter of what
-they traverse, so a program with many long-lived shared objects is not traversed over and over.
+It runs when the root set reaches a threshold, when the task ends, and when a lock scope
+closes (3.2). The threshold adapts as Nim's does: it starts at 4,096 roots and doubles while
+collections free less than a quarter of what they traverse, so a program with many long-lived
+shared objects is not traversed over and over.
+
+**At exit, only when something can see it.** Node runs no finalizers at exit, and a
+short-lived command should not pay a traversal on its way out. So the exit collects only when
+`VELT_RC_STATS` is set (the leak-checked goldens, which must balance) or when a cycle-capable
+type has a `[Symbol.dispose]()` the program can observe (the compiler records whether one
+does). Otherwise the process exits with its root sets as they are. Running the disposes of
+cyclic garbage, at a collection or at that exit, is a deliberate difference from Node, which
+never runs a dispose for garbage; it is what Velt already does for acyclic garbage at its last
+reference, and the docs-sync issue (step 8) says so.
 
 1. Drop the dead entries (blocks whose last reference went while buffered) and free them.
 2. Build the graph from the remaining roots through the trace glue and the weak core's
@@ -244,7 +291,7 @@ they traverse, so a program with many long-lived shared objects is not traversed
 Releases that a collection's own disposes and drops cause append to the root set for the next
 collection; a collection never starts inside another. Deep garbage drops through the existing
 drop-depth queue (`drop_depth.rs`), and a panic out of a dispose leaves the remaining garbage
-pinned and in the root set, so the next collection (at the latest, the one at exit) finishes it.
+pinned and in the root set, so the next collection finishes it.
 
 ### 3.4 What it costs
 
@@ -256,13 +303,48 @@ pinned and in the root set, so the next collection (at the latest, the one at ex
 | Cycle-capable, collected | its share of the traversal: trace, a hash-map entry, and the frees |
 
 A collection's pause is proportional to the graph reachable from its roots, not to the heap,
-and only the task that collects waits; it is not bounded by a constant. A
-large long-lived structure of a cycle-capable type (a tree with parent pointers) is traversed
-whenever one of its objects is a root; `weak` parent pointers take the type out of the set,
-and the lint of section 5 says where (decision 2). Steps 4 and 5 measure with
-`bench/sigx`, the 60 `bench/` programs with cycle-capable types (above), `bench/counted_*.velt`
-and new rows for the shapes of the problem table, against the 3% gate, and report cachegrind
-counts for the cold call and a collection per object.
+and only the task that collects waits; it is not bounded by a constant. A large long-lived
+structure of a cycle-capable type (a tree with parent pointers) is traversed whenever one of
+its objects is a root; `weak` parent pointers take the type out of the set, and the lint of
+section 5 says where (decision 2).
+
+**The gate, per row, decided before code generation.** Step 2 ends with a number: for every
+HTTP, `fetch`, JSX and database row of `bench/`, which types are still cycle-capable after the
+finer analysis and at which allocation sites (`VELT_DEBUG_COUNTED=1` gains the sites), posted
+on #3119. If the request path of `serve` is still cycle-capable then, that is a design point
+brought back to #3119 before step 5, not something to tune afterwards. Step 5 then holds
+every row of `bench/` to the 3% rule by instructions (cachegrind, `bench/nightly.sh`), with no
+accepted exceptions: a row that misses is profiled to its cause and fixed before merging. It
+also adds rows for the cold call, a collection per object, `bench/sigx` and the shapes of the
+problem table.
+
+### 3.5 In std, not in `velt_rt` (#2196)
+
+#2196 moves the runtime into std: no new Rust or externs go into `velt_rt`, and the weak core
+this collector generalizes (`crates/velt_rt/src/weak/`) is on its phase 2 list. So:
+
+- **Step 4 moves the weak core to std first** (std/lang/hooks, its own pull request, deleting
+  the Rust and the `velt_rt_weakmap_*`, `velt_rt_weakref_*` and `velt_rt_weak_release` externs,
+  measured on `bench/weakmap.velt` and a `bench/stdport` row: no more instructions than the
+  Rust path), **then writes the collector next to it**, sharing its graph code. Neither depends
+  on Rust.
+- **Lowering reaches them through std hooks** (`crates/velt_common/src/std_hooks.rs`, the
+  contract table): `cycleRelease(obj, desc)` (the cold path of 3.1), `cycleScopeOpen()` and
+  `cycleScopeClose()` (around a lock, 3.2), and `cycleCollect()` (a task's end, and the exit
+  when it collects).
+- **What they use that exists:** memory and atomics at an address (`addressLoad`,
+  `addressStore`, `addressAtomic*`), `rawAlloc` and `rawFree`, `addressCall` (dispose, drop
+  and free glue each take one pointer), `fnAddress` (the visit callback trace glue calls),
+  `ThreadLocal` (a cascade's depth and the trials it defers), the executor's task and worker
+  blocks (`T_CYCLES`, `E_CYCLES`), process-wide statics (#2797) for the weak table, and the
+  executor's lock (sched_lock.velt) for it.
+- **What they need that does not exist yet**, both in #2196's phase 2 list:
+  1. `addressCall3(f, a, b, c)`: a call of a C-ABI function pointer with three pointer-sized
+     arguments, for trace glue's `(obj, visit, ctx)` (`addressCall` takes one).
+  2. `cycleDesc<T>()`: the address of `T`'s static descriptor (3.1), for std's `WeakMap` to
+     trace its keys and values ("function pointers to drop glue"). The release sequence passes
+     descriptors itself, and an object's address reaches std as a `usize` from generated code,
+     so nothing else is needed.
 
 ## 4. `weak T` (step 6)
 
@@ -283,6 +365,9 @@ button.onClick(() => self?.refresh());
   to a `Node`, or `null`. It is allowed in the type of a class field, an object type or
   interface member, and a `let` or `const`; anywhere else (parameters, results, elements, type
   arguments) it is an error naming the places it may go. The AST gets `TypeExprKind::Weak`.
+  Parser tests keep `weak` an ordinary name wherever it is not the operator: `type weak = …`,
+  `let weak = 1`, a property or method named `weak`, `weak` as a type name (`x: weak`,
+  `weak[]`, `Map<weak, T>`).
 - **Typing.** The target must be a type whose values are objects (a class, an object type, an
   array, a map or set; interfaces and function values later). The written type must include
   `null`: a weak reference reads as `null` once its target is freed, and `parent: weak Node`
@@ -290,7 +375,8 @@ button.onClick(() => self?.refresh());
   counted reference (or `null`); a write takes `T | null`. A read is not narrowed across
   another read (`if (n.parent) n.parent.x` reads twice, and the target may be gone in
   between), so sema narrows nothing through a weak field: the second read is still
-  `T | null`, and the "possibly null" error gets a note suggesting `const p = n.parent`.
+  `T | null`, and the "possibly null" error after `if (n.parent) n.parent.x` gets a note
+  showing the form that keeps TypeScript's feel: `const p = n.parent; if (p) p.x`.
   `n.parent?.x` works as written.
 - **Representation.** A weak field holds a pointer to its target's **slot**, a counted block
   `[count][target]` shared by every weak reference to that target (Swift's side table). The
@@ -299,15 +385,18 @@ button.onClick(() => self?.refresh());
   gives up the record's reference, so the slot lives as long as a weak reference reads it. A
   read is inline and takes no lock:
   `s = field; p = s ? s.target : 0; if p { retain p }`. A write releases the old slot and gets
-  the new target's through `velt_rt_weak_slot(obj)` (the cold, locked path). The slot is used
+  the new target's through the `weakSlot(obj)` std hook (the cold, locked path). The slot is used
   only by the task that owns the target, like every counted object.
 - **The rest of the language.** A `weak` field is not an edge of section 1's graph and is
   skipped by trace glue, so `TreeNode` above is not cycle-capable. Its drop releases the slot.
   A closure captures a `weak` variable as its slot, so the capture is weak too, and the
   environment has no edge to the target.
   A transfer to another task (and `clone()`, step 7) maps a weak field to the copy of its
-  target when the target is copied along (the transfer's identity map, `transfers.rs`), and to
-  `null` otherwise, so a class with a `weak` field may cross threads, unlike `WeakRef`. A store
+  target when the target is part of the copied graph (the transfer's identity map,
+  `transfers.rs`), and to `null` when it is not: the copy must not refer to an object of
+  another task, even weakly. So a class with a `weak` field may cross threads, unlike
+  `WeakRef`. Steps 6 and 7 have a golden for each case (target copied along, target left
+  behind) for spawn arguments, channel messages, promise results and `clone()`. A store
   into a weak field of a value locked by `Mutex.with` of a target from outside the lock is an
   error, as weak collections are there (`ownership/locked/stores.rs`).
 - **TypeScript.** `weak` parses in `.ts` files as all Velt syntax does, and
@@ -323,7 +412,10 @@ With the collector, a cycle-capable type is a cost note, not a bug. A `velt_lint
 `perf/cycle-capable`, at the `hint` level, reports each cycle-capable type once at the field
 or capture that closes its cycle, with a fix-it to `weak` where the field is nullable and of
 an object type. It is a lint and not a sema warning so that `// velt-allow(perf/cycle-capable):
-reason` acknowledges an intended cycle (sema warnings cannot be allowed today).
+reason` acknowledges an intended cycle (sema warnings cannot be allowed today). It reports only
+types declared in the program and its packages, never std's (std's cycle-capable types, such
+as `Error` through a subclass holding `unknown`, would otherwise flood every program's hints);
+a test checks that a program using std's HTTP server gets no hint from std.
 
 ## 6. `clone()` and transfers of cyclic graphs (step 7)
 
@@ -334,13 +426,15 @@ other types, and fixes up `weak` fields as transfers do.
 
 ## Decisions for review
 
-1. **A collector at all.** semantics.md says "No cycle collector by default. If one is ever
-   added, it must be opt-in per type, incremental and bounded (no pause), and off in
-   benchmarks." This design keeps three of those four: it is per type (decided by the
-   compiler; `weak` opts a type out), it never pauses another task, and a benchmark without
-   cycle-capable types pays nothing (those with some are held to the 3% gate).
-   It is not opt-in: an opt-in collector leaves every ported TypeScript program leaking
-   (goal 1). **Recommendation: automatic for cycle-capable types.**
+1. **A collector at all: the owner's decision**, since it reverses a written one.
+   semantics.md says "No cycle collector by default. If one is ever added, it must be opt-in
+   per type, incremental and bounded (no pause), and off in benchmarks." This design is per
+   type (decided by the compiler; `weak` opts a type out) and never pauses another task. It is
+   not opt-in, because an opt-in collector leaves every ported TypeScript program leaking
+   (goal 1). It is not off in benchmarks either: benchmarks then measure what users run, and
+   the 3% gate per row (3.4) covers the cost. **Recommendation: automatic for cycle-capable
+   types, with "off in benchmarks" dropped**; semantics.md is rewritten to match once
+   decided.
 2. **Bounded pauses.** A collection traverses what is reachable from its roots. An
    incremental collector needs a write barrier on every pointer store of a cycle-capable type,
    a cost on the hot path of every such program instead of only at collections, and a far
@@ -362,18 +456,22 @@ Each step is one pull request with its own tests, gated like any other.
 
 1. This note and the cycle-capability analysis (section 1): no code generation change.
 2. A finer analysis: the closures node split by function type and the dynamics node by
-   interface, measured by how many of `bench/`'s 60 programs with cycle-capable types keep
-   them. Before any code generation, since the set decides who pays.
+   interface, and the allocation sites of each cycle-capable type in `VELT_DEBUG_COUNTED=1`.
+   It ends with the per-row list of 3.4 posted on #3119 (the HTTP, `fetch`, JSX and database
+   rows, with their sites); a `serve` request path still cycle-capable goes back to #3119
+   before step 5.
 3. Complete trace glue (section 2) for the types the analysis finds; `rt_abi.md`'s
    environment header and vtable slot. Weak maps use it at once (#989 (2)).
-4. The collector in `velt_rt` (section 3) with unit tests and a soak test in the style of the
-   weak core's: every shape of the problem table, released in every order, `WeakRef`s and weak
-   map entries into collected cycles, resurrection, a panicking dispose, tasks on several
-   threads. The ephemeron trial moves onto the shared graph code.
+4. In std (3.5): first the weak core moved out of `velt_rt` with the two intrinsics, then the
+   collector next to it, with unit tests and soak tests in the style of the weak core's: every
+   shape of the problem table released in every order, `WeakRef`s and weak map entries into
+   collected cycles, resurrection, a panicking dispose, and the four cases of 3.2 with
+   `VELT_THREADS=4`. The ephemeron trial moves onto the shared graph code.
 5. Lowering: the release sequence, descriptors and collection points for cycle-capable types;
    goldens with `// check: no leaks` for each shape (including the existing
    `lang/const_used_by_its_closures`, which gets the leak check it could not have), and the
-   benchmark gate (`bench_programs.rs` asserts no `velt_rt_cycle_*` call in a program without
+   gate of 3.4: every `bench/` row within 3% by instructions, no exceptions
+   (`bench_programs.rs` also asserts no call of the cycle hooks in a program without
    cycle-capable types).
 6. `weak T` (section 4): syntax, typing, slots, transfers, ts-compat rule, formatter, LSP,
    VS Code grammar.
