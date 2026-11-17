@@ -209,11 +209,34 @@ pub(crate) fn walk_units_program(cx: &mut Ctx, entry: Option<DefId>) -> FxHashSe
         true => base,
         false => cx.unit_base as usize,
     };
-    seed_units(cx, base);
+    // Lazy std loads part of std ([`units_loaded_modules`]) and seeds the by-name functions of
+    // what it loaded; a module live code reaches into is loaded then too (`Ctx::demand_std`).
+    let mut loaded = units_loaded_modules(cx);
+    seed_units(cx, base, &loaded);
     super::units_restart(cx);
     // Lazy std's loop: the walk, the hooks the constructs demand, and those that wait for what
     // the program does (the executor's, the record and number-text hooks, C's exports).
-    super::reach(cx);
+    loop {
+        super::reach(cx);
+        let mut new = vec![false; loaded.len()];
+        let mut any = false;
+        let live: Vec<DefId> = cx.lazy.live.live.iter().copied().collect();
+        for d in live {
+            let module = match &cx.info[d.0 as usize] {
+                DefInfo::Fn(f) => f.module,
+                DefInfo::Global(g) => g.module,
+                DefInfo::Adt(a) => a.module,
+                _ => continue,
+            };
+            if module < loaded.len() && !loaded[module] {
+                (loaded[module], new[module], any) = (true, true, true);
+            }
+        }
+        if !any {
+            break;
+        }
+        seed_units_named(cx, base, &new);
+    }
     // The program's definitions are also the classes, structs and interfaces live code has
     // values of: the passes that build the program (readonly erasure writing the solved error
     // sets into field types, the layouts) read their definitions.
@@ -253,6 +276,31 @@ pub(crate) fn units_live_set(cx: &mut Ctx) -> FxHashSet<DefId> {
     }
     cx.lazy = saved;
     set
+}
+
+/// EXPERIMENT (#2943): the modules lazy std loads before the check demands more: the program's,
+/// the std modules a program module imports directly, and the prelude's (`std/prelude/…`).
+pub(crate) fn units_loaded_modules(cx: &Ctx) -> Vec<bool> {
+    let mut loaded = vec![false; cx.modules.len()];
+    for m in 0..cx.modules.len() {
+        let module = &cx.modules[m];
+        if module.is_std && m != cx.root {
+            loaded[m] |= module.path.starts_with("std/prelude/");
+            continue;
+        }
+        loaded[m] = true;
+        for &t in cx
+            .import_targets
+            .get(m)
+            .into_iter()
+            .flat_map(|t| t.values())
+        {
+            if t < loaded.len() {
+                loaded[t] = true;
+            }
+        }
+    }
+    loaded
 }
 
 /// EXPERIMENT (#2943 M3): a build by units reaches a `catchUnwind` (`units::reach`): std's panic
@@ -866,7 +914,7 @@ mod roots;
 pub(super) use constructs::def_name;
 use constructs::{demanded_for, evaluate, format_bit};
 pub(crate) use constructs::{too_late, Assumed};
-use roots::{seed, seed_units};
+use roots::{seed, seed_units, seed_units_named};
 
 #[cfg(test)]
 #[path = "live_tests.rs"]

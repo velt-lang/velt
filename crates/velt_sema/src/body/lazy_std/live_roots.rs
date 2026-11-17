@@ -52,7 +52,7 @@ fn seed_std(cx: &mut Ctx, from: usize) {
 /// definition (each read decodes it): the program's from `base` on (a dependency's in the first
 /// unit too), and of std, the top-level functions of the modules lowering looks into by name and
 /// the hooks. The module slots are marked by the caller.
-pub(super) fn seed_units(cx: &mut Ctx, base: usize) {
+pub(super) fn seed_units(cx: &mut Ctx, base: usize, loaded: &[bool]) {
     cx.lazy.live.seeded = cx.info.len();
     cx.lazy.live.methods = None;
     for i in base..cx.info.len() {
@@ -65,11 +65,29 @@ pub(super) fn seed_units(cx: &mut Ctx, base: usize) {
             mark(cx, DefId(i as u32));
         }
     }
+    seed_units_named(cx, base, loaded);
+}
+
+/// [`seed_units`]' std part: the functions lowering looks up by name in the `loaded` modules
+/// (lazy std seeds only the modules it has loaded), and of those modules, the hooks no
+/// construct lists.
+pub(super) fn seed_units_named(cx: &mut Ctx, base: usize, loaded: &[bool]) {
     let hooks = seed_hooks(cx);
-    let mut named: Vec<DefId> = hooks.iter().copied().collect();
+    // A hook too only once its module is loaded: lazy std finds it by name in what it loaded.
+    let module_of = |cx: &Ctx, d: DefId| match &cx.info[d.0 as usize] {
+        DefInfo::Fn(f) => Some(f.module),
+        DefInfo::Global(g) => Some(g.module),
+        _ => None,
+    };
+    let mut named: Vec<DefId> = (hooks.iter().copied())
+        .filter(|d| module_of(cx, *d).is_some_and(|m| loaded.get(m).copied().unwrap_or(false)))
+        .collect();
     for m in 0..cx.modules.len().min(cx.scopes.len()) {
         let module = &cx.modules[m];
         if !module.is_std || m == cx.root || super::super::named_module(&module.path).is_none() {
+            continue;
+        }
+        if !loaded.get(m).copied().unwrap_or(false) {
             continue;
         }
         named.extend(cx.scopes[m].items.values().filter_map(|item| match item {
