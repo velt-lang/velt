@@ -355,6 +355,15 @@ fn generate_now(
 ) -> Option<GenBatch> {
     st.batches += 1;
     let batch_no = st.batches;
+    if std::env::var_os("VELT_GEN_DEBUG").is_some() {
+        for r in &demand.requests {
+            let at = sess.sm.get(r.at.file).path.display().to_string();
+            eprintln!(
+                "velt-gen: batch {batch_no}: {} at {at}:{} key {}",
+                demand.functions[r.function].function, r.at.lo, r.fingerprint
+            );
+        }
+    }
     let mut generated = run::run(sess, current, demand, batch_no, packages)?;
     let mut out = GenBatch::default();
     for g in generated.modules {

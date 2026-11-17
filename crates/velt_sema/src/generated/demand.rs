@@ -359,6 +359,16 @@ fn may_reach(cx: &mut Ctx, generated: &FxHashSet<DefId>, recorded: &mut Calls) -
         let base = cx.unit_base;
         concrete.retain(|d| d.0 >= base);
     }
+    // EXPERIMENT (#2943 M3): a build from std's unit on disk demands the instances of the std
+    // code the program has (what lazy std would have checked for it, `units_live_set`), not of
+    // all of std: hello's build asked for JSON writers of std/db and std/test.
+    if cx.std_from_disk && !cx.check_only && cx.units_stage == crate::units::Stage::App {
+        let base = cx.unit_base;
+        if concrete.iter().any(|d| d.0 < base) {
+            let live = crate::body::lazy_std::units_live_set(cx);
+            concrete.retain(|d| d.0 >= base || live.contains(d));
+        }
+    }
     if concrete.is_empty() {
         return Reach::None;
     }
