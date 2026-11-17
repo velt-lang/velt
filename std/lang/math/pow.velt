@@ -73,6 +73,15 @@ export function jsPow(x: f64, y: f64): f64 {
   if (hasFmaX86()) {
     return libmPowFma(x, y);
   }
+  return libmPowNoFma(x, y);
+}
+
+/**
+ * glibc's `pow` (the FMA build's bits) where the target has no FMA instruction: `powFast`, and
+ * where it can't be sure of a rounding, the copy with each `fma` emulated.
+ */
+@inline
+export function libmPowNoFma(x: f64, y: f64): f64 {
   // NaN: a NaN result, or a rounding `powFast` can't be sure of.
   const fast = libmPow(x, y, FAST);
   return fast == fast ? fast : libmPowEmulated(x, y);
@@ -91,10 +100,12 @@ function libmPowFma(x: f64, y: f64): f64 {
   return libmPow(x, y, FUSED);
 }
 
-// `libmPow` where the target has no FMA instruction, each `fma` emulated (C's would be a software
-// routine there). Out of line: it runs for the few pairs `powFast` leaves to it.
+/**
+ * `libmPow` where the target has no FMA instruction, each `fma` emulated (C's would be a software
+ * routine there). Out of line: it runs for the few pairs `powFast` leaves to it.
+ */
 @noInline
-function libmPowEmulated(x: f64, y: f64): f64 {
+export function libmPowEmulated(x: f64, y: f64): f64 {
   return libmPow(x, y, EMULATED);
 }
 

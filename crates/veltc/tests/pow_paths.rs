@@ -1,7 +1,9 @@
 //! `**` on floats (std/lang/math/pow.velt, #1676) runs one of several copies of glibc's `pow`: on
 //! x86-64 the one compiled for FMA where the CPU has it (`hasFmaX86()`,
-//! std/lang/math/fma_check.velt), else the one calling C's `fma`; Cranelift's in debug builds. The golden `lang/math_pow_node`
-//! checks Node's bits on the path its machine takes; this runs the release build on the others.
+//! std/lang/math/fma_check.velt), else the unfused steps of std/lang/math/pow_fast.velt with the
+//! copy that emulates each `fma` (`fmaSoft`) where they are not sure; the latter in debug builds
+//! too. The golden `lang/math_pow_node` checks Node's bits on the path its machine takes; this runs
+//! the release build on the others.
 
 use std::path::{Path, PathBuf};
 

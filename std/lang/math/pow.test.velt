@@ -1,0 +1,113 @@
+// velt/lang/math (internal): `pow` without an FMA instruction (std/lang/math/pow_fast.velt's
+// unfused steps and their checks) against the copy with each `fma` emulated, on the pairs whose
+// roundings those checks exist for. Both are plain double arithmetic, so this runs the same on
+// every machine, where the golden `lang/math_pow_node` reaches that path only on CPUs without FMA
+// and in debug builds. Run by `velt test std/`.
+import { describe, expect, it } from "velt/test";
+import { libmPowEmulated, libmPowNoFma } from "velt/lang/math/pow";
+
+let state: u64 = 0x2545f4914f6cdd1d;
+
+function rnd(): u64 {
+  state = state ^ (state << 13);
+  state = state ^ (state >> 7);
+  state = state ^ (state << 17);
+  return state;
+}
+
+// 2^e for a normal exponent.
+function pow2(e: i64): f64 {
+  return f64.fromBits(((e + 1023) as u64) << 52);
+}
+
+// A positive normal double with a random mantissa and an exponent in lo..hi.
+function positive(lo: i64, hi: i64): f64 {
+  const e = lo + ((rnd() % ((hi - lo + 1) as u64)) as i64);
+  return f64.fromBits((((e + 1023) as u64) << 52) | (rnd() >> 12));
+}
+
+// Uniform in [0, 1).
+function uniform(): f64 {
+  return ((rnd() >> 11) as f64) * 1.1102230246251565e-16;
+}
+
+const LN2: f64 = 0.6931471805599453;
+
+// ln(x) roughly (within 0.06), enough to aim y at a range of results.
+function roughLog(x: f64): f64 {
+  const e = ((((x.toBits() >> 52) & 0x7ff) as i64) - 1023) as f64;
+  const d = f64.fromBits((x.toBits() & 0x000fffffffffffff) | 0x3ff0000000000000) - 1.0;
+  return e * LN2 + d - d * d * 0.5 + d * d * d / 3.0;
+}
+
+// How many of `n` pairs from `make` the two copies give different bits for.
+function differences(n: i64, make: () => f64[]): i64 {
+  let bad: i64 = 0;
+  for (let i: i64 = 0; i < n; i++) {
+    const p = make();
+    const fast = libmPowNoFma(p[0], p[1]);
+    const emulated = libmPowEmulated(p[0], p[1]);
+    if (fast.toBits() != emulated.toBits() && !(fast != fast && emulated != emulated)) {
+      bad++;
+    }
+  }
+  return bad;
+}
+
+describe("libmPowNoFma", () => {
+  it("rounds like the emulated copy where exp's kd is halfway between two integers", () => {
+    // y log(x) at (n + 1/2) ln2 / 128, so that kd's product often rounds to the half: x is 2^e,
+    // or 2^e (1 + 2^-k), whose log three terms of its series give to the last bit.
+    const tie = () => {
+      const n = ((rnd() % 262144) as i64) - 131072;
+      const t = ((n as f64) + 0.5) * (LN2 / 128.0);
+      let e = ((rnd() % 2001) as i64) - 1000;
+      if (e == 0) {
+        e = 1;
+      }
+      let x = pow2(e);
+      let lx = (e as f64) * LN2;
+      if ((rnd() & 1) != 0) {
+        const d = pow2(-20 - ((rnd() % 21) as i64));
+        x = x * (1.0 + d);
+        lx = lx + (d - d * d * 0.5 + d * d * d / 3.0);
+      }
+      return [x, t / lx];
+    };
+    expect(differences(20000, tie)).toBe(0);
+  });
+
+  it("rounds like the emulated copy at and near the midpoints of exact powers", () => {
+    // m ** n with m odd of b bits and n b about 54 to 56: the exact power is a midpoint between
+    // two doubles, or close to one.
+    const midpoint = () => {
+      const n = 3 + ((rnd() % 18) as i64);
+      const b = (54 + ((rnd() % 3) as i64) + n - 1) / n;
+      const m = (rnd() & (((1 as u64) << (b as u64)) - 1)) | ((1 as u64) << ((b - 1) as u64)) | 1;
+      const emax = 1000 / n;
+      const e = ((rnd() % ((2 * emax + 1) as u64)) as i64) - emax;
+      const x = (m as f64) * pow2(e - b);
+      return [(rnd() & 1) == 0 ? x : -x, n as f64];
+    };
+    expect(differences(20000, midpoint)).toBe(0);
+  });
+
+  it("rounds like the emulated copy across the result range", () => {
+    const any = () => {
+      const x = positive(-1020, 1020);
+      return [x, (-745.0 + 1455.0 * uniform()) / roughLog(x)];
+    };
+    expect(differences(20000, any)).toBe(0);
+  });
+
+  it("rounds like the emulated copy for x near 1 and huge y", () => {
+    // ln(1 + d) is about d.
+    const nearOne = () => {
+      const d = (uniform() - 0.5) * pow2(-((rnd() % 50) as i64));
+      const x = 1.0 + d;
+      const lx = x == 1.0 ? 2.220446049250313e-16 : x - 1.0;
+      return [x == 1.0 ? 1.0000000000000002 : x, (-745.0 + 1455.0 * uniform()) / lx];
+    };
+    expect(differences(20000, nearOne)).toBe(0);
+  });
+});

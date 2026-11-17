@@ -5,14 +5,14 @@
 // Some steps are exact without an `fma`: `z * invc - 1` (invc has at most 8 significant bits),
 // `k * LN2_HI` and `k * NEG_LN2_HI_N` (few bits) and the product errors (Dekker). The others are
 // computed unfused, with a bound on how far each result can be from the FMA build's: the tails of
-// log(x) (`lo`, `llo`, `elo`) and exp's polynomial (`tmp`) carry it to a rounding they feed
-// (`lhi = hi + lo`, `r = r1 + elo`, the final `scale + scale * tmp`), and `r1` is checked on its
-// own. Where such a rounding is certain (the exact sum further than the bound from a midpoint),
-// it is the FMA build's. Where it is not, the steps are redone with each `fma` emulated
-// (velt/lang/math/fma's `fmaSoft`): the last ones (`expPolyExact`, about 1 in 60 results), or
-// all of them (`powFast` returns NaN, about 1 in 1,000, and for results near the overflow and
-// underflow limits). The bounds are 1.5 to 6 times the worst case of the step errors (u = 2^-53
-// each); the derivation is in the comments at each.
+// log(x) (`lo`, `elo`) and exp's polynomial (`pt`) carry it to a rounding they feed (`lhi = hi +
+// lo`, `r = r1 + elo`, the final `scale + scale * tmp`), and `r1`'s product to its sum. Such a
+// rounding is the FMA build's where the sums with both ends of the interval round to the same
+// double: rounding is monotonic, so the FMA build's sum, inside the interval, rounds to it too.
+// Where they differ, the steps are redone with each `fma` emulated (velt/lang/math/fma's
+// `fmaSoft`): the last ones (`expPolyExact`, about 1 in 80 results), or all of them (`powFast`
+// returns NaN, about 1 in 1,000, and for results near the overflow and underflow limits). The
+// derivation of each bound is in the comments at it (u = 2^-53).
 
 import { abs, inline, noInline } from "velt/lang/intrinsics";
 import { fmaSoft, productError, splitHi } from "velt/lang/math/fma";
@@ -39,23 +39,19 @@ import {
   SHIFT,
 } from "velt/lang/math/pow_consts";
 
-// 1 + 2^-50.
-const WIDEN: f64 = 1.0000000000000009;
-// 2^-49, 2^-50, 2^-51, 2^-52 and 2^-100.
-const P49: f64 = 1.7763568394002505e-15;
-const P50: f64 = 8.881784197001252e-16;
-const P51: f64 = 4.440892098500626e-16;
-const P52: f64 = 2.220446049250313e-16;
-const P100: f64 = 7.888609052210118e-31;
-
-// Whether `v + rem` (`rem` an exact remainder, or one rounded to nearest) and every value within
-// `bound` of it round to `v`. With d a little more than |rem| + bound, |v| - d rounding back to
-// |v| means d is at most half the gap below |v|, which is never wider than the gap above.
-@inline
-function certain(v: f64, rem: f64, bound: f64): bool {
-  const av = abs(v);
-  return av - (abs(rem) + bound) * WIDEN == av;
-}
+// The bounds' coefficients are 1.25 times a little more than the derivations' (5.1u for 5.04u and
+// 5.05u, 1.6u for 1.53u, 2^-100 for 16.3u^2). The 1.25 covers the rounding of an interval's ends
+// a ± b, at most u (|a| + b): u |a| is at most 0.16 b (|elo| and |pt| are at most b / 6.375u;
+// |lo| is at most 0.673 |ar3| + |lo1| + 2.02u |hi|, which blo bounds with 6.375u, 12.75u and
+// 80u^2), inside the 0.2 b the factor adds. A bound's own computation rounds it by a few u,
+// inside the 1% the coefficients add.
+// 6.375u (1.25 times 5.1u), 2u (1.25 times 1.6u), 1.25 2^-100.
+const U6_375: f64 = 7.077671781985373e-16;
+const U2: f64 = 2.220446049250313e-16;
+const P100_125: f64 = 9.860761315262648e-31;
+// 1 - 2^-52 and 1 + 2^-52.
+const BELOW: f64 = 0.9999999999999998;
+const ABOVE: f64 = 1.0000000000000002;
 
 /**
  * `pow` of the positive normal double with bits `ix` (k, z as in pow.velt) and `y`, the FMA
@@ -98,27 +94,30 @@ export function powFast(ix: u64, y: f64, signBias: u64): f64 {
   // build's: lo1's error, the sum's three roundings and the last step's, with |lo| at most
   // 0.673 |ar3| + |lo1| + |lo2| + |lo3| + |lo4|. lo2, lo3 and lo4 are the errors of t2, ar2 and
   // hi (|t1| >= |r| or t1 = 0: the table's nonzero |logc| are at least 0.0077 and |r| < 0.0058),
-  // so their part is under 16.3u^2 |hi| (|t2| <= 1.01 |hi|, |ar2| <= 0.01 |hi|).
+  // so their part is under 16.3u^2 |hi| (|t2| <= 1.01 |hi|, |ar2| <= 0.01 |hi|). blo is 1.25
+  // times that bound with 5.1u for each of u, 5.05u and 10.1u / 2.
   const lo = ar3 * q1 + (lo1 + lo2 + lo3 + lo4);
-  const blo = P50 * (abs(ar3) + abs(pl)) + P49 * abs(lo1) + P100 * abs(hi);
-  const lhi = hi + lo;
-  const llo = hi - lhi + lo;
-  // lhi is the FMA build's when hi + lo and everything within blo of it round to it; with a bound
-  // of 0 the steps were the FMA build's.
-  if (!certain(lhi, llo, blo) && blo != 0.0) {
+  const alo1 = abs(lo1);
+  const blo = U6_375 * (abs(ar3) + abs(pl) + alo1 + alo1) + P100_125 * abs(hi);
+  // lhi = hi + lo, the FMA build's when hi plus each end of lo's interval rounds the same (with a
+  // bound of 0 the steps were the FMA build's, and both ends are lo).
+  const lhi = hi + (lo - blo);
+  if (lhi != hi + (lo + blo)) {
     return NaN;
   }
+  const llo = hi - lhi + lo;
   // y log(x) as ehi + elo: fma(y, lhi, -ehi) is the product's error, exact; the outer fma
-  // unfused, within |y| (blo + 2.01u |llo|) + 3.03u |y llo| + 2.01u |elo| of it.
+  // unfused, within |y| (blo + 2.01u |llo|) + 3.03u |y llo| + 2.01u |elo| of it, which is at most
+  // |y| blo + 5.04u |yllo| + 2.01u |elo| (blo already 1.25 times lo's bound).
   const ehi = y * lhi;
   const yllo = y * llo;
   const elo = yllo + productError(y, lhi, ehi);
-  const belo = abs(y) * blo + P50 * (abs(yllo) + abs(elo));
+  const belo = abs(y) * blo + U6_375 * (abs(yllo) + abs(elo));
   return expFast(ehi, elo, belo, signBias);
 }
 
 // ±exp(x + xtail) as the FMA build computes it (the sign from `signBias`), where the FMA build's
-// tail is within `bound` of `xtail`; NaN where a rounding is not certain.
+// tail is within `bound` / 1.25 of `xtail`; NaN where a rounding is not certain.
 @inline
 function expFast(x: f64, xtail: f64, bound: f64, signBias: u64): f64 {
   const abstop = (x.toBits() >> 52) & 0x7ff;
@@ -137,27 +136,30 @@ function expFast(x: f64, xtail: f64, bound: f64, signBias: u64): f64 {
     return NaN;
   }
   // fma(INV_LN2_N, x, SHIFT) rounds the exact product to an integer; the rounded product rounds
-  // to the same one unless it is halfway between two (|p| < 2^17, so p - kd is exact).
+  // to the same one unless it is halfway between two (|p| < 2^17, so p - kd is exact; its square
+  // rounds to 0.25 only for ±0.5: 0.5 - 2^-54, the next double below, squares to 0.25 - 2^-54 +
+  // 2^-108, which rounds to 0.25 - 2^-54).
   const p = INV_LN2_N * x;
   const kdShifted = p + SHIFT;
   const kd = kdShifted - SHIFT;
-  if (abs(p - kd) == 0.5) {
+  const half = p - kd;
+  if (half * half == 0.25) {
     return NaN;
   }
   const ki = kdShifted.toBits();
-  // fma(kd, NEG_LN2_HI_N, x) is exact (|kd| < 2^17; Sterbenz). fma(kd, NEG_LN2_LO_N, r0)
-  // unfused: the exact sum r0 + pn (a two-sum) is within u |pn| of the fused one.
+  // fma(kd, NEG_LN2_HI_N, x) is exact (|kd| < 2^17; Sterbenz). fma(kd, NEG_LN2_LO_N, r0): the
+  // exact product is within half a unit of pn (normal: |pn| >= 1.28e-14 unless kd = 0), and
+  // pn (1 ± 2^-52) round to at least a unit beyond it, so r0 plus each rounds to the fused sum
+  // where they agree, and so does r0 + pn, between them.
   const r0 = kd * NEG_LN2_HI_N + x;
   const pn = kd * NEG_LN2_LO_N;
   const r1 = r0 + pn;
-  const b1 = r1 - r0;
-  if (!certain(r1, r0 - (r1 - b1) + (pn - b1), P52 * abs(pn))) {
+  if (r0 + pn * BELOW != r0 + pn * ABOVE) {
     return NaN;
   }
-  // r = r1 + xtail, the FMA build's when every sum within `bound` rounds the same.
-  const r = r1 + xtail;
-  const rb = r - r1;
-  if (!certain(r, r1 - (r - rb) + (xtail - rb), bound) && bound != 0.0) {
+  // r = r1 + xtail, the FMA build's when r1 plus each end of xtail's interval rounds the same.
+  const r = r1 + (xtail - bound);
+  if (r != r1 + (xtail + bound)) {
     return NaN;
   }
   const idx = ((ki & 127) * 2) as usize;
@@ -169,14 +171,15 @@ function expFast(x: f64, xtail: f64, bound: f64, signBias: u64): f64 {
   const r2 = r * r;
   const w = r2 * (r * C3 + C2) + (tail + r);
   const tmp = r2 * r2 * (r * C5 + C4) + w;
-  // scale + scale tmp: s + t3 is scale + pt exactly (|pt| < |scale|, a fast two-sum), within
-  // |scale| (1.52u r2 + 2.01u |w| + 3.02u |tmp|) of the FMA build's exact sum (tmp's bound, and
-  // pt's rounding), at most |scale| (1.53u r2 + 5.04u |tmp|) as |w| <= |tmp| + 3.1e-7 r2. Where
-  // that isn't certain, r is the FMA build's: only the last steps are redone, `fma` emulated.
+  // scale + scale tmp: pt is within |scale| (1.52u r2 + 2.01u |w| + 3.02u |tmp|) of the FMA
+  // build's exact product (tmp's bound, and pt's rounding), at most |scale| (1.53u r2 + 5.04u
+  // |tmp|) as |w| <= |tmp| + 3.1e-7 r2; sb is 1.25 times that with 1.6u and 5.1u. Where the two
+  // ends round apart, r is the FMA build's: only the last steps are redone, `fma` emulated.
   const scale = f64.fromBits(sbits);
   const pt = scale * tmp;
-  const s = scale + pt;
-  if (!certain(s, pt - (s - scale), abs(scale) * (P51 * r2 + P50 * abs(tmp)))) {
+  const sb = abs(scale) * (U2 * r2 + U6_375 * abs(tmp));
+  const s = scale + (pt - sb);
+  if (s != scale + (pt + sb)) {
     return expPolyExact(r, tail, scale);
   }
   return s;

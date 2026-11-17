@@ -161,8 +161,9 @@ function main() {
   // Pairs whose result changes when one step of glibc's FMA build is computed another way: x * x
   // for the exponent 2 left out (glibc's own pow differs), the subnormal path's product fused,
   // and each `fma` whose unfused variant changes any of 4 million fuzzed results (lo3, lo, exp's
-  // polynomial, the last step, the overflow path's). Read from an array, so no constant folding
-  // stands in for the run time.
+  // polynomial, the last step, the overflow path's, and exp's `kd`), and two checks of the copy
+  // without FMA (std/lang/math/pow_fast.velt): exp's `kd` halfway between two integers, `r1`'s
+  // sum and `r`'s. Read from an array, so no constant folding stands in for the run time.
   console.log("rounding steps:");
   const pairs = [
     -3.105736295771281e-132,
@@ -183,6 +184,14 @@ function main() {
     -724055487.097801,
     50.56944101453189,
     178.31013463468292,
+    5.596796781578837e248,
+    1.0137486528034878,
+    6.330191533301209e-83,
+    -2.416427073305617,
+    1.198810836229881e-42,
+    5,
+    2652.25,
+    4,
   ];
   const steps: number[] = [];
   for (let i = 0; i < pairs.length; i += 2) {
