@@ -111,8 +111,9 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
     cx.crossing_callbacks.clear();
     cx.in_shared.clear();
     // EXPERIMENT (#2943): walk the std code lazy std would have checked (`Ctx::walk_std`).
+    // On by default; `VELT_UNITS_WALK_STD=0` takes std's summaries (all of std's boundaries).
     if cx.units_stage == crate::units::Stage::App
-        && std::env::var_os("VELT_UNITS_WALK_STD").is_some()
+        && std::env::var_os("VELT_UNITS_WALK_STD").is_none_or(|v| v != "0")
     {
         let from = cx.walked_from();
         let live = crate::body::lazy_std::units_live_set(cx);

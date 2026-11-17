@@ -116,6 +116,11 @@ pub(super) fn merge(cx: &Ctx, g: &mut graph::Graph) {
 /// among the declared ones, with why: their literals are in the finished unit's bodies, which
 /// this unit's graph does not walk (`call_sites::crossing_params`).
 pub(super) fn crossing_closure_params<'c>(cx: &'c Ctx<'_>) -> &'c [(DefId, usize, Option<Why>)] {
+    // With the std code the program reaches walked ([`Ctx::walk_std`]), its closures' params
+    // are found again; the rest of the unit's are code the program doesn't have.
+    if cx.walk_std.is_some() {
+        return &[];
+    }
     &cx.unit_sums.async_summaries.crossing
 }
 
