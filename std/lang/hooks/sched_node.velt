@@ -43,6 +43,7 @@ import * as t from "./sched_task";
 import * as tr from "./sched_node_transfer";
 import * as wk from "./sched_wake";
 import * as x from "./sched_node_ext";
+import * as workers from "./sched_workers";
 
 export const N_HEAD: usize = 128;
 export const N_REFS: usize = 8;
@@ -98,10 +99,14 @@ export function boxed(
   hdrPoll: usize,
   hdrDrop: usize,
 ): usize {
-  const e = t.exec();
   const bytes = N_HEAD + 16 + (size as usize);
   const n = m.alloc(bytes);
-  m.st(n, t.main() + t.E_NODE_VT);
+  // Worker 0's waker table (before the start, on a C library's thread: the pending block's).
+  let g = t.main();
+  if (g === 0) {
+    g = workers.zeroBlock();
+  }
+  m.st(n, g + t.E_NODE_VT);
   m.st(n + N_REFS, 1);
   m.st32(n + N_FLAGS, 0);
   m.st32(n + N_BYTES, bytes as u32);
@@ -281,6 +286,16 @@ export function start(
   if (catching !== 0) {
     nc.catchesFrom(n, catching);
   }
+  bind(task, n, rdrop, rejecting);
+  firstRun(task, n);
+}
+
+/**
+ * Lazy node `n` becomes a started promise of task `task`, which the caller owns or polls (or has
+ * just made, sched_foreign.velt `start`): its result dropped with `rdrop` if nobody claims it.
+ */
+@inline
+export function bind(task: usize, n: usize, rdrop: usize, rejecting: bool): void {
   m.or32(n + N_FLAGS, STARTED | (rejecting ? REJECTING : 0));
   m.st(n + N_RESULT_DROP, rdrop);
   // The node's reference to its task, given back when the node is freed.
@@ -291,6 +306,11 @@ export function start(
   m.inc(n + N_REFS);
   t.bump(task + t.T_LOCALS, 1);
   t.flags(task, t.LOCALS, 0);
+}
+
+/** Bound node `n`'s first run, in a poll of its task `task`, the task's await word raised. */
+@inline
+export function firstRun(task: usize, n: usize): void {
   m.st32(task + t.T_WORD, m.ld32(task + t.T_WORD) + 1);
   run(task, n, false);
   m.st32(task + t.T_WORD, m.ld32(task + t.T_WORD) - 1);

@@ -1,0 +1,29 @@
+// A module's initializer reaches setTimeout and an async call through a function (#2196): the
+// callback runs, and the kept promise starts, as in Node, where both run after the module's
+// synchronous code. The initializer's timer comes before `main`'s with the same delay.
+// timing: Node's timer order (timers of 1 ms, then sleeps of 2 and 20 ms) is what this checks.
+
+async function note(tag: string): Promise<void> {
+  console.log(`${tag} sync`);
+  await sleep(2);
+  console.log(`${tag} later`);
+}
+
+function arm(): i64 {
+  setTimeout(async () => {
+    console.log("init timer");
+  }, 1);
+  const p = note("init call");
+  return 1;
+}
+
+const armed = arm();
+
+async function main() {
+  console.log(`main ${armed}`);
+  setTimeout(async () => {
+    console.log("main timer");
+  }, 1);
+  await sleep(20);
+  console.log("end");
+}

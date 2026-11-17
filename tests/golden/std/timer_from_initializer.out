@@ -1,0 +1,6 @@
+init call sync
+main 1
+init timer
+main timer
+init call later
+end
