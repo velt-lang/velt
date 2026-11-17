@@ -32,6 +32,39 @@ pub(crate) fn calls_object_create_null(module: &velt_syntax::ast::Module) -> boo
     f.0
 }
 
+/// EXPERIMENT (#2943): does the program's code (its modules and its dependencies', not std's)
+/// name `Proxy` or `Reflect`, so that lazy std would load them? A check by units has them
+/// loaded with std's unit (`Ctx::units_proxy`, `FnCx::uses_proxy`).
+pub(crate) fn program_names_proxy(cx: &crate::ctx::Ctx) -> bool {
+    (cx.modules.iter())
+        .filter(|m| !m.is_std)
+        .any(|m| names_proxy(&m.ast))
+}
+
+/// Does `module` name `Proxy` or `Reflect` (as a value or a type)? Only a program that does loads
+/// them (`body::expr::proxy`).
+pub(crate) fn names_proxy(module: &velt_syntax::ast::Module) -> bool {
+    use velt_syntax::ast::{self, ExprKind as E};
+    struct Find(bool);
+    impl<'a> velt_syntax::visit::Visit<'a> for Find {
+        fn expr(&mut self, e: &'a ast::Expr) {
+            if let E::Ident(id) = &e.kind {
+                self.0 |= matches!(id.name.as_str(), "Proxy" | "Reflect");
+            }
+        }
+        fn ty(&mut self, t: &'a ast::TypeExpr) {
+            if let ast::TypeExprKind::Named { path, .. } = &t.kind {
+                self.0 |= path.first().is_some_and(|p| {
+                    matches!(p.name.as_str(), "Proxy" | "Reflect" | "ProxyHandler")
+                });
+            }
+        }
+    }
+    let mut f = Find(false);
+    velt_syntax::visit::walk_module(module, &mut f);
+    f.0
+}
+
 /// Does `module` read a `constructor` property (`x.constructor`)? Only then does the prelude's
 /// `anyConstructor` hold the dispatch over the program's classes, whose objects are module
 /// state (`body::expr::ctor_objects`); other programs get none of it.

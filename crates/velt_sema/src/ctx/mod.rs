@@ -138,6 +138,10 @@ pub(crate) struct Ctx<'m> {
     /// would have checked, instead of taking their summaries (which hold all of std's
     /// boundaries).
     pub walk_std: Option<std::rc::Rc<FxHashSet<DefId>>>,
+    /// EXPERIMENT (#2943): in a later unit's stage, whether the program names `Proxy` or
+    /// `Reflect` (`source_scans::program_names_proxy`): std's unit has them loaded whatever the
+    /// program does (`FnCx::uses_proxy`).
+    pub units_proxy: Option<bool>,
     pub scopes: Vec<ModuleScope>,
     /// Exports of `std/prelude/*` modules, visible everywhere.
     pub prelude: FxHashMap<String, Item>,
@@ -607,6 +611,15 @@ impl<'m> Ctx<'m> {
         d.0 >= self.walked_from() || self.walk_std.as_ref().is_some_and(|s| s.contains(&d))
     }
 
+    /// Has the program loaded `Proxy` (and `Reflect`)? In a check by units, whether it names
+    /// them ([`Ctx::units_proxy`]); std's unit has them loaded whatever the program does.
+    pub(crate) fn proxy_loaded(&self) -> bool {
+        match self.units_proxy {
+            Some(uses) => uses,
+            None => self.prelude_adt("Proxy").is_some(),
+        }
+    }
+
     /// Is definition `i` one the program is built from ([`Ctx::program_set`], or from
     /// [`Ctx::program_from`] on)? Asked before the definition is read.
     pub(crate) fn in_program(&self, i: usize) -> bool {
@@ -680,6 +693,7 @@ impl<'m> Ctx<'m> {
             program_dispatch: FxHashSet::default(),
             dyn_member_fns: FxHashSet::default(),
             walk_std: None,
+            units_proxy: None,
             unit_sums: Default::default(),
             units_stage: crate::units::Stage::Both,
             scopes,

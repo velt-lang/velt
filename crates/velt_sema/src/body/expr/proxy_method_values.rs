@@ -248,7 +248,7 @@ impl FnCx<'_, '_> {
 /// `Program::array_methods_open` and `Program::any_call_names`.
 pub(crate) fn finish(cx: &mut Ctx) -> (bool, Vec<String>) {
     let f = &cx.method_facts;
-    let open = cx.prelude_adt("Proxy").is_some()
+    let open = cx.proxy_loaded()
         && (f.named
             || f.call_names.contains("get")
             || f.reads.iter().any(|r| !f.forwards.contains(r)));
