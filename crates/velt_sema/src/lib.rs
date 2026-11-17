@@ -436,6 +436,11 @@ fn check_timed(
             cx.union_views.assumed = views.clone();
             cx.fn_sites.reseed(seeds.clone(), last);
             cx.held_borrows = held_borrows;
+            // Std reading a `shared` of its own in place (the blocking pool's state) does not
+            // make the program one that reads `shared` values, as lazy std, which checks such
+            // a module only when the program uses it, and `velt/sync/epoch` (`FnCx::frozen_view`):
+            // the app's code sets it.
+            cx.frozen_reads = false;
             // The app's modules after std's unit, with what the rewrites found of them.
             if let Some(o) = &order {
                 // std's stage sealed the layouts after its passes: the app's conversions may put
