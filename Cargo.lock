@@ -1589,6 +1589,7 @@ dependencies = [
 name = "velt_codegen_cl"
 version = "0.6.0"
 dependencies = [
+ "blake3",
  "cranelift-codegen",
  "cranelift-frontend",
  "cranelift-jit",
@@ -1936,6 +1937,7 @@ name = "velt_vir"
 version = "0.6.0"
 dependencies = [
  "rustc-hash",
+ "smallvec",
  "velt_codegen_cl",
  "velt_common",
  "velt_link",

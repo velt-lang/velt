@@ -23,7 +23,6 @@ use cranelift_codegen::gimli::write::{
     RangeList, UnitEntryId,
 };
 use cranelift_codegen::gimli::{self, Encoding, Format, LineEncoding};
-use cranelift_codegen::Context;
 use cranelift_module::FuncId;
 use cranelift_object::object::Architecture;
 use velt_vir::vir::{self, SrcLoc};
@@ -65,15 +64,14 @@ pub(crate) struct Variable {
 }
 
 impl FunctionLines {
-    /// The lines of `function`, compiled in `ctx` from a translation whose source location
-    /// table is `srclocs`; `None` without compiled code.
+    /// The lines of `function`, compiled to `code` from a translation whose source location
+    /// table is `srclocs`.
     pub(crate) fn new(
         id: FuncId,
         function: &vir::Function,
-        ctx: &Context,
+        code: &cranelift_codegen::CompiledCode,
         srclocs: &[SrcLoc],
     ) -> Option<FunctionLines> {
-        let code = ctx.compiled_code()?;
         let size = code.code_info().total_size;
         let decl = function.first_loc();
         let mut rows: Vec<(u32, Option<SrcLoc>)> = vec![(0, decl)];
