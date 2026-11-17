@@ -8,7 +8,9 @@
 //   and halves when one did not, down to off; a park that ended soon after it began (an unpark
 //   within `2 * MAX`) turns it back on at `MIN`. An idle worker spins a few tens of microseconds
 //   once, then sleeps as before.
-// - Only with several workers (`E_MODE` not 0 or lazy): one worker has nobody to wake it.
+// - Only with several workers (`E_MODE` not 0 or lazy), and only while another worker is awake:
+//   with every other one asleep, nothing pushes to the inbox soon (its own timers and sockets
+//   wake it in the reactor), and the spin would only burn the budget.
 
 import * as m from "./sched_mem";
 import * as sl from "./sched_sleep";
@@ -29,6 +31,10 @@ export function spin(e: usize): bool {
   if (budget === 0) {
     budget = START;
   }
+  if (!othersAwake(e)) {
+    // Nobody to push to the inbox soon (its own timers and sockets wake it in the reactor).
+    return false;
+  }
   const start = sl.clock() as usize;
   let i: u32 = 0;
   while (true) {
@@ -43,6 +49,18 @@ export function spin(e: usize): bool {
     }
   }
   m.st(e + t.E_SPIN, budget / 2 < MIN ? OFF : budget / 2);
+  return false;
+}
+
+/** Is a worker other than `e` awake (its park word down), one that may wake a task onto `e`? */
+function othersAwake(e: usize): bool {
+  const n = m.load(t.main() + t.E_STARTED);
+  for (let i: usize = 0; i < n; i++) {
+    const w = t.worker(i);
+    if (w !== e && m.load32(w + t.E_PARK) !== 1) {
+      return true;
+    }
+  }
   return false;
 }
 

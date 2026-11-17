@@ -1,0 +1,48 @@
+// velt/lang/hooks (internal): tasks a burst spread over the workers come back to worker 0 once
+// the load is gone (#3097). Offers move tasks off a worker whose queue waits too long
+// (sched_spread.velt); nothing else brings them back, and a task left alone on an idle worker
+// pays a kernel wake-up for every call from another worker (an actor's shard at low load). So an
+// idle worker hands the tasks woken onto it to worker 0, when it takes its inbox:
+// - Idle: not worker 0, tasks spread (`M_SPREAD`), and asleep at least `IDLE_PCT` percent of its
+//   window so far, which is at least the spread's `WINDOW` long: a worker that ran a burst keeps
+//   its tasks until it has been mostly asleep that long (the hysteresis against offers, which
+//   need the queue's delay to stay high over a window too).
+// - Worker 0 not loaded: fewer than `sp.BORROW_MIN` tasks queued (`E_QUEUED`, as borrowers read).
+// - A task that may move goes as it is; an anchored one only when it can carry its sleeps
+//   (sched_sleep_carry.velt); a pinned one, or one anchored for good, stays.
+
+import * as m from "./sched_mem";
+import * as sc from "./sched_sleep_carry";
+import * as sp from "./sched_spread";
+import * as t from "./sched_task";
+import * as wk from "./sched_wake";
+
+const IDLE_PCT: usize = 90;
+
+/** Does worker `e` hand the tasks of its inbox to worker 0 (`g`)? */
+export function gathers(e: usize, g: usize): bool {
+  if ((m.ld32(e + t.E_MODE) & t.M_SPREAD) === 0) {
+    return false;
+  }
+  const now = m.ld(e + t.E_NOW);
+  const started = m.ld(e + t.E_W_START);
+  const wall = now > started ? now - started : 0;
+  if (wall < sp.WINDOW || m.ld(e + t.E_W_SLEPT) * 100 < wall * IDLE_PCT) {
+    return false;
+  }
+  return m.load(g + t.E_QUEUED) < sp.BORROW_MIN;
+}
+
+/** Idle worker `e` hands task `k` (from its inbox) to worker 0 (`g`): whether it did. */
+export function give(e: usize, g: usize, k: usize): bool {
+  if (!t.movable(k)) {
+    if (!t.has(k, t.ANCHORED) || !t.carryable(k) || !sc.canCarry(e)) {
+      return false;
+    }
+    m.st(k + t.T_NEXT, 0);
+    sc.carry(e, k);
+  }
+  m.st(k + t.T_HOME, g);
+  m.pushStack(g + t.E_INBOX, k, t.T_NEXT);
+  return true;
+}
