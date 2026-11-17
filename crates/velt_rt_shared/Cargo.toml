@@ -23,7 +23,6 @@ doctest = false
 
 [dependencies]
 bytes = "1.12.1"
-dashu-int = "0.6.1"
 futures-util = { version = "0.3.34", default-features = false, features = ["std", "sink"] }
 getrandom = "0.4.3"
 itoa = "1.0.18"
