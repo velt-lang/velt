@@ -30,20 +30,30 @@ What disappears: `.clone()` for strings, getters returning fields, `for...of` el
 escaping-closure capture error (`let count = 0; const inc = () => count++` works; a captured
 variable that is modified gets a counted box only when the closure escapes).
 
-What stays: no GC, no pauses, deterministic `[Symbol.dispose]()` (it runs when the last
-reference goes away), inline values, `noalias` and exclusivity where uniqueness is proven,
+What stays: no tracing GC, no stop-the-world pauses, deterministic `[Symbol.dispose]()` (it
+runs when the last reference goes away; for cyclic garbage, at the collection that frees it,
+[cycles.md](cycles.md)), inline values, `noalias` and exclusivity where uniqueness is proven,
 compile-time thread safety.
 
-## Reference cycles — without a collector
+## Reference cycles
 
-- **Static cycle analysis**: a type can only leak through a cycle if its type graph can reach
-  itself through strong references (`class Node { next: Node | null }`, parent ↔ child). The
-  compiler knows exactly which types can form cycles; most can't.
-- For cycle-capable types: `weak` references (`parent: weak Node | null`, like Swift and
-  Objective-C) and a compiler **warning** on a strong self-reachable field without `weak`,
-  explaining the leak risk.
-- **No cycle collector by default.** If one is ever added, it must be opt-in per type,
-  incremental and bounded (no pause), and off in benchmarks.
+Decided (owner, 2026-11-17, #3119): a collector runs automatically for the types that can form
+cycles, and only for them; design in [cycles.md](cycles.md). Ported TypeScript (sigx's
+server renderer, UIs with listeners) never writes `weak`, and Node frees its cycles, so a
+collector that a program has to opt into would leave those programs leaking.
+
+- **Static cycle analysis**: a block can only be in a cycle if the "may own a strong
+  reference to" graph of the program's types reaches its type again (`class Node { next: Node
+  | null }`, parent ↔ child, a listener closure stored in the object it captures). The compiler
+  knows which types can form cycles; uniquely owned values never can, and a program without
+  cycle-capable types compiles exactly as before.
+- **A collector confined to them**: synchronous trial deletion per task, on the task's own
+  thread, written in std. Acyclic garbage is still freed (and disposed) at its last reference.
+- **`weak` references** (`parent: weak Node | null`, like Swift and Objective-C) for the
+  cycles a program knows about: a `weak` field takes its type out of the collector's set.
+- **A `hint`-level lint** on a cycle-capable type of the program, with a fix-it to `weak`.
+- **Benchmarks run what users run**: the collector is not turned off for them, and every
+  `bench/` row stays within 3% by instructions.
 
 ## Why performance holds
 
@@ -74,7 +84,8 @@ compile-time thread safety.
    counts exactly the types a program shares; everything else keeps the unique-owner code. `==`
    on objects is identity and `deepEqual` compares contents. Not yet: removing the `struct`
    keyword (structs already behave as objects).
-3. **Cycles** (planned): `weak`, static cycle-capability analysis and the warning.
+3. **Cycles** (planned, [cycles.md](cycles.md)): static cycle-capability analysis, a collector
+   confined to cycle-capable types, `weak` and a lint.
 
 ## Gates
 

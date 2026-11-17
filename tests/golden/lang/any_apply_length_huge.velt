@@ -1,3 +1,4 @@
+// check: no leaks
 // `f.apply` with a list too long to pass is a `RangeError`, as in Node.
 function args(this: any, a: any, b: any, c: any): any {
   return `${this.tag}:${a},${b},${c}`;

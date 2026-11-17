@@ -268,6 +268,29 @@ fn a_program_that_calls_no_math_function_loads_no_port() {
     }
 }
 
+/// The globals whose modules hold module state (`sessionStorage`, `navigator`: a module-level
+/// `let` each) load for a name in code only: a comment that names one loads neither, which would
+/// give the program module state (#3097), and code that uses one still loads it.
+#[test]
+fn a_comment_does_not_load_a_global_with_module_state() {
+    let state = &["std/lang/storage/", "std/lang/navigator/"];
+    let comments = "// the Storage and sessionStorage of a navigator (Navigator)\n\
+                    /* sessionStorage */\nconsole.log(1);\n";
+    assert_eq!(std_modules(comments, state), Vec::<String>::new());
+    let storage = "sessionStorage.setItem(\"k\", \"v\");\nconsole.log(sessionStorage.length);\n";
+    assert!(
+        std_modules(storage, state).contains(&"std/lang/storage/storage".to_string()),
+        "{:?}",
+        std_modules(storage, state)
+    );
+    let nav = "console.log(navigator.hardwareConcurrency > 0);\n";
+    assert!(
+        std_modules(nav, state).contains(&"std/lang/navigator/navigator".to_string()),
+        "{:?}",
+        std_modules(nav, state)
+    );
+}
+
 /// `expect`'s pattern matchers take a `Pattern` (std/text/regex/pattern), so a test file compiles the
 /// regex engine only when it has a regex (#1889).
 #[test]
