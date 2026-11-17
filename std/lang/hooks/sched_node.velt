@@ -28,8 +28,12 @@
 // task's await word raised so its `await`s take their microtask step, and from then on its task
 // drives it: a wake puts it among the task's woken nodes, which the task runs before its root
 // (sched.velt `run`). Its owner only sees it finish. A task that starts nothing pays nothing.
+//
+// A started node its owner dropped runs on. One that nothing can wake any more (no leaf holds its
+// waker) never would: it is given up, its state dropped, as JavaScript collects a promise nobody
+// can settle together with the functions waiting for it (`unreachable`, `giveUp`).
 
-import { inline, stateDrop, statePoll } from "velt/lang/intrinsics";
+import { inline, noInline, stateDrop, statePoll } from "velt/lang/intrinsics";
 import * as bd from "./sched_budget";
 import * as m from "./sched_mem";
 import * as loc from "./sched_node_loc";
@@ -55,8 +59,9 @@ export const N_NEXT: usize = 56;
 export const N_CX: usize = 64;
 export const N_TAKEN_NEXT: usize = 80;
 /**
- * The lazy state's drop glue: read only before the start, so a started node lends it and the
- * word after it to sched_node_catch.velt (`N_SETTLE`).
+ * The state's drop glue: read before the start, and when a started node is given up (`giveUp`).
+ * A started node that catches lends it and the word after it to sched_node_catch.velt
+ * (`N_SETTLE`).
  */
 export const N_DROP: usize = 88;
 export const N_UNHANDLED_NEXT: usize = 104;
@@ -195,6 +200,16 @@ function pollNode(f: usize, cx: usize, claim: bool): u32 {
       adoptedDone(task, n, claim ? FINISHED | DELIVERED : FINISHED);
       return 1;
     }
+    if (m.ld(n + N_REFS) === 2) {
+      // Its owner's and its task's are its only references: no leaf holds its own waker, so it
+      // runs again only when its owner polls it, and its leaves wake the owner. The owner's
+      // waker is not kept here then: an owner that nothing else can wake is `unreachable`.
+      const w = aw.takePlain(n);
+      if (w !== 0) {
+        m.wakerDrop(w);
+      }
+      return 0;
+    }
   }
   return aw.awaitNode(n, cx);
 }
@@ -250,6 +265,59 @@ export function nodeDrop(f: usize): void {
   if (w !== 0) {
     m.wakerDrop(w);
   }
+  const pending = (fl & (STARTED | FINISHED)) === STARTED;
+  release(n);
+  // The owner's was the last reference besides its task's: nothing can wake it any more.
+  if (pending && unreachable(n, 1)) {
+    giveUp(m.ld(n + N_TASK), n);
+  }
+}
+
+/**
+ * Can started node `n` never run again, once all but `refs` of its references are given back?
+ * Its owner dropped it, it is not running, not among its task's woken nodes and not finished,
+ * and besides the caller's its task holds the only reference: no leaf holds its waker (each
+ * clone is a reference), so nothing can wake it. A promise nobody settles ends up here
+ * (std/lang/promise/settle.velt: `new Promise` whose `resolve` and `reject` were dropped,
+ * waiting on a race over nothing), as the loser of a race against a timer that was cleared
+ * does. Not a catching node (its drop glue's word is lent, `N_DROP`). A shared node is not
+ * detached while a holder has it (sched_share_drop.velt `free` drops it as its owner would).
+ */
+@inline
+function unreachable(n: usize, refs: usize): bool {
+  const fl = m.load32(n + N_FLAGS);
+  const idle = STARTED | DETACHED;
+  const busy = FINISHED | RUNNING | QUEUED | CATCHES | PANICKED | ADOPTED;
+  return (fl & (idle | busy)) === idle && m.ld(n + N_REFS) === refs;
+}
+
+/**
+ * Gives back the reference a run of node `n` of task `task` was made with (the woken stack's, a
+ * sleep's, a microtask's: sched_run.velt), after `run`. A node left suspended with nobody to wake
+ * it and nobody to see it finish is given up.
+ */
+export function ran(task: usize, n: usize): void {
+  const lost = unreachable(n, 2);
+  release(n);
+  if (lost) {
+    giveUp(task, n);
+  }
+}
+
+/**
+ * Gives up node `n` of task `task`, which is `unreachable`: its state is dropped (what its
+ * frame holds goes, as when JavaScript collects a function suspended for ever), and the task's
+ * reference with it, which frees the node. It has no result. On the task's thread only.
+ */
+@noInline
+function giveUp(task: usize, n: usize): void {
+  setFlags(n, FINISHED);
+  // SAFETY: the state's own drop glue (a non-catching node keeps it, `N_DROP`) on a state that
+  // is suspended, not being polled, and never polled again.
+  unsafe {
+    stateDrop(m.ld(n + N_DROP), n + N_HEAD + 16);
+  }
+  m.st(task + t.T_LOCALS, m.ld(task + t.T_LOCALS) - 1);
   release(n);
 }
 
