@@ -709,7 +709,9 @@ impl Loader<'_, '_> {
         let mut imports: Vec<(String, Span, Option<Vec<String>>, bool)> = vec![];
         for (imp, exported) in items {
             let skip = exported && is_std && !self.wanted.needs(index, &imp);
-            if skip && self.pure(index, &imp.from) {
+            // A known import whose module is loaded is not pure (`pure` answers so, after finding
+            // its file on disk: a load from std's unit has every std module loaded).
+            if skip && !self.known_loaded(index, &imp.from) && self.pure(index, &imp.from) {
                 continue;
             }
             let runner = self.harness == Some(index)
@@ -748,6 +750,15 @@ impl Loader<'_, '_> {
             self.jsx_runtime(index, queue);
             self.load_globals(index, queue);
         }
+    }
+
+    /// Does module `index` already know where `spec` leads, to a module loaded? Then the import
+    /// can't be left unloaded ([`Loader::pure`]).
+    fn known_loaded(&mut self, index: usize, spec: &str) -> bool {
+        let known = (self.modules[index].imports.iter())
+            .find(|(s, _)| s == spec)
+            .map(|(_, path)| path.clone());
+        known.is_some_and(|path| self.module_by_path(&path).is_some())
     }
 
     /// The first module whose path is `path`. A load from std's unit resolves every std
