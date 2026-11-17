@@ -1,0 +1,36 @@
+// `x.toString(radix)` for radixes other than 10 (std/lang/number/radix, V8's digits), compared
+// with Node: integers, fractions, negative zero, very large and very small values, every radix.
+
+const radixes: number[] = [2, 3, 7, 8, 16, 32, 36];
+
+const values: number[] = [
+  0, -0, 1, -1, 0.5, -0.5, 0.1, 0.2, 0.3, 1 / 3, 2 / 3, 3.75, -255.5, 255, 1e21, 1e-7, 123.456,
+  -123.456, 1e100, 1.7976931348623157e308, 5e-324, 2.2250738585072014e-308, 9007199254740991,
+  9007199254740993, -9007199254740992, 4294967295.5, 0.1 + 0.2, 1e-300, 6.02214076e23,
+  1234567890.0987654321, 0.000001, 35, 36, 1295, 1296, 46655.99999,
+];
+
+for (const r of radixes) {
+  for (const v of values) {
+    console.log(r, v, v.toString(r));
+  }
+}
+
+// Generated values at every decimal scale from 1e-25 to 1e25.
+let seed = 12345;
+for (let i = 0; i < 120; i++) {
+  seed = (seed * 1103 + 12347) % 1000003;
+  let x = seed / 997;
+  const scale = (i % 51) - 25;
+  for (let k = 0; k < scale; k++) {
+    x = x * 10;
+  }
+  for (let k = 0; k > scale; k--) {
+    x = x / 10;
+  }
+  if (i % 3 == 0) {
+    x = -x;
+  }
+  const r = radixes[i % radixes.length];
+  console.log(r, x.toString(r), x.toString(36), x.toString(2).length);
+}

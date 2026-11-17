@@ -31,23 +31,6 @@ function table(name, ty, rows) {
   out.push("];");
 }
 
-const intInputs = ["", " 42", "42px", "-42", "+42", "0x1F", "0X1f", "-0x1F", "0x", "  \n\t 12", "  7",
-  "﻿9", "\u0085 5", "᠎5", "3.14", "1e3", "abc", "-0", "0", "00012", "9007199254740993",
-  "123456789012345678901234567890", "ff", "zz", "Infinity", "1_000", "٣", "0b101", "0o17", "-", "+",
-  "--1", "0x" + "f".repeat(40), "1".repeat(70), "10".repeat(40) + "1", "z".repeat(12), "Z9", "7fffffffffffffff",
-  "1" + "0".repeat(400), "0x1" + "0".repeat(13) + "08", "0x1" + "0".repeat(13) + "18", "0x1" + "0".repeat(13) + "0801"];
-const radixes = [0, 2, 8, 10, 16, 36, 1, 37, -1, 4294967312];
-const intRows = [];
-for (const s of intInputs) for (const r of radixes) {
-  const v = parseInt(s, r === 0 ? undefined : r);
-  // V8 is not correctly rounded above 2^53 for radixes other than 10 and powers of two (velt_rt
-  // is, below 2^128): those cases are not comparable.
-  const exactRadix = [0, 2, 8, 10, 16, 4294967312].includes(r);
-  if (!exactRadix && Math.abs(v) >= 2 ** 53) continue;
-  intRows.push([rs(s), String(r), f(v)]);
-}
-table("PARSE_INT", "(&str, i64, u64)", intRows);
-
 const floatInputs = ["3.14", "  3.14abc", "-.5", ".5", "5.", ".", "-", "+", "1e", "1e+", "1e5x", "1E-3", "Infinity",
   "-Infinityx", "+Infinity", "infinity", "0x10", "", "  ", "1.7976931348623159e308", "2e-324", "-0", "0.1e-5",
   "1.2.3", "  4", "12_3", "NaN", "1e1000", "00.5", "0x1F", "0o17", "0b101", "0b", "-0x10", " 12 ", "12 px",
@@ -55,7 +38,6 @@ const floatInputs = ["3.14", "  3.14abc", "-.5", ".5", "5.", ".", "-", "+", "1e"
   "    42 ﻿", "0x" + "f".repeat(30), "0b" + "1".repeat(60), "0o777", "0o8", "1e+5", "-1e-5",
   "123456789012345678901234567890", "0.1", "9007199254740993", ".e1", "1.e1", "Infinityx", "  -  5",
   "4.9406564584124654e-324", "2.4703282292062327e-324", "\u0085 1"];
-table("PARSE_FLOAT", "(&str, u64)", floatInputs.map(s => [rs(s), f(parseFloat(s))]));
 table("TO_NUMBER", "(&str, u64)", floatInputs.map(s => [rs(s), f(Number(s))]));
 
 const sl = "hello world";

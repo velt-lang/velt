@@ -62,4 +62,17 @@ pub const DELETED: &[&str] = &[
     // and its delay, which the abort message carries; only std called them.
     "velt_rt_signal_timeout",
     "velt_rt_signal_timeout_ms",
+    // #2196: `toString(radix)` (std/lang/hooks/number, velt/lang/number/radix).
+    "velt_rt_f64_to_radix",
+    "velt_rt_i64_to_radix",
+    "velt_rt_u64_to_radix",
+    // #2196: `toExponential`, `toPrecision` and `toFixed`'s exact digits
+    // (std/lang/hooks/number_digits, velt/lang/number/exact).
+    "velt_rt_f64_to_exponential",
+    "velt_rt_f64_to_precision",
+    "velt_rt_f64_to_fixed",
+    // #2196: `parseInt` (velt/lang/number/parse_int), which only std called.
+    "velt_rt_parse_int",
+    // #2196: the decimals of `parseFloat` past 64 bits (std/lang/hooks/number_parse).
+    "velt_rt_parse_float",
 ];
