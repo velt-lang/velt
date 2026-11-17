@@ -149,6 +149,15 @@ impl FnCx<'_, '_> {
             self.flow_into(&v, Some(*site));
             self.cx.add_thrown_to_site(*site, v.ty);
         }
+        // The write may reach the field of any interface's method of that name (two interfaces
+        // each writing `update`): their sites become one set, so the type the value goes in as
+        // (the first site's, below) is every such field's.
+        if let Some((&first, rest)) = sites.split_first() {
+            for &s in rest {
+                self.cx.site_flow(first, s);
+                self.cx.site_flow(s, first);
+            }
+        }
         if self.cx.ty.is_bottom(v.ty) {
             return (self.error_expr(span), false);
         }
