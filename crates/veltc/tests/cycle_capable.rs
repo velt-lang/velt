@@ -217,3 +217,23 @@ fn a_weak_map_value_that_refers_back_to_its_key_closes_a_cycle() {
     assert!(has(&c, "class Wrapper"), "{c}");
     assert!(!has(&c, "class Plain"), "{c}");
 }
+
+#[test]
+fn a_class_hierarchy_alone_is_not_a_cycle() {
+    // A field of the base class type may hold a subclass object: that is "is a", not "owns",
+    // so a hierarchy whose classes refer to nothing has no cycle.
+    let c = cycle_capable(
+        "class Shape { name: string = \"s\"; }
+         class Circle extends Shape { r: number = 1; }
+         class Square extends Shape { side: number = 2; }
+         class Scene { main: Shape; constructor(s: Shape) { this.main = s; } }
+         function main() {
+           const s = new Scene(new Circle());
+           const t = new Scene(new Square());
+           const keep = [s, s, t];
+           const both: Shape[] = [s.main, t.main, s.main];
+           console.log(keep.length, both.length, both[0].name);
+         }",
+    );
+    assert_eq!(c, "", "nothing here can form a cycle");
+}

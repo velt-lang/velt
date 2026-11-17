@@ -1,9 +1,9 @@
 # Design: reference cycles (cycle-capable types, a collector for them, and `weak`)
 
 Status: accepted (#3119, for #11): the design review on #3119 is folded in, and the owner
-decided decision 1 (a collector, automatic for cycle-capable types). Step 1 (the
-cycle-capability analysis, below) is implemented; the rest is planned. This note replaces the
-"without a collector" plan [semantics.md](semantics.md#reference-cycles) had.
+chose a collector, automatic for cycle-capable types (decision 1). Step 1 (the cycle-capability
+analysis, below) is implemented; the rest is planned. This note replaces the "without a
+collector" plan [semantics.md](semantics.md#reference-cycles) had.
 
 ## The problem
 
@@ -91,7 +91,7 @@ reference to a value of `B`" (`velt_vir` `lower/boxing/cycles.rs`):
 
 | Type | Edges to |
 |---|---|
-| class | the types of its fields; and, for a class in a hierarchy with a vtable, every concrete class of that hierarchy a vtable was built for (its dynamic class may have more fields) |
+| class | the types of its fields; and, for a class with subclasses, every built subclass (an object of that type may be one, with more fields); never the class itself or a base class, since "is a" is not "owns" |
 | object type, tuple, struct, `T \| null`, union, `Result` | their parts |
 | `T[]`, `Map<K, V>`, `Set<T>`, other std containers | their elements, keys and values (a std container's type arguments) |
 | function value (`FnPtr`, `Closure`) | the *closures* node: the environment of any closure of the program, a counted block, with edges to every type a closure environment captures (a captured variable's cell is counted too) |

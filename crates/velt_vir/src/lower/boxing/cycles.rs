@@ -219,11 +219,13 @@ impl Cx<'_> {
                 // What a standard-library container keeps behind its own pointers.
                 tys.extend(args);
                 if self.is_class(t) && self.has_header(d) {
-                    // It may hold any class of its hierarchy that was built.
-                    let root = self.class_root(d);
+                    // It may be an object of any subclass that was built, which owns what the
+                    // subclass's fields hold. Only strict subclasses: "is a" is not "owns", and
+                    // an edge to the class itself or to a base would close a cycle no object
+                    // graph has.
                     for c in sorted(&self.facts.vtable_types) {
                         if matches!(self.kind(c), TyKind::Adt(cd, _)
-                            if self.is_class(c) && self.class_root(cd) == root)
+                            if self.is_class(c) && self.strict_subclass(cd, d))
                         {
                             tys.push(c);
                         }
@@ -233,6 +235,20 @@ impl Cx<'_> {
             }
             _ => vec![],
         }
+    }
+
+    /// Does the class `sub` extend `sup`, directly or not (and is not `sup` itself)?
+    fn strict_subclass(&self, mut sub: DefId, sup: DefId) -> bool {
+        while let Some(b) = self.adt_def(sub).base {
+            let TyKind::Adt(bd, _) = self.kind(b) else {
+                return false;
+            };
+            if bd == sup {
+                return true;
+            }
+            sub = bd;
+        }
+        false
     }
 
     /// The strongly connected components reachable from `starts` that contain a cycle (two
