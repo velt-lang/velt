@@ -81,6 +81,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
     /// layout (sema captures the group's variables in one order in each), and a member's env
     /// is always a counted heap env (frame_envs.rs leaves members out).
     pub(super) fn closure_sibling(&mut self, def: DefId, ty: TyId) -> Operand {
+        self.note_closure_env(def, ty);
         let targs = self.targs.clone();
         let code = self.cx.func(Work::Fn(def, targs.clone()));
         let ca = self.cx.closure_agg();
@@ -119,6 +120,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
     fn closure_value(&mut self, def: DefId, ty: TyId, borrowed: bool) -> Operand {
         self.note_closure_made(def);
         self.note_wrapper_made(def);
+        self.note_closure_env(def, ty);
         let f = self.cx.fn_def(def);
         let targs = self.targs.clone();
         let ca = self.cx.closure_agg();

@@ -55,6 +55,7 @@ impl<'h> Cx<'h> {
             reg_slot_agg: None,
             no_await_steps: false,
             facts_only: false,
+            cycle_facts: false,
             deferred: FxHashMap::default(),
             deferred_new: vec![],
             versioned: 0,

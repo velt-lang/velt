@@ -372,7 +372,8 @@ the next trial until a release elsewhere in the cycle changes the answer.
    target is opaque today, so such a cycle is kept until its map entry goes) and through class
    hierarchies (dispatching on the dynamic class), keys of other object kinds (unions, tuples,
    function and interface values), and ephemeron cycles that span several maps (above).
-2. `weak T` fields (#11): a `weak` field is a `WeakRef` slot inline in the object; reading it is
-   a liveness check where it is used.
+2. `weak T` fields (#11): planned in [cycles.md](cycles.md) section 4, as a pointer to a slot
+   per target that a read checks inline, together with a collector for the strong cycles this
+   core does not collect.
 3. Store the records inline (small vectors) and measure `set` and the cold release against
    Node's `WeakMap` on sigx's reactivity tests.
