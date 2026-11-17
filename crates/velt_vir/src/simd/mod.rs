@@ -6,6 +6,7 @@
 //! parses to. No runtime function exists behind these symbols.
 
 mod ext;
+pub mod wide;
 
 pub use ext::{Ext, ExtOp};
 
@@ -338,6 +339,9 @@ pub enum MaskOp {
 pub enum SimdCall {
     /// An operation on a vector type.
     Vector(Lanes, Op),
+    /// An operation on the 256-bit vector type whose halves have these lanes (`f32x8`), its
+    /// vectors passed by address ([`wide`]).
+    Wide(Lanes, Op),
     /// An operation on the mask type with lanes of the given width in bits.
     Mask(u32, MaskOp),
     /// An instruction of a CPU extension (`velt_simd_u32x4_<op>`, `velt_simd_u64x2_<op>`), which
@@ -381,6 +385,10 @@ impl SimdCall {
         if let Some(bits) = mask_bits(ty) {
             return Some(SimdCall::Mask(bits, mask_op(op)?));
         }
+        if let Some(lanes) = wide::named(ty) {
+            let op = vector_op(op)?;
+            return wide::supported(lanes, op).then_some(SimdCall::Wide(lanes, op));
+        }
         let lanes = Lanes::named(ty)?;
         let op = match op.strip_prefix("shuffle_") {
             Some(indices) => Op::Shuffle(shuffle_mask(lanes, indices)?),
@@ -393,6 +401,7 @@ impl SimdCall {
     pub fn signature(self) -> (Vec<Ty>, Ty) {
         use Ty::{Bool, Ptr, Unit, U32, U64, V128};
         match self {
+            SimdCall::Wide(lanes, op) => wide::signature(SimdCall::Vector(lanes, op).signature()),
             SimdCall::Has(_) => (vec![], Bool),
             SimdCall::Prefetch => (vec![Ptr], Unit),
             SimdCall::Cpuid => (vec![U32, U32], V128),

@@ -520,7 +520,8 @@ fn computes_only(ext: &ExternFn) -> bool {
             !matches!(op, Op::Store | Op::StorePartial | Op::LoadOptimistic)
         }
         Some(SimdCall::Mask(..) | SimdCall::Has(_) | SimdCall::Cpuid | SimdCall::Prefetch) => true,
-        Some(SimdCall::Inst(_)) | None => false,
+        // A 256-bit operation writes its result through a pointer.
+        Some(SimdCall::Inst(_) | SimdCall::Wide(..)) | None => false,
     }
 }
 

@@ -17,6 +17,7 @@ mod masks;
 mod partial;
 mod reshape;
 mod sha;
+mod wide;
 mod x86_sums;
 
 pub(crate) use sha::has_ext;
@@ -107,6 +108,10 @@ pub(crate) fn helper(
             }
         }
         SimdCall::Vector(lanes, op) => vector(&mut body, lanes, op, arch, caps),
+        SimdCall::Wide(lanes, op) => {
+            wide::vector(&mut body, lanes, op, arch);
+            None
+        }
         SimdCall::Mask(bits, op) => mask(&mut body, bits, op, arch == Arch::Neon),
         SimdCall::Has(ext) => Some(sha::has(&mut body, arch, ext)),
         SimdCall::Inst(op) => Some(sha::op(&mut body, arch, op)),
