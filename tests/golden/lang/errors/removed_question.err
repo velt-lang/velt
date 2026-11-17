@@ -1,2 +1,0 @@
-removed_question.velt:7:19: error: the `?` operator was removed
-= note: a call that throws propagates its error automatically: remove the `?`
