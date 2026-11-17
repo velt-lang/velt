@@ -1,0 +1,103 @@
+// HMAC-SHA384 and HMAC-SHA512 (velt/crypto `hmacSha384`, `hmacSha512`): RFC 4231's test cases
+// 1-7, keys shorter than, as long as and longer than the 128-byte block, data across blocks.
+import { hmacSha384, hmacSha512 } from "velt/crypto";
+import { hexDecode, hexEncode, utf8Encode } from "velt/encoding";
+import { describe, expect, it } from "velt/test";
+
+function repeat(byte: u8, n: usize): u8[] {
+  const out = Buffer.alloc(n);
+  out.fill(byte);
+  return out;
+}
+
+// [key, data, HMAC-SHA384, HMAC-SHA512] (test case 5's MACs are truncated to 128 bits).
+function cases(): [u8[], u8[], string, string][] {
+  const counting: u8[] = [];
+  for (let i: u8 = 1; i <= 25; i++) {
+    counting.push(i);
+  }
+  return [
+    [
+      repeat(0x0b, 20),
+      utf8Encode("Hi There"),
+      "afd03944d84895626b0825f4ab46907f15f9dadbe4101ec682aa034c7cebc59cfaea9ea9076ede7f4af152e8b2fa9cb6",
+      "87aa7cdea5ef619d4ff0b4241a1d6cb02379f4e2ce4ec2787ad0b30545e17cdedaa833b7d6b8a702038b274eaea3f4e4be9d914eeb61f1702e696c203a126854",
+    ],
+    [
+      utf8Encode("Jefe"),
+      utf8Encode("what do ya want for nothing?"),
+      "af45d2e376484031617f78d2b58a6b1b9c7ef464f5a01b47e42ec3736322445e8e2240ca5e69e2c78b3239ecfab21649",
+      "164b7a7bfcf819e2e395fbe73b56e0a387bd64222e831fd610270cd7ea2505549758bf75c05a994a6d034f65f8f0e6fdcaeab1a34d4a6b4b636e070a38bce737",
+    ],
+    [
+      repeat(0xaa, 20),
+      repeat(0xdd, 50),
+      "88062608d3e6ad8a0aa2ace014c8a86f0aa635d947ac9febe83ef4e55966144b2a5ab39dc13814b94e3ab6e101a34f27",
+      "fa73b0089d56a284efb0f0756c890be9b1b5dbdd8ee81a3655f83e33b2279d39bf3e848279a722c806b485a47e67c807b946a337bee8942674278859e13292fb",
+    ],
+    [
+      counting,
+      repeat(0xcd, 50),
+      "3e8a69b7783c25851933ab6290af6ca77a9981480850009cc5577c6e1f573b4e6801dd23c4a7d679ccf8a386c674cffb",
+      "b0ba465637458c6990e5a8c5f61d4af7e576d97ff94b872de76f8050361ee3dba91ca5c11aa25eb4d679275cc5788063a5f19741120c4f2de2adebeb10a298dd",
+    ],
+    [
+      repeat(0x0c, 20),
+      utf8Encode("Test With Truncation"),
+      "3abf34c3503b2a23a46efc619baef897",
+      "415fad6271580a531d4179bc891d87a6",
+    ],
+    [
+      repeat(0xaa, 131),
+      utf8Encode("Test Using Larger Than Block-Size Key - Hash Key First"),
+      "4ece084485813e9088d2c63a041bc5b44f9ef1012a2b588f3cd11f05033ac4c60c2ef6ab4030fe8296248df163f44952",
+      "80b24263c7c1a3ebb71493c1dd7be8b49b46d1f41b4aeec1121b013783f8f3526b56d037e05f2598bd0fd2215d6a1e5295e64f73f63f0aec8b915a985d786598",
+    ],
+    [
+      repeat(0xaa, 131),
+      utf8Encode(
+        "This is a test using a larger than block-size key and a larger than block-size data. " +
+          "The key needs to be hashed before being used by the HMAC algorithm.",
+      ),
+      "6617178e941f020d351e2f254e8fd32c602420feb0b8fb9adccebb82461e99c5a678cc31e799176d3860e6110c46523e",
+      "e37b6a775dc87dbaa4dfa9f96e5e3ffddebd71f8867289865df5a32d20cdc944b6022cac3c4982b10d5eeb55c3e4de15134676fb6de0446065c97440fa8c6a58",
+    ],
+  ];
+}
+
+describe("HMAC-SHA384 and HMAC-SHA512", () => {
+  it("match RFC 4231's test cases", () => {
+    let n = 1;
+    for (const c of cases()) {
+      const m384 = hexEncode(hmacSha384(c[0], c[1]));
+      const m512 = hexEncode(hmacSha512(c[0], c[1]));
+      expect(`${n} ${m384.slice(0, c[2].length)}`).toBe(`${n} ${c[2]}`);
+      expect(`${n} ${m512.slice(0, c[3].length)}`).toBe(`${n} ${c[3]}`);
+      n++;
+    }
+  });
+
+  it("give 48 and 64 bytes", () => {
+    expect(hmacSha384([], []).length).toBe(48);
+    expect(hmacSha512([], []).length).toBe(64);
+  });
+
+  it("treat a 128-byte key as the block and a 129-byte key as its hash", () => {
+    // A key of exactly one block is used as is; one byte longer, it is hashed first. Expected
+    // values from Python's hmac.
+    expect(hexEncode(hmacSha384(repeat(0x42, 128), utf8Encode("block")))).toBe(KEY128_384);
+    expect(hexEncode(hmacSha384(repeat(0x42, 129), utf8Encode("block")))).toBe(KEY129_384);
+    expect(hexEncode(hmacSha512(repeat(0x42, 128), utf8Encode("block")))).toBe(KEY128_512);
+    expect(hexEncode(hmacSha512(repeat(0x42, 129), utf8Encode("block")))).toBe(KEY129_512);
+    expect(hexDecode(KEY128_384).length).toBe(48);
+  });
+});
+
+const KEY128_384 =
+  "30463b4978512fe83434165532ac33271b1ce7bdd7a326f0cdb64fbe99ea52c85308c90133aa29bed3e9da2a1dfcca54";
+const KEY129_384 =
+  "92f9851fabbcbf0c84a1cdfb18df6912caeeeba014719bf08102479c6e646835e097c8170f4b877e0c01cf9095f390ee";
+const KEY128_512 =
+  "a15e1bddae5db0e9803e65c82153ede8320168c4eedbfd0f8ff2e9eb1d68b1d161a835a70f20fea060cd020ed52f7ae4d7e0b168d7fc8e0a18eb97ae71fd49a1";
+const KEY129_512 =
+  "664c440c34d98d761c1542b44592c7bd6ac76f186686a7b8e2d298f865af2b2a13827e1aded8d036e26bf1de7472c7778d2699f0e35d806d47f9e6f659e9fe4e";
