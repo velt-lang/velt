@@ -775,7 +775,7 @@ impl FnLower<'_, '_> {
     /// Is the `Upcast` of a `from` to a `to` a copy of some of `from`'s fields (both object
     /// types, `to` with fewer fields; sema accepted it as such, `generic_spread::part_copy`)?
     /// Two forms of one layout are the same value.
-    fn part_copy(&mut self, from: TyId, to: TyId) -> bool {
+    pub(super) fn part_copy(&mut self, from: TyId, to: TyId) -> bool {
         let (hir::TyKind::Adt(a, _), hir::TyKind::Adt(b, _)) =
             (self.cx.kind(from), self.cx.kind(to))
         else {
