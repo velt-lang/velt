@@ -128,6 +128,7 @@ table! {
     lang_hooks_syntax => "lang/hooks/syntax",
     lang_hooks_tuple_elements => "lang/hooks/tuple_elements",
     lang_hooks_unwind => "lang/hooks/unwind",
+    lang_hooks_weak => "lang/hooks/weak",
     lang_import_meta => "lang/import_meta",
     /// The compiler's intrinsics, declared (`@intrinsic declare function`; std-layout.md §10).
     lang_intrinsics => "lang/intrinsics",

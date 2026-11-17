@@ -1,0 +1,276 @@
+// velt/lang/hooks (internal): the weak core's graph of counted objects, for an entry's
+// examination and the trial deletion (weak_trial.velt; docs/internals/design/weak-refs.md "The
+// ephemeron rule"), with the lock held.
+//
+// One graph for the process, in the header (it is used only with the lock held), made on first
+// use: at most `LIMIT` objects, each with its trace glue and the references to it from inside
+// the graph, the edges between them, and the objects still to trace. Its arrays have room for
+// the limit, so a graph allocates nothing but its edges, which grow. An object is found by a scan
+// up to `SMALL` objects (a value graph is a handful: a proxy cell, its handler, closures) and
+// through a hash index past that. Trace glue reports a child through `visit`, whose context is
+// the graph's address.
+
+import { addressCall3, fnAddress } from "velt/lang/intrinsics";
+import { H_GRAPH } from "./weak_records";
+import { W, alloc, ld, slotOf, st, vat, vecPush, vlen, vpush, vset, vtruncate } from "./weak_mem";
+
+/** Objects a trial or an examination visits before it gives up (the cycle is kept: a leak). */
+export const LIMIT: usize = 256;
+
+/** Up to this many objects, an object is found by a scan rather than through the index. */
+const SMALL: usize = 16;
+
+/** Room in each array: the limit, and one past it to notice that it was passed. */
+const ROOM: usize = LIMIT + 1;
+
+/** Slots of the hash index (twice the room, a power of two): an object's index + 1, 0 none. */
+const INDEX: usize = 1024;
+
+const G_STOP: usize = 0;
+const G_CURRENT: usize = 8;
+const G_OVERFLOW: usize = 16;
+const G_N: usize = 24;
+const G_WORK_N: usize = 32;
+/** The edges, a vector of pairs `from, to`. */
+const G_EDGES: usize = 40;
+/** `reach`'s adjacency (a vector as long as the edges) and stack (a vector). */
+const G_ADJ: usize = 48;
+const G_STACK: usize = 56;
+const G_OBJS: usize = 64;
+const G_TRACES: usize = G_OBJS + ROOM * W;
+const G_INTERNAL: usize = G_TRACES + ROOM * W;
+const G_WORK: usize = G_INTERNAL + ROOM * W;
+/** `first[i]..first[i + 1]` index object `i`'s edges in `G_ADJ` (`ROOM + 1` words). */
+const G_FIRST: usize = G_WORK + ROOM * W;
+/** `reach`'s results, one word per object: the objects live, and on a path to a key. */
+export const G_LIVE: usize = G_FIRST + (ROOM + 1) * W;
+export const G_TO_KEY: usize = G_LIVE + ROOM * W;
+const G_INDEX: usize = G_TO_KEY + ROOM * W;
+const GRAPH: usize = G_INDEX + INDEX * W;
+
+/** The process's graph (lock held), emptied, with `stop` (an object recorded, not traced). */
+export function graph(h: usize, stop: usize): usize {
+  let g = ld(h + H_GRAPH);
+  if (g === 0) {
+    g = alloc(GRAPH);
+    st(h + H_GRAPH, g);
+  }
+  const n = ld(g + G_N);
+  if (n > SMALL) {
+    for (let i: usize = 0; i < INDEX; i++) {
+      st(g + G_INDEX + i * W, 0);
+    }
+  }
+  st(g + G_STOP, stop);
+  st(g + G_CURRENT, 0);
+  st(g + G_OVERFLOW, 0);
+  st(g + G_N, 0);
+  st(g + G_WORK_N, 0);
+  if (ld(g + G_EDGES) !== 0) {
+    vtruncate(ld(g + G_EDGES), 0);
+  }
+  return g;
+}
+
+export function len(g: usize): usize {
+  return ld(g + G_N);
+}
+
+export function obj(g: usize, i: usize): usize {
+  return ld(g + G_OBJS + i * W);
+}
+
+export function trace(g: usize, i: usize): usize {
+  return ld(g + G_TRACES + i * W);
+}
+
+/** References to object `i` from inside the graph. */
+export function internal(g: usize, i: usize): usize {
+  return ld(g + G_INTERNAL + i * W);
+}
+
+export function addInternal(g: usize, i: usize): void {
+  st(g + G_INTERNAL + i * W, internal(g, i) + 1);
+}
+
+/** Whether the graph passed the limit (nothing it found then counts). */
+export function overflow(g: usize): bool {
+  return ld(g + G_OVERFLOW) !== 0;
+}
+
+/** The index of `o`, or `ROOM` when it is not in the graph. */
+export function indexOf(g: usize, o: usize): usize {
+  const n = ld(g + G_N);
+  if (n <= SMALL) {
+    for (let i: usize = 0; i < n; i++) {
+      if (ld(g + G_OBJS + i * W) === o) {
+        return i;
+      }
+    }
+    return ROOM;
+  }
+  let s = slotOf(o, INDEX);
+  while (true) {
+    const v = ld(g + G_INDEX + s * W);
+    if (v === 0) {
+      return ROOM;
+    }
+    if (ld(g + G_OBJS + (v - 1) * W) === o) {
+      return v - 1;
+    }
+    s = (s + 1) & (INDEX - 1);
+  }
+  return ROOM;
+}
+
+function indexPut(g: usize, o: usize, i: usize): void {
+  let s = slotOf(o, INDEX);
+  while (ld(g + G_INDEX + s * W) !== 0) {
+    s = (s + 1) & (INDEX - 1);
+  }
+  st(g + G_INDEX + s * W, i + 1);
+}
+
+/** The index of `o` (its trace `t` kept if it had none), added when new; `ROOM` past the limit. */
+export function add(g: usize, o: usize, t: usize): usize {
+  const found = indexOf(g, o);
+  if (found !== ROOM) {
+    if (ld(g + G_TRACES + found * W) === 0) {
+      st(g + G_TRACES + found * W, t);
+    }
+    return found;
+  }
+  const i = ld(g + G_N);
+  if (i === LIMIT) {
+    st(g + G_OVERFLOW, 1);
+    return ROOM;
+  }
+  st(g + G_OBJS + i * W, o);
+  st(g + G_TRACES + i * W, t);
+  st(g + G_INTERNAL + i * W, 0);
+  st(g + G_N, i + 1);
+  if (i + 1 === SMALL + 1) {
+    for (let j: usize = 0; j <= i; j++) {
+      indexPut(g, ld(g + G_OBJS + j * W), j);
+    }
+  } else if (i + 1 > SMALL) {
+    indexPut(g, o, i);
+  }
+  if (o !== ld(g + G_STOP)) {
+    const w = ld(g + G_WORK_N);
+    st(g + G_WORK + w * W, i);
+    st(g + G_WORK_N, w + 1);
+  }
+  return i;
+}
+
+/** An edge from object `from` to object `to`. */
+export function edge(g: usize, from: usize, to: usize): void {
+  addInternal(g, to);
+  vecPush(g + G_EDGES, from);
+  vecPush(g + G_EDGES, to);
+}
+
+/** The next object to trace, or `ROOM` when none is left. */
+export function nextWork(g: usize): usize {
+  const w = ld(g + G_WORK_N);
+  if (w === 0) {
+    return ROOM;
+  }
+  st(g + G_WORK_N, w - 1);
+  return ld(g + G_WORK + (w - 1) * W);
+}
+
+export const NONE: usize = ROOM;
+
+/** `visit(ctx, child, trace)`: trace glue's report of a strong reference (rt_abi.md). */
+function visit(ctx: usize, child: usize, t: usize): void {
+  if (child === 0) {
+    return;
+  }
+  const j = add(ctx, child, t);
+  if (j !== ROOM) {
+    edge(ctx, ld(ctx + G_CURRENT), j);
+  }
+}
+
+/** Records the strong references object `i` holds (it is live and `trace(g, i)` is its glue). */
+export function expand(g: usize, i: usize): void {
+  const t = ld(g + G_TRACES + i * W);
+  if (t !== 0) {
+    st(g + G_CURRENT, i);
+    // SAFETY: `t` is the trace glue of the live object `obj(g, i)`, which calls `visit` with
+    // the context it is given.
+    unsafe {
+      addressCall3(t, ld(g + G_OBJS + i * W), fnAddress(visit), g);
+    }
+  }
+}
+
+/**
+ * Marks in the result array `out` (`G_LIVE` or `G_TO_KEY`) the objects reachable from the roots
+ * pushed with `root`, along the edges (against them when `reverse`).
+ */
+export function reach(g: usize, reverse: bool, out: usize): void {
+  const n = ld(g + G_N);
+  const edges = ld(g + G_EDGES);
+  const ne = vlen(edges) / 2;
+  // `first`: each object's count of edges from it, then where its list starts.
+  for (let i: usize = 0; i <= n; i++) {
+    st(g + G_FIRST + i * W, 0);
+  }
+  for (let e: usize = 0; e < ne; e++) {
+    const from = vat(edges, e * 2 + (reverse ? 1 : 0));
+    const f = g + G_FIRST + (from + 1) * W;
+    st(f, ld(f) + 1);
+  }
+  for (let i: usize = 0; i < n; i++) {
+    const f = g + G_FIRST + (i + 1) * W;
+    st(f, ld(f) + ld(f - W));
+  }
+  let adj = ld(g + G_ADJ);
+  while (vlen(adj) < ne) {
+    adj = vpush(adj, 0);
+  }
+  st(g + G_ADJ, adj);
+  // `first[i]` serves as the next free place of `i`'s list, then is moved back.
+  for (let e: usize = 0; e < ne; e++) {
+    const from = vat(edges, e * 2 + (reverse ? 1 : 0));
+    const to = vat(edges, e * 2 + (reverse ? 0 : 1));
+    const f = g + G_FIRST + from * W;
+    vset(adj, ld(f), to);
+    st(f, ld(f) + 1);
+  }
+  let i = n;
+  while (i > 0) {
+    st(g + G_FIRST + i * W, ld(g + G_FIRST + (i - 1) * W));
+    i -= 1;
+  }
+  st(g + G_FIRST, 0);
+  for (let j: usize = 0; j < n; j++) {
+    st(g + out + j * W, 0);
+  }
+  while (vlen(ld(g + G_STACK)) !== 0) {
+    const s = ld(g + G_STACK);
+    const k = vat(s, vlen(s) - 1);
+    vtruncate(s, vlen(s) - 1);
+    if (ld(g + out + k * W) === 0) {
+      st(g + out + k * W, 1);
+      const a = ld(g + G_FIRST + k * W);
+      const b = ld(g + G_FIRST + (k + 1) * W);
+      for (let x = a; x < b; x++) {
+        root(g, vat(adj, x));
+      }
+    }
+  }
+}
+
+/** Pushes object `i` as a root of the next `reach`. */
+export function root(g: usize, i: usize): void {
+  st(g + G_STACK, vpush(ld(g + G_STACK), i));
+}
+
+/** Whether object `i` was marked in the result array `out`. */
+export function marked(g: usize, out: usize, i: usize): bool {
+  return ld(g + out + i * W) !== 0;
+}

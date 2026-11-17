@@ -29,7 +29,7 @@ use velt_sema::hir::{self, DefId, Nothing, TyId, TyKind};
 
 use super::glue::Glue;
 use super::operand::proj;
-use super::rt::Rt;
+use super::hook_calls::{self as hooks, ty, HookTy};
 use super::{cint, Cx, FnLower, Work};
 use crate::vir::{BinOp, Const, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
@@ -223,14 +223,9 @@ impl FnLower<'_, '_> {
     /// The `WeakRef` slot of the checked dynamic key `k`, keeping its descriptor.
     pub(super) fn weakref_new_key(&mut self, k: &DynKey) -> Operand {
         let kept = k.table.clone().unwrap_or_else(|| k.desc.clone());
-        let desc = self.cast_to(kept, Ty::Ptr, Ty::U64);
-        let d = self.temp(Ty::U32);
-        self.call_rt(
-            Rt::WeakrefNewWith,
-            vec![k.data.clone(), desc],
-            Some(Place::local(d)),
-        );
-        Operand::Copy(Place::local(d))
+        let desc = ty::U64::arg(self.cast_to(kept, Ty::Ptr, Ty::U64));
+        let data = ty::USize::arg(self.as_usize(k.data.clone()));
+        hooks::weak_ref_new_with(self, data, desc).emit(self).op()
     }
 
     /// `deref()` of a `WeakRef<object>` (`t`: `object` or `object | null`): the target with its
@@ -239,22 +234,17 @@ impl FnLower<'_, '_> {
     pub(super) fn weakref_deref_dyn(&mut self, r: Operand, t: TyId, obj: TyId) -> Operand {
         let ovt = self.cx.ty(obj);
         let out = Place::local(self.temp(ovt));
-        let d = self.temp(Ty::Ptr);
-        self.call_rt(Rt::WeakrefDeref, vec![r.clone()], Some(Place::local(d)));
+        let d = self.weakref_deref_ptr(r.clone());
         let live = self.rvalue_temp(
             Ty::Bool,
-            Rvalue::Binary(BinOp::Ne, Operand::Copy(Place::local(d)), cint(0, Ty::Ptr)),
+            Rvalue::Binary(BinOp::Ne, d.clone(), cint(0, Ty::Ptr)),
         );
         let (yes, no, done) = (self.new_block(), self.new_block(), self.new_block());
         self.branch(live.clone(), yes, no);
         self.switch_to(yes);
-        let w = self.temp(Ty::U64);
-        self.call_rt(Rt::WeakrefWord, vec![r], Some(Place::local(w)));
-        let desc = self.cast_to(Operand::Copy(Place::local(w)), Ty::U64, Ty::Ptr);
-        self.assign(
-            proj(&out, Proj::Field(0)),
-            Rvalue::Use(Operand::Copy(Place::local(d))),
-        );
+        let w = hooks::weak_ref_word(self, ty::U32::arg(r)).emit(self).op();
+        let desc = self.cast_to(w, Ty::U64, Ty::Ptr);
+        self.assign(proj(&out, Proj::Field(0)), Rvalue::Use(d));
         self.assign(proj(&out, Proj::Field(1)), Rvalue::Use(desc));
         self.goto(done);
         self.switch_to(no);

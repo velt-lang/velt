@@ -1,0 +1,79 @@
+// velt/lang/hooks (internal): the weak core's `WeakRef` slots (weak.velt; docs/internals/design/
+// weak-refs.md "WeakRef"), all with the lock held.
+//
+// A `WeakRef`'s handle is a `u32` (0: none), an index into the header's table of two-word slots:
+// the target's word (0 once it was freed; bit 0 set for a typed proxy, which the slot keeps so
+// `deref` gives the same word back) and a word kept for the compiler (an `object` target's
+// descriptor). The target's record lists the slots, so freeing it clears them (weak_maps.velt
+// `forget`).
+
+import { H_FCAP, H_FFREE, H_FNEXT, H_REFS, R_REF, find, listPush, listRemove, node, settle } from "./weak_records";
+import { W, alloc, copy, free, ld, ld64, rcWord, st, st64, vecLen, vecPop, vecPush } from "./weak_mem";
+
+/** Bit 0 of a target's word: a typed proxy (the counted object is the word with it clear). */
+export const TAG: usize = 1;
+
+const SLOT: usize = 2 * W;
+
+function slot(h: usize, r: u32): usize {
+  return ld(h + H_REFS) + (r as usize) * SLOT;
+}
+
+/** A new slot for `target` (a counted object's word, maybe tagged), keeping `word`. */
+export function refNew(h: usize, target: usize, word: u64): u32 {
+  let r: usize = 0;
+  if (vecLen(h + H_FFREE) !== 0) {
+    r = vecPop(h + H_FFREE);
+  } else {
+    // Id 0 is never a slot (as for maps).
+    r = ld(h + H_FNEXT) === 0 ? 1 : ld(h + H_FNEXT);
+    st(h + H_FNEXT, r + 1);
+    if (r >= ld(h + H_FCAP)) {
+      const cap: usize = ld(h + H_FCAP) === 0 ? 16 : ld(h + H_FCAP) * 2;
+      const t = alloc(cap * SLOT);
+      if (ld(h + H_REFS) !== 0) {
+        copy(t, ld(h + H_REFS), ld(h + H_FCAP) * SLOT);
+        free(ld(h + H_REFS));
+      }
+      st(h + H_REFS, t);
+      st(h + H_FCAP, cap);
+    }
+  }
+  const s = slot(h, r as u32);
+  st(s, target);
+  st64(s + W, word);
+  listPush(node(h, target & ~TAG, 0), R_REF, r);
+  return r as u32;
+}
+
+/** The target's word with its count raised by one, or 0 once it was freed. */
+export function refDeref(h: usize, r: u32): usize {
+  const t = ld(slot(h, r));
+  if (t !== 0) {
+    const c = rcWord(t & ~TAG);
+    st64(c, ld64(c) + 1);
+  }
+  return t;
+}
+
+/** The word kept with slot `r`. */
+export function refWord(h: usize, r: u32): u64 {
+  return ld64(slot(h, r) + W);
+}
+
+/** Gives back slot `r`. */
+export function refDrop(h: usize, r: u32): void {
+  const s = slot(h, r);
+  const t = ld(s);
+  if (t !== 0) {
+    const obj = t & ~TAG;
+    const rec = find(h, obj);
+    if (rec !== 0) {
+      listRemove(rec, R_REF, r as usize);
+    }
+    settle(h, obj);
+  }
+  st(s, 0);
+  st64(s + W, 0);
+  vecPush(h + H_FFREE, r as usize);
+}
