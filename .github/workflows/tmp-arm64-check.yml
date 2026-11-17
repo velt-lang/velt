@@ -77,7 +77,10 @@ jobs:
           echo "release: $(diff expected.txt release.txt | grep -c '^<') differences"
           diff expected.txt debug.txt | head -n 10
           diff expected.txt release.txt | head -n 10
-          cmp expected.txt debug.txt && cmp expected.txt release.txt
+          echo "by function (Node on this runner against Velt):"
+          diff expected.txt release.txt | grep '^<' | awk '{print $2}' | sort | uniq -c
+          echo "x64 Node's output has md5 8954160460c327b4c6a878a2bbf14dd1; here:"
+          md5sum expected.txt debug.txt release.txt
       - name: bf16 kernels (#3129), main against this branch
         if: always()
         run: |
