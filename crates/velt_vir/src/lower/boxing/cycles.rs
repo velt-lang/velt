@@ -350,6 +350,9 @@ impl Cx<'_> {
     /// Record that a generator object of class type `g` holds the state of generator `def` at
     /// `targs`.
     pub(in crate::lower) fn note_gen_frame(&mut self, g: TyId, def: DefId, targs: &[TyId]) {
+        if !self.cycle_facts {
+            return;
+        }
         (self.facts.gen_frames).insert((g, def, targs.to_vec()));
     }
 
@@ -413,6 +416,10 @@ impl Cx<'_> {
             Node::Iface(d) => {
                 let tys = g.impls.get(&d).cloned().unwrap_or_default();
                 out.extend(tys.into_iter().map(Node::Ty));
+                // The interfaces converted to `d`. Today redundant: an upcast builds `d`'s table
+                // for each concrete type behind the converted interface (glue/vtable.rs, the
+                // targets of `upcast_impls`), so `impls[d]` already lists those types. Kept so the
+                // analysis stays sound if an upcast ever reuses the source's table instead.
                 let from = g.upcast_from.get(&d).cloned().unwrap_or_default();
                 out.extend(from.into_iter().map(Node::Iface));
             }

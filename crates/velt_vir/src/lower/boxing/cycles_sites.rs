@@ -12,7 +12,7 @@ impl FnLower<'_, '_> {
     /// Record `e`'s location when it makes a value: `new`, an object, array or tuple literal, a
     /// closure.
     pub(in crate::lower) fn note_alloc_site(&mut self, e: &hir::Expr) {
-        if !self.cx.cycle_sites {
+        if !self.cx.cycle_facts {
             return;
         }
         use hir::ExprKind as K;

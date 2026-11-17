@@ -145,9 +145,10 @@ weak-capable types, then a line per entry with where its values are made
 (`velt: cycle-capable sites: class View: src/view.velt:12:13, …`: `new`, literals, closures;
 `cycles_sites.rs`). `crates/veltc/tests/cycle_capable.rs` checks the set on the shapes above
 and on programs that must have none, and each edge kind, each split and the wrapper edge has a
-test that fails without it. The analysis changes no code generation and is computed only when
-asked; step 5 moves it into the counted-types fixed point (`close_boxing`), once code
-generation depends on it.
+test that fails without it. The analysis changes no code generation, and both the facts it reads
+and the analysis itself are computed only under that variable (`Cx::cycle_facts`), so other
+compiles do none of it; step 5 records them always and moves the analysis into the
+counted-types fixed point (`close_boxing`), once code generation depends on it.
 
 ## 2. Trace glue for every cycle-capable type (step 3)
 

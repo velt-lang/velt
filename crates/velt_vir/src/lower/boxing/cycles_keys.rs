@@ -114,6 +114,9 @@ impl Cx<'_> {
 
     /// Record that a table of interface `iface` was built for the concrete type `t`.
     pub(in crate::lower) fn note_iface_impl(&mut self, iface: DefId, t: TyId) {
+        if !self.cycle_facts {
+            return;
+        }
         self.facts.iface_impls.insert((iface, t));
     }
 }
@@ -121,6 +124,9 @@ impl Cx<'_> {
 impl FnLower<'_, '_> {
     /// Record that closure `def` is made here, its value of type `ty` (before substitution).
     pub(in crate::lower) fn note_closure_env(&mut self, def: DefId, ty: TyId) {
+        if !self.cx.cycle_facts {
+            return;
+        }
         let t = self.sub(ty);
         let key = self.cx.cycle_key(t);
         let targs = self.targs.clone();

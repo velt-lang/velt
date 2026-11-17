@@ -88,7 +88,7 @@ pub(super) fn lower_program_kept<'h>(
         cx.jit = opts.jit;
         cx.no_await_steps = no_await_steps;
         cx.facts_only = facts_only;
-        cx.cycle_sites = std::env::var_os("VELT_DEBUG_COUNTED").is_some();
+        cx.cycle_facts = std::env::var_os("VELT_DEBUG_COUNTED").is_some();
         cx.glue_slots.keep_all = want_seed || glue::demand_off();
         cx.shapes.wanted = shape::wanted(opts.shapes);
         cx.shapes.on = cx.shapes.wanted;
