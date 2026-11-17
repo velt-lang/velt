@@ -549,7 +549,8 @@ impl Ctx<'_> {
     /// for all of std, are the program's when its own code noted them or it reaches a std
     /// function that did (`Ctx::dyn_member_fns`).
     pub(crate) fn units_dyn_members(&mut self) {
-        if self.units_stage != crate::units::Stage::App {
+        // Only lowering reads the slots (`dyn_members`): a check that lowers nothing has none.
+        if self.units_stage != crate::units::Stage::App || self.check_only {
             return;
         }
         if self.any.is_some_and(|a| a.members) || self.unit_sums.dyn_member_fns.is_empty() {
