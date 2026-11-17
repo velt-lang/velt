@@ -152,7 +152,10 @@ function tryFree(o: usize): void {
   leaveReleasing(h);
 }
 
-/** A map key or a released object is an object's address, never a typed proxy's tagged word. */
+/**
+ * A map key or a released object is an object's address, never a typed proxy's tagged word.
+ * Checked before the lock is taken, so the ICE leaves the table usable.
+ */
 function untagged(obj: usize): void {
   if ((obj & wr.TAG) !== 0) {
     panic("ICE: a tagged proxy word reached the weak table");
@@ -218,6 +221,7 @@ export function weakMapNew(keyTrace: usize, retain: usize, release: usize, trace
 
 /** `map.set(key, value)`: takes over the caller's reference to `value`; the key is not counted. */
 export function weakMapSet(map: u32, key: usize, value: u64): void {
+  untagged(key);
   const h = enter();
   set(h, map, key, value, ld(mapOf(h, map) + wm.M_KEY_TRACE));
   leaveReleasing(h);
@@ -228,13 +232,13 @@ export function weakMapSet(map: u32, key: usize, value: u64): void {
  * dynamic, `WeakMap<object, V>`: each key's type is known only from its value).
  */
 export function weakMapSetTraced(map: u32, key: usize, value: u64, keyTrace: usize): void {
+  untagged(key);
   const h = enter();
   set(h, map, key, value, keyTrace);
   leaveReleasing(h);
 }
 
 function set(h: usize, map: u32, key: usize, value: u64, keyTrace: usize): void {
-  untagged(key);
   wm.del(h, map, key);
   const vt = ld(mapOf(h, map) + wm.M_VALUE_TRACE);
   // A nonzero value of a map with trace glue is a live counted object, the map's from here on.
