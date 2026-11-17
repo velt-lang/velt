@@ -189,6 +189,8 @@ impl Ctx<'_> {
                 }
             }
         }
+        // In source order: the first is where a closure written there throws into.
+        out.sort_by_key(|s| (s.file, s.lo, s.hi));
         out
     }
 
@@ -235,7 +237,13 @@ impl Ctx<'_> {
             let Some(s) = src else {
                 continue;
             };
-            if let Some(&f) = self.method_writes.field_sites.get(&(s.d, s.index)) {
+            // The site of the function an object literal stored there (`body/expr/object.rs`), or
+            // that of the field's written function type (`type H = { update: () => void }`).
+            let declared = (self.adt(s.d).and_then(|a| a.fields.get(s.index))).map(|f| f.ty);
+            let f = (self.method_writes.field_sites.get(&(s.d, s.index)).copied())
+                .or_else(|| declared.and_then(|t| self.var_site(t)))
+                .or_else(|| self.var_site(s.ty));
+            if let Some(f) = f.filter(|&f| f != m) {
                 self.site_flow(m, f);
                 self.site_flow(f, m);
             }
@@ -590,9 +598,15 @@ impl Ctx<'_> {
                 .and_then(|s| imp.methods.get(s as usize).copied());
             let def = match (own, srcs[j]) {
                 (Some(def), _) => def,
-                (None, Some(s)) => crate::collect::getters::field_setter_named(
-                    self, s.d, s.self_ty, s.index, s.ty, &name,
-                ),
+                (None, Some(s)) => {
+                    // Upcast implementations are made after the assigned object types are
+                    // known (`program.rs`): the setter writes `s.d` in place, so a share of it
+                    // must keep one object.
+                    crate::assigned_fields::mark_assigned(self, s.d);
+                    crate::collect::getters::field_setter_named(
+                        self, s.d, s.self_ty, s.index, s.ty, &name,
+                    )
+                }
                 (None, None) => {
                     let Some(fty) = self.method_fn_ty(b, args, j) else {
                         return (vec![], srcs);
