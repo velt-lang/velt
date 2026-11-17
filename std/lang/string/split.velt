@@ -1,0 +1,93 @@
+// velt/lang/string (internal): `s.split(sep)` with a string separator (std/prelude/string.velt),
+// in Velt on the byte searches of `indexOf` (byte_scan.velt, needle_scan.velt).
+//
+// JS semantics: adjacent and trailing separators give empty strings, `"".split(",")` is `[""]`,
+// `split("")` gives the code units (`"".split("")` is `[]`, and a pair splits into its two
+// halves, each a lone surrogate). The pieces are byte ranges of `s`: a match of a separator that
+// starts with a lead byte starts on a code point (WTF-8 is self-synchronizing), so no piece cuts
+// a character. Only a separator that can match half of a pair ("half needle", search.velt) in a
+// string that is not ASCII is searched in code units, its pieces cut by `substring`.
+
+import { noInline, strByteAt, strByteLen, strLen } from "velt/lang/intrinsics";
+import { findByte } from "velt/lang/string/byte_scan";
+import { codePoint4, isHalfNeedle } from "velt/lang/string/code_units";
+import { halfFind } from "velt/lang/string/half_needle";
+import { findBytes } from "velt/lang/string/needle_scan";
+
+declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
+
+/** `s.split(sep)`. */
+export function split(s: string, sep: string): string[] {
+  const m = strByteLen(sep);
+  if (m == 0) {
+    return splitUnits(s);
+  }
+  const n = strByteLen(s);
+  if (strLen(s) != n && isHalfNeedle(sep, m)) {
+    return splitHalf(s, sep);
+  }
+  const out: string[] = [];
+  let start: usize = 0;
+  if (m == 1) {
+    const b = strByteAt(sep, 0);
+    while (true) {
+      const k = findByte(s, b, start, n);
+      if (k < 0) {
+        break;
+      }
+      out.push(velt_rt_str_byte_slice(s, start as u64, k as u64));
+      start = (k as usize) + 1;
+    }
+  } else {
+    while (m <= n - start) {
+      const k = findBytes(s, sep, m, start, n);
+      if (k < 0) {
+        break;
+      }
+      out.push(velt_rt_str_byte_slice(s, start as u64, k as u64));
+      start = (k as usize) + m;
+    }
+  }
+  out.push(velt_rt_str_byte_slice(s, start as u64, n as u64));
+  return out;
+}
+
+/** `split("")`: one string per code unit, a pair's two halves as two lone surrogates. */
+@noInline
+function splitUnits(s: string): string[] {
+  const n = strByteLen(s);
+  const out: string[] = [];
+  let i: usize = 0;
+  while (i < n) {
+    const lead = strByteAt(s, i as u64);
+    const len: usize = lead < 0x80 ? 1 : lead < 0xe0 ? 2 : lead < 0xf0 ? 3 : 4;
+    if (len == 4) {
+      const cp = codePoint4(s, i) - 0x10000;
+      out.push(String.fromCharCode((0xd800 + (cp >> 10)) as number));
+      out.push(String.fromCharCode((0xdc00 + (cp & 0x3ff)) as number));
+    } else {
+      out.push(velt_rt_str_byte_slice(s, i as u64, (i + len) as u64));
+    }
+    i += len;
+  }
+  return out;
+}
+
+/** `split` by a half needle in a string that is not ASCII: matches in code units. */
+@noInline
+function splitHalf(s: string, sep: string): string[] {
+  const units = strLen(sep);
+  const total = strLen(s);
+  const out: string[] = [];
+  let start: usize = 0;
+  while (units <= total - start) {
+    const k = halfFind(s, sep, start);
+    if (k < 0) {
+      break;
+    }
+    out.push(s.substring(start as number, k as number));
+    start = (k as usize) + units;
+  }
+  out.push(s.substring(start as number));
+  return out;
+}

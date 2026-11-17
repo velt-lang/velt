@@ -178,6 +178,9 @@ hooks! {
     string_starts_with => lang_string_search, "startsWith", sig((&string, &string) -> bool);
     /// `s.endsWith(suffix)`.
     string_ends_with => lang_string_search, "endsWith", sig((&string, &string) -> bool);
+    /// `s.split(sep)` with a string separator (velt/lang/string/split, #2196).
+    string_split => lang_string_split, "split", sig((&string, &string) -> [string]),
+        replaces("velt_rt_str_split");
 
     // process_statics.velt: the process-wide statics the runtime reads (#2779), whose addresses
     // `velt_main` hands it first thing (`velt_rt_statics`).

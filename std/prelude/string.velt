@@ -24,7 +24,6 @@ import {
 } from "velt/lang/intrinsics";
 
 declare function velt_rt_str_slice(s: string, start: i64, end: i64): string;
-declare function velt_rt_str_split(s: string, sep: string): string[];
 declare function velt_rt_str_trim(s: string): string;
 declare function velt_rt_str_trim_start(s: string): string;
 declare function velt_rt_str_trim_end(s: string): string;
@@ -138,7 +137,7 @@ extend string {
    * surrogate pair splits into its two halves).
    */
   split(sep: string): string[] {
-    return velt_rt_str_split(this, sep);
+    return hookCall("string_split", this, sep);
   }
 
   /** Strips JS whitespace and line terminators. */
