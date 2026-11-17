@@ -1,0 +1,46 @@
+import { f32x4, f32x8 } from "velt/simd";
+
+function dot8(a: f32[], aAt: usize, b: f32[], dim: usize): f32 {
+  let s0 = f32x8.splat(0);
+  let s1 = f32x8.splat(0);
+  let i: usize = 0;
+  while (i + 16 <= dim && f32x8.fits(a, aAt + i + 8) && f32x8.fits(b, i + 8)) {
+    s0 = f32x8.load(a, aAt + i).mulAddFast(f32x8.load(b, i), s0);
+    s1 = f32x8.load(a, aAt + i + 8).mulAddFast(f32x8.load(b, i + 8), s1);
+    i += 16;
+  }
+  return s0.add(s1).sum();
+}
+
+function dot4(a: f32[], aAt: usize, b: f32[], dim: usize): f32 {
+  let s0 = f32x4.splat(0);
+  let s1 = f32x4.splat(0);
+  let s2 = f32x4.splat(0);
+  let s3 = f32x4.splat(0);
+  let i: usize = 0;
+  while (i + 16 <= dim && f32x4.fits(a, aAt + i + 12) && f32x4.fits(b, i + 12)) {
+    s0 = f32x4.load(a, aAt + i).mulAddFast(f32x4.load(b, i), s0);
+    s1 = f32x4.load(a, aAt + i + 4).mulAddFast(f32x4.load(b, i + 4), s1);
+    s2 = f32x4.load(a, aAt + i + 8).mulAddFast(f32x4.load(b, i + 8), s2);
+    s3 = f32x4.load(a, aAt + i + 12).mulAddFast(f32x4.load(b, i + 12), s3);
+    i += 16;
+  }
+  return s0.add(s1).add(s2.add(s3)).sum();
+}
+
+const n: usize = 2000;
+const d: usize = 384;
+const f: f32[] = [];
+for (let i: usize = 0; i < n * d; i++) {
+  f.push(((((i * 7919) % 2000) as number) / 1000 - 1) as f32);
+}
+const q = f.slice(0, 384);
+const which = process.argv[2] ?? "8";
+const passes = Number(process.argv[3] ?? "1");
+let s: f32 = 0;
+for (let r = 0; r < passes; r++) {
+  for (let row: usize = 0; row < n; row++) {
+    s += which == "8" ? dot8(f, row * d, q, d) : dot4(f, row * d, q, d);
+  }
+}
+console.log(s);
