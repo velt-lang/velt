@@ -32,6 +32,78 @@ pub(crate) fn calls_object_create_null(module: &velt_syntax::ast::Module) -> boo
     f.0
 }
 
+/// EXPERIMENT (#2943): does the program's code (its modules and its dependencies', not std's)
+/// name `Proxy` or `Reflect`, so that lazy std would load them? A check by units has them
+/// loaded with std's unit (`Ctx::units_proxy`, `FnCx::uses_proxy`).
+pub(crate) fn program_names_proxy(cx: &crate::ctx::Ctx) -> bool {
+    (cx.modules.iter())
+        .filter(|m| !m.is_std)
+        .any(|m| names_proxy(&m.ast))
+}
+
+/// Does `module` name one of std/prelude/global/proxy.velt's globals (`Proxy`, `Reflect`,
+/// `ProxyHandler`, `PropertyDescriptor`, as a value or a type), or put a literal nothing where
+/// its type may have none ([`has_nothing_slot`])? The loader loads `Proxy` for such a module
+/// (velt_loader `globals::names_global`); only a program that has one has proxies
+/// (`body::expr::proxy`).
+pub(crate) fn names_proxy(module: &velt_syntax::ast::Module) -> bool {
+    use velt_syntax::ast::{self, ExprKind as E};
+    const NAMES: [&str; 4] = ["Proxy", "Reflect", "ProxyHandler", "PropertyDescriptor"];
+    struct Find(bool);
+    impl<'a> velt_syntax::visit::Visit<'a> for Find {
+        fn expr(&mut self, e: &'a ast::Expr) {
+            if let E::Ident(id) = &e.kind {
+                self.0 |= NAMES.contains(&id.name.as_str());
+            }
+        }
+        fn ty(&mut self, t: &'a ast::TypeExpr) {
+            if let ast::TypeExprKind::Named { path, .. } = &t.kind {
+                self.0 |= path
+                    .first()
+                    .is_some_and(|p| NAMES.contains(&p.name.as_str()));
+            }
+        }
+    }
+    let mut f = Find(false);
+    velt_syntax::visit::walk_module(module, &mut f);
+    f.0 || has_nothing_slot(module)
+}
+
+/// Whether `module` asserts a literal `null` or `undefined` non-null (`null!`) or casts one to a
+/// type written without a nothing (`null as any`, `null as Foo`; not `null as Foo | null`): a
+/// view of the nothing holds it (velt_vir `lower/any_view.rs`), so the loader loads `Proxy` for
+/// it (velt_loader `globals::names_global`).
+pub fn has_nothing_slot(module: &velt_syntax::ast::Module) -> bool {
+    use velt_syntax::ast;
+    fn nothing(e: &ast::Expr) -> bool {
+        match &e.kind {
+            ast::ExprKind::Paren(inner) => nothing(inner),
+            ast::ExprKind::Lit(ast::Lit::Null | ast::Lit::Undefined) => true,
+            _ => false,
+        }
+    }
+    fn names_nothing(t: &ast::TypeExpr) -> bool {
+        match &t.kind {
+            ast::TypeExprKind::Union(parts) => parts.iter().any(names_nothing),
+            ast::TypeExprKind::Null | ast::TypeExprKind::Undefined => true,
+            _ => false,
+        }
+    }
+    struct Find(bool);
+    impl<'a> velt_syntax::visit::Visit<'a> for Find {
+        fn expr(&mut self, e: &'a ast::Expr) {
+            match &e.kind {
+                ast::ExprKind::NonNull(inner) => self.0 |= nothing(inner),
+                ast::ExprKind::Cast { expr, ty } => self.0 |= nothing(expr) && !names_nothing(ty),
+                _ => {}
+            }
+        }
+    }
+    let mut find = Find(false);
+    velt_syntax::visit::walk_module(module, &mut find);
+    find.0
+}
+
 /// Does `module` read a `constructor` property (`x.constructor`)? Only then does the prelude's
 /// `anyConstructor` hold the dispatch over the program's classes, whose objects are module
 /// state (`body::expr::ctor_objects`); other programs get none of it.

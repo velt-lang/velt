@@ -237,6 +237,9 @@ pub(crate) fn walk_units_program(cx: &mut Ctx, entry: Option<DefId>) -> FxHashSe
         }
         seed_units_named(cx, base, &new);
     }
+    let proxy =
+        (loaded.iter().enumerate()).any(|(m, &l)| l && is_proxy_module(&cx.modules[m].path));
+    cx.units_live_proxy = Some(proxy);
     // The program's definitions are also the classes, structs and interfaces live code has
     // values of: the passes that build the program (readonly erasure writing the solved error
     // sets into field types, the layouts) read their definitions.
@@ -251,6 +254,24 @@ pub(crate) fn walk_units_program(cx: &mut Ctx, entry: Option<DefId>) -> FxHashSe
         );
     }
     live
+}
+
+/// A module whose loading gives a program proxies: `Proxy`'s own (`std/lang/proxy/…`) and the
+/// hooks that import it (`std/lang/hooks/proxy`).
+fn is_proxy_module(path: &str) -> bool {
+    path == "std/lang/hooks/proxy"
+        || path == "std/lang/proxy"
+        || path.starts_with("std/lang/proxy/")
+}
+
+/// EXPERIMENT (#2943): whether lazy std would have loaded `Proxy` for this program: this
+/// round's units live walk loaded one of its modules ([`walk_units_program`]); walked now when
+/// no pass of the round walked.
+pub(crate) fn units_loads_proxy(cx: &mut Ctx) -> bool {
+    if cx.units_live_proxy.is_none() {
+        units_live_set(cx);
+    }
+    cx.units_live_proxy == Some(true)
 }
 
 /// EXPERIMENT (#2943): what lazy std would have checked of std's unit for this program

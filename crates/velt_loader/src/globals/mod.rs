@@ -289,35 +289,8 @@ fn has_this_fn(module: &ast::Module) -> bool {
 
 /// Whether `module` asserts a literal `null` or `undefined` non-null (`null!`) or casts one to a
 /// type written without a nothing (`null as any`, `null as Foo`; not `null as Foo | null`).
-fn has_nothing_slot(module: &ast::Module) -> bool {
-    fn nothing(e: &ast::Expr) -> bool {
-        match &e.kind {
-            ast::ExprKind::Paren(inner) => nothing(inner),
-            ast::ExprKind::Lit(ast::Lit::Null | ast::Lit::Undefined) => true,
-            _ => false,
-        }
-    }
-    fn names_nothing(t: &ast::TypeExpr) -> bool {
-        match &t.kind {
-            ast::TypeExprKind::Union(parts) => parts.iter().any(names_nothing),
-            ast::TypeExprKind::Null | ast::TypeExprKind::Undefined => true,
-            _ => false,
-        }
-    }
-    struct Find(bool);
-    impl<'a> Visit<'a> for Find {
-        fn expr(&mut self, e: &'a ast::Expr) {
-            match &e.kind {
-                ast::ExprKind::NonNull(inner) => self.0 |= nothing(inner),
-                ast::ExprKind::Cast { expr, ty } => self.0 |= nothing(expr) && !names_nothing(ty),
-                _ => {}
-            }
-        }
-    }
-    let mut find = Find(false);
-    visit::walk_module(module, &mut find);
-    find.0
-}
+/// Sema's, which a check by units asks too (`source_scans::names_proxy`).
+use velt_sema::has_nothing_slot;
 
 /// Whether `module` holds a `new RegExp(…)` (what the parser makes of a regex literal).
 fn has_regex(module: &ast::Module) -> bool {

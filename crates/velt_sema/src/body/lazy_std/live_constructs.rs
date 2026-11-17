@@ -47,6 +47,16 @@ pub(crate) struct Assumed {
     /// Hooks (`HOOKS` indexes) that a `hookCall` reached by those passes calls: their modules are
     /// demanded when the call is checked ([`super::hook_stubs`]).
     pub(in super::super) hooks: Vec<usize>,
+    /// EXPERIMENT (#2943): in a check by units, the program has `Proxy` loaded although its code
+    /// names none: the live walk loaded `Proxy`'s modules (`Ctx::units_live_proxy`).
+    pub(in super::super) proxy: bool,
+}
+
+impl Assumed {
+    /// Does a check by units start with `Proxy` loaded ([`Assumed::proxy`])?
+    pub(crate) fn proxy(&self) -> bool {
+        self.proxy
+    }
 }
 
 /// What lowering reports with the inferred `throws` of a live function, when thrown and not caught
@@ -60,6 +70,20 @@ pub(crate) struct Assumed {
 /// has no caller, and reports what it runs: any type argument in it may be what a generic `throws`
 /// stands for, by whatever expression the instance is reached. Whether anything was added.
 pub(crate) fn too_late(cx: &mut Ctx, assumed: &mut Assumed) -> bool {
+    // A check by units started without `Proxy` (its code names none), as lazy std, which loads
+    // it also when a construct demands a hook of `std/lang/hooks/proxy`: when the live walk
+    // loaded one, the next round has `Proxy` from the start (`Ctx::units_proxy`).
+    if cx.units_stage == crate::units::Stage::App
+        && cx.units_proxy == Some(false)
+        && !assumed.proxy
+        && super::units_loads_proxy(cx)
+    {
+        if std::env::var_os("VELT_UNITS_REACH_STATS").is_some() {
+            eprintln!("velt-units: round: the live walk loaded Proxy");
+        }
+        assumed.proxy = true;
+        return true;
+    }
     if cx.lazy.modules.is_empty() {
         return false;
     }
@@ -225,6 +249,6 @@ fn may_print_int(cx: &mut Ctx, t: TyId) -> bool {
 // The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
 crate::units::codec::structs! {
     Assumed {
-        constructs, defs, record_conversion, tasks, hooks,
+        constructs, defs, record_conversion, tasks, hooks, proxy,
     }
 }

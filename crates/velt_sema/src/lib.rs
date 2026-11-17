@@ -185,6 +185,7 @@ pub use kept::{KeptCheck, PendingKept, Refused};
 pub use kept_reload::member_name;
 pub use options::CheckOptions;
 pub use source_module::SourceModule;
+pub use source_scans::has_nothing_slot;
 pub use std_load::{LoadFn, Loads, StdBatch, StdLoads};
 pub use timings::check_rounds;
 pub use visit::rebase_detached_locals;
@@ -458,6 +459,11 @@ fn check_timed(
                 found.install(&mut cx, true);
                 units::remap_module_facts(&mut cx, &|m| o.in_app(m, base));
             }
+            // Std's unit has `Proxy` loaded; lazy std loads it only for a program that uses it
+            // (`FnCx::uses_proxy`), or when a construct demands a hook of its module: a round
+            // after one whose live walk loaded it has it (`lazy_std::too_late`).
+            cx.units_proxy =
+                Some(assumed.borrow().proxy() || source_scans::program_names_proxy(&cx));
         }
         if fresh {
             cx.units_stage = stage.get();
