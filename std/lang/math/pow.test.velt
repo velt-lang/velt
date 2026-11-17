@@ -92,6 +92,13 @@ describe("libmPowNoFma", () => {
     expect(differences(20000, midpoint)).toBe(0);
   });
 
+  it("gives Node's bits for the pairs that need each check", () => {
+    // kd's tie check, r1's and r's (the golden lang/math_pow_node pins them too).
+    expect(libmPowNoFma(6.330191533301209e-83, -2.416427073305617)).toBe(4.2352759226518107e198);
+    expect(libmPowNoFma(1.198810836229881e-42, 5.0)).toBe(2.4760151616571922e-210);
+    expect(libmPowNoFma(2652.25, 4.0)).toBe(49483206304203.76);
+  });
+
   it("rounds like the emulated copy across the result range", () => {
     const any = () => {
       const x = positive(-1020, 1020);
