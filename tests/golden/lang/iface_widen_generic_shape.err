@@ -1,0 +1,2 @@
+18:2: error: cannot cast `Ctx` as `InternalCtx`
+and a generic object literal of its shape is laid out as it, which would need `__name` too

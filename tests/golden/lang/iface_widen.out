@@ -1,0 +1,7 @@
+undefined
+dbg undefined x
+{"el":"x","__name":"dbg"} {"el":"y"} el,update,__name
+{ el: 'x', update: [Function: update], __name: 'dbg' }
+true w
+undefined
+written w

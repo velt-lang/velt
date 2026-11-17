@@ -55,12 +55,14 @@ pub mod ty {
     // The std classes in lowered hooks' signatures.
     markers!(
         ArrayView,
+        RecordViewSource,
         BufferView,
         CString,
         ClassMarker,
         Error,
         HostRef,
         HostSettled,
+        Map,
         Ptr,
         Record
     );

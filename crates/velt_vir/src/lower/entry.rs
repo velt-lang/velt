@@ -35,6 +35,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let mut lw = FnLower::bare(cx, vec![]);
         // Before any string can be freed: the runtime's position cache reads std's epoch.
         lw.register_statics();
+        // Before any C code (natives' setup, initializers) can start a thread that calls back.
+        lw.mark_program_thread();
         if lw.cx.uses_placement {
             // Before anything starts the runtime (#211).
             lw.call_rt(Rt::SetScheduler, vec![cint(1, Ty::U32)], None);

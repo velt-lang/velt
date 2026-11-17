@@ -1,6 +1,5 @@
-//! Which intrinsics' arguments lowering's glue may format, serialise or deep-copy, running the
-//! program's class hooks on them (`implicit.rs`, 1 and 2 of its module docs): the one list of
-//! every intrinsic, so a new one must be classified.
+//! Which intrinsics' arguments glue may format, serialise or deep-copy (`implicit.rs`, 1 and 2 of
+//! its module docs): a match that lists every intrinsic, so a new one must be classified.
 
 use crate::hir::Intrinsic;
 
@@ -202,6 +201,14 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::WeakRefNew
         | I::InspectNested
         | I::WeakRefDeref => false,
+        // Record views: a view's source read or written through `any`, no formatting.
+        I::RecordViewSync
+        | I::RecordViewIs
+        | I::RecordViewGet
+        | I::RecordViewHas
+        | I::RecordViewSet
+        | I::RecordViewDelete
+        | I::RecordViewFlush => false,
         I::StrWord0 | I::StrWord1 | I::StrWord2 | I::StrDataAddress => false,
     }
 }

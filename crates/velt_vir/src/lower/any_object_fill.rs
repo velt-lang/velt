@@ -45,7 +45,7 @@ impl FnLower<'_, '_> {
         let fields: Vec<(String, bool)> = a
             .fields
             .iter()
-            .map(|f| (f.name.clone(), f.optional))
+            .map(|f| (f.name.clone(), f.optional || f.cell))
             .collect();
         let desc = Operand::Copy(proj(p, Proj::Field(1)));
         let data = Operand::Copy(proj(p, Proj::Field(0)));
@@ -112,7 +112,17 @@ impl FnLower<'_, '_> {
             );
             self.goto(join);
             self.switch_to(present);
-            let v = self.any_unbox(&tmp, any, fty);
+            let v = match self.cx.cell_field(ty, i as u32) {
+                // Held out of line: a new cell holding the value.
+                Some((cell, value)) => {
+                    let inner = self.any_unbox(&tmp, any, value);
+                    let obj = self.alloc_object_raw(cell);
+                    let fp = self.field_place(&obj, cell, 0);
+                    self.store(fp, inner);
+                    Operand::Copy(obj)
+                }
+                None => self.any_unbox(&tmp, any, fty),
+            };
             self.assign(val.clone(), Rvalue::Use(v));
             self.assign(
                 flag.clone(),

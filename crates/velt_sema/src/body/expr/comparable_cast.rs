@@ -61,6 +61,8 @@ impl FnCx<'_, '_> {
         let source = self.place_text(&h);
         let view = self.through_any(h, target)?;
         match record {
+            // A record of `any` or `unknown` values is a view of the object (record_view_cast.rs).
+            true if self.record_of_dynamic(core) => self.cx.any_unknown_views = true,
             true => self.note_record_copy(from, core, source, span),
             false => self.cx.object_copies.view_casts.push((span, core)),
         }
@@ -239,7 +241,11 @@ impl FnCx<'_, '_> {
     }
 
     /// `h` converted to `target` through `any`; `Err(h)` when one of the two steps doesn't hold.
-    fn through_any(&mut self, h: hir::Expr, target: TyId) -> Result<hir::Expr, hir::Expr> {
+    pub(super) fn through_any(
+        &mut self,
+        h: hir::Expr,
+        target: TyId,
+    ) -> Result<hir::Expr, hir::Expr> {
         let Some(any) = self.any_ty() else {
             return Err(h);
         };

@@ -2,6 +2,7 @@
 //! assignable to the other.
 
 use crate::body::FnCx;
+use crate::defs::FieldInfo;
 use crate::hir::{self, DefId, TyId, TyKind};
 
 impl FnCx<'_, '_> {
@@ -88,6 +89,10 @@ impl FnCx<'_, '_> {
         target: TyId,
         span: velt_common::Span,
     ) -> Result<hir::Expr, hir::Expr> {
+        // `rq as { _input?: unknown }`: the interface with both's members, which extends `rq`'s.
+        if let Some(meet) = self.optional_object_target(h.ty, target, span) {
+            return self.related_iface_cast(h, meet, span);
+        }
         if let Some(first) = self.related_dom_union(h.ty, target) {
             let h = self.related_iface_cast(h, first, span)?;
             return self.try_coerce(h, target);
@@ -141,8 +146,16 @@ impl FnCx<'_, '_> {
         let TyKind::Dyn(have, _) = *self.cx.ty.kind(from) else {
             return false;
         };
-        if !self.adds_required(from, to) || self.cx.assigns(to, from, self.module) != Some(true) {
+        if self.cx.assigns(to, from, self.module) != Some(true) {
             return false;
+        }
+        if !self.adds_required(from, to) {
+            // Only optional members: fields the objects made as a `from` are widened with.
+            let Some(fields) = self.added_optional_fields(from, to) else {
+                return false;
+            };
+            let (s, d) = (self.cx.display(from), self.cx.display(to));
+            self.cx.note_iface_widen(have, fields, (s, d), span);
         }
         self.note_dynamic_iface(to, span);
         self.note_object_fill(to);
@@ -150,6 +163,59 @@ impl FnCx<'_, '_> {
         self.cx.note_dyn_object_target(to);
         self.cx.note_iface_downcast(have);
         true
+    }
+
+    /// For `from as to`, where `from` is an interface with methods and `to` an object type whose
+    /// fields are all optional and none of `from`'s (`rq as { _input?: unknown }`), as tsc allows:
+    /// the interface with the members of both (`synth_ifaces::meet_iface`), an extension of
+    /// `from`'s interface, which the cast then asserts as [`Self::related_iface_cast`] does.
+    fn optional_object_target(
+        &mut self,
+        from: TyId,
+        to: TyId,
+        span: velt_common::Span,
+    ) -> Option<TyId> {
+        if !self.cx.is_method_iface(from) || !self.cx.is_object_type(to) {
+            return None;
+        }
+        let TyKind::Adt(d, _) = *self.cx.ty.kind(to) else {
+            return None;
+        };
+        let have = self.object_members(from).unwrap_or_default();
+        let fields = self.cx.adt(d)?.fields.clone();
+        let fits = !fields.is_empty()
+            && (fields.iter()).all(|f| f.optional && !have.iter().any(|h| h.0 == f.name));
+        if !fits {
+            return None;
+        }
+        match self.cx.meet_iface(from, to, self.module, span)? {
+            Ok(t) if matches!(self.cx.ty.kind(t), TyKind::Dyn(..)) => Some(t),
+            _ => None,
+        }
+    }
+
+    /// The fields interface type `to` adds to `from`, when it adds only optional fields (no
+    /// method, `__name?: string`), as `to` declares them; `None` otherwise.
+    fn added_optional_fields(&mut self, from: TyId, to: TyId) -> Option<Vec<FieldInfo>> {
+        let TyKind::Dyn(want, args) = self.cx.ty.kind(to).clone() else {
+            return None;
+        };
+        let have = self.object_members(from).unwrap_or_default();
+        let info = self.cx.iface(want)?;
+        let (fields, methods) = (info.fields.clone(), info.methods.clone());
+        let new = |n: &str| !have.iter().any(|h| h.0 == n);
+        if methods.iter().any(|m| new(&m.name)) {
+            return None;
+        }
+        let added: Vec<FieldInfo> = (fields.into_iter())
+            .filter(|f| new(&f.name))
+            .map(|mut f| {
+                f.ty = self.cx.subst(f.ty, &args);
+                f.declared = self.cx.subst(f.declared, &args);
+                f
+            })
+            .collect();
+        (!added.is_empty() && added.iter().all(|f| f.optional && !f.readonly)).then_some(added)
     }
 
     /// Does interface type `to` declare a required member that `from` lacks (`name()` of `Named`

@@ -141,6 +141,14 @@ pub(crate) fn is_helper(qualified: &str) -> bool {
 pub(crate) const RECORD_HOOKS: &[&str] = &[
     velt_common::std_hook!(any_to_record_any),
     velt_common::std_hook!(any_to_record),
+    velt_common::std_hook!(record_view_new),
+    velt_common::std_hook!(record_view_make),
+    velt_common::std_hook!(record_view_sync_all),
+    velt_common::std_hook!(record_view_get_one),
+    velt_common::std_hook!(record_view_has_one),
+    velt_common::std_hook!(record_view_set_one),
+    velt_common::std_hook!(record_view_delete_one),
+    velt_common::std_hook!(record_view_write_all),
 ];
 
 /// Which free functions of a module lowering looks up by name.
@@ -397,6 +405,7 @@ pub(crate) fn reach(cx: &mut Ctx) {
 /// The executor in Velt's hooks (velt_common `std_hooks.rs`, `sched_*`), which lowering calls on a
 /// native target ([`sched_hooks`]).
 const SCHED_HOOKS: &[&str] = &[
+    velt_common::std_hook!(program_thread),
     velt_common::std_hook!(sched_block_on),
     velt_common::std_hook!(sched_spawn),
     velt_common::std_hook!(sched_yield),
@@ -466,6 +475,8 @@ fn sched_hooks(cx: &mut Ctx, found: &mut Vec<DefId>) {
     }
     cx.lazy.sched_hooks = true;
     cx.demand_std(velt_common::std_module!(lang_hooks_sched));
+    cx.demand_std(velt_common::std_module!(lang_hooks_program_thread));
+    cx.demand_std(velt_common::std_module!(lang_hooks_sched_spawn));
     found.extend(SCHED_HOOKS.iter().filter_map(|h| cx.prelude_fn(h)));
     if cfg!(debug_assertions) {
         cx.demand_std(velt_common::std_module!(lang_hooks_sched_cells));

@@ -176,6 +176,8 @@ impl FnLower<'_, '_> {
             (obj.clone(), ty, kt, vt, Entries::Map)
         } else if let Some((kt, vt)) = self.prelude_record(ty) {
             let map_ty = self.cx.adt_field_tys(ty)[0];
+            // A record view's mirror up to date first (record_view.rs).
+            self.record_view_sync_glue(obj, ty);
             (
                 self.field_place(obj, ty, 0),
                 map_ty,

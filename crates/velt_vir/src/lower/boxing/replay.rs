@@ -88,6 +88,11 @@ impl Facts {
             &mut out.array_view_targets,
             &one,
         );
+        take(
+            &mut self.record_view_targets,
+            &mut out.record_view_targets,
+            &one,
+        );
         take(&mut self.lock_values, &mut out.lock_values, &one);
         let by_fn = [
             (&mut self.fn_tuple_writes, &mut out.fn_tuple_writes),
@@ -134,6 +139,7 @@ impl Facts {
             &other.object_types,
             &other.proxy_targets,
             &other.array_view_targets,
+            &other.record_view_targets,
             &other.lock_values,
         ] {
             v.extend(s.iter().copied());
@@ -156,7 +162,7 @@ impl Facts {
     pub(in crate::lower) fn add_mapped(&mut self, other: &Facts, map: &FxHashMap<TyId, TyId>) {
         let m = |t: &TyId| *map.get(t).unwrap_or(t);
         let mut mf = |t: TyId| m(&t);
-        let sets: [(&mut FxHashSet<TyId>, &FxHashSet<TyId>); 14] = [
+        let sets: [(&mut FxHashSet<TyId>, &FxHashSet<TyId>); 15] = [
             (&mut self.shares, &other.shares),
             (&mut self.identity, &other.identity),
             (&mut self.identity_borrows, &other.identity_borrows),
@@ -170,6 +176,7 @@ impl Facts {
             (&mut self.object_types, &other.object_types),
             (&mut self.proxy_targets, &other.proxy_targets),
             (&mut self.array_view_targets, &other.array_view_targets),
+            (&mut self.record_view_targets, &other.record_view_targets),
             (&mut self.lock_values, &other.lock_values),
         ];
         for (to, from) in sets {

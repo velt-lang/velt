@@ -1,0 +1,35 @@
+// check: no leaks
+// An object made as an interface value, cast to an extension adding an optional field (#379):
+// Node adds the property when it is written. Velt widens the object types converted to `Ctx`
+// (an object literal's type, through `unknown` or written as the interface itself):
+// the field is absent until written (not printed, serialized or listed), and the object stays
+// the same one.
+interface Ctx {
+  el: string;
+  update(): void;
+}
+
+interface InternalCtx extends Ctx {
+  __name?: string;
+}
+
+function make(el: string): Ctx {
+  return { el, update: () => {} } as unknown as Ctx;
+}
+
+const c = make("x");
+const d = make("y");
+console.log((c as InternalCtx).__name);
+(c as InternalCtx).__name = "dbg";
+console.log((c as InternalCtx).__name, (d as InternalCtx).__name, c.el);
+console.log(JSON.stringify(c as any), JSON.stringify(d as any), Object.keys(c as any).join(","));
+console.log(c);
+const viaAny: Ctx = { el: "z", update: () => {} } as unknown as Ctx;
+const same = viaAny as InternalCtx;
+same.__name = "w";
+console.log(same === (viaAny as InternalCtx), (viaAny as InternalCtx).__name);
+
+const written: Ctx = { el: "w", update: () => {} };
+console.log((written as InternalCtx).__name);
+(written as InternalCtx).__name = "written";
+console.log((written as InternalCtx).__name, written.el);

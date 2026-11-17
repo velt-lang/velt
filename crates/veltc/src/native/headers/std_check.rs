@@ -20,7 +20,7 @@ use super::{check_library, decl_of, zig_target, LibraryHeaders};
 /// calls (std/net/calls_posix.velt).
 fn std_headers(target: &str) -> Vec<&'static str> {
     if target.contains("-windows") {
-        return vec!["<errno.h>", "<stdlib.h>", "<string.h>"];
+        return vec!["<errno.h>", "<stdlib.h>", "<string.h>", "<windows.h>"];
     }
     let mut headers = vec![
         "<arpa/inet.h>",
@@ -94,17 +94,23 @@ const CHECKED: &[&str] = &[
     "net/fd_until.velt",
     "net/rt_later_flush.velt",
     "net/udp/udp_sched.velt",
+    "process/child/child_win32.velt",
+    "process/child/command_line_win32.velt",
+    "process/child/exit_win32.velt",
+    "process/child/handle_list_win32.velt",
+    "process/child/pipes_win32.velt",
+    "process/child/spawn_win32.velt",
     "sync/output.velt",
     "sync/slot.velt",
 ];
 
 /// The std files [`CHECKED`] would list but that only macOS and Linux builds reach: child
-/// processes on the executor's reactor (std/process/child/child_reactor.velt, a hook module the
-/// check loads on every target, and the files it imports). Windows builds keep the runtime's
-/// child processes (std/imports.velt `#child-rt`), so their POSIX calls are checked against
-/// macOS's and Linux's headers only. Sorted, each file once, as `CHECKED`.
+/// processes on the executor's reactor (std/process/child/child_posix.velt, which the hook module
+/// child_reactor.velt loads through `#child-os` everywhere but on Windows, and the files it
+/// imports), so their POSIX calls are checked against macOS's and Linux's headers only. Sorted,
+/// each file once, as `CHECKED`.
 const CHECKED_POSIX: &[&str] = &[
-    "process/child/child_reactor.velt",
+    "process/child/child_posix.velt",
     "process/child/child_record.velt",
     "process/child/spawn_open_darwin.velt",
     "process/child/spawn_open_linux.velt",

@@ -179,7 +179,7 @@ impl FnLower<'_, '_> {
         let a = self.cx.adt_def(d);
         let fields: Vec<(String, bool)> = a.fields[std_prefix..]
             .iter()
-            .map(|f| (f.name.clone(), f.optional && !class))
+            .map(|f| (f.name.clone(), (f.optional || f.cell) && !class))
             .collect();
         // An object literal's accessor fields list the property each stands for, once (a
         // setter next to its getter is no key of its own: `#` hides it, as a private field).

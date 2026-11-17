@@ -61,6 +61,8 @@ use crate::ctx::Ctx;
 use crate::defs::DefInfo;
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, TyId, TyKind};
 
+pub(super) use super::glue_args::glue_args;
+
 /// The methods glue calls on a class (1 and 2).
 const GLUE_HOOKS: [&str; 4] = ["toString", "toJSON", crate::hooks::INSPECT, "clone"];
 

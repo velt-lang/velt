@@ -10,7 +10,12 @@
 # fail-fast cancellation that follows a failure keeps the pull request out. The decision is tested
 # on saved real runs (scripts/requeue/fixtures, crates/xtask/src/requeue_tests.rs).
 # scripts/requeue/enqueue.sh re-queues: only the commit the queue tested, only when the pull
-# request is open and not queued again already.
+# request is open and not queued again already. A run that keeps its pull request out gets a
+# comment on it instead, naming each job whose step failed or that hit its time limit, the step
+# and the first failure lines of its log (`requeue.py explain`): the fail-fast action cancels
+# every job, the failed one included, so the run's page shows only cancelled jobs, and such
+# entries were taken for spurious drops and queued again unchanged. A run that the queue
+# cancelled because an entry ahead dropped has no failed job and gets no comment.
 #
 # The token: events the workflow's own GITHUB_TOKEN causes start no workflow runs (GitHub's rule,
 # with exceptions the docs list, the merge queue not among them), so a pull request it enqueues
@@ -36,12 +41,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
-      # The run's jobs, and their annotations (check runs).
+      # The run's jobs, their logs, and their annotations (check runs).
       actions: read
       checks: read
       # The scripts, from the default branch (a `workflow_run` workflow runs from there).
       contents: read
-      # The comment on the pull request, and the enqueue without MERGE_QUEUE_TOKEN.
+      # The comments on the pull request, and the enqueue without MERGE_QUEUE_TOKEN.
       pull-requests: write
     steps:
       - uses: actions/checkout@v4
@@ -56,6 +61,18 @@ jobs:
         run: |
           python3 -I scripts/requeue/requeue.py fetch "$RUN_ID" "$ATTEMPT" > "$RUNNER_TEMP/run.json"
           python3 -I scripts/requeue/requeue.py decide "$RUNNER_TEMP/run.json" "$GITHUB_OUTPUT"
+      - if: steps.decide.outputs.requeue == 'false' && steps.decide.outputs.pr != ''
+        name: say on the pull request what failed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ steps.decide.outputs.pr }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+        run: |
+          comment="$RUNNER_TEMP/comment.md"
+          python3 -I scripts/requeue/requeue.py explain "$RUNNER_TEMP/run.json" "$comment" "$RUN_URL"
+          if [ -s "$comment" ]; then
+            gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -F body=@"$comment" > /dev/null
+          fi
       - if: steps.decide.outputs.requeue == 'true'
         name: re-queue the pull request
         env:

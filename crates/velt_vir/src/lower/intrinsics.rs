@@ -494,6 +494,16 @@ impl FnLower<'_, '_> {
             ) => self.async_intrinsic(i, args, ty),
             (I::Attempt, [f]) => self.attempt(f, ty),
             (
+                I::RecordViewSync
+                | I::RecordViewIs
+                | I::RecordViewGet
+                | I::RecordViewHas
+                | I::RecordViewSet
+                | I::RecordViewDelete
+                | I::RecordViewFlush,
+                _,
+            ) => self.record_view_intrinsic(i, args, ty),
+            (
                 I::WeakMapSet
                 | I::WeakMapGet
                 | I::WeakMapHas

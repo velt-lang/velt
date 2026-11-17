@@ -14,6 +14,7 @@ import {
   stdUsed,
 } from "velt/lang/intrinsics";
 import * as bd from "./sched_budget";
+import * as fg from "./sched_foreign";
 import * as jn from "./sched_join";
 import * as lk from "./sched_lock";
 import * as me from "./sched_main_end";
@@ -365,6 +366,9 @@ function rootDone(e: usize, k: usize): void {
   // lock with one thread at the executor: sched_task.velt `E_SOLO`, sched_lock.velt `LK_NONE`).
   if (m.ld32(e + t.E_SOLO) !== 0) {
     const s = m.ld32(k + t.T_JOIN_STATE);
+    if ((s & t.J_FOREIGN) !== 0) {
+      return jn.joinDone(e, k, lk.LK_ON);
+    }
     const joiner = m.ld(k + t.T_JOINER);
     m.st(k + t.T_JOINER, 0);
     m.st32(k + t.T_JOIN_STATE, s | t.J_DONE);
@@ -382,7 +386,7 @@ function rootDone(e: usize, k: usize): void {
     m.or32(k + t.T_FLAGS, t.JOIN_DUE);
     return;
   }
-  const kind = lk.kind();
+  const kind = jn.kindFor(k);
   if (kind === lk.LK_LAZY) {
     jn.joinDoneLazy(e, k, kind);
     return;
@@ -407,7 +411,8 @@ function finish(e: usize, k: usize): void {
     n = next;
   }
   micro.free(k);
-  // Not the root of `main`, or that root counted as live.
+  // Not the root of `main`, or that root counted as live (a C thread's task: sched_foreign.velt).
+  const foreign = (m.ld32(k + t.T_JOIN_STATE) & t.J_FOREIGN) !== 0;
   if (m.ld32(e + t.E_SOLO) === 0) {
     const g = m.ld(e + t.E_MAIN);
     if (e !== g) {
@@ -417,6 +422,9 @@ function finish(e: usize, k: usize): void {
     }
     // The executor's reference first: once the count below says no task is live, worker 0 may
     // end the program, and a block freed after that counts as leaked (`VELT_RC_STATS`).
+    if (foreign) {
+      return fg.ended(e, g, k);
+    }
     wk.release(k);
     if (mk.liveDown(g, e) === 1 && e !== g) {
       // The last live task: worker 0 may wait for that in `schedFinish`.
@@ -425,6 +433,9 @@ function finish(e: usize, k: usize): void {
     return;
   }
   // The only thread at the executor: worker 0's own count.
+  if (foreign) {
+    return fg.ended(e, e, k);
+  }
   m.st(e + t.E_LIVE, m.ld(e + t.E_LIVE) - 1);
   wk.release(k);
 }

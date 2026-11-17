@@ -1,0 +1,21 @@
+// An object converted statically to an interface giving a field one type, and widened for a
+// cast to an extension giving it another (#379): its implementation can't hold both, so the
+// cast is refused.
+interface Ctx {
+  el: string;
+  update(): void;
+}
+
+interface InternalCtx extends Ctx {
+  __name?: string;
+}
+
+interface K extends Ctx {
+  __name?: number;
+}
+
+const o = { el: "x", update: () => {} };
+const k: K = o;
+const c: Ctx = o;
+(c as InternalCtx).__name = "s";
+console.log(k.__name);

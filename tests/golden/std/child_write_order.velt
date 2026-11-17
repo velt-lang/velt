@@ -1,0 +1,40 @@
+// Writes to a child's stdin arrive in the order they were made, also when they are not awaited
+// one by one, as a Node stream's writes do. The child is this very program, which echoes its
+// input. On Windows each write blocks a thread of the executor's pool, so the writes of one pipe
+// must wait their turn there.
+import { spawn } from "velt/process/child";
+import { argv, args, readAll } from "velt/process";
+
+async function main(): Promise<i32> {
+  const a = args();
+  if (a.length > 0 && a[0] == "echo") {
+    process.stdout.write(await readAll());
+    return 0;
+  }
+  const self = argv()[0].clone();
+  let bad = 0;
+  for (let round = 0; round < 5; round++) {
+    const p = spawn(self, ["echo"], { stdin: "pipe", stdout: "pipe" });
+    const writes: Promise<void>[] = [];
+    let want = "";
+    for (let i = 0; i < 100; i++) {
+      writes.push(p.write(`${i},`));
+      want += `${i},`;
+    }
+    await Promise.all<void>(writes);
+    await p.closeStdin();
+    let out = "";
+    let chunk = await p.readStdout();
+    while (chunk != "") {
+      out += chunk;
+      chunk = await p.readStdout();
+    }
+    await p.wait();
+    p.close();
+    if (out != want) {
+      bad++;
+    }
+  }
+  console.log(`out of order in ${bad} of 5 rounds`);
+  return 0;
+}

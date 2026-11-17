@@ -1,9 +1,9 @@
 // velt/process/child (internal): the child-process functions, in a build compiled with the
 // executor in Velt (`VELT_SCHEDULER=std`, #2649 step 4): the `std-scheduler` variant of
-// `#child-rt` (std/imports.velt), with the names and signatures of the runtime's
-// (std/process/child/rt.velt). Each calls its twin on the executor's reactor
-// (child_reactor.velt) by role (`hookCall`, velt_common `std_hooks.rs`): a program loads the
-// reactor, and the executor with it, only when live code starts or uses a child (#2882).
+// `#child-rt` (std/imports.velt), with the names and signatures of the default variant's
+// (std/process/child/rt.velt). Each calls its twin of the executor's (child_reactor.velt, which
+// passes to its OS's) by role (`hookCall`, velt_common `std_hooks.rs`): a program loads the
+// executor only when live code starts or uses a child (#2882).
 // `execSync` (`velt_rt_child_output_sync`) stays the runtime's: it blocks its thread anyway.
 
 import { IoResult } from "velt/native/result";

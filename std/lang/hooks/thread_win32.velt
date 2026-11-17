@@ -19,8 +19,9 @@ const STACK_SIZE_PARAM_IS_A_RESERVATION: u32 = 0x10000;
 /** `GetActiveProcessorCount`'s every processor group. */
 const ALL_PROCESSOR_GROUPS: u16 = 0xffff;
 
-// Handles are `usize`s, as in std's other declarations of these symbols (`CloseHandle`);
-// pointers `Ptr`s: one C symbol has one signature in a program.
+// Pointers are `Ptr`s, and `CloseHandle`'s `HANDLE` a `Ptr<void>`, as in std's other
+// declaration of it (std/process/child/pipes_win32.velt): one C symbol has one signature in a
+// program.
 declare c("c") function CreateThread(
   attributes: Ptr<u8> | null,
   stack: usize,
@@ -29,7 +30,7 @@ declare c("c") function CreateThread(
   flags: u32,
   id: Ptr<u8> | null,
 ): usize;
-declare c("c") function CloseHandle(file: usize): i32;
+declare c("c") function CloseHandle(file: Ptr<void>): i32;
 declare c("c") function GetActiveProcessorCount(group: u16): u32;
 
 /** The active cores (at least 1). */
@@ -74,7 +75,7 @@ function startThread(start: usize, arg: usize): bool {
   }
   // SAFETY: the handle `CreateThread` returned, closed once; the thread runs on without it.
   unsafe {
-    CloseHandle(h);
+    CloseHandle(m.ptrTo<void>(h));
   }
   return true;
 }

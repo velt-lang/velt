@@ -102,6 +102,10 @@ impl FnCx<'_, '_> {
             Ok(u) => return Ok(u),
             Err(h) => h,
         };
+        let h = match self.record_view_value(h, exp) {
+            Ok(r) => return Ok(r),
+            Err(h) => h,
+        };
         let fixed = matches!(self.cx.ty.kind(h.ty), TyKind::FnPtr { .. });
         let h = match fixed && self.cx.is_generic_fn(exp) {
             true => match self.fn_value_as_generic(h, exp) {

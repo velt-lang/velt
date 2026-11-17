@@ -170,6 +170,14 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("needsDrop", Op(I::NeedsDrop)),
     ("needsTransfer", Op(I::NeedsTransfer)),
     ("nullAs", Op(I::NullAs)),
+    // record_view.velt
+    ("recordViewDelete", Op(I::RecordViewDelete)),
+    ("recordViewFlush", Op(I::RecordViewFlush)),
+    ("recordViewGet", Op(I::RecordViewGet)),
+    ("recordViewHas", Op(I::RecordViewHas)),
+    ("recordViewIs", Op(I::RecordViewIs)),
+    ("recordViewSet", Op(I::RecordViewSet)),
+    ("recordViewSync", Op(I::RecordViewSync)),
     // weak.velt
     ("weakMapDelete", Op(I::WeakMapDelete)),
     ("weakMapGet", Op(I::WeakMapGet)),

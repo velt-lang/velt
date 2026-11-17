@@ -9,6 +9,7 @@ import * as r from "#reactor";
 import * as th from "#sched-thread";
 import { processEnv } from "./process";
 import * as al from "./sched_all";
+import * as pt from "./program_thread";
 import * as dbg from "./sched_debug";
 import * as end from "./sched_end";
 import * as io from "./sched_io";
@@ -40,9 +41,61 @@ export function started(): usize {
   return start();
 }
 
-/** Starts the executor on this thread (worker 0) and the other workers: worker 0's block. */
+/**
+ * Worker 0's block before the executor started, made by a thread that isn't the program's (a C
+ * library's thread calling an exported function, #3085): its tasks wait on its inbox until the
+ * program's thread starts the executor on it (`start`). 0 until one is made.
+ */
+const PENDING = new Atomic<usize>(0);
+
+/**
+ * Starts the executor on this thread (worker 0) and the other workers: worker 0's block. On a
+ * thread that isn't the program's (program_thread.velt), it starts nothing: the block of the
+ * executor that the program's thread starts (`pending`).
+ */
 @noInline
 export function start(): usize {
+  if (!pt.isProgramThread()) {
+    return pending();
+  }
+  let e = PENDING.load("acquire");
+  if (e === 0) {
+    // Claimed as a C library's thread claims one (`pending`): a task such a thread pushes
+    // meanwhile lands on this block, never on another one nobody runs.
+    const n = block();
+    const was = PENDING.compareExchange(0, n, "acqrel", "acquire");
+    e = was === 0 ? n : was;
+  }
+  startOn(e);
+  return e;
+}
+
+/**
+ * Worker 0's block for a thread that isn't the program's: the executor's once it started, else
+ * the one the program's thread will start it on (made now if none was).
+ */
+export function pending(): usize {
+  const e = t.exec();
+  if (e !== 0) {
+    return e;
+  }
+  const p = PENDING.load("acquire");
+  if (p !== 0) {
+    return p;
+  }
+  const n = block();
+  const was = PENDING.compareExchange(0, n, "acqrel", "acquire");
+  // Another thread made one first: that one is the executor's (this one is never used).
+  return was === 0 ? n : was;
+}
+
+/** Whether the executor started (on the program's thread). */
+export function isStarted(): bool {
+  return t.startedOrdered();
+}
+
+/** A worker 0 block with what any thread may set: its waker tables and itself as `E_MAIN`. */
+function block(): usize {
   const e = m.lastingZeroed(t.E_SIZE);
   // SAFETY: each is an `@export`ed function of the C signature the table's slot has.
   unsafe {
@@ -59,8 +112,13 @@ export function start(): usize {
     m.st(e + t.E_ALL_VT + 16, exportedAddress(al.allWakeByRef));
     m.st(e + t.E_ALL_VT + 24, exportedAddress(al.allDrop));
   }
-  m.st(e + t.E_IO, io.open(e + t.E_TICK));
   m.st(e + t.E_MAIN, e);
+  return e;
+}
+
+/** Starts the executor on block `e` on this thread, the program's: what belongs to this thread. */
+function startOn(e: usize): void {
+  m.st(e + t.E_IO, io.open(e + t.E_TICK));
   m.st(e + t.E_CPU, r.threadClock() as usize);
   end.open(e);
   if (processEnv("VELT_RC_STATS") === "1") {
@@ -70,7 +128,6 @@ export function start(): usize {
   // The runtime's leaves that need its timers and I/O find them from this thread.
   velt_rt_set_scheduler(2);
   startWorkers(e);
-  return e;
 }
 
 /**
@@ -191,7 +248,7 @@ function startWorkers(e: usize): void {
     m.st32(w + t.E_MODE, mode | t.M_SPREAD);
     m.st(w + t.E_HELP, sp.HELP);
     m.st(w + t.E_W_START, sp.now());
-    // Asleep until its thread runs: a wake before that finds its park word up.
+    // Asleep until its thread runs (`workerMain`): a wake before that finds its park word up.
     m.st32(w + t.E_PARK, 1);
     m.st(ws + 8 * i, w);
   }
@@ -227,6 +284,13 @@ function workerMain(arg: Ptr<u8> | null): Ptr<u8> | null {
   io.installHere(m.ld(w + t.E_IO));
   // The runtime's leaves polled here find its timers and I/O.
   velt_rt_set_scheduler(2);
+  // Awake: its first turn may take work no wake brought (an offer it steals, input it borrows).
+  wk.awake(w);
+  if ((m.ld32(w + t.E_MODE) & t.M_MONITOR) !== 0) {
+    // The monitor may sleep, every park word read up while this thread had not run: it watches
+    // this worker's polls from now on, as after a park (sched_park.velt `park`).
+    mon.kick(m.ld(w + t.E_MAIN));
+  }
   while (true) {
     loop.turn(w);
   }
