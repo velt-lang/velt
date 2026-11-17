@@ -4,10 +4,9 @@
 // takes the shortest digits, those of `String(x)` (velt/lang/number/shortest). std reaches these
 // by role (`hookCall`), so only a program that calls one loads this module and the digit code.
 
-import { arrayTruncate, arrayWithCapacity, noInline } from "velt/lang/intrinsics";
+import { arrayTruncate, arrayWithCapacity, hookCall, noInline } from "velt/lang/intrinsics";
 import { asciiText } from "velt/lang/number/ascii";
 import { exactDigits, roundDigits } from "velt/lang/number/exact";
-import { f64Text } from "velt/lang/number/format";
 import { shortest } from "velt/lang/number/shortest";
 
 /** `String(x)` of NaN and the infinities. */
@@ -176,7 +175,10 @@ export function toPrecisionText(x: f64, precision: i64): string {
 export function toFixedText(x: f64, digits: i64): string {
   const a = x < 0 ? -x : x;
   if (!(a < 1e21)) {
-    return f64Text(x);
+    // By role, as `${x}` reaches it: importing std's float printing would give its helpers more
+    // callers in every program that calls `toFixed`, and LLVM then inlines fewer into
+    // velt/lang/number/fixed's fast path.
+    return hookCall("number_shortest", x);
   }
   // The integer `|x| * 10^digits` rounded: the exact digits down to the place of 10^-digits.
   let n: u8[] = [];
