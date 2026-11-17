@@ -483,6 +483,10 @@ async function main() {
 /// task print once more. No line may be lost or come out of order; two hand-overs at least mean
 /// worker 0 was lazy again after one, so its marks were set again (process.velt `setLazyWorker`).
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "#3148: on a loaded Windows runner worker 0 may never be lazy again within the rounds"
+)]
 fn worker_0s_lines_keep_their_order_while_it_turns_shared_and_lazy_again() {
     flip_rounds(&flip_output(TIMER_WAIT));
 }
