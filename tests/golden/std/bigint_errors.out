@@ -11,4 +11,12 @@ fromNumber -Infinity RangeError: The number -Infinity cannot be converted to a B
 shl RangeError: Maximum BigInt size exceeded
 asUintN RangeError: Maximum BigInt size exceeded
 asIntN RangeError: Invalid value: not (convertible to) a safe integer
+shl 2^30 RangeError: Maximum BigInt size exceeded
+shl 2^30, in place RangeError: Maximum BigInt size exceeded
+2 ** 2^30 RangeError: Maximum BigInt size exceeded
+3 ** 2^30 RangeError: Maximum BigInt size exceeded
+p29 * p29 RangeError: Maximum BigInt size exceeded
+p29 *= p29 RangeError: Maximum BigInt size exceeded
+p29 ** 2 RangeError: Maximum BigInt size exceeded
 parse Cannot convert 1.5 to a BigInt
+parse long 1028 1111111… to a BigInt

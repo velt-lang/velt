@@ -6,11 +6,13 @@
 import {
   natAdd,
   natAddInto,
+  natAddWordInto,
   natCmp,
   natOfWord,
   natSub,
   natSubFromInto,
   natSubInto,
+  natSubWordInto,
   natUnfilled,
   natAssign,
 } from "velt/math/nat_add";
@@ -24,8 +26,9 @@ import {
   natToTwos,
 } from "velt/math/nat_bits";
 import { natDivRem } from "velt/math/nat_div";
-import { natMul, natSquare } from "velt/math/nat_mul";
+import { natMul, natMulWordInto, natSquare } from "velt/math/nat_mul";
 import { storeReplace } from "velt/math/bigint_store";
+import { noInline } from "velt/lang/intrinsics";
 
 export const ADD: u32 = 0;
 export const SUB: u32 = 1;
@@ -36,14 +39,36 @@ export const AND: u32 = 5;
 export const OR: u32 = 6;
 export const XOR: u32 = 7;
 
-/** V8's largest BigInt, in bits: a longer result is JS's "Maximum BigInt size exceeded". */
+/**
+ * V8's largest BigInt, in limbs (`kMaxLength`, 2^30 bits). V8 sizes a result before it computes
+ * it, by a rule per operation (`addFits`, `mulFits`, `signedShift`, `bitwiseFits`), and a result
+ * sized past this is JS's RangeError "Maximum BigInt size exceeded", even when the value itself
+ * would fit (`M * 1n` for a 2^24-limb `M`). Each check here follows V8's rule and runs before the
+ * allocation.
+ */
+export const MAX_LIMBS: usize = 1 << 24;
+
+/** `MAX_LIMBS` in bits (`kMaxLengthBits`). */
 export const MAX_BITS: u64 = 1 << 30;
 
 /**
  * `(an, a) op (bn, b)` into the block `out`; `same` says that `b` is `a`. A divisor is not zero
- * (the caller checks, to panic before it takes a magnitude out).
+ * (the caller checks, to panic before it takes a magnitude out). Returns false, with `out`
+ * unchanged, when V8 sizes the result past `MAX_LIMBS`.
  */
-export function signedOp(an: bool, a: u64[], bn: bool, b: u64[], same: bool, op: u32, out: usize) {
+export function signedOp(
+  an: bool,
+  a: u64[],
+  bn: bool,
+  b: u64[],
+  same: bool,
+  op: u32,
+  out: usize,
+): bool {
+  // Only operands with more than `MAX_LIMBS` limbs between them can give a result too long.
+  if (a.length + b.length > MAX_LIMBS && !opFits(an, a.length, bn, b.length, op)) {
+    return false;
+  }
   if (op == ADD || op == SUB) {
     const bs = op == SUB ? !bn : bn;
     if (an == bs) {
@@ -66,20 +91,86 @@ export function signedOp(an: bool, a: u64[], bn: bool, b: u64[], same: bool, op:
   } else {
     bitwise(an, a, bn, b, op, out);
   }
+  return true;
 }
 
-/** `(an, a) += (bn, b)` with `a` changed in place (`b` is another array); returns the sign. */
-export function signedAddInto(an: bool, a: u64[], bn: bool, b: u64[]): bool {
+// The size checks below run only when the operands have more than `MAX_LIMBS` limbs between
+// them (their callers test that first), so they stay out of line and out of the inlining budget.
+
+// Whether V8 sizes `(an, n limbs) op (bn, m limbs)` within `MAX_LIMBS`.
+@noInline
+function opFits(an: bool, n: usize, bn: bool, m: usize, op: u32): bool {
+  if (op == ADD || op == SUB) {
+    return an != (op == SUB ? !bn : bn) || addFits(n, m);
+  }
+  if (op == MUL) {
+    return mulFits(n, m);
+  }
+  return op == DIV || op == REM || bitwiseFits(an, n, bn, m, op);
+}
+
+/**
+ * Whether V8 sizes a sum of magnitudes of `n` and `m` limbs (the operands' signs agree) within
+ * `MAX_LIMBS`: a zero operand returns the other, else the longer length plus one for the carry.
+ */
+@noInline
+export function addFits(n: usize, m: usize): bool {
+  return n == 0 || m == 0 || (n > m ? n : m) < MAX_LIMBS;
+}
+
+/** Whether V8 sizes a product of `n` and `m` limbs within `MAX_LIMBS`: zero for a zero operand. */
+@noInline
+export function mulFits(n: usize, m: usize): bool {
+  return n == 0 || m == 0 || n + m <= MAX_LIMBS;
+}
+
+/** `signedAddInto`'s result when V8 sizes the sum past `MAX_LIMBS`. */
+export const SUM_TOO_BIG: i64 = -1;
+
+/**
+ * `(an, a) += (bn, b)` with `a` changed in place (`b` is another array). Returns 1 for a negative
+ * sum, 0 for any other, or `SUM_TOO_BIG` with `a` unchanged.
+ */
+export function signedAddInto(an: bool, a: u64[], bn: bool, b: u64[]): i64 {
   if (an == bn) {
+    if (a.length + b.length > MAX_LIMBS && !addFits(a.length, b.length)) {
+      return SUM_TOO_BIG;
+    }
     natAddInto(a, b);
-    return an && a.length > 0;
+    return an && a.length > 0 ? 1 : 0;
   }
   if (natCmp(a, b) >= 0) {
     natSubInto(a, b);
-    return an && a.length > 0;
+    return an && a.length > 0 ? 1 : 0;
   }
   natSubFromInto(a, b);
-  return bn;
+  return bn ? 1 : 0;
+}
+
+/** `(an, a) += (an, a)` in place, or `-=` when `negate` (zero); returns as `signedAddInto` does. */
+export function signedDoubleInto(an: bool, a: u64[], negate: bool): i64 {
+  if (negate) {
+    a.truncate(0);
+    return 0;
+  }
+  if (!addFits(a.length, a.length)) {
+    return SUM_TOO_BIG;
+  }
+  natMulWordInto(a, 2);
+  return an && a.length > 0 ? 1 : 0;
+}
+
+/** The magnitude of `~(negative, a)`, which is `-(negative, a) - 1`, or null past `MAX_LIMBS`. */
+export function signedNot(negative: bool, a: u64[]): u64[] | null {
+  const r = natUnfilled(0);
+  natAssign(r, a);
+  if (negative) {
+    natSubWordInto(r, 1);
+    return r;
+  }
+  // V8 sizes `~x` exactly: only a carry out of the top limb grows it.
+  natAddWordInto(r, 1);
+  return r.length > MAX_LIMBS ? null : r;
 }
 
 /** -1, 0 or 1 as `(negative, a)` is less than, equal to or greater than `k`. */
@@ -95,36 +186,69 @@ export function signedCompareInt(negative: bool, a: u64[], k: i64): i64 {
   return negative ? -c : c;
 }
 
-/** `a ** e` for `e >= 0`, or null when the result would pass `MAX_BITS`. */
+/**
+ * The magnitude of `a ** e` for `e >= 0`, or null where V8 throws "Maximum BigInt size exceeded".
+ * V8's steps (`BigInt::Exponentiate`): 0 and 1 as themselves, `e == 1` the base, then `e` from
+ * 2^30 up throws, `2 ** e` is one bit, and any other base squares and multiplies, each product
+ * sized as `mulFits` sizes it.
+ */
 export function signedPow(a: u64[], e: i64): u64[] | null {
   const k0 = e as u64;
   const bits = natBits(a);
-  if (bits > 1 && k0 > MAX_BITS) {
+  if (k0 == 0) {
+    return natOfWord(1);
+  }
+  if (bits <= 1 || k0 == 1) {
+    const copy = natUnfilled(0);
+    natAssign(copy, a);
+    return copy;
+  }
+  if (k0 >= MAX_BITS) {
     return null;
   }
-  // Bits of the result, at most: (bits) * e.
-  if (bits > 1 && (bits - 1) * k0 > MAX_BITS) {
+  if (a.length == 1 && a[0] == 2) {
+    return natShl(natOfWord(1), k0);
+  }
+  // The result has at least `(bits - 1) * e + 1` bits: past `MAX_BITS`, V8 throws at some step,
+  // so stop before the long products (`3n ** (2n ** 30n - 1n)`).
+  if ((bits - 1) * k0 >= MAX_BITS) {
     return null;
   }
-  let result = natOfWord(1);
-  let base = natUnfilled(0);
-  natAssign(base, a);
-  let k = k0;
+  let square = natUnfilled(0);
+  natAssign(square, a);
+  let result: u64[] | null = null;
+  if ((k0 & 1) != 0) {
+    const copy = natUnfilled(0);
+    natAssign(copy, a);
+    result = copy;
+  }
+  let k = k0 >> 1;
   while (k != 0) {
+    if (!mulFits(square.length, square.length)) {
+      return null;
+    }
+    square = natSquare(square);
     if ((k & 1) != 0) {
-      result = natMul(result, base);
+      if (result == null) {
+        const copy = natUnfilled(0);
+        natAssign(copy, square);
+        result = copy;
+      } else {
+        if (!mulFits(result.length, square.length)) {
+          return null;
+        }
+        result = natMul(result, square);
+      }
     }
     k = k >> 1;
-    if (k != 0) {
-      base = natSquare(base);
-    }
   }
   return result;
 }
 
 /**
  * `(negative, a) << n` (`left`) or `>> n` into `out`; a negative `n` shifts the other way.
- * Returns false when the result would pass `MAX_BITS` (`out` unchanged).
+ * Returns false when the result would pass `MAX_LIMBS` (`out` unchanged): V8 sizes it exactly,
+ * with a limb for the top one's overflow.
  */
 export function signedShift(negative: bool, a: u64[], n: i64, left: bool, out: usize): bool {
   const up = left == (n >= 0);
@@ -134,6 +258,11 @@ export function signedShift(negative: bool, a: u64[], n: i64, left: bool, out: u
       return true;
     }
     if (s > MAX_BITS) {
+      return false;
+    }
+    const bit = s & 63;
+    const grows = bit != 0 && (a[a.length - 1] >> (64 - bit)) != 0;
+    if (a.length + ((s >> 6) as usize) + (grows ? 1 : 0) > MAX_LIMBS) {
       return false;
     }
     storeReplace(out, negative, natShl(a, s));
@@ -187,6 +316,22 @@ export function signedWrap(negative: bool, a: u64[], bits: u64, signed: bool, ou
   }
   const sign = natFromTwos(t);
   storeReplace(out, sign, t);
+  return true;
+}
+
+// Whether V8 sizes `&`, `|` or `^` of operands of `n` and `m` limbs within `MAX_LIMBS`: the
+// longer length, plus one for `&` of two negatives and for `^` of a negative and a positive that
+// is not zero (V8's `BitwiseAnd_NegNeg` and `BitwiseXor_PosNeg` result lengths).
+function bitwiseFits(an: bool, n: usize, bn: bool, m: usize, op: u32): bool {
+  if ((n > m ? n : m) < MAX_LIMBS) {
+    return true;
+  }
+  if (op == AND) {
+    return !(an && bn);
+  }
+  if (op == XOR) {
+    return an == bn || n == 0 || m == 0;
+  }
   return true;
 }
 

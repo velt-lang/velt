@@ -11,18 +11,22 @@ import { strByteAt, strByteLen } from "velt/lang/intrinsics";
 import { natAssign, natCmp, natOfWord, natUnfilled } from "velt/math/nat_add";
 import { natFromF64, natToF64 } from "velt/math/nat_bits";
 import { natMulWordInto } from "velt/math/nat_mul";
-import { natParse, natToString } from "velt/math/nat_radix";
+import { natParseText, natToString } from "velt/math/nat_radix";
 import {
   ADD,
   AND,
   DIV,
+  MAX_LIMBS,
   MUL,
   OR,
   REM,
   SUB,
+  SUM_TOO_BIG,
   XOR,
   signedAddInto,
   signedCompareInt,
+  signedDoubleInto,
+  signedNot,
   signedOp,
   signedPow,
   signedShift,
@@ -40,6 +44,13 @@ import {
 } from "velt/math/bigint_store";
 
 const TOO_BIG = "RangeError: Maximum BigInt size exceeded";
+
+/** Panics with V8's size error unless `ok`; callers have put their magnitudes back. */
+function fits(ok: bool) {
+  if (!ok) {
+    panic(TOO_BIG);
+  }
+}
 
 /** An arbitrary-precision integer (JS `BigInt`); see the module comment. */
 export class BigInt {
@@ -63,24 +74,18 @@ export class BigInt {
 
   /**
    * Parses digits in `radix` (2 to 36, either case) with an optional sign and surrounding
-   * whitespace; throws `BigIntError` with JS's message for anything else.
+   * whitespace; throws `BigIntError` with JS's message for anything else, more digits than V8
+   * parses included (V8's message shows the first 1,000 characters of a longer string, then "…").
    */
   static parse(s: string, radix: i64 = 10): BigInt {
     const t = s.trim();
-    const n = strByteLen(t);
-    let from: usize = 0;
-    let negative = false;
-    if (n > 0 && (strByteAt(t, 0) == 45 || strByteAt(t, 0) == 43)) {
-      negative = strByteAt(t, 0) == 45;
-      from = 1;
+    const negative = strByteLen(t) > 0 && strByteAt(t, 0) == 45;
+    const limbs = natParseText(t, radix);
+    if (limbs != null) {
+      return BigInt.of(negative, limbs);
     }
-    if (radix >= 2 && radix <= 36 && from < n) {
-      const limbs = natParse(t, from, n, radix as u64);
-      if (limbs != null) {
-        return BigInt.of(negative, limbs);
-      }
-    }
-    throw new BigIntError(`Cannot convert ${s} to a BigInt`);
+    const more = s.length > 1000 ? "…" : "";
+    throw new BigIntError(`Cannot convert ${s.slice(0, 1000)}${more} to a BigInt`);
   }
 
   /** JS `BigInt.asIntN(bits, x)`: `x` wrapped to a signed `bits`-bit integer. */
@@ -130,9 +135,14 @@ export class BigInt {
 
   /** `~this`, which is `-this - 1`. */
   not(): BigInt {
-    const out = this.neg();
-    out.addIntAssign(-1);
-    return out;
+    const h = this.#handle;
+    const a = limbsTake(h);
+    const r = signedNot(signOf(h), a);
+    limbsPut(h, a);
+    if (r == null) {
+      panic(TOO_BIG);
+    }
+    return BigInt.of(!signOf(h), r);
   }
 
   /** `this ** e` (JS: a negative exponent is a RangeError). */
@@ -218,12 +228,17 @@ export class BigInt {
     this.subAssign(new BigInt(k));
   }
 
+  /** `this *= k`, in place; V8 sizes the product as this one's length plus one limb for `k`. */
   mulIntAssign(k: i64) {
     const h = this.#handle;
     const a = limbsTake(h);
-    natMulWordInto(a, k < 0 ? 0 - (k as u64) : k as u64);
-    signSet(h, a.length > 0 && signOf(h) != (k < 0));
+    const ok = k == 0 || a.length < MAX_LIMBS;
+    if (ok) {
+      natMulWordInto(a, k < 0 ? 0 - (k as u64) : k as u64);
+      signSet(h, a.length > 0 && signOf(h) != (k < 0));
+    }
     limbsPut(h, a);
+    fits(ok);
   }
 
   divIntAssign(k: i64) {
@@ -346,14 +361,16 @@ export class BigInt {
     }
     const out = new BigInt();
     const a = limbsTake(h);
+    let ok = true;
     if (h == g) {
-      signedOp(signOf(h), a, signOf(h), a, true, op, out.#handle);
+      ok = signedOp(signOf(h), a, signOf(h), a, true, op, out.#handle);
     } else {
       const b = limbsTake(g);
-      signedOp(signOf(h), a, signOf(g), b, false, op, out.#handle);
+      ok = signedOp(signOf(h), a, signOf(g), b, false, op, out.#handle);
       limbsPut(g, b);
     }
     limbsPut(h, a);
+    fits(ok);
     return out;
   }
 
@@ -362,20 +379,15 @@ export class BigInt {
     const h = this.#handle;
     const g = other.#handle;
     const a = limbsTake(h);
-    if (h == g) {
-      // x + x doubles it; x - x is zero.
-      if (negate) {
-        a.truncate(0);
-        signSet(h, false);
-      } else {
-        natMulWordInto(a, 2);
-      }
-    } else {
+    let sign = h == g ? signedDoubleInto(signOf(h), a, negate) : 0;
+    if (h != g) {
       const b = limbsTake(g);
-      signSet(h, signedAddInto(signOf(h), a, signOf(g) != negate, b));
+      sign = signedAddInto(signOf(h), a, signOf(g) != negate, b);
       limbsPut(g, b);
     }
     limbsPut(h, a);
+    fits(sign != SUM_TOO_BIG);
+    signSet(h, sign == 1);
   }
 
   // Takes `v`'s number, leaving it this one's old number (which `v`'s drop frees).
@@ -395,9 +407,7 @@ export class BigInt {
     const a = limbsTake(h);
     const ok = signedShift(signOf(h), a, n, left, out.#handle);
     limbsPut(h, a);
-    if (!ok) {
-      panic(TOO_BIG);
-    }
+    fits(ok);
     return out;
   }
 
@@ -411,9 +421,7 @@ export class BigInt {
     const a = limbsTake(h);
     const ok = signedWrap(signOf(h), a, bits as u64, signed, out.#handle);
     limbsPut(h, a);
-    if (!ok) {
-      panic(TOO_BIG);
-    }
+    fits(ok);
     return out;
   }
 }

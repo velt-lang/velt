@@ -38,9 +38,37 @@ async function main() {
   await report("shl", async () => seven.shl(1 << 31).toString());
   await report("asUintN", async () => BigInt.asUintN(9007199254740991, new BigInt(-1)).toString());
   await report("asIntN", async () => BigInt.asIntN(-1, seven).toString());
+  // V8's largest BigInt has 2^24 limbs (2^30 bits), and each operation sizes its result before
+  // computing it. These throw without allocating it; `one.shl((1 << 30) - 1)` fits (Node
+  // accepts `1n << (2n ** 30n - 1n)`), but it takes 128 MiB, so it is not run here.
+  const one = new BigInt(1);
+  const size = (x: BigInt) => `${x.toString(16).length * 4} bits`;
+  await report("shl 2^30", async () => size(one.shl(1 << 30)));
+  await report("shl 2^30, in place", async () => {
+    const x = one.clone();
+    x.shlAssign(1 << 30);
+    return size(x);
+  });
+  await report("2 ** 2^30", async () => size(new BigInt(2).pow(1 << 30)));
+  await report("3 ** 2^30", async () => size(new BigInt(3).pow(1 << 30)));
+  // 2^(2^29) has 2^23 + 1 limbs (64 MiB): a product of two needs one limb too many.
+  const p29 = one.shl(1 << 29);
+  await report("p29 * p29", async () => size(p29.mul(p29)));
+  await report("p29 *= p29", async () => {
+    const x = p29.clone();
+    x.mulAssign(x);
+    return size(x);
+  });
+  await report("p29 ** 2", async () => size(p29.pow(2)));
   try {
     BigInt.parse("1.5");
   } catch (e) {
     console.log("parse", e.message);
+  }
+  // V8 shows the first 1,000 characters of a long string, then "…".
+  try {
+    BigInt.parse("1".repeat(1000) + "x");
+  } catch (e) {
+    console.log("parse long", e.message.length, e.message.slice(-20));
   }
 }

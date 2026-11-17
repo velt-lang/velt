@@ -4,7 +4,14 @@
 // below `SPLIT_LIMBS` limbs, and above it the number is split by `radix^(k 2^i)` (divide and
 // conquer), so the long divisions do the work in a few big steps.
 
-import { arrayMove, arraySetLen, arrayWithCapacity, strByteAt } from "velt/lang/intrinsics";
+import {
+  arrayMove,
+  arraySetLen,
+  arrayWithCapacity,
+  strByteAt,
+  strByteLen,
+} from "velt/lang/intrinsics";
+import { MAX_LIMBS } from "velt/math/bigint_signed";
 import { validToString } from "velt/encoding/utf8";
 import { natAddWordInto, natAssign, natOfWord, natUnfilled } from "velt/math/nat_add";
 import { natDivRem, natDivWordInto } from "velt/math/nat_div";
@@ -220,6 +227,37 @@ export function natParse(s: string, from: usize, to: usize, radix: u64): u64[] |
     part = chunk.digits;
   }
   return out;
+}
+
+/**
+ * The magnitude of the text `t` (an optional sign, then digits in `radix`), or null when it is
+ * not a number in that radix (2 to 36) or has more digits than V8 parses (`parseParts`).
+ */
+export function natParseText(t: string, radix: i64): u64[] | null {
+  const n = strByteLen(t);
+  const from: usize = n > 0 && (strByteAt(t, 0) == 45 || strByteAt(t, 0) == 43) ? 1 : 0;
+  if (radix < 2 || radix > 36 || from >= n) {
+    return null;
+  }
+  // A part holds at least one digit: only a longer text can need too many.
+  if (n - from > MAX_LIMBS && parseParts(t, from, n, radix as u64) > MAX_LIMBS) {
+    return null;
+  }
+  return natParse(t, from, n, radix as u64);
+}
+
+// How many 64-bit parts V8's parser takes for the digits `s[from..to]` (`FromStringAccumulator`):
+// leading zeros skipped, then `64 / log2(radix)` digits per part in a power-of-two radix and a
+// chunk's digits (`Chunk`) in any other. Past `kMaxLength` parts, V8 rejects the string before it
+// converts it, even when the value would fit (decimal holds 19 digits a part, below 64 bits).
+function parseParts(s: string, from: usize, to: usize, radix: u64): usize {
+  let at = from;
+  while (at < to && strByteAt(s, at as u64) == ZERO) {
+    at++;
+  }
+  const shift = bitsPerDigit(radix);
+  const per: usize = shift != 0 ? (64 / shift) as usize : new Chunk(radix).digits;
+  return (to - at + per - 1) / per;
 }
 
 // The digits `s[from..to]` in the radix `2^shift`, packed from the last one up.

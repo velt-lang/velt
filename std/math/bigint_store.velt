@@ -7,6 +7,17 @@
 // before it returns; while it is out, the slot is empty, so a method that reads two numbers
 // takes the second one only when it is not the first (`x.add(x)`). The magnitude is stored as it
 // is (`slotStore`, no transfer): an array of numbers that this number alone owns.
+//
+// While a magnitude is out, the slot still holds its bytes (`slotTake` copies them out), so a
+// panic in that window that unwinds (under `catchPanic`) drops the taken array and leaves the
+// block pointing at the freed buffer, which the number's drop then frees again. Only an internal
+// bug can panic there (an `ICE:` range check in a limb loop): every panic on user input (division
+// by zero, the size limit, a bad radix) comes after the method has put its magnitudes back.
+//
+// A read (`toString`, `compareTo`) takes the magnitude and puts it back, which stores the same
+// bytes into the slot again: a write to a number that the shared-state model treats as read-only
+// when it is frozen and shared between workers. The bytes are unchanged, so it is harmless on
+// today's targets; reading in place needs a way to borrow the slot's value without taking it.
 
 import {
   addressLoad,
