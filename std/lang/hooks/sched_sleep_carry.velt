@@ -96,9 +96,14 @@ export function adoptCarried(e: usize, k: usize, fl: u32): void {
   }
 }
 
-/** Worker `e`, about to poll task `k`, takes the sleeps it carries into its timer block. */
+/**
+ * Worker `e`, about to poll task `k`, takes the sleeps it carries into its timer block, and is
+ * its home from now on: the sleeps' block and the task's home stay one worker (a spare whose
+ * retirement was taken back polls a task `carryHome` homed on worker 0 already).
+ */
 export function adopt(e: usize, k: usize): void {
   t.flags(k, 0, t.CARRIED);
+  m.st(k + t.T_HOME, e);
   let f = m.ld(k + t.T_TIMERS);
   m.st(k + t.T_TIMERS, 0);
   const b = sl.block(e);
@@ -111,5 +116,81 @@ export function adopt(e: usize, k: usize): void {
     }
     sl.insert(b, f);
     f = next;
+  }
+}
+
+/**
+ * Spare `e`, asked to retire while its timer block holds pending sleeps (#3117: a rescue moved a
+ * task here, `main` too, and it sleeps): the sleeps go with their tasks to worker 0 (`g`), as an
+ * offer's do (`carry`), so that the spare can retire. Whether they went: not when a sleep of the
+ * block fired and is unseen, is due on a list or is past its deadline, nor when a sleep's task (its
+ * waker's) may not move (pinned, anchored for good, a sleep of it due) or is not anchored here;
+ * then nothing changed. Each task is woken on worker 0 once its sleeps are on it: that poll takes
+ * them into worker 0's block (`adopt`), finds them pending and waits again. The tasks are this
+ * spare's alone meanwhile: an anchored task runs only on its home, and its sleeps fire only from
+ * this block.
+ */
+export function carryHome(e: usize, g: usize): bool {
+  const b = m.ld(e + t.E_TIMERS);
+  if (b === 0) {
+    return true;
+  }
+  // A sleep past its deadline fires here first: carried, a later timer elsewhere could beat it.
+  if (
+    m.ld(b + sl.TM_UNSEEN) !== 0 || sl.due(b) || (sl.pending(b) && sl.nextDeadline(b) <= sl.clock())
+  ) {
+    return false;
+  }
+  // Every sleep's task may go: each marked once (counted), the marks taken back if one may not.
+  let n: usize = 0;
+  let f = m.ld(b + sl.TM_FIRST);
+  while (f !== 0) {
+    const o = wk.taskOf(sl.waiter(f));
+    if (o === 0 || m.ld(o + t.T_HOME) !== e || !t.has(o, t.ANCHORED) || !t.carryable(o)) {
+      unmark(b, f);
+      return false;
+    }
+    if (!t.has(o, t.CARRIED)) {
+      t.flags(o, t.CARRIED, 0);
+      n++;
+    }
+    f = m.ld(f + sl.S_NEXT);
+  }
+  if (n === 0) {
+    return true;
+  }
+  // From the last, so each task's list comes out first to last; each task noted at its first.
+  const tasks = m.alloc(n * 8);
+  let i: usize = 0;
+  f = m.ld(b + sl.TM_LAST);
+  while (f !== 0) {
+    const prev = m.ld(f + sl.S_PREV);
+    const o = wk.taskOf(sl.waiter(f));
+    if (m.ld(o + t.T_TIMERS) === 0) {
+      m.st(tasks + i * 8, o);
+      i++;
+    }
+    sl.unlinkPending(b, f);
+    m.st(f + sl.S_NEXT, m.ld(o + t.T_TIMERS));
+    m.st(o + t.T_TIMERS, f);
+    f = prev;
+  }
+  for (let j: usize = 0; j < n; j++) {
+    const o = m.ld(tasks + j * 8);
+    t.flags(o, t.LOCALS, 0);
+    m.st(o + t.T_HOME, g);
+    // Idle: queued on worker 0's inbox. Queued here already: the spare's hand-on moves it.
+    wk.wake(o);
+  }
+  m.release(tasks, n * 8);
+  return true;
+}
+
+/** Takes back `carryHome`'s marks on the tasks of block `b`'s sleeps before `stop`. */
+function unmark(b: usize, stop: usize): void {
+  let f = m.ld(b + sl.TM_FIRST);
+  while (f !== stop) {
+    t.flags(wk.taskOf(sl.waiter(f)), 0, t.CARRIED);
+    f = m.ld(f + sl.S_NEXT);
   }
 }
