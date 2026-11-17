@@ -18,7 +18,7 @@
 import { inline, noInline, strByteAt, strByteLen, strLen } from "velt/lang/intrinsics";
 import { findByte, rfindByte, sameBytes } from "velt/lang/string/byte_scan";
 import { codePoint3, codePoint4, endsWithHigh, isHalfNeedle } from "velt/lang/string/code_units";
-import { halfFind, halfRfind } from "velt/lang/string/half_needle";
+import { halfFind, halfIncludes, halfRfind } from "velt/lang/string/half_needle";
 import { findBytes, rfindBytes } from "velt/lang/string/needle_scan";
 import { byteToUnit, unitToByte } from "velt/lang/string/positions";
 
@@ -137,7 +137,7 @@ function includesBody(s: string, needle: string): bool {
   }
   if (strLen(s) != n) {
     if (isHalfNeedle(needle, m)) {
-      return halfFind(s, needle, 0) >= 0;
+      return halfIncludes(s, needle);
     }
   } else if (strByteAt(needle, 0) >= 0x80) {
     return false;

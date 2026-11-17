@@ -69,6 +69,24 @@ export function halfFind(s: string, needle: string, from: usize): i64 {
   return -1;
 }
 
+/** `s.includes(needle)` of a half needle: whether it matches anywhere, as `halfFind` from unit 0
+ * finds, with no position translated (search.velt's `includes` from the start never reaches the
+ * translation, nor the module state it reads). */
+@noInline
+export function halfIncludes(s: string, needle: string): bool {
+  const m = strByteLen(needle);
+  const half = condition(needle, m);
+  const start: usize = ((half >> 63) & 1) != 0 ? 3 : 0;
+  const end = ((half >> 62) & 1) != 0 ? m - 3 : m;
+  if (end < start + 2) {
+    return unitsFind(s, needle, 0) >= 0;
+  }
+  const n = strByteLen(s);
+  const len = end - start;
+  // From unit 0, `halfFind`'s first match of the middle whose halves are there is its answer.
+  return len <= n && findTwoWay(s, needle, start, len, 0, n, half) >= 0;
+}
+
 /** `s.lastIndexOf(needle)` of a half needle up to unit `last`: the last match starting at or
  * before it, or -1. */
 @noInline
