@@ -109,6 +109,11 @@ pub(crate) fn check_definitions(cx: &mut Ctx) {
             crate::collect::collect_app(cx, &app)
         });
         cx.collected_defs = cx.defs.len();
+        // EXPERIMENT (#2943): the program's classes are collected, so the seeds of std's trap
+        // sites name them.
+        if cx.units_stage == Stage::App {
+            cx.seed_trap_vars();
+        }
         // What std's check built on first use from the classes, implementations and `extend`
         // blocks it had: the app's add to them.
         cx.groups = None;

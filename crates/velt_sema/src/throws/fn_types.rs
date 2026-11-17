@@ -179,6 +179,14 @@ pub(crate) struct FnSites {
     pub(crate) sets_empty: Option<bool>,
     /// The closures created for sites' types found so far (`var_known`).
     pub(crate) site_closures: super::var_known::SiteClosures,
+    /// EXPERIMENT (#2943): std's functions whose error types std's unit kept unsolved, since
+    /// they hold the variables of std/proxy's trap sites (`ProxyHandler`), whose sets the
+    /// program's closures fill: the app's stage solves them with its own (`checks::check_all`).
+    pub(crate) std_var_fns: Vec<DefId>,
+    /// EXPERIMENT (#2943): the trap variables this round started with a seeded set
+    /// (`Ctx::seed_trap_vars`): a check over lazy std has that set written in the trap's type, so
+    /// a comparison with them binds nothing (`vars::unify_parts`).
+    pub(crate) fixed_traps: FxHashMap<u32, Vec<TyId>>,
 }
 
 impl FnSites {
@@ -201,7 +209,10 @@ impl FnSites {
     /// These sites for another round of a check by units (`crate::units`), which starts from
     /// std's frozen unit: what std's check recorded (where types are written, std's sites and
     /// flows) stays; what depends on the round's sets starts as [`Self::new`] starts it.
-    pub fn reseed(&mut self, seeds: FnTypeSeeds, last: bool) {
+    pub fn reseed(&mut self, mut seeds: FnTypeSeeds, last: bool) {
+        // std's unit met its trap sites and interned their types with variables: every round
+        // over it has them (the app's rounds record no std site again).
+        (seeds.proxy_sites).extend(self.found.proxy_sites.iter().copied());
         let fresh = FnSites::new(seeds, last);
         self.use_vars = fresh.use_vars;
         self.user_vars = fresh.user_vars;
@@ -213,6 +224,10 @@ impl FnSites {
         self.quiet.clear();
         self.indirect.clear();
         self.indirect_sites.clear();
+        // std's unit solved its trap variables with no program yet (`std_var_fns`): this
+        // round solves them again with the program's closures.
+        self.solved.clear();
+        self.sets_empty = None;
     }
 
     /// The sets to check the program with again, when this check added to them.
@@ -802,7 +817,7 @@ crate::units::codec::structs! {
         rejects, anon_written, alias_written, async_args, closure_return, closure_rejects,
         closure_sites, rest_closures, flows, added, last, use_vars, user_vars, var_of, trap_vars,
         vars, solved_anons, solved, var_sets, stored, thrown, reject_values, sets_empty,
-        site_closures,
+        site_closures, std_var_fns, fixed_traps,
     }
     FnTypeSeeds {
         sites, hints, slots, no_vars, proxy_sites, exact,

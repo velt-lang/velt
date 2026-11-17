@@ -28,9 +28,21 @@ pub(super) fn check_all(cx: &mut Ctx, fns: &[DefId], groups: &Groups) {
             }
         }
         solved_ok = cx.solve_err_vars();
-        // The passes after inference see the solved error types.
-        for &d in fns {
+        // The passes after inference see the solved error types. EXPERIMENT (#2943): std's
+        // unit keeps the error types that hold its trap variables unsolved, for the app's stage
+        // to solve with the closures the program stores into the traps (`std_var_fns`).
+        let std_unit = cx.units_stage == crate::units::Stage::Std;
+        let app = cx.units_stage == crate::units::Stage::App;
+        let kept: Vec<DefId> = match app {
+            true => cx.fn_sites.std_var_fns.clone(),
+            false => vec![],
+        };
+        for &d in fns.iter().chain(&kept) {
             let t = cx.fn_info(d).throws;
+            if std_unit && t.is_some_and(|t| cx.mentions_err_var(t)) {
+                cx.fn_sites.std_var_fns.push(d);
+                continue;
+            }
             cx.fn_info_mut(d).throws = solved(cx, t);
         }
     }
@@ -80,7 +92,18 @@ pub(super) fn check_all(cx: &mut Ctx, fns: &[DefId], groups: &Groups) {
     // The program is checked again with the solved sets also when this check grew a set
     // the variables don't hold (a closure's error a site's type can't keep): the next check
     // has no variables, and starts from what they found.
+    let assumed = cx.fn_sites.var_sets.assumed_count();
     let holds = solved_ok && cx.assumptions_hold();
+    if std::env::var_os("VELT_UNITS_GROW_DEBUG").is_some() {
+        eprintln!(
+            "velt-units: throws stage={:?} vars={vars} solved_ok={solved_ok} holds={holds} assumed={assumed} sites_grew={} grew={} unsupported={} rejects={}",
+            cx.units_stage,
+            cx.fn_sites.sites_grew,
+            cx.fn_sites.grew,
+            cx.fn_sites.var_sets.unsupported,
+            cx.fn_sites.reject_values
+        );
+    }
     if vars && (!holds || (cx.fn_sites.sites_grew && cx.fn_sites.again())) {
         cx.var_seeds();
     }

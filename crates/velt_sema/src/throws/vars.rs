@@ -43,6 +43,7 @@ use rustc_hash::FxHashMap;
 use crate::anon::ShapeField;
 use crate::ctx::Ctx;
 use crate::hir::{AdtKind, DefId, TyId, TyKind, TyOp};
+use velt_common::Span;
 
 /// The constraints on the variables of one check.
 #[derive(Clone, Default)]
@@ -86,6 +87,11 @@ impl VarSets {
     /// when that is known, else its own (`Ctx::solved_union`).
     pub(crate) fn order_key(&self, t: TyId) -> u32 {
         self.first.get(&t).copied().unwrap_or(t.0)
+    }
+
+    /// DEBUG (#2943): how many assumptions the check made.
+    pub(crate) fn assumed_count(&self) -> usize {
+        self.assumed.len()
     }
 
     /// `t`, a site's type with a variable, is `plain` as written.
@@ -133,6 +139,52 @@ impl VarSets {
 }
 
 impl Ctx<'_> {
+    /// EXPERIMENT (#2943): a round of the app's stage over std's unit, whose trap sites
+    /// (`ProxyHandler`) were interned with variables once: each trap's variable starts with the
+    /// set the previous round seeded for its site, as a check over lazy std interns the trap's
+    /// type with that set, so what a `catch` assumes of it holds.
+    pub(crate) fn seed_trap_vars(&mut self) {
+        if std::env::var_os("VELT_UNITS_GROW_DEBUG").is_some() {
+            eprintln!(
+                "velt-units: seed_trap_vars use_vars={} trap_vars={} vars={} seeds={}",
+                self.fn_sites.use_vars,
+                self.fn_sites.trap_vars.len(),
+                self.fn_sites.vars.len(),
+                self.fn_sites.seeds.sites.len()
+            );
+        }
+        if !self.fn_sites.use_vars || self.fn_sites.trap_vars.is_empty() {
+            return;
+        }
+        let mut traps: Vec<(u32, Span)> = (self.fn_sites.var_of.iter())
+            .filter_map(|(s, v)| self.err_var(*v).map(|n| (n, *s)))
+            .filter(|(n, _)| self.fn_sites.trap_vars.contains(n))
+            .collect();
+        traps.sort_by_key(|(n, s)| (*n, s.file, s.lo, s.hi));
+        if std::env::var_os("VELT_UNITS_GROW_DEBUG").is_some() {
+            let seeded: Vec<_> = (traps.iter())
+                .map(|(n, s)| (*n, self.fn_sites.seeds.sites.get(s).map_or(0, |p| p.len())))
+                .collect();
+            eprintln!(
+                "velt-units: seed_trap_vars traps {seeded:?}, seeds {} sites",
+                self.fn_sites.seeds.sites.len()
+            );
+        }
+        for (n, span) in traps {
+            let Some(ps) = self.fn_sites.seeds.sites.get(&span).cloned() else {
+                continue;
+            };
+            let ms: Vec<TyId> = ps.iter().filter_map(|p| self.unport(p)).collect();
+            self.fn_sites.fixed_traps.insert(n, ms.clone());
+            let r = self.fn_sites.var_sets.find(n);
+            for m in ms {
+                if !self.fn_sites.var_sets.members[r as usize].contains(&m) {
+                    self.fn_sites.var_sets.members[r as usize].push(m);
+                }
+            }
+        }
+    }
+
     /// The variable `t` is (`TyOp::ErrSite`), if it is one.
     pub(crate) fn err_var(&self, t: TyId) -> Option<u32> {
         match self.ty.kind(t) {
@@ -347,6 +399,10 @@ impl Ctx<'_> {
         }
         match (self.err_var(a), self.err_var(b)) {
             (Some(x), Some(y)) => return self.fn_sites.var_sets.union(x, y),
+            // EXPERIMENT (#2943): a trap seeded this round is its set (`FnSites::fixed_traps`).
+            (Some(x), None) | (None, Some(x)) if self.fn_sites.fixed_traps.contains_key(&x) => {
+                return
+            }
             (Some(x), None) | (None, Some(x)) => {
                 let other = if self.err_var(a).is_some() { b } else { a };
                 self.fn_sites.var_sets.ensure(x);
@@ -445,7 +501,8 @@ impl Ctx<'_> {
             return;
         }
         if let Some(v) = self.err_var(t) {
-            self.fn_sites.var_sets.assumed.push((v, self.ty.never));
+            let set = self.fixed_trap_set(v).unwrap_or(self.ty.never);
+            self.fn_sites.var_sets.assumed.push((v, set));
             return;
         }
         let mut parts = crate::types::children(self.ty.kind(t));
@@ -501,13 +558,36 @@ impl Ctx<'_> {
         let mut keep = vec![];
         for m in self.error_members(t) {
             match self.err_var(m) {
-                Some(v) if self.fn_sites.trap_vars.contains(&v) => {
-                    self.fn_sites.var_sets.assumed.push((v, self.ty.never))
-                }
+                Some(v) if self.fn_sites.trap_vars.contains(&v) => self.assume_var(v, &mut keep),
                 _ => keep.push(m),
             }
         }
         self.error_union(&keep)
+    }
+
+    /// EXPERIMENT (#2943): the set a trap's variable has from the start of this round, seeded by
+    /// the previous one (`FnSites::fixed_traps`): what a check over lazy std writes in the
+    /// trap's type.
+    fn fixed_trap_set(&mut self, v: u32) -> Option<TyId> {
+        let ms = self.fn_sites.fixed_traps.get(&v)?.clone();
+        Some(self.error_union(&ms).unwrap_or(self.ty.never))
+    }
+
+    /// Assume variable `v` has the set known for it: empty, or a seeded trap's set
+    /// ([`Self::fixed_trap_set`]), whose members join `keep`.
+    fn assume_var(&mut self, v: u32, keep: &mut Vec<TyId>) {
+        match self.fn_sites.fixed_traps.get(&v).cloned() {
+            Some(ms) => {
+                let set = self.error_union(&ms).unwrap_or(self.ty.never);
+                self.fn_sites.var_sets.assumed.push((v, set));
+                for m in ms {
+                    if !keep.contains(&m) {
+                        keep.push(m);
+                    }
+                }
+            }
+            None => self.fn_sites.var_sets.assumed.push((v, self.ty.never)),
+        }
     }
 
     /// `t` without its variables, which a check assumes empty (a `catch` variable's type).
@@ -519,7 +599,7 @@ impl Ctx<'_> {
         let mut keep = vec![];
         for m in self.error_members(t) {
             match self.err_var(m) {
-                Some(v) => self.fn_sites.var_sets.assumed.push((v, self.ty.never)),
+                Some(v) => self.assume_var(v, &mut keep),
                 None => keep.push(m),
             }
         }
@@ -566,6 +646,17 @@ impl Ctx<'_> {
         for (v, t) in std::mem::take(&mut self.fn_sites.var_sets.exact) {
             let want = self.solved_type(t);
             let have = self.error_union(&sets[reps[v as usize] as usize]);
+            if std::env::var_os("VELT_UNITS_GROW_DEBUG").is_some()
+                && self.canon_error(Some(want)) != have
+            {
+                let site = self.fn_sites.vars.get(v as usize).copied();
+                eprintln!(
+                    "velt-units: exact var {v} (trap {}) at {site:?}: want {} have {}",
+                    self.fn_sites.trap_vars.contains(&v),
+                    self.display(want),
+                    have.map_or("none".into(), |h| self.display(h))
+                );
+            }
             ok &= self.canon_error(Some(want)) == have;
         }
         ok
@@ -577,7 +668,18 @@ impl Ctx<'_> {
         assumed.into_iter().all(|(v, t)| {
             let var = self.ty.intern(TyKind::Op(TyOp::ErrSite(v), vec![]));
             let s = self.fn_sites.solved.get(&var).copied();
-            s.unwrap_or(self.ty.never) == t
+            let ok = s.unwrap_or(self.ty.never) == t;
+            if !ok && std::env::var_os("VELT_UNITS_GROW_DEBUG").is_some() {
+                let s = s.unwrap_or(self.ty.never);
+                eprintln!(
+                    "velt-units: assumed var {v} (trap {}, fixed {}) = {}, solved {}",
+                    self.fn_sites.trap_vars.contains(&v),
+                    self.fn_sites.fixed_traps.contains_key(&v),
+                    self.display(t),
+                    self.display(s)
+                );
+            }
+            ok
         })
     }
 
