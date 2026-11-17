@@ -117,7 +117,10 @@ fn collect_sources(f: DefId, e: &Expr, copies: &[(Span, TyId)], out: &mut Vec<St
         | E::UnwrapVariant { expr: x, .. }
         | E::Upcast(x)
         | E::Downcast(x) => collect_sources(f, x, copies, out),
-        _ => {}
+        // Anything else (a union's variant, an interface value, a literal) may be any value:
+        // the heap's, for what flows backward from it (`FlowGraph::origins`). A copy's reach
+        // stops at the heap, so this costs the copies nothing.
+        _ => add(Store::Heap, out),
     }
 }
 
