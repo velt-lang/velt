@@ -415,6 +415,17 @@ pub(crate) fn check(cx: &mut Ctx) {
     if !any_candidate(cx) {
         return;
     }
+    // A check by units: std's unit holds all of std, of which a program reaches a part (lazy
+    // std checks only that part). What the program may reach (`units::reach`): std's functions
+    // it doesn't reach don't run, and their function values are not the program's.
+    let reached: Option<FxHashSet<DefId>> = (cx.units_stage == crate::units::Stage::App)
+        .then(|| crate::body::lazy_std::units_live_set(cx));
+    let base = cx.unit_base as usize;
+    let skip = |i: usize| {
+        reached
+            .as_ref()
+            .is_some_and(|r| i < base && !r.contains(&DefId(i as u32)))
+    };
     let slots = fn_slots(cx);
     let weak = implicit::weak_entries(cx);
     let im = Implicit::new(cx, weak);
@@ -424,6 +435,9 @@ pub(crate) fn check(cx: &mut Ctx) {
     let mut shared: Vec<TyId> = Vec::new();
     let mut candidates: Vec<Candidate> = Vec::new();
     for (i, slot) in fns.iter_mut().enumerate() {
+        if skip(i) {
+            continue;
+        }
         let Some(Def::Fn(mut f)) = cx.defs[i].take() else {
             continue;
         };
@@ -530,6 +544,9 @@ pub(crate) fn check(cx: &mut Ctx) {
     // initializers (evaluated where a value is built): each a function of its own, in the slot
     // of the constant's or the type's `DefId` (`implicit` 5).
     for (i, d) in cx.info.iter().enumerate() {
+        if skip(i) {
+            continue;
+        }
         let inits: Vec<&Expr> = match d {
             DefInfo::Global(g) => g.init.iter().collect(),
             DefInfo::Adt(a) => a

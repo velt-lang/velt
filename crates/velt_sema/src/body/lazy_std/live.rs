@@ -230,6 +230,16 @@ pub(crate) fn walk_units_program(cx: &mut Ctx, entry: Option<DefId>) -> FxHashSe
     live
 }
 
+/// EXPERIMENT (#2943): what lazy std would have checked of std's unit for this program
+/// ([`walk_units_program`]), for the analyses whose answer depends on the std code a program
+/// has (lazy std's: the code it checked), leaving the check's state as it was.
+pub(crate) fn units_live_set(cx: &mut Ctx) -> FxHashSet<DefId> {
+    let saved = cx.lazy.clone();
+    let set = walk_units_program(cx, None);
+    cx.lazy = saved;
+    set
+}
+
 /// EXPERIMENT (#2943 M3): a build by units reaches a `catchUnwind` (`units::reach`): std's panic
 /// path is demanded ([`demanded`]).
 pub(crate) fn note_catch_unwind(cx: &mut Ctx) {
