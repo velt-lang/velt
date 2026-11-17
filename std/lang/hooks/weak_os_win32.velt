@@ -1,0 +1,42 @@
+// velt/lang/hooks (internal): the C library and Win32 calls of the weak core (weak_mem.velt,
+// `#weak-os`), which imports nothing of the executor's so a program without tasks loads none of
+// it: memory outside the leak counters, and giving the core away while the lock is contended.
+// Windows: `calloc`, `free`, `memcpy`, `SwitchToThread`.
+
+import { Ptr } from "velt/ffi/ptr";
+
+declare c("c") function calloc$weak(n: usize, size: usize): Ptr<u8> | null;
+declare c("c") function free$weak(p: Ptr<u8> | null): void;
+declare c("c") function memcpy$weak(dst: Ptr<u8>, src: Ptr<u8>, n: usize): Ptr<u8>;
+declare c("c") function SwitchToThread$weak(): i32;
+
+/** `n` bytes set to 0 (0 when the C library has none to give). */
+export function zeroed(n: usize): usize {
+  // SAFETY: calloc has no precondition; the caller checks the result.
+  const p = unsafe { calloc$weak(1, n) };
+  return p === null ? 0 : Ptr.addressOf(p);
+}
+
+/** Gives back a block `zeroed` made. */
+export function release(p: usize): void {
+  // SAFETY: `p` came from `zeroed` and is not used after.
+  unsafe {
+    free$weak(Ptr.at<u8>(p));
+  }
+}
+
+/** Copies `n` bytes from `src` to `dst` (blocks of the core's, which do not overlap). */
+export function copy(dst: usize, src: usize, n: usize): void {
+  // SAFETY: both hold `n` bytes.
+  unsafe {
+    memcpy$weak(Ptr.at<u8>(dst), Ptr.at<u8>(src), n);
+  }
+}
+
+/** Gives the core to another thread that is ready to run, if any. */
+export function yieldCore(): void {
+  // SAFETY: no precondition.
+  unsafe {
+    SwitchToThread$weak();
+  }
+}

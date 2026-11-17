@@ -1,21 +1,22 @@
 // velt/lang/hooks (internal): the memory of the weak core (weak.velt; docs/internals/design/
 // weak-refs.md): words at an address, the process lock, and growable vectors of words.
 //
-// Every block of the core is the C library's (`lastingZeroed`), outside the leak counters, as
+// Every block of the core is the C library's (`#weak-os`), outside the leak counters, as
 // the Rust core's were outside them: the tables live as long as the process, and a vector is
 // given back when it empties. A field is a word of 8 bytes on every target, so a layout is the
 // same on wasm32, where an address is 4 of them.
 
 import {
   addressAtomicCas,
-  addressAtomicRmw,
+  addressAtomicLoad,
+  addressAtomicStore,
   addressLoad,
   addressStore,
+  atomicSpinHint,
   inline,
   noInline,
 } from "velt/lang/intrinsics";
-import * as m from "./sched_mem";
-import * as r from "#reactor";
+import * as os from "#weak-os";
 
 /** The bytes of a field. */
 export const W: usize = 8;
@@ -86,19 +87,23 @@ export function count(obj: usize): u64 {
   return ld64(rcWord(obj)) & RC_COUNT;
 }
 
-/** `n` zeroed bytes of the C library's. */
+/** `n` zeroed bytes of the C library's (`#weak-os`). */
 export function alloc(n: usize): usize {
-  return m.lastingZeroed(n);
+  const p = os.zeroed(n);
+  if (p === 0) {
+    panic("out of memory");
+  }
+  return p;
 }
 
 /** Gives back a block `alloc` made. */
 export function free(p: usize): void {
-  m.lastingRelease(p);
+  os.release(p);
 }
 
 /** Copies `n` bytes (blocks that do not overlap). */
 export function copy(dst: usize, src: usize, n: usize): void {
-  m.copy(dst, src, n);
+  os.copy(dst, src, n);
 }
 
 /** The slot of `x` in a table of `cap` (a power of two) slots: Fibonacci hashing. */
@@ -108,7 +113,9 @@ export function slotOf(x: usize, cap: usize): usize {
   return (h as usize) & (cap - 1);
 }
 
-// The process lock: 0 free, 1 held, 2 held with threads waiting (sched_cells.velt's).
+// The process lock: 0 free, 1 held. It is held for a few table operations at a time (the
+// longest is a trial, bounded by `LIMIT` objects), so a thread that finds it held spins a while,
+// then gives its core away until it is free; no operation waits on anything with it held.
 
 /** Takes the lock at `a`. */
 @inline
@@ -121,16 +128,18 @@ export function lock(a: usize): void {
 
 @noInline
 function lockSlow(a: usize): void {
+  let spins: u32 = 0;
   while (true) {
-    // SAFETY: as `lock`.
-    const s = unsafe { addressAtomicCas<u32>(a, 0, 2, "acquire", "relaxed") };
-    if (s === 0) {
-      // Taken as contended: the unlock wakes one waiter, which takes it the same way.
+    // SAFETY: as `lock`; a read first, so waiters don't take the line from the holder.
+    const free = unsafe { addressAtomicLoad<u32>(a, "relaxed") } === 0;
+    if (free && unsafe { addressAtomicCas<u32>(a, 0, 1, "acquire", "relaxed") } === 0) {
       return;
     }
-    // SAFETY: as `lock`.
-    if (s === 2 || unsafe { addressAtomicCas<u32>(a, 1, 2, "relaxed", "relaxed") } === 1) {
-      r.wordWait(a, 2);
+    if (spins < 100) {
+      spins += 1;
+      atomicSpinHint();
+    } else {
+      os.yieldCore();
     }
   }
 }
@@ -139,8 +148,8 @@ function lockSlow(a: usize): void {
 @inline
 export function unlock(a: usize): void {
   // SAFETY: as `lock`.
-  if (unsafe { addressAtomicRmw<u32>(a, "exchange", 0, "release") } === 2) {
-    r.wordWake(a);
+  unsafe {
+    addressAtomicStore<u32>(a, 0, "release");
   }
 }
 

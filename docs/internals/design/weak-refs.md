@@ -38,10 +38,12 @@ A counted object is `[count: u64][value]`; the value pointer is the block addres
   the target is freed.
 
 **In std** (#3145): the core is Velt code over raw memory (`std/lang/hooks/weak*.velt`), whose
-blocks are the C library's, outside the leak counters, as the Rust core's were. One header for
-the process, in a static made on first use, holds the lock word (a futex word, `#reactor`'s
-`wordWait` and `wordWake`), the records, the tables of map blocks and `WeakRef` slots, and the
-trial's graph:
+blocks are the C library's (`#weak-os`, apart from the executor's modules, so a program without
+tasks loads none of them), outside the leak counters, as the Rust core's were. One header for
+the process, in a static made on first use, holds the lock word, the records, the tables of map
+blocks and `WeakRef` slots, and the trial's graph. The lock is held for a few table operations at
+a time and nothing waits with it held, so a thread that finds it taken spins a while, then gives
+its core away (`sched_yield`, `SwitchToThread`) until it is free.
 
 - **Records** sit in an open-addressing table keyed by address, in place. Each list a record
   has (the maps keyed by the object, the entries it belongs to, its `WeakRef`s) keeps its first

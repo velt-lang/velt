@@ -51,6 +51,13 @@ export const imports: Imports = {
   // sched_mem.velt, sched_io_wait.velt): `sched_yield` and `clock_gettime`, or on Windows
   // `SwitchToThread` and the performance counter.
   "#sched-os": { win32: "./lang/hooks/os_win32.velt", default: "./lang/hooks/os_posix.velt" },
+  // The C library calls of the weak core (std/lang/hooks/weak_mem.velt), apart from the
+  // executor's so a program without tasks loads none of it: memory, and `sched_yield` or on
+  // Windows `SwitchToThread` while its lock is contended.
+  "#weak-os": {
+    win32: "./lang/hooks/weak_os_win32.velt",
+    default: "./lang/hooks/weak_os_posix.velt",
+  },
   // The layout of `sigaction` for the executor in Velt's signals (std/lang/hooks/
   // sched_signal.velt): per OS; elsewhere none.
   "#sched-signal": {

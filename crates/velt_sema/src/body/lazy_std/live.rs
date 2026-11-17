@@ -773,32 +773,6 @@ fn live_impls(cx: &mut Ctx) {
     }
 }
 
-/// The bit of a kind of type an implementation may be for, other than a class or struct (0 for
-/// the others).
-fn kind_bit(kind: &TyKind) -> u32 {
-    match kind {
-        TyKind::Int(it) | TyKind::Literal(hir::LitValue::Int(it, _)) => 1 << (*it as u32 % 16),
-        TyKind::Float(_) | TyKind::Literal(hir::LitValue::Float(..)) => 1 << 16,
-        TyKind::Bool | TyKind::Literal(hir::LitValue::Bool(_)) => 1 << 17,
-        TyKind::Str | TyKind::Literal(hir::LitValue::Str(_)) => 1 << 18,
-        TyKind::Symbol => 1 << 19,
-        TyKind::Simd(_) => 1 << 20,
-        TyKind::Array(_) => 1 << 21,
-        TyKind::Map(..) => 1 << 22,
-        TyKind::Dyn(..) => 1 << 27,
-        TyKind::Promise(..) => 1 << 24,
-        TyKind::Tuple(_) => 1 << 25,
-        TyKind::FnPtr { .. } | TyKind::Closure(_) => 1 << 26,
-        _ => 0,
-    }
-}
-
-/// The kinds of [`kind_bit`] that gate a root ([`gate`]): values lowering does not make up.
-const GATE_KINDS: u32 = (1 << 21) | (1 << 22) | DYNAMIC | (1 << 24) | (1 << 25) | (1 << 26);
-
-/// The bit of a dynamic type (`any`, `unknown`, `object`, `Function`) among [`kind_bit`]'s.
-const DYNAMIC: u32 = 1 << 23;
-
 #[path = "live_again.rs"]
 mod again;
 #[path = "live_constructs.rs"]
@@ -810,6 +784,7 @@ pub(super) use constructs::def_name;
 use constructs::{demanded_for, evaluate, format_bit};
 pub(crate) use constructs::{too_late, Assumed};
 use roots::seed;
+use roots::{kind_bit, DYNAMIC};
 
 #[cfg(test)]
 #[path = "live_tests.rs"]
