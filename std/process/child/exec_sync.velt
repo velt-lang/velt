@@ -1,0 +1,12 @@
+// velt/process/child (internal): `execSync`'s start on macOS, Linux and WebAssembly (the default
+// variant of `#exec-sync`, std/imports.velt): the runtime's `velt_rt_child_output_sync`, which
+// looks the program up as Rust's `Command` does. Windows has its own (exec_sync_win32.velt).
+
+import { IoResult } from "velt/native/result";
+import { CommandSpec } from "velt/process/child/spec";
+import { RawOutput, velt_rt_child_output_sync } from "./rt";
+
+/** Runs `spec` to completion with `input`, blocking the calling thread. */
+export function outputSync(spec: CommandSpec, input: string): IoResult<RawOutput> {
+  return velt_rt_child_output_sync(spec, input);
+}

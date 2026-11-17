@@ -450,6 +450,10 @@ impl FnLower<'_, '_> {
         map: TyId,
     ) -> (Place, TyId) {
         let vp = self.any_value_place(data, ty);
+        if record {
+            // A record view's mirror up to date first (record_view.rs).
+            self.record_view_sync_glue(&vp, ty);
+        }
         match record {
             true => (self.field_place(&vp, ty, 0), map),
             false => (vp, map),
@@ -639,6 +643,21 @@ impl FnLower<'_, '_> {
             .unwrap_or_else(|| super::ice("fields of a non-ADT"));
         let optional = self.cx.adt_def(d).fields[f as usize].optional;
         let fp = self.field_place(&vp, ty, f);
+        // Held out of line: the cell's value while it is there, else `undefined`.
+        if let Some((cell, value)) = self.cx.cell_field(ty, f) {
+            let present = self.option_is_some(&fp, fty);
+            let (yes, no, done) = (self.new_block(), self.new_block(), self.new_block());
+            self.branch(present, yes, no);
+            self.switch_to(yes);
+            let cp = self.cell_value_place(&fp, fty, cell);
+            self.reflect_box(Operand::Copy(cp), value, out, true);
+            self.goto(done);
+            self.switch_to(no);
+            self.any_nothing_into(Nothing::Undefined, out);
+            self.goto(done);
+            self.switch_to(done);
+            return;
+        }
         // `a?: T | null`: absent is `undefined`, present `null` is `null`.
         if let Some(slot) = self.cx.presence_slot(ty, f) {
             let mut flag = fp.clone();

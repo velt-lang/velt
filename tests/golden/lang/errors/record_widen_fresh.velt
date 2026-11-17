@@ -1,6 +1,7 @@
 // An existing record (a variable) where a record of another value type is expected stays an
-// error: other code still sees it as the narrower record (#1185).
-function keys(r: Record<string, any>): number {
+// error: other code still sees it as the narrower record (#1185). A record of `any` or `unknown`
+// values takes it as a view of the one record (`record_view_any`, #379).
+function keys(r: Record<string, string | number>): number {
   return Object.keys(r).length;
 }
 const names: Record<string, string> = { a: "x" };

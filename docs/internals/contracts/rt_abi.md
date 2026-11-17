@@ -825,6 +825,12 @@ copied target. One table for the process, behind a lock (a task moves between
 worker threads at an `await`). Both runtimes provide them (`velt_rt/src/view.rs`, compiled into
 velt_rt_wasm too). Programs without views never call them.
 
+Record views (#379, velt_vir `lower/record_view.rs`) use the same object table: the live
+`Record<string, any>` view of the object an `any` held, keyed by that object's address with bit 0
+set (`obj | 1`), which no `Proxy` entry (keyed by an object's address, always even) can be.
+`view` is the record object, and its drop glue (`[Symbol.dispose]` time, before its fields drop)
+removes the entry before it releases the source.
+
 The `velt_rt_array_view_*` functions keep a second table the same way for array views (velt_vir
 `lower/array_view.rs`, hir_encodings.md "Array views"): from (`arr`, the data pointer of the
 `any` holding the original array; `ty`, a number the compiler gives the view type, unique

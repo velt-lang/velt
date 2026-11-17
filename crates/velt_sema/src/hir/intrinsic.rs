@@ -594,6 +594,33 @@ pub enum Intrinsic {
     /// null once it was freed.
     WeakRefDeref,
 
+    // Record views (#379; std/prelude/record.velt, velt_vir lower/record_view.rs): a record an
+    // `any` is converted to with `any` values is a view of the object the `any` holds. Each is
+    // nothing for a plain record, and no code at all in a record type no conversion makes a view.
+    /// std only: `recordViewSync<K, V>(r: borrow Record<K, V>)` — a view's mirror rebuilt from
+    /// its source, in the source's order.
+    RecordViewSync,
+    /// std only: `recordViewIs<K, V>(r: borrow Record<K, V>): bool` — whether `r` is a view:
+    /// `false` in a record type no conversion makes a view.
+    RecordViewIs,
+    /// std only: `recordViewGet<K, V>(r: borrow Record<K, V>, key: borrow K): V | undefined` — the
+    /// view `r`'s source's own entry `key` through `any`, or `undefined`.
+    RecordViewGet,
+    /// std only: `recordViewHas<K, V>(r: borrow Record<K, V>, key: borrow K): bool` — whether the
+    /// view `r`'s source has the own key `key`.
+    RecordViewHas,
+    /// std only: `recordViewSet<K, V>(r: borrow Record<K, V>, key: borrow K, value: owned V)` —
+    /// `value` written to the view `r`'s source through `any` (a `TypeError` where it can't hold
+    /// it).
+    RecordViewSet,
+    /// std only: `recordViewDelete<K, V>(r: borrow Record<K, V>, key: borrow K)` — `key` deleted
+    /// from the view `r`'s source through `any`.
+    RecordViewDelete,
+    /// std only: `recordViewFlush<K, V>(r: borrow Record<K, V>, other: borrow Record<K, V>)` — a
+    /// view's mirror entries for the keys of `other` written to its source (a spread or
+    /// `Object.assign` of `other` into the view).
+    RecordViewFlush,
+
     // The dynamic value `any` / `unknown` (issue #924; hir_encodings.md "any and unknown"). Its
     // operand is a `TyKind::Dyn` of the prelude's `any` or `unknown`, built by `ToDyn` with
     // `Program::any_impl`.

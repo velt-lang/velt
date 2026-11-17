@@ -110,6 +110,15 @@ export {
   strWord1,
   strWord2,
 } from "velt/lang/intrinsics/string";
+export {
+  recordViewDelete,
+  recordViewFlush,
+  recordViewGet,
+  recordViewHas,
+  recordViewIs,
+  recordViewSet,
+  recordViewSync,
+} from "velt/lang/intrinsics/record_view";
 export { symbolRegistry, symbolStatic } from "velt/lang/intrinsics/symbol";
 export { firstFulfilled, moduleStateUsed, spawnHandled } from "velt/lang/intrinsics/task";
 export { threadLocalGet, threadLocalSet } from "velt/lang/intrinsics/thread_local";

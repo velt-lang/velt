@@ -2,6 +2,19 @@
 
 use std::path::Path;
 
+/// nextest's profile for a CI run (.config/nextest.toml), from `VELT_NEXTEST_PROFILE`: `ci`
+/// (pull requests, `main`, the nightly), which reports every failure, or `queue` (the merge
+/// queue's `check` job), which stops at the first. Both write `target/nextest/<profile>/junit.xml`.
+pub fn ci_profile(var: Option<String>) -> Result<&'static str, String> {
+    match var.as_deref() {
+        None | Some("") | Some("ci") => Ok("ci"),
+        Some("queue") => Ok("queue"),
+        Some(other) => Err(format!(
+            "VELT_NEXTEST_PROFILE={other}: not a CI profile (`ci` or `queue`)"
+        )),
+    }
+}
+
 /// Lists the failed tests of a nextest JUnit report in the job summary (`$GITHUB_STEP_SUMMARY`),
 /// so a failure is attributable from the run's page. Best effort: without the report or the
 /// summary file there is nothing to add to nextest's own output.
@@ -64,7 +77,37 @@ fn junit_failures(xml: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::junit_failures;
+    use super::{ci_profile, junit_failures};
+
+    /// Every profile `ci_profile` picks is in .config/nextest.toml with a JUnit report, and only
+    /// the merge queue's stops at the first failure.
+    #[test]
+    fn the_ci_profiles_exist_and_only_the_queue_stops_early() {
+        let config = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.config/nextest.toml"),
+        )
+        .unwrap()
+        .replace("\r\n", "\n");
+        let section = |name: &str| {
+            let head = format!("\n[profile.{name}]\n");
+            let start = config.find(&head).unwrap_or_else(|| panic!("no {head}")) + head.len();
+            let end = config[start..]
+                .find("\n[")
+                .map_or(config.len(), |e| start + e);
+            config[start..end].to_string()
+        };
+        for (var, profile, fail_fast) in [
+            (None, "ci", "fail-fast = false"),
+            (Some("ci"), "ci", "fail-fast = false"),
+            (Some("queue"), "queue", "fail-fast = true"),
+        ] {
+            assert_eq!(ci_profile(var.map(String::from)), Ok(profile));
+            assert!(section(profile).contains(fail_fast), "[profile.{profile}]");
+            let junit = section(&format!("{profile}.junit"));
+            assert!(junit.contains("path = \"junit.xml\""), "{profile}");
+        }
+        assert!(ci_profile(Some("queeu".into())).is_err());
+    }
 
     #[test]
     fn failed_cases_are_named_by_class_and_name() {

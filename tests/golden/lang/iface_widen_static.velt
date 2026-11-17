@@ -1,0 +1,18 @@
+// check: no leaks
+// An object literal converted statically to the extension before another cast widens its type
+// (#379): its implementation, made while the program was checked, is made again with the field,
+// so the write through the cast is seen through the extension too, as in Node.
+interface Ctx {
+  el: string;
+  update(): void;
+}
+
+interface InternalCtx extends Ctx {
+  __name?: string;
+}
+
+const o = { el: "x", update: () => {} };
+const ic: InternalCtx = o;
+const c: Ctx = o;
+(c as InternalCtx).__name = "dbg";
+console.log((c as InternalCtx).__name, ic.__name);

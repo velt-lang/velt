@@ -1,0 +1,23 @@
+// velt/lang/hooks (internal): which thread is the program's, the one that runs `velt_main` and the
+// modules' initializers before it (#3085). Lowering marks it first thing (`programThread`), before
+// any C code can start a thread, so the executor in Velt starts its worker 0 only there
+// (sched_workers.velt `started`): a C library's thread calling an exported function never becomes
+// worker 0. No executor module is imported here, so a program that runs nothing on the executor
+// loads none of it.
+
+/** Set on the program's thread (`programThread`). */
+const PROGRAM = new ThreadLocal<bool>(false);
+
+/** Whether a thread was marked at all: an entry that marks none (a test runner) keeps any thread. */
+const MARKED = new Atomic<bool>(false);
+
+/** Marks this thread as the program's: `velt_main`'s first step. */
+export function programThread(): void {
+  PROGRAM.set(true);
+  MARKED.store(true, "release");
+}
+
+/** Is this the program's thread (or was none marked)? */
+export function isProgramThread(): bool {
+  return PROGRAM.get() || !MARKED.load("acquire");
+}

@@ -403,7 +403,7 @@ pub(crate) fn unused_setter(cx: &mut Ctx, d: DefId, self_ty: TyId, fname: &str, 
 
 /// A setter method `<set fname>(v: ty)` of class/struct `d` whose body is the statement
 /// `body(span, ty is Copy)` (its kind and type), or empty for `None`.
-fn setter_def(
+pub(crate) fn setter_def(
     cx: &mut Ctx,
     d: DefId,
     self_ty: TyId,

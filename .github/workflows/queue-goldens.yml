@@ -130,10 +130,12 @@ jobs:
       matrix:
         shard: ${{ fromJSON(inputs.shards) }}
     runs-on: ${{ inputs.os }}
-    # macOS shards take 14–19 minutes, and a runner at half speed doubles that (#2220's dispatch
-    # run: 1,743 s on one runner, 951 s on another, for the same goldens), so macOS gets room for
-    # one slow runner. A third shard would need another scarce macOS runner per run instead.
-    timeout-minutes: ${{ startsWith(inputs.os, 'macos') && 40 || 30 }}
+    # A runner at half speed doubles a shard's time (#2220's dispatch run: 1,743 s on one runner,
+    # 951 s on another, for the same goldens), so each OS gets room for one slow runner. Passing
+    # merge queue shards from 2026-11-13 to 11-16 took, at the median / 95th percentile / most:
+    # Linux 16 / 24 / 30 minutes (one cancelled at 30), Windows 19 / 24 / 26, macOS 23 / 29 / 37.
+    # A third macOS shard would need another scarce macOS runner per run instead.
+    timeout-minutes: ${{ startsWith(inputs.os, 'macos') && 45 || 40 }}
     permissions:
       contents: read
       actions: write
@@ -155,6 +157,11 @@ jobs:
         working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
         env:
           VELT_GOLDEN_SHARD: ${{ matrix.shard }}
+          # A golden's own time limit (crates/veltc/tests/golden.rs, default 120 s): its
+          # `--release` run links the debug runtime the archive carries (#3095), and a heavy one
+          # on a slow runner reached 120 s (std/abort_signal_timeout_dropped on macOS,
+          # 2026-11-16). A hang still fails well within the job's limit.
+          VELT_GOLDEN_TIMEOUT: ${{ startsWith(inputs.os, 'macos') && '300' || '180' }}
         run: cargo xtask check --full --part golden --archive golden.tar
       # For the push to main that follows (ci.yml's `clang-objects`): a failure here must not fail the entry.
       - name: the objects clang compiled (Linux)

@@ -209,10 +209,13 @@ hooks! {
     /// otherwise.
     panic_raise => lang_hooks_unwind, "panicRaise", sig((&string) -> never), lowered, constructs(CatchUnwind);
     // sched.velt: the executor in Velt (#2649), with `VELT_SCHEDULER=std` ([`std_scheduler`]).
+    /// The program's thread, marked by `velt_main` first thing (#3085): the executor's worker 0
+    /// starts only there (program_thread.velt).
+    program_thread => lang_hooks_program_thread, "programThread", sig(() -> void), lowered;
     /// `velt_rt_block_on`'s job: `(poll, state)`.
     sched_block_on => lang_hooks_sched, "schedBlockOn", sig((usize, usize, u64) -> void), lowered;
     /// `velt_rt_spawn`'s: `(poll, drop, state, size, align, result_size, result_drop)`, the handle.
-    sched_spawn => lang_hooks_sched, "schedSpawn", sig((usize, usize, usize, u64, u64, u64, usize, usize) -> usize), lowered;
+    sched_spawn => lang_hooks_sched_spawn, "schedSpawn", sig((usize, usize, usize, u64, u64, u64, usize, usize) -> usize), lowered;
     /// `velt_rt_yield_now`'s: `(cx)`; then the end of `velt_main` with its exit code (0: the
     /// tasks left run).
     sched_yield => lang_hooks_sched, "schedYield", sig((usize) -> void), lowered;
@@ -261,7 +264,7 @@ hooks! {
     sched_tla_at => lang_hooks_sched, "schedTlaAt", sig((&string) -> void), lowered;
     /// `velt_rt_spawn_fut`'s: `(f, result_size, result_drop)`, the handle; then
     /// `velt_rt_spawn_target`'s (`(worker)`: the next spawn is pinned to that worker).
-    sched_spawn_fut => lang_hooks_sched, "schedSpawnFut", sig((usize, u64, usize) -> usize), lowered;
+    sched_spawn_fut => lang_hooks_sched_spawn, "schedSpawnFut", sig((usize, u64, usize) -> usize), lowered;
     sched_pinned => lang_hooks_sched, "schedPinned", sig((i64) -> void), lowered;
     /// `velt_rt_sleep`'s: `(ms)`, a heap future; then the Node timer order's `velt_rt_timer_new`,
     /// `_turn`, `_again`, `_clear`, `_free`, then `velt_rt_uncaught_now`.
@@ -415,6 +418,24 @@ hooks! {
     any_to_record_any => lang_hooks_any_record, "anyToRecordAny", sig((&any) -> Record(string, any)), lowered;
     /// `x as Record<string, V>` of such an `any`: `any_to_record_any`, each value a `V`.
     any_to_record => lang_hooks_any_record, "anyToRecord", sig(<A>(&any) -> Record(string, A)), lowered;
+    /// The source of a record view (`velt_vir` `record_view.rs`): the object an `any` held.
+    record_view_source => lang_hooks_any_record, "RecordViewSource", class, lowered;
+    /// The source of a view of the object an `any` holds.
+    record_view_new => lang_hooks_any_record, "recordViewNew", sig((move any) -> RecordViewSource), lowered;
+    /// A view's record, its mirror filled from the source.
+    record_view_make => lang_hooks_any_record, "recordViewMake", sig((&RecordViewSource) -> Record(string, any)), lowered;
+    /// The source's own entry for one key of a view, or `undefined`.
+    record_view_get_one => lang_hooks_any_record, "recordViewGetOne", sig((&RecordViewSource, &string) -> any), lowered;
+    /// Whether a view's source has one own key.
+    record_view_has_one => lang_hooks_any_record, "recordViewHasOne", sig((&RecordViewSource, &string) -> bool), lowered;
+    /// A value written to a view's source under one key.
+    record_view_set_one => lang_hooks_any_record, "recordViewSetOne", sig((&RecordViewSource, &string, move any) -> void), lowered;
+    /// A key deleted from a view's source.
+    record_view_delete_one => lang_hooks_any_record, "recordViewDeleteOne", sig((&RecordViewSource, move string) -> void), lowered;
+    /// A view's mirror rebuilt from its source before a read of the whole record.
+    record_view_sync_all => lang_hooks_any_record, "recordViewSyncAll", sig((&RecordViewSource) -> Map(string, any)), lowered;
+    /// A view's mirror entries for another record's keys written to its source after a spread.
+    record_view_write_all => lang_hooks_any_record, "recordViewWriteAll", sig((&RecordViewSource, &Map(string, any), move Map(string, any)) -> void), lowered;
 
     // any_ops.velt: operators on `any` values holding objects (`ToPrimitive` first).
     /// `ToPrimitive(v, hint)` of an `any` holding an object or a function.

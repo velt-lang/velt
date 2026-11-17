@@ -6,6 +6,7 @@
 // property definitions, `Proxy` or `Reflect` (std/prelude/global/record_symbols.velt).
 
 import { objectPrototypeKey } from "velt/lang/hooks/record";
+import { recordViewGet, recordViewHas, recordViewIs } from "velt/lang/intrinsics";
 import {
   RECORD_ACCESSOR,
   RECORD_DEFINE_ACCESSOR,
@@ -147,6 +148,9 @@ extend<K, V> Record<K, V> {
     if (typeof key === "symbol") {
       return this[RECORD_GET_SYM](key as symbol);
     }
+    if (recordViewIs(this)) {
+      return recordViewGet(this, key as K);
+    }
     return this.entries.get(key as K);
   }
 
@@ -200,6 +204,9 @@ extend<K, V> Record<K, V> {
     }
     if (typeof key === "symbol") {
       return this[RECORD_HAS_SYM](key as symbol);
+    }
+    if (recordViewIs(this)) {
+      return recordViewHas(this, key as K);
     }
     return this.entries.has(key as K);
   }

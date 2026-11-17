@@ -51,6 +51,8 @@ export function task(
   m.st(k + t.T_BYTES, bytes);
   m.st(k + t.T_TIMERS, 0);
   m.st(k + t.T_HOME, e);
+  // No handle yet, and not a C thread's (`J_FOREIGN`, which a task's end reads): spawns set it.
+  m.st(k + t.T_JOIN_STATE, 0);
   m.st(k + t.T_JOIN, m.ld(e + t.E_JOIN_VT));
   m.st(k + t.T_JOIN + 8, m.ld(e + t.E_JOIN_VT + 8));
   return k;
@@ -184,10 +186,11 @@ export function liveDown(g: usize, e: usize): usize {
 /** The live tasks (worker 0's block `g`, read by worker 0). */
 @inline
 export function live(g: usize): usize {
-  return m.load(g + t.E_LIVE) + m.load(g + t.E_LIVE_X);
+  return m.load(g + t.E_LIVE) + m.load(g + t.E_LIVE_X) + m.load(g + t.E_LIVE_F);
 }
 
 /** No task is live any more (worker 0, giving up the tasks left). */
 export function noneLive(g: usize): void {
+  m.swap(g + t.E_LIVE_F, 0);
   m.st(g + t.E_LIVE, 0 - m.load(g + t.E_LIVE_X));
 }

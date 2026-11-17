@@ -48,7 +48,12 @@ needed.
 - `const r: Record<string, i64> = {}` is empty.
 - `{ a: 1, ...other }` is allowed.
 - With literal keys, the literal must list every key, so `r[k]` can be total.
-- There is no implicit conversion from a struct or object type.
+- There is no implicit conversion from a struct or object type, except to a record of `any` or
+  `unknown` values: an object of an object literal type, or a record of other values, converts to
+  one as a view of the one object (#379, velt_vir `lower/record_view.rs`), as `x as
+  Record<string, any>` of an `any` holding an object does. Reads see the object's current entries
+  and writes reach it; a key an object type has no field for stops with a `TypeError` where Node
+  adds it.
 
 **Iteration and helpers.** These follow TypeScript, in JavaScript's key order (#756): array-index
 keys such as `"2"` first, ascending, then the others in insertion order.

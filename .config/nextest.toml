@@ -20,6 +20,20 @@ slow-timeout = { period = "60s", terminate-after = 20 }
 # summary, so a failure is attributable without reading the log.
 path = "junit.xml"
 
+# The merge queue (`VELT_NEXTEST_PROFILE=queue`, ci.yml's `check` job): the `ci` profile, but the
+# first failing test starts no more tests. One failure drops the queue entry, so the rest of the
+# run only delays that and holds the runners the entries behind it wait for: from 2026-11-13 to
+# 11-16 the job ran on for 9 minutes (median, 23 at most) after its first failure. The tests
+# already running finish (`terminate = "immediate"` would report each of them as failed too, in
+# the log and the job summary). Pull requests and local runs keep reporting every failure.
+[profile.queue]
+fail-fast = true
+failure-output = "immediate-final"
+slow-timeout = { period = "60s", terminate-after = 20 }
+
+[profile.queue.junit]
+path = "junit.xml"
+
 [test-groups]
 # Tests that build and run many programs on a worker pool of their own, or wait on timeouts
 # (`velt dev` reloads, the debug adapter): two at a time, so they don't starve each other.

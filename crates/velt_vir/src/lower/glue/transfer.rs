@@ -197,6 +197,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
         if let Some(d) = view_of {
             self.proxy_unview(o.clone(), d);
         }
+        // A record view arrives as a plain record of its mirror (record_view.rs).
+        self.record_view_detach(&Place::local(obj), ty);
         let tys = self.cx.adt_field_tys(ty);
         for (i, t) in tys.into_iter().enumerate() {
             let fp = self.field_place(&Place::local(obj), ty, i as u32);

@@ -279,6 +279,9 @@ impl FnLower<'_, '_> {
                 lw.terminate(Terminator::Return(copy));
             })
         });
+        // A copy of a record view is a plain record of its mirror, up to date first
+        // (record_view.rs; field 4 is none below).
+        self.record_view_sync_glue(&Place::local(obj), ty);
         let oa = self.cx.obj_agg(ty);
         let new = self.object_alloc(ty);
         if let Some(found) = found {
@@ -296,7 +299,11 @@ impl FnLower<'_, '_> {
         for (i, t) in tys.into_iter().enumerate() {
             let dp = self.field_place(&np, ty, i as u32);
             if record && i >= 2 {
-                let none = self.none_value(t);
+                // Field 4, a view's source, is a word: 0, a plain record (record_view.rs).
+                let none = match self.cx.ty(t) {
+                    Ty::U64 => super::super::cint(0, Ty::U64),
+                    _ => self.none_value(t),
+                };
                 self.assign(dp, Rvalue::Use(none));
                 continue;
             }

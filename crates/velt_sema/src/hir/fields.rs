@@ -24,6 +24,12 @@ pub struct FieldDef {
     /// Not enumerable: a symbol brand `Object.defineProperty` adds (velt_sema
     /// `defined_props`). `console.log` and spreads leave it out, as Node does.
     pub hidden: bool,
+    /// A field a cast to an interface extension added to an object type (velt_sema
+    /// `object_widen`), stored out of line: `ty` is `C | null` for a class `C` whose one field
+    /// holds the value. `null` is absent; the cell is made on the first write. Reflection
+    /// (printing, keys, `in`, spreads, `any` reads and writes) sees the field as optional, of
+    /// the cell's field's type, present when the cell is there.
+    pub cell: bool,
 }
 
 /// An initializer a class gives a field it inherits: an error class's `name = "AppError"`

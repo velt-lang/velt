@@ -48,6 +48,15 @@ impl FnLower<'_, '_> {
 
     /// Did sema check the executor's hook `name` (the program runs something on the executor)?
     /// A program that runs nothing on it neither loads nor checks its hooks (#2880).
+    /// `velt_main`'s first step under the executor in Velt: this thread is the program's
+    /// (program_thread.velt, #3085), the only one the executor's worker 0 starts on. Nothing for a
+    /// program that runs nothing on the executor.
+    pub(super) fn mark_program_thread(&mut self) {
+        if self.std_sched() && self.sched_hook_live(velt_common::std_hook!(program_thread)) {
+            hooks::program_thread(self).emit(self);
+        }
+    }
+
     fn sched_hook_live(&self, name: &str) -> bool {
         (self.cx.prelude_def(name)).is_some_and(|d| !self.cx.hir.unchecked.contains(&d))
     }

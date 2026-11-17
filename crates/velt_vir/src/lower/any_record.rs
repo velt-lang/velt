@@ -88,7 +88,7 @@ impl FnLower<'_, '_> {
             return;
         }
         let names: Vec<String> = a.fields.iter().map(|f| f.name.clone()).collect();
-        let optional: Vec<bool> = a.fields.iter().map(|f| f.optional).collect();
+        let optional: Vec<bool> = a.fields.iter().map(|f| f.optional || f.cell).collect();
         if a.name == "Record" || a.name.ends_with("::Record") {
             return;
         }
@@ -169,7 +169,17 @@ impl FnLower<'_, '_> {
             );
             self.goto(join);
             self.switch_to(ok);
-            let v = self.any_unbox(&tmp, any, fty);
+            let v = match self.cx.cell_field(ty, i as u32) {
+                // Held out of line: a new cell holding the value.
+                Some((cell, value)) => {
+                    let inner = self.any_unbox(&tmp, any, value);
+                    let obj = self.alloc_object_raw(cell);
+                    let fp = self.field_place(&obj, cell, 0);
+                    self.store(fp, inner);
+                    Operand::Copy(obj)
+                }
+                None => self.any_unbox(&tmp, any, fty),
+            };
             self.assign(val.clone(), Rvalue::Use(v));
             self.assign(
                 flag.clone(),

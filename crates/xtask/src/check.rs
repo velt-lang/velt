@@ -487,14 +487,14 @@ impl Gate<'_> {
             true => filterset,
             false => crate::c_headers::without_zig_tests(&filterset),
         };
-        // In CI, nextest's `ci` profile writes a JUnit report (.config/nextest.toml).
         let mut junit = None;
         let mut tests = if has_nextest() {
             let mut c = cargo(&["nextest", "run"]);
             c.args(ws).args(["--no-tests", "pass", "-E", &filterset]);
             if std::env::var_os("CI").is_some() {
-                c.args(["--profile", "ci"]);
-                junit = Some(target_dir(self.root).join("nextest/ci/junit.xml"));
+                let profile = junit::ci_profile(std::env::var("VELT_NEXTEST_PROFILE").ok())?;
+                c.args(["--profile", profile]);
+                junit = Some(target_dir(self.root).join(format!("nextest/{profile}/junit.xml")));
             }
             c
         } else {

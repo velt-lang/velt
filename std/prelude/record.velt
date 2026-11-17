@@ -24,6 +24,15 @@ import {
   MAP_NEWEST_KEY_DIGIT,
 } from "velt/lang/hooks/keys";
 import { arrayIndex, objectPrototypeKey } from "velt/lang/hooks/record";
+import {
+  recordViewDelete,
+  recordViewFlush,
+  recordViewGet,
+  recordViewHas,
+  recordViewIs,
+  recordViewSet,
+  recordViewSync,
+} from "velt/lang/intrinsics";
 import { mapKeyNames } from "velt/lang/map/live";
 import { mapCopyFrom } from "velt/lang/map/table";
 import {
@@ -75,16 +84,27 @@ export class Record<K, V> {
   // `Keyed` methods there for every key (`hir::Program::record_accessors`).
   private accessors: Map<K | symbol, [(() => V) | null, ((value: V) => void) | null, bool]> | null =
     null;
+  // Field 4: for a view (#379, velt_vir lower/record_view.rs: an `any` converted to a record type
+  // with `any` values), its source, which lowering keeps here; 0 for any other record. On a view,
+  // a keyed read or write goes to the source (`recordViewIs`, then `recordViewGet` and the
+  // others), and a read of the whole record first rebuilds field 0, a mirror of the source's
+  // entries (`recordViewSync`). In a record type no conversion makes a view, `recordViewIs` is
+  // `false` and the others are no code; nothing here reads this field.
+  private view: u64 = 0;
   // The methods that read fields 2 and 3 are in std/lang/record/symbols.velt, which a
   // program loads only when it mentions symbols or property definitions.
 
   /** `r`'s string-keyed entries (the hook `recordEntriesOf`; static: in no `any` table). */
   static [RECORD_ENTRIES_OF]<RK, RV>(r: Record<RK, RV>): Map<RK, RV> {
+    recordViewSync(r);
     return r.entries;
   }
 
   /** `r[k]` / `r.name` of an open record: the value, or `undefined` (the compiler calls it). */
   [RECORD_GET](key: K): V | undefined {
+    if (recordViewIs(this)) {
+      return recordViewGet(this, key);
+    }
     return this.entries.get(key);
   }
 
@@ -107,6 +127,10 @@ export class Record<K, V> {
 
   /** `r[k] = v` / `r.name = v` (the compiler calls it). */
   [RECORD_SET](key: K, value: V) {
+    if (recordViewIs(this)) {
+      recordViewSet(this, key, value);
+      return;
+    }
     const n = this.entries.size;
     this.entries.set(key, value);
     if (this.entries.size != n && !this.unordered) {
@@ -177,6 +201,7 @@ export class Record<K, V> {
    * glue walk them), or empty when that is insertion order.
    */
   [RECORD_POSITIONS](): usize[] {
+    recordViewSync(this);
     if (!this.unordered) {
       return [];
     }
@@ -194,12 +219,19 @@ export class Record<K, V> {
 
   /** `delete r[k]`: `true`, as JavaScript's `delete` of an entry or of a missing key is. */
   [RECORD_DELETE](key: K): bool {
+    if (recordViewIs(this)) {
+      recordViewDelete(this, key);
+      return true;
+    }
     this.entries.delete(key);
     return true;
   }
 
   /** Whether the record has the key `key` (the compiler calls it for `k in r`). */
   [RECORD_HAS](key: K): bool {
+    if (recordViewIs(this)) {
+      return recordViewHas(this, key);
+    }
     return this.entries.has(key);
   }
 
@@ -214,6 +246,8 @@ export class Record<K, V> {
 
   /** `{ ...other }`: every entry of `other`, later entries replacing earlier ones. */
   [RECORD_EXTEND](other: Record<K, V>) {
+    recordViewSync(this);
+    recordViewSync(other);
     if (mapCopyFrom(this.entries, other.entries)) {
       // Into a record that never held a key: the same entries in the same order, so the same
       // keys are array indices.
@@ -230,6 +264,7 @@ export class Record<K, V> {
         this[RECORD_PUT_SYM](s, v);
       }
     }
+    recordViewFlush(this, other);
   }
 
   /** `{ ...other }` of a record that may be `null` or `undefined`: nothing when it is. */
@@ -248,6 +283,7 @@ export class Record<K, V> {
     convert: (value: W) => V,
   ) {
     if (other != null) {
+      recordViewSync(this);
       for (const [k, v] of other[RECORD_ENTRIES]()) {
         this[RECORD_SET](key(k), convert(v));
       }
@@ -262,6 +298,7 @@ export class Record<K, V> {
 
   /** The number of keys. */
   [RECORD_SIZE](): usize {
+    recordViewSync(this);
     return this.entries.size;
   }
 
@@ -272,6 +309,7 @@ export class Record<K, V> {
 
   /** Was this record made by `Object.create(null)`? */
   [RECORD_IS_NULL_PROTO](): bool {
+    recordViewSync(this);
     return this.entries[MAP_IS_NULL_PROTO]();
   }
 
@@ -280,6 +318,7 @@ export class Record<K, V> {
    * listed as its value.
    */
   [RECORD_KEY_NAMES](): string[] {
+    recordViewSync(this);
     if (!this.unordered) {
       return mapKeyNames(this.entries);
     }
@@ -297,6 +336,7 @@ export class Record<K, V> {
 
   /** `Object.values(r)` (the compiler calls it). */
   [RECORD_VALUES](): V[] {
+    recordViewSync(this);
     const values = this.entries.values();
     if (!this.unordered) {
       return values;
@@ -314,6 +354,7 @@ export class Record<K, V> {
 
   /** `Object.entries(r)` (the compiler calls it). */
   [RECORD_ENTRIES](): [K, V][] {
+    recordViewSync(this);
     const entries = this.entries.entries();
     if (!this.unordered) {
       return entries;

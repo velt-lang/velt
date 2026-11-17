@@ -1,0 +1,26 @@
+// A cast to an extension adding an optional field, where an object converted to the interface
+// can't get room for it (#379): a class (one layout per class), and an object literal written as
+// the interface whose method uses `this` (laid out as a class). Each is named.
+interface Ctx {
+  el: string;
+  update(): void;
+}
+
+interface InternalCtx extends Ctx {
+  __name?: string;
+}
+
+class Real implements Ctx {
+  el = "r";
+  update(): void {}
+}
+
+const direct: Ctx = {
+  el: "z",
+  update() {
+    console.log(this.el);
+  },
+};
+(direct as InternalCtx).__name = "direct";
+const r: Ctx = new Real();
+(r as InternalCtx).__name = "r";

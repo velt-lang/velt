@@ -141,7 +141,8 @@ impl Ctx<'_> {
                     let fs: Vec<String> = a
                         .fields
                         .iter()
-                        .map(|f| {
+                        .enumerate()
+                        .map(|(i, f)| {
                             // A function with properties shows its call signature (#921).
                             if f.name == crate::callables::CALL_FIELD {
                                 if let TyKind::FnPtr { params, ret, .. } = self.ty.kind(f.ty) {
@@ -156,7 +157,12 @@ impl Ctx<'_> {
                             let name = self
                                 .key_spelling(&f.name)
                                 .unwrap_or_else(|| display_key(&f.name));
-                            if f.optional {
+                            // A field a cast added, held out of line (`object_widen`): as the
+                            // optional field the cast's extension declares.
+                            if let Some(v) = self.cell_value_ty(*d, i) {
+                                let p = self.ty.opt_payload(v).unwrap_or(v);
+                                format!("{name}?: {}", self.display_in(p, &bound))
+                            } else if f.optional {
                                 format!("{name}?: {}", self.display_in(f.declared, &bound))
                             } else {
                                 format!("{name}: {}", self.display_in(f.ty, &bound))

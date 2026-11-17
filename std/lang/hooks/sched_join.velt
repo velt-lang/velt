@@ -113,6 +113,21 @@ export function joinDropLazy(f: usize): void {
   joinDropAs(f, lk.kind());
 }
 
+/**
+ * A join handle's poll for a task a thread that isn't a worker spawned (sched_foreign.velt, #3085):
+ * its slot always locks, in any lock mode.
+ */
+@cExport("std_sched_join_poll_foreign")
+export function joinPollForeign(f: usize, cx: usize): u32 {
+  return joinPollAs(f, cx, lk.LK_ON);
+}
+
+/** A join handle's drop for such a task (as `joinPollForeign`). */
+@cExport("std_sched_join_drop_foreign")
+export function joinDropForeign(f: usize): void {
+  joinDropAs(f, lk.LK_ON);
+}
+
 /** Is `f` a spawned task's join handle (its header a task's `T_JOIN`)? */
 export function isJoin(f: usize): bool {
   const poll = m.ld(f);
@@ -122,7 +137,15 @@ export function isJoin(f: usize): bool {
   const solo = unsafe { exportedAddress(joinPollSolo) };
   // SAFETY: as above.
   const lazy = unsafe { exportedAddress(joinPollLazy) };
-  return poll === polls || poll === solo || poll === lazy || poll === fnAddress(joinPanicked);
+  // SAFETY: as above.
+  const foreign = unsafe { exportedAddress(joinPollForeign) };
+  return (
+    poll === polls ||
+    poll === solo ||
+    poll === lazy ||
+    poll === foreign ||
+    poll === fnAddress(joinPanicked)
+  );
 }
 
 /**
@@ -204,7 +227,19 @@ export function rootPanicked(e: usize, k: usize, x: usize): void {
     m.or32(k + t.T_FLAGS, t.JOIN_DUE);
     return;
   }
-  panickedEnd(e, k, lk.kind());
+  panickedEnd(e, k, kindFor(k));
+}
+
+/**
+ * The kind of an operation on task `k`'s join slot: the lock mode's (sched_lock.velt `kind`), but
+ * always locked for a task a thread that isn't a worker spawned (`J_FOREIGN`, sched_foreign.velt,
+ * #3085), whose handle that thread may drop while the task ends on a worker.
+ */
+export function kindFor(k: usize): u32 {
+  if ((m.ld32(k + t.T_JOIN_STATE) & t.J_FOREIGN) !== 0) {
+    return lk.LK_ON;
+  }
+  return lk.kind();
 }
 
 /**
@@ -241,7 +276,7 @@ function uncaught(): never {
  */
 export function joinPanicked(f: usize, cx: usize): u32 {
   const k = f - t.T_JOIN;
-  const kind = lk.kind();
+  const kind = kindFor(k);
   const s = mk.lockJoin(k, kind);
   mk.unlockJoin(k, s | t.J_CLAIMED, kind);
   nc.again(m.ld(k + t.T_POLL));
@@ -355,9 +390,9 @@ export function polledFlags(e: usize, k: usize, mode: u32): void {
       wk.publish(e);
     }
     if ((fl & nc.T_PANICKED) !== 0) {
-      panickedEnd(e, k, lk.kind());
+      panickedEnd(e, k, kindFor(k));
     } else {
-      joinDone(e, k, lk.kind());
+      joinDone(e, k, kindFor(k));
     }
   }
 }

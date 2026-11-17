@@ -1,0 +1,28 @@
+// check: no leaks
+// Reflection through `any` of an object widened for a cast (#379): the added field, held out of
+// line, is listed, tested, read, written, deleted and spread as Node's property is.
+interface Ctx {
+  el: string;
+  update(): void;
+}
+
+interface ICtx extends Ctx {
+  __name?: string;
+}
+
+const a = { el: "a", update: () => {} };
+const b = { el: "b", update: () => {} };
+const ca: Ctx = a;
+const cb: Ctx = b;
+(ca as ICtx).__name = "one";
+const xa: any = a;
+const xb: any = b;
+console.log("__name" in xa, "__name" in xb, Object.keys(xa).join(","), Object.keys(xb).join(","));
+xb.__name = "two";
+console.log((cb as ICtx).__name, xb.__name, Object.keys(xb).join(","));
+xa.__name = "three";
+console.log((ca as ICtx).__name);
+delete xa.__name;
+console.log((ca as ICtx).__name, "__name" in xa, Object.keys(xa).join(","));
+const spread = { ...xb };
+console.log(JSON.stringify(spread));

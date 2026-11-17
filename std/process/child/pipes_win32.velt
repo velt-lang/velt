@@ -1,0 +1,402 @@
+// velt/process/child (internal): a child's piped stdin, stdout and stderr on Windows
+// (std/process/child/child_win32.velt). The executor's reactor polls only sockets (`\Device\Afd`),
+// and an anonymous pipe is none, so each read and write is a blocking `ReadFile` or `WriteFile`
+// on the executor's blocking pool (std/lang/hooks/sched_blocking.velt), as tokio's `process`
+// ran them on its blocking threads.
+//
+// The parent's end of a pipe lives in a counted block: the child's record holds one count, and
+// each read or write in flight holds another, so closing the pipe (`close`, `closeStdin`) while a
+// pool thread blocks in `ReadFile` closes the handle only once that call is over (closing a
+// handle under another thread's synchronous read is undefined for a pipe). The block also keeps
+// the start of a UTF-8 character split across text reads, as the reactor's sources do
+// (std/net/fd_io.velt `readString`).
+//
+// A pipe's operations run one at a time, in the order they were called, as a Node stream's (two
+// writes not awaited one by one would otherwise run on two pool threads in either order). Each
+// joins the block's queue when it is called, and waits for its turn as a task, holding no thread:
+// only the operation whose turn it is has a pool job, so one pipe holds at most one pool thread,
+// and a write blocked on a full pipe never keeps the read that would drain the child from
+// running. The operation runs as a spawned task, which ends whether or not its caller still
+// waits, so it always hands the turn on.
+//
+// The end of a pipe (`ERROR_BROKEN_PIPE`: every handle to the child's end is closed) reads as
+// end of stream; a write to a pipe whose reader is gone fails with `EPIPE`.
+
+import { IoResult } from "velt/native/result";
+import { IoStatus } from "velt/native/status";
+import { utf8DecodeLossy } from "velt/encoding/utf8";
+import { Out } from "velt/ffi/out";
+import { Ptr } from "velt/ffi/ptr";
+import { arrayTruncate, slotPut, slotSize, slotTake } from "velt/lang/intrinsics";
+import * as bl from "velt/lang/hooks/sched_blocking";
+import * as m from "velt/lang/hooks/sched_mem";
+import { addressOf, incompleteTail } from "velt/net/fd_io";
+import { failed, ok, osError, value } from "velt/net/fd_socket";
+import { HandOff, parkAfterWake } from "velt/sync/hand_off";
+
+/** C's `OVERLAPPED`: never passed (the pipes are synchronous). */
+declare c type _OVERLAPPED;
+
+declare c("c") function ReadFile(
+  file: Ptr<void>,
+  buf: u8[],
+  n: u32,
+  read: Out<u32>,
+  overlapped: Ptr<_OVERLAPPED> | null,
+): i32;
+declare c("c") function WriteFile(
+  file: Ptr<void>,
+  buf: Ptr<void>,
+  n: u32,
+  written: Out<u32>,
+  overlapped: Ptr<_OVERLAPPED> | null,
+): i32;
+declare c("c") function CloseHandle(h: Ptr<void>): i32;
+declare c("c") function GetLastError(): u32;
+
+const ERROR_BROKEN_PIPE: u32 = 109;
+/** A write's reader closed its end. */
+const ERROR_NO_DATA: u32 = 232;
+/** The most one read takes (as the runtime's), and one write passes. */
+const MOST_READ: u64 = 16777216;
+const MOST_WRITE: usize = 0x40000000;
+
+// The block: its count, the handle, the carried bytes of a split character and their count, the
+// queue of its operations.
+const P_REFS: usize = 0;
+const P_HANDLE: usize = 8;
+const P_CARRY: usize = 16;
+const P_CARRY_LEN: usize = 24;
+// The queue: its lock, whether an operation has the turn, the waiting operations' nodes (first,
+// last), each the next node then the closure that gives that operation its turn.
+const P_LOCK: usize = 32;
+const P_BUSY: usize = 36;
+const P_HEAD: usize = 40;
+const P_TAIL: usize = 48;
+const P_SIZE: usize = 56;
+const N_NEXT: usize = 0;
+const N_WAKE: usize = 8;
+
+/** The calling thread's last Windows error (`GetLastError`), read right after the failed call. */
+export function lastError(): u32 {
+  // SAFETY: no precondition.
+  return unsafe { GetLastError() };
+}
+
+/** Velt's error code (velt/io's `IoError` codes) of Windows error `e`, as Rust maps them. */
+function codeOf(e: u32): i32 {
+  switch (e) {
+    case 2:
+    case 3:
+    case 267:
+      return 1;
+    case 5:
+      return 2;
+    case 80:
+    case 183:
+      return 3;
+    case 87:
+    case 123:
+      return 4;
+    case 109:
+    case 232:
+      return 10;
+    case 50:
+      return 12;
+    case 6:
+      return 16;
+    default:
+      return 99;
+  }
+}
+
+/** The status of Windows error `e`: its code, and the system's message as Rust words it. */
+export function winError(e: u32): IoStatus {
+  return { code: codeOf(e), message: osError(e as i32).message };
+}
+
+/** Closes handle `h` (not 0). */
+export function closeHandle(h: usize): void {
+  // SAFETY: a handle this module's callers own, not used after.
+  unsafe {
+    CloseHandle(m.ptrTo<void>(h));
+  }
+}
+
+/** A block for the parent's end `h` of a pipe (0 for none), counted once. */
+export function make(h: usize): usize {
+  if (h === 0) {
+    return 0;
+  }
+  const p = m.zeroed(P_SIZE);
+  m.st(p + P_REFS, 1);
+  m.st(p + P_HANDLE, h);
+  return p;
+}
+
+/** One more count of block `p` (the caller holds one, or the record's lock). */
+export function retain(p: usize): void {
+  m.inc(p + P_REFS);
+}
+
+/** Gives back one count of block `p`: the last closes the handle and frees it. */
+export function drop(p: usize): void {
+  if (m.dec(p + P_REFS) === 1) {
+    closeHandle(m.ld(p + P_HANDLE));
+    m.release(p, P_SIZE);
+  }
+}
+
+/** Reads 1..n bytes from pipe `h`, blocking (on a pool thread); empty at the end. */
+function readChunk(h: usize, n: usize): IoResult<u8[]> {
+  const buf: u8[] = Buffer.alloc(n);
+  while (true) {
+    const got = new Out<u32>(0);
+    // SAFETY: `buf` has `n` bytes; a synchronous handle, no OVERLAPPED.
+    const done = unsafe { ReadFile(m.ptrTo<void>(h), buf, n as u32, got, null) };
+    if (done === 0) {
+      const e = lastError();
+      if (e === ERROR_BROKEN_PIPE) {
+        arrayTruncate(buf, 0);
+        return value(buf);
+      }
+      return failed(winError(e), []);
+    }
+    // A zero-length write of the child's reads as nothing, not as the end.
+    if (got.value !== 0) {
+      arrayTruncate(buf, got.value as usize);
+      return value(buf);
+    }
+  }
+}
+
+/** Writes all of `data` to pipe `h`, blocking (on a pool thread). */
+function writeAllNow(h: usize, data: u8[]): IoStatus {
+  let off: usize = 0;
+  while (off < data.length) {
+    const left = data.length - off;
+    const n = left < MOST_WRITE ? left : MOST_WRITE;
+    const put = new Out<u32>(0);
+    const done =
+      // SAFETY: `n` bytes of `data` from `off`; a synchronous handle, no OVERLAPPED.
+      unsafe { WriteFile(
+        m.ptrTo<void>(h),
+        m.ptrTo<void>(addressOf(data, off as u64)),
+        n as u32,
+        put,
+        null,
+      ) };
+    if (done === 0) {
+      const e = lastError();
+      return winError(e === ERROR_NO_DATA ? ERROR_BROKEN_PIPE : e);
+    }
+    off += put.value as usize;
+  }
+  return ok();
+}
+
+function lock(p: usize): void {
+  if (m.cas32(p + P_LOCK, 0, 1) !== 0) {
+    m.spinLock(p + P_LOCK);
+  }
+}
+
+function unlock(p: usize): void {
+  m.store32(p + P_LOCK, 0);
+}
+
+/**
+ * Joins pipe block `p`'s queue (when called, so operations keep the order of the calls): false
+ * when the turn is this operation's at once, true when `h` is given it later.
+ */
+function join(p: usize, h: shared<HandOff<bool>>): bool {
+  lock(p);
+  if (m.ld32(p + P_BUSY) === 0) {
+    m.st32(p + P_BUSY, 1);
+    unlock(p);
+    return false;
+  }
+  const n = m.zeroed(N_WAKE + slotSize<() => void>());
+  // SAFETY: room for the closure, which `endTurn` takes once.
+  unsafe {
+    slotPut<() => void>(n + N_WAKE, () => {
+      const left = h.give(true);
+    });
+  }
+  const last = m.ld(p + P_TAIL);
+  if (last === 0) {
+    m.st(p + P_HEAD, n);
+  } else {
+    m.st(last + N_NEXT, n);
+  }
+  m.st(p + P_TAIL, n);
+  unlock(p);
+  return true;
+}
+
+/** Ends the turn on pipe block `p`: the next operation waiting gets it. */
+function endTurn(p: usize): void {
+  lock(p);
+  const n = m.ld(p + P_HEAD);
+  if (n === 0) {
+    m.st32(p + P_BUSY, 0);
+    unlock(p);
+    return;
+  }
+  const after = m.ld(n + N_NEXT);
+  m.st(p + P_HEAD, after);
+  if (after === 0) {
+    m.st(p + P_TAIL, 0);
+  }
+  unlock(p);
+  // SAFETY: `join` put a closure there; the node is off the queue, so it is taken once.
+  const wake = unsafe { slotTake<() => void>(n + N_WAKE) };
+  m.release(n, N_WAKE + slotSize<() => void>());
+  wake();
+}
+
+/** The turn of an operation that joined as `h` (`waits`: not at once). */
+async function turn(h: shared<HandOff<bool>>, waits: bool): Promise<void> {
+  if (waits) {
+    await parkAfterWake<bool>(h);
+  }
+}
+
+/** A read of pipe block `p` in its turn: hands the turn on and gives the caller's count up. */
+async function readOp(
+  p: usize,
+  h: shared<HandOff<bool>>,
+  waits: bool,
+  n: usize,
+): Promise<IoResult<u8[]>> {
+  await turn(h, waits);
+  const at = m.ld(p + P_HANDLE);
+  const got = await bl.run<IoResult<u8[]>>(() => readChunk(at, n));
+  endTurn(p);
+  drop(p);
+  return got;
+}
+
+/** `readString` of pipe block `p` in its turn: hands the turn on and gives the count up. */
+async function readStringOp(
+  p: usize,
+  h: shared<HandOff<bool>>,
+  waits: bool,
+  n: usize,
+): Promise<IoResult<string>> {
+  await turn(h, waits);
+  const got = await bl.run<IoResult<string>>(() => readStringNow(p, n));
+  endTurn(p);
+  drop(p);
+  return got;
+}
+
+/** A write to pipe block `p` in its turn: hands the turn on and gives the caller's count up. */
+async function writeOp(
+  p: usize,
+  h: shared<HandOff<bool>>,
+  waits: bool,
+  data: u8[],
+): Promise<IoStatus> {
+  await turn(h, waits);
+  const at = m.ld(p + P_HANDLE);
+  const st = await bl.run<IoStatus>(() => writeAllNow(at, data));
+  endTurn(p);
+  drop(p);
+  return st;
+}
+
+/** The size of a read asked for `max` bytes (0: up to 64 KiB). */
+function sizeOf(max: u64): usize {
+  return (max === 0 ? 65536 : max > MOST_READ ? MOST_READ : max) as usize;
+}
+
+/**
+ * The next 1..max bytes of pipe block `p` (`max` 0: up to 64 KiB), whose count the caller gives
+ * up. A pipe's operations run one at a time, in the order they were called, as a Node stream's.
+ */
+export async function read(p: usize, max: u64): Promise<IoResult<u8[]>> {
+  const h = shared(new HandOff<bool>());
+  const waits = join(p, h);
+  return await spawn(readOp(p, h, waits, sizeOf(max)));
+}
+
+/** Writes all of `data` to pipe block `p`, whose count the caller gives up (in order: `read`). */
+export async function write(p: usize, data: u8[]): Promise<IoStatus> {
+  const h = shared(new HandOff<bool>());
+  const waits = join(p, h);
+  return await spawn(writeOp(p, h, waits, data));
+}
+
+/**
+ * The next chunk of pipe block `p` as UTF-8 (its count given up; in order: `read`): a character
+ * split across reads waits in the block for the rest, one cut off by the end becomes U+FFFD.
+ * "" at the end.
+ */
+export async function readString(p: usize, max: u64): Promise<IoResult<string>> {
+  const h = shared(new HandOff<bool>());
+  const waits = join(p, h);
+  return await spawn(readStringOp(p, h, waits, sizeOf(max)));
+}
+
+/** `readString` on a pool thread, in its turn. */
+function readStringNow(p: usize, n: usize): IoResult<string> {
+  while (true) {
+    const got = readChunk(m.ld(p + P_HANDLE), n);
+    if (got.code !== 0) {
+      return failed({ code: got.code, message: got.message }, "");
+    }
+    let bytes = got.value;
+    const carried = m.swap(p + P_CARRY_LEN, 0) as u32;
+    const word = m.ld32(p + P_CARRY);
+    if (carried !== 0) {
+      const all: u8[] = [];
+      for (let i: u32 = 0; i < carried; i++) {
+        all.push(((word >> (8 * i)) & 0xff) as u8);
+      }
+      for (const b of bytes) {
+        all.push(b);
+      }
+      if (got.value.length === 0) {
+        return value(utf8DecodeLossy(all));
+      }
+      bytes = all;
+    }
+    if (bytes.length === 0) {
+      return value("");
+    }
+    const keep = incompleteTail(bytes);
+    if (keep !== 0) {
+      let w: u32 = 0;
+      const from = bytes.length - keep;
+      for (let i: usize = 0; i < keep; i++) {
+        w = w | ((bytes[from + i] as u32) << (8 * (i as u32)));
+      }
+      m.st32(p + P_CARRY, w);
+      m.swap(p + P_CARRY_LEN, keep);
+      arrayTruncate(bytes, from);
+      if (bytes.length === 0) {
+        continue;
+      }
+    }
+    return value(utf8DecodeLossy(bytes));
+  }
+}
+
+/** Everything left on pipe block `p` (0: none; the caller keeps its count). */
+export async function drain(p: usize): Promise<u8[]> {
+  const all: u8[] = [];
+  if (p === 0) {
+    return all;
+  }
+  while (true) {
+    retain(p);
+    const got = await read(p, 0);
+    if (got.code !== 0 || got.value.length === 0) {
+      return all;
+    }
+    for (const b of got.value) {
+      all.push(b);
+    }
+  }
+}

@@ -57,7 +57,7 @@ impl FnLower<'_, '_> {
     }
 
     /// The value of type `t` the `any` at `*v` holds (taken from it), checked.
-    fn any_set_value(&mut self, v: vir::Local, t: TyId) -> Operand {
+    pub(super) fn any_set_value(&mut self, v: vir::Local, t: TyId) -> Operand {
         let any = self.cx.any_ty();
         let vp = self.any_out(v);
         let avt = self.cx.ty(any);
@@ -124,6 +124,11 @@ impl FnLower<'_, '_> {
             }
             let next = self.on_key(key, name);
             let fty = self.cx.member_ty(ty, i as u32);
+            if let Some((cell, value)) = self.cx.cell_field(ty, i as u32) {
+                self.any_set_cell(v, &vp, ty, i as u32, (fty, cell, value));
+                self.switch_to(next);
+                continue;
+            }
             if readonly.contains(name) || !self.cx.any_unboxable(fty) {
                 self.any_set_refuse(v, ST_UNSUPPORTED);
             } else {
