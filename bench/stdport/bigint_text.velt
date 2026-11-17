@@ -1,0 +1,37 @@
+// BigInt to decimal and hex text and back at four sizes (3, 25, 248 and 991 limbs). The Rust
+// port uses `dashu-int`, which `velt/math` ran on before it moved to Velt.
+import { BigInt } from "velt/math";
+
+// `b^e` by squaring (`pow` is newer than this row).
+function power(b: i64, e: i64): BigInt {
+  let result = new BigInt(1);
+  let base = new BigInt(b);
+  let k = e;
+  while (k > 0) {
+    if ((k & 1) != 0) {
+      result = result.mul(base);
+    }
+    k = k >> 1;
+    if (k > 0) {
+      base = base.mul(base);
+    }
+  }
+  return result;
+}
+
+function main() {
+  let acc: i64 = 0;
+  const sizes: i64[] = [100, 1000, 10000, 40000];
+  const reps: i64[] = [100000, 5000, 100, 10];
+  for (let s = 0; s < 4; s++) {
+    const x = power(3, sizes[s]);
+    for (let i: i64 = 0; i < reps[s]; i++) {
+      x.addIntAssign(1);
+      const text = x.toString();
+      const hex = x.toString(16);
+      acc = acc ^ BigInt.parse(text).toI64() ^ BigInt.parse(hex, 16).toI64();
+      acc += (text.length + hex.length) as i64;
+    }
+  }
+  console.log(acc);
+}

@@ -9,10 +9,8 @@ crate-type = ["staticlib", "rlib"]
 
 [dependencies]
 bytes = "1.12.1"
-dashu-int = "0.6.1"
 futures-util = { version = "0.3.34", default-features = false, features = ["std", "sink"] }
 getrandom = "0.4.3"
-itoa = "1.0.18"
 libm = "0.2.16"
 # The same C library mimalloc wraps, called directly by mem.rs for the small-alignment fast path.
 libmimalloc-sys = { version = "0.1.49", default-features = false, optional = true }
@@ -23,7 +21,6 @@ parking_lot = "0.12.5"
 parking_lot_core = "0.9.12"
 regex = "1.13.1"
 rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
-ryu = "1.0.23"
 velt_text = { path = "../velt_text" }
 velt_tls = { path = "../velt_tls" }
 socket2 = "0.6.5"

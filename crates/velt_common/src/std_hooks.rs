@@ -59,11 +59,14 @@ hooks! {
 
     // number.velt: numbers as text, and the conversions of a float index.
     /// `n.toString(radix)` of a float (`velt_sema` `builtins.rs`).
-    f64_to_string => lang_hooks_number, "f64ToString", sig((f64, f64) -> string);
+    f64_to_string => lang_hooks_number, "f64ToString", sig((f64, f64) -> string),
+        replaces("velt_rt_f64_to_radix");
     /// `n.toString(radix)` of a signed integer.
-    i64_to_string => lang_hooks_number, "i64ToString", sig((i64, f64) -> string);
+    i64_to_string => lang_hooks_number, "i64ToString", sig((i64, f64) -> string),
+        replaces("velt_rt_i64_to_radix");
     /// `n.toString(radix)` of an unsigned integer.
-    u64_to_string => lang_hooks_number, "u64ToString", sig((u64, f64) -> string);
+    u64_to_string => lang_hooks_number, "u64ToString", sig((u64, f64) -> string),
+        replaces("velt_rt_u64_to_radix");
     /// `Math.imul`-like `(a * b) | 0` of two int32 values (`velt_sema` `int32.rs`, `velt_opt`
     /// numrep).
     mul_to_int32 => lang_hooks_number, "mulToInt32", sig((f64, f64) -> i32), lowered;
@@ -71,6 +74,21 @@ hooks! {
     float_index => lang_hooks_number, "floatIndex", sig((f64) -> usize), lowered;
     /// A float position argument (`xs.at(i)`, `s.slice(i)`).
     float_position => lang_hooks_number, "floatPosition", sig((f64) -> usize);
+    // number_digits.velt: numbers rounded to a number of digits, which std calls by role.
+    /// `x.toExponential(digits)` (`digits` below 0: omitted; the prelude's method).
+    number_to_exponential => lang_hooks_number_digits, "toExponentialText", sig((f64, i64) -> string),
+        replaces("velt_rt_f64_to_exponential"), prebuilt;
+    /// `x.toPrecision(precision)` (the prelude's method).
+    number_to_precision => lang_hooks_number_digits, "toPrecisionText", sig((f64, i64) -> string),
+        replaces("velt_rt_f64_to_precision"), prebuilt;
+    /// `x.toFixed(digits)` from the exact digits: what std's `toFixed` (velt/lang/number/fixed)
+    /// can't do in 64 bits, and `toFixed` through `any`.
+    number_to_fixed => lang_hooks_number_digits, "toFixedText", sig((f64, i64) -> string),
+        replaces("velt_rt_f64_to_fixed"), prebuilt;
+    /// A decimal literal of `Number(s)` or `parseFloat(s)` (velt/lang/number/parse) that 64 bits
+    /// don't settle, from its bytes `start` to `end`.
+    number_parse_long => lang_hooks_number_parse, "longDecimalValue", sig((&string, usize, usize) -> f64),
+        replaces("velt_rt_parse_float"), prebuilt;
     /// `s.localeCompare(t)` (only std calls it: the method, and `anyStr_localeCompare` for a
     /// string held as `any`).
     locale_order => lang_string_collate, "localeOrder", sig((&string, &string) -> i64),

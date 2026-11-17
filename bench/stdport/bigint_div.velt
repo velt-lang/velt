@@ -1,0 +1,36 @@
+// BigInt quotients and remainders: a number twice as long as its divisor at four sizes (3, 25,
+// 248 and 991 limbs of divisor), and one limb divisors. The Rust port uses `dashu-int`, which
+// `velt/math` ran on before it moved to Velt.
+import { BigInt } from "velt/math";
+
+// `b^e` by squaring (`pow` is newer than this row).
+function power(b: i64, e: i64): BigInt {
+  let result = new BigInt(1);
+  let base = new BigInt(b);
+  let k = e;
+  while (k > 0) {
+    if ((k & 1) != 0) {
+      result = result.mul(base);
+    }
+    k = k >> 1;
+    if (k > 0) {
+      base = base.mul(base);
+    }
+  }
+  return result;
+}
+
+function main() {
+  let acc: i64 = 0;
+  const sizes: i64[] = [100, 1000, 10000, 40000];
+  const reps: i64[] = [100000, 10000, 200, 20];
+  for (let s = 0; s < 4; s++) {
+    const x = power(7, 2 * sizes[s]);
+    const y = power(3, sizes[s]);
+    for (let i: i64 = 0; i < reps[s]; i++) {
+      x.addIntAssign(1);
+      acc = acc ^ x.div(y).toI64() ^ x.rem(y).toI64() ^ x.remInt(1000000007).toI64();
+    }
+  }
+  console.log(acc);
+}

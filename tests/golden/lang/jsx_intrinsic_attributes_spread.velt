@@ -1,4 +1,5 @@
 // @jsxImportSource ./_jsx_attrs
+// check: no leaks
 
 // Attributes of `JSX.IntrinsicAttributes` given by a spread source reach the provider like written
 // ones (TypeScript accepts them in a spread). A later value of the same name replaces an earlier
