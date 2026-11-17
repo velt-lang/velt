@@ -86,7 +86,7 @@ function sl(): usize {
 /** One line: the monitor's state and counters, then each started worker's. */
 function line(g: usize, at: usize): void {
   const n = m.load(g + t.E_STARTED);
-  let s = `sched ${at}ms ticks=${m.load(g + t.E_TICKS)} started=${n} monAsleep=${m.load32(g + t.E_MON_ASLEEP)} moving=${m.load(g + t.E_MOVING)} rescues=${RESCUES.load()} spares=${SPARES.load()} turns=${TURNS.load()} yields=${m.SPIN_YIELDS.load()} pollsLost=${m.POLLS_LOST.load()} pollsReopened=${m.POLLS_REOPENED.load()} lazy=${m.load(g + t.E_LAZY)} split=${m.ld(g + t.E_SPLIT)} relax=${m.load32(g + t.E_RELAX)} calm=${m.ld(g + t.E_CALM)} count=${m.ld(g + t.E_COUNT)}`;
+  let s = `sched ${at}ms ticks=${m.load(g + t.E_TICKS)} started=${n} monAsleep=${m.load32(g + t.E_MON_ASLEEP)} moving=${m.load(g + t.E_MOVING)} rescues=${RESCUES.load()} spares=${SPARES.load()} turns=${TURNS.load()} yields=${m.SPIN_YIELDS.load()} pollsLost=${m.POLLS_LOST.load()} pollsReopened=${m.POLLS_REOPENED.load()} lazy=${m.load(g + t.E_LAZY)} split=${m.ld(g + t.E_SPLIT)} relax=${m.load32(g + t.E_RELAX)} calm=${m.ld(g + t.E_CALM)} count=${m.ld(g + t.E_COUNT)} rootHandover=${m.P_HANDOVER.load()} rootSteal=${m.P_STEAL.load()} rootOnSpareHomed=${m.P_RUN_HOMED.load()} rootOnSpareAway=${m.P_RUN_AWAY.load()}`;
   for (let i: usize = 0; i < n; i++) {
     const w = t.worker(i);
     const b = m.ld(w + t.E_IO);

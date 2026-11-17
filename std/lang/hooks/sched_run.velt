@@ -39,6 +39,13 @@ import * as wk from "./sched_wake";
  */
 @inline
 export function run(e: usize, k: usize, mode: u32): void {
+  if (mode !== 0 && k === m.ld(t.main() + t.E_ROOT) && m.ld(e + t.E_INDEX) >= m.ld(t.main() + t.E_COUNT)) {
+    if (m.ld(k + t.T_HOME) === e) {
+      m.P_RUN_HOMED.add(1, "relaxed");
+    } else {
+      m.P_RUN_AWAY.add(1, "relaxed");
+    }
+  }
   if (stdUsed("nodeTimers") && mode !== 0) {
     // A new poll: no look found it busy yet (before the state's store, which publishes it).
     m.store32(k + t.T_SKIPPED, 0);

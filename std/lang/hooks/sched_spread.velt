@@ -205,6 +205,9 @@ export function steal(e: usize): bool {
     q.lock(e, mode);
     while (k !== 0) {
       const next = m.ld(k + t.T_NEXT);
+      if (k === m.ld(t.main() + t.E_ROOT)) {
+        m.P_STEAL.add(1, "relaxed");
+      }
       m.st(k + t.T_HOME, e);
       q.pushRest(e, k, mode);
       k = next;

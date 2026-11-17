@@ -445,6 +445,9 @@ export function startSpare(g: usize, now: usize): usize {
 
 /** Makes worker `h` the home of task `k`, queues it in its inbox and wakes it. */
 export function handOver(h: usize, k: usize): void {
+  if (k === m.ld(t.main() + t.E_ROOT)) {
+    m.P_HANDOVER.add(1, "relaxed");
+  }
   m.st(k + t.T_HOME, h);
   m.pushStack(h + t.E_INBOX, k, t.T_NEXT);
   wk.unpark(h);
