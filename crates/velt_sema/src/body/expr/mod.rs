@@ -22,6 +22,7 @@ mod bound_values;
 mod catch_any;
 mod lit_members;
 mod raw_memory;
+mod record_widen;
 mod thread_local;
 pub(crate) use assign_pattern::REPORTED;
 mod attempt;

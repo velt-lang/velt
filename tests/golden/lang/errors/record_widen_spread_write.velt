@@ -1,0 +1,15 @@
+// A write inside a spread's expression is a write too, though the spread builds a new record
+// (Node prints z z: one record, where the copy would keep 1).
+const held: Record<string, string | number>[] = [];
+function keep(r: Record<string, string | number>): void {
+  held.push(r);
+}
+const attrs: Record<string, number> = { a: 1 };
+keep(attrs);
+const out: Record<string, string | number> = {
+  ...(() => {
+    held[0]["a"] = "z";
+    return attrs;
+  })(),
+};
+console.log(held[0]["a"], out["a"]);
