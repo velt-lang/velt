@@ -64,6 +64,9 @@ fn base_first(cx: &Ctx, d: DefId, seen: &mut FxHashSet<DefId>, order: &mut Vec<D
 fn overridden_methods(cx: &mut Ctx, adts: &[DefId]) -> (Overridden, Overrides) {
     let mut out = BTreeSet::new();
     let mut overrides = Overrides::default();
+    if cx.units_stage == crate::units::Stage::Std {
+        open_std_slots(cx, adts, &mut out);
+    }
     for &d in adts {
         // Fields implementing abstract members fill their slots (`abstract_fields`).
         for (key, _) in super::abstract_fields::field_impls(cx, d) {
@@ -127,6 +130,49 @@ fn overridden_methods(cx: &mut Ctx, adts: &[DefId]) -> (Overridden, Overrides) {
         }
     }
     (out, overrides)
+}
+
+/// EXPERIMENT (#2943 D1, vtable slots): std's unit is checked without the program, so the std
+/// methods a program may override get their slot in std's own unit, whether or not something
+/// overrides them: every instance method and accessor of `Error` and its subclasses, and any
+/// std class's `toString` and `toJSON`. Std's own calls of them dispatch, as they do in a lazy
+/// program that overrides them.
+fn open_std_slots(cx: &mut Ctx, adts: &[DefId], out: &mut Overridden) {
+    let error = cx.prelude_adt("Error");
+    let is_error = |cx: &Ctx, d: DefId| {
+        let mut cur = Some(d);
+        let mut guard = 0;
+        while let Some(c) = cur {
+            if Some(c) == error {
+                return true;
+            }
+            guard += 1;
+            if guard > 64 {
+                return false;
+            }
+            cur = base_of_def(cx, c);
+        }
+        false
+    };
+    for &d in adts {
+        let Some(decl) = cx.adt(d).and_then(|a| a.decl) else {
+            continue;
+        };
+        let module = cx.adt(d).expect("ICE: adt").module;
+        let whole = is_error(cx, d);
+        for m in (decl.methods.iter())
+            .filter(|m| !m.is_static && !m.decl.sig.name.is_private_name())
+            .filter(|m| m.decl.sig.generics.is_empty())
+        {
+            let name = &m.decl.sig.name;
+            if !whole && !matches!(name.name.as_str(), "toString" | "toJSON") {
+                continue;
+            }
+            let key = cx.method_key(module, name, m.is_setter);
+            let origin = introducer(cx, d, &key).unwrap_or(d);
+            out.insert((origin, key));
+        }
+    }
 }
 
 /// Does `d`'s method `key` redefine one a std class declares (`Error.toString`)? TypeScript
