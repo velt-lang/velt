@@ -39,9 +39,8 @@ pub(crate) struct AsyncSummaries {
 
 /// The finished unit's functions the unit calls: their parameters flow to what they return.
 pub(super) fn returns(cx: &Ctx, g: &mut graph::Graph) {
-    let from = cx.walked_from();
     for (f, ls) in &cx.unit_sums.async_summaries.rets {
-        if f.0 >= from {
+        if cx.walks(*f) {
             continue;
         }
         let Some(&r) = g.ids.get(&Node::Ret(*f)) else {
@@ -57,9 +56,10 @@ pub(super) fn returns(cx: &Ctx, g: &mut graph::Graph) {
 
 /// ... and their parameters cross, or are kept, as the finished unit found.
 pub(super) fn seed(cx: &Ctx, g: &graph::Graph, p: &mut Propagation) {
-    let from = cx.walked_from();
     for (f, ps) in &cx.unit_sums.async_summaries.params {
-        if f.0 >= from {
+        // With the std code the program reaches walked ([`Ctx::walk_std`]), the rest of the
+        // unit's functions are code the program doesn't have: their facts don't count.
+        if cx.walks(*f) || cx.walk_std.is_some() {
             continue;
         }
         for (l, flags, why, shared) in ps {
@@ -99,14 +99,14 @@ pub(super) fn merge(cx: &Ctx, g: &mut graph::Graph) {
     // does not stay in locals (`call_sites::held_in_locals`).
     for n in 0..g.nodes.len() {
         match g.nodes[n] {
-            Node::Ret(f) if f.0 < cx.walked_from() => {
+            Node::Ret(f) if !cx.walks(f) => {
                 g.unknown[n] = true;
                 let ty = g.tys[n];
                 if !g.inflows[n].contains(&(ty, None)) {
                     g.inflows[n].push((ty, None));
                 }
             }
-            Node::Local(f, _) if f.0 < cx.walked_from() => g.held.escapes.push(n),
+            Node::Local(f, _) if !cx.walks(f) => g.held.escapes.push(n),
             _ => {}
         }
     }
@@ -149,6 +149,11 @@ pub(super) fn find_crossing_closure_params(cx: &Ctx) -> Vec<(DefId, usize, Optio
 /// The finished unit's crossing values of a generic type, resolved again with this unit's
 /// instantiations (`resolve_hits`).
 pub(super) fn std_hits(cx: &Ctx, p: &mut Propagation) {
+    // With the std code the program reaches walked ([`Ctx::walk_std`]), its hits are found
+    // again; the rest of the unit's are code the program doesn't have.
+    if cx.walk_std.is_some() {
+        return;
+    }
     p.hits
         .extend(cx.unit_sums.async_summaries.hits.iter().copied());
 }

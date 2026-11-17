@@ -110,6 +110,15 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
     cx.subclass_map();
     cx.crossing_callbacks.clear();
     cx.in_shared.clear();
+    // EXPERIMENT (#2943): walk the std code lazy std would have checked (`Ctx::walk_std`).
+    if cx.units_stage == crate::units::Stage::App
+        && std::env::var_os("VELT_UNITS_WALK_STD").is_some()
+    {
+        let from = cx.walked_from();
+        let live = crate::body::lazy_std::units_live_set(cx);
+        let set: rustc_hash::FxHashSet<DefId> = live.into_iter().filter(|d| d.0 < from).collect();
+        cx.walk_std = Some(std::rc::Rc::new(set));
+    }
     let mut g = crate::timings::pass("local_async::graph", || graph::build(cx));
     summaries::returns(cx, &mut g);
     summaries::merge(cx, &mut g);

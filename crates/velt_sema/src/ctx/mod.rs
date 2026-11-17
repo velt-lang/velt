@@ -133,6 +133,11 @@ pub(crate) struct Ctx<'m> {
     /// a finished unit's are the program's only when it reaches them
     /// (`units::Summaries::dyn_member_fns`).
     pub dyn_member_fns: FxHashSet<DefId>,
+    /// EXPERIMENT (#2943, `VELT_UNITS_WALK_STD`): a later unit's async closures' analysis
+    /// (`ownership::local_async`) also walks these functions of the finished unit, those lazy std
+    /// would have checked, instead of taking their summaries (which hold all of std's
+    /// boundaries).
+    pub walk_std: Option<std::rc::Rc<FxHashSet<DefId>>>,
     pub scopes: Vec<ModuleScope>,
     /// Exports of `std/prelude/*` modules, visible everywhere.
     pub prelude: FxHashMap<String, Item>,
@@ -596,6 +601,12 @@ impl<'m> Ctx<'m> {
         }
     }
 
+    /// Does the async closures' analysis walk the body of `d` (from [`Ctx::walked_from`] on, or
+    /// one of [`Ctx::walk_std`]) rather than take its unit's summary?
+    pub(crate) fn walks(&self, d: DefId) -> bool {
+        d.0 >= self.walked_from() || self.walk_std.as_ref().is_some_and(|s| s.contains(&d))
+    }
+
     /// Is definition `i` one the program is built from ([`Ctx::program_set`], or from
     /// [`Ctx::program_from`] on)? Asked before the definition is read.
     pub(crate) fn in_program(&self, i: usize) -> bool {
@@ -668,6 +679,7 @@ impl<'m> Ctx<'m> {
             program_new_from: 0,
             program_dispatch: FxHashSet::default(),
             dyn_member_fns: FxHashSet::default(),
+            walk_std: None,
             unit_sums: Default::default(),
             units_stage: crate::units::Stage::Both,
             scopes,
