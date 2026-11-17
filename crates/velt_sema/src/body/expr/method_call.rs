@@ -133,6 +133,8 @@ impl FnCx<'_, '_> {
         };
         // A comparator of `any` values may throw from what it reads: std/prelude/sort.velt.
         let dynamic_sort = self.dynamic_sort_name(recv.ty, prop, args);
+        // The method as written, for the read-only check (`sort` is renamed just below).
+        let written = prop;
         let prop = dynamic_sort.as_ref().unwrap_or(prop);
         // Methods of a literal type are its base type's (`kind.toUpperCase()`).
         let recv = self.widen_literal_receiver(recv, &prop.name);
@@ -201,7 +203,11 @@ impl FnCx<'_, '_> {
             },
             false => recv,
         };
-        self.readonly_method_call(&recv, &prop.name, args, prop.span);
+        self.readonly_method_call(&recv, &written.name, args, prop.span);
+        // A read-only array has its array's methods; the mutating ones are refused just above
+        // (#3061). The twin is the same array for lowering.
+        let mut recv = recv;
+        recv.ty = self.cx.ty.mutable_twin(recv.ty);
         let Some(r) = self.resolve_method(recv.ty, &prop.name) else {
             // A method of an interface every member of a union extends.
             let recv = match self.cx.union_def(recv.ty).is_some() {

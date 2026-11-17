@@ -32,7 +32,8 @@ pub(crate) enum Portable {
     /// A value of an interface type (`unknown`, `any`, a thrown interface value): the
     /// interface's id, declaration span and type arguments.
     Dyn(DefId, Span, Vec<Portable>),
-    Array(Box<Portable>),
+    /// An array, read-only (`readonly T[]`, #3061) or not.
+    Array(Box<Portable>, bool),
     Option(Box<Portable>, Nothing),
 }
 
@@ -44,7 +45,7 @@ impl Portable {
             Portable::Def(_, _, args) | Portable::Dyn(_, _, args) => {
                 1 + args.iter().map(Portable::size).sum::<usize>()
             }
-            Portable::Array(e) | Portable::Option(e, _) => 1 + e.size(),
+            Portable::Array(e, _) | Portable::Option(e, _) => 1 + e.size(),
         }
     }
 }
@@ -694,7 +695,10 @@ impl Ctx<'_> {
                     .collect::<Option<Vec<_>>>()?;
                 Portable::Dyn(*d, span, args)
             }
-            TyKind::Array(e) => Portable::Array(Box::new(self.port(*e, depth + 1)?)),
+            TyKind::Array(e) => Portable::Array(
+                Box::new(self.port(*e, depth + 1)?),
+                self.ty.is_readonly_array(t),
+            ),
             TyKind::Option(e, n) => Portable::Option(Box::new(self.port(*e, depth + 1)?), *n),
             _ => return None,
         })
@@ -722,7 +726,11 @@ impl Ctx<'_> {
                     .collect::<Option<Vec<_>>>()?;
                 TyKind::Dyn(*d, args)
             }
-            Portable::Array(e) => TyKind::Array(self.unport(e)?),
+            Portable::Array(e, true) => {
+                let e = self.unport(e)?;
+                return Some(self.ty.readonly_array(e));
+            }
+            Portable::Array(e, false) => TyKind::Array(self.unport(e)?),
             Portable::Option(e, n) => TyKind::Option(self.unport(e)?, *n),
         };
         Some(self.ty.intern(k))

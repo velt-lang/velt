@@ -508,7 +508,9 @@ impl Ctx<'_> {
             return Some(self.ty.error);
         }
         let k = match name {
-            "Array" | "ReadonlyArray" => TyKind::Array(args[0]),
+            "Array" => TyKind::Array(args[0]),
+            // `readonly T[]` (parsed as this) is `T[]`'s read-only twin (#3061).
+            "ReadonlyArray" => return Some(self.ty.readonly_array(args[0])),
             // TypeScript's `Promise<T>` may reject: what with is inferred (`throws::promise_sites`).
             "Promise" if args.len() == 1 => {
                 return Some(self.promise_site(args[0], t.span, env.module))

@@ -456,6 +456,19 @@ impl Ctx<'_> {
                 .collect();
             let (twin, _) = self.anon_def_with(&plain, module);
             self.readonly_twins.insert(d, (twin, None));
+        } else if norm.iter().any(|f| self.plain_arrays(f.ty) != f.ty) {
+            // A field holding a read-only array (`{ xs: readonly number[] }`, #3061) is the
+            // plain field for lowering too: one object, which a `{ xs: number[] }` converts to
+            // (`readonly_nested`).
+            let plain: Vec<ShapeField> = norm
+                .iter()
+                .map(|f| ShapeField {
+                    ty: self.plain_arrays(f.ty),
+                    ..f.clone()
+                })
+                .collect();
+            let (twin, _) = self.anon_def_with(&plain, module);
+            self.array_twins.insert(d, twin);
         }
         (d, params)
     }

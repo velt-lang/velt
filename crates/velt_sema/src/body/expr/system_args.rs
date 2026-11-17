@@ -57,6 +57,8 @@ impl FnCx<'_, '_> {
         pty: TyId,
         want: Want,
     ) -> Option<hir::Expr> {
+        // A buffer the function only reads (`readonly u8[]`, #3061) is the same array here.
+        let pty = self.cx.ty.mutable_twin(pty);
         let bytes = self.is_byte_array(pty);
         // A C function's array of other numbers takes `xs.subarray(…)` of its own type too.
         let elem = self.cx.ty.array_elem(pty);
