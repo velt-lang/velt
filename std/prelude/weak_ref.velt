@@ -1,8 +1,7 @@
 // Prelude: `WeakRef<T>` (https://veltlang.com/docs/std/prelude/#weakmap-weakset-and-weakref), a reference that does not
 // keep its target alive, on std's weak core (std/lang/hooks/weak.velt) (docs/internals/design/weak-refs.md).
 
-import { weakRefDeref, weakRefNew } from "velt/lang/intrinsics";
-import { weakRefDrop } from "velt/lang/hooks/weak";
+import { weakRefDeref, weakRefDrop, weakRefNew } from "velt/lang/intrinsics";
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 

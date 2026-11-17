@@ -199,7 +199,9 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::WeakMapValue
         | I::WeakRefNew
         | I::InspectNested
-        | I::WeakRefDeref => false,
+        | I::WeakRefDeref
+        | I::WeakMapDrop
+        | I::WeakRefDrop => false,
         // Record views: a view's source read or written through `any`, no formatting.
         I::RecordViewSync
         | I::RecordViewIs

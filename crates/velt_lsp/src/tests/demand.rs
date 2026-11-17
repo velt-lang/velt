@@ -155,6 +155,11 @@ const PROGRAMS: &[(&str, &[&str])] = &[
         "function main() {\n  const a: any = { k: \"v\" };\n  const r = a as Record<string, string>;\n  console.log(r[\"k\"]);\n}\n",
         &["std/lang/hooks/any_record"],
     ),
+    // A weak collection: std's weak core (#3145), which no other program loads.
+    (
+        "class K {\n  n: number = 1;\n}\nfunction main() {\n  const k = new K();\n  const r = new WeakRef(k);\n  console.log(r.deref() === k);\n}\n",
+        &["std/lang/hooks/weak"],
+    ),
     // An error with a demand: reported the same, wherever the module came from.
     (
         "function main() {\n  const n: i64 = \"text\";\n  console.log(`n=${n}`);\n}\n",

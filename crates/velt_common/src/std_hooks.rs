@@ -251,9 +251,9 @@ hooks! {
     /// `map.delete(key)`.
     weak_map_delete => lang_hooks_weak, "weakMapDelete", sig((u32, usize) -> bool), lowered, constructs(Weak),
         replaces("velt_rt_weakmap_delete");
-    /// A weak map's drop (std's `WeakMap` and `WeakSet` call it).
-    weak_map_drop => lang_hooks_weak, "weakMapDrop", sig((u32) -> void),
-        replaces("velt_rt_weakmap_drop");
+    /// A weak map's drop (std's `WeakMap` and `WeakSet`, through `weakMapDrop`'s intrinsic).
+    weak_map_drop => lang_hooks_weak, "weakMapDrop", sig((u32) -> void), lowered,
+        constructs(Weak), replaces("velt_rt_weakmap_drop");
     /// `new WeakRef(obj)`: its handle.
     weak_ref_new => lang_hooks_weak, "weakRefNew", sig((usize) -> u32), lowered, constructs(Weak),
         replaces("velt_rt_weakref_new");
@@ -266,9 +266,9 @@ hooks! {
     /// `ref.deref()`: the target's word, retained, or 0.
     weak_ref_deref => lang_hooks_weak, "weakRefDeref", sig((u32) -> usize), lowered, constructs(Weak),
         replaces("velt_rt_weakref_deref");
-    /// A `WeakRef`'s drop (std's `WeakRef` calls it).
-    weak_ref_drop => lang_hooks_weak, "weakRefDrop", sig((u32) -> void),
-        replaces("velt_rt_weakref_drop");
+    /// A `WeakRef`'s drop (std's `WeakRef`, through `weakRefDrop`'s intrinsic).
+    weak_ref_drop => lang_hooks_weak, "weakRefDrop", sig((u32) -> void), lowered,
+        constructs(Weak), replaces("velt_rt_weakref_drop");
     // heap.velt: a release build's allocator, mimalloc through `declare c` (#2196). velt_opt's
     // last step (`heap_calls`) turns the runtime allocator calls lowering emits into these.
     /// `velt_rt_alloc`'s job: `(size, align)`, the block's address.

@@ -105,6 +105,16 @@ impl FnLower<'_, '_> {
                         .op(),
                 }
             }
+            (I::WeakMapDrop, [m]) => {
+                let m = ty::U32::arg(self.expr(m));
+                hooks::weak_map_drop(self, Construct::Weak, m).emit(self);
+                super::unit()
+            }
+            (I::WeakRefDrop, [r]) => {
+                let r = ty::U32::arg(self.expr(r));
+                hooks::weak_ref_drop(self, Construct::Weak, r).emit(self);
+                super::unit()
+            }
             (I::WeakMapValue, [w]) => {
                 let w = self.expr(w);
                 let t = self.sub(ty);

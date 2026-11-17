@@ -601,6 +601,12 @@ pub enum Intrinsic {
     /// std only: `weakRefDeref<T>(r: u32): T | null` — the target (counted), or
     /// null once it was freed.
     WeakRefDeref,
+    /// std only: `weakMapDrop(m: u32)` — weak map `m`'s drop: every value is released. Lowered
+    /// to std's weak core (`Construct::Weak`), which a program without weak collections
+    /// doesn't load.
+    WeakMapDrop,
+    /// std only: `weakRefDrop(r: u32)` — a `WeakRef` slot's drop.
+    WeakRefDrop,
 
     // Record views (#379; std/prelude/record.velt, velt_vir lower/record_view.rs): a record an
     // `any` is converted to with `any` values is a view of the object the `any` holds. Each is

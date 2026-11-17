@@ -134,10 +134,12 @@ export {
 } from "velt/lang/intrinsics/types";
 export {
   weakMapDelete,
+  weakMapDrop,
   weakMapGet,
   weakMapHas,
   weakMapSet,
   weakMapValue,
   weakRefDeref,
+  weakRefDrop,
   weakRefNew,
 } from "velt/lang/intrinsics/weak";

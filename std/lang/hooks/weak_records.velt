@@ -12,6 +12,7 @@
 // `WeakRef`s. Each list keeps its first item in the record and the rest in a vector, so a record
 // of an object in one map with one `WeakRef` allocates nothing of its own.
 
+import { noInline } from "velt/lang/intrinsics";
 import {
   RC_COUNT,
   RC_WEAK,
@@ -73,6 +74,7 @@ export function state(): usize {
   return makeState();
 }
 
+@noInline
 function makeState(): usize {
   const n = alloc(HEADER);
   st(n + H_RECS, alloc(64 * RECORD));

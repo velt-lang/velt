@@ -620,7 +620,9 @@ fn walk_expr(ty: &crate::types::Types, e: &hir::Expr, w: &mut Walk) {
                     | I::WeakMapDelete
                     | I::WeakMapValue
                     | I::WeakRefNew
-                    | I::WeakRefDeref,
+                    | I::WeakRefDeref
+                    | I::WeakMapDrop
+                    | I::WeakRefDrop,
                 ),
             ..
         } => w.weak = true,

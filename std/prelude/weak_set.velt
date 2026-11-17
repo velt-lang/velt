@@ -1,8 +1,7 @@
 // Prelude: `WeakSet<T>` (https://veltlang.com/docs/std/prelude/#weakmap-weakset-and-weakref), a set of objects that does
 // not keep them alive, on std's weak maps (weak.velt; docs/internals/design/weak-refs.md).
 
-import { weakMapDelete, weakMapHas, weakMapSet } from "velt/lang/intrinsics";
-import { weakMapDrop } from "velt/lang/hooks/weak";
+import { weakMapDelete, weakMapDrop, weakMapHas, weakMapSet } from "velt/lang/intrinsics";
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 

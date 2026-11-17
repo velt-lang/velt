@@ -80,7 +80,11 @@ const REMOVED: usize = 1;
 
 /** The block of map `id`. */
 export function mapOf(h: usize, id: u32): usize {
-  return ld(ld(h + H_MAPS) + (id as usize) * W);
+  const b = (id as usize) < ld(h + H_MNEXT) ? ld(ld(h + H_MAPS) + (id as usize) * W) : 0;
+  if (b === 0) {
+    panic("ICE: weak map used after drop");
+  }
+  return b;
 }
 
 /** A new map with this glue (each 0 or a function's address). */

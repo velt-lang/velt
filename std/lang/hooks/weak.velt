@@ -224,6 +224,7 @@ export function weakRelease(obj: usize): bool {
  * back to keys, so entries are never ephemerons). A value word of a map with `release` is 0 or a
  * counted object's address.
  */
+@noInline
 export function weakMapNew(keyTrace: usize, retain: usize, release: usize, trace: usize): u32 {
   if ((retain === 0) !== (release === 0) || (trace !== 0 && release === 0)) {
     panic("ICE: weak map values need both retain and release glue, and trace glue only with them");
@@ -235,6 +236,7 @@ export function weakMapNew(keyTrace: usize, retain: usize, release: usize, trace
 }
 
 /** `map.set(key, value)`: takes over the caller's reference to `value`; the key is not counted. */
+@noInline
 export function weakMapSet(map: u32, key: usize, value: u64): void {
   untagged(key);
   const h = enter();
@@ -246,6 +248,7 @@ export function weakMapSet(map: u32, key: usize, value: u64): void {
  * `weakMapSet` with the key's own trace glue instead of the map's (a map whose key type is
  * dynamic, `WeakMap<object, V>`: each key's type is known only from its value).
  */
+@noInline
 export function weakMapSetTraced(map: u32, key: usize, value: u64, keyTrace: usize): void {
   untagged(key);
   const h = enter();
@@ -275,6 +278,7 @@ function set(h: usize, map: u32, key: usize, value: u64, keyTrace: usize): void 
  * Counted because any later release of a weakly held object may run a trial that deletes the
  * entry and releases its value.
  */
+@noInline
 export function weakMapGet(map: u32, key: usize): u64 {
   untagged(key);
   const h = enter();
@@ -296,6 +300,7 @@ export function weakMapGet(map: u32, key: usize): u64 {
 }
 
 /** `map.has(key)`. */
+@noInline
 export function weakMapHas(map: u32, key: usize): bool {
   untagged(key);
   const h = enter();
@@ -305,6 +310,7 @@ export function weakMapHas(map: u32, key: usize): bool {
 }
 
 /** `map.delete(key)`: whether there was an entry; its value is released. */
+@noInline
 export function weakMapDelete(map: u32, key: usize): bool {
   untagged(key);
   const h = enter();
@@ -314,6 +320,7 @@ export function weakMapDelete(map: u32, key: usize): bool {
 }
 
 /** Drops `map`: every value is released. */
+@noInline
 export function weakMapDrop(map: u32): void {
   const h = enter();
   wm.mapDrop(h, map);
@@ -321,11 +328,13 @@ export function weakMapDrop(map: u32): void {
 }
 
 /** `new WeakRef(obj)`: does not count `obj`, which may be a typed proxy's tagged word. */
+@noInline
 export function weakRefNew(obj: usize): u32 {
   return weakRefNewWith(obj, 0);
 }
 
 /** `new WeakRef(obj)` keeping `word` with the slot (an `object` target's descriptor). */
+@noInline
 export function weakRefNewWith(obj: usize, word: u64): u32 {
   const h = enter();
   const r = wr.refNew(h, obj, word);
@@ -334,6 +343,7 @@ export function weakRefNewWith(obj: usize, word: u64): u32 {
 }
 
 /** The word given to `weakRefNewWith` for `r` (0 for `weakRefNew`). */
+@noInline
 export function weakRefWord(r: u32): u64 {
   const h = enter();
   const w = wr.refWord(h, r);
@@ -342,6 +352,7 @@ export function weakRefWord(r: u32): u64 {
 }
 
 /** `ref.deref()`: the target with its count raised by one, or 0 once it was freed. */
+@noInline
 export function weakRefDeref(r: u32): usize {
   const h = enter();
   const t = wr.refDeref(h, r);
@@ -350,6 +361,7 @@ export function weakRefDeref(r: u32): usize {
 }
 
 /** Drops `r`. */
+@noInline
 export function weakRefDrop(r: u32): void {
   const h = enter();
   wr.refDrop(h, r);
@@ -357,6 +369,7 @@ export function weakRefDrop(r: u32): void {
 }
 
 /** The records of weakly held objects (tests and leak checks). */
+@noInline
 export function weakTracked(): usize {
   const h = enter();
   const n = ld(h + rec.H_RLIVE);
@@ -365,6 +378,7 @@ export function weakTracked(): usize {
 }
 
 /** The entries of `map` (tests: JavaScript has no `WeakMap.size`). */
+@noInline
 export function weakMapLen(map: u32): usize {
   const h = enter();
   const n = wm.mapLen(h, map);
