@@ -136,8 +136,11 @@ The runtime relies on these; the compiler must keep them when it lowers weak ref
 - **Release.** `release_as` in `lower/rc.rs` takes the three-way sequence above for those
   types, at every release (drop glue, boxed values, half-built objects, the queued drops of
   `drop_depth.rs`), at `drop_chain.rs`'s `take` and at `transfer.rs`'s release of the sender's
-  reference after a deep copy (a full release there). `transfer_env.rs` decrements closure
-  environments, which are never weak-capable: function values are opaque to the trace glue.
+  reference after a deep copy (a full release there). Closure environments and captured
+  variables' cells may be weakly held in a program with weak references, since the trace glue
+  looks into function values ([cycles.md](cycles.md) section 2): their releases then take the
+  three-way sequence (`Boxing::weak_envs`), and `transfer_env.rs` gives up a shared
+  environment through its own drop entry instead of decrementing it.
 - **Trace glue** (`glue/trace.rs`) visits the counted objects an object refers to through its
   fields, elements and payloads stored inline; uncounted objects, function and interface values
   and `shared` values are not looked into, and classes in a hierarchy with a vtable are opaque
@@ -342,10 +345,11 @@ the next trial until a release elsewhere in the cycle changes the answer.
 ## Next steps
 
 1. Done (#823 step B): `WeakMap`, `WeakSet` and `WeakRef` in the language.
-   Left: trace glue through function values' environments (a handler closure capturing the
-   target is opaque today, so such a cycle is kept until its map entry goes) and through class
-   hierarchies (dispatching on the dynamic class), keys of other object kinds (unions, tuples,
-   function and interface values), and ephemeron cycles that span several maps (above).
+   Function values' environments are traced since #3119 step 3 (a handler closure capturing
+   the target, [cycles.md](cycles.md) section 2). Left: trace glue through class hierarchies
+   (dispatching on the dynamic class), interface values and generator states (the rest of
+   that step), keys of other object kinds (unions, tuples, function and interface values), and
+   ephemeron cycles that span several maps (above).
 2. `weak T` fields (#11): planned in [cycles.md](cycles.md) section 4, as a pointer to a slot
    per target that a read checks inline, together with a collector for the strong cycles this
    core does not collect.
