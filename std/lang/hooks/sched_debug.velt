@@ -14,6 +14,7 @@ import * as th from "#sched-thread";
 import { processEnv } from "./process";
 import * as io from "./sched_io";
 import * as m from "./sched_mem";
+import * as sleeps from "./sched_sleep";
 import * as t from "./sched_task";
 
 /** The monitor's rescues of a stalled worker that moved tasks, spares started, reactor turns. */
@@ -68,6 +69,15 @@ function debugMain(arg: Ptr<u8> | null): Ptr<u8> | null {
   return null;
 }
 
+/** Probe (#3060): worker `w`'s timer block, as sched_relax.velt `keeps` reads it: pending/due/unseen. */
+function timersOf(w: usize): string {
+  const b = m.ld(w + t.E_TIMERS);
+  if (b === 0) {
+    return "none";
+  }
+  return `${sleeps.pending(b) ? 1 : 0}/${m.ld(b + sleeps.TM_DUE)}/${m.ld(b + sleeps.TM_UNSEEN)}`;
+}
+
 /** The monotonic clock in nanoseconds. */
 function sl(): usize {
   return os.monotonicNs(r.MONOTONIC) as usize;
@@ -76,13 +86,13 @@ function sl(): usize {
 /** One line: the monitor's state and counters, then each started worker's. */
 function line(g: usize, at: usize): void {
   const n = m.load(g + t.E_STARTED);
-  let s = `sched ${at}ms ticks=${m.load(g + t.E_TICKS)} started=${n} monAsleep=${m.load32(g + t.E_MON_ASLEEP)} moving=${m.load(g + t.E_MOVING)} rescues=${RESCUES.load()} spares=${SPARES.load()} turns=${TURNS.load()} yields=${m.SPIN_YIELDS.load()} pollsLost=${m.POLLS_LOST.load()} pollsReopened=${m.POLLS_REOPENED.load()}`;
+  let s = `sched ${at}ms ticks=${m.load(g + t.E_TICKS)} started=${n} monAsleep=${m.load32(g + t.E_MON_ASLEEP)} moving=${m.load(g + t.E_MOVING)} rescues=${RESCUES.load()} spares=${SPARES.load()} turns=${TURNS.load()} yields=${m.SPIN_YIELDS.load()} pollsLost=${m.POLLS_LOST.load()} pollsReopened=${m.POLLS_REOPENED.load()} lazy=${m.load(g + t.E_LAZY)} split=${m.ld(g + t.E_SPLIT)} relax=${m.load32(g + t.E_RELAX)} calm=${m.ld(g + t.E_CALM)} count=${m.ld(g + t.E_COUNT)}`;
   for (let i: usize = 0; i < n; i++) {
     const w = t.worker(i);
     const b = m.ld(w + t.E_IO);
     const cur = m.load(w + t.E_CURRENT);
     const state = cur === 0 ? 9 : m.load32(cur + t.T_STATE);
-    s = `${s} | w${i} park=${m.load32(w + t.E_PARK)} cur=${cur === 0 ? 0 : 1}/${state} inbox=${m.load(w + t.E_INBOX) === 0 ? 0 : 1} offer=${m.load(w + t.E_OFFER) === 0 ? 0 : 1} io=${m.load(w + t.E_IHEAD) === 0 ? 0 : 1} rest=${m.load(w + t.E_HEAD) === 0 ? 0 : 1} next=${m.load(w + t.E_NEXT) === 0 ? 0 : 1} queued=${m.load(w + t.E_QUEUED)} qlock=${m.load32(w + t.E_QLOCK)} rlock=${m.load32(b + io.IO_RLOCK)} unparks=${m.load(w + t.E_UNPARKS)} polls=${m.load(w + t.E_POLLS)} progress=${m.load(w + t.E_PROGRESS)} retired=${m.load32(w + t.E_RETIRED)} live=${m.load(b + io.IO_LIVE)} waits=${m.load(b + io.IO_WAITING)} due=${(m.load(b + io.IO_DUE) | m.load(b + io.IO_RDUE)) === 0 ? 0 : 1}`;
+    s = `${s} | w${i} park=${m.load32(w + t.E_PARK)} cur=${cur === 0 ? 0 : 1}/${state} inbox=${m.load(w + t.E_INBOX) === 0 ? 0 : 1} offer=${m.load(w + t.E_OFFER) === 0 ? 0 : 1} io=${m.load(w + t.E_IHEAD) === 0 ? 0 : 1} rest=${m.load(w + t.E_HEAD) === 0 ? 0 : 1} next=${m.load(w + t.E_NEXT) === 0 ? 0 : 1} queued=${m.load(w + t.E_QUEUED)} qlock=${m.load32(w + t.E_QLOCK)} rlock=${m.load32(b + io.IO_RLOCK)} unparks=${m.load(w + t.E_UNPARKS)} polls=${m.load(w + t.E_POLLS)} progress=${m.load(w + t.E_PROGRESS)} retired=${m.load32(w + t.E_RETIRED)} timers=${timersOf(w)} unref=${m.ld(w + t.E_UNREF)} live=${m.load(b + io.IO_LIVE)} waits=${m.load(b + io.IO_WAITING)} due=${(m.load(b + io.IO_DUE) | m.load(b + io.IO_RDUE)) === 0 ? 0 : 1}`;
   }
   s = `${s}\n`;
   const len = s.length as usize;
