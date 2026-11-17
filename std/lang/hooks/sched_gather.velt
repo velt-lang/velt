@@ -17,7 +17,7 @@ import * as sp from "./sched_spread";
 import * as t from "./sched_task";
 import * as wk from "./sched_wake";
 
-const IDLE_PCT: usize = 90;
+const IDLE_PCT: usize = 75;
 
 /** Does worker `e` hand the tasks of its inbox to worker 0 (`g`)? */
 export function gathers(e: usize, g: usize): bool {
