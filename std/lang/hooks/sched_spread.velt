@@ -96,6 +96,7 @@ function windowEnd(e: usize, nowNs: usize, polls: usize): bool {
   const queued = perPoll * waiting;
   m.st(e + t.E_W_START, nowNs);
   m.st(e + t.E_W_POLLS, polls);
+  m.st(e + t.E_W_UNPARKS, m.load(e + t.E_UNPARKS));
   m.st(e + t.E_W_INPUT, 0);
   m.st(e + t.E_W_ALL, 0);
   m.st(e + t.E_W_NOTED, 0);

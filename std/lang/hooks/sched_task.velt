@@ -298,7 +298,9 @@ export const E_ALL_VT: usize = 952;
 export const E_LIVE_F: usize = 984;
 /** The worker's spin budget before it parks, in nanoseconds (sched_spin.velt). */
 export const E_SPIN: usize = 992;
-export const E_SIZE: usize = 1000;
+/** `E_UNPARKS` when the spread's window began (sched_spread.velt `windowEnd`, sched_gather.velt). */
+export const E_W_UNPARKS: usize = 1000;
+export const E_SIZE: usize = 1008;
 /** The spawns of a lazy worker 0's poll that go on `E_PREST`, which the monitor may take. */
 export const PEND_STACKED: usize = 64;
 /** `E_LAZY`'s states. */
