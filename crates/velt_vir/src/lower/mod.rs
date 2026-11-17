@@ -155,6 +155,7 @@ mod receiver;
 mod record_view;
 mod reg_args;
 mod replaceable;
+mod ret_abi;
 mod rt;
 mod same;
 mod sequence;
