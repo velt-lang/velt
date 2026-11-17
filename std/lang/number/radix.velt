@@ -1,0 +1,153 @@
+// velt/lang/number (internal): `x.toString(radix)` for a radix other than 10, in Velt (#2196), with
+// V8's digits. A float follows V8's `DoubleToRadixCString`: fraction digits are written until they
+// tell the value apart from its neighbours (half the gap to the next double), the last one rounded
+// to even and carried into the integer part; integer digits past a double's precision are `0`.
+// Integers are exact over the whole `i64` and `u64` range. `NaN`, the infinities and the radix's
+// range are the caller's (velt/lang/hooks/number).
+
+import {
+  arraySetLen,
+  arrayTruncate,
+  arrayWithCapacity,
+  floor,
+  noInline,
+} from "velt/lang/intrinsics";
+import { asciiText } from "velt/lang/number/ascii";
+
+// The digit `d` (0 to 35) as `0`-`9`, `a`-`z`.
+function digitByte(d: i64): u8 {
+  return (d < 10 ? 48 + d : 87 + d) as u8;
+}
+
+// The value of digit byte `c` (`0`-`9`, `a`-`z`).
+function byteDigit(c: u8): i64 {
+  return c > 57 ? (c as i64) - 87 : (c as i64) - 48;
+}
+
+// V8's `Double::Exponent`: the binary exponent of the significand read as an integer.
+function exponentOf(x: f64): i64 {
+  const biased = ((x.toBits() >> 52) & 0x7ff) as i64;
+  return biased == 0 ? -1074 : biased - 1075;
+}
+
+/** `x.toString(radix)` of a finite `x`, `radix` 2 to 36. */
+@noInline
+export function f64Radix(x: f64, radix: i64): string {
+  if (x == 0) {
+    // -0 too.
+    return "0";
+  }
+  const r = radix as f64;
+  const neg = x < 0;
+  const value = neg ? -x : x;
+  let integer = floor(value);
+  let fraction = value - integer;
+  // Half the gap to the next double (`value` is positive and finite, so its bits plus one), and
+  // at least the smallest double.
+  let delta = 0.5 * (f64.fromBits(value.toBits() + 1) - value);
+  const tiny = f64.fromBits(1);
+  if (delta < tiny) {
+    delta = tiny;
+  }
+  // At most 1,100 fraction digits: radix 2 of the smallest subnormal has 1,074.
+  const frac: u8[] = arrayWithCapacity(1100);
+  if (fraction >= delta) {
+    let more = true;
+    while (more) {
+      fraction *= r;
+      delta *= r;
+      const digit = fraction as i64;
+      frac.push(digitByte(digit));
+      fraction -= digit as f64;
+      if ((fraction > 0.5 || (fraction == 0.5 && (digit & 1) == 1)) && fraction + delta > 1) {
+        // Round up, carrying through the digits written so far.
+        let carry = true;
+        while (carry) {
+          const n = frac.length;
+          if (n == 0) {
+            integer += 1;
+            carry = false;
+          } else {
+            const d = byteDigit(frac[n - 1]);
+            arrayTruncate(frac, n - 1);
+            if (d + 1 < radix) {
+              frac.push(digitByte(d + 1));
+              carry = false;
+            }
+          }
+        }
+        more = false;
+      } else if (fraction < delta) {
+        more = false;
+      }
+    }
+  }
+  // The integer digits, last first; the ones a double can't hold are zeros.
+  const ints: u8[] = arrayWithCapacity(64);
+  while (exponentOf(integer / r) > 0) {
+    integer /= r;
+    ints.push(48);
+  }
+  let more = true;
+  while (more) {
+    const rem = integer % r;
+    ints.push(digitByte(rem as i64));
+    integer = (integer - rem) / r;
+    more = integer > 0;
+  }
+  const ni = ints.length;
+  const nf = frac.length;
+  const sign: usize = neg ? 1 : 0;
+  const len = sign + ni + (nf > 0 ? nf + 1 : 0);
+  const out: u8[] = arrayWithCapacity(len);
+  arraySetLen(out, len);
+  let o: usize = 0;
+  if (neg) {
+    out[0] = 45;
+    o = 1;
+  }
+  for (let i: usize = 0; i < ni; i++) {
+    out[o + i] = ints[ni - 1 - i];
+  }
+  o += ni;
+  if (nf > 0) {
+    out[o] = 46;
+    o++;
+    for (let i: usize = 0; i < nf; i++) {
+      out[o + i] = frac[i];
+    }
+  }
+  return asciiText(out, len);
+}
+
+/** `x.toString(radix)` of the integer `a` (its magnitude), after a `-` when `neg`; `radix` 2 to 36. */
+@noInline
+export function intRadix(neg: bool, a: u64, radix: i64): string {
+  const r = radix as u64;
+  // 64 digits in radix 2, and the sign.
+  const out: u8[] = arrayWithCapacity(65);
+  arraySetLen(out, 65);
+  let at: usize = 65;
+  let n = a;
+  let more = true;
+  while (more) {
+    at--;
+    out[at] = digitByte((n % r) as i64);
+    n = n / r;
+    more = n != 0;
+  }
+  if (neg) {
+    at--;
+    out[at] = 45;
+  }
+  const len = 65 - at;
+  if (at == 0) {
+    return asciiText(out, len);
+  }
+  const text: u8[] = arrayWithCapacity(len);
+  arraySetLen(text, len);
+  for (let i: usize = 0; i < len; i++) {
+    text[i] = out[at + i];
+  }
+  return asciiText(text, len);
+}

@@ -12,6 +12,7 @@
 
 // `Number(s)` and `parseFloat(s)` are Velt code (#1658).
 import { toNumber, parseFloatOf } from "velt/lang/number/parse";
+import { parseIntOf } from "velt/lang/number/parse_int";
 import {
   inline,
   strAsciiWords,
@@ -39,7 +40,6 @@ declare function velt_rt_str_repeat(s: string, n: i64, out: string): bool;
 declare function velt_rt_str_pad_start(s: string, target: i64, fill: string): string;
 declare function velt_rt_str_pad_end(s: string, target: i64, fill: string): string;
 declare function velt_rt_str_from_char_code(code: i64): string;
-declare function velt_rt_parse_int(s: string, radix: i64): f64;
 
 /**
  * The byte length of `s` when it is ASCII (its units are its bytes), else 0, from its words
@@ -331,7 +331,7 @@ export class String {
 
 /** Exact JS `parseInt`: `radix` 0 means "omitted" (base 10, or 16 after "0x"); NaN if no digits. */
 export function parseInt(s: string, radix: i64 = 0): f64 {
-  return velt_rt_parse_int(s, radix);
+  return parseIntOf(s, radix);
 }
 
 /** Exact JS `parseFloat`: the longest decimal prefix (incl. "Infinity"), else NaN. */

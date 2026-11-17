@@ -358,11 +358,11 @@ impl FnCx<'_, '_> {
                 if matches!(op, ast::BinaryOp::Or | ast::BinaryOp::Nullish) =>
             {
                 self.logical_lhs.push(lhs.span);
-                let h = self.binary(*op, lhs, rhs, exp, span);
+                let h = self.binary(*op, lhs, rhs, exp, want, span);
                 self.logical_lhs.pop();
                 h
             }
-            A::Binary { op, lhs, rhs } => self.binary(*op, lhs, rhs, exp, span),
+            A::Binary { op, lhs, rhs } => self.binary(*op, lhs, rhs, exp, want, span),
             A::Assign {
                 op: Some(op),
                 target,

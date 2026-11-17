@@ -8,9 +8,8 @@
 // `any`. A name without a function here is a `TypeError` naming #924. Arrays' and maps' are in
 // any_array_methods.velt.
 
+import { hookCall } from "velt/lang/intrinsics";
 import { anyString, anyText } from "./any_text";
-
-declare function velt_rt_f64_to_fixed(x: f64, digits: i64): string;
 
 /** Argument `k` of `args`, `undefined` when it was left out. */
 export function anyArg(args: any[], k: i64): any {
@@ -203,16 +202,16 @@ export function anyStr_concat(s: string, args: any[]): any {
 // Numbers and booleans.
 
 /**
- * `n.toFixed(digits)` through `any`, by the runtime's printer rather than std's `toFixed`
- * (velt/lang/number/to_fixed): this module is in every program, and the formatter is loaded only
- * for one that mentions `toFixed`.
+ * `n.toFixed(digits)` through `any`, by the exact printer (velt/lang/hooks/number_digits) called
+ * by role rather than std's `toFixed` (velt/lang/number/to_fixed): this module is in every
+ * program, and the printer is loaded only for one that calls this.
  */
 export function anyNum_toFixed(n: number, args: any[]): any {
   const digits = anyIntArg(args, 0, 0);
   if (digits < 0 || digits > 100) {
     panic("RangeError: toFixed() digits argument must be between 0 and 100");
   }
-  return velt_rt_f64_to_fixed(n, digits);
+  return hookCall("number_to_fixed", n, digits);
 }
 
 export function anyNum_toString(n: number, args: any[]): any {

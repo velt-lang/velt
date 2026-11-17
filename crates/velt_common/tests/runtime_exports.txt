@@ -63,10 +63,6 @@ velt_rt velt_rt_env_get
 velt_rt velt_rt_env_remove
 velt_rt velt_rt_env_set
 velt_rt velt_rt_exit
-velt_rt velt_rt_f64_to_exponential
-velt_rt velt_rt_f64_to_fixed
-velt_rt velt_rt_f64_to_precision
-velt_rt velt_rt_f64_to_radix
 velt_rt velt_rt_flush
 velt_rt velt_rt_fnprop_delete
 velt_rt velt_rt_fnprop_get
@@ -119,7 +115,6 @@ velt_rt velt_rt_fut_views
 velt_rt velt_rt_futs_handled
 velt_rt velt_rt_host_clone
 velt_rt velt_rt_host_release
-velt_rt velt_rt_i64_to_radix
 velt_rt velt_rt_json_enter
 velt_rt velt_rt_json_error
 velt_rt velt_rt_json_leave
@@ -225,8 +220,6 @@ velt_rt velt_rt_param_null
 velt_rt velt_rt_param_object
 velt_rt velt_rt_param_str
 velt_rt velt_rt_param_u64
-velt_rt velt_rt_parse_float
-velt_rt velt_rt_parse_int
 velt_rt velt_rt_perf_now
 velt_rt velt_rt_pow_f64
 velt_rt velt_rt_pow_i64
@@ -403,7 +396,6 @@ velt_rt velt_rt_timer_new
 velt_rt velt_rt_timer_turn
 velt_rt velt_rt_timer_unref_due
 velt_rt velt_rt_tla_at
-velt_rt velt_rt_u64_to_radix
 velt_rt velt_rt_uncaught_now
 velt_rt velt_rt_uncaught_report
 velt_rt velt_rt_unhandled_defer

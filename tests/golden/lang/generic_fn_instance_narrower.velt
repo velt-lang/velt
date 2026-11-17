@@ -1,3 +1,4 @@
+// check: no leaks
 // A generic function value where the target's bound lies within the source's: the function runs
 // at the narrower bound. Expected output from `node`; `tsc --strict` accepts it.
 type Def<T> = { __d: T };

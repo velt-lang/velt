@@ -1,4 +1,10 @@
 //! `velt cache warm`: what it stores for debug and release builds, and its marker.
+//!
+//! The std cache's builds turn prebuilt hook modules off (`VELT_PREBUILT_HOOKS=0`;
+//! `prebuilt_hooks.rs` tests them): a fill that misses one loads the module, compiles its
+//! functions there and stores the module's object, which the next build links instead of loading
+//! the module, so it would find fewer functions than the fill compiled (`toFixed` reaches
+//! `number_digits`). A build after `velt cache warm`, which runs with them on, turns them on again.
 
 use super::*;
 
@@ -82,7 +88,10 @@ fn the_warm_up_stores_what_release_builds_link() {
         .output()
         .unwrap();
     assert!(warm.status.success(), "{}", text(&warm.stderr));
-    let built = release_default(dir, "a.velt", "a", &cache, &[]);
+    // With prebuilt hook modules on, as for the warm-up: it stored the object of the one
+    // `toFixed` reaches, not that module's functions.
+    let on = [("VELT_PREBUILT_HOOKS", "1")];
+    let built = release_default(dir, "a.velt", "a", &cache, &on);
     let (found, compiled) = counts(&built);
     assert!(found > 0 && compiled == 0, "{}", text(&built.stderr));
     assert_eq!(left(&built), 0, "{}", text(&built.stderr));
