@@ -441,6 +441,12 @@ fn check_timed(
             // a module only when the program uses it, and `velt/sync/epoch` (`FnCx::frozen_view`):
             // the app's code sets it.
             cx.frozen_reads = false;
+            // Likewise `any`'s member slots: std's unit noted them for all of std; the program
+            // has them when its code notes them or it reaches std code that did
+            // (`Ctx::units_dyn_members`, at its build).
+            if let Some(a) = &mut cx.any {
+                a.members = false;
+            }
             // The app's modules after std's unit, with what the rewrites found of them.
             if let Some(o) = &order {
                 // std's stage sealed the layouts after its passes: the app's conversions may put

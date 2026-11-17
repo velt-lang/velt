@@ -525,8 +525,49 @@ impl Ctx<'_> {
     /// A member of an `any` is read or called: lowering adds the member slots
     /// (`Program::dyn_members`).
     pub(crate) fn note_dyn_members(&mut self) {
+        self.note_dyn_members_by(None);
+    }
+
+    /// [`Ctx::note_dyn_members`] for the body of `by`: in std's unit, recorded by function, so a
+    /// later unit's program has the slots only when it reaches one (`Ctx::dyn_member_fns`); one
+    /// not tied to a function counts for every program ([`ALWAYS_DYN`]).
+    pub(crate) fn note_dyn_members_by(&mut self, by: Option<crate::hir::DefId>) {
         if let Some(a) = &mut self.any {
             a.members = true;
+        }
+        if self.units_stage == crate::units::Stage::Std {
+            self.dyn_member_fns.insert(by.unwrap_or(ALWAYS_DYN));
+        }
+    }
+}
+
+/// In `Ctx::dyn_member_fns`: std's unit noted `any`'s member slots outside a function's body.
+pub(crate) const ALWAYS_DYN: crate::hir::DefId = crate::hir::DefId(u32::MAX);
+
+impl Ctx<'_> {
+    /// A check by units, at the program's build: `any`'s member slots, which std's unit noted
+    /// for all of std, are the program's when its own code noted them or it reaches a std
+    /// function that did (`Ctx::dyn_member_fns`).
+    pub(crate) fn units_dyn_members(&mut self) {
+        if self.units_stage != crate::units::Stage::App {
+            return;
+        }
+        if self.any.is_some_and(|a| a.members) || self.unit_sums.dyn_member_fns.is_empty() {
+            return;
+        }
+        let fns = std::mem::take(&mut self.unit_sums.dyn_member_fns);
+        // What lazy std would have checked (the hooks the program's constructs demand), not
+        // the build's superset: a hook such as `Proxy`'s array methods reads members of an
+        // `any` only in a program that has proxies.
+        let reached = fns.contains(&ALWAYS_DYN) || {
+            let live = crate::body::lazy_std::units_live_set(self);
+            fns.iter().any(|d| live.contains(d))
+        };
+        self.unit_sums.dyn_member_fns = fns;
+        if reached {
+            if let Some(a) = &mut self.any {
+                a.members = true;
+            }
         }
     }
 }

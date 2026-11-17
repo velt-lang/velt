@@ -206,6 +206,7 @@ fn build(
     let type_ops = type_level::lowered_ops(&mut cx);
     let anon_shapes = anon::concrete_shapes(&cx);
     let union_shapes = anon::concrete_unions(&cx);
+    cx.units_dyn_members();
     let dyn_members = any::dyn_members(&mut cx);
     let (array_methods_open, any_call_names) = body::expr::proxy_method_values::finish(&mut cx);
     let (upcasts, upcast_impls) = cx.upcast_tables();

@@ -129,6 +129,10 @@ pub(crate) struct Ctx<'m> {
     /// The functions whose bodies hold a dispatch over the program's classes (`body::expr::
     /// object_own`): a finished unit keeps them (`units::Summaries::dispatch_fns`).
     pub program_dispatch: FxHashSet<DefId>,
+    /// The functions whose bodies read, call or write a member of an `any` (`AnyDefs::members`):
+    /// a finished unit's are the program's only when it reaches them
+    /// (`units::Summaries::dyn_member_fns`).
+    pub dyn_member_fns: FxHashSet<DefId>,
     pub scopes: Vec<ModuleScope>,
     /// Exports of `std/prelude/*` modules, visible everywhere.
     pub prelude: FxHashMap<String, Item>,
@@ -663,6 +667,7 @@ impl<'m> Ctx<'m> {
             program_set: None,
             program_new_from: 0,
             program_dispatch: FxHashSet::default(),
+            dyn_member_fns: FxHashSet::default(),
             unit_sums: Default::default(),
             units_stage: crate::units::Stage::Both,
             scopes,

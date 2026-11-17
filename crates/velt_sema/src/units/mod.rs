@@ -242,6 +242,9 @@ pub(crate) struct Summaries {
     pub(crate) implicit: Option<crate::replaced_holders::implicit::ImplicitScan>,
     /// A finished unit's host functions (`collect::host_sig`).
     pub(crate) host_fns: Option<Vec<crate::hir::DefId>>,
+    /// A finished unit's std functions that read a member of an `any` (`Ctx::dyn_member_fns`):
+    /// a later unit's program has `any`'s member slots when it reaches one.
+    pub(crate) dyn_member_fns: Vec<crate::hir::DefId>,
 }
 
 /// std's part of two per-module facts ([`Order::std_facts`]).
@@ -376,6 +379,9 @@ pub(crate) fn finish_unit(cx: &mut Ctx) {
     dispatch.sort_unstable();
     cx.unit_sums.dispatch_fns = dispatch;
     cx.unit_sums.host_fns = Some(crate::collect::host_sig::unit_host_fns(cx));
+    let mut dyn_fns: Vec<crate::hir::DefId> = cx.dyn_member_fns.iter().copied().collect();
+    dyn_fns.sort_unstable();
+    cx.unit_sums.dyn_member_fns = dyn_fns;
     crate::ownership::keep_unit_scans(cx);
 }
 
@@ -433,7 +439,7 @@ crate::units::codec::structs! {
         weak_made, undefined_facts, lock_summaries, module_edges, groups, dispatch, generated_fns,
         literals, fed, modules, subclasses, calls, inst_sites, outside_named,
         outside_tys, lets, types, lib_base, dispatch_fns, value_scan,
-        virtuals, implicit, host_fns,
+        virtuals, implicit, host_fns, dyn_member_fns,
     }
 }
 
@@ -470,6 +476,7 @@ fn summary_sizes(s: &Summaries) {
         virtuals,
         implicit,
         host_fns,
+        dyn_member_fns,
     } = s;
     let mut sizes: Vec<(&str, usize)> = vec![];
     macro_rules! size { ($($f:ident),*) => {$(
@@ -506,7 +513,8 @@ fn summary_sizes(s: &Summaries) {
         value_scan,
         virtuals,
         implicit,
-        host_fns
+        host_fns,
+        dyn_member_fns
     );
     sizes.sort_by_key(|s| std::cmp::Reverse(s.1));
     for (f, n) in sizes {

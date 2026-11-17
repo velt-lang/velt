@@ -25,7 +25,8 @@ impl FnCx<'_, '_> {
                 || self.cx.union_def(f.ty).is_some()
         });
         if fill {
-            self.cx.note_dyn_members();
+            let by = self.body_def;
+            self.cx.note_dyn_members_by(by);
         }
     }
 }

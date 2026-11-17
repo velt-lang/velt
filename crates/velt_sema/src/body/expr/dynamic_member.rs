@@ -26,7 +26,10 @@ impl FnCx<'_, '_> {
         let m = &self.cx.modules[self.module];
         let by_name = crate::body::lazy_std::called_by_name(&m.path) && !m.path.ends_with(".test");
         if !m.is_std || !by_name {
-            self.cx.note_dyn_members();
+            // Std's unit holds all of std: the program has the slots when it reaches such a
+            // function (`Ctx::units_dyn_members`).
+            let by = self.body_def;
+            self.cx.note_dyn_members_by(by);
         }
     }
 

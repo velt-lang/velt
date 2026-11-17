@@ -235,7 +235,22 @@ pub(crate) fn walk_units_program(cx: &mut Ctx, entry: Option<DefId>) -> FxHashSe
 /// has (lazy std's: the code it checked), leaving the check's state as it was.
 pub(crate) fn units_live_set(cx: &mut Ctx) -> FxHashSet<DefId> {
     let saved = cx.lazy.clone();
-    let set = walk_units_program(cx, None);
+    let mut set = walk_units_program(cx, None);
+    // A hook waiting for what the program does (a record hook, a fallback) that nothing
+    // needed: lazy std leaves it unchecked, so its code is not the program's.
+    let needed = |cx: &Ctx, d: &DefId| {
+        cx.lazy.record_hooks
+            && super::RECORD_HOOKS
+                .iter()
+                .any(|h| cx.prelude_fn(h) == Some(*d))
+    };
+    let waiting: Vec<DefId> = (cx.lazy.live.waiting.iter())
+        .filter(|d| !needed(cx, d))
+        .copied()
+        .collect();
+    for d in waiting {
+        set.remove(&d);
+    }
     cx.lazy = saved;
     set
 }
