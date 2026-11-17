@@ -746,11 +746,14 @@ fn wants(program: &Program, state: &mut State, budget: &Budget, sccs: &[Vec<Func
     wants
 }
 
-/// Whether `func` is the standard library's or generated glue (`_G…`: drop, clone, the closures'
+/// Whether `func` is the standard library's (its C exports too: `std_sched_worker` and the other
+/// threads' entries are `@cExport("std_…")`) or generated glue (`_G…`: drop, clone, the closures'
 /// environments), not the program's own code: it gets nothing set aside ([`wants`]).
 fn library(func: &Function) -> bool {
     let s = &func.symbol;
-    s.starts_with("_V3std") || s.starts_with(GENERATED_STD) || s.starts_with("_G")
+    ["_V3std", GENERATED_STD, "std_", "_G"]
+        .iter()
+        .any(|p| s.starts_with(p))
 }
 
 /// The direct calls in `func` that could be inlined into it (as [`inline_into`] filters them), with

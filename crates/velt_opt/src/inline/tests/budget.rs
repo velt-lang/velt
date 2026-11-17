@@ -42,21 +42,27 @@ fn other_code_does_not_take_a_hot_loops_share_of_the_budget() {
 /// code folds away to those whose code stays (module docs).
 #[test]
 fn the_standard_librarys_functions_spend_first_come_first_served() {
-    let mut pb = ProgramBuilder::new();
-    let small = pb.add(adder("small", 35, Linkage::Internal));
-    let a = pb.add(caller_named("_V3stdP3libN1a", &[small], 4, Linkage::Export));
-    let b = pb.add(caller_named("_V3stdP3libN1b", &[small], 4, Linkage::Export));
-    let mut p = pb.finish();
-    let mut budget = Budget::for_program(&p);
-    budget.remaining = 4 * cost(&p.funcs[small.0 as usize]);
-    run(&mut p, &mut budget, crate::Served::default());
-    assert_valid(&p);
-    let left = |f: FuncId| calls_to(&p.funcs[f.0 as usize], small);
-    assert_eq!(
-        (left(a).min(left(b)), left(a).max(left(b))),
-        (0, 4),
-        "one keeps all four calls, the other inlines all four"
-    );
+    // Its Velt functions, and its C exports (a scheduler thread's entry).
+    for (a, b) in [
+        ("_V3stdP3libN1a", "_V3stdP3libN1b"),
+        ("std_sched_a", "std_sched_b"),
+    ] {
+        let mut pb = ProgramBuilder::new();
+        let small = pb.add(adder("small", 35, Linkage::Internal));
+        let a = pb.add(caller_named(a, &[small], 4, Linkage::Export));
+        let b = pb.add(caller_named(b, &[small], 4, Linkage::Export));
+        let mut p = pb.finish();
+        let mut budget = Budget::for_program(&p);
+        budget.remaining = 4 * cost(&p.funcs[small.0 as usize]);
+        run(&mut p, &mut budget, crate::Served::default());
+        assert_valid(&p);
+        let left = |f: FuncId| calls_to(&p.funcs[f.0 as usize], small);
+        assert_eq!(
+            (left(a).min(left(b)), left(a).max(left(b))),
+            (0, 4),
+            "one keeps all four calls, the other inlines all four"
+        );
+    }
 }
 
 /// What a hot loop wants counts its callee at the size the callee will have when the loop's
