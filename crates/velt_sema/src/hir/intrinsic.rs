@@ -379,21 +379,26 @@ pub enum Intrinsic {
     /// checks it): `v` written at `address`, unchecked (intrinsics.md "Memory at an address").
     /// Additive.
     AddressStore,
-    /// std only: `addressAtomicLoad<T>(address: usize, order: u8) -> T`, `T` an integer type:
-    /// as `AtomicLoad` on the integer at `address`, `T` being the call's type. Sema turns the
-    /// declaration's string literal orderings into the `Atomic*` intrinsics' integer literals.
-    /// Renamed from `PtrAtomicLoad`, which took a `Ptr<T>` (#3094).
+    /// std only (as are the other four `AddressAtomic*`): `addressAtomicLoad<T>(address: usize,
+    /// order: u8) -> T`, `T` an integer type: as `AtomicLoad` on the integer at `address`, `T`
+    /// being the call's type. Sema turns the declaration's string literal orderings into the
+    /// `Atomic*` intrinsics' integer literals.
+    ///
+    /// Changed (#3094), for all five `AddressAtomic*`: renamed from `PtrAtomic*`; the first
+    /// operand is a `usize` address, not a `Ptr<T>`. Not additive.
     AddressAtomicLoad,
-    /// `(address: usize, v: T, order: u8)`: as `AtomicStore` at `address`, `T` being `v`'s type.
+    /// std only: `(address: usize, v: T, order: u8)`: as `AtomicStore` at `address`, `T` being
+    /// `v`'s type. Changed (#3094): see `AddressAtomicLoad`.
     AddressAtomicStore,
-    /// `(address: usize, v: T, op: u8, order: u8) -> T`: as `AtomicRmw` at `address` (the
-    /// declaration's `(address, op, v, order)` reordered by sema, `op` a literal as `AtomicRmw`
-    /// numbers it).
+    /// std only: `(address: usize, v: T, op: u8, order: u8) -> T`: as `AtomicRmw` at `address`
+    /// (the declaration's `(address, op, v, order)` reordered by sema, `op` a literal as
+    /// `AtomicRmw` numbers it). Changed (#3094): see `AddressAtomicLoad`.
     AddressAtomicRmw,
-    /// `(address: usize, expected: T, v: T, order: u8, failure: u8) -> T`: as `AtomicCas` at
-    /// `address`.
+    /// std only: `(address: usize, expected: T, v: T, order: u8, failure: u8) -> T`: as
+    /// `AtomicCas` at `address`. Changed (#3094): see `AddressAtomicLoad`.
     AddressAtomicCas,
-    /// As `AddressAtomicCas`, `-> bool` (may fail spuriously), `T` being `expected`'s type.
+    /// std only: as `AddressAtomicCas`, `-> bool` (may fail spuriously), `T` being `expected`'s
+    /// type. Changed (#3094): see `AddressAtomicLoad`.
     AddressAtomicCasWeak,
     /// std only (velt/ffi's `Ptr.at`, `Ptr.orNull`): `ptrFromAddress<T>(address: usize) ->
     /// Ptr<T>`, the address as the pointer word, unchecked (#3094). Additive.
