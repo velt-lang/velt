@@ -37,19 +37,36 @@ export function spin(e: usize): bool {
   }
   const start = sl.clock() as usize;
   let i: u32 = 0;
+  let spun: usize = 0;
   while (true) {
     if (m.load(e + t.E_INBOX) !== 0) {
       m.st(e + t.E_SPIN, budget * 2 > MAX ? MAX : budget * 2);
+      idled(e, (sl.clock() as usize) - start);
       return true;
     }
     i++;
     // The clock every 32 looks: a look is a load, a clock read tens of nanoseconds.
-    if ((i & 31) === 0 && (sl.clock() as usize) - start >= budget) {
-      break;
+    if ((i & 31) === 0) {
+      spun = (sl.clock() as usize) - start;
+      if (spun >= budget) {
+        break;
+      }
     }
   }
   m.st(e + t.E_SPIN, budget / 2 < MIN ? OFF : budget / 2);
+  idled(e, spun);
   return false;
+}
+
+/**
+ * Worker `e` spun `ns` nanoseconds with nothing to run: idle time for the spread's window, as a
+ * sleep (sched_spread.velt `slept`), or an idle worker that spins would not look idle to gather
+ * its tasks back (sched_gather.velt).
+ */
+function idled(e: usize, ns: usize): void {
+  if ((m.ld32(e + t.E_MODE) & t.M_SPREAD) !== 0) {
+    t.bump(e + t.E_W_SLEPT, ns);
+  }
 }
 
 /** Is a worker other than `e` awake (its park word down), one that may wake a task onto `e`? */
