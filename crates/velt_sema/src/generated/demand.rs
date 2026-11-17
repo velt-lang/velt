@@ -399,6 +399,7 @@ fn record_calls(cx: &mut Ctx, recorded: &mut Calls) {
     };
     // Indexed, not iterated: a definition already recorded is not read (a finished unit's,
     // decoded on demand, `DefTable`).
+    #[allow(clippy::needless_range_loop)]
     for i in 0..cx.defs.len() {
         if done[i] {
             continue;
@@ -408,6 +409,7 @@ fn record_calls(cx: &mut Ctx, recorded: &mut Calls) {
             crate::visit_ref::exprs(&f.body.block, &mut |e| look(i as u32, e));
         }
     }
+    #[allow(clippy::needless_range_loop)]
     for i in 0..cx.info.len() {
         let fields_due = i >= *fields_from;
         if done[i] && !fields_due {

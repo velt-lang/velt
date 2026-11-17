@@ -87,7 +87,7 @@ use paths::{file_key, is_std_path, shown_in_package, shown_path};
 pub use resolve::resolve_module;
 pub use spec::{resolve_spec, ModuleRef};
 pub use std_ast::StdAstCache;
-pub use std_root::{in_std, prelude_files, std_root};
+pub use std_root::{in_std, installed_std_root, prelude_files, std_root};
 
 /// A std module's stub by its canonical path, decoded for its file ([`LoadOptions::std_stubs`]).
 pub type StdStubs<'f> = dyn Fn(&str, FileId) -> Option<ast::Module> + Sync + 'f;

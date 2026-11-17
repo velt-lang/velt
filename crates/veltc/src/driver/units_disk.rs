@@ -48,9 +48,14 @@ pub(crate) fn std_tree() -> Option<&'static StdTree> {
         )
             .hash(&mut h);
         let path = dir.join(format!("{:016x}.tree", std::hash::Hasher::finish(&h)));
+        // An installed release's own read-only std (`installed_std_root`) is what the snapshot
+        // kept under this compiler and this root says: no `stat` of each of its files. Any
+        // other std is checked file by file.
+        let installed =
+            loader::installed_std_root().is_some_and(|root| root == vpm::relpath::absolute(&std));
         let kept = (std::fs::read_to_string(&path).ok())
             .and_then(|text| StdTree::decode(&text))
-            .filter(StdTree::fresh);
+            .filter(|t| installed || t.fresh());
         if kept.is_some() {
             return kept;
         }

@@ -49,6 +49,32 @@ fn std_root_for_exe(exe: &Path) -> Option<PathBuf> {
     source_std.is_dir().then_some(source_std)
 }
 
+/// EXPERIMENT (#2943 M4): the std root when it is an installed release's own copy, which no
+/// one edits: `$VELT_STD` is not set, the compiler runs from `<root>/toolchains/<version>/bin`
+/// with std at `<root>/toolchains/<version>/std` (not a prefix linked under a name, which may
+/// be a checkout's build), and that directory is read-only (the installer leaves a release's std
+/// so). Only then may a check take std's files as the snapshot kept beside std's unit says,
+/// without a `stat` of each (`velt_loader::std_tree`); any other std is checked file by file,
+/// so an edit to it is never served a stale unit.
+pub fn installed_std_root() -> Option<PathBuf> {
+    if std::env::var_os("VELT_STD").is_some_and(|s| !s.is_empty()) {
+        return None;
+    }
+    installed_std_for_exe(&std::env::current_exe().ok()?)
+}
+
+/// Testable core of [`installed_std_root`] (without `$VELT_STD`) for the executable at `exe`.
+fn installed_std_for_exe(exe: &Path) -> Option<PathBuf> {
+    let bin = exe.parent()?;
+    let prefix = bin.parent()?;
+    let toolchains = prefix.parent()?;
+    let layout = bin.file_name().is_some_and(|n| n == "bin")
+        && toolchains.file_name().is_some_and(|n| n == "toolchains");
+    let std = prefix.join("std");
+    let read_only = std::fs::metadata(&std).is_ok_and(|m| m.is_dir() && m.permissions().readonly());
+    (layout && read_only).then(|| vpm::relpath::absolute(&std))
+}
+
 /// Whether `file` is inside the std root `std_root` (both resolved like the loader's file keys).
 pub fn in_std(file: &Path, std_root: &Path) -> bool {
     let key = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| vpm::relpath::absolute(p));
@@ -117,6 +143,64 @@ mod tests {
         std::fs::write(dir.join("index.velt"), "export { x } from \"./a\";\n").unwrap();
         let err = prelude_files(tmp.path()).unwrap_err();
         assert!(err.contains("line 1: expected `import"), "{err}");
+    }
+
+    /// Make directory `dir` read-only (`on`) or writable by its owner again.
+    fn read_only_dir(dir: &Path, on: bool) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = if on { 0o555 } else { 0o755 };
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(mode)).unwrap();
+        }
+        #[cfg(not(unix))]
+        {
+            let mut p = std::fs::metadata(dir).unwrap().permissions();
+            p.set_readonly(on);
+            std::fs::set_permissions(dir, p).unwrap();
+        }
+    }
+
+    /// Only a read-only std of a release under `<root>/toolchains/<version>` is taken without a
+    /// per-file check; a writable one, a linked prefix's or a dev build's is checked file by
+    /// file (`installed_std_root`; `$VELT_STD` is the caller's, checked before).
+    #[test]
+    fn only_a_read_only_release_std_is_trusted() {
+        let tmp = tempfile::tempdir().unwrap();
+        let release = tmp.path().join("toolchains/0.4.0");
+        std::fs::create_dir_all(release.join("bin")).unwrap();
+        let std = release.join("std");
+        std::fs::create_dir_all(&std).unwrap();
+        let exe = release.join("bin/velt");
+
+        // A writable release std: checked file by file.
+        assert_eq!(installed_std_for_exe(&exe), None);
+
+        read_only_dir(&std, true);
+        assert_eq!(
+            installed_std_for_exe(&exe),
+            Some(vpm::relpath::absolute(&std))
+        );
+
+        // The same read-only std in a prefix linked under a name, not a release's.
+        let linked = tmp.path().join("links-target/dev");
+        std::fs::create_dir_all(linked.join("bin")).unwrap();
+        std::fs::create_dir_all(linked.join("std")).unwrap();
+        read_only_dir(&linked.join("std"), true);
+        assert_eq!(installed_std_for_exe(&linked.join("bin/velt")), None);
+
+        // A dev build's std beside the checkout's Cargo.toml.
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(repo.join("target/debug")).unwrap();
+        std::fs::create_dir_all(repo.join("std")).unwrap();
+        assert_eq!(installed_std_for_exe(&repo.join("target/debug/velt")), None);
+
+        // Writable again (someone edits the release's std): checked file by file again.
+        read_only_dir(&std, false);
+        assert_eq!(installed_std_for_exe(&exe), None);
+
+        // tempdir removes the tree: leave every directory writable.
+        read_only_dir(&linked.join("std"), false);
     }
 
     #[test]
