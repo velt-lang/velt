@@ -311,6 +311,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Work::EnvDrop(def, targs) => Self::build_env_drop(cx, *def, targs),
             Work::EnvDropFrame(def, targs) => Self::build_frame_env_drop(cx, *def, targs),
             Work::EnvClone(def, targs) => Self::build_env_clone(cx, *def, targs),
+            Work::EnvTrace(def, targs) => Self::build_env_trace(cx, *def, targs),
             Work::EnvTransfer(def, targs) => Self::build_env_transfer(cx, *def, targs),
             Work::FnRoot => Self::build_fn_root(cx),
             Work::FnSame => Self::build_fn_same(cx),

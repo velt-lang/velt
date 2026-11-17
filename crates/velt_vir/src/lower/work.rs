@@ -21,6 +21,9 @@ pub(super) enum Work {
     /// not freed.
     EnvDropFrame(DefId, Vec<TyId>),
     EnvClone(DefId, Vec<TyId>),
+    /// `(env, visit, ctx)`: the trace glue of closure `(def, targs)`'s heap environment, which
+    /// visits the counted objects its captures own (glue/trace_env.rs).
+    EnvTrace(DefId, Vec<TyId>),
     /// `(env: ptr) -> ptr`: the environment of closure `(def, targs)` made safe for another
     /// thread (glue/transfer.rs).
     EnvTransfer(DefId, Vec<TyId>),

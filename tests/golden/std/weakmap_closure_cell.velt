@@ -1,0 +1,36 @@
+// check: no leaks
+// The cycle through a captured variable that the closure assigns (a cell, a counted block of
+// its own): freed like a plain capture (#3119 step 3).
+class Raw {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+class Handler {
+  swap: (r: Raw) => number;
+  constructor(f: (r: Raw) => number) {
+    this.swap = f;
+  }
+}
+
+function track(cache: WeakMap<Raw, Handler>, n: number): WeakRef<Raw> {
+  const raw = new Raw(n);
+  let cur = raw;
+  const handler = new Handler((r: Raw): number => {
+    const old = cur.n;
+    cur = r;
+    return old;
+  });
+  cache.set(raw, handler);
+  console.log("swap", cache.get(raw)!.swap(raw));
+  return new WeakRef(raw);
+}
+
+function main() {
+  const cache = new WeakMap<Raw, Handler>();
+  const r = track(cache, 3);
+  console.log("key freed:", r.deref() == null);
+  console.log("map still in use:", cache.has(new Raw(0)));
+}

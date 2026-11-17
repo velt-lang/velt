@@ -142,6 +142,18 @@ impl Cx<'_> {
                     }
                 }
             }
+            // A function value: what the environments of the closures made at its key own
+            // (glue/trace_env.rs). An environment is counted, so what it owns are the children
+            // of a child; listing them here is what the weak-capable walk needs, and the trace
+            // glue visits a function value exactly when this finds something.
+            TyKind::FnPtr { .. } => {
+                let closures = self.traced_closures(b, t);
+                for (def, targs) in closures {
+                    for (ct, _) in self.env_owned(def, &targs) {
+                        self.refs_inline(b, ct, out, seen);
+                    }
+                }
+            }
             // An uncounted object is opaque: nothing is traced through it (a leak at worst).
             TyKind::Adt(..) if self.is_class(t) => {}
             TyKind::Adt(..) | TyKind::Tuple(_) | TyKind::Result(..) => {
@@ -210,6 +222,14 @@ impl Cx<'_> {
 
     /// Fill `next`'s weak-capable types from this pass's seeds.
     pub(super) fn close_weak(&mut self, next: &mut Boxing) {
+        // In a program with weak references, the trace glue looks into the environments of the
+        // closures made at each function type (glue/trace_env.rs), and every environment and
+        // captured variable's cell may then be weakly held: their releases take the three-way
+        // sequence (`Boxing::weak_envs`, program-wide, so no shape question depends on it).
+        if !self.facts.weak_seeds.is_empty() || next.weak_object {
+            next.env_traced = self.closures_by_key();
+            next.weak_envs = !next.env_traced.is_empty();
+        }
         let mut seeds: Vec<TyId> = self.facts.weak_seeds.iter().copied().collect();
         if next.weak_object {
             // Every type converted to a dynamic type may reach a weak `object` key.

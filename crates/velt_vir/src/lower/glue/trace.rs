@@ -4,8 +4,8 @@
 //!   for each counted object `obj` refers to through its fields, elements and payloads stored
 //!   inline (up to the next counted object), with the child's own trace glue, or null for an
 //!   opaque child (a class with a vtable, whose dynamic class may have more fields, or one that
-//!   refers to nothing). Function values, interface values, uncounted objects and `shared`
-//!   values are not looked into: a reference left out only makes its target look referenced
+//!   refers to nothing). A function value leads to its closure's environment (trace_env.rs);
+//!   interface values, uncounted objects and `shared` values are not looked into: a reference left out only makes its target look referenced
 //!   from outside, which keeps it alive (a leak at worst, never a free of something live).
 //!   `TraceIn` is the same walk over an inline value at a pointer (a glue function per type, so
 //!   recursive types work).
@@ -155,7 +155,11 @@ impl FnLower<'_, '_> {
     }
 
     /// One part of type `t` at `place`: visit it when it is a counted object, else walk it.
-    fn trace_part(&mut self, place: Place, t: TyId, tv: (vir::Local, vir::Local)) {
+    pub(super) fn trace_part(&mut self, place: Place, t: TyId, tv: (vir::Local, vir::Local)) {
+        if matches!(self.cx.kind(t), TyKind::FnPtr { .. }) {
+            self.trace_fn_value(&place, t, tv);
+            return;
+        }
         let target = match self.cx.kind(t) {
             _ if self.cx.counted(t) => Some(t),
             TyKind::Option(e, _) if self.cx.ty(t) == Ty::Ptr && self.cx.counted(e) => Some(e),
