@@ -1,10 +1,9 @@
 # Design: reference cycles (cycle-capable types, a collector for them, and `weak`)
 
-Status: proposed (#3119, for #11), with the design review on #3119 folded in. Step 1 (the
+Status: accepted (#3119, for #11): the design review on #3119 is folded in, and the owner
+decided decision 1 (a collector, automatic for cycle-capable types). Step 1 (the
 cycle-capability analysis, below) is implemented; the rest is planned. This note replaces the
-"without a collector" plan in
-[semantics.md](semantics.md#reference-cycles--without-a-collector), which needs the owner's
-sign-off (decision 1).
+"without a collector" plan [semantics.md](semantics.md#reference-cycles) had.
 
 ## The problem
 
@@ -424,31 +423,31 @@ but `x.clone()` of a cyclic graph recurses until the stack overflows (#508 (3)).
 supported shape, `clone()` of a cycle-capable type uses the same identity map, at no cost for
 other types, and fixes up `weak` fields as transfers do.
 
-## Decisions for review
+## Decisions
 
-1. **A collector at all: the owner's decision**, since it reverses a written one.
-   semantics.md says "No cycle collector by default. If one is ever added, it must be opt-in
+1. **A collector at all.** Decided (owner, 2026-11-17): automatic for cycle-capable types,
+   with "off in benchmarks" dropped; semantics.md is rewritten to match. The case for it,
+   since it reverses a written decision:
+   semantics.md said "No cycle collector by default. If one is ever added, it must be opt-in
    per type, incremental and bounded (no pause), and off in benchmarks." This design is per
    type (decided by the compiler; `weak` opts a type out) and never pauses another task. It is
    not opt-in, because an opt-in collector leaves every ported TypeScript program leaking
    (goal 1). It is not off in benchmarks either: benchmarks then measure what users run, and
-   the 3% gate per row (3.4) covers the cost. **Recommendation: automatic for cycle-capable
-   types, with "off in benchmarks" dropped**; semantics.md is rewritten to match once
-   decided.
+   the 3% gate per row (3.4) covers the cost.
 2. **Bounded pauses.** A collection traverses what is reachable from its roots. An
    incremental collector needs a write barrier on every pointer store of a cycle-capable type,
    a cost on the hot path of every such program instead of only at collections, and a far
-   larger runtime. **Recommendation: synchronous, with the adaptive threshold and the lint;
+   larger runtime. **Accepted in review: synchronous, with the adaptive threshold and the lint;
    revisit if step 5's measurements on sigx show pauses that matter.**
 3. **Resurrection in a dispose** of cyclic garbage. (a) A panic, like Swift; (b) CPython's
    PEP 442: run the disposes, look again, keep the resurrected objects with a "disposed" mark
    so their dispose never runs twice (a fourth count-word bit, and the mark on every dispose).
-   **Recommendation: (a)**: no program in the repository does it, Node never runs a dispose
+   **Accepted in review: (a)**: no program in the repository does it, Node never runs a dispose
    for garbage at all, and a panic can become (b) later without breaking a working program.
 4. **`weak` locals**, not only fields: they are how a closure captures weakly without a
-   capture-list syntax TypeScript lacks. **Recommendation: yes.**
+   capture-list syntax TypeScript lacks. **Accepted in review: yes.**
 5. **The warning #11 asked for** becomes the `hint`-level lint of section 5, since a
-   cycle-capable type no longer leaks. **Recommendation: yes.**
+   cycle-capable type no longer leaks. **Accepted in review: yes.**
 
 ## Steps
 
