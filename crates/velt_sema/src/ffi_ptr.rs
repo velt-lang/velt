@@ -49,6 +49,8 @@ impl Ctx<'_> {
     /// Reports that C can't point at `pointee`, at `at`, unless that was reported already.
     fn refuse_pointee(&mut self, pointee: TyId, at: velt_common::Span, note: &'static str) {
         self.type_level.ptr_refusals += 1;
+        let ptr = self.ty.intern(TyKind::Ptr(pointee));
+        self.type_level.ptr_refused_types.insert(ptr);
         if !self.type_level.ptr_refused.insert(at) {
             return;
         }

@@ -66,6 +66,9 @@ pub(crate) struct State {
     /// How many pointees were refused so far: an expansion that refused one isn't walked
     /// again for them (`Ctx::alias_written`).
     pub(crate) ptr_refusals: u32,
+    /// The pointer types whose pointee was refused: they stay pointer types, and a C signature
+    /// or struct that holds one isn't refused again for it (`c_sig::is_c_ptr`).
+    pub(crate) ptr_refused_types: rustc_hash::FxHashSet<TyId>,
     /// While a call's argument is checked against its parameter's type: the argument, where a
     /// deferred intersection that can't be reduced at these type arguments is reported.
     pub(crate) use_site: Option<Span>,

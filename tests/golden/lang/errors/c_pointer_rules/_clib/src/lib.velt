@@ -15,6 +15,10 @@ class Holder {
 
 declare c("c") function setNull(p: Out<Ptr<FILE>>): void;
 declare c("c") function setObject(p: Out<Holder>): void;
+// A pointee refused where it was written is reported there, not again by the C signature.
+declare c("c") function takes(p: Ptr<string>): void;
+declare c("c") function outs(p: Out<Ptr<string> | null>): void;
+declare c("c") function gives(): Ptr<string> | null;
 
 function toAny<T>(x: T): any {
   return x;

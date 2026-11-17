@@ -420,7 +420,9 @@ fn out_value(cx: &Ctx, ty: TyId) -> bool {
 /// means nothing in C.
 pub(crate) fn is_c_ptr(cx: &Ctx, ty: TyId) -> bool {
     match cx.ty.kind(ty) {
-        TyKind::Ptr(t) => c_pointee(cx, *t),
+        // One whose pointee was refused where it was written is a pointer still, reported
+        // once, there (`Ctx::ptr_type_written`).
+        TyKind::Ptr(t) => c_pointee(cx, *t) || cx.type_level.ptr_refused_types.contains(&ty),
         _ => false,
     }
 }
