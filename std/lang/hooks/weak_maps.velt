@@ -57,7 +57,7 @@ import {
   vtruncate,
 } from "./weak_mem";
 
-// A map block.
+/** A map block: the keys' trace glue, then the values' retain, release and trace glue. */
 export const M_KEY_TRACE: usize = 0;
 export const M_RETAIN: usize = 8;
 export const M_RELEASE: usize = 16;
@@ -69,7 +69,7 @@ const M_USED: usize = 48;
 const M_LIVE: usize = 56;
 const MAP: usize = 64;
 
-// An entry.
+/** An entry: its key (0 empty, 1 removed), value word and contributions. */
 export const E_KEY: usize = 0;
 export const E_VALUE: usize = 8;
 export const E_MEMBERS: usize = 16;

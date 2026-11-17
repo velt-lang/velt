@@ -28,7 +28,7 @@
 use velt_sema::hir::{self, DefId, Nothing, TyId, TyKind};
 
 use super::glue::Glue;
-use super::hook_calls::{self as hooks, ty, HookTy};
+use super::hook_calls::{self as hooks, ty, Construct, HookTy};
 use super::operand::proj;
 use super::{cint, Cx, FnLower, Work};
 use crate::vir::{BinOp, Const, Operand, Place, Proj, Rvalue, Terminator, Ty};
@@ -225,7 +225,9 @@ impl FnLower<'_, '_> {
         let kept = k.table.clone().unwrap_or_else(|| k.desc.clone());
         let desc = ty::U64::arg(self.cast_to(kept, Ty::Ptr, Ty::U64));
         let data = ty::USize::arg(self.as_usize(k.data.clone()));
-        hooks::weak_ref_new_with(self, data, desc).emit(self).op()
+        hooks::weak_ref_new_with(self, Construct::Weak, data, desc)
+            .emit(self)
+            .op()
     }
 
     /// `deref()` of a `WeakRef<object>` (`t`: `object` or `object | null`): the target with its
@@ -242,7 +244,9 @@ impl FnLower<'_, '_> {
         let (yes, no, done) = (self.new_block(), self.new_block(), self.new_block());
         self.branch(live.clone(), yes, no);
         self.switch_to(yes);
-        let w = hooks::weak_ref_word(self, ty::U32::arg(r)).emit(self).op();
+        let w = hooks::weak_ref_word(self, Construct::Weak, ty::U32::arg(r))
+            .emit(self)
+            .op();
         let desc = self.cast_to(w, Ty::U64, Ty::Ptr);
         self.assign(proj(&out, Proj::Field(0)), Rvalue::Use(d));
         self.assign(proj(&out, Proj::Field(1)), Rvalue::Use(desc));

@@ -6,7 +6,7 @@
 //! readers of an `RwLock` share: their count operations go through `velt_rt_lk_*`, which leave
 //! the shared ones alone in a `read` callback (the `_of` variants, given the object's type).
 
-use super::hook_calls::{self as hooks, ty, HookTy};
+use super::hook_calls::{self as hooks, ty, Construct, HookTy};
 use super::operand::proj;
 use super::rt::Rt;
 use super::{cfunc, cint, ice, FnLower, Glue, LkMode, Work};
@@ -403,7 +403,9 @@ impl FnLower<'_, '_> {
         self.branch(one, last_bb, cold);
         self.switch_to(cold);
         let obj = ty::USize::arg(self.as_usize(p));
-        let gone = hooks::weak_release(self, obj).emit(self).op();
+        let gone = hooks::weak_release(self, Construct::Weak, obj)
+            .emit(self)
+            .op();
         self.branch(gone, last_bb, join);
         self.switch_to(last_bb);
         last(self);

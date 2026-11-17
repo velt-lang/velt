@@ -144,6 +144,8 @@ struct Walk {
     async_host: bool,
     /// A call of `catchUnwind` ([`Construct::CatchUnwind`]).
     catch_unwind: bool,
+    /// A weak collection's intrinsic ([`Construct::Weak`]).
+    weak: bool,
     /// Code that runs on the executor: an async function or closure, or one of the externs the
     /// executor in Velt serves ([`super::sched_hooks`]).
     tasks: bool,
@@ -381,6 +383,9 @@ fn add_walk(cx: &mut Ctx, w: Walk) {
     if w.catch_unwind {
         cx.lazy.live.present |= Construct::CatchUnwind.bit();
     }
+    if w.weak {
+        cx.lazy.live.present |= Construct::Weak.bit();
+    }
     if w.async_host {
         let settled = hook_class(cx, hook_index::host_settled);
         live_classes(cx, settled);
@@ -606,6 +611,19 @@ fn walk_expr(ty: &crate::types::Types, e: &hir::Expr, w: &mut Walk) {
             callee: Callee::Intrinsic(I::CatchUnwind | I::CatchUnwindAt),
             ..
         } => w.catch_unwind = true,
+        E::Call {
+            callee:
+                Callee::Intrinsic(
+                    I::WeakMapSet
+                    | I::WeakMapGet
+                    | I::WeakMapHas
+                    | I::WeakMapDelete
+                    | I::WeakMapValue
+                    | I::WeakRefNew
+                    | I::WeakRefDeref,
+                ),
+            ..
+        } => w.weak = true,
         E::Call {
             callee: Callee::Dyn {
                 method_type_args, ..

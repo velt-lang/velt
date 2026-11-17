@@ -11,7 +11,7 @@
 use velt_sema::hir::{self, Intrinsic, TyId, TyKind};
 
 use super::glue::Glue;
-use super::hook_calls::{self as hooks, ty, HookTy};
+use super::hook_calls::{self as hooks, ty, Construct, HookTy};
 use super::operand::proj;
 use super::{cfunc, cint, ice, FnLower, Work};
 use crate::vir::{Operand, Place, Proj, Rvalue, Ty};
@@ -94,9 +94,15 @@ impl FnLower<'_, '_> {
                 };
                 let (m, k) = (ty::U32::arg(m), ty::USize::arg(self.as_usize(k)));
                 match i {
-                    I::WeakMapGet => hooks::weak_map_get(self, m, k).emit(self).op(),
-                    I::WeakMapHas => hooks::weak_map_has(self, m, k).emit(self).op(),
-                    _ => hooks::weak_map_delete(self, m, k).emit(self).op(),
+                    I::WeakMapGet => hooks::weak_map_get(self, Construct::Weak, m, k)
+                        .emit(self)
+                        .op(),
+                    I::WeakMapHas => hooks::weak_map_has(self, Construct::Weak, m, k)
+                        .emit(self)
+                        .op(),
+                    _ => hooks::weak_map_delete(self, Construct::Weak, m, k)
+                        .emit(self)
+                        .op(),
                 }
             }
             (I::WeakMapValue, [w]) => {
@@ -117,7 +123,9 @@ impl FnLower<'_, '_> {
                     return cint(0, Ty::U32);
                 };
                 let k = ty::USize::arg(self.as_usize(k));
-                hooks::weak_ref_new(self, k).emit(self).op()
+                hooks::weak_ref_new(self, Construct::Weak, k)
+                    .emit(self)
+                    .op()
             }
             (I::WeakRefDeref, [r]) => {
                 let r = self.expr(r);
@@ -262,7 +270,7 @@ impl FnLower<'_, '_> {
         };
         let [key_trace, retain, release, trace] =
             [key_trace, retain, release, trace].map(|g| ty::USize::arg(self.as_usize(g)));
-        hooks::weak_map_new(self, key_trace, retain, release, trace)
+        hooks::weak_map_new(self, Construct::Weak, key_trace, retain, release, trace)
             .emit_to(self, Place::local(out));
         self.goto(join);
         self.switch_to(join);
@@ -273,10 +281,10 @@ impl FnLower<'_, '_> {
             Some(d) => {
                 let tr = self.dyn_key_trace(d);
                 let tr = ty::USize::arg(self.as_usize(tr));
-                hooks::weak_map_set_traced(self, m, k, w, tr).emit(self);
+                hooks::weak_map_set_traced(self, Construct::Weak, m, k, w, tr).emit(self);
             }
             None => {
-                hooks::weak_map_set(self, m, k, w).emit(self);
+                hooks::weak_map_set(self, Construct::Weak, m, k, w).emit(self);
             }
         }
         mo
@@ -284,7 +292,9 @@ impl FnLower<'_, '_> {
 
     /// `ref.deref()`'s target word as a pointer (retained), or null once it was freed.
     pub(super) fn weakref_deref_ptr(&mut self, r: Operand) -> Operand {
-        let w = hooks::weak_ref_deref(self, ty::U32::arg(r)).emit(self).op();
+        let w = hooks::weak_ref_deref(self, Construct::Weak, ty::U32::arg(r))
+            .emit(self)
+            .op();
         self.cast_to(w, Ty::U64, Ty::Ptr)
     }
 

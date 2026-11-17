@@ -86,7 +86,7 @@ function makeState(): usize {
   return was;
 }
 
-// A record.
+/** A record: its object (0 empty, 1 removed), then the object's trace glue. */
 export const R_OBJ: usize = 0;
 export const R_TRACE: usize = 8;
 /** `hint` (32 bits), then `observed` (32 bits). */
