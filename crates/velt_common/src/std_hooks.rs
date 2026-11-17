@@ -181,6 +181,12 @@ hooks! {
     /// `s.split(sep)` with a string separator (velt/lang/string/split, #2196).
     string_split => lang_string_split, "split", sig((&string, &string) -> [string]),
         replaces("velt_rt_str_split");
+    /// `s.replace(from, to)` with a string pattern (velt/lang/string/replace).
+    string_replace => lang_string_replace, "replace", sig((&string, &string, &string) -> string),
+        replaces("velt_rt_str_replace");
+    /// `s.replaceAll(from, to)` with a string pattern.
+    string_replace_all => lang_string_replace, "replaceAll",
+        sig((&string, &string, &string) -> string), replaces("velt_rt_str_replace_all");
 
     // process_statics.velt: the process-wide statics the runtime reads (#2779), whose addresses
     // `velt_main` hands it first thing (`velt_rt_statics`).

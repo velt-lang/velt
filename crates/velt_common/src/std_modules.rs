@@ -149,6 +149,7 @@ table! {
     lang_sort_stable => "lang/sort/stable",
     lang_string_collate => "lang/string/collate",
     lang_string_search => "lang/string/search",
+    lang_string_replace => "lang/string/replace",
     lang_string_split => "lang/string/split",
     lang_symbol => "lang/symbol",
     lang_this_fn => "lang/this_fn",

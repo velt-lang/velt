@@ -29,8 +29,6 @@ declare function velt_rt_str_trim_start(s: string): string;
 declare function velt_rt_str_trim_end(s: string): string;
 declare function velt_rt_str_to_upper(s: string): string;
 declare function velt_rt_str_to_lower(s: string): string;
-declare function velt_rt_str_replace(s: string, from: string, to: string): string;
-declare function velt_rt_str_replace_all(s: string, from: string, to: string): string;
 declare function velt_rt_str_repeat(s: string, n: i64, out: string): bool;
 declare function velt_rt_str_pad_start(s: string, target: i64, fill: string): string;
 declare function velt_rt_str_pad_end(s: string, target: i64, fill: string): string;
@@ -170,7 +168,7 @@ extend string {
 
   /** First occurrence; `to` expands `$$`, `$&`, `` $` `` and `$'` like JS. */
   replace(from: string, to: string): string {
-    return velt_rt_str_replace(this, from, to);
+    return hookCall("string_replace", this, from, to);
   }
 
   /**
@@ -182,7 +180,7 @@ extend string {
    * this string; `$$`, `$&`, `` $` `` and `$'` are expanded like JS.
    */
   replaceAll(from: string, to: string): string {
-    return velt_rt_str_replace_all(this, from, to);
+    return hookCall("string_replace_all", this, from, to);
   }
 
   /** Panics like JS's RangeError if `n` is negative or the result would be too large. */

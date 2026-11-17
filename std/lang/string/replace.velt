@@ -1,0 +1,201 @@
+// velt/lang/string (internal): `s.replace(from, to)` and `s.replaceAll(from, to)` with a string
+// pattern (std/prelude/string.velt), in Velt on the byte searches of `indexOf` (byte_scan.velt,
+// needle_scan.velt).
+//
+// The replacement follows JavaScript's `GetSubstitution` for string patterns: `$$` is `$`, `$&`
+// the match, `` $` `` the text before it, `$'` the text after it; any other `$` sequence (`$1`,
+// `$<name>`) is copied as it is, since a string pattern has no captures. The result is built by
+// string concatenation, which joins a high surrogate meeting a low one at a seam into the pair,
+// as JavaScript sees one character there.
+//
+// The matches are byte ranges of `s` (WTF-8 is self-synchronizing, as split.velt says), but for
+// a pattern that can match half of a pair ("half needle", search.velt) and `replaceAll("", x)`
+// in a string that is not ASCII: those positions are code units (`replaceAll("", "-")` puts a
+// `-` between the halves of every pair, as JavaScript does), cut by `substring`.
+
+import { noInline, strByteAt, strByteLen, strLen } from "velt/lang/intrinsics";
+import { findByte } from "velt/lang/string/byte_scan";
+import { isHalfNeedle } from "velt/lang/string/code_units";
+import { halfFind } from "velt/lang/string/half_needle";
+import { findBytes } from "velt/lang/string/needle_scan";
+
+declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
+
+const DOLLAR: u8 = 36;
+
+/** `s.replace(from, to)`: the first match only. */
+export function replace(s: string, from: string, to: string): string {
+  return replaceIn(s, from, to, false);
+}
+
+/** `s.replaceAll(from, to)`: every match that doesn't overlap the one before, left to right. */
+export function replaceAll(s: string, from: string, to: string): string {
+  return replaceIn(s, from, to, true);
+}
+
+@noInline
+function replaceIn(s: string, from: string, to: string, all: bool): string {
+  const n = strByteLen(s);
+  const m = strByteLen(from);
+  if (strLen(s) != n && (isHalfNeedle(from, m) || (all && m == 0))) {
+    return replaceUnits(s, from, to, all);
+  }
+  const plain = !hasDollar(to);
+  let out = "";
+  let copied: usize = 0;
+  let at: usize = 0;
+  let matched = false;
+  while (true) {
+    const k = nextMatch(s, from, m, at, n);
+    if (k < 0) {
+      break;
+    }
+    matched = true;
+    const pos = k as usize;
+    out = out + velt_rt_str_byte_slice(s, copied as u64, pos as u64);
+    out = out + (plain ? to : substitute(to, s, pos, m));
+    copied = pos + m;
+    if (!all) {
+      break;
+    }
+    // An empty pattern matches at every code point boundary, both ends included.
+    at = m == 0 ? nextBoundary(s, pos, n) : copied;
+    if (at > n) {
+      break;
+    }
+  }
+  if (!matched) {
+    return s;
+  }
+  return out + velt_rt_str_byte_slice(s, copied as u64, n as u64);
+}
+
+/** The first match of `from` (`m` bytes) in `s` (`n` bytes) at or after byte `at`, or -1. */
+function nextMatch(s: string, from: string, m: usize, at: usize, n: usize): i64 {
+  if (m == 0) {
+    return at <= n ? at as i64 : -1;
+  }
+  if (m > n - at) {
+    return -1;
+  }
+  if (m == 1) {
+    return findByte(s, strByteAt(from, 0), at, n);
+  }
+  return findBytes(s, from, m, at, n);
+}
+
+/** The byte after the code point at `pos` of `s` (`n` bytes): `n + 1` at the end. */
+function nextBoundary(s: string, pos: usize, n: usize): usize {
+  if (pos >= n) {
+    return n + 1;
+  }
+  const lead = strByteAt(s, pos as u64);
+  return pos + (lead < 0x80 ? 1 : lead < 0xe0 ? 2 : lead < 0xf0 ? 3 : 4);
+}
+
+/** Does `to` have a `$`? */
+function hasDollar(to: string): bool {
+  const n = strByteLen(to);
+  return n > 0 && findByte(to, DOLLAR, 0, n) >= 0;
+}
+
+/** `to` with its `$` sequences expanded, for the match at bytes `pos..pos + len` of `s`. */
+function substitute(to: string, s: string, pos: usize, len: usize): string {
+  const n = strByteLen(to);
+  let out = "";
+  let run: usize = 0;
+  let i: usize = 0;
+  while (i + 1 < n) {
+    if (strByteAt(to, i as u64) != DOLLAR) {
+      i++;
+      continue;
+    }
+    const c = strByteAt(to, (i + 1) as u64);
+    let piece = "";
+    let expands = true;
+    if (c == DOLLAR) {
+      piece = "$";
+    } else if (c == 38) {
+      piece = velt_rt_str_byte_slice(s, pos as u64, (pos + len) as u64);
+    } else if (c == 96) {
+      piece = velt_rt_str_byte_slice(s, 0, pos as u64);
+    } else if (c == 39) {
+      piece = velt_rt_str_byte_slice(s, (pos + len) as u64, strByteLen(s) as u64);
+    } else {
+      expands = false;
+    }
+    if (expands) {
+      out = out + velt_rt_str_byte_slice(to, run as u64, i as u64) + piece;
+      i += 2;
+      run = i;
+    } else {
+      i++;
+    }
+  }
+  return out + velt_rt_str_byte_slice(to, run as u64, n as u64);
+}
+
+/**
+ * `replaceIn` in code units: a half needle, or `replaceAll("", to)`, in a string that is not
+ * ASCII. Every position is a code unit; the pieces are cut by `substring`.
+ */
+@noInline
+function replaceUnits(s: string, from: string, to: string, all: bool): string {
+  const total = strLen(s);
+  const len = strLen(from);
+  const plain = !hasDollar(to);
+  let out = "";
+  let copied: usize = 0;
+  let at: usize = 0;
+  while (at <= total && len <= total - at) {
+    const k = len == 0 ? at as i64 : halfFind(s, from, at);
+    if (k < 0) {
+      break;
+    }
+    const pos = k as usize;
+    out = out + s.substring(copied as number, pos as number);
+    out = out + (plain ? to : substituteUnits(to, s, pos, len));
+    copied = pos + len;
+    if (!all) {
+      break;
+    }
+    at = len == 0 ? pos + 1 : copied;
+  }
+  return out + s.substring(copied as number);
+}
+
+/** `substitute` with code-unit positions. */
+function substituteUnits(to: string, s: string, pos: usize, len: usize): string {
+  const n = strByteLen(to);
+  let out = "";
+  let run: usize = 0;
+  let i: usize = 0;
+  while (i + 1 < n) {
+    if (strByteAt(to, i as u64) != DOLLAR) {
+      i++;
+      continue;
+    }
+    const c = strByteAt(to, (i + 1) as u64);
+    let piece = "";
+    let expands = true;
+    if (c == DOLLAR) {
+      piece = "$";
+    } else if (c == 38) {
+      piece = s.substring(pos as number, (pos + len) as number);
+    } else if (c == 96) {
+      piece = s.substring(0, pos as number);
+    } else if (c == 39) {
+      piece = s.substring((pos + len) as number);
+    } else {
+      expands = false;
+    }
+    if (expands) {
+      out = out + velt_rt_str_byte_slice(to, run as u64, i as u64) + piece;
+      i += 2;
+      run = i;
+    } else {
+      i++;
+    }
+  }
+  return out + velt_rt_str_byte_slice(to, run as u64, n as u64);
+}
