@@ -9,7 +9,7 @@
 //!    `to_json`, `inspect`): `String(x)`, template literals, `+` on a string and `join` /
 //!    `toString` of arrays (std code over a `T`) call `toString()`; `JSON.stringify` calls
 //!    `toJSON()`; `console.log` / `console.error` call `[INSPECT]()`, all for the value and for
-//!    every value it holds. Counted for the arguments of the intrinsics in [`super::glue_args`] whose
+//!    every value it holds. Counted for the arguments of the intrinsics in [`glue_args`] whose
 //!    type reaches a class with such a method ([`Implicit::reach`]).
 //! 2. **A class's own `clone()`**, which a deep copy calls instead of copying a resource owner
 //!    field by field (velt_vir transfer.rs `own_clone`): `x.clone()` (`Intrinsic::Clone`), a
