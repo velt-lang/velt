@@ -63,6 +63,7 @@ int32_t velt_main(void) {
     write_i64(1, -42); velt_rt_write_byte(1, ' ');
     write_u64(1, 18446744073709551615ull); velt_rt_write_byte(1, ' ');
     velt_rt_write_f64(1, 0.1 + 0.2); velt_rt_write_byte(1, ' ');
+    velt_rt_write_f64(1, 1e21); velt_rt_write_byte(1, ' ');
     velt_rt_write_bool(1, 1); velt_rt_write_byte(1, ' ');
     write_i64(1, velt_rt_pow_i64(2, 62)); velt_rt_write_byte(1, '\n');
     velt_rt_str_from_f64(1.5e-7, &f);

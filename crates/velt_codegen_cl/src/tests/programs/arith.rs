@@ -290,7 +290,7 @@ fn math_intrinsics(pb: &mut ProgramBuilder) -> Vec<(FuncId, Vec<Operand>, Ty, &'
         (
             M::FmaF64,
             vec![f(0.1), f(10.0), f(-1.0)],
-            "5.551115123125783e-17",
+            "0.00000000000000005551115123125783",
         ),
     ];
     let mut out = vec![];
