@@ -23,7 +23,6 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_sema::hir::{DefId, TyId, TyKind};
 
-use crate::lower::shape::SHAPE_BASE;
 use crate::lower::Cx;
 
 /// A node of the ownership graph.
@@ -144,12 +143,10 @@ impl Cx<'_> {
     /// Every type of the table that is a concrete type of this program (not a shape
     /// placeholder, nor a type mentioning one).
     fn table_types(&self) -> Vec<TyId> {
+        // A placeholder mentions itself, so this leaves out placeholders too.
         (0..self.types.len() as u32)
             .map(TyId)
-            .filter(|&t| {
-                !matches!(self.types.kind(t), TyKind::Param(n) if *n >= SHAPE_BASE)
-                    && !self.mentions_ph(t)
-            })
+            .filter(|&t| !self.mentions_ph(t))
             .collect()
     }
 
