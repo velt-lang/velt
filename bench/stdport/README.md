@@ -1,7 +1,7 @@
 # Standard-library components against the Rust crate for the same job
 
 Each `<name>.velt` exercises one part of the standard library, and `rust/src/bin/<name>.rs` is the
-same program on the crate the runtime uses for it today (`itoa`, `ryu`, `url`, `dashu-int`), or,
+same program on the crate the runtime uses for it today (`itoa`, `ryu`, `url`; `dashu-int`, which BigInt used), or,
 where the standard library is already Velt code (`velt/crypto`, `velt/encoding`), on the crate a
 Rust program would use (`sha2`, `base64`). Both print the same output; the harness fails
 otherwise.
@@ -34,13 +34,19 @@ this machine.
 | parse_float | runtime, Rust's `f64` parser | 57 | 28 | 2.01 |
 | to_fixed | runtime | 165 | 99 | 1.66 |
 | url_parse | Velt (`velt/net/url`) | 161 | 64 | 2.51 |
-| bigint | runtime, `dashu-int` | 169 | 169 | 1.00 |
+| bigint | runtime, `dashu-int` (Velt since) | 169 | 169 | 1.00 |
 | sha256_large | Velt (`velt/crypto`) | 118 | 19 | 6.09 |
 | sha256_small | Velt (`velt/crypto`) | 125 | 20 | 6.28 |
 | base64 | Velt (`velt/encoding`) | 149 | 41 | 3.64 |
 
 `limb_mul` was added after this table (64-bit limb arithmetic on `Math.umulh`, against `u128`
-in Rust): 1,194M instructions against 888M on the same machine, 1.34.
+in Rust): 1,194M instructions against 888M on the same machine, 1.34. Linux x86_64, cachegrind,
+`main` at f625a29d: 976M against Rust's 990M, 0.99: the loop is unrolled twice, with one widening
+`mul` and an `adc` chain per limb and no bounds check.
+
+`bigint_mul`, `bigint_div` and `bigint_text` were added with `velt/math`'s move from `dashu-int` to
+Velt (64-bit limbs): products, quotients and decimal and hex text at 3, 25, 248 and 991 limbs.
+The `bigint` row's number was the runtime's, and is Velt's since.
 
 `url_parse_wide` was added after it too: URLs with a character that is not ASCII, and long
 queries, paths and `data:` URLs, which `url_parse` has none of. 2,324M instructions against the

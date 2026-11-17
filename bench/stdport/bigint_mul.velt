@@ -1,0 +1,36 @@
+// BigInt products at four sizes (3, 25, 248 and 991 limbs: schoolbook, both sides of the
+// Karatsuba threshold, and well past it), and the squares of the same operands. The Rust port
+// uses `dashu-int`, which `velt/math` ran on before it moved to Velt.
+import { BigInt } from "velt/math";
+
+// `b^e` by squaring (`pow` is newer than this row).
+function power(b: i64, e: i64): BigInt {
+  let result = new BigInt(1);
+  let base = new BigInt(b);
+  let k = e;
+  while (k > 0) {
+    if ((k & 1) != 0) {
+      result = result.mul(base);
+    }
+    k = k >> 1;
+    if (k > 0) {
+      base = base.mul(base);
+    }
+  }
+  return result;
+}
+
+function main() {
+  let acc: i64 = 0;
+  const sizes: i64[] = [100, 1000, 10000, 40000];
+  const reps: i64[] = [200000, 20000, 400, 40];
+  for (let s = 0; s < 4; s++) {
+    const a = power(3, sizes[s]);
+    const b = power(7, sizes[s]);
+    for (let i: i64 = 0; i < reps[s]; i++) {
+      a.addIntAssign(1);
+      acc = acc ^ a.mul(b).toI64() ^ a.mul(a).toI64();
+    }
+  }
+  console.log(acc);
+}

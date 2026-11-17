@@ -69,27 +69,7 @@ fn same_f64(got: f64, want_bits: u64) -> bool {
 }
 
 #[test]
-fn parse_int_matches_js() {
-    for &(s, radix, want) in js::PARSE_INT {
-        let got = unsafe { velt_rt_parse_int(&lit(s), radix) };
-        assert!(
-            same_f64(got, want),
-            "parseInt({s:?}, {radix}) = {got:e}, want {:e}",
-            f64::from_bits(want)
-        );
-    }
-}
-
-#[test]
-fn parse_float_and_number_match_js() {
-    for &(s, want) in js::PARSE_FLOAT {
-        let got = unsafe { velt_rt_parse_float(&lit(s)) };
-        assert!(
-            same_f64(got, want),
-            "parseFloat({s:?}) = {got:e}, want {:e}",
-            f64::from_bits(want)
-        );
-    }
+fn number_matches_js() {
     for &(s, want) in js::TO_NUMBER {
         let got = unsafe { velt_rt_str_to_number(&lit(s)) };
         assert!(

@@ -1,15 +1,11 @@
-//! String → number conversions with exact JS semantics: `parseInt`, `parseFloat`, `Number(s)`.
+//! `Number(s)` with exact JS semantics, for compiled code that converts a string held as `any`
+//! (velt_vir `lower/any.rs`); std's `Number(s)` and `parseFloat` are velt/lang/number/parse.
 //!
-//! Decimal values are correctly rounded (Rust's `f64` parser, like V8). Power-of-two radixes are
-//! correctly rounded for any length; other radixes are exact below 2^128 and then continue in
-//! `f64` arithmetic (V8 is also approximate there).
+//! Decimal values are correctly rounded (Rust's `f64` parser, like V8); `0x`, `0o` and `0b`
+//! values are correctly rounded for any length.
 
 use super::{is_js_whitespace, text_lossy};
 use crate::str::VeltStr;
-
-fn trim_start_js(s: &str) -> &str {
-    s.trim_start_matches(is_js_whitespace)
-}
 
 fn digit_value(b: u8, radix: u32) -> Option<u32> {
     (b as char).to_digit(radix)
@@ -22,39 +18,8 @@ fn digits_len(s: &[u8], radix: u32) -> usize {
         .unwrap_or(s.len())
 }
 
-/// Value of a non-empty run of valid radix-`radix` digits.
-fn digits_value(digits: &[u8], radix: u32) -> f64 {
-    if radix == 10 {
-        if digits.len() <= 15 {
-            return digits.iter().fold(0u64, |a, &d| a * 10 + (d - b'0') as u64) as f64;
-        }
-        // SAFETY: ASCII digits only.
-        return unsafe { std::str::from_utf8_unchecked(digits) }
-            .parse()
-            .unwrap_or(f64::NAN);
-    }
-    if radix.is_power_of_two() {
-        return power_of_two_value(digits, radix);
-    }
-    let mut acc: u128 = 0;
-    for (i, &b) in digits.iter().enumerate() {
-        let d = digit_value(b, radix).unwrap_or(0) as u128;
-        match acc
-            .checked_mul(radix as u128)
-            .and_then(|a| a.checked_add(d))
-        {
-            Some(next) => acc = next,
-            None => {
-                return digits[i..].iter().fold(acc as f64, |f, &b| {
-                    f * radix as f64 + digit_value(b, radix).unwrap_or(0) as f64
-                })
-            }
-        }
-    }
-    acc as f64
-}
-
-/// Exact for any length: keep >= 123 significant bits, fold the rest into a sticky bit, and let
+/// Value of a non-empty run of valid digits in a power-of-two `radix` (16, 8 or 2), exact for
+/// any length: keep >= 123 significant bits, fold the rest into a sticky bit, and let
 /// the (round-to-nearest-even) `u128 → f64` conversion do the single rounding.
 fn power_of_two_value(digits: &[u8], radix: u32) -> f64 {
     let bits = radix.trailing_zeros();
@@ -69,43 +34,6 @@ fn power_of_two_value(digits: &[u8], radix: u32) -> f64 {
         }
     }
     (acc | sticky as u128) as f64 * 2f64.powi(shift)
-}
-
-/// `parseInt(s, radix)`; pass `radix = 0` when JS omits it.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_parse_int(s: *const VeltStr, radix: i64) -> f64 {
-    parse_int(&text_lossy(s), radix)
-}
-
-fn parse_int(s: &str, radix: i64) -> f64 {
-    let mut s = trim_start_js(s).as_bytes();
-    let negative = s.first() == Some(&b'-');
-    if matches!(s.first(), Some(b'-' | b'+')) {
-        s = &s[1..];
-    }
-    // ToInt32(radix): 0 means "not given".
-    let mut radix = match radix as i32 {
-        0 => 0,
-        r @ 2..=36 => r as u32,
-        _ => return f64::NAN,
-    };
-    if (radix == 0 || radix == 16) && (s.starts_with(b"0x") || s.starts_with(b"0X")) {
-        s = &s[2..];
-        radix = 16;
-    }
-    if radix == 0 {
-        radix = 10;
-    }
-    let n = digits_len(s, radix);
-    if n == 0 {
-        return f64::NAN;
-    }
-    let v = digits_value(&s[..n], radix);
-    if negative {
-        -v
-    } else {
-        v
-    }
 }
 
 /// Length of the longest `StrUnsignedDecimalLiteral` prefix (digits, optional `.digits`,
@@ -156,24 +84,6 @@ fn signed_infinity(negative: bool) -> f64 {
     }
 }
 
-/// `parseFloat(s)`: longest decimal prefix after leading whitespace; NaN if there is none.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_parse_float(s: *const VeltStr) -> f64 {
-    parse_float(&text_lossy(s))
-}
-
-fn parse_float(s: &str) -> f64 {
-    let s = trim_start_js(s).as_bytes();
-    let (negative, rest) = split_sign(s);
-    if rest.starts_with(b"Infinity") {
-        return signed_infinity(negative);
-    }
-    match decimal_prefix_len(rest) {
-        Some(n) => decimal_value(&s[..s.len() - rest.len() + n]),
-        None => f64::NAN,
-    }
-}
-
 /// `Number(s)`: whole string (after trimming) must be a numeric literal; `""` → 0;
 /// `0x`/`0o`/`0b` prefixes (unsigned only); `Infinity`; otherwise NaN.
 #[no_mangle]
@@ -196,7 +106,7 @@ fn str_to_number(s: &str) -> f64 {
         let digits = &s[2..];
         let valid = !digits.is_empty() && digits_len(digits, radix) == digits.len();
         return if valid {
-            digits_value(digits, radix)
+            power_of_two_value(digits, radix)
         } else {
             f64::NAN
         };

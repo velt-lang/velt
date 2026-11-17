@@ -1,0 +1,13 @@
+// `n.toString(radix)` of `i64` and `u64` values: exact over the whole range (std/lang/number/radix).
+// The expected text is Node's for the same values as BigInts.
+
+const big: i64 = 9223372036854775807;
+const small: i64 = -9223372036854775807 - 1;
+const ints: i64[] = [0, 1, -1, 35, -36, 255, 65535, 1000000007, big, small];
+for (const n of ints) {
+  console.log(n.toString(2), n.toString(3), n.toString(16), n.toString(36));
+}
+const unsigned: u64[] = [0, 35, 18446744073709551615];
+for (const u of unsigned) {
+  console.log(u.toString(2), u.toString(16), u.toString(36));
+}

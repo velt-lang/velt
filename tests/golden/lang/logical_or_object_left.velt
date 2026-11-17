@@ -1,0 +1,48 @@
+// check: no leaks
+// `a || b` with an object on the left is `a`, used as its user wants it (#3126): a user that
+// only reads it or changes it in place leaves `a` to its owner, one that keeps it shares it.
+class Holder {
+  xs: number[] = [7, 8];
+}
+
+function len(a: number[]): number {
+  return a.length;
+}
+
+function keep(a: number[]): number[] {
+  return a;
+}
+
+function make(i: number): number[] {
+  const r: number[] = [];
+  for (let k = 0; k < i % 3 + 1; k++) {
+    r.push(k);
+  }
+  return r;
+}
+
+function main() {
+  let total = 0;
+  for (let i = 0; i < 4; i++) {
+    const xs = make(i);
+    total += (xs || [1]).length;
+    const ys = make(i);
+    total += len(ys || [1]);
+    const zs = make(i);
+    const kept = zs || [1];
+    kept.push(9);
+    total += kept.length + zs.length;
+    const ws = make(i);
+    (ws || [1]).push(5);
+    total += ws.length;
+    const vs = make(i);
+    const out = keep(vs || [1]);
+    total += out.length;
+    const s: string[] = ["a", "b"];
+    total += (s || ["c"]).length;
+    const h = new Holder();
+    total += (h.xs || [1]).length + (h || new Holder()).xs.length;
+    total += (make(i) || [1]).length;
+  }
+  console.log(total);
+}
