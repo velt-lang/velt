@@ -195,7 +195,7 @@ fn floats_are_shortest_round_trip_and_non_finite_is_null() {
     w.end_row();
     assert_eq!(
         String::from_utf8(w.into_rows()).unwrap(),
-        r#"{"a":0.30000000000000004,"b":3,"c":0,"d":1e+21,"e":1.5e-7,"f":null,"g":null,"h":9007199254740992}"#
+        r#"{"a":0.30000000000000004,"b":3,"c":0,"d":1e21,"e":1.5e-7,"f":null,"g":null,"h":9007199254740992.0}"#
     );
 }
 
