@@ -379,3 +379,100 @@ fn a_function_holding_itself_as_a_property_closes_a_cycle() {
     );
     assert!(has_closures(&c), "{c}");
 }
+
+// From the review of #3122: the edges a weak collection's subclass, a generator object and a
+// weak map key of a wider static type own.
+
+#[test]
+fn a_weak_map_subclass_keeps_its_own_fields() {
+    let c = cycle_capable(
+        "class Key { k = 1; }
+         class Owner { cache: Cache | null = null; }
+         class Cache extends WeakMap<Key, number> { owner: Owner | null = null; }
+         function make(): void { const o = new Owner(); const c = new Cache(); c.owner = o; o.cache = c; }
+         function main() { make(); console.log(1); }",
+    );
+    assert!(has(&c, "class Owner"), "{c}");
+}
+
+#[test]
+fn a_generator_owns_its_state() {
+    let c = cycle_capable(
+        "class Holder { it: Generator<number, void, unknown> | null = null; n = 3; }
+         function* count(h: Holder): Generator<number, void, unknown> {
+           for (let i = 0; i < h.n; i++) yield i;
+         }
+         function make(): void { const h = new Holder(); h.it = count(h); }
+         function main() { make(); console.log(1); }",
+    );
+    assert!(has(&c, "class Holder"), "{c}");
+}
+
+#[test]
+fn an_async_generator_owns_its_state() {
+    let c = cycle_capable(
+        "class Holder { it: AsyncGenerator<number, void, unknown> | null = null; n = 3; }
+         async function* count(h: Holder): AsyncGenerator<number, void, unknown> {
+           for (let i = 0; i < h.n; i++) yield i;
+         }
+         function make(): void { const h = new Holder(); h.it = count(h); }
+         async function main() { make(); console.log(1); }",
+    );
+    assert!(has(&c, "class Holder"), "{c}");
+}
+
+#[test]
+fn an_object_key_leads_to_its_entries_from_its_concrete_type() {
+    // Each key is kept alive only by the other map's value, as `object` keys.
+    let c = cycle_capable(
+        "class A { n = 1; }
+         class B { n = 2; }
+         function main() {
+           const m1 = new WeakMap<object, B>();
+           const m2 = new WeakMap<object, A>();
+           const a = new A();
+           const b = new B();
+           m1.set(a, b);
+           m2.set(b, a);
+           console.log(m1.has(a), m2.has(b));
+         }",
+    );
+    assert!(has(&c, "class A"), "{c}");
+    assert!(has(&c, "class B"), "{c}");
+}
+
+#[test]
+fn a_base_class_key_leads_to_its_entries_from_a_subclass() {
+    // The key is a `Leaf`, typed as its base; the entry's value holds the `Leaf`.
+    let c = cycle_capable(
+        "class Base { n = 1; }
+         class Leaf extends Base { m = 2; }
+         class Tag { of: Leaf; constructor(l: Leaf) { this.of = l; } }
+         function main() {
+           const m = new WeakMap<Base, Tag>();
+           const l = new Leaf();
+           const b = new Base();
+           m.set(l, new Tag(l));
+           m.set(b, new Tag(new Leaf()));
+           console.log(m.has(l), m.has(b));
+         }",
+    );
+    assert!(has(&c, "class Tag"), "{c}");
+}
+
+#[test]
+fn an_interface_key_leads_to_its_entries_from_its_implementation() {
+    let c = cycle_capable(
+        "interface Keyed { id(): number; }
+         class Item implements Keyed { n = 1; id(): number { return this.n; } }
+         class Note { item: Item; constructor(i: Item) { this.item = i; } }
+         function main() {
+           const m = new WeakMap<Keyed, Note>();
+           const i = new Item();
+           const k: Keyed = i;
+           m.set(k, new Note(i));
+           console.log(m.has(k));
+         }",
+    );
+    assert!(has(&c, "class Note"), "{c}");
+}

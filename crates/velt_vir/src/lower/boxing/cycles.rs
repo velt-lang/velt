@@ -15,13 +15,17 @@
 //! - an interface value to the types its implementation tables were built for, and to the
 //!   interfaces converted to it; an `any`, `unknown` or `object` to the types `any` tables were
 //!   built for, the interfaces converted to `any`, and the generic closures;
-//! - a class with a vtable to every class of its hierarchy that was built;
+//! - a class with subclasses to every built subclass (strict: "is a" is not "owns");
+//! - a generator object to the locals of the generator functions made at its class type (its
+//!   state follows the class's fields);
 //! - in a program that writes properties of functions through `any`, an environment to the
 //!   dynamic values (its properties, which it owns).
 //!
-//! A `shared<T>` is a copy with an atomic count (out of scope), and a weak collection holds
-//! nothing strongly, but a weak map's entry keeps its value while its key lives: the ephemeron
-//! edge `K -> V`.
+//! A `shared<T>` is a copy with an atomic count (out of scope), and a weak collection's entries
+//! are the runtime's (its own fields and a subclass's are not), but a weak map's entry keeps its
+//! value while its key lives: the ephemeron edge `K -> V`, from every type a key may be (a
+//! subclass of a class key, the implementations behind an interface key, the concrete types
+//! behind an `object` or `any` key).
 //!
 //! A counted block is cycle-capable when it lies on a cycle of that graph (cycles_scc.rs).
 //! Classes are decided per hierarchy, by root class, as counting is. Nothing in code generation
@@ -68,8 +72,10 @@ pub(in crate::lower) struct CycleCapable {
 struct Graph {
     nodes: Vec<Node>,
     index: FxHashMap<Node, usize>,
-    /// The ephemeron edges of the program's weak maps, `K -> V`.
+    /// The ephemeron edges of the program's weak maps, `K -> V`, from every type a key may be.
     ephemerons: FxHashMap<TyId, Vec<TyId>>,
+    /// What the generator objects of each generator class type hold: their functions' states.
+    frames: FxHashMap<TyId, Vec<TyId>>,
     /// What the environments of each key capture.
     envs: FxHashMap<Option<CycleKey>, Vec<TyId>>,
     /// The concrete types each interface's tables were built for.
@@ -98,11 +104,14 @@ impl Cx<'_> {
         &mut self,
         witness: bool,
     ) -> (CycleCapable, Vec<String>) {
+        let impls = self.iface_impl_types();
+        let upcast_from = self.iface_upcasts();
         let mut g = Graph {
-            ephemerons: self.ephemeron_edges(),
+            ephemerons: self.ephemeron_edges(&impls, &upcast_from),
+            frames: self.gen_frame_types(),
             envs: self.env_captures(),
-            impls: self.iface_impl_types(),
-            upcast_from: self.iface_upcasts(),
+            impls,
+            upcast_from,
             ..Graph::default()
         };
         // Every counted block: objects of counted types, and the blocks counted whatever their
@@ -244,7 +253,11 @@ impl Cx<'_> {
 
     /// `K -> [V]` for every `WeakMap<K, V>` type of the program: an entry keeps its value
     /// alive while its key lives.
-    fn ephemeron_edges(&mut self) -> FxHashMap<TyId, Vec<TyId>> {
+    fn ephemeron_edges(
+        &mut self,
+        impls: &FxHashMap<DefId, Vec<TyId>>,
+        upcast_from: &FxHashMap<DefId, Vec<DefId>>,
+    ) -> FxHashMap<TyId, Vec<TyId>> {
         let mut out: FxHashMap<TyId, Vec<TyId>> = FxHashMap::default();
         for t in self.table_types() {
             if self.weak_class(t) != Some("WeakMap") {
@@ -258,10 +271,83 @@ impl Cx<'_> {
                 continue;
             }
             if let [k, v] = args[..] {
-                push_new(out.entry(k).or_default(), v);
+                // The entry lives as long as the key object, whatever its dynamic type.
+                for kt in self.key_types(k, impls, upcast_from) {
+                    push_new(out.entry(kt).or_default(), v);
+                }
             }
         }
         out
+    }
+
+    /// The types a weak map key of static type `k` may be: `k` itself, and the built strict
+    /// subclasses of a class, the implementations of an interface (and of the interfaces
+    /// converted to it), or the concrete types behind `object` and `any`.
+    fn key_types(
+        &mut self,
+        k: TyId,
+        impls: &FxHashMap<DefId, Vec<TyId>>,
+        upcast_from: &FxHashMap<DefId, Vec<DefId>>,
+    ) -> Vec<TyId> {
+        let mut out = vec![k];
+        match self.kind(k) {
+            TyKind::Adt(d, _) if self.is_class(k) && self.has_header(d) => {
+                for c in sorted(&self.facts.vtable_types) {
+                    if matches!(self.kind(c), TyKind::Adt(cd, _)
+                        if self.is_class(c) && self.strict_subclass(cd, d))
+                    {
+                        out.push(c);
+                    }
+                }
+            }
+            TyKind::Dyn(..) if self.is_dynamic(k) => {
+                out.extend(sorted(&self.facts.dyn_types));
+                out.extend(sorted(&self.facts.object_types));
+                let mut all: Vec<TyId> = impls.values().flatten().copied().collect();
+                all.sort_by_key(|t| t.0);
+                out.extend(all);
+            }
+            TyKind::Dyn(d, _) => {
+                let mut ifaces = vec![d];
+                let mut i = 0;
+                while let Some(&cur) = ifaces.get(i) {
+                    for &f in upcast_from.get(&cur).map_or(&[][..], |v| &v[..]) {
+                        if !ifaces.contains(&f) {
+                            ifaces.push(f);
+                        }
+                    }
+                    i += 1;
+                }
+                for f in ifaces {
+                    out.extend(impls.get(&f).map_or(&[][..], |v| &v[..]).iter().copied());
+                }
+            }
+            _ => {}
+        }
+        out
+    }
+
+    /// For each generator class type, the types its objects' states hold: every local of the
+    /// generator functions made at that type (a state keeps those live across a `yield`; all
+    /// of them is an over-approximation), substituted.
+    fn gen_frame_types(&mut self) -> FxHashMap<TyId, Vec<TyId>> {
+        let mut frames: Vec<_> = self.facts.gen_frames.iter().cloned().collect();
+        frames.sort_by_key(|f| format!("{f:?}"));
+        let mut out: FxHashMap<TyId, Vec<TyId>> = FxHashMap::default();
+        for (g, def, targs) in frames {
+            let locals: Vec<TyId> = self.fn_def(def).body.locals.iter().map(|l| l.ty).collect();
+            for t in locals {
+                let t = self.subst(t, &targs);
+                push_new(out.entry(g).or_default(), t);
+            }
+        }
+        out
+    }
+
+    /// Record that a generator object of class type `g` holds the state of generator `def` at
+    /// `targs`.
+    pub(in crate::lower) fn note_gen_frame(&mut self, g: TyId, def: DefId, targs: &[TyId]) {
+        (self.facts.gen_frames).insert((g, def, targs.to_vec()));
     }
 
     /// What the environments of each key capture: the types of their captured variables (a
@@ -355,6 +441,10 @@ impl Cx<'_> {
                 if let Some(vs) = g.ephemerons.get(&t) {
                     out.extend(vs.iter().copied().map(Node::Ty));
                 }
+                // A generator object holds its function's state after the class's fields.
+                if let Some(fs) = g.frames.get(&t) {
+                    out.extend(fs.iter().copied().map(Node::Ty));
+                }
             }
         }
         out
@@ -368,12 +458,14 @@ impl Cx<'_> {
             TyKind::Array(e) | TyKind::Option(e, _) => vec![e],
             TyKind::Map(a, b) | TyKind::Result(a, b) | TyKind::Promise(a, b) => vec![a, b],
             TyKind::Tuple(es) => es,
-            // A weak collection's entries are the runtime's; the ephemeron edges stand for them.
-            TyKind::Adt(..) if self.weak_class(t).is_some() => vec![],
             TyKind::Adt(d, args) => {
                 let mut tys = self.part_types(t);
-                // What a standard-library container keeps behind its own pointers.
-                tys.extend(args);
+                // What a standard-library container keeps behind its own pointers; but a weak
+                // collection's entries are the runtime's (the ephemeron edges stand for them),
+                // while its fields and a subclass's are its own.
+                if self.weak_class(t).is_none() {
+                    tys.extend(args);
+                }
                 if self.is_class(t) && self.has_header(d) {
                     // It may be an object of any subclass that was built, which owns what the
                     // subclass's fields hold. Only strict subclasses: "is a" is not "owns", and

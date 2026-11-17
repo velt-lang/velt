@@ -99,10 +99,19 @@ reference to a value of `B`" (`velt_vir` `lower/boxing/cycles.rs`):
 | interface value of interface `I` | the *`I` node*: its value, possibly a counted box, with edges to every concrete type an `I` table was built for and to the nodes of the interfaces converted to `I` |
 | `any`, `unknown`, `object` | the *dynamics* node: edges to every type an `any` table was built for, the nodes of the interfaces converted to `any`, and the generic closures |
 | closure environment, in a program that writes properties of functions through `any` | the dynamics node: its properties are `any` values it owns (`f.self = f`, #1780; velt_rt `fn_props.rs`) |
-| `Promise<T, E>` | `T`, `E` |
+| `Promise<T, E>` | `T`, `E` (see below for what a pending promise owns) |
+| generator object (`Generator`, `AsyncGenerator`) | its fields, and the state of the generator function it runs, which follows them: every local of the generator functions made at that class type |
 | `shared<T>` | none: a shared value is a copy with an atomic count; cycles through it are out of scope |
-| `WeakMap<K, V>`, `WeakSet<T>`, `WeakRef<T>` | none (their entries are the runtime's); a weak map adds `K -> V` (an entry keeps its value while the key lives: the ephemeron edge) |
+| `WeakMap<K, V>`, `WeakSet<T>`, `WeakRef<T>` | their own fields and a subclass's, not their entries (the runtime's); a weak map adds `K -> V` from every type a key may be (the class `K` and its built subclasses, or the concrete types behind an interface, `object` or `any`): an entry keeps its value while the key object lives, the ephemeron edge |
 | `weak T` field or variable (step 6) | none |
+
+**A pending promise** (a started promise's node, or a heap future) also owns the state of the
+async call that settles it and its reactions (`.then` callbacks, the awaiter's waker). The
+promise is not garbage while it is pending: the task that drives it holds it, so it is freed
+when it settles or its task ends, and a cycle through a pending promise's state is one of
+pending work, like a timer's. The graph has no edge for it. Step 3 decides whether trace glue
+reports those references (a never-settling promise that nothing but its own cycle refers to
+is the one case it matters for), with a test either way.
 
 **The set.** A counted type is **cycle-capable** when it lies on a cycle of this graph: in a
 strongly connected component with more than one node, or with an edge to itself. So are the

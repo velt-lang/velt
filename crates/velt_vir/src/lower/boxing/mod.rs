@@ -350,6 +350,9 @@ pub(super) struct Facts {
     /// Where values of each type are made (`new`, literals, closures), recorded only for
     /// `VELT_DEBUG_COUNTED` (cycles_sites.rs).
     pub(super) alloc_sites: FxHashSet<(TyId, velt_common::Span)>,
+    /// Generator objects made, `(generator class type, generator function, type arguments)`:
+    /// the object holds the function's state after its fields (cycles.rs).
+    pub(super) gen_frames: FxHashSet<(TyId, DefId, Vec<TyId>)>,
 }
 
 impl Cx<'_> {
