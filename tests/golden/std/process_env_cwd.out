@@ -1,6 +1,9 @@
 from setEnv
 from the env option
 unset
+found through PATH
+found through PATH
+true
 värde=1
 värde=1
 second

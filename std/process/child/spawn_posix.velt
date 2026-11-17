@@ -1,7 +1,7 @@
 // velt/process/child (internal): starting a child process with `posix_spawn` (macOS and Linux),
 // for the executor in Velt's child processes (std/process/child/child_sched.velt, #2649 step 4):
-// the program looked up as Rust's `Command` does, its arguments and environment as C arrays,
-// its working directory, its standard streams (inherited, piped, or the null device) and
+// the program looked up in the child's `PATH` as libuv does, its arguments and environment as C
+// arrays, its working directory, its standard streams (inherited, piped, or the null device) and
 // SIGPIPE back at its default (the runtime ignores it, as Rust programs do).
 //
 // Pipes are close-on-exec from the start where the OS can (`pipe2` on Linux); on macOS, which
@@ -67,15 +67,6 @@ declare c("c") function posix_spawn(
   argv: Ptr<Ptr<u8>>,
   envp: Ptr<Ptr<u8>>,
 ): i32;
-declare c("c") function posix_spawnp(
-  pid: Ptr<i32>,
-  file: CString,
-  fa: Ptr<posix_spawn_file_actions_t>,
-  attr: Ptr<posix_spawnattr_t>,
-  argv: Ptr<Ptr<u8>>,
-  envp: Ptr<Ptr<u8>>,
-): i32;
-declare c("c") function access(path: CString, mode: i32): i32;
 declare c("c") function close$child(fd: i32): i32;
 /** The address of a byte array's elements (a copy of nothing returns its destination). */
 declare c("c") function memset$bytes(dst: u8[], c: i32, n: usize): Ptr<u8>;
@@ -86,8 +77,9 @@ const POSIX_SPAWN_SETSIGDEF: i16 = 4;
 const POSIX_SPAWN_SETSIGMASK: i16 = 8;
 const SIGPIPE: i32 = 13;
 const O_RDWR: i32 = 2;
-const X_OK: i32 = 1;
 const ENOENT: i32 = 2;
+const EACCES: i32 = 13;
+const ENOTDIR: i32 = 20;
 /** `EINVAL`: a string holding a NUL (as Rust refuses it). */
 export const EINVAL: i32 = 22;
 
@@ -162,7 +154,10 @@ function freeArray(a: usize): void {
   m.release(a, 8 * (n + 1));
 }
 
-/** The child's environment as "name=value" (the parent's unless cleared, then the spec's). */
+/**
+ * The child's environment as `[name, value, …]`: the parent's unless cleared (a copy, made
+ * under velt/process' environment lock), then the spec's.
+ */
 function environment(spec: CommandSpec): string[] {
   const names: string[] = [];
   const values: string[] = [];
@@ -184,41 +179,49 @@ function environment(spec: CommandSpec): string[] {
   }
   const out: string[] = [];
   for (let i: usize = 0; i < names.length; i++) {
-    out.push(`${names[i]}=${values[i]}`);
+    out.push(names[i]);
+    out.push(values[i]);
   }
   return out;
 }
 
+/** `[name, value, …]` as the "name=value" strings `posix_spawn` takes. */
+function lines(env: string[]): string[] {
+  const out: string[] = [];
+  for (let i: usize = 0; i + 1 < env.length; i += 2) {
+    out.push(`${env[i]}=${env[i + 1]}`);
+  }
+  return out;
+}
+
+/** Where a program is looked up when the child's environment has no `PATH` (libuv's). */
+const DEFAULT_PATH = "/usr/bin:/bin";
+
+/** The child's `PATH` (libuv's default when it has none). */
+function pathOf(env: string[]): string {
+  for (let i: usize = 0; i + 1 < env.length; i += 2) {
+    if (env[i] == "PATH") {
+      return env[i + 1];
+    }
+  }
+  return DEFAULT_PATH;
+}
+
 /**
- * The program to run: as written when it holds a `/`; else found in the `PATH` the spec sets
- * (Rust looks a program up in the child's `PATH` when it is changed); "" when the spec sets no
- * `PATH` (`posix_spawnp` then looks in the parent's), null when it is in none of its entries.
+ * The paths to try for the program, in order: as written when it holds a `/`; else in each entry
+ * of the child's `PATH` (an empty one is the working directory), as libuv does for Node. So
+ * nothing reads this process' environment outside velt/process' lock, as `posix_spawnp`, which
+ * reads its `PATH`, would.
  */
-function lookUp(spec: CommandSpec): string | null {
-  if (spec.program.includes("/")) {
-    return spec.program;
+function candidates(program: string, path: string): string[] {
+  if (program.includes("/")) {
+    return [program];
   }
-  let path: string | null = null;
-  for (let i: usize = 0; i + 1 < spec.env.length; i += 2) {
-    if (spec.env[i] == "PATH") {
-      path = spec.env[i + 1];
-    }
-  }
-  if (path == null) {
-    return "";
-  }
+  const out: string[] = [];
   for (const dir of path.split(":")) {
-    const full = `${dir == "" ? "." : dir}/${spec.program}`;
-    try {
-      // SAFETY: a NUL-terminated path; access only reads it.
-      if (unsafe { access(new CString(full), X_OK) } === 0) {
-        return full;
-      }
-    } catch (e) {
-      return null;
-    }
+    out.push(`${dir == "" ? "." : dir}/${program}`);
   }
-  return null;
+  return out;
 }
 
 /** Closes `fd` if it is one (not -1). */
@@ -264,11 +267,8 @@ function pipeFor(fa: usize, target: i32): i32 {
  */
 export function start(spec: CommandSpec, modes: u32): Started {
   const out = new Started();
-  const program = lookUp(spec);
-  if (program == null) {
-    out.error = ENOENT;
-    return out;
-  }
+  const env = environment(spec);
+  const paths = candidates(spec.program, pathOf(env));
   if (((modes >> 2) & 3) === 0 || ((modes >> 4) & 3) === 0) {
     // The child's output comes after what this program printed before starting it.
     wk.handOffOutput();
@@ -281,13 +281,15 @@ export function start(spec: CommandSpec, modes: u32): Started {
   // Always a copy, made under velt/process' environment lock (`envPairs`, std/process/
   // env_posix.velt): C's own `environ` may be reallocated by another worker's `setEnv` while
   // `posix_spawn` reads it.
-  const cEnv = cArray(environment(spec));
-  let file: CString | null = null;
+  const cEnv = cArray(lines(env));
+  const files: CString[] = [];
   let devNull: CString | null = null;
   let cwd: CString | null = null;
   try {
     devNull = new CString("/dev/null");
-    file = new CString(program == "" ? spec.program : program);
+    for (const p of paths) {
+      files.push(new CString(p));
+    }
     if (spec.cwd != "") {
       cwd = new CString(spec.cwd);
     }
@@ -296,7 +298,11 @@ export function start(spec: CommandSpec, modes: u32): Started {
   }
   // A NUL in any of them (the cwd too: without it the child would run in this directory).
   if (
-    cArgv === 0 || cEnv === 0 || file == null || devNull == null || (spec.cwd != "" && cwd == null)
+    cArgv === 0 ||
+    cEnv === 0 ||
+    files.length < paths.length ||
+    devNull == null ||
+    (spec.cwd != "" && cwd == null)
   ) {
     if (cArgv !== 0) {
       freeArray(cArgv);
@@ -365,14 +371,25 @@ export function start(spec: CommandSpec, modes: u32): Started {
     const attrAt = m.ptrTo<posix_spawnattr_t>(attr);
     const argvAt = m.ptrTo<Ptr<u8>>(cArgv);
     const envAt = m.ptrTo<Ptr<u8>>(cEnv);
-    let rc: i32 = 0;
-    // SAFETY: as above; `pid` has room for a `pid_t`.
-    unsafe {
-      if (program == "") {
-        rc = posix_spawnp(pidAt, file!, faAt, attrAt, argvAt, envAt);
-      } else {
-        rc = posix_spawn(pidAt, file!, faAt, attrAt, argvAt, envAt);
+    // Each candidate in turn, as libuv: the next one after ENOENT, ENOTDIR or EACCES (a
+    // directory of that name, a file that isn't executable), EACCES at the end if one gave it.
+    // A relative candidate resolves in the child's working directory, after the chdir.
+    let rc: i32 = ENOENT;
+    let denied = false;
+    for (const file of files) {
+      // SAFETY: as above; `pid` has room for a `pid_t`.
+      unsafe {
+        rc = posix_spawn(pidAt, file, faAt, attrAt, argvAt, envAt);
       }
+      if (rc === EACCES) {
+        denied = true;
+      }
+      if (rc !== ENOENT && rc !== ENOTDIR && rc !== EACCES) {
+        break;
+      }
+    }
+    if (rc !== 0 && denied && (rc === ENOENT || rc === ENOTDIR)) {
+      rc = EACCES;
     }
     if (rc === 0) {
       out.pid = m.ld32(pid) as i32;

@@ -5,11 +5,14 @@
 // directory, chdir '<from>' -> '<to>'`). (Node: the same with `process.env.NAME = value`,
 // `delete process.env.NAME`, `process.env` for `envAll()`, `process.cwd()` and `process.chdir()`.)
 // Also: `execSync`'s child (this program again, with an argument) sees a variable `setEnv` set,
-// and an `env` option's value of the same name replaces it.
+// and an `env` option's value of the same name replaces it. And `exec` of a program named without
+// a path finds it in the child's `PATH`, copied from the parent's: this program's own directory.
 import { args, argv, chdir, cwd, envAll, removeEnv, setEnv } from "velt/process";
-import { execSync } from "velt/process/child";
+import { mkdirSync, removeSync } from "velt/fs";
+import { platform, tmpdir } from "velt/os";
+import { exec, execSync } from "velt/process/child";
 
-function main() {
+async function main() {
   if (args().length > 0) {
     console.log(process.env.VELT_ENV_INHERITED ?? "unset");
     return;
@@ -22,6 +25,35 @@ function main() {
   console.log(execSync(self, ["child"], { env: vars }).stdout.trim());
   removeEnv("VELT_ENV_INHERITED");
   console.log(execSync(self, ["child"]).stdout.trim());
+
+  let cut = self.lastIndexOf("/");
+  const back = self.lastIndexOf("\\");
+  if (back > cut) {
+    cut = back;
+  }
+  const savedPath = process.env.PATH ?? "";
+  setEnv("VELT_ENV_INHERITED", "found through PATH");
+  setEnv("PATH", cut > 0 ? self.slice(0, cut) : ".");
+  const found = await exec(self.slice(cut + 1), ["child"]);
+  console.log(found.stdout.trim());
+  // An entry before it holding a directory of the program's name is passed over, as in Node.
+  const shadow = `${tmpdir()}/velt-path-shadow-${Date.now()}`;
+  mkdirSync(`${shadow}/${self.slice(cut + 1)}`, { recursive: true });
+  setEnv("PATH", `${shadow}${platform() === "win32" ? ";" : ":"}${process.env.PATH ?? ""}`);
+  const passed = await exec(self.slice(cut + 1), ["child"]);
+  console.log(passed.stdout.trim());
+  removeSync(shadow, { recursive: true });
+  // A cleared environment: on macOS and Linux no PATH, so the default one (/usr/bin:/bin), not
+  // this process'; Windows keeps PATH in it (as Node), so the program is found there.
+  let outcome = "found";
+  try {
+    await exec(self.slice(cut + 1), ["child"], { clearEnv: true });
+  } catch (e) {
+    outcome = (e as any).code;
+  }
+  console.log(outcome === (platform() === "win32" ? "found" : "ENOENT"));
+  setEnv("PATH", savedPath);
+  removeEnv("VELT_ENV_INHERITED");
 
   setEnv("VELT_ENV_TEST", "värde=1");
   console.log(process.env.VELT_ENV_TEST);
