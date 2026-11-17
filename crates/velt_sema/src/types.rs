@@ -176,6 +176,15 @@ impl Types {
         r
     }
 
+    /// `to` (rebuilt from `from`'s kind) read-only when `from` is a read-only array: a rebuild
+    /// interns the kind, which names the mutable array.
+    pub fn keep_readonly(&mut self, from: TyId, to: TyId) -> TyId {
+        match (self.is_readonly_array(from), self.kind(to)) {
+            (true, &TyKind::Array(e)) => self.readonly_array(e),
+            _ => to,
+        }
+    }
+
     /// Does the program have a read-only array type (erased before lowering)?
     pub fn has_readonly_arrays(&self) -> bool {
         !self.readonly_elems.is_empty()
