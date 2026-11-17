@@ -36,6 +36,10 @@ compile-time thread safety.
 
 ## Reference cycles — without a collector
 
+Proposed revision: [cycles.md](cycles.md) keeps the static analysis and `weak`, and adds a
+collector confined to the types that can form cycles, since ported TypeScript does not write
+`weak` (decision 1 there). The plan below stands until that is decided.
+
 - **Static cycle analysis**: a type can only leak through a cycle if its type graph can reach
   itself through strong references (`class Node { next: Node | null }`, parent ↔ child). The
   compiler knows exactly which types can form cycles; most can't.

@@ -8,6 +8,7 @@
 //! until the set is stable. Programs that share nothing lower once, with today's
 //! representation everywhere.
 
+mod cycles;
 mod kinds;
 mod locks;
 mod module_reach;
