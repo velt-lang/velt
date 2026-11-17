@@ -145,6 +145,7 @@ pub(super) fn lower_program_kept<'h>(
             if std::env::var_os("VELT_DEBUG_COUNTED").is_some() {
                 eprintln!("velt: counted types: {}", cx.counted_names().join(", "));
                 eprintln!("velt: weak-capable types: {}", cx.weak_names().join(", "));
+                eprintln!("velt: cycle-capable types: {}", cx.cycle_names().join(", "));
             }
             if std::env::var_os("VELT_DEBUG_PROXY").is_some() {
                 eprintln!("velt: proxiable types: {}", cx.proxiable_names().join(", "));

@@ -94,6 +94,9 @@ impl Facts {
             &one,
         );
         take(&mut self.lock_values, &mut out.lock_values, &one);
+        take(&mut self.gen_frames, &mut out.gen_frames, &|f| {
+            ph(f.0) || f.2.iter().any(|&t| ph(t))
+        });
         let by_fn = [
             (&mut self.fn_tuple_writes, &mut out.fn_tuple_writes),
             (&mut self.fn_read_params, &mut out.fn_read_params),
@@ -146,6 +149,10 @@ impl Facts {
         }
         for s in [&other.projections, &other.upcasts, &other.proxy_casts] {
             v.extend(s.iter().flat_map(|p| [p.0, p.1]));
+        }
+        for (g, _, targs) in &other.gen_frames {
+            v.push(*g);
+            v.extend(targs.iter().copied());
         }
         for k in (other.fn_compared_keys.iter())
             .chain(&other.generic_any_keys)
@@ -202,6 +209,9 @@ impl Facts {
         }
         for (d, k, b) in &other.fresh_made {
             self.fresh_made.insert((*d, map_key(k, &mut mf), *b));
+        }
+        for (g, d, targs) in &other.gen_frames {
+            (self.gen_frames).insert((m(g), *d, targs.iter().map(m).collect()));
         }
     }
 }
