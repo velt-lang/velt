@@ -1,0 +1,425 @@
+    Finished `release` profile [optimized] target(s) in 8m 02s
+    Finished `release` profile [optimized] target(s) in 47.15s
+IR 1 T1 all_small_stored base 2332637438
+IR 1 T1 all_small_stored head 2332637431
+IR 1 T1 await_chain base 290456918
+IR 1 T1 await_chain head 290456911
+IR 1 T1 await_deep base 2611696168
+IR 1 T1 await_deep head 2611696163
+IR 1 T1 chan_item_size base 178404757
+IR 1 T1 chan_item_size head 178404757
+IR 1 T1 chan_wake base 1165968961
+IR 1 T1 chan_wake head 1165968954
+IR 1 T1 channel_pipeline base 207744523
+IR 1 T1 channel_pipeline head 207744516
+IR 1 T1 fanout_all base 475121453
+IR 1 T1 fanout_all head 475123120
+IR 1 T1 fanout_all_throwing base 601728716
+IR 1 T1 fanout_all_throwing head 601728707
+IR 1 T1 hot_loop base 2641285578
+IR 1 T1 hot_loop head 2641233498
+IR 1 T1 pingpong_colocated base 1030478955
+IR 1 T1 pingpong_colocated head 1030798948
+IR 1 T1 pingpong_pinned base 1030476850
+IR 1 T1 pingpong_pinned head 1030796843
+IR 1 T1 promise_identity_loop base 4763624772
+IR 1 T1 promise_identity_loop head 4763385734
+IR 1 T1 race_select base 456294314
+IR 1 T1 race_select head 456494315
+IR 1 T1 race_small base 1621084092
+IR 1 T1 race_small head 1561484096
+IR 1 T1 scheduler_spawn_burst base 101994992
+IR 1 T1 scheduler_spawn_burst head 101994985
+IR 1 T1 scheduler_spawn_start base 240466656
+IR 1 T1 scheduler_spawn_start head 240466649
+IR 1 T1 spawn_many base 724093122
+IR 1 T1 spawn_many head 724090745
+IR 1 T1 timer_await base 133854821
+IR 1 T1 timer_await head 134091822
+IR 1 T1 timer_await_top base 136789108
+IR 1 T1 timer_await_top head 137015531
+IR 1 T1 timers base 143634164
+IR 1 T1 timers head 143834161
+IR 1 T1 timers_due_in_promise base 58809593
+IR 1 T1 timers_due_in_promise head 58989343
+IR 1 T1 timers_due_join base 86384483
+IR 1 T1 timers_due_join head 86723495
+IR 1 T1 timers_due_reversed base 63411241
+IR 1 T1 timers_due_reversed head 63570253
+IR 1 T1 timers_due_stored base 57891343
+IR 1 T1 timers_due_stored head 58050355
+IR 1 T1 timers_fire base 256581495
+IR 1 T1 timers_fire head 256680323
+IR 1 T1 timers_fire_phases base 259892008
+IR 1 T1 timers_fire_phases head 259994835
+IR 1 T1 top_level_await base 43457097
+IR 1 T1 top_level_await head 43457088
+IR 1 T4 all_small_stored base 2363713620
+IR 1 T4 all_small_stored head 2363724980
+IR 1 T4 await_chain base 290572152
+IR 1 T4 await_chain head 290578106
+IR 1 T4 await_deep base 2612796522
+IR 1 T4 await_deep head 2612808292
+IR 1 T4 chan_item_size base 178404757
+IR 1 T4 chan_item_size head 178404757
+IR 1 T4 chan_wake base 1300804102
+IR 1 T4 chan_wake head 1300801559
+IR 1 T4 channel_pipeline base 208595904
+IR 1 T4 channel_pipeline head 208617164
+IR 1 T4 fanout_all base 485410717
+IR 1 T4 fanout_all head 485419294
+IR 1 T4 fanout_all_throwing base 602018728
+IR 1 T4 fanout_all_throwing head 602030169
+IR 1 T4 hot_loop base 2643086333
+IR 1 T4 hot_loop head 2643116633
+IR 1 T4 pingpong_colocated base 1302785207
+IR 1 T4 pingpong_colocated head 1269331847
+IR 1 T4 pingpong_pinned base 1172527057
+IR 1 T4 pingpong_pinned head 1175362939
+IR 1 T4 promise_identity_loop base 4786893479
+IR 1 T4 promise_identity_loop head 4786853526
+IR 1 T4 race_select base 533707664
+IR 1 T4 race_select head 264045551
+IR 1 T4 race_small base 1636415363
+IR 1 T4 race_small head 1576804327
+IR 1 T4 scheduler_spawn_burst base 206385703
+IR 1 T4 scheduler_spawn_burst head 206381160
+IR 1 T4 scheduler_spawn_start base 240641711
+IR 1 T4 scheduler_spawn_start head 240632414
+IR 1 T4 spawn_many base 1270095693
+IR 1 T4 spawn_many head 1266923751
+IR 1 T4 timer_await base 172892686
+IR 1 T4 timer_await head 180691232
+IR 1 T4 timer_await_top base 175847822
+IR 1 T4 timer_await_top head 181056150
+IR 1 T4 timers base 148043861
+IR 1 T4 timers head 148248718
+IR 1 T4 timers_due_in_promise base 60877391
+IR 1 T4 timers_due_in_promise head 61063790
+IR 1 T4 timers_due_join base 93560899
+IR 1 T4 timers_due_join head 93905939
+IR 1 T4 timers_due_reversed base 71534939
+IR 1 T4 timers_due_reversed head 71702078
+IR 1 T4 timers_due_stored base 65813792
+IR 1 T4 timers_due_stored head 65978695
+IR 1 T4 timers_fire base 270567874
+IR 1 T4 timers_fire head 270674718
+IR 1 T4 timers_fire_phases base 273791421
+IR 1 T4 timers_fire_phases head 273895406
+IR 1 T4 top_level_await base 43512657
+IR 1 T4 top_level_await head 43519185
+IR 2 T1 all_small_stored base 2332637438
+IR 2 T1 all_small_stored head 2332637431
+IR 2 T1 await_chain base 290456918
+IR 2 T1 await_chain head 290456911
+IR 2 T1 await_deep base 2611696168
+IR 2 T1 await_deep head 2611696163
+IR 2 T1 chan_item_size base 178404757
+IR 2 T1 chan_item_size head 178404757
+IR 2 T1 chan_wake base 1165968961
+IR 2 T1 chan_wake head 1165968954
+IR 2 T1 channel_pipeline base 207744523
+IR 2 T1 channel_pipeline head 207744516
+IR 2 T1 fanout_all base 475130509
+IR 2 T1 fanout_all head 475129336
+IR 2 T1 fanout_all_throwing base 601728716
+IR 2 T1 fanout_all_throwing head 601728707
+IR 2 T1 hot_loop base 2641234596
+IR 2 T1 hot_loop head 2641238677
+IR 2 T1 pingpong_colocated base 1030478955
+IR 2 T1 pingpong_colocated head 1030798948
+IR 2 T1 pingpong_pinned base 1030476850
+IR 2 T1 pingpong_pinned head 1030796843
+IR 2 T1 promise_identity_loop base 4763391429
+IR 2 T1 promise_identity_loop head 4763627227
+IR 2 T1 race_select base 456294314
+IR 2 T1 race_select head 456492386
+IR 2 T1 race_small base 1621084092
+IR 2 T1 race_small head 1561484096
+IR 2 T1 scheduler_spawn_burst base 101994992
+IR 2 T1 scheduler_spawn_burst head 101994985
+IR 2 T1 scheduler_spawn_start base 240466656
+IR 2 T1 scheduler_spawn_start head 240466649
+IR 2 T1 spawn_many base 724090752
+IR 2 T1 spawn_many head 724090161
+IR 2 T1 timer_await base 133950298
+IR 2 T1 timer_await head 134098968
+IR 2 T1 timer_await_top base 136794816
+IR 2 T1 timer_await_top head 136997151
+IR 2 T1 timers base 143634164
+IR 2 T1 timers head 143834161
+IR 2 T1 timers_due_in_promise base 58809593
+IR 2 T1 timers_due_in_promise head 58989343
+IR 2 T1 timers_due_join base 86384483
+IR 2 T1 timers_due_join head 86723495
+IR 2 T1 timers_due_reversed base 63411241
+IR 2 T1 timers_due_reversed head 63570253
+IR 2 T1 timers_due_stored base 57891343
+IR 2 T1 timers_due_stored head 58050355
+IR 2 T1 timers_fire base 256574469
+IR 2 T1 timers_fire head 256674200
+IR 2 T1 timers_fire_phases base 259892592
+IR 2 T1 timers_fire_phases head 259992695
+IR 2 T1 top_level_await base 43457097
+IR 2 T1 top_level_await head 43457088
+IR 2 T4 all_small_stored base 2363716301
+IR 2 T4 all_small_stored head 2363733325
+IR 2 T4 await_chain base 290572252
+IR 2 T4 await_chain head 290578716
+IR 2 T4 await_deep base 2612806295
+IR 2 T4 await_deep head 2612816884
+IR 2 T4 chan_item_size base 178404757
+IR 2 T4 chan_item_size head 178404757
+IR 2 T4 chan_wake base 1300717652
+IR 2 T4 chan_wake head 1300742849
+IR 2 T4 channel_pipeline base 208572362
+IR 2 T4 channel_pipeline head 208642389
+IR 2 T4 fanout_all base 485401655
+IR 2 T4 fanout_all head 485410535
+IR 2 T4 fanout_all_throwing base 602025648
+IR 2 T4 fanout_all_throwing head 602031059
+IR 2 T4 hot_loop base 2642977139
+IR 2 T4 hot_loop head 2643024742
+IR 2 T4 pingpong_colocated base 1268933650
+IR 2 T4 pingpong_colocated head 1303074325
+IR 2 T4 pingpong_pinned base 1171417656
+IR 2 T4 pingpong_pinned head 1171323648
+IR 2 T4 promise_identity_loop base 4786843741
+IR 2 T4 promise_identity_loop head 4786771601
+IR 2 T4 race_select base 264027268
+IR 2 T4 race_select head 259977703
+IR 2 T4 race_small base 1636411052
+IR 2 T4 race_small head 1576802755
+IR 2 T4 scheduler_spawn_burst base 206359551
+IR 2 T4 scheduler_spawn_burst head 206379415
+IR 2 T4 scheduler_spawn_start base 240641306
+IR 2 T4 scheduler_spawn_start head 240642452
+IR 2 T4 spawn_many base 1269185181
+IR 2 T4 spawn_many head 1265078444
+IR 2 T4 timer_await base 173677384
+IR 2 T4 timer_await head 180101839
+IR 2 T4 timer_await_top base 176318239
+IR 2 T4 timer_await_top head 181367588
+IR 2 T4 timers base 148042331
+IR 2 T4 timers head 148251263
+IR 2 T4 timers_due_in_promise base 60875643
+IR 2 T4 timers_due_in_promise head 61062917
+IR 2 T4 timers_due_join base 93556437
+IR 2 T4 timers_due_join head 93903940
+IR 2 T4 timers_due_reversed base 71534971
+IR 2 T4 timers_due_reversed head 71699365
+IR 2 T4 timers_due_stored base 65809989
+IR 2 T4 timers_due_stored head 65978029
+IR 2 T4 timers_fire base 270559598
+IR 2 T4 timers_fire head 271272949
+IR 2 T4 timers_fire_phases base 273782776
+IR 2 T4 timers_fire_phases head 273887828
+IR 2 T4 top_level_await base 43513522
+IR 2 T4 top_level_await head 43519465
+XWAKE 1 base workers 4: round trip 7562 ns
+XWAKE 1 base workers 4: round trip 29361 ns
+XWAKE 1 base workers 4: round trip 25546 ns
+XWAKE 1 s2 workers 4: round trip 16132 ns
+XWAKE 1 s2 workers 4: round trip 26817 ns
+XWAKE 1 s2 workers 4: round trip 26503 ns
+XWAKE 1 head workers 4: round trip 840 ns
+XWAKE 1 head workers 4: round trip 638 ns
+XWAKE 1 head workers 4: round trip 1098 ns
+XWAKE 2 base workers 4: round trip 14932 ns
+XWAKE 2 base workers 4: round trip 25884 ns
+XWAKE 2 base workers 4: round trip 26873 ns
+XWAKE 2 s2 workers 4: round trip 19261 ns
+XWAKE 2 s2 workers 4: round trip 25912 ns
+XWAKE 2 s2 workers 4: round trip 27154 ns
+XWAKE 2 head workers 4: round trip 27731 ns
+XWAKE 2 head workers 4: round trip 886 ns
+XWAKE 2 head workers 4: round trip 917 ns
+XWAKE 3 base workers 4: round trip 2426 ns
+XWAKE 3 base workers 4: round trip 24856 ns
+XWAKE 3 base workers 4: round trip 25219 ns
+XWAKE 3 s2 workers 4: round trip 1456 ns
+XWAKE 3 s2 workers 4: round trip 1590 ns
+XWAKE 3 s2 workers 4: round trip 19287 ns
+XWAKE 3 head workers 4: round trip 822 ns
+XWAKE 3 head workers 4: round trip 952 ns
+XWAKE 3 head workers 4: round trip 784 ns
+IDLE 1 base | 5.006 0.008 0.011
+IDLE 1 s2 | 5.005 0.008 0.008
+IDLE 1 head | 5.006 0.009 0.010
+IDLE 2 base | 5.004 0.004 0.018
+IDLE 2 s2 | 5.004 0.009 0.012
+IDLE 2 head | 5.014 0.016 0.024
+CALLS 1 warm c=64 base 583 ms | 0.588 0.582 0.018
+CALLS 1 warm c=64 s2 463 ms | 0.469 0.472 0.009
+CALLS 1 warm c=64 head 486 ms | 0.491 0.492 0.007
+CALLS 1 warm c=512 base 617 ms | 0.619 0.825 0.005
+CALLS 1 warm c=512 s2 718 ms | 0.720 0.988 0.014
+CALLS 1 warm c=512 head 655 ms | 0.657 0.917 0.007
+CALLS 1 fan c=64 base 602 ms | 0.608 0.615 0.014
+CALLS 1 fan c=64 s2 679 ms | 0.685 1.702 0.033
+CALLS 1 fan c=64 head 1160 ms | 1.168 2.058 0.347
+CALLS 1 fan c=512 base 1185 ms | 1.205 1.693 0.099
+CALLS 1 fan c=512 s2 1586 ms | 1.612 3.260 0.256
+CALLS 1 fan c=512 head 811 ms | 0.830 2.527 0.079
+CALLS 2 warm c=64 base 470 ms | 0.474 0.475 0.007
+CALLS 2 warm c=64 s2 446 ms | 0.448 0.451 0.007
+CALLS 2 warm c=64 head 490 ms | 0.493 0.496 0.007
+CALLS 2 warm c=512 base 730 ms | 0.733 1.002 0.020
+CALLS 2 warm c=512 s2 620 ms | 0.623 0.881 0.017
+CALLS 2 warm c=512 head 743 ms | 0.747 0.992 0.014
+CALLS 2 fan c=64 base 678 ms | 0.684 0.709 0.011
+CALLS 2 fan c=64 s2 987 ms | 0.994 1.563 0.047
+CALLS 2 fan c=64 head 785 ms | 0.791 1.658 0.020
+CALLS 2 fan c=512 base 1060 ms | 1.072 1.612 0.044
+CALLS 2 fan c=512 s2 796 ms | 0.817 2.255 0.100
+CALLS 2 fan c=512 head 705 ms | 0.724 2.206 0.048
+CALLS 3 warm c=64 base 487 ms | 0.489 0.494 0.007
+CALLS 3 warm c=64 s2 484 ms | 0.486 0.492 0.003
+CALLS 3 warm c=64 head 479 ms | 0.482 0.484 0.007
+CALLS 3 warm c=512 base 714 ms | 0.716 0.980 0.008
+CALLS 3 warm c=512 s2 686 ms | 0.689 0.926 0.009
+CALLS 3 warm c=512 head 688 ms | 0.690 0.874 0.010
+CALLS 3 fan c=64 base 630 ms | 0.636 0.644 0.016
+CALLS 3 fan c=64 s2 553 ms | 0.561 1.347 0.036
+CALLS 3 fan c=64 head 447 ms | 0.455 1.317 0.028
+CALLS 3 fan c=512 base 927 ms | 0.940 1.458 0.039
+CALLS 3 fan c=512 s2 618 ms | 0.635 2.138 0.045
+CALLS 3 fan c=512 head 639 ms | 0.654 2.170 0.040
+CALLS 4 warm c=64 base 433 ms | 0.435 0.441 0.003
+CALLS 4 warm c=64 s2 453 ms | 0.455 0.462 0.004
+CALLS 4 warm c=64 head 444 ms | 0.446 0.452 0.003
+CALLS 4 warm c=512 base 612 ms | 0.614 0.802 0.008
+CALLS 4 warm c=512 s2 617 ms | 0.620 0.791 0.009
+CALLS 4 warm c=512 head 598 ms | 0.601 0.760 0.010
+CALLS 4 fan c=64 base 601 ms | 0.607 0.611 0.011
+CALLS 4 fan c=64 s2 418 ms | 0.425 1.384 0.021
+CALLS 4 fan c=64 head 492 ms | 0.501 1.500 0.028
+CALLS 4 fan c=512 base 918 ms | 0.936 1.437 0.041
+CALLS 4 fan c=512 s2 639 ms | 0.657 2.185 0.061
+CALLS 4 fan c=512 head 623 ms | 0.638 2.176 0.052
+CALLS 5 warm c=64 base 443 ms | 0.444 0.450 0.002
+CALLS 5 warm c=64 s2 437 ms | 0.439 0.444 0.004
+CALLS 5 warm c=64 head 442 ms | 0.444 0.450 0.003
+CALLS 5 warm c=512 base 640 ms | 0.642 0.896 0.008
+CALLS 5 warm c=512 s2 649 ms | 0.651 0.829 0.008
+CALLS 5 warm c=512 head 580 ms | 0.583 0.730 0.002
+CALLS 5 fan c=64 base 579 ms | 0.585 0.593 0.013
+CALLS 5 fan c=64 s2 663 ms | 0.670 1.558 0.058
+CALLS 5 fan c=64 head 863 ms | 0.871 1.479 0.083
+CALLS 5 fan c=512 base 1020 ms | 1.032 1.524 0.051
+CALLS 5 fan c=512 s2 673 ms | 0.687 2.099 0.044
+CALLS 5 fan c=512 head 690 ms | 0.707 2.127 0.055
+== BENCH 1 base
+▸ dispatch/warm-actor (one key)
+    c=1/ops_per_sec  833.2k
+    c=1/p50  1.1µs   c=1/p99  1.7µs
+    c=64/ops_per_sec  707.0k
+    c=64/p50  74.4µs   c=64/p99  10.55ms
+    c=512/ops_per_sec  305.2k
+    c=512/p50  847.4µs   c=512/p99  1.65ms
+▸ dispatch/fan-out-actors (1000 keys)
+    c=1/ops_per_sec  726.8k
+    c=1/p50  1.3µs   c=1/p99  2.1µs
+    c=64/ops_per_sec  638.8k
+    c=64/p50  98.4µs   c=64/p99  260.9µs
+    c=512/ops_per_sec  290.4k
+    c=512/p50  1.05ms   c=512/p99  2.34ms
+▸ activation/cold-cycle (c=1: activate a new key, then deactivate it)
+    cycles_per_sec  201.8k   p50  2.9µs
+▸ mem/per-actor-footprint n=20000 (Tiny)
+▸ mem/per-actor-footprint n=100000 (Tiny)
+== BENCH 1 s2
+▸ dispatch/warm-actor (one key)
+    c=1/ops_per_sec  823.9k
+    c=1/p50  1.2µs   c=1/p99  1.7µs
+    c=64/ops_per_sec  868.0k
+    c=64/p50  74.4µs   c=64/p99  162.3µs
+    c=512/ops_per_sec  547.0k
+    c=512/p50  805.8µs   c=512/p99  1.96ms
+▸ dispatch/fan-out-actors (1000 keys)
+    c=1/ops_per_sec  724.6k
+    c=1/p50  1.3µs   c=1/p99  2.2µs
+    c=64/ops_per_sec  682.8k
+    c=64/p50  75.5µs   c=64/p99  316.0µs
+    c=512/ops_per_sec  748.2k
+    c=512/p50  530.8µs   c=512/p99  2.04ms
+▸ activation/cold-cycle (c=1: activate a new key, then deactivate it)
+    cycles_per_sec  45.6k   p50  18.5µs
+▸ mem/per-actor-footprint n=20000 (Tiny)
+▸ mem/per-actor-footprint n=100000 (Tiny)
+== BENCH 1 head
+▸ dispatch/warm-actor (one key)
+    c=1/ops_per_sec  538.6k
+    c=1/p50  1.2µs   c=1/p99  1.7µs
+    c=64/ops_per_sec  389.0k
+    c=64/p50  73.2µs   c=64/p99  166.9µs
+    c=512/ops_per_sec  332.8k
+    c=512/p50  762.5µs   c=512/p99  1.55ms
+▸ dispatch/fan-out-actors (1000 keys)
+    c=1/ops_per_sec  557.5k
+    c=1/p50  1.3µs   c=1/p99  2.7µs
+    c=64/ops_per_sec  624.4k
+    c=64/p50  72.8µs   c=64/p99  358.2µs
+    c=512/ops_per_sec  697.7k
+    c=512/p50  507.0µs   c=512/p99  2.17ms
+▸ activation/cold-cycle (c=1: activate a new key, then deactivate it)
+    cycles_per_sec  43.9k   p50  20.1µs
+▸ mem/per-actor-footprint n=20000 (Tiny)
+▸ mem/per-actor-footprint n=100000 (Tiny)
+== BENCH 2 base
+▸ dispatch/warm-actor (one key)
+    c=1/ops_per_sec  852.8k
+    c=1/p50  1.1µs   c=1/p99  1.6µs
+    c=64/ops_per_sec  896.5k
+    c=64/p50  73.1µs   c=64/p99  166.8µs
+    c=512/ops_per_sec  641.4k
+    c=512/p50  732.3µs   c=512/p99  1.63ms
+▸ dispatch/fan-out-actors (1000 keys)
+    c=1/ops_per_sec  763.5k
+    c=1/p50  1.3µs   c=1/p99  2.1µs
+    c=64/ops_per_sec  630.4k
+    c=64/p50  103.2µs   c=64/p99  226.2µs
+    c=512/ops_per_sec  443.2k
+    c=512/p50  1.02ms   c=512/p99  2.76ms
+▸ activation/cold-cycle (c=1: activate a new key, then deactivate it)
+    cycles_per_sec  316.0k   p50  2.9µs
+▸ mem/per-actor-footprint n=20000 (Tiny)
+▸ mem/per-actor-footprint n=100000 (Tiny)
+== BENCH 2 s2
+▸ dispatch/warm-actor (one key)
+    c=1/ops_per_sec  795.8k
+    c=1/p50  1.2µs   c=1/p99  1.6µs
+    c=64/ops_per_sec  868.3k
+    c=64/p50  73.9µs   c=64/p99  125.6µs
+    c=512/ops_per_sec  587.2k
+    c=512/p50  760.8µs   c=512/p99  1.48ms
+▸ dispatch/fan-out-actors (1000 keys)
+    c=1/ops_per_sec  738.4k
+    c=1/p50  1.3µs   c=1/p99  2.3µs
+    c=64/ops_per_sec  832.4k
+    c=64/p50  53.6µs   c=64/p99  194.4µs
+    c=512/ops_per_sec  793.4k
+    c=512/p50  478.3µs   c=512/p99  1.99ms
+▸ activation/cold-cycle (c=1: activate a new key, then deactivate it)
+    cycles_per_sec  39.6k   p50  28.2µs
+▸ mem/per-actor-footprint n=20000 (Tiny)
+▸ mem/per-actor-footprint n=100000 (Tiny)
+== BENCH 2 head
+▸ dispatch/warm-actor (one key)
+    c=1/ops_per_sec  842.0k
+    c=1/p50  1.2µs   c=1/p99  1.5µs
+    c=64/ops_per_sec  896.4k
+    c=64/p50  68.2µs   c=64/p99  127.2µs
+    c=512/ops_per_sec  599.1k
+    c=512/p50  816.4µs   c=512/p99  1.89ms
+▸ dispatch/fan-out-actors (1000 keys)
+    c=1/ops_per_sec  774.1k
+    c=1/p50  1.3µs   c=1/p99  2.1µs
+    c=64/ops_per_sec  753.2k
+    c=64/p50  62.8µs   c=64/p99  279.2µs
+    c=512/ops_per_sec  758.7k
+    c=512/p50  496.9µs   c=512/p99  1.96ms
+▸ activation/cold-cycle (c=1: activate a new key, then deactivate it)
+    cycles_per_sec  40.9k   p50  23.5µs
+▸ mem/per-actor-footprint n=20000 (Tiny)
+▸ mem/per-actor-footprint n=100000 (Tiny)

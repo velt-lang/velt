@@ -1,0 +1,19 @@
+// #3097 step 1: CPU an idle program burns with the spin before parking. Four workers; for five
+// seconds, either nothing (every worker parked) or a ticker every 10 ms on a task pinned to the
+// last worker (an idle server's timer: each tick wakes a worker, which then parks again).
+import { workerCount } from "velt/task";
+
+async function ticker(ms: i64, until: f64): Promise<i64> {
+  let n: i64 = 0;
+  while (performance.now() < until) {
+    await sleep(ms);
+    n++;
+  }
+  return n;
+}
+
+async function main() {
+  const until = performance.now() + 5000.0;
+  const ticks = await spawn(ticker(10, until), { worker: workerCount() - 1 });
+  console.log(`ticks ${ticks > 100}`);
+}

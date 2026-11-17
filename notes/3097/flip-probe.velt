@@ -1,0 +1,32 @@
+// The flip_output program of std_scheduler_rescue.rs with the worker `main` sleeps on printed to
+// stderr: does `main` run on a spare when it sleeps between rounds (its sleep would anchor it
+// there, and a spare with a timer pending declines to retire, so worker 0 is never lazy again)?
+import { currentWorker } from "velt/task";
+
+const MOVED = new Atomic<i64>(0);
+const GO = new Atomic<i64>(0);
+
+async function task(r: i64): Promise<void> {
+  console.log(`task ${r} before`);
+  await yieldNow();
+  console.log(`task ${r} after`);
+  await yieldNow();
+  MOVED.store(r + 1);
+  while (GO.load() <= r) {}
+  console.log(`task ${r} last`);
+}
+
+async function main() {
+  for (let r = 0; r < 5; r++) {
+    const t = spawn(task(r));
+    await yieldNow();
+    while (MOVED.load() <= r) {}
+    console.log(`main ${r} moved`);
+    await yieldNow();
+    GO.store(r + 1);
+    await t;
+    console.log(`main ${r} done`);
+    console.error(`SLEEP_ON ${currentWorker()}`);
+    await sleep(40);
+  }
+}

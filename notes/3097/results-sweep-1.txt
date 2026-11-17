@@ -1,0 +1,84 @@
+== BENCH 1 base
+    c=1/ops_per_sec  1.10M
+    c=64/ops_per_sec  875.1k
+    c=512/ops_per_sec  763.3k
+    cycles_per_sec  389.7k   p50  2.5µs
+== BENCH 1 i90
+    c=1/ops_per_sec  941.2k
+    c=64/ops_per_sec  851.9k
+    c=512/ops_per_sec  834.5k
+    cycles_per_sec  229.6k   p50  2.7µs
+== BENCH 1 i75
+    c=1/ops_per_sec  834.7k
+    c=64/ops_per_sec  606.3k
+    c=512/ops_per_sec  765.2k
+    cycles_per_sec  349.6k   p50  2.7µs
+== BENCH 1 i50
+    c=1/ops_per_sec  852.7k
+    c=64/ops_per_sec  546.7k
+    c=512/ops_per_sec  767.0k
+    cycles_per_sec  348.5k   p50  2.7µs
+CALLS 1 fan c=64 base 541 ms | 0.546 0.555 0.009
+CALLS 1 fan c=64 i90 612 ms | 0.618 1.831 0.029
+CALLS 1 fan c=64 i75 585 ms | 0.592 1.872 0.016
+CALLS 1 fan c=64 i50 623 ms | 0.629 1.843 0.022
+CALLS 1 fan c=512 base 558 ms | 0.566 0.684 0.024
+CALLS 1 fan c=512 i90 399 ms | 0.408 1.049 0.027
+CALLS 1 fan c=512 i75 681 ms | 0.699 1.659 0.061
+CALLS 1 fan c=512 i50 1174 ms | 1.191 2.683 0.103
+== BENCH 2 base
+    c=1/ops_per_sec  495.4k
+    c=64/ops_per_sec  327.6k
+    c=512/ops_per_sec  145.6k
+    cycles_per_sec  151.7k   p50  3.5µs
+== BENCH 2 i90
+    c=1/ops_per_sec  450.6k
+    c=64/ops_per_sec  298.6k
+    c=512/ops_per_sec  275.5k
+    cycles_per_sec  95.8k   p50  4.4µs
+== BENCH 2 i75
+    c=1/ops_per_sec  595.6k
+    c=64/ops_per_sec  1.27M
+    c=512/ops_per_sec  1.15M
+    cycles_per_sec  362.1k   p50  2.7µs
+== BENCH 2 i50
+    c=1/ops_per_sec  1.06M
+    c=64/ops_per_sec  658.9k
+    c=512/ops_per_sec  803.1k
+    cycles_per_sec  351.8k   p50  2.7µs
+CALLS 2 fan c=64 base 531 ms | 0.536 0.546 0.009
+CALLS 2 fan c=64 i90 736 ms | 0.742 1.891 0.028
+CALLS 2 fan c=64 i75 570 ms | 0.576 1.879 0.026
+CALLS 2 fan c=64 i50 693 ms | 0.699 1.789 0.030
+CALLS 2 fan c=512 base 832 ms | 0.845 1.253 0.040
+CALLS 2 fan c=512 i90 626 ms | 0.637 1.663 0.031
+CALLS 2 fan c=512 i75 594 ms | 0.606 2.171 0.033
+CALLS 2 fan c=512 i50 685 ms | 0.699 2.012 0.043
+== BENCH 3 base
+    c=1/ops_per_sec  833.6k
+    c=64/ops_per_sec  717.0k
+    c=512/ops_per_sec  458.8k
+    cycles_per_sec  341.7k   p50  2.8µs
+== BENCH 3 i90
+    c=1/ops_per_sec  852.0k
+    c=64/ops_per_sec  688.7k
+    c=512/ops_per_sec  849.2k
+    cycles_per_sec  68.1k   p50  13.7µs
+== BENCH 3 i75
+    c=1/ops_per_sec  866.8k
+    c=64/ops_per_sec  719.9k
+    c=512/ops_per_sec  853.1k
+    cycles_per_sec  342.1k   p50  2.8µs
+== BENCH 3 i50
+    c=1/ops_per_sec  860.9k
+    c=64/ops_per_sec  719.7k
+    c=512/ops_per_sec  804.8k
+    cycles_per_sec  351.4k   p50  2.7µs
+CALLS 3 fan c=64 base 485 ms | 0.491 0.490 0.006
+CALLS 3 fan c=64 i90 442 ms | 0.448 1.021 0.043
+CALLS 3 fan c=64 i75 555 ms | 0.561 1.518 0.028
+CALLS 3 fan c=64 i50 570 ms | 0.576 1.834 0.028
+CALLS 3 fan c=512 base 891 ms | 0.903 1.308 0.038
+CALLS 3 fan c=512 i90 639 ms | 0.652 2.103 0.043
+CALLS 3 fan c=512 i75 597 ms | 0.609 2.264 0.046
+CALLS 3 fan c=512 i50 514 ms | 0.527 1.692 0.043
