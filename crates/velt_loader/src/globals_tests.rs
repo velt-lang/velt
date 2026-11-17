@@ -222,6 +222,52 @@ fn a_program_that_names_no_json_loads_no_json_modules() {
     assert!(json_modules(csv).contains(&"std/prelude/json/json".to_string()));
 }
 
+/// The ports behind `Math.exp`, `Math.sin` and the others (std/lang/math, 1,600 lines) load only
+/// for a program that calls one (std/prelude/global/math_functions.velt): hello world, and a
+/// program that only rounds, load `Math.log` alone, which shares its name with `console.log`
+/// (#3130; with all of them in the prelude every `velt build` took 13% more instructions).
+#[test]
+fn a_program_that_calls_no_math_function_loads_no_port() {
+    let math = |main: &str| std_modules(main, &["std/lang/math/"]);
+    let log_only = vec![
+        "std/lang/math/log".to_string(),
+        "std/lang/math/words".to_string(),
+    ];
+    let sorted = |mut v: Vec<String>| {
+        v.sort();
+        v
+    };
+    assert_eq!(sorted(math("console.log(\"hello, world\");\n")), log_only);
+    let rounds = "console.log(Math.floor(2.5), Math.max(1, 2), Math.log(8) / Math.LN2);\n";
+    assert_eq!(sorted(math(rounds)), log_only);
+    // A comment or a string that names one is not a call.
+    let says = "// sin and cos\nconsole.log(\"Math.exp\");\n";
+    assert_eq!(sorted(math(says)), log_only);
+    for call in [
+        "Math.sin(1)",
+        "Math.exp(1)",
+        "Math.atan2(1, 2)",
+        "Math.cbrt(8)",
+        "Math.log2(8)",
+    ] {
+        let loaded = math(&format!("console.log({call});\n"));
+        for port in [
+            "functions",
+            "trig",
+            "exp",
+            "logs",
+            "inverse_trig",
+            "hyperbolic",
+            "cbrt",
+        ] {
+            assert!(
+                loaded.contains(&format!("std/lang/math/{port}")),
+                "{call}: {loaded:?}"
+            );
+        }
+    }
+}
+
 /// `expect`'s pattern matchers take a `Pattern` (std/text/regex/pattern), so a test file compiles the
 /// regex engine only when it has a regex (#1889).
 #[test]

@@ -5,7 +5,8 @@
 
 import { abs, sqrt } from "velt/lang/intrinsics";
 import { exp, expm1 } from "velt/lang/math/exp";
-import { log, log1p } from "velt/lang/math/log";
+import { log } from "velt/lang/math/log";
+import { log1p } from "velt/lang/math/logs";
 import { highWord, lowWord } from "velt/lang/math/words";
 
 const LN2: f64 = 6.93147180559945286227e-01;
