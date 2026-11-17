@@ -267,17 +267,21 @@ a build by reason):
 
 The objects above replace codegen only: sema, lowering and velt_opt of a served function still run
 in every build. For std code that replaces runtime Rust (#2196) that is most of the cost (#3039:
-one `toPrecision` call, +21.8% release build). So an on-demand hook module whose `prebuilt` hooks
-(velt_common `std_hooks/prebuilt.rs`) take and return only numbers and strings is compiled once,
-with everything it reaches, into one object (`std_cache/prebuilt.rs`, `prebuilt_object.rs`; kind
-`stdhook`):
+one `toPrecision` call, +21.8% release build; the weak core, #3153: +254% to +394% on the first
+release build of a program with a `WeakMap` or `WeakRef`). So an on-demand hook module whose
+`prebuilt` hooks (velt_common `std_hooks/prebuilt.rs`) take and return only numbers, `bool`s and
+strings is compiled once, with everything it reaches, into one object (`std_cache/prebuilt.rs`,
+`prebuilt_object.rs`; kind `stdhook`):
 
 - **Front end skipped.** When a check meets a `hookCall` of such a hook and the cache holds its
   module's object, sema types the call against a `declare function` named `velt_hook_<entry>`
   (`lazy_std/hook_stubs.rs` `declared`), as it typed the `velt_rt_*` extern the hook replaced; the
-  module is never loaded, checked, lowered or optimized, and the link adds the object. Without the
-  object the build loads the module as for any hook: no output depends on the cache.
-- **No program facts.** Numbers cross by value; a `&string` as the address of the caller's string,
+  module is never loaded, checked, lowered or optimized, and the link adds the object. A `lowered`
+  hook its constructs demand is declared the same way (`declared_lowered`), and lowering's builder
+  calls the declared function as an extern (`velt_vir` `hook_calls.rs`). Without the object the
+  build loads the module as for any hook: no output depends on the cache.
+- **No program facts.** Numbers and `bool`s cross by value (a `bool` as both backends pass it, a
+  zero-extended byte); a `&string` as the address of the caller's string,
   borrowed; a `string` result through a trailing out-pointer the callee fills (the runtime string
   externs' convention). Nothing a program decides (counted types, the layout of `u8[]`,
   `noalias`/`readonly`/`frozen`) reaches the object's code, which is compiled in a world of its own:
@@ -288,6 +292,15 @@ with everything it reaches, into one object (`std_cache/prebuilt.rs`, `prebuilt_
   go into the program's build stamp. Refused: an entry not lowered as the convention says, and code
   sharing state with the program (module state, thread-local values, static atomics such as the
   process statics, named statics).
+- **State of its own.** A module may keep thread-local values and static atomics in its *private*
+  modules (`prebuilt::private`: modules nothing else imports, the weak core's `weak*.velt`). The
+  object keeps the static atomics; the manifest lists the thread-local values' externs, and a
+  build linking the object adds them to its program, whose unit defining `velt_main` defines their
+  storage (vir.rs invariant 5: code compiled to link into a program declares them). Sema calls no
+  object for a program that loads a private module itself, which would hold a second copy of the
+  state; and where a debug build's backend has no thread-local storage an object can share, an
+  object with thread-local values is a miss. An entry point must not take its caller's location
+  (`track_caller.rs`), so such a module's code has no panic but its internal errors'.
 - **Pinned.** Once sema has called the entry points the build must link the object, so a build
   that links hard-links (or copies) the object it finds into a temporary directory it holds until
   it is done: another build's garbage collection or `velt clean --cache` before the link can't fail

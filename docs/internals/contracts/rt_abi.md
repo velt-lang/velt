@@ -252,8 +252,11 @@ calls and the cell layout is the same; the release runtime keeps the symbols as 
 ## Weak references
 std's weak core (`std/lang/hooks/weak*.velt`, #3145; it was `velt_rt`'s `src/weak/` until
 #2196 moved it) does this work; lowering reaches it through the hooks of `velt_common`'s
-`std_hooks.rs` (`weak_*`), and std's `WeakMap`, `WeakSet` and `WeakRef` call their drop hooks
-directly. `weak T` fields (#11) will use it too. Design: [weak-refs.md](../design/weak-refs.md).
+`std_hooks.rs` (`weak_*`), and std's `WeakMap`, `WeakSet` and `WeakRef` reach their drop hooks
+through intrinsics. The hooks are `prebuilt`: where the build links the core's object, each is a
+call of its entry point `velt_hook_<hook>` (numbers and `bool`s by value), and the program
+defines the storage of the object's thread-local values (`velt_tls_data_<id>`). `weak T` fields
+(#11) will use it too. Design: [weak-refs.md](../design/weak-refs.md).
 
 - **Count word.** Bit 63 (`RC_WEAK`) of a counted object's count is set while the object is weakly
   held; the count proper is bits 0..62. Retain is unchanged (`count += 1`).

@@ -260,6 +260,9 @@ fn demand_hooks(cx: &mut Ctx) -> bool {
     }
     let mut marked = false;
     for h in newly_demanded(before, now).filter(|h| !constructs::gated(h.name)) {
+        if super::hook_stubs::declared_lowered(cx, h) {
+            continue;
+        }
         cx.demand_std(&h.module());
         if let Some(crate::ctx::Item::Def(d)) = cx.std_def(&h.qualified()) {
             marked = true;

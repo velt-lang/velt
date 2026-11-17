@@ -17,6 +17,7 @@ import {
   noInline,
 } from "velt/lang/intrinsics";
 import * as os from "#weak-os";
+import { outOfMemory } from "./heap";
 
 /** The bytes of a field. */
 export const W: usize = 8;
@@ -87,11 +88,16 @@ export function count(obj: usize): u64 {
   return ld64(rcWord(obj)) & RC_COUNT;
 }
 
-/** `n` zeroed bytes of the C library's (`#weak-os`). */
+/**
+ * `n` zeroed bytes of the C library's (`#weak-os`). Without them the program stops, as the
+ * allocator of generated code does (heap.velt `outOfMemory`) and the Rust core did: not a panic,
+ * which a `catchUnwind` would catch with the lock held, and which would make every entry point
+ * take its caller's location (`velt_vir` `track_caller.rs`), so that none could be prebuilt.
+ */
 export function alloc(n: usize): usize {
   const p = os.zeroed(n);
   if (p === 0) {
-    panic("out of memory");
+    outOfMemory(n as u64);
   }
   return p;
 }
