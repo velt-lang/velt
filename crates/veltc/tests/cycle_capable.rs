@@ -247,6 +247,7 @@ fn a_class_hierarchy_alone_is_not_a_cycle() {
          }",
     );
     assert_eq!(c, "", "nothing here can form a cycle");
+}
 
 // Step 2: closures told apart by the function type they were made at, interface values by
 // their interface.
