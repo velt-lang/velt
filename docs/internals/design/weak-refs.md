@@ -211,8 +211,8 @@ The runtime relies on these; the compiler must keep them when it lowers weak ref
 ## Weak maps and `WeakRef`
 
 - `set(k, v)` records `k` in the side table (setting its flag), stores `v` (the map owns one
-  reference). When the map's values can refer to objects, the entry is examined for the
-  ephemeron rule below on the key's next decrement.
+  reference), and runs the insert-time ephemeron analysis below when the map's values can refer
+  to objects.
 - `get`, `has` and `delete` are hash probes. `get` returns the value counted (retained with the
   map's value glue; the caller releases it), like `deref()`: any later release of a weakly held
   object may run a trial that deletes the entry and frees its value, so a borrowed result would
@@ -234,20 +234,11 @@ either. With counts alone, the key's count never reaches zero while the proxy li
 map keeps the proxy alive: every reactive object would leak. Owner decision 3 on #823: a
 back-reference count plus a bounded cycle check on release.
 
-**On the key's first decrement after an insert,** the entry is examined: the table traces `v`'s
-graph through the compiler's trace glue (each counted type's strong references; up to 256
-objects) and finds every object on a path from `v` back to `k`. For each, the entry records how
-many references to it the entry holds: the map's reference to `v`, and the references from
-inside `v`'s graph. Their sum over all entries is the object's `hint`, and the objects get the
-flag. Waiting for a decrement loses nothing: an entry whose value refers back to its key holds a
-reference to the key, so the key's last outside reference goes by a decrement (a release that
-leaves the count above zero), never by the release that frees it. It saves the trace for an
-entry whose key goes by that last release while nothing else ever decremented it, and the
-trials that releases of a value not yet examined would run (the value is not marked yet). It
-also sees a path the value gains between the insert and that decrement (#3139).
-
-The examination and the trials reuse one graph per thread, so neither allocates once its
-buffers have grown to the program's value graphs.
+**At insert,** `set(k, v)` traces `v`'s graph through the compiler's trace glue (each counted
+type's strong references; up to 256 objects) and finds every object on a path from `v` back to
+`k`. For each, the entry records how many references to it the entry holds: the map's reference
+to `v`, and the references from inside `v`'s graph. Their sum over all entries is the object's
+`hint`, and the objects get the flag.
 
 **On a release** that leaves a recorded object's count at or below `max(hint, observed)`, every
 remaining reference may come from the cycle, so the cold path runs a **trial deletion**
@@ -320,22 +311,22 @@ the end. CI runs 20,000 through a window of 64.
 
 ### What it does not handle
 
-- **A value graph past 256 objects** at its examination or during a trial: nothing is recorded
-  or freed; the pair leaks until the entry is deleted or the map dropped (test
+- **A value graph past 256 objects** at insert or during a trial: nothing is recorded or freed;
+  the pair leaks until the entry is deleted or the map dropped (test
   `a_value_graph_past_the_limit_is_kept`). The bound keeps every release cheap; the proxy cells
   this is for are a handful of objects.
-- **References to the key added after the last examination or trial through it**, when the
-  final outside release lands on an object whose count is still above what the table knows: no
-  trial runs and the pair is kept until a release that reaches the known level, or the entry
-  goes (test `a_path_added_after_the_last_trial_delays_the_free`). sigx's proxies never change
-  their target, so its caches do not hit this.
+- **References to the key added after the last trial through it**, when the final outside
+  release lands on an object whose count is still above what the table knows: no trial runs and
+  the pair is kept until a release that reaches the known level, or the entry goes (test
+  `a_path_added_after_the_last_trial_delays_the_free`). sigx's proxies never change their
+  target, so its caches do not hit this.
 - **Strong cycles through the key** (`raw.self = proxy(raw)`): the trial frees the entry, but raw
   and the proxy still hold each other. That is an ordinary strong cycle, the problem `weak T`
   (#11) solves; the core does not collect cycles that no weak map takes part in.
 - **Ephemeron cycles across maps.** `m1.set(a, b); m2.set(b, a)` with no other references
   between `a` and `b`: each key is kept alive only by the other map's value, so a garbage
-  collector frees both at its next collection. The examination records a path from a value
-  back to its own entry's key only, so neither entry has a hint and no trial runs; the
+  collector frees both at its next collection. The insert-time analysis records a path from a
+  value back to its own entry's key only, so neither entry has a hint and no trial runs; the
   pair is kept until an entry is deleted or a map dropped. A trial through either object would
   find the pair dead (it follows entries in every map), but nothing starts one.
 - **A weak map held only by its own cycle** (sigx's `nestedCache` lives in the handler's
