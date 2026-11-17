@@ -261,8 +261,12 @@ pub(super) fn maybe_written(f: &Function, s: &Susp, u: &Universe) -> Vec<Bits> {
                 acc.union(&out[p]);
             }
         }
-        for &b in bs {
-            out[b] = acc.clone();
+        // Most components are one block: the set moves there, cloned only for the others.
+        if let Some((&last, rest)) = bs.split_last() {
+            for &b in rest {
+                out[b] = acc.clone();
+            }
+            out[last] = acc;
         }
     }
     out
