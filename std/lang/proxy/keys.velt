@@ -98,15 +98,27 @@ export function proxyKey(key: any): string | symbol {
  */
 export function symbolKeyName(s: symbol): string {
   const d = String(s);
-  // The well-known symbols, as a list in a string (an array here would be a counted value in
-  // every program that loads `Proxy`).
-  const known =
-    " asyncDispose asyncIterator dispose hasInstance isConcatSpreadable iterator match matchAll replace search species split toPrimitive toStringTag unscopables ";
-  if (d.startsWith("Symbol(Symbol.") && d.endsWith(")")) {
-    const k = d.slice(14, -1);
-    if (known.includes(` ${k} `)) {
-      return `[Symbol.${k}]`;
-    }
+  // The well-known symbols, by their whole descriptions: no array (a counted value in every
+  // program that loads `Proxy`) and no string search (the general search's code in every such
+  // program).
+  switch (d) {
+    case "Symbol(Symbol.asyncDispose)":
+    case "Symbol(Symbol.asyncIterator)":
+    case "Symbol(Symbol.dispose)":
+    case "Symbol(Symbol.hasInstance)":
+    case "Symbol(Symbol.isConcatSpreadable)":
+    case "Symbol(Symbol.iterator)":
+    case "Symbol(Symbol.match)":
+    case "Symbol(Symbol.matchAll)":
+    case "Symbol(Symbol.replace)":
+    case "Symbol(Symbol.search)":
+    case "Symbol(Symbol.species)":
+    case "Symbol(Symbol.split)":
+    case "Symbol(Symbol.toPrimitive)":
+    case "Symbol(Symbol.toStringTag)":
+    case "Symbol(Symbol.unscopables)":
+      // `Symbol(Symbol.iterator)` keys `[Symbol.iterator]`.
+      return `[${d.slice(7, -1)}]`;
   }
   return `￿${d}`;
 }
