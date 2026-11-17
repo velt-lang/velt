@@ -102,7 +102,9 @@ export const R_MEMBER_MORE: usize = 56;
 /** The object's `WeakRef` slots: the first, then a vector of the others. */
 export const R_REF: usize = 64;
 export const R_REF_MORE: usize = 72;
-export const RECORD: usize = 80;
+/** Entries keyed by the object whose value graph is not traced yet (weak.velt `examine`). */
+export const R_UNEXAMINED: usize = 80;
+export const RECORD: usize = 88;
 
 const EMPTY: usize = 0;
 const REMOVED: usize = 1;
@@ -236,6 +238,14 @@ export function observed(rec: usize): u32 {
 
 export function setObserved(rec: usize, v: u32): void {
   st32(rec + R_OBSERVED, v);
+}
+
+export function unexamined(rec: usize): usize {
+  return ld(rec + R_UNEXAMINED);
+}
+
+export function setUnexamined(rec: usize, n: usize): void {
+  st(rec + R_UNEXAMINED, n);
 }
 
 // A list of one-word items (`R_KEYED`, `R_REF`): its first item in the record, the rest after.

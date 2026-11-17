@@ -35,7 +35,9 @@ import {
   memberRemove,
   remove,
   setHint,
+  setUnexamined,
   settle,
+  unexamined,
 } from "./weak_records";
 import {
   W,
@@ -73,7 +75,9 @@ const MAP: usize = 64;
 export const E_KEY: usize = 0;
 export const E_VALUE: usize = 8;
 export const E_MEMBERS: usize = 16;
-const ENTRY: usize = 24;
+/** 1 once the value's graph was traced for paths back to the key (or there is none to trace). */
+export const E_EXAMINED: usize = 24;
+const ENTRY: usize = 32;
 
 const EMPTY: usize = 0;
 const REMOVED: usize = 1;
@@ -161,6 +165,7 @@ export function entryAdd(b: usize, key: usize): usize {
       st(e + E_KEY, key);
       st64(e + E_VALUE, 0);
       st(e + E_MEMBERS, 0);
+      st(e + E_EXAMINED, 1);
       return e;
     }
     i = (i + 1) & (cap - 1);
@@ -216,12 +221,16 @@ export function del(h: usize, id: u32, key: usize): bool {
   }
   const value = ld64(e + E_VALUE);
   const members = ld(e + E_MEMBERS);
+  const examined = ld(e + E_EXAMINED) !== 0;
   st(e + E_KEY, REMOVED);
   st(e + E_MEMBERS, 0);
   st(b + M_LIVE, ld(b + M_LIVE) - 1);
   const rec = find(h, key);
   if (rec !== 0) {
     listRemove(rec, R_KEYED, id as usize);
+    if (!examined) {
+      setUnexamined(rec, unexamined(rec) - 1);
+    }
   }
   unlink(h, id, key, members);
   settle(h, key);

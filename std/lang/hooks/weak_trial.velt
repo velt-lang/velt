@@ -2,10 +2,10 @@
 // holds its key strongly) and the bounded trial deletion that frees them (weak.velt;
 // docs/internals/design/weak-refs.md "The ephemeron rule"), with the lock held.
 //
-// When an entry is set, `members` traces its value's graph (up to `LIMIT` objects) and finds
-// every object on a path from the value back to the key, with the references the entry holds to
-// it (the map's reference to the value, and the references inside the value's graph). Their sum
-// per object is its `hint`.
+// When an entry is examined (weak.velt `examine`, on its key's first decrement after the insert),
+// `members` traces its value's graph (up to `LIMIT` objects) and finds every object on a path
+// from the value back to the key, with the references the entry holds to it (the map's reference
+// to the value, and the references inside the value's graph). Their sum per object is its `hint`.
 //
 // When a release leaves an object's count at or below its hint, `trial` runs a trial deletion in
 // the style of Bacon and Rajan's synchronous cycle collection, restricted to one subgraph: the

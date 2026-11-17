@@ -190,7 +190,7 @@ function untagged(obj: usize): void {
 export function weakRelease(obj: usize): bool {
   untagged(obj);
   const h = enter();
-  const r = rec.find(h, obj);
+  let r = rec.find(h, obj);
   if (r === 0) {
     leave(h);
     panic("ICE: a weakly held object was released with no record in the weak table");
@@ -204,6 +204,11 @@ export function weakRelease(obj: usize): bool {
     return true;
   }
   st64(rcWord(obj), ld64(rcWord(obj)) - 1);
+  if (rec.unexamined(r) !== 0) {
+    examine(h, obj);
+    // The examination may have added records, which moves the table.
+    r = rec.find(h, obj);
+  }
   if (c - 1 > level(r)) {
     leave(h);
     return false;
@@ -253,21 +258,58 @@ export function weakMapSetTraced(map: u32, key: usize, value: u64, keyTrace: usi
   leaveReleasing(h);
 }
 
+/**
+ * Inserts or replaces an entry. Its value's graph is examined later, on the key's first decrement
+ * (`examine`), not here: an entry whose value refers back to its key holds a reference to the
+ * key, so the key's last outside reference goes by a decrement, never by the release that frees
+ * it. An entry whose key is freed by its only release is never traced, and a value is not marked
+ * (its releases run no trial) until its entry is examined.
+ */
 function set(h: usize, map: u32, key: usize, value: u64, keyTrace: usize): void {
   wm.del(h, map, key);
-  const vt = ld(mapOf(h, map) + wm.M_VALUE_TRACE);
-  // A nonzero value of a map with trace glue is a live counted object, the map's from here on.
-  const ms = vt !== 0 && value !== 0 ? members(h, key, value as usize, vt) : 0;
-  rec.listPush(rec.node(h, key, keyTrace), rec.R_KEYED, map as usize);
-  const n = vlen(ms);
-  for (let i: usize = 0; i < n; i += 3) {
-    const r = rec.node(h, vat(ms, i), vat(ms, i + 2));
-    rec.memberPush(r, map as usize, key);
-    rec.setHint(r, rec.hint(r) + (vat(ms, i + 1) as u32));
+  const traced = ld(mapOf(h, map) + wm.M_VALUE_TRACE) !== 0 && value !== 0;
+  const r = rec.node(h, key, keyTrace);
+  rec.listPush(r, rec.R_KEYED, map as usize);
+  if (traced) {
+    rec.setUnexamined(r, rec.unexamined(r) + 1);
   }
   const e = wm.entryAdd(mapOf(h, map), key);
   st64(e + wm.E_VALUE, value);
-  st(e + wm.E_MEMBERS, ms);
+  st(e + wm.E_EXAMINED, traced ? 0 : 1);
+}
+
+/**
+ * Traces the values of the entries keyed by `k` that were not traced yet (a nonzero value of a
+ * map with trace glue: a live counted object the map owns), and records the objects on their paths
+ * back to `k` with the references the entry holds to each (their `hint`).
+ */
+function examine(h: usize, k: usize): void {
+  let r = rec.find(h, k);
+  let i: usize = 0;
+  while (i < rec.listLen(r, rec.R_KEYED)) {
+    const map = rec.listAt(r, rec.R_KEYED, i) as u32;
+    i += 1;
+    const b = mapOf(h, map);
+    const e = wm.entryOf(b, k);
+    if (e === 0 || ld(e + wm.E_EXAMINED) !== 0) {
+      continue;
+    }
+    const ms = members(h, k, ld64(e + wm.E_VALUE) as usize, ld(b + wm.M_VALUE_TRACE));
+    // `node` adds records, not entries: the entry stays where it is.
+    st(e + wm.E_MEMBERS, ms);
+    st(e + wm.E_EXAMINED, 1);
+    const n = vlen(ms);
+    if (n !== 0) {
+      for (let j: usize = 0; j < n; j += 3) {
+        const m = rec.node(h, vat(ms, j), vat(ms, j + 2));
+        rec.memberPush(m, map as usize, k);
+        rec.setHint(m, rec.hint(m) + (vat(ms, j + 1) as u32));
+      }
+      // The records may have moved.
+      r = rec.find(h, k);
+    }
+  }
+  rec.setUnexamined(r, 0);
 }
 
 /**

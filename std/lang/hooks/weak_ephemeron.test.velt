@@ -9,6 +9,7 @@ import {
   count,
   finish,
   get,
+  isMarked,
   live,
   newObj,
   objMap,
@@ -19,6 +20,7 @@ import {
   retain,
   set,
   setField,
+  traced,
 } from "velt/lang/hooks/weak_test_objects";
 
 /** Releases what `build` made in each order; whether everything was freed every time. */
@@ -233,21 +235,57 @@ describe("the ephemeron rule", () => {
   });
 
   it("delays the free of a path added after the last trial", () => {
-    // The gap: references to the key that a value gains after the last trial through it raise
-    // the key's count above what the table knows, so dropping the outside reference runs no
-    // trial and the pair is kept (a leak, never a use-after-free). It is freed once the extra
-    // reference goes (that release runs the trial), or with the entry or the map.
+    // The gap: references to the key that a value gains after the last examination or trial
+    // through it raise the key's count above what the table knows, so dropping the outside
+    // reference runs no trial and the pair is kept (a leak, never a use-after-free). It is
+    // freed once the extra reference goes (that release runs the trial), or with the entry or
+    // the map.
     const m = objMap();
     const raw = plain();
     release(proxyOf(m, raw, 0));
+    release(retain(raw)); // the key's first decrement: the entry is examined
     const p = get(m, raw);
     release(p); // the entry keeps it
+    expect(isMarked(p)).toBe(true); // on the path back to the key
     setField(p, 2, retain(raw));
     const before = live();
     release(raw);
     expect(live()).toBe(before); // kept while the extra path exists
     setField(p, 2, 0);
     expect(live()).toBe(before - 2);
+    expect(finish([m])).toBe(true);
+  });
+
+  it("finds a path added before the key's first decrement", () => {
+    // The entry is examined on its key's first decrement, so a path the value gains before
+    // then counts as one it had at the insert.
+    const m = objMap();
+    const raw = plain();
+    release(proxyOf(m, raw, 0));
+    const p = get(m, raw);
+    release(p);
+    expect(isMarked(p)).toBe(false); // not examined yet
+    setField(p, 2, retain(raw));
+    const before = live();
+    release(raw);
+    expect(live()).toBe(before - 2); // both paths were counted
+    expect(weakMapLen(m)).toBe(0);
+    expect(finish([m])).toBe(true);
+  });
+
+  it("never traces an entry whose key goes by its only release", () => {
+    // A value that refers to other objects only (a handler over them): the key's last release
+    // frees it and deletes the entry without tracing the value.
+    const m = objMap();
+    const raw = plain();
+    const other = plain();
+    const before = traced();
+    set(m, raw, newObj(other, 0, 0));
+    const objects = live();
+    release(raw);
+    expect(live()).toBe(objects - 3); // the key, the value and what it held
+    expect(weakMapLen(m)).toBe(0);
+    expect(traced()).toBe(before); // nothing was traced
     expect(finish([m])).toBe(true);
   });
 });

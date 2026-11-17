@@ -258,11 +258,19 @@ either. With counts alone, the key's count never reaches zero while the proxy li
 map keeps the proxy alive: every reactive object would leak. Owner decision 3 on #823: a
 back-reference count plus a bounded cycle check on release.
 
-**At insert,** `set(k, v)` traces `v`'s graph through the compiler's trace glue (each counted
-type's strong references; up to 256 objects) and finds every object on a path from `v` back to
-`k`. For each, the entry records how many references to it the entry holds: the map's reference
-to `v`, and the references from inside `v`'s graph. Their sum over all entries is the object's
-`hint`, and the objects get the flag.
+**On the key's first decrement after an insert,** the entry is examined: the core traces `v`'s
+graph through the compiler's trace glue (each counted type's strong references; up to 256
+objects) and finds every object on a path from `v` back to `k`. For each, the entry records how
+many references to it the entry holds: the map's reference to `v`, and the references from inside
+`v`'s graph. Their sum over all entries is the object's `hint`, and the objects get the flag.
+
+Waiting for a decrement loses no cycle: an entry whose value refers back to its key holds a
+reference to the key, so the key's last outside reference goes by a decrement, never by the
+release that frees it. It saves the trace of an entry whose key goes by its only release, and the
+trials that releases of a value not examined yet would run (the value is not marked until then),
+and it sees a path the value gains between the insert and that decrement. It costs a second
+lookup of the entry, at the decrement (#3139: `bench/weakmap_handlers.velt`, a handler over other
+objects, +11% against tracing at insert; `weakmap_handlers_cycle.velt` −37%).
 
 **On a release** that leaves a recorded object's count at or below `max(hint, observed)`, every
 remaining reference may come from the cycle, so the cold path runs a **trial deletion**
@@ -337,7 +345,7 @@ runs 20,000 through a window of 64.
 
 ### What it does not handle
 
-- **A value graph past 256 objects** at insert or during a trial: nothing is recorded or freed;
+- **A value graph past 256 objects** at its examination or during a trial: nothing is recorded or freed;
   the pair leaks until the entry is deleted or the map dropped (test
   "keeps a pair whose value graph is past the limit"). The bound keeps every release cheap; the proxy cells
   this is for are a handful of objects.

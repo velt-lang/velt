@@ -162,13 +162,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.switch_to(done);
     }
 
-    /// `visit(ctx, child, glue)`.
+    /// `visit(ctx, child, glue)` (glue/trace.rs `call_visit`).
     fn visit_child(&mut self, child: Operand, glue: Operand, tv: (vir::Local, vir::Local)) {
-        let (visit, ctx) = (
-            Operand::Copy(Place::local(tv.0)),
-            Operand::Copy(Place::local(tv.1)),
-        );
-        self.call_entry(visit, vec![ctx, child, glue], vec![Ty::Ptr; 3], Ty::Unit);
+        self.call_visit(tv, child, glue);
     }
 }
 
