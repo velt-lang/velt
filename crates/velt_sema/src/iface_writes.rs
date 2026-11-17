@@ -492,7 +492,6 @@ impl Ctx<'_> {
         self.iface(iface).map_or(String::new(), |i| i.name.clone())
     }
 
-    /// Appends the setters of implementation `index` (once).
     /// [`Self::add_setters`] for `crate::iface_method_writes`.
     pub(crate) fn add_setters_pub(&mut self, index: u32) {
         if self.iface_writes.sources.contains_key(&index) {
@@ -500,6 +499,7 @@ impl Ctx<'_> {
         }
     }
 
+    /// Appends the setters of implementation `index` (once).
     fn add_setters(&mut self, index: u32) {
         let imp = &self.impls[index as usize];
         let iface = imp.iface;

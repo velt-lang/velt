@@ -66,6 +66,9 @@ pub(crate) struct MethodWrites {
     /// (method site, object type, field, field type): fields storing a written method that are
     /// not sites ([`Ctx::check_unlinked_fields`]).
     unlinked: Vec<(Span, DefId, usize, TyId)>,
+    /// Methods of an interface read as values through an interface value, with where
+    /// (`crate::iface_method_reads`).
+    pub(crate) value_reads: Vec<(DefId, usize, Span)>,
 }
 
 impl Ctx<'_> {
@@ -198,7 +201,7 @@ impl Ctx<'_> {
     }
 
     /// Is interface `d` the interface `base`, or does it extend it?
-    fn extends_or_is_iface(&self, d: DefId, base: DefId, depth: u32) -> bool {
+    pub(crate) fn extends_or_is_iface(&self, d: DefId, base: DefId, depth: u32) -> bool {
         d == base
             || depth < 64
                 && self.iface(d).is_some_and(|i| {
@@ -325,8 +328,9 @@ impl Ctx<'_> {
     }
 
     /// Can a field of function type `field` store method `j` of `iface` (at `args`)? The same
-    /// parameters and result; the error types are compared by identity only, never unified (a
-    /// field's is inferred from what is stored into it, `crate::fn_sites`).
+    /// parameters and result; the error types (what it throws, and the rejection error of a
+    /// promise it returns) are not compared: a field's is inferred from what is stored into it
+    /// (`crate::fn_sites`), and so is the method's.
     pub(crate) fn stores_method(
         &mut self,
         iface: DefId,
@@ -344,7 +348,11 @@ impl Ctx<'_> {
             _ => None,
         };
         match (parts(m, self), parts(field, self)) {
-            (Some(a), Some(b)) => a == b,
+            (Some((p, r, x)), Some((q, s, y))) => {
+                p == q
+                    && x == y
+                    && self.without_rejection_error(r) == self.without_rejection_error(s)
+            }
             _ => false,
         }
     }
@@ -698,6 +706,14 @@ impl Ctx<'_> {
         }
         self.check_unlinked_fields();
         self.report_refusals();
+        self.report_written_method_reads();
+    }
+
+    /// The (interface, method) pairs written through interface values, each with where first.
+    pub(crate) fn written_method_pairs(&self) -> Vec<((DefId, usize), Span)> {
+        (self.method_writes.methods.iter())
+            .map(|(&k, &s)| (k, s))
+            .collect()
     }
 
     /// One error per written method some implementations can't store, at its first write, with a

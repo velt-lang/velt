@@ -1,0 +1,5 @@
+old
+method c 1
+method c2 2
+rewired c2
+done

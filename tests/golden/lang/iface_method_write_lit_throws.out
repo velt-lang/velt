@@ -1,0 +1,9 @@
+other? true lit throws
+other? false boom
+not Other
+failure? true
+d quiet
+no
+failure boom
+failure d boom
+arr 2

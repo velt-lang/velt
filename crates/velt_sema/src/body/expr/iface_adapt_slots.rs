@@ -381,10 +381,6 @@ fn promise_slot(cx: &mut Ctx, iface: DefId, slot: u32) -> bool {
         .is_some_and(|g| groups.list[g].promise)
 }
 
-/// The setter slot of field `field` for the adapter `p` (`iface_writes`, a field written through
-/// the interface): writes the value, converted to the wrapped value's own field type, through
-/// the wrapped value's setter. `None` when the value does not convert back (a field of an
-/// interface type at `unknown`, #924).
 /// The setter slot of method `j` written as a property (`crate::iface_method_writes`) of an
 /// adapter: it writes the wrapped value's, the function converted as an argument would be.
 /// `None` when the function can't convert.
@@ -426,6 +422,10 @@ pub(crate) fn adapter_method_setter(cx: &mut Ctx, p: &AdapterParts, j: usize) ->
     Some(adapter_method(cx, p, slot, &sig, true))
 }
 
+/// The setter slot of field `field` for the adapter `p` (`iface_writes`, a field written through
+/// the interface): writes the value, converted to the wrapped value's own field type, through
+/// the wrapped value's setter. `None` when the value does not convert back (a field of an
+/// interface type at `unknown`, #924).
 pub(crate) fn adapter_setter(cx: &mut Ctx, p: &AdapterParts, field: usize) -> Option<DefId> {
     let info = cx.iface(p.iface)?;
     let f = info.fields.get(field)?.clone();

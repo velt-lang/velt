@@ -87,6 +87,7 @@ pub use hooks::NAMES as HOOK_NAMES;
 mod canon_key;
 mod glue_reach;
 pub mod ide;
+mod iface_method_reads;
 mod iface_method_writes;
 mod iface_overloads;
 mod iface_writes;

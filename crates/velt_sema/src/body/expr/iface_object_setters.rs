@@ -117,7 +117,9 @@ impl crate::body::FnCx<'_, '_> {
         if !is_fn || !self.cx.written_method_name(&name.name) {
             return h;
         }
-        let site = self.cx.untyped_let_site(h.ty, name.span, self.module);
+        let Some(site) = self.cx.method_value_site(h.ty, name.span, self.module) else {
+            return h;
+        };
         let at = self.cx.site_in(name.span, site);
         self.flow_into(&h, at);
         sites.push((index, name.span));
@@ -151,7 +153,9 @@ impl crate::body::FnCx<'_, '_> {
                 continue;
             }
             let at = h.span;
-            let site = self.cx.untyped_let_site(h.ty, at, self.module);
+            let Some(site) = self.cx.method_value_site(h.ty, at, self.module) else {
+                continue;
+            };
             let target = self.cx.site_in(at, site);
             let h = values[f].1.clone();
             self.flow_into(&h, target);

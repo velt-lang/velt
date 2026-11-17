@@ -1,0 +1,6 @@
+10:13: error: method `update` is read as a value, and the program assigns to it through `Ctx`
+14:13: error: method `update` is read as a value, and the program assigns to it through `Ctx`
+15:14: error: method `update` is read as a value, and the program assigns to it through `Ctx`
+11:3: `update` is assigned here
+a value read from `update` would call the function assigned to it later, not the one stored when it is read
+keep the function in a variable of its own before assigning it to `update`

@@ -196,8 +196,6 @@ pub(crate) fn field_setter(cx: &mut Ctx, d: DefId, self_ty: TyId, index: usize, 
     field_setter_taking(cx, d, self_ty, index, ty, false)
 }
 
-/// [`field_setter`] for the slot of an interface's `set name(v)` method, whose parameter is
-/// borrowed when `borrowed` (the field gets a share of it).
 /// [`field_setter`] named `<set {name}>` (a method member's setter, `crate::iface_method_writes`).
 pub(crate) fn field_setter_named(
     cx: &mut Ctx,
@@ -237,6 +235,8 @@ pub(crate) fn field_setter_named(
     })
 }
 
+/// [`field_setter`] for the slot of an interface's `set name(v)` method, whose parameter is
+/// borrowed when `borrowed` (the field gets a share of it).
 pub(crate) fn field_setter_taking(
     cx: &mut Ctx,
     d: DefId,

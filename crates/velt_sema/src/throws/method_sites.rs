@@ -27,6 +27,75 @@ impl Ctx<'_> {
         self.fn_sites.seeds.methods.contains(name)
     }
 
+    /// `t` with a promise's rejection error left out (`never`): how a stored function's result
+    /// is compared with a written method's (`Ctx::stores_method`), whose error types are
+    /// inferred, never compared.
+    pub(crate) fn without_rejection_error(&mut self, t: TyId) -> TyId {
+        match self.rejection_error(t) {
+            Some(_) => {
+                let never = self.ty.never;
+                self.with_rejection_error(t, never)
+            }
+            None => t,
+        }
+    }
+
+    /// The type of an object literal's function value `t`, stored at `span` in module `module`
+    /// under the name of a method the program writes as a property: a site, as
+    /// [`Self::untyped_let_site`] makes one, also when the value throws (or its promise
+    /// rejects with) errors of its own. The field holds every function assigned to the method,
+    /// so what it throws is one set: the value's own errors join it here, and what the writes
+    /// assign joins it through the links to the method's site (`Ctx::link_method_sites`).
+    /// `None` when it can't be a site (outside a site module, or a function returning a promise
+    /// that also throws): the field's own type then has to allow what is assigned.
+    pub(crate) fn method_value_site(&mut self, t: TyId, span: Span, module: usize) -> Option<TyId> {
+        let TyKind::FnPtr {
+            params,
+            mut ret,
+            throws,
+            rest,
+        } = self.ty.kind(t).clone()
+        else {
+            return None;
+        };
+        if !self.site_module(module) || span == Span::DUMMY {
+            return None;
+        }
+        let never = self.ty.never;
+        let own = match self.rejection_error(ret) {
+            Some(_) if throws != never => return None,
+            Some(e) => e,
+            None => throws,
+        };
+        if own != never && own != self.ty.error {
+            let mut members = vec![];
+            for m in self.error_members(own) {
+                members.push(self.port_thrown(m)?);
+            }
+            self.add_to_site(span, &members);
+        }
+        let Some(err) = self.site_error(span, module) else {
+            self.record_fn_site(span, module, t);
+            return Some(t);
+        };
+        let throws = match self.rejection_error(ret) {
+            Some(_) => {
+                ret = self.with_rejection_error(ret, err);
+                never
+            }
+            None => err,
+        };
+        let s = self.ty.intern(TyKind::FnPtr {
+            params,
+            ret,
+            throws,
+            rest,
+        });
+        self.record_fn_site(span, module, s);
+        self.ty.inferred_fns.insert(s);
+        Some(s)
+    }
+
     /// The function type `(params) => ret` of an interface method without a `throws` clause that
     /// the program writes as a property (`crate::iface_method_writes`), as a site at `span` in
     /// module `module`: what it throws is inferred from what the program assigns to it and what
@@ -48,10 +117,16 @@ impl Ctx<'_> {
             true => self.site_var(span, module),
             false => self.site_error(span, module),
         };
+        // A method returning a promise rejects it with what is assigned to it, as a function
+        // type written without `throws` does (`Ctx::untyped_let_site`).
+        let (site_ret, throws) = match (err, self.rejection_error(ret)) {
+            (Some(e), Some(_)) => (self.with_rejection_error(ret, e), never),
+            (e, _) => (ret, e.unwrap_or(never)),
+        };
         let t = self.ty.intern(TyKind::FnPtr {
             params: params.clone(),
-            ret,
-            throws: err.unwrap_or(never),
+            ret: site_ret,
+            throws,
             rest: false,
         });
         self.record_fn_site(span, module, t);
