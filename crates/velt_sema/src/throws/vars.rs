@@ -183,6 +183,11 @@ impl Ctx<'_> {
                 }
             }
         }
+        // std's unit took the plain forms of its types with every trap as nothing: this
+        // round's plain forms write the seeded traps' sets in (`plain_type`).
+        if !self.fn_sites.fixed_traps.is_empty() {
+            self.fn_sites.var_sets.plain.clear();
+        }
     }
 
     /// The variable `t` is (`TyOp::ErrSite`), if it is one.
@@ -231,8 +236,10 @@ impl Ctx<'_> {
         if let Some(&p) = self.fn_sites.var_sets.plain.get(&t) {
             return p;
         }
-        let p = if self.err_var(t).is_some() {
-            self.ty.never
+        // A trap seeded this round is written with its set over lazy std (the overlay:
+        // `FnSites::fixed_traps`); any other variable is nothing as written.
+        let p = if let Some(v) = self.err_var(t) {
+            self.fixed_trap_set(v).unwrap_or(self.ty.never)
         } else if !self.mentions_err_var(t) {
             t
         } else if let Some(orig) = self.union_members(t) {
