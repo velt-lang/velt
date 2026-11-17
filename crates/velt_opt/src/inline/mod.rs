@@ -696,10 +696,10 @@ fn passes_static(func: &Function, args: &[Operand]) -> bool {
 /// budget unlimited: the sizes of the calls in its body that [`decide`] charges for, of callees up
 /// to `SHARE_COST`. Callers are visited bottom-up, so a callee has grown by then: it counts at its
 /// size plus what its own visit would inline (`Map.get` with its lookup), else a hot loop's share
-/// falls short of the call it was set aside for. All zero when the round's calls can't want more
-/// than is left (each counted call costs its callee's size, a callee up to `SHARE_COST`), which
-/// spares the work. An estimate, not a bound: one called once may become free, and the calls an
-/// inlined body brings along are not counted.
+/// falls short of the call it was set aside for. All zero, which spares the work, when an estimate
+/// says the round's calls fit what is left: every function's calls (the library's too) of callees
+/// up to `SHARE_COST`, at their size when the round starts, though a grown callee counts more here.
+/// Not a bound: one called once may become free, and an inlined body's calls aren't counted.
 fn wants(program: &Program, state: &mut State, budget: &Budget, sccs: &[Vec<FuncId>]) -> Vec<u64> {
     let n = program.funcs.len();
     let most: u64 = (program.funcs.iter())
