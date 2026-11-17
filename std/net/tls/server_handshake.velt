@@ -48,6 +48,7 @@ import {
 } from "velt/net/tls/record_cipher";
 import { HRR_RANDOM } from "velt/net/tls/server_hello";
 import { ServerKey } from "velt/net/tls/server_key";
+import { u8x16 } from "velt/simd";
 
 /** ecdsa_secp256r1_sha256, the signature scheme of the server's CertificateVerify. */
 const ECDSA_P256_SHA256: usize = 0x0403;
@@ -148,7 +149,7 @@ export class ServerHandshake {
     if (!retried) {
       this.compat = offer.sessionId.length > 0;
       this.serverName = offer.serverName;
-      this.suite = chooseSuite(offer.suites);
+      this.suite = chooseSuite(offer.suites, u8x16.hasAes());
       if (!offer.schemes.includes(ECDSA_P256_SHA256)) {
         throw new TlsFailure(
           HANDSHAKE_FAILURE,
@@ -369,11 +370,21 @@ export class ServerHandshake {
   }
 }
 
-// The client's first suite that this server has.
-function chooseSuite(offered: usize[]): usize {
-  for (const s of offered) {
-    if (s == AES_128_GCM_SHA256 || s == AES_256_GCM_SHA384 || s == CHACHA20_POLY1305_SHA256) {
-      return s;
+/**
+ * The suite the server chooses from `offered`, by the server's order rather than the client's (as
+ * Go's crypto/tls does): with AES instructions (`hasAes`), AES-128-GCM, AES-256-GCM, then
+ * ChaCha20-Poly1305; without them ChaCha20-Poly1305 first. Clients such as rustls and OpenSSL list
+ * AES-256-GCM first, which would put every handshake on SHA-384; AES-128-GCM is as strong a
+ * choice for them, and a client that offers only AES-256-GCM still gets it.
+ */
+export function chooseSuite(offered: usize[], hasAes: bool): usize {
+  const order =
+    hasAes
+      ? [AES_128_GCM_SHA256, AES_256_GCM_SHA384, CHACHA20_POLY1305_SHA256]
+      : [CHACHA20_POLY1305_SHA256, AES_128_GCM_SHA256, AES_256_GCM_SHA384];
+  for (let i: usize = 0; i < order.length; i++) {
+    if (offered.includes(order[i])) {
+      return order[i];
     }
   }
   throw new TlsFailure(
