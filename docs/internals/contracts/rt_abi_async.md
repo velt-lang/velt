@@ -663,12 +663,6 @@ joins the graceful stop through velt/dev (std/dev), on `velt_rt_dev_server_stop`
 |---|---|---|
 | `velt_rt_process_args` | `(VeltStrArray* out)` | UTF-8 (wide APIs on Windows), argv[0] included |
 | `velt_rt_process_node_argv` | `(VeltStrArray* out)` | Node's `process.argv`: `[current executable, script, ...args]`; the script is `$VELT_SCRIPT` (read and removed at start-up; `velt run` sets it) or the JIT host's `set_script`, else the executable. wasm: `[program, program, ...args]` (WASI: the module path; the browser passes none, so `["", ""]`) |
-| `velt_rt_env_get` | `(const VeltStr* name, VeltStr* out) -> u8` | 0 = unset (`out` untouched) |
-| `velt_rt_env_set` | `(const VeltStr* name, const VeltStr* value)` | not synchronized with concurrent env readers |
-| `velt_rt_env_remove` | `(const VeltStr* name)` | |
-| `velt_rt_env_all` | `(VeltStrArray* out)` | `[name0, value0, name1, value1, …]` in the OS's order; names starting with `=` (Windows' per-drive entries) left out; lossy UTF-8. wasm: WASI's environment, empty in the browser |
-| `velt_rt_process_cwd` | `(IoResult<VeltStr>* out)` | |
-| `velt_rt_process_chdir` | `(const VeltStr* path, VeltErr* out)` | |
 | `velt_rt_perf_now` | `() -> f64` | `performance.now()`: ms since process start, monotonic |
 | `velt_rt_date_now` | `() -> i64` | `Date.now()`: ms since the Unix epoch |
 | `velt_rt_exit` | see rt_abi.md | |
@@ -679,6 +673,16 @@ joins the graceful stop through velt/dev (std/dev), on `velt_rt_dev_server_stop`
 code on native targets (`#tty`: std/process/tty_posix.velt over `isatty`, tty_win32.velt over
 `GetConsoleMode`, each cached for 0, 1 and 2); `velt_rt_isatty(i32 fd) -> u8` is the WebAssembly
 runtime's only (std/process/tty_wasm.velt).
+
+**[non-additive, #2196]** The environment and the working directory are std code on native
+targets: `#env-sys` (std/process/env_posix.velt over `getenv`/`setenv`/`unsetenv` and `environ`,
+under one std lock; env_win32.velt over Win32's wide functions) and `#cwd-sys` (cwd_posix.velt
+over `getcwd`/`chdir`, cwd_win32.velt). The WebAssembly runtime keeps its own
+(std/process/env_wasm.velt and cwd_wasm.velt, WASI's environment, empty in the browser): `velt_rt_env_get(const VeltStr* name, VeltStr* out) -> u8` (0 = unset),
+`velt_rt_env_set(const VeltStr* name, const VeltStr* value)`, `velt_rt_env_remove(const VeltStr*
+name)`, `velt_rt_env_all(VeltStrArray* out)` (`[name0, value0, …]`),
+`velt_rt_process_cwd(IoResult<VeltStr>* out)` and `velt_rt_process_chdir(const VeltStr* path,
+VeltErr* out)`.
 
 ## 9. Shared state and helpers (sync)
 

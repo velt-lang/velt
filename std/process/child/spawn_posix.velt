@@ -24,8 +24,7 @@ import { addOpen } from "#spawn-open";
 import * as m from "velt/lang/hooks/sched_mem";
 import * as wk from "velt/lang/hooks/sched_wake";
 import { CommandSpec } from "velt/process/child/spec";
-
-declare function velt_rt_env_all(): string[];
+import { envPairs } from "#env-sys";
 
 // The headers' types (`velt native headers --std` checks this file:
 // crates/veltc/src/native/headers/std_check.rs); `posix_spawn_file_actions_addopen`, whose
@@ -168,7 +167,7 @@ function environment(spec: CommandSpec): string[] {
   const names: string[] = [];
   const values: string[] = [];
   if (!spec.clearEnv) {
-    const all = velt_rt_env_all();
+    const all = envPairs();
     for (let i: usize = 0; i + 1 < all.length; i += 2) {
       names.push(all[i]);
       values.push(all[i + 1]);
@@ -279,8 +278,9 @@ export function start(spec: CommandSpec, modes: u32): Started {
     argv.push(a);
   }
   const cArgv = cArray(argv);
-  // Always a copy, made under the runtime's environment lock (`velt_rt_env_all`): C's own
-  // `environ` may be reallocated by another worker's `setEnv` while `posix_spawn` reads it.
+  // Always a copy, made under velt/process' environment lock (`envPairs`, std/process/
+  // env_posix.velt): C's own `environ` may be reallocated by another worker's `setEnv` while
+  // `posix_spawn` reads it.
   const cEnv = cArray(environment(spec));
   let file: CString | null = null;
   let devNull: CString | null = null;

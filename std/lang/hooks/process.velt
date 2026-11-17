@@ -8,6 +8,7 @@
 
 import { processId } from "#process-pid";
 import { addressLoad, addressStore, inline, noInline } from "velt/lang/intrinsics";
+import { getEnv } from "#env-sys";
 
 declare function velt_rt_write_str(stream: u32, s: string);
 
@@ -85,8 +86,6 @@ export function clearStdoutWritten(): void {
   STDOUT_WRITTEN.set(false);
 }
 
-declare function velt_rt_env_get(name: string, out: string): bool;
-
 /**
  * Writes `s` to standard output (`stream` 1) or standard error (2), without a newline, ordered
  * with `console.log` / `console.error`. Returns `true`, like Node's `write`.
@@ -101,11 +100,7 @@ export function processWrite(stream: u32, s: string): bool {
 
 /** The value of environment variable `name`, or `undefined` if it is unset. */
 export function processEnv(name: string): string | undefined {
-  let out = "";
-  if (velt_rt_env_get(name, out)) {
-    return out;
-  }
-  return undefined;
+  return getEnv(name);
 }
 
 declare function velt_rt_process_node_argv(): string[];
