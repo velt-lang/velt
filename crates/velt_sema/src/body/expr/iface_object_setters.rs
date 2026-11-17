@@ -4,7 +4,7 @@
 use velt_common::Span;
 
 use super::iface_object::Slot;
-use crate::hir::{DefId, TyId, TyKind};
+use crate::hir::{self, DefId, TyId, TyKind};
 use crate::iface_writes::SetterSrc;
 
 /// How the literal stores each field of `iface` (`n_methods` methods), for the setter
@@ -99,6 +99,34 @@ fn getter_ret(
 }
 
 impl crate::body::FnCx<'_, '_> {
+    /// An anonymous object literal's property `name` (`value`, `dynamic` as for
+    /// `anon_prop_value`), field `index` of the literal (`body/expr/object.rs`): a function
+    /// stored under the name of a method the program writes as a property is a site, so what is
+    /// assigned to the method reaches it (`crate::iface_method_writes`). A site even while
+    /// nothing reached it yet: the links to the method's site (`Ctx::link_method_sites`) are how
+    /// anything does. Its field and site join `sites`, for `Ctx::note_method_field_sites`.
+    pub(super) fn prop_value_site(
+        &mut self,
+        name: &velt_syntax::ast::Ident,
+        value: Option<&velt_syntax::ast::Expr>,
+        dynamic: bool,
+        (index, sites): (usize, &mut Vec<(usize, Span)>),
+    ) -> hir::Expr {
+        let h = self.anon_prop_value(name, value, dynamic);
+        let is_fn = matches!(self.cx.ty.kind(h.ty), TyKind::FnPtr { .. });
+        if !is_fn || !self.cx.written_method_name(&name.name) {
+            return h;
+        }
+        let site = self.cx.untyped_let_site(h.ty, name.span, self.module);
+        let at = self.cx.site_in(name.span, site);
+        self.flow_into(&h, at);
+        sites.push((index, name.span));
+        match site != h.ty {
+            true => self.coerce(h, site),
+            false => h,
+        }
+    }
+
     /// The literal's function values for methods the program writes as properties
     /// (`crate::iface_method_writes`), each made a site at its own span, so what is assigned to
     /// the method reaches the field storing it; with the values' field indices and sites.

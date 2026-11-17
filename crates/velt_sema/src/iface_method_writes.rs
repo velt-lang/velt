@@ -212,6 +212,13 @@ impl Ctx<'_> {
         self.method_writes.field_sites.entry((d, i)).or_insert(at);
     }
 
+    /// [`Self::note_method_field_site`] for each (field, site) of object type `d`.
+    pub(crate) fn note_method_field_sites(&mut self, d: DefId, sites: Vec<(usize, Span)>) {
+        for (i, at) in sites {
+            self.note_method_field_site(d, i, at);
+        }
+    }
+
     /// Link the site of method `j` of `iface` with the sites of the fields its implementations
     /// store it in, both ways: they throw the same errors (`throws/fn_flows.rs` `site_flow`).
     /// Also those of interfaces extending `iface`, the method of that name: a value of one
