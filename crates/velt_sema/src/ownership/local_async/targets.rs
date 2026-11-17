@@ -112,8 +112,32 @@ impl Literals {
             crate::units::Stage::App => cx.unit_sums.literals.as_ref(),
             _ => None,
         };
-        let mut out = match kept {
-            Some((defs, inits, n)) => {
+        // EXPERIMENT (#2943): with the std code the program has known (`Ctx::walk_std`), std's
+        // part is a scan of that code, as lazy std's is of what it checked: a scan of all of std
+        // counts every type std converts to an `any` as one a value read from an `any` may be,
+        // and a call through it names a std method's change instead of the program's.
+        // The program's dependencies in std's unit (`units::libraries`) are walked as the
+        // program's (`Ctx::walked_from`): scanned whole, as the app's code is.
+        let live_std = match (&cx.walk_std, kept) {
+            (Some(live), Some(_)) => Some((live.clone(), cx.walked_from() as usize)),
+            _ => None,
+        };
+        let mut out = match (live_std, kept) {
+            (Some((live, from)), _) => {
+                let mut ids: Vec<DefId> = live
+                    .iter()
+                    .filter(|d| (d.0 as usize) < from)
+                    .copied()
+                    .collect();
+                ids.sort_unstable_by_key(|d| d.0);
+                let mut out = Literals::scan_def_list(cx, &ids);
+                out.append(Literals::scan_defs(cx, from));
+                let mut inits = Literals::scan_inits_list(cx, &ids);
+                inits.append(Literals::scan_inits(cx, from));
+                out.append(inits);
+                out
+            }
+            (None, Some((defs, inits, n))) => {
                 let mut out = defs.clone();
                 out.append(Literals::scan_defs(cx, *n));
                 let mut inits = inits.clone();
@@ -121,7 +145,7 @@ impl Literals {
                 out.append(inits);
                 out
             }
-            None => {
+            (None, None) => {
                 let mut out = Literals::scan_defs(cx, 0);
                 out.append(Literals::scan_inits(cx, 0));
                 out
@@ -167,32 +191,47 @@ impl Literals {
     /// The scan of the bodies of the definitions from `from` on.
     fn scan_defs(cx: &Ctx, from: usize) -> Literals {
         let mut out = Literals::default();
-        for (i, d) in cx.defs.iter().enumerate().skip(from) {
-            let def = DefId(i as u32);
-            // Function values std makes reach the program only through std's API; they come
-            // with its declared effects (step 2), not with this join.
-            let std = match cx.try_fn(def) {
-                Some(info) => cx.scopes[info.module].is_std,
-                None => cx.global(def).is_some_and(|g| cx.scopes[g.module].is_std),
-            };
-            match d {
-                Some(Def::Fn(f)) => {
-                    let me = (!std).then_some(def);
-                    walk::block(&f.body.block, &mut Scan(cx, &mut out, std, me));
+        for i in from..cx.defs.len() {
+            out.scan_def(cx, i);
+        }
+        out
+    }
+
+    /// The scan of the bodies of definitions `ids`, in their order.
+    fn scan_def_list(cx: &Ctx, ids: &[DefId]) -> Literals {
+        let mut out = Literals::default();
+        for d in ids {
+            out.scan_def(cx, d.0 as usize);
+        }
+        out
+    }
+
+    /// Add the scan of definition `i`'s body.
+    fn scan_def(&mut self, cx: &Ctx, i: usize) {
+        let d = &cx.defs[i];
+        let def = DefId(i as u32);
+        // Function values std makes reach the program only through std's API; they come
+        // with its declared effects (step 2), not with this join.
+        let std = match cx.try_fn(def) {
+            Some(info) => cx.scopes[info.module].is_std,
+            None => cx.global(def).is_some_and(|g| cx.scopes[g.module].is_std),
+        };
+        match d {
+            Some(Def::Fn(f)) => {
+                let me = (!std).then_some(def);
+                walk::block(&f.body.block, &mut Scan(cx, self, std, me));
+            }
+            Some(Def::Global(g)) => walk::expr(&g.init, &mut Scan(cx, self, std, None)),
+            // A module constant's initializer is kept with its info until the end.
+            _ => {
+                if let Some(init) = cx.global(def).and_then(|g| g.init.as_ref()) {
+                    walk::expr(init, &mut Scan(cx, self, std, None));
                 }
-                Some(Def::Global(g)) => walk::expr(&g.init, &mut Scan(cx, &mut out, std, None)),
-                // A module constant's initializer is kept with its info until the end.
-                _ => {
-                    if let Some(init) = cx.global(def).and_then(|g| g.init.as_ref()) {
-                        walk::expr(init, &mut Scan(cx, &mut out, std, None));
-                    }
-                    if let Some(Def::ExternFn(x)) = d {
-                        out.outside |= from_outside(cx, DefId(i as u32), x);
-                    }
+                if let Some(Def::ExternFn(x)) = d {
+                    self.outside |= from_outside(cx, def, x);
                 }
             }
         }
-        out
     }
 
     /// Scan the initializers each class from definition `from` on gives its own fields (`setup:
@@ -214,16 +253,38 @@ impl Literals {
     }
 
     fn scan_initializers(&mut self, cx: &Ctx, from: usize) {
-        for info in cx.info.iter().skip(from) {
-            let crate::defs::DefInfo::Adt(a) = info else {
+        for i in from..cx.info.len() {
+            self.scan_initializers_of(cx, i);
+        }
+    }
+
+    /// [`Literals::scan_inits`] for the classes among definitions `ids`, in their order.
+    fn scan_inits_list(cx: &Ctx, ids: &[DefId]) -> Literals {
+        let mut out = Literals::default();
+        for d in ids {
+            let crate::defs::DefInfo::Adt(a) = &cx.info[d.0 as usize] else {
                 continue;
             };
-            let std = cx.scopes[a.module].is_std;
-            let own = (a.fields.iter().skip(a.own_fields_start)).filter_map(|f| f.default.as_ref());
-            let redefined = a.redefined.iter().filter_map(|r| r.init.as_ref());
-            for init in own.chain(redefined) {
-                walk::expr(init, &mut Scan(cx, self, std, None));
+            if let Some(TyKind::Adt(b, _)) = a.base.map(|b| cx.ty.kind(b).clone()) {
+                out.subclasses.entry(b).or_default().push(*d);
             }
+        }
+        for d in ids {
+            out.scan_initializers_of(cx, d.0 as usize);
+        }
+        out
+    }
+
+    /// Add the scan of the initializers class `i` gives its fields (none when `i` is no class).
+    fn scan_initializers_of(&mut self, cx: &Ctx, i: usize) {
+        let crate::defs::DefInfo::Adt(a) = &cx.info[i] else {
+            return;
+        };
+        let std = cx.scopes[a.module].is_std;
+        let own = (a.fields.iter().skip(a.own_fields_start)).filter_map(|f| f.default.as_ref());
+        let redefined = a.redefined.iter().filter_map(|r| r.init.as_ref());
+        for init in own.chain(redefined) {
+            walk::expr(init, &mut Scan(cx, self, std, None));
         }
     }
 
