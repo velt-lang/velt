@@ -250,62 +250,65 @@ calls and the cell layout is the same; the release runtime keeps the symbols as 
 | `velt_rt_cell_free` | `(void* cell)` | before the cell's last reference frees it |
 
 ## Weak references
-`velt_rt` exports these functions (`src/weak/`); the compiler lowers `WeakMap`, `WeakSet` and
-`WeakRef` (std/prelude/weak.velt, `velt_vir` lower/weak.rs) to them, and `weak T` fields (#11)
-will use them too. Design: [weak-refs.md](../design/weak-refs.md).
+std's weak core (`std/lang/hooks/weak*.velt`, #3145; it was `velt_rt`'s `src/weak/` until
+#2196 moved it) does this work; lowering reaches it through the hooks of `velt_common`'s
+`std_hooks.rs` (`weak_*`), and std's `WeakMap`, `WeakSet` and `WeakRef` call their drop hooks
+directly. `weak T` fields (#11) will use it too. Design: [weak-refs.md](../design/weak-refs.md).
 
 - **Count word.** Bit 63 (`RC_WEAK`) of a counted object's count is set while the object is weakly
   held; the count proper is bits 0..62. Retain is unchanged (`count += 1`).
 - **Release** of a *weak-capable* type (decided program-wide: weak keys, `WeakRef` targets, `weak`
   targets and every type reachable from a weak map's key and value types): `c = count; if (int64_t)c
-  > 1 { count = c - 1 } else if c == 1 { drop; free } else if velt_rt_weak_release(obj) { drop;
-  free }` (`RC_WEAK` is the sign bit, so the shared path keeps one compare). Other types release as
+  > 1 { count = c - 1 } else if c == 1 { drop; free } else if weakRelease(obj) { drop; free }`
+  (`RC_WEAK` is the sign bit, so the shared path keeps one compare). Other types release as
   today.
 - **Trace glue** per counted type that can be a weak key or value, or be reached from one:
   `void trace(uint8_t* obj, VisitFn visit, void* ctx)` calls `visit(ctx, child, child_trace)` once
   for each counted reference `obj` owns (`child_trace` may be null: opaque). Map values are
   retained with `void retain(uint64_t value)` and released with `void release(uint64_t value)`.
+  These are C functions the core calls through their addresses (`addressCall3`,
+  `addressCallWord`); `visit` is a std function (`fnAddress`).
   A trace glue may leave references out (the target then looks referenced from outside and
   stays alive: a leak at worst) but must never report a word that is not a counted reference
   `obj` owns, or report one twice: the trial would count it as internal and could free a live
   object. So the glue of a type whose objects can have more fields than it knows (a class in a
   hierarchy with a vtable, an interface value, a function value's environment) is null, or
   dispatches on the object's dynamic type; Velt's is null for those today.
-- **Map values.** A value word of a map with `value_release` is 0 (`null`, `undefined`) or a
+- **Map values.** A value word of a map with value release glue is 0 (`null`, `undefined`) or a
   counted object pointer. The compiler stores a value whose type is a counted object (or
   `T | null` of one) as its pointer, a value without drop glue that fits in 8 bytes (numbers,
   `bool`) as its bits with no value glue, and any other value (strings, unions, tuples, function
   values) in a counted box of its own, `[count][value]`, whose glue retains and releases the box
-  (the box is weak-capable) and traces the value in it. The runtime never retains, releases or
+  (the box is weak-capable) and traces the value in it. The core never retains, releases or
   traces a 0 value.
-- **Threads.** Handles (`MapId`, `RefId`) are nonzero `uint32_t`s (generated code keeps 0 for
-  "not created yet"), valid on every thread until dropped: the side table is one per process,
-  behind a lock the runtime takes only in these functions, so a task that resumes on another
-  worker, or a value reached through a `shared` `Mutex`, keeps its entries. The compiler keeps
-  `WeakMap`, `WeakSet` and `WeakRef` values out of transfers (sema rejects them, or the transfer
-  glue panics): a handle is used by one task at a time. Weak-capable types are never atomic. An
-  object with `RC_WEAK` set and no record is an ICE (`velt_rt_weak_release` panics before it
-  changes the count). Trace glue runs with the table locked and must only call `visit`.
+- **Threads.** Handles of maps and `WeakRef`s are nonzero `uint32_t`s (generated code keeps 0
+  for "not created yet"), valid on every thread until dropped: the core's table is one per
+  process, behind a lock taken only in these hooks, so a task that resumes on another worker, or
+  a value reached through a `shared` `Mutex`, keeps its entries. The compiler keeps `WeakMap`,
+  `WeakSet` and `WeakRef` values out of transfers (sema rejects them, or the transfer glue
+  panics): a handle is used by one task at a time. Weak-capable types are never atomic. An object
+  with `RC_WEAK` set and no record is an ICE (`weakRelease` panics before it changes the count).
+  Trace glue runs with the table locked and must only call `visit`.
 - **Compiler rules** for weak-capable types: a uniqueness test compares the whole count word with
   1 (a weakly held object is never unique), and every site that decrements a count directly
   (`c - 1`: `lower/rc.rs`, `lower/glue/drop_chain.rs`, `lower/glue/transfer.rs`,
   `lower/glue/transfer_env.rs` in `velt_vir` today) uses the release sequence above instead.
 
-| Symbol | Signature | Semantics |
+| Hook | Signature | Semantics |
 |---|---|---|
-| `velt_rt_weakmap_new` | `(TraceFn key_trace, RetainFn value_retain, ReleaseFn value_release, TraceFn value_trace) -> uint32_t` | a new map; null `value_retain` and `value_release` (both or neither) mean values are plain words (`WeakMap<K, number>`, `WeakSet`), a null `value_trace` that values never refer to keys (a `value_trace` needs value glue) |
-| `velt_rt_weakmap_set` | `(uint32_t m, uint8_t* key, uint64_t value)` | takes over the value's reference; the key is not counted; releases a replaced value |
-| `velt_rt_weakmap_get` | `(uint32_t m, uint8_t* key, uint8_t* found) -> uint64_t` | the value, counted (retained with `value_retain`; the caller releases it), or 0; `*found` = 1 if present |
-| `velt_rt_weakmap_has` | `(uint32_t m, uint8_t* key) -> uint8_t` | |
-| `velt_rt_weakmap_delete` | `(uint32_t m, uint8_t* key) -> uint8_t` | 1 if there was an entry; its value is released |
-| `velt_rt_weakmap_drop` | `(uint32_t m)` | releases every value |
-| `velt_rt_weakref_new` | `(uint8_t* obj) -> uint32_t` | does not count `obj`; bit 0 of `obj` may be set (a typed proxy, the object being `obj` with it clear), and `deref` returns the word as given |
-| `velt_rt_weakref_deref` | `(uint32_t r) -> uint8_t*` | the target with count + 1, or null once freed |
-| `velt_rt_weakref_drop` | `(uint32_t r)` | |
-| `velt_rt_weakmap_set_traced` | `(uint32_t m, uint8_t* key, uint64_t value, TraceFn key_trace)` | `velt_rt_weakmap_set` with the key's own trace glue instead of the map's (keys of a map whose key type is `object` differ in type; the map is made with a null `key_trace`) |
-| `velt_rt_weakref_new_with` | `(uint8_t* obj, uint64_t word) -> uint32_t` | `velt_rt_weakref_new`, keeping `word` with the slot (the descriptor of an `object` target) |
-| `velt_rt_weakref_word` | `(uint32_t r) -> uint64_t` | the word given to `velt_rt_weakref_new_with` (0 for `velt_rt_weakref_new`), also after the target was freed |
-| `velt_rt_weak_release` | `(uint8_t* obj) -> uint8_t` | cold release of an object with `RC_WEAK` set, given the caller's reference: 1 = it was the last one (the object has left every map and `WeakRef`; the caller drops and frees it), 0 = the count was decremented (and an ephemeron cycle the object belonged to may have been freed); panics (ICE) when the object has no record |
+| `weakMapNew` | `(key_trace, value_retain, value_release, value_trace: usize) -> u32` | a new map; 0 `value_retain` and `value_release` (both or neither) mean values are plain words (`WeakMap<K, number>`, `WeakSet`), a 0 `value_trace` that values never refer to keys (a `value_trace` needs value glue) |
+| `weakMapSet` | `(m: u32, key: usize, value: u64)` | takes over the value's reference; the key is not counted; releases a replaced value |
+| `weakMapSetTraced` | `(m: u32, key: usize, value: u64, key_trace: usize)` | `weakMapSet` with the key's own trace glue instead of the map's (keys of a map whose key type is `object` differ in type; the map is made with a 0 `key_trace`) |
+| `weakMapGet` | `(m: u32, key: usize) -> u64` | the value, counted (retained with `value_retain`; the caller releases it), or 0 |
+| `weakMapHas` | `(m: u32, key: usize) -> bool` | |
+| `weakMapDelete` | `(m: u32, key: usize) -> bool` | whether there was an entry; its value is released |
+| `weakMapDrop` | `(m: u32)` | releases every value |
+| `weakRefNew` | `(obj: usize) -> u32` | does not count `obj`; bit 0 of `obj` may be set (a typed proxy, the object being `obj` with it clear), and `weakRefDeref` returns the word as given |
+| `weakRefNewWith` | `(obj: usize, word: u64) -> u32` | `weakRefNew`, keeping `word` with the slot (the descriptor of an `object` target) |
+| `weakRefWord` | `(r: u32) -> u64` | the word given to `weakRefNewWith` (0 for `weakRefNew`), also after the target was freed |
+| `weakRefDeref` | `(r: u32) -> usize` | the target with count + 1, or 0 once freed |
+| `weakRefDrop` | `(r: u32)` | |
+| `weakRelease` | `(obj: usize) -> bool` | cold release of an object with `RC_WEAK` set, given the caller's reference: true = it was the last one (the object has left every map and `WeakRef`; the caller drops and frees it), false = the count was decremented (and an ephemeron cycle the object belonged to may have been freed); panics (ICE) when the object has no record |
 
 ## Symbols [additive]
 

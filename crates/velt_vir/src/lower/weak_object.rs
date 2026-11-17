@@ -13,10 +13,10 @@
 //!
 //! The weak key is the data pointer, so a key keeps its identity through `any`, `unknown` and
 //! `object`. A map whose key type is `object` has no key trace of its own: each `set` passes
-//! the key's (`velt_rt_weakmap_set_traced`). The trace glue looks into dynamic values through
+//! the key's (std's `weakMapSetTraced` hook). The trace glue looks into dynamic values through
 //! the same word, so a `WeakMap<object, object>` whose values refer back to their keys (sigx's
 //! raw → proxy cache) frees both once nothing else refers to either. A `WeakRef<object>` keeps
-//! the target's descriptor with its slot (`velt_rt_weakref_new_with`), from which `deref()`
+//! the target's descriptor with its slot (std's `weakRefNewWith` hook), from which `deref()`
 //! rebuilds the `object`. Programs that never make `object` weak compile as before.
 //!
 //! An interface value as a key (`WeakMap<Instance, V>`, sigx's component instances) is keyed the
