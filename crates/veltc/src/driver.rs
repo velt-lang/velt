@@ -16,6 +16,7 @@ use velt_loader as loader;
 
 mod cpu_check;
 mod executable;
+mod heap_hooks;
 mod host_modules;
 pub(crate) mod memory;
 mod output;
@@ -562,6 +563,7 @@ fn lower_checked(
         no_cpu_extensions: Backend::of_build(opts) == Backend::Cranelift,
         counted_seed: seed_in.as_ref(),
         jit: dest == VirFor::Jit,
+        heap_hooks: heap_hooks::heap_hooks(opts.release, dest == VirFor::Jit, &target),
     };
     let mut dev_opt = None;
     let lowered = match warm::lower_kept(sess, &mut hir, &lower_opts, seed_in.is_some()) {

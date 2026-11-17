@@ -208,6 +208,15 @@ hooks! {
     /// exception when a `catchUnwind` is active on the thread, and calls `velt_rt_panic`
     /// otherwise.
     panic_raise => lang_hooks_unwind, "panicRaise", sig((&string) -> never), lowered, constructs(CatchUnwind);
+    // heap.velt: a release build's allocator, mimalloc through `declare c` (#2196). velt_opt's
+    // last step (`heap_calls`) turns the runtime allocator calls lowering emits into these.
+    /// `velt_rt_alloc`'s job: `(size, align)`, the block's address.
+    heap_alloc => lang_hooks_heap, "heapAlloc", sig((u64, u64) -> u64), lowered;
+    /// `velt_rt_realloc`'s: `(p, old_size, align, new_size)`, the block's new address. Not called
+    /// yet: array growth keeps the runtime's (velt_opt `heap_calls`).
+    heap_realloc => lang_hooks_heap, "heapRealloc", sig((u64, u64, u64, u64) -> u64), lowered;
+    /// `velt_rt_free`'s: `(p, size, align)`.
+    heap_free => lang_hooks_heap, "heapFree", sig((u64, u64, u64) -> void), lowered;
     // sched.velt: the executor in Velt (#2649), with `VELT_SCHEDULER=std` ([`std_scheduler`]).
     /// The program's thread, marked by `velt_main` first thing (#3085): the executor's worker 0
     /// starts only there (program_thread.velt).

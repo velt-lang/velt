@@ -16,6 +16,7 @@ import "./array_view";
 import "./async_iter";
 import "./class_object";
 import "./error";
+import "./heap";
 import "./iter";
 import "./keys";
 import "./number";

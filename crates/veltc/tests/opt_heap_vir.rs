@@ -32,7 +32,10 @@ fn allocations(vir: &str) -> Vec<(String, usize)> {
     for line in vir.lines() {
         if line.starts_with("fn#") {
             current = line.to_string();
-        } else if line.contains("= call extern#") && line.contains(" velt_rt_alloc(") {
+        } else if (line.contains("= call extern#") && line.contains(" velt_rt_alloc("))
+            // A release build's allocation of a known size, through std's hook (#2196).
+            || (line.contains("= call fn#") && line.contains("P4heapN9heapAlloc"))
+        {
             match out.last_mut() {
                 Some((f, n)) if *f == current => *n += 1,
                 _ => out.push((current.clone(), 1)),

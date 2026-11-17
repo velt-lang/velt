@@ -29,6 +29,11 @@ pub(super) const ENVIRONMENT: &[(&str, &str)] = &[
         "VELT_RT_LINK",
         "`static`: debug builds link the static runtime instead of the shared one",
     ),
+    (
+        "VELT_HEAP_HOOKS",
+        "`0`: release builds allocate through the runtime's allocator; `1`: through mimalloc \
+         directly also with a debug runtime (default: with a release runtime that has mimalloc)",
+    ),
     ("VELT_LINKER", "`bundled`, `system`, or a linker program"),
     (
         "VELT_BUILD_CACHE",

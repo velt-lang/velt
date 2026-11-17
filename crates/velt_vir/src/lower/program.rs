@@ -40,6 +40,7 @@ impl<'h> Cx<'h> {
             std_fns: std::cell::OnceCell::new(),
             uses_placement: false,
             cell_checks: false,
+            heap_hooks: false,
             target: String::new(),
             cpu_checks: Default::default(),
             unavailable: vec![],
@@ -457,7 +458,25 @@ impl<'h> Cx<'h> {
 
     pub(super) fn rt(&mut self, r: Rt) -> ExternId {
         let (sym, params, ret, noreturn) = r.sig();
+        if self.heap_hooks && !self.extern_map.contains_key(sym) {
+            self.heap_hook_for(r);
+        }
         self.extern_sym(sym, params, ret, noreturn)
+    }
+
+    /// With `heap_hooks`, std's hook that takes the place of the allocator call `r` once the
+    /// optimizer is done (`velt_opt::heap_calls`), lowered with the first such call.
+    fn heap_hook_for(&mut self, r: Rt) {
+        let name = match r {
+            Rt::Alloc => velt_common::std_hook!(heap_alloc),
+            Rt::Free => velt_common::std_hook!(heap_free),
+            _ => return,
+        };
+        let def = (self.prelude_def(name)).filter(|d| !self.hir.unchecked.contains(d));
+        let Some(def) = def else {
+            ice(format_args!("std without the hook `{name}`"))
+        };
+        self.func_for(def, vec![]);
     }
 
     /// Intern an extern by symbol; the same symbol must always have the same signature.
