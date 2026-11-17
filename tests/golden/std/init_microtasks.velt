@@ -2,6 +2,8 @@
 // the module's code and `main()` as one macrotask, so the initializer's microtasks run after
 // `main`'s synchronous code, interleaved with `main`'s own in the order they were queued; the
 // timers come after every microtask, the initializer's first.
+// timing: two 0 ms timers, which Node runs after every microtask in the order they were set; no
+// line depends on how long anything takes.
 
 async function nothing(): Promise<void> {}
 

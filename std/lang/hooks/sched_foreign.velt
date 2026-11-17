@@ -118,7 +118,7 @@ export function exportEnter(): void {
   }
 }
 
-/** An exported function's call from C ends (`schedExportExit`): the outermost gives the tasks over. */
+/** An exported function's call from C ends (`schedExportExit`): the outermost hands tasks on. */
 export function exportExit(): void {
   const d = DEPTH.get();
   if (d === 0) {
