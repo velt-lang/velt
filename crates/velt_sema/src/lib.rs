@@ -458,9 +458,6 @@ fn check_timed(
                 found.install(&mut cx, true);
                 units::remap_module_facts(&mut cx, &|m| o.in_app(m, base));
             }
-            // Std's unit has `Proxy` loaded; lazy std loads it only for a program that uses it
-            // (`FnCx::uses_proxy`).
-            cx.units_proxy = Some(source_scans::program_names_proxy(&cx));
         }
         if fresh {
             cx.units_stage = stage.get();

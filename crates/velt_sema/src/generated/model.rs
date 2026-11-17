@@ -367,7 +367,7 @@ impl Builder {
                     }
                 }
                 m.at = Some(self.span(span));
-                m.may_be_proxy = kind != AdtKind::Struct && cx.proxy_loaded();
+                m.may_be_proxy = kind != AdtKind::Struct && cx.prelude_adt("Proxy").is_some();
                 m.args = args.iter().map(|t| self.id(*t)).collect();
                 if let Some(b) = base {
                     let b = cx.subst(b, args);

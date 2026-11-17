@@ -264,7 +264,7 @@ impl Proxies {
         bodies: impl Iterator<Item = (&'f FxHashSet<TyId>, &'f mut bool)>,
     ) {
         // A program that loads `Proxy` may make one.
-        if !cx.proxy_loaded() {
+        if cx.prelude_adt("Proxy").is_none() {
             return;
         }
         let mut p = Proxiable::default();

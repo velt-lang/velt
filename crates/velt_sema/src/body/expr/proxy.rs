@@ -29,7 +29,7 @@ impl FnCx<'_, '_> {
     /// Has the program loaded `Proxy` (a module names it: std/prelude/global/proxy.velt)? Only
     /// then can a value be a proxy.
     pub(crate) fn uses_proxy(&self) -> bool {
-        self.cx.proxy_loaded()
+        self.cx.prelude_adt("Proxy").is_some()
     }
 
     /// The prelude class `name` for an operation on `any`, or, in a program that has loaded
@@ -86,14 +86,11 @@ impl FnCx<'_, '_> {
             }
         }
         if !std || PROXY_MODULES.contains(&self.cx.modules[self.module].path.as_str()) {
-            let loaded = self.cx.proxy_loaded();
-            let m = Self::proxy_method_of(i)
-                .filter(|_| loaded)
-                .and_then(|name| {
-                    let p = self.cx.prelude_adt("Proxy")?;
-                    let a = self.cx.adt(p)?;
-                    a.methods.get(name).filter(|m| !m.is_static).map(|m| m.def)
-                });
+            let m = Self::proxy_method_of(i).and_then(|name| {
+                let p = self.cx.prelude_adt("Proxy")?;
+                let a = self.cx.adt(p)?;
+                a.methods.get(name).filter(|m| !m.is_static).map(|m| m.def)
+            });
             // One source per method in each list: the operations of a body throw the same set.
             let list = self.f.tries.last().unwrap_or(&self.f.uncaught);
             let seen = |s: &crate::defs::ThrowSrc| matches!(s, crate::defs::ThrowSrc::Call(d, a, _) if Some(*d) == m && a.is_empty());
