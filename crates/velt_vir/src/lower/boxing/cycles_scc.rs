@@ -2,12 +2,12 @@
 //! numbered as they are found (the cycle analysis, cycles.rs): `succ(v)` is asked once per node
 //! reached, and may number new nodes.
 
-/// The components reachable from `starts` that contain a cycle: two nodes or more, or one node
-/// with an edge to itself.
+/// The components reachable from `starts` that contain a cycle (two nodes or more, or one node
+/// with an edge to itself), and the edges of every node reached.
 pub(super) fn cyclic_components(
     starts: &[usize],
     succ: &mut dyn FnMut(usize) -> Vec<usize>,
-) -> Vec<Vec<usize>> {
+) -> (Vec<Vec<usize>>, Vec<Vec<usize>>) {
     struct Frame {
         node: usize,
         next: usize,
@@ -81,15 +81,44 @@ pub(super) fn cyclic_components(
             }
         }
     }
-    out
+    (out, edges)
+}
+
+/// A shortest cycle through `from` that stays inside `comp`, as the nodes it passes (`from`
+/// first, not repeated at the end); empty when there is none.
+pub(super) fn cycle_through(from: usize, comp: &[usize], edges: &[Vec<usize>]) -> Vec<usize> {
+    let mut prev: std::collections::HashMap<usize, usize> = Default::default();
+    let mut queue = std::collections::VecDeque::from([from]);
+    while let Some(v) = queue.pop_front() {
+        for &w in edges.get(v).map_or(&[][..], |e| &e[..]) {
+            if !comp.contains(&w) {
+                continue;
+            }
+            if w == from {
+                let mut path = vec![v];
+                let mut at = v;
+                while at != from {
+                    at = prev[&at];
+                    path.push(at);
+                }
+                path.reverse();
+                return path;
+            }
+            if let std::collections::hash_map::Entry::Vacant(e) = prev.entry(w) {
+                e.insert(v);
+                queue.push_back(w);
+            }
+        }
+    }
+    vec![]
 }
 
 #[cfg(test)]
 mod tests {
-    use super::cyclic_components;
+    use super::{cycle_through, cyclic_components};
 
     fn comps(edges: &[&[usize]], starts: &[usize]) -> Vec<Vec<usize>> {
-        let mut out = cyclic_components(starts, &mut |v| edges[v].to_vec());
+        let mut out = cyclic_components(starts, &mut |v| edges[v].to_vec()).0;
         for c in &mut out {
             c.sort();
         }
@@ -118,5 +147,14 @@ mod tests {
     fn a_node_reached_again_from_a_later_start_is_not_reported_twice() {
         let g: &[&[usize]] = &[&[1], &[0], &[0]];
         assert_eq!(comps(g, &[0, 2, 1]), vec![vec![0, 1]]);
+    }
+
+    #[test]
+    fn the_cycle_through_a_node_is_a_shortest_one() {
+        // 0 -> 1 -> 2 -> 0 and 0 -> 3 -> 0: the shortest cycle through 0 passes 3.
+        let edges: Vec<Vec<usize>> = vec![vec![1, 3], vec![2], vec![0], vec![0]];
+        assert_eq!(cycle_through(0, &[0, 1, 2, 3], &edges), vec![0, 3]);
+        assert_eq!(cycle_through(1, &[0, 1, 2, 3], &edges), vec![1, 2, 0]);
+        assert!(cycle_through(0, &[0, 1], &edges).is_empty());
     }
 }

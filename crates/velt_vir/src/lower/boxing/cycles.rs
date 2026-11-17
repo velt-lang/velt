@@ -32,7 +32,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use velt_sema::hir::{DefId, TyId, TyKind};
 
 use super::cycles_keys::CycleKey;
-use super::cycles_scc::cyclic_components;
+use super::cycles_scc::{cycle_through, cyclic_components};
 use crate::lower::Cx;
 
 /// A node of the ownership graph.
@@ -92,8 +92,12 @@ impl Graph {
 
 impl Cx<'_> {
     /// The cycle-capable blocks of the program, as the counted types and this pass's facts
-    /// stand (call it once they have settled).
-    pub(in crate::lower) fn cycle_capable(&mut self) -> CycleCapable {
+    /// stand (call it once they have settled). With `witness`, also a shortest cycle through each entry, as the names of the nodes it
+    /// passes (`entry: a -> b -> a`).
+    pub(in crate::lower) fn cycle_analysis(
+        &mut self,
+        witness: bool,
+    ) -> (CycleCapable, Vec<String>) {
         let mut g = Graph {
             ephemerons: self.ephemeron_edges(),
             envs: self.env_captures(),
@@ -115,11 +119,27 @@ impl Cx<'_> {
         starts.extend(ifaces.into_iter().map(Node::Iface));
         starts.push(Node::Dynamics);
         let starts: Vec<usize> = starts.into_iter().map(|n| g.id(n)).collect();
-        let comps = cyclic_components(&starts, &mut |v| {
+        let (comps, edges) = cyclic_components(&starts, &mut |v| {
             let n = g.nodes[v].clone();
             let owned = self.owned(&g, n);
             owned.into_iter().map(|n| g.id(n)).collect()
         });
+        let mut witnesses = vec![];
+        for comp in comps.iter().filter(|_| witness) {
+            for &i in comp {
+                if matches!(g.nodes[i], Node::Ty(t) if !self.counted(t)) {
+                    continue;
+                }
+                let path = cycle_through(i, comp, &edges);
+                let names: Vec<String> = (path.iter().chain(path.first()))
+                    .map(|&n| self.node_name(&g.nodes[n]))
+                    .collect();
+                let entry = self.node_name(&g.nodes[i]);
+                witnesses.push(format!("{entry}: {}", names.join(" -> ")));
+            }
+        }
+        witnesses.sort();
+        witnesses.dedup();
         let mut out = CycleCapable::default();
         for i in comps.into_iter().flatten() {
             match g.nodes[i].clone() {
@@ -141,13 +161,26 @@ impl Cx<'_> {
                 Node::Dynamics => out.dynamics = true,
             }
         }
-        out
+        (out, witnesses)
     }
 
-    /// Display names of the cycle-capable blocks, then a line of sites per entry
-    /// (`VELT_DEBUG_COUNTED=1`, cycles_sites.rs).
-    pub(in crate::lower) fn cycle_report(&mut self) -> (Vec<String>, Vec<String>) {
-        let c = self.cycle_capable();
+    /// How a node of the ownership graph is named in a witness cycle.
+    fn node_name(&mut self, n: &Node) -> String {
+        match n {
+            Node::Ty(t) => match self.kind(*t) {
+                TyKind::Adt(d, _) if self.is_class(*t) => self.class_name(d),
+                _ => self.type_name(*t),
+            },
+            Node::Closures(k) => self.closure_set_name(k),
+            Node::Iface(d) => format!("`{}` interface values", self.adt_or_iface_name(*d)),
+            Node::Dynamics => "dynamic values".into(),
+        }
+    }
+
+    /// Display names of the cycle-capable blocks, a line of sites per entry (cycles_sites.rs)
+    /// and a shortest cycle per component (`VELT_DEBUG_COUNTED=1`).
+    pub(in crate::lower) fn cycle_report(&mut self) -> (Vec<String>, Vec<String>, Vec<String>) {
+        let (c, witnesses) = self.cycle_analysis(true);
         let mut names: Vec<String> = c.roots.iter().map(|&d| self.class_name(d)).collect();
         let tys: Vec<TyId> = c.tys.iter().copied().collect();
         names.extend(tys.into_iter().map(|t| self.type_name(t)));
@@ -162,7 +195,7 @@ impl Cx<'_> {
         }
         names.sort();
         let sites = self.cycle_site_lines(&c);
-        (names, sites)
+        (names, sites, witnesses)
     }
 
     /// `class Name` of the class `d`.

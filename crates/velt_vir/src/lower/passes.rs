@@ -146,10 +146,13 @@ pub(super) fn lower_program_kept<'h>(
             if std::env::var_os("VELT_DEBUG_COUNTED").is_some() {
                 eprintln!("velt: counted types: {}", cx.counted_names().join(", "));
                 eprintln!("velt: weak-capable types: {}", cx.weak_names().join(", "));
-                let (cycles, sites) = cx.cycle_report();
+                let (cycles, sites, witnesses) = cx.cycle_report();
                 eprintln!("velt: cycle-capable types: {}", cycles.join(", "));
                 for line in sites {
                     eprintln!("velt: cycle-capable sites: {line}");
+                }
+                for line in witnesses {
+                    eprintln!("velt: cycle-capable cycle: {line}");
                 }
             }
             if std::env::var_os("VELT_DEBUG_PROXY").is_some() {
