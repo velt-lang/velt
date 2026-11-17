@@ -54,6 +54,8 @@ export {
 export { hash, includesEq, keyEq } from "velt/lang/intrinsics/compare";
 export {
   addressCall,
+  addressCall3,
+  addressCallWord,
   fnAddress,
   futDrop,
   futPoll,
