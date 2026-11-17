@@ -66,6 +66,8 @@ pub(super) struct Node {
     /// covers references added after insert (a value that later gains a path back to its key),
     /// and puts objects on such new paths in the table.
     pub(super) observed: u32,
+    /// Entries keyed by this object whose value graph is not traced yet ([`State::examine`]).
+    pub(super) unexamined: u32,
 }
 
 impl Node {
@@ -78,6 +80,9 @@ impl Node {
 pub(super) struct Entry {
     pub(super) value: u64,
     pub(super) members: Vec<Contribution>,
+    /// The value's graph was traced for paths back to the key (or there is none to trace: a
+    /// null value, or a map without value trace glue).
+    pub(super) examined: bool,
 }
 
 /// A weak map.
@@ -244,21 +249,51 @@ impl State {
         untagged(key);
         let old = self.delete(m, key).unwrap_or_default();
         let k = key as usize;
-        let map = self.map(m);
-        let members = match map.value_trace {
-            // SAFETY: a nonzero value of a map with value glue is a live counted object, owned
-            // by the map from here on.
-            Some(trace) if value != 0 => unsafe { trial::members(key, value as *mut u8, trace) },
-            _ => Vec::new(),
+        let traced = self.map(m).value_trace.is_some() && value != 0;
+        let node = self.node(k, key_trace);
+        node.keyed_in.push(m);
+        node.unexamined += u32::from(traced);
+        let entry = Entry {
+            value,
+            members: Vec::new(),
+            examined: !traced,
         };
-        self.node(k, key_trace).keyed_in.push(m);
-        for c in &members {
-            let node = self.node(c.obj, c.trace);
-            node.member_of.push((m, k));
-            node.hint += c.refs;
-        }
-        self.map_mut(m).entries.insert(k, Entry { value, members });
+        self.map_mut(m).entries.insert(k, entry);
         old
+    }
+
+    /// Traces the values of the entries keyed by `k` that were not traced yet, and records the
+    /// objects on their paths back to `k` (with the references the entry holds to each: their
+    /// `hint`). Run on a decrement of `k` rather than at insert: an entry whose value refers
+    /// back to its key holds a reference to the key, so the key's last outside reference goes
+    /// by a decrement, never by the release that frees it; an entry that is not a cycle (the
+    /// common case: a handler capturing other objects) is then never traced at all.
+    fn examine(&mut self, k: usize) {
+        let n = self.nodes.get(&k).map_or(0, |n| n.keyed_in.len());
+        for i in 0..n {
+            let m = self.nodes[&k].keyed_in[i];
+            let map = self.map(m);
+            let (Some(trace), Some(e)) = (map.value_trace, map.entries.get(&k)) else {
+                continue;
+            };
+            if e.examined {
+                continue;
+            }
+            // SAFETY: the key is live (its decrement is under way) and so is the value, which
+            // the map owns.
+            let members = unsafe { trial::members(k as *mut u8, e.value as *mut u8, trace) };
+            for c in &members {
+                let node = self.node(c.obj, c.trace);
+                node.member_of.push((m, k));
+                node.hint += c.refs;
+            }
+            let e = (self.map_mut(m).entries.get_mut(&k)).expect("ICE: the entry just read");
+            e.members = members;
+            e.examined = true;
+        }
+        if let Some(node) = self.nodes.get_mut(&k) {
+            node.unexamined = 0;
+        }
     }
 
     /// Removes `key`'s entry from `m`; returns its value to release (`None`: there was no entry).
@@ -268,6 +303,7 @@ impl State {
         let entry = self.map_mut(m).entries.remove(&k)?;
         if let Some(node) = self.nodes.get_mut(&k) {
             remove_one(&mut node.keyed_in, &m);
+            node.unexamined -= u32::from(!entry.examined);
         }
         self.unlink(m, k, &entry);
         self.settle(k);
@@ -425,6 +461,9 @@ pub(super) unsafe fn decrement(obj: *mut u8) {
     let cascade = CASCADE.with(Cell::get) > 0;
     // One acquisition: the record check, the decrement and (outside a cascade) the trial.
     let values = with(|s| {
+        if s.nodes.get(&o)?.unexamined > 0 {
+            s.examine(o);
+        }
         let n = s.nodes.get(&o)?;
         let hint = n.hint.max(n.observed);
         // SAFETY: as for the function; the count changes under the lock, like `deref`'s increment.
