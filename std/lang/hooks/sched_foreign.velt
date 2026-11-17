@@ -24,7 +24,7 @@
 // A promise of such a thread is the executor's node (sched_node.velt), its owner on this thread:
 // its drop takes the atomic path (sched_node_await.velt `ownSide`).
 
-import { exportedAddress, fnAddress, futDrop, futPoll, statePoll } from "velt/lang/intrinsics";
+import { exportedAddress, fnAddress, futDrop, futPoll, noInline, statePoll } from "velt/lang/intrinsics";
 import * as jn from "./sched_join";
 import * as mk from "./sched_make";
 import * as m from "./sched_mem";
@@ -87,8 +87,10 @@ function push(g: usize, k: usize): void {
  * started promise of a new task of worker 0 now, so its owner's drop can't cancel it. Its first
  * run is synchronous, as an async call's in JS, on the program's thread or a worker (the program's
  * thread starts the executor first, as for its spawns); a C library's thread leaves it to that
- * task's first poll. Anything else stays as it is (a spawn's handle runs already).
+ * task's first poll. Anything else stays as it is (a spawn's handle runs already). Out of line: a
+ * start on a task stays small enough to inline.
  */
+@noInline
 export function start(f: usize, rdrop: usize, rejecting: bool): void {
   if (m.ld(f) !== fnAddress(node.nodePoll)) {
     return;

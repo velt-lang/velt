@@ -287,7 +287,10 @@ export function start(
     nc.catchesFrom(n, catching);
   }
   bind(task, n, rdrop, rejecting);
-  firstRun(task, n);
+  // `firstRun`, written out: its call of `run` stays inlined here.
+  m.st32(task + t.T_WORD, m.ld32(task + t.T_WORD) + 1);
+  run(task, n, false);
+  m.st32(task + t.T_WORD, m.ld32(task + t.T_WORD) - 1);
 }
 
 /**
