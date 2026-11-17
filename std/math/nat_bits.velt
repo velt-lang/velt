@@ -1,0 +1,165 @@
+// velt/math (internal): magnitudes as bits (nat_add.velt says what a magnitude is): shifts, the
+// two's complement limbs that JS's bitwise operators on BigInts work on, and conversions to and
+// from `f64`.
+
+import { natTrim, natUnfilled } from "velt/math/nat_add";
+import { shlRow, shrRow, zeroRow } from "#nat-rows";
+
+/** The number of significant bits of `a`. */
+export function natBits(a: u64[]): u64 {
+  const n = a.length;
+  return n == 0 ? 0 : 64 * (n as u64) - (a[n - 1].leadingZeros() as u64);
+}
+
+/** Whether `a` is a power of two. */
+export function natPowerOfTwo(a: u64[]): bool {
+  const n = a.length;
+  if (n == 0) {
+    return false;
+  }
+  for (let i: usize = 0; i + 1 < n; i++) {
+    if (a[i] != 0) {
+      return false;
+    }
+  }
+  const top = a[n - 1];
+  return (top & (top - 1)) == 0;
+}
+
+/** `a << s`. */
+export function natShl(a: u64[], s: u64): u64[] {
+  const n = a.length;
+  if (n == 0) {
+    return [];
+  }
+  const words = (s >> 6) as usize;
+  const out = natUnfilled(n + words + 1);
+  zeroRow(out, 0, words);
+  out[n + words] = shlRow(out, words, a, 0, n, s & 63);
+  natTrim(out);
+  return out;
+}
+
+/** `a >> s` (the bits shifted out are dropped). */
+export function natShr(a: u64[], s: u64): u64[] {
+  const n = a.length;
+  const words = s >> 6;
+  if (words >= (n as u64)) {
+    return [];
+  }
+  const w = words as usize;
+  const out = natUnfilled(n - w);
+  shrRow(out, 0, a, w, n - w, s & 63, 0);
+  natTrim(out);
+  return out;
+}
+
+/** Whether any of the low `s` bits of `a` is set. */
+export function natLowBitsSet(a: u64[], s: u64): bool {
+  const n = a.length as u64;
+  const words = s >> 6;
+  for (let i: u64 = 0; i < words && i < n; i++) {
+    if (a[i as usize] != 0) {
+      return true;
+    }
+  }
+  const bits = s & 63;
+  return words < n && bits != 0 && (a[words as usize] << (64 - bits)) != 0;
+}
+
+/**
+ * `n` limbs of the two's complement of the value with magnitude `a` and sign `negative`
+ * (`n` is more than `a`'s length, so the top limb holds the sign).
+ */
+export function natToTwos(a: u64[], negative: bool, n: usize): u64[] {
+  const out = natUnfilled(n);
+  const m = a.length;
+  if (!negative) {
+    for (let i: usize = 0; i < n; i++) {
+      out[i] = i < m ? a[i] : 0;
+    }
+    return out;
+  }
+  // -a = ~(a - 1)
+  let borrow: u64 = 1;
+  for (let i: usize = 0; i < n; i++) {
+    const x = i < m ? a[i] : 0;
+    out[i] = ~(x - borrow);
+    borrow = (x < borrow) as u64;
+  }
+  return out;
+}
+
+/**
+ * The magnitude of the two's complement limbs `t`, in place; returns whether the value is
+ * negative (its top bit).
+ */
+export function natFromTwos(t: u64[]): bool {
+  const n = t.length;
+  const negative = n > 0 && (t[n - 1] >> 63) != 0;
+  if (negative) {
+    // |v| = ~t + 1
+    let carry: u64 = 1;
+    for (let i: usize = 0; i < n; i++) {
+      const x = ~t[i] + carry;
+      carry = (x < carry) as u64;
+      t[i] = x;
+    }
+  }
+  natTrim(t);
+  return negative;
+}
+
+/** The nearest `f64` to the magnitude `a`, ties to even (JS `Number(big)`); Infinity past it. */
+export function natToF64(a: u64[]): f64 {
+  const bits = natBits(a);
+  if (bits <= 64) {
+    return bits == 0 ? 0.0 : a[0] as f64;
+  }
+  // The top 64 bits, the top one set, and whether anything below them is set.
+  const n = a.length;
+  const z = a[n - 1].leadingZeros() as u64;
+  let top = a[n - 1];
+  let sticky = false;
+  if (z != 0) {
+    top = (top << z) | (a[n - 2] >> (64 - z));
+    sticky = (a[n - 2] << z) != 0;
+  }
+  for (let i: usize = 0; i + 2 < n && !sticky; i++) {
+    sticky = a[i] != 0;
+  }
+  // 53 bits of mantissa, rounded half to even on the 11 below and the sticky bit.
+  let m = top >> 11;
+  const rest = top & 0x7ff;
+  if (rest > 0x400 || (rest == 0x400 && (sticky || (m & 1) != 0))) {
+    m += 1;
+  }
+  return scaled(m, bits - 53);
+}
+
+// `m * 2^e`, exact (or Infinity) for `m` up to 2^53.
+function scaled(m: u64, e: u64): f64 {
+  if (m == 1 << 53) {
+    return scaled(1 << 52, e + 1);
+  }
+  if (e + 52 > 1023) {
+    return Infinity;
+  }
+  // m = 1.f * 2^52: the double with exponent field e + 52 + 1023.
+  return f64.fromBits(((e + 52 + 1023) << 52) | (m & 0xfffffffffffff));
+}
+
+/** The magnitude of the integer part of the finite `x` (its sign is the caller's). */
+export function natFromF64(x: f64): u64[] {
+  const b = x.toBits();
+  const biased = (b >> 52) & 0x7ff;
+  if (biased < 1023) {
+    return [];
+  }
+  const mantissa = (b & 0xfffffffffffff) | (1 << 52);
+  const e = biased - 1075;
+  if (biased < 1075) {
+    return [mantissa >> (1075 - biased)];
+  }
+  return natShl([mantissa], e);
+}

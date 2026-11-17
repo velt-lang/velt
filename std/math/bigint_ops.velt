@@ -2,8 +2,8 @@
 // `a += b` is `a.addAssign(b)`, in place, and so on. Both operands are BigInts, as in JavaScript
 // (which throws on `b + 3`) and TypeScript (TS2365): mixed arithmetic is the named twins
 // (`addInt`, `mulIntAssign`, ...), which skip building a BigInt for the small operand. Shift
-// counts are an `i64`. Division truncates and `%` takes the dividend's sign, like JS; dividing by
-// zero and a negative shift count panic with a RangeError.
+// counts and exponents are an `i64`. Division truncates and `%` takes the dividend's sign, like
+// JS; dividing by zero and a negative exponent panic with JS's RangeError.
 
 import { BigInt } from "velt/math/bigint";
 
@@ -33,12 +33,37 @@ extend BigInt {
     return this.rem(other);
   }
 
-  /** `this << n` (`n` >= 0). */
+  /** `this ** e` (`e` >= 0). */
+  [Symbol.pow](e: i64): BigInt {
+    return this.pow(e);
+  }
+
+  /** `this & other`. */
+  [Symbol.bitAnd](other: BigInt): BigInt {
+    return this.and(other);
+  }
+
+  /** `this | other`. */
+  [Symbol.bitOr](other: BigInt): BigInt {
+    return this.or(other);
+  }
+
+  /** `this ^ other`. */
+  [Symbol.bitXor](other: BigInt): BigInt {
+    return this.xor(other);
+  }
+
+  /** `~this`. */
+  [Symbol.bitNot](): BigInt {
+    return this.not();
+  }
+
+  /** `this << n` (a negative `n` shifts right). */
   [Symbol.shl](n: i64): BigInt {
     return this.shl(n);
   }
 
-  /** `this >> n` (`n` >= 0; rounds toward -Infinity, like JS). */
+  /** `this >> n` (rounds toward -Infinity, like JS; a negative `n` shifts left). */
   [Symbol.shr](n: i64): BigInt {
     return this.shr(n);
   }

@@ -1,5 +1,5 @@
 // Prelude: `WeakMap<K, V>` (`WeakSet<T>` and `WeakRef<T>` are in weak_set.velt and weak_ref.velt)
-// (https://veltlang.com/docs/std/prelude/#weakmap-weakset-and-weakref), on velt_rt's weak-reference core
+// (https://veltlang.com/docs/std/prelude/#weakmap-weakset-and-weakref), on std's weak core (std/lang/hooks/weak.velt)
 // (docs/internals/design/weak-refs.md, rt_abi.md "Weak references").
 //
 // A key (a `WeakSet` member, a `WeakRef` target) must be an object: a class instance, an object
@@ -9,7 +9,7 @@
 // value refers back to its key (`raw -> proxy(raw)`) frees both once nothing else refers to
 // either (the ephemeron rule).
 //
-// A map is created in the runtime on its first `set` (`#id` 0 until then): the intrinsic sees
+// A map is created in the weak core on its first `set` (`#id` 0 until then): the intrinsic sees
 // the key and value types there and passes their glue. Maps and refs are bound to the thread
 // that made them: sema keeps them out of `spawn`, channels and `shared`.
 
@@ -20,10 +20,9 @@ import {
   weakMapSet,
   weakMapValue,
 } from "velt/lang/intrinsics";
+import { weakMapDrop } from "velt/lang/hooks/weak";
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
-
-declare function velt_rt_weakmap_drop(m: u32);
 
 /**
  * A map from objects to values that does not keep its keys alive: an entry goes away when its
@@ -68,7 +67,7 @@ export class WeakMap<K, V> {
   /** Drop hook: releases every value. */
   [Symbol.dispose]() {
     if (this.#id != 0) {
-      velt_rt_weakmap_drop(this.#id);
+      weakMapDrop(this.#id);
       this.#id = 0;
     }
   }

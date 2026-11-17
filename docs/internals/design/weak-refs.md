@@ -1,8 +1,10 @@
 # Design: weak references without a collector
 
 Status: `WeakMap`, `WeakSet` and `WeakRef` are in the language (#823 step B); `weak T` fields
-(#11) are not yet. The core is in `velt_rt` (`crates/velt_rt/src/weak/`) with unit tests and a
-leak soak test; the ABI is in [rt_abi.md](../contracts/rt_abi.md#weak-references). The compiler's
+(#11) are not yet. The core is std's, in Velt (`std/lang/hooks/weak*.velt`, #3145; it was
+`velt_rt`'s until #2196 moved it), with white-box tests and a leak soak test
+(`weak_*.test.velt`, run by `velt test std/`); the ABI is in
+[rt_abi.md](../contracts/rt_abi.md#weak-references). The compiler's
 side is `std/prelude/weak.velt`, `weak_set.velt` and `weak_ref.velt` (the classes), `velt_vir` `lower/boxing/weak.rs` (which types are
 weak-capable), `lower/weak.rs` (the intrinsics and map value words) and `lower/glue/trace.rs`
 (trace, retain and release glue).
@@ -29,11 +31,32 @@ A counted object is `[count: u64][value]`; the value pointer is the block addres
   map ids, `WeakRef` slots and records mean the same on every thread. The
   lock is taken only on the cold paths (weak map and `WeakRef` operations, and releases of
   objects with `RC_WEAK` set); a program without weak collections never takes it.
-- **Weak maps** are runtime-owned hash tables keyed by object address (the key is not counted),
+- **Weak maps** are hash tables of the core's, keyed by object address (the key is not counted),
   with the value's retain, release and trace glue given at creation. A value word of a map with
   release glue is 0 (`null`, `undefined`) or a counted object pointer: the compiler boxes strings
   and unions stored as such values. A `WeakSet` is a weak map whose values are plain words. A **`WeakRef`** is a slot holding the target's address, cleared when
   the target is freed.
+
+**In std** (#3145): the core is Velt code over raw memory (`std/lang/hooks/weak*.velt`), whose
+blocks are the C library's (`#weak-os`, apart from the executor's modules, so a program without
+tasks loads none of them), outside the leak counters, as the Rust core's were. One header for
+the process, in a static made on first use, holds the lock word, the records, the tables of map
+blocks and `WeakRef` slots, and the trial's graph. The lock is held for a few table operations at
+a time and nothing waits with it held, so a thread that finds it taken spins a while, then gives
+its core away (`sched_yield`, `SwitchToThread`) until it is free.
+
+- **Records** sit in an open-addressing table keyed by address, in place. Each list a record
+  has (the maps keyed by the object, the entries it belongs to, its `WeakRef`s) keeps its first
+  item in the record and spills to a vector, so a key in one map with one `WeakRef` allocates
+  nothing of its own.
+- **A map** is a block with its glue and an open-addressing table of entries: the value word
+  and the entry's contributions (a vector of `(object, references, trace)`, or none).
+- **The values to release** are queued in the header under the lock, the first in two fields
+  and the rest in a vector, and taken out before the lock is given back, so the common release
+  of one value allocates nothing.
+- **The trial's graph** is the process's (it is used only under the lock), with arrays sized
+  for the 256-object bound: an object is found by a scan up to 16 objects and through a hash
+  index past that, and only the edges grow.
 
 ## Release paths and their cost
 
@@ -46,7 +69,7 @@ first test from `c == 1` to a signed compare, which works because `RC_WEAK` is t
 c = *rc
 if c as i64 > 1 { *rc = c - 1 }                                              // shared path
 else if c == 1  { drop the fields; free }                                    // unique path
-else            { if velt_rt_weak_release(obj) { drop the fields; free } }  // RC_WEAK: cold
+else            { if weakRelease(obj) { drop the fields; free } }           // RC_WEAK: cold
 ```
 
 A weakly held object's count word is negative as a signed number, so it leaves the shared path
@@ -62,9 +85,10 @@ compiles exactly as today.
 | Object weakly held | a call and a side-table probe on each release |
 | Freeing a weakly held object | the above, plus removing its entries and clearing its `WeakRef`s |
 
-Measured with valgrind (`crates/velt_rt/scripts/weak_rc_cost.sh`, callgrind's per-function
-counts, loops in `src/weak/tests/bench.rs` inlining each release sequence, release build, Linux
-x86_64, 10^6 iterations), instructions per iteration of the loop:
+Measured with valgrind when the core was Rust (velt_rt's `weak_rc_cost.sh` and its
+`tests/bench.rs` loops, removed with the Rust in #3145; callgrind's per-function counts, each
+release sequence inlined, release build, Linux x86_64, 10^6 iterations), instructions per
+iteration of the loop. The sequences themselves did not change with the move:
 
 | Loop | Today's release | Weak-capable, signed compare | Weak-capable, separate bit test | Weakly held object |
 |---|---|---|---|---|
@@ -100,14 +124,14 @@ The runtime relies on these; the compiler must keep them when it lowers weak ref
   task itself may run on several threads in turn, which the process-wide table allows. A
   weak-capable object that is weakly held is never transferred in place either (its count word
   is never 1, so the transfer deep-copies it, and the copy is not weakly held). An object with
-  `RC_WEAK` set and no record is an `ICE:` that `velt_rt_weak_release` reports before it touches
+  `RC_WEAK` set and no record is an `ICE:` that `weakRelease` reports before it touches
   the count word.
 - **Weak-capable types are never atomic.** The flag lives in a plain count word, which only the
   task using the object changes; the table's lock protects the table, not the objects.
 - **Lock discipline.** No generated code that could reach the table runs while it is locked:
   value retains and releases run after the lock is released (the cascade below), and trace glue,
   which runs under the lock during a trial, only reads fields and records them. A re-entry would
-  deadlock, so the runtime reports it as an `ICE:` instead. Cascades and the trials they defer
+  deadlock, so the core reports it as an `ICE:` instead. Cascades and the trials they defer
   (`CASCADE`, `PENDING`) are per thread: a cascade is synchronous drop glue, which never awaits,
   so it starts and ends on one thread; two threads may run cascades at once over objects of
   different tasks.
@@ -128,10 +152,10 @@ The runtime relies on these; the compiler must keep them when it lowers weak ref
   value cannot be weakly held (a primitive, `null`, an object the conversion boxed: a tuple, a
   function value), else 1 or
   the type's trace glue. The key is the dynamic value's data pointer; `set` passes the key's
-  trace glue (`velt_rt_weakmap_set_traced`), the trace glue of a value holding a dynamic value
+  trace glue (`weakMapSetTraced`), the trace glue of a value holding a dynamic value
   visits its data pointer through the same word (so `WeakMap<object, object>` caches are
   ephemerons too), and a `WeakRef<object>` keeps the target's descriptor with its slot
-  (`velt_rt_weakref_new_with`) so `deref()` rebuilds the `object`. Other programs are
+  (`weakRefNewWith`) so `deref()` rebuilds the `object`. Other programs are
   unchanged.
 - **Release.** `release_as` in `lower/rc.rs` takes the three-way sequence above for those
   types, at every release (drop glue, boxed values, half-built objects, the queued drops of
@@ -267,7 +291,7 @@ owns; one it misses makes the target look referenced from outside (a leak).
 
 **Typed proxies** (#823, velt_vir's `proxy_typed.rs`). A value of a proxiable type may be its
 `Proxy` object's address with bit 0 set. The compiler never hands that word to the table as a
-key or a released object (the runtime treats one as an ICE): a map key is the untagged `Proxy`
+key or a released object (the core treats one as an ICE): a map key is the untagged `Proxy`
 object, a weak map value of a proxiable type is boxed, and a `WeakRef` slot keeps the word as
 given (the record and the count are the untagged object's), so `deref` gives the proxy back.
 Trace glue visits a typed proxy as its `Proxy` object, whose own trace glue visits its target
@@ -281,7 +305,9 @@ and the trial uses the record's trace for such keys.
 
 ### What it handles
 
-The unit tests (`src/weak/tests/ephemeron.rs`) release the outside references in every order:
+The white-box tests (`std/lang/hooks/weak_ephemeron.test.velt`, on hand-built counted objects
+whose glue is written in Velt, `weak_test_objects.velt`) release the outside references in every
+order:
 
 - a raw object and its proxy: both freed;
 - the key kept alive outside: the proxy stays (`signal(raw) === signal(raw)`), both freed with it;
@@ -291,11 +317,11 @@ The unit tests (`src/weak/tests/ephemeron.rs`) release the outside references in
 - a handler whose closure captures the target (an object on the path back to the key);
 - a shared handler outside the cycles, a key mapped to itself, 10,000 entries;
 - a value that gains a second path to its key after insert (found by the next trial);
-- null values and values of maps without trace glue next to a cycle (`src/weak/tests/values.rs`);
+- null values and values of maps without trace glue next to a cycle (`weak_ops.test.velt`);
 - a `get` result held across the release of its key's last outside reference.
 
-`src/weak/tests/threads.rs` releases weakly held objects and an ephemeron cycle on another
-thread than the one that made them, runs eight threads with maps of their own at once, releases
+`weak_threads.test.velt` releases weakly held objects and an ephemeron cycle in spawned tasks
+(on any of the executor's workers), runs eight tasks with maps of their own at once, releases
 values that release other maps' keys or drop other maps (nothing re-enters the lock), and checks
 that an object marked without a record is an ICE reported before the count changes. The goldens
 `weakmap_async` and `weakmap_nested` do the same from Velt programs; `weakmap_mutex`,
@@ -304,21 +330,21 @@ that an object marked without a record is an ICE reported before the count chang
 
 The soak test creates and drops reactive objects (raw, handler capturing it, proxy; a nested
 proxied child every third time) through a window of live ones, and checks after every step that
-the live objects, side-table records and map entries are exactly the window's. The long run
-(`soak_long`, ignored by default) passed 10^6 reactive objects (4,000,002 objects) through a
-window of 1,000: at most 4,002 objects were alive and recorded at any step, and none were left at
-the end. CI runs 20,000 through a window of 64.
+the live objects, side-table records and map entries are exactly the window's. The Rust core's
+long run passed 10^6 reactive objects (4,000,002 objects) through a window of 1,000: at most
+4,002 objects were alive and recorded at any step, and none were left at the end. The std test
+runs 20,000 through a window of 64.
 
 ### What it does not handle
 
 - **A value graph past 256 objects** at insert or during a trial: nothing is recorded or freed;
   the pair leaks until the entry is deleted or the map dropped (test
-  `a_value_graph_past_the_limit_is_kept`). The bound keeps every release cheap; the proxy cells
+  "keeps a pair whose value graph is past the limit"). The bound keeps every release cheap; the proxy cells
   this is for are a handful of objects.
 - **References to the key added after the last trial through it**, when the final outside
   release lands on an object whose count is still above what the table knows: no trial runs and
   the pair is kept until a release that reaches the known level, or the entry goes (test
-  `a_path_added_after_the_last_trial_delays_the_free`). sigx's proxies never change their
+  "delays the free of a path added after the last trial"). sigx's proxies never change their
   target, so its caches do not hit this.
 - **Strong cycles through the key** (`raw.self = proxy(raw)`): the trial frees the entry, but raw
   and the proxy still hold each other. That is an ordinary strong cycle, the problem `weak T`

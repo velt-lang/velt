@@ -103,6 +103,8 @@ table! {
     lang_hooks_inspect => "lang/hooks/inspect",
     lang_hooks_inspect_cycles => "lang/hooks/inspect_cycles",
     lang_hooks_number => "lang/hooks/number",
+    lang_hooks_number_digits => "lang/hooks/number_digits",
+    lang_hooks_number_parse => "lang/hooks/number_parse",
     lang_hooks_number_float => "lang/hooks/number_float",
     lang_hooks_number_text => "lang/hooks/number_text",
     lang_hooks_number_write => "lang/hooks/number_write",
@@ -126,6 +128,7 @@ table! {
     lang_hooks_syntax => "lang/hooks/syntax",
     lang_hooks_tuple_elements => "lang/hooks/tuple_elements",
     lang_hooks_unwind => "lang/hooks/unwind",
+    lang_hooks_weak => "lang/hooks/weak",
     lang_import_meta => "lang/import_meta",
     /// The compiler's intrinsics, declared (`@intrinsic declare function`; std-layout.md §10).
     lang_intrinsics => "lang/intrinsics",

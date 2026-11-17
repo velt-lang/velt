@@ -1,0 +1,373 @@
+// velt/lang/hooks (internal): weak references without a collector (#823, #11, #3145): the core
+// under `WeakMap`, `WeakSet` and `WeakRef`, and the cold path of the release sequence of every
+// weak-capable type. Design: docs/internals/design/weak-refs.md; ABI: rt_abi.md "Weak
+// references". This was velt_rt's weak core (#2196).
+//
+// A counted object that is weakly held has `RC_WEAK` set in its count word and a record in the
+// process's table (weak_records.velt), behind one lock taken only on these cold paths. Retain
+// stays `count += 1`. `RC_WEAK` is the sign bit, so release, for the types the compiler marks
+// weak-capable, keeps the single compare of its shared path (signed instead of `== 1`) and tells
+// the unique and the weakly held case apart off it:
+//
+//   c = *rc
+//   if c as i64 > 1 { *rc = c - 1 }                                     // shared path
+//   else if c == 1  { drop the fields; free }                           // unique path
+//   else            { if weakRelease(obj) { drop the fields; free } }   // RC_WEAK set: cold
+//
+// `weakRelease` removes a dying object from every map and `WeakRef`, and, on a decrement that may
+// leave the object referenced only by its own entries' values (the `raw -> proxy` ephemeron),
+// runs a bounded trial deletion (weak_trial.velt) that frees the cycle when nothing outside
+// refers to it.
+//
+// Lock discipline: no generated code runs under the lock except trace glue, which only reads
+// fields and calls `visit` (weak_graph.velt), and the values' retain glue (`count += 1`). Values
+// are released after the lock is given back (`leaveReleasing`), and trials that those releases
+// cause wait until the outermost release ends (`PENDING`), so a trial never sees a cycle half
+// released. A re-entry would deadlock, so it is an ICE instead. A weakly held object is used by
+// one task at a time, but a task moves between threads at an `await`, so the table is the
+// process's and the lock the only order.
+
+import { addressCallWord, noInline } from "velt/lang/intrinsics";
+import { mapOf } from "./weak_maps";
+import * as wm from "./weak_maps";
+import * as wr from "./weak_refs";
+import * as rec from "./weak_records";
+import { members, trial } from "./weak_trial";
+import {
+  count,
+  free,
+  ld,
+  ld64,
+  lock,
+  rcWord,
+  st,
+  st64,
+  unlock,
+  vat,
+  vlen,
+  vpush,
+  vswapRemove,
+  vtruncate,
+} from "./weak_mem";
+
+/** This thread holds the lock (a re-entry would deadlock). */
+const LOCKED = new ThreadLocal<bool>(false);
+
+/** Value releases under way on this thread: trials wait until the outermost ends. */
+const CASCADE = new ThreadLocal<u32>(0);
+
+/** Objects that reached their hint during a cascade (a vector's address, or 0). */
+const PENDING = new ThreadLocal<u64>(0);
+
+/** Takes the lock; the header. */
+function enter(): usize {
+  if (LOCKED.get()) {
+    panic("ICE: the weak table was re-entered while locked");
+  }
+  LOCKED.set(true);
+  const h = rec.state();
+  lock(h + rec.H_LOCK);
+  return h;
+}
+
+/** Gives back the lock (no value queued). */
+function leave(h: usize): void {
+  unlock(h + rec.H_LOCK);
+  LOCKED.set(false);
+}
+
+/** Gives back the lock, then releases the values queued under it (weak_maps.velt `release`). */
+function leaveReleasing(h: usize): void {
+  const glue = ld(h + rec.H_REL_FN);
+  if (glue === 0) {
+    leave(h);
+    return;
+  }
+  const value = ld64(h + rec.H_REL_VALUE);
+  const more = ld(h + rec.H_REL_MORE);
+  st(h + rec.H_REL_FN, 0);
+  st(h + rec.H_REL_MORE, 0);
+  leave(h);
+  releaseValues(glue, value, more);
+}
+
+/** Releases a value, then the pairs in `more` (0: none), then runs the trials they deferred. */
+@noInline
+function releaseValues(glue: usize, value: u64, more: usize): void {
+  CASCADE.set(CASCADE.get() + 1);
+  // SAFETY: each glue is a map's value release glue, and the map owned one reference to each
+  // value, which it gives up here.
+  unsafe {
+    addressCallWord(glue, value);
+  }
+  const n = vlen(more);
+  for (let i: usize = 0; i < n; i += 2) {
+    // SAFETY: as above.
+    unsafe {
+      addressCallWord(vat(more, i), vat(more, i + 1) as u64);
+    }
+  }
+  if (more !== 0) {
+    free(more);
+  }
+  const depth = CASCADE.get() - 1;
+  CASCADE.set(depth);
+  if (depth === 0) {
+    // A trial may release values and defer more; `PENDING` is read anew each time.
+    while (vlen(PENDING.get() as usize) !== 0) {
+      const p = PENDING.get() as usize;
+      const o = vat(p, vlen(p) - 1);
+      vtruncate(p, vlen(p) - 1);
+      tryFree(o);
+    }
+    const p = PENDING.get() as usize;
+    if (p !== 0) {
+      free(p);
+      PENDING.set(0);
+    }
+  }
+}
+
+function defer(o: usize): void {
+  const p = PENDING.get() as usize;
+  const n = vlen(p);
+  for (let i: usize = 0; i < n; i++) {
+    if (vat(p, i) === o) {
+      return;
+    }
+  }
+  PENDING.set(vpush(p, o) as u64);
+}
+
+function undefer(o: usize): void {
+  const p = PENDING.get() as usize;
+  const n = vlen(p);
+  for (let i: usize = 0; i < n; i++) {
+    if (vat(p, i) === o) {
+      vswapRemove(p, i);
+      return;
+    }
+  }
+}
+
+/** The level at or below which a release of the recorded object `r` may leave a cycle. */
+function level(r: usize): u64 {
+  const a = rec.hint(r);
+  const b = rec.observed(r);
+  return (a > b ? a : b) as u64;
+}
+
+/** Runs the trial deferred for `o`, if a release elsewhere has not made it pointless. */
+function tryFree(o: usize): void {
+  const h = enter();
+  const r = rec.find(h, o);
+  if (r !== 0 && count(o) <= level(r)) {
+    trial(h, o);
+  }
+  leaveReleasing(h);
+}
+
+/**
+ * A map key or a released object is an object's address, never a typed proxy's tagged word.
+ * Checked before the lock is taken, so the ICE leaves the table usable.
+ */
+function untagged(obj: usize): void {
+  if ((obj & wr.TAG) !== 0) {
+    panic("ICE: a tagged proxy word reached the weak table");
+  }
+}
+
+/**
+ * The cold release path of a weakly held object (`RC_WEAK` set), called with the caller's
+ * reference. True when that was the last reference: the object has left every map and `WeakRef`,
+ * and the caller drops its fields and frees it as on the unique path. False when the count was
+ * decremented instead (which may have freed an ephemeron cycle the object belonged to, but never
+ * the object while the caller's code still runs on it: a count above 1 means another reference,
+ * and a cycle's last outside reference is never the one being released by the code that holds
+ * it). An object with `RC_WEAK` set and no record is an ICE, reported before its count changes.
+ */
+@noInline
+export function weakRelease(obj: usize): bool {
+  untagged(obj);
+  const h = enter();
+  const r = rec.find(h, obj);
+  if (r === 0) {
+    leave(h);
+    panic("ICE: a weakly held object was released with no record in the weak table");
+  }
+  const c = count(obj);
+  if (c === 1) {
+    wm.forget(h, r, obj);
+    undefer(obj);
+    st64(rcWord(obj), 1);
+    leaveReleasing(h);
+    return true;
+  }
+  st64(rcWord(obj), ld64(rcWord(obj)) - 1);
+  if (c - 1 > level(r)) {
+    leave(h);
+    return false;
+  }
+  if (CASCADE.get() > 0) {
+    defer(obj);
+    leave(h);
+    return false;
+  }
+  trial(h, obj);
+  leaveReleasing(h);
+  return false;
+}
+
+/**
+ * A new, empty weak map: `keyTrace` is the keys' trace glue, `retain` and `release` retain and
+ * release a value (both 0: values are plain words), `trace` traces a value (0: values never refer
+ * back to keys, so entries are never ephemerons). A value word of a map with `release` is 0 or a
+ * counted object's address.
+ */
+export function weakMapNew(keyTrace: usize, retain: usize, release: usize, trace: usize): u32 {
+  if ((retain === 0) !== (release === 0) || (trace !== 0 && release === 0)) {
+    panic("ICE: weak map values need both retain and release glue, and trace glue only with them");
+  }
+  const h = enter();
+  const id = wm.mapNew(h, keyTrace, retain, release, trace);
+  leave(h);
+  return id;
+}
+
+/** `map.set(key, value)`: takes over the caller's reference to `value`; the key is not counted. */
+export function weakMapSet(map: u32, key: usize, value: u64): void {
+  untagged(key);
+  const h = enter();
+  set(h, map, key, value, ld(mapOf(h, map) + wm.M_KEY_TRACE));
+  leaveReleasing(h);
+}
+
+/**
+ * `weakMapSet` with the key's own trace glue instead of the map's (a map whose key type is
+ * dynamic, `WeakMap<object, V>`: each key's type is known only from its value).
+ */
+export function weakMapSetTraced(map: u32, key: usize, value: u64, keyTrace: usize): void {
+  untagged(key);
+  const h = enter();
+  set(h, map, key, value, keyTrace);
+  leaveReleasing(h);
+}
+
+function set(h: usize, map: u32, key: usize, value: u64, keyTrace: usize): void {
+  wm.del(h, map, key);
+  const vt = ld(mapOf(h, map) + wm.M_VALUE_TRACE);
+  // A nonzero value of a map with trace glue is a live counted object, the map's from here on.
+  const ms = vt !== 0 && value !== 0 ? members(h, key, value as usize, vt) : 0;
+  rec.listPush(rec.node(h, key, keyTrace), rec.R_KEYED, map as usize);
+  const n = vlen(ms);
+  for (let i: usize = 0; i < n; i += 3) {
+    const r = rec.node(h, vat(ms, i), vat(ms, i + 2));
+    rec.memberPush(r, map as usize, key);
+    rec.setHint(r, rec.hint(r) + (vat(ms, i + 1) as u32));
+  }
+  const e = wm.entryAdd(mapOf(h, map), key);
+  st64(e + wm.E_VALUE, value);
+  st(e + wm.E_MEMBERS, ms);
+}
+
+/**
+ * `map.get(key)`: the value, retained with the map's retain glue (the caller releases it), or 0.
+ * Counted because any later release of a weakly held object may run a trial that deletes the
+ * entry and releases its value.
+ */
+export function weakMapGet(map: u32, key: usize): u64 {
+  untagged(key);
+  const h = enter();
+  const b = mapOf(h, map);
+  const e = wm.entryOf(b, key);
+  let v: u64 = 0;
+  if (e !== 0) {
+    v = ld64(e + wm.E_VALUE);
+    const retain = ld(b + wm.M_RETAIN);
+    if (retain !== 0 && v !== 0) {
+      // SAFETY: the map's retain glue, of a value the map holds (`count += 1`).
+      unsafe {
+        addressCallWord(retain, v);
+      }
+    }
+  }
+  leave(h);
+  return v;
+}
+
+/** `map.has(key)`. */
+export function weakMapHas(map: u32, key: usize): bool {
+  untagged(key);
+  const h = enter();
+  const found = wm.entryOf(mapOf(h, map), key) !== 0;
+  leave(h);
+  return found;
+}
+
+/** `map.delete(key)`: whether there was an entry; its value is released. */
+export function weakMapDelete(map: u32, key: usize): bool {
+  untagged(key);
+  const h = enter();
+  const found = wm.del(h, map, key);
+  leaveReleasing(h);
+  return found;
+}
+
+/** Drops `map`: every value is released. */
+export function weakMapDrop(map: u32): void {
+  const h = enter();
+  wm.mapDrop(h, map);
+  leaveReleasing(h);
+}
+
+/** `new WeakRef(obj)`: does not count `obj`, which may be a typed proxy's tagged word. */
+export function weakRefNew(obj: usize): u32 {
+  return weakRefNewWith(obj, 0);
+}
+
+/** `new WeakRef(obj)` keeping `word` with the slot (an `object` target's descriptor). */
+export function weakRefNewWith(obj: usize, word: u64): u32 {
+  const h = enter();
+  const r = wr.refNew(h, obj, word);
+  leave(h);
+  return r;
+}
+
+/** The word given to `weakRefNewWith` for `r` (0 for `weakRefNew`). */
+export function weakRefWord(r: u32): u64 {
+  const h = enter();
+  const w = wr.refWord(h, r);
+  leave(h);
+  return w;
+}
+
+/** `ref.deref()`: the target with its count raised by one, or 0 once it was freed. */
+export function weakRefDeref(r: u32): usize {
+  const h = enter();
+  const t = wr.refDeref(h, r);
+  leave(h);
+  return t;
+}
+
+/** Drops `r`. */
+export function weakRefDrop(r: u32): void {
+  const h = enter();
+  wr.refDrop(h, r);
+  leave(h);
+}
+
+/** The records of weakly held objects (tests and leak checks). */
+export function weakTracked(): usize {
+  const h = enter();
+  const n = ld(h + rec.H_RLIVE);
+  leave(h);
+  return n;
+}
+
+/** The entries of `map` (tests: JavaScript has no `WeakMap.size`). */
+export function weakMapLen(map: u32): usize {
+  const h = enter();
+  const n = wm.mapLen(h, map);
+  leave(h);
+  return n;
+}

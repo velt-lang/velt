@@ -1,7 +1,8 @@
 // Prelude: `WeakRef<T>` (https://veltlang.com/docs/std/prelude/#weakmap-weakset-and-weakref), a reference that does not
-// keep its target alive, on velt_rt's weak-reference core (docs/internals/design/weak-refs.md).
+// keep its target alive, on std's weak core (std/lang/hooks/weak.velt) (docs/internals/design/weak-refs.md).
 
 import { weakRefDeref, weakRefNew } from "velt/lang/intrinsics";
+import { weakRefDrop } from "velt/lang/hooks/weak";
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
@@ -26,10 +27,8 @@ export class WeakRef<T> {
   /** Drop hook: releases the slot. */
   [Symbol.dispose]() {
     if (this.#id != 0) {
-      velt_rt_weakref_drop(this.#id);
+      weakRefDrop(this.#id);
       this.#id = 0;
     }
   }
 }
-
-declare function velt_rt_weakref_drop(r: u32);

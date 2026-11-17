@@ -7,7 +7,7 @@ import { Ptr, export as cExport } from "velt/ffi";
 import { exportedAddress, inline, noInline } from "velt/lang/intrinsics";
 import * as r from "#reactor";
 import * as th from "#sched-thread";
-import { processEnv } from "./process";
+import { processEnv, setLazyWorker } from "./process";
 import * as al from "./sched_all";
 import * as pt from "./program_thread";
 import * as dbg from "./sched_debug";
@@ -235,6 +235,8 @@ function startWorkers(e: usize): void {
   }
   mk.joinTable(e, mode === 0 ? mk.JT_SOLO : lazy ? mk.JT_LAZY : mk.JT_SHARED);
   if (lazy) {
+    // This thread is worker 0's: its writes to stdout mark the poll (process.velt).
+    setLazyWorker(e + t.E_PANY);
     m.st(e + t.E_LAZY, t.LAZY_WATCH);
     m.st(e + t.E_SPLIT, 1);
   }

@@ -434,6 +434,14 @@ pub enum Intrinsic {
     /// std only: `addressCall(f: usize, a: usize) -> usize`: the call of the C function at
     /// address `f` with `a`, both pointer-sized (a waker table's `clone`). Additive.
     AddressCall,
+    /// std only: `addressCallWord(f: usize, a: u64)`: the call of the C function at address `f`,
+    /// which takes one 64-bit word and returns nothing (a weak map value's retain and release
+    /// glue, rt_abi.md "Weak references"). Additive.
+    AddressCallWord,
+    /// std only: `addressCall3(f: usize, a: usize, b: usize, c: usize)`: the call of the C
+    /// function at address `f`, which takes three pointer-sized values and returns nothing (trace
+    /// glue's `(obj, visit, ctx)`). Additive.
+    AddressCall3,
     /// std only: `fnAddress(f) -> usize`: the address of module-level function `f` (a `FnRef`
     /// with no type arguments; sema checks it is not async or throwing and passes only numbers
     /// and `bool`), callable from C with the C calling convention (#2649). Additive.

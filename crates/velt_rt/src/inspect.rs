@@ -20,7 +20,7 @@ pub const MAX_ARRAY_LENGTH: usize = 100;
 /// container with `remaining` more.
 pub fn push_more_items(out: &mut Vec<u8>, remaining: u64) {
     out.extend_from_slice(b", ... ");
-    out.extend_from_slice(itoa::Buffer::new().format(remaining).as_bytes());
+    velt_text::fmt::push_u64(out, remaining);
     out.extend_from_slice(if remaining == 1 {
         b" more item"
     } else {

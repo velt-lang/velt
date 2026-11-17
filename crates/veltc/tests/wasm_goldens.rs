@@ -167,7 +167,8 @@ const SHARDS: usize = 8;
 /// The wasm32-wasip1 goldens: every file with an `.out` in these directories,
 const WASI_DIRS: &[&str] = &["m1", "m2", "m3", "m4", "lang"];
 /// and these of `std/`: the SIMD programs, whose vectors are WebAssembly `v128` values there,
-/// the std code written with them, and `random` (its seed is WASI's, through wasi-libc).
+/// the std code written with them, `random` (its seed is WASI's, through wasi-libc), and two
+/// ephemeron caches, whose trials call between std's weak core and the compiler's glue.
 const WASI_STD: &[&str] = &[
     "bytes_search",
     "half_dot",
@@ -207,6 +208,10 @@ const WASI_STD: &[&str] = &[
     "typed_arrays_basic",
     "typed_arrays_edges",
     "utf8_valid",
+    // The weak core in std calls trace glue, which calls the core's `visit` back: an indirect
+    // call whose signature must match on wasm32 (#3145).
+    "weakmap_ephemeron",
+    "weakmap_nested",
 ];
 
 /// The files of shard `shard`: every `SHARDS`-th one of the sorted list, so each shard gets a

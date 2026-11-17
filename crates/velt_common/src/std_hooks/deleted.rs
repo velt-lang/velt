@@ -7,6 +7,21 @@
 /// replaced extern is defined by `velt_rt` unless it is listed here, and that one listed here is
 /// defined nowhere and named by no compiler source, runtime or std file.
 pub const DELETED: &[&str] = &[
+    // #3145: the weak core (std/lang/hooks/weak*.velt): lowering's weak hooks, and the drops
+    // std's `WeakMap`, `WeakSet` and `WeakRef` call.
+    "velt_rt_weak_release",
+    "velt_rt_weakmap_new",
+    "velt_rt_weakmap_set",
+    "velt_rt_weakmap_set_traced",
+    "velt_rt_weakmap_get",
+    "velt_rt_weakmap_has",
+    "velt_rt_weakmap_delete",
+    "velt_rt_weakmap_drop",
+    "velt_rt_weakref_new",
+    "velt_rt_weakref_new_with",
+    "velt_rt_weakref_word",
+    "velt_rt_weakref_deref",
+    "velt_rt_weakref_drop",
     // #2196: velt/os's facts (std/os/sys_*.velt over the C library and Win32, the build's
     // `x64`/`arm64` condition for the architecture), which only std called.
     "velt_rt_os_platform",
@@ -62,4 +77,17 @@ pub const DELETED: &[&str] = &[
     // and its delay, which the abort message carries; only std called them.
     "velt_rt_signal_timeout",
     "velt_rt_signal_timeout_ms",
+    // #2196: `toString(radix)` (std/lang/hooks/number, velt/lang/number/radix).
+    "velt_rt_f64_to_radix",
+    "velt_rt_i64_to_radix",
+    "velt_rt_u64_to_radix",
+    // #2196: `toExponential`, `toPrecision` and `toFixed`'s exact digits
+    // (std/lang/hooks/number_digits, velt/lang/number/exact).
+    "velt_rt_f64_to_exponential",
+    "velt_rt_f64_to_precision",
+    "velt_rt_f64_to_fixed",
+    // #2196: `parseInt` (velt/lang/number/parse_int), which only std called.
+    "velt_rt_parse_int",
+    // #2196: the decimals of `parseFloat` past 64 bits (std/lang/hooks/number_parse).
+    "velt_rt_parse_float",
 ];

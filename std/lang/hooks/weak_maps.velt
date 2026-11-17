@@ -1,0 +1,326 @@
+// velt/lang/hooks (internal): the weak core's maps (weak.velt; docs/internals/design/
+// weak-refs.md "Weak maps"), all with the lock held.
+//
+// A map's handle is a `u32` (0: not made yet), an index into the header's table of map blocks,
+// as the prelude's `WeakMap` and `WeakSet` keep it. A map block holds the glue lowering gave it
+// (the keys' trace, the values' retain, release and trace) and an open-addressing table of
+// entries keyed by the key's address: its value word and the objects of the value's graph on a
+// path back to the key, with the references the entry holds to each (`members`: a vector of
+// `(object, references, trace)` triples, or 0). Values are released by the caller once the lock
+// is given back: `release` queues them in the header (weak.velt `take`).
+
+import {
+  H_MAPS,
+  H_MCAP,
+  H_MFREE,
+  H_MNEXT,
+  H_REFS,
+  H_REL_FN,
+  H_REL_MORE,
+  H_REL_VALUE,
+  R_KEYED,
+  R_KEYED_MORE,
+  R_MEMBER_MAP,
+  R_MEMBER_MORE,
+  R_REF,
+  R_REF_MORE,
+  find,
+  hint,
+  listAt,
+  listLen,
+  listRemove,
+  memberKey,
+  memberMap,
+  membersLen,
+  memberRemove,
+  remove,
+  setHint,
+  settle,
+} from "./weak_records";
+import {
+  W,
+  alloc,
+  copy,
+  free,
+  ld,
+  ld64,
+  slotOf,
+  st,
+  st64,
+  vat,
+  vecFree,
+  vecLen,
+  vecPop,
+  vecPush,
+  vlen,
+  vset,
+  vtruncate,
+} from "./weak_mem";
+
+/** A map block: the keys' trace glue, then the values' retain, release and trace glue. */
+export const M_KEY_TRACE: usize = 0;
+export const M_RETAIN: usize = 8;
+export const M_RELEASE: usize = 16;
+export const M_VALUE_TRACE: usize = 24;
+const M_ENTRIES: usize = 32;
+const M_CAP: usize = 40;
+/** Slots in use, removed ones included. */
+const M_USED: usize = 48;
+const M_LIVE: usize = 56;
+const MAP: usize = 64;
+
+/** An entry: its key (0 empty, 1 removed), value word and contributions. */
+export const E_KEY: usize = 0;
+export const E_VALUE: usize = 8;
+export const E_MEMBERS: usize = 16;
+const ENTRY: usize = 24;
+
+const EMPTY: usize = 0;
+const REMOVED: usize = 1;
+
+/** The block of map `id`. */
+export function mapOf(h: usize, id: u32): usize {
+  return ld(ld(h + H_MAPS) + (id as usize) * W);
+}
+
+/** A new map with this glue (each 0 or a function's address). */
+export function mapNew(
+  h: usize,
+  keyTrace: usize,
+  retain: usize,
+  release: usize,
+  trace: usize,
+): u32 {
+  const b = alloc(MAP);
+  st(b + M_KEY_TRACE, keyTrace);
+  st(b + M_RETAIN, retain);
+  st(b + M_RELEASE, release);
+  st(b + M_VALUE_TRACE, trace);
+  st(b + M_ENTRIES, alloc(8 * ENTRY));
+  st(b + M_CAP, 8);
+  let id: usize = 0;
+  if (vecLen(h + H_MFREE) !== 0) {
+    id = vecPop(h + H_MFREE);
+  } else {
+    // Id 0 is never a map: the prelude keeps it for "not made yet".
+    id = ld(h + H_MNEXT) === 0 ? 1 : ld(h + H_MNEXT);
+    st(h + H_MNEXT, id + 1);
+    if (id >= ld(h + H_MCAP)) {
+      const cap: usize = ld(h + H_MCAP) === 0 ? 16 : ld(h + H_MCAP) * 2;
+      const t = alloc(cap * W);
+      if (ld(h + H_MAPS) !== 0) {
+        copy(t, ld(h + H_MAPS), ld(h + H_MCAP) * W);
+        free(ld(h + H_MAPS));
+      }
+      st(h + H_MAPS, t);
+      st(h + H_MCAP, cap);
+    }
+  }
+  st(ld(h + H_MAPS) + id * W, b);
+  return id as u32;
+}
+
+/** The entry of `key` in the map block `b`, or 0 (a probe of a non-object's word 0: none). */
+export function entryOf(b: usize, key: usize): usize {
+  if (key <= REMOVED) {
+    return 0;
+  }
+  const cap = ld(b + M_CAP);
+  const es = ld(b + M_ENTRIES);
+  let i = slotOf(key, cap);
+  while (true) {
+    const e = es + i * ENTRY;
+    const k = ld(e + E_KEY);
+    if (k === key) {
+      return e;
+    }
+    if (k === EMPTY) {
+      return 0;
+    }
+    i = (i + 1) & (cap - 1);
+  }
+  return 0;
+}
+
+/** A new entry of `key` (which has none) in the map block `b`, its fields 0. */
+export function entryAdd(b: usize, key: usize): usize {
+  if ((ld(b + M_USED) + 1) * 4 >= ld(b + M_CAP) * 3) {
+    entriesGrow(b);
+  }
+  const cap = ld(b + M_CAP);
+  const es = ld(b + M_ENTRIES);
+  let i = slotOf(key, cap);
+  while (true) {
+    const e = es + i * ENTRY;
+    const k = ld(e + E_KEY);
+    if (k === EMPTY || k === REMOVED) {
+      if (k === EMPTY) {
+        st(b + M_USED, ld(b + M_USED) + 1);
+      }
+      st(b + M_LIVE, ld(b + M_LIVE) + 1);
+      st(e + E_KEY, key);
+      st64(e + E_VALUE, 0);
+      st(e + E_MEMBERS, 0);
+      return e;
+    }
+    i = (i + 1) & (cap - 1);
+  }
+  return 0;
+}
+
+function entriesGrow(b: usize): void {
+  const cap = ld(b + M_CAP);
+  const old = ld(b + M_ENTRIES);
+  const live = ld(b + M_LIVE);
+  const ncap = (live + 1) * 4 >= cap * 3 / 2 ? cap * 2 : cap;
+  const es = alloc(ncap * ENTRY);
+  for (let i: usize = 0; i < cap; i++) {
+    const e = old + i * ENTRY;
+    const k = ld(e + E_KEY);
+    if (k !== EMPTY && k !== REMOVED) {
+      let j = slotOf(k, ncap);
+      while (ld(es + j * ENTRY + E_KEY) !== EMPTY) {
+        j = (j + 1) & (ncap - 1);
+      }
+      copy(es + j * ENTRY, e, ENTRY);
+    }
+  }
+  free(old);
+  st(b + M_ENTRIES, es);
+  st(b + M_CAP, ncap);
+  st(b + M_USED, live);
+}
+
+/** The entries of map `id` (tests). */
+export function mapLen(h: usize, id: u32): usize {
+  return ld(mapOf(h, id) + M_LIVE);
+}
+
+/** Queues `value` (not 0) for its release glue `glue` once the lock is given back. */
+export function release(h: usize, glue: usize, value: u64): void {
+  if (ld(h + H_REL_FN) === 0) {
+    st(h + H_REL_FN, glue);
+    st64(h + H_REL_VALUE, value);
+  } else {
+    vecPush(h + H_REL_MORE, glue);
+    vecPush(h + H_REL_MORE, value as usize);
+  }
+}
+
+/** Removes `key`'s entry from map `id`, queueing its value; whether there was one. */
+export function del(h: usize, id: u32, key: usize): bool {
+  const b = mapOf(h, id);
+  const e = entryOf(b, key);
+  if (e === 0) {
+    return false;
+  }
+  const value = ld64(e + E_VALUE);
+  const members = ld(e + E_MEMBERS);
+  st(e + E_KEY, REMOVED);
+  st(e + E_MEMBERS, 0);
+  st(b + M_LIVE, ld(b + M_LIVE) - 1);
+  const rec = find(h, key);
+  if (rec !== 0) {
+    listRemove(rec, R_KEYED, id as usize);
+  }
+  unlink(h, id, key, members);
+  settle(h, key);
+  const glue = ld(b + M_RELEASE);
+  if (glue !== 0 && value !== 0) {
+    release(h, glue, value);
+  }
+  return true;
+}
+
+/** Takes the contributions `members` (a vector of triples, or 0) of entry `(id, key)` off its
+ * members' records, and gives the vector back. */
+export function unlink(h: usize, id: u32, key: usize, members: usize): void {
+  const n = vlen(members);
+  for (let i: usize = 0; i < n; i += 3) {
+    const obj = vat(members, i);
+    const rec = find(h, obj);
+    if (rec !== 0) {
+      memberRemove(rec, id as usize, key);
+      setHint(rec, hint(rec) - (vat(members, i + 1) as u32));
+      settle(h, obj);
+    }
+  }
+  if (members !== 0) {
+    free(members);
+  }
+}
+
+/** Drops map `id`, queueing every value. */
+export function mapDrop(h: usize, id: u32): void {
+  const b = mapOf(h, id);
+  // Each removal leaves the table in place (`remove_` only marks), so a scan sees every entry.
+  const cap = ld(b + M_CAP);
+  for (let i: usize = 0; i < cap; i++) {
+    const k = ld(ld(b + M_ENTRIES) + i * ENTRY + E_KEY);
+    if (k !== EMPTY && k !== REMOVED) {
+      del(h, id, k);
+    }
+  }
+  free(ld(b + M_ENTRIES));
+  free(b);
+  st(ld(h + H_MAPS) + (id as usize) * W, 0);
+  vecPush(h + H_MFREE, id as usize);
+}
+
+/**
+ * `obj` is about to be freed: it leaves every map, entry record and `WeakRef`, its entries'
+ * values queued. Its record goes first, so the removals find none (and leave its count word
+ * alone).
+ */
+export function forget(h: usize, rec: usize, obj: usize): void {
+  // The record's lists, before the record goes.
+  const firstMap = ld(rec + R_KEYED);
+  const moreMaps = ld(rec + R_KEYED_MORE);
+  st(rec + R_KEYED_MORE, 0);
+  const nm = membersLen(rec);
+  for (let i: usize = 0; i < nm; i++) {
+    stripMember(h, memberMap(rec, i) as u32, memberKey(rec, i), obj);
+  }
+  const nr = listLen(rec, R_REF);
+  for (let i: usize = 0; i < nr; i++) {
+    st(ld(h + H_REFS) + listAt(rec, R_REF, i) * 2 * W, 0);
+  }
+  st(rec + R_KEYED, 0);
+  st(rec + R_MEMBER_MAP, 0);
+  st(rec + R_REF, 0);
+  remove(h, rec);
+  if (firstMap !== 0) {
+    del(h, firstMap as u32, obj);
+  }
+  const n = vlen(moreMaps);
+  for (let i: usize = 0; i < n; i++) {
+    del(h, vat(moreMaps, i) as u32, obj);
+  }
+  if (moreMaps !== 0) {
+    free(moreMaps);
+  }
+}
+
+/** Removes `obj`'s contributions from entry `(id, key)`. */
+function stripMember(h: usize, id: u32, key: usize, obj: usize): void {
+  const e = entryOf(mapOf(h, id), key);
+  if (e === 0) {
+    return;
+  }
+  const ms = ld(e + E_MEMBERS);
+  let n = vlen(ms);
+  let i: usize = 0;
+  while (i < n) {
+    if (vat(ms, i) === obj) {
+      n -= 3;
+      vset(ms, i, vat(ms, n));
+      vset(ms, i + 1, vat(ms, n + 1));
+      vset(ms, i + 2, vat(ms, n + 2));
+    } else {
+      i += 3;
+    }
+  }
+  if (ms !== 0) {
+    vtruncate(ms, n);
+  }
+}

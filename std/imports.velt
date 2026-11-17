@@ -51,6 +51,13 @@ export const imports: Imports = {
   // sched_mem.velt, sched_io_wait.velt): `sched_yield` and `clock_gettime`, or on Windows
   // `SwitchToThread` and the performance counter.
   "#sched-os": { win32: "./lang/hooks/os_win32.velt", default: "./lang/hooks/os_posix.velt" },
+  // The C library calls of the weak core (std/lang/hooks/weak_mem.velt), apart from the
+  // executor's so a program without tasks loads none of it: memory, and `sched_yield` or on
+  // Windows `SwitchToThread` while its lock is contended.
+  "#weak-os": {
+    win32: "./lang/hooks/weak_os_win32.velt",
+    default: "./lang/hooks/weak_os_posix.velt",
+  },
   // The layout of `sigaction` for the executor in Velt's signals (std/lang/hooks/
   // sched_signal.velt): per OS; elsewhere none.
   "#sched-signal": {
@@ -162,6 +169,9 @@ export const imports: Imports = {
     "std-scheduler": "./task/worker_index_sched.velt",
     default: "./task/worker_index.velt",
   },
+  // The limb loops of `BigInt`'s magnitudes (std/math/nat_add.velt): on the limbs' addresses,
+  // which the C library's `memset` gives; JS hosts have none, and index the arrays.
+  "#nat-rows": { js: "./math/nat_rows_checked.velt", default: "./math/nat_rows_raw.velt" },
   // The C library's file-descriptor functions behind Node's fd API (`openSync`, `readSync`, ...):
   // `declare c("c")` on macOS and Linux, with their per-target `fcntl` commands and `struct
   // stat`; elsewhere each fails with ENOSYS.

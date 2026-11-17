@@ -1,0 +1,279 @@
+// velt/math (internal): the limb loops of the magnitudes (nat_add.velt says what a magnitude is)
+// on JS hosts (#nat-rows), which have no C library to give an array's address: indexed loops,
+// each access bounds-checked. The same API as nat_rows_raw.velt. Each range is `n` limbs from
+// its offset.
+
+import { inline } from "velt/lang/intrinsics";
+
+/** `out += a * b`, row by row (`out` has `a.length + b.length` limbs, zero above `a.length`). */
+export function mulRows(out: u64[], a: u64[], b: u64[]) {
+  const n = a.length;
+  const m = b.length;
+  for (let j: usize = 0; j < m; j++) {
+    out[j + n] = addMulRow(out, j, a, 0, n, b[j]);
+  }
+}
+
+/** `out = a * a` for `out` of `2 a.length` zero limbs, the symmetric products done once. */
+export function squareRows(out: u64[], a: u64[]) {
+  const n = a.length;
+  for (let i: usize = 0; i + 1 < n; i++) {
+    out[i + n] = addMulRow(out, 2 * i + 1, a, i + 1, n - i - 1, a[i]);
+  }
+  let carry: u64 = 0;
+  for (let i: usize = 0; i < 2 * n; i++) {
+    const x = out[i];
+    out[i] = (x << 1) | carry;
+    carry = x >> 63;
+  }
+  carry = 0;
+  for (let i: usize = 0; i < n; i++) {
+    const x = a[i];
+    const lo = x * x;
+    const hi = Math.umulh(x, x);
+    const y0 = out[2 * i];
+    const s0 = y0 + lo;
+    const t0 = s0 + carry;
+    out[2 * i] = t0;
+    const c0 = ((s0 < y0) as u64) + ((t0 < s0) as u64);
+    const y1 = out[2 * i + 1];
+    const s1 = y1 + hi;
+    const t1 = s1 + c0;
+    out[2 * i + 1] = t1;
+    carry = ((s1 < y1) as u64) + ((t1 < s1) as u64);
+  }
+}
+
+// `r[ro..] += a[ao..] * k`; the carry out.
+function addMulRow(r: u64[], ro: usize, a: u64[], ao: usize, n: usize, k: u64): u64 {
+  let c: u64 = 0;
+  for (let i: usize = 0; i < n; i++) {
+    const x = a[ao + i];
+    let hi = Math.umulh(x, k);
+    const s = x * k + c;
+    hi += (s < c) as u64;
+    const t = s + r[ro + i];
+    hi += (t < s) as u64;
+    r[ro + i] = t;
+    c = hi;
+  }
+  return c;
+}
+
+/** `a *= k` over all of `a` in place; returns the limb above it. */
+export function mulWordRow(a: u64[], k: u64): u64 {
+  let carry: u64 = 0;
+  for (let i: usize = 0; i < a.length; i++) {
+    const x = a[i];
+    const lo = x * k;
+    const t = lo + carry;
+    carry = Math.umulh(x, k) + ((t < lo) as u64);
+    a[i] = t;
+  }
+  return carry;
+}
+
+/** `r[ro..] += b[bo..] + c`; returns the carry out. */
+export function addRow(r: u64[], ro: usize, b: u64[], bo: usize, n: usize, c: u64): u64 {
+  let carry = c;
+  for (let i: usize = 0; i < n; i++) {
+    const x = r[ro + i];
+    const s = x + b[bo + i];
+    const t = s + carry;
+    r[ro + i] = t;
+    carry = ((s < x) as u64) + ((t < s) as u64);
+  }
+  return carry;
+}
+
+/** `r[ro..] -= b[bo..] + c`; returns the borrow out. */
+export function subRow(r: u64[], ro: usize, b: u64[], bo: usize, n: usize, c: u64): u64 {
+  let borrow = c;
+  for (let i: usize = 0; i < n; i++) {
+    const x = r[ro + i];
+    const y = b[bo + i];
+    const d = x - y;
+    r[ro + i] = d - borrow;
+    borrow = ((x < y) as u64) | ((d < borrow) as u64);
+  }
+  return borrow;
+}
+
+/** `r[ro..] = b[bo..] - r[ro..] - c`; returns the borrow out. */
+export function subFromRow(r: u64[], ro: usize, b: u64[], bo: usize, n: usize, c: u64): u64 {
+  let borrow = c;
+  for (let i: usize = 0; i < n; i++) {
+    const x = b[bo + i];
+    const y = r[ro + i];
+    const d = x - y;
+    r[ro + i] = d - borrow;
+    borrow = ((x < y) as u64) | ((d < borrow) as u64);
+  }
+  return borrow;
+}
+
+/** `o[oo..] = a[ao..] + b[bo..] + c`; returns the carry out. */
+export function sumRow(
+  o: u64[],
+  oo: usize,
+  a: u64[],
+  ao: usize,
+  b: u64[],
+  bo: usize,
+  n: usize,
+  c: u64,
+): u64 {
+  let carry = c;
+  for (let i: usize = 0; i < n; i++) {
+    const x = a[ao + i];
+    const s = x + b[bo + i];
+    const t = s + carry;
+    o[oo + i] = t;
+    carry = ((s < x) as u64) + ((t < s) as u64);
+  }
+  return carry;
+}
+
+/** `o[oo..] = a[ao..] - b[bo..] - c`; returns the borrow out. */
+export function diffRow(
+  o: u64[],
+  oo: usize,
+  a: u64[],
+  ao: usize,
+  b: u64[],
+  bo: usize,
+  n: usize,
+  c: u64,
+): u64 {
+  let borrow = c;
+  for (let i: usize = 0; i < n; i++) {
+    const x = a[ao + i];
+    const y = b[bo + i];
+    const d = x - y;
+    o[oo + i] = d - borrow;
+    borrow = ((x < y) as u64) | ((d < borrow) as u64);
+  }
+  return borrow;
+}
+
+/** `o[oo..] = a[ao..] + c`; returns the carry out. */
+export function carryRow(o: u64[], oo: usize, a: u64[], ao: usize, n: usize, c: u64): u64 {
+  let carry = c;
+  for (let i: usize = 0; i < n; i++) {
+    const t = a[ao + i] + carry;
+    o[oo + i] = t;
+    carry = (t < carry) as u64;
+  }
+  return carry;
+}
+
+/** `o[oo..] = a[ao..] - c`; returns the borrow out. */
+export function borrowRow(o: u64[], oo: usize, a: u64[], ao: usize, n: usize, c: u64): u64 {
+  let borrow = c;
+  for (let i: usize = 0; i < n; i++) {
+    const x = a[ao + i];
+    o[oo + i] = x - borrow;
+    borrow = (x < borrow) as u64;
+  }
+  return borrow;
+}
+
+/** `o[oo..] = a[ao..] << s` for `s` below 64; returns the bits shifted out of the top. */
+export function shlRow(o: u64[], oo: usize, a: u64[], ao: usize, n: usize, s: u64): u64 {
+  if (s == 0) {
+    copyRow(o, oo, a, ao, n);
+    return 0;
+  }
+  let carry: u64 = 0;
+  for (let i: usize = 0; i < n; i++) {
+    const x = a[ao + i];
+    o[oo + i] = (x << s) | carry;
+    carry = x >> (64 - s);
+  }
+  return carry;
+}
+
+/** `o[oo..] = a[ao..] >> s` for `s` below 64, with `top` shifted in above the range. */
+export function shrRow(o: u64[], oo: usize, a: u64[], ao: usize, n: usize, s: u64, top: u64) {
+  if (s == 0) {
+    copyRow(o, oo, a, ao, n);
+    return;
+  }
+  for (let i: usize = 0; i < n; i++) {
+    const above = i + 1 < n ? a[ao + i + 1] : top;
+    o[oo + i] = (a[ao + i] >> s) | (above << (64 - s));
+  }
+}
+
+/** `a[0..n] >>= s` in place, for `s` below 64 (zeros shifted in). */
+export function shrRowInPlace(a: u64[], n: usize, s: u64) {
+  if (s == 0) {
+    return;
+  }
+  for (let i: usize = 0; i < n; i++) {
+    const above = i + 1 < n ? a[i + 1] : 0;
+    a[i] = (a[i] >> s) | (above << (64 - s));
+  }
+}
+
+/** `o[oo..] = a[ao..]`. */
+export function copyRow(o: u64[], oo: usize, a: u64[], ao: usize, n: usize) {
+  for (let i: usize = 0; i < n; i++) {
+    o[oo + i] = a[ao + i];
+  }
+}
+
+/** `o[oo..] = 0`. */
+export function zeroRow(o: u64[], oo: usize, n: usize) {
+  for (let i: usize = 0; i < n; i++) {
+    o[oo + i] = 0;
+  }
+}
+
+/** `u[uo..] -= u[vo..] * k` for ranges that do not overlap; returns the borrow out. */
+export function subMulWithin(u: u64[], uo: usize, vo: usize, n: usize, k: u64): u64 {
+  let c: u64 = 0;
+  for (let i: usize = 0; i < n; i++) {
+    const x = u[vo + i];
+    let hi = Math.umulh(x, k);
+    const s = x * k + c;
+    hi += (s < c) as u64;
+    const y = u[uo + i];
+    u[uo + i] = y - s;
+    hi += (y < s) as u64;
+    c = hi;
+  }
+  return c;
+}
+
+/** `u[uo..] += u[vo..]` for ranges that do not overlap; returns the carry out. */
+export function addWithin(u: u64[], uo: usize, vo: usize, n: usize): u64 {
+  let carry: u64 = 0;
+  for (let i: usize = 0; i < n; i++) {
+    const x = u[uo + i];
+    const s = x + u[vo + i];
+    const t = s + carry;
+    u[uo + i] = t;
+    carry = ((s < x) as u64) + ((t < s) as u64);
+  }
+  return carry;
+}
+
+/** Limb `i` of `a` (bounds-checked; nat_rows_raw.velt's relies on `limbsInside`). */
+@inline
+export function limbOf(a: u64[], i: usize): u64 {
+  return a[i];
+}
+
+/** Writes limb `i` of `a` (bounds-checked). */
+@inline
+export function limbSet(a: u64[], i: usize, v: u64) {
+  a[i] = v;
+}
+
+/** Stops the program unless limbs `[at, at + n)` are inside `a` (an internal error). */
+export function limbsInside(a: u64[], at: usize, n: usize) {
+  if (at + n > a.length) {
+    panic("ICE: a limb loop's range is outside its magnitude");
+  }
+}

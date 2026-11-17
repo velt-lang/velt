@@ -59,11 +59,14 @@ hooks! {
 
     // number.velt: numbers as text, and the conversions of a float index.
     /// `n.toString(radix)` of a float (`velt_sema` `builtins.rs`).
-    f64_to_string => lang_hooks_number, "f64ToString", sig((f64, f64) -> string);
+    f64_to_string => lang_hooks_number, "f64ToString", sig((f64, f64) -> string),
+        replaces("velt_rt_f64_to_radix");
     /// `n.toString(radix)` of a signed integer.
-    i64_to_string => lang_hooks_number, "i64ToString", sig((i64, f64) -> string);
+    i64_to_string => lang_hooks_number, "i64ToString", sig((i64, f64) -> string),
+        replaces("velt_rt_i64_to_radix");
     /// `n.toString(radix)` of an unsigned integer.
-    u64_to_string => lang_hooks_number, "u64ToString", sig((u64, f64) -> string);
+    u64_to_string => lang_hooks_number, "u64ToString", sig((u64, f64) -> string),
+        replaces("velt_rt_u64_to_radix");
     /// `Math.imul`-like `(a * b) | 0` of two int32 values (`velt_sema` `int32.rs`, `velt_opt`
     /// numrep).
     mul_to_int32 => lang_hooks_number, "mulToInt32", sig((f64, f64) -> i32), lowered;
@@ -71,6 +74,21 @@ hooks! {
     float_index => lang_hooks_number, "floatIndex", sig((f64) -> usize), lowered;
     /// A float position argument (`xs.at(i)`, `s.slice(i)`).
     float_position => lang_hooks_number, "floatPosition", sig((f64) -> usize);
+    // number_digits.velt: numbers rounded to a number of digits, which std calls by role.
+    /// `x.toExponential(digits)` (`digits` below 0: omitted; the prelude's method).
+    number_to_exponential => lang_hooks_number_digits, "toExponentialText", sig((f64, i64) -> string),
+        replaces("velt_rt_f64_to_exponential"), prebuilt;
+    /// `x.toPrecision(precision)` (the prelude's method).
+    number_to_precision => lang_hooks_number_digits, "toPrecisionText", sig((f64, i64) -> string),
+        replaces("velt_rt_f64_to_precision"), prebuilt;
+    /// `x.toFixed(digits)` from the exact digits: what std's `toFixed` (velt/lang/number/fixed)
+    /// can't do in 64 bits, and `toFixed` through `any`.
+    number_to_fixed => lang_hooks_number_digits, "toFixedText", sig((f64, i64) -> string),
+        replaces("velt_rt_f64_to_fixed"), prebuilt;
+    /// A decimal literal of `Number(s)` or `parseFloat(s)` (velt/lang/number/parse) that 64 bits
+    /// don't settle, from its bytes `start` to `end`.
+    number_parse_long => lang_hooks_number_parse, "longDecimalValue", sig((&string, usize, usize) -> f64),
+        replaces("velt_rt_parse_float"), prebuilt;
     /// `s.localeCompare(t)` (only std calls it: the method, and `anyStr_localeCompare` for a
     /// string held as `any`).
     locale_order => lang_string_collate, "localeOrder", sig((&string, &string) -> i64),
@@ -208,6 +226,49 @@ hooks! {
     /// exception when a `catchUnwind` is active on the thread, and calls `velt_rt_panic`
     /// otherwise.
     panic_raise => lang_hooks_unwind, "panicRaise", sig((&string) -> never), lowered, constructs(CatchUnwind);
+    // weak.velt: weak references without a collector (#3145, #2196): the core under `WeakMap`,
+    // `WeakSet` and `WeakRef`, and the cold path of a weak-capable type's release
+    // (docs/internals/design/weak-refs.md, rt_abi.md "Weak references").
+    /// The cold release path of a weakly held object: `(obj)`, true when that was the last
+    /// reference (the caller drops and frees it).
+    weak_release => lang_hooks_weak, "weakRelease", sig((usize) -> bool), lowered, constructs(Weak),
+        replaces("velt_rt_weak_release");
+    /// A new weak map: `(key trace, value retain, value release, value trace)`, its handle.
+    weak_map_new => lang_hooks_weak, "weakMapNew", sig((usize, usize, usize, usize) -> u32),
+        lowered, constructs(Weak), replaces("velt_rt_weakmap_new");
+    /// `map.set(key, value)`: `(map, key, value word)`, the value's reference taken over.
+    weak_map_set => lang_hooks_weak, "weakMapSet", sig((u32, usize, u64) -> void), lowered, constructs(Weak),
+        replaces("velt_rt_weakmap_set");
+    /// `weak_map_set` with the key's own trace glue (a `WeakMap<object, V>`).
+    weak_map_set_traced => lang_hooks_weak, "weakMapSetTraced", sig((u32, usize, u64, usize) -> void),
+        lowered, constructs(Weak), replaces("velt_rt_weakmap_set_traced");
+    /// `map.get(key)`: the value word, retained, or 0.
+    weak_map_get => lang_hooks_weak, "weakMapGet", sig((u32, usize) -> u64), lowered, constructs(Weak),
+        replaces("velt_rt_weakmap_get");
+    /// `map.has(key)`.
+    weak_map_has => lang_hooks_weak, "weakMapHas", sig((u32, usize) -> bool), lowered, constructs(Weak),
+        replaces("velt_rt_weakmap_has");
+    /// `map.delete(key)`.
+    weak_map_delete => lang_hooks_weak, "weakMapDelete", sig((u32, usize) -> bool), lowered, constructs(Weak),
+        replaces("velt_rt_weakmap_delete");
+    /// A weak map's drop (std's `WeakMap` and `WeakSet` call it).
+    weak_map_drop => lang_hooks_weak, "weakMapDrop", sig((u32) -> void),
+        replaces("velt_rt_weakmap_drop");
+    /// `new WeakRef(obj)`: its handle.
+    weak_ref_new => lang_hooks_weak, "weakRefNew", sig((usize) -> u32), lowered, constructs(Weak),
+        replaces("velt_rt_weakref_new");
+    /// `new WeakRef(obj)` keeping a word for the compiler (an `object` target's descriptor).
+    weak_ref_new_with => lang_hooks_weak, "weakRefNewWith", sig((usize, u64) -> u32), lowered, constructs(Weak),
+        replaces("velt_rt_weakref_new_with");
+    /// The word `weak_ref_new_with` kept.
+    weak_ref_word => lang_hooks_weak, "weakRefWord", sig((u32) -> u64), lowered, constructs(Weak),
+        replaces("velt_rt_weakref_word");
+    /// `ref.deref()`: the target's word, retained, or 0.
+    weak_ref_deref => lang_hooks_weak, "weakRefDeref", sig((u32) -> usize), lowered, constructs(Weak),
+        replaces("velt_rt_weakref_deref");
+    /// A `WeakRef`'s drop (std's `WeakRef` calls it).
+    weak_ref_drop => lang_hooks_weak, "weakRefDrop", sig((u32) -> void),
+        replaces("velt_rt_weakref_drop");
     // heap.velt: a release build's allocator, mimalloc through `declare c` (#2196). velt_opt's
     // last step (`heap_calls`) turns the runtime allocator calls lowering emits into these.
     /// `velt_rt_alloc`'s job: `(size, align)`, the block's address.

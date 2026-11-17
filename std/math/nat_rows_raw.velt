@@ -1,0 +1,203 @@
+// velt/math (internal): the limb loops of the magnitudes (nat_add.velt says what a magnitude is)
+// on targets with a C library (#nat-rows): each checks its ranges once, then runs on the limbs'
+// addresses (nat_mem.velt), so that no limb access in the loop carries a bounds check. The same
+// API as nat_rows_checked.velt, the JS hosts' loops. Each range is `n` limbs from its offset.
+
+import { inline } from "velt/lang/intrinsics";
+import {
+  addMulRowAt,
+  addSquaresAt,
+  borrowAt,
+  carryAt,
+  copyLimbsAt,
+  diffAt,
+  doubleAt,
+  ldl,
+  limbsAt,
+  limbsCheck,
+  limbsIn,
+  mulWordAt,
+  shlAt,
+  shrAt,
+  stl,
+  subMulRowAt,
+  sumAt,
+  zeroLimbsAt,
+} from "velt/math/nat_mem";
+
+/** `out += a * b`, row by row (`out` has `a.length + b.length` limbs, zero above `a.length`). */
+export function mulRows(out: u64[], a: u64[], b: u64[]) {
+  const n = a.length;
+  const m = b.length;
+  limbsCheck(out, 0, n + m);
+  const o = limbsAt(out);
+  const ap = limbsIn(a);
+  const bp = limbsIn(b);
+  for (let j: usize = 0; j < m; j++) {
+    stl(o, j + n, addMulRowAt(o + 8 * j, ap, n, ldl(bp, j)));
+  }
+}
+
+/** `out = a * a` for `out` of `2 a.length` zero limbs, the symmetric products done once. */
+export function squareRows(out: u64[], a: u64[]) {
+  const n = a.length;
+  limbsCheck(out, 0, 2 * n);
+  const o = limbsAt(out);
+  const ap = limbsIn(a);
+  // The products above the diagonal, then doubled: row `i` is `a[i + 1..n] * a[i]` at limb
+  // `2 i + 1`, its carry the limb `i + n` (each below `2 n`).
+  for (let i: usize = 0; i + 1 < n; i++) {
+    stl(o, i + n, addMulRowAt(o + 8 * (2 * i + 1), ap + 8 * (i + 1), n - i - 1, ldl(ap, i)));
+  }
+  doubleAt(o, 2 * n);
+  addSquaresAt(o, ap, n);
+}
+
+/** `a *= k` over all of `a` in place; returns the limb above it. */
+export function mulWordRow(a: u64[], k: u64): u64 {
+  const ap = limbsAt(a);
+  return mulWordAt(ap, ap, a.length, k);
+}
+
+/** `r[ro..] += b[bo..] + c`; returns the carry out. */
+export function addRow(r: u64[], ro: usize, b: u64[], bo: usize, n: usize, c: u64): u64 {
+  limbsCheck(r, ro, n);
+  limbsCheck(b, bo, n);
+  const rp = limbsAt(r) + 8 * ro;
+  return sumAt(rp, rp, limbsIn(b) + 8 * bo, n, c);
+}
+
+/** `r[ro..] -= b[bo..] + c`; returns the borrow out. */
+export function subRow(r: u64[], ro: usize, b: u64[], bo: usize, n: usize, c: u64): u64 {
+  limbsCheck(r, ro, n);
+  limbsCheck(b, bo, n);
+  const rp = limbsAt(r) + 8 * ro;
+  return diffAt(rp, rp, limbsIn(b) + 8 * bo, n, c);
+}
+
+/** `r[ro..] = b[bo..] - r[ro..] - c`; returns the borrow out. */
+export function subFromRow(r: u64[], ro: usize, b: u64[], bo: usize, n: usize, c: u64): u64 {
+  limbsCheck(r, ro, n);
+  limbsCheck(b, bo, n);
+  const rp = limbsAt(r) + 8 * ro;
+  return diffAt(rp, limbsIn(b) + 8 * bo, rp, n, c);
+}
+
+/** `o[oo..] = a[ao..] + b[bo..] + c`; returns the carry out. */
+export function sumRow(
+  o: u64[],
+  oo: usize,
+  a: u64[],
+  ao: usize,
+  b: u64[],
+  bo: usize,
+  n: usize,
+  c: u64,
+): u64 {
+  limbsCheck(o, oo, n);
+  limbsCheck(a, ao, n);
+  limbsCheck(b, bo, n);
+  return sumAt(limbsAt(o) + 8 * oo, limbsIn(a) + 8 * ao, limbsIn(b) + 8 * bo, n, c);
+}
+
+/** `o[oo..] = a[ao..] - b[bo..] - c`; returns the borrow out. */
+export function diffRow(
+  o: u64[],
+  oo: usize,
+  a: u64[],
+  ao: usize,
+  b: u64[],
+  bo: usize,
+  n: usize,
+  c: u64,
+): u64 {
+  limbsCheck(o, oo, n);
+  limbsCheck(a, ao, n);
+  limbsCheck(b, bo, n);
+  return diffAt(limbsAt(o) + 8 * oo, limbsIn(a) + 8 * ao, limbsIn(b) + 8 * bo, n, c);
+}
+
+/** `o[oo..] = a[ao..] + c`; returns the carry out. */
+export function carryRow(o: u64[], oo: usize, a: u64[], ao: usize, n: usize, c: u64): u64 {
+  limbsCheck(o, oo, n);
+  limbsCheck(a, ao, n);
+  return carryAt(limbsAt(o) + 8 * oo, limbsIn(a) + 8 * ao, n, c);
+}
+
+/** `o[oo..] = a[ao..] - c`; returns the borrow out. */
+export function borrowRow(o: u64[], oo: usize, a: u64[], ao: usize, n: usize, c: u64): u64 {
+  limbsCheck(o, oo, n);
+  limbsCheck(a, ao, n);
+  return borrowAt(limbsAt(o) + 8 * oo, limbsIn(a) + 8 * ao, n, c);
+}
+
+/** `o[oo..] = a[ao..] << s` for `s` below 64; returns the bits shifted out of the top. */
+export function shlRow(o: u64[], oo: usize, a: u64[], ao: usize, n: usize, s: u64): u64 {
+  limbsCheck(o, oo, n);
+  limbsCheck(a, ao, n);
+  return shlAt(limbsAt(o) + 8 * oo, limbsIn(a) + 8 * ao, n, s);
+}
+
+/** `o[oo..] = a[ao..] >> s` for `s` below 64, with `top` shifted in above the range. */
+export function shrRow(o: u64[], oo: usize, a: u64[], ao: usize, n: usize, s: u64, top: u64) {
+  limbsCheck(o, oo, n);
+  limbsCheck(a, ao, n);
+  shrAt(limbsAt(o) + 8 * oo, limbsIn(a) + 8 * ao, n, s, top);
+}
+
+/** `a[0..n] >>= s` in place, for `s` below 64 (zeros shifted in). */
+export function shrRowInPlace(a: u64[], n: usize, s: u64) {
+  limbsCheck(a, 0, n);
+  const ap = limbsAt(a);
+  shrAt(ap, ap, n, s, 0);
+}
+
+/** `o[oo..] = a[ao..]`. */
+export function copyRow(o: u64[], oo: usize, a: u64[], ao: usize, n: usize) {
+  limbsCheck(o, oo, n);
+  limbsCheck(a, ao, n);
+  copyLimbsAt(limbsAt(o) + 8 * oo, limbsIn(a) + 8 * ao, n);
+}
+
+/** `o[oo..] = 0`. */
+export function zeroRow(o: u64[], oo: usize, n: usize) {
+  limbsCheck(o, oo, n);
+  zeroLimbsAt(limbsAt(o) + 8 * oo, n);
+}
+
+/** `u[uo..] -= u[vo..] * k` for ranges that do not overlap; returns the borrow out. */
+export function subMulWithin(u: u64[], uo: usize, vo: usize, n: usize, k: u64): u64 {
+  limbsCheck(u, uo, n);
+  limbsCheck(u, vo, n);
+  const up = limbsAt(u);
+  return subMulRowAt(up + 8 * uo, up + 8 * vo, n, k);
+}
+
+/** `u[uo..] += u[vo..]` for ranges that do not overlap; returns the carry out. */
+export function addWithin(u: u64[], uo: usize, vo: usize, n: usize): u64 {
+  limbsCheck(u, uo, n);
+  limbsCheck(u, vo, n);
+  const up = limbsAt(u);
+  return sumAt(up + 8 * uo, up + 8 * uo, up + 8 * vo, n, 0);
+}
+
+/**
+ * Limb `i` of `a`, unchecked here: the caller checked the range it reads first (`limbsInside`).
+ * nat_rows_checked.velt's checks it.
+ */
+@inline
+export function limbOf(a: u64[], i: usize): u64 {
+  return ldl(limbsIn(a), i);
+}
+
+/** Writes limb `i` of `a`, unchecked here as `limbOf`'s read. */
+@inline
+export function limbSet(a: u64[], i: usize, v: u64) {
+  stl(limbsAt(a), i, v);
+}
+
+/** Stops the program unless limbs `[at, at + n)` are inside `a` (an internal error). */
+@inline
+export function limbsInside(a: u64[], at: usize, n: usize) {
+  limbsCheck(a, at, n);
+}

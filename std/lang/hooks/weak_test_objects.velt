@@ -1,0 +1,200 @@
+// velt/lang/hooks (internal): for tests only, hand-built counted objects for the weak core's tests
+// (weak*.test.velt), as velt_rt's weak tests built them before the core moved to std (#3145).
+// An object stands for any counted type (a raw object, a proxy cell holding its target, a
+// handler): a count word and three strong reference fields (0: none). `release` is the release
+// sequence lowering emits for a weak-capable type (lower/rc.rs), and `traceObj`, `retainValue`
+// and `releaseValue` are the glue it makes for one (rt_abi.md "Weak references"). Glue written in
+// Velt takes 64-bit words where the compiler's takes pointers, which is the same call on a 64-bit
+// target only: these tests run natively.
+
+import { addressCall3, fnAddress, rawAlloc, rawFree } from "velt/lang/intrinsics";
+import {
+  weakMapDrop,
+  weakMapGet,
+  weakMapHas,
+  weakMapNew,
+  weakMapSet,
+  weakRelease,
+  weakTracked,
+} from "./weak";
+import { RC_COUNT, RC_WEAK, ld, ld64, st, st64 } from "./weak_mem";
+
+const SIZE: usize = 32;
+
+/** Test objects made and not yet freed, on every thread. */
+const LIVE = new Atomic<i64>(0);
+
+export function live(): i64 {
+  return LIVE.load();
+}
+
+/** A new object (count 1) holding `a`, `b` and `c` (references it takes over; 0: none). */
+export function newObj(a: usize, b: usize, c: usize): usize {
+  const block = rawAlloc(SIZE);
+  st64(block, 1);
+  st(block + 8, a);
+  st(block + 16, b);
+  st(block + 24, c);
+  LIVE.add(1);
+  return block + 8;
+}
+
+/** An object holding nothing. */
+export function plain(): usize {
+  return newObj(0, 0, 0);
+}
+
+/** Field `i` of `o`. */
+export function field(o: usize, i: usize): usize {
+  return ld(o + i * 8);
+}
+
+/** Stores `v` (a reference given up; 0: none) in field `i` of `o`, releasing the old one. */
+export function setField(o: usize, i: usize, v: usize): void {
+  const old = field(o, i);
+  st(o + i * 8, v);
+  if (old !== 0) {
+    release(old);
+  }
+}
+
+/** `count += 1`; `o`. */
+export function retain(o: usize): usize {
+  st64(o - 8, ld64(o - 8) + 1);
+  return o;
+}
+
+/** The count proper. */
+export function count(o: usize): u64 {
+  return ld64(o - 8) & RC_COUNT;
+}
+
+export function isMarked(o: usize): bool {
+  return (ld64(o - 8) & RC_WEAK) !== 0;
+}
+
+/** The release sequence of a weak-capable type. */
+export function release(o: usize): void {
+  const c = ld64(o - 8);
+  if ((c as i64) > 1) {
+    st64(o - 8, c - 1);
+  } else if (c === 1 || weakRelease(o)) {
+    destroy(o);
+  }
+}
+
+function destroy(o: usize): void {
+  const fields = [field(o, 0), field(o, 1), field(o, 2)];
+  // SAFETY: a block `newObj` made, freed once, at its last reference.
+  unsafe {
+    rawFree(o - 8, SIZE);
+  }
+  LIVE.sub(1);
+  for (const f of fields) {
+    if (f !== 0) {
+      release(f);
+    }
+  }
+}
+
+/** An object's trace glue. */
+export function traceObj(obj: usize, visit: usize, ctx: usize): void {
+  for (let i: usize = 0; i < 3; i++) {
+    const f = field(obj, i);
+    if (f !== 0) {
+      // SAFETY: `visit` is the core's callback, taking its context, a child and its glue (as
+      // 64-bit words, which pointers are on the targets these tests run on).
+      unsafe {
+        addressCall3(visit, ctx, f, fnAddress(traceObj));
+      }
+    }
+  }
+}
+
+/** A map value's retain glue. */
+export function retainValue(v: u64): void {
+  retain(v as usize);
+}
+
+/** A map value's release glue. */
+export function releaseValue(v: u64): void {
+  release(v as usize);
+}
+
+/** A map from objects to objects (the `raw -> proxy` cache). */
+export function objMap(): u32 {
+  return weakMapNew(
+    fnAddress(traceObj),
+    fnAddress(retainValue),
+    fnAddress(releaseValue),
+    fnAddress(traceObj),
+  );
+}
+
+/** A map of object values without trace glue (values never refer back to keys). */
+export function untracedMap(): u32 {
+  return weakMapNew(fnAddress(traceObj), fnAddress(retainValue), fnAddress(releaseValue), 0);
+}
+
+/** `map.set(key, value)`, giving up `value` (an object, or 0). */
+export function set(m: u32, k: usize, v: usize): void {
+  weakMapSet(m, k, v as u64);
+}
+
+/** Whether `k` has an entry. */
+export function has(m: u32, k: usize): bool {
+  return weakMapHas(m, k);
+}
+
+/** `map.get(key)`: a new reference to the value (0: none, or a null value). */
+export function get(m: u32, k: usize): usize {
+  return weakMapGet(m, k) as usize;
+}
+
+/**
+ * `signal(raw)` as sigx writes it: the cached proxy, or a new proxy cell holding `raw`
+ * (retained) and `handler` (taken over), cached. A new reference to the proxy.
+ */
+export function proxyOf(cache: u32, raw: usize, handler: usize): usize {
+  if (has(cache, raw)) {
+    if (handler !== 0) {
+      release(handler);
+    }
+    return get(cache, raw);
+  }
+  const p = newObj(retain(raw), handler, 0);
+  set(cache, raw, retain(p));
+  return p;
+}
+
+/** Drops the maps; whether nothing of the weak state is left behind. */
+export function finish(maps: u32[]): bool {
+  for (const m of maps) {
+    weakMapDrop(m);
+  }
+  return weakTracked() === 0;
+}
+
+/** Every order of `0..n`. */
+export function orders(n: usize): usize[][] {
+  if (n === 0) {
+    return [[]];
+  }
+  const out: usize[][] = [];
+  for (const rest of orders(n - 1)) {
+    for (let i = 0; i <= rest.length; i++) {
+      const o: usize[] = [];
+      for (let j = 0; j < rest.length; j++) {
+        if (j === i) {
+          o.push(n - 1);
+        }
+        o.push(rest[j]);
+      }
+      if (i === rest.length) {
+        o.push(n - 1);
+      }
+      out.push(o);
+    }
+  }
+  return out;
+}

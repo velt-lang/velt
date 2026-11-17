@@ -12,7 +12,6 @@
 #[cfg(velt_rt_host)]
 pub mod abi_symbols;
 pub mod array;
-pub mod bigint;
 pub mod build_profile;
 pub mod bytes;
 pub mod bytes_ops;
@@ -72,7 +71,6 @@ pub mod tls;
 pub mod top_level_await;
 pub mod transfer_map;
 pub mod view;
-pub mod weak;
 
 pub use crate::str::VeltStr;
 

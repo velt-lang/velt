@@ -85,7 +85,7 @@ impl FnLower<'_, '_> {
     }
 
     /// `op` (a pointer or an integer) as a `usize` argument.
-    fn as_usize(&mut self, op: Operand) -> Operand {
+    pub(super) fn as_usize(&mut self, op: Operand) -> Operand {
         self.rvalue_temp(Ty::U64, Rvalue::Cast(op, Ty::U64))
     }
 

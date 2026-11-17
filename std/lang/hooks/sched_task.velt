@@ -205,12 +205,16 @@ export const E_PCOUNT: usize = 736;
 /**
  * What a lazy worker 0's poll queued on the words above (`schedule`, `pend`), so its look reads
  * one word: `PANY_FIRST` alone, only its first wake (`E_PWAKE`); `PANY_MORE`, tasks on the
- * stacks or `E_PLIST`; `PANY_WOKE`, among them a task it woke past its first.
+ * stacks or `E_PLIST`; `PANY_WOKE`, among them a task it woke past its first; `PANY_PRINTED`,
+ * the poll wrote to standard output (process.velt `stdoutWritten`), which the look publishes
+ * before the next poll, so a task the monitor moves after it prints after it too (#2977).
  */
 export const E_PANY: usize = 744;
 export const PANY_FIRST: usize = 1;
 export const PANY_WOKE: usize = 2;
 export const PANY_MORE: usize = 4;
+/** process.velt `PRINTED`, which writes to stdout set (process.velt imports no executor module). */
+export const PANY_PRINTED: usize = 8;
 /**
  * The worker thread's CPU-time clock (`#reactor` `threadClock`): the monitor tells a poll that
  * computes from a worker the OS took off its core (sched_monitor.velt `computing`); the
