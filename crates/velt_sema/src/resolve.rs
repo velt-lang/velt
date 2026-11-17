@@ -454,19 +454,7 @@ impl Ctx<'_> {
         match item {
             Item::Def(d) if self.is_ptr_decl(d) => self.ptr_type_written(&args, t),
             Item::Def(d) => self.def_type(d, name, args, t),
-            Item::Alias(a) => {
-                let body = self.aliases[a as usize].decl.ty.span;
-                self.fn_sites.alias_written.insert(t.span, body);
-                // Checked once, at the outermost use, which is the code that chose the type
-                // arguments: an alias in another alias's body is expanded with them, and its
-                // own span is in the alias's file.
-                let outermost = self.type_level.alias_site.is_none();
-                let ty = self.expand_alias(a, args, t);
-                if outermost {
-                    self.alias_pointees(ty, t);
-                }
-                ty
-            }
+            Item::Alias(a) => self.alias_written(a, args, t),
         }
     }
 

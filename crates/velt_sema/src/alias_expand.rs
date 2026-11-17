@@ -27,6 +27,21 @@ impl Ctx<'_> {
         Some(out)
     }
 
+    /// Alias `a` written at `t` with the resolved type arguments `args`.
+    pub(crate) fn alias_written(&mut self, a: u32, args: Vec<TyId>, t: &ast::TypeExpr) -> TyId {
+        let body = self.aliases[a as usize].decl.ty.span;
+        self.fn_sites.alias_written.insert(t.span, body);
+        // Its C pointers' pointees are checked once, at the outermost use, which is the code
+        // that chose the type arguments: an alias in another alias's body is expanded with
+        // them, and its own span is in the alias's file (#3094).
+        let outermost = self.type_level.alias_site.is_none();
+        let ty = self.expand_alias(a, args, t);
+        if outermost {
+            self.alias_pointees(ty, t);
+        }
+        ty
+    }
+
     pub(crate) fn expand_alias(&mut self, a: u32, mut args: Vec<TyId>, t: &ast::TypeExpr) -> TyId {
         let info = &self.aliases[a as usize];
         let (module, decl) = (info.module, info.decl);
