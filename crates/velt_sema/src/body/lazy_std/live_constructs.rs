@@ -460,7 +460,7 @@ fn may_print_int(cx: &mut Ctx, t: TyId) -> bool {
         | TyKind::Result(..)
         | TyKind::Promise(..)
         | TyKind::Shared(_) => {
-            (crate::types::children(&kind).into_iter()).any(|c| may_print_int(cx, c))
+            (crate::types::contents(&kind).into_iter()).any(|c| may_print_int(cx, c))
         }
         _ => true,
     };

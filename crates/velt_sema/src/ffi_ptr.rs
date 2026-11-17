@@ -35,6 +35,37 @@ impl Ctx<'_> {
         self.ty.intern(TyKind::Ptr(*pointee))
     }
 
+    /// `ty`, an alias expanded where `t` is written, or the error type if a `Ptr<T>` in its body
+    /// now points at what C has no values of: `type P<T> = Ptr<T>` written `P<string>`. The
+    /// alias's body was checked with `T` unknown (`ptr_type_written`); a pointee that still
+    /// mentions a type parameter is checked where that one is instantiated (`json`).
+    pub(crate) fn alias_pointees(&mut self, ty: TyId, t: &ast::TypeExpr) -> TyId {
+        let mut todo = vec![(ty, 0u32)];
+        let mut seen: rustc_hash::FxHashSet<TyId> = rustc_hash::FxHashSet::default();
+        while let Some((u, depth)) = todo.pop() {
+            if depth > crate::types::MAX_ARG_DEPTH || !seen.insert(u) {
+                continue;
+            }
+            let kind = self.ty.kind(u).clone();
+            if let TyKind::Ptr(p) = kind {
+                if !mentions_param(&self.ty, p) && !self.c_pointee_written(p) {
+                    let shown = self.display(p);
+                    self.error(
+                        Diagnostic::error(format!("a C pointer can't point at `{shown}`"), t.span)
+                            .with_note("an alias's `Ptr<T>` is instantiated here: `Ptr<T>` points at a number, `bool`, `void`, a `declare c type`, a `declare c struct` or another pointer"),
+                    );
+                    return self.ty.error;
+                }
+            }
+            todo.extend(
+                crate::types::children(&kind)
+                    .into_iter()
+                    .map(|c| (c, depth + 1)),
+            );
+        }
+        ty
+    }
+
     /// Can C point at a `t`, as far as is known where a `Ptr<t>` is written? A type parameter,
     /// an error and a definition not collected yet pass; a type C has no values of doesn't.
     fn c_pointee_written(&self, t: TyId) -> bool {
@@ -70,11 +101,9 @@ impl Ctx<'_> {
     }
 
     /// Is `t` a C pointer, or an array, a tuple, an option or a union with one as an element, at
-    /// any depth (#3094)? Text of one would show the pointer (JS writes `${[p]}` and
-    /// `[p].join()` element by element), and one converted from `any` would read the pointer
-    /// out of a dynamic value (an array view reads each element through `any`). A class or a map
-    /// holding one is no such type: its text is `[object Object]`, `[object Map]` or its own
-    /// `toString()`, and from `any` it is the object the `any` holds.
+    /// any depth (#3094)? Text of one would show the pointer: JS writes `${[p]}` and
+    /// `[p].join()` element by element. A class, a map or a record holding one is no such
+    /// type: its text is `[object Object]`, `[object Map]` or its own `toString()`.
     pub(crate) fn ptr_or_element(&mut self, t: TyId) -> bool {
         self.ptr_or_element_at(t, 0)
     }
@@ -94,6 +123,33 @@ impl Ctx<'_> {
         parts
             .into_iter()
             .any(|p| self.ptr_or_element_at(p, depth + 1))
+    }
+
+    /// Would a view of an `any` as a `t` read a C pointer out of it (#3094): is `t` a pointer, or
+    /// an array, tuple, option, union or `Record` with one as an element or value, at any depth?
+    /// Each of these from `any` is a view reading its elements through `any` (array_view_cast,
+    /// record_view). Classes, maps, sets and object types from `any` are checked at run time
+    /// for the exact type the `any` holds, which a pointer is never part of.
+    pub(crate) fn ptr_in_view(&mut self, t: TyId) -> bool {
+        self.ptr_in_view_at(t, 0)
+    }
+
+    fn ptr_in_view_at(&mut self, t: TyId, depth: u32) -> bool {
+        if self.is_ptr_value(t) {
+            return true;
+        }
+        if depth > crate::types::MAX_ARG_DEPTH {
+            return false;
+        }
+        let parts = match self.ty.kind(t).clone() {
+            TyKind::Array(e) | TyKind::Option(e, _) => vec![e],
+            TyKind::Tuple(es) => es,
+            _ => match self.record_type_args(t) {
+                Some((_, v)) => vec![v],
+                None => self.union_members(t).unwrap_or_default(),
+            },
+        };
+        parts.into_iter().any(|p| self.ptr_in_view_at(p, depth + 1))
     }
 
     /// Is `t` a C pointer, or a union with one among its members: a value whose dynamic form
@@ -118,15 +174,21 @@ impl Ctx<'_> {
 
     /// Reports an instance of a generic `Ptr<T>` whose `T` is no type C has values of (a
     /// `string`, a class): the check `ptr_type_written` leaves to the instantiation (#3094).
-    pub(crate) fn check_instance_pointee(&mut self, pointee: TyId, span: velt_common::Span) {
+    /// True if it reported.
+    pub(crate) fn check_instance_pointee(
+        &mut self,
+        pointee: TyId,
+        span: velt_common::Span,
+    ) -> bool {
         if crate::collect::c_sig::c_pointee(self, pointee) {
-            return;
+            return false;
         }
         let shown = self.display(pointee);
         self.error(
             Diagnostic::error(format!("a C pointer can't point at `{shown}`"), span)
                 .with_note("a type parameter used as `Ptr<T>`'s pointee is instantiated here: `Ptr<T>` points at a number, `bool`, `void`, a `declare c type`, a `declare c struct` or another pointer"),
         );
+        true
     }
 }
 
@@ -185,7 +247,7 @@ impl FnCx<'_, '_> {
     /// Reports an `any` or `unknown` converted to a C pointer (`a as Ptr<T>`), also as an
     /// element (`a as Ptr<T>[]`): no dynamic value holds one (#3094). True if `to` is one.
     pub(crate) fn reject_ptr_from_dynamic(&mut self, h: &hir::Expr, to: TyId) -> bool {
-        if !self.cx.ptr_or_element(to) {
+        if !self.cx.ptr_in_view(to) {
             return false;
         }
         let (shown, target) = (self.cx.display(h.ty), self.cx.display(to));

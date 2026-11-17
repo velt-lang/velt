@@ -1,7 +1,8 @@
 // What a C pointer (`Ptr<T>`, #3094) can't be: text (also as an array's element), a `typeof`, an
-// operand of arithmetic or an ordering, a dynamic value or one read from `any`, or JSON, directly
-// or through a type parameter; a pointer to another C type, or to a type C has no values of (also
-// as a type parameter's instance); `Out<T>` of a value C must not write (a non-null pointer, a
+// operand of arithmetic or an ordering, a dynamic value or one read from `any` (also as an
+// array's element or a record's value), or JSON, directly or through a type parameter; a pointer
+// to another C type, or to a type C has no values of (also as a type parameter's instance, in a
+// signature or through an alias); `Out<T>` of a value C must not write (a non-null pointer, a
 // class reference).
 import { Out, Ptr } from "velt/ffi";
 
@@ -35,6 +36,22 @@ function wrapped<T>(x: T): string {
   return `${[x]}`;
 }
 
+function str<T>(x: T): string {
+  return String(x);
+}
+
+function plus<T>(x: T): string {
+  return "x" + x;
+}
+
+function asRec<T>(a: any): Record<string, T> {
+  return a as Record<string, T>;
+}
+
+type P<T> = Ptr<T>;
+
+function unused<T>(p: Ptr<T> | null): void {}
+
 function mk<T>(a: usize): Ptr<T> {
   // SAFETY: never read through.
   return unsafe { Ptr.at<T>(a) };
@@ -59,5 +76,11 @@ export function show(): void {
   console.log(a as Ptr<FILE>[], a as [Ptr<FILE> | null], fromAny<Ptr<FILE>[]>(a));
   console.log(`${[p]}`, String([p]), [p, p].join(","), [p].toString(), "x" + [p]);
   console.log(joined([p]), wrapped(p));
+  console.log(text([p]), str([p]), plus([p]));
+  console.log(a as Record<string, Ptr<FILE>>, a as Record<string, Ptr<FILE> | null>);
+  console.log(asRec<Ptr<FILE> | null>(a));
   console.log(mk<string>(16), mk<Holder>(16));
+  const x: P<string> | null = null;
+  unused<string>(null);
+  console.log(x);
 }

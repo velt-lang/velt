@@ -1,60 +1,76 @@
-_clib/src/lib.velt:56:24: error: cannot convert to or from JSON: `Ptr<FILE>` has no JSON form
+_clib/src/lib.velt:73:24: error: cannot convert to or from JSON: `Ptr<FILE>` has no JSON form
   = note: JSON supports numbers, boolean, string, literal types, enums, arrays, tuples, `T | null`, `Map<string, T>`, structs, classes and object literals of those, and `JsonValue`
-_clib/src/lib.velt:15:36: error: parameter `p` of C function `setNull` has type `Out<Ptr<FILE>>`, which cannot cross to C
+_clib/src/lib.velt:16:36: error: parameter `p` of C function `setNull` has type `Out<Ptr<FILE>>`, which cannot cross to C
   = note: C may write `NULL` into an `Out` of a pointer: declare it `Out<Ptr<T> | null>`
-_clib/src/lib.velt:16:38: error: parameter `p` of C function `setObject` has type `Out<Holder>`, which cannot cross to C
+_clib/src/lib.velt:17:38: error: parameter `p` of C function `setObject` has type `Out<Holder>`, which cannot cross to C
   = note: C writes an `Out<T>` of a number, `bool` or `Ptr<T> | null`: anything else C wrote would forge a Velt value (a reference, a symbol)
-_clib/src/lib.velt:44:19: error: a C pointer can't point at `Ptr<u8> | null | undefined`
+_clib/src/lib.velt:61:19: error: a C pointer can't point at `Ptr<u8> | null | undefined`
   = note: `Ptr<T>` points at a number, `bool`, `void`, a `declare c type`, a `declare c struct` or another pointer: C has no other values
-_clib/src/lib.velt:51:18: error: a C pointer (`Ptr<FILE>`) has no text
+_clib/src/lib.velt:68:18: error: a C pointer (`Ptr<FILE>`) has no text
   = note: `Ptr.addressOf(p)` gives a pointer's address, a number; `console.log(p)` shows it
-_clib/src/lib.velt:51:30: error: a C pointer (`Ptr<FILE>`) has no text
+_clib/src/lib.velt:68:30: error: a C pointer (`Ptr<FILE>`) has no text
   = note: `Ptr.addressOf(p)` gives a pointer's address, a number; `console.log(p)` shows it
-_clib/src/lib.velt:51:42: error: a C pointer (`Ptr<FILE>`) has no text
+_clib/src/lib.velt:68:42: error: a C pointer (`Ptr<FILE>`) has no text
   = note: `Ptr.addressOf(p)` gives a pointer's address, a number; `console.log(p)` shows it
-_clib/src/lib.velt:51:52: error: a C pointer (`Ptr<FILE>`) has no `typeof`: it is no JavaScript value
+_clib/src/lib.velt:68:52: error: a C pointer (`Ptr<FILE>`) has no `typeof`: it is no JavaScript value
   = note: `p === null` tells a NULL pointer from another
-_clib/src/lib.velt:52:15: error: cannot apply binary operator `<` to type `Ptr<FILE>`
+_clib/src/lib.velt:69:15: error: cannot apply binary operator `<` to type `Ptr<FILE>`
   = note: a C pointer is compared only with `===` and `!==`: `Ptr.addressOf(p)` gives its address, a number
-_clib/src/lib.velt:52:28: error: mismatched types
+_clib/src/lib.velt:69:28: error: mismatched types
   = note: expected Ptr<FILE>, found Ptr<DIR>
-_clib/src/lib.velt:53:18: error: a C pointer (`Ptr<FILE>`) can't be converted to `any`
+_clib/src/lib.velt:70:18: error: a C pointer (`Ptr<FILE>`) can't be converted to `any`
   = note: a pointer has no dynamic form: keep it typed, or pass `Ptr.addressOf(p)`, its address
-_clib/src/lib.velt:54:22: error: a C pointer (`Ptr<FILE>`) can't be converted to `unknown`
+_clib/src/lib.velt:71:22: error: a C pointer (`Ptr<FILE>`) can't be converted to `unknown`
   = note: a pointer has no dynamic form: keep it typed, or pass `Ptr.addressOf(p)`, its address
-_clib/src/lib.velt:55:21: error: a C pointer (`Ptr<FILE>`) can't be converted to `object`
+_clib/src/lib.velt:72:21: error: a C pointer (`Ptr<FILE>`) can't be converted to `object`
   = note: a pointer has no dynamic form: keep it typed, or pass `Ptr.addressOf(p)`, its address
-_clib/src/lib.velt:58:15: error: an `any` value can't be converted to a C pointer (`Ptr<FILE>`)
+_clib/src/lib.velt:75:15: error: an `any` value can't be converted to a C pointer (`Ptr<FILE>`)
   = note: no dynamic value holds a pointer: make one with `Ptr.at(address)` or `Ptr.orNull(address)` in `unsafe` code
-_clib/src/lib.velt:58:31: error: an `unknown` value can't be converted to a C pointer (`Ptr<FILE>`)
+_clib/src/lib.velt:75:31: error: an `unknown` value can't be converted to a C pointer (`Ptr<FILE>`)
   = note: no dynamic value holds a pointer: make one with `Ptr.at(address)` or `Ptr.orNull(address)` in `unsafe` code
-_clib/src/lib.velt:59:15: error: an `any` value can't be converted to a `Ptr<FILE>[]`: it holds a C pointer
+_clib/src/lib.velt:76:15: error: an `any` value can't be converted to a `Ptr<FILE>[]`: it holds a C pointer
   = note: no dynamic value holds a pointer: make one with `Ptr.at(address)` or `Ptr.orNull(address)` in `unsafe` code
-_clib/src/lib.velt:59:33: error: an `any` value can't be converted to a `[Ptr<FILE> | null]`: it holds a C pointer
+_clib/src/lib.velt:76:33: error: an `any` value can't be converted to a `[Ptr<FILE> | null]`: it holds a C pointer
   = note: no dynamic value holds a pointer: make one with `Ptr.at(address)` or `Ptr.orNull(address)` in `unsafe` code
-_clib/src/lib.velt:60:18: error: a `Ptr<FILE>[]` has no text: it holds a C pointer
+_clib/src/lib.velt:77:18: error: a `Ptr<FILE>[]` has no text: it holds a C pointer
   = note: `Ptr.addressOf(p)` gives a pointer's address, a number; `console.log(p)` shows it
-_clib/src/lib.velt:60:32: error: a `Ptr<FILE>[]` has no text: it holds a C pointer
+_clib/src/lib.velt:77:32: error: a `Ptr<FILE>[]` has no text: it holds a C pointer
   = note: `Ptr.addressOf(p)` gives a pointer's address, a number; `console.log(p)` shows it
-_clib/src/lib.velt:60:38: error: a `Ptr<FILE>[]` has no text: it holds a C pointer
+_clib/src/lib.velt:77:38: error: a `Ptr<FILE>[]` has no text: it holds a C pointer
   = note: `Ptr.addressOf(p)` gives a pointer's address, a number; `console.log(p)` shows it
-_clib/src/lib.velt:60:56: error: a `Ptr<FILE>[]` has no text: it holds a C pointer
+_clib/src/lib.velt:77:56: error: a `Ptr<FILE>[]` has no text: it holds a C pointer
   = note: `Ptr.addressOf(p)` gives a pointer's address, a number; `console.log(p)` shows it
-_clib/src/lib.velt:60:78: error: a `Ptr<FILE>[]` has no text: it holds a C pointer
+_clib/src/lib.velt:77:78: error: a `Ptr<FILE>[]` has no text: it holds a C pointer
   = note: `Ptr.addressOf(p)` gives a pointer's address, a number; `console.log(p)` shows it
-_clib/src/lib.velt:57:15: error: a C pointer (`Ptr<FILE>`) is converted to `any` here, through a type parameter
+_clib/src/lib.velt:80:15: error: an `any` value can't be converted to a `Record<string, Ptr<FILE>>`: it holds a C pointer
+  = note: no dynamic value holds a pointer: make one with `Ptr.at(address)` or `Ptr.orNull(address)` in `unsafe` code
+_clib/src/lib.velt:80:47: error: an `any` value can't be converted to a `Record<string, Ptr<FILE> | null>`: it holds a C pointer
+  = note: no dynamic value holds a pointer: make one with `Ptr.at(address)` or `Ptr.orNull(address)` in `unsafe` code
+_clib/src/lib.velt:83:12: error: a C pointer can't point at `string`
+  = note: an alias's `Ptr<T>` is instantiated here: `Ptr<T>` points at a number, `bool`, `void`, a `declare c type`, a `declare c struct` or another pointer
+_clib/src/lib.velt:74:15: error: a C pointer (`Ptr<FILE>`) is converted to `any` here, through a type parameter
   = note: a pointer has no dynamic form and no text: `Ptr.addressOf(p)` gives its address
-_clib/src/lib.velt:57:25: error: a C pointer (`Ptr<FILE>`) is converted to `any` here, through a type parameter
+_clib/src/lib.velt:74:25: error: a C pointer (`Ptr<FILE>`) is converted to `any` here, through a type parameter
   = note: a pointer has no dynamic form and no text: `Ptr.addressOf(p)` gives its address
-_clib/src/lib.velt:58:47: error: a C pointer (`Ptr<FILE>`) is converted from `any` here, through a type parameter
+_clib/src/lib.velt:75:47: error: a C pointer (`Ptr<FILE>`) is converted from `any` here, through a type parameter
   = note: a pointer has no dynamic form and no text: `Ptr.addressOf(p)` gives its address
-_clib/src/lib.velt:59:58: error: a `Ptr<FILE>[]` is converted from `any` here, through a type parameter: it holds a C pointer
+_clib/src/lib.velt:76:58: error: a `Ptr<FILE>[]` is converted from `any` here, through a type parameter: it holds a C pointer
   = note: a pointer has no dynamic form and no text: `Ptr.addressOf(p)` gives its address
-_clib/src/lib.velt:61:28: error: a `Ptr<FILE>[]` is converted to text here, through a type parameter: it holds a C pointer
+_clib/src/lib.velt:78:28: error: a `Ptr<FILE>[]` is converted to text here, through a type parameter: it holds a C pointer
   = note: a pointer has no dynamic form and no text: `Ptr.addressOf(p)` gives its address
-_clib/src/lib.velt:62:15: error: a C pointer can't point at `string`
+_clib/src/lib.velt:79:15: error: a `Ptr<FILE>[]` is converted to text here, through a type parameter: it holds a C pointer
+  = note: a pointer has no dynamic form and no text: `Ptr.addressOf(p)` gives its address
+_clib/src/lib.velt:79:26: error: a `Ptr<FILE>[]` is converted to text here, through a type parameter: it holds a C pointer
+  = note: a pointer has no dynamic form and no text: `Ptr.addressOf(p)` gives its address
+_clib/src/lib.velt:79:36: error: a `Ptr<FILE>[]` is converted to text here, through a type parameter: it holds a C pointer
+  = note: a pointer has no dynamic form and no text: `Ptr.addressOf(p)` gives its address
+_clib/src/lib.velt:81:15: error: a `Record<string, Ptr<FILE> | null>` is converted from `any` here, through a type parameter: it holds a C pointer
+  = note: a pointer has no dynamic form and no text: `Ptr.addressOf(p)` gives its address
+_clib/src/lib.velt:82:15: error: a C pointer can't point at `string`
   = note: a type parameter used as `Ptr<T>`'s pointee is instantiated here: `Ptr<T>` points at a number, `bool`, `void`, a `declare c type`, a `declare c struct` or another pointer
-_clib/src/lib.velt:62:31: error: a C pointer can't point at `Holder`
+_clib/src/lib.velt:82:31: error: a C pointer can't point at `Holder`
   = note: a type parameter used as `Ptr<T>`'s pointee is instantiated here: `Ptr<T>` points at a number, `bool`, `void`, a `declare c type`, a `declare c struct` or another pointer
-_clib/src/lib.velt:61:15: error: a `[Ptr<FILE>]` is converted to text here, through a type parameter: it holds a C pointer
+_clib/src/lib.velt:84:3: error: a C pointer can't point at `string`
+  = note: a type parameter used as `Ptr<T>`'s pointee is instantiated here: `Ptr<T>` points at a number, `bool`, `void`, a `declare c type`, a `declare c struct` or another pointer
+_clib/src/lib.velt:78:15: error: a `[Ptr<FILE>]` is converted to text here, through a type parameter: it holds a C pointer
   = note: a pointer has no dynamic form and no text: `Ptr.addressOf(p)` gives its address

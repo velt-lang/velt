@@ -18,6 +18,7 @@ pub(super) fn uses_of(
     e: &Expr,
     looks: bool,
     parsers: &FxHashSet<DefId>,
+    record: Option<DefId>,
 ) {
     // A type parameter read without a lock: whatever it is instantiated with may hold one.
     let unlocked = match &e.kind {
@@ -54,12 +55,12 @@ pub(super) fn uses_of(
             args,
         } => args.first().map(|a| (a.ty, a.span, PtrUse::ToText)),
         // Only where an instance could put a pointer: the parameter itself or an element of
-        // it (`a as T`, `a as T[]`). Recording an object type (`o as Box<T>`, a literal's view)
+        // it, which a view reads through `any` (`a as T`, `a as T[]`, `a as Record<string, T>`). Recording an object type (`o as Box<T>`, a literal's view)
         // would substitute, and so make, every instance of it at every call.
         E::Call {
             callee: Callee::Intrinsic(Intrinsic::AnyTo),
             ..
-        } if param_element(tys, e.ty) => Some((e.ty, e.span, PtrUse::FromDyn)),
+        } if param_element(tys, record, e.ty) => Some((e.ty, e.span, PtrUse::FromDyn)),
         _ => None,
     };
     if let Some((t, span, how)) = converted.filter(|(t, ..)| param_in(tys, *t)) {
@@ -106,12 +107,16 @@ pub(super) fn uses_of(
     }
 }
 
-/// Is `t` a type parameter, or an array, tuple or option with one as an element (at any depth)?
-fn param_element(tys: &crate::types::Types, t: TyId) -> bool {
+/// Is `t` a type parameter, or an array, tuple or option with one as an element, or a `Record`
+/// (`record`) with one as its value type, at any depth?
+fn param_element(tys: &crate::types::Types, record: Option<DefId>, t: TyId) -> bool {
     match tys.kind(t) {
         TyKind::Param(_) => true,
-        TyKind::Array(e) | TyKind::Option(e, _) => param_element(tys, *e),
-        TyKind::Tuple(es) => es.iter().any(|&e| param_element(tys, e)),
+        TyKind::Array(e) | TyKind::Option(e, _) => param_element(tys, record, *e),
+        TyKind::Tuple(es) => es.iter().any(|&e| param_element(tys, record, e)),
+        TyKind::Adt(d, args) if Some(*d) == record => {
+            args.get(1).is_some_and(|&v| param_element(tys, record, v))
+        }
         _ => false,
     }
 }

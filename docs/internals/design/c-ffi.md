@@ -1365,7 +1365,9 @@ Step 1 lands in layers, each its own pull request:
     - **The pointee**: a number, `bool`, `void`, a `declare c type`, a `declare c struct` or
       another pointer (`null` or `undefined`, not both). A pointee that is a type parameter is
       checked where it is instantiated (`json::PtrUse::Pointee`, at the call, as the other
-      type-parameter rules are).
+      type-parameter rules are), from a generic function's signature as well as its body; one
+      an alias's type arguments supply is checked where the alias is written
+      (`Ctx::alias_pointees`).
     - **Gone**: the struct and its private field, the four lowering hooks (`ptrOf`,
       `ptrOrNull`, `ptrAddress`, `ptrAddressOrZero`) and `OutPtr<T>` with `hir::CTy::OutPtr`:
       `Out<Ptr<T> | null>` is a `T **`. `Out<T>` takes a number, `bool` or `Ptr<T> | null`
@@ -1376,8 +1378,10 @@ Step 1 lands in layers, each its own pull request:
       narrows and is truthy, is copied (never moved), `structuredClone` copies it, and it crosses
       workers as a Copy value; text (`${p}`, `String(p)`, `"" + p`, also of an array, tuple,
       option or union holding one: `${[p]}`, `[p].join()`), `typeof`, ordering and arithmetic,
-      a pointer to another C type, `any`, `unknown`, `object` and interfaces (to and from them),
-      and JSON are compile errors, through a type parameter too (`json::Need::NoPtr`). A class
+      a pointer to another C type, `any`, `unknown`, `object` and interfaces (to and from them;
+      from them also as a view's element or value, `a as Ptr<T>[]`, `a as Record<string,
+      Ptr<T>>`, which read each through `any`: `Ctx::ptr_in_view`), and JSON are compile
+      errors, through a type parameter too (`json::Need::NoPtr`). A class
       or an array that holds one still converts to `any`, as one holding a SIMD vector does:
       its elements and fields through `any` are a `TypeError` (#924). A pointer holds no Velt
       value: walks over what a value contains (printing, cloning, locks, liveness) stop at it
