@@ -278,6 +278,22 @@ pub(crate) fn units_loads_proxy(cx: &mut Ctx) -> bool {
 /// ([`walk_units_program`]), for the analyses whose answer depends on the std code a program
 /// has (lazy std's: the code it checked), leaving the check's state as it was.
 pub(crate) fn units_live_set(cx: &mut Ctx) -> FxHashSet<DefId> {
+    // The passes that ask (generated code's demand, local async, `any`'s members) ask after the
+    // bodies are checked: the walk's answer changes only with definitions added since
+    // (`Ctx::units_live_memo`). Each walk decoded and walked all of the program's std again.
+    let sizes = (cx.defs.len(), cx.info.len());
+    if let Some((defs, info, set)) = &cx.units_live_memo {
+        if (*defs, *info) == sizes {
+            return (**set).clone();
+        }
+    }
+    let set = walk_units_live_set(cx);
+    cx.units_live_memo = Some((sizes.0, sizes.1, std::rc::Rc::new(set.clone())));
+    set
+}
+
+/// [`units_live_set`]'s walk.
+fn walk_units_live_set(cx: &mut Ctx) -> FxHashSet<DefId> {
     let saved = cx.lazy.clone();
     let mut set = walk_units_program(cx, None);
     // A hook waiting for what the program does (a record hook, a fallback) that nothing

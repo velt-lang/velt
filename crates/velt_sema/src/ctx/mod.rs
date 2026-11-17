@@ -146,6 +146,9 @@ pub(crate) struct Ctx<'m> {
     /// loaded `std/lang/proxy` or `std/lang/hooks/proxy`, as lazy std does when a construct
     /// demands one of that hook module's hooks: the next round has proxies (`lazy_std::too_late`).
     pub units_live_proxy: Option<bool>,
+    /// EXPERIMENT (#2943): the last `lazy_std::units_live_set`, with the numbers of definitions
+    /// and bodies it was walked over: the same until definitions are added.
+    pub units_live_memo: Option<(usize, usize, std::rc::Rc<FxHashSet<DefId>>)>,
     pub scopes: Vec<ModuleScope>,
     /// Exports of `std/prelude/*` modules, visible everywhere.
     pub prelude: FxHashMap<String, Item>,
@@ -699,6 +702,7 @@ impl<'m> Ctx<'m> {
             walk_std: None,
             units_proxy: None,
             units_live_proxy: None,
+            units_live_memo: None,
             unit_sums: Default::default(),
             units_stage: crate::units::Stage::Both,
             scopes,
