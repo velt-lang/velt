@@ -18,26 +18,17 @@
 // The readers are functions, not methods of the struct: a struct method is handed its own copy of
 // the struct where it can't be read in place (a method call that isn't inlined, or a result that
 // may refer into it), and a copy taken out of a `shared` box copies the arrays too. A parameter is
-// read in place. The ones every value read goes through (`wordKind`, `childIn`, `findIn`, …) take
-// the tape's arrays rather than the tape: they are then quiet (velt_vir lower/quiet.rs), so
-// `TapeRef` lends them `this.tape.words` without retaining itself for the call; the others take
-// the `shared<Tape>`.
+// read in place. The reads every value goes through (kind, number, child, `find` in a small
+// object) are `TapeRef`'s own, straight out of the box (tape_ref.velt says why).
 
-import { inline, strByteAt, strByteLen, strLoadPartialU8x16 } from "velt/lang/intrinsics";
+import { inline, strByteAt, strByteLen } from "velt/lang/intrinsics";
 
 declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
-declare function velt_simd_u8x16_eq(a: u8x16, b: u8x16): mask8x16;
-declare function velt_simd_mask8x16_all(m: mask8x16): bool;
 
 /** Objects with more keys than this get a hash index (`TapeRef.find`), built on their first lookup. */
 export const INDEX_THRESHOLD: usize = 16;
-/**
- * What `findIn` returns when the object needs `findOther`: over `INDEX_THRESHOLD` keys, a key
- * repeated or with escapes, or a name over 16 bytes.
- */
-export const FIND_OTHER: i64 = -2;
 /** What `findOther` returns for an object over `INDEX_THRESHOLD` keys: look it up in the index. */
-export const FIND_WIDE: i64 = -3;
+export const FIND_WIDE: i64 = -2;
 /** Value kinds (the low byte of a value's first word). */
 export const T_NULL: u64 = 1;
 export const T_FALSE: u64 = 2;
@@ -72,7 +63,7 @@ export const ESCAPED_KEY: u64 = 0x800;
  * position per distinct key, in JS order (a repeated key's is its last occurrence, whose value is
  * the one that counts, at the place of its first).
  *
- * Every lookup is O(1) but `findIn` in a small object (at most `INDEX_THRESHOLD` keys, compared
+ * Every lookup is O(1) but `find` in a small object (at most `INDEX_THRESHOLD` keys, compared
  * in place), so walking any value is linear in its size.
  */
 export struct Tape {
@@ -82,24 +73,6 @@ export struct Tape {
   /** The texts of the strings that had escapes, one after another (such a string's second word
    *  is its range here); empty when none had. */
   decoded: string;
-}
-
-/** Value `v`'s kind (`T_*`), from the tape's `words`. */
-@inline
-export function wordKind(words: u64[], v: u32): u64 {
-  return words[2 * (v as usize)] & 0xff;
-}
-
-/** A number value's value, from the tape's `words`. */
-@inline
-export function wordNumber(words: u64[], v: u32): f64 {
-  return f64.fromBits(words[2 * (v as usize) + 1]);
-}
-
-/** A string's UTF-16 length, from the tape's `words`. */
-@inline
-export function wordUnits(words: u64[], v: u32): i64 {
-  return (words[2 * (v as usize)] >> 32) as i64;
 }
 
 /** A container's member count (an object's keys as written, repeats included), else 0. */
@@ -147,52 +120,9 @@ function orderedMember(kids: u32[], at: usize, i: i64): i64 {
 }
 
 /**
- * Element `i` of array `v`, or the value of member `i` of object `v` (from the tape's `words` and
- * `kids`); -1 if there is none.
- */
-@inline
-export function childIn(words: u64[], kids: u32[], v: u32, i: i64): i64 {
-  const m = memberIn(words, kids, v, i);
-  // An object's member is its key: the value follows it.
-  return m < 0 || (words[2 * (v as usize)] & 0xff) == T_ARRAY ? m : m + 1;
-}
-
-/**
- * Object `v`'s value for `name` (from the tape's `words`, `kids` and `src`), or -1 (also when `v`
- * is no object); `FIND_OTHER` when `findOther` must look.
- */
-@inline
-export function findIn(words: u64[], kids: u32[], src: string, v: u32, name: string): i64 {
-  const w = words[2 * (v as usize)];
-  if ((w & 0xff) != T_OBJECT) {
-    return -1;
-  }
-  const n = (w >> 32) as usize;
-  const len = strByteLen(name);
-  if (n > INDEX_THRESHOLD || len > 16 || (w & (REPEATED | ESCAPED_KEY)) != 0) {
-    return FIND_OTHER;
-  }
-  // No key had escapes: each is a range of the source, compared to `name` with one vector
-  // compare when the lengths match (both sides' bytes in the low lanes, zeros in the others;
-  // `name`'s side loaded once).
-  const first = words[2 * (v as usize) + 1] as usize;
-  const nv = strLoadPartialU8x16(name, 0, len as u64);
-  for (let i: usize = 0; i < n; i++) {
-    const k = kids[first + i];
-    const p = words[2 * (k as usize) + 1];
-    if ((p >> 32) - (p & 0xffffffff) == len as u64) {
-      const kv = strLoadPartialU8x16(src, p & 0xffffffff, len as u64);
-      if (velt_simd_mask8x16_all(velt_simd_u8x16_eq(kv, nv))) {
-        return (k + 1) as i64;
-      }
-    }
-  }
-  return -1;
-}
-
-/**
- * `findIn` of an object it answered `FIND_OTHER` for: in a small object, from the last key (a
- * repeated key's value is its last); `FIND_WIDE` for one over `INDEX_THRESHOLD` keys.
+ * Object `v`'s value for `name` where `TapeRef.find`'s vector compare can't tell (a key repeated
+ * or with escapes, a name over 16 bytes): in a small object, from the last key (a repeated key's
+ * value is its last); `FIND_WIDE` for one over `INDEX_THRESHOLD` keys.
  */
 export function findOther(t: shared<Tape>, v: u32, name: string): i64 {
   const n = wordRawCount(t.words, v) as usize;

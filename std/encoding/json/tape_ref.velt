@@ -5,12 +5,12 @@
 // only a value crossing to another task copies it, which takes one more reference to the tape
 // (atomic), released when the copy goes.
 //
-// Reads never touch the tape's count. A `shared` handle read from a field is retained for the
-// statement (another owner of the object could replace it meanwhile), so each method here hands
-// `this.tape` (or its arrays) straight to a reader of tape.velt, as an argument (`tape` is written
-// only by the constructor, so passing it takes no reference), which reads its parameter in place.
-// The readers every value read goes through take only the arrays, which makes them quiet: a call
-// that lends a place reached through `this` to any other function retains `this` for the call.
+// Reads never touch the tape's count. The reads every value goes through (kind, number, child,
+// `find` in a small object) read numbers straight out of the box, with no call while they read:
+// a part of the box lent to a call would retain the box for the statement (atomically: another
+// owner of `this` could replace `tape` meanwhile), and `this.tape` lent to a function that isn't
+// quiet (velt_vir lower/quiet.rs) retains `this`. The rest hand `this.tape` or its arrays to
+// tape.velt, at those costs.
 //
 // The hash index of the wide objects (over `INDEX_THRESHOLD` keys) a task searched is the
 // `TapeRef`'s: at most one map per such object of the tape, each with one entry per key, so it
@@ -19,23 +19,26 @@
 // tape alive. A copy for another task takes the index made so far with it.
 
 import {
-  FIND_OTHER,
+  ESCAPED_KEY,
   FIND_WIDE,
+  INDEX_THRESHOLD,
+  ORDERED,
+  REPEATED,
+  T_ARRAY,
+  T_OBJECT,
   Tape,
-  childIn,
   countIn,
-  findIn,
   findOther,
   memberIn,
   tapeKey,
   tapeText,
-  wordKind,
-  wordNumber,
   wordRawCount,
-  wordUnits,
 } from "velt/encoding/json/tape";
 import { tapeStringify, writeTape } from "velt/encoding/json/tape_write";
-import { inline, noInline } from "velt/lang/intrinsics";
+import { inline, noInline, strByteLen, strLoadPartialU8x16 } from "velt/lang/intrinsics";
+
+declare function velt_simd_u8x16_eq(a: u8x16, b: u8x16): mask8x16;
+declare function velt_simd_mask8x16_all(m: mask8x16): bool;
 
 /** One task's reference to a frozen tape, with that task's hash index of its wide objects. */
 export class TapeRef {
@@ -47,14 +50,18 @@ export class TapeRef {
     this.tape = tape;
   }
 
+  // The readers below read numbers straight out of the box, with no call while they read: that
+  // holds no count (a call lent a part of `this.tape` would retain the box, atomically, and one
+  // lent `this.tape` itself, unless quiet, would retain `this`).
+
   @inline
   kind(v: u32): u64 {
-    return wordKind(this.tape.words, v);
+    return this.tape.words[2 * (v as usize)] & 0xff;
   }
 
   @inline
   number(v: u32): f64 {
-    return wordNumber(this.tape.words, v);
+    return f64.fromBits(this.tape.words[2 * (v as usize) + 1]);
   }
 
   @inline
@@ -64,7 +71,7 @@ export class TapeRef {
 
   @inline
   units(v: u32): i64 {
-    return wordUnits(this.tape.words, v);
+    return (this.tape.words[2 * (v as usize)] >> 32) as i64;
   }
 
   count(v: u32): i64 {
@@ -78,7 +85,29 @@ export class TapeRef {
   /** Element `i` of array `v`, or the value of member `i` of object `v`; -1 if there is none. */
   @inline
   child(v: u32, i: i64): i64 {
-    return childIn(this.tape.words, this.tape.kids, v, i);
+    const w = this.tape.words[2 * (v as usize)];
+    const k = w & 0xff;
+    if (k == T_ARRAY) {
+      if (i >= ((w >> 32) as i64)) {
+        return -1;
+      }
+      return this.tape.kids[(this.tape.words[2 * (v as usize) + 1] + (i as u64)) as usize] as i64;
+    }
+    if (k != T_OBJECT) {
+      return -1;
+    }
+    let first = this.tape.words[2 * (v as usize) + 1];
+    let n = w >> 32;
+    if ((w & ORDERED) != 0) {
+      // The member list after the keys: its length, then the list.
+      n = this.tape.kids[(first + n) as usize] as u64;
+      first = first + (w >> 32) + 1;
+    }
+    if (i >= (n as i64)) {
+      return -1;
+    }
+    // A member is its key: the value follows it.
+    return (this.tape.kids[(first + (i as u64)) as usize] as i64) + 1;
   }
 
   /** Appends value `v` as `JSON.stringify` writes it to the builder `out`. */
@@ -94,11 +123,34 @@ export class TapeRef {
   /** Object `v`'s value for `name` (the last, if repeated), or -1 (also when `v` is no object). */
   @inline
   find(v: u32, name: string): i64 {
-    const at = findIn(this.tape.words, this.tape.kids, this.tape.src, v, name);
-    return at == FIND_OTHER ? this.findSlow(v, name) : at;
+    const w = this.tape.words[2 * (v as usize)];
+    if ((w & 0xff) != T_OBJECT) {
+      return -1;
+    }
+    const n = (w >> 32) as usize;
+    const len = strByteLen(name);
+    if (n > INDEX_THRESHOLD || len > 16 || (w & (REPEATED | ESCAPED_KEY)) != 0) {
+      return this.findSlow(v, name);
+    }
+    // No key had escapes: each is a range of the source, compared to `name` with one vector
+    // compare when the lengths match (both sides' bytes in the low lanes, zeros in the others;
+    // `name`'s side loaded once).
+    const first = this.tape.words[2 * (v as usize) + 1] as usize;
+    const nv = strLoadPartialU8x16(name, 0, len as u64);
+    for (let i: usize = 0; i < n; i++) {
+      const k = this.tape.kids[first + i];
+      const p = this.tape.words[2 * (k as usize) + 1];
+      if ((p >> 32) - (p & 0xffffffff) == len as u64) {
+        const kv = strLoadPartialU8x16(this.tape.src, p & 0xffffffff, len as u64);
+        if (velt_simd_mask8x16_all(velt_simd_u8x16_eq(kv, nv))) {
+          return (k + 1) as i64;
+        }
+      }
+    }
+    return -1;
   }
 
-  // `find` where `findIn` can't answer: a key repeated or with escapes, a long name, or an object
+  // `find` where the vector compare can't answer: a key repeated or with escapes, a long name, or an object
   // over `INDEX_THRESHOLD` keys, which goes through its hash index (made the first time).
   @noInline
   private findSlow(v: u32, name: string): i64 {
