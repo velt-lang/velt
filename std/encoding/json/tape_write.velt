@@ -1,9 +1,15 @@
 // velt/encoding/json (internal): writing a tape value (tape.velt) as JSON text: strings copied or
 // re-escaped, numbers in their shortest form, into one byte buffer.
 
-import { copyRun, nextEscape, writeString } from "velt/encoding/json/writer";
+import {
+  ESCAPED_END,
+  copyRun,
+  nextEscape,
+  putEscaped,
+  writeString,
+} from "velt/encoding/json/writer";
 import { putDecimal, shortNumber } from "velt/encoding/json/writer_number";
-import { arraySetLen, arrayWithCapacity, strByteLen } from "velt/lang/intrinsics";
+import { arraySetLen, arrayWithCapacity, inline, strByteLen } from "velt/lang/intrinsics";
 import {
   ESCAPED,
   ORDERED,
@@ -142,7 +148,7 @@ function writeFrom(
   words: u64[],
   kids: u32[],
   src: string,
-  decoded: string,
+  decoded: string[],
   out: string,
   v: u32,
 ): void {
@@ -181,17 +187,17 @@ function writeFrom(
     if (k == T_NUMBER) {
       n = putNumber(buf, n, f64.fromBits(p));
     } else if (k == T_STRING) {
-      let to = putText(buf, n, src, srcLen, w, p);
-      if (to == NO_ROOM) {
+      let r = putString(buf, n, src, srcLen, decoded, w, p);
+      if (r == NO_ROOM_AT) {
         const len = n as u64;
         const units = len - extra;
         velt_rt_strbuf_push_u8s(out, buf, len, units);
         n = 0;
         extra = 0;
-        to = tapeTextAfterFlush(decoded, out, buf, src, srcLen, w, p);
+        r = tapeTextAfterFlush(decoded, out, buf, src, srcLen, w, p);
       }
-      extra += textExtra(w, p, to - n);
-      n = to;
+      extra += r >> 40;
+      n = (r & ESCAPED_END) as usize;
     } else if (k >= T_ARRAY) {
       const object = k == T_OBJECT;
       const count = w >> 32;
@@ -288,16 +294,17 @@ function writeFrom(
       // The key, its colon, then its value next round.
       const kp = words[2 * (m as usize) + 1];
       const kw = words[2 * (m as usize)];
-      let to = putText(buf, n, src, srcLen, kw, kp);
-      if (to == NO_ROOM) {
+      let r = putString(buf, n, src, srcLen, decoded, kw, kp);
+      if (r == NO_ROOM_AT) {
         const len = n as u64;
         const units = len - extra;
         velt_rt_strbuf_push_u8s(out, buf, len, units);
         n = 0;
         extra = 0;
-        to = tapeTextAfterFlush(decoded, out, buf, src, srcLen, kw, kp);
+        r = tapeTextAfterFlush(decoded, out, buf, src, srcLen, kw, kp);
       }
-      extra += textExtra(kw, kp, to - n);
+      extra += r >> 40;
+      const to = (r & ESCAPED_END) as usize;
       buf[to] = 58;
       n = to + 1;
       at = m + 1;
@@ -307,22 +314,65 @@ function writeFrom(
   }
 }
 
+/** `putString` could not write the string before a flush. */
+const NO_ROOM_AT: u64 = ~(0 as u64);
+
+/**
+ * String `w`, `p` (a tape string's words) quoted into `buf` at `o`: the position after it, and
+ * from bit 40 the bytes it wrote beyond their UTF-16 units; `NO_ROOM_AT` when it doesn't fit.
+ * One that had escapes is written from its decoded text, escaped again as `JSON.stringify` does
+ * (`é` in the source is `é` in the output), with no flush and no string made.
+ */
+@inline
+function putString(
+  buf: u8[],
+  o: usize,
+  src: string,
+  srcLen: usize,
+  decoded: string[],
+  w: u64,
+  p: u64,
+): u64 {
+  if ((w & ESCAPED) != 0) {
+    return putDecoded(buf, o, decoded[p as usize], w >> 32);
+  }
+  const to = putText(buf, o, src, srcLen, w, p);
+  if (to == NO_ROOM) {
+    return NO_ROOM_AT;
+  }
+  return (to as u64) | (textExtra(w, p, to - o) << 40);
+}
+
+// Decoded text `s` (`units` UTF-16 units) as `putString` writes it, when it fits with a colon and
+// the 15 bytes `copyRun` may write past its end (at most six bytes per byte and the quotes).
+function putDecoded(buf: u8[], o: usize, s: string, units: u64): u64 {
+  const n = strByteLen(s);
+  if (o + 6 * n + 2 + 16 > OUT_CAP + OUT_ROOM) {
+    return NO_ROOM_AT;
+  }
+  const r = putEscaped(buf, o, s, nextEscape(s, 0, n), n);
+  // Escapes are ASCII, as many bytes as units; a lone surrogate's 3 bytes and 1 unit become 6
+  // of each, which takes back the 2 bytes `s` had beyond its units there.
+  const extra = (n as u64) - units - 2 * (r >> 40);
+  return (r & ESCAPED_END) | (extra << 40);
+}
+
 /**
  * A string (words `w`, `p`) once `write`'s buffer `buf` is flushed: into `buf` from 0 when it
- * fits (the position after it), else straight to the builder with its escapes (0).
+ * fits (as `putString` returns it), else straight to the builder with its escapes (0).
  */
 export function tapeTextAfterFlush(
-  decoded: string,
+  decoded: string[],
   out: string,
   buf: u8[],
   src: string,
   srcLen: usize,
   w: u64,
   p: u64,
-): usize {
-  const to = putText(buf, 0, src, srcLen, w, p);
-  if (to != NO_ROOM) {
-    return to;
+): u64 {
+  const r = putString(buf, 0, src, srcLen, decoded, w, p);
+  if (r != NO_ROOM_AT) {
+    return r;
   }
   const s = wordText(src, decoded, w, p);
   writeString(out, s);

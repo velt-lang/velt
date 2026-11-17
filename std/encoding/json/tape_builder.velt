@@ -12,7 +12,7 @@ export class TapeBuilder {
   src: string;
   words: u64[] = [];
   kids: u32[] = [];
-  decoded: string = "";
+  decoded: string[] = [];
 
   constructor(src: string) {
     this.src = src;
@@ -30,10 +30,10 @@ export class TapeBuilder {
   /** A string value's (or key's) text. */
   text(v: u32): string {
     const p = this.words[2 * (v as usize) + 1];
-    // A range between a string's quotes, or one decoded string: whole characters.
     if ((this.words[2 * (v as usize)] & ESCAPED) != 0) {
-      return velt_rt_str_byte_slice(this.decoded, p & 0xffffffff, p >> 32);
+      return this.decoded[p as usize];
     }
+    // A range between a string's quotes: whole characters.
     return velt_rt_str_byte_slice(this.src, p & 0xffffffff, p >> 32);
   }
 
@@ -63,21 +63,21 @@ export class TapeBuilder {
   /** Whether key `k` may be an array index: its first byte is a digit (no string is made). */
   digitFirst(k: u32): bool {
     const p = this.words[2 * (k as usize) + 1];
+    if ((this.words[2 * (k as usize)] & ESCAPED) != 0) {
+      const d = this.decoded[p as usize];
+      return strByteLen(d) > 0 && strByteAt(d, 0) - 48 <= 9;
+    }
     const start = (p & 0xffffffff) as usize;
     if ((p >> 32) as usize <= start) {
       return false;
     }
-    if ((this.words[2 * (k as usize)] & ESCAPED) != 0) {
-      return strByteAt(this.decoded, start as u64) - 48 <= 9;
-    }
     return strByteAt(this.src, start as u64) - 48 <= 9;
   }
 
-  /** Adds the text of a string that had escapes; returns its range in `decoded`. */
+  /** Adds the text of a string that had escapes; returns its index in `decoded`. */
   addDecoded(text: string): u64 {
-    const start = strByteLen(this.decoded) as u64;
-    this.decoded += text;
-    return start | ((start + (strByteLen(text) as u64)) << 32);
+    this.decoded.push(text);
+    return (this.decoded.length - 1) as u64;
   }
 
   /**

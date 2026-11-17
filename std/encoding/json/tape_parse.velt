@@ -17,7 +17,7 @@ import {
 import { utf8Substring } from "velt/encoding";
 import { FLAG_COMMENTS, FLAG_TRAILING_COMMAS } from "velt/encoding/json/reader";
 import { shortPath } from "velt/encoding/json/reader_ops";
-import { strByteAt } from "velt/lang/intrinsics";
+import { strByteAt, strByteLen } from "velt/lang/intrinsics";
 import {
   ESCAPED,
   ESCAPED_KEY,
@@ -351,9 +351,10 @@ function setMembers(t: TapeBuilder, v: u32, firsts: u32[], index: bool, repeated
 function indexKey(t: TapeBuilder, k: u32): i64 {
   const w = t.words[2 * (k as usize)];
   const p = t.words[2 * (k as usize) + 1];
-  const s = (w & ESCAPED) != 0 ? t.decoded : t.src;
-  const start = (p & 0xffffffff) as usize;
-  const end = (p >> 32) as usize;
+  const escaped = (w & ESCAPED) != 0;
+  const s = escaped ? t.decoded[p as usize] : t.src;
+  const start = escaped ? 0 : (p & 0xffffffff) as usize;
+  const end = escaped ? strByteLen(s) : (p >> 32) as usize;
   const n = end - start;
   if (n == 0 || n > 10) {
     return -1;

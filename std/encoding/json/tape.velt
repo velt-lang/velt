@@ -10,10 +10,12 @@
 // read reaches the arrays with one pointer step fewer than through an object. From then on every
 // task reads it through that `shared<Tape>` (tape_ref.velt), with no writes and no count changes
 // (sema refuses writes through a shared value; lowering reads it frozen), so the values of a
-// document sent to other tasks share one tape instead of copying it. Anything a reader would add
-// later belongs to the task, not the tape: the hash index of a wide object lives in the task's
-// `TapeRef`. Editing a value (`set`, `push`, …) turns that value into the runtime's tree (prelude
-// `JsonValue`), so it never shows through the tape.
+// document sent to other tasks share one tape instead of copying it. What a reader adds later is
+// not the tape's: the hash index of a wide object lives in the `TapeRef` (tape_ref.velt), which
+// a task's values share and a crossing to another task copies. A `TapeRef` reached from several
+// cores at once is NOT safe: see tape_ref.velt on frozen constants (#1487) and unlocked module
+// state (#2726). Editing a value (`set`, `push`, …) turns that value into the runtime's tree
+// (prelude `JsonValue`), so it never shows through the tape.
 //
 // The readers are functions, not methods of the struct: a struct method is handed its own copy of
 // the struct where it can't be read in place (a method call that isn't inlined, or a result that
@@ -25,7 +27,7 @@ import { inline, strByteAt, strByteLen } from "velt/lang/intrinsics";
 
 declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
 
-/** Objects with more keys than this get a hash index (`TapeRef.find`), built on their first lookup. */
+/** Objects with more keys than this get a hash index (`TapeRef.find`), made on first lookup. */
 export const INDEX_THRESHOLD: usize = 16;
 /** What `findOther` returns for an object over `INDEX_THRESHOLD` keys: look it up in the index. */
 export const FIND_WIDE: i64 = -2;
@@ -40,8 +42,8 @@ export const T_OBJECT: u64 = 7;
 
 /**
  * A string's first word: bit 8 is set when it had escapes, and bits 32 and up hold its UTF-16
- * length. Its second word is `start | end << 32`, a byte range of the source, or of `decoded`
- * when it had escapes.
+ * length. Its second word is `start | end << 32`, a byte range of the source, or, when it had
+ * escapes, the index of its text in `decoded`.
  */
 export const ESCAPED: u64 = 0x100;
 /**
@@ -70,9 +72,12 @@ export struct Tape {
   src: string;
   words: u64[];
   kids: u32[];
-  /** The texts of the strings that had escapes, one after another (such a string's second word
-   *  is its range here); empty when none had. */
-  decoded: string;
+  /**
+   * The texts of the strings that had escapes, each stored once (such a string's second word is
+   * its index here), so a read shares the stored string instead of making one. Read through an
+   * argument (`wordText`, `writeFrom`), as the other arrays are.
+   */
+  decoded: string[];
 }
 
 /** A container's member count (an object's keys as written, repeats included), else 0. */
@@ -143,9 +148,14 @@ export function findOther(t: shared<Tape>, v: u32, name: string): i64 {
 function keyIs(t: shared<Tape>, k: u32, name: string): bool {
   const p = t.words[2 * (k as usize) + 1];
   if ((t.words[2 * (k as usize)] & ESCAPED) != 0) {
-    return rangeIs(t.decoded, p, name);
+    return decodedIs(t.decoded, p, name);
   }
   return rangeIs(t.src, p, name);
+}
+
+// Whether the decoded text at index `p` is `name`.
+function decodedIs(decoded: string[], p: u64, name: string): bool {
+  return decoded[p as usize] == name;
 }
 
 // Whether the byte range `p` (`start | end << 32`) of `s` is `name`.
@@ -170,11 +180,11 @@ export function tapeText(t: shared<Tape>, v: u32): string {
 }
 
 /** The text of the string whose words are `w` and `p`, from the tape's `src` and `decoded`. */
-export function wordText(src: string, decoded: string, w: u64, p: u64): string {
-  // A range between a string's quotes, or one decoded string: whole characters, no check needed.
+export function wordText(src: string, decoded: string[], w: u64, p: u64): string {
   if ((w & ESCAPED) != 0) {
-    return velt_rt_str_byte_slice(decoded, p & 0xffffffff, p >> 32);
+    return decoded[p as usize];
   }
+  // A range between a string's quotes: whole characters, no check needed.
   return velt_rt_str_byte_slice(src, p & 0xffffffff, p >> 32);
 }
 

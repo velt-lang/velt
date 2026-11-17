@@ -78,10 +78,11 @@ const KIND_OBJECT: u32 = 6;
  *
  * Two forms (#1660). A parsed value is a position on a tape (velt/encoding/json/tape): reading it makes
  * nothing, and its children share the tape. The tape is frozen and shared between tasks: a value
- * sent to another task reads the same tape there (velt/encoding/json/tape_ref, #3098). A value built or edited here (`object()`, `set`, …)
- * or read from a database driver is a tree of reference-counted runtime nodes behind `#handle`
- * (which stays the first field: compiled glue writes it); an edit turns a tape value into such
- * a tree first, so it never shows through the tape.
+ * sent to another task reads the same tape there (velt/encoding/json/tape_ref, #3098). A value
+ * built or edited here (`object()`, `set`, …) or read from a database driver is a tree of
+ * reference-counted runtime nodes behind `#handle` (which stays the first field: compiled glue
+ * writes it); an edit turns a tape value into such a tree first, so it never shows through the
+ * tape.
  */
 export class JsonValue {
   #handle: u64;
