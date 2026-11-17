@@ -494,6 +494,74 @@ async function main() {
 }
 "#;
 
+/// A task woken by a spare in the middle of the spare's poll is not run next on that spare (#3060):
+/// each round a rescued task resolves what `main` awaits and runs on, then `main` sleeps. Run on
+/// the spare, `main`'s sleep went into the spare's timer block, and a spare with a timer declines
+/// to retire, so worker 0 never was lazy again (on Windows the race made the worker-0 test above
+/// fail 9 runs in 10; this one wakes `main` mid-poll every round, on any OS).
+#[test]
+fn a_task_woken_by_a_spare_mid_poll_goes_home_so_the_spares_retire() {
+    if !has_threads() {
+        return;
+    }
+    let dir = test_dir::TestDir::new();
+    let exe = build_std(dir.path(), "woken_by_spare", WOKEN_BY_SPARE);
+    let want: String = (0..5)
+        .map(|r| format!("task {r} before\ntask {r} after\nmain {r} moved\nmain {r} woken\n"))
+        .collect();
+    for i in 0..RUNS {
+        let r = run(&exe, "1");
+        let what = format!("run {i}");
+        check(&r, &what, &want, 0);
+        assert!(
+            rescue_count(&r.err, "locks-on").is_some_and(|n| n >= 2),
+            "{what}: worker 0 was not lazy again after a rescue: {}",
+            r.err
+        );
+    }
+}
+
+/// The program of [`a_task_woken_by_a_spare_mid_poll_goes_home_so_the_spares_retire`].
+const WOKEN_BY_SPARE: &str = r#"const MOVED = new Atomic<i64>(0);
+const GO = new Atomic<i64>(0);
+
+async function task(r: i64, done: (v: i64) => void): Promise<void> {
+  console.log(`task ${r} before`);
+  await yieldNow();
+  // On a spare from here (only a rescue runs this while `main` spins).
+  console.log(`task ${r} after`);
+  await yieldNow();
+  MOVED.store(r + 1);
+  while (GO.load() <= r) {}
+  // Wakes `main` while this poll still runs, then runs on a little.
+  done(r);
+  let x = 0;
+  for (let i = 0; i < 200000; i++) {
+    x += i % 3;
+  }
+  if (x < 0) {
+    console.log("never");
+  }
+}
+
+async function main() {
+  for (let r = 0; r < 5; r++) {
+    const { promise, resolve } = Promise.withResolvers<i64>();
+    const t = spawn(task(r, resolve));
+    await yieldNow();
+    while (MOVED.load() <= r) {}
+    console.log(`main ${r} moved`);
+    await yieldNow();
+    GO.store(r + 1);
+    await promise;
+    console.log(`main ${r} woken`);
+    // The spares go idle and retire; worker 0 becomes lazy again.
+    await sleep(40);
+    await t;
+  }
+}
+"#;
+
 /// A line printed in a lazy worker 0's poll comes out before what the tasks that poll spawns
 /// afterwards print, when the monitor moves them to a spare while the poll still runs (#2977):
 /// the poll spawns one task, prints, spawns seven more and spins until one of them has run, which

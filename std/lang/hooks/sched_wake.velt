@@ -176,12 +176,17 @@ export function schedule(t: usize): void {
     q.unlock(w, mode);
     return;
   }
+  const g = tk.main();
   if (
     w !== 0 &&
     m.ld(w + tk.E_CURRENT) !== 0 &&
     m.ld32(w + tk.E_DISPATCH) === 0 &&
     tk.movable(t) &&
-    m.ld(tk.main() + tk.E_STAY) === 0
+    m.ld(g + tk.E_STAY) === 0 &&
+    // Not onto a spare the rescue started (its index past the workers asked for): spares retire
+    // once idle (sched_relax.velt), and a task run there makes its sleeps there, which keep it
+    // from retiring (#3060).
+    m.ld(w + tk.E_INDEX) < m.ld(g + tk.E_COUNT)
   ) {
     q.pushNext(w, t, m.load32Relaxed(w + tk.E_MODE));
     return;
