@@ -1,0 +1,44 @@
+// check: no leaks
+// A destructured binding that is assigned afterwards owns its values (#998): the one it was
+// bound to and each one assigned to it. The object it came from keeps its own.
+type Box = { items: string[]; name: string };
+
+function swap({ items, name }: Box): number {
+  items = ["new"];
+  items.push("q");
+  name = name + " (a longer name, kept on the heap)";
+  return items.length + name.length;
+}
+
+function nested(): number {
+  const deep = { inner: { list: [1, 2, 3], tag: "t" }, n: 4 };
+  let { inner: { list, tag }, n } = deep;
+  list = [9];
+  tag += "!";
+  n += 1;
+  return list.length + tag.length + n + deep.inner.list.length + deep.n;
+}
+
+function main() {
+  const b: Box = { items: ["a"], name: "box" };
+  console.log(swap(b), b.items.length, b.name);
+
+  const p0: Box = { items: ["x", "y"], name: "p0" };
+  let { items } = p0;
+  for (let i = 0; i < 3; i++) {
+    items = [...items, "more " + i];
+  }
+  console.log(items.length, p0.items.length);
+
+  const ps: [string[], string[]][] = [[["a"], ["b"]]];
+  let [g, k] = ps[0];
+  g = ["x", "y"];
+  k = g;
+  console.log(g.length, k.length, ps[0][0].length, ps[0][1].length);
+
+  let [first, ...rest] = [["one"], ["two"], ["three"]];
+  first = rest[1];
+  console.log(first.length, rest.length);
+
+  console.log(nested());
+}
