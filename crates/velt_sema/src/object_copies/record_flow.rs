@@ -48,8 +48,14 @@ pub(super) struct Lives {
     sources: Vec<Vec<Store>>,
     /// Each function's own span, for a span no expression has (`function_at`).
     bodies: Vec<(Span, DefId)>,
-    /// Was each copy's expression found? A copy the flow never saw has no known lifetime.
-    found: Vec<bool>,
+    /// The function each copy is made in (`None`: its expression wasn't found, so the copy has
+    /// no known lifetime).
+    maker: Vec<Option<DefId>>,
+    /// The closures: one holding a copy (a capture) may run after its maker returns.
+    closures: FxHashSet<DefId>,
+    /// The program defines a dispose hook (`[Symbol.dispose]`), which drops run with no call the
+    /// flow sees: no copy has a known lifetime.
+    disposers: bool,
 }
 
 impl Lives {
@@ -82,7 +88,14 @@ impl Lives {
         let mut receivers = FxHashMap::default();
         let mut sources = vec![vec![]; copies.len()];
         let mut bodies = vec![];
-        let mut found = vec![false; copies.len()];
+        let mut maker = vec![None; copies.len()];
+        let mut closures = FxHashSet::default();
+        let disposers = (0..cx.defs.len()).any(|i| {
+            let d = DefId(i as u32);
+            let own = cx.try_fn(d).is_some_and(|f| !cx.scopes[f.module].is_std);
+            let name = cx.try_fn(d).map_or("", |f| f.name.as_str());
+            own && (name.contains("Symbol(dispose)") || name.contains("Symbol(asyncDispose)"))
+        });
         for (i, d) in cx.defs.iter_mut().enumerate() {
             let Some(Def::Fn(f)) = d else {
                 continue;
@@ -114,7 +127,10 @@ impl Lives {
                     body.hi = body.hi.max(e.span.hi);
                 }
                 if let Some(ci) = copies.iter().position(|&(s, t)| s == e.span && t == e.ty) {
-                    found[ci] = true;
+                    maker[ci] = Some(fd);
+                }
+                if let E::Closure(c) = e.kind {
+                    closures.insert(c);
                 }
                 if spans.contains(&e.span) {
                     at.entry(e.span).or_insert(fd);
@@ -132,8 +148,12 @@ impl Lives {
                             }
                         }
                         Callee::Indirect(v) => fx.indirect.push(copy_flow::sources(fd, v, copies)),
-                        Callee::Intrinsic(Intrinsic::Yield) => fx.opaque = true,
-                        Callee::Intrinsic(_) => {}
+                        Callee::Intrinsic(i) => {
+                            let gets_fn = args.iter().any(|a| {
+                                matches!(cx.ty.kind(a.ty), TyKind::FnPtr { .. } | TyKind::Closure(_))
+                            });
+                            fx.opaque |= gets_fn || runs_code(*i);
+                        }
                         Callee::Virtual { .. }
                         | Callee::Dyn { .. }
                         | Callee::ParamMethod { .. } => fx.opaque = true,
@@ -163,7 +183,9 @@ impl Lives {
             receivers,
             sources,
             bodies,
-            found,
+            maker,
+            closures,
+            disposers,
         }
     }
 
@@ -172,11 +194,13 @@ impl Lives {
     /// runs holds what the functions that run pass it (the functions the copy lives in hold what
     /// any caller passes).
     pub(super) fn live(&self, ci: usize) -> Option<(FxHashSet<DefId>, FxHashSet<Store>)> {
-        if !self.found.get(ci).copied().unwrap_or(false) {
+        let maker = self.maker.get(ci).copied().flatten()?;
+        if self.disposers {
             return None;
         }
         let reach = self.graph.reach(&[Store::Copy(ci as u32)]);
-        let mut roots: FxHashSet<DefId> = FxHashSet::default();
+        // Its maker runs while it lives, also when the copy goes straight into a call.
+        let mut roots: FxHashSet<DefId> = FxHashSet::from_iter([maker]);
         for s in &reach {
             match *s {
                 Store::Heap => return None,
@@ -187,6 +211,10 @@ impl Lives {
                 Store::Copy(_) | Store::Fn(_) => {}
             }
         }
+        // A closure holding the copy (a capture) may run after its maker returns.
+        if roots.iter().any(|r| self.closures.contains(r)) {
+            return None;
+        }
         let mut work: Vec<DefId> = roots.iter().copied().collect();
         // A function the copy is passed to is called by one it lives in, which passes its other
         // arguments too: only the others (where it is made, or returned to) take any caller's.
@@ -194,7 +222,7 @@ impl Lives {
             .filter_map(|r| self.facts.get(r))
             .flat_map(|fx| fx.calls.iter().map(|c| c.0))
             .collect();
-        roots.retain(|r| !called.contains(r));
+        roots.retain(|&r| r == maker || !called.contains(&r));
         let mut live: FxHashSet<DefId> = FxHashSet::default();
         let mut passed: FxHashMap<(DefId, LocalId), Fns> = FxHashMap::default();
         while let Some(f) = work.pop() {
@@ -321,6 +349,18 @@ impl Lives {
         let src = self.graph.origins(source);
         from.iter().any(|s| reach.contains(s) || src.contains(s))
     }
+}
+
+/// May intrinsic `i` run the program's code, which the flow doesn't see: an operation on a
+/// dynamic value (a getter or setter, a proxy trap, `toString` / `valueOf`, `toJSON`, a method
+/// call), or a generator's `yield`. The rest only read or build values.
+fn runs_code(i: Intrinsic) -> bool {
+    use Intrinsic as I;
+    let pure = matches!(
+        i,
+        I::AnyIsArray | I::AnyIsList | I::AnyStrictEq | I::AnyTag | I::AnyTruthy | I::AnyTypeof
+    );
+    i == I::Yield || (!pure && format!("{i:?}").starts_with("Any"))
 }
 
 /// `into` with `v` added: did it change?
