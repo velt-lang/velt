@@ -109,7 +109,7 @@ declaration's `ExternFnDef` is never called. Its name maps to the `Intrinsic` in
   empty setters, never called. `x.m = f` is a `ParamMethod`/`Dyn` call of `<set m()>` with
   arguments `[x, f]`, held as a field setter call is (the receiver `BorrowMut`, the function
   owned). Reading a written method as a value (`const t = x.m`, not called) is a compile error
-  (`iface_method_reads`): a method value calls through slot `j` when it is called, which a later
+  (`iface_method_checks`): a method value calls through slot `j` when it is called, which a later
   write would change. Interfaces whose methods nobody writes have no method setter slots.
 
 ## M2 encodings sema emits

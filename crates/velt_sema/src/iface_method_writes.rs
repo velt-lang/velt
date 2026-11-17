@@ -37,7 +37,7 @@ pub(crate) struct MethodWrites {
     /// Interface -> where a method of it is first written.
     written: FxHashMap<DefId, Span>,
     /// (interface, method) pairs written, each with where first.
-    methods: FxHashMap<(DefId, usize), Span>,
+    pub(crate) methods: FxHashMap<(DefId, usize), Span>,
     /// Per implementation (`Ctx::impls` index): how it stores each method, `None` where it can't.
     sources: FxHashMap<u32, Vec<Option<MethodSrc>>>,
     /// Implementations given their method setters.
@@ -51,7 +51,7 @@ pub(crate) struct MethodWrites {
     adapters: FxHashMap<u32, crate::body::expr::iface_adapt_slots::AdapterParts>,
     /// (interface, method) -> its function-type site and that site's module
     /// ([`Ctx::method_site`]).
-    sites: FxHashMap<(DefId, usize), (Span, usize)>,
+    pub(crate) sites: FxHashMap<(DefId, usize), (Span, usize)>,
     /// (object type, field) -> the site of the function stored there under a written method's
     /// name (`body/expr/object.rs`), the first literal of that shape.
     field_sites: FxHashMap<(DefId, usize), Span>,
@@ -65,9 +65,9 @@ pub(crate) struct MethodWrites {
     refusals_reported: bool,
     /// (method site, object type, field, field type): fields storing a written method that are
     /// not sites ([`Ctx::check_unlinked_fields`]).
-    unlinked: Vec<(Span, DefId, usize, TyId)>,
+    pub(crate) unlinked: Vec<(Span, DefId, usize, TyId)>,
     /// Methods of an interface read as values through an interface value, with where
-    /// (`crate::iface_method_reads`).
+    /// (`crate::iface_method_checks`).
     pub(crate) value_reads: Vec<(DefId, usize, Span)>,
 }
 
@@ -274,42 +274,6 @@ impl Ctx<'_> {
                 }
             }
         }
-    }
-
-    /// The fields storing a written method that are not sites: what the functions assigned to
-    /// the method throw must fit the field's function type, or the write is refused.
-    fn check_unlinked_fields(&mut self) {
-        let unlinked = std::mem::take(&mut self.method_writes.unlinked);
-        for &(m, d, index, fty) in &unlinked {
-            let crate::hir::TyKind::FnPtr { throws, .. } = *self.ty.kind(fty) else {
-                continue;
-            };
-            let thrown = self.site_errors(m);
-            let Some(bad) = self.error_outside(Some(throws), thrown) else {
-                continue;
-            };
-            let at = (self.method_writes.sites.iter())
-                .find(|(_, &(s, _))| s == m)
-                .and_then(|(key, _)| self.method_writes.methods.get(key).copied());
-            let Some(at) = at else {
-                continue;
-            };
-            let Some(a) = self.adt(d) else {
-                continue;
-            };
-            let owner = a.name.clone();
-            let field = (a.fields.get(index)).map_or(String::new(), |f| f.name.clone());
-            let (bad, fty) = (self.display(bad), self.display(fty));
-            self.error(
-                Diagnostic::error(
-                    format!("a function assigned to method `{field}` throws `{bad}`, which a field storing it does not allow"),
-                    at,
-                )
-                .with_note(format!("`{owner}` stores it in its field `{field}` of type `{fty}`"))
-                .with_note(format!("catch the error inside the assigned function, or add `{bad}` to that field's `throws`")),
-            );
-        }
-        self.method_writes.unlinked = unlinked;
     }
 
     /// The site span of method `j` of `iface` ([`Self::method_site`]), once written.

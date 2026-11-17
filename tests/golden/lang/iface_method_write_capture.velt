@@ -19,6 +19,15 @@ function rewire(x: Ctx): void {
 }
 rewire(c);
 c.update();
+// A closure that replaces its own method while it runs, then uses what it captured: the call
+// keeps the closure alive until it returns.
+const tag = "tag " + c.el;
+c.update = () => {
+  c.update = () => console.log("replaced");
+  console.log("replacing, " + tag + " " + c.count);
+};
+c.update();
+c.update();
 // A closure stored in the object it captures is a reference cycle, which Velt does not collect
 // (design/semantics.md "Reference cycles"): the last write stores one that captures nothing.
 c.update = () => console.log("done");

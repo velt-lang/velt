@@ -285,7 +285,7 @@ impl FnCx<'_, '_> {
 
     /// `prop` of a value of type `t`, read as a value: when it is a method of an interface (on
     /// an interface value or a bounded type parameter), recorded, so a write of that method
-    /// refuses it (`crate::iface_method_reads`).
+    /// refuses it (`crate::iface_method_checks`).
     fn note_iface_method_read(&mut self, t: TyId, prop: &ast::Ident) {
         if let Some(Resolved::Iface { iface, slot, .. }) = self.resolve_method(t, &prop.name) {
             let n = self.cx.iface(iface).map_or(0, |i| i.methods.len());

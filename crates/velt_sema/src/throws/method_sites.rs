@@ -27,6 +27,11 @@ impl Ctx<'_> {
         self.fn_sites.seeds.methods.contains(name)
     }
 
+    /// What a promise of type `t` rejects with (`None`: not a promise).
+    pub(crate) fn promise_rejection_error(&self, t: TyId) -> Option<TyId> {
+        self.rejection_error(t)
+    }
+
     /// `t` with a promise's rejection error left out (`never`): how a stored function's result
     /// is compared with a written method's (`Ctx::stores_method`), whose error types are
     /// inferred, never compared.
