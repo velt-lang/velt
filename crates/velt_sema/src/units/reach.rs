@@ -20,19 +20,13 @@ use crate::ctx::{Ctx, Item};
 use crate::defs::DefInfo;
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, TyId, TyKind};
 
-/// The definitions a build from std's unit on disk is made of ([`self`]).
-pub(crate) fn program_set(cx: &mut Ctx, entry: Option<DefId>) -> FxHashSet<DefId> {
-    let base = cx.unit_sums.lib_base.min(cx.unit_base as usize);
-    let base = if crate::units::libraries() {
-        base
-    } else {
-        cx.unit_base as usize
-    };
-    let mut todo: Vec<DefId> = (base..cx.info.len()).map(|i| DefId(i as u32)).collect();
-    todo.extend(entry);
-    todo.extend(cx.module_slots.iter().copied());
-    // The std functions lowering looks up by name, as lazy std's roots (`Mode::named`), and
-    // every hook (lazy std demands those the program's constructs need: all is a superset).
+/// std's roots ([`self`]): the std functions lowering looks up by name, as lazy std's roots
+/// (`Mode::named`), and every hook (lazy std demands those the program's constructs need: all
+/// is a superset). They depend on std alone, so std's unit keeps them
+/// (`Summaries::reach_roots`, made as the unit is finished) instead of every build looking at
+/// each item of each std module by its qualified name.
+pub(crate) fn std_roots(cx: &Ctx) -> Vec<DefId> {
+    let mut roots = vec![];
     for m in 0..cx.modules.len().min(cx.scopes.len()) {
         let module = cx.modules[m];
         if !module.is_std {
@@ -55,9 +49,28 @@ pub(crate) fn program_set(cx: &mut Ctx, entry: Option<DefId>) -> FxHashSet<DefId
             let hook = velt_common::std_hooks::find(&qualified).is_some()
                 || crate::body::lazy_std::SCHED_HOOKS.contains(&qualified.as_str());
             if root || hook {
-                todo.push(*d);
+                roots.push(*d);
             }
         }
+    }
+    roots
+}
+
+/// The definitions a build from std's unit on disk is made of ([`self`]).
+pub(crate) fn program_set(cx: &mut Ctx, entry: Option<DefId>) -> FxHashSet<DefId> {
+    let base = cx.unit_sums.lib_base.min(cx.unit_base as usize);
+    let base = if crate::units::libraries() {
+        base
+    } else {
+        cx.unit_base as usize
+    };
+    let mut todo: Vec<DefId> = (base..cx.info.len()).map(|i| DefId(i as u32)).collect();
+    todo.extend(entry);
+    todo.extend(cx.module_slots.iter().copied());
+    // std's roots depend on std alone: its unit keeps them ([`std_roots`]).
+    match &cx.unit_sums.reach_roots {
+        Some(roots) => todo.extend(roots.iter().copied()),
+        None => todo.extend(std_roots(cx)),
     }
     let mut walk = Walk {
         live: FxHashSet::default(),
@@ -126,7 +139,7 @@ pub(crate) fn program_set(cx: &mut Ctx, entry: Option<DefId>) -> FxHashSet<DefId
                 *m.entry(cx.modules[module].path.as_str()).or_default() += 1;
             }
             let mut v: Vec<_> = m.into_iter().collect();
-            v.sort_by(|a, b| b.1.cmp(&a.1));
+            v.sort_by_key(|a| std::cmp::Reverse(a.1));
             v.truncate(25);
             v
         };

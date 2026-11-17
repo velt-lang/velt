@@ -831,14 +831,13 @@ fn live_types_of(cx: &mut Ctx, mut todo: Vec<TyId>, mut adts: Vec<DefId>) {
 /// The methods and constructors of every class and struct, by owner.
 fn methods<'a>(cx: &'a mut Ctx) -> &'a FxHashMap<DefId, Vec<DefId>> {
     if cx.lazy.live.methods.is_none() {
-        let mut by: FxHashMap<DefId, Vec<DefId>> = FxHashMap::default();
-        for (i, info) in cx.info.iter().enumerate() {
-            if let DefInfo::Fn(f) = info {
-                if let Some(o) = f.owner {
-                    by.entry(o).or_default().push(DefId(i as u32));
-                }
-            }
-        }
+        // A finished unit keeps its part (`Summaries::methods_by_owner`): walking every
+        // definition would decode all of a unit from disk.
+        let (mut by, from) = match &cx.unit_sums.methods_by_owner {
+            Some((by, n)) => (by.clone(), *n),
+            None => (FxHashMap::default(), 0),
+        };
+        add_methods(cx, &mut by, from);
         cx.lazy.live.methods = Some(by);
     }
     cx.lazy
@@ -846,6 +845,26 @@ fn methods<'a>(cx: &'a mut Ctx) -> &'a FxHashMap<DefId, Vec<DefId>> {
         .methods
         .as_ref()
         .expect("ICE: methods by owner")
+}
+
+/// Add the methods and constructors of the definitions from `from` on to `by`, by owner, in
+/// definition order.
+fn add_methods(cx: &Ctx, by: &mut FxHashMap<DefId, Vec<DefId>>, from: usize) {
+    for i in from..cx.info.len() {
+        if let DefInfo::Fn(f) = &cx.info[i] {
+            if let Some(o) = f.owner {
+                by.entry(o).or_default().push(DefId(i as u32));
+            }
+        }
+    }
+}
+
+/// A finished unit's methods and constructors by owner, with how many definitions it has
+/// (`Summaries::methods_by_owner`, which [`methods`] starts from).
+pub(crate) fn unit_methods(cx: &Ctx) -> (FxHashMap<DefId, Vec<DefId>>, usize) {
+    let mut by = FxHashMap::default();
+    add_methods(cx, &mut by, 0);
+    (by, cx.info.len())
 }
 
 /// The field defaults and redefined initializers of live class or struct `d` (its constructor

@@ -10,7 +10,8 @@
 //!
 //! A tree with a link below the root is not made (a path's identity would not be the root's
 //! joined with it). While the build stamp records what resolution looked at
-//! (`vpm::probe::record`), the snapshot answers nothing: the recording must see the files.
+//! (`vpm::probe::record`), the snapshot answers only for a path's identity, which a recording
+//! never sees: whether a file exists and a directory's names must reach the recording.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -251,14 +252,18 @@ fn installed() -> Option<&'static Installed> {
     TREE.get()
 }
 
-fn tree() -> Option<&'static StdTree> {
-    installed().map(|i| &i.tree)
+/// The snapshot also while the build stamp records: for a path's identity ([`key`],
+/// [`canonical_of`]), which `file_key` asks the file system for with `canonicalize`, never
+/// through `vpm::probe`, so a recording notes nothing of it either way. Asking the file system
+/// costs a build from std's unit one `getattrlist` per path part of each of std's ~830 modules.
+fn identity_tree() -> Option<&'static StdTree> {
+    TREE.get().map(|i| &i.tree)
 }
 
 /// The canonical path of `path`, a path the snapshot's root as given joined with plain names:
 /// no normalizing (the injected std modules', `LoadOptions::std_modules`).
 pub(crate) fn canonical_of(path: &Path) -> Option<PathBuf> {
-    let t = tree()?;
+    let t = identity_tree()?;
     plain_below(path, &t.root).map(|rel| t.canonical.join(rel))
 }
 
@@ -279,7 +284,7 @@ pub(crate) fn names(dir: &Path) -> Option<Vec<String>> {
 /// The identity `file_key` gives `path` (its canonical path), when its directory is below the
 /// snapshot's root.
 pub(crate) fn key(path: &Path) -> Option<PathBuf> {
-    let t = tree()?;
+    let t = identity_tree()?;
     let rel = t.below(path)?;
     let parent = rel.rsplit_once('/').map_or("", |(dir, _)| dir);
     if rel.is_empty() || t.dirs.contains_key(&rel) || t.dirs.contains_key(parent) {

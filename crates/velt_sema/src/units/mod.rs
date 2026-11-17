@@ -250,6 +250,16 @@ pub(crate) struct Summaries {
     /// A finished unit's std functions that read a member of an `any` (`Ctx::dyn_member_fns`):
     /// a later unit's program has `any`'s member slots when it reaches one.
     pub(crate) dyn_member_fns: Vec<crate::hir::DefId>,
+    /// A finished unit's roots of a build's program set (`reach::std_roots`): the std
+    /// functions lowering looks up by name and every hook.
+    pub(crate) reach_roots: Option<Vec<crate::hir::DefId>>,
+    /// A finished unit's methods and constructors by owner, with how many definitions it had
+    /// (`lazy_std::live::methods`): a later unit's stage adds its own instead of reading every
+    /// definition, which decodes all of a unit from disk.
+    pub(crate) methods_by_owner: Option<(
+        rustc_hash::FxHashMap<crate::hir::DefId, Vec<crate::hir::DefId>>,
+        usize,
+    )>,
 }
 
 /// std's part of two per-module facts ([`Order::std_facts`]).
@@ -387,6 +397,8 @@ pub(crate) fn finish_unit(cx: &mut Ctx) {
     let mut dyn_fns: Vec<crate::hir::DefId> = cx.dyn_member_fns.iter().copied().collect();
     dyn_fns.sort_unstable();
     cx.unit_sums.dyn_member_fns = dyn_fns;
+    cx.unit_sums.reach_roots = Some(reach::std_roots(cx));
+    cx.unit_sums.methods_by_owner = Some(crate::body::lazy_std::unit_methods(cx));
     crate::ownership::keep_unit_scans(cx);
 }
 
@@ -444,7 +456,7 @@ crate::units::codec::structs! {
         weak_made, undefined_facts, lock_summaries, module_edges, groups, dispatch, generated_fns,
         literals, fed, modules, subclasses, calls, inst_sites, outside_named,
         outside_tys, lets, types, lib_base, dispatch_fns, value_scan,
-        virtuals, implicit, host_fns, dyn_member_fns,
+        virtuals, implicit, host_fns, dyn_member_fns, reach_roots, methods_by_owner,
     }
 }
 
@@ -482,6 +494,8 @@ fn summary_sizes(s: &Summaries) {
         implicit,
         host_fns,
         dyn_member_fns,
+        reach_roots,
+        methods_by_owner,
     } = s;
     let mut sizes: Vec<(&str, usize)> = vec![];
     macro_rules! size { ($($f:ident),*) => {$(
@@ -519,7 +533,9 @@ fn summary_sizes(s: &Summaries) {
         virtuals,
         implicit,
         host_fns,
-        dyn_member_fns
+        dyn_member_fns,
+        reach_roots,
+        methods_by_owner
     );
     sizes.sort_by_key(|s| std::cmp::Reverse(s.1));
     for (f, n) in sizes {

@@ -42,7 +42,7 @@ pub(crate) use hook_stubs::stub as hook_stub;
 
 pub(crate) use live::{
     assume, demanded as hooks_demanded, finish as finish_live, live_defs, note_catch_unwind,
-    reach_again, too_late, units_live_set, walk_units_program, Assumed,
+    reach_again, too_late, unit_methods, units_live_set, walk_units_program, Assumed,
 };
 
 /// Std modules (path prefixes) whose free functions lowering looks up by name (`velt_vir`
