@@ -609,7 +609,23 @@ pub(super) fn value_targets(
         Read::FromAny => held_adts(cx, lits),
         _ => vec![],
     };
-    let t = find_values(cx, lits, want, &held, read);
+    let mut t = find_values(cx, lits, want, &held, read);
+    // EXPERIMENT (#2943): over std's unit the dependencies in it (`units::libraries`) are
+    // numbered before the program's definitions; lazy std numbers the program's first. The
+    // targets go in that order, the program's, the dependencies', std's: the first one's reason
+    // is the one an error gives.
+    if cx.units_stage == crate::units::Stage::App {
+        let (lib, base) = (cx.unit_sums.lib_base as u32, cx.unit_base);
+        let rank = |d: DefId| match d.0 {
+            n if n >= base => 0,
+            n if n >= lib => 1,
+            _ => 2,
+        };
+        if let Some(list) = t.as_mut() {
+            // Stable: each group keeps the order the index found it in.
+            list.sort_by_key(|(g, _)| rank(*g));
+        }
+    }
     lits.by_shape.borrow_mut().insert(key, t.clone());
     Some(t?.into_iter().map(|(g, s)| (g, skip - s)).collect())
 }
