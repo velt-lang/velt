@@ -238,6 +238,7 @@ impl Cx<'_> {
             env_traced: _,
             weak_envs: _,
             class_traced: _,
+            iface_traced: _,
             dyn_types: _,
             dyn_to_any,
             proxy_roots,

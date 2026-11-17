@@ -1,0 +1,47 @@
+// check: no leaks
+// As weakmap_iface_value, through a class implementing the interface alone: an interface value's
+// data that is a class object is visited with that class's trace glue (#3119 step 3).
+class Raw {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+interface Source {
+  read(): number;
+}
+
+class Watch implements Source {
+  raw: Raw;
+  constructor(raw: Raw) {
+    this.raw = raw;
+  }
+  read(): number {
+    return this.raw.n;
+  }
+}
+
+class Holder {
+  sources: Source[] = [];
+}
+
+function track(cache: WeakMap<Raw, Holder>, n: number): WeakRef<Raw> {
+  const raw = new Raw(n);
+  const holder = new Holder();
+  holder.sources.push(new Watch(raw));
+  cache.set(raw, holder);
+  let sum = 0;
+  for (const s of cache.get(raw)!.sources) {
+    sum += s.read();
+  }
+  console.log("reads", sum);
+  return new WeakRef(raw);
+}
+
+function main() {
+  const cache = new WeakMap<Raw, Holder>();
+  const r = track(cache, 4);
+  console.log("key freed:", r.deref() == null);
+  console.log("map still in use:", cache.has(new Raw(0)));
+}

@@ -1,0 +1,49 @@
+// check: no leaks
+// As weakmap_iface_value, through an object literal alone: an interface value's data that the
+// interface value owns in a box of its own (not a counted object) is walked in place (#3119
+// step 3).
+class Raw {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+interface Source {
+  read(): number;
+}
+
+class Watch implements Source {
+  raw: Raw;
+  constructor(raw: Raw) {
+    this.raw = raw;
+  }
+  read(): number {
+    return this.raw.n;
+  }
+}
+
+class Holder {
+  sources: Source[] = [];
+}
+
+function track(cache: WeakMap<Raw, Holder>, n: number): WeakRef<Raw> {
+  const raw = new Raw(n);
+  const holder = new Holder();
+  const lit: { raw: Raw; read(): number } = { raw, read: () => n };
+  holder.sources.push(lit);
+  cache.set(raw, holder);
+  let sum = 0;
+  for (const s of cache.get(raw)!.sources) {
+    sum += s.read();
+  }
+  console.log("reads", sum);
+  return new WeakRef(raw);
+}
+
+function main() {
+  const cache = new WeakMap<Raw, Holder>();
+  const r = track(cache, 4);
+  console.log("key freed:", r.deref() == null);
+  console.log("map still in use:", cache.has(new Raw(0)));
+}

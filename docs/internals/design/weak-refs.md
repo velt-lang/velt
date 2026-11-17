@@ -345,9 +345,10 @@ the next trial until a release elsewhere in the cycle changes the answer.
 ## Next steps
 
 1. Done (#823 step B): `WeakMap`, `WeakSet` and `WeakRef` in the language.
-   Function values' environments and class hierarchies (by the object's class) are traced
-   since #3119 step 3 ([cycles.md](cycles.md) section 2). Left: trace glue through interface
-   values and generator states (the rest of that step), keys of other object kinds (unions, tuples, function and interface values), and
+   Function values' environments, class hierarchies (by the object's class) and interface
+   values (by their table) are traced since #3119 step 3 ([cycles.md](cycles.md) section 2).
+   Left: trace glue through generator states and uncounted class fields (the rest of that
+   step), keys of other object kinds (unions, tuples, function and interface values), and
    ephemeron cycles that span several maps (above).
 2. `weak T` fields (#11): planned in [cycles.md](cycles.md) section 4, as a pointer to a slot
    per target that a read checks inline, together with a collector for the strong cycles this

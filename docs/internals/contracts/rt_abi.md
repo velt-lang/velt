@@ -270,7 +270,10 @@ will use them too. Design: [weak-refs.md](../design/weak-refs.md).
   `obj` owns, or report one twice: the trial would count it as internal and could free a live
   object. So the glue of a type whose objects can have more fields than it knows (a class in a
   hierarchy with a vtable, an interface value, a function value's environment) is null, or
-  dispatches on the object's dynamic type. Velt's is null for interface values today; a class
+  dispatches on the object's dynamic type. An interface value's glue dispatches on its table
+  (one static per implementation and concrete type, compared with the tables the program
+  built for the interface) and visits the data as that type keeps it: a counted object as a
+  child, an object or box only the interface value owns walked in place; a class
   with subclasses dispatches on the object's header (its class's vtable, compared with those
   of the classes the program built that are the class or extend it, then that class's exact
   glue), and leaves out an object of none of them. A function value's glue dispatches on its environment's drop entry

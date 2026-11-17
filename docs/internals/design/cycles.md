@@ -150,7 +150,7 @@ and the analysis itself are computed only under that variable (`Cx::cycle_facts`
 compiles do none of it; step 7 records them always and moves the analysis into the
 counted-types fixed point (`close_boxing`), once code generation depends on it.
 
-## 2. Trace glue for every cycle-capable type (step 3; closures and classes implemented)
+## 2. Trace glue for every cycle-capable type (step 3; closures, classes and interface values implemented)
 
 The collector and the weak core find cycles the same way: by asking each object which counted
 objects it owns, through compiler-generated trace glue (`rt_abi.md`, "Weak references"). Today
@@ -181,9 +181,15 @@ complete for every type a cycle-capable type reaches:
   compares it with the vtables of the classes of the hierarchy the program built that are the
   class or extend it (`Boxing::class_traced`) and calls that class's exact glue. An `any`
   table's weak word uses the same glue for such a class.
-- **Interface values and `any`.** The interface table gets the same slot; `any` tables already
-  carry a trace word when `object` is a weak key (`weak_object.rs`), and get it whenever a
-  dynamic value can reach a cycle-capable type.
+- **Interface values (implemented, `glue/trace_iface.rs`).** An interface value's table is
+  one static per implementation and concrete type, so its glue compares it with the tables
+  the program built for the interface (`Boxing::iface_traced`) and handles the data as that
+  type keeps it (`dyn_drop_body`): a counted object is a child, visited with its glue; an
+  uncounted class object or a box of its own belongs to the interface value and is walked in
+  place; a primitive's shared box holds nothing.
+- **`any`.** `any` tables carry a trace word when `object` is a weak key (`weak_object.rs`);
+  they get it whenever a dynamic value can reach a cycle-capable type (with the collector,
+  step 7).
 - **Uncounted classes** are traced inline: their fields' references are reported as the
   owner's, since the owner holds the only reference.
 

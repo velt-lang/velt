@@ -89,7 +89,7 @@ impl Cx<'_> {
             VtableKey::Impl(index, ty) => {
                 self.note_vtable_type(ty);
                 if !self.is_any_impl(index) {
-                    self.note_iface_impl(self.hir.impls[index as usize].iface, ty);
+                    self.note_iface_impl(self.hir.impls[index as usize].iface, index, ty);
                 }
                 let mut entries = self.impl_entries(index, ty);
                 if let Some(js) = self.hir.upcast_impls.get(&index).cloned() {

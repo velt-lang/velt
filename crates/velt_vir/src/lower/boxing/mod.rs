@@ -126,6 +126,10 @@ pub(super) struct Boxing {
     /// (by root class) the program built, which a value of one of its classes may be: the trace
     /// glue dispatches on them (glue/trace_class.rs). Empty in every other program.
     pub(super) class_traced: FxHashMap<DefId, Vec<TyId>>,
+    /// In a program with weak references: the tables the program built for each interface, as
+    /// `(impl index, concrete type)`: the trace glue of an interface value dispatches on them
+    /// (glue/trace_iface.rs). Empty in every other program.
+    pub(super) iface_traced: FxHashMap<DefId, Vec<(u32, TyId)>>,
     /// Interfaces whose values are converted to `any` / `unknown`: their tables hold the
     /// `any` table of their concrete type (`Cx::vtable`, `make_dyn`).
     pub(super) dyn_to_any: FxHashSet<DefId>,
@@ -356,8 +360,9 @@ pub(super) struct Facts {
     /// Closure environments built, `(key, closure, type arguments)`: the key is the function
     /// type the closure was made at (cycles_keys.rs; `None`: a generic closure's own type).
     pub(super) closure_envs: FxHashSet<(Option<CycleKey>, DefId, Vec<TyId>)>,
-    /// `(interface, concrete type)` of the implementation tables built (cycles.rs).
-    pub(super) iface_impls: FxHashSet<(DefId, TyId)>,
+    /// `(interface, impl index, concrete type)` of the implementation tables built (cycles.rs,
+    /// glue/trace_iface.rs).
+    pub(super) iface_tables: FxHashSet<(DefId, u32, TyId)>,
     /// Where values of each type are made (`new`, literals, closures), recorded only for
     /// `VELT_DEBUG_COUNTED` (cycles_sites.rs).
     pub(super) alloc_sites: FxHashSet<(TyId, velt_common::Span)>,

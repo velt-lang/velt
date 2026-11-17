@@ -4,7 +4,8 @@
 //!   for each counted object `obj` refers to through its fields, elements and payloads stored
 //!   inline (up to the next counted object), with the child's own trace glue (for a class with
 //!   subclasses, one that dispatches on the object's class, trace_class.rs), or null for a child
-//!   that refers to nothing. A function value leads to its closure's environment (trace_env.rs);
+//!   that refers to nothing. An interface value leads to its data by its table
+//!   (trace_iface.rs). A function value leads to its closure's environment (trace_env.rs);
 //!   interface values, uncounted objects and `shared` values are not looked into: a reference left out only makes its target look referenced
 //!   from outside, which keeps it alive (a leak at worst, never a free of something live).
 //!   `TraceIn` is the same walk over an inline value at a pointer (a glue function per type, so
@@ -135,6 +136,8 @@ impl FnLower<'_, '_> {
             {
                 self.trace_dyn(place, tv, true);
             }
+            // Any other interface value: by its table (trace_iface.rs).
+            TyKind::Dyn(..) => self.trace_iface_value(&place, ty, tv),
             TyKind::Adt(..) | TyKind::Result(..) if self.is_enum(ty) || self.is_result(ty) => {
                 if matches!(self.cx.ty(ty), Ty::Agg(_)) {
                     self.for_each_variant(&place, ty, |lw, _, parts| {

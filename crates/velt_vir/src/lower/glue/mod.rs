@@ -57,6 +57,7 @@ mod thunk;
 mod trace;
 mod trace_class;
 mod trace_env;
+mod trace_iface;
 mod transfer;
 mod transfer_env;
 mod transfer_settle;

@@ -125,7 +125,9 @@ impl Cx<'_> {
             // the trace glue asks its descriptor (weak_object.rs). So may an interface value
             // whose tables keep `any` tables.
             TyKind::Dyn(d, _)
-                if self.is_dynamic(t) || b.unwrap_or(&self.boxing).dyn_to_any.contains(&d) =>
+                if self.is_dynamic(t)
+                    || (b.unwrap_or(&self.boxing).weak_object
+                        && b.unwrap_or(&self.boxing).dyn_to_any.contains(&d)) =>
             {
                 let bx = b.unwrap_or(&self.boxing);
                 if bx.weak_object {
@@ -151,6 +153,17 @@ impl Cx<'_> {
                 for (def, targs) in closures {
                     for (ct, _) in self.env_owned(def, &targs) {
                         self.refs_inline(b, ct, out, seen);
+                    }
+                }
+            }
+            // An interface value: what the data of each table built for its interface refers to
+            // (glue/trace_iface.rs).
+            TyKind::Dyn(..) => {
+                for (_, c) in self.traced_tables(b, t) {
+                    for r in self.iface_refs(b, c) {
+                        if !out.contains(&r) {
+                            out.push(r);
+                        }
                     }
                 }
             }
@@ -262,6 +275,7 @@ impl Cx<'_> {
             next.env_traced = self.closures_by_key();
             next.weak_envs = !next.env_traced.is_empty();
             next.class_traced = self.classes_by_root();
+            next.iface_traced = self.tables_by_iface();
         }
         let mut seeds: Vec<TyId> = self.facts.weak_seeds.iter().copied().collect();
         if next.weak_object {

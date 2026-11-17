@@ -378,7 +378,9 @@ impl Cx<'_> {
 
     /// The concrete types each interface's tables were built for.
     fn iface_impl_types(&self) -> FxHashMap<DefId, Vec<TyId>> {
-        let mut pairs: Vec<(DefId, TyId)> = self.facts.iface_impls.iter().copied().collect();
+        let mut pairs: Vec<(DefId, TyId)> = (self.facts.iface_tables.iter())
+            .map(|&(d, _, t)| (d, t))
+            .collect();
         pairs.sort_by_key(|(d, t)| (d.0, t.0));
         let mut out: FxHashMap<DefId, Vec<TyId>> = FxHashMap::default();
         for (d, t) in pairs {

@@ -112,12 +112,14 @@ impl Cx<'_> {
         self.intern(k)
     }
 
-    /// Record that a table of interface `iface` was built for the concrete type `t`.
-    pub(in crate::lower) fn note_iface_impl(&mut self, iface: DefId, t: TyId) {
-        if !self.cycle_facts {
+    /// Record that the table of impl `index` of interface `iface` was built for the concrete
+    /// type `t` (read by the cycle analysis and, in a program with weak references, by the
+    /// trace glue of interface values: glue/trace_iface.rs).
+    pub(in crate::lower) fn note_iface_impl(&mut self, iface: DefId, index: u32, t: TyId) {
+        if !self.cycle_facts && !self.has_weak() {
             return;
         }
-        self.facts.iface_impls.insert((iface, t));
+        self.facts.iface_tables.insert((iface, index, t));
     }
 }
 

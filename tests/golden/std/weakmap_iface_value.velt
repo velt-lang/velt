@@ -1,0 +1,50 @@
+// check: no leaks
+// A weak map value holding interface values whose data refers back to the key, through a class
+// implementing the interface and through an object literal: the trace glue goes by each value's
+// table to its data, so the ephemeron cycles are found and freed (#3119 step 3).
+class Raw {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+interface Source {
+  read(): number;
+}
+
+class Watch implements Source {
+  raw: Raw;
+  constructor(raw: Raw) {
+    this.raw = raw;
+  }
+  read(): number {
+    return this.raw.n;
+  }
+}
+
+class Holder {
+  sources: Source[] = [];
+}
+
+function track(cache: WeakMap<Raw, Holder>, n: number): WeakRef<Raw> {
+  const raw = new Raw(n);
+  const holder = new Holder();
+  holder.sources.push(new Watch(raw));
+  const lit: { raw: Raw; read(): number } = { raw, read: () => n };
+  holder.sources.push(lit);
+  cache.set(raw, holder);
+  let sum = 0;
+  for (const s of cache.get(raw)!.sources) {
+    sum += s.read();
+  }
+  console.log("reads", sum);
+  return new WeakRef(raw);
+}
+
+function main() {
+  const cache = new WeakMap<Raw, Holder>();
+  const r = track(cache, 4);
+  console.log("key freed:", r.deref() == null);
+  console.log("map still in use:", cache.has(new Raw(0)));
+}
