@@ -22,8 +22,10 @@
 // `interval`), and a fair pass counts the queue when it starts.
 
 import { inline, noInline } from "velt/lang/intrinsics";
+import * as gb from "./sched_gather";
 import * as m from "./sched_mem";
 import * as t from "./sched_task";
+import * as wk from "./sched_wake";
 
 /** How long the second queue may wait behind the first before a fair pass (nanoseconds). */
 const FAIR: usize = 10000000;
@@ -362,10 +364,33 @@ export function takeInbox(e: usize): void {
     rev = k;
     k = next;
   }
+  const g = m.ld(e + t.E_MAIN);
+  if (rev !== 0 && e !== g && gb.gathers(e, g)) {
+    gather(e, g, rev);
+    return;
+  }
   while (rev !== 0) {
     const next = m.ld(rev + t.T_NEXT);
     pushIo(e, rev);
     rev = next;
+  }
+}
+
+/** `takeInbox` on idle worker `e`: the tasks of chain `k` that may go back to worker 0 (`g`) go. */
+@noInline
+function gather(e: usize, g: usize, k: usize): void {
+  let gave = false;
+  while (k !== 0) {
+    const next = m.ld(k + t.T_NEXT);
+    if (gb.give(e, g, k)) {
+      gave = true;
+    } else {
+      pushIo(e, k);
+    }
+    k = next;
+  }
+  if (gave) {
+    wk.unpark(g);
   }
 }
 

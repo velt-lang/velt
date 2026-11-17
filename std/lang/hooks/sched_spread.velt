@@ -29,7 +29,7 @@ import * as t from "./sched_task";
 import * as wk from "./sched_wake";
 
 /** How long each measurement runs (nanoseconds). */
-const WINDOW: usize = 10000000;
+export const WINDOW: usize = 10000000;
 /** The delay from which a worker takes on a helper (nanoseconds). */
 const TARGET: usize = 200000;
 /** The share of a window (percent) a worker must be awake for, with input waiting, to be saturated. */
@@ -41,7 +41,7 @@ export const HELP: usize = 16;
 /** Looks at the spread at most between two reads of the clock while a window runs. */
 const SKIP_MAX: usize = 8;
 /** Input waiting on a worker from which a worker that ran out of work borrows half. */
-const BORROW_MIN: usize = 2;
+export const BORROW_MIN: usize = 2;
 /**
  * The polls a worker runs before workers try to borrow from it again when the older half of its
  * input, which a borrower takes, was all pinned or anchored: a server's connections, pinned to
