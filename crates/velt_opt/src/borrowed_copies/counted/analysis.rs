@@ -56,6 +56,9 @@ impl Cx<'_> {
             counts,
             inc,
             releases: vec![],
+            own: vec![],
+            owned: false,
+            held_calls: FxHashSet::default(),
             count_stmts: FxHashSet::default(),
         };
         // The increment's `add`, when it is a register of its own.
@@ -78,7 +81,7 @@ impl Cx<'_> {
     }
 
     /// Whether `rv` is the root's own load, `*p` of a register `p` written once.
-    fn repeats_root_load(&self, fam: &Family, rv: &Rvalue) -> bool {
+    pub(super) fn repeats_root_load(&self, fam: &Family, rv: &Rvalue) -> bool {
         let Some((_, root_rv)) = self.def_of(fam.root) else {
             return false;
         };
@@ -168,10 +171,18 @@ impl Cx<'_> {
             let Terminator::Call { next, .. } = self.func.blocks[b].term else {
                 return None;
             };
-            return fam.glue_addrs.contains(&a).then_some(Release {
+            if !fam.glue_addrs.contains(&a) {
+                return None;
+            }
+            // `a = &m`: the member whose reference the glue releases.
+            let Some((_, Rvalue::AddrOf(m))) = self.def_of(a) else {
+                return None;
+            };
+            return Some(Release {
                 test: b,
                 dec: next,
                 store: None,
+                through: m.local,
             });
         }
         let Terminator::Branch { cond, els, .. } = &self.func.blocks[b].term else {
@@ -216,16 +227,21 @@ impl Cx<'_> {
             };
             matches!(sub, Rvalue::Binary(BinOp::Sub, _, o) if is_int(o, 1)).then_some((si, sub_at))
         })?;
+        let through = self.count_base(q)?;
         fam.count_stmts.extend(stmts.into_iter().chain(sub_at));
         Some(Release {
             test: b,
             dec: *els,
             store: Some((els.0 as usize, store)),
+            through,
         })
     }
 
     /// The uses of `fam`'s object when everything but its calls allows it to borrow (module
-    /// doc); its calls are checked by [`Cx::unfreed`] once every family is known.
+    /// doc); its calls are checked by [`Cx::unfreed`] once every family is known. The blocks
+    /// looked at are those reachable once `fam.releases` skip their freeing paths: every
+    /// release before [`Cx::pair`] (the fewest blocks, so a family refused here is refused
+    /// whatever its pairing), the paired ones after it.
     pub(super) fn check(&self, fam: &Family) -> Option<FxHashSet<Point>> {
         let cut = cut_of(std::iter::once(fam));
         let reach = self.reachable(&cut);
@@ -253,7 +269,7 @@ impl Cx<'_> {
                 }
             }
         }
-        (!w.bail && self.balanced(fam, &reach)).then_some(w.uses)
+        (!w.bail).then_some(w.uses)
     }
 
     /// The locals holding what the object holds, read out of it with no reference of their own
@@ -324,7 +340,7 @@ impl Cx<'_> {
     fn explained(&self, fam: &Family, at: Point) -> bool {
         at == fam.inc
             || fam.count_stmts.contains(&at)
-            || fam.releases.iter().any(|r| r.store == Some(at))
+            || (fam.releases.iter().chain(&fam.own)).any(|r| r.store == Some(at))
     }
 
     fn stmt(&self, fam: &Family, w: &mut Walk, at: Point, s: &Stmt) {
@@ -436,7 +452,15 @@ impl Cx<'_> {
                 if let velt_vir::vir::Callee::Ptr { target, .. } = callee {
                     self.operand(fam, w, at, target, false);
                 }
-                for a in args {
+                let frees_block = matches!(callee, velt_vir::vir::Callee::Extern(e) if Some(*e) == self.frees.free);
+                for (i, a) in args.iter().enumerate() {
+                    if i == 0 && frees_block && local_of(a).is_some_and(|q| fam.counts.contains(&q))
+                    {
+                        // The object's block freed through its count pointer: the end of a
+                        // release the family keeps (a paired one never reaches its free).
+                        w.uses.insert(at);
+                        continue;
+                    }
                     // Passed to the call, which borrows it.
                     self.operand(fam, w, at, a, true);
                     if local_of(a)
@@ -456,87 +480,9 @@ impl Cx<'_> {
         }
     }
 
-    /// Every path from the increment to a return passes a release (module doc), and the
-    /// increment never runs again before one.
-    fn balanced(&self, fam: &Family, reach: &[bool]) -> bool {
-        let n = self.func.blocks.len();
-        // Whether the reference may be held on entry to each block.
-        let mut held_in = vec![false; n];
-        let mut work: Vec<usize> = (0..n).filter(|&b| reach[b]).collect();
-        while let Some(b) = work.pop() {
-            let mut held = held_in[b];
-            for (si, s) in self.func.blocks[b].stmts.iter().enumerate() {
-                if (b, si) == fam.inc {
-                    if held {
-                        return false;
-                    }
-                    held = true;
-                } else if let Stmt::Assign(d, _) = s {
-                    // A member (or the root) written while it holds the reference.
-                    if d.proj.is_empty() && fam.members.contains(&d.local) && held {
-                        let copy = matches!(s, Stmt::Assign(_, Rvalue::Use(op))
-                            if local_of(op).is_some_and(|m| fam.members.contains(&m)));
-                        if !copy {
-                            return false;
-                        }
-                    }
-                }
-            }
-            let term = &self.func.blocks[b].term;
-            if held && matches!(term, Terminator::Return(_)) {
-                return false;
-            }
-            for (s, h) in self.out_edges(fam, b, held) {
-                if h && !held_in[s] {
-                    held_in[s] = true;
-                    work.push(s);
-                }
-            }
-        }
-        true
-    }
-
-    /// The successors of block `b` and whether the reference may be held on each edge.
-    fn out_edges(&self, fam: &Family, b: usize, held: bool) -> Vec<(usize, bool)> {
-        if let Some(r) = fam.release_at(b) {
-            return vec![(r.dec.0 as usize, false)];
-        }
-        let term = &self.func.blocks[b].term;
-        let null_edge = match term {
-            Terminator::Branch { cond, then, els } => self.null_test(fam, cond).map(|ne| {
-                // `m != null` is false (or `m == null` true) on this edge: nothing is held.
-                if ne {
-                    els.0 as usize
-                } else {
-                    then.0 as usize
-                }
-            }),
-            _ => None,
-        };
-        successors(term)
-            .iter()
-            .map(|s| (s.0 as usize, held && Some(s.0 as usize) != null_edge))
-            .collect()
-    }
-
-    /// `cond` as `m != null` (true) or `m == null` (false) of a member `m`.
-    fn null_test(&self, fam: &Family, cond: &Operand) -> Option<bool> {
-        let (_, rv) = self.def_of(local_of(cond)?)?;
-        let Rvalue::Binary(op, a, b) = rv else {
-            return None;
-        };
-        let member = |o: &Operand| local_of(o).is_some_and(|m| fam.members.contains(&m));
-        let tests = (member(a) && is_int(b, 0)) || (member(b) && is_int(a, 0));
-        match op {
-            BinOp::Ne if tests => Some(true),
-            BinOp::Eq if tests => Some(false),
-            _ => None,
-        }
-    }
-
-    /// No call that may free runs while `fam`'s object is still used after it, or is handed the
-    /// object (module doc), once the releases of `cut` (every family borrowed with it) no
-    /// longer free.
+    /// No call that may free runs while `fam` holds its increment's reference and its object is
+    /// still used after the call, or is handed the object (module doc), once the releases of
+    /// `cut` (every family borrowed with it) no longer free.
     pub(super) fn unfreed(
         &self,
         fam: &Family,
@@ -575,8 +521,10 @@ impl Cx<'_> {
             }
         }
         // A release of a family borrowed with this one (a glue call) goes away too.
+        // Only while the family holds the increment's reference does the object lose a count
+        // it had: before and after, its count is what it was.
         (0..n)
-            .filter(|&b| reach[b] && !cut.contains_key(&b))
+            .filter(|&b| reach[b] && !cut.contains_key(&b) && fam.held_calls.contains(&b))
             .all(|b| {
                 let block = &self.func.blocks[b];
                 let Terminator::Call {
