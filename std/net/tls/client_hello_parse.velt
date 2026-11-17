@@ -1,13 +1,23 @@
-// velt/net (internal): parsing a ClientHello (RFC 8446 §4.1.2) for the TLS 1.3 server (#2392 step
-// 4): what the server chooses from (versions, suites, groups and key shares, signature schemes,
-// ALPN) and what it echoes (the legacy session id).
+// velt/net (internal): parsing a ClientHello (RFC 8446 §4.1.2) for the TLS server (#2392 steps 4
+// and 5): what the server chooses from (versions, suites, groups and key shares, signature
+// schemes, ALPN), what it echoes (the legacy session id), and for TLS 1.2 (RFC 5246 §7.4.1.2) the
+// client random, extended_master_secret, renegotiation_info and ec_point_formats.
 
 import { utf8Decode } from "velt/encoding/utf8";
-import { DECODE_ERROR, ILLEGAL_PARAMETER, PROTOCOL_VERSION, TlsFailure } from "velt/net/tls/alert";
+import {
+  DECODE_ERROR,
+  HANDSHAKE_FAILURE,
+  ILLEGAL_PARAMETER,
+  PROTOCOL_VERSION,
+  TlsFailure,
+} from "velt/net/tls/alert";
 import { ByteReader } from "velt/net/tls/byte_reader";
 import {
   EXT_ALPN,
   EXT_COOKIE,
+  EXT_EC_POINT_FORMATS,
+  EXT_EXTENDED_MASTER_SECRET,
+  EXT_RENEGOTIATION_INFO,
   EXT_KEY_SHARE,
   EXT_SERVER_NAME,
   EXT_SIGNATURE_ALGORITHMS,
@@ -16,18 +26,31 @@ import {
   SECP256R1,
   X25519,
 } from "velt/net/tls/client_hello";
+import { RENEGOTIATION_SCSV } from "velt/net/tls/suites12";
 
 /** The extension pre_shared_key, which must come last (RFC 8446 §4.2.11). */
 const EXT_PRE_SHARED_KEY: usize = 41;
 
 /** What a ClientHello offers. */
 export class ClientOffer {
+  /** The client's random. */
+  random: u8[] = [];
   /** The legacy session id, echoed by the ServerHello. */
   sessionId: u8[] = [];
   /** The cipher suites, in the client's order. */
   suites: usize[] = [];
   /** Whether supported_versions has TLS 1.3. */
   tls13: bool = false;
+  /** Whether the client has TLS 1.2: in supported_versions, or by legacy_version without it. */
+  tls12: bool = false;
+  /** TLS 1.2: whether the client sent extended_master_secret (RFC 7627). */
+  ems: bool = false;
+  /** TLS 1.2: whether the client sent an empty renegotiation_info or its SCSV (RFC 5746). */
+  renegotiationInfo: bool = false;
+  /** TLS 1.2: whether the client sent ec_point_formats (RFC 8422 §5.1.2), which has uncompressed. */
+  pointFormats: bool = false;
+  /** TLS 1.2: whether the compression methods have null. */
+  nullCompression: bool = false;
   /** supported_groups. */
   groups: usize[] = [];
   /** The key shares for X25519 and secp256r1 (empty when not sent). */
@@ -47,25 +70,30 @@ export class ClientOffer {
 export function parseClientHello(body: u8[]): ClientOffer {
   const r = new ByteReader(body, 0, body.length, "ClientHello");
   const legacy = r.u16();
-  r.skip(32);
+  const offer = new ClientOffer();
+  offer.random = r.bytes(32);
   const sid = r.vector(1);
   if (sid.left() > 32) {
     throw new TlsFailure(ILLEGAL_PARAMETER, "a legacy session id over 32 bytes");
   }
-  const offer = new ClientOffer();
   offer.sessionId = sid.bytes(sid.left());
   const suites = r.vector(2);
   while (suites.left() > 1) {
-    offer.suites.push(suites.u16());
+    const s = suites.u16();
+    offer.suites.push(s);
+    if (s == RENEGOTIATION_SCSV) {
+      offer.renegotiationInfo = true;
+    }
   }
   suites.finish();
   const comp = r.vector(1);
   const methods = comp.bytes(comp.left());
-  if (r.left() == 0) {
-    // No extensions: an SSL 3.0 to TLS 1.2 client.
-    throw new TlsFailure(PROTOCOL_VERSION, "the client does not offer TLS 1.3");
-  }
-  const exts = r.vector(2);
+  offer.nullCompression = methods.includes(0);
+  // Without supported_versions, legacy_version is the client's highest version (RFC 8446 §4.2.1).
+  offer.tls12 = legacy >= 0x0303;
+  // No extensions at all: an older client, refused below for want of signature_algorithms.
+  const exts =
+    r.left() > 0 ? r.vector(2) : new ByteReader(body, body.length, body.length, "ClientHello");
   r.finish();
   const seen: usize[] = [];
   while (exts.left() > 0) {
@@ -76,13 +104,33 @@ export function parseClientHello(body: u8[]): ClientOffer {
     }
     seen.push(type);
     if (type == EXT_SUPPORTED_VERSIONS) {
+      offer.tls12 = false;
       const list = e.vector(1);
       while (list.left() > 1) {
-        if (list.u16() == 0x0304) {
+        const v = list.u16();
+        if (v == 0x0304) {
           offer.tls13 = true;
+        } else if (v == 0x0303) {
+          offer.tls12 = true;
         }
       }
       list.finish();
+    } else if (type == EXT_EXTENDED_MASTER_SECRET) {
+      offer.ems = true;
+    } else if (type == EXT_RENEGOTIATION_INFO) {
+      const c = e.vector(1);
+      if (c.left() != 0) {
+        // A renegotiation, which this server never started (RFC 5746 §3.6).
+        throw new TlsFailure(HANDSHAKE_FAILURE, "a renegotiation_info that is not empty");
+      }
+      offer.renegotiationInfo = true;
+    } else if (type == EXT_EC_POINT_FORMATS) {
+      const list = e.vector(1);
+      const formats = list.bytes(list.left());
+      if (!formats.includes(0)) {
+        throw new TlsFailure(ILLEGAL_PARAMETER, "ec_point_formats without uncompressed points");
+      }
+      offer.pointFormats = true;
     } else if (type == EXT_SUPPORTED_GROUPS) {
       const list = e.vector(2);
       while (list.left() > 1) {
@@ -128,10 +176,16 @@ export function parseClientHello(body: u8[]): ClientOffer {
     e.finish();
   }
   if (!offer.tls13) {
-    throw new TlsFailure(
-      PROTOCOL_VERSION,
-      "the client does not offer TLS 1.3 (TLS 1.2 is not supported yet)",
-    );
+    if (!offer.tls12) {
+      throw new TlsFailure(
+        PROTOCOL_VERSION,
+        `the client offers neither TLS 1.3 nor TLS 1.2 (legacy_version 0x${legacy.toString(16)})`,
+      );
+    }
+    if (!offer.nullCompression) {
+      throw new TlsFailure(ILLEGAL_PARAMETER, "a ClientHello without the null compression method");
+    }
+    return offer;
   }
   // TLS 1.3 fixes these (§4.1.2): legacy_version 0x0303, and only the null compression method.
   if (legacy != 0x0303) {

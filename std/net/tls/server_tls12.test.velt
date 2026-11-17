@@ -1,0 +1,277 @@
+// velt/net (tests): the TLS 1.2 server, for a client that has only TLS 1.2. The ClientHello is
+// fixed (as OpenSSL 1.1.1's `s_client -tls1_2` sends one) and so are the server's random and
+// ECDHE key, so the server's flight is fixed too (ECDSA signs with RFC 6979's nonces). The
+// client's records and the server's expected answer come from scripts/tls12-server-trace.js,
+// which checks the ServerKeyExchange's signature against the certificate with Node's crypto and
+// runs the key schedule on its own: the server must take the client's Finished and answer with
+// the Finished and records Node computed. Run by `velt test std/`.
+import { hexDecode, hexEncode } from "velt/encoding/hex";
+import { utf8Encode } from "velt/encoding/utf8";
+import { IoError } from "velt/io/error";
+import { Uint8Array } from "velt/lang/typed_array/uint8_array";
+import { TryStream } from "velt/net/byte_stream";
+import { ServerHandshake } from "velt/net/tls/server_handshake";
+import { serverKey } from "velt/net/tls/server_key";
+import { DATA, TlsEngine } from "velt/net/tls/tls_engine";
+import { describe, expect, it } from "velt/test";
+
+// A test certificate for localhost and its P-256 key.
+const CERT =
+  "-----BEGIN CERTIFICATE-----\n" +
+  "MIIBfDCCASOgAwIBAgIUbOEJE3w+3rEECtAfNMflvpgZqtwwCgYIKoZIzj0EAwIw\n" +
+  "FDESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTI2MTExNzEzNDUzOVoXDTM2MTExNDEz\n" +
+  "NDUzOVowFDESMBAGA1UEAwwJbG9jYWxob3N0MFkwEwYHKoZIzj0CAQYIKoZIzj0D\n" +
+  "AQcDQgAEIEQvsXzDK6ertX/VsGOHz5teD+18gYSVkXp/MwpFaXc89vpHbTg8b5LU\n" +
+  "UFKwAzJYmOHzKe0ItdgAsScNEIHxLqNTMFEwHQYDVR0OBBYEFNmx12M5cDbYdBCa\n" +
+  "XIyZhkZXnJykMB8GA1UdIwQYMBaAFNmx12M5cDbYdBCaXIyZhkZXnJykMA8GA1Ud\n" +
+  "EwEB/wQFMAMBAf8wCgYIKoZIzj0EAwIDRwAwRAIgLh3dAJx3PanRqo85r4iXkJkz\n" +
+  "N2xRv2tmTgYzj23AoDsCIFRPbr65ZYyKivCDzUGE2EJSEm4wtM5HLW58qfHzJsx3\n" +
+  "-----END CERTIFICATE-----\n";
+const KEY =
+  "-----BEGIN PRIVATE KEY-----\n" +
+  "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg4egJFXy8gX5QTFeV\n" +
+  "8hVAJmZZVtUCI1LXBsyujucjawShRANCAAQgRC+xfMMrp6u1f9WwY4fPm14P7XyB\n" +
+  "hJWRen8zCkVpdzz2+kdtODxvktRQUrADMliY4fMp7Qi12ACxJw0QgfEu\n" +
+  "-----END PRIVATE KEY-----\n";
+
+function names(): string[] {
+  return [
+    "AES-128-GCM",
+    "AES-256-GCM-SHA384",
+    "ChaCha20-Poly1305",
+    "AES-128-GCM without the extended master secret",
+  ];
+}
+
+/** ClientHello, the server's flight, the client's records, the server's answer, a renegotiation, a wrong client Finished. */
+function cases(): string[][] {
+  return [
+    [
+      "0100007603036b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b000006c02bc02f00ff010000470000000e000c0000096c6f63616c686f7374000b000403000102000a00080006001d001700180010000b000908687474702f312e3100170000000d000a00080403050308040401",
+      "160303024c020000460303777777777777777777777777777777777777777777777777444f574e4752440100c02b00001eff0100010000170000000b000201000010000b000908687474702f312e310b0001860001830001803082017c30820123a00302010202146ce109137c3edeb1040ad01f34c7e5be9819aadc300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f7374301e170d3236313131373133343533395a170d3336313131343133343533395a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d0301070342000420442fb17cc32ba7abb57fd5b06387cf9b5e0fed7c818495917a7f330a4569773cf6fa476d383c6f92d45052b003325898e1f329ed08b5d800b1270d1081f12ea3533051301d0603551d0e04160414d9b1d763397036d874109a5c8c998646579c9ca4301f0603551d23041830168014d9b1d763397036d874109a5c8c998646579c9ca4300f0603551d130101ff040530030101ff300a06082a8648ce3d040302034700304402202e1ddd009c773da9d1aa8f39af8897909933376c51bf6b664e06338f6dc0a03b0220544f6ebeb9658c8a8af083cd4184d84252126e30b4ce472d6e7ca9f1f326cc770c00007003001d20aafb210653b8f7653ee783a010acd8e6b1e5393c49be77cc8d677d922abd60680403004830460221008b8561ad8f05918a4a6311dd1d02410eb069cc702c8c559a219f63a89ddd7a1e02210084005dc44874294a20786453247f0925ff0429c45991695c1f5566a94be0498b0e000000",
+      "1603030025100000212007d3b5bb7ba5007fdba15c36d275700dc55b2d2ee7abf8a847d29f1a8755906314030300010116030300280000000000000000f73352f67617f09630f614cffda42d6a031a58cb2f0c3a287ed74af928494c95170303001c000000000000000188c5fc20c2c079382332c7de586cc669d7e11353",
+      "14030300010116030300280000000000000000d082a01cafa5dbf09b5f0345676d08f5063e02bac1edec009d8d4fc110a06ae4170303001c0000000000000001a8edd8880076afa7e839703976d914116f005514",
+      "16030300920000000000000002fe66021d6d8a245a31dc25033ad3743adb55d197e5781d4b471eba149c0b45023e0bf1b7db9f675555ac62bf952ea9c7755dad191d0a4f451c5133de66d5be453c4446c2a630c648ac9631d62f1df41542d817c46d31e12bdaa416eae9f017de7840234e03e75a9b8eb0658f69357f8c6895e9205ee615d7e3466f09a1f5014139d412e0f9c6e3fe6287",
+      "1603030025100000212007d3b5bb7ba5007fdba15c36d275700dc55b2d2ee7abf8a847d29f1a8755906314030300010116030300280000000000000000f73352f67617f09630f614cffda42d6b36b1b6414969ccceeade4e3049a1b715",
+    ],
+    [
+      "0100007603036b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b000006c02cc02f00ff010000470000000e000c0000096c6f63616c686f7374000b000403000102000a00080006001d001700180010000b000908687474702f312e3100170000000d000a00080403050308040401",
+      "160303024c020000460303777777777777777777777777777777777777777777777777444f574e4752440100c02c00001eff0100010000170000000b000201000010000b000908687474702f312e310b0001860001830001803082017c30820123a00302010202146ce109137c3edeb1040ad01f34c7e5be9819aadc300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f7374301e170d3236313131373133343533395a170d3336313131343133343533395a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d0301070342000420442fb17cc32ba7abb57fd5b06387cf9b5e0fed7c818495917a7f330a4569773cf6fa476d383c6f92d45052b003325898e1f329ed08b5d800b1270d1081f12ea3533051301d0603551d0e04160414d9b1d763397036d874109a5c8c998646579c9ca4301f0603551d23041830168014d9b1d763397036d874109a5c8c998646579c9ca4300f0603551d130101ff040530030101ff300a06082a8648ce3d040302034700304402202e1ddd009c773da9d1aa8f39af8897909933376c51bf6b664e06338f6dc0a03b0220544f6ebeb9658c8a8af083cd4184d84252126e30b4ce472d6e7ca9f1f326cc770c00007003001d20aafb210653b8f7653ee783a010acd8e6b1e5393c49be77cc8d677d922abd60680403004830460221008b8561ad8f05918a4a6311dd1d02410eb069cc702c8c559a219f63a89ddd7a1e02210084005dc44874294a20786453247f0925ff0429c45991695c1f5566a94be0498b0e000000",
+      "1603030025100000212007d3b5bb7ba5007fdba15c36d275700dc55b2d2ee7abf8a847d29f1a87559063140303000101160303002800000000000000003d9a84855f82f32622a0b4603e7c23b420ac277018b64fb33992f0111ba4b220170303001c0000000000000001d6f5b6231cff21a1aef517617f99d0ea61ee55ae",
+      "14030300010116030300280000000000000000de94257bdbea3c3708d17dd2620e56ad4395164f05acd5ee97258a23e37038f4170303001c000000000000000130e1eb80ad18645aa8a02a12d0c53043e22073c9",
+      "16030300920000000000000002f7d052582ac9dfe164fd3b8af2d1082b0bfb59af38c21be76551a3def29302231aaf728ad1cfeada4b8f02dd5389d48a154e0f136be0cd717add65100ef836489805c507646db4cc2cdb3f2bfa58b78fb4de22f9669e3bce014b9d06a055df45a57860913827fc4cf0cbe02772b1185c988f7c3ef67dbdf4b544156fcef32389a2666fae222ce24f865b",
+      "1603030025100000212007d3b5bb7ba5007fdba15c36d275700dc55b2d2ee7abf8a847d29f1a87559063140303000101160303002800000000000000003d9a84855f82f32622a0b4603e7c23b5a15294a7f8272a5b7e7114b244610e8a",
+    ],
+    [
+      "0100007603036b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b000006cca9c02f00ff010000470000000e000c0000096c6f63616c686f7374000b000403000102000a00080006001d001700180010000b000908687474702f312e3100170000000d000a00080403050308040401",
+      "160303024c020000460303777777777777777777777777777777777777777777777777444f574e4752440100cca900001eff0100010000170000000b000201000010000b000908687474702f312e310b0001860001830001803082017c30820123a00302010202146ce109137c3edeb1040ad01f34c7e5be9819aadc300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f7374301e170d3236313131373133343533395a170d3336313131343133343533395a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d0301070342000420442fb17cc32ba7abb57fd5b06387cf9b5e0fed7c818495917a7f330a4569773cf6fa476d383c6f92d45052b003325898e1f329ed08b5d800b1270d1081f12ea3533051301d0603551d0e04160414d9b1d763397036d874109a5c8c998646579c9ca4301f0603551d23041830168014d9b1d763397036d874109a5c8c998646579c9ca4300f0603551d130101ff040530030101ff300a06082a8648ce3d040302034700304402202e1ddd009c773da9d1aa8f39af8897909933376c51bf6b664e06338f6dc0a03b0220544f6ebeb9658c8a8af083cd4184d84252126e30b4ce472d6e7ca9f1f326cc770c00007003001d20aafb210653b8f7653ee783a010acd8e6b1e5393c49be77cc8d677d922abd60680403004830460221008b8561ad8f05918a4a6311dd1d02410eb069cc702c8c559a219f63a89ddd7a1e02210084005dc44874294a20786453247f0925ff0429c45991695c1f5566a94be0498b0e000000",
+      "1603030025100000212007d3b5bb7ba5007fdba15c36d275700dc55b2d2ee7abf8a847d29f1a875590631403030001011603030020d908a818d0c73b4301dcb1e8a7df5df5aa91a16b428a5123e11b895eb050125d17030300148e123d632244f9a1807e2f185c0ad05398683149",
+      "14030300010116030300204e78340f223e00227837fe7ffcf4cf164e6dd5acec0669066775340639ef931217030300146a0a5e1de7484b6bf2caa51f97d5486b513ea357",
+      "160303008af84ffc1175d15543e4c0750f7552f15d18085ee42e9a8d45b3431bb3b489a1542229e8b095ecdf9acaf3432b2536c6ec9648a701f724770212237fd833b8d1b75241e8e10e7488de336c0be0542027b4a6689e39ff80160d3f6aebc17db52b3768b74a2b4b13129967a21537ce516d26cfe17039d72959debc0a3c80949428b03c1a08fa661bf2d94032",
+      "1603030025100000212007d3b5bb7ba5007fdba15c36d275700dc55b2d2ee7abf8a847d29f1a875590631403030001011603030020d908a818d0c73b4301dcb1e8a7df5df44c0f09a69f138cc5b7eb103b250481b4",
+    ],
+    [
+      "0100007203036b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b000006c02bc02f00ff010000430000000e000c0000096c6f63616c686f7374000b000403000102000a00080006001d001700180010000b000908687474702f312e31000d000a00080403050308040401",
+      "1603030248020000420303777777777777777777777777777777777777777777777777444f574e4752440100c02b00001aff01000100000b000201000010000b000908687474702f312e310b0001860001830001803082017c30820123a00302010202146ce109137c3edeb1040ad01f34c7e5be9819aadc300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f7374301e170d3236313131373133343533395a170d3336313131343133343533395a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d0301070342000420442fb17cc32ba7abb57fd5b06387cf9b5e0fed7c818495917a7f330a4569773cf6fa476d383c6f92d45052b003325898e1f329ed08b5d800b1270d1081f12ea3533051301d0603551d0e04160414d9b1d763397036d874109a5c8c998646579c9ca4301f0603551d23041830168014d9b1d763397036d874109a5c8c998646579c9ca4300f0603551d130101ff040530030101ff300a06082a8648ce3d040302034700304402202e1ddd009c773da9d1aa8f39af8897909933376c51bf6b664e06338f6dc0a03b0220544f6ebeb9658c8a8af083cd4184d84252126e30b4ce472d6e7ca9f1f326cc770c00007003001d20aafb210653b8f7653ee783a010acd8e6b1e5393c49be77cc8d677d922abd60680403004830460221008b8561ad8f05918a4a6311dd1d02410eb069cc702c8c559a219f63a89ddd7a1e02210084005dc44874294a20786453247f0925ff0429c45991695c1f5566a94be0498b0e000000",
+      "1603030025100000212007d3b5bb7ba5007fdba15c36d275700dc55b2d2ee7abf8a847d29f1a8755906314030300010116030300280000000000000000db1ba3032eca521c36d1904f5f36453a2175df4f7497479332d20ffaa1346f7f170303001c0000000000000001d4c1b55a6494015b6f46dbaaa2f10744449631f7",
+      "1403030001011603030028000000000000000002e666e9b4c738d11e4d3f38b94f947b2e4eeadf7b25d3be63a85abae2b1dfd2170303001c0000000000000001f369422c6ffe59e7699453acffa8a1f80abaec69",
+      "160303008e0000000000000002c1cbd1a42bb9bb253dfe681a135dfb406188ac55e9c450011536ffb0529580875a5e6046e43e15ef5d9c1748187be0013655a43a208fb6e25bd1b6e4c84d431165a64a40892738d6c5baf29afd6ffe31bf25e3504e2529e2d77e036e0acdd4f5aa6510c708f0cdc6d41e93dd449c6fba39131990e6e0794ebcf0e8c5f311f3c7ecaa9985b488",
+      "1603030025100000212007d3b5bb7ba5007fdba15c36d275700dc55b2d2ee7abf8a847d29f1a8755906314030300010116030300280000000000000000db1ba3032eca521c36d1904f5f36453b25f751cf615005aa3e587dc5cd0bb573",
+    ],
+  ];
+}
+
+const SERVER_RANDOM = "7777777777777777777777777777777777777777777777777777777777777777";
+const SERVER_X25519 = "d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d353";
+
+// A transport that has `input` all at once and records what is written.
+class Wire implements TryStream {
+  private input: u8[];
+  private pos: usize;
+  written: u8[];
+  closed: bool;
+
+  constructor(input: u8[]) {
+    this.input = input;
+    this.pos = 0;
+    this.written = [];
+    this.closed = false;
+  }
+
+  async readInto(buf: Uint8Array): Promise<number | null> {
+    throw new Error("the server reads without waiting");
+  }
+
+  async writeBytes(data: u8[] | Uint8Array, start: number = 0, end?: number): Promise<void> {
+    throw new Error("the server writes without waiting");
+  }
+
+  close() {
+    this.closed = true;
+  }
+
+  async halfClose(): Promise<void> {}
+
+  tryStream(): TryStream | null {
+    return this;
+  }
+
+  tryRead(buf: u8[] | Uint8Array, start: number, end?: number): number | null {
+    if (buf instanceof Uint8Array) {
+      throw new Error("a test reads into arrays");
+    }
+    if (this.pos == this.input.length) {
+      return 0;
+    }
+    const to = end ?? (buf.length as number);
+    let n = this.input.length - this.pos;
+    const room = (to - start) as usize;
+    n = n < room ? n : room;
+    for (let i: usize = 0; i < n; i++) {
+      buf[(start as usize) + i] = this.input[this.pos + i];
+    }
+    this.pos += n;
+    return n as number;
+  }
+
+  tryWrite(data: u8[] | Uint8Array, start: number, end?: number): i64 {
+    return this.writeBytesLater(data, start, end);
+  }
+
+  writeBytesLater(data: u8[] | Uint8Array, start: number, end?: number): i64 {
+    if (data instanceof Uint8Array) {
+      throw new Error("a test writes arrays");
+    }
+    const to = end ?? (data.length as number);
+    for (let i = start as usize; i < (to as usize); i++) {
+      this.written.push(data[i]);
+    }
+    return (to - start) as i64;
+  }
+}
+
+// The plaintext record of the handshake message `m`.
+function plainRecord(m: string): string {
+  const n = m.length / 2;
+  return "160303" + hexEncode([((n >> 8) & 0xff) as u8, (n & 0xff) as u8]) + m;
+}
+
+/** What the server wrote, read, and how it ended. */
+class Served {
+  written: string = "";
+  done: bool = false;
+  read: string = "";
+  error: string = "";
+  alpn: string | null = null;
+}
+
+// The server's side for the client's bytes `client`: the handshake, then "ping" read and "pong"
+// written.
+function serve(client: string): Served {
+  const w = new Wire(hexDecode(client));
+  const h = new ServerHandshake(serverKey(CERT, KEY)!, ["http/1.1"]);
+  h.fixedRandom = hexDecode(SERVER_RANDOM);
+  h.fixedKey = hexDecode(SERVER_X25519);
+  const e = new TlsEngine(w);
+  const out = new Served();
+  try {
+    out.done = e.tryServerHandshake(h);
+    if (out.done) {
+      out.alpn = e.alpn;
+      if (e.tryFill() == DATA) {
+        for (const c of e.take(e.available())) {
+          out.read += String.fromCharCode(c as number);
+        }
+        e.out.tryWrite(utf8Encode("pong"), 0, 4);
+        // Whatever comes next: nothing, or a renegotiation.
+        e.tryFill();
+      }
+    }
+  } catch (err) {
+    out.error = err instanceof IoError ? err.message : `${err}`;
+  }
+  out.written = hexEncode(w.written);
+  return out;
+}
+
+describe("the TLS 1.2 server", () => {
+  for (let i: usize = 0; i < 4; i++) {
+    it(`answers a TLS 1.2 client as Node expects (${names()[i]})`, () => {
+      const c = cases()[i];
+      const s = serve(plainRecord(c[0]) + c[2]);
+      expect(s.error).toBe("");
+      expect(s.done).toBe(true);
+      expect(s.alpn).toBe("http/1.1");
+      expect(s.read).toBe("ping");
+      expect(s.written).toBe(c[1] + c[3]);
+    });
+  }
+
+  it("sends its flight, then waits for the client's", () => {
+    const c = cases()[0];
+    const s = serve(plainRecord(c[0]));
+    expect(s.done).toBe(false);
+    expect(s.written).toBe(c[1]);
+    // The downgrade sentinel ends the server random (RFC 8446 §4.1.3).
+    expect(s.written.slice(22 + 48, 22 + 64)).toBe("444f574e47524401");
+  });
+
+  it("refuses a changed client Finished, and records in the wrong order", () => {
+    const c = cases()[0];
+    const client = hexDecode(c[2]);
+    // ClientKeyExchange (5 + 37 bytes), ChangeCipherSpec (6), then the Finished record.
+    const fin = 42 + 6;
+    const changed = client.slice();
+    changed[fin + 20] ^= 1;
+    expect(serve(plainRecord(c[0]) + hexEncode(changed)).error).toBe(
+      "TLS: a record failed authentication (bad_record_mac)",
+    );
+    // A Finished whose verify_data is wrong, though its record opens: decrypt_error.
+    for (const k of cases()) {
+      const bad = serve(plainRecord(k[0]) + k[5]);
+      expect(bad.error).toBe("TLS: the client's Finished does not match the handshake");
+    }
+    // The Finished before the ChangeCipherSpec: no keys yet.
+    const noCcs = hexEncode(client.slice(0, 42)) + hexEncode(client.slice(fin as i64));
+    expect(serve(plainRecord(c[0]) + noCcs).error).toContain("TLS: ");
+    // A ChangeCipherSpec before the ClientKeyExchange.
+    const early = "140303000101" + c[2];
+    expect(serve(plainRecord(c[0]) + early).error).toBe("TLS: a ChangeCipherSpec out of place");
+  });
+
+  it("refuses ClientHellos it can't serve, with the alert each needs", () => {
+    const hello = cases()[0][0];
+    // [what changes, into what, the message, the alert].
+    const changes: [string, string, string, string][] = [
+      // TLS_FALLBACK_SCSV for the renegotiation SCSV: a client that fell back from TLS 1.3.
+      ["c02bc02f00ff", "c02bc02f5600", "a TLS 1.2 fallback from a TLS 1.3 client", "56"],
+      // CBC only.
+      ["c02bc02f00ff", "c023c02f00ff", "no TLS 1.2 cipher suite in common", "28"],
+      // TLS 1.1.
+      ["010000760303", "010000760302", "the client offers neither TLS 1.3 nor TLS 1.2", "46"],
+      // No null compression method.
+      ["00ff0100", "00ff0101", "a ClientHello without the null compression method", "2f"],
+      // ec_point_formats without uncompressed points.
+      ["000b000403000102", "000b000403010202", "ec_point_formats without uncompressed", "2f"],
+      // No ecdsa_secp256r1_sha256.
+      ["000a0008040305", "000a0008060305", "the client accepts no signature scheme", "28"],
+      // No group of the server's.
+      ["0006001d00170018", "0006001e00190018", "no key exchange group in common", "28"],
+    ];
+    for (const [from, to, message, alert] of changes) {
+      expect(hello.includes(from)).toBe(true);
+      const s = serve(plainRecord(hello.replace(from, to)));
+      expect(s.error).toContain(`TLS: ${message}`);
+      // The fatal alert, in plaintext.
+      expect(s.written).toBe("150303000202" + alert);
+    }
+  });
+
+  it("refuses a renegotiation after the handshake, with no_renegotiation", () => {
+    const c = cases()[0];
+    // The ClientHello again, protected, after "ping".
+    const s = serve(plainRecord(c[0]) + c[2] + c[4]);
+    expect(s.read).toBe("ping");
+    expect(s.error).toBe("TLS: the client asked to renegotiate, which is refused");
+  });
+});
