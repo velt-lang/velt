@@ -35,6 +35,7 @@ import {
   wordRawCount,
 } from "velt/encoding/json/tape";
 import { tapeStringify, writeTape } from "velt/encoding/json/tape_write";
+import { INSPECT } from "velt/lang/hooks/keys";
 import { inline, noInline, strByteLen, strLoadPartialU8x16 } from "velt/lang/intrinsics";
 
 declare function velt_simd_u8x16_eq(a: u8x16, b: u8x16): mask8x16;
@@ -48,6 +49,12 @@ export class TapeRef {
 
   constructor(tape: shared<Tape>) {
     this.tape = tape;
+  }
+
+  // Printable (a `shared` field is not), so a `JsonValue` holding one is: `console.log` shows the
+  // value itself (the compiler's glue for `JsonValue`), never this.
+  [INSPECT](): string {
+    return "TapeRef {}";
   }
 
   // The readers below read numbers straight out of the box, with no call while they read: that
