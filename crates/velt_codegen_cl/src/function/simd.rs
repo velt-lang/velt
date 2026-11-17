@@ -83,6 +83,7 @@ impl Translator<'_, '_> {
         Some(match call {
             SimdCall::Mask(bits, op) => Inlined::Value(self.simd_mask(bits, op, values)),
             SimdCall::Vector(lanes, op) => self.simd_vector(lanes, op, args, values),
+            SimdCall::Wide(lanes, op) => self.simd_wide(lanes, op, args, values),
             // Cranelift has none of these instructions: the CPU "lacks" them here, so every
             // check is false and the operations sit behind it as dead code (std/simd/sha.velt
             // runs the emulation). They give a zero value, never computed at run time.
@@ -133,7 +134,7 @@ impl Translator<'_, '_> {
         }
     }
 
-    fn simd_vector(
+    pub(super) fn simd_vector(
         &mut self,
         lanes: Lanes,
         op: Op,

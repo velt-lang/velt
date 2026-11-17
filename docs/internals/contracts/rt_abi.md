@@ -409,6 +409,23 @@ The operations are externs `velt_simd_<type>_<op>` (`velt_simd_u8x16_add`,
 them**: `velt_vir::simd` gives each symbol's operation and VIR signature (`SimdCall`), the
 verifier rejects a `velt_simd_*` extern that is not one, and both backends emit every call
 inline. They never cross the C ABI, so no target's vector calling convention is involved.
+A 256-bit vector (`f32x8`, #3140) [additive] is no VIR type: it is a value of two `V128` halves,
+the low lanes first (32 bytes), and `velt_simd_f32x8_<op>` (`SimdCall::Wide`, `velt_vir::simd::wide`)
+takes it by address: each vector operand of the 128-bit operation is a `Ptr` to such a value, and a
+vector result is written through one more `Ptr`, the last parameter (`add(a, b, out)`,
+`splat(x, out)`, `load(array, at, out)`, `store(v, array, at)`). The operation reads the 32 bytes at
+each operand pointer, writes the 32 bytes at the result pointer, and does nothing else: it keeps no
+pointer, never unwinds and touches no other memory (but for `load` and `store`, their array).
+Lowering gives each result a slot of its own; backends read every operand before they write, so a
+result pointer equal to an operand's is harmless. Each lane is the 128-bit operation's lane of the
+matching half on every target. LLVM computes one vector of twice the lanes (a `ymm` instruction
+with AVX; two halves where legalization splits it), Cranelift the two halves in turn, both inline.
+To the optimizer a wide operation is a call that writes memory (`math::effects` is `Any`). A local
+of this shape is never split into field locals (`velt_opt::sroa`) and is written whole (`dce`'s
+zero initialization, the LLVM backend's aggregate assignment), so that LLVM keeps it one value.
+The operations are `splat`, `load`, `store`, `add`, `sub`, `mul`, `div`, `min`, `max`, `neg`,
+`abs`, `sqrt`, `mul_add` and `mul_add_fast`; the rest of the type is std code on the halves.
+
 `fits_both(a, b, at)` [additive] is `fits(a, at) && fits(b, at)` as one test against the smaller
 length; no std file declares it: `velt_opt` writes it where the two tests have one lane type and
 one index (`fits_pair`). It reads both headers whatever the first length is, so neither array may
