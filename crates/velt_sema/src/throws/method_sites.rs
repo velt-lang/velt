@@ -27,6 +27,42 @@ impl Ctx<'_> {
         self.fn_sites.seeds.methods.contains(name)
     }
 
+    /// The type a function of type `fn_ty` written through `any` under a written method's name
+    /// is stored as (`body/expr/dynamic_write.rs`): its parameters and result, throwing (or, a
+    /// promise's, rejecting with) what the method's site `site` holds. The fields storing the
+    /// method have that type, which the write checks at run time; `fn_ty` itself when the site
+    /// holds nothing yet (a later check, with the value's errors added, has it).
+    pub(crate) fn any_method_write_ty(&mut self, fn_ty: TyId, site: Span) -> TyId {
+        let TyKind::FnPtr {
+            params,
+            ret,
+            throws,
+            rest,
+        } = self.ty.kind(fn_ty).clone()
+        else {
+            return fn_ty;
+        };
+        let Some(members) = self.fn_sites.seeds.sites.get(&site).cloned() else {
+            return fn_ty;
+        };
+        let ms: Vec<TyId> = members.iter().filter_map(|p| self.unport(p)).collect();
+        let Some(err) = self.error_union(&ms) else {
+            return fn_ty;
+        };
+        let never = self.ty.never;
+        let (ret, throws) = match self.rejection_error(ret) {
+            Some(_) if throws == never => (self.with_rejection_error(ret, err), never),
+            Some(_) => return fn_ty,
+            None => (ret, err),
+        };
+        self.ty.intern(TyKind::FnPtr {
+            params,
+            ret,
+            throws,
+            rest,
+        })
+    }
+
     /// What a promise of type `t` rejects with (`None`: not a promise).
     pub(crate) fn promise_rejection_error(&self, t: TyId) -> Option<TyId> {
         self.rejection_error(t)

@@ -156,6 +156,19 @@ impl FnCx<'_, '_> {
             Some(t) => self.coerce(v, t),
             None => v,
         };
+        // The fields storing the method hold its site's type, which the write checks at run
+        // time: the function goes in as that type, its own errors being part of the set.
+        let v = match sites.first() {
+            Some(&s) => {
+                let t = self.cx.any_method_write_ty(v.ty, s);
+                if t != v.ty {
+                    self.coerce(v, t)
+                } else {
+                    v
+                }
+            }
+            None => v,
+        };
         let v = self.coerce(v, any);
         if !as_value {
             return (self.dynamic_set(obj, key, v, span), false);

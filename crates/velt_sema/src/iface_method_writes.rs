@@ -276,6 +276,14 @@ impl Ctx<'_> {
         }
     }
 
+    /// Is `s` the site of a written method ([`Self::method_site`])?
+    pub(crate) fn is_written_method_site(&self, s: Span) -> bool {
+        self.method_writes
+            .sites
+            .values()
+            .any(|&(span, _)| span == s)
+    }
+
     /// The site span of method `j` of `iface` ([`Self::method_site`]), once written.
     pub(crate) fn method_site_span(&self, iface: DefId, j: usize) -> Option<Span> {
         self.method_writes.sites.get(&(iface, j)).map(|s| s.0)
