@@ -12,6 +12,12 @@
 //! replaced) is left out: a leak at worst, never a free of something live, as the weak core
 //! requires of every trace glue (rt_abi.md "Weak references").
 //!
+//! Two closures' drop entries can share an address when the linker folds identical functions
+//! (`/OPT:ICF` in Windows release links, velt_link). The dispatch stays sound: identical drop
+//! code releases the same fields with the same glue, so the environments have the same owned
+//! captures at the same offsets, and either closure's trace glue visits exactly what the
+//! environment owns.
+//!
 //! An environment's trace visits what its value captures own and the cells of its captured
 //! variables, each a counted `[count][value]` block traced like a weak map box. Borrowed
 //! captures belong to the frame that made the closure and are not visited.
@@ -44,26 +50,23 @@ impl Cx<'_> {
         bx.env_traced.get(&key).cloned().unwrap_or_default()
     }
 
-    /// What the environment of closure `def` at `targs` owns: each capture that is not
-    /// borrowed, as its type and whether it is a captured variable's cell.
+    /// What the environment of closure `def` at `targs` owns: each capture that is copied or
+    /// moved in, as its type and whether it is a captured variable's cell. These are the
+    /// captures the environment's drop releases and its trace glue visits (`value_captures`
+    /// and `cell_captures` with the same modes); a borrowed capture, cell or not, belongs to
+    /// the frame that made the closure.
     pub(in crate::lower) fn env_owned(&mut self, def: DefId, targs: &[TyId]) -> Vec<(TyId, bool)> {
         let f = self.fn_def(def);
-        let caps: Vec<(TyId, PassMode, bool)> = (f.captures.iter())
+        let caps: Vec<(TyId, bool)> = (f.captures.iter())
+            .filter(|c| matches!(c.mode, PassMode::Copy | PassMode::Owned))
             .map(|c| {
                 let l = &f.body.locals[c.inner.0 as usize];
-                (l.ty, c.mode, l.boxed)
+                (l.ty, l.boxed)
             })
             .collect();
-        let mut out = vec![];
-        for (t, mode, cell) in caps {
-            let borrowed = matches!(mode, PassMode::Borrow | PassMode::BorrowMut);
-            if borrowed && !cell {
-                continue;
-            }
-            let t = self.subst(t, targs);
-            out.push((t, cell));
-        }
-        out
+        (caps.into_iter())
+            .map(|(t, cell)| (self.subst(t, targs), cell))
+            .collect()
     }
 
     /// The closures of the program by the key of the function type they were made at, from
