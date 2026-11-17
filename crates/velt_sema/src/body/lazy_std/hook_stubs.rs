@@ -54,6 +54,10 @@ pub(crate) struct Stubs {
     /// Per prebuilt hook asked about ([`declared`]): its declared function, `None` where the
     /// build has no object of its module.
     declared: FxHashMap<usize, Option<DefId>>,
+    /// Per definition: the hooks (`HOOKS` indexes) its `hookCall`s name whose modules were not
+    /// loaded when it was checked without being live (the editor's analysis, or a check without
+    /// a load callback): demanded once it is live ([`demand_hook_calls`]).
+    pub(super) hook_calls: FxHashMap<DefId, Vec<usize>>,
 }
 
 impl Stubs {
@@ -102,6 +106,20 @@ impl Stubs {
                     *d = *real;
                 }
             }
+        }
+    }
+}
+
+/// Demand the modules of the hooks live definition `d` calls by role ([`Stubs::hook_calls`]), and
+/// make the hooks live.
+pub(super) fn demand_hook_calls(cx: &mut Ctx, d: DefId) {
+    let Some(hooks) = cx.lazy.stubs.hook_calls.remove(&d) else {
+        return;
+    };
+    for h in hooks.into_iter().map(|i| &HOOKS[i]) {
+        cx.demand_std(&h.module());
+        if let Some(Item::Def(f)) = cx.std_def(&h.qualified()) {
+            super::live::mark(cx, f);
         }
     }
 }
