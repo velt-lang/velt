@@ -31,7 +31,12 @@ pub(super) fn check_classes(cx: &mut Ctx, from: u32) {
     for &d in &adts {
         base_first(cx, d, &mut seen, &mut order);
     }
-    let (overridden, overrides) = overridden_methods(cx, &adts);
+    let (mut overridden, overrides) = overridden_methods(cx, &adts);
+    // A check by units: std's open classes get their slots whenever they are laid out, also as
+    // the base of a dependency's class in the first unit (`base_first` adds the bases).
+    if cx.units_stage != crate::units::Stage::Both {
+        open_std_slots(cx, &order, &mut overridden);
+    }
     for d in order {
         // A base class of a finished unit (`crate::units`): its vtable and constructor are final.
         if cx.is_frozen(d) {
@@ -64,9 +69,6 @@ fn base_first(cx: &Ctx, d: DefId, seen: &mut FxHashSet<DefId>, order: &mut Vec<D
 fn overridden_methods(cx: &mut Ctx, adts: &[DefId]) -> (Overridden, Overrides) {
     let mut out = BTreeSet::new();
     let mut overrides = Overrides::default();
-    if cx.units_stage == crate::units::Stage::Std {
-        open_std_slots(cx, adts, &mut out);
-    }
     for &d in adts {
         // Fields implementing abstract members fill their slots (`abstract_fields`).
         for (key, _) in super::abstract_fields::field_impls(cx, d) {
@@ -134,9 +136,8 @@ fn overridden_methods(cx: &mut Ctx, adts: &[DefId]) -> (Overridden, Overrides) {
 
 /// EXPERIMENT (#2943 D1, vtable slots): std's unit is checked without the program, so the std
 /// methods a program may override get their slot in std's own unit, whether or not something
-/// overrides them: every instance method and accessor of `Error` and its subclasses, and any
-/// std class's `toString` and `toJSON`. Std's own calls of them dispatch, as they do in a lazy
-/// program that overrides them.
+/// overrides them: every instance method and accessor of `Error` and its subclasses. Std's own
+/// calls of them dispatch, as they do in a lazy program that overrides them.
 fn open_std_slots(cx: &mut Ctx, adts: &[DefId], out: &mut Overridden) {
     let error = cx.prelude_adt("Error");
     let is_error = |cx: &Ctx, d: DefId| {
@@ -159,15 +160,16 @@ fn open_std_slots(cx: &mut Ctx, adts: &[DefId], out: &mut Overridden) {
             continue;
         };
         let module = cx.adt(d).expect("ICE: adt").module;
-        let whole = is_error(cx, d);
+        // Other std classes' `toString` / `toJSON` (D1 lists them too) need lowering to build
+        // the vtables of classes it builds without one (`Date`, `Duration`): not yet.
+        if !is_error(cx, d) || !cx.declared_in_std(d) {
+            continue;
+        }
         for m in (decl.methods.iter())
             .filter(|m| !m.is_static && !m.decl.sig.name.is_private_name())
             .filter(|m| m.decl.sig.generics.is_empty())
         {
             let name = &m.decl.sig.name;
-            if !whole && !matches!(name.name.as_str(), "toString" | "toJSON") {
-                continue;
-            }
             let key = cx.method_key(module, name, m.is_setter);
             let origin = introducer(cx, d, &key).unwrap_or(d);
             out.insert((origin, key));
