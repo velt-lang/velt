@@ -364,8 +364,16 @@ impl<T> IndexMut<usize> for DefTable<T> {
 }
 
 thread_local! {
-    /// Writes below a freeze in this thread's checks, by the caller's location.
-    static VIOLATIONS: RefCell<BTreeMap<String, usize>> = const { RefCell::new(BTreeMap::new()) };
+    /// Writes below a freeze in this thread's checks, by the caller's file and line (made text
+    /// only when [`take_violations`] reports them: a check over a frozen unit counts thousands).
+    static VIOLATIONS: RefCell<BTreeMap<(&'static str, u32), usize>> =
+        const { RefCell::new(BTreeMap::new()) };
+}
+
+/// `VELT_UNITS_FREEZE=panic`: a write below a freeze panics, read once.
+fn freeze_panics() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("VELT_UNITS_FREEZE").is_some_and(|v| v == "panic"))
 }
 
 /// A change to a finished unit that isn't a write to its tables (a slot it would need), counted as
@@ -376,16 +384,20 @@ pub(crate) fn crossing() {
 }
 
 fn violation(at: &'static Location<'static>) {
-    if std::env::var_os("VELT_UNITS_FREEZE").is_some_and(|v| v == "panic") {
+    if freeze_panics() {
         panic!("ICE: a later unit writes a frozen definition at {at}");
     }
-    let key = format!("{}:{}", at.file(), at.line());
+    let key = (at.file(), at.line());
     VIOLATIONS.with(|v| *v.borrow_mut().entry(key).or_default() += 1);
 }
 
-/// The writes below a freeze counted so far in this thread, by location, and clears them.
+/// The writes below a freeze counted so far in this thread, by location (`file:line`), and
+/// clears them.
 pub(crate) fn take_violations() -> BTreeMap<String, usize> {
-    VIOLATIONS.with(|v| std::mem::take(&mut *v.borrow_mut()))
+    let v = VIOLATIONS.with(|v| std::mem::take(&mut *v.borrow_mut()));
+    v.into_iter()
+        .map(|((file, line), n)| (format!("{file}:{line}"), n))
+        .collect()
 }
 
 /// Prints the counted writes below a freeze to stderr (`velt-units:` lines), when there are any.
