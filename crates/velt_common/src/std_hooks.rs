@@ -225,6 +225,8 @@ hooks! {
     process_env => lang_hooks_process, "processEnv", sig((&string) -> or_undefined(string));
     /// `process.argv`.
     process_argv => lang_hooks_process, "processArgv", sig(() -> [string]);
+    /// `process.pid`.
+    process_pid => lang_hooks_process, "processPid", sig(() -> f64);
     /// The mark of the top-level `await`s after it (`velt_sema` `top_level_await.rs`); lowering
     /// replaces its calls by the runtime's (`async_fn/suspend.rs`).
     top_level_await_at => lang_hooks_process, "topLevelAwaitAt", sig((&string) -> void), lowered;
