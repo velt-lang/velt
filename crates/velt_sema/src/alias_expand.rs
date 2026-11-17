@@ -36,18 +36,26 @@ impl Ctx<'_> {
         // with them, and its own span is in the alias's file. An alias without type arguments
         // expands the same everywhere: checked once, at its declaration (#3094).
         let outermost = self.type_level.alias_site.is_none();
-        let generic = !args.is_empty();
-        let site = match outermost && generic {
-            true => self.type_level.ptr_site.replace(t.span),
-            false => self.type_level.ptr_site,
+        if !outermost {
+            return self.expand_alias(a, args, t);
+        }
+        // Where the type arguments a pointee in the expansion names were chosen: this use, or,
+        // for an alias without them, its declaration (`type RC = C<string>`).
+        let at = match args.is_empty() {
+            true => body,
+            false => t.span,
         };
+        let site = self.type_level.ptr_site.replace(at);
+        let refusals = self.type_level.ptr_refusals;
         let ty = self.expand_alias(a, args, t);
-        if outermost && generic {
-            self.type_level.ptr_site = site;
-            self.alias_pointees(ty, t.span);
-        } else if outermost && !self.aliases[a as usize].pointees_checked {
-            self.aliases[a as usize].pointees_checked = true;
-            self.alias_pointees(ty, body);
+        self.type_level.ptr_site = site;
+        // A pointee the expansion refused is reported; others are found in the type it made.
+        let check = match at == body {
+            true => !std::mem::replace(&mut self.aliases[a as usize].pointees_checked, true),
+            false => true,
+        };
+        if check && self.type_level.ptr_refusals == refusals {
+            self.alias_pointees(ty, at);
         }
         ty
     }

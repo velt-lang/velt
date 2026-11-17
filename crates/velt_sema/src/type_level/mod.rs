@@ -60,6 +60,12 @@ pub(crate) struct State {
     /// `Ptr<T>` in its body (also through a conditional type) whose pointee they made one C
     /// has no values of is reported (`Ctx::ptr_type_written`, #3094).
     pub(crate) ptr_site: Option<Span>,
+    /// The spans a refused pointee was reported at (`Ctx::refuse_pointee`): an alias's body is
+    /// resolved at every use, and its mistake is reported once.
+    pub(crate) ptr_refused: rustc_hash::FxHashSet<Span>,
+    /// How many pointees were refused so far: an expansion that refused one isn't walked
+    /// again for them (`Ctx::alias_written`).
+    pub(crate) ptr_refusals: u32,
     /// While a call's argument is checked against its parameter's type: the argument, where a
     /// deferred intersection that can't be reduced at these type arguments is reported.
     pub(crate) use_site: Option<Span>,

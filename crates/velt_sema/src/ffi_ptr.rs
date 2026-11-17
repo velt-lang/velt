@@ -21,25 +21,53 @@ impl Ctx<'_> {
 
     /// The type `Ptr<args…>` written at `t`: the pointer kind of its one argument, which is
     /// what C can point at where it is known (a type parameter is checked in the C signature
-    /// or C struct it reaches, `collect::c_sig`).
-    pub(crate) fn ptr_type_written(&mut self, args: &[TyId], t: &ast::TypeExpr) -> TyId {
+    /// or C struct it reaches, `collect::c_sig`). `chosen`: the pointee as written names a type
+    /// parameter of the alias being expanded (or a name a conditional type bound), so the
+    /// alias's use chose it and a refusal goes there (`type_level.ptr_site`); a pointee fixed
+    /// in the alias's body is refused at the body. Refused, it is still the pointer type, so
+    /// nothing else about the type is reported.
+    pub(crate) fn ptr_type_written(
+        &mut self,
+        args: &[TyId],
+        t: &ast::TypeExpr,
+        chosen: bool,
+    ) -> TyId {
         let [pointee] = args else {
             self.arity_error("Ptr", 1, args.len(), t);
             return self.ty.error;
         };
         if !self.c_pointee_written(*pointee) {
-            let shown = self.display(*pointee);
-            // In an alias's body expanded with a use's type arguments: at that use.
-            let d = match self.type_level.ptr_site {
-                Some(at) => Diagnostic::error(format!("a C pointer can't point at `{shown}`"), at)
-                    .with_note(ALIAS_NOTE),
-                None => Diagnostic::error(format!("a C pointer can't point at `{shown}`"), t.span)
-                    .with_note("`Ptr<T>` points at a number, `bool`, `void`, a `declare c type`, a `declare c struct` or another pointer: C has no other values"),
+            let (at, note) = match self.type_level.ptr_site {
+                Some(at) if chosen => (at, ALIAS_NOTE),
+                _ => (t.span, "`Ptr<T>` points at a number, `bool`, `void`, a `declare c type`, a `declare c struct` or another pointer: C has no other values"),
             };
-            self.error(d);
-            return self.ty.error;
+            self.refuse_pointee(*pointee, at, note);
         }
         self.ty.intern(TyKind::Ptr(*pointee))
+    }
+
+    /// Reports that C can't point at `pointee`, at `at`, unless that was reported already.
+    fn refuse_pointee(&mut self, pointee: TyId, at: velt_common::Span, note: &'static str) {
+        self.type_level.ptr_refusals += 1;
+        if !self.type_level.ptr_refused.insert(at) {
+            return;
+        }
+        let shown = self.display(pointee);
+        self.error(
+            Diagnostic::error(format!("a C pointer can't point at `{shown}`"), at).with_note(note),
+        );
+    }
+
+    /// Does `args`, the type arguments written to a `Ptr`, name a type parameter or a bound
+    /// name of `env` (`ptr_type_written`'s `chosen`)?
+    pub(crate) fn names_env(args: &[ast::TypeExpr], env: &crate::resolve::TyEnv) -> bool {
+        let mut names = vec![];
+        for a in args {
+            crate::type_level::inline::names_in(a, &mut names);
+        }
+        names
+            .iter()
+            .any(|n| env.params.iter().any(|p| p == n) || env.locals.iter().any(|(l, _)| l == n))
     }
 
     /// Reports a `Ptr<T>` in `ty`, an alias expanded where `t` is written, that now points at
@@ -57,12 +85,7 @@ impl Ctx<'_> {
             let kind = self.ty.kind(u).clone();
             if let TyKind::Ptr(p) = kind {
                 if !mentions_param(&self.ty, p) && !self.c_pointee_written(p) {
-                    let shown = self.display(p);
-                    self.error(
-                        Diagnostic::error(format!("a C pointer can't point at `{shown}`"), at)
-                            .with_note(ALIAS_NOTE),
-                    );
-                    return;
+                    return self.refuse_pointee(p, at, ALIAS_NOTE);
                 }
             }
             todo.extend(
