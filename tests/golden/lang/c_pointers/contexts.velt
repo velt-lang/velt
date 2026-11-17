@@ -1,7 +1,8 @@
 // A C pointer (`Ptr<T>`, #3094) is one word in every context, and `Ptr<T> | null` the same word
 // with 0 as `null`: it prints as `Ptr(0x…)`, compares and hashes by address, narrows, is a
-// truthy value, keeps its value through generic code, closures, an `await` and another worker,
-// and a class that holds one still converts to `any`.
+// truthy value, is copied (not moved), keeps its value through generic code, closures,
+// `structuredClone`, an `await` and another worker, and a class that holds one still converts to
+// `any`. `Ptr<void>` is a pointer like any other.
 // No address here is read through: they are fixed numbers, so the output is the same everywhere.
 import { Ptr } from "velt/ffi";
 import { workerCount } from "velt/task";
@@ -31,6 +32,11 @@ function orNull(a: usize): Ptr<FILE> | null {
   return unsafe { Ptr.orNull<FILE>(a) };
 }
 
+function atVoid(a: usize): Ptr<void> {
+  // SAFETY: as in `at`.
+  return unsafe { Ptr.at<void>(a) };
+}
+
 async function addressOn(p: Ptr<FILE>): Promise<usize> {
   return Ptr.addressOf(p);
 }
@@ -48,10 +54,23 @@ async function main() {
   console.log([p, none], { file: q });
   console.log(Ptr.addressOf(p) === 0x7ffd5e8c1a30, Ptr.addressOf(none));
 
+  // Copied, not moved; `Ptr<void>` prints; `structuredClone` copies the address.
+  console.log(p, [p]);
+  const v = atVoid(0x20);
+  console.log(v, [v, v]);
+  console.log(
+    structuredClone(p) === p,
+    structuredClone({ file: q, n: 1 }),
+    structuredClone([none, p]),
+  );
+
   // Compared and hashed by address.
   console.log(p === at(0x7ffd5e8c1a30), p === q, none === null, orNull(0x1000) === q);
   const seen = new Set<Ptr<FILE>>([p, q, at(0x1000)]);
-  const names = new Map<Ptr<FILE>, string>([[p, "stack"], [q, "page"]]);
+  const names = new Map<Ptr<FILE>, string>([
+    [p, "stack"],
+    [q, "page"],
+  ]);
   console.log(seen.size, names.get(at(0x1000)), [p, q].includes(at(0x7ffd5e8c1a30)));
 
   // Narrowed, and truthy.

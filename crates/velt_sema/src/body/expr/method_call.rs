@@ -181,7 +181,10 @@ impl FnCx<'_, '_> {
         }
         let writes_list = matches!(prop.name.as_str(), "join" | "toString")
             && matches!(self.cx.ty.kind(recv.ty), TyKind::Array(_));
-        if writes_list && self.reject_js_list(recv.ty, &format!("`{}`", prop.name), prop.span) {
+        if writes_list
+            && (self.reject_ptr_text(&recv)
+                || self.reject_js_list(recv.ty, &format!("`{}`", prop.name), prop.span))
+        {
             self.check_args_loose(args);
             return self.error_expr(span);
         }

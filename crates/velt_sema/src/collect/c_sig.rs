@@ -426,7 +426,7 @@ pub(crate) fn is_c_ptr(cx: &Ctx, ty: TyId) -> bool {
 }
 
 /// Can a C pointer point at a `ty`?
-fn c_pointee(cx: &Ctx, ty: TyId) -> bool {
+pub(crate) fn c_pointee(cx: &Ctx, ty: TyId) -> bool {
     match cx.ty.kind(ty) {
         TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Unit => true,
         TyKind::Adt(d, _) => cx

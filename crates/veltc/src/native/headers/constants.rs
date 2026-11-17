@@ -114,20 +114,8 @@ pub fn read(
         record.headers = headers;
         for (i, constant) in of_package {
             let d = &decls[i];
-            match to_hir(&constant.value) {
-                // A `Ptr<T>` is never `NULL`: its 0 would read as `null` (#3094).
-                Some(CValue::Address(0)) if !d.nullable => diags.push(
-                    Diagnostic::error(
-                        format!(
-                            "C constant `{}` is NULL on {zig_target}, but its declaration's type is `Ptr<T>`",
-                            d.name
-                        ),
-                        d.span,
-                    )
-                    .with_note("declare it `Ptr<T> | null`: a `Ptr<T>` is never NULL"),
-                ),
-                Some(v) => values.push((d.def, v)),
-                None => {}
+            if let Some(v) = to_hir(&constant.value) {
+                values.push((d.def, v));
             }
             record.values.insert(d.name.clone(), constant);
         }
@@ -616,6 +604,26 @@ mod tests {
         );
         assert!(fit(&thing, true, &c_thing, &null).is_ok());
         assert!(fit(&int(64, false), false, &c_thing, &at).is_err());
+    }
+
+    /// A fetched package's recorded NULL is refused for a `Ptr<T>` as one read from headers is:
+    /// both go through `fit`, and lowering relies on it (a `Ptr<T>` constant is never 0, #3094).
+    #[test]
+    fn a_recorded_null_holds_only_a_nullable_pointer() {
+        let decl = |nullable| Decl {
+            def: 0,
+            name: "OWN_NULL".into(),
+            shape: Shape::Ptr(Pointee::Void),
+            nullable,
+            span: Span::DUMMY,
+        };
+        let null = |declared: &str| CConstant {
+            declared: declared.into(),
+            c_type: "void *".into(),
+            value: CConstantValue::Pointer("0".into()),
+        };
+        assert!(!holds(&decl(false), &null("Ptr<void>"), 64));
+        assert!(holds(&decl(true), &null("Ptr<void> | null"), 64));
     }
 
     /// A record's value is trusted as its author's check only when its type can hold it.

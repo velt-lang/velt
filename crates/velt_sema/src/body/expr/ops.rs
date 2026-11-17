@@ -476,8 +476,8 @@ impl FnCx<'_, '_> {
             && (l.ty == s) != (r.ty == s)
             && (self.reject_symbol_text(&l)
                 || self.reject_symbol_text(&r)
-                || self.reject_ptr_text(&l, "text")
-                || self.reject_ptr_text(&r, "text"))
+                || self.reject_ptr_text(&l)
+                || self.reject_ptr_text(&r))
         {
             return self.error_expr(span);
         }

@@ -605,7 +605,7 @@ pub(crate) fn holds_by(
         return holds_by(cx, base, is, seen);
     }
     let kind = cx.ty.kind(t).clone();
-    let mut parts = crate::types::children(&kind);
+    let mut parts = crate::types::contents(&kind);
     if let Some(members) = cx.union_members(t) {
         parts.extend(members);
     }

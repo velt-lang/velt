@@ -661,7 +661,7 @@ fn live_types_of(cx: &mut Ctx, mut todo: Vec<TyId>, mut adts: Vec<DefId>) {
                 _ => 0,
             };
             cx.lazy.live.present |= bit;
-            todo.extend(crate::types::children(&kind));
+            todo.extend(crate::types::contents(&kind));
             if let TyKind::Adt(d, _) = kind {
                 adts.push(d);
             }

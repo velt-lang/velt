@@ -164,6 +164,9 @@ impl FnLower<'_, '_> {
             // A C pointer and its address are the same word (#3094).
             (I::PtrFromAddress, [a]) => {
                 let a = self.expr(a);
+                if super::c_call::wasm32(&self.cx.target) {
+                    self.stop_if_past_32_bits(a.clone());
+                }
                 self.rvalue_temp(Ty::Ptr, Rvalue::Cast(a, Ty::Ptr))
             }
             (I::PtrToAddress, [p]) => {

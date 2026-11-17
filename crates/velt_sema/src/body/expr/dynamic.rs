@@ -40,8 +40,11 @@ impl FnCx<'_, '_> {
     ) -> Result<hir::Expr, hir::Expr> {
         let to = self.cx.dynamic(exp);
         let from = self.cx.dynamic(h.ty);
-        // A C pointer has no dynamic form (#3094).
+        // A C pointer has no dynamic form (#3094): none converts to one, and none comes from one.
         if to.is_some() && from.is_none() && self.reject_ptr_dynamic(&h, exp) {
+            return Ok(self.error_expr(h.span));
+        }
+        if from.is_some() && to.is_none() && self.reject_ptr_from_dynamic(&h, exp) {
             return Ok(self.error_expr(h.span));
         }
         if from.is_some() && exp == self.cx.ty.never {

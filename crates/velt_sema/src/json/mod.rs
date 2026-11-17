@@ -50,10 +50,23 @@ enum Need {
     /// may be in it. Recorded only for a type parameter; concrete types are checked where
     /// they are read (`Ctx::holds_lock`).
     NoLock,
-    /// Converted to `any` or an interface, or to text (`String(x)`, a template): a C pointer
-    /// (`Ptr<T>`) can't be (#3094). Recorded only for a type parameter; concrete types are
-    /// refused where they are converted (`FnCx::reject_ptr_text`, `coerce.rs`).
-    NoPtr,
+    /// A use a C pointer (`Ptr<T>`, #3094) can't have, or a pointee C can't point at. Recorded
+    /// only for a type parameter; concrete types are refused where they are used
+    /// (`FnCx::reject_ptr_text`, `FnCx::reject_ptr_dynamic`, `Ctx::ptr_type_written`).
+    NoPtr(PtrUse),
+}
+
+/// How generic code uses a type parameter that must not be a C pointer ([`Need::NoPtr`]).
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum PtrUse {
+    /// Converted to `any`, `unknown`, `object` or an interface.
+    ToDyn,
+    /// Converted to text (`String(x)`, a template literal part), also as an element (`${[x]}`).
+    ToText,
+    /// Converted from `any` or `unknown` (`a as T`).
+    FromDyn,
+    /// The pointee of a `Ptr<T>`: what it is instantiated with must be a type C points at.
+    Pointee,
 }
 
 /// What a body constructs: the type, its arguments, the span and the guard bits, resolved by
@@ -146,16 +159,14 @@ pub(crate) fn check_json_types(cx: &mut Ctx) {
                         .with_note("a value holding a lock is read only under it (`with`): pass what a callback returns instead"),
                     );
                 }
-            } else if parse == Need::NoPtr {
-                if checked.insert((t, span, parse)) && cx.is_ptr_value(t) {
-                    let tn = cx.display(t);
-                    cx.error(
-                        Diagnostic::error(
-                            format!("a C pointer (`{tn}`) is converted to `any` or to text here, through a type parameter"),
-                            span,
-                        )
-                        .with_note("a pointer has no dynamic form and no text: `Ptr.addressOf(p)` gives its address"),
-                    );
+            } else if let Need::NoPtr(how) = parse {
+                // One report per use: `${x}` of a `T` is both a conversion to text and to `any`.
+                let key = match how {
+                    PtrUse::Pointee => parse,
+                    _ => Need::NoPtr(PtrUse::ToText),
+                };
+                if checked.insert((t, span, key)) {
+                    no_ptr(cx, t, span, how);
                 }
             } else if let Need::Json(_) = parse {
                 // A type `JSON.parse` decodes: an object type's layout its extensions widen
@@ -323,6 +334,7 @@ impl Walk<'_> {
         let calls = u.calls.len();
         if seen.insert(e.ty) {
             u.types.push((e.ty, e.span));
+            pointees(self.ids.tys, u, e.ty, e.span);
         }
         // Type arguments of generic calls and of generic functions used as values.
         let targs = match &e.kind {
@@ -336,6 +348,7 @@ impl Walk<'_> {
         for t in targs {
             if seen.insert(*t) {
                 u.types.push((*t, e.span));
+                pointees(self.ids.tys, u, *t, e.span);
             }
         }
         uses_of(self.ids.tys, u, e, self.looks, self.parsers);
@@ -354,6 +367,26 @@ impl Walk<'_> {
     }
 }
 
+/// Reports a type parameter instantiated with a C pointer where generic code uses it as a
+/// pointer can't be used, or with a pointee C can't point at ([`PtrUse`]).
+fn no_ptr(cx: &mut Ctx, t: TyId, span: Span, how: PtrUse) {
+    let what = match how {
+        PtrUse::Pointee => return cx.check_instance_pointee(t, span),
+        PtrUse::ToDyn if cx.ptr_in_dynamic(t) => "converted to `any`",
+        PtrUse::FromDyn if cx.ptr_or_element(t) => "converted from `any`",
+        PtrUse::ToText if cx.ptr_or_element(t) => "converted to text",
+        _ => return,
+    };
+    let tn = cx.display(t);
+    let msg = match cx.is_ptr_value(t) {
+        true => format!("a C pointer (`{tn}`) is {what} here, through a type parameter"),
+        false => format!("a `{tn}` is {what} here, through a type parameter: it holds a C pointer"),
+    };
+    cx.error(Diagnostic::error(msg, span).with_note(
+        "a pointer has no dynamic form and no text: `Ptr.addressOf(p)` gives its address",
+    ));
+}
+
 /// Is `f` a function (or closure) of the standard library, or the initializers of a type or a
 /// constant of it?
 fn is_std_fn(cx: &Ctx, f: DefId) -> bool {
@@ -364,6 +397,15 @@ fn is_std_fn(cx: &Ctx, f: DefId) -> bool {
         _ => return false,
     };
     cx.modules.get(module).is_some_and(|m| m.is_std)
+}
+
+/// Records the pointees of generic C pointer types in `t`, checked where they are instantiated.
+fn pointees(tys: &crate::types::Types, u: &mut Uses, t: TyId, span: Span) {
+    let mut out = vec![];
+    Ctx::generic_pointees(tys, t, &mut out);
+    for p in out {
+        u.direct.push((p, span, Need::NoPtr(PtrUse::Pointee)));
+    }
 }
 
 /// [`has_param`] with the types at hand.

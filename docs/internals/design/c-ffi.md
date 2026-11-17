@@ -1048,7 +1048,7 @@ Step 1 lands in layers, each its own pull request:
        `TypeError`. The methods the language calls implicitly (symbol-keyed ones, `toString`,
        `toLocaleString`, `valueOf`, `toJSON`, `then`) can't be unsafe. A generator's output
        can't contain `unsafe` code. A pointer has no dynamic form at all (#3094): it doesn't
-       convert to `any`; `CString`'s bytes are a private field of a std class, which is no member
+       convert to or from `any`; `CString`'s bytes are a private field of a std class, which is no member
        through `any`.
      - The raw API, `Ptr`, `declare c type`s and unsafe functions, can be imported
        there only: by name, re-exported (through any number of modules), or as a namespace
@@ -1359,6 +1359,13 @@ Step 1 lands in layers, each its own pull request:
       for an address that may be 0); so does a NULL C result, C variable or exported function's
       parameter declared `Ptr<T>`, and a `declare c const` of that type whose header value is
       NULL is a compile error. std's C declarations that are passed NULL take `Ptr<T> | null`.
+      On wasm32 a pointer has 32 bits and an address (`usize`) 64: `ptrFromAddress` stops the
+      program for an address past 32 bits (`stop_if_past_32_bits`), which would otherwise be
+      cut to another address, or to 0 behind a `Ptr<T>`.
+    - **The pointee**: a number, `bool`, `void`, a `declare c type`, a `declare c struct` or
+      another pointer (`null` or `undefined`, not both). A pointee that is a type parameter is
+      checked where it is instantiated (`json::PtrUse::Pointee`, at the call, as the other
+      type-parameter rules are).
     - **Gone**: the struct and its private field, the four lowering hooks (`ptrOf`,
       `ptrOrNull`, `ptrAddress`, `ptrAddressOrZero`) and `OutPtr<T>` with `hir::CTy::OutPtr`:
       `Out<Ptr<T> | null>` is a `T **`. `Out<T>` takes a number, `bool` or `Ptr<T> | null`
@@ -1366,16 +1373,21 @@ Step 1 lands in layers, each its own pull request:
       or a `shared<T>` would forge one.
     - **The language's other operations**, decided rather than inherited from the struct: a
       pointer prints as `Ptr(0x7ffd5e8c1a30)` (std's `ptrPush`), compares and hashes by address,
-      narrows and is truthy, and crosses workers as a Copy value; text (`${p}`, `String(p)`,
-      `"" + p`), `typeof`, ordering and arithmetic, a pointer to another C type, `any`,
-      `unknown`, `object` and interfaces, and JSON are compile errors, through a type parameter
-      too (`json::Need::NoPtr`). A class that holds one still converts to `any`, as one holding
-      a SIMD vector does.
+      narrows and is truthy, is copied (never moved), `structuredClone` copies it, and it crosses
+      workers as a Copy value; text (`${p}`, `String(p)`, `"" + p`, also of an array, tuple,
+      option or union holding one: `${[p]}`, `[p].join()`), `typeof`, ordering and arithmetic,
+      a pointer to another C type, `any`, `unknown`, `object` and interfaces (to and from them),
+      and JSON are compile errors, through a type parameter too (`json::Need::NoPtr`). A class
+      or an array that holds one still converts to `any`, as one holding a SIMD vector does:
+      its elements and fields through `any` are a `TypeError` (#924). A pointer holds no Velt
+      value: walks over what a value contains (printing, cloning, locks, liveness) stop at it
+      (`types::contents`), while walks over what a type mentions see its pointee.
     - **Header check**: the shapes read `TyKind::Ptr`, and `Out<Ptr<T> | null>` compares
       against `T **`; packages/sqlite's record is regenerated (with `tests/` moved aside: #3105).
-    - **Tests**: goldens `lang/c_pointers` and `lang/errors/c_pointer_rules`, velt_vir
-      `tests/c_pointers.rs` (one word in a signature, a field and a C call; fails without the
-      niche), std/ffi/ffi.test.velt.
+    - **Tests**: goldens `lang/c_pointers` (`wide.velt` also on wasm32-wasip1:
+      `wasm_goldens.rs`) and `lang/errors/c_pointer_rules`, velt_vir `tests/c_pointers.rs` (one
+      word in a signature, a field and a C call; fails without the niche; no pointer attributes
+      on a pointer parameter), std/ffi/ffi.test.velt.
 
 ## Decisions
 

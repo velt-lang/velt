@@ -400,6 +400,20 @@ impl FnLower<'_, '_> {
         self.switch_to(ok);
     }
 
+    /// Stops the program where `address` (a `usize`) has bits past the low 32: on wasm32 a
+    /// pointer has 32, and the cast to one would make it another address, or NULL behind a
+    /// `Ptr<T>` that is never NULL (`ptrFromAddress`, #3094).
+    pub(super) fn stop_if_past_32_bits(&mut self, address: Operand) {
+        let high = self.u64_op(BinOp::UShr, address, cint(32, Ty::U64));
+        let past = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, high, cint(0, Ty::U64)));
+        let (bad, ok) = (self.new_block(), self.new_block());
+        self.branch(past, bad, ok);
+        self.switch_to(bad);
+        self.panic_msg("Ptr: the address does not fit a pointer of this target (32 bits)");
+        self.terminate(vir::Terminator::Unreachable);
+        self.switch_to(ok);
+    }
+
     /// `p`, or a dangling address aligned for any element (16) where it is null: an empty array
     /// literal holds a null data pointer, and C's `memcpy`, `memset` or `fwrite` given NULL is
     /// undefined behaviour even for a length of 0. No branch.

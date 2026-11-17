@@ -228,7 +228,9 @@ impl Cx<'_> {
             self.holds_mutex(t, 0, false),
             self.array_view(t),
             // A C pointer answers every other question as `symbol` does (a non-null word, no
-            // drop), but prints and compares as itself (#3094).
+            // drop), but prints and compares as itself (#3094). No shared instance sees one yet:
+            // only the array-view helpers are shared (`SHARED`), and sema refuses the view of a
+            // pointer array (`any as Ptr<T>[]`); this keeps the two apart once more is shared.
             self.c_pointer(t),
         ];
         answers

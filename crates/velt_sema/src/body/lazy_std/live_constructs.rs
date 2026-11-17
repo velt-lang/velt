@@ -123,7 +123,7 @@ pub(crate) fn too_late(cx: &mut Ctx, assumed: &mut Assumed) -> bool {
                 }
                 _ => {}
             }
-            todo.extend(crate::types::children(kind));
+            todo.extend(crate::types::contents(kind));
         }
     }
     classes.sort();

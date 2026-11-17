@@ -1,6 +1,9 @@
 Ptr(0x7ffd5e8c1a30) Ptr(0x1000) null
 [ Ptr(0x7ffd5e8c1a30), null ] { file: Ptr(0x1000) }
 true 0
+Ptr(0x7ffd5e8c1a30) [ Ptr(0x7ffd5e8c1a30) ]
+Ptr(0x20) [ Ptr(0x20), Ptr(0x20) ]
+true { file: Ptr(0x1000), n: 1 } [ null, Ptr(0x7ffd5e8c1a30) ]
 true false true true
 2 page true
 not null 8192

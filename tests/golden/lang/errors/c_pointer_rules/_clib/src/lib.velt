@@ -1,6 +1,8 @@
-// What a C pointer (`Ptr<T>`, #3094) can't be: text, a `typeof`, an operand of arithmetic or an
-// ordering, a dynamic value or JSON, directly or through a type parameter; a pointer to another
-// C type; `Out<T>` of a value C must not write (a non-null pointer, a class reference).
+// What a C pointer (`Ptr<T>`, #3094) can't be: text (also as an array's element), a `typeof`, an
+// operand of arithmetic or an ordering, a dynamic value or one read from `any`, or JSON, directly
+// or through a type parameter; a pointer to another C type, or to a type C has no values of (also
+// as a type parameter's instance); `Out<T>` of a value C must not write (a non-null pointer, a
+// class reference).
 import { Out, Ptr } from "velt/ffi";
 
 declare c type FILE;
@@ -21,6 +23,26 @@ function text<T>(x: T): string {
   return `${x}`;
 }
 
+function fromAny<T>(a: any): T {
+  return a as T;
+}
+
+function joined<T>(xs: T[]): string {
+  return xs.join(",");
+}
+
+function wrapped<T>(x: T): string {
+  return `${[x]}`;
+}
+
+function mk<T>(a: usize): Ptr<T> {
+  // SAFETY: never read through.
+  return unsafe { Ptr.at<T>(a) };
+}
+
+// C has one NULL: a pointer may be `null` or `undefined`, not both.
+function twice(p: Ptr<Ptr<u8> | null | undefined>): void {}
+
 export function show(): void {
   // SAFETY: never read through.
   const p = unsafe { Ptr.at<FILE>(8) };
@@ -33,4 +55,9 @@ export function show(): void {
   const o: object = p;
   console.log(a, u, o, JSON.stringify(p));
   console.log(toAny(p), text(p));
+  console.log(a as Ptr<FILE>, u as Ptr<FILE>, fromAny<Ptr<FILE>>(a));
+  console.log(a as Ptr<FILE>[], a as [Ptr<FILE> | null], fromAny<Ptr<FILE>[]>(a));
+  console.log(`${[p]}`, String([p]), [p, p].join(","), [p].toString(), "x" + [p]);
+  console.log(joined([p]), wrapped(p));
+  console.log(mk<string>(16), mk<Holder>(16));
 }

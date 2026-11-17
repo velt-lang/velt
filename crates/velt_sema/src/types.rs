@@ -430,6 +430,17 @@ pub(crate) fn velt_only_type_name(name: &str) -> bool {
 /// How deep type arguments may nest before [`Types::args_too_deep`] calls them grown without end.
 pub(crate) const MAX_ARG_DEPTH: u32 = 64;
 
+/// The types of the values a value of kind `k` holds: [`children`], except that a C pointer
+/// (`Ptr<T>`, #3094) holds none. Its pointee is C memory, not a Velt value, so walks over what a
+/// value contains (printing, cloning, locks, liveness) stop at it; walks over what a type
+/// mentions (parameters, substitution, inference) use [`children`].
+pub(crate) fn contents(k: &TyKind) -> Vec<TyId> {
+    match k {
+        TyKind::Ptr(_) => vec![],
+        k => children(k),
+    }
+}
+
 /// Direct component types of a type.
 pub(crate) fn children(k: &TyKind) -> Vec<TyId> {
     match k {
