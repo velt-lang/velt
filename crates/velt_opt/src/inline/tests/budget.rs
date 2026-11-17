@@ -36,6 +36,34 @@ fn other_code_does_not_take_a_hot_loops_share_of_the_budget() {
     }
 }
 
+/// Nothing is set aside for a call of a callee past `SHARE_COST` (`Map.set`'s grow path in a hot
+/// loop): it competes first come, first served, so a library function visited first, wanting more
+/// than is left, takes the budget and both calls stay calls. A callee up to `SHARE_COST` keeps
+/// its share (`other_code_does_not_take_a_hot_loops_share_of_the_budget`).
+#[test]
+fn nothing_is_set_aside_for_a_callee_past_the_share_limit() {
+    let mut pb = ProgramBuilder::new();
+    let small = pb.add(adder("small", 35, Linkage::Internal));
+    let slow = pb.add(adder("slow", SHARE_COST as usize + 50, Linkage::Internal));
+    let hog = pb.add(caller_named(
+        "_V3stdP3libN3hog",
+        &[small],
+        200,
+        Linkage::Export,
+    ));
+    let main = pb.add(looping_caller(&[slow]));
+    let mut p = pb.finish();
+    let mut budget = Budget::for_program(&p);
+    budget.remaining = 2 * cost(&p.funcs[slow.0 as usize]) + 10;
+    run(&mut p, &mut budget, crate::Served::default());
+    assert_valid(&p);
+    assert!(
+        calls_to(&p.funcs[hog.0 as usize], small) < 200,
+        "the hog spent"
+    );
+    assert_eq!(calls_to(&p.funcs[main.0 as usize], slow), 2);
+}
+
 /// The standard library's functions get nothing set aside: among themselves they spend first
 /// come, first served, so the first visited keeps what it takes. Shared out, two instances that
 /// each want four calls would get two each, which moved the budget from instances whose inlined

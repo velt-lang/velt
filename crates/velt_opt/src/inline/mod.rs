@@ -23,10 +23,11 @@
 //! visited bottom-up, so spent first come, first served, the first ones (deep library code, glue)
 //! could spend it all before a program's own code, nearer the top, got a turn (#2753). So a round
 //! whose calls could want more than is left sets aside for each of the program's own functions
-//! what it wants (`wants`: the calls in its body that would be charged, each callee at the size it
-//! will have when the caller is visited, with what its own visit inlines), and when they want more
-//! than is left, no more than a level set so that what is set aside adds up to it (a max-min fair
-//! share, `Budget::share`). A caller may spend what is set aside for it and whatever no caller
+//! what it wants (`wants`: the calls in its body that would be charged, of callees up to
+//! `SHARE_COST`, each at the size it will have when the caller is visited, with what its own
+//! visit inlines; a bigger callee is more often a slow path than a hot loop's step), and when they
+//! want more than is left, no more than a level set so that what is set aside adds up to it (a
+//! max-min fair share, `Budget::share`). A caller may spend what is set aside for it and whatever no caller
 //! still to come has set aside, so what one leaves unspent goes to the next: a hot loop that wants
 //! little gets it whatever else the program holds, and only callers wanting more than the level
 //! wait for what others leave. The standard library's functions and generated glue get nothing
@@ -93,6 +94,11 @@ const LOOP_COST: u64 = 1_000;
 /// `Number` (910), a regex test (502) or `RegExp.execAt` (358). On the generated 3k-line
 /// application of #2707, clang retires 10.8% fewer instructions (76.3 G to 68.1 G).
 const NESTED_LOOP_COST: u64 = 350;
+/// Calls of callees at most this big are what a function's share of the budget is set aside for
+/// ([`wants`]): a hot loop's steps (`Map.get` with its lookup, 123; a module's state, 78), not a
+/// slow path such as `Map.set`'s grow path (929), whose call in the loop competes first come,
+/// first served as before. Set aside for, it made `bench/structs/mapkey_flat` run 3% slower.
+const SHARE_COST: u64 = 350;
 /// Recursive callees at most this big are inlined into loops of outside callers (while the
 /// growth budget lasts).
 const RECURSIVE_COST: u64 = 200;
@@ -687,19 +693,20 @@ fn passes_static(func: &Function, args: &[Operand]) -> bool {
 }
 
 /// Per function of the program's own (not [`library`]), what this round would charge it with the
-/// budget unlimited: the sizes of the calls in its body that [`decide`] charges for. Callers are
-/// visited bottom-up, so a callee has grown by then: it counts at its size plus what its own visit
-/// would inline (`Map.get` with its lookup), else a hot loop's share falls short of the call it
-/// was set aside for. All zero when the round's calls can't want more than is left (each charged
-/// call costs at most its callee's size, up to `LOOP_COST`), which spares the work. An estimate,
-/// not a bound: one called once may become free, and the calls an inlined body brings along are
-/// not counted.
+/// budget unlimited: the sizes of the calls in its body that [`decide`] charges for, of callees up
+/// to `SHARE_COST`. Callers are visited bottom-up, so a callee has grown by then: it counts at its
+/// size plus what its own visit would inline (`Map.get` with its lookup), else a hot loop's share
+/// falls short of the call it was set aside for. All zero when the round's calls can't want more
+/// than is left (each counted call costs its callee's size, a callee up to `SHARE_COST`), which
+/// spares the work. An estimate, not a bound: one called once may become free, and the calls an
+/// inlined body brings along are not counted.
 fn wants(program: &Program, state: &mut State, budget: &Budget, sccs: &[Vec<FuncId>]) -> Vec<u64> {
     let n = program.funcs.len();
     let most: u64 = (program.funcs.iter())
         .flat_map(direct_calls)
         .filter_map(|c| program.funcs.get(c.0 as usize))
-        .map(|t| cost(t).min(LOOP_COST))
+        .map(cost)
+        .filter(|&c| c <= SHARE_COST)
         .sum();
     if most <= budget.remaining {
         return vec![0; n];
@@ -731,7 +738,9 @@ fn wants(program: &Program, state: &mut State, budget: &Budget, sccs: &[Vec<Func
             };
             match decide(state, program, callee, &site, budget) {
                 Some(Decision::Charged(size)) => {
-                    want += size;
+                    if size <= SHARE_COST {
+                        want += size;
+                    }
                     growth += size;
                 }
                 Some(Decision::Free) => growth += site.size,
