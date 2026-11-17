@@ -1,9 +1,9 @@
 //! The intrinsics on raw memory and heap futures (docs/internals/design/intrinsics.md "Memory at
-//! an address"): `addressStore`, `atomicAddress`, the address of a `Ptr<T>`'s integer for the
-//! `ptrAtomic*` operations (atomic.rs emits them), and the calls through a heap future's header
-//! (`futPoll`, `futDrop`, and every poll and drop of a heap future lowering emits).
+//! an address"): `addressStore`, `atomicAddress`, the word the `addressAtomic*` operations work
+//! on (atomic.rs emits them), and the calls through a heap future's header (`futPoll`,
+//! `futDrop`, and every poll and drop of a heap future lowering emits).
 
-use velt_sema::hir::{self, TyId, TyKind};
+use velt_sema::hir::{self, TyId};
 
 use super::operand::proj;
 use super::{ice, unit, FnLower};
@@ -32,25 +32,16 @@ impl FnLower<'_, '_> {
         self.rvalue_temp(t, Rvalue::Cast(p, t))
     }
 
-    /// The address of the integer the `Ptr<T>` `p` points to, `T`'s VIR type and its width: the
-    /// operands of a `ptrAtomic*` operation.
-    pub(super) fn ptr_word(&mut self, p: &hir::Expr) -> (Operand, Ty, u32) {
-        let pty = self.sub(p.ty);
-        let vt = match self.cx.kind(pty) {
-            TyKind::Adt(_, args) if args.len() == 1 => self.cx.ty(args[0]),
-            k => ice(format_args!("ptrAtomic intrinsic on {k:?}")),
-        };
+    /// The integer of type `t` at the address `a` (a `usize`) as a pointer, `t`'s VIR type and its
+    /// width: the operands of an `addressAtomic*` operation.
+    pub(super) fn address_word(&mut self, a: &hir::Expr, t: TyId) -> (Operand, Ty, u32) {
+        let vt = self.vty(t);
         let bits = match vt {
             t if t.is_int() => t.scalar_size().unwrap_or(8) * 8,
-            t => ice(format_args!(
-                "ptrAtomic intrinsic on a Ptr to VIR type {t:?}"
-            )),
+            t => ice(format_args!("addressAtomic intrinsic on VIR type {t:?}")),
         };
-        let v = self.expr(p);
-        let place = self.place_of(v, pty);
-        // A `Ptr`'s one field is its address.
-        let addr = self.field_place(&place, pty, 0);
-        let at = self.rvalue_temp(Ty::Ptr, Rvalue::Cast(Operand::Copy(addr), Ty::Ptr));
+        let addr = self.expr(a);
+        let at = self.rvalue_temp(Ty::Ptr, Rvalue::Cast(addr, Ty::Ptr));
         (at, vt, bits)
     }
 

@@ -1,6 +1,6 @@
 //! The intrinsics on raw memory (docs/internals/design/intrinsics.md "Memory at an address"):
-//! `addressStore`, the `ptrAtomic*` operations, `atomicAddress`, `futPoll` and `futDrop`, as std
-//! code calls them (only std may import the intrinsics).
+//! `addressStore`, the `addressAtomic*` operations, `atomicAddress`, `futPoll` and `futDrop`, as
+//! std code calls them (only std may import the intrinsics).
 
 mod common;
 
@@ -13,10 +13,9 @@ fn std_diagnostics(src: &str) -> String {
     l.render(&d)
 }
 
-const IMPORTS: &str = "import { Ptr } from \"velt/ffi\";
-import { addressCall, addressLoad, addressStore, atomicAddress, fnAddress, futDrop, futPoll,
-  ptrAtomicCas, ptrAtomicLoad, ptrAtomicRmw, ptrAtomicStore, promiseAt, slotPut, slotTake,
-  stateDrop, statePoll }
+const IMPORTS: &str = "import { addressAtomicCas, addressAtomicLoad, addressAtomicRmw,
+  addressAtomicStore, addressCall, addressLoad, addressStore, atomicAddress, fnAddress, futDrop,
+  futPoll, promiseAt, slotPut, slotTake, stateDrop, statePoll }
   from \"velt/lang/intrinsics\";";
 
 fn std_ok(body: &str) {
@@ -42,11 +41,11 @@ fn raw_memory_intrinsics_check_in_unsafe_code() {
                addressStore<u64>(8, 1);
                addressStore<bool>(8, true);
                addressStore<f32>(8, 1.5);
-               const p = Ptr.at<u32>(atomicAddress(W));
-               ptrAtomicStore(p, 1, \"release\");
-               const v: u32 = ptrAtomicLoad(p, \"acquire\");
-               const w: u32 = ptrAtomicRmw(p, \"add\", v, \"acqrel\");
-               const x: u32 = ptrAtomicCas(p, w, 2, \"seqcst\", \"relaxed\");
+               const p = atomicAddress(W);
+               addressAtomicStore<u32>(p, 1, \"release\");
+               const v = addressAtomicLoad<u32>(p, \"acquire\");
+               const w = addressAtomicRmw<u32>(p, \"add\", v, \"acqrel\");
+               const x: u32 = addressAtomicCas<u32>(p, w, 2, \"seqcst\", \"relaxed\");
                console.log(x, futPoll(16, 32));
                futDrop(16);
              }
@@ -68,11 +67,9 @@ fn the_raw_writes_and_future_calls_need_unsafe_code() {
     assert!(e.contains("calling unsafe intrinsic `futPoll`"), "{e}");
     let e = std_err("function main() { futDrop(8); }");
     assert!(e.contains("calling unsafe intrinsic `futDrop`"), "{e}");
-    let e = std_err(
-        "function main() { const p = unsafe { Ptr.at<u64>(8) }; console.log(ptrAtomicLoad(p, \"seqcst\")); }",
-    );
+    let e = std_err("function main() { console.log(addressAtomicLoad<u64>(8, \"seqcst\")); }");
     assert!(
-        e.contains("calling unsafe intrinsic `ptrAtomicLoad`"),
+        e.contains("calling unsafe intrinsic `addressAtomicLoad`"),
         "{e}"
     );
 }
@@ -106,27 +103,27 @@ fn address_load_and_store_move_only_numbers_and_bools() {
 }
 
 #[test]
-fn pointer_atomics_need_an_integer_and_literal_orderings() {
+fn address_atomics_need_an_integer_and_literal_orderings() {
     let e = std_err(
-        "function main() { unsafe { const p = Ptr.at<f64>(8); console.log(ptrAtomicLoad(p, \"seqcst\")); } }",
+        "function main() { unsafe { console.log(addressAtomicLoad<f64>(8, \"seqcst\")); } }",
     );
     assert!(
-        e.contains("`ptrAtomicLoad<T>` needs an integer type for `T`, found `f64`"),
+        e.contains("`addressAtomicLoad<T>` needs an integer type for `T`, found `f64`"),
         "{e}"
     );
     // An ordering the operation cannot have is the declaration's type error.
     let e = std_err(
-        "function main() { unsafe { const p = Ptr.at<u32>(8); console.log(ptrAtomicLoad(p, \"release\")); } }",
+        "function main() { unsafe { console.log(addressAtomicLoad<u32>(8, \"release\")); } }",
     );
     assert!(e.contains("release"), "{e}");
     let e = std_err(
         "function order(): \"seqcst\" | \"relaxed\" { return \"relaxed\"; }
-         function main() { unsafe { const p = Ptr.at<u32>(8); ptrAtomicStore(p, 1, order()); } }",
+         function main() { unsafe { addressAtomicStore<u32>(8, 1, order()); } }",
     );
     assert!(e.contains("an ordering must be a string literal"), "{e}");
     let e = std_err(
         "function op(): \"add\" | \"sub\" { return \"add\"; }
-         function main() { unsafe { const p = Ptr.at<u32>(8); console.log(ptrAtomicRmw(p, op(), 1, \"seqcst\")); } }",
+         function main() { unsafe { console.log(addressAtomicRmw<u32>(8, op(), 1, \"seqcst\")); } }",
     );
     assert!(e.contains("an operation must be a string literal"), "{e}");
 }

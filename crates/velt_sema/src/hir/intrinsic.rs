@@ -379,22 +379,27 @@ pub enum Intrinsic {
     /// checks it): `v` written at `address`, unchecked (intrinsics.md "Memory at an address").
     /// Additive.
     AddressStore,
-    /// std only: `ptrAtomicLoad<T>(p: Ptr<T>, order: u8) -> T`, `T` an integer type: as
-    /// `AtomicLoad` on the integer `p` points to (its address is `p`'s one field). Sema turns the
-    /// declaration's string literal orderings into the `Atomic*` intrinsics' integer literals.
-    /// Additive.
-    PtrAtomicLoad,
-    /// `(p: Ptr<T>, v: T, order: u8)`: as `AtomicStore` at `p`. Additive.
-    PtrAtomicStore,
-    /// `(p: Ptr<T>, v: T, op: u8, order: u8) -> T`: as `AtomicRmw` at `p` (the declaration's
-    /// `(p, op, v, order)` reordered by sema, `op` a literal as `AtomicRmw` numbers it).
-    /// Additive.
-    PtrAtomicRmw,
-    /// `(p: Ptr<T>, expected: T, v: T, order: u8, failure: u8) -> T`: as `AtomicCas` at `p`.
-    /// Additive.
-    PtrAtomicCas,
-    /// As `PtrAtomicCas`, `-> bool` (may fail spuriously). Additive.
-    PtrAtomicCasWeak,
+    /// std only (as are the other four `AddressAtomic*`): `addressAtomicLoad<T>(address: usize,
+    /// order: u8) -> T`, `T` an integer type: as `AtomicLoad` on the integer at `address`, `T`
+    /// being the call's type. Sema turns the declaration's string literal orderings into the
+    /// `Atomic*` intrinsics' integer literals.
+    ///
+    /// Changed (#3094), for all five `AddressAtomic*`: renamed from `PtrAtomic*`; the first
+    /// operand is a `usize` address, not a `Ptr<T>`. Not additive.
+    AddressAtomicLoad,
+    /// std only: `(address: usize, v: T, order: u8)`: as `AtomicStore` at `address`, `T` being
+    /// `v`'s type. Changed (#3094): see `AddressAtomicLoad`.
+    AddressAtomicStore,
+    /// std only: `(address: usize, v: T, op: u8, order: u8) -> T`: as `AtomicRmw` at `address`
+    /// (the declaration's `(address, op, v, order)` reordered by sema, `op` a literal as
+    /// `AtomicRmw` numbers it). Changed (#3094): see `AddressAtomicLoad`.
+    AddressAtomicRmw,
+    /// std only: `(address: usize, expected: T, v: T, order: u8, failure: u8) -> T`: as
+    /// `AtomicCas` at `address`. Changed (#3094): see `AddressAtomicLoad`.
+    AddressAtomicCas,
+    /// std only: as `AddressAtomicCas`, `-> bool` (may fail spuriously), `T` being `expected`'s
+    /// type. Changed (#3094): see `AddressAtomicLoad`.
+    AddressAtomicCasWeak,
     /// std only: `atomicAddress<T>(a: borrow Atomic<T>) -> usize`: the address of `a`'s word.
     /// Sema allows only an `Atomic` of a 32- or 64-bit integer that cannot move: a static atomic
     /// (`Global(d)`), or a field (of a field…) of the value of `SharedRead`. Additive.

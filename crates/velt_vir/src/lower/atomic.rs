@@ -14,16 +14,22 @@ use crate::atomic::{word, AtomicCall, Order, Rmw};
 use crate::vir::{BinOp, Callee, Const, Operand, Place, Proj, Rvalue, Ty, UnOp};
 
 impl FnLower<'_, '_> {
-    pub(super) fn atomic_intrinsic(&mut self, i: Intrinsic, args: &[hir::Expr]) -> Operand {
+    /// The atomic intrinsic `i` called with `args`, its result of type `ty`.
+    pub(super) fn atomic_intrinsic(
+        &mut self,
+        i: Intrinsic,
+        args: &[hir::Expr],
+        ty: TyId,
+    ) -> Operand {
         use Intrinsic as I;
         let instance = !matches!(i, I::AtomicFence | I::AtomicSpinHint);
         let raw = matches!(
             i,
-            I::PtrAtomicLoad
-                | I::PtrAtomicStore
-                | I::PtrAtomicRmw
-                | I::PtrAtomicCas
-                | I::PtrAtomicCasWeak
+            I::AddressAtomicLoad
+                | I::AddressAtomicStore
+                | I::AddressAtomicRmw
+                | I::AddressAtomicCas
+                | I::AddressAtomicCasWeak
         );
         if let Some(t) = args
             .first()
@@ -35,9 +41,15 @@ impl FnLower<'_, '_> {
         match (i, args) {
             (I::AtomicFence, [o]) => self.atomic_call(AtomicCall::Fence(order(o)), vec![]),
             (I::AtomicSpinHint, []) => self.atomic_call(AtomicCall::SpinHint, vec![]),
-            // The integer a `Ptr<T>` points to (raw_memory.rs).
+            // The integer at an address (raw_memory.rs): its type is the result's, or for the
+            // operations returning none or a `bool`, the value's (`expected`'s for a weak CAS).
             (_, [a, rest @ ..]) if raw => {
-                let word = self.ptr_word(a);
+                let t = match (i, rest) {
+                    (I::AddressAtomicStore | I::AddressAtomicCasWeak, [v, ..]) => v.ty,
+                    _ => ty,
+                };
+                let t = self.sub(t);
+                let word = self.address_word(a, t);
                 self.atomic_at(i, word, rest)
             }
             (_, [a, rest @ ..]) => {
@@ -61,12 +73,12 @@ impl FnLower<'_, '_> {
     ) -> Operand {
         use Intrinsic as I;
         match (i, rest) {
-            (I::AtomicLoad | I::PtrAtomicLoad, [o]) => {
+            (I::AtomicLoad | I::AddressAtomicLoad, [o]) => {
                 let order = order(o);
                 let w = self.atomic_call(AtomicCall::Load { bits, order }, vec![p]);
                 from_word(self, w, vt, bits)
             }
-            (I::AtomicStore | I::PtrAtomicStore, [v, o]) => {
+            (I::AtomicStore | I::AddressAtomicStore, [v, o]) => {
                 let v = self.word_arg(v, vt, bits);
                 let order = order(o);
                 self.atomic_call(AtomicCall::Store { bits, order }, vec![p, v])
@@ -75,7 +87,7 @@ impl FnLower<'_, '_> {
                 let v = self.expr(v);
                 self.float_rmw(p, v, vt, bits, lit(op), order(o))
             }
-            (I::AtomicRmw | I::PtrAtomicRmw, [v, op, o]) => {
+            (I::AtomicRmw | I::AddressAtomicRmw, [v, op, o]) => {
                 let v = self.word_arg(v, vt, bits);
                 let op = match (lit(op), vt.is_signed()) {
                     (0, _) => Rmw::Xchg,
@@ -95,12 +107,12 @@ impl FnLower<'_, '_> {
                 from_word(self, w, vt, bits)
             }
             (
-                I::AtomicCas | I::AtomicCasWeak | I::PtrAtomicCas | I::PtrAtomicCasWeak,
+                I::AtomicCas | I::AtomicCasWeak | I::AddressAtomicCas | I::AddressAtomicCasWeak,
                 [e, v, o, f],
             ) => {
                 let e = self.word_arg(e, vt, bits);
                 let v = self.word_arg(v, vt, bits);
-                let weak = matches!(i, I::AtomicCasWeak | I::PtrAtomicCasWeak);
+                let weak = matches!(i, I::AtomicCasWeak | I::AddressAtomicCasWeak);
                 let call = AtomicCall::Cas {
                     bits,
                     order: order(o),
