@@ -319,6 +319,10 @@ struct Loader<'a, 'o> {
     origins: Vec<(PathBuf, Origin)>,
     /// Canonical file path → module index.
     by_file: HashMap<PathBuf, usize>,
+    /// Module path → the first module with it, for the modules up to `by_path_len`
+    /// ([`Loader::module_by_path`]; `modules` only grows).
+    by_path: HashMap<String, usize>,
+    by_path_len: usize,
     /// [`file_key`] of the std root: std modules are exactly the files below it.
     std_key: Option<PathBuf>,
     /// Loading extra roots: a taken or reserved module path gets a fallback instead of an error.
@@ -720,9 +724,11 @@ impl Loader<'_, '_> {
         }
         let first = self.resolved.insert(index);
         for (spec, span, names, written) in imports {
-            let known = self.modules[index].imports.iter().find(|(s, _)| *s == spec);
+            let known = (self.modules[index].imports.iter())
+                .find(|(s, _)| *s == spec)
+                .map(|(_, path)| path.clone());
             let target = match known {
-                Some((_, path)) => self.modules.iter().position(|m| m.path == *path),
+                Some(path) => self.module_by_path(&path),
                 None => {
                     let target = self.import(index, &spec, span, written, queue);
                     if let Some(t) = target {
@@ -742,6 +748,20 @@ impl Loader<'_, '_> {
             self.jsx_runtime(index, queue);
             self.load_globals(index, queue);
         }
+    }
+
+    /// The first module whose path is `path`. A load from std's unit resolves every std
+    /// module's known imports, so a scan of the modules per import cost it a quadratic number of
+    /// path comparisons.
+    fn module_by_path(&mut self, path: &str) -> Option<usize> {
+        while self.by_path_len < self.modules.len() {
+            let i = self.by_path_len;
+            (self.by_path)
+                .entry(self.modules[i].path.clone())
+                .or_insert(i);
+            self.by_path_len += 1;
+        }
+        self.by_path.get(path).copied()
     }
 
     /// Locate (and load if new) the module `spec` imported by module `index`; `written`: the

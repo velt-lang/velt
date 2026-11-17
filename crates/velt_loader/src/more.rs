@@ -59,6 +59,8 @@ impl<'a, 'o> Loader<'a, 'o> {
             modules: state.modules,
             origins: state.origins,
             by_file: state.by_file,
+            by_path: HashMap::new(),
+            by_path_len: 0,
             std_key: opts.std_root.as_deref().map(file_key),
             extra_phase: false,
             dir_names: state.dir_names,
