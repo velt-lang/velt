@@ -1,0 +1,51 @@
+// check: no leaks
+// #2455: a loop over an array the loop itself owns (a call's result, a literal, a local), in a
+// program where that array type is counted. The loop's copy of the array and the array's own
+// reference are released one after the other; an optimized build must keep the second.
+import { utf8Encode } from "velt/encoding";
+
+class Holder {
+  xs: u8[];
+  constructor(xs: u8[]) {
+    this.xs = xs;
+  }
+}
+
+function digits(n: number): u8[] {
+  const out: u8[] = [];
+  for (let i = 0; i < n; i++) {
+    out.push((48 + i) as u8);
+  }
+  return out;
+}
+
+function main() {
+  // Two objects holding one array: `u8[]` values are counted in this program.
+  const a: u8[] = [1, 2];
+  const h1 = new Holder(a);
+  const h2 = new Holder(a);
+  h1.xs.push(3);
+  let n = h2.xs.length;
+  for (let i = 0; i < 10; i++) {
+    for (const b of utf8Encode("abc")) {
+      n += b;
+    }
+    for (const b of digits(3)) {
+      n += b;
+    }
+    for (const b of [i as u8, 2, 3]) {
+      n += b;
+    }
+    const bytes = utf8Encode("de");
+    for (const b of bytes) {
+      n += b;
+    }
+    n += bytes.length;
+  }
+  console.log(n);
+  // The same with an object and its alias.
+  const point = { x: 1, y: 2 };
+  const same = point;
+  same.x = 10;
+  console.log(point.x, JSON.stringify(same));
+}
