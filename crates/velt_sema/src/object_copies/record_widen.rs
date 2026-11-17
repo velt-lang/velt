@@ -10,9 +10,7 @@ use rustc_hash::FxHashSet;
 use velt_common::{Diagnostic, Span};
 
 use super::record_flow::Lives;
-use super::{
-    compared, dynamic_reaches, holds, related, report_seen, Copy, Dynamic, Seen, Write,
-};
+use super::{compared, dynamic_reaches, holds, related, report_seen, Copy, Dynamic, Seen, Write};
 use crate::copy_flow::Store;
 use crate::ctx::Ctx;
 use crate::hir::{DefId, TyId, TyKind};

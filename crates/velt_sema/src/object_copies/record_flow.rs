@@ -150,7 +150,10 @@ impl Lives {
                         Callee::Indirect(v) => fx.indirect.push(copy_flow::sources(fd, v, copies)),
                         Callee::Intrinsic(i) => {
                             let gets_fn = args.iter().any(|a| {
-                                matches!(cx.ty.kind(a.ty), TyKind::FnPtr { .. } | TyKind::Closure(_))
+                                matches!(
+                                    cx.ty.kind(a.ty),
+                                    TyKind::FnPtr { .. } | TyKind::Closure(_)
+                                )
                             });
                             fx.opaque |= gets_fn || runs_code(*i);
                         }
