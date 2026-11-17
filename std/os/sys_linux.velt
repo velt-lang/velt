@@ -4,7 +4,7 @@
 import { Ptr } from "velt/ffi/ptr";
 import { addressLoad, addressStore, rawAlloc, rawFree } from "velt/lang/intrinsics";
 import { cpuQuota } from "./cgroup";
-import { hostname as posixHostname } from "./posix";
+import { hostname as posixHostname, processId as posixProcessId } from "./posix";
 import { posixTmpdir } from "./tmpdir";
 
 /** C's `cpu_set_t`: a mask of 1024 CPUs. */
@@ -80,4 +80,9 @@ export function hostname(): string {
 /** The directory for temporary files, as Node's `os.tmpdir()` finds it. */
 export function tmpdir(): string {
   return posixTmpdir();
+}
+
+/** This process's id. */
+export function processId(): i64 {
+  return posixProcessId();
 }
