@@ -621,6 +621,14 @@ function onRow(n: i32, row: Ptr<u8> | null): i32 { … }
   - **LLVM on Windows**: the abort pad is a `cleanuppad` under `__C_specific_handler` (a
     termination handler, run for every exception that unwinds the frame); under
     `__CxxFrameHandler3` it was skipped for an exception that is not C++, so a Velt panic passed.
+- **Async code in it** (#2196): on a thread that isn't one of the executor's workers (a C
+  library's), the promises it starts, its timers and sleeps run on the executor's worker 0, handed
+  over through its inbox (std/lang/hooks/sched_foreign.velt). The C function marks the call's start
+  and end (`schedExportEnter`, `schedExportExit`), and such a thread's tasks wait for the
+  outermost call's end, in the order they were made: the call's synchronous run comes first, as a
+  JS callback's comes before its microtasks, so a rejection it handles later in that run is not
+  reported meanwhile. A `spawn` there runs beside the call at once. Work handed over after `main`
+  and the tasks left ended (a thread that outlives them) never runs: the process is exiting.
 - **Its address**: `exportedAddress(f)` (std/lang/intrinsics, std only, unsafe) is the C
   function's address as a `usize`, for a C API taking a function pointer (`pthread_create`,
   `qsort`); its argument must name an `@export` function. A package gets the address from C

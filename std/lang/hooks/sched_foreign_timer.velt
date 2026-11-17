@@ -6,7 +6,9 @@
 //   (the turn then completes at once), the order's handle after, `BUSY` while a posted job
 //   changes it, `FREED` once its task freed it.
 // - A clear or free on such a thread after the insertion is posted to worker 0 (`post`), which
-//   holds a reference to the record until it ran.
+//   holds a reference to the record until it ran. The timer's task waits for the end of the
+//   exported function's call that made it (sched_foreign.velt `exportEnter`), so a clear in that
+//   call always finds the word 0; a later one needs the timer from elsewhere.
 // The callback runs as on a worker: as a promise of the task that started it (sched_foreign.velt
 // `start`), its order Node's from the insertion on.
 

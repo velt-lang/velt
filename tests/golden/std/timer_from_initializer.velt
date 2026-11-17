@@ -1,11 +1,15 @@
 // A module's initializer reaches setTimeout and an async call through a function (#2196): the
 // callback runs, and the kept promise starts, as in Node, where both run after the module's
-// synchronous code. The initializer's timer comes before `main`'s with the same delay.
-// timing: Node's timer order (timers of 1 ms, then sleeps of 2 and 20 ms) is what this checks.
+// synchronous code; the kept promise's continuation is a microtask, before any timer. The
+// initializer's timer comes before `main`'s with the same delay.
+// timing: two timers of the same delay, which Node runs in the order they were set; no line
+// depends on how long anything takes.
+
+async function nothing(): Promise<void> {}
 
 async function note(tag: string): Promise<void> {
   console.log(`${tag} sync`);
-  await sleep(2);
+  await nothing();
   console.log(`${tag} later`);
 }
 
@@ -21,9 +25,11 @@ const armed = arm();
 
 async function main() {
   console.log(`main ${armed}`);
-  setTimeout(async () => {
-    console.log("main timer");
-  }, 1);
-  await sleep(20);
+  await new Promise<void>((resolve) => {
+    setTimeout(async () => {
+      console.log("main timer");
+      resolve();
+    }, 1);
+  });
   console.log("end");
 }

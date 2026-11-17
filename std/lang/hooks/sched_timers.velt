@@ -4,6 +4,7 @@
 // the order later (sched_foreign_timer.velt), its handle with bit 0 clear. The program's thread
 // starts the executor first, as for its spawns. Each call goes where its handle came from.
 
+import { stdUsed } from "velt/lang/intrinsics";
 import * as fg from "./sched_foreign";
 import * as ft from "./sched_foreign_timer";
 import * as order from "./sched_order";
@@ -24,7 +25,7 @@ export function giveBackAtExit(h: u64): void {
 
 /** A Node timer due `ms` milliseconds from now, queued: its handle. */
 export function timerNew(ms: i64): u64 {
-  if (!t.onWorker() && fg.foreign()) {
+  if (stdUsed("foreignCalls") && !t.onWorker() && fg.foreign()) {
     return ft.timerNew(ms);
   }
   const e = workers.started();
@@ -38,7 +39,7 @@ export function timerNew(ms: i64): u64 {
 
 /** A heap future that completes once timer `h`'s turn has come. */
 export function turn(h: u64, gate: u64): usize {
-  if ((h & 1) === 0) {
+  if (stdUsed("foreignCalls") && (h & 1) === 0) {
     return ft.turn(h as usize);
   }
   workers.started();
@@ -47,7 +48,7 @@ export function turn(h: u64, gate: u64): usize {
 
 /** An interval's timer `h` queued again, `ms` after its last turn. */
 export function again(h: u64, ms: i64): void {
-  if ((h & 1) === 0) {
+  if (stdUsed("foreignCalls") && (h & 1) === 0) {
     ft.again(h as usize, ms);
     return;
   }
@@ -56,7 +57,7 @@ export function again(h: u64, ms: i64): void {
 
 /** Timer `h` leaves the order (`clearTimeout`). */
 export function clear(h: u64): void {
-  if ((h & 1) === 0) {
+  if (stdUsed("foreignCalls") && (h & 1) === 0) {
     ft.clear(h as usize);
     return;
   }
@@ -66,7 +67,7 @@ export function clear(h: u64): void {
 
 /** Timer `h` leaves the order and its handle is freed. */
 export function free(h: u64): void {
-  if ((h & 1) === 0) {
+  if (stdUsed("foreignCalls") && (h & 1) === 0) {
     ft.free(h as usize);
     return;
   }

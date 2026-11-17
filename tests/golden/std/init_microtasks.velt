@@ -1,0 +1,36 @@
+// A module's initializer starts a promise and sets a timer through a function (#2196): Node runs
+// the module's code and `main()` as one macrotask, so the initializer's microtasks run after
+// `main`'s synchronous code, interleaved with `main`'s own in the order they were queued; the
+// timers come after every microtask, the initializer's first.
+
+async function nothing(): Promise<void> {}
+
+async function note(tag: string): Promise<void> {
+  console.log(`${tag} 1`);
+  await nothing();
+  console.log(`${tag} 2`);
+  await nothing();
+  console.log(`${tag} 3`);
+}
+
+function arm(): i64 {
+  setTimeout(async () => {
+    console.log("init timer");
+  }, 0);
+  const p = note("init");
+  return 1;
+}
+
+const armed = arm();
+
+async function main() {
+  setTimeout(async () => {
+    console.log("main timer");
+  }, 0);
+  const q = note("main");
+  console.log(`main sync ${armed}`);
+  await nothing();
+  console.log("main after 1");
+  await nothing();
+  console.log("main after 2");
+}

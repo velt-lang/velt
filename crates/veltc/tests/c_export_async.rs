@@ -1,10 +1,12 @@
 //! Async code on a C library's thread (#2196): an exported function that a C thread calls keeps
 //! a promise of an async call, sets Node timers, clears one, makes a sleep and a `Promise.all`.
 //! None of it may touch a worker's own structures from that thread: it all runs on the executor
-//! in Velt, handed to worker 0. Called from a module initializer's thread (before the executor
-//! started), and from two threads at once while `main` runs, with every worker, one, and a lazy
-//! worker 0 (`VELT_RESCUE=1`). Needs `VELT_ZIG` as tests/c_export.rs does, and runs on Unix
-//! (Windows links a package's DLL, which can't call into the executable).
+//! in Velt, handed to worker 0, once the call returned (its synchronous run comes first, as a JS
+//! callback's). Called from a module initializer's thread (before the executor started), from two
+//! threads at once while `main` runs, and from a detached thread whose calls `main` waits for,
+//! with every worker, one, and a lazy worker 0 (`VELT_RESCUE=1`). Needs `VELT_ZIG` as
+//! tests/c_export.rs does, and runs on Unix (Windows links a package's DLL, which can't call into
+//! the executable).
 
 #![cfg(unix)]
 
@@ -20,22 +22,24 @@ mod runtime_support;
 mod test_dir;
 mod zig_env;
 
-const HEADER: &str =
-    "#include <stdint.h>\n\nint64_t cbasync_run(int64_t n);\nvoid cbasync_nap(int64_t ms);\n";
+const HEADER: &str = "#include <stdint.h>\n\nint64_t cbasync_run(int64_t n);\nvoid cbasync_detached(void);\nvoid cbasync_mark(void);\nint64_t cbasync_marks(void);\nint64_t cbasync_done(void);\n";
 
-/// Starts `n` threads (at most 4) that call the export `cbasync_worker` together, and joins them.
+/// Starts `n` threads (at most 4) that call the export `cbasync_worker` together, and joins them;
+/// or one detached thread that calls `cbasync_rejecter` (whose gate is `cbasync_marks`, counted
+/// by Velt code through `cbasync_mark`), then sets `cbasync_done`.
 const SOURCE: &str = r#"#include "cbasync.h"
 #include <pthread.h>
-#include <time.h>
 
 void *cbasync_worker(void *arg);
-
-void cbasync_nap(int64_t ms) {
-  struct timespec ts = {ms / 1000, (ms % 1000) * 1000000};
-  nanosleep(&ts, 0);
-}
+void cbasync_rejecter(void);
 
 static int go;
+static int64_t marks;
+static int64_t done;
+
+void cbasync_mark(void) { __atomic_add_fetch(&marks, 1, __ATOMIC_ACQ_REL); }
+int64_t cbasync_marks(void) { return __atomic_load_n(&marks, __ATOMIC_ACQUIRE); }
+int64_t cbasync_done(void) { return __atomic_load_n(&done, __ATOMIC_ACQUIRE); }
 
 static void *start(void *arg) {
   while (!__atomic_load_n(&go, __ATOMIC_ACQUIRE)) {
@@ -56,12 +60,28 @@ int64_t cbasync_run(int64_t n) {
   for (int64_t i = 0; i < made; i++) pthread_join(t[i], 0);
   return made;
 }
+
+static void *detached(void *arg) {
+  // The rejecter waits inside its call for its own gate (mark 1).
+  cbasync_rejecter();
+  __atomic_store_n(&done, 1, __ATOMIC_RELEASE);
+  return arg;
+}
+
+void cbasync_detached(void) {
+  pthread_t t;
+  if (pthread_create(&t, 0, detached, 0) == 0) pthread_detach(t);
+  else __atomic_store_n(&done, 1, __ATOMIC_RELEASE);
+}
 "#;
 
 const LIB: &str = r#"import { Ptr, export as cExport } from "velt/ffi";
 
 declare c("cbasync") function cbasync_run(n: i64): i64;
-declare c("cbasync") function cbasync_nap(ms: i64): void;
+declare c("cbasync") function cbasync_detached(): void;
+declare c("cbasync") function cbasync_mark(): void;
+declare c("cbasync") function cbasync_marks(): i64;
+declare c("cbasync") function cbasync_done(): i64;
 
 async function later(tag: string, ms: i64): Promise<i64> {
   await sleep(ms);
@@ -87,23 +107,50 @@ function worker(arg: Ptr<void> | null): Ptr<void> | null {
   setTimeout(async () => {
     console.log("timeout fired");
   }, 5);
-  // Cleared at once: it neither runs nor keeps the program waiting for its time.
+  // Cleared in the same call: its task waits for the call's end, so the clear always comes before
+  // worker 0 puts it in Node's order. It neither runs nor keeps the program waiting for its time
+  // (a broken clear would hold the program past the run's limit).
   clearTimeout(setTimeout(async () => {
     console.log("cleared timeout ran");
   }, 100000));
-  // Cleared once worker 0 put it in Node's order (its task ran meanwhile): worker 0 clears it.
-  const late = setTimeout(async () => {
-    console.log("late cleared timeout ran");
-  }, 100000);
-  // SAFETY: it sleeps this thread.
-  unsafe {
-    cbasync_nap(30);
-  }
-  clearTimeout(late);
   // A combinator made on this thread, and a sleep, each awaited by a task.
   spawn(report(Promise.all([later("all a", 10), later("all b", 1)])));
   spawn(after(sleep(15)));
   return arg;
+}
+
+async function fails(): Promise<i64, string> {
+  throw "boom";
+}
+
+async function handle(p: Promise<i64, string>): Promise<void> {
+  try {
+    await p;
+  } catch (e) {
+    console.log(`caught ${e}`);
+  }
+}
+
+async function mark(): Promise<void> {
+  // SAFETY: an atomic add in C.
+  unsafe {
+    cbasync_mark();
+  }
+}
+
+/**
+ * A rejection this call handles later in its synchronous run is not reported: the promise's task
+ * waits for the call's end. The gate shows it: a task spawned after the promise runs on worker 0
+ * after anything pushed there before it, so once it ran (mark 1), the promise's task had run too,
+ * had it not been held.
+ */
+@cExport("cbasync_rejecter")
+function rejecter(): void {
+  const p = fails();
+  spawn(mark());
+  // SAFETY: an atomic load in C.
+  while (unsafe { cbasync_marks() } < 1) {}
+  spawn(handle(p));
 }
 
 export function runOn(n: i64): i64 {
@@ -111,11 +158,24 @@ export function runOn(n: i64): i64 {
   return unsafe { cbasync_run(n) };
 }
 
+/** Starts the detached thread's calls; `detachedDone` says when they returned. */
+export function runDetached(): void {
+  // SAFETY: it starts a thread that calls this module's exports.
+  unsafe {
+    cbasync_detached();
+  }
+}
+
+export function detachedDone(): bool {
+  // SAFETY: an atomic load in C.
+  return unsafe { cbasync_done() } !== 0;
+}
+
 // The module's initializer: a C thread runs it all before `velt_main` started the executor.
 runOn(1);
 "#;
 
-const MAIN: &str = r#"import { runOn } from "cbasync";
+const MAIN: &str = r#"import { detachedDone, runDetached, runOn } from "cbasync";
 
 async function main() {
   await yieldNow();
@@ -124,6 +184,12 @@ async function main() {
   console.log(`threads ${runOn(2)}`);
   await sleep(5);
   console.log("main slept");
+  // A thread `main` doesn't join: worker 0 stays free to run what its calls hand over.
+  runDetached();
+  while (!detachedDone()) {
+    await yieldNow();
+  }
+  console.log("detached done");
 }
 "#;
 
@@ -162,8 +228,9 @@ fn home(dir: &Path) -> PathBuf {
     home
 }
 
-/// Runs `velt args` in `dir`, killed after a minute (a hang fails the test instead of the run):
-/// its exit code (`None` when killed) and output.
+/// Runs `velt args` in `dir`, killed after a minute (a hang fails the test instead of the run),
+/// ten for a `build` (a release build of std with an empty cache took up to a minute on a loaded
+/// machine): its exit code (`None` when killed) and output.
 fn velt(dir: &Path, home: &Path, args: &[&str], env: &[(&str, &str)]) -> (Option<i32>, String) {
     let mut child = Command::new(env!("CARGO_BIN_EXE_velt"))
         .args(args)
@@ -178,12 +245,17 @@ fn velt(dir: &Path, home: &Path, args: &[&str], env: &[(&str, &str)]) -> (Option
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
+    let limit = Duration::from_secs(if args.first() == Some(&"build") {
+        600
+    } else {
+        60
+    });
     let start = Instant::now();
     let code = loop {
         if let Some(status) = child.try_wait().unwrap() {
             break status.code();
         }
-        if start.elapsed() > Duration::from_secs(60) {
+        if start.elapsed() > limit {
             let _ = child.kill();
             let _ = child.wait();
             break None;
@@ -214,6 +286,9 @@ fn async_code_on_c_threads_runs_on_the_executor() {
         &[("VELT_THREADS", "1")],
         &[("VELT_THREADS", "1"), ("VELT_RESCUE", "1")],
     ];
+    // Built first, outside the runs' limit: each run below finds the build current.
+    let (code, out) = velt(&app, &home, &["build", "--release"], &[]);
+    assert_eq!(code, Some(0), "{out}");
     for env in modes {
         let (code, out) = velt(&app, &home, &["run", "--release"], env);
         assert_eq!(code, Some(0), "{env:?}: {out}");
@@ -232,9 +307,17 @@ fn async_code_on_c_threads_runs_on_the_executor() {
             assert_eq!(count(want), 3, "{env:?} {want:?}: {out}");
         }
         assert_eq!(count("cleared timeout ran"), 0, "{env:?}: {out}");
-        assert_eq!(count("late cleared timeout ran"), 0, "{env:?}: {out}");
-        for want in ["main", "threads 2", "main slept"] {
+        // The detached thread's call: the rejection it handled later in its run is caught, not
+        // reported.
+        for want in [
+            "main",
+            "threads 2",
+            "main slept",
+            "caught boom",
+            "detached done",
+        ] {
             assert_eq!(count(want), 1, "{env:?} {want:?}: {out}");
         }
+        assert!(!out.contains("Uncaught"), "{env:?}: {out}");
     }
 }

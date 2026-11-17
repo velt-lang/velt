@@ -406,6 +406,8 @@ pub(crate) fn reach(cx: &mut Ctx) {
 /// native target ([`sched_hooks`]).
 const SCHED_HOOKS: &[&str] = &[
     velt_common::std_hook!(program_thread),
+    velt_common::std_hook!(sched_export_enter),
+    velt_common::std_hook!(sched_export_exit),
     velt_common::std_hook!(sched_block_on),
     velt_common::std_hook!(sched_spawn),
     velt_common::std_hook!(sched_yield),

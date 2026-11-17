@@ -1,6 +1,6 @@
 init call sync
 main 1
+init call later
 init timer
 main timer
-init call later
 end

@@ -71,11 +71,91 @@ function jobPoll(state: usize, cx: usize): u32 {
   return unsafe { statePoll(m.ld(state), m.ld(state + 8), cx) };
 }
 
-/** Task `k` of worker 0 (`g`), counted, pushed on `g`'s inbox. */
+/**
+ * Task `k` of worker 0 (`g`), counted, pushed on `g`'s inbox; held instead while this thread is in
+ * an exported function's call from C (`exportEnter`).
+ */
 function push(g: usize, k: usize): void {
   // Counted before it can be taken: worker 0 never sees the task without its count.
   m.inc(g + t.E_LIVE_F);
+  if (DEPTH.get() !== 0) {
+    hold(k);
+    return;
+  }
+  enqueue(g, k);
+}
+
+/** Task `k` of worker 0 (`g`), counted, pushed on `g`'s inbox now (a spawn: it runs beside us). */
+function pushNow(g: usize, k: usize): void {
+  m.inc(g + t.E_LIVE_F);
+  enqueue(g, k);
+}
+
+/** Pushes counted task `k` on worker 0's (`g`'s) inbox, and wakes it once the executor started. */
+function enqueue(g: usize, k: usize): void {
   m.pushStack(g + t.E_INBOX, k, t.T_NEXT);
+  if (workers.isStarted()) {
+    wk.unpark(g);
+  }
+}
+
+/**
+ * How deep this thread, a C library's, is in calls of exported functions (0 on any other thread).
+ * While it is in one, the tasks it starts (promises, timers, sleeps, posted jobs; not spawns, which
+ * run beside it) wait for the outermost call to return, in the order they were made: its
+ * synchronous run comes before any of them runs, as a JS callback's comes before its microtasks.
+ * So a rejection the call handles later in its run is not reported as unhandled meanwhile.
+ */
+const DEPTH = new ThreadLocal<u64>(0);
+/** The tasks held (`push`), first and last, linked through `T_NEXT`. */
+const HELD_FIRST = new ThreadLocal<u64>(0);
+const HELD_LAST = new ThreadLocal<u64>(0);
+
+/** An exported function's call from C begins (`schedExportEnter`). */
+export function exportEnter(): void {
+  if (foreign()) {
+    DEPTH.set(DEPTH.get() + 1);
+  }
+}
+
+/** An exported function's call from C ends (`schedExportExit`): the outermost gives the tasks over. */
+export function exportExit(): void {
+  const d = DEPTH.get();
+  if (d === 0) {
+    return;
+  }
+  DEPTH.set(d - 1);
+  if (d === 1) {
+    release();
+  }
+}
+
+/** Holds task `k` until this thread's outermost export call returns. */
+function hold(k: usize): void {
+  m.st(k + t.T_NEXT, 0);
+  const last = HELD_LAST.get() as usize;
+  if (last === 0) {
+    HELD_FIRST.set(k as u64);
+  } else {
+    m.st(last + t.T_NEXT, k);
+  }
+  HELD_LAST.set(k as u64);
+}
+
+/** Pushes the held tasks on worker 0's inbox, in the order they were made. */
+function release(): void {
+  let k = HELD_FIRST.get() as usize;
+  if (k === 0) {
+    return;
+  }
+  HELD_FIRST.set(0);
+  HELD_LAST.set(0);
+  const g = workers.zeroBlock();
+  while (k !== 0) {
+    const next = m.ld(k + t.T_NEXT);
+    m.pushStack(g + t.E_INBOX, k, t.T_NEXT);
+    k = next;
+  }
   if (workers.isStarted()) {
     wk.unpark(g);
   }
@@ -132,10 +212,12 @@ const MAIN_BEGUN = new Atomic<bool>(false);
 
 /**
  * On worker 0 `e` (the program's thread) while the modules' initializers run, after the executor
- * started: the task they run as, current from its first use on (made now), as if they were one
- * poll of it, as Node runs a module's code as one macrotask. A timer they set names it, so no
- * other worker gives its turn before that poll ends (sched_order_pass.velt `busy`); the promises
- * they start are its own. 0 at any other time.
+ * started: the task they run as, current from its first use on (made now), as if they were the
+ * start of one poll of it. It becomes `main`'s root task (`mainBegins`): Node runs the modules'
+ * code and `main()` as one macrotask, so the microtasks the initializers queued run after
+ * `main`'s synchronous code, in one queue with its own. A timer they set names it, so no other
+ * worker gives its turn before that poll ends (sched_order_pass.velt `busy`); the promises they
+ * start are its own. 0 at any other time.
  */
 export function initTask(e: usize): usize {
   if (MAIN_BEGUN.load("acquire") || !pt.isProgramThread() || t.here() !== e) {
@@ -145,7 +227,10 @@ export function initTask(e: usize): usize {
   if (cur !== 0) {
     return cur;
   }
-  const k = made(e, fnAddress(doneJob), 0);
+  // The root's references (`schedBlockOn`): the executor's and the reader of its result. Its root
+  // state and poll come with `main`.
+  const k = mk.task(e, fnAddress(doneJob), 0, 0, 0, 0, 2);
+  m.st(k + t.T_TRANSFER, 0);
   m.store32(k + t.T_SKIPPED, 0);
   m.store32(k + t.T_STATE, t.RUNNING);
   m.storeRelease(e + t.E_CURRENT, k);
@@ -153,8 +238,8 @@ export function initTask(e: usize): usize {
 }
 
 /**
- * `main`'s root is about to be queued on worker 0 `e`: the initializers' task, if any, is current
- * no more; it comes back for `initDone`.
+ * `main`'s root is about to be queued on worker 0 `e`: the initializers' task, if any (`initTask`),
+ * is current no more, and is the one the root becomes.
  */
 export function mainBegins(e: usize): usize {
   MAIN_BEGUN.store(true, "release");
@@ -163,15 +248,6 @@ export function mainBegins(e: usize): usize {
     m.storeRelease(e + t.E_CURRENT, 0);
   }
   return k;
-}
-
-/**
- * The initializers' poll of task `k` (`initTask`) ends: queued after `main`'s root, it runs its
- * microtasks and what woke meanwhile, and lives while its promises run.
- */
-export function initDone(e: usize, k: usize): void {
-  m.store32(k + t.T_STATE, t.SCHEDULED);
-  push(e, k);
 }
 
 /** The first run of node `n`, bound to the task polling it (`start`). */
@@ -280,7 +356,7 @@ function handOver(g: usize, k: usize): usize {
     m.st(k + t.T_JOIN + 8, exportedAddress(jn.joinDropForeign));
   }
   m.st(k + t.T_JOIN_STATE, (t.J_HANDLE | t.J_FOREIGN) as usize);
-  push(g, k);
+  pushNow(g, k);
   return k + t.T_JOIN;
 }
 
