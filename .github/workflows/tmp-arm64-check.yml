@@ -1,0 +1,120 @@
+# TEMPORARY, not for main: runs this branch's SIMD and Math changes on a Linux arm64 runner.
+# Delete this file and .github/tmp-arm64/ before the branch becomes a pull request.
+name: tmp-arm64-check
+
+on:
+  push:
+    branches: [claude/fervent-hawking-u6idno]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  arm64:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          tools: "false"
+          code-cache: "false"
+      - name: the CPU
+        run: |
+          lscpu | head -n 20
+          echo "features: $(grep -m1 Features /proc/cpuinfo)"
+          for f in asimdhp asimdfhm asimddp bf16 i8mm sve; do
+            grep -m1 Features /proc/cpuinfo | grep -qw "$f" && echo "has $f" || echo "NO $f"
+          done
+      - name: clang
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q clang
+          echo "VELT_CLANG=$(command -v clang)" >> "$GITHUB_ENV"
+      - name: build velt (release)
+        run: |
+          cargo build --release -q -p veltc -p velt_rt
+          target/release/velt --version
+      - name: build main's velt (release)
+        run: |
+          git fetch -q --depth 1 origin main
+          mkdir .base
+          git archive FETCH_HEAD | tar -x -C .base
+          cd .base
+          cargo build --release -q -p veltc -p velt_rt
+      - name: goldens of this branch, debug and release
+        run: |
+          fail=0
+          for t in std/dot_at std/half_dot std/simd_half_dot std/simd_half_types \
+                   std/simd_half_convert std/math_ceil_floor_div lang/number_f32_format \
+                   lang/math_functions_node lang/math_hypot_scaled lang/math_rounding_edges; do
+            for mode in "" "--release"; do
+              if target/release/velt run $mode tests/golden/$t.velt 2>/dev/null | diff -q - tests/golden/$t.out >/dev/null; then
+                echo "ok   $t $mode"
+              else
+                echo "FAIL $t $mode"
+                target/release/velt run $mode tests/golden/$t.velt 2>&1 | diff - tests/golden/$t.out | head -n 20
+                fail=1
+              fi
+            done
+          done
+          exit $fail
+      - name: Math against this runner's Node
+        if: always()
+        run: |
+          node --version
+          mkdir -p "$RUNNER_TEMP/m" && cd "$RUNNER_TEMP/m"
+          node "$GITHUB_WORKSPACE/.github/tmp-arm64/math_diff.js" gen > t.velt
+          node "$GITHUB_WORKSPACE/.github/tmp-arm64/math_diff.js" run > expected.txt
+          "$GITHUB_WORKSPACE/target/release/velt" run t.velt > debug.txt
+          "$GITHUB_WORKSPACE/target/release/velt" run --release t.velt > release.txt
+          wc -l expected.txt
+          echo "debug: $(diff expected.txt debug.txt | grep -c '^<') differences"
+          echo "release: $(diff expected.txt release.txt | grep -c '^<') differences"
+          diff expected.txt debug.txt | head -n 10
+          diff expected.txt release.txt | head -n 10
+          cmp expected.txt debug.txt && cmp expected.txt release.txt
+      - name: bf16 kernels (#3129), main against this branch
+        if: always()
+        run: |
+          out="$RUNNER_TEMP/b" && mkdir -p "$out"
+          src=.github/tmp-arm64/bf16.velt
+          target/release/velt build --release $src -o "$out/ref"
+          target/release/velt build --release --cpu native $src -o "$out/ref-native"
+          VELT_STD="$PWD/.base/std" .base/target/release/velt build --release $src -o "$out/base"
+          VELT_STD="$PWD/.base/std" .base/target/release/velt build --release --cpu native $src -o "$out/base-native"
+          for pass in 1 2 3; do
+            for b in base ref base-native ref-native; do
+              echo "== pass $pass: $b"
+              "$out/$b"
+            done
+          done | tee "$out/all.txt"
+          {
+            echo "### bf16 kernels on $(uname -sm), ns per 384-dim dot, best of 3 passes"
+            echo
+            echo "| build | f16 | bf16 dotAdd | bf16 dotAddFast |"
+            echo "|---|---:|---:|---:|"
+            python3 - "$out/all.txt" <<'PY'
+          import re, sys
+          best = {}
+          build = None
+          for line in open(sys.argv[1]):
+              m = re.match(r"== pass \d+: (\S+)", line)
+              if m:
+                  build = m.group(1)
+                  continue
+              m = re.match(r"(\w+): ([\d.]+) ns", line)
+              if m:
+                  key = (build, m.group(1))
+                  best[key] = min(best.get(key, 1e9), float(m.group(2)))
+          for b in ["base", "ref", "base-native", "ref-native"]:
+              print(f"| {b} | {best.get((b, 'f16'))} | {best.get((b, 'bf16'))} | {best.get((b, 'bf16fast'))} |")
+          PY
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "instructions in the bf16 dotAdd loop (ref, default cpu):"
+          objdump -d --no-show-raw-insn "$out/ref" | grep -cE "shll|ushll" || true
+          objdump -d --no-show-raw-insn "$out/ref-native" | grep -cE "bfdot" || true

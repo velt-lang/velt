@@ -1,0 +1,71 @@
+// Temporary (not for main): the kernels of #3129 on one machine, ns per 384-dim dot.
+import { bf16x8, f16x8, f32x4 } from "velt/simd";
+import { narrowBf16, narrowF16 } from "velt/half";
+
+function dotF16(a: f16[], aAt: usize, b: f16[], dim: usize): f32 {
+  let s0 = f32x4.splat(0);
+  let s1 = f32x4.splat(0);
+  let i: usize = 0;
+  while (i + 16 <= dim && f16x8.fits(a, aAt + i + 8) && f16x8.fits(b, i + 8)) {
+    s0 = f16x8.load(a, aAt + i).dotAdd(f16x8.load(b, i), s0);
+    s1 = f16x8.load(a, aAt + i + 8).dotAdd(f16x8.load(b, i + 8), s1);
+    i += 16;
+  }
+  return s0.add(s1).sum();
+}
+
+function dotBf16(a: bf16[], aAt: usize, b: bf16[], dim: usize): f32 {
+  let s0 = f32x4.splat(0);
+  let s1 = f32x4.splat(0);
+  let i: usize = 0;
+  while (i + 16 <= dim && bf16x8.fits(a, aAt + i + 8) && bf16x8.fits(b, i + 8)) {
+    s0 = bf16x8.load(a, aAt + i).dotAdd(bf16x8.load(b, i), s0);
+    s1 = bf16x8.load(a, aAt + i + 8).dotAdd(bf16x8.load(b, i + 8), s1);
+    i += 16;
+  }
+  return s0.add(s1).sum();
+}
+
+function dotBf16Fast(a: bf16[], aAt: usize, b: bf16[], dim: usize): f32 {
+  let s0 = f32x4.splat(0);
+  let s1 = f32x4.splat(0);
+  let i: usize = 0;
+  while (i + 16 <= dim && bf16x8.fits(a, aAt + i + 8) && bf16x8.fits(b, i + 8)) {
+    s0 = bf16x8.load(a, aAt + i).dotAddFast(bf16x8.load(b, i), s0);
+    s1 = bf16x8.load(a, aAt + i + 8).dotAddFast(bf16x8.load(b, i + 8), s1);
+    i += 16;
+  }
+  return s0.add(s1).sum();
+}
+
+const n: usize = 5000;
+const d: usize = 384;
+const f: f32[] = [];
+for (let i: usize = 0; i < n * d; i++) {
+  f.push(((((i * 7919) % 2000) as number) / 1000 - 1) as f32);
+}
+const h = narrowF16(f);
+const b = narrowBf16(f);
+const qh = h.slice(0, 384);
+const qb = b.slice(0, 384);
+
+for (const name of ["f16", "bf16", "bf16fast"]) {
+  let best = Infinity;
+  let sink: number = 0;
+  for (let r = 0; r < 25; r++) {
+    const t0 = performance.now();
+    let s: f32 = 0;
+    for (let row: usize = 0; row < n; row++) {
+      if (name == "f16") {
+        s += dotF16(h, row * d, qh, d);
+      } else if (name == "bf16") {
+        s += dotBf16(b, row * d, qb, d);
+      } else {
+        s += dotBf16Fast(b, row * d, qb, d);
+      }
+    }
+    best = Math.min(best, performance.now() - t0);
+    sink += s;
+  }
+  console.log(`${name}: ${((best * 1e6) / (n as number)).toFixed(1)} ns per 384-dim dot (sum ${sink})`);
+}
