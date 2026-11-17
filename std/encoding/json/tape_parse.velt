@@ -192,9 +192,9 @@ function str(sc: Scanner, t: Tape): bool {
   }
   const units = (sc.units as u64) << 32;
   if (sc.escaped) {
+    const at = t.addDecoded(sc.decoded);
     t.words.push(T_STRING | ESCAPED | units);
-    t.words.push(t.decoded.length as u64);
-    t.decoded.push(sc.decoded);
+    t.words.push(at);
   } else {
     t.words.push(T_STRING | units);
     t.words.push((sc.start as u64) | ((sc.end as u64) << 32));
@@ -321,7 +321,7 @@ function setMembers(t: Tape, v: u32, firsts: u32[], index: bool, repeated: bool)
   const flags = repeated ? REPEATED | ORDERED : ORDERED;
   t.words[2 * (v as usize)] = t.words[2 * (v as usize)] | flags;
   if (!index) {
-    t.ordered.set(v, firsts);
+    t.setMemberList(v, firsts);
     return;
   }
   // Index keys sorted by value (each with its key position below), then the others.
@@ -342,7 +342,7 @@ function setMembers(t: Tape, v: u32, firsts: u32[], index: bool, repeated: bool)
       out.push(k);
     }
   }
-  t.ordered.set(v, out);
+  t.setMemberList(v, out);
 }
 
 // Key `k`'s value as an array index (`"0"`, `"17"`, below 2^32 - 1, no leading zero), or -1. Read
@@ -351,7 +351,7 @@ function indexKey(t: Tape, k: u32): i64 {
   const w = t.words[2 * (k as usize)];
   const p = t.words[2 * (k as usize) + 1];
   const escaped = (w & ESCAPED) != 0;
-  const s = escaped ? t.decoded[p as usize] : t.src;
+  const s = escaped ? t.decoded![p as usize] : t.src;
   const start = escaped ? 0 : (p & 0xffffffff) as usize;
   const end = escaped ? strByteLen(s) : (p >> 32) as usize;
   const n = end - start;

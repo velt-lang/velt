@@ -115,7 +115,7 @@ impl Loader {
             let dir = self.files[m].parent().unwrap().to_path_buf();
             for spec in specs {
                 // A std module's `#name`: the variant std/imports.velt maps it to for every
-                // build (`default`), as the driver's loader picks it for a native target.
+                // build (`default`), or its first one when it has none (`#os-arch`).
                 let target = match spec.strip_prefix('#') {
                     Some(_) => std_default_variant(&std_dir, &spec).map(|p| format!("velt/{p}")),
                     None => None,
@@ -161,13 +161,18 @@ impl Loader {
 
 /// The `default` variant of std's conditional import `name` (`#http-transport`) as a path below
 /// std/ without `.velt`, read from std/imports.velt, whose entries are written
-/// `"#name": { …, default: "./path.velt" }`.
+/// `"#name": { …, default: "./path.velt" }`; the first variant written when the entry has no
+/// `default` (`#os-arch`, which names each processor and no fallback). The tests check types, so
+/// any variant stands for the others.
 fn std_default_variant(std_dir: &Path, name: &str) -> Option<String> {
     let src = std::fs::read_to_string(std_dir.join("imports.velt")).ok()?;
     let entry = &src[src.find(&format!("\"{name}\":"))?..];
     let entry = &entry[..entry.find('}')?];
-    let after = &entry[entry.find("default:")? + "default:".len()..];
-    let path = after.split('"').nth(1)?;
+    let after = match entry.find("default:") {
+        Some(at) => &entry[at + "default:".len()..],
+        None => &entry[entry.find('{')? + 1..],
+    };
+    let path = after.split('"').find(|p| p.starts_with("./"))?;
     Some(
         path.trim_start_matches("./")
             .trim_end_matches(".velt")

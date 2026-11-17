@@ -50,6 +50,7 @@ use crate::hir::{TyId, TyKind};
 use crate::object_views::Why;
 
 mod derived;
+mod record_widen;
 
 /// One conversion that copied the fields `fields` of a `from` value into a new `to`.
 #[derive(Clone)]
@@ -301,9 +302,15 @@ pub(crate) fn check(cx: &mut Ctx) {
     let mut strict = vec![];
     for (ci, c) in copies.iter().enumerate() {
         if c.record {
-            let written = record_writes.iter().find(|w| related(cx, w.0, c.to));
-            if let Some(&(_, at)) = written {
-                report_record_write(cx, c, at);
+            let written = match record_widen::of_record(cx, c) {
+                true => record_widen::written(cx, (c, ci), &record_writes, &writes, &looks),
+                false => record_writes
+                    .iter()
+                    .find(|w| record_widen::related_base(cx, w.0, c.to))
+                    .map(|w| w.1),
+            };
+            if let Some(at) = written {
+                record_widen::report_write(cx, c, at);
                 continue;
             }
             // Identity: the record is another object, which a dynamic value may hold.
@@ -311,11 +318,18 @@ pub(crate) fn check(cx: &mut Ctx) {
                 matches!(s.2, Seen::Identity | Seen::Key)
                     && compared(cx, s.0, &mut FxHashSet::default())
                         .into_iter()
-                        .any(|m| cx.dynamic(m).is_some() || related(cx, m, c.to))
+                        .any(|m| cx.dynamic(m).is_some() || record_widen::related_base(cx, m, c.to))
             });
-            if let Some(&(t, span, how)) = shown {
-                report_seen(cx, c, t, span, how, &in_keys);
-                continue;
+            match shown {
+                Some(&(t, span, how)) if record_widen::of_record(cx, c) => {
+                    record_widen::report_identity(cx, c, t, span, how);
+                    continue;
+                }
+                Some(&(t, span, how)) => {
+                    report_seen(cx, c, t, span, how, &in_keys);
+                    continue;
+                }
+                None => {}
             }
         }
         let proxy_only = proxies && !c.record && !built.iter().any(|&t| related(cx, t, c.from));
@@ -617,19 +631,6 @@ pub(crate) fn holds_by(
         parts.extend(fields.into_iter().map(|f| cx.subst(f, &args)));
     }
     parts.into_iter().any(|p| holds_by(cx, p, is, seen))
-}
-
-/// A record cast (`Copy::record`) in a program that writes to such a record.
-fn report_record_write(cx: &mut Ctx, c: &Copy, at: Span) {
-    let (from, to) = (cx.display(c.from), cx.display(c.to));
-    cx.error(
-        Diagnostic::error(
-            format!("a value of type `{from}` converts to `{to}` by copying its fields, and this program writes to such a record, which the object would not see"),
-            c.span,
-        )
-        .with_label(at, "written here")
-        .with_note("build the record with the fields you need (`{ a: x.a }`)"),
-    );
 }
 
 fn report_write(cx: &mut Ctx, c: &Copy, w: &Write) {

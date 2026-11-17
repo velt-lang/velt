@@ -88,7 +88,7 @@ fn a_build_no_variant_names_without_default_is_an_error() {
     let (_, d, _) = load(&root, opts(&g, "x86_64-unknown-linux-gnu"));
     assert_eq!(
         messages(&d),
-        ["`#io` of package `app` has no variant for this build (it has js; the build: native, linux)"]
+        ["`#io` of package `app` has no variant for this build (it has js; the build: native, linux, x64)"]
     );
     assert!(
         d[0].notes[0].contains("add a `default` variant"),

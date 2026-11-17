@@ -1,0 +1,225 @@
+// velt/math (internal): the magnitudes `BigInt` is built on, compared, added and subtracted. A
+// magnitude is a `u64[]` of little-endian 64-bit limbs without high zero limbs (zero is `[]`).
+// Sums carry with `(s < x) as u64`, which LLVM turns into the add-with-carry chain. The limb
+// loops are #nat-rows' (nat_rows_raw.velt).
+
+import { arraySetLen, arrayTruncate, arrayWithCapacity } from "velt/lang/intrinsics";
+import {
+  addRow,
+  borrowRow,
+  carryRow,
+  copyRow,
+  diffRow,
+  subFromRow,
+  subRow,
+  sumRow,
+  zeroRow,
+} from "#nat-rows";
+
+/** A magnitude of `n` limbs, each written before it is read. */
+export function natUnfilled(n: usize): u64[] {
+  const out: u64[] = arrayWithCapacity(n);
+  arraySetLen(out, n);
+  return out;
+}
+
+/** `n` zero limbs. */
+export function natZeros(n: usize): u64[] {
+  const out = natUnfilled(n);
+  zeroRow(out, 0, n);
+  return out;
+}
+
+/** The magnitude of the word `k` (`[]` for 0). */
+export function natOfWord(k: u64): u64[] {
+  const out: u64[] = [];
+  if (k != 0) {
+    out.push(k);
+  }
+  return out;
+}
+
+/** A copy of limbs `from` to `to` of `a` (past its end reads as zeros), without high zeros. */
+export function natSlice(a: u64[], from: usize, to: usize): u64[] {
+  let end = to < a.length ? to : a.length;
+  while (end > from && a[end - 1] == 0) {
+    end--;
+  }
+  if (end <= from) {
+    return [];
+  }
+  const out = natUnfilled(end - from);
+  copyRow(out, 0, a, from, end - from);
+  return out;
+}
+
+/** Cuts off high zero limbs. */
+export function natTrim(a: u64[]) {
+  let n = a.length;
+  while (n > 0 && a[n - 1] == 0) {
+    n--;
+  }
+  arrayTruncate(a, n);
+}
+
+/** Makes `a` an equal copy of `b`, reusing `a`'s buffer. */
+export function natAssign(a: u64[], b: u64[]) {
+  const n = b.length;
+  arraySetLen(a, n);
+  copyRow(a, 0, b, 0, n);
+}
+
+/** -1, 0 or 1 as `a` is less than, equal to or greater than `b`. */
+export function natCmp(a: u64[], b: u64[]): i64 {
+  if (a.length != b.length) {
+    return a.length < b.length ? -1 : 1;
+  }
+  let i = a.length;
+  while (i > 0) {
+    i--;
+    const x = a[i];
+    const y = b[i];
+    if (x != y) {
+      return x < y ? -1 : 1;
+    }
+  }
+  return 0;
+}
+
+/** `a + b`. */
+export function natAdd(a: u64[], b: u64[]): u64[] {
+  return a.length < b.length ? addOrdered(b, a) : addOrdered(a, b);
+}
+
+// `a + b` for `a` at least as long as `b`.
+function addOrdered(a: u64[], b: u64[]): u64[] {
+  const n = a.length;
+  const m = b.length;
+  const out = natUnfilled(n + 1);
+  const carry = sumRow(out, 0, a, 0, b, 0, m, 0);
+  out[n] = carryRow(out, m, a, m, n - m, carry);
+  natTrim(out);
+  return out;
+}
+
+/** `a += b` in place. */
+export function natAddInto(a: u64[], b: u64[]) {
+  const n0 = a.length;
+  const m = b.length;
+  if (n0 < m) {
+    arraySetLen(a, m);
+    for (let i: usize = n0; i < m; i++) {
+      a[i] = 0;
+    }
+  }
+  const n = a.length;
+  let carry = addRow(a, 0, b, 0, m, 0);
+  let i = m;
+  while (carry != 0 && i < n) {
+    const t = a[i] + 1;
+    a[i] = t;
+    carry = (t == 0) as u64;
+    i++;
+  }
+  if (carry != 0) {
+    a.push(1);
+  }
+}
+
+/** `a - b` for `a >= b`. */
+export function natSub(a: u64[], b: u64[]): u64[] {
+  const out = natUnfilled(a.length);
+  subLimbs(out, a, b);
+  natTrim(out);
+  return out;
+}
+
+/** `a -= b` in place, for `a >= b`. */
+export function natSubInto(a: u64[], b: u64[]) {
+  const m = b.length;
+  let borrow = subRow(a, 0, b, 0, m, 0);
+  let i = m;
+  while (borrow != 0) {
+    const x = a[i];
+    a[i] = x - 1;
+    borrow = (x == 0) as u64;
+    i++;
+  }
+  natTrim(a);
+}
+
+/** `a = b - a` in place, for `b >= a`. */
+export function natSubFromInto(a: u64[], b: u64[]) {
+  const n0 = a.length;
+  const n = b.length;
+  arraySetLen(a, n);
+  for (let i: usize = n0; i < n; i++) {
+    a[i] = 0;
+  }
+  subFromRow(a, 0, b, 0, n, 0);
+  natTrim(a);
+}
+
+// `out = a - b` limb by limb over `a`'s length (`out` as long as `a`, `b` not longer).
+function subLimbs(out: u64[], a: u64[], b: u64[]) {
+  const n = a.length;
+  const m = b.length;
+  const borrow = diffRow(out, 0, a, 0, b, 0, m, 0);
+  borrowRow(out, m, a, m, n - m, borrow);
+}
+
+/** `a += k` in place. */
+export function natAddWordInto(a: u64[], k: u64) {
+  let carry = k;
+  const n = a.length;
+  let i: usize = 0;
+  while (carry != 0 && i < n) {
+    const t = a[i] + carry;
+    a[i] = t;
+    carry = (t < carry) as u64;
+    i++;
+  }
+  if (carry != 0) {
+    a.push(carry);
+  }
+}
+
+/** `a -= k` in place, for `a >= k`. */
+export function natSubWordInto(a: u64[], k: u64) {
+  let borrow = k;
+  const n = a.length;
+  let i: usize = 0;
+  while (borrow != 0 && i < n) {
+    const x = a[i];
+    a[i] = x - borrow;
+    borrow = (x < borrow) as u64;
+    i++;
+  }
+  natTrim(a);
+}
+
+/** `r[at..] += x` with the carry run on (the sum fits in `r`). */
+export function natAddAt(r: u64[], at: usize, x: u64[]) {
+  const m = x.length;
+  let carry = addRow(r, at, x, 0, m, 0);
+  let i = at + m;
+  while (carry != 0) {
+    const t = r[i] + 1;
+    r[i] = t;
+    carry = (t == 0) as u64;
+    i++;
+  }
+}
+
+/** `r[at..] -= x` with the borrow run on (the difference is not negative). */
+export function natSubAt(r: u64[], at: usize, x: u64[]) {
+  const m = x.length;
+  let borrow = subRow(r, at, x, 0, m, 0);
+  let i = at + m;
+  while (borrow != 0) {
+    const y = r[i];
+    r[i] = y - 1;
+    borrow = (y == 0) as u64;
+    i++;
+  }
+}

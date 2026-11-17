@@ -40,7 +40,7 @@ pub mod wasm;
 
 pub use host::{host_triple, same_target};
 pub use native::NativeLink;
-pub use runtime_profile::runtime_lib_is_debug;
+pub use runtime_profile::{runtime_lib_is_debug, runtime_lib_profile, RuntimeProfile};
 pub use shared::shared_runtime_lib_name;
 pub(crate) use system::{
     find_system_linker, msvc_args, msvc_linker, platform, unix_args, unix_linker,

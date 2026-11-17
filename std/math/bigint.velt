@@ -1,76 +1,101 @@
-// velt/math (internal): arbitrary-precision integers (JS `BigInt`), backed by the runtime
-// (dashu-int).
-//
-// Arithmetic is methods and the operators that call them (bigint_ops.velt): `a.add(b)` or
-// `a + b` returns a new BigInt like JS `a + b`; `a.addAssign(b)` or `a += b` changes `a` in
-// place, reusing its buffer (hot loops such as a pidigits spigot should use the in-place forms). The arithmetic operations
-// have machine-integer twins (`mulInt(10)`, `mulIntAssign(k)`) that skip building a BigInt for
-// the small operand. Division truncates and `rem` takes the dividend's sign, like JS; dividing
-// by zero panics with a RangeError, as JS throws one. A negative shift count panics with a
-// RangeError too, where JS shifts the other way (`1n << -1n` is `0n`).
-//
-// A BigInt owns a runtime handle: `clone()` copies the number, `[Symbol.dispose]()` frees it.
+// velt/math (internal): arbitrary-precision integers (JS `BigInt`): a sign and 64-bit limbs
+// (nat_add.velt) in a block of the number's own (bigint_store.velt), the arithmetic in Velt
+// (nat_*.velt, bigint_signed.velt). `a.add(b)` or `a + b` returns a new BigInt; `a.addAssign(b)`
+// or `a += b` changes `a` in place, reusing its buffer (bigint_ops.velt has the operators), and
+// the `Int` twins (`mulIntAssign(k)`) take a machine integer. Division truncates and `rem` takes
+// the dividend's sign; dividing by zero panics with JS's RangeError; a negative shift count
+// shifts the other way (`1n << -1n` is `0n`). `[Symbol.dispose]()` frees the block.
 
 import { BigIntError } from "velt/math/errors";
+import { strByteAt, strByteLen } from "velt/lang/intrinsics";
+import { natAssign, natCmp, natOfWord, natUnfilled } from "velt/math/nat_add";
+import { natFromF64, natToF64 } from "velt/math/nat_bits";
+import { natMulWordInto } from "velt/math/nat_mul";
+import { natParseText, natToString } from "velt/math/nat_radix";
 import {
-  velt_rt_bigint_assign,
-  velt_rt_bigint_clone,
-  velt_rt_bigint_cmp,
-  velt_rt_bigint_cmp_i64,
-  velt_rt_bigint_free,
-  velt_rt_bigint_from_f64,
-  velt_rt_bigint_from_i64,
-  velt_rt_bigint_neg,
-  velt_rt_bigint_op,
-  velt_rt_bigint_op_i64,
-  velt_rt_bigint_parse,
-  velt_rt_bigint_to_f64,
-  velt_rt_bigint_to_i64,
-  velt_rt_bigint_to_string,
-} from "velt/math/rt";
+  ADD,
+  AND,
+  DIV,
+  MAX_LIMBS,
+  MUL,
+  OR,
+  REM,
+  SUB,
+  SUM_TOO_BIG,
+  XOR,
+  signedAddInto,
+  signedCompareInt,
+  signedDoubleInto,
+  signedNot,
+  signedOp,
+  signedPow,
+  signedShift,
+  signedWrap,
+} from "velt/math/bigint_signed";
+import {
+  limbCount,
+  limbsPut,
+  limbsTake,
+  signOf,
+  signSet,
+  storeFree,
+  storeNew,
+  storeReplace,
+} from "velt/math/bigint_store";
 
-// Operation codes of `velt_rt_bigint_op*` (crates/velt_rt/src/bigint.rs `op`).
-const ADD: u32 = 0;
+const TOO_BIG = "RangeError: Maximum BigInt size exceeded";
 
-const SUB: u32 = 1;
-
-const MUL: u32 = 2;
-
-const DIV: u32 = 3;
-
-const REM: u32 = 4;
-
-const SHL: u32 = 5;
-
-const SHR: u32 = 6;
+/** Panics with V8's size error unless `ok`; callers have put their magnitudes back. */
+function fits(ok: bool) {
+  if (!ok) {
+    panic(TOO_BIG);
+  }
+}
 
 /** An arbitrary-precision integer (JS `BigInt`); see the module comment. */
 export class BigInt {
-  #handle: u64;
+  // The number's block; never reassigned, so in-place operations don't modify the object.
+  #handle: usize;
 
   /** JS `BigInt(n)` / `10n`. */
   constructor(value: i64 = 0) {
-    this.#handle = velt_rt_bigint_from_i64(value);
+    this.#handle = storeNew(value < 0, natOfWord(value < 0 ? 0 - (value as u64) : value as u64));
+  }
+
+  /** JS `BigInt(x)` for a number: panics with JS's RangeError when `x` is not an integer. */
+  static fromNumber(x: f64): BigInt {
+    if (x != x || x - x != 0.0 || Math.trunc(x) != x) {
+      panic(
+        `RangeError: The number ${x} cannot be converted to a BigInt because it is not an integer`,
+      );
+    }
+    return BigInt.of(x < 0, natFromF64(x));
   }
 
   /**
-   * JS `BigInt(x)` for a float: the integer part of `x` (panics on NaN and ±Infinity, which JS
-   * rejects with a RangeError).
+   * Parses digits in `radix` (2 to 36, either case) with an optional sign and surrounding
+   * whitespace; throws `BigIntError` with JS's message for anything else, more digits than V8
+   * parses included (V8's message shows the first 1,000 characters of a longer string, then "…").
    */
-  static fromNumber(x: f64): BigInt {
-    if (x != x || x - x != 0.0) {
-      panic("RangeError: cannot convert a non-finite number to a BigInt");
+  static parse(s: string, radix: i64 = 10): BigInt {
+    const t = s.trim();
+    const negative = strByteLen(t) > 0 && strByteAt(t, 0) == 45;
+    const limbs = natParseText(t, radix);
+    if (limbs != null) {
+      return BigInt.of(negative, limbs);
     }
-    return BigInt.adopt(velt_rt_bigint_from_f64(x));
+    const more = s.length > 1000 ? "…" : "";
+    throw new BigIntError(`Cannot convert ${s.slice(0, 1000)}${more} to a BigInt`);
   }
 
-  /** Parses digits in `radix` (2 to 36) with an optional sign; throws `BigIntError`. */
-  static parse(s: string, radix: i64 = 10): BigInt {
-    const h = velt_rt_bigint_parse(s, radix);
-    if (h == 0) {
-      throw new BigIntError(`Cannot convert ${s} to a BigInt`);
-    }
-    return BigInt.adopt(h);
+  /** JS `BigInt.asIntN(bits, x)`: `x` wrapped to a signed `bits`-bit integer. */
+  static asIntN(bits: i64, x: BigInt): BigInt {
+    return x.wrapped(bits, true);
+  }
+
+  /** JS `BigInt.asUintN(bits, x)`: `x` wrapped to an unsigned `bits`-bit integer. */
+  static asUintN(bits: i64, x: BigInt): BigInt {
+    return x.wrapped(bits, false);
   }
 
   add(other: BigInt): BigInt {
@@ -93,165 +118,310 @@ export class BigInt {
     return this.binary(other, REM);
   }
 
+  /** `this & other` (JS's two's complement semantics for negatives). */
+  and(other: BigInt): BigInt {
+    return this.binary(other, AND);
+  }
+
+  /** `this | other`. */
+  or(other: BigInt): BigInt {
+    return this.binary(other, OR);
+  }
+
+  /** `this ^ other`. */
+  xor(other: BigInt): BigInt {
+    return this.binary(other, XOR);
+  }
+
+  /** `~this`, which is `-this - 1`. */
+  not(): BigInt {
+    const h = this.#handle;
+    const a = limbsTake(h);
+    const r = signedNot(signOf(h), a);
+    limbsPut(h, a);
+    if (r == null) {
+      panic(TOO_BIG);
+    }
+    return BigInt.of(!signOf(h), r);
+  }
+
+  /** `this ** e` (JS: a negative exponent is a RangeError). */
+  pow(e: i64): BigInt {
+    if (e < 0) {
+      // V8's message, word for word.
+      panic("RangeError: undefined must be positive");
+    }
+    const h = this.#handle;
+    const a = limbsTake(h);
+    const r = signedPow(a, e);
+    limbsPut(h, a);
+    if (r == null) {
+      panic(TOO_BIG);
+    }
+    return BigInt.of(signOf(h) && (e & 1) != 0, r);
+  }
+
   addInt(k: i64): BigInt {
-    return this.binaryInt(k, ADD);
+    return this.add(new BigInt(k));
   }
 
   subInt(k: i64): BigInt {
-    return this.binaryInt(k, SUB);
+    return this.sub(new BigInt(k));
   }
 
   mulInt(k: i64): BigInt {
-    return this.binaryInt(k, MUL);
+    const out = this.clone();
+    out.mulIntAssign(k);
+    return out;
   }
 
   divInt(k: i64): BigInt {
-    return this.binaryInt(k, DIV);
+    return this.div(new BigInt(k));
   }
 
   remInt(k: i64): BigInt {
-    return this.binaryInt(k, REM);
+    return this.rem(new BigInt(k));
   }
 
-  /** `this << n` (`n` >= 0). */
+  /** `this << n` (a negative `n` shifts right). */
   shl(n: i64): BigInt {
-    return this.binaryInt(n, SHL);
+    return this.shifted(n, true);
   }
 
-  /** `this >> n` (`n` >= 0; rounds toward -Infinity, like JS). */
+  /** `this >> n`, rounding toward -Infinity like JS (a negative `n` shifts left). */
   shr(n: i64): BigInt {
-    return this.binaryInt(n, SHR);
+    return this.shifted(n, false);
   }
 
   neg(): BigInt {
-    const out = new BigInt();
-    velt_rt_bigint_neg(out.#handle, this.#handle);
+    const out = this.clone();
+    const h = out.#handle;
+    signSet(h, !signOf(h) && limbCount(h) > 0);
     return out;
   }
 
   addAssign(other: BigInt) {
-    this.assignOp(other, ADD);
+    this.addSigned(other, false);
   }
 
   subAssign(other: BigInt) {
-    this.assignOp(other, SUB);
+    this.addSigned(other, true);
   }
 
   mulAssign(other: BigInt) {
-    this.assignOp(other, MUL);
+    this.adopt(this.mul(other));
   }
 
   divAssign(other: BigInt) {
-    this.assignOp(other, DIV);
+    this.adopt(this.div(other));
   }
 
   remAssign(other: BigInt) {
-    this.assignOp(other, REM);
+    this.adopt(this.rem(other));
   }
 
   addIntAssign(k: i64) {
-    this.assignOpInt(k, ADD);
+    this.addAssign(new BigInt(k));
   }
 
   subIntAssign(k: i64) {
-    this.assignOpInt(k, SUB);
+    this.subAssign(new BigInt(k));
   }
 
+  /** `this *= k`, in place; V8 sizes the product as this one's length plus one limb for `k`. */
   mulIntAssign(k: i64) {
-    this.assignOpInt(k, MUL);
+    const h = this.#handle;
+    const a = limbsTake(h);
+    const ok = k == 0 || a.length < MAX_LIMBS;
+    if (ok) {
+      natMulWordInto(a, k < 0 ? 0 - (k as u64) : k as u64);
+      signSet(h, a.length > 0 && signOf(h) != (k < 0));
+    }
+    limbsPut(h, a);
+    fits(ok);
   }
 
   divIntAssign(k: i64) {
-    this.assignOpInt(k, DIV);
+    this.adopt(this.div(new BigInt(k)));
   }
 
   shlAssign(n: i64) {
-    this.assignOpInt(n, SHL);
+    this.adopt(this.shl(n));
   }
 
   shrAssign(n: i64) {
-    this.assignOpInt(n, SHR);
+    this.adopt(this.shr(n));
   }
 
   /** Makes this number equal to `other`, reusing this one's buffer. */
   set(other: BigInt) {
-    velt_rt_bigint_assign(this.#handle, other.#handle);
+    const h = this.#handle;
+    const g = other.#handle;
+    if (h == g) {
+      return;
+    }
+    const a = limbsTake(h);
+    const b = limbsTake(g);
+    natAssign(a, b);
+    limbsPut(g, b);
+    limbsPut(h, a);
+    signSet(h, signOf(g));
   }
 
   /** -1, 0 or 1 as this is less than, equal to or greater than `other`. */
   compareTo(other: BigInt): i64 {
-    return velt_rt_bigint_cmp(this.#handle, other.#handle);
+    const h = this.#handle;
+    const g = other.#handle;
+    const negative = signOf(h);
+    if (h == g) {
+      return 0;
+    }
+    if (negative != signOf(g)) {
+      return negative ? -1 : 1;
+    }
+    const a = limbsTake(h);
+    const b = limbsTake(g);
+    const c = natCmp(a, b);
+    limbsPut(g, b);
+    limbsPut(h, a);
+    return negative ? -c : c;
   }
 
   /** -1, 0 or 1 as this is less than, equal to or greater than `k`. */
   compareToInt(k: i64): i64 {
-    return velt_rt_bigint_cmp_i64(this.#handle, k);
+    const h = this.#handle;
+    const a = limbsTake(h);
+    const c = signedCompareInt(signOf(h), a, k);
+    limbsPut(h, a);
+    return c;
   }
 
   equals(other: BigInt): bool {
     return this.compareTo(other) == 0;
   }
 
-  /** The nearest number (JS `Number(big)`). */
+  /** The nearest number (JS `Number(big)`), ties to even. */
   toNumber(): f64 {
-    return velt_rt_bigint_to_f64(this.#handle);
+    const h = this.#handle;
+    const a = limbsTake(h);
+    const x = natToF64(a);
+    limbsPut(h, a);
+    return signOf(h) ? -x : x;
   }
 
   /** The low 64 bits as a signed integer (JS `BigInt.asIntN(64, big)`). */
   toI64(): i64 {
-    return velt_rt_bigint_to_i64(this.#handle);
+    const h = this.#handle;
+    const a = limbsTake(h);
+    const low: u64 = a.length == 0 ? 0 : a[0];
+    limbsPut(h, a);
+    return (signOf(h) ? 0 - low : low) as i64;
   }
 
   /** Digits in `radix` (2 to 36), lowercase, with a leading `-` when negative. */
   toString(radix: i64 = 10): string {
-    return velt_rt_bigint_to_string(this.#handle, radix);
+    if (radix < 2 || radix > 36) {
+      panic("RangeError: toString() radix argument must be between 2 and 36");
+    }
+    const h = this.#handle;
+    const a = limbsTake(h);
+    const digits = natToString(a, radix as u64);
+    limbsPut(h, a);
+    return signOf(h) ? "-" + digits : digits;
   }
 
   /** An independent copy. */
   clone(): BigInt {
-    return BigInt.adopt(velt_rt_bigint_clone(this.#handle));
+    const h = this.#handle;
+    const a = limbsTake(h);
+    const copy = natUnfilled(0);
+    natAssign(copy, a);
+    limbsPut(h, a);
+    return BigInt.of(signOf(h), copy);
   }
 
-  /** Drop hook: frees the number. */
+  /** Drop hook: frees the number's block. */
   [Symbol.dispose]() {
-    if (this.#handle != 0) {
-      velt_rt_bigint_free(this.#handle);
-      this.#handle = 0;
-    }
+    storeFree(this.#handle);
   }
 
-  // A BigInt owning the runtime handle `h`.
-  private static adopt(h: u64): BigInt {
-    const b = new BigInt();
-    velt_rt_bigint_free(b.#handle);
-    b.#handle = h;
-    return b;
+  // A BigInt of sign and magnitude.
+  private static of(negative: bool, limbs: u64[]): BigInt {
+    const out = new BigInt();
+    storeReplace(out.#handle, negative, limbs);
+    return out;
   }
 
+  // `this op other` for a binary operation of bigint_signed.velt; `x op x` reads one magnitude.
   private binary(other: BigInt, op: u32): BigInt {
+    const h = this.#handle;
+    const g = other.#handle;
+    if ((op == DIV || op == REM) && limbCount(g) == 0) {
+      panic("RangeError: Division by zero");
+    }
     const out = new BigInt();
-    checked(velt_rt_bigint_op(out.#handle, this.#handle, other.#handle, op));
+    const a = limbsTake(h);
+    let ok = true;
+    if (h == g) {
+      ok = signedOp(signOf(h), a, signOf(h), a, true, op, out.#handle);
+    } else {
+      const b = limbsTake(g);
+      ok = signedOp(signOf(h), a, signOf(g), b, false, op, out.#handle);
+      limbsPut(g, b);
+    }
+    limbsPut(h, a);
+    fits(ok);
     return out;
   }
 
-  private binaryInt(k: i64, op: u32): BigInt {
+  // `this += other`, or `-=` when `negate`, in place.
+  private addSigned(other: BigInt, negate: bool) {
+    const h = this.#handle;
+    const g = other.#handle;
+    const a = limbsTake(h);
+    let sign = h == g ? signedDoubleInto(signOf(h), a, negate) : 0;
+    if (h != g) {
+      const b = limbsTake(g);
+      sign = signedAddInto(signOf(h), a, signOf(g) != negate, b);
+      limbsPut(g, b);
+    }
+    limbsPut(h, a);
+    fits(sign != SUM_TOO_BIG);
+    signSet(h, sign == 1);
+  }
+
+  // Takes `v`'s number, leaving it this one's old number (which `v`'s drop frees).
+  private adopt(v: BigInt) {
+    const h = this.#handle;
+    const g = v.#handle;
+    const a = limbsTake(h);
+    const b = limbsTake(g);
+    limbsPut(h, b);
+    limbsPut(g, a);
+    signSet(h, signOf(g));
+  }
+
+  private shifted(n: i64, left: bool): BigInt {
+    const h = this.#handle;
     const out = new BigInt();
-    checked(velt_rt_bigint_op_i64(out.#handle, this.#handle, k, op));
+    const a = limbsTake(h);
+    const ok = signedShift(signOf(h), a, n, left, out.#handle);
+    limbsPut(h, a);
+    fits(ok);
     return out;
   }
 
-  private assignOp(other: BigInt, op: u32) {
-    checked(velt_rt_bigint_op(this.#handle, this.#handle, other.#handle, op));
-  }
-
-  private assignOpInt(k: i64, op: u32) {
-    checked(velt_rt_bigint_op_i64(this.#handle, this.#handle, k, op));
-  }
-}
-
-// `ok` is false after a division by zero or a negative or enormous shift (operand unchanged).
-function checked(ok: bool) {
-  if (!ok) {
-    panic("RangeError: BigInt division by zero or invalid shift");
+  // JS's asIntN / asUintN: `x mod 2^bits`, as a signed `bits`-bit value when `signed`.
+  private wrapped(bits: i64, signed: bool): BigInt {
+    if (bits < 0 || bits > 9007199254740991) {
+      panic("RangeError: Invalid value: not (convertible to) a safe integer");
+    }
+    const h = this.#handle;
+    const out = new BigInt();
+    const a = limbsTake(h);
+    const ok = signedWrap(signOf(h), a, bits as u64, signed, out.#handle);
+    limbsPut(h, a);
+    fits(ok);
+    return out;
   }
 }

@@ -17,13 +17,15 @@ use rustc_hash::FxHashSet;
 use velt_sema::hir::{self, LocalId, UseMode};
 
 use super::place::part_root;
-use super::sequence::any_operand;
+use super::sequence::{any_operand, Later};
 use super::{unit, FnLower};
-use crate::vir::Operand;
+use crate::vir::{Operand, Place, Ty};
 
 impl FnLower<'_, '_> {
     /// `consume` each of `es` in order, snapshotting a value that a later one may change
-    /// (`[xs[0], grow(xs)]` reads `xs[0]` before `grow` reallocates `xs`, #580).
+    /// (`[xs[0], grow(xs)]` reads `xs[0]` before `grow` reallocates `xs`, #580). A value stays
+    /// the scope's to drop until all of them are evaluated, as an owned argument does
+    /// (`pending_owned`): an error a later one throws frees it (`[[i], boom()]`, #3126).
     pub(super) fn consume_each(&mut self, es: &[hir::Expr]) -> Vec<Operand> {
         // The elements of an array literal going into the caller's container in a `read`
         // callback (caller_stores.rs `Held::Elems`).
@@ -36,6 +38,7 @@ impl FnLower<'_, '_> {
         };
         let mut vals = Vec::with_capacity(es.len());
         let mut deferred = vec![];
+        let mut pending = vec![];
         for (i, ((e, later), part)) in es.iter().zip(later).zip(parts).enumerate() {
             let v = match part {
                 _ if to_caller => self.keep_for_caller(e),
@@ -47,12 +50,41 @@ impl FnLower<'_, '_> {
                 }
                 _ => self.consume(e),
             };
-            vals.push(self.hold_owned(v, e.ty, later));
+            let v = self.hold_owned(v, e.ty, later);
+            vals.push(match to_caller {
+                true => v,
+                false => self.pending_value(v, e.ty, later, &mut pending),
+            });
         }
         for i in deferred {
             vals[i] = self.consume(&es[i]);
         }
+        // The literal (or the call) takes them now.
+        for p in pending {
+            self.take_temp(&p);
+        }
         vals
+    }
+
+    /// The owned value `v` (of type `ty`) of an operand, registered for dropping until the
+    /// operands after it (`later`) are evaluated, in a temporary of its own when one of them
+    /// may throw.
+    fn pending_value(
+        &mut self,
+        v: Operand,
+        ty: hir::TyId,
+        later: Later,
+        pending: &mut Vec<Place>,
+    ) -> Operand {
+        match self.vty(ty) {
+            Ty::Agg(_) if !later.memory || self.dead() || !self.needs_drop(ty) => v,
+            vt @ Ty::Agg(_) => {
+                let tmp = self.copy_to_temp(v, vt);
+                self.pending_owned(Place::local(tmp), ty, later, pending);
+                Operand::Copy(Place::local(tmp))
+            }
+            _ => self.pending_scalar(v, ty, later, pending),
+        }
     }
 
     /// For each of `es`: the local it moves a part out of, when a later one reads that local.

@@ -19,17 +19,16 @@
 // channel.
 
 import {
-  inline,
+  addressAtomicCas,
+  addressAtomicLoad,
+  addressAtomicRmw,
+  addressAtomicStore,
   addressLoad,
   addressStore,
-  ptrAtomicCas,
-  ptrAtomicLoad,
-  ptrAtomicRmw,
-  ptrAtomicStore,
+  inline,
   rawAlloc,
   rawFree,
 } from "velt/lang/intrinsics";
-import { Ptr } from "velt/ffi/ptr";
 import { Backoff } from "velt/sync/backoff";
 import { wakeOwned } from "#sync-chan-word";
 import { publishOutput } from "#sync-output";
@@ -102,28 +101,28 @@ function ld32(a: usize): u32 {
 @inline
 function load(a: usize): usize {
   // SAFETY: as `ld`; written with `publish`.
-  return unsafe { ptrAtomicLoad(Ptr.at<usize>(a), "relaxed") };
+  return unsafe { addressAtomicLoad<usize>(a, "relaxed") };
 }
 
 @inline
 function publish(a: usize, v: usize): void {
   // SAFETY: as `ld`.
   unsafe {
-    ptrAtomicStore(Ptr.at<usize>(a), v, "relaxed");
+    addressAtomicStore<usize>(a, v, "relaxed");
   }
 }
 
 @inline
 export function load32(a: usize): u32 {
   // SAFETY: as `ld`.
-  return unsafe { ptrAtomicLoad(Ptr.at<u32>(a), "acquire") };
+  return unsafe { addressAtomicLoad<u32>(a, "acquire") };
 }
 
 @inline
 export function store32(a: usize, v: u32): void {
   // SAFETY: as `ld`.
   unsafe {
-    ptrAtomicStore(Ptr.at<u32>(a), v, "release");
+    addressAtomicStore<u32>(a, v, "release");
   }
 }
 
@@ -146,7 +145,7 @@ export function newBlock(capacity: usize, size: usize): usize {
 /** Gives back one count of block `b`; the last frees it (its items were taken out first). */
 export function release(b: usize): void {
   // SAFETY: the count, changed atomically by every holder.
-  const was = unsafe { ptrAtomicRmw(Ptr.at<usize>(b + B_REFS), "sub", 1, "acqrel") };
+  const was = unsafe { addressAtomicRmw<usize>(b + B_REFS, "sub", 1, "acqrel") };
   if (was === 1) {
     const ring = ld(b + B_RING);
     if (ring !== 0) {
@@ -166,7 +165,7 @@ export function release(b: usize): void {
 @inline
 export function lock(b: usize): void {
   // SAFETY: the lock word, changed atomically.
-  if (unsafe { ptrAtomicCas(Ptr.at<u32>(b + B_LOCK), 0, 1, "acquire", "relaxed") } !== 0) {
+  if (unsafe { addressAtomicCas<u32>(b + B_LOCK, 0, 1, "acquire", "relaxed") } !== 0) {
     lockSlow(b);
   }
 }
@@ -178,7 +177,7 @@ function lockSlow(b: usize): void {
     if (
       load32(b + B_LOCK) === 0 &&
       // SAFETY: as `lock`.
-      unsafe { ptrAtomicCas(Ptr.at<u32>(b + B_LOCK), 0, 1, "acquire", "relaxed") } === 0
+      unsafe { addressAtomicCas<u32>(b + B_LOCK, 0, 1, "acquire", "relaxed") } === 0
     ) {
       return;
     }
@@ -407,6 +406,6 @@ export function waiting(b: usize, kind: usize): usize {
 export function retain(b: usize): void {
   // SAFETY: the count, changed atomically by every holder.
   unsafe {
-    ptrAtomicRmw(Ptr.at<usize>(b + B_REFS), "add", 1, "relaxed");
+    addressAtomicRmw<usize>(b + B_REFS, "add", 1, "relaxed");
   }
 }

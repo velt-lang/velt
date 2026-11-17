@@ -41,9 +41,10 @@ fn std_headers(target: &str) -> Vec<&'static str> {
         "<unistd.h>",
         "<unwind.h>",
     ];
-    // The reactors' (std/lang/hooks/reactor_kqueue.velt, reactor_epoll.velt).
+    // The reactors' (std/lang/hooks/reactor_kqueue.velt, reactor_epoll.velt), and velt/os' on
+    // macOS (`sysctlbyname`, std/os/sys_darwin.velt).
     if target.contains("-apple-") {
-        headers.extend(["<mach/mach.h>", "<sys/event.h>"]);
+        headers.extend(["<mach/mach.h>", "<sys/event.h>", "<sys/sysctl.h>"]);
     } else if target.contains("-linux") {
         headers.extend(["<sys/epoll.h>", "<sys/eventfd.h>"]);
     }
@@ -51,8 +52,8 @@ fn std_headers(target: &str) -> Vec<&'static str> {
 }
 
 /// The macros std's C calls are declared with on `target`: Linux's C libraries declare
-/// `accept4` and `pipe2` (the epoll reactor's, std/lang/hooks/reactor_epoll.velt) with
-/// `_GNU_SOURCE` only.
+/// `accept4` and `pipe2` (the epoll reactor's, std/lang/hooks/reactor_epoll.velt) and
+/// `sched_getaffinity` (velt/os', std/os/sys_linux.velt) with `_GNU_SOURCE` only.
 fn std_defines(target: &str) -> Vec<(String, String)> {
     match target.contains("-linux") {
         true => vec![("_GNU_SOURCE".into(), "1".into())],
@@ -94,12 +95,16 @@ const CHECKED: &[&str] = &[
     "net/fd_until.velt",
     "net/rt_later_flush.velt",
     "net/udp/udp_sched.velt",
+    "os/posix.velt",
+    "os/sys_darwin.velt",
+    "os/sys_linux.velt",
     "process/child/child_win32.velt",
     "process/child/command_line_win32.velt",
     "process/child/exit_win32.velt",
     "process/child/handle_list_win32.velt",
     "process/child/pipes_win32.velt",
     "process/child/spawn_win32.velt",
+    "process/tty_posix.velt",
     "sync/output.velt",
     "sync/slot.velt",
 ];

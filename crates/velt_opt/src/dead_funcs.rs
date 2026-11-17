@@ -3,7 +3,9 @@
 //! conservatively even if the static is unused) are deleted, and `FuncId`s renumbered.
 //! Inlining leaves many of these behind (called-once helpers, fully inlined getters).
 
-use velt_vir::vir::{Callee, Const, FuncId, Linkage, Operand, Program, Terminator};
+use velt_vir::vir::{
+    Callee, Const, ExternId, FuncId, Function, Linkage, Operand, Program, Terminator,
+};
 
 use crate::callgraph::{address_refs, direct_calls, static_refs};
 use crate::visit::{stmt_operands_mut, term_operands_mut};
@@ -60,8 +62,10 @@ fn renumber_operand(op: &mut Operand, new_id: &impl Fn(FuncId) -> FuncId) {
     }
 }
 
-/// Mark functions reachable from exported roots.
+/// Mark functions reachable from exported roots. A function calling a runtime allocator extern
+/// reaches std's hook for it too, which takes the call's place at the end (`heap_calls`).
 pub(crate) fn live_functions(program: &Program) -> Vec<bool> {
+    let heap = crate::heap_calls::pairs(program);
     let n = program.funcs.len();
     let mut live = vec![false; n];
     let mut work: Vec<usize> = (0..n)
@@ -79,7 +83,11 @@ pub(crate) fn live_functions(program: &Program) -> Vec<bool> {
     }
     while let Some(i) = work.pop() {
         let f = &program.funcs[i];
-        for id in direct_calls(f).chain(address_refs(f)) {
+        let hooks = heap
+            .iter()
+            .filter(|(e, _)| calls_extern(f, *e))
+            .map(|&(_, h)| h);
+        for id in direct_calls(f).chain(address_refs(f)).chain(hooks) {
             let j = id.0 as usize;
             if j < n && !live[j] {
                 live[j] = true;
@@ -88,6 +96,13 @@ pub(crate) fn live_functions(program: &Program) -> Vec<bool> {
         }
     }
     live
+}
+
+/// Whether `f` calls the extern `e`.
+fn calls_extern(f: &Function, e: ExternId) -> bool {
+    f.blocks
+        .iter()
+        .any(|b| matches!(b.term, Terminator::Call { callee: Callee::Extern(x), .. } if x == e))
 }
 
 #[cfg(test)]

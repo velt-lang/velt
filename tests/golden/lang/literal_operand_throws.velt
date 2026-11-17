@@ -1,0 +1,52 @@
+// check: no leaks
+// An operand of a literal or of a call through `any` that is already evaluated is dropped
+// when a later operand throws (#3126): the array, the object and the tuple are never made,
+// and the call never runs.
+function boom(n: number): number[] {
+  if (n >= 0) {
+    throw new TypeError("no " + n);
+  }
+  return [n];
+}
+
+function two(a: number[], b: number[]): number {
+  return a.length + b.length;
+}
+
+function main() {
+  const f: any = two;
+  let caught = 0;
+  let made = 0;
+  for (let i = 0; i < 3; i++) {
+    // The last round throws nothing.
+    const n = i < 2 ? i : -1;
+    try {
+      const xs = [[i], boom(n)];
+      made += xs.length;
+    } catch (e) {
+      caught++;
+    }
+    try {
+      const o = { a: [i, i], label: "an object with a label on the heap: " + i, b: boom(n) };
+      made += o.a.length + o.b.length;
+    } catch (e) {
+      caught++;
+    }
+    try {
+      const t: [number[], string, number[]] = [
+        [i],
+        "a tuple with a string on the heap: " + i,
+        boom(n),
+      ];
+      made += t[0].length + t[2].length;
+    } catch (e) {
+      caught++;
+    }
+    try {
+      made += f([i, i, i], boom(n));
+    } catch (e) {
+      caught++;
+    }
+  }
+  console.log(caught, made);
+}

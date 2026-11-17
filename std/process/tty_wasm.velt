@@ -1,0 +1,9 @@
+// velt/process (internal): whether a file descriptor is a terminal in a WebAssembly build
+// (`#tty`'s default variant, std/imports.velt): the WebAssembly runtime answers.
+
+declare function velt_rt_isatty(fd: i32): bool;
+
+/** Whether file descriptor `fd` is a terminal. */
+export function isTerminal(fd: i32): bool {
+  return velt_rt_isatty(fd);
+}

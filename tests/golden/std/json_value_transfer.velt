@@ -1,0 +1,99 @@
+// check: no leaks
+// A parsed `JsonValue` sent to a task on another worker (#3098): the value that arrives reads as
+// the one sent, whatever its tape holds (an object whose members are reordered or repeated, strings
+// with escapes, a wide object with its hash index made before or after the send, a child of a
+// larger document), the sender's copy stays usable, and an edit on either side never shows on the
+// other. A value the sender keeps is shared when it is sent; one it gives up is moved.
+import { channel, Channel } from "velt/sync";
+import { currentWorker, workerCount } from "velt/task";
+
+// What each value received reads as, and the worker that read it.
+async function describe(ch: Channel<JsonValue>): Promise<[string[], i64]> {
+  const out: string[] = [];
+  for await (const v of ch) {
+    out.push(read(v));
+  }
+  return [out, currentWorker()];
+}
+
+// Everything a reader can see of `v`: its text, its keys in order, a lookup, an element.
+function read(v: JsonValue): string {
+  const keys = v.isObject() ? v.keys().join(",") : "-";
+  const k7 = v.get("k7");
+  const second = v.at(1);
+  const esc = second == null ? null : second.get("q\"");
+  return `${v.stringify()} | keys ${keys} | len ${v.len()} | k7 ${k7 == null ? "none" : k7.stringify()} | at(1) ${second == null ? "none" : second.stringify()} | q" ${esc == null ? "none" : esc.asString()}`;
+}
+
+// Edits the value it receives and answers with it: the sender's copy must not change.
+async function edit(ch: Channel<JsonValue>, back: Channel<JsonValue>): Promise<void> {
+  for await (const v of ch) {
+    v.set("edited", JsonValue.of(true));
+    await back.send(v);
+  }
+  back.close();
+}
+
+function wide(): string {
+  const parts: string[] = [];
+  for (let i = 0; i < 20; i++) {
+    parts.push(`"k${i}":${i}`);
+  }
+  return `{${parts.join(",")}}`;
+}
+
+async function main(): Promise<void> {
+  const here = currentWorker();
+  const other = (here + 1) % workerCount();
+  const small = JsonValue.from(["k1"]);
+  const ordered = JSON.parseValue('{"b":1,"2":"two","a":[3],"1":null,"b":5}');
+  const escaped = JSON.parseValue('["tab\\there", {"q\\"":"\\u00e9\\n"}, "plain"]');
+  const searched = JSON.parseValue(wide());
+  searched.get("k7");
+  const unsearched = JSON.parseValue(wide());
+  const doc = JSON.parseValue('{"inner":{"x":[1,{"y":"z"}],"2":0},"tail":"t"}');
+  const child = doc.get("inner")!;
+  const values = [small, ordered, escaped, searched, unsearched, child];
+
+  const ch = channel<JsonValue>(8);
+  const reader = spawn(describe(ch), { worker: other });
+  for (const v of values) {
+    // Kept here (in `values`): the value crosses as a copy, read on the other side meanwhile.
+    await ch.send(v);
+  }
+  // Given up: moved.
+  await ch.send(JSON.parseValue('{"moved":["a","b"],"k7":"seven"}'));
+  // The same value many times, as an actor's arguments are.
+  for (let i = 0; i < 50; i++) {
+    await ch.send(small);
+  }
+  ch.close();
+  const [got, first] = await reader;
+  for (let i = 0; i < 7; i++) {
+    console.log(got[i]);
+  }
+  console.log(got.length, got[7] == got[0] && got[56] == got[0]);
+  for (const v of values) {
+    console.log("here:", read(v));
+  }
+
+  // An edit on the other side stays there, and one here never reaches the copy sent.
+  const toEdit = channel<JsonValue>(1);
+  const back = channel<JsonValue>(1);
+  const editor = spawn(edit(toEdit, back), { worker: other });
+  await toEdit.send(ordered);
+  ordered.set("here", JsonValue.of(1));
+  const edited = (await back.receive())!;
+  await toEdit.send(child);
+  const editedChild = (await back.receive())!;
+  toEdit.close();
+  await editor;
+  console.log("edited there:", edited.stringify());
+  console.log("edited here:", ordered.stringify());
+  console.log("child there:", editedChild.stringify());
+  console.log("child here:", child.stringify(), doc.stringify());
+
+  // One worker (a single-core machine) has no other thread to cross to.
+  console.log("read on another worker:", workerCount() == 1 || first != here);
+}
+main();

@@ -227,10 +227,10 @@ impl FnCx<'_, '_> {
                 false => (lhs, inner),
             };
             if self
-                .trial_with(|cx| cx.binary(op, l, r, exp, span).ty)
+                .trial_with(|cx| cx.binary(op, l, r, exp, Want::Move, span).ty)
                 .is_some()
             {
-                return Some(self.binary(op, l, r, exp, span));
+                return Some(self.binary(op, l, r, exp, Want::Move, span));
             }
         }
         // Otherwise the operands are evaluated in order, each into a temporary unless it is a
@@ -285,20 +285,20 @@ impl FnCx<'_, '_> {
         };
         if !string {
             let (l, r) = pair(cast);
-            let h = self.binary(op, &l, &r, exp, span);
+            let h = self.binary(op, &l, &r, exp, Want::Move, span);
             return Some(self.with_temps_value(stmts, h));
         }
         let (l, r) = pair(s.clone());
         if self
-            .trial_with(|cx| cx.binary(op, &l, &r, exp, span).ty)
+            .trial_with(|cx| cx.binary(op, &l, &r, exp, Want::Move, span).ty)
             .is_some()
         {
-            let h = self.binary(op, &l, &r, exp, span);
+            let h = self.binary(op, &l, &r, exp, Want::Move, span);
             return Some(self.with_temps_value(stmts, h));
         }
         let cond = self.literal_member_test(&s, &values, span);
         let (l, r) = pair(cast);
-        let hit = self.binary(op, &l, &r, exp, span);
+        let hit = self.binary(op, &l, &r, exp, Want::Move, span);
         let negated = matches!(op, ast::BinaryOp::NotEq | ast::BinaryOp::StrictNotEq);
         let miss = self.mk(H::Lit(hir::Lit::Bool(negated)), hit.ty, span);
         let kind = H::If {

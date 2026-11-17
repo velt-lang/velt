@@ -1,0 +1,7 @@
+TMPDIR, trailing / dropped: true
+TMP next: true
+TEMP last: true
+none set: true
+the root stays: true
+the first of two set wins: true
+and the next of two: true

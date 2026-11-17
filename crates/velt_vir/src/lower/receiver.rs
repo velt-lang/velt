@@ -22,7 +22,7 @@ impl FnLower<'_, '_> {
     pub(super) fn replaceable_receiver(&mut self, recv: &hir::Expr) -> bool {
         let ty = self.sub(recv.ty);
         let shareable = self.cx.is_class(ty) || matches!(self.cx.kind(ty), TyKind::Dyn(..));
-        shareable && !super::call::is_moved(recv) && self.callee_replaceable(recv)
+        shareable && !super::moved_args::is_moved(recv) && self.callee_replaceable(recv)
     }
 
     /// The receiver `recv` with a reference of its own for the call, dropped after the

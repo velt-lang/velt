@@ -31,6 +31,7 @@ fn build(dir: &Path, file: &str, out: &str, cache: &Path, extra: &[(&str, &str)]
         .env("VELT_STD_OBJECT", "1")
         .env("VELT_STD_OBJECT_STATS", "1")
         .env("VELT_BUILD_CACHE", cache)
+        .env("VELT_PREBUILT_HOOKS", "0") // why: std_cache/warm.rs
         .env_remove("VELT_RT_LINK");
     for (k, v) in extra {
         cmd.env(k, v);
@@ -458,6 +459,7 @@ fn debug_command(dir: &Path, file: &str, out: &str, cache: &Path) -> std::proces
         .env("VELT_STD_OBJECT_STATS", "1")
         .env("VELT_BUILD_CACHE", cache)
         .env("VELT_BUILD_STAMP", "off")
+        .env("VELT_PREBUILT_HOOKS", "0") // why: std_cache/warm.rs
         .env_remove("VELT_STD_OBJECT")
         .env_remove("VELT_RT_LINK");
     cmd

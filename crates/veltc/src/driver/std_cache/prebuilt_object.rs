@@ -82,6 +82,10 @@ pub(super) fn build(
         no_cpu_extensions: false,
         counted_seed: None,
         jit: false,
+        // The object is shared by every release build, whichever runtime it links (a debug one
+        // checks and counts every block: driver/heap_hooks.rs), so it keeps the runtime's
+        // allocator.
+        heap_hooks: false,
     };
     let mut program = velt_vir::lower_checked(&hir, &lower).map_err(|d| {
         let shown: Vec<String> = d.iter().map(|d| d.render(&sess.sm)).collect();

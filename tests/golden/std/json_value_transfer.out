@@ -1,0 +1,21 @@
+["k1"] | keys - | len 1 | k7 none | at(1) none | q" none
+{"1":null,"2":"two","b":5,"a":[3]} | keys 1,2,b,a | len 4 | k7 none | at(1) "two" | q" none
+["tab\there",{"q\"":"é\n"},"plain"] | keys - | len 3 | k7 none | at(1) {"q\"":"é\n"} | q" é
+
+{"k0":0,"k1":1,"k2":2,"k3":3,"k4":4,"k5":5,"k6":6,"k7":7,"k8":8,"k9":9,"k10":10,"k11":11,"k12":12,"k13":13,"k14":14,"k15":15,"k16":16,"k17":17,"k18":18,"k19":19} | keys k0,k1,k2,k3,k4,k5,k6,k7,k8,k9,k10,k11,k12,k13,k14,k15,k16,k17,k18,k19 | len 20 | k7 7 | at(1) 1 | q" none
+{"k0":0,"k1":1,"k2":2,"k3":3,"k4":4,"k5":5,"k6":6,"k7":7,"k8":8,"k9":9,"k10":10,"k11":11,"k12":12,"k13":13,"k14":14,"k15":15,"k16":16,"k17":17,"k18":18,"k19":19} | keys k0,k1,k2,k3,k4,k5,k6,k7,k8,k9,k10,k11,k12,k13,k14,k15,k16,k17,k18,k19 | len 20 | k7 7 | at(1) 1 | q" none
+{"2":0,"x":[1,{"y":"z"}]} | keys 2,x | len 2 | k7 none | at(1) [1,{"y":"z"}] | q" none
+{"moved":["a","b"],"k7":"seven"} | keys moved,k7 | len 2 | k7 "seven" | at(1) "seven" | q" none
+57 true
+here: ["k1"] | keys - | len 1 | k7 none | at(1) none | q" none
+here: {"1":null,"2":"two","b":5,"a":[3]} | keys 1,2,b,a | len 4 | k7 none | at(1) "two" | q" none
+here: ["tab\there",{"q\"":"é\n"},"plain"] | keys - | len 3 | k7 none | at(1) {"q\"":"é\n"} | q" é
+
+here: {"k0":0,"k1":1,"k2":2,"k3":3,"k4":4,"k5":5,"k6":6,"k7":7,"k8":8,"k9":9,"k10":10,"k11":11,"k12":12,"k13":13,"k14":14,"k15":15,"k16":16,"k17":17,"k18":18,"k19":19} | keys k0,k1,k2,k3,k4,k5,k6,k7,k8,k9,k10,k11,k12,k13,k14,k15,k16,k17,k18,k19 | len 20 | k7 7 | at(1) 1 | q" none
+here: {"k0":0,"k1":1,"k2":2,"k3":3,"k4":4,"k5":5,"k6":6,"k7":7,"k8":8,"k9":9,"k10":10,"k11":11,"k12":12,"k13":13,"k14":14,"k15":15,"k16":16,"k17":17,"k18":18,"k19":19} | keys k0,k1,k2,k3,k4,k5,k6,k7,k8,k9,k10,k11,k12,k13,k14,k15,k16,k17,k18,k19 | len 20 | k7 7 | at(1) 1 | q" none
+here: {"2":0,"x":[1,{"y":"z"}]} | keys 2,x | len 2 | k7 none | at(1) [1,{"y":"z"}] | q" none
+edited there: {"1":null,"2":"two","b":5,"a":[3],"edited":true}
+edited here: {"1":null,"2":"two","b":5,"a":[3],"here":1}
+child there: {"2":0,"x":[1,{"y":"z"}],"edited":true}
+child here: {"2":0,"x":[1,{"y":"z"}]} {"inner":{"2":0,"x":[1,{"y":"z"}]},"tail":"t"}
+read on another worker: true

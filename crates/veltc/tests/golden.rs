@@ -26,7 +26,8 @@
 //!   `// requires: unix` is skipped on Windows (POSIX C functions, `velt/fs`'s fd API), and
 //!   `// requires: windows` everywhere else (Windows-only functions).
 //! - A golden whose first lines contain `// check: no leaks` must free every block it allocates
-//!   (`VELT_RC_STATS=1` with the debug runtime: `blocks=A/F` with A = F) in its debug run. Tasks
+//!   and every heap string buffer (`VELT_RC_STATS=1` with the debug runtime: `blocks=A/F` with
+//!   A = F, and `alloc=` equal to `free=`) in its debug run. Tasks
 //!   still running when `main` returns are waited for (up to a minute) while blocks are unfreed;
 //!   the count is taken at a moment when every block was freed, or once no task can run any
 //!   more (blocks held by tasks that wait forever, or by pending `unref()`'d timers, count as
@@ -58,6 +59,9 @@
 //! (`VELT_RT_DEBUG_ALLOC=1`, `crates/velt_rt/src/debug_alloc.rs`): a use after free, double free
 //! or buffer overflow aborts with `velt debug-alloc: ...`. Set `VELT_RT_DEBUG_ALLOC=0` to turn it
 //! off, or `=1` to check the release-mode runs too.
+//! Release-mode builds allocate through std's heap hooks (`VELT_HEAP_HOOKS=1`) although the
+//! runtime they link is this profile's (a debug one under `cargo test`), unless the variable is
+//! set already; with `VELT_RT_DEBUG_ALLOC=1` or `VELT_RC_STATS=1` set, they don't.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -406,6 +410,7 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
                 false => {
                     let mut cmd = crate::no_window::command(velt);
                     cmd.arg("run").args(mode).arg(f);
+                    heap_hooks(&mut cmd, mode);
                     cmd
                 }
                 true => {
@@ -414,6 +419,7 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
                     let exe = dir.join(format!("{stem}{}", std::env::consts::EXE_SUFFIX));
                     let mut build = crate::no_window::command(velt);
                     build.arg("build").args(mode);
+                    heap_hooks(&mut build, mode);
                     // As `velt run` builds to run here: a debug build for this CPU. (`velt run`
                     // leaves out the variable descriptions for debuggers, which `velt build`
                     // has no flag for; they must not change what a program does.)
@@ -614,24 +620,36 @@ fn too_many_strings(stderr: &str, limit: u64) -> Option<String> {
     }
 }
 
-/// The leak in a `rc stats: ... blocks=A/F` report: more than `allowed` blocks allocated but
-/// not freed, or no report.
+/// The leak in a `rc stats: ... alloc=A free=F blocks=A/F` report: more than `allowed` blocks
+/// allocated but not freed, a heap string buffer allocated but not freed (strings have no
+/// allowance: nothing keeps one on purpose), or no report.
 fn leaked_blocks(stderr: &str, allowed: u64) -> Option<String> {
-    let counts = stderr
-        .lines()
-        .rev()
-        .find(|l| l.starts_with("rc stats:"))
-        .and_then(|l| l.split_whitespace().find_map(|w| w.strip_prefix("blocks=")))
-        .and_then(|b| b.split_once('/'));
+    let Some(report) = stderr.lines().rev().find(|l| l.starts_with("rc stats:")) else {
+        return Some("leak check: no `rc stats` report on stderr".into());
+    };
+    let field = |name: &str| report.split_whitespace().find_map(|w| w.strip_prefix(name));
     let unfreed = |a: &str, f: &str| a.parse::<u64>().ok()?.checked_sub(f.parse().ok()?);
-    match counts {
+    let blocks = match field("blocks=").and_then(|b| b.split_once('/')) {
         Some((a, f)) if unfreed(a, f).is_some_and(|n| n <= allowed) => None,
         Some((a, f)) => Some(format!("leak: {a} blocks allocated, {f} freed")),
-        None => Some("leak check: no `rc stats` report on stderr".into()),
+        None => Some("leak check: no block counts in the `rc stats` report".into()),
+    };
+    let strings = match (field("alloc="), field("free=")) {
+        (Some(a), Some(f)) if unfreed(a, f) == Some(0) => None,
+        (Some(a), Some(f)) => Some(format!("leak: {a} heap strings allocated, {f} freed")),
+        _ => Some("leak check: no string counts in the `rc stats` report".into()),
+    };
+    blocks.or(strings)
+}
+
+/// A release build (`mode`) calls std's heap hooks with the debug runtime too (the header).
+fn heap_hooks(cmd: &mut Command, mode: Option<&str>) {
+    if mode.is_some() && std::env::var_os("VELT_HEAP_HOOKS").is_none() {
+        cmd.env("VELT_HEAP_HOOKS", "1");
     }
 }
 
-/// The build modes to check: `VELT_GOLDEN_MODES=debug` or `release` (the fast gate checks debug
+/// The build modes to check:`VELT_GOLDEN_MODES=debug` or `release` (the fast gate checks debug
 /// only); both by default.
 fn modes() -> Vec<Option<&'static str>> {
     match std::env::var("VELT_GOLDEN_MODES").as_deref() {

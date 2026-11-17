@@ -1,12 +1,12 @@
 // velt/process (internal): `Stderr`, standard error (for its `isTTY`), and `stderr`.
 
-import { velt_rt_isatty } from "velt/process/rt";
+import { isatty } from "velt/process/tty";
 
 /** Standard error, for its `isTTY` (write strings to it with `process.stderr.write(s)`). */
 export struct Stderr {
   /** Whether standard error is a terminal (Node's `process.stderr.isTTY`). Cached. */
   get isTTY(): bool {
-    return velt_rt_isatty(2);
+    return isatty(2);
   }
 }
 

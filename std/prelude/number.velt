@@ -2,13 +2,9 @@
 // `toExponential` and `toPrecision` on f64, and
 // the static members of `Number` (`Number.isInteger`, `Number.MAX_SAFE_INTEGER`, …).
 
-import { trunc } from "velt/lang/intrinsics";
+import { hookCall, trunc } from "velt/lang/intrinsics";
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
-
-// `digits` < 0: omitted.
-declare function velt_rt_f64_to_exponential(x: f64, digits: i64): string;
-declare function velt_rt_f64_to_precision(x: f64, precision: i64): string;
 
 /**
  * A value that is not a number (an `f64`). NaN does not equal any value, including itself: test
@@ -38,14 +34,14 @@ extend f64 {
    */
   toExponential(digits?: number): string {
     if (digits == null) {
-      return velt_rt_f64_to_exponential(this, -1);
+      return hookCall("number_to_exponential", this, -1);
     }
     // Truncates, saturating, and NaN is 0: JavaScript's ToIntegerOrInfinity, clamped.
     const d = digits as i64;
     if (isFinite(this) && (d < 0 || d > 100)) {
       panic("RangeError: toExponential() argument must be between 0 and 100");
     }
-    return velt_rt_f64_to_exponential(this, d);
+    return hookCall("number_to_exponential", this, d);
   }
 
   /**
@@ -62,7 +58,7 @@ extend f64 {
     if (isFinite(this) && (p < 1 || p > 100)) {
       panic("RangeError: toPrecision() argument must be between 1 and 100");
     }
-    return velt_rt_f64_to_precision(this, p);
+    return hookCall("number_to_precision", this, p);
   }
 }
 

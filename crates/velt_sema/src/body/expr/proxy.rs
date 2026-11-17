@@ -255,7 +255,15 @@ impl FnCx<'_, '_> {
             }
             self.cx.any_impl();
             self.cx.note_dyn_members();
-            if name == "set" {
+            // Each of these changes its target, which a copy made of it would miss.
+            let changes = [
+                "set",
+                "deleteProperty",
+                "defineProperty",
+                "setPrototypeOf",
+                "preventExtensions",
+            ];
+            if changes.contains(&name) {
                 self.note_dynamic_write("", span);
             }
         }
@@ -492,6 +500,11 @@ impl FnCx<'_, '_> {
             super::setters::synth(ast::ExprKind::Lit(ast::Lit::Str(name)), span)
         };
         self.note_dyn_members();
+        // A delete through `any` writes whatever object the value holds (`crate::object_copies`).
+        match key {
+            super::record::RecordKey::Name(p) => self.note_dynamic_write(&p.name, span),
+            _ => self.note_dynamic_write("", span),
+        }
         let k = match key {
             super::record::RecordKey::Name(p) => lit(p.name.clone(), p.span),
             super::record::RecordKey::Index(e) | super::record::RecordKey::Computed(e) => {
