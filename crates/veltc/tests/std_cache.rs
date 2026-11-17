@@ -2,12 +2,6 @@
 //! into every program that compiles the same code: release builds with `VELT_STD_OBJECT=1` (by
 //! default those marked `@noInline`), debug builds by default, where only `velt cache warm`
 //! stores objects.
-//!
-//! These builds turn prebuilt hook modules off (`VELT_PREBUILT_HOOKS=0`; `prebuilt_hooks.rs`
-//! tests them): a fill that misses one loads the module, compiles its functions here and stores
-//! the module's object, which the next build links instead of loading the module, so it would
-//! find fewer functions than the fill compiled (`toFixed` reaches `number_digits`). A build after
-//! `velt cache warm`, which runs with them on, turns them on again.
 
 use std::path::{Path, PathBuf};
 use std::process::Output;
@@ -37,7 +31,7 @@ fn build(dir: &Path, file: &str, out: &str, cache: &Path, extra: &[(&str, &str)]
         .env("VELT_STD_OBJECT", "1")
         .env("VELT_STD_OBJECT_STATS", "1")
         .env("VELT_BUILD_CACHE", cache)
-        .env("VELT_PREBUILT_HOOKS", "0")
+        .env("VELT_PREBUILT_HOOKS", "0") // why: std_cache/warm.rs
         .env_remove("VELT_RT_LINK");
     for (k, v) in extra {
         cmd.env(k, v);
@@ -465,7 +459,7 @@ fn debug_command(dir: &Path, file: &str, out: &str, cache: &Path) -> std::proces
         .env("VELT_STD_OBJECT_STATS", "1")
         .env("VELT_BUILD_CACHE", cache)
         .env("VELT_BUILD_STAMP", "off")
-        .env("VELT_PREBUILT_HOOKS", "0")
+        .env("VELT_PREBUILT_HOOKS", "0") // why: std_cache/warm.rs
         .env_remove("VELT_STD_OBJECT")
         .env_remove("VELT_RT_LINK");
     cmd

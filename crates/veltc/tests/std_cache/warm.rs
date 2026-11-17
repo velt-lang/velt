@@ -1,4 +1,10 @@
 //! `velt cache warm`: what it stores for debug and release builds, and its marker.
+//!
+//! The std cache's builds turn prebuilt hook modules off (`VELT_PREBUILT_HOOKS=0`;
+//! `prebuilt_hooks.rs` tests them): a fill that misses one loads the module, compiles its
+//! functions there and stores the module's object, which the next build links instead of loading
+//! the module, so it would find fewer functions than the fill compiled (`toFixed` reaches
+//! `number_digits`). A build after `velt cache warm`, which runs with them on, turns them on again.
 
 use super::*;
 
