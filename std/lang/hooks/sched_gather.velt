@@ -3,10 +3,11 @@
 // (sched_spread.velt); nothing else brings them back, and a task left alone on an idle worker
 // pays a kernel wake-up for every call from another worker (an actor's shard at low load). So an
 // idle worker hands the tasks woken onto it to worker 0, when it takes its inbox:
-// - Idle: not worker 0, tasks spread (`M_SPREAD`), and asleep at least `IDLE_PCT` percent of its
-//   window so far, which is at least the spread's `WINDOW` long: a worker that ran a burst keeps
-//   its tasks until it has been mostly asleep that long (the hysteresis against offers, which
-//   need the queue's delay to stay high over a window too).
+// - Idle: not worker 0, tasks spread (`M_SPREAD`), and in the spread's window so far (at least
+//   `MIN_POLLS` polls) at least `WOKEN_PCT` percent of its polls began with a kernel wake-up (its
+//   `E_UNPARKS` count against its polls): its tasks reach it one at a time while it sleeps, the
+//   cost this saves. A busy worker, or one whose spin catches its tasks (sched_spin.velt), is
+//   seldom woken from its reactor, so a burst's spread stays (the hysteresis against offers).
 // - Worker 0 not loaded: fewer than `sp.BORROW_MIN` tasks queued (`E_QUEUED`, as borrowers read).
 // - A task that may move goes as it is; an anchored one only when it can carry its sleeps
 //   (sched_sleep_carry.velt); a pinned one, or one anchored for good, stays.
@@ -17,17 +18,20 @@ import * as sp from "./sched_spread";
 import * as t from "./sched_task";
 import * as wk from "./sched_wake";
 
-const IDLE_PCT: usize = 75;
+const MIN_POLLS: usize = 16;
+const WOKEN_PCT: usize = 50;
 
 /** Does worker `e` hand the tasks of its inbox to worker 0 (`g`)? */
 export function gathers(e: usize, g: usize): bool {
   if ((m.ld32(e + t.E_MODE) & t.M_SPREAD) === 0) {
     return false;
   }
-  const now = m.ld(e + t.E_NOW);
-  const started = m.ld(e + t.E_W_START);
-  const wall = now > started ? now - started : 0;
-  if (wall < sp.WINDOW || m.ld(e + t.E_W_SLEPT) * 100 < wall * IDLE_PCT) {
+  const polls = m.ld(e + t.E_POLLS) - m.ld(e + t.E_W_POLLS);
+  if (polls < MIN_POLLS) {
+    return false;
+  }
+  const woken = m.load(e + t.E_UNPARKS) - m.ld(e + t.E_W_UNPARKS);
+  if (woken * 100 < polls * WOKEN_PCT) {
     return false;
   }
   return m.load(g + t.E_QUEUED) < sp.BORROW_MIN;
