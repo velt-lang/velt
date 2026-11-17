@@ -1,6 +1,6 @@
 // velt/process (internal): `pid`, this process's id.
 
-import { processId } from "#os-sys";
+import { processId } from "#process-pid";
 
 /** This process's id, as the builtin `process.pid` (Node's `process.pid`). */
 export function pid(): number {

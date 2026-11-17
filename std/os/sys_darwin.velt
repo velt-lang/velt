@@ -4,7 +4,7 @@
 import { CString } from "velt/ffi/c_string";
 import { Out } from "velt/ffi/out";
 import { Ptr } from "velt/ffi/ptr";
-import { hostname as posixHostname, processId as posixProcessId } from "./posix";
+import { hostname as posixHostname } from "./posix";
 import { posixTmpdir } from "./tmpdir";
 
 declare c("c") function sysctlbyname(
@@ -56,9 +56,4 @@ export function hostname(): string {
 /** The directory for temporary files, as Node's `os.tmpdir()` finds it. */
 export function tmpdir(): string {
   return posixTmpdir();
-}
-
-/** This process's id. */
-export function processId(): i64 {
-  return posixProcessId();
 }

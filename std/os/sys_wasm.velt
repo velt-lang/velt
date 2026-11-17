@@ -19,8 +19,3 @@ export function hostname(): string {
 export function tmpdir(): string {
   return "/tmp";
 }
-
-/** This process's id: 1 (a WebAssembly module has no process id). */
-export function processId(): i64 {
-  return 1;
-}

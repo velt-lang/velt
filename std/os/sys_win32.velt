@@ -7,7 +7,6 @@ import { windowsTmpdir } from "./tmpdir";
 import { startWinsock } from "./winsock_win32";
 
 declare c("c") function GetCurrentProcess(): usize;
-declare c("c") function GetCurrentProcessId(): u32;
 declare c("c") function GetProcessAffinityMask(
   process: usize,
   processMask: Out<usize>,
@@ -74,10 +73,4 @@ function windowsDirectory(): string {
 /** The directory for temporary files, as Node's `os.tmpdir()` finds it. */
 export function tmpdir(): string {
   return windowsTmpdir(windowsDirectory);
-}
-
-/** This process's id (`GetCurrentProcessId`). */
-export function processId(): i64 {
-  // SAFETY: no arguments, and it cannot fail.
-  return unsafe { GetCurrentProcessId() } as i64;
 }

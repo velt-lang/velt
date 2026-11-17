@@ -4,7 +4,6 @@
 import { utf8DecodeLossy } from "velt/encoding/utf8";
 
 declare c("c") function gethostname(name: u8[], len: usize): i32;
-declare c("c") function getpid(): i32;
 
 /** The longest host name POSIX promises room for (`HOST_NAME_MAX` is 255 on Linux and macOS). */
 const NAME_ROOM: usize = 256;
@@ -19,10 +18,4 @@ export function hostname(): string {
   // A name that fills the buffer may come without its NUL: it ends at the buffer's end.
   const end = buf.indexOf(0);
   return utf8DecodeLossy(end < 0 ? buf : buf.slice(0, end));
-}
-
-/** This process's id (`getpid`). */
-export function processId(): i64 {
-  // SAFETY: no arguments, and it cannot fail.
-  return unsafe { getpid() } as i64;
 }

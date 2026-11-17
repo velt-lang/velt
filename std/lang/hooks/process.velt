@@ -6,7 +6,7 @@
 // to standard output (`stdoutWritten`), which `console.log` and every std writer of stdout set and
 // velt/sync's hand-offs read (std/sync/output.velt, #2771).
 
-import { processId } from "#os-sys";
+import { processId } from "#process-pid";
 import { addressLoad, addressStore, inline, noInline } from "velt/lang/intrinsics";
 
 declare function velt_rt_write_str(stream: u32, s: string);
