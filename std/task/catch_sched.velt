@@ -127,6 +127,7 @@ function caughtPoll(a: usize, cx: usize): u32 {
   const e = a - nc.E_CATCH_ARGS;
   const catching = m.ld(e + nc.E_CATCHING);
   const adopting = m.ld(e + t.E_ADOPTING);
+  const guarded = m.ld(e + nc.E_GUARDED);
   m.st(e + nc.E_CATCHING, catching + 2);
   m.st(a + 16, cx);
   // SAFETY: `pollArgs` takes one number; the exception object is kept by the panicked promise
@@ -135,6 +136,9 @@ function caughtPoll(a: usize, cx: usize): u32 {
   m.st(e + nc.E_CATCHING, catching);
   if (x !== 0) {
     m.st(e + t.E_ADOPTING, adopting);
+    // A `catchPanic` in the poll that panicked between its `arm` and its `take` never put the
+    // promise guarded for the enclosing one back: it is what it was before the poll.
+    m.st(e + nc.E_GUARDED, guarded);
     m.st(a + 16, x);
     return 2;
   }

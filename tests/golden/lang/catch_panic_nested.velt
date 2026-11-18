@@ -37,6 +37,17 @@ async function deep(level: number): Promise<number> {
   }
 }
 
+// Not an async function: it panics before there is a promise to guard.
+function syncPanic(): Promise<number> {
+  panic("sync");
+}
+
+// The inner `catchPanic` unwinds between arming and taking its promise, in the first run of the
+// outer one's body.
+async function firstRunInner(): Promise<number> {
+  return await catchPanic(() => syncPanic());
+}
+
 async function main() {
   try {
     await catchPanic(() => outerBody());
@@ -50,4 +61,10 @@ async function main() {
   }
   console.log("nested without a panic", n);
   console.log("three deep", await catchPanic(() => deep(3)));
+  try {
+    await catchPanic(() => firstRunInner());
+    console.log("no panic");
+  } catch (e) {
+    console.log("caught the inner body's own panic", e instanceof PanicError);
+  }
 }

@@ -1,3 +1,4 @@
 caught true
 nested without a panic 100
 three deep 1
+caught the inner body's own panic true
