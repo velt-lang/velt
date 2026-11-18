@@ -12,9 +12,8 @@
 // in Velt's lock (sched_module.velt) on its workers, or a program without the executor (one
 // thread). At a normal end with the debug counters on, the blocks go (`dropAll`).
 
-import { addressLoad, inline, noInline } from "velt/lang/intrinsics";
+import { addressLoad, inline, noInline, rawAlloc, rawFree } from "velt/lang/intrinsics";
 import { addressCall } from "velt/lang/intrinsics/future";
-import * as h from "./heap";
 import * as m from "./sched_mem";
 
 declare function velt_rt_write_str(stream: u32, s: string);
@@ -103,7 +102,7 @@ export function dropAll(): void {
     unsafe {
       addressCall(m.ld(desc + DESC_DROP), p);
     }
-    h.heapFree(p as u64, bytesOf(desc) as u64, alignOf(desc) as u64);
+    freeBlock(desc, p);
   }
   COUNT.store(0, "relaxed");
   DESC.store(0, "relaxed");
@@ -198,14 +197,51 @@ function alignOf(desc: usize): usize {
 }
 
 /**
+ * A zeroed block of `desc`'s size and alignment, from the allocator compiled code uses
+ * (`rawAlloc`: the debug runtime counts and checks it), whose blocks are aligned to 8: a larger
+ * alignment (a SIMD slot's 16) takes `align` bytes more, the block starts at the first aligned
+ * address past a word that keeps the allocation's own (`freeBlock`).
+ */
+function allocBlock(desc: usize): usize {
+  const bytes = bytesOf(desc);
+  const align = alignOf(desc);
+  if (align <= RAW_ALIGN) {
+    const p = rawAlloc(bytes);
+    m.clear(p, bytes);
+    return p;
+  }
+  const raw = rawAlloc(bytes + align);
+  const past = raw + RAW_ALIGN;
+  const p = past + (align - past % align) % align;
+  m.st(p - RAW_ALIGN, raw);
+  m.clear(p, bytes);
+  return p;
+}
+
+/** Gives back block `p` of `desc`, which `allocBlock` made and nothing uses any more. */
+function freeBlock(desc: usize, p: usize): void {
+  const bytes = bytesOf(desc);
+  const align = alignOf(desc);
+  // SAFETY: `allocBlock` allocated these bytes for this descriptor; freed once (`dropAll`).
+  unsafe {
+    if (align <= RAW_ALIGN) {
+      rawFree(p, bytes);
+    } else {
+      rawFree(m.ld(p - RAW_ALIGN), bytes + align);
+    }
+  }
+}
+
+/** The alignment of `rawAlloc`'s blocks. */
+const RAW_ALIGN: usize = 8;
+
+/**
  * The block of `desc`, which no thread made yet, made as the runtime made it (module docs): zeroed,
  * with the descriptor's size and alignment, its entry added before the initializers run, then
  * `init`, and `rest` too when it is not the program's first block. Its address.
  */
 function newBlock(desc: usize): usize {
-  const bytes = bytesOf(desc);
-  const p = h.heapAlloc(bytes as u64, alignOf(desc) as u64) as usize;
-  m.clear(p, bytes);
+  const p = allocBlock(desc);
   const first = COUNT.load("relaxed") === 0;
   use(addEntry(desc, p, 0));
   // SAFETY: the descriptor's `init` and `rest` take the block they initialize; `p` is a zeroed
