@@ -108,6 +108,68 @@ const RUNTIME_REACH: &[(&str, &str)] = &[
     ("native", NATIVE_SUPPORT),
 ];
 
+/// C library functions std calls that touch only the program's memory or this thread's error
+/// slot: allocation, the memory and string helpers, and `errno` (macOS's `__error`, glibc's
+/// `__errno_location`, the CRT's `_errno`; Win32's `GetLastError`).
+const PURE_C: &[&str] = &[
+    "malloc",
+    "calloc",
+    "realloc",
+    "free",
+    "memcpy",
+    "memmove",
+    "memset",
+    "memchr",
+    "memcmp",
+    "strlen",
+    "__error",
+    "__errno_location",
+    "_errno",
+    "GetLastError",
+];
+
+/// The C library's and Win32's file functions std's file system code calls (std/fs/fd,
+/// std/fs/whole: #2196 moved them out of the runtime's `velt_rt_fs_*`), named as the runtime's
+/// were. Any other C function is outside as itself.
+const FILE_SYSTEM_C: &[&str] = &[
+    "open",
+    "close",
+    "read",
+    "write",
+    "pread",
+    "pwrite",
+    "fstat",
+    "stat",
+    "lstat",
+    "unlink",
+    "ftruncate",
+    "fsync",
+    "fdatasync",
+    "fcntl",
+    "mmap",
+    "madvise",
+    "opendir",
+    "readdir",
+    "closedir",
+    "mkdir",
+    "rmdir",
+    "CreateFileW",
+    "ReadFile",
+    "WriteFile",
+    "CloseHandle",
+    "GetFileSizeEx",
+    "GetFileInformationByHandle",
+    "GetFileInformationByHandleEx",
+    "GetFileAttributesW",
+    "GetFullPathNameW",
+    "FindFirstFileExW",
+    "FindNextFileW",
+    "FindClose",
+    "CreateDirectoryW",
+    "RemoveDirectoryW",
+    "DeleteFileW",
+];
+
 /// What the runtime's support for native packages (`velt_rt_native_*`) reaches.
 const NATIVE_SUPPORT: &str = "native code";
 
@@ -255,6 +317,12 @@ fn reason(symbol: &str) -> Option<String> {
         return None;
     }
     let Some(rest) = symbol.strip_prefix("velt_") else {
+        if PURE_C.contains(&symbol) {
+            return None;
+        }
+        if FILE_SYSTEM_C.contains(&symbol) {
+            return Some("the file system".to_string());
+        }
         return Some(format!("a C function `{symbol}`"));
     };
     if let Some(runtime) = rest.strip_prefix("rt_") {
@@ -402,7 +470,9 @@ mod tests {
         assert_eq!(outside("velt_rt_worker_count"), "the environment");
         // C functions, native packages (also those named like Velt's own prefixes), and
         // runtime functions not listed as pure.
-        assert_eq!(outside("open"), "a C function `open`");
+        assert_eq!(outside("open"), "the file system");
+        assert_eq!(outside("CreateFileW"), "the file system");
+        assert_eq!(outside("gethostname"), "a C function `gethostname`");
         assert_eq!(outside("velt_sqlite__open"), "native code of `sqlite`");
         assert_eq!(outside("velt_sigx__get"), "native code of `sigx`");
         assert_eq!(outside("velt_simdjson__parse"), "native code of `simdjson`");
@@ -431,6 +501,10 @@ mod tests {
             "velt_rt_uncaught_now",
             "velt_atomic_load_u64",
             "velt_simd_add_f32x4",
+            "malloc",
+            "memcpy",
+            "__error",
+            "GetLastError",
         ] {
             assert_eq!(reason(inside), None, "{inside}");
         }

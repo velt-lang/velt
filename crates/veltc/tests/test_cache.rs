@@ -135,7 +135,7 @@ fn the_leak_check_runs_what_an_ordinary_run_kept() {
 }
 
 /// A C function is outside the program: what it reads isn't covered by the program's bytes.
-/// std's `closeSync` calls the C library's `close`.
+/// std's `closeSync` calls the C library's `close`, which counts as the file system.
 #[cfg(unix)]
 #[test]
 fn a_test_calling_a_c_function_runs_every_time() {
@@ -146,12 +146,11 @@ fn a_test_calling_a_c_function_runs_every_time() {
     );
     for _ in 0..2 {
         let running = p.running(&[]);
-        // Also `__error` on macOS, where errno is read through it.
         let sys = running
             .iter()
             .find(|l| l.starts_with("tests/sys.test.velt"));
         assert!(
-            sys.is_some_and(|l| l.contains("not cacheable") && l.contains("a C function `close`")),
+            sys.is_some_and(|l| l.contains("not cacheable") && l.contains("the file system")),
             "{running:?}"
         );
     }
