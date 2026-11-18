@@ -10,3 +10,5 @@ export const FLAGS_AT: usize = 0;
 export const SA_RESTART: i32 = 0;
 /** `SIGUSR1` (the tests raise it). */
 export const SIGUSR1: i32 = 0;
+/** `SIGBUS`: a read of a mapped page that is not in its file any more (std/fs/mapped_fault.velt). */
+export const SIGBUS: i32 = 0;
