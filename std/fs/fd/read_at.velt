@@ -1,0 +1,35 @@
+// velt/fs (internal): `readAt`, a positioned read the calling task awaits.
+
+import { readChunkLater } from "#fs-read-at";
+import { descriptor, integer, MAX_INT32, MAX_SAFE } from "velt/fs/fd/args";
+import { osError } from "velt/fs/errors";
+
+/**
+ * Reads up to `length` bytes of the open file `fd` from byte `position`, without holding the
+ * calling task's thread while the disk answers: the bytes read, fewer than `length` at the end
+ * of the file and none past it. Reads started together wait for the disk together:
+ *
+ *     const parts = await Promise.all(offsets.map((at) => readAt(fd, 4096, at)));
+ *
+ * With the executor in Velt (`VELT_SCHEDULER=std`) the reads run on its blocking pool. Under the
+ * runtime's own scheduler each is a task of its own, which holds a worker thread while it
+ * waits, so about as many overlap as there are workers.
+ *
+ * The file's own position is neither used nor moved. `RangeError` for a `length` or `position`
+ * that is not a whole number in range, `IoError` when the read fails. Where `readSync` reads
+ * into a buffer of the caller's, this returns bytes of its own: a buffer cannot be filled by
+ * another thread while its owner may use it.
+ */
+export async function readAt(fd: number, length: number, position: number): Promise<u8[]> {
+  const f = descriptor(fd);
+  const len = integer("length", length, 0, MAX_INT32) as usize;
+  const at = integer("position", position, 0, MAX_SAFE);
+  if (len == 0) {
+    return [];
+  }
+  const got = await readChunkLater(f, len, at);
+  if (got.error != 0) {
+    throw osError(got.error, "read");
+  }
+  return got.bytes;
+}
