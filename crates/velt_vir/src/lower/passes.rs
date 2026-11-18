@@ -61,7 +61,7 @@ pub(super) fn lower_program_kept<'h>(
     let mut types = hir.types.clone();
     let mut counted = boxing::Boxing::initial(hir);
     let mut no_await_steps = false;
-    let mut value_params = None;
+    let (mut value_params, mut map_hint) = (None, None);
     // `VELT_LOWER_WHOLE`: every pass whole, as before facts-only passes (tests compare both).
     let facts_only = std::env::var_os("VELT_LOWER_WHOLE").is_none();
     let profile = std::env::var_os("VELT_LOWER_PROFILE").is_some();
@@ -92,6 +92,7 @@ pub(super) fn lower_program_kept<'h>(
         cx.glue_slots.keep_all = want_seed || glue::demand_off();
         cx.shapes.wanted = shape::wanted(opts.shapes);
         cx.shapes.on = cx.shapes.wanted;
+        cx.shapes.multi_hint = map_hint.take();
         cx.locs = opts
             .source_map
             .map(|sm| srcloc::LocMap::new(sm, opts.std_root));
@@ -112,7 +113,7 @@ pub(super) fn lower_program_kept<'h>(
         cx.build_iface_glues();
         cx.build_fn_tables();
         lower_profile::end_pass(pass, pass_start.elapsed());
-        cx.shapes_close();
+        map_hint = cx.shapes_close();
         let next = cx.close_boxing();
         if next == counted && seeded && next.locks_may_follow_seed() {
             return lower_program_kept(hir, &boxing::without_seed(opts), want_seed, keep);

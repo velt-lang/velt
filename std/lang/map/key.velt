@@ -1,0 +1,15 @@
+// velt/lang/map (internal): a key's hash and comparison as functions. Shared `Map` code (debug
+// builds, docs/internals/design/shape-sharing.md step 4) can't write them out for its key type,
+// so it calls the instance of these for each key type through its dictionary.
+
+import { hash, keyEq } from "velt/lang/intrinsics";
+
+/** `hash(key)`, as a function. */
+export function keyHash<K>(key: K): u64 {
+  return hash(key);
+}
+
+/** `keyEq(a, b)`, as a function. */
+export function keySame<K>(a: K, b: K): boolean {
+  return keyEq(a, b);
+}

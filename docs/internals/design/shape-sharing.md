@@ -1,6 +1,8 @@
 # Design: generic instances shared by shape (Go-style dictionaries)
 
-Status: step 2 is implemented (#2285), in debug builds only; steps 3 and later are proposed
+Status: step 2 is implemented (#2285), in debug builds only; step 4's first family, the prelude
+`Map`'s `<K, V>` functions, is implemented in debug builds (#2707: "Step 4, the `Map` family"
+below); steps 3 and the rest of 4 are proposed
 (#2271, part of #2189 and #1612 item 2). It starts from the proposal on
 #2189 (2026-11-03 17:19) and answers the five points #2271 leaves to review. Related designs:
 [package-cache.md](package-cache.md) (the per-package cache, #2236), #375's generic interface
@@ -782,3 +784,39 @@ dictionaries, the glue and the rewrite of pseudo ids into dictionary loads. It a
    strides then differ from the per-type layout, so arrays of `T` inside shared code would still
    use the exact stride, read from the dictionary. That is more change than step 2 needs. It is
    decided by the counters, not up front.
+
+## Step 4, the `Map` family (debug builds)
+
+Implemented for #2707. A call of a `<K, V>` function of `std/prelude/map` (`Map.` methods) or
+`std/lang/map/` from code of concrete types calls the shared instance when `map_shares_at`
+allows it. What differs from step 2:
+
+- **Key and comparison.** `hash` and `keyEq` of a placeholder key call `keyHash` and `keySame`
+  (std/lang/map/key.velt) at the key type, through the dictionary. Std's map code keeps the
+  intrinsics, so release code is unchanged (`bench/vir_identical.sh` with `RELEASE=1` is
+  byte-identical); sema keeps the two functions checked (`BY_NAME`).
+- **More rows in the key:** `struct` and C-struct keys, `holds_atomic`, option-ness,
+  `object_only`, `holds_dynamic`, a union view, in-place parts and `shares_as_counted`. The rows
+  that recurse are cut where a recursive type comes back.
+- **Not shared** (`map_shareable`, per call): options, types with parts a share copies,
+  `struct` values, types a view or proxy can stand for. `map_agrees` also leaves a call per type
+  when its `Map<K, V>` answers differently from the representatives' map (which counted-types
+  sets hold a map type depends on the program's use of it), is proxiable (its methods are read as
+  function values), or holds a map. Functions that throw, the constructor (its descriptor holds the
+  map's own code) and those writing a key's text stay per type (`MAP_PER_TYPE`).
+- **Own placeholders.** The family's positions start at `MAP_POS`, so they never share a
+  placeholder with the array-view helpers'.
+- **The end-of-pass check is per dictionary:** each dictionary's concrete types against the
+  representatives, for the types its instance's body asked about. Per member, a type that joined a
+  shape through `Map<B, number>` was checked against `Map<ph, bool>` of a `Set<A>` it never meets.
+
+Debug builds also pass every caller location as a parameter (track_caller.rs `tracks_by_arg`),
+so a caller-tracking `Map` method is one instance, not one per call site.
+
+A pair shares only when its shape had two members or more in the previous pass (`multi_pairs`,
+`multi_hint`): a one-member shape gains nothing and costs its dictionary's indirect calls.
+
+Measured on the 10k application of the compile benchmark (debug, build cache off, with the
+caller locations passed as parameters): VIR statements 171,391 to 145,871 and instructions
+-8.5% against `VELT_SHAPES=off`. On `bench/compile/scale` 10k, whose features all use one record
+type, nothing shares and nothing costs.

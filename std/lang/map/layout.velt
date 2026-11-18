@@ -46,6 +46,10 @@
 // breakpoints (`off` is 0). Renumbering rebuilds the breakpoints (at most one per run of
 // removed entries), so set, get and append never touch them.
 
+// Loaded with the map: shared `Map` code (debug builds) reaches a key type's hash and comparison
+// through these (std/lang/map/key.velt).
+import { keyHash, keySame } from "velt/lang/map/key";
+
 /** First index capacity once a map receives its first entry. */
 export const INITIAL_SLOTS: usize = 8;
 
