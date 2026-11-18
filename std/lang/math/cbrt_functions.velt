@@ -1,0 +1,17 @@
+// velt/lang/math (internal): `Math.cbrt`, as an extension of the prelude's class over fdlibm's
+// routines (velt/lang/math/cbrt). In a module of its own so that a program loads these ports only
+// when it calls one of these functions (std/prelude/global/math_cbrt.velt, a conditional global).
+
+import { cbrt } from "velt/lang/math/cbrt";
+
+// Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
+
+extend Math {
+  /**
+   * Returns the cube root of a number.
+   * @param x - A numeric expression.
+   */
+  static cbrt(x: f64): f64 {
+    return cbrt(x);
+  }
+}
