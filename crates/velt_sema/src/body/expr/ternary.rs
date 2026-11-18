@@ -119,6 +119,8 @@ impl FnCx<'_, '_> {
         self.simple_decl(v, name, ann, span, out);
         (self.kept_arms, self.kept_plain_arms) = (outer, plain);
         self.note_widening_const(v, name);
+        // `const el = document.body` (`never_write.rs`).
+        self.note_browser_local(v, name);
     }
 
     /// The literal type of an arm written `"a" as const`, or `"a"` (`None` for a nested

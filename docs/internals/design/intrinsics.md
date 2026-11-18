@@ -90,6 +90,18 @@ so their callers are unsafe code with a `// SAFETY:` comment, as for `addressLoa
   with a class would move an owned reference as raw bytes): nothing that owns memory or holds a
   reference crosses as raw bytes. (The `addressAtomic*` ones accept a type parameter, since their
   lowering checks each instance is an integer.)
+- `addressArray<T>(address: usize, length: usize): T[]` is an array over memory it does not
+  own: the header `{ data: address, len: length, cap: 0 }`, the form a constant table's
+  read-only data already has (velt_vir `lower/array`), so dropping it frees nothing and a copy
+  of it (`[...xs]`, a transfer of a value still referenced elsewhere) is an ordinary array.
+  `T` is a number type or `bool`, as for `addressLoad`. Every read of it is the usual
+  bounds-checked element read or SIMD load, at no cost over an owned array. Nothing may write
+  or grow it (a store goes to the foreign memory, and growth would hand the foreign pointer to
+  the allocator), so std wraps it in `shared(...)` before it leaves the unsafe function that
+  makes it: `shared<T[]>` is read-only for every holder. Its one user is `MappedFile`
+  (std/fs/mapped_file.velt), whose mappings are never unmapped; an array over memory that can
+  go away needs a lifetime the compiler tracks (the byte views of sqlite-engine.md, #1718)
+  before it can be offered.
 - `addressAtomicLoad<T>`, `addressAtomicStore<T>`, `addressAtomicRmw<T>`, `addressAtomicCas<T>`
   and `addressAtomicCasWeak<T>` take an address (`usize`) of an integer `T` and do what
   `Atomic<T>`'s methods do on it: the same `velt_atomic_*` operations (velt_vir `atomic.rs`), so

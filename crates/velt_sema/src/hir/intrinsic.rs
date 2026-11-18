@@ -379,6 +379,13 @@ pub enum Intrinsic {
     /// checks it): `v` written at `address`, unchecked (intrinsics.md "Memory at an address").
     /// Additive.
     AddressStore,
+    /// std only: `addressArray<T>(address: usize, length: usize) -> T[]`, `T` a number type or
+    /// `bool` (sema checks it): an array of the `length` elements at `address` that does not own
+    /// them (`cap == 0`, velt_vir `lower/array`): dropping it frees nothing, and a copy of it is
+    /// an ordinary array. Nothing checks that the memory is there, stays there or is aligned
+    /// for `T`, and the array must never be written or grown: std hands it out only as
+    /// `shared<T[]>` (`MappedFile`, std/fs/mapped_file.velt). Additive.
+    AddressArray,
     /// std only (as are the other four `AddressAtomic*`): `addressAtomicLoad<T>(address: usize,
     /// order: u8) -> T`, `T` an integer type: as `AtomicLoad` on the integer at `address`, `T`
     /// being the call's type. Sema turns the declaration's string literal orderings into the

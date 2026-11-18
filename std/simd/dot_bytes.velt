@@ -23,3 +23,28 @@ export function dotI8(a: i8[], b: i8[]): i32 {
   }
   return sum;
 }
+
+/**
+ * The dot product of `count` elements of `a` from index `aAt` and of `b` from index `bAt`, as
+ * `dotI8` of those two ranges without copying them out: row `r` of a flat `rows × dim` array
+ * against a query is `dotI8At(rows, r * dim, query, 0, dim)`. Panics with a RangeError when a
+ * range passes the end of its array.
+ */
+@noInline
+export function dotI8At(a: i8[], aAt: usize, b: i8[], bAt: usize, count: usize): i32 {
+  if (aAt > a.length || count > a.length - aAt) {
+    panic(
+      `RangeError: dotI8At: ${count} values from index ${aAt} pass the end (length ${a.length})`,
+    );
+  }
+  if (bAt > b.length || count > b.length - bAt) {
+    panic(
+      `RangeError: dotI8At: ${count} values from index ${bAt} pass the end (length ${b.length})`,
+    );
+  }
+  let sum: i32 = 0;
+  for (let i: usize = 0; i < count; i++) {
+    sum += (a[aAt + i] as i32) * (b[bAt + i] as i32);
+  }
+  return sum;
+}

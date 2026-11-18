@@ -13,6 +13,7 @@ export {
   addressAtomicLoad,
   addressAtomicRmw,
   addressAtomicStore,
+  addressArray,
   addressLoad,
   addressStore,
   exportedAddress,

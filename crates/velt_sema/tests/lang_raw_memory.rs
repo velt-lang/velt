@@ -13,7 +13,8 @@ fn std_diagnostics(src: &str) -> String {
     l.render(&d)
 }
 
-const IMPORTS: &str = "import { addressAtomicCas, addressAtomicLoad, addressAtomicRmw,
+const IMPORTS: &str =
+    "import { addressArray, addressAtomicCas, addressAtomicLoad, addressAtomicRmw,
   addressAtomicStore, addressCall, addressCall3, addressCallWord, addressLoad, addressStore,
   atomicAddress, fnAddress, futDrop,
   futPoll, promiseAt, slotPut, slotTake, stateDrop, statePoll }
@@ -101,6 +102,38 @@ fn address_load_and_store_move_only_numbers_and_bools() {
         e.contains("`addressLoad<T>` needs a number type or `bool` for `T`, found `T`"),
         "{e}"
     );
+}
+
+#[test]
+fn an_array_at_an_address_holds_numbers_and_needs_unsafe() {
+    std_ok(
+        "function main() {
+           if (false) {
+             // SAFETY: never runs.
+             const xs: f32[] = unsafe { addressArray<f32>(4096, 2) };
+             const s: shared<f32[]> = shared(xs);
+             console.log(s.length);
+           }
+         }",
+    );
+    let e =
+        std_err("function main() { unsafe { console.log(addressArray<string>(8, 1).length); } }");
+    assert!(
+        e.contains("`addressArray<T>` needs a number type or `bool` for `T`, found `string`"),
+        "{e}"
+    );
+    // A type parameter: an instance with a class would treat raw bytes as owned references.
+    let e = std_err(
+        "function at<T>(a: usize): T[] { return unsafe { addressArray<T>(a, 1) }; }
+         function main() {}",
+    );
+    assert!(
+        e.contains("`addressArray<T>` needs a number type or `bool` for `T`, found `T`"),
+        "{e}"
+    );
+    // Not in unsafe code.
+    let e = std_err("function main() { console.log(addressArray<u8>(8, 1).length); }");
+    assert!(e.contains("unsafe"), "{e}");
 }
 
 #[test]

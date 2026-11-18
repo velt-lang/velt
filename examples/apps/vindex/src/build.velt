@@ -1,0 +1,203 @@
+// Building the index from vectors.f32 in three passes, none of which holds the vectors in
+// memory:
+//
+//   1. train: k-means on an evenly spaced sample
+//   2. assign: every worker streams its own range of rows and finds each row's list
+//   3. write: with the list sizes known, every worker streams its range again and writes its
+//      rows' records into the part of each list that is its own, through small per-list buffers
+//
+// Memory is the centroids, 4 bytes per row for the assignment, and the write buffers.
+import * as fs from "velt/fs";
+import { workerCount } from "velt/task";
+import { getF32s, quantize } from "./kernels";
+import { makeRouter, route } from "./router";
+import type { Router } from "./router";
+import { TopK } from "./topk";
+import { kmeans } from "./kmeans";
+import { openVectors, putU32, ranges, readAt, rowPos, writeAt, writeMeta } from "./store";
+import type { Meta } from "./store";
+
+const CHUNK: i64 = 2048; // rows per read
+const BUFFERED: i64 = 32; // records a list buffers before they are written
+
+/// `fan`: how many groups of centroids a row looks into for its list (router.velt).
+export type BuildOptions = { nlist: i64; iters: i64; samplePerList: i64; seed: u64; fan: i64 };
+
+type Assigned = { lists: u32[]; counts: i64[] };
+
+function loadSample(fd: number, dim: i64, n: i64, m: i64): f32[] {
+  const d = dim as usize;
+  const out: f32[] = new Array<f32>((m * dim) as number).fill(0);
+  const buf: u8[] = Buffer.alloc((dim * 4) as usize);
+  for (let i: i64 = 0; i < m; i++) {
+    readAt(fd, buf, dim * 4, rowPos(dim, (i * n) / m));
+    getF32s(buf, 0, d, out, (i as usize) * d);
+  }
+  return out;
+}
+
+/// The int8 scale: 127 over the 99.9th percentile of the sample's absolute values, so that
+/// the codes use their range and only outliers clip.
+function chooseScale(sample: f32[]): f32 {
+  const step = sample.length > 400000 ? Math.floor(sample.length / 400000) : 1;
+  const abs: f32[] = [];
+  for (let i = 0; i < sample.length; i += step) {
+    abs.push(Math.abs(sample[i] as number) as f32);
+  }
+  abs.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  const p = abs[Math.floor((abs.length - 1) * 0.999)];
+  return p > 0 ? 127 / p : 127;
+}
+
+async function assignPart(
+  fd: number,
+  router: Router,
+  fan: i64,
+  nlist: i64,
+  dim: i64,
+  start: i64,
+  end: i64,
+): Promise<Assigned> {
+  const d = dim as usize;
+  const lists: u32[] = [];
+  const counts: i64[] = new Array<i64>(nlist as number).fill(0);
+  const buf: u8[] = Buffer.alloc((CHUNK * dim * 4) as usize);
+  const chunk: f32[] = new Array<f32>((CHUNK * dim) as number).fill(0);
+  const near = new TopK(fan);
+  const top = new TopK(1);
+  for (let at = start; at < end; at += CHUNK) {
+    const rows = at + CHUNK < end ? CHUNK : end - at;
+    readAt(fd, buf, rows * dim * 4, rowPos(dim, at));
+    getF32s(buf, 0, (rows as usize) * d, chunk, 0);
+    for (let r: i64 = 0; r < rows; r++) {
+      top.reset(1);
+      route(router, chunk, (r as usize) * d, fan, near, top);
+      const best = top.keys[0];
+      lists.push(best as u32);
+      counts[best] += 1;
+    }
+  }
+  return { lists, counts };
+}
+
+async function writePart(
+  fd: number,
+  out: number,
+  lists: u32[],
+  cursors: i64[],
+  nlist: i64,
+  dim: i64,
+  scale: f32,
+  start: i64,
+  end: i64,
+): Promise<i64> {
+  const d = dim as usize;
+  const rec = dim + 4;
+  const row: f32[] = new Array<f32>(dim as number).fill(0);
+  const buf: u8[] = Buffer.alloc((CHUNK * dim * 4) as usize);
+  // One buffer for all lists: list `c` owns records [c * BUFFERED, (c + 1) * BUFFERED).
+  const pending: u8[] = Buffer.alloc((nlist * BUFFERED * rec) as usize);
+  const held: i64[] = new Array<i64>(nlist as number).fill(0);
+  const one: u8[] = Buffer.alloc((BUFFERED * rec) as usize);
+  const flush = (c: i64) => {
+    const len = held[c] * rec;
+    const from = c * BUFFERED * rec;
+    for (let i: i64 = 0; i < len; i++) {
+      one[i] = pending[from + i];
+    }
+    writeAt(out, one, len, cursors[c] * rec);
+    cursors[c] += held[c];
+    held[c] = 0;
+  };
+  for (let at = start; at < end; at += CHUNK) {
+    const rows = at + CHUNK < end ? CHUNK : end - at;
+    readAt(fd, buf, rows * dim * 4, rowPos(dim, at));
+    for (let r: i64 = 0; r < rows; r++) {
+      const c = lists[at - start + r] as i64;
+      const to = ((c * BUFFERED + held[c]) * rec) as usize;
+      putU32(pending, to, (at + r) as u32);
+      getF32s(buf, (r as usize) * d * 4, d, row, 0);
+      quantize(row, 0, d, scale, pending, to + 4);
+      held[c] += 1;
+      if (held[c] == BUFFERED) {
+        flush(c);
+      }
+    }
+  }
+  for (let c: i64 = 0; c < nlist; c++) {
+    if (held[c] > 0) {
+      flush(c);
+    }
+  }
+  return end - start;
+}
+
+export type BuildReport = { trainMs: number; assignMs: number; writeMs: number; meta: Meta };
+
+/// Builds `dir`'s index files from `dir/vectors.f32`.
+export async function build(dir: string, o: BuildOptions): Promise<BuildReport> {
+  const f = openVectors(`${dir}/vectors.f32`);
+  const dim = f.dim;
+  const n = f.n;
+  if (n > 0xffffffff) {
+    throw new RangeError("row ids are 32-bit in this version");
+  }
+  const nlist = o.nlist < n ? o.nlist : n;
+
+  let t0 = performance.now();
+  const m = n < nlist * o.samplePerList ? n : nlist * o.samplePerList;
+  const sample = loadSample(f.fd, dim, n, m);
+  const scale = chooseScale(sample);
+  const centroids = await kmeans(shared(sample), m, dim, nlist, o.iters, o.seed);
+  const cbytes: u8[] = Buffer.alloc((nlist * dim * 4) as usize);
+  for (let i: usize = 0; i < centroids.length as usize; i++) {
+    putU32(cbytes, 4 * i, centroids[i].toBits());
+  }
+  const cfd = fs.openSync(`${dir}/centroids.f32`, "w");
+  writeAt(cfd, cbytes, nlist * dim * 4, 0);
+  fs.closeSync(cfd);
+  const trainMs = performance.now() - t0;
+
+  t0 = performance.now();
+  const router = await makeRouter(shared(centroids), nlist, dim);
+  const parts = ranges(n, workerCount());
+  const assigning: Promise<Assigned>[] = [];
+  for (const r of parts) {
+    assigning.push(spawn(assignPart(f.fd, router, o.fan, nlist, dim, r[0], r[1])));
+  }
+  const assigned = await Promise.all(assigning);
+  const assignMs = performance.now() - t0;
+
+  // List c holds worker 0's rows, then worker 1's, ...: each worker gets its own cursor into
+  // every list, so the workers write without coordinating and a list stays in row order.
+  t0 = performance.now();
+  const offsets: i64[] = [0];
+  for (let c: i64 = 0; c < nlist; c++) {
+    let size: i64 = 0;
+    for (const a of assigned) {
+      size += a.counts[c];
+    }
+    offsets.push(offsets[c] + size);
+  }
+  const out = fs.openSync(`${dir}/lists.bin`, "w+");
+  fs.ftruncateSync(out, (n * (dim + 4)) as number);
+  const writing: Promise<i64>[] = [];
+  const taken: i64[] = offsets.slice(0, nlist as number);
+  for (let w = 0; w < parts.length; w++) {
+    const cursors = taken.clone();
+    for (let c: i64 = 0; c < nlist; c++) {
+      taken[c] += assigned[w].counts[c];
+    }
+    const r = parts[w];
+    writing.push(
+      spawn(writePart(f.fd, out, assigned[w].lists, cursors, nlist, dim, scale, r[0], r[1])),
+    );
+  }
+  await Promise.all(writing);
+  fs.fsyncSync(out);
+  fs.closeSync(out);
+  fs.closeSync(f.fd);
+  const meta: Meta = { dim, n, nlist, scale, offsets };
+  writeMeta(dir, meta);
+  return { trainMs, assignMs, writeMs: performance.now() - t0, meta };
+}

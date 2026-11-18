@@ -1,0 +1,32 @@
+// velt/lang/math (internal): the 32-bit halves of a double, which the fdlibm routines of this
+// folder test and edit (fdlibm's GET_HIGH_WORD, SET_HIGH_WORD and so on).
+
+/** The high 32 bits of `x` (the sign, the exponent and the top 20 bits of the fraction), signed. */
+export function highWord(x: f64): i32 {
+  return ((x.toBits() >> 32) as u32) as i32;
+}
+
+/** The low 32 bits of `x`. */
+export function lowWord(x: f64): u32 {
+  return x.toBits() as u32;
+}
+
+/** The double with the high word `hi` and the low word `lo`. */
+export function fromWords(hi: i32, lo: u32): f64 {
+  return f64.fromBits((((hi as u32) as u64) << 32) | (lo as u64));
+}
+
+/** `x` with its high word replaced by `hi`. */
+export function withHighWord(x: f64, hi: i32): f64 {
+  return f64.fromBits((((hi as u32) as u64) << 32) | (x.toBits() & 0xffffffff));
+}
+
+/** `x` with its low word cleared. */
+export function clearLowWord(x: f64): f64 {
+  return f64.fromBits(x.toBits() & 0xffffffff00000000);
+}
+
+/** 2^n for an `n` from -1022 to 1023. */
+export function pow2(n: i32): f64 {
+  return fromWords((0x3ff + n) << 20, 0);
+}
