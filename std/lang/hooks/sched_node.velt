@@ -76,9 +76,9 @@ export const RUNNING: u32 = 64;
 /**
  * Its polls catch a Velt panic (std/task/catch_sched.velt): `catchPanic`'s promise, and every
  * promise started while a catching poll runs. A panic makes it PANICKED: finished, its result
- * never written, read or dropped, its state never polled or dropped again, the node never freed
- * (a leaf in the abandoned state may still wake it); the exception, which holds the message, in
- * place of its poll; an owner awaiting it gets the panic raised again (`again`).
+ * never written, read or dropped, its state never polled or dropped again (the cleanup pads of
+ * its poll dropped what it held); the exception, which holds the message, in place of its poll,
+ * freed with the node; an owner awaiting it gets the panic raised again (`again`).
  */
 export const CATCHES: u32 = 128;
 export const PANICKED: u32 = 256;
