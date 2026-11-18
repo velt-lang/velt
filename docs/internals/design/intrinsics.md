@@ -102,16 +102,21 @@ so their callers are unsafe code with a `// SAFETY:` comment, as for `addressLoa
   (std/fs/mapped_file.velt), whose mappings are never unmapped; an array over memory that can
   go away needs a lifetime the compiler tracks (the byte views of sqlite-engine.md, #1718)
   before it can be offered.
-- `arrayAsBytes<T>(xs: T[]): u8[]` (std/lang/intrinsics/array.velt, unsafe) is the other array
-  that does not own its buffer: `{ data: xs's buffer, len: xs.length * sizeof(T), cap: 0 }`, the
-  bytes of a number array in place. It exists so that a generic function can hand a number array
-  to a C function's buffer parameter, which `declare c` takes only for a concrete element type:
-  velt/fs's `readNumbersSync<T extends Numeric>` and `writeNumbersSync` pass `arrayAsBytes(xs)`
-  to the same `pread`/`pwrite` wrappers `readSync` uses, so the system fills the array's own
-  memory. The result aliases `xs`, so it is good only until `xs` is next used, grown or dropped;
-  it never leaves the function that makes it. Sema holds `T` to a number type or `bool` and lets
-  a type parameter through (as `arrayCopyBytes`); lowering refuses an instance whose elements
-  own something, which the public functions' `Numeric` bound keeps user code from reaching.
+- `arrayDataAddress<T>(xs: Mut<T[]>): usize` (unsafe) and `arrayByteLength<T>(xs: T[]): usize`
+  (std/lang/intrinsics/array.velt) are the address of a number array's buffer and
+  `xs.length * sizeof(T)`. They exist so that a generic function can hand a number array's own
+  memory to a C function, which `declare c` takes as a buffer only for a concrete element type:
+  velt/fs's `readSync<T extends Numeric>` and `writeSync` pass the address to `pread` / `pwrite`
+  (`readAddress`, `writeAddress` of `#fd-system`), so the system fills or reads the array itself,
+  counted in bytes as Node counts a typed array's. The address is good only until the array is
+  grown or dropped, which nothing does during the call. Sema holds `T` to a number type or
+  `bool` and lets a type parameter through (as `arrayCopyBytes`); lowering refuses an instance
+  whose elements own something, and an array view, neither of which the `Numeric` bound of the
+  public functions lets user code reach.
+  An earlier form gave the bytes as a second, non-owning `u8[]` (as `addressArray` does). It
+  cost an allocation and a free at every call, since a `u8[]` value is a counted box in
+  programs that share one, and it left an aliasing array to keep from escaping; an address
+  has neither problem.
 - **`Numeric`** (std/prelude/number.velt) is that bound: an interface no type declares, which
   the compiler takes to be satisfied by the integer and float types (`f16` and `bf16` too) and
   by nothing else, as `AtomicValue` and `Frozen` are the compiler's (velt_sema `infer.rs`

@@ -190,22 +190,25 @@ impl FnLower<'_, '_> {
         let elem = self.elem_ty(aty);
         match (i, rest) {
             (I::ArrayLen, []) => self.rvalue_temp(Ty::U64, Rvalue::Use(Self::arr_field(&arr, 1))),
-            (I::ArrayAsBytes, []) => {
-                // `{ data, len * size, cap: 0 }`: the same buffer, not owned (lower/array).
+            (I::ArrayDataAddress, []) => {
                 if self.cx.needs_drop(elem) {
-                    ice("arrayAsBytes of an array whose elements own something");
+                    ice("arrayDataAddress of an array whose elements own something");
+                }
+                self.rvalue_temp(Ty::U64, Rvalue::Cast(Self::arr_field(&arr, 0), Ty::U64))
+            }
+            (I::ArrayByteLength, []) => {
+                if self.cx.needs_drop(elem) {
+                    ice("arrayByteLength of an array whose elements own something");
                 }
                 let (stride, _) = self.stride(elem);
-                let bytes = self.rvalue_temp(
+                self.rvalue_temp(
                     Ty::U64,
                     Rvalue::Binary(
                         BinOp::Mul,
                         Self::arr_field(&arr, 1),
                         cint(stride as i128, Ty::U64),
                     ),
-                );
-                let ty = self.sub(ty);
-                self.array_value(ty, Self::arr_field(&arr, 0), bytes, cint(0, Ty::U64))
+                )
             }
             (I::ArrayPush, [x]) => self.push(&arr, elem, x),
             (I::ArrayPop, []) => self.pop(&arr, elem, ty),

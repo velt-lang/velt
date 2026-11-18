@@ -10,7 +10,7 @@ import { hookCall, trunc } from "velt/lang/intrinsics";
  * The number types: the integer types and the float types (`f16` and `bf16` too), whose values
  * are their bytes. The compiler knows which, so no type declares it. A type parameter bounded
  * by it (`T extends Numeric`) takes any of them and nothing else, checked where the generic is
- * instantiated: what velt/fs's `readNumbersSync` reads into, for one.
+ * instantiated: what velt/fs's `readSync` reads into, for one.
  */
 export interface Numeric {}
 

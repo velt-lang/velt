@@ -66,14 +66,15 @@ pub enum Intrinsic {
     /// `dst`'s element, which owns nothing (both ranges bounds-checked; one memcpy). The bulk
     /// load of `velt/half` (`f16FromBytes`, std/half/bytes.velt). Additive.
     ArrayCopyBytes,
-    /// std only, unsafe: `arrayAsBytes<T>(xs (modified)) -> u8[]`, the bytes of `xs`'s elements
-    /// as an array that does not own them (`cap == 0`, as `AddressArray`): `xs.length * size`
-    /// bytes at `xs`'s buffer, `size` the byte size of its element, which owns nothing (a number
-    /// type or `bool`; sema checks it, and lowering each instance of a type parameter). It
-    /// aliases `xs`: valid only while `xs` is neither grown, dropped nor used. For passing a
-    /// number array of a generic function to a C buffer parameter (std/fs/fd/numbers.velt).
-    /// Additive.
-    ArrayAsBytes,
+    /// std only, unsafe: `arrayDataAddress<T>(xs (modified)) -> usize`, the address of `xs`'s
+    /// buffer (0 for an array without one), whose elements own nothing (a number type or
+    /// `bool`; sema checks it, and lowering each instance of a type parameter). Good only
+    /// until `xs` is grown or dropped. With `ArrayByteLength`, how a generic function hands a
+    /// number array's own memory to a C function (velt/fs's `readSync`). Additive.
+    ArrayDataAddress,
+    /// std only: `arrayByteLength<T>(xs) -> usize`, `xs.length * sizeof(T)` for an array of
+    /// numbers (checked as `ArrayDataAddress`). Additive.
+    ArrayByteLength,
     /// std only: `(xs (modified), len: usize)` set the length to `len` (growing the capacity
     /// when it is smaller) without dropping or initializing any element: slots past the old
     /// length must be written (`ArrayMove`) before they are read, and slots that are not owned

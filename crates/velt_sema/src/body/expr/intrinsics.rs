@@ -82,7 +82,10 @@ impl FnCx<'_, '_> {
                 self.throw_src(crate::defs::ThrowSrc::Direct(e, span));
             }
         }
-        if matches!(i, Intrinsic::ArrayCopyBytes | Intrinsic::ArrayAsBytes) {
+        if matches!(
+            i,
+            Intrinsic::ArrayCopyBytes | Intrinsic::ArrayDataAddress | Intrinsic::ArrayByteLength
+        ) {
             if let Some(&t) = ck.type_args.first() {
                 self.bytes_elem_check(i, t, span);
             }
@@ -149,7 +152,12 @@ impl FnCx<'_, '_> {
         }
         let shown = self.cx.display(t);
         let what = match i {
-            Intrinsic::ArrayAsBytes => "`arrayAsBytes` gives the bytes of an array of numbers",
+            Intrinsic::ArrayDataAddress => {
+                "`arrayDataAddress` gives the address of the bytes of an array of numbers"
+            }
+            Intrinsic::ArrayByteLength => {
+                "`arrayByteLength` gives the byte length of an array of numbers"
+            }
             _ => "`arrayCopyBytes` writes bytes into an array of numbers",
         };
         self.cx

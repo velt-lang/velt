@@ -79,15 +79,19 @@ export declare function arrayPrefetch<T>(xs: T[], i: usize): void;
 export declare function arrayMove<T>(dst: Mut<T[]>, d: usize, src: T[], s: usize, n: usize): void;
 
 /**
- * The bytes of `xs`'s elements, as an array that does not own them: `xs.length * sizeof(T)`
- * bytes at `xs`'s buffer, in the target's byte order (little-endian on every target). `T` is a
- * number type or `bool` (sema checks it, and lowering each instance of a type parameter).
- * Unsafe: the result aliases `xs`, so it is valid only until `xs` is grown, dropped or used
- * again, and what is written through it must be values of `T`. For passing a number array of a
- * generic function to a C function's buffer (std/fs/fd/numbers.velt).
+ * The address of `xs`'s buffer, where its elements' bytes are (in the target's byte order,
+ * little-endian on every target); 0 for an array that has none. `T` is a number type or `bool`
+ * (sema checks it, and lowering each instance of a type parameter). Unsafe: the address is good
+ * only until `xs` is grown or dropped, and what is written there must be values of `T`. With
+ * `arrayByteLength`, for handing a number array's own memory to a C function from generic code
+ * (velt/fs's `readSync` and `writeSync`).
  */
 @intrinsic
-export declare unsafe function arrayAsBytes<T>(xs: Mut<T[]>): u8[];
+export declare unsafe function arrayDataAddress<T>(xs: Mut<T[]>): usize;
+
+/** `xs.length * sizeof(T)`: how many bytes `xs`'s elements are. `T` as for `arrayDataAddress`. */
+@intrinsic
+export declare function arrayByteLength<T>(xs: T[]): usize;
 
 /**
  * Copies `n * sizeof(T)` bytes of `src`, starting at byte index `s` (not an element index), as

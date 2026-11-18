@@ -13,9 +13,11 @@ import {
   lastError as posixLastError,
   mapRead as posixMapRead,
   openPath as posixOpenPath,
+  readAddress as posixReadAddress,
   readInto as posixReadInto,
   truncateFd as posixTruncateFd,
   unlinkPath as posixUnlinkPath,
+  writeAddress as posixWriteAddress,
   writeFrom as posixWriteFrom,
 } from "velt/fs/fd/posix";
 
@@ -105,4 +107,16 @@ export function mapRead(fd: i32, len: usize): usize {
 /** `madvise` on part of a mapping of `mapRead`: 0, or -1. */
 export function adviseMap(address: usize, len: usize, advice: i32): i32 {
   return posixAdviseMap(address, len, advice);
+}
+
+/** `read` or `pread` into the memory at `address`: the number read, or -1. Unsafe: as posix.velt's. */
+export unsafe function readAddress(fd: i32, address: usize, len: usize, at: i64): isize {
+  // SAFETY: the caller's statement, handed on.
+  return unsafe { posixReadAddress(fd, address, len, at) };
+}
+
+/** `write` or `pwrite` of the memory at `address`: the number written, or -1. Unsafe: as posix.velt's. */
+export unsafe function writeAddress(fd: i32, address: usize, len: usize, at: i64): isize {
+  // SAFETY: the caller's statement, handed on.
+  return unsafe { posixWriteAddress(fd, address, len, at) };
 }
