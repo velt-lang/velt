@@ -1,9 +1,13 @@
 import * as fs from "velt/fs";
-import { tmpdir } from "velt/os";
+import { platform, tmpdir } from "velt/os";
 import { build } from "../src/build";
 import { generate, groundTruth, loadAll } from "../src/gen";
 import { closeIndex, openIndex, Searcher } from "../src/index";
 import type { SearchOptions } from "../src/index";
+
+// The index is files read through velt/fs's descriptors and `MappedFile`, which exist on macOS
+// and Linux only (ENOSYS elsewhere): the tests run there.
+const POSIX = platform() == "darwin" || platform() == "linux";
 
 const K: i64 = 5;
 const N: i64 = 3000;
@@ -17,6 +21,9 @@ async function fixture(name: string): Promise<string> {
 }
 
 export async function test_probing_every_list_and_reranking_every_row_is_exact() {
+  if (!POSIX) {
+    return;
+  }
   const dir = await fixture("exact");
   const truth = await groundTruth(dir, K);
   const queries = loadAll(`${dir}/queries.f32`);
@@ -34,6 +41,9 @@ export async function test_probing_every_list_and_reranking_every_row_is_exact()
 }
 
 export async function test_mapped_and_positioned_reads_agree_and_find_most_neighbours() {
+  if (!POSIX) {
+    return;
+  }
   const dir = await fixture("agree");
   const truth = await groundTruth(dir, K);
   const queries = loadAll(`${dir}/queries.f32`);
@@ -64,6 +74,9 @@ export async function test_mapped_and_positioned_reads_agree_and_find_most_neigh
 }
 
 export async function test_every_row_is_in_exactly_one_list() {
+  if (!POSIX) {
+    return;
+  }
   const dir = await fixture("lists");
   const ix = await openIndex(dir, true);
   const rec = (ix.dim + 4) as usize;
