@@ -120,8 +120,9 @@ gh pr edit <n> --add-label ci:approved             # starts the pull request's c
 
 The rule stays that nothing is queued before an approving review; queueing with it removes the
 wait between approval and the queue. A pull request's checks start only with the label
-`ci:approved` (until then `ci` fails with "waiting for approval", so auto-merge waits): the
-runners go to approved changes. Later pushes run them again while the label stays. A new finding in the new commits is a required change like
+`ci:approved`; a push starts nothing, so the runners go to the merge queue and approved
+changes. After re-reviewing new commits, remove and re-add the label to run the checks on the
+new head (until a run passes there, the required `ci` check is missing and auto-merge waits). A new finding in the new commits is a required change like
 any other (`Verdict: CHANGES NEEDED`); an older nit that the first review missed is a follow-up,
 not a reason for another round.
 
