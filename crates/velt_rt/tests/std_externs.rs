@@ -494,7 +494,7 @@ fn velt_rt_wasm_defines_what_mirrored_directories_export() {
 fn the_parsers_see_the_whole_abi() {
     let decls = velt_declarations();
     assert!(decls.len() > 150, "found only {} declarations", decls.len());
-    let (params, ret) = &decls["velt_rt_fs_read_file"].0;
+    let (params, ret) = &decls["velt_rt_fs_read_file_bytes"].0;
     assert_eq!(
         (params.as_slice(), ret.as_str()),
         (&["ptr".to_string()][..], "ptr")

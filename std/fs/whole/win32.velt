@@ -1,0 +1,313 @@
+// velt/fs (internal): reading, writing and describing whole files on Windows (`#fs-whole`'s win32
+// variant, std/imports.velt), through Win32's wide-path functions, with Node's messages and
+// libuv's names for Win32's errors (std/os/win_error.velt). A path of 248 units or more is made
+// absolute and given the `\\?\` prefix, as Rust's std does, so that it is not cut at MAX_PATH;
+// errors name the path as it was given, as Node's do. A directory refuses to open as a file with
+// "access denied", which is `EISDIR` here, as everywhere else.
+
+import { Ptr } from "velt/ffi/ptr";
+import { wideOf } from "velt/ffi/wide";
+import { osError } from "velt/fs/errors";
+import { Stats } from "velt/fs/stats";
+import { Done } from "velt/fs/whole/done";
+import { readAll } from "velt/fs/whole/read_all";
+import { utf8Encode } from "velt/encoding/utf8";
+import { arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
+import { errnoOfWin32 } from "velt/os/win_error";
+
+declare c("c") function CreateFileW(
+  name: readonly u16[],
+  access: u32,
+  share: u32,
+  security: Ptr<u8> | null,
+  disposition: u32,
+  flags: u32,
+  template: usize,
+): usize;
+declare c("c") function ReadFile(
+  handle: usize,
+  buf: u8[],
+  count: u32,
+  read: u32[],
+  overlapped: Ptr<u8> | null,
+): i32;
+declare c("c") function WriteFile(
+  handle: usize,
+  buf: readonly u8[],
+  count: u32,
+  written: u32[],
+  overlapped: Ptr<u8> | null,
+): i32;
+declare c("c") function GetFileSizeEx(handle: usize, size: i64[]): i32;
+declare c("c") function GetFileInformationByHandle(handle: usize, info: u32[]): i32;
+declare c("c") function GetFileInformationByHandleEx(
+  handle: usize,
+  infoClass: i32,
+  info: u32[],
+  size: u32,
+): i32;
+declare c("c") function GetFileAttributesW(name: readonly u16[]): u32;
+declare c("c") function GetFullPathNameW(
+  name: readonly u16[],
+  room: u32,
+  out: u16[],
+  file: Ptr<u8> | null,
+): u32;
+declare c("c") function CloseHandle(handle: usize): i32;
+declare c("c") function GetLastError(): u32;
+
+const INVALID_HANDLE: usize = 0xffffffffffffffff;
+const GENERIC_READ: u32 = 0x80000000;
+const GENERIC_WRITE: u32 = 0x40000000;
+const FILE_APPEND_DATA: u32 = 0x4;
+const FILE_READ_ATTRIBUTES: u32 = 0x80;
+const SYNCHRONIZE: u32 = 0x100000;
+/** FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, as Rust's std and libuv open. */
+const SHARE_ALL: u32 = 7;
+const CREATE_ALWAYS: u32 = 2;
+const OPEN_EXISTING: u32 = 3;
+const OPEN_ALWAYS: u32 = 4;
+const FILE_ATTRIBUTE_NORMAL: u32 = 0x80;
+const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x02000000;
+const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x00200000;
+const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+const INVALID_FILE_ATTRIBUTES: u32 = 0xffffffff;
+/** `FileAttributeTagInfo`: the attributes and the reparse tag. */
+const ATTRIBUTE_TAG_INFO: i32 = 9;
+const IO_REPARSE_TAG_SYMLINK: u32 = 0xa000000c;
+const IO_REPARSE_TAG_MOUNT_POINT: u32 = 0xa0000003;
+const ERROR_FILE_NOT_FOUND: u32 = 2;
+const ERROR_ACCESS_DENIED: u32 = 5;
+const ERROR_BROKEN_PIPE: u32 = 109;
+/** EISDIR, Linux's number, which `osError` reads on Windows. */
+const EISDIR: i32 = 21;
+/** EIO, Linux's number: a write that wrote nothing. */
+const EIO: i32 = 5;
+/** The most one ReadFile or WriteFile is asked for. */
+const MOST: usize = 1073741824;
+/** Windows' FILETIME of the Unix epoch, in 100 ns ticks since 1601. */
+const EPOCH_TICKS: i64 = 116444736000000000;
+
+/** The last Win32 error. */
+function lastWin32(): u32 {
+  // SAFETY: GetLastError has no precondition.
+  return unsafe { GetLastError() };
+}
+
+/** `path` as a NUL-terminated wide path, `\\?\`-prefixed when long; null for a 0 inside it. */
+function winPath(path: string): u16[] | null {
+  const w = wideOf(path);
+  if (w === null || w.length < 249 || path.startsWith("\\\\?\\") || path.startsWith("\\\\.\\")) {
+    return w;
+  }
+  let room: u32 = 512;
+  while (true) {
+    const full = arrayWithCapacity<u16>(room as usize);
+    arraySetLen(full, room as usize);
+    // SAFETY: `w` is NUL-terminated and `full` holds `room` units, the count passed.
+    const got = unsafe { GetFullPathNameW(w, room, full, null) };
+    if (got === 0) {
+      return w;
+    }
+    if (got < room) {
+      arraySetLen(full, got as usize);
+      // Already `\\?\` or `\\.\` (a long `//?/x` normalises to it): as it is, with its NUL.
+      const verbatim = got > 3 && full[0] === 92 && full[1] === 92 && full[3] === 92;
+      if (verbatim && (full[2] === 63 || full[2] === 46)) {
+        full.push(0);
+        return full;
+      }
+      // `\\server\share\x` is `\\?\UNC\server\share\x`; `C:\x` is `\\?\C:\x`.
+      const unc = got > 2 && full[0] === 92 && full[1] === 92;
+      const prefix = unc ? "\\\\?\\UNC" : "\\\\?\\";
+      const out = wideOf(prefix);
+      if (out === null) {
+        return w;
+      }
+      out.pop();
+      for (let i: usize = unc ? 1 : 0; i < (got as usize); i++) {
+        out.push(full[i]);
+      }
+      out.push(0);
+      return out;
+    }
+    room = got;
+  }
+}
+
+/** Whether `w` names a directory (for "access denied" on opening it). */
+function isDirectory(w: readonly u16[]): bool {
+  // SAFETY: `w` is NUL-terminated.
+  const a = unsafe { GetFileAttributesW(w) };
+  return a !== INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY) !== 0;
+}
+
+/** `CreateFileW` of `w`: the handle, or INVALID_HANDLE (`lastWin32()`). */
+function open(w: readonly u16[], access: u32, disposition: u32, flags: u32): usize {
+  // SAFETY: `w` is NUL-terminated; no security attributes and no template.
+  return unsafe { CreateFileW(w, access, SHARE_ALL, null, disposition, flags, 0) };
+}
+
+function close(h: usize) {
+  // SAFETY: a handle this module opened, closed once.
+  unsafe {
+    CloseHandle(h);
+  }
+}
+
+/**
+ * `ReadFile` of up to `end - start` bytes into `bytes[start..end]`: the count, or -1 with the
+ * error in `failed[0]`, read right after the call.
+ */
+function readSome(h: usize, bytes: u8[], start: usize, end: usize, failed: u32[]): i64 {
+  const n = end - start > MOST ? MOST : end - start;
+  const got: u32[] = [0];
+  // SAFETY: `start..start + n` is inside `bytes` (the callers' ranges are), C gets its length.
+  const ok = unsafe { ReadFile(h, bytes.subarray(start, start + n), n as u32, got, null) };
+  if (ok !== 0) {
+    return got[0] as i64;
+  }
+  const code = lastWin32();
+  // A pipe whose writer closed: the end.
+  if (code === ERROR_BROKEN_PIPE) {
+    return 0;
+  }
+  failed[0] = code;
+  return -1;
+}
+
+/** The rest of `h` (std/fs/whole/read_all.velt), from the size `GetFileSizeEx` gives. */
+function readRest(h: usize): Done<u8[]> {
+  const size: i64[] = [0];
+  // SAFETY: `size` holds the LARGE_INTEGER the call writes.
+  const known = unsafe { GetFileSizeEx(h, size) } !== 0 && size[0] > 0;
+  const hint: usize = known ? size[0] as usize : 0;
+  const failed: u32[] = [0];
+  const bytes = readAll(hint, (b, start, end) => readSome(h, b, start, end, failed));
+  if (bytes === null) {
+    return { value: null, error: osError(errnoOfWin32(failed[0]), "read") };
+  }
+  return { value: bytes, error: null };
+}
+
+/** The bytes of the file at `path` (`c`, its C form, is POSIX's). */
+export function readBytes(c: readonly u8[], path: string): Done<u8[]> {
+  const w = winPath(path);
+  if (w === null) {
+    return { value: null, error: osError(errnoOfWin32(ERROR_FILE_NOT_FOUND), "open", path) };
+  }
+  const h = open(w, GENERIC_READ, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL);
+  if (h === INVALID_HANDLE) {
+    const code = lastWin32();
+    if (code === ERROR_ACCESS_DENIED && isDirectory(w)) {
+      return { value: null, error: osError(EISDIR, "read") };
+    }
+    return { value: null, error: osError(errnoOfWin32(code), "open", path) };
+  }
+  const r = readRest(h);
+  close(h);
+  return r;
+}
+
+/** The text of the file at `path`, UTF-8 with an invalid sequence as U+FFFD. */
+export function readText(c: readonly u8[], path: string): Done<string> {
+  const r = readBytes(c, path);
+  const bytes = r.value;
+  if (bytes === null) {
+    return { value: null, error: r.error };
+  }
+  return { value: bytes.utf8Slice(), error: null };
+}
+
+/** Writes `data` as UTF-8 to the file at `path`, created if missing, truncated or `append`ed to. */
+export function writeText(c: readonly u8[], path: string, data: string, append: bool): Done<bool> {
+  const w = winPath(path);
+  if (w === null) {
+    return { value: null, error: osError(errnoOfWin32(ERROR_FILE_NOT_FOUND), "open", path) };
+  }
+  const access = append ? FILE_APPEND_DATA | SYNCHRONIZE : GENERIC_WRITE;
+  const h = open(w, access, append ? OPEN_ALWAYS : CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL);
+  if (h === INVALID_HANDLE) {
+    const code = lastWin32();
+    const e = code === ERROR_ACCESS_DENIED && isDirectory(w) ? EISDIR : errnoOfWin32(code);
+    return { value: null, error: osError(e, "open", path) };
+  }
+  const bytes = utf8Encode(data);
+  const total = bytes.length as usize;
+  let at: usize = 0;
+  // The errno of a failed write (read right after the call), or 0.
+  let failed: i32 = 0;
+  while (at < total) {
+    const n = total - at > MOST ? MOST : total - at;
+    const wrote: u32[] = [0];
+    // SAFETY: `at..at + n` is inside `bytes`, and C gets its length.
+    const ok = unsafe { WriteFile(h, bytes.subarray(at, at + n), n as u32, wrote, null) };
+    if (ok === 0) {
+      failed = errnoOfWin32(lastWin32());
+      break;
+    }
+    if (wrote[0] === 0) {
+      // Nothing written with bytes left: an error, not a loop (Rust's `write_all`'s WriteZero).
+      failed = EIO;
+      break;
+    }
+    at += wrote[0] as usize;
+  }
+  close(h);
+  if (failed !== 0) {
+    return { value: null, error: osError(failed, "write") };
+  }
+  return { value: true, error: null };
+}
+
+/** `stat` (`follow`) or `lstat` of `path`, from one open of it (a directory too). */
+export function statOf(c: readonly u8[], path: string, follow: bool): Done<Stats> {
+  const call = follow ? "stat" : "lstat";
+  const w = winPath(path);
+  if (w === null) {
+    return { value: null, error: osError(errnoOfWin32(ERROR_FILE_NOT_FOUND), call, path) };
+  }
+  const flags = FILE_FLAG_BACKUP_SEMANTICS | (follow ? 0 : FILE_FLAG_OPEN_REPARSE_POINT);
+  const h = open(w, FILE_READ_ATTRIBUTES, OPEN_EXISTING, flags);
+  if (h === INVALID_HANDLE) {
+    return { value: null, error: osError(errnoOfWin32(lastWin32()), call, path) };
+  }
+  // BY_HANDLE_FILE_INFORMATION, as 13 DWORDs: the attributes at 0, the last write time at 5-6,
+  // the size at 8 (high) and 9 (low).
+  const info: u32[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+  // SAFETY: `info` holds the 52 bytes the call writes.
+  if (unsafe { GetFileInformationByHandle(h, info) } === 0) {
+    const code = lastWin32();
+    close(h);
+    return { value: null, error: osError(errnoOfWin32(code), call, path) };
+  }
+  let link = false;
+  if (!follow && (info[0] & FILE_ATTRIBUTE_REPARSE_POINT) !== 0) {
+    const tag: u32[] = [0, 0];
+    // SAFETY: `tag` holds the FILE_ATTRIBUTE_TAG_INFO (8 bytes) the call writes.
+    if (unsafe { GetFileInformationByHandleEx(h, ATTRIBUTE_TAG_INFO, tag, 8) } !== 0) {
+      link = tag[1] === IO_REPARSE_TAG_SYMLINK || tag[1] === IO_REPARSE_TAG_MOUNT_POINT;
+    }
+  }
+  close(h);
+  const dir = !link && (info[0] & FILE_ATTRIBUTE_DIRECTORY) !== 0;
+  // In integers: ticks since 1970 are past 2^53, which an f64 would round.
+  const ticks = (((info[6] as i64) << 32) | (info[5] as i64)) - EPOCH_TICKS;
+  const whole = ticks >= 0 ? ticks / 10000000 : -((-ticks + 9999999) / 10000000);
+  const sec = whole as number;
+  const nsec = ((ticks - whole * 10000000) * 100) as number;
+  const st: Stats = {
+    size: ((info[8] as u64) << 32) | (info[9] as u64),
+    mtimeMs: sec * 1000 + Math.floor(nsec / 1000) / 1000,
+    file: !link && !dir,
+    dir: dir,
+    symlink: link,
+  };
+  return { value: st, error: null };
+}
+
+/** Whether anything is at `path`, following symlinks (a broken one is not there). */
+export function existsAt(c: readonly u8[], path: string): bool {
+  return statOf(c, path, true).error === null;
+}

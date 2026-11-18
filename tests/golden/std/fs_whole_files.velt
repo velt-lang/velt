@@ -1,0 +1,112 @@
+// Whole files as Node reads and writes them (std/fs/whole/): writing truncates or creates,
+// appending creates, text with an invalid UTF-8 sequence reads as U+FFFD, `stat` describes a
+// file and a directory, and each failure has Node's code and message (the path named for `open`,
+// `stat` and `lstat`, none for `read`). `exists` is false, not an error, for a missing path and
+// for one holding a 0. The async forms give the same.
+import {
+  appendFile,
+  appendFileSync,
+  exists,
+  existsSync,
+  lstat,
+  lstatSync,
+  mkdirSync,
+  readFile,
+  readFileBytes,
+  readFileBytesSync,
+  readFileSync,
+  removeSync,
+  stat,
+  statSync,
+  writeFile,
+  writeFileSync,
+} from "velt/fs";
+import { closeSync, openSync, writeSync } from "velt/fs";
+import { IoError } from "velt/io";
+
+function attempt(what: string, f: () => void) {
+  try {
+    f();
+    console.log(what, "no error");
+  } catch (e) {
+    if (e instanceof IoError) {
+      console.log(what, e.code, e.message);
+    } else {
+      console.log(what, (e as Error).message);
+    }
+  }
+}
+
+async function main() {
+  const dir = "velt_fs_whole_files_tmp";
+  if (existsSync(dir)) {
+    removeSync(dir, { recursive: true });
+  }
+  mkdirSync(dir, { recursive: true });
+  const a = `${dir}/a.txt`;
+
+  writeFileSync(a, "first");
+  writeFileSync(a, "héllo");
+  appendFileSync(a, " wörld\n");
+  console.log(JSON.stringify(readFileSync(a)), readFileBytesSync(a).length);
+  appendFileSync(`${dir}/made.txt`, "made by append");
+  console.log(readFileSync(`${dir}/made.txt`));
+
+  writeFileSync(`${dir}/empty.txt`, "");
+  console.log(
+    JSON.stringify(readFileSync(`${dir}/empty.txt`)),
+    readFileBytesSync(`${dir}/empty.txt`).length,
+  );
+
+  const fd = openSync(`${dir}/bad.txt`, "w");
+  writeSync(fd, new Uint8Array([0x61, 0xff, 0x62, 0xe2, 0x82]));
+  closeSync(fd);
+  console.log(
+    JSON.stringify(readFileSync(`${dir}/bad.txt`)),
+    readFileBytesSync(`${dir}/bad.txt`).length,
+  );
+
+  const big = "0123456789abcdef".repeat(65536 + 3);
+  writeFileSync(`${dir}/big.txt`, big);
+  const back = readFileSync(`${dir}/big.txt`);
+  console.log(back.length, back === big);
+
+  const s = statSync(a);
+  console.log(s.size, s.isFile(), s.isDirectory(), s.isSymbolicLink(), s.mtimeMs > 1.6e12);
+  const d = statSync(dir);
+  console.log(d.isFile(), d.isDirectory(), lstatSync(a).isFile());
+
+  console.log(existsSync(a), existsSync(dir), existsSync(`${dir}/none`), existsSync(`${dir}/a\0b`));
+
+  attempt("read missing", () => {
+    readFileSync(`${dir}/none.txt`);
+  });
+  attempt("bytes missing", () => {
+    readFileBytesSync(`${dir}/none.txt`);
+  });
+  attempt("write into missing", () => {
+    writeFileSync(`${dir}/no/such.txt`, "x");
+  });
+  attempt("append into missing", () => {
+    appendFileSync(`${dir}/no/such.txt`, "x");
+  });
+  attempt("stat missing", () => {
+    statSync(`${dir}/none.txt`);
+  });
+  attempt("lstat missing", () => {
+    lstatSync(`${dir}/none.txt`);
+  });
+
+  await writeFile(`${dir}/b.txt`, "async");
+  await appendFile(`${dir}/b.txt`, " too");
+  console.log(await readFile(`${dir}/b.txt`), (await readFileBytes(`${dir}/b.txt`)).length);
+  console.log((await stat(`${dir}/b.txt`)).size, (await lstat(dir)).isDirectory());
+  console.log(await exists(`${dir}/b.txt`), await exists(`${dir}/none`));
+  try {
+    await readFile(`${dir}/none.txt`);
+  } catch (e) {
+    console.log("async read missing", (e as IoError).code, (e as Error).message);
+  }
+
+  removeSync(dir, { recursive: true });
+}

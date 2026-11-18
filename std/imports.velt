@@ -168,6 +168,9 @@ export const imports: Imports = {
   // The C library's file-descriptor functions behind Node's fd API (`openSync`, `readSync`, ...):
   // `declare c("c")` on macOS and Linux, with their per-target `fcntl` commands and `struct
   // stat`; elsewhere each fails with ENOSYS.
+  // Whole files (`readFile`, `writeFile`, `appendFile`, `stat`, `lstat`, `exists`) in a native
+  // build: the C library's file descriptors (`#fd-system`), or Win32's on Windows.
+  "#fs-whole": { win32: "./fs/whole/win32.velt", default: "./fs/whole/posix.velt" },
   "#fd-system": {
     darwin: "./fs/fd/darwin.velt",
     linux: "./fs/fd/linux.velt",

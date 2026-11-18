@@ -34,6 +34,7 @@ const PATHS: &[&str] = &[
     // std's own `declare c("c")` functions and the variants that load them per target
     // (`velt native headers --std`, tests/c_headers.rs).
     "std/fs/fd/",
+    "std/fs/whole/",
     "std/imports.velt",
     // The other files crates/veltc/src/native/headers/std_check.rs checks (`CHECKED`,
     // `CHECKED_POSIX`): a change to one of them runs the check too.

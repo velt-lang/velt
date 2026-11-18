@@ -41,6 +41,12 @@ export function fstatSync(fd: number): Stats {
     throw osError(lastError(), "fstat");
   }
   const st: Stat = got;
+  return statsOf(st);
+}
+
+/** The `Stats` of `struct stat`'s fields: the size, the modification time (to the microsecond, as
+ * Node's `mtimeMs`) and the type from `st_mode`. */
+export function statsOf(st: Stat): Stats {
   const kind = st.st_mode & 0o170000;
   return {
     size: st.st_size as u64,

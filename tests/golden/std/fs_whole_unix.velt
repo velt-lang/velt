@@ -1,0 +1,34 @@
+// requires: unix
+// A path through a file fails with ENOTDIR on macOS and Linux, as Node's does there (Windows
+// reports such a path as ENOENT, as libuv names ERROR_PATH_NOT_FOUND).
+import { mkdirSync, readFileSync, removeSync, statSync, writeFileSync, existsSync } from "velt/fs";
+import { IoError } from "velt/io";
+
+function attempt(what: string, f: () => void) {
+  try {
+    f();
+    console.log(what, "no error");
+  } catch (e) {
+    console.log(what, (e as IoError).code, (e as Error).message);
+  }
+}
+
+function main() {
+  const dir = "velt_fs_whole_unix_tmp";
+  if (existsSync(dir)) {
+    removeSync(dir, { recursive: true });
+  }
+  mkdirSync(dir, { recursive: true });
+  const a = `${dir}/a.txt`;
+  writeFileSync(a, "a");
+  attempt("read under a file", () => {
+    readFileSync(`${a}/x`);
+  });
+  attempt("write under a file", () => {
+    writeFileSync(`${a}/x`, "x");
+  });
+  attempt("stat under a file", () => {
+    statSync(`${a}/x`);
+  });
+  removeSync(dir, { recursive: true });
+}

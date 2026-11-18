@@ -27,6 +27,8 @@ declare c("c", { errno: true }) function fsync(fd: i32): i32;
 declare c("c", { errno: true }) function fcntl(fd: i32, cmd: i32, ...args: CVarArgs): i32;
 declare c("c", { errno: true }) function ftruncate(fd: i32, length: i64): i32;
 declare c("c", { errno: true }) function fstat(fd: i32, st: Ptr<void>): i32;
+declare c("c", { errno: true }) function stat(path: readonly u8[], st: Ptr<void>): i32;
+declare c("c", { errno: true }) function lstat(path: readonly u8[], st: Ptr<void>): i32;
 declare c("c", { errno: true }) function unlink(path: readonly u8[]): i32;
 declare c("c", { errno: true }) function mmap(
   addr: Ptr<void> | null,
@@ -158,6 +160,35 @@ export function fstatAt(
   size: usize,
   mtime: usize,
 ): Stat | null {
+  return statWith(fd, null, false, mode, mode16, size, mtime);
+}
+
+/**
+ * `stat(path)` (`follow`) or `lstat(path)`, with the fields at these offsets as `fstatAt` reads
+ * them: the fields, or `null` with the error for `lastError()`.
+ */
+export function statAt(
+  path: readonly u8[],
+  follow: bool,
+  mode: usize,
+  mode16: bool,
+  size: usize,
+  mtime: usize,
+): Stat | null {
+  checkPath(follow ? "stat" : "lstat", path);
+  return statWith(-1, path, follow, mode, mode16, size, mtime);
+}
+
+/** `fstat(fd)`, or with a `path` (checked by the caller) `stat` or `lstat` of it. */
+function statWith(
+  fd: i32,
+  path: (readonly u8[]) | null,
+  follow: bool,
+  mode: usize,
+  mode16: bool,
+  size: usize,
+  mtime: usize,
+): Stat | null {
   if (mode + 4 > STAT_SIZE || size + 8 > STAT_SIZE || mtime + 16 > STAT_SIZE) {
     panic("fstat: a field's offset is past the end of struct stat");
   }
@@ -166,9 +197,18 @@ export function fstatAt(
   if (st === null) {
     panic("fstat: out of memory");
   }
-  // SAFETY: `st` points at STAT_SIZE bytes, as many as this target's `struct stat` or more, which
-  // fstat fills; it keeps no pointer after it returns.
-  const rc = unsafe { fstat(fd, st) };
+  let rc: i32 = 0;
+  if (path === null) {
+    // SAFETY: `st` points at STAT_SIZE bytes, as many as this target's `struct stat` or more,
+    // which fstat fills; it keeps no pointer after it returns.
+    rc = unsafe { fstat(fd, st) };
+  } else if (follow) {
+    // SAFETY: as fstat's; `path` ends with its only 0 byte (the caller checked it).
+    rc = unsafe { stat(path, st) };
+  } else {
+    // SAFETY: as stat's.
+    rc = unsafe { lstat(path, st) };
+  }
   let out: Stat | null = null;
   if (rc == 0) {
     const at = Ptr.addressOf(st);

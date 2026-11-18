@@ -79,6 +79,8 @@ const CHECKED: &[&str] = &[
     "ffi/errno_windows.velt",
     "ffi/read.velt",
     "fs/fd/posix.velt",
+    "fs/whole/read_all.velt",
+    "fs/whole/win32.velt",
     "lang/hooks/os_posix.velt",
     "lang/hooks/pid_posix.velt",
     "lang/hooks/pid_win32.velt",

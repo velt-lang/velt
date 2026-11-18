@@ -1,0 +1,9 @@
+readFileSync true EINVAL "EINVAL: invalid argument, open 'a\u0000b.txt'"
+readFileBytesSync true EINVAL "EINVAL: invalid argument, open 'a\u0000b.txt'"
+writeFileSync true EINVAL "EINVAL: invalid argument, open 'a\u0000b.txt'"
+appendFileSync true EINVAL "EINVAL: invalid argument, open 'a\u0000b.txt'"
+statSync true EINVAL "EINVAL: invalid argument, stat 'a\u0000b.txt'"
+lstatSync true EINVAL "EINVAL: invalid argument, lstat 'a\u0000b.txt'"
+existsSync false false
+readFile true EINVAL
+stat true EINVAL
