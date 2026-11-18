@@ -62,6 +62,21 @@ export function parked(task: usize, n: usize): void {
 }
 
 /**
+ * The first run of node `n`, started on a thread that is no worker of its task's, is over
+ * (sched_foreign.velt `startJob`): the hand-off's reference goes. Its owner may have dropped it
+ * meanwhile, on its own thread (sched_node.velt `nodeDrop`, the side that only marks it and gives
+ * its reference back): with DETACHED set and the hand-off's and the task's the only references,
+ * the owner's is gone and no waker exists, so none can be made any more.
+ */
+export function handedOff(n: usize): void {
+  const lostNow = unreachable(n, 2);
+  nd.release(n);
+  if (lostNow) {
+    giveUp(m.ld(n + nd.N_TASK), n);
+  }
+}
+
+/**
  * Gives up node `n` of task `task`, which is `unreachable`: its state is dropped (what its
  * frame holds goes, as when JavaScript collects a function suspended for ever), and the task's
  * reference with it; the last reference frees the node. It has no result. On the task's thread
