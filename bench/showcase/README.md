@@ -13,7 +13,7 @@ bench/showcase/run.sh --categories http,websocket --runs 3
 bench/showcase/report.py results/<date>   # re-render the tables from results.json
 ```
 
-`run.sh --help` lists the options. On the Linux builder, from a worktree of the commit to
+`run.sh --help` lists the options. On a Linux machine, from a worktree of the commit to
 measure, with the machine otherwise idle:
 
 ```sh
@@ -21,9 +21,9 @@ export CARGO_TARGET_DIR=~/velt-build/showcase PATH=$HOME/.bun/bin:$HOME/velt-bui
 nohup bench/showcase/run.sh > ~/velt-build/showcase/run.log 2>&1 &
 ```
 
-It takes about 3.5–4 hours there (12 threads): about 20 minutes of builds (Velt in release,
-fourteen Cargo projects, four npm installs), then the categories (estimates for the full run, in
-minutes: startup 1, cpu 6, core 30, benchmarks-game 35, regex 2, async 50 (the two
+It takes about 3.5–4 hours on a 6-core, 12-thread machine: about 20 minutes of builds (Velt in
+release, fourteen Cargo projects, four npm installs), then the categories (estimates for the
+full run, in minutes: startup 1, cpu 6, core 30, benchmarks-game 35, regex 2, async 50 (the two
 `timer_await` programs take 23–44 s a run, `concurrent_map` about 50 s), json 12, tsx 5,
 sqlite 5, compile 17, http 36 (with the Velt one-thread rows), websocket 5). It needs about
 10 GB of disk for the build directory.
@@ -44,10 +44,10 @@ sqlite 5, compile 17, http 36 (with the Velt one-thread rows), websocket 5). It 
    which is opt-level 2). Where a suite's Rust baseline is built for the machine's CPU (the
    Benchmarks Game, `concurrent_map`, `btree`, `atomics`, as the published programs are), it is
    `-C target-cpu=native` and Velt gets `--cpu native`. Node and Bun run without flags (React
-   with `NODE_ENV=production`). Velt's runtime library (`velt_rt`, the Rust part: tokio, hyper,
+   with `NODE_ENV=production`). Velt's runtime library (`velt_rt`, the Rust part: tokio, rustls,
    the allocator) is linked prebuilt, built by `cargo build --release` with its own profile (thin
-   LTO, baseline x86-64); the Velt servers do not use its hyper (below), and Rust's fat LTO over
-   axum, hyper and tokio is if anything the stronger build.
+   LTO, baseline x86-64); Rust's fat LTO over axum, hyper and tokio is if anything the stronger
+   build.
 3. **No warm-up tricks.** Every process is timed from start to exit (start-up, JIT and file
    reading included), except where a suite times its own loop for every language alike (the
    SQLite workloads, the fetch scenarios, `concurrent_map`: the program prints its own time).
@@ -86,7 +86,7 @@ sqlite 5, compile 17, http 36 (with the Velt one-thread rows), websocket 5). It 
 Measurement: wall time, CPU time and peak RSS come from `measure.c`, a small helper built at
 the start of a run: it forks and execs the program, times it with the monotonic clock and
 takes `ru_utime`, `ru_stime` and `ru_maxrss` from `wait4`, the numbers GNU `time -v` prints,
-without needing it installed (the builder has no `/usr/bin/time`). The harness cannot take them
+without needing it installed (not every machine has `/usr/bin/time`). The harness cannot take them
 from its own `wait4`: Python starts a child with `vfork`, and Linux starts the child's
 `ru_maxrss` at the peak RSS of the address space its `exec` replaced, which is the harness's own
 (hundreds of MB after reading a large output), so every program smaller than the harness
@@ -137,7 +137,7 @@ it is deployed; the npm versions are pinned in `tsx/package.json` (and its lockf
 | concurrency | `Atomic<T>`: counters, CAS loops, latches across threads (`atomics`) | ✓ | ✓ (`std::sync::atomic`) | n/a: no JS program (would need workers and a SharedArrayBuffer) | n/a |
 | concurrency | tasks, channels, fan-out, timers (`async` above); `ConcurrentMap` against bbtree's concurrent map (`async` above) | ✓ | ✓ | ✓ (tasks only) | ✓ (tasks only) |
 | strings | string building, split/join, tokenizing (`typical`: strings, tokenize); non-ASCII strings: append, charCodeAt, CSV, JSON, sort (`strings_utf16`) | ✓ | ✓ (typical) | ✓ | ✓ |
-| strings | number formatting and parsing (int and float to string, `toFixed`, `parseFloat`), UTF-8 decode and validation, base64, hex, SHA-256, URL parsing, big integers, gunzip, Brotli (`stdport`: Velt std against the Rust crate for the same job, one thread) | ✓ | ✓ (itoa, ryu, url, dashu-int, sha2, base64, ...) | n/a | n/a |
+| strings | every `bench/stdport` program: number formatting and parsing (int and float to string, `toFixed`, `parseFloat`), UTF-8 decode and validation, base64, hex, SHA-2, URL parsing, big integers, gzip and Brotli in both directions, `pow`, string methods and more (`stdport`: Velt std against the Rust crate for the same job, one thread) | ✓ | ✓ (itoa, ryu, url, dashu-int, sha2, base64, ...) | n/a | n/a |
 | language | closures, callbacks, classes and virtual dispatch, error handling, generics over trees and graphs, numeric loops (`typical`: callbacks, chains, consume, dispatch, errors, fib, graph, grid, numloop, trees, vec2; classes, closures, shapes in `cpu`) | ✓ | ✓ | ✓ | ✓ |
 | language | iterators and generators, sync and async, spread (`iter`) | ✓ | n/a | ✓ | ✓ |
 | language | `any` operations: arithmetic, equality, `in`, casts; `any` over classes, maps and objects (`any_ops`, `any_text`) | ✓ | n/a: no dynamic typing | ✓ | ✓ |
@@ -149,7 +149,7 @@ is). A clean `cargo build` of the axum server compiles axum, hyper and tokio as 
 with `main.rs` touched is the edit-and-rebuild time.
 
 Servers run pinned to whole physical cores and the load generator to the others (`taskset`):
-half of the physical cores each (on the 6-core builder: 3 cores, 6 threads, for the servers and
+half of the physical cores each (on a 6-core machine: 3 cores, 6 threads, for the servers and
 3 for oha), so the load generator can keep up with the fastest servers; `SERVER_CPUS` and
 `LOAD_CPUS` override, as taskset lists. Each timed run records oha's own CPU time, and a row
 where it used 90% or more of its CPUs is marked **load-bound** (its req/s may be the load

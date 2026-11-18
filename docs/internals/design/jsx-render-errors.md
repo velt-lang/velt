@@ -1,13 +1,20 @@
-# Design: typed causes of render errors (#82)
+# Typed causes of render errors
 
-Status: proposal. Needs one std-internal intrinsic (below); sema and lowering own it.
+Status: proposed. Issue: [#82](https://github.com/velt-lang/velt/issues/82).
 
-## Problem
+## Summary
 
-A component that throws, or an async component whose promise rejects, makes `renderToString`,
-`renderToStringSync` and `renderToStream` throw a `RenderError { component; message }`. The
-original error survives only as text (`message` embeds `${e}`), so a page cannot react to what
-went wrong:
+`velt/jsx` reports a failing component as a `RenderError` that holds the original error only as
+text. This note gives `RenderError` a `cause: Error | null` field, as ES2022's `Error.cause`, so a
+page can narrow it with `instanceof` and react to what the component threw. It needs one
+std-internal intrinsic that turns a caught value of a generic error type into an `Error`.
+
+## Motivation
+
+A component that throws, or an async component whose promise rejects, makes `renderToString` and
+`renderToStringSync` throw a `RenderError { component; message }` (`std/jsx/errors.velt`);
+`renderToStream` prints it to stderr and cuts the response off. The original error survives only
+as text (`message` embeds `${e}`), so a page cannot react to what went wrong:
 
 ```ts ignore
 try {
@@ -17,15 +24,15 @@ try {
 }
 ```
 
-`JSX.Element` is not generic over error types, so the type of a component's error can't travel
+`JSX.Element` is not generic over error types, so the type of a component's error cannot travel
 with the element to the call that renders it.
 
-## Options
+## Design
 
-**A. `RenderError.cause: Error | null`.** ES2022's `Error.cause`, which TypeScript users know:
-the original error when it is a class extending the prelude `Error` (what Velt code throws
-almost always), `null` for other thrown values, whose text stays in `message`. The page narrows
-the cause with `instanceof`, which already works on an `Error | null` field:
+`RenderError` gains `cause: Error | null`; `message` and `component` stay as they are. `cause` is
+the original error when it is an instance of a class extending the prelude `Error` (what Velt code
+throws almost always), and `null` for other thrown values, whose text stays in `message`. The page
+narrows it with `instanceof`, which works on an `Error | null` field:
 
 ```ts ignore
 try {
@@ -40,68 +47,65 @@ try {
 ```
 
 The static type of what rendering throws stays `RenderError`, so every caller's `throws` clause
-and every provider stay as they are; the component name stays available.
+and every provider stay as they are, and the component name stays available. When several
+components fail, the first failure in document order wins, and its `cause` is that component's
+error. For a component whose error type is a union (`NotFound | Forbidden`), `cause` is the thrown
+member.
 
-**B. `JSX.Element<E>`.** Elements generic over the union of their components' errors, so
-`renderToString<E>(el: Element<E>): Promise<string> throws RenderError | E`. Exact static types,
-but every component signature, every container of elements (`JSX.Element[]`, props) and the
-provider contract would carry `E`, and TypeScript's `JSX.Element` is not generic, so components
-shared with a client would no longer compile with `tsc`. Rejected.
+## Compilation
 
-**C. Rethrow the original (React's `renderToString`).** Rendering throws the component's error
-itself, statically typed as `Error`. `catch (e) { if (e instanceof NotFound) … }` reads like
-React, but the component name is lost (React reports it through `onError`), errors that are not
-`Error` subclasses still need a wrapper, and one `catch` sees two shapes. Rejected in favour of
-A, which keeps one shape and the name.
+`jsxComponent` and `settle` (the async path) in `std/jsx/factory.velt` set `cause` from the caught
+error. Both are generic over the component's error type `E`, which is unbounded (a component may
+throw any value), and converting a caught `e: E` to `Error | null` is not expressible in Velt:
 
-## Recommendation: A
-
-- `RenderError` gains `cause: Error | null`; `message` and `component` stay as they are.
-- `jsxComponent` and the async path (`settle`) set it from the caught error.
-- The docs (https://veltlang.com/docs/std/jsx/, the TSX reference) show the `instanceof` narrowing above.
-
-### The missing piece: a caught `E` as an `Error`
-
-`jsxComponent<P, E>(component: (props: P) => Element throws E, …)` catches an `e: E`. Turning
-it into `Error | null` is not expressible in Velt today (checked on main):
-
-- `e instanceof Error` on a type parameter is an error (``instanceof` needs a class instance, an
-  interface value or a union with class members, found `E``);
-- a class bound `E extends Error` is not allowed (``Error` is not an interface``);
-- an interface bound (`E extends { message: string }`) doesn't convert `e` to an interface
-  value, and `instanceof` on a nullable interface value is an error.
+- `e instanceof Error` on a value of an unbounded type parameter is an error (``instanceof` needs
+  a class instance, an interface value or a union with class members, found `E``);
+- a class bound `E extends Error` would refuse components that throw strings or other non-`Error`
+  values, which `velt/jsx` accepts.
 
 Velt instantiates generic functions per type, so the answer is known in each instantiation. The
-smallest piece that uses that is a std-internal intrinsic, like `__intrinsic_array_with_capacity`:
+smallest piece that uses that is an intrinsic declared in `std/lang/intrinsics/` like the others
+(`@intrinsic export declare function asError<T>(value: T): Error | null;`), reachable only from
+std:
 
-```ts ignore
-// `e` as an `Error` when its type is a class extending `Error` (or a union of such classes and
-// others: the member's value, else null); null for any other type. Shares `e` (no move).
-__intrinsic_as_error(e): Error | null
-```
-
-- **sema** (`body/expr/builtins.rs` `intrinsic_call`): one argument of any type, result
-  `Error | null`.
+- **sema**: the declaration is the signature; `crates/velt_sema/src/intrinsic_decls.rs` maps the
+  name to a new `Intrinsic` variant.
 - **lowering**, per instantiation with the argument's type substituted:
-  - a class type that extends `Error` upcasts and shares the value;
-  - a union matches its members (classes extending `Error` as above, the rest `null`);
+  - a class type that extends `Error` is upcast, and the value is shared (no move);
+  - a union matches its members at run time: a member that is a class extending `Error` gives its
+    value as above, any other member gives `null`;
   - any other type is `null`.
 
-Alternatives to the intrinsic, for whoever owns the type checker: allowing `instanceof` on a
-value of type-parameter type, decided per instantiation, would let std write
-`e instanceof Error ? e : null` directly. That is a language change (and a TypeScript
-difference: TS decides `instanceof` at run time), so the intrinsic is the smaller step.
+The end-to-end test renders a sync component throwing a `NotFound`, an async component rejecting
+with one, and a component throwing a string: `renderToString` and `renderToStringSync` throw a
+`RenderError` whose `cause` narrows to `NotFound` (with its fields) in the first two cases and is
+`null` in the third.
 
-## Tests (when implemented)
+## Compatibility
 
-- A golden with a sync component throwing a `NotFound`, an async component rejecting with one,
-  and a component throwing a string. `renderToString`, `renderToStringSync` and
-  `renderToStream` throw a `RenderError` whose `cause` narrows to `NotFound` (with its fields)
-  in the first two cases and is `null` in the third.
-- The first failure in document order still wins, and its `cause` is that component's error.
-- A component whose error type is a union (`NotFound | Forbidden`) gives the thrown member.
+`cause` is TypeScript's `Error.cause` (ES2022), so the narrowing above reads as it does in
+TypeScript. React's `renderToString` rethrows the component's error itself; Velt keeps the
+wrapper, which carries the component name, and exposes the original through `cause`.
 
-## Out of scope
+## Alternatives considered
+
+**`JSX.Element<E>`.** Elements generic over the union of their components' errors, so
+`renderToString<E>(el: Element<E>): Promise<string> throws RenderError | E`. The static types are
+exact, but every component signature, every container of elements (`JSX.Element[]`, props) and
+the provider contract would carry `E`, and TypeScript's `JSX.Element` is not generic, so
+components shared with a client would no longer compile with `tsc`.
+
+**Rethrow the original, as React does.** Rendering throws the component's error itself, statically
+typed as `Error`. `catch (e) { if (e instanceof NotFound) … }` reads like React, but the
+component name is lost (React reports it through `onError`), errors that are not `Error`
+subclasses still need a wrapper, and one `catch` sees two shapes. A `cause` field keeps one shape
+and the name.
+
+**`instanceof` on a type parameter, decided per instantiation.** It would let std write
+`e instanceof Error ? e : null` directly. That is a language change and a difference from
+TypeScript, which decides `instanceof` at run time; the intrinsic is the smaller step.
+
+## Limitations
 
 Error boundaries (a component that renders a fallback for a failing subtree) are a provider
-feature; with `cause` they can be written in a provider without further compiler support.
+feature; with `cause` a provider can write them without further compiler support.

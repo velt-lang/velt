@@ -35,11 +35,13 @@
 name: ci
 
 on:
-  # A pull request's checks run once it is approved: the maintainer's approval adds the label
-  # `ci:approved`, which starts them; later pushes run them again while the label stays. Before
-  # that, `ci` fails with "waiting for approval", so auto-merge can't enqueue an unchecked change.
+  # A pull request's checks run only when the maintainer starts them: approving it adds the label
+  # `ci:approved`, which starts them. A push starts nothing (owner, 2026-11-18: runners go to the
+  # merge queue). After a re-review of new commits, the maintainer removes and re-adds the label.
+  # Until a run passes on the current head, the required `ci` check is missing, so auto-merge
+  # can't enqueue an unchecked change.
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
+    types: [labeled]
   merge_group:
   push:
     branches: [main]
