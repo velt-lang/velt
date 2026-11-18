@@ -404,12 +404,9 @@ pub enum Intrinsic {
     AddressArray,
     /// std only: `addressArray` with an owner block, whose first word is called at the drop.
     AddressArrayOwned,
-    /// std only (as are the other four `AddressAtomic*`): `addressAtomicLoad<T>(address: usize,
-    /// order: u8) -> T`, `T` an integer type: as `AtomicLoad` on the integer at `address`, `T`
-    /// being the call's type. Sema turns the declaration's string literal orderings into the
-    /// `Atomic*` intrinsics' integer literals. Changed (#3094), for all five `AddressAtomic*`:
-    /// renamed from `PtrAtomic*`; the first operand is a `usize` address, not a `Ptr<T>`. Not
-    /// additive.
+    /// std only, as all five `AddressAtomic*`: `(address: usize, order: u8) -> T`, `AtomicLoad` of
+    /// the integer `T` at `address` (orderings: literals, sema's `raw_memory.rs`). Changed (#3094)
+    /// for all five: renamed from `PtrAtomic*`, the first operand a `usize`. Not additive.
     AddressAtomicLoad,
     /// std only: `(address: usize, v: T, order: u8)`: `AtomicStore` at `address` (`T`: `v`'s).
     AddressAtomicStore,
@@ -424,6 +421,10 @@ pub enum Intrinsic {
     PtrFromAddress,
     /// std only (`Ptr.addressOf`): `ptrToAddress<T>(p: Ptr<T> | null) -> usize`. Additive.
     PtrToAddress,
+    /// std only (`Ptr.read`): `(p: Ptr<S>, i: usize) -> S`, stops at a NULL `Ptr<T>`. Additive.
+    PtrRead,
+    /// std only (`Ptr.write`): `ptrWrite<S>(p: Ptr<S>, i: usize, s: S)`, as `PtrRead`. Additive.
+    PtrWrite,
     /// std only: `atomicAddress<T>(a: borrow Atomic<T>) -> usize`: the address of `a`'s word.
     /// Sema allows only an `Atomic` of a 32- or 64-bit integer that cannot move: a static atomic
     /// (`Global(d)`), or a field (of a field…) of the value of `SharedRead`. Additive.

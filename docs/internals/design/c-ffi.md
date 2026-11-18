@@ -326,12 +326,24 @@ declare c struct CGRect { origin: CGPoint; size: CGSize; }
 
 - A C struct has fields only: no methods, constructor, type parameters, defaults, optional,
   private or static fields, `implements`, and at least one field. Fields are integers, `f32`,
-  `f64`, `bool` and other C structs; a struct cannot hold itself by value. A Velt enum and a
-  `declare c type` by value are refused with what to declare instead.
+  `f64`, `bool`, C pointers (`Ptr<T>`, `Ptr<T> | null`: one word each, NULL as `null`) and other
+  C structs; a struct cannot hold itself by value (a `Ptr<S> | null` field points at one). A
+  Velt enum, a `declare c type` by value and `Ptr<T> | null | undefined` (two words) are refused
+  with what to declare instead.
 - In Velt it is a value: Copy, built from a literal of its type, with read-only fields (a
   changed copy is `{ ...v, x: … }`). Lowering never counts or boxes it, so it stays inline, in
   declaration order at natural alignment, which is C's layout for these fields on 64-bit
-  targets.
+  targets. Lowering checks this for every C struct, from the fields' C types apart from the
+  aggregate (`lower/c_layout.rs`, an `ICE:` otherwise).
+- **`Ptr.read<S>(p, index)` and `Ptr.write<S>(p, index, s)`** (unsafe) move the `S` at element
+  `index` of `p` to and from C memory, `index` times `S`'s size past its address. `S` is a
+  number, `bool`, a pointer or a C struct; `void` and a `declare c type` have no bytes Velt
+  knows and are refused, at the call or where a type parameter is instantiated. A read checks
+  every pointer in the value declared non-null, in nested structs too: one C left NULL stops the
+  program, naming the field (`inner.data`). A struct without such a field pays nothing.
+- On wasm32 C's pointers, `size_t` and `ssize_t` are 4 bytes and Velt's 8, so `Ptr.read` and
+  `Ptr.write` of a type holding one are compile errors naming the target; a struct of other
+  fields is C's layout there too.
 - It has no identity, so every comparison compares its content, with the numbers in it compared
   as the operation compares numbers: `===`, `==` and `indexOf` by IEEE, `Object.is` by
   SameValue, `Map` and `Set` keys and `includes` by SameValueZero.
@@ -658,8 +670,9 @@ must not depend on code elsewhere.
 ## Limitations
 
 - `declare c` calls are synchronous.
-- A C struct crosses only behind `Ptr<S>`: not by value, not as `Out<S>`; struct declarations
-  are not compared with headers. C arrays and pointer fields in structs are not supported.
+- A C struct crosses only behind `Ptr<S>` (read and written with `Ptr.read` and `Ptr.write`):
+  not by value, not as `Out<S>`; struct declarations are not compared with headers. C arrays in
+  structs are not supported.
 - Function pointers cross only as `Ptr<void>`; C cannot call a Velt closure.
 - `declare c const` cannot be a string; a macro of a string literal is an error.
 - `va_list` parameters (`vprintf`) cannot be declared.

@@ -584,6 +584,8 @@ enums! {
         215 => SpreadParam,
         218 => PtrFromAddress,
         219 => PtrToAddress,
+        220 => PtrRead,
+        221 => PtrWrite,
     }
 }
 

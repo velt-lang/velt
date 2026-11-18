@@ -1,0 +1,75 @@
+// C structs with pointer fields (#3094): `Ptr<T>` and `Ptr<T> | null` fields are one word each,
+// at C's offsets, `NULL` as `null`, so `Ptr.write` and `Ptr.read` move them to and from C memory
+// as they are. Here a list lives in `calloc`'d memory, linked by its `next` pointers, and a struct
+// nests another with a pointer in it. Printed pointers are fixed addresses (`Ptr.at`): the
+// output is the same everywhere.
+import { Ptr } from "velt/ffi";
+
+declare c struct Label { len: u8; text: Ptr<u8>; }
+declare c struct Node { value: i32; next: Ptr<Node> | null; label: Label; done: bool; }
+
+declare c("c") function calloc(count: usize, size: usize): Ptr<Node>;
+declare c("c") function free(p: Ptr<Node>): void;
+
+function fixed(a: usize): Ptr<u8> {
+  // SAFETY: never read through; only the address is printed and compared.
+  return unsafe { Ptr.at<u8>(a) };
+}
+
+function element(p: Ptr<Node>, i: usize): Ptr<Node> {
+  // SAFETY: an address inside the block `p` starts, computed as C's `&p[i]`.
+  return unsafe { Ptr.at<Node>(Ptr.addressOf(p) + i * 40) };
+}
+
+/** The values along `next` from element `i` of `p`. */
+function walk(p: Ptr<Node>, i: usize): i32[] {
+  const out: i32[] = [];
+  let at: Ptr<Node> | null = element(p, i);
+  while (at !== null) {
+    // SAFETY: every `next` was written below, inside the block.
+    const n = unsafe { Ptr.read(at, 0) };
+    out.push(n.value);
+    at = n.next;
+  }
+  return out;
+}
+
+function main() {
+  // SAFETY: room for four nodes, zeroed; freed at the end.
+  const p = unsafe { calloc(4, 40) };
+  const label: Label = { len: 3, text: fixed(0x1000) };
+  // Three nodes, 2 → 0 → 3, linked through C memory.
+  // SAFETY: elements 0, 2 and 3 of the block.
+  unsafe { Ptr.write(p, 3, { value: 30, next: null, label, done: true }) };
+  // SAFETY: as above.
+  unsafe { Ptr.write(p, 0, { value: 10, next: element(p, 3), label, done: false }) };
+  // SAFETY: as above.
+  unsafe { Ptr.write(p, 2, { value: 20, next: element(p, 0), label: { ...label, len: 9 }, done: false }) };
+  console.log(walk(p, 2));
+
+  // SAFETY: element 3, written above.
+  const last = unsafe { Ptr.read(p, 3) };
+  console.log(last.next, last.label.len, last.label.text, last.done);
+  console.log(last.label);
+  // SAFETY: element 0, written above.
+  const first = unsafe { Ptr.read(p, 0) };
+  console.log(first.next === element(p, 3), first.label.text === last.label.text);
+  // Content, the pointers by address.
+  // SAFETY: element 0 again.
+  console.log(unsafe { Ptr.read(p, 0) } === first, first === last);
+
+  // The fields as C laid them out: `next` at offset 8, `label.text` at 24, `done` at 32.
+  // SAFETY: inside element 2.
+  const next = unsafe { Ptr.read(Ptr.at<Ptr<Node> | null>(Ptr.addressOf(p) + 80 + 8), 0) };
+  console.log(next === element(p, 0));
+  // SAFETY: as above.
+  console.log(unsafe { Ptr.read(Ptr.at<Ptr<u8>>(Ptr.addressOf(p) + 80 + 24), 0) });
+  // SAFETY: inside element 3.
+  console.log(unsafe { Ptr.read(Ptr.at<bool>(Ptr.addressOf(p) + 120 + 32), 0) });
+  // SAFETY: as above: a number written over the `len` of element 3's label.
+  unsafe { Ptr.write(Ptr.at<u8>(Ptr.addressOf(p) + 120 + 16), 0, 77) };
+  // SAFETY: element 3.
+  console.log(unsafe { Ptr.read(p, 3) }.label.len);
+  // SAFETY: allocated above, not used after.
+  unsafe { free(p) };
+}

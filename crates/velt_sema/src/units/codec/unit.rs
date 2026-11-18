@@ -105,7 +105,7 @@ unit_fields! {
     special: [sigq, type_level],
     skip: [
         // The caller's (`decode_unit`), or set again by every check that uses the unit.
-        modules, root, gen, units, import_targets, loads,
+        modules, root, gen, units, wasm32, import_targets, loads,
         loads_added, unit_base, units_stage,
         stack_base, stack_budget, held_borrows, ide, body_records, source_facts, std_missed,
         kept_demand,
