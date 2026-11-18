@@ -1,0 +1,23 @@
+// check: no leaks
+// A synchronous `main`'s module state (std/lang/hooks/module_blocks.velt, #2196 9c) is freed at a
+// normal end with the debug counters on: a counter, strings held in a module array, and a 16-byte
+// aligned SIMD value, which takes its block's alignment.
+import { u8x16 } from "velt/simd";
+
+let counter = 0;
+const names: string[] = [];
+let lanes = u8x16.splat(1);
+
+function bump(i: i64): void {
+  counter++;
+  names.push(`n${i}`);
+  lanes = lanes + u8x16.splat(1);
+}
+
+function main() {
+  for (let i = 0; i < 100; i++) {
+    bump(i);
+  }
+  console.log(`counter ${counter}, ${names.length} names, last ${names[names.length - 1]}`);
+  console.log(`lane ${lanes.lane(0)}`);
+}
