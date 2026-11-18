@@ -8,10 +8,13 @@
 //   and halves when one did not, down to off; a park that ended soon after it began (an unpark
 //   within `2 * MAX`) turns it back on at `MIN`. An idle worker spins a few tens of microseconds
 //   once, then sleeps as before.
-// - Only with several workers (`E_MODE` not 0 or lazy), and only while another worker is awake:
-//   with every other one asleep, nothing pushes to the inbox soon (its own timers and sockets
-//   wake it in the reactor), and the spin would only burn the budget.
+// - Only with several workers (`E_MODE` not 0 or lazy), and only while another worker is awake
+//   and running (not spinning too, `E_SPINNING`): with every other one asleep or waiting itself,
+//   nothing pushes to the inbox soon (its own timers and sockets wake it in the reactor), and the
+//   spin would only burn the budget. A pause between looks (`atomicSpinHint`) leaves the core's
+//   other hardware thread its turn.
 
+import { atomicSpinHint } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as sl from "./sched_sleep";
 import * as t from "./sched_task";
@@ -36,28 +39,42 @@ export function spin(e: usize): bool {
     return false;
   }
   const start = sl.clock() as usize;
+  m.storeRelease(e + t.E_SPINNING, 1);
+  let found = false;
   let i: u32 = 0;
   while (true) {
     if (m.load(e + t.E_INBOX) !== 0) {
-      m.st(e + t.E_SPIN, budget * 2 > MAX ? MAX : budget * 2);
-      return true;
-    }
-    i++;
-    // The clock every 32 looks: a look is a load, a clock read tens of nanoseconds.
-    if ((i & 31) === 0 && (sl.clock() as usize) - start >= budget) {
+      found = true;
       break;
     }
+    // A pause between looks: the core's other thread (perhaps the worker about to push) keeps
+    // its issue slots, and the look stays cheap while nothing comes.
+    atomicSpinHint();
+    i++;
+    // The clock every 8 looks: a look is a load and a pause (about 140 cycles on recent x86
+    // cores), a clock read tens of nanoseconds.
+    if ((i & 7) === 0 && (sl.clock() as usize) - start >= budget) {
+      break;
+    }
+  }
+  m.storeRelease(e + t.E_SPINNING, 0);
+  if (found) {
+    m.st(e + t.E_SPIN, budget * 2 > MAX ? MAX : budget * 2);
+    return true;
   }
   m.st(e + t.E_SPIN, budget / 2 < MIN ? OFF : budget / 2);
   return false;
 }
 
-/** Is a worker other than `e` awake (its park word down), one that may wake a task onto `e`? */
+/**
+ * Is a worker other than `e` awake, one that may wake a task onto `e`: its park word down and not
+ * itself spinning (two idle workers would otherwise keep each other spinning)?
+ */
 function othersAwake(e: usize): bool {
   const n = m.load(t.main() + t.E_STARTED);
   for (let i: usize = 0; i < n; i++) {
     const w = t.worker(i);
-    if (w !== e && m.load32(w + t.E_PARK) !== 1) {
+    if (w !== e && m.load32(w + t.E_PARK) !== 1 && m.load(w + t.E_SPINNING) === 0) {
       return true;
     }
   }
