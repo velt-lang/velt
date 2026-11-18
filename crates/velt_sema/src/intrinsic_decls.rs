@@ -180,11 +180,13 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("recordViewSync", Op(I::RecordViewSync)),
     // weak.velt
     ("weakMapDelete", Op(I::WeakMapDelete)),
+    ("weakMapDrop", Op(I::WeakMapDrop)),
     ("weakMapGet", Op(I::WeakMapGet)),
     ("weakMapHas", Op(I::WeakMapHas)),
     ("weakMapSet", Op(I::WeakMapSet)),
     ("weakMapValue", Op(I::WeakMapValue)),
     ("weakRefDeref", Op(I::WeakRefDeref)),
+    ("weakRefDrop", Op(I::WeakRefDrop)),
     ("weakRefNew", Op(I::WeakRefNew)),
 ];
 

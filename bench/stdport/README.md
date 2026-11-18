@@ -253,3 +253,25 @@ The decoder keeps the bit reader, output position and command state in locals of
 decodes prefix codes with one table lookup (two for codes over 8 bits) as the reference decoder
 does; the input sits in a buffer of its own followed by zeros, so the bit reader loads 8 bytes
 at a time with no check per byte and finds out afterwards whether a step read past the input.
+
+## pow
+
+`pow` is `**` on floats (`Math.pow`), the runtime's `velt_rt_pow_f64` before #1676 (fdlibm's
+`pow`, from the `libm` crate, which the Rust port calls), now std/lang/math/pow.velt: glibc's
+algorithm, whose results Node prints on Linux. Instructions executed (cachegrind, i9-12900HK,
+Linux x86-64 (Ubuntu 24.04 under WSL); `main` at cee20ee5a with its runtime built in the release
+profile, and the port; 2 runs each, the same):
+
+| benchmark | Velt before | Velt | Velt without FMA | Rust | Velt / Rust |
+|---|---:|---:|---:|---:|---:|
+| pow | 631.2 M | 288.3 M | 543.8 M | 575.0 M | 0.50 |
+
+The default x86-64 level has no FMA, so `pow` runs a copy compiled for it where the CPU has it
+(every x86-64 CPU since 2013). Without (the third column, `VELT_SIMD_DISABLE=clmul`), where each
+of its twenty `fma`s would be a call of C's `fma` (a software routine on such a CPU),
+std/lang/math/pow_fast.velt computes the same bits from unfused steps whose roundings it checks.
+On arm64, and with `--cpu x86-64-v3`, every `fma` is one instruction.
+
+On wasm32-wasip1, which has no `fma` instruction (wasmtime 50), the same program takes 675.8 M
+instructions before and 525.9 M with the port for the run (precompiled), and 1,487 M to 1,490 M
+before and 1,358 M with the port with wasmtime's compile included.

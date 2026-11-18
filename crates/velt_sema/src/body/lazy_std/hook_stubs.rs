@@ -29,6 +29,10 @@
 //! is neither: its calls name a `declare function` typed the same way ([`declared`]), which
 //! never binds, and its module is never loaded. That function is a plain extern to the rest of
 //! the check and to lowering, which calls the object's entry point as it called the runtime's.
+//! A lowered prebuilt hook its constructs demand is declared the same way ([`declared_lowered`]),
+//! and lowering's builder calls the declared function (`velt_vir` `hook_calls.rs`). A program
+//! that loads any of the module's private modules (`prebuilt::private`, the module itself
+//! among them) calls none: the object keeps their state, which would then be in two copies.
 
 use rustc_hash::FxHashMap;
 use velt_common::hook_sig::{FnSig, Mode, Sig, T};
@@ -54,6 +58,10 @@ pub(crate) struct Stubs {
     /// Per prebuilt hook asked about ([`declared`]): its declared function, `None` where the
     /// build has no object of its module.
     declared: FxHashMap<usize, Option<DefId>>,
+    /// Per definition: the hooks (`HOOKS` indexes) its `hookCall`s name whose modules were not
+    /// loaded when it was checked without being live (the editor's analysis, or a check without
+    /// a load callback): demanded once it is live ([`demand_hook_calls`]).
+    pub(super) hook_calls: FxHashMap<DefId, Vec<usize>>,
 }
 
 impl Stubs {
@@ -106,6 +114,20 @@ impl Stubs {
     }
 }
 
+/// Demand the modules of the hooks live definition `d` calls by role ([`Stubs::hook_calls`]), and
+/// make the hooks live.
+pub(super) fn demand_hook_calls(cx: &mut Ctx, d: DefId) {
+    let Some(hooks) = cx.lazy.stubs.hook_calls.remove(&d) else {
+        return;
+    };
+    for h in hooks.into_iter().map(|i| &HOOKS[i]) {
+        cx.demand_std(&h.module());
+        if let Some(Item::Def(f)) = cx.std_def(&h.qualified()) {
+            super::live::mark(cx, f);
+        }
+    }
+}
+
 /// The definition a `hookCall` of `HOOKS[index]` in `module` calls when the hook's module isn't
 /// loaded: its stub, made the first time. `None` where the module is to be demanded now: laziness
 /// is off or checks everything, the passes after the check have run, no loader serves modules on
@@ -149,7 +171,10 @@ pub(crate) fn declared(cx: &mut Ctx, index: usize, module: usize) -> Option<DefI
     if let Some(&d) = cx.lazy.stubs.declared.get(&index) {
         return d;
     }
-    let linked = (cx.loads.and_then(|l| l.prebuilt)).is_some_and(|linked| linked(index));
+    let private = prebuilt::private(HOOKS[index].module_entry);
+    let own_loaded = (private.iter()).any(|m| crate::collect::exports::std_module(cx, m).is_some());
+    let linked =
+        !own_loaded && (cx.loads.and_then(|l| l.prebuilt)).is_some_and(|linked| linked(index));
     let d = match (linked, &HOOKS[index].sig) {
         (true, Sig::Fn(sig)) => stub_info(cx, index, sig, module).map(|mut f| {
             f.name = prebuilt::symbol(&HOOKS[index]);
@@ -160,6 +185,20 @@ pub(crate) fn declared(cx: &mut Ctx, index: usize, module: usize) -> Option<DefI
     };
     cx.lazy.stubs.declared.insert(index, d);
     d
+}
+
+/// For lowered hook `h` its constructs demand: whether it is a prebuilt hook whose module is not
+/// loaded and whose object the build links, now declared ([`declared`]), so that its module is
+/// not loaded either. Lowering finds the declared function by its symbol.
+pub(super) fn declared_lowered(cx: &mut Ctx, h: &velt_common::std_hooks::Hook) -> bool {
+    if !h.prebuilt || crate::collect::exports::std_module(cx, &h.module()).is_some() {
+        return false;
+    }
+    let Some(index) = HOOKS.iter().position(|x| x.name == h.name) else {
+        return false;
+    };
+    // Its module, would it be loaded: the prelude's, whose names its signature's types are.
+    declared(cx, index, 0).is_some()
 }
 
 /// The stub's signature: the table's, with its passing modes fixed.

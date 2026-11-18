@@ -238,16 +238,7 @@ impl FnLower<'_, '_> {
             self.branch(is, yes, no);
             self.switch_to(yes);
             let tf = self.trace_fn(c);
-            let (visit, cx) = (
-                Operand::Copy(Place::local(tv.0)),
-                Operand::Copy(Place::local(tv.1)),
-            );
-            self.call_entry(
-                visit,
-                vec![cx, data.clone(), tf],
-                vec![Ty::Ptr; 3],
-                Ty::Unit,
-            );
+            self.call_visit(tv, data.clone(), tf);
             self.goto(done);
             self.switch_to(no);
         }

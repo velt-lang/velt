@@ -111,6 +111,7 @@ pub(crate) fn helper(
         SimdCall::Has(ext) => Some(sha::has(&mut body, arch, ext)),
         SimdCall::Inst(op) => Some(sha::op(&mut body, arch, op)),
         SimdCall::Cpuid => Some(aes::cpuid(&mut body, arch)),
+        SimdCall::Xgetbv => Some(aes::xgetbv(&mut body, arch)),
         SimdCall::Prefetch => {
             // A read, kept in every cache level (`locality` 3), of data (cache type 1).
             body.declarations.push(

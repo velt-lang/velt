@@ -113,8 +113,9 @@ fn home(dir: &Path) -> PathBuf {
     home
 }
 
-/// Runs `velt args` in `dir`, killed after a minute (a hang fails the test instead of the run):
-/// its exit code (`None` when killed) and output.
+/// Runs `velt args` in `dir`, killed after a minute (a hang fails the test instead of the run),
+/// ten for a `build` (a release build of std with an empty cache took up to a minute on a loaded
+/// machine): its exit code (`None` when killed) and output.
 fn velt(dir: &Path, home: &Path, args: &[&str], env: &[(&str, &str)]) -> (Option<i32>, String) {
     let mut child = Command::new(env!("CARGO_BIN_EXE_velt"))
         .args(args)
@@ -129,12 +130,17 @@ fn velt(dir: &Path, home: &Path, args: &[&str], env: &[(&str, &str)]) -> (Option
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
+    let limit = Duration::from_secs(if args.first() == Some(&"build") {
+        600
+    } else {
+        60
+    });
     let start = Instant::now();
     let code = loop {
         if let Some(status) = child.try_wait().unwrap() {
             break status.code();
         }
-        if start.elapsed() > Duration::from_secs(60) {
+        if start.elapsed() > limit {
             let _ = child.kill();
             let _ = child.wait();
             break None;
@@ -165,6 +171,9 @@ fn a_spawn_on_a_c_thread_before_the_executor_started_leaves_main_on_worker_0() {
         &[("VELT_THREADS", "1")],
         &[("VELT_THREADS", "1"), ("VELT_RESCUE", "1")],
     ];
+    // Built first, outside the runs' limit: each run below finds the build current.
+    let (code, out) = velt(&app, &home, &["build", "--release"], &[]);
+    assert_eq!(code, Some(0), "{out}");
     for env in modes {
         let (code, out) = velt(&app, &home, &["run", "--release"], env);
         assert_eq!(code, Some(0), "{env:?}: {out}");

@@ -1,0 +1,5 @@
+// velt/lang/math (internal): `#math-fma`'s `arm64` variant (std/imports.velt): every 64-bit Arm
+// processor has the fused multiply-add.
+
+/** Whether every CPU this build runs on has an FMA instruction. */
+export const FMA_EVERYWHERE: bool = true;

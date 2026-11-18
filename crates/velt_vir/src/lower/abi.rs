@@ -286,14 +286,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
         func.param_attrs = attrs;
         func.cold = cold;
         func.inline = inline;
-        func.target = hir_prog.cpu_targets.get(&def).map(|t| match t {
-            hir::CpuTarget::ShaArm => crate::simd::Ext::ShaArm,
-            hir::CpuTarget::ShaX86 => crate::simd::Ext::ShaX86,
-            hir::CpuTarget::ClmulX86 => crate::simd::Ext::ClmulX86,
-            hir::CpuTarget::ClmulArm => crate::simd::Ext::ClmulArm,
-            hir::CpuTarget::AesX86 => crate::simd::Ext::AesX86,
-            hir::CpuTarget::AesArm => crate::simd::Ext::AesArm,
-        });
+        // The extension of the same name (`targetFeature`'s; a test of velt_vir checks each).
+        let target = hir_prog.cpu_targets.get(&def);
+        func.target = target.map(|t| crate::simd::Ext::named(t.name()).expect("ICE: a CPU target"));
         func
     }
 

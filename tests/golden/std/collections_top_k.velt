@@ -1,0 +1,74 @@
+// `TopK<K>`: the k best-scored keys of a stream, against sorting everything; and
+// `PriorityQueue.replaceTop`.
+import { PriorityQueue, TopK } from "velt/collections";
+
+// A fixed pseudo-random sequence (an LCG), scores in [0, 1000) with repeats.
+function scores(n: number): number[] {
+  const out: number[] = [];
+  let x = 12345;
+  for (let i = 0; i < n; i++) {
+    x = (x * 1103515245 + 12345) % 2147483648;
+    out.push(x % 1000);
+  }
+  return out;
+}
+
+function main() {
+  const all = scores(500);
+  for (const k of [0, 1, 7, 100, 500, 800]) {
+    const top = new TopK<number>(k);
+    let kept = 0;
+    for (let i = 0; i < all.length; i++) {
+      if (top.push(i, all[i])) {
+        kept++;
+      }
+    }
+    const want = all.toSorted((a, b) => b - a).slice(0, k);
+    const got = top.toSortedArray();
+    let same = got.length == want.length;
+    for (let i = 0; i < got.length && same; i++) {
+      // The key is the position its score came from.
+      same = got[i].score == want[i] && all[got[i].key] == got[i].score;
+    }
+    console.log(k, top.size, top.capacity, same, kept >= top.size, top.threshold);
+  }
+
+  // Of equal scores the earlier stays; NaN never gets in; clear keeps k.
+  const names = new TopK<string>(2);
+  console.log(names.threshold, names.push("a", 1), names.push("b", 1), names.push("c", 1));
+  console.log(names.push("d", NaN), names.push("e", 2), names.threshold);
+  console.log(names.toSortedArray());
+  names.clear();
+  console.log(names.size, names.capacity, names.threshold, names.push("f", -Infinity));
+  console.log(names.toSortedArray());
+
+  // Lowest distances: negate.
+  const near = new TopK<string>(2);
+  near.push("far", -9);
+  near.push("close", -1);
+  near.push("closer", -0.5);
+  console.log(near.toSortedArray().map((e) => `${e.key}:${-e.score}`));
+
+  try {
+    new TopK<number>(1.5);
+  } catch (e) {
+    console.log(e.name, e.message);
+  }
+  try {
+    new TopK<number>(-1);
+  } catch (e) {
+    console.log(e.name, e.message);
+  }
+
+  // A queue bounded at 3: the smallest leaves when a new one comes.
+  const q = new PriorityQueue<i64>((a, b) => a - b);
+  console.log(q.replaceTop(5), q.size);
+  q.push(9);
+  q.push(1);
+  console.log(q.replaceTop(4), q.replaceTop(0), q.replaceTop(7), q.size);
+  console.log(q.toSortedArray());
+  const words = new PriorityQueue<string>((a, b) => a.localeCompare(b) as i64);
+  words.push("pear");
+  words.push("apple");
+  console.log(words.replaceTop("fig"), words.pop(), words.pop(), words.pop());
+}

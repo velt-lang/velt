@@ -1,0 +1,70 @@
+// velt/lang/math (internal): whether the CPU has x86's fused multiply-add (FMA3), the check of
+// `targetFeature("fma-x86")` (#1676). std's `pow` (std/lang/math/pow.velt) runs a copy compiled
+// for it where it is true: each of its `fma`s is then one `vfmadd`, where the default x86-64 build
+// (x86-64-v2, no FMA) calls C's `fma`. arm64 always has FMA and needs no check.
+//
+// `hasFmaX86()` is FMA with AVX and the AVX state saved by the OS (CPUID's OSXSAVE, then XCR0's
+// SSE and AVX bits, as Intel's manual says to check before using VEX instructions). It is false
+// off x86-64, on WebAssembly, in debug (Cranelift) builds, and with `VELT_SIMD_DISABLE=clmul`:
+// the runtime's carry-less flag, which every FMA CPU has, guards it, so that it folds to false
+// elsewhere and that variable turns it off without std parsing it (a program with `**` loads
+// this). The runtime keeps no flag for FMA itself (#2241): the answer comes from the CPU, read
+// once and kept in `DETECTED`.
+
+import { noInline } from "velt/lang/intrinsics";
+
+// True only in a function gated on `fma-x86` (and the clones of what it calls).
+declare function velt_simd_has_fma_x86(): bool;
+// The runtime's carry-less flag: false on every other architecture, on wasm and in debug builds.
+declare function velt_simd_has_clmul_x86(): bool;
+// x86's CPUID (EAX, EBX, ECX, EDX) and XGETBV; zeros elsewhere.
+declare function velt_simd_cpuid(leaf: u32, subleaf: u32): u32x4;
+declare function velt_simd_xgetbv(xcr: u32): u64;
+// A lane without the index check (whose panic would make `detect` track its callers).
+declare function velt_simd_u32x4_lane(v: u32x4, index: u64): u32;
+
+// What this CPU has, once computed: bit 0 set (computed), bit 1 FMA. A static atomic; threads
+// that race to compute it store the same value.
+const DETECTED = new Atomic<u32>(0);
+
+/** Whether ECX of CPUID leaf 1 says FMA (bit 12), OSXSAVE (bit 27) and AVX (bit 28). */
+export function cpuidHasFma(ecx: u32): bool {
+  const want: u32 = (1 << 12) | (1 << 27) | (1 << 28);
+  return (ecx & want) == want;
+}
+
+/** Whether XCR0 says the OS saves the SSE (bit 1) and AVX (bit 2) registers. */
+export function xcr0HasAvx(xcr0: u64): bool {
+  return (xcr0 & 6) == 6;
+}
+
+// Out of line: it runs once, and every check would otherwise carry a copy.
+@noInline
+function detect(): u32 {
+  let found: u32 = 1;
+  // XGETBV only after CPUID's OSXSAVE: without it the instruction faults.
+  const ecx = velt_simd_u32x4_lane(velt_simd_cpuid(1, 0), 2);
+  if (cpuidHasFma(ecx) && xcr0HasAvx(velt_simd_xgetbv(0))) {
+    found |= 2;
+  }
+  return found;
+}
+
+// `DETECTED`, computing it the first time.
+function cpu(): u32 {
+  let found = DETECTED.load("relaxed");
+  if (found == 0) {
+    found = detect();
+    DETECTED.store(found, "relaxed");
+  }
+  return found;
+}
+
+/**
+ * Whether the CPU has x86's FMA3 with the AVX state enabled (false off x86-64, in debug builds,
+ * and with `VELT_SIMD_DISABLE=clmul`): the check a call of a function gated on `fma-x86` must
+ * sit behind.
+ */
+export function hasFmaX86(): bool {
+  return velt_simd_has_fma_x86() || (velt_simd_has_clmul_x86() && (cpu() & 2) != 0);
+}

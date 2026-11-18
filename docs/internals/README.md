@@ -228,9 +228,9 @@ Decisions and their rationale, including what is still planned:
   (implemented, issue #62).
 - [Doc comments](design/doc-comments.md): JSDoc `/** … */` and `///` comments with tags, read
   by `velt doc` and the editor; std migrated from plain `//` (implemented, issue #513).
-- [Weak references without a collector](design/weak-refs.md): the weak flag, the per-thread
-  side table and the ephemeron rule under `WeakMap`, `WeakSet`, `WeakRef` and `weak T` (runtime
-  prototype, issues #823 and #11).
+- [Weak references without a collector](design/weak-refs.md): the weak flag, the process's
+  side table and the ephemeron rule under `WeakMap`, `WeakSet`, `WeakRef` and `weak T`, in std
+  (implemented, issues #823, #11 and #3145).
 - [Reference cycles](design/cycles.md): which types can form cycles, a collector confined to
   them, and `weak T` fields and variables (accepted, issues #3119 and #11; step 1, the
   analysis, implemented).

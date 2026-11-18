@@ -399,6 +399,18 @@ pub(crate) fn native_executor(opts: &BuildOptions) -> bool {
     !(opts.target.as_deref()).is_some_and(velt_codegen_llvm::is_wasm)
 }
 
+/// The prebuilt hook modules' objects a check of the program may call (`std_cache::prebuilt`):
+/// none for a source generator's host, or where `scope` asks for none.
+fn prebuilt_finder(
+    sess: &Session,
+    opts: &BuildOptions,
+    scope: &CheckScope,
+) -> Option<std_cache::Finder> {
+    (scope.prebuilt && !sess.generator_build)
+        .then(|| std_cache::Finder::for_build(opts))
+        .flatten()
+}
+
 /// Type-check the loaded program (and the native declarations against their libraries).
 fn sema_stage(
     sess: &mut Session,
@@ -419,9 +431,7 @@ fn sema_stage(
     // (`StdLoad::serve`); `velt check --std` loads everything up front.
     let demands = !scope.eager_std;
     let generator_build = sess.generator_build;
-    let finder = (scope.prebuilt && !generator_build)
-        .then(|| std_cache::Finder::for_build(opts))
-        .flatten();
+    let finder = prebuilt_finder(sess, opts, scope);
     let mut more = demands.then(|| {
         StdLoad::new(
             (&mut loaded.state, &loaded.modules),
@@ -638,7 +648,7 @@ fn lower_checked(
         None => std_cache::stage::optimize(sess, opts, &target, std_use, &mut program)?,
     }
     if dest == VirFor::Link {
-        std_cache::prebuilt_link(sess, opts, &target, &program)?;
+        std_cache::prebuilt_link(sess, opts, &target, &mut program)?;
     }
     if opts.report_numbers {
         sess.reports.push(crate::numbers_report::render(&program));

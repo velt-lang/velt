@@ -27,7 +27,9 @@
 //!   `// requires: windows` everywhere else (Windows-only functions).
 //! - A golden whose first lines contain `// check: no leaks` must free every block it allocates
 //!   and every heap string buffer (`VELT_RC_STATS=1` with the debug runtime: `blocks=A/F` with
-//!   A = F, and `alloc=` equal to `free=`) in its debug run. Tasks
+//!   A = F, and `alloc=` equal to `free=`) in its debug run and in its release run (the
+//!   optimizer removes count changes, #2455; that build allocates through the runtime, not
+//!   std's heap hooks, so its blocks are counted). Tasks
 //!   still running when `main` returns are waited for (up to a minute) while blocks are unfreed;
 //!   the count is taken at a moment when every block was freed, or once no task can run any
 //!   more (blocks held by tasks that wait forever, or by pending `unref()`'d timers, count as
@@ -61,7 +63,9 @@
 //! off, or `=1` to check the release-mode runs too.
 //! Release-mode builds allocate through std's heap hooks (`VELT_HEAP_HOOKS=1`) although the
 //! runtime they link is this profile's (a debug one under `cargo test`), unless the variable is
-//! set already; with `VELT_RT_DEBUG_ALLOC=1` or `VELT_RC_STATS=1` set, they don't.
+//! set already; with `VELT_RT_DEBUG_ALLOC=1` or `VELT_RC_STATS=1` set, they don't, and neither
+//! does a golden that asks for a leak check (the hooks themselves are tested in
+//! `tests/heap_hooks.rs`, and by the release runs of every other golden).
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -397,6 +401,8 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
             .into_iter()
             .flat_map(|m| std::iter::once((m, None)).chain(also.clone().map(|kv| (m, Some(kv)))))
             .collect();
+        // Checked in both modes: the block counts of a release build are its own.
+        let leak_check = leak_allowance(f);
         for (mode, env) in runs {
             // Separate output dirs per mode: on Windows a just-built exe can stay locked briefly
             // (Defender scan), so the release link must not overwrite the debug executable.
@@ -410,7 +416,7 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
                 false => {
                     let mut cmd = crate::no_window::command(velt);
                     cmd.arg("run").args(mode).arg(f);
-                    heap_hooks(&mut cmd, mode);
+                    heap_hooks(&mut cmd, mode, leak_check.is_some());
                     cmd
                 }
                 true => {
@@ -419,7 +425,7 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
                     let exe = dir.join(format!("{stem}{}", std::env::consts::EXE_SUFFIX));
                     let mut build = crate::no_window::command(velt);
                     build.arg("build").args(mode);
-                    heap_hooks(&mut build, mode);
+                    heap_hooks(&mut build, mode, leak_check.is_some());
                     // As `velt run` builds to run here: a debug build for this CPU. (`velt run`
                     // leaves out the variable descriptions for debuggers, which `velt build`
                     // has no flag for; they must not change what a program does.)
@@ -454,7 +460,6 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
             if mode.is_none() && std::env::var_os("VELT_RT_DEBUG_ALLOC").is_none() {
                 cmd.env("VELT_RT_DEBUG_ALLOC", "1");
             }
-            let leak_check = mode.is_none().then(|| leak_allowance(f)).flatten();
             let str_limit = mode.is_none().then(|| heap_string_limit(f)).flatten();
             let block_limit = mode.is_none().then(|| heap_block_limit(f)).flatten();
             if leak_check.is_some() || str_limit.is_some() || block_limit.is_some() {
@@ -464,7 +469,7 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
             let stdout = norm(&String::from_utf8_lossy(&o.stdout));
             if let Some(allowed) = leak_check {
                 if let Some(leak) = leaked_blocks(&String::from_utf8_lossy(&o.stderr), allowed) {
-                    failures.push(format!("{rel} [debug]: {leak}"));
+                    failures.push(format!("{rel} [{}]: {leak}", mode.unwrap_or("debug")));
                 }
             }
             if let Some(limit) = str_limit {
@@ -642,9 +647,15 @@ fn leaked_blocks(stderr: &str, allowed: u64) -> Option<String> {
     blocks.or(strings)
 }
 
-/// A release build (`mode`) calls std's heap hooks with the debug runtime too (the header).
-fn heap_hooks(cmd: &mut Command, mode: Option<&str>) {
-    if mode.is_some() && std::env::var_os("VELT_HEAP_HOOKS").is_none() {
+/// A release build (`mode`) calls std's heap hooks with the debug runtime too (the header),
+/// unless its blocks are `counted` for a leak check: the runtime counts only its own.
+fn heap_hooks(cmd: &mut Command, mode: Option<&str>, counted: bool) {
+    if mode.is_none() {
+        return;
+    }
+    if counted {
+        cmd.env("VELT_RC_STATS", "1");
+    } else if std::env::var_os("VELT_HEAP_HOOKS").is_none() {
         cmd.env("VELT_HEAP_HOOKS", "1");
     }
 }

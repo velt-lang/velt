@@ -57,6 +57,12 @@ hooks! {
     /// `Array.from({ length: n }, f)`.
     array_from_length => lang_hooks_array, "arrayFromLength", sig(<A, B>(i64, &Fn((i64) -> A throws B)) -> [A] throws B);
 
+    // pow.velt: `**` on floats.
+    /// `a ** b` and `Math.pow` on floats (`velt_vir` `lower/ops.rs`): V8's results, through
+    /// glibc's algorithm in Velt (std/lang/math/pow.velt, #1676).
+    pow_f64 => lang_hooks_pow, "powF64", sig((f64, f64) -> f64), lowered, constructs(PowFloat),
+        replaces("velt_rt_pow_f64"), bench("pow");
+
     // number.velt: numbers as text, and the conversions of a float index.
     /// `n.toString(radix)` of a float (`velt_sema` `builtins.rs`).
     f64_to_string => lang_hooks_number, "f64ToString", sig((f64, f64) -> string),
@@ -160,6 +166,19 @@ hooks! {
     prebuilt_probe_value => lang_hooks_prebuilt_probe, "probeValue",
         sig((&string, usize, usize) -> f64), prebuilt;
 
+    // velt/lang/string/search: the string searches (#2198), which the prelude's methods call by
+    // role (`hookCall`), so a program loads them only when live code calls one.
+    /// `s.indexOf(needle, from)`.
+    string_index_of => lang_string_search, "indexOf", sig((&string, &string, i64) -> i64);
+    /// `s.lastIndexOf(needle, from)`.
+    string_last_index_of => lang_string_search, "lastIndexOf", sig((&string, &string, i64) -> i64);
+    /// `s.includes(needle, position)`.
+    string_includes => lang_string_search, "includes", sig((&string, &string, i64) -> bool);
+    /// `s.startsWith(prefix)`.
+    string_starts_with => lang_string_search, "startsWith", sig((&string, &string) -> bool);
+    /// `s.endsWith(suffix)`.
+    string_ends_with => lang_string_search, "endsWith", sig((&string, &string) -> bool);
+
     // process_statics.velt: the process-wide statics the runtime reads (#2779), whose addresses
     // `velt_main` hands it first thing (`velt_rt_statics`).
     /// The epoch of the runtime's cache of the last position translation (`velt_rt`
@@ -212,6 +231,8 @@ hooks! {
     process_env => lang_hooks_process, "processEnv", sig((&string) -> or_undefined(string));
     /// `process.argv`.
     process_argv => lang_hooks_process, "processArgv", sig(() -> [string]);
+    /// `process.pid`.
+    process_pid => lang_hooks_process, "processPid", sig(() -> f64);
     /// The mark of the top-level `await`s after it (`velt_sema` `top_level_await.rs`); lowering
     /// replaces its calls by the runtime's (`async_fn/suspend.rs`).
     top_level_await_at => lang_hooks_process, "topLevelAwaitAt", sig((&string) -> void), lowered;
@@ -226,49 +247,42 @@ hooks! {
     /// exception when a `catchUnwind` is active on the thread, and calls `velt_rt_panic`
     /// otherwise.
     panic_raise => lang_hooks_unwind, "panicRaise", sig((&string) -> never), lowered, constructs(CatchUnwind);
-    // weak.velt: weak references without a collector (#3145, #2196): the core under `WeakMap`,
-    // `WeakSet` and `WeakRef`, and the cold path of a weak-capable type's release
-    // (docs/internals/design/weak-refs.md, rt_abi.md "Weak references").
-    /// The cold release path of a weakly held object: `(obj)`, true when that was the last
-    /// reference (the caller drops and frees it).
+    // weak.velt: the weak core (#3145; design/weak-refs.md, rt_abi.md "Weak references").
+    /// A weakly held object's cold release: `(obj)`, true when that was the last reference.
     weak_release => lang_hooks_weak, "weakRelease", sig((usize) -> bool), lowered, constructs(Weak),
-        replaces("velt_rt_weak_release");
+        replaces("velt_rt_weak_release"), prebuilt;
     /// A new weak map: `(key trace, value retain, value release, value trace)`, its handle.
     weak_map_new => lang_hooks_weak, "weakMapNew", sig((usize, usize, usize, usize) -> u32),
-        lowered, constructs(Weak), replaces("velt_rt_weakmap_new");
+        lowered, constructs(Weak), replaces("velt_rt_weakmap_new"), prebuilt;
     /// `map.set(key, value)`: `(map, key, value word)`, the value's reference taken over.
     weak_map_set => lang_hooks_weak, "weakMapSet", sig((u32, usize, u64) -> void), lowered, constructs(Weak),
-        replaces("velt_rt_weakmap_set");
+        replaces("velt_rt_weakmap_set"), prebuilt;
     /// `weak_map_set` with the key's own trace glue (a `WeakMap<object, V>`).
     weak_map_set_traced => lang_hooks_weak, "weakMapSetTraced", sig((u32, usize, u64, usize) -> void),
-        lowered, constructs(Weak), replaces("velt_rt_weakmap_set_traced");
+        lowered, constructs(Weak), replaces("velt_rt_weakmap_set_traced"), prebuilt;
     /// `map.get(key)`: the value word, retained, or 0.
     weak_map_get => lang_hooks_weak, "weakMapGet", sig((u32, usize) -> u64), lowered, constructs(Weak),
-        replaces("velt_rt_weakmap_get");
-    /// `map.has(key)`.
+        replaces("velt_rt_weakmap_get"), prebuilt;
+    /// `map.has(key)`, and below `map.delete(key)` (whether it had an entry).
     weak_map_has => lang_hooks_weak, "weakMapHas", sig((u32, usize) -> bool), lowered, constructs(Weak),
-        replaces("velt_rt_weakmap_has");
-    /// `map.delete(key)`.
+        replaces("velt_rt_weakmap_has"), prebuilt;
     weak_map_delete => lang_hooks_weak, "weakMapDelete", sig((u32, usize) -> bool), lowered, constructs(Weak),
-        replaces("velt_rt_weakmap_delete");
-    /// A weak map's drop (std's `WeakMap` and `WeakSet` call it).
-    weak_map_drop => lang_hooks_weak, "weakMapDrop", sig((u32) -> void),
-        replaces("velt_rt_weakmap_drop");
+        replaces("velt_rt_weakmap_delete"), prebuilt;
+    weak_map_drop => lang_hooks_weak, "weakMapDrop", sig((u32) -> void), lowered,
+        constructs(Weak), replaces("velt_rt_weakmap_drop"), prebuilt;
     /// `new WeakRef(obj)`: its handle.
     weak_ref_new => lang_hooks_weak, "weakRefNew", sig((usize) -> u32), lowered, constructs(Weak),
-        replaces("velt_rt_weakref_new");
-    /// `new WeakRef(obj)` keeping a word for the compiler (an `object` target's descriptor).
+        replaces("velt_rt_weakref_new"), prebuilt;
+    /// `new WeakRef(obj)` keeping an `object` target's descriptor, which `weak_ref_word` reads.
     weak_ref_new_with => lang_hooks_weak, "weakRefNewWith", sig((usize, u64) -> u32), lowered, constructs(Weak),
-        replaces("velt_rt_weakref_new_with");
-    /// The word `weak_ref_new_with` kept.
+        replaces("velt_rt_weakref_new_with"), prebuilt;
     weak_ref_word => lang_hooks_weak, "weakRefWord", sig((u32) -> u64), lowered, constructs(Weak),
-        replaces("velt_rt_weakref_word");
+        replaces("velt_rt_weakref_word"), prebuilt;
     /// `ref.deref()`: the target's word, retained, or 0.
     weak_ref_deref => lang_hooks_weak, "weakRefDeref", sig((u32) -> usize), lowered, constructs(Weak),
-        replaces("velt_rt_weakref_deref");
-    /// A `WeakRef`'s drop (std's `WeakRef` calls it).
-    weak_ref_drop => lang_hooks_weak, "weakRefDrop", sig((u32) -> void),
-        replaces("velt_rt_weakref_drop");
+        replaces("velt_rt_weakref_deref"), prebuilt;
+    weak_ref_drop => lang_hooks_weak, "weakRefDrop", sig((u32) -> void), lowered,
+        constructs(Weak), replaces("velt_rt_weakref_drop"), prebuilt;
     // heap.velt: a release build's allocator, mimalloc through `declare c` (#2196). velt_opt's
     // last step (`heap_calls`) turns the runtime allocator calls lowering emits into these.
     /// `velt_rt_alloc`'s job: `(size, align)`, the block's address.

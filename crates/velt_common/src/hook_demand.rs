@@ -59,6 +59,9 @@ pub enum Construct {
     /// program goes through std's panic path, which raises Velt's exception when a catch is
     /// active on the thread.
     CatchUnwind,
+    /// `**` on floats (`a ** b`, `a **= b`, `Math.pow`): std's `pow` (std/lang/hooks/pow.velt),
+    /// which only a program that has one loads (#1676).
+    PowFloat,
     /// A weak collection's operation (`WeakMap`, `WeakSet` and `WeakRef`'s intrinsics, #3145):
     /// lowering calls std's weak core (std/lang/hooks/weak.velt) for it, and for the release of
     /// the types it makes weak-capable.
@@ -67,13 +70,14 @@ pub enum Construct {
 
 impl Construct {
     /// Every construct, in bit order ([`ConstructSet`]).
-    pub const ALL: [Construct; 7] = [
+    pub const ALL: [Construct; 8] = [
         Construct::TextInt,
         Construct::TextUint,
         Construct::Format,
         Construct::IndexCheck,
         Construct::Dynamic,
         Construct::CatchUnwind,
+        Construct::PowFloat,
         Construct::Weak,
     ];
 
@@ -86,6 +90,7 @@ impl Construct {
             Construct::IndexCheck => "IndexCheck (a bounds-checked array index)",
             Construct::Dynamic => "Dynamic (the glue of a value held as any)",
             Construct::CatchUnwind => "CatchUnwind (a call of catchUnwind)",
+            Construct::PowFloat => "PowFloat (`**` on floats)",
             Construct::Weak => "Weak (a weak collection's intrinsic)",
         }
     }

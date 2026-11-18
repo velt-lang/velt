@@ -505,7 +505,9 @@ impl FnLower<'_, '_> {
                 | I::WeakMapDelete
                 | I::WeakMapValue
                 | I::WeakRefNew
-                | I::WeakRefDeref,
+                | I::WeakRefDeref
+                | I::WeakMapDrop
+                | I::WeakRefDrop,
                 _,
             ) => self.weak_intrinsic(i, args, ty),
             (I::ArrayDataPtr, [xs]) => {

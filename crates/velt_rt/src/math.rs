@@ -1,5 +1,5 @@
-//! `velt_rt_pow_f64` / `velt_rt_pow_i64` (the `**` operator) and the `Math.*` f64 primitives that
-//! backends do not emit inline (`velt_rt_math_*`).
+//! `velt_rt_pow_i64` (`**` on integers) and the `Math.*` f64 primitives that backends do not emit
+//! inline (`velt_rt_math_*`). `**` on floats is std's (std/lang/math/pow.velt).
 
 /// `Math.sqrt`.
 #[no_mangle]
@@ -47,18 +47,6 @@ pub extern "C" fn velt_rt_math_trunc(x: f64) -> f64 {
 #[no_mangle]
 pub extern "C" fn velt_rt_math_fabs(x: f64) -> f64 {
     x.abs()
-}
-
-/// `a ** b` with JavaScript semantics (differs from C `pow` only for `1 ** NaN` and
-/// `(±1) ** ±Infinity`, which are `NaN` in JS). Computed by fdlibm's `pow` (the `libm` crate),
-/// the algorithm V8 uses, rather than the platform libm: results are the same on every OS and
-/// match Node (macOS's `pow` is off by an ulp for some inputs).
-#[no_mangle]
-pub extern "C" fn velt_rt_pow_f64(a: f64, b: f64) -> f64 {
-    if b.is_nan() || (b.is_infinite() && a.abs() == 1.0) {
-        return f64::NAN;
-    }
-    libm::pow(a, b)
 }
 
 /// `x.toBits()`: the IEEE 754 bits of `x` (both backends emit a bitcast instead of calling it).
@@ -168,16 +156,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn pow_f64_matches_v8_on_every_platform() {
-        let x = 0.3 / -0.1;
-        assert_eq!(velt_rt_pow_f64(x, 2.0), 8.999999999999998);
-        assert_eq!(velt_rt_pow_f64(2.0, 0.5), std::f64::consts::SQRT_2);
-        assert!(velt_rt_pow_f64(1.0, f64::NAN).is_nan());
-        assert!(velt_rt_pow_f64(-1.0, f64::INFINITY).is_nan());
-        assert_eq!(velt_rt_pow_f64(f64::NAN, 0.0), 1.0);
-    }
-
-    #[test]
     fn to_int32_matches_js() {
         // Expected values are Node's `x | 0`.
         let cases: [(f64, i32); 17] = [
@@ -276,18 +254,5 @@ mod tests {
             (velt_rt_math_trunc(-1.7), velt_rt_math_fabs(-3.0)),
             (-1.0, 3.0)
         );
-    }
-
-    #[test]
-    fn pow_f64() {
-        assert_eq!(velt_rt_pow_f64(2.0, 10.0), 1024.0);
-        assert_eq!(velt_rt_pow_f64(2.0, 0.5), std::f64::consts::SQRT_2);
-        assert_eq!(velt_rt_pow_f64(2.0, -1.0), 0.5);
-        assert_eq!(velt_rt_pow_f64(f64::NAN, 0.0), 1.0);
-        assert!(velt_rt_pow_f64(1.0, f64::NAN).is_nan());
-        assert!(velt_rt_pow_f64(-1.0, f64::INFINITY).is_nan());
-        assert!(velt_rt_pow_f64(-8.0, 1.0 / 3.0).is_nan());
-        assert_eq!(velt_rt_pow_f64(10.0, 21.0), 1e21);
-        assert_eq!(velt_rt_pow_f64(0.0, -1.0), f64::INFINITY);
     }
 }

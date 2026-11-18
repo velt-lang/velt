@@ -58,6 +58,17 @@ its core away (`sched_yield`, `SwitchToThread`) until it is free.
   for the 256-object bound: an object is found by a scan up to 16 objects and through a hash
   index past that, and only the edges grow.
 
+**Compiled once.** The core is a prebuilt hook module (design/std-object.md "Prebuilt hook
+modules"): `velt cache warm` compiles it into one object of the build cache, and a native build
+that finds the object calls its entry points (`velt_hook_weak_*`) as it called the Rust core's
+externs, and checks, lowers and optimizes none of the core. Its state is its own (the header, a
+static atomic, and three thread-local values: the lock flag and the cascade's), kept in the
+object; the program defines the thread-local values' storage, as for any object linked into it.
+A program that loads one of the core's modules itself (its white-box tests) calls no object. An
+allocation that fails stops the program, as the allocator of generated code does and the Rust
+core did: no panic, so none leaves the lock held, and no entry point takes its caller's location.
+WebAssembly, and a native build before the cache is warm, compile the core with the program.
+
 ## Release paths and their cost
 
 The compiler decides program-wide which types are **weak-capable**: the types used as weak-map
