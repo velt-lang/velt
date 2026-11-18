@@ -133,7 +133,8 @@ const PURE_C: &[&str] = &[
 
 /// The C library's and Win32's calls that only the file system makes: each takes a path (std/fs/fd,
 /// std/fs/whole; #2196 moved them out of the runtime's `velt_rt_fs_*`), named as the runtime's
-/// were.
+/// were. On Windows a spawn makes some of them too (the PATH search through `GetFileAttributesW`,
+/// the NUL device through `CreateFileW`), and does touch the file system there.
 const FILE_SYSTEM_C: &[&str] = &[
     "open",
     "stat",
