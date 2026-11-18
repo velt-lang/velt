@@ -22,12 +22,20 @@
 //!   no more than a member does. Members other than `r` are only written with member values,
 //!   null, or `r`'s own load repeated (the plain copy of a nullable field, which the share then
 //!   overwrites with the same pointer);
-//! - every path from the increment to a return passes a release (a member's null test that
-//!   finds it null counts): so no call took the reference over, and no member was overwritten
-//!   while holding it;
-//! - no call that may free a counted object runs while a member, or something read out of the
+//! - every path from the increment to a return passes a release that gives the increment's
+//!   reference back (a member's null test that finds it null counts): so no call took the
+//!   reference over, and no member was overwritten while holding it. Those releases are the
+//!   *paired* ones. A family may release more than it took: one whose root owns its object
+//!   (`for (const b of bytes())`: the loop's copy and the temporary are one register by now)
+//!   releases the owner's reference too, after the paired release. Such a release is the
+//!   family's *own*, and stays (`pairing.rs`, #2455);
+//! - no call that may free a counted object runs while the family holds the increment's
+//!   reference and a member, or something read out of the
 //!   object with no reference of its own, is still used after it (`for (const [o, n] of pairs)`
-//!   reads `o` from the pair once, and `o` is the pair's to keep alive). Only
+//!   reads `o` from the pair once, and `o` is the pair's to keep alive). Before the increment
+//!   and after its release the object's count is what it was, so calls there change nothing;
+//!   and a family with a release of its own on every path holds a second reference all along,
+//!   which no call can give back, so its calls are not looked at. Only
 //!   calls free: a release that drops the last reference frees the object (a runtime call), and
 //!   so does drop glue. Calls that cannot: runtime functions that only read, allocation and
 //!   buffer reallocation (a buffer is never a counted object), the string functions (they free
@@ -37,9 +45,9 @@
 //!   when its body may free at all), and Velt functions that make only such calls (`Frees`,
 //!   computed callees first, after their own families are borrowed).
 //!
-//! Then the increment and each release's decrement become `Nop`s and each release's count test
-//! goes straight to the decrement's block (a glue call to its next block): the freeing path is
-//! no longer reached and `simplify_cfg` removes it.
+//! Then the increment and each paired release's decrement become `Nop`s and each paired
+//! release's count test goes straight to the decrement's block (a glue call to its next block):
+//! the freeing path is no longer reached and `simplify_cfg` removes it.
 
 mod glue;
 #[cfg(test)]
@@ -48,8 +56,8 @@ mod tests;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_vir::vir::{
-    BinOp, BlockId, Callee, Const, Function, Local, Operand, Place, Program, Proj, Rvalue, Stmt,
-    Terminator, Ty,
+    BinOp, BlockId, Callee, Const, ExternId, Function, Local, Operand, Place, Program, Proj,
+    Rvalue, Stmt, Terminator, Ty,
 };
 
 use crate::callgraph::CallGraph;
@@ -92,6 +100,8 @@ pub(crate) struct Frees {
     externs: Vec<bool>,
     /// Per function: drop glue that releases one counted pointer (glue.rs).
     glue: Vec<bool>,
+    /// `velt_rt_free`, which frees a counted object's block through its count pointer.
+    free: Option<ExternId>,
 }
 
 impl Frees {
@@ -153,6 +163,9 @@ pub(crate) fn run(program: &mut Program) -> Vec<bool> {
         returns,
         externs,
         glue: program.funcs.iter().map(glue::release_glue).collect(),
+        free: (program.externs.iter())
+            .position(|e| e.symbol == "velt_rt_free")
+            .map(|i| ExternId(i as u32)),
     };
     let mut changed = vec![false; n];
     for scc in CallGraph::of(program).sccs_bottom_up() {
@@ -199,13 +212,13 @@ fn borrow_all(frees: &Frees, func: &mut Function) -> bool {
     let mut found: Vec<(Family, FxHashSet<Point>)> = vec![];
     for (bi, block) in cx.func.blocks.iter().enumerate() {
         for (si, s) in block.stmts.iter().enumerate() {
-            let Some(family) = cx.increment_root(s).and_then(|r| cx.family(r, (bi, si))) else {
+            let Some(mut family) = cx.increment_root(s).and_then(|r| cx.family(r, (bi, si))) else {
                 continue;
             };
             if family.members.iter().any(|m| claimed.contains(m)) {
                 continue;
             }
-            if let Some(uses) = cx.check(&family) {
+            if let Some(uses) = cx.paired(&mut family) {
                 claimed.extend(family.members.iter().copied());
                 found.push((family, uses));
             }
@@ -218,7 +231,7 @@ fn borrow_all(frees: &Frees, func: &mut Function) -> bool {
         let cut = analysis::cut_of(found.iter().map(|(f, _)| f));
         let reach = cx.reachable(&cut);
         let before = found.len();
-        found.retain(|(f, uses)| cx.unfreed(f, &cut, &reach, uses));
+        found.retain(|(f, uses)| f.owned || cx.unfreed(f, &cut, &reach, uses));
         if found.len() == before {
             break;
         }
@@ -234,6 +247,23 @@ fn borrow_all(frees: &Frees, func: &mut Function) -> bool {
         }
     }
     true
+}
+
+impl Cx<'_> {
+    /// Pairs `fam`'s increment with its releases, and returns the uses of its object, when
+    /// everything but its calls allows it to borrow. The walk comes first: most families are
+    /// refused by it, and it is the cheaper of the two.
+    fn paired(&self, fam: &mut Family) -> Option<FxHashSet<Point>> {
+        let uses = self.check(fam)?;
+        if !self.pair(fam) {
+            return None;
+        }
+        // The freeing paths of the releases that stay are reachable after all.
+        match fam.own.is_empty() {
+            true => Some(uses),
+            false => self.check(fam),
+        }
+    }
 }
 
 /// A change to the function.
@@ -253,6 +283,8 @@ struct Release {
     test: usize,
     dec: BlockId,
     store: Option<Point>,
+    /// The member whose reference it gives back.
+    through: Local,
 }
 
 struct Family {
@@ -267,7 +299,15 @@ struct Family {
     counts: FxHashSet<Local>,
     /// The increment's store.
     inc: Point,
+    /// The releases that give the increment's reference back (`pairing.rs`).
     releases: Vec<Release>,
+    /// The releases that give back a reference the family has besides: they stay.
+    own: Vec<Release>,
+    /// The family has a reference of its own all the while the increment's is held, which
+    /// nothing else can give back (`pairing.rs`).
+    owned: bool,
+    /// The blocks whose call runs while the increment's reference may be held.
+    held_calls: FxHashSet<usize>,
     /// Statements that only compute the count changes (the increment's `add`, a release's load,
     /// test and `sub`).
     count_stmts: FxHashSet<Point>,
@@ -377,3 +417,4 @@ impl Cx<'_> {
 }
 
 mod analysis;
+mod pairing;

@@ -350,3 +350,19 @@ fn signatures() {
         (vec![Ty::V128, Ty::U32], Ty::V128)
     );
 }
+
+/// Every CPU target sema knows (the names `targetFeature` takes) is the extension of the same
+/// name, which lowering gives a gated function (`lower/abi.rs`), and every extension is one;
+/// `velt_simd_xgetbv` is `(u32) -> u64`.
+#[test]
+fn cpu_targets_are_extensions() {
+    use velt_sema::hir::CpuTarget;
+    for t in CpuTarget::ALL {
+        let ext = Ext::named(t.name()).expect("an extension");
+        assert_eq!(ext.name(), t.name());
+    }
+    assert_eq!(CpuTarget::ALL.len(), Ext::ALL.len());
+    assert_eq!(Ext::named("fma-x86"), Some(Ext::FmaX86));
+    let xgetbv = SimdCall::of_symbol("velt_simd_xgetbv").map(SimdCall::signature);
+    assert_eq!(xgetbv, Some((vec![Ty::U32], Ty::U64)));
+}

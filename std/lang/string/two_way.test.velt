@@ -1,0 +1,82 @@
+// velt/lang/string (internal): white-box tests of two_way.velt, run by `velt test std/`.
+//
+// Two-Way, the fallback of a long needle whose candidates keep failing late, is
+// reached from `indexOf` only after a budget of failed checks, so it is tested here directly:
+// against a plain search, on strings of `a` and `b` (whose needles overlap themselves in every
+// way: the table's fallbacks are what these exercise) and at the ends of the range.
+import { describe, expect, it } from "velt/test";
+import { findTwoWay, rfindTwoWay } from "velt/lang/string/two_way";
+
+/** The first start in `from..=stop - n.length` of `n` in `s`, or -1. */
+function plainFind(s: string, n: string, from: usize, stop: usize): i64 {
+  for (let i = from; i + n.length <= stop; i++) {
+    if (s.slice(i as i64, (i + n.length) as i64) == n) {
+      return i as i64;
+    }
+  }
+  return -1;
+}
+
+/** The last start before `top` of `n` in `s`, or -1. */
+function plainRfind(s: string, n: string, top: usize): i64 {
+  let i = top;
+  while (i > 0) {
+    i--;
+    if (i + n.length <= s.length && s.slice(i as i64, (i + n.length) as i64) == n) {
+      return i as i64;
+    }
+  }
+  return -1;
+}
+
+/** Strings of `a` and `b` from a seeded generator. */
+function words(seed: u64[], count: usize, maxLen: u64): string[] {
+  const out: string[] = [];
+  for (let k: usize = 0; k < count; k++) {
+    seed[0] = seed[0].wrappingMul(6364136223846793005).wrappingAdd(1442695040888963407);
+    const len = 2 + (seed[0] >> 33) % maxLen;
+    let w = "";
+    for (let i: u64 = 0; i < len; i++) {
+      seed[0] = seed[0].wrappingMul(6364136223846793005).wrappingAdd(1442695040888963407);
+      // Mostly `a`, so that matches overlap.
+      w += (seed[0] >> 40) % 4 == 0 ? "b" : "a";
+    }
+    out.push(w);
+  }
+  return out;
+}
+
+describe("Two-Way", () => {
+  it("finds what a plain search finds, forwards and backwards", () => {
+    const seed: u64[] = [2198];
+    const hays = words(seed, 60, 80);
+    const needles = words(seed, 60, 9);
+    let checked = 0;
+    for (const s of hays) {
+      for (const n of needles) {
+        if (n.length > s.length) {
+          continue;
+        }
+        for (const from of [0, 1, 7, s.length - n.length]) {
+          expect(findTwoWay(s, n, 0, n.length, from, s.length, 0)).toBe(
+            plainFind(s, n, from, s.length),
+          );
+        }
+        for (const top of [1, 5, s.length - n.length, s.length - n.length + 1]) {
+          expect(rfindTwoWay(s, n, 0, n.length, top, 0)).toBe(plainRfind(s, n, top));
+        }
+        checked++;
+      }
+    }
+    expect(checked > 1000).toBe(true);
+  });
+
+  it("finds a match that ends at the range's end, and none past it", () => {
+    expect(findTwoWay("aaab", "aab", 0, 3, 0, 4, 0)).toBe(1);
+    expect(findTwoWay("aaab", "aab", 0, 3, 0, 3, 0)).toBe(-1);
+    expect(findTwoWay("abaabab", "abab", 0, 4, 0, 7, 0)).toBe(3);
+    expect(rfindTwoWay("baaa", "baa", 0, 3, 1, 0)).toBe(0);
+    expect(rfindTwoWay("ababaab", "baba", 0, 4, 2, 0)).toBe(1);
+    expect(rfindTwoWay("ababaab", "baba", 0, 4, 1, 0)).toBe(-1);
+  });
+});

@@ -1,0 +1,7 @@
+// velt/lang/hooks (internal): this process's id where there are no processes (`#process-pid`,
+// std/imports.velt: WebAssembly).
+
+/** This process's id: 1 (a WebAssembly module has no process id). */
+export function processId(): i64 {
+  return 1;
+}

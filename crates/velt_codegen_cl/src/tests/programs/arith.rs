@@ -286,7 +286,12 @@ fn math_intrinsics(pb: &mut ProgramBuilder) -> Vec<(FuncId, Vec<Operand>, Ty, &'
         (M::MulInt32, vec![int(-3, I32), int(7, I32)], "-21"),
         (M::AddInt32, vec![int(5, I32), f(2.5)], "7"),
         (M::PowI64, vec![int(3, I64), int(4, I64)], "81"),
-        (M::PowF64, vec![f(2.0), f(10.0)], "1024"),
+        // Rounded once: 0.1 * 10 is 1 + 2^-54 exactly (a separate multiply rounds it to 1).
+        (
+            M::FmaF64,
+            vec![f(0.1), f(10.0), f(-1.0)],
+            "0.00000000000000005551115123125783",
+        ),
     ];
     let mut out = vec![];
     for (op, args, exp) in cases {

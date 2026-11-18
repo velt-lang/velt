@@ -1,0 +1,10 @@
+// velt/lang/hooks (internal): this process's id on Windows (`#process-pid`, std/imports.velt):
+// `GetCurrentProcessId`. It imports nothing, as pid_posix.velt.
+
+declare c("c") function GetCurrentProcessId(): u32;
+
+/** This process's id. */
+export function processId(): i64 {
+  // SAFETY: no arguments, and it cannot fail.
+  return unsafe { GetCurrentProcessId() } as i64;
+}

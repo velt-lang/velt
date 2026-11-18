@@ -355,6 +355,11 @@ pub enum SimdCall {
     /// 3), how velt/simd computes the AES check in Velt (#2401, #2241). Zeros on every other
     /// architecture, on wasm and under Cranelift. Pure: its answers never change.
     Cpuid,
+    /// `velt_simd_xgetbv(xcr) -> u64`: x86's `XGETBV` (EDX:EAX), extended control register `xcr`;
+    /// XCR0 says which register states the OS saves, how std checks that the AVX state FMA needs
+    /// is enabled (std/lang/math/fma_check.velt). Only where CPUID says OSXSAVE. 0 on every other
+    /// architecture, on wasm and under Cranelift. Pure.
+    Xgetbv,
     /// `velt_simd_prefetch(addr)`: start loading the cache line at `addr` for a read soon
     /// (`arrayPrefetch`); never faults. Nothing under Cranelift and on wasm.
     Prefetch,
@@ -369,6 +374,9 @@ impl SimdCall {
         }
         if rest == "cpuid" {
             return Some(SimdCall::Cpuid);
+        }
+        if rest == "xgetbv" {
+            return Some(SimdCall::Xgetbv);
         }
         if let Some(ext) = rest.strip_prefix("has_") {
             return Ext::named(&ext.replace('_', "-")).map(SimdCall::Has);
@@ -405,6 +413,7 @@ impl SimdCall {
             SimdCall::Has(_) => (vec![], Bool),
             SimdCall::Prefetch => (vec![Ptr], Unit),
             SimdCall::Cpuid => (vec![U32, U32], V128),
+            SimdCall::Xgetbv => (vec![U32], U64),
             SimdCall::Inst(ExtOp::Sha1H) => (vec![U32], U32),
             SimdCall::Inst(op) => {
                 let mut params = vec![V128; op.vector_operands()];

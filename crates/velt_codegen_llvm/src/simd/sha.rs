@@ -12,7 +12,10 @@ pub(crate) fn has_ext(arch: Arch, ext: Ext) -> bool {
     matches!(
         (arch, ext),
         (Arch::Neon, Ext::ShaArm | Ext::ClmulArm | Ext::AesArm)
-            | (Arch::Sse2, Ext::ShaX86 | Ext::ClmulX86 | Ext::AesX86)
+            | (
+                Arch::Sse2,
+                Ext::ShaX86 | Ext::ClmulX86 | Ext::AesX86 | Ext::FmaX86
+            )
     )
 }
 
@@ -82,7 +85,7 @@ pub(super) fn op(b: &mut Body, arch: Arch, op: ExtOp) -> String {
             let values: Vec<String> = (0..vectors).map(|i| b.arg(i, V)).collect();
             let prefix = match op.ext() {
                 Ext::ShaArm | Ext::ClmulArm | Ext::AesArm => "aarch64.crypto",
-                Ext::ShaX86 | Ext::ClmulX86 | Ext::AesX86 => "x86",
+                Ext::ShaX86 | Ext::ClmulX86 | Ext::AesX86 | Ext::FmaX86 => "x86",
             };
             (
                 format!("{prefix}.{}", op.name()),
