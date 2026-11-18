@@ -31,12 +31,13 @@
 //
 // A started node its owner dropped runs on. One that nothing can wake any more (no leaf holds its
 // waker) never would: it is given up, its state dropped, as JavaScript collects a promise nobody
-// can settle together with the functions waiting for it (`unreachable`, `giveUp`).
+// can settle together with the functions waiting for it (sched_node_lost.velt).
 
-import { inline, noInline, stateDrop, statePoll } from "velt/lang/intrinsics";
+import { inline, stateDrop, statePoll } from "velt/lang/intrinsics";
 import * as bd from "./sched_budget";
 import * as m from "./sched_mem";
 import * as loc from "./sched_node_loc";
+import * as lost from "./sched_node_lost";
 import * as micro from "./sched_micro";
 import * as aw from "./sched_node_await";
 import * as al from "./sched_share_alias";
@@ -59,7 +60,7 @@ export const N_NEXT: usize = 56;
 export const N_CX: usize = 64;
 export const N_TAKEN_NEXT: usize = 80;
 /**
- * The state's drop glue: read before the start, and when a started node is given up (`giveUp`).
+ * The state's drop glue: read before the start, and when a started node is given up (sched_node_lost.velt).
  * A started node that catches lends it and the word after it to sched_node_catch.velt
  * (`N_SETTLE`).
  */
@@ -259,7 +260,7 @@ export function nodeDrop(f: usize): void {
   } else if ((fl & FINISHED) === 0) {
     setFlags(n, DETACHED);
     if (m.load(n + N_REFS) === 2) {
-      return dropPending(n);
+      return lost.dropPending(n);
     }
   } else if ((fl & DELIVERED) === 0) {
     rp.dropResult(n);
@@ -268,71 +269,6 @@ export function nodeDrop(f: usize): void {
   if (w !== 0) {
     m.wakerDrop(w);
   }
-  release(n);
-}
-
-/**
- * `nodeDrop`'s end for started node `n` that has not finished, its owner on its task's thread:
- * when the owner's was the last reference besides its task's, nothing can wake it any more. A
- * call of its own, so the drop of a finished promise, the common one, keeps nothing across it.
- */
-@noInline
-function dropPending(n: usize): void {
-  const w = aw.takePlain(n);
-  if (w !== 0) {
-    m.wakerDrop(w);
-  }
-  release(n);
-  if (unreachable(n, 1)) {
-    giveUp(m.ld(n + N_TASK), n);
-  }
-}
-
-/**
- * Can started node `n` never run again, once all but `refs` of its references are given back?
- * Its owner dropped it, it is not running, not among its task's woken nodes and not finished,
- * and besides the caller's its task holds the only reference: no leaf holds its waker (each
- * clone is a reference), so nothing can wake it. A promise nobody settles ends up here
- * (std/lang/promise/settle.velt: `new Promise` whose `resolve` and `reject` were dropped,
- * waiting on a race over nothing), as the loser of a race against a timer that was cleared
- * does. Not a catching node (its drop glue's word is lent, `N_DROP`). A shared node is not
- * detached while a holder has it (sched_share_drop.velt `free` drops it as its owner would).
- */
-@inline
-function unreachable(n: usize, refs: usize): bool {
-  const fl = m.load32(n + N_FLAGS);
-  const idle = STARTED | DETACHED;
-  const busy = FINISHED | RUNNING | QUEUED | CATCHES | PANICKED | ADOPTED;
-  return (fl & (idle | busy)) === idle && m.load(n + N_REFS) === refs;
-}
-
-/**
- * A run of node `n` of task `task` left it suspended with its owner gone (`run`): given up when
- * nothing can wake it. The run's caller still holds the reference it ran it with (the woken
- * stack's, a sleep's, a microtask's: sched_run.velt), which frees the node when it goes.
- */
-@noInline
-function parked(task: usize, n: usize): void {
-  if (unreachable(n, 2)) {
-    giveUp(task, n);
-  }
-}
-
-/**
- * Gives up node `n` of task `task`, which is `unreachable`: its state is dropped (what its
- * frame holds goes, as when JavaScript collects a function suspended for ever), and the task's
- * reference with it; the last reference frees the node. It has no result. On the task's thread
- * only.
- */
-@noInline
-function giveUp(task: usize, n: usize): void {
-  setFlags(n, FINISHED);
-  // SAFETY: the state's own drop glue (a non-catching node keeps it, `N_DROP`) on a state that
-  // is suspended, not being polled, and never polled again.
-  unsafe {
-    stateDrop(m.ld(n + N_DROP), n + N_HEAD + 16);
-  }
-  m.st(task + t.T_LOCALS, m.ld(task + t.T_LOCALS) - 1);
   release(n);
 }
 
@@ -429,7 +365,7 @@ export function run(task: usize, n: usize, taken: bool): void {
     m.and32(n + N_FLAGS, ~RUNNING);
     if (r !== 1) {
       if ((m.load32(n + N_FLAGS) & DETACHED) !== 0 && m.load(n + N_REFS) === 2) {
-        parked(task, n);
+        lost.parked(task, n);
       }
       return;
     }
