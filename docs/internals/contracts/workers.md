@@ -18,34 +18,34 @@ that serves through `velt:worker` (packages/http-server's JS-host variant, condi
   that condition is chosen before one under `js` when written first (`vpm::imports::conditions`).
   The host package is part of the build stamp's key.
 - Output: a directory, `-o <dir>`, else `<name>-<condition>/` in the build's default directory
-  (`target/velt/` of the file's package; a package's name is without its `@scope/`). It must be
-  new, empty, or hold nothing but files the host package scaffolds and, when it has `.velt-host`
-  (an earlier host build's marker), the build's own files (`vpm::host::BUILD_FILES`, by-products
-  `program.o`, `program.entry.o` and the stamps included) and the entries and scaffolded files
-  the marker lists (`entry <name>`, `scaffold <name>`, one per line). The entry replaces only a
-  listed entry, never a scaffolded file. Otherwise the build fails before compiling, so it never
-  writes over the user's files, whichever host an earlier build was for. Names are compared with
-  the build's files without ASCII case (`vpm::host::is_build_file`; a case-insensitive file
-  system takes `.VELT-HOST` for `.velt-host`), and the marker is read before the build writes
-  anything. The build writes through what the directory holds: a symbolic link the user put
-  there under a build file's name is followed (packages ship plain files only). It holds `program.wasm` (with the build's object and stamps), `velt_web.mjs` (the core
-  glue every browser build gets), `velt_serve.mjs` (the server core below), `velt_modules.mjs`
-  (generated: `export const modules = { ["<module>"]: <its default export>, … }` with computed
-  keys, so `__proto__` is a key), the host modules of packages under
-  `hosts/<package>/<path below src/>`, the host package's `entry` under its file name (every
-  build writes these), each `scaffold` file only when absent (`{{name}}` replaced by the
-  program's name: lowercase letters, digits and `-`, at most 63), and `.velt-host`. A build
-  without `--release` warns.
-- Host modules: every import module the program reaches (a `declare host("m")` function it
-  calls; the module's `velt.host` section lists them) needs JavaScript. Modules named `velt:…`
-  are the runtime glue's (`velt:worker` below, `velt:fetch`, `velt:random` and `velt:clock` of velt_web.mjs): only std declares
-  their functions (sema: "the import modules `velt:…` are the runtime glue's"), so their types
-  are the glue's and the compiler keeps no table of them. Any other comes from the package whose
-  `package.velt` lists it under `hostModules` (manifest.md), which must be a package whose own
-  modules declare it; exactly one such package. Otherwise the build fails at a declaration of
-  the module (`driver/host_modules.rs`): "the `--host <p>` build has no JavaScript for host
-  module `m`" (with where to list it), "package `q` provides host module `m`, which none of its
-  modules declares", "host module `m` is provided by two packages".
+  (`target/velt/` of the file's package; a package's name is without its `@scope/`). It must be new,
+  empty, or hold nothing but files the host package scaffolds and, when it has `.velt-host` (an
+  earlier host build's marker), the build's own files (`vpm::host::BUILD_FILES`, by-products
+  `program.o`, `program.entry.o` and the stamps included) and the entries and scaffolded files the
+  marker lists (`entry <name>`, `scaffold <name>`, one per line). The entry replaces only a listed
+  entry, never a scaffolded file. Otherwise the build fails before compiling, so it never writes
+  over the user's files, whichever host an earlier build was for. Names are compared with the
+  build's files without ASCII case (`vpm::host::is_build_file`; a case-insensitive file system takes
+  `.VELT-HOST` for `.velt-host`), and the marker is read before the build writes anything. The build
+  writes through what the directory holds: a symbolic link the user put there under a build file's
+  name is followed (packages ship plain files only). It holds `program.wasm` (with the build's
+  object and stamps), `velt_web.mjs` (the core glue every browser build gets), `velt_serve.mjs` (the
+  server core below), `velt_modules.mjs` (generated: `export const modules = { ["<module>"]: <its
+  default export>, … }` with computed keys, so `__proto__` is a key), the host modules of packages
+  under `hosts/<package>/<path below src/>`, the host package's `entry` under its file name (every
+  build writes these), each `scaffold` file only when absent (`{{name}}` replaced by the program's
+  name: lowercase letters, digits and `-`, at most 63), and `.velt-host`. A build without
+  `--release` warns.
+- Host modules: every import module the program reaches (a `declare host("m")` function it calls;
+  the module's `velt.host` section lists them) needs JavaScript. Modules named `velt:…` are the
+  runtime glue's (`velt:worker` below, `velt:fetch`, `velt:random` and `velt:clock` of
+  velt_web.mjs): only std declares their functions (sema: "the import modules `velt:…` are the
+  runtime glue's"), so their types are the glue's and the compiler keeps no table of them. Any
+  other comes from the package whose `package.velt` lists it under `hostModules` (manifest.md),
+  which must be a package whose own modules declare it; exactly one such package. Otherwise the build fails at a declaration of the
+  module (`driver/host_modules.rs`): "the `--host <p>` build has no JavaScript for host module `m`"
+  (with where to list it), "package `q` provides host module `m`, which none of its modules
+  declares", "host module `m` is provided by two packages".
 
 ## The entry: a host package's adapter
 
@@ -59,12 +59,13 @@ import { createServer } from "./velt_serve.mjs";
 import { modules } from "./velt_modules.mjs";
 const server = createServer(module, { modules });
 export default {
-  fetch: (request, env, ctx) =>
-    server.serve(request, {
+  fetch(request, env, ctx) {
+    return server.serve(request, {
       context: { env, ctx },
       waitUntil: (p) => ctx.waitUntil(p),
       remoteAddr: request.headers.get("cf-connecting-ip") ?? "",
-    }),
+    });
+  },
 };
 ```
 
@@ -83,35 +84,36 @@ export default {
   context; a host function reads `host.*` when it is called (after an `await` inside it, the
   context may be another request's). They are wrapped as velt_web.mjs wraps
   any host function (what crosses, the checks of results, async functions returning promises).
+  `write(stream, bytes)` (optional) is the sink of the program's output (stream 1 or 2); without
+  it the output goes to the console, a line at a time.
 - The module is instantiated on the first request, once per isolate, and `main` runs once
   (`velt_start`); the instance serves every later request. Instantiation and `main` run in the
   first request's handler.
-- The end of a program (`velt.done(code)`, reaching the glue through `loadVelt`'s `ended`): a program that
-  ends with 0 before it accepted a request keeps its instance; queued and later requests get a
-  500 "the program does not accept requests", logged once. Any other end (code 0 after it
-  accepted, a panic's 101, a trap's 134, `process.exit(n)`, an uncaught error's 1), a host
-  function that throws, or a failed instantiation discards the instance (an exception that
-  unwinds through the module leaves it unusable): every request in flight that was not
-  answered gets a 500 (one answered whose body is still being written is cut off), the cause is
-  logged with the number of those 500s (left out when there are none, as when a server closed
-  and its handlers finished), and the next request instantiates the module again.
-- Contexts. Some platforms (Cloudflare's Workers) tie I/O (a request's body, a `Response`, a stream, a timer, a fetch) to
-  the request whose handler made it, cancel a request whose handler waits on nothing of its
-  own, and end a request's context, with what it started, once its response and its
-  `ctx.waitUntil` promises are done. So each request has a pump, an async loop in its own
-  handler that keeps a timer of its own pending while it waits (every 10 s) and does the
-  request's I/O when the program asks: reading the body, making the `Response` (the glue's 500s
-  too), writing a streamed body. The program's turns run in a request's context: `main` in the
-  first request's, a request handed to `accept()` in its own (from its pump), a wait on a
-  request settled from its pump (velt_web.mjs's `Deferred`, which runs the turn on the caller's
-  stack instead of in a reaction of a promise another request made), a host promise's
-  settlement in the context of the turn that started it (`loadVelt`'s `owner`/`resuming`), the
-  program's timer in the pump holding it (`loadVelt`'s `setTimer`): the newest request not
-  answered yet, else the newest request; it moves when that changes (its timeout is cleared in
-  the pump that set it), and a turn asking for the same deadline keeps it. A queued request
-  whose client went away (`request.signal`, which Workers abort only with the compatibility flag
-  `enable_request_signal`, set by host-cloudflare's scaffolded `wrangler.toml`) leaves the
-  queue and is answered 499.
+- The end of a program (`velt.done(code)`, reaching the glue through `loadVelt`'s `ended`): a
+  program that ends with 0 before it accepted a request keeps its instance; queued and later
+  requests get a 500 "the program does not accept requests", logged once. Any other end (code 0
+  after it accepted, a panic's 101, a trap's 134, `process.exit(n)`, an uncaught error's 1), a host
+  function that throws, or a failed instantiation discards the instance (an exception that unwinds
+  through the module leaves it unusable): every request in flight that was not answered gets a 500
+  (one answered whose body is still being written is cut off), the cause is logged with the number
+  of those 500s (left out when there are none, as when a server closed and its handlers finished),
+  and the next request instantiates the module again.
+- Contexts. Some platforms (Cloudflare's Workers) tie I/O (a request's body, a `Response`, a stream,
+  a timer, a fetch) to the request whose handler made it, cancel a request whose handler waits on
+  nothing of its own, and end a request's context, with what it started, once its response and its
+  `ctx.waitUntil` promises are done. So each request has a pump, an async loop in its own handler
+  that keeps a timer of its own pending while it waits (every 10 s) and does the request's I/O when
+  the program asks: reading the body, making the `Response` (the glue's 500s too), writing a
+  streamed body. The program's turns run in a request's context: `main` in the first request's, a
+  request handed to `accept()` in its own (from its pump), a wait on a request settled from its pump
+  (velt_web.mjs's `Deferred`, which runs the turn on the caller's stack instead of in a reaction of
+  a promise another request made), a host promise's settlement in the context of the turn that
+  started it (`loadVelt`'s `owner`/`resuming`), the program's timer in the pump holding it
+  (`loadVelt`'s `setTimer`): the newest request not answered yet, else the newest request; it moves
+  when that changes (its timeout is cleared in the pump that set it), and a turn asking for the same
+  deadline keeps it. A queued request whose client went away (`request.signal`, which Workers abort
+  only with the compatibility flag `enable_request_signal`, set by host-cloudflare's scaffolded
+  `wrangler.toml`) leaves the queue and is answered 499.
 - A pump runs its jobs in order without waiting for their I/O (a read waiting for the client, a
   write under backpressure): it lives while one is in flight, and a timer it holds or an answer
   is never held up by it. A `fetch` call's body is read and cancelled in the pump of the request
@@ -124,7 +126,8 @@ export default {
   moves to the next request.
 - `HostRef` slots of a long-lived instance: velt_web.mjs's `HostRefs` uses a released slot's
   index again with the next generation (12 bits) above the index (20 bits: at most 1,048,575
-  values held at once), so slots never wrap into a value in use and a stale slot misses.
+  values held at once), so slots never wrap into a value in use, and a stale slot misses until its
+  index has been used again 4,096 times.
 
 ## Requests: the host module `velt:worker`
 
@@ -162,8 +165,9 @@ declare host("velt:worker") async function close(stream: HostRef): Promise<void>
 - `respondStream(req, status, headers)`: the answer with a body the program writes: `write`
   settles once the chunk was taken (backpressure), `close` once the body ended; both reject when
   the client went away. Dropping the stream's `HostRef` without `close` aborts the body.
-- A request is answered once: a second `respond`/`respondStream` is logged and ignored (the
-  stream it returns rejects every `write`), so the instance and other requests go on. A request whose last `HostRef` the program drops unanswered gets a 500, logged.
+- A request is answered once: a second `respond`/`respondStream` is logged and ignored (the stream
+  it returns rejects every `write`), so the instance and other requests go on. A request whose last
+  `HostRef` the program drops unanswered gets a 500, logged.
 
 An `accept()` whose promise the program drops after the glue handed it a request (a race it
 lost) gives the request back to the next `accept()`.

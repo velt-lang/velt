@@ -1,0 +1,23 @@
+// check: no leaks
+// A method written through `any` as well as through the interface (#379), where the method's
+// error set already has another member: the function written through `any` goes in as the type
+// of the fields storing the method (the joined set), so the dynamic write's check at run time
+// accepts it, and the `catch` sees the error thrown, as in Node. Through `as any` after a typed
+// write that throws, and through an `any` variable after a literal whose own function throws.
+interface Ctx { update(): void; }
+class Failure extends Error {}
+class Other extends Error {}
+
+const c: Ctx = { update: () => console.log("lit") };
+c.update = () => { throw new Other("typed"); };
+try { c.update(); } catch (e) { console.log("Other?", e instanceof Other); }
+(c as any).update = () => { throw new Failure("via any"); };
+try { c.update(); } catch (e) { console.log("Failure?", e instanceof Failure, e instanceof Other); }
+
+const d: Ctx = { update: () => { throw new Other("lit"); } };
+try { d.update(); } catch (e) { console.log("Other?", e instanceof Other); }
+d.update = () => console.log("quiet");
+d.update();
+const a: any = d;
+a.update = () => { throw new Failure("via any var"); };
+try { d.update(); } catch (e) { console.log("Failure?", e instanceof Failure, e instanceof Other); }

@@ -180,12 +180,32 @@ function escapes(s: string, i: usize, n: usize): bool {
 // three bytes, measured on Apple M-series). Fewer than sixteen bytes before the end are copied
 // one at a time.
 function writeEscaped(out: string, s: string, first: usize, n: usize) {
-  // At most six bytes per byte (`\u00xx`), and the quotes: a block stored at `o` while
-  // sixteen bytes of `s` are left (at most `6 * (n - 16) + 1 + 16` bytes written) fits.
   const buf: u8[] = arrayWithCapacity(n * 6 + 2);
   arraySetLen(buf, n * 6 + 2);
-  buf[0] = QUOTE;
-  let o = copyRun(buf, 1, s, 0, first, n);
+  const r = putEscaped(buf, 0, s, first, n);
+  const len = r & ESCAPED_END;
+  // Only ASCII is escaped, into ASCII (a byte and a unit become as many of each), and lone
+  // surrogates (3 bytes and 1 unit become 6 of each): the literal has the units of `s`, one
+  // per byte added and two more per lone surrogate. The literal has no lone surrogates (they are
+  // escaped), so the builder takes this count as it is and scans nothing.
+  const units = (strLen(s) as u64) + (len - (n as u64)) + 2 * (r >> 40);
+  velt_rt_strbuf_push_u8s(out, buf, len, units);
+}
+
+/** The position part of what `putEscaped` returns (the lone surrogates it escaped are above). */
+export const ESCAPED_END: u64 = 0xffffffffff;
+
+/**
+ * `s` (`n` bytes, its first byte to escape at `first`, or `n`) as a quoted, escaped JSON string
+ * literal into `buf` at `o0`, which has `6 * n + 2` bytes of room from there: the position after
+ * it, and from bit 40 the number of lone surrogates it escaped (each adds two bytes beyond the
+ * UTF-16 units it had).
+ */
+export function putEscaped(buf: u8[], o0: usize, s: string, first: usize, n: usize): u64 {
+  // At most six bytes per byte (`\u00xx`), and the quotes: a block stored at `o` while
+  // sixteen bytes of `s` are left (at most `6 * (n - 16) + 1 + 16` bytes written) fits.
+  buf[o0] = QUOTE;
+  let o = copyRun(buf, o0 + 1, s, 0, first, n);
   let i = first;
   let lone: usize = 0;
   while (i < n) {
@@ -276,13 +296,7 @@ function writeEscaped(out: string, s: string, first: usize, n: usize) {
     }
   }
   buf[o] = QUOTE;
-  // Only ASCII is escaped, into ASCII (a byte and a unit become as many of each), and lone
-  // surrogates (3 bytes and 1 unit become 6 of each): the literal has the units of `s`, one
-  // per byte added and two more per lone surrogate. The literal has no lone surrogates (they are
-  // escaped), so the builder takes this count as it is and scans nothing.
-  const len = (o + 1) as u64;
-  const units = (strLen(s) + (o + 1 - n) + 2 * lone) as u64;
-  velt_rt_strbuf_push_u8s(out, buf, len, units);
+  return ((o + 1) as u64) | ((lone as u64) << 40);
 }
 
 // The index of the first set lane of `m`, 16 if none is: the mask's two halves as integers, one

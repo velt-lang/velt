@@ -1,0 +1,34 @@
+// check: no leaks
+// A method written through an interface value with a closure that captures the receiver
+// (#379), sigx's usual shape (`ctx.update = () => { … ctx … }`): the setter call holds the
+// receiver as a field setter call does, so it compiles, and the closure sees the object's state
+// when it is called.
+interface Ctx { el: string; count: number; update(): void; }
+const c: Ctx = { el: "c", count: 0, update: () => console.log("old") };
+c.update();
+c.update = () => {
+  c.count = c.count + 1;
+  console.log("method " + c.el + " " + c.count);
+};
+c.update();
+c.el = "c2";
+c.update();
+
+function rewire(x: Ctx): void {
+  x.update = () => console.log("rewired " + x.el);
+}
+rewire(c);
+c.update();
+// A closure that replaces its own method while it runs, then uses what it captured: the call
+// keeps the closure alive until it returns.
+const tag = "tag " + c.el;
+c.update = () => {
+  c.update = () => console.log("replaced");
+  console.log("replacing, " + tag + " " + c.count);
+};
+c.update();
+c.update();
+// A closure stored in the object it captures is a reference cycle, which Velt does not collect
+// (design/semantics.md "Reference cycles"): the last write stores one that captures nothing.
+c.update = () => console.log("done");
+c.update();

@@ -52,6 +52,10 @@ impl Ctx<'_> {
         if self.dynamic(tys[0]) == Some(crate::any::Dynamic::Any) {
             return tys[0];
         }
+        // `Readonly<T[]>` is `readonly T[]` (#3061), as `ReadonlyArray<T>` is.
+        if let ("Readonly", &TyKind::Array(e)) = (name, self.ty.kind(tys[0])) {
+            return self.ty.readonly_array(e);
+        }
         let written = match &args[0].kind {
             ast::TypeExprKind::Named { path, .. } if path.len() == 1 => Some(path[0].name.clone()),
             _ => None,

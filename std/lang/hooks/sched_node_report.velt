@@ -4,7 +4,7 @@
 // callback threw. A spawned task's result whose handle a poll drops waits there too
 // (sched_join.velt `keepDrop`).
 
-import { inline, stateDrop } from "velt/lang/intrinsics";
+import { inline, noInline, stateDrop } from "velt/lang/intrinsics";
 import * as jn from "./sched_join";
 import * as m from "./sched_mem";
 import * as nd from "./sched_node";
@@ -28,8 +28,14 @@ export const REPORTING = new ThreadLocal<u64>(0);
  */
 export function dropResult(n: usize): void {
   const task = m.ld(n + nd.N_TASK);
-  const e = t.exec();
+  const e = t.here();
   const rejecting = (m.load32(n + nd.N_FLAGS) & nd.REJECTING) !== 0;
+  if (e === 0) {
+    // Its owner, on a thread that isn't a worker (sched_foreign.velt `start`), dropped it: no
+    // task's list is this thread's.
+    offWorker(n);
+    return;
+  }
   if (rejecting && m.ld(e + t.E_UNCAUGHT) !== 0) {
     // An error a callback threw (sched.velt `schedUncaughtNow`): reported now, as Node's
     // uncaught exception ends the process before the microtasks run.
@@ -48,6 +54,16 @@ export function dropResult(n: usize): void {
     m.inc(n + nd.N_REFS);
     m.st(n + nd.N_UNHANDLED_NEXT, m.ld(task + t.T_UNHANDLED));
     m.st(task + t.T_UNHANDLED, n);
+    return;
+  }
+  dropNow(n);
+}
+
+/** `dropResult` off the workers: a watched node is left to its task's list, as on a worker. */
+@noInline
+function offWorker(n: usize): void {
+  if ((m.load32(n + nd.N_FLAGS) & (WATCHED | tr.HANDED_OVER)) === WATCHED) {
+    m.or32(n + nd.N_FLAGS, nd.DETACHED);
     return;
   }
   dropNow(n);

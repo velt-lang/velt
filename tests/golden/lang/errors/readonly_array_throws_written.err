@@ -1,0 +1,2 @@
+readonly_array_throws_written.velt:13:51: error: mismatched types
+  = note: expected Map<string, (f64[]) => f64>, found Map<string, (readonly f64[]) => f64 throws RangeError>

@@ -90,7 +90,6 @@ const CHECKED: &[&str] = &[
     "lang/hooks/sched_cells.velt",
     "lang/hooks/sched_end.velt",
     "lang/hooks/sched_exit.velt",
-    "lang/hooks/sched_id.velt",
     "lang/hooks/sched_io_write.velt",
     "lang/hooks/sched_mem.velt",
     "lang/hooks/sched_module.velt",

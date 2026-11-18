@@ -1,0 +1,7 @@
+dropped 1:t1 2:t2 3:t3 4:t4 5:t5
+10 t0
+unshift 3:t3 4:t4 5:t5 1:t1 2:t2
+push, splice 3:t3 2:t2 4:t4 5:t5 1:t1
+through arrays 1:t1 2:t2 4:t4 5:t5
+changed 1:t1+x 2:t2 4:t4 5:t5+y
+a

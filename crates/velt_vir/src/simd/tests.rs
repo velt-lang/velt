@@ -320,7 +320,11 @@ fn std_declarations_are_operations() {
             let call = SimdCall::of_symbol(&symbol)
                 .unwrap_or_else(|| panic!("{symbol} is not a SIMD operation"));
             let list = params.split_once(')').expect("`)`").0;
-            let declared = list.split(", ").filter(|p| !p.is_empty()).count();
+            let mut declared = list.split(", ").filter(|p| !p.is_empty()).count();
+            // A 256-bit operation writes a vector result through one more pointer (`wide`).
+            if matches!(call, SimdCall::Wide(..)) && !line.trim_end().ends_with(");") {
+                declared += 1;
+            }
             assert_eq!(call.signature().0.len(), declared, "{symbol}");
             seen += 1;
         }
