@@ -17,9 +17,9 @@ Language support for Velt (`.velt` files; see the [language reference](https://v
   - completion (locals, module items, imports, prelude items, keywords; members after `.`);
   - find references, rename, document highlight (reads and writes of the name under the cursor);
   - workspace symbols (`Ctrl+T`: declarations in the open programs and the workspace folders);
-  - quick fixes (light bulb) for compiler errors, such as `export default f;` → `export { f };`
-    and removing a needless `mut`, and for a promise left floating as a statement: add `await`
-    or wrap it in `spawn(...)`;
+  - quick fixes (light bulb) for compiler errors, such as removing a needless `mut`, and for a
+    promise left floating as a statement: add `await` or wrap it in `spawn(...)`; a refactor
+    turns `export default f;` into `export { f };`;
   - inlay hints: inferred types of `const` / `let` / `for ... of` bindings and parameter names at
     call sites (toggle with `editor.inlayHints.enabled`);
   - signature help while typing call arguments (functions, methods, constructors, function-typed
@@ -88,4 +88,4 @@ code --install-extension velt-<version>.vsix
 
 Or open `editors/vscode` in VS Code and press F5 to launch an Extension Development Host (run
 `npx tsc -watch -p .` alongside). `npm test` runs the unit tests of the debug configuration logic
-(`src/test/`).
+and the grammar (`src/test/`).

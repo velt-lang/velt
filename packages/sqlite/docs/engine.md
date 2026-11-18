@@ -1,8 +1,9 @@
 # sqlite/engine
 
-> In development (#1726): the SQLite engine written in Velt, which the `sqlite` package's driver
-> will move onto once it writes. It reads databases today; INSERT, UPDATE, DELETE and DDL come
-> next.
+The SQLite engine written in Velt. It reads databases and runs SELECT; statements that write are
+not supported (["What SQL runs"](#what-sql-runs)). The design is
+[sqlite-engine.md](../../../docs/internals/design/sqlite-engine.md); the work is tracked in
+[#1726](https://github.com/velt-lang/velt/issues/1726).
 
 `import { openDatabase, Database, Statement, SqliteError } from "sqlite/engine"`. Queries
 over a SQLite database file, with no C library: the file format, the SQL parser, the planner
@@ -21,7 +22,7 @@ for its bare columns.
   one `SQLITE_CANTOPEN`.
 - `Database.prepare(sql): Statement` parses and plans one SELECT (a trailing `;` is fine).
   Plans are cached by their text (the 200 used last), so preparing the same SQL again is a
-  lookup. SQL the engine can't run yet fails here with a message naming it.
+  lookup. SQL the engine can't run fails here with a message naming it.
 - `Statement`, as in the driver (`sqlite`): `all<T>(): T[]`, `get<T>(): T | null` (stops after the first
   row), `allWith<T>(params)`, `getWith<T>(params)`; also `columns(): string[]` and
   `values()` / `valuesWith(params)`, every value as a `Val` (`src/engine/exec/value/val.velt`),
@@ -96,7 +97,7 @@ moving frame is computed as SQLite computes it, adding the rows that enter the f
 out the ones that leave it, so its result is the same to the last bit (a `REAL` that passed
 through the frame, the order of a floating-point sum).
 
-Not yet (an error at `prepare`): statements other than SELECT, RIGHT and FULL joins, ORDER BY
+Not supported (an error at `prepare`): statements other than SELECT, RIGHT and FULL joins, ORDER BY
 inside a recursive CTE, `RANGE` frames with a `PRECEDING` or `FOLLOWING` offset, the `localtime`
 and `utc` date modifiers, `timediff`, ORDER BY inside an aggregate (`group_concat(x ORDER BY y)`),
 the math functions (`sqrt`, `pow`, `ln`, `log`, `floor`, `ceil`, `pi`, the trigonometric ones),

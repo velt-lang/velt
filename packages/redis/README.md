@@ -104,15 +104,16 @@ the next command tries again). Subscribers do not reconnect. Messages are pulled
 `for await`. Values are UTF-8 strings (invalid bytes read back as U+FFFD). Not available on
 WebAssembly.
 
-
 ## Layout and tests
 
 - `src/lib.velt`: the API (re-exports); `src/client.velt`, `subscriber.velt`, `pipeline.velt`,
-  `reply.velt`, `message.velt`, `errors.velt`: one type each; `src/types.velt`: the options and
-  `ZMember`.
-- `src/resp.velt`: the wire protocol; `src/url.velt`: connection URLs; `src/connection.velt`: TCP or
-  TLS and the handshake; `src/read_buffer.velt`: what has arrived; `src/multiplex.velt`,
-  `line.velt`, `reader.velt`: one connection shared by every task.
+  `reply.velt`, `message.velt`, `errors.velt`, `redis_connect_options.velt`, `set_options.velt`,
+  `z_member.velt`: one type each (`src/types.velt` re-exports the last three).
+- `src/resp.velt` and `raw_reply.velt`: the wire protocol; `src/url.velt` and `endpoint.velt`:
+  connection URLs; `src/args.velt`: command arguments; `src/connection.velt`: TCP or TLS, the
+  handshake and reconnecting; `src/read_buffer.velt`: what has arrived; `src/multiplex.velt`,
+  `line.velt`, `reader.velt`, `slot.velt`, `waiting.velt`, `outcome.velt`, `failure.velt`: one
+  connection shared by every task.
 - `tests/`: `velt test` in this directory. Most need a server: set `VELT_TEST_REDIS_URL`
   (`redis://host:6379`), and for TLS `VELT_TEST_REDISS_URL` and `VELT_TEST_REDISS_CA` (a PEM
   file); without them those tests do nothing. The repository's `scripts/linux-check.sh --services`

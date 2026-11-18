@@ -1,6 +1,6 @@
 # {{name}}
 
-A command-line tool: argument parsing with `std/cli`, subcommands, `--help`, and tests that
+A command-line tool: argument parsing with `velt/cli`, subcommands, `--help`, and tests that
 call the command layer directly (no process needed).
 
 ```sh

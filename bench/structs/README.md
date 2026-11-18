@@ -1,4 +1,4 @@
-# Struct benchmarks (#641)
+# Struct benchmarks
 
 Measures what the immutable `struct` value type wins. Each workload is written several ways,
 all printing the same output (`ab/` holds more programs, each against Rust alone: see below):
@@ -22,7 +22,8 @@ Workloads:
   two-number struct. The class version keys by the string `"x,y"` (class instances are
   identity keys, in TypeScript and in Velt); the flat version by `x * 65536 + y`.
 
-Run (Linux, needs cargo, rustc, clang, valgrind, python3, and node 22.6+ for the Node columns):
+Run (Linux, needs cargo, rustc, clang, valgrind, python3, and node 22.6+ for the wall-clock
+table's Node columns, which `--no-node` leaves out; the results below have none):
 
 ```
 bench/structs/run.sh                       # builds velt and the debug runtime first
@@ -36,9 +37,9 @@ optimized program, `VELT_RC_STATS=1`; Rust: valgrind DHAT).
 
 ## Results
 
-Measured on 2026-11-05 (LLVM release, `VELT_THREADS=1`) in an Ubuntu 24.04 arm64 VM, valgrind
-3.22, rustc 1.99 `-C opt-level=3`. Instruction counts are the measure (they repeat to within
-0.1%); the wall-clock table is from a shared machine and only indicative.
+Measured on 2026-11-05, commit 5e3a58fad (LLVM release, `VELT_THREADS=1`) in an Ubuntu 24.04
+arm64 VM, valgrind 3.22, rustc 1.99 `-C opt-level=3`. Instruction counts are the measure (they
+repeat to within 0.1%); the wall-clock table is from a shared machine and only indicative.
 
 Instructions executed (millions):
 
@@ -69,9 +70,8 @@ Best wall-clock time of 3 interleaved runs (ms, including process start):
 
 What it shows:
 - **A `struct`** is stored inline (no allocation) and executes 0.58–1.00× Rust's instructions.
-  Before #641 these programs got the same code, because the compiler proved each struct
-  unshared; the value type makes that a guarantee that one second reference can no longer break
-  (`particles_shared`: 20,002 heap blocks and pointer arrays).
+  One second reference to an element is not possible with a `struct`; with an object type it
+  makes the element a counted heap object (`particles_shared`: 20,002 heap blocks).
 - **Classes**, the TypeScript way of writing the same values, execute 3–20× the instructions of
   the flat code and allocate one block per value.
 - **mapkey**: struct keys hash and compare by their bytes (a NaN key finds itself, `-0` and `0`
@@ -81,18 +81,20 @@ What it shows:
 
 `ab/` holds programs whose structs cross calls that are not inlined (`calls`: a recursive walk
 passing and returning `Vec2`), are compared with `==` and kept in an array and a `Set` (`bfs`:
-a grid search; before #641, comparing by identity made each `Cell` a counted heap object), or
-are replaced whole in an array (`nbody`, the Benchmarks Game algorithm). `bench/structs/ab/run.sh` checks that each prints the same as its
-Rust version and counts instructions (cachegrind on Linux, `/usr/bin/time -l` on macOS).
+a grid search), or are replaced whole in an array (`nbody`, the Benchmarks Game algorithm).
+`bench/structs/ab/run.sh` checks that each prints the same as its Rust version and counts
+instructions (cachegrind on Linux, `/usr/bin/time -l` on macOS).
 
-Instructions executed, same VM and date; base is `main` before #641:
+Instructions executed, same VM, date and commit:
 
-| program | base | struct value type | Rust | value / base | value / Rust |
-|---|---:|---:|---:|---:|---:|
-| bfs | 1,825.6M | 930.7M | 1,189.9M | 0.51 | 0.78 |
-| calls | 320.9M | 210.7M | 210.5M | 0.66 | 1.00 |
-| nbody | 1,110.4M | 1,115.4M | 1,855.3M | 1.00 | 0.60 |
+| program | Velt | Rust | Velt / Rust |
+|---|---:|---:|---:|
+| bfs | 930.7M | 1,189.9M | 0.78 |
+| calls | 210.7M | 210.5M | 1.00 |
+| nbody | 1,115.4M | 1,855.3M | 0.60 |
 
-A struct of at most 16 bytes travels in registers: as its scalar fields when it has at most
+A struct of at most 16 bytes without padding between its numbers, passed to a named function
+(not a method or a closure), travels in registers: as its scalar fields when it has at most
 four numbers or booleans (a `Vec2` in two float registers, as Rust passes it), otherwise as one
-128-bit vector; results come back as one 128-bit vector.
+128-bit vector; results come back as one 128-bit vector (not from a throwing function). Not on
+WebAssembly (`crates/velt_vir/src/lower/reg_args.rs`, `lower/abi.rs`).

@@ -1,110 +1,91 @@
-# Design: Velt's own unwinding, and catching a panic in generated code
+# Velt's own unwinding
 
-Status: draft (#2649 decision 3, follows #2008 / #2137; tracking #2196). A prototype of the core
-is on branch `velt-unwind`: [Prototype](#prototype). The owner's open questions are in
-[Questions](#questions-for-the-owner).
-
-## Problem
-
-Since #2137 a panic is a real unwind. `velt_rt_panic` (Rust, `extern "C-unwind"`) ends the
-process unless a promise up the stack catches panics; then it unwinds with a Rust panic payload
-(`VeltPanic`) through the compiled frames, which have unwind tables and no landing pads, to a
-Rust `catch_unwind` at the poll of the catching promise node (`velt_rt::panic::catch`,
-`task/local/catch.rs`). `catchPanic` in `velt/task` arms that catch through
-`velt_rt_catch_arm/take/settled/message/free`.
-
-The executor in Velt (#2649) polls tasks from Velt code, so there is no Rust frame left to
-catch in. Owner decision 3: no temporary runtime catch under the Velt executor; solve unwinding
-first, and build the started promise's catch on it. Generated code cannot simply catch today's
-panic object: a Rust panic is an exception of class `MOZ\0RUST`, and only Rust may end one (its
-cleanup routine aborts when a foreign frame deletes it: "Rust panics must be rethrown"). And
-the new code must not be Rust: "nothing new in the runtime" (#2196).
+Status: partly implemented. Issue: [#2667](https://github.com/velt-lang/velt/issues/2667).
 
 ## Summary
 
-- **Velt raises its own exception.** Class `VELTPANC` (`velt_vir::eh::CLASS`), raised by std
-  code with the platform's unwinder: `_Unwind_RaiseException` on macOS and Linux (and every
-  other Itanium-ABI target), `RaiseException` on Windows. No Rust is involved.
-- **Generated code catches it.** A std-only intrinsic, `catchUnwind(f)`, calls `f` at a call
-  site with a landing pad (LLVM `invoke`, Cranelift `try_call`) and returns the exception object
-  when a Velt exception unwound out of `f`, 0 when `f` returned.
-- **Only Velt's class is caught.** The landing pad's personality claims `VELTPANC` in the search
-  phase and nothing else: a C++ exception, a Rust panic, any foreign one passes as if the frame
-  had no landing pad.
-- **Unwound frames drop what they own**, in programs that catch (#2667): calls in frames that own
+A panic (`panic(msg)`, an index or key check, `unreachable`, a failed transfer) in a program that
+catches panics is a real exception that Velt raises and Velt's generated code catches, with no
+Rust frame involved:
+
+- **Velt raises its own exception**, of class `VELTPANC` (`velt_vir::eh::CLASS`), from std code
+  with the platform's unwinder: `_Unwind_RaiseException` on macOS and Linux (every Itanium-ABI
+  target), `RaiseException` on Windows x64.
+- **Generated code catches it.** The std-only intrinsic `catchUnwind(f)` calls `f` at a call site
+  with a landing pad (LLVM `invoke`, Cranelift `try_call`) and returns the exception object when a
+  Velt exception unwound out of `f`, 0 when `f` returned.
+- **Only Velt's class is caught.** The personality routine claims `VELTPANC` and nothing else: a
+  C++ exception, a Rust panic or any other foreign exception passes as if the frame had no
+  landing pad.
+- **Unwound frames drop what they own.** In a program that catches, calls in frames that own
   values get cleanup pads that drop them and resume the unwind
-  ([Cleanup in unwound frames](#cleanup-in-unwound-frames)). A panicked state machine is never
-  polled or dropped again; its frame's own temporaries are dropped.
-- **The executor in Velt catches at a started promise with it**, which deletes the runtime's
-  catch: `velt_rt_catch_*`, `panic::catch`, `Catching`, `MAY_CATCH`, the Rust payload and the
-  node's panicked bookkeeping in Rust.
-- **Panics of Rust code stay fatal.** A Rust panic in velt_rt (a bug, an ICE) still ends the
-  process from the panic hook before any unwinding; nothing catches it.
-- **WebAssembly does not unwind.** A panic ends the instance as today; `catchUnwind` is a plain
-  call that returns 0.
+  ([Cleanup in unwound frames](#cleanup-in-unwound-frames)).
+- **The executor in Velt catches at a started promise** with it: `catchPanic` (in `velt/task`)
+  and an HTTP handler's 500 on a panic are built on `catchUnwind`.
+- **Panics of Rust code stay fatal.** A Rust panic in `velt_rt` (a runtime bug) ends the process
+  from the runtime's panic hook before any unwinding.
+- **WebAssembly does not unwind.** A panic ends the instance; `catchUnwind` is a plain call that
+  returns 0.
 
-## What is raised, and by whom
+A program whose live code never calls `catchUnwind` is unaffected: it panics through
+`velt_rt_panic` (print, exit 101), and its code has no `velt_eh_try`, no landing pads and no
+cleanup pads.
 
-The raise is std code (`std/lang/hooks/unwind.velt`, `panicRaise`), reached from every panic
-site of a program that catches: lowering calls the hook where it called `velt_rt_panic`
-(`Rt::Panic`: `panic(msg)`, index and key checks, `unreachable`, transfer and copy failures).
+## Motivation
+
+A server must answer 500 when one request panics, not end the process. The executor that polls
+tasks is std code ([#2649](https://github.com/velt-lang/velt/issues/2649)), so there is no Rust
+frame above a task's poll that could `catch_unwind`. Generated code cannot catch a Rust panic
+either: a Rust panic is an exception of class `MOZ\0RUST`, and only Rust may end one (its cleanup
+routine aborts when a foreign frame deletes it). And the mechanism must not be new Rust: the
+runtime is moving into std ([#2196](https://github.com/velt-lang/velt/issues/2196)). So Velt
+raises and catches an exception of its own.
+
+## Design
+
+### What is raised, and by whom
+
+The raise is std code (`std/lang/hooks/unwind.velt`, `panicRaise`). In a program that catches,
+lowering calls this hook at every panic site where it would otherwise call `velt_rt_panic`.
 
 ```text
 panicRaise(msg):
-  if this thread runs a catchUnwind that catches (thread-local count > 0):
-    flush stdout; print "panic: <msg>" to stderr        // as today, at the panic
-    e = malloc(32 + len + 1); header: class VELTPANC, no cleanup, two zero words
-    copy msg after the header; _Unwind_RaiseException(e)
-    // a live velt_eh_try claims it, so this returns only in the hole below (or if malloc
-    // failed): exit 101, as an uncaught panic
-  velt_rt_panic(msg)                                     // today's path, unchanged
+  if this thread runs a catchUnwind that catches (CATCHING > 0):
+    flush stdout; print "panic: <msg>" to stderr
+    if UNWINDING: print "panic while unwinding: aborting"; abort()
+    UNWINDING = true
+    raise(msg)            // claimed by the innermost live velt_eh_try; returns only if not
+    UNWINDING = false
+    exit 101              // fallback, as an uncaught panic
+  velt_rt_panic(msg)      // print, exit 101
 ```
 
-**Per target.** The raise is chosen by a conditional import of std (`#unwind-raise`,
-std/imports.velt): `std/lang/hooks/unwind_itanium.velt` on native targets other than Windows
-(the Itanium unwinder), `unwind_seh.velt` on Windows (`win32`: `RaiseException`, below), and
-`unwind_none.velt` on WebAssembly, which raises nothing and names no unwinder function. The
-backends name no `_Unwind_*` function on Windows or WebAssembly.
+**Per target.** The raise is chosen by std's conditional import `#unwind-raise`
+(`std/imports.velt`): `std/lang/hooks/unwind_itanium.velt` on native targets other than Windows,
+`unwind_seh.velt` on Windows, and `unwind_none.velt` on WebAssembly, which raises nothing and
+names no unwinder function. The backends name no `_Unwind_*` function on Windows or WebAssembly.
 
-**What the count means.** `CATCHING > 0` means a `velt_eh_try` frame *with a landing pad* is live
-on this thread's stack. `enterCatch` asks the backend first: `velt_eh_catches()` (a constant
-function the backend defines next to `velt_eh_try`, `velt_vir::eh::CATCHES`) is 1 in objects for
-the Itanium targets and Windows x64 (`Catching::Seh`), and 0 in the JIT (`velt dev`, generator
-hosts: no LSDA registered yet), on Windows on arm64 and on WebAssembly. Where it is 0, `catchVeltPanic` calls `f` plainly and doesn't
-count, so a panic takes `velt_rt_panic` (exit 101, or the runtime's `catchPanic`) instead of
-raising an exception nothing would claim. So the innermost live `velt_eh_try` claims every raise,
-except in the hole below.
+**The count.** `CATCHING` (a `ThreadLocal<u32>`) is above 0 exactly when a `velt_eh_try` frame
+with a landing pad is live on this thread's stack. `enterCatch` first asks the backend:
+`velt_eh_catches()` (`velt_vir::eh::CATCHES`, a constant function the backend defines next to
+`velt_eh_try`) is 1 in objects for Itanium targets and Windows x64, and 0 in the JIT (`velt dev`,
+generator hosts), on Windows on arm64 and on WebAssembly. Where it is 0, `catchVeltPanic` calls
+`f` plainly and does not count, so a panic takes `velt_rt_panic` instead of raising an exception
+nothing would claim.
 
-**Why the thread-local count.** On Itanium targets a Rust `catch_unwind` claims *every*
-exception in the search phase (Rust's personality doesn't look at the class) and then aborts
-on a foreign one ("Rust cannot catch foreign exceptions"). Under the runtime's executor such
-frames were on most stacks (tokio's task harness, the runtime's own task, deleted in #2649 D1;
-the runtime's own catch). So a Velt exception is raised only when a Velt catch is the nearest catching frame,
-which the count says: `catchUnwind` wraps synchronous code, so between it and the raise there
-are only compiled frames and Rust `C-unwind` frames without a catch. Without a catch the panic
-takes today's path (exit 101, or the runtime's `catchPanic` while it exists). The count also
-keeps the uncaught panic from walking the stack twice. Under the Velt executor both Rust catch
-sites are deleted; the count stays, for the second reason.
+The count exists for two reasons. On Itanium targets a Rust `catch_unwind` claims every exception
+in the search phase (Rust's personality does not look at the class) and then aborts on a foreign
+one; raising only when a Velt catch is the nearest catching frame keeps such a frame from ever
+seeing a Velt exception. And an uncaught panic exits at once instead of walking the stack.
 
-**The documented hole** while both executors exist: an `f` that itself makes the runtime poll a
-catching promise (the runtime's `catchPanic` inside `catchUnwind`) puts a Rust `catch_unwind`
-between the raise and the catch. Rust's personality claims the Velt exception in the search
-phase and its catch then aborts the process ("Rust cannot catch foreign exceptions"), with a
-runtime message instead of exit 101. Only the executor's own catch uses `catchUnwind`, so the
-hole closes with the switch, when the runtime's catch is deleted.
-
-**What a raise nobody claims does.** `_Unwind_RaiseException` returns only when the search phase
-reaches the end of the stack without a frame claiming the exception. Whether it gets there
-depends on the frames above `main`, which Velt doesn't control: the runtime's entry functions
-(`main`, `velt_rt_start`, the `program` thunk) are Rust `extern "C"` functions, whose
-abort-on-unwind landing pads Rust's personality claims for any class, so on Linux x86-64 with a
-debug runtime the process aborts there ("panic in a function that cannot unwind"); with other
-runtime builds the search reached the end of the stack and the raise returned. Tokio's task
-harness on worker threads catches too. On Windows an unclaimed `RaiseException` never returns;
-there an unhandled-exception filter std installs at the first raise exits with 101 instead
-("Windows" below). So `panicRaise`'s exit 101 after a returned raise is a
-fallback, not a guarantee: the guarantee is that it raises only when a `velt_eh_try` that
-catches is live, which then claims it.
+**A raise nobody claims.** `_Unwind_RaiseException` returns only when the search phase reaches
+the end of the stack without a frame claiming the exception. Whether it gets there depends on the
+frames above `main`, which Velt does not control: the runtime's entry functions are Rust
+`extern "C"` functions, whose abort-on-unwind landing pads Rust's personality claims for any
+class. On Windows an unclaimed `RaiseException` never returns, so the first raise installs an
+unhandled-exception filter that exits with 101 ([Windows](#windows)). So `panicRaise`'s exit 101
+after a returned raise is a fallback; the guarantee is that it raises only when a `velt_eh_try`
+that catches is live.
 
 **The exception object.** One `malloc`:
 
@@ -115,162 +96,247 @@ catches is live, which then claims it.
 | 16 | 16 | the unwinder's private words (zeroed) |
 | 32 | n+1 | the message, UTF-8, NUL-terminated |
 
-The prototype writes the message as bytes because std has no raw store yet; with
-`addressStore` (#2196, branch `velt-sched-intrinsics`) the payload becomes `{ VeltStr message,
-u64 flags }`, the string moved in (no copy, no NUL limit), and later the panic's location and a
-payload value if `catchPanic` ever hands one over. The object never leaves its thread: a catch
-and its raise are on one stack. `takePanic(e)` reads the message and frees the object.
+The header size is `velt_vir::eh::HEADER_SIZE`. The object never leaves its thread: a catch and
+its raise are on one stack. `takePanic(e)` reads the message and frees the object; `panicText(e)`
+reads it without freeing.
 
-**Rust code inside a catch.** Rust frames between the raise and the catch (a runtime leaf that
-polls a compiled future, the drop glue it calls) are `extern "C-unwind"` since #2137, so the
-foreign exception passes them and their own cleanups (drops of Rust locals) run, which is
-correct for a foreign exception. A Rust `extern "C"` function on that path would abort the
-process ("panic in a function that cannot unwind"); the rule of #2137 stays: every runtime
-function that can run Velt code is `C-unwind`.
+**Rust code inside a catch.** Rust frames between the raise and the catch (a runtime function
+that runs Velt code, the drop glue it calls) must be `extern "C-unwind"`: the foreign exception
+then passes them and their own cleanups run. A Rust `extern "C"` function on that path aborts the
+process ("panic in a function that cannot unwind"). The rule: every runtime function that can run
+Velt code is `C-unwind` ([Limitations](#limitations) lists the function-pointer types that are
+not yet).
 
-**Panics of Rust code.** The runtime's panic hook (`install_hook`) ends the process before a
-Rust panic unwinds, with `panic: <msg> (runtime: file:line)`. Unchanged: they are bugs, and
-catching them would hide that the runtime's state is broken. A user error the runtime detects
-(`panic::raise` for an awaited panicked node, `fatal`) keeps ending the process; under the
-Velt executor the awaited-panicked case moves to std (below), and the rest become errors
-returned to std, which panics through `panicRaise`.
+**Panics of Rust code.** The runtime's panic hook ends the process before a Rust panic unwinds,
+with `panic: <msg> (runtime: file:line)`. They are bugs, and catching them would hide that the
+runtime's state is broken.
 
-## The catch: `catchUnwind`
+### The catch: `catchUnwind`
 
 ```ts
 @intrinsic
 export declare unsafe function catchUnwind(f: () => void): usize;
+@intrinsic
+export declare unsafe function catchUnwindAt(code: usize, arg: usize): usize;
 ```
 
-`std/lang/intrinsics/unwind.velt`, `hir::Intrinsic::CatchUnwind`. Lowering calls
-`velt_eh_try(f.code, f.env)`, a function the backend defines in the object (`velt_vir::eh`;
-like `velt_tls_*`, no runtime function is behind the symbol). It returns null when `code(env)`
-returned and the exception object when a Velt exception unwound out of it. The caller owns the
-object. std's wrapper is `catchVeltPanic(f): string | null` (`std/task/unwind.velt`):
+Both are in `std/lang/intrinsics/unwind.velt` (`hir::Intrinsic::CatchUnwind`, `CatchUnwindAt`).
+Lowering calls `velt_eh_try(code, env)`, a function the backend defines in the object
+(`velt_vir::eh::TRY`; like `velt_tls_*`, no runtime function is behind the symbol). It returns
+null when `code(env)` returned and the exception object when a Velt exception unwound out of it;
+the caller owns the object. `catchUnwindAt` calls the function at an address (`fnAddress`) with
+one pointer-sized argument, so the executor's catching poll needs no closure.
+
+std's wrappers are in `std/task/unwind.velt`: `catchVeltPanic(f): string | null`, and the raw
+forms `catchPanicRaw(f)` and `catchPanicAt(code, arg)` that return the object:
 
 ```ts
-if (!enterCatch()) { f(); return null; }   // the count, only where velt_eh_try catches
+if (!enterCatch()) { f(); return 0; }   // only where velt_eh_try catches
 const e = unsafe { catchUnwind(f) };
 leaveCatch();
-if (e == 0) return null;
-caught();                                  // transfer state, leak check: below
-return unsafe { takePanic(e) };
+if (e != 0) { caughtPanic(); caught(); }
+return e;
 ```
 
-**State the runtime's catch restores.** `velt_rt::panic::catch` calls
-`transfer_map::forget_since(open)`: a panic inside a transfer (a value going to `spawn` that
-can't go, a copy that failed) leaves the thread's transfer depth up, and every later transfer of
-the thread would nest in the stale one (its copy map never cleared, its deferred releases never
-run). `catchVeltPanic` restores it with the existing externs, on the catch path only: `f` runs as
-user code, where the depth is 0 (a transfer suspends around the user code it calls), so after a
-caught panic `velt_rt_xfer_suspend()` reads the depth the panic left; if it is above 0,
-`velt_rt_xfer_resume(depth)` takes the stale transfer back and `velt_rt_xfer_end()` once per
-level closes it. The last `end` clears its copies and releases the references it deferred: those
-belonged to the transfer (sources it replaced by copies), not to the abandoned frames, so they
-are released rather than leaked (the runtime's `forget_since` leaks them). Not restored: a
-transfer the panicked code had *suspended* (a panic inside a class's own `clone()` during a
-transfer inside `f`) stays on the runtime's stack of suspended transfers. With nothing suspended
-when `f` started that is a leaked entry and nothing else; under a suspended outer transfer
-(`catchVeltPanic` inside a `clone()` that runs during a transfer, then that nested panic), the
-outer `resume` would take the stale entry. No extern reads that stack's length; the transfer map
-moves to std with the executor (#2196), and then the catch records and truncates it as
-`forget_since` does. Limit (review of #2668): `caught()` closes every open transfer level, which
-assumes `f` started at depth 0; a `catchVeltPanic` that runs inside a transfer (from a class's
-`clone()` during one) would close the outer transfer too. The catch should record the depth on
-entry and close only the levels above it, which needs that depth read without suspending (no
-extern does that today; std's transfer map will). Test: `std/task/unwind.test.velt` "closes a transfer the panic left open"
-(#2668's repro: `spawn(run(mk(keep)))` with a captured weak collection; the depth is 0 after the
-catch and a later spawn copies a graph with its sharing).
+**State restored after a caught panic** (`caught()`). A panic inside a transfer (a value going to
+`spawn` that cannot go, a copy that failed) leaves the thread's transfer depth up, and every later
+transfer of the thread would nest in the stale one. `f` runs as user code, where the depth is 0
+(a transfer suspends around the user code it calls), so after a caught panic
+`velt_rt_xfer_suspend()` reads the depth the panic left; if it is above 0,
+`velt_rt_xfer_resume(depth)` takes the stale transfer back and `velt_rt_xfer_end()` once per level
+closes it. The last `end` clears its copies and releases the references it deferred: those
+belonged to the transfer, not to the abandoned frames. Test: `std/task/unwind.test.velt` "closes
+a transfer the panic left open".
 
-**The leak check.** A caught panic leaks what the abandoned frames held, so a leak check of the
-process can't pass; the runtime's catch counts itself (`panics caught=` in the `VELT_RC_STATS`
-report) and `velt test` skips the check then. std's catch has no runtime counter (no new
-extern), so with `VELT_RC_STATS=1` it writes `rc stats: std caught a panic` to stderr, which the
-leak check reads too (`std/test/plan.velt` `leakedBlocks`). With the executor's switch the
-counter becomes std's altogether.
+**The leak check.** Where the unwound frames have no cleanup pads (Windows), what they owned
+leaks, so with `VELT_RC_STATS=1` `caught()` writes `rc stats: std caught a panic` to stderr, which
+`velt test`'s leak check reads (`std/test/plan.velt` `leakedBlocks`) to skip the check. Elsewhere
+the pads drop what the frames owned and the counts balance.
 
-**What is leaked.** Since #2667 the owned values of the frames between the raise and the catch
-are dropped by their cleanup pads ([Cleanup in unwound frames](#cleanup-in-unwound-frames), with
-its list of what is not covered). The rest of this paragraph is what stays true: every frame
-between the raise and the catch is abandoned: a `Mutex` they held stays locked,
-an object they were changing keeps the change half made (the README of `catchPanic` says so
-today). A state machine that panicked in its poll is never polled or dropped again, since its
-fields may be half moved; its task header stays allocated, so a waker that still points at it
-wakes nothing harmful. That is the contract of #2008 and doesn't change.
+**What a catch does not undo.** Every frame between the raise and the catch is abandoned: a
+`Mutex` it held stays locked, and an object it was changing keeps the change half made. A state
+machine that panicked in its poll is never polled again ([Async state
+machines](#async-state-machines)).
 
 **Nesting.** The search phase stops at the nearest catching frame, so the innermost
 `catchUnwind` takes the panic; an outer one sees `f` return.
 
-**The cost of a catch that catches nothing.** An `invoke` (a `try_call`) is a plain call plus a
-call-site table entry; the landing pad is out of line. `velt_eh_try` is a function of its own
-(`noinline`, so its personality needs no call-site lookup), so a catch costs one call and the
-indirect call of `f` that a plain closure call would make anyway. The wrapper adds two
-thread-local updates. Numbers: [Measurements](#measurements).
+### The personality
 
-## The personality
-
-Each frame with a landing pad names a personality routine in its CIE. Only `velt_eh_try`'s frame
-names `velt_eh_personality`, which the backend defines next to it:
+Each frame with a landing pad names `velt_eh_personality` (`velt_vir::eh::PERSONALITY`), which
+the backend defines in the object. It calls only libunwind / libgcc_s functions, which every
+native program links already; no Rust symbol is involved, so a debug build against the shared
+runtime links too.
 
 ```text
 velt_eh_personality(version, actions, class, exception, context):
-  if class != VELTPANC: return _URC_CONTINUE_UNWIND     // search and cleanup phase alike
-  if actions & _UA_SEARCH_PHASE: return _URC_HANDLER_FOUND
-  if actions & _UA_HANDLER_FRAME:                         // the frame the search chose
-    _Unwind_SetGR(context, 0, exception); _Unwind_SetGR(context, 1, 0)
-    _Unwind_SetIP(context, _Unwind_GetRegionStart(context) + landing_pad)
-    return _URC_INSTALL_CONTEXT
-  return _URC_CONTINUE_UNWIND
+  if class != VELTPANC: return _URC_CONTINUE_UNWIND          // both phases
+  entry = the LSDA call-site entry covering ip - 1
+  if no entry, or its landing pad is 0: return _URC_CONTINUE_UNWIND
+  if entry.action == 0:                                       // a cleanup pad
+    search phase: _URC_CONTINUE_UNWIND; cleanup phase: land
+  else:                                                       // velt_eh_try's catch
+    search phase: _URC_HANDLER_FOUND; cleanup phase: land in the handler frame only
+  land: SetGR(0, exception); SetGR(1, 0); SetIP(region start + landing pad)
+        return _URC_INSTALL_CONTEXT
 ```
 
-Returning `_URC_CONTINUE_UNWIND` for a foreign class in the search phase is what makes a foreign
-exception pass: the frame doesn't claim it, and since compiled frames have no cleanups, skipping
-the frame in the cleanup phase loses nothing.
+The LSDA reader handles the layout both backends write: landing-pad base omitted, the type table
+skipped, call sites in ULEB128 (LLVM) or `udata4` (Cranelift). A foreign class passes in both
+phases, so its unwinding runs no Velt cleanup.
 
-**A foreign exception leaves the count up.** One that passes `catchVeltPanic` and is caught above
-it (a C++ `catch` around a Velt call) skips `leaveCatch()`, so `CATCHING` stays 1 too high on
-that thread: later panics there raise with no live catch, which is the abort above. It can't
-happen today: the only way a foreign frame calls Velt code is an `@export` function (#2662), and
-its landing pad aborts on any exception that unwinds out of it, whatever the class (LLVM:
-`function/stop_unwind.rs`, Rust's personality runs the pad in the cleanup phase; Cranelift: no
-unwind entry, so the search ends there), so a foreign exception never reaches
-a catcher above a Velt frame. The fix, if exports ever let exceptions through: the personality
-also lands at the pad for a foreign class in the cleanup phase (selector 1, never in the search phase, so the exception still passes),
-`velt_eh_try` returns the object tagged (bit 0), and `catchVeltPanic` calls `leaveCatch()` and
-then `_Unwind_Resume` on it. It isn't built in this change because nothing can test it: the
-phase-2 pass needs a foreign catcher above a Velt frame.
+### The executor in Velt
 
-**No call-site lookup, no runtime.** `velt_eh_try`'s only call is the one with the landing pad,
-so the personality needs no general LSDA reader. Cranelift knows the handler's offset when it
-writes the personality and puts it in as a constant. LLVM writes the LSDA itself, so its
-personality reads the first (only) call-site entry: `velt_eh_try` is `noinline`, and LLVM writes
-the call-site table in ULEB128 with no landing-pad base. It checks that layout (lpstart
-omitted, call-site encoding `0x01`, a nonzero landing pad) in the search phase already; an LSDA
-of another layout makes the frame claim nothing (`_URC_CONTINUE_UNWIND`), rather than landing at
-a wrong address or failing phase 2 at its handler frame. The routine calls only libunwind /
-libgcc_s functions, which every native program links already. No Rust symbol is involved, so a
-debug build against the shared runtime links too: an early version delegated to
-`rust_eh_personality`, which `libvelt_rt_shared` doesn't export.
+`catchPanic(body)` (`std/task/panic.velt`) catches at a started promise. Its catch under the
+executor in Velt is `std/task/catch_sched.velt`, the native variant of `#task-catch`; the
+default variant, `std/task/catch_rt.velt`, uses the runtime's catch (`velt_rt_catch_*`) and is the
+one WebAssembly builds load.
 
-The alternatives, for the record:
+- **Arming.** `arm()` sets the low bit of the worker's `E_CATCHING` word; the next promise
+  started takes it (node flag `CATCHES`, `E_GUARDED` holds it), and `take()` disarms and returns
+  that promise. So the guarded promise is the first one started after `body` is called, and
+  `body` should be the async call itself (`() => handle(req)`). `E_CATCHING` also counts the
+  catching polls running on the worker, so a promise started while one runs catches too.
+- **Polling through the catch.** The executor polls only `CATCHES` nodes through the catch
+  (`caughtPoll`): its `run` tests the flag with the flags it reads anyway. The poll, state and
+  context wait in the worker's argument words (`E_CATCH_ARGS`), and `catchUnwindAt` has
+  `velt_eh_try` call the poll with their address. The catching poll and the raise again are
+  reached through function addresses that `arm` stores in worker 0's block, so a program that
+  never calls `catchPanic` has no `catchUnwind` in its live code and so no `velt_eh_try`, no panic
+  hook and no cleanup pads (test `only_a_program_that_catches_has_the_catch` in
+  `crates/veltc/tests/std_scheduler_catch.rs`).
+- **A panicked node** keeps its exception (the message) in place of its poll and is finished; its
+  result drop is cleared, and its state machine is never polled or dropped again (the pads of its
+  poll dropped what it held). It is freed with its last reference like any other node, its
+  exception with it: a leaf that still holds its waker holds a reference.
+  Awaiting it raises the panic again in the awaiter (`raiseAgain`, which prints nothing: the
+  message was printed at the panic), so a panic travels through `await`s as through calls until a
+  catching poll takes it, or ends the process with 101 where none runs.
+- **Waiting for the guarded promise.** `catchPanic` waits with `settled`, through a settled-future
+  header inside the node, which does not claim the result or raise; when the promise panicked it
+  throws `PanicError(message)`. A guarded promise that finished without a panic before
+  `catchPanic` waits for it is not waited for: `take` hands back 0 and `catchPanic` takes its
+  result.
+- **Tasks spawned while a catching poll runs catch too.** Their root is polled through the catch
+  (task flag `CATCHES`); a panic makes the task done with no result (`J_PANICKED`; nothing
+  transferred, copied or dropped), and its join handle's poll becomes `joinPanicked`, which
+  raises the panic again in the joiner. A panicked task nobody joins ends there and the process
+  goes on, so an HTTP handler that spawns work keeps serving. Tasks that do not catch pay nothing:
+  the task's poll tests `CATCHES` in a mask it tests already. A join polled again through the
+  header from before the panic is woken once to poll through the new one; a second such poll ends
+  the process with 101, since that `@export` frame cannot unwind to a catch.
+- **Where generated code does not catch** (`velt_eh_catches() == 0`: Windows on arm64, the
+  `velt dev` JIT), `caughtPoll` is a plain poll and a panic under `catchPanic` ends the process
+  with 101, as an uncaught one does. There is no runtime catch as a fallback.
 
-| personality | catches a foreign class? | available? |
-|---|---|---|
-| `__gxx_personality_v0` (C++) | only with `catch (...)`, then we must rethrow | needs libc++abi / libstdc++: not linked, not in a static musl build |
-| `__gcc_personality_v0` (C cleanups) | no: cleanups only, never a handler | libgcc / compiler-rt |
-| `rust_eh_personality` | yes: it claims any class whose action is a catch, without checking the class | inside velt_rt's static library; not exported by the shared one; goes away with runtime elimination |
-| a general one in Velt | as written | needs `@export` with the C convention and `fnAddress` (#2203 step 5) |
+### Cleanup in unwound frames
 
-A general personality (any number of call sites, so that `velt_eh_try` could be inlined) is
-worth writing only if inlining the helper measures worth it; then it is std Velt code (about 60
-lines: the LSDA header, the call-site search, the same three unwinder calls).
+A frame that owns values needing a drop gets cleanup code that runs when a Velt panic unwinds
+through it, only in a program whose live code calls `catchUnwind`. Programs that do not catch are
+byte-identical to programs built without the feature.
 
-## Lowering
+**Where cleanups come from.** Lowering already knows, at every point of a function, what the
+frame owns: the scope stack of drop obligations (`crates/velt_vir/src/lower/drops.rs`: a
+`DropEntry` per scope, the static state or drop flag of each local), which `return`, `break` and
+`throw` drop on their edges and an async function's cancel path drops without its `finally`
+blocks. A cleanup pad (`crates/velt_vir/src/lower/cleanup.rs`) is that cancel path at a call site:
+the drops of every open scope, innermost first, without `finally` blocks and without `catch`
+handlers (a panic is not an error: user code never sees it), then the resume of the unwind.
 
-**LLVM** (`velt_codegen_llvm/src/eh.rs`), in every module of a program that calls it:
+- **Which calls.** A call gets an unwind edge when (1) the program catches: sema demanded the
+  `panic_raise` hook (the construct `CatchUnwind` is live) and the target unwinds
+  (`Catching::of_triple(target) == Itanium`); (2) the callee may unwind: a Velt function or a
+  function value (`velt_vir::eh::may_unwind`); externs (the runtime, C) do not get one; (3) the
+  frame owns something at the call: some open scope holds an entry that would emit a drop. A
+  function that never owns anything at a call is unchanged. Arguments the call takes are already
+  off the scopes, so the callee drops them, never both.
+- **Calls on exit edges.** `return`, `break`, `continue` and `throw` emit the drops (and `finally`
+  blocks) of the scopes they leave without popping them. A call there (drop glue running a
+  `[Symbol.dispose]()`, a call in a `finally`) gets a pad without what the edge has dropped or is
+  dropping: each scope keeps a count of the entries pads still drop (`Scope::pad_keep`), lowered
+  as the edge goes and restored after it. The old value of a reassigned local is left out of the
+  pads of its own drop, and the new value, which no scope owns until it is stored, is in them.
+- **A transfer that panics.** A value going to another thread is off the scopes once consumed,
+  and its transfer glue can panic. `transfer_value` registers the temporary holding it for the
+  glue's call and takes it back after, so the pad drops it as far as it was transferred. An
+  original's release is deferred only once its copy is finished, so a panic while settling a copy
+  leaves the original owned once, and the pad and `caught()` do not both release it. Tests:
+  `a_value_whose_transfer_panics_is_dropped`,
+  `a_copy_whose_settling_panics_releases_the_original_once`,
+  `a_clone_returning_a_stored_object_releases_the_original_once`
+  (`crates/veltc/tests/unwinding.rs`).
+- **Pads are shared.** A pad is a chain of links, one per drop entry, innermost first, each ending
+  in a jump to the pad of the entries outside it; the empty pad is one block calling
+  `velt_eh_resume`. Links are cached per function by the entries and the states they read, so
+  code size grows with the number of distinct ownership states at calls, not with calls ×
+  entries.
+- **Inside a pad** calls get no unwind edge.
+
+`VELT_UNWIND_PADS=0` turns the edges off in lowering. It exists for measuring (the same program
+with and without pads); a program built with it leaks what unwound frames own.
+
+#### VIR
+
+- `Terminator::Call` has `unwind: Option<BlockId>` (`vir.rs` invariant 14). `Some(pad)`: when the
+  callee unwinds with a Velt exception, control continues at `pad` with `dest` not written. Every
+  call of a program that does not catch has `None`.
+- `velt_eh_resume()` (`velt_vir::eh::RESUME`, noreturn, backend-defined) continues the unwind that
+  entered the pad being run. Each pad ends in a call of it; a call of it never has an unwind edge.
+- Passes see the unwind edge as a successor (`velt_opt::visit::successors`, lowering's
+  `cfg::successors`, the verifier's dataflow), so a value a pad reads is live at the call and
+  definitely assigned before it. The inliner wires an inlined body into the call's edge: the
+  callee's calls that may unwind and have no edge get the call's, and its `velt_eh_resume` calls
+  become jumps to the call's pad.
+- **Memory kept in locals across calls.** A pass that keeps a pointee's fields in locals and
+  stores them back later must also store them where an unwind leaves the frame, since a frame
+  further out may own that memory and drops it by what memory says. `noalias` promotion stores the
+  written fields on each unwind edge, and `frame_slots` stores a poll function's written slots
+  before `velt_eh_resume` as before a `return`. Test:
+  `promoted_fields_are_current_when_a_call_unwinds`.
+
+#### A panic during a cleanup
+
+A drop in a pad can run user code (`[Symbol.dispose]()`), which may panic. Its unwind would run
+the outer pads of the frame whose pad is running and drop again what the inner drop was in the
+middle of. As in Rust ("panic while panicking"), it aborts: `panicRaise` sets the thread-local
+`UNWINDING` just before it raises, `caughtPanic` clears it when the catch has the exception, and a
+`panicRaise` that finds it set prints `panic while unwinding: aborting` and calls `abort()`.
+Nothing is added to the normal path. A consequence is that a catch inside a destructor run by a
+cleanup cannot catch either (test `a_panic_during_a_cleanup_aborts`).
+
+#### Async state machines
+
+A poll function's frame holds its live state in the state struct. Its pads are built before the
+spill pass chooses what goes into the state, so a pad drops what the open scopes own wherever it
+lives: the frame's temporaries and the values the state holds across suspensions alike. Every
+call that may unwind gets a pad, also where the frame owns nothing, and the pads set the state's
+tag to finished (`DONE`) before the resume. The frame holding the state then drops it as a
+finished one, which does nothing.
+
+A poll that unwinds through a call without a pad (an extern's) runs none of this, and the tag of
+its last suspension would name values the poll may have moved since. So in a program that
+catches, the start and every resume of a poll function first set the tag to `POLLING`, which has
+no dispatch case: polling or dropping such a state does nothing, and what it held leaks. That is
+one store per poll, only in programs that catch.
+
+The child an `await` waits for is owned by no scope: the cancel block of its suspension drops it.
+So the pad of a call that polls it drops it first, with the same code (`cleanup.rs` `awaiting`),
+then what the scopes own.
+
+A generator's resume function (and an async generator's poll function) is built the same way:
+its pads drop what its state holds and mark it finished, so the frame holding the generator drops
+it as a finished one, and a later `next()` is done, as after a generator that threw (test
+`a_panic_in_a_generator_body_is_caught`).
+
+## Compilation
+
+### LLVM
+
+`crates/velt_codegen_llvm/src/eh.rs` defines `velt_eh_try` and the personality in every module of
+a program that calls it, `linkonce_odr hidden`, so the link keeps one:
 
 ```llvm
-define linkonce_odr hidden ptr @velt_eh_try(ptr %code, ptr %env) noinline #0 personality ptr @velt_eh_personality {
+define linkonce_odr hidden ptr @velt_eh_try(ptr %code, ptr %env) noinline personality ptr @velt_eh_personality {
   invoke void %code(ptr %env) to label %ok unwind label %pad
 ok:  ret ptr null
 pad: %lp = landingpad { ptr, i32 } catch ptr null
@@ -279,532 +345,105 @@ pad: %lp = landingpad { ptr, i32 } catch ptr null
 }
 ```
 
-plus the personality above, with a ULEB128 reader. `uwtable` is already on every compiled
-function (#2137).
+`uwtable` is on every compiled function. A call with an unwind edge is an
+`invoke ... to label %ok unwind label %lpN`; each pad reached by an unwind edge gets a landing
+block, `landingpad { ptr, i32 } cleanup`, which stores the exception pointer in the function's
+exception slot and branches to the VIR pad. `velt_eh_resume` is `resume` of the slot. LLVM's
+inliner prices the pads as if they ran on every call, so a function that is small outside its
+pads (`inlining::small_with_pads`) gets `inlinehint`, and velt_opt's single-call-site rule
+compares its cost limit with the code outside the pads (`inline::hot_cost`). Both apply only to
+functions with unwind edges.
 
-**Cranelift** (`velt_codegen_cl/src/eh.rs`; cranelift 0.132 has `try_call`): `velt_eh_try` is a
-`try_call_indirect` with one catch-all handler (`ExceptionTableItem::Default`) whose block takes
-the first exception payload register (x0 / rax). The callee signature uses `CallConv::SystemV`
-even on Apple arm64: Cranelift implements `try_call` only for SystemV (and Tail), and for one
-pointer argument and no result the two conventions agree. Cranelift records the handler's
-offset (`MachBuffer::call_sites`); the backend writes:
+### Cranelift
 
-- the LSDA, in `.gcc_except_table` / `__TEXT,__gcc_except_tab`: no landing-pad base, a type table
-  of one `udata4` entry (0: catch-all), one ULEB128 call-site entry covering the whole function
-  (its only call is the `try_call`) with the handler as landing pad and action 1;
-- a second CIE with the personality and the LSDA encoding, used by `velt_eh_try`'s FDE only.
-  The personality pointer is indirect: on ELF through a local pointer in `.data` (compilers'
-  `DW.ref.*`), on Mach-O through the GOT (`ARM64_RELOC_POINTER_TO_GOT`, `X86_64_RELOC_GOT`). ld64
-  reads no other personality relocation: a pc-relative one to a data word fails the link with
-  "r_symbolnum out of range" (found while prototyping).
+`crates/velt_codegen_cl/src/eh.rs`: `velt_eh_try` is a `try_call_indirect` with one catch-all
+handler (`ExceptionTableItem::Default`) whose block takes the first exception payload register. A
+call with an unwind edge is a `try_call` whose handler is a landing block per pad that stores the
+exception in a variable and jumps to the pad; `velt_eh_resume` calls `_Unwind_Resume` with it.
 
-The JIT (`velt dev`, generator hosts) gets `velt_eh_try` as a plain call for now: registering
-an FDE with a personality for JIT code is `jit_systemv.rs`'s `__register_frame` plus the same
-LSDA in JIT memory. That is needed before `velt dev` runs an HTTP server under the Velt executor
-(its handlers' catch).
+`try_call` exists only for the SystemV convention. On Linux and x86-64 macOS that is the
+platform's; on Apple arm64 a call uses a SystemV signature for the same symbol only when every
+argument is in a register (at most 8 integer and 8 float or vector arguments), where the two
+conventions agree; a call with stack arguments stays a plain call. After a function is compiled,
+its call sites with a handler become its LSDA (`.gcc_except_table` / `__TEXT,__gcc_except_tab`,
+call sites in `udata4`), and its FDE names the LSDA and a CIE with the personality, which the
+object defines once when any function has an LSDA. The personality pointer is indirect: on ELF
+through a local pointer in `.data` (`DW.ref.*`), on Mach-O through the GOT
+(`ARM64_RELOC_POINTER_TO_GOT`, `X86_64_RELOC_GOT`); ld64 accepts no other personality
+relocation. A `try_call` treats every register as clobbered on the exceptional edge, so values
+live across it are spilled: a debug-build cost only.
 
-**Windows.** The unwinder is SEH, not Itanium. Rust panics on MSVC are C++ exceptions
-(`0xE06D7363`, `_CxxThrowException`), and a Rust `catch_unwind` there matches only its own type
-descriptor, so foreign exceptions pass Rust frames (unlike on Itanium).
+The JIT (`velt dev`, generator hosts) registers no LSDA, so `velt_eh_try` there is a plain call
+that returns null and no call has a landing pad.
 
-Built for x64 (`velt_vir::eh::Catching::Seh`, #2925); Windows on arm64 stays `Catching::None`.
+### A function C calls
 
-- Raise (`std/lang/hooks/unwind_seh.velt`): the object as on Itanium (the 32-byte header, then
-  the message), with its own address at offset 8, raised with
-  `RaiseException(0xE0564C54 /* 'VLT' */, EXCEPTION_NONCONTINUABLE, 1, object + 8)`
-  (`velt_vir::eh::SEH_CODE`), so its one parameter is the object. `panicText` and `takePanic` are
-  the Itanium ones.
-- Catch, LLVM (`velt_codegen_llvm/src/eh.rs`): what clang emits for `__try/__except(filter)`:
-  `velt_eh_try` with personality `__C_specific_handler`, the call an `invoke` to a `catchswitch`
-  with one `catchpad within %cs [ptr @velt_eh_filter]`. The filter returns
+A function exported to C (`@export`, `Function::stops_unwind`) stops a Velt panic: an unwind that
+reaches it ends the process. It gets no cleanups. With LLVM its calls are `invoke`s of an abort pad
+(`crates/velt_codegen_llvm/src/function/stop_unwind.rs`); with Cranelift it has no unwind entry,
+so the search ends at it, the raise returns and `panicRaise` exits with 101. Test:
+`a_panic_does_not_unwind_through_c_frames`.
+
+### Windows
+
+The unwinder is SEH. Rust panics on MSVC are C++ exceptions, and a Rust `catch_unwind` there
+matches only its own type descriptor, so foreign exceptions pass Rust frames. Windows x64 catches
+(`velt_vir::eh::Catching::Seh`); Windows on arm64 does not (`Catching::None`).
+
+- **Raise** (`std/lang/hooks/unwind_seh.velt`): the object as on Itanium, with its own address at
+  offset 8, raised with `RaiseException(0xE0564C54, EXCEPTION_NONCONTINUABLE, 1, object + 8)`
+  (`velt_vir::eh::SEH_CODE`), so its one parameter is the object.
+- **Catch, LLVM** (`crates/velt_codegen_llvm/src/eh.rs`): what clang emits for
+  `__try/__except(filter)`: `velt_eh_try` with personality `__C_specific_handler`, the call an
+  `invoke` to a `catchswitch` with one `catchpad` naming a filter. The filter returns
   `EXCEPTION_EXECUTE_HANDLER` for `0xE0564C54` (after storing the parameter in a slot of
-  `velt_eh_try`'s frame, `llvm.localescape` / `llvm.localrecover`) and
-  `EXCEPTION_CONTINUE_SEARCH` otherwise; the handler returns the slot. Both functions are
-  internal to each module that calls `velt_eh_try` (the filter reaches the frame through labels
-  local to the object).
-- Catch, Cranelift (`velt_codegen_cl/src/eh_seh.rs`): `try_call` has no Windows convention, so
-  `velt_eh_try` is fixed machine code (57 bytes, the filter included) whose `.xdata` names
-  `__C_specific_handler` and a one-entry scope table (the call and the instruction after it, the
-  filter, the target), filled by `ADDR32NB` relocations (`unwind/windows.rs`).
-- Calls get no cleanup pads (lowering adds edges only for `Catching::Itanium`): the frames a
-  panic unwinds leak what they own, as everywhere before #2667. Under the executor in Velt no Rust frame is
-  between the raise and the catch; a Rust `C-unwind` frame there would pass the exception in the
-  search phase (`__CxxFrameHandler3` claims C++ exceptions only, and skips its cleanups for
-  other exceptions).
-- A function C calls (`@export`) stops a Velt panic as on the other targets (#2649 decision (b)):
-  with LLVM its abort pad is a `cleanuppad` under `__C_specific_handler` (a termination handler,
-  which runs for every exception that unwinds the frame; under `__CxxFrameHandler3` a Velt panic
-  passed it), so a catch above the C frames makes the second phase abort there; with Cranelift
-  its `.xdata` names a language handler (`velt_eh_stop`, `eh_seh.rs`) that ends the process with
-  101 when the search phase reaches the frame with Velt's code, as the search ending there does
-  on Linux and macOS.
-- An unclaimed raise never returns on Windows (the unhandled-exception filter ends the process
-  with the exception code), so the first raise installs a filter of its own
-  (`SetUnhandledExceptionFilter`, `unwind_seh.velt` `unclaimed`) that ends the process with 101
-  for Velt's code, as `panicRaise`'s fallback does elsewhere, and hands other exceptions to the
-  filter it replaced. Raises racing on several threads wait until it is in place (one thread
-  installs; `INSTALLED` goes 0, 1, 2), so none of them reaches the system's filter first. A filter
-  a program or library installs after that replaces it, as any later filter does under
-  structured exceptions: an unclaimed Velt raise then goes to that filter (usually a crash with
-  `0xE0564C54`, not 101).
-- With LLVM, any exception that unwinds through an `@export` frame runs its abort pad: an
-  unhandled foreign exception raised under one, which the thread start's handler finally
-  unwinds, ends a release build with `abort` (`0xC0000409`) instead of its own code, and a C
-  `longjmp` across such a frame (an unwind on Windows, not on Linux and macOS) aborts too.
+  `velt_eh_try`'s frame, `llvm.localescape` / `llvm.localrecover`) and `EXCEPTION_CONTINUE_SEARCH`
+  otherwise.
+- **Catch, Cranelift** (`crates/velt_codegen_cl/src/eh_seh.rs`): `try_call` has no Windows
+  convention, so `velt_eh_try` is fixed machine code, the filter included, whose `.xdata` names
+  `__C_specific_handler` and a one-entry scope table.
+- **No cleanup pads.** Lowering adds unwind edges only for `Catching::Itanium`, so the frames a
+  panic unwinds on Windows leak what they own.
+- **A function C calls** stops a Velt panic: with LLVM its abort pad is a `cleanuppad` under
+  `__C_specific_handler`; with Cranelift its `.xdata` names a language handler (`velt_eh_stop`)
+  that ends the process with 101 when the search phase reaches it.
+- **An unclaimed raise** never returns on Windows, so the first raise installs a filter of its own
+  (`SetUnhandledExceptionFilter`, `unclaimed` in `unwind_seh.velt`) that ends the process with 101
+  for Velt's code and hands other exceptions to the filter it replaced. Raises racing on several
+  threads wait until it is in place (`INSTALLED`). A filter installed later replaces it, as any
+  later filter does.
 
-**WebAssembly.** No unwinding (`velt_rt_wasm` aborts on a panic). `velt_eh_try` is a plain call.
-The exception-handling proposal (`exnref`, `try_table`) could later carry the same design.
+### WebAssembly
 
-## The executor in Velt
+No unwinding: `velt_rt_wasm` aborts on a panic and `velt_eh_try` is a plain call. WebAssembly
+keeps the runtime's executor and its catch (`std/task/catch_rt.velt`).
 
-What replaces the runtime's catch (`velt_rt_catch_*`, the catch at a started promise's poll):
+### Contracts
 
-- **A promise node that catches** (`catchPanic`'s body, an HTTP handler's) has a flag in its
-  header. The executor polls such a node through the catch:
+- `hir::Intrinsic::CatchUnwind` and `CatchUnwindAt` (`crates/velt_sema/src/hir/intrinsic.rs`),
+  declared in `std/lang/intrinsics/unwind.velt`.
+- velt_common: the hook `panic_raise` (`std/lang/hooks/unwind::panicRaise`, `(&string) -> never`,
+  `constructs(CatchUnwind)`), the construct `Construct::CatchUnwind`, which demands only the panic
+  hook, and the std module `lang_hooks_unwind`, loaded on demand.
+- VIR: `Terminator::Call::unwind` (invariant 14) and the backend-defined externs
+  `velt_eh_try(ptr, ptr) -> ptr`, `velt_eh_catches() -> u8` and `velt_eh_resume()`
+  (`velt_vir::eh`), symbol contracts like `velt_tls_*`.
+- Objects of programs that catch: `velt_eh_try`, `velt_eh_personality` (local), an LSDA per
+  function with landing pads, a CIE naming the personality; references to
+  `_Unwind_RaiseException`, `_Unwind_Resume`, `_Unwind_GetIP`, `_Unwind_SetGR`, `_Unwind_SetIP`,
+  `_Unwind_GetRegionStart` (and, with LLVM, `_Unwind_GetLanguageSpecificData`): libSystem on
+  macOS, libgcc_s on Linux, both linked already.
 
-  ```ts
-  let r: u32 = PENDING;
-  const e = unsafe { catchUnwind(() => { r = futPoll(node.fut, cx); }) };
-  ```
+## Runtime cost
 
-  As built (std/task/catch_sched.velt `caughtPoll`), there is no function value: the poll,
-  state and `cx` wait in the worker's argument words (`E_CATCH_ARGS`), which a nested catching
-  poll writes only after the outer one read them, and the result comes back there;
-  `catchUnwindAt(fnAddress(pollArgs), args)` (an intrinsic beside `catchUnwind`) has
-  `velt_eh_try` call `pollArgs` with their address, so no closure, environment or thunk sits in
-  between. Its cost is the indirect calls through `velt_eh_try`, paid only by catching nodes. A
-  direct form, `catchPoll(f, cx)` lowered to a `velt_eh_try_poll(fut, cx)` that calls the
-  header's poll through the catch, would save one more call if it measures worth it. A guarded
-  promise that finished without a panic before `catchPanic` waits for it (a handler that never
-  waits) is not waited for: `take` gives it back and `catchPanic` takes its result. One still
-  running is waited for through a settled future that is a header inside its node (the started
-  node's lazy drop word and the free word after it, `N_SETTLE`; its `bool` result goes in the
-  word after those, the node's unhandled-rejection link, unused while `catchPanic` holds the
-  promise), so nothing is allocated. That future doesn't adopt the guarded promise while it
-  drives itself (its last poll was its own run, flag `ADOPTED` clear: `drivesItself`): its first
-  run (in its start) returned pending with its own waker, so an adoption would only poll a state
-  that waits for that wake; the future registers as the awaiter, the node's wake runs it among
-  its task's woken nodes, and its finish wakes the future.
-- **When the poll panicked**, the node becomes *panicked*: finished, its result slot never read,
-  transferred or dropped, its state machine never polled or dropped again (the pads of its poll
-  dropped what it held). The message moves into the node, which is freed with its last
-  reference like any other, the exception with it: a leaf that still holds its waker holds a
-  reference (#2818).
-- **Awaiting a panicked node raises the panic again** in the awaiter (`panicRaise(message)`), so
-  a panic travels through `await`s as through calls, until a catching node takes it, or reaches
-  a poll that catches nothing, which ends the process with 101 as today.
-- **`catchPanic(body)`** starts `body()`'s promise as a catching node and awaits it without
-  claiming its result; when it panicked it throws `PanicError(message)`. The arm/take protocol
-  and its limits ("the first promise started after `body` is called") go: the std function
-  marks the node it starts itself.
-- **A spawned task** whose root panics ends the process, as today; an `@export` function a C
-  caller runs aborts at its boundary on a Velt exception (decision (b) of #2649: its frame gets a
-  catch-all landing pad that calls `abort`, or `nounwind`).
+**Programs that do not catch** get the same code as without the feature: no `velt_eh_try`, no
+landing pads, no `POLLING` stores (tests `a_program_without_catch_keeps_the_runtime_panic` and
+`only_a_program_that_catches_gets_cleanup_pads`).
 
-**Built** (the executor in Velt, every native program's since #2649's switch, #2667; std/task/catch_sched.velt, the `std-scheduler`
-variant of `#task-catch`, whose default variant std/task/catch_rt.velt calls `velt_rt_catch_*`):
-
-- `catchPanic` keeps the arm/take shape and its documented limits, so both executors behave the
-  same: `arm` raises the low bit of the worker's `E_CATCHING` word; the next promise started
-  takes it (flag `CATCHES`, `E_GUARDED` holds it). The design's "marks the node it starts
-  itself" needs the promise's address before its start, which std code cannot get from the
-  value `body()` returns without a new intrinsic; the arming is one word on the worker, read
-  once per start (`schedStart` loads `E_CATCHING`; 0 skips everything).
-- `E_CATCHING` also counts the catching polls running on the worker (twice their number), so a
-  promise started while one runs catches too, as the runtime's `catches_here` arranges.
-- The executor polls only `CATCHES` nodes through the catch: `run` tests the flag with the
-  flags it reads anyway; an owner adopting a node (polling it with its own context) catches
-  when the node does or a catching poll runs, so a panic never unwinds through the adoption's
-  bookkeeping. The catching poll (`caughtPoll`) and the raise again (`again`) are reached
-  through function addresses in worker 0's block that `arm` stores: a program that never calls
-  `catchPanic` has no `catchUnwind` in its live code, so no `velt_eh_try`, no panic hook and no
-  cleanup pads (test `only_a_program_that_catches_has_the_catch`).
-- A panicked node keeps its exception (the message) in place of its poll, is finished, never
-  freed (one reference more), its result drop cleared and its rejection flag dropped; `nodePoll`
-  on it raises the panic again through `raiseAgain` (std/lang/hooks/unwind.velt), which prints
-  nothing (the message was printed at the panic) and, with no catch running on the thread, ends
-  the process with 101. `catchPanic` waits for the guarded node with `nodeSettled` (through the
-  settled header in its node), which doesn't claim the result or raise.
-- **Tasks spawned while a catching poll runs catch too** (decision recorded on #2667, owner
-  away): their root is polled through the catch (task flag `CATCHES`); a panic makes the task
-  done with no result (`PANICKED`, join word `J_PANICKED`; nothing transferred, copied or
-  dropped) and its join handle's header gets `joinPanicked`, which raises the panic again in the
-  joiner, on whichever worker that runs. The header changes because `joinPoll` (and a solo
-  worker's `joinPollSolo`, `VELT_THREADS=1`) is `@export`ed, and a C-callable frame ends any
-  unwinding. The straight path of a task's poll (sched_run.velt `run`) tests `CATCHES` in the
-  mask it tests already, so tasks that don't catch pay nothing for it. A panicked task nobody joins ends there; the
-  process goes on. This differs from the runtime's executor, where a panic in a spawned task
-  ends the process: under the runtime the task's poll is a Rust frame no catch reaches, while
-  here the task runs on the same executor, and an HTTP handler that spawns work keeps serving.
-- **Shared promises** (a promise read where it stays, `kept[0]`, or awaited at two places) still
-  go through the runtime's hub (velt_rt task/shared.rs), whose first waiter drives the promise
-  with the poll it found when the promise was shared. Two rules keep a panic from getting stuck
-  there. A raise that unwinds through the hub's frame drops the driver's place at the head of
-  the waiters (`DriverGone`), so the next await drives and is raised the panic in turn. And a
-  task's join that the hub polls through the header from before the panic (`joinPoll`) is woken
-  once to poll again (a joiner that read the header just before the switch then gets
-  `joinPanicked`); a second such poll ends the process with 101, as an uncaught panic, since
-  that `@export` frame can't unwind to a catch. That leaves one gap: a task that panicked after
-  its join was shared, joined through one of the runtime's shared-promise paths (the hub, and
-  `Promise.race`, which also polls through the runtime) inside another `catchPanic`, ends the
-  process with 101 instead of being caught. Moving shared promises and the combinators into std
-  closes it.
-- **Where generated code doesn't catch** (`velt_eh_catches() == 0`: Windows on arm64,
-  the `velt dev` JIT until its tables are registered),
-  `catchPanicRaw` calls the poll plainly and a panic under `catchPanic` ends the process with
-  101, as an uncaught one does (decision recorded on #2667: no runtime catch as a fallback,
-  owner decision 3 of #2649). WebAssembly keeps the runtime's executor and catch.
-- **Leaks:** the cleanup pads (#2680) drop what the abandoned frames held, as under the runtime's
-  catch, and what the panicked state machines held across their awaits ("Async state machines"
-  below, #2818). A panicked node is freed with its last reference, its exception with it; a
-  panicked task's root is still never freed.
-
-Deleted from velt_rt when the executor switches: `velt_rt_catch_arm`, `_take`, `_settled`,
-`_message`, `_free` (rt_abi_async.md §1.5); `panic::{catch, Catching, CATCHING, MAY_CATCH,
-VeltPanic, unwind, raise}`; `task/local/catch.rs`, `node/panicked.rs`; the `count_caught` leak
-report becomes std's. `velt_rt_panic` keeps only "print, exit 101" and can move to std.
-
-## Contract changes
-
-The prototype's, all additive:
-
-- `hir::Intrinsic::CatchUnwind` (velt_sema `hir/intrinsic.rs`) and its declaration in
-  `std/lang/intrinsics/unwind.velt`; `hir::Intrinsic::CatchUnwindAt` (#2667: the function at an
-  address called with one argument, `velt_eh_try(code, arg)`, for the executor's catching poll).
-- velt_common: hook `panic_raise` (`std/lang/hooks/unwind::panicRaise`, `(&string) -> never`,
-  `constructs(CatchUnwind)`), construct `Construct::CatchUnwind` (its own bit in sema's
-  `demanded_for`, so it demands only the panic hook), std module `lang_hooks_unwind`, loaded on
-  demand (`ON_DEMAND_MODULES`). With laziness off (`VELT_EAGER_STD=1`) sema demands every hook
-  but this one, which keeps the VIR of every program the same both ways (`eager_std_identity`);
-  a program that catches then panics through the runtime.
-- VIR: the backend-defined externs `velt_eh_try(ptr, ptr) -> ptr` and `velt_eh_catches() -> u8`
-  (`velt_vir::eh`), symbol contracts like `velt_tls_*`; no type changes. std declares
-  `velt_eh_catches` as an ordinary extern; the backend defines it.
-- std's conditional import `#unwind-raise` (std/imports.velt).
-- Objects: `velt_eh_try`, `velt_eh_personality` (local; LLVM `linkonce_odr hidden`), an LSDA, a
-  second CIE; programs that catch call `_Unwind_RaiseException`, `_Unwind_SetGR`,
-  `_Unwind_SetIP`, `_Unwind_GetRegionStart` (and, with LLVM, `_Unwind_GetLanguageSpecificData`):
-  libSystem on macOS, libgcc_s on Linux, both linked already.
-
-Later, with the executor's switch:
-
-- `rt_abi_async.md` §1.5 deleted; `rt_abi.md` "Control": `velt_rt_panic` no longer unwinds (it is
-  `extern "C"` again or std's), and a Velt exception (class `VELTPANC`) may pass any
-  `C-unwind` runtime function; the runtime never `catch_unwind`s around code that runs Velt
-  code.
-- The started-promise node header gains the catching / panicked flags (the executor's own
-  layout, std).
-- Windows x64: the SEH raise and catch above (done, #2925); the JIT: LSDA registration.
-
-## Prototype
-
-Branch `velt-unwind`: the intrinsic, both backends' `velt_eh_try` and personality, the std panic
-path and `catchVeltPanic`. Tested on macOS arm64 with Cranelift (debug) and LLVM (release), and
-on Linux arm64 in the velt-prof VM ([Measurements](#measurements)):
-
-- `std/task/unwind.test.velt`: null when nothing panics; `panic("boom")` caught with its
-  message; an index out of bounds 20 calls deep caught, the code after it in the body not run,
-  the process going on; nested catches (the inner one takes it).
-- `crates/veltc/tests/unwinding.rs`, both backends: the same, plus an exception of another class
-  (`OTHRLANG`, raised with `_Unwind_RaiseException`) passing the catch (the catch returns null
-  and the raise returns: nobody claimed it), and an uncaught panic still ending with 101. A
-  personality that claims every class makes it fail, with either backend. A program without
-  `catchUnwind` still calls `velt_rt_panic` and has no `velt_eh_try`.
-- What `_Unwind_RaiseException` returns when nobody claims the exception is no reliable reason
-  code: 3 or 5 on macOS, but an arbitrary word on Linux arm64 with libgcc, from a C program too.
-  Whether it returns at all depends on the frames above `main` ("What a raise nobody claims
-  does"), so the foreign-exception test accepts either outcome: the raise returns and the
-  program goes on, or a Rust frame above `main` ends the process; what it checks is that the
-  catch never hands the foreign exception back (its payload reads `FOREIGN-CAUGHT`, which a
-  catch that claims every class prints).
-- Not covered by the prototype: Windows, the JIT, the executor's use (branch `velt-executor`
-  has the executor; this branch is off `main`). Not run: x86_64 (macOS and Linux; the Mach-O
-  `X86_64_RELOC_GOT` personality relocation and rax/rdx payload registers are written but
-  untried).
-
-The foreign exception can't be tested from `velt test`: tests run in a task, and tokio's harness
-`catch_unwind` claims it and aborts, which is the Itanium hazard above.
-
-## Before step 5 (the executor's catch)
-
-**Audit: runtime function pointers that run Velt code and are still `extern "C"`.** A Velt
-exception through one of them finds no call-site entry in Rust's personality and aborts instead
-of reaching the catch. Each becomes `extern "C-unwind"` (an adaptation of the type, no new
-code), or the design states why no Velt panic can pass it:
-
-- `DropFn` in `velt_rt/src/drop_depth.rs`;
-- `DataFn`, `TransferFn` and `DropFn` in `velt_rt/src/fn_props.rs`;
-- `WorkFn` and `DropCtxFn` in `velt_rt/src/native/mod.rs`;
-- `DropFn` in `velt_rt/src/transfer_map.rs` (the deferred releases `velt_rt_xfer_end` runs);
-- the drop function of `velt_rt_statics`'s table (`velt_rt/src/entry.rs`, run at exit);
-- the entry chain above `velt_main` (`main`, `velt_rt_start`, `run_main`'s `program`): only a
-  raise nobody claims reaches it, which the count rules out outside the hole.
-
-Not changed in this PR: nothing that catches today runs through them (the executor's polls do,
-after the switch), and each change wants its own measurement.
-
-**Owner decision: drops in unwound frames.** Decided on #2667 (2026-11-09): yes, frames that own
-values get cleanup code, only in programs that catch: [Cleanup in unwound frames](#cleanup-in-unwound-frames).
-Before it, nothing in the frames between the raise and the catch was freed (#2668 measured 65
-blocks and 22 strings per caught panic 20 frames deep), a leak per panic without bound for a
-server that answers 500 on a panic.
-
-## Cleanup in unwound frames
-
-Owner decision on #2667: a frame that owns values needing a drop gets cleanup code that runs
-when a Velt panic unwinds through it, only in a program whose live code calls `catchUnwind`.
-Programs that don't catch stay byte-identical. Gate: run rows and build size within ±3% on
-`bench/http` and the async rows with the catch on; the fallback if it fails is a request-scoped
-arena (a design of its own).
-
-### Where cleanups come from
-
-Lowering already knows, at every point of a function, what the frame owns: the scope stack of
-drop obligations (`lower/drops.rs`: `DropEntry` per scope, the static state or drop flag of each
-local), which `return`, `break` and `throw` drop on their edges and an async function's cancel
-path drops without its `finally` blocks (`emit_cancel_drops`). A cleanup pad is that cancel
-path at a call site: the drops of every open scope, innermost first, without `finally` blocks
-and without `catch` handlers (a panic is not an error: user code never sees it), then the
-resume of the unwind.
-
-- **Which calls.** `FnLower::call` gives a call an unwind edge when (1) the program catches: sema
-  demanded `panic_raise` (the construct `CatchUnwind` is live) and the target unwinds
-  (`Catching::of_triple(target) == Itanium`); (2) the callee may unwind: a Velt function or a
-  function value (`velt_vir::eh::may_unwind`: `Callee::Func`, `Callee::Ptr`). Externs (the
-  runtime, C) don't get one: a panic in a Velt callback the runtime runs leaks the calling
-  frame's values, as before; (3) the frame owns something now: some open scope holds an entry
-  that would emit a drop (a temporary, a flagged value, a local in state `Init` or with a
-  flag, a cell). A frame that owns nothing at a call gets no edge, and a function that never
-  owns anything at a call is unchanged. Arguments the call takes are already off the scopes
-  (`take_temp` before the call, as for `throw`), so the callee drops them, never both.
-- **Calls on exit edges.** `return`, `break`, `continue` and `throw` emit the drops (and
-  `finally` blocks) of the scopes they leave without popping them, and an async cancel path
-  emits every scope's drops. A call there (drop glue running a `[Symbol.dispose]()`, a call in
-  a `finally`) gets a pad without what the edge has dropped or is dropping: each scope keeps a
-  count of the entries pads still drop (`Scope::pad_keep`), lowered to the index of the entry
-  being dropped as the edge goes and to 0 once the scope is done, and restored after the edge.
-  `pop_scope` pops first; while it drops the popped entries, a pad drops the ones it hasn't
-  reached yet, so a disposer that panics doesn't leak the entries before it. The old value of a
-  reassigned local (`drop_old`) is left out of the pads of its own drop, and the new value,
-  which no scope owns until it is stored, is in them.
-- **A transfer that panics.** A value going to another thread (`spawn`'s arguments, a channel,
-  `shared(...)`) is off the scopes once consumed, and its transfer glue can panic (a weak
-  collection in a captured environment). `transfer_value` registers the temporary holding it
-  for the glue's call and takes it back after, so the pad drops it as far as it was transferred
-  (its copies; the originals they replaced are the transfer's deferred releases, which the
-  catch's `caught()` releases). An original's release is deferred only once its copy is
-  finished (`shared_copy` settles the copy first: a class's own `clone()` checked and its copy
-  transferred in turn), so a panic while settling leaves the original in its holder alone,
-  owned once by the temporary, and the pad and `caught()` don't both release it. The copy being
-  settled is the glue frame's temporary meanwhile (`transfer_owned`), so the glue's pad drops it,
-  and a `clone()` whose result others still reference has that reference released before its
-  panic. Tests: `a_value_whose_transfer_panics_is_dropped`,
-  `a_copy_whose_settling_panics_releases_the_original_once`,
-  `a_clone_returning_a_stored_object_releases_the_original_once`. The pads run while the
-  transfer is still open (its depth above 0, its copies map live): a pad that frees a copy leaves
-  the copy's address in the map until `caught()`, so only a transfer started from inside a pad
-  (a `[Symbol.dispose]` that spawns) could look up a stale address.
-- **Pads are shared.** A pad is a chain of links, one per drop entry, innermost first, each
-  ending in a jump to the pad of the entries outside it; the empty pad is one block calling
-  `velt_eh_resume`. Links are cached per function by the entries and the states they read, so
-  consecutive calls in one state share a pad and a new temporary adds one link. Code size grows
-  with the number of distinct ownership states at calls, not with calls × entries.
-- **Inside a pad** calls get no unwind edge, and the pads are lowered with what lowering knows
-  about string data set aside (as a `finally` is), so a pad's code depends only on its entries.
-- **Not covered** (they leak as before): calls of externs; the shared `division by zero` panic
-  blocks (built after the scopes are gone); Cranelift on Apple arm64 for a call whose arguments
-  don't all fit in registers (below); the JIT (`velt dev`); Windows and WebAssembly. Since the
-  leak-check marker of a caught panic is gone (below), `velt test` fails the leak check of a
-  test that catches a panic unwinding through one of these paths.
-
-`VELT_UNWIND_PADS=0` turns the edges off in lowering. It is for measuring the gate only (the same
-program with and without pads); a program built with it leaks as before #2667.
-
-### VIR
-
-- `Terminator::Call` gains `unwind: Option<BlockId>` (invariant 14). `Some(pad)`: when the callee
-  unwinds with a Velt exception, control continues at `pad` with `dest` not written. `None` is
-  every call of a program that doesn't catch, so its VIR, fingerprints and code are unchanged.
-- `velt_eh_resume()` (`velt_vir::eh::RESUME`, noreturn, a backend-defined extern like
-  `velt_eh_try`): continues the unwind that entered the pad being run. Each pad ends in a call of
-  it; a call of it never has an unwind edge (verify).
-- Passes see the unwind edge as a successor (`velt_opt::visit::successors`, lowering's
-  `cfg::successors`, verify's dataflow), so a value a pad reads is live at the call and
-  definitely assigned before it (verify checks the pad as any other successor; its check is per
-  block, so a pad reading the call's own result is not caught there: lowering never emits one,
-  since a call's result is owned only after the call). The inliner wires an inlined body into
-  the call's edge: the callee's calls that may unwind and have no edge get the call's, and its
-  `velt_eh_resume` calls become jumps to the call's pad; a call without an edge inlines the
-  body as it is.
-- **Memory kept in locals across calls.** A pass that keeps a pointee's fields in locals and
-  stores them back later must also store them where an unwind leaves the frame, since a frame
-  further out may own that memory and its pad drops it by what memory says. `noalias` promotion
-  stores the written fields in a block on each unwind edge of a call that doesn't receive the
-  param (reloading them on the edge of one that does, which may change them), and gives a call
-  without an edge one to a block that stores them and resumes, once the program has pads (it
-  declares `velt_eh_resume`). `frame_slots` stores a poll function's written slots before
-  `velt_eh_resume` as before a `return`. The normal path is unchanged; programs that don't catch
-  get the same code. The other passes read memory once (`frozen`, `invariant_reads`, which
-  arrives at pads with the pre-call state) or stop at a call with a pad (`fresh`, so
-  `dead_fills`); `heap_sroa` only replaces objects no other frame sees.
-
-### Backends
-
-- **LLVM.** A call with an unwind edge is an `invoke ... to label %ok unwind label %lpN`. Each
-  pad block reached by an unwind edge gets a landing block of its own,
-  `%lpN: landingpad { ptr, i32 } cleanup`, which stores the exception pointer in the function's
-  exception slot (an `alloca` in the entry block) and branches to the VIR pad, which other pads
-  may also jump to. `velt_eh_resume` is `resume { ptr, i32 }` of the slot. A function with an
-  `invoke` names `personality ptr @velt_eh_personality`. LLVM's inliner prices the pads as if
-  they ran on every call (a pad with one drop added 50 to `Out.bytes` in http-server, 275 for a
-  threshold of 250), so a function that is small outside its pads (`inlining::small_with_pads`:
-  at most velt_opt's `SMALL_COST` of the blocks the entry reaches through normal edges) gets
-  `inlinehint` (threshold 325 at `-O3`), and velt_opt's single-call-site rule compares
-  `ONCE_COST` with the code outside the pads (`inline::hot_cost`: `Request`'s constructor). Both
-  apply only to functions with unwind edges, so a program that doesn't catch is unchanged.
-- **Cranelift.** A call with an unwind edge is a `try_call` (`try_call_indirect`) whose default
-  handler is a landing block per pad that stores the exception (payload register 0) in a
-  variable and jumps to the pad; `velt_eh_resume` calls `_Unwind_Resume` with it. `try_call`
-  exists only for the SystemV convention: on Linux and x86-64 macOS that is the platform's; on
-  Apple arm64 the call uses a SystemV signature for the same symbol only when every argument is
-  in a register (at most 8 integer and 8 float or vector arguments), where Cranelift's
-  AppleAarch64 and SystemV conventions agree (arguments are extended by their `sext`/`uext`
-  attributes in both); a call with stack arguments stays a plain call. After a function is
-  compiled, its call sites with a handler become its LSDA (`.gcc_except_table`, call sites in
-  `udata4`, one entry per call: `[return address - 1, +1)`, the handler, action 0 = cleanup);
-  its FDE names the LSDA and the CIE with the personality, which the object defines once (local)
-  when any of its functions has an LSDA. A `try_call` treats every register as clobbered on the
-  exceptional edge, so values live across it are spilled: a debug-build cost only.
-- **The personality** becomes the general one (both backends): for Velt's class, read the LSDA
-  header (landing-pad base omitted; the type table skipped; call sites in ULEB128 (LLVM) or
-  `udata4` (Cranelift's own)), find the entry covering `ip - 1` (`_Unwind_GetIP` minus
-  `_Unwind_GetRegionStart`); no entry or landing pad 0: `_URC_CONTINUE_UNWIND`. An entry with
-  action 0 is a cleanup: search phase `_URC_CONTINUE_UNWIND`, cleanup phase land
-  (`_URC_INSTALL_CONTEXT`). An entry with an action is a catch (`velt_eh_try`): search phase
-  `_URC_HANDLER_FOUND`, cleanup phase land only in the handler frame. A foreign class passes in
-  both phases, so its unwinding runs no Velt cleanup (unchanged: compiled frames are not
-  reached by foreign exceptions today). `velt_eh_try` keeps its LSDA; the general reader finds
-  its one entry.
-- **A function C calls** (`Function::stops_unwind`, `@export`) gets no cleanups: an unwind
-  that reaches it ends the process, so they could only run before the `abort`, and a function
-  has one personality. With LLVM its calls, those with an unwind edge too, are `invoke`s of its
-  abort pad (`function/stop_unwind.rs`, Rust's personality, which lands at the pad for any class
-  in the cleanup phase); with Cranelift it has no unwind entry, so its edges stay plain calls and
-  the search ends at it (`raise` returns, `panicRaise` exits). Its pad blocks are unreachable and
-  `velt_eh_resume` there is `unreachable` (a trap). An edge appears in one when an inlined callee
-  brings its pads.
-
-### A panic during a cleanup
-
-A drop in a pad can run user code (`[Symbol.dispose]()`, a class's destructor), which may panic.
-Its unwind would run the outer pads of the frame whose pad is running, dropping again what the
-inner drop was in the middle of. As in Rust ("panic while panicking"), it aborts: std keeps a
-thread-local `UNWINDING` flag, set by `panicRaise` just before it raises and cleared by
-`catchVeltPanic` when the catch returns the exception. A `panicRaise` that finds it set prints
-the message and `panic while unwinding: aborting` and calls `abort()`. Nothing is added to the
-normal path; the cost is that a catch inside a destructor run by a cleanup can't catch either
-(it aborts too). Older Rust did the same; recent Rust allows a panic that a drop running during
-an unwind catches itself, and only one that escapes the drop aborts. That is worth
-following once the executor's catch is public (step 5): it needs the flag to be a count of the
-catches entered since the unwind began.
-
-### Async state machines
-
-A poll function's frame holds its live state in the state struct (`async_fn/spill`). Its pads
-are built as any frame's, before the spill pass has chosen what goes into the state, so a pad
-drops what the open scopes own wherever it lives: the frame's temporaries and the values the
-state holds across suspensions alike (#2818; until then every pad link touching the state was
-bypassed and the panicked state machine leaked whole, #2008). Every call that may unwind gets a
-pad, also where the frame owns nothing, and the pads end by setting the state's tag to finished
-(`DONE`) before the resume. The frame holding the state (the awaiter with the state inline, the
-executor's node) then drops it as a finished one, which does nothing.
-
-A poll that unwinds through a call without a pad (an extern's: "Not covered" above) runs none
-of this: its state still holds what it held, and the tag of its last suspension names values the
-poll may have moved or dropped since. So in a program that catches, the start and every resume
-of a poll function first set the tag to `POLLING`, which has no dispatch case: polling or
-dropping such a state does nothing, and what it held leaks, as before. One store per poll, only
-in programs that catch.
-
-The child an `await` waits for is owned by no scope: the cancel block of its suspension drops
-it (the awaited heap future; an inline `Promise.all`'s children and the results of those that
-finished). So the pad of a call that polls it drops it first, with the same code
-(`cleanup.rs` `awaiting`), then what the scopes own. Without that, a child whose poll unwinds
-would leave the awaited future never dropped, and a join's other children with it.
-
-A generator's resume function (and an async generator's poll function) is built the same way:
-its pads drop what its state holds and mark it finished. The frame holding the generator (a
-`for...of` frame with the state inline, or the owner of a `Generator` object) then drops it as
-a finished one, which does nothing to the state and frees the object; without it the
-drop would find the tag of a running generator and panic ("generator is already running"), and
-during that frame's cleanup the panic aborts. A later `next()` (or `next(v)`) is done, as after
-a generator that threw. An async generator's poll function is built the same way; it is reached
-by an unwind only once a catch can run inside an executor (the design's step 5). The spill pass's
-liveness follows unwind edges, so a bypassed link never moves a local into the state.
-
-### Windows and WebAssembly
-
-No cleanup pads (Windows x64 catches in `velt_eh_try` only; arm64 and WebAssembly don't unwind):
-lowering adds no edges for those targets, and a backend that gets one anyway (the JIT) emits a
-plain call.
-
-### Contract changes
-
-- `vir::Terminator::Call::unwind` (vir.rs invariant 14) and the backend-defined extern
-  `velt_eh_resume` (`velt_vir::eh::RESUME`, `may_unwind`).
-- std: `UNWINDING` in `std/lang/hooks/unwind.velt`, `abort` in the Itanium raise; the leak-check
-  marker of a caught panic (`rc stats: std caught a panic`) goes, since a caught panic frees what
-  the unwound frames owned.
-- Objects of programs that catch: an LSDA per function with pads, the personality's CIE on their
-  FDEs, `_Unwind_Resume` and `_Unwind_GetIP` referenced (libSystem, libgcc_s).
-
-
-## Measurements
-
-Linux arm64 (velt-prof VM), cachegrind, release (LLVM), `VELT_THREADS=1`, base `main`
-bcd193394 against the prototype.
-
-**Programs that don't catch: no change.** The prototype changes nothing in a program whose live
-code has no `catchUnwind`: the LLVM IR of every row below is byte-identical between base and
-head, and the instruction counts differ only by run-to-run noise. The two `timer_await` rows wait
-on the wall clock, which moves them by a percent or more between runs of the same binary (#2137
-saw −1.5% to +6.3%).
-
-| row | base | head | Δ | LLVM IR |
-|---|---:|---:|---:|---|
-| json/edit | 120,555,094 | 120,543,149 | −0.01% | identical |
-| json/navigate | 2,060,575,662 | 2,060,575,662 | 0.00% | identical |
-| json/parse_typed | 2,458,488,111 | 2,458,490,496 | +0.00% | identical |
-| json/parse_union | 3,566,916,822 | 3,566,916,822 | 0.00% | identical |
-| json/parse_value | 3,047,587,713 | 3,047,521,172 | −0.00% | identical |
-| json/stringify | 926,348,528 | 926,347,960 | −0.00% | identical |
-| async/await_chain | 230,550,620 | 230,552,985 | +0.00% | identical |
-| async/await_deep | 2,486,383,512 | 2,486,389,834 | +0.00% | identical |
-| async/hot_loop | 2,642,829,327 | 2,642,821,772 | −0.00% | identical |
-| async/fanout_all | 1,027,007,093 | 1,027,007,836 | +0.00% | identical |
-| async/fanout_all_throwing | 814,138,943 | 814,134,209 | −0.00% | identical |
-| async/all_small_stored | 4,992,950,538 | 4,992,945,812 | −0.00% | identical |
-| async/spawn_many | 4,774,335,956 | 4,775,806,411 | +0.03% | identical |
-| async/channel_pipeline | 770,200,377 | 770,197,230 | −0.00% | identical |
-| async/timers_fire | 567,482,373 | 567,653,633 | +0.03% | identical |
-| async/timers_due_join | 147,114,593 | 147,117,008 | +0.00% | identical |
-| async/timers_due_stored | 96,077,097 | 96,080,347 | +0.00% | identical |
-| async/timers_due_in_promise | 95,494,301 | 95,491,814 | −0.00% | identical |
-| async/timers_due_reversed | 122,606,086 | 122,613,828 | +0.01% | identical |
-| async/top_level_await | 38,538,306 | 38,535,939 | −0.01% | identical |
-| async/timer_await | 282,688,738 | 279,839,657 | −1.01% (clock) | identical |
-| async/timer_await_top | 285,712,642 | 281,193,693 | −1.58% (clock) | identical |
-| async/promise_identity_loop | 12,919,623,040 | 12,919,722,657 | +0.00% | identical |
-
-**Compile cost.** `velt build --release --emit llvm` of `m1/hello`: 100.13 M → 100.19 M
-instructions (+0.06%, best of 4; the hook table entry and the construct). A first version that
-re-exported `catchUnwind` from `std/lang/intrinsics`' index, which every program loads, cost
-+0.15%: the declaration is imported from its own file instead. `json/parse_value`: within
-±0.02%.
-
-**The catch that catches nothing.** 2,000,000 iterations of a closure that adds to a module
-variable, called directly (`run(f)`), through `catchUnwind` (`rawCatch`), and through
-`catchVeltPanic` (the thread-local count and the null check too):
+**A catch that catches nothing.** An `invoke` (a `try_call`) is a plain call plus a call-site
+table entry; the landing pad is out of line. `velt_eh_try` is `noinline`, so a catch costs one
+call and the indirect call of `f`; `catchVeltPanic` adds two thread-local updates. Measured on
+Linux arm64 with cachegrind, 2,000,000 iterations of a closure that adds to a module variable:
 
 | | release (LLVM) | per iteration | debug (Cranelift) | per iteration |
 |---|---:|---:|---:|---:|
@@ -812,40 +451,97 @@ variable, called directly (`run(f)`), through `catchUnwind` (`rawCatch`), and th
 | `catchUnwind` | 144,393,079 | +11 | 346,567,849 | −2 |
 | `catchVeltPanic` | 172,393,245 | +25 | 538,572,083 | +94 |
 
-In release the plain call is inlined and the catch is not (`velt_eh_try` is a call of its own
-and the closure an indirect call in it): 11 instructions. The wrapper's two thread-local updates
-add 14 more; in a debug build a `ThreadLocal` costs a call each. For the executor that is paid
-once per poll of a catching promise, against about 75 for a whole suspend and resume in the
-executor in Velt (#2649 step 3.1).
+In release the plain call is inlined and the catch is not. In a debug build a `ThreadLocal` costs
+a call each. The executor pays this once per poll of a catching promise.
 
-**A caught panic.** 10 frames deep, the message printed to stderr: 73,907 instructions in
-release, 89,080 in debug (the difference of 20,000 and 10,000 caught panics). Most of it is the
-two-phase search and the cleanup phase through libgcc's DWARF unwinder, and the message's text.
-It is a cold path; the same panic uncaught ends the process.
+**A caught panic** 10 frames deep, with its message printed to stderr, costs about 74,000
+instructions in release and 89,000 in debug: mostly the two-phase search and the cleanup phase
+through the DWARF unwinder, and the message's text. It is a cold path.
+
+**Cleanup pads** cost code size in programs that catch: one link per distinct drop entry and
+ownership state at calls, out of line. The normal path is unchanged except for the `POLLING` store
+per poll.
 
 **Size.** Per object that catches: `velt_eh_try` and the personality (a few hundred bytes of
-code), a 15-byte LSDA, one more CIE; an 8-byte personality pointer on ELF.
+code), an LSDA per function with landing pads, one more CIE, and an 8-byte personality pointer on
+ELF.
 
-## Questions for the owner
+## Diagnostics
 
-1. **Personality.** The prototype's minimal one (one landing pad per frame, no LSDA search,
-   `velt_eh_try` never inlined), or a general LSDA reader in Velt so the helper can be inlined?
-   *Recommended: the minimal one*; revisit only if the call measures in an executor row.
-2. **Where the panic path runs.** Only in programs that call `catchUnwind` (prototype: no cost to
-   any other program, not even compile time), or always in std from the switch on, deleting
-   `velt_rt_panic`? *Recommended: on demand now; always at the switch*, when the runtime's catch
-   is deleted and every server program catches anyway.
-3. **The payload.** The message only (prototype: a NUL-terminated copy), or `{ VeltStr, location
-   }` once `addressStore` lands, or also a value (`panic(value)`)? *Recommended: the moved
-   `VeltStr` and the location*; a value payload has no use case yet.
-4. **Windows.** Fixed machine code for `velt_eh_try` with a hand-written SEH scope table, shared by
-   both backends, or LLVM's SEH lowering plus fixed code for Cranelift only? *Recommended: fixed
-   code for both*: one implementation to test, and nothing to inline on a path that already pays
-   a call.
-5. **The thread-local count after the switch.** Keep raising only inside a catch (an uncaught
-   panic exits without walking the stack, and a stray Rust `catch_unwind` can't abort the
-   process), or always raise and exit when nobody claims it? *Recommended: keep it*: two
-   thread-local updates per catching poll.
-6. **`velt dev`.** Register the LSDA with JIT code before the executor switch (handlers in `velt
-   dev` keep answering 500 on a panic), or accept that a panic ends a `velt dev` server until
-   then? *Recommended: register it*; it is the same bytes `__register_frame` already takes.
+All at run time, on stderr:
+
+- `panic: <msg>`: printed at the panic, caught or not.
+- `panic while unwinding: aborting`: a panic in a drop that a cleanup pad runs; the process
+  aborts.
+- An uncaught panic, or one that reaches a frame that cannot unwind to a catch, ends the process
+  with exit code 101.
+
+## Alternatives considered
+
+**Catching the Rust panic in generated code.** A Rust panic may be ended only by Rust; a foreign
+frame that deletes it makes Rust's cleanup routine abort. It would also keep the panic path in
+Rust while the runtime moves into std.
+
+**Another personality routine.** `__gxx_personality_v0` (C++) catches a foreign class only with
+`catch (...)`, which must rethrow, and needs libc++abi or libstdc++, which are not linked and not
+in a static musl build. `__gcc_personality_v0` runs cleanups only, never a handler.
+`rust_eh_personality` claims any class whose action is a catch, without checking the class, and
+the shared runtime library does not export it. Velt's own routine is small, checks the class, and
+needs only the unwinder.
+
+**Always raising, without the thread-local count.** Raising on every panic and exiting when
+nobody claims it would walk the stack for every uncaught panic, and on Itanium targets a Rust
+`catch_unwind` above the raise would claim and then abort on the foreign exception. The count
+costs two thread-local updates per catch.
+
+**One fixed `velt_eh_try` for both backends on Windows.** LLVM's own SEH lowering produces the
+same frame clang does for `__try/__except` and needs no hand-written tables; Cranelift, which has
+no Windows `try_call`, uses fixed machine code.
+
+**A request-scoped arena instead of cleanup pads.** Freeing a request's allocations in one step
+would avoid per-frame cleanup code, but it changes allocation for every program and does not drop
+values that outlive the request's frames. Cleanup pads reuse the drops lowering already computes
+and cost nothing in programs that do not catch.
+
+## Limitations
+
+- **Not covered by cleanup pads** (what they own leaks): calls of externs; the shared
+  `division by zero` panic blocks; Cranelift on Apple arm64 for a call with stack arguments; the
+  JIT; Windows; WebAssembly. `velt test` fails the leak check of a test that catches a panic
+  unwinding through one of these on a target with pads.
+- **A panicked task's root** is never freed
+  ([#2818](https://github.com/velt-lang/velt/issues/2818)).
+- **`catchPanic` guards the first promise started after `body` is called**, so `body` must be the
+  async call itself.
+- **A foreign exception that passes a catch leaves the count up.** One that passes
+  `catchVeltPanic` and is caught above it skips `leaveCatch()`. This cannot happen: the only way a
+  foreign frame calls Velt code is an `@export` function, which stops every exception that
+  unwinds out of it.
+- **A catch inside a transfer.** `caught()` closes every open transfer level, which assumes `f`
+  started at depth 0; a `catchVeltPanic` run from a class's `clone()` during a transfer would
+  close the outer transfer too. A transfer the panicked code had suspended stays on the runtime's
+  stack of suspended transfers.
+- **Runtime function pointers that are still `extern "C"`.** A Velt exception through one of them
+  aborts instead of reaching the catch: `DropFn` in `crates/velt_rt/src/drop_depth.rs` and
+  `crates/velt_rt/src/transfer_map.rs`; `DataFn`, `TransferFn` and `DropFn` in
+  `crates/velt_rt/src/fn_props.rs`; `WorkFn` and `DropCtxFn` in `crates/velt_rt/src/native/mod.rs`.
+- **The payload is the message only.** No location and no value.
+
+## Not yet implemented
+
+- **The JIT.** `velt dev` registers the LSDA and the personality's CIE for JIT code (the same bytes
+  `__register_frame` takes in `crates/velt_codegen_cl/src/unwind/jit_systemv.rs`), so a panic in a
+  handler under `velt dev` answers 500 instead of ending the process.
+- **Windows on arm64**, with SEH as on x64, and cleanup pads on Windows.
+- **`C-unwind` for the runtime's function pointers** listed under Limitations, each with its own
+  measurement.
+- **The payload** becomes `{ message, location }`, the message string moved in rather than copied
+  as NUL-terminated bytes (with `addressStore`).
+- **A panic a drop catches itself.** As in current Rust, a panic during a cleanup that a catch
+  inside the drop takes does not abort; only one that escapes the drop does. `UNWINDING` becomes a
+  count of the catches entered since the unwind began.
+- **`catchPanic` marks the node it starts itself**, replacing the arming of the next started
+  promise, once std can get a promise's address before its start.
+- **The runtime's catch is deleted** once WebAssembly no longer uses it: `velt_rt_catch_*`
+  (`rt_abi_async.md` §1.5), `velt_rt::panic::catch`, `task/local/catch.rs`, `VeltPanic`, and
+  `velt_rt_panic` reduced to print and exit 101, which can then move to std.

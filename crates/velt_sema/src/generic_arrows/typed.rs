@@ -49,7 +49,10 @@ fn decided_rest(params: &[ast::TypeExpr], type_params: &[ast::GenericParam]) -> 
     crate::type_level::inline::names_in(last, &mut names);
     let array = match &last.kind {
         K::Array(_) => true,
-        K::Named { path, .. } => path.len() == 1 && path[0].name == "Array",
+        // `readonly T[]` is parsed as `ReadonlyArray<T>`: an array too (#3061).
+        K::Named { path, .. } => {
+            path.len() == 1 && matches!(path[0].name.as_str(), "Array" | "ReadonlyArray")
+        }
         _ => false,
     };
     !array && (type_params.iter()).any(|g| names.iter().any(|n| *n == "*" || *n == g.name.name))

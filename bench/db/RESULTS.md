@@ -1,66 +1,35 @@
 # bench/db results
 
-Method, workloads and deviations: `README.md`. Command: `bench/db/run.sh --runs 5` (full sizes,
-best of 5 interleaved rounds, after one untimed run whose op counts and checksums all matched
-Rust's).
+Method, workloads and deviations: [README.md](README.md). Command: `bench/db/run.sh --runs 5`
+(full sizes, best of 5 interleaved rounds, after one untimed run whose op counts and checksums all
+matched Rust's).
 
-- **Machine**: Apple M4 (10 cores), 32 GB, macOS 26.6.2. **Busy**: other agents were building
-  and testing on it (load average 8–17 during the run), so single runs varied up to 2–4× on the
-  syscall- and round-trip-bound workloads; best-of-5 interleaved rounds hide most of that, but
-  treat differences under ~20% as noise.
+This run predates the `sqlite`, `redis` and `postgres` packages: it measured the earlier drivers
+in the Rust runtime, which passed rows to Velt as JSON text. It has not been repeated on the
+packages yet (the redis package is Velt code on `velt/net`; sqlite and postgres read rows by
+column through velt/db's `readRows`). For SQLite row decoding on the package, see
+`bench/sqlite/compare.sh` (Velt against rusqlite + serde_json).
+
+- **Machine**: Apple M4 (10 cores), 32 GB, macOS 26.6.2, before 2026-10-01 (compiler commit not
+  recorded). Other builds ran on it (load average 8–17), so single runs varied up to 2–4× on the
+  syscall- and round-trip-bound workloads; treat differences under about 20% as noise.
 - **Servers** (local, TCP on localhost): PostgreSQL 17.11 (Homebrew), Redis 8.8.1.
-- **Toolchains**: rustc 1.98.1; Velt pre-release (with the Postgres driver), `velt build
-  --release` on LLVM and Cranelift; Node 24.11.1.
-- **Libraries**: rusqlite 0.40.2 (bundled SQLite, the same crate and version as the Velt
-  runtime), redis 1.7.1 (tokio-comp, `MultiplexedConnection`), tokio-postgres 0.7.18 +
-  deadpool-postgres 0.14.2, tokio 1.53.1; better-sqlite3 12.11.1, ioredis 5.11.1, pg 8.23.1.
+- **Toolchains**: rustc 1.98.1; Velt `velt build --release` on LLVM and Cranelift; Node 24.11.1.
+- **Libraries**: rusqlite 0.40.2 (bundled SQLite), redis 1.7.1 (tokio-comp,
+  `MultiplexedConnection`), tokio-postgres 0.7.18 + deadpool-postgres 0.14.2, tokio 1.53.1;
+  better-sqlite3 12.11.1, ioredis 5.11.1, pg 8.23.1.
 
 ## Summary vs Rust
 
 | backend | Velt LLVM vs Rust | notes |
 |---|---|---|
-| SQLite | 0.29–0.91× | only `range_select` is > 2× slower (3.4×); Node 0.46–0.83× |
+| SQLite | 0.29–0.91× | `range_select` 0.29× (the JSON row round trip); Node 0.46–0.83× |
 | Redis | 0.98–1.83× | at or above Rust everywhere; 2.5–3× Node on pipelines and concurrency |
-| Postgres | 0.83–1.33× | round-trip bound: at Rust's level; `range_select` 0.83× |
+| Postgres | 0.83–1.33× | round-trip bound (about 30–40 µs per query on loopback) |
 
-Cranelift is within noise of LLVM on every workload here: the time goes to the runtime, SQLite
-and the network, not to compiled Velt code.
-
-## Root causes
-
-- **`sqlite.range_select` (0.29×, the one > 2× gap): the JSON row round trip.** Rows travel as
-  JSON text from the runtime to std, then `JSON.parse<Row[]>` decodes them. A `sample` profile of
-  the Velt LLVM loop (100 rows per query, 3 columns): SQLite itself (`sqlite3_step`) is 24% of
-  the time; encoding the rows to JSON in `velt_rt::sqlite::rows::read` is ~36%, of which 15% is
-  formatting the REAL column (`velt_rt::fmt::push_f64` → `ryu::format64` plus JS-style fix-ups
-  and memmoves); `JSON.parse` in the compiled program is ~34% (`velt_rt_json_reader_*`,
-  `Scanner::string`/`number`, `velt_rt_str_eq` for field-name matching, `dec2flt` to parse the
-  float back). Rust reads each column straight into the struct, so its whole query costs about
-  what `sqlite3_step` alone costs in Velt (≈ 9 µs vs 32 µs per 100-row query). Node's
-  better-sqlite3 builds JS objects directly from the columns (0.46×). Fix direction: a
-  compile-time row decoder that reads typed columns from the runtime directly (or at least a
-  binary row format), or, as a cheap step, writing REAL columns with ryu's output as is.
-- **`sqlite.insert_tx` (0.60–0.78×)**: per row, `JSON.stringify` of the params object in Velt
-  (including float formatting of `score`, 7% of samples) and `db_json::parse_params` in the
-  runtime (17%), then named binding; `sqlite3_step` is ~40%. Same JSON-in-the-middle cost as
-  above, smaller because rows are short and there is no decode side.
-- **`sqlite.point_select` (0.66×)**: ~59% of Velt' samples are the OS calls SQLite makes for
-  every statement (WAL read-lock `fcntl` and page `pread`s on cache misses), which Rust makes
-  too; the rest is the JSON row + parse, the connection lock and the `prepare_cached` lookup
-  (`StatementCache::get`, ~1%). Under this machine's load the syscall part dominates and swings
-  a lot (single Rust runs ranged 1.5–3.7 s for this loop), so the ratio is only indicative.
-- **`sqlite.insert_autocommit` (≈ 1×)**: commit-bound (WAL append per row); overheads vanish.
-- **Redis**: std/redis' own RESP2 client (one writer task batching queued requests into one
-  write, one reader completing reply slots) appears to do less per command than the `redis` crate's
-  `MultiplexedConnection` (not profiled; that crate converts every reply through its generic
-  `Value` and `FromRedisValue`), hence 1.5–1.8× on sequential round trips and ≥ 1× on pipelines; `concurrent_get`
-  matches the multi-thread Rust baseline (Rust's current-thread runtime is 1.3× faster there,
-  since 50 tasks on one connection gain nothing from cross-thread wake-ups).
-- **Postgres**: every workload is round-trip bound (~30–40 µs per query on loopback), so the
-  client libraries mostly wait on the server. `range_select` (0.83×) is the one where decoding
-  100 rows per query shows: the same JSON row round trip as SQLite, diluted by the round trip.
-  The pool workloads match Rust (deadpool) and beat pg's pool by ~1.3×.
-- **Memory**: Velt programs peak at 10–11 MB vs Rust's 4–8 MB and Node's 108–211 MB.
+Cranelift is within noise of LLVM on every workload: the time goes to the drivers, SQLite and the
+network, not to compiled Velt code. Velt programs peak at 10–11 MB of RSS against Rust's 4–8 MB
+and Node's 108–211 MB.
 
 ## Full table
 

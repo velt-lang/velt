@@ -1,0 +1,93 @@
+// velt/encoding/json (internal): a tape while it is parsed (tape_parse.velt). The parser adds the
+// words, kids (with the member lists) and decoded strings here, then `done` makes the frozen `Tape`
+// (tape.velt), a struct holding the same arrays, which `JsonValue` puts in a `shared(...)`.
+
+import { strByteAt, strByteLen } from "velt/lang/intrinsics";
+import { ESCAPED, Tape } from "velt/encoding/json/tape";
+
+declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
+
+/** A tape being parsed: `Tape`'s fields (tape.velt says what each holds), still growing. */
+export class TapeBuilder {
+  src: string;
+  words: u64[] = [];
+  kids: u32[] = [];
+  decoded: string[] = [];
+
+  constructor(src: string) {
+    this.src = src;
+  }
+
+  /** The finished tape, sharing this builder's arrays (the builder is not used after). */
+  done(): Tape {
+    return { src: this.src, words: this.words, kids: this.kids, decoded: this.decoded };
+  }
+
+  kind(v: u32): u64 {
+    return this.words[2 * (v as usize)] & 0xff;
+  }
+
+  /** A string value's (or key's) text. */
+  text(v: u32): string {
+    const p = this.words[2 * (v as usize) + 1];
+    if ((this.words[2 * (v as usize)] & ESCAPED) != 0) {
+      return this.decoded[p as usize];
+    }
+    // A range between a string's quotes: whole characters.
+    return velt_rt_str_byte_slice(this.src, p & 0xffffffff, p >> 32);
+  }
+
+  /** Whether keys `a` and `b` have the same text, compared in place. */
+  sameKey(a: u32, b: u32): bool {
+    const wa = this.words[2 * (a as usize)];
+    const wb = this.words[2 * (b as usize)];
+    if ((wa & ESCAPED) != 0 || (wb & ESCAPED) != 0) {
+      return this.text(a) == this.text(b);
+    }
+    const pa = this.words[2 * (a as usize) + 1];
+    const pb = this.words[2 * (b as usize) + 1];
+    const sa = (pa & 0xffffffff) as usize;
+    const sb = (pb & 0xffffffff) as usize;
+    const n = (pa >> 32) as usize - sa;
+    if ((pb >> 32) as usize - sb != n) {
+      return false;
+    }
+    for (let i: usize = 0; i < n; i++) {
+      if (strByteAt(this.src, (sa + i) as u64) != strByteAt(this.src, (sb + i) as u64)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /** Whether key `k` may be an array index: its first byte is a digit (no string is made). */
+  digitFirst(k: u32): bool {
+    const p = this.words[2 * (k as usize) + 1];
+    if ((this.words[2 * (k as usize)] & ESCAPED) != 0) {
+      const d = this.decoded[p as usize];
+      return strByteLen(d) > 0 && strByteAt(d, 0) - 48 <= 9;
+    }
+    const start = (p & 0xffffffff) as usize;
+    if ((p >> 32) as usize <= start) {
+      return false;
+    }
+    return strByteAt(this.src, start as u64) - 48 <= 9;
+  }
+
+  /** Adds the text of a string that had escapes; returns its index in `decoded`. */
+  addDecoded(text: string): u64 {
+    this.decoded.push(text);
+    return (this.decoded.length - 1) as u64;
+  }
+
+  /**
+   * Records the member list of the object whose keys are the last in `kids` (the caller flags it
+   * `ORDERED`): its length, then the list, right after those keys.
+   */
+  addMemberList(list: u32[]) {
+    this.kids.push(list.length as u32);
+    for (const k of list) {
+      this.kids.push(k);
+    }
+  }
+}

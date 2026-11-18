@@ -423,6 +423,8 @@ impl FnCx<'_, '_> {
             false => (l, r),
         };
         let (l, r) = if matches!(op, B::Eq | B::NotEq) {
+            // A read-only array is compared as its array: identity reads nothing (#3061).
+            let (l, r) = (self.compared_array(l), self.compared_array(r));
             let (l, r) = self.nullable_operands(l, r);
             let (l, r) = self.union_operands(l, r);
             self.identity_operands(l, r)
