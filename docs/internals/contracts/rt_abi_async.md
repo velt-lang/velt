@@ -692,11 +692,11 @@ value)`, `velt_rt_env_remove(const VeltStr* name)`, `velt_rt_env_all(VeltStrArra
 (`[name0, value0, …]`), `velt_rt_process_cwd(IoResult<VeltStr>* out)` and
 `velt_rt_process_chdir(const VeltStr* path, VeltErr* out)`.
 
-**[non-additive, #2196]** `Date.now()` and `performance.now()` are std hooks (`dateNow`,
-`perfNow`, std/lang/hooks/clock.velt over `#clock`: `clock_gettime`, the performance counter and
+`Date.now()` and `performance.now()` are std hooks (`dateNow`, `perfNow`,
+std/lang/hooks/clock.velt over `#clock`: `clock_gettime`, the performance counter and
 `GetSystemTimePreciseAsFileTime` on Windows, WASI's `clock_time_get`, a JS host's `velt:clock`),
 which lowering calls; `velt_main` stamps `performance.now()`'s time origin first (`clockStart`).
-`velt_rt_perf_now` and `velt_rt_date_now` no longer exist in either runtime.
+Neither runtime has clock functions.
 
 ## 9. Shared state and helpers (sync)
 
