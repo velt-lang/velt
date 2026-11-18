@@ -4,9 +4,9 @@
 //
 // The replacement follows JavaScript's `GetSubstitution` for string patterns: `$$` is `$`, `$&`
 // the match, `` $` `` the text before it, `$'` the text after it; any other `$` sequence (`$1`,
-// `$<name>`) is copied as it is, since a string pattern has no captures. The result is built by
-// string concatenation, which joins a high surrogate meeting a low one at a seam into the pair,
-// as JavaScript sees one character there.
+// `$<name>`) is copied as it is, since a string pattern has no captures. The result is built in
+// one string builder, whose appends (like concatenation) join a high surrogate meeting a low one
+// at a seam into the pair, as JavaScript sees one character there.
 //
 // The matches are byte ranges of `s` (WTF-8 is self-synchronizing, as split.velt says), but for
 // a pattern that can match half of a pair ("half needle", search.velt) and `replaceAll("", x)`
@@ -20,6 +20,9 @@ import { halfFind } from "velt/lang/string/half_needle";
 import { findBytes } from "velt/lang/string/needle_scan";
 
 declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
+declare function velt_rt_strbuf_new(cap: u64, out: string);
+declare function velt_rt_strbuf_push_str(buf: string, s: string);
+declare function velt_rt_strbuf_finish(buf: string, out: string);
 
 const DOLLAR: u8 = 36;
 
@@ -40,40 +43,52 @@ function replaceIn(s: string, from: string, to: string, all: bool): string {
   if (strLen(s) != n && (isHalfNeedle(from, m) || (all && m == 0))) {
     return replaceUnits(s, from, to, all);
   }
+  let k = nextMatch(s, from, m, 0, n);
+  if (k < 0) {
+    // A share of `s` (no copy), which leaves `s` borrowed as the hook's signature says.
+    return velt_rt_str_byte_slice(s, 0, n as u64);
+  }
   const plain = !hasDollar(to);
-  let out = "";
+  let buf = "";
+  velt_rt_strbuf_new((n + strByteLen(to)) as u64, buf);
   let copied: usize = 0;
-  let at: usize = 0;
-  let matched = false;
   while (true) {
-    const k = nextMatch(s, from, m, at, n);
-    if (k < 0) {
-      break;
-    }
-    matched = true;
     const pos = k as usize;
-    out = out + velt_rt_str_byte_slice(s, copied as u64, pos as u64);
-    // Not `plain ? to : …`: a conditional of `to` and a new string would take `to` owned.
+    pushRange(buf, s, copied, pos);
     if (plain) {
-      out = out + to;
+      velt_rt_strbuf_push_str(buf, to);
     } else {
-      out = out + substitute(to, s, pos, m);
+      const piece = substitute(to, s, pos, m);
+      velt_rt_strbuf_push_str(buf, piece);
     }
     copied = pos + m;
     if (!all) {
       break;
     }
     // An empty pattern matches at every code point boundary, both ends included.
-    at = m == 0 ? nextBoundary(s, pos, n) : copied;
+    const at = m == 0 ? nextBoundary(s, pos, n) : copied;
     if (at > n) {
       break;
     }
+    k = nextMatch(s, from, m, at, n);
+    if (k < 0) {
+      break;
+    }
   }
-  if (!matched) {
-    // A share of `s` (no copy), which leaves `s` borrowed as the hook's signature says.
-    return velt_rt_str_byte_slice(s, 0, n as u64);
+  pushRange(buf, s, copied, n);
+  let out = "";
+  velt_rt_strbuf_finish(buf, out);
+  return out;
+}
+
+/** Bytes `start..end` of `s` appended to the builder `buf` (a share of `s`'s bytes, copied in). */
+function pushRange(buf: string, s: string, start: usize, end: usize): void {
+  if (start == end) {
+    return;
   }
-  return out + velt_rt_str_byte_slice(s, copied as u64, n as u64);
+  // Into a local first: a call as an argument after the builder would copy the builder.
+  const piece = velt_rt_str_byte_slice(s, start as u64, end as u64);
+  velt_rt_strbuf_push_str(buf, piece);
 }
 
 /** The first match of `from` (`m` bytes) in `s` (`n` bytes) at or after byte `at`, or -1. */
