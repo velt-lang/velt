@@ -260,7 +260,9 @@ export function mayPark(e: usize): bool {
     if (stdUsed("nodeTimers") && wk.counting()) {
       give.end();
       const gave = give.giveBackQueued();
-      if (askAgain(e) || gave) {
+      // Another worker's question too: it is told once that worker wakes, and its task must
+      // have ended before the end is taken.
+      if (askAgain(e) !== 0 || gave) {
         return false;
       }
     }
@@ -283,27 +285,34 @@ export function mayPark(e: usize): bool {
     // Woken during the scan: look again.
     return false;
   }
-  // Something can still happen: the due unref()'d timers run.
-  return !askAgain(e);
+  // Something can still happen: the due unref()'d timers run. This worker parks unless one of
+  // its own asked (another worker's asks once it wakes, and wakes this one if need be).
+  return (askAgain(e) & ASKED_HERE) === 0;
 }
+
+/** `askAgain`'s result: one of this worker's timers asks again; one of another worker's does. */
+const ASKED_HERE: u32 = 1;
+const ASKED_THERE: u32 = 2;
 
 /**
  * The due `unref()`'d timers waiting for a park ask again (another worker's once it wakes:
- * sched_loop.velt `park`): whether one of this worker's did.
+ * sched_loop.velt `park`): whose did (`ASKED_HERE`, `ASKED_THERE`; 0: there was none).
  */
-function askAgain(e: usize): bool {
+function askAgain(e: usize): u32 {
+  let asked: u32 = 0;
   const n = m.load(e + t.E_STARTED);
   for (let i: usize = 1; i < n; i++) {
     const w = t.worker(i);
     if (m.load(w + t.E_UNREF) !== 0) {
       wk.unpark(w);
+      asked = asked | ASKED_THERE;
     }
   }
   if (m.ld(e + t.E_UNREF) !== 0) {
     wakeUnref(e);
-    return true;
+    asked = asked | ASKED_HERE;
   }
-  return false;
+  return asked;
 }
 
 /**

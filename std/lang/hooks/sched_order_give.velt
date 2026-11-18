@@ -32,28 +32,41 @@ export function ending(): bool {
   return ENDING.load("acquire") !== 0;
 }
 
-/** The timers still queued leave the order, their turns completing: true if there was one. */
+/**
+ * The timers still queued leave the order, their turns completing: true if there was one. Each
+ * leaves under the lock the walk holds, and only its turn's waker is kept for after: once the
+ * lock is given back a worker may grant a turn, and that timer's task may free its handle, so
+ * no handle is touched then.
+ */
 @noInline
 export function giveBackQueued(): bool {
   const b = l.order();
   if (b === 0) {
     return false;
   }
-  const queued: u64[] = [];
+  const wakers: u64[] = [];
+  let any = false;
   const k = l.lock(b);
   let list = m.ld(b + l.O_FIRST);
   while (list !== 0) {
+    // Read first: a list left empty is freed (sched_order_list.velt `take`).
+    const nextList = m.ld(list + l.L_NEXT);
     let h = m.ld(list + l.L_FIRST);
     while (h !== 0) {
-      queued.push(h as u64);
-      h = m.ld(h + l.H_NEXT);
+      const next = m.ld(h + l.H_NEXT);
+      any = true;
+      const w = order.leaveHeld(b, h);
+      if (w !== 0) {
+        wakers.push(w as u64);
+      }
+      h = next;
     }
-    list = m.ld(list + l.L_NEXT);
+    list = nextList;
   }
   l.unlock(b, k);
-  // Outside the lock: a clear takes it, and wakes the turn's task.
-  for (const h of queued) {
-    order.timerClear(h as usize);
+  // Outside the lock: a wake may take other locks.
+  for (const w of wakers) {
+    m.wakeOwned(w as usize);
   }
-  return queued.length > 0;
+  return any;
 }
