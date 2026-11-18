@@ -39,8 +39,12 @@ export class MappedFile {
 
   /**
    * Maps the file at `path`. An `IoError` when it cannot be opened or mapped: `EISDIR` for a
-   * directory, `EINVAL` for anything else that is not a regular file (a device, a pipe, a
-   * /proc file), `ENOSYS` where files cannot be mapped (Windows, WebAssembly).
+   * directory, `EINVAL` for anything else that is not a regular file (a device, a pipe),
+   * `ENOSYS` where files cannot be mapped (Windows, WebAssembly). A pipe blocks in `open` until
+   * it has a writer, as it does for `readFileSync`.
+   *
+   * A file of /proc or /sys is a regular file that reports a size of 0 whatever it holds, so it
+   * maps as no bytes, without an error: read those with `readFileSync`.
    */
   static open(path: string): MappedFile {
     const fd = openPath(cPath(path), isMac() ? 0x1000000 : 0x80000, 0); // O_RDONLY | O_CLOEXEC
@@ -54,7 +58,8 @@ export class MappedFile {
       throw osError(e, "fstat", path);
     }
     // Only a regular file has bytes to map: a directory's `mmap` fails with an errno Node has
-    // no name for, and a device or a /proc file reports a size of 0 whatever it holds.
+    // no name for, and a device reports a size of 0 whatever it holds. (So does a file of
+    // /proc or /sys, but that one is a regular file: it maps as no bytes, which the doc says.)
     const kind = st.st_mode & 0o170000;
     if (kind != 0o100000) {
       closeFd(fd);
