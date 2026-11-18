@@ -1,0 +1,78 @@
+// velt/fs (internal): Node's `rm` and `rmSync`: `remove` with Node's name, options and errors.
+
+import { IoError } from "velt/io/error";
+import { remove, removeSync } from "velt/fs/entries";
+import { osError } from "velt/fs/errors";
+import { lstat, lstatSync } from "velt/fs/metadata";
+import { Stats } from "velt/fs/stats";
+
+/** The options of `rm` and `rmSync`, as Node's. */
+export type RmOptions = {
+  /** Remove a directory and everything in it; without it a directory is an `ERR_FS_EISDIR` error. */
+  recursive?: bool;
+  /** A path that does not exist is not an error. */
+  force?: bool;
+};
+
+// Whether `rm` has something to remove: `false` for a missing path under `force`; a directory
+// without `recursive` is Node's error.
+function removable(
+  found: Stats | null,
+  missing: IoError | null,
+  path: string,
+  opts: RmOptions,
+): bool {
+  if (found == null) {
+    if (missing != null && missing.code == "ENOENT" && (opts.force ?? false)) {
+      return false;
+    }
+    throw missing ?? osError(2, "rm", path);
+  }
+  if (found.isDirectory() && !(opts.recursive ?? false)) {
+    throw new IoError(
+      "ERR_FS_EISDIR",
+      `Path is a directory: rm returned EISDIR (is a directory) ${path}`,
+    );
+  }
+  return true;
+}
+
+/**
+ * Removes a file or symlink, or with `recursive` a directory and everything in it (Node's
+ * `fs.promises.rm`). A directory without `recursive` is an `ERR_FS_EISDIR` error, also an empty one
+ * (`remove` removes those); a missing path is an `ENOENT` error unless `force` is set.
+ */
+export async function rm(path: string, opts: RmOptions = {}): Promise<void> {
+  let found: Stats | null = null;
+  let missing: IoError | null = null;
+  try {
+    found = await lstat(path);
+  } catch (e) {
+    if (e instanceof IoError) {
+      missing = e;
+    } else {
+      throw e;
+    }
+  }
+  if (removable(found, missing, path, opts)) {
+    await remove(path, { recursive: opts.recursive ?? false });
+  }
+}
+
+/** `rm`, blocking the calling thread (Node's `fs.rmSync`). */
+export function rmSync(path: string, opts: RmOptions = {}) {
+  let found: Stats | null = null;
+  let missing: IoError | null = null;
+  try {
+    found = lstatSync(path);
+  } catch (e) {
+    if (e instanceof IoError) {
+      missing = e;
+    } else {
+      throw e;
+    }
+  }
+  if (removable(found, missing, path, opts)) {
+    removeSync(path, { recursive: opts.recursive ?? false });
+  }
+}

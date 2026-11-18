@@ -1,0 +1,11 @@
+// velt/lang/hooks (internal): this process's id on macOS and Linux (`#process-pid`,
+// std/imports.velt): `getpid`. It imports nothing, so the hook module of the builtin `process`,
+// which every program loads, can import it.
+
+declare c("c") function getpid(): i32;
+
+/** This process's id. */
+export function processId(): i64 {
+  // SAFETY: no arguments, and it cannot fail.
+  return unsafe { getpid() } as i64;
+}

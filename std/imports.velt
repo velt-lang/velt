@@ -173,6 +173,15 @@ export const imports: Imports = {
     linux: "./fs/fd/linux.velt",
     default: "./fs/fd/unsupported.velt",
   },
+  // This process's id (`process.pid`): the C library's `getpid` on macOS and Linux, Win32's
+  // `GetCurrentProcessId` on Windows, 1 elsewhere. Modules that import nothing: the hook module
+  // of the builtin `process`, which every program loads, imports the variant.
+  "#process-pid": {
+    darwin: "./lang/hooks/pid_posix.velt",
+    linux: "./lang/hooks/pid_posix.velt",
+    win32: "./lang/hooks/pid_win32.velt",
+    default: "./lang/hooks/pid_none.velt",
+  },
   // velt/os's facts about the machine (`platform`, `availableParallelism`, `hostname`, `tmpdir`):
   // the C library's on macOS and Linux, Win32's and Winsock's on Windows; a WebAssembly build's
   // fixed answers elsewhere.

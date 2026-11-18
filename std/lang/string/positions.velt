@@ -21,6 +21,7 @@ import {
   strByteAt,
   strByteLen,
   strLen,
+  strLoadU8x16,
   strWord0,
   strWord1,
   strWord2,
@@ -36,6 +37,12 @@ import {
   STRIDE,
   tableLen,
 } from "velt/lang/string/crumbs";
+
+declare function velt_simd_u8x16_splat(x: u8): u8x16;
+declare function velt_simd_u8x16_and(a: u8x16, b: u8x16): u8x16;
+declare function velt_simd_u8x16_eq(a: u8x16, b: u8x16): mask8x16;
+declare function velt_simd_u8x16_lt(a: u8x16, b: u8x16): mask8x16;
+declare function velt_simd_mask8x16_bitmask(m: mask8x16): u64;
 
 /** How far before the last translated unit a translation steps back from it. */
 const BACK_STEPS: usize = 8;
@@ -117,10 +124,25 @@ function markSliceRemembered(s: string): void {
   }
 }
 
-/** Units of `s`'s bytes `from..to` (code point boundaries): one per lead byte, two for four. */
+/** Units of `s`'s bytes `from..to` (code point boundaries): one per lead byte, two for four.
+ * Sixteen bytes at a time: those that are no continuation byte, plus the four-byte leads. */
 function countUnits(s: string, from: usize, to: usize): usize {
   let n: usize = 0;
-  for (let i = from; i < to; i++) {
+  let i = from;
+  if (to - from >= 16) {
+    const top = velt_simd_u8x16_splat(0xc0);
+    const cont = velt_simd_u8x16_splat(0x80);
+    const three = velt_simd_u8x16_splat(0xef);
+    while (i + 16 <= to) {
+      const v = strLoadU8x16(s, i as u64);
+      const tails = velt_simd_u8x16_eq(velt_simd_u8x16_and(v, top), cont);
+      const fours = velt_simd_u8x16_lt(three, v);
+      n += 16 - (velt_simd_mask8x16_bitmask(tails).countOnes() as usize);
+      n += velt_simd_mask8x16_bitmask(fours).countOnes() as usize;
+      i += 16;
+    }
+  }
+  for (; i < to; i++) {
     const b = strByteAt(s, i as u64);
     if ((b & 0xc0) != 0x80) {
       n += b >= 0xf0 ? 2 : 1;

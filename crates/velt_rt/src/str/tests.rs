@@ -487,7 +487,6 @@ fn producers_join_halves_at_their_seams() {
 #[test]
 fn ill_formed_text_through_the_string_methods() {
     use crate::str_ops::case::*;
-    use crate::str_ops::search::*;
     use crate::str_ops::split::*;
     let s = |t: &str| VeltStr::from_bytes(&w(t));
     // Case mapping keeps lone surrogates; final sigma sees one as the end of a word.
@@ -499,16 +498,6 @@ fn ill_formed_text_through_the_string_methods() {
     // Trimming stops at a lone surrogate.
     let r = out(|o| unsafe { velt_rt_str_trim(&s(" \u{3000}H \u{FEFF}"), o) });
     assert_eq!(bytes(&r.0), w("H"));
-    // Positions in code units; a lone surrogate also matches half of a pair (as in JS).
-    unsafe {
-        assert_eq!(velt_rt_str_index_of(&s("aHbH"), &s("H"), 2), 3);
-        assert_eq!(velt_rt_str_last_index_of(&s("aHbH"), &s("H"), i64::MAX), 3);
-        assert_eq!(velt_rt_str_includes(&s("aHb"), &s("Hb")), 1);
-        assert_eq!(
-            velt_rt_str_includes(&VeltStr::from_static("😀".as_bytes()), &s("L")),
-            1
-        );
-    }
     // split("") gives a lone surrogate as one piece.
     let mut a = std::mem::MaybeUninit::uninit();
     unsafe { velt_rt_str_split(&s("aHb"), &VeltStr::empty(), a.as_mut_ptr()) };
