@@ -40,6 +40,28 @@ impl<'h> Cx<'h> {
     }
 
     pub(super) fn intern(&mut self, k: TyKind) -> TyId {
+        // A function type whose rest parameter is a tuple is those parameters, as sema's
+        // `Types::intern` makes it: an instance at `A = [f64, f64]` of `(rq: Ctx, ...args: A) =>
+        // R` is `(Ctx, f64, f64) => R`, the function a callback of that type is.
+        if let TyKind::FnPtr {
+            params,
+            ret,
+            throws,
+            rest: true,
+        } = &k
+        {
+            if let Some(TyKind::Tuple(ts)) = params.last().map(|t| self.raw_kind(*t).clone()) {
+                let mut fixed = params[..params.len() - 1].to_vec();
+                fixed.extend(ts);
+                let (ret, throws) = (*ret, *throws);
+                return self.intern(TyKind::FnPtr {
+                    params: fixed,
+                    ret,
+                    throws,
+                    rest: false,
+                });
+            }
+        }
         // `TyTable::intern` makes an option of an option one option; a `U | null` of a `U`
         // that allows `undefined` would lose one nothing (issue #930): report it.
         if let TyKind::Option(e, n) = &k {
