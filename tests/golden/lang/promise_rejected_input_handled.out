@@ -1,0 +1,6 @@
+settled 2 fulfilled rejected
+any s
+all caught all
+all .catch late
+settled again rejected,rejected
+done

@@ -157,6 +157,7 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("symbolStatic", Op(I::SymbolStatic)),
     // task.velt
     ("firstFulfilled", Op(I::PromiseAny)),
+    ("promisesHandled", Op(I::PromisesHandled)),
     ("spawnHandled", Op(I::SpawnHandled)),
     ("moduleStateUsed", Op(I::ModuleStateUsed)),
     // thread_local.velt

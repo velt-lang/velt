@@ -155,6 +155,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::FAbs
         | I::Sleep
         | I::YieldNow
+        | I::PromisesHandled
         | I::SourceLocation
         | I::PromiseWiden
         | I::PromiseSame

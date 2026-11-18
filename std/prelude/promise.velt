@@ -1,7 +1,7 @@
 // Prelude: `Promise.allSettled` and `Promise.any` (https://veltlang.com/docs/reference/async/). The compiler compiles
 // `Promise.allSettled(ps)` and `Promise.any(ps)` to calls of `promiseAllSettled` / `promiseAny`.
 
-import { firstFulfilled } from "velt/lang/intrinsics";
+import { firstFulfilled, promisesHandled } from "velt/lang/intrinsics";
 import { PromiseSlot, runExecutor, settlement, settlers } from "velt/lang/promise/settle";
 
 /** How `Promise.allSettled` reports one promise (`E`: what the promise rejects with). */
@@ -33,6 +33,10 @@ export async function promiseAllSettled<T, E>(
   // The promises as they are at the call, as JS reads them: the caller may still hold the
   // array and change it while this waits (and JS leaves the array as it is).
   const snap = ps.slice();
+  // Each one's rejection is handled from now on, as JS attaches a handler to every input at
+  // once: one that already rejected is not reported as uncaught while this still waits for an
+  // earlier one (#3195).
+  promisesHandled(snap);
   for (let i = 0; i < snap.length; i++) {
     try {
       out.push({ status: "fulfilled", value: await snap[i] });

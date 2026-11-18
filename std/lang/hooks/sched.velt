@@ -41,6 +41,7 @@ import * as off from "./sched_off";
 import { taskId } from "./sched_id";
 import * as pk from "./sched_peek";
 import * as run from "./sched_run";
+import * as sh from "./sched_share";
 import * as sl from "./sched_sleep";
 import * as sp from "./sched_spread";
 import * as st from "./sched_stats";
@@ -274,9 +275,17 @@ export function schedHandled(futs: usize, n: u64, qdrop: usize): void {
     return;
   }
   const poll = fnAddress(node.nodePoll);
+  const hold = fnAddress(sh.holderPoll);
   for (let i: usize = 0; i < (n as usize); i++) {
     const f = m.ld(futs + 8 * i);
-    if (!jn.joinHandled(f, qdrop)) {
+    if (f !== 0 && m.ld(f) === hold) {
+      // A holder of a shared promise (a copy of the caller's array, `promiseAllSettled`): its
+      // node is the one whose rejection would be reported (#3195).
+      const sn = sh.nodeOf(f);
+      if (sn !== 0) {
+        node.handledNode(sn, qdrop);
+      }
+    } else if (!jn.joinHandled(f, qdrop)) {
       node.handled(f, qdrop, poll);
     }
   }

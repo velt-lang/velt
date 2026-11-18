@@ -19,6 +19,14 @@ export declare function spawnHandled<T, E>(p: Owned<Promise<T, E>>): Promise<T, 
 export declare function moduleStateUsed(): bool;
 
 /**
+ * The promises of `ps` go to a combinator that awaits each of them itself (the prelude's
+ * `promiseAllSettled`): a rejection of one is handled from now on, never reported as uncaught,
+ * as `Promise.all` marks its inputs (`velt_rt_futs_handled`). `ps` stays the caller's.
+ */
+@intrinsic
+export declare function promisesHandled<T, E>(ps: Promise<T, E>[]): void;
+
+/**
  * The first of `ps` to fulfill, or the last rejection when all reject (the prelude's
  * `promiseAny`, behind `Promise.any`).
  */
