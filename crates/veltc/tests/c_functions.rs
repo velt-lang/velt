@@ -618,7 +618,7 @@ fn empty_arrays_are_never_null_and_a_null_ptr_result_is_caught() {
 
 const RAW: &str = include_str!("c_functions/raw.velt");
 
-/// `CString` (refused with a NUL inside), `Out<T>` and `OutPtr<T>` written by C, and C memory
+/// `CString` (refused with a NUL inside), `Out<T>` of a number and of a pointer written by C, and C memory
 /// read back with `readCString`, `readUtf8` and `readBytes`, in debug and release builds.
 #[test]
 fn c_strings_out_parameters_and_reads() {
@@ -675,22 +675,21 @@ fn a_proxied_c_string_is_refused() {
 }
 
 /// A pointer C can hold points at a C type, a number, `bool`, `void` or another pointer:
-/// `Ptr<string>` and `OutPtr<string>` mean nothing in C.
+/// `Ptr<string>` means nothing in C, wherever it is written (#3094), and `Out<T>` of a non-null
+/// pointer can't hold the NULL C may write.
 #[test]
 fn pointers_point_at_c_types_and_numbers() {
     let dir = test_dir::TestDir::new();
     project(
         dir.path(),
-        "import { OutPtr, Ptr } from \"velt/ffi\";\n\ndeclare c(\"c\") function f(p: Ptr<string>): void;\ndeclare c(\"c\") function g(p: OutPtr<string>): void;\ndeclare c(\"c\") function h(p: Ptr<Ptr<u8>>, q: Ptr<void> | null): Ptr<f64>;\n\nexport const x = 1;\n",
+        "import { Out, Ptr } from \"velt/ffi\";\n\ndeclare c(\"c\") function f(p: Ptr<string>): void;\ndeclare c(\"c\") function g(p: Out<Ptr<u8>>): void;\ndeclare c(\"c\") function h(p: Ptr<Ptr<u8>>, q: Ptr<void> | null, r: Out<Ptr<u8> | null>): Ptr<f64>;\n\nexport const x = 1;\n",
         "import { x } from \"cmath\";\n\nfunction main() {\n  console.log(x);\n}\n",
     );
     let out = check(dir.path());
+    assert!(out.contains("a C pointer can't point at `string`"), "{out}");
     assert!(
-        out.contains("parameter `p` of C function `f` has type `Ptr<string>`"),
-        "{out}"
-    );
-    assert!(
-        out.contains("parameter `p` of C function `g` has type `OutPtr<string>`"),
+        out.contains("parameter `p` of C function `g` has type `Out<Ptr<u8>>`")
+            && out.contains("C may write `NULL` into an `Out` of a pointer"),
         "{out}"
     );
     assert!(!out.contains("C function `h`"), "{out}");

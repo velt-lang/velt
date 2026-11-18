@@ -41,9 +41,9 @@ pub enum Shape {
         elem: Scalar,
         readonly: bool,
     },
-    /// `Out<T>`: a `T *` C writes.
+    /// `Out<T>` of a number or `bool`: a `T *` C writes.
     Out(Scalar),
-    /// `OutPtr<T>`: a `T **` C writes.
+    /// `Out<Ptr<T> | null>`: a `T **` C writes.
     OutPtr(Pointee),
     Void,
 }
@@ -86,7 +86,7 @@ pub fn describe(shape: &Shape) -> String {
             )
         }
         Shape::Out(s) => format!("Out<{}>", scalar(s)),
-        Shape::OutPtr(p) => format!("OutPtr<{}>", pointee(p)),
+        Shape::OutPtr(p) => format!("Out<Ptr<{}> | null>", pointee(p)),
         Shape::Void => "void".into(),
     }
 }
