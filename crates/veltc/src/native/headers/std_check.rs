@@ -34,6 +34,7 @@ fn std_headers(target: &str) -> Vec<&'static str> {
         "<stdlib.h>",
         "<string.h>",
         "<strings.h>",
+        "<sys/mman.h>",
         "<sys/socket.h>",
         "<sys/stat.h>",
         "<sys/wait.h>",
