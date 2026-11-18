@@ -407,24 +407,27 @@ fn dot_add_fast_asks_for_bfdot_at_run_time_on_arm64() {
                const r = bf16x8.load(a).dotAddFast(bf16x8.load(a), f32x4.splat(0));\n  \
                console.log(r.lane(0));\n}\n";
     std::fs::write(root.join("main.velt"), dot).unwrap();
-    let ir = |target: &str| {
-        let args = [
-            "build",
-            "--release",
-            "--target",
-            target,
-            "--emit",
-            "llvm",
-            "main.velt",
-        ];
-        let o = velt(root, &args, &[]);
+    let ir_for = |target: &str, cpu: &[&str]| {
+        let args = ["build", "--release", "--target", target, "--emit", "llvm"];
+        let o = velt(root, &[&args[..], cpu, &["main.velt"]].concat(), &[]);
         assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
         String::from_utf8(o.stdout).unwrap()
     };
+    let ir = |target: &str| ir_for(target, &[]);
     const BFDOT: &str = "call <16 x i8> @velt.simd.f32x4_bfdot(";
     const OTHER: &str = "call <16 x i8> @velt.simd.f32x4_dot_add_fast_bf16x8(";
+    const BUILT_FOR: &str = "@velt.simd.has_bf16_arm()";
     let linux = ir("aarch64-unknown-linux-gnu");
     assert!(linux.contains(BFDOT) && linux.contains(OTHER), "{linux}");
+    assert!(linux.contains(BUILT_FOR), "{linux}");
+    if velt_codegen_llvm::available() {
+        // Built for a CPU that has it, the check is true without asking: no call of it is left.
+        let n2 = ir_for("aarch64-unknown-linux-gnu", &["--cpu", "neoverse-n2"]);
+        assert!(n2.contains(BFDOT) && !n2.contains(BUILT_FOR), "{n2}");
+        // And for one that has not (an M1's core), it is asked as in the default build.
+        let a76 = ir_for("aarch64-unknown-linux-gnu", &["--cpu", "cortex-a76"]);
+        assert!(a76.contains(BUILT_FOR), "{a76}");
+    }
     assert!(linux.contains("call i64 @\"getauxval\"(i64 26)"), "{linux}");
     // No `--cpu` names bf16, so the other path is not `bfdot` too.
     assert_eq!(linux.matches("@llvm.aarch64.neon.bfdot").count(), 2);
@@ -434,9 +437,10 @@ fn dot_add_fast_asks_for_bfdot_at_run_time_on_arm64() {
     let x86 = ir("x86_64-unknown-linux-gnu");
     assert!(x86.contains(OTHER), "{x86}");
     assert!(
-        !x86.contains("bfdot") && !x86.contains("getauxval"),
+        !x86.contains(BFDOT) && !x86.contains("llvm.aarch64"),
         "{x86}"
     );
+    assert!(!x86.contains("getauxval"), "{x86}");
 }
 
 /// `bf16x8.dotAddFast` prints its golden in a release build for the default CPU on both of its

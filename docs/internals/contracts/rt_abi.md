@@ -496,7 +496,9 @@ is `false` off arm64, under Cranelift and with `VELT_SIMD_DISABLE=clmul`), `geta
 bit 14 on Linux and the `hw.optional.arm.FEAT_BF16` sysctl on macOS; `false` on Windows.
 `bf16x8.dotAddFast` is `velt_simd_f32x4_bfdot` behind that check and
 `velt_simd_f32x4_dot_add_fast_bf16x8` otherwise, so a build for any arm64 CPU runs `bfdot` where
-the CPU has it.
+the CPU has it. In code built for a `--cpu` for which clang defines
+`__ARM_FEATURE_BF16_VECTOR_ARITHMETIC`, `velt_simd_has_bf16_arm()` is `1` everywhere and nothing
+is asked.
 
 `velt_simd_f16x8_<op>` [additive] for `add`, `sub`, `mul`, `div`, `mul_add`, `mul_add_fast`, `min`,
 `max`, `neg`, `abs`, `sqrt` and the comparisons `eq`, `ne`, `lt`, `le`, `gt`, `ge` (giving a

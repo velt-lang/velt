@@ -265,9 +265,13 @@ impl Emitter<'_> {
             .is_some_and(|f| f.target.is_some() && f.target != self.function.target)
     }
 
-    /// Whether the CPU the code is built for has `ext` (`--cpu`'s x86 features hold all it
-    /// needs).
+    /// Whether the CPU the code is built for has `ext`: `--cpu`'s x86 features hold all it
+    /// needs, or it is Arm's bf16 and clang has it for `--cpu` (what makes
+    /// `velt_simd_f32x4_dot_add_fast_bf16x8` a `bfdot` too).
     fn baseline_has(&self, ext: velt_vir::simd::Ext) -> bool {
+        if ext == velt_vir::simd::Ext::Bf16Arm {
+            return self.simd_caps.bf16_dot;
+        }
         let needs = velt_codegen_cl::ext_x86_features(ext);
         needs != 0 && self.cpu_features & needs == needs
     }
