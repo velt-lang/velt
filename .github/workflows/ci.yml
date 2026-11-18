@@ -1,6 +1,7 @@
 # Pull requests run the checks their changes need (`cargo xtask check`, rules in
 # crates/xtask/src/plan.rs) on Linux, as three parallel jobs: lint (fmt, clippy), test (build,
-# unit and integration tests) and golden (end-to-end, debug mode). A change to OS-specific code
+# unit and integration tests) and golden (end-to-end in debug mode, the WebAssembly goldens and
+# the VIR identity when the change selects them). A change to OS-specific code
 # (crates/xtask/src/os.rs) is also linted on Windows, where `cfg(windows)` code compiles
 # differently, and on macOS when it can really differ there: clippy's findings there otherwise
 # surface only in the merge queue. The test files a pull request adds or edits run 20 times at once under load
@@ -34,7 +35,13 @@
 name: ci
 
 on:
+  # A pull request's checks run only when the maintainer starts them: approving it adds the label
+  # `ci:approved`, which starts them. A push starts nothing (owner, 2026-11-18: runners go to the
+  # merge queue). After a re-review of new commits, the maintainer removes and re-adds the label.
+  # Until a run passes on the current head, the required `ci` check is missing, so auto-merge
+  # can't enqueue an unchecked change.
   pull_request:
+    types: [labeled]
   merge_group:
   push:
     branches: [main]
@@ -43,8 +50,10 @@ on:
   workflow_dispatch:
 
 # The scheduled run has a group of its own: a push to main must not replace it while it waits.
+# Adding any other label starts a run that does nothing: it gets a group of its own, so it never
+# cancels the pull request's real run.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || (github.event_name == 'schedule' && 'nightly') || github.ref }}
+  group: ci-${{ (github.event.action == 'labeled' && github.event.label.name != 'ci:approved' && github.event.label.name != 'ci:full') && format('label-{0}', github.run_id) || github.event.pull_request.number || (github.event_name == 'schedule' && 'nightly') || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -53,7 +62,11 @@ env:
 
 jobs:
   pr:
-    if: github.event_name == 'pull_request'
+    if: >-
+      github.event_name == 'pull_request'
+      && contains(github.event.pull_request.labels.*.name, 'ci:approved')
+      && (github.event.action != 'labeled' || github.event.label.name == 'ci:approved'
+          || github.event.label.name == 'ci:full')
     name: ${{ matrix.part }}
     strategy:
       fail-fast: false
@@ -94,13 +107,18 @@ jobs:
           || (matrix.part == 'golden' && steps.plan.outputs.zig_goldens == 'true')
         with:
           working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
-      - name: cargo xtask check --part ${{ matrix.part }}
+      # The golden job also runs the WebAssembly goldens when the change selects them (8 tests of
+      # about 11 minutes each, which made the test job up to 2 hours long), and the VIR identity:
+      # it is shorter than the test job, as in the queue.
+      - name: cargo xtask check --part ${{ matrix.part == 'golden' && 'golden,wasm' || matrix.part }}
         env:
           # `--full` knows no changes, so it leaves the robustness sweep to the environment.
           VELT_ROBUSTNESS: >-
             ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') && 'full' || '' }}
+          VELT_WASM_GOLDENS: ${{ matrix.part == 'test' && 'skip' || '' }}
         run: >-
-          cargo xtask check --part ${{ matrix.part }} --fast --base HEAD^1
+          cargo xtask check --part ${{ matrix.part == 'golden' && 'golden,wasm' || matrix.part }}
+          --fast --base HEAD^1
           ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') && '--full' || '' }}
       # The test files the change adds or edits (velt test files, goldens), 50 times each at once
       # on twice as many threads as the runner has cores beside a spinning thread per core, from
@@ -115,7 +133,11 @@ jobs:
   # Whether the change touches OS-specific code, so the pull request is linted on Windows or
   # macOS too (`other_os`, xtask builds with the runner's stable Rust in seconds, as for queue-plan).
   pr-plan:
-    if: github.event_name == 'pull_request'
+    if: >-
+      github.event_name == 'pull_request'
+      && contains(github.event.pull_request.labels.*.name, 'ci:approved')
+      && (github.event.action != 'labeled' || github.event.label.name == 'ci:approved'
+          || github.event.label.name == 'ci:full')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -327,7 +349,6 @@ jobs:
       VELT_FMT_CORPUS: ${{ needs.queue-plan.outputs.fmt_corpus }}
       VELT_FMT_CORPUS_FILES: ${{ needs.queue-plan.outputs.fmt_corpus_files }}
       VELT_DEBUG_VARS: ${{ needs.queue-plan.outputs.debug_vars }}
-      VELT_VIR_IDENTITY: ${{ needs.queue-plan.outputs.vir_identity }}
       # The WebAssembly goldens run in shards of their own (`queue-golden`).
       VELT_WASM_GOLDENS: skip
       # nextest stops at the first failing test (.config/nextest.toml): the entry drops anyway.
@@ -405,6 +426,9 @@ jobs:
       shards: ${{ toJSON(fromJSON(needs.queue-plan.outputs.golden_shards)[matrix.os]) }}
       # Every golden, the example apps' that build packages/sqlite's C sources among them.
       zig: true
+      # The VIR identity runs in the golden shards, beside the goldens: they finish long before
+      # this OS's `check` job, after whose unit tests it ran for 20 to 41 minutes until 2026-11.
+      vir_identity: ${{ needs.queue-plan.outputs.vir_identity }}
       wasm_shards: >-
         ${{ needs.queue-plan.outputs.wasm_goldens == 'skip' && '[]'
         || toJSON(fromJSON(needs.queue-plan.outputs.wasm_shards)[matrix.os]) }}
@@ -612,7 +636,8 @@ jobs:
         run: cargo test --workspace --test c_headers --test c_constants --test c_sources --test c_export -- --nocapture
 
   ci:
-    if: always()
+    # Not for a run started by another label: its result would replace the real run's.
+    if: always() && !(github.event.action == 'labeled' && github.event.label.name != 'ci:approved' && github.event.label.name != 'ci:full')
     needs: [pr, pr-plan, pr-lint-os, pr-windows, queue-plan, queue, queue-golden, c-headers]
     runs-on: ubuntu-latest
     steps:
@@ -623,6 +648,15 @@ jobs:
             "${{ needs.c-headers.result }}"; do
             case "$r" in success|skipped) ;; *) echo "a gate failed: $r"; exit 1 ;; esac
           done
+      # Fail closed before approval: a pull request whose checks were skipped (no `ci:approved`
+      # label, or a label other than it or `ci:full` added) has not been checked.
+      - name: the pull request's checks ran
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "pr: ${{ needs.pr.result }}"
+          if [ "${{ needs.pr.result }}" = skipped ]; then
+            echo "waiting for approval: the label ci:approved starts the checks"; exit 1
+          fi
       # Fail closed in the queue: unless queue-plan found the entry gone (`os` is `[]`), the
       # checks and the goldens must have run and passed, not been skipped.
       - name: the queue checked and ran the goldens

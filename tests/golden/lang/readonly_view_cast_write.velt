@@ -1,0 +1,13 @@
+// A number[] seen as `readonly unknown[]` is a view of the one array (#3061, #1485). A cast to
+// `unknown[]` gets past `readonly`, as in TypeScript: a number written through it reaches the
+// original, as in Node. A string written through it stops with the view's TypeError, as `xs as U[]`
+// of an existing array does (Node stores the string: a documented difference).
+function main(): void {
+  const nums: number[] = [1, 2, 3];
+  const ro: readonly unknown[] = nums;
+  const w = ro as unknown[];
+  w[0] = 10;
+  console.log(nums[0], ro[0], nums.length);
+  w[1] = "two";
+  console.log("stored", nums[1]);
+}

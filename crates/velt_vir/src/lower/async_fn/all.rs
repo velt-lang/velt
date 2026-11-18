@@ -20,7 +20,10 @@
 
 use velt_sema::hir::{self, DefId, PassMode, TyId};
 
+use std::rc::Rc;
+
 use super::AsyncInfo;
+use crate::lower::cleanup::Awaited;
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
 use crate::lower::{cint, unit, FnLower, Work};
@@ -71,12 +74,15 @@ impl FnLower<'_, '_> {
             self.assign(Place::local(f), Rvalue::Use(Self::cbool(true)));
             f
         });
+        // What a pad of a child's poll drops: what the cancel block does.
+        let (cs, ds) = (children.clone(), done.clone());
+        let drop_children: Awaited = Rc::new(move |lw| lw.cancel_children(&cs, &ds, elem, slot));
         let (k, resume) = self.suspension();
         self.goto(resume);
         self.switch_to(resume);
         let mut all_done = Self::cbool(true);
         for (i, (c, &d)) in children.iter().zip(&done).enumerate() {
-            self.poll_unless_done(c, d);
+            self.poll_unless_done(c, d, &drop_children);
             if let (Some(e), Some(f)) = (err, first) {
                 let (check, next) = (self.new_block(), self.new_block());
                 self.branch(Operand::Copy(Place::local(f)), next, check);
@@ -222,23 +228,23 @@ impl FnLower<'_, '_> {
     }
 
     /// `if (!done) { done = poll(child) != 0 }`.
-    fn poll_unless_done(&mut self, c: &Child, done: Local) {
+    fn poll_unless_done(&mut self, c: &Child, done: Local, drop_children: &Awaited) {
         let (poll_bb, next) = (self.new_block(), self.new_block());
         self.branch(Operand::Copy(Place::local(done)), next, poll_bb);
         self.switch_to(poll_bb);
         let r = self.temp(Ty::U32);
         let cx = self.poll_cx();
-        match c {
+        self.awaiting(drop_children.clone(), |lw| match c {
             Child::State { info, local, .. } => {
-                let sp = self.addr(Place::local(*local));
+                let sp = lw.addr(Place::local(*local));
                 let callee = vir::Callee::Func(info.poll);
-                self.call(callee, vec![sp, cx], Some(Place::local(r)), false);
+                lw.call(callee, vec![sp, cx], Some(Place::local(r)), false);
             }
             Child::Heap(f) => {
                 let fp = Operand::Copy(Place::local(*f));
-                self.fut_poll_call(vec![fp, cx], Place::local(r));
+                lw.fut_poll_call(vec![fp, cx], Place::local(r));
             }
-        }
+        });
         let ready = Rvalue::Binary(BinOp::Ne, Operand::Copy(Place::local(r)), cint(0, Ty::U32));
         self.assign(Place::local(done), ready);
         self.goto(next);

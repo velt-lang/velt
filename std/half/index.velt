@@ -43,7 +43,7 @@ export { dotF16At } from "velt/half/dot";
 export { dotBf16 } from "velt/half/dot";
 /** The dot product of a range of one `bf16[]` and a range of another, as `dotBf16`. */
 export { dotBf16At } from "velt/half/dot";
-/** The dot product of two `bf16[]` by the CPU's bf16 dot product where it has one: faster, and not the same bits on every CPU. */
+/** The dot product of two `bf16[]` by the CPU's bf16 dot product: not the same bits everywhere. */
 export { dotBf16Fast } from "velt/half/dot_fast";
 /** The dot product of a range of one `bf16[]` and a range of another, as `dotBf16Fast`. */
 export { dotBf16FastAt } from "velt/half/dot_fast";

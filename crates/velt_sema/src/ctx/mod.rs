@@ -117,6 +117,7 @@ pub(crate) struct Ctx<'m> {
     pub impls: Vec<ImplDef>,
     /// Interfaces written through and their setter slots (`crate::iface_writes`).
     pub(crate) iface_writes: crate::iface_writes::IfaceWrites,
+    pub(crate) method_writes: crate::iface_method_writes::MethodWrites,
     pub(crate) part_ifaces: crate::intersection_members::PartIfaces,
     /// Interfaces made for intersections and `Pick`s of interfaces with methods.
     pub(crate) synth_ifaces: crate::synth_ifaces::SynthIfaces,
@@ -157,6 +158,14 @@ pub(crate) struct Ctx<'m> {
     /// anonymous object type of their fields. With a template, the twin's type arguments are
     /// the template's types with the original arguments substituted (a param order change).
     pub readonly_twins: FxHashMap<DefId, (DefId, Option<Vec<TyId>>)>,
+    /// Anonymous object type defs with a field holding a read-only array (`{ xs: readonly T[] }`,
+    /// #3061) → their twin with mutable arrays, which `crate::readonly` makes them before
+    /// lowering. Apart from [`Self::readonly_twins`], which other conversions take as one type
+    /// in both directions: only `readonly_nested` converts between these, in one direction.
+    pub array_twins: FxHashMap<DefId, DefId>,
+    /// The `(from, to, out)` pairs `readonly_widens` is comparing: one met again inside itself
+    /// (a recursive type, `L<T> { next: L<T> | null }`) holds, as structural relations take it.
+    pub readonly_widening: Vec<(TyId, TyId, bool)>,
     /// A container of `any` was used as one of `unknown` or back (`same_but_any_unknown`):
     /// `unknown` is erased to `any` before lowering (`crate::readonly`), so both are one type.
     pub any_unknown_views: bool,
@@ -577,6 +586,7 @@ impl<'m> Ctx<'m> {
             extension_names: (0, FxHashMap::default()),
             impls: vec![],
             iface_writes: Default::default(),
+            method_writes: Default::default(),
             part_ifaces: Default::default(),
             synth_ifaces: Default::default(),
             generic_fns: Default::default(),
@@ -595,6 +605,8 @@ impl<'m> Ctx<'m> {
             impl_scope: vec![],
             anon: FxHashMap::default(),
             readonly_twins: FxHashMap::default(),
+            array_twins: FxHashMap::default(),
+            readonly_widening: vec![],
             any_unknown_views: false,
             objects: Default::default(),
             brands: FxHashMap::default(),

@@ -6,8 +6,9 @@
 // `VELT_SIMD_DISABLE=clmul`: the runtime's carry-less flag guards it, so that it folds to false
 // elsewhere and that variable turns it off without std parsing it. FEAT_BF16 does not imply
 // FEAT_PMULL: a CPU with bf16 and no carry-less multiplication (the known ones all have both)
-// gets "no" here, and the slower path. The runtime keeps no flag for bf16 itself (#2241): the answer comes from the
-// operating system (`#simd-bf16`, std/imports.velt), read once and kept in `DETECTED`.
+// gets "no" here, and the slower path. The runtime keeps no flag for bf16 itself (#2241): the
+// answer comes from the operating system (`#simd-bf16`, std/imports.velt), read once and kept in
+// `DETECTED`.
 
 import { noInline } from "velt/lang/intrinsics";
 import { cpuHasBf16 } from "#simd-bf16";

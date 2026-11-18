@@ -12,24 +12,29 @@ import {
   hkdfExtractSha384,
 } from "velt/crypto/hkdf";
 import { hmacSha256, hmacSha384 } from "velt/crypto/hmac";
+import { arrayTruncate } from "velt/lang/intrinsics";
 
 /** The bytes of a SHA-384 secret (and transcript hash); SHA-256's are 32. */
 export const SHA384_LEN: usize = 48;
 
+// "tls13 ", every label's prefix.
+const PREFIX: u8[] = [0x74, 0x6c, 0x73, 0x31, 0x33, 0x20];
+
 /**
  * HKDF-Expand-Label(secret, label, context, length) (RFC 8446 §7.1), "tls13 " prefixed, with
  * the hash `secret` is as long as. The HkdfLabel goes straight into one buffer of its exact size
- * (labels are ASCII).
+ * (labels are ASCII), with room for HKDF-Expand's first counter byte: up to the hash's length
+ * (every key, IV and secret of the suites) is one HMAC of it, cut to `length`.
  */
 export function expandLabel(secret: u8[], label: string, context: u8[], length: usize): u8[] {
   const l = label.length as usize;
-  const info = Buffer.alloc(4 + 6 + l + context.length);
+  const n = 4 + 6 + l + context.length;
+  const info = Buffer.alloc(n + 1);
   info[0] = ((length >> 8) & 0xff) as u8;
   info[1] = (length & 0xff) as u8;
   info[2] = (6 + l) as u8;
-  const prefix: u8[] = [0x74, 0x6c, 0x73, 0x31, 0x33, 0x20];
   for (let i: usize = 0; i < 6; i++) {
-    info[3 + i] = prefix[i];
+    info[3 + i] = PREFIX[i];
   }
   for (let i: usize = 0; i < l; i++) {
     info[9 + i] = label.charCodeAt(i as i64) as u8;
@@ -38,10 +43,15 @@ export function expandLabel(secret: u8[], label: string, context: u8[], length: 
   for (let i: usize = 0; i < context.length; i++) {
     info[10 + l + i] = context[i];
   }
-  if (secret.length == SHA384_LEN) {
-    return hkdfExpandSha384(secret, info, length);
+  const sha384 = secret.length == SHA384_LEN;
+  if (length > (sha384 ? SHA384_LEN : 32)) {
+    arrayTruncate(info, n);
+    return sha384 ? hkdfExpandSha384(secret, info, length) : hkdfExpandSha256(secret, info, length);
   }
-  return hkdfExpandSha256(secret, info, length);
+  info[n] = 1;
+  const t = sha384 ? hmacSha384(secret, info) : hmacSha256(secret, info);
+  arrayTruncate(t, length);
+  return t;
 }
 
 // SHA-256 of the empty string: Derive-Secret's context for "derived".

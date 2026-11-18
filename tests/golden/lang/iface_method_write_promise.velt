@@ -1,0 +1,15 @@
+// check: no leaks
+// A method returning a promise written through an interface value (#379): the literal's
+// function stores it (results compare without their rejection errors, which are inferred), and
+// what an assigned async function rejects with reaches the caller's `catch`, as in Node.
+interface Loader { load(): Promise<string>; }
+class Failure extends Error {}
+const c: Loader = { load: () => Promise.resolve("loaded0") };
+async function main(): Promise<void> {
+  console.log(await c.load());
+  c.load = () => Promise.resolve("loaded1");
+  console.log(await c.load());
+  c.load = async () => { throw new Failure("async boom"); };
+  try { await c.load(); } catch (e) { console.log("caught", e instanceof Failure, (e as Error).message); }
+}
+main().then(() => console.log("done"));

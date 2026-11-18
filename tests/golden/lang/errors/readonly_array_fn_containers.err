@@ -1,0 +1,8 @@
+readonly_array_fn_containers.velt:32:51: error: mismatched types
+  = note: expected Map<string, (f64[]) => f64>, found Map<string, (readonly f64[]) => f64>
+
+readonly_array_fn_containers.velt:40:52: error: mismatched types
+  = note: expected readonly ((f64[]) => f64)[], found ((readonly f64[]) => f64)[]
+
+readonly_array_fn_containers.velt:47:47: error: mismatched types
+  = note: expected Promise<(f64[]) => f64>, found Promise<(readonly f64[]) => f64>
