@@ -71,16 +71,20 @@ export function carry(e: usize, chain: usize): void {
 }
 
 /**
- * The offered task pending sleep `f` goes with, or 0: the task that polled it into the block, or
- * the one its waker wakes now (a sleep handed on to another task: its expiry touches that one).
+ * The offered task pending sleep `f` goes with, or 0. Its expiry touches the task its waker wakes
+ * (sched_sleep.velt `expire`: that task's due list and flags, from the expiring worker's thread),
+ * so a sleep whose waker is a task's goes with that task alone: one handed on to another task
+ * (polled again there; `S_OWNER` still names the first) stays with the task that polls it now. A
+ * waker that is not a task's (a combinator's) is woken from any thread, and the sleep goes with
+ * the task that polled it into the block (`S_OWNER`).
  */
 function owner(f: usize): usize {
-  const o = m.ld(f + sl.S_OWNER);
-  if (o !== 0 && t.has(o, t.CARRIED)) {
-    return o;
-  }
   const w = wk.taskOf(sl.waiter(f));
-  return w !== 0 && t.has(w, t.CARRIED) ? w : 0;
+  if (w !== 0) {
+    return t.has(w, t.CARRIED) ? w : 0;
+  }
+  const o = m.ld(f + sl.S_OWNER);
+  return o !== 0 && t.has(o, t.CARRIED) ? o : 0;
 }
 
 /** Worker `e`, about to poll task `k`, takes the sleeps it carries into its timer block. */
