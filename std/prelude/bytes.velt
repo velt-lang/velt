@@ -105,6 +105,44 @@ export class Buffer {
     }
     return byteLengthIn(s, encoding);
   }
+
+  /**
+   * The bytes of `list`, one after another, in a new array, as Node's `Buffer.concat(list,
+   * totalLength)`: with `totalLength`, the result has that many bytes, the list's cut off past
+   * it or zeros after them; `totalLength` must be an integer from 0 to 2^53 - 1, else a
+   * `RangeError` (`ERR_OUT_OF_RANGE`). The arrays are copied, not shared.
+   */
+  static concat(list: u8[][], totalLength?: number): u8[] {
+    let n: usize = 0;
+    if (totalLength === undefined) {
+      for (const b of list) {
+        n += b.length;
+      }
+    } else {
+      n = concatLength(totalLength);
+    }
+    const out = velt_rt_bytes_uninit(n as u64);
+    let at: usize = 0;
+    for (const b of list) {
+      if (at >= n) {
+        break;
+      }
+      at += velt_rt_bytes_copy(out, b, at as i64, 0, (n - at) as i64) as usize;
+    }
+    fillBytes(out, 0, at, n);
+    return out;
+  }
+}
+
+/** `Buffer.concat`'s `totalLength`, checked as Node checks it (an integer in 0..2^53). */
+function concatLength(v: number): usize {
+  if (!Number.isInteger(v)) {
+    copyOutOfRange("length", "an integer", v);
+  }
+  if (v < 0 || v > 9007199254740991) {
+    copyOutOfRange("length", ">= 0 && <= 9007199254740991", v);
+  }
+  return v as usize;
 }
 
 /**
