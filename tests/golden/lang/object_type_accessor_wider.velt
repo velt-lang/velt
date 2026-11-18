@@ -1,3 +1,4 @@
+// check: no leaks
 // A wider object type converts to an alias with accessors as the same object, written through
 // it; a wider alias converts to the object type it spells out (#1501).
 type T = { get v(): number; set v(x: number) };

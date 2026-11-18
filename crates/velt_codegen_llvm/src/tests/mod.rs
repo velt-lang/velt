@@ -477,6 +477,7 @@ fn param_attributes_become_llvm_attributes() {
 
 mod aes;
 mod atomics;
+mod bfdot;
 mod c_export;
 mod half;
 mod inlining;
@@ -487,7 +488,6 @@ mod tbaa;
 mod units;
 mod variadic;
 mod wasm;
-mod wide;
 
 /// `velt_main` returning `velt_simd_has_sha_x86()` (#1981 step 5).
 fn sha_check_sample() -> Program {

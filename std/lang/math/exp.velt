@@ -174,7 +174,7 @@ export function expm1(x0: f64): f64 {
     // exp(x) - 1 from exp(x)
     let y = 1.0 - (e - x);
     if (k == 1024) {
-      // V8 writes 2^1023 with these digits, which is the double below it.
+      // 2^1023, in the digits V8 writes it with (its shortest ones).
       y = y * 2.0 * 8.98846567431158e+307;
     } else {
       y = y * twopk;

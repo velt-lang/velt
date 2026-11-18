@@ -1,0 +1,4 @@
+// An optional chain is no assignment target, also on a DOM value made from a browser global
+// (Node and tsc refuse it too).
+const el = document.createElement("div");
+el?.textContent = "x";

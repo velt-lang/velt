@@ -3,7 +3,7 @@
 //! throwing functions (convention in lib.rs). Calls through function values, vtables and
 //! interface values use the borrow ABI (callee.rs).
 
-use velt_sema::hir::{self, DefId, PassMode, TyId, TyKind, UseMode};
+use velt_sema::hir::{self, DefId, PassMode, TyId, TyKind};
 
 use super::foreign::ForeignBuf;
 use super::operand::proj;
@@ -407,6 +407,16 @@ impl FnLower<'_, '_> {
                 (Ty::Unit, _) => {
                     self.expr(a);
                 }
+                // A place moved into an argument that the callee only borrows (a local at its
+                // last use, converted for the parameter): the caller owns it now, and drops it
+                // after the call, as for a function value (`borrow_args`).
+                (t, PassMode::Borrow | PassMode::BorrowMut) if self.moved_arg(a) => {
+                    let v = self.own_moved_arg(a);
+                    argv.push(match t {
+                        Ty::Agg(_) => self.operand_addr(v, t),
+                        _ => v,
+                    });
+                }
                 (t @ Ty::Agg(_), PassMode::Borrow | PassMode::BorrowMut) => {
                     let v = match how {
                         Stabilize::Share | Stabilize::Direct(_) => {
@@ -586,10 +596,8 @@ impl FnLower<'_, '_> {
             };
             let v = if let Some(p) = table {
                 Operand::Copy(p)
-            } else if is_moved(a) {
-                let v = self.consume(a);
-                let ty = self.sub(a.ty);
-                self.own_value(v, ty)
+            } else if self.moved_arg(a) {
+                self.own_moved_arg(a)
             } else {
                 // A spawned call's borrows are settled right away, before the later arguments.
                 let rest = if transfer { &[][..] } else { &args[i + 1..] };
@@ -729,26 +737,6 @@ impl FnLower<'_, '_> {
         let v = Operand::Copy(proj(&proj(&rp, Proj::Cast(ov)), Proj::Field(1)));
         self.own_value(v, ret)
     }
-}
-
-/// A place moved into the call (the caller drops it after the call).
-pub(super) fn is_moved(a: &hir::Expr) -> bool {
-    if let hir::ExprKind::Downcast(x) = &a.kind {
-        return is_moved(x);
-    }
-    matches!(
-        a.kind,
-        hir::ExprKind::Local(_, UseMode::Move)
-            | hir::ExprKind::Field {
-                mode: UseMode::Move,
-                ..
-            }
-            | hir::ExprKind::UnwrapSome(_, UseMode::Move)
-            | hir::ExprKind::UnwrapVariant {
-                mode: UseMode::Move,
-                ..
-            }
-    )
 }
 
 /// How a direct call's borrowed arguments are kept alive (stabilize.rs).

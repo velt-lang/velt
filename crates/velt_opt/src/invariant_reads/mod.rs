@@ -519,9 +519,14 @@ fn computes_only(ext: &ExternFn) -> bool {
         Some(SimdCall::Vector(_, op)) => {
             !matches!(op, Op::Store | Op::StorePartial | Op::LoadOptimistic)
         }
-        Some(SimdCall::Mask(..) | SimdCall::Has(_) | SimdCall::Cpuid | SimdCall::Prefetch) => true,
-        // A 256-bit operation writes its result through a pointer.
-        Some(SimdCall::Inst(_) | SimdCall::Wide(..)) | None => false,
+        Some(
+            SimdCall::Mask(..)
+            | SimdCall::Has(_)
+            | SimdCall::Cpuid
+            | SimdCall::Xgetbv
+            | SimdCall::Prefetch,
+        ) => true,
+        Some(SimdCall::Inst(_)) | None => false,
     }
 }
 

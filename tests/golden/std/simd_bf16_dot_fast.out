@@ -1,0 +1,5 @@
+dim 8 rounds 2000 mismatches 0 total 123
+dim 64 rounds 500 mismatches 0 total -3452
+dim 384 rounds 200 mismatches 0 total -2178
+accumulated 48
+stable true

@@ -102,17 +102,23 @@ pub enum CpuTarget {
     AesX86,
     /// The ARMv8 AES instructions with PMULL.
     AesArm,
+    /// x86's FMA3 (with AVX): `MathOp::FmaF64` as one instruction (std's `pow`).
+    FmaX86,
+    /// Arm's bf16 instructions (FEAT_BF16): `bfdot`.
+    Bf16Arm,
 }
 
 impl CpuTarget {
     /// Every target.
-    pub const ALL: [CpuTarget; 6] = [
+    pub const ALL: [CpuTarget; 8] = [
         CpuTarget::ShaArm,
         CpuTarget::ShaX86,
         CpuTarget::ClmulX86,
         CpuTarget::ClmulArm,
         CpuTarget::AesX86,
         CpuTarget::AesArm,
+        CpuTarget::FmaX86,
+        CpuTarget::Bf16Arm,
     ];
 
     /// The name `targetFeature` takes.
@@ -124,6 +130,8 @@ impl CpuTarget {
             CpuTarget::ClmulArm => "clmul-arm",
             CpuTarget::AesX86 => "aes-x86",
             CpuTarget::AesArm => "aes-arm",
+            CpuTarget::FmaX86 => "fma-x86",
+            CpuTarget::Bf16Arm => "bf16-arm",
         }
     }
 
@@ -143,7 +151,8 @@ impl CpuTarget {
             )
     }
 
-    /// The static method of velt/simd that checks for it, by its definition's full name.
+    /// The static method of velt/simd that checks for it (for FMA, std's `hasFmaX86`), by its
+    /// definition's full name.
     pub fn check(self) -> &'static str {
         match self {
             CpuTarget::ShaArm => velt_common::std_item!(simd_sha, "u32x4.hasShaArm"),
@@ -152,6 +161,8 @@ impl CpuTarget {
             CpuTarget::ClmulArm => velt_common::std_item!(simd_clmul, "u64x2.hasClmulArm"),
             CpuTarget::AesX86 => velt_common::std_item!(simd_aes, "u8x16.hasAesX86"),
             CpuTarget::AesArm => velt_common::std_item!(simd_aes, "u8x16.hasAesArm"),
+            CpuTarget::FmaX86 => velt_common::std_item!(lang_math_fma_check, "hasFmaX86"),
+            CpuTarget::Bf16Arm => velt_common::std_item!(simd_bf16x8, "bf16x8.hasBf16Arm"),
         }
     }
 

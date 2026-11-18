@@ -160,7 +160,55 @@ const PROGRAMS: &[(&str, &[&str])] = &[
         "function main() {\n  const n: i64 = \"text\";\n  console.log(`n=${n}`);\n}\n",
         &["std/lang/hooks/number_text"],
     ),
+    // std calls the number printers and the long-decimal parser by role (`hookCall`, #3150).
+    (
+        "function main() {\n  console.log((1.5).toFixed(30), (1.5).toPrecision(25));\n}\n",
+        &["std/lang/hooks/number_digits"],
+    ),
+    (
+        "function main() {\n  console.log(parseInt(\"123456789012345678901234\"));\n}\n",
+        &["std/lang/hooks/number_parse"],
+    ),
+    (
+        "function main() {\n  const a: any = 2.5;\n  console.log(a.toFixed(30), Number(\"1.000000000000000000000001\"));\n}\n",
+        &["std/lang/hooks/number_digits", "std/lang/hooks/number_parse"],
+    ),
 ];
+
+/// The number printers' and the long-decimal parser's modules: loaded where a program reaches
+/// their hooks, also only through std, and reported by neither the editor nor `velt check` as
+/// not loaded (#3150); a program that prints text, integers or floats loads neither.
+#[test]
+fn the_number_hook_modules_load_only_where_reached() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("main.velt");
+    let hooks = [
+        "std/lang/hooks/number_digits",
+        "std/lang/hooks/number_parse",
+    ];
+    for (k, (src, want)) in PROGRAMS.iter().enumerate() {
+        let overlay = HashMap::from([(root.clone(), src.to_string())]);
+        let std = real_std();
+        for (errors, modules) in [
+            command_line(&std, &root, &overlay),
+            editor(&std, &root, &overlay),
+        ] {
+            assert!(
+                !errors.iter().any(|e| e.contains("is not loaded")),
+                "{src}: {errors:?}"
+            );
+            for h in hooks {
+                // The first four reach no number hook (the conversion through `any` after them
+                // does, by `Number(s)` and the like).
+                match (want.contains(&h), k < 4) {
+                    (true, _) => assert!(modules.contains(h), "{src}: {modules:?}"),
+                    (false, true) => assert!(!modules.contains(h), "{src}: {modules:?}"),
+                    (false, false) => {}
+                }
+            }
+        }
+    }
+}
 
 #[test]
 fn the_editor_loads_and_reports_what_velt_check_does() {

@@ -4,6 +4,8 @@
 // `f32x4` accumulator. The `velt_simd_*` functions below have no runtime implementation, the
 // compiler emits them inline (rt_abi.md "SIMD").
 
+import { detectedBf16Arm } from "velt/simd/bf16_check";
+
 export type bf16x8 = bf16x8;
 
 declare function velt_simd_bf16x8_fits(xs: bf16[], at: u64): bool;
@@ -21,6 +23,10 @@ declare function velt_simd_bf16x8_widen_high(v: bf16x8): f32x4;
 declare function velt_simd_f32x4_narrow_bf16x8(lo: f32x4, hi: f32x4): bf16x8;
 declare function velt_simd_f32x4_dot_add_bf16x8(acc: f32x4, a: bf16x8, b: bf16x8): f32x4;
 declare function velt_simd_f32x4_dot_add_fast_bf16x8(acc: f32x4, a: bf16x8, b: bf16x8): f32x4;
+// Arm's `bfdot` itself: only where `hasBf16Arm()` is true.
+declare function velt_simd_f32x4_bfdot(acc: f32x4, a: bf16x8, b: bf16x8): f32x4;
+// True only in a function gated on `bf16-arm`; false elsewhere, where std asks the CPU.
+declare function velt_simd_has_bf16_arm(): bool;
 
 extend bf16x8 {
   /** A vector with every lane `x`. */
@@ -151,14 +157,28 @@ extend bf16x8 {
 
   /**
    * `acc` plus the eight products of this and `b`, in `f32`, by the CPU's own bf16 dot product
-   * where `--cpu` has one: Arm's `bfdot` (FEAT_BF16; `--cpu apple-m2` and later, not an M1) or
-   * x86's `vdpbf16ps` (AVX512-BF16); elsewhere it is `dotAdd`. The sum of the lanes is the dot
-   * product to some rounding, but lanes differ between CPUs: those instructions add lanes
-   * `2k` and `2k + 1` into lane `k`, and `dotAdd` adds `k` and `k + 4`; they round the two
-   * products together, and they may flush subnormal operands and results to zero. So add up
-   * the lanes, and use `dotAdd` where the bits must be the same everywhere.
+   * where it has one: Arm's `bfdot` (FEAT_BF16: an Apple M2 and later, not an M1; Graviton 3,
+   * Neoverse N2 and V1), which a release build for any arm64 CPU finds when it runs
+   * (`bf16x8.hasBf16Arm()`), or x86's `vdpbf16ps` (AVX512-BF16) where `--cpu` has it; elsewhere
+   * it is `dotAdd`. The sum of the lanes is the dot product to some rounding, but lanes differ
+   * between CPUs: those instructions add lanes `2k` and `2k + 1` into lane `k`, and `dotAdd`
+   * adds `k` and `k + 4`; they round the two products together, and they may flush subnormal
+   * operands and results to zero. So add up the lanes, and use `dotAdd` where the bits must be
+   * the same everywhere.
    */
   dotAddFast(b: bf16x8, acc: f32x4): f32x4 {
+    if (bf16x8.hasBf16Arm()) {
+      return velt_simd_f32x4_bfdot(acc, this, b);
+    }
     return velt_simd_f32x4_dot_add_fast_bf16x8(acc, this, b);
+  }
+
+  /**
+   * Whether the CPU has Arm's bf16 instructions (FEAT_BF16), so that `dotAddFast` is `bfdot`:
+   * asked of the operating system when the program runs, on Linux and macOS. False off arm64,
+   * on Windows, in debug builds, and with `VELT_SIMD_DISABLE=clmul`.
+   */
+  static hasBf16Arm(): bool {
+    return velt_simd_has_bf16_arm() || detectedBf16Arm();
   }
 }

@@ -1730,7 +1730,6 @@ dependencies = [
  "futures-util",
  "getrandom 0.4.3",
  "libc",
- "libm",
  "libmimalloc-sys",
  "lock_api",
  "memchr",
@@ -1757,7 +1756,6 @@ dependencies = [
  "futures-util",
  "getrandom 0.4.3",
  "libc",
- "libm",
  "libmimalloc-sys",
  "lock_api",
  "memchr",
@@ -1784,7 +1782,6 @@ dependencies = [
  "futures-util",
  "getrandom 0.4.3",
  "libc",
- "libm",
  "libmimalloc-sys",
  "lock_api",
  "memchr",
@@ -1807,7 +1804,6 @@ dependencies = [
 name = "velt_rt_wasm"
 version = "0.6.0"
 dependencies = [
- "libm",
  "memchr",
  "velt_text",
 ]

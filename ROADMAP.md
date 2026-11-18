@@ -13,7 +13,7 @@ deprecated, and the compiler explains how to update code.
 | **Platform** | Unwind information for JIT code on macOS and Linux, hot swap verified on every platform, Windows arm64, a released toolchain with installers. |
 | **Performance** | Compile-time scaling of lowering and the optimizer, closure environments, `noalias` from the exclusivity rule, a batched PostgreSQL query API. |
 | **Tooling** | Debugger support for JIT code, a warm front end in `velt dev`, `new Promise(...)`, the logical assignment operators. |
-| **Semantics stage 3** | `weak` references and a compile-time warning for reference cycles, still without a collector. ([design](docs/internals/design/semantics.md#reference-cycles--without-a-collector)) |
+| **Semantics stage 3** | Reference cycles freed as in Node: a collector confined to the types that can form cycles, `weak` references, and a lint. ([design](docs/internals/design/cycles.md)) |
 
 Proposals for language changes start as issues; see
 [CONTRIBUTING.md](CONTRIBUTING.md#proposing-a-language-change).

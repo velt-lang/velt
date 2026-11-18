@@ -142,8 +142,8 @@ struct Walk {
     generators: [bool; 2],
     /// An async host function: lowering awaits its call's `HostSettled` (`velt_vir` `host.rs`).
     async_host: bool,
-    /// A call of `catchUnwind` ([`Construct::CatchUnwind`]).
-    catch_unwind: bool,
+    /// A call of `catchUnwind` ([`Construct::CatchUnwind`]), `**` on floats (`PowFloat`).
+    constructs: ConstructSet,
     /// Code that runs on the executor: an async function or closure, or one of the externs the
     /// executor in Velt serves ([`super::sched_hooks`]).
     tasks: bool,
@@ -292,7 +292,10 @@ fn walk_set(cx: &mut Ctx) {
             let start = w.start();
             if !walk_def(cx, d, &mut w) {
                 pending.push(d);
-            } else if program_code(cx, d) {
+                continue;
+            }
+            super::hook_stubs::demand_hook_calls(cx, d);
+            if program_code(cx, d) {
                 note_program_code(cx, &w, start);
             }
         }
@@ -378,9 +381,7 @@ fn add_walk(cx: &mut Ctx, w: Walk) {
     for (_, d) in (w.generators.iter().zip(generators)).filter(|(g, _)| **g) {
         live_classes(cx, d);
     }
-    if w.catch_unwind {
-        cx.lazy.live.present |= Construct::CatchUnwind.bit();
-    }
+    cx.lazy.live.present |= w.constructs;
     if w.async_host {
         let settled = hook_class(cx, hook_index::host_settled);
         live_classes(cx, settled);
@@ -429,14 +430,6 @@ fn dynamic_classes(cx: &mut Ctx) {
         let error = cx.prelude_adt("Error");
         live_classes(cx, view);
         live_classes(cx, error);
-    }
-}
-
-/// The class of hook `index` of the table, when the program has it.
-fn hook_class(cx: &Ctx, index: usize) -> Option<DefId> {
-    match cx.std_def(&HOOKS[index].qualified()) {
-        Some(crate::ctx::Item::Def(d)) => Some(d),
-        _ => None,
     }
 }
 
@@ -605,7 +598,7 @@ fn walk_expr(ty: &crate::types::Types, e: &hir::Expr, w: &mut Walk) {
         E::Call {
             callee: Callee::Intrinsic(I::CatchUnwind | I::CatchUnwindAt),
             ..
-        } => w.catch_unwind = true,
+        } => w.constructs |= Construct::CatchUnwind.bit(),
         E::Call {
             callee: Callee::Dyn {
                 method_type_args, ..
@@ -625,7 +618,7 @@ fn walk_expr(ty: &crate::types::Types, e: &hir::Expr, w: &mut Walk) {
             w.ifaces.push(*iface);
             w.types.extend(method_type_args.iter().chain(iface_args));
         }
-        _ => {}
+        kind => w.constructs |= constructs::pow_bit(ty, kind),
     }
 }
 
@@ -789,7 +782,7 @@ pub(crate) use again::reach_again;
 #[path = "live_roots.rs"]
 mod roots;
 pub(super) use constructs::def_name;
-use constructs::{demanded_for, evaluate, format_bit};
+use constructs::{demanded_for, evaluate, format_bit, hook_class};
 pub(crate) use constructs::{too_late, Assumed};
 use roots::seed;
 

@@ -1,0 +1,12 @@
+// velt/lang/hooks (internal): the compiler's hook for `**` on floats (std-layout.md §10b). Only a
+// program that has one loads it (velt_common `ON_DEMAND_MODULES`, construct `PowFloat`).
+
+import { jsPow } from "velt/lang/math/pow";
+
+/**
+ * `x ** y` and `Math.pow(x, y)` on floats (the compiler compiles `**` on numbers to a call):
+ * Node's results, bit for bit (std/lang/math/pow.velt).
+ */
+export function powF64(x: f64, y: f64): f64 {
+  return jsPow(x, y);
+}

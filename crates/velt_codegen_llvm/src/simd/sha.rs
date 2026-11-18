@@ -11,8 +11,13 @@ use super::{Arch, Body};
 pub(crate) fn has_ext(arch: Arch, ext: Ext) -> bool {
     matches!(
         (arch, ext),
-        (Arch::Neon, Ext::ShaArm | Ext::ClmulArm | Ext::AesArm)
-            | (Arch::Sse2, Ext::ShaX86 | Ext::ClmulX86 | Ext::AesX86)
+        (
+            Arch::Neon,
+            Ext::ShaArm | Ext::ClmulArm | Ext::AesArm | Ext::Bf16Arm
+        ) | (
+            Arch::Sse2,
+            Ext::ShaX86 | Ext::ClmulX86 | Ext::AesX86 | Ext::FmaX86
+        )
     )
 }
 
@@ -45,6 +50,9 @@ pub(super) fn op(b: &mut Body, arch: Arch, op: ExtOp) -> String {
     }
     if matches!(op.ext(), Ext::AesX86 | Ext::AesArm) {
         return super::aes::op(b, op);
+    }
+    if op == ExtOp::Bfdot {
+        return bfdot(b);
     }
     if op == ExtOp::Sha1H {
         b.declarations
@@ -81,8 +89,8 @@ pub(super) fn op(b: &mut Body, arch: Arch, op: ExtOp) -> String {
             let vectors = op.vector_operands();
             let values: Vec<String> = (0..vectors).map(|i| b.arg(i, V)).collect();
             let prefix = match op.ext() {
-                Ext::ShaArm | Ext::ClmulArm | Ext::AesArm => "aarch64.crypto",
-                Ext::ShaX86 | Ext::ClmulX86 | Ext::AesX86 => "x86",
+                Ext::ShaArm | Ext::ClmulArm | Ext::AesArm | Ext::Bf16Arm => "aarch64.crypto",
+                Ext::ShaX86 | Ext::ClmulX86 | Ext::AesX86 | Ext::FmaX86 => "x86",
             };
             (
                 format!("{prefix}.{}", op.name()),
@@ -95,6 +103,19 @@ pub(super) fn op(b: &mut Body, arch: Arch, op: ExtOp) -> String {
         .push(format!("declare {V} @llvm.{name}({})", params.join(", ")));
     let result = b.inst(format!("call {V} @llvm.{name}({})", args.join(", ")));
     b.bytes(&result, V)
+}
+
+/// Arm's `bfdot` on `%a0` (the `f32x4` sum) and the bf16 lanes of `%a1` and `%a2`, as the
+/// `<16 x i8>` of the new sum.
+fn bfdot(b: &mut Body) -> String {
+    const F: &str = "<4 x float>";
+    const H: &str = "<8 x bfloat>";
+    const NAME: &str = "llvm.aarch64.neon.bfdot.v4f32.v8bf16";
+    let (acc, x, y) = (b.arg(0, F), b.arg(1, H), b.arg(2, H));
+    b.declarations
+        .push(format!("declare {F} @{NAME}({F}, {H}, {H})"));
+    let r = b.inst(format!("call {F} @{NAME}({F} {acc}, {H} {x}, {H} {y})"));
+    b.bytes(&r, F)
 }
 
 /// A carry-less multiplication of the 64-bit lanes of `%a0` and `%a1` that `imm` selects (bit 0:

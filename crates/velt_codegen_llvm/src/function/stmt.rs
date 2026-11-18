@@ -1,7 +1,7 @@
 //! Statements: assignments of rvalues, aggregate construction, memory copies and fills
 //! (`llvm.memcpy` / `llvm.memmove` / `llvm.memset`).
 
-use velt_vir::vir::{AggId, Intrinsic, Operand, Place, Rvalue, Stmt, Ty};
+use velt_vir::vir::{AggId, Intrinsic, Operand, Place, Rvalue, Stmt};
 
 use super::{Emitter, Loc, Val};
 use crate::types::{abi_ret, abi_type, aggregate, global_name};
@@ -110,30 +110,6 @@ impl Emitter<'_> {
         else {
             bail!("aggregate assigned to a non-memory place")
         };
-        // Two 128-bit vectors and nothing else is a 256-bit vector (`f32x8`,
-        // `velt_vir::simd::wide`): one store of all 32 bytes, so that LLVM's scalar replacement
-        // keeps the slot one `ymm`-sized value. A store per half would have it split the slot,
-        // and every value copied to or from it, into two.
-        if let ([(Ty::V128, 0), (Ty::V128, 16)], 32, [Val::Scalar(lo), Val::Scalar(hi)]) =
-            (&fields[..], layout.size, &vals[..])
-        {
-            let whole = Loc::Mem {
-                base,
-                offset,
-                base_align,
-                ty: Ty::Agg(id),
-                root,
-                tbaa: None,
-            };
-            let (ptr, align) = self.address(&whole)?;
-            let picks: Vec<String> = (0..32).map(|i| format!("i32 {i}")).collect();
-            let both = self.inst(format!(
-                "shufflevector <16 x i8> {lo}, <16 x i8> {hi}, <32 x i32> <{}>",
-                picks.join(", ")
-            ));
-            self.line(format!("store <32 x i8> {both}, ptr {ptr}, align {align}"));
-            return Ok(());
-        }
         for (val, (field_ty, field_offset)) in vals.into_iter().zip(fields) {
             let loc = Loc::Mem {
                 base: base.clone(),

@@ -1,3 +1,4 @@
+// check: no leaks
 // An error thrown while `f.apply` reads its list leaves at the call, where it can be caught.
 function one(this: any, a: any): any {
   return a;

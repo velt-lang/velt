@@ -17,7 +17,6 @@ mod masks;
 mod partial;
 mod reshape;
 mod sha;
-mod wide;
 mod x86_sums;
 
 pub(crate) use sha::has_ext;
@@ -108,14 +107,11 @@ pub(crate) fn helper(
             }
         }
         SimdCall::Vector(lanes, op) => vector(&mut body, lanes, op, arch, caps),
-        SimdCall::Wide(lanes, op) => {
-            wide::vector(&mut body, lanes, op, arch);
-            None
-        }
         SimdCall::Mask(bits, op) => mask(&mut body, bits, op, arch == Arch::Neon),
         SimdCall::Has(ext) => Some(sha::has(&mut body, arch, ext)),
         SimdCall::Inst(op) => Some(sha::op(&mut body, arch, op)),
         SimdCall::Cpuid => Some(aes::cpuid(&mut body, arch)),
+        SimdCall::Xgetbv => Some(aes::xgetbv(&mut body, arch)),
         SimdCall::Prefetch => {
             // A read, kept in every cache level (`locality` 3), of data (cache type 1).
             body.declarations.push(

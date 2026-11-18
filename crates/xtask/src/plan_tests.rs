@@ -692,7 +692,7 @@ fn zig_is_selected_for_the_tests_that_build_c_sources() {
 fn zig_is_not_selected_for_unrelated_changes() {
     for path in [
         "crates/velt_lsp/src/lib.rs",
-        "tests/golden/lang/errors/std_moved_modules.velt",
+        "tests/golden/lang/errors/removed_syntax.velt",
         "docs/internals/design/c-ffi.md",
         "editors/vscode/package.json",
         "tests/difftest/src/main.rs",
@@ -704,7 +704,7 @@ fn zig_is_not_selected_for_unrelated_changes() {
         "bench/sqlite/engine.velt",
         "examples/wordfreq.velt",
         "examples/wordfreq.out",
-        "tests/golden/lang/errors/std_moved_modules.velt",
+        "tests/golden/lang/errors/removed_syntax.velt",
     ] {
         assert!(!crate::zig::goldens(&plan(&[path])), "{path}");
     }
@@ -733,7 +733,7 @@ fn the_c_bundles_are_built_before_the_goldens_that_link_them() {
         }
     }
     for path in [
-        "tests/golden/lang/errors/std_moved_modules.velt",
+        "tests/golden/lang/errors/removed_syntax.velt",
         "bench/sqlite/engine.velt",
     ] {
         assert!(

@@ -33,6 +33,16 @@ impl FnLower<'_, '_> {
             ) => self.atomic_intrinsic(i, args, ty),
             (I::AtomicAddress, [a]) => self.atomic_address(a, ty),
             (I::AddressStore, [a, v]) => self.address_store(a, v),
+            (I::AddressArray, [a, n]) => {
+                // `{ data: address, len, cap: 0 }`: a buffer the array does not own, as a
+                // constant table's (lower/array).
+                let addr = self.expr(a);
+                let data = self.rvalue_temp(Ty::Ptr, Rvalue::Cast(addr, Ty::Ptr));
+                let (len, lt) = (self.expr(n), self.vty(n.ty));
+                let len = self.cast_to(len, lt, Ty::U64);
+                let ty = self.sub(ty);
+                self.array_value(ty, data, len, super::cint(0, Ty::U64))
+            }
             (I::FutPoll, [f, cx]) => self.fut_intrinsic(f, Some(cx)),
             (I::FutDrop, [f]) => self.fut_intrinsic(f, None),
             (I::StatePoll, [p, s, cx]) => self.state_poll(p, s, cx),
@@ -106,8 +116,8 @@ impl FnLower<'_, '_> {
             }
             (I::PrintErr, _) => self.print(2, args),
             (I::ToString, [a]) => self.stringify(a, ty, false),
-            (I::ErrorText, [a]) => self.text_of(a, Self::push_error_text),
-            (I::Inspect, [a]) => self.text_of(a, Self::format_top_inspect),
+            (I::ErrorText, [a]) => self.text_of(a, ty, Self::push_error_text),
+            (I::Inspect, [a]) => self.text_of(a, ty, Self::format_top_inspect),
             (I::InspectNested, [buf, v, depth]) => {
                 let bp = self.place_expr(buf);
                 let ba = self.addr(bp);
@@ -121,7 +131,7 @@ impl FnLower<'_, '_> {
             (I::ThrowLoc, []) => {
                 let (_, buf) = self.new_strbuf(0);
                 self.push_throw_loc(&buf);
-                self.finish_text(buf)
+                self.finish_text(buf, ty)
             }
             (I::TemplateToString, [a]) => self.stringify(a, ty, true),
             (I::StrConcat, [a, b]) => self.str_concat(a, b, ty),
@@ -522,21 +532,29 @@ impl FnLower<'_, '_> {
 
     /// Evaluate two operands to places (the first held if the second may change it).
     /// `Intrinsic::ErrorText` or `Intrinsic::Inspect` of `a`: what `push` appends for it to a
-    /// new builder, as an owned string.
-    fn text_of(&mut self, a: &hir::Expr, push: fn(&mut Self, &Operand, &Place, TyId)) -> Operand {
+    /// new builder, as an owned string (of type `ty`).
+    fn text_of(
+        &mut self,
+        a: &hir::Expr,
+        ty: TyId,
+        push: fn(&mut Self, &Operand, &Place, TyId),
+    ) -> Operand {
         let t = self.sub(a.ty);
         let v = self.expr(a);
         let p = self.place_of(v, t);
         let (_, buf) = self.new_strbuf(0);
         push(self, &buf, &p, t);
-        self.finish_text(buf)
+        self.finish_text(buf, ty)
     }
 
-    /// The string the builder `buf` holds (an owned string; the builder is consumed).
-    fn finish_text(&mut self, buf: Operand) -> Operand {
+    /// The string (of type `ty`) the builder `buf` holds; the builder is consumed. The scope
+    /// owns it, as it owns `stringify`'s: whoever keeps the string takes it from there, and a
+    /// user that only reads it (or copies it) leaves it to be dropped.
+    fn finish_text(&mut self, buf: Operand, ty: TyId) -> Operand {
         let text = self.temp(Ty::Agg(STR_AGG));
         let tp = self.addr(Place::local(text));
         self.call_rt(Rt::StrbufFinish, vec![buf, tp], None);
+        self.own_temp(text, ty);
         Operand::Copy(Place::local(text))
     }
 
