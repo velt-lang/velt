@@ -169,6 +169,7 @@ pub(crate) struct Ctx<'m> {
     pub impls: Vec<ImplDef>,
     /// Interfaces written through and their setter slots (`crate::iface_writes`).
     pub(crate) iface_writes: crate::iface_writes::IfaceWrites,
+    pub(crate) method_writes: crate::iface_method_writes::MethodWrites,
     pub(crate) part_ifaces: crate::intersection_members::PartIfaces,
     /// Interfaces made for intersections and `Pick`s of interfaces with methods.
     pub(crate) synth_ifaces: crate::synth_ifaces::SynthIfaces,
@@ -716,6 +717,7 @@ impl<'m> Ctx<'m> {
             extension_names: (0, FxHashMap::default()),
             impls: vec![],
             iface_writes: Default::default(),
+            method_writes: Default::default(),
             part_ifaces: Default::default(),
             synth_ifaces: Default::default(),
             generic_fns: Default::default(),

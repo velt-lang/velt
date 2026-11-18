@@ -1336,9 +1336,8 @@ Step 1 lands in layers, each its own pull request:
       and the store. `bench/` VIR identical for all 217 other programs, debug and `--release`
       (first version; the change since touches only std/fs/fd, std/os/rt and the unwinder's
       declaration).
-    - **`declare system`** was public (the reference's system-functions page, user goldens), so
-      it stays a parse error naming `declare c("c")` (golden `lang/errors/declare_system_removed`)
-      rather than a silent unknown word; `ast::FnSig::is_system` (`AST_FORMAT` 16) and
+    - **`declare system`** is an ordinary parse error (`system` is a name; Velt keeps no
+      errors for removed forms); `ast::FnSig::is_system` (`AST_FORMAT` 16) and
       `hir::ExternFnDef::system` are removed, and velt_fmt, velt_doc, velt_lsp and tscompat
       lose their `system` forms. The goldens of the table (`lang/system_function*`) are gone
       with it: `declare c` has its own tests (c_functions.rs and the rest), and a lone file
@@ -1374,8 +1373,8 @@ Step 1 lands in layers, each its own pull request:
   `Import` static without contents and `__imp_<name>` on Windows; thread-local and `static` ones
   are refused by the header check; `errno` is set through velt/ffi's `setErrno`, std code over
   each C library's errno function (#2187 follow-up, made while the owner was away, for review).
-- Step 2 (made while the owner was away, for review): `declare system` is a parse error naming
-  `declare c("c")`, not just gone, since the reference documented it; std's fd API on Windows
+- Step 2 (made while the owner was away, for review): `declare system` is gone (an ordinary
+  parse error since Velt keeps no errors for removed forms); std's fd API on Windows
   and WebAssembly throws ENOSYS instead of failing to compile; std's C declarations are
   header-checked by `velt native headers --std` with a header list in veltc (std has no
   manifest), not at each build; `lastOsError()` reads a std `ThreadLocal` the compiler stores

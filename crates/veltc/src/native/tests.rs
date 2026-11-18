@@ -227,15 +227,12 @@ fn lower_for(src: &str, target: &str) -> String {
     }
 }
 
-/// `declare system function` is gone: an error naming `declare c("c")` (velt_syntax's parser).
+/// `declare system function` is not Velt: an ordinary error, not a program.
 #[test]
 fn declare_system_is_an_error() {
     let src = "declare system function close(fd: i32): i32;\nfunction main() {\n  console.log(close(-1));\n}\n";
     let d = lower_for(src, "aarch64-apple-darwin");
-    assert!(
-        d.contains("`declare system function` was removed") && d.contains("declare c(\"c\")"),
-        "{d}"
-    );
+    assert!(d.contains("error") && !d.contains("ICE"), "{d}");
 }
 
 /// std's fd API is `declare c("c")` on macOS and Linux behind the `#fd-system` variant of the

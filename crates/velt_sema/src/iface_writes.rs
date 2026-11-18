@@ -492,6 +492,13 @@ impl Ctx<'_> {
         self.iface(iface).map_or(String::new(), |i| i.name.clone())
     }
 
+    /// [`Self::add_setters`] for `crate::iface_method_writes`.
+    pub(crate) fn add_setters_pub(&mut self, index: u32) {
+        if self.iface_writes.sources.contains_key(&index) {
+            self.add_setters(index);
+        }
+    }
+
     /// Appends the setters of implementation `index` (once).
     fn add_setters(&mut self, index: u32) {
         let imp = &self.impls[index as usize];
@@ -499,7 +506,11 @@ impl Ctx<'_> {
         let Some(i) = self.iface(iface) else {
             return;
         };
-        if imp.methods.len() != i.methods.len() + i.fields.len() {
+        let base = i.methods.len() + i.fields.len();
+        // Placeholders a method write put where the field setters go (`iface_method_writes`):
+        // the real setters replace them.
+        let placeholder = self.method_writes_placeholder(index);
+        if imp.methods.len() != base && !placeholder {
             return;
         }
         let srcs = self.iface_writes.sources[&index].clone();
@@ -595,6 +606,16 @@ impl Ctx<'_> {
                     ));
                 }
             }
+        }
+        if placeholder {
+            let methods = &mut self.impls[index as usize].methods;
+            for (k, def) in defs.into_iter().enumerate() {
+                if let Some(slot) = methods.get_mut(base + k) {
+                    *slot = def;
+                }
+            }
+            self.method_writes_filled(index);
+            return;
         }
         self.impls[index as usize].methods.extend(defs);
     }

@@ -34,6 +34,7 @@ fn std_headers(target: &str) -> Vec<&'static str> {
         "<stdlib.h>",
         "<string.h>",
         "<strings.h>",
+        "<sys/mman.h>",
         "<sys/socket.h>",
         "<sys/stat.h>",
         "<sys/wait.h>",
@@ -41,10 +42,16 @@ fn std_headers(target: &str) -> Vec<&'static str> {
         "<unistd.h>",
         "<unwind.h>",
     ];
-    // The reactors' (std/lang/hooks/reactor_kqueue.velt, reactor_epoll.velt), and velt/os' on
-    // macOS (`sysctlbyname`, std/os/sys_darwin.velt).
+    // The reactors' (std/lang/hooks/reactor_kqueue.velt, reactor_epoll.velt), and on macOS
+    // velt/os' (`sysctlbyname`, std/os/sys_darwin.velt) and velt/process' (`_NSGetEnviron`,
+    // std/process/env_darwin.velt).
     if target.contains("-apple-") {
-        headers.extend(["<mach/mach.h>", "<sys/event.h>", "<sys/sysctl.h>"]);
+        headers.extend([
+            "<crt_externs.h>",
+            "<mach/mach.h>",
+            "<sys/event.h>",
+            "<sys/sysctl.h>",
+        ]);
     } else if target.contains("-linux") {
         headers.extend(["<sys/epoll.h>", "<sys/eventfd.h>"]);
     }
@@ -73,6 +80,8 @@ const CHECKED: &[&str] = &[
     "ffi/read.velt",
     "fs/fd/posix.velt",
     "lang/hooks/os_posix.velt",
+    "lang/hooks/pid_posix.velt",
+    "lang/hooks/pid_win32.velt",
     "lang/hooks/reactor_epoll.velt",
     "lang/hooks/reactor_kqueue.velt",
     "lang/hooks/sched_cells.velt",
@@ -104,6 +113,12 @@ const CHECKED: &[&str] = &[
     "process/child/handle_list_win32.velt",
     "process/child/pipes_win32.velt",
     "process/child/spawn_win32.velt",
+    "process/cwd_posix.velt",
+    "process/cwd_win32.velt",
+    "process/env_darwin.velt",
+    "process/env_linux.velt",
+    "process/env_posix.velt",
+    "process/env_win32.velt",
     "process/tty_posix.velt",
     "sync/output.velt",
     "sync/slot.velt",

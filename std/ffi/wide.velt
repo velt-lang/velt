@@ -1,33 +1,14 @@
 // velt/ffi (internal): Windows' wide strings (UTF-16, NUL-terminated, `WCHAR *`), which the
-// Win32 `…W` functions read and write: the text of a buffer of them.
-
-import { utf8DecodeLossy } from "velt/encoding/utf8";
-
-/** Appends code point `c`'s UTF-8 to `out`. */
-function pushUtf8(out: u8[], c: u32) {
-  if (c < 0x80) {
-    out.push(c as u8);
-  } else if (c < 0x800) {
-    out.push((0xc0 | (c >> 6)) as u8);
-    out.push((0x80 | (c & 0x3f)) as u8);
-  } else if (c < 0x10000) {
-    out.push((0xe0 | (c >> 12)) as u8);
-    out.push((0x80 | ((c >> 6) & 0x3f)) as u8);
-    out.push((0x80 | (c & 0x3f)) as u8);
-  } else {
-    out.push((0xf0 | (c >> 18)) as u8);
-    out.push((0x80 | ((c >> 12) & 0x3f)) as u8);
-    out.push((0x80 | ((c >> 6) & 0x3f)) as u8);
-    out.push((0x80 | (c & 0x3f)) as u8);
-  }
-}
+// Win32 `…W` functions read and write: the text of a buffer of them, and a string as one. Only
+// the prelude's string functions: the environment's variables are read through here, on the
+// executor's path, which must not bring velt/encoding's error classes in.
 
 /**
  * The text of the UTF-16 in `units`, up to its first NUL (or its end); a lone surrogate reads as
  * U+FFFD.
  */
 export function wideText(units: u16[]): string {
-  const out: u8[] = [];
+  let s = "";
   const n = units.length;
   let i: usize = 0;
   while (i < n) {
@@ -40,11 +21,30 @@ export function wideText(units: u16[]): string {
       const low = units[i] as u32;
       if (low >= 0xdc00 && low < 0xe000) {
         i++;
-        pushUtf8(out, 0x10000 + ((u - 0xd800) << 10) + (low - 0xdc00));
+        // The pair's halves join into one character.
+        s += String.fromCharCode(u as f64, low as f64);
         continue;
       }
     }
-    pushUtf8(out, u >= 0xd800 && u < 0xe000 ? 0xfffd : u);
+    s += String.fromCharCode((u >= 0xd800 && u < 0xe000 ? 0xfffd : u) as f64);
   }
-  return utf8DecodeLossy(out);
+  return s;
+}
+
+/**
+ * `s` as a NUL-terminated wide string, its UTF-16 code units as JavaScript counts them (a lone
+ * surrogate stays one); null when `s` holds a NUL, which would end the string where Win32 reads it.
+ */
+export function wideOf(s: string): u16[] | null {
+  const units: u16[] = [];
+  const n = s.length as i64;
+  for (let i: i64 = 0; i < n; i++) {
+    const u = s.charCodeAt(i);
+    if (u === 0) {
+      return null;
+    }
+    units.push(u as u16);
+  }
+  units.push(0);
+  return units;
 }

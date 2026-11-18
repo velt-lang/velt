@@ -1,0 +1,36 @@
+// `ceilDiv` and `floorDiv` from velt/math: integer division rounded up and down, where `/`
+// truncates, for every sign of the operands, exact divisions, and operands past 2^53, where the
+// detour through `number` and `Math.ceil` loses the answer.
+
+import { ceilDiv, floorDiv } from "velt/math";
+
+function main() {
+  const pairs: i64[][] = [
+    [10, 4],
+    [-10, 4],
+    [10, -4],
+    [-10, -4],
+    [12, 4],
+    [-12, 4],
+    [0, 5],
+    [1, 7],
+    [-1, 7],
+    [7, 1],
+  ];
+  for (const p of pairs) {
+    console.log(
+      `${p[0]} / ${p[1]}: trunc ${p[0] / p[1]} ceil ${ceilDiv(p[0], p[1])} floor ${floorDiv(p[0], p[1])}`,
+    );
+  }
+  // Rows split among workers: every row is in a part.
+  const n: i64 = 100000;
+  const parts: i64 = 12;
+  console.log(
+    ceilDiv(n, parts),
+    ceilDiv(n, parts) * parts >= n,
+    (ceilDiv(n, parts) - 1) * parts < n,
+  );
+  const big: i64 = 9007199254740993;
+  console.log(ceilDiv(big, 2), floorDiv(big, 2), ceilDiv(-big, 2), floorDiv(-big, 2));
+  console.log(ceilDiv(9223372036854775807, 2), floorDiv(-9223372036854775807, 2));
+}

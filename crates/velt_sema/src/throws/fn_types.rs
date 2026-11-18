@@ -69,6 +69,10 @@ pub(crate) struct FnTypeSeeds {
     /// the one their type is an instance of (`Ctx::closure_site_for`, #3033; unit-tested in
     /// `fn_flows`, an end-to-end golden waits on #3038: #3042).
     pub(super) closure_targets: FxHashMap<Span, Vec<Span>>,
+    /// The names of interface methods the program writes as properties (`crate::iface_method_writes`):
+    /// an object literal's function property of such a name is a site from the next check on,
+    /// so what is assigned to the method reaches the field storing it.
+    pub(crate) methods: FxHashSet<String>,
     /// Check with the sets written in, without variables (`throws::vars`).
     no_vars: bool,
     /// The sites of std/proxy's `ProxyHandler` traps the previous check met.
@@ -509,7 +513,7 @@ impl Ctx<'_> {
     /// user module, and the traps of std/lang/proxy's `ProxyHandler` (the only function types
     /// those modules write), so a trap may throw: a proxy operation throws what its trap throws
     /// (hir_encodings.md "Proxy and Reflect").
-    fn site_module(&self, module: usize) -> bool {
+    pub(super) fn site_module(&self, module: usize) -> bool {
         match self.scopes.get(module) {
             None => false,
             Some(s) if s.is_std => self.modules.get(module).is_some_and(|m| {
@@ -811,7 +815,7 @@ crate::units::codec::structs! {
         site_closures, std_var_fns, fixed_traps, closure_defs, structural, var_values,
     }
     FnTypeSeeds {
-        sites, hints, slots, no_vars, proxy_sites, exact, closure_targets,
+        sites, hints, slots, no_vars, proxy_sites, exact, closure_targets, methods,
     }
 }
 crate::units::codec::enums! {

@@ -1,0 +1,33 @@
+// velt/process (internal): the environment's variables on Linux (`#env-sys`' linux
+// variant, std/imports.velt): std/process/env_posix.velt, with the table at the C library's
+// `environ`.
+
+import { Ptr } from "velt/ffi/ptr";
+import * as posix from "./env_posix";
+
+/** C's `char **environ`: the table of "name=value" strings (NULL after `clearenv`). */
+declare c("c") let environ: Ptr<void> | null;
+
+/** The address of the table's first entry, or 0. */
+function table(): usize {
+  // SAFETY: reads the variable; env_posix holds its lock while the table is in use.
+  const at = unsafe { environ };
+  return at === null ? 0 : Ptr.addressOf(at);
+}
+
+export function getEnv(name: string): string | undefined {
+  return posix.getEnv(name);
+}
+
+export function setEnv(name: string, value: string) {
+  posix.setEnv(name, value);
+}
+
+export function removeEnv(name: string) {
+  posix.removeEnv(name);
+}
+
+/** Every variable as `[name, value, …]`, in the table's order. */
+export function envPairs(): string[] {
+  return posix.envPairs(table);
+}

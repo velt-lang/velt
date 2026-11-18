@@ -63,8 +63,7 @@ fn out(b: &[u8]) { std::io::stdout().write_all(b).unwrap(); }
 #[no_mangle] pub extern "C" fn velt_rt_math_popcount64(_x: u64) -> u64 { 999 }
 #[no_mangle] pub extern "C" fn velt_rt_math_umulh(_a: u64, _b: u64) -> u64 { 999 }
 #[no_mangle] pub extern "C" fn velt_rt_math_mul_int32(_a: i32, _b: i32) -> i32 { 999 }
-// Called: `pow` on doubles, and ToInt32 beyond 2^63 (the inline code's cold path).
-#[no_mangle] pub extern "C" fn velt_rt_pow_f64(a: f64, b: f64) -> f64 { a.powf(b) }
+// Called: ToInt32 beyond 2^63 (the inline code's cold path).
 #[no_mangle] pub extern "C" fn velt_rt_math_to_int32(x: f64) -> i32 {
     if !x.is_finite() { return 0; }
     (x.trunc() % 4294967296.0) as i64 as u32 as i32

@@ -306,6 +306,7 @@ enums! {
         3 => ClmulArm,
         4 => AesX86,
         5 => AesArm,
+        6 => FmaX86,
     }
     DynMemberKind {
         0 => Method,
@@ -539,5 +540,6 @@ enums! {
         199 => RecordViewSet,
         200 => RecordViewDelete,
         201 => RecordViewFlush,
+        202 => AddressArray,
     }
 }

@@ -2,19 +2,8 @@
 // layouts they return.
 
 import { IoResult, unwrapIo } from "velt/native/result";
-import { IoStatus } from "velt/native/status";
 
 export declare function velt_rt_process_args(): string[];
-
-export declare function velt_rt_env_set(name: string, value: string);
-
-export declare function velt_rt_env_remove(name: string);
-
-export declare function velt_rt_env_all(): string[];
-
-export declare function velt_rt_process_cwd(): IoResult<string>;
-
-export declare function velt_rt_process_chdir(path: string): IoStatus;
 
 export declare function velt_rt_stdout_write_bytes(bytes: u8[]);
 

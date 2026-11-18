@@ -1,0 +1,23 @@
+// HKDF-SHA256 and HMAC-SHA256 on TLS-sized inputs, 100k times each, each output fed back: the
+// SHA-256 path of `velt/crypto`'s HKDF, which TLS 1.3's SHA-256 key schedule runs, for base/head
+// instruction counts (`bench/program_instr.sh`).
+import { hkdfExpandSha256, hkdfSha256, hmacSha256 } from "velt/crypto";
+import { hexEncode } from "velt/encoding";
+
+function main() {
+  let key = Buffer.alloc(32);
+  const info = Buffer.alloc(20);
+  for (let i: usize = 0; i < 32; i++) {
+    key[i] = (i * 31 + 7) as u8;
+  }
+  for (let round = 0; round < 100000; round++) {
+    key = hkdfSha256(key, info, info, 32);
+    key = hmacSha256(key, info);
+    // An expand of 44 bytes (two blocks), as a traffic key and IV pair.
+    const okm = hkdfExpandSha256(key, info, 44);
+    for (let i: usize = 0; i < 32; i++) {
+      key[i] = okm[i];
+    }
+  }
+  console.log(hexEncode(key));
+}

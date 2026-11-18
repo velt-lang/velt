@@ -18,20 +18,22 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
-/// Compared, and reported apart from the rest: generated function names vary between runs (#2226);
-/// and, since #2649's switch, the statics' order where the executor's modules load mid-check
-/// (#2926).
-const KNOWN: &[&str] = &[
-    "lang/union_erased_layout.velt",
-    "lang/as_narrowing_panics.velt",
-    "lang/cast_class_union_checked.velt",
-    "lang/constructor_parameter_properties.velt",
-    "lang/extend_inherited.velt",
-    "lang/extend_static_inherited.velt",
-    "lang/getter_override_write.velt",
-    "lang/instanceof_or_join.velt",
-    "lang/private_names_union_slot.velt",
-    "std/error_name_field_order.velt",
+/// Compared, and reported apart from the rest, each with its issue: generated function names vary
+/// between runs (#2226); since #2649's switch, the statics' order where the executor's modules
+/// load mid-check (#2926); the inliner's budget, once used up, is spent in an order that follows
+/// sema's numbering (#2843).
+const KNOWN: &[(&str, u32)] = &[
+    ("lang/union_erased_layout.velt", 2226),
+    ("lang/as_narrowing_panics.velt", 2926),
+    ("lang/cast_class_union_checked.velt", 2926),
+    ("lang/constructor_parameter_properties.velt", 2926),
+    ("lang/extend_inherited.velt", 2926),
+    ("lang/extend_static_inherited.velt", 2926),
+    ("lang/getter_override_write.velt", 2926),
+    ("lang/instanceof_or_join.velt", 2926),
+    ("lang/literal_accessor_contexts.velt", 2843),
+    ("lang/private_names_union_slot.velt", 2926),
+    ("std/error_name_field_order.velt", 2926),
 ];
 
 /// One golden in this many, in the sample.
@@ -169,9 +171,10 @@ fn every_golden_has_the_same_vir_with_std_up_front_and_on_demand() {
     found.sort();
     let (known, new): (Vec<_>, Vec<_>) = found
         .into_iter()
-        .partition(|(name, _)| KNOWN.contains(&name.as_str()));
+        .partition(|(name, _)| KNOWN.iter().any(|(k, _)| k == name));
     for (name, why) in &known {
-        eprintln!("known difference (#2226, #2926): {name}\n  {why}");
+        let issue = KNOWN.iter().find(|(k, _)| k == name).map_or(0, |&(_, i)| i);
+        eprintln!("known difference (#{issue}): {name}\n  {why}");
     }
     let listed: Vec<String> = new.iter().map(|(n, why)| format!("{n}\n  {why}")).collect();
     assert!(

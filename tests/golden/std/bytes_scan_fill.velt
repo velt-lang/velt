@@ -1,0 +1,117 @@
+// check: no leaks
+// Byte arrays' `indexOf`, `lastIndexOf`, `includes`, `fill` and `concat` (std/lang/bytes, in
+// Velt on SIMD vectors) at every length around their loops' edges (16, 64, the 208 bytes past
+// which a search leaves the caller's code), with the byte at each position or absent, JS
+// positions (negative, past the end), and fill ranges that end inside a vector. Each line sums
+// what a sweep found, so a wrong position anywhere changes it. Expected output is Node's
+// (Uint8Array).
+function pattern(n: number): u8[] {
+  const b = Buffer.alloc(n);
+  for (let i = 0; i < n; i++) {
+    b[i] = ((i * 7 + 3) % 251) as u8;
+  }
+  return b;
+}
+
+function main() {
+  const sizes = [
+    0,
+    1,
+    2,
+    15,
+    16,
+    17,
+    31,
+    32,
+    33,
+    63,
+    64,
+    65,
+    79,
+    80,
+    127,
+    128,
+    129,
+    207,
+    208,
+    209,
+    210,
+    255,
+    256,
+    257,
+    1000,
+    4099,
+  ];
+  let found = 0;
+  let last = 0;
+  let has = 0;
+  for (const n of sizes) {
+    const b = pattern(n);
+    for (const at of [0, 1, 15, 16, 17, 63, 64, 65, 200, 208, 209, 999, 4098]) {
+      if (at >= n) {
+        continue;
+      }
+      const c = Buffer.alloc(n);
+      for (let i = 0; i < n; i++) {
+        c[i] = b[i] == 255 ? 1 : b[i];
+      }
+      c[at] = 255;
+      found += c.indexOf(255) + c.indexOf(255, at) + c.indexOf(255, at + 1) + c.indexOf(255, -1);
+      last +=
+        c.lastIndexOf(255) +
+        c.lastIndexOf(255, at) +
+        c.lastIndexOf(255, at - 1) +
+        c.lastIndexOf(255, -n - 1);
+      has += (c.includes(255) ? 1 : 0) + (c.includes(255, at + 1) ? 1 : 0);
+    }
+    found += b.indexOf(254) + b.indexOf(3, -3) + b.indexOf(3, 99999);
+    last +=
+      b.lastIndexOf(254) +
+      b.lastIndexOf(3, -1) +
+      b.lastIndexOf(3, 99999) +
+      b.lastIndexOf(3, -99999);
+  }
+  console.log("indexOf", found, "lastIndexOf", last, "includes", has);
+
+  let sum = 0;
+  for (const n of sizes) {
+    for (const [s, e] of [
+      [0, n],
+      [1, n - 1],
+      [3, 19],
+      [-17, -1],
+      [5, 70],
+      [n - 15, n + 5],
+      [10, 4],
+      [-99999, 99999],
+    ]) {
+      const b = pattern(n);
+      b.fill(9, s, e);
+      for (let i = 0; i < n; i++) {
+        sum += b[i] * ((i % 13) + 1);
+      }
+    }
+  }
+  console.log("fill", sum);
+
+  let cat = 0;
+  for (const n of [0, 1, 16, 17, 64, 65, 300]) {
+    for (const m of [0, 1, 15, 33, 1000]) {
+      const c = pattern(n).concat(pattern(m + 1).slice(1));
+      cat += c.length;
+      for (let i = 0; i < c.length; i++) {
+        cat += c[i] * ((i % 7) + 1);
+      }
+    }
+  }
+  console.log("concat", cat);
+
+  // A byte array reached through `any`: `fill` and the searches on it change and read the
+  // array itself.
+  const held: any = pattern(40);
+  const view = held as u8[];
+  view.fill(7, 3, 30);
+  console.log("view", view.indexOf(7), view.lastIndexOf(7), (held as u8[])[5], (held as u8[])[31]);
+}
+
+main();

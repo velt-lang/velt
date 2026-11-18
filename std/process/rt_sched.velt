@@ -15,12 +15,7 @@ import { LineRead } from "./rt";
 export {
   LineRead,
   lineOf,
-  velt_rt_env_all,
-  velt_rt_env_remove,
-  velt_rt_env_set,
   velt_rt_process_args,
-  velt_rt_process_chdir,
-  velt_rt_process_cwd,
   velt_rt_stdin_read_all_bytes_sync,
   velt_rt_stdin_read_all_sync,
   velt_rt_stdin_read_line_sync,

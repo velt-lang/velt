@@ -1,0 +1,135 @@
+// A write to a member of a DOM value made from a browser global (sigx's use-head.ts): on the
+// server, reading `document` throws `ReferenceError` as on Node, so the write never runs, and it
+// type-checks as under `tsc`, whatever the member's type: a plain write, an index write, a
+// compound write and an update.
+interface HeadScript {
+  innerHTML?: string;
+}
+
+function script(s: HeadScript): string {
+  try {
+    const el = document.createElement("script");
+    if (s.innerHTML) el.textContent = s.innerHTML;
+    return "script made";
+  } catch (e) {
+    return "script: " + (e as Error).message;
+  }
+}
+
+function style(innerHTML: string): string {
+  try {
+    const el = document.createElement("style");
+    el.textContent = innerHTML;
+    el["nodeValue"] = innerHTML;
+    return "style made";
+  } catch (e) {
+    return "style: " + (e as Error).message;
+  }
+}
+
+function noscript(n: { innerHTML: string }): string {
+  try {
+    const el = document.createElement("noscript");
+    el.textContent += n.innerHTML;
+    return "noscript made";
+  } catch (e) {
+    return "noscript: " + (e as Error).name;
+  }
+}
+
+function counter(): string {
+  try {
+    const el = document.createElement("progress");
+    el.tabIndex++;
+    return "counted";
+  } catch (e) {
+    return "counter: " + (e as Error).name;
+  }
+}
+
+function handler(): string {
+  try {
+    const el = document.createElement("button");
+    el.onclick = (e) => {
+      console.log("clicked", e);
+    };
+    return "handled";
+  } catch (e) {
+    return "handler: " + (e as Error).message;
+  }
+}
+
+function bare(): string {
+  try {
+    document.createElement("div").nodeValue = "v";
+    return "written";
+  } catch (e) {
+    return "bare: " + (e as Error).message;
+  }
+}
+
+// Through `!`, a cast, a `const` holding such a value (also one read from another), and a closure
+// capturing that `const`.
+function bang(id: string, v: string): string {
+  try {
+    document.getElementById(id)!.textContent = v;
+    return "bang written";
+  } catch (e) {
+    return "bang: " + (e as Error).message;
+  }
+}
+
+function cast(v: string): string {
+  try {
+    (document.createElement("a") as HTMLElement).title = v;
+    return "cast written";
+  } catch (e) {
+    return "cast: " + (e as Error).message;
+  }
+}
+
+function localBang(v: string): string {
+  try {
+    const el = document.querySelector("p");
+    el!.textContent = v;
+    return "local bang written";
+  } catch (e) {
+    return "local bang: " + (e as Error).message;
+  }
+}
+
+function chained(v: string): string {
+  try {
+    const body = document.body;
+    const first = body.firstChild;
+    first.textContent = v;
+    return "chained written";
+  } catch (e) {
+    return "chained: " + (e as Error).message;
+  }
+}
+
+function inClosure(v: string): string {
+  try {
+    const el = document.createElement("div");
+    const set = (): void => {
+      el.textContent = v;
+    };
+    set();
+    return "closure written";
+  } catch (e) {
+    return "closure: " + (e as Error).message;
+  }
+}
+
+console.log(script({ innerHTML: "x" }));
+console.log(style("p {}"));
+console.log(noscript({ innerHTML: "y" }));
+console.log(counter());
+console.log(handler());
+console.log(bare());
+console.log(bang("x", "1"));
+console.log(cast("2"));
+console.log(localBang("3"));
+console.log(chained("4"));
+console.log(inClosure("5"));

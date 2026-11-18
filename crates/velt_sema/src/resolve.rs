@@ -475,7 +475,6 @@ impl Ctx<'_> {
             "Array" | "ReadonlyArray" | "shared" | "Shared" => 1,
             "Promise" if args.len() == 2 => 2,
             "Promise" => 1,
-            "Result" => return Some(self.removed_result(t)),
             "ReadonlyMap" => return Some(self.resolve_readonly_map(t, args, env)),
             "ReturnType" | "Parameters" => {
                 return Some(self.resolve_fn_operator(t, name, args, env))
@@ -535,15 +534,6 @@ impl Ctx<'_> {
                 ),
             );
         }
-    }
-
-    fn removed_result(&mut self, t: &ast::TypeExpr) -> TyId {
-        self.error(
-            velt_common::Diagnostic::error("`Result` was removed", t.span).with_note(
-                "throw errors (a function's error types are part of its signature: `function f(): T throws E`), or return a union such as `User | NotFound`",
-            ),
-        );
-        self.ty.error
     }
 
     pub(crate) fn arity_error(&mut self, name: &str, want: usize, got: usize, t: &ast::TypeExpr) {

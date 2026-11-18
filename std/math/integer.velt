@@ -1,4 +1,5 @@
-// velt/math (internal): integer helpers: `clamp`, `gcd`, `lcm`, `isPrime`, `fib`.
+// velt/math (internal): integer helpers: `clamp`, `ceilDiv`, `floorDiv`, `gcd`, `lcm`, `isPrime`,
+// `fib`.
 
 /** `x` limited to [lo, hi] (assumes lo <= hi). */
 export function clamp(x: i64, lo: i64, hi: i64): i64 {
@@ -6,6 +7,27 @@ export function clamp(x: i64, lo: i64, hi: i64): i64 {
     return lo;
   }
   return x > hi ? hi : x;
+}
+
+/**
+ * `a / b` rounded up (toward +Infinity), where `/` on integers truncates: the number of parts of
+ * size `b` that hold `a` items (`ceilDiv(10, 4)` is 3), with no detour through `number` and
+ * `Math.ceil`. Exact for every pair, negative ones too (`ceilDiv(-7, 2)` is -3), but the smallest
+ * `i64` by -1, which wraps as `/` does. Dividing by 0 panics, as `/` does.
+ */
+export function ceilDiv(a: i64, b: i64): i64 {
+  const q = a / b;
+  return a % b != 0 && a < 0 == b < 0 ? q + 1 : q;
+}
+
+/**
+ * `a / b` rounded down (toward -Infinity), where `/` on integers truncates: `floorDiv(-7, 2)` is
+ * -4, and `floorDiv(7, 2)` is 3. The smallest `i64` by -1 wraps, and dividing by 0 panics, as `/`
+ * does.
+ */
+export function floorDiv(a: i64, b: i64): i64 {
+  const q = a / b;
+  return a % b != 0 && a < 0 != b < 0 ? q - 1 : q;
 }
 
 /** Greatest common divisor (Euclid), always >= 0; gcd(0, 0) is 0. */

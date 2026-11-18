@@ -63,9 +63,8 @@ pub(crate) fn lookup(name: &str) -> Option<*const u8> {
 
 /// The C library functions std declares with `declare c("c")` (velt/fs's file descriptors,
 /// std/fs/fd/posix.velt) and the `errno` accessor lowering calls after them (velt_vir's `c_abi`),
-/// by the symbols they link, and the rest of the file functions `declare system function` had
-/// (`fdatasync`, `lseek`), so a program's own `declare c("c")` of them still runs under a fully
-/// static `velt run`. Their signatures do not matter here, only their addresses.
+/// by the symbols they link, and other file functions (`fdatasync`, `lseek`), so a program's own
+/// `declare c("c")` of them runs under a fully static `velt run`. Their signatures do not matter here, only their addresses.
 #[cfg(unix)]
 fn system(name: &str) -> Option<*const u8> {
     mod c {

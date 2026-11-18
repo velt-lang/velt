@@ -2,7 +2,7 @@
 
 use std::time::Instant;
 
-use super::{load_modules, sema_stage, BuildError, BuildOptions, CheckScope, Session};
+use super::{load_modules, sema_stage, BuildError, BuildOptions, CheckScope, Session, StdLoad};
 
 /// What `velt check` runs: [`super::check_program`], except that syntax errors don't stop
 /// it. The modules without any go on to the type checker with the recovered rest
@@ -53,10 +53,12 @@ pub(super) fn check_recovering_loaded(
         .filter_map(primary_span)
         .map(|span| span.file)
         .collect();
-    let recovered: Vec<(usize, &str)> = (loaded.modules.iter().enumerate())
+    // Owned: the std modules the check demands are added to the source map meanwhile.
+    let sources: Vec<(usize, String)> = (loaded.modules.iter().enumerate())
         .filter(|(_, m)| broken.contains(&m.file))
-        .map(|(i, m)| (i, sess.sm.get(m.file).src.as_str()))
+        .map(|(i, m)| (i, sess.sm.get(m.file).src.clone()))
         .collect();
+    let recovered: Vec<(usize, &str)> = sources.iter().map(|(i, s)| (*i, s.as_str())).collect();
     let sema_opts = velt_sema::CheckOptions {
         require_main: scope.require_main,
         eager_std: scope.eager_std,
@@ -66,11 +68,41 @@ pub(super) fn check_recovering_loaded(
         std_stubbed: false,
         check_only: false,
     };
+    // The std modules the check demands are served as for a program that loaded cleanly
+    // (`sema_stage`): the load left them to the check (#3150).
+    let finder = super::prebuilt_finder(sess, opts, scope);
+    let more = (!scope.eager_std).then(|| {
+        StdLoad::new(
+            (&mut loaded.state, &loaded.modules),
+            sess.generator_build,
+            (opts, scope),
+            finder.as_ref(),
+        )
+    });
+    let has_more = more.is_some();
+    let linked = |hook: usize| finder.as_ref().is_some_and(|f| f.linked(hook));
+    let prebuilt = finder.as_ref().map(|_| &linked as &velt_sema::PrebuiltFn);
+    let kept = velt_sema::StdLoads::default();
+    let shared = std::sync::Mutex::new((&mut *sess, more));
+    let serve = |demanded: &[String]| {
+        let mut guard = shared.lock().ok()?;
+        let (sess, more) = &mut *guard;
+        Some(more.as_mut()?.serve(sess, demanded))
+    };
+    let loads = has_more.then_some(velt_sema::Loads {
+        run: &serve,
+        kept: &kept,
+        prebuilt,
+    });
     // The recovered trees can hold shapes no clean parse produces: a type checker failure on
     // them costs these findings only, never the syntax errors already reported.
     let checked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        velt_sema::check_recovered(&loaded.modules, loaded.root, sema_opts, &recovered)
+        velt_sema::check_recovered(&loaded.modules, loaded.root, sema_opts, &recovered, loads)
     }));
+    let (sess, _) = match shared.into_inner() {
+        Ok(inner) => inner,
+        Err(poisoned) => poisoned.into_inner(),
+    };
     if let Ok(diags) = checked {
         let found = (diags.into_iter())
             .filter(|d| primary_span(d).is_none_or(|span| !broken.contains(&span.file)));
@@ -93,6 +125,11 @@ mod tests {
     /// `velt check` of the files `files` (name, source; the first is the root): each error as
     /// `file: message`, one per line.
     fn check_files(files: &[(&str, &str)]) -> String {
+        errors_of(&check_session(files))
+    }
+
+    /// The session of `velt check` of the files `files`, which must fail.
+    fn check_session(files: &[(&str, &str)]) -> Session {
         let dir = tempfile::tempdir().unwrap();
         for (name, src) in files {
             std::fs::write(dir.path().join(name), src).unwrap();
@@ -104,6 +141,11 @@ mod tests {
         let mut sess = Session::new();
         let r = check(&mut sess, &opts);
         assert!(matches!(r, Err(BuildError::Diagnostics)), "{r:?}");
+        sess
+    }
+
+    /// Each error of `sess` as `file: message`, one per line.
+    fn errors_of(sess: &Session) -> String {
         let mut out = String::new();
         for d in sess.diagnostics.iter().filter(|d| d.is_error()) {
             let span = d.labels[0].span;
@@ -222,6 +264,68 @@ mod tests {
         let lib = "export class W implements { a: number = 1; b(): number { return 2; } }\n";
         let main = "import { W } from './lib';\nconst w = new W();\nconst s: string = 1;\n";
         assert_eq!(importer_errors(main, lib, 3), OWN);
+    }
+
+    /// The number hooks' modules (std/lang/hooks/number_digits, number_parse) `sess` loaded.
+    fn number_hook_modules(sess: &Session) -> Vec<String> {
+        let paths = sess
+            .sm
+            .files()
+            .map(|(_, f)| f.path.to_string_lossy().replace('\\', "/"));
+        let hooks = [
+            "lang/hooks/number_digits.velt",
+            "lang/hooks/number_parse.velt",
+        ];
+        let mut held: Vec<String> = paths
+            .filter_map(|p| {
+                hooks
+                    .iter()
+                    .find(|h| p.ends_with(*h))
+                    .map(|h| h.to_string())
+            })
+            .collect();
+        held.sort();
+        held.dedup();
+        held
+    }
+
+    /// Past a syntax error, the check serves the std modules it demands as a clean check does
+    /// (#3150): `toFixed` past 64 bits, `toPrecision`, `toExponential`, `parseInt`'s and
+    /// `Number`'s long paths and `toFixed` through `any` call their hooks by role, and reported
+    /// them as not loaded.
+    #[test]
+    fn check_past_a_syntax_error_loads_the_hooks_it_reaches() {
+        let main = "import { g } from './b';\n\
+            console.log(g(), (1.5).toFixed(30), (1.5).toPrecision(25), (1.5).toExponential(3));\n\
+            console.log(parseInt(\"123456789012345678901234\"));\n\
+            console.log(Number(\"1.000000000000000000000001\"));\n\
+            const a: any = 2.5;\nconsole.log(a.toFixed(30));\n\
+            const s: string = 1;\n";
+        let sess = check_session(&[("main.ts", main), ("b.ts", BROKEN)]);
+        assert_eq!(
+            errors_of(&sess),
+            "b.ts: expected identifier, found `{`\nmain.ts: mismatched types\n"
+        );
+        let held = number_hook_modules(&sess);
+        assert_eq!(
+            held,
+            [
+                "lang/hooks/number_digits.velt",
+                "lang/hooks/number_parse.velt"
+            ]
+        );
+    }
+
+    /// A program that calls none of them loads neither module, past a syntax error or not.
+    #[test]
+    fn check_loads_no_number_hooks_a_program_does_not_reach() {
+        let main = "import { g } from './b';\nconsole.log(g(), `${1.5}`);\nconst s: string = 1;\n";
+        let past = check_session(&[("main.ts", main), ("b.ts", BROKEN)]);
+        assert_eq!(number_hook_modules(&past), Vec::<String>::new());
+        let clean = "export function g(): number { return 1; }\n";
+        let sess = check_session(&[("main.ts", main), ("b.ts", clean)]);
+        assert_eq!(errors_of(&sess), "main.ts: mismatched types\n");
+        assert_eq!(number_hook_modules(&sess), Vec::<String>::new());
     }
 
     #[test]

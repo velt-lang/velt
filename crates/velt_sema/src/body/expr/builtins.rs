@@ -61,14 +61,6 @@ impl FnCx<'_, '_> {
             "attempt" => self.attempt_call(args, span),
             "sleep" => self.simple_intrinsic(Intrinsic::Sleep, "`sleep`", args, exp, span),
             "yieldNow" => self.simple_intrinsic(Intrinsic::YieldNow, "`yieldNow`", args, exp, span),
-            "Ok" | "Err" => {
-                self.cx.error(
-                    Diagnostic::error(format!("`{name}` was removed with `Result`"), id.span)
-                        .with_note("throw the error (`throw new NotFound(...)`, callers propagate it automatically), or return a union such as `User | NotFound`"),
-                );
-                self.check_args_loose(args);
-                self.error_expr(span)
-            }
             _ => {
                 // Calling another environment's global (`requestAnimationFrame(cb)`) throws
                 // Node's `ReferenceError` before the arguments are evaluated.

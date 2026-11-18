@@ -320,7 +320,11 @@ fn std_declarations_are_operations() {
             let call = SimdCall::of_symbol(&symbol)
                 .unwrap_or_else(|| panic!("{symbol} is not a SIMD operation"));
             let list = params.split_once(')').expect("`)`").0;
-            let declared = list.split(", ").filter(|p| !p.is_empty()).count();
+            let mut declared = list.split(", ").filter(|p| !p.is_empty()).count();
+            // A 256-bit operation writes a vector result through one more pointer (`wide`).
+            if matches!(call, SimdCall::Wide(..)) && !line.trim_end().ends_with(");") {
+                declared += 1;
+            }
             assert_eq!(call.signature().0.len(), declared, "{symbol}");
             seen += 1;
         }
@@ -345,4 +349,20 @@ fn signatures() {
         sig("velt_simd_u32x4_shr"),
         (vec![Ty::V128, Ty::U32], Ty::V128)
     );
+}
+
+/// Every CPU target sema knows (the names `targetFeature` takes) is the extension of the same
+/// name, which lowering gives a gated function (`lower/abi.rs`), and every extension is one;
+/// `velt_simd_xgetbv` is `(u32) -> u64`.
+#[test]
+fn cpu_targets_are_extensions() {
+    use velt_sema::hir::CpuTarget;
+    for t in CpuTarget::ALL {
+        let ext = Ext::named(t.name()).expect("an extension");
+        assert_eq!(ext.name(), t.name());
+    }
+    assert_eq!(CpuTarget::ALL.len(), Ext::ALL.len());
+    assert_eq!(Ext::named("fma-x86"), Some(Ext::FmaX86));
+    let xgetbv = SimdCall::of_symbol("velt_simd_xgetbv").map(SimdCall::signature);
+    assert_eq!(xgetbv, Some((vec![Ty::U32], Ty::U64)));
 }

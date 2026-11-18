@@ -195,6 +195,15 @@ fn clause_violation(cx: &mut Ctx, d: DefId, m: TyId, allowed: Option<TyId>, clau
                 "the error types of function types written without `throws` are inferred from what is stored into them; that inference hit its limit ({} checks of the program) here",
                 crate::FN_SITE_ROUNDS + 1
             ));
+            // Methods written as properties are sites of that inference
+            // (`crate::iface_method_writes`): name them, as what was assigned to them is part of it.
+            let written = cx.written_methods_shown();
+            if !written.is_empty() {
+                diag = diag.with_note(format!(
+                    "the methods written through interface values take part in it: {}",
+                    written.join(", ")
+                ));
+            }
         } else if inferred || matched {
             diag = diag.with_note(format!(
                 "the error types of function types written without `throws` are inferred from what is stored into them, which can't include `{mn}`"

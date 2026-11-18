@@ -1,0 +1,54 @@
+// check: no leaks
+// A method member of an interface assigned through an interface value (#379): TypeScript allows
+// it (a method signature is a writable property), and Node replaces the object's property. The
+// object holds the method as a field of function type, so the write replaces the field: a later
+// call through the interface or through the original object calls the new function, on the same
+// object. Also through a value converted from an interface extending it.
+interface Ctx {
+  el: string;
+  update(): void;
+}
+
+interface Named extends Ctx {
+  name(): string;
+}
+
+let log = "";
+const lit = {
+  el: "a",
+  update: () => {
+    log += "old ";
+  },
+};
+const ctx: Ctx = lit as unknown as Ctx;
+ctx.update();
+ctx.update = () => {
+  log += "new ";
+};
+ctx.update();
+lit.update();
+console.log(log.trim(), ctx === (lit as unknown as Ctx));
+const written: Ctx = {
+  el: "w",
+  update: () => {
+    log = "w-old";
+  },
+};
+written.update = () => {
+  log = "w-new";
+};
+written.update();
+console.log(log);
+const n: Named = {
+  el: "n",
+  update: () => {
+    log = "n-old";
+  },
+  name: () => "n",
+};
+const up: Ctx = n;
+up.update = () => {
+  log = "n-new via upcast";
+};
+n.update();
+console.log(log);
