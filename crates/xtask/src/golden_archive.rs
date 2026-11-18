@@ -5,8 +5,8 @@
 //! for the WebAssembly goldens (`VELT_WASM_SHARD=<i>/<n>`).
 //!
 //! The archive is a tar of what the goldens run, at its path under the checkout: `velt`,
-//! `velt-kit`, the runtime libraries next to them, veltc's golden test binary, and
-//! [`MANIFEST`], which names the test binaries and the checkout they were built in; with the
+//! `velt-kit`, the runtime libraries next to them, veltc's golden test binary (and its VIR
+//! identity's, `eager_std_identity`, when the plan selects that), and [`MANIFEST`], which names the test binaries and the checkout they were built in; with the
 //! WebAssembly goldens also their test binary and the WebAssembly runtime libraries
 //! ([`WASM_RUNTIMES`]). A test binary has that checkout's absolute paths compiled in
 //! (`CARGO_MANIFEST_DIR`, `CARGO_BIN_EXE_velt`), so it unpacks only into a checkout at the same
@@ -32,12 +32,20 @@ pub struct Manifest {
     pub test: Option<String>,
     /// The WebAssembly goldens' test binary, likewise.
     pub wasm: Option<String>,
+    /// The VIR identity's test binary (veltc's `eager_std_identity`), likewise: packed with the
+    /// goldens when the plan selects it, so the shards run it beside them.
+    pub identity: Option<String>,
 }
 
 impl Manifest {
     pub fn render(&self) -> String {
         let mut text = format!("root={}\n", self.root);
-        for (name, value) in [("test", &self.test), ("wasm", &self.wasm)] {
+        let fields = [
+            ("test", &self.test),
+            ("wasm", &self.wasm),
+            ("identity", &self.identity),
+        ];
+        for (name, value) in fields {
             if let Some(value) = value {
                 text.push_str(&format!("{name}={value}\n"));
             }
@@ -55,6 +63,7 @@ impl Manifest {
             root: field("root").ok_or(format!("{MANIFEST} has no `root=` line"))?,
             test: field("test"),
             wasm: field("wasm"),
+            identity: field("identity"),
         };
         if manifest.test.is_none() && manifest.wasm.is_none() {
             return Err(format!("{MANIFEST} names no test binary"));
@@ -195,7 +204,10 @@ mod tests {
             root: r"D:\a\velt\velt".into(),
             test: Some("target/debug/deps/golden-0123abcd.exe".into()),
             wasm: None,
+            identity: None,
         };
+        assert_eq!(Manifest::parse(&m.render()).unwrap(), m);
+        m.identity = Some("target/debug/deps/eager_std_identity-89ab.exe".into());
         assert_eq!(Manifest::parse(&m.render()).unwrap(), m);
         m.wasm = Some("target/debug/deps/wasm_goldens-4567.exe".into());
         assert_eq!(Manifest::parse(&m.render()).unwrap(), m);

@@ -11,9 +11,13 @@ use crate::graph::Graph;
 use crate::junit;
 use crate::plan::{Goldens, Plan, DIFFTEST};
 
+mod archive;
+
 /// The parts of the gate to run: `all`, or a comma-separated list of `lint` (`cargo fmt`,
 /// clippy), `test` (build, unit and integration tests, doctests, `velt fmt --check`, the VS Code
-/// extension's `npm test`, smoke test), `golden` (the end-to-end goldens) and `wasm` (the
+/// extension's `npm test`, smoke test), `golden` (the end-to-end goldens, and the VIR identity,
+/// which builds every golden too: in CI the golden job, or the golden shards, finish well before
+/// the test job, so it runs there instead of after the unit tests) and `wasm` (the
 /// WebAssembly goldens alone, which `test` otherwise runs with veltc's other tests; the merge
 /// queue and the nightly run them in parallel shards of their own). `all` is the first three.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -123,8 +127,9 @@ pub fn run(root: &Path, graph: &Graph, plan: &Plan, opts: &Options) -> Result<()
     }
     let goldens = part.has(Part::Golden) && plan.goldens != Goldens::None;
     let wasm = part.has(Part::Wasm) && plan.wasm_goldens();
-    let build =
-        opts.archive.is_none() && ((part.has(Part::Test) && plan.needs_build()) || goldens || wasm);
+    let identity = part.has(Part::Golden) && plan.vir_identity;
+    let build = opts.archive.is_none()
+        && ((part.has(Part::Test) && plan.needs_build()) || goldens || wasm || identity);
     if build {
         // Every later step reuses this build: the same packages and targets resolve the same
         // features, so nothing compiles twice (`VELT_RT_PREBUILT` below). Any test target makes
@@ -136,7 +141,12 @@ pub fn run(root: &Path, graph: &Graph, plan: &Plan, opts: &Options) -> Result<()
             b.arg("--all-targets");
         } else {
             b.args(["--lib", "--bins"]);
-            for (selected, test) in [(goldens, "golden"), (wasm, "wasm_goldens")] {
+            let tests = [
+                (goldens, "golden"),
+                (wasm, "wasm_goldens"),
+                (identity, IDENTITY_TEST),
+            ];
+            for (selected, test) in tests {
                 if selected {
                     b.args(["--test", test]);
                 }
@@ -169,8 +179,8 @@ pub fn run(root: &Path, graph: &Graph, plan: &Plan, opts: &Options) -> Result<()
         if !goldens && !wasm {
             return Err("--pack: the plan selects no goldens, so there is nothing to pack".into());
         }
-        gate.pack(&ws, file, goldens, wasm)?;
-    } else if goldens || wasm {
+        gate.pack(&ws, file, goldens, wasm, identity)?;
+    } else if goldens || wasm || identity {
         let manifest = match &opts.archive {
             Some(file) => Some(gate.unpack(file)?),
             None => None,
@@ -199,22 +209,18 @@ pub fn run(root: &Path, graph: &Graph, plan: &Plan, opts: &Options) -> Result<()
             let test = archived(&manifest, |m| m.wasm.clone(), "wasm")?;
             gate.wasm_goldens(&ws, test.as_deref(), plan.golden_env())?;
         }
+        if identity {
+            let test = archived(&manifest, |m| m.identity.clone(), "golden")?;
+            let mut identity = vir_identity_test(root, &ws, test.as_deref());
+            let name = match std::env::var("VELT_GOLDEN_SHARD") {
+                Ok(shard) => format!("VIR identity (std up front, std on demand), shard {shard}"),
+                Err(_) => "VIR identity (std up front, std on demand)".to_string(),
+            };
+            gate.step(&name, &mut identity)?;
+        }
     }
     if part.has(Part::Test) && plan.vscode {
         gate.vscode()?;
-    }
-    if part.has(Part::Test) && plan.vir_identity {
-        let mut identity = Command::new("cargo");
-        identity.current_dir(root).args([
-            "test",
-            "--workspace",
-            "--test",
-            "eager_std_identity",
-            "--",
-            "--ignored",
-            "--nocapture",
-        ]);
-        gate.step("VIR identity (std up front, std on demand)", &mut identity)?;
     }
     if part.has(Part::Test) && plan.velt_fmt {
         let velt = target_dir(root).join("debug").join(exe("velt"));
@@ -274,6 +280,26 @@ fn golden_test(root: &Path, ws: &[String], test: Option<&str>) -> Command {
     c
 }
 
+/// veltc's test of the VIR identity (crates/veltc/tests/eager_std_identity.rs).
+const IDENTITY_TEST: &str = "eager_std_identity";
+
+/// The VIR identity's long tests (every golden built with std loaded up front and on demand, and
+/// with and without error-set variables): through cargo, or the binary `test` (relative to
+/// `root`) from an archive. `VELT_VIR_IDENTITY` and `VELT_GOLDEN_SHARD` pass through from the
+/// environment.
+fn vir_identity_test(root: &Path, ws: &[String], test: Option<&str>) -> Command {
+    let mut c = match test {
+        Some(test) => Command::new(root.join(test)),
+        None => {
+            let mut c = cargo(&["test"]);
+            c.args(ws).args(["--test", IDENTITY_TEST, "--"]);
+            c
+        }
+    };
+    c.args(["--ignored", "--nocapture"]);
+    c
+}
+
 /// The goldens [`Gate::bundled_linker_goldens`] runs when all of them are selected.
 const BUNDLED_LINKER_GOLDENS: &str = "m1/,m2/,m3/,m4/,async_dispatch/";
 
@@ -313,100 +339,6 @@ impl Gate<'_> {
             let _ = std::fs::remove_dir_all(&kit);
         }
         result
-    }
-
-    /// Packs what the goldens run into `file` (see [`golden_archive`]): for the goldens
-    /// (`goldens`), the WebAssembly goldens (`wasm`, after building their runtimes), or both.
-    fn pack(&mut self, ws: &[String], file: &str, goldens: bool, wasm: bool) -> Result<(), String> {
-        if wasm {
-            for (target, _) in golden_archive::WASM_RUNTIMES {
-                let mut b = cargo(&["build", "-p", "velt_rt_wasm", "--target", target]);
-                self.step(&format!("the WebAssembly runtime ({target})"), &mut b)?;
-            }
-        }
-        let names: Vec<&str> = [(goldens, "golden"), (wasm, "wasm_goldens")]
-            .into_iter()
-            .filter_map(|(selected, name)| selected.then_some(name))
-            .collect();
-        let mut find = cargo(&["test"]);
-        find.args(ws);
-        for name in &names {
-            find.args(["--test", name]);
-        }
-        find.args(["--no-run", "--message-format=json"]);
-        println!("\x1b[36m==> the test binaries\x1b[0m\n    {}", show(&find));
-        let mut tests = vec![];
-        if self.dry_run {
-            tests.extend(
-                names
-                    .iter()
-                    .map(|n| format!("target/debug/deps/{n}-<hash>")),
-            );
-        } else {
-            let out = find
-                .current_dir(self.root)
-                .output()
-                .map_err(|e| format!("cannot run cargo: {e}"))?;
-            if !out.status.success() {
-                return Err(format!(
-                    "`{}` failed:\n{}",
-                    show(&find),
-                    String::from_utf8_lossy(&out.stderr)
-                ));
-            }
-            let messages = String::from_utf8_lossy(&out.stdout);
-            for name in &names {
-                let exe = golden_archive::test_binary(&messages, name)
-                    .ok_or(format!("cargo built no `{name}` test binary for veltc"))?;
-                tests.push(golden_archive::relative(self.root, &exe)?);
-            }
-        }
-        let mut binaries = tests.iter().cloned();
-        let manifest = Manifest {
-            root: self.root.to_string_lossy().into_owned(),
-            test: goldens.then(|| binaries.next()).flatten(),
-            wasm: wasm.then(|| binaries.next()).flatten(),
-        };
-        if !self.dry_run {
-            std::fs::write(self.root.join(MANIFEST), manifest.render())
-                .map_err(|e| format!("{MANIFEST}: {e}"))?;
-        }
-        // Relative paths only: GNU tar (Git's, on Windows) reads `C:` as a remote host.
-        let mut tar = Command::new("tar");
-        tar.args(["-cf", file, MANIFEST]).args(&tests);
-        tar.args(golden_archive::files(|f| {
-            self.dry_run || self.root.join(f).is_file()
-        }));
-        if wasm {
-            tar.args(golden_archive::WASM_RUNTIMES.iter().map(|(_, lib)| lib));
-        }
-        self.step(&format!("pack the goldens' build into {file}"), &mut tar)
-    }
-
-    /// Unpacks `file` (made by [`Gate::pack`]) into the checkout; returns its manifest.
-    fn unpack(&mut self, file: &str) -> Result<Manifest, String> {
-        let mut tar = Command::new("tar");
-        tar.args(["-xf", file]);
-        self.step(&format!("unpack {file}"), &mut tar)?;
-        if self.dry_run {
-            return Ok(Manifest {
-                root: self.root.to_string_lossy().into_owned(),
-                test: Some("target/debug/deps/golden-<hash>".into()),
-                wasm: Some("target/debug/deps/wasm_goldens-<hash>".into()),
-            });
-        }
-        let text = std::fs::read_to_string(self.root.join(MANIFEST))
-            .map_err(|e| format!("{file} has no {MANIFEST}: {e}"))?;
-        let manifest = Manifest::parse(&text)?;
-        let here = self.root.to_string_lossy();
-        if manifest.root != here {
-            return Err(format!(
-                "{file} was built in {}, not in this checkout ({here}): its test binaries have \
-                 that checkout's paths compiled in",
-                manifest.root
-            ));
-        }
-        Ok(manifest)
     }
 
     /// The WebAssembly goldens (crates/veltc/tests/wasm_goldens.rs): through cargo, or the test
