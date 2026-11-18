@@ -8,7 +8,7 @@
 // `Buffer.alloc(n)` makes a zeroed array in one allocation (calloc: large arrays cost no
 // memset). Positions follow JS: negative ones count from the end.
 
-import { strByteLen } from "velt/lang/intrinsics";
+import { inline, noInline, strByteLen } from "velt/lang/intrinsics";
 import { indexOfByte, lastIndexOfByte, xorMaskRange } from "velt/lang/bytes/search";
 import { byteLengthIn, received, textEquals } from "velt/lang/bytes/text";
 import { fillBytes, setBytes, writeUtf8 } from "velt/lang/bytes/copy";
@@ -107,30 +107,71 @@ export class Buffer {
   }
 }
 
+/**
+ * The byte a number written into a byte array stands for (`fill`), as in a `Uint8Array` (and
+ * Node's `Buffer`): ECMAScript's ToUint8, the integer part modulo 2^8, so 256 is 0, -1 is 255 and
+ * 300.7 is 44; `NaN` and the infinities are 0.
+ */
+@inline
+function toUint8(x: number): u8 {
+  if (x >= 0 && x < 256) {
+    // The common case, a byte already: `as u8` truncates the fraction.
+    return x as u8;
+  }
+  return toUint8Wrapped(x);
+}
+
+/** `toUint8` out of 0..256: wrapped, out of line. */
+@noInline
+function toUint8Wrapped(x: number): u8 {
+  if (!Number.isFinite(x)) {
+    return 0;
+  }
+  let m = Math.trunc(x) % 256;
+  if (m < 0) {
+    m += 256;
+  }
+  return m as u8;
+}
+
+/**
+ * Is `x` a value a byte array can hold (an integer in 0..=255, -0 included)? A search compares
+ * strictly, as a `Uint8Array`'s does, so any other number finds nothing (Node's `Buffer` would
+ * take it `& 255`; Velt's byte arrays follow `Uint8Array` where the two differ).
+ */
+@inline
+function isByte(x: number): bool {
+  return x >= 0 && x <= 255 && x == Math.trunc(x);
+}
+
 extend Array<u8> {
-  /** Position of the first `byte` at or after `from`, or -1. */
-  indexOf(byte: u8, from: i64 = 0): i64 {
-    return indexOfByte(this, byte, relative(from, this.length));
+  /** Position of the first element equal to `byte` at or after `from`, or -1. */
+  indexOf(byte: number, from: i64 = 0): i64 {
+    if (!isByte(byte)) {
+      return -1;
+    }
+    return indexOfByte(this, byte as u8, relative(from, this.length));
   }
 
-  /** Position of the last `byte` at or before `from`, or -1. */
-  lastIndexOf(byte: u8, from: i64 = 9223372036854775807): i64 {
+  /** Position of the last element equal to `byte` at or before `from`, or -1. */
+  lastIndexOf(byte: number, from: i64 = 9223372036854775807): i64 {
     const n = this.length;
     // A position before the start finds nothing; one past the end is the last byte.
-    if (from < 0 && (n as i64) + from < 0) {
+    if (!isByte(byte) || (from < 0 && (n as i64) + from < 0)) {
       return -1;
     }
     const at = relative(from, n);
-    return lastIndexOfByte(this, byte, at < n ? at + 1 : n);
+    return lastIndexOfByte(this, byte as u8, at < n ? at + 1 : n);
   }
 
   /**
    * Determines whether an array includes a certain byte, returning true or false as appropriate.
-   * @param byte - The byte to search for.
+   * @param byte - The value to search for (compared strictly: a number that isn't a byte is never
+   *   found).
    * @param from - The position to start the search at (negative: from the end).
    */
-  includes(byte: u8, from: i64 = 0): bool {
-    return indexOfByte(this, byte, relative(from, this.length)) >= 0;
+  includes(byte: number, from: i64 = 0): bool {
+    return isByte(byte) && indexOfByte(this, byte as u8, relative(from, this.length)) >= 0;
   }
 
   /**
@@ -263,9 +304,9 @@ extend Array<u8> {
     return (to > from ? to - from : 0) == len && (len == 0 || textEquals(this, from, s, len, true));
   }
 
-  /** Sets the bytes in [start, end) to `byte`. */
-  fill(byte: u8, start: i64 = 0, end: i64 = 9223372036854775807) {
+  /** Sets the bytes in [start, end) to `byte`, a number converted as a `Uint8Array` converts it (`toUint8`). */
+  fill(byte: number, start: i64 = 0, end: i64 = 9223372036854775807) {
     const n = this.length;
-    fillBytes(this, byte, relative(start, n), relative(end, n));
+    fillBytes(this, toUint8(byte), relative(start, n), relative(end, n));
   }
 }
