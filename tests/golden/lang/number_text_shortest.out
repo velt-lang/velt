@@ -4853,3 +4853,12 @@ NaN NaN
   fixed -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity
   exp -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity
   prec -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity -Infinity
+1e+21 1e+21 1e+21 1e+21
+[1e+21,0.5,-1e+21,1.5e+22,1.23456789e+23,1e-7,1.5e+300] [ 1e+21, 0.5, -1e+21, 1.5e+22, 1.23456789e+23, 1e-7, 1.5e+300 ]
+1e-7 1e-7 1e-7
+1e+21 1e+21 1e+21 [ 1e+21 ]
+1e+21 1e+21 1e+21 1e+21
+1e+21 1e+21 1e+21 [ 1e+21 ]
+BigField { v: 1e+21 } {"v":1e+21} 1e+21
+1e+21 1e+21
+{ a: 1e+21, b: 1e-7 } {"a":1e+21,"b":1e-7}

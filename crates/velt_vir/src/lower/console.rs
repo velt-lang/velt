@@ -76,7 +76,9 @@ impl FnLower<'_, '_> {
                 TyKind::Never => {}
                 TyKind::Unit => self.write_text(&stream, "undefined"),
                 TyKind::Literal(LitValue::Str(s)) => self.write_text(&stream, &s),
-                TyKind::Literal(LitValue::Int(_, n)) => self.write_text(&stream, &n.to_string()),
+                TyKind::Literal(LitValue::Int(_, n)) => {
+                    self.write_text(&stream, &super::glue::int_literal_text(n))
+                }
                 TyKind::Literal(LitValue::Bool(b)) => {
                     self.write_text(&stream, if b { "true" } else { "false" })
                 }

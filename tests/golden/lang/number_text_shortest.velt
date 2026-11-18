@@ -202,3 +202,29 @@ for (const x of digitValues) {
   console.log("  exp", exp.join(" "));
   console.log("  prec", prec.join(" "));
 }
+
+// Number literal types, whose text the compiler writes itself: past the 64-bit integers, and
+// floats that print with an exponent.
+type Big = 1e21 | 0.5 | -1e21 | 1.5e22 | 123456789e15 | 1e-7 | 1.5e300;
+const big: Big = 1e21;
+console.log(JSON.stringify(big), `${big}`, big, String(big));
+const bigs: Big[] = [1e21, 0.5, -1e21, 1.5e22, 123456789e15, 1e-7, 1.5e300];
+console.log(JSON.stringify(bigs), bigs);
+const small: Big = 1e-7;
+console.log(JSON.stringify(small), `${small}`, small);
+const only: 1e21 = 1e21;
+console.log(only, `${only}`, JSON.stringify(only), [only]);
+const held: any = only;
+console.log(held, String(held), JSON.stringify(held), `${held}`);
+type BigOrX = 1e21 | "x";
+const bx: BigOrX = 1e21;
+console.log(bx, JSON.stringify(bx), `${bx}`, [bx]);
+class BigField {
+  v: 1e21 | 2 = 1e21;
+}
+const bf = new BigField();
+console.log(bf, JSON.stringify(bf), `${bf.v}`);
+const maybe: (1e21 | 0.5) | undefined = 1e21;
+console.log(maybe, JSON.stringify(maybe));
+const rec: Record<string, 1e21 | 1e-7> = { a: 1e21, b: 1e-7 };
+console.log(rec, JSON.stringify(rec));

@@ -28,7 +28,7 @@ impl FnLower<'_, '_> {
             LitValue::Str(s) if nested => self.push_text(buf, &inspect_quote(s)),
             LitValue::Str(s) => self.push_text(buf, s),
             LitValue::Bool(b) => self.push_text(buf, if *b { "true" } else { "false" }),
-            LitValue::Int(_, n) => self.push_text(buf, &n.to_string()),
+            LitValue::Int(_, n) => self.push_text(buf, &int_literal_text(*n)),
             // Its text now: `String(x)` (`-0` is `0`).
             LitValue::Float(_, bits) => {
                 self.push_text(buf, &velt_syntax::js_number(f64::from_bits(*bits)))
@@ -45,7 +45,7 @@ impl FnLower<'_, '_> {
                 self.call_rt(Rt::StrbufPushJsonStr, vec![buf.clone(), a], None);
             }
             LitValue::Bool(b) => self.push_text(buf, if *b { "true" } else { "false" }),
-            LitValue::Int(_, n) => self.push_text(buf, &n.to_string()),
+            LitValue::Int(_, n) => self.push_text(buf, &int_literal_text(*n)),
             // `String(x)`, `null` for NaN and the infinities.
             LitValue::Float(_, bits) => match f64::from_bits(*bits) {
                 x if x.is_finite() => self.push_text(buf, &velt_syntax::js_number(x)),
@@ -105,6 +105,16 @@ impl FnLower<'_, '_> {
     }
 }
 
+/// The text of an integer literal type's value. One past the 64-bit integers is a `number`'s
+/// (no integer type holds it): `String(n)` of the double it denotes, `1e+21` for `1e21`, as Node.
+pub(in crate::lower) fn int_literal_text(n: i128) -> String {
+    if i64::try_from(n).is_ok() || u64::try_from(n).is_ok() {
+        n.to_string()
+    } else {
+        velt_syntax::js_number(n as f64)
+    }
+}
+
 /// An object key as `console.log` shows it: bare when it is an identifier of ASCII letters,
 /// digits and `_` (node quotes `$` and non-ASCII keys), else quoted (the runtime's
 /// `velt_rt_strbuf_push_inspect_key` does the same at run time).
@@ -156,7 +166,21 @@ pub(crate) fn inspect_quote(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::inspect_key;
+    use super::{inspect_key, int_literal_text};
+
+    #[test]
+    fn integer_literals_from_1e21_print_as_numbers_do() {
+        // The double nearest to it is 1e21.
+        assert_eq!(int_literal_text(999_999_999_999_999_999_999), "1e+21");
+        assert_eq!(
+            int_literal_text(123_456_789_012_345_678_901),
+            "123456789012345680000"
+        );
+        assert_eq!(int_literal_text(1_000_000_000_000_000_000_000), "1e+21");
+        assert_eq!(int_literal_text(u64::MAX as i128), "18446744073709551615");
+        assert_eq!(int_literal_text(-1_000_000_000_000_000_000_000), "-1e+21");
+        assert_eq!(int_literal_text(i64::MIN as i128), "-9223372036854775808");
+    }
 
     #[test]
     fn keys_bare_only_when_identifiers_like_node() {

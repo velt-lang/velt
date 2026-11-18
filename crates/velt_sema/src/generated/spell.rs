@@ -55,6 +55,27 @@ pub fn int_name(it: IntTy) -> &'static str {
     }
 }
 
+/// The value of an integer literal type as JavaScript source. One past the 64-bit integers is a
+/// `number`'s (no integer type holds it): the double it denotes as `String(n)` writes it
+/// (`1e+21`), which is also its JSON text and reads back as the same literal.
+pub(super) fn int_literal(v: i128) -> String {
+    if i64::try_from(v).is_ok() || u64::try_from(v).is_ok() {
+        v.to_string()
+    } else {
+        velt_syntax::js_number(v as f64)
+    }
+}
+
+/// The value of a float literal type (`f64::to_bits`) as JavaScript source: `String(x)` of it
+/// (`0.5`, `1e-7`, `1.5e+300`), also its JSON text.
+pub(super) fn float_literal(bits: u64) -> String {
+    let x = f64::from_bits(bits);
+    match x.is_finite() {
+        true => velt_syntax::js_number(x),
+        false => format!("{x}"),
+    }
+}
+
 pub fn float_name(ft: FloatTy) -> &'static str {
     match ft {
         FloatTy::F32 => "f32",
@@ -86,8 +107,8 @@ fn spell_depth(cx: &mut Ctx, t: TyId, depth: u32, params: bool) -> Option<String
         TyKind::Simd(s) => s.name().into(),
         TyKind::Literal(l) => match l {
             LitValue::Str(s) => format!("{s:?}"),
-            LitValue::Int(_, v) => v.to_string(),
-            LitValue::Float(_, bits) => format!("{}", f64::from_bits(bits)),
+            LitValue::Int(_, v) => int_literal(v),
+            LitValue::Float(_, bits) => float_literal(bits),
             LitValue::Bool(b) => b.to_string(),
         },
         TyKind::Array(e) => format!("({})[]", spell_depth(cx, e, d1, params)?),
