@@ -66,6 +66,17 @@ impl FnLower<'_, '_> {
 
     /// Is `e` a variable `plain_made` finds (through a share)?
     pub(super) fn plain_made_value(&mut self, e: &hir::Expr) -> bool {
+        self.plain_local(e).is_some_and(|l| self.plain_made(l))
+    }
+
+    /// `plain_made_value` for a store that hands the value over as one made for it alone
+    /// (`plain_made_once`).
+    pub(super) fn plain_made_once_value(&mut self, e: &hir::Expr) -> bool {
+        self.plain_local(e).is_some_and(|l| self.plain_made_once(l))
+    }
+
+    /// The variable `e` names, through a share.
+    fn plain_local(&self, e: &hir::Expr) -> Option<LocalId> {
         let mut x = e;
         while let K::Call {
             callee: hir::Callee::Intrinsic(Intrinsic::Share),
@@ -74,10 +85,13 @@ impl FnLower<'_, '_> {
         {
             match args.as_slice() {
                 [a] => x = a,
-                _ => return false,
+                _ => return None,
             }
         }
-        matches!(x.kind, K::Local(l, _) if self.plain_made(l))
+        match x.kind {
+            K::Local(l, _) => Some(l),
+            _ => None,
+        }
     }
 
     /// What the stored value `e` is made of, for `keep_value`.
