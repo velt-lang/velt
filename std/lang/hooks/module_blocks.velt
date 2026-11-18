@@ -12,7 +12,7 @@
 // in Velt's lock (sched_module.velt) on its workers, or a program without the executor (one
 // thread). At a normal end with the debug counters on, the blocks go (`dropAll`).
 
-import { addressLoad, inline, noInline, rawAlloc, rawFree } from "velt/lang/intrinsics";
+import { addressLoad, inline, noInline } from "velt/lang/intrinsics";
 import { addressCall } from "velt/lang/intrinsics/future";
 import * as m from "./sched_mem";
 
@@ -109,7 +109,7 @@ export function dropAll(): void {
     unsafe {
       addressCall(m.ld(desc + DESC_DROP), p);
     }
-    freeBlock(desc, p);
+    freeBlock(p);
   }
   if (table !== 0) {
     m.lastingRelease(table);
@@ -204,27 +204,23 @@ function alignOf(desc: usize): usize {
 }
 
 /**
- * A zeroed block of `desc`'s size, from the allocator compiled code uses (`rawAlloc`: the debug
- * runtime counts and checks it), whose blocks are aligned to 8: every descriptor's alignment is
- * at most that (a value's alignment is at most 8 in memory, a SIMD vector's too, rt_abi.md
- * "SIMD"), as a task's state's is (sched_spawn.velt).
+ * A zeroed block of `desc`'s size, from the C library, as the runtime took its blocks from its
+ * own allocator: outside the leak counters' blocks, which count what the program's values hold
+ * (a block a program leaves without dropping, as one stopped by an uncaught error in an
+ * initializer, is no leak of its values). Aligned to 16: every descriptor's alignment is at most
+ * 8 (a value's alignment in memory, a SIMD vector's too, rt_abi.md "SIMD"), as a task's state's
+ * is (sched_spawn.velt).
  */
 function allocBlock(desc: usize): usize {
   if (alignOf(desc) > 8) {
     panic("ICE: a module state block aligned to more than 8 bytes");
   }
-  const bytes = bytesOf(desc);
-  const p = rawAlloc(bytes);
-  m.clear(p, bytes);
-  return p;
+  return m.lastingZeroed(bytesOf(desc));
 }
 
-/** Gives back block `p` of `desc`, which `allocBlock` made and nothing uses any more. */
-function freeBlock(desc: usize, p: usize): void {
-  // SAFETY: `allocBlock` allocated these bytes for this descriptor; freed once (`dropAll`).
-  unsafe {
-    rawFree(p, bytesOf(desc));
-  }
+/** Gives back block `p`, which `allocBlock` made and nothing uses any more. */
+function freeBlock(p: usize): void {
+  m.lastingRelease(p);
 }
 
 /**
