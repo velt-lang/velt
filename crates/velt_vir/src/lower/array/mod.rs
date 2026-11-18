@@ -171,7 +171,13 @@ impl FnLower<'_, '_> {
     }
 
     /// Array value `{ data, len, cap }` registered as an owned temp of concrete type `ty`.
-    fn array_value(&mut self, ty: TyId, data: Operand, len: Operand, cap: Operand) -> Operand {
+    pub(super) fn array_value(
+        &mut self,
+        ty: TyId,
+        data: Operand,
+        len: Operand,
+        cap: Operand,
+    ) -> Operand {
         let a = self.cx.array_agg();
         let t = self.temp(Ty::Agg(a));
         self.assign(Place::local(t), Rvalue::Aggregate(a, vec![data, len, cap]));

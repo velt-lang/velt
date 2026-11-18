@@ -1,0 +1,130 @@
+// velt/fs (internal): `MappedFile`, a file's contents as memory (`mmap`): the system reads a
+// page from the disk when it is first touched and may drop it again when memory is short, so
+// a program works on files larger than memory without reading or copying them.
+
+import { addressArray } from "velt/lang/intrinsics";
+import { adviseMap, closeFd, fstatFd, lastError, mapRead, openPath } from "#fd-system";
+import { cPath } from "velt/fs/fd/args";
+import { isMac } from "velt/fs/fd/system";
+import { osError } from "velt/fs/errors";
+
+/** How a range of a `MappedFile` will be read (`advise`). */
+export type MapAdvice = "normal" | "random" | "sequential" | "willneed";
+
+/**
+ * A file mapped into memory, read-only. `bytes` is the whole file as a `shared<u8[]>`: it is
+ * read like any byte array (indexing, `subarray`, the SIMD loads) and can be handed to every
+ * task without a copy, and `f32s` gives a range of it as floats. Nothing is read when the
+ * file is opened; a page comes from the disk when it is first touched.
+ *
+ * The mapping stays for the rest of the program (it costs address space, not memory), so the
+ * arrays stay valid however long they are kept. Changing the file's bytes while it is mapped
+ * changes what the arrays read, and cutting the file short makes reading the cut pages stop
+ * the program: map files nothing else writes.
+ */
+export class MappedFile {
+  /** The file's bytes. */
+  readonly bytes: shared<u8[]>;
+  private readonly address: usize;
+
+  private constructor(address: usize, bytes: shared<u8[]>) {
+    this.address = address;
+    this.bytes = bytes;
+  }
+
+  /** Maps the file at `path` (an `IoError` when it cannot be opened or mapped). */
+  static open(path: string): MappedFile {
+    const fd = openPath(cPath(path), isMac() ? 0x1000000 : 0x80000, 0); // O_RDONLY | O_CLOEXEC
+    if (fd < 0) {
+      throw osError(lastError(), "open", path);
+    }
+    const st = fstatFd(fd);
+    if (st == null) {
+      const e = lastError();
+      closeFd(fd);
+      throw osError(e, "fstat", path);
+    }
+    const len = st.st_size as usize;
+    if (len == 0) {
+      // An empty file has nothing to map (`mmap` refuses a length of 0).
+      closeFd(fd);
+      return new MappedFile(0, shared([]));
+    }
+    const address = mapRead(fd, len);
+    const e = address == 0 ? lastError() : 0;
+    // The mapping keeps the file; the descriptor is not needed any more.
+    closeFd(fd);
+    if (address == 0) {
+      throw osError(e, "mmap", path);
+    }
+    // SAFETY: `address` is a mapping of `len` readable bytes that is never unmapped, and the
+    // array is only ever read: it leaves this function as a `shared<u8[]>`.
+    const bytes: u8[] = unsafe { addressArray<u8>(address, len) };
+    return new MappedFile(address, shared(bytes));
+  }
+
+  /** The file's size in bytes when it was mapped. */
+  get length(): number {
+    return this.bytes.length as number;
+  }
+
+  /**
+   * The `count` little-endian `f32` from byte `byteOffset`, as an array over the mapping (no
+   * copy). `RangeError` when the range is not inside the file or `byteOffset` is not a
+   * multiple of 4.
+   */
+  f32s(byteOffset: number, count: number): shared<f32[]> {
+    const size = this.bytes.length as number;
+    if (
+      !Number.isInteger(byteOffset) ||
+      !Number.isInteger(count) ||
+      byteOffset < 0 ||
+      count < 0 ||
+      byteOffset % 4 != 0 ||
+      byteOffset + count * 4 > size
+    ) {
+      throw new RangeError(
+        `f32s(${byteOffset}, ${count}) is not a range of 4-byte floats inside the ${size} mapped bytes`,
+      );
+    }
+    if (count == 0) {
+      return shared([]);
+    }
+    // SAFETY: the range is inside the mapping (checked above), which is page-aligned, so a
+    // multiple of 4 from its start is aligned for `f32`; the mapping is never unmapped, and the
+    // array is only ever read: it leaves as a `shared<f32[]>`.
+    const xs: f32[] =
+      unsafe { addressArray<f32>(this.address + (byteOffset as usize), count as usize) };
+    return shared(xs);
+  }
+
+  /**
+   * Tells the system how the `length` bytes from `byteOffset` (the whole file by default) will
+   * be read: `"sequential"` reads ahead more, `"random"` not at all, `"willneed"` starts
+   * reading them now, `"normal"` is the default. A hint: it never changes what is read.
+   */
+  advise(advice: MapAdvice, byteOffset: number = 0, length: number = -1) {
+    const size = this.bytes.length as number;
+    const len = length < 0 ? size - byteOffset : length;
+    if (
+      !Number.isInteger(byteOffset) ||
+      !Number.isInteger(len) ||
+      byteOffset < 0 ||
+      len < 0 ||
+      byteOffset + len > size
+    ) {
+      throw new RangeError(
+        `advise: ${byteOffset}..${byteOffset + len} is not inside the ${size} mapped bytes`,
+      );
+    }
+    if (len == 0) {
+      return;
+    }
+    // `madvise` takes whole pages from a page's start: round the start down (16 KiB covers
+    // every page size in use).
+    const start = byteOffset - (byteOffset % 16384);
+    const code: i32 =
+      advice == "random" ? 1 : advice == "sequential" ? 2 : advice == "willneed" ? 3 : 0;
+    adviseMap(this.address + (start as usize), (byteOffset - start + len) as usize, code);
+  }
+}

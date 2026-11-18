@@ -1,0 +1,109 @@
+// velt/fs (tests): `MappedFile`: the mapping reads as the file's bytes, alone and from other
+// tasks, and its float ranges are checked.
+import { closeSync, MappedFile, openSync, unlinkSync, writeSync } from "velt/fs";
+import { platform, tmpdir } from "velt/os";
+import { u8x16 } from "velt/simd";
+import { describe, expect, it } from "velt/test";
+
+const POSIX = platform() == "darwin" || platform() == "linux";
+
+function write(name: string, bytes: u8[]): string {
+  const path = `${tmpdir()}/velt-mapped-${Date.now()}-${Math.floor(Math.random() * 1e9)}-${name}`;
+  const fd = openSync(path, "w");
+  if (bytes.length > 0) {
+    writeSync(fd, bytes, 0, bytes.length as number, 0);
+  }
+  closeSync(fd);
+  return path;
+}
+
+function pattern(n: number): u8[] {
+  const bytes: u8[] = Buffer.alloc(n as usize);
+  for (let i = 0; i < n; i++) {
+    bytes[i] = (i % 251) as u8;
+  }
+  return bytes;
+}
+
+async function total(bytes: shared<u8[]>, from: i64, to: i64): Promise<i64> {
+  let s: i64 = 0;
+  for (let i = from; i < to; i++) {
+    s += bytes[i] as i64;
+  }
+  return s;
+}
+
+describe("MappedFile", () => {
+  it("reads the file's bytes without owning them", () => {
+    if (!POSIX) {
+      return;
+    }
+    const data = pattern(70000);
+    const path = write("bytes", data);
+    const m = MappedFile.open(path);
+    expect(m.length).toBe(70000);
+    expect(m.bytes[0]).toBe(0);
+    expect(m.bytes[69999]).toBe(data[69999]);
+    expect(u8x16.load(m.bytes, 65536).lane(3)).toBe(data[65539]);
+    m.advise("sequential");
+    m.advise("willneed", 4096, 100);
+    // A copy is an array of its own.
+    const copy: u8[] = [...m.bytes];
+    copy[0] = 9;
+    expect(m.bytes[0]).toBe(0);
+    expect(copy.length).toBe(70000);
+    unlinkSync(path);
+  });
+
+  it("is read by other tasks without a copy", async () => {
+    if (!POSIX) {
+      return;
+    }
+    const data = pattern(50000);
+    const path = write("tasks", data);
+    const m = MappedFile.open(path);
+    const parts = await Promise.all([
+      spawn(total(m.bytes, 0, 20000)),
+      spawn(total(m.bytes, 20000, 50000)),
+    ]);
+    let want: i64 = 0;
+    for (const b of data) {
+      want += b as i64;
+    }
+    expect(parts[0] + parts[1]).toBe(want);
+    unlinkSync(path);
+  });
+
+  it("gives a range of floats, checked", () => {
+    if (!POSIX) {
+      return;
+    }
+    const data: u8[] = Buffer.alloc(24);
+    // 1.5 and -2 as little-endian f32 at bytes 8 and 12.
+    data.set([0, 0, 0xc0, 0x3f, 0, 0, 0, 0xc0], 8);
+    const path = write("floats", data);
+    const m = MappedFile.open(path);
+    const xs = m.f32s(8, 2);
+    expect(xs.length).toBe(2);
+    expect(xs[0]).toBe(1.5);
+    expect(xs[1]).toBe(-2);
+    expect(m.f32s(24, 0).length).toBe(0);
+    expect(() => m.f32s(2, 1)).toThrow("not a range of 4-byte floats");
+    expect(() => m.f32s(20, 2)).toThrow("not a range of 4-byte floats");
+    expect(() => m.f32s(-4, 1)).toThrow("not a range of 4-byte floats");
+    expect(() => m.advise("random", 0, 25)).toThrow("is not inside the 24 mapped bytes");
+    unlinkSync(path);
+  });
+
+  it("maps an empty file as no bytes, and reports a missing one", () => {
+    if (!POSIX) {
+      return;
+    }
+    const path = write("empty", []);
+    const m = MappedFile.open(path);
+    expect(m.length).toBe(0);
+    m.advise("normal");
+    unlinkSync(path);
+    expect(() => MappedFile.open(path)).toThrow("ENOENT");
+  });
+});

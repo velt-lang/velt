@@ -51,6 +51,7 @@ export {
 export { Dirent } from "velt/fs/dirent";
 export { Stats } from "velt/fs/stats";
 export { FileReader } from "velt/fs/file_reader";
+export { MapAdvice, MappedFile } from "velt/fs/mapped_file";
 export { FileWriter } from "velt/fs/file_writer";
 export { OpenReadOptions } from "velt/fs/open_read_options";
 export { openRead, openWrite, OpenWriteOptions } from "velt/fs/stream";
