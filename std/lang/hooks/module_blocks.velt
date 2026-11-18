@@ -89,6 +89,13 @@ export function ready(state: usize, n: u64): void {
 export function dropAll(): void {
   const table = TABLE.load("relaxed") as usize;
   const n = COUNT.load("relaxed") as usize;
+  // Taken out first, as the runtime took its list: drop glue that reaches module state again
+  // makes a block of its own in a table of its own, and never meets one being dropped.
+  TABLE.store(0, "relaxed");
+  COUNT.store(0, "relaxed");
+  CAP.store(0, "relaxed");
+  DESC.store(0, "relaxed");
+  READY.store(0, "relaxed");
   for (let i: usize = 0; i < n; i++) {
     const at = table + i * ENTRY;
     // A program that stops before its root file's statements reached each declaration leaves
@@ -104,9 +111,9 @@ export function dropAll(): void {
     }
     freeBlock(desc, p);
   }
-  COUNT.store(0, "relaxed");
-  DESC.store(0, "relaxed");
-  READY.store(0, "relaxed");
+  if (table !== 0) {
+    m.lastingRelease(table);
+  }
 }
 
 /** Makes entry `at` the block reached now (`DESC`, `BLOCK`, `READY`): its address. */

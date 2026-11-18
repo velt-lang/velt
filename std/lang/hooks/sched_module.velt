@@ -32,19 +32,16 @@ const HELD = new ThreadLocal<u32>(0);
 
 /** `velt_rt_module_state`: the block, to reach slot `slot` of the program's descriptor `desc`. */
 export function state(desc: usize, slot: u64): usize {
-  const e = t.here();
-  // No worker runs yet (the program's start, on this thread alone): nothing to lock.
-  if (e !== 0 && HELD.get() === NOT_HELD) {
-    take(e);
+  if (HELD.get() === NOT_HELD) {
+    take(t.here());
   }
   return mb.state(desc, slot);
 }
 
 /** `velt_rt_module_block`: the block without the slot check (the root file's `main`). */
 export function block(desc: usize): usize {
-  const e = t.here();
-  if (e !== 0 && HELD.get() === NOT_HELD) {
-    take(e);
+  if (HELD.get() === NOT_HELD) {
+    take(t.here());
   }
   return mb.block(desc);
 }
@@ -67,9 +64,18 @@ export function dropAtExit(): void {
   mb.dropAll();
 }
 
-/** Takes the lock for worker `e`'s task being polled (touched from now on), or outside a task. */
+/**
+ * Takes the lock for worker `e`'s task being polled (touched from now on), or outside a task: on
+ * a worker between polls, or on a thread no worker runs on (`e` 0: the program's start, whose
+ * initializers may start the executor, until it hands over; a C library's thread, which waits
+ * for the tasks as the runtime's lock made it).
+ */
 function take(e: usize): void {
   lock();
+  if (e === 0) {
+    HELD.set(OUTSIDE);
+    return;
+  }
   const k = m.ld(e + t.E_CURRENT);
   if (k !== 0) {
     t.flags(k, t.TOUCHED, 0);
