@@ -1,6 +1,6 @@
 //! Spreads of values whose fields are known only per instantiation, and conversions between
 //! types of a generic body that are one object type at every instantiation (#350;
-//! `crate::generic_spread`, hir_encodings.md "Spreads and conversions in generic bodies").
+//! `crate::generic_spread`, hir_encodings.md "Spreads in generic bodies").
 
 use velt_syntax::ast;
 

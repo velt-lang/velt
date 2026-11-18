@@ -270,7 +270,7 @@ fn code_unit_positions() {
 
 #[test]
 fn half_pair_paths_match_js() {
-    // The examples of docs/internals/design/strings.md "Design" (node 22).
+    // The examples of docs/internals/design/strings.md "Semantics" (node 22).
     let (hi, lo) = (wtf8(&[0xD83D]), wtf8(&[0xDE00]));
     let emoji = lit("😀");
     unsafe {

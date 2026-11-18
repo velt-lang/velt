@@ -1,5 +1,5 @@
 {
-  "//": "The baseline of docs/internals/design/tsx.md \"Sharing components with the client\". The oracle (crates/velt_tscompat/tests/oracle.rs) extends it with the files to check.",
+  "//": "The baseline of docs/internals/design/tsx.md \"The common subset\". The oracle (crates/velt_tscompat/tests/oracle.rs) extends it with the files to check.",
   "compilerOptions": {
     "strict": true,
     "target": "ES2022",

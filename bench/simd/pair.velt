@@ -6,7 +6,7 @@
 //   pair one    the one-array kernel
 //
 // Prints a checksum. The kernel is called through a function value chosen at run time: nothing
-// inlines it or sees the lengths. pair.sh also builds this with `i8[]` boxed (docs/internals/design/semantics.md
+// inlines it or sees the lengths. pair.sh also builds this with `i8[]` boxed (semantics-stage2.md
 // 3.1), where the second array is a plain pointer and the merged test starts with a null test.
 import { i8x16, i32x4 } from "velt/simd";
 import { args } from "velt/process";

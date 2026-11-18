@@ -1,4 +1,4 @@
-//! Promotion of async frame slots into locals.
+//! Promotion of async frame slots into locals (FINDINGS 8.2, part 2).
 //!
 //! A local of an `async` function that lives across an `await` is a field of the state struct
 //! (the *frame*), which the poll function `f$poll(state, cx)` reaches through its first param

@@ -1,7 +1,7 @@
 //! Which counted types can be part of a reference cycle (docs/internals/design/cycles.md
-//! "Cycle-capable types"): those on a cycle of the "may own a strong reference to" graph,
-//! including the edges through closures, interface values, class hierarchies, uniquely owned
-//! objects and weak maps' entries. Counted types that cannot reach themselves stay out.
+//! section 1): those on a cycle of the "may own a strong reference to" graph, including the
+//! edges through closures, interface values, class hierarchies, uniquely owned objects and
+//! weak maps' entries. Counted types that cannot reach themselves stay out.
 
 mod no_window;
 mod test_dir;

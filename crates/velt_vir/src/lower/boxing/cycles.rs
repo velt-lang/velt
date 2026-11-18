@@ -1,5 +1,5 @@
-//! Cycle-capable types (docs/internals/design/cycles.md "Cycle-capable types"): the counted
-//! blocks that may be part of a reference cycle, the only ones the cycle collector will look at.
+//! Cycle-capable types (docs/internals/design/cycles.md section 1): the counted blocks that may
+//! be part of a reference cycle, the only ones the cycle collector will look at.
 //!
 //! A cycle needs an object with two owners, so it contains at least one counted block: an
 //! object of a counted type, or one of the blocks counted whatever their type (closure

@@ -29,7 +29,7 @@
 //! An unknown callee is not a boundary itself (#2726): its call runs on this task. A callback it
 //! keeps and later runs on another thread gets there through a boundary (a spawn, a channel, a
 //! settled promise, `shared(...)`), whose transfer copies what is still shared (the task-creation
-//! rule, docs/internals/design/semantics.md "Threads"). A value of unknown origin keeps the type it had where it flowed in, so a
+//! rule, docs/internals/design/semantics-stage2.md §6). A value of unknown origin keeps the type it had where it flowed in, so a
 //!   generic parameter that crosses brings its callers' concrete types. A boundary inside a
 //!   library (std, a package) reaches the program's closures only through values the program
 //!   hands to the library ([`heap_reaches`]): the types of what the library itself makes and

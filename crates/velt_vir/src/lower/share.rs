@@ -1,4 +1,4 @@
-//! Sharing (docs/internals/design/semantics.md "Operations"): another reference to a
+//! Sharing (semantics stage 2, docs/design/semantics-stage2.md §3.2): another reference to a
 //! value — `Intrinsic::Share`, and every place lowering copies a borrowed value into an owned
 //! one. Counted objects get a count increment; value types are copied with each part shared;
 //! function values share their environment. A share of a reference type that is not counted

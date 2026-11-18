@@ -1,6 +1,6 @@
 //! Object spreads and conversions in generic bodies whose fields are known only per
-//! instantiation (#350, docs/internals/design/deferred-types.md "Values of deferred types
-//! in a generic body"):
+//! instantiation (#350, docs/internals/design/deferred-types.md "Object literals and spreads at
+//! a deferred type"):
 //!
 //! - `{ ...t, $set }` with `t: T` is the deferred type `TyOp::Spread` over its parts' types (each
 //!   explicit property a one-field object type), and its value is an `Intrinsic::SpreadObject`

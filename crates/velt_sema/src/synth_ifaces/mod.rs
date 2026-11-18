@@ -17,7 +17,7 @@
 //! Interface values convert to an interface whose every member they have with the same type
 //! (a part of an intersection, a `Pick` of it, an interface it extends): [`Ctx::iface_upcast`]
 //! records the pair, and the value is an `Upcast` keeping the same object
-//! (hir_encodings.md "Interface intersections and upcasts").
+//! (hir_encodings.md "Interface upcasts").
 
 mod upcasts;
 

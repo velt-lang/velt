@@ -1,4 +1,4 @@
-# A/B gate for language changes (docs/internals/design/semantics.md "Runtime cost"): builds every bench/*.velt
+# A/B gate for language changes (docs/internals/design/semantics.md "Gates"): builds every bench/*.velt
 # with two Velt compilers (LLVM release), runs the executables interleaved (A B A B ...) so both
 # see the same machine state, and prints the median wall-clock time of each and the change.
 #

@@ -30,7 +30,7 @@
 //!    reachable through no other param, and `Borrow` params never alias a `BorrowMut`/`Owned`
 //!    one. Lowering sets them for user functions from `PassMode` (`BorrowMut` aggregate or
 //!    class object → `noalias`, only when values of the type have no other owners: not counted
-//!    and never borrowed inside a counted object, docs/internals/design/semantics.md "`noalias`, `readonly` and exclusivity";
+//!    and never borrowed inside a counted object, docs/design/semantics-stage2.md §3.4;
 //!    `Borrow` aggregate or class object → `readonly` unless the value holds a `Mutex` or an
 //!    `Atomic` in its own memory, or the
 //!    param is written (`LocalDef::mutable`), and `frozen` under the same conditions except

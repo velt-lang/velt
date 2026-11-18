@@ -37,7 +37,7 @@
 //!
 //! **The second array may be null where the first test fails.** The two tests never read `_b`
 //! there, so the rewrite must not either. A field holding an array that something else holds is a
-//! pointer (its type is boxed, docs/internals/design/semantics.md "Which types are counted"), null until it is assigned: read during
+//! pointer (its type is boxed, semantics-stage2.md 3.1), null until it is assigned: read during
 //! construction, by the constructor or a method or override it calls, it reaches a function with no
 //! retain and no test (`class D extends B { x: i8[] = shared; ... }` is `{ ptr@0, bool@8, ptr@16 }`).
 //! The VIR can't see this, as `_b` is a plain param. So the rewrite tests `_b` first, in the VIR:

@@ -26,7 +26,7 @@ MAX_CONNS = int(os.environ.get("MAX_CONNS", "15000"))
 
 RUST = os.path.join(HERE, "rust/target/release/ws-bench-rust")
 # name: (command, extra environment). The default run is velt node bun rust-raw rust-hyper; the
-# others are for digging into Velt's numbers.
+# others are for digging into Velt's numbers (README.md "Investigating").
 SERVERS = {
     "velt": ([os.path.join(WORK, "velt-server")], {}),
     "node": (["node", os.path.join(HERE, "node/server.mjs")], {}),

@@ -1,4 +1,4 @@
-// Reproduction of a quadratic join (not a benchmark): joining n tokio JoinHandles or n
+// Reproduction for bench/FINDINGS.md §7 (not a benchmark): joining n tokio JoinHandles or n
 // `sleep`s through `FuturesUnordered` (what `velt_rt_all` does for `Promise.all` over an array)
 // is quadratic when the join runs inside a tokio task, and linear when the join is wrapped in
 // `tokio::task::unconstrained` or charges the budget itself (`budgeted`, the proposal), or when

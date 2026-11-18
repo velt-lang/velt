@@ -5,9 +5,9 @@
 //! nothing in a build yet: steps 2-4 of #2161 consume it.
 //!
 //! - **Unit and storage** ([`store`]): one entry per std package (`std/<module>/`, a folder with
-//!   an `index.velt`, with the files of its implementation folders; build-architecture.md "Units", open
+//!   an `index.velt`, with the files of its implementation folders; package-cache.md "Units", open
 //!   question 2 answered per package), of kind [`KIND`]: the per-package interface layer
-//!   (build-architecture.md "A unit's interface"), of which this index is the first fields. #2236's step 4 adds the
+//!   (package-cache.md layer 1), of which this index is the first fields. #2236's step 4 adds the
 //!   checked signatures and summaries to the same entry, under the same kind, so std is described
 //!   once. The key is the compiler, the encoding's [`FORMAT`], the package's path and its files'
 //!   paths and contents, as the `std-ast` entries are keyed ([`crate::std_ast`]).

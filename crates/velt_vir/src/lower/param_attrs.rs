@@ -21,7 +21,7 @@
 //! - every pointer to a value → `nonnull` + `dereferenceable(size)`;
 //! - a poll function's frame → `nonnull` + `dereferenceable(frame size)` ([`Cx::poll_param_attrs`]).
 //!
-//! **Class objects** (every class-typed param, not only `this`). A class value
+//! **Class objects** (every class-typed param, not only `this`; FINDINGS 8.1). A class value
 //! is the pointer to its object, and the attributes describe the object's own bytes (its
 //! fields; objects it points to are other memory). An object has exactly one owner (language
 //! §9.1), so a second pointer to it exists only as a borrow the call site can see: the same

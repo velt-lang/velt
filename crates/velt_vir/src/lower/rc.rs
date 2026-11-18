@@ -1,4 +1,4 @@
-//! Reference counts of counted objects (docs/internals/design/semantics.md "Which types are counted"):
+//! Reference counts of counted objects (semantics stage 2, docs/design/semantics-stage2.md §3):
 //! a counted object is a heap block `[count: u64][payload]` whose value is the address of the
 //! payload, so a pointer to it is exactly what the borrow ABI passes for an inline value. The
 //! count is plain (non-atomic): counted objects never cross threads (§6). Inline code only — no

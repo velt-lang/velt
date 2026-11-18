@@ -1,4 +1,4 @@
-//! Boxed values (docs/internals/design/semantics.md "Which types are counted"): an array or object
+//! Boxed values (semantics stage 2, docs/design/semantics-stage2.md §3.1): an array or object
 //! type that the program shares is stored as a counted box — the value is a `Ptr` to the
 //! inline value it used to be, with the count in front. A pointer to the inline value is what
 //! borrows pass anyway, so only creating, dropping and deep-copying boxed values differs; every

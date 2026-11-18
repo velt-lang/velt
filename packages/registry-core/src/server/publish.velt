@@ -90,7 +90,7 @@ function requirements(m: Manifest): Map<string, string> {
   for (const [dep, spec] of m.dependencies) {
     if (spec.simple == "workspace") {
       // Publishing members, with `"workspace"` replaced by versions, is planned
-      // (docs/internals/design/workspaces.md "Not yet implemented").
+      // (docs/internals/design/workspaces.md "Publishing").
       throw new Refusal(
         400,
         `cannot publish \`${m.name}\`: dependency \`${dep}\` is \`"workspace"\`; publishing members of a workspace is not supported yet`,

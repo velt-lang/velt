@@ -1,5 +1,5 @@
 //! The scalar math operations: what each `velt_rt_math_*`, `velt_rt_pow_*` and `velt_math_*`
-//! extern means (rt_abi.md "Math operations"), and what every runtime function may do to memory
+//! extern means (rt_abi.md "Math"), and what every runtime function may do to memory
 //! ([`Effects`]).
 //!
 //! Those named `velt_rt_*` are real runtime functions (velt_rt's `math.rs`), which are the

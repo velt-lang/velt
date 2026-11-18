@@ -292,8 +292,8 @@ struct Cx<'h> {
     facts_only: bool,
     /// Record the facts only the cycle analysis reads (closure environments by key, interface
     /// tables, generator states, where values are made: boxing/cycles*.rs). Set under
-    /// `VELT_DEBUG_COUNTED`, the analysis's only user until the collector of
-    /// docs/internals/design/cycles.md is built, so other compiles do none of it.
+    /// `VELT_DEBUG_COUNTED`, the analysis's only user until step 5 of
+    /// docs/internals/design/cycles.md, so other compiles do none of it.
     cycle_facts: bool,
     /// The functions of this facts-only pass whose view loops are left to version once the
     /// counted types are complete, and those of the functions being built (deferred_versions.rs).

@@ -1,6 +1,6 @@
 // particles_mut.velt plus one shared `Vec2` (`const start = [pos[0]]` keeps a second reference
 // to an element): an object type whose fields are assigned and that is shared anywhere in the
-// program becomes a counted heap object everywhere (docs/internals/design/semantics.md "Which types are counted"), so every element of
+// program becomes a counted heap object everywhere (semantics-stage2 §3.1), so every element of
 // `pos` and `vel` is a pointer to its own block. An immutable `struct` cannot reach this state.
 type Vec2 = { x: number; y: number };
 

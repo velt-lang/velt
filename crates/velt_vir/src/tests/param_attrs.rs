@@ -45,7 +45,7 @@ fn attributes_follow_pass_modes() {
         ..mutable
     };
     // A class value is the object pointer: the attributes describe the object (8 bytes: `n`),
-    // borrowed mutably / shared — for `this` and every other class-typed param.
+    // borrowed mutably / shared — for `this` and every other class-typed param (FINDINGS 8.1).
     let object = |noalias| ParamAttrs {
         noalias,
         readonly: !noalias,

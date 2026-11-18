@@ -1,4 +1,4 @@
-//! Runtime externs and boxed types (docs/internals/design/semantics.md "Extern ABI").
+//! Runtime externs and boxed types (semantics stage 2, docs/design/semantics-stage2.md §3.5).
 //! `velt_rt` and native libraries read and write values in their unboxed ("foreign") layout: an
 //! array is its `{ data, len, cap }` header with elements in their foreign layout, an object its
 //! fields. When a type in an extern signature contains a boxed array or object, arguments are
