@@ -1,0 +1,45 @@
+// requires: unix
+// Node's `ERR_OUT_OF_RANGE` messages of the fd API show an integer beyond 2^32 with `_` between
+// groups of three digits (#3212); a file descriptor is checked another way and shown as it is.
+// This program prints what `node` prints for the same calls (fs_fd_range_messages.mjs).
+import * as fs from "velt/fs";
+import { tmpdir } from "velt/os";
+
+function attempt(f: () => number) {
+  try {
+    console.log(f());
+  } catch (e) {
+    console.log(e.message);
+  }
+}
+
+function main() {
+  const path = `${tmpdir()}/velt-golden-fd-range-messages-${process.pid}`;
+  fs.writeFileSync(path, "0123456789");
+  const fd = fs.openSync(path, "r+");
+  const buf = Buffer.alloc(10);
+
+  // Beyond 2^32: digits in groups of three.
+  attempt(() => fs.readSync(fd, buf, 0, 1, 2 ** 63));
+  attempt(() => fs.readSync(fd, buf, 0, 1, 2 ** 53));
+  attempt(() => fs.readSync(fd, buf, 0, 1, -(2 ** 40)));
+  attempt(() => fs.readSync(fd, buf, 2 ** 60, 1, 0));
+  attempt(() => fs.writeSync(fd, buf, 2 ** 40, 1, 0));
+  attempt(() => fs.writeSync(fd, buf, 0, 2 ** 33, 0));
+  attempt(() => fs.readSync(2 ** 40, buf, 0, 1, 0));
+  attempt(() => fs.readSync(1.5, buf, 0, 1, 0));
+  attempt(() => {
+    fs.closeSync(2 ** 40);
+    return 0;
+  });
+  // One past 2^32 is separated; 2^32 itself and smaller values are not.
+  attempt(() => fs.writeSync(fd, buf, 4294967297, 1, 0));
+  attempt(() => fs.writeSync(fd, buf, 4294967296, 1, 0));
+  attempt(() => fs.writeSync(fd, buf, 0, 12345, 0));
+  attempt(() => fs.readSync(fd, buf, 0, 1, -2));
+  // Not an integer: shown as it is.
+  attempt(() => fs.readSync(fd, buf, 0, 1, 4294967297.5));
+
+  fs.closeSync(fd);
+  fs.unlinkSync(path);
+}
