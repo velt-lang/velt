@@ -228,3 +228,32 @@ fn a_layout_the_headers_change_is_refused() {
         assert!(out.contains(want), "missing `{want}` in:\n{out}");
     }
 }
+
+/// A pointer to a defined struct that isn't the declaration's says to declare the struct, by
+/// the name already declared for that definition if there is one, not `declare c type`; a
+/// struct only declared is still a `declare c type`.
+#[test]
+fn a_pointer_to_another_struct_names_the_struct_to_declare() {
+    let Some(_zig) = zig() else { return };
+    let dir = test_dir::TestDir::new();
+    let header = "#include <stdint.h>\ntypedef struct point { int32_t x; int32_t y; } point_t;\nstruct other { int32_t a; };\nstruct hidden;\nvoid use_other(struct other *p);\nvoid use_other_t(point_t *p);\nvoid use_hidden(struct hidden *p);\nstruct lone { int32_t a; };\nvoid use_lone(struct lone *p);\n";
+    let lib = "declare c struct point { x: i32; y: i32; }\ndeclare c struct other { a: i32; }\ndeclare c(\"geo\") function use_other(p: Ptr<point>): void;\ndeclare c(\"geo\") function use_other_t(p: Ptr<other>): void;\ndeclare c(\"geo\") function use_hidden(p: Ptr<point>): void;\ndeclare c(\"geo\") function use_lone(p: Ptr<point>): void;\n";
+    project(dir.path(), header, lib);
+    let o = check(dir.path(), LINUX);
+    let out = output(&o);
+    assert!(!o.status.success(), "{out}");
+    for want in [
+        "parameter 1 of C function `use_other` is `struct other *` in geo.h:5, not the declaration's `Ptr<point>`",
+        "note: it points at C struct `other`, declared as `other`: declare `Ptr<other>`",
+        "parameter 1 of C function `use_other_t` is `point_t *` in geo.h:6, not the declaration's `Ptr<other>`",
+        "note: it points at C struct `point_t`, declared as `point`: declare `Ptr<point>`",
+        "note: it points at C type `hidden`: declare `Ptr<hidden>`, with `declare c type hidden;`",
+        "note: it points at C struct `lone`: declare `Ptr<lone>`, with `declare c struct lone { … }`",
+    ] {
+        assert!(out.contains(want), "missing `{want}` in:\n{out}");
+    }
+    assert!(
+        !out.contains("declare c type other") && !out.contains("declare c type point_t"),
+        "{out}"
+    );
+}

@@ -35,6 +35,8 @@ pub struct CVariable {
 /// A struct or union of the headers, as clang defines it (`RecordDecl`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CRecord {
+    /// Which definition it is: `struct tag` (`union tag`), or clang's id for one without a tag.
+    pub key: String,
     /// `union`, not `struct`.
     pub union: bool,
     /// Defined, not only declared (`struct s;`): only a definition has fields.
@@ -67,6 +69,9 @@ pub struct Headers {
     unnamed_records: HashMap<String, CRecord>,
     /// Typedef name → the struct or union without a tag it names.
     typedef_records: HashMap<String, CRecord>,
+    /// The `declare c struct`s checked with these headers, by name: a message about a pointer
+    /// to a struct names the declared one for its definition (`structs`).
+    pub declared: Vec<String>,
     /// Typedef name → the type it names, as written.
     typedefs: HashMap<String, String>,
     /// Enum tag (a typedef's name, for an enum without a tag) → what its width comes from.
@@ -281,7 +286,7 @@ impl Headers {
     /// { … } point_t;`)?
     pub fn same_record(&self, a: &str, b: &str) -> bool {
         match (self.record(a), self.record(b)) {
-            (Some((x, _)), Some((y, _))) => x == y,
+            (Some((x, _)), Some((y, _))) => x.key == y.key,
             _ => false,
         }
     }
@@ -469,8 +474,14 @@ fn record_of(node: &Value, at: String) -> CRecord {
             bitfield: f["isBitfield"] == true,
         })
         .collect();
+    let union = node["tagUsed"] == "union";
+    let key = match node["name"].as_str() {
+        Some(tag) => format!("{} {tag}", if union { "union" } else { "struct" }),
+        None => node["id"].as_str().unwrap_or_default().to_string(),
+    };
     CRecord {
-        union: node["tagUsed"] == "union",
+        key,
+        union,
         defined: node["completeDefinition"] == true,
         packed: (inner.into_iter().flatten()).any(|n| n["kind"] == "PackedAttr"),
         fields,

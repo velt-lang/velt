@@ -255,7 +255,7 @@ fn check_library(
     }
     let parsed =
         velt_toolchain::zig::zig(&home).and_then(|zig| parse(&zig, &home, root, read, zig_target));
-    let (parsed, read) = match parsed {
+    let (mut parsed, read) = match parsed {
         Ok(parsed) => parsed,
         Err(e) => {
             diags.push(
@@ -272,6 +272,10 @@ fn check_library(
             return None;
         }
     };
+    parsed.declared = (decls.iter())
+        .filter(|d| d.structure.is_some())
+        .map(|d| d.name.clone())
+        .collect();
     let windows = target.contains("windows");
     let long_bits = if windows { 32 } else { 64 };
     let before = diags.len();
