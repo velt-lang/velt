@@ -1,0 +1,215 @@
+// velt/lang/math (internal): the remainder by pi/2 of a double too large for the short
+// reduction (above 2^19 * pi/2), ported from fdlibm's k_rem_pio2.c as V8 has it
+// (src/base/ieee754.cc), for the precision `Math.sin`, `cos` and `tan` use. Copyright (C) 1993
+// by Sun Microsystems, Inc.; see NOTICE.
+
+import { floor } from "velt/lang/intrinsics";
+import { TWO_OVER_PI } from "velt/lang/math/two_over_pi";
+import { pow2 } from "velt/lang/math/words";
+
+/**
+ * `x` reduced by pi/2: `x = n*pi/2 + hi + lo` with |hi + lo| <= pi/4, where `lo` is the tail
+ * of the remainder (what `hi` rounds away). `n` holds the low bits of the quotient, with the
+ * sign of `x`.
+ */
+export struct Reduced {
+  n: i32;
+  hi: f64;
+  lo: f64;
+}
+
+// pi/2 in pieces of 24 bits.
+const PIO2: f64[] = [
+  1.57079625129699707031e+00,
+  7.54978941586159635335e-08,
+  5.39030252995776476554e-15,
+  3.28200341580791294123e-22,
+  1.27065575308067607349e-29,
+  1.22933308981111328932e-36,
+  2.73370053816464559624e-44,
+  2.16741683877804819444e-51,
+];
+
+const TWO24: f64 = 1.67772160000000000000e+07;
+const TWON24: f64 = 5.96046447753906250000e-08;
+
+// The terms of 2/pi in use at first, less one: enough for a 53-bit result with a tail.
+const JK: i32 = 4;
+
+function twoOverPi(j: i32): f64 {
+  return j < 0 || j >= 66 ? 0.0 : (TWO_OVER_PI[j as usize] as f64);
+}
+
+/**
+ * The remainder of `x = (x0 + x1 * 2^-24 + x2 * 2^-48) * 2^e0` by pi/2, where the pieces are
+ * whole numbers below 2^24 and `x0` is not 0. The product of `x` and the 24-bit digits of 2/pi
+ * is computed only around the binary point (digits further left give whole multiples of 8,
+ * which do not matter), with more digits when the fraction cancels. `n` is the quotient modulo
+ * 8, and `x` is positive.
+ */
+export function remPio2Large(x0: f64, x1: f64, x2: f64, e0: i32): Reduced {
+  const x: f64[] = [x0, x1, x2];
+  // The index of the last piece that is not 0.
+  const jx: i32 = x2 != 0.0 ? 2 : x1 != 0.0 ? 1 : 0;
+  const f: f64[] = new Array<f64>(20).fill(0.0);
+  const q: f64[] = new Array<f64>(20).fill(0.0);
+  const fq: f64[] = new Array<f64>(20).fill(0.0);
+  const iq: i32[] = new Array<i32>(20).fill(0);
+
+  // jv is the first digit of 2/pi that matters, q0 the exponent of q[0].
+  let jv = (e0 - 3) / 24;
+  if (jv < 0) {
+    jv = 0;
+  }
+  let q0 = e0 - 24 * (jv + 1);
+
+  // f[0..jx+JK] are the digits from jv - jx on, and q[i] = x[0]*f[jx+i] + … + x[jx]*f[i].
+  let j = jv - jx;
+  const m = jx + JK;
+  for (let i: i32 = 0; i <= m; i++) {
+    f[i as usize] = twoOverPi(j);
+    j++;
+  }
+  for (let i: i32 = 0; i <= JK; i++) {
+    let fw = 0.0;
+    for (j = 0; j <= jx; j++) {
+      fw += x[j as usize] * f[(jx + i - j) as usize];
+    }
+    q[i as usize] = fw;
+  }
+
+  let jz = JK;
+  let n: i32 = 0;
+  let ih: i32 = 0;
+  let z = 0.0;
+  while (true) {
+    // Distill q[] into iq[] in reverse order.
+    z = q[jz as usize];
+    let i: i32 = 0;
+    for (j = jz; j > 0; j--) {
+      const fw = ((TWON24 * z) as i32) as f64;
+      iq[i as usize] = (z - TWO24 * fw) as i32;
+      z = q[(j - 1) as usize] + fw;
+      i++;
+    }
+
+    // n is the whole part modulo 8, z the fraction.
+    z = z * pow2(q0);
+    z -= 8.0 * floor(z * 0.125);
+    n = z as i32;
+    z -= n as f64;
+    ih = 0;
+    if (q0 > 0) {
+      // Part of iq[jz-1] belongs to n.
+      i = iq[(jz - 1) as usize] >> (24 - q0);
+      n += i;
+      iq[(jz - 1) as usize] -= i << (24 - q0);
+      ih = iq[(jz - 1) as usize] >> (23 - q0);
+    } else if (q0 == 0) {
+      ih = iq[(jz - 1) as usize] >> 23;
+    } else if (z >= 0.5) {
+      ih = 2;
+    }
+
+    if (ih > 0) {
+      // The fraction is 0.5 or more: take 1 - fraction, and remember to negate.
+      n += 1;
+      let carry: i32 = 0;
+      for (i = 0; i < jz; i++) {
+        j = iq[i as usize];
+        if (carry == 0) {
+          if (j != 0) {
+            carry = 1;
+            iq[i as usize] = 0x1000000 - j;
+          }
+        } else {
+          iq[i as usize] = 0xffffff - j;
+        }
+      }
+      if (q0 == 1) {
+        iq[(jz - 1) as usize] &= 0x7fffff;
+      } else if (q0 == 2) {
+        iq[(jz - 1) as usize] &= 0x3fffff;
+      }
+      if (ih == 2) {
+        z = 1.0 - z;
+        if (carry != 0) {
+          z -= pow2(q0);
+        }
+      }
+    }
+
+    if (z != 0.0) {
+      break;
+    }
+    j = 0;
+    for (i = jz - 1; i >= JK; i--) {
+      j |= iq[i as usize];
+    }
+    if (j != 0) {
+      break;
+    }
+    // Everything cancelled: k more terms are needed.
+    let k: i32 = 1;
+    while (JK >= k && iq[(JK - k) as usize] == 0) {
+      k++;
+    }
+    for (i = jz + 1; i <= jz + k; i++) {
+      f[(jx + i) as usize] = twoOverPi(jv + i);
+      let fw = 0.0;
+      for (j = 0; j <= jx; j++) {
+        fw += x[j as usize] * f[(jx + i - j) as usize];
+      }
+      q[i as usize] = fw;
+    }
+    jz += k;
+  }
+
+  // Chop off the zero terms, or break z into 24-bit pieces.
+  if (z == 0.0) {
+    jz -= 1;
+    q0 -= 24;
+    while (iq[jz as usize] == 0) {
+      jz--;
+      q0 -= 24;
+    }
+  } else {
+    z = z * pow2(-q0);
+    if (z >= TWO24) {
+      const fw = ((TWON24 * z) as i32) as f64;
+      iq[jz as usize] = (z - TWO24 * fw) as i32;
+      jz += 1;
+      q0 += 24;
+      iq[jz as usize] = fw as i32;
+    } else {
+      iq[jz as usize] = z as i32;
+    }
+  }
+
+  // iq[] back to doubles, then times pi/2.
+  let fw = pow2(q0);
+  for (let i = jz; i >= 0; i--) {
+    q[i as usize] = fw * (iq[i as usize] as f64);
+    fw *= TWON24;
+  }
+  for (let i = jz; i >= 0; i--) {
+    fw = 0.0;
+    for (let k: i32 = 0; k <= JK && k <= jz - i; k++) {
+      fw += PIO2[k as usize] * q[(i + k) as usize];
+    }
+    fq[(jz - i) as usize] = fw;
+  }
+
+  // The sum, and its tail.
+  fw = 0.0;
+  for (let i = jz; i >= 0; i--) {
+    fw += fq[i as usize];
+  }
+  const y0 = ih == 0 ? fw : -fw;
+  fw = fq[0] - fw;
+  for (let i: i32 = 1; i <= jz; i++) {
+    fw += fq[i as usize];
+  }
+  const y1 = ih == 0 ? fw : -fw;
+  return { n: n & 7, hi: y0, lo: y1 };
+}

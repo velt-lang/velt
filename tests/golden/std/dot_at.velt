@@ -1,0 +1,90 @@
+// `dotF16At` and `dotBf16At` from velt/half and `dotI8At` from velt/simd: the dot product of a
+// range of each array is the whole-array function's number for copies of the two ranges, for
+// every count up to a few rounds at offsets that differ between the arrays; a count of 0, at the
+// end too; and a row of a flat matrix against a query.
+
+import { dotBf16, dotBf16At, dotF16, dotF16At } from "velt/half";
+import { dotI8, dotI8At } from "velt/simd";
+
+let seed: u32 = 2463534242;
+
+function next(): u32 {
+  seed = seed ^ (seed << 13);
+  seed = seed ^ (seed >>> 17);
+  seed = seed ^ (seed << 5);
+  return seed;
+}
+
+function main() {
+  const size: usize = 300;
+  const h: f16[] = [];
+  const g: f16[] = [];
+  const p: bf16[] = [];
+  const q: bf16[] = [];
+  const s: i8[] = [];
+  const t: i8[] = [];
+  for (let i: usize = 0; i < size; i++) {
+    h.push(f16.fromBits(((next() & 0x87ff) + 0x2c00) as u16));
+    g.push(f16.fromBits(((next() & 0x87ff) + 0x2c00) as u16));
+    p.push(bf16.fromBits(((next() & 0x80ff) + 0x3b00) as u16));
+    q.push(bf16.fromBits(((next() & 0x80ff) + 0x3b00) as u16));
+    s.push(((next() % 256) as i32 - 128) as i8);
+    t.push(((next() % 256) as i32 - 128) as i8);
+  }
+  let wrongF16 = 0;
+  let wrongBf16 = 0;
+  let wrongI8 = 0;
+  let lastF16: number = 0;
+  let lastBf16: number = 0;
+  let lastI8: i32 = 0;
+  for (let n: usize = 0; n <= 100; n++) {
+    const x = (next() % 150) as usize;
+    const y = (next() % 150) as usize;
+    lastF16 = dotF16At(h, x, g, y, n);
+    wrongF16 +=
+      lastF16 == dotF16(h.slice(x as i64, (x + n) as i64), g.slice(y as i64, (y + n) as i64))
+        ? 0
+        : 1;
+    lastBf16 = dotBf16At(p, x, q, y, n);
+    wrongBf16 +=
+      lastBf16 == dotBf16(p.slice(x as i64, (x + n) as i64), q.slice(y as i64, (y + n) as i64))
+        ? 0
+        : 1;
+    lastI8 = dotI8At(s, x, t, y, n);
+    wrongI8 +=
+      lastI8 == dotI8(s.slice(x as i64, (x + n) as i64), t.slice(y as i64, (y + n) as i64)) ? 0 : 1;
+  }
+  console.log("f16 counts 0 to 100: mismatches", wrongF16, "last", lastF16);
+  console.log("bf16 counts 0 to 100: mismatches", wrongBf16, "last", lastBf16);
+  console.log("i8 counts 0 to 100: mismatches", wrongI8, "last", lastI8);
+  // The whole arrays, and nothing: at the start, in the middle and at the very end.
+  console.log(
+    "whole",
+    dotF16At(h, 0, g, 0, size) == dotF16(h, g),
+    dotBf16At(p, 0, q, 0, size) == dotBf16(p, q),
+    dotI8At(s, 0, t, 0, size) == dotI8(s, t),
+  );
+  console.log(
+    "empty",
+    dotF16At(h, 0, g, 7, 0),
+    dotBf16At(p, size, q, size, 0),
+    dotI8At(s, size, t, 0, 0),
+  );
+  // Up to the last element of each.
+  console.log(
+    "to the end",
+    dotF16At(h, size - 9, g, size - 9, 9) ==
+      dotF16(h.slice((size - 9) as i64), g.slice((size - 9) as i64)),
+    dotBf16At(p, size - 33, q, 0, 33) ==
+      dotBf16(p.slice((size - 33) as i64), q.slice(0, 33 as i64)),
+    dotI8At(s, 0, t, size - 17, 17) == dotI8(s.slice(0, 17 as i64), t.slice((size - 17) as i64)),
+  );
+  // Rows of a flat 3 × 4 matrix against one query.
+  const rows: f16[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+  const query: f16[] = [1, 0.5, 0.25, 2];
+  const bytes: i8[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+  const weights: i8[] = [1, -1, 2, -2];
+  for (let r: usize = 0; r < 3; r++) {
+    console.log("row", r, dotF16At(rows, r * 4, query, 0, 4), dotI8At(bytes, r * 4, weights, 0, 4));
+  }
+}

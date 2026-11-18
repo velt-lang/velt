@@ -1,0 +1,13 @@
+10 / 4: trunc 2 ceil 3 floor 2
+-10 / 4: trunc -2 ceil -2 floor -3
+10 / -4: trunc -2 ceil -2 floor -3
+-10 / -4: trunc 2 ceil 3 floor 2
+12 / 4: trunc 3 ceil 3 floor 3
+-12 / 4: trunc -3 ceil -3 floor -3
+0 / 5: trunc 0 ceil 0 floor 0
+1 / 7: trunc 0 ceil 1 floor 0
+-1 / 7: trunc 0 ceil 0 floor -1
+7 / 1: trunc 7 ceil 7 floor 7
+8334 true true
+4503599627370497 4503599627370496 -4503599627370496 -4503599627370497
+4611686018427387904 -4611686018427387904
