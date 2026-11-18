@@ -3,13 +3,10 @@
 
 use super::js_table as js;
 use crate::str::{velt_rt_str_drop, VeltStr};
-use crate::str_array::{velt_rt_str_array_drop, VeltStrArray};
 use crate::str_ops::case::*;
 use crate::str_ops::number::*;
-use crate::str_ops::replace::*;
 use crate::str_ops::search::*;
 use crate::str_ops::slice::*;
-use crate::str_ops::split::*;
 use std::mem::MaybeUninit;
 
 /// A static (borrowed) input string.
@@ -88,29 +85,6 @@ fn slice_matches_js() {
     }
 }
 
-fn split_to_vec(s: &VeltStr, sep: &str) -> Vec<String> {
-    let mut out = MaybeUninit::<VeltStrArray>::uninit();
-    unsafe { velt_rt_str_split(s, &*heap(sep), out.as_mut_ptr()) };
-    let mut arr = unsafe { out.assume_init() };
-    let items = (0..arr.len as usize)
-        .map(|i| {
-            let piece = unsafe { &*arr.ptr.add(i) };
-            String::from_utf8(unsafe { piece.as_bytes() }.to_vec()).unwrap()
-        })
-        .collect();
-    unsafe { velt_rt_str_array_drop(&mut arr) };
-    items
-}
-
-#[test]
-fn split_matches_js() {
-    for &(s, sep, want) in js::SPLIT {
-        let got = both(s, |v| split_to_vec(v, sep).join("\u{0}"));
-        assert_eq!(got, want.join("\u{0}"), "{s:?}.split({sep:?})");
-        assert_eq!(split_to_vec(&lit(s), sep).len(), want.len());
-    }
-}
-
 #[test]
 fn trim_and_case_match_js() {
     for &(s, trim, start, end) in js::TRIM {
@@ -138,21 +112,6 @@ fn trim_and_case_match_js() {
             lower,
             "{s:?}"
         );
-    }
-}
-
-#[test]
-fn replace_matches_js() {
-    for &(s, from, to, first, all) in js::REPLACE {
-        let (f, t) = (lit(from), lit(to));
-        let got = both(s, |v| {
-            take(|o| unsafe { velt_rt_str_replace(v, &f, &t, o) })
-        });
-        assert_eq!(got, first, "{s:?}.replace({from:?}, {to:?})");
-        let got = both(s, |v| {
-            take(|o| unsafe { velt_rt_str_replace_all(v, &f, &t, o) })
-        });
-        assert_eq!(got, all, "{s:?}.replaceAll({from:?}, {to:?})");
     }
 }
 
@@ -260,12 +219,7 @@ fn code_unit_positions() {
     assert_eq!(pad("a", 5, "😀", false), u("a😀😀", &[]));
     assert_eq!(pad("a", 4, "😀", false), u("a😀~", &[0xD83D]));
     assert_eq!(pad("a", 3, "😀", true), u("😀a", &[]));
-    // split("") and replaceAll("") work per code unit: a pair splits into its halves.
-    let pieces = split_units(&lit("a😀"), &lit(""));
-    assert_eq!(pieces, [u("a", &[]), vec![0xD83D], vec![0xDE00]]);
-    let all =
-        take_units(|o| unsafe { velt_rt_str_replace_all(&lit("a😀"), &lit(""), &lit("|"), o) });
-    assert_eq!(all, u("|a|~|~|", &[0xD83D, 0xDE00]));
+    // (`split("")` and `replaceAll("")` per code unit: tests/golden/lang/string_split_replace.)
 }
 
 #[test]
@@ -278,14 +232,7 @@ fn half_pair_paths_match_js() {
         assert_eq!(velt_rt_str_char_code_at(&emoji, 1), 0xDE00);
         assert_eq!(velt_rt_str_char_code_at(&emoji, 2), -1);
     }
-    assert_eq!(
-        split_units(&lit("a😀b"), &lo),
-        [u("a~", &[0xD83D]), u("b", &[])]
-    );
-    let r = take_units(|o| unsafe { velt_rt_str_replace(&emoji, &lo, &lit("X"), o) });
-    assert_eq!(r, u("~X", &[0xD83D]));
-    let r = take_units(|o| unsafe { velt_rt_str_replace_all(&emoji, &lit(""), &lit("-"), o) });
-    assert_eq!(r, u("-~-~-", &[0xD83D, 0xDE00]));
+    // (`split`/`replace` by a lone half: tests/golden/lang/string_split_replace.)
     let slice = |s: &VeltStr, a, b| take_units(|o| unsafe { velt_rt_str_slice(s, a, b, o) });
     assert_eq!(slice(&emoji, 0, 1), vec![0xD83D]);
     assert_eq!(slice(&lit("x😀y"), 2, i64::MAX), u("~y", &[0xDE00]));
@@ -296,18 +243,6 @@ fn half_pair_paths_match_js() {
     let mut glued = unsafe { glued.assume_init() };
     assert_eq!(unsafe { glued.as_bytes() }, "😀".as_bytes());
     unsafe { velt_rt_str_drop(&mut glued) };
-}
-
-/// `s.split(sep)` as code units.
-fn split_units(s: &VeltStr, sep: &VeltStr) -> Vec<Vec<u16>> {
-    let mut out = MaybeUninit::<VeltStrArray>::uninit();
-    unsafe { velt_rt_str_split(s, sep, out.as_mut_ptr()) };
-    let mut arr = unsafe { out.assume_init() };
-    let items = (0..arr.len as usize)
-        .map(|i| super::utf16_model::wtf8_decode(unsafe { (*arr.ptr.add(i)).as_bytes() }))
-        .collect();
-    unsafe { velt_rt_str_array_drop(&mut arr) };
-    items
 }
 
 #[test]

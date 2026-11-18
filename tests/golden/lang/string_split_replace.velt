@@ -1,0 +1,101 @@
+// check: no leaks
+// `split`, `replace` and `replaceAll` with a string pattern (std/lang/string, in Velt): the
+// runtime's JS tables, `$` patterns, an empty pattern, halves of a pair (a separator or pattern
+// that is a lone surrogate, `split("")`, `replaceAll("", x)`), halves meeting at a seam (they
+// join into the pair, as in Node), and long strings in every alphabet whose pieces must join
+// back to the original. Results are printed with JSON.stringify, which escapes lone surrogates.
+// Expected output is Node's.
+const HI = String.fromCharCode(0xd83d);
+const LO = String.fromCharCode(0xde00);
+
+function q(s: string): string {
+  return JSON.stringify(s);
+}
+
+function main() {
+  const splits: string[][] = [
+    ["a,b,,c,", ","],
+    ["", ","],
+    ["", ""],
+    ["abc", ""],
+    ["héllo", ""],
+    ["a--b--c", "--"],
+    ["abc", "abc"],
+    ["abc", "x"],
+    ["aaa", "aa"],
+    [",", ","],
+    ["a b  c", " "],
+    ["xéyéz", "é"],
+    ["a😀b😀", "😀"],
+    ["a😀", ""],
+    ["a😀b", LO],
+    ["a😀b", HI],
+    [HI + "x" + LO, LO],
+    ["one, two, three", ", "],
+    ["中,文,", ","],
+  ];
+  for (const p of splits) {
+    console.log("split", q(p[0]), q(p[1]), JSON.stringify(p[0].split(p[1])));
+  }
+
+  const replaces: string[][] = [
+    ["aXbXc", "X", "-"],
+    ["abc", "", "-"],
+    ["abc", "b", "[$&]"],
+    ["abc", "b", "$`"],
+    ["abc", "b", "$'"],
+    ["abc", "b", "$$"],
+    ["abc", "b", "$1"],
+    ["abc", "b", "$<n>"],
+    ["abc", "x", "y"],
+    ["aaa", "aa", "b"],
+    ["", "", "x"],
+    ["abc", "b", "$"],
+    ["héé", "é", "e"],
+    ["a.b.c", ".", "$'$`"],
+    ["xx", "x", "$&$&"],
+    ["héllo", "", "_"],
+    ["😀", LO, "X"],
+    ["😀", "", "-"],
+    ["a😀", "", "|"],
+    ["😀😀", HI, "[$&]"],
+    ["a$b", "$", "$$$$"],
+  ];
+  for (const p of replaces) {
+    console.log("replace", q(p[0]), q(p[1]), q(p[2]), q(p[0].replace(p[1], p[2])), q(p[0].replaceAll(p[1], p[2])));
+  }
+
+  // Halves meeting at a seam join into the pair: before a match against the replacement, the
+  // replacement against what follows, and `$` pieces.
+  const seams = [
+    ("a" + HI + "-b").replace("-", LO + "x"),
+    (HI + "-" + HI + "-").replaceAll("-", LO),
+    ("x-" + LO).replace("-", HI),
+    (HI + "-" + LO).replace("-", "$'$`"),
+    (LO + HI).replaceAll("", "-"),
+  ];
+  for (const s of seams) {
+    console.log("seam", q(s), s.length, s.codePointAt(0), s.codePointAt(1));
+  }
+
+  // Long strings in each alphabet: separators at every distance, pieces joined back.
+  const alphabets = ["abcdefgh", "é中ß文", "😀🎉", "aé😀"];
+  for (const alpha of alphabets) {
+    const chars = Array.from(alpha);
+    for (const sep of [",", "::", "é", "😀", "abc"]) {
+      let s = "";
+      for (let i = 0; i < 300; i++) {
+        s += chars[i % chars.length];
+        if (i % 7 == 3 || i % 31 == 0) {
+          s += sep;
+        }
+      }
+      const parts = s.split(sep);
+      const back = parts.join(sep);
+      const r1 = s.replace(sep, "<$&>");
+      const ra = s.replaceAll(sep, "[$`]".length > 3 ? "#" : "?");
+      console.log("long", q(alpha), q(sep), parts.length, back == s, r1.length, ra.length, ra.split("#").length);
+    }
+  }
+}
+main();

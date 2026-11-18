@@ -1,0 +1,65 @@
+split "a,b,,c," "," ["a","b","","c",""]
+split "" "," [""]
+split "" "" []
+split "abc" "" ["a","b","c"]
+split "héllo" "" ["h","é","l","l","o"]
+split "a--b--c" "--" ["a","b","c"]
+split "abc" "abc" ["",""]
+split "abc" "x" ["abc"]
+split "aaa" "aa" ["","a"]
+split "," "," ["",""]
+split "a b  c" " " ["a","b","","c"]
+split "xéyéz" "é" ["x","y","z"]
+split "a😀b😀" "😀" ["a","b",""]
+split "a😀" "" ["a","\ud83d","\ude00"]
+split "a😀b" "\ude00" ["a\ud83d","b"]
+split "a😀b" "\ud83d" ["a","\ude00b"]
+split "\ud83dx\ude00" "\ude00" ["\ud83dx",""]
+split "one, two, three" ", " ["one","two","three"]
+split "中,文," "," ["中","文",""]
+replace "aXbXc" "X" "-" "a-bXc" "a-b-c"
+replace "abc" "" "-" "-abc" "-a-b-c-"
+replace "abc" "b" "[$&]" "a[b]c" "a[b]c"
+replace "abc" "b" "$`" "aac" "aac"
+replace "abc" "b" "$'" "acc" "acc"
+replace "abc" "b" "$$" "a$c" "a$c"
+replace "abc" "b" "$1" "a$1c" "a$1c"
+replace "abc" "b" "$<n>" "a$<n>c" "a$<n>c"
+replace "abc" "x" "y" "abc" "abc"
+replace "aaa" "aa" "b" "ba" "ba"
+replace "" "" "x" "x" "x"
+replace "abc" "b" "$" "a$c" "a$c"
+replace "héé" "é" "e" "heé" "hee"
+replace "a.b.c" "." "$'$`" "ab.cab.c" "ab.cabca.bc"
+replace "xx" "x" "$&$&" "xxx" "xxxx"
+replace "héllo" "" "_" "_héllo" "_h_é_l_l_o_"
+replace "😀" "\ude00" "X" "\ud83dX" "\ud83dX"
+replace "😀" "" "-" "-😀" "-\ud83d-\ude00-"
+replace "a😀" "" "|" "|a😀" "|a|\ud83d|\ude00|"
+replace "😀😀" "\ud83d" "[$&]" "[\ud83d]\ude00😀" "[\ud83d]\ude00[\ud83d]\ude00"
+replace "a$b" "$" "$$$$" "a$$b" "a$$b"
+seam "a😀xb" 5 97 128512
+seam "😀😀" 4 128512 56832
+seam "x😀" 3 120 128512
+seam "😀😀" 4 128512 56832
+seam "-\ude00-\ud83d-" 5 45 56832
+long "abcdefgh" "," 52 true 353 351 52
+long "abcdefgh" "::" 52 true 404 351 52
+long "abcdefgh" "é" 52 true 353 351 52
+long "abcdefgh" "😀" 52 true 404 351 52
+long "abcdefgh" "abc" 77 true 455 301 77
+long "é中ß文" "," 52 true 353 351 52
+long "é中ß文" "::" 52 true 404 351 52
+long "é中ß文" "é" 127 true 353 351 127
+long "é中ß文" "😀" 52 true 404 351 52
+long "é中ß文" "abc" 52 true 455 351 52
+long "😀🎉" "," 52 true 653 651 52
+long "😀🎉" "::" 52 true 704 651 52
+long "😀🎉" "é" 52 true 653 651 52
+long "😀🎉" "😀" 202 true 704 501 202
+long "😀🎉" "abc" 52 true 755 651 52
+long "aé😀" "," 52 true 453 451 52
+long "aé😀" "::" 52 true 504 451 52
+long "aé😀" "é" 152 true 453 451 152
+long "aé😀" "😀" 152 true 504 351 152
+long "aé😀" "abc" 52 true 555 451 52

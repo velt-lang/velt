@@ -17,11 +17,8 @@ use crate::hash::velt_rt_str_hash;
 use crate::str::{
     cmp_utf16, velt_rt_str_cmp, velt_rt_str_concat, velt_rt_str_drop, wtf8, BytePos, VeltStr,
 };
-use crate::str_array::{velt_rt_str_array_drop, VeltStrArray};
-use crate::str_ops::replace::*;
 use crate::str_ops::search::*;
 use crate::str_ops::slice::*;
-use crate::str_ops::split::*;
 use crate::strbuf::{velt_rt_strbuf_new, velt_rt_strbuf_push_str};
 use std::mem::MaybeUninit;
 
@@ -221,17 +218,6 @@ fn out_str(f: impl FnOnce(*mut VeltStr)) -> Vec<u16> {
     units(&r.0)
 }
 
-fn split_rt(s: &VeltStr, sep: &VeltStr) -> Vec<Vec<u16>> {
-    let mut out = MaybeUninit::<VeltStrArray>::uninit();
-    unsafe { velt_rt_str_split(s, sep, out.as_mut_ptr()) };
-    let mut arr = unsafe { out.assume_init() };
-    let items = (0..arr.len as usize)
-        .map(|i| units(unsafe { &*arr.ptr.add(i) }))
-        .collect();
-    unsafe { velt_rt_str_array_drop(&mut arr) };
-    items
-}
-
 /// One random operation on random inputs; returns a description of it and whether the runtime
 /// agreed with the model.
 fn check_one(rng: &mut Rng, alphabets: &[Alphabet]) -> Result<(), String> {
@@ -362,34 +348,9 @@ fn check_one(rng: &mut Rng, alphabets: &[Alphabet]) -> Result<(), String> {
                     model::repeat(&s, k),
                 )
             }
-            11 | 12 => {
-                let to = gen_needle(rng, &s, alphabets);
-                let rto = to_rt(rng, &to);
-                let all = rng.chance(50);
-                let got = out_str(|o| {
-                    if all {
-                        velt_rt_str_replace_all(rs, rn, &rto.0, o)
-                    } else {
-                        velt_rt_str_replace(rs, rn, &rto.0, o)
-                    }
-                });
-                let want = if all {
-                    model::replace_all(&s, &n, &to)
-                } else {
-                    model::replace(&s, &n, &to)
-                };
-                let name = if all { "replaceAll" } else { "replace" };
-                diff(
-                    format!("{}.{name}({}, {})", show(&s), show(&n), show(&to)),
-                    got,
-                    want,
-                )
-            }
-            13 => diff(
-                format!("{}.split({})", show(&s), show(&n)),
-                split_rt(rs, rn),
-                model::split(&s, &n),
-            ),
+            // `split`, `replace` and `replaceAll` are Velt code (std/lang/string), checked against
+            // Node by the golden tests/golden/lang/string_split_replace.
+            11..=13 => diff(format!("{}.length", show(&s)), rt_length(rs), s.len()),
             14 => {
                 let target = rng.below(s.len() + 8) as i64 - 2;
                 let start = rng.chance(50);

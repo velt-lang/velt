@@ -89,9 +89,10 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
 - **Which pieces share.** Exactly these runtime functions return a slice of a heap string:
   `velt_rt_str_slice` (`slice`, `substring`, `charAt`, `at`, `s[i]`),
   `velt_rt_str_trim`, `velt_rt_str_trim_start`, `velt_rt_str_trim_end`, and
-  `velt_rt_str_split` when its separator is not empty and cannot match half of a surrogate pair.
-  Every other function copies the pieces it returns: `split("")`, a split by a lone surrogate,
-  `velt_rt_str_code_points`, and the regex functions (the pieces of `match`, `exec` and `split`
+  `velt_rt_str_byte_slice` (a byte range at code point boundaries: the pieces of `split` and of
+  `replace` in std/lang/string, when the separator or pattern cannot match half of a surrogate
+  pair). Every other function copies the pieces it returns: `velt_rt_str_code_points`, and the
+  regex functions (the pieces of `match`, `exec` and `split`
   are new strings, `VeltStr::from_vec`). Those four return a slice
   when the piece is too long to be inline, at least a quarter of the buffer's capacity, and the
   buffer is below 1 GiB (2^30 bytes); otherwise it copies (inline when short).

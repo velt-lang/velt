@@ -47,12 +47,8 @@ table("SLICE", "(&str, i64, i64, &str)", slicePairs.map(([a, b]) =>
   [rs(sl), i(a), i(b), rs(b === MAX ? sl.slice(a) : sl.slice(a, b))]));
 
 // indexOf, lastIndexOf, includes, startsWith and endsWith are Velt code (#2198): their cases are
-// tests/golden/lang/string_search.velt.
-
-const splits = [["a,b,,c,", ","], ["", ","], ["", ""], ["abc", ""], ["héllo", ""], ["a--b--c", "--"],
-  ["abc", "abc"], ["abc", "x"], ["aaa", "aa"], [",", ","], ["a b  c", " "], ["xéyéz", "é"]];
-table("SPLIT", "(&str, &str, &[&str])", splits.map(([s, p]) =>
-  [rs(s), rs(p), "&[" + s.split(p).map(rs).join(", ") + "]"]));
+// tests/golden/lang/string_search.velt. split, replace and replaceAll are Velt code too (#2196):
+// tests/golden/lang/string_split_replace.velt.
 
 const ws = ["  x  ", "\t\n\u000b\f\r         　﻿x y﻿",
   "\u0085x\u0085", "", "   ", "᠎x", "x", " é "];
@@ -61,12 +57,6 @@ table("TRIM", "(&str, &str, &str, &str)", ws.map(s => [rs(s), rs(s.trim()), rs(s
 const cases = ["hello", "Straße", "ǅ", "ΑΣ ΟΔΟΣ", "İstanbul", "ﬁ", "ŉ", "ΐ", "Σ", "aΣ", "ÀÉÎ", "ǆ",
   "MiXeD 123", "", "ὈΔΥΣΣΕΎΣ", "ǰ", "Ωmega", "ß"];
 table("CASE", "(&str, &str, &str)", cases.map(s => [rs(s), rs(s.toUpperCase()), rs(s.toLowerCase())]));
-
-const reps = [["aXbXc", "X", "-"], ["abc", "", "-"], ["abc", "b", "[$&]"], ["abc", "b", "$`"], ["abc", "b", "$'"],
-  ["abc", "b", "$$"], ["abc", "b", "$1"], ["abc", "b", "$<n>"], ["abc", "x", "y"], ["aaa", "aa", "b"],
-  ["", "", "x"], ["abc", "b", "$"], ["héé", "é", "e"], ["a.b.c", ".", "$'$`"], ["xx", "x", "$&$&"], ["héllo", "", "_"]];
-table("REPLACE", "(&str, &str, &str, &str, &str)", reps.map(([s, a, b]) =>
-  [rs(s), rs(a), rs(b), rs(s.replace(a, b)), rs(s.replaceAll(a, b))]));
 
 const repeats = [["ab", 0], ["ab", 3], ["", 5], ["x", 1], ["é", 2]];
 table("REPEAT", "(&str, i64, &str)", repeats.map(([s, n]) => [rs(s), String(n), rs(s.repeat(n))]));

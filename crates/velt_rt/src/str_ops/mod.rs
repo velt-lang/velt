@@ -22,7 +22,6 @@
 
 pub mod case;
 pub mod number;
-pub mod replace;
 pub mod search;
 pub mod slice;
 pub mod split;

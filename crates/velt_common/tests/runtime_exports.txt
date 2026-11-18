@@ -310,10 +310,7 @@ velt_rt velt_rt_str_own
 velt_rt velt_rt_str_pad_end
 velt_rt velt_rt_str_pad_start
 velt_rt velt_rt_str_repeat
-velt_rt velt_rt_str_replace
-velt_rt velt_rt_str_replace_all
 velt_rt velt_rt_str_slice
-velt_rt velt_rt_str_split
 velt_rt velt_rt_str_to_lower
 velt_rt velt_rt_str_to_number
 velt_rt velt_rt_str_to_upper
