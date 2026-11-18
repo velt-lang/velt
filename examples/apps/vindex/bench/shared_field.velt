@@ -1,0 +1,58 @@
+// What reading a `shared` field at every call costs: each task sums the same `shared<f32[]>`
+// through a tiny function, passing either `box.data` (the field, read at each call) or a local
+// that holds it. Prints ms for 1 task and for every worker at once.
+//
+//   velt run --release bench/shared_field.velt
+import { workerCount } from "velt/task";
+
+type Box = { data: shared<f32[]>; n: usize };
+
+function at(xs: f32[], i: usize): f32 {
+  return xs[i];
+}
+
+async function viaField(box: Box, calls: i64): Promise<f64> {
+  let s: f64 = 0;
+  for (let c: i64 = 0; c < calls; c++) {
+    s += at(box.data, (c as usize) % box.n) as f64;
+  }
+  return s;
+}
+
+async function viaLocal(box: Box, calls: i64): Promise<f64> {
+  const data = box.data;
+  let s: f64 = 0;
+  for (let c: i64 = 0; c < calls; c++) {
+    s += at(data, (c as usize) % box.n) as f64;
+  }
+  return s;
+}
+
+async function time(tasks: i64, field: bool, box: Box, calls: i64): Promise<number> {
+  let best = Infinity;
+  for (let round = 0; round < 3; round++) {
+    const t = performance.now();
+    const running: Promise<f64>[] = [];
+    for (let i: i64 = 0; i < tasks; i++) {
+      running.push(spawn(field ? viaField(box, calls) : viaLocal(box, calls)));
+    }
+    await Promise.all(running);
+    best = Math.min(best, performance.now() - t);
+  }
+  return best;
+}
+
+async function main() {
+  const xs: f32[] = [];
+  for (let i = 0; i < 1024; i++) {
+    xs.push(i as f32);
+  }
+  const box: Box = { data: shared(xs), n: 1024 };
+  const calls: i64 = 20000000;
+  const w = workerCount();
+  console.log(`${calls} calls per task`);
+  console.log(`field, 1 task:   ${(await time(1, true, box, calls)).toFixed(1)} ms`);
+  console.log(`local, 1 task:   ${(await time(1, false, box, calls)).toFixed(1)} ms`);
+  console.log(`field, ${w} tasks:  ${(await time(w, true, box, calls)).toFixed(1)} ms`);
+  console.log(`local, ${w} tasks:  ${(await time(w, false, box, calls)).toFixed(1)} ms`);
+}

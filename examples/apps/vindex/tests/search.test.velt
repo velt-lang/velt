@@ -1,0 +1,84 @@
+import * as fs from "velt/fs";
+import { tmpdir } from "velt/os";
+import { build } from "../src/build";
+import { generate, groundTruth, loadAll } from "../src/gen";
+import { closeIndex, openIndex, Searcher } from "../src/index";
+import type { SearchOptions } from "../src/index";
+
+const K: i64 = 5;
+const N: i64 = 3000;
+
+async function fixture(name: string): Promise<string> {
+  const dir = `${tmpdir()}/vindex-test-${Date.now()}-${Math.floor(Math.random() * 1e9)}-${name}`;
+  // 24 dims: the kernels' 16-wide loops, 4-wide loops and scalar tails all run.
+  await generate(dir, { n: N, dim: 24, clusters: 30, queries: 20, noise: 0.3, seed: 3 });
+  await build(dir, { nlist: 16, iters: 5, samplePerList: 64, seed: 1, fan: 4 });
+  return dir;
+}
+
+export async function test_probing_every_list_and_reranking_every_row_is_exact() {
+  const dir = await fixture("exact");
+  const truth = await groundTruth(dir, K);
+  const queries = loadAll(`${dir}/queries.f32`);
+  for (const mapped of [true, false]) {
+    const ix = await openIndex(dir, mapped);
+    const s = new Searcher(ix);
+    for (let q: i64 = 0; q < 20; q++) {
+      const hits = s.search(queries, q, { k: K, nprobe: 16, rerank: N });
+      assertEq(s.scanned, N);
+      assertEq(hits.map((h) => h.key), truth.slice((q * K) as number, ((q + 1) * K) as number));
+    }
+    closeIndex(ix);
+  }
+  fs.removeSync(dir, { recursive: true });
+}
+
+export async function test_mapped_and_positioned_reads_agree_and_find_most_neighbours() {
+  const dir = await fixture("agree");
+  const truth = await groundTruth(dir, K);
+  const queries = loadAll(`${dir}/queries.f32`);
+  const mapped = await openIndex(dir, true);
+  const read = await openIndex(dir, false);
+  const a = new Searcher(mapped);
+  const b = new Searcher(read);
+  let found = 0;
+  for (let q: i64 = 0; q < 20; q++) {
+    const o: SearchOptions = { k: K, nprobe: 4, rerank: 40 };
+    const hits = a.search(queries, q, o);
+    assertEq(b.search(queries, q, o), hits);
+    assert(a.scanned < N);
+    for (const h of hits) {
+      if (truth.slice((q * K) as number, ((q + 1) * K) as number).includes(h.key)) {
+        found++;
+      }
+    }
+    // Scores are exact dot products of unit vectors, best first.
+    for (let i = 1; i < hits.length; i++) {
+      assert(hits[i - 1].score >= hits[i].score && hits[i].score <= 1.001);
+    }
+  }
+  assert(found >= 80, `recall ${found}/100`);
+  closeIndex(mapped);
+  closeIndex(read);
+  fs.removeSync(dir, { recursive: true });
+}
+
+export async function test_every_row_is_in_exactly_one_list() {
+  const dir = await fixture("lists");
+  const ix = await openIndex(dir, true);
+  const rec = (ix.dim + 4) as usize;
+  const seen: bool[] = new Array<bool>(N as number).fill(false);
+  assertEq(ix.listBytes.length as i64, N * (ix.dim + 4));
+  for (let r: usize = 0; r < (N as usize); r++) {
+    const at = r * rec;
+    const id =
+      (ix.listBytes[at] as i64) |
+      ((ix.listBytes[at + 1] as i64) << 8) |
+      ((ix.listBytes[at + 2] as i64) << 16) |
+      ((ix.listBytes[at + 3] as i64) << 24);
+    assert(id < N && !seen[id], `row ${id} twice or out of range`);
+    seen[id] = true;
+  }
+  closeIndex(ix);
+  fs.removeSync(dir, { recursive: true });
+}
