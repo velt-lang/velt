@@ -80,7 +80,7 @@ export function timerNew(e: usize, ms: i64): u64 {
  * is a worker woken for it; `O_WAKE_AT` is kept in every mode, so that a worker that finds it
  * still to come needs no look (`quiet`).
  */
-@inline
+@inline("always")
 function inserted(b: usize, e: usize, h: usize, k: u32): void {
   let cur: usize = 0;
   if (k !== lk.LK_NONE) {
@@ -182,7 +182,7 @@ export function timerFree(h: usize): void {
  * names (`H_TASK`) may end and be freed: a look reads only the tasks of queued timers
  * (sched_order_pass.velt `busy`), and `inserted` names the task again.
  */
-@inline
+@inline("always")
 function leave(h: usize): usize {
   if ((m.ld(h + l.H_STATE) | m.ld(h + l.H_WAKER)) === 0) {
     return 0;
@@ -375,7 +375,7 @@ export function busyEnded(e: usize, k: usize): void {
 }
 
 /** Has worker `e` timers to look at: sleeps, or Node's timer order? */
-@inline
+@inline("always")
 export function any(e: usize): bool {
   return m.ld(e + t.E_TIMERS) !== 0 || l.order() !== 0;
 }
@@ -388,7 +388,7 @@ export function any(e: usize): bool {
  * Read without the lock: a store that races with it is a look's or an insert's, which looks or
  * wakes a worker by its time itself.
  */
-@inline
+@inline("always")
 function quiet(b: usize, now: u64): bool {
   const w = m.load(b + l.O_WAKE_AT) as u64;
   return w !== 0 && now < w;
@@ -405,7 +405,7 @@ export function tick(e: usize): void {
  * fire, and the loop moves on, unless it waits for a time still to come (`quiet`). The deadline
  * of the first sleep of the worker left pending (0: none).
  */
-@inline
+@inline("always")
 function look(e: usize, all: bool, now: u64): u64 {
   const b = l.order();
   if (b !== 0 && quiet(b, now)) {

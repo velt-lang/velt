@@ -105,7 +105,7 @@ export function rowsBlock(state: u32[], counter: u32): Rows {
 }
 
 // `buf[at..at + n] ^=` the first `n` bytes (at most 16) of `v`, unchecked.
-@inline
+@inline("always")
 function xorPart(buf: u8[], at: usize, n: usize, v: u32x4) {
   const k = velt_simd_u32x4_as_u8x16(v);
   if (n >= 16) {

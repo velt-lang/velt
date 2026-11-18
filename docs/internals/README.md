@@ -261,6 +261,9 @@ Decisions and their rationale, including what is still planned:
 - [Intrinsics](design/intrinsics.md): operations the compiler knows, one registry per family
   in `velt_vir`, pure ones as `Rvalue::Intrinsic` statements, the runtime function as the
   reference, and the checklist for adding one (proposed, issue #1981).
+- [Packages that compile to hardware](design/package-machine-code.md): `@intrinsic` stays
+  private; packages get `velt/compiler`'s inlining decorators, CPU gating, `velt/arch`'s vendor
+  instructions and layout decorators (accepted direction, issue #3222; step 1 built).
 - [Lint profiles](design/lint-profiles.md): a profile per source file (portable, native,
   dependency), performance findings from patterns and from what the optimizer could not do,
   fixes that never cross a stricter boundary, `velt check --perf` and `--fix` (steps 1–4 built).

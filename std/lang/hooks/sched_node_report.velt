@@ -161,7 +161,7 @@ export function report(task: usize): void {
 }
 
 /** Where entry `n` of a task's list of rejections (`report`) links to the next. */
-@inline
+@inline("always")
 function nextAt(n: usize): usize {
   if ((n & jn.KEPT) !== 0) {
     return (n & ~jn.KEPT) + t.T_JOINER;

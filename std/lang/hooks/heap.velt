@@ -42,14 +42,14 @@ const MIN_ALIGN: u64 = 8;
 const MAX_ARRAY_BYTES: u64 = 4503599627370495;
 
 /** Address `a` as a C pointer argument; 0 passes `NULL`. */
-@inline
+@inline("always")
 function ptr(a: u64): Ptr<u8> {
   // SAFETY: only passed to mimalloc, as a block it gave or `NULL`.
   return unsafe { Ptr.at<u8>(a as usize) };
 }
 
 /** The address mimalloc returned; 0 for `NULL`. */
-@inline
+@inline("always")
 function addr(p: Ptr<u8> | null): u64 {
   if (p === null) {
     return 0;
@@ -61,7 +61,7 @@ function addr(p: Ptr<u8> | null): u64 {
  * `size` bytes aligned to `align` (a power of two), what `velt_rt_alloc(size, align)` gives: a
  * size of 0 takes no memory and gives `align` back, which `heapFree` of size 0 ignores.
  */
-@inline
+@inline("always")
 export function heapAlloc(size: u64, align: u64): u64 {
   if (size == 0) {
     return align;
@@ -115,7 +115,7 @@ export function heapRealloc(p: u64, old: u64, align: u64, size: u64): u64 {
 }
 
 /** Gives back the block `p` of `size` bytes, what `velt_rt_free` does: a size of 0 is none. */
-@inline
+@inline("always")
 export function heapFree(p: u64, size: u64, align: u64): void {
   if (size != 0) {
     // SAFETY: `p` is a live block of mimalloc's, freed once (the caller's contract).

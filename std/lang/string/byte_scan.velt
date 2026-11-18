@@ -19,7 +19,7 @@ export function eqAt(s: string, at: usize, v: u8x16): mask8x16 {
 
 /** Do the `len` bytes of `a` at `ai` equal those of `b` at `bi`? Both ranges are in bounds. A
  * byte loop below 16 bytes (folded when `len` is a constant), vectors above. */
-@inline
+@inline("always")
 export function sameBytes(a: string, ai: usize, b: string, bi: usize, len: usize): bool {
   if (len >= 16) {
     return sameBytesLong(a, ai, b, bi, len);

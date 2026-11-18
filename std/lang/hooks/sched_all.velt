@@ -152,7 +152,7 @@ export function core(futs: usize, n: usize, bytes: usize): usize {
 }
 
 /** Child `i`'s record of join `j`. */
-@inline
+@inline("always")
 export function kid(j: usize, i: usize): usize {
   return j + J_KIDS + i * C_SIZE;
 }
