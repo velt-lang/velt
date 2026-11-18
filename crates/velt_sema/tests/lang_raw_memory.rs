@@ -14,7 +14,7 @@ fn std_diagnostics(src: &str) -> String {
 }
 
 const IMPORTS: &str =
-    "import { addressArray, arrayByteLength, arrayDataAddress, addressAtomicCas, addressAtomicLoad, addressAtomicRmw,
+    "import { addressArray, arrayByteLength, arrayDataAddress, arrayReadAddress, addressAtomicCas, addressAtomicLoad, addressAtomicRmw,
   addressAtomicStore, addressCall, addressLoad, addressStore, atomicAddress, fnAddress, futDrop,
   futPoll, promiseAt, slotPut, slotTake, stateDrop, statePoll }
   from \"velt/lang/intrinsics\";";
@@ -171,6 +171,26 @@ fn the_address_of_an_array_s_bytes_is_of_numbers_and_needs_unsafe() {
     let e = std_err("function main() { const xs: u32[] = []; console.log(arrayDataAddress(xs)); }");
     assert!(e.contains("unsafe"), "{e}");
     std_ok("function main() { const xs: u32[] = [1]; console.log(arrayByteLength(xs)); }");
+    // The address for reading takes an array its holder may not change.
+    std_ok(
+        "function at<T>(xs: readonly T[]): usize {
+           // SAFETY: the address is not read through.
+           return unsafe { arrayReadAddress(xs) };
+         }
+         function main() {
+           const xs: readonly f64[] = [1, 2];
+           console.log(at(xs) != 0);
+         }",
+    );
+    let e = std_err(
+        "function main() { const xs: string[] = []; unsafe { console.log(arrayReadAddress(xs)); } }",
+    );
+    assert!(
+        e.contains("`arrayReadAddress` gives the address of the bytes of an array of numbers"),
+        "{e}"
+    );
+    let e = std_err("function main() { const xs: u32[] = []; console.log(arrayReadAddress(xs)); }");
+    assert!(e.contains("unsafe"), "{e}");
 }
 
 #[test]

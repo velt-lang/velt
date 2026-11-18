@@ -5,7 +5,7 @@ import { lastError, writeAddress, writeFrom as writeBytes } from "#fd-system";
 import { bufferOffset, descriptor, writeLength, writePosition } from "velt/fs/fd/args";
 import { osError } from "velt/fs/errors";
 import { utf8Encode } from "velt/encoding/utf8";
-import { arrayByteLength, arrayDataAddress } from "velt/lang/intrinsics";
+import { arrayByteLength, arrayReadAddress } from "velt/lang/intrinsics";
 import { ArrayBufferView, BufferView } from "velt/lang/typed_array/buffer_view";
 import { VIEW_SIZE } from "velt/lang/hooks/keys";
 
@@ -28,25 +28,32 @@ export function writeSync<T extends Numeric = u8>(
 ): number {
   const f = descriptor(fd);
   if (typeof buffer == "string") {
+    // All of the string's bytes; its third argument is the position.
     const b = utf8Encode(buffer);
-    return writeFrom(f, b, 0, b.length as usize, 0, null, offset);
+    return writeLoop(f, b, 0, b.length as usize, writePosition(offset));
   }
-  if (buffer instanceof BufferView) {
-    const size = buffer.len * buffer[VIEW_SIZE]();
-    return writeFrom(f, buffer.buf.bytes, buffer.off, size, offset, length, position);
-  }
-  // An array of numbers: its own memory is what is written, counted in bytes.
-  const size = arrayByteLength(buffer);
+  // An array of numbers counts in bytes, as a view does: its own memory is what is written.
+  const size =
+    buffer instanceof BufferView ? buffer.len * buffer[VIEW_SIZE]() : arrayByteLength(buffer);
   const off = bufferOffset(size, offset, false);
   const len = writeLength(size, off, length);
   const at = writePosition(position);
+  if (buffer instanceof BufferView) {
+    const base = buffer.off;
+    return writeLoop(f, buffer.buf.bytes, base + (off as usize), base + ((off + len) as usize), at);
+  }
   // SAFETY: the address is `buffer`'s memory, which stays where it is: nothing grows or drops
-  // `buffer` before the write returns. `writeLength` kept `off..off + len` inside its `size`
-  // bytes, which the system only reads.
-  const address = unsafe { arrayDataAddress(buffer) } + (off as usize);
+  // `buffer` before `writeMemory` returns. `writeLength` kept `off..off + len` inside its
+  // `size` bytes, which the system only reads.
+  const address = unsafe { arrayReadAddress(buffer) } + (off as usize);
+  // SAFETY: as above.
+  return unsafe { writeMemory(f, address, len as usize, at) };
+}
+
+// `write` / `pwrite` of the bytes `start..end` of `bytes`, again when a signal interrupted it.
+function writeLoop(f: i32, bytes: u8[], start: usize, end: usize, at: i64): number {
   while (true) {
-    // SAFETY: as above.
-    const n = unsafe { writeAddress(f, address, len as usize, at) };
+    const n = writeBytes(f, bytes, start, end, at);
     if (n >= 0) {
       return n as number;
     }
@@ -57,23 +64,14 @@ export function writeSync<T extends Numeric = u8>(
   }
 }
 
-// `writeSync` of the `size` bytes of `bytes` from `base`, again when a signal interrupted it.
-function writeFrom(
-  f: i32,
-  bytes: u8[],
-  base: usize,
-  size: usize,
-  offset: number | null,
-  length: number | null | undefined,
-  position: number | null | undefined,
-): number {
-  const off = bufferOffset(size, offset, false);
-  const len = writeLength(size, off, length);
-  const start = base + (off as usize);
-  const end = base + ((off + len) as usize);
-  const at = writePosition(position);
+/**
+ * `write` / `pwrite` of the `len` bytes at `address`, again when a signal interrupted it.
+ * Unsafe: `address` must be `len` readable bytes that nothing changes or frees during the call.
+ */
+unsafe function writeMemory(f: i32, address: usize, len: usize, at: i64): number {
   while (true) {
-    const n = writeBytes(f, bytes, start, end, at);
+    // SAFETY: the caller's statement about `address` and `len`.
+    const n = unsafe { writeAddress(f, address, len, at) };
     if (n >= 0) {
       return n as number;
     }

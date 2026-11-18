@@ -72,6 +72,10 @@ pub enum Intrinsic {
     /// until `xs` is grown or dropped. With `ArrayByteLength`, how a generic function hands a
     /// number array's own memory to a C function (velt/fs's `readSync`). Additive.
     ArrayDataAddress,
+    /// std only, unsafe: `arrayReadAddress<T>(xs) -> usize`, `ArrayDataAddress` for memory
+    /// that is only read: it does not count as a change of `xs` (an array an `RwLock` holds,
+    /// in a `read` callback: velt/fs's `writeSync`). Additive.
+    ArrayReadAddress,
     /// std only: `arrayByteLength<T>(xs) -> usize`, `xs.length * sizeof(T)` for an array of
     /// numbers (checked as `ArrayDataAddress`). Additive.
     ArrayByteLength,

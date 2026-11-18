@@ -84,7 +84,10 @@ impl FnCx<'_, '_> {
         }
         if matches!(
             i,
-            Intrinsic::ArrayCopyBytes | Intrinsic::ArrayDataAddress | Intrinsic::ArrayByteLength
+            Intrinsic::ArrayCopyBytes
+                | Intrinsic::ArrayDataAddress
+                | Intrinsic::ArrayReadAddress
+                | Intrinsic::ArrayByteLength
         ) {
             if let Some(&t) = ck.type_args.first() {
                 self.bytes_elem_check(i, t, span);
@@ -152,6 +155,9 @@ impl FnCx<'_, '_> {
         }
         let shown = self.cx.display(t);
         let what = match i {
+            Intrinsic::ArrayReadAddress => {
+                "`arrayReadAddress` gives the address of the bytes of an array of numbers"
+            }
             Intrinsic::ArrayDataAddress => {
                 "`arrayDataAddress` gives the address of the bytes of an array of numbers"
             }

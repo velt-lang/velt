@@ -29,50 +29,43 @@ export function readSync<T extends Numeric = u8>(
   position?: number | null,
 ): number {
   const f = descriptor(fd);
+  // An array of numbers counts in bytes, as a view does: its own memory is the buffer.
+  const size =
+    buffer instanceof BufferView ? buffer.len * buffer[VIEW_SIZE]() : arrayByteLength(buffer);
   // A `null` offset is Node's options argument (`typeof null` is "object") with no options:
   // the whole buffer, at the file's own position, whatever `length` and `position` say.
   const options = offset === null;
-  if (buffer instanceof BufferView) {
-    // The bytes a view holds are `buffer.buf.bytes`; the read loop takes those alone, so the
-    // view is never passed beside its own bytes (which the exclusive-access check would reject).
-    const size = buffer.len * buffer[VIEW_SIZE]();
-    const off = options ? 0 : bufferOffset(size, offset, true);
-    const len = readLength(size, off, options ? undefined : length);
-    if (len == 0) {
-      return 0;
-    }
-    if (size == 0) {
-      throw emptyBuffer(buffer[VIEW_EMPTY_TEXT]());
-    }
-    checkRead(size, off, len);
-    const base = buffer.off;
-    return readLoop(
-      f,
-      buffer.buf.bytes,
-      base + (off as usize),
-      base + ((off + len) as usize),
-      options ? -1 : readPosition(position),
-    );
-  }
-  // An array of numbers: its own memory is the buffer, counted in bytes.
-  const size = arrayByteLength(buffer);
   const off = options ? 0 : bufferOffset(size, offset, true);
   const len = readLength(size, off, options ? undefined : length);
   if (len == 0) {
     return 0;
   }
   if (size == 0) {
-    throw emptyBuffer(emptyBufferText(buffer));
+    const shown =
+      buffer instanceof BufferView ? buffer[VIEW_EMPTY_TEXT]() : emptyBufferText(buffer);
+    throw new TypeError(`The argument 'buffer' is empty and cannot be written. Received ${shown}`);
   }
   checkRead(size, off, len);
   const at = options ? -1 : readPosition(position);
+  if (buffer instanceof BufferView) {
+    // The bytes a view holds are `buffer.buf.bytes`; the read loop takes those alone, so the
+    // view is never passed beside its own bytes (which the exclusive-access check would
+    // reject).
+    const base = buffer.off;
+    return readLoop(f, buffer.buf.bytes, base + (off as usize), base + ((off + len) as usize), at);
+  }
   // SAFETY: the address is `buffer`'s memory, which stays where it is: nothing grows or drops
-  // `buffer` before the read returns. `checkRead` kept `off..off + len` inside its `size`
+  // `buffer` before `readMemory` returns. `checkRead` kept `off..off + len` inside its `size`
   // bytes, the system writes only those, and any bytes are values of a number type.
   const address = unsafe { arrayDataAddress(buffer) } + (off as usize);
+  // SAFETY: as above.
+  return unsafe { readMemory(f, address, len as usize, at) };
+}
+
+// `read` / `pread` into the bytes `start..end` of `bytes`, retried after a signal.
+function readLoop(f: i32, bytes: u8[], start: usize, end: usize, at: i64): number {
   while (true) {
-    // SAFETY: as above.
-    const n = unsafe { readAddress(f, address, len as usize, at) };
+    const n = readInto(f, bytes, start, end, at);
     if (n >= 0) {
       return n as number;
     }
@@ -83,14 +76,14 @@ export function readSync<T extends Numeric = u8>(
   }
 }
 
-function emptyBuffer(shown: string): TypeError {
-  return new TypeError(`The argument 'buffer' is empty and cannot be written. Received ${shown}`);
-}
-
-// `read` / `pread` into the bytes `start..end` of `bytes`, retried after a signal.
-function readLoop(f: i32, bytes: u8[], start: usize, end: usize, at: i64): number {
+/**
+ * `read` / `pread` of up to `len` bytes into the memory at `address`, retried after a signal.
+ * Unsafe: `address` must be `len` writable bytes that nothing else uses during the call.
+ */
+unsafe function readMemory(f: i32, address: usize, len: usize, at: i64): number {
   while (true) {
-    const n = readInto(f, bytes, start, end, at);
+    // SAFETY: the caller's statement about `address` and `len`.
+    const n = unsafe { readAddress(f, address, len, at) };
     if (n >= 0) {
       return n as number;
     }

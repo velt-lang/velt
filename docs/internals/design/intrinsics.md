@@ -102,17 +102,28 @@ so their callers are unsafe code with a `// SAFETY:` comment, as for `addressLoa
   (std/fs/mapped_file.velt), whose mappings are never unmapped; an array over memory that can
   go away needs a lifetime the compiler tracks (the byte views of sqlite-engine.md, #1718)
   before it can be offered.
-- `arrayDataAddress<T>(xs: Mut<T[]>): usize` (unsafe) and `arrayByteLength<T>(xs: T[]): usize`
-  (std/lang/intrinsics/array.velt) are the address of a number array's buffer and
-  `xs.length * sizeof(T)`. They exist so that a generic function can hand a number array's own
-  memory to a C function, which `declare c` takes as a buffer only for a concrete element type:
-  velt/fs's `readSync<T extends Numeric>` and `writeSync` pass the address to `pread` / `pwrite`
-  (`readAddress`, `writeAddress` of `#fd-system`), so the system fills or reads the array itself,
-  counted in bytes as Node counts a typed array's. The address is good only until the array is
-  grown or dropped, which nothing does during the call. Sema holds `T` to a number type or
-  `bool` and lets a type parameter through (as `arrayCopyBytes`); lowering refuses an instance
-  whose elements own something, and an array view, neither of which the `Numeric` bound of the
-  public functions lets user code reach.
+- `arrayDataAddress<T>(xs: Mut<T[]>): usize` and `arrayReadAddress<T>(xs: T[]): usize` (both
+  unsafe) and `arrayByteLength<T>(xs: T[]): usize` (std/lang/intrinsics/array.velt) are the
+  address of a number array's buffer and `xs.length * sizeof(T)`. They exist so that a generic
+  function can hand a number array's own memory to a C function, which `declare c` takes as a
+  buffer only for a concrete element type: velt/fs's `readSync<T extends Numeric>` and
+  `writeSync` pass the address to `pread` / `pwrite` (`readAddress`, `writeAddress` of
+  `#fd-system`), so the system fills or reads the array itself, counted in bytes as Node counts
+  a typed array's. The address is good only until the array is grown or dropped: std takes it
+  after every argument is checked and uses it in the read or write that follows, with nothing
+  in between that reaches the array.
+  - `arrayDataAddress` is for memory that will be written: it counts as a change of the array
+    (the owner and write barriers of array/ops.rs), so `readSync` into an array an `RwLock`
+    holds stops in a `read` callback as any other change does. `arrayReadAddress` and
+    `arrayByteLength` only read, as `length` does, so `writeSync` of such an array works there.
+  - Sema holds `T` to a number type or `bool` and lets a type parameter through (as
+    `arrayCopyBytes`); lowering refuses an instance whose elements own something, which the
+    `Numeric` bound of the public functions keeps user code from reaching.
+  - On a view type (array_view.rs: a number array type is one in a program that converts an
+    `any` to it) a plain array gives its own buffer, and a view its mirror's with every element
+    converted, which is what a C function given the array itself gets. Bytes read into a view's
+    mirror are not written back to the original: as before for a `u8[]` view passed to
+    `readSync`.
   An earlier form gave the bytes as a second, non-owning `u8[]` (as `addressArray` does). It
   cost an allocation and a free at every call, since a `u8[]` value is a counted box in
   programs that share one, and it left an aliasing array to keep from escaping; an address

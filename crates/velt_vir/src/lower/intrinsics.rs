@@ -272,6 +272,7 @@ impl FnLower<'_, '_> {
                 | I::ArrayMove
                 | I::ArrayCopyBytes
                 | I::ArrayDataAddress
+                | I::ArrayReadAddress
                 | I::ArrayByteLength
                 | I::ArraySetLen
                 | I::ArrayReserve

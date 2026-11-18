@@ -89,6 +89,14 @@ export declare function arrayMove<T>(dst: Mut<T[]>, d: usize, src: T[], s: usize
 @intrinsic
 export declare unsafe function arrayDataAddress<T>(xs: Mut<T[]>): usize;
 
+/**
+ * `arrayDataAddress` for memory that is only read (velt/fs's `writeSync`): it does not count
+ * as a change of `xs`, so an array an `RwLock` holds gives it in a `read` callback. Unsafe: the
+ * address is good only until `xs` is grown or dropped, and nothing may be written there.
+ */
+@intrinsic
+export declare unsafe function arrayReadAddress<T>(xs: T[]): usize;
+
 /** `xs.length * sizeof(T)`: how many bytes `xs`'s elements are. `T` as for `arrayDataAddress`. */
 @intrinsic
 export declare function arrayByteLength<T>(xs: T[]): usize;

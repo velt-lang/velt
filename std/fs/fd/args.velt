@@ -2,6 +2,7 @@
 // `RangeError`s and `TypeError`s with Node's messages for those it rejects.
 
 import { utf8Encode } from "velt/encoding/utf8";
+import { inline } from "velt/lang/intrinsics";
 
 /** `Number.MAX_SAFE_INTEGER`: the largest offset, length or position Node accepts. */
 export const MAX_SAFE: number = 9007199254740991;
@@ -44,6 +45,7 @@ export function cPath(path: string): u8[] {
  * (Node's options default), else an integer in [0, size] for a write (a write may start at the
  * end) or [0, MAX_SAFE] for a read (`offset + length <= size` is checked afterwards).
  */
+@inline
 export function bufferOffset(size: usize, offset: number | null | undefined, read: bool): i64 {
   if (offset == null) {
     return 0;

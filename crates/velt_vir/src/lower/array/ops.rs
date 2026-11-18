@@ -41,7 +41,10 @@ impl FnLower<'_, '_> {
         // An argument that may run code (`aa[0].push(g())`, where `g` grows or replaces `aa`)
         // runs after the array's address is taken: borrow the array as a call borrows its
         // receiver, so that address stays valid.
-        if i != I::ArrayLen && !self.cx.lock_counted(aty) {
+        // What only reads the array: its length, and the size and address of its bytes for a
+        // system call that reads them (`writeSync`).
+        let reads = matches!(i, I::ArrayLen | I::ArrayByteLength | I::ArrayReadAddress);
+        if !reads && !self.cx.lock_counted(aty) {
             // Held inline in an object (caller_stores.rs).
             self.owner_barrier(&args[0]);
         }
@@ -57,7 +60,7 @@ impl FnLower<'_, '_> {
         self.owner_write = false;
         let arr = self.place_of(av, aty);
         let caller = self.mode != LkMode::Plain && self.caller_object(&args[0]);
-        if i != I::ArrayLen && self.cx.lock_counted(aty) && !caller {
+        if !reads && self.cx.lock_counted(aty) && !caller {
             // A mutating operation: stops a reader of an `RwLock` changing a shared array (not
             // the caller's, caller_stores.rs `caller_object`).
             self.write_barrier(Operand::Copy(arr.clone()), aty);
@@ -71,8 +74,7 @@ impl FnLower<'_, '_> {
         }
         let ptr = Operand::Copy(arr.clone());
         let arr = self.content(&arr, aty);
-        if caller && i != I::ArrayLen && self.cx.lock_counted(aty) && !self.captured_root(&args[0])
-        {
+        if caller && !reads && self.cx.lock_counted(aty) && !self.captured_root(&args[0]) {
             // Reached through a call (`mk(out).kids`, `rw.read((s2) => s2.items)`): it may be
             // an array the reader made, not the caller's.
             return self.caller_or_own_op(i, &args[1..], ptr, &arr, aty, ty);
@@ -190,7 +192,7 @@ impl FnLower<'_, '_> {
         let elem = self.elem_ty(aty);
         match (i, rest) {
             (I::ArrayLen, []) => self.rvalue_temp(Ty::U64, Rvalue::Use(Self::arr_field(&arr, 1))),
-            (I::ArrayDataAddress, []) => {
+            (I::ArrayDataAddress | I::ArrayReadAddress, []) => {
                 if self.cx.needs_drop(elem) {
                     ice("arrayDataAddress of an array whose elements own something");
                 }
