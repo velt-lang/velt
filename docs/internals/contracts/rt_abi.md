@@ -494,9 +494,11 @@ a function gated on it and `0` everywhere else, and std computes the run-time an
 (std/simd/bf16_check.velt): behind the carry-less flag of arm64 (`velt_simd_has_clmul_arm`, so it
 is `false` off arm64, under Cranelift and with `VELT_SIMD_DISABLE=clmul`), `getauxval(AT_HWCAP2)`
 bit 14 on Linux and the `hw.optional.arm.FEAT_BF16` sysctl on macOS; `false` on Windows.
-`bf16x8.dotAddFast` is `velt_simd_f32x4_bfdot` behind that check and
+velt/half's `dotBf16Fast` and `dotBf16FastAt` ask once for a dot product and run a function gated
+on `bf16-arm`, whose loops are `velt_simd_f32x4_bfdot`, where the answer is yes, and
 `velt_simd_f32x4_dot_add_fast_bf16x8` otherwise, so a build for any arm64 CPU runs `bfdot` where
-the CPU has it. In code built for a `--cpu` for which clang defines
+the CPU has it. `bf16x8.dotAddFast`, a step of a caller's loop, asks nothing and is the latter
+alone. In code built for a `--cpu` for which clang defines
 `__ARM_FEATURE_BF16_VECTOR_ARITHMETIC`, `velt_simd_has_bf16_arm()` is `1` everywhere and nothing
 is asked.
 

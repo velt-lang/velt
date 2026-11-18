@@ -1,9 +1,10 @@
-// `bf16x8.dotAddFast` on whichever path the CPU gives it (#3129): Arm's `bfdot` where the program
-// finds FEAT_BF16 when it runs (a release build for any arm64 CPU), the widened lanes and two
-// fused additions elsewhere. It promises the sum of its lanes up to rounding, so the inputs are
-// small integers: every product and every partial sum is exact, whichever lanes they go to and
-// however they are rounded, and the sum must be the integer dot product.
+// `dotBf16Fast` and `dotBf16FastAt` on whichever path the CPU gives them (#3129): Arm's `bfdot`
+// where the program finds FEAT_BF16 when it runs (a release build for any arm64 CPU), the steps
+// of `bf16x8.dotAddFast` elsewhere. They promise the dot product up to rounding, so the weights
+// are small integers: every product and every partial sum is exact, whichever lanes they go to
+// and however they are rounded, and the result must be the integer dot product.
 
+import { dotBf16, dotBf16Fast, dotBf16FastAt } from "velt/half";
 import { bf16x8, f32x4 } from "velt/simd";
 
 let seed: u32 = 88172645;
@@ -20,47 +21,66 @@ function small(): i32 {
   return ((next() % 17) as i32) - 8;
 }
 
-function sum(v: f32x4): f32 {
-  return v.lane(0) + v.lane(1) + v.lane(2) + v.lane(3);
+const a: bf16[] = [];
+const b: bf16[] = [];
+const ia: i32[] = [];
+const ib: i32[] = [];
+
+function fill() {
+  for (let i = 0; i < 600; i++) {
+    ia.push(small());
+    ib.push(small());
+    a.push(ia[i] as bf16);
+    b.push(ib[i] as bf16);
+  }
 }
 
-// `rounds` dot products of `dim` lanes (a multiple of 8), each against the integer sum.
-function check(dim: usize, rounds: i32) {
-  let wrong = 0;
-  let total: i64 = 0;
-  for (let r = 0; r < rounds; r++) {
-    const a: bf16[] = [];
-    const b: bf16[] = [];
-    let want: i64 = 0;
-    for (let i: usize = 0; i < dim; i++) {
-      const x = small();
-      const y = small();
-      a.push(x as bf16);
-      b.push(y as bf16);
-      want += (x * y) as i64;
-    }
-    let acc = f32x4.splat(0);
-    let i: usize = 0;
-    while (bf16x8.fits(a, i) && bf16x8.fits(b, i)) {
-      acc = bf16x8.load(a, i).dotAddFast(bf16x8.load(b, i), acc);
-      i += 8;
-    }
-    if ((sum(acc) as i64) != want || i != dim) {
-      wrong += 1;
-    }
-    total += want;
+// The integer dot product of `count` weights from `aAt` and `bAt`.
+function want(aAt: usize, bAt: usize, count: usize): number {
+  let sum: i64 = 0;
+  for (let i: usize = 0; i < count; i++) {
+    sum += (ia[aAt + i] * ib[bAt + i]) as i64;
   }
-  console.log("dim", dim, "rounds", rounds, "mismatches", wrong, "total", total);
+  return sum as number;
+}
+
+// Every count from 0 to 200 (the rounds of 32, the steps of 8, the tail), at offsets that
+// differ between the arrays.
+function ranges() {
+  let wrong = 0;
+  let total: number = 0;
+  for (let count: usize = 0; count <= 200; count++) {
+    for (const aAt of [0, 1, 7, 33] as usize[]) {
+      const bAt = (aAt * 5 + count) % 300;
+      const got = dotBf16FastAt(a, aAt, b, bAt, count);
+      if (got != want(aAt, bAt, count)) {
+        wrong += 1;
+      }
+      // Exact weights: the same number as the one that is the same everywhere.
+      if (
+        got !=
+        dotBf16(
+          a.slice(aAt as i64, (aAt + count) as i64),
+          b.slice(bAt as i64, (bAt + count) as i64),
+        )
+      ) {
+        wrong += 1;
+      }
+      total += got;
+    }
+  }
+  console.log("ranges mismatches", wrong, "total", total);
 }
 
 function main() {
-  check(8, 2000);
-  check(64, 500);
-  check(384, 200);
-  // The accumulator is added to, not replaced, and each lane keeps what it had.
+  fill();
+  ranges();
+  console.log("whole", dotBf16Fast(a, b), want(0, 0, 600));
+  console.log("empty", dotBf16Fast([], []), dotBf16FastAt(a, 600, b, 0, 0));
+  // `dotAddFast`, the step: the accumulator is added to, and the lanes add up.
   const ones = bf16x8.splat(1);
   const r = ones.dotAddFast(ones, f32x4.splat(10));
-  console.log("accumulated", sum(r));
+  console.log("step", r.lane(0) + r.lane(1) + r.lane(2) + r.lane(3));
   // The answer is the same however often it is asked.
   console.log("stable", bf16x8.hasBf16Arm() == bf16x8.hasBf16Arm());
 }
