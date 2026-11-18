@@ -23,8 +23,7 @@ import { Ptr } from "velt/ffi/ptr";
 import { addressStore } from "velt/lang/intrinsics";
 import * as m from "velt/lang/hooks/sched_mem";
 import { CommandSpec } from "velt/process/child/spec";
-
-declare function velt_rt_env_all(): string[];
+import { envPairs } from "#env-sys";
 
 declare c("c") function GetFileAttributesW(name: Ptr<u16>): u32;
 declare c("c") function NeedCurrentDirectoryForExePathW(name: Ptr<u16>): i32;
@@ -157,7 +156,7 @@ function indexOfName(names: string[], name: string): isize {
 export function environment(spec: CommandSpec): string[] {
   const names: string[] = [];
   const values: string[] = [];
-  const parent = velt_rt_env_all();
+  const parent = envPairs();
   if (!spec.clearEnv) {
     for (let i: usize = 0; i + 1 < parent.length; i += 2) {
       names.push(parent[i]);

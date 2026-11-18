@@ -331,7 +331,7 @@ fn verify_rejects_math_externs_with_another_signature() {
     assert_eq!(crate::verify(&ok), Ok(()));
     let wrong_param = with_extern("velt_rt_math_clz64", vec![Ty::I64], Ty::U64);
     expect_err(&wrong_param, "signature differs from the math operation's");
-    let wrong_ret = with_extern("velt_rt_pow_f64", vec![Ty::F64, Ty::F64], Ty::I64);
+    let wrong_ret = with_extern("velt_rt_pow_i64", vec![Ty::I64, Ty::I64], Ty::F64);
     expect_err(&wrong_ret, "signature differs from the math operation's");
     let mut noreturn = with_extern("velt_rt_math_sqrt", vec![Ty::F64], Ty::F64);
     noreturn.externs.last_mut().expect("the extern").noreturn = true;

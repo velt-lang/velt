@@ -85,3 +85,23 @@ pub(super) fn cpuid(b: &mut Body, arch: Arch) -> String {
     }
     b.bytes(&v, "<4 x i32>")
 }
+
+/// `XGETBV` of the extended control register `%a0`, as EDX:EAX in an `i64`; 0 off x86-64. Its
+/// bytes rather than its mnemonic, which the assembler may refuse without XSAVE enabled; the
+/// caller runs it only where CPUID says OSXSAVE. Not `sideeffect`: the answer never changes.
+pub(super) fn xgetbv(b: &mut Body, arch: Arch) -> String {
+    if arch != Arch::Sse2 {
+        return "0".to_string();
+    }
+    let r = b.inst(
+        "call { i32, i32 } asm \".byte 0x0f, 0x01, 0xd0\", \
+         \"={ax},={dx},{cx},~{dirflag},~{fpsr},~{flags}\"(i32 %a0)"
+            .to_string(),
+    );
+    let lo = b.inst(format!("extractvalue {{ i32, i32 }} {r}, 0"));
+    let hi = b.inst(format!("extractvalue {{ i32, i32 }} {r}, 1"));
+    let lo = b.inst(format!("zext i32 {lo} to i64"));
+    let hi = b.inst(format!("zext i32 {hi} to i64"));
+    let hi = b.inst(format!("shl i64 {hi}, 32"));
+    b.inst(format!("or i64 {hi}, {lo}"))
+}

@@ -314,10 +314,7 @@ pub(super) fn modes_of(cx: &Ctx, d: DefId) -> Vec<PassMode> {
 /// would be accepted, and a table is read-only data.
 fn extern_written_param(symbol: &str) -> Option<usize> {
     Some(match symbol {
-        "velt_rt_bytes_set"
-        | "velt_rt_bytes_copy"
-        | "velt_rt_bytes_copy_within"
-        | "velt_rt_bytes_fill" => 0,
+        "velt_rt_bytes_set" | "velt_rt_bytes_copy" | "velt_rt_bytes_copy_within" => 0,
         "velt_rt_regex_exec" => 3,
         // `readInto(buf)` reads into the buffer's bytes.
         "velt_rt_tcp_try_read_into" => 1,
@@ -335,13 +332,19 @@ fn extern_written_param(symbol: &str) -> Option<usize> {
 fn iface_modes(cx: &mut Ctx, iface: DefId, slot: u32) -> Option<Vec<PassMode>> {
     let i = cx.iface(iface)?;
     if let Some(k) = (slot as usize).checked_sub(i.methods.len() + i.fields.len()) {
-        // A field setter (`crate::iface_writes`): it modifies the receiver and owns the value
-        // (copies it for Copy types), as `collect::getters::field_setter` declares it.
-        let f = *cx.setter_fields(iface).get(k)?;
-        let ty = i.fields[f].ty;
-        let v = match cx.is_copy(ty) {
-            true => PassMode::Copy,
-            false => PassMode::Owned,
+        // A field setter (`crate::iface_writes`), or its placeholder while only methods are
+        // written: it modifies the receiver and owns the value (copies it for Copy types), as
+        // `collect::getters::field_setter` declares it. After them, a method's setter
+        // (`crate::iface_method_writes`, `<set m()>`): the same, its value a function.
+        let (field, n) = (
+            i.fields.get(k).map(|f| f.ty),
+            i.fields.len() + i.methods.len(),
+        );
+        let v = match field {
+            Some(ty) if cx.is_copy(ty) => PassMode::Copy,
+            Some(_) => PassMode::Owned,
+            None if k < n => PassMode::Owned,
+            None => return None,
         };
         return Some(vec![PassMode::BorrowMut, v]);
     }

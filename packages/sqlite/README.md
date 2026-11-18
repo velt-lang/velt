@@ -1,8 +1,9 @@
 # sqlite
 
 `import { open, Database, Statement, SqliteError } from "sqlite"`. The real SQLite engine,
-called through `declare c` from plain Velt, with an API close to better-sqlite3. The package also holds a SQLite engine written in Velt, `sqlite/engine`
-(read-only for now: [docs/engine.md](docs/engine.md)).
+called through `declare c` from plain Velt, with an API close to better-sqlite3. The package also
+holds a SQLite engine written in Velt, `sqlite/engine`, which reads databases
+([docs/engine.md](docs/engine.md)).
 
 ```ts ignore
 // package.velt
@@ -20,10 +21,10 @@ dependencies: {
 The package binds the real SQLite engine through `declare c` (`src/sqlite3.velt`): list it in
 `allowNative`. SQLite 3.53.2's amalgamation is in `native/` (`sqlite3.c` and `sqlite3.h` as
 released; the version and checksums are in `package.velt`), built with the package by the pinned
-zig, with the compile options rusqlite's bundled build had: FTS3/FTS5, R-Tree, STAT4, DBSTAT,
+zig, with the compile options of rusqlite's bundled build: FTS3/FTS5, R-Tree, STAT4, DBSTAT,
 column metadata, foreign keys on by default. No system library is needed, and every platform gets
 the same SQLite. `c-headers.json` records the check of `src/sqlite3.velt` against `sqlite3.h` on
-every target (`velt native headers`, run with `tests/errors/` moved aside for now). SQLite's
+every target (`velt native headers`, run with `tests/errors/` moved aside). SQLite's
 authors put the amalgamation in the public domain (the notice at the top of `sqlite3.c` and
 `sqlite3.h`), so using or shipping it carries no licence terms.
 

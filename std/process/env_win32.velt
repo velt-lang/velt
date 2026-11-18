@@ -1,0 +1,129 @@
+// velt/process (internal): the environment's variables on Windows (`#env-sys`' win32 variant,
+// std/imports.velt), through Win32's wide-string functions, which lock the process' environment
+// themselves. Names are looked up without regard to case, as Windows does. Nothing here throws:
+// the executor reads variables (`processEnv`). The working directory is `#cwd-sys`'.
+
+import { Ptr } from "velt/ffi/ptr";
+import { wideOf, wideText } from "velt/ffi/wide";
+import { addressLoad, arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
+
+declare c("c") function GetEnvironmentVariableW(
+  name: readonly u16[],
+  value: u16[],
+  units: u32,
+): u32;
+declare c("c") function SetEnvironmentVariableW(name: readonly u16[], value: readonly u16[]): i32;
+declare c("c") function SetEnvironmentVariableW$remove(
+  name: readonly u16[],
+  value: Ptr<u16> | null,
+): i32;
+declare c("c") function GetEnvironmentStringsW(): Ptr<u16> | null;
+declare c("c") function FreeEnvironmentStringsW(block: Ptr<u16>): i32;
+declare c("c") function GetLastError(): u32;
+declare c("c") function SetLastError(code: u32): void;
+
+/** `ERROR_ENVVAR_NOT_FOUND`. */
+const ENVVAR_NOT_FOUND: u32 = 203;
+
+/**
+ * Whether Windows takes `name` as a variable's: not empty, and no "=" after its first character
+ * (the per-drive variables are named `=C:`, which Node reads too).
+ */
+function validName(name: string): bool {
+  return name.length > 0 && name.indexOf("=", 1) < 0;
+}
+
+/** The variable `name`, or undefined when it isn't set. */
+export function getEnv(name: string): string | undefined {
+  const n = wideOf(name);
+  if (n === null || !validName(name)) {
+    return undefined;
+  }
+  let room: u32 = 256;
+  while (true) {
+    // Not zeroed: only Windows writes it, and only what it wrote (up to its NUL) is read.
+    const buf = arrayWithCapacity<u16>(room as usize);
+    arraySetLen(buf, room as usize);
+    // SAFETY: no precondition: an empty value is told from a missing one by the error after.
+    unsafe {
+      SetLastError(0);
+    }
+    // SAFETY: `n` is NUL-terminated, `buf` holds `room` code units, the count passed.
+    const got = unsafe { GetEnvironmentVariableW(n, buf, room) };
+    if (got === 0) {
+      // SAFETY: no precondition.
+      const e = unsafe { GetLastError() };
+      return e === ENVVAR_NOT_FOUND ? undefined : "";
+    }
+    if (got < room) {
+      return wideText(buf);
+    }
+    // Too small: `got` is the room the value needs, its NUL counted.
+    room = got;
+  }
+}
+
+/** Sets the variable `name` to `value` (a name or value Windows can't hold changes nothing). */
+export function setEnv(name: string, value: string) {
+  const n = wideOf(name);
+  const v = wideOf(value);
+  if (n === null || v === null || !validName(name)) {
+    return;
+  }
+  // SAFETY: both NUL-terminated.
+  unsafe {
+    SetEnvironmentVariableW(n, v);
+  }
+}
+
+/** Removes the variable `name`. */
+export function removeEnv(name: string) {
+  const n = wideOf(name);
+  if (n === null || !validName(name)) {
+    return;
+  }
+  // SAFETY: a NUL-terminated name; a NULL value removes the variable.
+  unsafe {
+    SetEnvironmentVariableW$remove(n, null);
+  }
+}
+
+/**
+ * Every variable as `[name, value, …]`, in the order Windows keeps them; the per-drive entries
+ * (`=C:=C:\dir`, whose name starts with "=") left out, as in Node.
+ */
+export function envPairs(): string[] {
+  const out: string[] = [];
+  // SAFETY: no precondition; the block is freed below.
+  const block = unsafe { GetEnvironmentStringsW() };
+  if (block === null) {
+    return out;
+  }
+  let at = Ptr.addressOf(block);
+  while (true) {
+    const entry: u16[] = [];
+    while (true) {
+      // SAFETY: inside the block, whose entries each end with a NUL and which ends with an empty one.
+      const u = unsafe { addressLoad<u16>(at) };
+      at += 2;
+      if (u === 0) {
+        break;
+      }
+      entry.push(u);
+    }
+    if (entry.length === 0) {
+      break;
+    }
+    const text = wideText(entry);
+    const eq = text.indexOf("=", 1);
+    if (!text.startsWith("=") && eq > 0) {
+      out.push(text.slice(0, eq));
+      out.push(text.slice(eq + 1));
+    }
+  }
+  // SAFETY: the block GetEnvironmentStringsW gave above, which nothing uses after.
+  unsafe {
+    FreeEnvironmentStringsW(block);
+  }
+  return out;
+}

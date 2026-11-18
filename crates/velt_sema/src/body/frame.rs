@@ -118,6 +118,9 @@ pub(crate) struct Frame {
     pub readonly_exempt: Option<LocalId>,
     /// A method call written `(x as T).m()` with `T` read-only (`readonly_arrays.rs`).
     pub readonly_cast_recv: bool,
+    /// `const el = document.body` (an initializer rooted at a browser global, or at another such
+    /// local): a write to a member of it type-checks where it is `never` (`never_write.rs`).
+    pub browser_locals: rustc_hash::FxHashSet<LocalId>,
     /// `const c = [2, "y"] as const` (literals of different types): its elements, which an
     /// array pattern taking `c` apart reads as the literal (`literal_patterns`).
     pub as_const_tuples: FxHashMap<LocalId, Vec<velt_syntax::ast::Expr>>,
@@ -282,6 +285,7 @@ impl Frame {
             write_target: false,
             readonly_exempt: None,
             readonly_cast_recv: false,
+            browser_locals: Default::default(),
             as_const_tuples: Default::default(),
             closure_consts: Default::default(),
             named_fns: Default::default(),

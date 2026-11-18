@@ -1,0 +1,6 @@
+// velt/lang/math (internal): `#math-fma`'s default variant (std/imports.velt): x86-64, whose
+// default level has no FMA (velt/lang/math/fma_check asks the CPU), and WebAssembly, which has
+// none.
+
+/** Whether every CPU this build runs on has an FMA instruction. */
+export const FMA_EVERYWHERE: bool = false;

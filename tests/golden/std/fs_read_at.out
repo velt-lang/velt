@@ -1,0 +1,10 @@
+16 0 15
+[ 4096, 4096, 1808, 10, 0, 0 ]
+true 0
+4 [ 0, 1, 2, 3 ]
+RangeError The value of "length" is out of range. It must be >= 0 && <= 2147483647. Received -1
+RangeError The value of "length" is out of range. It must be an integer. Received 1.5
+RangeError The value of "length" is out of range. It must be >= 0 && <= 2147483647. Received 2147483648
+RangeError The value of "position" is out of range. It must be >= 0 && <= 9007199254740991. Received -1
+RangeError The value of "position" is out of range. It must be an integer. Received 0.5
+EBADF: bad file descriptor, read

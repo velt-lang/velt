@@ -33,7 +33,7 @@
 // waker) never would: it is given up, its state dropped, as JavaScript collects a promise nobody
 // can settle together with the functions waiting for it (sched_node_lost.velt).
 
-import { inline, stateDrop, statePoll } from "velt/lang/intrinsics";
+import { inline, noInline, stateDrop, statePoll } from "velt/lang/intrinsics";
 import * as bd from "./sched_budget";
 import * as m from "./sched_mem";
 import * as loc from "./sched_node_loc";
@@ -48,6 +48,7 @@ import * as t from "./sched_task";
 import * as tr from "./sched_node_transfer";
 import * as wk from "./sched_wake";
 import * as x from "./sched_node_ext";
+import * as workers from "./sched_workers";
 
 export const N_HEAD: usize = 128;
 export const N_REFS: usize = 8;
@@ -104,10 +105,14 @@ export function boxed(
   hdrPoll: usize,
   hdrDrop: usize,
 ): usize {
-  const e = t.exec();
   const bytes = N_HEAD + 16 + (size as usize);
   const n = m.alloc(bytes);
-  m.st(n, t.main() + t.E_NODE_VT);
+  // Worker 0's waker table (before the start, on a C library's thread: the pending block's).
+  let g = t.main();
+  if (g === 0) {
+    g = workers.zeroBlock();
+  }
+  m.st(n, g + t.E_NODE_VT);
   m.st(n + N_REFS, 1);
   m.st32(n + N_FLAGS, 0);
   m.st32(n + N_BYTES, bytes as u32);
@@ -300,6 +305,19 @@ export function start(
   if (catching !== 0) {
     nc.catchesFrom(n, catching);
   }
+  bind(task, n, rdrop, rejecting);
+  // `firstRun`, written out: its call of `run` stays inlined here.
+  m.st32(task + t.T_WORD, m.ld32(task + t.T_WORD) + 1);
+  run(task, n, false);
+  m.st32(task + t.T_WORD, m.ld32(task + t.T_WORD) - 1);
+}
+
+/**
+ * Lazy node `n` becomes a started promise of task `task`, which the caller owns or polls (or has
+ * just made, sched_foreign.velt `start`): its result dropped with `rdrop` if nobody claims it.
+ */
+@inline
+export function bind(task: usize, n: usize, rdrop: usize, rejecting: bool): void {
   m.or32(n + N_FLAGS, STARTED | (rejecting ? REJECTING : 0));
   m.st(n + N_RESULT_DROP, rdrop);
   // The node's reference to its task, given back when the node is freed.
@@ -310,6 +328,11 @@ export function start(
   m.inc(n + N_REFS);
   t.bump(task + t.T_LOCALS, 1);
   t.flags(task, t.LOCALS, 0);
+}
+
+/** Bound node `n`'s first run, in a poll of its task `task`, the task's await word raised. */
+@inline
+export function firstRun(task: usize, n: usize): void {
   m.st32(task + t.T_WORD, m.ld32(task + t.T_WORD) + 1);
   run(task, n, false);
   m.st32(task + t.T_WORD, m.ld32(task + t.T_WORD) - 1);
@@ -371,10 +394,7 @@ export function run(task: usize, n: usize, taken: bool): void {
     }
   }
   if ((m.load32(n + N_FLAGS) & REJECTING) !== 0) {
-    // Its owner may claim the result on another worker: it keeps where it threw (the state's
-    // poll is not needed any more), published before FINISHED.
-    loc.keep(n + N_FLAGS, n + N_HEAD + 16, n + N_POLL);
-    al.keepLoc(n);
+    keepWhereThrown(n);
   }
   // A handed-over node's transfer runs before FINISHED shows (sched_node_transfer.velt).
   tr.finished(n);
@@ -383,12 +403,12 @@ export function run(task: usize, n: usize, taken: bool): void {
   const prev = m.or32(n + N_FLAGS, FINISHED);
   m.st(task + t.T_LOCALS, m.ld(task + t.T_LOCALS) - 1);
   if ((prev & DETACHED) !== 0) {
-    rp.dropResult(n);
+    dropDetached(n);
   } else if (!ss.settled(n, task, prev)) {
     const w = aw.finishAwaiter(n, task);
     if (w === 0) {
       // Its owner holds it without waiting: a rejection is watched (sched_node_report.velt).
-      rp.watch(n, task);
+      watchHeld(n, task);
     } else {
       if (wk.taskOf(w) === task) {
         // Its awaiter is the task's root or another promise it drives: its reaction is queued
@@ -400,6 +420,32 @@ export function run(task: usize, n: usize, taken: bool): void {
     }
   }
   release(n);
+}
+
+// `run`'s rarer steps, out of line: `run` is inlined at every start (each async call kept as a
+// promise), and with these in it a program with many such calls doubled in size, which split it
+// into more codegen units and made it slower.
+
+/**
+ * Node `n` rejected: its owner may claim the result on another worker, so it keeps where it threw
+ * (the state's poll is not needed any more), published before FINISHED.
+ */
+@noInline
+function keepWhereThrown(n: usize): void {
+  loc.keep(n + N_FLAGS, n + N_HEAD + 16, n + N_POLL);
+  al.keepLoc(n);
+}
+
+/** Node `n` finished after its owner dropped it (sched_node_report.velt `dropResult`). */
+@noInline
+function dropDetached(n: usize): void {
+  rp.dropResult(n);
+}
+
+/** Node `n` of task `task` finished, its owner holding it without waiting (`rp.watch`). */
+@noInline
+function watchHeld(n: usize, task: usize): void {
+  rp.watch(n, task);
 }
 
 /** Is started node `w` (a waker header) among its task's woken nodes? */

@@ -1,3 +1,0 @@
-removed_result.velt:3:28: error: `Result` was removed
-removed_result.velt:5:12: error: `Ok` was removed with `Result`
-removed_result.velt:7:10: error: `Err` was removed with `Result`

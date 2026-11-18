@@ -1,7 +1,7 @@
-// Prelude: Node `Buffer`-style bulk operations on byte arrays (`u8[]`): short searches and XOR
-// masking sixteen bytes at a time with SIMD vectors (velt/lang/bytes/search, in Velt so that they
-// are compiled into their caller), text in bytes (velt/lang/bytes/text); long searches by memchr,
-// copying and filling by memmove and memset in the runtime.
+// Prelude: Node `Buffer`-style bulk operations on byte arrays (`u8[]`): searches and XOR masking
+// sixteen bytes at a time with SIMD vectors (velt/lang/bytes/search, in Velt so that they are
+// compiled into their caller), filling and concatenating likewise (velt/lang/bytes/copy), text
+// in bytes (velt/lang/bytes/text); long copies by memmove in the runtime.
 //
 // A byte array is a plain `u8[]` (Velt has no separate `Uint8Array` type), so every array
 // method works on it too; the methods here replace the generic ones of the same name for `u8[]`.
@@ -9,15 +9,14 @@
 // memset). Positions follow JS: negative ones count from the end.
 
 import { strByteLen } from "velt/lang/intrinsics";
-import { indexOfByte, xorMaskRange } from "velt/lang/bytes/search";
+import { indexOfByte, lastIndexOfByte, xorMaskRange } from "velt/lang/bytes/search";
 import { byteLengthIn, received, textEquals } from "velt/lang/bytes/text";
-import { setBytes, writeUtf8 } from "velt/lang/bytes/copy";
+import { fillBytes, setBytes, writeUtf8 } from "velt/lang/bytes/copy";
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
 declare function velt_rt_bytes_zeroed(n: u64): u8[];
 declare function velt_rt_bytes_uninit(n: u64): u8[];
-declare function velt_rt_bytes_last_index_of(b: u8[], byte: u8, from: i64): i64;
 declare function velt_rt_bytes_copy(
   dst: u8[],
   src: u8[],
@@ -26,9 +25,7 @@ declare function velt_rt_bytes_copy(
   sourceEnd: i64,
 ): i64;
 declare function velt_rt_bytes_copy_within(b: u8[], target: i64, start: i64, end: i64);
-declare function velt_rt_bytes_fill(b: u8[], byte: u8, start: i64, end: i64);
 declare function velt_rt_bytes_slice(b: u8[], start: i64, end: i64): u8[];
-declare function velt_rt_bytes_concat(a: u8[], b: u8[]): u8[];
 declare function velt_rt_bytes_range_to_str_lossy(b: u8[], start: i64, end: i64): string;
 declare function velt_simd_mask8x16_first(m: mask8x16): u64;
 
@@ -118,7 +115,13 @@ extend Array<u8> {
 
   /** Position of the last `byte` at or before `from`, or -1. */
   lastIndexOf(byte: u8, from: i64 = 9223372036854775807): i64 {
-    return velt_rt_bytes_last_index_of(this, byte, from);
+    const n = this.length;
+    // A position before the start finds nothing; one past the end is the last byte.
+    if (from < 0 && (n as i64) + from < 0) {
+      return -1;
+    }
+    const at = relative(from, n);
+    return lastIndexOfByte(this, byte, at < n ? at + 1 : n);
   }
 
   /**
@@ -193,7 +196,12 @@ extend Array<u8> {
 
   /** New array with this array's bytes followed by `other`'s. */
   concat(other: u8[]): u8[] {
-    return velt_rt_bytes_concat(this, other);
+    const n = this.length;
+    // Past the array length limit, the limit's `RangeError` (`velt_rt_bytes_uninit`).
+    const out = velt_rt_bytes_uninit((n as u64) + (other.length as u64));
+    setBytes(out, this, 0);
+    setBytes(out, other, n);
+    return out;
   }
 
   /**
@@ -255,8 +263,9 @@ extend Array<u8> {
     return (to > from ? to - from : 0) == len && (len == 0 || textEquals(this, from, s, len, true));
   }
 
-  /** Sets the bytes in [start, end) to `byte` (memset). */
+  /** Sets the bytes in [start, end) to `byte`. */
   fill(byte: u8, start: i64 = 0, end: i64 = 9223372036854775807) {
-    velt_rt_bytes_fill(this, byte, start, end);
+    const n = this.length;
+    fillBytes(this, byte, relative(start, n), relative(end, n));
   }
 }

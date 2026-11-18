@@ -244,11 +244,10 @@ fn math_operations_on_constants_fold() {
 #[test]
 fn math_operations_that_could_differ_from_running_stay() {
     let f64c = |x: f64| Operand::Const(Const::Float(x), Ty::F64);
-    // A NaN result's bits depend on the instruction; `pow` on doubles is the runtime's fdlibm.
+    // A NaN result's bits depend on the instruction.
     for (op, args) in [
         (MathOp::Sqrt, vec![f64c(-1.0)]),
         (MathOp::Abs, vec![f64c(f64::NAN)]),
-        (MathOp::PowF64, vec![f64c(2.0), f64c(0.5)]),
     ] {
         let f = fold_math(op, args);
         assert_eq!(folded_result(&f), None, "{op:?}");

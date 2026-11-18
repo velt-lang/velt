@@ -1,0 +1,41 @@
+// check: no leaks
+// A `read` callback inserting an explicit copy of the lock's arrays into the caller's array
+// with `splice` (#1992), written at the call and through a variable, in a program where the
+// arrays are counted (a `Map` keeps one, and `slice()` makes more). The call changes the
+// caller's array, so it runs by the caller's counts, and what it removes is the caller's to
+// drop. The copies are the caller's own afterwards: changing them leaves the lock's value.
+class Box {
+  items: number[][] = [[1, 2], [3]];
+}
+
+function main() {
+  const a = new RwLock(new Box());
+  const b = new RwLock(new Box());
+  const groups = new Map<string, number[][][]>();
+  groups.set("z", [[[0]]]);
+  const out: number[][][] = [[[1]], [[2]], [[3]], [[4]], [[5]], [[6]], [[7]]];
+  a.read((x) => {
+    console.log("splice", out.splice(1, 2));
+    console.log("splice in", out.splice(0, 1, structuredClone(x.items.slice())));
+    const all = out.splice(3);
+    console.log("rest", all.length, all);
+    b.read((y) => {
+      console.log("nested", out.splice(0, 1));
+      console.log("nested in", out.splice(1, 1, structuredClone(y.items.map((e) => e)), [[8]]));
+    });
+    const copy = structuredClone(x.items.slice());
+    console.log("variable", out.splice(0, 1, copy).length);
+    const whole = x.items.clone();
+    out.push(whole);
+  });
+  console.log(out.length, out, groups.size);
+  out[0][0].push(99);
+  out[out.length - 1][1].push(98);
+  a.read((x) => {
+    console.log("lock", x.items);
+    const g = groups.get("z")!;
+    console.log("group", g.length);
+    out.splice(0, out.length);
+  });
+  console.log(out.length);
+}

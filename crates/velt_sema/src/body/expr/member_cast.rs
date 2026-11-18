@@ -166,6 +166,8 @@ impl FnCx<'_, '_> {
             false => self.collapse_object_option(inner),
         };
         (self.dynamic_raw, self.asserted_fn) = (saved, outer);
+        // A cast gets past `readonly` (#3061).
+        let inner = self.readonly_cast_operand(inner, target);
         match self.assert_value(inner, target, span) {
             Ok(h) => h,
             Err(h) => (self.related_iface_cast(h, target, span))

@@ -1,0 +1,154 @@
+// velt/process (internal): the environment's variables on macOS and Linux, through the C library
+// (`#env-sys`' darwin and linux variants, std/process/env_darwin.velt and env_linux.velt, which
+// say where `environ` is). Nothing here throws, and it imports no error type: the executor reads
+// variables (`processEnv`) and loads this module with it. The working directory is `#cwd-sys`'.
+//
+// The C library's `getenv` takes no lock, and `setenv`/`unsetenv` may move the table it reads, so
+// velt/process takes one lock around every use of the environment: a variable read on one thread
+// while another sets one reads the old or the new table, never a freed one. (C code that reads
+// the environment outside velt/process, `localtime_r` reading `TZ` say, isn't covered, as for any
+// C library.)
+
+import { Ptr } from "velt/ffi/ptr";
+import { readCString } from "velt/ffi/read";
+import { strBytesOf } from "velt/ffi/str_bytes";
+import {
+  addressLoad,
+  arraySetLen,
+  arrayWithCapacity,
+  strByteAt,
+  strByteLen,
+  strDataAddress,
+} from "velt/lang/intrinsics";
+
+// Strings go as NUL-terminated byte arrays (`cBytes`), not `CString`: `CString` throws on a NUL,
+// and `processEnv` is reached from the executor's `@export` worker entry, which can't throw.
+declare c("c") function getenv(name: readonly u8[]): Ptr<u8> | null;
+declare c("c") function setenv(name: readonly u8[], value: readonly u8[], overwrite: i32): i32;
+declare c("c") function unsetenv(name: readonly u8[]): i32;
+declare c("c") function memcpy$env(dst: u8[], src: Ptr<u8>, n: usize): Ptr<u8>;
+
+/**
+ * `s`'s UTF-8 and a NUL after it (a lone surrogate as U+FFFD); `s` holds no NUL. Read with the
+ * string intrinsics, not velt/encoding: that module brings the error classes in, and the
+ * executor, which every program with a task loads, reads variables through here.
+ */
+function cBytes(s: string): u8[] {
+  const text = strBytesOf(s);
+  const n = strByteLen(text);
+  const bytes = arrayWithCapacity<u8>(n + 1);
+  arraySetLen(bytes, n + 1);
+  if (n > 0) {
+    // SAFETY: `bytes` holds n + 1 bytes and `text`'s n bytes are at its data address, alive
+    // during the call.
+    unsafe {
+      memcpy$env(bytes, Ptr.at<u8>(strDataAddress(text)), n);
+    }
+  }
+  bytes[n] = 0;
+  return bytes;
+}
+
+/** The environment's lock: 0 free, 1 held. */
+const LOCK = new Atomic<u32>(0);
+
+function lock() {
+  while (LOCK.compareExchange(0, 1, "acquire", "relaxed") !== 0) {
+    // Another thread is reading or setting a variable, which takes microseconds.
+  }
+}
+
+function unlock() {
+  LOCK.store(0, "release");
+}
+
+/** Whether `name` can name a variable: not empty, no "=" or NUL. */
+function validName(name: string): bool {
+  return strByteLen(name) > 0 && !hasByte(name, 61) && !hasByte(name, 0);
+}
+
+/** Whether `s`'s UTF-8 holds the byte `b` (an ASCII character): an inline scan, no call. */
+function hasByte(s: string, b: u8): bool {
+  const n = strByteLen(s);
+  for (let i: usize = 0; i < n; i++) {
+    if (strByteAt(s, i as u64) === b) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** The variable `name`, or undefined when it isn't set. */
+export function getEnv(name: string): string | undefined {
+  if (!validName(name)) {
+    return undefined;
+  }
+  const c = cBytes(name);
+  lock();
+  // SAFETY: a NUL-terminated name; the lock keeps the table from changing while it's read.
+  const at = unsafe { getenv(c) };
+  // SAFETY: getenv's value is a NUL-terminated string, in place while the lock is held.
+  const value = at === null ? undefined : unsafe { readCString(at) };
+  unlock();
+  return value;
+}
+
+/** Sets the variable `name` to `value` (a name or value C can't hold changes nothing). */
+export function setEnv(name: string, value: string) {
+  if (!validName(name) || hasByte(value, 0)) {
+    return;
+  }
+  const n = cBytes(name);
+  const v = cBytes(value);
+  lock();
+  // SAFETY: NUL-terminated name and value; the lock keeps every other use of the table out.
+  unsafe {
+    setenv(n, v, 1);
+  }
+  unlock();
+}
+
+/** Removes the variable `name`. */
+export function removeEnv(name: string) {
+  if (!validName(name)) {
+    return;
+  }
+  const n = cBytes(name);
+  lock();
+  // SAFETY: as `setEnv`.
+  unsafe {
+    unsetenv(n);
+  }
+  unlock();
+}
+
+/**
+ * Every variable as `[name, value, name, value, …]`, in the order of the table at `table` (the
+ * address of `environ`'s first entry, read under the lock by `environ`), entries without "=" or
+ * with an empty name left out.
+ */
+export function envPairs(environ: () => usize): string[] {
+  const out: string[] = [];
+  lock();
+  const table = environ();
+  if (table !== 0) {
+    let i: usize = 0;
+    while (true) {
+      // SAFETY: an entry of the NULL-terminated table, which the lock keeps in place.
+      const entry = unsafe { addressLoad<usize>(table + 8 * i) };
+      if (entry === 0) {
+        break;
+      }
+      // SAFETY: each entry is a NUL-terminated "name=value", in place while the lock is held.
+      const text = unsafe { readCString(Ptr.at<u8>(entry)) };
+      const eq = text.indexOf("=");
+      if (eq > 0) {
+        out.push(text.slice(0, eq));
+        out.push(text.slice(eq + 1));
+      }
+      i++;
+    }
+  }
+  unlock();
+  return out;
+}

@@ -487,6 +487,7 @@ mod tbaa;
 mod units;
 mod variadic;
 mod wasm;
+mod wide;
 
 /// `velt_main` returning `velt_simd_has_sha_x86()` (#1981 step 5).
 fn sha_check_sample() -> Program {

@@ -115,7 +115,11 @@ impl FnCx<'_, '_> {
         let want = self.flat_members(exp);
         let have = self.flat_members(b);
         let fits = have.iter().all(|m| want.contains(m));
-        if !fits || !have.iter().all(|&m| self.exact_test(m, 0)) {
+        if !fits
+            || !have
+                .iter()
+                .all(|&m| self.exact_test(m, 0) || self.readonly_view(m, 0))
+        {
             return Err(h);
         }
         // Tested as the bound, whose members all have exact tests, then widened to `exp` by
@@ -123,6 +127,19 @@ impl FnCx<'_, '_> {
         let boxed = self.generic_as_any(h)?;
         let bound = self.cast_dynamic(boxed, b);
         self.try_coerce(bound, exp)
+    }
+
+    /// Is `t` a read-only array a narrower array may be seen as (`number[]` for `readonly
+    /// unknown[]`), a view nothing writes through (#3061)? Its elements must be safe the same
+    /// way: in `readonly (number | string)[][]` an inner `number[]` would be written to.
+    fn readonly_view(&mut self, t: TyId, depth: u32) -> bool {
+        if depth > 8 || !self.cx.ty.is_readonly_array(t) {
+            return false;
+        }
+        let Some(e) = self.cx.ty.array_elem(t) else {
+            return false;
+        };
+        self.exact_test(e, depth + 1) || self.readonly_view(e, depth + 1)
     }
 
     /// `t` without its `| null` (or `| undefined`).

@@ -1,9 +1,20 @@
 // HKDF-SHA256 (velt/crypto `hkdfSha256`, `hkdfExtractSha256`, `hkdfExpandSha256`): RFC 5869's
-// test cases 1-3 and Project Wycheproof's valid cases.
-import { hkdfExpandSha256, hkdfExtractSha256, hkdfSha256 } from "velt/crypto";
+// test cases 1-3 and Project Wycheproof's valid cases. HKDF-SHA384 (`hkdfSha384`,
+// `hkdfExtractSha384`, `hkdfExpandSha384`): RFC 5869's inputs of test cases 1 and 3 with
+// SHA-384 (expected values from Node's `crypto.hkdfSync` and Python's hmac, which agree), and
+// Project Wycheproof's valid cases.
+import {
+  hkdfExpandSha256,
+  hkdfExpandSha384,
+  hkdfExtractSha256,
+  hkdfExtractSha384,
+  hkdfSha256,
+  hkdfSha384,
+} from "velt/crypto";
 import { hexDecode, hexEncode } from "velt/encoding";
 import { describe, expect, it } from "velt/test";
 import { HKDF_SHA256_CASES } from "./wycheproof_hkdf_sha256";
+import { HKDF_SHA384_CASES } from "./wycheproof_hkdf_sha384";
 
 function bytes(s: string): u8[] {
   return s == "-" ? [] : hexDecode(s);
@@ -45,6 +56,49 @@ describe("HKDF-SHA256", () => {
   it("throws CryptoError past 255 blocks of output", () => {
     expect(() => hkdfExpandSha256(Buffer.alloc(32), [], 8161)).toThrow(
       "HKDF-SHA256 output is at most 8160 bytes, asked for 8161",
+    );
+  });
+});
+
+describe("HKDF-SHA384", () => {
+  it("matches RFC 5869 test case 1's inputs with SHA-384", () => {
+    const prk = hkdfExtractSha384(
+      hexDecode("000102030405060708090a0b0c"),
+      hexDecode("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"),
+    );
+    expect(hexEncode(prk)).toBe(
+      "704b39990779ce1dc548052c7dc39f303570dd13fb39f7acc564680bef80e8dec70ee9a7e1f3e293ef68eceb072a5ade",
+    );
+    expect(hexEncode(hkdfExpandSha384(prk, hexDecode("f0f1f2f3f4f5f6f7f8f9"), 42))).toBe(
+      "9b5097a86038b805309076a44b3a9f38063e25b516dcbf369f394cfab43685f748b6457763e4f0204fc5",
+    );
+  });
+
+  it("matches RFC 5869 test case 3's inputs with SHA-384 (empty salt and info)", () => {
+    const ikm = hexDecode("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b");
+    expect(hexEncode(hkdfExtractSha384([], ikm))).toBe(
+      "10e40cf072a4c5626e43dd22c1cf727d4bb140975c9ad0cbc8e45b40068f8f0ba57cdb598af9dfa6963a96899af047e5",
+    );
+    expect(hexEncode(hkdfSha384(ikm, [], [], 42))).toBe(
+      "c8c96e710f89b0d7990bca68bcdec8cf854062e54c73a7abc743fade9b242daacc1cea5670415b52849c",
+    );
+  });
+
+  it("matches every valid Wycheproof case", () => {
+    let checked = 0;
+    for (const line of HKDF_SHA384_CASES) {
+      const f = line.split(" ");
+      const okm = bytes(f[3]);
+      expect(hexEncode(hkdfSha384(bytes(f[0]), bytes(f[1]), bytes(f[2]), okm.length))).toBe(f[3]);
+      checked++;
+    }
+    expect(checked).toBe(80);
+  });
+
+  it("throws CryptoError past 255 blocks of output", () => {
+    expect(hkdfExpandSha384(Buffer.alloc(48), [], 12240).length).toBe(12240);
+    expect(() => hkdfExpandSha384(Buffer.alloc(48), [], 12241)).toThrow(
+      "HKDF-SHA384 output is at most 12240 bytes, asked for 12241",
     );
   });
 });

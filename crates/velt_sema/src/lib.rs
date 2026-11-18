@@ -87,6 +87,8 @@ pub use hooks::NAMES as HOOK_NAMES;
 mod canon_key;
 mod glue_reach;
 pub mod ide;
+mod iface_method_checks;
+mod iface_method_writes;
 mod iface_overloads;
 mod iface_writes;
 mod index_signatures;
@@ -227,15 +229,19 @@ pub fn check_with(
 /// other modules too. A name imported from a recovered module (directly or through re-exports)
 /// that it doesn't declare but whose source has that word may be a declaration the parser
 /// dropped: importing and using it reports nothing. The caller drops the diagnostics located in
-/// recovered modules (their syntax errors come first). Never builds a program.
+/// recovered modules (their syntax errors come first). Never builds a program. `loads` serves
+/// the std modules the check demands, as for a check of a program that loaded cleanly: the load
+/// left them to it (`velt_common::std_hooks::ON_DEMAND_MODULES`), and without it a `hookCall`
+/// reached would report its hook as not loaded (#3150).
 pub fn check_recovered(
     modules: &[SourceModule],
     root: usize,
     opts: CheckOptions,
     recovered: &[(usize, &str)],
+    loads: Option<Loads>,
 ) -> Diagnostics {
     generating::on_sema_thread(|budget| {
-        check_on_current_thread(modules, root, opts, recovered, None, None, budget).1
+        check_on_current_thread(modules, root, opts, recovered, None, loads, budget).1
     })
 }
 
@@ -599,6 +605,9 @@ fn analyze_after_phase(cx: &mut ctx::Ctx) {
     timings::pass("make_dynamic_impls", || {
         body::expr::dynamic_fn_views::make_dynamic_impls(cx)
     });
+    // Every implementation exists now: those of interfaces whose methods are written get their
+    // method setters (`iface_method_writes`).
+    cx.finish_method_setters();
     timings::pass("check_adapter_writes", || cx.check_adapter_writes());
     timings::pass("check_adapted_array_reads", || {
         cx.check_adapted_array_reads()

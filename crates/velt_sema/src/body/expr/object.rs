@@ -388,14 +388,15 @@ impl FnCx<'_, '_> {
             return self.spread_object(props, None, self.hint(exp), span);
         }
         let ps = self.props(props);
-        let (mut fields, mut hs) = (vec![], vec![]);
+        let (mut fields, mut hs, mut ms) = (vec![], vec![], vec![]);
         let dynamic = self.hint(exp).is_some_and(|t| self.cx.dynamic(t).is_some());
         for (name, value) in &ps {
-            let h = self.anon_prop_value(name, *value, dynamic);
+            let h = self.prop_value_site(name, *value, dynamic, (fields.len(), &mut ms));
             fields.push((name.name.clone(), h.ty));
             hs.push(h);
         }
         let (def, type_args) = self.anon_def(&fields);
+        self.cx.note_method_field_sites(def, ms);
         self.note_anon_written(def, ps.iter().map(|(_, v)| *v));
         let ty = self.cx.ty.intern(TyKind::Adt(def, type_args.clone()));
         let kind = H::AdtLit {
