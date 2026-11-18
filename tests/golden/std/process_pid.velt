@@ -1,0 +1,8 @@
+// `process.pid` (Node's): this process's id, a number; `pid()` of velt/process is the same.
+import { pid } from "velt/process";
+
+function main() {
+  const id = process.pid;
+  console.log(typeof id, Number.isInteger(id), id > 0, id == pid(), id == process.pid);
+  console.log(`${id}`.length > 0, (id + 0.5) % 1);
+}

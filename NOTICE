@@ -53,6 +53,15 @@ This product includes code derived from fdlibm, Sun Microsystems' Freely Distrib
   modify, and distribute this software is freely granted, provided that this notice is
   preserved.
 
+This product includes code derived from Arm's optimized-routines
+(https://github.com/ARM-software/optimized-routines):
+
+  std/lang/math/pow.velt, pow_log_table.velt and exp_table.velt port its double-precision `pow`
+  (math/pow.c) and the tables it uses (math/pow_log_data.c, math/exp_data.c). Copyright (c)
+  1999-2026, Arm Limited. Licensed under the MIT license or the Apache License 2.0 with the LLVM
+  exception (SPDX-License-Identifier: MIT OR Apache-2.0 WITH LLVM-exception); used here under
+  the MIT license, whose text is in LICENSE-MIT with Arm Limited as the copyright holder.
+
 Release toolchains bundle third-party programs and libraries for linking (lib/velt/,
 lib/targets/; docs/internals/linking.md):
 

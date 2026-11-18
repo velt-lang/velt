@@ -1,0 +1,166 @@
+// velt/lang/string (internal): the searches of a needle that can match half of a surrogate pair
+// (std/lang/string/search.velt), on code units: a needle that starts with a lone low surrogate
+// or ends with a lone high one also matches the half of a pair stored as one 4-byte sequence.
+// Rare: lone surrogates come only from slicing between the halves of a pair,
+// `String.fromCharCode` and JSON escapes.
+
+import { noInline, strByteAt, strByteLen } from "velt/lang/intrinsics";
+
+/** Does `needle` (`m` bytes) start with a lone low surrogate or end with a lone high one? Its
+ * WTF-8 is then `ED B0..BF ..` at the start or `ED A0..AF ..` at the end. */
+export function isHalfNeedle(needle: string, m: usize): bool {
+  if (m < 3) {
+    return false;
+  }
+  return (strByteAt(needle, 0) == 0xed && (strByteAt(needle, 1) & 0xf0) == 0xb0) ||
+    endsWithHigh(needle, m);
+}
+
+/** Does `s` (`n` bytes, at least 3) end with a lone high surrogate? */
+export function endsWithHigh(s: string, n: usize): bool {
+  return strByteAt(s, (n - 3) as u64) == 0xed && (strByteAt(s, (n - 2) as u64) & 0xf0) == 0xa0;
+}
+
+/** The code point of the 4-byte sequence of `s` at `i`. */
+export function codePoint4(s: string, i: usize): u32 {
+  return ((strByteAt(s, i as u64) & 0x07) as u32) << 18 |
+    ((strByteAt(s, (i + 1) as u64) & 0x3f) as u32) << 12 |
+    ((strByteAt(s, (i + 2) as u64) & 0x3f) as u32) << 6 |
+    ((strByteAt(s, (i + 3) as u64) & 0x3f) as u32);
+}
+
+/** The surrogate (or other BMP code point) of the 3-byte sequence of `s` at `i`. */
+export function codePoint3(s: string, i: usize): u32 {
+  return ((strByteAt(s, i as u64) & 0x0f) as u32) << 12 |
+    ((strByteAt(s, (i + 1) as u64) & 0x3f) as u32) << 6 |
+    ((strByteAt(s, (i + 2) as u64) & 0x3f) as u32);
+}
+
+// A position in a string's code units, as a byte offset: `byte * 2`, plus 1 for the low half of
+// the pair (one 4-byte sequence) at `byte`. The search walks both strings this way, so it
+// allocates nothing (a search that only reads keeps borrowed copies, velt_opt
+// `borrowed_copies/read_only.rs`).
+
+/** The code unit of `s` at position `p` (see above). */
+function unitAt(s: string, p: u64): u32 {
+  const i = (p >> 1) as usize;
+  const b = strByteAt(s, i as u64);
+  if (b < 0x80) {
+    return b as u32;
+  }
+  if (b < 0xe0) {
+    return ((b & 0x1f) as u32) << 6 | ((strByteAt(s, (i + 1) as u64) & 0x3f) as u32);
+  }
+  if (b < 0xf0) {
+    return codePoint3(s, i);
+  }
+  const c = codePoint4(s, i) - 0x10000;
+  return (p & 1) == 0 ? 0xd800 + (c >> 10) : 0xdc00 + (c & 0x3ff);
+}
+
+/** The position after the code unit at `p` of `s`. */
+function nextUnit(s: string, p: u64): u64 {
+  const i = p >> 1;
+  const b = strByteAt(s, i);
+  if (b < 0x80) {
+    return (i + 1) << 1;
+  }
+  if (b < 0xe0) {
+    return (i + 2) << 1;
+  }
+  if (b < 0xf0) {
+    return (i + 3) << 1;
+  }
+  return (p & 1) == 0 ? p | 1 : (i + 4) << 1;
+}
+
+/** Do the code units of `needle` (`m` bytes) appear in `s` (`n` bytes) from position `p`? */
+function unitsMatch(s: string, n: usize, needle: string, m: usize, p: u64): bool {
+  let h = p;
+  let q: u64 = 0;
+  while ((q >> 1) < (m as u64)) {
+    if ((h >> 1) >= (n as u64) || unitAt(s, h) != unitAt(needle, q)) {
+      return false;
+    }
+    h = nextUnit(s, h);
+    q = nextUnit(needle, q);
+  }
+  return true;
+}
+
+/** `indexOf` of a half needle: the first match at or after unit `from`. */
+@noInline
+export function unitsFind(s: string, needle: string, from: usize): i64 {
+  const n = strByteLen(s);
+  const m = strByteLen(needle);
+  let p: u64 = 0;
+  let unit: usize = 0;
+  while ((p >> 1) < (n as u64)) {
+    if (unit >= from && unitsMatch(s, n, needle, m, p)) {
+      return unit as i64;
+    }
+    p = nextUnit(s, p);
+    unit++;
+  }
+  return -1;
+}
+
+/** `lastIndexOf` of a half needle: the last match starting at or before unit `last`. */
+@noInline
+export function unitsRfind(s: string, needle: string, last: usize): i64 {
+  const n = strByteLen(s);
+  const m = strByteLen(needle);
+  let found: i64 = -1;
+  let p: u64 = 0;
+  let unit: usize = 0;
+  while ((p >> 1) < (n as u64) && unit <= last) {
+    if (unitsMatch(s, n, needle, m, p)) {
+      found = unit as i64;
+    }
+    p = nextUnit(s, p);
+    unit++;
+  }
+  return found;
+}
+
+/** No match (`halfStart`). */
+export const NO_START: u64 = 0xffffffffffffffff;
+
+/**
+ * Where a match of a half needle starts whose whole-code-point middle (`len` bytes) is at byte
+ * `p` of `s`: `half` asks for a low surrogate just before it (bit 63, its value in bits 0..15)
+ * and a high one just after (bit 62, its value in bits 16..31). Each is a lone surrogate (three
+ * bytes) or that half of a pair (one four-byte sequence) beside the middle. The start as a
+ * position (`byte << 1 | low half`), or `NO_START` when a half is missing. `half` 0 asks nothing.
+ */
+export function halfStart(s: string, p: usize, len: usize, half: u64): u64 {
+  let start = (p as u64) << 1;
+  if (((half >> 63) & 1) != 0) {
+    const l = (half & 0xffff) as u32;
+    if (p >= 3 && strByteAt(s, (p - 3) as u64) == 0xed && codePoint3(s, p - 3) == l) {
+      start = ((p - 3) as u64) << 1;
+    } else if (
+      p >= 4 &&
+      strByteAt(s, (p - 4) as u64) >= 0xf0 &&
+      0xdc00 + ((codePoint4(s, p - 4) - 0x10000) & 0x3ff) == l
+    ) {
+      start = (((p - 4) as u64) << 1) | 1;
+    } else {
+      return NO_START;
+    }
+  }
+  if (((half >> 62) & 1) != 0) {
+    const h = ((half >> 16) & 0xffff) as u32;
+    const q = p + len;
+    const n = strByteLen(s);
+    const lone = q + 3 <= n && strByteAt(s, q as u64) == 0xed && codePoint3(s, q) == h;
+    const pair =
+      q + 4 <= n &&
+      strByteAt(s, q as u64) >= 0xf0 &&
+      0xd800 + ((codePoint4(s, q) - 0x10000) >> 10) == h;
+    if (!lone && !pair) {
+      return NO_START;
+    }
+  }
+  return start;
+}

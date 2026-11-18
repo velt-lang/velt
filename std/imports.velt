@@ -173,6 +173,15 @@ export const imports: Imports = {
     linux: "./fs/fd/linux.velt",
     default: "./fs/fd/unsupported.velt",
   },
+  // This process's id (`process.pid`): the C library's `getpid` on macOS and Linux, Win32's
+  // `GetCurrentProcessId` on Windows, 1 elsewhere. Modules that import nothing: the hook module
+  // of the builtin `process`, which every program loads, imports the variant.
+  "#process-pid": {
+    darwin: "./lang/hooks/pid_posix.velt",
+    linux: "./lang/hooks/pid_posix.velt",
+    win32: "./lang/hooks/pid_win32.velt",
+    default: "./lang/hooks/pid_none.velt",
+  },
   // velt/os's facts about the machine (`platform`, `availableParallelism`, `hostname`, `tmpdir`):
   // the C library's on macOS and Linux, Win32's and Winsock's on Windows; a WebAssembly build's
   // fixed answers elsewhere.
@@ -189,6 +198,12 @@ export const imports: Imports = {
     x64: "./os/arch_x64.velt",
     arm64: "./os/arch_arm64.velt",
     wasm: "./os/arch_wasm.velt",
+  },
+  // Whether every build for the processor has an FMA instruction (arm64), so `pow` uses its
+  // copy with `fma` without a check (std/lang/math/pow.velt).
+  "#math-fma": {
+    arm64: "./lang/math/fma_arm64.velt",
+    default: "./lang/math/fma_check_needed.velt",
   },
   // Winsock for velt/os' `hostname()` on Windows, started once per process; nothing elsewhere.
   "#os-winsock": { win32: "./os/winsock_win32.velt", default: "./os/winsock_none.velt" },

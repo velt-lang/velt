@@ -1,0 +1,10 @@
+full directory ERR_FS_EISDIR Path is a directory: rm returned EISDIR (is a directory) <dir>/a
+empty directory ERR_FS_EISDIR Path is a directory: rm returned EISDIR (is a directory) <dir>/empty
+missing ENOENT ENOENT: no such file or directory, lstat '<dir>/missing'
+missing, force ok
+file ok
+dangling link ok
+false true
+async ERR_FS_EISDIR
+async ENOENT
+false

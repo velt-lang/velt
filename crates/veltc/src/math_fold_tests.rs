@@ -104,7 +104,7 @@ fn folding_computes_what_the_runtime_computes() {
             let run = int32(rt::velt_rt_math_add_int32(a, x));
             check(MathOp::AddInt32, &[int32(a), b], run);
         }
-        // Every operation on a non-NaN double folds (except `pow`), unless its result is NaN.
+        // Every operation on a non-NaN double folds, unless its result is NaN.
         if !x.is_nan() {
             assert!(MathOp::ToInt32.eval(&[b]).is_some(), "{x}");
             assert!(MathOp::Round.eval(&[b]).is_some(), "{x}");

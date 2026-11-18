@@ -32,8 +32,6 @@ pub enum MathOp {
     Trunc,
     /// `(f64) -> f64`: `Math.abs`.
     Abs,
-    /// `(f64, f64) -> f64`: `a ** b` with JS semantics (always a runtime call).
-    PowF64,
     /// `(i64, i64) -> i64`: wrapping integer power (always a runtime call).
     PowI64,
     /// `(f64) -> u64`: the IEEE 754 bits, `x.toBits()`.
@@ -90,6 +88,11 @@ pub enum MathOp {
     /// Lowering emits it for `Math.sqrt` of an `f16`/`bf16` stored to the same format, where it
     /// rounds as the f64 square root does (`lower/half.rs`).
     SqrtF32,
+    /// `(f64, f64, f64) -> f64`: `a * b + c` rounded once (IEEE 754's fusedMultiplyAdd, C's
+    /// `fma`; no runtime function): one instruction where the target has FMA (arm64, x86-64 with
+    /// `--cpu x86-64-v3`), C's `fma` elsewhere. std's `pow` is built on it
+    /// (std/lang/math/fma.velt).
+    FmaF64,
 }
 
 impl MathOp {
@@ -101,7 +104,6 @@ impl MathOp {
         MathOp::Round,
         MathOp::Trunc,
         MathOp::Abs,
-        MathOp::PowF64,
         MathOp::PowI64,
         MathOp::F64Bits,
         MathOp::BitsF64,
@@ -128,6 +130,7 @@ impl MathOp {
         MathOp::Bf16Bits,
         MathOp::BitsBf16,
         MathOp::SqrtF32,
+        MathOp::FmaF64,
     ];
 
     /// The runtime function's symbol.
@@ -139,7 +142,6 @@ impl MathOp {
             MathOp::Round => "velt_rt_math_round",
             MathOp::Trunc => "velt_rt_math_trunc",
             MathOp::Abs => "velt_rt_math_fabs",
-            MathOp::PowF64 => "velt_rt_pow_f64",
             MathOp::PowI64 => "velt_rt_pow_i64",
             MathOp::F64Bits => "velt_rt_math_f64_bits",
             MathOp::BitsF64 => "velt_rt_math_bits_f64",
@@ -166,6 +168,7 @@ impl MathOp {
             MathOp::Bf16Bits => "velt_math_bf16_bits",
             MathOp::BitsBf16 => "velt_math_bits_bf16",
             MathOp::SqrtF32 => "velt_math_sqrt_f32",
+            MathOp::FmaF64 => "velt_math_fma_f64",
         }
     }
 
@@ -176,7 +179,7 @@ impl MathOp {
     }
 
     /// The operation's name: the symbol without its `velt_rt_math_` / `velt_rt_` /
-    /// `velt_math_` prefix (`sqrt`, `pow_f64`, `f32_bits`).
+    /// `velt_math_` prefix (`sqrt`, `pow_i64`, `f32_bits`).
     pub fn name(self) -> &'static str {
         let s = self.symbol();
         s.strip_prefix("velt_rt_math_")
@@ -209,7 +212,6 @@ impl MathOp {
             | MathOp::Round
             | MathOp::Trunc
             | MathOp::Abs => (&[F64], F64),
-            MathOp::PowF64 => (&[F64, F64], F64),
             MathOp::PowI64 => (&[I64, I64], I64),
             MathOp::F64Bits => (&[F64], U64),
             MathOp::BitsF64 => (&[U64], F64),
@@ -222,6 +224,7 @@ impl MathOp {
             MathOp::F32Bits => (&[F32], U32),
             MathOp::BitsF32 => (&[U32], F32),
             MathOp::SqrtF32 => (&[F32], F32),
+            MathOp::FmaF64 => (&[F64, F64, F64], F64),
             MathOp::F16ToF32 | MathOp::Bf16ToF32 => (&[U16], F32),
             MathOp::F32ToF16 | MathOp::F32ToBf16 => (&[F32], U16),
             MathOp::F64ToF16 | MathOp::F64ToBf16 => (&[F64], U16),
@@ -250,9 +253,9 @@ impl MathOp {
     /// type ([`MathOp::signature`]) zero-extended to 64 (an `i32` is its 32-bit pattern, an
     /// `f32` and an `f64` their IEEE 754 bits). Computes exactly what velt_rt's function does
     /// (a test of veltc compares the two); for a `velt_math_*` operation, which has no runtime
-    /// function, this is the reference. `None` where folding could differ from running: `pow` on
-    /// doubles (the runtime's fdlibm), and a NaN argument or result of a double operation (a
-    /// NaN's bits depend on the instruction that makes it).
+    /// function, this is the reference. `None` where folding could differ from running: a NaN
+    /// argument or result of a double operation (a NaN's bits depend on the instruction that
+    /// makes it).
     pub fn eval(self, args: &[u64]) -> Option<u64> {
         let f = |i: usize| args.get(i).map(|&b| f64::from_bits(b));
         let i32_ = |i: usize| args.get(i).map(|&b| b as u32 as i32);
@@ -279,7 +282,6 @@ impl MathOp {
                     _ => js_round(x),
                 })
             }
-            MathOp::PowF64 => None,
             MathOp::PowI64 => Some(pow_i64(u(0)? as i64, u(1)? as i64) as u64),
             MathOp::F64Bits => u(0).filter(|&b| !f64::from_bits(b).is_nan()),
             MathOp::BitsF64 => double(f64::from_bits(u(0)?)),
@@ -332,6 +334,14 @@ impl MathOp {
                 let x = f32::from_bits(u(0).filter(|&b| b >> 32 == 0)? as u32);
                 let r = x.sqrt();
                 (!x.is_nan() && !r.is_nan()).then_some(u64::from(r.to_bits()))
+            }
+            // Rust's `mul_add` rounds once, as IEEE 754 says; a NaN is not folded.
+            MathOp::FmaF64 => {
+                let (a, b, c) = (f(0)?, f(1)?, f(2)?);
+                if a.is_nan() || b.is_nan() || c.is_nan() {
+                    return None;
+                }
+                double(a.mul_add(b, c))
             }
             MathOp::I64ToBf16 => Some(u64::from(half::i64_to_bf16(u(0)? as i64))),
             MathOp::U64ToBf16 => Some(u64::from(half::u64_to_bf16(u(0)?))),
@@ -437,16 +447,11 @@ impl Effects {
 }
 
 /// The runtime functions besides the [`MathOp`]s whose effects are not [`Effects::Any`].
-const EFFECTS: [(&str, Effects); 10] = [
+const EFFECTS: [(&str, Effects); 5] = [
     ("velt_rt_str_cmp", Effects::ReadOnly),
     ("velt_rt_str_eq", Effects::ReadOnly),
     ("velt_rt_str_hash", Effects::ReadOnly),
-    ("velt_rt_str_starts_with", Effects::ReadOnly),
-    ("velt_rt_str_ends_with", Effects::ReadOnly),
     ("velt_rt_str_char_code_at", Effects::ReadCaching),
-    ("velt_rt_str_index_of", Effects::ReadCaching),
-    ("velt_rt_str_last_index_of", Effects::ReadCaching),
-    ("velt_rt_str_includes", Effects::ReadCaching),
     ("velt_rt_array_view_cold", Effects::Cold),
 ];
 
@@ -457,9 +462,12 @@ pub fn effects(symbol: &str) -> Effects {
     }
     // The SIMD operations (`velt_simd_*`, std/simd), which backends expand inline: lane
     // arithmetic, comparisons, conversions and loads read at most memory; the stores write, and
-    // `velt_simd_cpuid` is left as unknown.
+    // `velt_simd_cpuid` and `velt_simd_xgetbv` are left as unknown.
     if let Some(op) = symbol.strip_prefix("velt_simd_") {
-        let writes = op.ends_with("_store") || op.ends_with("_store_partial") || op == "cpuid";
+        let writes = op.ends_with("_store")
+            || op.ends_with("_store_partial")
+            || op == "cpuid"
+            || op == "xgetbv";
         return if writes {
             Effects::Any
         } else {
@@ -520,7 +528,7 @@ mod tests {
     #[test]
     fn runtime_functions() {
         assert!(MathOp::Sqrt.has_runtime_function());
-        assert!(MathOp::PowF64.has_runtime_function());
+        assert!(MathOp::PowI64.has_runtime_function());
         assert!(!MathOp::F32Bits.has_runtime_function());
         assert!(!MathOp::BitsF32.has_runtime_function());
         assert_eq!(MathOp::F32Bits.name(), "f32_bits");
@@ -577,7 +585,7 @@ mod tests {
             assert_eq!(effects(op.symbol()), Effects::None, "{op:?}");
         }
         assert_eq!(effects("velt_rt_str_cmp"), Effects::ReadOnly);
-        assert_eq!(effects("velt_rt_str_index_of"), Effects::ReadCaching);
+        assert_eq!(effects("velt_rt_str_char_code_at"), Effects::ReadCaching);
         assert_eq!(effects("velt_rt_array_view_cold"), Effects::Cold);
         assert_eq!(effects("velt_simd_u8x16_eq"), Effects::ReadOnly);
         assert_eq!(effects("velt_simd_u8x16_load"), Effects::ReadOnly);

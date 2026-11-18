@@ -1,0 +1,201 @@
+// Regression (#1676): `**` and `Math.pow` give Node's results bit for bit. V8 calls the C
+// library's `pow` (glibc's on Linux) after its own JS rules, so `10 ** -5` is 0.00001 (fdlibm's
+// pow, which Velt used before, gives 0.000009999999999999999). Printed numbers round-trip, so equal
+// lines are equal bits. Edge cases (±0, ±Infinity, NaN, subnormals, the largest double, ±1 to
+// ±Infinity), exponents near the overflow and underflow limits, every power of ten, integer
+// powers of negative bases, `x ** 0.5` against `Math.sqrt`, and pseudo-random pairs.
+
+function line(xs: number[]): string {
+  let s = "";
+  for (let i = 0; i < xs.length; i++) {
+    s += i == 0 ? `${xs[i]}` : ` ${xs[i]}`;
+  }
+  return s;
+}
+
+// A Park-Miller generator in exact double arithmetic, uniform in (0, 1).
+let seed = 20261116;
+
+function next(): number {
+  seed = (seed * 48271) % 2147483647;
+  return seed / 2147483647;
+}
+
+function main() {
+  const bases = [
+    0,
+    -0,
+    1,
+    -1,
+    0.5,
+    -0.5,
+    2,
+    -2,
+    3,
+    -3,
+    10,
+    -10,
+    0.1,
+    -0.1,
+    7.5,
+    Math.PI,
+    Math.E,
+    1.0000000000000002,
+    0.9999999999999999,
+    5e-324,
+    -5e-324,
+    2.2250738585072014e-308,
+    2.225073858507201e-308,
+    1e-300,
+    1e300,
+    1.7976931348623157e308,
+    -1.7976931348623157e308,
+    Infinity,
+    -Infinity,
+    NaN,
+  ];
+  const exps = [
+    0,
+    -0,
+    1,
+    -1,
+    2,
+    -2,
+    0.5,
+    -0.5,
+    3,
+    -3,
+    1 / 3,
+    1.5,
+    -1.5,
+    7,
+    10,
+    -10,
+    52,
+    53,
+    1023,
+    1024,
+    -1074,
+    -1075,
+    1e-20,
+    -1e-20,
+    1e20,
+    9223372036854775808,
+    -9223372036854775808,
+    18446744073709551616,
+    0.1,
+    Infinity,
+    -Infinity,
+    NaN,
+  ];
+  console.log("special:");
+  for (const x of bases) {
+    const row: number[] = [];
+    for (const y of exps) {
+      row.push(x ** y);
+    }
+    console.log(line(row));
+  }
+  console.log(`Math.pow agrees: ${Math.pow(10, -5)} ${Math.pow(-8, 1 / 3)} ${Math.pow(2, 0.5)}`);
+
+  console.log("powers of ten:");
+  for (let e = -330; e <= 310; e += 10) {
+    const row: number[] = [];
+    for (let k = 0; k < 10; k++) {
+      row.push(10 ** (e + k));
+    }
+    console.log(line(row));
+  }
+
+  console.log("integer powers:");
+  for (let b = -12; b <= 12; b++) {
+    const row: number[] = [];
+    for (let e = -40; e <= 40; e += 3) {
+      row.push(b ** e);
+    }
+    console.log(line(row));
+  }
+  console.log(line([3 ** 33, 7 ** 19, 192 ** 34, (-474) ** -52, 166 ** -77, 785 ** 8, 2 ** -1074]));
+
+  console.log("square roots:");
+  const roots: number[] = [];
+  for (let i = 0; i < 12; i++) {
+    const x = next() * 10 ** (i * 5 - 30);
+    roots.push(x ** 0.5 - Math.sqrt(x));
+  }
+  console.log(line(roots));
+  console.log(line([(-0) ** 0.5, (-Infinity) ** 0.5, (-4) ** 0.5, 2 ** 0.5, (0.3 / -0.1) ** 2]));
+
+  console.log("near 1, large exponents:");
+  for (let i = 0; i < 20; i++) {
+    const row: number[] = [];
+    for (let j = 0; j < 6; j++) {
+      const x = 1 + (next() - 0.5) * 2e-6;
+      row.push(x ** ((next() - 0.5) * 2e9));
+    }
+    console.log(line(row));
+  }
+
+  console.log("random:");
+  for (let i = 0; i < 120; i++) {
+    const row: number[] = [];
+    for (let j = 0; j < 8; j++) {
+      const x = 10 ** (next() * 40 - 20) * (j % 4 == 3 ? -1 : 1);
+      const y = j % 4 == 3 ? Math.floor(next() * 60) - 30 : (next() - 0.5) * 60;
+      row.push(x ** y);
+    }
+    console.log(line(row));
+  }
+
+  console.log("tiny and huge results:");
+  for (let i = 0; i < 20; i++) {
+    const row: number[] = [];
+    for (let j = 0; j < 6; j++) {
+      const x = 2 + next() * 2;
+      const y = (j % 2 == 0 ? 1 : -1) * (500 + next() * 600);
+      row.push(x ** y);
+    }
+    console.log(line(row));
+  }
+
+  // Pairs whose result changes when one step of glibc's FMA build is computed another way: x * x
+  // for the exponent 2 left out (glibc's own pow differs), the subnormal path's product fused,
+  // and each `fma` whose unfused variant changes any of 4 million fuzzed results (lo3, lo, exp's
+  // polynomial, the last step, the overflow path's, and exp's `kd`), and two checks of the copy
+  // without FMA (std/lang/math/pow_fast.velt): exp's `kd` halfway between two integers, `r1`'s
+  // sum and `r`'s. Read from an array, so no constant folding stands in for the run time.
+  console.log("rounding steps:");
+  const pairs = [
+    -3.105736295771281e-132,
+    2,
+    -1.273727269109014e153,
+    2,
+    2.6863845739988436e-225,
+    1.3696908310738714,
+    -6.883842987072273e60,
+    -5,
+    1.0136683913308693,
+    49820.64920400518,
+    1.0041893391049237,
+    -37922.56540026558,
+    0.9984895903013353,
+    -51156.30372982558,
+    1.00000000716076,
+    -724055487.097801,
+    50.56944101453189,
+    178.31013463468292,
+    5.596796781578837e248,
+    1.0137486528034878,
+    6.330191533301209e-83,
+    -2.416427073305617,
+    1.198810836229881e-42,
+    5,
+    2652.25,
+    4,
+  ];
+  const steps: number[] = [];
+  for (let i = 0; i < pairs.length; i += 2) {
+    steps.push(pairs[i] ** pairs[i + 1]);
+  }
+  console.log(line(steps));
+}

@@ -18,6 +18,8 @@ dashu-int = "0.6"
 flate2 = "1"
 hex = "0.4"
 itoa = "1"
+# `pow` (fdlibm), what the runtime called for `**` on floats before it moved to std.
+libm = "0.2"
 memchr = "2"
 ryu = "1"
 sha2 = "0.11"
