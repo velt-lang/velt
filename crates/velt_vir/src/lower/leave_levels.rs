@@ -263,7 +263,9 @@ impl FnLower<'_, '_> {
     /// literals and of the lock's value `value` (never a store's destination), by std's
     /// functions only? A function of the program may return anything it can reach; a variable
     /// other than the lock's value may name the caller's container, which a call on it
-    /// (`out.at(0)`) could give a part of.
+    /// (`out.at(0)`) could give a part of. No program is known that tells this answer from
+    /// "yes" for every such store: sema refuses the stores of a part of a lock's value that the
+    /// refused temporaries would make (review of #3170). It states what level 0 rests on.
     fn readers_own(&mut self, temps: &[Temp], value: Option<LocalId>) -> bool {
         let mut any = false;
         for t in temps {
@@ -273,7 +275,7 @@ impl FnLower<'_, '_> {
             }
             any = true;
             let known = !t.opaque
-                && t.locals.iter().all(|l| Some(*l) == value)
+                && t.outer().all(|l| Some(l) == value)
                 && t.callees.iter().all(|d| {
                     let span = self.cx.fn_def(*d).span;
                     self.cx.locs.as_ref().is_some_and(|m| m.is_std(span))
@@ -380,11 +382,14 @@ struct Store {
 }
 
 /// An argument of a storing call that is no place and holds no transfer: its type, the
-/// variables it reads and the functions it calls. `opaque`: it also does what these do not
-/// tell (a call through a value or a table, module state, a closure, an `await`).
+/// variables it reads, those it binds itself (`own`: a pattern's in `v!` or `a ?? b`, a
+/// `let`'s in the block a spread literal or `Array.from` becomes) and the functions it calls.
+/// `opaque`: it also does what these do not tell (a call through a value or a table, module
+/// state, a closure, an `await`, a jump out of it).
 struct Temp {
     ty: TyId,
     locals: Vec<LocalId>,
+    own: Vec<LocalId>,
     callees: Vec<DefId>,
     opaque: bool,
 }
@@ -394,11 +399,17 @@ impl Temp {
         let mut t = Temp {
             ty: e.ty,
             locals: vec![],
+            own: vec![],
             callees: vec![],
             opaque: false,
         };
         t.read(e);
         t
+    }
+
+    /// The variables it reads that it did not bind itself.
+    fn outer(&self) -> impl Iterator<Item = LocalId> + '_ {
+        (self.locals.iter().copied()).filter(|l| !self.own.contains(l))
     }
 
     fn read(&mut self, e: &hir::Expr) {
@@ -412,12 +423,62 @@ impl Temp {
                 callee: hir::Callee::Intrinsic(_),
                 ..
             } => {}
-            K::Call { .. } | K::Global(_) | K::Closure(_) | K::Await(_) | K::Block(_) => {
-                self.opaque = true
+            K::Call { .. } | K::Global(_) | K::Closure(_) | K::Await(_) => self.opaque = true,
+            K::Match { arms, .. } => {
+                for a in arms {
+                    super::debug_vars::pat_locals(&a.pat, &mut |l| self.own.push(l));
+                }
             }
+            K::Block(b) => return self.block(b),
             _ => {}
         }
         super::frame_envs::children(e, &mut |x| self.read(x));
+    }
+
+    /// A block's statements: what its `let`s and loops bind is its own; a jump out of it is
+    /// not told by what it reads.
+    fn block(&mut self, b: &hir::Block) {
+        use hir::StmtKind as S;
+        for s in &b.stmts {
+            match &s.kind {
+                S::Let { local, init } => {
+                    self.own.push(*local);
+                    init.iter().for_each(|e| self.read(e));
+                }
+                S::LetPat { pat, init } => {
+                    super::debug_vars::pat_locals(pat, &mut |l| self.own.push(l));
+                    self.read(init);
+                }
+                S::Expr(e) => self.read(e),
+                S::If { cond, then, els } => {
+                    self.read(cond);
+                    self.block(then);
+                    els.iter().for_each(|b| self.block(b));
+                }
+                S::While {
+                    cond, body, step, ..
+                } => {
+                    self.read(cond);
+                    self.block(body);
+                    step.iter().for_each(|e| self.read(e));
+                }
+                S::ForOf {
+                    binding,
+                    iter,
+                    body,
+                    ..
+                } => {
+                    super::debug_vars::pat_locals(binding, &mut |l| self.own.push(l));
+                    self.read(iter);
+                    self.block(body);
+                }
+                S::Block(b) => self.block(b),
+                S::Return(_) | S::Break(_) | S::Continue(_) | S::Try { .. } => self.opaque = true,
+            }
+        }
+        if let Some(e) = &b.value {
+            self.read(e);
+        }
     }
 }
 
