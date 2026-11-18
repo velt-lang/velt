@@ -153,7 +153,7 @@ function replaceUnits(s: string, from: string, to: string, all: bool): string {
       break;
     }
     const pos = k as usize;
-    out = out + s.substring(copied as number, pos as number);
+    out = out + s.substring(copied as i64, pos as i64);
     out = out + (plain ? to : substituteUnits(to, s, pos, len));
     copied = pos + len;
     if (!all) {
@@ -161,7 +161,7 @@ function replaceUnits(s: string, from: string, to: string, all: bool): string {
     }
     at = len == 0 ? pos + 1 : copied;
   }
-  return out + s.substring(copied as number);
+  return out + s.substring(copied as i64);
 }
 
 /** `substitute` with code-unit positions. */
@@ -181,11 +181,11 @@ function substituteUnits(to: string, s: string, pos: usize, len: usize): string 
     if (c == DOLLAR) {
       piece = "$";
     } else if (c == 38) {
-      piece = s.substring(pos as number, (pos + len) as number);
+      piece = s.substring(pos as i64, (pos + len) as i64);
     } else if (c == 96) {
-      piece = s.substring(0, pos as number);
+      piece = s.substring(0, pos as i64);
     } else if (c == 39) {
-      piece = s.substring((pos + len) as number);
+      piece = s.substring((pos + len) as i64);
     } else {
       expands = false;
     }

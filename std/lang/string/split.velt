@@ -85,9 +85,9 @@ function splitHalf(s: string, sep: string): string[] {
     if (k < 0) {
       break;
     }
-    out.push(s.substring(start as number, k as number));
+    out.push(s.substring(start as i64, k as i64));
     start = (k as usize) + units;
   }
-  out.push(s.substring(start as number));
+  out.push(s.substring(start as i64));
   return out;
 }
