@@ -1113,8 +1113,8 @@ Step 1 lands in layers, each its own pull request:
        includes counts. clang runs again when one changes (about 0.2 s per library). The
        package's files among them are build-stamp inputs, so a changed header rebuilds (and so
        checks) a program whose sources didn't change.
-     - Not yet: headers per build condition (frameworks: zig has no macOS SDK), structs,
-       function pointers (other than as `Ptr<void>`, 6c-1).
+     - Not yet: headers per build condition (frameworks: zig has no macOS SDK), function
+       pointers (other than as `Ptr<void>`, 6c-1). Structs came with "As built" 13.
    - 6b: what installs check.
      - A C library a package declares functions of lists its `headers` or says
        `unchecked: true`; `c`, the platform's C library, too (`c: { c: { headers:
@@ -1426,8 +1426,34 @@ Step 1 lands in layers, each its own pull request:
       veltc `tests/c_struct_pointers.rs`, a round trip through a package's C `sources` (C fills
       a chain of structs, Velt reads and follows it, Velt writes structs C checks field by
       field), which fails with the null niche taken out (the layout check stops the build).
-    - **Not yet**: the header check of structs (layer 4, before a package outside std ships
-      structs with pointer fields); `Ptr.cast`.
+    - **Not yet**: `Ptr.cast`. The header check of structs is "As built" 13.
+13. The header check of C structs (#2187 layer 4, #3094's pull request 4; veltc
+    `native/headers/structs.rs`).
+    - **Which**: each `declare c struct` a library's declarations reach (a pointer's pointee,
+      an `Out<T>`'s `T`, or a reached struct's field) is checked with that library, against its
+      headers, on each target with C headers. A struct no declaration reaches isn't checked.
+    - **Lookup**: the headers' struct of that name, by its tag (`struct point`) or a typedef
+      (`typedef struct { … } box_t;`, `typedef struct point point_t;`), from clang's
+      `RecordDecl`s (`ctype::CRecord`); a definition wins over a declaration.
+    - **Fields**: the same number, in order, each by its C name and its type through the table
+      functions use (`compare::compare`); a nested struct by name (`Shape::Struct`), a function
+      pointer as `Ptr<void>` until `CFunction`.
+    - **Refused**, with the header line: a union, a struct only declared, `packed`, bit-fields,
+      C arrays (a field `float m[4]` is a C array, no longer read as the pointer it is as a
+      parameter, until `T[N]`) and flexible array members.
+    - **Layout**: clang's own answers, not Velt's assumption. A second run of clang reads a
+      generated file whose enumerators are `sizeof`, `_Alignof` and `__builtin_offsetof` of each
+      struct that passed the field check (`structs::check_layouts`, as `declare c const`s' values
+      are read), compared with Velt's layout of the fields in order at natural alignment; so
+      `#pragma pack` and `aligned(…)` are refused, naming each offset and size that differs.
+    - **Records**: a struct is a declaration of the check (`Decl::structure`): its fields and
+      layout are part of the remembered result's key and of `c-headers.json`'s digests, so a
+      fetched package's structs are compared with its record as its functions are. The records
+      of packages without structs don't change.
+    - **Tests**: veltc `tests/c_struct_headers.rs` (structs by tag and by typedef on Linux,
+      macOS and Windows headers; each refusal; `#pragma pack` and `aligned(16)`), the round trip
+      of `tests/c_struct_pointers.rs` (now checked against its header), and unit tests of the
+      records' parsing (`ctype_tests.rs`), the probe and the digest.
 
 ## Decisions
 
