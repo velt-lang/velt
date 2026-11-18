@@ -83,4 +83,3 @@ pub(super) unsafe fn slice(s: &VeltStr, a: usize, b: usize) -> VeltStr {
     }
     VeltStr::from_vec(v)
 }
-
