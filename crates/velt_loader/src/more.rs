@@ -257,8 +257,10 @@ pub(crate) fn load_up_front(loader: &mut Loader, queue: &mut VecDeque<usize>) {
 
 /// The executor in Velt's modules sema demands as a program needs them: its hooks, a debug
 /// compiler's cell check, and what std calls by role (#2882): its blocking pool, its reactor, its
-/// child processes and its resolver.
+/// child processes and its resolver. With them the blocks of module state (module_blocks.velt,
+/// #2196 9c), which a native program with module state reaches with or without the executor.
 const EXECUTOR_MODULES: &[&str] = &[
+    velt_common::std_module!(lang_hooks_module_blocks),
     velt_common::std_module!(lang_hooks_sched),
     velt_common::std_module!(lang_hooks_program_thread),
     velt_common::std_module!(lang_hooks_sched_spawn),
