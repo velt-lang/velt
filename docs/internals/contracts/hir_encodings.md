@@ -961,8 +961,8 @@ doesn't hold, so a std global is the same definition in every program (#2943).
   modified in place. A use that takes the value (`Want::Move`) is wrapped in
   `Intrinsic::Share` by sema; moving a part out of it (`Field { base: Global(d) }` with mode
   `Move`) is a share too (lowering).
-- Lowering emits `velt_rt_module_state(&DESC, i) -> ptr` for each access to slot `i` (rt_abi.md
-  "Module state") and projects slot `i` of the tuple behind it; `DESC` is
+- Lowering emits `velt_rt_module_state(&DESC, i) -> ptr` (on a native target std's hook for it)
+  for each access to slot `i` (rt_abi.md "Module state") and projects slot `i` of the tuple behind it; `DESC` is
   `{ size, align, init, drop, names }`, `init` the function evaluating every slot's `init` in
   order into the zeroed block (calling `velt_rt_module_ready` after each), `drop` the tuple's
   drop glue, `names` the slots' names. A slot is never read from its initializer's stored

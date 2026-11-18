@@ -208,8 +208,9 @@ fn shares_nothing(program: &vir::Program) -> Result<(), String> {
     {
         return Err(format!("its code reaches `{}`", e.symbol));
     }
-    if let Some(f) =
-        (program.funcs.iter()).find(|f| f.symbol.contains("schedModule") && !f.blocks.is_empty())
+    // The executor's module hooks, and module_blocks.velt's functions (its module's mangled path).
+    let module_code = |s: &str| s.contains("schedModule") || s.contains("module__blocks");
+    if let Some(f) = (program.funcs.iter()).find(|f| module_code(&f.symbol) && !f.blocks.is_empty())
     {
         return Err(format!("its code reaches module state (`{}`)", f.symbol));
     }

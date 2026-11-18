@@ -629,10 +629,19 @@ struct ModuleDesc {
   const char *names;   /* each slot's name, NUL-terminated, in slot order */
   void (*rest)(void *state); /* the root file's slots, or NULL (additive, #1438) */
 };
+/* velt_rt_wasm only (#2196 9c): */
 void *velt_rt_module_state(const struct ModuleDesc *desc, uint64_t slot);
 void *velt_rt_module_block(const struct ModuleDesc *desc);
 void velt_rt_module_ready(void *state, uint64_t n);
 ```
+
+On native targets the three are std's hooks instead (#2196 9c; no runtime entry): the executor
+in Velt's `schedModuleState`, `schedModuleBlock` and `schedModuleReady` (sched_module.velt, which
+takes the lock below) for a program that runs on it, and module_blocks.velt's `moduleState`,
+`moduleBlock` and `moduleReady` for one that doesn't (no tasks, so no lock); they take the
+descriptor and the block as `usize`. Lowering calls `moduleExit(code)` after a synchronous
+`main` returns, which drops the blocks as below. Everything this section says of the entries
+holds for the hooks.
 
 `velt_rt_module_state` returns the process's module state block, for an access to slot `slot`:
 allocated zeroed with `size`/`align` and filled by `init` on the first call (the block is current
