@@ -263,6 +263,7 @@ fn named_pointee_note(n: &str, h: &Headers) -> String {
     match h.record(n) {
         Some((r, _)) if r.defined && !r.union => {
             match h.declared.iter().find(|d| h.same_record(d, n)) {
+                Some(d) if d == n => format!("it points at C struct `{n}`: declare `Ptr<{n}>`"),
                 Some(d) => format!("it points at C struct `{n}`, declared as `{d}`: declare `Ptr<{d}>`"),
                 None => format!(
                     "it points at C struct `{n}`: declare `Ptr<{n}>`, with `declare c struct {n} {{ … }}`"

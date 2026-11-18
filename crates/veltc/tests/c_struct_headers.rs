@@ -244,7 +244,7 @@ fn a_pointer_to_another_struct_names_the_struct_to_declare() {
     assert!(!o.status.success(), "{out}");
     for want in [
         "parameter 1 of C function `use_other` is `struct other *` in geo.h:5, not the declaration's `Ptr<point>`",
-        "note: it points at C struct `other`, declared as `other`: declare `Ptr<other>`",
+        "note: it points at C struct `other`: declare `Ptr<other>`\n",
         "parameter 1 of C function `use_other_t` is `point_t *` in geo.h:6, not the declaration's `Ptr<other>`",
         "note: it points at C struct `point_t`, declared as `point`: declare `Ptr<point>`",
         "note: it points at C type `hidden`: declare `Ptr<hidden>`, with `declare c type hidden;`",
