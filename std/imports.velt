@@ -128,6 +128,12 @@ export const imports: Imports = {
   // whole-file operations and standard input read on its blocking pool (std/lang/hooks/
   // sched_blocking.velt) instead of the runtime's leaves on tokio's blocking threads.
   "#fs-rt": { "std-scheduler": "./fs/rt_sched.velt", default: "./fs/rt.velt" },
+  // `readAt`'s read off the calling task's thread: on the executor's blocking pool in a native
+  // program; on the calling thread elsewhere, where there are no file descriptors to read.
+  "#fs-read-at": {
+    "std-scheduler": "./fs/fd/read_at_sched.velt",
+    default: "./fs/fd/read_at_inline.velt",
+  },
   "#process-rt": { "std-scheduler": "./process/rt_sched.velt", default: "./process/rt.velt" },
   // velt/process/child's runtime functions: the runtime's (std/process/child/rt.velt, which
   // WebAssembly can't run), or, compiled with the executor in Velt, its own (child_sched.velt),
@@ -162,6 +168,9 @@ export const imports: Imports = {
     "std-scheduler": "./task/worker_index_sched.velt",
     default: "./task/worker_index.velt",
   },
+  // The limb loops of `BigInt`'s magnitudes (std/math/nat_add.velt): on the limbs' addresses,
+  // which the C library's `memset` gives; JS hosts have none, and index the arrays.
+  "#nat-rows": { js: "./math/nat_rows_checked.velt", default: "./math/nat_rows_raw.velt" },
   // The C library's file-descriptor functions behind Node's fd API (`openSync`, `readSync`, ...):
   // `declare c("c")` on macOS and Linux, with their per-target `fcntl` commands and `struct
   // stat`; elsewhere each fails with ENOSYS.
@@ -169,5 +178,61 @@ export const imports: Imports = {
     darwin: "./fs/fd/darwin.velt",
     linux: "./fs/fd/linux.velt",
     default: "./fs/fd/unsupported.velt",
+  },
+  // This process's id (`process.pid`): the C library's `getpid` on macOS and Linux, Win32's
+  // `GetCurrentProcessId` on Windows, 1 elsewhere. Modules that import nothing: the hook module
+  // of the builtin `process`, which every program loads, imports the variant.
+  "#process-pid": {
+    darwin: "./lang/hooks/pid_posix.velt",
+    linux: "./lang/hooks/pid_posix.velt",
+    win32: "./lang/hooks/pid_win32.velt",
+    default: "./lang/hooks/pid_none.velt",
+  },
+  // velt/os's facts about the machine (`platform`, `availableParallelism`, `hostname`, `tmpdir`):
+  // the C library's on macOS and Linux, Win32's and Winsock's on Windows; a WebAssembly build's
+  // fixed answers elsewhere.
+  "#os-sys": {
+    darwin: "./os/sys_darwin.velt",
+    linux: "./os/sys_linux.velt",
+    win32: "./os/sys_win32.velt",
+    default: "./os/sys_wasm.velt",
+  },
+  // The build's processor (`os.arch()`, and the Linux system-call numbers that differ by it).
+  // No default: a native build for another processor fails here, at compile time, rather than
+  // running with x64's or WebAssembly's answers.
+  "#os-arch": {
+    x64: "./os/arch_x64.velt",
+    arm64: "./os/arch_arm64.velt",
+    wasm: "./os/arch_wasm.velt",
+  },
+  // Whether every build for the processor has an FMA instruction (arm64), so `pow` uses its
+  // copy with `fma` without a check (std/lang/math/pow.velt).
+  "#math-fma": {
+    arm64: "./lang/math/fma_arm64.velt",
+    default: "./lang/math/fma_check_needed.velt",
+  },
+  // The environment's variables: the C library's on macOS and Linux (each with its own way to
+  // `environ`), Win32's on Windows, the WebAssembly runtime's there. Nothing in them throws: the
+  // executor reads variables.
+  "#env-sys": {
+    darwin: "./process/env_darwin.velt",
+    linux: "./process/env_linux.velt",
+    win32: "./process/env_win32.velt",
+    default: "./process/env_wasm.velt",
+  },
+  // The working directory (`cwd`, `chdir`), apart from the variables: it throws `IoError`.
+  "#cwd-sys": {
+    win32: "./process/cwd_win32.velt",
+    native: "./process/cwd_posix.velt",
+    default: "./process/cwd_wasm.velt",
+  },
+  // Winsock for velt/os' `hostname()` on Windows, started once per process; nothing elsewhere.
+  "#os-winsock": { win32: "./os/winsock_win32.velt", default: "./os/winsock_none.velt" },
+  // Whether a file descriptor is a terminal: the C library's `isatty` on macOS and Linux, a
+  // console handle on Windows, the WebAssembly runtime's answer there.
+  "#tty": {
+    win32: "./process/tty_win32.velt",
+    native: "./process/tty_posix.velt",
+    default: "./process/tty_wasm.velt",
   },
 };

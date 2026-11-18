@@ -369,6 +369,7 @@ impl FnCx<'_, '_> {
         lhs: &ast::Expr,
         rhs: &ast::Expr,
         exp: Option<TyId>,
+        want: Want,
         span: Span,
     ) -> hir::Expr {
         let b = self.cx.ty.bool_;
@@ -415,10 +416,20 @@ impl FnCx<'_, '_> {
             None => None,
         };
         if test == Test::Object && !is_and {
-            // Always truthy: `a || b` is `a`; `b` is checked but never runs.
+            // Always truthy: `a || b` is `a`; `b` is checked but never runs. `a` is used as its
+            // user wants it, like `(a)`: taken over only by a user that keeps the value. One
+            // that reads it where it is (`(a || b).length`, an argument that is borrowed)
+            // leaves `a` its owner's, who drops it.
             self.scoped(&facts, |s| s.expr(rhs, Some(l.ty), Want::Move));
             let mut l = l;
-            self.force_move(&mut l);
+            match want {
+                Want::Move => self.force_move(&mut l),
+                Want::Borrow => {}
+                Want::BorrowMut if crate::body::places::is_place(&l) => {
+                    crate::body::places::set_place_mode(&mut l, hir::UseMode::BorrowMut)
+                }
+                Want::BorrowMut => {}
+            }
             return l;
         }
         let r = self.scoped(&facts, |s| s.expr(rhs, rhint, Want::Move));

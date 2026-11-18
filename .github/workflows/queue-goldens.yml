@@ -4,7 +4,9 @@
 # --pack`, crates/xtask/src/golden_archive.rs); then each shard downloads the archive and checks
 # every n-th golden (`--archive`, `VELT_GOLDEN_SHARD=<i>/<n>`), on its own runner, without
 # building. The shards per OS are in crates/xtask/src/os.rs (`GOLDEN_SHARDS`). Together the
-# shards check every golden once, in debug and release mode, and the bundled-linker goldens.
+# shards check every golden once, in debug and release mode, and the bundled-linker goldens; with
+# `vir_identity` other than `skip` they also run the VIR identity (crates/veltc/tests/
+# eager_std_identity.rs), each on its share of the goldens: the build packs its test binary.
 #
 # With `wasm_shards` (the queue's plan gives them when a change touches WebAssembly code), the
 # same build also packs the WebAssembly goldens (crates/veltc/tests/wasm_goldens.rs) and their
@@ -50,6 +52,12 @@ on:
           include programs that build a package's C `sources` (crates/xtask/src/zig.rs).
         type: boolean
         default: false
+      vir_identity:
+        description: >-
+          `VELT_VIR_IDENTITY` for the build and the shards: empty compares every golden, `sample`
+          one in 8, `skip` none (`Plan::vir_identity_queue` in crates/xtask/src/plan.rs).
+        type: string
+        default: skip
       fail-fast:
         description: >-
           A failed job cancels the caller's whole run (the merge queue; the nightly's jobs are
@@ -72,6 +80,9 @@ jobs:
       actions: write
     outputs:
       parts: ${{ steps.parts.outputs.parts }}
+    env:
+      # The build packs the VIR identity's test binary when it is selected; the shards run it.
+      VELT_VIR_IDENTITY: ${{ inputs.vir_identity }}
     steps:
       - name: the shards cover every golden
         id: parts
@@ -135,7 +146,9 @@ jobs:
     # merge queue shards from 2026-11-13 to 11-16 took, at the median / 95th percentile / most:
     # Linux 16 / 24 / 30 minutes (one cancelled at 30), Windows 19 / 24 / 26, macOS 23 / 29 / 37.
     # A third macOS shard would need another scarce macOS runner per run instead.
-    timeout-minutes: ${{ startsWith(inputs.os, 'macos') && 45 || 40 }}
+    # The VIR identity, when the queue runs all of it, adds its share: about 33 minutes of a
+    # 4-vCPU Linux runner in all, 41 on Windows and 25 on macOS (2026-11-18), split over the shards.
+    timeout-minutes: ${{ startsWith(inputs.os, 'macos') && 65 || 55 }}
     permissions:
       contents: read
       actions: write
@@ -157,6 +170,7 @@ jobs:
         working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
         env:
           VELT_GOLDEN_SHARD: ${{ matrix.shard }}
+          VELT_VIR_IDENTITY: ${{ inputs.vir_identity }}
           # A golden's own time limit (crates/veltc/tests/golden.rs, default 120 s): its
           # `--release` run links the debug runtime the archive carries (#3095), and a heavy one
           # on a slow runner reached 120 s (std/abort_signal_timeout_dropped on macOS,

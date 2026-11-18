@@ -183,9 +183,6 @@ impl Interp<'_> {
             "velt_rt_uncaught_report" => {}
             "velt_rt_set_throw_loc" => self.throw_loc = a[0],
             "velt_rt_throw_loc" => return Ok(self.throw_loc),
-            "velt_rt_pow_f64" => {
-                return Ok(f64::from_bits(a[0]).powf(f64::from_bits(a[1])).to_bits())
-            }
             "velt_rt_pow_i64" => return Ok(pow_i64(a[0] as i64, a[1] as i64) as u64),
             "velt_rt_alloc" => {
                 assert!(
@@ -257,6 +254,10 @@ impl Interp<'_> {
     }
 
     fn realloc(&mut self, p: u64, old: u64, new: u64) -> u64 {
+        // An old size of 0 allocates, as `velt_rt_realloc` does (array growth from empty).
+        if old == 0 {
+            return self.heap_alloc(new);
+        }
         assert_eq!(
             self.allocs.get(&p).copied(),
             Some(old.max(1)),

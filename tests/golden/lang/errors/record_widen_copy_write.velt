@@ -1,0 +1,8 @@
+// A record where a record of a wider value type is expected is a copy, which a write through
+// the wider type shows (Node prints true: one record).
+function mark(r: Record<string, string | boolean | undefined>): void {
+  r["seen"] = true;
+}
+const attrs: Record<string, string | undefined> = { a: "x" };
+mark(attrs);
+console.log(attrs["seen"]);

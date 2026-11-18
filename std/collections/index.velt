@@ -1,5 +1,5 @@
 // velt/collections: containers beyond the prelude's arrays and `Map`: a double-ended queue,
-// a priority queue, key-ordered maps (sorted arrays and a B+ tree), a concurrent map, and `Set`
+// a priority queue, the best `k` of a stream, key-ordered maps (sorted arrays and a B+ tree), a concurrent map, and `Set`
 // (also a global). https://veltlang.com/docs/std/collections/.
 
 export { BTreeMap, InlineKey } from "velt/collections/btree_map";
@@ -8,3 +8,4 @@ export { Deque } from "velt/collections/deque";
 export { PriorityQueue } from "velt/collections/priority_queue";
 export { ReadonlySet, Set } from "velt/collections/set";
 export { SortedMap } from "velt/collections/sorted_map";
+export { TopK, TopKEntry } from "velt/collections/top_k";

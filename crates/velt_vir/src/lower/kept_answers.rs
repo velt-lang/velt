@@ -64,7 +64,7 @@
 //! - `types`, `aggs`, `externs`, `extern_map`, `statics`, `static_map`, `str_objects`,
 //!   `symbol_records`, `numbered`, `callees`, `callee_ids`: tables keyed by content, which only
 //!   grow.
-//! - `cell_checks`, `target`, `jit`, `facts_only`: the options and the pass.
+//! - `cell_checks`, `heap_hooks`, `target`, `jit`, `facts_only`: the options and the pass.
 //!
 //! **Lowering's own state** of the functions it builds, rebuilt with them or emptied once a
 //! pass ends: `funcs`, `work_map`, `queue`, `held` (module state's accesses until `velt_main`

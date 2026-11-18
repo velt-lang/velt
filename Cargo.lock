@@ -391,28 +391,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dashu-base"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "861a614e79388a4c72aa66b0bdabc91e3a4f30d53e0c8d962953e207d75884d0"
-dependencies = [
- "num-modular",
-]
-
-[[package]]
-name = "dashu-int"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "24f558ce3d00852b4959e5fee8d317aa37e7f469c35abc9d4eeb81fcc0177485"
-dependencies = [
- "cfg-if",
- "dashu-base",
- "num-modular",
- "num-order",
- "static_assertions",
-]
-
-[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -971,21 +949,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "num-modular"
-version = "0.6.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bd8e500409e6cd603b03e477c26a6caecdc27ac58979a53e881c75eafc079f44"
-
-[[package]]
-name = "num-order"
-version = "1.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "537b596b97c40fcf8056d153049eb22f481c17ebce72a513ec9286e4986d1bb6"
-dependencies = [
- "num-modular",
-]
-
-[[package]]
 name = "object"
 version = "0.39.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1376,12 +1339,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
-name = "static_assertions"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
-
-[[package]]
 name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1770,12 +1727,9 @@ version = "0.6.0"
 dependencies = [
  "bytes",
  "cc",
- "dashu-int",
  "futures-util",
  "getrandom 0.4.3",
- "itoa",
  "libc",
- "libm",
  "libmimalloc-sys",
  "lock_api",
  "memchr",
@@ -1784,7 +1738,6 @@ dependencies = [
  "parking_lot_core",
  "regex",
  "rustls",
- "ryu",
  "socket2",
  "tokio",
  "tokio-rustls",
@@ -1800,12 +1753,9 @@ name = "velt_rt_host"
 version = "0.6.0"
 dependencies = [
  "bytes",
- "dashu-int",
  "futures-util",
  "getrandom 0.4.3",
- "itoa",
  "libc",
- "libm",
  "libmimalloc-sys",
  "lock_api",
  "memchr",
@@ -1814,7 +1764,6 @@ dependencies = [
  "parking_lot_core",
  "regex",
  "rustls",
- "ryu",
  "socket2",
  "tokio",
  "tokio-rustls",
@@ -1830,12 +1779,9 @@ name = "velt_rt_shared"
 version = "0.6.0"
 dependencies = [
  "bytes",
- "dashu-int",
  "futures-util",
  "getrandom 0.4.3",
- "itoa",
  "libc",
- "libm",
  "libmimalloc-sys",
  "lock_api",
  "memchr",
@@ -1844,7 +1790,6 @@ dependencies = [
  "parking_lot_core",
  "regex",
  "rustls",
- "ryu",
  "socket2",
  "tokio",
  "tokio-rustls",
@@ -1859,11 +1804,7 @@ dependencies = [
 name = "velt_rt_wasm"
 version = "0.6.0"
 dependencies = [
- "dashu-int",
- "itoa",
- "libm",
  "memchr",
- "ryu",
  "velt_text",
 ]
 

@@ -1,0 +1,282 @@
+// velt/lang/math (internal): `Math.asin`, `acos`, `atan` and `atan2`, ported from fdlibm's
+// e_asin.c, e_acos.c, s_atan.c and e_atan2.c as V8 has them (src/base/ieee754.cc), so that
+// results have the same bits as in JavaScript engines. Copyright (C) 1993 by Sun Microsystems,
+// Inc.; see NOTICE.
+
+import { abs, sqrt } from "velt/lang/intrinsics";
+import { clearLowWord, highWord, lowWord } from "velt/lang/math/words";
+
+const PI: f64 = 3.14159265358979311600e+00;
+const PI_LO: f64 = 1.2246467991473531772e-16;
+const PIO2_HI: f64 = 1.57079632679489655800e+00;
+const PIO2_LO: f64 = 6.12323399573676603587e-17;
+const PIO4_HI: f64 = 7.85398163397448278999e-01;
+
+// asin(x) = x + x * x^2 * R(x^2) on [0, 0.5], with R = P/Q.
+const PS0: f64 = 1.66666666666666657415e-01;
+const PS1: f64 = -3.25565818622400915405e-01;
+const PS2: f64 = 2.01212532134862925881e-01;
+const PS3: f64 = -4.00555345006794114027e-02;
+const PS4: f64 = 7.91534994289814532176e-04;
+const PS5: f64 = 3.47933107596021167570e-05;
+const QS1: f64 = -2.40339491173441421878e+00;
+const QS2: f64 = 2.02094576023350569471e+00;
+const QS3: f64 = -6.88283971605453293030e-01;
+const QS4: f64 = 7.70381505559019352791e-02;
+
+// atan(0.5), atan(1), atan(1.5) and atan(inf), and their tails.
+const ATAN_HI: f64[] = [
+  4.63647609000806093515e-01,
+  7.85398163397448278999e-01,
+  9.82793723247329054082e-01,
+  1.57079632679489655800e+00,
+];
+const ATAN_LO: f64[] = [
+  2.26987774529616870924e-17,
+  3.06161699786838301793e-17,
+  1.39033110312309984516e-17,
+  6.12323399573676603587e-17,
+];
+
+const AT0: f64 = 3.33333333333329318027e-01;
+const AT1: f64 = -1.99999999998764832476e-01;
+const AT2: f64 = 1.42857142725034663711e-01;
+const AT3: f64 = -1.11111104054623557880e-01;
+const AT4: f64 = 9.09088713343650656196e-02;
+const AT5: f64 = -7.69187620504482999495e-02;
+const AT6: f64 = 6.66107313738753120669e-02;
+const AT7: f64 = -5.83357013379057348645e-02;
+const AT8: f64 = 4.97687799461593236017e-02;
+const AT9: f64 = -3.65315727442169155270e-02;
+const AT10: f64 = 1.62858201153657823623e-02;
+
+// R(z) of the asin approximation, times z.
+function asinP(z: f64): f64 {
+  return z * (PS0 + z * (PS1 + z * (PS2 + z * (PS3 + z * (PS4 + z * PS5)))));
+}
+
+function asinQ(z: f64): f64 {
+  return 1.0 + z * (QS1 + z * (QS2 + z * (QS3 + z * QS4)));
+}
+
+/**
+ * The arc cosine, from 0 to pi; NaN outside [-1, 1]. Below 0.5 it is pi/2 - asin(x); above,
+ * 2*asin(sqrt((1 - x)/2)), and pi minus that for a negative `x`. The error is below 1 ulp.
+ */
+export function acos(x: f64): f64 {
+  const hx = highWord(x);
+  const ix = hx & 0x7fffffff;
+  if (ix >= 0x3ff00000) {
+    // |x| >= 1
+    if ((((ix - 0x3ff00000) as u32) | lowWord(x)) == 0) {
+      return hx > 0 ? 0.0 : PI + 2.0 * PIO2_LO;
+    }
+    return NaN;
+  }
+  if (ix < 0x3fe00000) {
+    // |x| < 0.5
+    if (ix <= 0x3c600000) {
+      // |x| < 2^-57
+      return PIO2_HI + PIO2_LO;
+    }
+    const z = x * x;
+    const r = asinP(z) / asinQ(z);
+    return PIO2_HI - (x - (PIO2_LO - x * r));
+  }
+  if (hx < 0) {
+    // x < -0.5
+    const z = (1.0 + x) * 0.5;
+    const p = asinP(z);
+    const q = asinQ(z);
+    const s = sqrt(z);
+    const r = p / q;
+    const w = r * s - PIO2_LO;
+    return PI - 2.0 * (s + w);
+  }
+  // x > 0.5
+  const z = (1.0 - x) * 0.5;
+  const s = sqrt(z);
+  const df = clearLowWord(s);
+  const c = (z - df * df) / (s + df);
+  const r = asinP(z) / asinQ(z);
+  const w = r * s + c;
+  return 2.0 * (df + w);
+}
+
+/**
+ * The arc sine, from -pi/2 to pi/2; NaN outside [-1, 1]. Below 0.5 it is a rational
+ * approximation; above, pi/2 - 2*asin(sqrt((1 - |x|)/2)). The error is below 1 ulp.
+ */
+export function asin(x: f64): f64 {
+  const hx = highWord(x);
+  const ix = hx & 0x7fffffff;
+  if (ix >= 0x3ff00000) {
+    // |x| >= 1
+    if ((((ix - 0x3ff00000) as u32) | lowWord(x)) == 0) {
+      return x * PIO2_HI + x * PIO2_LO;
+    }
+    return NaN;
+  }
+  if (ix < 0x3fe00000) {
+    // |x| < 0.5
+    if (ix < 0x3e400000) {
+      // |x| < 2^-27
+      return x;
+    }
+    const t = x * x;
+    const w = asinP(t) / asinQ(t);
+    return x + x * w;
+  }
+  let w = 1.0 - abs(x);
+  let t = w * 0.5;
+  let p = asinP(t);
+  let q = asinQ(t);
+  const s = sqrt(t);
+  if (ix >= 0x3fef3333) {
+    // |x| > 0.975
+    w = p / q;
+    t = PIO2_HI - (2.0 * (s + s * w) - PIO2_LO);
+  } else {
+    w = clearLowWord(s);
+    const c = (t - w * w) / (s + w);
+    const r = p / q;
+    p = 2.0 * s * r - (PIO2_LO - 2.0 * c);
+    q = PIO4_HI - 2.0 * w;
+    t = PIO4_HI - (p - q);
+  }
+  return hx > 0 ? t : -t;
+}
+
+/**
+ * The arc tangent, from -pi/2 to pi/2. The argument is reduced to below 7/16 with
+ * atan(x) = atan(c) + atan((x - c)/(1 + c*x)) for c = 0.5, 1, 1.5 or infinity, and the rest is a
+ * polynomial. The error is below 1 ulp.
+ */
+export function atan(x0: f64): f64 {
+  let x = x0;
+  const hx = highWord(x);
+  const ix = hx & 0x7fffffff;
+  if (ix >= 0x44100000) {
+    // |x| >= 2^66
+    if (ix > 0x7ff00000 || (ix == 0x7ff00000 && lowWord(x) != 0)) {
+      return x + x;
+    }
+    return hx > 0 ? ATAN_HI[3] + ATAN_LO[3] : -ATAN_HI[3] - ATAN_LO[3];
+  }
+  let id: i32 = -1;
+  if (ix < 0x3fdc0000) {
+    // |x| < 0.4375
+    if (ix < 0x3e400000) {
+      // |x| < 2^-27
+      return x;
+    }
+  } else {
+    x = abs(x);
+    if (ix < 0x3ff30000) {
+      // |x| < 1.1875
+      if (ix < 0x3fe60000) {
+        // 7/16 <= |x| < 11/16
+        id = 0;
+        x = (2.0 * x - 1.0) / (2.0 + x);
+      } else {
+        // 11/16 <= |x| < 19/16
+        id = 1;
+        x = (x - 1.0) / (x + 1.0);
+      }
+    } else if (ix < 0x40038000) {
+      // |x| < 2.4375
+      id = 2;
+      x = (x - 1.5) / (1.0 + 1.5 * x);
+    } else {
+      // 2.4375 <= |x| < 2^66
+      id = 3;
+      x = -1.0 / x;
+    }
+  }
+  const z = x * x;
+  const w = z * z;
+  // The odd and even terms of the polynomial, apart.
+  const s1 = z * (AT0 + w * (AT2 + w * (AT4 + w * (AT6 + w * (AT8 + w * AT10)))));
+  const s2 = w * (AT1 + w * (AT3 + w * (AT5 + w * (AT7 + w * AT9))));
+  if (id < 0) {
+    return x - x * (s1 + s2);
+  }
+  const r = ATAN_HI[id as usize] - ((x * (s1 + s2) - ATAN_LO[id as usize]) - x);
+  return hx < 0 ? -r : r;
+}
+
+/**
+ * The angle of the point (x, y) from the X axis, from -pi to pi: atan(y/x) moved to the
+ * quadrant the signs give, with the cases of zeros and infinities of IEEE 754. The error is
+ * below 2 ulp.
+ */
+export function atan2(y: f64, x: f64): f64 {
+  if (x != x || y != y) {
+    return x + y;
+  }
+  if (x == 1.0) {
+    return atan(y);
+  }
+  const hx = highWord(x);
+  const ix = hx & 0x7fffffff;
+  const hy = highWord(y);
+  const iy = hy & 0x7fffffff;
+  // 2 * sign(x) + sign(y)
+  let m = ((hy >> 31) & 1) | ((hx >> 30) & 2);
+  if (((iy as u32) | lowWord(y)) == 0) {
+    // y is ±0
+    if (m < 2) {
+      return y;
+    }
+    return m == 2 ? PI : -PI;
+  }
+  if (((ix as u32) | lowWord(x)) == 0) {
+    // x is ±0
+    return hy < 0 ? -PIO2_HI : PIO2_HI;
+  }
+  if (ix == 0x7ff00000) {
+    // x is ±Infinity
+    if (iy == 0x7ff00000) {
+      if (m == 0) {
+        return PIO4_HI;
+      }
+      if (m == 1) {
+        return -PIO4_HI;
+      }
+      return m == 2 ? 3.0 * PIO4_HI : -3.0 * PIO4_HI;
+    }
+    if (m == 0) {
+      return 0.0;
+    }
+    if (m == 1) {
+      return -0.0;
+    }
+    return m == 2 ? PI : -PI;
+  }
+  if (iy == 0x7ff00000) {
+    // y is ±Infinity
+    return hy < 0 ? -PIO2_HI : PIO2_HI;
+  }
+  const k = (iy - ix) >> 20;
+  let z = 0.0;
+  if (k > 60) {
+    // |y/x| > 2^60
+    z = PIO2_HI + 0.5 * PI_LO;
+    m &= 1;
+  } else if (hx < 0 && k < -60) {
+    // 0 > |y|/x > -2^-60
+    z = 0.0;
+  } else {
+    z = atan(abs(y / x));
+  }
+  if (m == 0) {
+    return z;
+  }
+  if (m == 1) {
+    return -z;
+  }
+  if (m == 2) {
+    return PI - (z - PI_LO);
+  }
+  return (z - PI_LO) - PI;
+}

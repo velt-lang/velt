@@ -1,3 +1,4 @@
+// check: no leaks
 // JavaScript truthiness: `0`, `-0`, `NaN`, `""` and `null` are falsy, everything else is
 // truthy; `||` and `&&` return an operand. The expected output is Node's.
 enum Color {

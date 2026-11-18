@@ -1,0 +1,18 @@
+// velt/lang/number (internal): ASCII bytes as a string, for the number printers whose text can be
+// longer than the inline words of velt/lang/number/text: radix digits (velt/lang/number/radix) and
+// exact decimals (velt/lang/number/exact).
+
+declare function velt_rt_strbuf_new(cap: u64, out: string);
+declare function velt_rt_strbuf_push_u8s(buf: string, bytes: u8[], len: u64, units: u64);
+declare function velt_rt_strbuf_finish(buf: string, out: string);
+
+/** The first `len` bytes of `bytes`, all ASCII, as a string. */
+export function asciiText(bytes: u8[], len: usize): string {
+  const n = len as u64;
+  let out = "";
+  velt_rt_strbuf_new(n, out);
+  velt_rt_strbuf_push_u8s(out, bytes, n, n);
+  let text = "";
+  velt_rt_strbuf_finish(out, text);
+  return text;
+}

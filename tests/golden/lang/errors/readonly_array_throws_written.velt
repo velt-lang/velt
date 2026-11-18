@@ -1,0 +1,15 @@
+// A function type with a written `throws` held in a `Map` is no function type that throws
+// nothing written, also when its parameter is a read-only array and the target's a mutable one
+// (#3061): the error type differs, as without the read-only parameter.
+function ranged(x: readonly number[]): number throws RangeError {
+  if (x.length > 0) {
+    throw new RangeError("r");
+  }
+  return 0;
+}
+
+function main(): void {
+  const m = new Map<string, (x: readonly number[]) => number throws RangeError>([["a", ranged]]);
+  const v: Map<string, (x: number[]) => number> = m;
+  console.log(v.size);
+}

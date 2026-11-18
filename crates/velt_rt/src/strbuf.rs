@@ -207,8 +207,15 @@ unsafe fn push_ascii(buf: *mut VeltStrBuf, text: &[u8]) {
 /// Append a decimal `i64`: a whole float's digits. Not an extern: compiled code appends an
 /// integer through std (velt/lang/hooks/number_text, #2197).
 unsafe fn push_i64(buf: *mut VeltStrBuf, v: i64) {
-    let mut b = itoa::Buffer::new();
-    push_ascii(buf, b.format(v).as_bytes());
+    // At most 20 bytes (`-9223372036854775808`).
+    let mut room = [0u8; 20];
+    let mut out = InPlace {
+        room: &mut room,
+        n: 0,
+    };
+    velt_text::fmt::push_i64(&mut out, v);
+    let n = out.n;
+    push_ascii(buf, &room[..n]);
 }
 
 /// Append an `f64` formatted like JS `String(v)`.

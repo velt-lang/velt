@@ -116,6 +116,7 @@ mod frame_slots;
 mod fresh;
 mod frozen;
 mod gated_clones;
+mod heap_calls;
 mod heap_sroa;
 mod inline;
 mod invariant_reads;
@@ -509,6 +510,7 @@ fn optimize_with(program: &mut vir::Program, level: OptLevel, t: &mut PassTiming
             t.time("null_exits", || null_exits::run(program));
         }
     }
+    t.time("heap_calls", || heap_calls::run(program));
     t.time("dead_funcs", || dead_funcs::run(program));
 }
 

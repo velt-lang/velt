@@ -196,8 +196,8 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   Backends call it with the target's variadic convention.
 - `declare system function` is gone (#2187 step 2): std's functions of the C library are
   `declare c("c")` declarations (std/fs/fd/posix.velt), the guards the compiler's table enforced
-  are std's Velt wrappers, and the parser reports `declare system` as an error naming `declare
-  c("c")`. Removed: `ast::FnSig::is_system` (`AST_FORMAT` 16), `hir::ExternFnDef::system`,
+  are std's Velt wrappers, and `declare system function` is an ordinary parse error (`system` is
+  a name). Removed: `ast::FnSig::is_system` (`AST_FORMAT` 16), `hir::ExternFnDef::system`,
   velt_vir's `system` module (its table) and `lower/system.rs`; added: velt_vir's `c_abi`
   (`errno`'s accessor per target, `host_triple`, `base_name`). `lastOsError()` is std's
   `ThreadLocal` `OS_ERROR` (std/os/rt.velt), which lowering stores `errno` into after a

@@ -1,0 +1,27 @@
+// A read-only array where a mutable one is expected, at the top and one level down (#3061): a
+// promise, an array, an object field, a tuple, a reassigned `let`, and a `Readonly<T[]>`'s
+// mutator. tsc refuses each (TS4104, TS2322, TS2345, TS2339), and so does Velt, with TS4104's
+// message rather than a widening note.
+async function f(): Promise<readonly number[]> {
+  return [1];
+}
+
+function takes(p: { xs: number[] }): number {
+  return p.xs.length;
+}
+
+async function main(): Promise<void> {
+  const p: Promise<number[]> = f();
+  const g: (readonly number[])[] = [[1]];
+  const m: number[][] = g;
+  const o: { xs: readonly number[] } = { xs: [1] };
+  console.log(takes(o));
+  const t: [readonly number[], string] = [[1], "s"];
+  const u: [number[], string] = t;
+  let l: number[] = [1];
+  const ro: readonly number[] = [5];
+  l = ro;
+  const w: Readonly<number[]> = [1];
+  w.push(2);
+  console.log(p, m, u, l);
+}

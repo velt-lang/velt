@@ -1,0 +1,17 @@
+// velt/os (internal): `#os-winsock`'s default variant (std/imports.velt): no Winsock outside
+// Windows, so velt/os' test of it has nothing to check there.
+
+/** Nothing to start: true. */
+export function startWinsock(): bool {
+  return true;
+}
+
+/** How many times velt/os called `WSAStartup`: never, here. */
+export function winsockStarts(): u32 {
+  return 0;
+}
+
+/** No Winsock: false. */
+export function checkLeftStarted(): bool {
+  return false;
+}

@@ -152,7 +152,11 @@ impl Ctx<'_> {
                 matches!((num_value(&a), num_value(&b)), (Some(x), Some(y)) if x == y)
             }
             (TyKind::Literal(v), _) => self.lit_base(&v) == p,
-            (TyKind::Array(a), TyKind::Array(b)) => self.relate(a, b, slots),
+            // A read-only array is no mutable one (#3061); a mutable one is a read-only one.
+            (TyKind::Array(a), TyKind::Array(b)) => {
+                (!self.ty.is_readonly_array(s) || self.ty.is_readonly_array(p))
+                    && self.relate(a, b, slots)
+            }
             (TyKind::Tuple(a), TyKind::Tuple(b)) => {
                 a.len() == b.len() && a.iter().zip(&b).all(|(x, y)| self.relate(*x, *y, slots))
             }

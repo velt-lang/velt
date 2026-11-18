@@ -1,0 +1,48 @@
+// velt/os (internal): the directory for temporary files, from the environment as Node's
+// `os.tmpdir()` reads it (JavaScript in Node, not an OS call): the POSIX and the Windows rule,
+// which `#os-sys`' variants pick from.
+
+import { processEnv } from "velt/lang/hooks/process";
+
+/** The first of `names` set to a non-empty value, or "". */
+function firstSet(names: string[]): string {
+  for (const name of names) {
+    const v = processEnv(name);
+    if (v !== undefined && v.length > 0) {
+      return v;
+    }
+  }
+  return "";
+}
+
+/** `TMPDIR`, `TMP` or `TEMP`, else "/tmp", without a trailing "/" (but "/" stays "/"). */
+export function posixTmpdir(): string {
+  let path = firstSet(["TMPDIR", "TMP", "TEMP"]);
+  if (path.length === 0) {
+    path = "/tmp";
+  }
+  if (path.length > 1 && path.endsWith("/")) {
+    path = path.slice(0, -1);
+  }
+  return path;
+}
+
+/**
+ * `TEMP` or `TMP`, else `%SystemRoot%\temp` (`%windir%` if that is unset, else `windows`, the
+ * Windows directory as Win32 reports it: Node would say "undefined\temp"), without a trailing
+ * "\" unless it is a drive's root ("C:\").
+ */
+export function windowsTmpdir(windows: () => string): string {
+  let path = firstSet(["TEMP", "TMP"]);
+  if (path.length === 0) {
+    let root = firstSet(["SystemRoot", "windir"]);
+    if (root.length === 0) {
+      root = windows();
+    }
+    path = root + "\\temp";
+  }
+  if (path.length > 1 && path.endsWith("\\") && !path.endsWith(":\\")) {
+    path = path.slice(0, -1);
+  }
+  return path;
+}

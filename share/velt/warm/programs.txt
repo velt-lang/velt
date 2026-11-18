@@ -18,6 +18,14 @@
 ../../../bench/stdport/fnv.velt
 ../../../bench/stdport/html_escape.velt
 ../../../bench/stdport/html_escape_jsx.velt
+../../../tests/golden/lang/number_to_string_radix.velt
+../../../tests/golden/lang/number_to_exponential_precision.velt
+../../../tests/golden/lang/number_parse_int.velt
+../../../tests/golden/lang/number_parse_long.velt
+# toFixed alone: there `u8[]` is laid out otherwise than in the golden above (inline, not
+# behind a pointer), so the release object of toFixed's exact printer has another key.
+../../../bench/stdport/to_fixed.velt
+../../../bench/stdport/pow.velt
 #
 # The rest, greedily:
 ../../../tests/std/fetch/server_api.test.velt

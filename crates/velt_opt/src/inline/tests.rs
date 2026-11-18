@@ -165,6 +165,8 @@ fn budget_caps_growth() {
     let mut p = pb.finish();
     let mut budget = Budget {
         remaining: 100,
+        set_aside: vec![],
+        set_aside_total: 0,
         cycles: FxHashMap::default(),
     };
     run(&mut p, &mut budget, crate::Served::default());
@@ -712,3 +714,5 @@ fn a_callee_called_once_is_inlined_whatever_its_cleanup_pads_add() {
     assert_eq!(calls_to(main, with_pads), 0);
     assert_eq!(calls_to(main, plain), 1);
 }
+
+mod budget;

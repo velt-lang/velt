@@ -412,6 +412,7 @@ fn lazy_std_checks_the_lowered_hooks_of_the_values_a_program_has() {
     assert_eq!(
         unchecked,
         [
+            "pow_f64",
             "number_write",
             "whole_number_write",
             "panic_raise",

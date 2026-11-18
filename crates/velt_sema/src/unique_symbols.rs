@@ -157,7 +157,8 @@ impl Ctx<'_> {
             }
             _ => return self.erased_shape(t, ifaces, d),
         };
-        self.ty.intern(kind)
+        let out = self.ty.intern(kind);
+        self.ty.keep_readonly(t, out)
     }
 
     /// [`Self::erased`] for a concrete union or an object type.

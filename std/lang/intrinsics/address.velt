@@ -14,6 +14,15 @@ import type { Copied } from "./modes";
 export declare unsafe function addressLoad<T>(address: usize): T;
 
 /**
+ * An array of the `length` `T`s (a number type or `bool`) at `address` that does not own them:
+ * dropping it frees nothing. Unsafe: the memory must be there, aligned for `T`, and stay there
+ * and unchanged for as long as the array or a `shared` handle of it lives; the array must never
+ * be written or grown, so hand it out only as `shared<T[]>`.
+ */
+@intrinsic
+export declare unsafe function addressArray<T>(address: usize, length: usize): T[];
+
+/**
  * Writes `value`, a `T` (a number type or `bool`), at `address`, unchecked. Unsafe: the memory
  * must be writable and hold a `T` nothing else reads or writes meanwhile.
  */

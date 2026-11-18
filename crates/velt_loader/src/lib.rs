@@ -58,7 +58,6 @@ mod import_meta;
 mod jsx;
 mod locate;
 mod more;
-mod moved;
 mod old_extension;
 mod paths;
 mod pick;
@@ -354,8 +353,9 @@ impl Loader<'_, '_> {
             .partition(|g| {
                 g.names.iter().any(|n| {
                     (!own.contains(n.as_str()) || globals::through_global_this(src, n))
-                        && globals::names_global(&words, ast, n)
-                        && (!g.code_only || globals::in_code(src, ast, n, &mut stripped))
+                        && globals::names_global(&words, ast, n, || {
+                            globals::in_code(src, ast, n, &mut stripped)
+                        })
                 })
             });
         self.globals = rest;

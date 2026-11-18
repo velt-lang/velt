@@ -1,0 +1,28 @@
+readonly_array_nested.velt:7:10: error: the type `readonly f64[] | null` cannot be assigned to `f64[] | null`: a 'readonly' array in it would be a mutable one (TypeScript's TS4104)
+  = note: code could change the array through the mutable type; copy it (`[...xs]`) to get an array you may change
+
+readonly_array_nested.velt:11:26: error: the type `(readonly f64[])[]` cannot be assigned to `f64[][]`: a 'readonly' array in it would be a mutable one (TypeScript's TS4104)
+  = note: code could change the array through the mutable type; copy it (`[...xs]`) to get an array you may change
+
+readonly_array_nested.velt:13:47: error: the type `(f64[]) => void` cannot be assigned to `(readonly f64[]) => void`: a 'readonly' array in it would be a mutable one (TypeScript's TS4104)
+  = note: code could change the array through the mutable type; copy it (`[...xs]`) to get an array you may change
+
+readonly_array_nested.velt:21:7: error: the type `readonly f64[]` does not satisfy the constraint `f64[]`
+  = note: required by `T extends f64[]` of function `bound`
+
+readonly_array_nested.velt:24:43: error: mismatched types
+  = note: expected 0, found 1
+
+readonly_array_nested.velt:26:4: error: property 'swap' does not exist on type 'readonly f64[]' (TypeScript's TS2339)
+  = note: a read-only array has no methods that change it; copy it first (`[...xs]`) to get an array you may change
+
+readonly_array_nested.velt:27:4: error: property 'truncate' does not exist on type 'readonly f64[]' (TypeScript's TS2339)
+  = note: a read-only array has no methods that change it; copy it first (`[...xs]`) to get an array you may change
+
+readonly_array_nested.velt:29:5: error: property 'sort' does not exist on type 'readonly any[]' (TypeScript's TS2339)
+  = note: a read-only array has no methods that change it; copy it first (`[...xs]`) to get an array you may change
+
+readonly_array_nested.velt:30:4: error: no field `length` on type `readonly f64[]`
+
+readonly_array_nested.velt:32:23: error: mismatched types
+  = note: expected string, found (readonly f64[])[]

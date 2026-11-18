@@ -189,7 +189,9 @@ impl FnCx<'_, '_> {
                             r.span,
                         );
                     }
-                    self.declare_local(r, ty, LocalKind::Bind)
+                    // A new array, which the code may change, also from a read-only one (#3061).
+                    let rest_ty = self.cx.ty.mutable_twin(ty);
+                    self.declare_local(r, rest_ty, LocalKind::Bind)
                 });
                 P::Array { elems: pats, rest }
             }

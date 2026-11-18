@@ -62,16 +62,16 @@ extend Array<i32> {
    * @example
    * xs.sort((a, b) => b.compareTo(a)); // descending
    */
-  sort(cmp: ((x: i32, y: i32) => i64) | null = null) {
+  sort(cmp: ((x: i32, y: i32) => number) | null = null) {
     if (cmp != null) {
-      stableSort(this, cmp, (c) => c < 0);
+      stableSort(this, cmp, (c) => c < 0.0);
       return;
     }
     pdqsort(this, (a, b) => a < b);
   }
 
   /** A sorted copy (ES2023); the receiver is unchanged. */
-  toSorted(cmp: ((x: i32, y: i32) => i64) | null = null): i32[] {
+  toSorted(cmp: ((x: i32, y: i32) => number) | null = null): i32[] {
     const out = this.slice();
     out.sort(cmp);
     return out;

@@ -112,6 +112,7 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("strLoadU8x16", Op(I::StrLoadU8x16)),
     ("targetFeature", TargetFeature),
     // address.velt
+    ("addressArray", Op(I::AddressArray)),
     ("addressLoad", Op(I::AddressLoad)),
     ("addressStore", Op(I::AddressStore)),
     ("exportedAddress", Op(I::ExportedAddress)),

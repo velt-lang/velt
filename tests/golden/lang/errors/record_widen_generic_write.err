@@ -1,0 +1,3 @@
+record_widen_generic_write.velt:11:6: error: a `Record<string, string | undefined>` converts to `Record<string, boolean | string | undefined>` by copying its entries, and this program writes to a record of one of the two types, which the other would not see
+record_widen_generic_write.velt:8:22: written here
+= note: pass a copy, `{ ...x }` (a new record in TypeScript too), or declare the parameter or variable as `Record<string, string | undefined>`

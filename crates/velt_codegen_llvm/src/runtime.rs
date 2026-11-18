@@ -157,6 +157,15 @@ const SQRT_F32: &str = "define internal float @velt.sqrt_f32(float %x) alwaysinl
   ret float %r
 }";
 
+/// `a * b + c` rounded once (`velt_math_fma_f64`): `llvm.fma.f64`, one `fmadd` / `vfmadd` where
+/// the target has FMA, else C's `fma`.
+const FMA_F64_DECL: &str = "declare double @llvm.fma.f64(double, double, double)";
+const FMA_F64: &str = "define internal double @velt.fma_f64(double %a, double %b, double %c) \
+alwaysinline nounwind {
+  %r = call double @llvm.fma.f64(double %a, double %b, double %c)
+  ret double %r
+}";
+
 /// A runtime math function the backend calls through a helper defined in the module instead:
 /// the helper's name and its definition (with what it declares). The helper has the
 /// operation's signature (`MathOp::signature`).
@@ -175,6 +184,7 @@ pub(crate) fn inline_helper(op: MathOp) -> Option<InlineHelper> {
         MathOp::F32Bits => ("@velt.f32_bits", &[F32_BITS]),
         MathOp::BitsF32 => ("@velt.bits_f32", &[BITS_F32]),
         MathOp::SqrtF32 => ("@velt.sqrt_f32", &[SQRT_F32_DECL, SQRT_F32]),
+        MathOp::FmaF64 => ("@velt.fma_f64", &[FMA_F64_DECL, FMA_F64]),
         _ => return None,
     })
 }
@@ -193,6 +203,13 @@ pub(crate) use velt_vir::math::{effects, Effects};
 /// grows an array stay in registers across it), and that an alloc/free pair of the same family
 /// whose block is never used can be deleted. velt_rt's mem.rs upholds this: the functions only
 /// call mimalloc (or the Rust global allocator) and abort on failure.
+///
+/// mimalloc's own functions, which a release build's generated code calls through std's hooks
+/// (std/lang/hooks/heap.velt, #2196), get the same memory effects and a `noalias` result, so
+/// loads stay in registers across a `push` as before; but no `allockind`: with it LLVM deletes
+/// an allocation whose block is never read together with the hook's null check, so a request
+/// larger than memory would no longer stop the program (tests/golden/lang/
+/// array_from_past_memory.velt), which the runtime's functions, whose check LLVM can't see, do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Allocator {
     /// `velt_rt_alloc(size: u64, align: u64) -> ptr`
@@ -201,6 +218,16 @@ pub(crate) enum Allocator {
     Realloc,
     /// `velt_rt_free(p: ptr, size: u64, align: u64)`
     Free,
+    /// `mi_malloc(size) -> ptr`
+    MiMalloc,
+    /// `mi_malloc_aligned(size, alignment) -> ptr`
+    MiMallocAligned,
+    /// `mi_realloc(p, newsize) -> ptr`
+    MiRealloc,
+    /// `mi_realloc_aligned(p, newsize, alignment) -> ptr`
+    MiReallocAligned,
+    /// `mi_free(p)`
+    MiFree,
 }
 
 /// `"alloc-family"` shared by the three functions (a block is freed by the same family).
@@ -214,6 +241,11 @@ impl Allocator {
             "velt_rt_alloc" => (Allocator::Alloc, &[U64, U64], Ptr),
             "velt_rt_realloc" => (Allocator::Realloc, &[Ptr, U64, U64, U64], Ptr),
             "velt_rt_free" => (Allocator::Free, &[Ptr, U64, U64], Unit),
+            "mi_malloc" => (Allocator::MiMalloc, &[U64], Ptr),
+            "mi_malloc_aligned" => (Allocator::MiMallocAligned, &[U64, U64], Ptr),
+            "mi_realloc" => (Allocator::MiRealloc, &[Ptr, U64], Ptr),
+            "mi_realloc_aligned" => (Allocator::MiReallocAligned, &[Ptr, U64, U64], Ptr),
+            "mi_free" => (Allocator::MiFree, &[Ptr], Unit),
             _ => return None,
         };
         (params == want_params && ret == want_ret).then_some(kind)
@@ -223,7 +255,12 @@ impl Allocator {
     pub(crate) fn return_attrs(self) -> &'static str {
         match self {
             Allocator::Alloc | Allocator::Realloc => "noalias noundef ",
-            Allocator::Free => "",
+            // As clang declares `malloc`: null on failure, else a fresh block.
+            Allocator::MiMalloc
+            | Allocator::MiMallocAligned
+            | Allocator::MiRealloc
+            | Allocator::MiReallocAligned => "noalias ",
+            Allocator::Free | Allocator::MiFree => "",
         }
     }
 
@@ -252,6 +289,12 @@ impl Allocator {
                 "free",
                 "memory(argmem: readwrite, inaccessiblemem: readwrite)",
             ),
+            Allocator::MiMalloc | Allocator::MiMallocAligned => {
+                return "nounwind memory(inaccessiblemem: readwrite)".to_string()
+            }
+            Allocator::MiRealloc | Allocator::MiReallocAligned | Allocator::MiFree => {
+                return "nounwind memory(argmem: readwrite, inaccessiblemem: readwrite)".to_string()
+            }
         };
         format!("nounwind allockind(\"{kind}\") {rest} {ALLOC_FAMILY}")
     }
@@ -271,10 +314,7 @@ mod tests {
                 || inline_helper(op).is_some()
                 || crate::half::helper(op, crate::half::HalfNative::None).is_some()
                 || op.rounding().is_some();
-            assert!(
-                inline || matches!(op, MathOp::PowF64 | MathOp::PowI64),
-                "{op:?}"
-            );
+            assert!(inline || op == MathOp::PowI64, "{op:?}");
         }
         assert_eq!(
             Allocator::of("velt_rt_alloc", &[Ty::U64, Ty::U64], Ty::Ptr),
@@ -286,5 +326,19 @@ mod tests {
         );
         // A different signature is not the runtime allocator.
         assert_eq!(Allocator::of("velt_rt_alloc", &[Ty::U64], Ty::Ptr), None);
+        // mimalloc's functions keep their memory effects, without `allockind` (the type's docs).
+        let mi = Allocator::of("mi_malloc", &[Ty::U64], Ty::Ptr);
+        assert_eq!(mi, Some(Allocator::MiMalloc));
+        let attrs = Allocator::MiMalloc.function_attrs();
+        assert!(
+            attrs.contains("memory(inaccessiblemem: readwrite)"),
+            "{attrs}"
+        );
+        assert!(!attrs.contains("allockind"), "{attrs}");
+        assert_eq!(
+            Allocator::of("mi_free", &[Ty::Ptr], Ty::Unit),
+            Some(Allocator::MiFree)
+        );
+        assert_eq!(Allocator::of("mi_free", &[Ty::U64], Ty::Unit), None);
     }
 }

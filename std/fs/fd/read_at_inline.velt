@@ -1,0 +1,11 @@
+// velt/fs (internal): the default variant of `#fs-read-at` (std/imports.velt): the targets that
+// are not native (WebAssembly), which have no blocking pool and no file descriptors either
+// (`#fd-system`'s variant there fails every read with ENOSYS). The read runs where it is called
+// and reports that error.
+
+import { ReadChunk, readChunk } from "velt/fs/fd/read_chunk";
+
+/** `readChunk`, on the calling thread. */
+export async function readChunkLater(fd: i32, length: usize, position: i64): Promise<ReadChunk> {
+  return readChunk(fd, length, position);
+}

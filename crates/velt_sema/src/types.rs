@@ -21,6 +21,12 @@ pub(crate) struct Types {
     /// The function types of sites resolved with an inferred error type, and the types made
     /// from them by substitution: shown as written, without it (`throws::fn_types`).
     pub inferred_fns: rustc_hash::FxHashSet<TyId>,
+    /// The read-only array of each element type (`readonly T[]`, `ReadonlyArray<T>`): a twin of
+    /// `T[]` of the same kind ([`TyTable::twin`]), which sema refuses to write through or to
+    /// convert to `T[]`, and which is `T[]` for lowering (#3061).
+    readonly_arrays: rustc_hash::FxHashMap<TyId, TyId>,
+    /// Each read-only array's element type.
+    readonly_elems: rustc_hash::FxHashMap<TyId, TyId>,
 }
 
 /// The note on an error about a `never` in a program that names `bigint`, whose `never` is
@@ -55,6 +61,8 @@ impl Types {
             f64,
             bigint_named: false,
             inferred_fns: Default::default(),
+            readonly_arrays: Default::default(),
+            readonly_elems: Default::default(),
         }
     }
 
@@ -155,6 +163,53 @@ impl Types {
 
     pub fn array(&mut self, t: TyId) -> TyId {
         self.intern(TyKind::Array(t))
+    }
+
+    /// `readonly T[]`: the read-only twin of `T[]` (one per `t`).
+    pub fn readonly_array(&mut self, t: TyId) -> TyId {
+        if let Some(&r) = self.readonly_arrays.get(&t) {
+            return r;
+        }
+        let r = self.table.twin(TyKind::Array(t));
+        self.readonly_arrays.insert(t, r);
+        self.readonly_elems.insert(r, t);
+        r
+    }
+
+    /// `to` (rebuilt from `from`'s kind) read-only when `from` is a read-only array: a rebuild
+    /// interns the kind, which names the mutable array.
+    pub fn keep_readonly(&mut self, from: TyId, to: TyId) -> TyId {
+        match (self.is_readonly_array(from), self.kind(to)) {
+            (true, &TyKind::Array(e)) => self.readonly_array(e),
+            _ => to,
+        }
+    }
+
+    /// Does the program have a read-only array type (erased before lowering)?
+    pub fn has_readonly_arrays(&self) -> bool {
+        !self.readonly_elems.is_empty()
+    }
+
+    /// The element type of `t` if it is a read-only array (no hashing in a program without one:
+    /// `Types::map` asks for every node).
+    fn readonly_elem(&self, t: TyId) -> Option<&TyId> {
+        match self.readonly_elems.is_empty() {
+            true => None,
+            false => self.readonly_elems.get(&t),
+        }
+    }
+
+    /// Is `t` a read-only array (`readonly T[]`)?
+    pub fn is_readonly_array(&self, t: TyId) -> bool {
+        self.readonly_elems.contains_key(&t)
+    }
+
+    /// `T[]` for a read-only array `readonly T[]`, else `t`.
+    pub fn mutable_twin(&mut self, t: TyId) -> TyId {
+        match self.readonly_elems.get(&t) {
+            Some(&e) => self.array(e),
+            None => t,
+        }
     }
 
     pub fn param(&mut self, n: u32) -> TyId {
@@ -314,6 +369,10 @@ impl Types {
     /// unconstrained: `Promise<T>` as a contextual type says nothing about what it rejects with.
     pub fn without_error_types(&mut self, t: TyId) -> TyId {
         let error = self.error;
+        if let Some(&e) = self.readonly_elem(t) {
+            let e = self.without_error_types(e);
+            return self.readonly_array(e);
+        }
         let k = self.kind(t).clone();
         let m = |s: &mut Self, x: TyId| s.without_error_types(x);
         let nk = match k {
@@ -345,6 +404,11 @@ impl Types {
         let k = self.kind(t).clone();
         if let Some(r) = f(&k) {
             return r;
+        }
+        // A read-only array stays one (its kind is `T[]`'s).
+        if let Some(&e) = self.readonly_elem(t) {
+            let e = self.map(e, f);
+            return self.readonly_array(e);
         }
         let mut m = |s: &mut Self, x: TyId| s.map(x, f);
         let nk = match k {

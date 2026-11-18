@@ -441,6 +441,44 @@ fn math_random_seeds_each_run_on_webassembly() {
     }
 }
 
+/// `velt/os` on WebAssembly, which has no OS to ask: what the target is (`platform()` "wasi",
+/// `arch()` "wasm32", neither a Node name) and the documented answers for "unknown" (1 CPU, no
+/// host name, "/tmp"), on both targets (std/os/sys_wasm.velt, arch_wasm.velt).
+#[test]
+fn velt_os_answers_on_webassembly() {
+    let root = root();
+    let main = root.join("crates/veltc/tests/wasm_os/main.velt");
+    for (target, runner) in [
+        ("wasm32-wasip1", "wasmtime"),
+        ("wasm32-unknown-unknown", "node"),
+    ] {
+        if let Some(missing) = missing_tools(target, runner) {
+            eprintln!("note: {missing} not available; skipping velt/os on {target}");
+            continue;
+        }
+        build_runtime(&root, target);
+        let work = own_build_dir(&root, "golden-work-os", target);
+        let o = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
+            .args(["run", "--target", target])
+            .arg(&main)
+            .current_dir(&work)
+            .output()
+            .expect("run velt");
+        let _ = std::fs::remove_dir_all(&work);
+        assert!(
+            o.status.success(),
+            "{target}: exit {:?}\n{}",
+            o.status,
+            String::from_utf8_lossy(&o.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n"),
+            "[\"wasi\",\"wasm32\",1,\"\",\"/tmp\",\"\\n\"]\n",
+            "{target}"
+        );
+    }
+}
+
 /// A directory of `name`'s own for a test's `velt run` of a file outside a package: such a build
 /// leaves `target/velt/<stem>.o` and `<stem>.wasm` below the current directory, which is
 /// crates/veltc for every test, so two tests building a `main.velt` at once (for different

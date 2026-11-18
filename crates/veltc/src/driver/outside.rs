@@ -96,7 +96,6 @@ const RUNTIME_REACH: &[(&str, &str)] = &[
     ("child", "child processes"),
     ("env", "the environment"),
     ("process", "the environment"),
-    ("os", "the environment"),
     ("isatty", "the environment"),
     ("memory", "the environment"),
     ("worker", "the environment"),
@@ -237,10 +236,24 @@ fn is_test_runner(symbol: &str) -> bool {
     symbol.contains("V3stdP4testP3runN13runRegistered")
 }
 
+/// mimalloc's functions std's allocator hooks call.
+const MIMALLOC: [&str; 5] = [
+    "mi_malloc",
+    "mi_malloc_aligned",
+    "mi_realloc",
+    "mi_realloc_aligned",
+    "mi_free",
+];
+
 /// What calling the extern `symbol` reaches, if anything. Only what is known to be pure is
 /// inside; a C function (`open`, `CreateFileW`), a native package's function and anything
 /// else unknown is outside.
 fn reason(symbol: &str) -> Option<String> {
+    // The allocator release builds call directly (std/lang/hooks/heap.velt), as pure as the
+    // runtime's (`velt_rt_alloc`).
+    if MIMALLOC.contains(&symbol) {
+        return None;
+    }
     let Some(rest) = symbol.strip_prefix("velt_") else {
         return Some(format!("a C function `{symbol}`"));
     };
@@ -412,6 +425,8 @@ mod tests {
             "velt_rt_timer_new",
             "velt_rt_json_parse",
             "velt_rt_alloc",
+            "mi_malloc",
+            "mi_free",
             "velt_rt_signal_new",
             "velt_rt_uncaught_now",
             "velt_atomic_load_u64",

@@ -1,0 +1,18 @@
+0 0 0 true true Infinity
+1 1 1 true true 992
+7 7 7 true true 984
+100 100 100 true true 808
+500 500 500 true true 0
+800 500 800 true true -Infinity
+-Infinity true true false
+false true 1
+[ { key: 'e', score: 2 }, { key: 'b', score: 1 } ]
+0 2 -Infinity true
+[ { key: 'f', score: -Infinity } ]
+[ 'closer:0.5', 'close:1' ]
+RangeError TopK: k must be a whole number from 0, got 1.5
+RangeError TopK: k must be a whole number from 0, got -1
+undefined 1
+1 4 0 3
+[ 5, 7, 9 ]
+apple fig pear undefined

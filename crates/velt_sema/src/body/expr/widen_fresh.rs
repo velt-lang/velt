@@ -124,6 +124,10 @@ impl FnCx<'_, '_> {
     /// The fresh value `h` widened to `exp` (`Err` gives it back).
     pub(super) fn widen_fresh(&mut self, h: hir::Expr, exp: TyId) -> Result<hir::Expr, hir::Expr> {
         if !is_fresh(&h) {
+            let h = match self.widen_record_copy(h, exp) {
+                Ok(c) => return Ok(c),
+                Err(h) => h,
+            };
             return self.dynamic_array_view(h, exp);
         }
         let h = match self.widen_fresh_record(h, exp) {

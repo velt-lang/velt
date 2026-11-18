@@ -77,6 +77,9 @@ impl FnCx<'_, '_> {
                 c_global: None,
             };
             self.var_decl(&v, span, out);
+            // Deleting the taken keys from the new copy is no write to a record anyone else
+            // holds (`crate::object_copies`), and the deletes hold no code of the program's.
+            let writes_at = self.cx.object_copies.record_writes.len();
             for key in taken {
                 let target = mk(
                     E::Index {
@@ -100,6 +103,7 @@ impl FnCx<'_, '_> {
                 };
                 self.stmt(&stmt, out);
             }
+            self.cx.object_copies.record_writes.truncate(writes_at);
             return;
         }
         let object = match self.cx.ty.kind(ty) {

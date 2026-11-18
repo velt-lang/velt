@@ -1,0 +1,61 @@
+// A write to a member of a `never` value that is not read from a browser global keeps the plain
+// write's error: such a value may be a value at run time (an `any` passed on, a cast), and a
+// write to it must not be skipped. A parameter, a closure's contextual parameter, an exhaustive
+// switch's leftover, an element of a `never[]` and a field read through a cast.
+interface W {
+  n: never;
+}
+
+function param(p: never): void {
+  p.foo = 1;
+}
+
+function take(f: (x: never) => void): void {
+  console.log(typeof f);
+}
+take((x) => {
+  x.foo = 1;
+});
+
+function leftover(k: "a" | "b"): void {
+  switch (k) {
+    case "a":
+      return;
+    case "b":
+      return;
+    default: {
+      const d = k;
+      d.foo = 1;
+    }
+  }
+}
+
+function element(xs: never[]): void {
+  xs[0].foo = 1;
+}
+
+function field(raw: any): void {
+  const w = raw as W;
+  const n = w.n;
+  n.foo = 2;
+}
+
+// Not from a browser global either, although the name or the initializer looks like one: a `let`
+// (which may later hold another `never` value), a parameter hiding a browser `const` and a
+// parameter named `document`.
+function later(): void {
+  let el = document.createElement("a");
+  el.textContent = "x";
+}
+
+function hidden(): void {
+  const el = document.body;
+  const f = (el: never): void => {
+    el.textContent = "x";
+  };
+  console.log(typeof f);
+}
+
+function named(document: never): void {
+  document.title = "x";
+}

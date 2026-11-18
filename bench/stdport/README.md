@@ -1,7 +1,7 @@
 # Standard-library components against the Rust crate for the same job
 
 Each `<name>.velt` exercises one part of the standard library, and `rust/src/bin/<name>.rs` is the
-same program on the crate the runtime uses for it today (`itoa`, `ryu`, `url`, `dashu-int`), or,
+same program on the crate the runtime uses for it today (`itoa`, `ryu`, `url`; `dashu-int`, which BigInt used), or,
 where the standard library is already Velt code (`velt/crypto`, `velt/encoding`), on the crate a
 Rust program would use (`sha2`, `base64`). Both print the same output; the harness fails
 otherwise.
@@ -34,13 +34,19 @@ this machine.
 | parse_float | runtime, Rust's `f64` parser | 57 | 28 | 2.01 |
 | to_fixed | runtime | 165 | 99 | 1.66 |
 | url_parse | Velt (`velt/net/url`) | 161 | 64 | 2.51 |
-| bigint | runtime, `dashu-int` | 169 | 169 | 1.00 |
+| bigint | runtime, `dashu-int` (Velt since) | 169 | 169 | 1.00 |
 | sha256_large | Velt (`velt/crypto`) | 118 | 19 | 6.09 |
 | sha256_small | Velt (`velt/crypto`) | 125 | 20 | 6.28 |
 | base64 | Velt (`velt/encoding`) | 149 | 41 | 3.64 |
 
 `limb_mul` was added after this table (64-bit limb arithmetic on `Math.umulh`, against `u128`
-in Rust): 1,194M instructions against 888M on the same machine, 1.34.
+in Rust): 1,194M instructions against 888M on the same machine, 1.34. Linux x86_64, cachegrind,
+`main` at f625a29d: 976M against Rust's 990M, 0.99: the loop is unrolled twice, with one widening
+`mul` and an `adc` chain per limb and no bounds check.
+
+`bigint_mul`, `bigint_div` and `bigint_text` were added with `velt/math`'s move from `dashu-int` to
+Velt (64-bit limbs): products, quotients and decimal and hex text at 3, 25, 248 and 991 limbs.
+The `bigint` row's number was the runtime's, and is Velt's since.
 
 `url_parse_wide` was added after it too: URLs with a character that is not ASCII, and long
 queries, paths and `data:` URLs, which `url_parse` has none of. 2,324M instructions against the
@@ -247,3 +253,25 @@ The decoder keeps the bit reader, output position and command state in locals of
 decodes prefix codes with one table lookup (two for codes over 8 bits) as the reference decoder
 does; the input sits in a buffer of its own followed by zeros, so the bit reader loads 8 bytes
 at a time with no check per byte and finds out afterwards whether a step read past the input.
+
+## pow
+
+`pow` is `**` on floats (`Math.pow`), the runtime's `velt_rt_pow_f64` before #1676 (fdlibm's
+`pow`, from the `libm` crate, which the Rust port calls), now std/lang/math/pow.velt: glibc's
+algorithm, whose results Node prints on Linux. Instructions executed (cachegrind, i9-12900HK,
+Linux x86-64 (Ubuntu 24.04 under WSL); `main` at cee20ee5a with its runtime built in the release
+profile, and the port; 2 runs each, the same):
+
+| benchmark | Velt before | Velt | Velt without FMA | Rust | Velt / Rust |
+|---|---:|---:|---:|---:|---:|
+| pow | 631.2 M | 288.3 M | 543.8 M | 575.0 M | 0.50 |
+
+The default x86-64 level has no FMA, so `pow` runs a copy compiled for it where the CPU has it
+(every x86-64 CPU since 2013). Without (the third column, `VELT_SIMD_DISABLE=clmul`), where each
+of its twenty `fma`s would be a call of C's `fma` (a software routine on such a CPU),
+std/lang/math/pow_fast.velt computes the same bits from unfused steps whose roundings it checks.
+On arm64, and with `--cpu x86-64-v3`, every `fma` is one instruction.
+
+On wasm32-wasip1, which has no `fma` instruction (wasmtime 50), the same program takes 675.8 M
+instructions before and 525.9 M with the port for the run (precompiled), and 1,487 M to 1,490 M
+before and 1,358 M with the port with wasmtime's compile included.

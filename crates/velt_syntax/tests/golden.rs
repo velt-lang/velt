@@ -26,7 +26,6 @@ fn golden_m1_files_parse() {
             "parse.velt"
                 | "mut_keyword.velt"
                 | "removed_syntax.velt"
-                | "removed_question.velt"
                 | "class_field_uninferred.velt"
                 | "using_syntax.velt"
                 | "_default_export_twice_lib.velt"
@@ -74,7 +73,6 @@ fn golden_m1_files_parse() {
                 | "decorators_default_placement.velt"
                 | "decorators_default_expression.velt"
                 | "decorators_class_binding.velt"
-                | "declare_system_removed.velt"
         ) {
             continue;
         }

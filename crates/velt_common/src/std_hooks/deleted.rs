@@ -7,6 +7,13 @@
 /// replaced extern is defined by `velt_rt` unless it is listed here, and that one listed here is
 /// defined nowhere and named by no compiler source, runtime or std file.
 pub const DELETED: &[&str] = &[
+    // #2196: velt/os's facts (std/os/sys_*.velt over the C library and Win32, the build's
+    // `x64`/`arm64` condition for the architecture), which only std called.
+    "velt_rt_os_platform",
+    "velt_rt_os_arch",
+    "velt_rt_os_cpu_count",
+    "velt_rt_os_tmpdir",
+    "velt_rt_os_hostname",
     // #2197: integers as text (std/lang/hooks/number_text, velt/lang/number/integer).
     "velt_rt_str_from_i64",
     "velt_rt_str_from_u64",
@@ -17,6 +24,8 @@ pub const DELETED: &[&str] = &[
     // #2196: the generator (std/lang/random/wyrand), which only std called, so no hook replaces it.
     "velt_rt_prng_f64",
     "velt_rt_prng_range",
+    // #2196: `**` on floats (std/lang/math/pow, #1676).
+    "velt_rt_pow_f64",
     // #2196: collation (std/lang/string/collate).
     "velt_rt_str_locale_compare",
     // #2196: FNV-1a (std/hash/fnv), which only std called, so no hook replaces it.
@@ -55,4 +64,17 @@ pub const DELETED: &[&str] = &[
     // and its delay, which the abort message carries; only std called them.
     "velt_rt_signal_timeout",
     "velt_rt_signal_timeout_ms",
+    // #2196: `toString(radix)` (std/lang/hooks/number, velt/lang/number/radix).
+    "velt_rt_f64_to_radix",
+    "velt_rt_i64_to_radix",
+    "velt_rt_u64_to_radix",
+    // #2196: `toExponential`, `toPrecision` and `toFixed`'s exact digits
+    // (std/lang/hooks/number_digits, velt/lang/number/exact).
+    "velt_rt_f64_to_exponential",
+    "velt_rt_f64_to_precision",
+    "velt_rt_f64_to_fixed",
+    // #2196: `parseInt` (velt/lang/number/parse_int), which only std called.
+    "velt_rt_parse_int",
+    // #2196: the decimals of `parseFloat` past 64 bits (std/lang/hooks/number_parse).
+    "velt_rt_parse_float",
 ];

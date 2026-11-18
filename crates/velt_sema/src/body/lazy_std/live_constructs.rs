@@ -204,6 +204,14 @@ pub(super) fn note_program_dyn(cx: &mut Ctx, into_any: &[(TyId, TyId)]) {
     }
 }
 
+/// The class of hook `index` of the table, when the program has it.
+pub(super) fn hook_class(cx: &Ctx, index: usize) -> Option<DefId> {
+    match cx.std_def(&velt_common::std_hooks::HOOKS[index].qualified()) {
+        Some(crate::ctx::Item::Def(d)) => Some(d),
+        _ => None,
+    }
+}
+
 /// Demands hook `index`'s module and marks the hook live: whether it wasn't.
 fn mark_hook(cx: &mut Ctx, index: usize) -> bool {
     let h = &velt_common::std_hooks::HOOKS[index];
@@ -256,6 +264,13 @@ fn may_cycle(cx: &mut Ctx) -> bool {
     types.retain(|&t| {
         !cx.lazy.cycle_closed.contains(&t) && !matches!(cx.ty.kind(t), TyKind::Dyn(..))
     });
+    // A walk starts only where a value can be printed: a type `console.log` refuses (one holding
+    // a shared value, a function or an interface value) is printed only as a part of one it takes,
+    // or from an `any` it was put into (`dyn_held`), and the walk from there reaches it. Generic
+    // code that puts its type parameters' values into an `any` may put anything there.
+    if !cx.lazy.dyn_generic {
+        types.retain(|&t| cx.lazy.dyn_held.contains(&t) || printable(cx, t));
+    }
     types.sort_unstable_by_key(|t| t.0);
     for v in insts.values_mut() {
         v.0.sort_unstable_by_key(|t| t.0);
@@ -267,6 +282,16 @@ fn may_cycle(cx: &mut Ctx) -> bool {
         .any(|t| reaches_back(cx, t, (&mut path, &insts), &mut closed, (0, 0)).0);
     cx.lazy.cycle_closed = closed;
     found
+}
+
+/// Does `console.log` take a value of type `t` (`body::printable`)? Remembered for the check.
+fn printable(cx: &mut Ctx, t: TyId) -> bool {
+    if let Some(&p) = cx.lazy.printable.get(&t) {
+        return p;
+    }
+    let p = crate::body::printable(cx, t);
+    cx.lazy.printable.insert(t, p);
+    p
 }
 
 /// The live instantiations of each generic subclass (a class with a base and type parameters), and
@@ -386,14 +411,33 @@ fn held(cx: &mut Ctx, t: TyId, insts: &Insts) -> Option<Vec<TyId>> {
 /// present demands them all, so that glue, which lowering makes per type, doesn't depend on each
 /// of its call sites being listed for the right construct (velt_common `hook_demand.rs`).
 /// `CatchUnwind` is its own bit: it demands std's panic path, which only a program that catches
-/// needs (and a source generator must not reach).
+/// needs (and a source generator must not reach); so is `PowFloat`, std's `pow`.
 pub(super) fn demanded_for(present: ConstructSet) -> ConstructSet {
-    let catch = Construct::CatchUnwind.bit();
-    let integer = match present & !catch {
+    let own = Construct::CatchUnwind.bit() | Construct::PowFloat.bit();
+    let integer = match present & !own {
         0 => 0,
-        _ => Construct::ALL.iter().fold(0, |set, c| set | c.bit()) & !catch,
+        _ => Construct::ALL.iter().fold(0, |set, c| set | c.bit()) & !own,
     };
-    integer | (present & catch)
+    integer | (present & own)
+}
+
+/// [`Construct::PowFloat`] if `e` is `**` (or `**=`) on floats, else nothing: `**` on integers
+/// is the runtime's.
+pub(super) fn pow_bit(ty: &crate::types::Types, e: &hir::ExprKind) -> ConstructSet {
+    use hir::{BinOp::Pow, ExprKind as E};
+    let (E::Binary {
+        op: Pow, lhs: x, ..
+    }
+    | E::CompoundAssign {
+        op: Pow, place: x, ..
+    }) = e
+    else {
+        return 0;
+    };
+    match ty.kind(x.ty) {
+        TyKind::Float(_) => Construct::PowFloat.bit(),
+        _ => 0,
+    }
 }
 
 /// The name that finds function, class or constant `d` again next round.

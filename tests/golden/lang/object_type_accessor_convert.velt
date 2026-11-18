@@ -1,3 +1,4 @@
+// check: no leaks
 // An alias of an object type with accessors converts to and from the object types of its
 // shape as the same object: `{ v: number }`, a field-only interface, a `readonly` form, and
 // a wider alias to a wider object type (#1501).

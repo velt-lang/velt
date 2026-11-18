@@ -29,6 +29,19 @@ impl Ctx<'_> {
                 .all(|v| v.payload.first().is_some_and(|p| self.is_err_var(*p)))
     }
 
+    /// `e[]`, with parentheses around an element type that needs them (`(A | B)[]`).
+    fn array_text(&self, e: TyId, names: &[String]) -> String {
+        match self.ty.kind(e) {
+            TyKind::Option(..) | TyKind::FnPtr { .. } => {
+                format!("({})[]", self.display_in(e, names))
+            }
+            _ if self.union_def(e).is_some() || self.ty.is_readonly_array(e) => {
+                format!("({})[]", self.display_in(e, names))
+            }
+            _ => format!("{}[]", self.display_in(e, names)),
+        }
+    }
+
     /// Display `t` with `Param(i)` named `names[i]`.
     pub(crate) fn display_in(&self, t: TyId, names: &[String]) -> String {
         let list = |s: &Self, ts: &[TyId]| {
@@ -48,6 +61,10 @@ impl Ctx<'_> {
         if let Some(n) = self.alias_names.get(&t) {
             return crate::namespaces::written(n).into_owned();
         }
+        // A read-only array is its array's kind (#3061): shown as written, `readonly T[]`.
+        if let (true, TyKind::Array(e)) = (self.ty.is_readonly_array(t), self.ty.kind(t)) {
+            return format!("readonly {}", self.array_text(*e, names));
+        }
         match self.ty.kind(t) {
             TyKind::Int(i) => int_name(*i).to_string(),
             TyKind::Float(f) => crate::generated::spell::float_name(*f).into(),
@@ -60,13 +77,7 @@ impl Ctx<'_> {
             TyKind::Never => "never".into(),
             TyKind::Error => "_".into(),
             TyKind::Literal(v) => crate::literals::display_lit(v),
-            TyKind::Array(e) => match self.ty.kind(*e) {
-                TyKind::Option(..) | TyKind::FnPtr { .. } => {
-                    format!("({})[]", self.display_in(*e, names))
-                }
-                _ if self.union_def(*e).is_some() => format!("({})[]", self.display_in(*e, names)),
-                _ => format!("{}[]", self.display_in(*e, names)),
-            },
+            TyKind::Array(e) => self.array_text(*e, names),
             TyKind::Map(k, v) => format!(
                 "Map<{}, {}>",
                 self.display_in(*k, names),

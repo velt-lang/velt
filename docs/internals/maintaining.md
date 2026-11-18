@@ -113,12 +113,15 @@ required item of the earlier review, not the whole pull request again. When ever
 addressed and the new commits raise nothing new, approve and queue in the same step:
 
 ```
-gh pr review <n> --comment --body-file review.md   # ends in "Verdict: APPROVE"
 gh pr merge <n> --auto
+gh pr review <n> --comment --body-file review.md   # ends in "Verdict: APPROVE"
+gh pr edit <n> --add-label ci:approved             # starts the pull request's checks
 ```
 
 The rule stays that nothing is queued before an approving review; queueing with it removes the
-wait between approval and the queue. A new finding in the new commits is a required change like
+wait between approval and the queue. A pull request's checks start only with the label
+`ci:approved` (until then `ci` fails with "waiting for approval", so auto-merge waits): the
+runners go to approved changes. Later pushes run them again while the label stays. A new finding in the new commits is a required change like
 any other (`Verdict: CHANGES NEEDED`); an older nit that the first review missed is a follow-up,
 not a reason for another round.
 
@@ -210,7 +213,10 @@ not a reason for another round.
   total passes that limit, and on 2026-11-07 that reached entries last used four hours earlier, so
   a key that every job restores stays and one that sits idle doesn't.
 - The VIR identity (`veltc::eager_std_identity`, every golden built twice) runs whole in a pull
-  request's `test` job when the change can break it, and in the nightly gate. The queue runs all of
+  request's `golden` job when the change can break it, and in the nightly gate; it is part of the
+  gate's `golden` part, beside the goldens, because the golden jobs and shards finish long before
+  the test jobs (it ran after the unit tests until 2026-11 and made the `check` jobs 20 to 41
+  minutes longer). In the queue each golden shard compares its share. The queue runs all of
   it only when the code loading std on demand changed (`VIR_IDENTITY_CODE` in
   `crates/xtask/src/plan.rs`), one golden in 8 for the rest of what can reach it, and nothing
   otherwise (`Plan::vir_identity_queue`, `VELT_VIR_IDENTITY`). What it can still miss there is a

@@ -1,7 +1,7 @@
 //! Node's `process` members that cost nothing at run time, on the builtin `process` namespace:
 //! `process.stdout.write(s)` and `process.stderr.write(s)` (a string, without a newline; `true`
 //! like Node), and `process.env.NAME` / `process.env[name]` (`string | null`: there is no
-//! `undefined`), and `process.argv` (Node's layout). They are calls of the prelude's
+//! `undefined`), `process.argv` (Node's layout) and `process.pid`. They are calls of the prelude's
 //! `processWrite` / `processEnv` / `processArgv`
 //! (std/prelude/process.velt). `process.exit` is an intrinsic (`builtins`); the rest of Node's
 //! `process` lives in `velt/process`.
@@ -127,6 +127,20 @@ impl FnCx<'_, '_> {
             return None;
         }
         Some(hooks::process_argv().check_as(self, "process.argv", exp, span))
+    }
+
+    /// `process.pid`: this process's id, a number as in Node; `None` for anything else.
+    pub(super) fn process_pid_member(
+        &mut self,
+        object: &ast::Expr,
+        prop: &ast::Ident,
+        exp: Option<TyId>,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        if prop.name != "pid" || !self.is_builtin_process(object) {
+            return None;
+        }
+        Some(hooks::process_pid().check_as(self, "process.pid", exp, span))
     }
 
     /// Is `e` the builtin `process.argv`?
@@ -256,7 +270,8 @@ pub(super) fn process_note(name: &str) -> String {
             format!("use `import {{ {name} }} from \"velt/process\"`: `{name}` is a function there")
         }
         _ => "the builtin `process` has `process.env.NAME`, `process.stdout.write(s)`, \
-              `process.argv`, `process.exit(code)` and `process.memoryUsage()`; `cwd()` is in \
+              `process.argv`, `process.pid`, `process.exit(code)` and `process.memoryUsage()`; \
+              `cwd()` is in \
               `velt/process`"
             .to_string(),
     }

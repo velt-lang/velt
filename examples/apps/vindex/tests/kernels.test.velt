@@ -1,0 +1,37 @@
+import { dotF32, dotF32Bytes, dotI8Bytes, getF32s, putF32s, quantize } from "../src/kernels";
+
+function ramp(n: usize, mul: f32): f32[] {
+  const xs: f32[] = [];
+  for (let i: usize = 0; i < n; i++) {
+    xs.push((((i * 7) % 13) as f32 - 6) * mul);
+  }
+  return xs;
+}
+
+export function test_byte_kernels_match_scalar_for_every_tail() {
+  for (let dim: usize = 1; dim <= 70; dim++) {
+    const a = ramp(dim + 3, 0.25);
+    const q = ramp(dim, 0.5);
+    let want: f32 = 0;
+    for (let i: usize = 0; i < dim; i++) {
+      want += a[3 + i] * q[i];
+    }
+    const bytes: u8[] = Buffer.alloc(4 * (dim + 3) + 5);
+    putF32s(a, 0, dim + 3, bytes, 5);
+    assertEq(dotF32Bytes(bytes, 5 + 12, q, 0, dim), want);
+    assertEq(dotF32(a, 3, q, 0, dim), want);
+    const back: f32[] = ramp(dim + 3, 0);
+    getF32s(bytes, 5, dim + 3, back, 0);
+    assertEq(back, a);
+
+    const ca: u8[] = Buffer.alloc(dim + 2);
+    const cq: u8[] = Buffer.alloc(dim);
+    quantize(a, 3, dim, 20, ca, 2);
+    quantize(q, 0, dim, 20, cq, 0);
+    let wi: i32 = 0;
+    for (let i: usize = 0; i < dim; i++) {
+      wi += ((ca[2 + i] as i8) as i32) * ((cq[i] as i8) as i32);
+    }
+    assertEq(dotI8Bytes(ca, 2, cq, dim), wi);
+  }
+}

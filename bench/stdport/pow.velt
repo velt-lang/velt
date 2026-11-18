@@ -1,0 +1,13 @@
+// `x ** y` (`Math.pow`) on doubles: 2 million pairs, bases from 0.75 to 3.35 and exponents from
+// -6.5 to 6.5. The Rust port calls the `libm` crate's `pow` (fdlibm), which the runtime called
+// before `**` moved to std (#1676).
+function main() {
+  let sum = 0.0;
+  let x = 0.75;
+  for (let i: i64 = 0; i < 2000000; i++) {
+    const y = ((i % 997) as f64) * 0.013 - 6.5;
+    sum += x ** y;
+    x += 0.0000013;
+  }
+  console.log(sum as i64);
+}
