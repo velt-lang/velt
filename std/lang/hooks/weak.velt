@@ -27,7 +27,7 @@
 // one task at a time, but a task moves between threads at an `await`, so the table is the
 // process's and the lock the only order.
 
-import { addressCallWord, noInline } from "velt/lang/intrinsics";
+import { addressCallWord, inline, noInline } from "velt/lang/intrinsics";
 import { mapOf } from "./weak_maps";
 import * as wm from "./weak_maps";
 import * as wr from "./weak_refs";
@@ -256,9 +256,16 @@ export function weakMapSetTraced(map: u32, key: usize, value: u64, keyTrace: usi
   leaveReleasing(h);
 }
 
+@inline
 function set(h: usize, map: u32, key: usize, value: u64, keyTrace: usize): void {
-  wm.del(h, map, key);
-  const vt = ld(mapOf(h, map) + wm.M_VALUE_TRACE);
+  // One probe of the map's entries: the entry `key` has, removed, or where its entry goes. Nothing
+  // below changes them (the records and the trace glue only), so the slot holds until it is taken.
+  const b = mapOf(h, map);
+  const at = wm.entryProbe(b, key);
+  if ((at & 1) === 0) {
+    wm.delEntry(h, map, b, at, key);
+  }
+  const vt = ld(b + wm.M_VALUE_TRACE);
   // A nonzero value of a map with trace glue is a live counted object, the map's from here on.
   const ms = vt !== 0 && value !== 0 ? members(h, key, value as usize, vt) : 0;
   rec.listPush(rec.node(h, key, keyTrace), rec.R_KEYED, map as usize);
@@ -268,7 +275,7 @@ function set(h: usize, map: u32, key: usize, value: u64, keyTrace: usize): void 
     rec.memberPush(r, map as usize, key);
     rec.setHint(r, rec.hint(r) + (vat(ms, i + 1) as u32));
   }
-  const e = wm.entryAdd(mapOf(h, map), key);
+  const e = wm.entryClaim(b, at & ~(1 as usize), key);
   st64(e + wm.E_VALUE, value);
   st(e + wm.E_MEMBERS, ms);
 }

@@ -146,6 +146,52 @@ export function entryOf(b: usize, key: usize): usize {
   return 0;
 }
 
+/**
+ * The entry of `key` (an object's address) in the map block `b`, or, with bit 0 set, the slot an
+ * entry of it would take: the first removed slot the probe passed, else the empty slot that ended
+ * it. One probe for a lookup that may insert ([`entryClaim`]).
+ */
+export function entryProbe(b: usize, key: usize): usize {
+  const cap = ld(b + M_CAP);
+  const es = ld(b + M_ENTRIES);
+  let i = slotOf(key, cap);
+  let free: usize = 0;
+  while (true) {
+    const e = es + i * ENTRY;
+    const k = ld(e + E_KEY);
+    if (k === key) {
+      return e;
+    }
+    if (k === EMPTY) {
+      return (free !== 0 ? free : e) | 1;
+    }
+    if (k === REMOVED && free === 0) {
+      free = e;
+    }
+    i = (i + 1) & (cap - 1);
+  }
+  return 0;
+}
+
+/**
+ * A new entry of `key` at `slot`, the slot [`entryProbe`] gave (its tag cleared), the table changed
+ * since only by the removal of `key`'s own entry there; its fields 0. Where taking an empty slot
+ * would fill the table past its load, the table grows and the entry goes where a new probe finds.
+ */
+export function entryClaim(b: usize, slot: usize, key: usize): usize {
+  if (ld(slot + E_KEY) === EMPTY) {
+    if ((ld(b + M_USED) + 1) * 4 >= ld(b + M_CAP) * 3) {
+      return entryAdd(b, key);
+    }
+    st(b + M_USED, ld(b + M_USED) + 1);
+  }
+  st(b + M_LIVE, ld(b + M_LIVE) + 1);
+  st(slot + E_KEY, key);
+  st64(slot + E_VALUE, 0);
+  st(slot + E_MEMBERS, 0);
+  return slot;
+}
+
 /** A new entry of `key` (which has none) in the map block `b`, its fields 0. */
 export function entryAdd(b: usize, key: usize): usize {
   if ((ld(b + M_USED) + 1) * 4 >= ld(b + M_CAP) * 3) {
@@ -218,6 +264,12 @@ export function del(h: usize, id: u32, key: usize): bool {
   if (e === 0) {
     return false;
   }
+  delEntry(h, id, b, e, key);
+  return true;
+}
+
+/** Removes the entry `e` of `key` from map `id` (its block `b`), queueing its value. */
+export function delEntry(h: usize, id: u32, b: usize, e: usize, key: usize): void {
   const value = ld64(e + E_VALUE);
   const members = ld(e + E_MEMBERS);
   st(e + E_KEY, REMOVED);
@@ -233,7 +285,6 @@ export function del(h: usize, id: u32, key: usize): bool {
   if (glue !== 0 && value !== 0) {
     release(h, glue, value);
   }
-  return true;
 }
 
 /** Takes the contributions `members` (a vector of triples, or 0) of entry `(id, key)` off its
