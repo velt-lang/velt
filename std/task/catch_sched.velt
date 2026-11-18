@@ -19,7 +19,7 @@
 // is a plain poll and a panic ends the process as an uncaught one does.
 
 import { fnAddress, promiseAt, statePoll } from "velt/lang/intrinsics";
-import { panicText, raiseAgain, takePanic } from "velt/lang/hooks/unwind";
+import { freePanic, panicText, raiseAgain } from "velt/lang/hooks/unwind";
 import * as m from "velt/lang/hooks/sched_mem";
 import * as node from "velt/lang/hooks/sched_node";
 import * as aw from "velt/lang/hooks/sched_node_await";
@@ -27,28 +27,36 @@ import * as nc from "velt/lang/hooks/sched_node_catch";
 import * as t from "velt/lang/hooks/sched_task";
 import { catchPanicAt } from "./unwind";
 
-/** The next promise started on this worker catches panics. */
-export function arm(): void {
+/**
+ * The next promise started on this worker catches panics. Returns what `take` gets back: the
+ * promise guarded for a `catchPanic` this one runs inside of. A `catchPanic` called in the first
+ * run of another's body finds that one's promise in `E_GUARDED`, not taken yet (its `take` comes
+ * after the run), and must leave it there when it is done.
+ */
+export function arm(): u64 {
   const g = t.main();
   if (m.ld(g + nc.E_CATCH_POLL) === 0) {
     m.st(g + nc.E_CATCH_AGAIN, fnAddress(again));
     m.st(g + nc.E_CATCH_POLL, fnAddress(caughtPoll));
   }
   const e = t.exec();
+  const outer = m.ld(e + nc.E_GUARDED);
   m.st(e + nc.E_CATCHING, m.ld(e + nc.E_CATCHING) | 1);
   m.st(e + nc.E_GUARDED, 0);
+  return outer as u64;
 }
 
 /**
  * The promise that took the arming, as a handle (0: none did, or it already finished without a
  * panic, as a handler that never waits does: then `catchPanic` just takes its result); disarms.
- * The handle's node gets its settled future (`settled`).
+ * The handle's node gets its settled future (`settled`). `outer`: what `arm` returned.
  */
-export function take(): u64 {
+export function take(outer: u64): u64 {
   const e = t.exec();
   m.st(e + nc.E_CATCHING, m.ld(e + nc.E_CATCHING) & ~1);
   const f = m.ld(e + nc.E_GUARDED);
-  m.st(e + nc.E_GUARDED, 0);
+  // The enclosing `catchPanic`'s promise again, for its own `take` (`arm`).
+  m.st(e + nc.E_GUARDED, outer as usize);
   if (f === 0) {
     return 0;
   }
@@ -152,7 +160,9 @@ function again(x: usize, free: usize): u32 {
   if (free !== 0) {
     // SAFETY: the exception of a panicked promise whose node is being freed: nothing reads it
     // after.
-    const message = unsafe { takePanic(x) };
+    unsafe {
+      freePanic(x);
+    }
     return 0;
   }
   // SAFETY: the exception of a panicked promise or task, alive while its node or task is.
