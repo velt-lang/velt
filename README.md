@@ -3,7 +3,7 @@
 **Familiar as TypeScript. Fast as Rust.**
 
 Velt compiles typed, modern TypeScript (classes, interfaces, generics, `async`/`await`) ahead of
-time to one native executable. No interpreter, no tracing garbage collector, every core in use.
+time to one native executable. No interpreter, no garbage collector, every core in use.
 
 **[veltlang.com](https://veltlang.com)** · [Getting started](https://veltlang.com/docs/book/getting-started/) ·
 [Tour](https://veltlang.com/docs/book/tour/) · [Docs](https://veltlang.com/docs/) ·
@@ -45,7 +45,7 @@ a second as Rust's axum and over ten times as many as Node, in a fraction of Nod
 - **Every core.** A multi-threaded scheduler runs your tasks on all cores, and data races are
   compile errors.
 - **Memory you don't think about.** Values are freed when their last reference goes: no
-  tracing collector, no stop-the-world pauses.
+  garbage collector, no pauses.
 - **Fixes JavaScript's traps.** Typed errors, and a forgotten `await` is a compile error.
 - **One file to ship.** `velt build --release` writes a self-contained executable, and
   cross-compiles from any OS. Also to WebAssembly and Cloudflare Workers.
