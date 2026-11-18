@@ -55,15 +55,23 @@ pub fn int_name(it: IntTy) -> &'static str {
     }
 }
 
-/// The value of an integer literal type as JavaScript source. One past the 64-bit integers is a
-/// `number`'s (no integer type holds it): the double it denotes as `String(n)` writes it
-/// (`1e+21`), which is also its JSON text and reads back as the same literal.
+/// The value of an integer literal type as source that reads back as the same literal type. One
+/// past the 64-bit integers is a `number`'s (no integer type holds it): the double it denotes as
+/// `String(n)` writes it (`1e+21`). One inside them keeps its digits: the double's text of
+/// `2^63 - 1` (`9223372036854776000`) would read back as a literal out of `i64`'s range.
 pub(super) fn int_literal(v: i128) -> String {
     if i64::try_from(v).is_ok() || u64::try_from(v).is_ok() {
         v.to_string()
     } else {
         velt_syntax::js_number(v as f64)
     }
+}
+
+/// The value of an integer literal type as a program's output writes it (its JSON text, and the
+/// JavaScript source the type model gives generators): `String(n)` of the double it denotes, as
+/// Node, so `9007199254740993` is `9007199254740992` and `2^63 - 1` is `9223372036854776000`.
+pub(super) fn int_literal_value(v: i128) -> String {
+    velt_syntax::js_number(v as f64)
 }
 
 /// The value of a float literal type (`f64::to_bits`) as JavaScript source: `String(x)` of it
@@ -257,4 +265,21 @@ fn alias_spelling(cx: &mut Ctx, t: TyId) -> Option<String> {
         true => format!("NonNullable<{q}>"),
         false => q,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{int_literal, int_literal_value};
+
+    /// A literal's value as output writes it is the double's text, as Node; its spelling as source
+    /// keeps the digits a 64-bit integer holds, so that it reads back as the same literal type.
+    #[test]
+    fn integer_literal_values_are_their_double() {
+        assert_eq!(int_literal_value(9_007_199_254_740_993), "9007199254740992");
+        assert_eq!(int_literal_value(i64::MAX as i128), "9223372036854776000");
+        assert_eq!(int_literal_value(1_000_000_000_000_000_000_000), "1e+21");
+        assert_eq!(int_literal_value(12), "12");
+        assert_eq!(int_literal(i64::MAX as i128), "9223372036854775807");
+        assert_eq!(int_literal(1_000_000_000_000_000_000_000), "1e+21");
+    }
 }

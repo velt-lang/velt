@@ -105,14 +105,11 @@ impl FnLower<'_, '_> {
     }
 }
 
-/// The text of an integer literal type's value. One past the 64-bit integers is a `number`'s
-/// (no integer type holds it): `String(n)` of the double it denotes, `1e+21` for `1e21`, as Node.
+/// The text of an integer literal type's value: `String(n)` of the double it denotes, as Node
+/// (`9007199254740993` is `9007199254740992`, `2^63 - 1` is `9223372036854776000`, `1e21` is
+/// `1e+21`); the digits themselves wherever the double holds the value exactly below 10^21.
 pub(in crate::lower) fn int_literal_text(n: i128) -> String {
-    if i64::try_from(n).is_ok() || u64::try_from(n).is_ok() {
-        n.to_string()
-    } else {
-        velt_syntax::js_number(n as f64)
-    }
+    velt_syntax::js_number(n as f64)
 }
 
 /// An object key as `console.log` shows it: bare when it is an identifier of ASCII letters,
@@ -177,9 +174,19 @@ mod tests {
             "123456789012345680000"
         );
         assert_eq!(int_literal_text(1_000_000_000_000_000_000_000), "1e+21");
-        assert_eq!(int_literal_text(u64::MAX as i128), "18446744073709551615");
         assert_eq!(int_literal_text(-1_000_000_000_000_000_000_000), "-1e+21");
-        assert_eq!(int_literal_text(i64::MIN as i128), "-9223372036854775808");
+    }
+
+    /// Between 2^53 and 2^64 a `number` literal is the double nearest to it, as Node prints it.
+    #[test]
+    fn integer_literals_past_2_53_print_their_double() {
+        assert_eq!(int_literal_text(9_007_199_254_740_992), "9007199254740992");
+        assert_eq!(int_literal_text(9_007_199_254_740_993), "9007199254740992");
+        assert_eq!(int_literal_text(i64::MAX as i128), "9223372036854776000");
+        assert_eq!(int_literal_text(i64::MIN as i128), "-9223372036854776000");
+        assert_eq!(int_literal_text(u64::MAX as i128), "18446744073709552000");
+        assert_eq!(int_literal_text(42), "42");
+        assert_eq!(int_literal_text(-7), "-7");
     }
 
     #[test]

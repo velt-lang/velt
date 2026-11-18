@@ -228,3 +228,11 @@ const maybe: (1e21 | 0.5) | undefined = 1e21;
 console.log(maybe, JSON.stringify(maybe));
 const rec: Record<string, 1e21 | 1e-7> = { a: 1e21, b: 1e-7 };
 console.log(rec, JSON.stringify(rec));
+// Between 2^53 and 2^64: the double nearest to the literal.
+type Wide = 9007199254740993 | 9223372036854775807 | 0.5;
+const ws: Wide[] = [9007199254740993, 9223372036854775807, 0.5];
+console.log(JSON.stringify(ws), ws);
+const w: Wide = 9223372036854775807;
+console.log(w, `${w}`, JSON.stringify(w), String(w));
+const exact: 9007199254740993 = 9007199254740993;
+console.log(exact, `${exact}`, JSON.stringify(exact), String(exact));
