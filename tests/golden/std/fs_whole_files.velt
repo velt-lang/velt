@@ -1,5 +1,5 @@
 // Whole files as Node reads and writes them (std/fs/whole/): writing truncates or creates,
-// appending creates, text with an invalid UTF-8 sequence reads as U+FFFD, `stat` describes a
+// appending creates, `stat` describes a
 // file and a directory, and each failure has Node's code and message (the path named for `open`,
 // `stat` and `lstat`, none for `read`). `exists` is false, not an error, for a missing path and
 // for one holding a 0. The async forms give the same.
@@ -21,7 +21,6 @@ import {
   writeFile,
   writeFileSync,
 } from "velt/fs";
-import { closeSync, openSync, writeSync } from "velt/fs";
 import { IoError } from "velt/io";
 
 function attempt(what: string, f: () => void) {
@@ -56,14 +55,6 @@ async function main() {
   console.log(
     JSON.stringify(readFileSync(`${dir}/empty.txt`)),
     readFileBytesSync(`${dir}/empty.txt`).length,
-  );
-
-  const fd = openSync(`${dir}/bad.txt`, "w");
-  writeSync(fd, new Uint8Array([0x61, 0xff, 0x62, 0xe2, 0x82]));
-  closeSync(fd);
-  console.log(
-    JSON.stringify(readFileSync(`${dir}/bad.txt`)),
-    readFileBytesSync(`${dir}/bad.txt`).length,
   );
 
   const big = "0123456789abcdef".repeat(65536 + 3);

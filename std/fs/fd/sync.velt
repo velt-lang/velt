@@ -44,14 +44,13 @@ export function fstatSync(fd: number): Stats {
   return statsOf(st);
 }
 
-/** The `Stats` of `struct stat`'s fields: the size, the modification time (to the microsecond, as
+/** The `Stats` of `struct stat`'s fields: the size, the modification time (`sec * 1e3 + nsec / 1e6`, as
  * Node's `mtimeMs`) and the type from `st_mode`. */
 export function statsOf(st: Stat): Stats {
   const kind = st.st_mode & 0o170000;
   return {
     size: st.st_size as u64,
-    mtimeMs:
-      (st.st_mtime as number) * 1000 + Math.floor((st.st_mtime_nsec as number) / 1000) / 1000,
+    mtimeMs: (st.st_mtime as number) * 1000 + (st.st_mtime_nsec as number) / 1e6,
     file: kind == 0o100000,
     dir: kind == 0o040000,
     symlink: kind == 0o120000,

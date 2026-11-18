@@ -128,3 +128,10 @@ export function statOf(c: readonly u8[], path: string, follow: bool): Done<Stats
 export function existsAt(c: readonly u8[], path: string): bool {
   return statPath(c, true) !== null;
 }
+
+/** `path` as the C bytes the functions here take: its UTF-8 and a 0 (it holds no 0). */
+export function cBytes(path: string): u8[] {
+  const c = utf8Encode(path);
+  c.push(0);
+  return c;
+}

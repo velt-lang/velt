@@ -375,7 +375,7 @@ fn std_declarations_match_velt_rt() {
 #[test]
 fn only_the_wasm_bindings_may_declare_what_velt_rt_lacks() {
     let wasm = rust_definitions(&runtime_sources("velt_rt_wasm"));
-    let name = "velt_rt_fs_read_file";
+    let name = "velt_rt_fs_read_file_bytes";
     assert!(wasm.contains_key(name), "velt_rt_wasm defines {name}");
     let bindings = repo().join(WASM_ONLY_BINDINGS[0]);
     let other = repo().join("std/process/rt.velt");

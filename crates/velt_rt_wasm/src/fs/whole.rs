@@ -1,11 +1,12 @@
 //! The whole-file operations that WebAssembly builds still call in the runtime (std/fs/rt.velt):
-//! reading, writing and appending whole files, `stat`, `lstat` and `exists`, with their `*_sync`
+//! reading whole files as bytes (std decodes text), writing and appending them, `stat`, `lstat`
+//! and `exists`, with their `*_sync`
 //! functions. A native build has them as std code (std/fs/whole/, #2196), so velt_rt no longer
 //! compiles them; they moved here from velt_rt's fs/ops.rs and fs/sync.rs unchanged.
 
 use super::ops::{at, data_arg, open, path_arg, stats_of, unit, VeltStat};
 use crate::bytes::VeltBytes;
-use crate::result::{fs_error, invalid_utf8, op_error, IoResult};
+use crate::result::{fs_error, op_error, IoResult};
 use crate::str::VeltStr;
 use std::fs;
 use std::io::{self, Read, Write};
@@ -24,15 +25,6 @@ fn read_all(path: &Path) -> io::Result<Vec<u8>> {
     let mut data = vec![];
     f.read_to_end(&mut data).map_err(|e| op_error(e, "read"))?;
     Ok(data)
-}
-
-/// `readFile(path)` as UTF-8 text.
-pub fn read_text(path: PathBuf) -> IoResult<VeltStr> {
-    let r = read_all(&path).and_then(|b| match String::from_utf8(b) {
-        Ok(s) => Ok(s.into_bytes()),
-        Err(_) => Err(invalid_utf8("file")),
-    });
-    IoResult::from_io(r, VeltStr::from_vec)
 }
 
 /// `readFile(path)` as bytes.
@@ -72,15 +64,6 @@ pub fn lstat(path: PathBuf) -> IoResult<VeltStat> {
 /// `exists(path)`: 1 if anything (file, directory, valid symlink) is there.
 pub fn exists(path: PathBuf) -> u8 {
     path.try_exists().unwrap_or(false) as u8
-}
-
-/// `readFileSync(path)` (UTF-8 text).
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_fs_read_file_sync(
-    path: *const VeltStr,
-    out: *mut IoResult<VeltStr>,
-) {
-    read_text(path_arg(path)).write_to(out);
 }
 
 /// `readFileSync(path)` as bytes.

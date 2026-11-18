@@ -18,9 +18,9 @@ import { Dirent } from "velt/fs/dirent";
 import { Stats } from "velt/fs/stats";
 import { hookCall } from "velt/lang/intrinsics";
 import * as rt from "./rt";
-import { utf8Encode } from "velt/encoding/utf8";
 import { osError } from "velt/fs/errors";
 import {
+  cBytes,
   existsAt,
   readBytes as wholeBytes,
   readText as wholeText,
@@ -144,11 +144,9 @@ function cOf(path: string, call: string): u8[] {
   return bytesOf(path);
 }
 
-/** `path`'s UTF-8 and a 0 (the caller has checked it holds none). */
+/** `path` as `#fs-whole` takes it (the caller has checked it holds no 0). */
 function bytesOf(path: string): u8[] {
-  const c = utf8Encode(path);
-  c.push(0);
-  return c;
+  return cBytes(path);
 }
 
 export function readTextSync(path: string): string {

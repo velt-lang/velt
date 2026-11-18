@@ -16,13 +16,6 @@ use crate::task::leaf::ready_leaf;
 use crate::task::VeltFut;
 use ops::{data_arg, path_arg};
 
-/// `readFile(path)` → `IoResult<VeltStr>`.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_fs_read_file(path: *const VeltStr) -> *mut VeltFut {
-    let p = path_arg(path);
-    ready_leaf(move || whole::read_text(p))
-}
-
 /// `readFileBytes(path)` → `IoResult<VeltBytes>`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_fs_read_file_bytes(path: *const VeltStr) -> *mut VeltFut {

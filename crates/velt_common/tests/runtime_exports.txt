@@ -454,10 +454,8 @@ velt_rt_wasm velt_rt_fs_lstat_sync
 velt_rt_wasm velt_rt_fs_mkdir
 velt_rt_wasm velt_rt_fs_read_dir
 velt_rt_wasm velt_rt_fs_read_dir_typed
-velt_rt_wasm velt_rt_fs_read_file
 velt_rt_wasm velt_rt_fs_read_file_bytes
 velt_rt_wasm velt_rt_fs_read_file_bytes_sync
-velt_rt_wasm velt_rt_fs_read_file_sync
 velt_rt_wasm velt_rt_fs_readlink
 velt_rt_wasm velt_rt_fs_realpath
 velt_rt_wasm velt_rt_fs_remove

@@ -79,6 +79,7 @@ const IO_REPARSE_TAG_SYMLINK: u32 = 0xa000000c;
 const IO_REPARSE_TAG_MOUNT_POINT: u32 = 0xa0000003;
 const ERROR_FILE_NOT_FOUND: u32 = 2;
 const ERROR_ACCESS_DENIED: u32 = 5;
+const ERROR_SHARING_VIOLATION: u32 = 32;
 const ERROR_BROKEN_PIPE: u32 = 109;
 /** EISDIR, Linux's number, which `osError` reads on Windows. */
 const EISDIR: i32 = 21;
@@ -230,8 +231,14 @@ export function writeText(c: readonly u8[], path: string, data: string, append: 
   const h = open(w, access, append ? OPEN_ALWAYS : CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL);
   if (h === INVALID_HANDLE) {
     const code = lastWin32();
-    const e = code === ERROR_ACCESS_DENIED && isDirectory(w) ? EISDIR : errnoOfWin32(code);
-    return { value: null, error: osError(e, "open", path) };
+    if (code === ERROR_ACCESS_DENIED && isDirectory(w)) {
+      // A directory: Node names the open for a write, but the write (no path) for an append.
+      return {
+        value: null,
+        error: append ? osError(EISDIR, "write") : osError(EISDIR, "open", path),
+      };
+    }
+    return { value: null, error: osError(errnoOfWin32(code), "open", path) };
   }
   const bytes = utf8Encode(data);
   const total = bytes.length as usize;
@@ -299,7 +306,7 @@ export function statOf(c: readonly u8[], path: string, follow: bool): Done<Stats
   const nsec = ((ticks - whole * 10000000) * 100) as number;
   const st: Stats = {
     size: ((info[8] as u64) << 32) | (info[9] as u64),
-    mtimeMs: sec * 1000 + Math.floor(nsec / 1000) / 1000,
+    mtimeMs: sec * 1000 + nsec / 1e6,
     file: !link && !dir,
     dir: dir,
     symlink: link,
@@ -309,5 +316,22 @@ export function statOf(c: readonly u8[], path: string, follow: bool): Done<Stats
 
 /** Whether anything is at `path`, following symlinks (a broken one is not there). */
 export function existsAt(c: readonly u8[], path: string): bool {
-  return statOf(c, path, true).error === null;
+  const w = winPath(path);
+  if (w === null) {
+    return false;
+  }
+  // An open with no access (a directory too), as Rust's `fs::exists` checks: cheaper than a
+  // `stat`. The open follows links, so a broken one is not there; a file another process holds
+  // without sharing is there.
+  const h = open(w, 0, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS);
+  if (h === INVALID_HANDLE) {
+    return lastWin32() === ERROR_SHARING_VIOLATION;
+  }
+  close(h);
+  return true;
+}
+
+/** No C bytes: Windows reads the path as UTF-16 (`winPath`), so it costs nothing to make. */
+export function cBytes(path: string): u8[] {
+  return [];
 }
