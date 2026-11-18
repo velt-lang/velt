@@ -4,6 +4,7 @@ import { build } from "../src/build";
 import { generate, groundTruth, loadAll } from "../src/gen";
 import { closeIndex, openIndex, Searcher } from "../src/index";
 import type { SearchOptions } from "../src/index";
+import { openVectors } from "../src/store";
 
 // The index is files read through velt/fs's descriptors and `MappedFile`, which exist on macOS
 // and Linux only (ENOSYS elsewhere): the tests run there.
@@ -94,4 +95,18 @@ export async function test_every_row_is_in_exactly_one_list() {
   }
   closeIndex(ix);
   fs.removeSync(dir, { recursive: true });
+}
+
+// Where the tests above do not run, the index says why: its files cannot be opened.
+export function test_without_file_descriptors_opening_a_vector_file_is_enosys() {
+  if (POSIX) {
+    return;
+  }
+  let message = "";
+  try {
+    openVectors(`${tmpdir()}/vindex-test-no-such-file.f32`);
+  } catch (e) {
+    message = e.message;
+  }
+  assert(message.includes("ENOSYS"), `expected ENOSYS, got "${message}"`);
 }
