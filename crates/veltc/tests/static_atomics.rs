@@ -19,10 +19,10 @@ fn copy_tree(from: &Path, to: &Path) {
     }
 }
 
-/// Does the VIR `v` reach module state: the runtime's entry (WebAssembly), or on a native target
-/// std's blocks (std/lang/hooks/module_blocks.velt, #2196 9c), which it loads only then?
+/// Does the VIR `v` have module state: the functions lowering makes for it (its `init` and its
+/// accesses, `_Gmodule_*`), whichever blocks they reach (#2196 9c)?
 fn module_state(v: &str) -> bool {
-    v.contains("velt_rt_module_state") || v.contains("P14module__blocksN")
+    v.contains("_Gmodule_")
 }
 
 /// The VIR of `src`, compiled as `main.velt`.
