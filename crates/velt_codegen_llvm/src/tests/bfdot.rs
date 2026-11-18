@@ -39,9 +39,10 @@ fn helper(ir: &str) -> &str {
         .unwrap_or_else(|| panic!("no helper in\n{ir}"))
 }
 
-/// On arm64 it is the instruction, in a helper that alone has `+bf16`, and every function of
-/// the program may hold it (the program's extension features), so the helper inlines into a
-/// loop behind the check. A default arm64 build has no `bfdot` otherwise.
+/// On arm64 it is the instruction, in a helper with `+bf16`, and every function of a program
+/// that uses it has `+bf16` too (the program's extension features), so the helper inlines into
+/// a loop behind the check. LLVM uses the feature for nothing but this instruction, and a
+/// default arm64 build has no `bfdot` otherwise.
 #[test]
 fn arm64_lowers_bfdot_to_the_instruction_with_its_feature() {
     for triple in ["aarch64-unknown-linux-gnu", "aarch64-apple-darwin"] {

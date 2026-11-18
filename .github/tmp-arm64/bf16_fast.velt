@@ -1,0 +1,30 @@
+// Temporary (not for main): velt/half's range dot products on one machine, ns per 384-dim dot.
+import { dotBf16At, dotBf16FastAt, narrowBf16 } from "velt/half";
+
+const n: usize = 5000;
+const d: usize = 384;
+const f: f32[] = [];
+for (let i: usize = 0; i < n * d; i++) {
+  f.push(((((i * 7919) % 2000) as number) / 1000 - 1) as f32);
+}
+const b = narrowBf16(f);
+const qb = b.slice(0, 384);
+
+for (const name of ["bulk", "bulkfast"]) {
+  let best = Infinity;
+  let sink: number = 0;
+  for (let r = 0; r < 25; r++) {
+    const t0 = performance.now();
+    let s: number = 0;
+    for (let row: usize = 0; row < n; row++) {
+      if (name == "bulk") {
+        s += dotBf16At(b, row * d, qb, 0, d);
+      } else {
+        s += dotBf16FastAt(b, row * d, qb, 0, d);
+      }
+    }
+    best = Math.min(best, performance.now() - t0);
+    sink += s;
+  }
+  console.log(`${name}: ${((best * 1e6) / (n as number)).toFixed(1)} ns per 384-dim dot (${sink.toFixed(3)})`);
+}

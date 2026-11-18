@@ -47,7 +47,7 @@ jobs:
       - name: goldens, debug and release, with and without the run-time answer
         run: |
           fail=0
-          for t in std/simd_bf16_dot_fast std/simd_half_dot std/half_dot std/dot_at; do
+          for t in std/simd_bf16_dot_fast std/simd_half_dot std/half_dot std/dot_at std/simd_half_types; do
             for mode in "" "--release" "--release --cpu native"; do
               for off in "" clmul; do
                 if VELT_SIMD_DISABLE=$off target/release/velt run $mode tests/golden/$t.velt 2>/dev/null | diff -q - tests/golden/$t.out >/dev/null; then
@@ -83,7 +83,7 @@ jobs:
         if: always()
         run: |
           cargo build -q -p velt_rt
-          cargo test -q -p veltc --test cpu_levels dot_add_fast
+          cargo test -q -p veltc --test cpu_levels dot_bf16_fast
           cargo test -q -p velt_codegen_llvm bfdot
       - name: bf16 kernels (#3129), main against this branch
         if: always()
@@ -124,5 +124,14 @@ jobs:
               print(f"| {b} | {best.get((b, 'f16'))} | {best.get((b, 'bf16'))} | {best.get((b, 'bf16fast'))} |")
           PY
           } | tee -a "$GITHUB_STEP_SUMMARY"
-          echo "the dotAddFast loop of the default build:"
-          objdump -d --no-show-raw-insn "$out/ref" | grep -B12 -A6 bfdot | head -n 60
+          echo "### range dot products (velt/half), ns per 384-dim dot"
+          src2=.github/tmp-arm64/bf16_fast.velt
+          target/release/velt build --release $src2 -o "$out/r"
+          target/release/velt build --release --cpu native $src2 -o "$out/r-native"
+          for pass in 1 2 3; do
+            echo "== default"; "$out/r"
+            echo "== default, VELT_SIMD_DISABLE=clmul"; VELT_SIMD_DISABLE=clmul "$out/r"
+            echo "== native"; "$out/r-native"
+          done
+          echo "bfdot and calls in the default build's kernel:"
+          objdump -d --no-show-raw-insn "$out/r" | grep -A60 "sumBfdot>:" | head -n 70

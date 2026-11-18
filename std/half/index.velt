@@ -6,7 +6,8 @@
 //   const xs: f32[] = widenF16(f16FromBytes(bytes));
 //
 // `dotF16` and `dotBf16` multiply two arrays of weights, accumulating in `f32`; `dotF16At` and
-// `dotBf16At` take a range of each (a row of a flat matrix), copying nothing.
+// `dotBf16At` take a range of each (a row of a flat matrix), copying nothing. `dotBf16Fast` and
+// `dotBf16FastAt` use the CPU's own bf16 dot product where it has one.
 //
 // Bytes are little-endian, as model files (safetensors, GGUF) store them. A default x86-64 build
 // (x86-64-v2) converts f16 with SSE4.1 integer code, about 40 instructions per 4 values;
@@ -42,3 +43,7 @@ export { dotF16At } from "velt/half/dot";
 export { dotBf16 } from "velt/half/dot";
 /** The dot product of a range of one `bf16[]` and a range of another, as `dotBf16`. */
 export { dotBf16At } from "velt/half/dot";
+/** The dot product of two `bf16[]` by the CPU's bf16 dot product where it has one: faster, and not the same bits on every CPU. */
+export { dotBf16Fast } from "velt/half/dot_fast";
+/** The dot product of a range of one `bf16[]` and a range of another, as `dotBf16Fast`. */
+export { dotBf16FastAt } from "velt/half/dot_fast";
