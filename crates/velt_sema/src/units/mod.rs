@@ -260,6 +260,12 @@ pub(crate) struct Summaries {
         rustc_hash::FxHashMap<crate::hir::DefId, Vec<crate::hir::DefId>>,
         usize,
     )>,
+    /// The error type each function definition of a finished unit was finalized with
+    /// (`finalize::finalize_unit_fns`, before the unit froze): the program's `build_defs` leaves
+    /// one whose error type comes out the same alone, neither decoding its body nor writing to
+    /// the frozen unit.
+    pub(crate) fn_throws:
+        Option<rustc_hash::FxHashMap<crate::hir::DefId, Option<crate::hir::TyId>>>,
 }
 
 /// std's part of two per-module facts ([`Order::std_facts`]).
@@ -373,6 +379,8 @@ pub(crate) fn remap_module_facts(cx: &mut Ctx, at: &dyn Fn(usize) -> Option<usiz
 /// Finish a unit (std's, as its stage ends): freeze its definitions, and keep the indexes a
 /// later unit's stage extends with its own definitions instead of walking every definition again.
 pub(crate) fn finish_unit(cx: &mut Ctx) {
+    // Before the freeze: the unit's functions carry their final error types from here on.
+    cx.unit_sums.fn_throws = Some(crate::finalize::finalize_unit_fns(cx));
     cx.freeze_defs();
     cx.unit_base = cx.defs.len() as u32;
     cx.unit_sums.modules = cx.modules.len();
@@ -456,7 +464,7 @@ crate::units::codec::structs! {
         weak_made, undefined_facts, lock_summaries, module_edges, groups, dispatch, generated_fns,
         literals, fed, modules, subclasses, calls, inst_sites, outside_named,
         outside_tys, lets, types, lib_base, dispatch_fns, value_scan,
-        virtuals, implicit, host_fns, dyn_member_fns, reach_roots, methods_by_owner,
+        virtuals, implicit, host_fns, dyn_member_fns, reach_roots, methods_by_owner, fn_throws,
     }
 }
 
@@ -496,6 +504,7 @@ fn summary_sizes(s: &Summaries) {
         dyn_member_fns,
         reach_roots,
         methods_by_owner,
+        fn_throws,
     } = s;
     let mut sizes: Vec<(&str, usize)> = vec![];
     macro_rules! size { ($($f:ident),*) => {$(
@@ -535,7 +544,8 @@ fn summary_sizes(s: &Summaries) {
         host_fns,
         dyn_member_fns,
         reach_roots,
-        methods_by_owner
+        methods_by_owner,
+        fn_throws
     );
     sizes.sort_by_key(|s| std::cmp::Reverse(s.1));
     for (f, n) in sizes {

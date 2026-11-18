@@ -59,30 +59,28 @@ pub(crate) fn build_defs(cx: &mut Ctx) -> rustc_hash::FxHashSet<DefId> {
             crate::collect::forwarders::await_forwarded(cx, d, ret, never, span);
         }
     }
+    let app = cx.units_stage == crate::units::Stage::App;
     for i in program_defs(cx) {
         let d = DefId(i as u32);
+        // EXPERIMENT (#2943): a finished unit's function finalized with the error type it comes
+        // out with again is left alone: reading it decodes its body from the unit, writing it
+        // modifies the frozen unit (`finalize_unit_fns`). One whose error type depends on the
+        // program (an error set the program's code fills, a dispatch group its methods join)
+        // differs, and is finalized here.
+        let stored = match app && i < cx.unit_base as usize {
+            true => cx
+                .unit_sums
+                .fn_throws
+                .as_ref()
+                .and_then(|m| m.get(&d).copied()),
+            false => None,
+        };
+        if stored.is_some_and(|t| final_throws(cx, d) == t) {
+            continue;
+        }
         if cx.defs[i].is_some() {
-            let mut throws = cx.try_fn(d).and_then(|f| f.throws);
-            // A synchronous forwarder to an async method: its group's errors reject the promise
-            // it returns, they are not thrown by the call (throws/groups.rs `Group::promise`).
-            if cx.try_fn(d).is_some_and(|f| !f.is_async) && cx.throw_groups().in_promise_group(d) {
-                throws = None;
-            }
-            // A generator's declared result carries its final error type as `E`.
-            let gen_ret = match &cx.defs[i] {
-                Some(Def::Fn(f)) if f.is_generator => Some(f.ret),
-                _ => None,
-            };
-            let gen_ret = gen_ret.map(|r| {
-                let e = throws.unwrap_or(cx.ty.never);
-                cx.with_generator_error(r, e)
-            });
-            if let Some(Def::Fn(f)) = &mut cx.defs[i] {
-                f.throws = throws;
-                if let Some(r) = gen_ret {
-                    f.ret = r;
-                }
-            }
+            let throws = final_throws(cx, d);
+            set_throws(cx, i, throws);
             continue;
         }
         let def = match &cx.info[i] {
@@ -121,6 +119,53 @@ pub(crate) fn build_defs(cx: &mut Ctx) -> rustc_hash::FxHashSet<DefId> {
     }
     crate::collect::host_sig::same_imports(cx);
     unchecked
+}
+
+/// The error type function `d`'s definition is finalized with (its inferred one; none for a
+/// synchronous forwarder to an async method: its group's errors reject the promise it returns,
+/// they are not thrown by the call, throws/groups.rs `Group::promise`).
+fn final_throws(cx: &mut Ctx, d: DefId) -> Option<hir::TyId> {
+    let throws = cx.try_fn(d).and_then(|f| f.throws);
+    if cx.try_fn(d).is_some_and(|f| !f.is_async) && cx.throw_groups().in_promise_group(d) {
+        return None;
+    }
+    throws
+}
+
+/// Finalize function definition `i` with error type `throws` (a generator's declared result
+/// carries it as `E`).
+fn set_throws(cx: &mut Ctx, i: usize, throws: Option<hir::TyId>) {
+    let gen_ret = match &cx.defs[i] {
+        Some(Def::Fn(f)) if f.is_generator => Some(f.ret),
+        _ => None,
+    };
+    let gen_ret = gen_ret.map(|r| {
+        let e = throws.unwrap_or(cx.ty.never);
+        cx.with_generator_error(r, e)
+    });
+    if let Some(Def::Fn(f)) = &mut cx.defs[i] {
+        f.throws = throws;
+        if let Some(r) = gen_ret {
+            f.ret = r;
+        }
+    }
+}
+
+/// EXPERIMENT (#2943): a unit's stage, before the unit is frozen (`units::finish_unit`):
+/// finalize its function definitions' error types as [`build_defs`] does, each recorded, so a
+/// later stage's `build_defs` leaves alone one that comes out the same.
+pub(crate) fn finalize_unit_fns(cx: &mut Ctx) -> FxHashMap<DefId, Option<hir::TyId>> {
+    let mut out = FxHashMap::default();
+    for i in 0..cx.defs.len() {
+        if !matches!(&cx.defs[i], Some(Def::Fn(_))) {
+            continue;
+        }
+        let d = DefId(i as u32);
+        let throws = final_throws(cx, d);
+        set_throws(cx, i, throws);
+        out.insert(d, throws);
+    }
+    out
 }
 
 /// EXPERIMENT (#2943 M3): with the program built from a set (`Ctx::program_set`), the
