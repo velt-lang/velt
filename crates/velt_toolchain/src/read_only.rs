@@ -1,9 +1,10 @@
-//! An installed release's std is left read-only (#2943 M4): a check then takes std's files as
-//! the snapshot kept beside std's compiled unit says, without a `stat` of each
-//! (`velt_loader::installed_std_root`). A release never changes, so no one edits it; one made
-//! writable again is checked file by file. Everything that removes or replaces an installed
-//! toolchain clears the bit first ([`remove_tree`]): a read-only directory can't lose its
-//! entries on Unix, and a read-only file can't be deleted on Windows.
+//! An installed release's std is left read-only (#2943): a release never changes, so nothing
+//! should edit it, and a check by compilation units can trust it as installed (take its files
+//! as the snapshot kept beside std's compiled unit says, without a `stat` of each). Everything
+//! that removes or replaces an installed toolchain clears the bit first ([`remove_tree`], and
+//! `chmod -R u+w` in the install scripts): a read-only directory can't lose its entries on
+//! Unix. On Windows, NTFS deletes read-only files anyway; FAT volumes and network shares may
+//! not, so the bit is cleared there too.
 
 use std::io;
 use std::path::Path;
