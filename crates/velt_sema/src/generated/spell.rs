@@ -67,11 +67,16 @@ pub(super) fn int_literal(v: i128) -> String {
     }
 }
 
-/// The value of an integer literal type as a program's output writes it (its JSON text, and the
-/// JavaScript source the type model gives generators): `String(n)` of the double it denotes, as
-/// Node, so `9007199254740993` is `9007199254740992` and `2^63 - 1` is `9223372036854776000`.
-pub(super) fn int_literal_value(v: i128) -> String {
-    velt_syntax::js_number(v as f64)
+/// The value `v` of an integer literal type of width `it` as a program's output writes it (its
+/// JSON text, and the JavaScript source the type model gives generators). An unsuffixed literal
+/// type (`i64`, as sema gives it) is a `number`'s: `String(n)` of the double it denotes, as Node,
+/// so `9007199254740993` is `9007199254740992` and `2^63 - 1` is `9223372036854776000`. A literal
+/// of another width (`18446744073709551615u64`) is that integer: its digits.
+pub(super) fn int_literal_value(it: IntTy, v: i128) -> String {
+    match it {
+        IntTy::I64 => velt_syntax::js_number(v as f64),
+        _ => v.to_string(),
+    }
 }
 
 /// The value of a float literal type (`f64::to_bits`) as JavaScript source: `String(x)` of it
@@ -269,17 +274,27 @@ fn alias_spelling(cx: &mut Ctx, t: TyId) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{int_literal, int_literal_value};
+    use super::{int_literal, int_literal_value, IntTy};
 
     /// A literal's value as output writes it is the double's text, as Node; its spelling as source
     /// keeps the digits a 64-bit integer holds, so that it reads back as the same literal type.
     #[test]
     fn integer_literal_values_are_their_double() {
-        assert_eq!(int_literal_value(9_007_199_254_740_993), "9007199254740992");
-        assert_eq!(int_literal_value(i64::MAX as i128), "9223372036854776000");
-        assert_eq!(int_literal_value(1_000_000_000_000_000_000_000), "1e+21");
-        assert_eq!(int_literal_value(12), "12");
+        let number = |v| int_literal_value(IntTy::I64, v);
+        assert_eq!(number(9_007_199_254_740_993), "9007199254740992");
+        assert_eq!(number(i64::MAX as i128), "9223372036854776000");
+        assert_eq!(number(1_000_000_000_000_000_000_000), "1e+21");
+        assert_eq!(number(12), "12");
         assert_eq!(int_literal(i64::MAX as i128), "9223372036854775807");
         assert_eq!(int_literal(1_000_000_000_000_000_000_000), "1e+21");
+    }
+
+    /// A literal type of another width is that integer: its digits.
+    #[test]
+    fn sized_integer_literal_values_are_their_digits() {
+        let max = u64::MAX as i128;
+        assert_eq!(int_literal_value(IntTy::U64, max), "18446744073709551615");
+        assert_eq!(int_literal_value(IntTy::I32, -2147483648), "-2147483648");
+        assert_eq!(int_literal_value(IntTy::U8, 255), "255");
     }
 }

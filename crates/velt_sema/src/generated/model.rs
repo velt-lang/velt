@@ -195,7 +195,7 @@ impl Builder {
                 m.kind = "literal";
                 m.literal = match l {
                     LitValue::Str(s) => json_quote(&s),
-                    LitValue::Int(_, v) => super::spell::int_literal_value(v),
+                    LitValue::Int(it, v) => super::spell::int_literal_value(it, v),
                     LitValue::Float(_, b) => super::spell::float_literal(b),
                     LitValue::Bool(b) => b.to_string(),
                 };

@@ -48,7 +48,7 @@ impl FnLower<'_, '_> {
             TyKind::Literal(v) => match v {
                 LitValue::Str(s) => format!("{s:?}"),
                 LitValue::Bool(b) => b.to_string(),
-                LitValue::Int(_, i) => super::glue::int_literal_text(i),
+                LitValue::Int(it, i) => super::glue::int_literal_text(it, i),
                 _ => self.cx.type_name(ty),
             },
             TyKind::FnPtr {
