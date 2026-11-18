@@ -210,7 +210,10 @@ not a reason for another round.
   total passes that limit, and on 2026-11-07 that reached entries last used four hours earlier, so
   a key that every job restores stays and one that sits idle doesn't.
 - The VIR identity (`veltc::eager_std_identity`, every golden built twice) runs whole in a pull
-  request's `test` job when the change can break it, and in the nightly gate. The queue runs all of
+  request's `golden` job when the change can break it, and in the nightly gate; it is part of the
+  gate's `golden` part, beside the goldens, because the golden jobs and shards finish long before
+  the test jobs (it ran after the unit tests until 2026-11 and made the `check` jobs 20 to 41
+  minutes longer). In the queue each golden shard compares its share. The queue runs all of
   it only when the code loading std on demand changed (`VIR_IDENTITY_CODE` in
   `crates/xtask/src/plan.rs`), one golden in 8 for the rest of what can reach it, and nothing
   otherwise (`Plan::vir_identity_queue`, `VELT_VIR_IDENTITY`). What it can still miss there is a

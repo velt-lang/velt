@@ -1,6 +1,7 @@
 # Pull requests run the checks their changes need (`cargo xtask check`, rules in
 # crates/xtask/src/plan.rs) on Linux, as three parallel jobs: lint (fmt, clippy), test (build,
-# unit and integration tests) and golden (end-to-end, debug mode). A change to OS-specific code
+# unit and integration tests) and golden (end-to-end in debug mode, the WebAssembly goldens and
+# the VIR identity when the change selects them). A change to OS-specific code
 # (crates/xtask/src/os.rs) is also linted on Windows, where `cfg(windows)` code compiles
 # differently, and on macOS when it can really differ there: clippy's findings there otherwise
 # surface only in the merge queue. The test files a pull request adds or edits run 20 times at once under load
@@ -94,13 +95,18 @@ jobs:
           || (matrix.part == 'golden' && steps.plan.outputs.zig_goldens == 'true')
         with:
           working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
-      - name: cargo xtask check --part ${{ matrix.part }}
+      # The golden job also runs the WebAssembly goldens when the change selects them (8 tests of
+      # about 11 minutes each, which made the test job up to 2 hours long), and the VIR identity:
+      # it is shorter than the test job, as in the queue.
+      - name: cargo xtask check --part ${{ matrix.part == 'golden' && 'golden,wasm' || matrix.part }}
         env:
           # `--full` knows no changes, so it leaves the robustness sweep to the environment.
           VELT_ROBUSTNESS: >-
             ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') && 'full' || '' }}
+          VELT_WASM_GOLDENS: ${{ matrix.part == 'test' && 'skip' || '' }}
         run: >-
-          cargo xtask check --part ${{ matrix.part }} --fast --base HEAD^1
+          cargo xtask check --part ${{ matrix.part == 'golden' && 'golden,wasm' || matrix.part }}
+          --fast --base HEAD^1
           ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') && '--full' || '' }}
       # The test files the change adds or edits (velt test files, goldens), 50 times each at once
       # on twice as many threads as the runner has cores beside a spinning thread per core, from
@@ -327,7 +333,6 @@ jobs:
       VELT_FMT_CORPUS: ${{ needs.queue-plan.outputs.fmt_corpus }}
       VELT_FMT_CORPUS_FILES: ${{ needs.queue-plan.outputs.fmt_corpus_files }}
       VELT_DEBUG_VARS: ${{ needs.queue-plan.outputs.debug_vars }}
-      VELT_VIR_IDENTITY: ${{ needs.queue-plan.outputs.vir_identity }}
       # The WebAssembly goldens run in shards of their own (`queue-golden`).
       VELT_WASM_GOLDENS: skip
       # nextest stops at the first failing test (.config/nextest.toml): the entry drops anyway.
@@ -405,6 +410,9 @@ jobs:
       shards: ${{ toJSON(fromJSON(needs.queue-plan.outputs.golden_shards)[matrix.os]) }}
       # Every golden, the example apps' that build packages/sqlite's C sources among them.
       zig: true
+      # The VIR identity runs in the golden shards, beside the goldens: they finish long before
+      # this OS's `check` job, after whose unit tests it ran for 20 to 41 minutes until 2026-11.
+      vir_identity: ${{ needs.queue-plan.outputs.vir_identity }}
       wasm_shards: >-
         ${{ needs.queue-plan.outputs.wasm_goldens == 'skip' && '[]'
         || toJSON(fromJSON(needs.queue-plan.outputs.wasm_shards)[matrix.os]) }}
