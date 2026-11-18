@@ -149,6 +149,9 @@ pub(crate) struct Ctx<'m> {
     /// EXPERIMENT (#2943): the last `lazy_std::units_live_set`, with the numbers of definitions
     /// and bodies it was walked over: the same until definitions are added.
     pub units_live_memo: Option<(usize, usize, std::rc::Rc<FxHashSet<DefId>>)>,
+    /// EXPERIMENT (#2943): with std's unit, the std modules only a global the program did not ask
+    /// for brings (`units::globals::hidden`): `std_def` answers as lazy std does, not loaded.
+    pub units_hidden: FxHashSet<usize>,
     pub scopes: Vec<ModuleScope>,
     /// Exports of `std/prelude/*` modules, visible everywhere.
     pub prelude: FxHashMap<String, Item>,
@@ -705,6 +708,7 @@ impl<'m> Ctx<'m> {
             units_proxy: None,
             units_live_proxy: None,
             units_live_memo: None,
+            units_hidden: FxHashSet::default(),
             unit_sums: Default::default(),
             units_stage: crate::units::Stage::Both,
             scopes,

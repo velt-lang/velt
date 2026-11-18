@@ -124,6 +124,13 @@ impl Ctx<'_> {
             None => self.std_def(name),
         };
         match found.as_ref() {
+            // With std's unit, the class of a global the program didn't ask for is not loaded,
+            // as with lazy std (`Ctx::units_hidden`): sema asks this to decide what to compile.
+            Some(Item::Def(d))
+                if (self.adt(*d)).is_some_and(|a| self.units_hidden.contains(&a.module)) =>
+            {
+                None
+            }
             Some(Item::Def(d)) if self.adt(*d).is_some() => Some(*d),
             _ => None,
         }

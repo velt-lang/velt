@@ -20,14 +20,14 @@ pub(super) fn run(
     packages: Option<&vpm::PackageGraph>,
 ) {
     sema_opts.std_key = Some(std_sources_key(sess, loaded));
-    let sema_opts = *sema_opts;
+    let sema_opts = sema_opts.clone();
     let before = sess.diagnostics.len();
     let t1 = Instant::now();
     let first = crate::generate::check(
         sess,
         &loaded.modules,
         loaded.root,
-        sema_opts,
+        sema_opts.clone(),
         packages,
         None,
     );

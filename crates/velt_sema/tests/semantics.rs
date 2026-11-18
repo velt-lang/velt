@@ -477,14 +477,14 @@ fn library_root_needs_no_main_but_is_fully_checked() {
     };
     let (p, d) = run_with(
         vec![func("helper", &[], Some("i64"), vec![ret(int(1))])],
-        lib,
+        lib.clone(),
     );
     assert!(d.iter().all(|d| !d.is_error()), "{d:?}");
     assert_eq!(p.expect("library accepted").entry, None);
     // A body nothing calls is still type-checked.
     let (p, d) = run_with(
         vec![func("helper", &[], Some("i64"), vec![ret(str_("x"))])],
-        lib,
+        lib.clone(),
     );
     assert!(p.is_none());
     assert!(!has_err(&d, "`main` function not found"));

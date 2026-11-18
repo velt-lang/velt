@@ -460,6 +460,7 @@ fn sema_stage(
         std_key: None,
         std_stubbed: false,
         check_only: sess.check_only,
+        unloaded_globals: loaded.unloaded_globals.clone(),
     };
     let packages = opts.packages.as_ref();
     // EXPERIMENT (#2943): `VELT_UNITS_TWICE` (`units_twice`).

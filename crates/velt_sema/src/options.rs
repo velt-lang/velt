@@ -1,7 +1,7 @@
 //! The options of a check ([`crate::check_with`]).
 
 /// What [`crate::check_with`] requires of the program beyond being well-typed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CheckOptions {
     /// The root module must define `main` (a program to build or run). Without it a root with no
     /// `main` is a library module: every body is still checked and the program's `entry` is
@@ -30,6 +30,12 @@ pub struct CheckOptions {
     /// (EXPERIMENT, `crate::units::disk`), the program then leaves std's definitions out
     /// (`Ctx::std_from_disk`). Additive.
     pub check_only: bool,
+    /// The std globals loaded on demand (`std/prelude/global/*`) that the program's own code
+    /// did not ask for, by module path (`std/prelude/global/this_fn`): the loader's answer
+    /// (velt_loader `Loaded::unloaded_globals`). With `units`, where std's unit has every module,
+    /// what only such a global brings is left out of the lookups that ask whether std loaded it
+    /// (`Ctx::std_def`), so a check by units answers them as lazy std does. Additive.
+    pub unloaded_globals: Vec<String>,
 }
 
 impl Default for CheckOptions {
@@ -42,6 +48,7 @@ impl Default for CheckOptions {
             std_key: None,
             std_stubbed: false,
             check_only: false,
+            unloaded_globals: vec![],
         }
     }
 }

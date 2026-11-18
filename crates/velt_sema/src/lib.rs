@@ -227,7 +227,7 @@ pub fn check_with(
     opts: CheckOptions,
 ) -> (Option<hir::Program>, Diagnostics) {
     let (out, diags) = generating::on_sema_thread(|budget| {
-        check_on_current_thread(modules, root, opts, &[], None, None, budget)
+        check_on_current_thread(modules, root, opts.clone(), &[], None, None, budget)
     });
     generating::program_or_demand_error(out, diags)
 }
@@ -249,7 +249,7 @@ pub fn check_recovered(
     loads: Option<Loads>,
 ) -> Diagnostics {
     generating::on_sema_thread(|budget| {
-        check_on_current_thread(modules, root, opts, recovered, None, loads, budget).1
+        check_on_current_thread(modules, root, opts.clone(), recovered, None, loads, budget).1
     })
 }
 
@@ -265,7 +265,7 @@ fn check_on_current_thread(
     timings::start();
     let out = timings::pass("check", || {
         script_locals::check(modules, root, |m| {
-            check_timed(m, root, opts, recovered, gen, loads, stack_budget)
+            check_timed(m, root, opts.clone(), recovered, gen, loads, stack_budget)
         })
     });
     timings::finish();
@@ -291,7 +291,7 @@ fn check_timed(
     let rewrite_start = std::time::Instant::now();
     // By units with `VELT_UNITS_SPLIT` (#2943 M2): the rewrites run once over std alone (std's
     // stage) and once over the app with std's modules as stubs (`units::stubs`).
-    let (stubbed, std_input) = units::split_inputs(opts, input);
+    let (stubbed, std_input) = units::split_inputs(opts.clone(), input);
     let rw = rewrites::run(stubbed.as_deref().unwrap_or(input), root);
     let std_rw = std_input.as_deref().map(|s| rewrites::run(s, s.len()));
     let modules = rw.modules(stubbed.as_deref().unwrap_or(input));
@@ -378,7 +378,7 @@ fn check_timed(
     let std_found = std_rw.as_ref().map(|s| units::stubs::std_found(s, &found));
     let std_key = (order.as_ref())
         .zip(opts.std_key)
-        .map(|(o, k)| found.std_key(k, opts, o, modules));
+        .map(|(o, k)| found.std_key(k, opts.clone(), o, modules));
     let mut held = std_unit::hold(std_key);
     let mut std_copies = held
         .as_ref()
@@ -395,7 +395,7 @@ fn check_timed(
         Some(_) => Box::leak(Box::default()),
         None => &kept_arena,
     };
-    let disk = units::disk::path(opts, (order.is_some()).then_some(&found));
+    let disk = units::disk::path(opts.clone(), (order.is_some()).then_some(&found));
     // std's modules for its unit: std's own run's, or the loader's stubs as they are.
     let unit_mods: Vec<&SourceModule> = match std_mods {
         Some(m) => m.iter().collect(),
@@ -462,6 +462,8 @@ fn check_timed(
                 // its own families in use until its round seals them (`collect::extended_layouts`).
                 cx.objects.layouts.sealed = false;
                 o.add_app(&mut cx, modules);
+                // What lazy std would not have loaded for this program (`units::globals`).
+                cx.units_hidden = units::globals::hidden(&cx, &opts.unloaded_globals);
                 let base = o.app_base(&cx);
                 generating::install(&mut cx, gen, generator.as_ref());
                 found.install(&mut cx, true);
@@ -502,7 +504,7 @@ fn check_timed(
             units::remap_module_facts(&mut cx, &|m| o.in_std(m));
         }
         let cx_root = cx.root;
-        let entry = timings::pass(round, || analyze(&mut cx, cx_root, root_mod, opts));
+        let entry = timings::pass(round, || analyze(&mut cx, cx_root, root_mod, opts.clone()));
         global_this::drop_site_errors(&mut cx);
         if let Some(o) = overloaded {
             overloads::report_misfits(&mut cx.diags, &o.sig_spans);

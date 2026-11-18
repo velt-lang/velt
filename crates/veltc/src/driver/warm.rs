@@ -77,9 +77,10 @@ fn warm_inner(
             std_key: None,
             std_stubbed: false,
             check_only: false,
+            unloaded_globals: vec![],
         };
         let t = Instant::now();
-        match reparsed(sess, kept, cold_files, &edited, sema_opts) {
+        match reparsed(sess, kept, cold_files, &edited, sema_opts.clone()) {
             Fast::Checked(checked, edited_files) => {
                 sess.record("sema (warm)", t);
                 sess.splice_files = Some(edited_files);
@@ -145,7 +146,7 @@ fn warm_inner(
             }
         }
         let edited = named;
-        let checked = match kept.reload(&loaded.modules, loaded.root, &edited, sema_opts) {
+        let checked = match kept.reload(&loaded.modules, loaded.root, &edited, sema_opts.clone()) {
             Ok((p, diags)) => {
                 // What the cold front end would report: the warnings of the code the edit left
                 // alone, printed again on every reload.

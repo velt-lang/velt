@@ -64,7 +64,7 @@ pub(crate) fn check(
     if let Some(offer) = offer_key.as_ref().and_then(cache::load_offer) {
         let mark = sess.diagnostics.len();
         let files = offer.generator_files.clone();
-        if let Some(p) = check_offered(sess, modules, root, opts, offer, (more.0, more.1)) {
+        if let Some(p) = check_offered(sess, modules, root, opts.clone(), offer, (more.0, more.1)) {
             sess.generator_inputs.extend(files);
             if let Some(h) = &mut sess.pending_kept {
                 h.loads = Some(kept);
@@ -296,10 +296,25 @@ fn rounds(
         let keep = keep && round == 1 && sources.is_empty();
         let (gen, srcs) = (&input, &sources[..]);
         let ((out, diags), pending) = if keep {
-            velt_sema::check_generating_kept(current, root, opts, gen, srcs, Some(&generate), loads)
+            velt_sema::check_generating_kept(
+                current,
+                root,
+                opts.clone(),
+                gen,
+                srcs,
+                Some(&generate),
+                loads,
+            )
         } else {
-            let checked =
-                velt_sema::check_generating(current, root, opts, gen, srcs, Some(&generate), loads);
+            let checked = velt_sema::check_generating(
+                current,
+                root,
+                opts.clone(),
+                gen,
+                srcs,
+                Some(&generate),
+                loads,
+            );
             (checked, None)
         };
         let (_, st, spent, _) = shared.into_inner().ok()?;

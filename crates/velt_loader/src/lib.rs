@@ -167,6 +167,11 @@ pub struct Loaded {
     pub root: usize,
     /// What [`load_more`] goes on from.
     pub state: LoadState,
+    /// The globals loaded on demand ([`globals`]) that the program's own code did not ask for,
+    /// by module path (`std/prelude/global/this_fn`): what lazy std leaves out. A load of all
+    /// of std (a check by units) may still hold their modules; sema answers "did std load it?"
+    /// from this list there (velt_sema `CheckOptions::unloaded_globals`).
+    pub unloaded_globals: Vec<String>,
 }
 
 /// Read and parse the root file, the extra roots ([`LoadOptions::extra_roots`]) and everything
@@ -261,10 +266,25 @@ pub fn load_program(
     loader.check_ambients();
     loader.declare_global_types();
     let modules = std::mem::take(&mut loader.modules);
+    // The globals still waiting are those nothing in the program asked for (each one loaded is
+    // taken out of the list: `load_globals`, `load_conditional_globals`).
+    let unloaded_globals = match (&loader.opts.std_root, injected) {
+        (Some(std), false) => {
+            let std = Origin::Std(std.clone());
+            (loader.globals.iter())
+                .map(|g| std.canonical(&g.file))
+                .collect()
+        }
+        // std's modules injected (a check by units from disk): nothing went through
+        // `load_globals`, so the same questions are asked here.
+        (Some(std), true) => loader.unasked_globals(&std.clone()),
+        (None, _) => vec![],
+    };
     Ok(Loaded {
         modules,
         root: root_index,
         state: loader.into_state(),
+        unloaded_globals,
     })
 }
 
@@ -414,6 +434,39 @@ impl Loader<'_, '_> {
                 None
             }
         }
+    }
+
+    /// With std's modules injected ([`LoadOptions::std_modules`], a check by units from disk),
+    /// where no global went through [`Self::load_globals`]: the globals none of the program's
+    /// own modules asks for, by module path. A global loaded by name is asked for as
+    /// `load_globals` would ask; one loaded on a condition, whenever a module mentions one of
+    /// its words (whether its std module is loaded is not known here: the cautious answer).
+    fn unasked_globals(&self, std: &Path) -> Vec<String> {
+        let origin = Origin::Std(std.to_path_buf());
+        let own: Vec<_> = (self.modules.iter().filter(|m| !m.is_std))
+            .map(|m| (m, &self.sm.get(m.file).src))
+            .collect();
+        let words: Vec<_> = (own.iter())
+            .map(|(m, src)| (globals::bound_names(&m.ast), globals::Words::of(src)))
+            .collect();
+        let asks = |g: &globals::Global| {
+            own.iter().zip(&words).any(|((m, src), (bound, w))| {
+                let mut stripped = None;
+                let named = g.names.iter().any(|n| {
+                    (!bound.contains(n.as_str()) || globals::through_global_this(src, n))
+                        && globals::names_global(w, &m.ast, n, || {
+                            globals::in_code(src, &m.ast, n, &mut stripped)
+                        })
+                });
+                let when = (g.when.as_ref())
+                    .is_some_and(|(_, ws)| ws.iter().any(|x| globals::mentions_word(w, &m.ast, x)));
+                named || when
+            })
+        };
+        (globals::global_modules(std, &self.std_parser).iter())
+            .filter(|g| !asks(g))
+            .map(|g| origin.canonical(&g.file))
+            .collect()
     }
 
     /// Load the globals ([`globals`]) that non-std module `index` mentions.

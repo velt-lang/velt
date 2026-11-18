@@ -41,7 +41,7 @@ pub fn check_generating(
         generate,
     };
     on_sema_thread(|budget| {
-        check_on_current_thread(modules, root, opts, &[], Some(args), load, budget)
+        check_on_current_thread(modules, root, opts.clone(), &[], Some(args), load, budget)
     })
 }
 
@@ -66,7 +66,8 @@ pub fn check_generating_kept(
     };
     on_sema_thread(|budget| {
         let _request = crate::kept::request(modules);
-        let out = check_on_current_thread(modules, root, opts, &[], Some(args), load, budget);
+        let out =
+            check_on_current_thread(modules, root, opts.clone(), &[], Some(args), load, budget);
         (out, crate::kept::take())
     })
 }

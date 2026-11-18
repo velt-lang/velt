@@ -383,7 +383,7 @@ impl KeptCheck {
                 .map(|name| find_fn(&cx, name))
                 .collect::<Result<Vec<_>, String>>()?;
             let from = check_again(&mut cx, &defs, |_, _| Ok(()))?;
-            finish(cx, opts, from).map(|(p, _)| p)
+            finish(cx, opts.clone(), from).map(|(p, _)| p)
         })
     }
 
@@ -482,7 +482,8 @@ impl KeptCheck {
             edited_modules.dedup();
             // What the source rewrites and scans find of the program: the same as the kept
             // check's, but for the edited modules' own trees, which they leave as written.
-            let (Some(kept_facts), Some(facts)) = (&cx.source_facts, probe(modules, root, opts))
+            let (Some(kept_facts), Some(facts)) =
+                (&cx.source_facts, probe(modules, root, opts.clone()))
             else {
                 return Err("the source rewrites and scans were not kept".into());
             };
@@ -530,7 +531,7 @@ impl KeptCheck {
                 }
                 Ok(())
             })?;
-            finish(cx, opts, from)
+            finish(cx, opts.clone(), from)
         })
     }
 

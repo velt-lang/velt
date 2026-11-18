@@ -67,6 +67,7 @@ pub(super) fn check_recovering_loaded(
         std_key: None,
         std_stubbed: false,
         check_only: false,
+        unloaded_globals: loaded.unloaded_globals.clone(),
     };
     // The std modules the check demands are served as for a program that loaded cleanly
     // (`sema_stage`): the load left them to the check (#3150).

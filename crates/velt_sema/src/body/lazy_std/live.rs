@@ -318,7 +318,12 @@ fn walk_units_live_set(cx: &mut Ctx) -> FxHashSet<DefId> {
     for d in waiting {
         set.remove(&d);
     }
+    // A live `catchUnwind` demands std's panic path ([`demanded`]): kept, as the reach walk
+    // keeps it (`note_catch_unwind`). Without it, a build from std's unit left the panic hooks
+    // out and a `catchPanic` caught nothing.
+    let catches = cx.lazy.live.present & Construct::CatchUnwind.bit();
     cx.lazy = saved;
+    cx.lazy.live.present |= catches;
     set
 }
 

@@ -13,6 +13,7 @@
 
 pub(crate) mod codec;
 pub(crate) mod disk;
+pub(crate) mod globals;
 pub(crate) mod reach;
 pub(crate) mod stubs;
 
