@@ -1,0 +1,203 @@
+// velt/net (internal): a TLS server's certificate chain and private key from PEM text (#2392 step
+// 4), as `listenTls` takes them: CERTIFICATE blocks (leaf first) and a P-256 key in PKCS#8
+// ("PRIVATE KEY") or SEC 1 ("EC PRIVATE KEY") form. The key must match the leaf's public key.
+// Keys the Velt server can't sign with yet (RSA, P-384, Ed25519) are reported as such, not as
+// errors, so a caller can choose another server for them.
+
+import { p256PublicKey, p256ScalarOk } from "velt/crypto/p256";
+import { base64Decode } from "velt/encoding/base64";
+import { IoError } from "velt/io/error";
+import { BIT_STRING, DerReader, INTEGER, OCTET_STRING, OID, SEQUENCE } from "velt/net/tls/x509/der";
+import { Certificate } from "velt/net/tls/x509/certificate";
+import { OID_EC_PUBLIC_KEY, OID_P256 } from "velt/net/tls/x509/oids";
+import { Tlv } from "velt/net/tls/x509/tlv";
+
+/** A server's credentials: the chain (DER, leaf first) and its P-256 private key (32 bytes). */
+export struct ServerKey {
+  chain: u8[][];
+  key: u8[];
+}
+
+/** One PEM block: its label ("CERTIFICATE") and its DER bytes. */
+struct PemBlock {
+  label: string;
+  der: u8[];
+}
+
+// The runtime's messages (crates/velt_rt/src/tls.rs), so both servers fail alike.
+function invalid(message: string): IoError {
+  return new IoError("EINVAL", message);
+}
+
+/**
+ * The PEM blocks of `text`, in order. Throws `EINVAL` for a block that is not valid PEM, naming
+ * `what` ("certificate", "key").
+ */
+function pemBlocks(text: string, what: string): PemBlock[] {
+  const out: PemBlock[] = [];
+  let at = 0;
+  while (true) {
+    const begin = text.indexOf("-----BEGIN ", at);
+    if (begin < 0) {
+      return out;
+    }
+    const labelEnd = text.indexOf("-----", begin + 11);
+    if (labelEnd < 0) {
+      throw invalid(`invalid ${what} PEM: a BEGIN line without its end`);
+    }
+    const label = text.slice(begin + 11, labelEnd);
+    const endLine = `-----END ${label}-----`;
+    const end = text.indexOf(endLine, labelEnd + 5);
+    if (end < 0) {
+      throw invalid(`invalid ${what} PEM: "${label}" without its END line`);
+    }
+    let b64 = "";
+    for (const line of text.slice(labelEnd + 5, end).split("\n")) {
+      b64 += line.trim();
+    }
+    let der: u8[] = [];
+    try {
+      der = base64Decode(b64);
+    } catch (e) {
+      throw invalid(`invalid ${what} PEM: "${label}" is not valid base64`);
+    }
+    if (der.length == 0) {
+      throw invalid(`invalid ${what} PEM: "${label}" is empty`);
+    }
+    out.push({ label: label, der: der });
+    at = end + (endLine.length as i64);
+  }
+}
+
+/**
+ * The chain of `certPem` and the key of `keyPem`, checked to belong together; null for a key the
+ * Velt server can't sign with yet (RSA, another curve, Ed25519). Throws `IoError` `EINVAL` for
+ * text that isn't PEM, no certificate, no key, a malformed certificate or key, or a key that
+ * doesn't match the leaf certificate.
+ */
+export function serverKey(certPem: string, keyPem: string): ServerKey | null throws IoError {
+  const chain: u8[][] = [];
+  for (const b of pemBlocks(certPem, "certificate")) {
+    if (b.label == "CERTIFICATE") {
+      chain.push(b.der);
+    }
+  }
+  if (chain.length == 0) {
+    throw invalid("no certificate found in the certificate PEM");
+  }
+  let leaf: Certificate;
+  try {
+    leaf = new Certificate(chain[0]);
+  } catch (e) {
+    throw invalid(`invalid certificate PEM: ${e}`);
+  }
+  let key: u8[] | null = null;
+  let found = false;
+  for (const b of pemBlocks(keyPem, "key")) {
+    if (b.label == "PRIVATE KEY") {
+      key = fromPkcs8(b.der);
+      found = true;
+      break;
+    }
+    if (b.label == "EC PRIVATE KEY") {
+      key = fromSec1(b.der, null);
+      found = true;
+      break;
+    }
+    if (b.label == "RSA PRIVATE KEY") {
+      return null;
+    }
+  }
+  if (!found) {
+    throw invalid("invalid key PEM: no private key found");
+  }
+  if (key == null) {
+    return null;
+  }
+  let pub: u8[] = [];
+  try {
+    pub = p256PublicKey(key);
+  } catch (e) {
+    throw invalid("invalid key PEM: the P-256 key is out of range");
+  }
+  const d = leaf.der;
+  const pk = leaf.publicKey;
+  let same = pk.end - pk.start == pub.length;
+  for (let i: usize = 0; same && i < pub.length; i++) {
+    same = d[pk.start + i] == pub[i];
+  }
+  if (!same) {
+    throw invalid("certificate and key do not match: the public keys differ");
+  }
+  return { chain: chain, key: key };
+}
+
+// The P-256 key of a PKCS#8 PrivateKeyInfo (RFC 5208 / 5958), null for another algorithm.
+function fromPkcs8(der: u8[]): u8[] | null {
+  const r = new DerReader(der);
+  try {
+    const top = r.enter(SEQUENCE, der.length);
+    const version = r.next(INTEGER, top.end);
+    r.smallInt(version);
+    const alg = r.enter(SEQUENCE, top.end);
+    const oid = r.next(OID, alg.end);
+    if (!r.equals(oid, OID_EC_PUBLIC_KEY)) {
+      return null;
+    }
+    const curve = r.next(OID, alg.end);
+    r.done(alg.end);
+    if (!r.equals(curve, OID_P256)) {
+      return null;
+    }
+    const inner = r.next(OCTET_STRING, top.end);
+    return fromSec1(der.slice(inner.start as i64, inner.end as i64), curve);
+  } catch (e) {
+    if (e instanceof IoError && e.code == "EINVAL") {
+      throw e;
+    }
+    throw invalid("invalid key PEM: a malformed PKCS#8 key");
+  }
+}
+
+// The key of a SEC 1 ECPrivateKey (RFC 5915). `curve` is the curve PKCS#8 named already; else
+// the key's own parameters must name P-256 (null for another curve).
+function fromSec1(der: u8[], curve: Tlv | null): u8[] | null {
+  const r = new DerReader(der);
+  try {
+    const top = r.enter(SEQUENCE, der.length);
+    const version = r.next(INTEGER, top.end);
+    if (r.smallInt(version) != 1) {
+      throw invalid("invalid key PEM: the EC private key is not version 1");
+    }
+    const k = r.next(OCTET_STRING, top.end);
+    let p256 = curve != null;
+    if (r.peek(top.end) == 0xa0) {
+      const params = r.enter(0xa0, top.end);
+      const oid = r.next(OID, params.end);
+      r.done(params.end);
+      if (!r.equals(oid, OID_P256)) {
+        return null;
+      }
+      p256 = true;
+    }
+    if (r.peek(top.end) == 0xa1) {
+      const pub = r.enter(0xa1, top.end);
+      r.next(BIT_STRING, pub.end);
+      r.done(pub.end);
+    }
+    r.done(top.end);
+    if (!p256) {
+      throw invalid("invalid key PEM: the EC key does not name its curve");
+    }
+    const key = der.slice(k.start as i64, k.end as i64);
+    if (!p256ScalarOk(key)) {
+      throw invalid("invalid key PEM: the P-256 key is out of range");
+    }
+    return key;
+  } catch (e) {
+    if (e instanceof IoError && e.code == "EINVAL") {
+      throw e;
+    }
+    throw invalid("invalid key PEM: a malformed EC key");
+  }
+}

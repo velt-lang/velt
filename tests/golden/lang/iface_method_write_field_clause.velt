@@ -1,0 +1,17 @@
+// A method without a `throws` clause written through an interface value, stored in a field
+// whose function type has one (#379): what the assigned function throws must fit the field's
+// clause, or the write is refused.
+interface Ctx {
+  update(): void;
+}
+
+class Failure extends Error {}
+
+class Other extends Error {}
+
+type Holder = { update: () => void throws Failure };
+const o: Holder = { update: () => {} };
+const c: Ctx = o;
+c.update = () => {
+  throw new Other("not allowed");
+};

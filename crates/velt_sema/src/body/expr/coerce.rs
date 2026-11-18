@@ -31,6 +31,22 @@ impl FnCx<'_, '_> {
     pub fn try_coerce(&mut self, mut h: hir::Expr, exp: TyId) -> Result<hir::Expr, hir::Expr> {
         // `K` (a constant holding a fresh symbol) where its `typeof K` is expected.
         h = self.unique_symbol_value(h, exp);
+        // Read-only arrays first: a twin has its array's kind, which the rules below would take
+        // as the same array (#3061).
+        if h.ty != exp {
+            use super::readonly_array_cast::ReadonlyCast as R;
+            h = match self.readonly_array_value(h, exp) {
+                R::Other(h) => h,
+                R::Done(c) => return Ok(c),
+                R::Refused(h) => return Err(h),
+            };
+            // One inside another type (`Promise<readonly T[]>`, `{ xs: readonly T[] }`).
+            h = match self.readonly_nested_value(h, exp) {
+                R::Other(h) => h,
+                R::Done(c) => return Ok(c),
+                R::Refused(h) => return Err(h),
+            };
+        }
         // `{ p } | typeof K` where `{ p } | symbol` is expected: one layout once lowered.
         if self.cx.widens_unique(h.ty, exp) {
             return Ok(self.unique_retype(h, exp));

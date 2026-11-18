@@ -1,0 +1,2 @@
+record_widen_reflect_delete.velt:9:6: error: a `Record<string, string | undefined>` converts to `Record<string, boolean | string | undefined>` by copying its entries, and this program writes to a record of one of the two types, which the other would not see
+record_widen_reflect_delete.velt:10:1: written here

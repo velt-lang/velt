@@ -86,6 +86,17 @@ impl FnCx<'_, '_> {
         true
     }
 
+    /// A write to a record of type `ty` at `span`, for `crate::object_copies`. Std's generic code
+    /// writes records of type parameters only into records it made, or into a caller's record
+    /// reached through `any` (`Reflect.set`), which the caller's write through `any` stands for:
+    /// those are not noted, so a generic record write in the program's own code may be any record.
+    fn note_record_write(&mut self, ty: TyId, span: Span) {
+        if self.cx.has_type_params(ty) && self.cx.scopes[self.module].is_std {
+            return;
+        }
+        self.cx.object_copies.record_writes.push((ty, span));
+    }
+
     /// `obj.method(args)` for a record method without a key parameter.
     pub(super) fn record_call(
         &mut self,
@@ -94,8 +105,15 @@ impl FnCx<'_, '_> {
         args: &[ast::Expr],
         span: Span,
     ) -> hir::Expr {
-        if method == velt_common::std_key!(record_extend) {
-            self.cx.object_copies.record_writes.push((obj.ty, span));
+        let writes = [
+            velt_common::std_key!(record_extend),
+            velt_common::std_key!(record_set_keyed),
+            velt_common::std_key!(record_define_accessor),
+            velt_common::std_key!(record_define_getter),
+            velt_common::std_key!(record_define_setter),
+        ];
+        if writes.contains(&method) {
+            self.note_record_write(obj.ty, span);
         }
         let m = ast::Ident {
             name: method.to_string(),
@@ -150,8 +168,7 @@ impl FnCx<'_, '_> {
         if method == velt_common::std_key!(record_set)
             || method == velt_common::std_key!(record_delete)
         {
-            let at = (obj.ty, span);
-            self.cx.object_copies.record_writes.push(at);
+            self.note_record_write(obj.ty, span);
         }
         let obj = self.unview(obj);
         let (mut def, mut slots, mut recv_ty, mut vslot) = self.record_method(obj.ty, method);

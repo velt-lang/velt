@@ -1,0 +1,16 @@
+// velt/process (internal): the working directory in a WebAssembly build (`#cwd-sys`' default
+// variant, std/imports.velt): the WebAssembly runtime's (WASI's preopened directories).
+
+import { IoResult, unwrapIo } from "velt/native/result";
+import { IoStatus, checkIo } from "velt/native/status";
+
+declare function velt_rt_process_cwd(): IoResult<string>;
+declare function velt_rt_process_chdir(path: string): IoStatus;
+
+export function cwd(): string {
+  return unwrapIo(velt_rt_process_cwd());
+}
+
+export function changeDir(path: string) {
+  checkIo(velt_rt_process_chdir(path));
+}

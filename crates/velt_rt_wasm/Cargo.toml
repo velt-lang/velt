@@ -13,12 +13,7 @@ edition.workspace = true
 crate-type = ["staticlib", "rlib"]
 
 [dependencies]
-dashu-int = "0.6.1"
-# Same versions as crates/velt_rt (its fmt.rs is compiled here).
-itoa = "1.0.18"
-libm = "0.2.16"
 memchr = "2.8.3"
-ryu = "1.0.23"
 # velt_rt's text modules (compiled here) re-export it.
 velt_text = { path = "../velt_text" }
 

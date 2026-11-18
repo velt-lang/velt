@@ -5,9 +5,11 @@
 //! rewrite an added module missed, or something in the VIR that depends on the order sema numbers
 //! things in.
 //!
-//! Long: selected by `cargo xtask affected`, which runs it with `--ignored`. With
+//! Long: selected by `cargo xtask affected`, which runs it with `--ignored` next to the goldens
+//! (the gate's `golden` part, so in CI it runs beside the unit tests instead of after them). With
 //! `VELT_VIR_IDENTITY=sample` it compares one golden in [`SAMPLE_ONE_IN`] (the merge queue, unless
 //! the code loading std on demand changed: `Plan::vir_identity_queue` in crates/xtask/src/plan.rs).
+//! `VELT_GOLDEN_SHARD=<i>/<n>` compares every n-th of them only, as the goldens' shards do.
 
 mod no_window;
 #[path = "eager_std_identity/site_vars.rs"]
@@ -18,20 +20,22 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
-/// Compared, and reported apart from the rest: generated function names vary between runs (#2226);
-/// and, since #2649's switch, the statics' order where the executor's modules load mid-check
-/// (#2926).
-const KNOWN: &[&str] = &[
-    "lang/union_erased_layout.velt",
-    "lang/as_narrowing_panics.velt",
-    "lang/cast_class_union_checked.velt",
-    "lang/constructor_parameter_properties.velt",
-    "lang/extend_inherited.velt",
-    "lang/extend_static_inherited.velt",
-    "lang/getter_override_write.velt",
-    "lang/instanceof_or_join.velt",
-    "lang/private_names_union_slot.velt",
-    "std/error_name_field_order.velt",
+/// Compared, and reported apart from the rest, each with its issue: generated function names vary
+/// between runs (#2226); since #2649's switch, the statics' order where the executor's modules
+/// load mid-check (#2926); the inliner's budget, once used up, is spent in an order that follows
+/// sema's numbering (#2843).
+const KNOWN: &[(&str, u32)] = &[
+    ("lang/union_erased_layout.velt", 2226),
+    ("lang/as_narrowing_panics.velt", 2926),
+    ("lang/cast_class_union_checked.velt", 2926),
+    ("lang/constructor_parameter_properties.velt", 2926),
+    ("lang/extend_inherited.velt", 2926),
+    ("lang/extend_static_inherited.velt", 2926),
+    ("lang/getter_override_write.velt", 2926),
+    ("lang/instanceof_or_join.velt", 2926),
+    ("lang/literal_accessor_contexts.velt", 2843),
+    ("lang/private_names_union_slot.velt", 2926),
+    ("std/error_name_field_order.velt", 2926),
 ];
 
 /// One golden in this many, in the sample.
@@ -52,6 +56,57 @@ fn the_sample_is_a_fixed_fraction_by_name() {
         .filter(|i| in_sample(&format!("lang/g{i}.velt")))
         .count();
     assert!((800..1200).contains(&sampled), "{sampled} of 8,000");
+}
+
+/// `VELT_GOLDEN_SHARD=<i>/<n>` (1-based), as the golden test reads it; `(1, 1)` without it.
+fn shard() -> (usize, usize) {
+    let Ok(spec) = std::env::var("VELT_GOLDEN_SHARD") else {
+        return (1, 1);
+    };
+    let parsed = spec.split_once('/').and_then(|(i, n)| {
+        Some((
+            i.trim().parse::<usize>().ok()?,
+            n.trim().parse::<usize>().ok()?,
+        ))
+    });
+    match parsed {
+        Some((i, n)) if i >= 1 && i <= n => (i, n),
+        _ => panic!("VELT_GOLDEN_SHARD must be <i>/<n> with 1 <= i <= n, not `{spec}`"),
+    }
+}
+
+/// Keeps the files of this shard ([`shard`]): every n-th of the sorted `files`. Returns n, by
+/// which the counts a whole run must reach are divided.
+fn keep_shard(files: &mut Vec<PathBuf>) -> usize {
+    let (i, n) = shard();
+    keep_shard_of(files, i, n);
+    if n > 1 {
+        eprintln!("shard {i}/{n}: {} files", files.len());
+    }
+    n
+}
+
+/// Keeps every n-th of `files`, starting at the i-th (1-based).
+fn keep_shard_of<T>(files: &mut Vec<T>, i: usize, n: usize) {
+    let mut k = 0;
+    files.retain(|_| {
+        k += 1;
+        (k - 1) % n == i - 1
+    });
+}
+
+#[test]
+fn shards_cover_every_file_once() {
+    let all: Vec<usize> = (0..10).collect();
+    let mut seen = vec![];
+    for i in 1..=3 {
+        let mut files = all.clone();
+        keep_shard_of(&mut files, i, 3);
+        assert!((3..=4).contains(&files.len()), "shard {i}: {files:?}");
+        seen.extend(files);
+    }
+    seen.sort();
+    assert_eq!(seen, all);
 }
 
 fn goldens(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -138,6 +193,7 @@ fn every_golden_has_the_same_vir_with_std_up_front_and_on_demand() {
         });
         eprintln!("the sample: {} goldens", files.len());
     }
+    let shards = keep_shard(&mut files);
     let next = AtomicUsize::new(0);
     let built = AtomicUsize::new(0);
     let found = Mutex::new(vec![]);
@@ -161,7 +217,7 @@ fn every_golden_has_the_same_vir_with_std_up_front_and_on_demand() {
     // Two identical compile failures count as a match: a broken setup must not pass that way.
     let built = built.into_inner();
     assert!(
-        filtered || built > if sample { 100 } else { 1000 },
+        filtered || built > if sample { 100 } else { 1000 } / shards,
         "only {built} of {} goldens built",
         files.len()
     );
@@ -169,9 +225,10 @@ fn every_golden_has_the_same_vir_with_std_up_front_and_on_demand() {
     found.sort();
     let (known, new): (Vec<_>, Vec<_>) = found
         .into_iter()
-        .partition(|(name, _)| KNOWN.contains(&name.as_str()));
+        .partition(|(name, _)| KNOWN.iter().any(|(k, _)| k == name));
     for (name, why) in &known {
-        eprintln!("known difference (#2226, #2926): {name}\n  {why}");
+        let issue = KNOWN.iter().find(|(k, _)| k == name).map_or(0, |&(_, i)| i);
+        eprintln!("known difference (#{issue}): {name}\n  {why}");
     }
     let listed: Vec<String> = new.iter().map(|(n, why)| format!("{n}\n  {why}")).collect();
     assert!(

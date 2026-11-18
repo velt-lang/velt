@@ -76,6 +76,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::StrLen
         | I::StrByteLen
         | I::AddressLoad
+        | I::AddressArray
         | I::AddressStore
         | I::AtomicAddress
         | I::AddressAtomicLoad

@@ -6,7 +6,9 @@
 // to standard output (`stdoutWritten`), which `console.log` and every std writer of stdout set and
 // velt/sync's hand-offs read (std/sync/output.velt, #2771).
 
-import { inline } from "velt/lang/intrinsics";
+import { processId } from "#process-pid";
+import { addressLoad, addressStore, inline, noInline } from "velt/lang/intrinsics";
+import { getEnv } from "#env-sys";
 
 declare function velt_rt_write_str(stream: u32, s: string);
 
@@ -19,10 +21,57 @@ declare function velt_rt_write_str(stream: u32, s: string);
  */
 const STDOUT_WRITTEN = new ThreadLocal<bool>(false);
 
+/**
+ * On a lazy worker 0's thread, its `E_PANY` word (sched_task.velt), 0 elsewhere and once it is
+ * shared: the first write after a publish marks it `PRINTED` (`PANY_PRINTED` there), and the look
+ * after the poll publishes the output (sched_loop.velt `alone`, through `publishPrinted`, which
+ * clears `STDOUT_WRITTEN`), which a lazy worker 0 does not do per poll (#2977). While it is set,
+ * `STDOUT_WRITTEN` set means the word is marked (`setLazyWorker` marks it too), so later writes
+ * only read `STDOUT_WRITTEN`. Only that thread writes the word: the mark is a plain load and
+ * store. No executor module is imported here: a program that runs nothing on the executor loads
+ * none of it.
+ */
+const LAZY_PANY = new ThreadLocal<usize>(0);
+
+/** The bit of `E_PANY` a write sets (sched_task.velt `PANY_PRINTED`). */
+export const PRINTED: usize = 8;
+
 /** Marks that this thread wrote to standard output: before each write of it. */
 @inline
 export function stdoutWritten(): void {
+  if (!STDOUT_WRITTEN.get()) {
+    firstWrite();
+  }
+}
+
+/** `stdoutWritten` after a publish (or the first ever): the mark, and a lazy worker 0's word. */
+@noInline
+function firstWrite(): void {
   STDOUT_WRITTEN.set(true);
+  const a = LAZY_PANY.get();
+  if (a !== 0) {
+    markLazy(a);
+  }
+}
+
+/** A lazy worker 0's `E_PANY` word at `a` gets `PRINTED`. */
+function markLazy(a: usize): void {
+  // SAFETY: `a` is worker 0's `E_PANY` (`setLazyWorker`), its block lasting, this its thread.
+  unsafe {
+    addressStore<usize>(a, addressLoad<usize>(a) | PRINTED);
+  }
+}
+
+/**
+ * This thread is lazy worker 0, its `E_PANY` word at `a` (0: not any more): its writes to
+ * standard output mark that word (`stdoutWritten`). Set by the worker itself.
+ */
+export function setLazyWorker(a: usize): void {
+  LAZY_PANY.set(a);
+  // Written since the last publish: the look after the next poll publishes that too.
+  if (a !== 0 && STDOUT_WRITTEN.get()) {
+    markLazy(a);
+  }
 }
 
 /** Whether this thread wrote to standard output since a hand-off last published it (kept set). */
@@ -36,8 +85,6 @@ export function stdoutWrittenSince(): bool {
 export function clearStdoutWritten(): void {
   STDOUT_WRITTEN.set(false);
 }
-
-declare function velt_rt_env_get(name: string, out: string): bool;
 
 /**
  * Writes `s` to standard output (`stream` 1) or standard error (2), without a newline, ordered
@@ -53,11 +100,7 @@ export function processWrite(stream: u32, s: string): bool {
 
 /** The value of environment variable `name`, or `undefined` if it is unset. */
 export function processEnv(name: string): string | undefined {
-  let out = "";
-  if (velt_rt_env_get(name, out)) {
-    return out;
-  }
-  return undefined;
+  return getEnv(name);
 }
 
 declare function velt_rt_process_node_argv(): string[];
@@ -68,6 +111,11 @@ declare function velt_rt_process_node_argv(): string[];
  */
 export function processArgv(): string[] {
   return velt_rt_process_node_argv();
+}
+
+/** Node's `process.pid`: this process's id. */
+export function processPid(): number {
+  return processId() as number;
 }
 
 declare function velt_rt_tla_at(site: string);

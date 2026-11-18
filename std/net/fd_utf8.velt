@@ -1,0 +1,18 @@
+// velt/net (internal): where a chunk of UTF-8 read from a stream stops in the middle of a
+// character, for the `readString`s that carry the cut-off bytes to the next chunk (fd_io.velt,
+// std/net/tls/fd_conn.velt, std/process/child/pipes_win32.velt).
+
+/** How many bytes at the end of `b` start a UTF-8 character that is not complete yet (0..3). */
+export function incompleteTail(b: u8[]): usize {
+  const n = b.length;
+  let i: usize = 0;
+  while (i < 3 && i < n) {
+    const c = b[n - 1 - i];
+    if ((c & 0xc0) !== 0x80) {
+      const need: usize = c >= 0xf0 ? 4 : c >= 0xe0 ? 3 : c >= 0xc0 ? 2 : 1;
+      return need > i + 1 ? i + 1 : 0;
+    }
+    i++;
+  }
+  return 0;
+}

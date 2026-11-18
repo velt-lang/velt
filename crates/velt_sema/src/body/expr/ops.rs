@@ -305,6 +305,7 @@ impl FnCx<'_, '_> {
         lhs: &ast::Expr,
         rhs: &ast::Expr,
         exp: Option<TyId>,
+        want: Want,
         span: Span,
     ) -> hir::Expr {
         use ast::BinaryOp as B;
@@ -318,7 +319,7 @@ impl FnCx<'_, '_> {
         let strict = op.is_strict();
         let op = op.loose();
         match op {
-            B::And | B::Or => return self.logical(op, lhs, rhs, exp, span),
+            B::And | B::Or => return self.logical(op, lhs, rhs, exp, want, span),
             B::In => {
                 if let Some(h) = self.browser_global_in(lhs, rhs, span) {
                     return h;
@@ -422,6 +423,8 @@ impl FnCx<'_, '_> {
             false => (l, r),
         };
         let (l, r) = if matches!(op, B::Eq | B::NotEq) {
+            // A read-only array is compared as its array: identity reads nothing (#3061).
+            let (l, r) = (self.compared_array(l), self.compared_array(r));
             let (l, r) = self.nullable_operands(l, r);
             let (l, r) = self.union_operands(l, r);
             self.identity_operands(l, r)

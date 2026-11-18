@@ -1,14 +1,11 @@
 // velt/lang/number (internal): `Number(s)` and `parseFloat(s)` in Velt, with exact JavaScript
 // semantics (#1658, part of #1655): decimal values are correctly rounded (exact arithmetic when it
 // is exact, else Eisel-Lemire, velt/lang/number/eisel_lemire; a mantissa of more than 19 significant
-// digits goes to the runtime's arbitrary-precision parser), `0x`/`0o`/`0b` values exactly at any
-// length.
+// digits, or one Eisel-Lemire can't settle, goes to the exact parser velt/lang/hooks/number_parse,
+// called by role), `0x`/`0o`/`0b` values exactly at any length.
 
 import { decide } from "velt/lang/number/eisel_lemire";
-import { strByteAt, strByteLen } from "velt/lang/intrinsics";
-
-declare function velt_rt_str_to_number(s: string): f64;
-declare function velt_rt_parse_float(s: string): f64;
+import { hookCall, strByteAt, strByteLen } from "velt/lang/intrinsics";
 
 // 10^0 to 10^22, each exact in f64.
 const POW10: f64[] = [
@@ -227,8 +224,8 @@ function space(s: string, i: usize, n: usize): usize {
   return 0;
 }
 
-// The first byte of `s` after its leading whitespace.
-function skipSpace(s: string, n: usize): usize {
+/** The first byte of `s` (`n` bytes) after its leading whitespace. */
+export function skipSpace(s: string, n: usize): usize {
   let i: usize = 0;
   while (i < n) {
     const k = space(s, i, n);
@@ -312,10 +309,8 @@ export function toNumber(s: string): f64 {
   if (d.end != end || !(d.ok || d.long)) {
     return NaN;
   }
-  if (d.long) {
-    return velt_rt_str_to_number(s);
-  }
-  return neg ? -d.value : d.value;
+  const v: f64 = d.long ? hookCall("number_parse_long", s, i, end) : d.value;
+  return neg ? -v : v;
 }
 
 /** `parseFloat(s)`: the longest decimal prefix after leading whitespace (`Infinity` too); else NaN. */
@@ -337,8 +332,6 @@ export function parseFloatOf(s: string): f64 {
   if (d.end == i) {
     return NaN;
   }
-  if (d.long || !d.ok) {
-    return velt_rt_parse_float(s);
-  }
-  return neg ? -d.value : d.value;
+  const v: f64 = d.long || !d.ok ? hookCall("number_parse_long", s, i, d.end) : d.value;
+  return neg ? -v : v;
 }

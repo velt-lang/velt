@@ -1,0 +1,29 @@
+// A read-only union bound whose implementation casts the key to a mutable array and writes
+// through it (#379, `union_bound_value`, #3061): the key, an instantiation's `number[]`, converts to
+// the bound as a view of that one array, which a cast gets past `readonly`. Writing a `string`
+// through it stops with the view's TypeError, as `xs as U[]` of an existing array does (tsc
+// accepts the program and Node prints `3 3`: a documented difference).
+type KeyValue = string | readonly (string | number)[];
+
+function push(x: (number | string)[]): void {
+  x.push("x");
+}
+
+function use(key: string): number;
+function use<K extends KeyValue>(key: () => K | null): number;
+function use(key: string | (() => KeyValue | null)): number {
+  if (typeof key === "string") {
+    return key.length;
+  }
+  const k = key();
+  if (k === null || typeof k === "string") {
+    return 0;
+  }
+  push(k as (number | string)[]);
+  return k.length;
+}
+
+function main(): void {
+  const a: number[] = [1, 2];
+  console.log(use(() => a), a.length);
+}

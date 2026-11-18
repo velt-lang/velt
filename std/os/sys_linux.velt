@@ -1,0 +1,83 @@
+// velt/os (internal): the machine facts on Linux (`#os-sys`' linux variant, std/imports.velt),
+// through the C library.
+
+import { Ptr } from "velt/ffi/ptr";
+import { addressLoad, addressStore, rawAlloc, rawFree } from "velt/lang/intrinsics";
+import { cpuQuota } from "./cgroup";
+import { hostname as posixHostname } from "./posix";
+import { posixTmpdir } from "./tmpdir";
+
+/** C's `cpu_set_t`: a mask of 1024 CPUs. */
+declare c type cpu_set_t;
+
+declare c("c") function sched_getaffinity(pid: i32, size: usize, mask: Ptr<cpu_set_t>): i32;
+declare c("c") function sysconf(name: i32): i64;
+
+/** `sizeof(cpu_set_t)`: 1024 bits. */
+const CPU_SET_BYTES: usize = 128;
+
+/** `_SC_NPROCESSORS_ONLN` on Linux. */
+const SC_NPROCESSORS_ONLN: i32 = 84;
+
+/** Node's `process.platform` name of Linux. */
+export const PLATFORM: string = "linux";
+
+/** The CPUs this thread may run on (its affinity mask), or -1 when it can't be read. */
+function affinityCount(): i64 {
+  const p = rawAlloc(CPU_SET_BYTES);
+  for (let at: usize = 0; at < CPU_SET_BYTES; at += 8) {
+    // SAFETY: inside the block just allocated.
+    unsafe {
+      addressStore<u64>(p + at, 0);
+    }
+  }
+  // SAFETY: `p` holds a `cpu_set_t` (zeroed), the size passed.
+  const mask = unsafe { Ptr.at<cpu_set_t>(p) };
+  // SAFETY: as above; pid 0 is the calling thread.
+  const r = unsafe { sched_getaffinity(0, CPU_SET_BYTES, mask) };
+  let n: i64 = -1;
+  if (r === 0) {
+    n = 0;
+    for (let at: usize = 0; at < CPU_SET_BYTES; at += 8) {
+      // SAFETY: inside the block, which sched_getaffinity filled.
+      let word = unsafe { addressLoad<u64>(p + at) };
+      while (word !== 0) {
+        word = word & (word - 1);
+        n++;
+      }
+    }
+  }
+  // SAFETY: the block rawAlloc gave above, which nothing uses after.
+  unsafe {
+    rawFree(p, CPU_SET_BYTES);
+  }
+  return n;
+}
+
+/**
+ * Logical CPUs this process may use, at least 1: the CPUs of its affinity mask (else the online
+ * processors), capped by its cgroup's CPU quota, as libuv's `uv_available_parallelism` counts
+ * them for Node's `os.availableParallelism()`.
+ */
+export function cpuCount(): i64 {
+  let n = affinityCount();
+  if (n < 0) {
+    // SAFETY: no precondition.
+    n = unsafe { sysconf(SC_NPROCESSORS_ONLN) };
+  }
+  const quota = cpuQuota();
+  if (quota > 0 && quota < n) {
+    n = quota;
+  }
+  return n < 1 ? 1 : n;
+}
+
+/** The machine's host name ("" if unknown). */
+export function hostname(): string {
+  return posixHostname();
+}
+
+/** The directory for temporary files, as Node's `os.tmpdir()` finds it. */
+export function tmpdir(): string {
+  return posixTmpdir();
+}

@@ -63,6 +63,14 @@ const DROP_BIT: i128 = 0x8000_0000;
 const CLOSE_BIT: i128 = 0x4000_0000;
 /// Tag of a finished state machine (never resumed; dropping it is a no-op).
 const DONE: i128 = 0x7FFF_FFFF;
+/// Tag of an async function's state while its poll runs, in a program that catches panics
+/// (cleanup.rs): no dispatch case, so polling or dropping it does nothing. A poll that unwinds
+/// through a call with a cleanup pad ends `DONE`, its state's values dropped by the pad; one
+/// that unwinds through a call without a pad (an extern's) leaves this tag, and the frame
+/// holding the state then drops it as nothing, where the tag of its last suspension would
+/// name values the poll has moved or dropped since. A generator has `GEN_RUNNING`. No program is
+/// known that unwinds through such a call (review of #3180), so no test pins this store.
+const POLLING: i128 = 0x7FFF_FFFD;
 
 /// Layout facts of a compiled async function instance, known once its poll function is built.
 #[derive(Clone, Debug)]
@@ -151,8 +159,7 @@ impl Cx<'_> {
             )
         };
         let stored: Vec<Local> = inputs.iter().flatten().copied().collect();
-        let links = std::mem::take(&mut self.unwinding.links);
-        let (state, fields) = spill::spill(self, &mut func, result, &f.name, &stored, &links);
+        let (state, fields) = spill::spill(self, &mut func, result, &f.name, &stored);
         func.is_poll = true;
         func.param_attrs = self.poll_param_attrs(state);
         let inputs = inputs
@@ -366,8 +373,23 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
     }
 
-    /// Drop the owned inputs of a state machine that has not started.
+    /// Drop the owned inputs of a state machine that has not started. What the body's scopes
+    /// own does not hold here (the drop flags are not set yet), so a pad of one of these drops
+    /// must not read it: the inputs not dropped yet are the only things owned, each until its
+    /// own drop begins.
     fn drop_inputs(&mut self, f: &FnDef) {
+        let outer = std::mem::take(&mut self.scopes);
+        self.push_scope(super::ScopeKind::Block);
+        let mut owned = vec![];
+        for p in f.params.iter().rev() {
+            let info = &self.info[p.local.0 as usize];
+            if !info.cell && info.droppable {
+                let ty = info.ty;
+                let place = self.local_place(p.local);
+                self.own_place(place.clone(), ty);
+                owned.push((p.local, place, ty));
+            }
+        }
         for p in &f.params {
             let info = &self.info[p.local.0 as usize];
             if info.cell {
@@ -375,12 +397,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 // after the capture): release the state's reference to the cell, as the
                 // started paths do, not the value inside it.
                 self.release_cell(p.local);
-            } else if info.droppable {
-                let ty = info.ty;
-                let place = self.local_place(p.local);
+            } else if let Some((_, place, ty)) = owned.iter().find(|(l, ..)| *l == p.local) {
+                let (place, ty) = (place.clone(), *ty);
+                self.take_temp(&place);
                 self.drop_glue(place, ty);
             }
         }
+        self.scopes = outer;
     }
 
     /// Fill the entry block: `switch state.tag`.
@@ -397,7 +420,22 @@ impl<'c, 'h> FnLower<'c, 'h> {
             self.switch_to(BlockId(0));
         }
         let other = self.new_block();
-        let cases = std::mem::take(&mut self.actx().cases);
+        let mut cases = std::mem::take(&mut self.actx().cases);
+        if !self.in_generator() && self.cx.unwind_pads() {
+            // The start and each resume go through a block of their own that marks the state
+            // as being polled (`POLLING`); a cancellation runs drops only.
+            for (k, b) in &mut cases {
+                if *k & (DROP_BIT | CLOSE_BIT) == 0 {
+                    let mark = self.new_block();
+                    self.live[mark.0 as usize] = true;
+                    self.switch_to(mark);
+                    self.set_tag(POLLING);
+                    self.goto(*b);
+                    *b = mark;
+                }
+            }
+            self.switch_to(BlockId(0));
+        }
         self.terminate(Terminator::Switch {
             value: tag,
             cases,

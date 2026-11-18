@@ -8,7 +8,9 @@ import {
   closeFd as posixCloseFd,
   fstatAt as posixFstatAt,
   fsyncFd as posixFsyncFd,
+  adviseMap as posixAdviseMap,
   lastError as posixLastError,
+  mapRead as posixMapRead,
   openPath as posixOpenPath,
   readInto as posixReadInto,
   truncateFd as posixTruncateFd,
@@ -76,4 +78,14 @@ export function writeFrom(fd: i32, bytes: readonly u8[], start: usize, end: usiz
 /** `ftruncate(fd, length)`: 0, or -1. */
 export function truncateFd(fd: i32, length: i64): i32 {
   return posixTruncateFd(fd, length);
+}
+
+/** Maps the first `len` bytes of `fd` read-only: the address, or 0. */
+export function mapRead(fd: i32, len: usize): usize {
+  return posixMapRead(fd, len);
+}
+
+/** `madvise` on part of a mapping of `mapRead`: 0, or -1. */
+export function adviseMap(address: usize, len: usize, advice: i32): i32 {
+  return posixAdviseMap(address, len, advice);
 }

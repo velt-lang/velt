@@ -173,11 +173,13 @@ fn nullish_and_optional_chaining() {
 }
 
 #[test]
-fn result_is_removed() {
+fn result_ok_and_err_are_unknown_names() {
     let r = err_src("function b(): Result<i64, string> { return 1; } function main() {}");
-    assert!(r.contains("`Result` was removed"), "{r}");
-    let r = err_src("function main() { const r = Ok(1); }");
-    assert!(r.contains("`Ok` was removed with `Result`"), "{r}");
+    assert!(r.contains("`Result`"), "{r}");
+    for call in ["Ok(1)", "Err(1)"] {
+        let r = err_src(&format!("function main() {{ const r = {call}; }}"));
+        assert!(r.contains("cannot find"), "{r}");
+    }
 }
 
 // ───────────────────────────── closures ─────────────────────────────

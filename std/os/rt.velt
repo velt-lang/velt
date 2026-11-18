@@ -1,14 +1,7 @@
-// velt/os (internal): the runtime functions velt/os calls (rt_abi_async.md §14), and
-// `lastOsError`, the error a C call left.
+// velt/os (internal): `lastOsError`, the error a C call left.
 
 import { errno } from "velt/ffi/errno";
 import { noInline } from "velt/lang/intrinsics";
-
-export declare function velt_rt_os_platform(): string;
-export declare function velt_rt_os_arch(): string;
-export declare function velt_rt_os_cpu_count(): u64;
-export declare function velt_rt_os_tmpdir(): string;
-export declare function velt_rt_os_hostname(): string;
 
 /**
  * This thread's error slot: lowering stores `errno` here right after each call of a C function

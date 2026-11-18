@@ -1,0 +1,15 @@
+// A record view (an interface with named members next to its index signature) where a record of
+// a wider value type is expected is a copy, which a later write through the view shows (Node
+// prints b: one record).
+interface Meta {
+  name?: string;
+  [key: string]: string | undefined;
+}
+const held: Record<string, string | boolean | undefined>[] = [];
+function keep(r: Record<string, string | boolean | undefined>): void {
+  held.push(r);
+}
+const meta: Meta = { name: "a" };
+keep(meta);
+meta.name = "b";
+console.log(held[0]["name"]);

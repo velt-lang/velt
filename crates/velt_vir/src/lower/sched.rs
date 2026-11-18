@@ -57,6 +57,25 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// The start (`enter`) or end of an exported function's call from C (c_export.rs): the tasks
+    /// a C library's thread starts during the call wait for its end (sched_foreign.velt). Nothing
+    /// for a program that runs nothing on the executor.
+    pub(super) fn sched_export_call(&mut self, enter: bool) {
+        let hook = if enter {
+            velt_common::std_hook!(sched_export_enter)
+        } else {
+            velt_common::std_hook!(sched_export_exit)
+        };
+        if !self.std_sched() || !self.sched_hook_live(hook) {
+            return;
+        }
+        if enter {
+            hooks::sched_export_enter(self).emit(self);
+        } else {
+            hooks::sched_export_exit(self).emit(self);
+        }
+    }
+
     fn sched_hook_live(&self, name: &str) -> bool {
         (self.cx.prelude_def(name)).is_some_and(|d| !self.cx.hir.unchecked.contains(&d))
     }

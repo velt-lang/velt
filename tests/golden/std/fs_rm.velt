@@ -1,0 +1,45 @@
+// requires: unix
+// Node's `fs.rm` and `fs.rmSync`: a directory needs `recursive` (an empty one too, where
+// `remove` takes it), a missing path is an error unless `force`, and the errors are Node's.
+import * as fs from "velt/fs";
+import { tmpdir } from "velt/os";
+
+function report(what: string, dir: string, run: () => void) {
+  try {
+    run();
+    console.log(what, "ok");
+  } catch (e) {
+    console.log(what, e.code, e.message.replace(dir, "<dir>"));
+  }
+}
+
+async function main() {
+  const dir = `${tmpdir()}/velt-golden-rm-${process.pid}`;
+  fs.mkdirSync(`${dir}/a/b`, { recursive: true });
+  fs.mkdirSync(`${dir}/empty`);
+  fs.writeFileSync(`${dir}/a/f.txt`, "x");
+  fs.symlinkSync(`${dir}/nowhere`, `${dir}/link`);
+
+  report("full directory", dir, () => fs.rmSync(`${dir}/a`));
+  report("empty directory", dir, () => fs.rmSync(`${dir}/empty`));
+  report("missing", dir, () => fs.rmSync(`${dir}/missing`));
+  report("missing, force", dir, () => fs.rmSync(`${dir}/missing`, { force: true }));
+  report("file", dir, () => fs.rmSync(`${dir}/a/f.txt`));
+  report("dangling link", dir, () => fs.rmSync(`${dir}/link`));
+  console.log(fs.existsSync(`${dir}/a/f.txt`), fs.existsSync(`${dir}/a/b`));
+
+  try {
+    await fs.rm(`${dir}/a`);
+  } catch (e) {
+    console.log("async", e.code);
+  }
+  await fs.rm(`${dir}/a`, { recursive: true });
+  try {
+    await fs.rm(`${dir}/a`);
+  } catch (e) {
+    console.log("async", e.code);
+  }
+  await fs.rm(`${dir}/a`, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true });
+  console.log(fs.existsSync(dir));
+}

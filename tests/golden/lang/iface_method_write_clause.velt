@@ -1,0 +1,14 @@
+// A method with a `throws` clause written through an interface value (#379): the assigned
+// function may throw only what the clause allows, as any implementation of the method.
+class Failure extends Error {}
+
+class Other extends Error {}
+
+interface Ctx {
+  update(): void throws Failure;
+}
+
+const ctx: Ctx = { update: () => {} };
+ctx.update = () => {
+  throw new Other("not allowed");
+};

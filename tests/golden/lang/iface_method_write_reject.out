@@ -1,0 +1,5 @@
+p0
+caught true rej
+caught np true np
+caught async true false
+done

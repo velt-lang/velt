@@ -19,6 +19,12 @@
 //! reached only after the passes that follow the check (`Assumed::hooks`): too late to load a
 //! module then, so the check runs again with it.
 //!
+//! The editor's analysis (`ide`) checks every body, live or not, and never lowers, so it takes
+//! the stub too: with a loader, the live walk binds it as `velt check`'s does, for one demand set
+//! (a prelude method nothing calls demands nothing); without one (`velt ts-compat` analysing what
+//! its check loaded), a stub no live code needed stays unbound, where demanding its module would
+//! report it as not loaded.
+//!
 //! A prebuilt hook (velt_common `std_hooks/prebuilt.rs`) whose module's object the build links
 //! is neither: its calls name a `declare function` typed the same way ([`declared`]), which
 //! never binds, and its module is never loaded. That function is a plain extern to the rest of
@@ -48,6 +54,10 @@ pub(crate) struct Stubs {
     /// Per prebuilt hook asked about ([`declared`]): its declared function, `None` where the
     /// build has no object of its module.
     declared: FxHashMap<usize, Option<DefId>>,
+    /// Per definition: the hooks (`HOOKS` indexes) its `hookCall`s name whose modules were not
+    /// loaded when it was checked without being live (the editor's analysis, or a check without
+    /// a load callback): demanded once it is live ([`demand_hook_calls`]).
+    pub(super) hook_calls: FxHashMap<DefId, Vec<usize>>,
 }
 
 impl Stubs {
@@ -100,13 +110,30 @@ impl Stubs {
     }
 }
 
+/// Demand the modules of the hooks live definition `d` calls by role ([`Stubs::hook_calls`]), and
+/// make the hooks live.
+pub(super) fn demand_hook_calls(cx: &mut Ctx, d: DefId) {
+    let Some(hooks) = cx.lazy.stubs.hook_calls.remove(&d) else {
+        return;
+    };
+    for h in hooks.into_iter().map(|i| &HOOKS[i]) {
+        cx.demand_std(&h.module());
+        if let Some(Item::Def(f)) = cx.std_def(&h.qualified()) {
+            super::live::mark(cx, f);
+        }
+    }
+}
+
 /// The definition a `hookCall` of `HOOKS[index]` in `module` calls when the hook's module isn't
 /// loaded: its stub, made the first time. `None` where the module is to be demanded now: laziness
 /// is off or checks everything, the passes after the check have run, no loader serves modules on
-/// demand, or the stub can't express the signature. `span` is the call's.
+/// demand, or the stub can't express the signature; the editor's analysis, which never lowers,
+/// takes a stub with laziness on or without a loader. `span` is the call's.
 pub(crate) fn stub(cx: &mut Ctx, index: usize, module: usize, span: Span) -> Option<DefId> {
-    if cx.lazy.modules.is_empty() || cx.lazy.check_all || cx.lazy.finishing() || cx.loads.is_none()
-    {
+    let lazy = !cx.lazy.modules.is_empty();
+    let editor = cx.ide.is_some() && (lazy || cx.loads.is_none());
+    let check = lazy && !cx.lazy.check_all && cx.loads.is_some();
+    if !(editor || check) || cx.lazy.finishing() {
         return None;
     }
     // The program's own code is checked whole and nearly all live: no stub for it.

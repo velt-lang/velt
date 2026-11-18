@@ -1,0 +1,9 @@
+// A read-only array where a union with a read-only array member is expected is that member
+// (#3061): `mapped ?? raw` with a mutable and a read-only array, and a returned union.
+function key(raw: readonly (string | number)[], mapped: unknown[] | undefined): string {
+  return JSON.stringify(mapped ?? raw);
+}
+function pick(raw: readonly string[], other: number[]): readonly string[] | number[] {
+  return raw.length > 0 ? raw : other;
+}
+console.log(key(["a", 1], undefined), key(["b"], [2]), JSON.stringify(pick(["x"], [1])));

@@ -97,6 +97,20 @@ declaration's `ExternFnDef` is never called. Its name maps to the `Intrinsic` in
   arguments `[x, v]`; lowering holds the receiver of a `Dyn` setter call against `v` (a
   reference of its own when `v` may replace or free what `x` holds). Interfaces nobody writes
   through have no setter slots.
+- An interface the program writes a **method** member through (`x.m = f`, `iface_method_writes`)
+  also has one method setter slot per method after the field setters: slot
+  `methods + 2 × fields + j` for method `j`, listed as `<set m()>`. When no field of the
+  interface is written, the field-setter part holds placeholders instead (`<unset f>`, one per
+  field, never called), so the method setters keep their slots; a field written later replaces
+  the placeholders with the real field setters. An implementation that holds `m` as a field of
+  the method's function type (an object literal `{ m: () => … }`) fills `<set m()>` with a
+  setter of that field (`this` mutably borrowed, the function owned), and its method slot `j`
+  calls the field, so later calls see the new function; the slots of methods nobody writes are
+  empty setters, never called. `x.m = f` is a `ParamMethod`/`Dyn` call of `<set m()>` with
+  arguments `[x, f]`, held as a field setter call is (the receiver `BorrowMut`, the function
+  owned). Reading a written method as a value (`const t = x.m`, not called) is a compile error
+  (`iface_method_checks`): a method value calls through slot `j` when it is called, which a later
+  write would change. Interfaces whose methods nobody writes have no method setter slots.
 
 ## M2 encodings sema emits
 - Closure `FnDef::params`: one param per capture first (local = `Capture::inner`, mode = capture
@@ -1690,7 +1704,11 @@ that was only variables solved empty is no error type (`FnDef::throws` is `None`
   Once a field of `I` is written through an interface value (`iface_writes`), the impl gets a
   setter (`<I> adapter.<set f>`, `this` borrowed mutably, the value owned) per field, which
   calls the field's setter slot on the wrapped value with the value converted as an argument
-  is. Lowering sees only these ordinary forms, and finds the adapters by their struct (a name
+  is. Likewise, once a method of `I` is written through an interface value
+  (`iface_method_writes`), the impl gets a method setter (`<I> adapter.<set m()>`, slot
+  `methods + 2 × fields + j`) per method: a written method's calls the wrapped value's method
+  setter slot with the function converted as an argument is (`adapter_method_setter`), the
+  others are empty setters, never called. Lowering sees only these ordinary forms, and finds the adapters by their struct (a name
   ending in ` adapter`, one interface field): their tables' class id word says so, and `===`,
   `Set`/`Map` key hashes, `instanceof` and the downcast after it look through them at the
   wrapped value, and a conversion of one to `any`, `unknown` or `object` holds the wrapped

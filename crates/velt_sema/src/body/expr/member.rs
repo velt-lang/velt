@@ -140,6 +140,9 @@ impl FnCx<'_, '_> {
             if let Some(h) = self.process_argv_member(object, prop, exp, span) {
                 return h;
             }
+            if let Some(h) = self.process_pid_member(object, prop, exp, span) {
+                return h;
+            }
         }
         if let Some(object) = self.without_namespace(object) {
             return self.member(&object, prop, optional, exp, want, span);

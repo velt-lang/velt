@@ -1,0 +1,11 @@
+// A record where a record of a wider value type is expected is a copy, which a later
+// `Reflect.deleteProperty` on the record shows: the copy keeps the key (Node prints false: one
+// record).
+const keep: Record<string, string | boolean | undefined>[] = [];
+function hold(r: Record<string, string | boolean | undefined>): void {
+  keep.push(r);
+}
+const attrs: Record<string, string | undefined> = { a: "1" };
+hold(attrs);
+Reflect.deleteProperty(attrs, "a");
+console.log("a" in keep[0]);

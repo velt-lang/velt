@@ -291,6 +291,26 @@ fn f16_arithmetic_on_every_path_prints_the_goldens() {
     }
 }
 
+/// `f32x8` gives the golden's bits on each path: Cranelift's two halves, the CPU's widest
+/// registers (`native`: `ymm` where it has AVX), and the level whose legalization splits every
+/// operation into halves. The golden compares each operation with `f32x4` on the halves and
+/// prints lanes, so a path that computed a lane differently would show.
+#[test]
+// As `half_dot_products_on_this_cpu_print_the_golden`: `--cpu native` on GitHub's x86_64 Linux
+// runners, #2938.
+#[cfg_attr(all(target_os = "linux", target_arch = "x86_64"), ignore = "#2938")]
+fn f32x8_on_every_path_prints_the_golden() {
+    let dir = test_dir::TestDir::new();
+    let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/golden/std");
+    let want = std::fs::read_to_string(golden.join("simd_f32x8.out")).unwrap();
+    for (at, flags) in f16_paths().iter().enumerate() {
+        let exe = built_golden(dir.path(), "simd_f32x8", flags, at);
+        let o = no_window::command(exe.to_str().unwrap()).output().unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        assert_eq!(String::from_utf8_lossy(&o.stdout), want, "{flags:?}");
+    }
+}
+
 /// What `simd_half_sweep` prints for every pair of the 2^32, from FEAT_FP16's own instructions: the
 /// same sweep in C with `arm_neon.h` (`clang -O2 -mcpu=apple-m1 -ffp-contract=off`), which agrees
 /// with Node on the golden's sample.

@@ -6,6 +6,7 @@
 // sched_monitor.velt). The poll of a task is sched_run.velt's.
 
 import { inline, noInline } from "velt/lang/intrinsics";
+import * as pr from "./process";
 import * as ex from "./sched_exit";
 import * as m from "./sched_mem";
 import * as mon from "./sched_monitor";
@@ -80,10 +81,18 @@ export function alone(e: usize): bool {
   return false;
 }
 
-/** What lazy worker 0 `e`'s last poll queued (`E_PANY`), joined to its queues. */
+/**
+ * What lazy worker 0 `e`'s last poll queued (`E_PANY`), joined to its queues; what it printed,
+ * published, before a task the monitor moves from now on prints on another thread (#2977).
+ */
 @noInline
 function joinAll(e: usize): void {
+  const any = m.ld(e + t.E_PANY);
   m.st(e + t.E_PANY, 0);
+  if ((any & t.PANY_PRINTED) !== 0) {
+    // Its mark cleared too, so the next spawn or wake does not publish again (`publishPrinted`).
+    wk.publishPrinted(e);
+  }
   if (m.ld(e + t.E_PWAKE) !== 0) {
     joinWoken(e);
   }
@@ -153,6 +162,8 @@ function adopt(e: usize): void {
   // Not lazy any more before the stack is joined: a rescue that puts tasks back on it after the
   // join sees that and sends them to the inbox (sched_monitor.velt `lazyRescue`).
   m.swap(e + t.E_LAZY, 0);
+  // What it printed while lazy (`PANY_PRINTED`) is published below with the rest.
+  pr.setLazyWorker(0);
   m.st(e + t.E_PANY, 0);
   if (m.ld(e + t.E_PWAKE) !== 0) {
     joinWoken(e);

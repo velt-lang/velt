@@ -179,6 +179,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
     fn gen_object(&mut self, def: DefId, targs: &[TyId], info: &AsyncInfo, s: Local) -> Operand {
         let bx = self.cx.gen_box(def, targs, info);
         let gty = self.cx.gen_class_ty(def, targs);
+        self.cx.note_gen_frame(gty, def, targs);
         let obj = if self.cx.counted(gty) {
             self.counted_alloc(Ty::Agg(bx))
         } else {

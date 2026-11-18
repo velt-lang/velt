@@ -1,0 +1,259 @@
+// velt/lang/hooks (internal): the decimal literals std's parser (velt/lang/number/parse) can't settle
+// in 64 bits, correctly rounded, in Velt (#2196): more than 19 significant digits, or a product
+// Eisel-Lemire leaves undecided. The first 19 digits bound the value; when the doubles nearest
+// both bounds agree, that is the answer. Otherwise a candidate double is checked against the
+// exact value: the literal's digits and the midpoint between two neighbouring doubles, both made
+// integers (velt/lang/number/exact's base 10^9) and compared, one step at a time. std reaches it by
+// role (`hookCall`), so the code loads only in programs that parse such text.
+
+import { arrayWithCapacity, noInline, strByteAt } from "velt/lang/intrinsics";
+import { decide } from "velt/lang/number/eisel_lemire";
+import { mulSmall } from "velt/lang/number/exact";
+
+const BASE: u64 = 1000000000;
+// More digits than any midpoint between two doubles has (at most 767): the ones past these only
+// tell whether the rest is zero, kept as one more digit, 1.
+const KEPT: i64 = 800;
+const MAX_FINITE: f64 = 1.7976931348623157e308;
+
+/** The literal's significant digits (0 to 9 each, the first not 0) and `q`: it is `digits * 10^q`. */
+struct Digits {
+  digits: u8[];
+  q: i64;
+}
+
+// The digits and exponent of the unsigned decimal literal at bytes `start` to `end` of `s` (digits,
+// `.digits`, an exponent with digits: velt/lang/number/parse has checked it).
+function digitsOf(s: string, start: usize, end: usize): Digits {
+  const digits: u8[] = arrayWithCapacity(64);
+  let q: i64 = 0;
+  let point = false;
+  let sticky = false;
+  let i = start;
+  while (i < end) {
+    const c = strByteAt(s, i as u64);
+    if (c == 46) {
+      point = true;
+    } else if (c - 48 <= 9) {
+      const d = c - 48;
+      if (digits.length == 0 && d == 0) {
+        if (point) {
+          q--;
+        }
+      } else if ((digits.length as i64) < KEPT) {
+        digits.push(d);
+        if (point) {
+          q--;
+        }
+      } else {
+        sticky = sticky || d != 0;
+        if (!point) {
+          q++;
+        }
+      }
+    } else {
+      break;
+    }
+    i++;
+  }
+  if (sticky) {
+    digits.push(1);
+    q--;
+  }
+  if (i < end) {
+    // The exponent: saturated, as velt/lang/number/parse reads it.
+    i++;
+    let neg = false;
+    const c = strByteAt(s, i as u64);
+    if (c == 43 || c == 45) {
+      neg = c == 45;
+      i++;
+    }
+    let e: i64 = 0;
+    while (i < end) {
+      if (e < 1099511627776) {
+        e = e * 10 + ((strByteAt(s, i as u64) - 48) as i64);
+      }
+      i++;
+    }
+    q += neg ? -e : e;
+  }
+  return { digits, q };
+}
+
+// A big integer (base 10^9, least significant limb first) from decimal digits.
+function fromDigits(digits: u8[]): u64[] {
+  const n = digits.length;
+  const limbs: u64[] = arrayWithCapacity(n / 9 + 2);
+  let end = n;
+  while (end > 0) {
+    const from = end >= 9 ? end - 9 : 0;
+    let v: u64 = 0;
+    for (let k = from; k < end; k++) {
+      v = v * 10 + (digits[k] as u64);
+    }
+    limbs.push(v);
+    end = from;
+  }
+  return limbs;
+}
+
+// `limbs` times 5^k.
+function mulPow5(limbs: u64[], k: i64): void {
+  let left = k;
+  while (left > 0) {
+    const s = left > 13 ? 13 : left;
+    let f: u64 = 1;
+    for (let j: i64 = 0; j < s; j++) {
+      f = f * 5;
+    }
+    mulSmall(limbs, f);
+    left -= s;
+  }
+}
+
+// `limbs` times 2^k.
+function mulPow2(limbs: u64[], k: i64): void {
+  let left = k;
+  while (left > 0) {
+    const s = left > 32 ? 32 : left;
+    mulSmall(limbs, (1 as u64) << (s as u64));
+    left -= s;
+  }
+}
+
+// -1, 0 or 1 as `a` is below, equal to or above `b` (no leading zero limbs).
+function compare(a: u64[], b: u64[]): i64 {
+  let na = a.length;
+  let nb = b.length;
+  while (na > 1 && a[na - 1] == 0) {
+    na--;
+  }
+  while (nb > 1 && b[nb - 1] == 0) {
+    nb--;
+  }
+  if (na != nb) {
+    return na < nb ? -1 : 1;
+  }
+  let i = na;
+  while (i > 0) {
+    i--;
+    if (a[i] != b[i]) {
+      return a[i] < b[i] ? -1 : 1;
+    }
+  }
+  return 0;
+}
+
+// -1, 0 or 1 as `digits * 10^q` is below, at or above the midpoint between `b` (finite, 0 or
+// more) and the next double up.
+function versusMidpoint(d: Digits, b: f64): i64 {
+  const bits = b.toBits();
+  const be = ((bits >> 52) & 0x7ff) as i64;
+  const frac = bits & 0xfffffffffffff;
+  const m = be == 0 ? frac : frac | 0x10000000000000;
+  const e: i64 = be == 0 ? -1074 : be - 1075;
+  // The value is digits * 5^q * 2^q, the midpoint (2m + 1) * 2^(e - 1): both times 5^-q when q
+  // is below 0, then the smaller power of two divided out.
+  const left = fromDigits(d.digits);
+  const mid = 2 * m + 1;
+  const right: u64[] = [mid % BASE, mid / BASE];
+  if (d.q >= 0) {
+    mulPow5(left, d.q);
+  } else {
+    mulPow5(right, -d.q);
+  }
+  const l2 = d.q;
+  const r2 = e - 1;
+  if (l2 > r2) {
+    mulPow2(left, l2 - r2);
+  } else {
+    mulPow2(right, r2 - l2);
+  }
+  return compare(left, right);
+}
+
+/**
+ * The value of the unsigned decimal literal at bytes `start` to `end` of `s` (velt/lang/number/
+ * parse has checked it), correctly rounded: the decimals that parser hands over.
+ */
+@noInline
+export function longDecimalValue(s: string, start: usize, end: usize): f64 {
+  const d = digitsOf(s, start, end);
+  const nd = d.digits.length as i64;
+  if (nd == 0 || nd + d.q < -324) {
+    return 0;
+  }
+  if (nd + d.q > 310) {
+    return Infinity;
+  }
+  // The first 19 digits, `w`: the value is from w * 10^qw up to below (w + 1) * 10^qw.
+  const k = nd < 19 ? nd : 19;
+  let w: u64 = 0;
+  for (let i: i64 = 0; i < k; i++) {
+    w = w * 10 + (d.digits[i as usize] as u64);
+  }
+  const qw = d.q + nd - k;
+  const low = decide(w, qw);
+  if (low.ok) {
+    if (nd == k) {
+      return low.value;
+    }
+    const high = decide(w + 1, qw);
+    if (high.ok && high.value == low.value) {
+      return low.value;
+    }
+  }
+  // A candidate near the value, then a step at a time to the double nearest it.
+  let b = low.ok ? low.value : approximate(w, qw);
+  if (b > MAX_FINITE) {
+    b = MAX_FINITE;
+  }
+  while (true) {
+    const up = versusMidpoint(d, b);
+    if (up > 0 || (up == 0 && (b.toBits() & 1) == 1)) {
+      // Above the midpoint to the next double (or on it, and that one is even).
+      b = f64.fromBits(b.toBits() + 1);
+      if (b > MAX_FINITE) {
+        return Infinity;
+      }
+      continue;
+    }
+    if (up == 0 || b == 0) {
+      return b;
+    }
+    const below = f64.fromBits(b.toBits() - 1);
+    const down = versusMidpoint(d, below);
+    if (down < 0 || (down == 0 && (below.toBits() & 1) == 0)) {
+      b = below;
+      continue;
+    }
+    return b;
+  }
+}
+
+// `w * 10^q` in double arithmetic: a few units in the last place off at most.
+function approximate(w: u64, q: i64): f64 {
+  let v = w as f64;
+  let k = q;
+  while (k > 0) {
+    const s = k > 22 ? 22 : k;
+    v = v * pow10(s);
+    k -= s;
+  }
+  while (k < 0) {
+    const s = -k > 22 ? 22 : -k;
+    v = v / pow10(s);
+    k += s;
+  }
+  return v;
+}
+
+// 10^k for k from 0 to 22, exact.
+function pow10(k: i64): f64 {
+  let v: f64 = 1;
+  for (let i: i64 = 0; i < k; i++) {
+    v = v * 10;
+  }
+  return v;
+}

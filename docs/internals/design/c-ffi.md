@@ -624,6 +624,14 @@ function onRow(n: i32, row: Ptr<u8> | null): i32 { … }
   - **LLVM on Windows**: the abort pad is a `cleanuppad` under `__C_specific_handler` (a
     termination handler, run for every exception that unwinds the frame); under
     `__CxxFrameHandler3` it was skipped for an exception that is not C++, so a Velt panic passed.
+- **Async code in it** (#2196): on a thread that isn't one of the executor's workers (a C
+  library's), the promises it starts, its timers and sleeps run on the executor's worker 0, handed
+  over through its inbox (std/lang/hooks/sched_foreign.velt). The C function marks the call's start
+  and end (`schedExportEnter`, `schedExportExit`), and such a thread's tasks wait for the
+  outermost call's end, in the order they were made: the call's synchronous run comes first, as a
+  JS callback's comes before its microtasks, so a rejection it handles later in that run is not
+  reported meanwhile. A `spawn` there runs beside the call at once. Work handed over after `main`
+  and the tasks left ended (a thread that outlives them) never runs: the process is exiting.
 - **Its address**: `exportedAddress(f)` (std/lang/intrinsics, std only, unsafe) is the C
   function's address as a `usize`, for a C API taking a function pointer (`pthread_create`,
   `qsort`); its argument must name an `@export` function. A package gets the address from C
@@ -1339,9 +1347,8 @@ Step 1 lands in layers, each its own pull request:
       and the store. `bench/` VIR identical for all 217 other programs, debug and `--release`
       (first version; the change since touches only std/fs/fd, std/os/rt and the unwinder's
       declaration).
-    - **`declare system`** was public (the reference's system-functions page, user goldens), so
-      it stays a parse error naming `declare c("c")` (golden `lang/errors/declare_system_removed`)
-      rather than a silent unknown word; `ast::FnSig::is_system` (`AST_FORMAT` 16) and
+    - **`declare system`** is an ordinary parse error (`system` is a name; Velt keeps no
+      errors for removed forms); `ast::FnSig::is_system` (`AST_FORMAT` 16) and
       `hir::ExternFnDef::system` are removed, and velt_fmt, velt_doc, velt_lsp and tscompat
       lose their `system` forms. The goldens of the table (`lang/system_function*`) are gone
       with it: `declare c` has its own tests (c_functions.rs and the rest), and a lone file
@@ -1489,8 +1496,8 @@ Step 1 lands in layers, each its own pull request:
   `Import` static without contents and `__imp_<name>` on Windows; thread-local and `static` ones
   are refused by the header check; `errno` is set through velt/ffi's `setErrno`, std code over
   each C library's errno function (#2187 follow-up, made while the owner was away, for review).
-- Step 2 (made while the owner was away, for review): `declare system` is a parse error naming
-  `declare c("c")`, not just gone, since the reference documented it; std's fd API on Windows
+- Step 2 (made while the owner was away, for review): `declare system` is gone (an ordinary
+  parse error since Velt keeps no errors for removed forms); std's fd API on Windows
   and WebAssembly throws ENOSYS instead of failing to compile; std's C declarations are
   header-checked by `velt native headers --std` with a header list in veltc (std has no
   manifest), not at each build; `lastOsError()` reads a std `ThreadLocal` the compiler stores

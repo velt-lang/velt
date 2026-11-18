@@ -325,7 +325,8 @@ package directory inside it, which the record would still vouch for.
   `#` and `/`-separated segments of `[A-Za-z0-9_-]`; a value is a file or an object of
   conditions to files, kept in the order written (`Manifest::imports`, `GraphPackage::imports`).
   Conditions are the built-in `vpm::imports::CONDITIONS` (`native`, `darwin`, `linux`, `win32`,
-  `wasm`, `wasi`, `js`, `default`) or any name spelled as a host package's condition (a lowercase
+  `x64`, `arm64`, `wasm`, `wasi`, `js`, `default`; `x64` and `arm64` are a native target's
+  processor, Node's `process.arch` names) or any name spelled as a host package's condition (a lowercase
   letter, then lowercase letters, digits and `-`; Node's custom conditions), which only a
   `--host` build for that host package has (the root package's condition that is neither
   built-in nor a dependency's host condition is warned about when the project opens,

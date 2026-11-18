@@ -118,7 +118,8 @@ fn with_error_params(cx: &mut Ctx, t: TyId, at: &mut Target, depth: u32) -> TyId
         }
         _ => return t,
     };
-    cx.ty.intern(k)
+    let out = cx.ty.intern(k);
+    cx.ty.keep_readonly(t, out)
 }
 
 /// What a function type of the target throws: `e`, if it is a type parameter the block

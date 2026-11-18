@@ -1,0 +1,28 @@
+// `toFixed`, `toExponential` and `toPrecision` on an `f32`: the methods of `number` on the
+// float's exact value (what Node prints for `Math.fround(x)`), since every `f32` is a `number`.
+// A score kept as `f32` formats without `as number`.
+
+const x: f32 = 0.1;
+const big: f32 = 3.4028235e38;
+const score: f32 = 0.87654321;
+console.log(`${x}`, x.toFixed(3), x.toFixed(10), x.toFixed(), score.toFixed(3));
+console.log(
+  x.toExponential(),
+  x.toExponential(2),
+  x.toExponential(12),
+  big.toExponential(),
+  (1.5 as f32).toExponential(),
+);
+console.log(x.toPrecision(), x.toPrecision(3), x.toPrecision(12), big.toPrecision(4));
+const nan: f32 = NaN as f32;
+const inf: f32 = -Infinity as f32;
+console.log(
+  nan.toFixed(2),
+  inf.toFixed(2),
+  nan.toExponential(),
+  inf.toExponential(3),
+  nan.toPrecision(2),
+  (-0.0 as f32).toFixed(1),
+);
+const tiny: f32 = 1e-45;
+console.log(tiny.toExponential(), tiny.toFixed(50), tiny.toPrecision(3));

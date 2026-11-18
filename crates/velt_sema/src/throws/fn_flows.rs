@@ -299,6 +299,21 @@ impl Ctx<'_> {
         true
     }
 
+    /// What a function value of type `fn_ty` throws joins the site at `s` (and the sites it flows
+    /// into): a value stored there by a write the type checker can't follow, a method written
+    /// through `any` (`body/expr/dynamic_write.rs`, `crate::iface_method_writes`).
+    pub(crate) fn add_thrown_to_site(&mut self, s: Span, fn_ty: TyId) {
+        let TyKind::FnPtr { throws, .. } = *self.ty.kind(fn_ty) else {
+            return;
+        };
+        if throws == self.ty.never || throws == self.ty.error {
+            return;
+        }
+        if let Some(p) = self.port_thrown(throws) {
+            self.add_to_site(s, &[p]);
+        }
+    }
+
     pub(super) fn add_to_site(&mut self, s: Span, members: &[Portable]) {
         let mut work = vec![s];
         while let Some(s) = work.pop() {
@@ -319,6 +334,13 @@ impl Ctx<'_> {
                 work.extend(self.fn_sites.flows.get(&s).into_iter().flatten().copied());
             }
         }
+    }
+
+    /// What the functions stored into site `s` throw, once the bodies are checked: what a field
+    /// with its own `throws` clause must allow to store a written method
+    /// (`crate::iface_method_writes`).
+    pub(crate) fn site_errors(&mut self, s: Span) -> Option<TyId> {
+        self.site_set(s)
     }
 
     /// What is stored into site `s`, as found so far.

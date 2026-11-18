@@ -18,6 +18,33 @@ impl FnCx<'_, '_> {
         if self.cx.dynamic(found.ty) == Some(crate::any::Dynamic::Unknown) {
             return self.unknown_use_error(found.span);
         }
+        // A read-only array where a mutable one is expected (#3061): TypeScript's TS4104 (also
+        // the elaboration of its TS2322 and TS2345). Before the widening report, which says
+        // TypeScript allows a conversion it refuses here.
+        let core = self.cx.ty.core(expected).unwrap_or(expected);
+        let mutable = matches!(self.cx.ty.kind(core), TyKind::Array(_))
+            && !self.cx.ty.is_readonly_array(core);
+        let top = self.cx.ty.is_readonly_array(found.ty) && mutable;
+        // Or one inside (`{ xs: readonly T[] }` where `{ xs: T[] }` is expected).
+        let nested = !top
+            && self.cx.ty.has_readonly_arrays()
+            && self.cx.erased_alike_but_errors(found.ty, expected)
+            && !self.cx.readonly_widens(found.ty, expected, true, 0)
+            && self.cx.readonly_widens(expected, found.ty, true, 0);
+        if top || nested {
+            let (s, d) = (self.cx.display(found.ty), self.cx.display(expected));
+            self.cx.error(
+                velt_common::Diagnostic::error(
+                    match top {
+                        true => format!("the type `{s}` is 'readonly' and cannot be assigned to the mutable type `{d}` (TypeScript's TS4104)"),
+                        false => format!("the type `{s}` cannot be assigned to `{d}`: a 'readonly' array in it would be a mutable one (TypeScript's TS4104)"),
+                    },
+                    found.span,
+                )
+                .with_note("code could change the array through the mutable type; copy it (`[...xs]`) to get an array you may change"),
+            );
+            return;
+        }
         // A pointer to another C type (#3094): never converted implicitly, and says how.
         let from = self.cx.ty.core(found.ty).unwrap_or(found.ty);
         if matches!(self.cx.ty.kind(from), TyKind::Ptr(_)) {

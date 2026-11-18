@@ -2,11 +2,33 @@
 // variant of `#exec-sync`, std/imports.velt): the runtime's `velt_rt_child_output_sync`, which
 // looks the program up as Rust's `Command` does. Windows has its own (exec_sync_win32.velt).
 
+import { envPairs } from "#env-sys";
 import { IoResult } from "velt/native/result";
 import { CommandSpec } from "velt/process/child/spec";
 import { RawOutput, velt_rt_child_output_sync } from "./rt";
 
 /** Runs `spec` to completion with `input`, blocking the calling thread. */
 export function outputSync(spec: CommandSpec, input: string): IoResult<RawOutput> {
-  return velt_rt_child_output_sync(spec, input);
+  if (spec.clearEnv) {
+    return velt_rt_child_output_sync(spec, input);
+  }
+  // The child's whole environment, copied under velt/process' environment lock (`envPairs`,
+  // std/process/env_posix.velt), so that Rust's `Command` never reads C's `environ`, which another
+  // worker's `setEnv` may reallocate meanwhile (Rust's own environment lock doesn't cover it).
+  // The spec's variables come after the parent's, and `Command` keeps the last value of a name.
+  // A program named without a `/` is then looked up by fork and exec rather than `posix_spawnp`
+  // (Rust's `Command` does so whenever the environment is given).
+  const env = envPairs();
+  for (const v of spec.env) {
+    env.push(v.clone());
+  }
+  const whole: CommandSpec = {
+    program: spec.program.clone(),
+    args: spec.args.clone(),
+    cwd: spec.cwd.clone(),
+    env: env,
+    stdio: spec.stdio,
+    clearEnv: true,
+  };
+  return velt_rt_child_output_sync(whole, input);
 }

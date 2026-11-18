@@ -57,13 +57,22 @@ hooks! {
     /// `Array.from({ length: n }, f)`.
     array_from_length => lang_hooks_array, "arrayFromLength", sig(<A, B>(i64, &Fn((i64) -> A throws B)) -> [A] throws B);
 
+    // pow.velt: `**` on floats.
+    /// `a ** b` and `Math.pow` on floats (`velt_vir` `lower/ops.rs`): V8's results, through
+    /// glibc's algorithm in Velt (std/lang/math/pow.velt, #1676).
+    pow_f64 => lang_hooks_pow, "powF64", sig((f64, f64) -> f64), lowered, constructs(PowFloat),
+        replaces("velt_rt_pow_f64"), bench("pow");
+
     // number.velt: numbers as text, and the conversions of a float index.
     /// `n.toString(radix)` of a float (`velt_sema` `builtins.rs`).
-    f64_to_string => lang_hooks_number, "f64ToString", sig((f64, f64) -> string);
+    f64_to_string => lang_hooks_number, "f64ToString", sig((f64, f64) -> string),
+        replaces("velt_rt_f64_to_radix");
     /// `n.toString(radix)` of a signed integer.
-    i64_to_string => lang_hooks_number, "i64ToString", sig((i64, f64) -> string);
+    i64_to_string => lang_hooks_number, "i64ToString", sig((i64, f64) -> string),
+        replaces("velt_rt_i64_to_radix");
     /// `n.toString(radix)` of an unsigned integer.
-    u64_to_string => lang_hooks_number, "u64ToString", sig((u64, f64) -> string);
+    u64_to_string => lang_hooks_number, "u64ToString", sig((u64, f64) -> string),
+        replaces("velt_rt_u64_to_radix");
     /// `Math.imul`-like `(a * b) | 0` of two int32 values (`velt_sema` `int32.rs`, `velt_opt`
     /// numrep).
     mul_to_int32 => lang_hooks_number, "mulToInt32", sig((f64, f64) -> i32), lowered;
@@ -71,6 +80,21 @@ hooks! {
     float_index => lang_hooks_number, "floatIndex", sig((f64) -> usize), lowered;
     /// A float position argument (`xs.at(i)`, `s.slice(i)`).
     float_position => lang_hooks_number, "floatPosition", sig((f64) -> usize);
+    // number_digits.velt: numbers rounded to a number of digits, which std calls by role.
+    /// `x.toExponential(digits)` (`digits` below 0: omitted; the prelude's method).
+    number_to_exponential => lang_hooks_number_digits, "toExponentialText", sig((f64, i64) -> string),
+        replaces("velt_rt_f64_to_exponential"), prebuilt;
+    /// `x.toPrecision(precision)` (the prelude's method).
+    number_to_precision => lang_hooks_number_digits, "toPrecisionText", sig((f64, i64) -> string),
+        replaces("velt_rt_f64_to_precision"), prebuilt;
+    /// `x.toFixed(digits)` from the exact digits: what std's `toFixed` (velt/lang/number/fixed)
+    /// can't do in 64 bits, and `toFixed` through `any`.
+    number_to_fixed => lang_hooks_number_digits, "toFixedText", sig((f64, i64) -> string),
+        replaces("velt_rt_f64_to_fixed"), prebuilt;
+    /// A decimal literal of `Number(s)` or `parseFloat(s)` (velt/lang/number/parse) that 64 bits
+    /// don't settle, from its bytes `start` to `end`.
+    number_parse_long => lang_hooks_number_parse, "longDecimalValue", sig((&string, usize, usize) -> f64),
+        replaces("velt_rt_parse_float"), prebuilt;
     /// `s.localeCompare(t)` (only std calls it: the method, and `anyStr_localeCompare` for a
     /// string held as `any`).
     locale_order => lang_string_collate, "localeOrder", sig((&string, &string) -> i64),
@@ -142,6 +166,19 @@ hooks! {
     prebuilt_probe_value => lang_hooks_prebuilt_probe, "probeValue",
         sig((&string, usize, usize) -> f64), prebuilt;
 
+    // velt/lang/string/search: the string searches (#2198), which the prelude's methods call by
+    // role (`hookCall`), so a program loads them only when live code calls one.
+    /// `s.indexOf(needle, from)`.
+    string_index_of => lang_string_search, "indexOf", sig((&string, &string, i64) -> i64);
+    /// `s.lastIndexOf(needle, from)`.
+    string_last_index_of => lang_string_search, "lastIndexOf", sig((&string, &string, i64) -> i64);
+    /// `s.includes(needle, position)`.
+    string_includes => lang_string_search, "includes", sig((&string, &string, i64) -> bool);
+    /// `s.startsWith(prefix)`.
+    string_starts_with => lang_string_search, "startsWith", sig((&string, &string) -> bool);
+    /// `s.endsWith(suffix)`.
+    string_ends_with => lang_string_search, "endsWith", sig((&string, &string) -> bool);
+
     // process_statics.velt: the process-wide statics the runtime reads (#2779), whose addresses
     // `velt_main` hands it first thing (`velt_rt_statics`).
     /// The epoch of the runtime's cache of the last position translation (`velt_rt`
@@ -194,6 +231,8 @@ hooks! {
     process_env => lang_hooks_process, "processEnv", sig((&string) -> or_undefined(string));
     /// `process.argv`.
     process_argv => lang_hooks_process, "processArgv", sig(() -> [string]);
+    /// `process.pid`.
+    process_pid => lang_hooks_process, "processPid", sig(() -> f64);
     /// The mark of the top-level `await`s after it (`velt_sema` `top_level_await.rs`); lowering
     /// replaces its calls by the runtime's (`async_fn/suspend.rs`).
     top_level_await_at => lang_hooks_process, "topLevelAwaitAt", sig((&string) -> void), lowered;
@@ -208,10 +247,24 @@ hooks! {
     /// exception when a `catchUnwind` is active on the thread, and calls `velt_rt_panic`
     /// otherwise.
     panic_raise => lang_hooks_unwind, "panicRaise", sig((&string) -> never), lowered, constructs(CatchUnwind);
+    // heap.velt: a release build's allocator, mimalloc through `declare c` (#2196). velt_opt's
+    // last step (`heap_calls`) turns the runtime allocator calls lowering emits into these.
+    /// `velt_rt_alloc`'s job: `(size, align)`, the block's address.
+    heap_alloc => lang_hooks_heap, "heapAlloc", sig((u64, u64) -> u64), lowered;
+    /// `velt_rt_realloc`'s: `(p, old_size, align, new_size)`, the block's new address. Not called
+    /// yet: array growth keeps the runtime's (velt_opt `heap_calls`).
+    heap_realloc => lang_hooks_heap, "heapRealloc", sig((u64, u64, u64, u64) -> u64), lowered;
+    /// `velt_rt_free`'s: `(p, size, align)`.
+    heap_free => lang_hooks_heap, "heapFree", sig((u64, u64, u64) -> void), lowered;
     // sched.velt: the executor in Velt (#2649), with `VELT_SCHEDULER=std` ([`std_scheduler`]).
     /// The program's thread, marked by `velt_main` first thing (#3085): the executor's worker 0
     /// starts only there (program_thread.velt).
     program_thread => lang_hooks_program_thread, "programThread", sig(() -> void), lowered;
+    /// The C function of an `@export` begins its call, then ends it (#2196): the tasks a C
+    /// library's thread starts meanwhile wait for its end, so its synchronous run comes first, as
+    /// in JS (sched_foreign.velt).
+    sched_export_enter => lang_hooks_sched, "schedExportEnter", sig(() -> void), lowered;
+    sched_export_exit => lang_hooks_sched, "schedExportExit", sig(() -> void), lowered;
     /// `velt_rt_block_on`'s job: `(poll, state)`.
     sched_block_on => lang_hooks_sched, "schedBlockOn", sig((usize, usize, u64) -> void), lowered;
     /// `velt_rt_spawn`'s: `(poll, drop, state, size, align, result_size, result_drop)`, the handle.

@@ -1,0 +1,122 @@
+// velt/lang/math (internal): the exact steps of `pow` where the target has no FMA instruction
+// (velt/lang/math/fma, std/lang/math/pow_fast.velt) against `fma` (the instruction or C's `fma`,
+// correctly rounded either way). Run by `velt test std/`.
+import { describe, expect, it } from "velt/test";
+import { addOdd, fma, fmaSoft, productError, splitHi } from "velt/lang/math/fma";
+
+let state: u64 = 0x9e3779b97f4a7c15;
+
+function rnd(): u64 {
+  state = state ^ (state << 13);
+  state = state ^ (state >> 7);
+  state = state ^ (state << 17);
+  return state;
+}
+
+// A double with a random sign, a random 52-bit mantissa and an exponent in lo..hi.
+function rdouble(lo: i64, hi: i64): f64 {
+  const e = lo + ((rnd() % ((hi - lo + 1) as u64)) as i64);
+  return f64.fromBits(((rnd() & 1) << 63) | (((e + 1023) as u64) << 52) | (rnd() >> 12));
+}
+
+// How many of `n` triples from `make` fmaSoft rounds unlike fma.
+function mismatches(n: i64, make: () => f64[]): i64 {
+  let bad: i64 = 0;
+  for (let i: i64 = 0; i < n; i++) {
+    const t = make();
+    if (fmaSoft(t[0], t[1], t[2]).toBits() != fma(t[0], t[1], t[2]).toBits()) {
+      bad++;
+    }
+  }
+  return bad;
+}
+
+describe("productError", () => {
+  it("is a * b - p exactly", () => {
+    let bad = 0;
+    for (let i = 0; i < 100000; i++) {
+      const a = rdouble(-200, 200);
+      const b = rdouble(-200, 200);
+      const p = a * b;
+      if (productError(a, b, p) != fma(a, b, -p)) {
+        bad++;
+      }
+    }
+    expect(bad).toBe(0);
+  });
+
+  it("splits into halves that add back exactly", () => {
+    const a = 1.2345678901234567;
+    const hi = splitHi(a);
+    expect(hi + (a - hi)).toBe(a);
+    expect((hi.toBits() & 0x7ffffff) == 0).toBe(true);
+  });
+});
+
+describe("addOdd", () => {
+  it("rounds an inexact sum to the neighbour with an odd last bit", () => {
+    // 1 ± 2^-60: between 1 and a neighbour; 1 is even, so the neighbour.
+    expect(addOdd(1.0, 8.673617379884035e-19)).toBe(1.0000000000000002);
+    expect(addOdd(1.0, -8.673617379884035e-19)).toBe(0.9999999999999999);
+    expect(addOdd(1.0000000000000002, 8.673617379884035e-19)).toBe(1.0000000000000002);
+    expect(addOdd(-1.0, -8.673617379884035e-19)).toBe(-1.0000000000000002);
+  });
+
+  it("keeps an exact sum", () => {
+    expect(addOdd(1.0, 2.0)).toBe(3.0);
+    expect(addOdd(1.0, 2.220446049250313e-16)).toBe(1.0000000000000002);
+  });
+});
+
+describe("fmaSoft", () => {
+  it("rounds like fma for operands of any size", () => {
+    const any = () => [rdouble(-300, 300), rdouble(-300, 300), rdouble(-600, 600)];
+    expect(mismatches(100000, any)).toBe(0);
+  });
+
+  it("rounds like fma when c is near -a * b", () => {
+    const near = () => {
+      const a = rdouble(-60, 60);
+      const b = rdouble(-60, 60);
+      // -a * b rounded, a few units of it away, with its low bits replaced, or half of it.
+      let c = -(a * b);
+      const kind = rnd() % 4;
+      if (kind == 1) {
+        c = f64.fromBits(c.toBits() + (rnd() % 7) - 3);
+      } else if (kind == 2) {
+        c = f64.fromBits((c.toBits() & 0xfffffffffff00000) | (rnd() >> 44));
+      } else if (kind == 3) {
+        c = c * 0.5;
+      }
+      return [a, b, c];
+    };
+    expect(mismatches(100000, near)).toBe(0);
+  });
+
+  it("rounds like fma when a * b is a correction near c's last bit", () => {
+    const tiny = () => {
+      const c = rdouble(-10, 10);
+      const a = rdouble(-30, 30);
+      const ce = (((c.toBits() >> 52) & 0x7ff) as i64) - 1023;
+      const ae = (((a.toBits() >> 52) & 0x7ff) as i64) - 1023;
+      const be = ce - 53 - ae + ((rnd() % 6) as i64) - 3;
+      return [a, rdouble(be, be), c];
+    };
+    expect(mismatches(100000, tiny)).toBe(0);
+  });
+
+  it("rounds ties like fma", () => {
+    // a * b exactly half a unit of c (2^-53 next to 1), and just above and below it.
+    expect(fmaSoft(1.0, 1.1102230246251565e-16, 1.0)).toBe(1.0);
+    expect(fmaSoft(1.0000000000000002, 1.1102230246251565e-16, 1.0)).toBe(1.0000000000000002);
+    expect(fmaSoft(0.9999999999999999, 1.1102230246251565e-16, 1.0)).toBe(1.0);
+    expect(fmaSoft(3.0, 3.700743415417188e-17, 1.0000000000000002)).toBe(
+      fma(3.0, 3.700743415417188e-17, 1.0000000000000002),
+    );
+  });
+
+  it("gives +0 for an exact zero from nonzero terms, as fma does", () => {
+    expect(Object.is(fmaSoft(2.0, 3.0, -6.0), 0)).toBe(true);
+    expect(Object.is(fmaSoft(-0.0, 1.0, 0.0), 0)).toBe(true);
+  });
+});

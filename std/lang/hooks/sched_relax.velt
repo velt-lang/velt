@@ -23,13 +23,15 @@
 // lazy worker 0 is homed there at once (sched_wake.velt `schedule`); a task never follows a
 // socket to a retired spare (sched_io_table.velt `join`).
 
-import { noInline } from "velt/lang/intrinsics";
+import { noInline, stdUsed } from "velt/lang/intrinsics";
+import * as pr from "./process";
 import * as ex from "./sched_exit";
 import * as io from "./sched_io";
 import * as w from "./sched_io_write";
 import * as lk from "./sched_lock";
 import * as m from "./sched_mem";
 import * as mon from "./sched_monitor";
+import * as ow from "./sched_order_wait";
 import * as q from "./sched_queue";
 import * as sl from "./sched_sleep";
 import * as tq from "./sched_take";
@@ -212,6 +214,12 @@ export function retiredLook(e: usize): void {
       wk.awake(e);
       continue;
     }
+    if (stdUsed("nodeTimers")) {
+      // It waits without a time: when no worker waits for Node's timers (this one was the
+      // waiter until its wake, or a worker woken to take that on was asked to retire since),
+      // one that sleeps wakes to (#3060).
+      ow.handOff(e);
+    }
     const b = m.ld(e + t.E_IO);
     m.st32(e + t.E_DISPATCH, t.D_INPUT);
     if (io.anyDue(b)) {
@@ -319,6 +327,8 @@ export function relax(g: usize): bool {
   lk.setMode(lk.LK_LAZY);
   m.swap(g + t.E_LAZY, t.LAZY_WATCH);
   m.store32(g + t.E_MODE, 0);
+  // Its writes to stdout mark its polls again (process.velt `stdoutWritten`).
+  pr.setLazyWorker(g + t.E_PANY);
   q.unlock(g, mode);
   m.and32(g + t.E_RELAX, ex.EXIT_DUE);
   return true;

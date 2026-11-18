@@ -26,7 +26,10 @@
 //!   `// requires: unix` is skipped on Windows (POSIX C functions, `velt/fs`'s fd API), and
 //!   `// requires: windows` everywhere else (Windows-only functions).
 //! - A golden whose first lines contain `// check: no leaks` must free every block it allocates
-//!   (`VELT_RC_STATS=1` with the debug runtime: `blocks=A/F` with A = F) in its debug run. Tasks
+//!   and every heap string buffer (`VELT_RC_STATS=1` with the debug runtime: `blocks=A/F` with
+//!   A = F, and `alloc=` equal to `free=`) in its debug run and in its release run (the
+//!   optimizer removes count changes, #2455; that build allocates through the runtime, not
+//!   std's heap hooks, so its blocks are counted). Tasks
 //!   still running when `main` returns are waited for (up to a minute) while blocks are unfreed;
 //!   the count is taken at a moment when every block was freed, or once no task can run any
 //!   more (blocks held by tasks that wait forever, or by pending `unref()`'d timers, count as
@@ -58,6 +61,11 @@
 //! (`VELT_RT_DEBUG_ALLOC=1`, `crates/velt_rt/src/debug_alloc.rs`): a use after free, double free
 //! or buffer overflow aborts with `velt debug-alloc: ...`. Set `VELT_RT_DEBUG_ALLOC=0` to turn it
 //! off, or `=1` to check the release-mode runs too.
+//! Release-mode builds allocate through std's heap hooks (`VELT_HEAP_HOOKS=1`) although the
+//! runtime they link is this profile's (a debug one under `cargo test`), unless the variable is
+//! set already; with `VELT_RT_DEBUG_ALLOC=1` or `VELT_RC_STATS=1` set, they don't, and neither
+//! does a golden that asks for a leak check (the hooks themselves are tested in
+//! `tests/heap_hooks.rs`, and by the release runs of every other golden).
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -150,6 +158,8 @@ fn golden() {
     }
     let known = known_failing();
     let results = run_parallel(velt, &runnable, &work);
+    report_slowest(&runnable, &results);
+    let results = results.into_iter().map(|(errs, _)| errs);
     let mut failures = vec![];
     let mut pending_failures = 0;
     let mut known_failures = 0;
@@ -191,6 +201,34 @@ fn golden() {
 "
             )
         );
+    }
+}
+
+/// The `VELT_GOLDEN_SLOWEST` (default 20) goldens that took longest, with their share of the
+/// time all of them took (build and run, every mode): where the end-to-end tests' time goes.
+fn report_slowest(files: &[(PathBuf, String)], results: &[(Vec<String>, std::time::Duration)]) {
+    let n = std::env::var("VELT_GOLDEN_SLOWEST")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(20);
+    let total: f64 = results.iter().map(|(_, d)| d.as_secs_f64()).sum();
+    let mut timed: Vec<_> = files
+        .iter()
+        .zip(results)
+        .map(|((_, rel), (_, d))| (d, rel))
+        .collect();
+    timed.sort_by(|a, b| b.0.cmp(a.0));
+    if n == 0 || timed.is_empty() {
+        return;
+    }
+    println!(
+        "golden: {:.0} s of builds and runs in all; the {} slowest:",
+        total,
+        n.min(timed.len())
+    );
+    for (d, rel) in timed.into_iter().take(n) {
+        let share = 100.0 * d.as_secs_f64() / total.max(f64::MIN_POSITIVE);
+        println!("golden:   {:7.2} s {share:4.1}% {rel}", d.as_secs_f64());
     }
 }
 
@@ -393,6 +431,8 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
             .into_iter()
             .flat_map(|m| std::iter::once((m, None)).chain(also.clone().map(|kv| (m, Some(kv)))))
             .collect();
+        // Checked in both modes: the block counts of a release build are its own.
+        let leak_check = leak_allowance(f);
         for (mode, env) in runs {
             // Separate output dirs per mode: on Windows a just-built exe can stay locked briefly
             // (Defender scan), so the release link must not overwrite the debug executable.
@@ -406,6 +446,7 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
                 false => {
                     let mut cmd = crate::no_window::command(velt);
                     cmd.arg("run").args(mode).arg(f);
+                    heap_hooks(&mut cmd, mode, leak_check.is_some());
                     cmd
                 }
                 true => {
@@ -414,6 +455,7 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
                     let exe = dir.join(format!("{stem}{}", std::env::consts::EXE_SUFFIX));
                     let mut build = crate::no_window::command(velt);
                     build.arg("build").args(mode);
+                    heap_hooks(&mut build, mode, leak_check.is_some());
                     // As `velt run` builds to run here: a debug build for this CPU. (`velt run`
                     // leaves out the variable descriptions for debuggers, which `velt build`
                     // has no flag for; they must not change what a program does.)
@@ -448,7 +490,6 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
             if mode.is_none() && std::env::var_os("VELT_RT_DEBUG_ALLOC").is_none() {
                 cmd.env("VELT_RT_DEBUG_ALLOC", "1");
             }
-            let leak_check = mode.is_none().then(|| leak_allowance(f)).flatten();
             let str_limit = mode.is_none().then(|| heap_string_limit(f)).flatten();
             let block_limit = mode.is_none().then(|| heap_block_limit(f)).flatten();
             if leak_check.is_some() || str_limit.is_some() || block_limit.is_some() {
@@ -458,7 +499,7 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
             let stdout = norm(&String::from_utf8_lossy(&o.stdout));
             if let Some(allowed) = leak_check {
                 if let Some(leak) = leaked_blocks(&String::from_utf8_lossy(&o.stderr), allowed) {
-                    failures.push(format!("{rel} [debug]: {leak}"));
+                    failures.push(format!("{rel} [{}]: {leak}", mode.unwrap_or("debug")));
                 }
             }
             if let Some(limit) = str_limit {
@@ -614,24 +655,42 @@ fn too_many_strings(stderr: &str, limit: u64) -> Option<String> {
     }
 }
 
-/// The leak in a `rc stats: ... blocks=A/F` report: more than `allowed` blocks allocated but
-/// not freed, or no report.
+/// The leak in a `rc stats: ... alloc=A free=F blocks=A/F` report: more than `allowed` blocks
+/// allocated but not freed, a heap string buffer allocated but not freed (strings have no
+/// allowance: nothing keeps one on purpose), or no report.
 fn leaked_blocks(stderr: &str, allowed: u64) -> Option<String> {
-    let counts = stderr
-        .lines()
-        .rev()
-        .find(|l| l.starts_with("rc stats:"))
-        .and_then(|l| l.split_whitespace().find_map(|w| w.strip_prefix("blocks=")))
-        .and_then(|b| b.split_once('/'));
+    let Some(report) = stderr.lines().rev().find(|l| l.starts_with("rc stats:")) else {
+        return Some("leak check: no `rc stats` report on stderr".into());
+    };
+    let field = |name: &str| report.split_whitespace().find_map(|w| w.strip_prefix(name));
     let unfreed = |a: &str, f: &str| a.parse::<u64>().ok()?.checked_sub(f.parse().ok()?);
-    match counts {
+    let blocks = match field("blocks=").and_then(|b| b.split_once('/')) {
         Some((a, f)) if unfreed(a, f).is_some_and(|n| n <= allowed) => None,
         Some((a, f)) => Some(format!("leak: {a} blocks allocated, {f} freed")),
-        None => Some("leak check: no `rc stats` report on stderr".into()),
+        None => Some("leak check: no block counts in the `rc stats` report".into()),
+    };
+    let strings = match (field("alloc="), field("free=")) {
+        (Some(a), Some(f)) if unfreed(a, f) == Some(0) => None,
+        (Some(a), Some(f)) => Some(format!("leak: {a} heap strings allocated, {f} freed")),
+        _ => Some("leak check: no string counts in the `rc stats` report".into()),
+    };
+    blocks.or(strings)
+}
+
+/// A release build (`mode`) calls std's heap hooks with the debug runtime too (the header),
+/// unless its blocks are `counted` for a leak check: the runtime counts only its own.
+fn heap_hooks(cmd: &mut Command, mode: Option<&str>, counted: bool) {
+    if mode.is_none() {
+        return;
+    }
+    if counted {
+        cmd.env("VELT_RC_STATS", "1");
+    } else if std::env::var_os("VELT_HEAP_HOOKS").is_none() {
+        cmd.env("VELT_HEAP_HOOKS", "1");
     }
 }
 
-/// The build modes to check: `VELT_GOLDEN_MODES=debug` or `release` (the fast gate checks debug
+/// The build modes to check:`VELT_GOLDEN_MODES=debug` or `release` (the fast gate checks debug
 /// only); both by default.
 fn modes() -> Vec<Option<&'static str>> {
     match std::env::var("VELT_GOLDEN_MODES").as_deref() {
@@ -648,14 +707,18 @@ fn modes() -> Vec<Option<&'static str>> {
 /// never collide; and no build ever overwrites an executable that has just run, which on Windows
 /// can stay locked for a moment, even when two programs share a name). Returns each file's
 /// errors, in `files` order.
-fn run_parallel(velt: &str, files: &[(PathBuf, String)], work: &Path) -> Vec<Vec<String>> {
+fn run_parallel(
+    velt: &str,
+    files: &[(PathBuf, String)],
+    work: &Path,
+) -> Vec<(Vec<String>, std::time::Duration)> {
     let jobs = std::env::var("VELT_GOLDEN_JOBS")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get().min(16)))
         .max(1);
     let next = std::sync::atomic::AtomicUsize::new(0);
-    let results = std::sync::Mutex::new(vec![Vec::new(); files.len()]);
+    let results = std::sync::Mutex::new(vec![(Vec::new(), Default::default()); files.len()]);
     std::thread::scope(|scope| {
         for _ in 0..jobs {
             let (next, results) = (&next, &results);
@@ -667,11 +730,13 @@ fn run_parallel(velt: &str, files: &[(PathBuf, String)], work: &Path) -> Vec<Vec
                 let dir = work.join(format!("p{i}"));
                 let _ = std::fs::remove_dir_all(&dir);
                 std::fs::create_dir_all(&dir).unwrap();
+                let started = std::time::Instant::now();
                 let errs = check_file(velt, f, rel, &dir);
+                let took = started.elapsed();
                 // Delete this program's build outputs (exe, obj, pdb): kept around they add up
                 // to tens of GB.
                 let _ = std::fs::remove_dir_all(&dir);
-                results.lock().unwrap()[i] = errs;
+                results.lock().unwrap()[i] = (errs, took);
             });
         }
     });

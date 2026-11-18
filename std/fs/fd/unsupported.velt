@@ -47,3 +47,11 @@ export function truncateFd(fd: i32, length: i64): i32 {
 export function fstatFd(fd: i32): Stat | null {
   return null;
 }
+
+export function mapRead(fd: i32, len: usize): usize {
+  return 0;
+}
+
+export function adviseMap(address: usize, len: usize, advice: i32): i32 {
+  return -1;
+}

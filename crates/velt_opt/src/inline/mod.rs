@@ -19,6 +19,27 @@
 //!   17-line row parser 16 times its size (`Number`, 910 statements, twice, through the
 //!   `integer` helper its loop calls, #2707).
 //!
+//! The budget is the program's: it may at most double in size, plus `BUDGET_SLACK`. Callers are
+//! visited bottom-up, so spent first come, first served, the first ones (deep library code, glue)
+//! could spend it all before a program's own code, nearer the top, got a turn (#2753). So a round
+//! whose calls could want more than is left sets aside for each of the program's own functions
+//! what it wants (`wants`: the calls in its body that would be charged, of callees up to
+//! `SHARE_COST`, each at the size it will have when the caller is visited, with what its own
+//! visit inlines; a bigger callee is more often a slow path than a hot loop's step), and when they
+//! want more than is left, no more than a level set so that what is set aside adds up to it (a
+//! max-min fair share, `Budget::share`). A caller may spend what is set aside for it and whatever no caller
+//! still to come has set aside, so what one leaves unspent goes to the next: a hot loop that wants
+//! little gets it whatever else the program holds, and only callers wanting more than the level
+//! wait for what others leave. The standard library's functions and generated glue get nothing
+//! set aside: among themselves they spend first come, first served as before, from what the
+//! program's own code doesn't want. Sharing among them too moved the budget from the instances
+//! whose inlined code folds away to those whose code stays (`bench/btree`: the `u64` map's
+//! internals to the `string` map's, 14% more code for the same budget, and 10% more to build).
+//! `wants` is an estimate, not a bound (one called once becomes free, a callee's growth is what
+//! its own visit would inline with the budget unlimited, and the calls an inlined body brings
+//! along are not counted), so a program whose own functions' wants fit is inlined as first come,
+//! first served would only as far as the estimate is right.
+//!
 //! Functions that never return normally (panic helpers, and `never` functions that throw) are
 //! never inlined: their calls are cold.
 //!
@@ -73,6 +94,11 @@ const LOOP_COST: u64 = 1_000;
 /// `Number` (910), a regex test (502) or `RegExp.execAt` (358). On the generated 3k-line
 /// application of #2707, clang retires 10.8% fewer instructions (76.3 G to 68.1 G).
 const NESTED_LOOP_COST: u64 = 350;
+/// Calls of callees at most this big are what a function's share of the budget is set aside for
+/// ([`wants`]): a hot loop's steps (`Map.get` with its lookup, 123; a module's state, 78), not a
+/// slow path such as `Map.set`'s grow path (929), whose call in the loop competes first come,
+/// first served as before. Set aside for, it made `bench/structs/mapkey_flat` run 3% slower.
+const SHARE_COST: u64 = 350;
 /// Recursive callees at most this big are inlined into loops of outside callers (while the
 /// growth budget lasts).
 const RECURSIVE_COST: u64 = 200;
@@ -142,6 +168,10 @@ pub(crate) fn hot_cost(func: &Function) -> u64 {
 /// Program-wide code growth allowance for inlining, shared by all pipeline rounds.
 pub(crate) struct Budget {
     remaining: u64,
+    /// Per caller, what is set aside for it this round until it is visited (module docs).
+    set_aside: Vec<u64>,
+    /// The sum of `set_aside`: what callers still to come may spend before any other.
+    set_aside_total: u64,
     /// Per caller, recursive functions it has a copy of (inlined into it, directly or within
     /// another callee's body): their cycles are not inlined into it again (module docs).
     cycles: FxHashMap<FuncId, Vec<FuncId>>,
@@ -153,9 +183,65 @@ impl Budget {
         let size: u64 = program.funcs.iter().map(cost).sum();
         Budget {
             remaining: size + BUDGET_SLACK,
+            set_aside: vec![],
+            set_aside_total: 0,
             cycles: FxHashMap::default(),
         }
     }
+
+    /// What the caller being visited may still be charged: what no caller still to come has set
+    /// aside.
+    fn room(&self) -> u64 {
+        (self.remaining.checked_sub(self.set_aside_total))
+            .expect("ICE: inline budget set aside more than is left")
+    }
+
+    /// `caller` is visited: what is set aside for it is its to spend.
+    fn visit(&mut self, caller: FuncId) {
+        if let Some(mine) = self.set_aside.get_mut(caller.0 as usize) {
+            self.set_aside_total -= *mine;
+            *mine = 0;
+        }
+    }
+
+    /// Charge the caller being visited `size` (at most [`Budget::room`]).
+    fn charge(&mut self, size: u64) {
+        self.remaining -= size;
+    }
+
+    /// Start a round whose callers want `wants` (one entry per caller): what is set aside for
+    /// each, up to the level that shares what is left among them (module docs).
+    fn share(&mut self, wants: Vec<u64>) {
+        let cap = level(&wants, self.remaining).unwrap_or(u64::MAX);
+        self.set_aside = wants.into_iter().map(|w| w.min(cap)).collect();
+        self.set_aside_total = self.set_aside.iter().sum();
+        // At most what is left: the level is rounded down.
+        debug_assert!(
+            self.set_aside_total <= self.remaining,
+            "ICE: set aside more than is left"
+        );
+    }
+}
+
+/// The level that shares `pool` among callers wanting `wants`: each gets what it wants up to the
+/// level, and what they get adds up to `pool`. `None` when what they want fits.
+fn level(wants: &[u64], pool: u64) -> Option<u64> {
+    if wants.iter().sum::<u64>() <= pool {
+        return None;
+    }
+    let mut wants: Vec<u64> = wants.iter().copied().filter(|&w| w > 0).collect();
+    wants.sort_unstable();
+    let (mut left, mut n) = (pool, wants.len() as u64);
+    for w in wants {
+        // Every caller from here on wants at least `w`: if that is more than an equal split of
+        // what is left, the split is the level.
+        if w.saturating_mul(n) > left {
+            return Some(left / n);
+        }
+        left -= w;
+        n -= 1;
+    }
+    None
 }
 
 /// Inline call sites across the program; returns whether anything was inlined. Into the functions
@@ -176,15 +262,19 @@ pub(crate) fn run(program: &mut Program, budget: &mut Budget, served: crate::Ser
         .map(|f| sccs[scc_of[f]].len() > 1 || calls_itself[f])
         .collect();
     let mut state = State {
+        loops: vec![],
         recursive,
         calls_itself,
         scc_of,
         call_sites: graph.call_sites.clone(),
         address_taken: graph.address_taken,
     };
+    let wants = wants(program, &mut state, budget, &sccs);
+    budget.share(wants);
     let mut changed = false;
     for scc in &sccs {
         for &caller in scc {
+            budget.visit(caller);
             if inline_into(program, caller, &mut state, budget) {
                 changed = true;
                 if !served.optimizes(&program.funcs[caller.0 as usize]) {
@@ -319,6 +409,9 @@ const STD_EQUAL: &str = "_V3stdP4langP5equal";
 const GENERATED_STD: &str = "_V15_3cgenerated_3eP3std";
 
 struct State {
+    /// Per function, its blocks' [`loop_blocks`], when this round's `wants` computed them, for
+    /// `inline_into` to take: a function's body doesn't change before it is visited.
+    loops: Vec<Option<Vec<bool>>>,
     recursive: Vec<bool>,
     /// Per function, whether it calls itself directly.
     calls_itself: Vec<bool>,
@@ -346,6 +439,10 @@ struct Site<'a> {
     passes_static: bool,
     /// Recursive functions whose inlined bodies the call came with (this round).
     from: &'a [FuncId],
+    /// What the caller may still be charged ([`Budget::room`]).
+    room: u64,
+    /// The callee's size: its [`cost`], or in [`wants`] the size it will have by then.
+    size: u64,
 }
 
 fn decide(
@@ -380,7 +477,7 @@ fn decide(
             return None;
         }
     }
-    let size = cost(target);
+    let size = site.size;
     if size <= TRIVIAL_COST || (target.inline == Inline::Always && !recursive) {
         return Some(Decision::Free);
     }
@@ -399,7 +496,7 @@ fn decide(
     if recursive {
         // A copy of a recursive function adds to its body, which stays: only a small entry
         // called from a loop is worth one (module docs).
-        let ok = site.in_loop && size <= RECURSIVE_COST && size <= budget.remaining;
+        let ok = site.in_loop && size <= RECURSIVE_COST && size <= site.room;
         return ok.then_some(Decision::Charged(size));
     }
     let limit = if site.in_loop && site.nested && !site.passes_static {
@@ -411,7 +508,7 @@ fn decide(
     } else {
         SMALL_COST
     };
-    (size <= limit && size <= budget.remaining).then_some(Decision::Charged(size))
+    (size <= limit && size <= site.room).then_some(Decision::Charged(size))
 }
 
 /// Whether `func` calls nothing but functions that never return (its checks' reports).
@@ -465,7 +562,9 @@ fn inline_into(
     let mut caller_cost = cost(&program.funcs[fi]);
     // Per block: whether it is in a loop, and whether to scan it. Inlining appends the
     // callee's blocks, so the blocks before them keep their numbers.
-    let mut in_loop = loop_blocks(&program.funcs[fi]);
+    let mut in_loop = (state.loops.get_mut(fi))
+        .and_then(Option::take)
+        .unwrap_or_else(|| loop_blocks(&program.funcs[fi]));
     let mut scan = vec![true; in_loop.len()];
     // Per block: the recursive functions whose inlined bodies it came with.
     let mut from: Vec<Vec<FuncId>> = vec![vec![]; in_loop.len()];
@@ -512,6 +611,8 @@ fn inline_into(
             nested: nested[here],
             passes_static,
             from: &from[here],
+            room: budget.room(),
+            size,
         };
         let Some(decision) = decide(state, program, callee, &site, budget) else {
             continue;
@@ -527,7 +628,7 @@ fn inline_into(
         }
         copied.extend(brings.iter().copied());
         if let Decision::Charged(size) = decision {
-            budget.remaining -= size;
+            budget.charge(size);
         }
         let body = program.funcs[callee.0 as usize].clone();
         state.call_sites[callee.0 as usize] -= 1;
@@ -589,6 +690,100 @@ fn passes_static(func: &Function, args: &[Operand]) -> bool {
         |l: Local| holds.contains(&l) || points.iter().any(|&(p, q)| p == l && holds.contains(&q));
     args.iter()
         .any(|a| matches!(a, Operand::Copy(p) if p.proj.is_empty() && held(p.local)))
+}
+
+/// Per function of the program's own (not [`library`]), what this round would charge it with the
+/// budget unlimited: the sizes of the calls in its body that [`decide`] charges for, of callees up
+/// to `SHARE_COST`. Callers are visited bottom-up, so a callee has grown by then: it counts at its
+/// size plus what its own visit would inline (`Map.get` with its lookup), else a hot loop's share
+/// falls short of the call it was set aside for. All zero, which spares the work, when an estimate
+/// says the round's calls fit what is left: every function's calls (the library's too) of callees
+/// up to `SHARE_COST`, at their size when the round starts, though a grown callee counts more here.
+/// Not a bound: one called once may become free, and an inlined body's calls aren't counted.
+fn wants(program: &Program, state: &mut State, budget: &Budget, sccs: &[Vec<FuncId>]) -> Vec<u64> {
+    let n = program.funcs.len();
+    let most: u64 = (program.funcs.iter())
+        .flat_map(direct_calls)
+        .filter_map(|c| program.funcs.get(c.0 as usize))
+        .map(cost)
+        .filter(|&c| c <= SHARE_COST)
+        .sum();
+    if most <= budget.remaining {
+        return vec![0; n];
+    }
+    state.loops = (program.funcs.iter())
+        .map(|f| (!f.blocks.is_empty()).then(|| loop_blocks(f)))
+        .collect();
+    let mut wants = vec![0; n];
+    // Per function, its size once visited.
+    let mut grown: Vec<u64> = program.funcs.iter().map(cost).collect();
+    for &caller in sccs.iter().flatten() {
+        let fi = caller.0 as usize;
+        let func = &program.funcs[fi];
+        let Some(in_loop) = &state.loops[fi] else {
+            continue;
+        };
+        let caller_cost = cost(func);
+        let (mut want, mut growth) = (0, 0);
+        for (callee, bi) in calls(program, func) {
+            let site = Site {
+                caller,
+                caller_cost,
+                in_loop: in_loop[bi],
+                nested: false,
+                passes_static: false,
+                from: &[],
+                room: u64::MAX,
+                size: grown[callee.0 as usize],
+            };
+            match decide(state, program, callee, &site, budget) {
+                Some(Decision::Charged(size)) => {
+                    if size <= SHARE_COST {
+                        want += size;
+                    }
+                    growth += size;
+                }
+                Some(Decision::Free) => growth += site.size,
+                None => {}
+            }
+        }
+        grown[fi] += growth;
+        if !library(func) {
+            wants[fi] = want;
+        }
+    }
+    wants
+}
+
+/// Whether `func` is the standard library's (its C exports too: `std_sched_worker` and the other
+/// threads' entries are `@cExport("std_…")`) or generated glue (`_G…`: drop, clone, the closures'
+/// environments), not the program's own code: it gets nothing set aside ([`wants`]).
+fn library(func: &Function) -> bool {
+    let s = &func.symbol;
+    ["_V3std", GENERATED_STD, "std_", "_G"]
+        .iter()
+        .any(|p| s.starts_with(p))
+}
+
+/// The direct calls in `func` that could be inlined into it (as [`inline_into`] filters them), with
+/// their blocks.
+fn calls<'a>(
+    program: &'a Program,
+    func: &'a Function,
+) -> impl Iterator<Item = (FuncId, usize)> + 'a {
+    (func.blocks.iter().enumerate()).filter_map(move |(bi, block)| {
+        let Terminator::Call {
+            callee: Callee::Func(callee),
+            args,
+            ..
+        } = &block.term
+        else {
+            return None;
+        };
+        let target = program.funcs.get(callee.0 as usize)?;
+        let gated_elsewhere = target.target.is_some() && target.target != func.target;
+        (splice::arity_matches(args, target) && !gated_elsewhere).then_some((*callee, bi))
+    })
 }
 
 /// Per block of `func`: whether it lies on a cycle of the control-flow graph (in a loop).

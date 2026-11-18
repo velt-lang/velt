@@ -162,8 +162,11 @@ fn field_getters(
             .adt(p.d)
             .and_then(|a| a.fields.iter().position(|g| g.name == f.name))
             .map(|i| (i, cx.adt(p.d).expect("ICE: adt").fields[i].ty));
-        // The same type, or the same but for error-set variables (`throws::vars`).
-        if let Some((i, ty)) = have.filter(|(_, ty)| cx.same_ty(*ty, want)) {
+        // The same type, or the same but for error-set variables (`throws::vars`), or a
+        // mutable array for a read-only one (#3061): the getter gives the same array.
+        let fits =
+            |cx: &mut Ctx, ty: TyId| cx.same_ty(ty, want) || cx.readonly_field_fits(ty, want);
+        if let Some((i, ty)) = have.filter(|(_, ty)| fits(cx, *ty)) {
             let g = match cache.get(&(p.d, i)) {
                 Some(&g) => g,
                 None => super::getters::field_getter(cx, p.d, p.self_ty, i, ty),
@@ -179,7 +182,11 @@ fn field_getters(
                 });
             }
         } else if let Some((i, ty)) = have.filter(|(_, ty)| {
-            f.optional && cx.ty.opt_payload(want).is_some_and(|w| cx.same_ty(*ty, w))
+            f.optional
+                && cx
+                    .ty
+                    .opt_payload(want)
+                    .is_some_and(|w| cx.same_ty(*ty, w) || cx.readonly_field_fits(*ty, w))
         }) {
             // A required field provides an optional one (`x: number` for `x?: number`), as in
             // TypeScript and as for an object type (`object_ifaces`): read, it is present;

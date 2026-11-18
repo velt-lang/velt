@@ -1,0 +1,44 @@
+// check: no leaks
+// A record, or a record view (an interface with named members next to its index signature),
+// where a record of a wider value type is expected (#379, sigx's head.ts `serializeAttrs`): a
+// copy of its entries, which a program that only reads it cannot tell from the record.
+interface HeadMeta {
+  name?: string;
+  content?: string;
+  [key: string]: string | undefined;
+}
+interface HeadLink {
+  rel: string;
+  href?: string;
+  [key: string]: string | undefined;
+}
+interface HeadStyle {
+  innerHTML: string;
+  [key: string]: string | undefined;
+}
+interface HeadBase {
+  href?: string;
+  target?: string;
+}
+
+function serializeAttrs(obj: Record<string, string | boolean | undefined>): string {
+  return Object.entries(obj)
+    .filter(([k, v]) => v !== undefined && v !== false && k !== "priority")
+    .map(([k, v]) => (v === true ? k : `${k}="${String(v)}"`))
+    .join(" ");
+}
+
+function main(): void {
+  const meta: HeadMeta = { name: "description", content: "A page" };
+  console.log(`<meta ${serializeAttrs(meta)}>`);
+  const link: HeadLink = { rel: "stylesheet", href: "/a.css", priority: "1" };
+  console.log(`<link ${serializeAttrs(link)}>`);
+  const style: HeadStyle = { innerHTML: "p{}", media: "print" };
+  const { innerHTML, ...rest } = style;
+  console.log(`<style ${serializeAttrs(rest)}>${innerHTML}</style>`);
+  const bases: HeadBase[] = [{ href: "/root/" }];
+  for (const base of bases) {
+    console.log(`<base ${serializeAttrs(base as Record<string, string | undefined>)}>`);
+  }
+  console.log(Object.keys(meta).join(","), rest["media"]);
+}
