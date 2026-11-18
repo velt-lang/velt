@@ -35,6 +35,11 @@ function many(n: usize): f32[] {
   return xs;
 }
 
+// The object is one the caller lends: an element of an array `f` empties.
+function lentHolder(slot: Slot, f: () => void): f32 {
+  return readAfter(slot.marks, f);
+}
+
 class Table {
   rows: shared<f32[]>;
 
@@ -94,4 +99,30 @@ function main() {
     slots2.push({ marks: shared([5 as f32]) });
   });
   console.log(d, slots[0].marks.length);
+
+  // The object is reached through a name bound to the element, and through a param.
+  const more: Slot[] = [{ marks: shared(many(90)) }];
+  const more2 = more;
+  const bound = more[0];
+  const e = readAfter(bound.marks, () => {
+    more2.pop();
+    more2.push({ marks: shared([6 as f32]) });
+  });
+  console.log(e, more[0].marks.length);
+
+  const lent: Slot[] = [{ marks: shared(many(40)) }];
+  const lent2 = lent;
+  const refill = () => {
+    lent2.pop();
+    lent2.push({ marks: shared([8 as f32]) });
+  };
+  console.log(lentHolder(lent[0], refill), lent[0].marks.length);
+
+  // The object is a variable a closure reads while another closure gives it another object.
+  let seen: Slot = { marks: shared(many(30)) };
+  const renew = () => {
+    seen = { marks: shared([9 as f32]) };
+  };
+  const look = () => readAfter(seen.marks, renew);
+  console.log(look(), seen.marks.length);
 }

@@ -180,6 +180,17 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// Is `l` a param of this function that it does not write through: one whose value the
+    /// caller keeps for the call?
+    fn lent_param(&self, l: hir::LocalId) -> bool {
+        match self.cx.cur_def.map(|d| self.cx.hir.def(d)) {
+            Some(hir::Def::Fn(f)) => {
+                (f.params.iter()).any(|p| p.local == l && p.mode != hir::PassMode::BorrowMut)
+            }
+            _ => false,
+        }
+    }
+
     /// Can the object the place `e` names be another one, or gone, while a statement reads a
     /// field of it? Not a variable the body never assigns and no closure holds by reference
     /// (it keeps its object for as long as it is in scope), nor a field of such an object that
@@ -188,7 +199,16 @@ impl FnLower<'_, '_> {
     fn holder_replaceable(&mut self, e: &hir::Expr) -> bool {
         use hir::ExprKind as K;
         match &e.kind {
-            K::Local(l, _) => self.info[l.0 as usize].in_cell || self.body_changes(*l),
+            // A variable that is a pointer to its value names a place of some other owner, which
+            // stabilize.rs `stays_put` does not trust either: a binding of an element, a
+            // capture. A param is the exception: its caller keeps what it lent in place for the
+            // call, or passed a share where something could replace it (stabilize.rs
+            // `stable_borrow`).
+            K::Local(l, _) => {
+                let info = &self.info[l.0 as usize];
+                let elsewhere = info.indirect && !self.lent_param(*l);
+                elsewhere || info.in_cell || self.body_changes(*l)
+            }
             K::Field { base, index, .. } => {
                 let bty = self.sub(base.ty);
                 self.cx.field_written(bty, *index) || self.holder_replaceable(base)
