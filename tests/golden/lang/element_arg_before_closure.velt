@@ -1,0 +1,125 @@
+// An element of an array passed to a function, with a closure after it (#3204): the call reads
+// what it was lent, also when the closure it runs takes the element out of the array. Every
+// line prints the element as it was when the call was made, then the array's length after.
+type Slot = { marks: f32[] };
+type Shelf = { slots: Slot[] };
+
+struct Pack {
+  data: shared<f32[]>;
+  n: usize;
+}
+
+function readAfter(slot: Slot, f: () => void): f32 {
+  f();
+  return slot.marks[0] + slot.marks[slot.marks.length - 1];
+}
+
+function readBefore(f: () => void, slot: Slot): f32 {
+  f();
+  return slot.marks[0] + slot.marks[slot.marks.length - 1];
+}
+
+function readPack(p: Pack, f: () => void): f32 {
+  f();
+  return p.data[0] + p.data[p.n - 1];
+}
+
+function readPair(p: [Slot, number], f: () => void): f32 {
+  f();
+  return p[0].marks[0] + (p[1] as f32);
+}
+
+function readBoth(a: Slot, f: () => void, b: Slot): f32 {
+  f();
+  return a.marks[0] + b.marks[0];
+}
+
+function main() {
+  // The array has one owner and the closure does not touch it.
+  const own: Slot[] = [{ marks: [1, 2, 3] }];
+  let ran = 0;
+  console.log(
+    readAfter(own[0], () => {
+      ran++;
+    }),
+    own.length,
+    ran,
+  );
+
+  // The closure pops the element through another name of the array.
+  const lent: Slot[] = [{ marks: [4, 5, 6] }];
+  const lent2 = lent;
+  console.log(
+    readAfter(lent[0], () => {
+      lent2.pop();
+    }),
+    lent.length,
+  );
+
+  // The closure first, the element second.
+  const late: Slot[] = [{ marks: [7, 8, 9] }];
+  const late2 = late;
+  console.log(
+    readBefore(
+      () => {
+        late2.pop();
+      },
+      late[0],
+    ),
+    late.length,
+  );
+
+  // An element of an array in a field.
+  const shelf: Shelf = { slots: [{ marks: [10, 11] }] };
+  const shelf2 = shelf;
+  console.log(
+    readAfter(shelf.slots[0], () => {
+      shelf2.slots.pop();
+    }),
+    shelf.slots.length,
+  );
+
+  // A struct element.
+  const packs: Pack[] = [{ data: shared([12 as f32, 13]), n: 2 }];
+  const packs2 = packs;
+  console.log(
+    readPack(packs[0], () => {
+      packs2.pop();
+    }),
+    packs.length,
+  );
+
+  // A tuple element.
+  const pairs: [Slot, number][] = [[{ marks: [14, 15] }, 16]];
+  const pairs2 = pairs;
+  console.log(
+    readPair(pairs[0], () => {
+      pairs2.pop();
+    }),
+    pairs.length,
+  );
+
+  // Two elements around the closure.
+  const two: Slot[] = [{ marks: [17] }, { marks: [18] }];
+  const two2 = two;
+  console.log(
+    readBoth(
+      two[0],
+      () => {
+        two2.length = 0;
+      },
+      two[1],
+    ),
+    two.length,
+  );
+
+  // The closure replaces the element instead of removing it.
+  const swap: Slot[] = [{ marks: [19, 20] }];
+  const swap2 = swap;
+  console.log(
+    readAfter(swap[0], () => {
+      swap2[0] = { marks: [0] };
+    }),
+    swap[0].marks.length,
+  );
+}
