@@ -57,6 +57,12 @@ hooks! {
     /// `Array.from({ length: n }, f)`.
     array_from_length => lang_hooks_array, "arrayFromLength", sig(<A, B>(i64, &Fn((i64) -> A throws B)) -> [A] throws B);
 
+    // pow.velt: `**` on floats.
+    /// `a ** b` and `Math.pow` on floats (`velt_vir` `lower/ops.rs`): V8's results, through
+    /// glibc's algorithm in Velt (std/lang/math/pow.velt, #1676).
+    pow_f64 => lang_hooks_pow, "powF64", sig((f64, f64) -> f64), lowered, constructs(PowFloat),
+        replaces("velt_rt_pow_f64"), bench("pow");
+
     // number.velt: numbers as text, and the conversions of a float index.
     /// `n.toString(radix)` of a float (`velt_sema` `builtins.rs`).
     f64_to_string => lang_hooks_number, "f64ToString", sig((f64, f64) -> string),

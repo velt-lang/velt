@@ -25,7 +25,6 @@ doctest = false
 bytes = "1.12.1"
 futures-util = { version = "0.3.34", default-features = false, features = ["std", "sink"] }
 getrandom = "0.4.3"
-libm = "0.2.16"
 # The same C library mimalloc wraps, called directly by mem.rs for the small-alignment fast path.
 libmimalloc-sys = { version = "0.1.49", default-features = false, optional = true }
 lock_api = "0.4.14"

@@ -114,8 +114,8 @@ fn pow_and_casts() {
         let_(x, flt(2.0, t.f64)),
         se(print(
             vec![
+                // `**` on floats is std's `powF64` hook (lang/math_pow_node runs it).
                 bin(B::Pow, int(2, t.i64), int(10, t.i64)),
-                bin(B::Pow, f.cp(x), flt(0.5, t.f64)),
                 bin(B::Pow, int(3, t.u8), int(5, t.u8)),
             ],
             t,
@@ -135,6 +135,6 @@ fn pow_and_casts() {
     let out = run(&pb.finish());
     assert_eq!(
         out.stdout,
-        "1024 1.4142135623730951 243\n2147483647 -3 255 9223372036854775807 2\n"
+        "1024 243\n2147483647 -3 255 9223372036854775807 2\n"
     );
 }
