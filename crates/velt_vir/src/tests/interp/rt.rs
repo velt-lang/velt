@@ -193,6 +193,21 @@ impl Interp<'_> {
                 return Ok(self.heap_alloc(a[0]));
             }
             "velt_rt_realloc" => return Ok(self.realloc(a[0], a[1], a[3])),
+            // The C library std's clocks call (std/lang/hooks/clock_darwin.velt, clock_linux.velt): its buffer is
+            // C memory, kept for the thread's life, so not counted as a leak; the clocks read the
+            // emulated time (`exec.now`, ms), the wall clock from 2023-11-14.
+            "calloc" => return Ok(self.raw_alloc(a[0] * a[1])),
+            "clock_gettime" => {
+                let ns = (self.exec.now * 1e6) as u64 + 1;
+                let ns = if a[0] == 0 {
+                    ns + 1_700_000_000_000_000_000
+                } else {
+                    ns
+                };
+                self.write_bytes(a[1], &(ns / 1_000_000_000).to_le_bytes());
+                self.write_bytes(a[1] + 8, &(ns % 1_000_000_000).to_le_bytes());
+                return Ok(0);
+            }
             "velt_rt_free" => {
                 assert_eq!(
                     self.allocs.get(&a[0]).copied(),

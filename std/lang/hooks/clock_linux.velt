@@ -1,0 +1,54 @@
+// velt/lang/hooks (internal): the clocks of `#clock` on Linux: `clock_gettime`, into a
+// `struct timespec` in this thread's buffer, so a read allocates nothing. The monotonic clock is
+// `CLOCK_MONOTONIC`, which Node's `performance.now()` and Rust's `Instant` read too. (One file per
+// OS, not a shared POSIX one: the prelude loads this, and each module loaded costs every
+// program.)
+
+import { Ptr } from "velt/ffi/ptr";
+import { addressLoad } from "velt/lang/intrinsics";
+
+/** C's `struct timespec` (two 64-bit words), which `clock_gettime` fills. */
+declare c type timespec;
+
+declare c("c") function clock_gettime$clock(clock: i32, ts: Ptr<timespec>): i32;
+declare c("c") function calloc$clock(n: usize, size: usize): Ptr<u8> | null;
+
+/** `CLOCK_REALTIME` and `CLOCK_MONOTONIC`. */
+const REALTIME: i32 = 0;
+const MONOTONIC: i32 = 1;
+
+/** This thread's `struct timespec` (0 before its first use): from the C library, for its life. */
+const BUFFER = new ThreadLocal<u64>(0);
+
+/** Clock `clock` in nanoseconds (0 when this thread has no buffer). */
+function clockNs(clock: i32): i64 {
+  let p = BUFFER.get() as usize;
+  if (p === 0) {
+    // SAFETY: calloc has no precondition; its result is checked.
+    const block = unsafe { calloc$clock(1, 16) };
+    if (block === null) {
+      return 0;
+    }
+    p = Ptr.addressOf(block);
+    BUFFER.set(p as u64);
+  }
+  // SAFETY: this thread's buffer holds a `struct timespec`, which only this call uses.
+  unsafe {
+    clock_gettime$clock(clock, Ptr.at<timespec>(p));
+  }
+  // SAFETY: inside the buffer, which clock_gettime filled.
+  const secs = unsafe { addressLoad<i64>(p) };
+  // SAFETY: as above.
+  const nanos = unsafe { addressLoad<i64>(p + 8) };
+  return secs * 1000000000 + nanos;
+}
+
+/** The monotonic clock in nanoseconds. */
+export function monotonicNs(): u64 {
+  return clockNs(MONOTONIC) as u64;
+}
+
+/** The wall clock in nanoseconds since the Unix epoch. */
+export function realtimeNs(): i64 {
+  return clockNs(REALTIME);
+}

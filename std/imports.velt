@@ -51,6 +51,17 @@ export const imports: Imports = {
   // sched_mem.velt, sched_io_wait.velt): `sched_yield` and `clock_gettime`, or on Windows
   // `SwitchToThread` and the performance counter.
   "#sched-os": { win32: "./lang/hooks/os_win32.velt", default: "./lang/hooks/os_posix.velt" },
+  // The clocks of `Date.now()` and `performance.now()` (std/lang/hooks/clock.velt): the C
+  // library's `clock_gettime` on macOS and Linux, the performance counter and the precise system
+  // time on Windows, WASI's `clock_time_get`, a JS host's own. No default: a target without one
+  // fails here, at compile time.
+  "#clock": {
+    darwin: "./lang/hooks/clock_darwin.velt",
+    linux: "./lang/hooks/clock_linux.velt",
+    win32: "./lang/hooks/clock_win32.velt",
+    wasi: "./lang/hooks/clock_wasi.velt",
+    js: "./lang/hooks/clock_js.velt",
+  },
   // The layout of `sigaction` for the executor in Velt's signals (std/lang/hooks/
   // sched_signal.velt): per OS; elsewhere none.
   "#sched-signal": {

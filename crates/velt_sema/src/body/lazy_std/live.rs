@@ -142,7 +142,7 @@ struct Walk {
     generators: [bool; 2],
     /// An async host function: lowering awaits its call's `HostSettled` (`velt_vir` `host.rs`).
     async_host: bool,
-    /// A call of `catchUnwind` ([`Construct::CatchUnwind`]), `**` on floats (`PowFloat`).
+    /// `catchUnwind` ([`Construct::CatchUnwind`]), `**` on floats (`PowFloat`), a clock (`Clock`).
     constructs: ConstructSet,
     /// Code that runs on the executor: an async function or closure, or one of the externs the
     /// executor in Velt serves ([`super::sched_hooks`]).
@@ -596,9 +596,13 @@ fn walk_expr(ty: &crate::types::Types, e: &hir::Expr, w: &mut Walk) {
             ..
         } => w.conversions.push(e.ty),
         E::Call {
-            callee: Callee::Intrinsic(I::CatchUnwind | I::CatchUnwindAt),
+            callee:
+                Callee::Intrinsic(i @ (I::CatchUnwind | I::CatchUnwindAt | I::PerfNow | I::DateNow)),
             ..
-        } => w.constructs |= Construct::CatchUnwind.bit(),
+        } => {
+            let clock = matches!(i, I::PerfNow | I::DateNow);
+            w.constructs |= [Construct::CatchUnwind, Construct::Clock][usize::from(clock)].bit();
+        }
         E::Call {
             callee: Callee::Dyn {
                 method_type_args, ..

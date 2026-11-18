@@ -62,11 +62,14 @@ pub enum Construct {
     /// `**` on floats (`a ** b`, `a **= b`, `Math.pow`): std's `pow` (std/lang/hooks/pow.velt),
     /// which only a program that has one loads (#1676).
     PowFloat,
+    /// A read of a clock (`Date.now()`, `performance.now()`): its hooks, and
+    /// `velt_main` stamps `performance.now()`'s time origin first thing.
+    Clock,
 }
 
 impl Construct {
     /// Every construct, in bit order ([`ConstructSet`]).
-    pub const ALL: [Construct; 7] = [
+    pub const ALL: [Construct; 8] = [
         Construct::TextInt,
         Construct::TextUint,
         Construct::Format,
@@ -74,6 +77,7 @@ impl Construct {
         Construct::Dynamic,
         Construct::CatchUnwind,
         Construct::PowFloat,
+        Construct::Clock,
     ];
 
     /// The construct as the ICE names it.
@@ -86,6 +90,7 @@ impl Construct {
             Construct::Dynamic => "Dynamic (the glue of a value held as any)",
             Construct::CatchUnwind => "CatchUnwind (a call of catchUnwind)",
             Construct::PowFloat => "PowFloat (`**` on floats)",
+            Construct::Clock => "Clock (a read of Date.now or performance.now)",
         }
     }
 

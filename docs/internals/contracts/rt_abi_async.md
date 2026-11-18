@@ -663,8 +663,6 @@ joins the graceful stop through velt/dev (std/dev), on `velt_rt_dev_server_stop`
 |---|---|---|
 | `velt_rt_process_args` | `(VeltStrArray* out)` | UTF-8 (wide APIs on Windows), argv[0] included |
 | `velt_rt_process_node_argv` | `(VeltStrArray* out)` | Node's `process.argv`: `[current executable, script, ...args]`; the script is `$VELT_SCRIPT` (read and removed at start-up; `velt run` sets it) or the JIT host's `set_script`, else the executable. wasm: `[program, program, ...args]` (WASI: the module path; the browser passes none, so `["", ""]`) |
-| `velt_rt_perf_now` | `() -> f64` | `performance.now()`: ms since process start, monotonic |
-| `velt_rt_date_now` | `() -> i64` | `Date.now()`: ms since the Unix epoch |
 | `velt_rt_exit` | see rt_abi.md | |
 | `velt_rt_memory_rss` | `() -> i64` | `process.memoryUsage().rss`: resident set size in bytes from the OS (`/proc/self/statm`, `task_info`, `GetProcessMemoryInfo`); 0 if unknown. wasm: the linear memory size |
 | `velt_rt_memory_heap` | `() -> i64` | `heapUsed`: mimalloc's committed heap bytes (Windows: the process's private committed bytes); without mimalloc, the RSS. wasm: the linear memory size |
@@ -683,6 +681,12 @@ over `getcwd`/`chdir`, cwd_win32.velt). The WebAssembly runtime keeps its own
 name)`, `velt_rt_env_all(VeltStrArray* out)` (`[name0, value0, …]`),
 `velt_rt_process_cwd(IoResult<VeltStr>* out)` and `velt_rt_process_chdir(const VeltStr* path,
 VeltErr* out)`.
+
+**[non-additive, #2196]** `Date.now()` and `performance.now()` are std hooks (`dateNow`,
+`perfNow`, std/lang/hooks/clock.velt over `#clock`: `clock_gettime`, the performance counter and
+`GetSystemTimePreciseAsFileTime` on Windows, WASI's `clock_time_get`, a JS host's `velt:clock`),
+which lowering calls; `velt_main` stamps `performance.now()`'s time origin first (`clockStart`).
+`velt_rt_perf_now` and `velt_rt_date_now` no longer exist in either runtime.
 
 ## 9. Shared state and helpers (sync)
 

@@ -411,9 +411,9 @@ fn held(cx: &mut Ctx, t: TyId, insts: &Insts) -> Option<Vec<TyId>> {
 /// present demands them all, so that glue, which lowering makes per type, doesn't depend on each
 /// of its call sites being listed for the right construct (velt_common `hook_demand.rs`).
 /// `CatchUnwind` is its own bit: it demands std's panic path, which only a program that catches
-/// needs (and a source generator must not reach); so is `PowFloat`, std's `pow`.
+/// needs (and a source generator must not reach); so are `PowFloat`, std's `pow`, and `Clock`.
 pub(super) fn demanded_for(present: ConstructSet) -> ConstructSet {
-    let own = Construct::CatchUnwind.bit() | Construct::PowFloat.bit();
+    let own = Construct::CatchUnwind.bit() | Construct::PowFloat.bit() | Construct::Clock.bit();
     let integer = match present & !own {
         0 => 0,
         _ => Construct::ALL.iter().fold(0, |set, c| set | c.bit()) & !own,

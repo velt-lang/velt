@@ -45,7 +45,7 @@ mod tests {
 
     #[test]
     fn offset_is_within_a_day() {
-        let now = crate::process::velt_rt_date_now();
+        let now = 1_700_000_000_000;
         assert!(velt_rt_local_offset_minutes(now).abs() < 24 * 60);
         assert!(velt_rt_local_offset_minutes(-1).abs() < 24 * 60);
     }

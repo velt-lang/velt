@@ -330,6 +330,19 @@ mod tests {
         assert_eq!(declared, provided);
     }
 
+    /// Std's declarations of `velt:clock` (velt_web.mjs's `clockHost`) are the glue's functions.
+    #[test]
+    fn glue_contract_clock() {
+        let glue = include_str!("../../../velt_rt_wasm/js/velt_web.mjs");
+        let provided = glue_functions(glue, "export function clockHost(", 4);
+        let declared = std_declarations("velt:clock");
+        assert!(
+            declared.contains("now") && declared.contains("date"),
+            "{declared:?}"
+        );
+        assert_eq!(declared, provided);
+    }
+
     /// Std's `velt:worker` declarations and the server core's functions are the same set, so the
     /// compiler needs no table of the glue's functions: only std may declare them (sema).
     #[test]
