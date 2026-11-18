@@ -386,8 +386,10 @@ What replaces the runtime's catch (`velt_rt_catch_*`, the catch at a started pro
   that waits for that wake; the future registers as the awaiter, the node's wake runs it among
   its task's woken nodes, and its finish wakes the future.
 - **When the poll panicked**, the node becomes *panicked*: finished, its result slot never read,
-  transferred or dropped, its state machine never polled or dropped, the node never freed (a
-  leaf inside the leaked state may still wake it). The message moves into the node.
+  transferred or dropped, its state machine never polled or dropped again (the pads of its poll
+  dropped what it held). The message moves into the node, which is freed with its last
+  reference like any other, the exception with it: a leaf that still holds its waker holds a
+  reference (#2818).
 - **Awaiting a panicked node raises the panic again** in the awaiter (`panicRaise(message)`), so
   a panic travels through `await`s as through calls, until a catching node takes it, or reaches
   a poll that catches nothing, which ends the process with 101 as today.
@@ -454,8 +456,8 @@ variant of `#task-catch`, whose default variant std/task/catch_rt.velt calls `ve
   owner decision 3 of #2649). WebAssembly keeps the runtime's executor and catch.
 - **Leaks:** the cleanup pads (#2680) drop what the abandoned frames held, as under the runtime's
   catch, and what the panicked state machines held across their awaits ("Async state machines"
-  below, #2818). The panicked node itself (and a panicked task's root) and its exception are
-  still never freed.
+  below, #2818). A panicked node is freed with its last reference, its exception with it; a
+  panicked task's root is still never freed.
 
 Deleted from velt_rt when the executor switches: `velt_rt_catch_arm`, `_take`, `_settled`,
 `_message`, `_free` (rt_abi_async.md §1.5); `panic::{catch, Catching, CATCHING, MAY_CATCH,
