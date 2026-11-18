@@ -1,0 +1,16 @@
+// A read-only array is refused writes by its type (#3061), wherever it comes from, not only
+// through a variable declared read-only: a field and a call's result here. tsc gives TS2542 for the
+// element writes and TS2339 for the methods.
+class Holder {
+  items: readonly number[] = [1, 2];
+}
+function make(): readonly number[] {
+  return [3, 4];
+}
+function main(): void {
+  const h = new Holder();
+  h.items[0] = 9;
+  make()[1] = 8;
+  h.items.push(5);
+  make().sort();
+}
