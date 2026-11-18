@@ -581,8 +581,28 @@ impl FnLower<'_, '_> {
         }
         match self.cx.kind(ty) {
             TyKind::Array(e) | TyKind::Option(e, _) if self.inline(ty) => self.hand_ok(e),
+            _ if self.inline_parts(ty) => {
+                let tys = self.cx.part_types(ty);
+                tys.into_iter().all(|t| self.hand_ok(t))
+            }
             _ => false,
         }
+    }
+
+    /// Is a `ty` an object type's or a tuple's value held inline, every field in it (not a
+    /// class's object, an enum, or one with a field held out of line)? Its fields are handed
+    /// to the reader one by one (`hand_place`).
+    fn inline_parts(&mut self, ty: TyId) -> bool {
+        if !matches!(self.cx.kind(ty), TyKind::Adt(..) | TyKind::Tuple(_))
+            || !self.inline(ty)
+            || self.cx.is_class(ty)
+            || self.is_enum(ty)
+            || self.cx.proxiable(ty)
+        {
+            return false;
+        }
+        let n = self.cx.part_types(ty).len() as u32;
+        (0..n).all(|i| self.cx.cell_field(ty, i).is_none())
     }
 
     /// Is a `ty` held inline (not behind a pointer)?
@@ -641,6 +661,15 @@ impl FnLower<'_, '_> {
                 self.hand_place(&proj(p, Proj::Field(1)), e);
                 self.goto(done);
                 self.switch_to(done);
+            }
+            _ if self.inline_parts(ty) => {
+                let tys = self.cx.part_types(ty);
+                for (i, t) in tys.into_iter().enumerate() {
+                    if self.cx.reaches_lock_set(t) {
+                        let fp = self.field_place(p, ty, i as u32);
+                        self.hand_place(&fp, t);
+                    }
+                }
             }
             _ => self.hand_boxed(p, ty),
         }
