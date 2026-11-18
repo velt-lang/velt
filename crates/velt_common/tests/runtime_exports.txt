@@ -4,9 +4,6 @@ velt_rt velt_cpu_clmul_arm
 velt_rt velt_cpu_clmul_x86
 velt_rt velt_cpu_sha_arm
 velt_rt velt_cpu_sha_x86
-velt_rt velt_rt_all
-velt_rt velt_rt_all_or_reject
-velt_rt velt_rt_all_with_drop
 velt_rt velt_rt_alloc
 velt_rt velt_rt_array_view_cold
 velt_rt velt_rt_array_view_get
@@ -218,8 +215,6 @@ velt_rt velt_rt_process_args
 velt_rt velt_rt_process_node_argv
 velt_rt velt_rt_proxy_array_call
 velt_rt velt_rt_proxy_array_hole
-velt_rt velt_rt_race
-velt_rt velt_rt_race_ok
 velt_rt velt_rt_random_bytes
 velt_rt velt_rt_random_u64
 velt_rt velt_rt_rc_dec

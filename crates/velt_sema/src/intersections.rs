@@ -276,7 +276,8 @@ impl Ctx<'_> {
             },
             _ => return t,
         };
-        self.ty.intern(k)
+        let out = self.ty.intern(k);
+        self.ty.keep_readonly(t, out)
     }
 
     /// Is every value of `t` an object? An intersection is when a part is `object` or a type

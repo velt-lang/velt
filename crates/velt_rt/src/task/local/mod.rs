@@ -29,7 +29,6 @@ pub use catch::{
     velt_rt_catch_take,
 };
 pub use gate::{velt_rt_task_gate, velt_rt_task_gate_free, velt_rt_task_gate_wait};
-pub(crate) use losers::give_up;
 pub use losers::velt_rt_fut_detach;
 pub(crate) use micro::{grant_step, settled, step_free, ticket_pending};
 pub use micro::{velt_rt_await_ready, velt_rt_await_tick, velt_rt_microtask};
@@ -53,7 +52,7 @@ use std::task::{Context, Poll, Waker};
 use self::gate::Gate;
 use self::set::LocalSet;
 use self::timers::Timers;
-use super::all::ResultDropFn;
+use super::ResultDropFn;
 use super::{DropFn, PollFn, VeltFut};
 use std::sync::Arc;
 
@@ -501,10 +500,9 @@ fn current_set_or_new() -> *mut LocalSet {
 /// The owner hands promise `f` to another task (`spawn`, a channel, a settled promise): its
 /// result is transferred with `transfer` (in place, compiled transfer glue) on the task that
 /// produces it, so the other task never sees an object the producing task still references
-/// (#160). A started or lazy promise node keeps the function for when its state finishes; a
-/// race passes it on to its children (the winner's result is theirs); anything else (a join
-/// handle, whose task already had its inputs transferred, or a runtime leaf) produces nothing
-/// to transfer. A null `transfer` (a result with nothing to move or copy) only hands over a
+/// (#160). A started or lazy promise node keeps the function for when its state finishes;
+/// anything else (a join handle, whose task already had its inputs transferred, or a runtime
+/// leaf) produces nothing to transfer. A null `transfer` (a result with nothing to move or copy) only hands over a
 /// holder of a shared promise (task/shared.rs).
 #[no_mangle]
 pub unsafe extern "C-unwind" fn velt_rt_fut_transfer(
@@ -520,9 +518,6 @@ pub unsafe extern "C-unwind" fn velt_rt_fut_transfer(
     }
     // Whatever its result needs, the promise is the other task's now (#1497).
     node::mark_handed_over(f);
-    if crate::task::race::pass_transfer(f, transfer) {
-        return;
-    }
     if let Some(t) = transfer {
         node::set_transfer(f, t);
     }
