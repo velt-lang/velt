@@ -17,6 +17,7 @@ declare function velt_rt_bytes_copy(
   sourceEnd: i64,
 ): i64;
 declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
+declare function velt_simd_u8x16_splat(x: u8): u8x16;
 declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
 
 /**
@@ -88,4 +89,37 @@ export function writeUtf8(d: u8[], s: string, offset: usize = 0): usize {
     panic("RangeError: offset is out of bounds");
   }
   return writeText(d, s, offset, n);
+}
+
+/**
+ * Sets `d[start..end]` (`end` at most its length) to `byte` (`fill`): four 16-byte stores per
+ * step, then one, and the last bytes by a store ending at `end`, which overlaps bytes already
+ * set; under 16 bytes, byte by byte.
+ */
+export function fillBytes(d: u8[], byte: u8, start: usize, end: usize) {
+  if (end <= start) {
+    return;
+  }
+  if (end - start < 16) {
+    for (let i = start; i < end; i++) {
+      d[i] = byte;
+    }
+    return;
+  }
+  const v = velt_simd_u8x16_splat(byte);
+  let i = start;
+  while (i + 64 <= end) {
+    velt_simd_u8x16_store(v, d, i as u64);
+    velt_simd_u8x16_store(v, d, (i + 16) as u64);
+    velt_simd_u8x16_store(v, d, (i + 32) as u64);
+    velt_simd_u8x16_store(v, d, (i + 48) as u64);
+    i += 64;
+  }
+  while (i + 16 <= end) {
+    velt_simd_u8x16_store(v, d, i as u64);
+    i += 16;
+  }
+  if (i < end) {
+    velt_simd_u8x16_store(v, d, (end - 16) as u64);
+  }
 }

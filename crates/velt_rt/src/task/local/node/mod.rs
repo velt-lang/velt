@@ -52,7 +52,7 @@ pub(super) use self::panicked::{
 use self::transfer::run_transfer;
 use self::waker::NODE_WAKER;
 use super::set::Shared;
-use crate::task::all::ResultDropFn;
+use crate::task::ResultDropFn;
 use crate::task::{DropFn, PollFn, VeltFut, READY};
 
 /// The state finished; its result is in the slot (unless it was handed out).

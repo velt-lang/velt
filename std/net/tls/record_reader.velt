@@ -54,6 +54,8 @@ export class RecordReader {
   handshaking: bool;
   /** Whether the stream ended with close_notify. */
   ended: bool;
+  /** Who sends what this reads, for messages: "server" on a client, "client" on a server. */
+  peer: string;
   // The first failure: nothing is read past it, and `next` throws it again.
   private failure: TlsFailure | null;
 
@@ -69,6 +71,7 @@ export class RecordReader {
     this.cipher = null;
     this.handshaking = true;
     this.ended = false;
+    this.peer = "server";
     this.failure = null;
   }
 
@@ -135,6 +138,11 @@ export class RecordReader {
           return MORE;
         }
         const at = this.rstart;
+        // Not a TLS record (an HTTP request on a TLS port): a failure now, not a wait for a body
+        // that never comes.
+        if (!recordHeader(this.buf, at)) {
+          throw new TlsFailure(DECODE_ERROR, "not a TLS record (no TLS version in its header)");
+        }
         const len = ((this.buf[at + 3] as usize) << 8) | (this.buf[at + 4] as usize);
         if (len > MAX_CIPHER) {
           throw new TlsFailure(RECORD_OVERFLOW, `a record of ${len} bytes`);
@@ -167,7 +175,7 @@ export class RecordReader {
     }
     const at = this.rstart;
     const len = ((this.buf[at + 3] as usize) << 8) | (this.buf[at + 4] as usize);
-    return len > MAX_CIPHER || avail >= HEADER + len;
+    return !recordHeader(this.buf, at) || len > MAX_CIPHER || avail >= HEADER + len;
   }
 
   /** The transport ended where a record or close_notify was due: throws what that means. */
@@ -213,6 +221,13 @@ export class RecordReader {
       this.cend = at + HEADER + len;
       return type;
     }
+    if (type == ALERT && this.handshaking && len == 2) {
+      // A peer that fails on the other side's flight sends its alert before it switches its
+      // write keys: unprotected, while this side reads with the handshake keys (rustls takes it).
+      this.cstart = at + HEADER;
+      this.cend = at + HEADER + len;
+      return type;
+    }
     if (type != APPLICATION_DATA) {
       throw new TlsFailure(
         UNEXPECTED_MESSAGE,
@@ -254,7 +269,7 @@ export class RecordReader {
       // user_canceled: a warning, followed by close_notify.
       return false;
     }
-    throw new TlsFailure(d, `the server sent the alert ${alertName(d)} (${d})`, false);
+    throw new TlsFailure(d, `the ${this.peer} sent the alert ${alertName(d)} (${d})`, false);
   }
 
   // Reads more of the transport behind the unread records: false at its end.
@@ -281,4 +296,12 @@ export class RecordReader {
       this.pend = 0;
     }
   }
+}
+
+// Whether the bytes at `buf[at..]` can start a TLS record: its version's major byte is 3 (RFC 8446
+// §5.1, also TLS 1.2's). An unknown content type with it is a TLS peer's mistake, refused with
+// unexpected_message once the record is read; another major byte is no TLS at all (an HTTP
+// request on a TLS port), refused at once with decode_error, as rustls does.
+function recordHeader(buf: u8[], at: usize): bool {
+  return buf[at + 1] == 3;
 }

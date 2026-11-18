@@ -87,6 +87,8 @@ pub use hooks::NAMES as HOOK_NAMES;
 mod canon_key;
 mod glue_reach;
 pub mod ide;
+mod iface_method_checks;
+mod iface_method_writes;
 mod iface_overloads;
 mod iface_writes;
 mod index_signatures;
@@ -603,6 +605,9 @@ fn analyze_after_phase(cx: &mut ctx::Ctx) {
     timings::pass("make_dynamic_impls", || {
         body::expr::dynamic_fn_views::make_dynamic_impls(cx)
     });
+    // Every implementation exists now: those of interfaces whose methods are written get their
+    // method setters (`iface_method_writes`).
+    cx.finish_method_setters();
     timings::pass("check_adapter_writes", || cx.check_adapter_writes());
     timings::pass("check_adapted_array_reads", || {
         cx.check_adapted_array_reads()

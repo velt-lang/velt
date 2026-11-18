@@ -1,7 +1,8 @@
-// A read-only union bound whose read-only implementation casts the key to a mutable array and
-// writes through it (#379, `union_bound_value`): Velt doesn't check that a read-only array stays
-// one (TS4104), so a read-only bound doesn't keep an instantiation's narrower `number[]` from a
-// `string`. Velt refuses the conversion; tsc accepts it and Node prints `3 3`.
+// A read-only union bound whose implementation casts the key to a mutable array and writes
+// through it (#379, `union_bound_value`, #3061): the key, an instantiation's `number[]`, converts to
+// the bound as a view of that one array, which a cast gets past `readonly`. Writing a `string`
+// through it stops with the view's TypeError, as `xs as U[]` of an existing array does (tsc
+// accepts the program and Node prints `3 3`: a documented difference).
 type KeyValue = string | readonly (string | number)[];
 
 function push(x: (number | string)[]): void {

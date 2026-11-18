@@ -1,0 +1,21 @@
+readonly_array_aliases.velt:17:42: error: mismatched types
+  = note: expected { inner: { xs: f64[] } }, found { inner: { xs: readonly f64[] }; extra: f64 }
+
+readonly_array_aliases.velt:29:29: error: mismatched types
+  = note: expected Holder<f64[]>, found Holder<readonly f64[]>
+  = note: `Holder<readonly f64[]>` does not declare `implements Holder<f64[]>`
+
+readonly_array_aliases.velt:41:36: error: mismatched types
+  = note: expected Box<readonly f64[]>, found Box<f64[]>
+
+readonly_array_aliases.velt:53:37: error: the type `Sink<f64[]>` cannot be assigned to `Sink<readonly f64[]>`: a 'readonly' array in it would be a mutable one (TypeScript's TS4104)
+  = note: code could change the array through the mutable type; copy it (`[...xs]`) to get an array you may change
+
+readonly_array_aliases.velt:63:29: error: the type `Node2<readonly f64[]>` cannot be assigned to `Node2<f64[]>`: a 'readonly' array in it would be a mutable one (TypeScript's TS4104)
+  = note: code could change the array through the mutable type; copy it (`[...xs]`) to get an array you may change
+
+readonly_array_aliases.velt:66:60: error: the type `Map<string, (f64[]) => void>` cannot be assigned to `Map<string, (readonly f64[]) => void>`: a 'readonly' array in it would be a mutable one (TypeScript's TS4104)
+  = note: code could change the array through the mutable type; copy it (`[...xs]`) to get an array you may change
+
+readonly_array_aliases.velt:13:17: error: an `Object.freeze` result where a `Desc` is expected, in a program that assigns field `anon`, is not supported yet
+  = note: Node throws a `TypeError` when a frozen object's field is written, and Velt can't tell at run time that a value is frozen: pass it where a `Readonly<T>` is expected

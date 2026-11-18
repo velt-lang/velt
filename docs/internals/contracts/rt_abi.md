@@ -414,6 +414,24 @@ The operations are externs `velt_simd_<type>_<op>` (`velt_simd_u8x16_add`,
 them**: `velt_vir::simd` gives each symbol's operation and VIR signature (`SimdCall`), the
 verifier rejects a `velt_simd_*` extern that is not one, and both backends emit every call
 inline. They never cross the C ABI, so no target's vector calling convention is involved.
+A 256-bit vector (`f32x8`, #3140) [additive] is not a VIR type: it is a value of two `V128` halves,
+the low lanes first (32 bytes, 8-byte aligned as a `V128` is; the helpers' loads and stores are
+unaligned), and `velt_simd_f32x8_<op>` (`SimdCall::Wide`, `velt_vir::simd::wide`)
+takes it by address: each vector operand of the 128-bit operation is a `Ptr` to such a value, and a
+vector result is written through one more `Ptr`, the last parameter (`add(a, b, out)`,
+`splat(x, out)`, `load(array, at, out)`, `store(v, array, at)`). The operation reads the 32 bytes at
+each operand pointer, writes the 32 bytes at the result pointer, and does nothing else: it keeps no
+pointer, never unwinds and touches no other memory (but for `load` and `store`, their array).
+Lowering gives each result a slot of its own; backends read every operand before they write, so a
+result pointer equal to an operand's is harmless. Each lane is the 128-bit operation's lane of the
+matching half on every target. LLVM computes one vector of twice the lanes (a `ymm` instruction
+with AVX; two halves where legalization splits it), Cranelift the two halves in turn, both inline.
+To the optimizer a wide operation is a call that writes memory (`math::effects` is `Any`). A local
+of this shape is never split into field locals (`velt_opt::sroa`) and is written whole (`dce`'s
+zero initialization, the LLVM backend's aggregate assignment), so that LLVM keeps it one value.
+The operations are `splat`, `load`, `store`, `add`, `sub`, `mul`, `div`, `min`, `max`, `neg`,
+`abs`, `sqrt`, `mul_add` and `mul_add_fast`; the rest of the type is std code on the halves.
+
 `fits_both(a, b, at)` [additive] is `fits(a, at) && fits(b, at)` as one test against the smaller
 length; no std file declares it: `velt_opt` writes it where the two tests have one lane type and
 one index (`fits_pair`). It reads both headers whatever the first length is, so neither array may
@@ -747,8 +765,8 @@ at most 2^53 - 3 (all an index running to `len` inclusive needs). A typed array'
 below 2^52 for the same reason (its buffer is a `u8[]`). `velt_rt_bytes_zeroed(n)` and
 `velt_rt_bytes_uninit(n)` check `n` against the limit too. A buffer within the limit that the target cannot allocate is out of
 memory (`velt_rt_alloc` above), never a smaller block: on wasm32 a byte size past 2^31 - 1
-stops the program there, in `velt_rt_realloc`, in `velt_rt_bytes_zeroed`, `velt_rt_bytes_uninit` and in
-`velt_rt_bytes_concat`.
+stops the program there, in `velt_rt_realloc`, in `velt_rt_bytes_zeroed` and in
+`velt_rt_bytes_uninit` (which `u8[]`'s `concat` allocates with).
 
 ## Array methods on a proxy [additive, #823]
 
@@ -1013,16 +1031,13 @@ Declared in std (Velt signatures; `u8[]`/`string` are passed as in rt_abi_async.
 `u64`), checked against the runtime by `crates/velt_rt/tests/std_externs.rs`:
 - `u8[]` (`std/prelude/bytes.velt`): `velt_rt_bytes_zeroed(n: u64): u8[]`,
   `velt_rt_bytes_uninit(n: u64): u8[]` (contents not set: `Buffer.allocUnsafe`),
-  `velt_rt_bytes_index_of(b: u8[], byte: u8, from: i64): i64`,
-  `velt_rt_bytes_last_index_of(b: u8[], byte: u8, from: i64): i64` (−1 if absent),
   `velt_rt_bytes_set(dst: u8[], src: u8[], offset: u64): bool` (false: out of range),
   `velt_rt_bytes_copy(dst: u8[], src: u8[], targetStart: i64, sourceStart: i64, sourceEnd: i64): i64`
   (Node's `src.copy(dst, …)`: the bytes copied, −1 for a position out of range),
   `velt_rt_bytes_copy_within(b: u8[], target: i64, start: i64, end: i64)`,
-  `velt_rt_bytes_fill(b: u8[], byte: u8, start: i64, end: i64)`,
-  `velt_rt_bytes_slice(b: u8[], start: i64, end: i64): u8[]`,
-  `velt_rt_bytes_concat(a: u8[], b: u8[]): u8[]`. XOR masking (`xorMask`) is Velt code on SIMD
-  vectors there, and UTF-8 validation (`utf8Valid`, the WebSocket reader) in
+  `velt_rt_bytes_slice(b: u8[], start: i64, end: i64): u8[]`. Searching (`indexOf`,
+  `lastIndexOf`, `includes`), filling and concatenating (`std/lang/bytes/search.velt`,
+  `copy.velt`) and XOR masking (`xorMask`) are Velt code on SIMD vectors, and UTF-8 validation (`utf8Valid`, the WebSocket reader) in
   `std/encoding/utf8.velt`.
 - For protocols written in Velt (`u8[]`'s `utf8Slice` in `std/prelude/bytes.velt`;
   `std/net/websocket/text.velt`), on a range `[start, end)` (relative indices) so no slice is made:

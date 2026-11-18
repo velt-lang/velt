@@ -53,6 +53,12 @@ export class ByteReader {
     return x;
   }
 
+  /** Skips the next `n` bytes, copying nothing. */
+  skip(n: usize) {
+    this.need(n);
+    this.pos += n;
+  }
+
   /** A copy of the next `n` bytes. */
   bytes(n: usize): u8[] {
     this.need(n);

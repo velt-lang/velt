@@ -1,0 +1,8 @@
+// A read-only array through a generic function is still read-only: its result can't be stored
+// where a mutable array is expected (tsc: TS4104).
+function id<T>(x: T): T {
+  return x;
+}
+const ro: readonly number[] = [1, 2, 3];
+const m: number[] = id(ro);
+m.push(4);

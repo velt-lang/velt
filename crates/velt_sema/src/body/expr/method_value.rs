@@ -135,6 +135,7 @@ impl FnCx<'_, '_> {
         if self.own_literal_iface(obj.ty) {
             return self.detached_literal_method(prop, span);
         }
+        self.note_iface_method_read(obj.ty, prop);
         // An unsafe method is no value (a function type can't say it is unsafe), reported once
         // here rather than at the call the bound value makes.
         if let Some(Resolved::Def { def, .. } | Resolved::Virtual { def, .. }) =
@@ -277,8 +278,22 @@ impl FnCx<'_, '_> {
         {
             return None;
         }
+        self.note_iface_method_read(t, prop);
         let recv = strip_parens(object).clone();
         self.bound_parts(t, recv, prop, Some(exp), arg.span)
+    }
+
+    /// `prop` of a value of type `t`, read as a value: when it is a method of an interface (on
+    /// an interface value or a bounded type parameter), recorded, so a write of that method
+    /// refuses it (`crate::iface_method_checks`).
+    fn note_iface_method_read(&mut self, t: TyId, prop: &ast::Ident) {
+        if let Some(Resolved::Iface { iface, slot, .. }) = self.resolve_method(t, &prop.name) {
+            let n = self.cx.iface(iface).map_or(0, |i| i.methods.len());
+            if (slot as usize) < n {
+                self.cx
+                    .note_method_value_read(iface, slot as usize, prop.span);
+            }
+        }
     }
 
     /// `o.m` or `o.m.bind(o)` where `m` is a method of `o` (a path): `o.m`, for notes.
