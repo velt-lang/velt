@@ -371,6 +371,16 @@ impl Ctx<'_> {
         if errs.is_empty() {
             return;
         }
+        // A written method's site holds what its promises reject with (`method_site_ty`), not
+        // the `Promise<T>` written in its declaration.
+        if self.is_written_method_site(to) {
+            for e in errs {
+                if !self.reject_into_site_var(to, e) {
+                    self.seed_site_with(to, e);
+                }
+            }
+            return;
+        }
         // A type alias written there (`const make: Make = …`): the sites are in its body.
         let site = self.last_promise_site_in(to).or_else(|| {
             let body = *self.fn_sites.alias_written.get(&to)?;

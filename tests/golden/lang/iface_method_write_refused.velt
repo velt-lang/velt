@@ -1,0 +1,24 @@
+// A method member assigned through an interface value whose implementations can't all store it
+// (#379): a class's method (one per class), an object literal's method using `this`, and a field
+// of another function type. Each is named; the write is a compile error.
+interface Ctx {
+  el: string;
+  update(): void;
+}
+
+class Real implements Ctx {
+  el = "r";
+  update(): void {}
+}
+
+const r: Ctx = new Real();
+const thisLit: Ctx = {
+  el: "t",
+  update() {
+    console.log(this.el);
+  },
+};
+const other = { el: "o", update: () => 5 };
+const o: Ctx = other as unknown as Ctx;
+r.update = () => {};
+console.log(r.el, thisLit.el, o.el);
