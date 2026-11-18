@@ -25,8 +25,8 @@
 // - Dropped before it completes, the join drops its unfinished children in array order and the
 //   finished results (`rdrop`). Clones of the children's wakers keep the allocation alive: the
 //   join's reference count holds one for the join and one per clone.
-// Off every worker (code the runtime's executor runs on its own threads, sched_off.velt) it is the
-// runtime's join.
+// Made on a thread that isn't a worker (a C library's, calling an exported function), it is the
+// same join: only its awaiter polls it, on a worker (sched_foreign.velt).
 
 import { export as cExport } from "velt/ffi";
 import {
@@ -39,9 +39,9 @@ import {
   stateDrop,
 } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
-import * as off from "./sched_off";
 import * as t from "./sched_task";
 import * as wk from "./sched_wake";
+import * as workers from "./sched_workers";
 
 /**
  * The join: its heap future's header (poll, drop; the unit result takes no room), then the
@@ -101,9 +101,6 @@ export function schedAll(
   rdrop: usize,
   reject: bool,
 ): usize {
-  if (!t.onWorker()) {
-    return off.all(futs, count, bytes, results, rdrop, reject);
-  }
   const n = count as usize;
   const size = bytes as usize;
   const j = core(futs, n, J_KIDS + n * C_SIZE);
@@ -138,7 +135,12 @@ export function core(futs: usize, n: usize, bytes: usize): usize {
   m.st(j + J_WAKING, 0);
   m.st(j + J_CX, 0);
   m.st(j + J_CX + 8, 0);
-  const vt = t.main() + t.E_ALL_VT;
+  // Worker 0's waker table (before the start, on a C library's thread: the pending block's).
+  let g = t.main();
+  if (g === 0) {
+    g = workers.zeroBlock();
+  }
+  const vt = g + t.E_ALL_VT;
   for (let i: usize = 0; i < n; i++) {
     const c = kid(j, i);
     m.st(c + C_VT, vt);

@@ -1,11 +1,12 @@
 # Linking
 
 `velt build` compiles in-process (Cranelift, or LLVM through clang) and then links the program's
-objects with the runtime (`velt_rt`) into an executable. Linking used to need the system's
-linker and SDK: Visual Studio Build Tools on Windows, Xcode's command line tools on macOS,
-`build-essential` on Linux. Released toolchains now bring their own (#803): **LLVM's `lld`**
-and, per target, a **link kit** that stands in for the SDK. This page explains how the pieces
-were chosen and how they are made. Users' view: [Platforms](https://veltlang.com/docs/tooling/platforms/#the-bundled-linker).
+objects with the runtime (`velt_rt`) into an executable. Released toolchains bring their own linker,
+so no system linker or SDK (Visual Studio Build Tools on Windows, Xcode's command line tools on
+macOS, `build-essential` on Linux) is needed: **LLVM's `lld`** and, per target, a **link kit** that
+stands in for the SDK ([#803](https://github.com/velt-lang/velt/issues/803)). This page explains how
+the pieces are chosen and how they are made. Users' view:
+[Platforms](https://veltlang.com/docs/tooling/platforms/#the-bundled-linker).
 
 Code: `crates/velt_link` (`bundled.rs` chooses the linker, `lld.rs` builds lld's arguments,
 `kit/` describes and builds kits, `src/bin/velt-kit.rs` is the tool that builds them and
@@ -14,15 +15,19 @@ refreshes their lists), `crates/velt_link/kit/` (the kits' sources).
 ## Choosing the linker
 
 `velt_link::link` uses the bundled linker when the toolchain has both `lib/velt/lld[.exe]` and a
-complete kit for the target (`lib/targets/<triple>/kit.stamp` of the current format), and the
-system linker (`link.exe`, `cc`) otherwise. `$VELT_LINKER` overrides: `bundled` (an error when
-it is missing), `system`, or a path to a linker program given the system linker's arguments
-(as before). In a source checkout there is no `lib/velt/lld`; the Rust toolchain's `rust-lld`
-is the same program and stands in for it, so a kit written into `target/lib/targets/<host>`
-(`cargo run -p velt_link --bin velt-kit -- build --target <host> --out target/lib/targets/<host>`)
-is enough to try the bundled linker. `velt doctor` reports the choice and, for the system
-linker, why the bundled one was not used. The link stamp includes the choice, so switching
-relinks.
+complete kit for the target (`lib/targets/<triple>/kit.stamp` of the current format), and the system
+linker (`link.exe`, `cc`) otherwise. `$VELT_LINKER` overrides: `bundled` (an error when it is
+missing), `system`, or a path to a linker program given the system linker's arguments. In a source
+checkout there is no `lib/velt/lld`; the Rust toolchain's `rust-lld` is the same program and stands
+in for it, so a kit written into `target/lib/targets/<host>` (`cargo run -p velt_link --bin velt-kit
+-- build --target <host> --out target/lib/targets/<host>`) is enough to try the bundled linker.
+`velt doctor` reports the choice and, for the system linker, why the bundled one was not used. The
+link stamp includes the choice, so switching relinks.
+
+The system linker on Linux is `cc`, with `-fuse-ld=mold` or `-fuse-ld=lld` when `mold` or
+`ld.lld` is on `PATH` (`fast_ld.rs`): GNU ld takes several times as long, for static links and
+for debug links against the shared runtime alike. A link that fails with the flag is retried
+without it; a `$VELT_LINKER` program is run as given.
 
 The bundled lld also links WebAssembly (`-flavor wasm`), ahead of `rust-lld` and `wasm-ld`.
 
@@ -39,7 +44,7 @@ One executable links all formats; `velt` runs it with `-flavor link|gnu|darwin|w
   library (140 MB); on Windows it is a 120 MB static build of all of LLVM's targets.
 - Not LLVM's release archives: they are 0.8–1.9 GB, ship lld linked against a shared `libLLVM`
   on some platforms, and have no x86_64 macOS build.
-- `.github/workflows/lld.yml` builds it per release target (20–60 minutes) and caches it until
+- `.github/workflows/lld.yml` builds it per release target (25–60 minutes) and caches it until
   the scripts change; `release.yml` packages the result.
 
 ## Windows (`x86_64-pc-windows-msvc`)
@@ -58,13 +63,11 @@ library file is redistributed. Programs link with `/NODEFAULTLIB`: the `/DEFAULT
 the runtime's objects carry (`msvcrt`, `msvcprt`, `oldnames`, `uuid`) name Visual Studio's
 libraries.
 
-**The CRT question** (#803's open question, answered by linking hello, the HTTP server and the
-whole runtime with lld-link and only generated import libraries on a GitHub runner, then
-running the results in a Windows Server Core container without Visual Studio or
-`vcruntime140.dll`). The runtime stays a `*-windows-msvc` build with the dynamic CRT (`/MD`).
-With `ucrtbase.dll` imported, eleven symbols were left (and `_fltused` when `velt.exe` itself is linked); Rust's MSVC panics need nothing more,
-since `ucrtbase.dll` exports `__CxxFrameHandler3` and `_CxxThrowException`. The eleven are what
-Visual Studio's CRT startup objects provide, and `kit/crt/windows_x86_64.rs` provides them
+**The C runtime.** The runtime is a `*-windows-msvc` build with the dynamic CRT (`/MD`). With
+generated import libraries and `ucrtbase.dll` imported, a link with lld-link leaves the symbols
+below undefined (`_fltused` only when `velt.exe` itself is linked); Rust's MSVC panics need
+nothing more, since `ucrtbase.dll` exports `__CxxFrameHandler3` and `_CxxThrowException`. They
+are what Visual Studio's CRT startup objects provide, and `kit/crt/windows_x86_64.rs` provides them
 (`rustc --emit obj` of a `no_std` file; `velt_crt.obj` for executables, `velt_crt_dll.obj` for
 DLLs):
 
@@ -74,15 +77,15 @@ DLLs):
 | `_DllMainCRTStartup` | `velt_rt_shared.dll` | the same initializers, and the DLL's own `atexit` table |
 | `_tls_used`, `_tls_index` | every `thread_local` (Rust's and C++'s) | the TLS directory: template bounds (`.tls`, `.tls$ZZZ`), index slot, callbacks (`.CRT$XL*`) |
 | `__dyn_tls_on_demand_init`, `__tls_guard` | mimalloc, which MSVC compiles as C++ | runs C++ `thread_local` initializers (`.CRT$XD*`) once per thread |
-| `__security_cookie`, `__security_check_cookie`, `__GSHandlerCheck`, `__report_rangecheckfailure` | SQLite and mimalloc (`/GS`) | a random cookie at start, `__fastfail` on mismatch |
+| `__security_cookie`, `__security_check_cookie`, `__GSHandlerCheck`, `__report_rangecheckfailure` | mimalloc, and packages' C code compiled with MSVC's default `/GS` (such as the `sqlite` package's) | a random cookie at start, `__fastfail` on mismatch |
 | `` type_info::`vftable' `` | Rust's MSVC panic type descriptor | a vtable never called (exception matching compares names) |
 | `std::get_new_handler` | mimalloc's `operator new` | no handler |
 | `atexit` | the runtime's C code | `_crt_atexit` (executables), the module's table (DLLs) |
 | `_fltused` | Rust objects using floating point (`velt.exe`) | the marker value |
 
-`/MD` vs `/MT` (`crt-static`) was not needed: `crt-static` would have needed Visual Studio's
-static CRT libraries at every link. The `*-windows-gnullvm` target (mingw ABI) would have
-changed the runtime's triple, debug info format and native package ABI.
+The runtime does not use the static CRT (`/MT`, `crt-static`): it would need Visual Studio's
+static CRT libraries at every link. The `*-windows-gnullvm` target (mingw ABI) is not used
+either: it would change the runtime's triple, debug info format and native package ABI.
 
 **velt.exe and the shared runtime DLL** are built with Visual Studio (`/MD`) like any Rust
 program, which makes them import `vcruntime140.dll`. `scripts/package.ps1` links both again with
@@ -126,17 +129,17 @@ Linux toolchain archives.
 
 ## macOS (`*-apple-darwin`)
 
-`ld64.lld` with the kit as the SDK (`-syslibroot`): `usr/lib/libSystem.tbd` and the
-`CoreFoundation` and `SystemConfiguration` frameworks' `.tbd` (for native packages that list
-them in their bundle's `system_libs`: the runtime itself needs only libSystem), TAPI text stubs that Velt writes
-from `kit/macos.txt`: the names of every symbol those libraries export (`libSystem` with the
-libraries it re-exports, about 9 500 names; the frameworks, about 4 100), which
-`velt-kit lists macos` reads from the SDK's stubs. Programs need more than the runtime imports:
-compiled code calls `libSystem` directly (`fmod` and the other math functions, `memcpy`, …). The
-stubs hold names only (no code, no other content of Apple's SDK files); whether the list of names
-may be shipped is the same question as for Zig, which ships Apple's `.tbd` files themselves.
-lld signs arm64 executables ad hoc, as Apple's `ld` does. `-platform_version macos <min> <min>`
-with the same minimums as before (11.0 arm64, 10.12 x86_64, or `MACOSX_DEPLOYMENT_TARGET`).
+`ld64.lld` with the kit as the SDK (`-syslibroot`): `usr/lib/libSystem.tbd` and the `CoreFoundation`
+and `SystemConfiguration` frameworks' `.tbd` (for native packages that list them in their bundle's
+`system_libs`: the runtime itself needs only libSystem), TAPI text stubs that Velt writes from
+`kit/macos.txt`: the names of every symbol those libraries export (`libSystem` with the libraries it
+re-exports, about 9 500 names; the frameworks, about 4 100), which `velt-kit lists macos` reads from
+the SDK's stubs. Programs need more than the runtime imports: compiled code calls `libSystem`
+directly (`fmod` and the other math functions, `memcpy`, …). The stubs hold names only (no code, no
+other content of Apple's SDK files); whether the list of names may be shipped is the same question
+as for Zig, which ships Apple's `.tbd` files themselves. lld signs arm64 executables ad hoc, as
+Apple's `ld` does. `-platform_version macos <min> <min>` with the runtime's minimums (11.0 arm64,
+10.12 x86_64), or `MACOSX_DEPLOYMENT_TARGET` when it is newer.
 
 A native package's library that needs another system library or framework fails to link with
 the bundled linker; `VELT_LINKER=system` links it with Xcode's tools.

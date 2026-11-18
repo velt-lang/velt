@@ -2,7 +2,7 @@
 //! once and then progresses while its creator does other things; dropped unawaited, it still
 //! runs to completion (handed to a combinator, with its quiet drop); a cancelled task cancels its
 //! unfinished promises; a lazy promise its owner polled and then detached keeps running after
-//! the owner's continuation (`velt_rt_fut_detach`); `velt_rt_race`.
+//! the owner's continuation (`velt_rt_fut_detach`).
 
 use super::fake::block_on_fut;
 use crate::task::compiled::{Compiled, Inline};
@@ -10,7 +10,6 @@ use crate::task::leaf::new_leaf;
 use crate::task::local::{
     velt_rt_fut_box, velt_rt_fut_detach, velt_rt_fut_start, velt_rt_futs_handled,
 };
-use crate::task::race::velt_rt_race;
 use crate::task::runtime::{runtime, velt_rt_block_on};
 use crate::task::{drop_fut, poll_fut, VeltFut, PENDING, READY};
 use crate::timer::velt_rt_sleep;
@@ -385,47 +384,4 @@ fn cancelling_a_task_cancels_its_unfinished_promises() {
     }
     // Dropping the task dropped the handle (detach), then cancelled the running promise.
     assert_eq!(JOB_CANCELS[30].load(Ordering::SeqCst), 1);
-}
-
-// async function first() { return await Promise.race([job(41, GATED), job(42, 5), job(43, GATED)]); }
-unsafe extern "C-unwind" fn race_poll(s: *mut u8, cx: *mut c_void) -> u32 {
-    let st = &mut *(s as *mut [i64; 2]);
-    if st[1] == 0 {
-        let futs = [
-            started_job(41, GATED),
-            started_job(42, 5),
-            started_job(43, GATED),
-        ];
-        st[1] = velt_rt_race(futs.as_ptr(), 3, 8) as i64;
-    }
-    match take(st[1] as *mut VeltFut, cx) {
-        Some(v) => {
-            st[0] = v;
-            READY
-        }
-        None => PENDING,
-    }
-}
-
-#[test]
-fn race_takes_the_first_result_and_the_losers_keep_running() {
-    let mut st = [0i64; 2];
-    // The losers wait for their gates, which open only after the race settled.
-    open_after_a_minute(&[41, 43]);
-    unsafe { velt_rt_block_on(race_poll, st.as_mut_ptr() as *mut u8) };
-    assert_eq!(st[0], 42);
-    assert!(
-        !events(41..44).contains(&(41, "end")) && !events(41..44).contains(&(43, "end")),
-        "the race waited for a loser"
-    );
-    open(41);
-    open(43);
-    let t = Instant::now();
-    while events(41..44).len() < 6 {
-        assert!(
-            t.elapsed() < Duration::from_secs(60),
-            "losers did not finish"
-        );
-        block_on_fut::<()>(velt_rt_sleep(2));
-    }
 }

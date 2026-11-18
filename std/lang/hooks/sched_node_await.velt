@@ -109,10 +109,11 @@ export function takePlain(n: usize): usize {
  */
 @inline("always")
 export function ownSide(n: usize): bool {
+  const e = t.here();
   if (lk.mode() === lk.LK_NONE) {
-    return true;
+    // One worker, but the owner may be a thread that isn't one (sched_foreign.velt `start`).
+    return e !== 0;
   }
-  const e = t.exec();
   return e !== 0 && m.ld(e + t.E_CURRENT) === m.ld(n + nd.N_TASK);
 }
 

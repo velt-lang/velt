@@ -1,0 +1,55 @@
+// A function taking a read-only array, held in a `Map`, a read-only array or a promise, where
+// one taking a mutable array is expected (#3061): refused while the two function types' error
+// types are inferred apart (one site each), as converting one would let a call through the
+// target expect another error layout. tsc accepts it and Node prints `caught boom`, `caught
+// true r`, `caught t2`: a difference, until the conversions that carry errors from site to
+// site take read-only arrays (#3191).
+function boom(x: readonly number[]): number {
+  if (x.length > 0) {
+    throw new Error("boom");
+  }
+  return 0;
+}
+
+function ranged(x: readonly number[]): number {
+  if (x.length > 0) {
+    throw new RangeError("r");
+  }
+  return 0;
+}
+
+async function typed(): Promise<(x: readonly number[]) => number> {
+  return (x: readonly number[]): number => {
+    if (x.length > 1) {
+      throw new TypeError("t2");
+    }
+    return x.length;
+  };
+}
+
+async function main(): Promise<void> {
+  const m = new Map<string, (x: readonly number[]) => number>([["a", boom]]);
+  const v: Map<string, (x: number[]) => number> = m;
+  try {
+    console.log(v.get("a")!([1]));
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+
+  const fs: readonly ((x: readonly number[]) => number)[] = [ranged];
+  const gs: readonly ((x: number[]) => number)[] = fs;
+  try {
+    console.log(gs[0]([1]));
+  } catch (e) {
+    console.log("caught", e instanceof RangeError, (e as Error).message);
+  }
+
+  const p: Promise<(x: number[]) => number> = typed();
+  const f = await p;
+  try {
+    console.log(f([1, 2]));
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+  console.log(v.get("a")!([]), gs[0]([]), f([1]));
+}

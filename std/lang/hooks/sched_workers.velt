@@ -89,6 +89,15 @@ export function pending(): usize {
   return was === 0 ? n : was;
 }
 
+/**
+ * Worker 0's block from any thread: the executor's, or before the start the one the program's
+ * thread will start it on (`pending`).
+ */
+@noInline
+export function zeroBlock(): usize {
+  return m.ld(pending() + t.E_MAIN);
+}
+
 /** Whether the executor started (on the program's thread). */
 export function isStarted(): bool {
   return t.startedOrdered();

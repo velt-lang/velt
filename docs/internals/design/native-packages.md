@@ -1,441 +1,242 @@
-# Design: native code in packages
+# Native code in packages
 
-Status: implemented as a prototype ([#22](https://github.com/velt-lang/velt/issues/22)); the
-contract is [native_abi.md](../contracts/native_abi.md). The sections below are the proposal;
-[Decisions](#decisions) and [As built](#as-built) record what changed. The generated files were
-later revised by [#188](https://github.com/velt-lang/velt/issues/188): they are JSON, and this
-note uses their current names (`velt.lock.json`, the registry's `index.json`, the bundle's
-`native.json`).
+Status: implemented. Issue: [#22](https://github.com/velt-lang/velt/issues/22).
 
-A package can ship a Rust crate (`native/`) next to its Velt sources. Database drivers, image
-codecs and crypto then live in packages instead of `velt_rt`. **Users never need cargo or a Rust
-toolchain.** Installing such a package downloads a **prebuilt binary for the user's target**
-from the registry and caches it, in the style of npm prebuilt addons and esbuild's per-platform
-packages. Only package authors build, when they publish. Most packages are pure Velt and never
-touch any of this.
+## Summary
 
-How a program uses the binary depends on the mode:
+A package can ship a Rust crate next to its Velt sources. The crate is built by the package
+author when they publish; users download a **prebuilt library for their target** from the
+registry, in the style of npm's prebuilt addons and esbuild's per-platform packages. Users never
+need cargo or a Rust toolchain.
+
+The exact interface (pass modes, the function table, signature records, bundle files, start-up,
+linking) is the contract [native_abi.md](../contracts/native_abi.md). This note explains the
+design behind it. Packages that bind a C library rather than ship Rust use `declare c` and
+C `sources` instead ([c-ffi.md](c-ffi.md)); most packages are plain Velt and use neither.
+
+How a program uses the library depends on the mode:
 
 | Mode | How the native library is used |
 |---|---|
-| `velt dev` (JIT host) | loaded into the running program (`dlopen` / `LoadLibrary`), nothing linked |
-| `velt build` / `velt run` (debug) | linked as a shared library, the way debug builds use the shared runtime |
-| `velt build --release` | linked statically, so the executable stays self-contained |
+| `velt dev` (JIT host) | loaded into the running host (`dlopen` / `LoadLibraryW`), nothing linked |
+| `velt build` / `velt run` (debug) | linked as a shared library |
+| `velt build --release`, Linux and macOS | linked statically as one prelinked object |
+| `velt build --release`, Windows | linked against the DLL, which is placed next to the executable |
 
-## Starting point
+## Design
 
-- Packages hold only `velt.toml` and `src/**`. Both `vpm::contents` and `vpm::archive::check_path`
-  reject anything else.
-- `declare function` already declares a C-ABI symbol. The parser produces `ItemKind::ExternFn`,
-  which becomes `hir::Def::ExternFn` and then `vir::ExternFn` (https://veltlang.com/docs/reference/modules/). User
-  modules may use it, but every symbol must come from `velt_rt`:
-  - `velt_link::LinkRequest` takes only objects plus one runtime library.
-  - The dev JIT resolves only `velt_rt_host::abi_symbols::symbol_table()` and `c_symbols`.
-- This is why the sqlite, postgres and redis drivers were built into `velt_rt`
-  (`rt_abi_async.md` §14). They are packages now (`packages/postgres` with a crate; see
-  [As built](#as-built)), `packages/redis` is plain Velt (c-ffi.md "Follow-up track") and
-  `packages/sqlite` calls SQLite through `declare c`.
-
-## Package layout
+### Package layout and manifest
 
 ```text
-sqlite/
-  velt.toml
-  src/lib.velt          # the Velt API; `declare function velt_sqlite__open(...)` etc.
-  native/Cargo.toml    # crate-type = ["cdylib", "staticlib"]; depends on `velt_native`
+mypkg/
+  package.velt
+  src/lib.velt          # the Velt API; `declare function velt_mypkg__open(...)` etc.
+  native/Cargo.toml     # [lib] name = "velt_native_mypkg"; depends on `velt_native`
   native/src/lib.rs
 ```
 
-## Manifest: the `[native]` table
+The manifest's `native` field (`crates/vpm/src/manifest/mod.rs`, `NativeConfig`) names the
+crate directory and the targets the author publishes for:
 
-This addition to `velt.toml` is parsed by `vpm::manifest`. (The manifest is now `package.velt`,
-where this table is `native: { … }`: [manifest.md](../contracts/manifest.md).)
-
-```toml
-[native]
-path = "native"            # the Cargo crate directory (default "native")
-targets = [                # what `velt publish` builds or collects; it publishes nothing less
-  "x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu",
-  "x86_64-apple-darwin", "aarch64-apple-darwin",
-  "x86_64-pc-windows-msvc",
-]
-wasm = false               # true: the author also ships a wasm32-wasip1 static object
+```ts
+native: {
+  path: "native",                       // the crate's directory (default "native")
+  targets: ["x86_64-unknown-linux-gnu", "aarch64-apple-darwin", "x86_64-pc-windows-msvc"],
+},
 ```
 
-Validation rules:
-- The `path` directory contains a `Cargo.toml`.
-- Every entry in `targets` is a triple Velt supports.
-- No package may declare `[native]` when its name collides with another package's
-  [export prefix](#exported-symbol-names) after `-` becomes `_`.
+- `path` is one directory name in the package root, not `src` or `target`.
+- Every target is one `velt` itself builds for (`NATIVE_TARGETS`).
+- `wasm: true` is rejected: packages with native code cannot target WebAssembly.
 
-## ABI between Velt and the native crate
+### Calls from Velt into the library
 
-The contract will be a new file, `docs/internals/contracts/native_abi.md`.
+Velt calls the library through ordinary `declare function` and `declare async function`
+declarations, with the pass modes std's own runtime functions use: scalars by value, strings,
+arrays and structs of values as borrowed pointers, non-scalar results through a trailing
+out-pointer, errors as `IoResult<T>` / `IoStatus`, and native objects as `u64` handles that the
+package wraps in a class with `[Symbol.dispose]()`. Nothing in the parser, HIR or VIR is specific
+to native packages.
 
-### Calls from Velt into native code
+Classes, interfaces, unions, closures and functions cannot cross the boundary. That rule also
+keeps hot reload sound (below): native code never holds a Velt code pointer.
 
-Velt calls native code through the existing `declare function` and `declare async function`. The
-pass modes are the ones in `rt_abi.md` and `rt_abi_async.md` §3:
-- Scalars go by value.
-- Strings, arrays, structs and tuples go as a read-only borrowed pointer.
-- A non-scalar result goes through a trailing out-pointer, and the function returns `void`.
-- Errors use `IoResult<T>` / `IoStatus`.
-- Native objects are `u64` handles, with 0 meaning none (§3.2).
+### Export names
 
-Nothing changes in the parser, HIR or VIR.
+Every export of package `p` starts with `velt_p__` (with `-` in the package name written `_`),
+plus one init function, `velt_native_init_p`. The prefix is structural: no C library function
+starts with `velt_`, so an export never takes the name of one, and package names never contain a
+doubled, mixed or trailing `-`/`_`, so one package's prefix is never the start of another's.
+Names that differ only in `-` versus `_` count as the same package name.
 
-```ts planned
-// sqlite/src/lib.velt
-declare function velt_sqlite__open(path: string, flags: u32): IoResult<u64>;
-declare async function velt_sqlite__query(db: u64, sql: string): Promise<IoResult<Rows>>;
-```
+A `declare` outside std must name an export of **its own** package's library, with exactly the
+signature the library recorded. The SDK's `#[velt_native::export]` emits a signature record for
+each export (`velt_sig_<name>`), `velt native build` reads them from the built library into the
+bundle's `native.json`, and the driver checks every `declare` against them after type checking
+(`crates/veltc/src/native/`). A mismatch is a compile error at the `declare`, not a link error or
+a crash later. As a result, two packages cannot bind each other's native code and their symbols
+never collide.
 
-### Exported symbol names
+### How native code reaches the runtime: a function table
 
-Every symbol the crate exports starts with `velt_<pkg>__`, where `<pkg>` is the package name
-with `-` turned into `_`. No C library function starts with `velt_`, so an export can't take a
-C function's name, and package names never contain a doubled, mixed or trailing `-`/`_`, so one
-package's prefix is never the start of another's. The one exception is `velt_native_init_<pkg>`.
-The rule is checked in two places:
+The library never links a `velt_rt_*` symbol by name. Its init function receives a pointer to a
+`#[repr(C)]` table, `VeltRtApi`, whose entries are documented runtime functions (allocating and
+reading strings and byte arrays, creating futures, completing them, a fatal error, registering
+row cursors). A table is used because it is the only scheme that works the same in all modes:
 
-- **At publish:** `velt publish` reads the export list of the built library and refuses
-  unprefixed exports. The list is stored in the bundle's `native.json`.
-- **In sema:** a `declare` in a package module must name either an export of that package's own
-  native library or a `velt_rt_*` symbol from std's set. Anything else is a diagnostic at the
-  `declare` ("`velt_sqlite__opne` is not exported by the native library of `sqlite 1.2.0`"), not a
-  link error later.
+- a library `dlopen`ed into the `velt dev` host cannot see the host's runtime symbols, which are
+  linked statically and not exported;
+- a Windows DLL cannot import from an executable without an import library for it;
+- a release executable has no shared runtime to link against;
+- the table carries a version that the library checks before its first call.
 
-A package may only declare its own exports. Two packages therefore can't bind each other's native
-code, and the symbols of any two packages never collide.
+The table is append-only: `abi_version` grows by one with each addition, and fields are never
+removed or reordered. A library records the version it needs (`abi` in `native.json`,
+`native_abi` in the registry index). vpm refuses to install a library that needs a newer table
+than the running `velt` provides, and the SDK's init checks `abi_version` and `size` again.
 
-### How native code reaches the runtime: a versioned function table
-
-The native crate **never links `velt_rt_*` by symbol name.** It exports one entry point:
-
-```rust
-#[no_mangle]
-pub extern "C" fn velt_native_init(api: *const VeltRtApi) -> i32; // 0 = ok
-```
-
-The runtime calls it once, before any of the crate's exports run. `VeltRtApi` is a
-`#[repr(C)]` table:
-
-```rust
-#[repr(C)]
-pub struct VeltRtApi {
-    pub abi_version: u32,   // bumped when a field is added
-    pub size: u32,          // size_of::<VeltRtApi>() of the runtime that built it
-    pub str_from_utf8: unsafe extern "C" fn(*const u8, usize, *mut VeltStr),
-    pub str_clone: unsafe extern "C" fn(*const VeltStr, *mut VeltStr),
-    pub str_drop: unsafe extern "C" fn(*mut VeltStr),
-    pub bytes_alloc: unsafe extern "C" fn(usize, *mut VeltBytes),
-    pub err_new: unsafe extern "C" fn(i32, *const u8, usize, *mut VeltErr),
-    pub fut_new_blocking: /* see "Async" */,
-    pub fut_completer: /* see "Async" */,
-    // ... append-only
-}
-```
-
-Every field is a documented `velt_rt_*` function: the entry in `native_abi.md` names the symbol
-and points to its `rt_abi*.md` section. So native code still reaches the runtime only through
-documented `velt_rt_*` functions, but it receives them as pointers rather than linking them.
-
-A table is used rather than symbol imports because it is the only scheme that works the same in
-all three modes:
-- A library `dlopen`ed into `velt` (the JIT host) can't see the host's statically linked runtime
-  symbols. `velt` doesn't export them dynamically.
-- A Windows DLL can't import from `velt.exe` without an import library for it.
-- A release executable has no shared runtime to link against.
-- It also gives native code a version check before its first call.
-
-### Versioning
-
-- `abi_version` grows by one whenever fields are appended. Fields are never removed or reordered.
-  Existing behaviour is frozen in the same way as the `[M3/M4 — frozen]` sections of `rt_abi.md`.
-- A crate records the minimum `abi_version` it needs (`velt_native` writes it into `native.json`,
-  which becomes `native_abi` in the registry index).
-- `velt_native_init` returns an error code when `api.abi_version` or `api.size` is too small.
-- vpm checks `native_abi` against the running `velt` before downloading anything: "`sqlite 1.2.0`
-  needs Velt native ABI 3; this velt has 2. Update velt."
-- Package versions follow semver as usual. The native binaries are part of the package version
-  ([Registry](#registry-and-versioning)).
-
-### Who calls `velt_native_init`
-
-- **JIT (`velt dev`):** the host calls each package's init right after loading the library, then
-  passes the library's exports to `JITBuilder::symbol` using `dlsym` / `GetProcAddress` on the
-  export list.
-- **Executables (debug and release):** the driver writes a small `natives.o` with
-  cranelift-object, the same way it writes `emit_entry_object`. It defines
-  `velt_native_inits: [Option<extern "C" fn(*const VeltRtApi) -> i32>; N+1]`, terminated by a
-  null entry.
-  - `velt_rt`'s start-up walks the array before `velt_main` and reports a failing init as a
-    start-up error that names the package.
-  - Programs without native packages get an array holding only the terminator.
-  - This is an additive `rt_abi.md` change: one new symbol that the runtime references.
+Each package has its own init function rather than one global `velt_native_init`, which would
+collide in a static link. The generated `velt_main` calls every package's init before user code,
+with `velt_rt_native_api()`, and checks the result with `velt_rt_native_check`, which reports a
+failing init as a start-up error naming the package (`LowerOptions::native_inits` in
+`crates/velt_vir`). The JIT host resolves the init like any other export, so all modes start the
+same way.
 
 ### Memory and ownership
 
-- Strings, bytes and arrays that cross into Velt are allocated **through the table**: the runtime
-  allocator, so generated code can adopt them (`rt_abi_async.md` §4).
-- Arguments are borrowed for the duration of the call. Native code that keeps a string clones it
-  with `str_clone`.
-- Native-owned objects live behind `u64` handles. They follow the two handle kinds of §3.2: copy
-  structs with generation checks, or class-owned handles released by `dispose()`.
-- A panic must not unwind across `extern "C"`. `velt_native`'s export helper catches it and turns
-  it into an `IoResult` error, or aborts with the package name for functions that can't fail.
+- Strings and byte arrays that cross into Velt are allocated through the table, by the runtime's
+  allocator, so generated code adopts them like its own.
+- Arguments are borrowed for the duration of the call; the SDK rejects parameter types that
+  would outlive it (`&'static str`). Native code that keeps a value copies it.
+- Native objects live behind `u64` handles that are keys in a registry with generations, never
+  addresses: a forged or stale handle fails instead of reaching memory.
+- A panic never unwinds across `extern "C"`: the SDK's export wrapper turns it into an
+  `IoResult` error, or into a fatal error for functions that cannot fail.
 
 ### Async
 
-The native crate has its own copy of Rust std. It can't share `velt_rt`'s tokio runtime. The table
-offers two ways to produce a `VeltFut*` that the runtime polls, following the protocol of
-`rt_abi_async.md` §1–§2:
+The library has its own copy of Rust's standard library and cannot share the runtime's
+executor. The table offers two ways to produce a future the runtime polls:
 
-- `fut_new_blocking(work, ctx, drop_ctx, result_size) -> *mut VeltFut`. The runtime runs
-  `work(ctx, out)` on its blocking pool and completes the future with the result written to `out`.
-  This fits sqlite and most C-library wrappers.
-- `fut_completer(result_size, out_handle) -> *mut VeltFut`. This returns a pending future and a
-  completion handle. Any native thread, including one running the crate's own tokio runtime (for
-  example a postgres client), calls `api.complete(handle, result)` once.
-  - Dropping the future (cancellation) marks the handle as cancelled. A later `complete` then
-    frees the result instead of storing it.
+- `fut_blocking` runs a `work` function on the runtime's blocking pool and completes the future
+  with its result. This fits synchronous C-library wrappers.
+- `fut_completer` returns a pending future and a handle that any thread, including one running
+  the library's own executor, completes exactly once. If the future is dropped first, the result
+  is freed instead of stored. Handles are never reused, so a second completion is a fatal error,
+  never a use of freed memory.
 
-Both keep the code pointers in the native library, which is never unloaded (see the next
-section). No Velt code pointer is involved.
+### The `velt_native` SDK
 
-### The `velt_native` SDK crate
+`crates/velt_native` (with `crates/velt_native_macros`) contains no runtime code: the table
+type, safe wrappers for strings, byte arrays, arrays and handles, `#[derive(velt_native::Value)]`
+for structs in Velt's layout, the `init!` helper and the `#[export]` macro that writes the
+signature records and catches panics. It is tested against a mock table.
 
-`crates/velt_native` is published to crates.io with its version tied to `abi_version`. It contains
-no runtime code: only `VeltRtApi`, safe wrappers (`VeltStr`, `VeltBytes`, `IoResult<T>`, handle
-tables), the `init!` helper that stores the table, and `#[export]`-style helpers that catch panics.
-It is tested against a mock table.
+### Hot reload
 
-## Hot reload
+Only vtables, future headers and per-server handler slots may store code addresses
+([hot-reload.md](hot-reload.md)). Native libraries satisfy that rule because they are **loaded
+once per dev host and never unloaded**: their code pointers, including `work` functions, stay
+valid for the life of the host. When a library built from source changes (an author working on a
+path dependency), the host restarts instead of swapping (`crates/veltc/src/dev/native.rs`). A
+Velt edit in a program that uses native packages hot-swaps as usual, and state the library holds
+survives the swap.
 
-The rule from `hot-reload.md` decision 3 and `rt_abi_async.md` §13.5 is that only vtables, future
-headers and per-server handler slots may store code addresses.
+### Bundles
 
-- **Native libraries are loaded once per dev host and never unloaded or swapped.** Their code
-  pointers, including the `work` functions above, stay valid for the whole life of the host, so
-  storing them is safe.
-- When a native library changes, the host restarts instead of hot-swapping. This only happens to
-  authors, through a path dependency whose `native/` changed; the supervisor watches that
-  directory.
-- **Native code must never store a Velt code pointer.** In v1 this is enforced by construction:
-  sema rejects function-typed parameters on `declare` outside std.
-- Callbacks are planned for later. They will go through runtime-owned callback slots, read again
-  on every call and replaced on a swap, which is the `VeltHandler` pattern of §13.5.
+`velt native build [--target <triple>]` runs cargo in the crate directory and writes one
+**bundle** per target: `native.json` (target, table version, export list with signatures,
+system libraries), the shared library and, on Linux and macOS, one prelinked object.
 
-## Artifacts per target
+A Rust staticlib carries its own copy of Rust's standard library; linked next to the runtime
+(which carries another), their symbols clash. On Linux and macOS the build therefore prelinks
+the staticlib into one relocatable object (`ld -r --force-group-allocation`, ld64 `-r` on macOS)
+and hides every global except the package's exports and its init. The result cannot collide with
+the runtime or another package. `--force-group-allocation` is required: without it the
+runtime's copy of a section group (`DW.ref.rust_eh_personality`) wins over the library's and
+leaves the library's localized references dangling. Windows has no partial link, so release
+builds there link the DLL.
 
-`velt publish` produces one **native bundle** per target: an archive in the existing `VELTPKG1`
-format, with a different allowed-path set.
+The crate's `[lib] name` must be `velt_native_<p>`, so the library files of two packages never
+share a name (`-l` arguments, DLLs next to one executable). Tools can be overridden for cross
+builds with `VELT_CARGO`, `VELT_NATIVE_LD` and `VELT_NATIVE_OBJCOPY`
+(`crates/vpm/src/native/build.rs`).
 
-```text
-native.json            # target, abi_version, crate version, export list
-shared/libsqlite.so    # or .dylib, or sqlite.dll plus sqlite.dll.lib
-static/sqlite.o        # one prelinked relocatable object
-```
-
-- **Why a prelinked object instead of the staticlib.** A Rust `staticlib` carries its own copy of
-  Rust std. Linked next to `libvelt_rt.a`, the shared symbols clash: `rust_eh_personality`,
-  allocator shims, std internals.
-  - On the author's machine, `velt publish` runs `ld -r` (ELF) or `ld64 -r` (Mach-O) over the
-    staticlib.
-  - It then hides every global except `velt_native_init_<pkg>` and `velt_<pkg>__*`, using
-    `--version-script` / `-exported_symbols_list` or `objcopy --localize-hidden`.
-  - The result is a single object that can't collide with `velt_rt` or another package.
-- **Windows** has no partial link. The prototype checks whether the MSVC staticlib links cleanly
-  next to `velt_rt.lib`.
-  - If not, Windows `--release` places the DLL next to the executable instead, as the debug build
-    already does. This is the one open question below.
-- **wasm:**
-  - With `wasm = false`, building for `wasm32-*` fails with a diagnostic that names the package.
-  - With `wasm = true`, the author adds a `wasm32-wasip1` bundle holding only `static/`, which is
-    linked like the release path. wasm has no `dlopen`, and the browser flavor isn't supported in
-    v1.
-
-## Registry and versioning
-
-These additions extend the remote protocol in `manifest.md` (then `velt_toml.md`):
+### Registry, lockfile and cache
 
 | Request | Meaning |
 |---|---|
 | `GET <url>/api/v1/<name>/<version>/native/<triple>` | download a bundle |
-| `PUT <url>/api/v1/<name>/<version>/native/<triple>` | upload a bundle (`X-Velt-Checksum`, bearer token) |
+| `PUT <url>/api/v1/<name>/<version>/native/<triple>` | upload a bundle |
 
-The index entry gains two fields (shown in the TOML of the time; `index.json` has the same
-fields as JSON):
+- The index entry of a version gains `native_abi` and `native`, a map from target to the
+  bundle's checksum.
+- Versions are immutable, with one exception: a target can be **added** to a published version.
+  A target that exists is never replaced.
+- `velt.lock.json` pins the checksum of **every** published target of each locked package, so
+  the lockfile is identical on every OS and each machine verifies the bundle for its own target.
+  Under `--locked`, a locked version keeps exactly its locked targets.
+- Bundles are cached under `$VELT_HOME/cache/native/<name>-<version>/<triple>/` and verified
+  against the lockfile in a staging directory before anything loads or links them.
 
-```toml
-[[version]]
-version = "1.2.0"
-checksum = "sha256:…"            # the source archive, as today
-native_abi = 3
-native = { "x86_64-unknown-linux-gnu" = "sha256:…", "aarch64-apple-darwin" = "sha256:…" }
-```
+`velt publish` builds the targets the host can build and takes the others from
+`--native-artifacts <dir>`, so the intended workflow is a CI matrix with one runner per OS
+followed by one publish. Publishing fails when a target listed in `native.targets` is missing.
 
-- Versions stay immutable. The single exception is that a **target can be added** to a published
-  version, for example when a new platform arrives later. A target that already exists is never
-  replaced.
-- The source archive now also includes `native/**`, minus `target/`, because the fallback build
-  needs it.
-- `velt.lock.json` records the checksum of **every** published target of each locked package. The
-  lockfile is then identical on every OS, and a CI machine verifies the bundle for its own target.
-- Bundles are cached under `~/.velt/cache/native/<name>-<version>/<triple>/`. A cached bundle is
-  reused when its checksum matches the lock and replaced when it is tampered with, just like source
-  packages in `vpm::cache`.
+### Trust
 
-## Building
+A native library is code that runs in every program that uses the package. A program allows it
+explicitly in its manifest's `allowNative` list, by registry name or bound to a git repository or
+URL prefix (`crates/vpm/src/manifest/allow_native.rs`); installing checks every package with
+native code against the list. An update that changes a package's native code says so.
 
-- **Authors.** `velt native build [--target <triple>]` runs
-  `cargo build --release --target <triple>` in `native/`, then prelinks and writes the bundle to
-  `target/velt-native/<triple>/`.
-  - `velt publish` builds what the host can build and collects the other targets with
-    `--native-artifacts <dir>`. The intended workflow is a CI matrix with one runner per OS that
-    uploads its bundles, followed by one publish.
-  - Publishing fails if any target listed in `[native] targets` is missing. Targets can still be
-    added later.
-- **Users, fallback.** If the lock has no bundle for the user's target, vpm builds from the cached
-  sources with the same cargo invocation, when `cargo` is on PATH. Without cargo:
+### Building from source
 
-  ```text
-  error: `sqlite 1.2.0` has no prebuilt binary for aarch64-unknown-linux-musl
-         (published: x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu, ...).
-         Install Rust (https://rustup.rs) to build it from source, or ask the package author
-         to publish this target.
-  ```
-- **Trust.** A native bundle is code that runs in every program that uses the package. `velt add` and
-  `velt install` print once which packages carry native code. The checksums in `velt.lock.json` pin
-  the exact binaries.
+When the lockfile has no bundle for the user's target, vpm can build the crate from the cached
+sources with cargo, using the published `Cargo.lock` (`--locked`). For registry packages this
+requires `VELT_NATIVE_FROM_SOURCE=1`, because it runs the package's build scripts. Without a
+bundle and without that build, installing fails with an error that names the published targets.
+A path dependency on a package with native code builds its crate with cargo into the package's
+`target/velt-native/`.
 
-## Linking
+## Compilation
 
-`velt_link::LinkRequest` gains `native: &[NativeLink { shared: PathBuf, static_obj: PathBuf }]`,
-and the link stamp (`veltc/src/link.rs::link_key`) hashes the bundles.
-
-| Mode | What is linked |
+| Part | Where |
 |---|---|
-| Debug, Unix | `-L<dir> -l<pkg> -Wl,-rpath,<dir>` per package, as with `velt_rt_shared` |
-| Debug, Windows | link against the `.dll.lib`; `place_dll` copies the DLL next to the exe |
-| Release | append `static/<pkg>.o` after the objects and before the runtime library |
-| JIT | nothing linked; `dlopen` and `JITBuilder::symbol` as above. A static musl `velt` has no loader, so it says to use `velt dev --exe` |
+| Manifest, bundles, build, install, cache | `crates/vpm/src/manifest/`, `crates/vpm/src/native/`, `crates/vpm/src/install.rs` |
+| Registry endpoints | `crates/velt_registry` |
+| `declare` check against the export list | `crates/veltc/src/native/` |
+| Init calls in `velt_main` | `crates/velt_vir` (`LowerOptions::native_inits`) |
+| The function table | `crates/velt_rt/src/native/` |
+| Linking (`NativeLink`, DLL placement, system libraries) | `crates/velt_link/src/native.rs` |
+| Loading into the JIT host | `crates/veltc/src/dev/native.rs` |
 
-## Implementation plan
+A release object records the system libraries its crate needs (rustc's `native-static-libs`) in
+the bundle, and `velt_link` adds them only to programs that use the package. End-to-end coverage
+is `crates/veltc/tests/native_packages.rs`: an author publishes
+`crates/veltc/tests/native_package` to a `velt registry serve`; a user without cargo adds it and
+runs it with `velt run`, with
+`velt build --release` (the executable still runs after the cache is deleted) and with
+`velt dev` (a Velt edit hot-swaps and the library's state survives).
 
-The prototype driver is **sqlite**:
-- It is synchronous, bundles its C library through rusqlite, needs no server, and exercises
-  handles and `fut_new_blocking`.
-- `packages/sqlite` mirrors `std/sqlite.velt` with `velt_sqlite__*` exports.
-- `std/sqlite` stays until the drivers are migrated as a follow-up (done: see As built).
+## Alternatives considered
 
-Each step below lands with its own tests:
+**Linking runtime symbols by name.** Simpler for the library author, but it cannot work in the
+JIT host or for a Windows DLL, and it offers no version check (see the function table above).
 
-1. **vpm and registry** (`crates/vpm`, `crates/velt_registry`):
-   - parse `[native]`
-   - allow `native/**` in archives
-   - add the index `native` and `native_abi` fields, the bundle endpoints, the lockfile checksums
-     and `cache::fetch_native`
-   - add `GraphPackage.native` with exports and paths (a manifest contract update)
-2. **Author tooling** (`veltc`): `velt native build`, `velt publish --native-artifacts`, the
-   prelink step, the cargo fallback and its message, and a `cli.md` update.
-3. **Runtime table** (`crates/velt_rt`):
-   - `VELT_RT_API`, `fut_new_blocking`, `fut_completer`, `complete`
-   - the `velt_native_inits` walk at start-up
-   - `native_abi.md`, and a test in the style of `abi_symbols` that checks the table against the
-     doc
-4. **SDK** (`crates/velt_native`), unit-tested against a mock table.
-5. **Linking** (`crates/velt_link`, `veltc/src/link.rs`): `NativeLink`, shared and static
-   arguments, `natives.o`, and the link stamp.
-6. **Dev JIT** (`veltc/src/dev`, `velt_codegen_cl/src/dev/version.rs`): load the library, init it,
-   register the symbols, and restart on a native change.
-7. **Sema** (`velt_sema/src/collect/declare.rs`): check the export list, reject function-typed
-   parameters, and diagnose a wasm target without a bundle.
-8. **`packages/sqlite`.** An end-to-end test against a local `velt registry serve`, with no cargo
-   on PATH:
-   - `velt add sqlite`
-   - `velt run`
-   - `velt build --release`: the executable has no dynamic dependency on the library
-   - `velt dev`, where a Velt edit still hot-swaps
-9. **Docs:** https://veltlang.com/docs/tooling/packages/ and https://veltlang.com/docs/tooling/manifest/, and a book page "Writing a package with
-   native code".
+**Linking the Rust staticlib directly in release builds.** Two copies of Rust's standard
+library in one link clash on symbols such as `rust_eh_personality` and allocator shims. The
+prelinked, localized object avoids that on Linux and macOS.
 
-## Decisions
+**Building from source on every user's machine.** Requires a Rust toolchain for every user of
+the package and runs build scripts on install. Prebuilt, checksummed bundles keep users
+toolchain-free; building from source is an explicit opt-in.
 
-1. **Windows `--release` links the DLL** (next to the executable, as debug builds do): two Rust
-   staticlibs in one MSVC link collide on std symbols and MSVC has no `-r`. Linux and macOS
-   keep the prelinked object. Revisit if a clean static path on MSVC appears.
-2. **Signatures are required**, recorded by the SDK's `#[export]` (not written by hand) and
-   checked exactly for every `declare` of the package: a mismatch is a compile error.
-3. **Cache**: native bundles live in vpm's package cache, `~/.velt/cache/native/...`
-   (`$VELT_HOME/cache`).
-4. **Handles** surface in the package's Velt API as classes with `[Symbol.dispose]()` (and
-   `using`), plus a Copy reference type for async calls (`packages/sqlite`).
-5. **Integrity**: bundles are verified against `velt.lock.json` in a staging directory before they
-   are placed where anything loads or links them; `velt add`/`velt install` list the packages
-   that run native code.
+## Limitations
 
-## As built
-
-Differences from the proposal above:
-
-- **Init per package**: `velt_native_init_<pkg>` (one global `velt_native_init` would collide in
-  a static link). `velt_main` calls each package's init through VIR lowering
-  (`LowerOptions::native_inits`) with `velt_rt_native_api()` and checks the result with
-  `velt_rt_native_check`; there is no `natives.o` and no symbol the runtime must find. The JIT
-  host resolves the init like any export, so all three modes start the same way.
-- **The table** (`VeltRtApi`, version 1): `str_new`, `str_bytes`, `str_drop`, `bytes_new`,
-  `bytes_drop`, `fut_blocking`, `fut_completer`, `complete`, `fatal`. `str_bytes` keeps the
-  string layout private to the runtime; errors are built by the SDK from `str_new`.
-- **The check** runs in the driver after sema (`veltc/src/native.rs`), where the package graph
-  is known, rather than in `velt_sema`; HIR is unchanged. Only scalars, `string`, `u8[]`,
-  `IoResult<T>`/`IoStatus` and `void` cross the boundary, so function types are rejected by
-  construction.
-- **Prelinking** needs `ld -r --force-group-allocation`: without it the runtime's copy of a
-  section group (`DW.ref.rust_eh_personality`) wins over the library's and leaves the
-  library's now-local references dangling.
-- **Lockfile** `native` is a `[package.native]` subtable. Under `--locked` a locked version keeps
-  exactly its locked targets (a target the author added later does not fail CI).
-- **Library names**: the crate's `[lib] name` must be `velt_native_<pkg>`, so files never clash
-  (`-l` names, DLLs next to an executable). `native.json` may only name the bundle's own files.
-- **Builds from source** use the published `Cargo.lock` (`--locked`) and need
-  `VELT_NATIVE_FROM_SOURCE=1` for registry packages, since they run the package's build scripts.
-- **Prototype**: `packages/sqlite` (rusqlite; rows as JSON decoded with `JSON.parse<T[]>`),
-  later replaced by std's driver (below), tested end to end in
-  `crates/veltc/tests/native_packages.rs`: publish to a
-  `velt registry serve`, then without cargo `velt add`, `velt run`, `velt build --release` (runs
-  with the cache removed) and `velt dev` (a Velt edit hot-swaps; the database opened before the
-  swap survives).
-
-- **The drivers as packages** (std-layout.md §3): std's `velt/sqlite`, `velt/postgres` and
-  `velt/redis` left std and the runtime for `packages/sqlite` (the prototype's API gave way to
-  std's), `packages/postgres` and `packages/redis`, each with its crate in `native/`, its tests
-  (`velt test` in the package; `crates/veltc/tests/packages.rs` runs it for every package, building
-  the native crate first, as for any package with native code it builds locally) and its docs.
-  They use only public std APIs: the row and parameter API of velt/db (`decodeRows`,
-  `bindParams`) and velt/native. Programs in the repository depend on them by path
-  (`examples/apps/todo-api`, `bench/`); a path dependency on a package with native code builds
-  its crate with cargo into the package's `target/velt-native/`.
-
-## Known gaps
-
-- Verified on Linux x86_64 and macOS aarch64 (the repository's packages build, link as a shared
-  library in debug builds and as a prelinked object in release builds, and pass their tests
-  there). Windows DLL placement is written but untested.
-- `velt_native` is not on crates.io; a published package's crate cannot yet build from source on
-  a user's machine (the fallback) unless it depends on the SDK by git.
-- `[native] wasm = true` is rejected; WebAssembly targets with native packages are an error.
-- A remote publish uploads the package before its bundles: for a moment the version is visible
-  without libraries (users then get the "no prebuilt native library" error).
-- Callbacks from native code into Velt are not supported (planned: runtime-owned callback slots,
-  the `VeltHandler` pattern).
-- A package's release object brings no system libraries of its own: `velt_link` adds what the
-  database packages need (tokio-postgres' `whoami`: `secur32.lib`, the macOS frameworks) to every
-  executable. A `native.libs` field would let a package name them.
-- Packages have no "package-private" visibility: `private` members are usable only in their own
-  type's body (std's modules may use each other's, packages may not), so a package type made by
-  another of its types has a public factory taking a raw handle (`Client.fromHandle` in
-  packages/postgres). The handles are registry keys, so a forged one only fails (`ECLOSED`).
-- velt/db's `decodeRows` and `bindParams` take the address of a driver's cursor or sink as a
-  `u64`: a program that passes another number reads memory it should not (what a std-only
-  intrinsic used to rule out). A typed, runtime-checked handle is a follow-up.
+- Packages with native code cannot target WebAssembly (`wasm: true` is rejected).
+- Native code cannot call back into Velt: function types do not cross the boundary.
+- A statically linked (musl) `velt` cannot load native libraries into its JIT host; `velt dev`
+  says to use `velt dev --exe`.
+- A remote publish uploads the package before its bundles, so for a moment the version is
+  visible without libraries, and installing it then fails with the missing-library error.

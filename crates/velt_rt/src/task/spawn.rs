@@ -9,10 +9,10 @@
 //! or is dropped: drop glue kept with a value in flight, allowed by the hot-reload rule
 //! (rt_abi_async.md §13.5).
 
-use super::all::ResultDropFn;
 use super::compiled::{with_state_store, Compiled, OwnedStore};
 use super::local::Locals;
 use super::runtime::JoinHandle;
+use super::ResultDropFn;
 use super::{
     raw_cx, with_context, DropFn, PollFn, SendPtr, VeltFut, FUT_RESULT_OFFSET, PENDING, READY,
 };
