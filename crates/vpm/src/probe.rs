@@ -15,7 +15,6 @@ use std::fs::DirEntry;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-
 /// What a path was when it was probed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
