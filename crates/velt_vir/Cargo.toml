@@ -7,6 +7,7 @@ edition.workspace = true
 rustc-hash = "2.1.3"
 velt_common.workspace = true
 velt_sema.workspace = true
+velt_syntax.workspace = true
 
 [dev-dependencies]
 # Tests whose lowering reaches std's hooks load their program with the real std, as `velt build`

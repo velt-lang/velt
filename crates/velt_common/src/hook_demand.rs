@@ -62,11 +62,20 @@ pub enum Construct {
     /// `**` on floats (`a ** b`, `a **= b`, `Math.pow`): std's `pow` (std/lang/hooks/pow.velt),
     /// which only a program that has one loads (#1676).
     PowFloat,
+    /// A float to text: `ToString` / `TemplateToString` of a value that may hold one, the
+    /// formatting glue of such a value (`console.log`, `inspect`, `String()` of what is no
+    /// scalar), and a numeric key read through `any` or a proxy. Sema takes `Dynamic` as this
+    /// too, and this as [`Construct::WriteFloat`].
+    TextFloat,
+    /// `console.log` and `console.error` of a float (or of a type parameter's value, which may be
+    /// one): `console.log`'s float writers, which hold no other printing, so that a program that
+    /// prints only floats demands none of the text hooks.
+    WriteFloat,
 }
 
 impl Construct {
     /// Every construct, in bit order ([`ConstructSet`]).
-    pub const ALL: [Construct; 7] = [
+    pub const ALL: [Construct; 9] = [
         Construct::TextInt,
         Construct::TextUint,
         Construct::Format,
@@ -74,6 +83,8 @@ impl Construct {
         Construct::Dynamic,
         Construct::CatchUnwind,
         Construct::PowFloat,
+        Construct::TextFloat,
+        Construct::WriteFloat,
     ];
 
     /// The construct as the ICE names it.
@@ -86,17 +97,19 @@ impl Construct {
             Construct::Dynamic => "Dynamic (the glue of a value held as any)",
             Construct::CatchUnwind => "CatchUnwind (a call of catchUnwind)",
             Construct::PowFloat => "PowFloat (`**` on floats)",
+            Construct::TextFloat => "TextFloat (a float to text, or glue that may print one)",
+            Construct::WriteFloat => "WriteFloat (console.log of a float)",
         }
     }
 
     /// Its bit in a [`ConstructSet`].
-    pub const fn bit(self) -> u8 {
+    pub const fn bit(self) -> ConstructSet {
         1 << self as u8
     }
 }
 
 /// A set of [`Construct`]s, one bit each ([`Construct::bit`]).
-pub type ConstructSet = u8;
+pub type ConstructSet = u16;
 
 /// The words of a [`HookSet`]: one bit per entry of [`crate::std_hooks::HOOKS`].
 const WORDS: usize = crate::std_hooks::HOOKS.len().div_ceil(64);

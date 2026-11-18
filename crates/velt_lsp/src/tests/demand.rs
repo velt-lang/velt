@@ -90,6 +90,22 @@ fn on_demand(paths: impl Iterator<Item = String>) -> BTreeSet<String> {
 
 /// `velt check`'s path: the driver's load, and its check with the load callback.
 fn command_line(std: &Path, root: &Path, overlay: &HashMap<PathBuf, String>) -> Seen {
+    command_line_linking(std, root, overlay, false)
+}
+
+/// Is hook `i` std's float printing (`number_shortest`), which a warm build cache links prebuilt?
+fn prebuilt_shortest(i: usize) -> bool {
+    velt_common::std_hooks::HOOKS[i].name == "number_shortest"
+}
+
+/// [`command_line`], with std's float printing linked prebuilt when `linked`, as a build with a
+/// warm cache does.
+fn command_line_linking(
+    std: &Path,
+    root: &Path,
+    overlay: &HashMap<PathBuf, String>,
+    linked: bool,
+) -> Seen {
     let mut sm = SourceMap::default();
     let mut diags = vec![];
     let mut l = load_program(&mut sm, root, options(std, overlay), &mut diags).unwrap();
@@ -117,7 +133,7 @@ fn command_line(std: &Path, root: &Path, overlay: &HashMap<PathBuf, String>) -> 
         Some(Loads {
             run: &serve,
             kept: &kept,
-            prebuilt: None,
+            prebuilt: linked.then_some(&prebuilt_shortest as &(dyn Fn(usize) -> bool + Sync)),
         }),
     );
     let (_, _, _, served) = shared.into_inner().unwrap();
@@ -242,7 +258,9 @@ fn each_program_demands_what_it_needs() {
 }
 
 /// `console.log`'s float writer has a module of its own: a program that prints no float doesn't
-/// load it, and one that prints only a float loads no integer printing with it.
+/// load it, and one that prints only a float loads neither the integer printing nor the float
+/// text hooks with it (velt/lang/hooks/number_text), where std's float printing is linked
+/// prebuilt; without that, std's float printing is checked, and demands the integer hooks.
 #[test]
 fn only_a_float_printed_loads_the_float_writer() {
     let dir = tempfile::tempdir().unwrap();
@@ -255,7 +273,7 @@ fn only_a_float_printed_loads_the_float_writer() {
     ] {
         let src = format!("function main() {{\n{body}\n}}\n");
         let overlay = HashMap::from([(root.clone(), src)]);
-        let (_, modules) = command_line(&real_std(), &root, &overlay);
+        let (_, modules) = command_line_linking(&real_std(), &root, &overlay, true);
         assert_eq!(modules.contains(writer), loads, "{body}: {modules:?}");
         assert_eq!(
             modules.contains(integers),

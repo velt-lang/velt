@@ -14,20 +14,37 @@ pub(super) fn evaluate(cx: &mut Ctx, w: &Walk) {
         present |= match cx.ty.kind(t) {
             TyKind::Int(it) if it.is_signed() => Construct::TextInt.bit(),
             TyKind::Int(_) => Construct::TextUint.bit(),
-            // Floats print through the float hooks (`number_text::reach_hooks`).
-            TyKind::Float(_) | TyKind::Bool | TyKind::Str => 0,
-            // An instance may be an integer of either sign.
+            TyKind::Float(_) => Construct::TextFloat.bit(),
+            TyKind::Bool | TyKind::Str => 0,
+            // An instance may be an integer of either sign, or a float.
             TyKind::Param(_) | TyKind::Op(..) => {
-                Construct::TextInt.bit() | Construct::TextUint.bit() | Construct::Format.bit()
+                Construct::TextInt.bit()
+                    | Construct::TextUint.bit()
+                    | Construct::Format.bit()
+                    | Construct::TextFloat.bit()
             }
-            _ => format_bit(cx, t),
+            _ => format_bit(cx, t) | float_bit(cx, t, present),
         };
     }
     for &t in &w.formats {
-        present |= format_bit(cx, t);
+        present |= format_bit(cx, t) | float_bit(cx, t, present);
+    }
+    if w.prints_float {
+        present |= Construct::WriteFloat.bit();
     }
     cx.lazy.live.present |= present;
     cx.lazy.live.prints_float |= w.prints_float;
+}
+
+/// `TextFloat` where text or glue for a value of type `t` may print a float (none needed when
+/// `present` has it already).
+fn float_bit(cx: &mut Ctx, t: TyId, present: ConstructSet) -> ConstructSet {
+    let bit = Construct::TextFloat.bit();
+    let seen = &mut rustc_hash::FxHashSet::default();
+    match present & bit == 0 && super::super::number_text::may_hold_float(cx, t, seen, 0) {
+        true => bit,
+        false => 0,
+    }
 }
 
 /// What a round starts with, for what the round before learned too late to act on: what only
@@ -411,14 +428,25 @@ fn held(cx: &mut Ctx, t: TyId, insts: &Insts) -> Option<Vec<TyId>> {
 /// present demands them all, so that glue, which lowering makes per type, doesn't depend on each
 /// of its call sites being listed for the right construct (velt_common `hook_demand.rs`).
 /// `CatchUnwind` is its own bit: it demands std's panic path, which only a program that catches
-/// needs (and a source generator must not reach); so is `PowFloat`, std's `pow`.
+/// needs (and a source generator must not reach); so is `PowFloat`, std's `pow`. `TextFloat` is
+/// its own too, which `Dynamic` implies: a numeric key read through `any` is a float's text. A
+/// program that converts, formats or prints nothing that may hold a float checks no float hook.
+/// `WriteFloat`, `console.log`'s float writers, is its own as well, so that a program that prints
+/// only floats checks none of the text hooks; `TextFloat` implies it (an optional float printed
+/// alone is written by them too, and a type that may hold a float may be such a value).
 pub(super) fn demanded_for(present: ConstructSet) -> ConstructSet {
-    let own = Construct::CatchUnwind.bit() | Construct::PowFloat.bit();
+    let alone = Construct::CatchUnwind.bit() | Construct::PowFloat.bit();
+    let (text, write) = (Construct::TextFloat.bit(), Construct::WriteFloat.bit());
+    let own = alone | text | write;
     let integer = match present & !own {
         0 => 0,
         _ => Construct::ALL.iter().fold(0, |set, c| set | c.bit()) & !own,
     };
-    integer | (present & own)
+    let float = match present & (text | Construct::Dynamic.bit()) {
+        0 => present & write,
+        _ => text | write,
+    };
+    integer | float | (present & alone)
 }
 
 /// [`Construct::PowFloat`] if `e` is `**` (or `**=`) on floats, else nothing: `**` on integers

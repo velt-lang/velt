@@ -135,11 +135,6 @@ pub unsafe extern "C" fn velt_rt_write_str(stream: u32, s: *const VeltStr) {
 }
 
 #[no_mangle]
-pub extern "C" fn velt_rt_write_f64(stream: u32, v: f64) {
-    emit(stream, |b| fmt::push_inspect_f64(b, v));
-}
-
-#[no_mangle]
 pub extern "C" fn velt_rt_write_bool(stream: u32, v: u8) {
     emit(stream, |b| fmt::push_bool(b, v));
 }
@@ -199,16 +194,14 @@ mod tests {
         let out = capture::run(|| {
             unsafe { velt_rt_write_str(1, &s) };
             velt_rt_write_byte(1, b' ');
-            velt_rt_write_f64(1, 0.1 + 0.2);
-            velt_rt_write_byte(1, b' ');
-            velt_rt_write_f64(1, 1e21);
+            velt_rt_write_bool(1, 0);
             velt_rt_write_byte(1, b' ');
             velt_rt_write_bool(1, 1);
             velt_rt_write_byte(1, b'\n');
-            velt_rt_write_f64(2, f64::NAN);
+            unsafe { velt_rt_write_str(2, &s) };
             velt_rt_flush();
         });
-        assert_eq!(out, "x = 0.30000000000000004 1e+21 true\n[err]NaN");
+        assert_eq!(out, "x = false true\n[err]x =");
     }
 
     #[test]
