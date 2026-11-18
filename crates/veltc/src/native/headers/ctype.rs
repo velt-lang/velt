@@ -276,6 +276,16 @@ impl Headers {
         None
     }
 
+    /// Do `a` and `b` (a `declare c struct`'s name, a C type's) name the same struct or union
+    /// definition, each by its tag or a typedef (`point` and `point_t` of `typedef struct point
+    /// { … } point_t;`)?
+    pub fn same_record(&self, a: &str, b: &str) -> bool {
+        match (self.record(a), self.record(b)) {
+            (Some((x, _)), Some((y, _))) => x == y,
+            _ => false,
+        }
+    }
+
     /// Enums `node` defines, inside structs too: their tags are the file's in C.
     fn nested_enums(&mut self, node: &Value) {
         match node["kind"].as_str() {

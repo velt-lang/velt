@@ -444,7 +444,7 @@ fn check_decl(d: &Decl, h: &Headers, headers: &[String], windows: bool, diags: &
         return;
     }
     for (i, (shape, written)) in d.params.iter().zip(&c.params).enumerate() {
-        if let Err(note) = compare::compare(shape, &h.resolve(written, long_bits)) {
+        if let Err(note) = compare::compare_in(shape, &h.resolve(written, long_bits), h) {
             diags.push(
                 Diagnostic::error(
                     format!(
@@ -460,7 +460,7 @@ fn check_decl(d: &Decl, h: &Headers, headers: &[String], windows: bool, diags: &
             );
         }
     }
-    if let Err(note) = compare::compare(&d.ret, &h.resolve(&c.ret, long_bits)) {
+    if let Err(note) = compare::compare_in(&d.ret, &h.resolve(&c.ret, long_bits), h) {
         diags.push(
             Diagnostic::error(
                 format!(

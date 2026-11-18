@@ -1,7 +1,7 @@
 //! Whether what a `declare c` parameter or result passes matches the C type the header gives it
 //! (docs/internals/design/c-ffi.md "Checking declarations against C headers").
 
-use super::ctype::CType;
+use super::ctype::{CType, Headers};
 
 /// A number as it crosses.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -104,8 +104,15 @@ fn is_pointer_sized(names: &[String]) -> bool {
     })
 }
 
-/// `Err(note)` when `shape` doesn't match `c`; the note says what to declare.
+/// `Err(note)` when `shape` doesn't match `c`; the note says what to declare. Structs are
+/// compared by name alone: [`compare_in`] knows the headers' typedefs of them.
 pub fn compare(shape: &Shape, c: &CType) -> Result<(), String> {
+    compare_in(shape, c, &Headers::default())
+}
+
+/// [`compare`] in the headers `h`: a struct a declaration names (`point`) matches the C type
+/// when both name the same definition, under its tag or a typedef (`struct point`, `point_t`).
+pub fn compare_in(shape: &Shape, c: &CType, h: &Headers) -> Result<(), String> {
     match shape {
         Shape::Void => match c {
             CType::Void => Ok(()),
@@ -113,7 +120,7 @@ pub fn compare(shape: &Shape, c: &CType) -> Result<(), String> {
         },
         Shape::Scalar(s) => scalar(s, c),
         Shape::Struct(name) => match c {
-            CType::Named(n) if n == name => Ok(()),
+            CType::Named(n) if n == name || h.same_record(name, n) => Ok(()),
             CType::Named(n) => Err(format!("declare C struct `{n}`")),
             _ => Err(format!("declare {}", velt_for(c))),
         },
@@ -132,7 +139,7 @@ pub fn compare(shape: &Shape, c: &CType) -> Result<(), String> {
                 pointee,
                 pointee_names,
                 ..
-            } => self::pointee(p, pointee, pointee_names),
+            } => self::pointee(p, pointee, pointee_names, h),
             _ => Err(format!("declare {}", velt_for(c))),
         },
         Shape::Text => match c {
@@ -172,7 +179,7 @@ pub fn compare(shape: &Shape, c: &CType) -> Result<(), String> {
                     pointee,
                     pointee_names,
                     ..
-                } => self::pointee(p, pointee, pointee_names),
+                } => self::pointee(p, pointee, pointee_names, h),
                 other => Err(format!("C writes {} there, not a pointer", velt_for(other))),
             },
             _ => Err(format!("declare {}", velt_for(c))),
@@ -221,14 +228,16 @@ fn scalar(s: &Scalar, c: &CType) -> Result<(), String> {
     }
 }
 
-fn pointee(p: &Pointee, c: &CType, names: &[String]) -> Result<(), String> {
+fn pointee(p: &Pointee, c: &CType, names: &[String], h: &Headers) -> Result<(), String> {
     // `void *` takes and gives any pointer, as in C.
     if matches!(p, Pointee::Void) || matches!(c, CType::Void) {
         return Ok(());
     }
     let ok = match (p, c) {
         (Pointee::Scalar(s), _) => scalar(s, c).is_ok(),
-        (Pointee::CType(name), CType::Named(tag)) => name == tag || names.iter().any(|n| n == name),
+        (Pointee::CType(name), CType::Named(tag)) => {
+            name == tag || names.iter().any(|n| n == name) || h.same_record(name, tag)
+        }
         (Pointee::CType(name), _) => names.iter().any(|n| n == name),
         (
             Pointee::Ptr(inner),
@@ -237,7 +246,7 @@ fn pointee(p: &Pointee, c: &CType, names: &[String]) -> Result<(), String> {
                 pointee_names,
                 ..
             },
-        ) => self::pointee(inner, pointee, pointee_names).is_ok(),
+        ) => self::pointee(inner, pointee, pointee_names, h).is_ok(),
         _ => false,
     };
     match (ok, c) {

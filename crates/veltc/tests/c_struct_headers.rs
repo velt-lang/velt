@@ -75,6 +75,22 @@ struct node { struct node *next; uint8_t kind; void (*visit)(struct node *); };
 void use_box(box_t *b);
 void use_node(struct node *n);
 point *make_point(void);
+/* One struct spelled both ways: `point_t` and `struct point` name the same definition. */
+typedef struct point point_t;
+struct seg { point_t a; struct point b; };
+void use_seg(struct seg *s);
+void use_pt(point_t *p);
+/* Every kind of field, with padding before and after small ones and a nested struct with tail
+   padding: a slip in any width or alignment shows in the offsets. */
+#include <stdbool.h>
+#include <stddef.h>
+struct tail { int64_t big; uint8_t small; };
+struct kinds {
+  bool flag; int8_t i8; uint8_t u8; int16_t i16; uint16_t u16; float f; int32_t i32;
+  uint32_t u32; struct tail t; uint8_t after; void *p; size_t size; ptrdiff_t diff;
+  int64_t i64; uint64_t u64; double d; bool last;
+};
+void use_kinds(struct kinds *k);
 "#;
 
 const GOOD: &str = r#"declare c struct point { x: f64; y: f64; }
@@ -83,11 +99,22 @@ declare c struct node { next: Ptr<node> | null; kind: u8; visit: Ptr<void> | nul
 declare c("geo") function use_box(b: Ptr<box_t>): void;
 declare c("geo") function use_node(n: Ptr<node>): void;
 declare c("geo") function make_point(): Ptr<point> | null;
+declare c struct seg { a: point; b: point; }
+declare c("geo") function use_seg(s: Ptr<seg>): void;
+declare c("geo") function use_pt(p: Ptr<point>): void;
+declare c struct tail { big: i64; small: u8; }
+declare c struct kinds {
+  flag: bool; i8: i8; u8: u8; i16: i16; u16: u16; f: f32; i32: i32;
+  u32: u32; t: tail; after: u8; p: Ptr<void> | null; size: usize; diff: isize;
+  i64: i64; u64: u64; d: f64; last: bool;
+}
+declare c("geo") function use_kinds(k: Ptr<kinds>): void;
 "#;
 
 /// Structs by tag, by a typedef of a struct without a tag, and with a nested struct, a pointer
 /// to the struct itself and a function pointer (`Ptr<void>` until `CFunction`) all pass, on
-/// every 64-bit target's headers.
+/// every 64-bit target's headers; so does a struct the header spells both by its tag and by a
+/// typedef (as a field and as a pointee), and one with every kind of field.
 #[test]
 fn structs_matching_their_headers_pass_on_every_target() {
     let Some(_zig) = zig() else { return };

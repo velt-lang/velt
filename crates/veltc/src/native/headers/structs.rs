@@ -21,7 +21,8 @@ use super::shape::{field_shape, short_name};
 use super::{Decl, LibraryHeaders};
 
 /// What a `declare c struct` is, for the check: its fields in order and Velt's layout of it on the
-/// 64-bit targets (velt_vir's, which lowering checks against C's rules for the fields' types).
+/// 64-bit targets: fields in order at their natural alignment, as velt_vir lays it out (and checks
+/// against C's rules, `check_c_struct_layout`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct StructDecl {
     pub fields: Vec<(String, Shape)>,
@@ -180,11 +181,17 @@ pub(super) fn check_fields(
         if c.name != *field {
             refuse(
                 diags,
-                format!(
-                    "field {} of C struct `{name}` is `{}` in {at}, not the declaration's `{field}`",
-                    i + 1,
-                    if c.name.is_empty() { "an anonymous member" } else { &c.name }
-                ),
+                match c.name.is_empty() {
+                    true => format!(
+                        "field {} of C struct `{name}` is an anonymous member in {at}, not the declaration's `{field}`",
+                        i + 1
+                    ),
+                    false => format!(
+                        "field {} of C struct `{name}` is `{}` in {at}, not the declaration's `{field}`",
+                        i + 1,
+                        c.name
+                    ),
+                },
                 "declare every field by its C name, in C's order",
             );
             continue;
@@ -197,7 +204,7 @@ pub(super) fn check_fields(
             refuse(diags, format!("{what} is `{}` in {at}", c.ty), note);
             continue;
         }
-        if let Err(note) = compare::compare(shape, &h.resolve(&c.ty, long_bits)) {
+        if let Err(note) = compare::compare_in(shape, &h.resolve(&c.ty, long_bits), h) {
             refuse(
                 diags,
                 format!(
