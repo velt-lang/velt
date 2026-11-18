@@ -187,6 +187,26 @@ impl FnCx<'_, '_> {
             .narrowing_assertion(read, member, span)
             .unwrap_or_else(|h| self.cast_dynamic(h, member)))
     }
+
+    /// A record of another value type where a record view is expected (`Record<string, unknown>`
+    /// as `JSXProps`, a view of `Record<string, any>`; TypeScript assigns one to the other): the
+    /// value as the view's record, as it converts (`unknown` values as `any` ones), then as the
+    /// view. `Err(h)` otherwise.
+    pub(super) fn record_to_view(
+        &mut self,
+        h: hir::Expr,
+        exp: TyId,
+    ) -> Result<hir::Expr, hir::Expr> {
+        let Some((base, _)) = self.cx.record_view(exp) else {
+            return Err(h);
+        };
+        if base == h.ty || self.record_args(h.ty).is_none() {
+            return Err(h);
+        }
+        let mut r = self.try_coerce(h, base)?;
+        r.ty = exp;
+        Ok(r)
+    }
 }
 
 impl FnCx<'_, '_> {

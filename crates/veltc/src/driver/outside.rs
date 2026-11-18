@@ -85,9 +85,6 @@ const PURE_RUNTIME: &[&str] = &[
     "yield",
 ];
 
-/// Functions of a pure group that do reach outside, with what they reach.
-const IMPURE_IN_PURE_GROUP: &[(&str, &str)] = &[("velt_rt_signal_timeout", "the clock")];
-
 /// What the impure runtime groups reach, for the message (others: `a runtime function …`).
 const RUNTIME_REACH: &[(&str, &str)] = &[
     ("fs", "the file system"),
@@ -99,7 +96,6 @@ const RUNTIME_REACH: &[(&str, &str)] = &[
     ("child", "child processes"),
     ("env", "the environment"),
     ("process", "the environment"),
-    ("os", "the environment"),
     ("isatty", "the environment"),
     ("memory", "the environment"),
     ("worker", "the environment"),
@@ -240,18 +236,26 @@ fn is_test_runner(symbol: &str) -> bool {
     symbol.contains("V3stdP4testP3runN13runRegistered")
 }
 
+/// mimalloc's functions std's allocator hooks call.
+const MIMALLOC: [&str; 5] = [
+    "mi_malloc",
+    "mi_malloc_aligned",
+    "mi_realloc",
+    "mi_realloc_aligned",
+    "mi_free",
+];
+
 /// What calling the extern `symbol` reaches, if anything. Only what is known to be pure is
-/// inside; a system function (`open`, `CreateFileW`), a native package's function and anything
+/// inside; a C function (`open`, `CreateFileW`), a native package's function and anything
 /// else unknown is outside.
 fn reason(symbol: &str) -> Option<String> {
-    if let Some((_, what)) = IMPURE_IN_PURE_GROUP
-        .iter()
-        .find(|(p, _)| symbol.starts_with(p))
-    {
-        return Some(what.to_string());
+    // The allocator release builds call directly (std/lang/hooks/heap.velt), as pure as the
+    // runtime's (`velt_rt_alloc`).
+    if MIMALLOC.contains(&symbol) {
+        return None;
     }
     let Some(rest) = symbol.strip_prefix("velt_") else {
-        return Some(format!("a system function `{symbol}`"));
+        return Some(format!("a C function `{symbol}`"));
     };
     if let Some(runtime) = rest.strip_prefix("rt_") {
         let group = runtime.split('_').next().unwrap_or("");
@@ -392,14 +396,13 @@ mod tests {
         assert_eq!(outside("velt_rt_tcp_connect"), "the network");
         assert_eq!(outside("velt_rt_perf_now"), "the clock");
         assert_eq!(outside("velt_rt_local_offset_minutes"), "the clock");
-        assert_eq!(outside("velt_rt_signal_timeout_ms"), "the clock");
         assert_eq!(outside("velt_rt_random_u64"), "random numbers");
         assert_eq!(outside("velt_rt_memory_rss"), "the environment");
         assert_eq!(outside("velt_rt_isatty"), "the environment");
         assert_eq!(outside("velt_rt_worker_count"), "the environment");
-        // System functions, native packages (also those named like Velt's own prefixes), and
+        // C functions, native packages (also those named like Velt's own prefixes), and
         // runtime functions not listed as pure.
-        assert_eq!(outside("open"), "a system function `open`");
+        assert_eq!(outside("open"), "a C function `open`");
         assert_eq!(outside("velt_sqlite__open"), "native code of `sqlite`");
         assert_eq!(outside("velt_sigx__get"), "native code of `sigx`");
         assert_eq!(outside("velt_simdjson__parse"), "native code of `simdjson`");
@@ -422,6 +425,8 @@ mod tests {
             "velt_rt_timer_new",
             "velt_rt_json_parse",
             "velt_rt_alloc",
+            "mi_malloc",
+            "mi_free",
             "velt_rt_signal_new",
             "velt_rt_uncaught_now",
             "velt_atomic_load_u64",

@@ -1,0 +1,17 @@
+// A record of a value type that doesn't convert to the view's (#379): a `Record<string, string>`
+// where an interface with an index signature of `number` is expected is still an error, as in
+// TypeScript (TS2345); a `Record<string, unknown>` into an `any` view converts
+// (`record_into_view`).
+interface Counts {
+  total?: number;
+  [key: string]: number | undefined;
+}
+
+function sum(c: Counts): number {
+  return c.total ?? 0;
+}
+
+function main(): void {
+  const names: Record<string, string> = { a: "x" };
+  console.log(sum(names));
+}

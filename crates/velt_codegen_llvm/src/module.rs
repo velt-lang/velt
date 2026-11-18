@@ -39,10 +39,15 @@ const READ_CACHING_ATTRS: &str = "#8";
 /// Attribute group of runtime functions whose call marks the way it is on as rare.
 const COLD_ATTRS: &str = "#9";
 /// Attribute groups of the allocator functions (`runtime::Allocator`).
-const ALLOCATOR_ATTRS: [(Allocator, &str); 3] = [
+const ALLOCATOR_ATTRS: [(Allocator, &str); 8] = [
     (Allocator::Alloc, "#5"),
     (Allocator::Realloc, "#6"),
     (Allocator::Free, "#7"),
+    (Allocator::MiMalloc, "#11"),
+    (Allocator::MiMallocAligned, "#12"),
+    (Allocator::MiRealloc, "#13"),
+    (Allocator::MiReallocAligned, "#14"),
+    (Allocator::MiFree, "#15"),
 ];
 
 /// Intrinsic declarations requested while translating functions (deduplicated, sorted).

@@ -1,0 +1,1 @@
+array_bound_for_of_rows.velt:6:21: error: cannot iterate over a value of type `T`

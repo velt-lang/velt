@@ -254,7 +254,19 @@ impl FnLower<'_, '_> {
         self.finish_call(callee, argv, ret, throws)
     }
 
+    /// A call through function value `f`, whose code takes no frozen arguments as they are
+    /// (frozen.rs `unfrozen_args`) unless it is a known closure's (`call_known_fn`).
     pub(super) fn call_indirect(
+        &mut self,
+        f: &hir::Expr,
+        args: &[hir::Expr],
+        ty: TyId,
+        transfer: bool,
+    ) -> Operand {
+        self.unfrozen_args(|lw| lw.call_indirect_in(f, args, ty, transfer))
+    }
+
+    fn call_indirect_in(
         &mut self,
         f: &hir::Expr,
         args: &[hir::Expr],

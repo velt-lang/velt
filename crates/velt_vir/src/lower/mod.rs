@@ -80,6 +80,7 @@ mod call;
 mod callee;
 mod caller_aliases;
 mod caller_stores;
+mod cell_fields;
 mod cells;
 mod cfg;
 mod class_test;
@@ -104,11 +105,13 @@ mod for_of_shared;
 mod foreign;
 mod frame_envs;
 mod lower_profile;
+mod moved_args;
 mod raw_memory;
 mod sched;
 mod slot;
 mod state;
 use state::{DropEntry, LInfo, LState, Scope, ScopeKind};
+mod extern_args;
 mod fn_shapes;
 mod fresh_fns;
 mod frozen;
@@ -150,6 +153,7 @@ mod proxy_write;
 mod quiet;
 mod rc;
 mod receiver;
+mod record_view;
 mod reg_args;
 mod replaceable;
 mod rt;
@@ -168,7 +172,6 @@ mod strbuf;
 mod stringify;
 mod strings;
 mod symbols;
-mod system;
 mod system_views;
 mod template;
 mod this_fn;
@@ -254,11 +257,14 @@ struct Cx<'h> {
     /// Report every use of a captured variable's cell to the debug runtime (cells.rs,
     /// `LowerOptions::cell_checks`).
     cell_checks: bool,
-    /// The target triple, for system and host functions (`LowerOptions::target`).
+    /// Lower std's allocator hooks with the first runtime allocator call of each kind
+    /// (`LowerOptions::heap_hooks`).
+    heap_hooks: bool,
+    /// The target triple, for C and host functions (`LowerOptions::target`).
     target: String,
     /// CPU checks known while lowering (cpu_checks.rs).
     cpu_checks: cpu_checks::CpuChecks,
-    /// Calls of system and host functions the target lacks: (the declaration, the calling function, the
+    /// Calls of C and host functions the target lacks: (the declaration, the calling function, the
     /// user code being lowered then, `user_site`).
     unavailable: Vec<(DefId, Option<DefId>, velt_common::Span)>,
     /// Deferred types an instantiation met that sema didn't reduce (`types.rs` `reduce_op`).
@@ -277,10 +283,8 @@ struct Cx<'h> {
     /// velt/ffi's hooks found so far (c_call.rs): each is looked up once per program.
     ffi_hooks: FxHashMap<&'static str, DefId>,
     /// Per user call site of a standard-library function, that function (call.rs): what an
-    /// unavailable system function deep in std is reported as, at the user's call.
+    /// unavailable C function deep in std is reported as, at the user's call.
     std_calls: FxHashMap<velt_common::Span, DefId>,
-    /// The aggregates of C structs (system.rs), by the table's struct.
-    system_aggs: FxHashMap<usize, vir::AggId>,
     /// The 16-byte slot a `struct` returned in a register passes through (abi.rs `RegRet`).
     reg_slot_agg: Option<vir::AggId>,
     /// Lower no `await` steps (async_fn/await_order.rs): the program was lowered once and
@@ -289,6 +293,11 @@ struct Cx<'h> {
     /// This pass only finds the counted types (`lower_program`): functions leave out the work
     /// that finds none, the versions of their view loops (view_unswitch.rs).
     facts_only: bool,
+    /// Record the facts only the cycle analysis reads (closure environments by key, interface
+    /// tables, generator states, where values are made: boxing/cycles*.rs). Set under
+    /// `VELT_DEBUG_COUNTED`, the analysis's only user until step 5 of
+    /// docs/internals/design/cycles.md, so other compiles do none of it.
+    cycle_facts: bool,
     /// The functions of this facts-only pass whose view loops are left to version once the
     /// counted types are complete, and those of the functions being built (deferred_versions.rs).
     deferred: FxHashMap<FuncId, deferred_versions::Deferred>,
@@ -392,6 +401,9 @@ struct Cx<'h> {
     numbered: rustc_hash::FxHashMap<(program::Numbered, u32), u32>,
     /// Sharing facts observed in this pass (boxing/).
     facts: boxing::Facts,
+    /// Set while a `Callee::Dyn` call looks up its entry in a generic slot's instantiation table
+    /// (glue/generic_slots.rs): the only way a list of type arguments enters one.
+    dyn_call_lookup: bool,
     /// Generic instances shared by shape in this pass (shape/).
     shapes: shape::Shapes,
     /// `Program::impls` indexes per interface (`impls_of`), built on first use.

@@ -19,15 +19,14 @@
 // - Tables come from `rawAlloc` (the allocator compiled code uses, aligned to 8), which the
 //   runtime's own tables use too, so either side frees the other's.
 
-import { Ptr } from "velt/ffi";
 import {
+  addressAtomicCas,
+  addressAtomicLoad,
+  addressAtomicRmw,
+  addressAtomicStore,
   addressLoad,
   addressStore,
   noInline,
-  ptrAtomicCas,
-  ptrAtomicLoad,
-  ptrAtomicRmw,
-  ptrAtomicStore,
   rawAlloc,
   rawFree,
   strByteAt,
@@ -62,7 +61,7 @@ function tableOf(v: usize): usize {
 /** The entries in use of table `t`. */
 export function tableLen(t: usize): usize {
   // SAFETY: `t` is a live table; `len` is its first word.
-  return unsafe { ptrAtomicLoad(Ptr.at<usize>(t), "acquire") };
+  return unsafe { addressAtomicLoad<usize>(t, "acquire") };
 }
 
 /** The entries table `t` has room for. */
@@ -74,14 +73,14 @@ function tableCap(t: usize): usize {
 /** Entry `k` (below `len`) of table `t`. */
 export function entry(t: usize, k: usize): u32 {
   // SAFETY: `t` is a live table with more than `k` entries in use.
-  return unsafe { ptrAtomicLoad(Ptr.at<u32>(t + 3 * WORD + 4 * k), "relaxed") };
+  return unsafe { addressAtomicLoad<u32>(t + 3 * WORD + 4 * k, "relaxed") };
 }
 
 /** Writes entry `k` (below `cap`) of table `t`. */
 function setEntry(t: usize, k: usize, e: u32): void {
   // SAFETY: `t` is a live table with room for `k + 1` entries.
   unsafe {
-    ptrAtomicStore(Ptr.at<u32>(t + 3 * WORD + 4 * k), e, "relaxed");
+    addressAtomicStore<u32>(t + 3 * WORD + 4 * k, e, "relaxed");
   }
   ;
 }
@@ -145,7 +144,7 @@ function fill(t: usize, s: string, want: usize): void {
   }
   // SAFETY: `t` is a live table; `len` only grows.
   unsafe {
-    ptrAtomicRmw(Ptr.at<usize>(t), "max", len, "release");
+    addressAtomicRmw<usize>(t, "max", len, "release");
   }
   ;
 }
@@ -172,7 +171,7 @@ function allocTable(cap: usize, old: usize, n: usize): usize {
  */
 export function crumbs(s: string, data: usize, units: usize, k: usize): usize {
   // SAFETY: `s` is a live heap string, so its buffer and its header are.
-  const t = tableOf(unsafe { ptrAtomicLoad(Ptr.at<usize>(field(data)), "acquire") });
+  const t = tableOf(unsafe { addressAtomicLoad<usize>(field(data), "acquire") });
   if (t != 0 && k < tableLen(t)) {
     return t;
   }
@@ -183,10 +182,9 @@ export function crumbs(s: string, data: usize, units: usize, k: usize): usize {
 @noInline
 function build(s: string, data: usize, units: usize): usize {
   const want = (units + STRIDE - 1) / STRIDE;
+  const at = field(data);
   // SAFETY: as in `crumbs`: the header field of a live buffer.
-  const at = unsafe { Ptr.at<usize>(field(data)) };
-  // SAFETY: as above.
-  let seen = unsafe { ptrAtomicLoad(at, "acquire") };
+  let seen = unsafe { addressAtomicLoad<usize>(at, "acquire") };
   while (true) {
     const current = tableOf(seen);
     if (current != 0 && tableCap(current) >= want) {
@@ -203,7 +201,7 @@ function build(s: string, data: usize, units: usize): usize {
     }
     ;
     // SAFETY: as in `crumbs`.
-    const won = unsafe { ptrAtomicCas(at, seen, t, "acqrel", "acquire") };
+    const won = unsafe { addressAtomicCas<usize>(at, seen, t, "acqrel", "acquire") };
     if (won == seen) {
       return t;
     }
@@ -221,13 +219,12 @@ function build(s: string, data: usize, units: usize): usize {
 /** Notes that a thread remembers a position in a slice of the non-ASCII buffer whose text is at
  * `data`, so that freeing it bumps the epoch: `REMEMBERED` unless it has a table. */
 export function markRemembered(data: usize): void {
+  const at = field(data);
   // SAFETY: the caller holds a slice of the buffer, so its header is live.
-  const at = unsafe { Ptr.at<usize>(field(data)) };
-  // SAFETY: as above.
   unsafe {
-    if (ptrAtomicLoad(at, "relaxed") == 0) {
+    if (addressAtomicLoad<usize>(at, "relaxed") == 0) {
       // Losing the race to a table is fine: a table bumps the epoch too.
-      ptrAtomicCas(at, 0, REMEMBERED, "release", "relaxed");
+      addressAtomicCas<usize>(at, 0, REMEMBERED, "release", "relaxed");
     }
   }
 }

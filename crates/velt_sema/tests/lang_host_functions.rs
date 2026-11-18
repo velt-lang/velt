@@ -78,7 +78,7 @@ function main() {}
     let done = host_fn(&p, "done");
     assert_eq!(done.host.as_ref().unwrap().module, "other");
     assert_eq!(done.host.as_ref().unwrap().ret, HostTy::Void);
-    assert!(done.system.is_none() && !done.is_async);
+    assert!(!done.is_async);
 }
 
 /// A parameter of another type is an error naming it and listing what crosses.
@@ -242,7 +242,7 @@ function main() {}
 }
 
 /// A `u8[]` parameter is a buffer the host may write: its argument is a mutable borrow (a
-/// read-only array is rejected), and a view of bytes is accepted, as for system functions.
+/// read-only array is rejected), and a view of bytes is accepted, as for C functions.
 #[test]
 fn buffers_are_borrowed_as_written() {
     let p = ok_src(

@@ -11,13 +11,14 @@
 // Also the few OS calls a non-blocking socket needs whose details differ per OS: the last
 // error (`WSAGetLastError`), non-blocking mode (`ioctlsocket(FIONBIO)`) and no inheritance by
 // child processes, Winsock started (`WSAStartup`, once per reactor: it counts). Threads park
-// with `WaitOnAddress` (the `synchronization` library; wait_win32.velt's, re-exported). Child
-// processes stay the runtime's on Windows (`#child-rt`): their exit and pipes are no sockets.
+// with `WaitOnAddress` (the `synchronization` library; wait_win32.velt's, re-exported). A child
+// process's exit and pipes are no sockets: on Windows they wait on the executor's blocking pool
+// (std/process/child/child_win32.velt), not here.
 //
 // Functions are ws2_32's, ntdll's, kernel32's and the synchronization library's, all declared
 // from `c` (std names no other library), which the link resolves with those import libraries.
-// Handles (`HANDLE`, `SOCKET`) are `usize`s as the compiler's system functions have them, other
-// pointers `Ptr`s: one C symbol has one signature in a program.
+// Handles (`HANDLE`, `SOCKET`) are `usize`s, as in std's other declarations of these symbols,
+// other pointers `Ptr`s: one C symbol has one signature in a program.
 //
 // A timed wait shorter than the system timer's tick (about 15.6 ms) raises the process's timer
 // resolution first (`os.fineTimers`, wait_win32.velt, #2896): Windows ends a timeout at a tick.
@@ -37,6 +38,11 @@ export const EAGAIN: i32 = 10035;
 export const EINPROGRESS: i32 = 10035;
 /** `WSAEINTR`. */
 export const EINTR: i32 = 10004;
+/**
+ * A send on a stream whose peer is gone (std/net/pair.velt): `WSAESHUTDOWN`, Winsock's nearest,
+ * which the runtime's codes call `EPIPE` too.
+ */
+export const EPIPE: i32 = 10058;
 /** `WSAEMFILE`: no more sockets (an accepted handle too large for a descriptor). */
 const WSAEMFILE: i32 = 10024;
 /** `WSAENOTSOCK`: a socket whose poll can't be submitted (`rearm`). */
@@ -49,6 +55,8 @@ export const SEND_FLAGS: i32 = 0;
 export const SOCKET_FLAGS: i32 = 0;
 /** `sysconf`'s name of the online cores: none here (std/lang/hooks/thread_win32.velt counts). */
 export const SC_NPROCESSORS_ONLN: i32 = 0;
+/** `pthread_attr_setdetachstate`'s detached state (`PTHREAD_CREATE_DETACHED`; 0: no pthreads). */
+export const PTHREAD_CREATE_DETACHED: i32 = 0;
 /** Does an operation that finds a socket not ready call `rearm`? Yes: polls report once. */
 export const REARMS: bool = true;
 /**
@@ -419,7 +427,7 @@ export function threadCpu(c: u64): u64 {
   return 0;
 }
 
-/** Does `exitFd` give a descriptor to close? No: child processes stay the runtime's here. */
+/** Does `exitFd` give a descriptor to close? No: no child's exit is watched here. */
 export const EXIT_FD_OWNED: bool = false;
 
 /** No exit to watch here: -1. */

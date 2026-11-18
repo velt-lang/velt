@@ -1,0 +1,6 @@
+// A program whose only cycle runs through one route (generic_fn): sema finds a live type that can
+// hold itself, so printing tracks it and writes <ref *1> and [Circular *1] as Node does.
+class H { v: any = 1; }
+function wrap<T>(x: T): any { return x; }
+function main() { const h = new H(); h.v = wrap(h); console.log(h); }
+main();

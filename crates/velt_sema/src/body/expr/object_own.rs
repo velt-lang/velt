@@ -285,6 +285,12 @@ impl FnCx<'_, '_> {
         if let Some(d) = self.body_def {
             self.cx.program_dispatch.insert(d);
         }
+        // A library body with a dispatch over the program's classes is the program's glue.
+        if self.cx.scopes[self.module].is_library {
+            if let Some(d) = self.body_def {
+                self.cx.glue_bodies.insert(d);
+            }
+        }
         let sty = s.ty;
         let (l, mode) = self.option_binding(&s, sty, "<dyn>", false);
         let name = format!("<dyn@{}>", span.lo);
@@ -292,12 +298,21 @@ impl FnCx<'_, '_> {
             scope.names.insert(name.clone(), l);
         }
         let read = synth(ast::ExprKind::Ident(ast::Ident { name, span }), span);
+        // A record view's source (`velt_vir` `record_view.rs`) is held only by the view's
+        // record, never in a dynamic value: listed, it would make the dispatch depend on whether
+        // its hook module is loaded.
+        let source = match self.cx.std_def(velt_common::std_hook!(record_view_source)) {
+            Some(crate::ctx::Item::Def(d)) => Some(d),
+            _ => None,
+        };
         let mut classes: Vec<(usize, DefId)> = (0..self.cx.info.len() as u32)
             .map(DefId)
             .filter(|&d| {
-                self.cx
-                    .adt(d)
-                    .is_some_and(|a| a.kind == AdtKind::Class && !is_internal(&a.name))
+                Some(d) != source
+                    && self
+                        .cx
+                        .adt(d)
+                        .is_some_and(|a| a.kind == AdtKind::Class && !is_internal(&a.name))
             })
             .collect::<Vec<_>>()
             .into_iter()

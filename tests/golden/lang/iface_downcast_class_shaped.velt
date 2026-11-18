@@ -1,0 +1,23 @@
+// An interface value of a class only shaped like the extension, asserted to it (#379): Velt's
+// classes are nominal, so the class must declare `implements Named` (itself or through a base
+// class) to be one, as for a plain conversion. The check fails at the cast; Node goes on and
+// prints `structural 2 true`.
+interface Shape {
+  area(): number;
+}
+interface Named extends Shape {
+  name(): string;
+}
+class Base implements Shape {
+  area(): number {
+    return 2;
+  }
+}
+class Structural extends Base {
+  name(): string {
+    return "structural";
+  }
+}
+const s: Shape = new Structural();
+console.log("before");
+console.log((s as Named).name());

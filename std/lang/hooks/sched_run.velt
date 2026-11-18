@@ -14,6 +14,7 @@ import {
   stdUsed,
 } from "velt/lang/intrinsics";
 import * as bd from "./sched_budget";
+import * as fg from "./sched_foreign";
 import * as jn from "./sched_join";
 import * as lk from "./sched_lock";
 import * as me from "./sched_main_end";
@@ -73,9 +74,8 @@ export function run(e: usize, k: usize, mode: u32): void {
   if (stdUsed("nodeTimers") && mode !== 0) {
     timersAfter(e, k);
   }
-  if ((m.ld32(k + t.T_FLAGS) & t.BATCHED) !== 0) {
-    // Its poll as part of a batch ends (sched_queue.velt `pushNext`).
-    m.and32(k + t.T_FLAGS, ~t.BATCHED);
+  if ((m.ld32(k + t.T_FLAGS) & (t.BATCHED | t.JOIN_DUE)) !== 0) {
+    jn.polledFlags(e, k, mode);
   }
   m.st(e + t.E_CURRENT, 0);
   // A lazy worker 0's look after the poll (sched_loop.velt `alone`) reads `E_MODE` after this, and
@@ -89,7 +89,7 @@ export function run(e: usize, k: usize, mode: u32): void {
   } else if (m.cas32(k + t.T_STATE, t.RUNNING, t.IDLE) !== t.RUNNING) {
     // Woken during its poll.
     m.store32(k + t.T_STATE, t.SCHEDULED);
-    if (mode === t.M_LAZY) {
+    if (again(e, mode)) {
       m.st(e + t.E_AGAIN, k);
     } else {
       q.lock(e, mode);
@@ -97,6 +97,18 @@ export function run(e: usize, k: usize, mode: u32): void {
       q.unlock(e, mode);
     }
   }
+}
+
+/**
+ * Does the task worker `e` polled, woken during its poll, wait in `E_AGAIN` rather than queue
+ * (`mode` as `run`'s)? On a lazy worker 0, until the look after the poll; on a shared worker
+ * with its queues empty, it runs next from there with no lock, a push or a pop (sched_loop.velt
+ * `turnShared` queues it once anything else is queued first). What it printed was published at
+ * its poll's end all the same (`run`).
+ */
+@inline
+function again(e: usize, mode: u32): bool {
+  return mode === t.M_LAZY || (mode !== 0 && q.ownEmpty(e));
 }
 
 /**
@@ -239,9 +251,9 @@ function timersAfter(e: usize, k: usize): void {
   }
 }
 
-/** Queues task `k` again after its poll (`mode` as `run`'s: a lazy worker 0's after its look). */
+/** Queues task `k` again after its poll (`mode` as `run`'s), or leaves it in `E_AGAIN`. */
 function requeue(e: usize, k: usize, mode: u32): void {
-  if (mode === t.M_LAZY) {
+  if (again(e, mode)) {
     m.st(e + t.E_AGAIN, k);
   } else {
     wk.push(e, k);
@@ -327,8 +339,9 @@ function pollRootAgain(e: usize, k: usize): void {
 }
 
 /**
- * Task `k`'s root is done: its result to the join handle, its awaiter woken; at a lazy worker 0
- * (sched_lock.velt) in line, without the slot's lock (`jn.joinDoneLazy`).
+ * Task `k`'s root is done: its result to the join handle, its awaiter woken; with the slot's
+ * locks on, at the poll's end (`jn.polledFlags`); at a lazy worker 0 (sched_lock.velt) in line,
+ * without the slot's lock (`jn.joinDoneLazy`).
  */
 function rootDone(e: usize, k: usize): void {
   const tr = m.ld(k + t.T_TRANSFER);
@@ -353,6 +366,9 @@ function rootDone(e: usize, k: usize): void {
   // lock with one thread at the executor: sched_task.velt `E_SOLO`, sched_lock.velt `LK_NONE`).
   if (m.ld32(e + t.E_SOLO) !== 0) {
     const s = m.ld32(k + t.T_JOIN_STATE);
+    if ((s & t.J_FOREIGN) !== 0) {
+      return jn.joinDone(e, k, lk.LK_ON);
+    }
     const joiner = m.ld(k + t.T_JOINER);
     m.st(k + t.T_JOINER, 0);
     m.st32(k + t.T_JOIN_STATE, s | t.J_DONE);
@@ -365,7 +381,12 @@ function rootDone(e: usize, k: usize): void {
     }
     return;
   }
-  const kind = lk.kind();
+  if (lk.mode() === lk.LK_ON) {
+    // The slot ends at the poll's end, after its microtasks and the publish (`jn.polledFlags`).
+    m.or32(k + t.T_FLAGS, t.JOIN_DUE);
+    return;
+  }
+  const kind = jn.kindFor(k);
   if (kind === lk.LK_LAZY) {
     jn.joinDoneLazy(e, k, kind);
     return;
@@ -390,16 +411,20 @@ function finish(e: usize, k: usize): void {
     n = next;
   }
   micro.free(k);
-  // Not the root of `main`, or that root counted as live.
+  // Not the root of `main`, or that root counted as live (a C thread's task: sched_foreign.velt).
+  const foreign = (m.ld32(k + t.T_JOIN_STATE) & t.J_FOREIGN) !== 0;
   if (m.ld32(e + t.E_SOLO) === 0) {
     const g = m.ld(e + t.E_MAIN);
     if (e !== g) {
-      // What it printed reaches the OS before worker 0 can see it was the last live task and
-      // end the process (stdout is buffered per thread), as for the root of `main` (`rootDone`).
-      wk.handOffOutput();
+      // What it printed is published before worker 0 can see it was the last live task and end
+      // the process, as for the root of `main` (`mainDone`).
+      wk.publishPrinted(e);
     }
     // The executor's reference first: once the count below says no task is live, worker 0 may
     // end the program, and a block freed after that counts as leaked (`VELT_RC_STATS`).
+    if (foreign) {
+      return fg.ended(e, g, k);
+    }
     wk.release(k);
     if (mk.liveDown(g, e) === 1 && e !== g) {
       // The last live task: worker 0 may wait for that in `schedFinish`.
@@ -408,6 +433,9 @@ function finish(e: usize, k: usize): void {
     return;
   }
   // The only thread at the executor: worker 0's own count.
+  if (foreign) {
+    return fg.ended(e, e, k);
+  }
   m.st(e + t.E_LIVE, m.ld(e + t.E_LIVE) - 1);
   wk.release(k);
 }

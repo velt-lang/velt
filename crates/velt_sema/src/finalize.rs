@@ -97,7 +97,6 @@ pub(crate) fn build_defs(cx: &mut Ctx) -> rustc_hash::FxHashSet<DefId> {
                 params: f.params.iter().map(|p| p.ty).collect(),
                 ret: f.ret,
                 is_async: f.is_async,
-                system: f.system.clone(),
                 host: f.host.clone(),
                 c: f.c.clone(),
                 is_decorator: crate::decorators::decl_of(f).is_some(),
@@ -194,6 +193,7 @@ fn iface_def(cx: &mut Ctx, d: DefId) -> InterfaceDef {
                 private: false,
                 presence: false,
                 hidden: hidden.contains(&f.name),
+                cell: false,
             })
             .collect(),
         methods: i
@@ -322,7 +322,8 @@ fn adt_def(cx: &mut Ctx, d: DefId, memo: &mut FxHashMap<DefId, Vec<Option<hir::E
         .fields
         .iter()
         .zip(defaults)
-        .map(|(f, default)| FieldDef {
+        .enumerate()
+        .map(|(i, (f, default))| FieldDef {
             name: f.name.clone(),
             ty: f.ty,
             default,
@@ -330,6 +331,7 @@ fn adt_def(cx: &mut Ctx, d: DefId, memo: &mut FxHashMap<DefId, Vec<Option<hir::E
             private: f.private_to.is_some(),
             presence: crate::anon::has_presence(&cx.ty, a.kind, f),
             hidden: hidden.contains(&f.name),
+            cell: cx.cell_field(d, i),
         })
         .collect();
     let declared_struct = a.kind == AdtKind::Struct && a.decl.is_some() && !cx.place_struct(d);

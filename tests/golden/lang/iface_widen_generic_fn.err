@@ -1,0 +1,2 @@
+18:2: error: cannot cast `Box<f64>` as `IBox<f64>`
+an object literal made in a generic function is converted to `Box<f64>`, and is laid out per instance of the function's type parameters

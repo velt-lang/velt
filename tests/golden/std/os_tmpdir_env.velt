@@ -1,0 +1,58 @@
+// `os.tmpdir()` reads the environment each time, as Node's does: on POSIX `TMPDIR`, `TMP`,
+// `TEMP`, else "/tmp"; on Windows `TEMP`, `TMP`, else `%SystemRoot%\temp`; a trailing separator
+// dropped unless the path is a root. Each line is the same on every OS. (Node: the same with
+// `process.env.NAME = value` and `delete process.env.NAME`, which Velt writes with `setEnv` and
+// `removeEnv`.)
+import { platform, tmpdir } from "velt/os";
+import { removeEnv, setEnv } from "velt/process";
+
+function posix() {
+  setEnv("TMPDIR", "/velt-a/");
+  console.log("TMPDIR, trailing / dropped:", tmpdir() === "/velt-a");
+  removeEnv("TMPDIR");
+  setEnv("TMP", "/velt-b");
+  console.log("TMP next:", tmpdir() === "/velt-b");
+  removeEnv("TMP");
+  setEnv("TEMP", "/velt-c");
+  console.log("TEMP last:", tmpdir() === "/velt-c");
+  removeEnv("TEMP");
+  console.log("none set:", tmpdir() === "/tmp");
+  setEnv("TMPDIR", "/");
+  console.log("the root stays:", tmpdir() === "/");
+  setEnv("TMPDIR", "/velt-first");
+  setEnv("TMP", "/velt-second");
+  console.log("the first of two set wins:", tmpdir() === "/velt-first");
+  removeEnv("TMPDIR");
+  setEnv("TEMP", "/velt-third");
+  console.log("and the next of two:", tmpdir() === "/velt-second");
+}
+
+function windows() {
+  setEnv("TEMP", "C:\\velt-a\\");
+  console.log("TMPDIR, trailing / dropped:", tmpdir() === "C:\\velt-a");
+  removeEnv("TEMP");
+  setEnv("TMP", "D:\\velt-b");
+  console.log("TMP next:", tmpdir() === "D:\\velt-b");
+  removeEnv("TMP");
+  setEnv("SystemRoot", "C:\\Windows");
+  console.log("TEMP last:", tmpdir() === "C:\\Windows\\temp");
+  console.log("none set:", tmpdir().endsWith("\\temp"));
+  setEnv("TEMP", "C:\\");
+  console.log("the root stays:", tmpdir() === "C:\\");
+  setEnv("TEMP", "C:\\velt-first");
+  setEnv("TMP", "C:\\velt-second");
+  console.log("the first of two set wins:", tmpdir() === "C:\\velt-first");
+  removeEnv("TEMP");
+  console.log("and the next of two:", tmpdir() === "C:\\velt-second");
+}
+
+function main() {
+  removeEnv("TMPDIR");
+  removeEnv("TMP");
+  removeEnv("TEMP");
+  if (platform() === "win32") {
+    windows();
+  } else {
+    posix();
+  }
+}

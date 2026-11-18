@@ -226,7 +226,7 @@ pub(crate) struct Summaries {
     /// A finished unit's instantiation sites (`instantiation_cycles`).
     pub(crate) inst_sites: Option<crate::instantiation_cycles::Sites>,
     /// The functions a finished unit names outside its bodies (`ownership::local_async`).
-    pub(crate) outside_named: Option<rustc_hash::FxHashSet<crate::hir::DefId>>,
+    pub(crate) outside_named: Option<crate::ownership::OutsideNamed>,
     /// The types code outside a finished unit's bodies mentions (`ownership::local_async`).
     pub(crate) outside_tys: Option<Vec<crate::hir::TyId>>,
     /// A finished unit's module-level `let`s (`module_state::order`).

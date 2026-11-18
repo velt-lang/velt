@@ -1,0 +1,23 @@
+exec 0 true
+execSync 0 true
+spawn 0 true
+19 args
+"plain"
+"a b"
+""
+" "
+"q\"uote"
+"\""
+"\"\""
+"back\\slash"
+"trail\\"
+"trail sp\\"
+"end\\\\"
+"\\\""
+"x\\\\\"y"
+"a\\\\b c"
+"tab\there"
+"-e=\"x y\""
+"\\\\server\\share x"
+"ünï cødé ✓"
+"%PATH% $HOME *.txt ? ^&|<>"

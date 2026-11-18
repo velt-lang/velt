@@ -1,9 +1,10 @@
-//! Deferred writes on the runtime's streams under the executor in Velt (#2817): a program
-//! compiled with `VELT_SCHEDULER=std` keeps what `writeLater` queues on a runtime-owned stream
-//! (`streamPair`, `connectTls`) in Velt and hands it to the runtime's `write` once the poll ends
-//! (std/net/rt_later.velt): the runtime sends its own deferred bytes only after polls of its own
-//! tasks, which never run on the Velt worker. And the end of such a program gives back the send
-//! buffers of the reactor's sockets dropped without `close()` (sched_io_table.velt
+//! Deferred writes under the executor in Velt (#2817). On a runtime-owned stream (`connectTls`) a
+//! program compiled with `VELT_SCHEDULER=std` keeps what `writeLater` queues in Velt and hands it
+//! to the runtime's `write` once the poll ends (std/net/rt_later.velt): the runtime sends its own
+//! deferred bytes only after polls of its own tasks, which never run on the Velt worker. A
+//! `streamPair` is two of the reactor's sockets (std/net/pair.velt): the same programs on it check
+//! the reactor's deferred writes, closes and errors. And the end of such a program gives back the
+//! send buffers of the reactor's sockets dropped without `close()` (sched_io_table.velt
 //! `releaseBuffers`), which a leak check counts. Each program is built with the variable and
 //! runs with `VELT_THREADS=1` and `4` (the flusher is a task other workers may take; killed after
 //! a minute: lost bytes hang); it must print what Node prints.
@@ -89,6 +90,27 @@ fn blocks(o: &Output) -> Option<(u64, u64)> {
     Some((a.parse().ok()?, f.parse().ok()?))
 }
 
+/// The marker of a `streamPair`'s code in Velt: the symbols of std's file of the two sockets
+/// (std/net/pair_posix.velt), whose mangled names spell its module `pair__posix`
+/// (`_V3stdP3netP11pair__posixN13connectedPair`), which a macOS or Linux binary's symbol table
+/// holds. Not the file's name: only a Linux binary has that, in its DWARF; a macOS one leaves
+/// DWARF in the objects, and the file has no panic locations to name it. None on Windows
+/// (empty): a Windows binary names neither, and there the runtime has no pair of its own either
+/// (`velt_rt_tcp_pair` is gone), so a `streamPair` that links is std's.
+const PAIR: &[u8] = if cfg!(windows) { b"" } else { b"pair__posix" };
+
+/// The marker of velt/net's listener in Velt (std/net/fd_socket.velt `listenOn`), which a macOS
+/// or Linux binary names; none on Windows (empty), whose binary doesn't, as for [`PAIR`].
+const LISTEN: &[u8] = if cfg!(windows) { b"" } else { b"listenOn" };
+
+/// A send to a closed peer's message: the OS's words for `EPIPE`, on Windows `WSAESHUTDOWN`'s
+/// (std/lang/hooks/reactor_afd.velt `EPIPE`).
+const EPIPE_MESSAGE: &str = if cfg!(windows) {
+    "A request to send or receive data was disallowed because the socket had already been shut down in that direction with a previous shutdown call. (os error 10058)"
+} else {
+    "Broken pipe (os error 32)"
+};
+
 /// Which runs of [`prints_counted`] must free every block they allocated.
 #[derive(Clone, Copy, PartialEq)]
 enum Counted {
@@ -107,10 +129,6 @@ fn prints(name: &str, src: &str, want: &str, marker: &[u8]) {
 
 /// [`prints`], with the block counts compared only in the runs `counted` names.
 fn prints_counted(name: &str, src: &str, want: &str, marker: &[u8], counted: Counted) {
-    if !cfg!(unix) {
-        // Windows has no reactor in Velt yet: its sockets stay the runtime's.
-        return;
-    }
     let dir = test_dir::TestDir::new();
     // The goldens' test certificate and key (`TEST_CA`, `TEST_CERT`, `TEST_KEY`).
     std::fs::write(
@@ -120,7 +138,10 @@ fn prints_counted(name: &str, src: &str, want: &str, marker: &[u8], counted: Cou
     .unwrap();
     let exe = build(dir.path(), name, src);
     let bin = std::fs::read(&exe).unwrap();
-    assert!(contains(&bin, marker), "{name}: its code in Velt");
+    assert!(
+        marker.is_empty() || contains(&bin, marker),
+        "{name}: its code in Velt"
+    );
     for threads in ["1", "4"] {
         let o = run(&exe, name, threads);
         let out = String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n");
@@ -154,7 +175,7 @@ fn rt_later_shadow_white_box_tests_pass() {
 /// them, `tryWrite` takes nothing while they wait, `close` sends them first, and 4 MiB go
 /// through with `drained` as backpressure.
 #[test]
-fn deferred_writes_on_a_runtime_stream_reach_the_peer() {
+fn deferred_writes_on_a_stream_pair_reach_the_peer() {
     prints(
         "pair_later",
         "import { streamPair, TcpStream } from \"velt/net\";
@@ -239,7 +260,7 @@ async function main() {
 }
 ",
         "read 5\none two three four\nping\n0\nx\nbye\nEBADF\n[ 4194304, 105628 ]\n",
-        b"rt_later",
+        PAIR,
     );
 }
 
@@ -339,7 +360,7 @@ async function main() {
 }
 ",
         "hello x\nkept\n",
-        b"listenOn",
+        LISTEN,
     );
 }
 
@@ -391,7 +412,7 @@ async function main() {
 }
 ",
         "writeLater EBADF\ntryWrite 0\nwrite EBADF\ndrained EBADF\npeer got 8388608\n",
-        b"rt_later",
+        PAIR,
     );
     // Block counts not compared: a runtime thread still holding a waker of the finished reader
     // (its read waited on the closed stream) gives the reference back after the counts, at any
@@ -428,15 +449,15 @@ async function main() {
 }
 ",
         "read EBADF\npeer got 8388608\n",
-        b"rt_later",
+        PAIR,
         Counted::Never,
     );
 }
 
-/// `writeLater` on a closed runtime stream reports `EBADF` every time, whether it deferred bytes
+/// `writeLater` on a closed stream reports `EBADF` every time, whether it deferred bytes
 /// before its close or not.
 #[test]
-fn write_later_on_a_closed_runtime_stream_reports_ebadf() {
+fn write_later_on_a_closed_stream_pair_end_reports_ebadf() {
     prints(
         "later_after_close",
         "import { streamPair } from \"velt/net\";
@@ -471,7 +492,7 @@ async function main() {
 }
 ",
         "EBADF\nEBADF\nEBADF\nEBADF\nfirst\nEBADF\nEBADF\n",
-        b"rt_later",
+        PAIR,
     );
 }
 
@@ -492,15 +513,15 @@ async function main() {
 }
 ",
         "returning\n",
-        b"rt_later",
+        PAIR,
         Counted::Never,
     );
 }
 
-/// A failed deferred write reports the runtime's status as it is (code and message), to
-/// `drained` and to the next `writeLater`.
+/// A failed deferred write reports the OS's status as it is (code and message), to `drained` and
+/// to the next `writeLater`.
 #[test]
-fn a_failed_deferred_write_reports_the_runtimes_status() {
+fn a_failed_deferred_write_reports_its_status() {
     prints(
         "later_error",
         "import { streamPair } from \"velt/net\";
@@ -525,17 +546,17 @@ async function main() {
   x.close();
 }
 ",
-        "drained EPIPE broken pipe\nwriteLater EPIPE broken pipe\n",
-        b"rt_later",
+        &format!("drained EPIPE {EPIPE_MESSAGE}\nwriteLater EPIPE {EPIPE_MESSAGE}\n"),
+        PAIR,
     );
 }
 
-/// A program that ends with `process.exit` while a runtime stream with a deferred-write buffer
+/// A program that ends with `process.exit` while a stream with a deferred-write buffer
 /// is still open ends as the default build does. Its block counts are not compared: `process.exit`
 /// ends in the runtime with no hook of std's on the way, and other workers may still be using the
 /// buffers (sched_io_table.velt `releaseBuffers`).
 #[test]
-fn process_exit_with_an_open_runtime_stream_ends_the_program() {
+fn process_exit_with_an_open_stream_with_deferred_bytes_ends_the_program() {
     prints_counted(
         "later_process_exit",
         "import { streamPair } from \"velt/net\";
@@ -548,7 +569,7 @@ async function main() {
 }
 ",
         "kept\n",
-        b"rt_later",
+        PAIR,
         Counted::Never,
     );
 }

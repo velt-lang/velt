@@ -47,14 +47,17 @@ pub(crate) struct StdLoad<'a> {
     scope: &'a CheckScope,
     /// The files of the modules served.
     pub(super) files: Vec<velt_common::FileId>,
+    /// The prebuilt hook modules' objects the build may link instead of loading the modules
+    /// (`std_cache::prebuilt`, `velt_sema::Loads::prebuilt`).
+    pub(crate) prebuilt: Option<&'a super::std_cache::Finder>,
 }
 
 impl<'a> StdLoad<'a> {
     pub(super) fn new(
         (state, base): (&'a mut loader::LoadState, &'a [velt_sema::SourceModule]),
         generator_build: bool,
-        opts: &'a BuildOptions,
-        scope: &'a CheckScope,
+        (opts, scope): (&'a BuildOptions, &'a CheckScope),
+        prebuilt: Option<&'a super::std_cache::Finder>,
     ) -> Self {
         StdLoad {
             state,
@@ -63,6 +66,7 @@ impl<'a> StdLoad<'a> {
             opts,
             scope,
             files: vec![],
+            prebuilt,
         }
     }
 

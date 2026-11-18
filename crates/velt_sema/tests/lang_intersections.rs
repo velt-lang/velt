@@ -257,11 +257,18 @@ fn a_write_to_an_absent_optional_field_tells_the_copy_apart() {
 #[test]
 fn spreading_the_copy_tells_it_apart() {
     let src = "type A = { a: f64 }; type AB = A & { b: f64 };";
+    // Once the spread's object is looked at (#2956): Node's has `b` too.
     let e = err_src(&format!(
         "{src} function main() {{ const ab: AB = {{ a: 1, b: 2 }}; const x: A = ab;
-           const y = {{ ...x, c: 3 }}; console.log(y.c); }}"
+           const y = {{ ...x, c: 3 }}; console.log(y); }}"
     ));
-    assert!(e.contains("spreads an `A`"), "{e}");
+    assert!(e.contains("it is spread into a"), "{e}");
+    assert!(e.contains("this program prints a"), "{e}");
+    // Reading its fields shows nothing: it is a new object in Node too.
+    ok_src(&format!(
+        "{src} function main() {{ const ab: AB = {{ a: 1, b: 2 }}; const x: A = ab;
+           const y = {{ ...x, c: 3 }}; console.log(y.c, y.a); }}"
+    ));
     // Spreading the source keeps all its fields, as in Node.
     ok_src(&format!(
         "{src} function g(a: A): f64 {{ return a.a; }}

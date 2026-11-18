@@ -71,7 +71,7 @@ unit_fields! {
         decorator_uses, c_exports, enclosing_class, static_this, static_copies, static_copy_of,
         generator_values, overload_sets, callback_wrappers, kept_fns, kept_consts, symbol_keys,
         held_borrows_used, object_copies, method_facts, super_calls, type_defaults, diags,
-        widening_values, recursive_union_instances, js_api_modules,
+        widening_values, recursive_union_instances, js_api_modules, glue_bodies,
     ],
     // Saved in part (`special`).
     special: [sigq, type_level],

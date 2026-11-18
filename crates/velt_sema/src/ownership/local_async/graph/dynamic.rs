@@ -47,6 +47,7 @@ pub(super) fn untraced_nodes(cx: &Ctx, g: &Graph) -> Vec<bool> {
     let mut work = vec![];
     for (i, node) in g.nodes.iter().enumerate() {
         let seed = g.unknown[i]
+            || g.forced.get(i).copied().unwrap_or(false)
             || (g.srcs[i].is_empty() && !matches!(node, Node::Lit(_)))
             || matches!(*node, Node::Local(d, l) if g.held.referenced.contains(&d) && is_param(cx, d, l));
         if seed {
@@ -159,7 +160,7 @@ impl Walk<'_, '_> {
 /// The graph's dynamic-value tables, once its walk is done: what is untraced (per node, and per
 /// conversion), and the calls through function values by the type called through.
 pub(super) fn finish(cx: &Ctx, g: &mut Graph) {
-    g.untraced = untraced_nodes(cx, g);
+    super::wire::wire(cx, g);
     let mut by_ty: FxHashMap<TyId, usize> = FxHashMap::default();
     for (ci, call) in g.indirect.iter().enumerate() {
         let k = *by_ty.entry(call.ty).or_insert_with(|| {

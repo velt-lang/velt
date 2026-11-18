@@ -1,6 +1,10 @@
 //! `velt_rt_race` / `velt_rt_race_ok`: `Promise.race` and `Promise.any` over a runtime-sized
 //! array of heap futures.
 //!
+//! On native targets the executor in Velt races in Velt (std/lang/hooks/sched_race.velt); its
+//! only call of these is for code the runtime's executor runs off every worker
+//! (std/lang/hooks/sched_off.velt). They go when that path moves (#2196).
+//!
 //! The children are driven like `velt_rt_all`'s (a `FuturesUnordered` of [`Child`]ren, so only
 //! woken children are re-polled, with the same cooperative-budget rule); the winner moves its
 //! result into the race's own result slot, and the others are dropped right away. Like JS, that

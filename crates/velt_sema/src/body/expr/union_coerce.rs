@@ -129,7 +129,10 @@ impl FnCx<'_, '_> {
                     Err(back) => value = back,
                 }
             }
-            None
+            // A type parameter's value whose bound's members are all `exp`'s (`K` of `K |
+            // Falsy` as `KeyValue | Falsy`, #379) is the whole union, its member picked at run
+            // time (`union_bound_value`).
+            s.union_bound_value(value, exp).ok()
         })
     }
 

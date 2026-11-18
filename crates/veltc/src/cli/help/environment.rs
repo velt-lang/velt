@@ -29,6 +29,11 @@ pub(super) const ENVIRONMENT: &[(&str, &str)] = &[
         "VELT_RT_LINK",
         "`static`: debug builds link the static runtime instead of the shared one",
     ),
+    (
+        "VELT_HEAP_HOOKS",
+        "`0`: release builds allocate through the runtime's allocator; `1`: through mimalloc \
+         directly also with a debug runtime (default: with a release runtime that has mimalloc)",
+    ),
     ("VELT_LINKER", "`bundled`, `system`, or a linker program"),
     (
         "VELT_BUILD_CACHE",
@@ -52,6 +57,11 @@ pub(super) const ENVIRONMENT: &[(&str, &str)] = &[
         "VELT_STD_OBJECT_FILL",
         "set: a build compiles the std functions it does not find with clang and stores them \
          (`velt cache warm` sets it)",
+    ),
+    (
+        "VELT_PREBUILT_HOOKS",
+        "`0`: builds load the std modules of prebuilt hooks instead of linking their objects; \
+         `fill`: a build compiles and stores the objects it does not find",
     ),
     (
         "VELT_BUILD_STAMP",

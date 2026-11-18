@@ -1,17 +1,23 @@
-// velt/net (internal): `streamPair`, two connected in-memory streams.
+// velt/net (internal): `streamPair`, two connected streams on the reactor of the executor in Velt
+// (std/lang/hooks/sched_io.velt): a `socketpair` on macOS and Linux, a loopback connection on
+// Windows. Both ends are the reactor's sockets, so every `TcpStream` operation on them runs in
+// Velt on the worker, as on a connected socket. The ends are made by `#net-pair-ends`:
+// std/net/pair_sched.velt where the executor in Velt runs (every native build), and
+// std/net/pair_none.velt elsewhere (WebAssembly), which has no sockets for them.
 
 import { TcpStream } from "velt/net/tcp_stream";
-
-declare function velt_rt_tcp_pair(): u64[];
+import { connectedEnds } from "#net-pair-ends";
 
 /**
- * Two connected in-memory streams, as Node's `duplexPair()` (or a `socketpair`): what one
- * writes, the other reads, and one's `shutdown()` is the other's end of stream. Each is a
- * `TcpStream` like any other (close both). For a protocol carried inside another one: the HTTP/2
- * server gives a WebSocket over an HTTP/2 stream one end, and moves bytes between the other end
- * and the stream's frames.
+ * Two connected streams, as Node's `duplexPair()`: what one writes, the other reads, and one's
+ * `shutdown()` is the other's end of stream. Each is a `TcpStream` like any other (close both),
+ * on an OS socket: a `socketpair` on macOS and Linux, a loopback TCP connection on Windows, so
+ * each end holds a descriptor. Closing one end gives the other what was sent, then its end of
+ * stream; a write on the other end after that fails with `EPIPE`. For a protocol carried inside
+ * another one: the HTTP/2 server gives a WebSocket over an HTTP/2 stream one end, and moves bytes
+ * between the other end and the stream's frames. Panics when the OS refuses the sockets (out of
+ * descriptors).
  */
 export function streamPair(): [TcpStream, TcpStream] {
-  const h = velt_rt_tcp_pair();
-  return [TcpStream.ofHandle(h[0]), TcpStream.ofHandle(h[1])];
+  return connectedEnds();
 }

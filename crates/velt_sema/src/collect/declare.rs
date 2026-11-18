@@ -148,7 +148,6 @@ pub(crate) fn fn_placeholder<'m>(
         local_kinds: vec![],
         owner: None,
         is_async: false,
-        system: None,
         host: None,
         c: None,
         intrinsic: None,
@@ -243,6 +242,20 @@ pub(super) fn new_def<'m>(
                 cx.err(
                     format!(
                         "`{}` is a runtime function: only the standard library may declare it",
+                        s.name.name
+                    ),
+                    s.name.span,
+                );
+            }
+            // A prebuilt hook's entry point: a build that links its object declares it itself, typed
+            // from the table (velt_common `std_hooks/prebuilt.rs`); another declaration would clash.
+            if s.name
+                .name
+                .starts_with(velt_common::std_hooks::prebuilt::PREFIX)
+            {
+                cx.err(
+                    format!(
+                        "`{}` is the entry point of a prebuilt std hook: no module may declare it",
                         s.name.name
                     ),
                     s.name.span,

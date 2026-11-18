@@ -217,6 +217,9 @@ impl FnCx<'_, '_> {
         let mut complete = false;
         for (i, p) in props.iter().enumerate() {
             let recv = self.mk(H::Local(t, UseMode::Borrow), ty, span);
+            let writes_at = self.cx.object_copies.record_writes.len();
+            // Does the call note its own write (first, before its arguments')?
+            let mut own = true;
             let call = match p {
                 ast::ObjectProp::Spread(e) if computed_entry(e).is_some() => {
                     let (key, value) = computed_entry(e).expect("ICE: a computed entry");
@@ -236,6 +239,7 @@ impl FnCx<'_, '_> {
                     if self.trial_type(e).is_some_and(|t| self.spreads_dynamic(t)) =>
                 {
                     complete = true;
+                    own = false;
                     match self.spread_any(recv, ty, e) {
                         Some(call) => call,
                         None => continue,
@@ -247,6 +251,8 @@ impl FnCx<'_, '_> {
                     let spread = self.trial_type(e);
                     let nullable = spread.is_some_and(|t| self.cx.ty.core(t).is_some());
                     complete = !nullable;
+                    // Only `record_extend` notes its write (`record_call`).
+                    own = !nullable && !spread.is_some_and(|t| self.spreads_other_values(t, ty));
                     if spread.is_some_and(|t| self.spreads_other_values(t, ty)) {
                         let args = [e.clone(), identity_arrow(e.span), identity_arrow(e.span)];
                         self.record_call(
@@ -273,12 +279,25 @@ impl FnCx<'_, '_> {
                 }
                 ast::ObjectProp::Method(_) => continue,
             };
+            if own {
+                self.unnote_literal_write(writes_at, ty);
+            }
             stmts.push(hir::Stmt {
                 kind: S::Expr(call),
                 span,
             });
         }
         (seen, complete)
+    }
+
+    /// The set or spread that filled a new literal of type `ty`, noted at `at` (a call that notes
+    /// its own write does so before its arguments'), is no write to a record anyone else holds:
+    /// `crate::object_copies` doesn't count it (writes inside its value still count).
+    fn unnote_literal_write(&mut self, at: usize, ty: TyId) {
+        let writes = &mut self.cx.object_copies.record_writes;
+        if writes.get(at).is_some_and(|w| w.0 == ty) {
+            writes.remove(at);
+        }
     }
 
     /// `...e` of an `any` into the record in temporary `t` (of type `ty`) of another value type:

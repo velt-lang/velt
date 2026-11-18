@@ -125,6 +125,7 @@ mod object_call_on;
 mod object_copies;
 mod object_ifaces;
 mod object_views;
+mod object_widen;
 mod options;
 mod overload_adapter;
 mod overloads;
@@ -186,7 +187,8 @@ pub use kept_reload::member_name;
 pub use options::CheckOptions;
 pub use source_module::SourceModule;
 pub use source_scans::has_nothing_slot;
-pub use std_load::{LoadFn, Loads, StdBatch, StdLoads};
+pub use std_load::{LoadFn, Loads, PrebuiltFn, StdBatch, StdLoads};
+pub use throws::closure_site_defs;
 pub use timings::check_rounds;
 pub use visit::rebase_detached_locals;
 

@@ -912,3 +912,74 @@ fn a_panicked_promise_prints_pending() {
         );
     }
 }
+
+/// What a task printed before its root panicked under a catch, its microtasks too, comes before
+/// what its joiner prints once the join raises the panic again (#3020, sched_join.velt
+/// `panickedEnd`). Each round's task, pinned to worker 1, prints `w`, queues a long microtask that
+/// prints `q`, and panics; the joiner, on worker 0, works a little first, so it often finds the
+/// slot done at its first poll. The slot used to say done before the microtasks and the publish.
+#[test]
+fn a_panicked_tasks_output_comes_before_its_joiners() {
+    if !catches_here() {
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let file = dir.path().join("panicked_first.velt");
+    std::fs::write(
+        &file,
+        r#"import { catchPanic } from "velt/task";
+
+function busy(n: i64): i64 {
+  let s: i64 = 0;
+  for (let j: i64 = 0; j < n; j++) {
+    s = (s * 31 + j) % 1000003;
+  }
+  return s;
+}
+
+async function child(i: i64): Promise<i64> {
+  console.log(`w ${i}`);
+  queueMicrotask(() => {
+    busy(100000);
+    console.log(`q ${i}`);
+  });
+  const xs: i64[] = [1, 2];
+  return xs[i + 2]!;
+}
+
+async function joins(i: i64): Promise<i64> {
+  const h = spawn(child(i), { worker: 1 });
+  busy(10000);
+  return await h;
+}
+
+async function main() {
+  for (let i: i64 = 0; i < 200; i++) {
+    try {
+      await catchPanic(() => joins(i));
+    } catch (e) {
+      console.log(`c ${i}`);
+    }
+  }
+}
+"#,
+    )
+    .unwrap();
+    let exe = exe_name(dir.path(), "panicked_first");
+    build_std(&file, &exe);
+    let want: String = (0..200).map(|i| format!("w {i}\nq {i}\nc {i}\n")).collect();
+    for round in 0..3 {
+        let (code, out, err) = run(&exe, dir.path(), "4");
+        let at = (out.lines().zip(want.lines())).position(|(a, b)| a != b);
+        assert!(
+            code == 0 && out == want,
+            "round {round}: exit {code}, first difference at line {at:?}: {:?}\nstderr: {}",
+            out.lines()
+                .skip(at.unwrap_or(0))
+                .take(3)
+                .collect::<Vec<_>>(),
+            err.lines().take(5).collect::<Vec<_>>().join("\n")
+        );
+    }
+}

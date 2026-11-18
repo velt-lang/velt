@@ -1,0 +1,11 @@
+// A record where a record of a wider value type is expected is a copy, which an identity test
+// shows (Node prints true: one record).
+let last: Record<string, string | boolean | undefined> | null = null;
+function same(r: Record<string, string | boolean | undefined>): boolean {
+  const s = r === last;
+  last = r;
+  return s;
+}
+const attrs: Record<string, string | undefined> = { a: "x" };
+same(attrs);
+console.log(same(attrs));

@@ -1,2 +1,2 @@
-record_widen_fresh.velt:7:18
-error: mismatched types
+record_widen_fresh.velt:9:18: error: a `Record<string, string>` converts to `Record<string, string | f64>` by copying its entries, and this program writes to a record of one of the two types, which the other would not see
+record_widen_fresh.velt:10:1: written here

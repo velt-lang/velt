@@ -8,7 +8,11 @@ use crate::lower::{cint, unit, Cx, FnLower, ScopeKind};
 use crate::vir::{self, BinOp, Function, Operand, Place, Proj, Rvalue, Ty};
 
 impl<'c, 'h> FnLower<'c, 'h> {
-    /// `(arr: ptr, stride: u64, align: u64)`: double the capacity (4 when empty).
+    /// `(arr: ptr, stride: u64, align: u64)`: double the capacity (4 when empty). One call of the
+    /// reallocator whether the buffer is empty or not (`velt_rt_realloc` of an old size of 0
+    /// allocates), so a loop that pushes has one call on its rare path, not two (and, in a
+    /// release build, std's allocator hooks inlined there: LLVM then peeled such loops and kept
+    /// more induction variables in their hot path).
     pub(in crate::lower) fn build_array_grow(cx: &'c mut Cx<'h>) -> Function {
         let mut lw = FnLower::bare(cx, vec![]);
         let a = lw.cx.array_agg();
@@ -27,28 +31,19 @@ impl<'c, 'h> FnLower<'c, 'h> {
         lw.branch(empty, new_bb, grow_bb);
         lw.switch_to(new_bb);
         lw.assign(Place::local(newcap), Rvalue::Use(cint(4, Ty::U64)));
-        let size = lw.rvalue_temp(
-            Ty::U64,
-            Rvalue::Binary(BinOp::Mul, cint(4, Ty::U64), stride.clone()),
-        );
-        lw.call_rt(
-            Rt::Alloc,
-            vec![size, align.clone()],
-            Some(Place::local(data)),
-        );
         lw.goto(join);
         lw.switch_to(grow_bb);
-        let dbl = lw.rvalue_temp(
-            Ty::U64,
-            Rvalue::Binary(BinOp::Mul, cap.clone(), cint(2, Ty::U64)),
-        );
-        lw.assign(Place::local(newcap), Rvalue::Use(dbl.clone()));
-        let old = lw.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::Mul, cap, stride.clone()));
-        let new = lw.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::Mul, dbl, stride));
-        let args = vec![Self::arr_field(&arr, 0), old, align, new];
-        lw.call_rt(Rt::Realloc, args, Some(Place::local(data)));
+        let dbl = Rvalue::Binary(BinOp::Mul, cap.clone(), cint(2, Ty::U64));
+        lw.assign(Place::local(newcap), dbl);
         lw.goto(join);
         lw.switch_to(join);
+        let old = lw.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::Mul, cap, stride.clone()));
+        let new = lw.rvalue_temp(
+            Ty::U64,
+            Rvalue::Binary(BinOp::Mul, Operand::Copy(Place::local(newcap)), stride),
+        );
+        let args = vec![Self::arr_field(&arr, 0), old, align, new];
+        lw.call_rt(Rt::Realloc, args, Some(Place::local(data)));
         lw.assign(
             proj(&arr, Proj::Field(0)),
             Rvalue::Use(Operand::Copy(Place::local(data))),

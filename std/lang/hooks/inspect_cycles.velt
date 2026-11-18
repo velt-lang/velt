@@ -1,0 +1,290 @@
+// velt/lang/hooks (internal): objects that hold themselves in what `console.log` and
+// `util.inspect` print. Node writes a reference back to an object being printed as
+// `[Circular *N]` and prefixes that object with `<ref *N> `, numbering once per top-level value.
+// Lowering's format glue (`velt_vir` `glue/format*.rs`) reports each class instance, recursive
+// object, `Map` and `Set` it starts and finishes (`openObject`, `inspectEnter`, `inspectLeave`),
+// where sema found a live type that can hold itself; elsewhere nothing is tracked and this module
+// is not loaded. The state is this thread's: a top-level value is printed on one thread, with
+// no await in between. Node's depth limit enters at most three objects per value, kept in
+// thread-locals; the `<ref *N>` numbers are in a block of words, allocated only for a value with
+// a cycle and given back when the value is done. User code that runs during a print (a custom
+// inspect) gets a state of its own (`inspectSave`, `inspectRestore`), so a value it prints is
+// numbered from 1, as Node numbers it.
+
+import { addressLoad, addressStore, rawAlloc, rawFree, strByteLen } from "velt/lang/intrinsics";
+import { pushU64 } from "velt/lang/number/integer";
+
+declare function velt_rt_strbuf_push_str(buf: string, s: string);
+declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
+declare function velt_rt_strbuf_finish(buf: string, out: string);
+
+/** How many objects are being printed (at most three, `SLOTS`). */
+const DEPTH = new ThreadLocal<u64>(0);
+
+/** How many objects can be printed at once: Node's depth limit enters depths 0, 1 and 2. */
+const SLOTS: u64 = 3;
+
+/**
+ * The objects being printed, outermost first: identity (its address), and where its text starts
+ * in the builder, in bytes.
+ */
+const ID0 = new ThreadLocal<u64>(0);
+const ID1 = new ThreadLocal<u64>(0);
+const ID2 = new ThreadLocal<u64>(0);
+const AT0 = new ThreadLocal<u64>(0);
+const AT1 = new ThreadLocal<u64>(0);
+const AT2 = new ThreadLocal<u64>(0);
+
+/**
+ * The objects given a `<ref *N>` number while printing the current top-level value: 0, or a block
+ * of words `[capacity, length, identity…]`, an object's number its position + 1. Node numbers once
+ * per `console.log` argument, so an object keeps its number and the next cycle takes the next one.
+ */
+const NUMBERED = new ThreadLocal<u64>(0);
+
+/** The word at `a`, in a block of this module's. */
+function load(a: usize): usize {
+  // SAFETY: `a` is a word of a block `rawAlloc` gave this module and not yet freed.
+  return unsafe { addressLoad<usize>(a) };
+}
+
+function store(a: usize, v: usize): void {
+  // SAFETY: as `load`.
+  unsafe {
+    addressStore<usize>(a, v);
+  }
+}
+
+/** Gives back the numbering block `p` (not 0). */
+function release(p: usize): void {
+  const bytes = (load(p) + 2) * 8;
+  // SAFETY: `p` came from `rawAlloc(bytes)` in `pushCircular` and nothing uses it after.
+  unsafe {
+    rawFree(p, bytes);
+  }
+}
+
+/** The identity of the object being printed at position `i` (< `DEPTH`), outermost first. */
+function idAt(i: u64): u64 {
+  if (i == 0) {
+    return ID0.get();
+  }
+  if (i == 1) {
+    return ID1.get();
+  }
+  return ID2.get();
+}
+
+/** Is the object with identity `id` being printed? */
+function isBeing(id: u64): bool {
+  const n = DEPTH.get();
+  return (n > 0 && ID0.get() == id) || (n > 1 && ID1.get() == id) || (n > 2 && ID2.get() == id);
+}
+
+/** The `<ref *N>` number of the object with identity `id`: 0 when it has none. */
+function numberOf(id: u64): usize {
+  const p = NUMBERED.get() as usize;
+  if (p == 0) {
+    return 0;
+  }
+  const len = load(p + 8);
+  for (let i: usize = 0; i < len; i++) {
+    if (load(p + 16 + i * 8) as u64 == id) {
+      return i + 1;
+    }
+  }
+  return 0;
+}
+
+/** Appends `[Circular *N]` for the object with identity `id`, numbering it if it has no number. */
+function pushCircular(buf: string, id: u64): void {
+  let n = numberOf(id);
+  if (n == 0) {
+    let p = NUMBERED.get() as usize;
+    let cap: usize = 0;
+    let len: usize = 0;
+    if (p != 0) {
+      cap = load(p);
+      len = load(p + 8);
+    }
+    if (len == cap) {
+      const next = cap == 0 ? 8 : cap * 2;
+      const q = rawAlloc((next + 2) * 8);
+      store(q, next);
+      for (let i: usize = 0; i < len; i++) {
+        store(q + 16 + i * 8, load(p + 16 + i * 8));
+      }
+      if (p != 0) {
+        release(p);
+      }
+      p = q;
+      NUMBERED.set(p as u64);
+    }
+    store(p + 16 + len * 8, id as usize);
+    store(p + 8, len + 1);
+    n = len + 1;
+  }
+  velt_rt_strbuf_push_str(buf, "[Circular *");
+  pushU64(buf, n as u64);
+  velt_rt_strbuf_push_str(buf, "]");
+}
+
+/**
+ * Starts a top-level value (a `console.log` argument, `${x}`, `String(x)`): the numbering starts
+ * over. Objects still marked as being printed are what a panic left behind (a value printed by
+ * user code during a print starts from `inspectSave`'s empty state): forgotten.
+ */
+export function inspectBegin(): void {
+  DEPTH.set(0);
+  const p = NUMBERED.get() as usize;
+  if (p != 0) {
+    store(p + 8, 0);
+  }
+}
+
+/** Ends a top-level value: gives back the numbering block. */
+export function inspectEnd(): void {
+  const p = NUMBERED.get() as usize;
+  if (p != 0) {
+    release(p);
+    NUMBERED.set(0);
+  }
+}
+
+/**
+ * Before user code runs during a print (a custom inspect): this thread's state, which
+ * `inspectRestore` puts back after it (0: the empty state), and the state is left empty, so a
+ * value the code prints is numbered on its own, as Node does. Should the code panic, the thread
+ * stays at that state, and the next top-level value starts clean; the saved one is abandoned
+ * with the rest of the print.
+ */
+export function inspectSave(): u64 {
+  const n = DEPTH.get();
+  const p = NUMBERED.get();
+  if (n == 0 && p == 0) {
+    return 0;
+  }
+  const s = rawAlloc(8 * 8);
+  store(s, n as usize);
+  store(s + 8, p as usize);
+  store(s + 16, ID0.get() as usize);
+  store(s + 24, ID1.get() as usize);
+  store(s + 32, ID2.get() as usize);
+  store(s + 40, AT0.get() as usize);
+  store(s + 48, AT1.get() as usize);
+  store(s + 56, AT2.get() as usize);
+  DEPTH.set(0);
+  NUMBERED.set(0);
+  return s as u64;
+}
+
+/** After the user code `inspectSave` was called for: the state it saved, `s`, back. */
+export function inspectRestore(s: u64): void {
+  inspectEnd();
+  if (s == 0) {
+    DEPTH.set(0);
+    return;
+  }
+  const a = s as usize;
+  DEPTH.set(load(a) as u64);
+  NUMBERED.set(load(a + 8) as u64);
+  ID0.set(load(a + 16) as u64);
+  ID1.set(load(a + 24) as u64);
+  ID2.set(load(a + 32) as u64);
+  AT0.set(load(a + 40) as u64);
+  AT1.set(load(a + 48) as u64);
+  AT2.set(load(a + 56) as u64);
+  // SAFETY: `s` came from `rawAlloc(64)` in `inspectSave`, and this is its only restore.
+  unsafe {
+    rawFree(a, 8 * 8);
+  }
+}
+
+/**
+ * Opens the object with identity `id` (its address), one that may hold itself: false past the
+ * depth limit (after `[Circular *N]` when it is being printed, else `cut`, `[Name]`) and when it
+ * is being printed already (after `[Circular *N]`, marking the object it refers back to with
+ * `<ref *N>`). After a true, the caller ends the object with `inspectLeave`.
+ */
+export function openObject(buf: string, cut: string, id: u64, depth: u32): bool {
+  if (depth > 2) {
+    if (!inspectCircular(buf, id)) {
+      velt_rt_strbuf_push_str(buf, cut);
+    }
+    return false;
+  }
+  return inspectEnter(buf, id);
+}
+
+/**
+ * Starts printing the object with identity `id` (its address): true, or, when it is being printed
+ * already (the graph has a cycle), false after `[Circular *N]`; the caller then skips it. After a
+ * true, the caller ends the object with `inspectLeave`.
+ */
+export function inspectEnter(buf: string, id: u64): bool {
+  if (isBeing(id)) {
+    pushCircular(buf, id);
+    return false;
+  }
+  const n = DEPTH.get();
+  const at = strByteLen(buf) as u64;
+  if (n == 0) {
+    ID0.set(id);
+    AT0.set(at);
+  } else if (n == 1) {
+    ID1.set(id);
+    AT1.set(at);
+  } else if (n == 2) {
+    ID2.set(id);
+    AT2.set(at);
+  }
+  // Past `SLOTS` (the depth limit makes it unreachable) an object is counted, not kept: it can
+  // be printed again inside itself, which only the depth limit stops.
+  DEPTH.set(n + 1);
+  return true;
+}
+
+/**
+ * Node's check for a container past its depth limit: when the object with identity `id` is being
+ * printed (a reference back to it), true after `[Circular *N]`; else false, and the caller writes
+ * `[Name]`. The object is not entered, so it takes no `<ref *N>` prefix, as in Node.
+ */
+export function inspectCircular(buf: string, id: u64): bool {
+  if (!isBeing(id)) {
+    return false;
+  }
+  pushCircular(buf, id);
+  return true;
+}
+
+/**
+ * Done printing the innermost object `inspectEnter` started: when something refers back to it,
+ * its text takes Node's `<ref *N> ` prefix.
+ */
+export function inspectLeave(buf: string): void {
+  const i = DEPTH.get() - 1;
+  DEPTH.set(i);
+  if (NUMBERED.get() == 0 || i >= SLOTS) {
+    return;
+  }
+  const n = numberOf(idAt(i));
+  if (n == 0) {
+    return;
+  }
+  let start: u64 = AT0.get();
+  if (i == 1) {
+    start = AT1.get();
+  } else if (i == 2) {
+    start = AT2.get();
+  }
+  let text = "";
+  velt_rt_strbuf_finish(buf, text);
+  const len = strByteLen(text) as u64;
+  const head = velt_rt_str_byte_slice(text, 0, start);
+  const tail = velt_rt_str_byte_slice(text, start, len);
+  velt_rt_strbuf_push_str(buf, head);
+  velt_rt_strbuf_push_str(buf, "<ref *");
+  pushU64(buf, n as u64);
+  velt_rt_strbuf_push_str(buf, "> ");
+  velt_rt_strbuf_push_str(buf, tail);
+}

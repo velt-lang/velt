@@ -22,6 +22,7 @@
 use velt_sema::hir::{AdtKind, DefId, TyId, TyKind};
 
 use super::{Glue, SLOT_FORMAT};
+use crate::lower::hook_calls::{self as hooks, ty, Construct, HookTy};
 use crate::lower::hooks::Hook;
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
@@ -124,13 +125,16 @@ impl FnLower<'_, '_> {
             {
                 // Node numbers the `<ref *N>` of cycles once per top-level value; the value is
                 // printed on one line, then broken across lines like node if too long.
-                self.call_rt(Rt::StrbufInspectBegin, vec![], None);
+                let end = self.inspect_begin();
                 let start = self.temp(Ty::U64);
                 let len = Some(Place::local(start));
                 self.call_rt(Rt::StrbufLen, vec![buf.clone()], len);
                 self.format_nested(buf, place, ty, &top_depth());
                 let start = Operand::Copy(Place::local(start));
                 self.call_rt(Rt::StrbufInspectLayout, vec![buf.clone(), start], None);
+                if let Some(end) = end {
+                    _ = end.emit(self);
+                }
             }
         }
     }
@@ -311,8 +315,15 @@ impl FnLower<'_, '_> {
                 self.switch_to(done);
             }
             TyKind::Array(e) => {
-                let arr = self.content(place, ty);
-                self.format_array(buf, &arr, e, depth)
+                let a = self.value_arg(place, ty);
+                let args = (ty::Str::arg(buf.clone()), ty::Array::<ty::Gen>::arg(a));
+                match hooks::inspect_array(self, [e], args.0, args.1, ty::U32::arg(depth.clone())) {
+                    Some(call) => _ = call.emit(self),
+                    None => {
+                        let arr = self.content(place, ty);
+                        self.format_array(buf, &arr, e, depth)
+                    }
+                }
             }
             TyKind::Shared(e) => {
                 let bx = self.cx.shared_box(e);
@@ -338,6 +349,15 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// The value at `place` (of type `ty`) as a borrowed argument of a hook: a scalar or a pointer
+    /// by value, an aggregate by its address.
+    pub(super) fn value_arg(&mut self, place: &Place, ty: TyId) -> Operand {
+        match self.cx.ty(ty) {
+            Ty::Agg(_) => self.addr(place.clone()),
+            _ => Operand::Copy(place.clone()),
+        }
+    }
+
     /// Node's `depth` limit for a container at depth `depth`: deeper than [`DEPTH`], `cut`
     /// (`[Object]`) instead of `body`, which is given its entries' depth. `obj`: the address
     /// of an object that may be part of a cycle, which prints `[Circular *N]` there instead
@@ -357,11 +377,16 @@ impl FnLower<'_, '_> {
         let (deep_bb, shallow_bb, done) = (self.new_block(), self.new_block(), self.new_block());
         self.branch(deep, deep_bb, shallow_bb);
         self.switch_to(deep_bb);
+        // Where the cycle hooks are unchecked no live type can hold itself: nothing is tracked.
         if let Some(p) = obj {
-            let circular = self.rt_u8(Rt::StrbufInspectCircular, vec![buf.clone(), p]);
-            let cut_bb = self.new_block();
-            self.branch(circular, done, cut_bb);
-            self.switch_to(cut_bb);
+            let id = self.rvalue_temp(Ty::U64, Rvalue::Cast(p, Ty::U64));
+            let (b, id) = (ty::Str::arg(buf.clone()), ty::U64::arg(id));
+            if let Some(circular) = hooks::inspect_circular(self, b, id) {
+                let circular = circular.emit(self).op();
+                let cut_bb = self.new_block();
+                self.branch(circular, done, cut_bb);
+                self.switch_to(cut_bb);
+            }
         }
         self.push_text(buf, cut);
         self.goto(done);
@@ -455,7 +480,12 @@ impl FnLower<'_, '_> {
     /// inspect: a string result raw, any other value after the class name, at the object's depth
     /// (`Headers { a: '1' }`).
     fn format_inspect(&mut self, buf: &Operand, obj: Operand, ty: TyId, m: DefId, depth: &Operand) {
+        // The method is user code: what it prints is numbered on its own (std's `inspectSave`).
+        let saved = hooks::inspect_save(self).map(|save| save.emit(self).op());
         let (res, rty) = self.call_hook(m, obj, ty, None);
+        if let Some(restore) = saved.and_then(|s| hooks::inspect_restore(self, ty::U64::arg(s))) {
+            _ = restore.emit(self);
+        }
         let name = self.cx.type_name(ty);
         if matches!(self.cx.kind(rty), TyKind::Str) {
             self.push_inspect_text(buf, &res);
@@ -514,16 +544,48 @@ impl FnLower<'_, '_> {
             if self.cx.adt_def(d).name == velt_common::std_item!(lang_typed_array_native_inspect, "NativeInspect"))
     }
 
+    /// The start of a top-level value: std's `inspectBegin` (std/lang/hooks/inspect_cycles.velt)
+    /// starts the `<ref *N>` numbering over, and the runtime forgets the pieces of custom inspects
+    /// of the value before. Where std's is unchecked (no object can be printed), the runtime's
+    /// alone. The call of `inspectEnd` that gives back std's state after the value.
+    fn inspect_begin(&mut self) -> Option<hooks::Call<ty::Void>> {
+        self.call_rt(Rt::StrbufInspectBegin, vec![], None);
+        let begin = hooks::inspect_begin(self)?;
+        _ = begin.emit(self);
+        hooks::inspect_end(self)
+    }
+
+    /// Done printing the innermost object `format_once` or std's `openObject` started: its
+    /// `<ref *N> ` prefix when something refers back to it (std/lang/hooks/inspect_cycles.velt).
+    pub(super) fn inspect_leave(&mut self, buf: &Operand) {
+        if let Some(leave) = hooks::inspect_leave(self, ty::Str::arg(buf.clone())) {
+            _ = leave.emit(self);
+        }
+    }
+
+    /// Node's `, ... n more items` after the first 100 entries of a container, `remaining` (a
+    /// `u64`) of which are not shown.
+    pub(super) fn inspect_more(&mut self, buf: &Operand, remaining: Operand) {
+        let (b, n) = (ty::Str::arg(buf.clone()), ty::U64::arg(remaining));
+        _ = hooks::inspect_more(self, Construct::Format, b, n).emit(self);
+    }
+
     /// Print the object at address `p` with `body`, unless it is already being printed: an
     /// object graph with a cycle prints `[Circular *1]` there, and the object it refers back to
     /// gets a `<ref *1>` prefix, as node prints it.
     pub(super) fn format_once(&mut self, buf: &Operand, p: Operand, body: impl FnOnce(&mut Self)) {
-        let fresh = self.rt_u8(Rt::StrbufInspectEnter, vec![buf.clone(), p]);
+        let id = self.rvalue_temp(Ty::U64, Rvalue::Cast(p, Ty::U64));
+        let (b, id) = (ty::Str::arg(buf.clone()), ty::U64::arg(id));
+        let Some(enter) = hooks::inspect_enter(self, b, id) else {
+            // No live type can hold itself (the cycle hooks are unchecked): nothing to track.
+            return body(self);
+        };
+        let fresh = enter.emit(self).op();
         let (print, done) = (self.new_block(), self.new_block());
         self.branch(fresh, print, done);
         self.switch_to(print);
         body(self);
-        self.call_rt(Rt::StrbufInspectLeave, vec![buf.clone()], None);
+        self.inspect_leave(buf);
         self.goto(done);
         self.switch_to(done);
     }

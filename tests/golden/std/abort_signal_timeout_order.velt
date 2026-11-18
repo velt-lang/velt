@@ -1,0 +1,24 @@
+// `AbortSignal.timeout` and `setTimeout` share one order of timers, as in Node (#3029): a
+// timeout's abort comes after a `setTimeout` due earlier, before one due later, and, at the same
+// delay, in the order the two were made. Valid TypeScript; prints what Node prints. Different
+// delays differ by at least 35 ms, so a busy machine doesn't change which comes first.
+const state = (s: AbortSignal) => (s.aborted ? `aborted ${s.reason?.name}` : "not aborted");
+
+const t10 = AbortSignal.timeout(10);
+const t80 = AbortSignal.timeout(80);
+const t400 = AbortSignal.timeout(400);
+setTimeout(() => console.log("45 ms:", state(t10), "|", state(t80)), 45);
+// The same delay, made after the timeout: the callback runs after its abort.
+setTimeout(() => console.log("80 ms, made after:", state(t80)), 80);
+// The same delay, made before the timeout: the callback runs before its abort.
+const late: AbortSignal[] = [];
+setTimeout(() => console.log("120 ms, made before:", state(late[0])), 120);
+late.push(AbortSignal.timeout(120));
+// Through `AbortSignal.any`, whose timeout source nothing else holds: it fires through it.
+const either = AbortSignal.any([new AbortController().signal, AbortSignal.timeout(200)]);
+setTimeout(() => console.log("160 ms, any:", state(either)), 160);
+setTimeout(() => console.log("240 ms, any:", state(either)), 240);
+setTimeout(() => console.log("350 ms:", state(t400)), 350);
+setTimeout(() => console.log("450 ms:", state(t400)), 450);
+
+// timing: the order of timers is the subject; delays differ by tens of milliseconds

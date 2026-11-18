@@ -5,21 +5,12 @@
 # <path from the repository root> #<issue> [os=macos,linux,windows]
 
 tests/golden/lang/script_closure_promise.velt                      #2966
-tests/golden/lang/promise_identity_bounded.velt                    #2909
-tests/golden/lang/promise_identity_compare_types.velt              #2909
-tests/golden/lang/promise_identity_converted.velt                  #2909
-tests/golden/lang/promise_identity_converted_rejects.velt          #2909
-tests/golden/lang/promise_identity_defer.velt                      #2909
-tests/golden/lang/promise_identity_defer_rejects.velt              #2909
-tests/golden/lang/promise_identity_defer_twice.velt                #2909
-tests/golden/lang/promise_identity_rejection.velt                  #2909
-tests/golden/lang/promise_identity_tasks.velt                      #2909
-tests/golden/lang/promise_widen_compare.velt                       #2909
-tests/golden/lang/promise_shared_inflight.velt                     #2910
-tests/golden/lang/promises_sync_main.velt                          #2966
-tests/golden/lang/promises_unhandled_timing.velt                   #2913
+tests/golden/lang/promises_unhandled_timing.velt                   #3004
+tests/golden/lang/promise_race_running_call.velt                   #3079
 tests/golden/lang/rwlock_read_tasks_stop.velt                      #2917 os=macos,windows
 tests/golden/lang/promise_combinators_kept_array.velt               #2910
 tests/golden/lang/spawn_shared_promise_timer.velt                  #2910
+tests/golden/std/abort_signal_identity.velt                        #3011
+tests/golden/std/fetch_abort_custom_reason.velt                    #3005
 tests/golden/std/net_tls.velt                                      #2842
 tests/golden/std/timer_spawned_busy.velt                           #2916 os=macos,windows

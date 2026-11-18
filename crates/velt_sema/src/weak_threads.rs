@@ -197,7 +197,7 @@ fn scans(cx: &mut Ctx, sends: &[DefId]) -> Vec<(DefId, Scan)> {
         Stage::Both | Stage::Std => 0,
     };
     let mut out = match cx.units_stage {
-        Stage::App => cx.unit_sums.weak_scans.bodies.clone(),
+        Stage::App => units_live_std(cx, &cx.unit_sums.weak_scans.bodies.clone()),
         Stage::Both | Stage::Std => vec![],
     };
     for (i, d) in cx.defs.iter().enumerate().skip(from) {
@@ -233,11 +233,25 @@ fn scans(cx: &mut Ctx, sends: &[DefId]) -> Vec<(DefId, Scan)> {
     out
 }
 
+/// EXPERIMENT (#2943): of std's unit's `rows`, those of the std code lazy std would have had for
+/// this program (`body::lazy_std::units_live_set`). The unit has every std module's bodies: a
+/// conversion of a weak-holding class to an interface in a module the program never loads
+/// would make that interface hold one in the program's checks (`std/task/signal.velt`'s
+/// `Mutex<SignalObj>` refused in programs that don't use it). Code that isn't live never runs,
+/// so it makes no such value.
+fn units_live_std<T: Clone>(cx: &mut Ctx, rows: &[(DefId, T)]) -> Vec<(DefId, T)> {
+    let live = crate::body::lazy_std::units_live_set(cx);
+    (rows.iter())
+        .filter(|(d, _)| live.contains(d))
+        .cloned()
+        .collect()
+}
+
 /// The facts of every body for the instantiations: a finished unit's from its summary.
 fn facts(cx: &mut Ctx) -> Vec<(DefId, crate::promise_copies::Facts)> {
     match cx.units_stage {
         crate::units::Stage::App => {
-            let mut out = cx.unit_sums.weak_scans.facts.clone();
+            let mut out = units_live_std(cx, &cx.unit_sums.weak_scans.facts.clone());
             out.extend(crate::promise_copies::collect(cx, cx.unit_base as usize));
             out
         }

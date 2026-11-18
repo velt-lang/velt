@@ -11,7 +11,7 @@ import { CString } from "velt/ffi/c_string";
 import { Ptr } from "velt/ffi/ptr";
 import { utf8DecodeLossy } from "velt/encoding/utf8";
 import { addressLoad, hookCall } from "velt/lang/intrinsics";
-import { GAI_OS_ERROR, freeaddrinfo, gai_strerror, inet_ntop } from "#net-calls";
+import { GAI_OS_ERROR, addrinfo, freeaddrinfo, gai_strerror, inet_ntop } from "#net-calls";
 import * as sys from "#net-sys";
 import * as m from "velt/lang/hooks/sched_mem";
 
@@ -22,7 +22,7 @@ const AI_NEXT: usize = 40;
 
 // Pointers are `Ptr`s, as in a program's own declarations of these symbols: one C symbol has one
 // signature in a program (Winsock's has the same). Addresses become `Ptr`s with `m.ptr` (0
-// passes `NULL`). The others are `#net-calls`'.
+// passes `NULL`), or `m.ptrTo` for a typed one. The others are `#net-calls`'.
 declare c("c") function getaddrinfo(
   host: CString,
   port: CString,
@@ -59,13 +59,41 @@ function split(addr: string): string[] {
 }
 
 /**
+ * Is `port` a port number: decimal digits (after an optional `+`) of a value from 0 to 65535, as
+ * Rust's `u16` parse (the runtime's) takes it? `getaddrinfo` would take more: a service name, and
+ * a number past 65535 cut to 16 bits (99999 is port 34463 to glibc and Winsock alike).
+ */
+function isPort(port: string): bool {
+  const start: i64 = port.startsWith("+") ? 1 : 0;
+  if ((port.length as i64) <= start) {
+    return false;
+  }
+  let value: i64 = 0;
+  for (let i = start; i < (port.length as i64); i++) {
+    const c = port.charCodeAt(i);
+    if (c < 48 || c > 57) {
+      return false;
+    }
+    value = value * 10 + ((c - 48) as i64);
+    if (value > 65535) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
  * The addresses of "host:port" (`getaddrinfo`'s list, freed by the caller), or a failure: a
- * numeric host at once, a name looked up on the blocking pool.
+ * numeric host at once, a name looked up on the blocking pool. A port that isn't a number from 0
+ * to 65535 fails with `EINVAL` (the runtime's "invalid port value") before any lookup.
  */
 export async function resolve(addr: string, passive: bool): Promise<IoResult<usize>> {
   const parts = split(addr);
   if (parts[1] === "") {
     return { code: 4, message: "invalid socket address", value: 0 };
+  }
+  if (!isPort(parts[1])) {
+    return { code: 4, message: "invalid port value", value: 0 };
   }
   const host = parts[0] === "" ? (passive ? "0.0.0.0" : "localhost") : parts[0];
   const port = parts[1];
@@ -169,6 +197,6 @@ export function addrText(sa: usize): string {
 export function freeList(list: usize): void {
   // SAFETY: a list getaddrinfo made, freed once.
   unsafe {
-    freeaddrinfo(m.ptr(list));
+    freeaddrinfo(m.ptrTo<addrinfo>(list));
   }
 }

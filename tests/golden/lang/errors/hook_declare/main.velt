@@ -1,0 +1,8 @@
+// No module may declare a prebuilt std hook's entry point (`velt_hook_*`): a build that links the
+// hook's object declares it itself, typed from the compiler's table, and another declaration
+// would clash with it.
+declare function velt_hook_prebuilt_probe_text(x: f64, digits: i64): string;
+
+function main() {
+  console.log(velt_hook_prebuilt_probe_text(1, 1));
+}

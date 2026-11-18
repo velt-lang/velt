@@ -1,0 +1,53 @@
+// `AbortSignal`'s reason, as in Node (#2991): `undefined` before an abort; a `DOMException`
+// named `AbortError` (code 20) for `abort()` and `AbortSignal.abort()`, `TimeoutError` (code 23)
+// for `AbortSignal.timeout`, also the one `throwIfAborted()` throws and an `AbortSignal.any`'s;
+// a string passed to `abort(reason)` is the reason. (One object across reads, `===`:
+// abort_signal_identity.velt, #3011.) Valid TypeScript; prints what Node prints.
+const show = (label: string, e: any) => console.log(
+  label,
+  e?.name,
+  JSON.stringify(e?.message),
+  e instanceof DOMException,
+  e?.code,
+);
+const c = new AbortController();
+console.log("before", c.signal.reason);
+c.abort();
+show("abort()", c.signal.reason);
+try {
+  c.signal.throwIfAborted();
+} catch (e) {
+  show("throwIfAborted", e);
+}
+const c3 = new AbortController();
+c3.abort("text");
+console.log("string", c3.signal.reason);
+// A string equal to the default message is the reason itself, also through an `AbortSignal.any`.
+const d = new AbortController();
+const ds = AbortSignal.any([d.signal]);
+d.abort("This operation was aborted");
+console.log("default text", typeof d.signal.reason, typeof ds.reason);
+const pre = AbortSignal.abort();
+show("AbortSignal.abort()", pre.reason);
+// An `AbortSignal.any` has the reason of the source that aborted first, not the first in its list.
+const a = new AbortController();
+const b = new AbortController();
+const ab = AbortSignal.any([a.signal, b.signal]);
+b.abort("B");
+a.abort("A");
+console.log("any first aborted", ab.reason);
+const t = AbortSignal.timeout(10);
+setTimeout(
+  () => {
+    show("timeout", t.reason);
+    show("any", AbortSignal.any([new AbortController().signal, t]).reason);
+    // Made after the timeout fired: aborted already, with its reason, whatever aborts next.
+    const x = new AbortController();
+    const late = AbortSignal.any([x.signal, t]);
+    x.abort("late");
+    show("any after timeout", late.reason);
+  },
+  50,
+);
+
+// timing: waits past an AbortSignal.timeout to read its reason

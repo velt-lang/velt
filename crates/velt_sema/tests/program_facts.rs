@@ -57,3 +57,18 @@ fn putting_a_function_in_shared_changes_the_program_not_the_closures() {
     assert!(sharing.changes_held.contains(&d2));
     assert!(!plain.changes_held.contains(&d1));
 }
+
+#[test]
+fn a_std_body_with_a_dispatch_over_the_programs_classes_is_the_programs_glue() {
+    // `String(x)` of an `any`: sema writes a dispatch over the program's classes (here `C`'s
+    // `toString`) into std's `anyString`, whose body is then this program's only.
+    let p = ok_src(
+        "class C { toString(): string { return \"c\"; } }
+         function main() { const x: any = new C(); console.log(String(x)); }",
+    );
+    let (d, _) = function(&p, "std/lang/hooks/any_text::anyString");
+    assert!(p.glue_bodies.contains(&d), "{:?}", p.glue_bodies);
+    // Only library bodies are glue: `main` is the program's own.
+    let (main, _) = function(&p, "main");
+    assert!(!p.glue_bodies.contains(&main));
+}

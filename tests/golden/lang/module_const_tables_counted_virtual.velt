@@ -1,0 +1,41 @@
+// check: no leaks
+// A table of a counted array type (#3015) passed on from a function that only reads it: to a
+// direct call it stays the stored data, to a method called through a vtable (whose code is not
+// specialized for it, so it may count what it is given) it is a copy, freed after the call.
+const TABLE: u32[] = [10, 20, 30, 40];
+class Holder {
+  xs: u32[];
+  constructor(xs: u32[]) {
+    this.xs = xs;
+  }
+}
+class Reader {
+  read(xs: u32[]): u32 {
+    const ys = xs;
+    return ys[1];
+  }
+}
+class Doubler extends Reader {
+  override read(xs: u32[]): u32 {
+    const ys = xs;
+    return ys[1] * 2;
+  }
+}
+function add(xs: u32[], n: u32): u32 {
+  return xs[3] + n;
+}
+function apply(r: Reader, xs: u32[]): u32 {
+  return add(xs, r.read(xs));
+}
+function main() {
+  const a: u32[] = [1, 2];
+  const h1 = new Holder(a);
+  const h2 = new Holder(a);
+  h1.xs.push(3);
+  const r: Reader = a.length > 5 ? new Reader() : new Doubler();
+  let total: u64 = h2.xs.length as u64;
+  for (let i = 0; i < 1000; i++) {
+    total += apply(r, TABLE) as u64;
+  }
+  console.log(total, TABLE.join("-"));
+}

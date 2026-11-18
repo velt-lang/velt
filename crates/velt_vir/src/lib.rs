@@ -167,6 +167,7 @@ pub const STR_TEXT_AGG_NAME: &str = "string text";
 pub const OBJECT_AGG_SUFFIX: &str = " object";
 
 pub mod atomic;
+pub mod c_abi;
 pub mod eh;
 pub mod fingerprint;
 mod lower;
@@ -206,7 +207,6 @@ pub mod mangle;
 pub mod math;
 pub mod parallel;
 pub mod simd;
-pub mod system;
 pub mod tls;
 mod verify;
 
@@ -238,8 +238,8 @@ pub struct LowerOptions<'a> {
     /// Describe source variables for debuggers (`Program::debug_types`, `LocalDecl::debug`;
     /// vir/debug.rs). Needs `source_map`. Off, the program is the same without them.
     pub debug_info: bool,
-    /// The target triple: system functions (`declare system function`, [`system`]) are bound
-    /// per target. `None`: the host's.
+    /// The target triple: C calls follow its conventions (where `errno` is, [`c_abi`]).
+    /// `None`: the host's.
     pub target: Option<&'a str>,
     /// Share generic instances by shape (docs/internals/design/shape-sharing.md): debug builds.
     /// `VELT_SHAPES=off` / `all` overrides it.
@@ -255,6 +255,12 @@ pub struct LowerOptions<'a> {
     /// named by its own symbol, whose address the host resolves, also on Windows, where a linked
     /// program reaches it through the import library's `__imp_<name>` pointer (lower/c_global.rs).
     pub jit: bool,
+    /// Lower std's allocator hooks (velt_common `std_hooks.rs` `heap_alloc`, `heap_realloc`,
+    /// `heap_free`: mimalloc through `declare c`) next to the runtime allocator calls a program
+    /// makes, for `velt_opt::heap_calls` to call in their place once the optimizer is done:
+    /// release builds for native targets, whose runtime need not see every block (a debug
+    /// runtime checking or counting them does). Off, the program is the same without them.
+    pub heap_hooks: bool,
 }
 
 pub use lower::{CountedSeed, Delta, KeptLowering, Refused};

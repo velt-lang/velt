@@ -1,0 +1,19 @@
+// Overload callbacks whose results the implementation's callback can't take (TS2394), next to the
+// conversions #379 added (`overload_union_bound_key`):
+// - `() => string | number` against `() => string | boolean`: neither result type is assignable
+//   to the other, and tsc reports TS2394 too;
+// - `() => K` with `K extends string | number` against `() => string | boolean`: the bound holds
+//   `number`, which the implementation's union doesn't. tsc accepts it (it relates the erased
+//   signatures, `K` as `any`), but the implementation would get a `number` where it reads a
+//   `string | boolean`, so Velt refuses it.
+function f(g: () => string | number): string;
+function f(g: () => string | boolean): string {
+  return String(g());
+}
+
+function useKey<K extends string | number>(key: () => K): string;
+function useKey(key: () => string | boolean): string {
+  return String(key());
+}
+
+function main() {}

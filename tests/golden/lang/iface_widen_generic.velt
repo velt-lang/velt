@@ -1,0 +1,22 @@
+// check: no leaks
+// A cast to an extension adding an optional field, of values that reach the interface at other
+// type arguments (#379): the conversion wraps them in an adapter, and the objects inside are
+// widened. Node adds the property when it is written.
+interface Ctx<P = unknown> {
+  props: P;
+  update(): void;
+}
+
+interface InternalCtx extends Ctx {
+  __name?: string;
+}
+
+function setup(c: Ctx): string {
+  (c as InternalCtx).__name = "named";
+  return (c as InternalCtx).__name ?? "none";
+}
+
+const typed: Ctx<{ a: number }> = { props: { a: 1 }, update: () => {} };
+console.log(setup(typed));
+const lit = { props: "p", update: () => {} } as unknown as Ctx<string>;
+console.log(setup(lit));

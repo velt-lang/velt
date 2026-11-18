@@ -171,6 +171,31 @@ fn a_module_slot_is_live() {
     );
 }
 
+/// An `@export` function lowering builds unasked is live; out of the live set (as a check by
+/// units leaves an unreached std module's export, `std_child_exited`), it isn't built.
+#[test]
+fn an_export_is_built_only_when_live() {
+    let src = "import { export as cExport } from \"velt/ffi\";\n\
+               @cExport(\"test_answer_c\")\nfunction answer(): i32 {\n  return 42;\n}\n\
+               function main() {\n  console.log(\"x\");\n}\n";
+    let built = |p: &hir::Program| {
+        let v = lower_ok(p);
+        (v.funcs.iter()).any(|f| f.symbol == "test_answer_c")
+    };
+    let mut p = std_src::check_src(src);
+    assert!(is_live(&p, "answer"));
+    assert!(built(&p), "a live export is built");
+    let i = (p.defs.iter())
+        .position(|d| matches!(d, hir::Def::Fn(f) if f.name == "answer"))
+        .expect("answer");
+    assert!(p
+        .live
+        .as_mut()
+        .expect("the live set")
+        .remove(&hir::DefId(i as u32)));
+    assert!(!built(&p), "an export out of the live set is left out");
+}
+
 /// The check catches what it is for: without one definition it stops, naming it.
 #[test]
 #[should_panic(expected = "built by lowering but not live")]

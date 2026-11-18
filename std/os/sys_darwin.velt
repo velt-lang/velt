@@ -1,0 +1,59 @@
+// velt/os (internal): the machine facts on macOS (`#os-sys`' darwin variant, std/imports.velt),
+// through the C library.
+
+import { CString } from "velt/ffi/c_string";
+import { Out } from "velt/ffi/out";
+import { Ptr } from "velt/ffi/ptr";
+import { hostname as posixHostname } from "./posix";
+import { posixTmpdir } from "./tmpdir";
+
+declare c("c") function sysctlbyname(
+  name: CString,
+  old: i32[],
+  oldLen: Out<usize>,
+  newValue: Ptr<void> | null,
+  newLen: usize,
+): i32;
+declare c("c") function sysconf(name: i32): i64;
+
+/** `_SC_NPROCESSORS_ONLN` on macOS. */
+const SC_NPROCESSORS_ONLN: i32 = 58;
+
+/** Node's `process.platform` name of macOS. */
+export const PLATFORM: string = "darwin";
+
+/** The `int` sysctl `name`, or -1 when it can't be read as one. */
+function sysctlInt(name: string): i64 {
+  const value: i32[] = [0];
+  const len = new Out<usize>(4);
+  // SAFETY: room for one `int`, which `len` says; no new value.
+  const r = unsafe { sysctlbyname(new CString(name), value, len, null, 0) };
+  return r === 0 && len.value === 4 ? value[0] as i64 : -1;
+}
+
+/**
+ * Logical CPUs this process may use, at least 1: the first of `hw.activecpu`, `hw.logicalcpu`
+ * and `hw.ncpu` that reads as a positive number, else the online processors (libuv's
+ * `uv_available_parallelism`, which Node's `os.availableParallelism()` returns).
+ */
+export function cpuCount(): i64 {
+  for (const name of ["hw.activecpu", "hw.logicalcpu", "hw.ncpu"]) {
+    const n = sysctlInt(name);
+    if (n > 0) {
+      return n;
+    }
+  }
+  // SAFETY: no precondition.
+  const online = unsafe { sysconf(SC_NPROCESSORS_ONLN) };
+  return online < 1 ? 1 : online;
+}
+
+/** The machine's host name ("" if unknown). */
+export function hostname(): string {
+  return posixHostname();
+}
+
+/** The directory for temporary files, as Node's `os.tmpdir()` finds it. */
+export function tmpdir(): string {
+  return posixTmpdir();
+}

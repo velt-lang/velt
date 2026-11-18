@@ -5,6 +5,7 @@
 
 import { export as cExport } from "velt/ffi";
 import { inline, noInline } from "velt/lang/intrinsics";
+import { clearStdoutWritten, stdoutWrittenSince } from "./process";
 import * as io from "./sched_io";
 import * as m from "./sched_mem";
 import * as q from "./sched_queue";
@@ -21,8 +22,21 @@ export function wakerClone(w: usize): usize {
 
 @cExport("std_sched_waker_wake")
 export function wakerWake(w: usize): void {
+  if (COUNTING.load("relaxed") !== 0) {
+    countedWake(w);
+    return;
+  }
   wake(w);
   release(w);
+}
+
+/** `wakerWake` with the block counters on: counted until the reference is back. */
+@noInline
+function countedWake(w: usize): void {
+  WAKING.add(1);
+  wake(w);
+  release(w);
+  WAKING.sub(1);
 }
 
 @cExport("std_sched_waker_wake_by_ref")
@@ -33,6 +47,51 @@ export function wakerWakeByRef(w: usize): void {
 @cExport("std_sched_waker_drop")
 export function wakerDrop(w: usize): void {
   release(w);
+}
+
+/**
+ * The wakes by value under way (`wakerWake`, sched_node_wake.velt `nodeWake`), from any thread:
+ * a timer or I/O thread of the runtime's, or another worker. Such a wake gives its reference back
+ * after it woke the task, which may run, finish and end the program meanwhile: worker 0 waits
+ * for them at the end (`settleWakes`), or what they free counts as leaked (#2966). Only the
+ * debug runtime's block counters (`VELT_RC_STATS=1`) see that, so only then are they counted
+ * (`COUNTING`): a program without them pays one load per wake.
+ */
+const WAKING = new Atomic<u64>(0);
+
+/** Are wakes counted (`countWakes`)? Set once, before any worker or waker exists. */
+const COUNTING = new Atomic<u64>(0);
+
+/** The executor starts with the block counters on (sched_workers.velt): wakes are counted. */
+export function countWakes(): void {
+  COUNTING.store(1, "relaxed");
+}
+
+/** Are wakes counted? */
+@inline
+export function counting(): bool {
+  return COUNTING.load("relaxed") !== 0;
+}
+
+/** A counted wake by value starts (sched_node_wake.velt `nodeWake`). */
+export function wakingStarts(): void {
+  WAKING.add(1);
+}
+
+/** A counted wake by value gave its reference back. */
+export function wakingEnds(): void {
+  WAKING.sub(1);
+}
+
+/**
+ * The program ends (sched.velt `schedFinish`): once the wakes by value under way gave their
+ * references back. Each is a few steps with no wait; the core is given away meanwhile, so a
+ * waking thread the OS took off its core gets to finish.
+ */
+export function settleWakes(): void {
+  while (WAKING.load() !== 0) {
+    m.yieldCore();
+  }
 }
 
 /** Wakes task `t`: queued once if idle, polled again if running. */
@@ -104,10 +163,12 @@ export function schedule(t: usize): void {
       pend(w, t, d);
       return;
     }
-    q.lock(w, mode);
     if (d === 0 && mode !== 0) {
-      q.pushNext(w, t);
-    } else if (d === tk.D_INPUT) {
+      q.pushNext(w, t, mode);
+      return;
+    }
+    q.lock(w, mode);
+    if (d === tk.D_INPUT) {
       q.pushIo(w, t);
     } else {
       q.pushRest(w, t, mode);
@@ -115,17 +176,19 @@ export function schedule(t: usize): void {
     q.unlock(w, mode);
     return;
   }
+  const g = tk.main();
   if (
     w !== 0 &&
     m.ld(w + tk.E_CURRENT) !== 0 &&
     m.ld32(w + tk.E_DISPATCH) === 0 &&
     tk.movable(t) &&
-    m.ld(tk.main() + tk.E_STAY) === 0
+    m.ld(g + tk.E_STAY) === 0 &&
+    // Not onto a spare the rescue started (its index past the workers asked for): spares retire
+    // once idle (sched_relax.velt), and a task run there makes its sleeps there, which keep it
+    // from retiring (#3060).
+    m.ld(w + tk.E_INDEX) < m.ld(g + tk.E_COUNT)
   ) {
-    const mode = m.load32Relaxed(w + tk.E_MODE);
-    q.lock(w, mode);
-    q.pushNext(w, t);
-    q.unlock(w, mode);
+    q.pushNext(w, t, m.load32Relaxed(w + tk.E_MODE));
     return;
   }
   toInbox(h, t);
@@ -138,7 +201,7 @@ export function schedule(t: usize): void {
 @inline
 export function scheduleNew(w: usize, t: usize): void {
   if (w !== 0 && m.ld32(w + tk.E_SOLO) !== 0) {
-    // The only thread at the executor: no lock, its spawns counted (sched_loop.velt `interval`).
+    // The only thread at the executor: no lock, its spawns counted (sched_tick.velt `interval`).
     q.pushRest(w, t, 0);
     tk.bump(w + tk.E_RLEN, 1);
     return;
@@ -162,20 +225,20 @@ export function scheduleNew(w: usize, t: usize): void {
         }
         m.st(h + tk.E_PLIST_TAIL, t);
       } else {
-        pendStacked(h, t, n);
+        pendStacked(h, t);
       }
       tk.bump(h + tk.E_RLEN, 1);
       return;
     }
     if (mode !== 0) {
       // A fresh task may start on another worker at once: what this thread printed first.
-      publish(h);
+      publishPrinted(h);
     }
     q.lock(h, mode);
     q.pushRest(h, t, mode);
     q.unlock(h, mode);
     if (mode === 0) {
-      // One worker's count of tasks spawned not yet run (sched_loop.velt `interval`).
+      // One worker's count of tasks spawned not yet run (sched_tick.velt `interval`).
       tk.bump(h + tk.E_RLEN, 1);
     }
     return;
@@ -200,21 +263,21 @@ function pend(w: usize, t: usize, d: u32): void {
 }
 
 /**
- * Pushes task `t`, spawned by lazy worker 0 `w`'s poll, its `n`th spawn (under `PEND_STACKED`),
- * on `E_PREST`, which the monitor may take.
+ * Pushes task `t`, spawned by lazy worker 0 `w`'s poll (one of its first `PEND_STACKED`), on
+ * `E_PREST`, which the monitor may take.
  */
 @noInline
-function pendStacked(w: usize, t: usize, n: usize): void {
-  if (n === 0) {
-    // The first task this poll spawns may start on a spare (the monitor's rescue): what this
-    // thread printed first (the runtime publishes at each spawn; here at each poll's first).
-    publish(w);
-  }
+function pendStacked(w: usize, t: usize): void {
   pendOn(w, t, tk.E_PREST);
 }
 
-/** Pushes task `k` on the stack of lazy worker 0 `w` at offset `at` (`E_PIO` or `E_PREST`). */
+/**
+ * Pushes task `k` on the stack of lazy worker 0 `w` at offset `at` (`E_PIO` or `E_PREST`), which
+ * the monitor may take while the poll still runs and start on a spare: what this thread printed
+ * is published first (#2977), at the cost of a thread-local load when it printed nothing.
+ */
 function pendOn(w: usize, k: usize, at: usize): void {
+  publishPrinted(w);
   m.pushStack(w + at, k, tk.T_NEXT);
 }
 
@@ -234,7 +297,7 @@ export function push(e: usize, t: usize): void {
 export function toInbox(h: usize, t: usize): void {
   const w = tk.here();
   if (w !== 0) {
-    publish(w);
+    publishPrinted(w);
   }
   m.pushStack(h + tk.E_INBOX, t, tk.T_NEXT);
   unpark(h);
@@ -256,15 +319,42 @@ export function publish(w: usize): void {
 /**
  * What the poll that just ran on shared worker `w` printed (its microtasks too), published before
  * the poll's end can be seen by another thread: before Node's timer order takes the task for not
- * busy, its state lets another worker poll it, or its end wakes a joiner (sched_run.velt `run`).
- * A task woken on another worker runs there next (`schedule`), so a line printed before an
- * `await` would otherwise reach the shared buffer after what the task prints next there,
- * whenever this thread was held up between the two (#2971). A lazy worker 0 publishes nothing
- * per poll: its output reaches the others when it adopts the shared mode (sched_loop.velt
- * `adopt`), so a task the rescue moved meanwhile may print there first (#2977).
+ * busy, its state lets another worker poll it, or its end wakes a joiner (sched_run.velt `run`). A
+ * task woken on another worker runs there next (`schedule`), so a line printed before an `await`
+ * would otherwise reach the shared buffer after what the task prints next there, whenever this
+ * thread was held up between the two (#2971). Every such poll, also one whose task runs again here
+ * (`E_AGAIN`, the slot): other threads see its effects through module state, shared objects and the
+ * process's end, not only when the task moves. Through the stdout mark (`publishPrinted`): a poll
+ * that printed nothing costs a thread-local load. A lazy worker 0 publishes after a poll that
+ * printed (sched_task.velt `PANY_PRINTED`, read by the look after it, sched_loop.velt `alone`) and
+ * before it queues a task where the monitor may take it during the poll (`pendOn`), so no task the
+ * rescue moves prints before what was printed ahead of it on worker 0 (#2977).
  */
 @inline
 export function publishPolled(w: usize): void {
+  publishPrinted(w);
+}
+
+/**
+ * `publish` at the points where work this thread made may be seen by another worker next: a poll's
+ * end (`publishPolled`), a spawn, a wake sent to another worker's inbox, a task's end on another
+ * worker than worker 0. Only a thread that wrote to stdout since its last publish has anything to
+ * publish: every write of stdout from compiled code sets this thread's mark first (process.velt
+ * `stdoutWritten`), so a thread that wrote nothing pays one thread-local load and a branch, not the
+ * runtime's call (#2786). A mark left set by a publish that did not clear it (the runtime's) costs
+ * one publish of nothing.
+ */
+@inline
+export function publishPrinted(w: usize): void {
+  if (stdoutWrittenSince()) {
+    publishMarked(w);
+  }
+}
+
+/** `publishPrinted` once the mark is seen set: cleared before the publish, which takes it all. */
+@noInline
+function publishMarked(w: usize): void {
+  clearStdoutWritten();
   publish(w);
 }
 
@@ -272,6 +362,21 @@ export function publishPolled(w: usize): void {
 @noInline
 export function handOffOutput(): void {
   velt_rt_flush();
+}
+
+/**
+ * Worker `e` (this thread's) is awake with no wake from another thread: its thread starts (its
+ * park word is up until then), or its park finds work before it sleeps. The word goes down, then
+ * its count of wakes goes up, as at the end of a sleep (sched_io.velt `wait`). Worker 0's end
+ * scan (sched_end.velt `quiet`) takes a worker whose word it read up for asleep; what this worker
+ * runs next (its inbox, tasks it steals or borrows from another worker) may be gone from where
+ * the scan looks by the time it looks there, and the count read after the scan says the worker
+ * woke. Without it, a worker whose thread started late took `main`'s root at its first turn and
+ * ran it with its word still up, and the program ended with `main` running (#3076).
+ */
+export function awake(e: usize): void {
+  m.store32(e + tk.E_PARK, 0);
+  m.incOrdered(e + tk.E_UNPARKS);
 }
 
 /** Wakes worker `w` if it sleeps in its reactor (its park word is up). */

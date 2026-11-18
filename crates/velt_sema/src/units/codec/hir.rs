@@ -19,14 +19,14 @@ structs! {
     Capture { outer, inner, mode, share }
     Body { locals, block }
     LocalDef { name, ty, mutable, boxed, span }
-    ExternFnDef { name, symbol, params, ret, is_async, system, host, c, is_decorator, span }
+    ExternFnDef { name, symbol, params, ret, is_async, host, c, is_decorator, span }
     CImport { library, errno, params, ret, variadic }
     HostImport { module, params, ret }
     AdtDef {
         name, kind, generics, fields, is_copy, declared_struct, c_struct, private_fields, opaque,
         base, inherited_inits, ctor, dispose, to_string, to_json, inspect, vtable, span,
     }
-    FieldDef { name, ty, default, optional, private, presence, hidden }
+    FieldDef { name, ty, default, optional, private, presence, hidden, cell }
     FieldInit { field, depth, at, init }
     EnumDef { name, generics, variants, is_copy, is_union, span }
     VariantDef { name, payload, discriminant, str_value }
@@ -443,11 +443,6 @@ enums! {
         98 => StrCharCodeAt,
         99 => AddressLoad,
         100 => AddressStore,
-        101 => PtrAtomicLoad,
-        102 => PtrAtomicStore,
-        103 => PtrAtomicRmw,
-        104 => PtrAtomicCas,
-        105 => PtrAtomicCasWeak,
         106 => AtomicAddress,
         107 => FutPoll,
         108 => FutDrop,
@@ -531,5 +526,18 @@ enums! {
         186 => AnyTag,
         187 => AnyToNumber,
         188 => SimdShuffle(a, b),
+        189 => InspectNested,
+        190 => AddressAtomicLoad,
+        191 => AddressAtomicStore,
+        192 => AddressAtomicRmw,
+        193 => AddressAtomicCas,
+        194 => AddressAtomicCasWeak,
+        195 => RecordViewSync,
+        196 => RecordViewIs,
+        197 => RecordViewGet,
+        198 => RecordViewHas,
+        199 => RecordViewSet,
+        200 => RecordViewDelete,
+        201 => RecordViewFlush,
     }
 }

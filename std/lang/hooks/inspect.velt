@@ -1,0 +1,77 @@
+// velt/lang/hooks (internal): what `console.log` and `util.inspect` write the same way for every
+// type (docs/internals/design/inspect-shapes.md): the depth limit, arrays and `... n more items`
+// (objects that hold themselves are inspect_cycles.velt's). Lowering writes what differs per type
+// around these (an object's fields, the member a union holds) and calls them with the line's own
+// builder, so a value has no builder of its own. Sema checks them where live code may print one
+// (velt_common `std_hooks.rs`), so a program without arrays or objects does not pay for them.
+
+import { inspectNested, noInline } from "velt/lang/intrinsics";
+
+declare function velt_rt_strbuf_push_str(buf: string, s: string);
+declare function velt_rt_strbuf_push_f64(buf: string, x: f64);
+
+/**
+ * Opens an object that cannot hold itself: false past the depth limit, after `cut` (`[Name]`).
+ * An object that can is opened by inspect_cycles.velt's `openObject`.
+ */
+export function openPlain(buf: string, cut: string, depth: u32): bool {
+  if (depth > 2) {
+    velt_rt_strbuf_push_str(buf, cut);
+    return false;
+  }
+  return true;
+}
+
+/** An array: `[ a, b ]`, its first 100 elements, `[Array]` past the depth limit. */
+export function inspectArray<E>(buf: string, a: E[], depth: u32): void {
+  const n = a.length;
+  if (n == 0) {
+    velt_rt_strbuf_push_str(buf, "[]");
+    return;
+  }
+  if (depth > 2) {
+    velt_rt_strbuf_push_str(buf, "[Array]");
+    return;
+  }
+  const c = depth + 1;
+  velt_rt_strbuf_push_str(buf, "[ ");
+  inspectElements(buf, a, c);
+  if (n > 100) {
+    const more = (n - 100) as u64;
+    inspectMore(buf, more);
+  }
+  velt_rt_strbuf_push_str(buf, " ]");
+}
+
+/** Node's `, ... n more items` (`, ... 1 more item`) after the first 100 entries of a container. */
+export function inspectMore(buf: string, remaining: u64): void {
+  velt_rt_strbuf_push_str(buf, ", ... ");
+  // As a number: its digits, without compiling std's integer printing into every program.
+  const n = remaining as f64;
+  velt_rt_strbuf_push_f64(buf, n);
+  if (remaining == 1) {
+    velt_rt_strbuf_push_str(buf, " more item");
+  } else {
+    velt_rt_strbuf_push_str(buf, " more items");
+  }
+}
+
+/**
+ * The first 100 elements of `a`, at depth `c`, separated by `, `. `for…of` reads each element
+ * without a bounds check, whose message a program would compile; not inlined, so the optimizer
+ * goes over the loop once per element type, not at every place an array is printed.
+ */
+@noInline
+function inspectElements<E>(buf: string, a: E[], c: u32): void {
+  let i: usize = 0;
+  for (const x of a) {
+    if (i == 100) {
+      break;
+    }
+    if (i > 0) {
+      velt_rt_strbuf_push_str(buf, ", ");
+    }
+    inspectNested(buf, x, c);
+    i++;
+  }
+}

@@ -6,10 +6,11 @@
 //! `VELT_THREADS=4` and must print what Node prints. The tests with sockets are in
 //! std_scheduler_workers_net.rs.
 
-use std::path::Path;
-
 use no_window::command;
-use sched_workers_support::{build_and_run, build_and_run_with, has_threads, manifest, prints};
+use sched_workers_support::{
+    build_and_run, build_and_run_with, contended_runs, contended_runs_checked, contended_runs_spun,
+    has_threads, manifest, prints, Spin,
+};
 
 mod no_window;
 mod runtime_support;
@@ -20,14 +21,31 @@ mod test_dir;
 /// The borrowers' take, white-box (std_unix/lang/hooks/sched_spread.test.velt): on a worker
 /// block and tasks built by hand, the tasks that may not move stay where they were, in their
 /// order, and the worker is left alone only when the older half held tasks and all of them
-/// stayed. It imports the scheduler's modules, which only link on macOS and Linux.
+/// stayed; the window's skipped clock reads end at the monitor's next tick (#2981). It imports
+/// the scheduler's modules, which only link on macOS and Linux.
 #[cfg(unix)]
 #[test]
 fn sched_spread_white_box_tests_pass() {
-    runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
+    runtime_support::build_native_runtime(manifest());
     std_unix::velt_test_in_std_copy(
         "lang/hooks/sched_spread.test.velt",
         include_str!("std_unix/lang/hooks/sched_spread.test.velt"),
+    );
+}
+
+/// The slot for the next task and the fair pass's clock, white-box
+/// (std_unix/lang/hooks/sched_queue.test.velt): after `NEXT_RUNS` tasks in a row from the slot
+/// the queues get their turn, on the locked path and the lock-free one, and an I/O tick with both
+/// queues holding tasks reads the clock, starts the fair wait, skips reads while it runs and
+/// starts the pass once it is due (#2786); the skips end at the monitor's next tick, and without
+/// a monitor no read is skipped (#2981).
+#[cfg(unix)]
+#[test]
+fn sched_queue_white_box_tests_pass() {
+    runtime_support::build_native_runtime(manifest());
+    std_unix::velt_test_in_std_copy(
+        "lang/hooks/sched_queue.test.velt",
+        include_str!("std_unix/lang/hooks/sched_queue.test.velt"),
     );
 }
 
@@ -355,6 +373,140 @@ fn a_line_printed_before_an_await_comes_first_when_the_task_resumes_elsewhere() 
     assert!(lost.is_empty(), "{}", lost.join("\n"));
 }
 
+/// Lines ordered by the module-state lock come out in that order: two tasks on two workers each
+/// print the shared turn and step it, then yield. Every poll publishes what it printed before its
+/// task lets go of the lock, also a poll whose task runs again on its worker (`E_AGAIN`): when the
+/// local loop skipped that publish, about half of the 40,000 lines came out of order, and before
+/// #2971's fix the publish came after the lock was let go (about 3,000).
+#[test]
+fn lines_ordered_by_the_module_lock_across_workers_print_in_that_order() {
+    if !has_threads() {
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let (code, out) = build_and_run(dir.path(), "turns", TURNS, "4");
+    assert_eq!(code, 0, "{out}");
+    let mut last = -1i64;
+    let mut lines = 0;
+    for line in out.lines() {
+        let turn: i64 = line
+            .split(' ')
+            .nth(1)
+            .and_then(|t| t.parse().ok())
+            .unwrap_or_else(|| panic!("line {line:?}"));
+        assert!(turn > last, "turn {turn} printed after turn {last}");
+        last = turn;
+        lines += 1;
+    }
+    assert_eq!(lines, 40000);
+}
+
+/// The program of [`lines_ordered_by_the_module_lock_across_workers_print_in_that_order`]: `main`,
+/// awaited at the top level, keeps worker 0 busy while it spawns, so the two tasks start on two
+/// other workers.
+const TURNS: &str = r#"let turn = 0;
+
+async function w(name: string): Promise<void> {
+  for (let i = 0; i < 20000; i++) {
+    console.log(name + " " + turn);
+    turn++;
+    await yieldNow();
+  }
+}
+
+function busy(ms: number): void {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {}
+}
+
+async function main(): Promise<void> {
+  const a = spawn(w("a"));
+  busy(20);
+  const b = spawn(w("b"));
+  busy(20);
+  await a;
+  await b;
+}
+
+await main();
+"#;
+
+/// `process.exit` on worker 0 while a task prints on another: every line the task counted before
+/// `main` read the count is printed before `exit after N`. The task counts a line in the poll after
+/// the one that printed it, so its publish came first. When the local loop skipped the
+/// publish of a task that ran again on its worker, its lines stayed in that thread's buffer and
+/// the exit (which writes out its own thread's and the shared buffer) lost up to a few thousand.
+#[test]
+fn process_exit_on_another_worker_keeps_the_lines_a_task_printed() {
+    if !has_threads() {
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let (code, out) = build_and_run(dir.path(), "exit_count", EXIT_COUNT, "4");
+    assert_eq!(code, 0, "{}", out.lines().last().unwrap_or(""));
+    check_exit_count(&out);
+    // The loss depended on where the exit caught the printing task: one run in three lost lines
+    // under the test runner on macOS. Four more runs of the same build.
+    let exe = dir.path().join(format!(
+        "exit_count_std{}",
+        if cfg!(windows) { ".exe" } else { "" }
+    ));
+    for _ in 0..4 {
+        let o = command(&exe)
+            .env("VELT_THREADS", "4")
+            .env_remove("VELT_SCHEDULER")
+            .output()
+            .unwrap();
+        assert_eq!(o.status.code(), Some(0));
+        check_exit_count(&String::from_utf8_lossy(&o.stdout));
+    }
+}
+
+/// Every line [`EXIT_COUNT`] counted before `exit after N` is in `out`.
+fn check_exit_count(out: &str) {
+    let mut printed = -1i64;
+    let mut counted = None;
+    for line in out.lines() {
+        if let Some(n) = line.strip_prefix("line ") {
+            printed = printed.max(n.trim_end().parse().unwrap());
+        } else if let Some(n) = line.strip_prefix("exit after ") {
+            counted = Some(n.trim_end().parse::<i64>().unwrap());
+        }
+    }
+    let counted = counted.expect("no `exit after` line");
+    assert!(
+        printed >= counted,
+        "last line printed {printed}, but {counted} were counted as printed"
+    );
+}
+
+/// The program of [`process_exit_on_another_worker_keeps_the_lines_a_task_printed`].
+const EXIT_COUNT: &str = r#"class Count {
+  n: Atomic<i64> = new Atomic<i64>(-1);
+}
+
+async function w(c: shared<Count>): Promise<void> {
+  for (let i = 0; i < 100000000; i++) {
+    console.log("line " + i);
+    await yieldNow();
+    // In the next poll: the one that printed the line has ended (and published it).
+    c.n.store(i);
+  }
+}
+
+async function main() {
+  const c = shared(new Count());
+  spawn(w(c));
+  const t0 = Date.now();
+  while (Date.now() - t0 < 10) {}
+  await new Promise<void>((r) => setTimeout(r, 30));
+  console.log("exit after " + c.n.load());
+  process.exit(0);
+}
+"#;
+
 /// Whether every waiter's lines of [`RESUME_ORDER`] (`<id> a|b <round>`) come in its program's
 /// order, all of them there.
 fn in_task_order(out: &str) -> Result<(), String> {
@@ -425,87 +577,6 @@ async function main() {
   }
 }
 "#;
-
-/// Runs the std build of `name` (built in `dir`) with `threads` workers: on Linux 40 times with the
-/// program and two spinning threads on cores 0 and 1 (`sched_setaffinity`), elsewhere 10 plain
-/// runs (macOS cannot pin threads). The runs that did not print `want` with exit code 0.
-fn contended_runs(dir: &Path, name: &str, threads: &str, want: &str) -> Vec<String> {
-    contended_runs_checked(dir, name, threads, |out| {
-        if out == want {
-            Ok(())
-        } else {
-            Err(format!("{out:?}"))
-        }
-    })
-}
-
-/// [`contended_runs`] with `check` judging each run's stdout (exit code 0 required too): the runs
-/// it rejected, with its reason.
-fn contended_runs_checked(
-    dir: &Path,
-    name: &str,
-    threads: &str,
-    check: impl Fn(&str) -> Result<(), String>,
-) -> Vec<String> {
-    let exe = dir.join(format!(
-        "{name}_std{}",
-        if cfg!(windows) { ".exe" } else { "" }
-    ));
-    let linux = cfg!(target_os = "linux");
-    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let burners: Vec<_> = (0..if linux { 2 } else { 0 })
-        .map(|_| {
-            let stop = stop.clone();
-            std::thread::spawn(move || {
-                pin_to_two_cores();
-                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
-                    std::hint::spin_loop();
-                }
-            })
-        })
-        .collect();
-    let mut lost = Vec::new();
-    for run in 0..if linux { 40 } else { 10 } {
-        let mut cmd = command(&exe);
-        cmd.env("VELT_THREADS", threads)
-            .env_remove("VELT_SCHEDULER");
-        #[cfg(target_os = "linux")]
-        {
-            use std::os::unix::process::CommandExt;
-            // SAFETY: only an affinity call between fork and exec.
-            unsafe {
-                cmd.pre_exec(|| {
-                    pin_to_two_cores();
-                    Ok(())
-                });
-            }
-        }
-        let o = cmd.output().unwrap();
-        let out = String::from_utf8_lossy(&o.stdout);
-        match (o.status.code(), check(&out)) {
-            (Some(0), Ok(())) => {}
-            (code, Err(why)) => lost.push(format!("run {run}: {code:?} {why}")),
-            (code, Ok(())) => lost.push(format!("run {run}: exit {code:?}")),
-        }
-    }
-    stop.store(true, std::sync::atomic::Ordering::Relaxed);
-    for b in burners {
-        b.join().unwrap();
-    }
-    lost
-}
-
-/// Pins the calling thread (or a child between fork and exec) to cores 0 and 1 (Linux only).
-fn pin_to_two_cores() {
-    #[cfg(target_os = "linux")]
-    // SAFETY: a zeroed `cpu_set_t` filled by the libc macros, passed with its size.
-    unsafe {
-        let mut set: libc::cpu_set_t = std::mem::zeroed();
-        libc::CPU_SET(0, &mut set);
-        libc::CPU_SET(1, &mut set);
-        libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set);
-    }
-}
 
 /// The program of [`mains_last_line_printed_on_another_worker_is_written`].
 const LAST_LINE: &str = r#"async function main() {
@@ -757,5 +828,118 @@ async function main() {
     sum += await h;
   }
   console.log(`sum ${sum}`);
+}
+"#;
+
+/// A task whose handle was dropped rejects on worker 1 while `main` sleeps on worker 0: the
+/// uncaught-error exit gives back every block, as when the task rejects on worker 0. The root of
+/// `main` and its sleep are worker 0's to give back, so the exit used to leave them counted when
+/// it came from another worker (2 blocks, #3017; `lang/spawn_handle_dropped_rejects` when its
+/// task ran elsewhere); worker 0 now ends the program for it. Before the fix every run leaked.
+#[test]
+fn an_uncaught_rejection_on_another_worker_gives_back_mains_root() {
+    if !has_threads() {
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let counted = [("VELT_RT_DEBUG_ALLOC", "1"), ("VELT_RC_STATS", "1")];
+    for run in 0..3 {
+        let (code, out) = build_and_run_with(dir.path(), "far", FAR_REJECTION, "4", &counted);
+        let blocks = out
+            .split_whitespace()
+            .find_map(|w| w.strip_prefix("blocks="))
+            .and_then(|b| b.split_once('/'));
+        assert!(
+            code == 1
+                && out.starts_with("dropping the handle\n")
+                && out.contains("Uncaught Failed")
+                && blocks.is_some_and(|(a, f)| a == f),
+            "run {run}: exit {code}\n{out}"
+        );
+    }
+}
+
+/// The program of [`an_uncaught_rejection_on_another_worker_gives_back_mains_root`].
+const FAR_REJECTION: &str = r#"class Failed extends Error {}
+
+async function failing(ms: i64): Promise<i64> {
+  await sleep(ms);
+  throw new Failed(`lost after ${ms} ms`);
+}
+
+async function main() {
+  {
+    const task = spawn(failing(20), { worker: 1 });
+    console.log("dropping the handle");
+  }
+  // A hang guard: the rejection ends the process long before.
+  await sleep(60000);
+  console.log("unreachable");
+}
+"#;
+
+/// A worker whose thread starts late borrows tasks at its first turn, before anything woke it:
+/// the end detection must see it awake (#3076). `main` waits for tasks that were woken from
+/// worker 1 into worker 0's input, which a late thread borrows and runs. Its park word stayed up
+/// from before its thread ran, so worker 0, out of work, read every other worker as asleep and
+/// ended the program with `main` waiting: nothing printed, exit code 0. On Linux, 40 runs at 128
+/// workers on two cores where two processes spin (many threads start late there): without the
+/// fix 17 runs in 80 printed nothing, none with it (x86_64; `race_select` under cachegrind lost
+/// the same way, about 1 run in 150).
+#[test]
+fn a_worker_that_borrows_before_its_first_park_is_awake() {
+    if !has_threads() {
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let (code, out) = build_and_run(dir.path(), "borrow", LATE_BORROW, "128");
+    assert_eq!((code, out.as_str()), (0, "done true\n"), "late borrow");
+    let want = |out: &str| match out {
+        "done true\n" => Ok(()),
+        _ => Err(format!("{out:?}")),
+    };
+    let lost = contended_runs_spun(dir.path(), "borrow", "128", Spin::Processes, want);
+    assert!(lost.is_empty(), "{}", lost.join("\n"));
+}
+
+/// The program of [`a_worker_that_borrows_before_its_first_park_is_awake`].
+const LATE_BORROW: &str = r#"function burn(n: i64): i64 {
+  let s: i64 = 0;
+  for (let i: i64 = 0; i < n; i++) {
+    s = (s * 31 + i) % 1000000007;
+  }
+  return s;
+}
+
+async function child(i: i64): Promise<i64> {
+  return i;
+}
+
+// Woken from worker 1 (its child's end) into worker 0's input, which an idle worker borrows.
+async function waiter(c: Promise<i64>, rounds: i64): Promise<i64> {
+  let s = await c;
+  for (let i: i64 = 0; i < rounds; i++) {
+    s = (s + burn(5000)) % 1000000007;
+    await yieldNow();
+  }
+  return s;
+}
+
+async function main() {
+  const ws: Promise<i64>[] = [];
+  for (let i: i64 = 0; i < 16; i++) {
+    ws.push(spawn(waiter(spawn(child(i), { worker: 1 }), 100)));
+  }
+  let s: i64 = 0;
+  for (let i: i64 = 0; i < 50; i++) {
+    s = (s + burn(5000)) % 1000000007;
+    await yieldNow();
+  }
+  for (const w of ws) {
+    s = (s + (await w)) % 1000000007;
+  }
+  console.log(`done ${s >= 0}`);
 }
 "#;

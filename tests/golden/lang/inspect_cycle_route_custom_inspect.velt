@@ -1,0 +1,8 @@
+// A program whose only cycle runs through one route (custom_inspect): sema finds a live type that can
+// hold itself, so printing tracks it and writes <ref *1> and [Circular *1] as Node does.
+const custom = Symbol.for("nodejs.util.inspect.custom");
+class N { next: N | null = null; }
+class L { [custom](): string { const n = new N(); n.next = n; console.log("in", n); return "L!"; } }
+class O { l: L = new L(); x: number = 1; }
+function main() { console.log(new O()); }
+main();

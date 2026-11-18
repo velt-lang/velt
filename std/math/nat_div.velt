@@ -1,0 +1,255 @@
+// velt/math (internal): magnitude division (nat_add.velt says what a magnitude is). A limb
+// quotient divides 128 bits by a normalized 64-bit divisor (top bit set) with its reciprocal and
+// two multiplications (Möller and Granlund, "Improved division by invariant integers", 2011),
+// so no loop runs a hardware divide. Long divisors use Knuth's algorithm D (TAOCP 4.3.1).
+
+import { arraySetLen, arrayTruncate, inline } from "velt/lang/intrinsics";
+import { natAssign, natCmp, natTrim, natUnfilled } from "velt/math/nat_add";
+import {
+  addWithin,
+  limbOf,
+  limbSet,
+  limbsInside,
+  shlRow,
+  shrRowInPlace,
+  subMulWithin,
+} from "#nat-rows";
+
+const MAX: u64 = 0xffffffffffffffff;
+
+/**
+ * The reciprocal of the normalized `d`: `floor((2^128 - 1) / d) - 2^64`. Found once per divisor
+ * by long division on 32-bit halves (Hacker's Delight, `divlu`).
+ */
+export function natReciprocal(d: u64): u64 {
+  const dh = d >> 32;
+  const dl = d & 0xffffffff;
+  // (~d : 2^64 - 1) / d, with ~d < d.
+  const u1 = ~d;
+  let q1 = u1 / dh;
+  let r = u1 - q1 * dh;
+  while (q1 >> 32 != 0 || q1 * dl > ((r << 32) | 0xffffffff)) {
+    q1 -= 1;
+    r += dh;
+    if (r >> 32 != 0) {
+      break;
+    }
+  }
+  const mid = (u1 << 32) + 0xffffffff - q1 * d;
+  let q0 = mid / dh;
+  r = mid - q0 * dh;
+  while (q0 >> 32 != 0 || q0 * dl > ((r << 32) | 0xffffffff)) {
+    q0 -= 1;
+    r += dh;
+    if (r >> 32 != 0) {
+      break;
+    }
+  }
+  return (q1 << 32) + q0;
+}
+
+/** `(u1 : u0) / d` and its remainder, for the normalized `d` with reciprocal `v` and `u1 < d`. */
+@inline
+export function natDiv2By1(u1: u64, u0: u64, d: u64, v: u64): [u64, u64] {
+  const p0 = v * u1;
+  const s = p0 + u0;
+  let q = Math.umulh(v, u1) + u1 + ((s < p0) as u64) + 1;
+  let r = u0 - q * d;
+  if (r > s) {
+    q -= 1;
+    r += d;
+  }
+  if (r >= d) {
+    q += 1;
+    r -= d;
+  }
+  return [q, r];
+}
+
+/** `a /= d` in place for `d > 0`; returns the remainder. */
+export function natDivWordInto(a: u64[], d: u64): u64 {
+  const n = a.length;
+  if (n == 0) {
+    return 0;
+  }
+  const s = d.leadingZeros() as u64;
+  const dn = d << s;
+  const v = natReciprocal(dn);
+  let r: u64 = 0;
+  if (s == 0) {
+    let i = n;
+    while (i > 0) {
+      i--;
+      const qr = natDiv2By1(r, a[i], dn, v);
+      a[i] = qr[0];
+      r = qr[1];
+    }
+  } else {
+    const back = 64 - s;
+    r = a[n - 1] >> back;
+    let i = n - 1;
+    while (i > 0) {
+      const lo = (a[i] << s) | (a[i - 1] >> back);
+      const qr = natDiv2By1(r, lo, dn, v);
+      a[i] = qr[0];
+      r = qr[1];
+      i--;
+    }
+    const qr = natDiv2By1(r, a[0] << s, dn, v);
+    a[0] = qr[0];
+    r = qr[1] >> s;
+  }
+  natTrim(a);
+  return r;
+}
+
+/** `a % d` for `d > 0`, without changing `a`. */
+export function natRemWord(a: u64[], d: u64): u64 {
+  const n = a.length;
+  const s = d.leadingZeros() as u64;
+  const dn = d << s;
+  const v = natReciprocal(dn);
+  // Each limb reduced against the normalized divisor: r * 2^64 + x mod dn, then the shift.
+  let r: u64 = 0;
+  let i = n;
+  while (i > 0) {
+    i--;
+    const x = a[i];
+    if (s == 0) {
+      r = natDiv2By1(r, x, dn, v)[1];
+    } else {
+      const hi = (r << s) | (x >> (64 - s));
+      r = natDiv2By1(hi, x << s, dn, v)[1] >> s;
+    }
+  }
+  return r;
+}
+
+/**
+ * `a / b` (`[]` unless `quotient`), with `a % b` written to `rem`, which is empty; `b` is not
+ * zero. Knuth's algorithm D, in `rem`'s buffer. The quotient estimates read the operands' top
+ * words as if `b`'s top limb were normalized (shifted up by its leading zeros); with enough steps
+ * to pay for it, the copies of both are shifted so that the steps read their words as they are,
+ * and the remainder is shifted back.
+ */
+export function natDivRem(a: u64[], b: u64[], rem: u64[], quotient: bool): u64[] {
+  if (natCmp(a, b) < 0) {
+    natAssign(rem, a);
+    return [];
+  }
+  const n = b.length;
+  if (n == 1) {
+    if (!quotient) {
+      const r = natRemWord(a, b[0]);
+      if (r != 0) {
+        rem.push(r);
+      }
+      return [];
+    }
+    const q = natUnfilled(0);
+    natAssign(q, a);
+    const r = natDivWordInto(q, b[0]);
+    if (r != 0) {
+      rem.push(r);
+    }
+    return q;
+  }
+  const len = a.length;
+  const m = len - n;
+  const s = b[n - 1].leadingZeros() as u64;
+  // The shift the copies get: all of `s` when the steps' shifted reads would cost more than
+  // shifting `b` and the remainder (about 20 instructions a step against 4 a limb, measured).
+  const t = (m + 1) * 6 > n + 24 ? s : 0;
+  // In `rem`: `u = a << t` with a limb above it, which the steps change, then `v = b << t`.
+  const vo = len + 1;
+  arraySetLen(rem, vo + n);
+  rem[len] = shlRow(rem, 0, a, 0, len, t);
+  shlRow(rem, vo, b, 0, n, t);
+  const q = natUnfilled(quotient ? m + 1 : 0);
+  if (t == s) {
+    divNormalized(rem, vo, q, m, n);
+  } else {
+    divLimbs(rem, vo, q, m, n, s);
+  }
+  // The remainder is the low `n` limbs of `u`, shifted back.
+  shrRowInPlace(rem, n, t);
+  arrayTruncate(rem, n);
+  natTrim(rem);
+  natTrim(q);
+  return q;
+}
+
+// `divLimbs` for operands already normalized: a copy of its own, whose reads are not shifted.
+function divNormalized(u: u64[], vo: usize, q: u64[], m: usize, n: usize) {
+  divLimbs(u, vo, q, m, n, 0);
+}
+
+// Word `i` of the number at `x[at..]` (inside `x`) shifted up by `s` (below 64), without its
+// overflow.
+@inline
+function topOf(x: u64[], at: usize, i: usize, s: u64): u64 {
+  if (s == 0) {
+    return limbOf(x, at + i);
+  }
+  const below = i == 0 ? 0 : limbOf(x, at + i - 1) >> (64 - s);
+  return (limbOf(x, at + i) << s) | below;
+}
+
+// Algorithm D's steps: `q[0..m + 1] = u / v` (`q` is empty when the quotient is not wanted) and
+// `u[0..n]` the remainder, for `u` the `m + n + 1` limbs of `u` from 0, whose top one is below
+// `v`'s top limb, and `v` its `n` (at least 2) limbs from `vo`, normalized when shifted up by `s`.
+@inline
+function divLimbs(u: u64[], vo: usize, q: u64[], m: usize, n: usize, s: u64) {
+  // Every word the steps read or write without a check below: `u`'s up to `m + n`, `v`'s, `q`'s.
+  limbsInside(u, 0, m + n + 1);
+  limbsInside(u, vo, n);
+  const quotient = q.length > 0;
+  if (quotient) {
+    limbsInside(q, 0, m + 1);
+  }
+  const v1 = topOf(u, vo, n - 1, s);
+  const v0 = topOf(u, vo, n - 2, s);
+  const rec = natReciprocal(v1);
+  let j = m + 1;
+  while (j > 0) {
+    j--;
+    const u2 = topOf(u, 0, j + n, s);
+    let qh = MAX;
+    if (u2 < v1) {
+      const u0 = topOf(u, 0, j + n - 2, s);
+      const qr = natDiv2By1(u2, topOf(u, 0, j + n - 1, s), v1, rec);
+      qh = qr[0];
+      let rh = qr[1];
+      // At most two corrections: while qh * v0 > rh * 2^64 + u0.
+      while (true) {
+        const hi = Math.umulh(qh, v0);
+        if (hi < rh || (hi == rh && qh * v0 <= u0)) {
+          break;
+        }
+        qh -= 1;
+        rh += v1;
+        if (rh < v1) {
+          break;
+        }
+      }
+    }
+    const borrow = subMulWithin(u, j, vo, n, qh);
+    const top = limbOf(u, j + n);
+    limbSet(u, j + n, top - borrow);
+    if (top < borrow) {
+      // qh was one or two too large: add `v` back until the window turns non-negative.
+      while (true) {
+        qh -= 1;
+        const c = addWithin(u, j, vo, n);
+        const t = limbOf(u, j + n) + c;
+        limbSet(u, j + n, t);
+        if (t < c) {
+          break;
+        }
+      }
+    }
+    if (quotient) {
+      limbSet(q, j, qh);
+    }
+  }
+}

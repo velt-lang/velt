@@ -486,13 +486,7 @@ impl FnLower<'_, '_> {
             Ty::Bool,
             Rvalue::Binary(BinOp::Le, need.clone(), cap.clone()),
         );
-        let (grow, new_bb, re_bb, set, ok) = (
-            self.new_block(),
-            self.new_block(),
-            self.new_block(),
-            self.new_block(),
-            self.new_block(),
-        );
+        let (grow, ok) = (self.new_block(), self.new_block());
         self.branch(fits, ok, grow);
         self.switch_to(grow);
         let (stride, align) = self.stride(elem);
@@ -503,21 +497,11 @@ impl FnLower<'_, '_> {
             Ty::U64,
             Rvalue::Binary(BinOp::Mul, need.clone(), stride.clone()),
         );
-        let empty = self.rvalue_temp(
-            Ty::Bool,
-            Rvalue::Binary(BinOp::Eq, cap.clone(), cint(0, Ty::U64)),
-        );
-        self.branch(empty, new_bb, re_bb);
-        self.switch_to(new_bb);
-        let args = vec![size.clone(), align.clone()];
-        self.call_rt(Rt::Alloc, args, Some(Place::local(data)));
-        self.goto(set);
-        self.switch_to(re_bb);
+        // One call whether the buffer is empty or not: an old size of 0 allocates (as in
+        // `_Garray_grow`).
         let old = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::Mul, cap, stride));
         let args = vec![Self::arr_field(arr, 0), old, align, size];
         self.call_rt(Rt::Realloc, args, Some(Place::local(data)));
-        self.goto(set);
-        self.switch_to(set);
         let d = Rvalue::Use(Operand::Copy(Place::local(data)));
         self.assign(proj(arr, Proj::Field(0)), d);
         self.assign(proj(arr, Proj::Field(2)), Rvalue::Use(need));

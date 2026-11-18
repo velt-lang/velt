@@ -1,0 +1,12 @@
+// An element cast to a union with a member that is no element: still an error (#379 only lets
+// a union of related `lib.dom` interfaces through). tsc accepts the cast (its error is at
+// `.count`): the refusal at the cast is Velt's limitation, recorded here.
+interface Counter {
+  count: number;
+}
+
+function read(dom: Element): number {
+  return (dom as HTMLInputElement | Counter).count;
+}
+
+console.log(typeof read);

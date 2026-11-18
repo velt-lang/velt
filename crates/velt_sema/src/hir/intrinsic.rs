@@ -25,6 +25,10 @@ pub enum Intrinsic {
     /// it (`'a'`, `[ 1, 2 ]`, `{ a: 1 }`: as `console.log` prints it inside an array), for
     /// messages that show values, such as a failed `assertEq`.
     Inspect,
+    /// `(buf: borrow mut string, x: borrow T, depth: u32)`: appends `x` as `console.log` shows
+    /// it inside a container, at Node's depth `depth`, to the string builder `buf`
+    /// (std/lang/hooks/inspect.velt: a leaf in place, anything else through its format function).
+    InspectNested,
     /// (Str borrow, Str borrow) → new owned Str.
     StrConcat,
     /// `s.length` → usize (byte length in POC).
@@ -92,8 +96,8 @@ pub enum Intrinsic {
     /// bounds-checked): the bits of two elements, nothing copied or dropped, also between two
     /// inner arrays, which one call may not otherwise change both of. Additive.
     ArraySwapNested,
-    /// `xs.subarray(begin, end)` of a `u8[]` as the argument of a `declare system function`'s
-    /// buffer parameter (https://veltlang.com/docs/reference/system-functions/): `(xs: u8[] (borrowed, modified
+    /// `xs.subarray(begin, end)` of an array as the argument of a C or host function's buffer
+    /// parameter (docs/internals/design/c-ffi.md "A position in an array"): `(xs: u8[] (borrowed, modified
     /// for a buffer the function writes), begin, end)`, of type `u8[]`, the bytes
     /// `begin..end` of `xs` with JS's `subarray` positions (negative counts from the end,
     /// clamped to the array); a position is an `i64`, or a `usize` when it is never negative.
@@ -375,22 +379,27 @@ pub enum Intrinsic {
     /// checks it): `v` written at `address`, unchecked (intrinsics.md "Memory at an address").
     /// Additive.
     AddressStore,
-    /// std only: `ptrAtomicLoad<T>(p: Ptr<T>, order: u8) -> T`, `T` an integer type: as
-    /// `AtomicLoad` on the integer `p` points to (its address is `p`'s one field). Sema turns the
-    /// declaration's string literal orderings into the `Atomic*` intrinsics' integer literals.
-    /// Additive.
-    PtrAtomicLoad,
-    /// `(p: Ptr<T>, v: T, order: u8)`: as `AtomicStore` at `p`. Additive.
-    PtrAtomicStore,
-    /// `(p: Ptr<T>, v: T, op: u8, order: u8) -> T`: as `AtomicRmw` at `p` (the declaration's
-    /// `(p, op, v, order)` reordered by sema, `op` a literal as `AtomicRmw` numbers it).
-    /// Additive.
-    PtrAtomicRmw,
-    /// `(p: Ptr<T>, expected: T, v: T, order: u8, failure: u8) -> T`: as `AtomicCas` at `p`.
-    /// Additive.
-    PtrAtomicCas,
-    /// As `PtrAtomicCas`, `-> bool` (may fail spuriously). Additive.
-    PtrAtomicCasWeak,
+    /// std only (as are the other four `AddressAtomic*`): `addressAtomicLoad<T>(address: usize,
+    /// order: u8) -> T`, `T` an integer type: as `AtomicLoad` on the integer at `address`, `T`
+    /// being the call's type. Sema turns the declaration's string literal orderings into the
+    /// `Atomic*` intrinsics' integer literals.
+    ///
+    /// Changed (#3094), for all five `AddressAtomic*`: renamed from `PtrAtomic*`; the first
+    /// operand is a `usize` address, not a `Ptr<T>`. Not additive.
+    AddressAtomicLoad,
+    /// std only: `(address: usize, v: T, order: u8)`: as `AtomicStore` at `address`, `T` being
+    /// `v`'s type. Changed (#3094): see `AddressAtomicLoad`.
+    AddressAtomicStore,
+    /// std only: `(address: usize, v: T, op: u8, order: u8) -> T`: as `AtomicRmw` at `address`
+    /// (the declaration's `(address, op, v, order)` reordered by sema, `op` a literal as
+    /// `AtomicRmw` numbers it). Changed (#3094): see `AddressAtomicLoad`.
+    AddressAtomicRmw,
+    /// std only: `(address: usize, expected: T, v: T, order: u8, failure: u8) -> T`: as
+    /// `AtomicCas` at `address`. Changed (#3094): see `AddressAtomicLoad`.
+    AddressAtomicCas,
+    /// std only: as `AddressAtomicCas`, `-> bool` (may fail spuriously), `T` being `expected`'s
+    /// type. Changed (#3094): see `AddressAtomicLoad`.
+    AddressAtomicCasWeak,
     /// std only: `atomicAddress<T>(a: borrow Atomic<T>) -> usize`: the address of `a`'s word.
     /// Sema allows only an `Atomic` of a 32- or 64-bit integer that cannot move: a static atomic
     /// (`Global(d)`), or a field (of a field…) of the value of `SharedRead`. Additive.
@@ -584,6 +593,33 @@ pub enum Intrinsic {
     /// std only: `weakRefDeref<T>(r: u32): T | null` — the target (counted), or
     /// null once it was freed.
     WeakRefDeref,
+
+    // Record views (#379; std/prelude/record.velt, velt_vir lower/record_view.rs): a record an
+    // `any` is converted to with `any` values is a view of the object the `any` holds. Each is
+    // nothing for a plain record, and no code at all in a record type no conversion makes a view.
+    /// std only: `recordViewSync<K, V>(r: borrow Record<K, V>)` — a view's mirror rebuilt from
+    /// its source, in the source's order.
+    RecordViewSync,
+    /// std only: `recordViewIs<K, V>(r: borrow Record<K, V>): bool` — whether `r` is a view:
+    /// `false` in a record type no conversion makes a view.
+    RecordViewIs,
+    /// std only: `recordViewGet<K, V>(r: borrow Record<K, V>, key: borrow K): V | undefined` — the
+    /// view `r`'s source's own entry `key` through `any`, or `undefined`.
+    RecordViewGet,
+    /// std only: `recordViewHas<K, V>(r: borrow Record<K, V>, key: borrow K): bool` — whether the
+    /// view `r`'s source has the own key `key`.
+    RecordViewHas,
+    /// std only: `recordViewSet<K, V>(r: borrow Record<K, V>, key: borrow K, value: owned V)` —
+    /// `value` written to the view `r`'s source through `any` (a `TypeError` where it can't hold
+    /// it).
+    RecordViewSet,
+    /// std only: `recordViewDelete<K, V>(r: borrow Record<K, V>, key: borrow K)` — `key` deleted
+    /// from the view `r`'s source through `any`.
+    RecordViewDelete,
+    /// std only: `recordViewFlush<K, V>(r: borrow Record<K, V>, other: borrow Record<K, V>)` — a
+    /// view's mirror entries for the keys of `other` written to its source (a spread or
+    /// `Object.assign` of `other` into the view).
+    RecordViewFlush,
 
     // The dynamic value `any` / `unknown` (issue #924; hir_encodings.md "any and unknown"). Its
     // operand is a `TyKind::Dyn` of the prelude's `any` or `unknown`, built by `ToDyn` with

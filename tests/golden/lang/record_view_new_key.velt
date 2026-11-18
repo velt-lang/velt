@@ -1,0 +1,12 @@
+// A key written through a view of an object (#379, velt_vir lower/record_view.rs) that the
+// object's type has no field for: Node adds it, Velt stops with a `TypeError`, since an object
+// type has a fixed set of fields (a documented difference). Writes of its own fields reach it.
+function main(): void {
+  const o = { x: 1, y: 2 };
+  const held: any = o;
+  const r = held as Record<string, any>;
+  r["x"] = 10;
+  console.log(o.x);
+  r["z"] = 1;
+  console.log("not reached");
+}

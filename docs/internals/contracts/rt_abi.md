@@ -825,6 +825,12 @@ copied target. One table for the process, behind a lock (a task moves between
 worker threads at an `await`). Both runtimes provide them (`velt_rt/src/view.rs`, compiled into
 velt_rt_wasm too). Programs without views never call them.
 
+Record views (#379, velt_vir `lower/record_view.rs`) use the same object table: the live
+`Record<string, any>` view of the object an `any` held, keyed by that object's address with bit 0
+set (`obj | 1`), which no `Proxy` entry (keyed by an object's address, always even) can be.
+`view` is the record object, and its drop glue (`[Symbol.dispose]` time, before its fields drop)
+removes the entry before it releases the source.
+
 The `velt_rt_array_view_*` functions keep a second table the same way for array views (velt_vir
 `lower/array_view.rs`, hir_encodings.md "Array views"): from (`arr`, the data pointer of the
 `any` holding the original array; `ty`, a number the compiler gives the view type, unique
@@ -920,6 +926,25 @@ number where the program has `intWrite`, else `wholeNumberWrite`).
 | `velt_rt_realloc` | `(void* p, uint64_t old_size, uint64_t align, uint64_t new_size) -> void*` |
 | `velt_rt_free` | `(void* p, uint64_t size, uint64_t align)` |
 
+In a release build for a native target, an allocation of a constant size and every free call
+mimalloc directly (#2196): the optimizer's last step (`velt_opt` `heap_calls`) turns each into a
+call of std's hook for it (std/lang/hooks/heap.velt: `heapAlloc`, `heapFree`), which calls
+mimalloc through `declare c` (`mi_malloc`, `mi_malloc_aligned`, `mi_free`, in the runtime's
+archive) with the same contract: a size of 0 gives `align` back and its free does nothing, an
+alignment of 8 or less takes the plain function, and a request mimalloc refuses stops the program
+with the same message and exit code (through `velt_rt_write_str` and `velt_rt_exit`, not a
+panic a `catchUnwind` could catch). Array buffers of a run-time length and array growth still
+call `velt_rt_alloc` / `velt_rt_realloc` (`heap_calls` says why); array growth calls
+`velt_rt_realloc` for an empty buffer too (an old size of 0 allocates). The runtime's Rust uses mimalloc
+too (its global allocator), so blocks still move both ways. Debug builds, the JIT and WebAssembly
+keep calling the runtime's functions, and so does a release build that links a debug runtime (a
+`velt` built by cargo, or `$VELT_RT_LIB` naming one): the variables that make it check and count
+every block (`VELT_RT_DEBUG_ALLOC=1`, `VELT_RC_STATS=1`) are read when the program runs. So does
+one whose runtime has no mimalloc (built with `--no-default-features`), or that is made with one
+of those variables set. The compiler reads the runtime's symbol index to tell
+(`velt_link::runtime_lib_profile`); `VELT_HEAP_HOOKS=0` turns the hooks off, `=1` on with a debug
+runtime too (veltc's driver/heap_hooks.rs).
+
 An array buffer (generated code's `T[]`) has its element's alignment, or 128 bytes when the
 element's size is a multiple of 64 (`velt_vir` `buffer_align`): each element of such an array is
 then whole 64-byte lines, and an aligned pair of them one 128-byte block (one cache line on
@@ -995,21 +1020,11 @@ Declared in std (Velt signatures; `u8[]`/`string` are passed as in rt_abi_async.
   worked out once, right after that statement, when the rest of the block reads a byte of `s` and
   is quiet (`lower/quiet.rs`, strict): nothing there can grow a builder or replace what `s` borrows
   (`lower/str_data.rs`).
-- BigInt (`std/math/bigint.velt`, handle `u64`, freed by `velt_rt_bigint_free`): `from_i64`, `from_f64`,
-  `parse(s, radix)`, `clone`, `assign(dst, a)`, `neg(dst, a)`, `op(dst, a, b, op: u32): bool` and
-  `op_i64(dst, a, k: i64, op: u32): bool` (false: division by zero or a negative or huge shift; `dst` unchanged), `cmp`/`cmp_i64` (−1/0/1),
-  `to_i64`, `to_f64`, `to_string(a, radix)`. `op` codes are defined in `std/math/bigint.velt`.
-- Numbers: `velt_rt_f64_to_fixed(x: f64, digits: i64): string` (JS `toFixed` rounding; std's
-  `toFixed` (velt/lang/number/fixed) calls it only for more than 19 digits, a result past 64
-  bits, and 1e21 and up),
-  `velt_rt_f64_to_exponential(x: f64, digits: i64): string` (JS `toExponential`; `digits < 0`:
-  omitted), `velt_rt_f64_to_precision(x: f64, precision: i64): string` (JS `toPrecision`),
-  `velt_rt_f64_to_radix(x: f64, radix: i64): string` (JS `toString(radix)` with V8's digits, for
-  a finite `x`; `radix` clamped to 2..36), `velt_rt_i64_to_radix(x: i64, radix: i64): string`
-  and `velt_rt_u64_to_radix(x: u64, radix: i64): string` (exact integer digits) (additive),
+- Numbers (`toFixed`, `toExponential`, `toPrecision` and `toString(radix)` are std's:
+  velt/lang/number, velt/lang/hooks/number_digits):
   `velt_rt_math_umulh(a: u64, b: u64): u64` (high 64 bits of the product),
   `velt_rt_math_f64_bits(x: f64): u64` and `velt_rt_math_bits_f64(b: u64): f64` (IEEE 754 bit
   casts, `x.toBits()` / `f64.fromBits(b)`; both backends emit them inline).
 - Binary stdio: `velt_rt_stdout_write_bytes(bytes: u8[])` (synchronous, ordered with
-  `console.log`), `async velt_rt_stdin_read_all_bytes(): IoResult<u8[]>` and
-  `velt_rt_stdin_read_all_bytes_sync(): IoResult<u8[]>` (hand over the runtime's buffer).
+  `console.log`) and `velt_rt_stdin_read_all_bytes_sync(): IoResult<u8[]>` (hands over the
+  runtime's buffer; `readAllBytes()` runs it on the executor's blocking pool).

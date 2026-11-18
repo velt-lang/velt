@@ -62,8 +62,14 @@ impl Cx<'_> {
         }
         // The executor in Velt's own exports wait until the program is known to run on it
         // (`Cx::drain`): one that doesn't leaves them out, as when std is loaded on demand.
+        // With a live set, only the exports in it: lazy std's has the export of each module it
+        // loaded, but a check by units has every std module's (`std_child_exited`, a Windows
+        // module's), and an export nothing reaches is left out; `exportedAddress` of one
+        // still builds it.
         for i in 0..self.hir.c_exports.len() {
-            if !self.hir.c_exports[i].name.starts_with(SCHED_EXPORTS) {
+            let e = &self.hir.c_exports[i];
+            let live = (self.hir.live.as_ref()).is_none_or(|live| live.contains(&e.def));
+            if live && !e.name.starts_with(SCHED_EXPORTS) {
                 self.func(Work::CExport(i as u32));
             }
         }

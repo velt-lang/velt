@@ -115,6 +115,32 @@ async function main() {
     );
 }
 
+/// Comments that name a global with module state (`sessionStorage`'s `Storage`, `navigator`) load
+/// neither: the program has no module state, so its listener still spreads over every worker
+/// (std/prelude/global/storage.velt and navigator.velt load for a name in code only). A comment
+/// naming `Storage` once kept a server's connections on one task (#3097: the actors app).
+#[test]
+fn a_comment_that_names_a_global_with_module_state_leaves_the_connections_spread() {
+    if !has_threads() {
+        return;
+    }
+    prints(
+        "comment_globals",
+        r#"import { listen, spreadsConnections } from "velt/net";
+
+// Storage: what the Storage and sessionStorage of a navigator would hold, and the Navigator.
+/* sessionStorage, navigator */
+
+async function main() {
+  const l = await listen("127.0.0.1:0");
+  console.log(`spreads ${spreadsConnections()}, workers ${l.workers()}`);
+  l.close();
+}
+"#,
+        "spreads true, workers 4\n",
+    );
+}
+
 /// A connection served on one worker moves to another mid-stream (its stream handed to a task
 /// pinned there): it keeps serving, its registration follows the task to that worker's reactor
 /// (#2370), and the client runs on a third worker.

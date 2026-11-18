@@ -41,6 +41,7 @@ impl<'h> Cx<'h> {
             prelude_defs: std::cell::OnceCell::new(),
             uses_placement: false,
             cell_checks: false,
+            heap_hooks: false,
             target: String::new(),
             cpu_checks: Default::default(),
             unavailable: vec![],
@@ -52,10 +53,10 @@ impl<'h> Cx<'h> {
             c_clashes_reported: Default::default(),
             ffi_hooks: Default::default(),
             std_calls: FxHashMap::default(),
-            system_aggs: FxHashMap::default(),
             reg_slot_agg: None,
             no_await_steps: false,
             facts_only: false,
+            cycle_facts: false,
             deferred: FxHashMap::default(),
             deferred_new: vec![],
             versioned: 0,
@@ -119,6 +120,7 @@ impl<'h> Cx<'h> {
             symbol_records: Default::default(),
             boxing,
             facts: Default::default(),
+            dyn_call_lookup: false,
             shapes: Default::default(),
             iface_impls: None,
             ext_memo: Default::default(),
@@ -458,7 +460,25 @@ impl<'h> Cx<'h> {
 
     pub(super) fn rt(&mut self, r: Rt) -> ExternId {
         let (sym, params, ret, noreturn) = r.sig();
+        if self.heap_hooks && !self.extern_map.contains_key(sym) {
+            self.heap_hook_for(r);
+        }
         self.extern_sym(sym, params, ret, noreturn)
+    }
+
+    /// With `heap_hooks`, std's hook that takes the place of the allocator call `r` once the
+    /// optimizer is done (`velt_opt::heap_calls`), lowered with the first such call.
+    fn heap_hook_for(&mut self, r: Rt) {
+        let name = match r {
+            Rt::Alloc => velt_common::std_hook!(heap_alloc),
+            Rt::Free => velt_common::std_hook!(heap_free),
+            _ => return,
+        };
+        let def = (self.prelude_def(name)).filter(|d| !self.hir.unchecked.contains(d));
+        let Some(def) = def else {
+            ice(format_args!("std without the hook `{name}`"))
+        };
+        self.func_for(def, vec![]);
     }
 
     /// Intern an extern by symbol; the same symbol must always have the same signature.
@@ -471,8 +491,9 @@ impl<'h> Cx<'h> {
     }
 
     /// [`Self::extern_sym`] of a C function, `variadic` (`params` its fixed parameters) or not.
-    /// c_call.rs checked its declaration against the symbol's extern so far; a system call
-    /// (system.rs) of a symbol the program declared otherwise is an error at that declaration.
+    /// c_call.rs checked its declaration against the symbol's extern so far; the compiler's
+    /// own variadic extern of a symbol the program declared otherwise is an error at that
+    /// declaration.
     pub(super) fn extern_sym_c(
         &mut self,
         symbol: &str,

@@ -66,6 +66,12 @@ export const imports: Imports = {
     win32: "./lang/hooks/thread_win32.velt",
     default: "./lang/hooks/thread_none.velt",
   },
+  // `posix_spawn_file_actions_addopen`, whose `mode_t` is 16 bits on macOS and 32 on Linux
+  // (std/process/child/spawn_posix.velt, which only those load).
+  "#spawn-open": {
+    darwin: "./process/child/spawn_open_darwin.velt",
+    default: "./process/child/spawn_open_linux.velt",
+  },
   // velt/net's TCP functions: the runtime's (std/net/rt.velt), or, compiled with the executor in
   // Velt (`VELT_SCHEDULER=std`, the `std-scheduler` condition), non-blocking sockets on its
   // reactor (std/net/tcp_sched.velt), which hands the runtime's handles (TLS, `fetch`'s pool) and
@@ -100,28 +106,46 @@ export const imports: Imports = {
   // The C library's socket functions those sockets call (std/net/fd_socket.velt, fd_io.velt,
   // fd_addr.velt, std/lang/hooks/sched_io_write.velt), or Winsock's under the same names.
   "#net-calls": { win32: "./net/calls_win32.velt", default: "./net/calls_posix.velt" },
-  // velt/net's UDP sockets and name lookups: the runtime's, or, compiled with the executor in
-  // Velt, non-blocking UDP sockets on its reactor and `getaddrinfo` on its blocking pool.
-  // On Windows UDP stays the runtime's under it too (#2649: its Winsock port is a follow-up).
-  "#net-udp": {
-    win32: "./net/udp/rt.velt",
-    "std-scheduler": "./net/udp/udp_sched.velt",
-    default: "./net/udp/rt.velt",
-  },
+  // `streamPair`'s two connected sockets (std/net/pair.velt): a `socketpair`, or on Windows,
+  // which has none, a loopback connection.
+  "#net-pair": { win32: "./net/pair_win32.velt", default: "./net/pair_posix.velt" },
+  // `streamPair`'s ends (std/net/pair.velt): with the executor in Velt (every native build) those
+  // sockets on its reactor; elsewhere (WebAssembly) none, a panic.
+  "#net-pair-ends": { "std-scheduler": "./net/pair_sched.velt", default: "./net/pair_none.velt" },
+  // velt/net's UDP sockets and name lookups: with the executor in Velt (every native build),
+  // non-blocking UDP sockets on its reactor and `getaddrinfo` on its blocking pool; elsewhere
+  // (WebAssembly) none, `ENOTSUP`.
+  "#net-udp": { "std-scheduler": "./net/udp/udp_sched.velt", default: "./net/udp/rt.velt" },
   "#net-dns": { "std-scheduler": "./net/dns/rt_sched.velt", default: "./net/dns/rt.velt" },
+  // An `AbortSignal.timeout`'s timer, which a counted exit gives back (std/task/signal_timeout.velt):
+  // the executor in Velt's order marks it; elsewhere nothing is counted that way.
+  "#timer-give-back": {
+    "std-scheduler": "./task/timer_give_back_sched.velt",
+    default: "./task/timer_give_back_none.velt",
+  },
   // velt/fs's and velt/process's runtime functions: the runtime's (std/fs/rt.velt, std/process/
   // rt.velt), or, compiled with the executor in Velt (`VELT_SCHEDULER=std`), the same names with
   // whole-file operations and standard input read on its blocking pool (std/lang/hooks/
   // sched_blocking.velt) instead of the runtime's leaves on tokio's blocking threads.
   "#fs-rt": { "std-scheduler": "./fs/rt_sched.velt", default: "./fs/rt.velt" },
   "#process-rt": { "std-scheduler": "./process/rt_sched.velt", default: "./process/rt.velt" },
-  // velt/process/child's runtime functions: the runtime's (tokio's processes), or, compiled with
-  // the executor in Velt, `posix_spawn` with the exit and the pipes on its reactor. On Windows
-  // child processes stay the runtime's under it too (#2649: `CreateProcess` is a follow-up).
+  // velt/process/child's runtime functions: the runtime's (std/process/child/rt.velt, which
+  // WebAssembly can't run), or, compiled with the executor in Velt, its own (child_sched.velt),
+  // which `#child-os` serves: `posix_spawn` with the exit and the pipes on its reactor, or on
+  // Windows `CreateProcessW` with the exit wait and the pipes on its blocking pool.
   "#child-rt": {
-    win32: "./process/child/rt.velt",
     "std-scheduler": "./process/child/child_sched.velt",
     default: "./process/child/rt.velt",
+  },
+  "#child-os": {
+    win32: "./process/child/child_win32.velt",
+    default: "./process/child/child_posix.velt",
+  },
+  // `execSync`'s start: the runtime's, after the program is found and checked as `exec` does it
+  // on Windows; elsewhere the runtime's alone.
+  "#exec-sync": {
+    win32: "./process/child/exec_sync_win32.velt",
+    default: "./process/child/exec_sync.velt",
   },
   // `fetch`'s plain-TCP connections: under the executor in Velt (every native build) sockets on
   // its reactor, pooled in Velt (`https:` stays the runtime's); otherwise the runtime's.
@@ -137,5 +161,42 @@ export const imports: Imports = {
   "#task-workers": {
     "std-scheduler": "./task/worker_index_sched.velt",
     default: "./task/worker_index.velt",
+  },
+  // The limb loops of `BigInt`'s magnitudes (std/math/nat_add.velt): on the limbs' addresses,
+  // which the C library's `memset` gives; JS hosts have none, and index the arrays.
+  "#nat-rows": { js: "./math/nat_rows_checked.velt", default: "./math/nat_rows_raw.velt" },
+  // The C library's file-descriptor functions behind Node's fd API (`openSync`, `readSync`, ...):
+  // `declare c("c")` on macOS and Linux, with their per-target `fcntl` commands and `struct
+  // stat`; elsewhere each fails with ENOSYS.
+  "#fd-system": {
+    darwin: "./fs/fd/darwin.velt",
+    linux: "./fs/fd/linux.velt",
+    default: "./fs/fd/unsupported.velt",
+  },
+  // velt/os's facts about the machine (`platform`, `availableParallelism`, `hostname`, `tmpdir`):
+  // the C library's on macOS and Linux, Win32's and Winsock's on Windows; a WebAssembly build's
+  // fixed answers elsewhere.
+  "#os-sys": {
+    darwin: "./os/sys_darwin.velt",
+    linux: "./os/sys_linux.velt",
+    win32: "./os/sys_win32.velt",
+    default: "./os/sys_wasm.velt",
+  },
+  // The build's processor (`os.arch()`, and the Linux system-call numbers that differ by it).
+  // No default: a native build for another processor fails here, at compile time, rather than
+  // running with x64's or WebAssembly's answers.
+  "#os-arch": {
+    x64: "./os/arch_x64.velt",
+    arm64: "./os/arch_arm64.velt",
+    wasm: "./os/arch_wasm.velt",
+  },
+  // Winsock for velt/os' `hostname()` on Windows, started once per process; nothing elsewhere.
+  "#os-winsock": { win32: "./os/winsock_win32.velt", default: "./os/winsock_none.velt" },
+  // Whether a file descriptor is a terminal: the C library's `isatty` on macOS and Linux, a
+  // console handle on Windows, the WebAssembly runtime's answer there.
+  "#tty": {
+    win32: "./process/tty_win32.velt",
+    native: "./process/tty_posix.velt",
+    default: "./process/tty_wasm.velt",
   },
 };

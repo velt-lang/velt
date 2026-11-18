@@ -1,0 +1,21 @@
+// velt/os (internal): the machine facts of a WebAssembly build (`#os-sys`' default variant,
+// std/imports.velt), which has no OS to ask: what the target is ("wasi", which Node has no
+// name for) and the answers the functions document for "unknown".
+
+/** The platform of a WebAssembly build: "wasi". */
+export const PLATFORM: string = "wasi";
+
+/** Logical CPUs: 1 (a module runs on the thread that calls it). */
+export function cpuCount(): i64 {
+  return 1;
+}
+
+/** The host name: "" (unknown). */
+export function hostname(): string {
+  return "";
+}
+
+/** The directory for temporary files: "/tmp". */
+export function tmpdir(): string {
+  return "/tmp";
+}

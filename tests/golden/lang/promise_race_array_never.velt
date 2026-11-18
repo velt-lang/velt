@@ -1,0 +1,13 @@
+// `Promise.race` over an array with a child that never settles: the other one wins, and an empty
+// race never settles (#2196).
+async function main() {
+  const never = Promise.withResolvers<string>();
+  const ps: Promise<string>[] = [never.promise, Promise.resolve("other")];
+  console.log(await Promise.race(ps));
+  const none: Promise<string>[] = [];
+  Promise.race(none).then((v) => console.log(`empty settled ${v}`));
+  for (let i = 0; i < 4; i++) {
+    await null;
+  }
+  console.log("end");
+}

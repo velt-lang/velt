@@ -1,8 +1,9 @@
-//! Child-process ABI tests (Unix shells; the Windows equivalents are covered by the goldens).
+//! `execSync`'s ABI tests (Unix shells; the Windows equivalents are covered by the goldens).
 
 use super::command::VeltCommand;
 use super::output::{velt_rt_child_output_sync, VeltOutput};
-use super::*;
+use crate::result::IoResult;
+use crate::str::VeltStr;
 use crate::str_array::VeltStrArray;
 use std::mem::MaybeUninit;
 
@@ -80,34 +81,6 @@ fn output_sync_collects_everything() {
         );
     }
     inputs.iter_mut().for_each(|i| unsafe { i.release() });
-}
-
-#[cfg(unix)]
-#[test]
-fn spawned_child_is_reaped_and_killable() {
-    let s = spec("sleep", &["30"], 2 | (2 << 2) | (2 << 4));
-    let mut out = MaybeUninit::uninit();
-    // SAFETY: valid spec; the handle is released at the end.
-    unsafe {
-        velt_rt_child_spawn(&s, out.as_mut_ptr());
-        let out = out.assume_init();
-        assert_eq!(out.err.code, 0);
-        let child = out.value.assume_init();
-        assert!(velt_rt_child_pid(child) > 0);
-        assert_eq!(velt_rt_child_exit_code(child), -1);
-        let mut err = MaybeUninit::uninit();
-        velt_rt_child_kill(child, libc::SIGTERM, err.as_mut_ptr());
-        assert_eq!(err.assume_init().code, 0);
-        let mut status = super::CHILDREN.get(child).expect("open").status.clone();
-        crate::task::runtime::runtime().block_on(async {
-            status
-                .wait_for(Option::is_some)
-                .await
-                .expect("reaper publishes");
-        });
-        assert_eq!(velt_rt_child_exit_code(child), 128 + libc::SIGTERM as i64);
-        velt_rt_child_close(child);
-    }
 }
 
 /// A fresh directory for one test (its mode decides what the lookup may see in it).

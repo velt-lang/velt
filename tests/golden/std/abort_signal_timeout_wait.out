@@ -1,0 +1,3 @@
+a temporary signal's timeout fired
+an any of a timeout fired: TimeoutError
+the sleep won, aborted: false ; the losing wait lets the program end

@@ -44,136 +44,9 @@
 pub use crate::hook_demand::{Construct, ConstructSet, HookSet};
 pub use crate::hook_sig::{FnSig, Mode, Param, Sig, T};
 
-/// One hook: its entry name, its module's canonical path, its name there, its signature, whether
-/// lowering calls it, whether lowering may find it missing and fall back to the runtime
-/// (`fallback`), the runtime externs it replaces and the benchmark that measures it.
-#[derive(Clone, Copy, Debug)]
-pub struct Hook {
-    /// The entry's name (`f64_to_string`).
-    pub name: &'static str,
-    /// The std module table's entry of the module that defines it (`lang_hooks_number`:
-    /// [`crate::std_modules`]).
-    pub module_entry: &'static str,
-    /// Its name in that module (`f64ToString`; `ArrayView` for a class).
-    pub item: &'static str,
-    /// Its signature ([`crate::hook_sig`]).
-    pub sig: Sig,
-    /// Lowering, the optimizer or a backend calls it by name.
-    pub lowered: bool,
-    /// The runtime externs (`velt_rt_*`) whose job this hook does: the compiler must call the
-    /// hook, not the extern, for the feature the hook implements (`velt_common`'s test
-    /// `hook_replaces.rs` lists every place left that still names one, #2197). An extern the
-    /// hook only wraps is not listed: `processWrite` writes through `velt_rt_write_str`, which
-    /// stays the runtime's job. A hook may also call an extern it replaces for some of its
-    /// inputs (`numberText` hands a float that is not whole to `velt_rt_str_from_f64`): what
-    /// counts is that the compiler no longer calls it in the hook's place.
-    pub replaces: &'static [&'static str],
-    /// Lowering calls the runtime instead when the hook is missing or left unchecked (it is
-    /// one of [`ON_DEMAND_FLOAT`] or [`ON_DEMAND_WRITE`]): its `velt_vir` builder returns an
-    /// `Option`. Every other lowered hook missing is an internal compiler error.
-    pub fallback: bool,
-    /// The program of `bench/stdport/` (`int_to_string` for `bench/stdport/int_to_string.velt`)
-    /// that measures this hook against the Rust it replaced, if one does.
-    pub bench: Option<&'static str>,
-    /// The HIR constructs whose lowering calls it ([`crate::hook_demand`]): sema checks it only
-    /// where live code has one, and lowering asserts that. None: always needed.
-    pub constructs: &'static [Construct],
-}
-
-impl Hook {
-    /// The canonical path of the module that defines it: `std/lang/hooks/number`.
-    pub fn module(&self) -> String {
-        let rel = crate::std_modules::rel(self.module_entry).unwrap_or_else(|| {
-            panic!(
-                "ICE: hook module `{}` is not a std module",
-                self.module_entry
-            )
-        });
-        format!("{}{rel}", crate::std_modules::CANONICAL_PREFIX)
-    }
-
-    /// The qualified name: `std/lang/hooks/number::f64ToString`.
-    pub fn qualified(&self) -> String {
-        format!("{}::{}", self.module(), self.item)
-    }
-}
-
-/// An entry is `name => module, "item", sig(…)` (or `class`, `decorator`), then optional flags
-/// after commas, in any order: `lowered`, `fallback`, `replaces("velt_rt_…", …)`, `bench("row")`
-/// and `constructs(TextInt, …)` (the fields of [`Hook`]).
-macro_rules! hooks {
-    // Each flag is one of these (an unknown one fails here).
-    (@flag lowered) => {};
-    (@flag fallback) => {};
-    (@flag replaces) => {};
-    (@flag bench) => {};
-    (@flag constructs) => {};
-    (@lowered) => { false };
-    (@lowered lowered $($rest:tt)*) => { true };
-    (@lowered $skip:tt $($rest:tt)*) => { hooks!(@lowered $($rest)*) };
-    (@fallback) => { false };
-    (@fallback fallback $($rest:tt)*) => { true };
-    (@fallback $skip:tt $($rest:tt)*) => { hooks!(@fallback $($rest)*) };
-    (@replaces) => { &[] };
-    (@replaces replaces ($($r:literal),* $(,)?) $($rest:tt)*) => { &[$($r),*] };
-    (@replaces $skip:tt $($rest:tt)*) => { hooks!(@replaces $($rest)*) };
-    (@bench) => { None };
-    (@bench bench ($b:literal) $($rest:tt)*) => { Some($b) };
-    (@bench $skip:tt $($rest:tt)*) => { hooks!(@bench $($rest)*) };
-    (@constructs) => { &[] };
-    (@constructs constructs ($($c:ident),* $(,)?) $($rest:tt)*) => { &[$(Construct::$c),*] };
-    (@constructs $skip:tt $($rest:tt)*) => { hooks!(@constructs $($rest)*) };
-    ($($(#[doc = $doc:literal])* $name:ident => $module:ident, $item:literal,
-        $kind:ident $(($($sig:tt)*))? $(, $flag:ident $(($($arg:tt)*))?)*;)*) => {
-        $($(hooks!(@flag $flag);)*)*
-
-        /// Calls macro `cb` (in scope where this is invoked) with every entry of the table, as
-        /// `name => "item", sig(…) [flags];` (or `class`), the flags' names only: how `velt_vir`
-        /// generates its typed call builders from the signatures written here.
-        #[macro_export]
-        macro_rules! std_hook_table {
-            ($cb:ident) => {
-                $cb! { $( $name => $item, $kind $(($($sig)*))? [$($flag)*]; )* }
-            };
-        }
-
-        /// The qualified name of hook `name`: `std_hook!(f64_to_string)` is
-        /// `"std/lang/hooks/number::f64ToString"`. A literal, usable in `const`s and patterns.
-        #[macro_export]
-        macro_rules! std_hook {
-            $( ($name) => { $crate::std_item!($module, $item) }; )*
-        }
-
-        /// The name of hook `name` in its module: `std_hook_name!(f64_to_string)` is
-        /// `"f64ToString"`.
-        #[macro_export]
-        macro_rules! std_hook_name {
-            $( ($name) => { $item }; )*
-        }
-
-        /// Every hook, in table order.
-        pub const HOOKS: &[Hook] = &[$(Hook {
-            name: stringify!($name),
-            module_entry: stringify!($module),
-            item: $item,
-            sig: $crate::hook_sig!($kind $(($($sig)*))?),
-            lowered: hooks!(@lowered $($flag $(($($arg)*))?)*),
-            fallback: hooks!(@fallback $($flag $(($($arg)*))?)*),
-            replaces: hooks!(@replaces $($flag $(($($arg)*))?)*),
-            bench: hooks!(@bench $($flag $(($($arg)*))?)*),
-            constructs: hooks!(@constructs $($flag $(($($arg)*))?)*),
-        }),*];
-
-        #[allow(non_camel_case_types, dead_code)]
-        enum Index { $($name),* }
-
-        /// Each hook's index in [`HOOKS`] (a [`HookSet`]'s bit): `hook_index::int_push`.
-        #[allow(non_upper_case_globals)]
-        pub mod hook_index {
-            $(pub const $name: usize = super::Index::$name as usize;)*
-        }
-    };
-}
+#[macro_use]
+mod hook;
+pub use hook::Hook;
 
 hooks! {
     // array.velt: array constructors.
@@ -186,11 +59,14 @@ hooks! {
 
     // number.velt: numbers as text, and the conversions of a float index.
     /// `n.toString(radix)` of a float (`velt_sema` `builtins.rs`).
-    f64_to_string => lang_hooks_number, "f64ToString", sig((f64, f64) -> string);
+    f64_to_string => lang_hooks_number, "f64ToString", sig((f64, f64) -> string),
+        replaces("velt_rt_f64_to_radix");
     /// `n.toString(radix)` of a signed integer.
-    i64_to_string => lang_hooks_number, "i64ToString", sig((i64, f64) -> string);
+    i64_to_string => lang_hooks_number, "i64ToString", sig((i64, f64) -> string),
+        replaces("velt_rt_i64_to_radix");
     /// `n.toString(radix)` of an unsigned integer.
-    u64_to_string => lang_hooks_number, "u64ToString", sig((u64, f64) -> string);
+    u64_to_string => lang_hooks_number, "u64ToString", sig((u64, f64) -> string),
+        replaces("velt_rt_u64_to_radix");
     /// `Math.imul`-like `(a * b) | 0` of two int32 values (`velt_sema` `int32.rs`, `velt_opt`
     /// numrep).
     mul_to_int32 => lang_hooks_number, "mulToInt32", sig((f64, f64) -> i32), lowered;
@@ -198,6 +74,21 @@ hooks! {
     float_index => lang_hooks_number, "floatIndex", sig((f64) -> usize), lowered;
     /// A float position argument (`xs.at(i)`, `s.slice(i)`).
     float_position => lang_hooks_number, "floatPosition", sig((f64) -> usize);
+    // number_digits.velt: numbers rounded to a number of digits, which std calls by role.
+    /// `x.toExponential(digits)` (`digits` below 0: omitted; the prelude's method).
+    number_to_exponential => lang_hooks_number_digits, "toExponentialText", sig((f64, i64) -> string),
+        replaces("velt_rt_f64_to_exponential"), prebuilt;
+    /// `x.toPrecision(precision)` (the prelude's method).
+    number_to_precision => lang_hooks_number_digits, "toPrecisionText", sig((f64, i64) -> string),
+        replaces("velt_rt_f64_to_precision"), prebuilt;
+    /// `x.toFixed(digits)` from the exact digits: what std's `toFixed` (velt/lang/number/fixed)
+    /// can't do in 64 bits, and `toFixed` through `any`.
+    number_to_fixed => lang_hooks_number_digits, "toFixedText", sig((f64, i64) -> string),
+        replaces("velt_rt_f64_to_fixed"), prebuilt;
+    /// A decimal literal of `Number(s)` or `parseFloat(s)` (velt/lang/number/parse) that 64 bits
+    /// don't settle, from its bytes `start` to `end`.
+    number_parse_long => lang_hooks_number_parse, "longDecimalValue", sig((&string, usize, usize) -> f64),
+        replaces("velt_rt_parse_float"), prebuilt;
     /// `s.localeCompare(t)` (only std calls it: the method, and `anyStr_localeCompare` for a
     /// string held as `any`).
     locale_order => lang_string_collate, "localeOrder", sig((&string, &string) -> i64),
@@ -260,12 +151,59 @@ hooks! {
     float_push => lang_hooks_number_float, "floatPush", sig((&mut string, f64) -> void), lowered, fallback,
         replaces("velt_rt_strbuf_push_f64"), bench("float_to_string");
 
+    // prebuilt_probe.velt: the test of prebuilt hook modules (`prebuilt`), nothing else: no std
+    // code calls them; veltc's test `prebuilt_hooks.rs` calls them by role from a std of its own.
+    /// The first `digits` digits of `x`'s whole part (`|x|` below 2^53), from an `u8[]`.
+    prebuilt_probe_text => lang_hooks_prebuilt_probe, "probeText", sig((f64, i64) -> string),
+        prebuilt;
+    /// The decimal digits of `s` from byte `start` to `end`, as a number.
+    prebuilt_probe_value => lang_hooks_prebuilt_probe, "probeValue",
+        sig((&string, usize, usize) -> f64), prebuilt;
+
     // process_statics.velt: the process-wide statics the runtime reads (#2779), whose addresses
     // `velt_main` hands it first thing (`velt_rt_statics`).
     /// The epoch of the runtime's cache of the last position translation (`velt_rt`
     /// `str/recent.rs`): bumped by the runtime when a string buffer it may have remembered is
     /// freed or moved.
     str_epoch => lang_hooks_process_statics, "STR_EPOCH", process_static, lowered;
+
+    // inspect_cycles.velt: `<ref *1>` and `[Circular *1]`, checked only where a live type can hold
+    // itself (velt_sema `live_constructs.rs`); lowering tracks no cycle where they are unchecked.
+    /// The start of a top-level value: the numbering starts over.
+    inspect_begin => lang_hooks_inspect_cycles, "inspectBegin", sig(() -> void), lowered, fallback,
+        constructs(Format, Dynamic);
+    /// The end of a top-level value: the numbering's block is given back.
+    inspect_end => lang_hooks_inspect_cycles, "inspectEnd", sig(() -> void), lowered, fallback,
+        constructs(Format, Dynamic);
+    /// Before a user's custom inspect: the state, saved for `inspect_restore` and left empty.
+    inspect_save => lang_hooks_inspect_cycles, "inspectSave", sig(() -> u64), lowered, fallback,
+        constructs(Format, Dynamic);
+    /// After a user's custom inspect: the state `inspect_save` saved, back.
+    inspect_restore => lang_hooks_inspect_cycles, "inspectRestore", sig((u64) -> void), lowered,
+        fallback, constructs(Format, Dynamic);
+    /// The start of an object that may hold itself: false after `[Circular *N]` when it is open.
+    inspect_enter => lang_hooks_inspect_cycles, "inspectEnter", sig((&mut string, u64) -> bool),
+        lowered, fallback, constructs(Format, Dynamic), replaces("velt_rt_strbuf_inspect_enter");
+    /// The end of the innermost object `inspect_enter` started: its `<ref *N> ` prefix.
+    inspect_leave => lang_hooks_inspect_cycles, "inspectLeave", sig((&mut string) -> void),
+        lowered, fallback, constructs(Format, Dynamic), replaces("velt_rt_strbuf_inspect_leave");
+    /// Past the depth limit: `[Circular *N]` (true) when the object is being printed.
+    inspect_circular => lang_hooks_inspect_cycles, "inspectCircular", sig((&mut string, u64) -> bool),
+        lowered, fallback, constructs(Format, Dynamic), replaces("velt_rt_strbuf_inspect_circular");
+    /// An object that may hold itself: the depth limit and the cycle check, before its fields.
+    open_object => lang_hooks_inspect_cycles, "openObject", sig((&mut string, &string, u64, u32) -> bool),
+        lowered, fallback, constructs(Format, Dynamic);
+
+    // inspect.velt: what `console.log` writes alike for every type (lowering's glue where unchecked).
+    /// An object that cannot hold itself: the depth limit, before lowering writes its fields.
+    open_plain => lang_hooks_inspect, "openPlain", sig((&mut string, &string, u32) -> bool),
+        lowered, fallback, constructs(Format, Dynamic);
+    /// `, ... n more items` after the first 100 entries of an array, `Map` or `Set`.
+    inspect_more => lang_hooks_inspect, "inspectMore", sig((&mut string, u64) -> void),
+        lowered, constructs(Format, Dynamic), replaces("velt_rt_strbuf_inspect_more");
+    /// An array: `[ 1, 2 ]`, its first 100 elements, `[Array]` past the depth limit.
+    inspect_array => lang_hooks_inspect, "inspectArray", sig(<A>(&mut string, &[A], u32) -> void),
+        lowered, fallback, constructs(Format, Dynamic);
 
     // process.velt: the builtin `process` namespace (`velt_sema` `process.rs`).
     /// `process.stdout.write(s)` / `process.stderr.write(s)`.
@@ -288,11 +226,23 @@ hooks! {
     /// exception when a `catchUnwind` is active on the thread, and calls `velt_rt_panic`
     /// otherwise.
     panic_raise => lang_hooks_unwind, "panicRaise", sig((&string) -> never), lowered, constructs(CatchUnwind);
+    // heap.velt: a release build's allocator, mimalloc through `declare c` (#2196). velt_opt's
+    // last step (`heap_calls`) turns the runtime allocator calls lowering emits into these.
+    /// `velt_rt_alloc`'s job: `(size, align)`, the block's address.
+    heap_alloc => lang_hooks_heap, "heapAlloc", sig((u64, u64) -> u64), lowered;
+    /// `velt_rt_realloc`'s: `(p, old_size, align, new_size)`, the block's new address. Not called
+    /// yet: array growth keeps the runtime's (velt_opt `heap_calls`).
+    heap_realloc => lang_hooks_heap, "heapRealloc", sig((u64, u64, u64, u64) -> u64), lowered;
+    /// `velt_rt_free`'s: `(p, size, align)`.
+    heap_free => lang_hooks_heap, "heapFree", sig((u64, u64, u64) -> void), lowered;
     // sched.velt: the executor in Velt (#2649), with `VELT_SCHEDULER=std` ([`std_scheduler`]).
+    /// The program's thread, marked by `velt_main` first thing (#3085): the executor's worker 0
+    /// starts only there (program_thread.velt).
+    program_thread => lang_hooks_program_thread, "programThread", sig(() -> void), lowered;
     /// `velt_rt_block_on`'s job: `(poll, state)`.
     sched_block_on => lang_hooks_sched, "schedBlockOn", sig((usize, usize, u64) -> void), lowered;
     /// `velt_rt_spawn`'s: `(poll, drop, state, size, align, result_size, result_drop)`, the handle.
-    sched_spawn => lang_hooks_sched, "schedSpawn", sig((usize, usize, usize, u64, u64, u64, usize, usize) -> usize), lowered;
+    sched_spawn => lang_hooks_sched_spawn, "schedSpawn", sig((usize, usize, usize, u64, u64, u64, usize, usize) -> usize), lowered;
     /// `velt_rt_yield_now`'s: `(cx)`; then the end of `velt_main` with its exit code (0: the
     /// tasks left run).
     sched_yield => lang_hooks_sched, "schedYield", sig((usize) -> void), lowered;
@@ -304,8 +254,21 @@ hooks! {
     sched_detach => lang_hooks_sched, "schedDetach", sig((usize, usize) -> void), lowered;
     /// `velt_rt_fut_transfer`'s: `(f, transfer_glue)` (#2854).
     sched_transfer => lang_hooks_sched_node_transfer, "schedTransfer", sig((usize, usize) -> void), lowered;
+    /// `velt_rt_fut_share`'s: `(f, result_size, share_poll, result_drop)`, another holder (#2854).
+    sched_share => lang_hooks_sched_share, "schedShare", sig((usize, u64, usize, usize) -> usize), lowered;
+    /// `velt_rt_fut_id`'s: `(f)`, the promise's identity (#1682, #2854).
+    sched_fut_id => lang_hooks_sched_share, "schedFutId", sig((usize) -> u64), lowered;
+    /// `velt_rt_fut_alias`'s: `(w, inner, quiet)`; `velt_rt_fut_views`' `(on)` (#2854).
+    sched_fut_alias => lang_hooks_sched_share_alias, "schedFutAlias", sig((usize, usize, usize) -> void), lowered;
+    sched_fut_views => lang_hooks_sched_share_alias, "schedFutViews", sig((u8) -> void), lowered;
     /// `velt_rt_futs_handled`'s: `(futs, n, quiet_drop)`.
     sched_handled => lang_hooks_sched, "schedHandled", sig((usize, u64, usize) -> void), lowered;
+    /// `velt_rt_all`'s, `_with_drop`'s and `_or_reject`'s: `(futs, n, result_size, results,
+    /// result_drop, reject)`, the join's heap future (#2944).
+    sched_all => lang_hooks_sched_all, "schedAll", sig((usize, u64, u64, usize, usize, bool) -> usize), lowered;
+    /// `velt_rt_race`'s and `velt_rt_race_ok`'s: `(futs, n, result_size, reject_drop, first_ok)`,
+    /// the race's heap future (#2196).
+    sched_race => lang_hooks_sched_race, "schedRace", sig((usize, u64, u64, usize, bool) -> usize), lowered;
     /// `velt_rt_fut_peek`'s (`console.log` of a promise): `(f)`, 1 when it settled with its result
     /// in its slot.
     sched_peek => lang_hooks_sched, "schedPeek", sig((usize) -> u32), lowered;
@@ -328,7 +291,7 @@ hooks! {
     sched_tla_at => lang_hooks_sched, "schedTlaAt", sig((&string) -> void), lowered;
     /// `velt_rt_spawn_fut`'s: `(f, result_size, result_drop)`, the handle; then
     /// `velt_rt_spawn_target`'s (`(worker)`: the next spawn is pinned to that worker).
-    sched_spawn_fut => lang_hooks_sched, "schedSpawnFut", sig((usize, u64, usize) -> usize), lowered;
+    sched_spawn_fut => lang_hooks_sched_spawn, "schedSpawnFut", sig((usize, u64, usize) -> usize), lowered;
     sched_pinned => lang_hooks_sched, "schedPinned", sig((i64) -> void), lowered;
     /// `velt_rt_sleep`'s: `(ms)`, a heap future; then the Node timer order's `velt_rt_timer_new`,
     /// `_turn`, `_again`, `_clear`, `_free`, then `velt_rt_uncaught_now`.
@@ -482,6 +445,24 @@ hooks! {
     any_to_record_any => lang_hooks_any_record, "anyToRecordAny", sig((&any) -> Record(string, any)), lowered;
     /// `x as Record<string, V>` of such an `any`: `any_to_record_any`, each value a `V`.
     any_to_record => lang_hooks_any_record, "anyToRecord", sig(<A>(&any) -> Record(string, A)), lowered;
+    /// The source of a record view (`velt_vir` `record_view.rs`): the object an `any` held.
+    record_view_source => lang_hooks_any_record, "RecordViewSource", class, lowered;
+    /// The source of a view of the object an `any` holds.
+    record_view_new => lang_hooks_any_record, "recordViewNew", sig((move any) -> RecordViewSource), lowered;
+    /// A view's record, its mirror filled from the source.
+    record_view_make => lang_hooks_any_record, "recordViewMake", sig((&RecordViewSource) -> Record(string, any)), lowered;
+    /// The source's own entry for one key of a view, or `undefined`.
+    record_view_get_one => lang_hooks_any_record, "recordViewGetOne", sig((&RecordViewSource, &string) -> any), lowered;
+    /// Whether a view's source has one own key.
+    record_view_has_one => lang_hooks_any_record, "recordViewHasOne", sig((&RecordViewSource, &string) -> bool), lowered;
+    /// A value written to a view's source under one key.
+    record_view_set_one => lang_hooks_any_record, "recordViewSetOne", sig((&RecordViewSource, &string, move any) -> void), lowered;
+    /// A key deleted from a view's source.
+    record_view_delete_one => lang_hooks_any_record, "recordViewDeleteOne", sig((&RecordViewSource, move string) -> void), lowered;
+    /// A view's mirror rebuilt from its source before a read of the whole record.
+    record_view_sync_all => lang_hooks_any_record, "recordViewSyncAll", sig((&RecordViewSource) -> Map(string, any)), lowered;
+    /// A view's mirror entries for another record's keys written to its source after a spread.
+    record_view_write_all => lang_hooks_any_record, "recordViewWriteAll", sig((&RecordViewSource, &Map(string, any), move Map(string, any)) -> void), lowered;
 
     // any_ops.velt: operators on `any` values holding objects (`ToPrimitive` first).
     /// `ToPrimitive(v, hint)` of an `any` holding an object or a function.
@@ -693,7 +674,7 @@ hooks! {
     record_entries_of => lang_hooks_record, "recordEntriesOf", sig(<A, B>(&Record(A, B)) -> Map(A, B));
 
     // lang/typed_array/buffer_view.velt: the bytes of a typed array.
-    /// The bytes a typed array or `DataView` passed to a system function views (`system_views.rs`).
+    /// The bytes a typed array or `DataView` passed to a C or host function views (`system_views.rs`).
     view_bytes => lang_typed_array_buffer_view, "viewBytes", sig((&BufferView) -> usize), lowered;
 
     // ffi/ptr.velt: a `Ptr` from and to a C function (velt_vir's lower/c_call.rs).
@@ -752,7 +733,10 @@ pub use scheduler::{std_scheduler, SCHEDULER_ENV, SCHED_EXTERNS, SCHED_UNREF_DUE
 mod lookup;
 pub use lookup::{find, is_lowered};
 mod on_demand;
-pub use on_demand::{on_demand, ON_DEMAND_FLOAT, ON_DEMAND_MODULES, ON_DEMAND_WRITE};
+pub mod prebuilt;
+pub use on_demand::{
+    on_demand, INSPECT_SHAPES, ON_DEMAND_FLOAT, ON_DEMAND_MODULES, ON_DEMAND_WRITE,
+};
 
 #[cfg(test)]
 #[path = "std_hooks_tests.rs"]

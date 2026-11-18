@@ -260,8 +260,10 @@ fn infer_body(cx: &mut Ctx, d: DefId, f: &mut FnDef) -> bool {
     let ev = super::evidence::collect_in(cx, d, f);
     changed |= super::mutation::apply(cx, d, f, &ev, &moved);
     let kinds = cx.fn_info(d).local_kinds.clone();
+    let assigned = assigned_whole(&f.body.block);
     let mut flip = Flip {
         moved: &moved,
+        assigned: &assigned,
         kinds: &kinds,
         changed: false,
     };
@@ -269,9 +271,26 @@ fn infer_body(cx: &mut Ctx, d: DefId, f: &mut FnDef) -> bool {
     changed | flip.changed
 }
 
-/// Turns borrowed bindings that are moved from into moves (and moves the matched place).
+/// The locals assigned as a whole (`items = […]`, `n += 1`) in `b` itself. (One a closure
+/// assigns lives in a cell, which owns its value.)
+fn assigned_whole(b: &Block) -> FxHashSet<LocalId> {
+    let mut out = FxHashSet::default();
+    visit::exprs(b, &mut |e: &Expr| {
+        if let E::Assign { place, .. } | E::CompoundAssign { place, .. } = &e.kind {
+            if let E::Local(l, _) = place.kind {
+                out.insert(l);
+            }
+        }
+    });
+    out
+}
+
+/// Turns borrowed bindings that are moved from, or assigned, into moves (and moves the matched
+/// place). An assigned binding holds a value of its own from then on, which it drops; so it
+/// owns the one it is bound to as well (#998: bound by reference, the new value was nobody's).
 struct Flip<'a> {
     moved: &'a FxHashSet<LocalId>,
+    assigned: &'a FxHashSet<LocalId>,
     kinds: &'a [LocalKind],
     changed: bool,
 }
@@ -280,14 +299,15 @@ impl Flip<'_> {
     /// Returns whether the pattern has a `Move` binding afterwards.
     fn pat(&mut self, p: &mut Pat) -> bool {
         let mut any = false;
-        let (moved, kinds) = (self.moved, self.kinds);
+        let (moved, assigned, kinds) = (self.moved, self.assigned, self.kinds);
         let mut changed = false;
         visit::pat(
             p,
             &mut PatFn(&mut |x: &mut Pat| {
                 if let PatKind::Binding(l, m) = &mut x.kind {
                     let bind = kinds.get(l.0 as usize) == Some(&LocalKind::Bind);
-                    if *m == UseMode::Borrow && bind && moved.contains(l) {
+                    let owns = moved.contains(l) || assigned.contains(l);
+                    if *m == UseMode::Borrow && bind && owns {
                         *m = UseMode::Move;
                         changed = true;
                     }

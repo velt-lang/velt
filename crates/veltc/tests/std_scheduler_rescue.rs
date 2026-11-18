@@ -7,7 +7,10 @@
 //! (`VELT_RC_STATS=1` with the checking allocator, `VELT_RT_DEBUG_ALLOC=1`) and, through
 //! `VELT_RESCUE_STATS=1`, that a rescue happened at all.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use std::time::{Duration, Instant};
 
 use no_window::command;
 
@@ -62,8 +65,14 @@ struct Run {
 /// `VELT_RESCUE` for the runs (unset when `None`).
 const RESCUE: Option<&str> = Some("1");
 
+/// How long one run may take before it counts as hung: killed, its exit code [`HUNG`].
+const DEADLINE: Duration = Duration::from_secs(60);
+
+/// The exit code of a run killed at [`DEADLINE`].
+const HUNG: i32 = -2;
+
 /// Runs `exe` with `threads` workers, `VELT_RESCUE` as [`RESCUE`] has it, the checking allocator,
-/// the block count and the rescue count.
+/// the block count and the rescue count; killed at [`DEADLINE`] (a lost wake hangs).
 fn run(exe: &Path, threads: &str) -> Run {
     let mut c = command(exe);
     c.env("VELT_THREADS", threads)
@@ -74,12 +83,43 @@ fn run(exe: &Path, threads: &str) -> Run {
     if let Some(r) = RESCUE {
         c.env("VELT_RESCUE", r);
     }
-    let o = c.env_remove("VELT_SCHEDULER").output().unwrap();
+    let mut child = c
+        .env_remove("VELT_SCHEDULER")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let out = drain(child.stdout.take().unwrap());
+    let err = drain(child.stderr.take().unwrap());
+    let start = Instant::now();
+    let code = loop {
+        if let Some(s) = child.try_wait().unwrap() {
+            break s.code().unwrap_or(-1);
+        }
+        if start.elapsed() > DEADLINE {
+            let _ = child.kill();
+            let _ = child.wait();
+            break HUNG;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let text = |h: std::thread::JoinHandle<Vec<u8>>| {
+        String::from_utf8_lossy(&h.join().unwrap()).replace("\r\n", "\n")
+    };
     Run {
-        code: o.status.code().unwrap_or(-1),
-        out: String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n"),
-        err: String::from_utf8_lossy(&o.stderr).replace("\r\n", "\n"),
+        code,
+        out: text(out),
+        err: text(err),
     }
+}
+
+/// Reads `r` to its end on a thread of its own, so a run cannot block on a full pipe.
+fn drain(mut r: impl Read + Send + 'static) -> std::thread::JoinHandle<Vec<u8>> {
+    std::thread::spawn(move || {
+        let mut v = Vec::new();
+        let _ = r.read_to_end(&mut v);
+        v
+    })
 }
 
 /// The count `name` of the `rescue stats:` line (std/lang/hooks/sched_stats.velt).
@@ -94,6 +134,14 @@ fn rescue_count(err: &str, name: &str) -> Option<u64> {
 /// Checks run `r` of `what`: exit 0, stdout `want`, a rescue, and (with the debug runtime, which
 /// counts) every block freed but `unfreed` at most.
 fn check(r: &Run, what: &str, want: &str, unfreed: u64) {
+    assert_ne!(
+        r.code,
+        HUNG,
+        "{what}: hung, killed after {} s; stdout: {}stderr: {}",
+        DEADLINE.as_secs(),
+        r.out,
+        r.err
+    );
     assert_eq!(
         (r.code, r.out.as_str()),
         (0, want),
@@ -377,5 +425,318 @@ async function main() {
   while (MARKED.load() == 0) {}
   console.log(`rescued after ${MARKED.load() - start} ms`);
   await m;
+}
+"#;
+
+/// What a task printed on a lazy worker 0 before an `await` comes out before what it prints after
+/// the rescue moved it to a spare (#2977): the line sat in worker 0's thread buffer while the
+/// spare published its own. The task can only finish while `main` spins if a rescue moved it, so
+/// each run that passes the rescue check crossed the hand-over; it marks that a poll after its
+/// second line, which the spare has published by then, so `main`'s line comes after it.
+#[test]
+fn a_line_printed_on_a_lazy_worker_comes_before_what_the_rescued_task_prints_next() {
+    if !has_threads() {
+        return;
+    }
+    let dir = test_dir::TestDir::new();
+    let exe = build_std(dir.path(), "moved_output", MOVED_OUTPUT);
+    for i in 0..RUNS {
+        let r = run(&exe, "1");
+        check(
+            &r,
+            &format!("run {i}"),
+            "before the await\nafter the await\nmain\n",
+            0,
+        );
+    }
+}
+
+/// The program of
+/// [`a_line_printed_on_a_lazy_worker_comes_before_what_the_rescued_task_prints_next`].
+const MOVED_OUTPUT: &str = r#"const MOVED = new Atomic<i64>(0);
+
+async function task(): Promise<void> {
+  console.log("before the await");
+  await yieldNow();
+  console.log("after the await");
+  // A poll later, so the spare has published that line (its poll's end) when `main` reads this.
+  await yieldNow();
+  MOVED.store(1);
+}
+
+async function main() {
+  const t = spawn(task());
+  // The task prints its first line here and queues behind `main` at its `await`.
+  await yieldNow();
+  // Only a rescue runs the task's second half while this poll spins.
+  while (MOVED.load() == 0) {}
+  console.log("main");
+  await t;
+}
+"#;
+
+/// Worker 0's output across its modes (#2977): lazy, made shared by a rescue in the middle of a
+/// poll, and lazy again once the spares retire (std/lang/hooks/sched_relax.velt), five rounds a
+/// run. Each round a task prints on lazy worker 0, is moved to a spare and prints there (the
+/// first line published after the poll that printed it); `main` prints in the poll the rescue made
+/// shared, after the hand-over (published when worker 0 takes on the shared mode), then lets the
+/// task print once more. No line may be lost or come out of order; two hand-overs at least mean
+/// worker 0 was lazy again after one, so its marks were set again (process.velt `setLazyWorker`).
+#[test]
+#[cfg_attr(
+    windows,
+    ignore = "#3148: on a loaded Windows runner worker 0 may never be lazy again within the rounds"
+)]
+fn worker_0s_lines_keep_their_order_while_it_turns_shared_and_lazy_again() {
+    flip_rounds(&flip_output(TIMER_WAIT));
+}
+
+/// [`worker_0s_lines_keep_their_order_while_it_turns_shared_and_lazy_again`] with `main` waiting
+/// between rounds in a `sleep`. A rescue may move `main` to a spare (`lazyRescue` takes the whole
+/// queue), and its sleep then anchors it there: that spare declines to retire, and worker 0 is not
+/// lazy again (#3117; on Windows in most runs).
+#[test]
+#[ignore = "#3117: a rescued main sleeping on a spare keeps the spare from retiring"]
+fn worker_0s_lines_keep_their_order_while_it_turns_shared_and_lazy_again_with_sleeps() {
+    flip_rounds(&flip_output("sleep(40)"));
+}
+
+/// Five rounds of `src` (a [`FLIP_OUTPUT`]): each run's lines in order, and worker 0 lazy again
+/// after a rescue at least once.
+fn flip_rounds(src: &str) {
+    if !has_threads() {
+        return;
+    }
+    let dir = test_dir::TestDir::new();
+    let exe = build_std(dir.path(), "flip_output", src);
+    let want: String = (0..5)
+        .map(|r| {
+            format!(
+                "task {r} before\ntask {r} after\nmain {r} moved\ntask {r} last\nmain {r} done\n"
+            )
+        })
+        .collect();
+    for i in 0..RUNS {
+        let r = run(&exe, "1");
+        let what = format!("run {i}");
+        check(&r, &what, &want, 0);
+        assert!(
+            rescue_count(&r.err, "locks-on").is_some_and(|n| n >= 2),
+            "{what}: worker 0 was not lazy again after a rescue: {}",
+            r.err
+        );
+    }
+}
+
+/// The program of [`worker_0s_lines_keep_their_order_while_it_turns_shared_and_lazy_again`].
+const FLIP_OUTPUT: &str = r#"const MOVED = new Atomic<i64>(0);
+const GO = new Atomic<i64>(0);
+
+async function task(r: i64): Promise<void> {
+  console.log(`task ${r} before`);
+  await yieldNow();
+  // On a spare from here (only a rescue runs this while `main` spins).
+  console.log(`task ${r} after`);
+  // A poll later, so the spare has published that line when `main` reads this.
+  await yieldNow();
+  MOVED.store(r + 1);
+  while (GO.load() <= r) {}
+  console.log(`task ${r} last`);
+}
+
+async function main() {
+  for (let r = 0; r < 5; r++) {
+    const t = spawn(task(r));
+    // The task prints its first line here and queues behind `main` at its `await`.
+    await yieldNow();
+    while (MOVED.load() <= r) {}
+    // In the poll the rescue made shared: published when worker 0 takes that on, at this `await`.
+    console.log(`main ${r} moved`);
+    await yieldNow();
+    GO.store(r + 1);
+    await t;
+    console.log(`main ${r} done`);
+    // The spares go idle and retire; worker 0 becomes lazy again. The wait: a Node timer,
+    // which anchors no task, or the `sleep` of #3117 (`flip_output`).
+    await $WAIT;
+  }
+}
+"#;
+
+/// [`FLIP_OUTPUT`] with `wait` as `main`'s wait between rounds: a Node timer ([`TIMER_WAIT`])
+/// leaves `main` movable, so a spare a rescue moved it to can retire; a `sleep` anchors it there.
+fn flip_output(wait: &str) -> String {
+    FLIP_OUTPUT.replace("$WAIT", wait)
+}
+
+/// The wait of [`worker_0s_lines_keep_their_order_while_it_turns_shared_and_lazy_again`].
+const TIMER_WAIT: &str = "new Promise<void>((resolve) => setTimeout(() => resolve(), 40))";
+
+/// A task woken by a spare in the middle of the spare's poll is not run next on that spare (#3060):
+/// each round a rescued task resolves what `main` awaits and runs on, then `main` sleeps. Run on
+/// the spare, `main`'s sleep went into the spare's timer block, and a spare with a timer declines
+/// to retire, so worker 0 never was lazy again (on Windows the race made the worker-0 test above
+/// fail 9 runs in 10; this one wakes `main` mid-poll every round, on any OS).
+#[test]
+#[cfg_attr(
+    windows,
+    ignore = "#3117: on Windows a rescue may also move main to a spare, where its sleep keeps the spare"
+)]
+fn a_task_woken_by_a_spare_mid_poll_goes_home_so_the_spares_retire() {
+    if !has_threads() {
+        return;
+    }
+    let dir = test_dir::TestDir::new();
+    let exe = build_std(dir.path(), "woken_by_spare", WOKEN_BY_SPARE);
+    let want: String = (0..5)
+        .map(|r| format!("task {r} before\ntask {r} after\nmain {r} moved\nmain {r} woken\n"))
+        .collect();
+    for i in 0..RUNS {
+        let r = run(&exe, "1");
+        let what = format!("run {i}");
+        check(&r, &what, &want, 0);
+        assert!(
+            rescue_count(&r.err, "locks-on").is_some_and(|n| n >= 2),
+            "{what}: worker 0 was not lazy again after a rescue: {}",
+            r.err
+        );
+    }
+}
+
+/// The program of [`a_task_woken_by_a_spare_mid_poll_goes_home_so_the_spares_retire`].
+const WOKEN_BY_SPARE: &str = r#"const MOVED = new Atomic<i64>(0);
+const GO = new Atomic<i64>(0);
+
+async function task(r: i64, done: (v: i64) => void): Promise<void> {
+  console.log(`task ${r} before`);
+  await yieldNow();
+  // On a spare from here (only a rescue runs this while `main` spins).
+  console.log(`task ${r} after`);
+  await yieldNow();
+  MOVED.store(r + 1);
+  while (GO.load() <= r) {}
+  // Wakes `main` while this poll still runs, then runs on a little.
+  done(r);
+  let x = 0;
+  for (let i = 0; i < 200000; i++) {
+    x += i % 3;
+  }
+  if (x < 0) {
+    console.log("never");
+  }
+}
+
+async function main() {
+  for (let r = 0; r < 5; r++) {
+    const { promise, resolve } = Promise.withResolvers<i64>();
+    const t = spawn(task(r, resolve));
+    await yieldNow();
+    while (MOVED.load() <= r) {}
+    console.log(`main ${r} moved`);
+    await yieldNow();
+    GO.store(r + 1);
+    await promise;
+    console.log(`main ${r} woken`);
+    // The spares go idle and retire; worker 0 becomes lazy again.
+    await sleep(40);
+    await t;
+  }
+}
+"#;
+
+/// A line printed in a lazy worker 0's poll comes out before what the tasks that poll spawns
+/// afterwards print, when the monitor moves them to a spare while the poll still runs (#2977):
+/// the poll spawns one task, prints, spawns seven more and spins until one of them has run, which
+/// only a rescue allows. The spawns after the line are queued where the monitor takes them from,
+/// so the line is published first (sched_wake.velt `pendOn`).
+#[test]
+fn a_line_printed_before_a_spawn_comes_first_when_the_rescue_moves_the_spawned_task() {
+    if !has_threads() {
+        return;
+    }
+    let dir = test_dir::TestDir::new();
+    let exe = build_std(dir.path(), "spawn_after_line", SPAWN_AFTER_LINE);
+    let want = format!("main before\n{}main after\n", "child\n".repeat(8));
+    for i in 0..RUNS {
+        let r = run(&exe, "1");
+        check(&r, &format!("run {i}"), &want, 0);
+    }
+}
+
+/// The program of
+/// [`a_line_printed_before_a_spawn_comes_first_when_the_rescue_moves_the_spawned_task`].
+const SPAWN_AFTER_LINE: &str = r#"const DONE = new Atomic<i64>(0);
+
+async function child(): Promise<void> {
+  console.log("child");
+  DONE.add(1);
+}
+
+async function main() {
+  const ts: Promise<void>[] = [];
+  ts.push(spawn(child()));
+  console.log("main before");
+  for (let i = 0; i < 7; i++) {
+    ts.push(spawn(child()));
+  }
+  // Only a rescue runs a child while this poll spins.
+  while (DONE.load() == 0) {}
+  for (const t of ts) {
+    await t;
+  }
+  console.log("main after");
+}
+"#;
+
+/// A spare that waits for the time of Node's timers and is asked to retire passes that wait on
+/// (#3060): each round the rescued task ends on the spare after `main` awaited a `setTimeout`
+/// promise, while worker 0 still runs `busy`, so the spare parks first and waits for the timer's
+/// time (sched_order_wait.velt `O_WAITER`) and worker 0 parks without one. The monitor then asks
+/// the spare to retire; retired, it waits without a time too. Before, it gave the role up and
+/// nobody waited for the timer: the run hung (every run on macOS).
+#[test]
+fn a_spare_waiting_for_a_node_timer_hands_the_wait_on_when_it_retires() {
+    if !has_threads() {
+        return;
+    }
+    let dir = test_dir::TestDir::new();
+    let exe = build_std(dir.path(), "waiter_retires", WAITER_RETIRES);
+    let want: String = (0..3).map(|r| format!("round {r}\n")).collect();
+    for i in 0..RUNS {
+        let r = run(&exe, "1");
+        check(&r, &format!("run {i}"), &want, 0);
+    }
+}
+
+/// The program of [`a_spare_waiting_for_a_node_timer_hands_the_wait_on_when_it_retires`].
+const WAITER_RETIRES: &str = r#"const MOVED = new Atomic<i64>(0);
+const GO = new Atomic<i64>(0);
+
+async function task(r: i64): Promise<void> {
+  await yieldNow();
+  // On a spare from here (only a rescue runs this while `main` spins).
+  MOVED.store(r + 1);
+  while (GO.load() <= r) {}
+}
+
+// Runs on worker 0 after `main` awaits the timer: the task ends and the spare parks meanwhile.
+async function busy(r: i64): Promise<void> {
+  GO.store(r + 1);
+  const until = Date.now() + 5;
+  while (Date.now() < until) {}
+}
+
+async function main() {
+  for (let r = 0; r < 3; r++) {
+    const t = spawn(task(r));
+    await yieldNow();
+    while (MOVED.load() <= r) {}
+    const p = new Promise<void>((resolve) => setTimeout(() => resolve(), 100));
+    const b = spawn(busy(r));
+    await p;
+    await t;
+    await b;
+    console.log(`round ${r}`);
+  }
 }
 "#;

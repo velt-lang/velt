@@ -1,0 +1,6 @@
+// A program whose only cycle runs through one route (subclass): sema finds a live type that can
+// hold itself, so printing tracks it and writes <ref *1> and [Circular *1] as Node does.
+class Base { tag: string = "base"; }
+class Derived extends Base { back: Base | null = null; }
+function main() { const d = new Derived(); d.back = d; const b: Base = d; console.log(b); }
+main();

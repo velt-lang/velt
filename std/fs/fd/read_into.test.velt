@@ -1,0 +1,43 @@
+// velt/fs (tests): white-box tests, run by `velt test std/`.
+//
+// `readInto` and `writeFrom` of the `#fd-system` variant (std/fs/fd/posix.velt on macOS and
+// Linux): a range past the array is clamped to it, so C gets only the array's bytes, and a failed
+// call leaves its `errno` for `lastError()`, read only on failure. The other variant fails every
+// call with ENOSYS.
+import { lastError, openPath, readInto, writeFrom } from "#fd-system";
+import { platform } from "velt/os";
+import { describe, expect, it } from "velt/test";
+
+const POSIX = platform() == "darwin" || platform() == "linux";
+
+describe("velt/fs's reads and writes of a descriptor", () => {
+  it("clamps a range to the array", () => {
+    if (!POSIX) {
+      return;
+    }
+    const zero: u8[] = [47, 100, 101, 118, 47, 122, 101, 114, 111, 0]; // "/dev/zero"
+    const fd = openPath(zero, 0, 0);
+    expect(fd >= 0).toBe(true);
+    const bytes: u8[] = [1, 2, 3, 4];
+    expect(readInto(fd, bytes, 1, 99, 0)).toBe(3);
+    expect(bytes.join(",")).toBe("1,0,0,0");
+    bytes.fill(5);
+    expect(readInto(fd, bytes, 3, 2, -1)).toBe(0);
+    expect(readInto(fd, bytes, 9, 99, -1)).toBe(0);
+    expect(bytes.join(",")).toBe("5,5,5,5");
+  });
+
+  it("leaves the error of a failed call for lastError", () => {
+    // EBADF: 9 on macOS and Linux; ENOSYS (38) where the variant has no descriptors.
+    const want = POSIX ? 9 : 38;
+    const bytes: u8[] = [1, 2];
+    expect(readInto(-1, bytes, 0, 2, 0)).toBe(-1);
+    expect(lastError()).toBe(want);
+    expect(readInto(-1, bytes, 0, 2, -1)).toBe(-1);
+    expect(lastError()).toBe(want);
+    expect(writeFrom(-1, bytes, 0, 2, 0)).toBe(-1);
+    expect(lastError()).toBe(want);
+    expect(writeFrom(-1, bytes, 0, 2, -1)).toBe(-1);
+    expect(lastError()).toBe(want);
+  });
+});

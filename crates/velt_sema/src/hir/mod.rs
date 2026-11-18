@@ -181,6 +181,12 @@ pub struct Program {
     /// on it (velt_vir glue/many.rs). A fact of the whole program (it follows the program's
     /// fields), kept out of the definitions (#2943).
     pub changes_held: HashSet<DefId>,
+    /// The library functions (std's, a package's) whose checked bodies sema writes for this
+    /// program: a dispatch over the program's classes (`String(x)`, `x + ""`, `x.constructor`,
+    /// `Object.prototype.toString` of an `any`; velt_sema `dynamic_class_match_where`). They are
+    /// the program's glue, the same in no two programs: a cache of checked or compiled library
+    /// code leaves them to each program (#2943).
+    pub glue_bodies: HashSet<DefId>,
     /// The program calls `Object.create(null)`: a record may have no prototype (its map is
     /// marked, std/prelude/map.velt `[RECORD_MARK_NULL_PROTO]`), which printing and cloning look at.
     pub null_proto_records: bool,

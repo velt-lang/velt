@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use super::c_wasi::check;
+use super::c_wasi::check_for;
 use crate::lower::c_global::c_global_symbol;
 use crate::vir;
 use crate::LowerOptions;
@@ -20,7 +20,7 @@ const READS: &str = "declare c(\"c\") let optarg: Ptr<u8> | null;\n\
 /// `src` lowered for `target`, for the JIT when `jit`; or its errors, one per line (message;
 /// notes).
 fn lower(src: &str, target: &str, jit: bool) -> Result<vir::Program, String> {
-    let (p, sm) = check(src);
+    let (p, sm) = check_for(src, target);
     let std = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
     let opts = LowerOptions {
         source_map: Some(&sm),

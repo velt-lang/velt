@@ -27,7 +27,31 @@ declare c("c") function velt_rt_fut_start$rt(f: usize, rdrop: usize): void;
 declare c("c") function velt_rt_fut_start_rejecting$rt(f: usize, rdrop: usize): void;
 declare c("c") function velt_rt_fut_detach$rt(f: usize, qdrop: usize): void;
 declare c("c") function velt_rt_futs_handled$rt(futs: usize, n: u64, qdrop: usize): void;
+declare c("c") function velt_rt_all_with_drop$rt(
+  futs: usize,
+  n: u64,
+  size: u64,
+  results: usize,
+  rdrop: usize,
+): usize;
+declare c("c") function velt_rt_race$rt(futs: usize, n: u64, size: u64): usize;
+declare c("c") function velt_rt_race_ok$rt(futs: usize, n: u64, size: u64, rdrop: usize): usize;
+declare c("c") function velt_rt_all_or_reject$rt(
+  futs: usize,
+  n: u64,
+  size: u64,
+  results: usize,
+  rdrop: usize,
+): usize;
 declare c("c") function velt_rt_fut_transfer$rt(f: usize, glue: usize): void;
+declare c("c") function velt_rt_fut_id$rt(f: usize): u64;
+declare c("c") function velt_rt_fut_alias$rt(w: usize, inner: usize, quiet: usize): void;
+declare c("c") function velt_rt_fut_share$rt(
+  f: usize,
+  size: u64,
+  share: usize,
+  rdrop: usize,
+): usize;
 
 /** The runtime's `sleep` of `ms` milliseconds: a heap future. */
 export function sleep(ms: i64): usize {
@@ -97,6 +121,35 @@ export function detach(f: usize, qdrop: usize): void {
   }
 }
 
+/** The runtime's `Promise.all` join over the `n` futures at `futs` (sched_all.velt `schedAll`). */
+export function all(
+  futs: usize,
+  n: u64,
+  size: u64,
+  results: usize,
+  rdrop: usize,
+  reject: bool,
+): usize {
+  // SAFETY: `futs` holds `n` heap futures, `results` `n` slots of `size` bytes.
+  unsafe {
+    if (reject) {
+      return velt_rt_all_or_reject$rt(futs, n, size, results, rdrop);
+    }
+    return velt_rt_all_with_drop$rt(futs, n, size, results, rdrop);
+  }
+}
+
+/** The runtime's race over the `n` futures at `futs` (sched_race.velt `schedRace`). */
+export function race(futs: usize, n: u64, size: u64, rdrop: usize, firstOk: bool): usize {
+  // SAFETY: `futs` holds `n` heap futures.
+  unsafe {
+    if (firstOk) {
+      return velt_rt_race_ok$rt(futs, n, size, rdrop);
+    }
+    return velt_rt_race$rt(futs, n, size);
+  }
+}
+
 /** The runtime's boxes among the `n` promises at `futs` go to a combinator (the others are left). */
 export function handled(futs: usize, n: u64, qdrop: usize): void {
   // SAFETY: `futs` holds `n` heap futures.
@@ -111,5 +164,29 @@ export function transfer(f: usize, glue: usize): void {
   // transfer glue.
   unsafe {
     velt_rt_fut_transfer$rt(f, glue);
+  }
+}
+
+/**
+ * `velt_rt_fut_share`, the runtime's: another holder of `f`, a runtime future. `share` is a
+ * `SharePoll` glue (sched_share.velt): `(src, dst) -> u32` is the runtime's `(src, dst)` share
+ * glue but for its result, which the runtime does not read.
+ */
+export function share(f: usize, size: u64, share: usize, rdrop: usize): usize {
+  // SAFETY: the caller holds `f`, a heap future of the runtime's; the glue matches its result.
+  return unsafe { velt_rt_fut_share$rt(f, size, share, rdrop) };
+}
+
+/** `velt_rt_fut_id`, the runtime's: the identity of `f` (its holders, its converted promises). */
+export function futId(f: usize): u64 {
+  // SAFETY: `f` is null or a live heap future.
+  return unsafe { velt_rt_fut_id$rt(f) };
+}
+
+/** `velt_rt_fut_alias`, the runtime's: converted promise `w`, a runtime future, wraps `inner`. */
+export function alias(w: usize, inner: usize, quiet: usize): void {
+  // SAFETY: `w` and `inner` are live heap futures, `w` owned by the caller; `quiet` matches `w`.
+  unsafe {
+    velt_rt_fut_alias$rt(w, inner, quiet);
   }
 }

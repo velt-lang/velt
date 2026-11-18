@@ -1,0 +1,173 @@
+// velt/lang/hooks (internal): `Promise.race` and `Promise.any` over an array under the executor in
+// Velt (sched.velt, #2649, #2196): `velt_rt_race`'s and `velt_rt_race_ok`'s jobs (`schedRace`).
+//
+// A race is a join (sched_all.velt `core`: its fields, its children's records and their waker
+// table, the ready stack, the awaiter's waker) followed by its own heap future, whose result slot
+// (at +16, `size` bytes) takes the winner's result. The word before the future leads back to the
+// join. Lowering hands the race future itself to the awaiter (it is not boxed).
+// - The first poll goes through the children in array order, as Node subscribes in array order:
+//   the first that settled before the race was made, or is ready when looked at, wins. Later
+//   polls take the children that woke, in wake order. (The runtime's race also holds back
+//   children still running at the first pass and lets the shared promise that settled first win
+//   over the wake order; neither changed the winner in any of 200 generated programs compared
+//   with Node, so the race here has neither. A call that Node would still be running can win in
+//   the first poll, as with the runtime's race: #3079.)
+// - `first_ok` (`Promise.any`): the first child that fulfills wins; a rejection is dropped
+//   (`rdrop`) while other children run, and the last one is the result.
+// - The winner's result is in the slot; the others are given up in array order (dropped: a
+//   started promise runs on, its rejection handled as the caller marked it). A race over no
+//   children never settles. Dropped before it settled, it drops its children in array order.
+// Off every worker (code the runtime's executor runs on its own threads, sched_off.velt) it is
+// the runtime's race.
+
+import { addressLoad, fnAddress, futDrop, futPoll, stateDrop } from "velt/lang/intrinsics";
+import * as al from "./sched_all";
+import * as m from "./sched_mem";
+import * as off from "./sched_off";
+import * as t from "./sched_task";
+
+// The race's own field, in a join header word it does not use: whether a rejection loses while
+// others run (`Promise.any`).
+const R_FIRST_OK: usize = 0;
+
+/** `velt_rt_race*`'s job: a race over the `n` futures at `futs` (theirs now), results of `size`. */
+export function schedRace(futs: usize, count: u64, bytes: u64, rdrop: usize, firstOk: bool): usize {
+  if (!t.onWorker()) {
+    return off.race(futs, count, bytes, rdrop, firstOk);
+  }
+  const n = count as usize;
+  const size = bytes as usize;
+  // The future after the records, at a 16-byte offset (the allocation is aligned to 8, every
+  // value's alignment), its back link in the word before it.
+  const at = (al.J_KIDS + n * al.C_SIZE + 8 + 15) & ~15;
+  const j = al.core(futs, n, at + 16 + ((size + 7) & ~7));
+  const f = j + at;
+  m.st(f - 8, j);
+  m.st(f, fnAddress(racePoll));
+  m.st(f + 8, fnAddress(raceDrop));
+  m.st(j + al.J_SIZE, size);
+  m.st(j + al.J_RESULTS, f + 16);
+  m.st(j + al.J_RDROP, rdrop);
+  m.st(j + R_FIRST_OK, firstOk ? 1 : 0);
+  return f;
+}
+
+/** Is `f` a race of the executor's (sched_node_transfer.velt passes a transfer to its children)? */
+export function isRace(f: usize): bool {
+  return m.ld(f) === fnAddress(racePoll);
+}
+
+/** How many children race `f` has. */
+export function childCount(f: usize): usize {
+  return m.ld(m.ld(f - 8) + al.J_N);
+}
+
+/** Race `f`'s child `i` (its future), 0 once it finished or was given up. */
+export function childAt(f: usize, i: usize): usize {
+  return m.ld(al.kid(m.ld(f - 8), i) + al.C_FUT);
+}
+
+/** The poll of race `f`: 1 once a child won. */
+function racePoll(f: usize, cx: usize): u32 {
+  const j = m.ld(f - 8);
+  if (m.ld(j + al.J_STATE) !== al.RUNNING) {
+    return 1;
+  }
+  const n = m.ld(j + al.J_N);
+  if (n === 0) {
+    // `Promise.race([])` never settles.
+    return 0;
+  }
+  al.register(j, m.ld(cx + 8));
+  m.st(j + al.J_CX, m.ld(cx));
+  if (m.ld(j + al.J_STARTED) === 0) {
+    m.st(j + al.J_STARTED, 1);
+    for (let i: usize = 0; i < n; i++) {
+      const c = al.kid(j, i);
+      if (m.ld(c + al.C_FUT) !== 0 && pollKid(j, c)) {
+        return 1;
+      }
+    }
+    return 0;
+  }
+  // One batch a poll, as the join's (sched_all.velt).
+  let c = al.reverse(m.takeStack(j + al.J_READY));
+  while (c !== 0) {
+    const next = m.ld(c + al.C_NEXT);
+    m.swap(c + al.C_QUEUED, 0);
+    if (m.ld(c + al.C_FUT) !== 0 && pollKid(j, c)) {
+      return 1;
+    }
+    c = next;
+  }
+  return 0;
+}
+
+/**
+ * Polls child `c` of race `j`: whether the race settled. A finished child's result goes to the
+ * race's slot; with `first_ok`, a rejection there loses while another child is unfinished.
+ */
+function pollKid(j: usize, c: usize): bool {
+  const k = m.ld(c + al.C_FUT);
+  m.st(j + al.J_CX + 8, c);
+  // SAFETY: `k` is a live heap future the race owns, `j + J_CX` a `cx` of two words.
+  const ready = unsafe { futPoll(k, j + al.J_CX) };
+  if (ready !== 1) {
+    return false;
+  }
+  const size = m.ld(j + al.J_SIZE);
+  const slot = m.ld(j + al.J_RESULTS);
+  if (size !== 0) {
+    m.copy(slot, k + 16, size);
+  }
+  m.st(c + al.C_FUT, 0);
+  // SAFETY: the race owns `k`, finished, its result moved out.
+  unsafe {
+    futDrop(k);
+  }
+  m.st(j + al.J_LEFT, m.ld(j + al.J_LEFT) - 1);
+  if (m.ld(j + R_FIRST_OK) !== 0 && m.ld(j + al.J_LEFT) !== 0) {
+    // SAFETY: the slot holds the child's `Result`, its tag byte first.
+    const rejected = size !== 0 && unsafe { addressLoad<u8>(slot) } !== 0;
+    if (rejected) {
+      const rdrop = m.ld(j + al.J_RDROP);
+      if (rdrop !== 0) {
+        // SAFETY: the slot holds the rejection, which nobody else owns.
+        unsafe {
+          stateDrop(rdrop, slot);
+        }
+      }
+      return false;
+    }
+  }
+  giveUpAll(j);
+  m.st(j + al.J_STATE, al.COMPLETE);
+  return true;
+}
+
+/** The unfinished children of race `j`, given up (dropped) in array order. */
+function giveUpAll(j: usize): void {
+  const n = m.ld(j + al.J_N);
+  for (let i: usize = 0; i < n; i++) {
+    const c = al.kid(j, i);
+    const k = m.ld(c + al.C_FUT);
+    if (k !== 0) {
+      m.st(c + al.C_FUT, 0);
+      // SAFETY: the race owns `k`; a started promise runs on without its handle.
+      unsafe {
+        futDrop(k);
+      }
+    }
+  }
+}
+
+/** The drop of race `f`: its children go (in array order) unless one won, then its reference. */
+function raceDrop(f: usize): void {
+  const j = m.ld(f - 8);
+  if (m.ld(j + al.J_STATE) === al.RUNNING) {
+    giveUpAll(j);
+  }
+  m.st(j + al.J_STATE, al.DROPPED);
+  al.dropAwaiter(j, m.swap(j + al.J_WAKER, 0));
+  al.release(j);
+}

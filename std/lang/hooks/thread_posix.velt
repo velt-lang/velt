@@ -3,8 +3,12 @@
 // address from `exportedAddress`), with the stack every thread that runs tasks has, and the
 // number of online cores (`sysconf`), the default worker count.
 //
-// Pointers are `Ptr`s and integers the C types', as in a program's own declarations of these
-// symbols: one C symbol has one signature in a program.
+// Pointers are `Ptr`s and integers the C types', as the headers declare them (`velt native
+// headers --std` checks this file: crates/veltc/src/native/headers/std_check.rs). One C symbol
+// has one signature in a program, so a program's own declarations of these symbols match.
+// A thread that ends on its own is created detached (its attributes), so no `pthread_t` is read
+// back or passed on (a pointer on macOS and musl, an integer on glibc): `pthread_create` only
+// writes it to the room after `ATTR`.
 
 import { Ptr } from "velt/ffi/ptr";
 import * as r from "#reactor";
@@ -18,17 +22,22 @@ const STACK: usize = 8388608;
 /** Room for a `pthread_attr_t` (56 or 64 bytes on these OSes) and a `pthread_t`. */
 const ATTR: usize = 128;
 
+/** C's `pthread_attr_t` (its room is laid out here: `ATTR`). */
+declare c type pthread_attr_t;
+
+// `thread`: a `pthread_t *` (a pointer or an integer, as above); `start`: a function pointer
+// (`Ptr<void>` until `CFunction`).
 declare c("c") function pthread_create(
-  thread: Ptr<u8>,
-  attr: Ptr<u8>,
-  start: Ptr<u8>,
-  arg: Ptr<u8>,
+  thread: Ptr<void>,
+  attr: Ptr<pthread_attr_t>,
+  start: Ptr<void>,
+  arg: Ptr<void>,
 ): i32;
-declare c("c") function pthread_attr_init(attr: Ptr<u8>): i32;
-declare c("c") function pthread_attr_setstacksize(attr: Ptr<u8>, size: usize): i32;
-declare c("c") function pthread_attr_destroy(attr: Ptr<u8>): i32;
-declare c("c") function pthread_detach(thread: usize): i32;
-declare c("c") function sysconf(name: i32): isize;
+declare c("c") function pthread_attr_init(attr: Ptr<pthread_attr_t>): i32;
+declare c("c") function pthread_attr_setstacksize(attr: Ptr<pthread_attr_t>, size: usize): i32;
+declare c("c") function pthread_attr_destroy(attr: Ptr<pthread_attr_t>): i32;
+declare c("c") function pthread_attr_setdetachstate(attr: Ptr<pthread_attr_t>, state: i32): i32;
+declare c("c") function sysconf(name: i32): i64;
 
 /** The online cores (at least 1). */
 export function cores(): usize {
@@ -55,8 +64,8 @@ export function startDetached(start: usize, arg: usize): bool {
 
 function startThread(start: usize, arg: usize, detach: bool): bool {
   const a = m.zeroed(ATTR + 16);
-  const attr = m.ptr(a);
-  const t = m.ptr(a + ATTR);
+  const attr = m.ptrTo<pthread_attr_t>(a);
+  const t = m.ptrTo<void>(a + ATTR);
   // No thread starts without its stack size: tasks need the 8 MiB (a secondary thread's default
   // is 512 KiB on macOS), so a failed `pthread_attr_init` or `pthread_attr_setstacksize` is a
   // thread that could not start (the callers run without it). The attributes are destroyed only
@@ -68,14 +77,13 @@ function startThread(start: usize, arg: usize, detach: bool): bool {
     // SAFETY: as above; `attr` was initialized.
     unsafe {
       rc = pthread_attr_setstacksize(attr, STACK);
+      if (rc === 0 && detach) {
+        rc = pthread_attr_setdetachstate(attr, r.PTHREAD_CREATE_DETACHED);
+      }
       if (rc === 0) {
-        rc = pthread_create(t, attr, m.ptr(start), m.ptr(arg));
+        rc = pthread_create(t, attr, m.ptrTo<void>(start), m.ptrTo<void>(arg));
       }
       pthread_attr_destroy(attr);
-      if (rc === 0 && detach) {
-        // A `pthread_t` is a pointer (macOS) or an `unsigned long` (Linux): a word either way.
-        pthread_detach(m.ld(a + ATTR));
-      }
     }
   }
   m.release(a, ATTR + 16);

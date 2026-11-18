@@ -9,6 +9,8 @@
 //! objects optimized by LLVM (`VELT_STD_OBJECT_FILL`, `std_cache::serve`), so its debug builds
 //! run them too; and then each again in release, for the same two CPUs, which stores the objects
 //! of the std functions marked `@noInline` that release builds link (`std_cache::no_inline`).
+//! With clang it then compiles the object of every prebuilt hook module (`std_cache::prebuilt`)
+//! the cache lacks, whether a warm-up program calls its hooks or not.
 //! A marker per
 //! toolchain (`<cache>/warm/<key>`) makes later runs return at once, also after a run where some
 //! programs failed but not all (the marker names them: they would only fail again); the toolchain installers
@@ -72,6 +74,14 @@ pub fn warm_command(background: bool) -> Result<(), String> {
         }
     }
     let _ = std::fs::remove_dir_all(&out);
+    // Every prebuilt hook module, whether a warm-up program calls one of its hooks or not.
+    // In this process: an internal error there is one failure, not the end of the warm-up
+    // before its marker (every later warm-up would build everything again).
+    let hooks_failed = match clang {
+        true => std::panic::catch_unwind(prebuilt_hooks)
+            .unwrap_or_else(|_| vec!["the prebuilt hook modules: an internal error".into()]),
+        false => vec![],
+    };
     eprintln!(
         "velt: warmed the build cache with {} programs in {:.1}s",
         programs.len(),
@@ -85,13 +95,54 @@ pub fn warm_command(background: bool) -> Result<(), String> {
         std::fs::write(&marker, marker_text(&failed))
             .map_err(|e| format!("cannot write `{}`: {e}", marker.display()))?;
     }
-    if !failed.is_empty() {
-        return Err(format!(
+    failures(&failed, &hooks_failed).map_or(Ok(()), Err)
+}
+
+/// What a warm-up that had failures says: the programs that did not compile, then the prebuilt
+/// hook modules; `None` without either.
+fn failures(programs: &[String], hooks: &[String]) -> Option<String> {
+    let mut said = vec![];
+    if !programs.is_empty() {
+        said.push(format!(
             "some warm-up programs did not compile: {}",
-            failed.join(", ")
+            programs.join(", ")
         ));
     }
-    Ok(())
+    if !hooks.is_empty() {
+        said.push(format!(
+            "some prebuilt hook modules did not compile: {}",
+            hooks.join("; ")
+        ));
+    }
+    (!said.is_empty()).then(|| said.join("\n"))
+}
+
+/// The CPUs (and modes) whose prebuilt hook module objects `velt cache warm` stores: what a
+/// release build with `--cpu native` links, and what every other build links (a debug build's
+/// object is the default CPU's, which a release build without `--cpu` links too).
+const HOOK_BUILDS: [(bool, Option<&str>); 2] = [(true, Some("native")), (false, None)];
+
+/// Compile and store the object of every prebuilt hook module the cache lacks
+/// (`std_cache::prebuilt`), for each of [`HOOK_BUILDS`]: a warm-up program reaches only some of
+/// them. The modules that failed, with why.
+fn prebuilt_hooks() -> Vec<String> {
+    let mut failed = vec![];
+    for (release, cpu) in HOOK_BUILDS {
+        let opts = crate::driver::BuildOptions {
+            release,
+            cpu: cpu.map(str::to_string),
+            ..crate::driver::BuildOptions::default()
+        };
+        for (module, stored) in crate::driver::prebuilt_warm(&opts) {
+            if let Err(why) = stored {
+                failed.push(format!(
+                    "{module} ({}): {why}",
+                    cpu.unwrap_or("default CPU")
+                ));
+            }
+        }
+    }
+    failed
 }
 
 /// What the marker holds: this velt's version line, then the warm-up programs that failed.
@@ -265,6 +316,20 @@ mod tests {
                 warm.join("../g/c.velt")
             ]
         );
+    }
+
+    /// A failed program does not hide a failed prebuilt hook module.
+    #[test]
+    fn every_kind_of_failure_is_said() {
+        let (p, h) = (["a.velt".to_string()], ["m (native): why".to_string()]);
+        assert_eq!(failures(&[], &[]), None);
+        let both = failures(&p, &h).unwrap_or_default();
+        assert!(
+            both.contains("a.velt") && both.contains("m (native): why"),
+            "{both}"
+        );
+        assert!(failures(&[], &h).is_some_and(|s| s.contains("hook modules")));
+        assert!(failures(&p, &[]).is_some_and(|s| s.contains("programs")));
     }
 
     #[test]

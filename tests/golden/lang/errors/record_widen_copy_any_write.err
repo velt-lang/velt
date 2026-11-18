@@ -1,0 +1,2 @@
+record_widen_copy_any_write.velt:8:6: error: a `Record<string, string | undefined>` converts to `Record<string, boolean | string | undefined>` by copying its entries, and this program writes to a record of one of the two types, which the other would not see
+record_widen_copy_any_write.velt:10:3: written here

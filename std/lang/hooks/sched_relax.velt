@@ -23,12 +23,15 @@
 // lazy worker 0 is homed there at once (sched_wake.velt `schedule`); a task never follows a
 // socket to a retired spare (sched_io_table.velt `join`).
 
-import { noInline } from "velt/lang/intrinsics";
+import { noInline, stdUsed } from "velt/lang/intrinsics";
+import * as pr from "./process";
+import * as ex from "./sched_exit";
 import * as io from "./sched_io";
 import * as w from "./sched_io_write";
 import * as lk from "./sched_lock";
 import * as m from "./sched_mem";
 import * as mon from "./sched_monitor";
+import * as ow from "./sched_order_wait";
 import * as q from "./sched_queue";
 import * as sl from "./sched_sleep";
 import * as tq from "./sched_take";
@@ -52,7 +55,8 @@ export function relaxDuties(g: usize, now: usize): bool {
     m.st(g + t.E_CALM, 0);
     return false;
   }
-  const relax = m.load32(g + t.E_RELAX);
+  // The relax's own states: an exit due (sched_exit.velt `EXIT_DUE`) leaves them as they are.
+  const relax = m.load32(g + t.E_RELAX) & ~ex.EXIT_DUE;
   if (relax === t.RELAX_DOING) {
     return true;
   }
@@ -81,7 +85,7 @@ export function relaxDuties(g: usize, now: usize): bool {
     }
   }
   if (retired === n - 1) {
-    m.store32(g + t.E_RELAX, t.RELAX_ASKED);
+    m.or32(g + t.E_RELAX, t.RELAX_ASKED);
     return true;
   }
   const ticks = m.ld(g + t.E_CALM) + 1;
@@ -115,7 +119,7 @@ export function idleDuties(g: usize): bool {
     m.ld(g + t.E_SPLIT) === 0 ||
     n < 2 ||
     m.load(g + t.E_LAZY) !== 0 ||
-    m.load32(g + t.E_RELAX) !== 0 ||
+    (m.load32(g + t.E_RELAX) & ~ex.EXIT_DUE) !== 0 ||
     m.load(g + t.E_MOVING) !== 0
   ) {
     return false;
@@ -137,7 +141,7 @@ export function idleDuties(g: usize): bool {
     }
   }
   if (retired === n - 1) {
-    m.store32(g + t.E_RELAX, t.RELAX_ASKED);
+    m.or32(g + t.E_RELAX, t.RELAX_ASKED);
     return false;
   }
   if (open > 0) {
@@ -207,8 +211,14 @@ export function retiredLook(e: usize): void {
     // after the look below wakes it (the push comes before its wake's look at the park word).
     m.store32(e + t.E_PARK, 1);
     if (m.load(e + t.E_INBOX) !== 0 || q.any(e) || m.load32(e + t.E_RETIRED) !== t.R_RETIRED) {
-      m.store32(e + t.E_PARK, 0);
+      wk.awake(e);
       continue;
+    }
+    if (stdUsed("nodeTimers")) {
+      // It waits without a time: when no worker waits for Node's timers (this one was the
+      // waiter until its wake, or a worker woken to take that on was asked to retire since),
+      // one that sleeps wakes to (#3060).
+      ow.handOff(e);
     }
     const b = m.ld(e + t.E_IO);
     m.st32(e + t.E_DISPATCH, t.D_INPUT);
@@ -290,7 +300,7 @@ export function relax(g: usize): bool {
   const n = m.load(g + t.E_STARTED);
   for (let i: usize = 1; i < n; i++) {
     if (m.load32(t.worker(i) + t.E_RETIRED) !== t.R_RETIRED) {
-      m.store32(g + t.E_RELAX, 0);
+      m.and32(g + t.E_RELAX, ex.EXIT_DUE);
       return false;
     }
   }
@@ -300,17 +310,27 @@ export function relax(g: usize): bool {
   if (next !== 0) {
     m.st(next + t.T_HOME, g);
   }
+  // The task its last poll left to run next (sched_run.velt `again`), run first when lazy.
+  const again = m.ld(g + t.E_AGAIN);
+  if (again !== 0) {
+    m.st(again + t.T_HOME, g);
+  }
   homeAll(g, m.ld(g + t.E_IHEAD));
   homeAll(g, m.ld(g + t.E_HEAD));
   m.swap(g + t.E_WATCH, 0);
+  // A skip of the fair pass's clock reads set while shared ends: lazy, no tick would end it
+  // (sched_tick.velt `fairLook`).
+  m.st(g + t.E_FAIR_SKIP, 0);
   m.st(g + t.E_SEEN_CUR, 0);
   m.st(g + t.E_SEEN_CPU, 0);
   // The spares' last operations were released by their retirement, read above.
   lk.setMode(lk.LK_LAZY);
   m.swap(g + t.E_LAZY, t.LAZY_WATCH);
   m.store32(g + t.E_MODE, 0);
+  // Its writes to stdout mark its polls again (process.velt `stdoutWritten`).
+  pr.setLazyWorker(g + t.E_PANY);
   q.unlock(g, mode);
-  m.store32(g + t.E_RELAX, 0);
+  m.and32(g + t.E_RELAX, ex.EXIT_DUE);
   return true;
 }
 

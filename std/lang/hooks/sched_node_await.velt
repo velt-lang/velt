@@ -38,7 +38,15 @@ export const N_AWAITER: usize = 32;
  * waker is stored, and the waker is woken then (the owner polls again and finds it finished).
  */
 export function awaitNode(n: usize, cx: usize): u32 {
-  const cw = m.ld(cx + 8);
+  return awaitWith(n, m.ld(cx + 8));
+}
+
+/**
+ * `awaitNode` with waker `cw` (cloned), not a cx's: a shared promise's hub on another task
+ * (sched_share_away.velt) registers its first waiting holder's waker.
+ */
+@inline
+export function awaitWith(n: usize, cw: usize): u32 {
   const w = m.wakerClone(cw);
   if (lk.mode() === lk.LK_NONE || wk.taskOf(cw) === m.ld(n + nd.N_TASK)) {
     // The owner runs on the node's task (module docs).

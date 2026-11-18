@@ -1,0 +1,45 @@
+// check: no leaks
+// A class method's class type parameter resolved through the objects made of the class (#2952):
+// `Queue<T>.push` reached through an interface (dispatch) forwards to `keepAndSpawn<T>`, and every
+// queue is a `Queue<number>`, so it spawns a number, not a closure, and the counter's closure,
+// which modifies what it captured, stays on this task. Node prints the same.
+
+function keepAndSpawn<T>(x: T): void {
+  const box: T[] = [x];
+  const v = box[0];
+  spawn(async () => {
+    console.log(typeof v);
+  });
+}
+
+interface Sink<T> {
+  push(x: T): void;
+}
+
+class Queue<T> implements Sink<T> {
+  push(x: T): void {
+    keepAndSpawn<T>(x);
+  }
+}
+
+class Counter {
+  bump: () => Promise<void> = async () => {};
+}
+
+function makeCounter(): Counter {
+  let runs = 0;
+  const c = new Counter();
+  c.bump = async (): Promise<void> => {
+    runs++;
+    console.log(`run ${runs}`);
+  };
+  return c;
+}
+
+async function main() {
+  const c = makeCounter();
+  await c.bump();
+  const s: Sink<number> = new Queue<number>();
+  s.push(1);
+  await sleep(10);
+}

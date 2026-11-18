@@ -22,8 +22,8 @@ abort mid-body: AbortError: enough
   server: the request's connection closed
 abort in text(): AbortError: no more
   server: the request's connection closed
-timeout in bytes(): TimeoutError: timed out after 100 ms
-timeout: TimeoutError: timed out after 100 ms after at least 100 ms: true
+timeout in bytes(): TimeoutError: The operation was aborted due to timeout
+timeout: TimeoutError: The operation was aborted due to timeout after at least 100 ms: true
   server: the request's connection closed
 refused: IoError ECONNREFUSED
 ftp: IoError ENOTSUP

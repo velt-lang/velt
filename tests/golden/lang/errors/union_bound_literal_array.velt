@@ -1,0 +1,22 @@
+// A type parameter bounded by a union with a one-primitive array member (#379,
+// `union_bound_value`): an instantiation may still be an array of its literal types (`("a" |
+// "b")[]` for `string[]`), laid out differently, which the implementation's `push("zzz")` can't
+// write into. Velt refuses the conversion; tsc accepts it and Node prints `2 2`.
+function use(key: string): number;
+function use<K extends string | string[]>(key: () => K | null): number;
+function use(key: string | (() => string | string[] | null)): number {
+  if (typeof key === "string") {
+    return key.length;
+  }
+  const k = key();
+  if (k === null || typeof k === "string") {
+    return 0;
+  }
+  k.push("zzz");
+  return k.length;
+}
+
+function main(): void {
+  const a: ("a" | "b")[] = ["a"];
+  console.log(use(() => a), a.length);
+}

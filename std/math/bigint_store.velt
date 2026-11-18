@@ -1,0 +1,101 @@
+// velt/math (internal): where a `BigInt` keeps its number: a block of its own (`rawAlloc`) with
+// the sign word, then a slot holding the magnitude (`u64[]`, nat_add.velt). The object holds only
+// the block's address, which it never reassigns: an operation changes the number in the block,
+// so `x.mulAssign(x)` (`x *= x`) passes `x` twice without modifying the object, as the runtime
+// handle this replaces allowed, and as JavaScript allows. A method takes the magnitude out of
+// the slot (`limbsTake`), works on it as an ordinary array, and puts it back (`limbsPut`)
+// before it returns; while it is out, the slot is empty, so a method that reads two numbers
+// takes the second one only when it is not the first (`x.add(x)`). The magnitude is stored as it
+// is (`slotStore`, no transfer): an array of numbers that this number alone owns.
+//
+// While a magnitude is out, the slot still holds its bytes (`slotTake` copies them out), so a
+// panic in that window that unwinds (under `catchPanic`) drops the taken array and leaves the
+// block pointing at the freed buffer, which the number's drop then frees again. Only an internal
+// bug can panic there (an `ICE:` range check in a limb loop): every panic on user input (division
+// by zero, the size limit, a bad radix) comes after the method has put its magnitudes back.
+//
+// A read (`toString`, `compareTo`) takes the magnitude and puts it back, which stores the same
+// bytes into the slot again: a write to a number that the shared-state model treats as read-only
+// when it is frozen and shared between workers. The bytes are unchanged, so it is harmless on
+// today's targets; reading in place needs a way to borrow the slot's value without taking it.
+
+import {
+  addressLoad,
+  addressStore,
+  rawAlloc,
+  rawFree,
+  slotSize,
+  slotStore,
+  slotTake,
+} from "velt/lang/intrinsics";
+
+// The magnitude's slot follows the sign word.
+const SLOT: usize = 8;
+
+function blockBytes(): usize {
+  return SLOT + slotSize<u64[]>();
+}
+
+/** A new block holding the number with `limbs` (moved in) and sign `negative`. */
+export function storeNew(negative: bool, limbs: u64[]): usize {
+  const h = rawAlloc(blockBytes());
+  const sign = negative && limbs.length > 0;
+  // SAFETY: a new block of `blockBytes()`; its slot holds no value yet.
+  unsafe {
+    addressStore<bool>(h, sign);
+    slotStore<u64[]>(h + SLOT, limbs);
+  }
+  return h;
+}
+
+/** Frees the block `h` and its magnitude. */
+export function storeFree(h: usize) {
+  // SAFETY: `h` is a live block whose slot holds the magnitude; nothing uses it after this.
+  unsafe {
+    slotTake<u64[]>(h + SLOT);
+    rawFree(h, blockBytes());
+  }
+}
+
+/** Takes the magnitude out of `h`'s slot (which must hold it); `limbsPut` puts it back. */
+export function limbsTake(h: usize): u64[] {
+  // SAFETY: `h` is a live block whose slot holds the magnitude.
+  return unsafe { slotTake<u64[]>(h + SLOT) };
+}
+
+/** Puts a magnitude into `h`'s empty slot. */
+export function limbsPut(h: usize, limbs: u64[]) {
+  // SAFETY: `h` is a live block whose slot is empty (`limbsTake` took the magnitude).
+  unsafe {
+    slotStore<u64[]>(h + SLOT, limbs);
+  }
+}
+
+/** Whether the number in `h` is negative. */
+export function signOf(h: usize): bool {
+  // SAFETY: `h` is a live block.
+  return unsafe { addressLoad<bool>(h) };
+}
+
+/** Sets the sign of the number in `h` (the caller keeps zero non-negative). */
+export function signSet(h: usize, negative: bool) {
+  // SAFETY: `h` is a live block.
+  unsafe {
+    addressStore<bool>(h, negative);
+  }
+}
+
+/** Replaces the number in `h` (whose slot holds a magnitude) by `limbs` and `negative`. */
+export function storeReplace(h: usize, negative: bool, limbs: u64[]) {
+  signSet(h, negative && limbs.length > 0);
+  limbsTake(h);
+  limbsPut(h, limbs);
+}
+
+/** The number of limbs of the number in `h`. */
+export function limbCount(h: usize): usize {
+  const limbs = limbsTake(h);
+  const n = limbs.length;
+  limbsPut(h, limbs);
+  return n;
+}

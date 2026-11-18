@@ -193,8 +193,9 @@ impl<'p> Hashing<'p> {
                     private,
                     presence,
                     hidden,
+                    cell,
                 } = f;
-                let flags = (optional, private, presence, hidden);
+                let flags = (optional, private, presence, hidden, cell);
                 finish((name, self.ty(*ty), default.is_some(), flags))
             })
             .collect()
@@ -211,7 +212,6 @@ impl<'p> Hashing<'p> {
                     params,
                     ret,
                     is_async,
-                    system,
                     host,
                     c,
                     is_decorator,
@@ -221,7 +221,7 @@ impl<'p> Hashing<'p> {
                 // `CImport` and `HostImport` hold no ids: their `Debug` text is their content.
                 // (HIR contract types without `Hash`: if one gains a `TyId` or `DefId`, hash it
                 // here by structure instead. The same holds for `CTy`, `CValue` and `HookSet`.)
-                let how = (system, format!("{host:?}"), format!("{c:?}"));
+                let how = (format!("{host:?}"), format!("{c:?}"));
                 (name.clone(), finish((0u8, symbol, sig, how)))
             }
             Def::Adt(a) => (a.name.clone(), self.adt(a)),

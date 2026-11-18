@@ -5,12 +5,12 @@
 //! program that never names them should not pay for in compile time.
 //!
 //! A global module consists only of re-exports (`export { fetch, Response } from "velt/net/http";`);
-//! the names it re-exports are its triggers. A non-std module whose source contains one of them
-//! as a whole word (in code, a comment or a string: a false positive only costs loading time)
-//! loads the global module, which then becomes part of the prelude (its canonical path starts
-//! with `std/prelude/`), unless the module binds that name itself at the top level (an import,
-//! as `import { Response } from "./api"` does, or a declaration), which hides the global, except
-//! for a name the module also writes as `globalThis.<name>`, which reaches past its own binding.
+//! the names it re-exports are its triggers. A non-std module whose code names one of them as a
+//! whole word (not a comment or a string's text: [`in_code`]) loads the global module, which then
+//! becomes part of the prelude (its canonical path starts with `std/prelude/`), unless the module
+//! binds that name itself at the top level (an import, as `import { Response } from "./api"`
+//! does, or a declaration), which hides the global, except for a name the module also writes as
+//! `globalThis.<name>`, which reaches past its own binding.
 //! A regular expression literal (`/a+/`, which the parser reads as `new RegExp(…)`) counts as
 //! naming `RegExp`. std modules import what they use, so they never trigger one.
 //!
@@ -22,12 +22,14 @@
 //! `.name` matches only a read of the property (`res.body`, `res["body"]`, `const { body } =
 //! res`; not `{ body: … }`).
 //!
-//! A global marked **code only** (`code_only`: `lib.dom`'s groups, the event classes) loads for
-//! a name only where the name appears outside the module's comments.
+//! A global's name loads it only where the name is in code, not in a comment or a string's text
+//! ([`in_code`]): a false positive there would cost more than loading time when the global's
+//! module holds module state (`sessionStorage`, `navigator`), which keeps a program's tasks and a
+//! server's connections on one worker.
 
-mod code_only;
+mod in_code;
 
-pub(super) use code_only::in_code;
+pub(super) use in_code::in_code;
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -44,8 +46,6 @@ pub(super) struct Global {
     /// A conditional global's `// load when <module> uses: <words>` line: the std module
     /// (canonical path) and the words.
     pub when: Option<(String, Vec<String>)>,
-    /// Loads only for a name in code, not in a comment (`code_only`).
-    pub code_only: bool,
 }
 
 #[cfg(test)]
@@ -128,13 +128,7 @@ pub(super) fn global_modules(std_root: &Path, parser: &StdParser) -> Vec<Global>
                 );
             }
             let when = load_when(&src);
-            let code_only = src.contains(code_only::CODE_ONLY_LINE);
-            Some(Global {
-                file,
-                names,
-                when,
-                code_only,
-            })
+            Some(Global { file, names, when })
         })
         .collect()
 }
@@ -214,11 +208,17 @@ pub(super) fn bound_names(module: &ast::Module) -> HashSet<&str> {
 }
 
 /// Whether module `module` (its source's `words`) names global `name`: as a whole word of its
-/// source, for `RegExp` also by a regular expression literal, and for `Proxy` by a literal
-/// nothing put where its type may have none (`null!`, `null as any`), which a view of the
-/// nothing holds (velt_vir `lower/any_view.rs`).
-pub(super) fn names_global(words: &Words, module: &ast::Module, name: &str) -> bool {
-    words.has(name)
+/// source that is in its code (`in_code`, asked only then: [`in_code`]), for `RegExp` also by a
+/// regular expression literal, and for `Proxy` by a literal nothing put where its type may have
+/// none (`null!`, `null as any`), which a view of the nothing holds (velt_vir
+/// `lower/any_view.rs`).
+pub(super) fn names_global(
+    words: &Words,
+    module: &ast::Module,
+    name: &str,
+    in_code: impl FnOnce() -> bool,
+) -> bool {
+    (words.has(name) && in_code())
         || (name == "RegExp" && words.src.contains('/') && has_regex(module))
         || (name == "Proxy"
             && (words.has("null") || words.has("undefined"))
@@ -527,7 +527,7 @@ mod tests {
             let mut sm = SourceMap::new();
             let file = sm.add(Path::new("m.velt"), src.to_string());
             let (module, _) = velt_syntax::parse_file(file, &sm.get(file).src);
-            names_global(&Words::of(src), &module, "Proxy")
+            names_global(&Words::of(src), &module, "Proxy", || true)
         };
         assert!(names("class A {}\nconst a: A = null!;\n"));
         assert!(names("const a: { x: number } = null as any;\n"));
@@ -542,7 +542,7 @@ mod tests {
             let mut sm = SourceMap::new();
             let file = sm.add(Path::new("m.velt"), src.to_string());
             let (module, _) = velt_syntax::parse_file(file, &sm.get(file).src);
-            names_global(&Words::of(src), &module, "RegExp")
+            names_global(&Words::of(src), &module, "RegExp", || true)
         };
         assert!(names(
             "function f(): bool {\n  return /a+/.test(\"caa\");\n}\n"
@@ -604,10 +604,20 @@ mod tests {
             velt_syntax::parse_file(file, &sm.get(file).src).0
         };
         let with = "const f = function (this: any) { return this; };\n";
-        assert!(names_global(&Words::of(with), &parse(with), THIS_FN));
+        assert!(names_global(
+            &Words::of(with),
+            &parse(with),
+            THIS_FN,
+            || true
+        ));
         // The class's name is no trigger: a program cannot name it.
         let named = "const ThisFn = 1;\n";
-        assert!(!names_global(&Words::of(named), &parse(named), THIS_FN));
+        assert!(!names_global(
+            &Words::of(named),
+            &parse(named),
+            THIS_FN,
+            || true
+        ));
     }
 
     #[test]
@@ -627,8 +637,18 @@ mod tests {
             velt_syntax::parse_file(file, &sm.get(file).src).0
         };
         let with = "declare host(\"m\") async function f(): Promise<u32>;\n";
-        assert!(names_global(&Words::of(with), &parse(with), ASYNC_HOST));
+        assert!(names_global(
+            &Words::of(with),
+            &parse(with),
+            ASYNC_HOST,
+            || true
+        ));
         let sync = "declare host(\"m\") function f(): u32;\n";
-        assert!(!names_global(&Words::of(sync), &parse(sync), ASYNC_HOST));
+        assert!(!names_global(
+            &Words::of(sync),
+            &parse(sync),
+            ASYNC_HOST,
+            || true
+        ));
     }
 }

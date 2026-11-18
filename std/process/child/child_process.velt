@@ -77,9 +77,12 @@ export struct ChildProcess {
     return unwrapIo(await velt_rt_child_read(this.handle, 2, max));
   }
 
-  /** Resolves with the exit code once the program has finished. */
+  /**
+   * Resolves with the exit code once the program has finished (unsigned, as Node reports a
+   * Windows code such as 0xC0000005).
+   */
   async wait(): Promise<i64> {
-    return unwrapIo(await velt_rt_child_wait(this.handle)) as i64;
+    return (unwrapIo(await velt_rt_child_wait(this.handle)) as u32) as i64;
   }
 
   /** The exit code if the program has finished, else null. */

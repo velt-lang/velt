@@ -21,7 +21,7 @@ structs! {
     FnInfo<'_> {
         name, name_span, span, module, kind, generics, this, params, ret, ret_span, ret_source,
         fixed_modes, source, state, throw_srcs, declared_throws, throws, local_kinds, owner,
-        is_async, system, host, c, intrinsic, unsafe_intrinsic, rest, sig_unsafe, generator,
+        is_async, host, c, intrinsic, unsafe_intrinsic, rest, sig_unsafe, generator,
         extern_sig, is_generator, is_async_gen, soft_moves, is_private, is_getter, inline_marker,
         inherits_this, escaping, keeps_fn_params, soft_params, modified_params,
         modified_captures, mutated_captures, mutated_through, assigns_capture,

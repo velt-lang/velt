@@ -46,6 +46,11 @@ pub(crate) struct ObjectImpls {
     seen: FxHashSet<TyId>,
     /// The interfaces (with their arguments) dynamic values are converted to.
     targets: Vec<(DefId, Vec<TyId>)>,
+    /// The interfaces whose values are cast to an extension (`shape as Named`, #379): the object
+    /// types implementing one are sources, since the cast converts through `any`.
+    downcast_from: FxHashSet<DefId>,
+    /// The object types widened for casts to extensions adding optional fields (`object_widen`).
+    pub widen: crate::object_widen::Widen,
     /// Those written with type parameters (`o as Box<T>` in `view<T>`, `o as T`): the targets
     /// are also those they become where their definitions are instantiated (#1909).
     generic_targets: FxHashSet<TyId>,
@@ -90,6 +95,8 @@ enum Fill {
     Absent(String, TyId),
     /// `set f(v)` writing field `.0` (of type `.1`; `.2`: the parameter is borrowed).
     Setter(usize, TyId, bool),
+    /// Added field `.0`, held out of line, of value type `.1` (`object_widen`).
+    Cell(usize, TyId),
     /// Method `.0` of the interface, the function in field `.1` (of type `.2`) taking `.3`
     /// arguments.
     Call(usize, usize, TyId, usize),
@@ -112,6 +119,8 @@ enum Store {
     /// In field `.0` (of type `.1`), the value (of the interface field's type `.2`) converted
     /// through `any`.
     Convert(usize, TyId, TyId),
+    /// In added field `.0`'s cell, of value type `.1` (`object_widen`).
+    Cell(usize, TyId),
 }
 
 impl Ctx<'_> {
@@ -164,6 +173,45 @@ impl Ctx<'_> {
                 _ => {}
             }
         }
+    }
+
+    /// The object type `d` was given the fields `names` (`crate::object_widen`): its
+    /// implementations made before, of an interface with one of those fields, read it as absent
+    /// and stop a write. Each is made again, and its slots replace the old ones, so the
+    /// conversions that use it see the field.
+    /// Returns a field one of them can't hold as the type gets it (another type there).
+    pub(crate) fn rebuild_object_impls(&mut self, d: DefId, names: &[String]) -> Option<String> {
+        let stale: Vec<(DefId, Vec<TyId>, bool, u32)> = (self.object_impls.made.iter())
+            .filter_map(|(k, v)| (k.0 == d).then_some((k.1, k.2.clone(), k.3, (*v)?)))
+            .collect();
+        for (iface, args, dynamic, old) in stale {
+            let has = self
+                .iface(iface)
+                .is_some_and(|i| (i.fields.iter()).any(|f| names.contains(&f.name)));
+            if !has {
+                continue;
+            }
+            let self_ty = self.impls[old as usize].ty;
+            let Some((plan, setters)) = self.object_impl_plan(d, self_ty, iface, &args, dynamic)
+            else {
+                let fields = self
+                    .iface(iface)
+                    .map(|i| i.fields.clone())
+                    .unwrap_or_default();
+                return (fields.into_iter())
+                    .map(|f| f.name)
+                    .find(|n| names.contains(n));
+            };
+            let new = self.build_object_impl(d, self_ty, iface, &args, plan, setters);
+            self.impls[old as usize].methods = self.impls[new as usize].methods.clone();
+            self.copy_setter_sources(new, old);
+        }
+        None
+    }
+
+    /// A value of interface `iface` cast to an extension (`ObjectImpls::downcast_from`).
+    pub(crate) fn note_iface_downcast(&mut self, iface: DefId) {
+        self.object_impls.downcast_from.insert(iface);
     }
 
     /// A dynamic value converted to `t` (module docs): recorded when it is an interface type,
@@ -262,7 +310,9 @@ impl Ctx<'_> {
         let TyKind::Adt(d, targs) = self.ty.kind(self_ty).clone() else {
             return None;
         };
-        if !targs.is_empty() || !self.is_object_type(self_ty) {
+        if !targs.is_empty()
+            || !(self.is_object_type(self_ty) || self.widened_literal_struct(self_ty))
+        {
             return None;
         }
         if args.iter().any(|a| self.has_type_params(*a)) {
@@ -365,6 +415,16 @@ impl Ctx<'_> {
         for f in &ifields {
             let want = self.subst(f.ty, &full);
             let payload = self.ty.opt_payload(want);
+            // A field a cast's extension added, held out of line (`object_widen`).
+            let cell = find(&f.name).and_then(|i| Some((i, self.cell_value_ty(d, i)?)));
+            if let Some((i, v)) = cell {
+                if !self.same_ty(v, want) {
+                    return None;
+                }
+                setters.push(Store::Cell(i, v));
+                plan.push(Fill::Cell(i, v));
+                continue;
+            }
             let fill = match find(&f.name) {
                 Some(i) if self.same_ty(fields[i].1, want) => {
                     setters.push(Store::Field(i, fields[i].1));
@@ -478,6 +538,7 @@ impl Ctx<'_> {
                 Fill::Setter(i, ty, borrowed) => {
                     field_setter_taking(self, d, self_ty, i, ty, borrowed)
                 }
+                Fill::Cell(i, v) => self.cell_getter(d, self_ty, i, v),
                 Fill::Call(j, i, fn_ty, takes) => {
                     self.fn_field_slot(d, self_ty, iface, &full, (j, i, fn_ty, takes))
                 }
@@ -516,6 +577,11 @@ impl Ctx<'_> {
                 },
                 Store::Convert(index, ty, want) => SetterSrc::Method {
                     def: self.convert_setter(d, self_ty, index, ty, want),
+                    d,
+                    name: self.adt(d).expect("ICE: adt").fields[index].name.clone(),
+                },
+                Store::Cell(index, v) => SetterSrc::Method {
+                    def: self.cell_setter(d, self_ty, index, v),
                     d,
                     name: self.adt(d).expect("ICE: adt").fields[index].name.clone(),
                 },
@@ -620,7 +686,26 @@ pub(crate) fn make_dynamic_object_impls(cx: &mut Ctx) {
     // converting to it stays a `TypeError`.
     let mut targets: Vec<(DefId, Vec<TyId>)> = vec![];
     let mut done: FxHashSet<(TyId, DefId, Vec<TyId>)> = FxHashSet::default();
+    let mut scanned = 0;
     loop {
+        // Before the implementations of the extensions are made: their objects' new fields.
+        cx.widen_converted();
+        // The object types made as an interface some value of is cast to an extension, including
+        // those whose implementations the last round made.
+        if !cx.object_impls.downcast_from.is_empty() {
+            let from: Vec<TyId> = (cx.impls[scanned..].iter())
+                .filter(|i| i.generics == 0 && cx.object_impls.downcast_from.contains(&i.iface))
+                .map(|i| i.ty)
+                .collect();
+            scanned = cx.impls.len();
+            for t in from {
+                if cx.is_object_type(t) {
+                    cx.note_dyn_object_source(t);
+                } else if cx.widened_literal_struct(t) && !cx.object_impls.sources.contains(&t) {
+                    cx.object_impls.sources.push(t);
+                }
+            }
+        }
         for t in std::mem::take(&mut cx.object_impls.targets) {
             if !targets.contains(&t) && !cx.ty.args_too_deep(&t.1) {
                 targets.push(t);
@@ -628,11 +713,21 @@ pub(crate) fn make_dynamic_object_impls(cx: &mut Ctx) {
         }
         let sources = cx.object_impls.sources.clone();
         let mut made_any = false;
-        for t in sources {
-            for (iface, args) in targets.clone() {
-                if done.insert((t, iface, args.clone())) {
-                    made_any = true;
-                    dynamic_object_impl(cx, t, iface, &args);
+        // The interfaces cast to an extension adding fields first: the object types implementing
+        // them are widened before their implementations of the extensions are made.
+        let widened_from = cx.widened_ifaces();
+        let (first, rest): (Vec<_>, Vec<_>) =
+            (targets.iter().cloned()).partition(|(i, _)| widened_from.contains(i));
+        for (k, pass) in [first, rest].into_iter().enumerate() {
+            if k == 1 && !widened_from.is_empty() {
+                cx.widen_converted();
+            }
+            for &t in &sources {
+                for (iface, args) in pass.iter().cloned() {
+                    if done.insert((t, iface, args.clone())) {
+                        made_any = true;
+                        dynamic_object_impl(cx, t, iface, &args);
+                    }
                 }
             }
         }
@@ -663,6 +758,6 @@ fn dynamic_object_impl(cx: &mut Ctx, t: TyId, iface: DefId, args: &[TyId]) {
 crate::units::codec::structs! {
     ObjectImpls {
         made, sources, seen, targets, generic_targets, param_fillable, assign_setters, kept_fns,
-        throw_checks, fresh_checks,
+        throw_checks, fresh_checks, downcast_from, widen,
     }
 }

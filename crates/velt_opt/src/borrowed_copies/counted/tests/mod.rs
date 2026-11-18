@@ -6,6 +6,7 @@ use crate::testkit::builder::*;
 use crate::testkit::validate::assert_valid;
 use velt_vir::vir::{AggId, BasicBlock, ExternId, FuncId};
 
+mod owned;
 mod rules;
 
 /// What runs between the increment and the read of `data.length` (or, for the `After…`
@@ -565,13 +566,18 @@ fn a_nullable_field_loaded_twice() {
     // lowering's copy of a nullable field reads the field twice, the plain copy then the share.
     // The repeated load joins the family (same pointer, or null); a freeing call while the
     // share is held and used, or another load into the copy while it holds the reference
-    // (it would be overwritten unreleased), keeps the count.
-    for (case, borrows) in [
+    // (it would be overwritten unreleased), keeps the count. The null test is of the copy, or
+    // of the field loaded once more for it (`t = this.data; if (t != null)`).
+    let cases = [
         (Nullable::Nothing, true),
         (Nullable::FreeBeforeLoad, true),
         (Nullable::FreeAfterShare, false),
         (Nullable::ReloadWhileHeld, false),
-    ] {
+    ];
+    for (tests_load, (case, borrows)) in [false, true]
+        .into_iter()
+        .flat_map(|l| cases.map(|c| (l, c)))
+    {
         let k = kit();
         let mut fb = FuncBuilder::export("f", &[Ty::Ptr], Ty::U64);
         let this = fb.param(0);
@@ -587,7 +593,14 @@ fn a_nullable_field_loaded_twice() {
         }
         let field = deref(slot, Ty::Ptr);
         fb.assign(b, c, Rvalue::Use(copy_place(field.clone())));
-        fb.assign(b, t, bin(BinOp::Ne, copy_local(c), int(0, Ty::Ptr)));
+        let tested = if tests_load {
+            let again = fb.local(Ty::Ptr);
+            fb.assign(b, again, Rvalue::Use(copy_place(field.clone())));
+            again
+        } else {
+            c
+        };
+        fb.assign(b, t, bin(BinOp::Ne, copy_local(tested), int(0, Ty::Ptr)));
         fb.branch(b, t, set, join);
         let (r, q) = share(&mut fb, set, field.clone());
         fb.assign(set, c, Rvalue::Use(copy_local(r)));
@@ -603,7 +616,8 @@ fn a_nullable_field_loaded_twice() {
         fb.ret(exit, copy_local(x));
         let mut pb = k.pb;
         let f = pb.add(fb.finish());
-        assert_eq!(decide(pb.finish(), f, &[[q, q2]]), [borrows], "{case:?}");
+        let got = decide(pb.finish(), f, &[[q, q2]]);
+        assert_eq!(got, [borrows], "{case:?}, tests the load: {tests_load}");
     }
 }
 

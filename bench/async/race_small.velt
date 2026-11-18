@@ -1,0 +1,20 @@
+// 100000 rounds of Promise.race over 8 small async calls, the winner the one that needs the
+// fewest steps; the losers run on and finish (#2196).
+async function steps(n: i64, v: i64): Promise<i64> {
+  for (let i: i64 = 0; i < n; i++) {
+    await null;
+  }
+  return v;
+}
+
+async function main() {
+  let total: i64 = 0;
+  for (let round: i64 = 0; round < 100000; round++) {
+    const ps: Promise<i64>[] = [];
+    for (let i: i64 = 0; i < 8; i++) {
+      ps.push(steps((i + round) % 8, i));
+    }
+    total += await Promise.race(ps);
+  }
+  console.log(total);
+}

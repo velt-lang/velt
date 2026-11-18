@@ -23,6 +23,7 @@ import * as wt from "velt/lang/hooks/sched_io_wait";
 import * as wr from "velt/lang/hooks/sched_io_write";
 import { aborted, closed, failed, ok, osError, value } from "velt/net/fd_socket";
 import { readReady } from "velt/net/fd_ready";
+import { pairPeer, peerGone } from "velt/net/fd_pair";
 import * as wk from "velt/lang/hooks/sched_wake";
 
 // Pointers are `Ptr`s, as in a program's own declarations of these symbols: one C symbol has one
@@ -249,7 +250,7 @@ export async function readString(h: u64, max: u64): Promise<IoResult<string>> {
 }
 
 /** How many bytes at the end of `b` start a UTF-8 character that is not complete yet (0..3). */
-function incompleteTail(b: u8[]): usize {
+export function incompleteTail(b: u8[]): usize {
   const n = b.length;
   let i: usize = 0;
   while (i < 3 && i < n) {
@@ -397,12 +398,16 @@ export function shutdown(h: u64): IoStatus {
   return st;
 }
 
-/** Fails what is in flight and everything after; the handle stays open until `close`. */
+/**
+ * Fails what is in flight and everything after; the handle stays open until `close`. A
+ * `streamPair` end's other end can't send to it from now on, as after a `close`.
+ */
 export function abort(h: u64): void {
   const s = tb.enter(h);
   if (s === 0) {
     return;
   }
+  const peer = pairPeer(s);
   m.st32(s + io.S_FLAGS, m.ld32(s + io.S_FLAGS) | io.F_ABORTED);
   m.st(s + io.S_OFF, 0);
   m.st(s + io.S_LEN, 0);
@@ -412,17 +417,23 @@ export function abort(h: u64): void {
   }
   wt.wakeAll(s);
   tb.leave(s);
+  peerGone(peer);
 }
 
-/** Releases the handle; the socket closes once its buffered bytes are sent. */
+/**
+ * Releases the handle; the socket closes once its buffered bytes are sent. A `streamPair` end's
+ * other end can't send to it from now on (`peerGone`).
+ */
 export function close(h: u64): void {
   handOff();
   const s = tb.enter(h);
   if (s === 0) {
     return;
   }
+  const peer = pairPeer(s);
   tb.forget(h);
   wt.wakeAll(s);
   wr.endSource(s, true);
   tb.leave(s);
+  peerGone(peer);
 }

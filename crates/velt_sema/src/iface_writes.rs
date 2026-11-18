@@ -288,6 +288,13 @@ impl Ctx<'_> {
 
     /// Implementation `index` stores the writable fields of its interface as `srcs` (in field
     /// order). Adds its setters at once when the interface is already written through.
+    /// Implementation `to` stores its fields as `from` does (`Ctx::rebuild_object_impls`).
+    pub(crate) fn copy_setter_sources(&mut self, from: u32, to: u32) {
+        if let Some(s) = self.iface_writes.sources.get(&from).cloned() {
+            self.iface_writes.sources.insert(to, s);
+        }
+    }
+
     pub(crate) fn note_setters(&mut self, index: u32, srcs: Vec<SetterSrc>) {
         self.iface_writes.sources.insert(index, srcs);
         let iface = self.impls[index as usize].iface;

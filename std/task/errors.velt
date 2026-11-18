@@ -1,10 +1,31 @@
 // velt/task (internal): `AbortError`, what an aborted signal throws.
 
+import { DOMException } from "velt/lang/dom_exception";
+
 export const DEFAULT_REASON: string = "This operation was aborted";
 
-/** Thrown by `throwIfAborted()`: the signal's reason is the message. */
-export class AbortError extends Error {
-  constructor(reason: string) {
-    super(reason);
+/**
+ * Thrown by `throwIfAborted()` and by work given an aborted signal: Node's `DOMException` named
+ * `AbortError` (`code` 20), with the signal's reason as its message ("This operation was
+ * aborted" for `abort()`). A signal aborted with a value that is not an `AbortError` throws one
+ * whose `cause` is that value (#3005: Node throws the value itself).
+ */
+export class AbortError extends DOMException {
+  #cause: any = undefined;
+
+  constructor(message: string = DEFAULT_REASON, name: string = "AbortError") {
+    super(message, name);
+  }
+
+  /** The value the signal was aborted with, when it is not an `AbortError` (else `undefined`). */
+  get cause(): any {
+    return this.#cause;
+  }
+
+  /** An `AbortError` for a signal aborted with `reason`, which it keeps as `cause`. */
+  static of(reason: any): AbortError {
+    const e = new AbortError(String(reason));
+    e.#cause = reason;
+    return e;
   }
 }

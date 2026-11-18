@@ -1,0 +1,14 @@
+// An object that declares a field the extension adds, at a type the extension's field can't be
+// read as (#379): the cast is refused, naming the field. (Node reads the number.)
+interface Ctx {
+  el: string;
+  update(): void;
+}
+
+interface InternalCtx extends Ctx {
+  __name?: string;
+}
+
+const o = { el: "x", update: () => {}, __name: 5 };
+const c: Ctx = o;
+console.log((c as InternalCtx).__name);

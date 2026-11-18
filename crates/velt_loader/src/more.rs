@@ -262,6 +262,8 @@ pub(crate) fn load_up_front(loader: &mut Loader, queue: &mut VecDeque<usize>) {
 /// child processes and its resolver.
 const EXECUTOR_MODULES: &[&str] = &[
     velt_common::std_module!(lang_hooks_sched),
+    velt_common::std_module!(lang_hooks_program_thread),
+    velt_common::std_module!(lang_hooks_sched_spawn),
     velt_common::std_module!(lang_hooks_sched_blocking),
     velt_common::std_module!(lang_hooks_sched_cells),
     velt_common::std_module!(lang_hooks_sched_io),

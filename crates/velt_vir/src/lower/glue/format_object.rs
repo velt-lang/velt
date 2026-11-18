@@ -6,8 +6,10 @@
 use velt_sema::hir::{AdtKind, TyId, TyKind};
 
 use crate::lower::glue::literals::inspect_key;
-use crate::lower::FnLower;
-use crate::vir::{self, Operand, Place, Proj, Rvalue, Ty};
+use crate::lower::hook_calls::{self as hooks, ty, HookTy};
+use crate::lower::rt::Rt;
+use crate::lower::{cint, FnLower};
+use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Ty, STR_AGG};
 
 impl FnLower<'_, '_> {
     /// An object `Name { a: 1, b: 'x' }` (`{ … }` without a name), `Name {}` when it shows no
@@ -42,16 +44,49 @@ impl FnLower<'_, '_> {
         }
         let optional = self.optional_fields(ty, &shown);
         let cut = format!("[{}]", name.as_deref().unwrap_or("Object"));
-        self.within_depth(buf, depth, &cut, obj.clone(), |lw, child| {
-            let body = |lw: &mut Self| match optional.iter().any(|o| *o) {
-                true => lw.format_fields_optional(buf, name, place, ty, &shown, &optional, &child),
-                false => lw.format_fields(buf, name, place, ty, &shown, &child),
-            };
-            match obj {
-                Some(p) => lw.format_once(buf, p, body),
-                None => body(lw),
+        let fields = |lw: &mut Self, name, child: &Operand| match optional.iter().any(|o| *o) {
+            true => lw.format_fields_optional(buf, name, place, ty, &shown, &optional, child),
+            false => lw.format_fields(buf, name, place, ty, &shown, child),
+        };
+        // The depth limit and the cycle check, in std where the program has them checked: the
+        // cycle check only where a live type can hold itself (velt_sema `live_constructs.rs`).
+        let cut_text = self.str_lit(&cut);
+        let cut_text = self.operand_addr(cut_text, Ty::Agg(STR_AGG));
+        let tracked = match &obj {
+            Some(p) => {
+                let id = self.rvalue_temp(Ty::U64, Rvalue::Cast(p.clone(), Ty::U64));
+                let (b, c) = (ty::Str::arg(buf.clone()), ty::Str::arg(cut_text.clone()));
+                hooks::open_object(self, b, c, ty::U64::arg(id), ty::U32::arg(depth.clone()))
             }
-        });
+            None => None,
+        };
+        let open = match tracked {
+            Some(open) => Some((open.emit(self).op(), true)),
+            None => {
+                let (b, c) = (ty::Str::arg(buf.clone()), ty::Str::arg(cut_text));
+                let plain = hooks::open_plain(self, b, c, ty::U32::arg(depth.clone()));
+                plain.map(|open| (open.emit(self).op(), false))
+            }
+        };
+        let Some((open, tracked)) = open else {
+            return self.within_depth(buf, depth, &cut, obj.clone(), |lw, child| match obj {
+                Some(p) => lw.format_once(buf, p, |lw| fields(lw, name, &child)),
+                None => fields(lw, name, &child),
+            });
+        };
+        let (body, done) = (self.new_block(), self.new_block());
+        self.branch(open, body, done);
+        self.switch_to(body);
+        let child = self.rvalue_temp(
+            Ty::U32,
+            Rvalue::Binary(BinOp::Add, depth.clone(), cint(1, Ty::U32)),
+        );
+        fields(self, name, &child);
+        if tracked {
+            self.inspect_leave(buf);
+        }
+        self.goto(done);
+        self.switch_to(done);
     }
 
     /// Panic: the object (of an object type) has a field that is `void` after substitution
@@ -76,9 +111,10 @@ impl FnLower<'_, '_> {
         if def.kind == AdtKind::Class {
             return vec![false; shown.len()];
         }
+        // A field held out of line (`FieldDef::cell`) shows while its cell is there.
         let flags: Vec<bool> = shown
             .iter()
-            .map(|(i, _, _)| def.fields[*i as usize].optional)
+            .map(|(i, _, _)| def.fields[*i as usize].optional || def.fields[*i as usize].cell)
             .collect();
         shown
             .iter()
@@ -123,8 +159,11 @@ impl FnLower<'_, '_> {
             .into_iter()
             .map(|i| {
                 let (index, n, t) = &shown[i];
-                let key =
-                    velt_sema::property_order::symbol_key(n).unwrap_or_else(|| inspect_key(n));
+                // Node 26 writes a symbol key as `Symbol(d): v`, without brackets.
+                let key = match velt_sema::property_order::symbol_key(n) {
+                    Some(k) => symbol_key_text(k.trim_start_matches('[').trim_end_matches(']')),
+                    None => inspect_key(n),
+                };
                 (*index, key, *t)
             })
             .collect()
@@ -148,8 +187,8 @@ impl FnLower<'_, '_> {
         };
         for (i, (index, n, t)) in shown.iter().enumerate() {
             let sep = if i > 0 { ", " } else { "" };
-            pending.push_str(&format!("{sep}{n}: "));
-            self.push_text(buf, &pending);
+            pending.push_str(sep);
+            self.push_key(buf, &pending, n);
             pending.clear();
             match self.accessor_label(ty, *index) {
                 Some(label) => self.push_text(buf, label),
@@ -160,6 +199,27 @@ impl FnLower<'_, '_> {
             }
         }
         self.push_text(buf, " }");
+    }
+
+    /// `before`, then the key `n` and its `: `. A symbol key whose description holds what line
+    /// breaking reads as structure (a quote, a bracket, `, `) is kept as one piece, as a custom
+    /// inspect's text is (`velt_rt_strbuf_inspect_atom`).
+    fn push_key(&mut self, buf: &Operand, before: &str, n: &str) {
+        let special = |c: char| " ,:<'\"`{[()]}".contains(c);
+        let kept = n
+            .strip_prefix("Symbol(")
+            .and_then(|d| d.strip_suffix(')'))
+            .is_some_and(|d| d.contains(special));
+        if !kept {
+            return self.push_text(buf, &format!("{before}{n}: "));
+        }
+        self.push_text(buf, before);
+        let start = self.temp(Ty::U64);
+        self.call_rt(Rt::StrbufLen, vec![buf.clone()], Some(Place::local(start)));
+        self.push_text(buf, n);
+        let start = Operand::Copy(Place::local(start));
+        self.call_rt(Rt::StrbufInspectAtom, vec![buf.clone(), start], None);
+        self.push_text(buf, ": ");
     }
 
     /// [`format_fields`](Self::format_fields) for a type with optional fields: which fields
@@ -195,16 +255,22 @@ impl FnLower<'_, '_> {
             let (first, rest, join) = (self.new_block(), self.new_block(), self.new_block());
             self.branch(Operand::Copy(Place::local(written)), rest, first);
             self.switch_to(first);
-            self.push_text(buf, &format!("{open}{n}: "));
+            self.push_key(buf, &open, n);
             self.goto(join);
             self.switch_to(rest);
-            self.push_text(buf, &format!(", {n}: "));
+            self.push_key(buf, ", ", n);
             self.goto(join);
             self.switch_to(join);
             self.assign(Place::local(written), Rvalue::Use(FnLower::ctrue()));
             match self.accessor_label(ty, *index) {
                 Some(label) => self.push_text(buf, label),
-                None => self.format_nested(buf, &fp, *t, child),
+                None => match self.cx.cell_field(ty, *index) {
+                    Some((cell, value)) => {
+                        let vp = self.cell_value_place(&fp, *t, cell);
+                        self.format_nested(buf, &vp, value, child);
+                    }
+                    None => self.format_nested(buf, &fp, *t, child),
+                },
             }
             self.goto(skip);
             self.switch_to(skip);
@@ -248,4 +314,26 @@ impl FnLower<'_, '_> {
             if matches!(self.cx.hir.def(d), velt_sema::hir::Def::Adt(a)
                 if a.kind == AdtKind::Struct && a.fields.is_empty()))
     }
+}
+
+/// A symbol key's `Symbol(d)` as Node writes it: with the escapes of its string keys
+/// (`strEscapeSequencesReplacer`: control characters, `'`, `\`, U+007F to U+009F), unquoted.
+fn symbol_key_text(k: &str) -> String {
+    let mut out = String::with_capacity(k.len());
+    for c in k.chars() {
+        match c {
+            '\u{8}' => out.push_str(r"\b"),
+            '\t' => out.push_str(r"\t"),
+            '\n' => out.push_str(r"\n"),
+            '\u{c}' => out.push_str(r"\f"),
+            '\r' => out.push_str(r"\r"),
+            '\'' => out.push_str(r"\'"),
+            '\\' => out.push_str(r"\\"),
+            '\0'..='\u{1f}' | '\u{7f}'..='\u{9f}' => {
+                out.push_str(&format!(r"\x{:02X}", c as u32));
+            }
+            c => out.push(c),
+        }
+    }
+    out
 }

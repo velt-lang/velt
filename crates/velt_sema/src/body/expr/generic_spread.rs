@@ -51,7 +51,7 @@ impl FnCx<'_, '_> {
                 ast::ObjectProp::Spread(e) => {
                     self.flush_props(&mut run, &mut parts, &mut lets, span);
                     let h = self.expr(e, None, Want::Borrow);
-                    let seen = crate::object_copies::Seen::Spread;
+                    let seen = crate::object_copies::Seen::Spread(None);
                     self.cx.object_copies.observe(h.ty, e.span, seen);
                     // A source that may be `undefined` or `null` (`...v`, `v: V | undefined`):
                     // the object of its fields, each absent while it is missing.

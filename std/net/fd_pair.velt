@@ -1,0 +1,48 @@
+// velt/net (internal): the link between the two ends of a `streamPair` (std/net/pair.velt), two
+// of the reactor's sockets (`F_PAIR`). Each end keeps the other's handle (`S_PEER`); closing or
+// aborting one (std/net/fd_io.velt) marks the other `F_PEER_GONE`, whose sends then fail with
+// `EPIPE` (std/lang/hooks/sched_io_write.velt `sendSome`): what a `socketpair` does, and what
+// Windows' loopback TCP, which takes a send after the peer's close, would not.
+
+import * as r from "#reactor";
+import * as io from "velt/lang/hooks/sched_io";
+import * as m from "velt/lang/hooks/sched_mem";
+import * as tb from "velt/lang/hooks/sched_io_table";
+import * as wr from "velt/lang/hooks/sched_io_write";
+
+/** Makes streams `a` and `b` (`F_PAIR`, open) each other's other end. */
+export function pairUp(a: u64, b: u64): void {
+  setPeer(a, b);
+  setPeer(b, a);
+}
+
+function setPeer(h: u64, peer: u64): void {
+  const s = tb.enter(h);
+  if (s !== 0) {
+    m.st(s + io.S_PEER, peer as usize);
+    tb.leave(s);
+  }
+}
+
+/** The other end's handle of source `s` (locked), a `streamPair` end, or 0. */
+export function pairPeer(s: usize): u64 {
+  return (m.ld32(s + io.S_FLAGS) & io.F_PAIR) !== 0 ? m.ld(s + io.S_PEER) as u64 : 0;
+}
+
+/**
+ * The other end of `streamPair` end `h` closed or aborted: its sends fail with `EPIPE` from now
+ * on (what it still has to read stays readable), and so do the bytes it has buffered, as a
+ * `socketpair`'s would. A closed `h` (or 0: no other end) is left alone. Called with no lock held
+ * (the closing end's given back first): the two ends may close at once on two workers.
+ */
+export function peerGone(h: u64): void {
+  const s = h === 0 ? 0 : tb.enter(h);
+  if (s === 0) {
+    return;
+  }
+  m.st32(s + io.S_FLAGS, m.ld32(s + io.S_FLAGS) | io.F_PEER_GONE);
+  if (m.ld(s + io.S_LEN) !== 0) {
+    wr.fail(s, r.EPIPE);
+  }
+  tb.leave(s);
+}

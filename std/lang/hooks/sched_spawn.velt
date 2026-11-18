@@ -1,0 +1,126 @@
+// velt/lang/hooks (internal): `spawn` under the executor in Velt (sched.velt, #2649):
+// `velt_rt_spawn`'s and `velt_rt_spawn_fut`'s jobs. On a worker the task is made on its block and
+// queued there; on the program's thread before the executor started, `exec` starts it first; on
+// a thread that isn't the program's (a C library's, calling an exported function), the task goes
+// to worker 0 through its inbox (sched_foreign.velt, #3085).
+
+import { fnAddress, inline, noInline } from "velt/lang/intrinsics";
+import * as pt from "./program_thread";
+import * as fg from "./sched_foreign";
+import * as mk from "./sched_make";
+import * as m from "./sched_mem";
+import * as nc from "./sched_node_catch";
+import * as run from "./sched_run";
+import * as t from "./sched_task";
+import * as wk from "./sched_wake";
+import * as workers from "./sched_workers";
+
+/** The executor, started on first use (sched.velt `exec`). */
+@inline
+function exec(): usize {
+  return workers.started();
+}
+
+/**
+ * `spawn(f(...))`: a task from the initial state at `state` (`size` bytes, aligned to at most 8 as
+ * every value the compiler lays out, which the task's block is; moved in), scheduled now; its join handle, a heap future whose slot gets `rsize` bytes. A
+ * result the handle never claims is dropped with `rdrop` (0: nothing to drop).
+ */
+export function schedSpawn(
+  poll: usize,
+  drop: usize,
+  state: usize,
+  size: u64,
+  align: u64,
+  rsize: u64,
+  rdrop: usize,
+  transfer: usize,
+): usize {
+  if (align > 8) {
+    panic("ICE: a task's state aligned to more than 8 bytes");
+  }
+  // This thread's worker block (0 off the workers), read once (the queueing).
+  const w = t.here();
+  if (w === 0) {
+    return spawnFirst(poll, drop, state, size, align, rsize, rdrop, transfer);
+  }
+  return spawnOn(w, w, poll, drop, state, size, rsize, rdrop, transfer);
+}
+
+/**
+ * `schedSpawn` on a thread that has no worker block: the program's before the executor started
+ * (`exec` starts it), or a C library's thread, whose task is handed to worker 0 (#3085). Out of
+ * line, so the workers' spawn stays small enough to inline.
+ */
+@noInline
+function spawnFirst(
+  poll: usize,
+  drop: usize,
+  state: usize,
+  size: u64,
+  align: u64,
+  rsize: u64,
+  rdrop: usize,
+  transfer: usize,
+): usize {
+  if (!pt.isProgramThread()) {
+    return fg.spawn(poll, drop, state, size, rsize, rdrop, transfer);
+  }
+  const e = exec();
+  return spawnOn(e, t.here(), poll, drop, state, size, rsize, rdrop, transfer);
+}
+
+/** `schedSpawn`'s task, from worker block `e` (`w`: this thread's). */
+@inline
+function spawnOn(
+  e: usize,
+  w: usize,
+  poll: usize,
+  drop: usize,
+  state: usize,
+  size: u64,
+  rsize: u64,
+  rdrop: usize,
+  transfer: usize,
+): usize {
+  // The executor's reference and the handle's.
+  const k = mk.task(e, poll, drop, rsize, rdrop, size, 2);
+  m.st(k + t.T_TRANSFER, transfer);
+  m.copy(m.ld(k + t.T_ROOT), state, size as usize);
+  m.st(k + t.T_JOIN_STATE, t.J_HANDLE as usize);
+  nc.spawned(e, k);
+  mk.home(e, k);
+  mk.liveUp(m.ld(e + t.E_MAIN), e);
+  wk.scheduleNew(w, k);
+  return k + t.T_JOIN;
+}
+
+/**
+ * `spawn(p)` of heap future `f` (a stored promise, a join handle, a leaf): a task polling it,
+ * scheduled now; its join handle, whose slot gets `rsize` bytes (dropped with `rdrop` when
+ * nobody claims them). The task's state is `f` and `rsize`, then the root's result.
+ */
+export function schedSpawnFut(f: usize, rsize: u64, rdrop: usize): usize {
+  // This thread's worker block (0 off the workers), read once (`exec`, and the queueing).
+  let w = t.here();
+  let e = w;
+  if (w === 0) {
+    if (!pt.isProgramThread()) {
+      return fg.spawnFut(f, rsize, rdrop);
+    }
+    e = exec();
+    w = t.here();
+  }
+  const k = mk.task(e, fnAddress(run.futRootPoll), 0, rsize, rdrop, 16 + ((rsize + 15) & ~15), 2);
+  const at = m.ld(k + t.T_ROOT);
+  m.st(at, f);
+  m.st(at + 8, rsize as usize);
+  m.st(k + t.T_ROOT, at + 16);
+  m.st(k + t.T_JOIN_STATE, t.J_HANDLE as usize);
+  m.st(k + t.T_TRANSFER, 0);
+  nc.spawned(e, k);
+  mk.home(e, k);
+  mk.liveUp(m.ld(e + t.E_MAIN), e);
+  wk.scheduleNew(w, k);
+  return k + t.T_JOIN;
+}

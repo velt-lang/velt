@@ -22,6 +22,7 @@ mod bound_values;
 mod catch_any;
 mod lit_members;
 mod raw_memory;
+mod record_widen;
 mod thread_local;
 pub(crate) use assign_pattern::REPORTED;
 mod attempt;
@@ -199,6 +200,7 @@ mod record_logical;
 mod record_present;
 mod record_props;
 mod record_view;
+mod record_view_cast;
 mod regex_args;
 mod rest_forms;
 mod rest_shapes;
@@ -221,6 +223,7 @@ mod sync;
 mod system_args;
 pub(crate) mod tasks;
 mod ternary;
+mod thenable_test;
 mod this_fn_call;
 mod this_fn_expr;
 mod this_param;
@@ -238,6 +241,7 @@ mod union_compound;
 mod union_iface;
 mod union_text;
 mod union_view;
+mod union_write;
 mod unique_symbol_eq;
 pub(crate) mod virtual_defaults;
 mod widen_fresh;
@@ -354,11 +358,11 @@ impl FnCx<'_, '_> {
                 if matches!(op, ast::BinaryOp::Or | ast::BinaryOp::Nullish) =>
             {
                 self.logical_lhs.push(lhs.span);
-                let h = self.binary(*op, lhs, rhs, exp, span);
+                let h = self.binary(*op, lhs, rhs, exp, want, span);
                 self.logical_lhs.pop();
                 h
             }
-            A::Binary { op, lhs, rhs } => self.binary(*op, lhs, rhs, exp, span),
+            A::Binary { op, lhs, rhs } => self.binary(*op, lhs, rhs, exp, want, span),
             A::Assign {
                 op: Some(op),
                 target,

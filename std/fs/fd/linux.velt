@@ -1,0 +1,79 @@
+// velt/fs (internal): the `#fd-system` variant of Linux (std/imports.velt): posix.velt's safe
+// functions, with Linux's `fcntl` commands, `fdatasync` and `struct stat` (glibc and musl agree
+// on it per architecture).
+
+import { arch } from "velt/os/machine";
+import { Stat } from "velt/fs/fd/system";
+import {
+  closeFd as posixCloseFd,
+  fstatAt as posixFstatAt,
+  fsyncFd as posixFsyncFd,
+  lastError as posixLastError,
+  openPath as posixOpenPath,
+  readInto as posixReadInto,
+  truncateFd as posixTruncateFd,
+  unlinkPath as posixUnlinkPath,
+  writeFrom as posixWriteFrom,
+} from "velt/fs/fd/posix";
+
+declare c("c", { errno: true }) function fdatasync(fd: i32): i32;
+
+/** Flushes the file's data and metadata to the disk: 0, or -1. */
+export function syncAll(fd: i32): i32 {
+  return posixFsyncFd(fd);
+}
+
+/** Flushes the file's data to the disk: 0, or -1. */
+export function syncData(fd: i32): i32 {
+  // SAFETY: an integer argument only.
+  return unsafe { fdatasync(fd) };
+}
+
+/**
+ * `fstat(fd)`'s fields, or `null` (the error for `lastError()`): `st_mode` at 24 on x86-64 and 16
+ * on arm64 (the generic layout), `st_size` at 48 and the times from 72 on both.
+ */
+export function fstatFd(fd: i32): Stat | null {
+  if (arch() == "x64") {
+    return posixFstatAt(fd, 24, false, 48, 88);
+  }
+  return posixFstatAt(fd, 16, false, 48, 88);
+}
+
+// The functions both POSIX variants share, from posix.velt (a variant defines what it exports:
+// `velt check` compares the variants' own signatures).
+
+/** The `errno` of the last failed call of these functions on this thread. */
+export function lastError(): i32 {
+  return posixLastError();
+}
+
+/** `open(path, oflag, mode)`: a descriptor, or -1. */
+export function openPath(path: readonly u8[], oflag: i32, mode: u32): i32 {
+  return posixOpenPath(path, oflag, mode);
+}
+
+/** `close(fd)`: 0, or -1. */
+export function closeFd(fd: i32): i32 {
+  return posixCloseFd(fd);
+}
+
+/** `unlink(path)`: 0, or -1. */
+export function unlinkPath(path: readonly u8[]): i32 {
+  return posixUnlinkPath(path);
+}
+
+/** `read` (`at < 0`) or `pread` at `at` into the bytes `start..end` of `bytes`, or -1. */
+export function readInto(fd: i32, bytes: u8[], start: usize, end: usize, at: i64): isize {
+  return posixReadInto(fd, bytes, start, end, at);
+}
+
+/** `write` (`at < 0`) or `pwrite` at `at` of the bytes `start..end` of `bytes`, or -1. */
+export function writeFrom(fd: i32, bytes: readonly u8[], start: usize, end: usize, at: i64): isize {
+  return posixWriteFrom(fd, bytes, start, end, at);
+}
+
+/** `ftruncate(fd, length)`: 0, or -1. */
+export function truncateFd(fd: i32, length: i64): i32 {
+  return posixTruncateFd(fd, length);
+}

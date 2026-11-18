@@ -2,6 +2,7 @@
 //! assignable to the other.
 
 use crate::body::FnCx;
+use crate::defs::FieldInfo;
 use crate::hir::{self, DefId, TyId, TyKind};
 
 impl FnCx<'_, '_> {
@@ -44,8 +45,9 @@ impl FnCx<'_, '_> {
     }
 
     /// Are `a` and `b` (or what they hold besides `null`/`undefined`) two interfaces, one
-    /// extending the other (`Node` and `Comment`)? Such values don't convert to each other yet
-    /// (`iface_notes`), so `===` compares them as `any` values: the object each points at.
+    /// extending the other (`Node` and `Comment`)? Such values don't convert to each other
+    /// implicitly (`iface_notes`); `as` checks one at run time ([`Self::related_iface_cast`]), and
+    /// `===` compares them as `any` values: the object each points at.
     pub(super) fn related_ifaces(&self, a: TyId, b: TyId) -> bool {
         let iface = |t: TyId| {
             let t = self.cx.ty.core(t).unwrap_or(t);
@@ -71,28 +73,157 @@ impl FnCx<'_, '_> {
                 .any(|p| p.iface == base || self.iface_extends(p.iface, base, depth + 1))
     }
 
-    /// `e as B` for an `A` value where `B` extends `A`, both of std's `lib.dom` interfaces
-    /// (`node as HTMLElement`), which `tsc` allows since one is assignable to the other: the value
-    /// as an `any`, converted to `B` (`Err`: not such a pair). No such value exists on a server, so
-    /// the conversion never runs; between other interfaces it is still `cannot cast`, since the
-    /// check would stop a program where Node goes on.
+    /// `e as B` for an `A` value where `B` extends `A` (`shape as Named`), which `tsc` allows since
+    /// one is assignable to the other: the value as an `any`, converted to `B` (`Err`: not such a
+    /// pair). The conversion checks at run time that the object implements `B`, and a value that
+    /// doesn't stops the program with a `TypeError` (#379). Node goes on there and fails only when
+    /// a member `B` adds is used; so outside std's `lib.dom` (whose values a server never holds) `B`
+    /// must add a required member, which such a value lacks. A `B` that adds only optional ones
+    /// stays `cannot cast`: Node adds them when written, and a Velt object has no room for them.
+    /// For `lib.dom`, `B` may be a union of such interfaces (`dom as HTMLInputElement |
+    /// HTMLTextAreaElement`): the value converts to the first, as the member of the union it is
+    /// then ([`Self::related_dom_union`]).
     pub(super) fn related_iface_cast(
         &mut self,
         h: hir::Expr,
         target: TyId,
         span: velt_common::Span,
     ) -> Result<hir::Expr, hir::Expr> {
-        if !self.related_ifaces(h.ty, target)
-            || self.cx.ty.opt_payload(target).is_some()
-            || !self.both_std_dom(h.ty, target)
-        {
+        // `rq as { _input?: unknown }`: the interface with both's members, which extends `rq`'s.
+        if let Some(meet) = self.optional_object_target(h.ty, target, span) {
+            return self.related_iface_cast(h, meet, span);
+        }
+        if let Some(first) = self.related_dom_union(h.ty, target) {
+            let h = self.related_iface_cast(h, first, span)?;
+            return self.try_coerce(h, target);
+        }
+        if !self.related_ifaces(h.ty, target) || self.cx.ty.opt_payload(target).is_some() {
+            return Err(h);
+        }
+        let dom = self.both_std_dom(h.ty, target);
+        if !dom && !self.checked_downcast(h.ty, target, span) {
             return Err(h);
         }
         let Some(any) = self.any_ty() else {
             return Err(h);
         };
         let a = self.compared_operand(h, any);
-        Ok(self.intrinsic(hir::Intrinsic::AnyTo, vec![a], target, span))
+        // A checked assertion's failure, as the others say it (`downcast.rs`); a lib.dom value
+        // never reaches the check on a server.
+        let mut ops = vec![a];
+        if !dom {
+            ops.push(self.str_lit("type assertion failed", span));
+        }
+        Ok(self.intrinsic(hir::Intrinsic::AnyTo, ops, target, span))
+    }
+
+    /// The first member of `target` when `target` is a union of std `lib.dom` interfaces each
+    /// related to `from`'s (`related_ifaces`), and `from` is one too. Only there: converting to
+    /// the first member would stop a program whose value is another member, and no `lib.dom`
+    /// value exists on a server. Other unions stay `cannot cast` (no run-time test of an `any` for
+    /// one of several interfaces yet, #924).
+    fn related_dom_union(&mut self, from: TyId, target: TyId) -> Option<TyId> {
+        if self.cx.ty.opt_payload(target).is_some() {
+            return None;
+        }
+        let members = self.cx.union_members(target)?;
+        let all = members
+            .iter()
+            .all(|&m| self.related_ifaces(from, m) && self.both_std_dom(from, m));
+        match all {
+            true => members.first().copied(),
+            false => None,
+        }
+    }
+
+    /// Is `from as to` (interface types, `to` extending `from`'s interface) a cast Velt checks at
+    /// run time ([`Self::related_iface_cast`])? `from` holds no `undefined` (which Node passes on),
+    /// `to` adds a required member, and a `to` is a `from` as it is (`Source<number>` takes no
+    /// `Labeled<string>`, which `tsc` refuses too). Records the conversion: `to` as a target of
+    /// conversions from `any`, and `from`'s interface as one cast from, so that every object type
+    /// made as a `from` gets its implementation of `to` when it fits (`object_ifaces.rs`).
+    fn checked_downcast(&mut self, from: TyId, to: TyId, span: velt_common::Span) -> bool {
+        let TyKind::Dyn(have, _) = *self.cx.ty.kind(from) else {
+            return false;
+        };
+        if self.cx.assigns(to, from, self.module) != Some(true) {
+            return false;
+        }
+        if !self.adds_required(from, to) {
+            // Only optional members: fields the objects made as a `from` are widened with.
+            let Some(fields) = self.added_optional_fields(from, to) else {
+                return false;
+            };
+            let (s, d) = (self.cx.display(from), self.cx.display(to));
+            self.cx.note_iface_widen(have, fields, (s, d), span);
+        }
+        self.note_dynamic_iface(to, span);
+        self.note_object_fill(to);
+        self.note_fn_views(to, span);
+        self.cx.note_dyn_object_target(to);
+        self.cx.note_iface_downcast(have);
+        true
+    }
+
+    /// For `from as to`, where `from` is an interface with methods and `to` an object type whose
+    /// fields are all optional and none of `from`'s (`rq as { _input?: unknown }`), as tsc allows:
+    /// the interface with the members of both (`synth_ifaces::meet_iface`), an extension of
+    /// `from`'s interface, which the cast then asserts as [`Self::related_iface_cast`] does.
+    fn optional_object_target(
+        &mut self,
+        from: TyId,
+        to: TyId,
+        span: velt_common::Span,
+    ) -> Option<TyId> {
+        if !self.cx.is_method_iface(from) || !self.cx.is_object_type(to) {
+            return None;
+        }
+        let TyKind::Adt(d, _) = *self.cx.ty.kind(to) else {
+            return None;
+        };
+        let have = self.object_members(from).unwrap_or_default();
+        let fields = self.cx.adt(d)?.fields.clone();
+        let fits = !fields.is_empty()
+            && (fields.iter()).all(|f| f.optional && !have.iter().any(|h| h.0 == f.name));
+        if !fits {
+            return None;
+        }
+        match self.cx.meet_iface(from, to, self.module, span)? {
+            Ok(t) if matches!(self.cx.ty.kind(t), TyKind::Dyn(..)) => Some(t),
+            _ => None,
+        }
+    }
+
+    /// The fields interface type `to` adds to `from`, when it adds only optional fields (no
+    /// method, `__name?: string`), as `to` declares them; `None` otherwise.
+    fn added_optional_fields(&mut self, from: TyId, to: TyId) -> Option<Vec<FieldInfo>> {
+        let TyKind::Dyn(want, args) = self.cx.ty.kind(to).clone() else {
+            return None;
+        };
+        let have = self.object_members(from).unwrap_or_default();
+        let info = self.cx.iface(want)?;
+        let (fields, methods) = (info.fields.clone(), info.methods.clone());
+        let new = |n: &str| !have.iter().any(|h| h.0 == n);
+        if methods.iter().any(|m| new(&m.name)) {
+            return None;
+        }
+        let added: Vec<FieldInfo> = (fields.into_iter())
+            .filter(|f| new(&f.name))
+            .map(|mut f| {
+                f.ty = self.cx.subst(f.ty, &args);
+                f.declared = self.cx.subst(f.declared, &args);
+                f
+            })
+            .collect();
+        (!added.is_empty() && added.iter().all(|f| f.optional && !f.readonly)).then_some(added)
+    }
+
+    /// Does interface type `to` declare a required member that `from` lacks (`name()` of `Named`
+    /// over `Shape`)? A value lacking one is not a `to` in Node either ([`Self::related_iface_cast`]).
+    pub(super) fn adds_required(&mut self, from: TyId, to: TyId) -> bool {
+        let have = self.object_members(from).unwrap_or_default();
+        let want = self.object_members(to).unwrap_or_default();
+        (want.iter()).any(|m| !m.2 && !have.iter().any(|h| h.0 == m.0))
     }
 
     /// Are `a` and `b` (or what they hold besides `null`/`undefined`) both of std's `lib.dom`

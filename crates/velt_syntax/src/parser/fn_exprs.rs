@@ -99,7 +99,6 @@ impl<'a> Parser<'a> {
                         throws,
                         is_async,
                         is_unsafe: false,
-                        is_system: false,
                         is_decorator: false,
                         decorators: vec![],
                         generator: None,

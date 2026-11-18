@@ -1,18 +1,23 @@
 // velt/net/udp (internal): the UDP functions, in a build compiled with the executor in Velt
 // (`VELT_SCHEDULER=std`, #2649 step 4): the `std-scheduler` variant of `#net-udp`
-// (std/imports.velt), with the names and signatures of the runtime's (std/net/udp/rt.velt).
+// (std/imports.velt), with the names and signatures of the default variant's
+// (std/net/udp/rt.velt).
 //
 // `bind` opens a non-blocking datagram socket on the executor's reactor (std/lang/hooks/
-// sched_io.velt), registered as TCP's sockets are, with a handle of the reactor's table (top bit
-// set); `recvFrom` and `sendTo` try at once and wait for readiness on EAGAIN, on the worker, with
-// no Rust in between. Addresses are resolved as `connect`'s are (std/net/fd_addr.velt
-// `resolve`: a numeric one on the worker, a name on the blocking pool), the first address used,
-// as tokio's `send_to` does. On an OS without the reactor, every call is the runtime's.
+// sched_io.velt: epoll, kqueue or Windows' AFD), registered as TCP's sockets are, with a handle
+// of the reactor's table (top bit set); `recvFrom` and `sendTo` try at once and wait for
+// readiness on EAGAIN, on the worker, with no Rust in between. Addresses are resolved as
+// `connect`'s are (std/net/fd_addr.velt `resolve`: a numeric one on the worker, a name on the
+// blocking pool), the first address used, as tokio's `send_to` did. The C calls are
+// `#net-calls`' (the C library's, or Winsock's under the same names). Without the reactor (an OS
+// with none, or one that failed to open) `bind` fails with `ENOTSUP`, and a handle not of the
+// reactor's table is a closed one (`EBADF`).
 
 import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";
 import { Ptr } from "velt/ffi/ptr";
 import { arrayTruncate, promiseAt } from "velt/lang/intrinsics";
+import { bind, recvfrom$net, sendto$net, setsockopt, sockaddr, socket } from "#net-calls";
 import * as r from "#reactor";
 import * as sys from "#net-sys";
 import * as io from "velt/lang/hooks/sched_io";
@@ -23,7 +28,6 @@ import * as wt from "velt/lang/hooks/sched_io_wait";
 import * as wk from "velt/lang/hooks/sched_wake";
 import * as fa from "velt/net/fd_addr";
 import * as fs from "velt/net/fd_socket";
-import * as rt from "./rt";
 import { RawDatagram } from "./rt";
 
 export { RawDatagram } from "./rt";
@@ -36,33 +40,6 @@ const MAX_DATAGRAM: usize = 65536;
 /** A `sockaddr_storage` and its length word. */
 const SA_SIZE: usize = 128;
 
-// Pointers are `Ptr`s, as in a program's own declarations of these symbols: one C symbol has one
-// signature in a program.
-declare c("c") function socket$udp(family: i32, kind: i32, protocol: i32): i32;
-declare c("c") function bind$udp(fd: i32, addr: Ptr<u8>, len: u32): i32;
-declare c("c") function setsockopt$udp(
-  fd: i32,
-  level: i32,
-  name: i32,
-  value: Ptr<u8>,
-  len: u32,
-): i32;
-declare c("c") function recvfrom$udp(
-  fd: i32,
-  buf: Ptr<u8>,
-  n: usize,
-  flags: i32,
-  addr: Ptr<u8>,
-  len: Ptr<u8>,
-): isize;
-declare c("c") function sendto$udp(
-  fd: i32,
-  buf: Ptr<u8>,
-  n: usize,
-  flags: i32,
-  addr: Ptr<u8>,
-  len: u32,
-): isize;
 /**
  * The address of a byte array's elements (a copy of nothing returns its destination), until
  * `declare c` can take a pointer into an array (#2187), as std/net/fd_io.velt does.
@@ -81,7 +58,7 @@ function noDatagram(): RawDatagram {
 
 export async function velt_rt_udp_bind(addr: string): Promise<IoResult<u64>> {
   if (!io.supported()) {
-    return await rt.velt_rt_udp_bind(addr);
+    return fs.failed({ code: 12, message: "operation not supported on this platform" }, 0);
   }
   const found = await fa.resolve(addr, true);
   if (found.code !== 0) {
@@ -89,7 +66,7 @@ export async function velt_rt_udp_bind(addr: string): Promise<IoResult<u64>> {
   }
   const ai = found.value;
   // SAFETY: no precondition.
-  const fd = unsafe { socket$udp(m.ld32(ai + AI_FAMILY) as i32, SOCK_DGRAM | r.SOCKET_FLAGS, 0) };
+  const fd = unsafe { socket(m.ld32(ai + AI_FAMILY) as i32, SOCK_DGRAM | r.SOCKET_FLAGS, 0) };
   let st = fs.ok();
   if (fd < 0) {
     st = fs.osError(r.errno());
@@ -98,8 +75,9 @@ export async function velt_rt_udp_bind(addr: string): Promise<IoResult<u64>> {
     if (prep !== 0) {
       st = fs.osError(prep);
     } else {
+      const at = m.ptrTo<sockaddr>(m.ld(ai + sys.AI_ADDR));
       // SAFETY: the address and its length from getaddrinfo's entry.
-      if (unsafe { bind$udp(fd, m.ptr(m.ld(ai + sys.AI_ADDR)), m.ld32(ai + AI_ADDRLEN)) } !== 0) {
+      if (unsafe { bind(fd, at, m.ld32(ai + AI_ADDRLEN)) } !== 0) {
         st = fs.osError(r.errno());
       }
     }
@@ -116,7 +94,7 @@ export async function velt_rt_udp_bind(addr: string): Promise<IoResult<u64>> {
 }
 
 export function velt_rt_udp_port(u: u64): u32 {
-  return tb.ours(u) ? fs.portOf(u) : rt.velt_rt_udp_port(u);
+  return fs.portOf(u);
 }
 
 export async function velt_rt_udp_send_to(
@@ -124,9 +102,6 @@ export async function velt_rt_udp_send_to(
   data: u8[],
   addr: string,
 ): Promise<IoResult<u64>> {
-  if (!tb.ours(u)) {
-    return await rt.velt_rt_udp_send_to(u, data, addr);
-  }
   // A hand-off: the receiver (often a task of this program) may get the datagram at once, so
   // what this thread printed comes first (the runtime's `publish_before_handoff`).
   const w = t.here();
@@ -159,9 +134,10 @@ async function sendTo(u: u64, data: u8[], sa: usize, len: u32): Promise<IoResult
     const n = data.length;
     const p = n === 0 ? 0 : addressOf(data, 0);
     let sent: isize = 0;
+    const to = m.ptrTo<sockaddr>(sa);
     // SAFETY: `data` holds `n` bytes at `p` (none: no buffer read); the address is getaddrinfo's.
     unsafe {
-      sent = sendto$udp(m.ld(s + io.S_FD) as i32, m.ptr(p), n, r.SEND_FLAGS, m.ptr(sa), len);
+      sent = sendto$net(m.ld(s + io.S_FD) as i32, m.ptr(p), n, r.SEND_FLAGS, to, len);
     }
     if (sent >= 0) {
       tb.leave(s);
@@ -182,9 +158,6 @@ async function sendTo(u: u64, data: u8[], sa: usize, len: u32): Promise<IoResult
 }
 
 export async function velt_rt_udp_recv_from(u: u64, max: u64): Promise<IoResult<RawDatagram>> {
-  if (!tb.ours(u)) {
-    return await rt.velt_rt_udp_recv_from(u, max);
-  }
   const size = max === 0 || max > (MAX_DATAGRAM as u64) ? MAX_DATAGRAM : max as usize;
   // The datagram's first `size` bytes are what the caller gets (the rest is dropped, as
   // the runtime truncates to `max`): the buffer holds no more.
@@ -204,10 +177,12 @@ export async function velt_rt_udp_recv_from(u: u64, max: u64): Promise<IoResult<
     }
     m.st32(sa + SA_SIZE, SA_SIZE as u32);
     const p = addressOf(buf, 0);
+    const peer = m.ptrTo<sockaddr>(sa);
+    const room = m.ptrTo<u32>(sa + SA_SIZE);
     let n: isize = 0;
     // SAFETY: `buf` holds `size` bytes at `p`; a sockaddr_storage and its length word.
     unsafe {
-      n = recvfrom$udp(m.ld(s + io.S_FD) as i32, m.ptr(p), size, 0, m.ptr(sa), m.ptr(sa + SA_SIZE));
+      n = recvfrom$net(m.ld(s + io.S_FD) as i32, m.ptr(p), size, 0, peer, room);
     }
     if (n >= 0) {
       tb.leave(s);
@@ -232,9 +207,6 @@ export async function velt_rt_udp_recv_from(u: u64, max: u64): Promise<IoResult<
 }
 
 export function velt_rt_udp_set_broadcast(u: u64, on: bool): IoStatus {
-  if (!tb.ours(u)) {
-    return rt.velt_rt_udp_set_broadcast(u, on);
-  }
   const s = tb.enter(u);
   if (s === 0) {
     return fs.closed();
@@ -244,7 +216,7 @@ export function velt_rt_udp_set_broadcast(u: u64, on: bool): IoStatus {
   let rc: i32 = 0;
   // SAFETY: an int option in `word`.
   unsafe {
-    rc = setsockopt$udp(m.ld(s + io.S_FD) as i32, sys.SOL_SOCKET, sys.SO_BROADCAST, m.ptr(word), 4);
+    rc = setsockopt(m.ld(s + io.S_FD) as i32, sys.SOL_SOCKET, sys.SO_BROADCAST, m.ptr(word), 4);
   }
   m.release(word, 16);
   const st = rc === 0 ? fs.ok() : fs.osError(r.errno());
@@ -253,10 +225,6 @@ export function velt_rt_udp_set_broadcast(u: u64, on: bool): IoStatus {
 }
 
 export function velt_rt_udp_close(u: u64) {
-  if (!tb.ours(u)) {
-    rt.velt_rt_udp_close(u);
-    return;
-  }
   const s = tb.enter(u);
   if (s !== 0) {
     fs.discard(u, s);

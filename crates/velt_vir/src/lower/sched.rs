@@ -48,6 +48,15 @@ impl FnLower<'_, '_> {
 
     /// Did sema check the executor's hook `name` (the program runs something on the executor)?
     /// A program that runs nothing on it neither loads nor checks its hooks (#2880).
+    /// `velt_main`'s first step under the executor in Velt: this thread is the program's
+    /// (program_thread.velt, #3085), the only one the executor's worker 0 starts on. Nothing for a
+    /// program that runs nothing on the executor.
+    pub(super) fn mark_program_thread(&mut self) {
+        if self.std_sched() && self.sched_hook_live(velt_common::std_hook!(program_thread)) {
+            hooks::program_thread(self).emit(self);
+        }
+    }
+
     fn sched_hook_live(&self, name: &str) -> bool {
         (self.cx.prelude_def(name)).is_some_and(|d| !self.cx.hir.unchecked.contains(&d))
     }
@@ -66,6 +75,13 @@ impl FnLower<'_, '_> {
         }
         hooks::sched_exit(self, ty::I32::arg(cint(1, Ty::I32))).emit(self);
         self.terminate(crate::vir::Terminator::Unreachable);
+    }
+
+    /// Does `velt_rt_fut_share` go to the executor's hub (sched_share.velt, #2854)? Only where the
+    /// executor is loaded: a program that runs nothing on it has none of its nodes, and every
+    /// promise it shares is the runtime's, for the runtime's hub.
+    pub(super) fn sched_share_live(&self) -> bool {
+        self.std_sched() && self.sched_hook_live(velt_common::std_hook!(sched_share))
     }
 
     /// `op` (a pointer or an integer) as a `usize` argument.
@@ -164,6 +180,31 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// `velt_rt_fut_share`'s job (another holder of promise `f`, into `out`): the executor in
+    /// Velt's hub (sched_share.velt, #2854), with the result's size, `share` (a `SharePoll` glue
+    /// or null) and `drop` (its drop glue or null).
+    pub(super) fn sched_share(
+        &mut self,
+        f: Operand,
+        size: u64,
+        share: Operand,
+        drop: Operand,
+        out: crate::vir::Local,
+    ) -> Operand {
+        let (f, share, drop) = (self.as_usize(f), self.as_usize(share), self.as_usize(drop));
+        let size = cint(size as i128, Ty::U64);
+        let c = hooks::sched_share(
+            self,
+            ty::USize::arg(f),
+            ty::U64::arg(size),
+            ty::USize::arg(share),
+            ty::USize::arg(drop),
+        );
+        let v = c.emit(self).op();
+        self.assign(Place::local(out), Rvalue::Cast(v, Ty::Ptr));
+        Operand::Copy(Place::local(out))
+    }
+
     /// Runtime call `r` with `args` (result into `dest`) as the executor in Velt's hook, when it
     /// has one; else `args` and `dest` back.
     pub(super) fn sched_rt(
@@ -178,7 +219,15 @@ impl FnLower<'_, '_> {
                 | Rt::FutStart
                 | Rt::FutStartRejecting
                 | Rt::FutDetach
+                | Rt::All
+                | Rt::AllWithDrop
+                | Rt::AllOrReject
+                | Rt::Race
+                | Rt::RaceOk
                 | Rt::FutTransfer
+                | Rt::FutId
+                | Rt::FutAlias
+                | Rt::FutViews
                 | Rt::FutsHandled
                 | Rt::FutPeek
                 | Rt::AwaitTick
@@ -205,6 +254,11 @@ impl FnLower<'_, '_> {
         // are neither loaded nor checked (#2880): `console.log` of a promise there keeps the
         // runtime's peek, in either std mode.
         if r == Rt::FutPeek && !self.sched_hook_live(velt_common::std_hook!(sched_peek)) {
+            return Err((args, dest));
+        }
+        // Likewise a promise's identity and its aliases: without the executor no holder of its
+        // hub exists.
+        if matches!(r, Rt::FutId | Rt::FutAlias | Rt::FutViews) && !self.sched_share_live() {
             return Err((args, dest));
         }
         let ret = r.sig().2;
@@ -247,6 +301,25 @@ impl FnLower<'_, '_> {
                     let (f, glue) = (self.as_usize(f.clone()), self.as_usize(glue.clone()));
                     hooks::sched_transfer(self, ty::USize::arg(f), ty::USize::arg(glue)).emit(self);
                     None
+                }
+                (Rt::FutAlias, [w, inner, quiet]) => {
+                    let (w, inner) = (self.as_usize(w.clone()), self.as_usize(inner.clone()));
+                    let quiet = self.as_usize(quiet.clone());
+                    let (w, inner, quiet) = (
+                        ty::USize::arg(w),
+                        ty::USize::arg(inner),
+                        ty::USize::arg(quiet),
+                    );
+                    hooks::sched_fut_alias(self, w, inner, quiet).emit(self);
+                    None
+                }
+                (Rt::FutViews, [on]) => {
+                    hooks::sched_fut_views(self, ty::U8::arg(on.clone())).emit(self);
+                    None
+                }
+                (Rt::FutId, [f]) => {
+                    let f = self.as_usize(f.clone());
+                    Some(hooks::sched_fut_id(self, ty::USize::arg(f)).emit(self).op())
                 }
                 (Rt::FutsHandled, [futs, n, qdrop]) => {
                     let (futs, qdrop) = (self.as_usize(futs.clone()), self.as_usize(qdrop.clone()));
@@ -301,6 +374,49 @@ impl FnLower<'_, '_> {
                             .emit(self)
                             .op(),
                     )
+                }
+                // `Promise.all` over an array (sched_all.velt `schedAll`, #2944): `velt_rt_all` has
+                // no result drop.
+                (
+                    Rt::All | Rt::AllWithDrop | Rt::AllOrReject,
+                    [futs, n, size, results, rest @ ..],
+                ) => {
+                    let rdrop = match rest {
+                        [d] => self.as_usize(d.clone()),
+                        _ => self.as_usize(cint(0, Ty::Ptr)),
+                    };
+                    let (futs, results) =
+                        (self.as_usize(futs.clone()), self.as_usize(results.clone()));
+                    let reject = Operand::Const(Const::Bool(r == Rt::AllOrReject), Ty::Bool);
+                    let c = hooks::sched_all(
+                        self,
+                        ty::USize::arg(futs),
+                        ty::U64::arg(n.clone()),
+                        ty::U64::arg(size.clone()),
+                        ty::USize::arg(results),
+                        ty::USize::arg(rdrop),
+                        ty::Bool::arg(reject),
+                    );
+                    Some(c.emit(self).op())
+                }
+                // `Promise.race` and `Promise.any` over an array (sched_race.velt `schedRace`):
+                // `velt_rt_race` has no reject drop.
+                (Rt::Race | Rt::RaceOk, [futs, n, size, rest @ ..]) => {
+                    let rdrop = match rest {
+                        [d] => self.as_usize(d.clone()),
+                        _ => self.as_usize(cint(0, Ty::Ptr)),
+                    };
+                    let futs = self.as_usize(futs.clone());
+                    let first_ok = Operand::Const(Const::Bool(r == Rt::RaceOk), Ty::Bool);
+                    let c = hooks::sched_race(
+                        self,
+                        ty::USize::arg(futs),
+                        ty::U64::arg(n.clone()),
+                        ty::U64::arg(size.clone()),
+                        ty::USize::arg(rdrop),
+                        ty::Bool::arg(first_ok),
+                    );
+                    Some(c.emit(self).op())
                 }
                 (Rt::AwaitReady, [ticket, cx]) => {
                     let (ticket, cx) = (ticket.clone(), self.as_usize(cx.clone()));

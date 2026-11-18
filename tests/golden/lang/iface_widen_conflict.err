@@ -1,0 +1,2 @@
+20:2: error: cannot cast `Ctx` as `Other`
+has a field `__name` of another type than `Other` gives it

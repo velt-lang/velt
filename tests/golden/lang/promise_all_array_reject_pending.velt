@@ -1,0 +1,31 @@
+// `Promise.all` over an array rejects with the first rejection while other inputs are still
+// pending, whichever place the rejecting input has; the pending ones run on (#2944). They wait on
+// timers: given up, their microtask steps would run before the awaiter's `catch` (#3064).
+async function fail(label: string): Promise<string> {
+  await null;
+  console.log(`${label} rejects`);
+  throw new Error(label);
+}
+
+async function finish(label: string, ms: i64): Promise<string> {
+  await sleep(ms);
+  console.log(`${label} finishes`);
+  return label;
+}
+
+async function main() {
+  const first: Promise<string>[] = [fail("first"), finish("second", 20)];
+  try {
+    await Promise.all(first);
+  } catch (e) {
+    console.log(`caught ${(e as Error).message}`);
+  }
+  const last: Promise<string>[] = [finish("third", 40), fail("fourth")];
+  try {
+    await Promise.all(last);
+  } catch (e) {
+    console.log(`caught ${(e as Error).message}`);
+  }
+  await sleep(80);
+  console.log("end");
+}

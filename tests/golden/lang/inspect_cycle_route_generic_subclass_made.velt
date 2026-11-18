@@ -1,0 +1,17 @@
+// A program whose only cycle runs through one route (a generic subclass made by generic code and
+// returned as its base, so only lowering sees its instance): sema counts it as able to hold
+// anything, so printing tracks it and writes <ref *1> and [Circular *1] as Node does.
+class Base { name: string = "b"; }
+class Sub<T> extends Base { x: T | null = null; }
+class Holder { item: Base | null = null; }
+function make<T>(v: T): Base {
+  const s = new Sub<T>();
+  s.x = v;
+  return s;
+}
+function main() {
+  const h = new Holder();
+  h.item = make<Holder>(h);
+  console.log(h);
+}
+main();

@@ -1,5 +1,10 @@
-// velt/net/dns (internal): the runtime's resolver function (rt_abi_async.md §14.6).
+// velt/net/dns (internal): the resolver function where the executor in Velt doesn't run (the
+// default variant of `#net-dns`, std/imports.velt: WebAssembly), with the name and signature of
+// the `std-scheduler` variant (std/net/dns/rt_sched.velt). No runtime resolves names there: it
+// fails with `ENOTSUP`.
 
 import { IoResult } from "velt/native/result";
 
-export declare async function velt_rt_dns_lookup(host: string): Promise<IoResult<string[]>>;
+export async function velt_rt_dns_lookup(host: string): Promise<IoResult<string[]>> {
+  return { code: 12, message: "operation not supported on this platform", value: [] };
+}

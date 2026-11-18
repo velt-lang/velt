@@ -1,4 +1,6 @@
 same signal: true
 spawned task saw: stop | local: true
 escaped scope signal: false
-after cancel: true late
+after cancel: true DOMException [AbortError]: late
+any of it: DOMException [AbortError]: late
+cancel(): DOMException [AbortError]: This operation was aborted | any: DOMException [AbortError]: This operation was aborted

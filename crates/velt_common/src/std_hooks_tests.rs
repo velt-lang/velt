@@ -18,7 +18,9 @@ fn names_are_unique() {
 fn the_fallback_hooks_are_the_on_demand_ones() {
     // An unchecked hook is missing to lowering: only these may be, and lowering falls back.
     for h in HOOKS {
-        let on_demand = ON_DEMAND_FLOAT.contains(&h.name) || ON_DEMAND_WRITE.contains(&h.name);
+        let on_demand = ON_DEMAND_FLOAT.contains(&h.name)
+            || ON_DEMAND_WRITE.contains(&h.name)
+            || INSPECT_SHAPES.contains(&h.name);
         assert_eq!(h.fallback, on_demand, "{}", h.name);
         assert!(!h.fallback || h.lowered, "{}", h.name);
     }

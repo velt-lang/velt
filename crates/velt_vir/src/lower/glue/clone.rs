@@ -279,6 +279,9 @@ impl FnLower<'_, '_> {
                 lw.terminate(Terminator::Return(copy));
             })
         });
+        // A copy of a record view is a plain record of its mirror, up to date first
+        // (record_view.rs; field 4 is none below).
+        self.record_view_sync_glue(&Place::local(obj), ty);
         let oa = self.cx.obj_agg(ty);
         let new = self.object_alloc(ty);
         if let Some(found) = found {
@@ -296,7 +299,11 @@ impl FnLower<'_, '_> {
         for (i, t) in tys.into_iter().enumerate() {
             let dp = self.field_place(&np, ty, i as u32);
             if record && i >= 2 {
-                let none = self.none_value(t);
+                // Field 4, a view's source, is a word: 0, a plain record (record_view.rs).
+                let none = match self.cx.ty(t) {
+                    Ty::U64 => super::super::cint(0, Ty::U64),
+                    _ => self.none_value(t),
+                };
                 self.assign(dp, Rvalue::Use(none));
                 continue;
             }
@@ -335,15 +342,22 @@ impl FnLower<'_, '_> {
         let slot = self.cx.promise_slot(ty);
         let vt = self.cx.ty(slot);
         let size = self.cx.size_align(vt).0;
-        let share = if self.cx.needs_drop(slot) {
-            cfunc(self.cx.func(Work::Glue(Glue::ShareSlot, slot)))
-        } else {
-            cint(0, Ty::Ptr)
+        // The executor in Velt shares its nodes with a hub in Velt (sched_share.velt, #2854),
+        // which calls the share glue with `statePoll`'s signature; a program that runs nothing on
+        // the executor shares only the runtime's promises, with the runtime's hub.
+        let std = self.sched_share_live();
+        let share = match (self.cx.needs_drop(slot), std) {
+            (true, false) => cfunc(self.cx.func(Work::Glue(Glue::ShareSlot, slot))),
+            (true, true) => cfunc(self.cx.func(Work::Glue(Glue::SharePoll, slot))),
+            (false, _) => cint(0, Ty::Ptr),
         };
         let drop = self
             .result_drop_fn(slot)
             .unwrap_or_else(|| cint(0, Ty::Ptr));
         let out = self.temp(Ty::Ptr);
+        if std {
+            return self.sched_share(f, size as u64, share, drop, out);
+        }
         let args = vec![f, cint(size as i128, Ty::U64), share, drop];
         self.call_rt(Rt::FutShare, args, Some(Place::local(out)));
         Operand::Copy(Place::local(out))
@@ -356,5 +370,14 @@ impl FnLower<'_, '_> {
         let d = self.deref_param(dst, ty);
         self.share_into(s, d, ty);
         self.terminate(Terminator::Return(unit()));
+    }
+
+    /// `Glue::SharePoll`: `share_slot_body`, returning 1.
+    pub(super) fn share_poll_body(&mut self, src: vir::Local, dst: vir::Local, ty: TyId) {
+        self.cx.note_share(ty);
+        let s = self.deref_param(src, ty);
+        let d = self.deref_param(dst, ty);
+        self.share_into(s, d, ty);
+        self.terminate(Terminator::Return(cint(1, Ty::U32)));
     }
 }

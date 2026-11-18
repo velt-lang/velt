@@ -1,0 +1,24 @@
+// An interface value asserted to an extension its object doesn't implement: Velt checks the
+// assertion and stops with a TypeError (#379). Node goes on and fails only when `name` is called.
+interface Shape {
+  area(): number;
+}
+
+interface Named extends Shape {
+  name(): string;
+}
+
+class Circle implements Shape {
+  r: number;
+  constructor(r: number) {
+    this.r = r;
+  }
+  area(): number {
+    return 3 * this.r * this.r;
+  }
+}
+
+const c: Shape = new Circle(2);
+console.log("before");
+const n = c as Named;
+console.log("not reached", n.name());

@@ -18,10 +18,21 @@
 //! name), when no loader serves std modules on demand, and for a hook that a round before
 //! reached only after the passes that follow the check (`Assumed::hooks`): too late to load a
 //! module then, so the check runs again with it.
+//!
+//! The editor's analysis (`ide`) checks every body, live or not, and never lowers, so it takes
+//! the stub too: with a loader, the live walk binds it as `velt check`'s does, for one demand set
+//! (a prelude method nothing calls demands nothing); without one (`velt ts-compat` analysing what
+//! its check loaded), a stub no live code needed stays unbound, where demanding its module would
+//! report it as not loaded.
+//!
+//! A prebuilt hook (velt_common `std_hooks/prebuilt.rs`) whose module's object the build links
+//! is neither: its calls name a `declare function` typed the same way ([`declared`]), which
+//! never binds, and its module is never loaded. That function is a plain extern to the rest of
+//! the check and to lowering, which calls the object's entry point as it called the runtime's.
 
 use rustc_hash::FxHashMap;
 use velt_common::hook_sig::{FnSig, Mode, Sig, T};
-use velt_common::std_hooks::HOOKS;
+use velt_common::std_hooks::{prebuilt, HOOKS};
 use velt_common::Span;
 
 use crate::ctx::{Ctx, Item};
@@ -40,6 +51,9 @@ pub(crate) struct Stubs {
     /// Hooks a round before reached only after the passes: no stub for them, their modules are
     /// demanded when the call is checked (`Assumed::hooks`).
     at_check: Vec<usize>,
+    /// Per prebuilt hook asked about ([`declared`]): its declared function, `None` where the
+    /// build has no object of its module.
+    declared: FxHashMap<usize, Option<DefId>>,
 }
 
 impl Stubs {
@@ -47,6 +61,11 @@ impl Stubs {
     /// only after the passes.
     pub(super) fn demand_at_check(&mut self, hooks: &[usize]) {
         self.at_check = hooks.to_vec();
+    }
+
+    /// Did a round before reach hook `index` only after the passes (`Assumed::hooks`)?
+    pub(super) fn assumed(&self, index: usize) -> bool {
+        self.at_check.contains(&index)
     }
 
     /// Has the check made any stub?
@@ -90,10 +109,13 @@ impl Stubs {
 /// The definition a `hookCall` of `HOOKS[index]` in `module` calls when the hook's module isn't
 /// loaded: its stub, made the first time. `None` where the module is to be demanded now: laziness
 /// is off or checks everything, the passes after the check have run, no loader serves modules on
-/// demand, or the stub can't express the signature. `span` is the call's.
+/// demand, or the stub can't express the signature; the editor's analysis, which never lowers,
+/// takes a stub with laziness on or without a loader. `span` is the call's.
 pub(crate) fn stub(cx: &mut Ctx, index: usize, module: usize, span: Span) -> Option<DefId> {
-    if cx.lazy.modules.is_empty() || cx.lazy.check_all || cx.lazy.finishing() || cx.loads.is_none()
-    {
+    let lazy = !cx.lazy.modules.is_empty();
+    let editor = cx.ide.is_some() && (lazy || cx.loads.is_none());
+    let check = lazy && !cx.lazy.check_all && cx.loads.is_some();
+    if !(editor || check) || cx.lazy.finishing() {
         return None;
     }
     // The program's own code is checked whole and nearly all live: no stub for it.
@@ -113,6 +135,31 @@ pub(crate) fn stub(cx: &mut Ctx, index: usize, module: usize, span: Span) -> Opt
     cx.lazy.stubs.hooks.insert(d, (index, None));
     cx.lazy.stubs.first_call.insert(d, span);
     Some(d)
+}
+
+/// The function a `hookCall` of `HOOKS[index]` in `module` calls when the hook is prebuilt
+/// (velt_common `std_hooks/prebuilt.rs`) and the build links its module's object (the driver's
+/// [`crate::Loads::prebuilt`]): a `declare function` named by `prebuilt::symbol`, typed from the
+/// table, as the `velt_rt_*` extern the hook replaced was. The hook's module is not loaded for
+/// it. Made once per check; `None` otherwise, and the call goes on as for any hook.
+pub(crate) fn declared(cx: &mut Ctx, index: usize, module: usize) -> Option<DefId> {
+    if !HOOKS[index].prebuilt {
+        return None;
+    }
+    if let Some(&d) = cx.lazy.stubs.declared.get(&index) {
+        return d;
+    }
+    let linked = (cx.loads.and_then(|l| l.prebuilt)).is_some_and(|linked| linked(index));
+    let d = match (linked, &HOOKS[index].sig) {
+        (true, Sig::Fn(sig)) => stub_info(cx, index, sig, module).map(|mut f| {
+            f.name = prebuilt::symbol(&HOOKS[index]);
+            f.kind = FnKind::Extern;
+            cx.alloc_def(Span::DUMMY, DefInfo::Fn(Box::new(f)))
+        }),
+        _ => None,
+    };
+    cx.lazy.stubs.declared.insert(index, d);
+    d
 }
 
 /// The stub's signature: the table's, with its passing modes fixed.
@@ -392,6 +439,6 @@ fn rebind(cx: &mut Ctx, caller: DefId) {
 // The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
 crate::units::codec::structs! {
     Stubs {
-        by_hook, hooks, first_call, at_check,
+        by_hook, hooks, first_call, at_check, declared,
     }
 }

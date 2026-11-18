@@ -1,0 +1,28 @@
+// A read-only union bound whose read-only implementation casts the key to a mutable array and
+// writes through it (#379, `union_bound_value`): Velt doesn't check that a read-only array stays
+// one (TS4104), so a read-only bound doesn't keep an instantiation's narrower `number[]` from a
+// `string`. Velt refuses the conversion; tsc accepts it and Node prints `3 3`.
+type KeyValue = string | readonly (string | number)[];
+
+function push(x: (number | string)[]): void {
+  x.push("x");
+}
+
+function use(key: string): number;
+function use<K extends KeyValue>(key: () => K | null): number;
+function use(key: string | (() => KeyValue | null)): number {
+  if (typeof key === "string") {
+    return key.length;
+  }
+  const k = key();
+  if (k === null || typeof k === "string") {
+    return 0;
+  }
+  push(k as (number | string)[]);
+  return k.length;
+}
+
+function main(): void {
+  const a: number[] = [1, 2];
+  console.log(use(() => a), a.length);
+}

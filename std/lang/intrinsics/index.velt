@@ -8,14 +8,14 @@
 // and packages cannot (`velt/lang` is internal), so they use the public APIs instead.
 
 export {
+  addressAtomicCas,
+  addressAtomicCasWeak,
+  addressAtomicLoad,
+  addressAtomicRmw,
+  addressAtomicStore,
   addressLoad,
   addressStore,
   exportedAddress,
-  ptrAtomicCas,
-  ptrAtomicCasWeak,
-  ptrAtomicLoad,
-  ptrAtomicRmw,
-  ptrAtomicStore,
 } from "velt/lang/intrinsics/address";
 export {
   anyDelete,
@@ -95,7 +95,7 @@ export {
   toAny,
 } from "velt/lang/intrinsics/reflect";
 export { hookCall } from "velt/lang/intrinsics/hook_call";
-export { errorText, inspect, throwLoc } from "velt/lang/intrinsics/report";
+export { errorText, inspect, inspectNested, throwLoc } from "velt/lang/intrinsics/report";
 export { strLoadPartialU8x16, strLoadU8x16, targetFeature } from "velt/lang/intrinsics/simd";
 export {
   strAsciiWords,
@@ -110,6 +110,15 @@ export {
   strWord1,
   strWord2,
 } from "velt/lang/intrinsics/string";
+export {
+  recordViewDelete,
+  recordViewFlush,
+  recordViewGet,
+  recordViewHas,
+  recordViewIs,
+  recordViewSet,
+  recordViewSync,
+} from "velt/lang/intrinsics/record_view";
 export { symbolRegistry, symbolStatic } from "velt/lang/intrinsics/symbol";
 export { firstFulfilled, moduleStateUsed, spawnHandled } from "velt/lang/intrinsics/task";
 export { threadLocalGet, threadLocalSet } from "velt/lang/intrinsics/thread_local";

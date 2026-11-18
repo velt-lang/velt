@@ -87,7 +87,7 @@ use instances::{class_insts, instances, method_class};
 pub(in crate::ownership::local_async) use labels::{reaches, with_why};
 use why::heap_reaches;
 
-pub(crate) use call_sites::unit_named_outside_bodies;
+pub(crate) use call_sites::{unit_named_outside_bodies, OutsideNamed};
 pub(crate) use changes::check_crossing_changes;
 pub(crate) use generic_closures::unit_outside_types;
 pub(crate) use record::record_changed_captures;
@@ -250,6 +250,9 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
         cx.unit_sums.async_summaries.crossing = crossing;
     }
     let reported = callbacks::check_crossing_callbacks(cx, &g, &p.flags);
+    for &c in &g.skipped {
+        finish(cx, c, true, None);
+    }
     for (n, node) in g.nodes.iter().enumerate() {
         let Node::Lit(c) = *node else { continue };
         let why = p.why[n];

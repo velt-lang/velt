@@ -1,0 +1,22 @@
+// A type parameter bounded by a union with a read-only array of mutable arrays (#379,
+// `union_bound_value`): `readonly (number | string)[][]` is read-only only on the outside, so an
+// instantiation's inner `number[]` may get a `string` written into it. Velt refuses the
+// conversion; tsc accepts it and Node prints `2 2`.
+function use(key: string): number;
+function use<K extends (string | readonly (number | string)[][])>(key: () => K | null): number;
+function use(key: string | (() => string | readonly (number | string)[][] | null)): number {
+  if (typeof key === "string") {
+    return key.length;
+  }
+  const k = key();
+  if (k === null || typeof k === "string") {
+    return 0;
+  }
+  k[0].push("x");
+  return k[0].length;
+}
+
+function main(): void {
+  const a: number[][] = [[1]];
+  console.log(use(() => a), a[0].length);
+}

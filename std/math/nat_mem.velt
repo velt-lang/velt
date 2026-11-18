@@ -1,0 +1,305 @@
+// velt/math (internal): the limb loops of the magnitudes (nat_add.velt says what a magnitude is)
+// on the limbs' addresses, so that no limb access carries a bounds check: the callers check each
+// range once, before the loop, and each loop touches only the `n` limbs it is given. An address
+// stays valid while its array is not resized, which none of these loops does.
+
+import { Ptr } from "velt/ffi/ptr";
+import { addressLoad, addressStore, inline, noInline } from "velt/lang/intrinsics";
+
+/**
+ * The address of `dst`'s first limb (`memset` of nothing returns its destination; LLVM folds the
+ * call away): a stand-in until `declare c` can take a pointer into an array (#2187).
+ */
+declare c("c") function memset$limbs(dst: u64[], c: i32, n: usize): Ptr<u8>;
+/** As `memset$limbs`, for an array the caller only reads. */
+declare c("c") function memset$limbsRead(dst: readonly u64[], c: i32, n: usize): Ptr<u8>;
+
+/** The address of limb 0 of `a`, which the caller writes through it; valid until `a` is resized. */
+@inline
+export function limbsAt(a: u64[]): usize {
+  // SAFETY: a write of no bytes; `a` is borrowed for the call.
+  return Ptr.addressOf(unsafe { memset$limbs(a, 0, 0) });
+}
+
+/** The address of limb 0 of `a`, which the caller only reads through it. */
+@inline
+export function limbsIn(a: u64[]): usize {
+  // SAFETY: as `limbsAt`'s.
+  return Ptr.addressOf(unsafe { memset$limbsRead(a, 0, 0) });
+}
+
+/** Stops the program when limbs `[at, at + n)` are not all inside `a`: an internal error. */
+@inline
+export function limbsCheck(a: u64[], at: usize, n: usize) {
+  if (at + n > a.length) {
+    rangeFault();
+  }
+}
+
+function rangeFault() {
+  panic("ICE: a limb loop's range is outside its magnitude");
+}
+
+/** The limb at `p + 8 i`. */
+@inline
+export function ldl(p: usize, i: usize): u64 {
+  // SAFETY: the caller checked that limb `i` is inside the array `p` came from (`limbsCheck`).
+  return unsafe { addressLoad<u64>(p + 8 * i) };
+}
+
+/** Writes the limb at `p + 8 i`. */
+@inline
+export function stl(p: usize, i: usize, v: u64) {
+  // SAFETY: as `ldl`'s.
+  unsafe {
+    addressStore<u64>(p + 8 * i, v);
+  }
+}
+
+// One limb of `addMulRowAt`: `r[i] += a[i] * k + c`; the carry out.
+@inline
+function addMulStep(r: usize, a: usize, i: usize, k: u64, c: u64): u64 {
+  const x = ldl(a, i);
+  let hi = Math.umulh(x, k);
+  const s = x * k + c;
+  hi += (s < c) as u64;
+  const t = s + ldl(r, i);
+  hi += (t < s) as u64;
+  stl(r, i, t);
+  return hi;
+}
+
+// One limb of `subMulRowAt`: `r[i] -= a[i] * k + c`; the borrow out.
+@inline
+function subMulStep(r: usize, a: usize, i: usize, k: u64, c: u64): u64 {
+  const x = ldl(a, i);
+  let hi = Math.umulh(x, k);
+  const s = x * k + c;
+  hi += (s < c) as u64;
+  const y = ldl(r, i);
+  stl(r, i, y - s);
+  hi += (y < s) as u64;
+  return hi;
+}
+
+/** `r[0..n] += a[0..n] * k` at addresses; returns the carry out of the top limb. */
+export function addMulRowAt(r: usize, a: usize, n: usize, k: u64): u64 {
+  let c: u64 = 0;
+  let i: usize = 0;
+  // Four limbs a step: the loop's own count and branch are paid once per four (eight is
+  // slower for the short rows of short products).
+  const quads = n & ~(3 as usize);
+  while (i < quads) {
+    c = addMulStep(r, a, i, k, c);
+    c = addMulStep(r, a, i + 1, k, c);
+    c = addMulStep(r, a, i + 2, k, c);
+    c = addMulStep(r, a, i + 3, k, c);
+    i += 4;
+  }
+  while (i < n) {
+    c = addMulStep(r, a, i, k, c);
+    i++;
+  }
+  return c;
+}
+
+/**
+ * `r[0..n] -= a[0..n] * k` at addresses; returns the borrow out of the top limb. Not inlined: in
+ * the long division around it, LLVM runs out of registers for its eight steps.
+ */
+@noInline
+export function subMulRowAt(r: usize, a: usize, n: usize, k: u64): u64 {
+  let c: u64 = 0;
+  let i: usize = 0;
+  // Eight limbs a step: the loop's own count and branch are paid once per eight (a division's
+  // rows are as long as its divisor).
+  const eights = n & ~(7 as usize);
+  while (i < eights) {
+    c = subMulStep(r, a, i, k, c);
+    c = subMulStep(r, a, i + 1, k, c);
+    c = subMulStep(r, a, i + 2, k, c);
+    c = subMulStep(r, a, i + 3, k, c);
+    c = subMulStep(r, a, i + 4, k, c);
+    c = subMulStep(r, a, i + 5, k, c);
+    c = subMulStep(r, a, i + 6, k, c);
+    c = subMulStep(r, a, i + 7, k, c);
+    i += 8;
+  }
+  while (i < n) {
+    c = subMulStep(r, a, i, k, c);
+    i++;
+  }
+  return c;
+}
+
+/**
+ * `o[0..n] = a[0..n] + b[0..n] + carry` at addresses (`o` may be `a` or `b`); returns the carry
+ * out.
+ */
+export function sumAt(o: usize, a: usize, b: usize, n: usize, carry: u64): u64 {
+  let c = carry;
+  for (let i: usize = 0; i < n; i++) {
+    const x = ldl(a, i);
+    const s = x + ldl(b, i);
+    const t = s + c;
+    stl(o, i, t);
+    c = ((s < x) as u64) + ((t < s) as u64);
+  }
+  return c;
+}
+
+/**
+ * `o[0..n] = a[0..n] - b[0..n] - borrow` at addresses (`o` may be `a` or `b`); returns the borrow
+ * out.
+ */
+export function diffAt(o: usize, a: usize, b: usize, n: usize, borrow: u64): u64 {
+  let c = borrow;
+  for (let i: usize = 0; i < n; i++) {
+    const x = ldl(a, i);
+    const y = ldl(b, i);
+    const d = x - y;
+    stl(o, i, d - c);
+    c = ((x < y) as u64) | ((d < c) as u64);
+  }
+  return c;
+}
+
+/** `o[0..n] = a[0..n] + carry` at addresses (`o` may be `a`); returns the carry out. */
+export function carryAt(o: usize, a: usize, n: usize, carry: u64): u64 {
+  let c = carry;
+  for (let i: usize = 0; i < n; i++) {
+    const t = ldl(a, i) + c;
+    stl(o, i, t);
+    c = (t < c) as u64;
+  }
+  return c;
+}
+
+/** `o[0..n] = a[0..n] - borrow` at addresses (`o` may be `a`); returns the borrow out. */
+export function borrowAt(o: usize, a: usize, n: usize, borrow: u64): u64 {
+  let c = borrow;
+  for (let i: usize = 0; i < n; i++) {
+    const x = ldl(a, i);
+    stl(o, i, x - c);
+    c = (x < c) as u64;
+  }
+  return c;
+}
+
+/** `o[0..n] = a[0..n] * k` at addresses (`o` may be `a`); returns the top limb. */
+export function mulWordAt(o: usize, a: usize, n: usize, k: u64): u64 {
+  let carry: u64 = 0;
+  for (let i: usize = 0; i < n; i++) {
+    const x = ldl(a, i);
+    const lo = x * k;
+    const t = lo + carry;
+    carry = Math.umulh(x, k) + ((t < lo) as u64);
+    stl(o, i, t);
+  }
+  return carry;
+}
+
+/** `a[0..n] <<= 1` at an address, the bit shifted out of the top limb returned. */
+export function doubleAt(a: usize, n: usize): u64 {
+  let carry: u64 = 0;
+  for (let i: usize = 0; i < n; i++) {
+    const x = ldl(a, i);
+    stl(a, i, (x << 1) | carry);
+    carry = x >> 63;
+  }
+  return carry;
+}
+
+/**
+ * `o[0..n] = a[0..n] << s` at addresses, for `s` below 64 (`o` may be `a`); returns the bits
+ * shifted out of the top limb.
+ */
+export function shlAt(o: usize, a: usize, n: usize, s: u64): u64 {
+  if (s == 0) {
+    copyLimbsAt(o, a, n);
+    return 0;
+  }
+  const back = 64 - s;
+  let carry: u64 = 0;
+  for (let i: usize = 0; i < n; i++) {
+    const x = ldl(a, i);
+    stl(o, i, (x << s) | carry);
+    carry = x >> back;
+  }
+  return carry;
+}
+
+/**
+ * `o[0..n] = a[0..n] >> s` at addresses, for `s` below 64, with `top` shifted in above `a[n - 1]`
+ * (`o` may be `a`).
+ */
+export function shrAt(o: usize, a: usize, n: usize, s: u64, top: u64) {
+  if (s == 0) {
+    copyLimbsAt(o, a, n);
+    return;
+  }
+  const back = 64 - s;
+  for (let i: usize = 0; i + 1 < n; i++) {
+    stl(o, i, (ldl(a, i) >> s) | (ldl(a, i + 1) << back));
+  }
+  if (n > 0) {
+    stl(o, n - 1, (ldl(a, n - 1) >> s) | (top << back));
+  }
+}
+
+/**
+ * `o[0..n] = a[0..n]` at addresses, for limbs that do not overlap. Two limbs a step, which LLVM
+ * keeps a loop: its `memcpy` would be a `rep movsb`, eight steps a limb.
+ */
+export function copyLimbsAt(o: usize, a: usize, n: usize) {
+  let i: usize = 0;
+  const pairs = n & ~(1 as usize);
+  while (i < pairs) {
+    const x = ldl(a, i);
+    const y = ldl(a, i + 1);
+    stl(o, i, x);
+    stl(o, i + 1, y);
+    i += 2;
+  }
+  if (i < n) {
+    stl(o, i, ldl(a, i));
+  }
+}
+
+/** `o[0..n] = 0` at an address, two limbs a step as `copyLimbsAt`. */
+export function zeroLimbsAt(o: usize, n: usize) {
+  let i: usize = 0;
+  const pairs = n & ~(1 as usize);
+  while (i < pairs) {
+    stl(o, i, 0);
+    stl(o, i + 1, 0);
+    i += 2;
+  }
+  if (i < n) {
+    stl(o, i, 0);
+  }
+}
+
+/**
+ * `o[2 i..2 i + 2] += a[i]^2` at addresses for each `i` below `n`, the carry run from each pair to
+ * the next (the diagonal of a square, `o` of `2 n` limbs); returns the carry out of the top.
+ */
+export function addSquaresAt(o: usize, a: usize, n: usize): u64 {
+  let carry: u64 = 0;
+  for (let i: usize = 0; i < n; i++) {
+    const x = ldl(a, i);
+    const lo = x * x;
+    const hi = Math.umulh(x, x);
+    const y0 = ldl(o, 2 * i);
+    const s0 = y0 + lo;
+    const t0 = s0 + carry;
+    stl(o, 2 * i, t0);
+    const c0 = ((s0 < y0) as u64) + ((t0 < s0) as u64);
+    const y1 = ldl(o, 2 * i + 1);
+    const s1 = y1 + hi;
+    const t1 = s1 + c0;
+    stl(o, 2 * i + 1, t1);
+    carry = ((s1 < y1) as u64) + ((t1 < s1) as u64);
+  }
+  return carry;
+}

@@ -105,6 +105,7 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     // report.velt
     ("errorText", Op(I::ErrorText)),
     ("inspect", Op(I::Inspect)),
+    ("inspectNested", Op(I::InspectNested)),
     ("throwLoc", Op(I::ThrowLoc)),
     // simd.velt
     ("strLoadPartialU8x16", Op(I::StrLoadPartialU8x16)),
@@ -114,11 +115,11 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("addressLoad", Op(I::AddressLoad)),
     ("addressStore", Op(I::AddressStore)),
     ("exportedAddress", Op(I::ExportedAddress)),
-    ("ptrAtomicCas", Op(I::PtrAtomicCas)),
-    ("ptrAtomicCasWeak", Op(I::PtrAtomicCasWeak)),
-    ("ptrAtomicLoad", Op(I::PtrAtomicLoad)),
-    ("ptrAtomicRmw", Op(I::PtrAtomicRmw)),
-    ("ptrAtomicStore", Op(I::PtrAtomicStore)),
+    ("addressAtomicCas", Op(I::AddressAtomicCas)),
+    ("addressAtomicCasWeak", Op(I::AddressAtomicCasWeak)),
+    ("addressAtomicLoad", Op(I::AddressAtomicLoad)),
+    ("addressAtomicRmw", Op(I::AddressAtomicRmw)),
+    ("addressAtomicStore", Op(I::AddressAtomicStore)),
     // future.velt
     ("addressCall", Op(I::AddressCall)),
     ("fnAddress", Op(I::FnAddress)),
@@ -167,6 +168,14 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("needsDrop", Op(I::NeedsDrop)),
     ("needsTransfer", Op(I::NeedsTransfer)),
     ("nullAs", Op(I::NullAs)),
+    // record_view.velt
+    ("recordViewDelete", Op(I::RecordViewDelete)),
+    ("recordViewFlush", Op(I::RecordViewFlush)),
+    ("recordViewGet", Op(I::RecordViewGet)),
+    ("recordViewHas", Op(I::RecordViewHas)),
+    ("recordViewIs", Op(I::RecordViewIs)),
+    ("recordViewSet", Op(I::RecordViewSet)),
+    ("recordViewSync", Op(I::RecordViewSync)),
     // weak.velt
     ("weakMapDelete", Op(I::WeakMapDelete)),
     ("weakMapGet", Op(I::WeakMapGet)),

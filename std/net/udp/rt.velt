@@ -1,24 +1,46 @@
-// velt/net/udp (internal): the runtime's UDP functions (rt_abi_async.md §14.6).
+// velt/net/udp (internal): the UDP functions where the executor in Velt doesn't run (the default
+// variant of `#net-udp`, std/imports.velt: WebAssembly), with the names and signatures of the
+// `std-scheduler` variant (std/net/udp/udp_sched.velt). No runtime has sockets there: `bind`
+// fails with `ENOTSUP`, and no handle is open.
 
 import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";
 
-/** The runtime's `VeltDatagram`. */
+/** A received datagram and its sender (`"ip:port"`). */
 export struct RawDatagram {
   data: u8[];
   addr: string;
 }
 
-export declare async function velt_rt_udp_bind(addr: string): Promise<IoResult<u64>>;
-export declare function velt_rt_udp_port(u: u64): u32;
-export declare async function velt_rt_udp_send_to(
+/** The status of a closed handle. */
+function closed(): IoStatus {
+  return { code: 16, message: "handle is closed" };
+}
+
+export async function velt_rt_udp_bind(addr: string): Promise<IoResult<u64>> {
+  return { code: 12, message: "operation not supported on this platform", value: 0 };
+}
+
+export function velt_rt_udp_port(u: u64): u32 {
+  return 0;
+}
+
+export async function velt_rt_udp_send_to(
   u: u64,
   data: u8[],
   addr: string,
-): Promise<IoResult<u64>>;
-export declare async function velt_rt_udp_recv_from(
-  u: u64,
-  max: u64,
-): Promise<IoResult<RawDatagram>>;
-export declare function velt_rt_udp_set_broadcast(u: u64, on: bool): IoStatus;
-export declare function velt_rt_udp_close(u: u64);
+): Promise<IoResult<u64>> {
+  const st = closed();
+  return { code: st.code, message: st.message, value: 0 };
+}
+
+export async function velt_rt_udp_recv_from(u: u64, max: u64): Promise<IoResult<RawDatagram>> {
+  const st = closed();
+  return { code: st.code, message: st.message, value: { data: [], addr: "" } };
+}
+
+export function velt_rt_udp_set_broadcast(u: u64, on: bool): IoStatus {
+  return closed();
+}
+
+export function velt_rt_udp_close(u: u64) {}

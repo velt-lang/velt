@@ -1,0 +1,1 @@
+<ref *1> Holder { item: Sub { name: 'b', x: [Circular *1] } }

@@ -1,0 +1,19 @@
+// A cast to an extension adding a field, where a generic object literal of the object's shape
+// is laid out as its type (#379): that layout would need the field too, so the cast is refused.
+interface Ctx {
+  el: string;
+  update(): void;
+}
+
+interface InternalCtx extends Ctx {
+  __name?: string;
+}
+
+function make<T>(el: T) {
+  return { el, update: () => {} };
+}
+
+const o = make("x");
+const c: Ctx = o;
+(c as InternalCtx).__name = "n";
+console.log((c as InternalCtx).__name, o.el);

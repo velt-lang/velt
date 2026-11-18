@@ -57,6 +57,34 @@ pub(super) fn instances(cx: &mut Ctx, g: &Graph, c: DefId, ty: TyId) -> Vec<TyId
             out.push(t);
             continue;
         }
+        // A class method's class type parameters are what each object of the class is made
+        // with (`class_insts`: `new`, and each subclass's `extends`), however the method is
+        // reached: by name, by dispatch, or through `any` (#2952). Not a struct's or an object
+        // type's: a conversion from `any` makes those (`JSON.parse(t) as Envelope<K>`) with no
+        // `new`.
+        let class = match method_class(cx, f) {
+            Some((class, own))
+                if !types::mentions_param_from(cx, t, own)
+                    && cx
+                        .adt(class)
+                        .is_some_and(|a| a.kind == crate::hir::AdtKind::Class) =>
+            {
+                class_insts(cx, g, class, 0)
+            }
+            _ => None,
+        };
+        if let Some(sites) = class {
+            if depth > 4 || out.len() + work.len() > 64 {
+                out.push(t);
+                continue;
+            }
+            for (caller, targs) in sites {
+                let caller_owner = instance_owner(cx, g, caller);
+                let s = cx.subst(t, &targs);
+                work.push((caller_owner, s, depth + 1));
+            }
+            continue;
+        }
         let mut sites = g.insts.get(&f).cloned().unwrap_or_default();
         // A generic closure's, or an implementation's generic method's, calls through its
         // interface (`generic_closures`), next to any direct ones.

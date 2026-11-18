@@ -1,0 +1,1 @@
+<ref *1> Bag { items: Map(1) { 'self' => [Circular *1] } }

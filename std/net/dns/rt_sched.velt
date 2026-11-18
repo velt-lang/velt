@@ -1,6 +1,6 @@
 // velt/net/dns (internal): the resolver function, in a build compiled with the executor in Velt
 // (`VELT_SCHEDULER=std`, #2649 step 4): the `std-scheduler` variant of `#net-dns`
-// (std/imports.velt), with the name and signature of the runtime's (std/net/dns/rt.velt). It
+// (std/imports.velt), with the name and signature of the default variant's (std/net/dns/rt.velt). It
 // calls its twin on the executor (lookup_sched.velt) by role (`hookCall`, velt_common
 // `std_hooks.rs`): a program loads it only when live code resolves a name (#2882).
 

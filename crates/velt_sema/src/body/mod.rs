@@ -341,8 +341,8 @@ pub(crate) struct FnCx<'a, 'm> {
     /// The compound assignment or update being checked has an asserted target
     /// (`crate::asserted_targets`), until its read uses the mark (`expr/asserted_rmw.rs`).
     pub asserted_target: bool,
-    /// The call about to be checked is of a `declare system function`: its byte buffer
-    /// parameters take views too (`system_args.rs`).
+    /// The call about to be checked is of a host or C function: its buffer parameters take
+    /// views too (`system_args.rs`).
     pub system_args: bool,
     /// ...and it is a C function's (`declare c`), for the messages.
     pub c_args: bool,

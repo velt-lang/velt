@@ -154,6 +154,7 @@ impl FnLower<'_, '_> {
         let prev = self.enter_span(e.span);
         let site = self.enter_site(e.span);
         let v = self.expr_at(e);
+        self.note_alloc_site(e);
         self.restore_loc(prev);
         self.cx.user_site = site;
         if cfg!(debug_assertions) {
@@ -775,7 +776,7 @@ impl FnLower<'_, '_> {
     /// Is the `Upcast` of a `from` to a `to` a copy of some of `from`'s fields (both object
     /// types, `to` with fewer fields; sema accepted it as such, `generic_spread::part_copy`)?
     /// Two forms of one layout are the same value.
-    fn part_copy(&mut self, from: TyId, to: TyId) -> bool {
+    pub(super) fn part_copy(&mut self, from: TyId, to: TyId) -> bool {
         let (hir::TyKind::Adt(a, _), hir::TyKind::Adt(b, _)) =
             (self.cx.kind(from), self.cx.kind(to))
         else {

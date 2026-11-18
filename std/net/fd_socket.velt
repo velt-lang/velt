@@ -12,6 +12,7 @@ import { IoStatus } from "velt/native/status";
 import { Ptr } from "velt/ffi/ptr";
 import { promiseAt } from "velt/lang/intrinsics";
 import {
+  addrinfo,
   bind,
   close$net,
   connect$net,
@@ -21,6 +22,7 @@ import {
   getsockopt,
   listen,
   setsockopt,
+  sockaddr,
   socket,
   strerror,
 } from "#net-calls";
@@ -151,7 +153,7 @@ export async function connectUntil(
     if (r1.code === 0 || r1.code === TIMED_OUT) {
       // SAFETY: the list getaddrinfo made, freed once.
       unsafe {
-        freeaddrinfo(m.ptr(list));
+        freeaddrinfo(m.ptrTo<addrinfo>(list));
       }
       return r1;
     }
@@ -160,7 +162,7 @@ export async function connectUntil(
   }
   // SAFETY: as above.
   unsafe {
-    freeaddrinfo(m.ptr(list));
+    freeaddrinfo(m.ptrTo<addrinfo>(list));
   }
   return failed(last, 0);
 }
@@ -180,8 +182,9 @@ async function connectOne(ai: usize, deadline: u64, cell: usize): Promise<IoResu
     return failed(osError(prep), 0);
   }
   setOn(fd, IPPROTO_TCP, TCP_NODELAY);
+  const addr = m.ptrTo<sockaddr>(m.ld(ai + sys.AI_ADDR));
   // SAFETY: the address and its length from getaddrinfo's entry.
-  const rc = unsafe { connect$net(fd, m.ptr(m.ld(ai + sys.AI_ADDR)), m.ld32(ai + AI_ADDRLEN)) };
+  const rc = unsafe { connect$net(fd, addr, m.ld32(ai + AI_ADDRLEN)) };
   if (rc === 0) {
     return adopt(fd, 0, io.READ | io.WRITE);
   }
@@ -218,7 +221,7 @@ async function connectOne(ai: usize, deadline: u64, cell: usize): Promise<IoResu
   m.st32(word + 8, 4);
   // SAFETY: an int option and its length word.
   unsafe {
-    getsockopt(fd, sys.SOL_SOCKET, sys.SO_ERROR, m.ptr(word), m.ptr(word + 8));
+    getsockopt(fd, sys.SOL_SOCKET, sys.SO_ERROR, m.ptr(word), m.ptrTo<u32>(word + 8));
   }
   const err = m.ld32(word) as i32;
   m.release(word, 16);
@@ -259,8 +262,9 @@ export async function listenOn(addr: string): Promise<IoResult<u64>> {
     if (prep !== 0) {
       st = osError(prep);
     } else {
+      const addr = m.ptrTo<sockaddr>(m.ld(ai + sys.AI_ADDR));
       // SAFETY: the address and its length from getaddrinfo's entry.
-      const bound = unsafe { bind(fd, m.ptr(m.ld(ai + sys.AI_ADDR)), m.ld32(ai + AI_ADDRLEN)) };
+      const bound = unsafe { bind(fd, addr, m.ld32(ai + AI_ADDRLEN)) };
       // SAFETY: a socket bound above; a backlog.
       if (bound !== 0 || unsafe { listen(fd, 1024) } !== 0) {
         st = osError(r.errno());
@@ -269,7 +273,7 @@ export async function listenOn(addr: string): Promise<IoResult<u64>> {
   }
   // SAFETY: the list getaddrinfo made, freed once.
   unsafe {
-    freeaddrinfo(m.ptr(ai));
+    freeaddrinfo(m.ptrTo<addrinfo>(ai));
   }
   if (st.code !== 0) {
     if (fd >= 0) {
@@ -334,7 +338,7 @@ export function portOf(l: u64): u32 {
   m.st32(sa + SA_SIZE, SA_SIZE as u32);
   // SAFETY: a sockaddr_storage and its length word.
   unsafe {
-    getsockname(m.ld(s + io.S_FD) as i32, m.ptr(sa), m.ptr(sa + SA_SIZE));
+    getsockname(m.ld(s + io.S_FD) as i32, m.ptrTo<sockaddr>(sa), m.ptrTo<u32>(sa + SA_SIZE));
   }
   tb.leave(s);
   const port = ((m.ld32(sa) >> 16) & 0xffff) as u32;
@@ -351,17 +355,22 @@ export function closeListener(l: u64): void {
   }
 }
 
-/** The peer's "ip:port" of stream `h` ("" once closed). */
+/** The peer's "ip:port" of stream `h` ("" once closed, and for a `streamPair` end). */
 export function peerOf(h: u64): string {
   // Held while its descriptor is used, as `portOf`'s.
   const s = tb.hold(h);
   if (s === 0) {
     return "";
   }
+  if ((m.ld32(s + io.S_FLAGS) & io.F_PAIR) !== 0) {
+    tb.leave(s);
+    return "";
+  }
   const sa = m.zeroed(SA_SIZE + 8);
   m.st32(sa + SA_SIZE, SA_SIZE as u32);
+  const sfd = m.ld(s + io.S_FD) as i32;
   // SAFETY: a sockaddr_storage and its length word.
-  const rc = unsafe { getpeername(m.ld(s + io.S_FD) as i32, m.ptr(sa), m.ptr(sa + SA_SIZE)) };
+  const rc = unsafe { getpeername(sfd, m.ptrTo<sockaddr>(sa), m.ptrTo<u32>(sa + SA_SIZE)) };
   tb.leave(s);
   const out = rc === 0 ? addrText(sa) : "";
   m.release(sa, SA_SIZE + 8);

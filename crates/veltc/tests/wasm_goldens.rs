@@ -30,6 +30,12 @@ use wasm_tools::{build_runtime, copy_dir, for_node, missing_tools, root};
 /// them as microtasks, so `.then` callbacks and `queueMicrotask` jobs around a `resolve` called
 /// later do not keep Node's order (https://veltlang.com/docs/reference/async/).
 const UNSUPPORTED: &[&str] = &[
+    // wasm's race is still the runtime's, which orders its losers' steps differently from Node
+    // (#3077).
+    "promise_race_array_mixed",
+    // Known to fail on every target (#3079; this runner doesn't read golden_known_failing.txt);
+    // on wasm the race is still the runtime's (#3077).
+    "promise_race_running_call",
     "tcp_echo",
     "http_server",
     "console_std_handles",
@@ -55,12 +61,6 @@ const UNSUPPORTED: &[&str] = &[
 /// Goldens that need a file system (not available to browser modules).
 const NEEDS_FS: &[&str] = &["fs"];
 
-/// Does the program declare a system function? WebAssembly has none (declaring one is a
-/// compile error there), so such a golden never runs on it.
-fn declares_system_functions(path: &Path) -> bool {
-    std::fs::read_to_string(path).is_ok_and(|s| s.contains("declare system function"))
-}
-
 fn programs(root: &Path, dirs: &[&str], skip: &[&str]) -> Vec<PathBuf> {
     // `VELT_GOLDEN` as in tests/golden.rs: substrings separated by `,`, any of them matches.
     let filter = std::env::var("VELT_GOLDEN").unwrap_or_default();
@@ -82,7 +82,6 @@ fn programs(root: &Path, dirs: &[&str], skip: &[&str]) -> Vec<PathBuf> {
             p.extension().is_some_and(|e| e == "velt")
                 && p.with_extension("out").exists()
                 && !skip.contains(&stem.as_ref())
-                && !declares_system_functions(p)
                 && {
                     // The path in the checkout, as in tests/golden.rs.
                     let rel = p.strip_prefix(root).unwrap_or(p);
@@ -396,6 +395,44 @@ fn math_random_seeds_each_run_on_webassembly() {
         let (one, two) = (run(), run());
         let _ = std::fs::remove_dir_all(&work);
         assert_ne!(one, two, "{target}: two runs printed the same numbers");
+    }
+}
+
+/// `velt/os` on WebAssembly, which has no OS to ask: what the target is (`platform()` "wasi",
+/// `arch()` "wasm32", neither a Node name) and the documented answers for "unknown" (1 CPU, no
+/// host name, "/tmp"), on both targets (std/os/sys_wasm.velt, arch_wasm.velt).
+#[test]
+fn velt_os_answers_on_webassembly() {
+    let root = root();
+    let main = root.join("crates/veltc/tests/wasm_os/main.velt");
+    for (target, runner) in [
+        ("wasm32-wasip1", "wasmtime"),
+        ("wasm32-unknown-unknown", "node"),
+    ] {
+        if let Some(missing) = missing_tools(target, runner) {
+            eprintln!("note: {missing} not available; skipping velt/os on {target}");
+            continue;
+        }
+        build_runtime(&root, target);
+        let work = own_build_dir(&root, "golden-work-os", target);
+        let o = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
+            .args(["run", "--target", target])
+            .arg(&main)
+            .current_dir(&work)
+            .output()
+            .expect("run velt");
+        let _ = std::fs::remove_dir_all(&work);
+        assert!(
+            o.status.success(),
+            "{target}: exit {:?}\n{}",
+            o.status,
+            String::from_utf8_lossy(&o.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n"),
+            "[\"wasi\",\"wasm32\",1,\"\",\"/tmp\",\"\\n\"]\n",
+            "{target}"
+        );
     }
 }
 

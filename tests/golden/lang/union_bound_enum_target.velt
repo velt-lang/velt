@@ -1,0 +1,26 @@
+// A type parameter bounded by `string | Box` passed where the first overload takes
+// `E | string | Box` (#379): converted to its bound and widened to that union, so the first
+// overload takes it, as tsc picks it. The union's enum member, which has no run-time test, is not
+// tested. Node prints the same (run on tsc's JavaScript, for the enum).
+class Box {
+  constructor(public n: number) {}
+}
+
+enum E {
+  A,
+  B,
+}
+
+function o(x: E | string | Box): string;
+function o(x: string | Box | boolean): number;
+function o(x: E | string | Box | boolean): string | number {
+  return typeof x === "boolean" ? 1 : "s";
+}
+
+function f<K extends string | Box>(k: K): number | string {
+  return o(k);
+}
+
+function main(): void {
+  console.log(f("q"), f(new Box(2)));
+}

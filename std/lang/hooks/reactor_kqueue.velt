@@ -5,15 +5,23 @@
 //
 // Also the few OS calls a non-blocking socket needs whose details differ per OS: `errno`, making
 // a descriptor non-blocking and close-on-exec, keeping a write to a closed peer from raising
-// SIGPIPE. `fcntl` is variadic and `declare c` has no `CVarArgs` yet (docs/internals/design/
-// c-ffi.md): it is the compiler's system function, which passes the argument where each
+// SIGPIPE. `fcntl` is variadic: its `int` argument goes as C's `...` (`CVarArgs`), where each
 // architecture reads it.
 //
 // Pointers are `Ptr`s and integers the C types', as in a program's own declarations of these
 // symbols: one C symbol has one signature in a program. Addresses become `Ptr`s with `m.ptr`.
 
+import { CVarArgs } from "velt/ffi/c_var_args";
 import { Ptr } from "velt/ffi/ptr";
 import * as m from "./sched_mem";
+
+// The headers' types (`velt native headers --std` checks this file:
+// crates/veltc/src/native/headers/std_check.rs), laid out in this file's own rooms.
+/** C's `struct kevent`, `struct timespec`, `struct sockaddr` and `posix_spawn_file_actions_t`. */
+declare c type kevent;
+declare c type timespec;
+declare c type sockaddr;
+declare c type posix_spawn_file_actions_t;
 
 /** Does this OS have the reactor? (The default variant has not: sockets stay the runtime's.) */
 export const SUPPORTED: bool = true;
@@ -21,6 +29,8 @@ export const SUPPORTED: bool = true;
 export const EAGAIN: i32 = 35;
 export const EINPROGRESS: i32 = 36;
 export const EINTR: i32 = 4;
+/** A send on a stream whose peer is gone. */
+export const EPIPE: i32 = 32;
 /** `CLOCK_MONOTONIC`. */
 export const MONOTONIC: i32 = 6;
 /** `send`'s flags: none (SIGPIPE is off per socket, `SO_NOSIGPIPE`). */
@@ -29,6 +39,8 @@ export const SEND_FLAGS: i32 = 0;
 export const SOCKET_FLAGS: i32 = 0;
 /** `sysconf`'s name of the online cores (`_SC_NPROCESSORS_ONLN`; 0: none). */
 export const SC_NPROCESSORS_ONLN: i32 = 58;
+/** `pthread_attr_setdetachstate`'s detached state (`PTHREAD_CREATE_DETACHED`; 0: no pthreads). */
+export const PTHREAD_CREATE_DETACHED: i32 = 2;
 
 // Readiness bits of an event (sched_io.velt).
 const READ: u32 = 1;
@@ -73,15 +85,16 @@ const R_EVENTS: usize = 88;
 const R_SIZE: usize = 88 + 64 * 32;
 
 declare c("c") function kqueue(): i32;
-declare c("c") function kevent(
+// C's `kevent`, named apart from `struct kevent` (one Velt name is one thing).
+declare c("c") function kevent$io(
   kq: i32,
-  changes: Ptr<u8>,
+  changes: Ptr<kevent>,
   nchanges: i32,
-  events: Ptr<u8>,
+  events: Ptr<kevent>,
   nevents: i32,
-  timeout: Ptr<u8>,
+  timeout: Ptr<timespec>,
 ): i32;
-declare system function fcntl(fd: i32, cmd: i32, arg: i32): i32;
+declare c("c") function fcntl$io(fd: i32, cmd: i32, ...args: CVarArgs): i32;
 declare c("c") function setsockopt$io(
   fd: i32,
   level: i32,
@@ -89,10 +102,10 @@ declare c("c") function setsockopt$io(
   value: Ptr<u8>,
   len: u32,
 ): i32;
-// The signature the compiler calls it with for `lastOsError()` (velt_vir system/posix.rs): one
-// C symbol has one signature in a program.
+// The signature the compiler calls it with for `{ errno: true }` (velt_vir c_abi.rs): one C
+// symbol has one signature in a program.
 declare c("c") function __error(): Ptr<i32>;
-declare c("c") function accept$io(fd: i32, addr: Ptr<u8>, len: Ptr<u8>): i32;
+declare c("c") function accept$io(fd: i32, addr: Ptr<sockaddr>, len: Ptr<u32>): i32;
 declare c("c") function close$io(fd: i32): i32;
 
 /** The calling thread's `errno`. */
@@ -114,7 +127,7 @@ export function open(): usize {
   change(r, 0, EVFILT_USER, EV_ADD | EV_CLEAR, 0, 0);
   // SAFETY: one change record in the block; no events wanted.
   unsafe {
-    kevent(kq, m.ptr(r + R_CHANGE), 1, m.ptr(0), 0, m.ptr(0));
+    kevent$io(kq, m.ptrTo<kevent>(r + R_CHANGE), 1, m.ptrTo<kevent>(0), 0, m.ptrTo<timespec>(0));
   }
   m.st(r + R_TRIGGER, 0);
   m.st32(r + R_TRIGGER + 8, ((EVFILT_USER as u16) as u32));
@@ -156,8 +169,10 @@ function changeBoth(r: usize, fd: i32, flags: u16, source: usize): i32 {
   m.st(c + 24, source);
   m.copy(c + EV, c, EV);
   m.st32(c + EV + 8, ((EVFILT_WRITE as u16) as u32) | ((flags as u32) << 16));
+  const kq = m.ld(r + R_KQ) as i32;
+  const none = m.ptrTo<kevent>(0);
   // SAFETY: two change records at `c`.
-  const n = unsafe { kevent(m.ld(r + R_KQ) as i32, m.ptr(c), 2, m.ptr(0), 0, m.ptr(0)) };
+  const n = unsafe { kevent$io(kq, m.ptrTo<kevent>(c), 2, none, 0, m.ptrTo<timespec>(0)) };
   m.release(c, 2 * EV);
   return n < 0 ? errno() : 0;
 }
@@ -174,9 +189,11 @@ export function wait(r: usize, timeoutMs: i64): usize {
     m.st(ts + 8, ((timeoutMs % 1000) * 1000000) as usize);
   }
   const kq = m.ld(r + R_KQ) as i32;
-  const events = m.ptr(r + R_EVENTS);
+  const events = m.ptrTo<kevent>(r + R_EVENTS);
+  const none = m.ptrTo<kevent>(0);
+  const until = m.ptrTo<timespec>(ts);
   // SAFETY: the block has room for MAX_EVENTS events and the timespec.
-  const n = unsafe { kevent(kq, m.ptr(0), 0, events, MAX_EVENTS as i32, m.ptr(ts)) };
+  const n = unsafe { kevent$io(kq, none, 0, events, MAX_EVENTS as i32, until) };
   return n < 0 ? 0 : n as usize;
 }
 
@@ -226,8 +243,10 @@ export function watchExit(r: usize, exit: i32, source: usize): i32 {
   m.st32(c + 8, ((EVFILT_PROC as u16) as u32) | (((EV_ADD | EV_ONESHOT) as u32) << 16));
   m.st32(c + 12, NOTE_EXIT);
   m.st(c + 24, source);
+  const kq = m.ld(r + R_KQ) as i32;
+  const none = m.ptrTo<kevent>(0);
   // SAFETY: one change record at `c`.
-  const n = unsafe { kevent(m.ld(r + R_KQ) as i32, m.ptr(c), 1, m.ptr(0), 0, m.ptr(0)) };
+  const n = unsafe { kevent$io(kq, m.ptrTo<kevent>(c), 1, none, 0, m.ptrTo<timespec>(0)) };
   m.release(c, EV);
   if (n < 0) {
     return errno();
@@ -245,17 +264,26 @@ export const EXITED: i32 = ESRCH;
  */
 export const SPAWN_FLAGS: i16 = 0x4000;
 
-declare c("c") function pipe$io(fds: Ptr<u8>): i32;
-declare c("c") function posix_spawn_file_actions_addinherit_np(fa: Ptr<u8>, fd: i32): i32;
+declare c("c") function pipe$io(fds: Ptr<i32>): i32;
+declare c("c") function posix_spawn_file_actions_addinherit_np(
+  fa: Ptr<posix_spawn_file_actions_t>,
+  fd: i32,
+): i32;
 
 /** A pipe at `fds` (read end, write end), both close-on-exec; 0, or -1 with `errno` set. */
 export function pipeCloexec(fds: usize): i32 {
   // SAFETY: room for two descriptors.
-  if (unsafe { pipe$io(m.ptr(fds)) } !== 0) {
+  if (unsafe { pipe$io(Ptr.at<i32>(fds)) } !== 0) {
     return -1;
   }
-  fcntl(m.ld32(fds) as i32, F_SETFD, FD_CLOEXEC);
-  fcntl(m.ld32(fds + 4) as i32, F_SETFD, FD_CLOEXEC);
+  // SAFETY: F_SETFD takes an `int`, passed as C's `...` argument.
+  unsafe {
+    fcntl$io(m.ld32(fds) as i32, F_SETFD, FD_CLOEXEC);
+  }
+  // SAFETY: as above.
+  unsafe {
+    fcntl$io(m.ld32(fds + 4) as i32, F_SETFD, FD_CLOEXEC);
+  }
   return 0;
 }
 
@@ -263,7 +291,7 @@ export function pipeCloexec(fds: usize): i32 {
 export function spawnInherit(fa: usize, fd: i32): void {
   // SAFETY: `fa` is an initialized file-actions object.
   unsafe {
-    posix_spawn_file_actions_addinherit_np(m.ptr(fa), fd);
+    posix_spawn_file_actions_addinherit_np(m.ptrTo<posix_spawn_file_actions_t>(fa), fd);
   }
 }
 
@@ -273,14 +301,21 @@ export function wake(r: usize): void {
   // wake a worker while the process ends).
   // SAFETY: one change record.
   unsafe {
-    kevent(m.ld(r + R_KQ) as i32, m.ptr(r + R_TRIGGER), 1, m.ptr(0), 0, m.ptr(0));
+    kevent$io(
+      m.ld(r + R_KQ) as i32,
+      m.ptrTo<kevent>(r + R_TRIGGER),
+      1,
+      m.ptrTo<kevent>(0),
+      0,
+      m.ptrTo<timespec>(0),
+    );
   }
 }
 
 /** Accepts a connection of listener `fd`, non-blocking and close-on-exec: its fd, or -1. */
 export function accept(fd: i32, addr: usize, len: usize): i32 {
   // SAFETY: `addr` holds the `socklen_t` at `len` bytes.
-  const s = unsafe { accept$io(fd, m.ptr(addr), m.ptr(len)) };
+  const s = unsafe { accept$io(fd, m.ptrTo<sockaddr>(addr), m.ptrTo<u32>(len)) };
   if (s >= 0 && prepare(s) !== 0) {
     // SAFETY: the descriptor accept returned, not used after.
     unsafe {
@@ -293,7 +328,10 @@ export function accept(fd: i32, addr: usize, len: usize): i32 {
 
 /** Makes a new socket non-blocking, close-on-exec, and SIGPIPE-free; 0 or errno. */
 export function prepare(fd: i32): i32 {
-  if (fcntl(fd, F_SETFL, O_NONBLOCK) < 0 || fcntl(fd, F_SETFD, FD_CLOEXEC) < 0) {
+  // SAFETY: F_SETFL and F_SETFD take an `int`, passed as C's `...` argument.
+  const nonblocking = unsafe { fcntl$io(fd, F_SETFL, O_NONBLOCK) };
+  // SAFETY: as above.
+  if (nonblocking < 0 || unsafe { fcntl$io(fd, F_SETFD, FD_CLOEXEC) } < 0) {
     return errno();
   }
   const one = m.alloc(16);
@@ -341,12 +379,14 @@ export function wordWake(word: usize): void {
   }
 }
 
-declare c("c") function pthread_self(): usize;
-declare c("c") function pthread_mach_thread_np(thread: usize): u32;
-declare c("c") function thread_info(thread: u32, flavor: i32, info: Ptr<u8>, count: Ptr<u8>): i32;
+// A `pthread_t` is a pointer here (`struct _opaque_pthread_t *`); `thread_info`'s port, flavor and
+// count are `natural_t`s (unsigned), its info `integer_t`s.
+declare c("c") function pthread_self(): Ptr<void>;
+declare c("c") function pthread_mach_thread_np(thread: Ptr<void>): u32;
+declare c("c") function thread_info(thread: u32, flavor: u32, info: Ptr<i32>, count: Ptr<u32>): i32;
 
 /** `THREAD_BASIC_INFO` and its count of `int`s (user and system time, then six more). */
-const THREAD_BASIC_INFO: i32 = 3;
+const THREAD_BASIC_INFO: u32 = 3;
 const THREAD_BASIC_INFO_COUNT: u32 = 10;
 
 /**
@@ -375,7 +415,7 @@ export function threadCpu(c: u64): u64 {
   let rc: i32 = 0;
   // SAFETY: `info` has room for a `thread_basic_info` and its count after it.
   unsafe {
-    rc = thread_info(port, THREAD_BASIC_INFO, m.ptr(info), m.ptr(info + 40));
+    rc = thread_info(port, THREAD_BASIC_INFO, m.ptrTo<i32>(info), m.ptrTo<u32>(info + 40));
   }
   let ns: u64 = 0;
   if (rc === 0) {

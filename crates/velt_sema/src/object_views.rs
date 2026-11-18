@@ -295,7 +295,7 @@ pub(crate) fn check_view_spreads(
         return;
     }
     for &(t, at, how) in seen {
-        if !matches!(how, Seen::Spread) {
+        if !matches!(how, Seen::Spread(_)) {
             continue;
         }
         let t = cx.ty.core(t).unwrap_or(t);

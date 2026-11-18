@@ -1,0 +1,44 @@
+// check: no leaks
+// Allocations of no bytes: empty arrays (literal, `new Array(0)`, emptied, sliced, filtered and
+// grown again), objects of a class with no fields, arrays of them, and empty strings and their
+// arrays. A size of 0 takes no memory from the allocator and its free does nothing, in debug
+// builds (the runtime's allocator) and release builds (mimalloc through std, #2196) alike.
+class Empty {}
+
+class Holder {
+  items: number[] = [];
+  names: string[] = [];
+  empties: Empty[] = [];
+}
+
+function main() {
+  const none: number[] = [];
+  console.log(none.length, JSON.stringify(none));
+  const zero = new Array<number>(0).fill(1);
+  console.log(zero.length);
+
+  const xs = [1, 2, 3];
+  xs.length = 0;
+  console.log(xs.length);
+  xs.push(4);
+  console.log(xs);
+  console.log(xs.slice(1).length, xs.filter((x) => x > 9).length, xs.map((x) => x).length);
+
+  const e = new Empty();
+  const es: Empty[] = [e, new Empty(), new Empty()];
+  es.pop();
+  console.log(es.length);
+
+  const h = new Holder();
+  h.items.push(1, 2);
+  h.items.length = 0;
+  h.names.push("", "");
+  h.empties.push(new Empty());
+  console.log(h.items.length, h.names.join("").length, h.empties.length);
+
+  const s = "" + "";
+  console.log(s.length, JSON.stringify(s), "".split(",").length, [""].join("").length);
+  const nested: number[][] = [[], [], []];
+  nested[1].push(7);
+  console.log(nested.map((a) => a.length));
+}

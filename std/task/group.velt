@@ -1,0 +1,82 @@
+// velt/task (internal): `TaskGroup`, the live children of a `taskScope` (std/task/scope.velt):
+// a count the scope waits on before it settles, so its children never outlive it.
+//
+// The count lives in one atomic word with two flags: `WAITING` (the scope's wait found children
+// and sleeps until the last one leaves) and `CLOSED` (the wait saw no live child, or the scope
+// ended without waiting: later `enter`s fail rather than start a child that would outlive it).
+// The wait sleeps on a channel, which the last child to leave closes: that wakes the scope on
+// whatever worker it waits, through its waker, on every target (the channel serves WebAssembly
+// too). One wait per group (the scope's).
+//
+// Share a group between the scope and its children as a `shared` value: its fields never change,
+// only the word and the channel's block do, and a child that outlives a dropped scope still
+// leaves a live group.
+
+import { Channel, channel } from "velt/sync/channel";
+import { publishOutput } from "#sync-output";
+
+/** The wait saw no live child, or the scope ended: no child starts any more. */
+const CLOSED: u64 = 0x8000000000000000;
+/** The scope's wait sleeps until the count drops to 0. */
+const WAITING: u64 = 0x4000000000000000;
+/** The bits of the word that count the live children. */
+const COUNT: u64 = 0x3fffffffffffffff;
+
+/** The live children of one task scope. */
+export class TaskGroup {
+  /** The number of live children, plus `WAITING` and `CLOSED`. */
+  private live: Atomic<u64> = new Atomic<u64>(0);
+  /** Closed by the last child to leave while the scope waits. */
+  private idle: Channel<bool> = channel<bool>();
+
+  /** A child is about to start: false (nothing counted) once the group is closed. */
+  enter(): bool {
+    let n = this.live.load("acquire");
+    while ((n & CLOSED) == 0) {
+      const was = this.live.compareExchange(n, n + 1, "acqrel", "acquire");
+      if (was == n) {
+        return true;
+      }
+      n = was;
+    }
+    return false;
+  }
+
+  /** A child finished (fulfilled or rejected, or its task was dropped). */
+  leave(): void {
+    // The scope may resume on another worker once the last child leaves (and print): what this
+    // child printed goes first (#249), also when it is not the last.
+    publishOutput();
+    const was = this.live.sub(1, "acqrel");
+    if (was == (WAITING | 1)) {
+      // The last child while the scope waits. A child entering meanwhile makes this fail: its
+      // own `leave` wakes the scope then.
+      if (this.live.compareExchange(WAITING, WAITING | CLOSED, "acqrel", "acquire") == WAITING) {
+        this.idle.close();
+      }
+    }
+  }
+
+  /**
+   * Starts the scope's wait (once): null when no child is live, which closes the group (later
+   * `enter`s fail); else the channel the last child closes, closing the group too: the scope
+   * awaits its `receive()`. (Synchronous: an async method would copy the group, atomics and all.)
+   */
+  startWait(): Channel<bool> | null {
+    let n = this.live.load("acquire");
+    while ((n & CLOSED) == 0) {
+      const next = (n & COUNT) == 0 ? n | CLOSED : n | WAITING;
+      const was = this.live.compareExchange(n, next, "acqrel", "acquire");
+      if (was == n) {
+        return (next & CLOSED) != 0 ? null : this.idle;
+      }
+      n = was;
+    }
+    return null;
+  }
+
+  /** The scope ended without waiting (its task was dropped): later `enter`s fail. */
+  close(): void {
+    this.live.or(CLOSED, "acqrel");
+  }
+}

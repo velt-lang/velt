@@ -1,0 +1,186 @@
+// velt/lang/hooks (internal): the allocator of a release build's generated code, mimalloc called
+// through `declare c` (#2196). Lowering emits the runtime's allocator calls (`velt_rt_alloc`,
+// `velt_rt_realloc`, `velt_rt_free`; rt_abi.md "Memory"), which the optimizer reads, and its last
+// step makes an allocation of a known size and every free a call of the hook here (velt_opt
+// `heap_calls`), inlined where it is called. Array buffers of a run-time length and their growth
+// keep the runtime's calls for now (`heapRealloc` waits for that: see `heap_calls`).
+// Debug builds, and release builds that link a debug runtime, keep the runtime's, which checks and
+// counts every block when the program runs with `VELT_RT_DEBUG_ALLOC` or `VELT_RC_STATS` set: its
+// Rust allocates and frees blocks generated code also uses. So does a runtime built without
+// mimalloc (veltc's driver/heap_hooks.rs).
+//
+// mimalloc is in the runtime's archive, also as the Rust global allocator, so a block from either
+// side is freed by the other. Every `mi_malloc` block is aligned to 8; a larger alignment takes
+// the `_aligned` functions, and `mi_free` frees both.
+
+import { Ptr } from "velt/ffi";
+import { inline, noInline } from "velt/lang/intrinsics";
+
+// Not checked against a header (native/headers/std_check.rs lists no file of mimalloc's): the C
+// library's headers don't declare them, mimalloc.h does, which the runtime's build has.
+declare c("c") function mi_malloc(size: usize): Ptr<u8> | null;
+declare c("c") function mi_malloc_aligned(size: usize, alignment: usize): Ptr<u8> | null;
+declare c("c") function mi_realloc(p: Ptr<u8> | null, newsize: usize): Ptr<u8> | null;
+declare c("c") function mi_realloc_aligned(
+  p: Ptr<u8> | null,
+  newsize: usize,
+  alignment: usize,
+): Ptr<u8> | null;
+declare c("c") function mi_free(p: Ptr<u8> | null): void;
+
+declare function velt_rt_exit(code: i32): never;
+declare function velt_rt_flush(): void;
+declare function velt_rt_write_str(stream: u32, s: string);
+
+/** The alignment of every `mi_malloc` block. */
+const MIN_ALIGN: u64 = 8;
+
+/**
+ * The most bytes an array's buffer holds (rt_abi.md "Array length limit", velt_vir's
+ * `MAX_ARRAY_LEN`): 2^52 - 1.
+ */
+const MAX_ARRAY_BYTES: u64 = 4503599627370495;
+
+/** Address `a` as a C pointer argument; 0 passes `NULL`. */
+@inline
+function ptr(a: u64): Ptr<u8> {
+  // SAFETY: only passed to mimalloc, as a block it gave or `NULL`.
+  return unsafe { Ptr.at<u8>(a as usize) };
+}
+
+/** The address mimalloc returned; 0 for `NULL`. */
+@inline
+function addr(p: Ptr<u8> | null): u64 {
+  if (p === null) {
+    return 0;
+  }
+  return Ptr.addressOf(p) as u64;
+}
+
+/**
+ * `size` bytes aligned to `align` (a power of two), what `velt_rt_alloc(size, align)` gives: a
+ * size of 0 takes no memory and gives `align` back, which `heapFree` of size 0 ignores.
+ */
+@inline
+export function heapAlloc(size: u64, align: u64): u64 {
+  if (size == 0) {
+    return align;
+  }
+  let p: u64;
+  if (align <= MIN_ALIGN) {
+    // SAFETY: a plain allocation; the result is checked.
+    p = addr(unsafe { mi_malloc(size as usize) });
+  } else {
+    // SAFETY: as above; `align` is a power of two.
+    p = addr(unsafe { mi_malloc_aligned(size as usize, align as usize) });
+  }
+  if (p == 0) {
+    outOfMemory(size);
+  }
+  return p;
+}
+
+/**
+ * The block `p` of `old` bytes (from `heapAlloc` or the runtime, with `align`) grown or shrunk to
+ * `size` bytes, what `velt_rt_realloc` does: generated code reallocates only to grow an array (an
+ * empty one too: an `old` of 0 allocates), so past the length limit it stops here with the
+ * `RangeError` lowering's own checks report. Out of line, as the runtime's was: it is the rare
+ * path of every `push`, and inlined there LLVM kept more induction variables in the loop's hot
+ * path (two more instructions per `push` in bench/closures.velt).
+ */
+@noInline
+export function heapRealloc(p: u64, old: u64, align: u64, size: u64): u64 {
+  if (size > MAX_ARRAY_BYTES) {
+    arrayTooLong();
+  }
+  if (old == 0) {
+    return heapAlloc(size, align);
+  }
+  if (size == 0) {
+    heapFree(p, old, align);
+    return align;
+  }
+  let q: u64;
+  if (align <= MIN_ALIGN) {
+    // SAFETY: `p` is a live block of mimalloc's (the caller's contract); the result is checked.
+    q = addr(unsafe { mi_realloc(ptr(p), size as usize) });
+  } else {
+    // SAFETY: as above; `align` is a power of two.
+    q = addr(unsafe { mi_realloc_aligned(ptr(p), size as usize, align as usize) });
+  }
+  if (q == 0) {
+    outOfMemory(size);
+  }
+  return q;
+}
+
+/** Gives back the block `p` of `size` bytes, what `velt_rt_free` does: a size of 0 is none. */
+@inline
+export function heapFree(p: u64, size: u64, align: u64): void {
+  if (size != 0) {
+    // SAFETY: `p` is a live block of mimalloc's, freed once (the caller's contract).
+    unsafe {
+      mi_free(ptr(p));
+    }
+  }
+}
+
+/**
+ * Stops the program: mimalloc has no block of `size` bytes. As the runtime's allocator does
+ * (`fatal`), with its message and exit code, and not as a panic: a `catchUnwind` running doesn't
+ * catch it, and the message names no location.
+ */
+@noInline
+function outOfMemory(size: u64): never {
+  velt_rt_flush();
+  velt_rt_write_str(2, "panic: memory allocation of " + decimal(size) + " bytes failed\n");
+  velt_rt_exit(101);
+}
+
+/**
+ * `n` in decimal, by hand: a template, or a digit read from an array (its bounds check), would
+ * load the number printing hooks into every program that is checked, as this module is
+ * (velt_lsp's `demand` tests).
+ */
+function decimal(n: u64): string {
+  let s = digit(n % 10);
+  let rest = n / 10;
+  while (rest > 0) {
+    s = digit(rest % 10) + s;
+    rest = rest / 10;
+  }
+  return s;
+}
+
+function digit(d: u64): string {
+  if (d < 5) {
+    if (d == 0) {
+      return "0";
+    }
+    if (d == 1) {
+      return "1";
+    }
+    if (d == 2) {
+      return "2";
+    }
+    return d == 3 ? "3" : "4";
+  }
+  if (d == 5) {
+    return "5";
+  }
+  if (d == 6) {
+    return "6";
+  }
+  if (d == 7) {
+    return "7";
+  }
+  return d == 8 ? "8" : "9";
+}
+
+/** Stops the program: an array's buffer past the length limit. */
+@noInline
+function arrayTooLong(): never {
+  panic(
+    "RangeError: Invalid array length: an array holds at most 2^52 - 1 elements, and its elements at most 2^52 - 1 bytes",
+  );
+}

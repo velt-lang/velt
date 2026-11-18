@@ -106,7 +106,6 @@ impl PB {
                 params: vec![u32, ty, u8],
                 ret: self.t.unit,
                 is_async: false,
-                system: None,
                 host: None,
                 c: None,
                 is_decorator: false,
@@ -128,14 +127,53 @@ impl PB {
         self.add_fn(f.build(vec![]));
     }
 
+    /// The cycle hooks of what `console.log` prints (std/lang/hooks/inspect_cycles.velt), which a
+    /// hand-built program has no std for: the programs here print no cyclic graph and no
+    /// container of more than 100 entries, so every object is printed (`inspectEnter` is true,
+    /// `inspectCircular` false) and the rest write nothing. Tests of the hooks themselves are
+    /// goldens (lang/inspect_cycles_std).
+    fn inspect_hooks(&mut self) {
+        let u64 = self.types.intern(TyKind::Int(IntTy::U64));
+        let t = self.t;
+        let hooks = [
+            (velt_common::std_hook!(inspect_enter), true, Some(true)),
+            (velt_common::std_hook!(inspect_circular), true, Some(false)),
+            (velt_common::std_hook!(inspect_leave), false, None),
+            (velt_common::std_hook!(inspect_more), true, None),
+        ];
+        for (hook, with_id, result) in hooks {
+            let rty = if result.is_some() { t.bool } else { t.unit };
+            let mut f = FB::new(hook, rty);
+            f.param("buf", t.str, PassMode::BorrowMut);
+            if with_id {
+                f.param("id", u64, PassMode::Copy);
+            }
+            let body = result.map(|b| vec![ret(Some(boolean(b, t)))]);
+            self.add_fn(f.build(body.unwrap_or_default()));
+        }
+        // Around a custom inspect: nothing to save.
+        let save = FB::new(velt_common::std_hook!(inspect_save), u64);
+        self.add_fn(save.build(vec![ret(Some(int(0, u64)))]));
+        let mut restore = FB::new(velt_common::std_hook!(inspect_restore), t.unit);
+        restore.param("s", u64, PassMode::Copy);
+        self.add_fn(restore.build(vec![]));
+    }
+
     pub fn finish(mut self) -> Program {
         self.console_writers();
+        self.inspect_hooks();
         // Sema demands the writers of a program that prints a number; a hand-built program says
         // so here, for the hooks it defines above.
         let mut hooks_demanded = velt_common::std_hooks::HookSet::default();
         for i in [
             velt_common::std_hooks::hook_index::int_write,
             velt_common::std_hooks::hook_index::uint_write,
+            velt_common::std_hooks::hook_index::inspect_enter,
+            velt_common::std_hooks::hook_index::inspect_circular,
+            velt_common::std_hooks::hook_index::inspect_leave,
+            velt_common::std_hooks::hook_index::inspect_more,
+            velt_common::std_hooks::hook_index::inspect_save,
+            velt_common::std_hooks::hook_index::inspect_restore,
         ] {
             hooks_demanded.insert(i);
         }
@@ -153,6 +191,7 @@ impl PB {
             counted_objects: Vec::new(),
             assigned_objects: Default::default(),
             changes_held: Default::default(),
+            glue_bodies: Default::default(),
             null_proto_records: false,
             fn_shapes: Default::default(),
             record_fills: false,

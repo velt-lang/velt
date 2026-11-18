@@ -41,6 +41,7 @@ import {
   stdUsed,
 } from "velt/lang/intrinsics";
 import * as dt from "./sched_detach";
+import * as give from "./sched_order_give";
 import * as io from "./sched_io";
 import * as tb from "./sched_io_table";
 import * as wt from "./sched_io_wait";
@@ -222,8 +223,10 @@ function veltBusy(g: usize, self: usize): bool {
  * Worker 0 (`e`, its park word up) sees nothing that can still happen: true when that holds for
  * the whole scan. The workers are read one after another, so a worker read as idle may be woken
  * before another is read (by a worker that then parks, or by a thread of the runtime's): every
- * wake of a parked worker counts in its `E_UNPARKS`, and a worker going idle unparks worker 0,
- * so the scan counts only when no worker was woken meanwhile and worker 0 is still parked.
+ * wake of a parked worker counts in its `E_UNPARKS`, so does a worker taking its park word down
+ * itself (its thread's start, a park that found work: sched_wake.velt `awake`), and a worker
+ * going idle unparks worker 0, so the scan counts only when no worker was woken meanwhile and
+ * worker 0 is still parked.
  */
 function quiet(e: usize): bool {
   const before = unparks(e);
@@ -249,6 +252,13 @@ export function mayPark(e: usize): bool {
       if (!t.has(root, t.ROOT_DONE)) {
         unfinished(e);
       }
+    }
+    // A counted run gives back the timers that would wait past the end (an `AbortSignal.timeout`
+    // nobody waits for): their turns complete, their tasks end, and the loop looks again.
+    if (stdUsed("nodeTimers") && wk.counting() && give.giveBackMarked()) {
+      return false;
+    }
+    if (root !== 0) {
       // The root is done, its task not (promises it started after the root's end wait for
       // ever): counted as live, so worker 0 stops waiting for its end (sched_task.velt
       // `rootLeft`). COUNTED means the live count was raised for it (sched_run.velt `finish`

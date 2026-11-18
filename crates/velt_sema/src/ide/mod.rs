@@ -101,7 +101,11 @@ fn check_on_current_thread(
     stack_budget: usize,
 ) -> Analysis {
     let kept = crate::StdLoads::default();
-    let loads = load.map(|run| crate::Loads { run, kept: &kept });
+    let loads = load.map(|run| crate::Loads {
+        run,
+        kept: &kept,
+        prebuilt: None,
+    });
     // As in `crate::check_with`: script variables module state refused move into `main`.
     crate::script_locals::check(modules, root, |m| {
         let (analysis, _, refused) = analyze(m, root, loads, stack_budget);

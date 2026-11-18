@@ -1,0 +1,348 @@
+// velt/process/child (internal): what `CreateProcessW` is given for a child on Windows
+// (std/process/child/spawn_win32.velt starts it), as Node's libuv makes it (`uv_spawn`,
+// src/win/process.c):
+//
+// - The command line: each argument quoted as `quote_cmd_arg` does, so the child's C runtime
+//   (`CommandLineToArgvW`, MSVCRT's parse) reads back exactly the arguments given: one with no
+//   space, tab or quote stays as it is; others are wrapped in quotes, with each quote escaped and
+//   the backslashes before a quote or the closing quote doubled.
+// - The environment: this program's with the spec's variables over it (names compare without
+//   case, as Windows' do), or with `clearEnv` only the spec's plus the variables Windows programs
+//   need to start (libuv's `required_vars`: `SYSTEMROOT` and the rest, taken from this program's
+//   when the spec has none), sorted by name without case.
+// - The program: found as libuv's `search_path` finds it. A name with a directory in it is looked
+//   for there (relative to the child's working directory); a bare name in the working directory
+//   first (unless `NoDefaultCurrentDirectoryInExePath` is set), then in each `PATH` entry of the
+//   child's environment. In each place the name itself is tried when it has an extension, then
+//   the name with `.com`, then with `.exe` added. `PATHEXT` is not used.
+//
+// Text crosses to Windows as UTF-16 in raw memory (`wide`), NUL-terminated.
+
+import { utf8Encode } from "velt/encoding/utf8";
+import { Ptr } from "velt/ffi/ptr";
+import { addressStore } from "velt/lang/intrinsics";
+import * as m from "velt/lang/hooks/sched_mem";
+import { CommandSpec } from "velt/process/child/spec";
+
+declare function velt_rt_env_all(): string[];
+
+declare c("c") function GetFileAttributesW(name: Ptr<u16>): u32;
+declare c("c") function NeedCurrentDirectoryForExePathW(name: Ptr<u16>): i32;
+
+const INVALID_FILE_ATTRIBUTES: u32 = 0xffffffff;
+const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+
+/** The variables a child started from an empty environment still gets (libuv's list). */
+function required(): string[] {
+  return [
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "LOGONSERVER",
+    "PATH",
+    "SYSTEMDRIVE",
+    "SYSTEMROOT",
+    "TEMP",
+    "USERDOMAIN",
+    "USERNAME",
+    "USERPROFILE",
+    "WINDIR",
+  ];
+}
+
+/** `s` as UTF-16 code units (no NUL added). */
+export function unitsOf(s: string): u16[] {
+  const b = utf8Encode(s);
+  const out: u16[] = [];
+  let i: usize = 0;
+  while (i < b.length) {
+    const c = b[i] as u32;
+    let cp = c;
+    let n: usize = 1;
+    if (c >= 0xf0 && i + 3 < b.length) {
+      cp =
+        ((c & 7) << 18) |
+        (((b[i + 1] as u32) & 0x3f) << 12) |
+        (((b[i + 2] as u32) & 0x3f) << 6) |
+        ((b[i + 3] as u32) & 0x3f);
+      n = 4;
+    } else if (c >= 0xe0 && i + 2 < b.length) {
+      cp = ((c & 0xf) << 12) | (((b[i + 1] as u32) & 0x3f) << 6) | ((b[i + 2] as u32) & 0x3f);
+      n = 3;
+    } else if (c >= 0xc0 && i + 1 < b.length) {
+      cp = ((c & 0x1f) << 6) | ((b[i + 1] as u32) & 0x3f);
+      n = 2;
+    }
+    if (cp >= 0x10000) {
+      const v = cp - 0x10000;
+      out.push((0xd800 | (v >> 10)) as u16);
+      out.push((0xdc00 | (v & 0x3ff)) as u16);
+    } else {
+      out.push(cp as u16);
+    }
+    i += n;
+  }
+  return out;
+}
+
+/** The bytes `wide` takes for `units` and its NUL (what `m.release` gives back). */
+export function wideSize(units: u16[]): usize {
+  return 2 * (units.length + 1);
+}
+
+/** `units` NUL-terminated in raw memory (`m.release(p, wideSize(units))` frees it). */
+export function wide(units: u16[]): usize {
+  const p = m.alloc(wideSize(units));
+  for (let i: usize = 0; i < units.length; i++) {
+    // SAFETY: `p` has room for every unit and the NUL.
+    unsafe {
+      addressStore<u16>(p + 2 * i, units[i]);
+    }
+  }
+  // SAFETY: as above.
+  unsafe {
+    addressStore<u16>(p + 2 * units.length, 0);
+  }
+  return p;
+}
+
+/** Argument `s` as the child's C runtime reads it back (libuv's `quote_cmd_arg`). */
+export function quoteArg(s: string): string {
+  if (s == "") {
+    return "\"\"";
+  }
+  if (!s.includes(" ") && !s.includes("\t") && !s.includes("\"")) {
+    return s;
+  }
+  if (!s.includes("\"") && !s.includes("\\")) {
+    return `"${s}"`;
+  }
+  let out = "\"";
+  let slashes = 0;
+  for (const ch of s) {
+    if (ch == "\\") {
+      slashes++;
+      continue;
+    }
+    // Backslashes before a quote are doubled, and the quote escaped; others stay as they are.
+    out += "\\".repeat(ch == "\"" ? 2 * slashes + 1 : slashes);
+    out += ch;
+    slashes = 0;
+  }
+  // Before the closing quote: doubled.
+  out += "\\".repeat(2 * slashes);
+  return `${out}"`;
+}
+
+/** The command line of `spec`: the program and its arguments, each quoted. */
+export function commandLine(spec: CommandSpec): string {
+  let line = quoteArg(spec.program);
+  for (const a of spec.args) {
+    line += ` ${quoteArg(a)}`;
+  }
+  return line;
+}
+
+/** Is `name` the name of one in `names` (without case)? Its index, or -1. */
+function indexOfName(names: string[], name: string): isize {
+  const up = name.toUpperCase();
+  for (let i: usize = 0; i < names.length; i++) {
+    if (names[i].toUpperCase() == up) {
+      return i as isize;
+    }
+  }
+  return -1;
+}
+
+/** The child's environment as name, value, name, value, … (sorted by `block`). */
+export function environment(spec: CommandSpec): string[] {
+  const names: string[] = [];
+  const values: string[] = [];
+  const parent = velt_rt_env_all();
+  if (!spec.clearEnv) {
+    for (let i: usize = 0; i + 1 < parent.length; i += 2) {
+      names.push(parent[i]);
+      values.push(parent[i + 1]);
+    }
+  }
+  for (let i: usize = 0; i + 1 < spec.env.length; i += 2) {
+    const at = indexOfName(names, spec.env[i]);
+    if (at >= 0) {
+      values[at as usize] = spec.env[i + 1];
+    } else {
+      names.push(spec.env[i]);
+      values.push(spec.env[i + 1]);
+    }
+  }
+  if (spec.clearEnv) {
+    for (const want of required()) {
+      if (indexOfName(names, want) < 0) {
+        for (let i: usize = 0; i + 1 < parent.length; i += 2) {
+          if (parent[i].toUpperCase() == want) {
+            names.push(parent[i]);
+            values.push(parent[i + 1]);
+            break;
+          }
+        }
+      }
+    }
+  }
+  const out: string[] = [];
+  for (let i: usize = 0; i < names.length; i++) {
+    out.push(names[i]);
+    out.push(values[i]);
+  }
+  return out;
+}
+
+/** Variable `name`'s value in `env` (name, value, …; without case), or null. */
+export function lookUpVar(env: string[], name: string): string | null {
+  for (let i: usize = 0; i + 1 < env.length; i += 2) {
+    if (env[i].toUpperCase() == name) {
+      return env[i + 1];
+    }
+  }
+  return null;
+}
+
+/** `env` (name, value, …) as `CreateProcessW`'s block: "name=value" NUL-terminated, sorted. */
+export function block(env: string[]): u16[] {
+  const order: usize[] = [];
+  for (let i: usize = 0; i + 1 < env.length; i += 2) {
+    order.push(i);
+  }
+  order.sort((a: usize, b: usize): i64 => {
+    const x = env[a].toUpperCase();
+    const y = env[b].toUpperCase();
+    return x < y ? -1 : x > y ? 1 : 0;
+  });
+  const out: u16[] = [];
+  for (const i of order) {
+    for (const u of unitsOf(`${env[i]}=${env[i + 1]}`)) {
+      out.push(u);
+    }
+    out.push(0);
+  }
+  if (out.length === 0) {
+    out.push(0);
+  }
+  return out;
+}
+
+/**
+ * Does `name` name a batch file (`.bat` or `.cmd`, any case)? As Windows opens it: without the
+ * dots and spaces at its end (`x.bat.` and `x.bat ` open `x.bat`).
+ */
+export function isBatch(name: string): bool {
+  let end = name.length as i64;
+  while (end > 0 && (name[end - 1] == "." || name[end - 1] == " ")) {
+    end--;
+  }
+  const lower = name.slice(0, end).toLowerCase();
+  return lower.endsWith(".bat") || lower.endsWith(".cmd");
+}
+
+/** Does `path` name a file (not a directory) that exists? */
+function isFile(path: string): bool {
+  const units = unitsOf(path);
+  const p = wide(units);
+  // SAFETY: a NUL-terminated path.
+  const at = unsafe { GetFileAttributesW(m.ptrTo<u16>(p)) };
+  m.release(p, wideSize(units));
+  return at !== INVALID_FILE_ATTRIBUTES && (at & FILE_ATTRIBUTE_DIRECTORY) === 0;
+}
+
+/** Is `dir` absolute (`\x`, `/x`, `C:…`)? */
+function absolute(dir: string): bool {
+  return dir.startsWith("\\") || dir.startsWith("/") || (dir.length >= 2 && dir[1] == ":");
+}
+
+/** `name` in directory `dir` ("" for the working directory) relative to `cwd` (or ""). */
+function joined(dir: string, name: string, cwd: string): string {
+  let at = dir;
+  if (cwd != "" && !absolute(dir)) {
+    at = dir == "" ? cwd : `${cwd}\\${dir}`;
+  }
+  if (at == "" || at.endsWith("\\") || at.endsWith("/")) {
+    return `${at}${name}`;
+  }
+  return `${at}\\${name}`;
+}
+
+/** `name` in `dir`: as it is when it has an extension, then with `.com`, then `.exe`. */
+function tryIn(dir: string, name: string, hasExt: bool, cwd: string): string | null {
+  if (hasExt) {
+    const p = joined(dir, name, cwd);
+    if (isFile(p)) {
+      return p;
+    }
+  }
+  for (const ext of [".com", ".exe"]) {
+    const p = joined(dir, `${name}${ext}`, cwd);
+    if (isFile(p)) {
+      return p;
+    }
+  }
+  return null;
+}
+
+/** The entries of a `PATH` value: split at `;`, quotes taken out, empty ones skipped. */
+function entries(path: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let quoted = false;
+  for (const ch of path) {
+    if (ch == "\"") {
+      quoted = !quoted;
+    } else if (ch == ";" && !quoted) {
+      if (cur != "") {
+        out.push(cur);
+      }
+      cur = "";
+    } else {
+      cur += ch;
+    }
+  }
+  if (cur != "") {
+    out.push(cur);
+  }
+  return out;
+}
+
+/** The program `spec` runs, found as libuv finds it (`path`: the child's `PATH`), or null. */
+export function lookUp(spec: CommandSpec, path: string): string | null {
+  const file = spec.program;
+  let start: i64 = 0;
+  for (let i: i64 = 0; i < (file.length as i64); i++) {
+    const ch = file[i];
+    if (ch == "\\" || ch == "/" || (i === 1 && ch == ":")) {
+      start = i + 1;
+    }
+  }
+  const name = file.slice(start);
+  if (name == "") {
+    return null;
+  }
+  const dot = name.indexOf(".");
+  const hasExt = dot >= 0 && dot + 1 < (name.length as i64);
+  if (start > 0) {
+    return tryIn(file.slice(0, start), name, hasExt, spec.cwd);
+  }
+  const none: u16[] = [];
+  const empty = wide(none);
+  // SAFETY: an empty NUL-terminated name.
+  const here = unsafe { NeedCurrentDirectoryForExePathW(m.ptrTo<u16>(empty)) } !== 0;
+  m.release(empty, wideSize(none));
+  if (here) {
+    const found = tryIn("", name, hasExt, spec.cwd);
+    if (found != null) {
+      return found;
+    }
+  }
+  for (const dir of entries(path)) {
+    const found = tryIn(dir, name, hasExt, spec.cwd);
+    if (found != null) {
+      return found;
+    }
+  }
+  return null;
+}

@@ -1,0 +1,72 @@
+class Node2 {
+  name: string;
+  next: Node2 | null = null;
+  kids: Node2[] = [];
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+class Point {
+  x: number;
+  y: number;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+}
+const sym = Symbol("tag");
+const o = { a: 1, [sym]: 5 };
+console.log(o);
+console.log([[1, [2, [3, [4, [5]]]]]]);
+console.log([[]], [{}], [[[]]]);
+const m = new Map<string, number[]>();
+m.set("a", [1, 2]);
+m.set("b", []);
+console.log(m);
+const mm = new Map<string, Map<string, Map<string, Map<string, number>>>>();
+const inner = new Map<string, Map<string, Map<string, number>>>();
+const inner2 = new Map<string, Map<string, number>>();
+const inner3 = new Map<string, number>();
+inner3.set("z", 1);
+inner2.set("y", inner3);
+inner.set("x", inner2);
+mm.set("w", inner);
+console.log(mm);
+console.log(new Set<number>([1, 2, 3]), new Set<string>(), new Map<number, string>());
+const big = new Set<number>();
+for (let i = 0; i < 101; i++) {
+  big.add(i);
+}
+console.log(big.size, [big].length);
+const a = new Node2("a");
+const b = new Node2("b");
+a.next = b;
+b.next = a;
+a.kids.push(a);
+a.kids.push(b);
+console.log(a);
+console.log([a, b]);
+console.log({ list: [a] });
+console.log(new Point(1, 2), [new Point(3, 4)], { p: { q: { r: new Point(5, 6) } } });
+const arr: number[] = [];
+for (let i = 0; i < 150; i++) {
+  arr.push(i * 2);
+}
+console.log([arr.slice(0, 101)].length, arr.slice(0, 3));
+class Holder {
+  m: Map<string, Holder> = new Map<string, Holder>();
+  s: Set<Holder> = new Set<Holder>();
+}
+const h = new Holder();
+h.m.set("me", h);
+h.s.add(h);
+console.log(h);
+console.log([h], { h: h });
+const hs: Holder[] = [];
+for (let i = 0; i < 3; i++) {
+  const x = new Holder();
+  x.m.set("self", x);
+  hs.push(x);
+}
+console.log(hs);
+console.log("str", 1.5, -0, [-0], [NaN, Infinity], ["it's", 'a"b'], [true, null, undefined]);

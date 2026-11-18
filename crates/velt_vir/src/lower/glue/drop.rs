@@ -126,7 +126,7 @@ impl FnLower<'_, '_> {
                 for (i, t) in tys.into_iter().enumerate() {
                     if self.cx.needs_drop(t) {
                         let fp = self.field_place(place, ty, i as u32);
-                        self.drop_glue(fp, t);
+                        self.drop_part(fp, ty, i as u32, t);
                     }
                 }
             }
@@ -184,9 +184,26 @@ impl FnLower<'_, '_> {
         for (i, t) in tys.into_iter().enumerate() {
             if !self.cx.is_unit(t) && self.cx.needs_drop(t) {
                 let f = Proj::Field(self.cx.vir_field(ty, i as u32));
-                self.drop_glue(proj(v, f), t);
+                self.drop_part(proj(v, f), ty, i as u32, t);
             }
         }
+    }
+
+    /// Drop part `i` (at `fp`, of type `t`) of a value of type `ty`. A field held out of line
+    /// (`FieldDef::cell`) is tested here and its cell dropped through the cell type's own glue,
+    /// so the value's drop stays small for the objects never given the field (cell_fields.rs).
+    fn drop_part(&mut self, fp: Place, ty: TyId, i: u32, t: TyId) {
+        let Some((cell, _)) = self.cx.cell_field(ty, i) else {
+            return self.drop_glue(fp, t);
+        };
+        let present = self.option_is_some(&fp, t);
+        let (yes, done) = (self.new_block(), self.new_block());
+        self.branch(present, yes, done);
+        self.switch_to(yes);
+        let ptr = self.some_payload(&fp, t);
+        self.drop_glue(ptr, cell);
+        self.goto(done);
+        self.switch_to(done);
     }
 
     pub(in crate::lower) fn is_enum(&self, ty: TyId) -> bool {
@@ -283,6 +300,11 @@ impl FnLower<'_, '_> {
         };
         // A view leaves the cache of views (any_view.rs).
         self.proxy_unview(this.clone(), d);
+        // A record view leaves it too, and releases its source (record_view.rs).
+        if self.cx.record_view(ty) {
+            let r = self.record_place(this.clone());
+            self.record_view_drop(&r, ty);
+        }
         let Some(m) = self.cx.dispose_of(d) else {
             return;
         };

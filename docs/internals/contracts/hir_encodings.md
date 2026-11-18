@@ -354,9 +354,9 @@ declaration's `ExternFnDef` is never called. Its name maps to the `Intrinsic` in
   A rest parameter typed by a tuple is never interned: `Types::intern` spreads the tuple into
   `params` and clears `rest` (`(...a: [A, B]) => R` is `(a: A, b: B) => R`).
 - `declare function` params are never inferred modified: std passes out-parameters as fresh locals.
-  A `declare system function` (`ExternFnDef::system`, per param whether it was written
-  `readonly`) writes every non-Copy param not written `readonly` (its `u8[]` buffers and its
-  structs): callers pass those `BorrowMut`.
+  A host or C function (`ExternFnDef::host`, `ExternFnDef::c`) writes every buffer parameter
+  not written `readonly` (and a C function its `Out`/`OutPtr` parameters): callers pass those
+  `BorrowMut`.
   An argument of such a call for a `u8[]` parameter (a buffer or a path) is a `u8[]`, a value
   of a class extending `std/lang/typed_array/buffer_view::BufferView` (a typed array or `DataView`: the
   argument keeps its class type, with no conversion), or `Intrinsic::Subarray(xs, begin,
@@ -422,6 +422,22 @@ function used as a value of a generic function type without type parameters is a
 the module state per function and type, whose initializer is the `ToDyn` of the generic closure
 calling it (a class value's encoding, "Classes as values"), so every use is one value; so is
 a generic function declared in a function body, which captures nothing.
+
+Instances (additive, #2952). A generic closure runs only through `Callee::Dyn` calls of the
+generic function type it was made as, at those calls' `method_type_args`: lowering adds a list of
+type arguments to a slot's instantiation table only while it lowers a `Callee::Dyn` call (glue/
+generic_slots.rs, asserted in debug compilers), and a closure's `any` table (`ClosureAny`) is a
+copy for an instance its table already has. A generic function value that reaches `unknown` or
+`object` (holding it as `any` or `Function` is refused) comes back only by `u as G` to the type
+it was made as, and a call straight through `any` is a TypeError (#924). Converted to a function
+type of fixed types, it runs through the closure sema writes in the converting body, or as the
+named function instantiated there. Likewise a generic method of an object type or class
+(`wrap<T>`): through `any` it can be neither read as a value nor called (`a.wrap(…)`,
+`a.wrap.call(…)`, an override reached through `any`: TypeError, #924), so it runs only through
+calls by name and `Dyn` calls (after `a as I`), at their type arguments; an object's own type
+arguments are what it was made with. velt_sema's local-async check relies on this
+(`local_async::generic_closures`): a call through `any` that instantiates a generic closure or
+method (#924) must change that check too.
 
 `Program::fresh_closures` (additive) maps closures to a `FreshClosure` (`hir/fresh.rs`), for
 the comparison of function values:
@@ -1248,6 +1264,15 @@ that was only variables solved empty is no error type (`FnDef::throws` is `None`
   `Object.defineProperty` adds without `enumerable: true` (`velt_sema::defined_props`, #922).
   It is an ordinary field otherwise; `console.log` (`format_object`) and spreads leave it out, as
   Node leaves out a non-enumerable property. Readers that ignore it show the brand.
+- `FieldDef::cell` (additive): a field a cast to an interface extension added to an object type
+  (velt_sema `object_widen`, #379), held out of line. Its `ty` is `C | null`, for a hidden class
+  `C` with one field holding the value (`T | undefined`). `null` means absent, and the cell is
+  made on the first write. Sema's implementations of the extension read and write it through
+  the cell. Lowering reads the flag only for reflection: printing, keys, `in`, `delete`, reads
+  and writes through `any`, and objects filled from an `any` or a `Record` see the field as an
+  optional field of the cell's field type, present while the cell is there (velt_vir
+  `cell_fields.rs`). Such a field has no presence flag. Readers that ignore the flag see the
+  cell itself.
 - `FieldDef::presence` (additive): every optional field whose type is an option (`a?: T`, read
   as `T | undefined`, and `a?: T | null`, read as `T | null | undefined`), in an object type,
   field-only interface or struct (not a class, whose optional field is an own property holding
@@ -1617,6 +1642,24 @@ that was only variables solved empty is no error type (`FnDef::throws` is `None`
   array of the mirror (a transfer in place leaves the table first). Sema writes a cast
   `xs as U[]` of an `S[]` with comparable element types (or to a union with one array member
   `U[]`) as `AnyTo(U[], xs as any)`, upcast to the union.
+- Record views (#379, velt_vir `lower/record_view.rs`, std/lang/hooks/any_record.velt;
+  additive): the record types with `any` values (after `unknown` is erased) that `AnyTo` targets
+  in the program's own code are *view types*. `AnyTo` to one of an `any` holding an object or
+  another record is a view of that object, not a copy: a `Record<string, any>` whose entries
+  (field 0) mirror the source's and whose field 4 (`view`, a `u64`, 0 in every other record) is a
+  counted pointer to the hook object `RecordViewSource` (`target`: the source as an `any`).
+  Sema converts a record of other values, or an object of an object literal type, where such a
+  record is expected through `any` the same way. std's `Record` methods call seven intrinsics:
+  `RecordViewIs(r)` (a test of field 4) guards `RecordViewGet`, `RecordViewHas`, `RecordViewSet`
+  and `RecordViewDelete` (a key read, tested, written or deleted on the source through `any`);
+  `RecordViewSync(r)` (the mirror rebuilt from the source, before a read of the whole record) and
+  `RecordViewFlush(r, other)` (the keys of a record spread into the view written to the source)
+  test field 4 themselves. In any other record type `RecordViewIs` and `RecordViewHas` are `false`,
+  `RecordViewGet` a zero value (behind that `false`) and the others no code at all. The glue that
+  reads field 0 directly (formatting, `AnyReflect`, deep copy) syncs a view first, and a deep copy
+  or a view sent to another task is a plain record (field 4 zero).
+  Identity: the runtime's object view table (rt_abi.md "Views"), keyed by the source object's
+  address with bit 0 set; the view's drop removes its entry and releases the source.
 - Object conversions (#650, #651; sema `body/expr/object_copy.rs`): an object type converted to
   another object type whose fields it has (in another order, or only some of them) is an
   `AdtLit` of the expected type with `converted: Conversion::Copy`, whose fields each read the

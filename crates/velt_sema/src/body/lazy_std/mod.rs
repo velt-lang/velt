@@ -29,7 +29,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::ctx::Ctx;
 use crate::defs::{BodyState, DefInfo};
-use crate::hir::{self, DefId, ExprKind as E, TyKind};
+use crate::hir::{self, DefId, ExprKind as E, TyId, TyKind};
 
 mod hook_stubs;
 mod live;
@@ -38,12 +38,21 @@ mod record_conversions;
 
 use record_conversions::holds_string_record;
 
-pub(crate) use hook_stubs::stub as hook_stub;
+pub(crate) use hook_stubs::{declared as declared_hook, stub as hook_stub};
 
 pub(crate) use live::{
     assume, demanded as hooks_demanded, finish as finish_live, live_defs, note_catch_unwind,
     reach_again, too_late, unit_methods, units_live_set, walk_units_program, Assumed,
 };
+
+/// Is `d` live (for the passes after [`finish_live`])? Lowering builds only live definitions (a
+/// debug compiler asserts it, `hir::Program::live`), so code that isn't live never runs.
+/// Everything is live when std isn't checked lazily. The local-async check leaves std bodies that
+/// aren't live out of its graph, so a gap in the live rules, a debug compiler's ICE, is a check
+/// that misses a closure in a release compiler (`VELT_LIVE_CHECK=1` asserts there too).
+pub(crate) fn is_live(cx: &Ctx, d: DefId) -> bool {
+    cx.lazy.modules.is_empty() || cx.lazy.live.live.contains(&d)
+}
 
 /// Std modules (path prefixes) whose free functions lowering looks up by name (`velt_vir`
 /// `STABLE_SORT`, the proxy and typed-array glue, the epoch sections' `pin`, `unpin` and `retire`,
@@ -132,6 +141,14 @@ pub(crate) fn is_helper(qualified: &str) -> bool {
 pub(crate) const RECORD_HOOKS: &[&str] = &[
     velt_common::std_hook!(any_to_record_any),
     velt_common::std_hook!(any_to_record),
+    velt_common::std_hook!(record_view_new),
+    velt_common::std_hook!(record_view_make),
+    velt_common::std_hook!(record_view_sync_all),
+    velt_common::std_hook!(record_view_get_one),
+    velt_common::std_hook!(record_view_has_one),
+    velt_common::std_hook!(record_view_set_one),
+    velt_common::std_hook!(record_view_delete_one),
+    velt_common::std_hook!(record_view_write_all),
 ];
 
 /// Which free functions of a module lowering looks up by name.
@@ -186,6 +203,16 @@ pub(crate) struct Lazy {
     /// Live code prints a float: `console.log`'s float writer is reached
     /// (`velt_common::std_hooks::ON_DEMAND_WRITE`).
     float_write: bool,
+    /// The types of the values live code puts into an `any` or an interface value (`ToDyn`),
+    /// and whether the program's own code puts a type parameter's value into one.
+    dyn_held: FxHashSet<TyId>,
+    dyn_generic: bool,
+    /// Live types found unable to reach themselves (`live_constructs.rs` `may_cycle`), while
+    /// the live classes, `dyn_held`, `dyn_generic` and the live instantiations of generic
+    /// subclasses are `cycle_seen`; and whether one can, so the cycle hooks are reached.
+    cycle_closed: FxHashSet<TyId>,
+    cycle_seen: (usize, usize, bool, usize),
+    cycles: bool,
     /// The live definitions, and the hooks their constructs demand ([`live`]).
     live: live::Live,
     /// The stubs of the hooks `hookCall` names before their modules are loaded ([`hook_stubs`]).
@@ -213,6 +240,11 @@ impl Lazy {
             sched_hooks: false,
             float_text: false,
             float_write: false,
+            dyn_held: FxHashSet::default(),
+            dyn_generic: false,
+            cycle_closed: FxHashSet::default(),
+            cycle_seen: (0, 0, false, 0),
+            cycles: false,
             live: live::Live::new(),
             stubs: hook_stubs::Stubs::default(),
         }
@@ -367,8 +399,13 @@ pub(crate) fn reach(cx: &mut Ctx) {
         }
         number_text::reach_hooks(cx, texts, &mut found);
         number_text::reach_writer(cx, &mut found);
-        // A std function C calls (`@export`) is live though no checked code refers to it.
-        found.extend(cx.c_exports.iter().map(|e| e.def));
+        // A std function C calls (`@export`) is live though no checked code refers to it; in a
+        // walk of std's unit, only once its module is loaded, as in lazy std (`loaded_for`).
+        found.extend(
+            (cx.c_exports.iter())
+                .map(|e| e.def)
+                .filter(|&d| live::loaded_for(cx, d, None)),
+        );
         sched_hooks(cx, &mut found);
         let mut checked = false;
         for d in found {
@@ -385,6 +422,7 @@ pub(crate) fn reach(cx: &mut Ctx) {
 /// The executor in Velt's hooks (velt_common `std_hooks.rs`, `sched_*`), which lowering calls on a
 /// native target ([`sched_hooks`]).
 pub(crate) const SCHED_HOOKS: &[&str] = &[
+    velt_common::std_hook!(program_thread),
     velt_common::std_hook!(sched_block_on),
     velt_common::std_hook!(sched_spawn),
     velt_common::std_hook!(sched_yield),
@@ -393,6 +431,10 @@ pub(crate) const SCHED_HOOKS: &[&str] = &[
     velt_common::std_hook!(sched_start),
     velt_common::std_hook!(sched_detach),
     velt_common::std_hook!(sched_transfer),
+    velt_common::std_hook!(sched_share),
+    velt_common::std_hook!(sched_fut_id),
+    velt_common::std_hook!(sched_fut_alias),
+    velt_common::std_hook!(sched_fut_views),
     velt_common::std_hook!(sched_handled),
     velt_common::std_hook!(sched_peek),
     velt_common::std_hook!(sched_await_tick),
@@ -409,6 +451,8 @@ pub(crate) const SCHED_HOOKS: &[&str] = &[
     velt_common::std_hook!(sched_spawn_fut),
     velt_common::std_hook!(sched_pinned),
     velt_common::std_hook!(sched_sleep),
+    velt_common::std_hook!(sched_all),
+    velt_common::std_hook!(sched_race),
     velt_common::std_hook!(sched_timer_new),
     velt_common::std_hook!(sched_timer_turn),
     velt_common::std_hook!(sched_timer_again),
@@ -454,6 +498,8 @@ fn sched_hooks(cx: &mut Ctx, found: &mut Vec<DefId>) {
     }
     cx.lazy.sched_hooks = true;
     cx.demand_std(velt_common::std_module!(lang_hooks_sched));
+    cx.demand_std(velt_common::std_module!(lang_hooks_program_thread));
+    cx.demand_std(velt_common::std_module!(lang_hooks_sched_spawn));
     found.extend(SCHED_HOOKS.iter().filter_map(|h| cx.prelude_fn(h)));
     if cfg!(debug_assertions) {
         cx.demand_std(velt_common::std_module!(lang_hooks_sched_cells));
@@ -602,7 +648,8 @@ mod tests;
 crate::units::codec::structs! {
     Lazy {
         on, check_all, native_executor, modules, subclasses, user_record, generic_any,
-        record_conversion, record_hooks, sched_hooks, float_text, float_write, live, stubs,
+        record_conversion, record_hooks, sched_hooks, float_text, float_write, dyn_held,
+        dyn_generic, cycle_closed, cycle_seen, cycles, live, stubs,
     }
     Mode {
         whole, named,

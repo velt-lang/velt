@@ -1,0 +1,2 @@
+14:14: error: cannot cast `Ctx` as `InternalCtx`
+has a field `__name` of another type than `InternalCtx` gives it

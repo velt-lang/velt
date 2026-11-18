@@ -1,6 +1,7 @@
-// An object whose generic method a call through `any` reaches: the call may give any type
-// arguments, whatever the calls by name give, so the type parameter stays generic and the job
-// that modifies what it captured is refused (#2860).
+// An object whose generic method is called after the object went through `any` and back (#2860,
+// #2952): the call through `Reader` is recorded with the job's type, so the job that modifies what
+// it captured is refused. (A call straight through `any` is a TypeError at run time, #924, and
+// reaches no method.)
 type Job = () => Promise<void>;
 function keepAndSpawn<T>(x: T): void {
   const box: T[] = [x];
@@ -17,7 +18,7 @@ interface Engine {
 }
 async function main() {
   let f = 0;
-  const o = {
+  const o: Reader = {
     read<T>(x: T): void {
       keepAndSpawn<T>(x);
     },
@@ -27,5 +28,6 @@ async function main() {
   const job2: Job = async () => {
     f++;
   };
-  anyO.read(job2);
+  const back = anyO as Reader;
+  back.read<Job>(job2);
 }

@@ -1,0 +1,23 @@
+// A write through a union where one member lacks the field, or has it `readonly`, stays an
+// error (#379 only writes a field every member has, writable).
+interface Input {
+  value: string;
+}
+
+interface Label {
+  text: string;
+}
+
+interface Fixed {
+  readonly value: string;
+}
+
+function set(el: Input | Label, v: string) {
+  el.value = v;
+}
+
+function setFixed(el: Input | Fixed, v: string) {
+  el.value = v;
+}
+
+console.log(typeof set, typeof setFixed);

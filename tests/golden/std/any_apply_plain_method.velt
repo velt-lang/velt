@@ -1,3 +1,4 @@
+// check: no leaks
 // A method named `apply` that isn't `Function.prototype.apply` takes a typed array, or a proxy of one, as a value.
 class C {
   apply(a: any, b: any): any {

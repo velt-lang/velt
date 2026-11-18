@@ -3,7 +3,7 @@
 //! throwing functions (convention in lib.rs). Calls through function values, vtables and
 //! interface values use the borrow ABI (callee.rs).
 
-use velt_sema::hir::{self, DefId, PassMode, TyId, TyKind, UseMode};
+use velt_sema::hir::{self, DefId, PassMode, TyId, TyKind};
 
 use super::foreign::ForeignBuf;
 use super::operand::proj;
@@ -37,7 +37,6 @@ impl FnLower<'_, '_> {
                     self.after_super_inits(*def);
                     v
                 }
-                hir::Def::ExternFn(x) if x.system.is_some() => self.system_call(*def, args),
                 hir::Def::ExternFn(x) if x.host.is_some() => self.host_call(*def, args),
                 hir::Def::ExternFn(x) if x.c.is_some() => self.c_call(*def, args),
                 hir::Def::ExternFn(_) => self.extern_call(*def, args),
@@ -96,8 +95,9 @@ impl FnLower<'_, '_> {
         let f = self.cx.fn_def(def);
         let modes: Vec<PassMode> = f.params[pre.len()..].iter().map(|p| p.mode).collect();
         let (ret, throws) = self.cx.call_sig(f);
-        // Frozen counted arguments go to an instance that neither changes nor counts them.
-        let frozen = self.frozen_mask(&modes, args, pre.len());
+        // Frozen counted arguments and counted tables go to an instance that never counts them.
+        let tables = self.table_mask(f, &modes, args, pre.len());
+        let frozen = self.frozen_mask(&modes, args, pre.len()) | tables;
         let at = self.panic_loc().filter(|_| self.cx.tracks_caller(def));
         // A large caller-tracking callee, or any called from an instance that takes its own
         // caller's location, takes the location as its last argument (track_caller.rs).
@@ -172,7 +172,7 @@ impl FnLower<'_, '_> {
             .filter(|(_, p)| f.body.locals[p.local.0 as usize].mutable)
             .fold(0u64, |m, (i, _)| m | 1 << i);
         let changed = std::mem::replace(&mut self.changed_args, changed);
-        argv.extend(self.lower_args(args, &modes, how, Some(def)));
+        argv.extend(self.lower_args(args, &modes, how, Some(def), tables >> argv.len()));
         self.changed_args = changed;
         argv.extend(loc_arg);
         let handed = std::mem::replace(&mut self.kept_handed, handed);
@@ -216,6 +216,9 @@ impl FnLower<'_, '_> {
             let (symbol, ret) = (x.symbol.clone(), x.ret);
             return self.sched_extern(&symbol, args, ret);
         }
+        if let Some(v) = self.strbuf_push_literal(&x.symbol, args) {
+            return v;
+        }
         let foreign = x
             .params
             .iter()
@@ -251,7 +254,7 @@ impl FnLower<'_, '_> {
         let mut bufs = vec![];
         let argv = match foreign {
             true => self.foreign_args(&x.params, args, false, &mut bufs),
-            false => self.lower_args(args, &modes, Stabilize::No, None),
+            false => self.lower_args(args, &modes, Stabilize::No, None, 0),
         };
         let fut = self.finish_call(vir::Callee::Extern(id), argv, x.ret, None);
         self.free_foreign_bufs(bufs);
@@ -347,13 +350,15 @@ impl FnLower<'_, '_> {
     }
 
     /// Arguments of a direct call per the callee's modes, borrows through counted objects
-    /// stabilized as `how` says.
+    /// stabilized as `how` says; a table to a `Borrow` param in `tables` (bit `i`: `args[i]`)
+    /// is passed as it is stored (frozen.rs `table_arg`).
     pub(super) fn lower_args(
         &mut self,
         args: &[hir::Expr],
         modes: &[PassMode],
         how: Stabilize,
         callee: Option<DefId>,
+        tables: u64,
     ) -> Vec<Operand> {
         if args.len() != modes.len() {
             ice("argument count does not match parameter count");
@@ -393,16 +398,24 @@ impl FnLower<'_, '_> {
                     self.proxy_recv_lowered(r, &v.clone());
                 }
             }
+            // A table to a param that only reads it: its read-only data (#1334).
+            if let Some(v) = self.table_arg(a, *mode, i < 64 && tables >> i & 1 == 1) {
+                argv.push(v);
+                continue;
+            }
             match (self.vty(a.ty), mode) {
                 (Ty::Unit, _) => {
                     self.expr(a);
                 }
-                (Ty::Agg(_), PassMode::Borrow) if self.is_table(a) => {
-                    // A table to a param that only reads it: its read-only data (#1334).
-                    let place = self
-                        .table_read(a)
-                        .unwrap_or_else(|| ice("table without data"));
-                    argv.push(self.addr(place));
+                // A place moved into an argument that the callee only borrows (a local at its
+                // last use, converted for the parameter): the caller owns it now, and drops it
+                // after the call, as for a function value (`borrow_args`).
+                (t, PassMode::Borrow | PassMode::BorrowMut) if self.moved_arg(a) => {
+                    let v = self.own_moved_arg(a);
+                    argv.push(match t {
+                        Ty::Agg(_) => self.operand_addr(v, t),
+                        _ => v,
+                    });
                 }
                 (t @ Ty::Agg(_), PassMode::Borrow | PassMode::BorrowMut) => {
                     let v = match how {
@@ -578,15 +591,13 @@ impl FnLower<'_, '_> {
             // its read-only data, not a new array (sema rejects every use that could write or
             // keep a table, and an array with `cap == 0` owns no buffer to free).
             let table = match (mode, transfer) {
-                (Some(PassMode::Borrow), false) if self.is_table(a) => self.table_read(a),
+                (Some(PassMode::Borrow), false) if self.inline_table(a) => self.table_read(a),
                 _ => None,
             };
             let v = if let Some(p) = table {
                 Operand::Copy(p)
-            } else if is_moved(a) {
-                let v = self.consume(a);
-                let ty = self.sub(a.ty);
-                self.own_value(v, ty)
+            } else if self.moved_arg(a) {
+                self.own_moved_arg(a)
             } else {
                 // A spawned call's borrows are settled right away, before the later arguments.
                 let rest = if transfer { &[][..] } else { &args[i + 1..] };
@@ -726,26 +737,6 @@ impl FnLower<'_, '_> {
         let v = Operand::Copy(proj(&proj(&rp, Proj::Cast(ov)), Proj::Field(1)));
         self.own_value(v, ret)
     }
-}
-
-/// A place moved into the call (the caller drops it after the call).
-pub(super) fn is_moved(a: &hir::Expr) -> bool {
-    if let hir::ExprKind::Downcast(x) = &a.kind {
-        return is_moved(x);
-    }
-    matches!(
-        a.kind,
-        hir::ExprKind::Local(_, UseMode::Move)
-            | hir::ExprKind::Field {
-                mode: UseMode::Move,
-                ..
-            }
-            | hir::ExprKind::UnwrapSome(_, UseMode::Move)
-            | hir::ExprKind::UnwrapVariant {
-                mode: UseMode::Move,
-                ..
-            }
-    )
 }
 
 /// How a direct call's borrowed arguments are kept alive (stabilize.rs).

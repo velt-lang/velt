@@ -96,7 +96,7 @@ impl FnLower<'_, '_> {
                 .adt_def(d)
                 .fields
                 .iter()
-                .map(|f| (f.name.clone(), f.optional))
+                .map(|f| (f.name.clone(), f.optional || f.cell))
                 .collect();
             let vp = self.any_value_place(data, ty);
             for (i, (name, optional)) in fields.iter().enumerate() {

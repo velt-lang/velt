@@ -450,7 +450,16 @@ fn part_holds_shared(cx: &mut Ctx, p: TyId, depth: u32) -> bool {
 
 /// The classes extending class `d`, directly or not.
 pub(super) fn subclasses(cx: &mut Ctx, d: DefId) -> Vec<DefId> {
-    cx.subclasses_of(d)
+    let mut out = cx.subclasses_of(d);
+    // EXPERIMENT (#2943): a check by units has every std module's subclasses, lazy std only
+    // those of the modules it loaded. A std class no live code has (`units_live_set`, which
+    // holds the classes live code has values of) has no instance here: not a part of anything.
+    if cx.units_stage == crate::units::Stage::App {
+        let live = crate::body::lazy_std::units_live_set(cx);
+        let base = cx.walked_from();
+        out.retain(|s| s.0 >= base || live.contains(s));
+    }
+    out
 }
 
 /// A store of a value reaching `b` into a place reaching `dest` crosses the boundary. A moved

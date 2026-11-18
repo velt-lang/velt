@@ -1,0 +1,51 @@
+// velt/fs (tests): white-box tests, run by `velt test std/`.
+//
+// The guards in front of velt/fs's `unsafe` calls of the C library (std/fs/fd/guards.velt): each
+// lets through what C reads safely and stops the program on anything else, here caught with
+// `catchVeltPanic` (synchronous, as the guards are; `catchPanic` leaks a caught panic's node,
+// #2818).
+import { describe, expect, it } from "velt/test";
+import { canCatchPanics, catchVeltPanic } from "velt/task/unwind";
+import { checkCommand, checkPath } from "velt/fs/fd/guards";
+
+/** The message of the panic `f` ends in (without the location after it), or "" when it returns. */
+function panicOf(f: () => void): string {
+  const m = catchVeltPanic(f);
+  if (m === null) {
+    return "";
+  }
+  const at = m.lastIndexOf(" at ");
+  return at < 0 ? m : m.slice(0, at);
+}
+
+const INT_COMMANDS: i32[] = [1, 2, 3, 4];
+
+describe("velt/fs's guards of C calls", () => {
+  it("a path ends with its only 0 byte", () => {
+    // Where generated code doesn't catch (Windows for now, WebAssembly) a panic ends the process.
+    if (!canCatchPanics()) {
+      return;
+    }
+    const ok: u8[] = [97, 0];
+    expect(panicOf(() => checkPath("open", ok))).toBe("");
+    const inner: u8[] = [97, 0, 98, 0];
+    const missing: u8[] = [97, 98];
+    const empty: u8[] = [];
+    for (const p of [inner, missing, empty]) {
+      expect(panicOf(() => checkPath("open", p))).toBe(
+        "open: the path must end with its only 0 byte",
+      );
+    }
+  });
+
+  it("fcntl gets only the commands whose argument is an int", () => {
+    if (!canCatchPanics()) {
+      return;
+    }
+    expect(panicOf(() => checkCommand("fcntl", 3, INT_COMMANDS))).toBe("");
+    // F_GETLK (7 on macOS, 5 on Linux) reads a `struct flock *`.
+    expect(panicOf(() => checkCommand("fcntl", 7, INT_COMMANDS))).toBe(
+      "fcntl: command 7 does not take an int argument",
+    );
+  });
+});

@@ -1,0 +1,43 @@
+// check: no leaks
+// A generic method of an object that goes into `any` (#2952): through `any` it can be neither read
+// nor called, so it runs only through its calls by name, here with a number: `keepAndSpawn<T>`
+// spawns a number, not a closure, and the counter's closure, which modifies what it captured,
+// stays on this task. Node prints the same.
+
+function keepAndSpawn<T>(x: T): void {
+  const box: T[] = [x];
+  const v = box[0];
+  spawn(async () => {
+    console.log(typeof v);
+  });
+}
+
+class Adapter {
+  mount<T>(x: T): void {
+    keepAndSpawn<T>(x);
+  }
+}
+
+class Counter {
+  bump: () => Promise<void> = async () => {};
+}
+
+function makeCounter(): Counter {
+  let runs = 0;
+  const c = new Counter();
+  c.bump = async (): Promise<void> => {
+    runs++;
+    console.log(`run ${runs}`);
+  };
+  return c;
+}
+
+async function main() {
+  const a = new Adapter();
+  const seen: unknown = a;
+  console.log(typeof seen);
+  const c = makeCounter();
+  await c.bump();
+  a.mount<number>(1);
+  await sleep(10);
+}

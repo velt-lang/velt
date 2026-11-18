@@ -180,8 +180,10 @@ export const E_LOOKS: usize = 680;
 export const E_PIO: usize = 688;
 export const E_PREST: usize = 696;
 /**
- * A lazy worker 0's task its last poll left to queue again, queued after the look (`turnLazy`),
- * or, with nothing queued, run next from here.
+ * The task the worker's last poll left to queue again, run next from here while nothing else is
+ * queued: a lazy worker 0's, queued after the look (`turnLazy`); a shared worker's when its queues
+ * were empty (sched_loop.velt `turnShared`), taken by no other thread until it queues (its poll's
+ * output is published all the same: sched_run.velt `run`).
  */
 export const E_AGAIN: usize = 704;
 /**
@@ -203,12 +205,16 @@ export const E_PCOUNT: usize = 736;
 /**
  * What a lazy worker 0's poll queued on the words above (`schedule`, `pend`), so its look reads
  * one word: `PANY_FIRST` alone, only its first wake (`E_PWAKE`); `PANY_MORE`, tasks on the
- * stacks or `E_PLIST`; `PANY_WOKE`, among them a task it woke past its first.
+ * stacks or `E_PLIST`; `PANY_WOKE`, among them a task it woke past its first; `PANY_PRINTED`,
+ * the poll wrote to standard output (process.velt `stdoutWritten`), which the look publishes
+ * before the next poll, so a task the monitor moves after it prints after it too (#2977).
  */
 export const E_PANY: usize = 744;
 export const PANY_FIRST: usize = 1;
 export const PANY_WOKE: usize = 2;
 export const PANY_MORE: usize = 4;
+/** process.velt `PRINTED`, which writes to stdout set (process.velt imports no executor module). */
+export const PANY_PRINTED: usize = 8;
 /**
  * The worker thread's CPU-time clock (`#reactor` `threadClock`): the monitor tells a poll that
  * computes from a worker the OS took off its core (sched_monitor.velt `computing`); the
@@ -225,7 +231,8 @@ export const E_STALL_SEEN: usize = 776;
  * which then runs no task and hands what reaches it to worker 0, until the monitor sets it back
  * to 0; `R_DECLINED` by a spare that keeps its tasks (a worker as any other: `R_AWAY` holds the
  * states in which it runs nothing). Worker 0's `E_RELAX`: the monitor asks it to leave the shared mode (`RELAX_ASKED`), it
- * does so between two polls (`RELAX_DOING`, then 0).
+ * does so between two polls (`RELAX_DOING`, then 0). Every worker's `E_RELAX` gets
+ * sched_exit.velt's `EXIT_DUE` when an exit is due, which the relax keeps.
  */
 export const E_RETIRED: usize = 784;
 export const E_RELAX: usize = 788;
@@ -263,7 +270,33 @@ export const E_NOBORROW: usize = 880;
  * task's reference back first (sched_exit.velt).
  */
 export const E_DROPPING: usize = 888;
-export const E_SIZE: usize = 896;
+/** Handles of shared promises made now are views (sched_share_alias.velt `schedFutViews`). */
+export const E_VIEWS: usize = 896;
+/**
+ * The fair pass's clock between two reads (sched_tick.velt `fairLook`): reactor turns left before
+ * the next read, turns since the last, and the time of the last.
+ */
+export const E_FAIR_SKIP: usize = 904;
+export const E_FAIR_TURNS: usize = 912;
+export const E_FAIR_AT: usize = 920;
+/** The spread's looks left before its next look at the clock (sched_spread.velt `windowEnd`). */
+export const E_W_SKIP: usize = 928;
+/**
+ * The monitor's tick (`E_PROGRESS`, noted per poll with `M_MONITOR`) at the last read of the
+ * fair pass's clock, and of the spread's: a tick since ends the skipped reads (sched_tick.velt `tickTurned`, sched_spread.velt
+ * `maybeHelp`).
+ */
+export const E_FAIR_TICK: usize = 936;
+export const E_W_TICK: usize = 944;
+/** The waker table of a `Promise.all` join's children (sched_all.velt): process-wide, as `E_VT`. */
+export const E_ALL_VT: usize = 952;
+/**
+ * Worker 0's live tasks spawned by threads that aren't workers (sched_foreign.velt, #3085), counted
+ * atomically: each counts here until its end (sched_run.velt, wherever it ran, a rescue's spare
+ * too), never in `E_LIVE`.
+ */
+export const E_LIVE_F: usize = 984;
+export const E_SIZE: usize = 992;
 /** The spawns of a lazy worker 0's poll that go on `E_PREST`, which the monitor may take. */
 export const PEND_STACKED: usize = 64;
 /** `E_LAZY`'s states. */
@@ -280,6 +313,7 @@ export const M_SPREAD: u32 = 4;
 /**
  * Not a mode of `E_MODE`: what a lazy worker 0's step passes for its poll (sched_loop.velt
  * `turnLazy`): the task the poll leaves to queue again waits in `E_AGAIN` until the look after.
+ * (A shared worker's poll leaves it there too while its queues are empty: sched_run.velt `again`.)
  */
 export const M_LAZY: u32 = 8;
 /** `E_DISPATCH`: wakes are input (a reactor turn, timers), or output (room to write). */
@@ -364,6 +398,12 @@ export const ANCHORED: u32 = 4096;
  * ends, the tasks it wakes queue behind the ones already waiting, not in the run-next slot.
  */
 export const BATCHED: u32 = 65536;
+/**
+ * Its root finished (or panicked under a catch) in this poll with the join slot's locks on: the
+ * slot ends at the poll's end, after its microtasks and the publish of its output
+ * (sched_join.velt `polledFlags`).
+ */
+export const JOIN_DUE: u32 = 131072;
 
 /**
  * The join slot's word (`T_JOIN_STATE`): its lock (guards `T_JOINER`), the root is done (the
@@ -373,6 +413,12 @@ export const J_LOCK: u32 = 1;
 export const J_DONE: u32 = 2;
 export const J_HANDLE: u32 = 4;
 export const J_CLAIMED: u32 = 8;
+/**
+ * The task was spawned by a thread that isn't a worker (sched_foreign.velt, #3085): its handle may
+ * be dropped there while the task ends on a worker, so its slot always locks (sched_make.velt
+ * `lockJoin`), whatever the lock mode.
+ */
+export const J_FOREIGN: u32 = 64;
 
 /**
  * This thread's worker block; off the workers (a thread of the runtime's, a C library's),
@@ -398,7 +444,15 @@ export function main(): usize {
 /** Makes `e` worker 0's block, with this thread worker 0. */
 export function install(e: usize): void {
   WORKER.set(e as u64);
-  EXEC.store(e as u64, "release");
+  // Sequentially consistent, against a C library's thread's inbox push and then its load of
+  // `EXEC` (sched_workers.velt `isStarted`, #3085): either it sees the start and wakes worker 0, or
+  // worker 0, whose park word store and inbox load are sequentially consistent, sees the task.
+  EXEC.store(e as u64, "seqcst");
+}
+
+/** Whether the executor started: `EXEC`, sequentially consistent (`install`). */
+export function startedOrdered(): bool {
+  return EXEC.load("seqcst") !== 0;
 }
 
 /** Makes `w` this thread's worker block (a worker thread's start). */

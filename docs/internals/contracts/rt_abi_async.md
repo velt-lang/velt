@@ -347,7 +347,7 @@ Since #2649's switch, a program for a native target runs on the executor in Velt
 and the compiler no longer reads `VELT_SCHEDULER` (it is accepted and ignored). The symbols below
 stay the ABI of WebAssembly programs (`velt_rt_wasm`) and of programs compiled before the switch
 until they go (#2649 D2b); the host described after the table runs the runtime's Rust glue (TLS,
-child processes and UDP on Windows, file streams, the native-package ABI).
+child processes on Windows, file streams, the native-package ABI).
 
 | Symbol | Signature | Notes |
 |---|---|---|
@@ -367,7 +367,7 @@ child processes and UDP on Windows, file streams, the native-package ABI).
 
 Runtime (#2649 D1): the host of the runtime's Rust glue (`task/runtime/host.rs`), one tokio
 multi-thread runtime with one worker thread (`velt-host`, an 8 MiB stack) and tokio's blocking
-pool, started on first use. TLS, `fetch` over https, child processes and UDP on Windows, file
+pool, started on first use. TLS, `fetch` over https, child processes on Windows, file
 streams, signals, the `velt dev` host and the native-package ABI run there, and so do the symbols
 above for programs compiled before the switch (deleted in #2649 D2b). Everything in the runtime
 goes through `task/runtime/` (`spawn`, `spawn_blocking`, `enter`, `block_on`, its
@@ -414,9 +414,11 @@ exit for the leak counters.
 Each signal's `u64` handle (an `Arc`) is owned by a private `shared` cell in std/task/signal.velt and
 released once, at the cell's last reference; no handle is public. Aborting sets a flag, stores
 the reason and wakes the waiters; it never cancels anything itself. No code pointers are
-stored: `AbortSignal.timeout` is a runtime timer task holding a weak reference, aborted (freed with
-its timer) when the signal is dropped. A signal made
-by `any` holds strong references to its sources until it is aborted (they hold weak ones back).
+stored. `AbortSignal.timeout`'s timer is std's, one of Node's timers (`velt_rt_timer_*`,
+std/task/signal_timeout.velt): its promise holds a reference to the signal until the delay is up
+and aborts it with `velt_rt_signal_abort` and a message carrying the delay, and std passes
+`timed` to a wait for it. A signal made by `any`
+holds strong references to its sources until it is aborted (they hold weak ones back).
 
 | Symbol | Signature | Notes |
 |---|---|---|
@@ -426,23 +428,13 @@ by `any` holds strong references to its sources until it is aborted (they hold w
 | `velt_rt_signal_abort` | `(u64 s, const VeltStr* reason)` | aborts it and the signals derived from it (`any`); a no-op if aborted |
 | `velt_rt_signal_aborted` | `(u64 s) -> bool` | |
 | `velt_rt_signal_reason` | `(u64 s, VeltStr* out)` | the reason (`""` while not aborted) |
-| `velt_rt_signal_timeout_ms` | `(u64 s) -> i64` | the `ms` of the `velt_rt_signal_timeout` signal that aborted it (directly or through `any`), else -1 |
-| `velt_rt_signal_wait` | `(u64 s) -> VeltFut*` | completes (unit) once aborted |
-| `velt_rt_signal_timeout` | `(i64 ms, const VeltStr* reason) -> u64` | a signal a timer aborts after `ms` |
-| `velt_rt_signal_any` | `(const VeltArray<u64>* signals) -> u64` | aborted with the first of `signals` that is (its reason and timeout); keeps them alive until then |
+| `velt_rt_signal_wait` | `(u64 s, bool timed) -> VeltFut*` | completes (unit) once aborted; `timed` (a timer may abort it): the wait keeps the process alive |
+| `velt_rt_signal_any` | `(const VeltArray<u64>* signals) -> u64` | aborted with the first of `signals` that is (its reason); keeps them alive until then |
 
-### 2.4 Task groups (`taskScope`)
+### 2.4 Task groups (`taskScope`) [removed, #2196]
 
-The live-children count of a `taskScope` (std/task/scope.velt), behind a registry key (a `TaskScope`
-copy used after its scope ended finds no group). No code pointers are stored.
-
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_rt_group_new` | `() -> u64` | a group with no children |
-| `velt_rt_group_enter` | `(u64 g) -> bool` | a child is about to start; false (nothing counted) once the group is closed or freed |
-| `velt_rt_group_leave` | `(u64 g)` | a child finished |
-| `velt_rt_group_wait` | `(u64 g) -> VeltFut*` | completes (unit) once no child is live, and closes the group then |
-| `velt_rt_group_free` | `(u64 g)` | the scope ended |
+The live-children count of a `taskScope` is std/task/group.velt (an atomic word and a channel the
+last child closes), on every target; the runtime has no `velt_rt_group_*` functions any more.
 
 ### 2.5 Turns a JS host drives (wasm32-unknown-unknown) [additive, #1737]
 
@@ -525,29 +517,23 @@ declaration in `std/` with velt_rt's and velt_rt_wasm's definitions.
 WebAssembly import the JS glue provides, called with the signature velt_vir's `vir/host.rs`
 states (rt_abi.md "Host values").
 
-`declare system function` (https://veltlang.com/docs/reference/system-functions/) is not this ABI: it binds a C
-library function, not the runtime, and lowering (velt_vir `lower/system.rs`) calls it with the
-C signature the table of system functions (velt_vir `system/`) states for the target. Integers
-are passed as themselves; a `u8[]` / `readonly u8[]` parameter is two C arguments, its `ptr`
-and `len` (or `ptr + start` and `end - start` for a declared range, checked); a path is its
-`ptr`, after checking that the last element is 0; a struct is the address of a zeroed temporary
-in the C layout, filled from the Velt struct's fields by name and copied back after the call;
-a parameter the declaration leaves out is `NULL`. Variadic arguments are 64-bit integers
-(pointers converted) passed to a variadic extern (`vir::ExternFn::variadic`), which each backend
-calls with the target's variadic convention (on Apple arm64 they land in the stack slots a
-variadic callee reads). Right after each system call, the `int`
-that `__error()` (macOS) or `__errno_location()` (Linux) points to is stored into a
-thread-local value (`velt_tls_*_32_0` of `velt/os::lastOsError:I32`, crate::tls), and
-`lastOsError()` reads that value; on Windows it is a call of `GetLastError`. The forms of `fcntl` are one variadic extern, as a `declare c` declaration of it is.
+`declare c("lib") function` (docs/internals/design/c-ffi.md) is not this ABI either: it binds a C
+library function, not the runtime, called with the target's C convention as the declaration
+types it (velt_vir `lower/c_call.rs`). After a call of one declared with `{ errno: true }`, the
+`int` that `__error()` (macOS), `__errno_location()` (Linux) or `_errno()` (Windows' C runtime;
+`GetLastError()` for another Windows library) gives is stored into the thread-local value
+`velt_tls_*_32_0` of std's `std/os/rt::OS_ERROR:I32` (crate::tls, velt_vir `c_abi::ERRNO_SLOT`),
+which `lastOsError()` reads (`OS_ERROR.get()`). std's file-descriptor functions are such
+declarations (std/fs/fd/posix.velt), with the guards a C call needs in Velt beside them.
 
 ### 3.2 Object handles
 
 Runtime objects that Velt code holds (`VeltListener`, `VeltStream`, `VeltServer`, `VeltReq`,
-`VeltResp`, `VeltRegex`, `VeltChild`, `VeltUdp`, `VeltFileReader`,
+`VeltResp`, `VeltRegex`, `VeltChild`, `VeltFileReader`,
 `VeltFileWriter`, `VeltJson`) are **`uint64_t` handles**, 0 = none. Velt has no
 pointer type, so `std` stores them in `u64` fields and passes `u64` arguments; the runtime takes
 and returns the same `u64`, in argument lists, results and result slots alike.
-- Handles that `std` wraps in **Copy structs** (`VeltListener`, `VeltStream`, `VeltUdp`,
+- Handles that `std` wraps in **Copy structs** (`VeltListener`, `VeltStream`,
   `VeltChild`, `VeltFileReader`, `VeltFileWriter`) are keys into runtime handle tables
   (`velt_rt::registry::Key<T>`: generation, shard and slot), because Velt code may hold several copies:
   releasing one (`close`/`free`) makes every copy dead. Later operations fail with `EBADF`
@@ -594,27 +580,33 @@ typedef struct { VeltStrArray names; VeltBytes kinds; } VeltDirents;  // 48 byte
 socket, device), 1 file, 2 directory, 3 symlink (not followed). The kind comes with the listing
 (`d_type`, or Windows' find data); only an entry of unknown type costs an `lstat`.
 
-| Async (`-> VeltFut*`) | Sync (`..., out)`, returns nothing) | Result type |
-|---|---|---|
-| `velt_rt_fs_read_file(path)` | `velt_rt_fs_read_file_sync(path, out)` | `IoResult<VeltStr>` (`EILSEQ` if not UTF-8) |
-| `velt_rt_fs_read_file_bytes(path)` | `velt_rt_fs_read_file_bytes_sync(path, out)` | `IoResult<VeltBytes>` |
-| `velt_rt_fs_write_file(path, data)` | `velt_rt_fs_write_file_sync(path, data, out)` | `IoResult<()>` (= `VeltErr`) |
-| `velt_rt_fs_append_file(path, data)` | `velt_rt_fs_append_file_sync(path, data, out)` | `IoResult<()>`; creates the file |
-| `velt_rt_fs_read_dir(path)` | `velt_rt_fs_read_dir_sync(path, out)` | `IoResult<VeltStrArray>` names, sorted |
-| `velt_rt_fs_read_dir_typed(path)` | `velt_rt_fs_read_dir_typed_sync(path, out)` | `IoResult<VeltDirents>` [additive, #692] |
-| `velt_rt_fs_stat(path)` | `velt_rt_fs_stat_sync(path, out)` | `IoResult<VeltStat>` (follows symlinks) |
-| `velt_rt_fs_lstat(path)` | `velt_rt_fs_lstat_sync(path, out)` | `IoResult<VeltStat>` (a symlink itself) [additive, #691] |
-| `velt_rt_fs_readlink(path)` | `velt_rt_fs_readlink_sync(path, out)` | `IoResult<VeltStr>`; `EINVAL` if not a symlink [additive, #691] |
-| `velt_rt_fs_realpath(path)` | `velt_rt_fs_realpath_sync(path, out)` | `IoResult<VeltStr>`: the absolute path with every symlink, `.` and `..` resolved; `ENOENT` if it (or a link's target) doesn't exist; Windows: without the `\\?\` prefix unless the path needs it (`C:\dir\f`, `\\server\share\f`). WebAssembly: as WASI reports it [additive, #2077] |
-| `velt_rt_fs_symlink(target, path)` | `velt_rt_fs_symlink_sync(target, path, out)` | `IoResult<()>`; Windows: a directory link if `target` is a directory, a relative target stored with `\` separators (as Node) [additive, #691] |
-| `velt_rt_fs_mkdir(path, u8 recursive)` | `velt_rt_fs_mkdir_sync(path, recursive, out)` | `IoResult<()>` |
-| `velt_rt_fs_remove(path, u8 recursive)` | `velt_rt_fs_remove_sync(path, recursive, out)` | `IoResult<()>`; file, symlink (the link only, a Windows directory link too), empty dir, or tree if recursive |
-| `velt_rt_fs_rename(from, to)` | `velt_rt_fs_rename_sync(from, to, out)` | `IoResult<()>` |
-| `velt_rt_fs_copy_file(from, to)` | `velt_rt_fs_copy_file_sync(from, to, out)` | `IoResult<()>` |
-| `velt_rt_fs_exists(path)` | `velt_rt_fs_exists_sync(path) -> u8` | `u8` (never fails) |
+velt_rt defines these sync functions: a native build runs them on the executor's blocking pool
+(std/fs/rt_sched.velt). Each has an async twin of the same name without `_sync`, taking the
+same arguments without `out` and returning a `VeltFut*` of the same result. Only velt_rt_wasm
+defines the twins (WebAssembly builds, std/fs/rt.velt) [velt_rt's async leaves removed, #2196],
+so they are not in this table, whose names the JIT host exports
+(crates/velt_rt_host/tests/abi_symbols.rs).
 
-All `path`/`from`/`to`/`data` parameters are `const VeltStr*`. Async variants run on tokio's
-blocking pool. Error messages are Node's: `<CODE>: <description>, <syscall> '<path>'` (plus
+| Sync (`..., out)`, returns nothing) | Result type |
+|---|---|
+| `velt_rt_fs_read_file_sync(path, out)` | `IoResult<VeltStr>` (`EILSEQ` if not UTF-8) |
+| `velt_rt_fs_read_file_bytes_sync(path, out)` | `IoResult<VeltBytes>` |
+| `velt_rt_fs_write_file_sync(path, data, out)` | `IoResult<()>` (= `VeltErr`) |
+| `velt_rt_fs_append_file_sync(path, data, out)` | `IoResult<()>`; creates the file |
+| `velt_rt_fs_read_dir_sync(path, out)` | `IoResult<VeltStrArray>` names, sorted |
+| `velt_rt_fs_read_dir_typed_sync(path, out)` | `IoResult<VeltDirents>` [additive, #692] |
+| `velt_rt_fs_stat_sync(path, out)` | `IoResult<VeltStat>` (follows symlinks) |
+| `velt_rt_fs_lstat_sync(path, out)` | `IoResult<VeltStat>` (a symlink itself) [additive, #691] |
+| `velt_rt_fs_readlink_sync(path, out)` | `IoResult<VeltStr>`; `EINVAL` if not a symlink [additive, #691] |
+| `velt_rt_fs_realpath_sync(path, out)` | `IoResult<VeltStr>`: the absolute path with every symlink, `.` and `..` resolved; `ENOENT` if it (or a link's target) doesn't exist; Windows: without the `\\?\` prefix unless the path needs it (`C:\dir\f`, `\\server\share\f`). WebAssembly: as WASI reports it [additive, #2077] |
+| `velt_rt_fs_symlink_sync(target, path, out)` | `IoResult<()>`; Windows: a directory link if `target` is a directory, a relative target stored with `\` separators (as Node) [additive, #691] |
+| `velt_rt_fs_mkdir_sync(path, recursive, out)` | `IoResult<()>` |
+| `velt_rt_fs_remove_sync(path, recursive, out)` | `IoResult<()>`; file, symlink (the link only, a Windows directory link too), empty dir, or tree if recursive |
+| `velt_rt_fs_rename_sync(from, to, out)` | `IoResult<()>` |
+| `velt_rt_fs_copy_file_sync(from, to, out)` | `IoResult<()>` |
+| `velt_rt_fs_exists_sync(path) -> u8` | `u8` (never fails) |
+
+All `path`/`from`/`to`/`data` parameters are `const VeltStr*`. Error messages are Node's: `<CODE>: <description>, <syscall> '<path>'` (plus
 ` -> '<to>'` for `rename`/`copyfile`/`symlink`), e.g. `ENOENT: no such file or directory, lstat 'x'` from
 `fs_remove`; the file streams' `open_read`/`open_write` (§14.7) use the same form. A failed
 read or write of an opened file names no path (`EISDIR: illegal operation on a directory,
@@ -655,7 +647,6 @@ writes.
 | `velt_rt_tcp_listen_tls` | `(const VeltStr* addr, const VeltStr* cert_pem, const VeltStr* key_pem, const VeltStr* alpn) -> VeltFut*` | `IoResult<VeltListener>` whose accepted streams are TLS; `alpn` = protocols to offer, comma-separated (`""`: none); bad PEM ⇒ `EINVAL`. `velt_rt_tcp_accept` returns once the TCP connection is accepted: the handshake (10 s limit) runs with the stream's first operation, which reports its failure |
 | `velt_rt_tcp_connect_tls` | `(const VeltStr* addr, const VeltStr* server_name, const VeltStr* ca_pem, const VeltStr* alpn) -> VeltFut*` | `IoResult<VeltStream>` once the handshake is done; `server_name` `""` = the host of `addr`; `ca_pem` = extra trusted CAs |
 | `velt_rt_tcp_alpn` | `(VeltStream s) -> VeltFut*` | `IoResult<VeltStr>` once the stream is set up (a TLS stream's handshake done, running it if no operation did yet): the protocol ALPN chose, `""` for none or a plain TCP stream |
-| `velt_rt_tcp_pair` | `(VeltArray<u64>* out)` | two connected in-memory stream handles (`[a, b]`): what one writes the other reads; a `shutdown` is the other's end of stream |
 | `velt_rt_tcp_park` | `(VeltStream s, const VeltStr* key)` | keeps idle stream `s` under `key` (the `fetch` client's origin) for a later `velt_rt_tcp_unpark` in any task; closed instead when the key holds 512 already. The caller gives the handle up. Additive |
 | `velt_rt_tcp_unpark` | `(const VeltStr* key, uint32_t settled) -> VeltStream` | the stream most recently parked under `key` that is still open (each is checked with a look at the socket that must find nothing; one idle over 60 s is closed), or 0. With `settled` not 0, only a stream idle for at least 5 ms, so a close its server sent shortly after the response has arrived (for a request that may not be sent twice). Process-wide runtime state, so no Velt memory is kept and tasks do not take the module lock for it. The WebAssembly runtime defines the client's §6 symbols without a network: connecting fails with `ENOTSUP` (`fetch failed: WebAssembly programs have no network access`). Additive |
 
@@ -678,12 +669,16 @@ joins the graceful stop through velt/dev (std/dev), on `velt_rt_dev_server_stop`
 | `velt_rt_env_all` | `(VeltStrArray* out)` | `[name0, value0, name1, value1, …]` in the OS's order; names starting with `=` (Windows' per-drive entries) left out; lossy UTF-8. wasm: WASI's environment, empty in the browser |
 | `velt_rt_process_cwd` | `(IoResult<VeltStr>* out)` | |
 | `velt_rt_process_chdir` | `(const VeltStr* path, VeltErr* out)` | |
-| `velt_rt_isatty` | `(i32 fd) -> u8` | 1 if `fd` is a terminal (Node's `tty.isatty`); cached for 0, 1, 2; on Windows other numbers are 0 [additive, #693] |
 | `velt_rt_perf_now` | `() -> f64` | `performance.now()`: ms since process start, monotonic |
 | `velt_rt_date_now` | `() -> i64` | `Date.now()`: ms since the Unix epoch |
 | `velt_rt_exit` | see rt_abi.md | |
 | `velt_rt_memory_rss` | `() -> i64` | `process.memoryUsage().rss`: resident set size in bytes from the OS (`/proc/self/statm`, `task_info`, `GetProcessMemoryInfo`); 0 if unknown. wasm: the linear memory size |
 | `velt_rt_memory_heap` | `() -> i64` | `heapUsed`: mimalloc's committed heap bytes (Windows: the process's private committed bytes); without mimalloc, the RSS. wasm: the linear memory size |
+
+**[non-additive, #2196]** Whether a file descriptor is a terminal (Node's `tty.isatty`) is std
+code on native targets (`#tty`: std/process/tty_posix.velt over `isatty`, tty_win32.velt over
+`GetConsoleMode`, each cached for 0, 1 and 2); `velt_rt_isatty(i32 fd) -> u8` is the WebAssembly
+runtime's only (std/process/tty_wasm.velt).
 
 ## 9. Shared state and helpers (sync)
 
@@ -935,12 +930,8 @@ buffer grows. An adopted string's head must not lie in its buffer.
 | `velt_rt_strbuf_push_json_str` | `(VeltStrBuf* b, const VeltStr* s)` | quoted + escaped exactly like `JSON.stringify(s)`: `\"` `\\` `\b \f \n \r \t`, other controls < U+0020 as lowercase 6-char `\u00xx`; everything else verbatim |
 | `velt_rt_strbuf_push_json_value` | `(VeltStrBuf* b, u64 v)` | `JSON.stringify(v)` of a `json.Value` runtime tree (null handle ⇒ `null`); the handle is the value's address as a `u64`, like the handles of §3.2. The compiler no longer emits it: generated code calls the prelude's `JsonValue[JSON_WRITE]` (velt/encoding/json `appendJsonValue`), which writes a parsed (tape) value in Velt and calls this for a tree |
 | `velt_rt_strbuf_push_inspect_json` | `(VeltStrBuf* b, const void* v, u8 top, u32 depth)` | what `console.log` prints for a `json.Value` (node `util.inspect` of the parsed value: `{ a: 1, b: [ 2, 'x' ] }`, `[]`, `{}`, strings quoted like `push_inspect_str`, keys like `push_inspect_key`); a string is raw when `top != 0`, and an array or object is then broken across lines like `inspect_layout`; null handle ⇒ `null`. `depth` is node's depth of the value (0 for a `console.log` argument): a non-empty array or object nested deeper than 2 prints as `[Array]` / `[Object]`, and an array shows its first 100 elements, then `... n more items` (node's `depth` and `maxArrayLength`). The handle is passed as a pointer (VIR `ptr`), unlike `push_json_value`'s `u64` (additive; `depth` added by #497) |
-| `velt_rt_strbuf_inspect_begin` | `()` | start of a top-level value printed by `console.log`, `${x}` or `String(x)`: the `<ref *N>` numbering of cycles starts over (node numbers per argument), unless an object is being printed (additive) |
-| `velt_rt_strbuf_inspect_enter` | `(VeltStrBuf* b, const void* p) -> u8` | start printing the object at `p` (class instance or recursive object): `1`, or, when `p` is already being printed (a cycle), append `[Circular *N]` and return `0` (the caller skips it); `N` is the object's number for the whole top-level value (additive) |
-| `velt_rt_strbuf_inspect_leave` | `(VeltStrBuf* b)` | done with the innermost entered object; an object with a number gets the `<ref *N> ` prefix at the start of its text (additive) |
-| `velt_rt_strbuf_inspect_circular` | `(VeltStrBuf* b, const void* p) -> u8` | for an object past node's depth limit: when `p` is being printed, append `[Circular *N]` (numbered like `inspect_enter`) and return `1`; else `0` (the caller prints `[Name]`). The object is not entered (additive) |
+| `velt_rt_strbuf_inspect_begin` | `()` | start of a top-level value printed by `console.log`, `${x}` or `String(x)`: the custom inspects' pieces (`inspect_atom`) of the value before are forgotten. Compiled code calls it at every top-level value, next to std's `inspectBegin` (std/lang/hooks/inspect_cycles.velt, which numbers the `<ref *N>` of cycles) where that hook is checked (additive) |
 | `velt_rt_strbuf_inspect_atom` | `(const VeltStrBuf* b, u64 start)` | the text from byte `start` to the end of `b` is what a class's `[util.inspect.custom]()` returned: `inspect_layout` keeps it as one piece (node inserts a custom inspect's string as it is). Forgotten at the next `inspect_begin` (additive) |
-| `velt_rt_strbuf_inspect_more` | `(VeltStrBuf* b, u64 remaining)` | append node's `, ... n more items` (`, ... 1 more item`) after the first 100 entries of an array, `Map` or `Set` (additive) |
 | `velt_rt_strbuf_len` | `(const VeltStrBuf* b) -> u64` | byte length: where the next value's text starts (for `inspect_layout`) |
 | `velt_rt_strbuf_inspect_layout` | `(VeltStrBuf* b, u64 start)` | re-lays out the text of one printed value, from byte `start` to the end, the way node's `util.inspect` breaks it across lines (`breakLength` 80, 2-space indentation, arrays of more than six short entries in columns (an array's `... n more items` entry on its own line after them), long strings split at line breaks); a value of at most 71 bytes with fewer than six commas and no line break is left alone without being parsed; a custom inspect's text (`velt_rt_strbuf_inspect_atom`) is kept as it is, its lines after the first indented by the value's indentation, as node indents a custom inspect's string. Emitted after each top-level `console.log` / `${}` value that can hold containers |
 | `velt_rt_strbuf_finish` | `(VeltStrBuf* b, VeltStr* out)` | moves the text to `*out`; `*b` becomes empty (reusable, nothing to free) |
@@ -993,8 +984,6 @@ U+FFFD. "Omitted" JS arguments are passed as the value given in Notes.
 | `velt_rt_str_pad_start` / `_pad_end` | `(const VeltStr* s, i64 target, const VeltStr* fill, VeltStr* out)` | lengths in code units; the last partial `fill` is cut to the units missing, between the halves of a pair if need be (as JS); omitted `fill` = `" "` |
 | `velt_rt_str_char_code_at` | `(const VeltStr* s, i64 i) -> i64` | the UTF-16 code unit at `i`; -1 if out of range (JS: NaN). Generated code reads ASCII strings inline (rt_abi.md) |
 | `velt_rt_str_from_char_code` | `(i64 code, VeltStr* out)` | JS `ToUint16(code)`; a surrogate gives a lone surrogate, as JS; ASCII results are static (no allocation) |
-| `velt_rt_parse_int` | `(const VeltStr* s, i64 radix) -> f64` | exact JS `parseInt`: leading JS whitespace, sign, `0x` prefix (radix 0/16), radix `ToInt32`, 0 = omitted, outside 2..36 ⇒ NaN, longest digit prefix, none ⇒ NaN, `-0` kept. Correctly rounded for radix 10 and powers of two; other radixes exact below 2^128 (V8 is not correctly rounded there either). |
-| `velt_rt_parse_float` | `(const VeltStr* s) -> f64` | exact JS `parseFloat`: leading whitespace, longest `StrDecimalLiteral` prefix (incl. `Infinity`), else NaN |
 | `velt_rt_str_to_number` | `(const VeltStr* s) -> f64` | exact JS `Number(s)`: trimmed; `""` ⇒ 0; `0x`/`0o`/`0b` (unsigned); `±Infinity`; whole string must be a decimal literal, else NaN |
 | `velt_rt_str_array_drop` | `(VeltStrArray* a)` | already in §4 |
 
@@ -1272,63 +1261,46 @@ typedef struct {                 // std/process/child/spec.velt `CommandSpec` (1
 } VeltCommand;
 typedef struct { int32_t code; uint32_t pad; VeltStr stdout; VeltStr stderr; } VeltOutput;  // 56 bytes
 ```
-`VeltChild` is an `Arc`; in-flight operations hold a clone, so `close` is allowed any time. A
-runtime task owns the OS child and reaps it (no zombies), so dropping a handle never kills.
-Exit codes: the process's code, or `128 + signal` when killed by a signal (Unix). Spawn failures
-are `IoResult` errors whose message starts with `spawn <program>: `.
+Only `execSync` is the runtime's: `spawn` and `exec` are std's own on every native target
+(std/process/child/child_sched.velt: `posix_spawn` with the exit and the pipes on the executor's
+reactor on macOS and Linux, `CreateProcessW` with the exit wait and the pipes on its blocking
+pool on Windows). Exit codes: the process's code, or `128 + signal` when killed by a signal
+(Unix). Spawn failures are `IoResult` errors whose message starts with `spawn <program>: `.
 
 | Symbol | Signature | Notes |
 |---|---|---|
-| `velt_rt_child_spawn` | `(const VeltCommand* spec, IoResult<VeltChild>* out)` | spec copied |
-| `velt_rt_child_pid` | `(VeltChild c) -> u32` | |
-| `velt_rt_child_exit_code` | `(VeltChild c) -> i64` | -1 while running |
-| `velt_rt_child_wait` | `(VeltChild c) -> VeltFut*` | `IoResult<i32>` exit code |
-| `velt_rt_child_kill` | `(VeltChild c, i32 signal, VeltErr* out)` | Unix signal number (Windows: terminate); no-op once finished |
-| `velt_rt_child_close` | `(VeltChild c)` | releases the handle only |
-| `velt_rt_child_read` | `(VeltChild c, u32 which, u64 max) -> VeltFut*` | `which` 1 stdout / 2 stderr; `IoResult<VeltBytes>`, empty = EOF, `max` 0 = 64 KiB; `EINVAL` if not piped |
-| `velt_rt_child_read_string` | `(VeltChild c, u32 which, u64 max) -> VeltFut*` | `IoResult<VeltStr>`, split characters completed on the next read, `""` = EOF |
-| `velt_rt_child_write` | `(VeltChild c, const VeltStr* data) -> VeltFut*` | `IoResult<()>` to stdin (copied) |
-| `velt_rt_child_close_stdin` | `(VeltChild c) -> VeltFut*` | `IoResult<()>`; idempotent |
-| `velt_rt_child_output` | `(const VeltCommand* spec, const VeltStr* input) -> VeltFut*` | run to completion: stdout/stderr piped and drained concurrently, `input` (empty = none, stdin is then null) written then closed; `IoResult<VeltOutput>`, output decoded lossily; `spec.stdio` ignored |
-| `velt_rt_child_output_sync` | `(const VeltCommand* spec, const VeltStr* input, IoResult<VeltOutput>* out)` | same, blocking |
+| `velt_rt_child_output_sync` | `(const VeltCommand* spec, const VeltStr* input, IoResult<VeltOutput>* out)` | run to completion, blocking: stdout/stderr piped and drained concurrently, `input` (empty = none, stdin is then null) written then closed; output decoded lossily; `spec.stdio` ignored |
 
 ### 14.4 Standard input (`velt/process`)
 
 `typedef struct { IoResult<VeltStr> line; u8 eof; } LineRead;` (64 bytes): a line without its
 `\n`/`\r\n`; at end of input `eof = 1` and the line is empty. One process-wide buffered stream
-serves both forms; async reads run on the blocking pool; text is decoded lossily.
+serves both forms; an async read is the sync one on the executor's blocking pool
+(std/process/rt_sched.velt); text is decoded lossily. [The async leaves `velt_rt_stdin_read_line`,
+`_read_all` and `_read_all_bytes` were removed, #2196.]
 
 | Symbol | Signature |
 |---|---|
-| `velt_rt_stdin_read_line` | `() -> VeltFut*` (result `LineRead`) |
 | `velt_rt_stdin_read_line_sync` | `(LineRead* out)` |
-| `velt_rt_stdin_read_all` | `() -> VeltFut*` (result `IoResult<VeltStr>`) |
 | `velt_rt_stdin_read_all_sync` | `(IoResult<VeltStr>* out)` |
 
 ### 14.5 Machine facts (`velt/os`)
 
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_rt_os_platform` | `(VeltStr* out)` | static `darwin` / `linux` / `win32` / Rust OS name |
-| `velt_rt_os_arch` | `(VeltStr* out)` | static `arm64` / `x64` / Rust arch name |
-| `velt_rt_os_cpu_count` | `() -> u64` | available parallelism, ≥ 1 |
-| `velt_rt_os_tmpdir` | `(VeltStr* out)` | no trailing separator |
-| `velt_rt_os_hostname` | `(VeltStr* out)` | `""` if unknown |
+**[non-additive, #2196]** Gone from the native runtime: `velt/os`'s facts are std code over the C
+library and Win32 (`#os-sys`: std/os/sys_darwin.velt, sys_linux.velt, sys_win32.velt; on
+WebAssembly sys_wasm.velt), and its architecture is the build's `x64` or `arm64` condition
+(`#os-arch`). `velt_rt_os_platform`, `velt_rt_os_arch`, `velt_rt_os_cpu_count`,
+`velt_rt_os_tmpdir` and `velt_rt_os_hostname` no longer exist.
 
 ### 14.6 UDP and DNS (`velt/net/udp`, `velt/net/dns`)
 
-`VeltUdp` is an `Arc<tokio::net::UdpSocket>` (in-flight operations hold a clone).
-`typedef struct { VeltBytes data; VeltStr addr; } VeltDatagram;` (48 bytes; `addr` = `"ip:port"`).
-
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_rt_udp_bind` | `(const VeltStr* addr) -> VeltFut*` | `IoResult<VeltUdp>`; port 0 = any free port |
-| `velt_rt_udp_port` | `(VeltUdp u) -> u32` | |
-| `velt_rt_udp_send_to` | `(VeltUdp u, const VeltBytes* data, const VeltStr* addr) -> VeltFut*` | `IoResult<u64>` bytes sent; data and address copied, host names resolved |
-| `velt_rt_udp_recv_from` | `(VeltUdp u, u64 max) -> VeltFut*` | `IoResult<VeltDatagram>`, payload truncated to `max` (0 = 64 KiB) |
-| `velt_rt_udp_set_broadcast` | `(VeltUdp u, u8 on, VeltErr* out)` | |
-| `velt_rt_udp_close` | `(VeltUdp u)` | |
-| `velt_rt_dns_lookup` | `(const VeltStr* host) -> VeltFut*` | `IoResult<VeltStrArray>` of IP strings (system resolver, duplicates removed); `ENOENT` if unresolvable |
+**[non-additive, #2196]** Gone from the native runtime: `velt/net/udp`'s sockets are non-blocking
+sockets on the reactor of the executor in Velt on every native OS (std/net/udp/udp_sched.velt;
+Windows' through AFD), and `velt/net/dns`'s lookups run `getaddrinfo` on its blocking pool
+(std/net/dns/lookup_sched.velt). `velt_rt_udp_bind`, `_port`, `_send_to`, `_recv_from`,
+`_set_broadcast`, `_close` and `velt_rt_dns_lookup` are no longer exported. std's default
+variants (std/net/udp/rt.velt, std/net/dns/rt.velt: WebAssembly, whose runtime never had them)
+are Velt functions of the same names that fail with `ENOTSUP`.
 
 ### 14.7 File streams (`velt/fs`)
 

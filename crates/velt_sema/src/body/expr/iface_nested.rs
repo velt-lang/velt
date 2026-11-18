@@ -218,6 +218,12 @@ impl FnCx<'_, '_> {
         if let Some(r) = self.hoisted_write(target, w, as_value, span) {
             return Some(r);
         }
+        // `u.f = v` on a union of interfaces (union_write.rs).
+        if let (NestedWrite::Assign(op, value), false) = (&w, as_value) {
+            if let Some(h) = self.union_member_write(*op, target, value, span) {
+                return Some((h, false));
+            }
+        }
         let (depth, object, prop) = self.iface_part_of(target)?;
         let obj = self.expr(object, None, Want::Borrow);
         let f = self.iface_field_of(obj.ty, &prop.name)?;

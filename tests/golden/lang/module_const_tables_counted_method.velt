@@ -1,0 +1,35 @@
+// check: no leaks
+// A table of a counted array type (#3015) passed straight to a method called through a vtable,
+// also from a `super` call: a new array for code that may count it. Lowering passed the table's
+// header itself, where the method takes a pointer, and VIR verification failed.
+const TABLE: u32[] = [10, 20, 30, 40];
+
+class Holder {
+  xs: u32[];
+  constructor(xs: u32[]) {
+    this.xs = xs;
+  }
+}
+
+class A {
+  m(xs: u32[]): u32 {
+    return xs[1];
+  }
+}
+
+class B extends A {
+  override m(xs: u32[]): u32 {
+    return super.m(xs) + 1;
+  }
+}
+
+function main() {
+  // Two objects holding one array: `u32[]` values are counted boxes in this program.
+  const a: u32[] = [1, 2];
+  const h1 = new Holder(a);
+  const h2 = new Holder(a);
+  h1.xs.push(3);
+  const b = new B();
+  const r: A = b;
+  console.log(b.m(TABLE), r.m(TABLE), h2.xs.length);
+}

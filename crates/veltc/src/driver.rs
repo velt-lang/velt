@@ -16,6 +16,7 @@ use velt_loader as loader;
 
 mod cpu_check;
 mod executable;
+mod heap_hooks;
 mod host_modules;
 pub(crate) mod memory;
 mod output;
@@ -32,6 +33,7 @@ mod warm;
 pub use warm::{compile_for_jit_warm, copy_files};
 pub(crate) mod stamp;
 mod std_cache;
+pub(crate) use std_cache::prebuilt_warm;
 mod timings;
 
 use executable::build_on_current_thread;
@@ -82,6 +84,10 @@ pub struct BuildOptions {
     /// ([`loader::LoadOptions::check_variants`]): `velt check` and `velt test`, not the builds
     /// that only run.
     pub check_variants: bool,
+    /// Check std's own `declare c("c")` functions against the C library's headers too
+    /// (`velt native headers --std`; `native::headers::STD_HEADERS`): with zig, so not in
+    /// builds, where std's declarations are taken as checked.
+    pub std_c_headers: bool,
 }
 
 /// The host package of a `--host` build (`vpm::host`): what its `package.velt`'s `host` says, and
@@ -153,6 +159,10 @@ pub struct CheckScope {
     pub eager_std: bool,
     /// Check by units (`velt_sema::CheckOptions::units`; `VELT_UNITS` for `velt check`).
     pub units: bool,
+    /// A `hookCall` of a prebuilt hook may call its module's object, where the build cache holds
+    /// it, instead of loading the module (`std_cache::prebuilt`): builds that link, and `velt
+    /// check`.
+    pub prebuilt: bool,
 }
 
 /// What a successful build produced.
@@ -243,6 +253,8 @@ pub struct Session {
     pub cached: Option<(usize, usize, &'static str)>,
     /// Objects of std functions the program links instead of compiling (`std_cache`).
     pub std_objects: Vec<PathBuf>,
+    /// The prebuilt hook modules' objects the check found and called (`std_cache::prebuilt`).
+    pub(crate) prebuilt: Vec<(&'static str, std_cache::Found)>,
     /// This build's turn at its output (`std_cache::Place::lock`), until the build returns.
     pub turn: Option<std::fs::File>,
     /// What the program reaches outside itself (`outside::reaches`), when it was worked out
@@ -452,12 +464,15 @@ fn sema_stage(
     // (`StdLoad::serve`); `velt check --std` loads everything up front.
     let demands = !scope.eager_std;
     let generator_build = sess.generator_build;
+    let finder = (scope.prebuilt && !generator_build)
+        .then(|| std_cache::Finder::for_build(opts))
+        .flatten();
     let mut more = demands.then(|| {
         StdLoad::new(
             (&mut loaded.state, &loaded.modules),
             generator_build,
-            opts,
-            scope,
+            (opts, scope),
+            finder.as_ref(),
         )
     });
     let mut hir = crate::generate::check(
@@ -476,6 +491,9 @@ fn sema_stage(
         sess.units_no_stubs = true;
         *loaded = load_modules(sess, opts, scope)?;
         return sema_stage(sess, opts, scope, loaded);
+    }
+    if let Some(finder) = finder {
+        sess.prebuilt = std_cache::prebuilt_found(finder, &mut sess.generator_inputs);
     }
     sess.native = crate::native::check_trust(
         &loaded.modules,
@@ -499,6 +517,7 @@ fn sema_stage(
         sess.c_checked = crate::native::check_declares(
             hir,
             &sess.sm,
+            std_root.as_deref().filter(|_| opts.std_c_headers),
             std_root.as_deref(),
             opts.packages.as_ref(),
             &std_files,
@@ -543,6 +562,7 @@ fn compile_to_vir_linking(
         extra_roots: vec![],
         eager_std: false,
         units: false,
+        prebuilt: dest == VirFor::Link && opts.emit == Emit::Exe,
     };
     // EXPERIMENT (#2943 M3, `VELT_UNITS_BUILD=1` with `VELT_UNITS`): a build checks by units,
     // with every std file, as `velt check` does (`commands::check::with_all_std`).
@@ -603,6 +623,7 @@ fn lower_checked(
         no_cpu_extensions: Backend::of_build(opts) == Backend::Cranelift,
         counted_seed: seed_in.as_ref(),
         jit: dest == VirFor::Jit,
+        heap_hooks: heap_hooks::heap_hooks(opts.release, dest == VirFor::Jit, &target),
     };
     let mut dev_opt = None;
     let lowered = match warm::lower_kept(sess, &mut hir, &lower_opts, seed_in.is_some()) {
@@ -675,6 +696,9 @@ fn lower_checked(
         Some(warm::DevOpt::Done(changed)) => sess.dev_changed = Some(changed),
         Some(warm::DevOpt::Whole) => warm::optimize_kept(sess, &mut program)?,
         None => std_cache::stage::optimize(sess, opts, &target, std_use, &mut program)?,
+    }
+    if dest == VirFor::Link {
+        std_cache::prebuilt_link(sess, opts, &target, &program)?;
     }
     if opts.report_numbers {
         sess.reports.push(crate::numbers_report::render(&program));

@@ -1,0 +1,9 @@
+// velt/task (internal): `#timer-give-back` under the executor in Velt: an `AbortSignal.timeout`'s
+// timer is one a counted exit gives back (std/lang/hooks/sched_order_give.velt).
+
+import * as tm from "velt/lang/hooks/sched_timers";
+
+/** Timer `timer` (`velt_rt_timer_new`'s handle) is given back at a counted exit. */
+export function giveBackAtExit(timer: u64): void {
+  tm.giveBackAtExit(timer);
+}

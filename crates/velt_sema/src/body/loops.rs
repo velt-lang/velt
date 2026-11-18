@@ -362,7 +362,7 @@ impl FnCx<'_, '_> {
         if !p.await_each && self.cx.dynamic(it.ty) == Some(crate::any::Dynamic::Any) {
             return self.for_of_any(it, p, out);
         }
-        let mut it = self.array_bound_value(it).unwrap_or_else(|it| it);
+        let mut it = self.array_bound_value(it, false).unwrap_or_else(|it| it);
         if self.is_iterable(it.ty) {
             return self.for_of_iterable(it, p, out);
         }

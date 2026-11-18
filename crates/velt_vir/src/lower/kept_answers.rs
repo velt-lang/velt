@@ -59,12 +59,12 @@
 //!   `adopt_boxes`, `vtables`, `slot_tables`, `generic_slots`, `drop_memo`, `foreign`).
 //! - `prelude_proxy`, `view_fn`, `std_fns`, `prelude_error`, `prelude_type_error`,
 //!   `tla_marks`, `ffi_hooks`: std's definitions.
-//! - `native_inits`, `c_symbols`, `c_globals`, `system_aggs`, `reg_slot_agg`, `fut_header`:
+//! - `native_inits`, `c_symbols`, `c_globals`, `reg_slot_agg`, `fut_header`:
 //!   `declare` items and C layouts.
 //! - `types`, `aggs`, `externs`, `extern_map`, `statics`, `static_map`, `str_objects`,
 //!   `symbol_records`, `numbered`, `callees`, `callee_ids`: tables keyed by content, which only
 //!   grow.
-//! - `cell_checks`, `target`, `jit`, `facts_only`: the options and the pass.
+//! - `cell_checks`, `heap_hooks`, `target`, `jit`, `facts_only`: the options and the pass.
 //!
 //! **Lowering's own state** of the functions it builds, rebuilt with them or emptied once a
 //! pass ends: `funcs`, `work_map`, `queue`, `held` (module state's accesses until `velt_main`

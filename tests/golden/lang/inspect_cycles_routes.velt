@@ -1,0 +1,83 @@
+// Cycles reached by every route a value can hold itself through, each in a program that prints
+// nothing else that can: a class field, a subclass held through its base class, a union member,
+// an optional, an array of objects, a `Map` value, a `Set`, an `any` field, an interface value and
+// a generic holder. Each prints `<ref *1>` and `[Circular *1]` as Node does.
+interface Shape {
+  name(): string;
+}
+
+class Base {
+  tag: string = "base";
+}
+class Derived extends Base {
+  back: Base | null = null;
+}
+
+class Ring implements Shape {
+  next: Shape | null = null;
+  name(): string {
+    return "ring";
+  }
+}
+
+class Holder<T> {
+  value: T | null = null;
+}
+class Boxed {
+  box: Holder<Boxed> = new Holder<Boxed>();
+}
+
+class Tree {
+  kids: Tree[] = [];
+  label: string;
+  constructor(label: string) {
+    this.label = label;
+  }
+}
+
+class Pair {
+  other: Pair | string = "none";
+}
+
+class Bag {
+  items: Map<string, Bag> = new Map<string, Bag>();
+  set: Set<Bag> = new Set<Bag>();
+}
+
+class Loose {
+  v: any = 0;
+}
+
+function main() {
+  const d = new Derived();
+  d.back = d;
+  console.log(d);
+
+  const r = new Ring();
+  r.next = r;
+  console.log(r);
+
+  const b = new Boxed();
+  b.box.value = b;
+  console.log(b);
+
+  const t = new Tree("root");
+  t.kids.push(new Tree("leaf"));
+  t.kids.push(t);
+  console.log(t);
+
+  const p = new Pair();
+  p.other = p;
+  console.log(p);
+
+  const g = new Bag();
+  g.items.set("self", g);
+  g.set.add(g);
+  console.log(g);
+
+  const l = new Loose();
+  l.v = l;
+  console.log(l);
+}
+
+main();

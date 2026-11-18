@@ -1,0 +1,21 @@
+// check: no leaks
+// A promise test written as a thenable test through `any` (sigx's renderer, #379): checked as
+// `instanceof Promise` when the promise is the union's only member with a `then`.
+type ViewFn = () => string;
+
+function setup(async_: boolean): Promise<ViewFn> | ViewFn {
+  return async_ ? Promise.resolve(() => "later") : () => "now";
+}
+
+function describe(r: Promise<ViewFn> | ViewFn | null): string {
+  if (r && typeof (r as any).then === "function") {
+    return "promise";
+  }
+  if (r !== null && typeof (r as any).then !== "function") {
+    return typeof r === "function" ? r() : "?";
+  }
+  return "none";
+}
+
+const later = setup(true);
+console.log(describe(setup(false)), describe(later), describe(null));

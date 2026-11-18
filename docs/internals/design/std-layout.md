@@ -252,11 +252,12 @@ answer one question. Split by responsibility, never by line count:
   interface, its iterator).
 - **Free functions group by the operation family they implement**, the way Node's documentation
   groups them: opening and closing, reading, writing, metadata. `fs/fd.velt` (490 lines, no
-  classes) becomes `fs/fd/system.velt` (the `declare system function` bindings and the C
-  layouts), `fs/errors.velt` (errno → Node's `IoError`, shared by all of `velt/fs`),
+  classes) becomes `fs/fd/system.velt` (what the targets share; the `declare c("c")` bindings
+  and their guards are the `#fd-system` variants `fs/fd/posix.velt`, `darwin.velt`, `linux.velt`
+  and `unsupported.velt` since #2187 step 2), `fs/errors.velt` (errno → Node's `IoError`, shared by all of `velt/fs`),
   `fs/fd/args.velt` (Node's argument checks and their `RangeError`/`TypeError` messages),
   `fs/fd/open.velt`, `fs/fd/read.velt`, `fs/fd/write.velt` and `fs/fd/sync.velt`.
-- **Native bindings** (`declare function velt_rt_*`, `declare system function`) sit in one file
+- **Native bindings** (`declare function velt_rt_*`, `declare c("c") function`) sit in one file
   per module (`system.velt` or `rt.velt`), so a module's native surface is reviewable in one place
   and its other files are plain Velt.
 - **Helpers two files need** become a file of their own that both import, rather than a copy or

@@ -1,0 +1,71 @@
+// velt/lang/hooks (internal): a shared promise of the executor in Velt settles (sched_share.velt):
+// its node's result moves into the hub, and the waiting holders are queued in the task's
+// microtask queue in the order they started waiting, as Node queues a promise's reactions when it
+// settles. On the node's own task that happens as the node finishes there (sched_node.velt `run`,
+// `settled`); a hub on another task settles as its first waiting holder polls (sched_share.velt
+// `pollHolder`, sched_share_away.velt).
+
+import { inline } from "velt/lang/intrinsics";
+import * as m from "./sched_mem";
+import * as micro from "./sched_micro";
+import * as nd from "./sched_node";
+import * as sh from "./sched_share";
+import * as al from "./sched_share_alias";
+import * as sd from "./sched_share_drop";
+import * as wt from "./sched_share_wait";
+import * as wk from "./sched_wake";
+
+/**
+ * The node of hub `h` finished (on task `task`): its result moves into the hub, and every waiting
+ * holder but `me` is queued in the task's microtask queue in the order they started waiting (a
+ * waker of another task is woken). Each keeps its entry with its ticket until it takes the result.
+ */
+export function settle(h: usize, task: usize, me: usize): void {
+  if ((m.load32(h + sh.H_FLAGS) & sh.DONE) !== 0) {
+    return;
+  }
+  const n = m.ld(h + sh.H_NODE);
+  if ((m.load32(n + nd.N_FLAGS) & nd.PANICKED) === 0) {
+    const size = m.ld(h + sh.H_SIZE);
+    const r = m.alloc(size > 0 ? size : 1);
+    m.copy(r, n + nd.N_HEAD + 16, size);
+    m.st(h + sh.H_RESULT, r);
+    nd.setFlags(n, nd.DELIVERED);
+    // The hub took the node's result: a converted node's claim (the runtime's `deliver_unadopted`).
+    al.claimed(n);
+  }
+  m.or32(h + sh.H_FLAGS, sh.DONE);
+  const len = m.ld(h + sh.H_WLEN);
+  for (let i: usize = 0; i < len; i++) {
+    const at = wt.entry(h, i);
+    const w = m.ld(at + 8);
+    let ticket: u64 = 0;
+    if (m.ld(at) === me) {
+      ticket = 0;
+    } else if (task !== 0 && wk.taskOf(w) === task) {
+      ticket = micro.enqueue(task, m.wakerClone(w), true);
+    } else {
+      m.wakeByRef(w);
+    }
+    m.st(at + 16, ticket as usize);
+  }
+}
+
+/**
+ * Node `n` of task `task` finished (sched_node.velt `run`, `prev` its flags before FINISHED): if
+ * it is shared on this task, its hub settles (the waiting holders are queued) and true; false
+ * for any other node, whose awaiter is woken (a hub on another task's, sched_share_away.velt).
+ */
+@inline
+export function settled(n: usize, task: usize, prev: u32): bool {
+  if ((prev & sh.HUB_HERE) === 0) {
+    return false;
+  }
+  const h = m.ld(n + sh.N_HUB);
+  settle(h, task, 0);
+  if ((m.and32(n + nd.N_FLAGS, ~sh.HUB_HERE) & sh.HUB_HERE) === 0) {
+    // The original, handed to another task, was dropped there meanwhile (`holderDrop`).
+    sd.free(h);
+  }
+  return true;
+}

@@ -88,35 +88,31 @@ pub(crate) fn fn_type(sig: &ast::FnSig, span: Span) -> ast::TypeExpr {
 /// alias, or `None` when there is none; with the errors found.
 pub(crate) fn rewrite(modules: &[SourceModule]) -> (Option<Vec<SourceModule>>, Vec<Diagnostic>) {
     let fn_bases = function_names(modules);
-    let callable = |i: &ast::Item| match &i.kind {
-        ast::ItemKind::Interface(d) => {
-            !d.call_sigs.is_empty() || d.extends.iter().any(|b| names_function(b, &fn_bases))
-        }
+    // The names are the program's (`function_names`): a std interface that extends one of std's
+    // own interfaces of the same name (`Arithmetic<T> extends Add<T>`) is not a function.
+    let is_callable = |d: &ast::InterfaceDecl, std: bool| {
+        !d.call_sigs.is_empty() || (!std && d.extends.iter().any(|b| names_function(b, &fn_bases)))
+    };
+    let callable = |i: &ast::Item, std: bool| match &i.kind {
+        ast::ItemKind::Interface(d) => is_callable(d, std),
         _ => false,
     };
-    if !modules.iter().any(|m| m.ast.items.iter().any(callable)) {
+    if !(modules.iter()).any(|m| m.ast.items.iter().any(|i| callable(i, m.is_std))) {
         return (None, vec![]);
     }
     // Each module on its own (`crate::par`), the errors in module order.
     let done = crate::par::map(modules, crate::par::module_weight(modules), |m| {
         let mut diags = vec![];
         let mut ast = m.ast.clone();
-        if ast.items.iter().any(callable) {
+        if ast.items.iter().any(|i| callable(i, m.is_std)) {
             let items = std::mem::take(&mut ast.items);
             ast.items = items
                 .into_iter()
                 .map(|item| match item.kind {
-                    ast::ItemKind::Interface(d)
-                        if !d.call_sigs.is_empty()
-                            || d.extends.iter().any(|b| names_function(b, &fn_bases)) =>
-                    {
-                        ast::Item {
-                            kind: ast::ItemKind::TypeAlias(interface_alias(
-                                d, item.span, &mut diags,
-                            )),
-                            ..item
-                        }
-                    }
+                    ast::ItemKind::Interface(d) if is_callable(&d, m.is_std) => ast::Item {
+                        kind: ast::ItemKind::TypeAlias(interface_alias(d, item.span, &mut diags)),
+                        ..item
+                    },
                     _ => item,
                 })
                 .collect();
@@ -145,7 +141,9 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> (Option<Vec<SourceModule>>, V
 /// The names of the type aliases of function types and of the interfaces with call signatures
 /// (`type EffectFn = () => void`), and of the interfaces extending one, in any module: an
 /// interface extending one (`interface Subscriber extends EffectFn { … }`) is a function with
-/// properties too (#921).
+/// properties too (#921). Standard library ones count too (`interface EventInvoker extends
+/// EventListener`, lib.dom's listener, #379), unless the program declares an item of that name
+/// itself: names are matched without resolving them, so a program's own `EventListener` wins.
 fn function_names(modules: &[SourceModule]) -> rustc_hash::FxHashSet<String> {
     let mut names = rustc_hash::FxHashSet::default();
     let items = || {
@@ -155,18 +153,18 @@ fn function_names(modules: &[SourceModule]) -> rustc_hash::FxHashSet<String> {
             .flat_map(|m| &m.ast.items)
     };
     for item in items() {
-        match &item.kind {
-            ast::ItemKind::TypeAlias(a)
-                if matches!(a.ty.kind, ast::TypeExprKind::Function { .. }) =>
-            {
-                names.insert(a.name.name.clone());
-            }
-            ast::ItemKind::Interface(d) if d.call_sigs.len() == 1 => {
-                names.insert(d.name.name.clone());
-            }
-            _ => {}
-        }
+        insert_function_name(&mut names, item);
     }
+    let own: rustc_hash::FxHashSet<&str> = items().flat_map(item_names).collect();
+    let mut std_names = rustc_hash::FxHashSet::default();
+    for item in modules
+        .iter()
+        .filter(|m| m.is_std)
+        .flat_map(|m| &m.ast.items)
+    {
+        insert_function_name(&mut std_names, item);
+    }
+    names.extend(std_names.into_iter().filter(|n| !own.contains(n.as_str())));
     loop {
         let before = names.len();
         for item in items() {
@@ -179,6 +177,37 @@ fn function_names(modules: &[SourceModule]) -> rustc_hash::FxHashSet<String> {
         if names.len() == before {
             return names;
         }
+    }
+}
+
+/// Adds `item`'s name to `names` when it is a function type alias or an interface with one call
+/// signature.
+fn insert_function_name(names: &mut rustc_hash::FxHashSet<String>, item: &ast::Item) {
+    match &item.kind {
+        ast::ItemKind::TypeAlias(a) if matches!(a.ty.kind, ast::TypeExprKind::Function { .. }) => {
+            names.insert(a.name.name.clone());
+        }
+        ast::ItemKind::Interface(d) if d.call_sigs.len() == 1 => {
+            names.insert(d.name.name.clone());
+        }
+        _ => {}
+    }
+}
+
+/// The type names a module-level `item` gives the program: what it declares, or the names an
+/// import renames something to (`import { Foo as EventListener }`; an import under its own name
+/// is the exporting module's item, counted there or the standard library's).
+fn item_names(item: &ast::Item) -> Vec<&str> {
+    match &item.kind {
+        ast::ItemKind::TypeAlias(a) => vec![&a.name.name],
+        ast::ItemKind::Interface(d) => vec![&d.name.name],
+        ast::ItemKind::Class(c) => vec![&c.name.name],
+        ast::ItemKind::Struct(s) => vec![&s.name.name],
+        ast::ItemKind::Enum(e) => vec![&e.name.name],
+        ast::ItemKind::Import(i) => (i.names.iter())
+            .filter_map(|n| n.alias.as_ref().map(|a| a.name.as_str()))
+            .collect(),
+        _ => vec![],
     }
 }
 
@@ -365,3 +394,7 @@ pub(crate) fn check(modules: &[SourceModule]) -> Vec<Diagnostic> {
     });
     found.into_iter().flatten().collect()
 }
+
+#[cfg(test)]
+#[path = "call_sigs_tests.rs"]
+mod tests;

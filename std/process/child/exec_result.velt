@@ -2,7 +2,7 @@
 
 /** What a finished program produced (output decoded as UTF-8, invalid bytes as U+FFFD). */
 export class ExecResult {
-  /** Exit code; `128 + n` when killed by signal `n` (Unix). */
+  /** Exit code; `128 + n` when killed by signal `n` (`kill` on Windows too). */
   code: number;
   stdout: string;
   stderr: string;

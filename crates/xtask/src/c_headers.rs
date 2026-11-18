@@ -31,6 +31,38 @@ const PATHS: &[&str] = &[
     "crates/vpm/src/manifest/c_library.rs",
     "crates/vpm/src/manifest/read/native.rs",
     "std/ffi/",
+    // std's own `declare c("c")` functions and the variants that load them per target
+    // (`velt native headers --std`, tests/c_headers.rs).
+    "std/fs/fd/",
+    "std/imports.velt",
+    // The other files crates/veltc/src/native/headers/std_check.rs checks (`CHECKED`,
+    // `CHECKED_POSIX`): a change to one of them runs the check too.
+    "std/lang/hooks/os_posix.velt",
+    "std/lang/hooks/sched_cells.velt",
+    "std/lang/hooks/sched_end.velt",
+    "std/lang/hooks/sched_exit.velt",
+    "std/lang/hooks/sched_id.velt",
+    "std/lang/hooks/sched_io_write.velt",
+    "std/lang/hooks/sched_mem.velt",
+    "std/lang/hooks/sched_module.velt",
+    "std/lang/hooks/sched_node_loc.velt",
+    "std/lang/hooks/sched_off.velt",
+    "std/lang/hooks/sched_peek.velt",
+    "std/lang/hooks/sched_read.velt",
+    "std/lang/hooks/sched_wake.velt",
+    "std/lang/hooks/sched_workers.velt",
+    "std/lang/hooks/thread_posix.velt",
+    "std/lang/hooks/unwind_itanium.velt",
+    "std/net/calls_posix.velt",
+    "std/net/fd_io.velt",
+    "std/net/fd_until.velt",
+    "std/net/rt_later_flush.velt",
+    "std/process/child/",
+    "std/sync/output.velt",
+    "std/sync/slot.velt",
+    // The runtime's exports, which the check skips (std_check.rs `runtime_exports`).
+    "crates/velt_common/tests/runtime_exports.txt",
+    "crates/veltc/src/native/headers/std_check.rs",
     ".github/actions/zig/",
     // C variables (`declare c("lib") let`, tests/c_sources.rs): their lowering, the backends'
     // data imports, the dev JIT's lookup, the optimizer's and the std cache's handling of them.

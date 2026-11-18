@@ -9,7 +9,7 @@ helper), and explain it in your final report.
 |---|---|---|
 | Spans & diagnostics | `crates/velt_common/src/lib.rs` | everyone |
 | Well-known std modules | `crates/velt_common/src/std_modules.rs`: the std modules the compiler names (`std_module!`, `std_item!`, …; docs/internals/design/std-layout.md §5) | std ↔ every compiler crate |
-| Compiler hooks | `crates/velt_common/src/std_hooks.rs`: the std functions and classes the compiler calls (`std_hook!`), with their signatures (docs/internals/design/std-layout.md §10b); `hook_demand.rs`: the HIR constructs whose lowering calls a hook, and the set of hooks sema demands (`hir::Program::hooks_demanded`) | std ↔ sema, lowering |
+| Compiler hooks | `crates/velt_common/src/std_hooks.rs`: the std functions and classes the compiler calls (`std_hook!`), with their signatures (docs/internals/design/std-layout.md §10b); `hook_demand.rs`: the HIR constructs whose lowering calls a hook, and the set of hooks sema demands (`hir::Program::hooks_demanded`); `std_hooks/prebuilt.rs`: the `prebuilt` flag (a hook a build may call in its module's object, compiled once and cached, instead of loading the module; only numbers and `&string`s in, a number, `string` or `void` out, `prebuilt::scalar`, checked when the compiler is built), the entry point's symbol `velt_hook_<entry>` (`prebuilt::symbol`), and how values cross: numbers by value, a `&string` as the address of the caller's string, borrowed for the call, a `string` result through a trailing out-pointer the callee fills and the caller owns | std ↔ sema, lowering; `prebuilt`: velt_common ↔ sema, veltc and the cached objects |
 | AST | `crates/velt_syntax/src/ast.rs` (with `ast/blocks.rs`, `ast/type_parts.rs`, `ast/type_level.rs`, `ast/jsx.rs`, `ast/num_array.rs`: `ExprKind::NumArray`, a packed array literal of 16 or more number literals, `Expr::unpacked` giving back the `Array` it stands for) + `parse_file` (`parse_file_unpacked`: the same without packing, for the formatter; `parse_with` for the loader: `define`, ambient declarations; `encode_module`/`decode_module`: a module in a compact binary form, `AST_FORMAT` first, spans stored without their file and decoded for the file id given, a damaged value `None`) | frontend → sema |
 | Program loader | `crates/velt_loader/src/lib.rs`: `load_program(sm, root, LoadOptions, diags) -> Result<Loaded, String>` and the resolution rules a tool must share with it (§ Program loader below) | loader → driver, language server, tests and tools that load programs as `velt build` does |
 | HIR | `crates/velt_sema/src/hir/mod.rs`, `hir/intrinsic.rs`, `hir/module_state.rs`, `hir/const_array.rs` (`ExprKind::ConstArray`: an array of number literals of one number type, as the `ArrayLit` of its elements) + `hir_encodings.md` + `check`, `SourceModule` (`is_std`: loaded from the std root; `is_dependency`: loaded from a package the program depends on, a library like std for the analyses that report at the program's call into one, with no privilege; drivers set both, sema never derives them from the path), `effects::may_change_memory` (can evaluating an expression run code that changes memory: a call other than an intrinsic, an intrinsic handed a place to modify or move, an assignment, `new`, `await`; IR lowering holds earlier operands and re-forms element addresses on it) | sema → IR |
@@ -149,7 +149,7 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   (`abstract x: T;`), whose decorators are a field's. `AST_FORMAT` 12. Sema records the uses in `Program::decorators` (hir_encodings.md
   "Decorators") and `DefKind::Decorator` names the declarations for editors.
 - `FnSig::host: Option<HostModule { module, span }>` (`ast.rs`): `declare host("<module>")
-  function name(…): R;`, an `ItemKind::ExternFn` like `declare system function` (`host` is a
+  function name(…): R;`, an `ItemKind::ExternFn` like `declare c("lib") function` (`host` is a
   word only between `declare` and `(`). Any module may declare one
   (https://veltlang.com/docs/reference/host-functions/).
 - `hir::ExternFnDef::host: Option<HostImport { module, params: Vec<HostTy>, ret: HostTy }>`
@@ -158,13 +158,13 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   `F64`, `Bool`, `Str`, `Bytes { readonly }`, `Ref { nullable }` for std's `HostRef`, `Void`). Not
   an extern of the link: sema has checked the types, and every declaration of one import has the
   same ones. Calls pass `u8[]` parameters `BorrowMut` and take views of bytes there, as for
-  system functions (hir_encodings.md).
+  C functions (hir_encodings.md).
 - `vir::ExternFn::host: Option<HostImport { module, name, params: Vec<HostValue>, ret }>`
   (`vir/host.rs`): the extern is that import, not a link symbol; its `symbol` only names it in
   the object. The extern's signature per value and the manifest the glue reads (the custom
   section `velt.host`, a line per import) are in `vir/host.rs`. Lowering makes one only for
-  `wasm32-unknown-unknown`; on any other target a reachable call is an error, as for a system
-  function the target lacks. The LLVM backend declares it with `wasm-import-module` /
+  `wasm32-unknown-unknown`; on any other target a reachable call is an error, as for a C
+  function the target can't call. The LLVM backend declares it with `wasm-import-module` /
   `wasm-import-name` and writes the manifest; other backends never see one.
 - Async host functions (#1737): `declare host("m") async function f(…): Promise<T>` has
   `ExternFnDef::is_async` with `host` (`HostImport::ret` is what `T` crosses as) and `ret`
@@ -183,8 +183,16 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   `Ptr<T>`, `Ptr<T> | null`, `null`). `vir::ExternFn::variadic` (additive) marks the extern:
   `params` are the fixed ones, and a call passes further scalars of type `I32`, `U32`, `I64`,
   `U64`, `F64` or `Ptr`, C's default argument promotions done (the verifier checks both).
-  Backends call it with the target's variadic convention; `declare system`'s variadic forms are
-  such externs too.
+  Backends call it with the target's variadic convention.
+- `declare system function` is gone (#2187 step 2): std's functions of the C library are
+  `declare c("c")` declarations (std/fs/fd/posix.velt), the guards the compiler's table enforced
+  are std's Velt wrappers, and the parser reports `declare system` as an error naming `declare
+  c("c")`. Removed: `ast::FnSig::is_system` (`AST_FORMAT` 16), `hir::ExternFnDef::system`,
+  velt_vir's `system` module (its table) and `lower/system.rs`; added: velt_vir's `c_abi`
+  (`errno`'s accessor per target, `host_triple`, `base_name`). `lastOsError()` is std's
+  `ThreadLocal` `OS_ERROR` (std/os/rt.velt), which lowering stores `errno` into after a
+  `declare c("c", { errno: true })` call (`c_abi::ERRNO_SLOT`; on Windows the C runtime's
+  `_errno()`, and `GetLastError()` for another library).
 - std's own host functions (#1785): the import modules `velt:fetch`
   (std/net/http/fetch/client/transport/js_host.velt), `fetch`'s transport on JS hosts, and
   `velt:random` (std/lang/random/seed_js.velt), `Math.random()`'s seed, which the glue provides

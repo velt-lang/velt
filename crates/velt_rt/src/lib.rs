@@ -12,7 +12,6 @@
 #[cfg(velt_rt_host)]
 pub mod abi_symbols;
 pub mod array;
-pub mod bigint;
 pub mod build_profile;
 pub mod bytes;
 pub mod bytes_ops;
@@ -49,7 +48,6 @@ pub mod memory_usage;
 pub mod mutex;
 pub mod native;
 pub mod net;
-pub mod os;
 pub mod panic;
 pub mod process;
 pub mod proxy_array;

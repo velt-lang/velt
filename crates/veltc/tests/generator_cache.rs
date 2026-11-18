@@ -228,12 +228,19 @@ fn offered_code_is_used_only_while_it_fits() {
 
 /// `velt check -v main.velt` in `dir`: how many times the program was checked.
 fn checks(dir: &Path, cache: &Path) -> usize {
-    let out = Command::new(env!("CARGO_BIN_EXE_velt"))
-        .args(["check", "-v", "main.velt"])
+    checks_with(dir, cache, false)
+}
+
+/// `checks`, with every std module loaded (`VELT_STD_SUMMARY_EAGER`) when `whole_std`.
+fn checks_with(dir: &Path, cache: &Path, whole_std: bool) -> usize {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_velt"));
+    cmd.args(["check", "-v", "main.velt"])
         .current_dir(dir)
-        .env("VELT_BUILD_CACHE", cache)
-        .output()
-        .expect("run velt");
+        .env("VELT_BUILD_CACHE", cache);
+    if whole_std {
+        cmd.env("VELT_STD_SUMMARY_EAGER", "1");
+    }
+    let out = cmd.output().expect("run velt");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "{stderr}");
     (stderr.lines())
@@ -265,6 +272,30 @@ fn an_offer_that_no_longer_covers_the_program_is_replaced() {
     ));
     assert_eq!(checks(&dir, &cache), 2, "the offer lacks `Team`'s instance");
     assert_eq!(checks(&dir, &cache), 1, "the new offer has it");
+}
+
+/// A check that loads every std module needs other instances than one that loads std on
+/// demand (std's own bodies need theirs): each keeps its own offer, so alternating them is one
+/// check each, not two each as they replace each other's offer.
+#[test]
+fn checks_of_all_std_and_of_std_on_demand_keep_their_own_offers() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let dir = tmp.path().join("prog");
+    let cache = tmp.path().join("cache");
+    std::fs::create_dir_all(&dir).expect("dir");
+    std::fs::write(dir.join("gen.velt"), FIELDS).expect("gen");
+    let main = program(
+        "class User { name = \"\"; }",
+        "console.log(fields<User>());",
+    );
+    std::fs::write(dir.join("main.velt"), main).expect("main");
+    for whole_std in [false, true, false, true] {
+        assert_eq!(
+            checks_with(&dir, &cache, whole_std),
+            1,
+            "whole std: {whole_std}"
+        );
+    }
 }
 
 /// Instances that need code are generated during the check that finds them, and their code is

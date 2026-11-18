@@ -1,10 +1,10 @@
 aborted: user cancelled
-stopped: This operation was aborted
+stopped: AbortError: This operation was aborted
 before: false true
-after: true timed out after 50 ms
+after: true DOMException [TimeoutError]: The operation was aborted due to timeout
 any: true first
-any of a timeout: true timed out after 20 ms
-throwIfAborted: timed out after 20 ms
+any of a timeout: true DOMException [TimeoutError]: The operation was aborted due to timeout
+throwIfAborted: The operation was aborted due to timeout
 slow 10 finished
 slow 10
 timeout: timed out after 30 ms 30

@@ -381,8 +381,8 @@ fn a_leak_check_without_block_counts_fails_the_file() {
     write(
         dir,
         "t/silent.test.velt",
-        "declare system function close(fd: i32): i32;\n\n\
-         export function test_closes_stderr() {\n  close(2);\n}\n",
+        "import { closeSync } from \"velt/fs\";\n\n\
+         export function test_closes_stderr() {\n  closeSync(2);\n}\n",
     );
     let mut command = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
     let o = command

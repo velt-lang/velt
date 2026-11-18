@@ -1,34 +1,99 @@
-// Spreading a value whose type a conversion copied to (#650, #651) shows the copy: Node's
-// spread copies all the original object's fields, in its order.
+// Spreading a value whose type a conversion copied to (#650, #651) shows the copy once the
+// spread's object is looked at: Node's spread copies all the original object's fields, in its
+// order (#2956). Each function below converts once and looks at the spread's object one way.
 type A = { a: number };
 type AB = A & { b: number };
 
-function wider(ab: AB) {
+function printed(ab: AB) {
   const x: A = ab;
-  const y = { ...x, c: 3 };
-  console.log(y.c);
+  console.log({ ...x, c: 3 });
 }
 
 type B = { b: number };
 type BC = B & { c: number };
 
-function mapped(bc: BC) {
+function serialized(bc: BC) {
   const xs: B[] = [bc];
-  const ys = xs.map((x) => ({ ...x, d: 1 }));
-  console.log(ys.length);
+  console.log(JSON.stringify(xs.map((x) => ({ ...x, d: 1 }))));
 }
 
 type P = { x: number; y: number };
 type Q = { y: number; x: number };
 
-function reordered(q: Q) {
+function keys(q: Q) {
   const p: P = q;
-  const w = { ...p, w: 0 };
-  console.log(w.w);
+  console.log(Object.keys({ ...p, w: 0 }).join(","));
+}
+
+function spreadTwice(ab: AB) {
+  const x: A = ab;
+  const y = { ...x, c: 1 };
+  const z = { ...y, k: 2 };
+  console.log(z);
+}
+
+function tested(ab: AB) {
+  const x: A = ab;
+  const y = { ...x, c: 1 };
+  console.log("b" in y);
+}
+
+function dynamic(ab: AB) {
+  const x: A = ab;
+  const d: any = { ...x, c: 1 };
+  console.log(Object.keys(d).length);
+}
+
+class Holder {
+  held: { a: number; c: number };
+  constructor(x: A) {
+    this.held = { ...x, c: 7 };
+  }
+}
+
+function field(ab: AB) {
+  const x: A = ab;
+  console.log(new Holder(x));
+}
+
+function make(x: A): { a: number; c: number } {
+  return { ...x, c: 1 };
+}
+
+function returned(ab: AB) {
+  const x: A = ab;
+  console.log(JSON.stringify(make(x)));
+}
+
+// A spread in generic code, followed at its instantiation.
+function extend<T extends object>(t: T): T & { k: number } {
+  return { ...t, k: 1 };
+}
+
+function generic(ab: AB) {
+  const x: A = ab;
+  console.log(extend(x));
+}
+
+type AC = { a: number; c?: number };
+
+// The spread's object converted again, every field in order: still not what Node's has.
+function copiedAgain(ab: AB) {
+  const x: A = ab;
+  const y = { ...x, c: 1 };
+  const z: AC = y;
+  console.log(z);
 }
 
 function main() {
-  wider({ a: 1, b: 2 });
-  mapped({ b: 1, c: 2 });
-  reordered({ y: 1, x: 2 });
+  printed({ a: 1, b: 2 });
+  serialized({ b: 1, c: 2 });
+  keys({ y: 1, x: 2 });
+  spreadTwice({ a: 1, b: 2 });
+  tested({ a: 1, b: 2 });
+  dynamic({ a: 1, b: 2 });
+  field({ a: 1, b: 2 });
+  returned({ a: 1, b: 2 });
+  generic({ a: 1, b: 2 });
+  copiedAgain({ a: 1, b: 2 });
 }

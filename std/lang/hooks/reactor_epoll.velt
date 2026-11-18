@@ -8,9 +8,17 @@
 // `struct epoll_event` is packed on x86-64 (12 bytes, data at 4) and natural elsewhere (16, data
 // at 8): the block records which at `open`.
 
+import { CVarArgs } from "velt/ffi/c_var_args";
 import { Ptr } from "velt/ffi/ptr";
-import { velt_rt_os_arch } from "velt/os/rt";
+import { ARCH } from "#os-arch";
 import * as m from "./sched_mem";
+
+// The headers' types (`velt native headers --std` checks this file:
+// crates/veltc/src/native/headers/std_check.rs), laid out in this file's own rooms.
+/** C's `struct epoll_event`, `struct sockaddr` and `struct timespec`. */
+declare c type epoll_event;
+declare c type sockaddr;
+declare c type timespec;
 
 /** Does this OS have the reactor? (The default variant has not: sockets stay the runtime's.) */
 export const SUPPORTED: bool = true;
@@ -18,6 +26,8 @@ export const SUPPORTED: bool = true;
 export const EAGAIN: i32 = 11;
 export const EINPROGRESS: i32 = 115;
 export const EINTR: i32 = 4;
+/** A send on a stream whose peer is gone. */
+export const EPIPE: i32 = 32;
 /** `CLOCK_MONOTONIC`. */
 export const MONOTONIC: i32 = 1;
 /** `send`'s flags: `MSG_NOSIGNAL` (a closed peer is EPIPE, not SIGPIPE). */
@@ -26,6 +36,8 @@ export const SEND_FLAGS: i32 = 0x4000;
 export const SOCKET_FLAGS: i32 = 0x80800;
 /** `sysconf`'s name of the online cores (`_SC_NPROCESSORS_ONLN`; 0: none). */
 export const SC_NPROCESSORS_ONLN: i32 = 84;
+/** `pthread_attr_setdetachstate`'s detached state (`PTHREAD_CREATE_DETACHED`; 0: no pthreads). */
+export const PTHREAD_CREATE_DETACHED: i32 = 1;
 
 // Readiness bits of an event (sched_io.velt).
 const READ: u32 = 1;
@@ -62,19 +74,20 @@ const R_SIZE: usize = 64 + 64 * 16;
 
 declare c("c") function epoll_create1(flags: i32): i32;
 // Pointers are `Ptr`s and integers the C types', as in a program's own declarations of these
-// symbols (`declare system function read(fd: i32, buf: u8[]): isize` passes a pointer and a
+// symbols (velt/fs's `read(fd: i32, buf: u8[], nbyte: usize): isize` passes a pointer and a
 // `size_t`): one C symbol has one signature in a program. Addresses become `Ptr`s with `m.ptr`.
-declare c("c") function epoll_ctl(ep: i32, op: i32, fd: i32, event: Ptr<u8>): i32;
-declare c("c") function epoll_wait(ep: i32, events: Ptr<u8>, max: i32, timeout: i32): i32;
+declare c("c") function epoll_ctl(ep: i32, op: i32, fd: i32, event: Ptr<epoll_event>): i32;
+declare c("c") function epoll_wait(ep: i32, events: Ptr<epoll_event>, max: i32, timeout: i32): i32;
 declare c("c") function eventfd(initval: u32, flags: i32): i32;
 declare c("c") function read$io(fd: i32, buf: Ptr<u8>, n: usize): isize;
 declare c("c") function write$io(fd: i32, buf: Ptr<u8>, n: usize): isize;
-// The signature the compiler calls it with for `lastOsError()` (velt_vir system/posix.rs): one
-// C symbol has one signature in a program.
+// The signature the compiler calls it with for `{ errno: true }` (velt_vir c_abi.rs): one C
+// symbol has one signature in a program.
 declare c("c") function __errno_location(): Ptr<i32>;
-// `fcntl` is variadic: the compiler's system function passes `arg` where each architecture reads it.
-declare system function fcntl(fd: i32, cmd: i32, arg: i32): i32;
-declare c("c") function accept4(fd: i32, addr: Ptr<u8>, len: Ptr<u8>, flags: i32): i32;
+// `fcntl` is variadic: its `int` argument goes as C's `...` (`CVarArgs`), where each architecture
+// reads it.
+declare c("c") function fcntl$io(fd: i32, cmd: i32, ...args: CVarArgs): i32;
+declare c("c") function accept4(fd: i32, addr: Ptr<sockaddr>, len: Ptr<u32>, flags: i32): i32;
 
 /** The calling thread's `errno`. */
 export function errno(): i32 {
@@ -95,7 +108,7 @@ export function open(): usize {
   m.st(r + R_EP, ep as usize);
   m.st(r + R_EVFD, evfd as usize);
   m.st(r + R_ONE, 1);
-  const packed = velt_rt_os_arch() === "x64";
+  const packed = ARCH === "x64";
   m.st(r + R_STRIDE, packed ? 12 : 16);
   m.st(r + R_DATA, packed ? 4 : 8);
   ctl(r, EPOLL_CTL_ADD, evfd, EPOLLIN | EPOLLET, 0);
@@ -114,7 +127,7 @@ function ctl(r: usize, op: i32, fd: i32, events: u32, data: usize): i32 {
   m.st32(at, (data & 0xffffffff) as u32);
   m.st32(at + 4, (data >> 32) as u32);
   // SAFETY: one event at `c`.
-  const n = unsafe { epoll_ctl(m.ld(r + R_EP) as i32, op, fd, m.ptr(c)) };
+  const n = unsafe { epoll_ctl(m.ld(r + R_EP) as i32, op, fd, m.ptrTo<epoll_event>(c)) };
   m.release(c, 16);
   return n < 0 ? errno() : 0;
 }
@@ -136,7 +149,7 @@ const PIDFD_OPEN: i64 = 434;
  */
 export function exitFd(pid: i32): i32 {
   // SAFETY: pidfd_open takes a process id and flags 0; the result is checked.
-  return unsafe { syscall(PIDFD_OPEN, pid as i64, 0, 0, 0, 0, 0) } as i32;
+  return unsafe { syscall(PIDFD_OPEN, pid as i64, 0 as i64) } as i32;
 }
 
 /** Watches pidfd `exit` (`exitFd`'s) in reactor `r`: readable once the child exited; 0 or errno. */
@@ -150,7 +163,7 @@ export const EXITED: i32 = -1;
 /** `posix_spawnattr_setflags`' extra flags for a child process: none (pipes are `pipe2`'s). */
 export const SPAWN_FLAGS: i16 = 0;
 
-declare c("c") function pipe2(fds: Ptr<u8>, flags: i32): i32;
+declare c("c") function pipe2(fds: Ptr<i32>, flags: i32): i32;
 
 /** `O_CLOEXEC`. */
 const O_CLOEXEC: i32 = 0x80000;
@@ -161,7 +174,7 @@ const O_CLOEXEC: i32 = 0x80000;
  */
 export function pipeCloexec(fds: usize): i32 {
   // SAFETY: room for two descriptors.
-  return unsafe { pipe2(m.ptr(fds), O_CLOEXEC) };
+  return unsafe { pipe2(Ptr.at<i32>(fds), O_CLOEXEC) };
 }
 
 /** Keeps descriptor `fd` the child's: nothing to do here (no `SPAWN_FLAGS`). */
@@ -179,8 +192,9 @@ export function del(r: usize, fd: i32): void {
 export function wait(r: usize, timeoutMs: i64): usize {
   const t = timeoutMs < 0 ? -1 : timeoutMs > 0x7fffffff ? 0x7fffffff : timeoutMs;
   const ep = m.ld(r + R_EP) as i32;
+  const events = m.ptrTo<epoll_event>(r + R_EVENTS);
   // SAFETY: the block has room for MAX_EVENTS events of the largest size.
-  const n = unsafe { epoll_wait(ep, m.ptr(r + R_EVENTS), MAX_EVENTS as i32, t as i32) };
+  const n = unsafe { epoll_wait(ep, events, MAX_EVENTS as i32, t as i32) };
   if (n <= 0) {
     return 0;
   }
@@ -232,7 +246,7 @@ export function wake(r: usize): void {
 /** Accepts a connection of listener `fd`, non-blocking and close-on-exec: its fd, or -1. */
 export function accept(fd: i32, addr: usize, len: usize): i32 {
   // SAFETY: `addr` holds the `socklen_t` at `len` bytes.
-  return unsafe { accept4(fd, m.ptr(addr), m.ptr(len), SOCKET_FLAGS) };
+  return unsafe { accept4(fd, m.ptrTo<sockaddr>(addr), m.ptrTo<u32>(len), SOCKET_FLAGS) };
 }
 
 /** `fcntl`'s command that sets a descriptor's status flags, and the flag of non-blocking I/O. */
@@ -245,17 +259,20 @@ const O_NONBLOCK: i32 = 0x800;
  * worker until the peer writes; 0 or errno.
  */
 export function prepare(fd: i32): i32 {
-  return fcntl(fd, F_SETFL, O_NONBLOCK) < 0 ? errno() : 0;
+  // SAFETY: F_SETFL takes an `int`, passed as C's `...` argument.
+  return unsafe { fcntl$io(fd, F_SETFL, O_NONBLOCK) } < 0 ? errno() : 0;
 }
 
 const FUTEX_WAIT_PRIVATE: i64 = 128;
 const FUTEX_WAKE_PRIVATE: i64 = 129;
 
-declare c("c") function syscall(n: i64, a: i64, b: i64, c: i64, d: i64, e: i64, f: i64): i64;
+// `syscall` is variadic: each call passes the arguments its system call reads, as C's `...`
+// (#3021).
+declare c("c") function syscall(n: i64, ...args: CVarArgs): i64;
 
 /** The futex call's number on this architecture. */
 function futexNumber(): i64 {
-  return velt_rt_os_arch() === "arm64" ? 98 : 202;
+  return ARCH === "arm64" ? 98 : 202;
 }
 
 /**
@@ -266,7 +283,7 @@ export function wordWait(word: usize, expected: u32): void {
   const n = futexNumber();
   // SAFETY: `word` is an aligned word that lives as long as the process; no timeout.
   unsafe {
-    syscall(n, word as i64, FUTEX_WAIT_PRIVATE, expected as i64, 0, 0, 0);
+    syscall(n, word as i64, FUTEX_WAIT_PRIVATE, expected as i64, 0 as i64);
   }
 }
 
@@ -281,7 +298,7 @@ export function wordWaitFor(word: usize, expected: u32, us: u32): void {
   m.st(ts + 8, ((us % 1000000) * 1000) as usize);
   // SAFETY: as `wordWait`; a relative timespec at `ts`.
   unsafe {
-    syscall(n, word as i64, FUTEX_WAIT_PRIVATE, expected as i64, ts as i64, 0, 0);
+    syscall(n, word as i64, FUTEX_WAIT_PRIVATE, expected as i64, ts as i64);
   }
 }
 
@@ -290,29 +307,33 @@ export function wordWake(word: usize): void {
   const n = futexNumber();
   // SAFETY: as `wordWait`.
   unsafe {
-    syscall(n, word as i64, FUTEX_WAKE_PRIVATE, 1, 0, 0, 0);
+    syscall(n, word as i64, FUTEX_WAKE_PRIVATE, 1 as i64);
   }
 }
 
-declare c("c") function pthread_self(): usize;
-declare c("c") function pthread_getcpuclockid(thread: usize, clock: Ptr<u8>): i32;
-declare c("c") function clock_gettime$io(clock: i32, ts: Ptr<u8>): i32;
+declare c("c") function clock_gettime$io(clock: i32, ts: Ptr<timespec>): i32;
+
+/** The gettid call's number on this architecture. */
+function gettidNumber(): i64 {
+  return ARCH === "arm64" ? 178 : 186;
+}
 
 /**
  * This thread's CPU-time clock, which `threadCpu` reads from any thread (the stall monitor: a
  * worker the OS took off its core is not stalled in a poll); 0 when there is none.
+ *
+ * The kernel's clock id for thread `tid`'s CPU time is `(~tid << 3) | 6` (a per-thread
+ * `CPUCLOCK_SCHED` clock), which glibc's and musl's `pthread_getcpuclockid` both return; asking
+ * the kernel directly leaves out `pthread_t`, an integer in glibc and a pointer in musl.
  */
 export function threadClock(): u64 {
-  const a = m.scratch();
-  m.st(a, 0);
-  let c: u64 = 0;
-  // SAFETY: `a` has room for a `clockid_t`.
-  unsafe {
-    if (pthread_getcpuclockid(pthread_self(), m.ptr(a)) === 0) {
-      c = (m.ld32(a) as u64) | 0x100000000;
-    }
+  // SAFETY: gettid takes no arguments and cannot fail.
+  const tid = unsafe { syscall(gettidNumber()) } as i32;
+  if (tid <= 0) {
+    return 0;
   }
-  return c;
+  const clock = (~tid << 3) | 6;
+  return ((clock as u32) as u64) | 0x100000000;
 }
 
 /** The CPU time of the thread whose `threadClock` is `c` (nanoseconds; 0: unknown). */
@@ -326,7 +347,7 @@ export function threadCpu(c: u64): u64 {
   m.st(ts + 8, 0);
   // SAFETY: a timespec at `ts`; the clock is a live thread's (workers run until the end).
   unsafe {
-    clock_gettime$io((c & 0xffffffff) as u32 as i32, m.ptr(ts));
+    clock_gettime$io((c & 0xffffffff) as u32 as i32, m.ptrTo<timespec>(ts));
   }
   return (m.ld(ts) * 1000000000 + m.ld(ts + 8)) as u64;
 }

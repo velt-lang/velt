@@ -1,0 +1,186 @@
+// check: no leaks
+// velt/task taskScope's group of children: the scope settles only once every child has finished,
+// awaited or not, including children spawned by other children after the body returned and while
+// the scope already waits; results come back in the order the body asks for them, whatever order
+// the children finish in; the first failure in time aborts the signal and is the scope's error,
+// also through nested scopes; a scope whose body fails still waits for its children.
+import { AbortError, AbortSignal, TaskScope, taskScope } from "velt/task";
+
+class Failed extends Error {}
+
+type ScopeError = Failed | AbortError;
+
+/** Children that finished (each adds 1). */
+const DONE = new Atomic<i64>(0);
+/** Children that stopped on the scope's abort. */
+const STOPPED = new Atomic<i64>(0);
+
+async function after(ms: i64, value: i64): Promise<i64> {
+  await sleep(ms);
+  DONE.add(1);
+  return value;
+}
+
+async function failAfter(ms: i64, message: string): Promise<i64> throws Failed {
+  await sleep(ms);
+  throw new Failed(message);
+}
+
+// Fails with its own error once the scope's signal is aborted: always after the failure that
+// aborted it.
+async function failOnAbort(signal: AbortSignal): Promise<i64> throws Failed {
+  for (let i = 0; i < 6000; i++) {
+    if (signal.aborted) {
+      throw new Failed("second");
+    }
+    await sleep(10);
+  }
+  return -1;
+}
+
+async function untilAborted(signal: AbortSignal): Promise<i64> throws AbortError {
+  // A minute: a hang guard, only reached if the abort never comes.
+  for (let i = 0; i < 6000; i++) {
+    if (signal.aborted) {
+      STOPPED.add(1);
+    }
+    signal.throwIfAborted();
+    await sleep(10);
+  }
+  return -1;
+}
+
+async function yields(n: i64): Promise<void> {
+  for (let i: i64 = 0; i < n; i++) {
+    await yieldNow();
+  }
+  DONE.add(1);
+}
+
+// Spawns a grandchild into the same scope once it ran a while: by then the body has returned and
+// the scope waits.
+async function spawner(scope: TaskScope<Failed>, depth: i64): Promise<void> {
+  await sleep(10);
+  DONE.add(1);
+  if (depth > 0) {
+    const work = spawner(scope, depth - 1);
+    const next = scope.spawn(work);
+  }
+}
+
+async function quietUntilAborted(signal: AbortSignal): Promise<i64> {
+  for (let i = 0; i < 6000; i++) {
+    if (signal.aborted) {
+      STOPPED.add(1);
+      return 0;
+    }
+    await sleep(10);
+  }
+  return -1;
+}
+
+async function inner(fail: bool): Promise<i64> throws ScopeError {
+  return await taskScope(async (scope: TaskScope<ScopeError>): Promise<i64> throws ScopeError => {
+    const a = scope.spawn(after(5, 1));
+    const b = scope.spawn(quietUntilAborted(scope.signal));
+    if (fail) {
+      await scope.spawn(failAfter(15, "inner failed"));
+    } else {
+      scope.cancel("inner done");
+    }
+    return (await a) + 10;
+  });
+}
+
+async function main() {
+  // 1. Results in the order asked for; the children finish in the reverse order.
+  DONE.store(0);
+  const order = await taskScope(async (scope: TaskScope<Failed>): Promise<string> throws Failed => {
+    const handles: Promise<i64>[] = [];
+    for (let i: i64 = 0; i < 8; i++) {
+      handles.push(scope.spawn(after(5 * (8 - i), i)));
+    }
+    const values = await Promise.all(handles);
+    return values.join(",");
+  });
+  console.log("1:", order, DONE.load());
+
+  // 2. Children nobody awaits: the scope settles after all of them.
+  DONE.store(0);
+  const r2 = await taskScope(async (scope: TaskScope<Failed>): Promise<string> throws Failed => {
+    for (let i: i64 = 0; i < 5; i++) {
+      const h = scope.spawn(after(5 + 5 * i, i));
+    }
+    return "body";
+  });
+  console.log("2:", r2, DONE.load());
+
+  // 3. Children spawning children after the body returned.
+  DONE.store(0);
+  await taskScope(async (scope: TaskScope<Failed>): Promise<void> throws Failed => {
+    const w1 = spawner(scope, 4);
+    const h = scope.spawn(w1);
+    const w2 = spawner(scope, 2);
+    const k = scope.spawn(w2);
+  });
+  console.log("3:", DONE.load());
+
+  // 4. No children at all.
+  const r4 = await taskScope(async (scope: TaskScope<Failed>): Promise<i64> throws Failed => 4);
+  console.log("4:", r4);
+
+  // 5. Many children ending on any worker at about the same time.
+  DONE.store(0);
+  await taskScope(async (scope: TaskScope<Failed>): Promise<void> throws Failed => {
+    for (let i: i64 = 0; i < 300; i++) {
+      const h = scope.spawn(yields(i % 7));
+    }
+  });
+  console.log("5:", DONE.load());
+
+  // 6. The first failure in time wins over a later one and over the AbortErrors it causes.
+  STOPPED.store(0);
+  try {
+    await taskScope(async (scope: TaskScope<ScopeError>): Promise<i64> throws ScopeError => {
+      const late = scope.spawn(failOnAbort(scope.signal));
+      const early = scope.spawn(failAfter(10, "first"));
+      const w = scope.spawn(untilAborted(scope.signal));
+      return 0;
+    });
+  } catch (e) {
+    console.log("6:", e.message, STOPPED.load());
+  }
+
+  // 7. The body fails while children run: they stop, and the scope still waits for them.
+  STOPPED.store(0);
+  try {
+    await taskScope(async (scope: TaskScope<ScopeError>): Promise<i64> throws ScopeError => {
+      const a = scope.spawn(untilAborted(scope.signal));
+      const b = scope.spawn(untilAborted(scope.signal));
+      await sleep(10);
+      throw new Failed("body failed");
+    });
+  } catch (e) {
+    console.log("7:", e.message, STOPPED.load());
+  }
+
+  // 8. Nested scopes: an inner scope's failure is its outer child's, which aborts the outer one.
+  STOPPED.store(0);
+  try {
+    await taskScope(async (scope: TaskScope<ScopeError>): Promise<i64> throws ScopeError => {
+      const ok = scope.spawn(inner(false));
+      const sibling = scope.spawn(untilAborted(scope.signal));
+      const bad = scope.spawn(inner(true));
+      return await ok;
+    });
+  } catch (e) {
+    console.log("8:", e.message, STOPPED.load());
+  }
+  // An inner scope that only cancels its own signal ends normally inside its outer one.
+  const r9 = await taskScope(async (
+    scope: TaskScope<ScopeError>,
+  ): Promise<i64> throws ScopeError => {
+    return await scope.spawn(inner(false));
+  });
+  console.log("9:", r9);
+}

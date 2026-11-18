@@ -25,10 +25,6 @@ use std::sync::Mutex;
 /// first diagnostic message that differs (nothing that depends on the OS).
 const KNOWN: &[(&str, Kind)] = &[
     (
-        "golden/bugs/lower_adapted_closure_kept.velt",
-        Kind::Vir("callsIt state"),
-    ),
-    (
         "golden/lang/any_fn_members.velt",
         Kind::Vir("_V4read_T16bool_20_7c_20f64"),
     ),
@@ -59,13 +55,11 @@ const KNOWN: &[(&str, Kind)] = &[
         "golden/lang/throws_fn_type_values.velt",
         Kind::Vir("run::{closure#1} env"),
     ),
+    // With variables the set holds `Refused` too; the union's members are in their canonical
+    // order (#2958), so the first layout that differs is `Refused`'s.
     (
         "golden/std/catch_panic.velt",
-        Kind::Vir("Error | Refused | PanicError::Error"),
-    ),
-    (
-        "golden/std/throws_fn_type_revivers.velt",
-        Kind::Vir("RegExpError | UrlError::RegExpError"),
+        Kind::Vir("Refused | Error | PanicError::Refused"),
     ),
     // No promise: `const b: G = a` makes the sets of `F` and `G` one with variables, so the
     // `catch` around `a(1)` may catch an `E2`; without them `F`'s set is `E1` alone, and the

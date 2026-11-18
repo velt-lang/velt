@@ -1,0 +1,26 @@
+// check: no leaks
+// An interface extending the standard library's `EventListener`, a function type, is a function
+// with properties (#921), as one extending a program's own function type is (sigx's
+// `EventInvoker`, #379). (sigx's invoker calls its own `value`, a closure using the const it is
+// assigned to, which leaks its cycle for now: #1291.)
+interface Invoker extends EventListener {
+  value: (x: string) => string;
+  srcKey?: string;
+}
+
+function make(): Invoker {
+  const inv = function (e: Event) {
+    console.log("got", e.type);
+  } as Invoker;
+  inv.value = (x) => x.toUpperCase();
+  return inv;
+}
+
+const inv = make();
+inv(new Event("ping"));
+const target = new EventTarget();
+target.addEventListener("pong", inv);
+target.dispatchEvent(new Event("pong"));
+target.removeEventListener("pong", inv);
+target.dispatchEvent(new Event("pong"));
+console.log(inv.value("done"), inv.srcKey === undefined);

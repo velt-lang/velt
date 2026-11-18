@@ -1,0 +1,41 @@
+// velt/os (internal): Winsock for `hostname()` on Windows (`#os-winsock`'s win32 variant,
+// std/imports.velt): started once per process and never cleaned up, as libuv does for Node. A
+// `WSAStartup`/`WSACleanup` pair costs milliseconds, which every `hostname()` would pay.
+
+declare c("c") function WSAStartup$os(version: u16, data: u8[]): i32;
+declare c("c") function WSACleanup(): i32;
+
+/** Whether this process started Winsock for velt/os (it stays started). */
+const STARTED = new Atomic<u8>(0);
+
+/** How many times velt/os called `WSAStartup` (std/os/winsock.test.velt reads it). */
+const STARTS = new Atomic<u32>(0);
+
+/**
+ * Starts Winsock for velt/os once per process. `WSAStartup` counts, so a race of two first
+ * calls only counts one start more. False when it fails (then the next call tries again).
+ */
+export function startWinsock(): bool {
+  if (STARTED.load("acquire") !== 0) {
+    return true;
+  }
+  const wsa: u8[] = new Array<u8>(512).fill(0);
+  STARTS.add(1, "relaxed");
+  // SAFETY: room for a `WSADATA` (408 bytes on 64-bit Windows).
+  if (unsafe { WSAStartup$os(0x0202, wsa) } !== 0) {
+    return false;
+  }
+  STARTED.store(1, "release");
+  return true;
+}
+
+/** How many times velt/os called `WSAStartup` in this process (for its test). */
+export function winsockStarts(): u32 {
+  return STARTS.load("relaxed");
+}
+
+/** One `WSACleanup` (for velt/os' test): 0 when Winsock was started, else an error. */
+export function cleanupWinsock(): i32 {
+  // SAFETY: no precondition: it fails when Winsock isn't started.
+  return unsafe { WSACleanup() };
+}

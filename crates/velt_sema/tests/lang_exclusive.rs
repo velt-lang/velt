@@ -330,19 +330,19 @@ fn an_argument_may_not_replace_a_field_another_one_passes_through_a_narrowed_fie
 }
 
 #[test]
-fn a_system_function_buffer_is_not_shortened_by_another_argument() {
-    // A system function's buffer is a view of bytes: a later argument shortening the array
-    // would free bytes it covers, read or written.
-    let decl = "declare system function pread(fd: i32, buf: u8[], offset: i64): isize;
-                declare system function write(fd: i32, buf: readonly u8[], n: usize): isize;
+fn a_c_function_buffer_is_not_shortened_by_another_argument() {
+    // A C function's buffer is a view of bytes: a later argument shortening the array would
+    // free bytes it covers, read or written.
+    let decl = "declare c(\"c\") function pread(fd: i32, buf: u8[], n: usize, offset: i64): isize;
+                declare c(\"c\") function write(fd: i32, buf: readonly u8[], n: usize): isize;
                 class Holder { b: u8[] = Buffer.alloc(16); }";
     for call in [
-        "pread(0, h.b, (h.b.length = 0) as i64)",
+        "pread(0, h.b, 16, (h.b.length = 0) as i64)",
         "write(1, h.b, (h.b.length = 0) as usize)",
         "write(1, h.b.subarray(0, 8), (h.b.length = 0) as usize)",
     ] {
         let r = err_src(&format!(
-            "{decl} function main() {{ const h = new Holder(); console.log({call}); }}"
+            "{decl} function main() {{ const h = new Holder(); console.log(unsafe {{ {call} }}); }}"
         ));
         assert!(r.contains("`h.b` here"), "{call}: {r}");
     }

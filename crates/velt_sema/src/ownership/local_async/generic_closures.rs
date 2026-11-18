@@ -67,7 +67,18 @@ impl DynCalls {
     /// A value of type `ty` goes into `any` or is converted to another type: the interfaces it
     /// mentions escape, also through the fields of the objects it holds (a `(engine as any).run(…)`
     /// call reaches a generic function value in a field).
-    pub(super) fn escape(&mut self, cx: &Ctx, ty: TyId) {
+    ///
+    /// Into a dynamic type (`dynamic`: `any`, `unknown`, `object`), nothing does (#2952;
+    /// `docs/internals/contracts/hir_encodings.md`): a generic function value, a generic closure
+    /// or a generic method runs only through `Dyn` calls of its type or calls by name, whose type
+    /// arguments the walk records. Out of a dynamic type a value comes back only by a conversion
+    /// to its type (`u as G`, `a as I`), and a call of a generic method or function value straight
+    /// through `any` is a TypeError (#924); holding a generic function value as `any` or
+    /// `Function` is refused. An object's own type arguments are what it was made with.
+    pub(super) fn escape(&mut self, cx: &Ctx, ty: TyId, dynamic: bool) {
+        if dynamic {
+            return;
+        }
         let mut seen = FxHashSet::default();
         let mut work = vec![ty];
         while let Some(t) = work.pop() {
@@ -101,7 +112,7 @@ impl DynCalls {
         };
         outside_types(cx, from, &mut tys);
         for t in tys {
-            self.escape(cx, t);
+            self.escape(cx, t, false);
         }
     }
 

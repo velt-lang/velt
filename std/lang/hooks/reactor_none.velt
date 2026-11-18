@@ -2,8 +2,7 @@
 // over an IOCP port is #2649 step 2's: owner decision (c)): no sockets (`SUPPORTED` false, so
 // velt/net keeps the runtime's), and the worker's idle wait spins until another thread wakes it.
 
-import { Ptr } from "velt/ffi";
-import { atomicSpinHint, ptrAtomicLoad } from "velt/lang/intrinsics";
+import { addressAtomicLoad, atomicSpinHint } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 
 /** Does this OS have the reactor? Not here: sockets stay the runtime's. */
@@ -12,6 +11,8 @@ export const SUPPORTED: bool = false;
 export const EAGAIN: i32 = 11;
 export const EINPROGRESS: i32 = 115;
 export const EINTR: i32 = 4;
+/** A send on a stream whose peer is gone. */
+export const EPIPE: i32 = 32;
 /** `CLOCK_MONOTONIC`. */
 export const MONOTONIC: i32 = 1;
 /** `send`'s flags. */
@@ -20,6 +21,8 @@ export const SEND_FLAGS: i32 = 0;
 export const SOCKET_FLAGS: i32 = 0;
 /** `sysconf`'s name of the online cores (`_SC_NPROCESSORS_ONLN`; 0: none). */
 export const SC_NPROCESSORS_ONLN: i32 = 0;
+/** `pthread_attr_setdetachstate`'s detached state (`PTHREAD_CREATE_DETACHED`; 0: no pthreads). */
+export const PTHREAD_CREATE_DETACHED: i32 = 0;
 
 /** No `errno` to read here: 0. */
 export function errno(): i32 {
@@ -45,7 +48,7 @@ export function wait(r: usize, timeoutMs: i64): usize {
     return 0;
   }
   // SAFETY: the block's first word, changed atomically.
-  while (unsafe { ptrAtomicLoad(Ptr.at<u32>(r), "seqcst") } === 0) {
+  while (unsafe { addressAtomicLoad<u32>(r, "seqcst") } === 0) {
     atomicSpinHint();
   }
   m.store32(r, 0);

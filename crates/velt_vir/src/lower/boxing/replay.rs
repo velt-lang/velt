@@ -88,7 +88,21 @@ impl Facts {
             &mut out.array_view_targets,
             &one,
         );
+        take(
+            &mut self.record_view_targets,
+            &mut out.record_view_targets,
+            &one,
+        );
         take(&mut self.lock_values, &mut out.lock_values, &one);
+        take(&mut self.closure_envs, &mut out.closure_envs, &|e| {
+            let key_ph = e.0.as_ref().is_some_and(|k| k.tys().into_iter().any(ph));
+            key_ph || e.2.iter().any(|&t| ph(t))
+        });
+        take(&mut self.iface_impls, &mut out.iface_impls, &|p| ph(p.1));
+        take(&mut self.alloc_sites, &mut out.alloc_sites, &|p| ph(p.0));
+        take(&mut self.gen_frames, &mut out.gen_frames, &|f| {
+            ph(f.0) || f.2.iter().any(|&t| ph(t))
+        });
         let by_fn = [
             (&mut self.fn_tuple_writes, &mut out.fn_tuple_writes),
             (&mut self.fn_read_params, &mut out.fn_read_params),
@@ -134,12 +148,23 @@ impl Facts {
             &other.object_types,
             &other.proxy_targets,
             &other.array_view_targets,
+            &other.record_view_targets,
             &other.lock_values,
         ] {
             v.extend(s.iter().copied());
         }
         for s in [&other.projections, &other.upcasts, &other.proxy_casts] {
             v.extend(s.iter().flat_map(|p| [p.0, p.1]));
+        }
+        for (key, _, targs) in &other.closure_envs {
+            v.extend(key.iter().flat_map(|k| k.tys()));
+            v.extend(targs.iter().copied());
+        }
+        v.extend(other.iface_impls.iter().map(|p| p.1));
+        v.extend(other.alloc_sites.iter().map(|p| p.0));
+        for (g, _, targs) in &other.gen_frames {
+            v.push(*g);
+            v.extend(targs.iter().copied());
         }
         for k in (other.fn_compared_keys.iter())
             .chain(&other.generic_any_keys)
@@ -156,7 +181,7 @@ impl Facts {
     pub(in crate::lower) fn add_mapped(&mut self, other: &Facts, map: &FxHashMap<TyId, TyId>) {
         let m = |t: &TyId| *map.get(t).unwrap_or(t);
         let mut mf = |t: TyId| m(&t);
-        let sets: [(&mut FxHashSet<TyId>, &FxHashSet<TyId>); 14] = [
+        let sets: [(&mut FxHashSet<TyId>, &FxHashSet<TyId>); 15] = [
             (&mut self.shares, &other.shares),
             (&mut self.identity, &other.identity),
             (&mut self.identity_borrows, &other.identity_borrows),
@@ -170,6 +195,7 @@ impl Facts {
             (&mut self.object_types, &other.object_types),
             (&mut self.proxy_targets, &other.proxy_targets),
             (&mut self.array_view_targets, &other.array_view_targets),
+            (&mut self.record_view_targets, &other.record_view_targets),
             (&mut self.lock_values, &other.lock_values),
         ];
         for (to, from) in sets {
@@ -195,6 +221,16 @@ impl Facts {
         }
         for (d, k, b) in &other.fresh_made {
             self.fresh_made.insert((*d, map_key(k, &mut mf), *b));
+        }
+        for (key, d, targs) in &other.closure_envs {
+            let key = key.as_ref().map(|k| k.map(&mut mf));
+            self.closure_envs
+                .insert((key, *d, targs.iter().map(m).collect()));
+        }
+        (self.iface_impls).extend(other.iface_impls.iter().map(|&(d, t)| (d, m(&t))));
+        (self.alloc_sites).extend(other.alloc_sites.iter().map(|&(t, s)| (m(&t), s)));
+        for (g, d, targs) in &other.gen_frames {
+            (self.gen_frames).insert((m(g), *d, targs.iter().map(m).collect()));
         }
     }
 }

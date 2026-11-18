@@ -55,7 +55,8 @@ export const L_SIZE: usize = 64;
  * list (0: not queued), links in it, state, the waker of its turn, when its turn may come at the
  * earliest (nanoseconds: the whole delay after it was inserted), when its last turn was taken
  * (nanoseconds, and whether it was), the task that runs its callback (0: none; its lists are
- * passed over while it is in a poll on another worker: sched_order_pass.velt `busy`).
+ * passed over while it is in a poll on another worker: sched_order_pass.velt `busy`), and whether
+ * a counted exit gives it back (sched_order_give.velt).
  */
 export const H_MS: usize = 0;
 export const H_START: usize = 8;
@@ -69,7 +70,8 @@ export const H_AT: usize = 64;
 export const H_RAN: usize = 72;
 export const H_RAN_SET: usize = 80;
 export const H_TASK: usize = 88;
-export const H_SIZE: usize = 96;
+export const H_GIVE: usize = 96;
+export const H_SIZE: usize = 104;
 
 /** A timer's states: not queued (new, cleared, or its turn taken); queued; its turn has come. */
 export const IDLE: usize = 0;

@@ -172,7 +172,11 @@ pub(super) fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> b
         // per group, not per call.
         let calls = (g.indirect_by_ty.iter())
             .filter(|(cty, _)| types::may_be(cx, ty, *cty))
-            .flat_map(|(_, calls)| calls.iter().map(|&ci| &g.indirect[ci]));
+            .flat_map(|(_, calls)| calls.iter())
+            // A wired call's arguments flow into the parameters of the closures it may reach
+            // (`graph::wire`): a crossing parameter makes its argument cross along that edge.
+            .filter(|&&ci| !g.wired[ci])
+            .map(|&ci| &g.indirect[ci]);
         let calls: Vec<_> = calls.collect();
         for call in calls {
             if unseen && !super::graph::untraced_input(g, call.callee) {
@@ -248,7 +252,7 @@ fn crossing_method_args(cx: &Ctx, g: &Graph, p: &mut Propagation) -> bool {
 /// capture locals back to the variables they capture, since a closure that assigns a captured
 /// variable changes the enclosing function's (a cell, `crate::moves`). A function's result is a
 /// sink unless the graph follows it to every caller ([`results_followed`]).
-fn forward(cx: &Ctx, g: &Graph) -> Forward {
+pub(super) fn forward(cx: &Ctx, g: &Graph) -> Forward {
     let mut edges = vec![vec![]; g.nodes.len()];
     for (m, srcs) in g.srcs.iter().enumerate() {
         for &(s, _) in srcs {
@@ -289,7 +293,7 @@ fn results_followed(cx: &Ctx, g: &Graph, d: DefId) -> bool {
 }
 
 /// The graph's edges forward ([`forward`]), and the nodes whose values reach a sink directly.
-struct Forward {
+pub(super) struct Forward {
     edges: Vec<Vec<usize>>,
     sink: Vec<bool>,
 }
@@ -301,14 +305,21 @@ struct Forward {
 /// value or a dispatched call, whose parameter the graph does not follow. A closure that
 /// captures it holds it in a capture local, which only that closure's body reads: followed like
 /// any local, so the flags the capturing closure takes (`Propagation::run`) don't count here.
-fn held_in_locals(g: &Graph, fwd: &Forward, n: usize) -> Option<FxHashSet<usize>> {
+pub(super) fn held_in_locals(g: &Graph, fwd: &Forward, n: usize) -> Option<FxHashSet<usize>> {
     let mut seen = FxHashSet::default();
     let mut work = vec![n];
     while let Some(m) = work.pop() {
         if !seen.insert(m) {
             continue;
         }
-        if fwd.sink[m] || matches!(g.nodes[m], Node::Arg(..) | Node::DArg(..)) {
+        // An argument of a wired call flows on into the parameters of the closures it may
+        // reach (`graph::wire`); another call's goes where the graph doesn't follow.
+        let unfollowed = match g.nodes[m] {
+            Node::Arg(ci, _) => !g.wired.get(ci as usize).copied().unwrap_or(false),
+            Node::DArg(..) => true,
+            _ => false,
+        };
+        if fwd.sink[m] || unfollowed {
             return None;
         }
         work.extend(fwd.edges[m].iter().copied().filter(|x| !seen.contains(x)));
@@ -319,29 +330,70 @@ fn held_in_locals(g: &Graph, fwd: &Forward, n: usize) -> Option<FxHashSet<usize>
 /// Collects into `out` the functions that code outside every function body (module-level and
 /// field initializers) calls by name or uses as a value: called from where the graph does not
 /// follow, with no type arguments recorded.
-pub(super) fn named_outside_bodies(cx: &Ctx, out: &mut FxHashSet<DefId>) {
-    // A finished unit's are kept with it (`units::finish_unit`, [`unit_named_outside_bodies`]).
+pub(super) fn named_outside_bodies(
+    cx: &Ctx,
+    out: &mut FxHashSet<DefId>,
+    insts: &mut FxHashMap<DefId, Vec<(DefId, Vec<TyId>)>>,
+    news: &mut FxHashMap<DefId, Vec<(DefId, Vec<TyId>)>>,
+) {
+    // A finished unit's are kept with it (`units::finish_unit`, [`unit_named_outside_bodies`]):
+    // its definitions come first, as a scan of every definition finds them.
     let from = match &cx.unit_sums.outside_named {
         Some(kept) => {
-            out.extend(kept.iter().copied());
+            out.extend(kept.out.iter().copied());
+            for (d, sites) in &kept.insts {
+                insts.entry(*d).or_default().extend(sites.iter().cloned());
+            }
+            for (d, sites) in &kept.news {
+                news.entry(*d).or_default().extend(sites.iter().cloned());
+            }
             cx.unit_base as usize
         }
         None => 0,
     };
-    named_outside_bodies_from(cx, from, out);
+    named_outside_bodies_from(cx, from, out, insts, news);
+}
+
+/// What [`named_outside_bodies`] finds in a finished unit, kept with it (#2943 M2): reading
+/// every definition again would decode all of a unit from disk.
+#[derive(Clone, Default)]
+pub(crate) struct OutsideNamed {
+    out: FxHashSet<DefId>,
+    insts: FxHashMap<DefId, Vec<(DefId, Vec<TyId>)>>,
+    news: FxHashMap<DefId, Vec<(DefId, Vec<TyId>)>>,
 }
 
 /// EXPERIMENT (#2943 M2): [`named_outside_bodies`] of a finished unit, kept with it.
-pub(crate) fn unit_named_outside_bodies(cx: &Ctx) -> FxHashSet<DefId> {
-    let mut out = FxHashSet::default();
-    named_outside_bodies_from(cx, 0, &mut out);
-    out
+pub(crate) fn unit_named_outside_bodies(cx: &Ctx) -> OutsideNamed {
+    let mut o = OutsideNamed::default();
+    named_outside_bodies_from(cx, 0, &mut o.out, &mut o.insts, &mut o.news);
+    o
 }
 
-fn named_outside_bodies_from(cx: &Ctx, from: usize, out: &mut FxHashSet<DefId>) {
-    let mut named = Named(out);
-    for info in cx.info.iter().skip(from) {
-        match info {
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    OutsideNamed {
+        out, insts, news,
+    }
+}
+
+/// [`named_outside_bodies`] over the definitions from `from` on.
+fn named_outside_bodies_from(
+    cx: &Ctx,
+    from: usize,
+    out: &mut FxHashSet<DefId>,
+    insts: &mut FxHashMap<DefId, Vec<(DefId, Vec<TyId>)>>,
+    news: &mut FxHashMap<DefId, Vec<(DefId, Vec<TyId>)>>,
+) {
+    let mut named = Named {
+        out,
+        insts,
+        news,
+        owner: DefId(0),
+    };
+    for i in from..cx.info.len() {
+        named.owner = DefId(i as u32);
+        match &cx.info[i] {
             DefInfo::Global(gi) => {
                 if let Some(init) = &gi.init {
                     walk::expr(init, &mut named);
@@ -356,10 +408,11 @@ fn named_outside_bodies_from(cx: &Ctx, from: usize, out: &mut FxHashSet<DefId>) 
             _ => {}
         }
     }
-    for def in cx.defs.iter().skip(from).flatten() {
-        match def {
-            Def::Global(gd) => walk::expr(&gd.init, &mut named),
-            Def::Adt(a) => {
+    for i in from..cx.defs.len() {
+        named.owner = DefId(i as u32);
+        match &cx.defs[i] {
+            Some(Def::Global(gd)) => walk::expr(&gd.init, &mut named),
+            Some(Def::Adt(a)) => {
                 for v in a.fields.iter().filter_map(|f| f.default.as_ref()) {
                     walk::expr(v, &mut named);
                 }
@@ -372,17 +425,37 @@ fn named_outside_bodies_from(cx: &Ctx, from: usize, out: &mut FxHashSet<DefId>) 
     }
 }
 
-/// Collects the functions an expression calls by name or uses as a value.
-struct Named<'a>(&'a mut FxHashSet<DefId>);
+/// Collects the functions an expression calls by name or uses as a value, and, as instantiations
+/// of a generic one (`Graph::insts`), the type arguments it names there, made by `owner` (#2952:
+/// `const renderer = createRenderer(nodeOps)` at module level is `createRenderer`'s only call);
+/// likewise the objects of generic classes and structs it makes (`Graph::news`).
+struct Named<'a> {
+    out: &'a mut FxHashSet<DefId>,
+    insts: &'a mut FxHashMap<DefId, Vec<(DefId, Vec<TyId>)>>,
+    news: &'a mut FxHashMap<DefId, Vec<(DefId, Vec<TyId>)>>,
+    owner: DefId,
+}
 
 impl Visit for Named<'_> {
     fn expr(&mut self, e: &Expr) {
         match &e.kind {
-            E::FnRef(d, _)
+            E::FnRef(d, targs)
             | E::Call {
-                callee: Callee::Def(d, _),
+                callee: Callee::Def(d, targs),
                 ..
-            } => _ = self.0.insert(*d),
+            } => {
+                self.out.insert(*d);
+                if !targs.is_empty() {
+                    let site = (self.owner, targs.clone());
+                    self.insts.entry(*d).or_default().push(site);
+                }
+            }
+            E::New { def, type_args, .. } | E::AdtLit { def, type_args, .. }
+                if !type_args.is_empty() =>
+            {
+                let site = (self.owner, type_args.clone());
+                self.news.entry(*def).or_default().push(site);
+            }
             _ => {}
         }
     }

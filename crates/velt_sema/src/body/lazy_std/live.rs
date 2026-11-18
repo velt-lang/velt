@@ -46,7 +46,7 @@ pub(crate) struct Live {
     /// The definitions below this one are seeded ([`seed`]; generated code is added later).
     seeded: usize,
     /// The live definitions.
-    live: FxHashSet<DefId>,
+    pub(super) live: FxHashSet<DefId>,
     /// Live definitions still to walk (some not checked yet).
     todo: Vec<DefId>,
     /// The types met in live code.
@@ -95,6 +95,11 @@ pub(crate) struct Live {
     /// EXPERIMENT (#2943 M3): a build from std's unit on disk walked this set
     /// ([`walk_units_program`]): the hooks are those its constructs demand.
     pub(super) units: bool,
+    /// EXPERIMENT (#2943): with [`Live::units`], the modules lazy std would have loaded so far
+    /// ([`walk_units_program`]; empty: every module). A std unit has every module's extensions
+    /// and implementations, lazy std only those of the modules it loaded: the others' methods
+    /// aren't live ([`loaded_for`]).
+    units_loaded: Vec<bool>,
 }
 
 impl Live {
@@ -212,6 +217,7 @@ pub(crate) fn walk_units_program(cx: &mut Ctx, entry: Option<DefId>) -> FxHashSe
     // Lazy std loads part of std ([`units_loaded_modules`]) and seeds the by-name functions of
     // what it loaded; a module live code reaches into is loaded then too (`Ctx::demand_std`).
     let mut loaded = units_loaded_modules(cx);
+    cx.lazy.live.units_loaded = loaded.clone();
     seed_units(cx, base, &loaded);
     super::units_restart(cx);
     // Lazy std's loop: the walk, the hooks the constructs demand, and those that wait for what
@@ -235,6 +241,7 @@ pub(crate) fn walk_units_program(cx: &mut Ctx, entry: Option<DefId>) -> FxHashSe
         if !any {
             break;
         }
+        units_loaded_more(cx, &loaded, &new);
         seed_units_named(cx, base, &new);
     }
     let proxy =
@@ -386,7 +393,7 @@ pub(crate) fn live_defs(cx: &mut Ctx, unchecked: &FxHashSet<DefId>) -> Option<Fx
 pub(super) fn step(cx: &mut Ctx) -> Vec<TyId> {
     loop {
         walk_set(cx);
-        if !demand_hooks(cx) {
+        if !(demand_hooks(cx) | constructs::demand_gated(cx)) {
             return std::mem::take(&mut cx.lazy.live.texts);
         }
     }
@@ -419,7 +426,7 @@ fn demand_hooks(cx: &mut Ctx) -> bool {
         return false;
     }
     let mut marked = false;
-    for h in newly_demanded(before, now) {
+    for h in newly_demanded(before, now).filter(|h| !constructs::gated(h.name)) {
         cx.demand_std(&h.module());
         if let Some(crate::ctx::Item::Def(d)) = cx.std_def(&h.qualified()) {
             marked = true;
@@ -503,6 +510,7 @@ fn note_program_code(
     (types, conversions, into_any, first_text): (usize, usize, usize, usize),
 ) {
     cx.lazy.live.texts.extend(&w.texts[first_text..]);
+    constructs::note_program_dyn(cx, &w.into_any[into_any..]);
     if !cx.lazy.record_hooks {
         super::record_conversions::note_user_conversions(
             cx,
@@ -515,6 +523,7 @@ fn note_program_code(
 
 /// What `w` found is live.
 fn add_walk(cx: &mut Ctx, w: Walk) {
+    cx.lazy.dyn_held.extend(w.into_any.iter().map(|&(t, _)| t));
     for &t in &w.conversions {
         if !cx.lazy.record_conversion {
             let holds = super::holds_string_record(cx, t, &mut FxHashSet::default());
@@ -783,7 +792,7 @@ fn walk_expr(ty: &crate::types::Types, e: &hir::Expr, w: &mut Walk) {
             w.formats.extend(args.iter().map(|a| a.ty));
         }
         E::Call {
-            callee: Callee::Intrinsic(I::Inspect | I::ErrorText),
+            callee: Callee::Intrinsic(I::Inspect | I::InspectNested | I::ErrorText),
             args,
         } => w.formats.extend(args.iter().map(|a| a.ty)),
         E::Call {
@@ -866,9 +875,57 @@ fn live_types_of(cx: &mut Ctx, mut todo: Vec<TyId>, mut adts: Vec<DefId>) {
         adts.extend(cx.lazy.subclasses.get(&d).into_iter().flatten().copied());
         let ms = methods(cx).get(&d).cloned().unwrap_or_default();
         for m in ms {
-            mark(cx, m);
+            if loaded_for(cx, m, Some(d)) {
+                mark(cx, m);
+            }
         }
         defaults(cx, d);
+    }
+}
+
+/// The module of function `f`.
+fn fn_module(cx: &Ctx, f: DefId) -> Option<usize> {
+    match cx.info.get(f.0 as usize) {
+        Some(DefInfo::Fn(i)) => Some(i.module),
+        _ => None,
+    }
+}
+
+/// EXPERIMENT (#2943): may method `m` of `owner` (a class or struct, if any) be live in a walk
+/// of std's unit ([`Live::units_loaded`])? Lazy std has an extension's or implementation's
+/// methods only once it loaded their module: `std/test/suite`'s `extend<T> T` gives every type a
+/// `[SETTLE]` method, which a program that never imports `velt/test` hasn't. A class's own
+/// methods are in its module, which is there with it.
+pub(super) fn loaded_for(cx: &Ctx, m: DefId, owner: Option<DefId>) -> bool {
+    let loaded = &cx.lazy.live.units_loaded;
+    if loaded.is_empty() {
+        return true;
+    }
+    let Some(module) = fn_module(cx, m) else {
+        return true;
+    };
+    let owner_module = owner.and_then(|o| match cx.info.get(o.0 as usize) {
+        Some(DefInfo::Adt(a)) => Some(a.module),
+        _ => None,
+    });
+    owner_module == Some(module) || loaded.get(module).copied().unwrap_or(true)
+}
+
+/// EXPERIMENT (#2943): [`walk_units_program`] loaded the `new` modules: the methods there of the
+/// live classes and structs are live now, and the implementations there are considered again.
+fn units_loaded_more(cx: &mut Ctx, loaded: &[bool], new: &[bool]) {
+    cx.lazy.live.units_loaded = loaded.to_vec();
+    cx.lazy.live.opened = None;
+    let adts: Vec<DefId> = cx.lazy.live.adts.iter().copied().collect();
+    let mut found = vec![];
+    for d in adts {
+        let ms = methods(cx).get(&d).cloned().unwrap_or_default();
+        found.extend(ms.into_iter().filter(|&m| {
+            fn_module(cx, m).is_some_and(|module| new.get(module).copied().unwrap_or(false))
+        }));
+    }
+    for m in found {
+        mark(cx, m);
     }
 }
 
@@ -943,14 +1000,16 @@ fn live_impls(cx: &mut Ctx) {
         {
             continue;
         }
-        let for_live_type = match cx.ty.kind(imp.ty) {
-            TyKind::Adt(d, _) => live.adts.contains(d),
+        let (for_live_type, owner) = match cx.ty.kind(imp.ty) {
+            TyKind::Adt(d, _) => (live.adts.contains(d), Some(*d)),
             k => match kind_bit(k) {
-                0 => true,
-                bit => live.kinds & bit != 0,
+                0 => (true, None),
+                bit => (live.kinds & bit != 0, None),
             },
         };
-        if for_live_type {
+        // Not marked: considered again when its module is loaded (`units_loaded_more`).
+        let loaded = (imp.methods.first()).is_none_or(|&m| loaded_for(cx, m, owner));
+        if for_live_type && loaded {
             marked.push((k, imp.methods.clone()));
         }
     }
@@ -1009,7 +1068,7 @@ crate::units::codec::structs! {
     Live {
         check, seeded, live, todo, types, adts, methods, impls, kinds, ifaces, gated, opened,
         waiting, texts, dynamic_classes, finishing, present, assumed, late, demanded, int_text,
-        prints_float, tasks, units,
+        prints_float, tasks, units, units_loaded,
     }
 }
 crate::units::codec::enums! {
