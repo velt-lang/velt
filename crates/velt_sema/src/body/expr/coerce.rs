@@ -533,6 +533,9 @@ impl FnCx<'_, '_> {
         iface: hir::DefId,
         args: &[TyId],
     ) -> Result<hir::Expr, hir::Expr> {
+        if self.reject_ptr_dynamic(&h, exp) {
+            return Ok(self.error_expr(h.span));
+        }
         // `I<A>` where `I<unknown>` is expected: wrapped (`iface_adapt`).
         if let TyKind::Dyn(have, from) = self.cx.ty.kind(h.ty).clone() {
             if have == iface && self.cx.dynamic(h.ty).is_none() {

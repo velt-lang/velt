@@ -12,7 +12,7 @@
 // transaction back. A nested transaction that rolled back resets the count, so its failure only
 // undoes its own savepoint.
 
-import { CString, OutPtr, Ptr, readCString, readUtf8 } from "velt/ffi";
+import { CString, Out, Ptr, readCString, readUtf8 } from "velt/ffi";
 import { Backoff } from "velt/sync";
 import { codeName, SQLITE_MISMATCH, SQLITE_MISUSE, SqliteError } from "./errors";
 import { Book } from "./book";
@@ -201,7 +201,7 @@ export function openState(path: string, readonly: bool, create: bool, timeoutMs:
   if (name instanceof SqliteError) {
     throw name;
   }
-  const out = new OutPtr<sqlite3>();
+  const out = new Out<Ptr<sqlite3> | null>(null);
   // SAFETY: the name is NUL-terminated, and `out` is written before the call returns.
   const rc = unsafe { sqlite3_open_v2(name, out, flags, null) };
   const db = out.value;
@@ -271,8 +271,8 @@ function tailProblem(s: shared<State>, rest: string): SqliteError | null {
   if (text instanceof SqliteError) {
     return several;
   }
-  const out = new OutPtr<sqlite3_stmt>();
-  const tail = new OutPtr<u8>();
+  const out = new Out<Ptr<sqlite3_stmt> | null>(null);
+  const tail = new Out<Ptr<u8> | null>(null);
   // SAFETY: inside the gate; the SQL is NUL-terminated and borrowed for the call.
   const rc = unsafe { sqlite3_prepare_v3(s.db, text, -1, 0, out, tail) };
   const stmt = out.value;
@@ -292,8 +292,8 @@ function compile(s: shared<State>, sql: string, flags: u32): Ptr<sqlite3_stmt> |
   if (text instanceof SqliteError) {
     return s.note(text);
   }
-  const out = new OutPtr<sqlite3_stmt>();
-  const tail = new OutPtr<u8>();
+  const out = new Out<Ptr<sqlite3_stmt> | null>(null);
+  const tail = new Out<Ptr<u8> | null>(null);
   // SAFETY: inside the gate; the SQL is NUL-terminated, and `tail` points into it while it lives.
   const rc = unsafe { sqlite3_prepare_v3(s.db, text, -1, flags, out, tail) };
   if (rc != SQLITE_OK) {

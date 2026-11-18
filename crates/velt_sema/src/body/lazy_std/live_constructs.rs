@@ -123,7 +123,7 @@ pub(crate) fn too_late(cx: &mut Ctx, assumed: &mut Assumed) -> bool {
                 }
                 _ => {}
             }
-            todo.extend(crate::types::children(kind));
+            todo.extend(crate::types::contents(kind));
         }
     }
     classes.sort();
@@ -504,7 +504,7 @@ fn may_print_int(cx: &mut Ctx, t: TyId) -> bool {
         | TyKind::Result(..)
         | TyKind::Promise(..)
         | TyKind::Shared(_) => {
-            (crate::types::children(&kind).into_iter()).any(|c| may_print_int(cx, c))
+            (crate::types::contents(&kind).into_iter()).any(|c| may_print_int(cx, c))
         }
         _ => true,
     };

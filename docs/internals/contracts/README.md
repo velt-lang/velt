@@ -176,6 +176,13 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   loads them for a module declaring one. On JS hosts `velt_main` hands `main`'s root to
   `velt_rt_host_main` with the code after it (VIR `Work::MainFinish`) instead of calling
   `velt_rt_block_on` (rt_abi_async.md §2.5).
+- C pointers (#3094, docs/internals/design/c-ffi.md "As built" 11): `hir::TyKind::Ptr(T)` is
+  velt/ffi's `Ptr<T>`, resolved from std's declaration through the `std_hooks` entry kind
+  `type_kind` (`ffi_ptr_type`); it lowers to `Ty::Ptr` with the null niche, so `Ptr<T> | null`
+  is one word with 0 for `null`. `hir::CTy::OutPtr` is removed (`Out<Ptr<T> | null>` is a
+  `T **`, `CTy::Out`); the `std_hooks` rows `ffi_ptr_of`, `ffi_ptr_or_null`, `ffi_ptr_address`
+  and `ffi_ptr_address_or_zero` are removed; `Intrinsic::PtrAtomic*` are `AddressAtomic*`,
+  taking an address, and `PtrFromAddress` / `PtrToAddress` are added. VIR types are unchanged.
 - Variadic C functions (#2187, docs/internals/design/c-ffi.md "Variadic functions"):
   `hir::CImport::variadic` (additive) marks a `declare c` function ending with `...args:
   CVarArgs`; its `CImport::params` and `ExternFnDef::params` are the fixed parameters, and a

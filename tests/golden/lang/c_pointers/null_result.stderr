@@ -1,0 +1,1 @@
+C function `getenv` returned NULL, but its declaration's result is `Ptr<T>`: declare it `Ptr<T> | null`

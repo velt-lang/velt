@@ -35,7 +35,7 @@ const BYTES = new Atomic<u64>(0);
 /** Making the pipe (a spin lock). */
 const MAKING = new Atomic<u32>(0);
 
-declare c("c") function sigaction(sig: i32, act: Ptr<u8>, old: Ptr<u8>): i32;
+declare c("c") function sigaction(sig: i32, act: Ptr<u8>, old: Ptr<u8> | null): i32;
 declare c("c") function read$signal(fd: i32, buf: Ptr<u8>, n: usize): isize;
 declare c("c") function write$signal(fd: i32, buf: Ptr<u8>, n: usize): isize;
 declare c("c") function close$signal(fd: i32): i32;
@@ -103,7 +103,7 @@ export function watch(sig: i32): bool {
   m.st(act, unsafe { exportedAddress(onSignal) });
   m.st32(act + sg.FLAGS_AT, sg.SA_RESTART as u32);
   // An empty mask: the zeroed `sigset_t` at 8. SAFETY: a `struct sigaction` at `act`.
-  const rc = unsafe { sigaction(sig, m.ptr(act), m.ptr(0)) };
+  const rc = unsafe { sigaction(sig, m.ptr(act), null) };
   m.release(act, sg.ACTION_SIZE);
   return rc === 0;
 }
