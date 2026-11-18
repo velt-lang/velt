@@ -144,7 +144,7 @@ function runWoken(e: usize, k: usize, fl: u32): void {
     while (n !== 0) {
       const next = wn.nextWoken(n);
       node.run(k, n, true);
-      node.ran(k, n);
+      node.release(n);
       drain(e, k);
       n = next;
     }
@@ -194,7 +194,7 @@ function fireDue(e: usize, k: usize): void {
     } else {
       if (own) {
         node.run(k, w, false);
-        node.ran(k, w);
+        node.release(w);
       } else {
         m.wakeOwned(w);
       }
@@ -323,7 +323,7 @@ function drain(e: usize, k: usize): void {
       pollRootAgain(e, k);
     } else if (node.ownNode(k, w)) {
       node.run(k, w, false);
-      node.ran(k, w);
+      node.release(w);
     } else {
       m.wakeOwned(w);
     }

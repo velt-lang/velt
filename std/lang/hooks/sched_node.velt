@@ -200,7 +200,7 @@ function pollNode(f: usize, cx: usize, claim: bool): u32 {
       adoptedDone(task, n, claim ? FINISHED | DELIVERED : FINISHED);
       return 1;
     }
-    if (m.ld(n + N_REFS) === 2) {
+    if (m.load(n + N_REFS) === 2) {
       // Its owner's and its task's are its only references: no leaf holds its own waker, so it
       // runs again only when its owner polls it, and its leaves wake the owner. The owner's
       // waker is not kept here then: an owner that nothing else can wake is `unreachable`.
@@ -258,6 +258,9 @@ export function nodeDrop(f: usize): void {
     return;
   } else if ((fl & FINISHED) === 0) {
     setFlags(n, DETACHED);
+    if (m.load(n + N_REFS) === 2) {
+      return dropPending(n);
+    }
   } else if ((fl & DELIVERED) === 0) {
     rp.dropResult(n);
   }
@@ -265,10 +268,22 @@ export function nodeDrop(f: usize): void {
   if (w !== 0) {
     m.wakerDrop(w);
   }
-  const pending = (fl & (STARTED | FINISHED)) === STARTED;
   release(n);
-  // The owner's was the last reference besides its task's: nothing can wake it any more.
-  if (pending && unreachable(n, 1)) {
+}
+
+/**
+ * `nodeDrop`'s end for started node `n` that has not finished, its owner on its task's thread:
+ * when the owner's was the last reference besides its task's, nothing can wake it any more. A
+ * call of its own, so the drop of a finished promise, the common one, keeps nothing across it.
+ */
+@noInline
+function dropPending(n: usize): void {
+  const w = aw.takePlain(n);
+  if (w !== 0) {
+    m.wakerDrop(w);
+  }
+  release(n);
+  if (unreachable(n, 1)) {
     giveUp(m.ld(n + N_TASK), n);
   }
 }
@@ -288,18 +303,17 @@ function unreachable(n: usize, refs: usize): bool {
   const fl = m.load32(n + N_FLAGS);
   const idle = STARTED | DETACHED;
   const busy = FINISHED | RUNNING | QUEUED | CATCHES | PANICKED | ADOPTED;
-  return (fl & (idle | busy)) === idle && m.ld(n + N_REFS) === refs;
+  return (fl & (idle | busy)) === idle && m.load(n + N_REFS) === refs;
 }
 
 /**
- * Gives back the reference a run of node `n` of task `task` was made with (the woken stack's, a
- * sleep's, a microtask's: sched_run.velt), after `run`. A node left suspended with nobody to wake
- * it and nobody to see it finish is given up.
+ * A run of node `n` of task `task` left it suspended with its owner gone (`run`): given up when
+ * nothing can wake it. The run's caller still holds the reference it ran it with (the woken
+ * stack's, a sleep's, a microtask's: sched_run.velt), which frees the node when it goes.
  */
-export function ran(task: usize, n: usize): void {
-  const lost = unreachable(n, 2);
-  release(n);
-  if (lost) {
+@noInline
+function parked(task: usize, n: usize): void {
+  if (unreachable(n, 2)) {
     giveUp(task, n);
   }
 }
@@ -307,7 +321,8 @@ export function ran(task: usize, n: usize): void {
 /**
  * Gives up node `n` of task `task`, which is `unreachable`: its state is dropped (what its
  * frame holds goes, as when JavaScript collects a function suspended for ever), and the task's
- * reference with it, which frees the node. It has no result. On the task's thread only.
+ * reference with it; the last reference frees the node. It has no result. On the task's thread
+ * only.
  */
 @noInline
 function giveUp(task: usize, n: usize): void {
@@ -386,6 +401,8 @@ export function handled(f: usize, qdrop: usize, hdrPoll: usize): void {
  * Polls started node `n` of task `task` once (it is not running). Only a node `taken` off the
  * task's woken stack (sched_node_woken.velt `takeWoken`) leaves QUEUED: one run from elsewhere
  * (a microtask, its start) may still be on the stack, and a wake must not push it there twice.
+ * A poll that leaves it suspended with its owner gone looks whether anything can still wake it
+ * (`parked`).
  */
 export function run(task: usize, n: usize, taken: bool): void {
   if (taken) {
@@ -411,6 +428,9 @@ export function run(task: usize, n: usize, taken: bool): void {
     const r = unsafe { statePoll(m.ld(n + N_POLL), n + N_HEAD + 16, n + N_CX) };
     m.and32(n + N_FLAGS, ~RUNNING);
     if (r !== 1) {
+      if ((m.load32(n + N_FLAGS) & DETACHED) !== 0 && m.load(n + N_REFS) === 2) {
+        parked(task, n);
+      }
       return;
     }
   }
