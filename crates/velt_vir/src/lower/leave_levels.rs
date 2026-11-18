@@ -14,6 +14,7 @@
 use rustc_hash::FxHashMap;
 use velt_sema::hir::{self, DefId, ExprKind as K, Intrinsic, LocalId, TyId};
 
+use super::caller_aliases::binds;
 use super::frozen::place_root;
 use super::rt::Rt;
 use super::{cfunc, cint, FnLower, LkMode, Work};
@@ -382,7 +383,7 @@ struct Store {
 }
 
 /// An argument of a storing call that is no place and holds no transfer: its type, the
-/// variables it reads, those it binds itself (`own`: a pattern's in `v!` or `a ?? b`, a
+/// variables it reads, those it binds itself (`pats`: a pattern's in `v!` or `a ?? b`; `own`: a
 /// `let`'s in the block a spread literal or `Array.from` becomes) and the functions it calls.
 /// `opaque`: it also does what these do not tell (a call through a value or a table, module
 /// state, a closure, an `await`, a jump out of it).
@@ -390,6 +391,7 @@ struct Temp {
     ty: TyId,
     locals: Vec<LocalId>,
     own: Vec<LocalId>,
+    pats: Vec<hir::Pat>,
     callees: Vec<DefId>,
     opaque: bool,
 }
@@ -400,6 +402,7 @@ impl Temp {
             ty: e.ty,
             locals: vec![],
             own: vec![],
+            pats: vec![],
             callees: vec![],
             opaque: false,
         };
@@ -409,7 +412,8 @@ impl Temp {
 
     /// The variables it reads that it did not bind itself.
     fn outer(&self) -> impl Iterator<Item = LocalId> + '_ {
-        (self.locals.iter().copied()).filter(|l| !self.own.contains(l))
+        (self.locals.iter().copied())
+            .filter(|l| !self.own.contains(l) && !self.pats.iter().any(|p| binds(p, *l)))
     }
 
     fn read(&mut self, e: &hir::Expr) {
@@ -426,7 +430,7 @@ impl Temp {
             K::Call { .. } | K::Global(_) | K::Closure(_) | K::Await(_) => self.opaque = true,
             K::Match { arms, .. } => {
                 for a in arms {
-                    super::debug_vars::pat_locals(&a.pat, &mut |l| self.own.push(l));
+                    self.pats.push(a.pat.clone());
                 }
             }
             K::Block(b) => return self.block(b),
@@ -446,7 +450,7 @@ impl Temp {
                     init.iter().for_each(|e| self.read(e));
                 }
                 S::LetPat { pat, init } => {
-                    super::debug_vars::pat_locals(pat, &mut |l| self.own.push(l));
+                    self.pats.push(pat.clone());
                     self.read(init);
                 }
                 S::Expr(e) => self.read(e),
@@ -468,7 +472,7 @@ impl Temp {
                     body,
                     ..
                 } => {
-                    super::debug_vars::pat_locals(binding, &mut |l| self.own.push(l));
+                    self.pats.push(binding.clone());
                     self.read(iter);
                     self.block(body);
                 }

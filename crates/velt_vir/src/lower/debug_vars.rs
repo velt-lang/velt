@@ -352,7 +352,7 @@ impl FnLower<'_, '_> {
 }
 
 /// Every local `p` binds.
-pub(super) fn pat_locals(p: &hir::Pat, f: &mut dyn FnMut(hir::LocalId)) {
+fn pat_locals(p: &hir::Pat, f: &mut dyn FnMut(hir::LocalId)) {
     use hir::PatKind as P;
     match &p.kind {
         P::Binding(l, _) => f(*l),
