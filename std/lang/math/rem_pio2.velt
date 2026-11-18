@@ -1,0 +1,102 @@
+// velt/lang/math (internal): the remainder of a double by pi/2, for `Math.sin`, `cos` and `tan`;
+// ported from fdlibm's e_rem_pio2.c as V8 has it (src/base/ieee754.cc), so that results have the
+// same bits as in JavaScript engines. Copyright (C) 1993 by Sun Microsystems, Inc.; see NOTICE.
+
+import { abs } from "velt/lang/intrinsics";
+import { Reduced, remPio2Large } from "velt/lang/math/rem_pio2_large";
+import { NPIO2_HW } from "velt/lang/math/two_over_pi";
+import { fromWords, highWord, lowWord } from "velt/lang/math/words";
+
+const INV_PIO2: f64 = 6.36619772367581382433e-01;
+// The first 33 bits of pi/2, and pi/2 - PIO2_1.
+const PIO2_1: f64 = 1.57079632673412561417e+00;
+const PIO2_1T: f64 = 6.07710050650619224932e-11;
+// The second 33 bits of pi/2, and pi/2 - (PIO2_1 + PIO2_2).
+const PIO2_2: f64 = 6.07710050630396597660e-11;
+const PIO2_2T: f64 = 2.02226624879595063154e-21;
+// The third 33 bits of pi/2, and pi/2 - (PIO2_1 + PIO2_2 + PIO2_3).
+const PIO2_3: f64 = 2.02226624871116645580e-21;
+const PIO2_3T: f64 = 8.47842766036889956997e-32;
+
+/** Reduces an `x` with |x| > pi/4 (the callers handle smaller ones, NaN and the infinities). */
+export function remPio2(x: f64): Reduced {
+  const hx = highWord(x);
+  const ix = hx & 0x7fffffff;
+  if (ix < 0x4002d97c) {
+    // |x| < 3pi/4: n is ±1.
+    if (hx > 0) {
+      let z = x - PIO2_1;
+      if (ix != 0x3ff921fb) {
+        // 33 + 53 bits of pi/2 are enough.
+        const y0 = z - PIO2_1T;
+        return { n: 1, hi: y0, lo: (z - y0) - PIO2_1T };
+      }
+      // Near pi/2: 33 + 33 + 53 bits.
+      z -= PIO2_2;
+      const y0 = z - PIO2_2T;
+      return { n: 1, hi: y0, lo: (z - y0) - PIO2_2T };
+    }
+    let z = x + PIO2_1;
+    if (ix != 0x3ff921fb) {
+      const y0 = z + PIO2_1T;
+      return { n: -1, hi: y0, lo: (z - y0) + PIO2_1T };
+    }
+    z += PIO2_2;
+    const y0 = z + PIO2_2T;
+    return { n: -1, hi: y0, lo: (z - y0) + PIO2_2T };
+  }
+  if (ix <= 0x413921fb) {
+    // |x| <= 2^19 * pi/2
+    return remPio2Medium(x, hx, ix);
+  }
+  // Split |x| into three 24-bit pieces, scaled to an exponent of 23.
+  const e0 = (ix >> 20) - 1046;
+  let z = fromWords(ix - (e0 << 20), lowWord(x));
+  const tx0 = ((z as i32) as f64);
+  z = (z - tx0) * 16777216.0;
+  const tx1 = ((z as i32) as f64);
+  const tx2 = (z - tx1) * 16777216.0;
+  const r = remPio2Large(tx0, tx1, tx2, e0);
+  if (hx < 0) {
+    return { n: -r.n, hi: -r.hi, lo: -r.lo };
+  }
+  return r;
+}
+
+// |x| from 3pi/4 to 2^19 * pi/2: n is the nearest whole number to |x| * 2/pi, and the remainder
+// is taken with as many 33-bit pieces of pi/2 as the cancellation needs.
+function remPio2Medium(x: f64, hx: i32, ix: i32): Reduced {
+  let t = abs(x);
+  const n = (t * INV_PIO2 + 0.5) as i32;
+  const whole = n as f64;
+  let r = t - whole * PIO2_1;
+  // The first round is good to 85 bits.
+  let w = whole * PIO2_1T;
+  let y0 = r - w;
+  if (n >= 32 || ix == NPIO2_HW[(n - 1) as usize]) {
+    const j = ix >> 20;
+    let i = j - ((highWord(y0) >> 20) & 0x7ff);
+    if (i > 16) {
+      // The second round is good to 118 bits.
+      t = r;
+      w = whole * PIO2_2;
+      r = t - w;
+      w = whole * PIO2_2T - ((t - r) - w);
+      y0 = r - w;
+      i = j - ((highWord(y0) >> 20) & 0x7ff);
+      if (i > 49) {
+        // The third round is good to 151 bits, which covers every case.
+        t = r;
+        w = whole * PIO2_3;
+        r = t - w;
+        w = whole * PIO2_3T - ((t - r) - w);
+        y0 = r - w;
+      }
+    }
+  }
+  const y1 = (r - y0) - w;
+  if (hx < 0) {
+    return { n: -n, hi: -y0, lo: -y1 };
+  }
+  return { n: n, hi: y0, lo: y1 };
+}

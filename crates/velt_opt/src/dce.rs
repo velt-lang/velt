@@ -152,6 +152,13 @@ fn zero_init(aggs: &[AggLayout], l: Local, mut ty: Ty) -> Option<Stmt> {
                 if fields.is_empty() {
                     return Some(Stmt::Assign(place, Rvalue::Aggregate(id, vec![])));
                 }
+                // A 256-bit vector (two 128-bit halves) is zeroed whole: a write of one half
+                // would have LLVM keep the local as two halves from then on (`crate::sroa`).
+                if let [(Ty::V128, 0), (Ty::V128, 16)] = fields[..] {
+                    let zero = crate::sroa::zero(Ty::V128);
+                    let halves = vec![zero.clone(), zero];
+                    return Some(Stmt::Assign(place, Rvalue::Aggregate(id, halves)));
+                }
                 let (i, &(field, _)) = fields.iter().enumerate().find(|(_, f)| f.0 != Ty::Unit)?;
                 place.proj.push(Proj::Field(i as u32));
                 ty = field;
@@ -337,6 +344,33 @@ mod tests {
         let pair = pb.agg("pair", 16, 8, &[(Ty::Ptr, 0), (Ty::I64, 8)]);
         let outer = pb.agg("outer", 24, 8, &[(Ty::Agg(pair), 0), (Ty::I64, 16)]);
         removes_address_and_verifies(pb, addressed_on_one_path(Ty::Agg(outer)));
+    }
+
+    #[test]
+    fn a_wide_vector_is_zeroed_whole() {
+        // { v128, v128 } is a 256-bit vector: one assignment of both halves, where a write of
+        // field 0 alone would have LLVM keep the local as two halves.
+        let mut pb = ProgramBuilder::new();
+        let wide = pb.agg("f32x8", 32, 16, &[(Ty::V128, 0), (Ty::V128, 16)]);
+        let zero = crate::sroa::zero(Ty::V128);
+        assert_eq!(
+            zero_init(&pb.p.aggs, Local(0), Ty::Agg(wide)),
+            Some(Stmt::Assign(
+                Place::local(Local(0)),
+                Rvalue::Aggregate(wide, vec![zero.clone(), zero.clone()])
+            ))
+        );
+        // Not a wide vector: three vectors keep the write of the first field.
+        let three = pb.agg(
+            "m",
+            48,
+            16,
+            &[(Ty::V128, 0), (Ty::V128, 16), (Ty::V128, 32)],
+        );
+        assert_eq!(
+            zero_init(&pb.p.aggs, Local(0), Ty::Agg(three)),
+            Some(Stmt::Assign(field(Local(0), 0), Rvalue::Use(zero)))
+        );
     }
 
     #[test]

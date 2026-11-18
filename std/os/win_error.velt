@@ -1,0 +1,154 @@
+// velt/os (internal): a Win32 error code (`GetLastError()`) as the errno that names it, the way
+// libuv translates them for Node (`uv_translate_sys_error`), for the errors of the file system,
+// the environment and the working directory. Velt's `osError` (std/fs/errors.velt) then writes
+// Node's message for it.
+
+// errno values (Linux's numbering, which `osError` reads on Windows).
+const EPERM: i32 = 1;
+const ENOENT: i32 = 2;
+const EIO: i32 = 5;
+const EBADF: i32 = 9;
+const EAGAIN: i32 = 11;
+const ENOMEM: i32 = 12;
+const EACCES: i32 = 13;
+const EFAULT: i32 = 14;
+const EBUSY: i32 = 16;
+const EEXIST: i32 = 17;
+const EXDEV: i32 = 18;
+const EISDIR: i32 = 21;
+const EINVAL: i32 = 22;
+const EMFILE: i32 = 24;
+const ENOSPC: i32 = 28;
+const EROFS: i32 = 30;
+const EPIPE: i32 = 32;
+const ENAMETOOLONG: i32 = 36;
+const ENOTEMPTY: i32 = 39;
+const ELOOP: i32 = 40;
+const ENOTSUP: i32 = 95;
+
+/** An errno `osError` doesn't know: it writes "UNKNOWN: unknown error". */
+const UNKNOWN: i32 = -1;
+
+// Win32's error codes (winerror.h).
+const ERROR_INVALID_FUNCTION: u32 = 1;
+const ERROR_FILE_NOT_FOUND: u32 = 2;
+const ERROR_PATH_NOT_FOUND: u32 = 3;
+const ERROR_TOO_MANY_OPEN_FILES: u32 = 4;
+const ERROR_ACCESS_DENIED: u32 = 5;
+const ERROR_INVALID_HANDLE: u32 = 6;
+const ERROR_NOT_ENOUGH_MEMORY: u32 = 8;
+const ERROR_INVALID_DATA: u32 = 13;
+const ERROR_OUTOFMEMORY: u32 = 14;
+const ERROR_INVALID_DRIVE: u32 = 15;
+const ERROR_NOT_SAME_DEVICE: u32 = 17;
+const ERROR_WRITE_PROTECT: u32 = 19;
+const ERROR_GEN_FAILURE: u32 = 31;
+const ERROR_SHARING_VIOLATION: u32 = 32;
+const ERROR_LOCK_VIOLATION: u32 = 33;
+const ERROR_HANDLE_DISK_FULL: u32 = 39;
+const ERROR_NOT_SUPPORTED: u32 = 50;
+const ERROR_FILE_EXISTS: u32 = 80;
+const ERROR_CANNOT_MAKE: u32 = 82;
+const ERROR_INVALID_PARAMETER: u32 = 87;
+const ERROR_OPEN_FAILED: u32 = 110;
+const ERROR_BUFFER_OVERFLOW: u32 = 111;
+const ERROR_DISK_FULL: u32 = 112;
+const ERROR_INSUFFICIENT_BUFFER: u32 = 122;
+const ERROR_INVALID_NAME: u32 = 123;
+const ERROR_MOD_NOT_FOUND: u32 = 126;
+const ERROR_DIR_NOT_EMPTY: u32 = 145;
+const ERROR_BAD_PATHNAME: u32 = 161;
+const ERROR_ALREADY_EXISTS: u32 = 183;
+const ERROR_ENVVAR_NOT_FOUND: u32 = 203;
+const ERROR_FILENAME_EXCED_RANGE: u32 = 206;
+const ERROR_BAD_PIPE: u32 = 230;
+const ERROR_PIPE_BUSY: u32 = 231;
+const ERROR_NO_DATA: u32 = 232;
+const ERROR_PIPE_NOT_CONNECTED: u32 = 233;
+const ERROR_DIRECTORY: u32 = 267;
+const ERROR_ELEVATION_REQUIRED: u32 = 740;
+const ERROR_INVALID_FLAGS: u32 = 1004;
+const ERROR_IO_DEVICE: u32 = 1117;
+const ERROR_PRIVILEGE_NOT_HELD: u32 = 1314;
+const ERROR_SYMLINK_NOT_SUPPORTED: u32 = 1464;
+const ERROR_NOACCESS: u32 = 998;
+const ERROR_CANT_ACCESS_FILE: u32 = 1920;
+const ERROR_CANT_RESOLVE_FILENAME: u32 = 1921;
+const ERROR_INVALID_REPARSE_DATA: u32 = 4392;
+
+/**
+ * The errno libuv gives Win32 error `code`; UNKNOWN (-1) for one outside the file system's,
+ * the environment's and the working directory's.
+ */
+export function errnoOfWin32(code: u32): i32 {
+  switch (code) {
+    case ERROR_INVALID_FUNCTION:
+      return EISDIR;
+    case ERROR_FILE_NOT_FOUND:
+    case ERROR_PATH_NOT_FOUND:
+    case ERROR_INVALID_DRIVE:
+    case ERROR_INVALID_NAME:
+    case ERROR_MOD_NOT_FOUND:
+    case ERROR_BAD_PATHNAME:
+    case ERROR_ENVVAR_NOT_FOUND:
+    case ERROR_DIRECTORY:
+    case ERROR_INVALID_REPARSE_DATA:
+      return ENOENT;
+    case ERROR_TOO_MANY_OPEN_FILES:
+      return EMFILE;
+    case ERROR_ACCESS_DENIED:
+    case ERROR_PRIVILEGE_NOT_HELD:
+      return EPERM;
+    case ERROR_INVALID_HANDLE:
+    case ERROR_INVALID_FLAGS:
+      return EBADF;
+    case ERROR_NOT_ENOUGH_MEMORY:
+    case ERROR_OUTOFMEMORY:
+      return ENOMEM;
+    case ERROR_INVALID_DATA:
+    case ERROR_INVALID_PARAMETER:
+    case ERROR_INSUFFICIENT_BUFFER:
+    case ERROR_SYMLINK_NOT_SUPPORTED:
+      return EINVAL;
+    case ERROR_NOT_SAME_DEVICE:
+      return EXDEV;
+    case ERROR_WRITE_PROTECT:
+      return EROFS;
+    case ERROR_GEN_FAILURE:
+    case ERROR_OPEN_FAILED:
+    case ERROR_IO_DEVICE:
+      return EIO;
+    case ERROR_SHARING_VIOLATION:
+    case ERROR_LOCK_VIOLATION:
+    case ERROR_PIPE_BUSY:
+      return EBUSY;
+    case ERROR_HANDLE_DISK_FULL:
+    case ERROR_CANNOT_MAKE:
+    case ERROR_DISK_FULL:
+      return ENOSPC;
+    case ERROR_NOT_SUPPORTED:
+      return ENOTSUP;
+    case ERROR_FILE_EXISTS:
+    case ERROR_ALREADY_EXISTS:
+      return EEXIST;
+    case ERROR_BUFFER_OVERFLOW:
+    case ERROR_FILENAME_EXCED_RANGE:
+      return ENAMETOOLONG;
+    case ERROR_NOACCESS:
+      return EFAULT;
+    case ERROR_DIR_NOT_EMPTY:
+      return ENOTEMPTY;
+    case ERROR_BAD_PIPE:
+    case ERROR_PIPE_NOT_CONNECTED:
+      return EPIPE;
+    case ERROR_NO_DATA:
+      return EAGAIN;
+    case ERROR_ELEVATION_REQUIRED:
+    case ERROR_CANT_ACCESS_FILE:
+      return EACCES;
+    case ERROR_CANT_RESOLVE_FILENAME:
+      return ELOOP;
+    default:
+      return UNKNOWN;
+  }
+}

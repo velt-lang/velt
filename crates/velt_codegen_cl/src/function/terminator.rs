@@ -386,6 +386,8 @@ impl Translator<'_, '_> {
         let flags = ir::MemFlags::new();
         Some(match op {
             MathOp::Sqrt | MathOp::SqrtF32 => self.builder.ins().sqrt(args[0]),
+            // One instruction where the ISA has FMA, else a call of C's `fma`.
+            MathOp::FmaF64 => self.builder.ins().fma(args[0], args[1], args[2]),
             MathOp::Abs => self.builder.ins().fabs(args[0]),
             MathOp::Clz32 | MathOp::Clz64 => self.builder.ins().clz(args[0]),
             MathOp::Ctz64 => self.builder.ins().ctz(args[0]),
@@ -419,7 +421,6 @@ impl Translator<'_, '_> {
             | MathOp::BitsBf16 => unreachable!("ICE: half conversions are handled above"),
             MathOp::ToInt32
             | MathOp::AddInt32
-            | MathOp::PowF64
             | MathOp::PowI64
             | MathOp::Floor
             | MathOp::Ceil

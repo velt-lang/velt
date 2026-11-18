@@ -18,3 +18,14 @@ extend f64 {
     return fixedText(this, digits);
   }
 }
+
+extend f32 {
+  /**
+   * `digits` (0 to 100) decimals of the `f32`'s exact value, as `toFixed` on `number` (every
+   * `f32` is a `number`): `(0.1 as f32).toFixed(3)` is "0.100", and with 10 digits
+   * "0.1000000015", the float nearest 0.1.
+   */
+  toFixed(digits: i64 = 0): string {
+    return (this as f64).toFixed(digits);
+  }
+}

@@ -33,6 +33,35 @@ tests/tscompat-oracle):
   they are not offered under the MIT license. Copyright (c) Microsoft Corporation. All rights
   reserved. Licensed under the Apache License, Version 2.0, with the terms quoted above.
 
+This product includes code derived from fdlibm, Sun Microsystems' Freely Distributable LIBM
+(https://www.netlib.org/fdlibm/), in the revisions of FreeBSD's msun and of V8
+(https://github.com/v8/v8, src/base/ieee754.cc):
+
+  std/lang/math/cbrt.velt, exp.velt, hyperbolic.velt, inverse_trig.velt, log.velt, logs.velt,
+  rem_pio2.velt, rem_pio2_large.velt, trig.velt, two_over_pi.velt and words.velt (the
+  exponential, logarithmic, trigonometric, hyperbolic and cube root functions of `Math`, and
+  fdlibm's word macros) are ports to Velt of fdlibm's e_exp.c, s_expm1.c, e_log.c, s_log1p.c,
+  e_log2.c, e_log10.c, s_sin.c, s_cos.c, s_tan.c, k_sin.c, k_cos.c, k_tan.c, e_rem_pio2.c,
+  k_rem_pio2.c, e_asin.c, e_acos.c, s_atan.c, e_atan2.c, e_sinh.c, e_cosh.c, s_tanh.c,
+  s_asinh.c, e_acosh.c, e_atanh.c and s_cbrt.c, following V8's versions of them so that results
+  have the same bits as in JavaScript engines. Each of those files says so in a comment at the
+  top.
+
+  Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+
+  Developed at SunSoft/SunPro, a Sun Microsystems, Inc. business. Permission to use, copy,
+  modify, and distribute this software is freely granted, provided that this notice is
+  preserved.
+
+This product includes code derived from Arm's optimized-routines
+(https://github.com/ARM-software/optimized-routines):
+
+  std/lang/math/pow.velt, pow_log_table.velt and exp_table.velt port its double-precision `pow`
+  (math/pow.c) and the tables it uses (math/pow_log_data.c, math/exp_data.c). Copyright (c)
+  1999-2026, Arm Limited. Licensed under the MIT license or the Apache License 2.0 with the LLVM
+  exception (SPDX-License-Identifier: MIT OR Apache-2.0 WITH LLVM-exception); used here under
+  the MIT license, whose text is in LICENSE-MIT with Arm Limited as the copyright holder.
+
 Release toolchains bundle third-party programs and libraries for linking (lib/velt/,
 lib/targets/; docs/internals/linking.md):
 

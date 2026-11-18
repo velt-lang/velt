@@ -1,4 +1,5 @@
-// velt/crypto: SHA-256 and SHA-1 (FIPS 180-4), HMAC (RFC 2104), HKDF (RFC 5869), X25519
+// velt/crypto: SHA-256, SHA-384, SHA-512 and SHA-1 (FIPS 180-4), HMAC (RFC 2104), HKDF over
+// SHA-256 and SHA-384 (RFC 5869), X25519
 // (RFC 7748), ECDH and ECDSA verification on P-256 (SEC 1), the ChaCha20-Poly1305 (RFC 8439)
 // and AES-GCM (NIST SP 800-38D) AEADs, secure random bytes/integers and constant-time
 // comparison.
@@ -8,6 +9,8 @@
 // bare instructions; elsewhere (other CPUs, WebAssembly, debug builds, `VELT_SIMD_DISABLE=sha` in
 // code that checks at run time)
 // through portable rounds over `u32` words (integer arithmetic wraps, `>>>` is a logical shift).
+// SHA-384 and SHA-512 always run portable rounds over `u64` words (no SHA-512 instructions in
+// `velt/simd` yet, #2429); `Sha512` hashes a message given in pieces.
 // Randomness comes from the OS generator through the runtime. SHA-1 is broken for collision
 // resistance: use it only for legacy protocols (WebSocket handshakes, HMAC-SHA1 in TOTP, git
 // object ids).
@@ -23,11 +26,19 @@ export { AesGcm } from "velt/crypto/aes_gcm";
 export { ChaCha20Poly1305 } from "velt/crypto/chacha20_poly1305";
 export { timingSafeEqual } from "velt/crypto/compare";
 export { CryptoError } from "velt/crypto/errors";
-export { hkdfExpandSha256, hkdfExtractSha256, hkdfSha256 } from "velt/crypto/hkdf";
-export { hmacSha1, hmacSha256 } from "velt/crypto/hmac";
+export {
+  hkdfExpandSha256,
+  hkdfExpandSha384,
+  hkdfExtractSha256,
+  hkdfExtractSha384,
+  hkdfSha256,
+  hkdfSha384,
+} from "velt/crypto/hkdf";
+export { hmacSha1, hmacSha256, hmacSha384, hmacSha512 } from "velt/crypto/hmac";
 export { p256Verify } from "velt/crypto/ecdsa_p256";
 export { p256Ecdh, p256PrivateKey, p256PublicKey } from "velt/crypto/p256";
 export { randomBytes, randomInt } from "velt/crypto/random";
 export { sha1, sha1Hex } from "velt/crypto/sha1";
 export { sha256, sha256Hex } from "velt/crypto/sha256";
+export { Sha512, sha384, sha384Hex, sha512, sha512Hex } from "velt/crypto/sha512";
 export { x25519, x25519PublicKey } from "velt/crypto/x25519";

@@ -151,14 +151,40 @@ fn fmlal(b: &mut Body) -> String {
     b.bytes(&r, FLOATS)
 }
 
+/// The low (or high) four bf16 lanes of `x` as `<4 x float>` by the shift alone (`shll`, or
+/// `pmovzxwd` and `pslld`): a signalling NaN stays signalling, where [`widened`] sets its quiet
+/// bit at five more operations a conversion (#3129). For an operand of an FMA only, which
+/// quiets it and keeps its payload; `dotAdd` documents that such a NaN may come out either way.
+fn shifted(b: &mut Body, x: &str, high: bool) -> String {
+    let picks = if high {
+        "4, i32 5, i32 6, i32 7"
+    } else {
+        "0, i32 1, i32 2, i32 3"
+    };
+    let part = b.inst(format!(
+        "shufflevector <8 x i16> {x}, <8 x i16> poison, <4 x i32> <i32 {picks}>"
+    ));
+    let wide = b.inst(format!("zext <4 x i16> {part} to <4 x i32>"));
+    let bits = b.inst(format!(
+        "shl <4 x i32> {wide}, <i32 16, i32 16, i32 16, i32 16>"
+    ));
+    b.inst(format!("bitcast <4 x i32> {bits} to {FLOATS}"))
+}
+
 fn chain(b: &mut Body, of: Lanes, half: HalfNative) -> String {
     let acc = b.arg(0, FLOATS);
     let x = b.arg(1, "<8 x i16>");
     let y = b.arg(2, "<8 x i16>");
     let mut r = acc;
     for high in [false, true] {
-        let p = widened(b, &x, of, high, half);
-        let q = widened(b, &y, of, high, half);
+        let (p, q) = if of == Lanes::BF16 {
+            (shifted(b, &x, high), shifted(b, &y, high))
+        } else {
+            (
+                widened(b, &x, of, high, half),
+                widened(b, &y, of, high, half),
+            )
+        };
         r = b.intrinsic("fma", "v4f32", FLOATS, &[&p, &q, &r], "");
     }
     b.bytes(&r, FLOATS)
@@ -334,8 +360,11 @@ mod tests {
         // bf16's exact form has no instruction anywhere, whatever the CPU.
         for caps in [m2, bf16_cpu, Caps::NONE] {
             let text = body(bf16, Arch::Neon, caps);
+            assert!(text.contains("@llvm.fma"), "{text}");
+            // Widened by the shift alone: the FMA quiets a NaN, so the lanes need not (#3129).
+            assert_eq!(text.matches("shl <4 x i32>").count(), 4, "{text}");
             assert!(
-                text.contains("@velt.bf16_to_f32.v4") && text.contains("@llvm.fma"),
+                !text.contains("bf16_to_f32") && !text.contains("icmp"),
                 "{text}"
             );
             assert!(!text.contains("bfdot") && !text.contains("fmlal"), "{text}");

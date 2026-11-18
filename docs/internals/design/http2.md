@@ -1,21 +1,27 @@
-# Design: HTTP/2 in Velt, on the HTTP/1.1 server's handlers
+# HTTP/2
 
-Status: implemented (`packages/http-server/src/h2/`, `serveHttp` dispatching to it; HPACK and
-frames shared with the `fetch` client in std's `velt/net/http/h2`). Owner: packages/http-server
-and std; the runtime only for ALPN (`TcpStream.alpnProtocol()`). Follows the
-standard library layout (#1946), which removes the hyper-based server that gave Velt HTTP/2
-until now.
+Status: implemented.
 
-## Problem
+## Summary
 
-`velt/http`'s `serve` got HTTP/2 from hyper, in Rust. The server std keeps is the one written in
-Velt (`serveHttp`, #1533), which spoke HTTP/1.1 only. Removing hyper would have dropped HTTP/2:
-browsers use it for every HTTPS site, gRPC needs it, and many requests over one connection are
-what a page with dozens of assets wants. The owner's rule for servers holds here too: the
-protocol is written in Velt on public std APIs (no intrinsics, no `declare`d runtime
-functions in protocol code), and where an API is missing it is added to std properly. It must
-also be fast: the HTTP/1.1 server is ahead of hyper and axum, and HTTP/2 should not be the
-place where Velt loses.
+Velt's HTTP server (`serveHttp` in `packages/http-server`) and std's `fetch` client speak HTTP/2
+(RFC 9113) as well as HTTP/1.1. Both are written in Velt on public std APIs: the protocol code
+uses no intrinsics and no `declare`d runtime functions. The frame codec and HPACK (RFC 7541) are
+shared by the server and the client in std's `velt/net/http/h2` (`std/net/http/h2/`); the server's
+connection logic is in `packages/http-server/src/h2/`, the client's in
+`std/net/http/fetch/client/h2/`. The runtime contributes only ALPN (`TcpStream.alpnProtocol()`).
+
+Handlers do not change: a handler written for HTTP/1.1 serves HTTP/2 streams with the same
+signature, and the web-standard `serve((req: Request) => Response)` built on `serveHttp` gets
+HTTP/2 the same way.
+
+## Motivation
+
+Browsers use HTTP/2 for every HTTPS site, gRPC requires it, and a page with dozens of assets
+wants many requests over one connection. A server that speaks only HTTP/1.1 loses on all three.
+The HTTP/2 implementation must also keep the HTTP/1.1 server's performance: protocol code runs
+on every request, so it is written as single-pass parsing into reused buffers, with no per-frame
+allocation.
 
 ## Design
 
@@ -23,26 +29,28 @@ place where Velt loses.
 
 ```
 serveHttp (packages/http-server/src/serve.velt)
-  ├─ TLS: await conn.alpnProtocol() == "h2"  ─┐
-  ├─ TCP: first bytes "PRI" (the preface)     ├─> serveH2 (h2/serve.velt) → H2Connection
-  └─ otherwise HTTP/1.1 as before              │     handlers get the stream's H2Request and
-     (http1/connection.velt)                    │     H2Response
+  └─ per connection (http1/connection.velt)
+       ├─ TLS: await conn.alpnProtocol() == "h2"  ─┐
+       ├─ TCP: first bytes "PRI" (the preface)    ─┴─> serveH2 (h2/serve.velt): H2Connection;
+       │                                                handlers get H2Request, H2Response
+       └─ otherwise HTTP/1.1
 ```
 
-Handlers keep their signature, `(req: HttpRequest, res: HttpResponse)`. `HttpRequest` and
-`HttpResponse` are abstract classes (`src/request.velt`, `src/response.velt`): HTTP/1.1's
-`Http1Request` / `Http1Response` (`src/http1/`) and HTTP/2's `H2Request` / `H2Response` extend
-them, so a handler gets the stream's own objects, and a class that misses a method does not
-compile (when HTTP/1.1's classes passed calls on to HTTP/2's by hand, one that was never passed
-on, `headerValues`, read nothing over HTTP/2). What only the server calls (`begin`, `complete`,
-`timedOut`, ...) is on the concrete classes. They are abstract classes rather than interfaces
-so that a handler's `req` and `res` are instances of unrelated classes, which the compiler
-knows cannot be one object: a helper taking both, `acceptWebSocket(req, res)`, can be called
-with them. The web-standard `serve((req: Request) => Response)` built on
-`HttpRequest`/`HttpResponse` gets HTTP/2 the same way.
+Over TLS the listener offers `h2,http/1.1` through ALPN unless the options name the protocols
+(`tls.alpn`). On plain TCP a connection that starts with the HTTP/2 preface is HTTP/2 with prior
+knowledge (no HTTP/1.1 method is `PRI`). `HttpServeOptions.http2: false` turns HTTP/2 off;
+`HttpServeOptions.maxConcurrentStreams` sets SETTINGS_MAX_CONCURRENT_STREAMS (default 128).
 
-Files (each under 400 lines, one exported class per file). The wire format the `fetch` client
-shares is std's `velt/net/http/h2` (`std/net/http/h2/`):
+Handlers have the signature `(req: HttpRequest, res: HttpResponse)`. `HttpRequest` and
+`HttpResponse` are abstract classes (`src/request.velt`, `src/response.velt`): HTTP/1.1's
+`Http1Request` / `Http1Response` (`src/http1/`) and HTTP/2's `H2Request` / `H2Response`
+(`src/h2/`) extend them, so a handler gets the stream's own objects and a protocol class that
+misses a method does not compile. What only the server calls (`begin`, `complete`, `timedOut`,
+...) is on the concrete classes. They are abstract classes rather than interfaces so that a
+handler's `req` and `res` are instances of unrelated classes, which the compiler knows cannot be
+one object: a helper taking both, such as `acceptWebSocket(req, res)`, can be called with them.
+
+The wire format, in `std/net/http/h2/`:
 
 | File | Role |
 |---|---|
@@ -50,16 +58,18 @@ shares is std's `velt/net/http/h2` (`std/net/http/h2/`):
 | `huffman.velt`, `huffman_table.velt` | Huffman coding (table generated by `scripts/gen-hpack-huffman.py`) |
 | `hpack_static.velt`, `hpack_table.velt`, `hpack_decoder.velt`, `hpack_encoder.velt`, `field_list.velt` | HPACK |
 
-The server's own are in `packages/http-server/src/h2/`:
+The server, in `packages/http-server/src/h2/`:
 
 | File | Role |
 |---|---|
 | `connection.velt` | `H2Connection`: the read loop, output, shutdown, abuse allowance |
-| `inbound.velt`, `streams.velt`, `settings.velt` | what each received frame does |
+| `inbound.velt`, `streams.velt`, `settings.velt`, `closed.velt` | what each received frame does; recently closed streams |
 | `outbound.velt` | HEADERS and DATA of responses within the windows |
 | `stream.velt` | `H2Stream`: one stream's state, request body queue, pending response body |
 | `request.velt`, `response.velt` | `H2Request`, `H2Response` (the handler's view) |
+| `tunnel.velt` | extended CONNECT: bytes between a stream and an in-memory stream pair |
 | `validate.velt` | malformed-request checks (RFC 9113 §8.2, §8.3) |
+| `wait.velt` | how the connection waits for input (idle timeout, body deadlines, stop) |
 | `serve.velt`, `options.velt` | entry point and limits |
 
 ### One task per connection, handlers as promises on it
@@ -69,9 +79,12 @@ A connection is one task, as in the HTTP/1.1 server. It reads into a buffer of i
 as a promise on the same task, not spawned: Velt runs started promises on their task between its
 waits, as JavaScript does, so all streams of a connection share the HPACK tables, the windows
 and the output buffer without a lock or a copy. A handler that waits (for a database, a body,
-window) lets the connection read on. Handlers start after the frames of the read that opened
-them are processed, so an error frame right behind a request (a zero WINDOW_UPDATE, DATA beyond
-`content-length`) resets the stream before its handler answers.
+window) lets the connection read on.
+
+Handlers start after the frames of the read that opened them are processed, and after up to four
+further reads that find data at once. An error frame right behind a request (a zero
+WINDOW_UPDATE, DATA beyond `content-length`) therefore resets the stream before its handler
+answers, also when the client's frames arrive in separate reads.
 
 The connection does not return while a handler runs (a task's unfinished promises would be
 cancelled with it): when it ends it resets every stream (aborting `res.signal()`, waking any
@@ -80,8 +93,7 @@ handler waiting for body or window) and waits for the handlers.
 ### Output: one write per read
 
 Frames go into one `FrameWriter` buffer per connection. After the frames of one read are
-processed (and the handlers that answered at once have answered; handlers start once no more
-frames have arrived, up to four reads), the buffer is queued with
+processed and the handlers that answered at once have answered, the buffer is queued with
 `writeBytesLater`: the responses, SETTINGS and PING acknowledgements and window updates of a
 read leave in one system call, as the HTTP/1.1 server's pipelined responses do. A handler that
 answers later queues its frames the same way; `writeBytesLater` joins everything queued before
@@ -93,55 +105,59 @@ windows, one DATA frame with END_STREAM, the text written straight into the fram
 
 ### Frames (RFC 9113 §4, §6)
 
-The read buffer holds at least one frame of our SETTINGS_MAX_FRAME_SIZE (16384, the default; we
-do not raise it). Every frame type is checked as §6 asks: lengths (FRAME_SIZE_ERROR), stream 0
-or not, frames on idle streams (PROTOCOL_ERROR), a header block not followed by its
-CONTINUATION frames. Unknown frame types are ignored. PUSH_PROMISE from a client is a
-connection error.
+The read buffer holds at least one frame of our SETTINGS_MAX_FRAME_SIZE (16384, the default,
+which the server does not raise). Every frame type is checked as §6 asks: lengths
+(FRAME_SIZE_ERROR), stream 0 or not, frames on idle streams (PROTOCOL_ERROR), a header block not
+followed by its CONTINUATION frames. Unknown frame types are ignored. PUSH_PROMISE from a client
+is a connection error.
 
 ### HPACK (RFC 7541)
 
-- Static table as functions over string literals (a module-level array that is not numbers is
-  module state, behind a process-wide lock, #1487); the Huffman tables are arrays of numbers,
-  static data.
+- The static table is functions over string literals, because a module-level array that is not
+  numbers is module state behind a process-wide lock
+  ([#1487](https://github.com/velt-lang/velt/issues/1487)); the Huffman tables are arrays of
+  numbers, which are static data.
 - Decoder: fields are written into one buffer per block (`FieldList`: bytes plus four offsets
-  per field, as the HTTP/1.1 parser keeps a head), Huffman decoded straight into it: the next 8
+  per field, as the HTTP/1.1 parser keeps a head), Huffman-decoded straight into it: the next 8
   bits find codes of up to 8 bits in one lookup, longer ones by length (the code is canonical).
   Integers are bounded, size updates are allowed only at the start of a block and up to our
   SETTINGS_HEADER_TABLE_SIZE (4096), padding is checked (§5.2: under 8 bits, all ones, no EOS).
   A block whose fields exceed SETTINGS_MAX_HEADER_LIST_SIZE is still decoded to its end, so the
-  table stays in step with the peer's encoder, but the fields beyond the limit are not kept:
-  an HPACK bomb (a small block referring many times to a large entry) costs the time to read it.
+  table stays in step with the peer's encoder, but the fields beyond the limit are not kept: an
+  HPACK bomb (a small block referring many times to a large entry) costs the time to read it.
 - Encoder: fields a server repeats (`server`, `content-type`, the `date` of this second, a
   handler's headers) are added to the dynamic table the first time and sent as one byte after
   that; `content-length` is sent without indexing by its static name; `set-cookie`, `cookie`
-  and `authorization` are never indexed (§7.1.3). Literals are Huffman coded when shorter. A
+  and `authorization` are never indexed (§7.1.3). Literals are Huffman-coded when shorter. A
   smaller SETTINGS_HEADER_TABLE_SIZE from the peer is announced at the start of the next block.
 
 ### Streams (§5.1)
 
 `H2Stream` objects are pooled per connection (their header buffer is reused). States: open,
-half-closed (remote) once END_STREAM arrived, half-closed (local) once ours went out, closed.
-A stream leaves the connection's map when closed or reset; its object returns to the pool when
-its handler has returned too. HEADERS on a closed stream we remember (the last 64) is
-STREAM_CLOSED, on any other id at or below the highest one seen PROTOCOL_ERROR. When the
-response is complete but the request is not (a handler that answered without reading an
-upload), the stream is reset with NO_ERROR (§8.1) and what it held is given back.
+half-closed (remote) once END_STREAM arrived, half-closed (local) once ours went out, closed. A
+stream leaves the connection's map when closed or reset; its object returns to the pool when its
+handler has returned too. The connection remembers the most recently closed streams (twice
+`maxConcurrentStreams`, at least 64) and whether each was reset: a frame on a stream the server
+reset is ignored (the client sent it before it saw the reset), HEADERS on another remembered
+closed stream is STREAM_CLOSED, and HEADERS on any other id at or below the highest one seen is
+PROTOCOL_ERROR. When the response is complete but the request is not (a handler that answered
+without reading an upload), the stream is reset with NO_ERROR (§8.1) and what it held is given
+back.
 
 ### Flow control (§5.2, §6.9)
 
-- Receiving: SETTINGS_INITIAL_WINDOW_SIZE 256 KiB per stream, 1 MiB for the connection (a
-  WINDOW_UPDATE right after our SETTINGS). Windows are given back as the handler reads
+- Receiving: SETTINGS_INITIAL_WINDOW_SIZE is 256 KiB per stream, and the connection window is
+  1 MiB (a WINDOW_UPDATE right after our SETTINGS). Windows are given back as the handler reads
   (`req.read()`, `body()`), in WINDOW_UPDATEs of at least half a window: a slow reader slows its
-  client (backpressure), and a stream holds at most its window unread. The connection window
-  is given back the same way, and at once for what nobody will read (padding, a body left
-  unread when the handler returns, DATA on a reset stream), so one stalled stream does not stop
-  the others. DATA beyond a window is FLOW_CONTROL_ERROR.
+  client (backpressure), and a stream holds at most its window unread. The connection window is
+  given back the same way, and at once for what nobody will read (padding, a body left unread
+  when the handler returns, DATA on a reset stream), so one stalled stream does not stop the
+  others. DATA beyond a window is FLOW_CONTROL_ERROR.
 - Sending: a body goes out within min(stream window, connection window, the peer's
   SETTINGS_MAX_FRAME_SIZE); the rest waits in the stream's buffer, and the stream in the
   connection's list of blocked streams. WINDOW_UPDATE on the connection sends from the blocked
   streams in the order they began to wait (round robin: one large download does not hold back
-  the small responses), on a stream from that stream. A change of the peer's initial window
+  the small responses); on a stream, from that stream. A change of the peer's initial window
   moves every stream's window (§6.9.2), also below zero. Overflow past 2^31-1 is
   FLOW_CONTROL_ERROR. A streamed body (`HttpStream.write`) waits while more than 64 KiB of it
   wait for window or for the socket.
@@ -151,190 +167,143 @@ upload), the stream is reset with NO_ERROR (§8.1) and what it held is given bac
 `requestTimeout` (300 s) runs per stream from its head, as HTTP/1.1's runs per request: a
 handler still reading the body after it gets `IoError` `ETIMEDOUT` and, if it lets the error
 through before sending, the client gets 408; the stream is reset with NO_ERROR after the
-response, the connection goes on. The connection keeps the earliest deadline of the bodies
+response, and the connection goes on. The connection keeps the earliest deadline of the bodies
 still arriving and waits for input no longer than that (one wait in the runtime, no timer per
-stream). `idleTimeout` closes a connection that has no streams. `headersTimeout` has no HTTP/2
-counterpart: a head is one header block, and a block that does not end is bounded by the block
-limits below and the idle timeout.
+stream). `idleTimeout` (5 s) closes a connection that has no streams. `headersTimeout` has no
+HTTP/2 counterpart: a head is one header block, and a block that does not end is bounded by the
+block limits below and the idle timeout.
 
 ### SETTINGS, PING, GOAWAY
 
-Our SETTINGS go out first (MAX_CONCURRENT_STREAMS, INITIAL_WINDOW_SIZE,
-MAX_HEADER_LIST_SIZE, ENABLE_PUSH 0). The peer's are checked (§6.5.2) and acknowledged; we do not
-time out an unacknowledged SETTINGS (nothing we send depends on it). PING is answered with the
-same payload. Graceful shutdown (`HttpServer.close()`): GOAWAY with NO_ERROR and the last stream
-id, new streams above it are ignored (their header blocks still decoded), the streams in flight
-finish, then the connection closes. A connection idle for `idleTimeout` with no streams sends
-GOAWAY and closes. A GOAWAY from the peer changes nothing on our side: it closes when done. On a
-connection error we send GOAWAY with the code, then read what the peer still sends for up to
-2 s (1 MiB), so closing with unread input does not reset the connection before the GOAWAY
-arrives.
+Our SETTINGS go out first: MAX_CONCURRENT_STREAMS, INITIAL_WINDOW_SIZE, MAX_HEADER_LIST_SIZE,
+ENABLE_PUSH 0 and ENABLE_CONNECT_PROTOCOL 1. The peer's are checked (§6.5.2) and acknowledged;
+an unacknowledged SETTINGS is not timed out, because nothing the server sends depends on it.
+PING is answered with the same payload.
+
+Graceful shutdown (`HttpServer.close()`) sends GOAWAY with NO_ERROR and the last stream id; new
+streams above it are ignored (their header blocks still decoded), the streams in flight finish,
+then the connection closes. A connection idle for `idleTimeout` with no streams sends GOAWAY and
+closes. A GOAWAY from the peer changes nothing on the server's side: the connection closes when
+its streams are done. On a connection error the server sends GOAWAY with the code.
+
+Every connection ends with a lingering close (`src/linger.velt`): after shutting down its
+sending side, the server reads and drops what the peer still sends until the peer closes, 2 s
+pass without input, 1 MiB has arrived or 10 s have passed. Closing a socket with unread input
+resets the connection, which can discard the GOAWAY and the last responses before the client
+reads them.
 
 ### RST_STREAM, priority, trailers, push
 
 - RST_STREAM from the peer aborts the handler's signal; its writes throw `IoError`.
 - Priority (RFC 7540 §5.3) is deprecated by RFC 9113 §5.3.2: PRIORITY frames and the priority
-  in HEADERS are checked (length, self-dependency) and otherwise ignored. RFC 9218's
-  `priority` header is passed to the handler like any header; streams are scheduled round robin.
+  in HEADERS are checked (length, self-dependency) and otherwise ignored. RFC 9218's `priority`
+  header is passed to the handler like any header; streams are scheduled round robin.
 - Request trailers (HEADERS with END_STREAM after DATA) are validated and dropped, as the
-  HTTP/1.1 server drops chunked trailers. Response trailers: `HttpResponse.addTrailers` (Node's
-  name) before the body ends; the body's last DATA frame then goes without END_STREAM and a
-  HEADERS frame with the trailers (no pseudo-headers, HPACK-encoded like any block) ends the
-  stream, also after a body sent at once or no body. Over HTTP/1.1 they end a chunked body (a
-  streamed one, or a whole one sent chunked because the request said `TE: trailers`, RFC 9110
-  §6.5.1); a `Content-Length` body drops them. The web `Response` has no trailer API (the Fetch
-  standard removed it), so nothing maps there.
-- Server push: not offered (SETTINGS_ENABLE_PUSH 0 is what we send; browsers removed it).
-- Extended CONNECT (RFC 8441, WebSockets over HTTP/2): we send SETTINGS_ENABLE_CONNECT_PROTOCOL
-  1 and accept `:protocol` on a CONNECT with `:scheme`, `:path` and `:authority`
-  (`:protocol` anywhere else is malformed). `req.isUpgrade("websocket")` is true for it, and
-  `res.upgrade` answers 200 and returns one end of a `streamPair` (velt/net, an in-memory
-  stream pair added for this); two promises on the connection's task move bytes between the
-  other end and the stream's DATA frames (`h2/tunnel.velt`), the client's window given back as
-  the protocol reads, the protocol's writes waiting for the client's window (64 KiB at most).
-  An end of stream either way is END_STREAM / `shutdown`, a reset aborts the pair. So
-  velt/net/websocket's code, written on streams, runs unchanged: `acceptWebSocket` answers an
-  extended CONNECT with 200 and no key (RFC 8441 §5). The web-standard `upgradeWebSocket` gets
-  the same once its upgrade path takes this branch.
+  HTTP/1.1 server drops chunked trailers.
+- Response trailers: `HttpResponse.addTrailers` (Node's name) before the body ends. Over HTTP/2
+  the body's last DATA frame then goes without END_STREAM, and a HEADERS frame with the trailers
+  (no pseudo-headers, HPACK-encoded like any block) ends the stream, also after a body sent at
+  once or no body. Over HTTP/1.1 they end a chunked body (a streamed one, or a whole one sent
+  chunked because the request said `TE: trailers`, RFC 9110 §6.5.1); a `Content-Length` body
+  drops them. The web `Response` has no trailer API (the Fetch standard removed it), so nothing
+  maps there.
+- Server push is not offered (the server sends SETTINGS_ENABLE_PUSH 0; browsers removed push).
+
+### Extended CONNECT (RFC 8441)
+
+The server sends SETTINGS_ENABLE_CONNECT_PROTOCOL 1 and accepts `:protocol` on a CONNECT with
+`:scheme`, `:path` and `:authority` (`:protocol` anywhere else is malformed).
+`req.isUpgrade("websocket")` is true for it, and `res.upgrade` answers 200 and returns one end of
+a `streamPair` (velt/net's in-memory stream pair). Two promises on the connection's task move
+bytes between the other end and the stream's DATA frames (`h2/tunnel.velt`): the client's window
+is given back as the protocol reads, and the protocol's writes wait for the client's window
+(64 KiB at most queued). An end of stream either way is END_STREAM / `shutdown`; a reset aborts
+the pair. WebSocket code written on streams therefore runs unchanged: `acceptWebSocket` and the
+web-standard `upgradeWebSocket` answer an extended CONNECT with 200 and no key (RFC 8441 §5), and
+a plain HTTP/2 request for a WebSocket gets 426.
 
 ### `Upgrade: h2c`
 
-Not supported, deliberately: RFC 9113 §3.1 deprecates it, browsers never use it (they speak
-HTTP/2 only over TLS), and it needs the first request answered over HTTP/2 after an HTTP/1.1
-request with a body that may be in flight. The request is answered over HTTP/1.1, which the
-upgrade rules allow. Prior knowledge (the preface on plain TCP) covers the server-to-server and
-proxy cases; ALPN covers TLS.
+Not supported: RFC 9113 §3.1 deprecates it, browsers never use it (they speak HTTP/2 only over
+TLS), and it requires answering the first request over HTTP/2 after an HTTP/1.1 request whose
+body may still be in flight. The request is answered over HTTP/1.1, which the upgrade rules
+allow. Prior knowledge (the preface on plain TCP) covers the server-to-server and proxy cases;
+ALPN covers TLS.
 
-### Limits and abuse (DoS)
+### Limits and abuse
+
+The abuse allowance starts at 1000 per connection; each item marked "costs allowance" below
+takes one, a completed response gives one back, and at 0 the connection ends with GOAWAY
+ENHANCE_YOUR_CALM.
 
 | Attack | What the server does |
 |---|---|
-| Rapid reset (CVE-2023-44487) | The concurrency limit (`maxConcurrentStreams`, 128) counts streams whose handler still runs, also after a reset, so resetting streams never runs more handlers at once than the limit; a stream opened beyond it gets REFUSED_STREAM. Each reset before the response completed costs one unit of an abuse allowance (1000; a completed response gives one back); at 0, GOAWAY ENHANCE_YOUR_CALM. |
-| "MadeYouReset" (CVE-2025-8671) | Every stream the server has to reset (a stream error) costs allowance too. |
+| Rapid reset (CVE-2023-44487) | The concurrency limit (`maxConcurrentStreams`, 128) counts streams whose handler still runs, also after a reset, so resetting streams never runs more handlers at once than the limit; a stream opened beyond it gets REFUSED_STREAM. Each reset before the response completed costs allowance. |
+| "MadeYouReset" (CVE-2025-8671) | Every stream the server has to reset (a stream error) costs allowance. |
 | Refused-stream churn | Each REFUSED_STREAM costs allowance. |
-| CONTINUATION flood (2024) | At most 128 CONTINUATION frames per block and `2 × maxHeadSize + 16 KiB` of block bytes; beyond, GOAWAY ENHANCE_YOUR_CALM. |
-| HPACK bomb | Fields past SETTINGS_MAX_HEADER_LIST_SIZE (`maxHeadSize`, 16 KiB) are not kept; the request gets 431. Our decoder table is 4096 bytes. |
+| CONTINUATION flood | At most 128 CONTINUATION frames per block and `2 × maxHeadSize + 16 KiB` of block bytes; beyond, GOAWAY ENHANCE_YOUR_CALM. |
+| HPACK bomb | Fields past SETTINGS_MAX_HEADER_LIST_SIZE (`maxHeadSize`, 16 KiB) are not kept; the request gets 431. The decoder table is 4096 bytes. |
 | Empty DATA frames (CVE-2019-9518) | Each empty DATA frame without END_STREAM costs allowance. |
 | PING / SETTINGS flood (CVE-2019-9512/9515) | Answers are queued like any output; past 1 MiB queued the connection stops reading until the peer reads. |
 | Slow reader of responses | Flow control and the 64 KiB per streamed body bound what a stream holds; the 1 MiB queue bounds the connection. |
 | Large or many uploads | Stream windows (256 KiB) and the connection window (1 MiB), given back only as handlers read; `maxBodySize` for `body()` (413). |
-| Malformed requests | Reset with PROTOCOL_ERROR before any handler runs (uppercase names, connection-specific fields, `te` other than `trailers`, pseudo-headers after fields or repeated or unknown, missing `:method`/`:scheme`/`:path`, CR/LF/NUL or edge whitespace in values, `content-length` not matching the DATA). |
+| Malformed requests | Reset with PROTOCOL_ERROR before any handler runs: uppercase names, connection-specific fields, `te` other than `trailers`, pseudo-headers after fields or repeated or unknown, missing `:method`/`:scheme`/`:path`, CR/LF/NUL or edge whitespace in values, `content-length` not matching the DATA. |
 
-### Sharing with the HTTP/1.1 server
+### What HTTP/1.1 and HTTP/2 share
 
-The listener, accept loop, options, limits (`maxHeadSize` is the header list size,
-`maxBodySize`, `idleTimeout`), the handler signature, `HttpStream` and `EventStream` (they call
-`HttpResponse.piece`/`finishStream`, which pass on), `BodyTooLarge`, the 500 / empty-200 rules,
-and header-value checks (`isTchar`). Not shared: framing, the head parser (HTTP/2 heads are
-HPACK fields; `FieldList` keeps them as the HTTP/1.1 `Head` does, bytes plus offsets).
+Shared: the listener, accept loop, options and limits (`maxHeadSize` is the header list size,
+`maxBodySize`, `idleTimeout`, `requestTimeout`), the handler signature, `HttpStream` and
+`EventStream`, `BodyTooLarge`, the 500 / empty-200 rules, and the header-value checks. Not
+shared: framing and the head parser (HTTP/2 heads are HPACK fields, which `FieldList` keeps as
+the HTTP/1.1 `Head` does, as bytes plus offsets).
 
-## The client (`fetch`)
+### The client (`fetch`)
 
 `std/net/http/fetch/client/h2/`, on the same frame and HPACK code:
 
-- **When.** A new connection to an `https:` origin offers `h2,http/1.1` (`dial`'s ALPN list).
-  Plain `http:` stays HTTP/1.1, as in browsers and undici. An idle pooled HTTP/1.1 connection to
-  the origin is taken first (the origin answered HTTP/1.1 before), so a server without HTTP/2
-  costs nothing extra once its pool is warm.
-- **One session per origin, shared by every task.** A session is a task of its own that owns
-  the connection (`ClientSession`). Requests reach it on a channel (`H2Call`), each with a
-  channel of its own for the response (`H2Event`: head, body pieces, end, error). Sessions are
-  found by origin in a map kept in a static atomic (an `Atomic<shared<T> | null>` module
-  constant, released at exit for the leak counters; velt/net/websocket's topics do the same):
-  not module state, which would make every task that fetches take the module lock at each poll. The first request
-  to an origin claims the entry before it connects, so requests started meanwhile queue on the
-  same session instead of opening connections; if ALPN says HTTP/1.1 they are told to retry and
-  take the HTTP/1.1 path.
-- **Multiplexing and limits.** Streams up to the server's SETTINGS_MAX_CONCURRENT_STREAMS, later
-  ones queue in order. Request bodies are sent within the server's windows (round robin over
-  the blocked streams); response bodies get 1 MiB per stream and 4 MiB per connection, given
-  back as the program reads (each piece read sends a credit message to the session), so a
-  response nobody reads holds at most its window.
-- **Errors and retries.** RST_STREAM fails one request; REFUSED_STREAM, a GOAWAY's streams above
+- **When.** A new connection to an `https:` origin offers `h2,http/1.1` through ALPN. Plain
+  `http:` stays HTTP/1.1, as in browsers and undici. An idle pooled HTTP/1.1 connection to the
+  origin is taken first (the origin answered HTTP/1.1 before), so a server without HTTP/2 costs
+  nothing extra once its pool is warm.
+- **One session per origin, shared by every task.** A session (`ClientSession`) is a task of its
+  own that owns the connection. Requests reach it on a channel (`H2Call`), each with a channel of
+  its own for the response (`H2Event`: head, body pieces, end, error). Sessions are found by
+  origin in a map kept in a static atomic (an `Atomic<shared<T> | null>` module constant,
+  released at exit for the leak counters), not in module state, which would make every task that
+  fetches take the module lock at each poll. The first request to an origin claims the map entry
+  before it connects, so requests started meanwhile queue on the same session instead of opening
+  connections; if ALPN chooses HTTP/1.1 they are told to retry and take the HTTP/1.1 path.
+- **Multiplexing and limits.** Streams up to the server's SETTINGS_MAX_CONCURRENT_STREAMS; later
+  ones queue in order. Request bodies are sent within the server's windows (round robin over the
+  blocked streams); response bodies get 1 MiB per stream and 4 MiB per connection, given back as
+  the program reads (each piece read sends a credit message to the session), so a response
+  nobody reads holds at most its window.
+- **Errors and retries.** RST_STREAM fails one request. REFUSED_STREAM, a GOAWAY's streams above
   its last id, and a session closing before the request went out are retried on a new
-  connection (the server did not process them). A GOAWAY makes the session take no new requests
-  and close once its streams are done; 4 s without streams closes it too. Aborts and abandoned
-  bodies send RST_STREAM CANCEL. Server push is disabled (SETTINGS_ENABLE_PUSH 0; a PUSH_PROMISE
-  is a connection error).
+  connection, whatever the method (the server did not process them, RFC 9113 §8.7); an
+  idempotent request whose session failed before the response's head is retried too. A GOAWAY
+  makes the session take no new requests and close once its streams are done; 4 s without
+  streams closes it too. Aborts and abandoned bodies send RST_STREAM CANCEL. Server push is
+  disabled (SETTINGS_ENABLE_PUSH 0; a PUSH_PROMISE is a connection error).
 - **Fetch's API is unchanged.** The response head becomes the HTTP/1.1 parser's `Head` (bytes
   plus offsets), so `Response`, headers, redirects and `content-encoding` decoding are shared;
   only where the body comes from differs (`H2Body` instead of the HTTP/1.1 `BodyReader`).
 
-## Public API added
+### Public API it relies on
 
 - `TcpStream.alpnProtocol(): Promise<string | null>` (velt/net): the protocol the TLS handshake
-  chose. Runtime: the TLS stream keeps it; `velt_rt_tcp_alpn` (rt_abi_async.md).
+  chose (`velt_rt_tcp_alpn` for runtime streams, rt_abi_async.md; the Velt TLS stream in
+  `std/net/tls/` keeps it itself).
 - `u8[].copy(target, targetStart?, sourceStart?, sourceEnd?)` (prelude), Node's `buf.copy`:
-  moving bytes between a protocol's buffers without a slice. Runtime: `velt_rt_bytes_copy`.
+  moving bytes between a protocol's buffers without a slice.
+- `streamPair` (velt/net): two connected in-memory stream ends, for extended CONNECT.
 - `HttpServeOptions.http2`, `HttpServeOptions.maxConcurrentStreams`.
 
-## Alternatives considered
-
-- **Keep hyper for HTTP/2.** Rejected: two servers with different behaviour, Rust protocol
-  code, and the reason to remove hyper (one server, in Velt) applies to HTTP/2 as much.
-- **A task per stream** (as Go's goroutine per stream). Each stream would need the HPACK
-  encoder and windows behind a lock or a channel to the connection's task; a request would cost
-  a spawn and cross-thread wake-ups. Promises on the connection's task share them for free; a
-  CPU-heavy handler can still `spawn` its work.
-- **Request/Response objects per stream without pooling.** `HttpResponse` keeps a 16 KiB
-  buffer for HTTP/1.1; a pair per request would allocate that each time. Pooled per connection
-  and unbound after use instead.
-- **A 4-bit Huffman automaton** (nghttp2's, 4096 entries). Faster per byte, but `velt fmt`
-  writes a table one number per line and the file would exceed std's 2,500 lines for generated
-  tables; with HPACK's dynamic table, Huffman decoding is rare after a connection's first
-  request.
-- **`Upgrade: h2c`.** See above.
-
-## Tests
-
-`tests/std/http2/` (run by `cargo test -p veltc --test std_tests`, debug with leak checks and
-release):
-
-- `hpack.test.velt`: RFC 7541 Appendix C (C.2–C.6), errors (index 0, past the table, bad
-  integers, strings past the block, padding of 8+ ones, EOS, size updates), HPACK bomb, Huffman
-  round trips, the encoder read back by the decoder, table size changes.
-- `exchange.test.velt`: requests as raw frames: GET, bodies in several DATA frames, concurrent
-  streams, pseudo-headers, HEAD, 204, an empty 200, 500, trailers, 100-continue.
-- `protocol.test.velt`: connection errors (GOAWAY codes), CONTINUATION flood, malformed requests
-  reset without the handler, 431, flow control both ways, window overflow.
-- `limits.test.velt`: concurrency limit with reset handlers, rapid reset, empty DATA flood, a
-  client reset aborting the handler's signal, graceful stop, window given back for unread bodies.
-- `alpn.test.velt`: `alpnProtocol()` on both sides, plain TCP.
-- `serve.test.velt`: `serveHttp` with curl over h2c, TLS+ALPN, HTTP/1.1, `Upgrade: h2c` answered
-  over HTTP/1.1, SSE, streams, uploads, 100 parallel streams (skipped without curl with HTTP/2).
-
-Conformance: [h2spec](https://github.com/summerwind/h2spec)
-(`go install github.com/summerwind/h2spec/cmd/h2spec@latest`) against a server, plain and TLS:
-
-```sh
-h2spec -h 127.0.0.1 -p 8080 -o 3              # h2c, prior knowledge
-h2spec -t -k -h localhost -p 8443 -o 3        # TLS, ALPN
-```
-
-Result: 145 of 145 over TLS, and against `serveH2` alone on plain TCP. Through `serveHttp` on
-plain TCP, 3.5 #2 ("invalid connection preface") gets HTTP/1.1's 400 instead of GOAWAY: bytes
-that do not start with the preface are an HTTP/1.1 request to a server that speaks both, and
-the 400 is the right answer to them. Handlers start only after the frames the client sent right
-behind a request have been read (up to four reads that find data at once), so an error frame
-behind a request (a zero WINDOW_UPDATE, DATA that does not match `content-length`) resets the
-stream before the handler answers; without that, h2spec's 6.9 #2, 6.9.1 #3 and 8.1.2.6 #1–2
-failed when their frames came in separate reads.
-
-## Benchmarks
-
-h2load (nghttp2 1.69) against `/plaintext`, Apple M-series, macOS, both servers built with the
-same compiler and runtime from this branch (`velt build --release`), interleaved, best of 3, on
-a machine with other builds running (load 25–60): requests/s, and the server's instructions
-retired per request (`/usr/bin/time -l`, which also counts idle worker threads):
-
-| h2load | Velt (`serveHttp`, `HttpResponse.send`) | hyper (`velt/http` `serve`, `new Response`) |
-|---|---|---|
-| `-c 16 -m 10 -t 4`, 200k requests | 1,098k req/s, 15.7k instr/req | 283k req/s, 58.7k instr/req |
-| `-c 100 -m 32 -t 4`, 400k requests | 2,337k req/s, 13.2k instr/req | 294k req/s, 57.7k instr/req |
-| `-c 4 -m 1 -t 4` (latency bound), 50k | 56k req/s, 76k instr/req | 50k req/s, 98k instr/req |
+## Runtime cost
 
 `fetch` over HTTPS against `serveHttp` in the same process (`bench/fetch/tls_h2.velt`, release,
-best of 3 interleaved; instructions retired by the whole process, client and server):
+Apple M-series, best of 3 interleaved; instructions retired by the whole process, client and
+server):
 
 | Requests | HTTP/2 (one connection) | HTTP/1.1 (pooled connections) |
 |---|---|---|
@@ -342,15 +311,50 @@ best of 3 interleaved; instructions retired by the whole process, client and ser
 | 5,000, one at a time | 39k req/s | 44k req/s |
 
 One at a time, HTTP/2 pays for the hand-off to the session's task (a channel each way) that
-HTTP/1.1's connection, used by the request's own task, does not; with requests at once the one
-connection, one TLS session and HPACK win.
+HTTP/1.1's connection, used by the request's own task, does not; with concurrent requests the
+single connection, single TLS session and HPACK win.
 
-The hyper side includes the web `Request`/`Response` layer, as `bench/web`'s `velt-native`
-comparison of HTTP/1.1 does. A web-standard `serve` on top of `HttpRequest`/`HttpResponse` will
-carry that layer's cost over HTTP/2 too.
+## Compatibility
 
-## Not done
+Conformance is checked with [h2spec](https://github.com/summerwind/h2spec) against a server,
+plain and TLS:
 
-Nothing from the first round's list is left (request body time limits, response trailers,
-extended CONNECT and the `fetch` client are above). Not planned: server push, the RFC 7540
-priority tree, and h2c for `fetch` over plain `http:` (browsers and undici do not either).
+```sh
+h2spec -h 127.0.0.1 -p 8080 -o 3              # h2c, prior knowledge
+h2spec -t -k -h localhost -p 8443 -o 3        # TLS, ALPN
+```
+
+All 145 cases pass over TLS, and against `serveH2` alone on plain TCP. Through `serveHttp` on
+plain TCP, case 3.5 #2 ("invalid connection preface") gets HTTP/1.1's 400 instead of GOAWAY:
+bytes that do not start with the preface are an HTTP/1.1 request to a server that speaks both,
+and 400 is the right answer to them.
+
+Tests: the HPACK codec in `tests/std/h2/hpack.test.velt` (RFC 7541 Appendix C, decoder errors,
+HPACK bomb, Huffman round trips, table size changes), ALPN in `tests/std/net/alpn.test.velt`
+and the client in `tests/std/fetch/h2.test.velt` and
+`std/net/http/fetch/client/h2/session.test.velt` (run by `cargo test -p veltc --test std_tests`);
+the server in `packages/http-server/tests/h2/` (exchanges as raw frames, protocol errors, limits
+and abuse, trailers, WebSockets, the web-standard `serve`, `fetch` against the server, and
+`serveHttp` driven by curl over h2c, TLS and HTTP/1.1, skipped without a curl with HTTP/2; run by
+`cargo test -p veltc --test packages`). Both run in a debug build with leak checks and in a
+release build.
+
+## Alternatives considered
+
+- **A task per stream**, as Go's goroutine per stream. Each stream would need the HPACK encoder
+  and windows behind a lock or a channel to the connection's task, and a request would cost a
+  spawn and cross-thread wake-ups. Promises on the connection's task share them for free; a
+  CPU-heavy handler can still `spawn` its work.
+- **Request/response objects per stream without pooling.** The HTTP/1.1 response keeps a
+  16 KiB output buffer; a fresh pair per request would allocate that each time. Stream objects
+  are pooled per connection instead.
+- **A 4-bit Huffman automaton** (nghttp2's, 4096 entries). Faster per byte, but the generated
+  table would be far larger than the canonical-code tables, and with HPACK's dynamic table
+  Huffman decoding is rare after a connection's first request.
+- **`Upgrade: h2c`.** See above.
+
+## Limitations
+
+- No server push, no RFC 7540 priority tree.
+- `fetch` does not use HTTP/2 over plain `http:` (h2c), as browsers and undici do not.
+- `Upgrade: h2c` requests are answered over HTTP/1.1.

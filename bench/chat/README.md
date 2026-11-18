@@ -2,11 +2,11 @@
 
 A chat server with token auth (HMAC-SHA256), rooms, JSON messages, an SQLite `INSERT` per
 message and a history query per join, written once per platform to one contract
-([SPEC.md](SPEC.md)) and checked by one smoke test (`smoke.py`, 56 checks; all four pass).
+([SPEC.md](SPEC.md)) and checked by one smoke test (`smoke.py`; all four pass).
 
 ```
-velt/server.velt   std/http + std/websocket + the sqlite package, all cores, one process
-velt/server-topics.velt  the same, with rooms as std/websocket topics (subscribe, publish)
+velt/server.velt   http-server + velt/net/websocket + the sqlite package, all cores, one process
+velt/server-topics.velt  the same, with rooms as velt/net/websocket topics (subscribe, publish)
 go/main.go        net/http + gorilla/websocket + mattn/go-sqlite3, all cores
 bun/server.ts     Bun.serve websockets + bun:sqlite, pub/sub for rooms, one process
 node/server.js    node:http + ws + better-sqlite3, one process
@@ -53,25 +53,22 @@ committed; each checkout has its own test CA. Never trust `tls/ca.pem` outside t
 **On a VM**: `vm/up.sh` provisions an Azure VM and builds everything; `vm/bench_chat.py [suite ...]`
 runs the suites there (`join`, `steady`, `ramp`, `percore`, `topics`, `idle`; servers `velt`,
 `velt-topics`, `velt-per-core`, `go`, `bun`, `node`). The VM suites use `ws://` only.
+`velt-per-core` sets `VELT_SCHEDULER=per-core`, which nothing reads any more: it runs the same
+binary and scheduler as `velt`.
 
-## Results (2026-10-10)
+## Results
 
-**Versions:** Go 1.27.1; Node 24.x and Bun as `vm/up.sh` installed them that day, and the Velt
-commit, were not recorded. `up.sh` now pins Bun (1.4.2), and `bench_chat.py` writes the versions
-as the first line of each results file.
+Measured on 2026-10-10 with `vm/bench_chat.py`: Go 1.27.1; the Node and Bun versions and the Velt
+commit were not recorded (`up.sh` pins Bun 1.4.2, and `bench_chat.py` writes the versions as the
+first line of each results file). The Velt server then ran on the runtime's HTTP server and its
+schedulers; it has not been measured on the `http-server` package and the executor in Velt yet.
+In the results files, `velt-shards` is a prototype per-core scheduler build, and `velt-fgckpt` /
+`+yield` rows are builds with experimental runtime changes that were not kept.
 
-**Names in the results files:** *shards* (`velt-shards`) is the prototype of the per-core
-scheduler, run today as `velt-per-core` (`VELT_SCHEDULER=per-core`). Rounds 3 and 4 ran a build
-with a background WAL checkpointer that is not on `main` (#1022): in those files `velt` is that
-build and `velt-fgckpt` the same build with SQLite's own checkpoints, which is what `main` does.
-`+yield` rows are a runtime experiment (the WebSocket writer yields before each write) that was not
-kept.
-
-### Round 1: Azure D48as_v5
+### Azure D48as_v5: steady, join, idle
 
 AMD EPYC 7763; every server pinned to the same 8 physical cores (one vCPU each), the load
-generator on the other 16. Velt with its own WebSocket codec (since merged, #976). Raw rows:
-`vm/results-20261010-d48as_v5.jsonl`.
+generator on the other 16. Raw rows: `vm/results-20261010-d48as_v5.jsonl`.
 
 **Steady: 10 000 clients in 100 rooms, 1 000 messages/s → 100 000 deliveries/s**
 
@@ -85,17 +82,6 @@ generator on the other 16. Velt with its own WebSocket codec (since merged, #976
 *RSS, clients connected* is sampled one second after the last client joined, before any message
 is sent; *peak RSS* is the highest sample during the run.
 
-**Ramp: the same clients, the rate doubling until p99 > 100 ms**
-
-| server | highest rate with p99 ≤ 100 ms | deliveries/s | p99 there | first failing rate |
-|---|---:|---:|---:|---|
-| **Velt** (8 cores) | 4 000/s | 396k | **40 ms** | 8 000/s: p99 689 ms, still 756k/s delivered |
-| Go (8 cores) | 4 000/s | 397k | 72 ms | 8 000/s: 453k/s, p99 10.6 s |
-| Bun | < 1 000/s | | | 1 000/s: p99 211 ms |
-| Node | < 1 000/s | | | 1 000/s: 79k/s, p99 2.4 s |
-| Velt, 1 core | < 1 000/s | | | 1 000/s: p99 295 ms, all delivered |
-| Go, 1 core | < 1 000/s | | | 1 000/s: 84 % delivered, p99 5.8 s |
-
 **Join storm: 20 000 clients connect (auth + history query each)**
 
 | | Velt | Bun | Go | Node |
@@ -106,20 +92,17 @@ is sent; *peak RSS* is the highest sample during the run.
 **Idle: 50 000 connected clients:** Bun 1.58 KB per connection (102 MB), Velt 3.66 KB (192 MB),
 Node 5.56 KB (339 MB), Go 34.4 KB (1.69 GB).
 
-### Round 3: after the fixes, database on tmpfs
+### Azure D48as_v5: ramp, database on tmpfs
 
-(Round 2's rows were not kept.)
+The same VM type and pinning, every server's database on `/dev/shm`, so the cloud disk (whose
+burst credits make fsync stalls vary from run to run) is out of the measurement. Raw rows:
+`vm/results-20261010-r3-tmpfs.jsonl` (and `-r3-disk.jsonl` for the same suites on the disk).
 
-The same VM type, Velt with the shard-aware HTTP server (since merged, #993) and the background
-checkpointer (parked, #1022), every server's database on `/dev/shm` so the cloud disk (whose
-burst credits make fsync stalls vary from run to run) is out of the measurement. Raw rows: `vm/results-20261010-r3-tmpfs.jsonl` (and
-`-r3-disk.jsonl` for the same suites on the disk).
-
-**Ramp, p99 per rate (10 000 clients, 100 rooms, 8 cores):**
+**p99 per rate (10 000 clients, 100 rooms, 8 cores):**
 
 | rate (deliveries/s) | 1 000 (100k) | 2 000 (200k) | 4 000 (400k) | 8 000 (800k) | 16 000 (1.6M) | 32 000 |
 |---|---:|---:|---:|---:|---:|---:|
-| **Velt, shards** | 1.6 ms | 2.6 ms | 17.7 ms | 35 ms | **89 ms (1.57M/s)** | collapses |
+| **Velt, per-core prototype** | 1.6 ms | 2.6 ms | 17.7 ms | 35 ms | **89 ms (1.57M/s)** | collapses |
 | Velt, work stealing | 1.7 ms | 3.1 ms | 17.1 ms | **34 ms** | 115 ms (1.57M/s) | |
 | Go | 1.3 ms | 2.3 ms | **18.2 ms** | 6 078 ms (608k/s) | | |
 | Bun | 192 ms | | | | | |
@@ -130,65 +113,32 @@ burst credits make fsync stalls vary from run to run) is out of the measurement.
 Velt sustains 16 000 messages/s (1.57M deliveries/s) under 100 ms: 4× Go's limit and over 16×
 Bun's and Node's. At low load Velt and Go are level (p99 1.3–1.7 ms), Velt with less CPU (4.0 vs
 5.1 cores at 4 000/s) and less memory (peak 227 vs 510 MB at 4 000/s; with the clients connected
-and idle, 97 vs 364 MB). With the shard-aware HTTP server, shards beat work
-stealing at the top (p99 89 vs 115 ms at 16 000/s, 12 % less CPU). On tmpfs the background
-checkpointer makes no difference (as expected): its effect has to be measured on a steady disk.
+and idle, 97 vs 364 MB). On one core Velt is at Bun's level.
 
-On the disk, at 1 000/s, the background checkpointer cut Velt's p99 from 21 to 7.5 ms (Go 19.9 ms,
-Bun 192 ms), but later disk runs contradicted each other (burst credits): the checkpointer is
-parked (#1022) until it is measured on a disk with provisioned IOPS or local NVMe (round 4).
+### Azure D48ads_v5: topics against the send loop
 
-### Round 4: local SSD, topics
-
-Azure D48ads_v5 (the same CPU with a local SSD), the database on the local SSD, the same
-pinning. Raw rows: `vm/results-20261010-r4-localssd-ckpt.jsonl` and `-r4-topics.jsonl`.
-
-**Checkpoints on a local SSD, p99 of two passes (10 000 clients, 100 rooms):**
-
-| rate | 2 000 | 4 000 | 8 000 | 16 000 |
-|---|---:|---:|---:|---:|
-| SQLite's own checkpoints (`velt-fgckpt`, as on `main`) | 4.8 / 4.1 ms | 21.4 / 20.5 ms | **40.3 / 39.1 ms** | 212 / 225 ms |
-| background checkpointer (`velt`, #1022) | **2.6 / 2.7 ms** | 20.9 / 20.9 ms | 45.7 / 48.7 ms | **171 / 165 ms** |
-
-Mixed: better at 2 000 and 16 000/s, worse at 8 000/s, and 20 % more CPU at 16 000/s (4.6 vs 3.8
-cores). Not a uniform win, so it stays parked; a candidate for an opt-in.
-
-**Topics against the send loop, p99 (`velt/server-topics.velt` against `velt/server.velt`):**
+The same CPU with a local SSD, the database on it, the same pinning. p99 of
+`velt/server-topics.velt` against `velt/server.velt`. Raw rows:
+`vm/results-20261010-r4-topics.jsonl`.
 
 | rate | 4 000 | 8 000 | 16 000 |
 |---|---:|---:|---:|
 | send loop | 21.4 ms | 37.9 ms | 135 ms |
 | topics | 21.0 ms | 36.9 ms | 123 ms |
 
-The same up to 8 000/s, p99 a little better at 16 000/s. (The `+yield` rows in the file are within
-a few percent of these.)
+## Lessons
 
-## What it shows
-
-- Velt holds up in an app with auth, JSON, a database and shared state: Go's latency and
-  throughput with less CPU and a little over half its peak memory (a fifth with the clients
-  connected and idle), about 4× the sustained load of Bun and more
-  than 5× Node's, the fastest joins, and graceful degradation past the limit.
-- On one core Velt is at Bun's level (both deliver everything at 1 000/s with p99 over 100 ms).
-- Bun stays the leanest per idle connection (1.6 KB vs Velt's 3.7 KB).
-
-## Findings for Velt (and what was done)
-
-1. **SQLite checkpoints stall the only connection.** At 8 000 messages/s on the cloud disk, with
-   SQLite's own checkpoints, Velt's p99 was 0.7–0.9 s (`velt-fgckpt` in `-r3-disk.jsonl`: 715 and
-   870 ms); with the database on tmpfs the same rate ran at p99 35 ms (`-r3-tmpfs.jsonl`).
-   SQLite's automatic checkpoint runs inside the commit that crosses 1 000 WAL pages and syncs the
-   database file (slow on a cloud disk), while every other message waits for the connection.
-   Prototype (parked, #1022): the runtime checkpoints in the background (PASSIVE every 100 ms on
-   its own connection, RESTART past 16 MiB of WAL so the log starts over). On the cloud disk its
-   effect changed from run to run (at 4 000/s, p50 6.5 → 3.6 ms but p99 40 → 120 ms in
-   `-r3-disk.jsonl`), and on a local SSD it was mixed (round 4). Past ~8 000 messages/s
-   this spec is disk-bound for any server (each message is its own transaction: about 8 KB of WAL
-   plus the same again at checkpoint, against a disk of ~100 MB/s).
-2. **`VELT_SCHED=shards` needed a shard-aware HTTP server**: std/http accepted on one shard, so
-   every session ran on it (p99 179 ms). Fixed with an accept loop per worker (#993): p99
-   9.2 ms at 1 000/s, and the best high-load numbers of all (round 3).
-3. **Idle memory per connection** (3.7 KB vs Bun's 1.6 KB): the HTTP connection state kept after
-   the upgrade, the session task's state and the WebSocket objects are the places to look.
-4. Not measured yet: TLS (`wss://`; every server and both clients support it, see
-   [Running](#running)), and the same app with batched inserts.
+- **SQLite checkpoints stall the only connection.** SQLite's automatic checkpoint runs inside the
+  commit that crosses 1 000 WAL pages and syncs the database file, while every other message
+  waits for the connection: at 8 000 messages/s on the cloud disk Velt's p99 was 0.7–0.9 s,
+  against 35 ms on tmpfs. A background checkpointer helped at some rates and hurt at others on a
+  local SSD, so it was not adopted. Past about 8 000 messages/s this spec is disk-bound for any
+  server: each message is its own transaction (about 8 KB of WAL plus the same again at
+  checkpoint).
+- **Accept on every worker.** A server that accepts on one worker runs every session there; the
+  per-core layout only pays once connections are spread over the workers.
+- **Idle memory per connection** is 3.7 KB in Velt against Bun's 1.6 KB: the HTTP connection
+  state kept after the upgrade, the session task's state and the WebSocket objects are the
+  places to look.
+- Not measured: TLS (`wss://`; every server and both clients support it, see
+  [Running](#running)), and the same app with batched inserts.

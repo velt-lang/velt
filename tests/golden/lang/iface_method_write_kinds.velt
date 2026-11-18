@@ -1,0 +1,40 @@
+// check: no leaks
+// Methods written through interface values on objects of other kinds (#379), as in Node:
+// - an object written as an interface extending the written one, with no fields: the write
+//   reaches the object, so a call through either view runs the new function;
+// - an object of a declared object type (`type Holder`) whose field is the function: what the
+//   assigned function throws joins the field's function type, so the caller's `catch` gets it.
+interface Ctx {
+  update(): void;
+}
+
+interface Named extends Ctx {
+  name(): string;
+}
+
+class Failure extends Error {}
+
+const n: Named = { update: () => console.log("old"), name: () => "n" };
+const c: Ctx = n;
+c.update = () => {
+  console.log("new");
+};
+c.update();
+n.update();
+
+type Holder = { update: () => void };
+const o: Holder = { update: () => {} };
+const h: Ctx = o;
+h.update = () => {
+  throw new Failure("boom");
+};
+try {
+  h.update();
+} catch (e) {
+  console.log("caught", e instanceof Failure);
+}
+try {
+  o.update();
+} catch (e) {
+  console.log("held caught", e instanceof Failure);
+}

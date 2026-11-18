@@ -1,0 +1,17 @@
+readonly_array_into_mutable.velt:14:32: error: the type `Promise<readonly f64[]>` cannot be assigned to `Promise<f64[]>`: a 'readonly' array in it would be a mutable one (TypeScript's TS4104)
+  = note: code could change the array through the mutable type; copy it (`[...xs]`) to get an array you may change
+
+readonly_array_into_mutable.velt:16:25: error: the type `(readonly f64[])[]` cannot be assigned to `f64[][]`: a 'readonly' array in it would be a mutable one (TypeScript's TS4104)
+  = note: code could change the array through the mutable type; copy it (`[...xs]`) to get an array you may change
+
+readonly_array_into_mutable.velt:18:21: error: the type `{ xs: readonly f64[] }` cannot be assigned to `{ xs: f64[] }`: a 'readonly' array in it would be a mutable one (TypeScript's TS4104)
+  = note: code could change the array through the mutable type; copy it (`[...xs]`) to get an array you may change
+
+readonly_array_into_mutable.velt:20:33: error: the type `[readonly f64[], string]` cannot be assigned to `[f64[], string]`: a 'readonly' array in it would be a mutable one (TypeScript's TS4104)
+  = note: code could change the array through the mutable type; copy it (`[...xs]`) to get an array you may change
+
+readonly_array_into_mutable.velt:23:7: error: the type `readonly f64[]` is 'readonly' and cannot be assigned to the mutable type `f64[]` (TypeScript's TS4104)
+  = note: code could change the array through the mutable type; copy it (`[...xs]`) to get an array you may change
+
+readonly_array_into_mutable.velt:25:5: error: property 'push' does not exist on type 'readonly f64[]' (TypeScript's TS2339)
+  = note: a read-only array has no methods that change it; copy it first (`[...xs]`) to get an array you may change

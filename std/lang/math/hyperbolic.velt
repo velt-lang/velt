@@ -1,0 +1,199 @@
+// velt/lang/math (internal): `Math.sinh`, `cosh`, `tanh`, `asinh`, `acosh` and `atanh`, ported
+// from fdlibm's e_sinh.c, e_cosh.c, s_tanh.c, s_asinh.c, e_acosh.c and e_atanh.c as V8 has them
+// (src/base/ieee754.cc), so that results have the same bits as in JavaScript engines.
+// Copyright (C) 1993 by Sun Microsystems, Inc.; see NOTICE.
+
+import { abs, sqrt } from "velt/lang/intrinsics";
+import { exp, expm1 } from "velt/lang/math/exp";
+import { log } from "velt/lang/math/log";
+import { log1p } from "velt/lang/math/logs";
+import { highWord, lowWord } from "velt/lang/math/words";
+
+const LN2: f64 = 6.93147180559945286227e-01;
+// Past log(MAX_VALUE), exp(|x|/2) squared still gives sinh and cosh up to here.
+const OVERFLOW: f64 = 710.4758600739439;
+
+/**
+ * The hyperbolic sine, (e^x - e^-x)/2: from expm1 below 22, from exp above. The error is below
+ * 1 ulp.
+ */
+export function sinh(x: f64): f64 {
+  const h = x < 0.0 ? -0.5 : 0.5;
+  const ax = abs(x);
+  if (ax < 22.0) {
+    if (ax < 3.725290298461914e-9) {
+      // |x| < 2^-28
+      return x;
+    }
+    const t = expm1(ax);
+    if (ax < 1.0) {
+      return h * (2.0 * t - t * t / (t + 1.0));
+    }
+    return h * (t + t / (t + 1.0));
+  }
+  if (ax < 709.7822265625) {
+    return h * exp(ax);
+  }
+  if (ax <= OVERFLOW) {
+    const w = exp(0.5 * ax);
+    const t = h * w;
+    return t * w;
+  }
+  // Over the range, or NaN.
+  return x * 1.0e307;
+}
+
+/**
+ * The hyperbolic cosine, (e^x + e^-x)/2: from expm1 below 0.5*ln2, from exp above. The error
+ * is below 1 ulp.
+ */
+export function cosh(x: f64): f64 {
+  const ix = highWord(x) & 0x7fffffff;
+  if (ix < 0x3fd62e43) {
+    // |x| < 0.5 ln2
+    const t = expm1(abs(x));
+    const w = 1.0 + t;
+    if (ix < 0x3c800000) {
+      // |x| < 2^-55
+      return w;
+    }
+    return 1.0 + (t * t) / (w + w);
+  }
+  if (ix < 0x40360000) {
+    // |x| < 22
+    const t = exp(abs(x));
+    return 0.5 * t + 0.5 / t;
+  }
+  if (ix < 0x40862e42) {
+    // |x| < log(MAX_VALUE)
+    return 0.5 * exp(abs(x));
+  }
+  if (abs(x) <= OVERFLOW) {
+    const w = exp(0.5 * abs(x));
+    const t = 0.5 * w;
+    return t * w;
+  }
+  if (ix >= 0x7ff00000) {
+    return x * x;
+  }
+  return Infinity;
+}
+
+/**
+ * The hyperbolic tangent, from expm1(±2|x|) below 22 and ±1 above. The error is below 1 ulp.
+ */
+export function tanh(x: f64): f64 {
+  const jx = highWord(x);
+  const ix = jx & 0x7fffffff;
+  if (ix >= 0x7ff00000) {
+    // ±1 for the infinities, NaN for NaN.
+    return jx >= 0 ? 1.0 / x + 1.0 : 1.0 / x - 1.0;
+  }
+  let z = 0.0;
+  if (ix < 0x40360000) {
+    // |x| < 22
+    if (ix < 0x3e300000) {
+      // |x| < 2^-28
+      return x;
+    }
+    if (ix >= 0x3ff00000) {
+      // |x| >= 1
+      const t = expm1(2.0 * abs(x));
+      z = 1.0 - 2.0 / (t + 2.0);
+    } else {
+      const t = expm1(-2.0 * abs(x));
+      z = -t / (t + 2.0);
+    }
+  } else {
+    z = 1.0;
+  }
+  return jx >= 0 ? z : -z;
+}
+
+/**
+ * The inverse hyperbolic sine, sign(x) * log(|x| + sqrt(x^2 + 1)), in a form that keeps its
+ * accuracy for small and large `x`. The error is below 1 ulp.
+ */
+export function asinh(x: f64): f64 {
+  const hx = highWord(x);
+  const ix = hx & 0x7fffffff;
+  if (ix >= 0x7ff00000) {
+    return x + x;
+  }
+  if (ix < 0x3e300000) {
+    // |x| < 2^-28
+    return x;
+  }
+  let w = 0.0;
+  if (ix > 0x41b00000) {
+    // |x| > 2^28
+    w = log(abs(x)) + LN2;
+  } else if (ix > 0x40000000) {
+    // 2 < |x| <= 2^28
+    const t = abs(x);
+    w = log(2.0 * t + 1.0 / (sqrt(x * x + 1.0) + t));
+  } else {
+    const t = x * x;
+    w = log1p(abs(x) + t / (1.0 + sqrt(1.0 + t)));
+  }
+  return hx > 0 ? w : -w;
+}
+
+/**
+ * The inverse hyperbolic cosine, log(x + sqrt(x^2 - 1)); NaN below 1. The error is below 1 ulp.
+ */
+export function acosh(x: f64): f64 {
+  const hx = highWord(x);
+  if (hx < 0x3ff00000) {
+    // x < 1
+    return NaN;
+  }
+  if (hx >= 0x41b00000) {
+    // x > 2^28
+    if (hx >= 0x7ff00000) {
+      return x + x;
+    }
+    return log(x) + LN2;
+  }
+  if ((((hx - 0x3ff00000) as u32) | lowWord(x)) == 0) {
+    return 0.0;
+  }
+  if (hx > 0x40000000) {
+    // 2 < x < 2^28
+    const t = x * x;
+    return log(2.0 * x - 1.0 / (x + sqrt(t - 1.0)));
+  }
+  // 1 < x <= 2
+  const t = x - 1.0;
+  return log1p(t + sqrt(2.0 * t + t * t));
+}
+
+/**
+ * The inverse hyperbolic tangent, 0.5 * log((1 + x)/(1 - x)) through log1p; ±Infinity at ±1,
+ * NaN outside. The error is below 1 ulp.
+ */
+export function atanh(x: f64): f64 {
+  const hx = highWord(x);
+  const ix = hx & 0x7fffffff;
+  if (ix > 0x3ff00000 || (ix == 0x3ff00000 && lowWord(x) != 0)) {
+    // |x| > 1, or NaN
+    return NaN;
+  }
+  if (ix == 0x3ff00000) {
+    return x > 0.0 ? Infinity : -Infinity;
+  }
+  if (ix < 0x3e300000) {
+    // |x| < 2^-28
+    return x;
+  }
+  const ax = abs(x);
+  let t = 0.0;
+  if (ix < 0x3fe00000) {
+    // |x| < 0.5
+    t = ax + ax;
+    t = 0.5 * log1p(t + t * ax / (1.0 - ax));
+  } else {
+    t = 0.5 * log1p((ax + ax) / (1.0 - ax));
+  }
+  return hx >= 0 ? t : -t;
+}

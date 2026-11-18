@@ -1,0 +1,206 @@
+// velt/net (tests): TLS_AES_256_GCM_SHA384 against handshakes recorded from OpenSSL 1.1.1o's
+// `s_server -tls1_3 -ciphersuites TLS_AES_256_GCM_SHA384` (P-256 certificate): the client's
+// ClientHellos are fixed (random 5a.., session id 3c.., the keys below), and the expected secrets
+// are what the server logged with `-keylogfile`, so the transcript hash, the SHA-384 key schedule
+// and the AES-256-GCM records are checked against another implementation. One trace goes
+// straight to X25519; the other is a HelloRetryRequest to secp256r1, whose message_hash is 48
+// bytes. The capture script is scripts/capture-tls13-sha384-trace.js.
+import { hexDecode, hexEncode } from "velt/encoding/hex";
+import { TlsFailure } from "velt/net/tls/alert";
+import {
+  ClientHandshake,
+  FINISHED_DONE,
+  HANDSHAKE_KEYS,
+  KEEP_READING,
+  SEND_RETRY,
+} from "velt/net/tls/client_handshake";
+import { HandshakeBuffer } from "velt/net/tls/handshake_buffer";
+import { RecordCipher } from "velt/net/tls/record_cipher";
+import { describe, expect, it } from "velt/test";
+
+const X25519_PRIVATE = "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1";
+const P256_PRIVATE = "1111111111111111111111111111111111111111111111111111111111111107";
+
+const DIRECT_HELLO =
+  "010000ae03035a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a203c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c00021302010000630000000e000c0000096c6f63616c686f7374002b0003020304000a00060004001d0017000d0012001004030503080408050806040105010601003300260024001d0020fd8f6898c8b2ecc253fe551898b44e8750a0ea2c21743964f67d2bb89648dd58";
+
+function directRecords(): string[] {
+  return [
+    "160303007a02000076030328a858e568798c35aac3f73f520565cb7d0efadf230993b8d067df07c0ac28a5203c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c130200002e002b0002030400330024001d002029dd7b95477881519c5162dbd75329bed0b64c408d4a02d57e670a70d8dceb5a",
+    "140303000101",
+    "1703030017e16eead6e9d628a659144c0016f1e553db9959c32b341e",
+    "170303019e22e612c7b443f2ec47f250b6d8ee37a5f5eaa58cf45b7d0a1c6c88675b4e185c41b41685596f323cc2dbe727900da7835455aff6594a55acba251bb8e1b7b79a620568860b6f9c2c0d14f567f8f843968253785d897df37e36519b28c3b16f0c072e6ceb5739790a7e85a5f97ae64168639f55b635a52c9ea8c8bb7baae479b146ed078acb0b5a8110693df886d7c2c38d6ef623dbace5e7b73017e61cf7153e0d8b5fd057ac0396cea3bd42be262ebf078e8a4ff590e59d7999b0f2b6e380abec01f471ecd792503417059e6120f30316d4504bc39241a2f6ebf1f72d20155accf72d9f55b03e32e58349655ab0355d55e823dfc23f11521e6cee3ddbb6180f97bce9edef1a357af0089cf18d07d92199b057872d03974225be123527047c467200b18422c5f23c44fb98c879e4127d12bc5a245183befc1394a67f90a0fdcd779c996fc8aa8c055f475d0a4ebec13c3b4abc8c56cfc6e7b8558b6a298f0038aa9af70bd4ae6a4dcb781c1f52f136de88860074af848f54abff68e0805726e703248c1bb0e49e4ee0253b0793ba0a856f1d9d467139af89b3a4608acb86",
+    "1703030060539acfa2ebb967774ef93fac2531a16e5988a5f0fe7c97ff3e814d466501f15266cb6d2b95854c3aab2651d2c530b6cff585f1315ca18b83a023f7a9ac18dacab791b660c3a08e2c005ec7457db9853a0b8498fc647978e1a01d88b5774370b8",
+    "1703030045c2675a01e95e318ae7a3c65fd63fedee0d0a8a850fe2cc5226d0ad21936f41b60fcf6b008024968bad3d7b1e90d3b0ac8d7ec8539daa0d895187bce3dc77c5f57f7cea28ff",
+  ];
+}
+
+const DIRECT_SHS =
+  "83e3437c0f44e11f0f925b504bd33248e1a075a8536c3170f2efc30faf019853cdbcc99f0059bf9458c53d479387f193";
+const DIRECT_CHS =
+  "2c6fb10d7c2f9bed6eb4437da118ae8d1f365d184dfdb1ea3082267362f8606f3acd2e6a31c1a9f768d13637095c1534";
+const DIRECT_SAP =
+  "4d8a8ef821330c1a2daf7527d674ff98f58a7aab839d2000f09f809b72f0f149dc154fef14ad559ee0ea37eff84f3c92";
+
+const RETRY_HELLO1 =
+  "010000ae03035a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a203c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c00021302010000630000000e000c0000096c6f63616c686f7374002b0003020304000a00060004001d0017000d0012001004030503080408050806040105010601003300260024001d0020fd8f6898c8b2ecc253fe551898b44e8750a0ea2c21743964f67d2bb89648dd58";
+const RETRY_HELLO2 =
+  "010000cf03035a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a203c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c00021302010000840000000e000c0000096c6f63616c686f7374002b0003020304000a00060004001d0017000d00120010040305030804080508060401050106010033004700450017004104c5a3a4ed10ca34e528bcc56916556dd7289b8a67f372af3bf6453de8c08266f2f757a553c3bb97115876e891490b46843b8e0a12ac58ac21161e24f21e13bfe3";
+
+function retryRecords(): string[] {
+  return [
+    "1603030058020000540303cf21ad74e59a6111be1d8c021e65b891c2a211167abb8c5e079e09e2c8a8339c203c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c130200000c002b00020304003300020017",
+    "140303000101",
+    "160303009b020000970303f92becaf8977cbab93e2207ae98c2a9e5b33cbd7ba7134836c1399c1c5bd92e3203c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c130200004f002b00020304003300450017004104057594233fb4da896bdfce81efb57cb0f5cc27df95ba9edefed50cd9c907485ea4322e92d7804c6d71d944932b2ee332b3dabf605afe5d990b14084e15a6e3c9",
+    "17030300171356cc23a5d484e690d7c7dc8dd8089a12003367dfba99",
+    "170303019e2687658bc746ad70ecbe4e7aa723c36f73ae80540752d3712e9d75a992abbea7fd3567585f733f31b22f69c366f39dec5545ddf476f879013b092a0467bed6425a6af5c1ee5c357a49144e716cf46faf2a742f0a3d618a3e0a2549775c7bad1fefe2d7bd2b82cb42c245702bb571f32ecd5ca891d22c49f3226cd6cf2b5cc9f73d6a84bd46ff77d4151bbc60ee3ac77a0c891e131473eda7121946ccef7be263202f1714d8118100b57e0ade37b6b4abe443eb1978a76a53ef0ddb79d764672cb37d64bf1334ea9bf4905449c19e504412b3f460b571287fc60ded90a18fcebcf00b7e2815acff8705b5664283c5453f20ce608325c997f873485009e6a1d7b9506dfc0a03e7afd1d974435baaff32e122e026626ed2aa4af2df3a5f423207243b187eabe50fd7ce1507a640d37edd1cc62718954a85b92838af4e3071ab07916d9039f5a71acd061698269fa4d5e0cb1af42cb788619f3c82fa83be0c4597e8396cb299f373bbc758ea7e8ac40018d78d38b2b15bd72a46279f99a80ce0cc7a9b0c4f1dad5154250ffb8e6e261f27ac13c1272e16fe69bfadbc251ee038",
+    "1703030060b49854359900d30a7eb9ebed8ccc0281ea728a6d2df78c3cbabb60ad75565fc9e5a3bad79a3ecabdd9a08c507275959d3e7ea3535f38a871bbab18a0c5f9801f70dd7351f8ecb70d78b0e4318e5c3f8200c346b70dc4816fd367b6b747bcedd8",
+    "1703030045733ff42944c433e2e6853fde8ecd135c4daf18a183de9c9d0ddb0ac1f91a205b15721b188cdff79a0e02addec99c176b718a82c979c2f12226f63d7e25599f6b37f51a60a5",
+  ];
+}
+
+const RETRY_SHS =
+  "ff97c493b40b0c02100cf63bae1f5b978161ae614eb206c831c612c9e7e06dccea77c410883b55cd8f480757f4d807c1";
+const RETRY_CHS =
+  "1eee488b8aadcde5c838939e659256c1818aaa51d9e27600e9643b92ab12a9e1c6f34db82c3cd11df114afe6cab8dcbe";
+const RETRY_SAP =
+  "a24656643e7c8915b17789b4e4f9c829cb4504312386c22ebf4f3b51e1973276c6a9402658e325281699b05af5e0c90e";
+
+const SHA384_SUITE: usize = 0x1302;
+
+function sessionId(): u8[] {
+  const out: u8[] = [];
+  for (let i: usize = 0; i < 32; i++) {
+    out.push(0x3c);
+  }
+  return out;
+}
+
+// What one trace's handshake ended with.
+class Outcome {
+  actions: i32[] = [];
+  serverHandshake: string = "";
+  clientHandshake: string = "";
+  serverApplication: string = "";
+  lastFlight: u8[] = [];
+  suite: usize = 0;
+}
+
+// Runs the client over the recorded server records, `suites` offered.
+function replay(
+  hello1: string,
+  hello2: string | null,
+  records: string[],
+  suites: usize[] = [SHA384_SUITE],
+): Outcome {
+  const h = new ClientHandshake(
+    {
+      random: [],
+      sessionId: sessionId(),
+      publicKey: [],
+      serverName: "",
+      alpn: [],
+      fixed: hexDecode(hello1),
+      fixedRetry: hello2 != null ? hexDecode(hello2) : null,
+      suites: suites,
+      retryKey: hexDecode(P256_PRIVATE),
+    },
+    hexDecode(X25519_PRIVATE),
+  );
+  h.hello();
+  const out = new Outcome();
+  const buf = new HandshakeBuffer();
+  let cipher: RecordCipher | null = null;
+  for (const hex of records) {
+    const rec = hexDecode(hex);
+    if (rec[0] == 20) {
+      continue;
+    }
+    if (rec[0] == 22) {
+      buf.append(rec, 5, rec.length);
+    } else {
+      const c = cipher!;
+      let n = c.open(rec, 0, rec.length);
+      // The inner plaintext: the content, its type, zeros.
+      while (rec[5 + n - 1] == 0) {
+        n--;
+      }
+      expect(rec[5 + n - 1]).toBe(22);
+      buf.append(rec, 5, 5 + n - 1);
+    }
+    while (buf.hasMessage()) {
+      const action = h.onMessage(buf.take());
+      out.actions.push(action);
+      if (action == HANDSHAKE_KEYS) {
+        cipher = new RecordCipher(h.suite, h.serverHandshake);
+      }
+    }
+  }
+  out.serverHandshake = hexEncode(h.serverHandshake);
+  out.clientHandshake = hexEncode(h.clientHandshake);
+  out.serverApplication = hexEncode(h.serverApplication);
+  out.lastFlight = h.lastFlight;
+  out.suite = h.suite;
+  return out;
+}
+
+// The alert and message of what `f` throws, "" if nothing.
+function failure(f: () => void throws Error): string {
+  try {
+    f();
+    return "";
+  } catch (e) {
+    return e instanceof TlsFailure ? `${e.alert} ${e.message}` : `${e}`;
+  }
+}
+
+describe("TLS_AES_256_GCM_SHA384 against OpenSSL", () => {
+  it("derives OpenSSL's secrets and checks its Finished (X25519)", () => {
+    const o = replay(DIRECT_HELLO, null, directRecords());
+    expect(o.suite).toBe(SHA384_SUITE);
+    expect(o.serverHandshake).toBe(DIRECT_SHS);
+    expect(o.clientHandshake).toBe(DIRECT_CHS);
+    expect(o.serverApplication).toBe(DIRECT_SAP);
+    // ServerHello, EncryptedExtensions, Certificate, CertificateVerify, Finished.
+    expect(o.actions).toEqual([
+      HANDSHAKE_KEYS,
+      KEEP_READING,
+      KEEP_READING,
+      KEEP_READING,
+      FINISHED_DONE,
+    ]);
+    // The client's Finished: a 48-byte verify_data.
+    expect(o.lastFlight.length).toBe(4 + 48);
+    expect(o.lastFlight[3]).toBe(48);
+  });
+
+  it("derives OpenSSL's secrets after a HelloRetryRequest to secp256r1", () => {
+    const o = replay(RETRY_HELLO1, RETRY_HELLO2, retryRecords());
+    expect(o.serverHandshake).toBe(RETRY_SHS);
+    expect(o.clientHandshake).toBe(RETRY_CHS);
+    expect(o.serverApplication).toBe(RETRY_SAP);
+    expect(o.actions).toEqual([
+      SEND_RETRY,
+      HANDSHAKE_KEYS,
+      KEEP_READING,
+      KEEP_READING,
+      KEEP_READING,
+      FINISHED_DONE,
+    ]);
+  });
+
+  it("refuses a changed Finished", () => {
+    const records = directRecords().slice();
+    const last = records[records.length - 1];
+    // A flipped bit in the record's tag: the record fails to open.
+    const flipped = last.slice(0, (last.length - 2) as i64) + (last.endsWith("00") ? "01" : "00");
+    records[records.length - 1] = flipped;
+    expect(failure(() => replay(DIRECT_HELLO, null, records))).toContain("bad_record_mac");
+  });
+
+  it("refuses the suite when it was not offered", () => {
+    expect(failure(() => replay(DIRECT_HELLO, null, directRecords(), [0x1301, 0x1303]))).toBe(
+      "47 TLS: the server chose a cipher suite not offered (0x1302)",
+    );
+  });
+});

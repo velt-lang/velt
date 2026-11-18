@@ -205,50 +205,20 @@ impl<'a> Parser<'a> {
     /// `declare unsafe function name(...): R;` (`unsafe` likewise: calling it needs unsafe code,
     /// which sema allows only on an `@intrinsic` declaration) or `declare decorator function
     /// name(...): Target;` (`decorator` likewise; `async` parses, so sema can say why it is not
-    /// one). The old `declare [unsafe] intrinsic function` is an error naming its new form,
-    /// `@intrinsic declare function` (#2203), and parses as that would. The removed `declare
-    /// [async] system function` is an error naming `declare c("c")`, parsed as `declare function`.
+    /// one).
     fn parse_declare(&mut self, lo: u32) -> PResult<FnSig> {
         self.bump(); // declare
-        let async_system = self.at_kw(Kw::Async)
-            && self.nth_word(1, "system")
-            && self.nth(2) == Tok::Kw(Kw::Function);
-        let mut is_async = async_system && self.eat_kw(Kw::Async);
-        let is_system = self.at_word("system") && self.nth(1) == Tok::Kw(Kw::Function);
-        if is_system {
-            let at = self.cur_span();
-            self.error(
-                "`declare system function` was removed: declare a C library function with `declare c(\"c\")` in a package with native code (`native: { c: {} }`) and call it in an `unsafe` block; velt/fs and velt/os wrap the file functions and `lastOsError`".to_string(),
-                at,
-            );
-            self.bump(); // system
-        }
-        let old_intrinsic = |p: &mut Self, k: usize| {
-            p.nth_word(k, "intrinsic") && p.nth(k + 1) == Tok::Kw(Kw::Function)
-        };
-        let is_unsafe = !is_system
-            && self.at_word("unsafe")
-            && (self.nth(1) == Tok::Kw(Kw::Function) || old_intrinsic(self, 1));
+        let is_unsafe = self.at_word("unsafe") && self.nth(1) == Tok::Kw(Kw::Function);
         if is_unsafe {
             self.bump(); // unsafe
         }
-        if !is_system && old_intrinsic(self, 0) {
-            let unsafe_ = if is_unsafe { "unsafe " } else { "" };
-            let at = self.cur_span();
-            self.error(
-                format!("`declare {unsafe_}intrinsic function` is written `@intrinsic declare {unsafe_}function` now, with the decorator std/lang/intrinsics declares"),
-                at,
-            );
-            self.bump(); // intrinsic
-        }
-        let is_decorator = !is_system
-            && !is_unsafe
+        let is_decorator = !is_unsafe
             && self.at_word("decorator")
             && matches!(self.nth(1), Tok::Kw(Kw::Function | Kw::Async));
         if is_decorator {
             self.bump(); // decorator
         }
-        is_async |= self.eat_kw(Kw::Async);
+        let is_async = self.eat_kw(Kw::Async);
         // `declare decorator function export(…)`: the one place, beside a decorator's head, where
         // the keyword `export` is a name (#2203 step 5).
         let mut sig =
