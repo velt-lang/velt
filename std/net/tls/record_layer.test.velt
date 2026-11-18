@@ -264,7 +264,7 @@ function opened(cipher: RecordCipher, rec: string): string {
 
 describe("TLS key schedule", () => {
   it("derives RFC 8448's handshake secret and client handshake traffic secret", () => {
-    const hs = handshakeSecret(hexDecode(SHARED));
+    const hs = handshakeSecret(hexDecode(SHARED), 32);
     expect(hexEncode(hs)).toBe(HANDSHAKE_SECRET);
     expect(hexEncode(expandLabel(hs, "c hs traffic", hexDecode(HELLO_HASH), 32))).toBe(
       CLIENT_HS_SECRET,
@@ -304,6 +304,48 @@ describe("TLS key schedule", () => {
     const info = hexDecode("002011746c73313320747261666669632075706400");
     const secret = hexDecode(CLIENT_AP_SECRET);
     expect(hexEncode(nextSecret(secret))).toBe(hexEncode(hkdfExpandSha256(secret, info, 32)));
+  });
+
+  it("derives a SHA-384 secret's next secret with HKDF-SHA384", () => {
+    // Expected value from Node's createHmac("sha384"); a 48-byte secret is a SHA-384 suite's.
+    expect(hexEncode(nextSecret(hexDecode(SHA384_SECRET)))).toBe(
+      "df0aebd8a46f9f882b98cbcbbed996ec4e63dfee76993684af48581a1252ace48e7594b78d5b2f6c875b6cfef0b3ef18",
+    );
+  });
+});
+
+// A SHA-384 traffic secret (OpenSSL's server application secret in openssl_sha384.test.velt).
+const SHA384_SECRET =
+  "4d8a8ef821330c1a2daf7527d674ff98f58a7aab839d2000f09f809b72f0f149dc154fef14ad559ee0ea37eff84f3c92";
+
+describe("RecordCipher with TLS_AES_256_GCM_SHA384", () => {
+  it("seals records as Node's aes-256-gcm does, and opens them", () => {
+    // Node: key and IV by HKDF-Expand-Label over createHmac("sha384"), createCipheriv.
+    const buf = Buffer.alloc(64);
+    const c = new RecordCipher(0x1302, hexDecode(SHA384_SECRET));
+    const first: u8[] = [104, 101, 108, 108, 111, 23];
+    for (let i: usize = 0; i < first.length; i++) {
+      buf[5 + i] = first[i];
+    }
+    let n = c.seal(buf, 0, first.length);
+    expect(hexEncode(buf.slice(0, n as i64))).toBe(
+      "1703030016bc3dfc31e55779b790f23704217dec08dbfbea2137bb",
+    );
+    const second: u8[] = [119, 111, 114, 108, 100, 33, 23];
+    for (let i: usize = 0; i < second.length; i++) {
+      buf[5 + i] = second[i];
+    }
+    n = c.seal(buf, 0, second.length);
+    expect(hexEncode(buf.slice(0, n as i64))).toBe(
+      "17030300179ae064bcd1b68be1d40f1764128f0551405044e7c38c2a",
+    );
+    const o = new RecordCipher(0x1302, hexDecode(SHA384_SECRET));
+    expect(opened(o, "1703030016bc3dfc31e55779b790f23704217dec08dbfbea2137bb")).toBe(
+      "68656c6c6f17",
+    );
+    expect(opened(o, "17030300179ae064bcd1b68be1d40f1764128f0551405044e7c38c2a")).toBe(
+      "776f726c642117",
+    );
   });
 });
 

@@ -16,7 +16,7 @@ import {
   X25519,
 } from "velt/net/tls/client_hello";
 import { ByteReader } from "velt/net/tls/byte_reader";
-import { AES_128_GCM_SHA256, CHACHA20_POLY1305_SHA256 } from "velt/net/tls/record_cipher";
+import { knownSuite } from "velt/net/tls/record_cipher";
 
 // SHA-256("HelloRetryRequest"): a ServerHello with this random is a HelloRetryRequest.
 const HRR_RANDOM: u8[] = [
@@ -70,12 +70,14 @@ export struct ServerHello {
 
 /**
  * The ServerHello in `body` (the message without its 4-byte header), checked against `sessionId`
- * and the group `offered` of the client's last key share. `retried` says a HelloRetryRequest came
- * already: another one is `unexpected_message` whatever it says (RFC 8446 §4.1.4).
+ * and the group `offered` of the client's last key share; the suite must be one of `suites`, the
+ * client's. `retried` says a HelloRetryRequest came already: another one is `unexpected_message`
+ * whatever it says (RFC 8446 §4.1.4).
  */
 export function parseServerHello(
   body: u8[],
   sessionId: u8[],
+  suites: usize[],
   offered: usize,
   retried: bool,
 ): ServerHello {
@@ -101,7 +103,7 @@ export function parseServerHello(
     throw new TlsFailure(ILLEGAL_PARAMETER, "the ServerHello does not echo the session id");
   }
   const suite = r.u16();
-  if (suite != AES_128_GCM_SHA256 && suite != CHACHA20_POLY1305_SHA256) {
+  if (!suites.includes(suite) || !knownSuite(suite)) {
     throw new TlsFailure(
       ILLEGAL_PARAMETER,
       `the server chose a cipher suite not offered (0x${suite.toString(16)})`,
