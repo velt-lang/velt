@@ -158,21 +158,6 @@ pub(super) fn find(hay: &[u16], needle: &[u16], from: usize) -> Option<usize> {
     None
 }
 
-/// The last window of `hay` starting at or before `last` equal to `needle` (non-empty).
-pub(super) fn rfind(hay: &[u16], needle: &[u16], last: usize) -> Option<usize> {
-    let end = last.saturating_add(needle.len()).min(hay.len());
-    let (h, n) = (as_le_bytes(&hay[..end]), as_le_bytes(needle));
-    let finder = memchr::memmem::FinderRev::new(&n);
-    let mut end = h.len();
-    while let Some(i) = finder.rfind(&h[..end]) {
-        if i % 2 == 0 {
-            return Some(i / 2);
-        }
-        end = i + n.len() - 1;
-    }
-    None
-}
-
 /// Every non-overlapping match of `needle` (non-empty) in `hay`, left to right (at most `limit`).
 pub(super) fn find_all(hay: &[u16], needle: &[u16], limit: usize) -> Vec<usize> {
     let mut out = Vec::new();

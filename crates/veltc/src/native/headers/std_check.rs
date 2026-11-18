@@ -73,6 +73,8 @@ const CHECKED: &[&str] = &[
     "ffi/read.velt",
     "fs/fd/posix.velt",
     "lang/hooks/os_posix.velt",
+    "lang/hooks/pid_posix.velt",
+    "lang/hooks/pid_win32.velt",
     "lang/hooks/reactor_epoll.velt",
     "lang/hooks/reactor_kqueue.velt",
     "lang/hooks/sched_cells.velt",

@@ -51,6 +51,24 @@ export class PriorityQueue<T> {
     return top;
   }
 
+  /**
+   * Adds `value` and removes the element that was first in `cmp` order, which it returns
+   * (`undefined` if the queue was empty, where `value` is only added): one sift down, where
+   * `pop` then `push` is two. For a queue bounded at `k` elements: once it holds `k`, each new
+   * element replaces the first.
+   */
+  replaceTop(value: T): T | undefined {
+    const n = this.heap.length;
+    this.heap.push(value);
+    if (n == 0) {
+      return undefined;
+    }
+    arraySwap(this.heap, 0, n);
+    const top = this.heap.pop();
+    this.siftDown(0);
+    return top;
+  }
+
   /** A clone of the first element in `cmp` order, or `undefined` if empty. */
   peek(): T | undefined {
     if (this.heap.length == 0) {

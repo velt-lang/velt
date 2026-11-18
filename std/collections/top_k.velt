@@ -1,0 +1,136 @@
+// velt/collections (internal): `TopK<K>`, the `k` best-scored keys of a stream.
+//
+// A bounded min-heap on the scores: the root is the lowest score kept, so a candidate that
+// does not beat it costs one comparison (`threshold`), and one that does replaces the root with
+// one sift down. Keys and scores are two flat arrays, so number keys and the scores are not
+// boxed. Keys are only swapped inside the arrays.
+
+import { arraySwap, arrayTruncate } from "velt/lang/intrinsics";
+
+/** A key kept by a `TopK`, with its score. */
+export type TopKEntry<K> = { key: K; score: number };
+
+/**
+ * The `k` keys with the highest scores of all that were pushed: for search results, rankings
+ * and nearest neighbours (negate a distance to keep the lowest). `push` is O(log k), and O(1)
+ * for a candidate that does not get in.
+ */
+export class TopK<K> {
+  private keys: K[] = [];
+  private scores: f64[] = [];
+  private limit: usize;
+
+  /** Keeps at most `k` keys (`RangeError` unless `k` is a whole number from 0). */
+  constructor(k: number) {
+    if (!Number.isInteger(k) || k < 0) {
+      throw new RangeError(`TopK: k must be a whole number from 0, got ${k}`);
+    }
+    this.limit = k as usize;
+  }
+
+  /** Number of keys kept now. */
+  get size(): usize {
+    return this.keys.length;
+  }
+
+  /** The most keys it keeps: `k`. */
+  get capacity(): usize {
+    return this.limit;
+  }
+
+  /**
+   * The score a candidate must beat to get in: `-Infinity` until `k` keys are kept, then the
+   * lowest score kept (`Infinity` when `k` is 0: nothing gets in). Testing `score > top.threshold` before building a key saves the work
+   * for candidates that would be turned away.
+   */
+  get threshold(): number {
+    if (this.keys.length < this.limit) {
+      return -Infinity;
+    }
+    return this.limit == 0 ? Infinity : this.scores[0];
+  }
+
+  /**
+   * Offers `key` with `score`; returns whether it was kept. Once `k` keys are kept, a score
+   * must be higher than the lowest kept one, which it then replaces: of equal scores the
+   * earlier stays. A `NaN` score is never kept.
+   */
+  push(key: K, score: number): bool {
+    if (score != score) {
+      return false;
+    }
+    const n = this.keys.length;
+    if (n < this.limit) {
+      this.keys.push(key);
+      this.scores.push(score);
+      this.siftUp(n);
+      return true;
+    }
+    if (n == 0 || score <= this.scores[0]) {
+      return false;
+    }
+    // The new entry goes in at the end, changes places with the root, and the old root
+    // leaves from the end.
+    this.keys.push(key);
+    this.scores.push(score);
+    arraySwap(this.keys, 0, n);
+    arraySwap(this.scores, 0, n);
+    arrayTruncate(this.keys, n);
+    arrayTruncate(this.scores, n);
+    this.siftDown(0);
+    return true;
+  }
+
+  /** Removes every key; `k` stays. */
+  clear() {
+    arrayTruncate(this.keys, 0);
+    arrayTruncate(this.scores, 0);
+  }
+
+  /**
+   * The kept keys with their scores, highest score first; the `TopK` is unchanged. Equal
+   * scores come out in no particular order.
+   */
+  toSortedArray(): TopKEntry<K>[] {
+    const out: TopKEntry<K>[] = [];
+    for (let i: usize = 0; i < this.keys.length; i++) {
+      out.push({ key: this.keys[i], score: this.scores[i] });
+    }
+    out.sort((a, b) => (a.score < b.score ? 1 : a.score > b.score ? -1 : 0));
+    return out;
+  }
+
+  private siftUp(at: usize) {
+    let i = at;
+    while (i > 0) {
+      const parent = (i - 1) / 2;
+      if (this.scores[i] >= this.scores[parent]) {
+        return;
+      }
+      arraySwap(this.keys, i, parent);
+      arraySwap(this.scores, i, parent);
+      i = parent;
+    }
+  }
+
+  private siftDown(at: usize) {
+    let i = at;
+    const n = this.keys.length;
+    while (true) {
+      const left = 2 * i + 1;
+      if (left >= n) {
+        return;
+      }
+      let child = left;
+      if (left + 1 < n && this.scores[left + 1] < this.scores[left]) {
+        child = left + 1;
+      }
+      if (this.scores[child] >= this.scores[i]) {
+        return;
+      }
+      arraySwap(this.keys, i, child);
+      arraySwap(this.scores, i, child);
+      i = child;
+    }
+  }
+}

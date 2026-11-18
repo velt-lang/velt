@@ -213,6 +213,8 @@ pub(crate) struct Lazy {
     cycle_closed: FxHashSet<TyId>,
     cycle_seen: (usize, usize, bool, usize),
     cycles: bool,
+    /// Per live type `may_cycle` asked about: whether `console.log` takes it (`printable`).
+    printable: FxHashMap<TyId, bool>,
     /// The live definitions, and the hooks their constructs demand ([`live`]).
     live: live::Live,
     /// The stubs of the hooks `hookCall` names before their modules are loaded ([`hook_stubs`]).
@@ -245,9 +247,16 @@ impl Lazy {
             cycle_closed: FxHashSet::default(),
             cycle_seen: (0, 0, false, 0),
             cycles: false,
+            printable: FxHashMap::default(),
             live: live::Live::new(),
             stubs: hook_stubs::Stubs::default(),
         }
+    }
+
+    /// Definition `d`, checked whether or not it is live, calls hook `HOOKS[hook]` by its role
+    /// while the hook's module is not loaded: demand it once `d` is live.
+    pub(crate) fn defer_hook_call(&mut self, d: DefId, hook: usize) {
+        self.stubs.hook_calls.entry(d).or_default().push(hook);
     }
 
     /// A generated module added during the check (`Ctx::add_module`): checked eagerly, as any
