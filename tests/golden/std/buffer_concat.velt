@@ -28,3 +28,18 @@ attempt("copy, not shared", () => {
   c[0] = 99;
   return `${a[0]} ${c[0]}`;
 });
+
+// The padding is written, not left to fresh memory: a junk buffer of the same size is filled and
+// dropped before each padded concat, so reused memory would show through.
+let nonzero = 0;
+for (let round = 0; round < 64; round++) {
+  const junk = Buffer.allocUnsafe(64);
+  junk.fill(255);
+  const padded = Buffer.concat([a], 64);
+  for (let i = 3; i < 64; i++) {
+    if (padded[i] != 0) {
+      nonzero += 1;
+    }
+  }
+}
+console.log("nonzero padding", nonzero);
