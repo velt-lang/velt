@@ -28,11 +28,16 @@
 // task's await word raised so its `await`s take their microtask step, and from then on its task
 // drives it: a wake puts it among the task's woken nodes, which the task runs before its root
 // (sched.velt `run`). Its owner only sees it finish. A task that starts nothing pays nothing.
+//
+// A started node its owner dropped runs on. One that nothing can wake any more (no leaf holds its
+// waker) never would: it is given up, its state dropped, as JavaScript collects a promise nobody
+// can settle together with the functions waiting for it (sched_node_lost.velt).
 
 import { inline, noInline, stateDrop, statePoll } from "velt/lang/intrinsics";
 import * as bd from "./sched_budget";
 import * as m from "./sched_mem";
 import * as loc from "./sched_node_loc";
+import * as lost from "./sched_node_lost";
 import * as micro from "./sched_micro";
 import * as aw from "./sched_node_await";
 import * as al from "./sched_share_alias";
@@ -56,8 +61,9 @@ export const N_NEXT: usize = 56;
 export const N_CX: usize = 64;
 export const N_TAKEN_NEXT: usize = 80;
 /**
- * The lazy state's drop glue: read only before the start, so a started node lends it and the
- * word after it to sched_node_catch.velt (`N_SETTLE`).
+ * The state's drop glue: read before the start, and when a started node is given up (sched_node_lost.velt).
+ * A started node that catches lends it and the word after it to sched_node_catch.velt
+ * (`N_SETTLE`).
  */
 export const N_DROP: usize = 88;
 export const N_UNHANDLED_NEXT: usize = 104;
@@ -200,6 +206,16 @@ function pollNode(f: usize, cx: usize, claim: bool): u32 {
       adoptedDone(task, n, claim ? FINISHED | DELIVERED : FINISHED);
       return 1;
     }
+    if (m.load(n + N_REFS) === 2) {
+      // Its owner's and its task's are its only references: no leaf holds its own waker, so it
+      // runs again only when its owner polls it, and its leaves wake the owner. The owner's
+      // waker is not kept here then: an owner that nothing else can wake is `unreachable`.
+      const w = aw.takePlain(n);
+      if (w !== 0) {
+        m.wakerDrop(w);
+      }
+      return 0;
+    }
   }
   return aw.awaitNode(n, cx);
 }
@@ -248,6 +264,9 @@ export function nodeDrop(f: usize): void {
     return;
   } else if ((fl & FINISHED) === 0) {
     setFlags(n, DETACHED);
+    if (m.load(n + N_REFS) === 2) {
+      return lost.dropPending(n);
+    }
   } else if ((fl & DELIVERED) === 0) {
     rp.dropResult(n);
   }
@@ -341,6 +360,8 @@ export function handled(f: usize, qdrop: usize, hdrPoll: usize): void {
  * Polls started node `n` of task `task` once (it is not running). Only a node `taken` off the
  * task's woken stack (sched_node_woken.velt `takeWoken`) leaves QUEUED: one run from elsewhere
  * (a microtask, its start) may still be on the stack, and a wake must not push it there twice.
+ * A poll that leaves it suspended with its owner gone looks whether anything can still wake it
+ * (`parked`).
  */
 export function run(task: usize, n: usize, taken: bool): void {
   if (taken) {
@@ -366,6 +387,9 @@ export function run(task: usize, n: usize, taken: bool): void {
     const r = unsafe { statePoll(m.ld(n + N_POLL), n + N_HEAD + 16, n + N_CX) };
     m.and32(n + N_FLAGS, ~RUNNING);
     if (r !== 1) {
+      if ((m.load32(n + N_FLAGS) & DETACHED) !== 0 && m.load(n + N_REFS) === 2) {
+        lost.parked(task, n);
+      }
       return;
     }
   }
