@@ -160,6 +160,19 @@ hooks! {
     prebuilt_probe_value => lang_hooks_prebuilt_probe, "probeValue",
         sig((&string, usize, usize) -> f64), prebuilt;
 
+    // velt/lang/string/search: the string searches (#2198), which the prelude's methods call by
+    // role (`hookCall`), so a program loads them only when live code calls one.
+    /// `s.indexOf(needle, from)`.
+    string_index_of => lang_string_search, "indexOf", sig((&string, &string, i64) -> i64);
+    /// `s.lastIndexOf(needle, from)`.
+    string_last_index_of => lang_string_search, "lastIndexOf", sig((&string, &string, i64) -> i64);
+    /// `s.includes(needle, position)`.
+    string_includes => lang_string_search, "includes", sig((&string, &string, i64) -> bool);
+    /// `s.startsWith(prefix)`.
+    string_starts_with => lang_string_search, "startsWith", sig((&string, &string) -> bool);
+    /// `s.endsWith(suffix)`.
+    string_ends_with => lang_string_search, "endsWith", sig((&string, &string) -> bool);
+
     // process_statics.velt: the process-wide statics the runtime reads (#2779), whose addresses
     // `velt_main` hands it first thing (`velt_rt_statics`).
     /// The epoch of the runtime's cache of the last position translation (`velt_rt`
@@ -212,6 +225,8 @@ hooks! {
     process_env => lang_hooks_process, "processEnv", sig((&string) -> or_undefined(string));
     /// `process.argv`.
     process_argv => lang_hooks_process, "processArgv", sig(() -> [string]);
+    /// `process.pid`.
+    process_pid => lang_hooks_process, "processPid", sig(() -> f64);
     /// The mark of the top-level `await`s after it (`velt_sema` `top_level_await.rs`); lowering
     /// replaces its calls by the runtime's (`async_fn/suspend.rs`).
     top_level_await_at => lang_hooks_process, "topLevelAwaitAt", sig((&string) -> void), lowered;

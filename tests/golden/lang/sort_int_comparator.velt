@@ -1,0 +1,46 @@
+// `xs.sort((a, b) => a - b)` on arrays of declared integers (#3157). The elements of an `i64[]`
+// stay integers in the comparator, so the difference is exact past 2^53, where a number's is
+// not; those of an `i32[]` are numbers there, so the difference of the extremes does not wrap.
+function byValue(a: i64, b: i64): i64 {
+  return a - b;
+}
+
+function main() {
+  const xs: i64[] = [3, 1, 10, 2];
+  xs.sort((a, b) => a - b);
+  console.log(xs, xs.toSorted((a, b) => b - a));
+  xs.sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
+  console.log(xs);
+  xs.sort(byValue);
+  xs.sort((a: i64, b: i64): i64 => a - b);
+  console.log(xs);
+  xs.sort((a, b) => {
+    if (a % 2 != b % 2) {
+      return a % 2 - b % 2;
+    }
+    return a - b;
+  });
+  console.log(xs);
+
+  // 2^53 + 1 and 2^53 are the same number, and different integers.
+  const big: i64[] = [9007199254740993, 9007199254740992, 5, -9007199254740993];
+  big.sort((a, b) => a - b);
+  console.log(big);
+
+  const ys: i32[] = [2147483647, -2147483648, 0, 7];
+  ys.sort((a, b) => a - b);
+  console.log(ys, ys.toSorted((a, b) => b - a));
+  ys.sort((a, b) => (a < b ? 1 : -1));
+  console.log(ys);
+  ys.sort((a, b) => a.compareTo(b));
+  console.log(ys);
+
+  // Other arrays sort as before.
+  const ns: number[] = [2.5, -1, 10];
+  ns.sort((a, b) => a - b);
+  const us: u64[] = [3, 1, 2];
+  us.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  const rows = [{ id: 2 as i64 }, { id: 1 as i64 }];
+  rows.sort((a, b) => a.id - b.id);
+  console.log(ns, us, rows[0].id);
+}

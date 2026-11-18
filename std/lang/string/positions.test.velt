@@ -3,6 +3,11 @@
 // static, heap, a slice), forward, backward and at random, across a freed and reused buffer (the
 // epoch), and with the runtime's own translation filling, extending and racing to build the same
 // tables.
+//
+// The reused-buffer tests need the allocator to hand a freed address back, which the release
+// runtime does and the debug one's checking allocator (`VELT_RT_DEBUG_ALLOC=1`) may not: the
+// release run (std_tests runs both) is what guards the epoch check and the slice mark. The debug
+// run's block count (`VELT_RC_STATS=1`) guards the build race's frees.
 import { describe, expect, it } from "velt/test";
 import { strByteAt, strByteLen, strLen } from "velt/lang/intrinsics";
 import { utf8Substring } from "velt/encoding";

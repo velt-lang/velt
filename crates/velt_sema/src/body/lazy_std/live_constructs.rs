@@ -204,6 +204,14 @@ pub(super) fn note_program_dyn(cx: &mut Ctx, into_any: &[(TyId, TyId)]) {
     }
 }
 
+/// The class of hook `index` of the table, when the program has it.
+pub(super) fn hook_class(cx: &Ctx, index: usize) -> Option<DefId> {
+    match cx.std_def(&velt_common::std_hooks::HOOKS[index].qualified()) {
+        Some(crate::ctx::Item::Def(d)) => Some(d),
+        _ => None,
+    }
+}
+
 /// Demands hook `index`'s module and marks the hook live: whether it wasn't.
 fn mark_hook(cx: &mut Ctx, index: usize) -> bool {
     let h = &velt_common::std_hooks::HOOKS[index];
@@ -256,6 +264,13 @@ fn may_cycle(cx: &mut Ctx) -> bool {
     types.retain(|&t| {
         !cx.lazy.cycle_closed.contains(&t) && !matches!(cx.ty.kind(t), TyKind::Dyn(..))
     });
+    // A walk starts only where a value can be printed: a type `console.log` refuses (one holding
+    // a shared value, a function or an interface value) is printed only as a part of one it takes,
+    // or from an `any` it was put into (`dyn_held`), and the walk from there reaches it. Generic
+    // code that puts its type parameters' values into an `any` may put anything there.
+    if !cx.lazy.dyn_generic {
+        types.retain(|&t| cx.lazy.dyn_held.contains(&t) || printable(cx, t));
+    }
     types.sort_unstable_by_key(|t| t.0);
     for v in insts.values_mut() {
         v.0.sort_unstable_by_key(|t| t.0);
@@ -267,6 +282,16 @@ fn may_cycle(cx: &mut Ctx) -> bool {
         .any(|t| reaches_back(cx, t, (&mut path, &insts), &mut closed, (0, 0)).0);
     cx.lazy.cycle_closed = closed;
     found
+}
+
+/// Does `console.log` take a value of type `t` (`body::printable`)? Remembered for the check.
+fn printable(cx: &mut Ctx, t: TyId) -> bool {
+    if let Some(&p) = cx.lazy.printable.get(&t) {
+        return p;
+    }
+    let p = crate::body::printable(cx, t);
+    cx.lazy.printable.insert(t, p);
+    p
 }
 
 /// The live instantiations of each generic subclass (a class with a base and type parameters), and

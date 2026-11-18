@@ -28,7 +28,7 @@ async function main() {
   delete process.env.HOME;
   const quit = process.exit;
   const usage = process.memoryUsage;
-  const pid = process.pid;
+  const pid = process.ppid;
   process.stdout.end();
   process.argv.push("x");
   process.argv[2] = "y";
