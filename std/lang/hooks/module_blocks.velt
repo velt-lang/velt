@@ -35,7 +35,7 @@ const COUNT = new Atomic<u64>(0);
 const CAP = new Atomic<u64>(0);
 const ENTRY: usize = 24;
 
-/** The module descriptor's fields (velt_rt `ModuleDesc`): size, alignment, `init`, `drop`, `rest`. */
+/** The module descriptor's fields (rt_abi.md `ModuleDesc`): size, alignment, `init`, `drop`, `rest`. */
 const DESC_SIZE: usize = 0;
 const DESC_ALIGN: usize = 8;
 const DESC_INIT: usize = 16;
@@ -204,43 +204,28 @@ function alignOf(desc: usize): usize {
 }
 
 /**
- * A zeroed block of `desc`'s size and alignment, from the allocator compiled code uses
- * (`rawAlloc`: the debug runtime counts and checks it), whose blocks are aligned to 8: a larger
- * alignment (a SIMD slot's 16) takes `align` bytes more, the block starts at the first aligned
- * address past a word that keeps the allocation's own (`freeBlock`).
+ * A zeroed block of `desc`'s size, from the allocator compiled code uses (`rawAlloc`: the debug
+ * runtime counts and checks it), whose blocks are aligned to 8: every descriptor's alignment is
+ * at most that (a value's alignment is at most 8 in memory, a SIMD vector's too, rt_abi.md
+ * "SIMD"), as a task's state's is (sched_spawn.velt).
  */
 function allocBlock(desc: usize): usize {
-  const bytes = bytesOf(desc);
-  const align = alignOf(desc);
-  if (align <= RAW_ALIGN) {
-    const p = rawAlloc(bytes);
-    m.clear(p, bytes);
-    return p;
+  if (alignOf(desc) > 8) {
+    panic("ICE: a module state block aligned to more than 8 bytes");
   }
-  const raw = rawAlloc(bytes + align);
-  const past = raw + RAW_ALIGN;
-  const p = past + (align - past % align) % align;
-  m.st(p - RAW_ALIGN, raw);
+  const bytes = bytesOf(desc);
+  const p = rawAlloc(bytes);
   m.clear(p, bytes);
   return p;
 }
 
 /** Gives back block `p` of `desc`, which `allocBlock` made and nothing uses any more. */
 function freeBlock(desc: usize, p: usize): void {
-  const bytes = bytesOf(desc);
-  const align = alignOf(desc);
   // SAFETY: `allocBlock` allocated these bytes for this descriptor; freed once (`dropAll`).
   unsafe {
-    if (align <= RAW_ALIGN) {
-      rawFree(p, bytes);
-    } else {
-      rawFree(m.ld(p - RAW_ALIGN), bytes + align);
-    }
+    rawFree(p, bytesOf(desc));
   }
 }
-
-/** The alignment of `rawAlloc`'s blocks. */
-const RAW_ALIGN: usize = 8;
 
 /**
  * The block of `desc`, which no thread made yet, made as the runtime made it (module docs): zeroed,

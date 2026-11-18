@@ -162,7 +162,7 @@ async function main() {
 
 /// The module state's blocks are made and dropped in Velt (std/lang/hooks/module_blocks.velt,
 /// #2196 9c): written from every worker, a counted normal exit gives back every block of it (a
-/// module `let`, an array of strings, a 16-byte aligned vector), as the runtime's drop at exit did.
+/// module `let`, an array of strings, a SIMD vector), as the runtime's drop at exit did.
 #[test]
 fn module_state_is_freed_at_a_counted_normal_exit() {
     if !has_threads() {
