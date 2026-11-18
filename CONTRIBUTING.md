@@ -409,7 +409,7 @@ opening it.
   so `cfg(windows)`-only findings show before the queue. The label `ci:full` makes them check everything (add it before
   pushing, or close and reopen the pull request). When a pull
   request is approved, the maintainer who approves it adds the label `ci:approved`, which starts
-  those checks (before it, `ci` reports "waiting for approval"; run `scripts/check.sh` locally),
+  those checks (a push starts none; run `scripts/check.sh` locally),
   and adds it to the **merge queue** in the same step (`gh pr merge <n> --auto`): the queue runs the whole gate against the pull
   request merged with the latest `main`, and merges it when it passes. It checks Linux, plus
   Windows when the change touches OS-specific code (the runtime, code generation and linking,
