@@ -30,26 +30,33 @@ declare c("c") function free$sched(p: Ptr<u8> | null): void;
 declare c("c") function memcpy$sched(dst: Ptr<u8>, src: Ptr<u8>, n: usize): Ptr<u8>;
 declare c("c") function memset$sched(dst: Ptr<u8>, c: i32, n: usize): Ptr<u8>;
 
-/** Address `a` as a C pointer argument; 0 passes `NULL`. */
+/**
+ * Address `a`, never 0, as a C pointer argument (the program stops on 0: a pointer that may be
+ * `NULL` is `ptrOrNull`'s).
+ */
 @inline
 export function ptr(a: usize): Ptr<u8> {
   // SAFETY: only passed to a C function, whose call site states what is at `a`.
   return unsafe { Ptr.at<u8>(a) };
 }
 
-/** Address `a` as a C pointer argument to a `T` (`declare c type`, or a number type). */
+/** Address `a`, never 0, as a C pointer argument to a `T` (`declare c type`, or a number type). */
 @inline
 export function ptrTo<T>(a: usize): Ptr<T> {
   // SAFETY: as `ptr`'s.
   return unsafe { Ptr.at<T>(a) };
 }
 
+/** Address `a` as a C pointer argument to a `T` that may be `NULL`: 0 passes `NULL`. */
+@inline
+export function ptrOrNull<T>(a: usize): Ptr<T> | null {
+  // SAFETY: as `ptr`'s.
+  return unsafe { Ptr.orNull<T>(a) };
+}
+
 /** The address a C function returned; 0 for `NULL`. */
 @inline
 export function addr(p: Ptr<u8> | null): usize {
-  if (p === null) {
-    return 0;
-  }
   return Ptr.addressOf(p);
 }
 

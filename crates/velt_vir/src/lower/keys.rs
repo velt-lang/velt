@@ -41,6 +41,7 @@ impl Cx<'_> {
             TyKind::Bool => "bool".into(),
             TyKind::Str => "string".into(),
             TyKind::Symbol => "symbol".into(),
+            TyKind::Ptr(p) => format!("Ptr<{}>", self.type_key_in(*p, env, stack)),
             TyKind::Simd(s) => s.name().into(),
             TyKind::Unit => "void".into(),
             TyKind::Never => "never".into(),
