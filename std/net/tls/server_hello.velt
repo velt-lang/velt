@@ -18,8 +18,8 @@ import {
 import { ByteReader } from "velt/net/tls/byte_reader";
 import { knownSuite } from "velt/net/tls/record_cipher";
 
-// SHA-256("HelloRetryRequest"): a ServerHello with this random is a HelloRetryRequest.
-const HRR_RANDOM: u8[] = [
+/** SHA-256("HelloRetryRequest"): a ServerHello with this random is a HelloRetryRequest. */
+export const HRR_RANDOM: u8[] = [
   0xcf,
   0x21,
   0xad,
@@ -134,7 +134,7 @@ export function parseServerHello(
         const c = e.vector(2);
         cookie = c.bytes(c.left());
       } else {
-        e.bytes(e.left());
+        e.skip(e.left());
       }
       e.finish();
     }

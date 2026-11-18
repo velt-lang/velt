@@ -1,0 +1,22 @@
+// A read-only array through generic code keeps its type (#3061): a type parameter inferred from
+// one is the read-only array, also in the result and in a nested generic type. Node prints the
+// same.
+function id<T>(x: T): T {
+  return x;
+}
+
+function firstOf<T>(xs: readonly T[]): T | undefined {
+  return xs[0];
+}
+
+function pair<A, B>(a: A, b: B): [A, B] {
+  return [a, b];
+}
+
+function main(): void {
+  const ro: readonly number[] = [1, 2, 3];
+  const back: readonly number[] = id(ro);
+  const [left, right] = pair(ro, "x");
+  console.log(back.length, firstOf(ro), left.length, right);
+  console.log(JSON.stringify(ro), JSON.stringify(id(ro)));
+}

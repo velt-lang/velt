@@ -272,7 +272,7 @@ export class ClientHandshake {
         }
         this.alpn = p;
       } else {
-        e.bytes(e.left());
+        e.skip(e.left());
       }
       e.finish();
     }

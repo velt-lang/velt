@@ -1,0 +1,19 @@
+// check: no leaks
+// A method returning a promise written through an interface value (#379) with a function that
+// is not async but returns a promise that rejects (`Promise.reject`, a `new Promise` whose
+// executor rejects): what it rejects with joins the method's set, as an async function's does,
+// so the caller's `catch` sees it, as in Node.
+interface Loader { load(): Promise<string>; }
+class Failure extends Error {}
+class Other extends Error {}
+const c: Loader = { load: () => Promise.resolve("p0") };
+async function main(): Promise<void> {
+  console.log(await c.load());
+  c.load = () => Promise.reject(new Failure("rej"));
+  try { await c.load(); } catch (e) { console.log("caught", e instanceof Failure, (e as Error).message); }
+  c.load = () => new Promise<string>((res, rej) => rej(new Failure("np")));
+  try { await c.load(); } catch (e) { console.log("caught np", e instanceof Failure, (e as Error).message); }
+  c.load = async () => { throw new Other("async"); };
+  try { await c.load(); } catch (e) { console.log("caught async", e instanceof Other, e instanceof Failure); }
+}
+main().then(() => console.log("done"));

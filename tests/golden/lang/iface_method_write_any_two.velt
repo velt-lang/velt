@@ -1,0 +1,30 @@
+// check: no leaks
+// A method written through `any` where two interfaces each have a written method of that name
+// (#379): the write may reach either object's field, so the sites of both methods are one set,
+// and the function goes in as the type every such field has. Through the second interface
+// (`b`), then through both, as in Node.
+interface A { update(): void; }
+interface B { update(): void; }
+class Failure extends Error {}
+class Other extends Error {}
+class Third extends Error {}
+
+const a: A = { update: () => console.log("a lit") };
+const b: B = { update: () => console.log("b lit") };
+a.update = () => { throw new Other("a typed"); };
+b.update = () => { throw new Third("b typed"); };
+
+function name(e: unknown): string {
+  return e instanceof Failure ? "Failure" : e instanceof Other ? "Other" : e instanceof Third ? "Third" : "?";
+}
+
+try { a.update(); } catch (e) { console.log("a", name(e), (e as Error).message); }
+try { b.update(); } catch (e) { console.log("b", name(e), (e as Error).message); }
+(b as any).update = () => { throw new Failure("b any"); };
+try { a.update(); } catch (e) { console.log("a", name(e), (e as Error).message); }
+try { b.update(); } catch (e) { console.log("b", name(e), (e as Error).message); }
+(a as any).update = () => { throw new Failure("a any"); };
+const any2: any = b;
+any2.update = () => { throw new Other("b any again"); };
+try { a.update(); } catch (e) { console.log("a", name(e), (e as Error).message); }
+try { b.update(); } catch (e) { console.log("b", name(e), (e as Error).message); }

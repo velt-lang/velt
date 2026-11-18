@@ -141,29 +141,18 @@ per call), not more work. Node could not be counted: V8 dies under valgrind.
 
 **In-process dispatch is where Velt still loses to Node:** 2.1–3.3× the CPU per call on one
 thread, and 3.1–7.5× with 4 shards. A callgrind profile of one warm call on one thread (at
-`2cce7b99`, like the instruction counts) puts the cost in the runtime, not in compiled code:
-
-- **The channel to the shard: about 20%.** Moving the ~100-byte envelope through the channel copies
-  it one byte at a time ([#635](https://github.com/velt-lang/velt/issues/635)), 1,400
-  instructions in `Chan::try_pop` alone. The registry lock comes on top
-  ([#146](https://github.com/velt-lang/velt/issues/146)).
-- **Allocation: about 13%.** This covers the promise of the turn loop that starts for an idle
-  actor, the `withResolvers` slot and its two settler closures, the `Envelope`, and the chain
-  array.
-- **Strings: about 8%.** The `type/key` id is formatted on every call, and so is the `{"data":…}`
-  reply body.
-- **Promise machinery** (start, poll, settle): the rest of the runtime share.
+`2cce7b99`, like the instruction counts) put the cost in the runtime of that commit, not in
+compiled code: its channel (about 20%, then Rust code that copied the envelope one byte at a
+time), allocation (about 13%: the turn loop's promise, the `withResolvers` slot and its two
+settler closures, the `Envelope`, the chain array), strings (about 8%: the `type/key` id and the
+`{"data":…}` reply body are formatted on every call) and promise machinery. The channel and the
+executor have since moved to Velt (`std/sync/channel.velt`, `std/lang/hooks/sched.velt`) and the
+byte-by-byte copy is gone ([#635](https://github.com/velt-lang/velt/issues/635)), so these
+figures need re-measuring; open channel costs are in
+[#146](https://github.com/velt-lang/velt/issues/146).
 
 With 4 shards, the two wakeups per call dominate: the shard and the caller sit on different
 workers. Fixing that needs task placement ([#211](https://github.com/velt-lang/velt/issues/211)).
-
-### Earlier results (2026-09, Linux VM)
-
-[`bench/results/2026-09-linux-vm`](bench/results/2026-09-linux-vm) holds the first round. It ran
-at `5320d29` on a 4-vCPU Linux VM, measured throughput with wrk and sigx's own benchmark runner,
-and is quoted in #182. Over HTTP, Velt answered 15–23× the requests per second of
-@sigx/actors. In process, one pinned Velt core ran 380k warm calls/s against sigx's 794k. That
-round still carried the bug workarounds, among them a JSON round trip of every call's arguments.
 
 ## Files
 
@@ -181,6 +170,6 @@ round still carried the bug workarounds, among them a JSON round trip of every c
 | `node/mem.mjs` | RSS per activation on @sigx/actors |
 | `node/bare.mjs` | Plain `node:http`, for calibration |
 | `bench/cpu.sh`, `bench/cpu.ps1` | CPU time per call in process and over HTTP, and instructions per call (Linux, and Windows with Git Bash; not macOS: the script reads `/proc` and uses GNU `time`) |
-| `bench/http.sh`, `bench/post.lua`, `bench/inproc.sh` | The throughput comparison of the first round (Linux, wrk, sigx's runner) |
-| `bench/results/` | Raw outputs of both rounds |
+| `bench/http.sh`, `bench/post.lua`, `bench/inproc.sh` | A throughput comparison over HTTP (Linux, wrk, sigx's runner) |
+| `bench/results/` | Raw outputs of the measured run |
 | `FINDINGS.md` | What the port found: fixed bugs, open gaps, performance |

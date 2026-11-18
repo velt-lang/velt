@@ -93,7 +93,8 @@ key that does not parse) throws `IoError`.
   collection's own methods (`m.set(k, v)`, `xs.push(x)`, `BTreeMap.set`) and an interface or
   overridden method that changes its object. Reading a captured object is fine.
 
-  Known limits (#854): the check does not see every change, and these still change only the
+  Known limits ([#854](https://github.com/velt-lang/velt/issues/854)): the check does not see
+  every change, and these still change only the
   request's copy, silently; use `shared(...)`, an `Atomic` or a `Mutex` for state requests
   must share:
   - an element of a spread copy (`[...list][0].visits++`, `const xs = [...list]; xs[0]…`) and
@@ -103,8 +104,8 @@ key that does not parse) throws `IoError`.
     `Int32Array`, `fill`, `sort`, `reverse`, `copyWithin`, `subarray().fill`, a view over a
     captured buffer (`new Uint8Array(b.buffer)`), I/O that reads into a captured buffer;
   - a field of a new object filled from the captured value by `Reflect.set(this, "out", …)`,
-    then `ctx.out.push(…)` (std's `Reflect.set` is not looked into yet; the same store through
-    an `any` or a helper of the program's is reported);
+    then `ctx.out.push(…)` (the check does not look into std's `Reflect.set`; the same store
+    through an `any` or a helper of the program's is reported);
   - a `RegExp` with the `g` or `y` flag used with `test` or `exec` (its `lastIndex`), and the
     caches of `Headers` and `URLSearchParams` reads, which each request keeps for itself;
   - a library `struct` (a handle such as `Channel` or `TcpStream`, whose copies share what they
@@ -185,8 +186,8 @@ key that does not parse) throws `IoError`.
   response already streaming when the panic happens can't become a 500: its connection (or
   HTTP/2 stream) is closed. A panic in a task the handler `spawn`s still ends the process.
   On Windows the frames the panic unwinds leak what they owned. Under `velt dev`'s JIT and on
-  Windows on arm64, where generated code can't catch a panic yet, a panic in a handler ends the
-  process with 101, as an uncaught one does (#2649, #2008).
+  Windows on arm64, where generated code can't catch a panic, a panic in a handler ends the
+  process with 101, as an uncaught one does.
 
 ## The request
 
@@ -389,7 +390,7 @@ is built on this.
 ## On a JS host (`velt build --host`)
 
 The same program serves on a JavaScript platform: on a `velt build --host <package>` build (the
-first host package is packages/host-cloudflare, for Cloudflare Workers), `serve` runs over the
+host packages include packages/host-cloudflare, for Cloudflare Workers), `serve` runs over the
 host's request queue (std's `velt/host/worker`) instead of a TCP listener: the JS-host variant,
 src/hosted/standard.velt, which `imports` in package.velt picks by the built-in condition `js`, so
 it serves on every host package's platform. The handler, its `Request` and

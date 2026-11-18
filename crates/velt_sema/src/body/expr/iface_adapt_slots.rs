@@ -381,6 +381,47 @@ fn promise_slot(cx: &mut Ctx, iface: DefId, slot: u32) -> bool {
         .is_some_and(|g| groups.list[g].promise)
 }
 
+/// The setter slot of method `j` written as a property (`crate::iface_method_writes`) of an
+/// adapter: it writes the wrapped value's, the function converted as an argument would be.
+/// `None` when the function can't convert.
+pub(crate) fn adapter_method_setter(cx: &mut Ctx, p: &AdapterParts, j: usize) -> Option<DefId> {
+    let m = cx.iface(p.iface)?.methods.get(j)?.clone();
+    let slot = cx.method_setter_slot(p.iface, j)?;
+    let throws = m.throws.and_then(|t| t.ty).unwrap_or(cx.ty.never);
+    let params: Vec<TyId> = m.params.iter().map(|q| q.ty).collect();
+    let fty = cx.ty.intern(TyKind::FnPtr {
+        params,
+        ret: m.ret,
+        throws,
+        rest: false,
+    });
+    let mut targs = p.to.clone();
+    targs.push(p.self_ty);
+    let mut fargs = p.from.clone();
+    fargs.push(p.inner);
+    let (to, from) = (cx.subst(fty, &targs), cx.subst(fty, &fargs));
+    let mut mode = Mode {
+        generic: p.generics > 0,
+        ..Mode::default()
+    };
+    if !cx.ty.has_error(to) && !value_ok(cx, to, from, false, &mut mode) {
+        return None;
+    }
+    let sig = SlotSig {
+        name: format!("<set {}()>", m.name),
+        params: vec![ParamSig {
+            name: "v".into(),
+            span: p.span,
+            ty: fty,
+            mode: PassMode::Owned,
+            default: None,
+        }],
+        ret: cx.ty.unit,
+        own: 0,
+    };
+    Some(adapter_method(cx, p, slot, &sig, true))
+}
+
 /// The setter slot of field `field` for the adapter `p` (`iface_writes`, a field written through
 /// the interface): writes the value, converted to the wrapped value's own field type, through
 /// the wrapped value's setter. `None` when the value does not convert back (a field of an
