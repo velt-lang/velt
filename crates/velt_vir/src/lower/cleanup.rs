@@ -13,6 +13,10 @@ use velt_sema::hir::LocalId;
 
 use super::state::{DropEntry, LState};
 use super::FnLower;
+
+/// What an `await` drops when it is cancelled (its pending child: the awaited future, a join's
+/// children and their results), for the pads of the calls that poll it (`awaiting`).
+pub(super) type Awaited = std::rc::Rc<dyn for<'a, 'b, 'c> Fn(&'c mut FnLower<'a, 'b>)>;
 use crate::eh;
 use crate::vir::{self, BlockId};
 
@@ -32,6 +36,8 @@ pub(super) struct Pads {
     /// of the scope `pop_scope` is dropping that are not dropped yet (it pops the scope first),
     /// and the new value of a local whose old value `drop_old` is dropping.
     pub(super) popped: Vec<DropEntry>,
+    /// While the poll of an awaited child is emitted: what drops that child (`awaiting`).
+    awaited: Option<Awaited>,
     /// The locals whose old value `drop_old` is dropping: a pad doesn't drop them again.
     pub(super) dropping: Vec<LocalId>,
 }
@@ -106,11 +112,35 @@ impl FnLower<'_, '_> {
             self.pads.cache.insert(key.clone(), start);
             next = start;
         }
+        if let Some(drop_child) = self.pads.awaited.clone() {
+            // The awaited child first, as the `await`'s cancel block drops it before the scopes'.
+            let start = self.new_block();
+            self.live[start.0 as usize] = true;
+            self.switch_to(start);
+            drop_child(self);
+            self.goto(next);
+            next = start;
+        }
         self.pads.inside = false;
         self.str_datas = known;
         self.switch_to(cur);
         self.loc = loc;
         Some(next)
+    }
+
+    /// Emits `poll`, the poll of an `await`'s pending child, which no scope owns (the cancel
+    /// block of the suspension drops it): a pad of a call in it drops the child with
+    /// `drop_child` before what the scopes own. A poll that unwinds would otherwise leave the
+    /// awaited future, and a join's other children, never dropped (#2818).
+    pub(super) fn awaiting<R>(
+        &mut self,
+        drop_child: Awaited,
+        poll: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let outer = self.pads.awaited.replace(drop_child);
+        let r = poll(self);
+        self.pads.awaited = outer;
+        r
     }
 
     /// The block ending every pad: `velt_eh_resume()`.

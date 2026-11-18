@@ -68,7 +68,8 @@ const DONE: i128 = 0x7FFF_FFFF;
 /// through a call with a cleanup pad ends `DONE`, its state's values dropped by the pad; one
 /// that unwinds through a call without a pad (an extern's) leaves this tag, and the frame
 /// holding the state then drops it as nothing, where the tag of its last suspension would
-/// name values the poll has moved or dropped since. A generator has `GEN_RUNNING`.
+/// name values the poll has moved or dropped since. A generator has `GEN_RUNNING`. No program is
+/// known that unwinds through such a call (review of #3180), so no test pins this store.
 const POLLING: i128 = 0x7FFF_FFFD;
 
 /// Layout facts of a compiled async function instance, known once its poll function is built.

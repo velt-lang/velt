@@ -21,7 +21,10 @@
 
 use velt_sema::hir::{self, DefId, Intrinsic, PassMode, TyId, TyKind, UseMode};
 
+use std::rc::Rc;
+
 use super::AsyncInfo;
+use crate::lower::cleanup::Awaited;
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
 use crate::lower::{cint, unit, FnLower, Work};
@@ -204,11 +207,14 @@ impl FnLower<'_, '_> {
         let r = self.temp(Ty::U32);
         let cx = self.poll_cx();
         let callee = vir::Callee::Func(info.poll);
-        self.call(callee, vec![sp.clone(), cx], Some(Place::local(r)), false);
-        self.after_poll(k, Operand::Copy(Place::local(r)), |lw| {
+        let drop_child: Awaited = Rc::new(move |lw| {
             let sp = lw.addr(Place::local(child));
             lw.call(vir::Callee::Func(drop_fn), vec![sp], None, false);
         });
+        self.awaiting(drop_child.clone(), |lw| {
+            lw.call(callee, vec![sp.clone(), cx], Some(Place::local(r)), false);
+        });
+        self.after_poll(k, Operand::Copy(Place::local(r)), |lw| drop_child(lw));
         let ret = self.cx.async_result(f);
         let ret = self.cx.subst(ret, &targs);
         let throws = self.cx.fn_throws(f, &targs);
@@ -374,11 +380,12 @@ impl FnLower<'_, '_> {
         self.switch_to(resume);
         let r = self.temp(Ty::U32);
         let cx = self.poll_cx();
-        self.fut_poll_call(vec![fp.clone(), cx], Place::local(r));
         let drop_arg = fp.clone();
-        self.after_poll(k, Operand::Copy(Place::local(r)), |lw| {
-            lw.fut_drop_call(vec![drop_arg]);
+        let drop_child: Awaited = Rc::new(move |lw| lw.fut_drop_call(vec![drop_arg.clone()]));
+        self.awaiting(drop_child.clone(), |lw| {
+            lw.fut_poll_call(vec![fp.clone(), cx], Place::local(r));
         });
+        self.after_poll(k, Operand::Copy(Place::local(r)), |lw| drop_child(lw));
         let slot_ty = self.cx.promise_slot(pty);
         let vt = self.cx.ty(slot_ty);
         let res = (vt != Ty::Unit).then(|| {

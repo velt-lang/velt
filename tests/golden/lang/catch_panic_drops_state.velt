@@ -1,5 +1,5 @@
 // A caught panic drops what the panicked async functions and generators held across their
-// awaits and yields, each value once (#2818): the cleanup pads of a poll function dropped only
+// awaits and yields, each value once, with the futures they awaited (#2818): the cleanup pads of a poll function dropped only
 // the frame's temporaries, and everything in the state leaked with it, about 5 KB a panic in a
 // server whose handler panics.
 import { catchPanic, PanicError } from "velt/task";
@@ -106,6 +106,32 @@ async function throughStream(tag: string): Promise<number> {
   return total;
 }
 
+// Finishes after its sibling has panicked.
+async function slow(tag: string): Promise<number> {
+  const h = new Held(tag + ".slow");
+  await yieldNow();
+  await yieldNow();
+  await yieldNow();
+  return h.name.length;
+}
+
+// A join's other child is still pending when one panics: the join's children are compiled into
+// this state, and the pad of the child's poll drops them as the `await`'s cancellation does.
+async function joined(tag: string): Promise<number> {
+  const h = new Held(tag + ".joined");
+  const rs = await Promise.all([leaf(tag), slow(tag)]);
+  return rs[0] + rs[1] + h.name.length;
+}
+
+// The same through an array: the promises are started, so the sibling runs on and frees what
+// it holds when it finishes.
+async function joinedArray(tag: string): Promise<number> {
+  const h = new Held(tag + ".array");
+  const ps = [leaf(tag), slow(tag)];
+  const rs = await Promise.all(ps);
+  return rs[0] + rs[1] + h.name.length;
+}
+
 async function attempt(what: string, run: () => Promise<number>): Promise<void> {
   console.log(what);
   try {
@@ -124,5 +150,10 @@ async function main() {
   await attempt("looped", () => looped("f"));
   await attempt("generator", () => throughGenerator("g"));
   await attempt("async generator", () => throughStream("h"));
+  await attempt("joined", () => joined("i"));
+  await attempt("joined, array", () => joinedArray("j"));
+  for (let i = 0; i < 6; i++) {
+    await yieldNow();
+  }
   console.log("done");
 }

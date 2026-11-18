@@ -721,8 +721,14 @@ A poll that unwinds through a call without a pad (an extern's: "Not covered" abo
 of this: its state still holds what it held, and the tag of its last suspension names values the
 poll may have moved or dropped since. So in a program that catches, the start and every resume
 of a poll function first set the tag to `POLLING`, which has no dispatch case: polling or
-dropping such a state does nothing, and what it held leaks, as before. One store a poll, only
+dropping such a state does nothing, and what it held leaks, as before. One store per poll, only
 in programs that catch.
+
+The child an `await` waits for is owned by no scope: the cancel block of its suspension drops
+it (the awaited heap future; an inline `Promise.all`'s children and the results of those that
+finished). So the pad of a call that polls it drops it first, with the same code
+(`cleanup.rs` `awaiting`), then what the scopes own. Without that, a child whose poll unwinds
+would leave the awaited future never dropped, and a join's other children with it.
 
 A generator's resume function (and an async generator's poll function) is built the same way:
 its pads drop what its state holds and mark it finished. The frame holding the generator (a
