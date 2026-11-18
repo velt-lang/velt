@@ -82,6 +82,7 @@ jobs:
       - name: the tests of the change
         if: always()
         run: |
+          cargo build -q -p velt_rt
           cargo test -q -p veltc --test cpu_levels dot_add_fast
           cargo test -q -p velt_codegen_llvm bfdot
       - name: bf16 kernels (#3129), main against this branch
