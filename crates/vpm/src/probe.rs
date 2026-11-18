@@ -15,7 +15,6 @@ use std::fs::DirEntry;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use sha2::{Digest, Sha256};
 
 /// What a path was when it was probed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -234,10 +233,12 @@ fn hash_resolved(real: Option<&Path>) -> String {
     content_hash(text.as_bytes())
 }
 
-/// The hash a [`Read`] records of contents `bytes`.
+/// The hash a [`Read`] records of contents `bytes`: blake3, in hex. Only the build's caches keep
+/// it (stamps, the prebuilt std cache, the test cache), each comparing it with this function's
+/// again, so a change of function is a miss once. SHA-256 here, over every file a build that
+/// can't reuse its stamp reads, was ~11% of a warm build of a small program.
 pub fn content_hash(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    digest.iter().map(|b| format!("{b:02x}")).collect()
+    blake3::hash(bytes).to_hex().to_string()
 }
 
 /// The hash a [`Seen::listed`] directory records of its entries (names and whether each is a
