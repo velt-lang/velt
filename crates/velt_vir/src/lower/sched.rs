@@ -70,6 +70,15 @@ impl FnLower<'_, '_> {
             && self.sched_hook_live(velt_common::std_hook!(module_state))
     }
 
+    /// Does a synchronous `main` that starts no tasks end with module_blocks.velt's `moduleExit`
+    /// (the blocks go at a counted normal end)? Whenever sema loaded it (a native program with
+    /// module state): its blocks are module_blocks.velt's whether they were reached through its
+    /// own hooks or the executor's (sched_module.velt), and without tasks no `schedFinish` drops
+    /// them.
+    pub(super) fn module_exit_live(&self) -> bool {
+        self.std_sched() && self.sched_hook_live(velt_common::std_hook!(module_exit))
+    }
+
     /// The exit with 1 after an uncaught error's report: under the executor in Velt its hook
     /// (`sched_exit`: the executor gives back the blocks it holds for the leak counters first),
     /// else `velt_rt_exit`. A program sema found running nothing on the executor has no executor

@@ -474,8 +474,9 @@ const SCHED_CELL_HOOKS: &[&str] = &[
 
 /// Adds [`SCHED_HOOKS`] to `found` the first time, on a native target (`Lazy::native_executor`)
 /// when live code runs on it (`live::Live::tasks`: async code, or an extern the executor serves). A
-/// program without such code doesn't load the executor; lowering then keeps the runtime's
-/// module state (velt_vir `module_state.rs`), and never calls a task or timer hook (#2649 P3(a)).
+/// program without such code doesn't load the executor; lowering then calls module_blocks.velt's
+/// hooks for module state ([`module_hooks`], velt_vir `module_state.rs`), and never calls a task or
+/// timer hook (#2649 P3(a)).
 fn sched_hooks(cx: &mut Ctx, found: &mut Vec<DefId>) {
     let wanted = cx.lazy.live.tasks && cx.lazy.native_executor;
     if cx.lazy.sched_hooks || !wanted {
