@@ -1,0 +1,38 @@
+// What `Ptr.read` and `Ptr.write` (#3094) can't move: `void` and a `declare c type`, which have
+// no size, directly or through a type parameter; and they are unsafe.
+import { Ptr } from "velt/ffi";
+
+declare c type FILE;
+
+declare c struct Node {
+  next: Ptr<Node> | null;
+  value: i32;
+}
+
+function first<T>(p: Ptr<T>): T {
+  // SAFETY: never run; the type argument is refused.
+  return unsafe { Ptr.read(p, 0) };
+}
+
+function put<T>(p: Ptr<T>, v: T): void {
+  // SAFETY: as in `first`.
+  unsafe {
+    Ptr.write(p, 0, v);
+  }
+  ;
+}
+
+export function show(pv: Ptr<void>, pf: Ptr<FILE>, pn: Ptr<Node>, v: FILE): void {
+  // SAFETY: never run; each type argument is refused.
+  unsafe {
+    Ptr.read(pv, 1);
+    console.log(Ptr.read(pf, 0));
+    Ptr.write(pf, 0, v);
+  }
+  ;
+  console.log(first(pf), first(pn).value);
+  put(pf, v);
+  console.log(Ptr.read(pn, 0));
+}
+
+export const ready = 1;

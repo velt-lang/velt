@@ -33,6 +33,8 @@ impl FnLower<'_, '_> {
             ) => self.atomic_intrinsic(i, args, ty),
             (I::AtomicAddress, [a]) => self.atomic_address(a, ty),
             (I::AddressStore, [a, v]) => self.address_store(a, v),
+            (I::PtrRead, [p, i]) => self.ptr_read(p, i, ty),
+            (I::PtrWrite, [p, i, v]) => self.ptr_write(p, i, v),
             (I::FutPoll, [f, cx]) => self.fut_intrinsic(f, Some(cx)),
             (I::FutDrop, [f]) => self.fut_intrinsic(f, None),
             (I::StatePoll, [p, s, cx]) => self.state_poll(p, s, cx),

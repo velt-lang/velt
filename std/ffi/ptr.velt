@@ -3,7 +3,7 @@
 // documentation and its statics (`velt_common` `std_hooks`, `ffi_ptr_type`), never a type of its
 // own. One machine word: `Ptr<T> | null` is the same word, with 0 as `null`.
 
-import { ptrFromAddress, ptrToAddress } from "velt/lang/intrinsics/address";
+import { ptrFromAddress, ptrRead, ptrToAddress, ptrWrite } from "velt/lang/intrinsics/address";
 
 declare function velt_rt_strbuf_push_str(buf: string, s: string);
 
@@ -12,7 +12,7 @@ declare function velt_rt_strbuf_push_str(buf: string, s: string);
  * with `declare c` returns as `Ptr<T>`, and passes to C when given as an argument. `T` is a type
  * declared with `declare c type` or `declare c struct`, a number type, `bool`, `void` or another
  * pointer; `Ptr<T> | null` is a pointer that may be `NULL`. Nothing in Velt reads or writes
- * through one without `unsafe` code. A pointer is compared by its address, prints as
+ * through one without `unsafe` code (`Ptr.read`, `Ptr.write`). A pointer is compared by its address, prints as
  * `Ptr(0x7ffd5e8c1a30)`, and is never `NULL`.
  */
 export struct Ptr<T> {
@@ -42,6 +42,33 @@ export struct Ptr<T> {
   /** The address `p` holds, or 0 for `null`. */
   static addressOf<T>(p: Ptr<T> | null): usize {
     return ptrToAddress<T>(p);
+  }
+
+  /**
+   * A copy of the `T` at element `index` of the array of `T`s at `p` (`p[index]` in C): a number,
+   * `bool`, a C struct or a C pointer. A non-null pointer in it, a C struct's field or a nested
+   * struct's, that C left `NULL` stops the program, naming the field: declare such a field
+   * `Ptr<U> | null`. Unsafe: `index + 1` `T`s must be readable at `p`, which C doesn't change
+   * during the read. Not on wasm32 for a `T` whose layout differs from C's there (one with a
+   * pointer, `usize` or `isize` in it).
+   */
+  static unsafe read<T>(p: Ptr<T>, index: usize): T {
+    // SAFETY: the caller's statement about `p` and `index`.
+    return unsafe { ptrRead<T>(p, index) };
+  }
+
+  /**
+   * Writes `value` at element `index` of the array of `T`s at `p` (`p[index] = value` in C), `T`
+   * as for `read`: how a binding fills a struct C keeps (a listener it is given the address of).
+   * Unsafe: `index + 1` `T`s must be writable at `p`, and nothing else reads or writes that
+   * element meanwhile. Not on wasm32 for the types `read` isn't.
+   */
+  static unsafe write<T>(p: Ptr<T>, index: usize, value: T): void {
+    // SAFETY: the caller's statement about `p` and `index`.
+    unsafe {
+      ptrWrite<T>(p, index, value);
+    }
+    ;
   }
 }
 

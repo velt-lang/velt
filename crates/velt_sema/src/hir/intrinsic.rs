@@ -406,6 +406,15 @@ pub enum Intrinsic {
     /// std only (velt/ffi's `Ptr.addressOf`): `ptrToAddress<T>(p: Ptr<T> | null) -> usize`, the
     /// pointer word as an address, 0 for `null` (#3094). Additive.
     PtrToAddress,
+    /// std only (velt/ffi's `Ptr.read`): `ptrRead<T>(p: Ptr<T>, index: usize) -> T`, `T` a
+    /// number type, `bool`, a C struct or a C pointer (sema checks it, through type parameters
+    /// too: `json::PtrUse::Memory`): the `T` at element `index` of the array at `p`, its
+    /// non-null pointers (a C struct's, nested ones included) checked, the program stopping on
+    /// NULL (#3094). On wasm32 a `T` whose layout isn't C's there is a lowering error. Additive.
+    PtrRead,
+    /// std only (velt/ffi's `Ptr.write`): `ptrWrite<T>(p: Ptr<T>, index: usize, v: T)`, `T` as
+    /// for `PtrRead`: `v` written at element `index` of the array at `p` (#3094). Additive.
+    PtrWrite,
     /// std only: `atomicAddress<T>(a: borrow Atomic<T>) -> usize`: the address of `a`'s word.
     /// Sema allows only an `Atomic` of a 32- or 64-bit integer that cannot move: a static atomic
     /// (`Global(d)`), or a field (of a field…) of the value of `SharedRead`. Additive.

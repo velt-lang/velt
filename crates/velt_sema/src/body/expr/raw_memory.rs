@@ -1,6 +1,7 @@
 //! The intrinsics on raw memory (std/lang/intrinsics/address.velt and atomic.velt's
 //! `atomicAddress`, docs/internals/design/intrinsics.md "Memory at an address"): what their
 //! declarations cannot say. `addressLoad<T>` and `addressStore<T>` move one number or `bool`;
+//! `ptrRead<T>` and `ptrWrite<T>` move a number, `bool`, C struct or C pointer;
 //! the `addressAtomic*` ones work on an integer, and their orderings (and `addressAtomicRmw`'s
 //! operation) are string literals that become the integer literals the `Atomic*` intrinsics
 //! take; and `atomicAddress` takes only an `Atomic` that cannot move.
@@ -27,6 +28,15 @@ impl FnCx<'_, '_> {
             I::AddressLoad | I::AddressStore => {
                 let ok = t.is_none_or(|t| self.raw_value_ty(t, false));
                 self.raw_type_error(i, t, ok, "a number type or `bool`", span)?;
+                Some(args)
+            }
+            I::PtrRead | I::PtrWrite => {
+                // A type parameter is checked where it is instantiated (`json::PtrUse::Memory`).
+                let ok = t.is_none_or(|t| {
+                    matches!(self.cx.ty.kind(t), TyKind::Param(_) | TyKind::Error)
+                        || self.cx.memory_element(t)
+                });
+                self.raw_type_error(i, t, ok, crate::ffi_ptr::MEMORY_ELEMENTS, span)?;
                 Some(args)
             }
             I::AddressAtomicLoad

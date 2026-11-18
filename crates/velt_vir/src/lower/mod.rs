@@ -105,6 +105,7 @@ mod for_of_shared;
 mod foreign;
 mod frame_envs;
 mod lower_profile;
+mod ptr_memory;
 mod raw_memory;
 mod sched;
 mod slot;

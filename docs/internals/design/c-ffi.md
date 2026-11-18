@@ -425,7 +425,10 @@ declare c("objc") function objc_msgSend$frame(obj: Ptr<NSView>, sel: Ptr<SEL>): 
 ```
 
 Fields in C order with C-crossable types (scalars, `Ptr`, other C structs; fixed arrays as tuples
-until `T[N]`, #1866 area 4); in Velt a plain value struct, never counted. Passing and returning
+until `T[N]`, #1866 area 4); in Velt a plain value struct, never counted. A pointer field is C's
+`T *`, `Ptr<T> | null` with `NULL` as `null`; a non-null `Ptr<T>` field is checked wherever C
+hands the struct to Velt ("As built" 12). `Ptr.read(p, i)` and `Ptr.write(p, i, s)` read and
+write element `i` of an array of structs (or numbers, or pointers) in C memory. Passing and returning
 by value follows the target's convention (SysV x86-64 INTEGER/SSE eightbytes, AAPCS64
 homogeneous float aggregates, Win64 by reference over 8 bytes, `sret`, Apple arm64 variadics).
 **One table-driven classifier**, a port of rustc's `rustc_target::abi::call`, serves both
@@ -1246,8 +1249,8 @@ Step 1 lands in layers, each its own pull request:
    - Not yet:
      - C arrays: a tuple type's storage isn't fixed (boxing/tuples.rs counts one the program
        writes in place and copies, anywhere), so they wait for `T[N]`.
-     - Pointer fields: `Ptr<T> | null` is an option of the address in Velt, larger than C's
-       pointer, so they get their own storage, the address with `NULL` as `null`.
+     - Pointer fields: `Ptr<T> | null` was an option of the address in Velt, larger than C's
+       pointer. They came with `Ptr<T>` as a type kind ("As built" 11 and 12).
      - Structs by value in `declare c` signatures, `Out<S>` and `Ref<S>` (the shared
        classifier, both backends); the header check of structs; the differential ABI test.
 9. What the scheduler's reactor in Velt (#2649) needed of `declare c`, each its own commit:
@@ -1392,6 +1395,39 @@ Step 1 lands in layers, each its own pull request:
       `wasm_goldens.rs`) and `lang/errors/c_pointer_rules`, velt_vir `tests/c_pointers.rs` (one
       word in a signature, a field and a C call; fails without the niche; no pointer attributes
       on a pointer parameter), std/ffi/ffi.test.velt.
+12. Pointer fields in C structs, `Ptr.read` and `Ptr.write` (#3094, its pull request 3; layer 2 of
+    C structs).
+    - **Fields**: a C struct's field may be `Ptr<T>` or `Ptr<T> | null` (`Ptr<T> | undefined`
+      too, the same word), the struct itself included (`next: Ptr<Node> | null`), C's `T *`
+      (velt_sema `collect/c_struct.rs`). `Ptr<T> | null | undefined` is a Velt option, refused.
+    - **The layout guarantee**: lowering checks every C struct's aggregate against C's rules
+      for its fields' C types on the 64-bit targets, offset by offset (layout.rs
+      `check_c_struct_layout`), and that it is never boxed (types.rs); either is an `ICE:`.
+    - **`Ptr.read<T>(p, index)` and `Ptr.write<T>(p, index, value)`** (std/ffi/ptr.velt, over
+      the std-only intrinsics `ptrRead` and `ptrWrite`, `hir::Intrinsic::PtrRead` /
+      `PtrWrite`, additive): element `index` of an array of `T` at `p`, `T` a number, `bool`,
+      a C struct or a C pointer, one load or store of its VIR type at `p + index * size`
+      (velt_vir `lower/ptr_memory.rs`). `void` and a `declare c type` have no size: a compile
+      error, through a type parameter too (`json::PtrUse::Memory`, at the instantiation).
+    - **Arrival check**: C has no non-null pointer, so a read compares every non-null
+      `Ptr<U>` in the element (a C struct's fields at any depth) with 0, and the program stops
+      on NULL, naming the field (`field `name.text` of the `Entry` read is NULL`). A struct
+      without one has no check. The later arrival paths take the same check: by-value results
+      and `Out<S>` (layer 3), struct pointers passed to callbacks (step 5),
+      `PinnedBuffer<S>.view` (step 6).
+    - **wasm32**: Velt's `usize`, `isize` and pointers take 8 bytes in memory on every target
+      and C's 4 on wasm32, so `Ptr.read` and `Ptr.write` of an element holding one is a
+      compile error there, at the user's call, naming the target. An element of fixed-width
+      numbers has the same layout and is allowed.
+    - **Tests**: goldens `lang/c_pointers/struct_fields` and `null_field`,
+      `lang/errors/c_pointer_memory`; velt_vir `tests/c_struct_layouts.rs` (size, alignment
+      and every offset of `{ptr}`, `{i8, ptr}`, `{ptr, i32}`, `{f32, ptr, f32}` and a nested
+      struct; the stride and the check; the wasm32 errors); velt_sema `lang_c_structs.rs`;
+      veltc `tests/c_struct_pointers.rs`, a round trip through a package's C `sources` (C fills
+      a chain of structs, Velt reads and follows it, Velt writes structs C checks field by
+      field), which fails with the null niche taken out (the layout check stops the build).
+    - **Not yet**: the header check of structs (layer 4, before a package outside std ships
+      structs with pointer fields); `Ptr.cast`.
 
 ## Decisions
 

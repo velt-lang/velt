@@ -1,0 +1,7 @@
+// `Ptr.read` and `Ptr.write` move numbers, `bool`, C structs and C pointers (#3094): the binding
+// package's errors, reported before the program runs.
+import { ready } from "clib";
+
+function main() {
+  console.log(ready);
+}

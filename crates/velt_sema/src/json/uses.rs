@@ -62,6 +62,15 @@ pub(super) fn uses_of(
             callee: Callee::Intrinsic(Intrinsic::AnyTo),
             ..
         } if param_element(tys, record, e.ty) => Some((e.ty, e.span, PtrUse::FromDyn)),
+        // The element `Ptr.read` / `Ptr.write` move: the result, or the value written.
+        E::Call {
+            callee: Callee::Intrinsic(Intrinsic::PtrRead),
+            ..
+        } => Some((e.ty, e.span, PtrUse::Memory)),
+        E::Call {
+            callee: Callee::Intrinsic(Intrinsic::PtrWrite),
+            args,
+        } => args.get(2).map(|a| (a.ty, e.span, PtrUse::Memory)),
         _ => None,
     };
     if let Some((t, span, how)) = converted.filter(|(t, ..)| param_in(tys, *t)) {

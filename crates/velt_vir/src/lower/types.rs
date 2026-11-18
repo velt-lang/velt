@@ -461,6 +461,10 @@ impl<'h> Cx<'h> {
             TyKind::Simd(_) => Ty::V128,
             // Literal types are zero-sized: the type is the value.
             TyKind::Unit | TyKind::Never | TyKind::Literal(_) => Ty::Unit,
+            // A C struct is never boxed: its memory is C's layout (layout.rs).
+            _ if self.boxed(t) && self.c_struct(t) => {
+                ice(format_args!("C struct `{}` boxed", self.type_name(t)))
+            }
             _ if self.boxed(t) => Ty::Ptr,
             TyKind::Adt(d, _) => match self.hir.def(d) {
                 hir::Def::Adt(a) if a.kind == AdtKind::Class => Ty::Ptr,
