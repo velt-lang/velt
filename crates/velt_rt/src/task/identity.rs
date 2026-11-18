@@ -28,8 +28,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use parking_lot::Mutex;
 
-use super::all::ResultDropFn;
 use super::shared::{self, HubRef};
+use super::ResultDropFn;
 use super::VeltFut;
 
 /// What a converted promise keeps.
@@ -64,11 +64,6 @@ fn alias_of(f: *mut VeltFut) -> Option<*mut VeltFut> {
         .and_then(|m| m.get(&(f as usize)))
         .map(|a| a.holder)
         .filter(|h| !h.is_null())
-}
-
-/// The holder a converted promise `f` keeps of the promise it stands for, if it keeps one.
-pub(crate) fn converted_from(f: *mut VeltFut) -> Option<*mut VeltFut> {
-    alias_of(f)
 }
 
 /// The identity of promise `f` (null: 0): two holders of one promise, and a converted promise
