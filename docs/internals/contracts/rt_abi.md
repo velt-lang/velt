@@ -1042,5 +1042,4 @@ Declared in std (Velt signatures; `u8[]`/`string` are passed as in rt_abi_async.
   `velt_rt_math_f64_bits(x: f64): u64` and `velt_rt_math_bits_f64(b: u64): f64` (IEEE 754 bit
   casts, `x.toBits()` / `f64.fromBits(b)`; both backends emit them inline).
 - Binary stdio: `velt_rt_stdout_write_bytes(bytes: u8[])` (synchronous, ordered with
-  `console.log`) and `velt_rt_stdin_read_all_bytes_sync(): IoResult<u8[]>` (hands over the
-  runtime's buffer; `readAllBytes()` runs it on the executor's blocking pool).
+  `console.log`). Standard input is std code (rt_abi_async.md §14.4).

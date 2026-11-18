@@ -129,6 +129,15 @@ export const imports: Imports = {
   // sched_blocking.velt) instead of the runtime's leaves on tokio's blocking threads.
   "#fs-rt": { "std-scheduler": "./fs/rt_sched.velt", default: "./fs/rt.velt" },
   "#process-rt": { "std-scheduler": "./process/rt_sched.velt", default: "./process/rt.velt" },
+  // Reading standard input (std/process/stdin_buffer.velt's refills): `read` on fd 0 on macOS,
+  // Linux and WASI (wasi-libc's), the console's or a pipe's own read on Windows, none under a JS
+  // host.
+  "#stdin-sys": {
+    win32: "./process/stdin_win32.velt",
+    native: "./process/stdin_posix.velt",
+    wasi: "./process/stdin_posix.velt",
+    default: "./process/stdin_none.velt",
+  },
   // velt/process/child's runtime functions: the runtime's (std/process/child/rt.velt, which
   // WebAssembly can't run), or, compiled with the executor in Velt, its own (child_sched.velt),
   // which `#child-os` serves: `posix_spawn` with the exit and the pipes on its reactor, or on

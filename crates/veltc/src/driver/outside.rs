@@ -104,7 +104,6 @@ const RUNTIME_REACH: &[(&str, &str)] = &[
     ("perf", "the clock"),
     ("local", "the clock"),
     ("random", "random numbers"),
-    ("stdin", "standard input"),
     ("native", NATIVE_SUPPORT),
 ];
 

@@ -1273,16 +1273,12 @@ pool on Windows). Exit codes: the process's code, or `128 + signal` when killed 
 
 ### 14.4 Standard input (`velt/process`)
 
-`typedef struct { IoResult<VeltStr> line; u8 eof; } LineRead;` (64 bytes): a line without its
-`\n`/`\r\n`; at end of input `eof = 1` and the line is empty. One process-wide buffered stream
-serves both forms; an async read is the sync one on the executor's blocking pool
-(std/process/rt_sched.velt); text is decoded lossily. [The async leaves `velt_rt_stdin_read_line`,
-`_read_all` and `_read_all_bytes` were removed, #2196.]
-
-| Symbol | Signature |
-|---|---|
-| `velt_rt_stdin_read_line_sync` | `(LineRead* out)` |
-| `velt_rt_stdin_read_all_sync` | `(IoResult<VeltStr>* out)` |
+**[non-additive, #2196]** Standard input is std code: one process-wide read-ahead buffer
+(std/process/stdin_buffer.velt) over `#stdin-sys` (`read` on fd 0 on macOS, Linux and WASI;
+`ReadConsoleW` or `ReadFile` on Windows; none under a JS host), locked with `velt_rt_mutex_lock`;
+an async read is the sync one on the executor's blocking pool (std/process/rt_sched.velt).
+`velt_rt_stdin_read_line_sync`, `velt_rt_stdin_read_all_sync` and
+`velt_rt_stdin_read_all_bytes_sync` no longer exist (the fs readers' `LineRead` is in §14.7).
 
 ### 14.5 Machine facts (`velt/os`)
 
@@ -1314,7 +1310,7 @@ every operation runs on the blocking pool. A writer's last release flushes (erro
 | `velt_rt_fs_reader_opened_stats` | `(VeltFileReader r, IoResult<VeltStat>* out)` | synchronous: the file's `VeltStat` when it was opened (an `fstat` in the open's own blocking call, so no I/O here), whatever its path names now; `size` is the whole file's; `EBADF` once closed [additive, #2077] |
 | `velt_rt_fs_reader_read` | `(VeltFileReader r, u64 max) -> VeltFut*` | `IoResult<VeltBytes>`, empty = EOF, `max` 0 = 64 KiB |
 | `velt_rt_fs_reader_read_string` | `(VeltFileReader r, u64 max) -> VeltFut*` | `IoResult<VeltStr>`, split characters completed on the next call, `""` = EOF |
-| `velt_rt_fs_reader_read_line` | `(VeltFileReader r) -> VeltFut*` | result `LineRead` (§14.4) |
+| `velt_rt_fs_reader_read_line` | `(VeltFileReader r) -> VeltFut*` | result `typedef struct { IoResult<VeltStr> line; u8 eof; } LineRead;` (64 bytes): a line without its `\n`/`\r\n`, decoded lossily; at the end of the file `eof = 1` and the line is empty |
 | `velt_rt_fs_reader_close` | `(VeltFileReader r)` | |
 | `velt_rt_fs_open_write` | `(const VeltStr* path, u8 append) -> VeltFut*` | `IoResult<VeltFileWriter>`; creates; truncates unless `append` |
 | `velt_rt_fs_writer_write` / `_write_bytes` | `(VeltFileWriter w, const VeltBytes* data) -> VeltFut*` | `IoResult<()>`; data copied (two names so Velt can bind a string and a byte form) |

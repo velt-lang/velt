@@ -7,6 +7,11 @@
 /// replaced extern is defined by `velt_rt` unless it is listed here, and that one listed here is
 /// defined nowhere and named by no compiler source, runtime or std file.
 pub const DELETED: &[&str] = &[
+    // #2196: standard input (std/process/stdin_buffer.velt over `#stdin-sys`), which only std
+    // called.
+    "velt_rt_stdin_read_line_sync",
+    "velt_rt_stdin_read_all_sync",
+    "velt_rt_stdin_read_all_bytes_sync",
     // #2196: velt/os's facts (std/os/sys_*.velt over the C library and Win32, the build's
     // `x64`/`arm64` condition for the architecture), which only std called.
     "velt_rt_os_platform",
