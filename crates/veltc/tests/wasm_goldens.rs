@@ -116,9 +116,21 @@ fn a_golden_that_needs_an_os_is_skipped() {
     std::fs::create_dir_all(&dir).unwrap();
     let cases = [
         ("unix.velt", "// requires: unix\nconsole.log(1);\n", true),
-        ("windows.velt", "// requires: windows\nconsole.log(1);\n", true),
-        ("crlf.velt", "// requires: unix\r\nconsole.log(1);\r\n", true),
-        ("symlinks.velt", "// requires: symlinks\nconsole.log(1);\n", false),
+        (
+            "windows.velt",
+            "// requires: windows\nconsole.log(1);\n",
+            true,
+        ),
+        (
+            "crlf.velt",
+            "// requires: unix\r\nconsole.log(1);\r\n",
+            true,
+        ),
+        (
+            "symlinks.velt",
+            "// requires: symlinks\nconsole.log(1);\n",
+            false,
+        ),
         ("plain.velt", "console.log(1);\n", false),
     ];
     for (name, text, skipped) in cases {
