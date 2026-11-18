@@ -111,11 +111,11 @@ export class MappedFile {
     if (count == 0) {
       return shared([]);
     }
+    const at = this.address + (byteOffset as usize);
     // SAFETY: the range is inside the mapping (checked above), which is page-aligned, so a
     // multiple of 4 from its start is aligned for `f32`; the mapping is never unmapped, and the
     // array is only ever read: it leaves as a `shared<f32[]>`.
-    const xs: f32[] =
-      unsafe { addressArray<f32>(this.address + (byteOffset as usize), count as usize) };
+    const xs: f32[] = unsafe { addressArray<f32>(at, count as usize) };
     return shared(xs);
   }
 
