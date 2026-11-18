@@ -403,13 +403,14 @@ Work on a branch and open a pull request against `main`; nothing is pushed to `m
 Reference the issue it resolves (`Closes #123`), and go through the self-check below before
 opening it.
 
-- **CI**: every pull request runs the checks its changes need (as `scripts/check.sh` selects
+- **CI**: every approved pull request runs the checks its changes need (as `scripts/check.sh` selects
   them) on Linux, as three parallel jobs: lint, test and golden; a change to OS-specific code
   (below) is also linted (fmt, clippy) on Windows, and on macOS when the queue checks it there,
   so `cfg(windows)`-only findings show before the queue. The label `ci:full` makes them check everything (add it before
   pushing, or close and reopen the pull request). When a pull
-  request is approved, the maintainer who approves it adds it to the **merge queue** in the same
-  step (`gh pr merge <n> --auto`): the queue runs the whole gate against the pull
+  request is approved, the maintainer who approves it adds the label `ci:approved`, which starts
+  those checks (before it, `ci` reports "waiting for approval"; run `scripts/check.sh` locally),
+  and adds it to the **merge queue** in the same step (`gh pr merge <n> --auto`): the queue runs the whole gate against the pull
   request merged with the latest `main`, and merges it when it passes. It checks Linux, plus
   Windows when the change touches OS-specific code (the runtime, code generation and linking,
   `veltc`, `vpm`, the parts of the standard library that talk to the OS and its test suites, and

@@ -389,8 +389,17 @@ function onRow(n: i32, row: Ptr<u8> | null): i32 { … }
   on Windows x64 names a language handler (`velt_eh_stop`, `crates/velt_codegen_cl/src/eh_seh.rs`)
   that ends the process when a Velt panic's search phase reaches the frame
   ([unwinding.md](unwinding.md)).
+- **Async code in it**: on a thread that isn't one of the executor's workers (a C
+  library's), the promises it starts, its timers and sleeps run on the executor's worker 0, handed
+  over through its inbox (std/lang/hooks/sched_foreign.velt). The C function marks the call's start
+  and end (`schedExportEnter`, `schedExportExit`), and such a thread's tasks wait for the
+  outermost call's end, in the order they were made: the call's synchronous run comes first, as a
+  JS callback's comes before its microtasks, so a rejection it handles later in that run is not
+  reported meanwhile. A `spawn` there runs beside the call at once. Work handed over after `main`
+  and the tasks left ended (a thread that outlives them) never runs: the process is exiting.
 - **Its address**: `exportedAddress(f)` (std only, unsafe) is the C function's address as a
-  `usize`, for C APIs that take a function pointer (`pthread_create`, `qsort`).
+  `usize`, for C APIs that take a function pointer (`pthread_create`, `qsort`); its
+  argument must name an `@export` function.
 - **Linking**: a package's C `sources` call an export by name. Release builds link the static
   archive; debug builds link the shared library, which finds the symbol in the executable when
   it loads (macOS links the library with `-undefined dynamic_lookup`). Release links strip an
