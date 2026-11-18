@@ -193,7 +193,7 @@ export class ServerHandshake {
     const hello = serverHello(randomBytes(32), offer.sessionId, this.suite, group, ours);
     this.add(hello);
     this.hello = hello;
-    const hs = handshakeSecret(secret);
+    const hs = handshakeSecret(secret, 32);
     const h1 = sha256(this.transcript);
     this.clientHandshake = expandLabel(hs, "c hs traffic", h1, 32);
     this.serverHandshake = expandLabel(hs, "s hs traffic", h1, 32);
