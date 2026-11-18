@@ -187,7 +187,8 @@ declaration's `ExternFnDef` is never called. Its name maps to the `Intrinsic` in
   owned, typed as `q`: `q` is `p.then` converting the value (on a temporary holding `p`), and
   `p` the temporary itself. `q` is `p` for identity and rejection reports (rt_abi_async.md
   §1.3, #1682); used as a value, it starts `q`.
-- `async main` → `velt_main` calls `velt_rt_block_on`.
+- `async main` → `velt_main` hands its root to std's `schedBlockOn` (std/lang/hooks/sched.velt);
+  on WebAssembly it calls `velt_rt_block_on`, or on JS hosts `velt_rt_host_main`.
 - std wraps rt I/O with `declare async function` externs (`ExternFnDef::is_async`); rt results
   use `IoResult` layout = Velt `struct { code: i32; message: string; value: T }`.
 
