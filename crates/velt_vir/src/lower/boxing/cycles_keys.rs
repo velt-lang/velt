@@ -1,5 +1,5 @@
 //! The function types closure environments are told apart by in the cycle analysis
-//! (docs/internals/design/cycles.md section 1, step 2): a function value of type `F` can only
+//! (docs/internals/design/cycles.md "Closures by key"): a function value of type `F` can only
 //! hold the environment of a closure made at a type with `F`'s key, so the analysis follows a
 //! function value to those environments only, not to every closure of the program.
 //!

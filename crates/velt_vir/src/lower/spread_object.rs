@@ -1,8 +1,9 @@
-//! `Intrinsic::SpreadObject` (#350; hir_encodings.md "Spreads in generic bodies"): an object
-//! literal that spreads a value whose fields are known only per instantiation (`{ ...t, $set }`
-//! with `t: T`). Its type is the deferred `TyOp::Spread`, which sema reduced at this
-//! instantiation to the object type JavaScript's spread builds. Each part is a place of a
-//! concrete object type (a spread source, or a temporary holding a run of explicit properties);
+//! `Intrinsic::SpreadObject` (#350; hir_encodings.md "Spreads and conversions in generic
+//! bodies"): an object literal that spreads a value whose fields are known only per
+//! instantiation (`{ ...t, $set }` with `t: T`). Its type is the deferred `TyOp::Spread`,
+//! which sema reduced at this instantiation to the object type JavaScript's spread builds. Each
+//! part is a place of a concrete object type (a spread source, or a temporary holding a run of
+//! explicit properties);
 //! each field of the result is shared from the last part that has a field of that name, and an
 //! optional field (which sema allows only from one part) keeps that part's presence. A class's
 //! optional field is always present (an own property holding `undefined` until set).
@@ -352,7 +353,7 @@ impl FnLower<'_, '_> {
     /// union (`T[K]`): the value is evaluated once, and the field the key names takes the
     /// value's member, checked: a member of another type stops the program with a `TypeError`,
     /// where TypeScript would store a value of the wrong type
-    /// (docs/internals/design/deferred-types.md, decision 4).
+    /// (docs/internals/design/deferred-types.md "Writes through a key").
     fn key_write_checked(
         &mut self,
         object: &hir::Expr,

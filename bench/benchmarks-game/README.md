@@ -1,8 +1,10 @@
 # Computer Language Benchmarks Game — Velt vs Rust, Go, Node, Bun
 
 Ports of the [Benchmarks Game](https://benchmarksgame-team.pages.debian.net/benchmarksgame/)
-programs. Run everything with `bench/benchmarks-game/run.sh` (see `--help`); results are in
-`RESULTS.md`, root causes of Velt gaps in `bench/FINDINGS.md`.
+programs. Run everything with `bench/benchmarks-game/run.sh [--quick] [--runs N] [program...]`
+(see `--help`); results are in [RESULTS.md](RESULTS.md), open gaps in
+[../FINDINGS.md](../FINDINGS.md). `pwsh bench/benchmarks-game/compare.ps1 -Baseline <velt.exe>`
+compares two compilers on these programs, interleaved.
 
 ## Layout
 
@@ -11,6 +13,7 @@ programs. Run everything with `bench/benchmarks-game/run.sh` (see `--help`); res
   main.velt        idiomatic Velt, written the way a TypeScript developer would
   main_mt.velt     multi-threaded Velt (spawn + Promise.all), where the official fastest are parallel
   main_opt.velt    optimized Velt, only when it teaches something about the compiler
+  main_arena.velt  binary-trees on a velt/mem Arena;  main_limbs.velt  pidigits on a limb class
   main.go          fastest single-file published Go (credited in its header)
   main.js          fastest single-file published Node program (Bun runs the same source)
   main_st.go/.js   fastest published single-threaded Go / Node, when main.go / main.js is parallel
@@ -31,7 +34,8 @@ STDIN=none          # none | fasta  (fasta: stdin is the output of `fasta N`, or
 ```
 
 Programs reading stdin (`STDIN=fasta`) get the fasta output: the runner generates it once with the
-Rust fasta at the N in `bench.conf` (25,000,000; 5,000,000 for regex-redux) and at QUICK_N (1000: the official small input files are exactly `fasta 1000`).
+Rust fasta at the N in `bench.conf` (25,000,000; 5,000,000 for regex-redux) and at QUICK_N
+(1000: the official small input files are exactly `fasta 1000`).
 
 Setup on macOS: `brew install go bun gmp` (GMP for the Rust `rug` and Go pidigits programs); Rust
 and Apple clang from the usual toolchains.

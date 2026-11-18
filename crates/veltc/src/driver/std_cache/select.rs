@@ -137,7 +137,7 @@ fn never_served(f: &vir::Function) -> bool {
 /// them. For a `@noInline` function whose
 /// callers, inlined into the program's code, pass it constants: in the program LLVM specializes
 /// it for them, an object compiled once can't. A tool std's authors use deliberately, each entry
-/// with why (design/std-object.md "Never served"); a name that no longer exists in std fails a
+/// with why (design/std-object.md "What is served"); a name that no longer exists in std fails a
 /// test.
 pub(super) const NEVER_SERVED: &[&str] = &[
     // `toFixed` (std/lang/number/to_fixed) is inlined into its callers and passes their `digits`,

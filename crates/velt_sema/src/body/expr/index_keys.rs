@@ -1,4 +1,4 @@
-//! `m[i, j]`: an index with several keys (design operators.md step 8, #2179). It calls the
+//! `m[i, j]`: an index with several keys (design operators.md "Indexing", #2179). It calls the
 //! object's operator indexer with every key, `m[Symbol.index](i, j)` and, as a target,
 //! `m[Symbol.setIndex](i, j, v)` (`indexers.rs`, which evaluates the object, then each key
 //! once, left to right). A key naming a member never applies: several keys always call the

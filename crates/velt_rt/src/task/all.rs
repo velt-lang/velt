@@ -14,7 +14,7 @@
 //! budget-aware leaf (join handle, timer, socket) polled with the budget spent returns a spurious
 //! `Pending` whose wake-up is deferred until the task yields. `FuturesUnordered` cannot see a
 //! deferred wake, so it would go on polling every remaining child once per poll of the join to
-//! make progress on at most 128 of them: quadratic (bench/FINDINGS.md §7). So a child is never
+//! make progress on at most 128 of them: quadratic. So a child is never
 //! polled without budget: it wakes itself instead, which makes `FuturesUnordered` yield after two
 //! such children, and the join yields to the other tasks until the next tick refills the budget.
 //! The join also pays one unit per finished child, so a join over children that never touch the

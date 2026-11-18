@@ -340,8 +340,8 @@ programs faster. Velt is a native backend language, not a way to compile to Java
 proposal for a Velt-only feature is welcome when it shows the speed it buys.
 
 1. **Open an issue** describing the problem, with real code that is awkward or impossible today.
-2. **Write a design note** for anything beyond a small fix, in the style of
-   [docs/internals/design](docs/internals/design): the syntax (as close to TypeScript as
+2. **Write a design note** for anything beyond a small fix, following the rules in
+   [docs/internals/design/README.md](docs/internals/design/README.md): the syntax (as close to TypeScript as
    possible), the semantics, how it compiles, what it costs at run time, and the diagnostics
    users will see, including fixes for code that breaks.
 3. **Show the performance impact** on `bench/` for anything that touches code generation or the
@@ -468,7 +468,9 @@ go through this list:
 2. **Docs**: user-visible changes have a docs-sync issue on the website repo, linked from the
    pull request ([The website's docs](#the-websites-docs)), and the README or a package's docs
    in this repository are updated where they describe the change; otherwise there is no
-   user-visible change.
+   user-visible change. A change to behavior a design note or contract describes rewrites
+   that text in the same pull request, so it states the current design without a history
+   ([design note rules](docs/internals/design/README.md)).
 3. **Tests**: each bug fix has a regression test that fails without the fix.
 4. **Panics**: no `unwrap()` or `expect()` on a path user input reaches (source, `package.velt`,
    command-line arguments, files, the network); `expect("ICE: …")` only for invariants.

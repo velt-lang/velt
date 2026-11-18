@@ -11,7 +11,7 @@ engine and doesn't wrap one: there is no interpreter, no JIT warm-up, no garbage
 single-threaded event loop. Your program is a native binary that uses every core of the machine.
 
 ```ts
-// src/main.velt of a package made with `velt new hello --template api`
+// as src/main.velt of a package made with `velt new hello --template api`
 // (its package.velt depends on the http-server package): `velt run`
 import { serve } from "http-server";
 
@@ -34,23 +34,15 @@ await serve({ port: 8080 }, async (req: Request): Promise<Response> => {
 ```
 
 That is a complete HTTP server, and every core answers requests. On the TechEmpower-style suite
-below, this kind of server handles **7× as many JSON requests as Node and 1.2× as many as Rust's
-axum**, in tens of megabytes of memory.
+below, a Velt server handles **as many JSON requests as Rust's axum and 17× as many as Node**, in
+tens of megabytes of memory.
 
-**Small and fast to start.** A minimal "Hello, World!" web server, built with
-`velt build --release`:
-
-| | Velt | Node |
-|---|---:|---:|
-| memory, idle | **8 MB** | 39 MB |
-| memory under load, 220k req/s vs Node's 130k | **19–21 MB** | 129 MB |
-| start a program and exit | **3 ms** on Linux, 33 ms on Windows | 69 ms on Windows |
-| what you deploy | **one 6 MB executable** | Node plus `node_modules` |
-
-Idle memory and the Windows start times were measured with velt 0.2.1 and Node 22.22 on an
-Intel i9 laptop running Windows 11. The memory under load is from
-[bench/http](bench/http/RESULTS.md), measured on an Apple M4 with Node 24, and the Linux start time is from
-[bench/RESULTS.md](bench/RESULTS.md).
+**Small to run and to ship.** `velt build --release` writes one self-contained executable:
+nothing else to install on the server and no `node_modules`. On that suite the Velt server peaks
+at **25–63 MB** of memory where Node takes 100–308 MB and a Node cluster up to 1.6 GB
+([raw table](bench/web/results/azure-d48ads_v5-pinned-20261010.md)), and a minimal handler on
+the `http-server` package stays at **19 MiB** while serving 77k requests a second on 4 workers
+([bench/http](bench/http/RESULTS.md#middleware-and-soak)).
 
 ## Get started
 
@@ -74,6 +66,9 @@ velt build --release        # an optimized native executable in target/velt/
 ```
 
 You can also run TypeScript you already have: `velt run app.ts`.
+
+Debug builds use Cranelift. Release builds optimize with LLVM when clang 16 or newer is
+installed (`VELT_CLANG` names one), and use Cranelift otherwise.
 
 In VS Code, install the [Velt extension](https://marketplace.visualstudio.com/items?itemName=andtii.velt)
 (`code --install-extension andtii.velt`). It gives you diagnostics as you type, completion, go to
@@ -103,8 +98,8 @@ Next, read [Getting started](https://veltlang.com/docs/book/getting-started/) an
   compile errors**, so parallel code is as safe to write as single-threaded code.
 - **Memory you don't think about.** Objects are references, as in JavaScript. Memory is freed
   the moment the last reference to it goes, so there are no GC pauses and `using` cleanup runs at
-  a known point. An idle Velt web server takes about 8 MB and stays around 20 MB under load,
-  where Node needs well over 100 MB.
+  a known point. A Velt web server stays around 20 MB under load, where Node needs well over
+  100 MB.
 - **One file to ship.** `velt build --release` writes a native executable. There is nothing to
   install on the server, no `node_modules`, and startup takes milliseconds. You can cross-compile
   for Linux, macOS, Windows or WebAssembly from any of them.
@@ -190,14 +185,16 @@ For the full list, and the few places where Velt deliberately differs from TypeS
 
 Velt's goal is an ecosystem written in Velt itself, because Velt code is what the compiler
 optimizes best, and the libraries are moving that way: the HTTP server (the
-[`http-server`](packages/http-server) package), the CSV parser and a read-only SQLite engine, for
-example, are already Velt code. A young language can't have a library for everything yet,
+[`http-server`](packages/http-server) package), the PostgreSQL client
+([`postgres`](packages/postgres)), the CSV parser and a read-only SQLite engine, for example,
+are already Velt code. A young language can't have a library for everything yet,
 though, so until one exists in Velt you don't have to wait: **any Velt package can include a Rust crate**,
 which puts all of crates.io within reach. Need image processing, compression, PDF generation or
 ML inference today? Wrap the crate that already does it, typically in a few dozen lines, and
-replace it with a Velt version whenever one arrives; your users' code doesn't change. The Postgres driver in
-[`packages/postgres`](packages/postgres) is a complete example: Rust around `tokio-postgres` in
-`native/`, and the client's API in Velt.
+replace it with a Velt version whenever one arrives; your users' code doesn't change.
+[`packages/postgres/native`](packages/postgres/native) is a complete example of the Rust side: a
+PostgreSQL driver around `tokio-postgres` on `velt_native` (the package's own client is Velt code
+and does not use it).
 
 Here is zstd compression as a package, end to end. Add the crate to the package's
 `native/Cargo.toml`, next to `velt_native`:
@@ -265,38 +262,43 @@ Velt is benchmarked against Rust and Node on every change. A pull request that m
 more than 3% slower needs an explicit OK. Here is a selection; the full tables, methods and
 machines are in [bench/](bench/RESULTS.md).
 
-**Web serving**: a TechEmpower-style suite on Linux arm64 with 10 cores
-([bench/web](bench/web/RESULTS.md)).
+**Web serving**: a TechEmpower-style suite on a 48-core AMD EPYC machine, each server pinned to
+8 cores; best req/s over the connection levels
+([bench/web](bench/web/RESULTS.md), [raw table](bench/web/results/azure-d48ads_v5-pinned-20261010.md)).
+The run predates the `http-server` package: Velt served it with the runtime's HTTP server.
 
 | test | Velt | Rust (axum) | Go | Bun | Node | Node cluster |
 |---|---:|---:|---:|---:|---:|---:|
-| JSON, req/s | **741k** | 619k | 327k | 248k | 100k | 474k |
-| plaintext, pipelined, req/s | **3.31M** | 1.24M | 621k | 76k | 161k | 679k |
-| single query, req/s | **141k** | 133k | 119k | 42k | 39k | 106k |
-| fortunes (HTML), req/s | 115k | **118k** | 89k | 33k | 23k | 90k |
-| peak memory | 25–54 MB | 29–45 MB | 35–53 MB | 34–104 MB | 173–278 MB | 0.8–1.7 GB |
+| JSON, req/s | **525k** | 510k | 253k | 63k | 30k | 251k |
+| plaintext, pipelined, req/s | **3.27M** | 737k | 399k | 77k | 51k | 433k |
+| single query, req/s | 51k | **54k** | **54k** | 21k | 12k | 49k |
+| fortunes (HTML), req/s | 46k | **51k** | **51k** | 17k | 10k | 47k |
 
-Velt is within 0.94–1.07× of Rust on every database test and handles 4–13× as many requests as
-Node.
+The database tests are bound by the 16-connection pool's round trips: Velt reaches 0.90–0.95×
+of Rust on single query and fortunes, and 2.2× on 20 queries per request.
 
-**Compute**: best of 10 runs on an Intel i9 laptop ([bench/RESULTS.md](bench/RESULTS.md)).
+**Compute**: LLVM release builds, best wall-clock time of 10 runs on an Intel i9 laptop running
+Linux ([bench/RESULTS.md](bench/RESULTS.md#micro-suite-benchvelt)).
 
 | benchmark | Velt | Rust `-O` | Node |
 |---|---:|---:|---:|
-| `fib(35)`, recursive calls | 32 ms | 32 ms | 147 ms |
-| n-body, floating point | 162 ms | 179 ms | 1826 ms |
-| hash map workload | 182 ms | 287 ms | 479 ms |
-| class-heavy code | 201 ms | 293 ms | 521 ms |
+| `fib(35)`, recursive calls | 26 ms | 30 ms | 153 ms |
+| n-body, floating point | 218 ms | 220 ms | 2524 ms |
+| hash map workload | 136 ms | 237 ms | 520 ms |
+| class-heavy code | 243 ms | 338 ms | 750 ms |
 
-**Async**, on the same i9 laptop ([bench/async](bench/async)):
+**Async**, on an Intel i9 laptop running Windows, before the executor moved into Velt
+([bench/RESULTS.md](bench/RESULTS.md#async-benchasync)):
 
 - 10 million awaits take 55 ms. Rust's tokio takes 52 ms and Node 508 ms.
 - A million spawned tasks take 614 ms. Tokio takes 703 ms and Node 1618 ms, and Velt uses half
   of Node's memory.
 
 Velt is young, and not everything runs at Rust's speed yet. Code written the way TypeScript
-usually is, with closures and lots of small objects and strings, takes up to about 4× as long as
-Rust, though it stays well ahead of Node. The remaining gaps are tracked in
+usually is, with closures and lots of small objects and strings, takes up to about 3.5× as long
+as Rust, though it stays ahead of Node on all 19 programs of
+[the typical-workloads suite](bench/RESULTS.md#typical-typescript-workloads-benchtypical). The
+remaining gaps are tracked in
 [bench/FINDINGS.md](bench/FINDINGS.md).
 
 ## Documentation

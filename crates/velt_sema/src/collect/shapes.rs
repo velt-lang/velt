@@ -171,7 +171,8 @@ pub(crate) fn resolve_bounds(cx: &mut Ctx, gs: &[ast::GenericParam], env: &TyEnv
                 Some(Err(ty)) => {
                     // An object type bound (`T extends { name: string }`) also reads and writes
                     // its fields in the body, through an interface of them that each type
-                    // argument implements with its own fields (deferred-types.md, P3).
+                    // argument implements with its own fields (deferred-types.md "Structural
+                    // bounds").
                     if let Some(b) = cx.object_bound(ty, env, b.span) {
                         bounds.push(b);
                     }

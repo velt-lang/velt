@@ -1,6 +1,6 @@
 //! The `tsc` oracle (issue #13): holds the lint's claims against a pinned TypeScript
 //! (tests/tscompat-oracle, `npm ci` there) under the baseline `tsconfig` of
-//! docs/internals/design/tsx.md "The common subset".
+//! docs/internals/design/tsx.md "Sharing components with the client".
 //!
 //! - Every rule has a [`Claim`]: `tsc` rejects what it reports (a sample in `rejected/`), `tsc`
 //!   accepts it but JavaScript runs it differently (a sample in `behaviour/`), or the claim is

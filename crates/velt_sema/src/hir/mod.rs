@@ -236,9 +236,9 @@ pub struct Program {
     /// hold it (`null!`, `null as any`; hir_encodings.md "A nothing in a slot"): the targets of
     /// `AnyTo` then hold it as a view of it, as in a program with `new Proxy`. Additive.
     pub nothing_slots: bool,
-    /// Interface upcasts (hir_encodings.md "Interface upcasts"): per interface whose values
-    /// convert to other interfaces (`Upcast` of a `Dyn(A)` to a `Dyn(B)`), the targets, in
-    /// table order. Additive.
+    /// Interface upcasts (hir_encodings.md "Interface intersections and upcasts"): per
+    /// interface whose values convert to other interfaces (`Upcast` of a `Dyn(A)` to a
+    /// `Dyn(B)`), the targets, in table order. Additive.
     pub upcasts: HashMap<DefId, Vec<DefId>>,
     /// Per implementation (`impls` index) of an interface in `upcasts`: the implementation of
     /// each target for the same type, in `upcasts` order. Additive.

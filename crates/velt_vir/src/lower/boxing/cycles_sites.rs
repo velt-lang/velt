@@ -1,5 +1,5 @@
 //! Where the values of the cycle-capable types are made (docs/internals/design/cycles.md
-//! section 3.4, step 2): `VELT_DEBUG_COUNTED=1` prints a line per cycle-capable type with the
+//! "Compilation"): `VELT_DEBUG_COUNTED=1` prints a line per cycle-capable type with the
 //! `new` expressions, literals and closures that make its values, so a benchmark row's cost
 //! can be traced to the code that pays it. Recorded only under that variable.
 

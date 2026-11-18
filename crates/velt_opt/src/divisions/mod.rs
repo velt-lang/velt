@@ -1,4 +1,4 @@
-//! Cheaper signed divisions and remainders by constants (FINDINGS 8.8).
+//! Cheaper signed divisions and remainders by constants.
 //!
 //! Integers wrap, so LLVM rarely knows that a signed dividend is non-negative, and `x / 2` on
 //! `i64` becomes a shift plus a sign fix-up (Cranelift: a hardware divide). This pass rewrites

@@ -181,8 +181,8 @@ impl FnCx<'_, '_> {
     }
 
     /// `{} as D` where `D` is an object type known only per instantiation (`Pick<T, K>` in the
-    /// standard `pick` body; docs/internals/design/deferred-types.md, decision 5): a new empty
-    /// record of `any` values, as an `any`. Its keys are set through it (`r[k] = o[k]`), and
+    /// standard `pick` body; docs/internals/design/deferred-types.md "Values of deferred types
+    /// in a generic body"): a new empty record of `any` values, as an `any`. Its keys are set through it (`r[k] = o[k]`), and
     /// converting it to `D` (`return r`) builds `D` from its entries at each instantiation,
     /// each value checked, a missing required key a `TypeError` naming it. `None` for any
     /// other assertion.

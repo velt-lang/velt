@@ -1,7 +1,7 @@
 //! `AnyTo` of an `any` to a string literal type (a key known per instantiation), checked by the
 //! string's content, and of an `any` holding a `Record<string, any>` to an object type: the
 //! object built from the record's entries (`{} as Pick<T, K>`, docs/internals/design/
-//! deferred-types.md, decision 5).
+//! deferred-types.md "Values of deferred types in a generic body").
 
 use velt_sema::hir::{self, DynMemberKind, TyId, TyKind};
 
@@ -64,7 +64,7 @@ impl FnLower<'_, '_> {
     /// Where the `any` at `p` (of type `from`, owned) holds a `Record<string, any>` and `ty` is
     /// an object type without optional fields: `ty` built from the record's entries, each value
     /// converted as `AnyTo` converts it, a missing key a `TypeError` naming it
-    /// (docs/internals/design/deferred-types.md, decision 5); then on to `done` with it in
+    /// (docs/internals/design/deferred-types.md, `{} as D`); then on to `done` with it in
     /// `out`. Any other value goes on in the current block. Nothing for other target types.
     pub(super) fn any_record_fill(
         &mut self,
