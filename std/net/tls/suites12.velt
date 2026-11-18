@@ -29,7 +29,9 @@ export const DOWNGRADE_TLS12: u8[] = [0x44, 0x4f, 0x57, 0x4e, 0x47, 0x52, 0x44, 
  * Checks the handshake message `m` that came after a TLS 1.2 handshake, on a server (`server`)
  * or a client: a server's HelloRequest is ignored (RFC 5246 §7.4.1.1 lets a client that won't
  * renegotiate do so), a client's ClientHello, a renegotiation, is refused with no_renegotiation,
- * and anything else is unexpected_message.
+ * and anything else is unexpected_message. The no_renegotiation alert is fatal and closes the
+ * connection, where RFC 5246 §7.2.2 has it a warning and rustls keeps the connection: refusing
+ * and closing is safe, and a client that asks to renegotiate fails its renegotiation either way.
  */
 export function afterHandshake12(m: u8[], server: bool) {
   if (!server && m[0] == 0 && m.length == 4) {

@@ -257,6 +257,10 @@ describe("the TLS 1.2 server", () => {
       ["000a0008040305", "000a0008060305", "the client accepts no signature scheme", "28"],
       // No group of the server's.
       ["0006001d00170018", "0006001e00190018", "no key exchange group in common", "28"],
+      // A server name that is not UTF-8.
+      ["096c6f63616c686f7374", "09ff6f63616c686f7374", "a server name that is not UTF-8", "32"],
+      // An ALPN name that is not UTF-8 ("\xfftp/1.1"): bytes, which match no protocol.
+      ["08687474702f312e31", "08ff7474702f312e31", "the client offers no ALPN protocol", "78"],
     ];
     for (const [from, to, message, alert] of changes) {
       expect(hello.includes(from)).toBe(true);
@@ -267,11 +271,71 @@ describe("the TLS 1.2 server", () => {
     }
   });
 
+  it("refuses a second ClientHello that drops TLS 1.3 after its HelloRetryRequest", () => {
+    // cases()[0]'s ClientHello with TLS 1.3 too: TLS_AES_128_GCM_SHA256, supported_versions
+    // 1.3 and 1.2, and a key_share with no share, so the server asks for one.
+    const hello = cases()[0][0];
+    expect(hello.slice(2 * 38, 2 * 51)).toBe("00" + "0006c02bc02f00ff" + "0100" + "0047");
+    const exts = hello.slice(2 * 51) + "002b00050403040303" + "003300020000";
+    const body = "0303" + "6b".repeat(32) + "00" + "00081301c02bc02f00ff" + "0100";
+    const n = (body.length + exts.length + 4) / 2;
+    const first =
+      "010000" + n.toString(16) + body + (exts.length / 2).toString(16).padStart(4, "0") + exts;
+    const retry = serve(plainRecord(first));
+    expect(retry.error).toBe("");
+    expect(retry.done).toBe(false);
+    // A HelloRetryRequest: its special random after the version.
+    expect(retry.written.slice(22, 86)).toBe(
+      "cf21ad74e59a6111be1d8c021e65b891c2a211167abb8c5e079e09e2c8a8339c",
+    );
+    // Then the TLS 1.2-only ClientHello.
+    const s = serve(plainRecord(first) + plainRecord(hello));
+    expect(s.error).toBe("TLS: the second ClientHello drops TLS 1.3");
+    expect(s.written.startsWith(retry.written)).toBe(true);
+    expect(s.written.endsWith("15030300020" + "22f")).toBe(true);
+  });
+
   it("refuses a renegotiation after the handshake, with no_renegotiation", () => {
     const c = cases()[0];
     // The ClientHello again, protected, after "ping".
     const s = serve(plainRecord(c[0]) + c[2] + c[4]);
     expect(s.read).toBe("ping");
     expect(s.error).toBe("TLS: the client asked to renegotiate, which is refused");
+  });
+
+  it("fails only with a TLS failure on changed client bytes", () => {
+    // The ClientHello, the client's flight and a renegotiation, changed in 1 to 3 places (most
+    // in the ClientHello) by a fixed generator: a byte changed, set to 0, 1, 2 or 0xff, inserted
+    // or removed, or the bytes cut there.
+    let seed = 12345;
+    function next(n: usize): usize {
+      seed = (seed * 48271) % 2147483647;
+      return (seed % (n as number)) as usize;
+    }
+    for (let i: usize = 0; i < 300; i++) {
+      const c = cases()[i % 4];
+      const b = hexDecode(plainRecord(c[0]) + c[2] + c[4]);
+      const changes = 1 + next(3);
+      for (let k: usize = 0; k < changes && b.length > 0; k++) {
+        const at = next(2) == 0 ? next(b.length < 130 ? b.length : 130) : next(b.length);
+        const op = next(5);
+        if (op == 0) {
+          b[at] ^= (1 + next(255)) as u8;
+        } else if (op == 1) {
+          b[at] = [0, 1, 2, 0xff][next(4)] as u8;
+        } else if (op == 2) {
+          b.splice(at as i64, 0, next(256) as u8);
+        } else if (op == 3) {
+          b.splice(at as i64, 1);
+        } else {
+          b.splice(at as i64, (b.length - at) as i64);
+        }
+      }
+      const s = serve(hexEncode(b));
+      // A TlsFailure's message; another error shows as "TLS: Error: …" (and sends no alert).
+      if (s.error != "" && (!s.error.startsWith("TLS: ") || s.error.includes("Error: "))) {
+        expect(`${s.error} for ${hexEncode(b)}`).toBe("a TLS failure");
+      }
+    }
   });
 });

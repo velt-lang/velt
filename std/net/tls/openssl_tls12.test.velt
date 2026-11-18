@@ -12,6 +12,9 @@ import { hexDecode, hexEncode } from "velt/encoding/hex";
 import { IoError } from "velt/io/error";
 import { Uint8Array } from "velt/lang/typed_array/uint8_array";
 import { ByteStream } from "velt/net/byte_stream";
+import { KeyBlock12, keyBlock12 } from "velt/net/tls/key_schedule12";
+import { RecordCipher } from "velt/net/tls/record_cipher";
+import { ivLength12, keyLength12 } from "velt/net/tls/suites12";
 import { TlsEngine } from "velt/net/tls/tls_engine";
 import { TlsStream } from "velt/net/tls/tls_stream";
 import { describe, expect, it } from "velt/test";
@@ -467,6 +470,93 @@ function recordAt(hex: string, n: usize): usize {
   return at;
 }
 
+// The suite of the ServerHello at the start of `server`: after the random and the session id.
+function suiteOf(server: u8[]): usize {
+  const sid = server[43] as usize;
+  return ((server[44 + sid] as usize) << 8) | (server[45 + sid] as usize);
+}
+
+// The key block of `trace`, from the master secret in the server's key log.
+function keysOf(trace: string[]): KeyBlock12 {
+  const server = hexDecode(trace[1]);
+  const suite = suiteOf(server);
+  const hashLen: usize = suite == 0xc02c || suite == 0xc030 ? 48 : 32;
+  return keyBlock12(
+    hashLen,
+    hexDecode(trace[3]),
+    hexDecode("5a".repeat(32)),
+    server.slice(11, 43),
+    keyLength12(suite),
+    ivLength12(suite),
+  );
+}
+
+// The server's bytes of `trace` with its Finished record opened with the server's write keys,
+// the verify_data byte `at` XORed with `x`, and sealed again: the record still opens.
+function resealedFinished(trace: string[], at: usize, x: u8): string {
+  const suite = suiteOf(hexDecode(trace[1]));
+  const k = keysOf(trace);
+  const from = recordAt(trace[1], 5);
+  const to = recordAt(trace[1], 6);
+  const rec = hexDecode(trace[1]).slice(from as i64, to as i64);
+  const n = new RecordCipher(suite, k.serverKey, k.serverIv).open12(rec, 0, rec.length);
+  // Finished: type 20, length 12, then the verify_data.
+  const content = 5 + (ivLength12(suite) == 4 ? 8 : 0);
+  expect(n).toBe(16);
+  expect(hexEncode(rec.slice(content as i64, (content + 4) as i64))).toBe("1400000c");
+  rec[content + 4 + at] ^= x;
+  new RecordCipher(suite, k.serverKey, k.serverIv).sealRecord(rec, 0, 16, 22);
+  return trace[1].slice(0, (2 * from) as i64) + hexEncode(rec) + trace[1].slice((2 * to) as i64);
+}
+
+// The content of the last record the client wrote, opened with its write keys at sequence
+// number `seq`.
+function lastWritten(trace: string[], written: string, seq: u64): string {
+  const suite = suiteOf(hexDecode(trace[1]));
+  const k = keysOf(trace);
+  const b = hexDecode(written);
+  let at: usize = 0;
+  let last: usize = 0;
+  while (at < b.length) {
+    last = at;
+    at += 5 + (((b[at + 3] as usize) << 8) | (b[at + 4] as usize));
+  }
+  const c = new RecordCipher(suite, k.clientKey, k.clientIv);
+  c.seq = seq;
+  const n = c.open12(b, last, b.length);
+  const content = last + 5 + (ivLength12(suite) == 4 ? 8 : 0);
+  return hexEncode([b[last]]) + ":" + hexEncode(b.slice(content as i64, (content + n) as i64));
+}
+
+// `server` with `from` (hex) in its first record, the ServerHello, replaced by `to`, and the
+// record's, the message's and the extensions' lengths changed to match.
+function changeHello(server: string, from: string, to: string): string {
+  const end = 2 * recordAt(server, 1);
+  const hello = server.slice(0, end as i64);
+  expect(hello.includes(from)).toBe(true);
+  const b = hexDecode(hello.replace(from, to));
+  const d = ((to.length - from.length) / 2) as i64;
+  const rec = (((b[3] as i64) << 8) | (b[4] as i64)) + d;
+  b[3] = (rec >> 8) as u8;
+  b[4] = (rec & 0xff) as u8;
+  const msg = (((b[7] as i64) << 8) | (b[8] as i64)) + d;
+  b[7] = (msg >> 8) as u8;
+  b[8] = (msg & 0xff) as u8;
+  const ext = 5 + 4 + 2 + 32 + 1 + (b[43] as usize) + 2 + 1;
+  const exts = (((b[ext] as i64) << 8) | (b[ext + 1] as i64)) + d;
+  b[ext] = (exts >> 8) as u8;
+  b[ext + 1] = (exts & 0xff) as u8;
+  return hexEncode(b) + server.slice(end as i64);
+}
+
+// A HelloRetryRequest record for the client's session id that asks for a secp256r1 share.
+function retryRecord(): string {
+  const hrr = "cf21ad74e59a6111be1d8c021e65b891c2a211167abb8c5e079e09e2c8a8339c";
+  const body = `0303${hrr}20${"3c".repeat(32)}130100000c002b00020304003300020017`;
+  const n = body.length / 2;
+  return `16030300${(n + 4).toString(16)}020000${n.toString(16)}${body}`;
+}
+
 function names(): string[] {
   return ["AES-128-GCM, X25519", "AES-256-GCM-SHA384, secp256r1", "ChaCha20, RSA", "no EMS"];
 }
@@ -503,6 +593,86 @@ describe("the TLS 1.2 client against OpenSSL", () => {
       "TLS: a record failed authentication (bad_record_mac)",
     );
   });
+
+  it("refuses a server Finished that opens but has the wrong verify_data", async () => {
+    // Sealed again with the server's keys: unchanged, the handshake still works; with its first
+    // or its last byte changed, the client answers with a protected decrypt_error.
+    for (let i: usize = 0; i < 4; i++) {
+      const trace = traces()[i];
+      const same = await replay(trace, resealedFinished(trace, 0, 0));
+      expect(same.reply.startsWith("HTTP/1.0 200 ok\r\n")).toBe(true);
+      for (const at of [0, 11] as usize[]) {
+        const o = await replay(trace, resealedFinished(trace, at, 0x40));
+        expect(o.error).toBe("TLS: the server's Finished does not match the handshake");
+        expect(o.reply).toBe("");
+        // The client's Finished went at sequence number 0, the alert at 1.
+        expect(lastWritten(trace, o.written, 1)).toBe("15:0233");
+      }
+    }
+  });
+
+  it("refuses a TLS 1.2 ServerHello after a HelloRetryRequest", async () => {
+    const trace = aes128Trace();
+    const o = await replay(trace, retryRecord() + trace[1]);
+    expect(o.error).toBe("TLS: a TLS 1.2 ServerHello after a HelloRetryRequest");
+    expect(o.written.endsWith("15030300020" + "22f")).toBe(true);
+    // It answered the retry with a second ClientHello before.
+    const b = hexDecode(o.written);
+    let hellos = 0;
+    for (let n: usize = 0; recordAt(o.written, n) < b.length; n++) {
+      const at = recordAt(o.written, n);
+      if (b[at] == 22 && b[at + 5] == 1) {
+        hellos++;
+      }
+    }
+    expect(hellos).toBe(2);
+  });
+
+  it("refuses a ServerKeyExchange scheme it did not offer, or of another kind of key", async () => {
+    // [trace, the scheme instead, its name in the message]: rsa_pss_rsae_sha256 under an ECDSA
+    // suite, ecdsa_secp521r1_sha512 (not offered), ecdsa_secp256r1_sha256 under an RSA suite,
+    // and rsa_pkcs1_sha1 under an RSA suite: an RSA scheme, but not one offered.
+    const cases: [usize, string, string][] = [
+      [0, "0804", "0x804"],
+      [0, "0603", "0x603"],
+      [2, "0403", "0x403"],
+      [2, "0201", "0x201"],
+    ];
+    for (const [i, scheme, name] of cases) {
+      const trace = traces()[i];
+      // The scheme follows curve_type, the group, and the point's length and 32 bytes.
+      const at = 2 * (recordAt(trace[1], 2) + 5 + 4 + 1 + 2 + 1 + 32);
+      expect(trace[1].slice(at as i64, (at + 4) as i64) != scheme).toBe(true);
+      const changed = trace[1].slice(0, at as i64) + scheme + trace[1].slice((at + 4) as i64);
+      const o = await replay(trace, changed);
+      expect(o.error).toBe(
+        `TLS: a ServerKeyExchange signed with scheme ${name}, which this suite or client does not take`,
+      );
+      expect(o.written.endsWith("15030300020" + "22f")).toBe(true);
+    }
+  });
+
+  it("refuses a renegotiation_info in the ServerHello that is not empty", async () => {
+    const trace = aes128Trace();
+    const o = await replay(trace, changeHello(trace[1], "ff01000100", "ff0100020100"));
+    expect(o.error).toBe("TLS: a renegotiation_info that is not empty");
+    expect(o.written.endsWith("150303000202" + "28")).toBe(true);
+    // The lengths are fixed up right: the ServerHello rewritten unchanged still works.
+    const control = await replay(trace, changeHello(trace[1], "ff01000100", "ff01000100"));
+    expect(control.reply.startsWith("HTTP/1.0 200 ok\r\n")).toBe(true);
+  });
+
+  it(
+    "refuses an ALPN protocol in the ServerHello that is not UTF-8: it was not offered",
+    async () => {
+      const trace = aes128Trace();
+      const alpn = "001000050003" + "0268ff";
+      const o = await replay(trace, changeHello(trace[1], "ff01000100", "ff01000100" + alpn));
+      expect(o.error.startsWith("TLS: the server chose ALPN protocol")).toBe(true);
+      expect(o.error.endsWith("which was not offered")).toBe(true);
+      expect(o.written.endsWith("150303000202" + "78")).toBe(true);
+    },
+  );
 
   it("refuses the downgrade sentinel in the server random", async () => {
     // ServerHello's random starts 11 bytes into its record; the sentinel is its last 8 bytes.
@@ -595,5 +765,41 @@ describe("the TLS 1.2 client against OpenSSL", () => {
     expect((await replay(trace, changed)).error).toBe(
       "TLS: a record failed authentication (bad_record_mac)",
     );
+  });
+
+  it("fails only with a TLS failure on changed server bytes", async () => {
+    // The server's records changed in 1 to 3 places (most in the ServerHello, Certificate and
+    // ServerKeyExchange) by a fixed generator, a third of them read a byte at a time: a byte
+    // changed, set to 0, 1, 2 or 0xff, inserted or removed, or the bytes cut there.
+    let seed = 777;
+    function next(n: usize): usize {
+      seed = (seed * 48271) % 2147483647;
+      return (seed % (n as number)) as usize;
+    }
+    for (let i: usize = 0; i < 150; i++) {
+      const trace = traces()[i % 4];
+      const b = hexDecode(trace[1]);
+      const changes = 1 + next(3);
+      for (let k: usize = 0; k < changes && b.length > 0; k++) {
+        const at = next(2) == 0 ? next(b.length < 900 ? b.length : 900) : next(b.length);
+        const op = next(5);
+        if (op == 0) {
+          b[at] ^= (1 + next(255)) as u8;
+        } else if (op == 1) {
+          b[at] = [0, 1, 2, 0xff][next(4)] as u8;
+        } else if (op == 2) {
+          b.splice(at as i64, 0, next(256) as u8);
+        } else if (op == 3) {
+          b.splice(at as i64, 1);
+        } else {
+          b.splice(at as i64, (b.length - at) as i64);
+        }
+      }
+      const o = await replay(trace, hexEncode(b), i % 3 == 0 ? 1 : 1000000);
+      // A TlsFailure's message; another error shows as "TLS: Error: …" (and sends no alert).
+      if (o.error != "" && (!o.error.startsWith("TLS: ") || o.error.includes("Error: "))) {
+        expect(`${o.error} for ${hexEncode(b)}`).toBe("a TLS failure");
+      }
+    }
   });
 });

@@ -10,7 +10,7 @@ import { p256Ecdh, p256PrivateKey, p256PublicKey } from "velt/crypto/p256";
 import { x25519 } from "velt/crypto/x25519";
 import { sha256 } from "velt/crypto/sha256";
 import { sha384 } from "velt/crypto/sha512";
-import { utf8Decode } from "velt/encoding/utf8";
+import { utf8DecodeLossy } from "velt/encoding/utf8";
 import { arrayMove, arrayReserve, arraySetLen } from "velt/lang/intrinsics";
 import {
   DECODE_ERROR,
@@ -309,7 +309,8 @@ export class ClientHandshake {
         const list = e.vector(2);
         const one = list.vector(1);
         list.finish();
-        const p = utf8Decode(one.bytes(one.left()));
+        // Protocol names are bytes (RFC 7301 §3.1): one that is not UTF-8 is not one offered.
+        const p = utf8DecodeLossy(one.bytes(one.left()));
         if (!this.input.alpn.includes(p)) {
           throw new TlsFailure(
             NO_APPLICATION_PROTOCOL,

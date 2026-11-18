@@ -376,6 +376,9 @@ describe("EncryptedExtensions and the client's Certificate", () => {
     expect(failure(() => traced(1, ["h2"]).onMessage(ee("026833")))).toBe(
       `120 TLS: the server chose ALPN protocol "h3", which was not offered`,
     );
+    // A name that is not UTF-8 is bytes that were not offered either.
+    const bytes = failure(() => traced(1, ["h2"]).onMessage(ee("0268ff")));
+    expect(bytes.startsWith("120 TLS: the server chose ALPN protocol")).toBe(true);
   });
 
   it("refuses an ALPN list of two names", () => {
