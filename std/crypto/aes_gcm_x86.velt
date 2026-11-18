@@ -40,6 +40,14 @@ function encryptBlock(k: Rounds, block: u8x16): u8x16 {
   return velt_simd_u8x16_aesenclast(s, k.k14);
 }
 
+/** GCM's hash key H = E(K, 0^128) under the round keys `keys` (16 bytes). */
+export function gcmHashKeyX86(keys: u8x16[]): u8[] {
+  targetFeature("aes-x86");
+  const h = Buffer.alloc(16);
+  store16(encryptBlock(rounds(keys), u8x16.splat(0)), h, 0);
+  return h;
+}
+
 // XORs `buf[start..end]` in place with the keystream from counter 2.
 function ctrX86(keys: u8x16[], k: Rounds, base: u32x4, buf: u8[], start: usize, end: usize) {
   targetFeature("aes-x86");
