@@ -58,10 +58,6 @@ velt_rt velt_rt_dev_server_stop
 velt_rt velt_rt_drop_drain
 velt_rt velt_rt_drop_queue
 velt_rt velt_rt_drop_state
-velt_rt velt_rt_env_all
-velt_rt velt_rt_env_get
-velt_rt velt_rt_env_remove
-velt_rt velt_rt_env_set
 velt_rt velt_rt_exit
 velt_rt velt_rt_flush
 velt_rt velt_rt_fnprop_delete
@@ -223,8 +219,6 @@ velt_rt velt_rt_param_u64
 velt_rt velt_rt_perf_now
 velt_rt velt_rt_pow_i64
 velt_rt velt_rt_process_args
-velt_rt velt_rt_process_chdir
-velt_rt velt_rt_process_cwd
 velt_rt velt_rt_process_node_argv
 velt_rt velt_rt_proxy_array_call
 velt_rt velt_rt_proxy_array_hole

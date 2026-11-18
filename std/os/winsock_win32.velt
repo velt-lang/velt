@@ -34,8 +34,19 @@ export function winsockStarts(): u32 {
   return STARTS.load("relaxed");
 }
 
-/** One `WSACleanup` (for velt/os' test): 0 when Winsock was started, else an error. */
-export function cleanupWinsock(): i32 {
+/**
+ * Whether Winsock is started (for velt/os' test): one `WSACleanup` succeeds. The start it undid
+ * is made again, so the count Winsock keeps, and `hostname()` after, are as before.
+ */
+export function checkLeftStarted(): bool {
   // SAFETY: no precondition: it fails when Winsock isn't started.
-  return unsafe { WSACleanup() };
+  if (unsafe { WSACleanup() } !== 0) {
+    return false;
+  }
+  const wsa: u8[] = new Array<u8>(512).fill(0);
+  // SAFETY: room for a `WSADATA` (408 bytes on 64-bit Windows).
+  unsafe {
+    WSAStartup$os(0x0202, wsa);
+  }
+  return true;
 }
