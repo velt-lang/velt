@@ -11,9 +11,7 @@ import { osError } from "velt/fs/errors";
  *
  *     const parts = await Promise.all(offsets.map((at) => readAt(fd, 4096, at)));
  *
- * With the executor in Velt (`VELT_SCHEDULER=std`) the reads run on its blocking pool. Under the
- * runtime's own scheduler each is a task of its own, which holds a worker thread while it
- * waits, so about as many overlap as there are workers.
+ * The reads run on the executor's blocking pool, each on a thread of its own.
  *
  * The file's own position is neither used nor moved. `RangeError` for a `length` or `position`
  * that is not a whole number in range, `IoError` when the read fails. Where `readSync` reads

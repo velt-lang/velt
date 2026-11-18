@@ -128,11 +128,11 @@ export const imports: Imports = {
   // whole-file operations and standard input read on its blocking pool (std/lang/hooks/
   // sched_blocking.velt) instead of the runtime's leaves on tokio's blocking threads.
   "#fs-rt": { "std-scheduler": "./fs/rt_sched.velt", default: "./fs/rt.velt" },
-  // `readAt`'s read off the calling task's thread: on the executor's blocking pool, or as a
-  // task of its own under the runtime's scheduler.
+  // `readAt`'s read off the calling task's thread: on the executor's blocking pool in a native
+  // program; on the calling thread elsewhere, where there are no file descriptors to read.
   "#fs-read-at": {
     "std-scheduler": "./fs/fd/read_at_sched.velt",
-    default: "./fs/fd/read_at_spawn.velt",
+    default: "./fs/fd/read_at_inline.velt",
   },
   "#process-rt": { "std-scheduler": "./process/rt_sched.velt", default: "./process/rt.velt" },
   // velt/process/child's runtime functions: the runtime's (std/process/child/rt.velt, which
