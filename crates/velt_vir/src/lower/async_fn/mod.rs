@@ -63,6 +63,13 @@ const DROP_BIT: i128 = 0x8000_0000;
 const CLOSE_BIT: i128 = 0x4000_0000;
 /// Tag of a finished state machine (never resumed; dropping it is a no-op).
 const DONE: i128 = 0x7FFF_FFFF;
+/// Tag of an async function's state while its poll runs, in a program that catches panics
+/// (cleanup.rs): no dispatch case, so polling or dropping it does nothing. A poll that unwinds
+/// through a call with a cleanup pad ends `DONE`, its state's values dropped by the pad; one
+/// that unwinds through a call without a pad (an extern's) leaves this tag, and the frame
+/// holding the state then drops it as nothing, where the tag of its last suspension would
+/// name values the poll has moved or dropped since. A generator has `GEN_RUNNING`.
+const POLLING: i128 = 0x7FFF_FFFD;
 
 /// Layout facts of a compiled async function instance, known once its poll function is built.
 #[derive(Clone, Debug)]
@@ -151,8 +158,7 @@ impl Cx<'_> {
             )
         };
         let stored: Vec<Local> = inputs.iter().flatten().copied().collect();
-        let links = std::mem::take(&mut self.unwinding.links);
-        let (state, fields) = spill::spill(self, &mut func, result, &f.name, &stored, &links);
+        let (state, fields) = spill::spill(self, &mut func, result, &f.name, &stored);
         func.is_poll = true;
         func.param_attrs = self.poll_param_attrs(state);
         let inputs = inputs
@@ -397,7 +403,22 @@ impl<'c, 'h> FnLower<'c, 'h> {
             self.switch_to(BlockId(0));
         }
         let other = self.new_block();
-        let cases = std::mem::take(&mut self.actx().cases);
+        let mut cases = std::mem::take(&mut self.actx().cases);
+        if !self.in_generator() && self.cx.unwind_pads() {
+            // The start and each resume go through a block of their own that marks the state
+            // as being polled (`POLLING`); a cancellation runs drops only.
+            for (k, b) in &mut cases {
+                if *k & (DROP_BIT | CLOSE_BIT) == 0 {
+                    let mark = self.new_block();
+                    self.live[mark.0 as usize] = true;
+                    self.switch_to(mark);
+                    self.set_tag(POLLING);
+                    self.goto(*b);
+                    *b = mark;
+                }
+            }
+            self.switch_to(BlockId(0));
+        }
         self.terminate(Terminator::Switch {
             value: tag,
             cases,

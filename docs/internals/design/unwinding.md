@@ -453,8 +453,9 @@ variant of `#task-catch`, whose default variant std/task/catch_rt.velt calls `ve
   101, as an uncaught one does (decision recorded on #2667: no runtime catch as a fallback,
   owner decision 3 of #2649). WebAssembly keeps the runtime's executor and catch.
 - **Leaks:** the cleanup pads (#2680) drop what the abandoned frames held, as under the runtime's
-  catch; the panicked node's own state (and a panicked task's root) stays leaked by design, since
-  a leaf in it may still wake it.
+  catch, and what the panicked state machines held across their awaits ("Async state machines"
+  below, #2818). The panicked node itself (and a panicked task's root) and its exception are
+  still never freed.
 
 Deleted from velt_rt when the executor switches: `velt_rt_catch_arm`, `_take`, `_settled`,
 `_message`, `_free` (rt_abi_async.md §1.5); `panic::{catch, Catching, CATCHING, MAY_CATCH,
@@ -707,20 +708,26 @@ catches entered since the unwind began.
 
 ### Async state machines
 
-A poll function's frame holds its live state in the state struct (`async_fn/spill`): those
-values are owned by the future, not the frame, and the panicked state machine is leaked as
-before (#2008: never polled or dropped again). So a poll function's pads drop only the frame's
-own temporaries: lowering records each pad link of a poll function, and after the spill pass
-has chosen what goes into the state, a link whose code touches a spilled local is bypassed (its
-first block jumps to the next link). Values that never cross a suspension (the temporaries of
-the statement that panicked, locals between two `await`s) are dropped; what the state holds
-leaks with it. A plain function's pads drop everything the frame owns.
+A poll function's frame holds its live state in the state struct (`async_fn/spill`). Its pads
+are built as any frame's, before the spill pass has chosen what goes into the state, so a pad
+drops what the open scopes own wherever it lives: the frame's temporaries and the values the
+state holds across suspensions alike (#2818; until then every pad link touching the state was
+bypassed and the panicked state machine leaked whole, #2008). Every call that may unwind gets a
+pad, also where the frame owns nothing, and the pads end by setting the state's tag to finished
+(`DONE`) before the resume. The frame holding the state (the awaiter with the state inline, the
+executor's node) then drops it as a finished one, which does nothing.
 
-A generator's resume function (and an async generator's poll function) gives every call that
-may unwind a pad, also where the frame owns nothing, and its pads end by setting the state's tag
-to finished (`DONE`) before the resume. The frame holding the generator (a `for...of` frame with
-the state inline, or the owner of a `Generator` object) then drops it as a finished one, which
-does nothing to the state (what it held leaks, as above) and frees the object; without it the
+A poll that unwinds through a call without a pad (an extern's: "Not covered" above) runs none
+of this: its state still holds what it held, and the tag of its last suspension names values the
+poll may have moved or dropped since. So in a program that catches, the start and every resume
+of a poll function first set the tag to `POLLING`, which has no dispatch case: polling or
+dropping such a state does nothing, and what it held leaks, as before. One store a poll, only
+in programs that catch.
+
+A generator's resume function (and an async generator's poll function) is built the same way:
+its pads drop what its state holds and mark it finished. The frame holding the generator (a
+`for...of` frame with the state inline, or the owner of a `Generator` object) then drops it as
+a finished one, which does nothing to the state and frees the object; without it the
 drop would find the tag of a running generator and panic ("generator is already running"), and
 during that frame's cleanup the panic aborts. A later `next()` (or `next(v)`) is done, as after
 a generator that threw. An async generator's poll function is built the same way; it is reached

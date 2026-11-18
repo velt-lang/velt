@@ -23,9 +23,9 @@ pub(super) struct Pads {
     cache: FxHashMap<String, BlockId>,
     /// The block calling `velt_eh_resume`, once built.
     resume: Option<BlockId>,
-    /// In a generator's resume function: the block marking the generator finished before the
+    /// In a poll or resume function: the block marking the state machine finished before the
     /// resume, once built.
-    gen_resume: Option<BlockId>,
+    machine_resume: Option<BlockId>,
     /// While a pad is lowered: its calls get no unwind edge.
     inside: bool,
     /// What the frame owns outside the scopes while a drop is emitted, innermost: the entries
@@ -34,9 +34,6 @@ pub(super) struct Pads {
     pub(super) popped: Vec<DropEntry>,
     /// The locals whose old value `drop_old` is dropping: a pad doesn't drop them again.
     pub(super) dropping: Vec<LocalId>,
-    /// Each link of a poll function: (its first block, the next link), for the spill pass,
-    /// which bypasses the links touching the state (async_fn/spill).
-    pub(super) links: Vec<(BlockId, BlockId)>,
 }
 
 /// What the program's lowering knows of cleanup pads (`Cx::unwinding`).
@@ -44,15 +41,13 @@ pub(super) struct Pads {
 pub(super) struct Unwinding {
     /// Whether calls get cleanup pads, once asked.
     on: Option<bool>,
-    /// The pad links of the poll function `finish` built last, renumbered, for the spill pass.
-    pub(super) links: Vec<(BlockId, BlockId)>,
 }
 
 impl super::Cx<'_> {
     /// Whether this program's calls get cleanup pads: it catches (sema demanded `panic_raise`,
     /// so `catchUnwind` is live), the target unwinds, and `VELT_UNWIND_PADS=0` (for measuring
     /// only) doesn't turn them off.
-    fn unwind_pads(&mut self) -> bool {
+    pub(super) fn unwind_pads(&mut self) -> bool {
         if let Some(on) = self.unwinding.on {
             return on;
         }
@@ -68,8 +63,9 @@ impl super::Cx<'_> {
 impl FnLower<'_, '_> {
     /// The unwind edge of a call of `callee` emitted now: the pad dropping what the frame owns,
     /// or `None` (the program doesn't catch, the callee can't unwind, the frame owns nothing,
-    /// or this is a pad's own call). Every call in a generator's body that may unwind gets one:
-    /// its pads end by marking the generator finished (`gen_resume_block`).
+    /// or this is a pad's own call). Every call in a state machine's body (an async function's
+    /// poll, a generator's resume) that may unwind gets one: its pads drop what the state holds
+    /// as what any frame owns, and end by marking the state finished (`machine_resume_block`).
     pub(super) fn cleanup_pad(&mut self, callee: &vir::Callee) -> Option<BlockId> {
         if self.pads.inside || self.dead() || !eh::may_unwind(callee) || !self.cx.unwind_pads() {
             return None;
@@ -82,15 +78,16 @@ impl FnLower<'_, '_> {
             .filter(|d| self.drops_something(d))
             .cloned()
             .collect();
-        let generator = self.in_generator();
-        if entries.is_empty() && !generator {
+        // A state machine's pads end by marking it finished, also where the frame owns nothing.
+        let machine = self.asyncx.is_some();
+        if entries.is_empty() && !machine {
             return None;
         }
         let (cur, loc) = (self.cur, self.loc);
         let known = std::mem::take(&mut self.str_datas);
         self.pads.inside = true;
-        let mut next = match generator {
-            true => self.gen_resume_block(),
+        let mut next = match machine {
+            true => self.machine_resume_block(),
             false => self.resume_block(),
         };
         let mut key = String::new();
@@ -106,9 +103,6 @@ impl FnLower<'_, '_> {
             self.switch_to(start);
             self.drop_entry(d);
             self.goto(next);
-            if self.asyncx.is_some() {
-                self.pads.links.push((start, next));
-            }
             self.pads.cache.insert(key.clone(), start);
             next = start;
         }
@@ -134,11 +128,12 @@ impl FnLower<'_, '_> {
         b
     }
 
-    /// The block ending a generator body's pads: the generator is marked finished
-    /// (`mark_unwound`), so the frame that holds it drops it quietly and a later `next()` is
-    /// done, then the unwind goes on.
-    fn gen_resume_block(&mut self) -> BlockId {
-        if let Some(b) = self.pads.gen_resume {
+    /// The block ending a state machine's pads: the state is marked finished (`mark_unwound`),
+    /// its values dropped by the links before, then the unwind goes on. The frame that holds
+    /// the state drops it as a finished one, which does nothing; a later `next()` of a
+    /// generator is done.
+    fn machine_resume_block(&mut self) -> BlockId {
+        if let Some(b) = self.pads.machine_resume {
             return b;
         }
         let resume = self.resume_block();
@@ -147,7 +142,7 @@ impl FnLower<'_, '_> {
         self.switch_to(b);
         self.mark_unwound();
         self.goto(resume);
-        self.pads.gen_resume = Some(b);
+        self.pads.machine_resume = Some(b);
         b
     }
 
@@ -190,14 +185,5 @@ impl FnLower<'_, '_> {
                 format!("C{arr}:{}:{}", next.0, elem.0)
             }
         }
-    }
-
-    /// The pad links of a poll function, renumbered by `map` (`finish`), for the spill pass.
-    pub(super) fn take_pad_links(&mut self, map: impl Fn(BlockId) -> Option<BlockId>) {
-        let links = std::mem::take(&mut self.pads.links);
-        self.cx.unwinding.links = links
-            .into_iter()
-            .filter_map(|(a, b)| Some((map(a)?, map(b)?)))
-            .collect();
     }
 }
