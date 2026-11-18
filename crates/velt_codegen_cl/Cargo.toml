@@ -25,4 +25,5 @@ blake3 = { version = "1.8.7", default-features = false, features = ["std", "pure
 windows-sys = { version = "0.61.2", features = ["Win32_System_Diagnostics_Debug"] }
 
 [dev-dependencies]
+sha2 = "0.10"
 object = { version = "0.39", default-features = false, features = ["read"] }

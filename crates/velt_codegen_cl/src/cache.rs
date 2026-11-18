@@ -113,6 +113,13 @@ fn store_key(cranelift: &str, hash: &[u8; 32]) -> Vec<u8> {
 /// target's name, triple, flags and ISA flags. The same contents as Cranelift's key, so a hit is
 /// exactly what Cranelift would have taken; buffered, so the hash runs once over the whole.
 fn function_key(isa: &dyn TargetIsa, func: &cranelift_codegen::ir::Function) -> [u8; 32] {
+    *blake3::hash(&key_bytes(isa, func)).as_bytes()
+}
+
+/// The bytes [`function_key`] hashes: what Cranelift's `CacheKey` feeds its hasher, in order
+/// (a test checks SHA-256 of them is Cranelift's own `compute_cache_key`, so a Cranelift that
+/// adds to its key fails the test instead of sharing code built for other settings).
+fn key_bytes(isa: &dyn TargetIsa, func: &cranelift_codegen::ir::Function) -> Vec<u8> {
     use std::hash::{Hash, Hasher};
     struct Bytes(Vec<u8>);
     impl Hasher for Bytes {
@@ -130,7 +137,7 @@ fn function_key(isa: &dyn TargetIsa, func: &cranelift_codegen::ir::Function) -> 
     isa.triple().hash(&mut b);
     isa.flags().hash(&mut b);
     isa.isa_flags_hash_key().hash(&mut b);
-    *blake3::hash(&b.0).as_bytes()
+    b.0
 }
 
 /// A compile error of `func` as the build reports it.
@@ -181,6 +188,58 @@ mod tests {
         assert_eq!(map.get(&new), None);
         map.put(&new, b"new code");
         assert_eq!(map.get(&new).as_deref(), Some(&b"new code"[..]));
+    }
+
+    /// A function returning nothing, for keys.
+    fn empty_fn() -> cranelift_codegen::ir::Function {
+        use cranelift_codegen::ir::{Function, InstBuilder, Signature, UserFuncName};
+        use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
+        let sig = Signature::new(cranelift_codegen::isa::CallConv::SystemV);
+        let mut f = Function::with_name_signature(UserFuncName::default(), sig);
+        let mut ctx = FunctionBuilderContext::new();
+        let mut b = FunctionBuilder::new(&mut f, &mut ctx);
+        let entry = b.create_block();
+        b.switch_to_block(entry);
+        b.seal_block(entry);
+        b.ins().return_(&[]);
+        b.finalize();
+        f
+    }
+
+    fn isa(optimize: bool, cpu: Option<&str>) -> cranelift_codegen::isa::OwnedTargetIsa {
+        crate::isa::make_isa("x86_64-unknown-linux-gnu", cpu, optimize, false).unwrap()
+    }
+
+    /// The key hashes exactly what Cranelift's own key does: SHA-256 over the same bytes is
+    /// Cranelift's `compute_cache_key`. A Cranelift that adds to its key fails here, rather
+    /// than having velt reuse code compiled for other settings.
+    #[test]
+    fn the_key_holds_what_cranelifts_key_holds() {
+        use sha2::Digest as _;
+        let f = empty_fn();
+        for isa in [
+            isa(false, None),
+            isa(true, None),
+            isa(false, Some("x86-64-v3")),
+        ] {
+            let ours: [u8; 32] = sha2::Sha256::digest(key_bytes(&*isa, &f)).into();
+            let theirs = cranelift_codegen::incremental_cache::compute_cache_key(&*isa, &f);
+            assert_eq!(format!("CacheKeyHash:{ours:?}"), theirs.to_string());
+        }
+    }
+
+    /// The flags and the CPU's features are in the key: code built for other settings is a miss.
+    #[test]
+    fn other_flags_or_cpu_features_give_another_key() {
+        let f = empty_fn();
+        let plain = function_key(&*isa(false, None), &f);
+        assert_eq!(plain, function_key(&*isa(false, None), &f));
+        assert_ne!(plain, function_key(&*isa(true, None), &f), "opt_level");
+        assert_ne!(
+            plain,
+            function_key(&*isa(false, Some("x86-64-v3")), &f),
+            "CPU features"
+        );
     }
 
     /// `CRANELIFT` names the Cranelift the workspace builds with.

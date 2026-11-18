@@ -1555,6 +1555,7 @@ dependencies = [
  "cranelift-object",
  "object",
  "rustc-hash",
+ "sha2",
  "target-lexicon",
  "velt_common",
  "velt_vir",
