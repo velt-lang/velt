@@ -32,8 +32,8 @@
 //!   std's heap hooks, so its blocks are counted). Tasks
 //!   still running when `main` returns are waited for (up to a minute) while blocks are unfreed;
 //!   the count is taken at a moment when every block was freed, or once no task can run any
-//!   more (blocks held by tasks that wait forever, or by pending `unref()`'d timers, count as
-//!   unfreed).
+//!   more (blocks held by tasks that wait forever count as unfreed; pending `unref()`'d timers
+//!   are given back first, #3032).
 //! - A golden whose first lines contain `// check: unfreed blocks at most N` is checked the same
 //!   way, but may leave up to N blocks unfreed: for programs that keep memory on purpose until
 //!   they exit.

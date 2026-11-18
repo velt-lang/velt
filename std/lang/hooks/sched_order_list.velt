@@ -70,8 +70,7 @@ export const H_AT: usize = 64;
 export const H_RAN: usize = 72;
 export const H_RAN_SET: usize = 80;
 export const H_TASK: usize = 88;
-export const H_GIVE: usize = 96;
-export const H_SIZE: usize = 104;
+export const H_SIZE: usize = 96;
 
 /** A timer's states: not queued (new, cleared, or its turn taken); queued; its turn has come. */
 export const IDLE: usize = 0;
