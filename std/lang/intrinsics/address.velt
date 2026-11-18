@@ -95,15 +95,16 @@ export declare function ptrToAddress<T>(p: Ptr<T> | null): usize;
 /**
  * The `T` at element `index` of the array of `T` at `p` (velt/ffi's `Ptr.read`): a number type,
  * `bool`, a C struct or a C pointer. Its non-null C pointers, a C struct's nested ones included,
- * are checked: the program stops on a NULL one. Unsafe: `index + 1` `T`s must be readable at `p`.
+ * are checked: the program stops on a NULL one. Unsafe: `p` must be aligned for `T` (the load
+ * assumes C's alignment of the element), and `index + 1` `T`s must be readable at `p`.
  */
 @intrinsic
 export declare unsafe function ptrRead<T>(p: Ptr<T>, index: usize): T;
 
 /**
  * Writes `value` at element `index` of the array of `T` at `p` (velt/ffi's `Ptr.write`), `T` as
- * for `ptrRead`. Unsafe: the memory must be writable, and nothing else reads or writes it
- * meanwhile.
+ * for `ptrRead`. Unsafe: `p` must be aligned for `T` (as for `ptrRead`), the memory must be
+ * writable, and nothing else reads or writes it meanwhile.
  */
 @intrinsic
 export declare unsafe function ptrWrite<T>(p: Ptr<T>, index: usize, value: Copied<T>): void;

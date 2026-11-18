@@ -48,8 +48,9 @@ export struct Ptr<T> {
    * A copy of the `T` at element `index` of the array of `T`s at `p` (`p[index]` in C): a number,
    * `bool`, a C struct or a C pointer. A non-null pointer in it, a C struct's field or a nested
    * struct's, that C left `NULL` stops the program, naming the field: declare such a field
-   * `Ptr<U> | null`. Unsafe: `index + 1` `T`s must be readable at `p`, which C doesn't change
-   * during the read. Not on wasm32 for a `T` whose layout differs from C's there (one with a
+   * `Ptr<U> | null`. Unsafe: `p` must be aligned for `T` (C's alignment of the element: the read
+   * is a load that assumes it), `index + 1` `T`s must be readable at `p`, and C doesn't change
+   * them during the read. Not on wasm32 for a `T` whose layout differs from C's there (one with a
    * pointer, `usize` or `isize` in it).
    */
   static unsafe read<T>(p: Ptr<T>, index: usize): T {
@@ -60,8 +61,8 @@ export struct Ptr<T> {
   /**
    * Writes `value` at element `index` of the array of `T`s at `p` (`p[index] = value` in C), `T`
    * as for `read`: how a binding fills a struct C keeps (a listener it is given the address of).
-   * Unsafe: `index + 1` `T`s must be writable at `p`, and nothing else reads or writes that
-   * element meanwhile. Not on wasm32 for the types `read` isn't.
+   * Unsafe: `p` must be aligned for `T` (as for `read`), `index + 1` `T`s must be writable at
+   * `p`, and nothing else reads or writes that element meanwhile. Not on wasm32 for the types `read` isn't.
    */
   static unsafe write<T>(p: Ptr<T>, index: usize, value: T): void {
     // SAFETY: the caller's statement about `p` and `index`.
