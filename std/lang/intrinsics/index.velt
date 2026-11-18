@@ -29,6 +29,7 @@ export {
   stdUsed,
 } from "velt/lang/intrinsics/any";
 export {
+  arrayAsBytes,
   arrayCopyBytes,
   arrayMove,
   arrayPrefetch,

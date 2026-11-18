@@ -82,9 +82,9 @@ impl FnCx<'_, '_> {
                 self.throw_src(crate::defs::ThrowSrc::Direct(e, span));
             }
         }
-        if i == Intrinsic::ArrayCopyBytes {
+        if matches!(i, Intrinsic::ArrayCopyBytes | Intrinsic::ArrayAsBytes) {
             if let Some(&t) = ck.type_args.first() {
-                self.bytes_elem_check(t, span);
+                self.bytes_elem_check(i, t, span);
             }
         }
         let Some(args) = self.raw_memory_args(i, &ck.type_args, ck.args, span) else {
@@ -137,7 +137,7 @@ impl FnCx<'_, '_> {
     /// or 1). Anything else (a string, an object, a pointer-like type to come) is an error here,
     /// not an ICE in lowering. A type parameter of a generic std function passes: sema checks the
     /// body once, and lowering checks each instance (an element that owns something is an ICE).
-    fn bytes_elem_check(&mut self, t: TyId, span: Span) {
+    fn bytes_elem_check(&mut self, i: Intrinsic, t: TyId, span: Span) {
         let ty = &self.cx.ty;
         if ty.is_bottom(t)
             || matches!(ty.kind(t), TyKind::Param(_))
@@ -148,15 +148,14 @@ impl FnCx<'_, '_> {
             return;
         }
         let shown = self.cx.display(t);
-        self.cx.error(
-            Diagnostic::error(
-                "`arrayCopyBytes` writes bytes into an array of numbers",
-                span,
-            )
-            .with_note(format!(
+        let what = match i {
+            Intrinsic::ArrayAsBytes => "`arrayAsBytes` gives the bytes of an array of numbers",
+            _ => "`arrayCopyBytes` writes bytes into an array of numbers",
+        };
+        self.cx
+            .error(Diagnostic::error(what, span).with_note(format!(
                 "its element type must be a number type or `bool`, found {shown}"
-            )),
-        );
+            )));
     }
 
     /// `(x: T) -> C<T>`, `x` copied: the constructor of the prelude's struct `C` holding one

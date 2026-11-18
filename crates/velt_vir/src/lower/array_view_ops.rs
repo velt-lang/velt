@@ -37,6 +37,7 @@ impl FnLower<'_, '_> {
         let len = |arr: &Place| Rvalue::Use(Operand::Copy(proj(arr, Proj::Field(1))));
         match (i, rest) {
             (I::ArrayLen, []) => self.view_len(bxp, aty),
+            (I::ArrayAsBytes, []) => ice("arrayAsBytes of an array view: its elements are numbers"),
             // Only a hint: a view's elements are not where a plain array's are.
             (I::ArrayPrefetch, [n]) => {
                 self.expr(n);

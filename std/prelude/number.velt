@@ -7,6 +7,14 @@ import { hookCall, trunc } from "velt/lang/intrinsics";
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
 /**
+ * The number types: the integer types and the float types (`f16` and `bf16` too), whose values
+ * are their bytes. The compiler knows which, so no type declares it. A type parameter bounded
+ * by it (`T extends Numeric`) takes any of them and nothing else, checked where the generic is
+ * instantiated: what velt/fs's `readNumbersSync` reads into, for one.
+ */
+export interface Numeric {}
+
+/**
  * A value that is not a number (an `f64`). NaN does not equal any value, including itself: test
  * for it with `isNaN(x)`.
  */

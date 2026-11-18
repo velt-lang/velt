@@ -14,7 +14,7 @@ fn std_diagnostics(src: &str) -> String {
 }
 
 const IMPORTS: &str =
-    "import { addressArray, addressAtomicCas, addressAtomicLoad, addressAtomicRmw,
+    "import { addressArray, arrayAsBytes, addressAtomicCas, addressAtomicLoad, addressAtomicRmw,
   addressAtomicStore, addressCall, addressLoad, addressStore, atomicAddress, fnAddress, futDrop,
   futPoll, promiseAt, slotPut, slotTake, stateDrop, statePoll }
   from \"velt/lang/intrinsics\";";
@@ -132,6 +132,38 @@ fn an_array_at_an_address_holds_numbers_and_needs_unsafe() {
     );
     // Not in unsafe code.
     let e = std_err("function main() { console.log(addressArray<u8>(8, 1).length); }");
+    assert!(e.contains("unsafe"), "{e}");
+}
+
+#[test]
+fn the_bytes_of_an_array_are_of_numbers_and_need_unsafe() {
+    std_ok(
+        "function size<T>(xs: T[]): usize {
+           // SAFETY: only the length is read.
+           const bytes = unsafe { arrayAsBytes(xs) };
+           return bytes.length;
+         }
+         function main() {
+           const xs: f32[] = [1, 2];
+           // SAFETY: only the length is read.
+           const bytes: u8[] = unsafe { arrayAsBytes(xs) };
+           console.log(bytes.length, size(xs));
+         }",
+    );
+    let e = std_err(
+        "function main() { const xs: string[] = []; unsafe { console.log(arrayAsBytes(xs).length); } }",
+    );
+    assert!(
+        e.contains("`arrayAsBytes` gives the bytes of an array of numbers"),
+        "{e}"
+    );
+    assert!(
+        e.contains("its element type must be a number type or `bool`, found string"),
+        "{e}"
+    );
+    // Not in unsafe code.
+    let e =
+        std_err("function main() { const xs: u32[] = []; console.log(arrayAsBytes(xs).length); }");
     assert!(e.contains("unsafe"), "{e}");
 }
 

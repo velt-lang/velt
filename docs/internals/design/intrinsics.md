@@ -102,6 +102,21 @@ so their callers are unsafe code with a `// SAFETY:` comment, as for `addressLoa
   (std/fs/mapped_file.velt), whose mappings are never unmapped; an array over memory that can
   go away needs a lifetime the compiler tracks (the byte views of sqlite-engine.md, #1718)
   before it can be offered.
+- `arrayAsBytes<T>(xs: T[]): u8[]` (std/lang/intrinsics/array.velt, unsafe) is the other array
+  that does not own its buffer: `{ data: xs's buffer, len: xs.length * sizeof(T), cap: 0 }`, the
+  bytes of a number array in place. It exists so that a generic function can hand a number array
+  to a C function's buffer parameter, which `declare c` takes only for a concrete element type:
+  velt/fs's `readNumbersSync<T extends Numeric>` and `writeNumbersSync` pass `arrayAsBytes(xs)`
+  to the same `pread`/`pwrite` wrappers `readSync` uses, so the system fills the array's own
+  memory. The result aliases `xs`, so it is good only until `xs` is next used, grown or dropped;
+  it never leaves the function that makes it. Sema holds `T` to a number type or `bool` and lets
+  a type parameter through (as `arrayCopyBytes`); lowering refuses an instance whose elements
+  own something, which the public functions' `Numeric` bound keeps user code from reaching.
+- **`Numeric`** (std/prelude/number.velt) is that bound: an interface no type declares, which
+  the compiler takes to be satisfied by the integer and float types (`f16` and `bf16` too) and
+  by nothing else, as `AtomicValue` and `Frozen` are the compiler's (velt_sema `infer.rs`
+  `satisfies`). A type parameter has it only through its own `T extends Numeric`; `bool` is
+  left out (not every byte is a `bool`).
 - `addressAtomicLoad<T>`, `addressAtomicStore<T>`, `addressAtomicRmw<T>`, `addressAtomicCas<T>`
   and `addressAtomicCasWeak<T>` take an address (`usize`) of an integer `T` and do what
   `Atomic<T>`'s methods do on it: the same `velt_atomic_*` operations (velt_vir `atomic.rs`), so

@@ -1,0 +1,77 @@
+// requires: unix
+// `readNumbersSync` and `writeNumbersSync`: arrays of numbers to and from a file as their
+// bytes, with nothing copied: floats, integers of several widths, a range of an array, the
+// end of the file, and bad arguments.
+import * as fs from "velt/fs";
+import { tmpdir } from "velt/os";
+import { f32x4 } from "velt/simd";
+
+function main() {
+  const path = `${tmpdir()}/velt-golden-numbers-${process.pid}`;
+  const fd = fs.openSync(path, "w+");
+  const xs: f32[] = [1.5, -2, 3.25, 4, 5, 6, 7, 8];
+  console.log(fs.writeNumbersSync(fd, xs, 0));
+  // Two of three ids, after the floats.
+  const ids: u32[] = [7, 0xffffffff, 3];
+  console.log(fs.writeNumbersSync(fd, ids, 32, 1, 2), fs.fstatSync(fd).size);
+
+  const back: f32[] = new Array<f32>(8).fill(0);
+  const all = fs.readNumbersSync(fd, back, 0);
+  console.log(all, back, f32x4.load(back, 4).sum());
+
+  // Into the middle of an array: the rest keeps its values.
+  const part: f32[] = new Array<f32>(6).fill(9);
+  const some = fs.readNumbersSync(fd, part, 8, 2, 3);
+  console.log(some, part);
+
+  // The file ends after two of the four asked for.
+  const got: u32[] = [0, 0, 0, 0];
+  const two = fs.readNumbersSync(fd, got, 32);
+  console.log(two, got);
+
+  // The same 8 bytes as one i64; and the bytes of 1.5 as they are in the file.
+  const wide: i64[] = [0, 0];
+  const one = fs.readNumbersSync(fd, wide, 32);
+  console.log(one, wide[0] == 0x00000003ffffffff);
+  const bytes: u8[] = Buffer.alloc(4);
+  console.log(fs.readSync(fd, bytes, 0, 4, 0), bytes);
+
+  // At the file's own position, which advances.
+  const pair: f32[] = [0, 0];
+  fs.readSync(fd, bytes, 0, 4, null);
+  const next = fs.readNumbersSync(fd, pair);
+  console.log(next, pair);
+  const more: i16[] = [258, -2];
+  fs.writeNumbersSync(fd, more, 40);
+  const small: i16[] = [0, 0, 0];
+  const twoMore = fs.readNumbersSync(fd, small, 40);
+  console.log(twoMore, small);
+
+  for (const [start, count] of [
+    [9, 0],
+    [0, 9],
+    [4, 5],
+    [-1, 1],
+    [0.5, 1],
+  ]) {
+    try {
+      fs.readNumbersSync(fd, back, 0, start, count);
+    } catch (e) {
+      console.log(e.name, e.message);
+    }
+  }
+  try {
+    fs.writeNumbersSync(fd, xs, -3);
+  } catch (e) {
+    console.log(e.name, e.message);
+  }
+  const none: f64[] = [];
+  console.log(fs.readNumbersSync(fd, none, 0), fs.writeNumbersSync(fd, none));
+  fs.closeSync(fd);
+  try {
+    fs.readNumbersSync(fd, back, 0);
+  } catch (e) {
+    console.log(e.message);
+  }
+  fs.unlinkSync(path);
+}

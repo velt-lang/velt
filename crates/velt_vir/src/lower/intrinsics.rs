@@ -271,6 +271,7 @@ impl FnLower<'_, '_> {
                 | I::ArrayTruncate
                 | I::ArrayMove
                 | I::ArrayCopyBytes
+                | I::ArrayAsBytes
                 | I::ArraySetLen
                 | I::ArrayReserve
                 | I::ArrayPrefetch

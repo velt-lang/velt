@@ -139,6 +139,10 @@ pub(crate) const VELT_GLOBALS: &[VeltOnly] = &[
         "keep thread-shared state out of code shared with TypeScript",
     ),
     (
+        "Numeric",
+        "a bound on Velt's number types; TypeScript has `number` alone",
+    ),
+    (
         "Frozen",
         "keep thread-shared state out of code shared with TypeScript",
     ),

@@ -1,0 +1,20 @@
+8
+2 40
+8 [
+  1.5, -2, 3.25, 4,
+    5,  6,    7, 8
+] 26
+3 [ 9, 9, 3.25, 4, 5, 9 ]
+2 [ 4294967295, 3, 0, 0 ]
+1 true
+4 [ 0, 0, 192, 63 ]
+2 [ -2, 3.25 ]
+2 [ 258, -2, 0 ]
+RangeError The value of "start" is out of range. It must be >= 0 && <= 8. Received 9
+RangeError The value of "count" is out of range. It must be >= 0 && <= 8. Received 9
+RangeError The value of "count" is out of range. It must be >= 0 && <= 4. Received 5
+RangeError The value of "start" is out of range. It must be >= 0 && <= 8. Received -1
+RangeError The value of "start" is out of range. It must be an integer. Received 0.5
+RangeError The value of "position" is out of range. It must be >= 0 && <= 9007199254740991. Received -3
+0 0
+EBADF: bad file descriptor, read
