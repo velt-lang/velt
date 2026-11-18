@@ -393,3 +393,85 @@ fn half_dot_products_on_this_cpu_print_the_golden() {
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     assert_eq!(String::from_utf8_lossy(&o.stdout), want);
 }
+
+/// `bf16x8.dotAddFast` in a release build for any arm64 CPU asks at run time whether the CPU has
+/// FEAT_BF16 and runs `bfdot` where it has (#3129): the kernel's capability word on Linux, a
+/// sysctl on macOS. The other path is still there, and an x86-64 build has neither the
+/// instruction nor the question.
+#[test]
+fn dot_add_fast_asks_for_bfdot_at_run_time_on_arm64() {
+    let dir = test_dir::TestDir::new();
+    let root = dir.path();
+    let dot = "import { bf16x8, f32x4 } from \"velt/simd\";\n\nfunction main() {\n  \
+               const a: bf16[] = [1, 2, 3, 4, 5, 6, 7, 8];\n  \
+               const r = bf16x8.load(a).dotAddFast(bf16x8.load(a), f32x4.splat(0));\n  \
+               console.log(r.lane(0));\n}\n";
+    std::fs::write(root.join("main.velt"), dot).unwrap();
+    let ir = |target: &str| {
+        let args = [
+            "build",
+            "--release",
+            "--target",
+            target,
+            "--emit",
+            "llvm",
+            "main.velt",
+        ];
+        let o = velt(root, &args, &[]);
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        String::from_utf8(o.stdout).unwrap()
+    };
+    const BFDOT: &str = "call <16 x i8> @velt.simd.f32x4_bfdot(";
+    const OTHER: &str = "call <16 x i8> @velt.simd.f32x4_dot_add_fast_bf16x8(";
+    let linux = ir("aarch64-unknown-linux-gnu");
+    assert!(linux.contains(BFDOT) && linux.contains(OTHER), "{linux}");
+    assert!(linux.contains("call i64 @\"getauxval\"(i64 26)"), "{linux}");
+    // No `--cpu` names bf16, so the other path is not `bfdot` too.
+    assert_eq!(linux.matches("@llvm.aarch64.neon.bfdot").count(), 2);
+    let mac = ir("aarch64-apple-darwin");
+    assert!(mac.contains(BFDOT) && mac.contains(OTHER), "{mac}");
+    assert!(mac.contains("@\"sysctlbyname\"("), "{mac}");
+    let x86 = ir("x86_64-unknown-linux-gnu");
+    assert!(x86.contains(OTHER), "{x86}");
+    assert!(
+        !x86.contains("bfdot") && !x86.contains("getauxval"),
+        "{x86}"
+    );
+}
+
+/// `bf16x8.dotAddFast` prints its golden in a release build for the default CPU on both of its
+/// paths: as the CPU answers (`bfdot` on an arm64 CPU with FEAT_BF16), and with the question
+/// turned off (`VELT_SIMD_DISABLE=clmul`), where it widens the lanes.
+#[test]
+fn dot_add_fast_on_both_paths_prints_the_golden() {
+    if !velt_codegen_llvm::available() {
+        return;
+    }
+    let dir = test_dir::TestDir::new();
+    let root = dir.path();
+    let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/golden/std");
+    let source = golden.join("simd_bf16_dot_fast.velt");
+    let exe = root.join(if cfg!(windows) { "app.exe" } else { "app" });
+    let args = [
+        "build",
+        "--release",
+        "--backend",
+        "llvm",
+        source.to_str().unwrap(),
+        "-o",
+        exe.to_str().unwrap(),
+    ];
+    let o = velt(root, &args, &[]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let want = std::fs::read_to_string(golden.join("simd_bf16_dot_fast.out")).unwrap();
+    for disable in [None, Some("clmul")] {
+        let mut cmd = no_window::command(exe.to_str().unwrap());
+        cmd.env_remove("VELT_SIMD_DISABLE");
+        if let Some(name) = disable {
+            cmd.env("VELT_SIMD_DISABLE", name);
+        }
+        let o = cmd.output().unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        assert_eq!(String::from_utf8_lossy(&o.stdout), want, "{disable:?}");
+    }
+}

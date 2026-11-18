@@ -1,0 +1,66 @@
+// `bf16x8.dotAddFast` on whichever path the CPU gives it (#3129): Arm's `bfdot` where the program
+// finds FEAT_BF16 when it runs (a release build for any arm64 CPU), the widened lanes and two
+// fused additions elsewhere. It promises the sum of its lanes up to rounding, so the inputs are
+// small integers: every product and every partial sum is exact, whichever lanes they go to and
+// however they are rounded, and the sum must be the integer dot product.
+
+import { bf16x8, f32x4 } from "velt/simd";
+
+let seed: u32 = 88172645;
+
+function next(): u32 {
+  seed ^= seed << 13;
+  seed ^= seed >> 17;
+  seed ^= seed << 5;
+  return seed;
+}
+
+// An integer from -8 to 8.
+function small(): i32 {
+  return ((next() % 17) as i32) - 8;
+}
+
+function sum(v: f32x4): f32 {
+  return v.lane(0) + v.lane(1) + v.lane(2) + v.lane(3);
+}
+
+// `rounds` dot products of `dim` lanes (a multiple of 8), each against the integer sum.
+function check(dim: usize, rounds: i32) {
+  let wrong = 0;
+  let total: i64 = 0;
+  for (let r = 0; r < rounds; r++) {
+    const a: bf16[] = [];
+    const b: bf16[] = [];
+    let want: i64 = 0;
+    for (let i: usize = 0; i < dim; i++) {
+      const x = small();
+      const y = small();
+      a.push(x as bf16);
+      b.push(y as bf16);
+      want += (x * y) as i64;
+    }
+    let acc = f32x4.splat(0);
+    let i: usize = 0;
+    while (bf16x8.fits(a, i) && bf16x8.fits(b, i)) {
+      acc = bf16x8.load(a, i).dotAddFast(bf16x8.load(b, i), acc);
+      i += 8;
+    }
+    if ((sum(acc) as i64) != want || i != dim) {
+      wrong += 1;
+    }
+    total += want;
+  }
+  console.log("dim", dim, "rounds", rounds, "mismatches", wrong, "total", total);
+}
+
+function main() {
+  check(8, 2000);
+  check(64, 500);
+  check(384, 200);
+  // The accumulator is added to, not replaced, and each lane keeps what it had.
+  const ones = bf16x8.splat(1);
+  const r = ones.dotAddFast(ones, f32x4.splat(10));
+  console.log("accumulated", sum(r));
+  // The answer is the same however often it is asked.
+  console.log("stable", bf16x8.hasBf16Arm() == bf16x8.hasBf16Arm());
+}

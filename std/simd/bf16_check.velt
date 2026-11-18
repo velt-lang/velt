@@ -1,0 +1,40 @@
+// velt/simd (internal): whether the CPU has Arm's bf16 instructions (FEAT_BF16), the check of
+// `bf16x8.hasBf16Arm()` and of `targetFeature("bf16-arm")` (#3129): `bf16x8.dotAddFast` is the
+// CPU's `bfdot` where it is true, in a build for any arm64 CPU.
+//
+// It is false off arm64, on WebAssembly, in debug (Cranelift) builds, and with
+// `VELT_SIMD_DISABLE=clmul`: the runtime's carry-less flag, which every arm64 CPU with bf16 has,
+// guards it, so that it folds to false elsewhere and that variable turns it off without std
+// parsing it. The runtime keeps no flag for bf16 itself (#2241): the answer comes from the
+// operating system (`#simd-bf16`, std/imports.velt), read once and kept in `DETECTED`.
+
+import { noInline } from "velt/lang/intrinsics";
+import { cpuHasBf16 } from "#simd-bf16";
+
+// The runtime's carry-less flag: false on every other architecture, on wasm and in debug builds.
+declare function velt_simd_has_clmul_arm(): bool;
+
+// What this CPU has, once computed: bit 0 set (computed), bit 1 bf16. A static atomic; threads
+// that race to compute it store the same value.
+const DETECTED = new Atomic<u32>(0);
+
+// Out of line: it runs once, and every check would otherwise carry a copy.
+@noInline
+function detect(): u32 {
+  return cpuHasBf16() ? 3 : 1;
+}
+
+// `DETECTED`, computing it the first time.
+function cpu(): u32 {
+  let found = DETECTED.load("relaxed");
+  if (found == 0) {
+    found = detect();
+    DETECTED.store(found, "relaxed");
+  }
+  return found;
+}
+
+/** Whether this arm64 CPU has FEAT_BF16, asked at run time (false where the carry-less flag is). */
+export function detectedBf16Arm(): bool {
+  return velt_simd_has_clmul_arm() && (cpu() & 2) != 0;
+}
