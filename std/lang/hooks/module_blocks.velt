@@ -51,7 +51,10 @@ const ALL_READY: usize = 0xffff_ffff_ffff_ffff;
 /**
  * `velt_rt_module_state` in a program without the executor (velt_common std_hooks.rs
  * `module_state`): one thread, so no lock; the executor's workers go through sched_module.velt.
+ * Kept a call, as the runtime's entry was: velt_opt's `module_state` pass (#1571), which runs
+ * after inlining, makes the accesses of one function call ask once by finding this call.
  */
+@noInline
 export function moduleState(desc: usize, slot: u64): usize {
   return state(desc, slot);
 }
