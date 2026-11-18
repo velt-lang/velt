@@ -151,6 +151,31 @@ pub(super) unsafe fn another_holder(f: *mut VeltFut) -> *mut VeltFut {
     new_handle(h)
 }
 
+/// The future polled by `started` behind promise `f` (a started promise, local.rs): `f` itself,
+/// or for a holder of a shared promise its original future when that was one (a holder handed to
+/// this task through its proxy). `None` for anything else. What a combinator marks handled
+/// (`velt_rt_futs_handled`): `ps.slice()` makes every input such a holder (#3195).
+///
+/// # Safety
+/// `f` must be a live heap future.
+pub(super) unsafe fn started_behind(f: *mut VeltFut, started: FutPollFn) -> Option<*mut VeltFut> {
+    let mut g = f;
+    // A proxy may be shared and handed on again; the chain is short, bounded to be safe.
+    for _ in 0..64 {
+        if !is_shared(g) {
+            return std::ptr::fn_addr_eq((*g).poll.0, started).then_some(g);
+        }
+        if let Some((p, _)) = forwarded(g) {
+            g = p;
+            continue;
+        }
+        let h = hub(g);
+        let h = h.borrow();
+        return std::ptr::fn_addr_eq(h.poll, started).then_some(h.orig);
+    }
+    None
+}
+
 /// A new holder of the promise of `h`: a handle of its own.
 unsafe fn new_handle(h: HubRef) -> *mut VeltFut {
     let size = {

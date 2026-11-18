@@ -243,11 +243,13 @@ pub unsafe extern "C" fn velt_rt_futs_handled(
 ) {
     for i in 0..n as usize {
         let f = (*futs.add(i)).0;
-        if std::ptr::fn_addr_eq(
-            (*f).poll.0,
+        // A holder of a shared promise (a combinator's copy of its array, #3195) marks the
+        // started promise it stands for: that one's rejection is what the checkpoint reports.
+        if let Some(s) = super::shared::started_behind(
+            f,
             started_poll as unsafe extern "C" fn(*mut VeltFut, *mut c_void) -> u32,
         ) {
-            let mut s = shared(f).borrow_mut();
+            let mut s = shared(s).borrow_mut();
             s.result_drop = quiet_drop;
             s.handled = true;
         }
