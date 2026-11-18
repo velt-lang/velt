@@ -61,8 +61,7 @@ function replaceIn(s: string, from: string, to: string, all: bool): string {
     if (plain) {
       velt_rt_strbuf_push_str(buf, to);
     } else {
-      const piece = substitute(to, s, pos, m);
-      velt_rt_strbuf_push_str(buf, piece);
+      substitute(buf, to, s, pos, m);
     }
     copied = pos + m;
     if (!all) {
@@ -131,10 +130,12 @@ function hasDollar(to: string): bool {
   return n > 0 && findByte(to, DOLLAR, 0, n) >= 0;
 }
 
-/** `to` with its `$` sequences expanded, for the match at bytes `pos..pos + len` of `s`. */
-function substitute(to: string, s: string, pos: usize, len: usize): string {
+/**
+ * `to` with its `$` sequences expanded, for the match at bytes `pos..pos + len` of `s`, appended
+ * to the builder `buf`.
+ */
+function substitute(buf: string, to: string, s: string, pos: usize, len: usize): void {
   const n = strByteLen(to);
-  let out = "";
   let run: usize = 0;
   let i: usize = 0;
   while (i + 1 < n) {
@@ -143,28 +144,26 @@ function substitute(to: string, s: string, pos: usize, len: usize): string {
       continue;
     }
     const c = strByteAt(to, (i + 1) as u64);
-    let piece = "";
-    let expands = true;
-    if (c == DOLLAR) {
-      piece = "$";
-    } else if (c == 38) {
-      piece = velt_rt_str_byte_slice(s, pos as u64, (pos + len) as u64);
-    } else if (c == 96) {
-      piece = velt_rt_str_byte_slice(s, 0, pos as u64);
-    } else if (c == 39) {
-      piece = velt_rt_str_byte_slice(s, (pos + len) as u64, strByteLen(s) as u64);
-    } else {
-      expands = false;
-    }
-    if (expands) {
-      out = out + velt_rt_str_byte_slice(to, run as u64, i as u64) + piece;
-      i += 2;
-      run = i;
-    } else {
+    if (c != DOLLAR && c != 38 && c != 96 && c != 39) {
+      // Any other `$` sequence is copied as it is.
       i++;
+      continue;
     }
+    pushRange(buf, to, run, i);
+    if (c == DOLLAR) {
+      // `$$` is the first `$`.
+      pushRange(buf, to, i, i + 1);
+    } else if (c == 38) {
+      pushRange(buf, s, pos, pos + len);
+    } else if (c == 96) {
+      pushRange(buf, s, 0, pos);
+    } else {
+      pushRange(buf, s, pos + len, strByteLen(s));
+    }
+    i += 2;
+    run = i;
   }
-  return out + velt_rt_str_byte_slice(to, run as u64, n as u64);
+  pushRange(buf, to, run, n);
 }
 
 /**
@@ -200,7 +199,7 @@ function replaceUnits(s: string, from: string, to: string, all: bool): string {
   return out + s.substring(copied as i64);
 }
 
-/** `substitute` with code-unit positions. */
+/** `substitute` with code-unit positions, as a string. */
 function substituteUnits(to: string, s: string, pos: usize, len: usize): string {
   const n = strByteLen(to);
   let out = "";

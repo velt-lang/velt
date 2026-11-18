@@ -9,12 +9,18 @@
 // string that is not ASCII is searched in code units, its pieces cut by `substring`.
 
 import { noInline, strByteAt, strByteLen, strLen } from "velt/lang/intrinsics";
-import { findByte } from "velt/lang/string/byte_scan";
+import { eqAt, findByte, sameBytes } from "velt/lang/string/byte_scan";
 import { codePoint4, isHalfNeedle } from "velt/lang/string/code_units";
 import { halfFind } from "velt/lang/string/half_needle";
 import { findBytes } from "velt/lang/string/needle_scan";
 
 declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
+declare function velt_simd_u8x16_splat(x: u8): u8x16;
+declare function velt_simd_mask8x16_and(a: mask8x16, b: mask8x16): mask8x16;
+declare function velt_simd_mask8x16_bitmask(m: mask8x16): u64;
+
+/** The longest separator `splitBlocks` takes (needle_scan.velt's `SHORT_NEEDLE`). */
+const SHORT_SEP: usize = 32;
 
 /** `s.split(sep)`. */
 export function split(s: string, sep: string): string[] {
@@ -38,6 +44,8 @@ export function split(s: string, sep: string): string[] {
       out.push(velt_rt_str_byte_slice(s, start as u64, k as u64));
       start = (k as usize) + 1;
     }
+  } else if (m <= SHORT_SEP && n >= m + 15) {
+    return splitBlocks(s, sep, m, n);
   } else {
     while (m <= n - start) {
       const k = findBytes(s, sep, m, start, n);
@@ -47,6 +55,42 @@ export function split(s: string, sep: string): string[] {
       out.push(velt_rt_str_byte_slice(s, start as u64, k as u64));
       start = (k as usize) + m;
     }
+  }
+  out.push(velt_rt_str_byte_slice(s, start as u64, n as u64));
+  return out;
+}
+
+/**
+ * `split` by a separator of 2 to `SHORT_SEP` bytes in a string of at least 16 starts: the starts
+ * whose first and last bytes match, 16 at a time (the last block ending at the last start), each
+ * candidate checked in full where the piece before it begins. One scan for all the matches (as
+ * `findBytes` would be one per match, setting up its vectors each time); a candidate overlapping
+ * the match before it is skipped, as JavaScript matches left to right without overlap. At most
+ * `SHORT_SEP` bytes are compared per start, as `findBytes` allows a needle this short.
+ */
+@noInline
+function splitBlocks(s: string, sep: string, m: usize, n: usize): string[] {
+  const out: string[] = [];
+  const vf = velt_simd_u8x16_splat(strByteAt(sep, 0));
+  const vl = velt_simd_u8x16_splat(strByteAt(sep, (m - 1) as u64));
+  const end = n - m;
+  let start: usize = 0;
+  let i: usize = 0;
+  while (i <= end) {
+    // The last block is the 16 starts that end at `end`, its starts before `i` masked off.
+    const at = i + 15 <= end ? i : end - 15;
+    let bits =
+      velt_simd_mask8x16_bitmask(velt_simd_mask8x16_and(eqAt(s, at, vf), eqAt(s, at + m - 1, vl))) &
+      ~((1 << ((i - at) as u64)) - 1);
+    while (bits != 0) {
+      const k = at + (bits.trailingZeros() as usize);
+      bits = bits & (bits - 1);
+      if (k >= start && sameBytes(s, k + 1, sep, 1, m - 2)) {
+        out.push(velt_rt_str_byte_slice(s, start as u64, k as u64));
+        start = k + m;
+      }
+    }
+    i = at + 16;
   }
   out.push(velt_rt_str_byte_slice(s, start as u64, n as u64));
   return out;

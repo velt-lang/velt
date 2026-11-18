@@ -62,7 +62,14 @@ function main() {
     ["a$b", "$", "$$$$"],
   ];
   for (const p of replaces) {
-    console.log("replace", q(p[0]), q(p[1]), q(p[2]), q(p[0].replace(p[1], p[2])), q(p[0].replaceAll(p[1], p[2])));
+    console.log(
+      "replace",
+      q(p[0]),
+      q(p[1]),
+      q(p[2]),
+      q(p[0].replace(p[1], p[2])),
+      q(p[0].replaceAll(p[1], p[2])),
+    );
   }
 
   // Halves meeting at a seam join into the pair: before a match against the replacement, the
@@ -94,8 +101,30 @@ function main() {
       const back = parts.join(sep);
       const r1 = s.replace(sep, "<$&>");
       const ra = s.replaceAll(sep, "[$`]".length > 3 ? "#" : "?");
-      console.log("long", q(alpha), q(sep), parts.length, back == s, r1.length, ra.length, ra.split("#").length);
+      console.log(
+        "long",
+        q(alpha),
+        q(sep),
+        parts.length,
+        back == s,
+        r1.length,
+        ra.length,
+        ra.split("#").length,
+      );
     }
   }
+
+  // Candidates overlapping the match before them, in strings long enough to be scanned 16
+  // starts at a time: matches are taken left to right without overlap.
+  for (const n of [16, 17, 33, 40]) {
+    const s = "a".repeat(n);
+    console.log(
+      "overlap",
+      n,
+      JSON.stringify(s.split("aa")),
+      JSON.stringify(("b" + s + "b").split("aaa")),
+    );
+  }
 }
+
 main();
