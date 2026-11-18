@@ -62,7 +62,8 @@
 //!   `velt_rt_panic("division by zero")`); signed `x / -1` is lowered as wrapping negation and
 //!   `x % -1` as `0`, so backends never see the `MIN / -1` trap. Float `%` is emitted as
 //!   `BinOp::Rem` on floats with C `fmod` semantics (codegen calls libm `fmod`/`fmodf`).
-//! * `**` calls `velt_rt_pow_i64` / `velt_rt_pow_f64` (operands widened to 64 bits, result cast back).
+//! * `**` calls `velt_rt_pow_i64` on integers and std's `powF64` hook on floats (operands widened
+//!   to 64 bits, result cast back).
 //! * String comparisons call `velt_rt_str_cmp` and compare its result with 0.
 //! * Drops: owned non-Copy locals are dropped at every scope exit unless moved. A local whose
 //!   ownership changes inside a conditional region gets a `Bool` drop-flag local (`<name>.dropflag`),

@@ -57,6 +57,12 @@ hooks! {
     /// `Array.from({ length: n }, f)`.
     array_from_length => lang_hooks_array, "arrayFromLength", sig(<A, B>(i64, &Fn((i64) -> A throws B)) -> [A] throws B);
 
+    // pow.velt: `**` on floats.
+    /// `a ** b` and `Math.pow` on floats (`velt_vir` `lower/ops.rs`): V8's results, through
+    /// glibc's algorithm in Velt (std/lang/math/pow.velt, #1676).
+    pow_f64 => lang_hooks_pow, "powF64", sig((f64, f64) -> f64), lowered, constructs(PowFloat),
+        replaces("velt_rt_pow_f64"), bench("pow");
+
     // number.velt: numbers as text, and the conversions of a float index.
     /// `n.toString(radix)` of a float (`velt_sema` `builtins.rs`).
     f64_to_string => lang_hooks_number, "f64ToString", sig((f64, f64) -> string),
@@ -241,8 +247,7 @@ hooks! {
     /// exception when a `catchUnwind` is active on the thread, and calls `velt_rt_panic`
     /// otherwise.
     panic_raise => lang_hooks_unwind, "panicRaise", sig((&string) -> never), lowered, constructs(CatchUnwind);
-    // weak.velt: the weak core (#3145) under `WeakMap`, `WeakSet` and `WeakRef`, and the cold path
-    // of a weak-capable type's release (design/weak-refs.md, rt_abi.md "Weak references").
+    // weak.velt: the weak core (#3145; design/weak-refs.md, rt_abi.md "Weak references").
     /// A weakly held object's cold release: `(obj)`, true when that was the last reference.
     weak_release => lang_hooks_weak, "weakRelease", sig((usize) -> bool), lowered, constructs(Weak),
         replaces("velt_rt_weak_release"), prebuilt;
@@ -258,28 +263,24 @@ hooks! {
     /// `map.get(key)`: the value word, retained, or 0.
     weak_map_get => lang_hooks_weak, "weakMapGet", sig((u32, usize) -> u64), lowered, constructs(Weak),
         replaces("velt_rt_weakmap_get"), prebuilt;
-    /// `map.has(key)`.
+    /// `map.has(key)`, and below `map.delete(key)` (whether it had an entry).
     weak_map_has => lang_hooks_weak, "weakMapHas", sig((u32, usize) -> bool), lowered, constructs(Weak),
         replaces("velt_rt_weakmap_has"), prebuilt;
-    /// `map.delete(key)`.
     weak_map_delete => lang_hooks_weak, "weakMapDelete", sig((u32, usize) -> bool), lowered, constructs(Weak),
         replaces("velt_rt_weakmap_delete"), prebuilt;
-    /// A weak map's drop (std's `WeakMap` and `WeakSet`, through `weakMapDrop`'s intrinsic).
     weak_map_drop => lang_hooks_weak, "weakMapDrop", sig((u32) -> void), lowered,
         constructs(Weak), replaces("velt_rt_weakmap_drop"), prebuilt;
     /// `new WeakRef(obj)`: its handle.
     weak_ref_new => lang_hooks_weak, "weakRefNew", sig((usize) -> u32), lowered, constructs(Weak),
         replaces("velt_rt_weakref_new"), prebuilt;
-    /// `new WeakRef(obj)` keeping a word for the compiler (an `object` target's descriptor).
+    /// `new WeakRef(obj)` keeping an `object` target's descriptor, which `weak_ref_word` reads.
     weak_ref_new_with => lang_hooks_weak, "weakRefNewWith", sig((usize, u64) -> u32), lowered, constructs(Weak),
         replaces("velt_rt_weakref_new_with"), prebuilt;
-    /// The word `weak_ref_new_with` kept.
     weak_ref_word => lang_hooks_weak, "weakRefWord", sig((u32) -> u64), lowered, constructs(Weak),
         replaces("velt_rt_weakref_word"), prebuilt;
     /// `ref.deref()`: the target's word, retained, or 0.
     weak_ref_deref => lang_hooks_weak, "weakRefDeref", sig((u32) -> usize), lowered, constructs(Weak),
         replaces("velt_rt_weakref_deref"), prebuilt;
-    /// A `WeakRef`'s drop (std's `WeakRef`, through `weakRefDrop`'s intrinsic).
     weak_ref_drop => lang_hooks_weak, "weakRefDrop", sig((u32) -> void), lowered,
         constructs(Weak), replaces("velt_rt_weakref_drop"), prebuilt;
     // heap.velt: a release build's allocator, mimalloc through `declare c` (#2196). velt_opt's

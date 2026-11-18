@@ -368,17 +368,18 @@ has, to test it.
 ## Math operations [additive]
 
 The scalar math functions `velt_rt_math_*` (`sqrt floor ceil round trunc fabs f64_bits bits_f64
-umulh to_int32 mul_int32 add_int32 clz32 clz64 ctz64 popcount64`) and `velt_rt_pow_f64` /
-`velt_rt_pow_i64` are runtime functions (velt_rt's `math.rs`, the reference for what each
-computes) that compiled code treats as operations: `velt_vir::math::MathOp` gives each symbol's
-operation and VIR signature, the verifier rejects one of these externs with another signature,
-and backends emit all but `pow` inline (an instruction, or a helper whose slow path calls the
+umulh to_int32 mul_int32 add_int32 clz32 clz64 ctz64 popcount64`) and `velt_rt_pow_i64` (`**` on
+integers; on floats it is std's `powF64` hook, std/lang/math/pow.velt) are runtime functions
+(velt_rt's `math.rs`, the reference for what each computes) that compiled code treats as
+operations: `velt_vir::math::MathOp` gives each symbol's operation and VIR signature, the
+verifier rejects one of these externs with another signature, and backends emit all but `pow`
+inline (an instruction, or a helper whose slow path calls the
 runtime). `velt_vir::math::effects` is the one list of what a runtime function may do to memory
 (none for every math operation; read-only, read-caching or cold for some string and array
 functions), which LLVM's declarations and `velt_opt` both read. `velt_opt` folds a call whose arguments are
 constants (`MathOp::eval`, which a test of veltc checks against the runtime's functions), except
-`pow` on doubles and a double operation with a NaN argument or result, whose bits the hardware
-chooses. Lowering emits a math operation as `Rvalue::Intrinsic(Intrinsic::Math(op), …)` (vir.rs
+a double operation with a NaN argument or result, whose bits the hardware chooses. Lowering emits
+a math operation as `Rvalue::Intrinsic(Intrinsic::Math(op), …)` (vir.rs
 invariant 12), a statement that means the same as the call, and never as a direct call (the
 verifier rejects one); the extern stays declared, and backends call it for `pow` and on
 ToInt32's cold path.
@@ -403,6 +404,10 @@ that does, through a native package, changes these conversions too).
 [additive] `sqrt_f32(x: f32): f32` is not a conversion: the correctly rounded f32 square root
 (LLVM's `llvm.sqrt.f32`, Cranelift's `sqrt`), which lowering emits for `Math.sqrt(x) as f16` (or
 `as bf16`) of a value of that format, before the one narrowing.
+[additive] `fma_f64(a: f64, b: f64, c: f64): f64` is `a * b + c` rounded once (IEEE 754's
+fusedMultiplyAdd): LLVM's `llvm.fma.f64` and Cranelift's `fma`, one instruction where the target
+has FMA (arm64, x86-64 with `--cpu x86-64-v3`, a function gated on `fma-x86`) and C's `fma`
+elsewhere. std's `pow` is built on it (std/lang/math/pow.velt, #1676).
 
 ## SIMD [additive]
 
@@ -541,10 +546,22 @@ architecture too (`Ext::covers`): its `velt_simd_has_clmul_x86` (`_arm`) is `1` 
 any gated function the checks of the other architecture's extensions are `0`. `--cpu` never makes
 the AES checks constant: the CPU check's lists (below) do not have AES.
 
+**FMA (#1676) [additive].** The extension `fma-x86` (FMA3 with AVX) has no instructions of its
+own: a function gated on it compiles `velt_math_fma_f64` (Math operations) to one `vfmadd`,
+where the default x86-64 level calls C's `fma`. Like AES it has **no runtime flag**:
+`velt_simd_has_fma_x86()` is `1` only in a function gated on it, and std computes the run-time
+answer once (`hasFmaX86()` of std/lang/math/fma_check.velt, the check sema keeps calls of a
+function gated on `fma-x86` behind): the carry-less flag, then CPUID leaf 1 ECX bits 12 (FMA), 27
+(OSXSAVE) and 28 (AVX), then XCR0's bits 1 and 2 (the OS saves the SSE and AVX state); not with
+`VELT_SIMD_DISABLE=clmul`. `velt_simd_xgetbv(xcr: u32) -> u64` [additive] is x86's `XGETBV`
+(EDX:EAX), emitted inline (no runtime function) and pure, valid only where CPUID says OSXSAVE;
+it gives 0 on another architecture, on wasm and under Cranelift. `--cpu` does not make the check
+constant; with an FMA level (`x86-64-v3`) `velt_math_fma_f64` is one instruction everywhere.
+
 LLVM gives a function that calls one of these operations the extension's own feature (`+sha2`,
 `+sha`, `+pclmul`, `+aes`), which it uses for nothing else; a *gated*
 function (VIR `Function::target`, HIR `Program::cpu_targets`, from std's `targetFeature("sha-arm" |
-"sha-x86" | "clmul-x86" | "clmul-arm" | "aes-x86" | "aes-arm")`, every call of
+"sha-x86" | "clmul-x86" | "clmul-arm" | "aes-x86" | "aes-arm" | "fma-x86")`, every call of
 which sema keeps behind the check) gets the extension's whole set (`+sha,+ssse3,+sse4.1` on x86),
 and the check of its own extension (`velt_simd_has_<ext>`) is the constant `1` there, so the
 emulation behind it is dead code. The ordinary functions it calls that check that extension
@@ -987,7 +1004,6 @@ message). Allocation sites are not recorded. The first violation prints `velt de
 | `velt_rt_uncaught_report` | `(void)` | called before an `Uncaught …` report is written (the report then ends the process): returns on the first thread to report (and on it again); any other thread waits until the process ends, so one report is printed (#1497). (additive) |
 | `velt_rt_set_throw_loc` | `(const VeltStr* loc)` | per-thread slot: where the error being thrown comes from (static ` at <path>:<line>:<col>` string, or null) |
 | `velt_rt_throw_loc` | `(void) -> const VeltStr*` | the slot's value (null if never set); appended to `Uncaught …` reports |
-| `velt_rt_pow_f64` | `(double a, double b) -> double` | |
 | `velt_rt_pow_i64` | `(int64_t a, int64_t b) -> int64_t` | wrapping; negative exponent → 0 (1 if a == 1) |
 
 Division by zero: lowering emits a check that calls `velt_rt_panic` with message `division by zero`.

@@ -142,10 +142,9 @@ struct Walk {
     generators: [bool; 2],
     /// An async host function: lowering awaits its call's `HostSettled` (`velt_vir` `host.rs`).
     async_host: bool,
-    /// A call of `catchUnwind` ([`Construct::CatchUnwind`]).
-    catch_unwind: bool,
-    /// A weak collection's intrinsic ([`Construct::Weak`]).
-    weak: bool,
+    /// A call of `catchUnwind` ([`Construct::CatchUnwind`]), `**` on floats (`PowFloat`), a weak
+    /// collection's intrinsic (`Weak`).
+    constructs: ConstructSet,
     /// Code that runs on the executor: an async function or closure, or one of the externs the
     /// executor in Velt serves ([`super::sched_hooks`]).
     tasks: bool,
@@ -386,12 +385,7 @@ fn add_walk(cx: &mut Ctx, w: Walk) {
     for (_, d) in (w.generators.iter().zip(generators)).filter(|(g, _)| **g) {
         live_classes(cx, d);
     }
-    if w.catch_unwind {
-        cx.lazy.live.present |= Construct::CatchUnwind.bit();
-    }
-    if w.weak {
-        cx.lazy.live.present |= Construct::Weak.bit();
-    }
+    cx.lazy.live.present |= w.constructs;
     if w.async_host {
         let settled = hook_class(cx, hook_index::host_settled);
         live_classes(cx, settled);
@@ -608,7 +602,7 @@ fn walk_expr(ty: &crate::types::Types, e: &hir::Expr, w: &mut Walk) {
         E::Call {
             callee: Callee::Intrinsic(I::CatchUnwind | I::CatchUnwindAt),
             ..
-        } => w.catch_unwind = true,
+        } => w.constructs |= Construct::CatchUnwind.bit(),
         E::Call {
             callee:
                 Callee::Intrinsic(
@@ -623,7 +617,7 @@ fn walk_expr(ty: &crate::types::Types, e: &hir::Expr, w: &mut Walk) {
                     | I::WeakRefDrop,
                 ),
             ..
-        } => w.weak = true,
+        } => w.constructs |= Construct::Weak.bit(),
         E::Call {
             callee: Callee::Dyn {
                 method_type_args, ..
@@ -643,7 +637,7 @@ fn walk_expr(ty: &crate::types::Types, e: &hir::Expr, w: &mut Walk) {
             w.ifaces.push(*iface);
             w.types.extend(method_type_args.iter().chain(iface_args));
         }
-        _ => {}
+        kind => w.constructs |= constructs::pow_bit(ty, kind),
     }
 }
 

@@ -1,0 +1,304 @@
+// velt/lang/math (internal): `x ** y` and `Math.pow` on doubles, with Node's results (#1676).
+//
+// V8 computes `Math.pow` with the C library's `pow` (its `--use-std-math-pow`, on by default) after
+// a few JS rules of its own (src/numbers/ieee754.cc), so Node on Linux prints what glibc's `pow`
+// returns: `10 ** -5` is 0.00001 there, where fdlibm's gives 0.000009999999999999999. glibc's
+// `pow` is Arm's optimized-routines algorithm (math/pow.c; MIT, see NOTICE): log(x) to about 68
+// bits from a 128-entry table, times y, then exp from another. On a CPU with FMA (every x86-64
+// since 2013, every arm64) glibc runs the build compiled for it, where GCC fuses each `a * b + c`
+// of that source into one FMA; this port does every such step with `fma` (velt/lang/math/fma), in
+// the same order, so it returns those bits on every target. Checked against glibc 2.44's `pow` on
+// x86-64 with FMA (Node 26's results): equal on 30 million random pairs and on every integer pair
+// from -1000..1000 to -120..120.
+//
+// `fma` is one instruction on arm64 and with `--cpu x86-64-v3`. The default x86-64 build has no
+// FMA, so there a copy compiled for it runs where the CPU has it (`hasFmaX86()`,
+// velt/lang/math/fma_check). Without it (CPUs before 2013, WebAssembly, debug builds), where each
+// `fma` would be a call of C's (a software routine on those), `powFast`
+// (velt/lang/math/pow_fast) gives the same bits from unfused steps it checks, and leaves the few
+// pairs it can't be sure of to the copy with each `fma` emulated (`fmaSoft`).
+
+import { abs, inline, noInline, sqrt, targetFeature } from "velt/lang/intrinsics";
+import { fma, fmaSoft } from "velt/lang/math/fma";
+import { EXP_TAB } from "velt/lang/math/exp_table";
+import { POW_LOG } from "velt/lang/math/pow_log_table";
+import { hasFmaX86 } from "velt/lang/math/fma_check";
+import { powFast } from "velt/lang/math/pow_fast";
+import { FMA_EVERYWHERE } from "#math-fma";
+import {
+  A0,
+  A1,
+  A2,
+  A3,
+  A4,
+  A5,
+  A6,
+  C2,
+  C3,
+  C4,
+  C5,
+  INV_LN2_N,
+  LN2_HI,
+  LN2_LO,
+  NEG_LN2_HI_N,
+  NEG_LN2_LO_N,
+  OFF,
+  ONE_BITS,
+  SHIFT,
+  SIGN_BIAS,
+} from "velt/lang/math/pow_consts";
+
+/**
+ * `x ** y` as JS has it (V8's `math::pow`): NaN for a NaN exponent and for ±1 to ±Infinity,
+ * `x * x` for the exponent 2, the square root for 0.5 (Infinity for -Infinity), else glibc's
+ * `pow`. The compiler calls it for `**` on numbers through `powF64` (std/lang/hooks/pow.velt).
+ */
+export function jsPow(x: f64, y: f64): f64 {
+  if (y != y) {
+    return y;
+  }
+  if (abs(y) == Infinity && abs(x) == 1.0) {
+    return NaN;
+  }
+  if (y == 2.0) {
+    return x * x;
+  }
+  if (y == 0.5) {
+    // +0 for -0, which `sqrt` alone keeps negative.
+    return abs(x) == Infinity ? Infinity : sqrt(x + 0.0);
+  }
+  if (FMA_EVERYWHERE) {
+    return libmPow(x, y, FUSED);
+  }
+  if (hasFmaX86()) {
+    return libmPowFma(x, y);
+  }
+  return libmPowNoFma(x, y);
+}
+
+/**
+ * glibc's `pow` (the FMA build's bits) where the target has no FMA instruction: `powFast`, and
+ * where it can't be sure of a rounding, the copy with each `fma` emulated.
+ */
+@inline
+export function libmPowNoFma(x: f64, y: f64): f64 {
+  // NaN: a NaN result, or a rounding `powFast` can't be sure of.
+  const fast = libmPow(x, y, FAST);
+  return fast == fast ? fast : libmPowEmulated(x, y);
+}
+
+// How `libmPow` computes: each `fma` one (an instruction, or C's `fma`); with `powFast`; each
+// `fma` emulated (`fmaSoft`).
+const FUSED: i64 = 0;
+const FAST: i64 = 1;
+const EMULATED: i64 = 2;
+
+// `libmPow` compiled for x86's FMA: each `fma` one `vfmadd` (`libmPow` and `expTail` are inlined
+// into each caller, so each copy is compiled for its caller's target).
+function libmPowFma(x: f64, y: f64): f64 {
+  targetFeature("fma-x86");
+  return libmPow(x, y, FUSED);
+}
+
+/**
+ * `libmPow` where the target has no FMA instruction, each `fma` emulated (C's would be a software
+ * routine there). Out of line: it runs for the few pairs `powFast` leaves to it.
+ */
+@noInline
+export function libmPowEmulated(x: f64, y: f64): f64 {
+  return libmPow(x, y, EMULATED);
+}
+
+// `fma(a, b, c)`, emulated in the `EMULATED` copy.
+@inline
+function step(mode: i64, a: f64, b: f64, c: f64): f64 {
+  return mode == EMULATED ? fmaSoft(a, b, c) : fma(a, b, c);
+}
+
+// 0 if `iy` (a finite nonzero double's bits) is not an integer, 1 if it is odd, 2 if even.
+function checkInt(iy: u64): i64 {
+  const e = (iy >> 52) & 0x7ff;
+  if (e < 0x3ff) {
+    return 0;
+  }
+  if (e > 0x3ff + 52) {
+    return 2;
+  }
+  const unit: u64 = (1 as u64) << (0x3ff + 52 - e);
+  if ((iy & (unit - 1)) != 0) {
+    return 0;
+  }
+  return (iy & unit) != 0 ? 1 : 2;
+}
+
+// Whether the bits are those of ±0, ±Infinity or NaN.
+function zeroInfNan(i: u64): bool {
+  const twice = i << 1;
+  return twice == 0 || twice >= 0xffe0000000000000;
+}
+
+// glibc's `pow` (the FMA build), with its special cases; in the `FAST` copy, `powFast` after them.
+@inline
+function libmPow(x: f64, y: f64, mode: i64): f64 {
+  let signBias: u64 = 0;
+  let ix = x.toBits();
+  const iy = y.toBits();
+  let topx = ix >> 52;
+  const topy = iy >> 52;
+  const ey = topy & 0x7ff;
+  if (topx == 0 || topx >= 0x7ff || ey < 0x3be || ey >= 0x43e) {
+    // x is ±0, subnormal, negative, ±Infinity or NaN, or |y| < 2^-65 or |y| >= 2^63 or NaN.
+    if (zeroInfNan(iy)) {
+      if ((iy << 1) == 0 || ix == ONE_BITS) {
+        return 1.0;
+      }
+      if ((ix << 1) > 0xffe0000000000000 || (iy << 1) > 0xffe0000000000000) {
+        return x + y;
+      }
+      if ((ix << 1) == 0x7fe0000000000000) {
+        return 1.0;
+      }
+      // |x| < 1 with y = Infinity, or |x| > 1 with y = -Infinity.
+      if (((ix << 1) < 0x7fe0000000000000) == ((iy >> 63) == 0)) {
+        return 0.0;
+      }
+      return y * y;
+    }
+    if (zeroInfNan(ix)) {
+      let x2 = x * x;
+      if ((ix >> 63) != 0 && checkInt(iy) == 1) {
+        x2 = -x2;
+      }
+      return (iy >> 63) != 0 ? 1.0 / x2 : x2;
+    }
+    // x and y are finite and not 0.
+    if ((ix >> 63) != 0) {
+      const yint = checkInt(iy);
+      if (yint == 0) {
+        return NaN;
+      }
+      if (yint == 1) {
+        signBias = SIGN_BIAS;
+      }
+      ix = ix & 0x7fffffffffffffff;
+      topx = topx & 0x7ff;
+    }
+    if (ey < 0x3be || ey >= 0x43e) {
+      // y is even here (or not an integer and x positive).
+      if (ix == ONE_BITS) {
+        return 1.0;
+      }
+      if (ey < 0x3be) {
+        return ix > ONE_BITS ? 1.0 + y : 1.0 - y;
+      }
+      return (ix > ONE_BITS) == (topy < 0x800) ? Infinity : 0.0;
+    }
+    if (topx == 0) {
+      // A subnormal x, normalized with its exponent below the normal range's.
+      ix = ((x * 4503599627370496.0).toBits() & 0x7fffffffffffffff) - ((52 as u64) << 52);
+    }
+  }
+  if (mode == FAST) {
+    return powFast(ix, y, signBias);
+  }
+
+  // log(x) = k ln2 + log(c) + log1p(z/c - 1), as lhi + llo.
+  const tmp = ix - OFF;
+  const i = (((tmp >> 45) & 127) * 3) as usize;
+  // The exponent of x / OFF, signed (an arithmetic shift).
+  const k = (tmp as i64) >> 52;
+  const z = f64.fromBits(ix - (tmp & 0xfff0000000000000));
+  const kd = k as f64;
+  const r = step(mode, z, f64.fromBits(POW_LOG[i]), -1.0);
+  const t1 = step(mode, kd, LN2_HI, f64.fromBits(POW_LOG[i + 1]));
+  const t2 = t1 + r;
+  const lo1 = step(mode, kd, LN2_LO, f64.fromBits(POW_LOG[i + 2]));
+  const lo2 = t1 - t2 + r;
+  const ar = A0 * r;
+  const ar2 = r * ar;
+  const ar3 = r * ar2;
+  const hi = t2 + ar2;
+  const lo3 = step(mode, ar, r, -ar2);
+  const lo4 = t2 - hi + ar2;
+  const q2 = step(mode, ar2, step(mode, r, A6, A5), step(mode, r, A4, A3));
+  const q1 = step(mode, ar2, q2, step(mode, r, A2, A1));
+  const lo = step(mode, ar3, q1, lo1 + lo2 + lo3 + lo4);
+  const lhi = hi + lo;
+  const llo = hi - lhi + lo;
+  // y log(x) as ehi + elo, then its exp.
+  const ehi = y * lhi;
+  const elo = step(mode, y, llo, step(mode, y, lhi, -ehi));
+  return expTail(ehi, elo, signBias, mode);
+}
+
+// ±exp(x + xtail) (the sign from `signBias`), |xtail| tiny next to |x|.
+@inline
+function expTail(x: f64, xtail: f64, signBias: u64, mode: i64): f64 {
+  const abstop = (x.toBits() >> 52) & 0x7ff;
+  let edge = false;
+  if (abstop < 0x3c9 || abstop >= 0x408) {
+    if (abstop < 0x3c9) {
+      // |x| < 2^-54: 1 (rounded as 1 + x).
+      const one = 1.0 + x;
+      return signBias != 0 ? -one : one;
+    }
+    if (abstop >= 0x409) {
+      // |x| >= 1024: overflow or underflow.
+      if ((x.toBits() >> 63) != 0) {
+        return signBias != 0 ? -0.0 : 0.0;
+      }
+      return signBias != 0 ? -Infinity : Infinity;
+    }
+    // 512 <= |x| < 1024: the result may overflow or be subnormal.
+    edge = true;
+  }
+  // x = k ln2/128 + r, |r| <= ln2/256; 2^(k/128) from the table.
+  const kdShifted = step(mode, INV_LN2_N, x, SHIFT);
+  const ki = kdShifted.toBits();
+  const kd = kdShifted - SHIFT;
+  const r = step(mode, kd, NEG_LN2_LO_N, step(mode, kd, NEG_LN2_HI_N, x)) + xtail;
+  const idx = ((ki & 127) * 2) as usize;
+  const top = (ki + signBias) << 45;
+  const tail = f64.fromBits(EXP_TAB[idx]);
+  const sbits = EXP_TAB[idx + 1] + top;
+  const r2 = r * r;
+  const tmp = step(
+    mode,
+    r2 * r2,
+    step(mode, r, C5, C4),
+    step(mode, r2, step(mode, r, C3, C2), tail + r),
+  );
+  if (edge) {
+    return expEdge(tmp, sbits, ki, mode);
+  }
+  const scale = f64.fromBits(sbits);
+  return step(mode, scale, tmp, scale);
+}
+
+// scale * (1 + tmp) where the scale's exponent (in `sbits`) has overflowed by a few hundred or is
+// below the normal range: computed at a safe exponent, then scaled, rounding once into the
+// subnormals.
+function expEdge(tmp: f64, sbits: u64, ki: u64, mode: i64): f64 {
+  if ((ki & 0x80000000) == 0) {
+    // k > 0: the result times 2^-1009, then 2^1009.
+    const scale = f64.fromBits(sbits - ((1009 as u64) << 52));
+    return step(mode, scale, tmp, scale) * f64.fromBits((2032 as u64) << 52);
+  }
+  // k < 0: the result times 2^1022, rounded to the subnormal's precision before scaling back.
+  const sb = sbits + ((1022 as u64) << 52);
+  const scale = f64.fromBits(sb);
+  // One product with two uses: glibc's build does not fuse these two.
+  const st = scale * tmp;
+  let y = scale + st;
+  if (abs(y) < 1.0) {
+    const one = y < 0.0 ? -1.0 : 1.0;
+    let lo = scale - y + st;
+    const hi = one + y;
+    lo = one - hi + y + lo;
+    y = hi + lo - one;
+    if (y == 0.0) {
+      y = f64.fromBits(sb & 0x8000000000000000);
+    }
+  }
+  return f64.fromBits((1 as u64) << 52) * y;
+}
