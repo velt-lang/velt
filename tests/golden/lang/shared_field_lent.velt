@@ -1,0 +1,97 @@
+// A `shared` handle in a field, lent to a call (#3113). Where nothing can replace the field
+// or its object, the call borrows it without counting; where something does replace it while
+// the call still reads what it was lent, the old value must stay readable: every line prints
+// what the handle held when the call was made.
+type Fixed = { rows: shared<f32[]>; n: usize };
+type Swapped = { cells: shared<f32[]> };
+type Held = { vals: shared<f32[]> };
+type Inner = { items: shared<f32[]> };
+type Outer = { inner: Inner };
+type Slot = { marks: shared<f32[]> };
+
+function first(xs: f32[]): f32 {
+  return xs[0];
+}
+
+function sum(xs: f32[], n: usize): f32 {
+  let s: f32 = 0;
+  for (let i: usize = 0; i < n; i++) {
+    s += xs[i];
+  }
+  return s;
+}
+
+// Runs `f`, then reads what it was lent.
+function readAfter(xs: f32[], f: () => void): f32 {
+  f();
+  return xs[0] + xs[xs.length - 1];
+}
+
+function many(n: usize): f32[] {
+  const xs: f32[] = [];
+  for (let i: usize = 0; i < n; i++) {
+    xs.push(i as f32);
+  }
+  return xs;
+}
+
+class Table {
+  rows: shared<f32[]>;
+
+  constructor(rows: f32[]) {
+    this.rows = shared(rows);
+  }
+
+  total(): f32 {
+    let s: f32 = 0;
+    for (let k = 0; k < 3; k++) {
+      s += sum(this.rows, 4);
+    }
+    return s;
+  }
+}
+
+function main() {
+  // Nothing writes `rows` or replaces `fixed`: borrowed in place, call after call.
+  const fixed: Fixed = { rows: shared(many(100)), n: 100 };
+  let total: f32 = 0;
+  for (let k = 0; k < 3; k++) {
+    total += sum(fixed.rows, fixed.n) + first(fixed.rows);
+  }
+  console.log(total, new Table([1, 2, 3, 4]).total());
+
+  // The field is given another handle, through another name of the same object.
+  const swapped: Swapped = { cells: shared(many(50)) };
+  const other = swapped;
+  const a = readAfter(swapped.cells, () => {
+    other.cells = shared([100 as f32, 200]);
+  });
+  console.log(a, swapped.cells.length);
+
+  // The variable holding the object is given another object, by a closure made earlier.
+  let held: Held = { vals: shared(many(60)) };
+  const hooks = {
+    replace: () => {
+      held = { vals: shared([7 as f32]) };
+    },
+  };
+  const b = readAfter(held.vals, hooks.replace);
+  console.log(b, held.vals.length);
+
+  // A field on the way to the handle is replaced, through another name of the outer object.
+  const outer: Outer = { inner: { items: shared(many(70)) } };
+  const outer2 = outer;
+  const c = readAfter(outer.inner.items, () => {
+    outer2.inner = { items: shared([3 as f32, 4]) };
+  });
+  console.log(c, outer.inner.items.length);
+
+  // The object is an element, and the array loses it, through another name of the array.
+  const slots: Slot[] = [{ marks: shared(many(80)) }];
+  const slots2 = slots;
+  const d = readAfter(slots[0].marks, () => {
+    slots2.pop();
+    slots2.push({ marks: shared([5 as f32]) });
+  });
+  console.log(d, slots[0].marks.length);
+}
