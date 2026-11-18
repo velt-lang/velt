@@ -171,6 +171,15 @@ export function schedWorkerCount(): u64 {
 }
 
 /**
+ * Do this program's tasks stay on their worker (sched_spread.velt `stay`, set before `main`
+ * runs): it may give a declared function properties through `any`, which the runtime keeps under
+ * a lock only worker 0 holds, so a task elsewhere that reaches them would never run on.
+ */
+export function schedStays(): bool {
+  return m.ld(m.ld(exec() + t.E_MAIN) + t.E_STAY) !== 0;
+}
+
+/**
  * `currentWorker()`: this thread's worker index (0 off the workers); a spare worker reports one
  * of the configured ones, so the index stays below `workerCount()` (#2371).
  */

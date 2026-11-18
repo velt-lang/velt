@@ -1,18 +1,24 @@
 // velt/net (internal): `listen` and `listenTls`, which bind a `TcpListener`.
 
 import { unwrapIo } from "velt/native/result";
-import { velt_rt_tcp_listen, velt_rt_tcp_listen_tls, velt_rt_tcp_listener_port } from "#net-tcp";
+import {
+  connectionsSpread,
+  velt_rt_tcp_listen,
+  velt_rt_tcp_listen_tls,
+  velt_rt_tcp_listener_port,
+} from "#net-tcp";
 import { TcpListener } from "velt/net/tcp_listener";
 
 /**
  * Whether a server in this program may spread its connections over the workers
- * (`TcpListener.workers()`): true. A program with module state (module-level `let`s, module
- * constants computed at startup, functions given properties through `any`) spreads them too;
- * its handlers that touch module state take the process-wide module lock for each poll, so they
- * may wait for each other on it.
+ * (`TcpListener.workers()`). A program with module state (module-level `let`s, module constants
+ * computed at startup) spreads them too: its handlers that touch module state take the
+ * process-wide module lock for each poll, so they may wait for each other on it. One that may
+ * give a declared function properties through `any` keeps its connections on one worker: the
+ * runtime keeps those properties under a lock only worker 0 holds.
  */
 export function spreadsConnections(): bool {
-  return true;
+  return connectionsSpread();
 }
 
 /** Listens on "host:port" (port 0 picks a free port; read it back from `.port`). */

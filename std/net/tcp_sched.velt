@@ -19,7 +19,7 @@
 import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";
 import { noteStdUse, stdUsed } from "velt/lang/intrinsics";
-import { schedWorkerCount } from "velt/lang/hooks/sched";
+import { schedStays, schedWorkerCount } from "velt/lang/hooks/sched";
 import { processEnv } from "velt/lang/hooks/process";
 import * as io from "velt/lang/hooks/sched_io";
 import * as tb from "velt/lang/hooks/sched_io_table";
@@ -66,10 +66,21 @@ export function velt_rt_tcp_listener_close(l: u64) {
  * The executor's workers (`workerCount()`), as the runtime's: a task pinned to one runs there, and
  * a socket of ours follows the task that uses it to its worker's reactor
  * (std/lang/hooks/sched_io_table.velt `follow`). A program with module state spreads too
- * (std/net/rt.velt `listenerWorkers`).
+ * (#2726 (c)): its tasks that touch it take the module lock for each poll. Only one whose tasks
+ * stay on their worker (`connectionsSpread`) gets one.
  */
 export function listenerWorkers(l: u64): u64 {
-  return schedWorkerCount();
+  return connectionsSpread() ? schedWorkerCount() : 1;
+}
+
+/**
+ * May a server spread its connections over the workers (velt/net `spreadsConnections`)? Not in a
+ * program whose tasks stay on their worker (std/lang/hooks/sched.velt `schedStays`): one that may
+ * give a declared function properties through `any`, which the runtime keeps under a lock only
+ * worker 0 holds, so a connection served on another worker that reaches them never answers.
+ */
+export function connectionsSpread(): bool {
+  return !schedStays();
 }
 
 export async function velt_rt_tcp_accept(l: u64): Promise<IoResult<u64>> {

@@ -13,8 +13,9 @@ stays there, as in thread-per-core servers, so a handler that computes for a lon
 back the other connections on its worker. A program with module state (a module-level `let`, or
 a module constant computed at startup) spreads its connections too, but its handlers that touch
 module state take the process-wide lock that guards it for each poll, so they wait for each
-other on it; pass such state to the handler as a captured value to use every core. A listening
-server keeps the process alive after
+other on it; pass such state to the handler as a captured value to use every core. A program
+that gives a declared function properties through `any` keeps its connections on one worker
+(`spreadsConnections()` is false there). A listening server keeps the process alive after
 `main` returns, like Node, until `server.close()`; dropping the `HttpServer` value does not stop
 it. A
 `main` that fails (an uncaught error, or a nonzero exit code) ends the process at once, servers
