@@ -367,6 +367,13 @@ hooks! {
     sched_module_state => lang_hooks_sched, "schedModuleState", sig((usize, u64) -> usize), lowered;
     sched_module_block => lang_hooks_sched, "schedModuleBlock", sig((usize) -> usize), lowered;
     sched_module_ready => lang_hooks_sched, "schedModuleReady", sig((usize, u64) -> void), lowered;
+    /// The same in a program without the executor (one thread, no lock): module_blocks.velt.
+    module_state => lang_hooks_module_blocks, "moduleState", sig((usize, u64) -> usize), lowered;
+    module_block => lang_hooks_module_blocks, "moduleBlock", sig((usize) -> usize), lowered;
+    module_ready => lang_hooks_module_blocks, "moduleReady", sig((usize, u64) -> void), lowered;
+    /// The end of such a program's `velt_main` with exit code `(code)`: the blocks go at a normal
+    /// end with the debug counters on, as the runtime's did.
+    module_exit => lang_hooks_module_blocks, "moduleExit", sig((i32) -> void), lowered;
 
     // syntax.velt: what the parser writes some syntax as (velt_syntax `ast_names.rs`).
     /// `value satisfies T`.

@@ -61,6 +61,15 @@ impl FnLower<'_, '_> {
         (self.cx.prelude_def(name)).is_some_and(|d| !self.cx.hir.unchecked.contains(&d))
     }
 
+    /// Does module state go to module_blocks.velt's hooks: a native program that sema found with
+    /// module state (velt_sema `lazy_std` `module_hooks`, #2196 9c) and without the executor (which
+    /// has its own, `module_sched`)? Else the runtime's entries (a wasm target's).
+    pub(super) fn module_hooks(&self) -> bool {
+        self.std_sched()
+            && !self.cx.module_sched()
+            && self.sched_hook_live(velt_common::std_hook!(module_state))
+    }
+
     /// The exit with 1 after an uncaught error's report: under the executor in Velt its hook
     /// (`sched_exit`: the executor gives back the blocks it holds for the leak counters first),
     /// else `velt_rt_exit`. A program sema found running nothing on the executor has no executor

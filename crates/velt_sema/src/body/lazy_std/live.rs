@@ -92,6 +92,9 @@ pub(crate) struct Live {
     /// Live code runs on the executor ([`Walk::tasks`]): the executor in Velt's hooks are needed
     /// (#2649 P3(a)).
     pub(super) tasks: bool,
+    /// The program has module state (a live stored global): on a native target lowering calls
+    /// module_blocks.velt's hooks for it ([`super::module_hooks`], #2196 9c).
+    pub(super) module_state: bool,
 }
 
 impl Live {
@@ -147,6 +150,8 @@ struct Walk {
     /// Code that runs on the executor: an async function or closure, or one of the externs the
     /// executor in Velt serves ([`super::sched_hooks`]).
     tasks: bool,
+    /// A slot of the module state: a stored global ([`super::module_hooks`]).
+    module_state: bool,
     /// Calls of `hookCall`'s stubs not bound yet, `(caller, stub)` (`hook_stubs.rs`).
     stub_calls: Vec<(DefId, DefId)>,
     /// The last type added to `types` (a body repeats the same type many times in a row).
@@ -190,6 +195,7 @@ pub(crate) fn assume(cx: &mut Ctx, assumed: &Assumed) {
     cx.lazy.live.assumed = assumed.defs.clone();
     cx.lazy.record_conversion = assumed.record_conversion;
     cx.lazy.live.tasks = assumed.tasks;
+    cx.lazy.live.module_state = assumed.module_state;
     cx.lazy.stubs.demand_at_check(&assumed.hooks);
 }
 
@@ -366,6 +372,7 @@ fn add_walk(cx: &mut Ctx, w: Walk) {
     }
     cx.lazy.live.kinds |= w.kinds;
     cx.lazy.live.tasks |= w.tasks;
+    cx.lazy.live.module_state |= w.module_state;
     cx.lazy.live.ifaces.extend(w.ifaces);
     let bound = match w.stub_calls.is_empty() {
         true => FxHashMap::default(),
@@ -513,6 +520,7 @@ fn walk_def(cx: &mut Ctx, d: DefId, w: &mut Walk) -> bool {
                 return false;
             }
             note_ty(ty, g.ty, w);
+            w.module_state |= g.stored;
             if let Some(e) = &mut g.init {
                 crate::visit::exprs_in(e, &mut |e| visit(e, w));
             }

@@ -77,7 +77,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 None => cint(0, Ty::I32),
             }
         } else {
-            lw.call_main(def, None)
+            let code = lw.call_main(def, None);
+            if lw.cx.hir.module_state.is_some() && lw.module_hooks() {
+                // The blocks go at a normal end with the debug counters on (module_blocks.velt).
+                let c = lw.rvalue_temp(Ty::I32, Rvalue::Use(code.clone()));
+                hooks::module_exit(&mut lw, ty::I32::arg(c)).emit(&mut lw);
+            }
+            code
         };
         lw.terminate(Terminator::Return(code));
         lw.scopes.clear();

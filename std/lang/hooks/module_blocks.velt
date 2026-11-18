@@ -14,6 +14,7 @@
 
 import { addressLoad, inline, noInline } from "velt/lang/intrinsics";
 import { addressCall } from "velt/lang/intrinsics/future";
+import { processEnv } from "./process";
 import * as m from "./sched_mem";
 
 declare function velt_rt_write_str(stream: u32, s: string);
@@ -46,6 +47,35 @@ const DESC_REST: usize = 40;
 
 /** A block's `ready` count once its last slot is initialized (lowering reports it). */
 const ALL_READY: usize = 0xffff_ffff_ffff_ffff;
+
+/**
+ * `velt_rt_module_state` in a program without the executor (velt_common std_hooks.rs
+ * `module_state`): one thread, so no lock; the executor's workers go through sched_module.velt.
+ */
+export function moduleState(desc: usize, slot: u64): usize {
+  return state(desc, slot);
+}
+
+/** `velt_rt_module_block` in a program without the executor. */
+export function moduleBlock(desc: usize): usize {
+  return block(desc);
+}
+
+/** `velt_rt_module_ready` in a program without the executor. */
+export function moduleReady(state: usize, n: u64): void {
+  ready(state, n);
+}
+
+/**
+ * The end of a program without the executor, `main` done with exit code `code`: at a normal end
+ * (0) with the debug counters on (`VELT_RC_STATS=1`), the blocks go (`dropAll`), as the runtime's
+ * drop at exit did; else they are kept to the end, as in Node.
+ */
+export function moduleExit(code: i32): void {
+  if (code === 0 && processEnv("VELT_RC_STATS") === "1") {
+    dropAll();
+  }
+}
 
 /** The block of the program's descriptor `desc`, to reach slot `slot` (made on first use). */
 @inline

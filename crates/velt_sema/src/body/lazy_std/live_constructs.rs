@@ -44,6 +44,8 @@ pub(crate) struct Assumed {
     pub(in super::super) record_conversion: bool,
     /// Code running on the executor that those passes reached ([`super::live::Live::tasks`]).
     pub(in super::super) tasks: bool,
+    /// Module state that those passes reached ([`super::live::Live::module_state`]).
+    pub(in super::super) module_state: bool,
     /// Hooks (`HOOKS` indexes) that a `hookCall` reached by those passes calls: their modules are
     /// demanded when the call is checked ([`super::hook_stubs`]).
     pub(in super::super) hooks: Vec<usize>,
@@ -71,10 +73,12 @@ pub(crate) fn too_late(cx: &mut Ctx, assumed: &mut Assumed) -> bool {
     let mut added = !new_defs.is_empty()
         || assumed.constructs | late.constructs != assumed.constructs
         || late.record_conversion && !assumed.record_conversion
-        || late.tasks && !assumed.tasks;
+        || late.tasks && !assumed.tasks
+        || late.module_state && !assumed.module_state;
     assumed.constructs |= late.constructs;
     assumed.record_conversion |= late.record_conversion;
     assumed.tasks |= late.tasks;
+    assumed.module_state |= late.module_state;
     assumed.defs.extend(new_defs);
     for h in late.hooks {
         if !assumed.hooks.contains(&h) {

@@ -197,6 +197,8 @@ pub(crate) struct Lazy {
     record_hooks: bool,
     /// Have [`SCHED_HOOKS`] been reached?
     sched_hooks: bool,
+    /// Have [`MODULE_HOOKS`] been reached?
+    module_hooks: bool,
     /// The program's code converts a value that may hold a float to text: the float hooks are
     /// reached (`velt_common::std_hooks::ON_DEMAND_FLOAT`).
     float_text: bool,
@@ -240,6 +242,7 @@ impl Lazy {
             record_conversion: false,
             record_hooks: false,
             sched_hooks: false,
+            module_hooks: false,
             float_text: false,
             float_write: false,
             dyn_held: FxHashSet::default(),
@@ -399,6 +402,7 @@ pub(crate) fn reach(cx: &mut Ctx) {
         // A std function C calls (`@export`) is live though no checked code refers to it.
         found.extend(cx.c_exports.iter().map(|e| e.def));
         sched_hooks(cx, &mut found);
+        module_hooks(cx, &mut found);
         let mut checked = false;
         for d in found {
             checked |= live::mark(cx, d);
@@ -491,6 +495,34 @@ fn sched_hooks(cx: &mut Ctx, found: &mut Vec<DefId>) {
         cx.demand_std(velt_common::std_module!(lang_hooks_sched_cells));
         found.extend(SCHED_CELL_HOOKS.iter().filter_map(|h| cx.prelude_fn(h)));
     }
+}
+
+/// The hooks of module state in a program without the executor (module_blocks.velt): lowering
+/// calls them in place of the runtime's `velt_rt_module_state`, `_block` and `_ready`, and at the
+/// end of `velt_main` (#2196 9c).
+const MODULE_HOOKS: &[&str] = &[
+    velt_common::std_hook!(module_state),
+    velt_common::std_hook!(module_block),
+    velt_common::std_hook!(module_ready),
+    velt_common::std_hook!(module_exit),
+];
+
+/// Adds [`MODULE_HOOKS`] to `found` the first time, on a native target, when the program has
+/// module state (`live::Live::module_state`: a live stored global). Lowering calls them only for a
+/// program with module state, so a program without any (hello) never loads their module.
+fn module_hooks(cx: &mut Ctx, found: &mut Vec<DefId>) {
+    let wanted = cx.lazy.live.module_state && cx.lazy.native_executor;
+    if cx.lazy.module_hooks || !wanted {
+        return;
+    }
+    if cx.lazy.live.finishing {
+        // Reached by what the passes after the check made: the next round has it.
+        cx.lazy.live.late.module_state = true;
+        return;
+    }
+    cx.lazy.module_hooks = true;
+    cx.demand_std(velt_common::std_module!(lang_hooks_module_blocks));
+    found.extend(MODULE_HOOKS.iter().filter_map(|h| cx.prelude_fn(h)));
 }
 
 /// Check the definition `d` if it is deferred and unchecked: whether it did.
