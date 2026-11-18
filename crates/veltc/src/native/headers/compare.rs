@@ -45,6 +45,8 @@ pub enum Shape {
     Out(Scalar),
     /// `Out<Ptr<T> | null>`: a `T **` C writes.
     OutPtr(Pointee),
+    /// A C struct by value, by name: a field of another C struct.
+    Struct(String),
     Void,
 }
 
@@ -87,6 +89,7 @@ pub fn describe(shape: &Shape) -> String {
         }
         Shape::Out(s) => format!("Out<{}>", scalar(s)),
         Shape::OutPtr(p) => format!("Out<Ptr<{}> | null>", pointee(p)),
+        Shape::Struct(name) => name.clone(),
         Shape::Void => "void".into(),
     }
 }
@@ -109,6 +112,11 @@ pub fn compare(shape: &Shape, c: &CType) -> Result<(), String> {
             _ => Err(format!("declare the result as {}", velt_for(c))),
         },
         Shape::Scalar(s) => scalar(s, c),
+        Shape::Struct(name) => match c {
+            CType::Named(n) if n == name => Ok(()),
+            CType::Named(n) => Err(format!("declare C struct `{n}`")),
+            _ => Err(format!("declare {}", velt_for(c))),
+        },
         Shape::Null => match c {
             CType::Pointer { .. } | CType::FunctionPointer => Ok(()),
             _ => Err(format!(
