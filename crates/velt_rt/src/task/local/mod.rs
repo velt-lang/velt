@@ -652,7 +652,7 @@ pub unsafe extern "C-unwind" fn velt_rt_futs_handled(
 /// counter, never reused, and kept by the task's local promises when they outlive it (they stay
 /// on that one logical task). `new Promise` compares it to decide whether a resolved value stays
 /// on its task or must be copied for another one (stage 2: counted objects never cross tasks,
-/// docs/internals/design/semantics-stage2.md §6).
+/// docs/internals/design/semantics.md "Threads").
 #[no_mangle]
 pub extern "C-unwind" fn velt_rt_task_id() -> u64 {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);

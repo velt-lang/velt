@@ -550,7 +550,7 @@ unsafe extern "C-unwind" fn counted_drop(s: *mut u8) {
 
 /// `Promise.all` over 100k children (each `counted(child(i))`), checked against `expected(i)`.
 /// Linear is checked by counting, not timing (a loaded machine stretches any time limit): each
-/// child is polled once to start and about once per wake-up. The join of bench/FINDINGS.md §7
+/// child is polled once to start and about once per wake-up. The quadratic join this guards against
 /// polled every pending child again each time the task budget ran out, about n² / 128 polls.
 fn check_all_100k(
     what: &str,

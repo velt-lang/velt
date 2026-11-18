@@ -1,4 +1,4 @@
-//! Shared cells of captured variables (semantics stage 2, docs/design/semantics-stage2.md §5,
+//! Shared cells of captured variables (docs/internals/design/semantics.md "Closures and captured variables",
 //! `LocalDef::boxed`): such a variable is a counted heap block holding its value. Its VIR local
 //! holds the cell pointer and is *indirect*, so every read and write goes through the cell; an
 //! escaping closure capturing it stores the cell pointer in its environment (one more reference)

@@ -1,7 +1,7 @@
-//! Canonical instances (docs/internals/design/deferred-types.md, P1): an instance of a generic
-//! object type, union or nullable type is the type written directly. Optional fields (P2): `?`
-//! is a flag over the declared type, part of an object type's identity, and `a?: T | null` keeps
-//! an absent key apart from a present `null` (`FieldDef::presence`).
+//! Canonical instances (docs/internals/design/deferred-types.md "Canonical instantiation"): an
+//! instance of a generic object type, union or nullable type is the type written directly.
+//! Optional fields: `?` is a flag over the declared type, part of an object type's identity, and
+//! `a?: T | null` keeps an absent key apart from a present `null` (`FieldDef::presence`).
 
 mod common;
 

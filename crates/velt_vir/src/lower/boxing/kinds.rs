@@ -1,5 +1,5 @@
 //! How a value of each type is shared (`Intrinsic::Share` and lowering's implicit copies of
-//! borrowed values): docs/design/semantics-stage2.md §3.1.
+//! borrowed values): docs/internals/design/semantics.md "Which types are counted".
 
 use velt_sema::hir::{self, AdtKind, TyId, TyKind};
 

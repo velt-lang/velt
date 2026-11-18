@@ -13,7 +13,7 @@
 //! ```
 //!
 //! JS takes the inner values as it reaches each nested pattern; here every value of the outer
-//! pattern is taken first (iteration.md "Deviations": only an outer iterable whose generator
+//! pattern is taken first (iteration.md "Compatibility": only an outer iterable whose generator
 //! has effects can tell).
 
 use velt_syntax::ast;

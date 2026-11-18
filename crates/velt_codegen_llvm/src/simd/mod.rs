@@ -536,7 +536,7 @@ fn fits_len(b: &mut Body, len: &str, at: &str, n: u32) -> String {
 }
 
 /// Address of element `%a{array + 1}` of the array whose header `%a{array}` points to (the
-/// `{ data, len, cap }` header of docs/internals/design/semantics-stage2.md).
+/// `{ data, len, cap }` header of docs/internals/design/semantics.md).
 fn element(b: &mut Body, lane: &str, array: usize) -> String {
     element_at(b, lane, array, &format!("%a{}", array + 1))
 }

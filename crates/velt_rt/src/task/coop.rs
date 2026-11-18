@@ -1,8 +1,7 @@
 //! Cooperative scheduling for the runtime's own combinators: a task has a budget of polls per turn
 //! (tokio's, which its own leaves spend too), and code that drives many children (`Promise.all`,
 //! a task's started promises) stops and yields once it is spent, so one task cannot hold the
-//! host's worker for long (and a join does not re-poll every child on every wake,
-//! bench/FINDINGS.md §7).
+//! host's worker for long (and a join does not re-poll every child on every wake).
 
 use std::future::Future;
 

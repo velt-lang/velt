@@ -1,4 +1,4 @@
-//! Stores by key, for [`super::fed`] (#854; docs/internals/design/write-effects.md, step 1): a
+//! Stores by key, for [`super::fed`] (docs/internals/design/write-effects.md "Compilation"): a
 //! value put into an object through an `any` (`const self: any = this; self.out = v`, `o[k] =
 //! v`) lands in a field the program never names at the store. Each function a crossing reaches
 //! gets a summary of the stores by key it makes into what its parameters hold (`stores v in

@@ -1,4 +1,4 @@
-# A/B gate over the Benchmarks Game programs (docs/design/semantics.md "Gates"), Windows: builds
+# A/B gate over the Benchmarks Game programs (docs/internals/design/semantics.md "Runtime cost", the gate), Windows: builds
 # every <program>/main.velt with two Velt compilers (LLVM release), runs them interleaved
 # (A B A B ...) with the official N from bench.conf (stdin = the fasta output of that N when
 # STDIN=fasta), checks that both print the same bytes, and prints the median wall-clock time.
