@@ -6,6 +6,7 @@
 // to standard output (`stdoutWritten`), which `console.log` and every std writer of stdout set and
 // velt/sync's hand-offs read (std/sync/output.velt, #2771).
 
+import { processId } from "#process-pid";
 import { addressLoad, addressStore, inline, noInline } from "velt/lang/intrinsics";
 
 declare function velt_rt_write_str(stream: u32, s: string);
@@ -115,6 +116,11 @@ declare function velt_rt_process_node_argv(): string[];
  */
 export function processArgv(): string[] {
   return velt_rt_process_node_argv();
+}
+
+/** Node's `process.pid`: this process's id. */
+export function processPid(): number {
+  return processId() as number;
 }
 
 declare function velt_rt_tla_at(site: string);

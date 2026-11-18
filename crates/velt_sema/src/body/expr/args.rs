@@ -503,8 +503,18 @@ impl FnCx<'_, '_> {
             // `returns::returned`).
             let declared = self.cx.ty.core(p.ty).unwrap_or(p.ty);
             self.std_callback = match self.cx.ty.kind(declared) {
-                TyKind::FnPtr { params, .. } if c.js_api && (arrow.is_some() || named) => {
-                    Some(params.iter().map(|t| self.cx.ty.is_int(*t)).collect())
+                // A callback declared to return an integer is the comparator of an `i64[]`
+                // (`xs.sort((a, b) => a - b)`, std/prelude/sort.velt): its parameters are the
+                // elements, not indexes, and stay integers in the body, so `a - b` is the `i64`
+                // the comparator returns, exact past 2^53 where a number is not (#3157).
+                TyKind::FnPtr { params, ret, .. } if c.js_api && (arrow.is_some() || named) => {
+                    let elements = self.cx.ty.is_int(*ret);
+                    Some(
+                        params
+                            .iter()
+                            .map(|t| !elements && self.cx.ty.is_int(*t))
+                            .collect(),
+                    )
                 }
                 _ => None,
             };

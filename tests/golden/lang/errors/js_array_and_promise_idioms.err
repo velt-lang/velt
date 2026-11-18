@@ -14,8 +14,8 @@ js_array_and_promise_idioms.velt:28:10: error: cannot `delete` from `process.env
   = note: use `removeEnv(name)` from `velt/process`
 js_array_and_promise_idioms.velt:29:16: error: `process.exit` can only be called
 js_array_and_promise_idioms.velt:30:17: error: `process.memoryUsage` can only be called
-js_array_and_promise_idioms.velt:31:15: error: `process.pid` is not supported
-  = note: the builtin `process` has `process.env.NAME`, `process.stdout.write(s)`, `process.argv`, `process.exit(code)` and `process.memoryUsage()`; `cwd()` is in `velt/process`
+js_array_and_promise_idioms.velt:31:15: error: `process.ppid` is not supported
+  = note: the builtin `process` has `process.env.NAME`, `process.stdout.write(s)`, `process.argv`, `process.pid`, `process.exit(code)` and `process.memoryUsage()`; `cwd()` is in `velt/process`
 js_array_and_promise_idioms.velt:32:18: error: `process.stdout` has no method `end`
   = note: use `write(s)`, or `velt/process` for byte writes
 js_array_and_promise_idioms.velt:33:16: error: `process.argv` can't be changed in place: each read is a new array

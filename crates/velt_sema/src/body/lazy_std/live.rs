@@ -292,7 +292,10 @@ fn walk_set(cx: &mut Ctx) {
             let start = w.start();
             if !walk_def(cx, d, &mut w) {
                 pending.push(d);
-            } else if program_code(cx, d) {
+                continue;
+            }
+            super::hook_stubs::demand_hook_calls(cx, d);
+            if program_code(cx, d) {
                 note_program_code(cx, &w, start);
             }
         }
@@ -429,14 +432,6 @@ fn dynamic_classes(cx: &mut Ctx) {
         let error = cx.prelude_adt("Error");
         live_classes(cx, view);
         live_classes(cx, error);
-    }
-}
-
-/// The class of hook `index` of the table, when the program has it.
-fn hook_class(cx: &Ctx, index: usize) -> Option<DefId> {
-    match cx.std_def(&HOOKS[index].qualified()) {
-        Some(crate::ctx::Item::Def(d)) => Some(d),
-        _ => None,
     }
 }
 
@@ -789,7 +784,7 @@ pub(crate) use again::reach_again;
 #[path = "live_roots.rs"]
 mod roots;
 pub(super) use constructs::def_name;
-use constructs::{demanded_for, evaluate, format_bit};
+use constructs::{demanded_for, evaluate, format_bit, hook_class};
 pub(crate) use constructs::{too_late, Assumed};
 use roots::seed;
 

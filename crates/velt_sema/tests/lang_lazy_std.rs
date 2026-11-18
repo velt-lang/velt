@@ -678,6 +678,11 @@ fn printing_shapes_are_checked_once_live_code_may_print_an_object() {
                    function main() {\n  const h = new H();\n  h.v = wrap(h);\n  console.log(h);\n}\n";
     let sub = "class B {\n  x: number = 1;\n}\nclass S extends B {\n  b: B | null = null;\n}\n\
                function main() {\n  const b: B = new S();\n  console.log(b);\n}\n";
+    // Types that hold themselves through a shared value, which `console.log` refuses: a class of
+    // the program's, and the epoch's chunks any live `Atomic` brings (std/sync/epoch).
+    let shared = "class N {\n  next: Atomic<shared<N> | null> = new Atomic<shared<N> | null>(null);\n}\n\
+                  function main() {\n  const n = new N();\n  console.log({ a: n.next.load() === null });\n}\n";
+    let atomic = "function main() {\n  const a = new Atomic<u64>(1);\n  a.store(2);\n  console.log({ a: a.load() });\n}\n";
     // A generic subclass whose type argument is how the value reaches itself, one made by generic
     // code (its instance is lowering's), and one whose instances can't hold themselves.
     let gsub = "class B {
@@ -735,6 +740,8 @@ class S<T> extends B {
         (number, None, false),
         (generic, None, true),
         (sub, Some(false), true),
+        (shared, None, false),
+        (atomic, None, false),
         (gsub, Some(false), true),
         (gmade, Some(false), true),
         (gnum, Some(false), false),
