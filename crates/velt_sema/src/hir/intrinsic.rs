@@ -407,6 +407,12 @@ pub enum Intrinsic {
     /// std only: as `AddressAtomicCas`, `-> bool` (may fail spuriously), `T` being `expected`'s
     /// type. Changed (#3094): see `AddressAtomicLoad`.
     AddressAtomicCasWeak,
+    /// std only (velt/ffi's `Ptr.at`, `Ptr.orNull`): `ptrFromAddress<T>(address: usize) ->
+    /// Ptr<T>`, the address as the pointer word, unchecked (#3094). Additive.
+    PtrFromAddress,
+    /// std only (velt/ffi's `Ptr.addressOf`): `ptrToAddress<T>(p: Ptr<T> | null) -> usize`, the
+    /// pointer word as an address, 0 for `null` (#3094). Additive.
+    PtrToAddress,
     /// std only: `atomicAddress<T>(a: borrow Atomic<T>) -> usize`: the address of `a`'s word.
     /// Sema allows only an `Atomic` of a 32- or 64-bit integer that cannot move: a static atomic
     /// (`Global(d)`), or a field (of a field…) of the value of `SharedRead`. Additive.

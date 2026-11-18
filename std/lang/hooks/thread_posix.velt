@@ -31,7 +31,7 @@ declare c("c") function pthread_create(
   thread: Ptr<void>,
   attr: Ptr<pthread_attr_t>,
   start: Ptr<void>,
-  arg: Ptr<void>,
+  arg: Ptr<void> | null,
 ): i32;
 declare c("c") function pthread_attr_init(attr: Ptr<pthread_attr_t>): i32;
 declare c("c") function pthread_attr_setstacksize(attr: Ptr<pthread_attr_t>, size: usize): i32;
@@ -81,7 +81,7 @@ function startThread(start: usize, arg: usize, detach: bool): bool {
         rc = pthread_attr_setdetachstate(attr, r.PTHREAD_CREATE_DETACHED);
       }
       if (rc === 0) {
-        rc = pthread_create(t, attr, m.ptrTo<void>(start), m.ptrTo<void>(arg));
+        rc = pthread_create(t, attr, m.ptrTo<void>(start), m.ptrOrNull<void>(arg));
       }
       pthread_attr_destroy(attr);
     }

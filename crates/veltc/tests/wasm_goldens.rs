@@ -405,6 +405,49 @@ fn conditional_imports_pick_the_target_variant() {
     }
 }
 
+/// A C pointer has 32 bits on wasm32 and an address 64 (`usize`): tests/golden/lang/c_pointers/
+/// wide.velt stops at an address past 32 bits there, after printing one that fits, instead of
+/// cutting it to another address or to a NULL behind a `Ptr<T>` (#3094). The package's goldens
+/// are not among [`WASI_DIRS`]' top-level files; it is copied into a work directory, whose
+/// build goes to its own `target/velt`.
+#[test]
+fn a_c_pointer_past_32_bits_stops_on_wasm32() {
+    if let Some(missing) = missing_tools("wasm32-wasip1", "wasmtime") {
+        eprintln!("note: {missing} not available; skipping C pointers on wasm32-wasip1");
+        return;
+    }
+    let root = root();
+    build_runtime(&root, "wasm32-wasip1");
+    let fixture = root.join("tests/golden/lang/c_pointers");
+    for mode in [None, Some("--release")] {
+        let work = work_dir::work_dir(&root, "golden-work-wide").join(format!(
+            "{}-{}",
+            mode.is_some(),
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&work);
+        copy_dir(&fixture, &work);
+        let o = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
+            .args(["run", "--target", "wasm32-wasip1"])
+            .args(mode)
+            .arg(work.join("wide.velt"))
+            .current_dir(&work)
+            .output()
+            .expect("run velt");
+        let _ = std::fs::remove_dir_all(&work);
+        let (out, err) = (
+            String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n"),
+            String::from_utf8_lossy(&o.stderr),
+        );
+        let stopped = !o.status.success() && err.contains("does not fit a pointer");
+        assert!(
+            out == "Ptr(0xfffffff0)\n" && stopped,
+            "{mode:?}: exit {:?}\n--- stdout ---\n{out}--- stderr ---\n{err}",
+            o.status
+        );
+    }
+}
+
 /// `Math.random()`'s seed on WebAssembly: WASI's `random_get` through wasi-libc, and the JS
 /// host's `crypto.getRandomValues` (`velt:random`). Two runs of tests/wasm_random/main.velt print
 /// different numbers on each target, which a constant seed (a `fill` that does nothing, a

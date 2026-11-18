@@ -152,7 +152,7 @@ with #2406.
 
 ## Follow-ups
 
-- **`Out<usize>` and `OutPtr` on wasm32:** these cross by address with no narrowing, so C would
+- **`Out<usize>` and `Out<Ptr<T> | null>` on wasm32:** these cross by address with no narrowing, so C would
   write 4 bytes into an 8-byte field. Nothing reachable declares one today: std's only C calls
   on wasip1 are `strlen`, `memcpy` and `getentropy`, and packages are refused. Narrow them (a
   32-bit temporary, widened after the call) before the first such declaration.

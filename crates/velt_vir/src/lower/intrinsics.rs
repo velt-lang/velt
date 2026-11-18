@@ -171,6 +171,18 @@ impl FnLower<'_, '_> {
                 let f = self.cx.c_export_address(index as u32);
                 self.rvalue_temp(Ty::U64, Rvalue::Cast(f, Ty::U64))
             }
+            // A C pointer and its address are the same word (#3094).
+            (I::PtrFromAddress, [a]) => {
+                let a = self.expr(a);
+                if super::c_call::wasm32(&self.cx.target) {
+                    self.stop_if_past_32_bits(a.clone());
+                }
+                self.rvalue_temp(Ty::Ptr, Rvalue::Cast(a, Ty::Ptr))
+            }
+            (I::PtrToAddress, [p]) => {
+                let p = self.expr(p);
+                self.rvalue_temp(Ty::U64, Rvalue::Cast(p, Ty::U64))
+            }
             (I::AddressLoad, [a]) => {
                 let addr = self.expr(a);
                 let at = self.rvalue_temp(Ty::Ptr, Rvalue::Cast(addr, Ty::Ptr));
