@@ -2,14 +2,18 @@
 // `RangeError`s and `TypeError`s with Node's messages for those it rejects.
 
 import { utf8Encode } from "velt/encoding/utf8";
-import { inline } from "velt/lang/intrinsics";
+import { inline, noInline } from "velt/lang/intrinsics";
 
 /** `Number.MAX_SAFE_INTEGER`: the largest offset, length or position Node accepts. */
 export const MAX_SAFE: number = 9007199254740991;
 /** The largest 32-bit signed integer: the largest file descriptor and `open` flags. */
 export const MAX_INT32: number = 2147483647;
 
-/** The value of an integer argument as Node checks it (`validateInteger`). */
+/**
+ * The value of an integer argument as Node checks it (`validateInteger`). Inlined: the check is
+ * three comparisons, which fold away for a constant argument; the error is built out of line.
+ */
+@inline
 export function integer(name: string, v: number, min: number, max: number): i64 {
   if (v >= min && v <= max && Math.floor(v) == v) {
     return v as i64;
@@ -17,6 +21,7 @@ export function integer(name: string, v: number, min: number, max: number): i64 
   throw outOfRange(name, v, min, max);
 }
 
+@noInline
 export function outOfRange(name: string, v: number, min: number, max: number): RangeError {
   const must = Math.floor(v) != v ? "an integer" : `>= ${min} && <= ${max}`;
   return new RangeError(
