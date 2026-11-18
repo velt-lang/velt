@@ -241,11 +241,9 @@ hooks! {
     /// exception when a `catchUnwind` is active on the thread, and calls `velt_rt_panic`
     /// otherwise.
     panic_raise => lang_hooks_unwind, "panicRaise", sig((&string) -> never), lowered, constructs(CatchUnwind);
-    // weak.velt: weak references without a collector (#3145, #2196): the core under `WeakMap`,
-    // `WeakSet` and `WeakRef`, and the cold path of a weak-capable type's release
-    // (docs/internals/design/weak-refs.md, rt_abi.md "Weak references").
-    /// The cold release path of a weakly held object: `(obj)`, true when that was the last
-    /// reference (the caller drops and frees it).
+    // weak.velt: the weak core (#3145) under `WeakMap`, `WeakSet` and `WeakRef`, and the cold path
+    // of a weak-capable type's release (design/weak-refs.md, rt_abi.md "Weak references").
+    /// A weakly held object's cold release: `(obj)`, true when that was the last reference.
     weak_release => lang_hooks_weak, "weakRelease", sig((usize) -> bool), lowered, constructs(Weak),
         replaces("velt_rt_weak_release"), prebuilt;
     /// A new weak map: `(key trace, value retain, value release, value trace)`, its handle.
