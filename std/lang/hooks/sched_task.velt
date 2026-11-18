@@ -300,7 +300,9 @@ export const E_LIVE_F: usize = 984;
 export const E_SPIN: usize = 992;
 /** `E_UNPARKS` when the spread's window began (sched_spread.velt `windowEnd`, sched_gather.velt). */
 export const E_W_UNPARKS: usize = 1000;
-export const E_SIZE: usize = 1008;
+/** 1 while the worker spins for its inbox (sched_spin.velt): awake, but pushing nothing. */
+export const E_SPINNING: usize = 1008;
+export const E_SIZE: usize = 1016;
 /** The spawns of a lazy worker 0's poll that go on `E_PREST`, which the monitor may take. */
 export const PEND_STACKED: usize = 64;
 /** `E_LAZY`'s states. */
