@@ -9,10 +9,14 @@ import { isMac } from "velt/fs/fd/system";
 import { osError } from "velt/fs/errors";
 
 /** How a range of a `MappedFile` will be read (`advise`). */
-export type MapAdvice = "normal" | "random" | "sequential" | "willneed";
+export type MapAdvice = "normal" | "random" | "sequential" | "willneed" | "dontneed";
+
+/** Which part of a file `MappedFile.open` maps: `length` bytes from byte `offset`. */
+export type MapOptions = { offset?: number; length?: number };
 
 /**
- * A file mapped into memory, read-only. `bytes` is the whole file as a `shared<u8[]>`: it is
+ * A file mapped into memory, read-only. `bytes` is the file (or the part of it that was
+ * asked for) as a `shared<u8[]>`: it is
  * read like any byte array (indexing, `subarray`, the SIMD loads) and can be handed to every
  * task without a copy; `f32s`, `i8s`, `u32s` and the other typed methods give a range of it as
  * an array of that number type. Nothing is read when the
@@ -29,17 +33,27 @@ export type MapAdvice = "normal" | "random" | "sequential" | "willneed";
  * and output it had buffered may be lost: map files nothing else writes.
  */
 export class MappedFile {
-  /** The file's bytes. */
+  /** The mapped bytes. */
   readonly bytes: shared<u8[]>;
+  // Where `bytes` starts, and how many bytes of the mapping lie before it (a mapping starts
+  // at a page of the file; `bytes` starts where it was asked to).
   private readonly address: usize;
+  private readonly lead: usize;
 
-  private constructor(address: usize, bytes: shared<u8[]>) {
+  private constructor(address: usize, lead: usize, bytes: shared<u8[]>) {
     this.address = address;
+    this.lead = lead;
     this.bytes = bytes;
   }
 
   /**
-   * Maps the file at `path`. An `IoError` when it cannot be opened or mapped: `EISDIR` for a
+   * Maps the file at `path`: all of it, or with `options` the `length` bytes from byte
+   * `offset` (to the end of the file when `length` is left out), which costs address space
+   * for that part only. `RangeError` when that range is not inside the file. A typed view
+   * (`f32s`, `u32s`, …) of a part needs its values at a multiple of their size in the file,
+   * as it does for a whole file.
+   *
+   * An `IoError` when the file cannot be opened or mapped: `EISDIR` for a
    * directory, `EINVAL` for anything else that is not a regular file (a device, a pipe),
    * `ENOSYS` where files cannot be mapped (Windows, WebAssembly). A pipe blocks in `open` until
    * it has a writer, as it does for `readFileSync`.
@@ -47,7 +61,7 @@ export class MappedFile {
    * A file of /proc or /sys is a regular file that reports a size of 0 whatever it holds, so it
    * maps as no bytes, without an error: read those with `readFileSync`.
    */
-  static open(path: string): MappedFile {
+  static open(path: string, options?: MapOptions): MappedFile {
     const fd = openPath(cPath(path), isMac() ? 0x1000000 : 0x80000, 0); // O_RDONLY | O_CLOEXEC
     if (fd < 0) {
       throw osError(lastError(), "open", path);
@@ -66,33 +80,53 @@ export class MappedFile {
       closeFd(fd);
       throw osError(kind == 0o040000 ? 21 : 22, "mmap", path); // EISDIR, EINVAL
     }
-    const len = st.st_size as usize;
-    if (len == 0) {
-      // An empty file has nothing to map (`mmap` refuses a length of 0).
+    const size = st.st_size as number;
+    const offset = options?.offset ?? 0;
+    const length = options?.length ?? size - offset;
+    if (
+      !Number.isInteger(offset) ||
+      !Number.isInteger(length) ||
+      offset < 0 ||
+      length < 0 ||
+      offset + length > size
+    ) {
       closeFd(fd);
-      return new MappedFile(0, shared([]));
+      throw new RangeError(
+        `MappedFile.open: ${offset}..${offset + length} is not inside the ${size} bytes of ${path}`,
+      );
     }
-    const address = mapRead(fd, len);
-    const e = address == 0 ? lastError() : 0;
+    if (length == 0) {
+      // No bytes: nothing to map (`mmap` refuses a length of 0).
+      closeFd(fd);
+      return new MappedFile(0, 0, shared([]));
+    }
+    // A mapping starts at a page of the file: a multiple of 64 KiB is one for every page size
+    // in use (4, 16 and 64 KiB).
+    const lead = offset % 65536;
+    const len = length as usize;
+    const base = mapRead(fd, (lead as usize) + len, (offset - lead) as i64);
+    const e = base == 0 ? lastError() : 0;
     // The mapping keeps the file; the descriptor is not needed any more.
     closeFd(fd);
-    if (address == 0) {
+    if (base == 0) {
       throw osError(e, "mmap", path);
     }
-    // SAFETY: `address` is a mapping of `len` readable bytes that is never unmapped, and the
+    const address = base + (lead as usize);
+    // SAFETY: `address` is `len` readable bytes of a mapping that is never unmapped, and the
     // array is only ever read: it leaves this function as a `shared<u8[]>`.
     const bytes: u8[] = unsafe { addressArray<u8>(address, len) };
-    return new MappedFile(address, shared(bytes));
+    return new MappedFile(address, lead as usize, shared(bytes));
   }
 
-  /** The file's size in bytes when it was mapped. */
+  /** The number of mapped bytes: the file's size when it was mapped, or the part's. */
   get length(): number {
     return this.bytes.length as number;
   }
 
   // The address of the `count` values of `width` bytes from byte `byteOffset` (0 for no
-  // values), for the method `what`: inside the file and aligned for the type, else a
-  // `RangeError`.
+  // values), for the method `what`: inside the mapped bytes and aligned for the type, else a
+  // `RangeError`. The mapping starts at a page, so an address in it is aligned when its place
+  // in the file is.
   private range(
     what: string,
     noun: string,
@@ -106,7 +140,7 @@ export class MappedFile {
       !Number.isInteger(count) ||
       byteOffset < 0 ||
       count < 0 ||
-      byteOffset % width != 0 ||
+      ((this.lead as number) + byteOffset) % width != 0 ||
       byteOffset + count * width > size
     ) {
       throw new RangeError(
@@ -292,10 +326,12 @@ export class MappedFile {
   }
 
   /**
-   * Tells the system how the `length` bytes from `byteOffset` (the whole file by default) will
-   * be read: `"sequential"` reads ahead more, `"random"` not at all, `"willneed"` starts
-   * reading them now, `"normal"` is the default. A hint: it never changes what is read.
-   * `RangeError` when the range is not inside the file.
+   * Tells the system how the `length` bytes from `byteOffset` (all the mapped bytes by default)
+   * will be read: `"sequential"` reads ahead more, `"random"` not at all, `"willneed"` starts
+   * reading them now, `"normal"` is the default. `"dontneed"` gives their memory back now
+   * rather than when the system runs short: the next read of them comes from the file again.
+   * A hint: it never changes what is read. It works on whole pages, so it may reach a little
+   * past either end of the range. `RangeError` when the range is not inside the mapped bytes.
    */
   advise(advice: MapAdvice, byteOffset: number = 0, length?: number) {
     const size = this.bytes.length as number;
@@ -315,10 +351,15 @@ export class MappedFile {
       return;
     }
     // `madvise` takes whole pages from a page's start: round the start down to a multiple of
-    // 64 KiB, which is a page's start for every page size in use (4, 16 and 64 KiB).
-    const start = byteOffset - (byteOffset % 65536);
+    // 64 KiB from the mapping's start, which is a page's start for every page size in use (4,
+    // 16 and 64 KiB).
+    const lead = this.lead as number;
+    const at = lead + byteOffset;
+    const start = at - (at % 65536);
     const code: i32 =
-      advice == "random" ? 1 : advice == "sequential" ? 2 : advice == "willneed" ? 3 : 0;
-    adviseMap(this.address + (start as usize), (byteOffset - start + len) as usize, code);
+      advice == "random"
+        ? 1
+        : advice == "sequential" ? 2 : advice == "willneed" ? 3 : advice == "dontneed" ? 4 : 0;
+    adviseMap(this.address - this.lead + (start as usize), (at - start + len) as usize, code);
   }
 }

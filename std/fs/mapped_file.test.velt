@@ -130,6 +130,82 @@ describe("MappedFile", () => {
     unlinkSync(path);
   });
 
+  it("maps a part of a file, from any byte", () => {
+    if (!POSIX) {
+      return;
+    }
+    const data = pattern(200000);
+    const path = write("part", data);
+    // A start inside the first page, one past 64 KiB, and one on a 64 KiB boundary.
+    const starts: number[] = [12, 70001, 131072];
+    for (const offset of starts) {
+      const part = MappedFile.open(path, { offset, length: 5000 });
+      expect(part.length).toBe(5000);
+      let same = true;
+      for (let i = 0; i < 5000; i++) {
+        same = same && part.bytes[i] == data[offset + i];
+      }
+      expect(same).toBe(true);
+    }
+    // To the end of the file when `length` is left out; no bytes at the very end.
+    const tail = MappedFile.open(path, { offset: 199990 });
+    expect(tail.length).toBe(10);
+    expect(tail.bytes[9]).toBe(data[199999]);
+    expect(MappedFile.open(path, { offset: 200000 }).length).toBe(0);
+    expect(MappedFile.open(path, { length: 7 }).length).toBe(7);
+    expect(() => MappedFile.open(path, { offset: 199990, length: 11 })).toThrow(
+      "MappedFile.open: 199990..200001 is not inside the 200000 bytes of",
+    );
+    expect(() => MappedFile.open(path, { offset: -1 })).toThrow("MappedFile.open: -1..");
+    expect(() => MappedFile.open(path, { offset: 1.5 })).toThrow("MappedFile.open: 1.5..");
+    expect(() => MappedFile.open(path, { offset: 200001 })).toThrow("MappedFile.open: 200001..");
+    unlinkSync(path);
+  });
+
+  it("gives typed views of a part where the file aligns them", () => {
+    if (!POSIX) {
+      return;
+    }
+    const data = pattern(100000);
+    const path = write("part-views", data);
+    const whole = MappedFile.open(path);
+    // The part starts 12 bytes into the file: a u32 at a multiple of 4 from it is aligned.
+    const part = MappedFile.open(path, { offset: 70012, length: 4000 });
+    const a = part.u32s(8, 3);
+    const b = whole.u32s(70020, 3);
+    expect([a[0], a[1], a[2]]).toEqual([b[0], b[1], b[2]]);
+    // A part that starts at an odd byte: its u32 values sit at 3, 7, … from its start.
+    const odd = MappedFile.open(path, { offset: 70001, length: 4000 });
+    expect(odd.u32s(3, 1)[0]).toBe(whole.u32s(70004, 1)[0]);
+    expect(() => odd.u32s(0, 1)).toThrow("u32s(0, 1) is not a range of 4-byte integers");
+    expect(() => odd.u32s(4, 1)).toThrow("u32s(4, 1) is not a range of 4-byte integers");
+    expect(odd.i8s(0, 1)[0] as number).toBe(whole.i8s(70001, 1)[0] as number);
+    unlinkSync(path);
+  });
+
+  it("gives pages back and reads them again", () => {
+    if (!POSIX) {
+      return;
+    }
+    const data = pattern(300000);
+    const path = write("dontneed", data);
+    const part = MappedFile.open(path, { offset: 70001, length: 200000 });
+    let before: i64 = 0;
+    for (let i = 0; i < 200000; i++) {
+      before += part.bytes[i] as i64;
+    }
+    part.advise("dontneed");
+    part.advise("dontneed", 100, 70000);
+    part.advise("willneed", 199999, 1);
+    let after: i64 = 0;
+    for (let i = 0; i < 200000; i++) {
+      after += part.bytes[i] as i64;
+    }
+    expect(after).toBe(before);
+    expect(() => part.advise("dontneed", 0, 200001)).toThrow("advise: 0..200001 is not inside");
+    unlinkSync(path);
+  });
+
   it("maps an empty file as no bytes, and reports a missing one", () => {
     if (!POSIX) {
       return;
