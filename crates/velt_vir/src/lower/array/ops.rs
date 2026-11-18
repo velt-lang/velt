@@ -192,6 +192,8 @@ impl FnLower<'_, '_> {
         let elem = self.elem_ty(aty);
         match (i, rest) {
             (I::ArrayLen, []) => self.rvalue_temp(Ty::U64, Rvalue::Use(Self::arr_field(&arr, 1))),
+            // A plain array's bytes are its elements: nothing to write back.
+            (I::ArrayBytesWritten, []) => unit(),
             (I::ArrayDataAddress | I::ArrayReadAddress, []) => {
                 if self.cx.needs_drop(elem) {
                     ice("arrayDataAddress of an array whose elements own something");

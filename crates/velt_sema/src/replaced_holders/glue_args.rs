@@ -98,6 +98,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::ArrayCopyBytes
         | I::ArrayDataAddress
         | I::ArrayReadAddress
+        | I::ArrayBytesWritten
         | I::ArrayByteLength
         | I::ArraySetLen
         | I::ArrayReserve

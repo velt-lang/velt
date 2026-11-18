@@ -103,7 +103,7 @@ so their callers are unsafe code with a `// SAFETY:` comment, as for `addressLoa
   go away needs a lifetime the compiler tracks (the byte views of sqlite-engine.md, #1718)
   before it can be offered.
 - `arrayDataAddress<T>(xs: Mut<T[]>): usize` and `arrayReadAddress<T>(xs: T[]): usize` (both
-  unsafe) and `arrayByteLength<T>(xs: T[]): usize` (std/lang/intrinsics/array.velt) are the
+  unsafe), `arrayByteLength<T>(xs: T[]): usize` and `arrayBytesWritten` (std/lang/intrinsics/array.velt) are the
   address of a number array's buffer and `xs.length * sizeof(T)`. They exist so that a generic
   function can hand a number array's own memory to a C function, which `declare c` takes as a
   buffer only for a concrete element type: velt/fs's `readSync<T extends Numeric>` and
@@ -121,9 +121,11 @@ so their callers are unsafe code with a `// SAFETY:` comment, as for `addressLoa
     `Numeric` bound of the public functions keeps user code from reaching.
   - On a view type (array_view.rs: a number array type is one in a program that converts an
     `any` to it) a plain array gives its own buffer, and a view its mirror's with every element
-    converted, which is what a C function given the array itself gets. Bytes read into a view's
-    mirror are not written back to the original: as before for a `u8[]` view passed to
-    `readSync`.
+    converted, which is what a C function given the array itself gets. After bytes were
+    written there, `arrayBytesWritten<T>(xs: Mut<T[]>)` writes a view's mirror back to the
+    array it views (`readSync` calls it after the read; nothing for a plain array, and no code
+    in a program without view types). A C function given a view as a buffer that is not
+    `readonly` gets the same write-back after the call (c_call.rs).
   An earlier form gave the bytes as a second, non-owning `u8[]` (as `addressArray` does). It
   cost an allocation and a free at every call, since a `u8[]` value is a counted box in
   programs that share one, and it left an aliasing array to keep from escaping; an address

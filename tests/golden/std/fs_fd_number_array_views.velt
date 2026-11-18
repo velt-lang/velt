@@ -1,8 +1,8 @@
 // requires: unix
 // `readSync` and `writeSync` in a program that converts an `any` to an array type, which makes
 // that array type one that can hold a view of another array (#1485): a plain array of the type
-// is read into and written from as in any program, and a view gives the bytes of its elements
-// as they are when the call is made.
+// is read into and written from as in any program; a view gives the bytes of its elements as
+// they are when the call is made, and what is read into it goes to the array it views.
 import * as fs from "velt/fs";
 import { tmpdir } from "velt/os";
 
@@ -20,13 +20,16 @@ function main() {
 
   // The view: its three elements are written as three bytes.
   console.log(fs.writeSync(fd, bytes, 0, 3, 0), fs.readFileBytesSync(path).join(","));
-  console.log(fs.readSync(fd, bytes, 0, 3, 6), bytes.length);
+  // Read into the view: the bytes reach the array it is a view of (#3211).
+  console.log(fs.readSync(fd, bytes, 0, 3, 6), bytes.join(","), parsed);
+  console.log(fs.readSync(fd, bytes, 1, 1, 0), bytes.join(","), parsed);
 
   // `number[]` as well, eight bytes an element.
   const more: any = [1.5, -2];
   const floats = more as number[];
   const own: number[] = [0, 0];
   console.log(fs.writeSync(fd, floats, 0, 16, 0), fs.readSync(fd, own, 0, 16, 0), own);
+  console.log(fs.writeSync(fd, [8, 9], 0, 16, 0), fs.readSync(fd, floats, 0, 16, 0), floats, more);
   const plainFloats: number[] = [3.25, 4];
   console.log(fs.writeSync(fd, plainFloats, 8, 8, 0), fs.readSync(fd, own, 0, 8, 0), own);
 

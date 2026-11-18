@@ -76,6 +76,10 @@ pub enum Intrinsic {
     /// that is only read: it does not count as a change of `xs` (an array an `RwLock` holds,
     /// in a `read` callback: velt/fs's `writeSync`). Additive.
     ArrayReadAddress,
+    /// std only: `arrayBytesWritten<T>(xs (modified))`, said after bytes were written at
+    /// `ArrayDataAddress`'s address: a view (velt_vir array_view.rs) writes its mirror back to
+    /// the array it views; nothing for a plain array. Additive.
+    ArrayBytesWritten,
     /// std only: `arrayByteLength<T>(xs) -> usize`, `xs.length * sizeof(T)` for an array of
     /// numbers (checked as `ArrayDataAddress`). Additive.
     ArrayByteLength,

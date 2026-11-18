@@ -30,6 +30,7 @@ export {
 } from "velt/lang/intrinsics/any";
 export {
   arrayByteLength,
+  arrayBytesWritten,
   arrayCopyBytes,
   arrayDataAddress,
   arrayMove,

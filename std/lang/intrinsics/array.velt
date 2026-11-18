@@ -97,6 +97,14 @@ export declare unsafe function arrayDataAddress<T>(xs: Mut<T[]>): usize;
 @intrinsic
 export declare unsafe function arrayReadAddress<T>(xs: T[]): usize;
 
+/**
+ * Says that bytes were written at `arrayDataAddress(xs)`: where `xs` is a view of another array
+ * (an `any` converted to `T[]`) the elements go back to that array, as after any other change
+ * through the view. Nothing for a plain array.
+ */
+@intrinsic
+export declare function arrayBytesWritten<T>(xs: Mut<T[]>): void;
+
 /** `xs.length * sizeof(T)`: how many bytes `xs`'s elements are. `T` as for `arrayDataAddress`. */
 @intrinsic
 export declare function arrayByteLength<T>(xs: T[]): usize;

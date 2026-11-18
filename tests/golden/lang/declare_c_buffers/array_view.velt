@@ -1,0 +1,38 @@
+// requires: unix
+// A C function that fills a buffer, given a view of another array (an `any` converted to
+// `u8[]`, #1485): what it wrote reaches the array the view is of (#3211), also through
+// `subarray`. A `readonly` buffer is only read, and a plain array of the same type is filled
+// as in any program.
+import { Ptr } from "velt/ffi";
+
+declare c("c") function memset(dst: u8[], value: i32, n: usize): Ptr<void>;
+declare c("c") function memcmp(a: readonly u8[], b: readonly u8[], n: usize): i32;
+
+function main() {
+  const parsed: any = [1, 2, 3, 4];
+  const view = parsed as u8[];
+  // SAFETY: `memset` writes 2 bytes into an array of 4.
+  unsafe {
+    memset(view, 9, 2);
+  }
+  console.log(view.join(","), parsed);
+
+  // SAFETY: the 2 bytes of the subarray.
+  unsafe {
+    memset(view.subarray(2, 4), 7, 2);
+  }
+  console.log(view.join(","), parsed);
+
+  // The array changes behind the view; the view is read, not written back.
+  parsed[0] = 5;
+  const same: u8[] = [5, 9, 7, 7];
+  // SAFETY: both hold 4 bytes.
+  console.log(unsafe { memcmp(view, same, 4) }, parsed);
+
+  const plain: u8[] = [0, 0, 0];
+  // SAFETY: 3 bytes into an array of 3.
+  unsafe {
+    memset(plain, 6, 3);
+  }
+  console.log(plain.join(","));
+}

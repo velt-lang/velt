@@ -40,6 +40,12 @@ impl FnLower<'_, '_> {
             // The bytes of a view are its mirror's, every element converted: what a C
             // function given the array itself gets (c_call.rs). A plain array of the view type
             // gives its own.
+            // Bytes were written into the mirror (at `ArrayDataAddress`'s address): a view
+            // gives every element back to the array it views.
+            (I::ArrayBytesWritten, []) => {
+                self.view_flush(bx, aty, ViewFlush::All);
+                unit()
+            }
             (I::ArrayDataAddress | I::ArrayReadAddress | I::ArrayByteLength, []) => {
                 let arr = self.content_with(bxp, aty, ViewSync::All);
                 self.array_op(i, rest, &arr, aty, ty)
