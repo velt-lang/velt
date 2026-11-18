@@ -52,6 +52,20 @@ a second as Rust's axum and over ten times as many as Node, in a fraction of Nod
 - **A fast edit loop.** `velt dev` hot-swaps the functions you change on every save.
 - **C when you need it.** `declare c` calls C libraries, checked against their headers.
 
+## Beyond TypeScript
+
+Velt is a language of its own: TypeScript's syntax, plus what a native language needs.
+
+- [SIMD vectors](https://veltlang.com/docs/std/simd/) that compile to the CPU's vector instructions
+- [Integer and half-precision types](https://veltlang.com/docs/reference/types/), from `i8` to `u64`, `f16` and `bf16`
+- [Operators on your own types](https://veltlang.com/docs/reference/classes/): `a + b * 0.5` on vectors and matrices
+- [Threads and shared memory](https://veltlang.com/docs/reference/async/): `shared<T>`, `Atomic<T>`, `Mutex`
+- [Typed errors](https://veltlang.com/docs/reference/errors/): `throws` clauses the compiler checks
+- [Calling C](https://veltlang.com/docs/reference/c-interop/) with `declare c`
+
+The differences in one place: [Velt for TypeScript developers](https://veltlang.com/docs/book/ts-developers/).
+What comes next: [the roadmap](ROADMAP.md).
+
 ## Get started
 
 ```sh
