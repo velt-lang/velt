@@ -1,7 +1,7 @@
 // check: no leaks
 // A synchronous `main`'s module state (std/lang/hooks/module_blocks.velt, #2196 9c) is freed at a
-// normal end with the debug counters on: a counter, strings held in a module array, and a 16-byte
-// aligned SIMD value, which takes its block's alignment.
+// normal end with the debug counters on: a counter, strings held in a module array, and a SIMD
+// value.
 import { u8x16 } from "velt/simd";
 
 let counter = 0;
