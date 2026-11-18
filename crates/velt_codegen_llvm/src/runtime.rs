@@ -157,6 +157,15 @@ const SQRT_F32: &str = "define internal float @velt.sqrt_f32(float %x) alwaysinl
   ret float %r
 }";
 
+/// `a * b + c` rounded once (`velt_math_fma_f64`): `llvm.fma.f64`, one `fmadd` / `vfmadd` where
+/// the target has FMA, else C's `fma`.
+const FMA_F64_DECL: &str = "declare double @llvm.fma.f64(double, double, double)";
+const FMA_F64: &str = "define internal double @velt.fma_f64(double %a, double %b, double %c) \
+alwaysinline nounwind {
+  %r = call double @llvm.fma.f64(double %a, double %b, double %c)
+  ret double %r
+}";
+
 /// A runtime math function the backend calls through a helper defined in the module instead:
 /// the helper's name and its definition (with what it declares). The helper has the
 /// operation's signature (`MathOp::signature`).
@@ -175,6 +184,7 @@ pub(crate) fn inline_helper(op: MathOp) -> Option<InlineHelper> {
         MathOp::F32Bits => ("@velt.f32_bits", &[F32_BITS]),
         MathOp::BitsF32 => ("@velt.bits_f32", &[BITS_F32]),
         MathOp::SqrtF32 => ("@velt.sqrt_f32", &[SQRT_F32_DECL, SQRT_F32]),
+        MathOp::FmaF64 => ("@velt.fma_f64", &[FMA_F64_DECL, FMA_F64]),
         _ => return None,
     })
 }
@@ -304,10 +314,7 @@ mod tests {
                 || inline_helper(op).is_some()
                 || crate::half::helper(op, crate::half::HalfNative::None).is_some()
                 || op.rounding().is_some();
-            assert!(
-                inline || matches!(op, MathOp::PowF64 | MathOp::PowI64),
-                "{op:?}"
-            );
+            assert!(inline || op == MathOp::PowI64, "{op:?}");
         }
         assert_eq!(
             Allocator::of("velt_rt_alloc", &[Ty::U64, Ty::U64], Ty::Ptr),

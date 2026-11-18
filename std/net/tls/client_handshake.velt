@@ -8,6 +8,7 @@
 import { p256Ecdh, p256PrivateKey, p256PublicKey } from "velt/crypto/p256";
 import { x25519 } from "velt/crypto/x25519";
 import { sha256 } from "velt/crypto/sha256";
+import { sha384 } from "velt/crypto/sha512";
 import { utf8Decode } from "velt/encoding/utf8";
 import { arrayMove, arrayReserve, arraySetLen } from "velt/lang/intrinsics";
 import {
@@ -22,6 +23,7 @@ import { clientHello, EXT_ALPN, HelloInput, SECP256R1, X25519 } from "velt/net/t
 import { ByteReader } from "velt/net/tls/byte_reader";
 import { ByteWriter } from "velt/net/tls/byte_writer";
 import { expandLabel, finishedMac, handshakeSecret, masterSecret } from "velt/net/tls/key_schedule";
+import { AES_256_GCM_SHA384, hashLength } from "velt/net/tls/record_cipher";
 import { parseServerHello } from "velt/net/tls/server_hello";
 
 // Handshake message types.
@@ -134,7 +136,11 @@ export class ClientHandshake {
     arrayMove(this.transcript, at, m, 0, n);
   }
 
+  // The transcript's hash with the suite's hash (SHA-256 until the server chose).
   private hash(): u8[] {
+    if (this.suite == AES_256_GCM_SHA384) {
+      return sha384(this.transcript);
+    }
     return sha256(this.transcript);
   }
 
@@ -184,16 +190,23 @@ export class ClientHandshake {
   }
 
   private serverHello(m: u8[], body: u8[]): i32 {
-    const sh = parseServerHello(body, this.input.sessionId, this.group, this.retried);
+    const sh = parseServerHello(
+      body,
+      this.input.sessionId,
+      this.input.suites,
+      this.group,
+      this.retried,
+    );
     if (sh.retry) {
       if (sh.cookie == null && sh.group == 0) {
         throw new TlsFailure(ILLEGAL_PARAMETER, "a HelloRetryRequest that changes nothing");
       }
       this.retried = true;
       this.suite = sh.suite;
-      // The transcript restarts with message_hash(ClientHello1) (RFC 8446 §4.4.1).
+      // The transcript restarts with message_hash(ClientHello1) (RFC 8446 §4.4.1), with the
+      // hash of the suite the HelloRetryRequest chose.
       const first = this.hash();
-      this.transcript = [254, 0, 0, 32];
+      this.transcript = [254, 0, 0, first.length as u8];
       this.add(first);
       this.add(m);
       let publicKey = this.input.publicKey;
@@ -230,10 +243,10 @@ export class ClientHandshake {
           : "the server's secp256r1 share is not a point on the curve",
       );
     }
-    const hs = handshakeSecret(shared);
+    const hs = handshakeSecret(shared, hashLength(this.suite));
     const h = this.hash();
-    this.clientHandshake = expandLabel(hs, "c hs traffic", h, 32);
-    this.serverHandshake = expandLabel(hs, "s hs traffic", h, 32);
+    this.clientHandshake = expandLabel(hs, "c hs traffic", h, h.length);
+    this.serverHandshake = expandLabel(hs, "s hs traffic", h, h.length);
     this.master = masterSecret(hs);
     this.state = WAIT_ENCRYPTED_EXTENSIONS;
     return HANDSHAKE_KEYS;
@@ -259,7 +272,7 @@ export class ClientHandshake {
         }
         this.alpn = p;
       } else {
-        e.bytes(e.left());
+        e.skip(e.left());
       }
       e.finish();
     }
@@ -279,8 +292,9 @@ export class ClientHandshake {
 
   private finished(m: u8[], body: u8[]): i32 {
     const expected = finishedMac(this.serverHandshake, this.hash());
-    let diff: u8 = body.length == 32 ? 0 : 1;
-    for (let i: usize = 0; i < 32 && i < body.length; i++) {
+    const n = expected.length;
+    let diff: u8 = body.length == n ? 0 : 1;
+    for (let i: usize = 0; i < n && i < body.length; i++) {
       diff |= expected[i] ^ body[i];
     }
     if (diff != 0) {
@@ -288,8 +302,8 @@ export class ClientHandshake {
     }
     this.add(m);
     const h = this.hash();
-    this.clientApplication = expandLabel(this.master, "c ap traffic", h, 32);
-    this.serverApplication = expandLabel(this.master, "s ap traffic", h, 32);
+    this.clientApplication = expandLabel(this.master, "c ap traffic", h, h.length);
+    this.serverApplication = expandLabel(this.master, "s ap traffic", h, h.length);
     const w = new ByteWriter();
     const context = this.certRequestContext;
     if (context != null) {

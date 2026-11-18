@@ -17,14 +17,11 @@
 // - The winner's result is in the slot; the others are given up in array order (dropped: a
 //   started promise runs on, its rejection handled as the caller marked it). A race over no
 //   children never settles. Dropped before it settled, it drops its children in array order.
-// Off every worker (code the runtime's executor runs on its own threads, sched_off.velt) it is
-// the runtime's race.
+// Made on a thread that isn't a worker, it is the same race (sched_all.velt).
 
 import { addressLoad, fnAddress, futDrop, futPoll, stateDrop } from "velt/lang/intrinsics";
 import * as al from "./sched_all";
 import * as m from "./sched_mem";
-import * as off from "./sched_off";
-import * as t from "./sched_task";
 
 // The race's own field, in a join header word it does not use: whether a rejection loses while
 // others run (`Promise.any`).
@@ -32,9 +29,6 @@ const R_FIRST_OK: usize = 0;
 
 /** `velt_rt_race*`'s job: a race over the `n` futures at `futs` (theirs now), results of `size`. */
 export function schedRace(futs: usize, count: u64, bytes: u64, rdrop: usize, firstOk: bool): usize {
-  if (!t.onWorker()) {
-    return off.race(futs, count, bytes, rdrop, firstOk);
-  }
   const n = count as usize;
   const size = bytes as usize;
   // The future after the records, at a 16-byte offset (the allocation is aligned to 8, every

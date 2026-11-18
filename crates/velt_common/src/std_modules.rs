@@ -108,6 +108,7 @@ table! {
     lang_hooks_number_float => "lang/hooks/number_float",
     lang_hooks_number_text => "lang/hooks/number_text",
     lang_hooks_number_write => "lang/hooks/number_write",
+    lang_hooks_pow => "lang/hooks/pow",
     lang_hooks_prebuilt_probe => "lang/hooks/prebuilt_probe",
     lang_hooks_process => "lang/hooks/process",
     lang_hooks_process_statics => "lang/hooks/process_statics",
@@ -142,6 +143,7 @@ table! {
     lang_proxy_traps => "lang/proxy/traps",
     /// The prelude `Map`'s internals (std/lang/map/*.velt).
     lang_map => "lang/map",
+    lang_math_fma_check => "lang/math/fma_check",
     lang_record => "lang/record",
     lang_sort => "lang/sort",
     lang_sort_stable => "lang/sort/stable",

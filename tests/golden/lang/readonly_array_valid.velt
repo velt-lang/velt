@@ -1,0 +1,99 @@
+// Valid TypeScript with read-only arrays (#3061): comparing a mutable and a read-only array, rest
+// destructuring (a fresh, mutable array), a class field `T[]` for an interface field `readonly
+// T[]`, a mutable array one level down where a read-only one is expected (a promise, an array, an
+// object field, a tuple), and `Readonly<T[]>`. tsc accepts it, and Node prints the same.
+interface I {
+  xs: readonly number[];
+}
+class D implements I {
+  xs: number[] = [1];
+}
+
+async function f(): Promise<number[]> {
+  return [1];
+}
+
+function show(p: { xs: readonly number[] }): number {
+  return p.xs.length;
+}
+
+// A field-only interface parameter fed an object type, an object type nested in another, and
+// `implements` with an optional field or nested arrays.
+interface P {
+  xs: readonly number[];
+}
+function len(p: P): number {
+  return p.xs.length;
+}
+
+type In = { xs: readonly number[] };
+type Out = { inner: In; n: number };
+
+interface Opt {
+  xs?: readonly number[];
+}
+class WithOpt implements Opt {
+  xs?: number[] = [1];
+}
+
+// A recursive object type (an interface and an alias).
+interface List<T> {
+  v: T;
+  next: List<T> | null;
+}
+type Chain<T> = { v: T; next: Chain<T> | null };
+
+interface Grid {
+  xs: readonly (readonly number[])[];
+}
+class Rows implements Grid {
+  xs: number[][] = [[1]];
+}
+
+async function main(): Promise<void> {
+  const m: number[] = [1];
+  const r: readonly number[] = m;
+  console.log(m === r, r === m, m !== r);
+
+  const ro: readonly number[] = [1, 2];
+  const [a, ...rest] = ro;
+  rest.push(1);
+  const [...all] = ro;
+  all.push(3);
+  console.log(a, rest, all, ro);
+
+  const d = new D();
+  d.xs.push(2);
+  console.log(d.xs.length);
+
+  const p: Promise<readonly number[]> = f();
+  console.log((await p).length);
+
+  const g: number[][] = [[1]];
+  const rr: readonly (readonly number[])[] = g;
+  console.log(rr[0].length);
+
+  const o: { xs: number[] } = { xs: [1, 2] };
+  console.log(show(o));
+
+  const t: [number[], string] = [[1], "s"];
+  const u: [readonly number[], string] = t;
+  console.log(u[0].length, u[1]);
+
+  const w: Readonly<number[]> = [1, 2, 3];
+  console.log(w.length);
+
+  const po: { xs: number[] } = { xs: [1, 2] };
+  console.log(len(po));
+  const nested: { inner: { xs: number[] }; n: number } = { inner: { xs: [1] }, n: 2 };
+  const out: Out = nested;
+  nested.inner.xs.push(3);
+  console.log(out.inner.xs.length, JSON.stringify(out));
+  console.log(new WithOpt().xs?.length, new Rows().xs.length);
+
+  const l: List<number[]> = { v: [1], next: { v: [2, 3], next: null } };
+  const l2: List<readonly number[]> = l;
+  const c: Chain<number[]> = { v: [4], next: null };
+  const c2: Chain<readonly number[]> = c;
+  console.log(l2.v.length, l2.next?.v.length, c2.v.length);
+}

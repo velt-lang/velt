@@ -226,8 +226,8 @@ unsafe fn is_running(set: *mut LocalSet, f: *mut VeltFut) -> bool {
     false
 }
 
-/// Run member `f` now, from inside a poll of the task's root or of another node (a loser of a
-/// combinator that just settled, local/mod.rs `give_up`): like [`run`], except that the root,
+/// Run member `f` now, from inside a poll of the task's root or of another node (a promise its
+/// owner just detached, losers.rs): like [`run`], except that the root,
 /// which is being polled, is woken instead of polled when `f` resumes it. A node that is being
 /// polled already is queued instead.
 pub(super) unsafe fn run_now(set: *mut LocalSet, t: &TaskCx, f: *mut VeltFut) {

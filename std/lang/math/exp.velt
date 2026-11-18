@@ -1,0 +1,194 @@
+// velt/lang/math (internal): `Math.exp` and `Math.expm1`, ported from fdlibm's e_exp.c and
+// s_expm1.c as V8 has them (src/base/ieee754.cc), so that results have the same bits as in
+// JavaScript engines. Copyright (C) 1993 by Sun Microsystems, Inc.; see NOTICE.
+
+import { fromWords, highWord, lowWord, withHighWord } from "velt/lang/math/words";
+
+const O_THRESHOLD: f64 = 7.09782712893383973096e+02;
+const U_THRESHOLD: f64 = -7.45133219101941108420e+02;
+const LN2_HI: f64 = 6.93147180369123816490e-01;
+const LN2_LO: f64 = 1.90821492927058770002e-10;
+const INV_LN2: f64 = 1.44269504088896338700e+00;
+const TWOM1000: f64 = 9.33263618503218878990e-302;
+const TWO1023: f64 = 8.988465674311579539e307;
+
+const P1: f64 = 1.66666666666666019037e-01;
+const P2: f64 = -2.77777777770155933842e-03;
+const P3: f64 = 6.61375632143793436117e-05;
+const P4: f64 = -1.65339022054652515390e-06;
+const P5: f64 = 4.13813679705723846039e-08;
+
+const Q1: f64 = -3.33333333333331316428e-02;
+const Q2: f64 = 1.58730158725481460165e-03;
+const Q3: f64 = -7.93650757867487942473e-05;
+const Q4: f64 = 4.00821782732936239552e-06;
+const Q5: f64 = -2.01099218183624371326e-07;
+
+/**
+ * e^x. The argument is reduced to `r = x - k*ln2` with |r| <= 0.5*ln2, e^r comes from a
+ * rational approximation, and the result is scaled by 2^k. The error is below 1 ulp.
+ */
+export function exp(x0: f64): f64 {
+  let x = x0;
+  let hi = 0.0;
+  let lo = 0.0;
+  let k: i32 = 0;
+  const hw = highWord(x);
+  const neg = hw < 0;
+  const hx = hw & 0x7fffffff;
+  if (hx >= 0x40862e42) {
+    // |x| >= 709.78: infinite, NaN, or over or under the range.
+    if (hx >= 0x7ff00000) {
+      if ((((hx & 0xfffff) as u32) | lowWord(x)) != 0) {
+        return x + x;
+      }
+      return neg ? 0.0 : x;
+    }
+    if (x > O_THRESHOLD) {
+      return Infinity;
+    }
+    if (x < U_THRESHOLD) {
+      return 0.0;
+    }
+  }
+  if (hx > 0x3fd62e42) {
+    // |x| > 0.5 ln2
+    if (hx < 0x3ff0a2b2) {
+      // and |x| < 1.5 ln2
+      if (x == 1.0) {
+        return 2.718281828459045;
+      }
+      if (neg) {
+        hi = x + LN2_HI;
+        lo = -LN2_LO;
+        k = -1;
+      } else {
+        hi = x - LN2_HI;
+        lo = LN2_LO;
+        k = 1;
+      }
+    } else {
+      k = (INV_LN2 * x + (neg ? -0.5 : 0.5)) as i32;
+      const t = k as f64;
+      hi = x - t * LN2_HI;
+      lo = t * LN2_LO;
+    }
+    x = hi - lo;
+  } else if (hx < 0x3e300000) {
+    // |x| < 2^-28
+    return 1.0 + x;
+  }
+  const t = x * x;
+  const c = x - t * (P1 + t * (P2 + t * (P3 + t * (P4 + t * P5))));
+  if (k == 0) {
+    return 1.0 - ((x * c) / (c - 2.0) - x);
+  }
+  const y = 1.0 - ((lo - (x * c) / (2.0 - c)) - hi);
+  if (k >= -1021) {
+    if (k == 1024) {
+      return y * 2.0 * TWO1023;
+    }
+    return y * fromWords(0x3ff00000 + (k << 20), 0);
+  }
+  return y * fromWords(0x3ff00000 + ((k + 1000) << 20), 0) * TWOM1000;
+}
+
+/**
+ * e^x - 1, accurate for `x` near 0 too. Reduced as in `exp`; the correction term `c` keeps the
+ * rounding error of the reduction. The error is below 1 ulp.
+ */
+export function expm1(x0: f64): f64 {
+  let x = x0;
+  let k: i32 = 0;
+  let c = 0.0;
+  const hw = highWord(x);
+  const neg = hw < 0;
+  const hx = hw & 0x7fffffff;
+  if (hx >= 0x4043687a) {
+    // |x| >= 56 ln2
+    if (hx >= 0x40862e42) {
+      // |x| >= 709.78
+      if (hx >= 0x7ff00000) {
+        if ((((hx & 0xfffff) as u32) | lowWord(x)) != 0) {
+          return x + x;
+        }
+        return neg ? -1.0 : x;
+      }
+      if (x > O_THRESHOLD) {
+        return Infinity;
+      }
+    }
+    if (neg) {
+      // x < -56 ln2: -1 with inexact
+      return -1.0;
+    }
+  }
+  if (hx > 0x3fd62e42) {
+    // |x| > 0.5 ln2
+    let hi = 0.0;
+    let lo = 0.0;
+    if (hx < 0x3ff0a2b2) {
+      // and |x| < 1.5 ln2
+      if (neg) {
+        hi = x + LN2_HI;
+        lo = -LN2_LO;
+        k = -1;
+      } else {
+        hi = x - LN2_HI;
+        lo = LN2_LO;
+        k = 1;
+      }
+    } else {
+      k = (INV_LN2 * x + (neg ? -0.5 : 0.5)) as i32;
+      const t = k as f64;
+      hi = x - t * LN2_HI;
+      lo = t * LN2_LO;
+    }
+    x = hi - lo;
+    c = (hi - x) - lo;
+  } else if (hx < 0x3c900000) {
+    // |x| < 2^-54
+    return x;
+  }
+  const hfx = 0.5 * x;
+  const hxs = x * hfx;
+  const r1 = 1.0 + hxs * (Q1 + hxs * (Q2 + hxs * (Q3 + hxs * (Q4 + hxs * Q5))));
+  let t = 3.0 - r1 * hfx;
+  let e = hxs * ((r1 - t) / (6.0 - x * t));
+  if (k == 0) {
+    return x - (x * e - hxs);
+  }
+  const twopk = fromWords(0x3ff00000 + (k << 20), 0);
+  e = x * (e - c) - c;
+  e -= hxs;
+  if (k == -1) {
+    return 0.5 * (x - e) - 0.5;
+  }
+  if (k == 1) {
+    if (x < -0.25) {
+      return -2.0 * (e - (x + 0.5));
+    }
+    return 1.0 + 2.0 * (x - e);
+  }
+  if (k <= -2 || k > 56) {
+    // exp(x) - 1 from exp(x)
+    let y = 1.0 - (e - x);
+    if (k == 1024) {
+      // 2^1023, in the digits V8 writes it with (its shortest ones).
+      y = y * 2.0 * 8.98846567431158e+307;
+    } else {
+      y = y * twopk;
+    }
+    return y - 1.0;
+  }
+  if (k < 20) {
+    // t = 1 - 2^-k
+    t = withHighWord(1.0, 0x3ff00000 - (0x200000 >> k));
+    return (t - (e - x)) * twopk;
+  }
+  // t = 2^-k
+  t = fromWords((0x3ff - k) << 20, 0);
+  let y = x - (e + t);
+  y += 1.0;
+  return y * twopk;
+}

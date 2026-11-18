@@ -74,21 +74,16 @@ fn declare_function() {
     assert!(m.items[1].exported);
 }
 
-/// `declare system function` is gone (std binds the C library with `declare c("c")`): an error
-/// naming the new form, which parses as a `declare function`; `system` is still a name.
+/// `system` is a name, not a modifier of `declare`: `declare system function` is an ordinary
+/// parse error.
 #[test]
-fn declare_system_function_is_an_error() {
+fn system_is_a_name() {
     for src in [
         "declare system function close(fd: i32): i32;",
         "declare async system function close(fd: i32): i32;",
     ] {
         let e = errors(src);
-        assert_eq!(e.len(), 1, "{src}: {e:?}");
-        assert!(
-            e[0].contains("`declare system function` was removed"),
-            "{e:?}"
-        );
-        assert!(e[0].contains("declare c(\"c\")"), "{e:?}");
+        assert!(!e.is_empty(), "{src}: parsed");
     }
     let m = parse_ok(
         "function system(): i32 { return 1; }
@@ -124,27 +119,15 @@ fn declare_intrinsic_function() {
     assert!(matches!(&m.items[2].kind, ItemKind::Function(f) if f.sig.name.name == "intrinsic"));
 }
 
-/// The old `declare [unsafe] intrinsic function` is an error naming the new form, and still
-/// parses as it (a function may be named `intrinsic` as before).
+/// `intrinsic` is a name, not a modifier of `declare` (the decorator is `@intrinsic`): `declare
+/// intrinsic function` is an ordinary parse error.
 #[test]
-fn declare_intrinsic_function_is_the_old_form() {
-    for (src, form) in [
-        (
-            "declare intrinsic function strLen(s: string): usize;",
-            "`@intrinsic declare function`",
-        ),
-        (
-            "declare unsafe intrinsic function load<T>(a: usize): T;",
-            "`@intrinsic declare unsafe function`",
-        ),
+fn intrinsic_is_a_name() {
+    for src in [
+        "declare intrinsic function strLen(s: string): usize;",
+        "declare unsafe intrinsic function load<T>(a: usize): T;",
     ] {
-        let (m, d) = parse(src);
-        assert_eq!(d.len(), 1, "{src}: {d:?}");
-        assert!(d[0].message.contains(form), "{}", d[0].message);
-        let ItemKind::ExternFn(sig) = &m.items[0].kind else {
-            panic!()
-        };
-        assert_eq!(sig.is_unsafe, src.contains("unsafe"));
+        assert!(!errors(src).is_empty(), "{src}: parsed");
     }
     parse_ok("declare function intrinsic(): void;");
 }

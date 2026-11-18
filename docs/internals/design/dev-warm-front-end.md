@@ -1,388 +1,261 @@
-# Design: a warm front end for `velt dev` (hot reload phase 4)
+# A warm front end for `velt dev`
 
-Status: draft for review (#2621). Extends [hot-reload.md](hot-reload.md) ("Phase 4: keep the front end
-warm") and borrows the interface model of [package-cache.md](package-cache.md) (#2189), in
-memory instead of on disk.
+Status: partly implemented. Issue: [#2621](https://github.com/velt-lang/velt/issues/2621).
 
-## Problem
+## Summary
 
-Developers expect a save to show in the running backend as fast as Vite shows it in the
-browser: well under 100 ms. `velt dev` hot-swaps only the functions that changed, but it builds
-the whole program again first, on every save.
+`velt dev` hot-swaps only the functions that changed ([hot reload](hot-reload.md)), but without
+help it builds the whole program again first, on every save. Its JIT host is a long-lived process
+that already holds the running version, so it keeps the work that led there too: the checked
+context, the final lowering pass, the optimizer's per-function facts and the counted types. A
+save that edits function bodies and nothing else is checked, lowered, optimized and verified for
+the edited functions from that kept state, with everything else fixed. The output is exactly what
+the cold front end produces for the same sources; any edit the warm path cannot prove it handles
+takes the cold front end, which stays the reference.
 
-Measured on `examples/http_hello.velt` (the `http-server` package, about 20 lines of program
-code over std and the package), Linux x86-64, 4 cores, release `velt`, `velt dev -v`, a one-string
-edit of the handler, save to the first response with the new body:
+The goal is that a save that edits the program's own code reaches the running program in under
+100 ms for programs the size of `examples/apps/*`.
 
-| step | time |
-|---|---:|
-| watcher settle delay (`watch::SETTLE`) | 30 ms |
-| parse (std from the AST cache, the package and the program parsed again) | ~80 ms |
-| sema (everything reached, std and the package included) | 190–250 ms |
-| lower (the whole program) | 120–140 ms |
-| optimize (debug pipeline, every function) | ~20 ms |
-| diff, JIT of the 3 changed functions, swap | ~10–20 ms |
-| **save to first new response** | **~540 ms median (498–581)** |
+## Motivation
 
-`velt run` after the same edit spends the same front end plus Cranelift and the link: about
-560 ms. Of a reload's sema (`VELT_SEMA_TIMINGS`), `ownership_passes` is 127 ms, `check_bodies`
-95 ms and `collect` 30 ms; lowering's time is spread over about 2,000 functions, none above
-1 ms. Nearly all of that work is std and the package, which did not change: the program's own
-code is a few functions.
+The cold front end is a pure function of the sources, run from scratch per save. Nearly all of
+its work is std and the packages, which do not change during a session: on
+`examples/http_hello.velt` (about 20 lines of program code over std and the `http-server`
+package), sema's whole-program passes, `check_bodies` and lowering together take several hundred
+milliseconds per save, while the program's own code is a few functions. `VELT_SEMA_TIMINGS`
+prints sema's time per pass; `velt dev -v` prints the time of each stage of a reload.
 
-The front end is a pure function of the sources, run from scratch per save. The dev host is a
-long-lived process that already holds the previous version (its VIR and its JIT code) and
-already decides per function what changed (`velt_vir::fingerprint`, `Mode::HotReload`). What it
-does not keep is any of the work that led there.
+## Design
 
-## Goal
+### The model: library and app, interface and body
 
-A save that edits the program's own code (not std, not a package, not `package.velt`) reaches
-the running program in **under 100 ms** on the machine above, for programs the size of
-`examples/apps/*`. The output is exactly what the cold front end produces: same diagnostics,
-same VIR for the swapped functions. Anything outside the fast path falls back to today's full
-build, which stays the reference.
-
-## Model: the library is checked once per session
-
-A program in `velt dev` is two parts:
+A program in `velt dev` has two parts:
 
 - the **library**: std and every package (`SourceModule::is_std`, `is_dependency`), which
-  essentially never changes during a session (an edit there, or of `package.velt`/the lockfile,
-  starts a cold build, as today);
+  essentially never changes during a session (an edit there, or of `package.velt` or the
+  lockfile, takes the cold front end);
 - the **app**: the program's own modules.
 
-Today each save computes `F(library ∪ app)`. The warm host computes the library's part once,
-keeps it, and per save computes only what the app's edit can change. Like package-cache.md, the
-boundary is an **interface**: what the app may observe of the library (declarations, signatures,
-layouts' inputs, and the summaries sema computes from bodies: ownership pass modes, error sets,
-write effects, fresh returns, `holds_promise`). Unlike package-cache.md, nothing is serialized:
-the host keeps the structures in memory, so no encoder, no cache key and no format version.
+Every definition has an *interface*, what other code can observe of it (its signature, inferred
+return type, error set, ownership pass modes, write effects, fresh returns), and a *body*. The
+common save while iterating edits a function's body and nothing else. When a body edit leaves
+the interface the same, nothing that depends on the definition has to be redone: passes that read
+other definitions read their interfaces, which are the same by construction (early cutoff).
 
-The hard part is the same in both designs: sema and lowering are whole-program today. Each step
-below makes one stage incremental where it can be shown exact, and each ships on its own.
+The host keeps everything in memory. Unlike the on-disk unit cache of
+[build-architecture.md](build-architecture.md), nothing is serialized, so there is no encoder,
+cache key or format version.
 
-## Steps
+### When a save takes the warm path
 
-Each step lists what it keeps, what it reruns, how it falls back and the expected saving.
+Warm reloads are on by default in `velt dev`; `VELT_DEV_WARM=off` turns them off. Every cold build
+in `velt dev` keeps its state for the next save. The warm path helps only while the program keeps
+running: a program that exits is started again as a new process, with a full build.
 
-### Step 1: warm parse (expected −30 ms, after a −25 ms fix for every build)
+A save takes the cold front end when:
 
-Measured inside the loader (warm caches, `http_hello`): the parse stage was ~89 ms, of which
-decoding std's cached ASTs took ~22 ms, parsing the package's and the program's 53 files ~9 ms,
-and `globals::mentions` (whether a module names one of the globals, a whole-source substring
-search per module per name) about a quarter of loading. The last one is fixed for every build
-by splitting each module's source into its words once (`globals::Words`): the stage is now
-60–70 ms.
+- the change detection finds anything but body edits, a function it names is not found, or more
+  than one declaration has its name (methods are named by kind: `T.get v`, `T.set v`,
+  `T.static make`);
+- what the source rewrites and scans find of the program differs from the kept check's: every
+  rewritten module but the edited ones, whose trees the rewrites must leave as written, and the
+  scans' and rewrites' side outputs, such as which generators are thrown into;
+- the edit moves any other definition of its file (a body whose length changes, with definitions
+  after it): the kept code of those definitions holds its old source positions, which lowering
+  would resolve against the new text;
+- an edited function's inferred result type or what it throws (its throw sources, by kind and
+  type) changes: other bodies' checks read them;
+- walking the live code again makes anything new live or demands a std module: the kept check
+  loads no std and checks no std body late;
+- the edited bodies report any diagnostic (warnings included, which the cold build then shows),
+  or the reload needs another round of the throws sets, the sharing retry, or generated code the
+  kept check did not generate;
+- the warm path fails with an internal error (a panic): the kept state is dropped and the cold
+  build keeps a new one.
 
-The host keeps each file's AST (after the loader's own processing) keyed by its contents' hash
-and the parse options (conditions, `define`s). A reload neither decodes std's ASTs again nor
-parses unchanged files; it parses only files whose hash changed, and rebuilds the module graph
-from the kept ASTs. Spans carry a `FileId`, which a reload's new source map may number
-differently: the host keeps one source map for the session (unchanged files keep their ids), or
-re-targets a kept AST's spans.
+After a warm check, the lowering may still be done whole (step 3E below lists when). A warm
+reload reports what a cold one would: the warnings of the code the edit left alone, kept in the
+context, are printed again on every reload.
 
-- Fallback: a file not in the map is parsed, as today.
-- Owner: `velt_loader` (a `ParsedFiles` map the caller may pass, used by the dev host only);
-  `veltc` dev host keeps it in `DevSession`.
-- Also: the whole-program source rewrites in front of sema (`module_chunks`, `nested_closures`,
-  …; 11 ms here, parallel since #2605) take per-module results that can be kept the same way,
-  keyed by the module's AST hash, once each rewrite is split into a per-module part and a
-  whole-program part.
+## Compilation
 
-### Step 2: warm lowering (expected −110 ms)
+The warm path is made of parts that each fall back to the cold front end when unsure. Step 2 is
+the counted types; step 3 is the body-edit fast path, parts A to E.
 
-**2a, done: the counted types carried over (−90 to −110 ms).** Lowering lowers the whole program
-again while a pass finds more types that must be counted: on `http_hello` two passes of about
-100 ms each, the first one only to find them. The dev host keeps the counted types of each
-version (`velt_vir::CountedSeed`: types by their stable spelling `Cx::type_key`, definitions by
-qualified name) and hands them to the next version's lowering (`LowerOptions::counted_seed`,
-`lower_seeded`), whose first pass then already uses them and is the only one when the edit
-counts the same types. Measured in `velt dev` on `http_hello`: lowering per save from about
-220 ms to about 110 ms. Counted sets only grow within a lowering, so a type an edit stops
-needing stays counted until the host restarts: a representation the cold build would not pick,
-with the same behavior; the one counted fact that is behavior, an `RwLock` whose `read` is
-exclusive (`lock_exclusive`), is never seeded. Applying a seed spells every type of the new
-version's table (`Cx::type_key`), which the measured win includes. `velt build` and `velt run`
-never use a seed.
+### Step 2: the counted types carried over
 
-**2b: reuse the lowered functions.** Lowering builds every reached instance through a worklist,
-then lowers again while the counted-types pass grows (`lower/boxing/`). A function's VIR depends on its checked HIR, the
-types it mentions, and whole-program facts (counted types, the shared flag, union tags, class
-ids, parameter attributes). package-cache.md's **facts trace** is exactly the record needed:
-lowering asks those facts through one `Facts` interface, and a recorder keeps every question
-with its answer.
+Lowering lowers the whole program again while a pass finds more types that must be counted
+(`lower/boxing/`), so a cold lowering is usually two passes, the first one only to find them. The
+dev host keeps the counted types of each version (`velt_vir::CountedSeed`, in
+`crates/velt_vir/src/lower/boxing/seed.rs`: types by their stable spelling `Cx::type_key`,
+definitions by qualified name) and hands them to the next version's lowering
+(`LowerOptions::counted_seed`, `velt_vir::lower_seeded`), whose first pass then already uses them
+and is the only one when the edit counts the same types.
 
-The host keeps, per function key (symbol: stable across versions, hot-reload.md), the previous
-version's VIR, its HIR fingerprint (a new `velt_sema` fingerprint of the definition's HIR and
-the signatures it calls, like `velt_vir::fingerprint` one stage earlier) and its facts trace. A
-reload's worklist reuses the kept VIR of an instance whose HIR fingerprint is unchanged and
-whose trace holds in the new program; it lowers the rest.
+Counted sets only grow within a lowering, so a type an edit stops needing stays counted until the
+host restarts: a representation the cold build would not pick, with the same behavior. The one
+counted fact that is behavior, whether an `RwLock`'s `read` is exclusive (`lock_exclusive`), is
+never seeded, nor the weak and proxy sets it is computed from; a seeded lowering that ends with a
+lock value and any weak or proxy fact is done again without the seed. `velt build` and `velt run`
+never use a seed. The same seed tells the host whether the running program's values fit the next
+version's code (`CountedSeed::representation_change`, hot-reload.md "Classification").
 
-- Fallback: any instance without a kept entry, or whose trace fails, is lowered as today.
-- Verification: `VELT_DEV_VERIFY=1` lowers everything as well and compares the VIR
-  fingerprints of the reused functions (debug aid and CI test mode).
-- Shared work with package-cache.md: the `Facts` interface and recorder are its step 1; this
-  step uses them without storage.
-- The debug optimizer then runs only on lowered (not reused) functions: its passes are per
-  function in the debug pipeline (−18 ms).
+### Step 3: the body-edit fast path
 
-### Step 3: the body-edit fast path (early cutoff)
+Per save:
 
-The common save while iterating edits a function's body and nothing else. Every definition has an
-*interface* (what other code can observe: its signature, inferred return type, error set, ownership
-pass modes, write effects, fresh returns) and a *body*. When a body edit leaves the interface the
-same, nothing that depends on the definition is redone. That cut-off replaces most of what 3c below
-would have to prove pass by pass: passes that read other definitions read their interfaces, which
-are the same by construction.
+1. Parse only the changed files (`velt_loader::reparse`, into the kept check's modules:
+   `KeptCheck::reload_reparsed`) and compare each top-level definition with the running
+   version's by its source text.
+2. Check only the changed bodies, in the kept checking context, with every other definition's
+   results fixed; then run the passes after the bodies' check.
+3. Lower the functions of the edited files in the kept lowering context and splice them into the
+   running version's program; verify and optimize only the changed functions, and hand them to
+   the JIT, which compiles only what changed.
 
-The fast path, per save:
-1. Parse only the changed files (step 1) and compare each top-level definition with the running
-   version's, by its source text: unchanged, a function whose body alone changed, or anything
-   else (a signature, a type, an import, a definition added or removed), which takes the cold
-   front end as today.
-2. Check only the changed bodies, in the running version's checking context kept by the host
-   (sema's `Ctx`, with the modules it borrows), with every other definition's results fixed:
-   the per-function parts of the passes after `check_bodies` (ownership patching, moves,
-   exclusive access, the lock and thread checks) run for those functions alone.
-3. Recompute their interfaces. Unchanged: lower them in the running version's lowering context,
-   splice them into its VIR, and hand that to the JIT (which already compiles only what
-   changed). Changed: the cold front end.
-4. Definitions after an edited one in the same file keep their code but not their positions: the
-   source locations they carry (panic messages, line tables) are shifted by the edit's change
-   in length.
+**A. Change detection** (`crates/veltc/src/dev/edits.rs`). Each top-level definition of the
+program's files is kept as its *shape* (its source text with every function, method and
+constructor body cut out) and the text of each body, by name. A save changed nothing, changed the
+bodies of some functions and nothing else, or changed something else (a signature, a type, an
+import, a definition added or removed), which takes the cold front end. Comparing source text is
+conservative: a comment inside a body counts as a body edit, and one between definitions as
+another change. A reload checks again the bodies changed since the kept check and those changed
+since the running version (`located_since`): a body edited and then undone is the kept check's
+text again, but the running version has the edit. `velt dev -v` reports what a save changed.
 
-What it needs, as separate pull requests, each falling back to the cold front end when unsure:
-- **A. Change detection** (`veltc` dev host): per-definition source hashes and the edit's kind,
-  reported by `velt dev -v`. No behavior change; the gate for the rest.
-- **B. Interface summaries** (`velt_sema::interface`): a hash per function of what other code
-  observes, and one per kind of program-wide fact a body can change, computed from the checked
-  HIR by structure and name (never by `TyId`, `DefId` or `Span`, which move when a body
-  changes), compared between versions. `velt dev -v` says after a body edit whether everything
-  but the edited functions (and their closures) kept its interface (about 5 ms on `http_hello`;
-  the fast path summarizes only the functions it checks again). What it showed: a body edit that
-  makes lazy std check more definitions (the first `new Map` in a program) changes the program's
-  `reached std`, declarations (fields std's bodies assign), implementations and flags, and the
-  lock-free callbacks among std's closures. Such an edit takes the cold front end until C and D
-  can check newly reached std bodies. Facts sema keeps out of the HIR (which functions return
-  fresh values) are not in the summaries: D reruns `fresh_returns` over every widening, which is
-  cheap.
-- **C. A kept checking context** (`velt_sema`, dev only): the host keeps the running version's
-  `Ctx` and modules; a body is checked again in it, with its closures' definitions replaced and
-  its diagnostics its own. The checked `Ctx` is consumed and changed by the finishing steps
-  (`program.rs`: layouts merged, readonly types erased, the definitions moved into the
-  program), so the host keeps a clone made before them. In three pull requests:
-  - *C1:* `Ctx: Clone`, by derives: what it holds by value is copied, and the `Rc`s in it point
-    to data that doesn't change. A clone shares what it borrows: the modules (unchanged), the std
-    modules loaded on demand (`StdLoads`, which only grows: sound to share) and the driver's
-    generator, whose state generating code adds to. `VELT_SEMA_CLONE_CHECK=1` builds every
-    program also from a clone and compares the two field by field (an `ICE` showing the
-    difference). That shows the clone holds what the finishing steps read and that nothing they
-    change is shared; it doesn't show independence in general (a shared cache keyed by `TyId`
-    passes it, since both builds intern types in the same order). Every golden passes with it
-    on. A clone of `http_hello`'s checked context (5,600 definitions) takes 11–15 ms in a debug
-    compiler.
-  - *C2:* an owning kept check (`velt_sema::kept`): the clone, the rewritten modules it
-    borrows (the source rewrites' last copy), the loader's modules when it borrows them, the
-    generated modules given with them, and the driver's `StdLoads`, in one value the dev host
-    keeps (`KeptCheck`, with `-v` for now). The check offers it (`PendingKept`); the driver hands
-    over the vectors and `adopt` takes them only if their heap addresses are the ones borrowed;
-    an address can't tell a vector from another allocated in its place, so `adopt` is `unsafe`
-    and its one caller says why the vectors are the checked ones. The `unsafe` (the clone's `'m`
-    erased, its drop first, `Send`, `adopt`) is in that one module. `borrows_only_what_it_owns`
-    checks that every module the clone reads lies in a buffer the kept check owns (a test fails
-    without memcheck when an owner is dropped), and the tests run clean under memcheck. Kept: the first check of a program (round
-    1) and a check with generated code offered from the cache, `http_hello`'s path. Not kept: a
-    check in which a generator ran, and a script whose variables `script_locals` moved into
-    `main` (another copy of the modules). Measured on `http_hello` (debug compiler, five
-    saves): resident memory 230 MB without, 370 MB with a kept check of 375 modules and 5,474
-    definitions. Most of it is the clone and the moment the original and the clone are both
-    alive during the finishing steps, not the modules; keeping the original and making the
-    finishing steps leave it intact would save both.
-  - *C3:* a save that edits function bodies alone is checked from the kept check
-    (`KeptCheck::reload`, `driver::compile_for_jit_warm`), and lowered as usual. The kept check
-    holds the context from after the bodies' check (before the passes that follow it) and the
-    final one; each reload clones the first, so nothing drifts from one reload to the next. In
-    the clone the edited bodies' first checks are undone together (`recheck::forget_all`,
-    against the lists as the records saw them), each body is given its declaration from the
-    new text and checked again in the order of the first checks, the program's live code is
-    walked again (`lazy_std::reach_again`), and the passes after the bodies' check run over the
-    whole program (`reanalyze`). Warm sema is on by default in `velt dev` (`VELT_DEV_WARM=off`
-    turns it off), so every cold build in `velt dev` keeps its check: two context clones per
-    cold build, not only with `-v`. The warm path only helps while the program keeps running:
-    a program that exits is started again as a new process, with a full build.
+**B. Interface summaries** (`crates/velt_sema/src/interface/`). A hash per function of what other
+code observes, and one per kind of program-wide fact a body can change, computed from the checked
+HIR by structure and name (never by `TyId`, `DefId` or `Span`, which move when a body changes) and
+compared between versions. After a body edit, `velt dev -v` says whether everything but the
+edited functions and their closures kept its interface. A body edit that makes lazy std check
+more definitions (the first `new Map` in a program) changes the program's reached std, the
+declarations std's bodies assign, implementations and flags; such an edit takes the cold front
+end. Facts sema keeps out of the HIR (which functions return fresh values) are not in the
+summaries.
 
-    A reload refuses, and the save takes the cold front end, when:
-    - the change detection finds anything but body edits, or a function it names is not
-      found, or more than one declaration has its name (methods are named by kind:
-      `T.get v`, `T.set v`, `T.static make`);
-    - what the source rewrites and scans find of the program differs from the kept check's
-      (`kept_reload::Facts`: every rewritten module but the edited ones, whose trees the
-      rewrites must leave as written, and the scans' and rewrites' side outputs, such as which
-      generators are thrown into);
-    - the edit moves any other definition of its file (a body whose length changes, with
-      definitions after it): the kept code of those holds its old positions, which lowering
-      would resolve against the new text. Rebasing them is left to step E;
-    - an edited function's inferred result, or what it throws (its throw sources, by kind and
-      type), changes: other bodies' checks read them;
-    - walking the live code again makes anything new live or demands a std module: the kept
-      check loads no std and checks no std body late;
-    - the edited bodies report any diagnostic (warnings included, which the cold build then
-      shows), or the reload needs another round of the throws sets, the sharing retry, or
-      generated code the kept check did not generate;
-    - the warm path fails with an internal error (a panic): the kept check is dropped and the
-      cold build keeps a new one.
+**C. A kept checking context** (`velt_sema`, used by the dev host only). The checked `Ctx` is
+consumed and changed by the finishing steps (`crates/velt_sema/src/program.rs`: layouts merged,
+readonly types erased, the definitions moved into the program), so the host keeps a clone made
+before them.
 
-    A warm reload reports what a cold one would: the warnings of the code the edit left alone,
-    kept in the context, are printed again on every reload.
+- *C1, a cloneable context.* `Ctx` is `Clone` by derives: what it holds by value is copied, and
+  the `Rc`s in it point to data that does not change. A clone shares what it borrows: the modules
+  (unchanged) and the std modules loaded on demand (`StdLoads`, which only grows, so sharing it is
+  sound). `VELT_SEMA_CLONE_CHECK=1` builds every program also from a clone and compares the two
+  field by field (an `ICE` shows the difference), which shows that the clone holds what the
+  finishing steps read and that nothing they change is shared
+  (`crates/veltc/tests/clone_check.rs`). It does not show independence in general: a shared cache
+  keyed by `TyId` passes it, since both builds intern types in the same order. Caches outside
+  `Ctx` keyed by `TyId` or `DefId` (`locked_props::MEMO`) are reset by `module_state::build`,
+  which every reload runs.
+- *C2, an owning kept check* (`crates/velt_sema/src/kept.rs`). A `KeptCheck` holds the clone
+  together with everything it borrows: the rewritten modules (the source rewrites' last copy),
+  the loader's modules when it borrows them, the generated modules given with them, and the
+  driver's `StdLoads`. The check offers it as a `PendingKept`; the driver hands over its vectors,
+  and `PendingKept::adopt` takes them only if their heap addresses are the ones the clone
+  borrows. An address cannot tell a vector from another allocated in its place, so `adopt` is
+  `unsafe`, and its one caller says why the vectors are the checked ones. All the `unsafe` (the
+  clone's lifetime erased, its drop first, `Send`, `adopt`) is in that one module.
+  `borrows_only_what_it_owns` checks that every module the clone reads lies in a buffer the kept
+  check owns. The clone shares no generator and loads no std. A check that added generated
+  modules, or a script whose variables `script_locals` moved into `main` (another copy of the
+  modules), keeps nothing.
+- *C3, the reload* (`KeptCheck::reload`, `driver::compile_for_jit_warm` in
+  `crates/veltc/src/driver/warm.rs`). The kept check holds the context from after the bodies'
+  check (before the passes that follow it) and the final one; each reload clones the first, so
+  nothing drifts from one reload to the next. In the clone, the edited bodies' first checks are
+  undone together (`recheck::forget_all`), each body is given its declaration from the new text
+  and checked again in the order of the first checks, the program's live code is walked again
+  (`lazy_std::reach_again`), and the passes after the bodies' check run over the whole program
+  (`kept_reload::reanalyze`). The refusals listed under "When a save takes the warm path" are in
+  `crates/velt_sema/src/kept_reload.rs`.
 
-    Not done: checking the body in two clones and comparing them. Instead, a differential
-    test (`dev/swap/warm_tests.rs`) compares warm reloads of random body edits of golden
-    programs with cold builds (program and diagnostics). Caches outside `Ctx` keyed by `TyId`
-    or `DefId` (`locked_props::MEMO`) are reset by `module_state::build`, which `reanalyze`
-    runs.
-- **D. Per-function passes** (`velt_sema`): the passes after `check_bodies` run for a set of
-  functions with the rest fixed.
-- **E. Splicing into the lowering** (`velt_vir` `lower/kept.rs`, `velt_opt`,
-  `velt_codegen_cl`, dev only; done). A dev build keeps its final lowering pass
-  (`KeptLowering`), its optimized program and what the debug optimizer learned
-  (`velt_opt::DebugKept`). A warm reload's program is spliced into the kept lowering: every
-  instance of a function defined in a file edited since the kept check, or since the running
-  version (an edit undone is the kept check's text again but not the running version's), is
-  lowered again, with what those newly reach, and only the rebuilt functions come back
-  (`Delta`). The delta is applied to the running version's optimized program; only the
-  changed functions are verified (`verify_changed`, with the program-wide checks), optimized
-  (`optimize_debug_delta`) and compared by the JIT (`DevSession::reload_changed`,
-  `Facts::update`). A reload parses only the edited files (`velt_loader::reparse`) into the
-  kept check's modules (`KeptCheck::reload_reparsed`) and loads nothing again.
+**E. Splicing into the lowering** (`crates/velt_vir/src/lower/kept.rs`, `velt_opt`,
+`velt_codegen_cl`). A dev build keeps its final lowering pass (`KeptLowering`), its optimized
+program and what the debug optimizer learned (`velt_opt::DebugKept`). A warm reload's program is
+spliced into the kept lowering: every instance of a function defined in a file edited since the
+kept check or since the running version is lowered again, with what those newly reach, and only
+the rebuilt functions come back (`Delta`). The delta is applied to the running version's
+optimized program; only the changed functions are verified (`velt_vir::verify_changed`, with the
+program-wide checks), optimized (`velt_opt::optimize_debug_delta`) and compared by the JIT
+(`DevSession::reload_changed`, `Facts::update`, which fingerprints only the changed functions).
 
-  The splice is refused, and the program lowered whole (still from warm sema), when the type
-  table differs; an interface other than a closure's of an edited file changes; lowering learns
-  a new fact (`boxing::Facts` only grow: equal facts mean no other function lowers otherwise);
-  the counted types change; a task becomes pinned; lowering reports something; or an answer
-  lowering keeps between functions changes. Each such answer has a rule (`lower/kept_answers.rs`):
-  answers about an edited function (whether it runs user code or is a known CPU check, an async function's state, a
-  closure's environment, by-pointer params) and whole-program answers computed from every body
-  (what each function and direct callee stores, the fields, slots and globals code assigns, the
-  params that may reach a function value) are taken out, answered anew from the new program,
-  and compared; what is built from them for an edited function alone is taken out; the rest
-  depends only on declarations or on std. An internal error on the warm path builds the save
-  cold. The delta
-  optimizer refuses when a helper inlined into callers, or a numrep parameter fact, would
-  change. Every refusal keeps a new lowering for the next save.
+The splice is refused, and the program lowered whole (still from the warm check), when the type
+table differs; an interface other than that of a closure of an edited file changes; lowering
+learns a new fact (`boxing::Facts` only grow, so equal facts mean no other function lowers
+differently); the counted types change; a task becomes pinned; lowering reports a diagnostic; or
+an answer lowering keeps between functions changes. Each such answer has a rule
+(`crates/velt_vir/src/lower/kept_answers.rs`):
 
-  Positions are not shifted: the kept check's code for the definitions after an edit holds the
-  old spans, which the lowering would resolve against the new text, so C3's refusal of an edit
-  that moves other definitions stays (point 4 above is not done). The warm-against-cold test
-  (`dev/swap/warm_tests.rs`) runs the whole path, version after version as the dev loop
-  carries it, and compares each program with a cold build (aggregates, externs, statics and
-  functions named by content).
-- **F. Verification:** `VELT_DEV_VERIFY=1` also runs the cold front end and compares the
-  swapped functions' VIR fingerprints and the diagnostics; the reload tests run in this mode in
-  CI.
+| Rule | Answers |
+|---|---|
+| taken out, answered anew from the new program, and compared | about an edited function: whether it runs user code or is a known CPU check, an async function's state, a closure's environment, by-pointer params; about the whole program: what each function and direct callee stores, the fields, slots and globals code assigns, the params that may reach a function value |
+| taken out and made again for the edited function alone | what only the edited files' functions name, such as an async function's promise wrapper |
+| kept | the rest, which depends only on declarations or on std |
 
-Expected for a body edit of `http_hello`'s handler: parse ~5 ms, check and passes a few ms,
-lowering a few ms, JIT and swap ~15 ms: about 20–40 ms from save to the new response, against
-about 450 ms now. Edits that change an interface keep today's path until 3a–3c below grow.
+The delta optimizer refuses when a helper inlined into callers, or a numrep parameter fact, would
+change. An internal error on the warm lowering builds the save cold. Every refusal keeps a new
+lowering for the next save.
 
-### Step 3a–3c: warm sema for every edit (expected −170 ms)
+### Testing
 
-The most work and the biggest share. Sema checks the program in one `Ctx`, in rounds; its
-whole-program passes (ownership modes, throws, moves, exclusive access) iterate over every body.
+`crates/veltc/src/dev/swap/warm_tests.rs` runs the whole warm path version after version, as the
+dev loop carries it, and compares each program and its diagnostics with a cold build of the same
+sources (aggregates, externs, statics and functions named by content): hand-written edits for
+each refusal and random body edits of programs from the golden tests
+(`warm_harness.rs`). `crates/veltc/src/dev/swap/tests.rs` checks that the spliced and
+delta-optimized program equals a cold build's VIR and that the warm path parses nothing again;
+`crates/velt_sema/tests/kept_check.rs` checks a kept check's ownership.
 
-**3a. A library snapshot.** On the first build of a session the host checks the library on its
-own once, with lazy std's live set seeded by what the app reaches, and keeps the resulting
-`Ctx` (made `Clone`; it is `!Send`, which the host does not need). The library part of the
-`Ctx` is laid out first: its `DefId`s, scopes, collected declarations and type-table entries
-come before any app definition. Today the loader adds the root module first and the others in
-discovery order (`velt_loader::load_program`), and sema collects in that order; the dev host's
-build would order the library's modules first, and the cold build must check that the order
-changes no diagnostic and no program (a test over the goldens).
+## Runtime cost
 
-**3b. Check the app against the snapshot.** A reload clones the snapshot and runs `collect` and
-`check_bodies` for the app's modules only, plus the library bodies the app newly reaches (lazy
-std's demand, which already works incrementally within a round). Library bodies already checked
-are not checked again.
+Measured on a 10,000-line typed application (50 features), release compiler, a same-length edit
+of one feature's function while the program keeps running, 10 saves each, save to swap: warm
+0.30–0.34 s (median 0.325 s), `VELT_DEV_WARM=off` 1.07–1.16 s (median 1.12 s). Most of a warm
+save is sema's whole-program passes after the bodies (`ownership_passes` alone is the largest);
+the splice, optimizer and verifier take tens of milliseconds each.
 
-**3c. Incremental whole-program passes.** Each pass from `ownership_passes` on is made to run
-over a set of definitions with the library's results as fixed inputs:
-- *Ownership modes* (`infer_modes`): a fixpoint where modes only grow. Library functions'
-  modes depend on library bodies and on function-typed parameters' modes, not on app code that
-  calls them; start from the snapshot's modes and visit the app's functions plus any library
-  function whose callee set gained an app function (a callback stored into library data). A
-  library function whose mode would change invalidates the fast path (fallback).
-- *Throws* (`throws::infer_all`, `fn_types`): library error sets are fixed; function types
-  written without `throws` grow from the closures stored into them, which can be app closures
-  (`FnSites`). If an app edit grows a library seed, fall back.
-- *Per-function checks* (`moves`, `check_exclusive`, `check_locked`, `validate_moves`,
-  `atomic_copies`, `thread_locals`, `struct_tuples`, …): run on the app's functions and on
-  library functions instantiated with app types. They already do per-function work; #2605's
-  `par.rs` showed which parts separate from the `Ctx`.
-- *Instantiation passes* (`record_keys`, `json`, `void_fields`, `undefined_args`): over the
-  instantiations whose type arguments mention app types.
+Memory: a kept check of `http_hello` (375 modules, about 5,500 definitions) raises the host's
+resident memory from about 230 MB to about 370 MB in a debug compiler. Most of it is the clone and
+the moment the original and the clone are both alive during the finishing steps; keeping the
+original and making the finishing steps leave it intact would save both. A clone of that context
+takes 11–15 ms in a debug compiler. `velt dev -v` reports the kept check's size and the process's
+memory.
 
-Each pass states its dependency in a short table (what it reads of other definitions) with a
-test that edits an app function and compares the pass's output with the cold build's. A pass
-that cannot state one stays whole-program, which is correct and only slower.
+## Limitations
 
-- Fallback: a cold front end for the reload whenever 3c detects a library result would change,
-  when the edit changes a declaration the library sees (an app type passed to a library generic
-  gains a field: the instantiation is rechecked, not the snapshot), or on any error (errors
-  are reported from the cold build, so their order and text never depend on the fast path).
-- Verification: `VELT_DEV_VERIFY=1` also runs the cold sema and compares the HIR fingerprints of
-  the app's definitions and the diagnostics.
+- An edit that changes a body's length moves the definitions after it in the same file, and takes
+  the cold front end (most random edits anywhere in a file do).
+- Any change to an interface, a declaration, an import, std or a package takes the cold front end.
+- `velt build` and `velt run` are fresh processes and gain nothing from the warm path; the
+  [unit cache](build-architecture.md) is their counterpart.
 
-### Step 4: the settle delay (expected −20 ms)
+## Not yet implemented
 
-`watch::SETTLE` waits 30 ms after a change for an editor's multi-step save to finish. With
-content hashes from step 1, the host can start the build at the first notification and restart
-it if another write arrives (the build is cheap by then), instead of waiting every time.
-
-## Expected result
-
-| step | today | warm |
-|---|---:|---:|
-| settle | 30 ms | ~5–10 ms |
-| parse | ~80 ms (60–70 after the `Words` fix) | ~5 ms (the edited file, the graph) |
-| sema | ~200 ms | ~20–30 ms (app bodies, incremental passes) |
-| lower + optimize | ~145 ms (one pass since 2a) | ~10 ms (changed functions) |
-| diff, JIT, swap | ~15 ms | ~15 ms |
-| **save to first new response** | **~540 ms** | **~65–75 ms** |
-
-The same warm structures make `velt run` and `velt build` no faster (each is a fresh process);
-package-cache.md is their counterpart, and steps 1–2 share its building blocks.
-
-## Order of work and risk
-
-0. Step 3's fast path A–F: the body edit, the common save, first.
-1. Step 1 (warm parse): small, contained in `velt_loader` and the dev host; measurable alone
-   (its `Words` fix for every build is in).
-2. Step 2a (done), then the `Facts` interface and recorder (package-cache.md step 1) and
-   step 2b.
-3. Step 3a–3b (`Ctx: Clone`, library-first layout, app-only collect/check) with the full
-   whole-program passes still run: already removes `check_bodies`' library share.
-4. Step 3c pass by pass, largest first (`ownership_passes`: 127 ms here), each behind its own
-   dependency test.
-5. Step 4.
-
-Risk is concentrated in step 3: a missed dependency is a wrong program in dev only, never in
-`velt build` (which never takes the fast path), and `VELT_DEV_VERIFY` plus the reload test suite
-(`tests/reload/`) running in verify mode in CI is the guard. Each step falls back to the cold
-front end, so an incomplete step costs speed, not correctness.
-
-## Measuring
-
-`bench/reload` gains the measurement above for `examples/http_hello.velt` and one larger app
-(`examples/apps/shop-api`), reporting save to first new response and the per-stage times, run
-before and after each step.
-
-## Open questions
-
-- Does any sema pass read library bodies in a way that depends on the set of app definitions
-  without going through a call or a type (for example counts over all definitions)? Each such
-  read must become a stated dependency or keep that pass whole-program.
-- Memory: the snapshot doubles the host's front-end memory at worst (one clone per reload,
-  freed after it); measured on `sigx` before step 3 ships.
-- The program's own modules besides the edited one: step 3 treats every app module as edited.
-  A finer split (per app module, like package-cache.md's later work) is only worth it for large
-  apps.
+- **D. Per-function passes.** The passes after `check_bodies` (ownership modes, throws, moves,
+  exclusive access, the lock and thread checks) run for the edited functions with every other
+  definition's results fixed, instead of over the whole program. This is most of a warm save's
+  remaining time.
+- **Shifted positions.** Definitions after an edited one in the same file keep their code, and the
+  source locations they carry (panic messages, line tables, closure names) are shifted by the
+  edit's change in length, so length-changing body edits take the warm path.
+- **Warm parse for every edit.** The host keeps each file's AST keyed by its contents' hash and the
+  parse options (conditions, `define`s), with one source map for the session so unchanged files
+  keep their `FileId`s; a reload that takes the cold front end parses only files whose hash
+  changed.
+- **Reused lowered functions for every edit.** A function's VIR depends on its checked HIR, the
+  types it mentions and whole-program facts (counted types, union tags, class ids, parameter
+  attributes). Keyed by a fingerprint of its HIR and the facts it read, as the specialization
+  stage of [build-architecture.md](build-architecture.md) keys machine code, a function whose key
+  holds in the new program reuses its kept VIR.
+- **The library checked once per session.** The library is checked once as its own unit, frozen,
+  and kept; a reload checks only the app's modules against it, plus the library bodies the app
+  newly reaches ([build-architecture.md](build-architecture.md) describes the unit split). Each
+  whole-program pass states what it reads of other definitions, with a test comparing its output
+  after an app edit with the cold build's; a pass that cannot state it stays whole-program.
+- **No settle delay.** With content hashes, the host starts the build at the first change
+  notification and restarts it if another write arrives, instead of waiting 30 ms
+  (`watch::SETTLE`) every time.
+- **Verify mode.** `VELT_DEV_VERIFY=1` also runs the cold front end on every reload and compares
+  the swapped functions' VIR fingerprints and the diagnostics; the reload tests run in this mode
+  in CI.

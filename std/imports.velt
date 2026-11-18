@@ -134,6 +134,12 @@ export const imports: Imports = {
   // whole-file operations and standard input read on its blocking pool (std/lang/hooks/
   // sched_blocking.velt) instead of the runtime's leaves on tokio's blocking threads.
   "#fs-rt": { "std-scheduler": "./fs/rt_sched.velt", default: "./fs/rt.velt" },
+  // `readAt`'s read off the calling task's thread: on the executor's blocking pool in a native
+  // program; on the calling thread elsewhere, where there are no file descriptors to read.
+  "#fs-read-at": {
+    "std-scheduler": "./fs/fd/read_at_sched.velt",
+    default: "./fs/fd/read_at_inline.velt",
+  },
   "#process-rt": { "std-scheduler": "./process/rt_sched.velt", default: "./process/rt.velt" },
   // velt/process/child's runtime functions: the runtime's (std/process/child/rt.velt, which
   // WebAssembly can't run), or, compiled with the executor in Velt, its own (child_sched.velt),
@@ -204,6 +210,27 @@ export const imports: Imports = {
     x64: "./os/arch_x64.velt",
     arm64: "./os/arch_arm64.velt",
     wasm: "./os/arch_wasm.velt",
+  },
+  // Whether every build for the processor has an FMA instruction (arm64), so `pow` uses its
+  // copy with `fma` without a check (std/lang/math/pow.velt).
+  "#math-fma": {
+    arm64: "./lang/math/fma_arm64.velt",
+    default: "./lang/math/fma_check_needed.velt",
+  },
+  // The environment's variables: the C library's on macOS and Linux (each with its own way to
+  // `environ`), Win32's on Windows, the WebAssembly runtime's there. Nothing in them throws: the
+  // executor reads variables.
+  "#env-sys": {
+    darwin: "./process/env_darwin.velt",
+    linux: "./process/env_linux.velt",
+    win32: "./process/env_win32.velt",
+    default: "./process/env_wasm.velt",
+  },
+  // The working directory (`cwd`, `chdir`), apart from the variables: it throws `IoError`.
+  "#cwd-sys": {
+    win32: "./process/cwd_win32.velt",
+    native: "./process/cwd_posix.velt",
+    default: "./process/cwd_wasm.velt",
   },
   // Winsock for velt/os' `hostname()` on Windows, started once per process; nothing elsewhere.
   "#os-winsock": { win32: "./os/winsock_win32.velt", default: "./os/winsock_none.velt" },

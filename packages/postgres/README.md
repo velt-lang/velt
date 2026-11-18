@@ -18,9 +18,9 @@ dependencies: {
 ```
 
 Nothing here runs native code, so using the package needs no toolchain beyond `velt`. The `native/`
-folder is the Rust driver this client replaces, with its ABI in `docs/native_abi.md`. Nothing in
-`src/` uses it. It stays until this client also matches it on `pool_select_64`
-([#2370](https://github.com/velt-lang/velt/issues/2370)), and then goes.
+folder holds a Rust driver over `tokio-postgres`, with its ABI in `docs/native_abi.md`; nothing in
+`src/` uses it, and it serves as a performance reference
+([#2370](https://github.com/velt-lang/velt/issues/2370)).
 The full guide: https://veltlang.com/docs/packages/postgres/.
 
 - `connect(url): Promise<Client>`. `url` is `postgres://user:password@host:port/db?options` or
@@ -117,8 +117,10 @@ The full guide: https://veltlang.com/docs/packages/postgres/.
     named by `sslrootcert`. Both check the host name too: unlike libpq, `verify-ca` is as strict
     as `verify-full`, so a connection by IP address or by an alias needs a certificate whose
     subject alternative names include it. They need PostgreSQL 17 or later; an older server, or a
-    proxy without direct TLS, fails with `"ETLS"` and a message that says so, until checked TLS
-    after `SSLRequest` comes (velt-lang/velt#2392). There, `require` encrypts without the check.
+    proxy without direct TLS, fails with `"ETLS"` and a message that says so: a certificate check
+    after `SSLRequest` is not supported
+    ([#2392](https://github.com/velt-lang/velt/issues/2392)). There, `require` encrypts without
+    the check.
 
   The answer to `SSLRequest` is read one byte at a time, so nothing sent in plain text after it is
   taken for part of the encrypted stream (libpq's CVE-2021-23222). The handshake ends by the
@@ -131,9 +133,8 @@ The full guide: https://veltlang.com/docs/packages/postgres/.
   that SASLprep would change (`Ⅸ` for `IX`, a no-break space, a soft hyphen) is refused by the
   server with `"28P01"`; md5 and cleartext passwords aren't affected.
 - Unix-domain sockets (`host=/dir`) throw `"ENOTSUP"`, and keepalive options are accepted and do
-  nothing, so a connection gets no `SO_KEEPALIVE` (the Rust driver had it on by default, 2 hours
-  idle): `velt/net` has no Unix-domain stream and no socket options, and a socket made in Velt with
-  `declare c` can't become a `TcpStream`.
+  nothing, so a connection gets no `SO_KEEPALIVE`: `velt/net` has no Unix-domain stream and no
+  socket options, and a socket made in Velt with `declare c` can't become a `TcpStream`.
 
 ```ts
 import { connect, createPool } from "postgres";
@@ -229,12 +230,15 @@ reads its own reply.
 - The protocol: `frontend.velt`, `backend.velt`, `scram.velt`, `md5.velt`, `placeholders.velt`,
   `pg_type.velt`, `values.velt`, `temporal.velt`, `network.velt`, `array_json.velt`, `json_params.velt`.
 - `tests/`: `velt test` in this directory. `values`, `auth`, `config`, `placeholders`,
-  `fake_server`, `negotiation`, `abandon`, `line`, `wire` and `encoder` need no server; the rest need one: set `VELT_TEST_PG_URL`
+  `fake_server`, `negotiation`, `abandon`, `line`, `wire`, `encoder`, `statement_cache` and
+  `waiter_line` need no server; the rest need one: set `VELT_TEST_PG_URL`
   (`postgres://user:password@host/db`), without which they do nothing. `VELT_TEST_PG_MD5_URL`,
-  `VELT_TEST_PG_SCRAM_URL` and `VELT_TEST_PG_TLS_URL` add the password exchanges and TLS;
+  `VELT_TEST_PG_SCRAM_URL`, `VELT_TEST_PG_PASSWORD_URL` (cleartext) and `VELT_TEST_PG_TLS_URL`
+  add the password exchanges and TLS;
   `VELT_TEST_PG_TLS_UNTRUSTED_URL` (a server with TLS that nothing verifies) and
   `VELT_TEST_PG_PLAIN_URL` (one without TLS), both without `sslmode`, what each `sslmode` does. The
   repository's `scripts/linux-check.sh --services` starts a server, as the nightly CI does; it sets
   only `VELT_TEST_PG_URL`.
 
-`src/` uses only public std APIs: velt/db (`readRows`, `writeParams`), velt/net, velt/crypto.
+`src/` uses only public std APIs: velt/db (`readRows`, `writeParams`), velt/net, velt/crypto
+and the other std modules.

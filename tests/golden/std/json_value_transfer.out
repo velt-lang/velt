@@ -18,4 +18,7 @@ edited there: {"1":null,"2":"two","b":5,"a":[3],"edited":true}
 edited here: {"1":null,"2":"two","b":5,"a":[3],"here":1}
 child there: {"2":0,"x":[1,{"y":"z"}],"edited":true}
 child here: {"2":0,"x":[1,{"y":"z"}]} {"inner":{"2":0,"x":[1,{"y":"z"}]},"tail":"t"}
+there: 41800 {"there0":198,"there1":199,"there2":197} | 0
+here: 41800 {"here0":198,"here1":199,"here2":197} | 0
+unchanged: true 19
 read on another worker: true

@@ -1,159 +1,238 @@
-# Casts across layouts: interface downcasts, widened objects, method writes, promise views
+# Casts across layouts
 
-Status: approved 2026-11-16 (#379, sigx's "casts across layouts" kit group), with the decisions under "Decisions" below. The order is A1, A2, B, E1, D; A1 is implemented.
+Status: partly implemented. Issue: [#379](https://github.com/velt-lang/velt/issues/379).
 
-## Why
+## Summary
 
 TypeScript allows `x as T` when either type is assignable to the other, and Node never checks
 it: the value stays the same object. Velt keeps a value's layout, so some of these casts would
-change the value, and today they are refused. After the small shapes of #3050, sigx's kit has
-these left:
+change the value. For each such cast Velt gives Node's behavior or a compile error, never a silent
+change of the value:
 
-| shape | sigx site | today |
-|---|---|---|
-| A: an interface value cast to an extension that adds optional members, then written | renderer.ts 1074 `(ctx as InternalComponentContext).__name = …`, 1233 `.__hmrReload = …`; server index.ts 315 `(rq as { _input?: unknown })._input = …` | `cannot cast … adds __name …` |
-| B: a member the interface declares as a method, assigned | renderer.ts 1221 `ctx.update = () => …`, hydrate-component.ts 381 | `no field update … is a method` |
-| D: a promise cast to another settled type | app-config.ts 173 `resolvePrincipal(rq) as Promise<P \| null>` | `a promise keeps the type of the value it settles with` |
-| E: functions (or arrays of them) cast to another parameter type | app-config.ts 363 `op.policies as ServerPolicy \| readonly ServerPolicy[] \| undefined` | `cannot cast` |
+- an interface value cast to an extension of its interface is checked at run time and stays the
+  same object;
+- when the extension adds only optional members, the objects converted to the base interface get
+  room for them, so the write Node allows works;
+- a method member of an interface can be assigned through an interface value;
+- a promise cast to another settled type, and a cast that is an identity at some instantiations of
+  a generic function, are designed below but not built.
 
-The aim is the rule from #379 for each: Node's behaviour, or a compile error; no silent change.
+## Motivation
 
-## A. Checked downcasts between related interface values
+Framework code written for Node uses these casts to attach bookkeeping to objects it receives as
+an interface, and to replace callbacks:
 
-**What exists.** A value of an interface type with methods is a pair `(data, vtable)`: the
-vtable is the one for the static interface. Related interfaces don't convert to each other
-(identity_eq.rs); only lib.dom gets a cast, through `any`. Field-only interfaces are object
-types, and #1383 (collect/extended_layouts.rs) lets a base and its optional-only extensions
-share one layout.
+```ts
+interface InternalComponentContext extends ComponentSetupContext { __name?: string }
 
-**Mechanism.** A run-time check, as .NET's `castclass` does with its interface maps. A1 needs no
-new table: the conversion of an `any` to an interface (any_iface.rs) already is one. It compares
-the `any`'s descriptor with that of each type the program's `any` values may hold, and takes that
-type's own implementation of the interface. So `x as J`, where `x: I` and `J` extends `I`, is the
-value as an `any`, converted to `J` (identity_eq.rs `related_iface_cast`, the route lib.dom casts
-already took):
+(ctx as InternalComponentContext).__name = componentName;
+(rq as { _input?: unknown })._input = input;
+ctx.update = () => rerender();          // `update(): void` is declared as a method
+resolvePrincipal(rq) as Promise<P | null>;
+```
 
-- the object implements `J`: the value is `(data, its J vtable)`, the same object, as in Node;
-- it doesn't: the program panics with `TypeError: type assertion failed: the value is not a J
-  (it is an object)`, as the other checked assertions do.
+Each of these is valid TypeScript and does what it says in Node.
 
-What implements `J` is what a plain conversion to `J` takes: a class that declares
+## Design
+
+### Checked downcasts between related interfaces
+
+A value of an interface type with methods is a pair `(data, vtable)`, where the vtable is the one
+for the static interface. `x as J`, where `x: I` and `J` extends `I`, is checked at run time:
+
+- the object implements `J`: the result is `(data, its J vtable)`, the same object, as in Node
+  (`===` holds, and a write through `J` shows through `I`);
+- it does not: the program panics with
+  `TypeError: type assertion failed: the value is not a J (it is an object)`, as the other checked
+  assertions do.
+
+What implements `J` is what a plain conversion to `J` accepts: a class that declares
 `implements J` (itself or through a base class), since Velt's classes are nominal, or an object
-literal with `J`'s members. A class only shaped like `J` fails the check, where Node goes on.
+type with `J`'s members. An object type that is only shaped like `J` (made as an `I`, never
+converted to `J`) gets its implementation of `J` too, because each object type implementing an
+interface the program casts from is recorded as a value `any` may hold. A class only shaped like
+`J` fails the check, where Node goes on.
 
-There is no new runtime Rust, no change to the vtable layout, and no cost in programs without
-such a cast. Where Node goes on and the check would stop the program:
+The casts that stay `cannot cast`:
 
-- `J` adds only **optional** members: Node adds them when written. Such a cast stays `cannot cast`
-  until A2 widens the objects, so A1 takes only an extension that adds a required member (an
-  object lacking it fails in Node too, when the member is used).
-- A **union** of extensions or `J | undefined`: there is no run-time test of an `any` for one of
-  several interfaces yet (#924), so these stay `cannot cast` outside lib.dom.
-- A source that may be **`undefined`**: Node passes it on, and an `any` holding `undefined` is no
-  `J`. The note says to test it first.
-- `J` at **other type arguments** than `I` (`Source<number> as Labeled<string>`, which `tsc`
-  refuses too, or `as Labeled<any>`): no object is both, so it stays `cannot cast`.
+- to a union of extensions, or to `J | undefined`: there is no run-time test of an `any` for one
+  of several interfaces ([#924](https://github.com/velt-lang/velt/issues/924)). Unions of std's
+  `lib.dom` interfaces are the exception: the value converts to the first member, as no DOM value
+  exists on a server;
+- from a source that may be `undefined`: Node passes `undefined` on, and it is no `J`; test it
+  first;
+- to `J` at other type arguments than `I` (`Source<number> as Labeled<string>`): no object is
+  both.
 
-An object type that is only shaped like `J` (made as an `I`, never converted to `J`) gets its
-implementation of `J` too: each object type implementing an interface the program casts from is
-recorded as a value `any` may hold (object_ifaces.rs `downcast_from`).
+### Widening the objects converted to the base
 
-**Cost:** about 30 instructions (3 ns) per cast on an Apple M-series machine with a few
-implementing types, measured on a 10-million-cast loop; the check compares one descriptor per type
-the program's `any` values may hold, in order, so it grows with that count.
+When `J` adds only **optional** members to `I`, an object converted to `I` usually lacks them,
+and Node adds the property when it is written. So for each such cast in the program, every object
+type the program converts to `I` gets `J`'s optional fields after its own, absent until written.
+It then implements `J`, and the checked cast finds its implementation.
 
-## A, continued. Widening the objects converted to the base
-
-With the lookup alone, sigx's `ctx` still fails. It is an object literal converted to
-`ComponentSetupContext`, and has no `__name`. In Node, writing `__name` adds the property. So:
-
-- For each cast `I → J` in the program where `J` adds only **optional** members to `I`, every
-  concrete type the program converts to `I` gets room for `J`'s optional fields: hidden slots,
-  absent until written. It then implements `J`, so the check of A1 finds its `J` vtable.
-- This is #1383's widening, carried from field-only interfaces to every object type converted to
-  an interface with methods. The rules are #1383's:
-  - one layout per base family;
-  - extensions that disagree on a field's type keep their own layout;
-  - absent fields are not printed, serialized or listed.
-- **Classes** are not widened (decided below). A class converted to `I` that lacks one of `J`'s optional fields, where the program casts `I` to `J`, is a compile error naming the class and the field. A class that declares the field itself implements `J` as it is.
-- An anonymous target (`rq as { _input?: unknown }`) where every member is optional and absent
+- The rules are those of extended layouts for field-only interfaces: one layout per base family;
+  extensions that disagree on a field's type are an error naming the type and the field; absent
+  fields are not printed, serialized or listed.
+- An anonymous target (`rq as { _input?: unknown }`) whose members are all optional and absent
   from `I` counts as an extension of `I`.
-- **Layout:** each added field is held out of line (`hir::FieldDef::cell`). It's one pointer slot, `null` while the field was never written, pointing to a hidden one-field class that holds the value, made on the first write. The extension's implementation reads and writes through it, and reflection sees it as an optional field (velt_vir `cell_fields.rs`).
-- **Cost:** in a program with such a cast, every object of a type converted to `I` is one pointer larger per added field, written or not. A written field also costs its cell.
-  - Measured on an Apple M-series Mac (release runtime, 2,000,000 `{ id, run }` literals converted to `Ctx`, each read 5 times, one written):
-    - the struct grows from 24 to 32 bytes;
-    - peak RSS goes from 115.5 MB to 130.8 MB;
-    - instructions go from 426.8 M to 456.6 M (+7.0%).
-  - That's what an ordinary 8-byte field costs: the control, the same program with one more number field and no cast, measures 130.7 MB and 454.5 M. Of the +7.0%, 2.9 points are the checked cast's route through `any` (A1).
-  - Holding the fields inline instead (the option's slot plus a presence flag) cost 40 bytes per object: 195.0 MB and 511.8 M.
-  - Programs without such a cast are unchanged.
+- **Classes are not widened.** A class's objects have one layout per class. A class converted to
+  `I` that lacks one of `J`'s fields makes the cast a compile error naming the class and the
+  field; a class that declares the field itself implements `J` as it is.
+- An object literal written as `I` whose methods use `this` is laid out as a class and is not
+  widened either; the error says to give the literal the type `J` where it is made. So is an
+  object literal made in a generic function, which is laid out per instance.
 
-## B. Setter slots for method members
+### Assigning method members
 
-`ctx.update = () => …` where `I` declares `update(): void`. TypeScript allows it: a method
-signature is a writable property.
+`ctx.update = () => …`, where `I` declares `update(): void`, is allowed, as TypeScript allows it:
+a method signature is a writable property.
 
-- When the program writes method member `m` of `I` anywhere, `I`'s vtables get a **setter slot**
-  for `m`.
-- A concrete type that holds `m` as a field of function type (every object literal does:
-  `update: () => {}`) fills the slot with a write of that field. Its method slot already calls
-  the field, so the write is seen by every call.
-- A **class** with a real method `m` has no field to write. Node would add an own property that
-  shadows the prototype's method; Velt has no per-object method table. So the write is refused at
-  compile time, with today's message, when any class converted to `I` has `m` as a method. That
-  is the only remaining limit; a golden records it.
+- When the program writes method member `m` through a value of `I`, `I`'s vtables get a **setter
+  slot** for `m`, after the field setters.
+- An implementation that holds `m` as a field of the method's function type (an object literal
+  `{ update: () => {} }`) fills the slot with a write of that field. Its method slot already calls
+  the field, so every later call sees the new function.
+- An implementation that cannot store it makes the write a compile error naming it: a class with
+  a real method `m` (Node would add an own property shadowing the prototype's method; Velt has no
+  per-object method table), an object literal whose method `m` uses `this`, and a field of another
+  function type.
 
-## D. Promise views
+Nothing changes for an interface never written through: its tables and code stay as they are.
 
-`p as Promise<B>` of a `Promise<A>` (A and B related: `unknown` and `P | null`). In Node it is
-the same promise, and an await gives whatever `p` settled with. A Velt promise stores its
-settled value with `A`'s layout, so it can't be read as a `B`.
+## Compilation
 
-- This follows array views (#1485, lower/array_view.rs). The `Promise<B>` types that some cast in
-  the program makes are **view types**, and a value of one may be a **view**: a promise box
-  flagged as a view, holding the original promise and the conversion glue `A → B`.
-- An `await`, or a `then` callback, of a view type tests the flag:
-  - not set: the promise itself;
-  - set: awaits the original, then converts the value in place, with no extra microtask. So the
-    timing is Node's, and a rejection passes through unchanged.
-- The conversion is the checked one `v as B` would be. An `unknown` that holds no `B` panics with
-  `type assertion failed`, as any checked assertion does.
-- **Identity:** as with array views, a table from `(original, view type)` to the view keeps one
-  view per pair, so `===`, `Set` and `Map` see one value.
+- The checked downcast is the conversion of the value to `any` and from `any` to `J`
+  (`Intrinsic::AnyTo`, `crates/velt_sema/src/body/expr/identity_eq.rs`,
+  `related_iface_cast`). The conversion from `any` to an interface
+  (`crates/velt_vir/src/lower/any_iface.rs`) compares the `any`'s descriptor with that of each
+  type the program's `any` values may hold and takes that type's implementation of the interface,
+  so it needs no new table and no change to the vtable layout. The object types recorded for the
+  check are in `crates/velt_sema/src/object_ifaces.rs` (`downcast_from`).
+- Widening is `crates/velt_sema/src/object_widen.rs`, run once every body is checked
+  (`object_ifaces::make_dynamic_object_impls`), building on the extended layouts of
+  `crates/velt_sema/src/collect/extended_layouts.rs`.
+- Each added field is held out of line (`hir::FieldDef::cell`): one pointer slot, `null` while the
+  field was never written, pointing to a hidden one-field class that holds the value, made on the
+  first write. Reflection (printing, keys, `in`, spreads, `any` reads and writes) sees it as an
+  optional field (`crates/velt_vir/src/lower/cell_fields.rs`).
+- Setter slots for methods are `crates/velt_sema/src/iface_method_writes.rs`, next to the field
+  setters of `crates/velt_sema/src/iface_writes.rs`.
+
+## Runtime cost
+
+Programs without such a cast are unchanged.
+
+- **Checked downcast:** about 30 instructions (3 ns) per cast on an Apple M-series machine with a
+  few implementing types, measured on a loop of 10 million casts. The check compares one
+  descriptor per type the program's `any` values may hold, in order, so it grows with that count.
+- **Widening:** in a program with such a cast, every object of a type converted to `I` is one
+  pointer larger per added field, written or not; a written field also costs its cell. Measured on
+  an Apple M-series machine (release runtime, 2,000,000 `{ id, run }` literals converted to `Ctx`,
+  each read 5 times, one written):
+
+  | | struct | peak RSS | instructions |
+  |---|---|---|---|
+  | no cast | 24 B | 115.5 MB | 426.8 M |
+  | cast, field out of line | 32 B | 130.8 MB | 456.6 M (+7.0%) |
+  | control: one more number field, no cast | 32 B | 130.7 MB | 454.5 M |
+  | cast, field inline (slot and presence flag) | 40 B | 195.0 MB | 511.8 M |
+
+  The out-of-line field costs what an ordinary 8-byte field costs; of the +7.0%, 2.9 points are
+  the checked cast's route through `any`.
+
+## Diagnostics
+
+A cast Velt refuses, with a note saying why:
+
+```text
+error: cannot cast `Shape` as `Named | Sided`
+error: cannot cast `Shape | undefined` as `Named`
+a `Shape | undefined` may be `undefined`, which is no `Named`
+error: cannot cast `Source<f64>` as `Labeled<string>`
+a `Labeled<string>` is not a `Source<f64>` (their type arguments differ)
+```
+
+A cast whose widening an object type cannot take, with a note per such type:
+
+```text
+error: cannot cast `Ctx` as `InternalCtx`
+class `Real` implements `Ctx` and doesn't declare `__name`: a class's objects get no fields it
+doesn't declare; declare `__name` on `Real` (optional is fine)
+```
+
+A method write an implementation cannot store, with a note per such implementation:
+
+```text
+error: cannot assign to method `update` of `Ctx`
+class `Real` implements `Ctx` with a method `update`, which its objects share through the class
+```
+
+A promise cast to another settled type, until promise views exist:
+
+```text
+error: cannot cast `Promise<A>` as `Promise<B>`
+a promise keeps the type of the value it settles with, so a `Promise<A>` can't be read as a
+`Promise<B>`; convert the value where it is awaited (`(await p) as …`)
+```
+
+## Compatibility
+
+Where Node goes on and Velt stops: a class only shaped like the target interface fails the
+checked downcast, and a class that lacks an optional field the cast adds, or that declares a
+method the program assigns, is a compile error. Everywhere else the cast is the same object, as in
+Node.
+
+## Alternatives considered
+
+**A failed downcast as a compile error.** Whether an object implements `J` is known only at run
+time for values that flow through interfaces, so a compile-time answer would refuse correct
+programs. A `TypeError` panic matches the other checked assertions.
+
+**Widening classes too.** A class's objects share one layout and one vtable per class; giving
+every class converted to `I` the extension's fields would grow objects in code that never sees
+the cast. Declaring the optional field on the class costs the same and is explicit.
+
+**Holding the added fields inline.** An inline slot with a presence flag costs 40 bytes per object
+in the measurement above against 32 out of line, and the field is usually never written.
+
+**Function views for casts between function types.** A function cast to another parameter type
+could be a wrapper converting each argument, but its identity would differ from the original's
+(`===`), which Node never shows. Such casts stay compile errors at instantiations where the types
+differ.
+
+## Limitations
+
+- Casts to a union of interface extensions are refused outside `lib.dom`.
+- A class cannot gain fields or per-object methods through a cast or a write.
+- A function value cannot be cast to another parameter type.
+
+## Not yet implemented
+
+### Promise views
+
+`p as Promise<B>` of a `Promise<A>` (A and B related, such as `unknown` and `P | null`). In Node
+it is the same promise, and an await gives whatever `p` settled with. A Velt promise stores its
+settled value with `A`'s layout, so it cannot be read as a `B`.
+
+- As with array views (`crates/velt_vir/src/lower/array_view.rs`), the `Promise<B>` types that a
+  cast in the program makes are **view types**, and a value of one may be a **view**: a promise
+  box flagged as a view, holding the original promise and the conversion `A → B`.
+- An `await`, or a `then` callback, of a view type tests the flag. Not set: the promise itself.
+  Set: it awaits the original, then converts the value in place, with no extra microtask, so the
+  timing is Node's and a rejection passes through unchanged.
+- The conversion is the checked one `v as B` would be: an `unknown` that holds no `B` panics with
+  `type assertion failed`.
+- As with array views, a table from `(original, view type)` to the view keeps one view per pair,
+  so `===`, `Set` and `Map` see one value.
 - Programs without such a cast have no view types.
 
-## E. Casts that are the same type per instantiation
+### Casts that are an identity per instantiation
 
-sigx's casts in generic code (`principal<P = unknown>`, policies of `P`) are identities at its
-default `P = unknown`, and differ only at other instantiations.
-
-- A new compiler-internal intrinsic, `SameType<T, U>(x: T): U`. Lowering resolves it per
-  instantiation: where `T` and `U` are the same type, it is the value as it is (no code).
-  Elsewhere it is the conversion the cast needs there:
-  - a promise view (D) for promises;
-  - for function types, part 2 (below).
-- **Contract:** adding `Intrinsic::SameType` changes the `hir` contract
-  (`docs/internals/contracts`), and the setter slots change the vtable layout in `vir`.
-- **Part 2, function views (not proposed):** a function cast to another parameter type is a
-  wrapper that converts each argument. Its identity differs from the original's (`===`), which
-  Node would not show. It stays a compile error at instantiations where the types differ, with an
-  issue to decide on.
-
-## Order and size
-
-1. **A1:** checked downcasts to extensions adding a required member, with goldens.
-2. **A2:** widening the converted object types, and anonymous all-optional targets.
-3. **B:** setter slots for method members, and the class refusal.
-4. **E1:** the `SameType` intrinsic, identity at equal instantiations.
-5. **D:** promise views. The other instantiations of E1's promise casts use them.
-
-Each is a PR with a Node-matched golden that fails on `main`, a golden where the rule stops,
-and the kit count. Steps 1–3 clear renderer.ts 1074, 1221 and 1233, hydrate-component.ts 381 and
-server index.ts 315 (five errors). Steps 4–5 clear app-config.ts 173, and 363 at sigx's default
-`P`.
-
-## Decisions (2026-11-16)
-
-- **A failed downcast** is a `TypeError` panic (`type assertion failed: the value is not a J`), like the other checked assertions, and not a compile error.
-- **Widening** covers object types and object literals only, not classes. A class that would need a new field is a compile error naming the class and the field.
-- **The contract changes** (vtable layout in `vir`, `Intrinsic::SameType` in `hir`) are accepted. Each PR names the ones it makes.
+In generic code (`function principal<P = unknown>(…)`) a cast such as `x as Promise<P | null>` is
+an identity at the default `P = unknown` and differs only at other instantiations. A
+compiler-internal intrinsic, `SameType<T, U>(x: T): U`, is resolved per instantiation in lowering:
+where `T` and `U` are the same type it is the value as it is (no code); elsewhere it is the
+conversion the cast needs there (a promise view for promises), or a compile error at that
+instantiation where no conversion exists (function types). Adding `Intrinsic::SameType` changes
+the `hir` contract ([contracts](../contracts/README.md)).

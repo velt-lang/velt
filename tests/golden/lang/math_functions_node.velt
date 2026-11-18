@@ -1,0 +1,239 @@
+// The exponential, logarithmic, trigonometric, hyperbolic and cube root functions of `Math`,
+// `Math.fround` and the constants (#3130): each at its edges (zeros, infinities, NaN, the
+// smallest and largest doubles, the thresholds where the result overflows or the algorithm
+// changes) and at pseudo-random arguments over the ranges that matter to it. The functions are
+// fdlibm's, as in V8, so every digit is the same as under Node.
+// Expected output is Node's.
+let seed = 20260101;
+
+// A Lehmer generator: the products stay below 2^53, so the sequence is exact in doubles.
+function rnd(): number {
+  seed = (seed * 16807) % 2147483647;
+  return seed / 2147483647;
+}
+
+function uniform(lo: number, hi: number): number {
+  return lo + (hi - lo) * rnd();
+}
+
+// ±m * 2^e with m in [1, 2) and a whole e in [lo, hi), by exact doublings or halvings.
+function wide(lo: number, hi: number, signed: boolean): number {
+  let x = 1 + rnd();
+  const e = Math.floor(uniform(lo, hi));
+  for (let i = 0; i < e; i++) {
+    x *= 2;
+  }
+  for (let i = 0; i > e; i--) {
+    x *= 0.5;
+  }
+  return signed && rnd() < 0.5 ? -x : x;
+}
+
+function show(r: number): string {
+  if (r === 0) {
+    return 1 / r > 0 ? "0" : "-0";
+  }
+  return `${r}`;
+}
+
+function apply(name: string, x: number): number {
+  switch (name) {
+    case "exp":
+      return Math.exp(x);
+    case "expm1":
+      return Math.expm1(x);
+    case "log":
+      return Math.log(x);
+    case "log1p":
+      return Math.log1p(x);
+    case "log2":
+      return Math.log2(x);
+    case "log10":
+      return Math.log10(x);
+    case "sin":
+      return Math.sin(x);
+    case "cos":
+      return Math.cos(x);
+    case "tan":
+      return Math.tan(x);
+    case "asin":
+      return Math.asin(x);
+    case "acos":
+      return Math.acos(x);
+    case "atan":
+      return Math.atan(x);
+    case "sinh":
+      return Math.sinh(x);
+    case "cosh":
+      return Math.cosh(x);
+    case "tanh":
+      return Math.tanh(x);
+    case "asinh":
+      return Math.asinh(x);
+    case "acosh":
+      return Math.acosh(x);
+    case "atanh":
+      return Math.atanh(x);
+    case "cbrt":
+      return Math.cbrt(x);
+    default:
+      return Math.fround(x);
+  }
+}
+
+// The i-th pseudo-random argument for a function: each has a few ranges, taken in turn.
+function sample(name: string, i: number): number {
+  const k = i % 4;
+  switch (name) {
+    case "exp":
+    case "expm1":
+      return k == 0
+        ? uniform(-5, 5)
+        : k == 1 ? uniform(-746, 710) : k == 2 ? wide(-40, 0, true) : uniform(-40, 40);
+    case "log":
+    case "log2":
+    case "log10":
+      return k == 0
+        ? uniform(0.5, 2)
+        : k == 1 ? wide(-1074, 1024, false) : k == 2 ? uniform(0, 100) : wide(-30, 30, false);
+    case "log1p":
+      return k == 0
+        ? uniform(-1, 3)
+        : k == 1 ? wide(-60, -1, true) : k == 2 ? wide(0, 1024, false) : uniform(-0.3, 0.42);
+    case "sin":
+    case "cos":
+    case "tan":
+      if (k == 3) {
+        // Next to a multiple of pi/2, where the reduction cancels.
+        return Math.floor(uniform(-100000, 100000)) * 1.5707963267948966;
+      }
+      return k == 0 ? uniform(-7, 7) : k == 1 ? uniform(-1e6, 1e6) : wide(20, 1024, true);
+    case "asin":
+    case "acos":
+    case "atanh":
+      return k == 0
+        ? uniform(-1, 1)
+        : k == 1 ? wide(-60, 0, true) : k == 2 ? 1 - wide(-53, -1, false) : uniform(-0.6, 0.6);
+    case "atan":
+      return k == 0
+        ? uniform(-3, 3)
+        : k == 1 ? wide(-40, 70, true) : k == 2 ? uniform(-100, 100) : uniform(0.4, 2.5);
+    case "sinh":
+    case "cosh":
+      return k == 0
+        ? uniform(-3, 3)
+        : k == 1 ? uniform(-711, 711) : k == 2 ? wide(-40, 0, true) : uniform(-23, 23);
+    case "tanh":
+      return k == 0
+        ? uniform(-3, 3)
+        : k == 1 ? uniform(-25, 25) : k == 2 ? wide(-40, 0, true) : uniform(-1.1, 1.1);
+    case "asinh":
+      return k == 0
+        ? uniform(-3, 3)
+        : k == 1 ? wide(-40, 40, true) : k == 2 ? wide(-1074, 1024, true) : uniform(-1e9, 1e9);
+    case "acosh":
+      return k == 0
+        ? uniform(1, 3)
+        : k == 1 ? 1 + wide(-52, 1, false) : k == 2 ? wide(0, 1024, false) : uniform(1, 1e9);
+    case "cbrt":
+      if (k == 3) {
+        const c = Math.floor(uniform(-1000, 1000));
+        return c * c * c;
+      }
+      return k == 0
+        ? uniform(-1000, 1000)
+        : k == 1 ? wide(-1074, 1024, true) : wide(-1080, -1020, true);
+    default:
+      return k == 0
+        ? uniform(-1e6, 1e6)
+        : k == 1 ? wide(-160, 130, true) : k == 2 ? wide(-30, 30, true) : wide(120, 129, true);
+  }
+}
+
+function main(): void {
+  console.log(`LN2 ${Math.LN2} LN10 ${Math.LN10} LOG2E ${Math.LOG2E} LOG10E ${Math.LOG10E}`);
+  console.log(`SQRT2 ${Math.SQRT2} SQRT1_2 ${Math.SQRT1_2} PI ${Math.PI} E ${Math.E}`);
+  const names: string[] = [
+    "exp",
+    "expm1",
+    "log",
+    "log1p",
+    "log2",
+    "log10",
+    "sin",
+    "cos",
+    "tan",
+    "asin",
+    "acos",
+    "atan",
+    "sinh",
+    "cosh",
+    "tanh",
+    "asinh",
+    "acosh",
+    "atanh",
+    "cbrt",
+    "fround",
+  ];
+  const edges: number[] = [
+    0,
+    -0.0,
+    1,
+    -1,
+    0.5,
+    -0.5,
+    Infinity,
+    -Infinity,
+    NaN,
+    5e-324,
+    -5e-324,
+    2.2250738585072014e-308,
+    1.7976931348623157e308,
+    -1.7976931348623157e308,
+    1e-10,
+    -1e-10,
+    2,
+    8,
+    10,
+    22,
+    27,
+    100,
+    1000,
+    1e22,
+    1e300,
+    0.9999999999999999,
+    1.0000000000000002,
+    0.7853981633974483,
+    1.5707963267948966,
+    3.141592653589793,
+    709.782712893384,
+    709.7827128933841,
+    710.4758600739439,
+    710.475860073944,
+    -745.1332191019411,
+    -745.1332191019412,
+    3.4028235677973366e38,
+    1.401298464324817e-45,
+  ];
+  for (const name of names) {
+    for (const x of edges) {
+      console.log(`${name}(${show(x)}) = ${show(apply(name, x))}`);
+    }
+    for (let i = 0; i < 90; i++) {
+      const x = sample(name, i);
+      console.log(`${name}(${x}) = ${show(apply(name, x))}`);
+    }
+  }
+  const ys: number[] = [0, -0.0, 1, -1, Infinity, -Infinity, NaN, 5e-324, 1e-300, 1e300];
+  for (const y of ys) {
+    for (const x of ys) {
+      console.log(`atan2(${show(y)}, ${show(x)}) = ${show(Math.atan2(y, x))}`);
+    }
+  }
+  for (let i = 0; i < 90; i++) {
+    const k = i % 3;
+    const y = k == 0 ? uniform(-10, 10) : wide(-300, 300, true);
+    const x = k == 0 ? uniform(-10, 10) : k == 1 ? wide(-300, 300, true) : y * wide(-70, 70, true);
+    console.log(`atan2(${y}, ${x}) = ${show(Math.atan2(y, x))}`);
+  }
+}

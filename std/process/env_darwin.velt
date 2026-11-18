@@ -1,0 +1,35 @@
+// velt/process (internal): the environment's variables on macOS (`#env-sys`' darwin
+// variant, std/imports.velt): std/process/env_posix.velt, with the table that `_NSGetEnviron()`
+// points at (`environ` itself is only an executable's, not a library's, on macOS).
+
+import { Ptr } from "velt/ffi/ptr";
+import { addressLoad } from "velt/lang/intrinsics";
+import * as posix from "./env_posix";
+
+/** `char ***_NSGetEnviron(void)` (<crt_externs.h>): where `environ` is. */
+declare c("c") function _NSGetEnviron(): Ptr<void>;
+
+/** The address of the table's first entry, or 0. */
+function table(): usize {
+  // SAFETY: no precondition; it returns the address of the process' `environ`.
+  const at = Ptr.addressOf(unsafe { _NSGetEnviron() });
+  // SAFETY: `at` holds `environ`, read while env_posix holds its lock.
+  return unsafe { addressLoad<usize>(at) };
+}
+
+export function getEnv(name: string): string | undefined {
+  return posix.getEnv(name);
+}
+
+export function setEnv(name: string, value: string) {
+  posix.setEnv(name, value);
+}
+
+export function removeEnv(name: string) {
+  posix.removeEnv(name);
+}
+
+/** Every variable as `[name, value, …]`, in the table's order. */
+export function envPairs(): string[] {
+  return posix.envPairs(table);
+}

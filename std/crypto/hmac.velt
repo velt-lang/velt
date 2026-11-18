@@ -1,4 +1,4 @@
-// velt/crypto (internal): HMAC (RFC 2104) over SHA-256 and SHA-1.
+// velt/crypto (internal): HMAC (RFC 2104) over SHA-256, SHA-384, SHA-512 and SHA-1.
 
 import { u32x4 } from "velt/simd";
 import { BLOCK } from "velt/crypto/blocks";
@@ -6,6 +6,9 @@ import { sha1, sha1Of } from "velt/crypto/sha1";
 import { hmac1Arm, hmac1X86 } from "velt/crypto/sha1_simd";
 import { sha256, sha256Of } from "velt/crypto/sha256";
 import { hmac256Arm, hmac256X86 } from "velt/crypto/sha256_simd";
+import { sha384, sha512, sha512Of } from "velt/crypto/sha512";
+import { BLOCK512 } from "velt/crypto/sha512_block";
+import { H384, H512 } from "velt/crypto/sha512_tables";
 
 /** HMAC-SHA256 (RFC 2104 / RFC 4231) of `data` under `key`. */
 export function hmacSha256(key: u8[], data: u8[]): u8[] {
@@ -17,6 +20,18 @@ export function hmacSha256(key: u8[], data: u8[]): u8[] {
     return hmac256X86(k, data);
   }
   return sha256Of(k, 0x5c, true, sha256Of(k, 0x36, true, data));
+}
+
+/** HMAC-SHA384 (RFC 2104 / RFC 4231) of `data` under `key`: 48 bytes. */
+export function hmacSha384(key: u8[], data: u8[]): u8[] {
+  const k = key.length > BLOCK512 ? sha384(key) : key;
+  return sha512Of(H384, 48, k, 0x5c, true, sha512Of(H384, 48, k, 0x36, true, data));
+}
+
+/** HMAC-SHA512 (RFC 2104 / RFC 4231) of `data` under `key`: 64 bytes. */
+export function hmacSha512(key: u8[], data: u8[]): u8[] {
+  const k = key.length > BLOCK512 ? sha512(key) : key;
+  return sha512Of(H512, 64, k, 0x5c, true, sha512Of(H512, 64, k, 0x36, true, data));
 }
 
 /** HMAC-SHA1 (RFC 2104 / RFC 2202) of `data` under `key`. */

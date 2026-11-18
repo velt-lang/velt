@@ -315,9 +315,14 @@ fn mismatches(defs: &BTreeMap<String, Vec<(Sig, PathBuf)>>, required: bool) -> V
 /// The std files whose declarations velt_rt may lack, bindings WebAssembly builds use:
 /// std/fs/rt.velt (`#fs-rt`), whose async leaves are velt_rt_wasm's alone (a native build
 /// imports only the file's `*_sync` twins and runs them on the executor's blocking pool), and
-/// std/process/tty_wasm.velt (`#tty`'s default variant: native builds ask the OS from std)
-/// (#2196).
-const WASM_ONLY_BINDINGS: &[&str] = &["std/fs/rt.velt", "std/process/tty_wasm.velt"];
+/// std/process/tty_wasm.velt, env_wasm.velt and cwd_wasm.velt (`#tty`'s, `#env-sys`' and
+/// `#cwd-sys`' default variants: native builds ask the OS from std) (#2196).
+const WASM_ONLY_BINDINGS: &[&str] = &[
+    "std/fs/rt.velt",
+    "std/process/tty_wasm.velt",
+    "std/process/env_wasm.velt",
+    "std/process/cwd_wasm.velt",
+];
 
 /// Whether `name`, declared in `paths` and not defined by velt_rt, is a WebAssembly-only leaf:
 /// declared in one file of `WASM_ONLY_BINDINGS` and nowhere else, and defined by velt_rt_wasm (whose check

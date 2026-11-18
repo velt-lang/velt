@@ -1,0 +1,71 @@
+// check: no leaks
+// An element a `read` callback takes out of the caller's array is the caller's object: what it
+// reaches (here each element's `tags`, an array the program counts) lost no reference when the
+// element was an object held inline in the array, so every removal leaked it (#3126). Removed
+// and dropped, read, and put back with `unshift`, `push`, `splice` or through another array.
+
+type P = { v: number; tags: string[] };
+
+class St {
+  items: P[] = [{ v: 1, tags: ["a"] }];
+}
+
+function show(label: string, out: P[]) {
+  console.log(label, out.map((p) => p.v + ":" + p.tags.join("+")).join(" "));
+}
+
+function main() {
+  const rw = new RwLock(new St());
+  const out: P[] = [];
+  // Makes `string[]` a counted type of the program.
+  const keep = new Map<string, string[]>();
+  for (let i = 0; i < 8; i++) {
+    out.push({ v: i, tags: ["t" + i] });
+  }
+  keep.set("first", out[0].tags);
+
+  let n = 0;
+  rw.read((s) => {
+    out.pop();
+    const last = out.pop()!;
+    n += last.v + last.tags.length + s.items.length;
+    const first = out.shift()!;
+    n += first.tags[0].length;
+  });
+  show("dropped", out);
+  console.log(n, keep.get("first")!.join(","));
+
+  for (let i = 0; i < 3; i++) {
+    rw.read((s) => {
+      const last = out.pop()!;
+      out.unshift(last);
+    });
+  }
+  show("unshift", out);
+
+  rw.read((s) => {
+    const last = out.pop()!;
+    out.push(last);
+    const again = out.pop()!;
+    out.splice(1, 0, again);
+  });
+  show("push, splice", out);
+
+  rw.read((s) => {
+    const xs = out.splice(0, 2);
+    out.push(xs[1]);
+    const one = out.shift()!;
+    const held = [one];
+    out.push(held[0]);
+    const front = out[0];
+    out.push(front);
+    out.shift();
+  });
+  show("through arrays", out);
+
+  // The caller's elements are still its own to change.
+  out[0].tags.push("x");
+  out[out.length - 1].tags.push("y");
+  show("changed", out);
+  console.log(rw.read((s) => s.items[0].tags.join(",")));
+}
