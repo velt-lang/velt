@@ -13,7 +13,9 @@
 // in a string that is not ASCII: those positions are code units (`replaceAll("", "-")` puts a
 // `-` between the halves of every pair, as JavaScript does), cut by `substring`.
 
-import { noInline, strByteAt, strByteLen, strLen } from "velt/lang/intrinsics";
+import type { Ptr } from "velt/ffi";
+import { noInline, strByteAt, strByteLen, strDataAddress, strLen } from "velt/lang/intrinsics";
+import { ptrFromAddress } from "velt/lang/intrinsics/address";
 import { findByte } from "velt/lang/string/byte_scan";
 import { isHalfNeedle } from "velt/lang/string/code_units";
 import { halfFind } from "velt/lang/string/half_needle";
@@ -22,6 +24,7 @@ import { findBytes } from "velt/lang/string/needle_scan";
 declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
 declare function velt_rt_strbuf_new(cap: u64, out: string);
 declare function velt_rt_strbuf_push_str(buf: string, s: string);
+declare function velt_rt_strbuf_push_bytes(buf: string, ptr: Ptr<u8>, len: u64);
 declare function velt_rt_strbuf_finish(buf: string, out: string);
 
 const DOLLAR: u8 = 36;
@@ -81,14 +84,22 @@ function replaceIn(s: string, from: string, to: string, all: bool): string {
   return out;
 }
 
-/** Bytes `start..end` of `s` appended to the builder `buf` (a share of `s`'s bytes, copied in). */
+/**
+ * Bytes `start..end` of `s` copied into the builder `buf`, with no string made for them. The
+ * length word is the byte count with, for an ASCII `s`, the unit count in its high half (nothing
+ * to count then); for another `s` the runtime counts the piece and joins a low surrogate at its
+ * start to a high one ending `buf`. A string is below 2 GiB, so the byte count fits the low half.
+ */
 function pushRange(buf: string, s: string, start: usize, end: usize): void {
   if (start == end) {
     return;
   }
-  // Into a local first: a call as an argument after the builder would copy the builder.
-  const piece = velt_rt_str_byte_slice(s, start as u64, end as u64);
-  velt_rt_strbuf_push_str(buf, piece);
+  const len = (end - start) as u64;
+  const word = strLen(s) == strByteLen(s) ? len | (len << 32) : len;
+  // SAFETY: `s` is this function's parameter, so its bytes stay where they are during the call,
+  // and `start..end` is in them (the callers' positions are at most `strByteLen(s)`).
+  const at = unsafe { ptrFromAddress<u8>(strDataAddress(s) + start) };
+  velt_rt_strbuf_push_bytes(buf, at, word);
 }
 
 /** The first match of `from` (`m` bytes) in `s` (`n` bytes) at or after byte `at`, or -1. */
