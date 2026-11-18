@@ -87,6 +87,11 @@ impl FnCx<'_, '_> {
                 }
             }
         }
+        if self.numbers_for_bytes(expected, found.ty) {
+            d = d.with_note(
+                "a `number[]` is not a byte array (`u8[]`): `Uint8Array.from(xs)` converts its numbers to bytes as JavaScript does (256 is 0, -1 is 255), or declare the array `u8[]`",
+            );
+        }
         if let Some(note) = self.narrowing_note(found.ty) {
             d = d.with_note(note);
         }
@@ -176,6 +181,21 @@ impl FnCx<'_, '_> {
             "build one from it: `{{ {} }}`, or give `{e}` a method to make it an interface classes implement",
             fields.join(", ")
         ))
+    }
+
+    /// Is `found` a `number[]` where a union with a byte array member is expected (`string |
+    /// u8[] | …`, as `Buffer.from` takes)? Such a union takes a `Uint8Array` too (std's do).
+    fn numbers_for_bytes(&mut self, expected: TyId, found: TyId) -> bool {
+        if !matches!(self.cx.ty.kind(found), TyKind::Array(e) if *e == self.cx.ty.f64) {
+            return false;
+        }
+        let Some(members) = self.cx.union_members(expected) else {
+            return false;
+        };
+        members.iter().any(|&m| {
+            matches!(self.cx.ty.kind(m), TyKind::Array(e)
+                if matches!(self.cx.ty.kind(*e), TyKind::Int(crate::hir::IntTy::U8)))
+        })
     }
 
     /// Is `t` an anonymous object type (`{ v: number }`, a generic alias's instance)?

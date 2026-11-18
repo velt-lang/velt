@@ -1,7 +1,8 @@
 // Prelude: Node `Buffer`-style bulk operations on byte arrays (`u8[]`): searches and XOR masking
 // sixteen bytes at a time with SIMD vectors (velt/lang/bytes/search, in Velt so that they are
 // compiled into their caller), filling and concatenating likewise (velt/lang/bytes/copy), text
-// in bytes (velt/lang/bytes/text); long copies by memmove in the runtime.
+// in bytes (velt/lang/bytes/text, and Node's other encodings: velt/lang/bytes/encodings); long
+// copies by memmove in the runtime.
 //
 // A byte array is a plain `u8[]` (Velt has no separate `Uint8Array` type), so every array
 // method works on it too; the methods here replace the generic ones of the same name for `u8[]`.
@@ -10,8 +11,11 @@
 
 import { inline, noInline, strByteLen } from "velt/lang/intrinsics";
 import { indexOfByte, lastIndexOfByte, xorMaskRange } from "velt/lang/bytes/search";
-import { byteLengthIn, received, textEquals } from "velt/lang/bytes/text";
+import { received, textEquals } from "velt/lang/bytes/text";
+import { byteLengthIn, textBytes, utf8Bytes } from "velt/lang/bytes/encodings";
 import { fillBytes, setBytes, writeUtf8 } from "velt/lang/bytes/copy";
+import { ByteSource } from "velt/lang/bytes/byte_source";
+import { VIEW_BYTES } from "velt/lang/hooks/keys";
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
@@ -104,6 +108,32 @@ export class Buffer {
       return strByteLen(s);
     }
     return byteLengthIn(s, encoding);
+  }
+
+  /**
+   * A new byte array, as Node's `Buffer.from`: the bytes of a string in `encoding` (below), a
+   * copy of a byte array, or a typed array's elements, each converted to a byte (`ToUint8`: a
+   * `Uint16Array`'s 256 is 0; a `Uint8Array`'s bytes as they are); never shared with `data`.
+   * A `DataView` gives no bytes, as in Node (which reads its missing `length`).
+   *
+   * A string's encoding is UTF-8 by default (a lone surrogate as U+FFFD's three bytes);
+   * `utf16le` / `ucs2` writes two bytes per UTF-16 code unit, the low one first; `latin1` /
+   * `binary` / `ascii` each code unit's low byte; `hex` decodes pairs of digits up to the first
+   * pair that isn't (an odd last digit is dropped); `base64` / `base64url` decode either
+   * alphabet, skipping whitespace and any other character, padding optional, up to the first
+   * `=`. Names ignore case; an unknown one throws a `TypeError` (`Unknown encoding: …`).
+   *
+   * An array literal is a byte array here (`Buffer.from([1, 2, 3])`); a `number[]` is converted
+   * by `Uint8Array.from(xs)`.
+   */
+  static from(data: string | u8[] | ByteSource, encoding?: string): u8[] {
+    if (typeof data == "string") {
+      return encoding == null ? utf8Bytes(data) : textBytes(data, encoding);
+    }
+    if (data instanceof ByteSource) {
+      return data[VIEW_BYTES]();
+    }
+    return velt_rt_bytes_slice(data, 0, data.length as i64);
   }
 
   /**
