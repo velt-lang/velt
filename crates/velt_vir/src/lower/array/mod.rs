@@ -4,9 +4,14 @@
 //! doubling (the shared `ArrayGrow` helper, starting at 4). A buffer has its element's
 //! alignment, and `LINE_ALIGN` when the element's size is a multiple of 64 bytes, so each element
 //! of such an array is whole cache lines ([`FnLower::stride`]). `cap == 0` with elements is a
-//! buffer the array does not own: a module constant table's read-only data (`table_read` in
-//! `expr.rs`), seen only by the code that reads an element, the length or iterates. Indexing is
-//! bounds-checked
+//! buffer the array does not own, which nothing may write, grow or free. There are two: a
+//! module constant table's read-only data (`table_read` in `expr.rs`), seen only by the code
+//! that reads an element, the length or iterates; and memory at an address (the std-only
+//! `addressArray`, docs/internals/design/intrinsics.md "Memory at an address"), which is a value:
+//! it is passed, transferred to other tasks and dropped ([`FnLower::free_buffer`] frees nothing
+//! when `cap == 0`, and a copy sizes from `len` and owns its buffer). What keeps that one sound
+//! is not here: std hands it out only inside a `shared<T[]>`, which sema refuses to write or
+//! grow. Indexing is bounds-checked
 //! (the `Oob` helper panics with `index out of bounds: the len is L but the index is I`).
 //! A buffer holds at most [`crate::MAX_ARRAY_LEN`] bytes, so an array at most that many
 //! elements (fewer of larger ones, [`max_elems`]) and a byte size never wraps. It is checked where

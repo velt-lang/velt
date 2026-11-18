@@ -18,9 +18,14 @@ export type MapAdvice = "normal" | "random" | "sequential" | "willneed";
  * file is opened; a page comes from the disk when it is first touched.
  *
  * The mapping stays for the rest of the program (it costs address space, not memory), so the
- * arrays stay valid however long they are kept. Changing the file's bytes while it is mapped
- * changes what the arrays read, and cutting the file short makes reading the cut pages stop
- * the program: map files nothing else writes.
+ * arrays stay valid however long they are kept. Every `open` makes a mapping of its own that
+ * lasts until the program exits: open a file once and keep the `MappedFile`. A program that
+ * opens one per request runs out of mappings (`ENOMEM` after about 65,000 on Linux's default
+ * limit).
+ *
+ * Changing the file's bytes while it is mapped changes what the arrays read. Cutting the file
+ * short ends the program with a bus-error signal when a cut page is read, without a message,
+ * and output it had buffered may be lost: map files nothing else writes.
  */
 export class MappedFile {
   /** The file's bytes. */
@@ -32,7 +37,11 @@ export class MappedFile {
     this.bytes = bytes;
   }
 
-  /** Maps the file at `path` (an `IoError` when it cannot be opened or mapped). */
+  /**
+   * Maps the file at `path`. An `IoError` when it cannot be opened or mapped: `EISDIR` for a
+   * directory, `EINVAL` for anything else that is not a regular file (a device, a pipe, a
+   * /proc file), `ENOSYS` where files cannot be mapped (Windows, WebAssembly).
+   */
   static open(path: string): MappedFile {
     const fd = openPath(cPath(path), isMac() ? 0x1000000 : 0x80000, 0); // O_RDONLY | O_CLOEXEC
     if (fd < 0) {
@@ -43,6 +52,13 @@ export class MappedFile {
       const e = lastError();
       closeFd(fd);
       throw osError(e, "fstat", path);
+    }
+    // Only a regular file has bytes to map: a directory's `mmap` fails with an errno Node has
+    // no name for, and a device or a /proc file reports a size of 0 whatever it holds.
+    const kind = st.st_mode & 0o170000;
+    if (kind != 0o100000) {
+      closeFd(fd);
+      throw osError(kind == 0o040000 ? 21 : 22, "mmap", path); // EISDIR, EINVAL
     }
     const len = st.st_size as usize;
     if (len == 0) {
@@ -102,10 +118,11 @@ export class MappedFile {
    * Tells the system how the `length` bytes from `byteOffset` (the whole file by default) will
    * be read: `"sequential"` reads ahead more, `"random"` not at all, `"willneed"` starts
    * reading them now, `"normal"` is the default. A hint: it never changes what is read.
+   * `RangeError` when the range is not inside the file.
    */
-  advise(advice: MapAdvice, byteOffset: number = 0, length: number = -1) {
+  advise(advice: MapAdvice, byteOffset: number = 0, length?: number) {
     const size = this.bytes.length as number;
-    const len = length < 0 ? size - byteOffset : length;
+    const len = length === undefined ? size - byteOffset : length;
     if (
       !Number.isInteger(byteOffset) ||
       !Number.isInteger(len) ||
@@ -120,9 +137,9 @@ export class MappedFile {
     if (len == 0) {
       return;
     }
-    // `madvise` takes whole pages from a page's start: round the start down (16 KiB covers
-    // every page size in use).
-    const start = byteOffset - (byteOffset % 16384);
+    // `madvise` takes whole pages from a page's start: round the start down to a multiple of
+    // 64 KiB, which is a page's start for every page size in use (4, 16 and 64 KiB).
+    const start = byteOffset - (byteOffset % 65536);
     const code: i32 =
       advice == "random" ? 1 : advice == "sequential" ? 2 : advice == "willneed" ? 3 : 0;
     adviseMap(this.address + (start as usize), (byteOffset - start + len) as usize, code);

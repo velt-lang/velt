@@ -92,6 +92,10 @@ describe("MappedFile", () => {
     expect(() => m.f32s(20, 2)).toThrow("not a range of 4-byte floats");
     expect(() => m.f32s(-4, 1)).toThrow("not a range of 4-byte floats");
     expect(() => m.advise("random", 0, 25)).toThrow("is not inside the 24 mapped bytes");
+    expect(() => m.advise("random", 0, -5)).toThrow("is not inside the 24 mapped bytes");
+    expect(() => m.advise("random", 8, 17)).toThrow("is not inside the 24 mapped bytes");
+    m.advise("random", 8);
+    m.advise("willneed", 24, 0);
     unlinkSync(path);
   });
 
@@ -105,5 +109,25 @@ describe("MappedFile", () => {
     m.advise("normal");
     unlinkSync(path);
     expect(() => MappedFile.open(path)).toThrow("ENOENT");
+  });
+
+  it("refuses what is not a regular file, by Node's codes", () => {
+    if (!POSIX) {
+      return;
+    }
+    expect(() => MappedFile.open(tmpdir())).toThrow(
+      "EISDIR: illegal operation on a directory, mmap",
+    );
+    // A device reports a size of 0 whatever it holds: an error, not an empty mapping.
+    expect(() => MappedFile.open("/dev/zero")).toThrow(
+      "EINVAL: invalid argument, mmap '/dev/zero'",
+    );
+  });
+
+  it("is ENOSYS where files cannot be mapped", () => {
+    if (POSIX) {
+      return;
+    }
+    expect(() => MappedFile.open("anything")).toThrow("ENOSYS");
   });
 });
