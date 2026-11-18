@@ -1,0 +1,10 @@
+
+STATE 2026-11-18: #3190 APPROVED + auto-merge (gate green 44c286143). Step 5a (whole-file fs) started in branches/fs-sync-2196 (from f60987432), uncommitted:
+- std/fs/whole/{done,posix,win32}.velt (#fs-whole in imports.velt: win32 / default posix); posix over #fd-system (new statPath in darwin/linux/unsupported + statAt in fd/posix.velt; statsOf exported from fd/sync.velt); win32 over CreateFileW/ReadFile/WriteFile/GetFileInformationByHandle(+Ex tag), \\?\ for paths >= 248 units.
+- rt_sched.velt: readTextSync/readText/readBytesSync/readBytes/writeSync/write/statSync/stat/existsSync/exists (cPath on caller thread, Done<T> through the blocking pool, take() throws); rt.velt (wasm) same names over velt_rt_wasm externs (text from bytes, lossy). files/metadata/entries/cgroup use them.
+- Rust deleted: 7 *_sync externs (sync.rs) + ops.rs read_all/read_text/read_bytes/write/stat/lstat/exists; abi/fs.rs tests rewritten; runtime_exports, outside.rs examples, contract table + note, std_check CHECKED (fs/whole/win32.velt), c_headers PATHS (std/fs/whole/). NOT in deleted.rs (velt_rt_wasm still defines them).
+- Coordinator decisions: (a) invalid UTF-8 -> U+FFFD (Node), note in docs-sync; (b) POSIX + Windows in one PR; check Windows error paths and a growing file.
+- Tests: golden std/fs_whole_files (.out from Node 24 twin at scratchpad fs_whole_files.mjs), crates/veltc/tests/fs_whole_reads.rs (FIFO + growing file), bench/stdport/fs_whole.velt + rust twin.
+- Pending: build + checks (scratchpad fs5a-check.sh), mutants for the new tests, VM A/B, gate, PR, docs-sync issue.
+
+STATE 2026-11-18 late: fs 5a = DRAFT PR #3218 @88f85f14f (branch fs-sync-2196, one commit), docs velt-lang.github.io#261. Self-review fixes in (read_all.velt doubling loop; fs_whole_unix golden; fs_whole_nul_path golden; EIO write-zero; Windows error timing/mtime/long path). Mutants verified. TODO: VM A/B (branches/vm-stdin/fs5a-ab.sh, base worktree branches/ab-fs5a-base) in my slot; gate in another slot; self-check comment; mark ready. Follow-ups listed in the PR (huge-file OOM, Windows lone surrogates, dead wasm text exports). Then 5b (readdir, mkdir, rm).

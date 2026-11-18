@@ -1,0 +1,15 @@
+// Reads standard input line by line, then whatever is left, and prints how much it got.
+import { readAllSync, readLineSync } from "velt/process";
+
+function main() {
+  let lines = 0;
+  let chars = 0;
+  let line = readLineSync();
+  while (line !== null && lines < 500000) {
+    lines++;
+    chars += line.length;
+    line = readLineSync();
+  }
+  const rest = readAllSync();
+  console.log(lines, chars, rest.length);
+}

@@ -1,0 +1,58 @@
+// A quick check of the whole-file functions (step 5a): what they return and how they fail.
+import {
+  appendFileSync,
+  existsSync,
+  lstatSync,
+  readFile,
+  readFileBytesSync,
+  readFileSync,
+  stat,
+  statSync,
+  writeFile,
+  writeFileSync,
+} from "velt/fs";
+
+function fails(what: string, f: () => void) {
+  try {
+    f();
+    console.log(what, "ok");
+  } catch (e) {
+    console.log(what, (e as Error).message);
+  }
+}
+
+async function main() {
+  const dir = "/tmp/velt-fs5a";
+  writeFileSync(`${dir}-a.txt`, "héllo\n");
+  appendFileSync(`${dir}-a.txt`, "more");
+  console.log(readFileSync(`${dir}-a.txt`));
+  console.log(readFileBytesSync(`${dir}-a.txt`).length);
+  const s = statSync(`${dir}-a.txt`);
+  console.log(s.size, s.isFile(), s.isDirectory(), s.isSymbolicLink());
+  console.log(statSync("/tmp").isDirectory(), lstatSync("/tmp").isSymbolicLink());
+  console.log(existsSync(`${dir}-a.txt`), existsSync(`${dir}-none`), existsSync("a\0b"));
+  fails("read missing", () => {
+    readFileSync(`${dir}-none`);
+  });
+  fails("read dir", () => {
+    readFileSync("/tmp");
+  });
+  fails("write dir", () => {
+    writeFileSync("/tmp", "x");
+  });
+  fails("stat missing", () => {
+    statSync(`${dir}-none/x`);
+  });
+  fails("lstat missing", () => {
+    lstatSync(`${dir}-none`);
+  });
+  fails("nul", () => {
+    readFileSync("a\0b");
+  });
+  await writeFile(`${dir}-b.txt`, "async");
+  console.log(await readFile(`${dir}-b.txt`), (await stat(`${dir}-b.txt`)).size);
+  const big = "x".repeat(200000);
+  writeFileSync(`${dir}-c.txt`, big);
+  console.log(readFileSync(`${dir}-c.txt`).length);
+  console.log(readFileSync("/dev/null").length);
+}
