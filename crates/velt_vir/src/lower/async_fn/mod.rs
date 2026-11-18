@@ -373,8 +373,23 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
     }
 
-    /// Drop the owned inputs of a state machine that has not started.
+    /// Drop the owned inputs of a state machine that has not started. What the body's scopes
+    /// own does not hold here (the drop flags are not set yet), so a pad of one of these drops
+    /// must not read it: the inputs not dropped yet are the only things owned, each until its
+    /// own drop begins.
     fn drop_inputs(&mut self, f: &FnDef) {
+        let outer = std::mem::take(&mut self.scopes);
+        self.push_scope(super::ScopeKind::Block);
+        let mut owned = vec![];
+        for p in f.params.iter().rev() {
+            let info = &self.info[p.local.0 as usize];
+            if !info.cell && info.droppable {
+                let ty = info.ty;
+                let place = self.local_place(p.local);
+                self.own_place(place.clone(), ty);
+                owned.push((p.local, place, ty));
+            }
+        }
         for p in &f.params {
             let info = &self.info[p.local.0 as usize];
             if info.cell {
@@ -382,12 +397,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 // after the capture): release the state's reference to the cell, as the
                 // started paths do, not the value inside it.
                 self.release_cell(p.local);
-            } else if info.droppable {
-                let ty = info.ty;
-                let place = self.local_place(p.local);
+            } else if let Some((_, place, ty)) = owned.iter().find(|(l, ..)| *l == p.local) {
+                let (place, ty) = (place.clone(), *ty);
+                self.take_temp(&place);
                 self.drop_glue(place, ty);
             }
         }
+        self.scopes = outer;
     }
 
     /// Fill the entry block: `switch state.tag`.
