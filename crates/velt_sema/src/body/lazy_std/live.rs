@@ -520,9 +520,7 @@ fn walk_def(cx: &mut Ctx, d: DefId, w: &mut Walk) -> bool {
                 return false;
             }
             note_ty(ty, g.ty, w);
-            // Module state: a stored global, or a constant of the program's own, which the
-            // passes after this walk may keep in the module state (kept_consts.rs, #1383; std's
-            // constants never are).
+            // A stored global, or a constant of the program's, kept later (kept_consts.rs).
             w.module_state |= g.stored || !cx.modules[g.module].is_std;
             if let Some(e) = &mut g.init {
                 crate::visit::exprs_in(e, &mut |e| visit(e, w));

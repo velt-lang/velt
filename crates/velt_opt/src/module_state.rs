@@ -87,7 +87,7 @@ struct Site {
 /// itself, or a local the block set to it cast to an integer (lowering's `desc_arg`).
 fn desc_static(b: &BasicBlock, a: &Operand) -> Option<Const> {
     match a {
-        Operand::Const(c @ Const::Static(_), _) => return Some(c.clone()),
+        Operand::Const(c @ Const::Static(_), _) => Some(c.clone()),
         Operand::Copy(p) if p.proj.is_empty() => {
             for s in b.stmts.iter().rev() {
                 if let Stmt::Assign(to, rv) = s {
