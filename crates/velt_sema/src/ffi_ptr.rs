@@ -226,7 +226,7 @@ impl Ctx<'_> {
 
 /// What `ptrRead<T>` and `ptrWrite<T>` (velt/ffi's `Ptr.read`, `Ptr.write`) move.
 pub(crate) const MEMORY_ELEMENTS: &str =
-    "a number type, `bool`, a C struct or a C pointer (`Ptr<T>`, `Ptr<T> | null`)";
+    "a number type, `bool`, a C struct or a C pointer (`Ptr<T>`, `Ptr<T> | null`, `Ptr<T> | undefined`)";
 
 impl Ctx<'_> {
     /// Can `ptrRead<T>` / `ptrWrite<T>` (velt/ffi's `Ptr.read`, `Ptr.write`) move a `t`: a number
