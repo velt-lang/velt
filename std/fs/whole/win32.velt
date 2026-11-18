@@ -5,6 +5,7 @@
 // errors name the path as it was given, as Node's do. A directory refuses to open as a file with
 // "access denied", which is `EISDIR` here, as everywhere else.
 
+import { OutPtr } from "velt/ffi/out_ptr";
 import { Ptr } from "velt/ffi/ptr";
 import { wideOf } from "velt/ffi/wide";
 import { osError } from "velt/fs/errors";
@@ -12,36 +13,44 @@ import { Stats } from "velt/fs/stats";
 import { Done } from "velt/fs/whole/done";
 import { readAll } from "velt/fs/whole/read_all";
 import { utf8Encode } from "velt/encoding/utf8";
-import { arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
+import { addressLoad, arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
 import { errnoOfWin32 } from "velt/os/win_error";
+
+/** C's `SECURITY_ATTRIBUTES` and `OVERLAPPED`: never passed. */
+declare c type _SECURITY_ATTRIBUTES;
+declare c type _OVERLAPPED;
+/** C's `BY_HANDLE_FILE_INFORMATION`, which `GetFileInformationByHandle` fills. */
+declare c type _BY_HANDLE_FILE_INFORMATION;
 
 declare c("c") function CreateFileW(
   name: readonly u16[],
   access: u32,
   share: u32,
-  security: Ptr<u8> | null,
+  security: Ptr<_SECURITY_ATTRIBUTES> | null,
   disposition: u32,
   flags: u32,
-  template: usize,
-): usize;
+  template: Ptr<void> | null,
+): Ptr<void> | null;
 declare c("c") function ReadFile(
-  handle: usize,
+  handle: Ptr<void>,
   buf: u8[],
   count: u32,
   read: u32[],
-  overlapped: Ptr<u8> | null,
+  overlapped: Ptr<_OVERLAPPED> | null,
 ): i32;
 declare c("c") function WriteFile(
-  handle: usize,
+  handle: Ptr<void>,
   buf: readonly u8[],
   count: u32,
   written: u32[],
-  overlapped: Ptr<u8> | null,
+  overlapped: Ptr<_OVERLAPPED> | null,
 ): i32;
-declare c("c") function GetFileSizeEx(handle: usize, size: i64[]): i32;
-declare c("c") function GetFileInformationByHandle(handle: usize, info: u32[]): i32;
+declare c("c") function GetFileInformationByHandle(
+  handle: Ptr<void>,
+  info: Ptr<_BY_HANDLE_FILE_INFORMATION>,
+): i32;
 declare c("c") function GetFileInformationByHandleEx(
-  handle: usize,
+  handle: Ptr<void>,
   infoClass: i32,
   info: u32[],
   size: u32,
@@ -51,10 +60,12 @@ declare c("c") function GetFullPathNameW(
   name: readonly u16[],
   room: u32,
   out: u16[],
-  file: Ptr<u8> | null,
+  file: OutPtr<u16>,
 ): u32;
-declare c("c") function CloseHandle(handle: usize): i32;
+declare c("c") function CloseHandle(handle: Ptr<void>): i32;
 declare c("c") function GetLastError(): u32;
+declare c("c") function malloc(size: usize): Ptr<void> | null;
+declare c("c") function free(p: Ptr<void> | null): void;
 
 const INVALID_HANDLE: usize = 0xffffffffffffffff;
 const GENERIC_READ: u32 = 0x80000000;
@@ -73,8 +84,12 @@ const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x00200000;
 const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
 const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
 const INVALID_FILE_ATTRIBUTES: u32 = 0xffffffff;
+/** `FileStandardInfo`: the sizes (the end of the file is its second 64-bit field). */
+const STANDARD_INFO: i32 = 1;
 /** `FileAttributeTagInfo`: the attributes and the reparse tag. */
 const ATTRIBUTE_TAG_INFO: i32 = 9;
+/** The size of `BY_HANDLE_FILE_INFORMATION`: 13 DWORDs. */
+const HANDLE_INFO_SIZE: usize = 52;
 const IO_REPARSE_TAG_SYMLINK: u32 = 0xa000000c;
 const IO_REPARSE_TAG_MOUNT_POINT: u32 = 0xa0000003;
 const ERROR_FILE_NOT_FOUND: u32 = 2;
@@ -107,7 +122,7 @@ function winPath(path: string): u16[] | null {
     const full = arrayWithCapacity<u16>(room as usize);
     arraySetLen(full, room as usize);
     // SAFETY: `w` is NUL-terminated and `full` holds `room` units, the count passed.
-    const got = unsafe { GetFullPathNameW(w, room, full, null) };
+    const got = unsafe { GetFullPathNameW(w, room, full, new OutPtr<u16>()) };
     if (got === 0) {
       return w;
     }
@@ -144,13 +159,18 @@ function isDirectory(w: readonly u16[]): bool {
   return a !== INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY) !== 0;
 }
 
-/** `CreateFileW` of `w`: the handle, or INVALID_HANDLE (`lastWin32()`). */
-function open(w: readonly u16[], access: u32, disposition: u32, flags: u32): usize {
+/** `CreateFileW` of `w`: the handle, or null (`lastWin32()`). */
+function open(w: readonly u16[], access: u32, disposition: u32, flags: u32): Ptr<void> | null {
   // SAFETY: `w` is NUL-terminated; no security attributes and no template.
-  return unsafe { CreateFileW(w, access, SHARE_ALL, null, disposition, flags, 0) };
+  const h = unsafe { CreateFileW(w, access, SHARE_ALL, null, disposition, flags, null) };
+  // INVALID_HANDLE_VALUE is what a failed open returns.
+  if (h === null || Ptr.addressOf(h) === INVALID_HANDLE) {
+    return null;
+  }
+  return h;
 }
 
-function close(h: usize) {
+function close(h: Ptr<void>) {
   // SAFETY: a handle this module opened, closed once.
   unsafe {
     CloseHandle(h);
@@ -161,7 +181,7 @@ function close(h: usize) {
  * `ReadFile` of up to `end - start` bytes into `bytes[start..end]`: the count, or -1 with the
  * error in `failed[0]`, read right after the call.
  */
-function readSome(h: usize, bytes: u8[], start: usize, end: usize, failed: u32[]): i64 {
+function readSome(h: Ptr<void>, bytes: u8[], start: usize, end: usize, failed: u32[]): i64 {
   const n = end - start > MOST ? MOST : end - start;
   const got: u32[] = [0];
   // SAFETY: `start..start + n` is inside `bytes` (the callers' ranges are), C gets its length.
@@ -178,12 +198,14 @@ function readSome(h: usize, bytes: u8[], start: usize, end: usize, failed: u32[]
   return -1;
 }
 
-/** The rest of `h` (std/fs/whole/read_all.velt), from the size `GetFileSizeEx` gives. */
-function readRest(h: usize): Done<u8[]> {
-  const size: i64[] = [0];
-  // SAFETY: `size` holds the LARGE_INTEGER the call writes.
-  const known = unsafe { GetFileSizeEx(h, size) } !== 0 && size[0] > 0;
-  const hint: usize = known ? size[0] as usize : 0;
+/** The rest of `h` (std/fs/whole/read_all.velt), from the size the file's standard info gives. */
+function readRest(h: Ptr<void>): Done<u8[]> {
+  // FILE_STANDARD_INFO, as 6 DWORDs: the end of the file at 2 (low) and 3 (high).
+  const info: u32[] = [0, 0, 0, 0, 0, 0];
+  // SAFETY: `info` holds the 24 bytes the call writes, the size passed.
+  const known = unsafe { GetFileInformationByHandleEx(h, STANDARD_INFO, info, 24) } !== 0;
+  const size = ((info[3] as i64) << 32) | (info[2] as i64);
+  const hint: usize = known && size > 0 ? size as usize : 0;
   const failed: u32[] = [0];
   const bytes = readAll(hint, (b, start, end) => readSome(h, b, start, end, failed));
   if (bytes === null) {
@@ -199,7 +221,7 @@ export function readBytes(c: readonly u8[], path: string): Done<u8[]> {
     return { value: null, error: osError(errnoOfWin32(ERROR_FILE_NOT_FOUND), "open", path) };
   }
   const h = open(w, GENERIC_READ, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL);
-  if (h === INVALID_HANDLE) {
+  if (h === null) {
     const code = lastWin32();
     if (code === ERROR_ACCESS_DENIED && isDirectory(w)) {
       return { value: null, error: osError(EISDIR, "read") };
@@ -229,7 +251,7 @@ export function writeText(c: readonly u8[], path: string, data: string, append: 
   }
   const access = append ? FILE_APPEND_DATA | SYNCHRONIZE : GENERIC_WRITE;
   const h = open(w, access, append ? OPEN_ALWAYS : CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL);
-  if (h === INVALID_HANDLE) {
+  if (h === null) {
     const code = lastWin32();
     if (code === ERROR_ACCESS_DENIED && isDirectory(w)) {
       // A directory: Node names the open for a write, but the write (no path) for an append.
@@ -268,6 +290,37 @@ export function writeText(c: readonly u8[], path: string, data: string, append: 
   return { value: true, error: null };
 }
 
+/**
+ * `GetFileInformationByHandle(h)`: its 13 DWORDs pushed to `info` and 0, or the Win32 error.
+ */
+function handleInfo(h: Ptr<void>, info: u32[]): u32 {
+  // SAFETY: malloc's result is checked before use and freed once below.
+  const block = unsafe { malloc(HANDLE_INFO_SIZE) };
+  if (block === null) {
+    panic("stat: out of memory");
+  }
+  const at = Ptr.addressOf(block);
+  // SAFETY: `at` is the block's address, HANDLE_INFO_SIZE bytes, as many as the struct's.
+  const out = unsafe { Ptr.at<_BY_HANDLE_FILE_INFORMATION>(at) };
+  // SAFETY: `h` is an open handle and `out` points at room for the struct the call fills; it
+  // keeps no pointer after it returns.
+  const ok = unsafe { GetFileInformationByHandle(h, out) } !== 0;
+  // Read right after the call, before `free` can change it.
+  const code: u32 = ok ? 0 : lastWin32();
+  if (ok) {
+    for (let i: usize = 0; i < HANDLE_INFO_SIZE; i += 4) {
+      // SAFETY: the call wrote the struct at `at`, and `i..i + 4` is inside it; malloc's
+      // memory is aligned for a DWORD.
+      info.push(unsafe { addressLoad<u32>(at + i) });
+    }
+  }
+  // SAFETY: `block` came from malloc and is freed once; `info` holds copies.
+  unsafe {
+    free(block);
+  }
+  return code;
+}
+
 /** `stat` (`follow`) or `lstat` of `path`, from one open of it (a directory too). */
 export function statOf(c: readonly u8[], path: string, follow: bool): Done<Stats> {
   const call = follow ? "stat" : "lstat";
@@ -277,15 +330,14 @@ export function statOf(c: readonly u8[], path: string, follow: bool): Done<Stats
   }
   const flags = FILE_FLAG_BACKUP_SEMANTICS | (follow ? 0 : FILE_FLAG_OPEN_REPARSE_POINT);
   const h = open(w, FILE_READ_ATTRIBUTES, OPEN_EXISTING, flags);
-  if (h === INVALID_HANDLE) {
+  if (h === null) {
     return { value: null, error: osError(errnoOfWin32(lastWin32()), call, path) };
   }
   // BY_HANDLE_FILE_INFORMATION, as 13 DWORDs: the attributes at 0, the last write time at 5-6,
   // the size at 8 (high) and 9 (low).
-  const info: u32[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-  // SAFETY: `info` holds the 52 bytes the call writes.
-  if (unsafe { GetFileInformationByHandle(h, info) } === 0) {
-    const code = lastWin32();
+  const info: u32[] = [];
+  const code = handleInfo(h, info);
+  if (code !== 0) {
     close(h);
     return { value: null, error: osError(errnoOfWin32(code), call, path) };
   }
@@ -324,7 +376,7 @@ export function existsAt(c: readonly u8[], path: string): bool {
   // `stat`. The open follows links, so a broken one is not there; a file another process holds
   // without sharing is there.
   const h = open(w, 0, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS);
-  if (h === INVALID_HANDLE) {
+  if (h === null) {
     return lastWin32() === ERROR_SHARING_VIOLATION;
   }
   close(h);
