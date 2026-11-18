@@ -1,5 +1,7 @@
 two 1,2,3,4,5
 none 0
+none, total 3 []
+none, total -1 []
 with empty 1,2,3
 total shorter 1,2,3,4
 total longer 1,2,3,4,5,0,0,0

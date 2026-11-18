@@ -3,15 +3,15 @@
 
 import { VIEW_EMPTY_TEXT, VIEW_SIZE } from "velt/lang/hooks/keys";
 import { ArrayBuffer } from "velt/lang/typed_array/core";
-import { ByteSource } from "velt/lang/bytes/byte_source";
+import { ViewBytes } from "velt/lang/bytes/view_bytes";
 
 /**
  * A view of a byte range of an `ArrayBuffer` (std only: what every typed array and `DataView`
  * extends): the buffer, the offset of the range in it (bytes), and its length in elements of
- * `[VIEW_SIZE]()` bytes. It is a `ByteSource` so that `Buffer.from` takes one without the
+ * `[VIEW_SIZE]()` bytes. It is a `ViewBytes` so that `Buffer.from` takes one without the
  * prelude loading this module.
  */
-export class BufferView extends ByteSource {
+export class BufferView extends ViewBytes {
   private buf: ArrayBuffer;
   private off: usize;
   private len: usize;

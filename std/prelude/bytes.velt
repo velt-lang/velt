@@ -14,7 +14,7 @@ import { indexOfByte, lastIndexOfByte, xorMaskRange } from "velt/lang/bytes/sear
 import { received, textEquals } from "velt/lang/bytes/text";
 import { byteLengthIn, textBytes, utf8Bytes } from "velt/lang/bytes/encodings";
 import { fillBytes, setBytes, writeUtf8 } from "velt/lang/bytes/copy";
-import { ByteSource } from "velt/lang/bytes/byte_source";
+import { ViewBytes } from "velt/lang/bytes/view_bytes";
 import { VIEW_BYTES } from "velt/lang/hooks/keys";
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
@@ -126,11 +126,11 @@ export class Buffer {
    * An array literal is a byte array here (`Buffer.from([1, 2, 3])`); a `number[]` is converted
    * by `Uint8Array.from(xs)`.
    */
-  static from(data: string | u8[] | ByteSource, encoding?: string): u8[] {
+  static from(data: string | u8[] | ViewBytes, encoding?: string): u8[] {
     if (typeof data == "string") {
       return encoding == null ? utf8Bytes(data) : textBytes(data, encoding);
     }
-    if (data instanceof ByteSource) {
+    if (data instanceof ViewBytes) {
       return data[VIEW_BYTES]();
     }
     return velt_rt_bytes_slice(data, 0, data.length as i64);
@@ -143,6 +143,10 @@ export class Buffer {
    * `RangeError` (`ERR_OUT_OF_RANGE`). The arrays are copied, not shared.
    */
   static concat(list: u8[][], totalLength?: number): u8[] {
+    if (list.length == 0) {
+      // As Node: an empty list gives an empty array before `totalLength` is looked at.
+      return velt_rt_bytes_zeroed(0);
+    }
     let n: usize = 0;
     if (totalLength === undefined) {
       for (const b of list) {

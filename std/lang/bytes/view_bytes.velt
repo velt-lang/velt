@@ -1,4 +1,4 @@
-// velt/lang/bytes (internal): `ByteSource`, what `Buffer.from` (std/prelude/bytes.velt) copies the
+// velt/lang/bytes (internal): `ViewBytes`, what `Buffer.from` (std/prelude/bytes.velt) copies the
 // bytes of besides strings and byte arrays: the base class of the buffer views (typed arrays and
 // `DataView`, std/lang/typed_array/buffer_view.velt). A class of its own, with no fields, so
 // that the prelude names it without loading the typed arrays (which would add to every
@@ -10,7 +10,7 @@ import { VIEW_BYTES } from "velt/lang/hooks/keys";
  * A buffer view (std only: what `BufferView` extends), as `Buffer.from` reads it: the bytes
  * `[VIEW_BYTES]()` makes of it.
  */
-export class ByteSource {
+export class ViewBytes {
   /**
    * The bytes Node's `Buffer.from` makes of the view, in a new array: none here, as for a
    * `DataView` (Node reads its `length`, which it lacks); a typed array converts its elements
