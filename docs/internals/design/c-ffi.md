@@ -1409,6 +1409,10 @@ Step 1 lands in layers, each its own pull request:
       a C struct or a C pointer, one load or store of its VIR type at `p + index * size`
       (velt_vir `lower/ptr_memory.rs`). `void` and a `declare c type` have no size: a compile
       error, through a type parameter too (`json::PtrUse::Memory`, at the instantiation).
+      The safety contract: `p` is aligned for `T` (C's alignment of the element) and `index + 1`
+      `T`s are readable (writable) there. The load or store is a place of the element's VIR
+      type, which the backends access at its natural alignment (LLVM emits `align N`), so a
+      misaligned `p` is undefined behaviour, not a slow access; nothing checks it.
     - **Arrival check**: C has no non-null pointer, so a read compares every non-null
       `Ptr<U>` in the element (a C struct's fields at any depth) with 0, and the program stops
       on NULL, naming the field (`field `name.text` of the `Entry` read is NULL`). A struct

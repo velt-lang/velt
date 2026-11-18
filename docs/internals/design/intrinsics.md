@@ -94,7 +94,7 @@ so their callers are unsafe code with a `// SAFETY:` comment, as for `addressLoa
   `Ptr.read` and `Ptr.write` (#3094, docs/internals/design/c-ffi.md "As built" 12): element
   `index` of an array of `T` at a C pointer, one load or store at `p + index * size`. `T` is a
   number, `bool`, a C struct or a C pointer; a type parameter passes sema and is checked where it
-  is instantiated. A read checks the element's non-null pointers (a C struct's, nested ones
+  is instantiated. The caller promises that `p` is aligned for `T`: the access assumes it. A read checks the element's non-null pointers (a C struct's, nested ones
   included) and stops the program on NULL.
 - `addressAtomicLoad<T>`, `addressAtomicStore<T>`, `addressAtomicRmw<T>`, `addressAtomicCas<T>`
   and `addressAtomicCasWeak<T>` take an address (`usize`) of an integer `T` and do what
