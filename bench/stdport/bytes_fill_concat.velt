@@ -1,0 +1,65 @@
+// Byte arrays' `lastIndexOf`, `fill` and `concat`: every line start of a 1 MiB text found from
+// the end (`lastIndexOf` from the previous hit: short searches) 200 times, a byte that occurs
+// once, at the start, 2000 times (one long search each); `fill` of 64 bytes 2M times, of 4 KiB
+// 50k times and of 1 MiB 500 times; `concat` of two 48-byte arrays 1M times and of two 64 KiB
+// arrays 2000 times. The Rust port uses `memchr::memrchr`, `fill` (memset) and a `Vec` built
+// from both slices, as the runtime did.
+function main() {
+  const text = Buffer.alloc(1048576);
+  let next: usize = 20;
+  let width: usize = 20;
+  for (let i: usize = 0; i < text.length; i++) {
+    text[i] = (97 + i % 26) as u8;
+    if (i == next) {
+      text[i] = 10;
+      width = 20 + (width * 7 + 13) % 81;
+      next += width;
+    }
+  }
+  text[0] = 33;
+  let total: i64 = 0;
+  for (let round = 0; round < 200; round++) {
+    let at: i64 = (text.length as i64) - 1;
+    while (at >= 0) {
+      const hit = text.lastIndexOf(10, at) as i64;
+      if (hit < 0) {
+        break;
+      }
+      total += hit;
+      at = hit - 1;
+    }
+  }
+  for (let round = 0; round < 2000; round++) {
+    total += text.lastIndexOf(33) as i64;
+  }
+  const small = Buffer.alloc(64);
+  for (let round: usize = 0; round < 2000000; round++) {
+    small.fill((round % 251) as u8);
+    total += small[round % 64] as i64;
+  }
+  const page = Buffer.alloc(4096);
+  for (let round: usize = 0; round < 50000; round++) {
+    page.fill((round % 251) as u8, 1, 4095);
+    total += page[round % 4096] as i64;
+  }
+  for (let round: usize = 0; round < 500; round++) {
+    text.fill((round % 251) as u8);
+    total += text[round] as i64;
+  }
+  const a = Buffer.alloc(48);
+  const b = Buffer.alloc(48);
+  for (let round: usize = 0; round < 1000000; round++) {
+    a[round % 48] = (round % 251) as u8;
+    const c = a.concat(b);
+    total += (c.length as i64) + (c[round % 96] as i64);
+  }
+  const big = Buffer.alloc(65536);
+  for (let round: usize = 0; round < 2000; round++) {
+    big[round] = (round % 251) as u8;
+    const c = big.concat(big);
+    total += (c.length as i64) + (c[65536 + round] as i64);
+  }
+  console.log(total);
+}
+
+main();

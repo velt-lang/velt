@@ -1,0 +1,38 @@
+// velt/ffi (tests): white-box tests, run by `velt test std/`.
+//
+// Windows' wide strings (std/ffi/wide.velt), which the Win32 calls of velt/os and velt/process
+// read and write; the conversions are plain code, so every OS runs them.
+import { describe, expect, it } from "velt/test";
+import { wideOf, wideText } from "velt/ffi/wide";
+
+describe("velt/ffi's wide strings", () => {
+  it("a string goes to UTF-16 and back", () => {
+    for (const s of ["", "ascii", "värde", "C:\\Windows\\temp", "日本語", "a😀b"]) {
+      const units = wideOf(s);
+      expect(units === null).toBe(false);
+      if (units !== null) {
+        expect(units[units.length - 1]).toBe(0);
+        expect(units.length).toBe((s.length as usize) + 1);
+        expect(wideText(units)).toBe(s);
+      }
+    }
+  });
+
+  it("the text ends at the first NUL", () => {
+    const units: u16[] = [104, 105, 0, 120, 0];
+    expect(wideText(units)).toBe("hi");
+  });
+
+  it("a lone surrogate reads as U+FFFD, a pair as its character", () => {
+    const lone: u16[] = [0xd800, 97, 0xdc00, 0];
+    expect(wideText(lone)).toBe("\uFFFDa\uFFFD");
+    const pair: u16[] = [0xd83d, 0xde00, 0];
+    expect(wideText(pair)).toBe("😀");
+    const atEnd: u16[] = [97, 0xd83d];
+    expect(wideText(atEnd)).toBe("a\uFFFD");
+  });
+
+  it("a string holding a NUL has no wide form", () => {
+    expect(wideOf("a\0b") === null).toBe(true);
+  });
+});

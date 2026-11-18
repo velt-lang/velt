@@ -48,6 +48,32 @@ pub(crate) fn assigned_objects(cx: &mut Ctx) -> FxHashSet<DefId> {
     out
 }
 
+/// Object type `d` has a field assigned by a setter made after [`assigned_objects`] ran (a
+/// method setter of an upcast's implementation, `crate::iface_method_writes`): it joins
+/// `Ctx::assigned_objects`, with the anonymous types of its field names (see above).
+pub(crate) fn mark_assigned(cx: &mut Ctx, d: DefId) {
+    if !cx.assigned_objects.insert(d) {
+        return;
+    }
+    let names = |a: &crate::defs::AdtInfo<'_>| -> Vec<String> {
+        a.fields.iter().map(|f| f.name.clone()).collect()
+    };
+    let Some(DefInfo::Adt(a)) = cx.info.get(d.0 as usize) else {
+        return;
+    };
+    if a.kind != AdtKind::Anon {
+        return;
+    }
+    let mine = names(a);
+    let same: Vec<DefId> = (cx.info.iter().enumerate())
+        .filter_map(|(i, info)| match info {
+            DefInfo::Adt(b) if b.kind == AdtKind::Anon && names(b) == mine => Some(DefId(i as u32)),
+            _ => None,
+        })
+        .collect();
+    cx.assigned_objects.extend(same);
+}
+
 /// The object type whose field `place` writes: directly (`x.f = …`) or a part of it held inline,
 /// such as a tuple's element (`x.t[0] = …`, `x.t[1][0] = …`, also behind `!` or `as`:
 /// `x.t![0] = …`), which changes the field's value.

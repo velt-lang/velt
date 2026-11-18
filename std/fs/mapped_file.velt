@@ -14,7 +14,8 @@ export type MapAdvice = "normal" | "random" | "sequential" | "willneed";
 /**
  * A file mapped into memory, read-only. `bytes` is the whole file as a `shared<u8[]>`: it is
  * read like any byte array (indexing, `subarray`, the SIMD loads) and can be handed to every
- * task without a copy, and `f32s` gives a range of it as floats. Nothing is read when the
+ * task without a copy; `f32s`, `i8s`, `u32s` and the other typed methods give a range of it as
+ * an array of that number type. Nothing is read when the
  * file is opened; a page comes from the disk when it is first touched.
  *
  * The mapping stays for the rest of the program (it costs address space, not memory), so the
@@ -89,33 +90,204 @@ export class MappedFile {
     return this.bytes.length as number;
   }
 
-  /**
-   * The `count` little-endian `f32` from byte `byteOffset`, as an array over the mapping (no
-   * copy). `RangeError` when the range is not inside the file or `byteOffset` is not a
-   * multiple of 4.
-   */
-  f32s(byteOffset: number, count: number): shared<f32[]> {
+  // The address of the `count` values of `width` bytes from byte `byteOffset` (0 for no
+  // values), for the method `what`: inside the file and aligned for the type, else a
+  // `RangeError`.
+  private range(
+    what: string,
+    noun: string,
+    byteOffset: number,
+    count: number,
+    width: number,
+  ): usize {
     const size = this.bytes.length as number;
     if (
       !Number.isInteger(byteOffset) ||
       !Number.isInteger(count) ||
       byteOffset < 0 ||
       count < 0 ||
-      byteOffset % 4 != 0 ||
-      byteOffset + count * 4 > size
+      byteOffset % width != 0 ||
+      byteOffset + count * width > size
     ) {
       throw new RangeError(
-        `f32s(${byteOffset}, ${count}) is not a range of 4-byte floats inside the ${size} mapped bytes`,
+        `${what}(${byteOffset}, ${count}) is not a range of ${width}-byte ${noun} inside the ${size} mapped bytes`,
       );
     }
-    if (count == 0) {
+    return count == 0 ? 0 : this.address + (byteOffset as usize);
+  }
+
+  /**
+   * The `count` `i8` from byte `byteOffset`, as an array over the mapping (no copy).
+   * `RangeError` when the range is not inside the file.
+   */
+  i8s(byteOffset: number, count: number): shared<i8[]> {
+    const at = this.range("i8s", "integers", byteOffset, count, 1);
+    if (at == 0) {
       return shared([]);
     }
-    const at = this.address + (byteOffset as usize);
-    // SAFETY: the range is inside the mapping (checked above), which is page-aligned, so a
-    // multiple of 4 from its start is aligned for `f32`; the mapping is never unmapped, and the
-    // array is only ever read: it leaves as a `shared<f32[]>`.
+    // SAFETY: `range` checked that the values are inside the mapping and aligned for `i8`
+    // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
+    const xs: i8[] = unsafe { addressArray<i8>(at, count as usize) };
+    return shared(xs);
+  }
+
+  /**
+   * The `count` little-endian `u16` from byte `byteOffset`, as an array over the mapping (no
+   * copy). `RangeError` when the range is not inside the file or `byteOffset` is not a
+   * multiple of 2.
+   */
+  u16s(byteOffset: number, count: number): shared<u16[]> {
+    const at = this.range("u16s", "integers", byteOffset, count, 2);
+    if (at == 0) {
+      return shared([]);
+    }
+    // SAFETY: `range` checked that the values are inside the mapping and aligned for `u16`
+    // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
+    const xs: u16[] = unsafe { addressArray<u16>(at, count as usize) };
+    return shared(xs);
+  }
+
+  /**
+   * The `count` little-endian `i16` from byte `byteOffset`, as an array over the mapping (no
+   * copy). `RangeError` when the range is not inside the file or `byteOffset` is not a
+   * multiple of 2.
+   */
+  i16s(byteOffset: number, count: number): shared<i16[]> {
+    const at = this.range("i16s", "integers", byteOffset, count, 2);
+    if (at == 0) {
+      return shared([]);
+    }
+    // SAFETY: `range` checked that the values are inside the mapping and aligned for `i16`
+    // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
+    const xs: i16[] = unsafe { addressArray<i16>(at, count as usize) };
+    return shared(xs);
+  }
+
+  /**
+   * The `count` little-endian `u32` from byte `byteOffset`, as an array over the mapping (no
+   * copy). `RangeError` when the range is not inside the file or `byteOffset` is not a
+   * multiple of 4.
+   */
+  u32s(byteOffset: number, count: number): shared<u32[]> {
+    const at = this.range("u32s", "integers", byteOffset, count, 4);
+    if (at == 0) {
+      return shared([]);
+    }
+    // SAFETY: `range` checked that the values are inside the mapping and aligned for `u32`
+    // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
+    const xs: u32[] = unsafe { addressArray<u32>(at, count as usize) };
+    return shared(xs);
+  }
+
+  /**
+   * The `count` little-endian `i32` from byte `byteOffset`, as an array over the mapping (no
+   * copy). `RangeError` when the range is not inside the file or `byteOffset` is not a
+   * multiple of 4.
+   */
+  i32s(byteOffset: number, count: number): shared<i32[]> {
+    const at = this.range("i32s", "integers", byteOffset, count, 4);
+    if (at == 0) {
+      return shared([]);
+    }
+    // SAFETY: `range` checked that the values are inside the mapping and aligned for `i32`
+    // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
+    const xs: i32[] = unsafe { addressArray<i32>(at, count as usize) };
+    return shared(xs);
+  }
+
+  /**
+   * The `count` little-endian `u64` from byte `byteOffset`, as an array over the mapping (no
+   * copy). `RangeError` when the range is not inside the file or `byteOffset` is not a
+   * multiple of 8.
+   */
+  u64s(byteOffset: number, count: number): shared<u64[]> {
+    const at = this.range("u64s", "integers", byteOffset, count, 8);
+    if (at == 0) {
+      return shared([]);
+    }
+    // SAFETY: `range` checked that the values are inside the mapping and aligned for `u64`
+    // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
+    const xs: u64[] = unsafe { addressArray<u64>(at, count as usize) };
+    return shared(xs);
+  }
+
+  /**
+   * The `count` little-endian `i64` from byte `byteOffset`, as an array over the mapping (no
+   * copy). `RangeError` when the range is not inside the file or `byteOffset` is not a
+   * multiple of 8.
+   */
+  i64s(byteOffset: number, count: number): shared<i64[]> {
+    const at = this.range("i64s", "integers", byteOffset, count, 8);
+    if (at == 0) {
+      return shared([]);
+    }
+    // SAFETY: `range` checked that the values are inside the mapping and aligned for `i64`
+    // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
+    const xs: i64[] = unsafe { addressArray<i64>(at, count as usize) };
+    return shared(xs);
+  }
+
+  /**
+   * The `count` little-endian `f16` from byte `byteOffset`, as an array over the mapping (no
+   * copy). `RangeError` when the range is not inside the file or `byteOffset` is not a
+   * multiple of 2.
+   */
+  f16s(byteOffset: number, count: number): shared<f16[]> {
+    const at = this.range("f16s", "floats", byteOffset, count, 2);
+    if (at == 0) {
+      return shared([]);
+    }
+    // SAFETY: `range` checked that the values are inside the mapping and aligned for `f16`
+    // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
+    const xs: f16[] = unsafe { addressArray<f16>(at, count as usize) };
+    return shared(xs);
+  }
+
+  /**
+   * The `count` little-endian `bf16` from byte `byteOffset`, as an array over the mapping (no
+   * copy). `RangeError` when the range is not inside the file or `byteOffset` is not a
+   * multiple of 2.
+   */
+  bf16s(byteOffset: number, count: number): shared<bf16[]> {
+    const at = this.range("bf16s", "floats", byteOffset, count, 2);
+    if (at == 0) {
+      return shared([]);
+    }
+    // SAFETY: `range` checked that the values are inside the mapping and aligned for `bf16`
+    // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
+    const xs: bf16[] = unsafe { addressArray<bf16>(at, count as usize) };
+    return shared(xs);
+  }
+
+  /**
+   * The `count` little-endian `f32` from byte `byteOffset`, as an array over the mapping (no
+   * copy). `RangeError` when the range is not inside the file or `byteOffset` is not a
+   * multiple of 4.
+   */
+  f32s(byteOffset: number, count: number): shared<f32[]> {
+    const at = this.range("f32s", "floats", byteOffset, count, 4);
+    if (at == 0) {
+      return shared([]);
+    }
+    // SAFETY: `range` checked that the values are inside the mapping and aligned for `f32`
+    // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
     const xs: f32[] = unsafe { addressArray<f32>(at, count as usize) };
+    return shared(xs);
+  }
+
+  /**
+   * The `count` little-endian `f64` from byte `byteOffset`, as an array over the mapping (no
+   * copy). `RangeError` when the range is not inside the file or `byteOffset` is not a
+   * multiple of 8.
+   */
+  f64s(byteOffset: number, count: number): shared<f64[]> {
+    const at = this.range("f64s", "floats", byteOffset, count, 8);
+    if (at == 0) {
+      return shared([]);
+    }
+    // SAFETY: `range` checked that the values are inside the mapping and aligned for `f64`
+    // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
+    const xs: f64[] = unsafe { addressArray<f64>(at, count as usize) };
     return shared(xs);
   }
 

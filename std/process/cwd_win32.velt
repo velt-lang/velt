@@ -1,0 +1,65 @@
+// velt/process (internal): the working directory on Windows (`#cwd-sys`' win32 variant,
+// std/imports.velt), through Win32's wide-string functions, with libuv's names for its errors
+// (std/os/win_error.velt).
+
+import { wideOf, wideText } from "velt/ffi/wide";
+import { osError } from "velt/fs/errors";
+import { IoError } from "velt/io/error";
+import { arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
+import { errnoOfWin32 } from "velt/os/win_error";
+
+declare c("c") function GetCurrentDirectoryW(units: u32, path: u16[]): u32;
+declare c("c") function SetCurrentDirectoryW(path: readonly u16[]): i32;
+declare c("c") function GetLastError(): u32;
+
+/** `ERROR_FILE_NOT_FOUND`: what a path holding a NUL is reported as. */
+const FILE_NOT_FOUND: u32 = 2;
+
+/** The current working directory; throws `IoError` (Node's `uv_cwd` error). */
+export function cwd(): string {
+  let room: u32 = 260;
+  while (true) {
+    // Not zeroed: only Windows writes it, and only what it wrote (up to its NUL) is read.
+    const buf = arrayWithCapacity<u16>(room as usize);
+    arraySetLen(buf, room as usize);
+    // SAFETY: `buf` holds `room` code units, the count passed.
+    const got = unsafe { GetCurrentDirectoryW(room, buf) };
+    if (got === 0) {
+      // SAFETY: no precondition.
+      throw osError(errnoOfWin32(unsafe { GetLastError() }), "uv_cwd");
+    }
+    if (got < room) {
+      return wideText(buf);
+    }
+    // Too small: `got` is the room the path needs, its NUL counted.
+    room = got;
+  }
+}
+
+/**
+ * Changes the working directory of the whole process to `path`; throws `IoError` with Node's
+ * message (`ENOENT: no such file or directory, chdir '<from>' -> '<path>'`).
+ */
+export function changeDir(path: string) {
+  const p = wideOf(path);
+  // SAFETY: a NUL-terminated path.
+  if (p !== null && unsafe { SetCurrentDirectoryW(p) } !== 0) {
+    return;
+  }
+  // SAFETY: no precondition.
+  const code = p === null ? FILE_NOT_FOUND : unsafe { GetLastError() };
+  const e = osError(errnoOfWin32(code), "chdir");
+  throw new IoError(e.code, `${e.message} '${cwdOrEmpty()}' -> '${path}'`);
+}
+
+/**
+ * The working directory for `chdir`'s message, or "" when it can't be read: Node, too, reports
+ * the `chdir` error then, not `uv_cwd`'s.
+ */
+function cwdOrEmpty(): string {
+  try {
+    return cwd();
+  } catch (e) {
+    return "";
+  }
+}

@@ -45,6 +45,7 @@ const ERRNOS =
   "11 EAGAIN: resource temporarily unavailable\n" +
   "12 ENOMEM: not enough memory\n" +
   "13 EACCES: permission denied\n" +
+  "14 EFAULT: bad address in system call argument\n" +
   "16 EBUSY: resource busy or locked\n" +
   "17 EEXIST: file already exists\n" +
   "18 EXDEV: cross-device link not permitted\n" +

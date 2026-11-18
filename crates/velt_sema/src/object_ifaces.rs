@@ -523,6 +523,22 @@ impl Ctx<'_> {
     ) -> u32 {
         let mut full = args.to_vec();
         full.push(self_ty);
+        // How it stores each method, should the program write one (`iface_method_writes`).
+        let nmethods = self.iface(iface).map_or(0, |i| i.methods.len());
+        let mut msrcs = vec![];
+        for (j, fill) in plan.iter().take(nmethods).enumerate() {
+            let src = match *fill {
+                Fill::Call(_, i, fn_ty, _) => (self.stores_method(iface, args, j, fn_ty))
+                    .then_some(crate::iface_method_writes::MethodSrc {
+                        d,
+                        self_ty,
+                        index: i,
+                        ty: fn_ty,
+                    }),
+                _ => None,
+            };
+            msrcs.push(src);
+        }
         let mut defs = vec![];
         for fill in plan {
             defs.push(match fill {
@@ -593,6 +609,7 @@ impl Ctx<'_> {
             })
             .collect();
         self.note_setters(index, srcs);
+        self.note_method_sources(index, msrcs);
         // The dispatch groups gain the new methods (`throws/groups.rs`): built again on next use.
         self.groups = None;
         index

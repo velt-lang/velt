@@ -135,8 +135,8 @@ fn update_expressions() {
     check("a + ++b", "(+ a (++pre b))");
 }
 
-/// A `?` followed by any token that can start an expression is a ternary, not the removed
-/// postfix `?` (`can_start_expr`): every prefix operator and every primary expression.
+/// A `?` followed by any token that can start an expression starts a ternary branch: every
+/// prefix operator and every primary expression.
 #[test]
 fn ternary_branch_starts() {
     check("c ? void 0 : v", "(? c (void 0) v)");
@@ -172,12 +172,6 @@ fn ternary_branch_starts() {
         let e = expr(src);
         assert!(matches!(e.kind, ExprKind::Cond { .. }), "{src}: {e:?}");
     }
-    // A function expression is rejected as such, not as a removed `?`.
-    let errs = errors("function f(c: bool) { const g = c ? function () {} : null; }");
-    assert!(
-        !errs.iter().any(|e| e.contains("operator was removed")),
-        "{errs:?}"
-    );
     // `#x in o` as a branch.
     let errs =
         errors("class A { #x = 1; has(c: bool, o: A): bool { return c ? #x in o : false; } }");
@@ -185,17 +179,14 @@ fn ternary_branch_starts() {
 }
 
 #[test]
-fn removed_question_operator_vs_optional_chaining() {
+fn question_after_an_expression() {
     check("f()?.x", "(?. (call f []) x)");
     check("a?.b?.c", "(?. (?. a b) c)");
     check("a?.[0]?.(1)", "(call ([] a 0) [1])");
     check("a ? b : c", "(? a b c)");
+    // A `?` that no ternary follows is a parse error.
     for src in ["function f() { g()?; }", "function f() { h(x?, y); }"] {
-        let errs = errors(src);
-        assert!(
-            errs.iter().any(|e| e == "the `?` operator was removed"),
-            "{src}: {errs:?}"
-        );
+        assert!(!errors(src).is_empty(), "{src}: parsed");
     }
 }
 

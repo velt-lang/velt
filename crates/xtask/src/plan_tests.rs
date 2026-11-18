@@ -692,7 +692,7 @@ fn zig_is_selected_for_the_tests_that_build_c_sources() {
 fn zig_is_not_selected_for_unrelated_changes() {
     for path in [
         "crates/velt_lsp/src/lib.rs",
-        "tests/golden/lang/errors/std_moved_modules.velt",
+        "tests/golden/lang/errors/removed_syntax.velt",
         "docs/internals/design/c-ffi.md",
         "editors/vscode/package.json",
         "tests/difftest/src/main.rs",
@@ -704,7 +704,7 @@ fn zig_is_not_selected_for_unrelated_changes() {
         "bench/sqlite/engine.velt",
         "examples/wordfreq.velt",
         "examples/wordfreq.out",
-        "tests/golden/lang/errors/std_moved_modules.velt",
+        "tests/golden/lang/errors/removed_syntax.velt",
     ] {
         assert!(!crate::zig::goldens(&plan(&[path])), "{path}");
     }
@@ -733,7 +733,7 @@ fn the_c_bundles_are_built_before_the_goldens_that_link_them() {
         }
     }
     for path in [
-        "tests/golden/lang/errors/std_moved_modules.velt",
+        "tests/golden/lang/errors/removed_syntax.velt",
         "bench/sqlite/engine.velt",
     ] {
         assert!(
@@ -741,4 +741,28 @@ fn the_c_bundles_are_built_before_the_goldens_that_link_them() {
             "{path}"
         );
     }
+}
+
+#[test]
+fn skipping_the_webassembly_goldens_leaves_them_out_of_the_tests_only() {
+    // A changed golden selects the WebAssembly goldens' binary; skipped, the tests leave it out
+    // and the goldens stay.
+    let mut p = plan(&["tests/golden/lang/foo.velt"]);
+    assert!(p.wasm_goldens());
+    p.skip_wasm_goldens();
+    assert!(!p.wasm_goldens());
+    let Veltc::Some(binaries) = &p.veltc else {
+        panic!("{:?}", p.veltc)
+    };
+    assert!(!binaries.contains("wasm_goldens"));
+    assert_ne!(p.goldens, Goldens::None);
+    // A std change for WebAssembly runs every veltc test: the filterset excludes their binary.
+    let mut p = plan(&["std/process/env_wasm.velt"]);
+    assert!(p.wasm_goldens());
+    p.skip_wasm_goldens();
+    assert!(!p.wasm_goldens());
+    assert!(p
+        .filterset()
+        .unwrap()
+        .contains("- binary_id(veltc::wasm_goldens)"));
 }

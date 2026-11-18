@@ -1,0 +1,20 @@
+// A method returning a promise written through an interface value (#379) where the object
+// literal's function is no site of the method (it returns a promise and throws too): what the
+// assigned function rejects its promise with must fit the field's function type, which rejects
+// with nothing, so the write is refused (calling it would reach a `catch` with a type that says
+// no error can arrive there).
+interface Loader { load(): Promise<string>; }
+class Other extends Error {}
+let bad = false;
+const c: Loader = {
+  load: (): Promise<string> => {
+    if (bad) { throw new Other("sync"); }
+    return Promise.resolve("a");
+  },
+};
+async function main(): Promise<void> {
+  console.log(await c.load());
+  c.load = async () => { throw new Other("async"); };
+  try { await c.load(); } catch (e) { console.log("caught", e instanceof Other); }
+}
+main();

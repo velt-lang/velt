@@ -424,6 +424,15 @@ impl Plan {
     }
 
     /// Whether the WebAssembly goldens (`veltc::wasm_goldens`) run.
+    /// Leaves the WebAssembly goldens out of the tests: another job runs them
+    /// (`VELT_WASM_GOLDENS=skip`).
+    pub fn skip_wasm_goldens(&mut self) {
+        self.wasm = false;
+        if let Veltc::Some(binaries) = &mut self.veltc {
+            binaries.remove("wasm_goldens");
+        }
+    }
+
     pub fn wasm_goldens(&self) -> bool {
         match &self.veltc {
             Veltc::All => self.wasm,

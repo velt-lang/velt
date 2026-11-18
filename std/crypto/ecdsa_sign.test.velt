@@ -1,0 +1,56 @@
+// velt/crypto (tests): ECDSA signing on P-256 (`p256Sign`), run by `velt test std/`: RFC 6979
+// §A.2.5's deterministic signatures, and signatures that `p256Verify` accepts.
+import { describe, expect, it } from "velt/test";
+import { hexDecode, hexEncode } from "velt/encoding";
+import { p256Verify } from "velt/crypto/ecdsa_p256";
+import { p256Sign } from "velt/crypto/ecdsa_p256_sign";
+import { p256PrivateKey, p256PublicKey } from "velt/crypto/p256";
+import { sha256 } from "velt/crypto/sha256";
+import { utf8Encode } from "velt/encoding/utf8";
+
+// RFC 6979 §A.2.5: the key, its public key, and the SHA-256 signatures of "sample" and "test".
+const KEY = "c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721";
+const PUBLIC =
+  "0460fed4ba255a9d31c961eb74c6356d68c049b8923b61fa6ce669622e60f29fb6" +
+  "7903fe1008b8bc99a41ae9e95628bc64f2f1b20c2d7e9f5177a3c294d4462299";
+const SAMPLE_SIG =
+  "3046022100efd48b2aacb6a8fd1140dd9cd45e81d69d2c877b56aaf991c34d0ea84eaf3716" +
+  "022100f7cb1c942d657c41d436c7a1b6e29f65f3e900dbb9aff4064dc4ab2f843acda8";
+const TEST_SIG =
+  "3045022100f1abb023518351cd71d881567b1ea663ed3efcf6c5132b354f28d3b0b7d38367" +
+  "0220019f4113742a2b14bd25926b49c649155f267e60d3814b4c0cc84250e46f0083";
+
+describe("p256Sign", () => {
+  it("gives RFC 6979's signatures for SHA-256", () => {
+    const key = hexDecode(KEY);
+    expect(hexEncode(p256PublicKey(key))).toBe(PUBLIC);
+    expect(hexEncode(p256Sign(key, sha256(utf8Encode("sample"))))).toBe(SAMPLE_SIG);
+    expect(hexEncode(p256Sign(key, sha256(utf8Encode("test"))))).toBe(TEST_SIG);
+  });
+
+  it("signs what p256Verify accepts, and nothing else verifies", () => {
+    for (let i = 0; i < 8; i++) {
+      const key = p256PrivateKey();
+      const digest = sha256(utf8Encode(`message ${i}`));
+      const sig = p256Sign(key, digest);
+      expect(p256Verify(p256PublicKey(key), digest, sig)).toBe(true);
+      const other = sha256(utf8Encode(`message ${i + 1}`));
+      expect(p256Verify(p256PublicKey(key), other, sig)).toBe(false);
+    }
+  });
+
+  it("reduces a digest at or above n", () => {
+    const key = hexDecode(KEY);
+    const high: u8[] = [];
+    for (let i = 0; i < 32; i++) {
+      high.push(0xff);
+    }
+    expect(p256Verify(hexDecode(PUBLIC), high, p256Sign(key, high))).toBe(true);
+  });
+
+  it("refuses a key out of range", () => {
+    expect(() => p256Sign(Buffer.alloc(32), Buffer.alloc(32))).toThrow(
+      "P-256 needs a 32-byte private key between 1 and n - 1",
+    );
+  });
+});

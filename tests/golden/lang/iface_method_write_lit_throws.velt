@@ -1,0 +1,37 @@
+// check: no leaks
+// A method written through an interface value (#379) where the object literal's own function
+// already throws: the field storing the method holds every function assigned to it, so what it
+// throws is one set, the literal's errors and the assigned function's. A `Failure` thrown by the
+// assigned function is not caught as the literal's `Other` (Node: `other? false boom`, then
+// `not Other`), through a helper taking the interface, a direct call, and an array of them.
+interface Ctx { update(): void; }
+class Failure extends Error {}
+class Other extends Error {}
+
+const c: Ctx = { update: () => { throw new Other("lit throws"); } };
+const d: Ctx = { update: () => { throw new Other("d throws"); } };
+
+function callIt(t: Ctx): string {
+  try { t.update(); return "no"; }
+  catch (e) { return "other? " + (e instanceof Other) + " " + (e as Error).message; }
+}
+
+console.log(callIt(c));
+c.update = () => { throw new Failure("boom"); };
+console.log(callIt(c));
+try { c.update(); } catch (e) {
+  if (e instanceof Other) { console.log("is Other", (e as Error).message); } else { console.log("not Other"); }
+}
+try { c.update(); } catch (e) { console.log("failure?", e instanceof Failure); }
+
+// The reverse order: a function that throws nothing, then one that throws.
+d.update = () => console.log("d quiet");
+console.log(callIt(d));
+d.update = () => { throw new Failure("d boom"); };
+const all: Ctx[] = [c, d];
+for (const x of all) {
+  try { x.update(); } catch (e) {
+    console.log(e instanceof Failure ? "failure" : "other", (e as Error).message);
+  }
+}
+console.log("arr", all.length);

@@ -1,8 +1,7 @@
 //! Postfix expressions: member access and optional chaining (`.`, `?.`, `?.(`, `?.[`), calls
-//! with optional explicit type arguments (`f<T>(x)`), indexing, `++`/`--`, and postfix `?` (try)
-//! versus the ternary `?`.
+//! with optional explicit type arguments (`f<T>(x)`), indexing and `++`/`--`.
 
-use super::{Fail, PResult, Parser, Ternary};
+use super::{Fail, PResult, Parser};
 use crate::ast::*;
 use crate::lexer::{Kw, Tok, TplPart};
 
@@ -81,10 +80,6 @@ impl<'a> Parser<'a> {
                 {
                     self.bump();
                     ExprKind::NonNull(Box::new(e))
-                }
-                Tok::Question if !self.question_is_ternary() => {
-                    self.reject_question_operator();
-                    continue;
                 }
                 _ => break,
             };
@@ -217,54 +212,6 @@ impl<'a> Parser<'a> {
                     | Tok::Kw(Kw::Void)
                     | Tok::Kw(Kw::Import)
             )
-    }
-
-    /// Postfix `e?` no longer exists (errors propagate by themselves): report it, skip the `?`.
-    fn reject_question_operator(&mut self) {
-        let span = self.cur_span();
-        self.diags.push(
-            velt_common::Diagnostic::error("the `?` operator was removed", span)
-                .with_note("a call that throws propagates its error automatically: remove the `?`")
-                .with_note(
-                    "for errors as values, return a union (`User | NotFound`) and narrow it",
-                ),
-        );
-        self.bump();
-    }
-
-    /// Decides whether the `?` at the cursor starts a ternary (vs. the removed postfix `?`): it
-    /// is a ternary iff an expression and then `:` follow. Decisions are cached per token, with
-    /// where that expression ends, so nested ternaries stay linear (`parse_cond`).
-    fn question_is_ternary(&mut self) -> bool {
-        if !Self::can_start_expr(self.nth(1)) {
-            return false;
-        }
-        if let Some(cached) = self.ternary_cache.get(&self.pos) {
-            return cached.is_ternary;
-        }
-        let key = self.pos;
-        let snap = self.snapshot();
-        let saved_flag = std::mem::replace(&mut self.hit_depth_limit, false);
-        self.speculating += 1;
-        self.bump();
-        let is_ternary = self.allow_in(|p| p.parse_assign()).is_ok() && self.at(Tok::Colon);
-        let then_end = (self.pos, self.prev_hi);
-        self.speculating -= 1;
-        let too_deep = self.hit_depth_limit;
-        self.hit_depth_limit = saved_flag || too_deep;
-        self.restore(snap);
-        if too_deep {
-            // Undecidable within the depth limit: take the ternary path so the real parse reports
-            // the nesting error instead of a confusing follow-up error.
-            return true;
-        }
-        let decision = Ternary {
-            is_ternary,
-            then_end,
-            relexes: self.relexes,
-        };
-        self.ternary_cache.insert(key, decision);
-        is_ternary
     }
 
     /// Can `t` be the first token of an expression? Every token `parse_unary_inner` and
