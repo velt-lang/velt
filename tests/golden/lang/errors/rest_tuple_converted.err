@@ -1,0 +1,11 @@
+rest_tuple_converted.velt:17:28: error: a function value whose rest parameter is typed by a type parameter (`...args: A`) can't be converted to another type yet (#943)
+  = note: what it takes is known per call only (`A` from the callback); pass it on as it is, or take the callback as `(rq, ...args: unknown[]) => R`
+
+rest_tuple_converted.velt:21:18: error: a function value whose rest parameter is typed by a type parameter (`...args: A`) can't be converted to another type yet (#943)
+  = note: what it takes is known per call only (`A` from the callback); pass it on as it is, or take the callback as `(rq, ...args: unknown[]) => R`
+
+rest_tuple_converted.velt:26:13: error: a function value whose rest parameter is typed by a type parameter (`...args: A`) can't be converted to another type yet (#943)
+  = note: what it takes is known per call only (`A` from the callback); pass it on as it is, or take the callback as `(rq, ...args: unknown[]) => R`
+
+rest_tuple_converted.velt:36:15: error: a function value whose rest parameter is typed by a type parameter (`...args: A`) can't be converted to another type yet (#943)
+  = note: what it takes is known per call only (`A` from the callback); pass it on as it is, or take the callback as `(rq, ...args: unknown[]) => R`

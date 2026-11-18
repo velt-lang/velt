@@ -21,6 +21,9 @@ impl FnCx<'_, '_> {
         if self.shared_widening_error(expected, found) {
             return;
         }
+        if self.rest_param_fn(found.ty) && self.converts_rest_param_fn(found.ty, expected) {
+            return self.rest_param_fn_converted(found.span);
+        }
         if self.callable_as_object(found.ty, expected) {
             let (s, d) = (self.cx.display(found.ty), self.cx.display(expected));
             self.cx.error(

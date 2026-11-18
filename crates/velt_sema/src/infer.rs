@@ -133,6 +133,29 @@ impl Ctx<'_> {
                     params: pp,
                     ret: pr,
                     throws: pt,
+                    rest: pat_rest,
+                },
+                TyKind::FnPtr {
+                    params: ap,
+                    ret: ar,
+                    throws: at,
+                    rest: false,
+                },
+            ) if pat_rest && self.rest_param_slot(&pp).is_some() && ap.len() + 1 >= pp.len() => {
+                // `(rq, ...args: A) => R` matched by `(rq: Ctx, a: number) => R`: `A` is the tuple
+                // of the parameters at the rest position (`body::expr::rest_tuple`).
+                let n = pp.len() - 1;
+                let rest = self.ty.intern(TyKind::Tuple(ap[n..].to_vec()));
+                let x =
+                    self.match_all(&pp[..n], &ap[..n], slots) && self.match_ty(pp[n], rest, slots);
+                let y = self.match_error(pt, at, slots);
+                self.match_ty(pr, ar, slots) && x && y
+            }
+            (
+                TyKind::FnPtr {
+                    params: pp,
+                    ret: pr,
+                    throws: pt,
                     ..
                 },
                 TyKind::FnPtr {
@@ -477,6 +500,14 @@ impl Ctx<'_> {
             ok &= self.match_error(*p, *a, slots);
         }
         ok
+    }
+
+    /// The type parameter a function type's rest parameter is (the last of `params`), if any.
+    fn rest_param_slot(&self, params: &[TyId]) -> Option<u32> {
+        match params.last().map(|&t| self.ty.kind(t)) {
+            Some(&TyKind::Param(i)) => Some(i),
+            _ => None,
+        }
     }
 
     fn match_all(&mut self, ps: &[TyId], as_: &[TyId], slots: &mut [Option<TyId>]) -> bool {

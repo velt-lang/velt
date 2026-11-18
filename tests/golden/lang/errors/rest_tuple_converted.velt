@@ -1,0 +1,45 @@
+// A function value whose rest parameter is typed by a type parameter, converted in a generic
+// body (#379): what it takes is known per instance only, so stored under a wider function type,
+// as `any`, cast to a fixed one or kept as a class field of another type, it would be called
+// with the wrong arguments. Refused. tsc accepts each, and Node prints `NaN`, `3`, `2` and `1`
+// (a difference until such conversions are checked at run time, #943).
+interface Ctx {
+  id: string;
+}
+
+interface Entry {
+  name: string;
+  fn: (rq: Ctx, ...args: unknown[]) => unknown;
+}
+const entries: Entry[] = [];
+
+function register<A extends unknown[], R>(name: string, f: (rq: Ctx, ...args: A) => R): void {
+  entries.push({ name, fn: f as unknown as (rq: Ctx, ...args: unknown[]) => unknown });
+}
+
+function viaAny<A extends unknown[], R>(f: (rq: Ctx, ...args: A) => R): void {
+  const g: any = f;
+  console.log(g({ id: "x" }));
+}
+
+function viaCast<A extends unknown[], R>(f: (rq: Ctx, ...args: A) => R): R {
+  const g = f as unknown as (rq: Ctx, x: number) => R;
+  return g({ id: "x" }, 2);
+}
+
+class Holder<A extends unknown[]> {
+  f: (rq: Ctx, ...args: A) => number;
+  constructor(f: (rq: Ctx, ...args: A) => number) {
+    this.f = f;
+  }
+  run(): number {
+    const g = this.f as unknown as (rq: Ctx) => number;
+    return g({ id: "xy" });
+  }
+}
+
+register("add", (rq: Ctx, a: number, b: number): number => a + b);
+viaAny((rq: Ctx, a: number): number => a + 1);
+console.log(viaCast((rq: Ctx, n: number): number => n + 1));
+console.log(new Holder((rq: Ctx): number => rq.id.length).run());
+console.log(entries.length);

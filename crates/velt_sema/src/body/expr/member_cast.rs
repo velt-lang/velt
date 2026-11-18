@@ -123,6 +123,19 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> hir::Expr {
+        // `f as unknown as (rq: Ctx, ...args: unknown[]) => unknown` of an `f` whose rest is an
+        // `A` (`rest_tuple`).
+        if matches!(
+            expr.kind,
+            ast::ExprKind::Ident(_) | ast::ExprKind::Member { .. }
+        ) {
+            if let Some(t) = self.trial_type(expr) {
+                if self.rest_param_fn(t) && self.converts_rest_param_fn(t, target) {
+                    self.rest_param_fn_converted(expr.span);
+                    return self.error_expr(span);
+                }
+            }
+        }
         if let Some(h) = self.fn_through_top(expr, target, want) {
             return h;
         }

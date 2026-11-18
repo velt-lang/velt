@@ -29,6 +29,13 @@ impl FnCx<'_, '_> {
 
     /// Like [`coerce`](Self::coerce) without reporting; `Err` gives the expression back.
     pub fn try_coerce(&mut self, mut h: hir::Expr, exp: TyId) -> Result<hir::Expr, hir::Expr> {
+        // A function value whose rest is an `A` converts to nothing else (`rest_tuple`).
+        if self.rest_param_fn(h.ty)
+            && !self.cx.ty.has_error(exp)
+            && self.converts_rest_param_fn(h.ty, exp)
+        {
+            return Err(h);
+        }
         // `K` (a constant holding a fresh symbol) where its `typeof K` is expected.
         h = self.unique_symbol_value(h, exp);
         // `{ p } | typeof K` where `{ p } | symbol` is expected: one layout once lowered.

@@ -206,6 +206,7 @@ mod record_view_cast;
 mod regex_args;
 mod rest_forms;
 mod rest_shapes;
+mod rest_tuple;
 mod setters;
 mod simd_call;
 mod slot_results;
