@@ -600,15 +600,24 @@ and `velt_rt_fs_exists_sync(path) -> u8`, with their async twins, for WebAssembl
 is read as bytes and decoded in std, so `velt_rt_fs_read_file` and `velt_rt_fs_read_file_sync`
 no longer exist in either runtime.
 
+**[non-additive, #2196]** Listing a directory (plain and with each entry's type), making one
+and removing a file, a link or a tree are std code in a native build too (`#fs-tree`:
+std/fs/tree/posix.velt over the C library's `opendir`, `readdir`, `mkdir`, `rmdir` and, for a
+tree, `openat`, `fdopendir` and `unlinkat`, so that nothing is reached through a link;
+tree/win32.velt over `FindFirstFileExW` and `CreateDirectoryW`), with the same messages and
+the names sorted by code point. velt_rt no longer defines `velt_rt_fs_read_dir_sync`,
+`velt_rt_fs_read_dir_typed_sync` and `velt_rt_fs_mkdir_sync`; velt_rt_wasm keeps them, and
+`VeltDirents`, with their async twins, for WebAssembly builds. `velt_rt_fs_remove_sync` stays
+in velt_rt for Windows alone, whose std calls it (a tree is removed there with every
+directory opened relative to its parent's handle, which std does not do yet); on macOS and
+Linux nothing calls it and it reports "unsupported".
+
 | Sync (`..., out)`, returns nothing) | Result type |
 |---|---|
-| `velt_rt_fs_read_dir_sync(path, out)` | `IoResult<VeltStrArray>` names, sorted |
-| `velt_rt_fs_read_dir_typed_sync(path, out)` | `IoResult<VeltDirents>` [additive, #692] |
 | `velt_rt_fs_readlink_sync(path, out)` | `IoResult<VeltStr>`; `EINVAL` if not a symlink [additive, #691] |
 | `velt_rt_fs_realpath_sync(path, out)` | `IoResult<VeltStr>`: the absolute path with every symlink, `.` and `..` resolved; `ENOENT` if it (or a link's target) doesn't exist; Windows: without the `\\?\` prefix unless the path needs it (`C:\dir\f`, `\\server\share\f`). WebAssembly: as WASI reports it [additive, #2077] |
 | `velt_rt_fs_symlink_sync(target, path, out)` | `IoResult<()>`; Windows: a directory link if `target` is a directory, a relative target stored with `\` separators (as Node) [additive, #691] |
-| `velt_rt_fs_mkdir_sync(path, recursive, out)` | `IoResult<()>` |
-| `velt_rt_fs_remove_sync(path, recursive, out)` | `IoResult<()>`; file, symlink (the link only, a Windows directory link too), empty dir, or tree if recursive |
+| `velt_rt_fs_remove_sync(path, recursive, out)` | Windows only. `IoResult<()>`; file, symlink (the link only, a Windows directory link too), empty dir, or tree if recursive |
 | `velt_rt_fs_rename_sync(from, to, out)` | `IoResult<()>` |
 | `velt_rt_fs_copy_file_sync(from, to, out)` | `IoResult<()>` |
 

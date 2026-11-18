@@ -19,6 +19,16 @@ import {
   unlinkPath as posixUnlinkPath,
   writeFrom as posixWriteFrom,
 } from "velt/fs/fd/posix";
+import { checkPath } from "velt/fs/fd/guards";
+import {
+  DirSystem,
+  listPath as posixListPath,
+  removeDir as posixRemoveDir,
+  removeTree as posixRemoveTree,
+} from "velt/fs/fd/dirs";
+
+/** `mode_t` is 16 bits on macOS. */
+declare c("c", { errno: true }) function mkdir(path: readonly u8[], mode: u16): i32;
 
 /**
  * The `fcntl` commands whose argument is an `int` (or none): `F_GETFD`, `F_SETFD`, `F_GETFL`,
@@ -117,4 +127,48 @@ export function mapRead(fd: i32, len: usize): usize {
 /** `madvise` on part of a mapping of `mapRead`: 0, or -1. */
 export function adviseMap(address: usize, len: usize, advice: i32): i32 {
   return posixAdviseMap(address, len, advice);
+}
+
+// Directories (std/fs/fd/dirs.velt), with macOS's `struct dirent`, `open` flags and `AT_`
+// constants.
+
+/**
+ * macOS's `struct dirent`: on arm64 `readdir` fills the 64-bit-inode one (`d_type` at 20,
+ * `d_name` at 21); on x86-64 the symbols `opendir`, `fdopendir` and `readdir` are the
+ * 32-bit-inode ones, as `fstat` is (`d_type` at 6, `d_name` at 8). `O_NOFOLLOW` 0x100,
+ * `O_DIRECTORY` 0x100000, `O_CLOEXEC` 0x1000000; `AT_FDCWD` -2, `AT_REMOVEDIR` 0x80; `ELOOP` 62.
+ */
+function dirSystem(): DirSystem {
+  const x64 = arch() == "x64";
+  return {
+    typeAt: x64 ? 6 : 20,
+    nameAt: x64 ? 8 : 21,
+    openDir: 0x1100100,
+    cwd: -2,
+    removeDir: 0x80,
+    loop: 62,
+  };
+}
+
+/** The entries of the directory at `path` into `names` and `types` (`d_type`): 0, or the errno. */
+export function listDir(path: readonly u8[], names: u8[][], types: u8[]): i32 {
+  return posixListPath(path, dirSystem(), names, types);
+}
+
+/** `mkdir(path, mode)`: 0, or -1. */
+export function makeDir(path: readonly u8[], mode: u32): i32 {
+  checkPath("mkdir", path);
+  // SAFETY: `path` ends with its only 0 byte (checked above); C keeps no pointer to it.
+  return unsafe { mkdir(path, mode as u16) };
+}
+
+/** `rmdir(path)`: 0, or -1. */
+export function removeDir(path: readonly u8[]): i32 {
+  return posixRemoveDir(path);
+}
+
+/** Removes the directory at `path` and everything in it, following no link: 0, or the errno. */
+export function removeTree(path: readonly u8[]): i32 {
+  const sys = dirSystem();
+  return posixRemoveTree(sys.cwd, path, sys, true);
 }

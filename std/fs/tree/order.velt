@@ -1,0 +1,24 @@
+// velt/fs (internal): the order of a directory listing's names: by code point, the order of
+// their UTF-8 bytes. `<` on strings compares UTF-16 code units, which differs for a character
+// past U+FFFF (a surrogate pair, 0xD800-0xDFFF) against one in U+E000-U+FFFF.
+
+/** A UTF-16 code unit moved so that the units order as their characters' code points do. */
+function rank(u: i64): i64 {
+  if (u >= 0xe000) {
+    return u - 0x800;
+  }
+  return u >= 0xd800 ? u + 0x2000 : u;
+}
+
+/** Whether `a` sorts before `b` by code point. */
+export function byCodePoint(a: string, b: string): bool {
+  const n = a.length < b.length ? a.length : b.length;
+  for (let i: i64 = 0; i < (n as i64); i++) {
+    const x = a.charCodeAt(i) as i64;
+    const y = b.charCodeAt(i) as i64;
+    if (x != y) {
+      return rank(x) < rank(y);
+    }
+  }
+  return a.length < b.length;
+}

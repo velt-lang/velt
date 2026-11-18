@@ -7,8 +7,8 @@ import {
   velt_rt_fs_copy_file_sync,
   exists as existsAt,
   existsSync as existsAtSync,
-  velt_rt_fs_remove,
-  velt_rt_fs_remove_sync,
+  remove as removeAt,
+  removeSync as removeAtSync,
   velt_rt_fs_rename,
   velt_rt_fs_rename_sync,
 } from "#fs-rt";
@@ -21,7 +21,7 @@ export type RemoveOptions = {
 
 /** Removes a file, symlink or empty directory (with `recursive`, a directory and its contents). */
 export async function remove(path: string, opts: RemoveOptions = {}): Promise<void> {
-  checkIo(await velt_rt_fs_remove(path, opts.recursive ?? false));
+  await removeAt(path, opts.recursive ?? false);
 }
 
 /** Renames (moves) `from` to `to`, replacing a file at `to`. */
@@ -41,7 +41,7 @@ export async function exists(path: string): Promise<bool> {
 
 /** `remove`, blocking the calling thread. */
 export function removeSync(path: string, opts: RemoveOptions = {}) {
-  checkIo(velt_rt_fs_remove_sync(path, opts.recursive ?? false));
+  removeAtSync(path, opts.recursive ?? false);
 }
 
 /** `rename`, blocking the calling thread. */

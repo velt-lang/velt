@@ -17,13 +17,14 @@ use super::{check_library, decl_of, zig_target, LibraryHeaders};
 /// (velt/ffi's `#errno-location`); `<unwind.h>` has the Itanium unwinder's
 /// `_Unwind_RaiseException` (std/lang/hooks/unwind_itanium.velt); the socket headers
 /// (`<sys/socket.h>`, `<netdb.h>`, `<arpa/inet.h>`, and `<strings.h>` for `bcopy`) have velt/net's
-/// calls (std/net/calls_posix.velt).
+/// calls (std/net/calls_posix.velt); `<dirent.h>` has velt/fs's directories (std/fs/fd/dirs.velt).
 fn std_headers(target: &str) -> Vec<&'static str> {
     if target.contains("-windows") {
         return vec!["<errno.h>", "<stdlib.h>", "<string.h>", "<windows.h>"];
     }
     let mut headers = vec![
         "<arpa/inet.h>",
+        "<dirent.h>",
         "<errno.h>",
         "<fcntl.h>",
         "<netdb.h>",
@@ -78,9 +79,14 @@ const CHECKED: &[&str] = &[
     "ffi/errno_linux.velt",
     "ffi/errno_windows.velt",
     "ffi/read.velt",
+    "fs/fd/darwin.velt",
+    "fs/fd/dirs.velt",
+    "fs/fd/linux.velt",
     "fs/fd/posix.velt",
+    "fs/tree/win32.velt",
     "fs/whole/read_all.velt",
     "fs/whole/win32.velt",
+    "fs/whole/win_path.velt",
     "lang/hooks/os_posix.velt",
     "lang/hooks/pid_posix.velt",
     "lang/hooks/pid_win32.velt",

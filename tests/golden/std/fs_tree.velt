@@ -1,0 +1,96 @@
+// Listing, making and removing directories (`readDir`, `readDirEntries`, `mkdir`, `remove` and
+// their `*Sync` twins), which are std code over the C library or Win32: the names sorted by code
+// point (U+FF21 before U+1F600, which UTF-16 order would put first), each entry's type, a tree
+// made and removed, and Node's errors. The expected output is Node's, whose twin sorts its
+// listings by code point (Node lists in the system's order) and removes with `rmdirSync`,
+// `unlinkSync` or `rmSync` after an `lstatSync`, as `remove` does.
+import * as fs from "velt/fs";
+import { IoError } from "velt/io";
+
+function attempt(what: string, f: () => void) {
+  try {
+    f();
+    console.log(what, "no error");
+  } catch (e) {
+    console.log(what, (e as IoError).code, (e as Error).message);
+  }
+}
+
+function kind(d: fs.Dirent): string {
+  return d.isFile() ? "file" : d.isDirectory() ? "dir" : d.isSymbolicLink() ? "link" : "other";
+}
+
+function typed(entries: fs.Dirent[]): string {
+  return entries.map((d) => `${d.name}:${kind(d)}`).join(" ");
+}
+
+async function main() {
+  const dir = "velt_fs_tree_tmp";
+  if (fs.existsSync(dir)) {
+    fs.removeSync(dir, { recursive: true });
+  }
+  fs.mkdirSync(`${dir}/a/b/c`, { recursive: true });
+  // Again: a directory that is there is not an error.
+  fs.mkdirSync(`${dir}/a/b/c`, { recursive: true });
+  fs.mkdirSync(`${dir}/a/b/./d/`, { recursive: true });
+  await fs.mkdir(`${dir}/x/y`, { recursive: true });
+  await fs.mkdir(`${dir}/plain`);
+  const names = [
+    "b.txt",
+    "a.txt",
+    "C.txt",
+    "é.txt",
+    "\u{ff21}.txt",
+    "\u{1f600}.txt",
+    "10",
+    "9",
+    "z",
+  ];
+  for (const name of names) {
+    fs.writeFileSync(`${dir}/${name}`, name);
+  }
+  fs.writeFileSync(`${dir}/a/b/c/deep.txt`, "deep");
+
+  console.log(fs.readDirSync(dir).join(" "));
+  console.log((await fs.readDir(dir)).join(" "));
+  console.log(typed(fs.readDirEntriesSync(dir)));
+  console.log(typed(await fs.readDirEntries(dir)));
+  console.log(fs.readDirSync(`${dir}/a/b`).join(" "), fs.readDirSync(`${dir}/plain`).length);
+  console.log(fs.readDirEntriesSync(`${dir}/plain`).length, fs.readDirSync(`${dir}/`).length);
+
+  attempt("list missing", () => fs.readDirSync(`${dir}/missing`));
+  attempt("list a file", () => fs.readDirSync(`${dir}/a.txt`));
+  attempt("entries of missing", () => fs.readDirEntriesSync(`${dir}/missing`));
+  attempt("entries of a file", () => fs.readDirEntriesSync(`${dir}/a.txt`));
+  attempt("mkdir existing", () => fs.mkdirSync(`${dir}/plain`));
+  attempt("mkdir without its parent", () => fs.mkdirSync(`${dir}/no/parent`));
+  attempt("mkdir over a file", () => fs.mkdirSync(`${dir}/a.txt`));
+  attempt("mkdir recursive over a file", () => fs.mkdirSync(`${dir}/a.txt`, { recursive: true }));
+  attempt("remove a full directory", () => fs.removeSync(`${dir}/a`));
+  attempt("remove missing", () => fs.removeSync(`${dir}/missing`));
+  attempt("remove missing, recursive", () => fs.removeSync(`${dir}/missing`, { recursive: true }));
+  try {
+    await fs.readDir(`${dir}/missing`);
+  } catch (e) {
+    console.log("async list", (e as IoError).code, (e as Error).message);
+  }
+  try {
+    await fs.mkdir(`${dir}/plain`);
+  } catch (e) {
+    console.log("async mkdir", (e as IoError).code, (e as Error).message);
+  }
+  try {
+    await fs.remove(`${dir}/a`);
+  } catch (e) {
+    console.log("async remove", (e as IoError).code, (e as Error).message);
+  }
+
+  fs.removeSync(`${dir}/a.txt`);
+  fs.removeSync(`${dir}/plain`);
+  await fs.remove(`${dir}/x`, { recursive: true });
+  fs.removeSync(`${dir}/a`, { recursive: true });
+  await fs.remove(`${dir}/z`, { recursive: true });
+  console.log(fs.readDirSync(dir).join(" "));
+  fs.removeSync(dir, { recursive: true });
+  console.log(fs.existsSync(dir));
+}

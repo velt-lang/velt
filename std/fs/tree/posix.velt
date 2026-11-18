@@ -1,0 +1,214 @@
+// velt/fs (internal): listing, making and removing directories on macOS and Linux (the default
+// variant of `#fs-tree`, std/imports.velt), over the C library's directory functions
+// (`#fd-system`). The errors are Node's (`ENOENT: no such file or directory, scandir 'x'`). Each
+// function takes the path as C bytes (checked on the caller's thread) and as the text its error
+// names, and returns a `Done`, so it can run on the executor's blocking pool.
+//
+// A listing is sorted by name, by code point (Node lists in the system's order; a sorted listing
+// is the same on every system and run). An entry's type comes with the listing (`d_type`); only
+// an entry whose file system reports none costs an `lstat`.
+
+import {
+  lastError,
+  listDir,
+  makeDir,
+  removeDir,
+  removeTree,
+  statPath,
+  unlinkPath,
+} from "#fd-system";
+import { Dirent } from "velt/fs/dirent";
+import { osError } from "velt/fs/errors";
+import { byCodePoint } from "velt/fs/tree/order";
+import { Done } from "velt/fs/whole/done";
+import { pdqsort } from "velt/lang/sort/pdq";
+
+const ENOENT: i32 = 2;
+/** `st_mode`'s type bits, and a directory's and a link's. */
+const S_IFMT: u32 = 0o170000;
+const S_IFDIR: u32 = 0o040000;
+const S_IFLNK: u32 = 0o120000;
+const S_IFREG: u32 = 0o100000;
+
+/** `Dirent`'s kinds (std/fs/dirent.velt). */
+const OTHER: u8 = 0;
+const FILE: u8 = 1;
+const DIR: u8 = 2;
+const LINK: u8 = 3;
+
+/** Whether `name` (UTF-8) holds a character past U+FFFF, where UTF-16 order is not code points'. */
+function wide(name: readonly u8[]): bool {
+  for (const b of name) {
+    if (b >= 0xf0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** The names in the directory at `c`, sorted. */
+export function list(c: readonly u8[], path: string): Done<string[]> {
+  const names: u8[][] = [];
+  const types: u8[] = [];
+  const e = listDir(c, names, types);
+  if (e != 0) {
+    return { value: null, error: osError(e, "scandir", path) };
+  }
+  const out: string[] = [];
+  let anyWide = false;
+  for (const name of names) {
+    anyWide = anyWide || wide(name);
+    out.push(name.utf8Slice());
+  }
+  if (anyWide) {
+    pdqsort(out, (a, b) => byCodePoint(a, b));
+  } else {
+    // No character past U+FFFF: UTF-16 order is code point order.
+    out.sort();
+  }
+  return { value: out, error: null };
+}
+
+/** The kind of the entry `name` of the directory at `c`, from `lstat` (its `d_type` said nothing). */
+function kindByStat(c: readonly u8[], name: readonly u8[]): u8 {
+  const child: u8[] = c.slice(0, (c.length - 1) as i64);
+  child.push(47);
+  for (const b of name) {
+    child.push(b);
+  }
+  child.push(0);
+  const st = statPath(child, false);
+  if (st === null) {
+    return OTHER;
+  }
+  const kind = st.st_mode & S_IFMT;
+  return kind == S_IFREG ? FILE : kind == S_IFDIR ? DIR : kind == S_IFLNK ? LINK : OTHER;
+}
+
+/** The entries of the directory at `c` with their types, sorted by name. */
+export function listTyped(c: readonly u8[], path: string): Done<Dirent[]> {
+  const names: u8[][] = [];
+  const types: u8[] = [];
+  const e = listDir(c, names, types);
+  if (e != 0) {
+    return { value: null, error: osError(e, "scandir", path) };
+  }
+  const out: Dirent[] = [];
+  let anyWide = false;
+  for (let i: usize = 0; i < names.length; i++) {
+    const name = names[i];
+    anyWide = anyWide || wide(name);
+    // `d_type`: DT_REG 8, DT_DIR 4, DT_LNK 10, DT_UNKNOWN 0.
+    const t = types[i];
+    const kind =
+      t == 8 ? FILE : t == 4 ? DIR : t == 10 ? LINK : t == 0 ? kindByStat(c, name) : OTHER;
+    out.push({ name: name.utf8Slice(), kind });
+  }
+  if (anyWide) {
+    pdqsort(out, (a, b) => byCodePoint(a.name, b.name));
+  } else {
+    pdqsort(out, (a, b) => a.name < b.name);
+  }
+  return { value: out, error: null };
+}
+
+/** `mkdir(c)`: 0, or its errno. */
+function makeOne(c: readonly u8[]): i32 {
+  return makeDir(c, 0o777) == 0 ? 0 : lastError();
+}
+
+/** Whether a directory is at `c` (following links). */
+function isDir(c: readonly u8[]): bool {
+  const st = statPath(c, true);
+  return st !== null && (st.st_mode & S_IFMT) == S_IFDIR;
+}
+
+/**
+ * The parent of the path `c` as C bytes: `a/b` of `a/b/c` and of `a/b//c/`, `/` of `/a`, the
+ * empty path of `a`; `null` for `/` and the empty path, which have none.
+ */
+function parentOf(c: readonly u8[]): u8[] | null {
+  let end = c.length - 1;
+  while (end > 0 && c[end - 1] == 47) {
+    end--;
+  }
+  if (end == 0) {
+    return null;
+  }
+  let start = end;
+  while (start > 0 && c[start - 1] != 47) {
+    start--;
+  }
+  let cut = start;
+  while (cut > 0 && c[cut - 1] == 47) {
+    cut--;
+  }
+  if (cut == 0 && start > 0) {
+    cut = 1;
+  }
+  const out: u8[] = c.slice(0, cut as i64);
+  out.push(0);
+  return out;
+}
+
+/**
+ * Makes the directory at `c` and its missing parents: 0, or the errno of what failed. A
+ * directory already there is not an error, whoever made it (another thread making the same tree).
+ */
+function makeAll(c: readonly u8[]): i32 {
+  if (c.length <= 1) {
+    // The empty path: the parent of a relative name, which is there.
+    return 0;
+  }
+  const first = makeOne(c);
+  if (first == 0) {
+    return 0;
+  }
+  if (first != ENOENT) {
+    return isDir(c) ? 0 : first;
+  }
+  const parent = parentOf(c);
+  if (parent === null) {
+    return first;
+  }
+  const above = makeAll(parent);
+  if (above != 0) {
+    return above;
+  }
+  const again = makeOne(c);
+  return again == 0 || isDir(c) ? 0 : again;
+}
+
+/** Makes the directory at `c`, with `recursive` its missing parents too. */
+export function make(c: readonly u8[], path: string, recursive: bool): Done<bool> {
+  const e = recursive ? makeAll(c) : makeOne(c);
+  if (e != 0) {
+    return { value: null, error: osError(e, "mkdir", path) };
+  }
+  return { value: true, error: null };
+}
+
+/**
+ * Removes what is at `c`: a file, a link (never what it points to) or an empty directory, with
+ * `recursive` a directory and everything in it. The error names the call that failed: `lstat`
+ * for a path that is not there.
+ */
+export function removeAt(c: readonly u8[], path: string, recursive: bool): Done<bool> {
+  const st = statPath(c, false);
+  if (st === null) {
+    return { value: null, error: osError(lastError(), "lstat", path) };
+  }
+  if ((st.st_mode & S_IFMT) != S_IFDIR) {
+    if (unlinkPath(c) != 0) {
+      return { value: null, error: osError(lastError(), "unlink", path) };
+    }
+  } else if (recursive) {
+    const e = removeTree(c);
+    if (e != 0) {
+      return { value: null, error: osError(e, "rm", path) };
+    }
+  } else if (removeDir(c) != 0) {
+    return { value: null, error: osError(lastError(), "rmdir", path) };
+  }
+  return { value: true, error: null };
+}

@@ -18,8 +18,17 @@ import {
   unlinkPath as posixUnlinkPath,
   writeFrom as posixWriteFrom,
 } from "velt/fs/fd/posix";
+import { checkPath } from "velt/fs/fd/guards";
+import {
+  DirSystem,
+  listPath as posixListPath,
+  removeDir as posixRemoveDir,
+  removeTree as posixRemoveTree,
+} from "velt/fs/fd/dirs";
 
 declare c("c", { errno: true }) function fdatasync(fd: i32): i32;
+/** `mode_t` is 32 bits on Linux. */
+declare c("c", { errno: true }) function mkdir(path: readonly u8[], mode: u32): i32;
 
 /** Flushes the file's data and metadata to the disk: 0, or -1. */
 export function syncAll(fd: i32): i32 {
@@ -97,4 +106,46 @@ export function mapRead(fd: i32, len: usize): usize {
 /** `madvise` on part of a mapping of `mapRead`: 0, or -1. */
 export function adviseMap(address: usize, len: usize, advice: i32): i32 {
   return posixAdviseMap(address, len, advice);
+}
+
+// Directories (std/fs/fd/dirs.velt), with Linux's `struct dirent`, `open` flags and `AT_`
+// constants.
+
+/**
+ * Linux's `struct dirent` on a 64-bit target (glibc and musl agree): `d_type` at 18, `d_name` at
+ * 19. `O_CLOEXEC` is 0x80000; `O_DIRECTORY` and `O_NOFOLLOW` are 0x10000 and 0x20000 on x86-64,
+ * 0x4000 and 0x8000 on arm64. `AT_FDCWD` -100, `AT_REMOVEDIR` 0x200; `ELOOP` 40.
+ */
+function dirSystem(): DirSystem {
+  return {
+    typeAt: 18,
+    nameAt: 19,
+    openDir: arch() == "x64" ? 0xb0000 : 0x8c000,
+    cwd: -100,
+    removeDir: 0x200,
+    loop: 40,
+  };
+}
+
+/** The entries of the directory at `path` into `names` and `types` (`d_type`): 0, or the errno. */
+export function listDir(path: readonly u8[], names: u8[][], types: u8[]): i32 {
+  return posixListPath(path, dirSystem(), names, types);
+}
+
+/** `mkdir(path, mode)`: 0, or -1. */
+export function makeDir(path: readonly u8[], mode: u32): i32 {
+  checkPath("mkdir", path);
+  // SAFETY: `path` ends with its only 0 byte (checked above); C keeps no pointer to it.
+  return unsafe { mkdir(path, mode) };
+}
+
+/** `rmdir(path)`: 0, or -1. */
+export function removeDir(path: readonly u8[]): i32 {
+  return posixRemoveDir(path);
+}
+
+/** Removes the directory at `path` and everything in it, following no link: 0, or the errno. */
+export function removeTree(path: readonly u8[]): i32 {
+  const sys = dirSystem();
+  return posixRemoveTree(sys.cwd, path, sys, true);
 }
