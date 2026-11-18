@@ -29,6 +29,7 @@ import * as nc from "./sched_node_catch";
 import * as order from "./sched_order";
 import * as q from "./sched_queue";
 import * as sl from "./sched_sleep";
+import * as sc from "./sched_sleep_carry";
 import * as t from "./sched_task";
 import * as wk from "./sched_wake";
 
@@ -138,6 +139,9 @@ function runOther(e: usize, k: usize, fl: u32): void {
  */
 @inline
 function runWoken(e: usize, k: usize, fl: u32): void {
+  if ((fl & t.CARRIED) !== 0) {
+    sc.adopt(e, k);
+  }
   t.flags(k, 0, t.POLLED);
   if ((fl & t.LOCALS) !== 0) {
     let n = wn.takeWoken(k);

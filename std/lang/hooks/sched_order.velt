@@ -25,7 +25,7 @@
 // poll of the task has ended, its microtasks too (sched_run.velt `runEnd`), as Node runs the
 // microtasks after each callback. A timer is never run inside the poll that created it: the loop
 // moves only between polls. A task with Node timers may move to another worker (its sleeps anchor
-// it: sched_sleep.velt).
+// it, and an offer carries them along: sched_sleep_carry.velt).
 //
 // Known differences from the runtime's order:
 // - A step fires only the sleeps of the worker that steps: a sleep of another worker due before
