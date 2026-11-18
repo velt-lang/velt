@@ -305,3 +305,23 @@ fn structs_are_found_by_tag_and_typedef() {
     assert!(h.record("tight").unwrap().0.packed);
     assert!(h.record("nothing").is_none());
 }
+
+/// A struct defined inside another one has its own line, not the outer struct's.
+#[test]
+fn a_nested_struct_has_its_own_line() {
+    let json = serde_json::json!({ "inner": [
+        { "kind": "RecordDecl", "name": "outer", "tagUsed": "struct", "completeDefinition": true,
+          "loc": { "file": "/p/geo.h", "line": 2 },
+          "range": { "begin": { "line": 2 }, "end": { "line": 6 } },
+          "inner": [
+            { "kind": "FieldDecl", "name": "a", "loc": { "line": 3 }, "type": { "qualType": "int" } },
+            { "kind": "RecordDecl", "name": "inner", "tagUsed": "struct", "completeDefinition": true,
+              "loc": { "line": 4 }, "range": { "begin": { "line": 4 }, "end": { "line": 4 } },
+              "inner": [ { "kind": "FieldDecl", "name": "b", "loc": { "line": 4 }, "type": { "qualType": "int" } } ] },
+            { "kind": "FieldDecl", "name": "in", "loc": { "line": 5 }, "type": { "qualType": "struct inner" } }
+          ] }
+    ]});
+    let h = Headers::from_json(&json);
+    assert_eq!(h.record("outer").unwrap().0.at, "geo.h:2");
+    assert_eq!(h.record("inner").unwrap().0.at, "geo.h:4");
+}

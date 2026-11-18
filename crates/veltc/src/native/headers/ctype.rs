@@ -226,13 +226,21 @@ impl Headers {
     }
 
     /// Structs and unions with a tag defined inside `node`'s fields: their tags are the file's in
-    /// C, as enums' are.
-    fn nested_records(&mut self, node: &Value, place: &mut Place) {
+    /// C, as enums' are. `place` is where clang's printing is after `node`'s own locations: a
+    /// copy follows it through the fields, so each nested record gets its own line.
+    fn nested_records(&mut self, node: &Value, place: &Place) {
+        let mut place = place.clone();
+        self.nested_records_in(node, &mut place);
+    }
+
+    fn nested_records_in(&mut self, node: &Value, place: &mut Place) {
         for inner in node["inner"].as_array().into_iter().flatten() {
+            let line = node_line(inner, place);
             if inner["kind"] == "RecordDecl" {
-                let at = format!("{}:{}", short(&place.file), place.line);
-                self.add_record(inner, at);
-                self.nested_records(inner, place);
+                self.add_record(inner, format!("{}:{line}", short(&place.file)));
+                self.nested_records_in(inner, place);
+            } else {
+                visit_places(&inner["inner"], place);
             }
         }
     }
@@ -657,7 +665,7 @@ fn opening_paren(text: &str) -> Option<usize> {
 
 /// The file and line clang printed last: it leaves either out of a location when it is the
 /// same, in print order (a node's `loc`, then its `range`, then its children).
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Place {
     file: String,
     line: u64,

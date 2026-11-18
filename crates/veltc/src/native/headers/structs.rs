@@ -4,7 +4,7 @@
 //! the headers define, under its tag or a typedef, with the same fields in the same order, by
 //! name and by type through the table functions use; a nested struct is compared by name. Its
 //! size, alignment and every field's offset are clang's own answers, from a generated file whose
-//! enumerators are `sizeof`, `_Alignof` and `offsetof` (as `declare c const`s' values come), so
+//! enumerators are `sizeof`, `_Alignof` and `__builtin_offsetof` (as `declare c const`s' values come), so
 //! `#pragma pack`, `aligned(…)` and padding are compared, not assumed. Unions, bit-fields,
 //! flexible array members, C arrays (until `T[N]`), `packed` structs and structs only declared
 //! are refused, with the header line.
