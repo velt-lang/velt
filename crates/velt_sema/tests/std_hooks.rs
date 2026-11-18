@@ -413,6 +413,8 @@ fn lazy_std_checks_the_lowered_hooks_of_the_values_a_program_has() {
             "number_write",
             "whole_number_write",
             "panic_raise",
+            "class_object",
+            "host_ref_handle",
             "weak_release",
             "weak_map_new",
             "weak_map_set",
@@ -426,8 +428,6 @@ fn lazy_std_checks_the_lowered_hooks_of_the_values_a_program_has() {
             "weak_ref_word",
             "weak_ref_deref",
             "weak_ref_drop",
-            "class_object",
-            "host_ref_handle"
         ]
     );
 }
