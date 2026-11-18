@@ -1,0 +1,103 @@
+// What a C pointer (`Ptr<T>`, #3094) can't be: text (also as an array's element), a `typeof`, an
+// operand of arithmetic or an ordering, a dynamic value or one read from `any` (also as an
+// array's element or a record's value), or JSON, directly or through a type parameter; a pointer
+// to another C type, or to a type C has no values of (also as a type parameter's instance, in a
+// signature or through an alias); `Out<T>` of a value C must not write (a non-null pointer, a
+// class reference).
+import { Out, Ptr } from "velt/ffi";
+
+declare c type FILE;
+declare c type DIR;
+
+class Holder {
+  n = 0;
+}
+
+declare c("c") function setNull(p: Out<Ptr<FILE>>): void;
+declare c("c") function setObject(p: Out<Holder>): void;
+// A pointee refused where it was written is reported there, not again by the C signature.
+declare c("c") function takes(p: Ptr<string>): void;
+declare c("c") function outs(p: Out<Ptr<string> | null>): void;
+declare c("c") function gives(): Ptr<string> | null;
+
+function toAny<T>(x: T): any {
+  return x;
+}
+
+function text<T>(x: T): string {
+  return `${x}`;
+}
+
+function fromAny<T>(a: any): T {
+  return a as T;
+}
+
+function joined<T>(xs: T[]): string {
+  return xs.join(",");
+}
+
+function wrapped<T>(x: T): string {
+  return `${[x]}`;
+}
+
+function str<T>(x: T): string {
+  return String(x);
+}
+
+function plus<T>(x: T): string {
+  return "x" + x;
+}
+
+function asRec<T>(a: any): Record<string, T> {
+  return a as Record<string, T>;
+}
+
+type P<T> = Ptr<T>;
+type PP<T> = Ptr<P<T> | null>;
+type Q<T> = P<T>[];
+type C<T> = T extends string ? Ptr<T> : never;
+type R = P<string>;
+type W<T> = [T, Ptr<string> | null];
+export type CA<T> = T extends string ? Ptr<T>[] : never;
+
+function unused<T>(p: Ptr<T> | null): void {}
+
+function mk<T>(a: usize): Ptr<T> {
+  // SAFETY: never read through.
+  return unsafe { Ptr.at<T>(a) };
+}
+
+// C has one NULL: a pointer may be `null` or `undefined`, not both.
+function twice(p: Ptr<Ptr<u8> | null | undefined>): void {}
+
+export function show(): void {
+  // SAFETY: never read through.
+  const p = unsafe { Ptr.at<FILE>(8) };
+  // SAFETY: as above.
+  const d = unsafe { Ptr.at<DIR>(16) };
+  console.log(`${p}`, String(p), "at " + p, typeof p);
+  console.log(p < p, p === d);
+  const a: any = p;
+  const u: unknown = p;
+  const o: object = p;
+  console.log(a, u, o, JSON.stringify(p));
+  console.log(toAny(p), text(p));
+  console.log(a as Ptr<FILE>, u as Ptr<FILE>, fromAny<Ptr<FILE>>(a));
+  console.log(a as Ptr<FILE>[], a as [Ptr<FILE> | null], fromAny<Ptr<FILE>[]>(a));
+  console.log(`${[p]}`, String([p]), [p, p].join(","), [p].toString(), "x" + [p]);
+  console.log(joined([p]), wrapped(p));
+  console.log(text([p]), str([p]), plus([p]));
+  console.log(a as Record<string, Ptr<FILE>>, a as Record<string, Ptr<FILE> | null>);
+  console.log(asRec<Ptr<FILE> | null>(a));
+  console.log(mk<string>(16), mk<Holder>(16));
+  const x: P<string> | null = null;
+  const z: PP<string> | null = null;
+  const y: Q<Holder> = [];
+  const c: C<string>[] = [];
+  const r1: R | null = null;
+  const r2: R | null = null;
+  const w1: W<i64> = [1, null];
+  const w2: W<i64> = [2, null];
+  unused<string>(null);
+  console.log(x, z, y, c, r1, r2, w1, w2);
+}

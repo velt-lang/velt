@@ -475,7 +475,10 @@ impl FnCx<'_, '_> {
         let s = self.cx.ty.str_;
         if op == B::Add
             && (l.ty == s) != (r.ty == s)
-            && (self.reject_symbol_text(&l) || self.reject_symbol_text(&r))
+            && (self.reject_symbol_text(&l)
+                || self.reject_symbol_text(&r)
+                || self.reject_ptr_text(&l)
+                || self.reject_ptr_text(&r))
         {
             return self.error_expr(span);
         }
@@ -761,6 +764,10 @@ impl FnCx<'_, '_> {
             let mut d = Diagnostic::error(message, span);
             if matches!(self.cx.ty.kind(t), TyKind::Simd(_)) {
                 d = d.with_note(simd_method_note(op));
+            }
+            // A C pointer has no arithmetic and no order (#3094): its address is a number.
+            if self.cx.is_ptr_value(t) {
+                d = d.with_note("a C pointer is compared only with `===` and `!==`: `Ptr.addressOf(p)` gives its address, a number");
             }
             self.cx.error(d);
             return None;

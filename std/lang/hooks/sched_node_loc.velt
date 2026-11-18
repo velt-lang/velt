@@ -16,7 +16,7 @@ import * as m from "./sched_mem";
 // The runtime's slot of the last `throw` on this thread (panic.rs); a pointer is `Ptr`, as in
 // compiled code's declarations of these symbols.
 declare c("c") function velt_rt_throw_loc$loc(): Ptr<u8> | null;
-declare c("c") function velt_rt_set_throw_loc$loc(loc: Ptr<u8>): void;
+declare c("c") function velt_rt_set_throw_loc$loc(loc: Ptr<u8> | null): void;
 
 /** A node's flag (sched_node.velt): the word at `at` holds where its error was thrown. */
 export const LOC: u32 = 1024;
@@ -57,6 +57,6 @@ export function current(): usize {
 export function restore(loc: usize): void {
   // SAFETY: `loc` is a location compiled code recorded (a static string) or 0, for NULL.
   unsafe {
-    velt_rt_set_throw_loc$loc(m.ptr(loc));
+    velt_rt_set_throw_loc$loc(m.ptrOrNull<u8>(loc));
   }
 }

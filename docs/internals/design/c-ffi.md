@@ -182,7 +182,7 @@ unsafe function sum(p: Ptr<f32>, n: usize): f32 { … }
 | `StrBytes` | `const char *` | a `string`'s UTF-8 bytes, borrowed, no NUL; the binding passes `byteLength(s)` |
 | `CString` | `const char *` | an owned NUL-terminated copy (`new CString(s)`, one allocation, reusable) |
 | `CStr` (callback parameters only) | `const char *` | copied into a `string` by the trampoline |
-| `Out<T>` | `T *` | a stack slot the call writes, copied back |
+| `Out<T>` | `T *` | the `value` C writes: a number, `bool`, or `Ptr<U> \| null` for a `U **` (#3094) |
 | a `declare c struct` | by value, or `S *` as `Out<S>` / `Ref<S>` | the target's C layout and calling convention |
 | `CFunction<F>` | function pointer | a `NativeCallback`'s `.fn`, or one read from C memory |
 | `CallbackContext` | `void *` | a `NativeCallback`'s `.context` |
@@ -352,7 +352,7 @@ the same C signature; they don't have to name the same Velt types.
 - **Same C signature** is decided on the C type each Velt type crosses as (the "What crosses"
   table), by class, the same on every target:
   - **a machine word**: every pointer form (`Ptr<T>`, `Ptr<T> | null`, `null`, `StrBytes`,
-    `CString`, arrays and views, `Out<T>`, `OutPtr<T>`) and `isize`/`usize`. A pointer and
+    `CString`, arrays and views, `Out<T>`) and `isize`/`usize`. A pointer and
     `size_t`/`ssize_t` are one register class and width on every target Velt compiles for
     (64 bits natively, 32 on wasm32), so C reads one where the other was passed;
   - each other integer by width **and** signedness (`i8` and `u8` differ: a caller extends
@@ -591,9 +591,9 @@ function onRow(n: i32, row: Ptr<u8> | null): i32 { … }
   the C library's for every caller, the runtime's included), and no `declare c` function of the
   program has it. Each is an error at the decorator.
 - **It compiles to** a function with the unmangled symbol and the target's C calling convention
-  (Velt functions use it already for scalars), which converts what crosses (an address to its
-  `Ptr`, a `Ptr` result to its address, with std's `ptrOf`, `ptrOrNull`, `ptrAddress`,
-  `ptrAddressOrZero`) and calls the Velt function, which stays an ordinary function for Velt
+  (Velt functions use it already for scalars). A pointer is the same word on both sides (#3094),
+  so nothing converts; a `Ptr<T>` parameter C passes NULL for stops the program, as it would
+  read as `null`. It calls the Velt function, which stays an ordinary function for Velt
   callers. Built whether or not Velt code reaches it, in both backends; a std function with
   `@export` is live for lazy std. Its `i8`, `i16` and `bool` parameters carry no `signext` /
   `zeroext` in LLVM: AAPCS64 outside Darwin leaves their upper bits unspecified, and clang's
@@ -1047,10 +1047,10 @@ Step 1 lands in layers, each its own pull request:
        `Proxy`, `Reflect`) doesn't reach unsafe methods and accessors: their names give a
        `TypeError`. The methods the language calls implicitly (symbol-keyed ones, `toString`,
        `toLocaleString`, `valueOf`, `toJSON`, `then`) can't be unsafe. A generator's output
-       can't contain `unsafe` code. `Ptr`'s address is a `readonly` field, which a write through `any`
-       refuses; `OutPtr`'s and `CString`'s are private fields of std classes, which are no members
+       can't contain `unsafe` code. A pointer has no dynamic form at all (#3094): it doesn't
+       convert to or from `any`; `CString`'s bytes are a private field of a std class, which is no member
        through `any`.
-     - The raw API, `Ptr`, `OutPtr`, `declare c type`s and unsafe functions, can be imported
+     - The raw API, `Ptr`, `declare c type`s and unsafe functions, can be imported
        there only: by name, re-exported (through any number of modules), or as a namespace
        import's member (`ffi.Ptr`). A safe function of an allowed package can still return a
        `Ptr`; the code receiving it can't read or write through it without `unsafe`.
@@ -1343,6 +1343,55 @@ Step 1 lands in layers, each its own pull request:
       lose their `system` forms. The goldens of the table (`lang/system_function*`) are gone
       with it: `declare c` has its own tests (c_functions.rs and the rest), and a lone file
       can't declare C functions.
+11. `Ptr<T>` as a type kind, one word with 0 as `null` (#3094, its pull requests 1 and 2; layer 2
+    of C structs). Layers 3 and 4 above describe what it replaced.
+    - **Atomics at an address** (pull request 1): std's executor, channels and string crumbs
+      made a `Ptr` only to call the `ptrAtomic*` intrinsics; they are `addressAtomic*` over a
+      `usize` now (intrinsics.md "Memory at an address").
+    - **The type**: `hir::TyKind::Ptr(T)`. std/ffi/ptr.velt declares `Ptr`, a `type_kind` entry
+      of `velt_common::std_hooks` (`ffi_ptr_type`): every type written with that declaration's
+      name is the kind (velt_sema `ffi_ptr.rs`), its statics are Velt functions over the
+      intrinsics `ptrFromAddress` and `ptrToAddress`, and it is never a built-in type name, so a
+      user type `Ptr` stays the user's. Lowering gives it `Ty::Ptr` with the null niche
+      (`lower/type_kinds.rs`), so `Ptr<T> | null` is C's pointer word, 0 for `null`; the shape
+      key has a bit of its own (it answers every other question as `symbol` does).
+    - **No 0 in a non-null `Ptr<T>`**: `Ptr.at(0)` stops the program (`Ptr.orNull` is the one
+      for an address that may be 0); so does a NULL C result, C variable or exported function's
+      parameter declared `Ptr<T>`, and a `declare c const` of that type whose header value is
+      NULL is a compile error. std's C declarations that are passed NULL take `Ptr<T> | null`.
+      On wasm32 a pointer has 32 bits and an address (`usize`) 64: `ptrFromAddress` stops the
+      program for an address past 32 bits (`stop_if_past_32_bits`), which would otherwise be
+      cut to another address, or to 0 behind a `Ptr<T>`.
+    - **The pointee**: a number, `bool`, `void`, a `declare c type`, a `declare c struct` or
+      another pointer (`null` or `undefined`, not both). A pointee that is a type parameter is
+      checked where it is instantiated (`json::PtrUse::Pointee`, at the call, as the other
+      type-parameter rules are), from a generic function's signature as well as its body; one
+      an alias's type arguments supply is checked where the alias is written
+      (`Ctx::alias_pointees`).
+    - **Gone**: the struct and its private field, the four lowering hooks (`ptrOf`,
+      `ptrOrNull`, `ptrAddress`, `ptrAddressOrZero`) and `OutPtr<T>` with `hir::CTy::OutPtr`:
+      `Out<Ptr<T> | null>` is a `T **`. `Out<T>` takes a number, `bool` or `Ptr<T> | null`
+      only: C may write NULL into a non-null pointer, and writing a class reference, a `symbol`
+      or a `shared<T>` would forge one.
+    - **The language's other operations**, decided rather than inherited from the struct: a
+      pointer prints as `Ptr(0x7ffd5e8c1a30)` (std's `ptrPush`), compares and hashes by address,
+      narrows and is truthy, is copied (never moved), `structuredClone` copies it, and it crosses
+      workers as a Copy value; text (`${p}`, `String(p)`, `"" + p`, also of an array, tuple,
+      option or union holding one: `${[p]}`, `[p].join()`), `typeof`, ordering and arithmetic,
+      a pointer to another C type, `any`, `unknown`, `object` and interfaces (to and from them;
+      from them also as a view's element or value, `a as Ptr<T>[]`, `a as Record<string,
+      Ptr<T>>`, which read each through `any`: `Ctx::ptr_in_view`), and JSON are compile
+      errors, through a type parameter too (`json::Need::NoPtr`). A class
+      or an array that holds one still converts to `any`, as one holding a SIMD vector does:
+      its elements and fields through `any` are a `TypeError` (#924). A pointer holds no Velt
+      value: walks over what a value contains (printing, cloning, locks, liveness) stop at it
+      (`types::contents`), while walks over what a type mentions see its pointee.
+    - **Header check**: the shapes read `TyKind::Ptr`, and `Out<Ptr<T> | null>` compares
+      against `T **`; packages/sqlite's record is regenerated (with `tests/` moved aside: #3105).
+    - **Tests**: goldens `lang/c_pointers` (`wide.velt` also on wasm32-wasip1:
+      `wasm_goldens.rs`) and `lang/errors/c_pointer_rules`, velt_vir `tests/c_pointers.rs` (one
+      word in a signature, a field and a C call; fails without the niche; no pointer attributes
+      on a pointer parameter), std/ffi/ffi.test.velt.
 
 ## Decisions
 

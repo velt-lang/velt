@@ -7,7 +7,8 @@
 //! - struct / anon / tuple → inline aggregate; class → `Ptr` to a heap object;
 //! - numeric / string enum (no variant has a payload) → `I64` discriminant (string enums: the
 //!   member index); unions → tagged aggregate (tag `u32` = variant index, then the payload);
-//! - `T | null` → `Ptr` (null = none) when `T` is a class or `shared<T>`, else `{ bool, T }`;
+//! - `T | null` → `Ptr` (null = none) when `T` is a class, `shared<T>`, `symbol` or a C pointer
+//!   (`Ptr<T>`, #3094; type_kinds.rs `has_null_niche`), else `{ bool, T }`;
 //! - `Result<T, E>` → tagged aggregate (tag `u8`: 0 = Ok, 1 = Err);
 //! - `T[]` → `{ ptr, len: u64, cap: u64 }`; `shared<T>` → `Ptr` to `{ count: u64, value: T }`;
 //! - `Promise<T>` (a promise *value*: stored, passed, not awaited in place) → `Ptr` to a heap
@@ -118,6 +119,7 @@ impl<'h> Cx<'h> {
             TyKind::Result(a, b) => TyKind::Result(c(self, a), c(self, b)),
             TyKind::Promise(v, e) => TyKind::Promise(c(self, v), c(self, e)),
             TyKind::Shared(e) => TyKind::Shared(c(self, e)),
+            TyKind::Ptr(e) => TyKind::Ptr(c(self, e)),
             TyKind::FnPtr {
                 params,
                 ret,
@@ -423,6 +425,7 @@ impl<'h> Cx<'h> {
             TyKind::Result(a, b) => TyKind::Result(s(self, a), s(self, b)),
             TyKind::Promise(v, e) => TyKind::Promise(s(self, v), s(self, e)),
             TyKind::Shared(e) => TyKind::Shared(s(self, e)),
+            TyKind::Ptr(e) => TyKind::Ptr(s(self, e)),
             TyKind::FnPtr {
                 params,
                 ret,
@@ -439,69 +442,6 @@ impl<'h> Cx<'h> {
         self.intern(k)
     }
 
-    pub(super) fn adt_def(&self, d: DefId) -> &'h hir::AdtDef {
-        match self.hir.def(d) {
-            hir::Def::Adt(a) => a,
-            _ => ice("expected a struct/class definition"),
-        }
-    }
-
-    pub(super) fn enum_def(&self, d: DefId) -> &'h hir::EnumDef {
-        match self.hir.def(d) {
-            hir::Def::Enum(e) => e,
-            _ => ice("expected an enum definition"),
-        }
-    }
-
-    pub(super) fn fn_def(&self, d: DefId) -> &'h hir::FnDef {
-        match self.hir.def(d) {
-            hir::Def::Fn(f) => f,
-            _ => ice("expected a function definition"),
-        }
-    }
-
-    /// The `[Symbol.dispose]()` drop hook of a struct/class definition.
-    pub(super) fn dispose_of(&self, d: DefId) -> Option<DefId> {
-        match self.hir.def(d) {
-            hir::Def::Adt(a) => a.dispose,
-            _ => None,
-        }
-    }
-
-    /// Is `t` a class instance type?
-    pub(super) fn is_class(&self, t: TyId) -> bool {
-        match self.types.kind(self.ph_rep(t)) {
-            TyKind::Adt(d, _) => {
-                matches!(self.hir.def(*d), hir::Def::Adt(a) if a.kind == AdtKind::Class)
-            }
-            _ => false,
-        }
-    }
-
-    /// Enum whose variants carry no payload: represented by its `i64` discriminant.
-    pub(super) fn is_c_like_enum(&self, d: DefId) -> bool {
-        self.enum_def(d)
-            .variants
-            .iter()
-            .all(|v| v.payload.is_empty())
-    }
-
-    /// Is `t` a union type (a compiler-generated enum, `EnumDef::is_union`)?
-    pub(super) fn is_union(&self, t: TyId) -> bool {
-        match self.types.kind(self.ph_rep(t)) {
-            TyKind::Adt(d, _) => matches!(self.hir.def(*d), hir::Def::Enum(e) if e.is_union),
-            _ => false,
-        }
-    }
-
-    /// `Option<t>` uses the null pointer for none.
-    pub(super) fn has_null_niche(&self, t: TyId) -> bool {
-        let t = self.ph_rep(t);
-        self.is_class(t)
-            || self.boxed(t)
-            || matches!(self.types.kind(t), TyKind::Shared(_) | TyKind::Symbol)
-    }
-
     /// VIR type of a concrete HIR type. `Unit` and `Never` map to `Ty::Unit` (no value), and
     /// an option of such a type to `Bool`.
     pub(super) fn ty(&mut self, t: TyId) -> Ty {
@@ -516,6 +456,8 @@ impl<'h> Cx<'h> {
             TyKind::Str => Ty::Agg(STR_AGG),
             // The address of a symbol record (rt_abi.md "Symbols"), never null.
             TyKind::Symbol => Ty::Ptr,
+            // A C pointer (#3094), never `NULL`: `Ptr<T> | null` is the same word, 0 for `null`.
+            TyKind::Ptr(_) => Ty::Ptr,
             TyKind::Simd(_) => Ty::V128,
             // Literal types are zero-sized: the type is the value.
             TyKind::Unit | TyKind::Never | TyKind::Literal(_) => Ty::Unit,

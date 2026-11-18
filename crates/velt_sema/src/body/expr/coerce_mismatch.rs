@@ -18,6 +18,15 @@ impl FnCx<'_, '_> {
         if self.cx.dynamic(found.ty) == Some(crate::any::Dynamic::Unknown) {
             return self.unknown_use_error(found.span);
         }
+        // A pointer to another C type (#3094): never converted implicitly, and says how.
+        let from = self.cx.ty.core(found.ty).unwrap_or(found.ty);
+        if matches!(self.cx.ty.kind(from), TyKind::Ptr(_)) {
+            if let Some(d) =
+                crate::collect::c_sig::ptr_conversion(self.cx, from, expected, found.span)
+            {
+                return self.cx.error(d);
+            }
+        }
         if self.shared_widening_error(expected, found) {
             return;
         }

@@ -1,0 +1,19 @@
+// An address is a `usize`, 64 bits everywhere; a pointer has 32 on wasm32. There, `Ptr.at` and
+// `Ptr.orNull` stop the program for an address past 32 bits instead of cutting it to another
+// address, or to 0 behind a `Ptr<T>`, which is never NULL (#3094). Natively both are addresses
+// like any other (crates/veltc/tests/wasm_goldens.rs runs this on wasm32-wasip1).
+import { Ptr } from "velt/ffi";
+
+declare c type FILE;
+
+function main() {
+  const fits: usize = 0xfffffff0;
+  // SAFETY: never read through.
+  console.log(unsafe { Ptr.at<FILE>(fits) });
+  const wide: usize = 0x100000000;
+  // SAFETY: as above.
+  const p = unsafe { Ptr.orNull<FILE>(wide) };
+  console.log(p === null ? "null" : "not null");
+  // SAFETY: as above.
+  console.log(unsafe { Ptr.at<FILE>(wide) });
+}
