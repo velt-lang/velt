@@ -63,6 +63,31 @@ Velt is a language of its own: TypeScript's syntax, plus what a native language 
 - [Typed errors](https://veltlang.com/docs/reference/errors/): `throws` clauses the compiler checks
 - [Calling C](https://veltlang.com/docs/reference/c-interop/) with `declare c`
 
+An operator is a method with a well-known symbol key; `a + b` compiles to one direct call:
+
+```ts
+class Vec3 {
+  constructor(public x: f64, public y: f64, public z: f64) {}
+  [Symbol.add](o: Vec3): Vec3 { return new Vec3(this.x + o.x, this.y + o.y, this.z + o.z); }
+  [Symbol.sub](o: Vec3): Vec3 { return new Vec3(this.x - o.x, this.y - o.y, this.z - o.z); }
+  [Symbol.mul](k: f64): Vec3 { return new Vec3(this.x * k, this.y * k, this.z * k); }
+  static [Symbol.mul](k: f64, v: Vec3): Vec3 { return v * k; }
+  [Symbol.neg](): Vec3 { return new Vec3(-this.x, -this.y, -this.z); }
+  toString(): string { return `(${this.x}, ${this.y}, ${this.z})`; }
+}
+
+const a = new Vec3(1, 2, 3);
+const b = new Vec3(4, 5, 6);
+const c = new Vec3(1, 1, 1);
+console.log((a + b * 0.5 - -c).toString()); // (4, 5.5, 7)
+console.log((2 * a).toString());             // (2, 4, 6)
+```
+
+Whole programs in [examples/apps](examples/apps): [vindex](examples/apps/vindex), a disk-based
+vector search index on SIMD kernels and memory-mapped files;
+[seek](examples/apps/seek), a ripgrep-style search; [redis-clone](examples/apps/redis-clone), a
+Redis-compatible server; and web services, a chat and server-rendered TSX apps.
+
 The differences in one place: [Velt for TypeScript developers](https://veltlang.com/docs/book/ts-developers/).
 What comes next: [the roadmap](ROADMAP.md).
 
