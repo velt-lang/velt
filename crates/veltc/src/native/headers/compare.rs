@@ -251,10 +251,25 @@ fn pointee(p: &Pointee, c: &CType, names: &[String], h: &Headers) -> Result<(), 
     };
     match (ok, c) {
         (true, _) => Ok(()),
-        (false, CType::Named(n)) => Err(format!(
-            "it points at C type `{n}`: declare `Ptr<{n}>`, with `declare c type {n};`"
-        )),
+        (false, CType::Named(n)) => Err(named_pointee_note(n, h)),
         (false, _) => Err(format!("it points at {}", velt_for(c))),
+    }
+}
+
+/// What to declare for a pointer to the C struct or union `n` (a name the header writes): a
+/// defined struct is a `declare c struct`, the one already declared for its definition if there
+/// is one; anything else (a struct only declared, a union) is a `declare c type`.
+fn named_pointee_note(n: &str, h: &Headers) -> String {
+    match h.record(n) {
+        Some((r, _)) if r.defined && !r.union => {
+            match h.declared.iter().find(|d| h.same_record(d, n)) {
+                Some(d) => format!("it points at C struct `{n}`, declared as `{d}`: declare `Ptr<{d}>`"),
+                None => format!(
+                    "it points at C struct `{n}`: declare `Ptr<{n}>`, with `declare c struct {n} {{ … }}`"
+                ),
+            }
+        }
+        _ => format!("it points at C type `{n}`: declare `Ptr<{n}>`, with `declare c type {n};`"),
     }
 }
 
