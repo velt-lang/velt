@@ -34,7 +34,11 @@
 name: ci
 
 on:
+  # A pull request's checks run once it is approved: the maintainer's approval adds the label
+  # `ci:approved`, which starts them; later pushes run them again while the label stays. Before
+  # that, `ci` fails with "waiting for approval", so auto-merge can't enqueue an unchecked change.
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
   merge_group:
   push:
     branches: [main]
@@ -43,8 +47,10 @@ on:
   workflow_dispatch:
 
 # The scheduled run has a group of its own: a push to main must not replace it while it waits.
+# Adding any other label starts a run that does nothing: it gets a group of its own, so it never
+# cancels the pull request's real run.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || (github.event_name == 'schedule' && 'nightly') || github.ref }}
+  group: ci-${{ (github.event.action == 'labeled' && github.event.label.name != 'ci:approved' && github.event.label.name != 'ci:full') && format('label-{0}', github.run_id) || github.event.pull_request.number || (github.event_name == 'schedule' && 'nightly') || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -53,7 +59,11 @@ env:
 
 jobs:
   pr:
-    if: github.event_name == 'pull_request'
+    if: >-
+      github.event_name == 'pull_request'
+      && contains(github.event.pull_request.labels.*.name, 'ci:approved')
+      && (github.event.action != 'labeled' || github.event.label.name == 'ci:approved'
+          || github.event.label.name == 'ci:full')
     name: ${{ matrix.part }}
     strategy:
       fail-fast: false
@@ -115,7 +125,11 @@ jobs:
   # Whether the change touches OS-specific code, so the pull request is linted on Windows or
   # macOS too (`other_os`, xtask builds with the runner's stable Rust in seconds, as for queue-plan).
   pr-plan:
-    if: github.event_name == 'pull_request'
+    if: >-
+      github.event_name == 'pull_request'
+      && contains(github.event.pull_request.labels.*.name, 'ci:approved')
+      && (github.event.action != 'labeled' || github.event.label.name == 'ci:approved'
+          || github.event.label.name == 'ci:full')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -612,7 +626,8 @@ jobs:
         run: cargo test --workspace --test c_headers --test c_constants --test c_sources --test c_export -- --nocapture
 
   ci:
-    if: always()
+    # Not for a run started by another label: its result would replace the real run's.
+    if: always() && !(github.event.action == 'labeled' && github.event.label.name != 'ci:approved' && github.event.label.name != 'ci:full')
     needs: [pr, pr-plan, pr-lint-os, pr-windows, queue-plan, queue, queue-golden, c-headers]
     runs-on: ubuntu-latest
     steps:
@@ -623,6 +638,15 @@ jobs:
             "${{ needs.c-headers.result }}"; do
             case "$r" in success|skipped) ;; *) echo "a gate failed: $r"; exit 1 ;; esac
           done
+      # Fail closed before approval: a pull request whose checks were skipped (no `ci:approved`
+      # label, or a label other than it or `ci:full` added) has not been checked.
+      - name: the pull request's checks ran
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "pr: ${{ needs.pr.result }}"
+          if [ "${{ needs.pr.result }}" = skipped ]; then
+            echo "waiting for approval: the label ci:approved starts the checks"; exit 1
+          fi
       # Fail closed in the queue: unless queue-plan found the entry gone (`os` is `[]`), the
       # checks and the goldens must have run and passed, not been skipped.
       - name: the queue checked and ran the goldens

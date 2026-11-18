@@ -113,12 +113,15 @@ required item of the earlier review, not the whole pull request again. When ever
 addressed and the new commits raise nothing new, approve and queue in the same step:
 
 ```
-gh pr review <n> --comment --body-file review.md   # ends in "Verdict: APPROVE"
 gh pr merge <n> --auto
+gh pr review <n> --comment --body-file review.md   # ends in "Verdict: APPROVE"
+gh pr edit <n> --add-label ci:approved             # starts the pull request's checks
 ```
 
 The rule stays that nothing is queued before an approving review; queueing with it removes the
-wait between approval and the queue. A new finding in the new commits is a required change like
+wait between approval and the queue. A pull request's checks start only with the label
+`ci:approved` (until then `ci` fails with "waiting for approval", so auto-merge waits): the
+runners go to approved changes. Later pushes run them again while the label stays. A new finding in the new commits is a required change like
 any other (`Verdict: CHANGES NEEDED`); an older nit that the first review missed is a follow-up,
 not a reason for another round.
 
