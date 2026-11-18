@@ -53,7 +53,12 @@ function replaceIn(s: string, from: string, to: string, all: bool): string {
     matched = true;
     const pos = k as usize;
     out = out + velt_rt_str_byte_slice(s, copied as u64, pos as u64);
-    out = out + (plain ? to : substitute(to, s, pos, m));
+    // Not `plain ? to : …`: a conditional of `to` and a new string would take `to` owned.
+    if (plain) {
+      out = out + to;
+    } else {
+      out = out + substitute(to, s, pos, m);
+    }
     copied = pos + m;
     if (!all) {
       break;
@@ -65,7 +70,8 @@ function replaceIn(s: string, from: string, to: string, all: bool): string {
     }
   }
   if (!matched) {
-    return s;
+    // A share of `s` (no copy), which leaves `s` borrowed as the hook's signature says.
+    return velt_rt_str_byte_slice(s, 0, n as u64);
   }
   return out + velt_rt_str_byte_slice(s, copied as u64, n as u64);
 }
@@ -154,7 +160,11 @@ function replaceUnits(s: string, from: string, to: string, all: bool): string {
     }
     const pos = k as usize;
     out = out + s.substring(copied as i64, pos as i64);
-    out = out + (plain ? to : substituteUnits(to, s, pos, len));
+    if (plain) {
+      out = out + to;
+    } else {
+      out = out + substituteUnits(to, s, pos, len);
+    }
     copied = pos + len;
     if (!all) {
       break;

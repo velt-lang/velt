@@ -28,6 +28,11 @@ pub const DELETED: &[&str] = &[
     "velt_rt_pow_f64",
     // #2196: collation (std/lang/string/collate).
     "velt_rt_str_locale_compare",
+    // #2196: `split`, `replace` and `replaceAll` with a string pattern (std/lang/string/split,
+    // std/lang/string/replace).
+    "velt_rt_str_split",
+    "velt_rt_str_replace",
+    "velt_rt_str_replace_all",
     // #2196: FNV-1a (std/hash/fnv), which only std called, so no hook replaces it.
     "velt_rt_fnv1a64_str",
     "velt_rt_fnv1a64_bytes",
