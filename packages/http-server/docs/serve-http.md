@@ -49,10 +49,15 @@ async function main() {
 
 ## `serveHttp(opts, handler)`
 
-`serveHttp<E>(opts: HttpServeOptions, handler: (req: HttpRequest, res: HttpResponse) => Promise<void, E>
-throws E): Promise<HttpServer>`. `HttpServeOptions { port: number; host?; maxHeadSize?; maxHeaders?;
-maxBodySize?; idleTimeout?; tls?; headersTimeout?; requestTimeout?; http2?; maxConcurrentStreams? }`
-(the last two: [HTTP/2](#http2)): the default host is 127.0.0.1 and port 0 picks a free port.
+```text
+serveHttp<E>(opts: HttpServeOptions,
+             handler: (req: HttpRequest, res: HttpResponse) => Promise<void, E> throws E)
+  : Promise<HttpServer>
+HttpServeOptions { port: number; host?; maxHeadSize?; maxHeaders?; maxBodySize?; idleTimeout?;
+                   tls?; headersTimeout?; requestTimeout?; http2?; maxConcurrentStreams? }
+```
+
+`http2` and `maxConcurrentStreams` are described under [HTTP/2](#http2). The default host is 127.0.0.1 and port 0 picks a free port.
 `idleTimeout` (5 s) is how long a connection waits for its next request or more of one;
 `headersTimeout` (60 s) the most a head may take from its first byte, and `requestTimeout` (300 s)
 the most a body may take from its head, however steadily they trickle in: past either, the request
