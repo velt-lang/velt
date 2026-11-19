@@ -113,7 +113,7 @@ and the map keeps the proxy alive: every reactive object would leak. Velt keeps 
 count per object and runs a bounded cycle check on release.
 
 **At insert,** `set(k, v)` traces `v`'s graph through the compiler's trace glue (each counted
-type's strong references; up to 256 objects, `LIMIT` in `std/lang/hooks/weak_trial.velt`) and
+type's strong references; up to 256 objects, `LIMIT` in `std/lang/hooks/weak_graph.velt`) and
 finds every object on a path from `v` back to `k`. For each, the entry records how many
 references to it the entry holds: the map's reference to `v`, and the references from inside
 `v`'s graph. Their sum over all entries is the object's `hint`, and the objects get the flag.
