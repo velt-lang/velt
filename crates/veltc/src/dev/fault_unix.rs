@@ -79,8 +79,8 @@ pub fn install() {
 extern "C" fn on_fault(sig: libc::c_int, info: *mut libc::siginfo_t, context: *mut libc::c_void) {
     static REPORTED: AtomicBool = AtomicBool::new(false);
     // SAFETY: the kernel passes a valid `siginfo_t` and `ucontext_t` to an `SA_SIGINFO`
-    // handler. Everything called is async-signal-safe but `pthread_getname_np`, which reads
-    // the thread's name without locking on Linux and macOS.
+    // handler. Everything called is async-signal-safe but macOS's `pthread_getname_np`
+    // (`thread_name`).
     unsafe {
         let code = (*info).si_code;
         if !REPORTED.swap(true, Ordering::AcqRel) {
@@ -106,8 +106,7 @@ extern "C" fn on_fault(sig: libc::c_int, info: *mut libc::siginfo_t, context: *m
                 line.text(" sent to the program");
             }
             let mut name = [0u8; 32];
-            let named =
-                libc::pthread_getname_np(libc::pthread_self(), name.as_mut_ptr().cast(), 32) == 0;
+            let named = thread_name(&mut name);
             let len = name.iter().position(|&b| b == 0).unwrap_or(0);
             if named && len > 0 {
                 line.text(" on thread `");
@@ -128,6 +127,19 @@ extern "C" fn on_fault(sig: libc::c_int, info: *mut libc::siginfo_t, context: *m
             libc::raise(sig);
         }
     }
+}
+
+/// The current thread's name into `name` (zero-terminated); false when it cannot be read.
+/// Linux asks the kernel (a system call, safe in a handler). Elsewhere `pthread_getname_np`,
+/// which is not on the async-signal-safe list: macOS's copies the name out of the thread's own
+/// record without taking a lock.
+unsafe fn thread_name(name: &mut [u8; 32]) -> bool {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    return libc::prctl(libc::PR_GET_NAME, name.as_mut_ptr()) == 0;
+    #[cfg(target_os = "macos")]
+    return libc::pthread_getname_np(libc::pthread_self(), name.as_mut_ptr().cast(), 32) == 0;
+    #[allow(unreachable_code)]
+    false
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -207,6 +219,26 @@ impl Line {
         // SAFETY: writes the initialized part of the buffer to stderr.
         unsafe { libc::write(2, self.buf.as_ptr().cast(), self.len) };
     }
+}
+
+/// For tests: fault as a swap that crashes would, by a write to a page that allows none (the
+/// address is mapped, so the write is a defined access that the kernel refuses).
+pub fn fault() {
+    // SAFETY: maps one inaccessible page of its own and writes to it; the write faults.
+    unsafe {
+        let page = libc::mmap(
+            std::ptr::null_mut(),
+            4096,
+            libc::PROT_NONE,
+            libc::MAP_PRIVATE | libc::MAP_ANON,
+            -1,
+            0,
+        );
+        if page != libc::MAP_FAILED {
+            page.cast::<u8>().write_volatile(0);
+        }
+    }
+    std::process::abort();
 }
 
 #[cfg(test)]

@@ -17,7 +17,7 @@ use crate::commands::{failure_code, report};
 use crate::driver::{self, BuildOptions, Session};
 
 /// For tests: a host with this set crashes when asked to reload, as one whose swap faults
-/// would: `segv` by a write through a null pointer once the build is done, anything else by an
+/// would: `segv` by a write to an inaccessible page once the build is done, anything else by an
 /// abort at once.
 pub const CRASH_ON_RELOAD_ENV: &str = "VELT_DEV_CRASH_ON_RELOAD";
 
@@ -298,8 +298,10 @@ fn reload_with(
     }
     step(Step::Swapping);
     if FAULT_IN_SWAP.load(Ordering::Relaxed) {
-        // SAFETY: none; the fault is the point (a test's stand-in for a swap that crashes).
-        unsafe { std::ptr::null_mut::<u8>().write_volatile(0) };
+        #[cfg(unix)]
+        super::fault_unix::fault();
+        #[cfg(not(unix))]
+        std::process::abort();
     }
     let start = Instant::now();
     let mut steps = vec![];

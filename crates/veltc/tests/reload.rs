@@ -453,7 +453,7 @@ fn fault_during_reload_says_where() {
     ok(dev.wait_stderr(mark, crashed));
     let lines = dev.stderr_since(mark);
     let reports: Vec<_> = (lines.iter())
-        .filter(|l| l.starts_with("velt dev: signal 11 touching 0x0 at 0x"))
+        .filter(|l| l.starts_with("velt dev: signal 11 touching 0x") && l.contains(" at 0x"))
         .collect();
     assert_eq!(reports.len(), 1, "{lines:?}");
     let tail = "on thread `velt-dev-reload`; reload 1: generating and swapping code";
