@@ -102,7 +102,6 @@ const RUNTIME_REACH: &[(&str, &str)] = &[
     ("current", "the environment"),
     ("date", "the clock"),
     ("perf", "the clock"),
-    ("local", "the clock"),
     ("random", "random numbers"),
     ("native", NATIVE_SUPPORT),
 ];
@@ -394,7 +393,7 @@ mod tests {
         assert_eq!(outside("velt_rt_fs_read_file_sync"), "the file system");
         assert_eq!(outside("velt_rt_tcp_connect"), "the network");
         assert_eq!(outside("velt_rt_perf_now"), "the clock");
-        assert_eq!(outside("velt_rt_local_offset_minutes"), "the clock");
+        assert_eq!(outside("velt_rt_date_now"), "the clock");
         assert_eq!(outside("velt_rt_random_u64"), "random numbers");
         assert_eq!(outside("velt_rt_memory_rss"), "the environment");
         assert_eq!(outside("velt_rt_isatty"), "the environment");

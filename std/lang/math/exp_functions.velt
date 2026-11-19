@@ -1,0 +1,27 @@
+// velt/lang/math (internal): the exponential functions of `Math`, `exp` and `expm1`, as an
+// extension of the prelude's class over fdlibm's routines (velt/lang/math/exp). In a module of its
+// own so that a program loads these ports only when it calls one of these functions
+// (std/prelude/global/math_exp.velt, a conditional global).
+
+import { exp, expm1 } from "velt/lang/math/exp";
+
+// Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
+
+extend Math {
+  /**
+   * Returns e (the base of natural logarithms) raised to a power.
+   * @param x - A numeric expression representing the power of e.
+   */
+  static exp(x: f64): f64 {
+    return exp(x);
+  }
+
+  /**
+   * Returns the result of (e^x - 1), accurate for an `x` near 0 too, where `Math.exp(x) - 1`
+   * loses digits.
+   * @param x - A numeric expression.
+   */
+  static expm1(x: f64): f64 {
+    return expm1(x);
+  }
+}

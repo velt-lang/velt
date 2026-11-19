@@ -648,7 +648,7 @@ fn lower_checked(
         None => std_cache::stage::optimize(sess, opts, &target, std_use, &mut program)?,
     }
     if dest == VirFor::Link {
-        std_cache::prebuilt_link(sess, opts, &target, &program)?;
+        std_cache::prebuilt_link(sess, opts, &target, &mut program)?;
     }
     if opts.report_numbers {
         sess.reports.push(crate::numbers_report::render(&program));

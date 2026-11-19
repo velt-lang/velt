@@ -20,6 +20,13 @@
 //! nothing. Its `file` entries go into the program's build stamp, so a changed std file rebuilds
 //! a program that linked the object.
 //!
+//! **Thread-local values.** The object may keep state of its module's own (`prebuilt.rs`
+//! "State"): its thread-local values are the program's to define, as with any object compiled to
+//! link into a program (vir.rs invariant 5), so the manifest lists their externs (`tls` lines) and
+//! a build that links the object adds them to its program ([`link`]), whose unit defining
+//! `velt_main` defines their storage. Where a debug build's backend has no thread-local storage
+//! an object shares (`velt_codegen_cl::has_thread_local_data`), an object with any is a miss.
+//!
 //! **Pinned.** Once sema has called the object's entry points, the build has to link it: a build
 //! that links takes the object found out of the cache's reach at once ([`pin`]: a hard link or a
 //! copy in a temporary directory the build holds), so another build's garbage collection or
@@ -45,7 +52,7 @@ use crate::driver::{BuildError, BuildOptions, OutputPaths, Session};
 /// The build cache's kind for prebuilt hook modules' objects.
 pub(super) const KIND: &str = "stdhook";
 /// The first line of a manifest; a manifest of another form finds nothing.
-const MANIFEST_HEADER: &str = "velt prebuilt hook module 1";
+const MANIFEST_HEADER: &str = "velt prebuilt hook module 2";
 
 /// A module's object as a build found it.
 #[derive(Clone, Debug)]
@@ -56,6 +63,8 @@ pub(crate) struct Found {
     pub entries: Vec<String>,
     /// The manifest's `file` entries, for the program's build stamp.
     pub files: Vec<String>,
+    /// The externs of its thread-local values (`tls` lines), which the program defines.
+    pub tls: Vec<String>,
     /// The temporary directory holding the pinned object, removed when the last copy goes.
     pub _pinned: Option<Arc<Pinned>>,
 }
@@ -188,6 +197,9 @@ impl Finder {
         if object_key.hex() != manifest.object {
             return None;
         }
+        if !manifest.tls.is_empty() && !velt_codegen_cl::has_thread_local_data(&self.target) {
+            return None;
+        }
         let cached = self.cache.path_of(KIND, &object_key)?;
         let (object, pinned) = match self.linking {
             true => pin(&cached).map(|(dir, object)| (object, Some(Arc::new(dir))))?,
@@ -197,6 +209,7 @@ impl Finder {
             object,
             entries: manifest.entries,
             files: manifest.files,
+            tls: manifest.tls,
             _pinned: pinned,
         })
     }
@@ -251,6 +264,7 @@ impl Finder {
             object: object_key.hex(),
             entries: built.entries,
             files: built.files,
+            tls: built.tls,
         };
         let path = self.manifest_path(&key);
         write_atomically(&path, &manifest.render()).map_err(|e| format!("{}: {e}", path.display()))
@@ -355,6 +369,7 @@ struct Manifest {
     object: String,
     entries: Vec<String>,
     files: Vec<String>,
+    tls: Vec<String>,
 }
 
 impl Manifest {
@@ -366,9 +381,13 @@ impl Manifest {
         let object = lines.next()?.strip_prefix("object ")?.to_string();
         let mut entries = vec![];
         let mut files = vec![];
+        let mut tls = vec![];
         for line in lines {
             if let Some(e) = line.strip_prefix("entry ") {
                 entries.push(e.to_string());
+            } else if let Some(t) = line.strip_prefix("tls ") {
+                velt_vir::tls::TlsCall::of_symbol(t)?;
+                tls.push(t.to_string());
             } else if line.starts_with("file ") {
                 files.push(line.to_string());
             } else {
@@ -379,6 +398,7 @@ impl Manifest {
             object,
             entries,
             files,
+            tls,
         })
     }
 
@@ -386,6 +406,9 @@ impl Manifest {
         let mut s = format!("{MANIFEST_HEADER}\nobject {}\n", self.object);
         for e in &self.entries {
             s.push_str(&format!("entry {e}\n"));
+        }
+        for t in &self.tls {
+            s.push_str(&format!("tls {t}\n"));
         }
         for f in &self.files {
             s.push_str(f);
@@ -417,8 +440,9 @@ pub(super) fn entry_line(symbol: &str, params: &[vir::Ty], ret: vir::Ty) -> Stri
 pub(crate) fn linked_objects(
     program: &vir::Program,
     found: &[(&'static str, Found)],
-) -> Result<Vec<PathBuf>, String> {
+) -> Result<(Vec<PathBuf>, Vec<String>), String> {
     let mut objects = vec![];
+    let mut tls = vec![];
     for (module_entry, f) in found {
         let mut called = false;
         for (_, h) in prebuilt::of_module(module_entry) {
@@ -437,9 +461,34 @@ pub(crate) fn linked_objects(
         }
         if called {
             objects.push(f.object.clone());
+            tls.extend(f.tls.iter().cloned());
         }
     }
-    Ok(objects)
+    Ok((objects, tls))
+}
+
+/// Add the externs `tls` (the thread-local values of the objects `program` links) to `program`
+/// where it lacks them: the unit defining `velt_main` defines the storage of each (velt_codegen_llvm
+/// `function/tls.rs`, velt_codegen_cl `tls.rs`).
+fn define_tls(program: &mut vir::Program, tls: &[String]) {
+    for symbol in tls {
+        let Some(call) = velt_vir::tls::TlsCall::of_symbol(symbol) else {
+            continue;
+        };
+        if program.externs.iter().any(|e| &e.symbol == symbol) {
+            continue;
+        }
+        let (params, ret) = call.signature();
+        program.externs.push(vir::ExternFn {
+            symbol: symbol.clone(),
+            params,
+            ret,
+            noreturn: false,
+            host: None,
+            c_decl: None,
+            variadic: false,
+        });
+    }
 }
 
 /// After a check with `finder`: fill what it missed (`VELT_STD_OBJECT_FILL`), and what it found,
@@ -458,20 +507,22 @@ pub(in crate::driver) fn found(
 
 /// After `program` (for `target`) is optimized: the objects of the prebuilt modules it calls
 /// into, placed for the link after the std cache's own (`hook<n>.<ext>`, linked or copied as
-/// those are), in `sess.std_objects`.
+/// those are), in `sess.std_objects`, and their thread-local values' externs added to `program`,
+/// which defines their storage (module docs).
 pub(in crate::driver) fn link(
     sess: &mut Session,
     opts: &BuildOptions,
     target: &str,
-    program: &vir::Program,
+    program: &mut vir::Program,
 ) -> Result<(), BuildError> {
     if sess.prebuilt.is_empty() {
         return Ok(());
     }
-    let objects = linked_objects(program, &sess.prebuilt).map_err(BuildError::Ice)?;
+    let (objects, tls) = linked_objects(program, &sess.prebuilt).map_err(BuildError::Ice)?;
     if objects.is_empty() {
         return Ok(());
     }
+    define_tls(program, &tls);
     let place =
         OutputPaths::new(&opts.input, opts.output.as_deref(), opts.emit, target).std_objects();
     if sess.turn.is_none() {
@@ -565,6 +616,7 @@ mod tests {
             object: object_key.hex(),
             entries: vec![line],
             files: vec![],
+            tls: vec![],
         };
         write_atomically(&finder.manifest_path(&key), &manifest.render()).unwrap();
 
@@ -584,7 +636,8 @@ mod tests {
             ..vir::Program::default()
         };
         let found = finder.found();
-        let objects = linked_objects(&program, &found).unwrap();
+        let (objects, tls) = linked_objects(&program, &found).unwrap();
+        assert!(tls.is_empty());
         let place = super::super::Place {
             dir: tmp.path().join("app.std"),
             ext: "o".into(),
@@ -648,6 +701,7 @@ mod tests {
             object: object_key(&key, &[]).hex(),
             entries: vec![],
             files: vec![],
+            tls: vec![],
         };
         write_atomically(&finder.manifest_path(&key), &manifest.render()).unwrap();
         assert!(!finder.linked(hook));

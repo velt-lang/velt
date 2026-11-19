@@ -128,10 +128,11 @@ export function heapFree(p: u64, size: u64, align: u64): void {
 /**
  * Stops the program: mimalloc has no block of `size` bytes. As the runtime's allocator does
  * (`fatal`), with its message and exit code, and not as a panic: a `catchUnwind` running doesn't
- * catch it, and the message names no location.
+ * catch it, and the message names no location. The weak core's allocator stops the same way
+ * (weak_mem.velt `alloc`).
  */
 @noInline
-function outOfMemory(size: u64): never {
+export function outOfMemory(size: u64): never {
   velt_rt_flush();
   velt_rt_write_str(2, "panic: memory allocation of " + decimal(size) + " bytes failed\n");
   velt_rt_exit(101);

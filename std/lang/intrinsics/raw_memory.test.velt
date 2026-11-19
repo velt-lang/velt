@@ -10,6 +10,8 @@ import {
   addressAtomicRmw,
   addressAtomicStore,
   addressCall,
+  addressCall3,
+  addressCallWord,
   addressLoad,
   addressStore,
   atomicAddress,
@@ -36,6 +38,17 @@ function double(x: usize): usize {
 
 function bump(x: usize): void {
   BUMPED.add(x as u64);
+}
+
+/** What `wordBump` and `sum3` received. */
+const WORDS = new Atomic<u64>(0);
+
+function wordBump(x: u64): void {
+  WORDS.add(x);
+}
+
+function sum3(a: usize, b: usize, c: usize): void {
+  WORDS.add((a * 100 + b * 10 + c) as u64);
 }
 
 function fakePoll(state: usize, cx: usize): u32 {
@@ -175,5 +188,14 @@ describe("velt/lang/intrinsics memory at an address", () => {
       expect(statePoll(fnAddress(fakePoll), 3, 4)).toBe(34);
     }
     expect(BUMPED.load()).toBe(7);
+  });
+
+  it("addressCallWord and addressCall3 call functions that return nothing", () => {
+    // SAFETY: each address is of a function taking what the call passes and returning nothing.
+    unsafe {
+      addressCallWord(fnAddress(wordBump), 0x1_0000_0000);
+      addressCall3(fnAddress(sum3), 1, 2, 3);
+    }
+    expect(WORDS.load()).toBe(0x1_0000_0000 + 123);
   });
 });
