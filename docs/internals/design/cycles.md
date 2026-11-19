@@ -187,8 +187,17 @@ taken and the runtime reads some at fixed offsets, so the trace entry uses the o
 leave empty (interface tables of value structs keep their `BitsEq` there). An interface table has no
 free slot, so an interface value's glue compares its table with those built for classes implementing
 the interface (`Boxing::iface_traced`, from the tables lowering builds) and visits the object with
-that class's glue, as a function value's glue compares drop entries. Weak maps find cycles through
-handler closures, class hierarchies and interface values with it ([weak-refs.md](weak-refs.md)).
+that class's glue, as a function value's glue compares drop entries.
+
+**Trace glue for generator states** (`crates/velt_vir/src/lower/async_fn/gen_trace.rs`). A
+generator's state holds what its function had live at its suspension, in places spill.rs chooses
+after the poll function is built. So the trace runs in the poll function, as the close path does:
+the case `TRACE_BIT | k` of each `yield` (and of the state before the start) visits the drop
+entries the close path of `k` would drop, with their flags, and `f$trace` in the generator's
+table runs it for a suspended generator. The weak-capable walk takes every local of the generator
+functions made at a generator class type (`Boxing::gen_types`, from the `gen_frames` fact,
+recorded in programs with weak references). Weak maps find cycles through handler closures,
+class hierarchies, interface values and generators with it ([weak-refs.md](weak-refs.md)).
 
 ## Alternatives considered
 
@@ -222,8 +231,8 @@ to programs that have no cycles.
 
 ## Not yet implemented
 
-The cycle-capability analysis above is built. The collector, `weak T`, the lint and
-`clone()` of cyclic graphs are accepted design, described here.
+The cycle-capability analysis and the trace glue above are built. The collector, `weak T`, the lint
+and `clone()` of cyclic graphs are accepted design, described here.
 
 ### The collector
 
@@ -406,8 +415,6 @@ panics. `weak T` is Velt syntax; it parses in `.ts` files, and `--ts-compat` rep
 
 ### Work items
 
-- trace glue for generator states: the locals live at the generator's suspension, as its close
-  path drops them, so weak maps find cycles through a generator held in a value too;
 - the collector in std beside the weak core, with the intrinsic it needs, `cycleDesc<T>()` (the
   address of `T`'s descriptor);
 - lowering of the release sequence, descriptors and collection points for cycle-capable types,
