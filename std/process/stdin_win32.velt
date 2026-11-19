@@ -11,21 +11,28 @@ import { Ptr } from "velt/ffi/ptr";
 import { osError } from "velt/fs/errors";
 import { addressLoad, addressStore } from "velt/lang/intrinsics";
 
-declare c("c") function GetStdHandle(which: u32): usize;
-declare c("c") function GetConsoleMode$stdin(handle: usize, mode: Ptr<u32>): i32;
+/**
+ * C's `CONSOLE_READCONSOLE_CONTROL`, which `ReadConsoleW` reads, and `OVERLAPPED`, which is never
+ * passed.
+ */
+declare c type _CONSOLE_READCONSOLE_CONTROL;
+declare c type _OVERLAPPED;
+
+declare c("c") function GetStdHandle(which: u32): Ptr<void> | null;
+declare c("c") function GetConsoleMode$stdin(handle: Ptr<void>, mode: Ptr<u32>): i32;
 declare c("c") function ReadConsoleW(
-  handle: usize,
+  handle: Ptr<void>,
   units: Ptr<u16>,
   count: u32,
   read: Ptr<u32>,
-  control: Ptr<u8> | null,
+  control: Ptr<_CONSOLE_READCONSOLE_CONTROL> | null,
 ): i32;
 declare c("c") function ReadFile(
-  handle: usize,
+  handle: Ptr<void>,
   buf: Ptr<u8>,
   count: u32,
   read: Ptr<u32>,
-  overlapped: Ptr<u8> | null,
+  overlapped: Ptr<_OVERLAPPED> | null,
 ): i32;
 declare c("c") function WideCharToMultiByte(
   codePage: u32,
@@ -71,7 +78,9 @@ function failed(): Chunk {
 /** Reads up to `n` bytes (n >= 16) of standard input to `p`. */
 export function readChunk(p: usize, n: usize): Chunk {
   // SAFETY: no precondition.
-  const h = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
+  const std = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
+  // The handle's address: what the functions below keep, and pass as the HANDLE it is.
+  const h: usize = std === null ? 0 : Ptr.addressOf(std);
   if (h === 0 || h === INVALID_HANDLE) {
     return { count: 0, error: null };
   }
@@ -81,8 +90,8 @@ export function readChunk(p: usize, n: usize): Chunk {
     return failed();
   }
   const w = Ptr.addressOf(word);
-  // SAFETY: `w` holds a DWORD the call writes.
-  const console = unsafe { GetConsoleMode$stdin(h, Ptr.at<u32>(w)) } !== 0;
+  // SAFETY: `h` is standard input's handle, and `w` holds a DWORD the call writes.
+  const console = unsafe { GetConsoleMode$stdin(Ptr.at<void>(h), Ptr.at<u32>(w)) } !== 0;
   let out = console ? readConsole(h, p, n, w) : readPipe(h, p, n, w);
   // A console read that gave only a high surrogate (kept for its low half) isn't the end of
   // input: read on.
@@ -108,7 +117,11 @@ unsafe function consoleRead(h: usize, into: usize, count: u32, w: usize, control
     SetLastError$stdin(0);
   }
   // SAFETY: the caller's statement about the three addresses.
-  return unsafe { ReadConsoleW(h, Ptr.at<u16>(into), count, Ptr.at<u32>(w), Ptr.at<u8>(control)) };
+  const ctl = unsafe { Ptr.at<_CONSOLE_READCONSOLE_CONTROL>(control) };
+  // SAFETY: `h` is standard input's handle (the caller's statement).
+  const console = unsafe { Ptr.at<void>(h) };
+  // SAFETY: the caller's statement about the three addresses.
+  return unsafe { ReadConsoleW(console, Ptr.at<u16>(into), count, Ptr.at<u32>(w), ctl) };
 }
 
 /** The units count `ReadConsoleW` wrote at `w`. */
@@ -135,8 +148,10 @@ unsafe function utf8Of(from: Ptr<u16>, count: i32, to: Ptr<u8>, size: i32): i32 
 /** `ReadFile` of a pipe or a file into `p`; `w` is a DWORD of scratch. */
 function readPipe(h: usize, p: usize, n: usize, w: usize): Chunk {
   const count = n > 0x7fffffff ? 0x7fffffff : n;
+  // SAFETY: `h` is standard input's handle.
+  const file = unsafe { Ptr.at<void>(h) };
   // SAFETY: `p` has room for `count` bytes, `w` for the DWORD the call writes.
-  const ok = unsafe { ReadFile(h, Ptr.at<u8>(p), count as u32, Ptr.at<u32>(w), null) } !== 0;
+  const ok = unsafe { ReadFile(file, Ptr.at<u8>(p), count as u32, Ptr.at<u32>(w), null) } !== 0;
   if (!ok) {
     // SAFETY: no precondition.
     const e = unsafe { GetLastError$stdin() };
