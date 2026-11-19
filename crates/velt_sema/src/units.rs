@@ -56,6 +56,8 @@ pub(crate) fn check_definitions(cx: &mut Ctx) {
     }
     if cx.units_stage == Stage::Both {
         cx.freeze_defs();
+        #[cfg(test)]
+        codec::hook::std_unit(cx);
     }
     crate::timings::pass("units: app", || {
         crate::script_tdz::check(cx);
