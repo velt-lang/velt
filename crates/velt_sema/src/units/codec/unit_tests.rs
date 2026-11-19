@@ -67,7 +67,12 @@ fn round_trip(cx: &Ctx) -> Found {
     }
     let table = &decoded.ty.table;
     let types_ok = table.len() == cx.ty.table.len()
-        && (0..table.len() as u32).all(|i| table.get(table.kind(TyId(i))) == Some(TyId(i)));
+        && (0..table.len() as u32).all(|i| {
+            // A read-only array is a twin of `T[]`: its kind names `T[]`.
+            decoded.ty.is_readonly_array(TyId(i)) == cx.ty.is_readonly_array(TyId(i))
+                && (decoded.ty.is_readonly_array(TyId(i))
+                    || table.get(table.kind(TyId(i))) == Some(TyId(i)))
+        });
     let frozen = decoded.unit_base == cx.unit_base
         && (0..decoded.defs.len()).all(|d| decoded.is_frozen(crate::hir::DefId(d as u32)));
     Found {

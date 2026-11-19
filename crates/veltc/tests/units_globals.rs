@@ -65,6 +65,11 @@ const PROGRAMS: &[(&str, &str)] = &[
         "record_symbols",
         "function main() {\n  const s = Symbol(\"k\");\n  const r: Record<string | symbol, number> = {};\n  r[s] = 1;\n  console.log(r[s]);\n}\n",
     ),
+    // Names `cert` and loads the TCP functions, without listening.
+    (
+        "tls_reactor",
+        "import { connect } from \"velt/net\";\nfunction main() { const cert = 1; console.log(typeof connect, cert); }\n",
+    ),
     (
         "to_fixed",
         "function main() { console.log((1.25).toFixed(1)); }\n",
