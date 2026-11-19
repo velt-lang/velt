@@ -280,7 +280,8 @@ impl FnLower<'_, '_> {
     /// (`LocalDebug::end`): `let` and destructuring bindings, and the bindings of a `for … of`
     /// or a `catch`, which end with their own body. In the function's own block (`body`) the
     /// `let`s last to the end of the function, which needs no end. The blocks its statements
-    /// hold (of an `if`, a loop, a `try`, a nested block) are recorded with it, whether or not
+    /// hold (of an `if`, a loop, a `try`, a `switch`'s cases, a nested block) are recorded with
+    /// it, whether or not
     /// they are lowered: a block lowering leaves out (a branch of a condition known when
     /// compiling, code after a `return`) still declares its variables, and one left without an
     /// end would be in scope to the end of the function, across the blocks around it.
@@ -382,8 +383,25 @@ fn scoped_bindings(b: &hir::Block, body: bool, found: &mut Vec<(hir::LocalId, Sp
             }
             hir::StmtKind::While { body: inner, .. } => scoped_bindings(inner, false, found),
             hir::StmtKind::Block(inner) => scoped_bindings(inner, false, found),
+            hir::StmtKind::Expr(e) => held_blocks(e, found),
             _ => {}
         }
+    }
+}
+
+/// The blocks an expression in statement position holds, for [`scoped_bindings`]: a `switch`
+/// without fallthrough is a `Match` whose arms are blocks (hir_encodings.md "switch"; with a
+/// `break` in every case, inside a `While`), and a block may stand as an expression. A
+/// closure's blocks are not among them: they are another function's, with locals of its own.
+fn held_blocks(e: &hir::Expr, found: &mut Vec<(hir::LocalId, Span)>) {
+    match &e.kind {
+        hir::ExprKind::Block(b) => scoped_bindings(b, false, found),
+        hir::ExprKind::Match { arms, .. } => {
+            for arm in arms {
+                held_blocks(&arm.body, found);
+            }
+        }
+        _ => {}
     }
 }
 

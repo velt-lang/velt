@@ -462,7 +462,8 @@ fn catch_bodies_and_switch_cases_end_their_variables() {
 
 /// A block lowering leaves out of the code: the branch of a condition it knows when compiling
 /// (std's `stdUsed` of a name nothing notes), which is where std has them. `never` is declared
-/// in it, inside `root`'s block, which code follows. Integers throughout: the debug pipeline
+/// in it, inside `root`'s block, which code follows, and so is `inCase`, in a `switch` there.
+/// Integers throughout: the debug pipeline
 /// cleans up only the functions whose `number`s it narrows (velt_opt `debug_passes`), and a
 /// function it leaves alone, as most of std's are, keeps the variable no code uses.
 const LEFT_OUT: &str = r#"import { stdUsed } from "velt/lang/intrinsics";
@@ -474,6 +475,17 @@ function pick(n: i64): i64 {
     if (stdUsed("debug-vars-left-out") && root > 2) {
       const never = root * 2;
       total += never;
+      switch (never) {
+        case 1: {
+          const inCase = root * 5;
+          total += inCase;
+          break;
+        }
+        default: {
+          total += 2;
+          break;
+        }
+      }
     }
     if (root > 5) {
       total += root;
@@ -533,7 +545,11 @@ fn a_block_left_out_of_the_code_ends_its_variables() {
     };
     let line = |text: &str| LEFT_OUT.lines().position(|l| l.contains(text)).unwrap() as u32 + 1;
     let never = end_of("never").expect("never ends");
-    assert_eq!(never.line, line("total += never") + 1, "{never:?}");
+    assert_eq!(never.line, line("total += 2;") + 4, "{never:?}");
+    // A `switch` with a `break` in every case is a match in a loop: its case's variable ends
+    // with the case's block.
+    let in_case = end_of("inCase").expect("inCase ends");
+    assert_eq!(in_case.line, line("total += inCase") + 2, "{in_case:?}");
     let root = end_of("root").expect("root ends");
     assert_eq!(root.line, line("total += 1") + 1, "{root:?}");
 }
