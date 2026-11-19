@@ -160,9 +160,11 @@ impl KeptLowering {
             return Err(("no lowering kept".into(), program));
         };
         // SAFETY: as in `lower`; the old program is dropped only once the context no longer
-        // borrows it (`std_fns` is the only other borrow, cleared here).
+        // borrows it (`std_fns` and `prelude_defs`, whose keys are its definitions' names, are
+        // the only other borrows, cleared here).
         cx.hir = unsafe { &*(program.as_ref() as *const hir::Program) };
         cx.std_fns = std::cell::OnceCell::new();
+        cx.prelude_defs = std::cell::OnceCell::new();
         drop(self.hir.replace(program));
         cx.locs = (opts.source_map).map(|sm| super::srcloc::LocMap::new(sm, opts.std_root));
         match cx.relower(files) {
