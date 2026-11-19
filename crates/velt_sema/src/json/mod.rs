@@ -49,6 +49,23 @@ enum Need {
     /// may be in it. Recorded only for a type parameter; concrete types are checked where
     /// they are read (`Ctx::holds_lock`).
     NoLock,
+    /// A use a C pointer (`Ptr<T>`, #3094) can't have, or a pointee C can't point at. Recorded
+    /// only for a type parameter; concrete types are refused where they are used
+    /// (`FnCx::reject_ptr_text`, `FnCx::reject_ptr_dynamic`, `Ctx::ptr_type_written`).
+    NoPtr(PtrUse),
+}
+
+/// How generic code uses a type parameter that must not be a C pointer ([`Need::NoPtr`]).
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum PtrUse {
+    /// Converted to `any`, `unknown`, `object` or an interface.
+    ToDyn,
+    /// Converted to text (`String(x)`, a template literal part), also as an element (`${[x]}`).
+    ToText,
+    /// Converted from `any` or `unknown` (`a as T`).
+    FromDyn,
+    /// The pointee of a `Ptr<T>`: what it is instantiated with must be a type C points at.
+    Pointee,
 }
 
 /// What a body constructs: the type, its arguments, the span and the guard bits, resolved by
@@ -112,6 +129,8 @@ pub(crate) fn check_json_types(cx: &mut Ctx) {
     let mut work = dispatch.work + uses.iter().map(|(_, u)| u.types.len() as u64).sum::<u64>();
     let mut needs: Needs = FxHashMap::default();
     let mut checked: FxHashSet<(TyId, Span, Need)> = FxHashSet::default();
+    // The types and spans a C pointer rule was reported at (`no_ptr`).
+    let mut ptr_reported: FxHashSet<(TyId, Span)> = FxHashSet::default();
     while let Some(i) = rounds.pop() {
         let (f, u) = &uses[i];
         work += u.size();
@@ -140,6 +159,16 @@ pub(crate) fn check_json_types(cx: &mut Ctx) {
                         )
                         .with_note("a value holding a lock is read only under it (`with`): pass what a callback returns instead"),
                     );
+                }
+            } else if let Need::NoPtr(how) = parse {
+                // Each use is checked, and one at a span is reported: `${x}` of a `T` is both a
+                // conversion to `any` and to text, and an array holding a pointer may be the one
+                // and not the other.
+                if checked.insert((t, span, parse))
+                    && !ptr_reported.contains(&(t, span))
+                    && no_ptr(cx, t, span, how)
+                {
+                    ptr_reported.insert((t, span));
                 }
             } else if let Need::Json(_) = parse {
                 // A type `JSON.parse` decodes: an object type's layout its extensions widen
@@ -223,6 +252,7 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
         .iter()
         .map(|c| (c.span, c.to))
         .collect();
+    let record = cx.prelude_adt("Record");
     let ids = identity::Looks {
         any_impl: cx.any.and_then(|a| a.imp),
         proxy: cx.prelude_adt("Proxy"),
@@ -237,6 +267,7 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
         looks,
         parsers: &parsers,
         lookers: &lookers,
+        record,
     };
     let mut bodies: Vec<(DefId, Uses, News)> = vec![];
     for (i, d) in cx.defs.iter().enumerate() {
@@ -245,6 +276,14 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
         let mut news = vec![];
         let mut seen: FxHashSet<TyId> = FxHashSet::default();
         walk.ids.f = DefId(i as u32);
+        // A generic pointee in the signature, which the body may never read (an unused
+        // `p: Ptr<T> | null`), is checked at each instance as one in the body is.
+        let span = cx.def_spans[i];
+        for t in f.params.iter().map(|p| p.ty).chain([f.ret]) {
+            if seen.insert(t) {
+                pointees(walk.ids.tys, &mut u, t, span);
+            }
+        }
         let guards = guards_of(walk.ids.tys, &f.body.block);
         crate::visit_ref::exprs(&f.body.block, &mut |e: &Expr| {
             let guard = guards.get(&(e as *const Expr)).copied().unwrap_or(0);
@@ -292,6 +331,8 @@ struct Walk<'a> {
     looks: bool,
     parsers: &'a FxHashSet<DefId>,
     lookers: &'a FxHashSet<DefId>,
+    /// The prelude's `Record`, whose view from `any` reads each value through it (`uses_of`).
+    record: Option<DefId>,
 }
 
 impl Walk<'_> {
@@ -307,6 +348,7 @@ impl Walk<'_> {
         let calls = u.calls.len();
         if seen.insert(e.ty) {
             u.types.push((e.ty, e.span));
+            pointees(self.ids.tys, u, e.ty, e.span);
         }
         // Type arguments of generic calls and of generic functions used as values.
         let targs = match &e.kind {
@@ -320,9 +362,10 @@ impl Walk<'_> {
         for t in targs {
             if seen.insert(*t) {
                 u.types.push((*t, e.span));
+                pointees(self.ids.tys, u, *t, e.span);
             }
         }
-        uses_of(self.ids.tys, u, e, self.looks, self.parsers);
+        uses_of(self.ids.tys, u, e, self.looks, self.parsers, self.record);
         if self.looks {
             identity::generated_look(self.lookers, e, &mut u.direct);
         }
@@ -338,6 +381,27 @@ impl Walk<'_> {
     }
 }
 
+/// Reports a type parameter instantiated with a C pointer where generic code uses it as a
+/// pointer can't be used, or with a pointee C can't point at ([`PtrUse`]). True if it reported.
+fn no_ptr(cx: &mut Ctx, t: TyId, span: Span, how: PtrUse) -> bool {
+    let what = match how {
+        PtrUse::Pointee => return cx.check_instance_pointee(t, span),
+        PtrUse::ToDyn if cx.ptr_in_dynamic(t) => "converted to `any`",
+        PtrUse::FromDyn if cx.ptr_in_view(t) => "converted from `any`",
+        PtrUse::ToText if cx.ptr_or_element(t) => "converted to text",
+        _ => return false,
+    };
+    let tn = cx.display(t);
+    let msg = match cx.is_ptr_value(t) {
+        true => format!("a C pointer (`{tn}`) is {what} here, through a type parameter"),
+        false => format!("a `{tn}` is {what} here, through a type parameter: it holds a C pointer"),
+    };
+    cx.error(Diagnostic::error(msg, span).with_note(
+        "a pointer has no dynamic form and no text: `Ptr.addressOf(p)` gives its address",
+    ));
+    true
+}
+
 /// Is `f` a function (or closure) of the standard library, or the initializers of a type or a
 /// constant of it?
 fn is_std_fn(cx: &Ctx, f: DefId) -> bool {
@@ -348,6 +412,15 @@ fn is_std_fn(cx: &Ctx, f: DefId) -> bool {
         _ => return false,
     };
     cx.modules.get(module).is_some_and(|m| m.is_std)
+}
+
+/// Records the pointees of generic C pointer types in `t`, checked where they are instantiated.
+fn pointees(tys: &crate::types::Types, u: &mut Uses, t: TyId, span: Span) {
+    let mut out = vec![];
+    Ctx::generic_pointees(tys, t, &mut out);
+    for p in out {
+        u.direct.push((p, span, Need::NoPtr(PtrUse::Pointee)));
+    }
 }
 
 /// [`has_param`] with the types at hand.

@@ -383,7 +383,7 @@ docs/internals/design/iteration.md §4)
   `params` and clears `rest` (`(...a: [A, B]) => R` is `(a: A, b: B) => R`).
 - `declare function` params are never inferred modified: std passes out-parameters as fresh locals.
   A host or C function (`ExternFnDef::host`, `ExternFnDef::c`) writes every buffer parameter
-  not written `readonly` (and a C function its `Out`/`OutPtr` parameters): callers pass those
+  not written `readonly` (and a C function its `Out` parameters): callers pass those
   `BorrowMut`.
   An argument of such a call for a `u8[]` parameter (a buffer or a path) is a `u8[]`, a value
   of a class extending `std/lang/typed_array/buffer_view::BufferView` (a typed array or `DataView`:

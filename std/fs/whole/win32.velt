@@ -5,7 +5,7 @@
 // errors name the path as it was given, as Node's do. A directory refuses to open as a file with
 // "access denied", which is `EISDIR` here, as everywhere else.
 
-import { OutPtr } from "velt/ffi/out_ptr";
+import { Out } from "velt/ffi/out";
 import { Ptr } from "velt/ffi/ptr";
 import { wideOf } from "velt/ffi/wide";
 import { osError } from "velt/fs/errors";
@@ -60,7 +60,7 @@ declare c("c") function GetFullPathNameW(
   name: readonly u16[],
   room: u32,
   out: u16[],
-  file: OutPtr<u16>,
+  file: Out<Ptr<u16> | null>,
 ): u32;
 declare c("c") function CloseHandle(handle: Ptr<void>): i32;
 declare c("c") function GetLastError(): u32;
@@ -122,7 +122,7 @@ function winPath(path: string): u16[] | null {
     const full = arrayWithCapacity<u16>(room as usize);
     arraySetLen(full, room as usize);
     // SAFETY: `w` is NUL-terminated and `full` holds `room` units, the count passed.
-    const got = unsafe { GetFullPathNameW(w, room, full, new OutPtr<u16>()) };
+    const got = unsafe { GetFullPathNameW(w, room, full, new Out<Ptr<u16> | null>(null)) };
     if (got === 0) {
       return w;
     }
