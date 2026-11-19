@@ -287,12 +287,13 @@ collection; a collection never starts inside another. Deep garbage drops through
 queue (`crates/velt_rt/src/drop_depth.rs`), and a panic out of a dispose leaves the remaining
 garbage pinned and in the root set for the next collection.
 
-**In std.** The collector and the weak core it generalizes are written in std
-(`std/lang/hooks`), not in `velt_rt`. Lowering reaches them through std hooks
-(`crates/velt_common/src/std_hooks.rs`): `cycleRelease(obj, desc)`, `cycleScopeOpen()` and
-`cycleScopeClose()` around a lock, and `cycleCollect()` at a task's end and at exit. They use the
-std-only intrinsics for memory at an address (`addressLoad`, `addressStore`, `addressAtomic*`),
-`rawAlloc` and `rawFree`, `addressCall` and `fnAddress` ([intrinsics.md](intrinsics.md)).
+**In std.** The collector is written in std next to the weak core it generalizes
+(`std/lang/hooks/weak*.velt`), not in `velt_rt`. Lowering reaches it through std hooks, as it
+reaches the weak core (`crates/velt_common/src/std_hooks/weak_hooks.rs`): `cycleRelease(obj,
+desc)`, `cycleScopeOpen()` and `cycleScopeClose()` around a lock, and `cycleCollect()` at a task's
+end and at exit. Like the weak core, it uses the std-only intrinsics for memory at an address
+(`addressLoad`, `addressStore`, `addressAtomic*`) and calls trace glue through `addressCall3`
+([intrinsics.md](intrinsics.md)).
 
 ### `weak T`
 
@@ -379,9 +380,8 @@ panics. `weak T` is Velt syntax; it parses in `.ts` files, and `--ts-compat` rep
   tables, and uncounted classes traced inline; each glue is tested against the drop glue's
   releases (the same objects, the same number of times). Weak maps then find cycles through
   handler closures and class hierarchies too;
-- the weak core moved from `velt_rt` into std, and the collector beside it, with two intrinsics
-  they need: `addressCall3(f, a, b, c)` (a C-ABI call with three pointer-sized arguments, for
-  trace glue's `(obj, visit, ctx)`) and `cycleDesc<T>()` (the address of `T`'s descriptor);
+- the collector in std beside the weak core, with the intrinsic it needs, `cycleDesc<T>()` (the
+  address of `T`'s descriptor);
 - lowering of the release sequence, descriptors and collection points for cycle-capable types,
   and the leak check on `tests/golden/lang/const_used_by_its_closures.velt`;
 - `weak T`, with its parser, formatter, LSP and `--ts-compat` support;
