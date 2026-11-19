@@ -49,9 +49,13 @@ mod hook;
 pub use hook::Hook;
 #[macro_use]
 mod weak_hooks;
+#[macro_use]
+mod module_hooks;
+pub use module_hooks::BLOCKS_MODULE_ENTRY;
 
-// The table: these rows, then the weak core's (`weak_hooks.rs`), given to `hooks!` together.
-with_weak_hooks! {
+// The table: these rows, then module state's (`module_hooks.rs`) and the weak core's
+// (`weak_hooks.rs`), given to `hooks!` together.
+with_module_hooks! {
     // array.velt: array constructors.
     /// `new Array<T>(n).fill(v)` (`velt_sema` `array_ctor.rs`).
     array_filled => lang_hooks_array, "arrayFilled", sig(<A>(f64, &A) -> [A]);
@@ -387,18 +391,6 @@ with_weak_hooks! {
     sched_module_state => lang_hooks_sched, "schedModuleState", sig((usize, u64) -> usize), lowered;
     sched_module_block => lang_hooks_sched, "schedModuleBlock", sig((usize) -> usize), lowered;
     sched_module_ready => lang_hooks_sched, "schedModuleReady", sig((usize, u64) -> void), lowered;
-    // module_blocks.velt: the blocks of module state (#2196 9c), prebuilt: a native program with
-    // module state calls its module's object, whose state is the module's own (`prebuilt::private`).
-    /// Module state's lookup in a program without the executor (one thread, no lock), and under
-    /// the executor's lock (sched_module.velt, by role): `(desc, slot)`, the block.
-    module_state => lang_hooks_module_blocks, "moduleState", sig((usize, u64) -> usize), lowered, prebuilt;
-    module_block => lang_hooks_module_blocks, "moduleBlock", sig((usize) -> usize), lowered, prebuilt;
-    module_ready => lang_hooks_module_blocks, "moduleReady", sig((usize, u64) -> void), lowered, prebuilt;
-    /// The end of such a program's `velt_main` with exit code `(code)`: the blocks go at a normal
-    /// end with the debug counters on, as the runtime's did.
-    module_exit => lang_hooks_module_blocks, "moduleExit", sig((i32) -> void), lowered, prebuilt;
-    /// The blocks go (the executor's counted normal end, sched_module.velt `dropAtExit`, by role).
-    module_drop => lang_hooks_module_blocks, "moduleDrop", sig(() -> void), prebuilt;
 
     // syntax.velt: what the parser writes some syntax as (velt_syntax `ast_names.rs`).
     /// `value satisfies T`.
@@ -789,10 +781,6 @@ mod deleted;
 pub use deleted::DELETED;
 mod scheduler;
 pub use scheduler::{std_scheduler, SCHEDULER_ENV, SCHED_EXTERNS, SCHED_UNREF_DUE};
-/// The std module table's entry of the module that keeps the blocks of module state
-/// (std/lang/hooks/module_blocks.velt, #2196 9c): its lowered hooks are live once a program has
-/// module state (`velt_sema` `lazy_std` `module_hooks`), not in every program.
-pub const BLOCKS_MODULE_ENTRY: &str = "lang_hooks_module_blocks";
 
 mod lookup;
 pub use lookup::{find, is_lowered};
