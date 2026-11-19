@@ -19,7 +19,7 @@ const SHORT_NEEDLE: usize = 32;
 
 /** The first offset in `from..=n - m` of `s` where the `m` bytes of `needle` (`2 <= m`,
  * `m <= n - from`) are, or -1. */
-@inline
+@inline("always")
 export function findBytes(s: string, needle: string, m: usize, from: usize, n: usize): i64 {
   const end = n - m;
   if (end - from >= 16) {

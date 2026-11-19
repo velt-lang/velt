@@ -19,7 +19,7 @@ export const S_BUSY: u32 = 2;
  * Does nothing hold the loop of order `b` (locked) for a step (`how`, task `k`'s)? The end of the
  * poll that took the last turn lets it go first.
  */
-@inline
+@inline("always")
 export function free(b: usize, k: usize, how: u32): bool {
   if (how === S_RELEASED) {
     if (m.ld(b + l.O_HOLDER) !== k) {
@@ -35,7 +35,7 @@ export function free(b: usize, k: usize, how: u32): bool {
  * the timer's time fire before it (the check phase's immediates come before the sleeps that came
  * due meanwhile, as before the next pass).
  */
-@inline
+@inline("always")
 export function uptoFor(b: usize, h: usize, now: u64): u64 {
   return m.ld(b + p.P_PHASE) === p.PASS ? m.ld(h + l.H_AT) as u64 : now;
 }
@@ -45,7 +45,7 @@ export function uptoFor(b: usize, h: usize, now: u64): u64 {
  * pass, not while a sleep of worker block `wb` due by its time is left to fire: its turn comes
  * once they fired (the worker looks again at once).
  */
-@inline
+@inline("always")
 export function move(b: usize, wb: usize, h: usize): usize {
   if (m.ld(b + p.P_PHASE) === p.PASS) {
     const at = m.ld(h + l.H_AT);
@@ -58,7 +58,7 @@ export function move(b: usize, wb: usize, h: usize): usize {
 }
 
 /** Worker block `wb`'s sleeps (0: none) due by `upto` fire: the next one's deadline (0: none). */
-@inline
+@inline("always")
 export function sleeps(wb: usize, upto: u64): u64 {
   return wb !== 0 && sl.pending(wb) ? fire(wb, upto) : 0;
 }
@@ -81,7 +81,7 @@ export function sleepsFirst(wb: usize, at: u64): bool {
  * without the lock (sched_order_wait.velt), and a 0 in between would leave none of them waiting
  * for it. `alone`: with one worker for good, no task is busy (`stepAlone`).
  */
-@inline
+@inline("always")
 export function choose(b: usize, now: u64, alone: bool): usize {
   if (m.ld(b + l.O_QUEUED) === 0) {
     m.st(b + l.O_WAKE_AT, 0);
@@ -116,7 +116,7 @@ export function choose(b: usize, now: u64, alone: bool): usize {
 }
 
 /** Timer `h`, chosen by the look, gets its turn (the lock held): its turn's waker (taken), or 0. */
-@inline
+@inline("always")
 export function grant(b: usize, h: usize): usize {
   m.st(b + l.O_WAKE_AT, 0);
   p.commit(b);

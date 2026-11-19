@@ -753,8 +753,10 @@ with_weak_hooks! {
 
     // lang/intrinsics/decorators.velt: the compile-time decorators the compiler acts on (#2203),
     // found by these roles, never by the name a use is written with.
-    /// `@inline` on a std function or method: every call is inlined in release builds
-    /// (`vir::Inline::Always`; `velt_sema` `decorators/known.rs`, `velt_vir` lowering).
+    /// `@inline` on a function or method (any module; velt/compiler re-exports it):
+    /// `@inline("always")` inlines every call in release builds (`vir::Inline::Always`), the
+    /// default `"hint"` is `vir::Inline::Default` while a program is one unit (`velt_sema`
+    /// `decorators/known.rs`, `velt_vir` lowering).
     decorator_inline => lang_intrinsics_decorators, "inline", decorator;
     /// `@noInline`: calls stay calls (`vir::Inline::Never`).
     decorator_no_inline => lang_intrinsics_decorators, "noInline", decorator;

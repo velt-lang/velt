@@ -1,11 +1,13 @@
-//! std's inlining decorators (std/lang/intrinsics/decorators.velt, std only, #2203): `@inline`
-//! inlines every call of a function whatever its size, `@noInline` keeps every call a call, and
-//! sema rejects `@inline` on a recursive function, both on one function, either on a
-//! generator, an async function, a `declare function` or an abstract method, either outside std,
-//! and `@intrinsic` on a function with a body. They are std-only (a program's own
-//! decorators of those names are data: tests/golden/lang/errors/decorators_known_by_role.velt),
-//! so a golden file cannot use them: std is copied to a temp directory with a probe module added,
-//! and `velt` uses it through `$VELT_STD` (as gated_functions.rs does).
+//! The inlining decorators (std/lang/intrinsics/decorators.velt, #2203; re-exported by
+//! velt/compiler for packages and programs, docs/internals/design/package-machine-code.md §1):
+//! `@inline("always")` inlines every call of a function whatever its size, `@inline` (the hint)
+//! leaves the inliner to decide while a program is one unit, `@noInline` keeps every call a call;
+//! sema rejects `@inline("always")` on a recursive function, both decorators on one function,
+//! either on a generator, an async function, a `declare function` or an abstract method, a bare
+//! `@inline` in std, and `@intrinsic` on a function with a body. A program's own decorators of
+//! those names are data (tests/golden/lang/errors/decorators_known_by_role.velt). Most cases are
+//! std's (a bare `@inline` is std's error), so std is copied to a temp directory with a probe
+//! module added, and `velt` uses it through `$VELT_STD` (as gated_functions.rs does).
 
 use std::path::{Path, PathBuf};
 use std::process::Output;
@@ -60,8 +62,8 @@ fn velt_with_main(dir: &test_dir::TestDir, probe: &str, main: &str, args: &[&str
 const MAIN: &str =
     "import { probe } from \"velt/zz_marked\";\n\nfunction main() {\n  console.log(probe(7));\n}\n";
 
-/// `wide` (300 statements: past every size the inliner takes, even from a loop) marked `@inline`
-/// and called three times; `tiny` (trivial, called once) marked `@noInline`.
+/// `wide` (300 statements: past every size the inliner takes, even from a loop) marked
+/// `@inline("always")` and called three times; `tiny` (trivial, called once) marked `@noInline`.
 const LINES: &str = "  y = y * 3 + 0;
   y = y * 4 + 1;
   y = y * 5 + 2;
@@ -364,7 +366,7 @@ const LINES: &str = "  y = y * 3 + 0;
   y = y * 7 + 299;";
 
 const MARKED: &str = r#"
-@inline
+@inline("always")
 function wide(x: i64): i64 {
   let y = x;
 LINES
@@ -418,7 +420,11 @@ fn release_vir(probe: &str) -> (String, impl Fn(&str) -> usize) {
 fn inline_inlines_every_call_and_no_inline_keeps_its_call() {
     let marked = MARKED.replace("LINES", LINES);
     // Without the decorators, `wide` stays a call and `tiny` is inlined: the test needs both.
-    let (vir, calls) = release_vir(&marked.replace("@inline\n", "").replace("@noInline\n", ""));
+    let (vir, calls) = release_vir(
+        &marked
+            .replace("@inline(\"always\")\n", "")
+            .replace("@noInline\n", ""),
+    );
     assert_eq!(calls("zz__markedN4wide"), 3, "{vir}");
     assert_eq!(calls("zz__markedN4tiny"), 0, "{vir}");
     let (vir, calls) = release_vir(&marked);
@@ -465,12 +471,12 @@ fn check_fails(probe: &str, messages: &[&str]) {
 fn inline_on_a_recursive_function_is_an_error() {
     // Directly, and through another function: each marked function on the cycle is reported.
     let probe = r#"
-@inline
+@inline("always")
 function fact(n: i64): i64 {
   return n <= 1 ? 1 : n * fact(n - 1);
 }
 
-@inline
+@inline("always")
 function even(n: i64): bool {
   return n == 0 ? true : odd(n - 1);
 }
@@ -483,11 +489,12 @@ export function probe(a: i64): i64 {
   return fact(a) + (even(a) ? 1 : 0);
 }
 "#;
-    check_fails(probe, &["`@inline` on a recursive function"]);
+    check_fails(probe, &["`@inline(\"always\")` on a recursive function"]);
     let dir = test_dir::TestDir::new();
     let err = String::from_utf8_lossy(&velt(&dir, probe, &["check"]).stderr).into_owned();
     assert_eq!(
-        err.matches("`@inline` on a recursive function").count(),
+        err.matches("`@inline(\"always\")` on a recursive function")
+            .count(),
         2,
         "{err}"
     );
@@ -501,7 +508,7 @@ function fact(n: i64): i64 {
   return n <= 1 ? 1 : n * fact(n - 1);
 }
 
-@inline
+@inline("always")
 function outer(n: i64): i64 {
   return fact(n) + 1;
 }
@@ -525,7 +532,7 @@ fn both_decorators_are_an_error() {
     // One field says how a function is inlined, so `@inline` and `@noInline` together are an
     // error at the second.
     let probe = r#"
-@inline
+@inline("always")
 @noInline
 function both(x: i64): i64 {
   return x;
@@ -546,7 +553,7 @@ fn the_decorators_apply_to_plain_functions_and_methods() {
     // On a generator or an async function (whose body is compiled into a resume function the
     // decorator would not reach) and on a `declare function` (no body): each is an error.
     let probe = r#"
-@inline
+@inline("always")
 function* gen(n: i64): Generator<i64> {
   yield n;
 }
@@ -557,7 +564,7 @@ async function later(n: i64): Promise<i64> {
 }
 
 class Box {
-  @inline
+  @inline("always")
   async load(n: i64): Promise<i64> {
     return n;
   }
@@ -596,7 +603,7 @@ fn the_decorators_on_methods_are_accepted() {
 class Counter {
   n: i64 = 0;
 
-  @inline
+  @inline("always")
   bump(by: i64): i64 {
     this.n += by;
     return this.n;
@@ -628,7 +635,7 @@ fn the_decorators_on_an_abstract_method_are_an_error() {
     // An abstract method has no body to inline, like a `declare function`.
     let probe = r#"
 abstract class Shape {
-  @inline
+  @inline("always")
   abstract area(): i64;
 
   @noInline
@@ -680,42 +687,101 @@ export function probe(a: i64): i64 {
 }
 
 #[test]
-fn the_decorators_outside_std_are_an_error() {
-    // Only import visibility keeps them in std today; were a public std module to re-export them,
-    // a program's use is still refused.
+fn a_bare_inline_in_std_is_an_error() {
+    // It meant "always" before the hint existed: a std function written so would lose its forcing.
     let probe = r#"
-export { inline, noInline };
-
+@inline
 export function probe(a: i64): i64 {
-  return a;
+  return a + 1;
 }
 "#;
-    let main = r#"import { probe, inline, noInline } from "velt/zz_marked";
-
-@inline
-function bump(x: i64): i64 {
-  return x + 1;
+    check_fails(
+        probe,
+        &["3:1: error: std's `@inline` says how: `@inline(\"always\")`"],
+    );
 }
 
-class Counter {
-  @noInline
-  twice(x: i64): i64 {
-    return x * 2;
-  }
+/// A program (no std probe) whose `wide` is marked `MARK` from velt/compiler and called three
+/// times; its release VIR and the number of calls of `wide` in it.
+fn program_vir(mark: &str) -> (String, usize) {
+    let main = format!(
+        "import {{ inline, noInline }} from \"velt/compiler\";\n\n{mark}\nfunction wide(x: i64): i64 {{\n  let y = x;\n{LINES}  return y;\n}}\n\nfunction main() {{\n  const a = Date.now() as i64;\n  console.log(wide(a) + wide(a + 1) + wide(a + 2));\n}}\n"
+    );
+    let dir = test_dir::TestDir::new();
+    let out = velt_with_main(&dir, PLAIN, &main, &["build", "--release", "--emit", "vir"]);
+    let vir = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let calls = (vir.lines())
+        .filter(|l| !l.starts_with("fn#") && l.contains(" call ") && l.contains("4wide"))
+        .count();
+    (vir, calls)
+}
+
+/// A probe with nothing marked, for the tests whose decorators are the program's.
+const PLAIN: &str = "export function probe(a: i64): i64 {\n  return a;\n}\n";
+
+#[test]
+fn a_program_inlines_through_velt_compiler() {
+    // `@inline("always")` inlines every call of a function of the program; the hint and no
+    // decorator leave the three calls of a function this large (the hint changes nothing while
+    // the program is one unit); `@noInline` keeps them.
+    let (vir, calls) = program_vir("@inline(\"always\")");
+    assert_eq!(calls, 0, "{vir}");
+    for mark in ["", "@inline", "@inline(\"hint\")", "@noInline"] {
+        let (vir, calls) = program_vir(mark);
+        assert_eq!(calls, 3, "{mark}:\n{vir}");
+    }
+}
+
+#[test]
+fn the_checks_apply_outside_std() {
+    // The same rules as in std, on a program's functions: no forcing on a recursive function (the
+    // hint is allowed there), not both, not on an async function.
+    let main = r#"import { inline, noInline } from "velt/compiler";
+
+@inline("always")
+function fact(n: i64): i64 {
+  return n <= 1 ? 1 : n * fact(n - 1);
+}
+
+@inline
+function fib(n: i64): i64 {
+  return n < 2 ? n : fib(n - 1) + fib(n - 2);
+}
+
+@inline
+@noInline
+function both(x: i64): i64 {
+  return x;
+}
+
+@inline
+async function later(x: i64): Promise<i64> {
+  return x;
 }
 
 function main() {
-  console.log(probe(7) + bump(1) + new Counter().twice(2));
+  console.log(fact(5) + fib(5) + both(1));
 }
 "#;
     let dir = test_dir::TestDir::new();
-    let out = velt_with_main(&dir, probe, main, &["check"]);
+    let out = velt_with_main(&dir, PLAIN, main, &["check"]);
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(!out.status.success(), "{err}");
     for m in [
-        "3:1: error: `@inline` is not allowed: only the standard library marks how its functions are inlined",
-        "9:3: error: `@noInline` is not allowed: only the standard library marks how its functions are inlined",
+        "3:1: error: `@inline(\"always\")` on a recursive function",
+        "write the hint `@inline` instead (it allows recursion)",
+        "14:1: error: a function is `@inline` or `@noInline`, not both",
+        "19:1: error: `@inline` doesn't apply to an async function or a generator",
     ] {
         assert!(err.contains(m), "missing `{m}` in:\n{err}");
     }
+    assert!(
+        !err.contains("8:1:"),
+        "the hint on a recursive function is allowed:\n{err}"
+    );
 }
