@@ -9,7 +9,7 @@
 // Memory is the centroids, 4 bytes per row for the assignment, and the write buffers.
 import * as fs from "velt/fs";
 import { workerCount } from "velt/task";
-import { getF32s, quantize } from "./kernels";
+import { quantize } from "./kernels";
 import { makeRouter, route } from "./router";
 import type { Router } from "./router";
 import { TopK } from "./topk";
@@ -26,12 +26,10 @@ export type BuildOptions = { nlist: i64; iters: i64; samplePerList: i64; seed: u
 type Assigned = { lists: u32[]; counts: i64[] };
 
 function loadSample(fd: number, dim: i64, n: i64, m: i64): f32[] {
-  const d = dim as usize;
   const out: f32[] = new Array<f32>((m * dim) as number).fill(0);
-  const buf: u8[] = Buffer.alloc((dim * 4) as usize);
   for (let i: i64 = 0; i < m; i++) {
-    readAt(fd, buf, dim * 4, rowPos(dim, (i * n) / m));
-    getF32s(buf, 0, d, out, (i as usize) * d);
+    // Row by row, each into its place in `out`.
+    readAt(fd, out, dim * 4, rowPos(dim, (i * n) / m), i * dim * 4);
   }
   return out;
 }
@@ -61,14 +59,12 @@ async function assignPart(
   const d = dim as usize;
   const lists: u32[] = [];
   const counts: i64[] = new Array<i64>(nlist as number).fill(0);
-  const buf: u8[] = Buffer.alloc((CHUNK * dim * 4) as usize);
   const chunk: f32[] = new Array<f32>((CHUNK * dim) as number).fill(0);
   const near = new TopK(fan);
   const top = new TopK(1);
   for (let at = start; at < end; at += CHUNK) {
     const rows = at + CHUNK < end ? CHUNK : end - at;
-    readAt(fd, buf, rows * dim * 4, rowPos(dim, at));
-    getF32s(buf, 0, (rows as usize) * d, chunk, 0);
+    readAt(fd, chunk, rows * dim * 4, rowPos(dim, at));
     for (let r: i64 = 0; r < rows; r++) {
       top.reset(1);
       route(router, chunk, (r as usize) * d, fan, near, top);
@@ -93,31 +89,23 @@ async function writePart(
 ): Promise<i64> {
   const d = dim as usize;
   const rec = dim + 4;
-  const row: f32[] = new Array<f32>(dim as number).fill(0);
-  const buf: u8[] = Buffer.alloc((CHUNK * dim * 4) as usize);
+  const chunk: f32[] = new Array<f32>((CHUNK * dim) as number).fill(0);
   // One buffer for all lists: list `c` owns records [c * BUFFERED, (c + 1) * BUFFERED).
   const pending: u8[] = Buffer.alloc((nlist * BUFFERED * rec) as usize);
   const held: i64[] = new Array<i64>(nlist as number).fill(0);
-  const one: u8[] = Buffer.alloc((BUFFERED * rec) as usize);
   const flush = (c: i64) => {
-    const len = held[c] * rec;
-    const from = c * BUFFERED * rec;
-    for (let i: i64 = 0; i < len; i++) {
-      one[i] = pending[from + i];
-    }
-    writeAt(out, one, len, cursors[c] * rec);
+    writeAt(out, pending, held[c] * rec, cursors[c] * rec, c * BUFFERED * rec);
     cursors[c] += held[c];
     held[c] = 0;
   };
   for (let at = start; at < end; at += CHUNK) {
     const rows = at + CHUNK < end ? CHUNK : end - at;
-    readAt(fd, buf, rows * dim * 4, rowPos(dim, at));
+    readAt(fd, chunk, rows * dim * 4, rowPos(dim, at));
     for (let r: i64 = 0; r < rows; r++) {
       const c = lists[at - start + r] as i64;
       const to = ((c * BUFFERED + held[c]) * rec) as usize;
       putU32(pending, to, (at + r) as u32);
-      getF32s(buf, (r as usize) * d * 4, d, row, 0);
-      quantize(row, 0, d, scale, pending, to + 4);
+      quantize(chunk, (r as usize) * d, d, scale, pending, to + 4);
       held[c] += 1;
       if (held[c] == BUFFERED) {
         flush(c);
@@ -149,12 +137,8 @@ export async function build(dir: string, o: BuildOptions): Promise<BuildReport> 
   const sample = loadSample(f.fd, dim, n, m);
   const scale = chooseScale(sample);
   const centroids = await kmeans(shared(sample), m, dim, nlist, o.iters, o.seed);
-  const cbytes: u8[] = Buffer.alloc((nlist * dim * 4) as usize);
-  for (let i: usize = 0; i < centroids.length as usize; i++) {
-    putU32(cbytes, 4 * i, centroids[i].toBits());
-  }
   const cfd = fs.openSync(`${dir}/centroids.f32`, "w");
-  writeAt(cfd, cbytes, nlist * dim * 4, 0);
+  writeAt(cfd, centroids, nlist * dim * 4, 0);
   fs.closeSync(cfd);
   const trainMs = performance.now() - t0;
 
