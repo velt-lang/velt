@@ -1,0 +1,73 @@
+// check: no leaks
+// requires: unix
+// A spawned task whose root panics under `catchPanic` is freed with its last reference, as any
+// task (#2818): the executor kept each one for good, a block for every panic of a handler that
+// spawns its work. Also one nobody joins, and one that panics while a promise it started still
+// waits for a timer, which wakes the task after its root is gone.
+import { catchPanic, PanicError } from "velt/task";
+
+async function boom(i: number): Promise<number> {
+  await yieldNow();
+  panic("boom " + i);
+  return 1;
+}
+
+async function slow(i: number): Promise<void> {
+  // timing: the timer is the leaf that wakes the task after its root panicked.
+  await sleep(5);
+  console.log("woke", i);
+}
+
+async function leaves(i: number): Promise<number> {
+  void slow(i);
+  await yieldNow();
+  panic("left " + i);
+  return 1;
+}
+
+async function joined(i: number): Promise<number> {
+  return await spawn(boom(i));
+}
+
+async function joinedLeaves(i: number): Promise<number> {
+  return await spawn(leaves(i));
+}
+
+async function dropped(i: number): Promise<number> {
+  spawn(boom(i));
+  await yieldNow();
+  await yieldNow();
+  return i;
+}
+
+async function main() {
+  let caught = 0;
+  for (let i = 0; i < 40; i++) {
+    try {
+      await catchPanic(() => joined(i));
+    } catch (e) {
+      if (e instanceof PanicError && e.message.startsWith("boom " + i)) {
+        caught++;
+      }
+    }
+  }
+  console.log("caught", caught);
+  let passed = 0;
+  for (let i = 0; i < 10; i++) {
+    passed += await catchPanic(() => dropped(i));
+  }
+  console.log("passed", passed);
+  let left = 0;
+  for (let i = 0; i < 5; i++) {
+    try {
+      await catchPanic(() => joinedLeaves(i));
+    } catch (e) {
+      if (e instanceof PanicError && e.message.startsWith("left " + i)) {
+        left++;
+      }
+    }
+  }
+  // timing: longer than every `slow` timer above.
+  await sleep(40);
+  console.log("left", left);
+}
