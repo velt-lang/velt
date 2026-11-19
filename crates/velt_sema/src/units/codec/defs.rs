@@ -48,7 +48,7 @@ structs! {
 }
 
 enums! {
-    DefInfo<'_> {
+    @fielded DefInfo<'_> {
         0 => Fn(a),
         1 => Adt(a),
         2 => Enum(a),
@@ -74,11 +74,11 @@ enums! {
         1 => Body,
         2 => Base(a, b),
     }
-    FnSource<'_> {
+    @fielded FnSource<'_> {
         0 => Decl(a),
         1 => Default(a, b),
     }
-    ThrowSrc {
+    @fielded ThrowSrc {
         0 => Direct(a, b),
         1 => Call(a, b, c),
         2 => Slot { iface, slot, args, span },
