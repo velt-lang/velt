@@ -39,9 +39,13 @@ fn found_on(path: &OsStr) -> Option<Found> {
     if on_path("ld.lld") {
         return Some(Found::Lld);
     }
+    // A program this link names itself (the symbolic link is to it): from a directory given
+    // in full. An empty or relative entry (`.`) of the path means the directory the build runs
+    // in, a project's, and what is found there is not the system's linker.
+    let named: Vec<&PathBuf> = dirs.iter().filter(|d| d.is_absolute()).collect();
     LLD_VERSIONS.rev().find_map(|v| {
         let name = format!("ld.lld-{v}");
-        let program = dirs.iter().map(|d| d.join(&name)).find(|p| p.is_file())?;
+        let program = named.iter().map(|d| d.join(&name)).find(|p| p.is_file())?;
         Some(Found::VersionedLld(program))
     })
 }
@@ -190,6 +194,27 @@ mod tests {
         let none = root.join("none");
         std::fs::create_dir_all(none.join("ld.lld-18")).unwrap();
         assert_eq!(found_on(&path(&[&none])), None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A versioned lld in the directory the build runs in (an empty or relative entry of the
+    /// search path: `.`) is not taken: this link would run that file by name.
+    #[test]
+    fn a_versioned_lld_of_the_working_directory_is_not_taken() {
+        let root = root("relative");
+        let here = dir_with(&root, "project", &["ld.lld-18"]);
+        let relative = here.strip_prefix(std::env::temp_dir()).unwrap_or(&here);
+        let was = std::env::current_dir().unwrap();
+        // The search path's entries as given, never resolved against a directory: no need to
+        // change into one.
+        for entry in [Path::new(""), Path::new("."), relative] {
+            assert_eq!(found_on(&path(&[entry])), None, "{entry:?}");
+        }
+        assert_eq!(std::env::current_dir().unwrap(), was);
+        assert_eq!(
+            found_on(&path(&[Path::new("."), &here])),
+            Some(Found::VersionedLld(here.join("ld.lld-18")))
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
