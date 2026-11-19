@@ -24,6 +24,7 @@ import * as sl from "./sched_sleep";
 import * as sc from "./sched_sleep_carry";
 import * as t from "./sched_task";
 import * as wk from "./sched_wake";
+import * as yl from "./sched_yield";
 
 /**
  * Polls task `k` once: its woken started promises, its due sleeps, its root, its microtasks. A
@@ -46,6 +47,7 @@ export function run(e: usize, k: usize, mode: u32): void {
     m.storeRelease(e + t.E_CURRENT, k);
   }
   const fl = m.ld32(k + t.T_FLAGS);
+  yl.begin(k, fl);
   // Fresh tasks matter to other workers only (sched_monitor.velt).
   if (mode !== 0 && mode !== t.M_LAZY && (fl & t.STARTED) === 0) {
     m.st32(k + t.T_FLAGS, fl | t.STARTED);
