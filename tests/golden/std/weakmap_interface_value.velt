@@ -1,0 +1,103 @@
+// check: no leaks
+// A weak map value of an interface type whose object holds the key: the trace glue compares
+// the value's table with those the program built for a class and visits the object with that
+// class's glue (#3119 step 3, #989), so the entry and the key are freed once the key's last
+// outside reference goes. Also an implementation that is a class with a vtable, an interface
+// value in a field and in an array, a value of a struct (left out: kept until the map goes,
+// never freed early) and a key held outside.
+class Raw {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+interface Reader {
+  read(): number;
+}
+
+class KeyReader implements Reader {
+  raw: Raw;
+  constructor(raw: Raw) {
+    this.raw = raw;
+  }
+  read(): number {
+    return this.raw.n;
+  }
+}
+
+class Base implements Reader {
+  read(): number {
+    return 0;
+  }
+}
+
+class Sub extends Base {
+  raw: Raw;
+  constructor(raw: Raw) {
+    super();
+    this.raw = raw;
+  }
+  override read(): number {
+    return this.raw.n * 10;
+  }
+}
+
+struct KeyStruct implements Reader {
+  raw: Raw;
+
+  read(): number {
+    return this.raw.n + 100;
+  }
+}
+
+class Many {
+  readers: Reader[] = [];
+}
+
+function direct(cache: WeakMap<Raw, Reader>, n: number): WeakRef<Raw> {
+  const raw = new Raw(n);
+  cache.set(raw, new KeyReader(raw));
+  console.log("direct reads", cache.get(raw)!.read());
+  return new WeakRef(raw);
+}
+
+function subclass(cache: WeakMap<Raw, Reader>, n: number): WeakRef<Raw> {
+  const raw = new Raw(n);
+  const r: Reader = new Sub(raw);
+  cache.set(raw, r);
+  console.log("subclass reads", cache.get(raw)!.read());
+  return new WeakRef(raw);
+}
+
+function inArray(lists: WeakMap<Raw, Many>, n: number): WeakRef<Raw> {
+  const raw = new Raw(n);
+  const m = new Many();
+  m.readers.push(new Base());
+  m.readers.push(new KeyReader(raw));
+  lists.set(raw, m);
+  console.log("in an array reads", lists.get(raw)!.readers[1].read());
+  return new WeakRef(raw);
+}
+
+function boxed(cache: WeakMap<Raw, Reader>, n: number): WeakRef<Raw> {
+  const raw = new Raw(n);
+  const r: Reader = { raw: raw } as KeyStruct;
+  cache.set(raw, r);
+  console.log("struct reads", cache.get(raw)!.read());
+  return new WeakRef(raw);
+}
+
+function main() {
+  const cache = new WeakMap<Raw, Reader>();
+  const lists = new WeakMap<Raw, Many>();
+  console.log("direct, key freed:", direct(cache, 1).deref() == null);
+  console.log("subclass, key freed:", subclass(cache, 2).deref() == null);
+  console.log("in an array, key freed:", inArray(lists, 3).deref() == null);
+  console.log("struct, key kept:", boxed(cache, 5).deref() != null);
+  const kept = new Raw(4);
+  cache.set(kept, new KeyReader(kept));
+  const w = new WeakRef(kept);
+  console.log("held, reads", cache.get(kept)!.read(), "alive:", w.deref() != null);
+  console.log("maps in use:", cache.has(new Raw(0)), lists.has(new Raw(0)));
+}
