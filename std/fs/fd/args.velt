@@ -2,6 +2,7 @@
 // `RangeError`s and `TypeError`s with Node's messages for those it rejects.
 
 import { utf8Encode } from "velt/encoding/utf8";
+import { received } from "velt/lang/bytes/text";
 
 /** `Number.MAX_SAFE_INTEGER`: the largest offset, length or position Node accepts. */
 export const MAX_SAFE: number = 9007199254740991;
@@ -19,12 +20,20 @@ export function integer(name: string, v: number, min: number, max: number): i64 
 export function outOfRange(name: string, v: number, min: number, max: number): RangeError {
   const must = Math.floor(v) != v ? "an integer" : `>= ${min} && <= ${max}`;
   return new RangeError(
-    `The value of "${name}" is out of range. It must be ${must}. Received ${v}`,
+    `The value of "${name}" is out of range. It must be ${must}. Received ${received(v)}`,
   );
 }
 
+/**
+ * A file descriptor as Node checks it (`validateInt32`, which shows what it received as it is:
+ * no digit separators, unlike `validateInteger`).
+ */
 export function descriptor(fd: number): i32 {
-  return integer("fd", fd, 0, MAX_INT32) as i32;
+  if (fd >= 0 && fd <= MAX_INT32 && Math.floor(fd) == fd) {
+    return fd as i32;
+  }
+  const must = Math.floor(fd) != fd ? "an integer" : `>= 0 && <= ${MAX_INT32}`;
+  throw new RangeError(`The value of "fd" is out of range. It must be ${must}. Received ${fd}`);
 }
 
 /** `path` as a C string: its UTF-8 bytes and a 0 (Node's `TypeError` for a 0 inside it). */
@@ -99,13 +108,13 @@ export function writeLength(size: usize, off: i64, length: number | null | undef
 
 export function tooLarge(name: string, max: i64, v: i64): RangeError {
   return new RangeError(
-    `The value of "${name}" is out of range. It must be <= ${max}. Received ${v}`,
+    `The value of "${name}" is out of range. It must be <= ${max}. Received ${received(v as number)}`,
   );
 }
 
 export function outOfRangeAtLeast(name: string, min: i64, v: i64): RangeError {
   return new RangeError(
-    `The value of "${name}" is out of range. It must be >= ${min}. Received ${v}`,
+    `The value of "${name}" is out of range. It must be >= ${min}. Received ${received(v as number)}`,
   );
 }
 

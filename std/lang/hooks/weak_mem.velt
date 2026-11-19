@@ -1,0 +1,325 @@
+// velt/lang/hooks (internal): the memory of the weak core (weak.velt; docs/internals/design/
+// weak-refs.md): words at an address, the process lock, and growable vectors of words.
+//
+// Every block of the core is the C library's (`#weak-os`), outside the leak counters, as
+// the Rust core's were outside them: the tables live as long as the process, and a vector is
+// given back when it empties. A field is a word of 8 bytes on every target, so a layout is the
+// same on wasm32, where an address is 4 of them.
+
+import {
+  addressAtomicCas,
+  addressAtomicLoad,
+  addressAtomicStore,
+  addressLoad,
+  addressStore,
+  atomicSpinHint,
+  inline,
+  noInline,
+} from "velt/lang/intrinsics";
+import * as os from "#weak-os";
+import { outOfMemory } from "./heap";
+
+/** The bytes of a field. */
+export const W: usize = 8;
+
+/** Count word: the object is weakly held and has a record (rt_abi.md "Weak references"). */
+export const RC_WEAK: u64 = 0x8000_0000_0000_0000;
+
+/** Count word: the count proper. */
+export const RC_COUNT: u64 = 0x7fff_ffff_ffff_ffff;
+
+/** The address-sized field at `a`. */
+@inline("always")
+export function ld(a: usize): usize {
+  // SAFETY: the core reads only fields of its own blocks and the count words of live objects.
+  return unsafe { addressLoad<u64>(a) } as usize;
+}
+
+/** Stores `v` in the address-sized field at `a`. */
+@inline("always")
+export function st(a: usize, v: usize): void {
+  // SAFETY: as `ld`; the core writes only fields of its own blocks under the lock.
+  unsafe {
+    addressStore<u64>(a, v as u64);
+  }
+}
+
+/** The 64-bit field at `a`. */
+@inline("always")
+export function ld64(a: usize): u64 {
+  // SAFETY: as `ld`.
+  return unsafe { addressLoad<u64>(a) };
+}
+
+/** Stores `v` in the 64-bit field at `a`. */
+@inline("always")
+export function st64(a: usize, v: u64): void {
+  // SAFETY: as `st`.
+  unsafe {
+    addressStore<u64>(a, v);
+  }
+}
+
+/** The 32-bit field at `a`. */
+@inline("always")
+export function ld32(a: usize): u32 {
+  // SAFETY: as `ld`.
+  return unsafe { addressLoad<u32>(a) };
+}
+
+/** Stores `v` in the 32-bit field at `a`. */
+@inline("always")
+export function st32(a: usize, v: u32): void {
+  // SAFETY: as `st`.
+  unsafe {
+    addressStore<u32>(a, v);
+  }
+}
+
+/** The count word of the counted object `obj` (its value address). */
+@inline("always")
+export function rcWord(obj: usize): usize {
+  return obj - 8;
+}
+
+/** The count of the live counted object `obj`, without its flag. */
+@inline("always")
+export function count(obj: usize): u64 {
+  return ld64(rcWord(obj)) & RC_COUNT;
+}
+
+/**
+ * `n` zeroed bytes of the C library's (`#weak-os`). Without them the program stops, as the
+ * allocator of generated code does (heap.velt `outOfMemory`) and the Rust core did: not a panic,
+ * which a `catchUnwind` would catch with the lock held, and which would make every entry point
+ * take its caller's location (`velt_vir` `track_caller.rs`), so that none could be prebuilt.
+ */
+export function alloc(n: usize): usize {
+  const p = os.zeroed(n);
+  if (p === 0) {
+    outOfMemory(n as u64);
+  }
+  return p;
+}
+
+/** Gives back a block `alloc` made. */
+export function free(p: usize): void {
+  os.release(p);
+}
+
+/** Copies `n` bytes (blocks that do not overlap). */
+export function copy(dst: usize, src: usize, n: usize): void {
+  os.copy(dst, src, n);
+}
+
+/** The slot of `x` in a table of `cap` (a power of two) slots: Fibonacci hashing. */
+@inline("always")
+export function slotOf(x: usize, cap: usize): usize {
+  const h = (((x as u64) >> 3) * 0x9e37_79b9_7f4a_7c15) >> 32;
+  return (h as usize) & (cap - 1);
+}
+
+// The process lock: 0 free, 1 held. It is held for a few table operations at a time (the
+// longest is a trial, bounded by `LIMIT` objects), so a thread that finds it held spins a while,
+// then gives its core away until it is free; no operation waits on anything with it held.
+
+/** Takes the lock at `a`. */
+@inline("always")
+export function lock(a: usize): void {
+  // SAFETY: `a` is the lock word of the core's header, changed only atomically.
+  if (unsafe { addressAtomicCas<u32>(a, 0, 1, "acquire", "relaxed") } !== 0) {
+    lockSlow(a);
+  }
+}
+
+@noInline
+function lockSlow(a: usize): void {
+  let spins: u32 = 0;
+  while (true) {
+    // SAFETY: as `lock`; a read first, so waiters don't take the line from the holder.
+    const free = unsafe { addressAtomicLoad<u32>(a, "relaxed") } === 0;
+    // SAFETY: as `lock`: the lock word, taken by a compare-and-swap once it reads free.
+    if (free && unsafe { addressAtomicCas<u32>(a, 0, 1, "acquire", "relaxed") } === 0) {
+      return;
+    }
+    if (spins < 100) {
+      spins += 1;
+      atomicSpinHint();
+    } else {
+      os.yieldCore();
+    }
+  }
+}
+
+/** Gives back the lock at `a`. */
+@inline("always")
+export function unlock(a: usize): void {
+  // SAFETY: as `lock`.
+  unsafe {
+    addressAtomicStore<u32>(a, 0, "release");
+  }
+}
+
+// A vector: a block `[length, capacity, items…]`, one word each, held in a field (0: empty).
+
+const V_LEN: usize = 0;
+const V_CAP: usize = 8;
+const V_ITEMS: usize = 16;
+
+/** The items in the vector held at `field`. */
+@inline("always")
+export function vecLen(field: usize): usize {
+  const v = ld(field);
+  return v === 0 ? 0 : ld(v + V_LEN);
+}
+
+/** Item `i` of the vector held at `field` (`i` < its length). */
+@inline("always")
+export function vecAt(field: usize, i: usize): usize {
+  return ld(ld(field) + V_ITEMS + i * W);
+}
+
+/** Appends `x` to the vector held at `field`. */
+export function vecPush(field: usize, x: usize): void {
+  let v = ld(field);
+  if (v === 0 || ld(v + V_LEN) === ld(v + V_CAP)) {
+    v = vecGrow(field);
+  }
+  const n = ld(v + V_LEN);
+  st(v + V_ITEMS + n * W, x);
+  st(v + V_LEN, n + 1);
+}
+
+/** The vector held at `field` with room for one more item. */
+@noInline
+function vecGrow(field: usize): usize {
+  const v = ld(field);
+  const cap: usize = v === 0 ? 4 : ld(v + V_CAP) * 2;
+  const n = alloc(V_ITEMS + cap * W);
+  st(n + V_CAP, cap);
+  if (v !== 0) {
+    const len = ld(v + V_LEN);
+    copy(n + V_ITEMS, v + V_ITEMS, len * W);
+    st(n + V_LEN, len);
+    free(v);
+  }
+  st(field, n);
+  return n;
+}
+
+/** Removes the last item of the vector held at `field` (not empty) and returns it. */
+export function vecPop(field: usize): usize {
+  const v = ld(field);
+  const n = ld(v + V_LEN) - 1;
+  st(v + V_LEN, n);
+  return ld(v + V_ITEMS + n * W);
+}
+
+/** Removes item `i` of the vector held at `field`, moving the last one into its place. */
+export function vecSwapRemove(field: usize, i: usize): void {
+  const v = ld(field);
+  const n = ld(v + V_LEN) - 1;
+  st(v + V_ITEMS + i * W, ld(v + V_ITEMS + n * W));
+  st(v + V_LEN, n);
+  if (n === 0) {
+    vecFree(field);
+  }
+}
+
+/** Removes one `x` from the vector held at `field`; whether there was one. */
+export function vecRemove(field: usize, x: usize): bool {
+  const n = vecLen(field);
+  for (let i: usize = 0; i < n; i++) {
+    if (vecAt(field, i) === x) {
+      vecSwapRemove(field, i);
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Removes one pair `(a, b)` from the vector of pairs held at `field`; whether there was one. */
+export function vecRemovePair(field: usize, a: usize, b: usize): bool {
+  const n = vecLen(field);
+  for (let i: usize = 0; i < n; i += 2) {
+    if (vecAt(field, i) === a && vecAt(field, i + 1) === b) {
+      const v = ld(field);
+      const last = n - 2;
+      st(v + V_ITEMS + i * W, ld(v + V_ITEMS + last * W));
+      st(v + V_ITEMS + (i + 1) * W, ld(v + V_ITEMS + (last + 1) * W));
+      st(v + V_LEN, last);
+      if (last === 0) {
+        vecFree(field);
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
+/** `vecPush` of a vector held in a variable: the vector, which may have moved (`v`: 0 for none). */
+export function vpush(v: usize, x: usize): usize {
+  if (v === 0 || ld(v + V_LEN) === ld(v + V_CAP)) {
+    return vgrowPush(v, x);
+  }
+  const n = ld(v + V_LEN);
+  st(v + V_ITEMS + n * W, x);
+  st(v + V_LEN, n + 1);
+  return v;
+}
+
+@noInline
+function vgrowPush(v: usize, x: usize): usize {
+  const cap: usize = v === 0 ? 4 : ld(v + V_CAP) * 2;
+  const n = alloc(V_ITEMS + cap * W);
+  st(n + V_CAP, cap);
+  let len: usize = 0;
+  if (v !== 0) {
+    len = ld(v + V_LEN);
+    copy(n + V_ITEMS, v + V_ITEMS, len * W);
+    free(v);
+  }
+  st(n + V_ITEMS + len * W, x);
+  st(n + V_LEN, len + 1);
+  return n;
+}
+
+/** The items of the vector `v` (0: none). */
+@inline("always")
+export function vlen(v: usize): usize {
+  return v === 0 ? 0 : ld(v + V_LEN);
+}
+
+/** Item `i` of the vector `v`. */
+@inline("always")
+export function vat(v: usize, i: usize): usize {
+  return ld(v + V_ITEMS + i * W);
+}
+
+/** Sets item `i` of the vector `v`. */
+@inline("always")
+export function vset(v: usize, i: usize, x: usize): void {
+  st(v + V_ITEMS + i * W, x);
+}
+
+/** Removes item `i` of the vector `v`, moving the last one into its place. */
+export function vswapRemove(v: usize, i: usize): void {
+  const n = ld(v + V_LEN) - 1;
+  st(v + V_ITEMS + i * W, ld(v + V_ITEMS + n * W));
+  st(v + V_LEN, n);
+}
+
+/** Makes `n` (at most its length) the length of the vector `v`. */
+@inline("always")
+export function vtruncate(v: usize, n: usize): void {
+  st(v + V_LEN, n);
+}
+
+/** Gives back the vector held at `field`, which then holds none. */
+export function vecFree(field: usize): void {
+  const v = ld(field);
+  if (v !== 0) {
+    free(v);
+    st(field, 0);
+  }
+}

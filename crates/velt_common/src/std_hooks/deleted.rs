@@ -7,6 +7,21 @@
 /// replaced extern is defined by `velt_rt` unless it is listed here, and that one listed here is
 /// defined nowhere and named by no compiler source, runtime or std file.
 pub const DELETED: &[&str] = &[
+    // #3145: the weak core (std/lang/hooks/weak*.velt): lowering's weak hooks, and the drops
+    // std's `WeakMap`, `WeakSet` and `WeakRef` call.
+    "velt_rt_weak_release",
+    "velt_rt_weakmap_new",
+    "velt_rt_weakmap_set",
+    "velt_rt_weakmap_set_traced",
+    "velt_rt_weakmap_get",
+    "velt_rt_weakmap_has",
+    "velt_rt_weakmap_delete",
+    "velt_rt_weakmap_drop",
+    "velt_rt_weakref_new",
+    "velt_rt_weakref_new_with",
+    "velt_rt_weakref_word",
+    "velt_rt_weakref_deref",
+    "velt_rt_weakref_drop",
     // #2196: velt/os's facts (std/os/sys_*.velt over the C library and Win32, the build's
     // `x64`/`arm64` condition for the architecture), which only std called.
     "velt_rt_os_platform",
@@ -14,6 +29,10 @@ pub const DELETED: &[&str] = &[
     "velt_rt_os_cpu_count",
     "velt_rt_os_tmpdir",
     "velt_rt_os_hostname",
+    // #2196: the local time zone's offset (`#localtime`: std/time/localtime_posix.velt over
+    // `localtime_r`, localtime_win32.velt over Win32's time-zone functions, UTC on WebAssembly),
+    // which only std called.
+    "velt_rt_local_offset_minutes",
     // #2197: integers as text (std/lang/hooks/number_text, velt/lang/number/integer).
     "velt_rt_str_from_i64",
     "velt_rt_str_from_u64",

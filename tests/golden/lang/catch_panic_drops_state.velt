@@ -1,3 +1,4 @@
+// check: no leaks
 // requires: unix
 // (The drops below are the cleanup pads', which exist where panics unwind as Itanium exceptions:
 // Linux and macOS. On Windows a caught panic leaks what the abandoned frames held, as before.)

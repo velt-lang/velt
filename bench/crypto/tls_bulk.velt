@@ -1,0 +1,40 @@
+// 8 MiB through one TLS 1.3 connection of `startTls` (the client in Velt) to `listenTls` in the
+// same process, in 64 KiB writes: the record layer's sealing and opening on both sides (the
+// suite this CPU prefers) for base/head instruction counts (`bench/program_instr.sh`).
+import { connect, listenTls, startTls, TcpStream } from "velt/net";
+import { TEST_CERT, TEST_KEY } from "../../tests/golden/std/_tls";
+
+async function main() {
+  const l = await listenTls("127.0.0.1:0", { cert: TEST_CERT, key: TEST_KEY });
+  const accepting = l;
+  const server = spawn(async () => {
+    const conn: TcpStream = await accepting.accept();
+    let n: usize = 0;
+    while (true) {
+      const got = await conn.read();
+      if (got.length == 0) {
+        break;
+      }
+      n += got.length;
+    }
+    await conn.write(`${n}`);
+    conn.close();
+    return n;
+  });
+  const tls = await startTls(await connect(`127.0.0.1:${l.port}`), {
+    serverName: "localhost",
+    verify: false,
+  });
+  const chunk: u8[] = Buffer.alloc(65536);
+  for (let i = 0; i < chunk.length; i++) {
+    chunk[i] = (i % 251) as u8;
+  }
+  for (let i = 0; i < 128; i++) {
+    await tls.writeBytes(chunk);
+  }
+  await tls.shutdown();
+  const reply = await tls.read();
+  console.log(`${await server} ${reply.length}`);
+  tls.close();
+  l.close();
+}
