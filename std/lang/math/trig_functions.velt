@@ -1,0 +1,34 @@
+// velt/lang/math (internal): the trigonometric functions of `Math`, `sin`, `cos` and `tan`, as an
+// extension of the prelude's class over fdlibm's routines (velt/lang/math/trig). In a module of
+// its own so that a program loads these ports only when it calls one of these functions
+// (std/prelude/global/math_trig.velt, a conditional global).
+
+import { cos, sin, tan } from "velt/lang/math/trig";
+
+// Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
+
+extend Math {
+  /**
+   * Returns the sine of a number.
+   * @param x - A numeric expression that contains an angle measured in radians.
+   */
+  static sin(x: f64): f64 {
+    return sin(x);
+  }
+
+  /**
+   * Returns the cosine of a number.
+   * @param x - A numeric expression that contains an angle measured in radians.
+   */
+  static cos(x: f64): f64 {
+    return cos(x);
+  }
+
+  /**
+   * Returns the tangent of a number.
+   * @param x - A numeric expression that contains an angle measured in radians.
+   */
+  static tan(x: f64): f64 {
+    return tan(x);
+  }
+}

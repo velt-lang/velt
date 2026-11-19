@@ -223,15 +223,21 @@ fn a_program_that_names_no_json_loads_no_json_modules() {
 }
 
 /// The ports behind `Math.exp`, `Math.sin` and the others (std/lang/math, 1,600 lines) load only
-/// for a program that calls one (std/prelude/global/math_functions.velt): hello world, and a
-/// program that only rounds, load of them only `Math.log`, which shares its name with
-/// `console.log` (#3130; with all of them in the prelude every `velt build` took 13% more
-/// instructions). `**`'s modules in the same folder (`pow`, `fma`, their tables) are another
+/// for a program that calls one, and group by group (std/prelude/global/math_*.velt, one
+/// conditional global per group): hello world, and a program that only rounds, load of them only
+/// `Math.log`, which shares its name with `console.log` (#3130; with all of them in the prelude
+/// every `velt build` took 13% more instructions), and a program that calls `Math.sin` loads the
+/// trigonometric ports without the other 1,100 lines. `**`'s modules in the same folder (`pow`, `fma`, their tables) are another
 /// matter: a hook's, loaded on their own terms.
 #[test]
 fn a_program_that_calls_no_math_function_loads_no_port() {
-    const PORTS: [&str; 10] = [
-        "functions",
+    const PORTS: [&str; 15] = [
+        "exp_functions",
+        "logs_functions",
+        "trig_functions",
+        "inverse_trig_functions",
+        "hyperbolic_functions",
+        "cbrt_functions",
         "trig",
         "rem_pio2",
         "rem_pio2_large",
@@ -256,28 +262,36 @@ fn a_program_that_calls_no_math_function_loads_no_port() {
     // A comment or a string that names one is not a call.
     let says = "// sin and cos\nconsole.log(\"Math.exp\");\n";
     assert_eq!(ports(says), log_only);
-    for call in [
-        "Math.sin(1)",
-        "Math.exp(1)",
-        "Math.atan2(1, 2)",
-        "Math.cbrt(8)",
-        "Math.log2(8)",
+    // A call loads its own group and what that group is built on, and no other group.
+    let trig = vec![
+        "trig_functions",
+        "trig",
+        "rem_pio2",
+        "rem_pio2_large",
+        "two_over_pi",
+    ];
+    let hyperbolic = vec!["hyperbolic_functions", "exp", "logs", "hyperbolic"];
+    for (call, group) in [
+        ("Math.sin(1)", trig.clone()),
+        ("Math.tan(1)", trig),
+        ("Math.exp(1)", vec!["exp_functions", "exp"]),
+        ("Math.expm1(1)", vec!["exp_functions", "exp"]),
+        ("Math.log2(8)", vec!["logs_functions", "logs"]),
+        ("Math.log1p(8)", vec!["logs_functions", "logs"]),
+        (
+            "Math.atan2(1, 2)",
+            vec!["inverse_trig_functions", "inverse_trig"],
+        ),
+        (
+            "Math.asin(1)",
+            vec!["inverse_trig_functions", "inverse_trig"],
+        ),
+        ("Math.sinh(1)", hyperbolic.clone()),
+        ("Math.atanh(0.5)", hyperbolic),
+        ("Math.cbrt(8)", vec!["cbrt_functions", "cbrt"]),
     ] {
-        let loaded = math(&format!("console.log({call});\n"));
-        for port in [
-            "functions",
-            "trig",
-            "exp",
-            "logs",
-            "inverse_trig",
-            "hyperbolic",
-            "cbrt",
-        ] {
-            assert!(
-                loaded.contains(&format!("std/lang/math/{port}")),
-                "{call}: {loaded:?}"
-            );
-        }
+        let (loaded, _) = ports(&format!("console.log({call});\n"));
+        assert_eq!(loaded, group, "{call}");
     }
 }
 

@@ -1,0 +1,6 @@
+// Global, conditional (crates/velt_loader/src/globals): the inverse trigonometric functions of
+// `Math`, `asin`, `acos`, `atan` and `atan2` (velt/lang/math/inverse_trig_functions), for a
+// program that calls one; other programs don't load the ports behind them, and a program that
+// calls one loads no other group's.
+// load when std/prelude/math uses: .asin .acos .atan .atan2
+import "velt/lang/math/inverse_trig_functions";
