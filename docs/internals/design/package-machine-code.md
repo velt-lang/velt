@@ -2,7 +2,8 @@
 
 Status: **accepted direction** (#3222, maintainer review 2026-11-18), revision 2: the review's
 answers to the open questions and its changes A–E are written in below. Step 1 is built with this
-note (#3230), step 2 next (§2 "As built in step 2"); steps 3–6 follow, one pull request each.
+note (#3230), step 2 with #3263 (§2 "As built in step 2"); steps 3–6 follow, one pull request
+each.
 
 Related: #1981 (intrinsics, intrinsics.md), #2203 (compile-time decorators), #1055 (SIMD),
 #1866 (numeric workloads), #2402 (wide multiply, add-with-carry), #3094 (`Ptr<T>`), #2943 /
