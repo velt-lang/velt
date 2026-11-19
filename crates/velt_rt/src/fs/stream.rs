@@ -17,12 +17,29 @@ use crate::net::tcp::DEFAULT_READ;
 use crate::net::utf8::Utf8Decoder;
 use crate::registry::{Key, Registry};
 use crate::result::{fs_error, IoResult};
-use crate::stdin::LineRead;
 use crate::str::VeltStr;
 use crate::task::leaf::{blocking_leaf, new_leaf, run_blocking};
 use crate::task::VeltFut;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Take, Write};
+
+/// One `readLine` result: `{ IoResult<VeltStr> line; u8 eof; }` (size 64). At end of input
+/// `eof` is 1 and the line is empty (an empty line before the end has `eof` 0).
+#[repr(C)]
+pub struct LineRead {
+    /// The line without its `\n` / `\r\n`.
+    pub line: IoResult<VeltStr>,
+    /// 1 at end of input.
+    pub eof: u8,
+}
+
+/// A string of `bytes`, invalid UTF-8 replaced by U+FFFD (one copy when the text is valid).
+fn decode(bytes: &[u8]) -> VeltStr {
+    match std::str::from_utf8(bytes) {
+        Ok(_) => VeltStr::from_bytes(bytes),
+        Err(_) => VeltStr::from_vec(String::from_utf8_lossy(bytes).into_owned().into_bytes()),
+    }
+}
 use std::sync::{Mutex, MutexGuard};
 
 /// Buffer size of readers and writers.
@@ -197,7 +214,7 @@ fn buffered_line(obj: &ReaderObj) -> Option<LineRead> {
     let buf = g.0.buffer();
     let end = memchr::memchr(b'\n', buf)?;
     let line = &buf[..end];
-    let line = crate::stdin::decode(line.strip_suffix(b"\r").unwrap_or(line));
+    let line = decode(line.strip_suffix(b"\r").unwrap_or(line));
     g.0.consume(end + 1);
     Some(LineRead {
         line: IoResult::ok(line),
@@ -217,7 +234,7 @@ fn read_line(r: &mut Source) -> LineRead {
         }
     }
     LineRead {
-        line: IoResult::from_io(res, |_| crate::stdin::decode(&buf)),
+        line: IoResult::from_io(res, |_| decode(&buf)),
         eof,
     }
 }

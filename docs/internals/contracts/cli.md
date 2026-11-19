@@ -145,7 +145,7 @@ velt --version | -V | version          # velt <ver> (<git hash> <host triple>)
   object is `<exe>.o` (`.obj`), the others `<exe>.cgu<N>.o` beside it, and all are linked; objects
   of higher-numbered units from an earlier build are removed. With `$VELT_CODEGEN_UNITS` unset,
   the count depends on the program's size only (not on the machine,
-  `velt_codegen_llvm/src/units/mod.rs`): one unit below 32 000 VIR statements, else one per
+  `velt_codegen_llvm/src/units/mod.rs`): one unit below 64 000 VIR statements, else one per
   16 000, at most 4; above 800 000 statements, one per 200 000, at most 16.
   `$VELT_CODEGEN_UNITS` = N overrides it (N units, at most the core count; `1`: no split).
   `--emit obj` always writes one object and removes none.
