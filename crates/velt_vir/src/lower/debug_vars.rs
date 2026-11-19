@@ -279,30 +279,18 @@ impl FnLower<'_, '_> {
     /// With debug info, record where block `b` ends for the variables its statements declare
     /// (`LocalDebug::end`): `let` and destructuring bindings, and the bindings of a `for … of`
     /// or a `catch`, which end with their own body. In the function's own block (`body`) the
-    /// `let`s last to the end of the function, which needs no end.
+    /// `let`s last to the end of the function, which needs no end. The blocks its statements
+    /// hold (of an `if`, a loop, a `try`, a nested block) are recorded with it, whether or not
+    /// they are lowered: a block lowering leaves out (a branch of a condition known when
+    /// compiling, code after a `return`) still declares its variables, and one left without an
+    /// end would be in scope to the end of the function, across the blocks around it.
     pub(super) fn note_scope_ends(&mut self, b: &hir::Block, body: bool) {
         let Some(locs) = self.cx.locs.as_ref().filter(|_| self.cx.debug.is_some()) else {
             return;
         };
         let end_of = |span: Span| locs.loc(Span::new(span.file, span.hi, span.hi));
         let mut found: Vec<(hir::LocalId, Span)> = vec![];
-        for s in &b.stmts {
-            match &s.kind {
-                hir::StmtKind::Let { .. } | hir::StmtKind::LetPat { .. } if body => {}
-                hir::StmtKind::Let { local, .. } => found.push((*local, b.span)),
-                hir::StmtKind::LetPat { pat, .. } => {
-                    pat_locals(pat, &mut |l| found.push((l, b.span)));
-                }
-                hir::StmtKind::ForOf { binding, body, .. } => {
-                    pat_locals(binding, &mut |l| found.push((l, body.span)));
-                }
-                hir::StmtKind::Try {
-                    catch: Some((Some(l), handler)),
-                    ..
-                } => found.push((*l, handler.span)),
-                _ => {}
-            }
-        }
+        scoped_bindings(b, body, &mut found);
         let ends: Vec<(hir::LocalId, SrcLoc)> = found
             .into_iter()
             .filter_map(|(l, span)| Some((l, end_of(span)?)))
@@ -347,6 +335,54 @@ impl FnLower<'_, '_> {
                 param: (f.captures.len()..params).contains(&i),
             };
             self.locals[local.0 as usize].debug = Some(debug);
+        }
+    }
+}
+
+/// The variables the statements of `b` declare, each with the span of the block it ends with,
+/// and those of the blocks its statements hold (`FnLower::note_scope_ends`). The `let`s of the
+/// function's own block (`body`) are left out: they last to its end.
+fn scoped_bindings(b: &hir::Block, body: bool, found: &mut Vec<(hir::LocalId, Span)>) {
+    for s in &b.stmts {
+        match &s.kind {
+            hir::StmtKind::Let { .. } | hir::StmtKind::LetPat { .. } if body => {}
+            hir::StmtKind::Let { local, .. } => found.push((*local, b.span)),
+            hir::StmtKind::LetPat { pat, .. } => {
+                pat_locals(pat, &mut |l| found.push((l, b.span)));
+            }
+            hir::StmtKind::ForOf {
+                binding,
+                body: inner,
+                ..
+            } => {
+                pat_locals(binding, &mut |l| found.push((l, inner.span)));
+                scoped_bindings(inner, false, found);
+            }
+            hir::StmtKind::Try {
+                body: tried,
+                catch,
+                finally,
+            } => {
+                scoped_bindings(tried, false, found);
+                if let Some((binding, handler)) = catch {
+                    if let Some(l) = binding {
+                        found.push((*l, handler.span));
+                    }
+                    scoped_bindings(handler, false, found);
+                }
+                if let Some(f) = finally {
+                    scoped_bindings(f, false, found);
+                }
+            }
+            hir::StmtKind::If { then, els, .. } => {
+                scoped_bindings(then, false, found);
+                if let Some(e) = els {
+                    scoped_bindings(e, false, found);
+                }
+            }
+            hir::StmtKind::While { body: inner, .. } => scoped_bindings(inner, false, found),
+            hir::StmtKind::Block(inner) => scoped_bindings(inner, false, found),
+            _ => {}
         }
     }
 }

@@ -460,6 +460,84 @@ fn catch_bodies_and_switch_cases_end_their_variables() {
     assert_eq!(end_of("total"), None);
 }
 
+/// A block lowering leaves out of the code: the branch of a condition it knows when compiling
+/// (std's `stdUsed` of a name nothing notes), which is where std has them. `never` is declared
+/// in it, inside `root`'s block, which code follows. Integers throughout: the debug pipeline
+/// cleans up only the functions whose `number`s it narrows (velt_opt `debug_passes`), and a
+/// function it leaves alone, as most of std's are, keeps the variable no code uses.
+const LEFT_OUT: &str = r#"import { stdUsed } from "velt/lang/intrinsics";
+
+function pick(n: i64): i64 {
+  let total: i64 = 0;
+  if (n > 0) {
+    const root = n + 1;
+    if (stdUsed("debug-vars-left-out") && root > 2) {
+      const never = root * 2;
+      total += never;
+    }
+    if (root > 5) {
+      total += root;
+    }
+    total += 1;
+  }
+  total += n;
+  return total;
+}
+
+function main() {
+  console.log(pick(3));
+}
+"#;
+
+/// Where [`LEFT_OUT`] is compiled as: a file of std (the intrinsic is std's).
+fn left_out_input() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std/__debug_vars_left_out.velt")
+}
+
+/// A session that compiles its root as std code, as a generator host's root is.
+fn std_session() -> Session {
+    let mut sess = Session::new();
+    sess.generator_build = true;
+    sess
+}
+
+/// A variable of a block left out of the code still ends with its block: lowering never meets
+/// the block, and a variable without an end would be in scope to the function's end, across
+/// the end of the block around it (#3184: `dwarfdump --verify` found the overlap on macOS).
+#[test]
+fn a_block_left_out_of_the_code_ends_its_variables() {
+    let opts = BuildOptions {
+        input: left_out_input(),
+        root_source: Some(LEFT_OUT.to_string()),
+        debug_vars: true,
+        emit: veltc::cli::Emit::Obj,
+        ..BuildOptions::default()
+    };
+    let mut sess = std_session();
+    let p = driver::compile(&mut sess, &opts)
+        .unwrap_or_else(|e| panic!("{e:?}\n{}", sess.render_diagnostics()));
+    velt_vir::verify(&p).unwrap();
+    let pick = p
+        .funcs
+        .iter()
+        .find(|f| f.symbol.ends_with("4pick"))
+        .unwrap();
+    let end_of = |name: &str| {
+        (pick.locals.iter())
+            .find(|l| l.name.as_deref() == Some(name) && l.debug.is_some())
+            .unwrap_or_else(|| panic!("no {name}"))
+            .debug
+            .as_ref()
+            .unwrap()
+            .end
+    };
+    let line = |text: &str| LEFT_OUT.lines().position(|l| l.contains(text)).unwrap() as u32 + 1;
+    let never = end_of("never").expect("never ends");
+    assert_eq!(never.line, line("total += never") + 1, "{never:?}");
+    let root = end_of("root").expect("root ends");
+    assert_eq!(root.line, line("total += 1") + 1, "{root:?}");
+}
+
 /// `llvm-dwarfdump` (`dwarfdump` on macOS), if installed.
 fn dwarfdump() -> Option<&'static str> {
     ["llvm-dwarfdump", "dwarfdump"].into_iter().find(|tool| {
@@ -471,8 +549,9 @@ fn dwarfdump() -> Option<&'static str> {
 }
 
 /// The debug info of programs with blocks lowered outside `block` (`catch` bodies, `switch`
-/// cases, JSX components) passes `dwarfdump --verify`: no lexical block overlaps a sibling
-/// (regression: a `catch` body's variables lasted to the function's end).
+/// cases, JSX components) or left out of the code passes `dwarfdump --verify`: no lexical block
+/// overlaps a sibling (regressions: a `catch` body's variables lasted to the function's end, and
+/// so did those of a block left out).
 #[test]
 fn dwarf_of_handlers_and_cases_verifies() {
     let Some(tool) = dwarfdump() else {
@@ -481,14 +560,24 @@ fn dwarf_of_handlers_and_cases_verifies() {
     };
     let dir = tempfile::tempdir().unwrap();
     let goldens = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/golden");
-    let mut programs: Vec<(String, BuildOptions)> = vec![(
-        "handlers".into(),
-        BuildOptions {
-            input: dir.path().join("handlers.velt"),
-            root_source: Some(HANDLERS.to_string()),
-            ..BuildOptions::default()
-        },
-    )];
+    let mut programs: Vec<(String, BuildOptions)> = vec![
+        (
+            "handlers".into(),
+            BuildOptions {
+                input: dir.path().join("handlers.velt"),
+                root_source: Some(HANDLERS.to_string()),
+                ..BuildOptions::default()
+            },
+        ),
+        (
+            "left_out".into(),
+            BuildOptions {
+                input: left_out_input(),
+                root_source: Some(LEFT_OUT.to_string()),
+                ..BuildOptions::default()
+            },
+        ),
+    ];
     for golden in [
         "lang/field_default_generic_throws",
         "lang/field_default_generic_siblings",
@@ -512,7 +601,11 @@ fn dwarf_of_handlers_and_cases_verifies() {
             debug_vars: true,
             ..opts
         };
-        let mut sess = Session::new();
+        // `left_out` is std code (its intrinsic is std's).
+        let mut sess = match name.as_str() {
+            "left_out" => std_session(),
+            _ => Session::new(),
+        };
         driver::build(&mut sess, &opts)
             .unwrap_or_else(|e| panic!("{name}: {e:?}\n{}", sess.render_diagnostics()));
         let out = std::process::Command::new(tool)
