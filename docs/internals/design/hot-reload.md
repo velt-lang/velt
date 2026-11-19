@@ -74,7 +74,10 @@ point directly.
 - The host is a separate process rather than the supervisor itself because runtime panics and
   `exit` end the process, the tokio runtime is a process-global with no shutdown, and there are
   process-wide statics (allocator, stdout buffers, panic hook). A crash ends only the host, and
-  the supervisor starts a new one on the next save.
+  the supervisor starts a new one on the next save. A host that faults says where on stderr
+  before it dies: on Unix one line for a `SIGSEGV` with the address touched, the instruction,
+  the thread and the step of the reload it was in (`dev/fault_unix.rs`); on Windows x64 an
+  access violation with registers and the stack (`dev/fault.rs`).
 - Each version registers its unwind information with the system, so debuggers and backtraces
   walk through JIT frames: `RtlAddFunctionTable` on Windows x64 (`unwind/jit_windows.rs`), DWARF
   CFI through `__register_frame` on macOS and Linux (`unwind/jit_systemv.rs`). Line tables reach

@@ -435,6 +435,31 @@ fn crash_during_reload_is_reported() {
     }
 }
 
+/// A host that faults while it swaps says what it touched, on which thread and in which step of
+/// the reload, before the supervisor reports the signal and restarts it (#3194).
+#[cfg(unix)]
+#[test]
+fn fault_during_reload_says_where() {
+    let dir = TestDir::new();
+    let case = root().join("tests/reload/hello_server/1");
+    apply(&case, dir.path());
+    let main = std::fs::read_to_string(case.join("main.velt")).unwrap();
+    let dev = Dev::start_with_env(dir.path(), &[], &[("VELT_DEV_CRASH_ON_RELOAD", "segv")]);
+    let ok = |r: Result<Instant, String>| r.unwrap_or_else(|e| panic!("{e}"));
+    ok(dev.wait_stderr(Mark::default(), "velt dev: started"));
+    let mark = dev.mark();
+    save(&dir.path().join("main.velt"), main.replace("v1", "v2"));
+    let crashed = "velt dev: the running program crashed during the reload (signal 11)";
+    ok(dev.wait_stderr(mark, crashed));
+    let lines = dev.stderr_since(mark);
+    let reports: Vec<_> = (lines.iter())
+        .filter(|l| l.starts_with("velt dev: signal 11 touching 0x0 at 0x"))
+        .collect();
+    assert_eq!(reports.len(), 1, "{lines:?}");
+    let tail = "on thread `velt-dev-reload`; reload 1: generating and swapping code";
+    assert!(reports[0].ends_with(tail), "{lines:?}");
+}
+
 /// A host started with `VELT_DEV_QUIET` (a spare) prints nothing about its build; without it
 /// the same failed build prints its diagnostics.
 #[test]
