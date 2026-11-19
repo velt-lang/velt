@@ -4,7 +4,8 @@
 // class's glue (#3119 step 3, #989), so the entry and the key are freed once the key's last
 // outside reference goes. Also an implementation that is a class with a vtable, an interface
 // value in a field and in an array, a value of a struct (left out: kept until the map goes,
-// never freed early) and a key held outside.
+// never freed early) and a key held outside. Node prints `false` for a freed key until its next
+// garbage collection (weakref.velt).
 class Raw {
   n: number;
   constructor(n: number) {

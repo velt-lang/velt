@@ -3,7 +3,8 @@
 // trace glue dispatches through the object's class table to the subclass's own glue (#3119
 // step 3, #989), so the entry and the key are freed once the key's last outside reference
 // goes. Also through a field of another class, two levels of subclasses, a base class built
-// itself, a key held outside (kept while held) and a generic subclass.
+// itself, a key held outside (kept while held) and a generic subclass. Node prints `false` for
+// a freed key until its next garbage collection (weakref.velt).
 class Raw {
   n: number;
   constructor(n: number) {
