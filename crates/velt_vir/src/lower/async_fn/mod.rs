@@ -29,6 +29,8 @@ mod ctor;
 mod foreign_promise;
 mod gen_object;
 mod gen_send;
+mod gen_trace;
+pub(in crate::lower) use gen_trace::TABLE_TRACE;
 mod generator;
 mod kept;
 mod spawn;
@@ -61,6 +63,9 @@ const DROP_BIT: i128 = 0x8000_0000;
 /// `return()`): at a `yield` it runs the `finally` blocks and disposals, which may `await`.
 /// `DONE | CLOSE_BIT` is `DONE`.
 const CLOSE_BIT: i128 = 0x4000_0000;
+/// Tag bit of a generator's trace (gen_trace.rs): the case `TRACE_BIT | k` visits what the state
+/// holds at suspension `k`, with `cx` pointing to the trace glue's `(visit, ctx)`.
+const TRACE_BIT: i128 = 0x2000_0000;
 /// Tag of a finished state machine (never resumed; dropping it is a no-op).
 const DONE: i128 = 0x7FFF_FFFF;
 /// Tag of an async function's state while its poll runs, in a program that catches panics
@@ -370,6 +375,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.cancel_cases(0, d);
         if self.in_generator() {
             self.throw_start_cases(f);
+            self.trace_start_case(f);
         }
     }
 
