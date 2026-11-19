@@ -37,6 +37,7 @@ mod hir_tests;
 pub(crate) mod hook;
 #[cfg(test)]
 mod lazy_tests;
+mod tables;
 #[cfg(test)]
 mod tests;
 mod values;

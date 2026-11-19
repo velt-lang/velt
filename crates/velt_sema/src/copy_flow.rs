@@ -376,3 +376,13 @@ impl CopyFlow {
         }
     }
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::enums! {
+    @fielded Store {
+        0 => Local(f0, f1),
+        1 => Ret(f0),
+        2 => Heap,
+        3 => Copy(f0),
+    }
+}
