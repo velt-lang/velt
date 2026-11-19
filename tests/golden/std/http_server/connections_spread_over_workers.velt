@@ -1,8 +1,8 @@
 // A server's connections are spread over the workers (#2744): each is a task of its own, pinned
 // to the workers in turn, so as many connections as there are workers, opened one after another,
 // are served on every worker, and both requests of a connection on its own. (They ran as promises
-// of the accept loop's one task, on one worker.) Only in a program without module state: see
-// connections_module_state_one_task.velt.
+// of the accept loop's one task, on one worker.) A program with module state spreads them too:
+// connections_module_state_spread.velt.
 import { HttpRequest, HttpResponse, serveHttp } from "http-server";
 import { connect, TcpStream } from "velt/net";
 import { currentWorker, workerCount } from "velt/task";

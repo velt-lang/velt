@@ -1,0 +1,370 @@
+// velt/lang/hooks (tests): the ephemeron rule of the weak core (weak_trial.velt): an entry whose
+// value holds its key strongly (`raw -> proxy`) is freed with its key and value once nothing
+// outside refers to either, in whatever order the outside references go; on hand-built objects
+// (weak_test_objects.velt), run by `velt test std/`.
+import { describe, expect, it } from "velt/test";
+import { weakMapLen } from "velt/lang/hooks/weak";
+import { LIMIT } from "velt/lang/hooks/weak_graph";
+import {
+  count,
+  finish,
+  get,
+  isMarked,
+  live,
+  newObj,
+  objMap,
+  orders,
+  plain,
+  proxyOf,
+  release,
+  retain,
+  set,
+  setField,
+  traced,
+} from "velt/lang/hooks/weak_test_objects";
+
+/** Releases what `build` made in each order; whether everything was freed every time. */
+function inEveryOrder(n: usize, build: (m: u32) => usize[]): bool {
+  for (const order of orders(n)) {
+    const before = live();
+    const m = objMap();
+    const refs = build(m);
+    for (const i of order) {
+      release(refs[i as number]);
+    }
+    if (weakMapLen(m) !== 0 || !finish([m]) || live() !== before) {
+      return false;
+    }
+  }
+  return true;
+}
+
+describe("the ephemeron rule", () => {
+  it("frees a raw object and its proxy", () => {
+    expect(
+      inEveryOrder(2, (m) => {
+        const raw = plain();
+        const p = proxyOf(m, raw, 0);
+        return [raw, p];
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps the proxy while its key lives", () => {
+    const m = objMap();
+    const raw = plain();
+    const p = proxyOf(m, raw, 0);
+    const before = live();
+    release(p);
+    expect(live()).toBe(before); // the proxy lives while its key does
+    const again = proxyOf(m, raw, 0);
+    expect(again).toBe(p); // signal(raw) === signal(raw)
+    release(again);
+    release(raw);
+    expect(live()).toBe(before - 2);
+    expect(finish([m])).toBe(true);
+  });
+
+  it("keeps the key while its value lives", () => {
+    const m = objMap();
+    const raw = plain();
+    const p = proxyOf(m, raw, 0);
+    const before = live();
+    release(raw);
+    expect(live()).toBe(before);
+    expect(get(m, raw)).toBe(p); // the entry stays while its key is reachable
+    release(p);
+    release(p);
+    expect(live()).toBe(before - 2);
+    expect(finish([m])).toBe(true);
+  });
+
+  it("frees a chain of entries", () => {
+    // A -> B (B holds A), B -> C (C holds B): the outside may hold any of them.
+    expect(
+      inEveryOrder(3, (m) => {
+        const a = plain();
+        const b = newObj(retain(a), 0, 0);
+        set(m, a, retain(b));
+        const c = newObj(retain(b), 0, 0);
+        set(m, b, retain(c));
+        return [a, b, c];
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps a whole chain while its end is held", () => {
+    const m = objMap();
+    const a = plain();
+    const b = newObj(retain(a), 0, 0);
+    set(m, a, retain(b));
+    const c = newObj(retain(b), 0, 0);
+    set(m, b, retain(c));
+    release(a);
+    release(b);
+    expect(weakMapLen(m)).toBe(2);
+    expect(get(m, a)).toBe(b);
+    release(b);
+    release(c);
+    expect(weakMapLen(m)).toBe(0);
+    expect(finish([m])).toBe(true);
+  });
+
+  it("frees nested reactive objects", () => {
+    // raw1.child = raw2, and both have proxies in the same cache.
+    expect(
+      inEveryOrder(4, (m) => {
+        const raw2 = plain();
+        const raw1 = newObj(retain(raw2), 0, 0);
+        const p1 = proxyOf(m, raw1, 0);
+        const p2 = proxyOf(m, raw2, 0);
+        return [raw1, raw2, p1, p2];
+      }),
+    ).toBe(true);
+  });
+
+  it("frees a handler that captures the target", () => {
+    // proxy -> handler -> raw: the handler is on a path back to the key.
+    expect(
+      inEveryOrder(3, (m) => {
+        const raw = plain();
+        const handler = newObj(retain(raw), 0, 0);
+        const p = proxyOf(m, raw, retain(handler));
+        return [raw, handler, p];
+      }),
+    ).toBe(true);
+  });
+
+  it("leaves a handler shared outside the cycles alone", () => {
+    const m = objMap();
+    const handler = plain();
+    for (let i = 0; i < 3; i++) {
+      const raw = plain();
+      const p = proxyOf(m, raw, retain(handler));
+      release(raw);
+      release(p);
+    }
+    expect(weakMapLen(m)).toBe(0);
+    expect(count(handler)).toBe(1);
+    release(handler);
+    expect(finish([m])).toBe(true);
+  });
+
+  it("leaves the strong cycle of a key that holds its proxy", () => {
+    // raw.self = proxy(raw): the entry goes once nothing outside refers to either, but raw and
+    // the proxy still hold each other strongly: an ordinary strong cycle, until one side is
+    // `weak` (#11).
+    for (const order of orders(2)) {
+      const m = objMap();
+      const raw = plain();
+      const p = proxyOf(m, raw, 0);
+      setField(raw, 0, retain(p));
+      const before = live();
+      const refs = [raw, p];
+      for (const i of order) {
+        release(refs[i as number]);
+      }
+      expect(weakMapLen(m)).toBe(0);
+      expect(live()).toBe(before); // the strong cycle remains
+      setField(raw, 0, 0); // what `weak` would do
+      expect(live()).toBe(before - 2);
+      expect(finish([m])).toBe(true);
+    }
+  });
+
+  it("frees a key mapped to itself", () => {
+    const m = objMap();
+    const k = plain();
+    set(m, k, retain(k));
+    release(k);
+    expect(weakMapLen(m)).toBe(0);
+    expect(finish([m])).toBe(true);
+  });
+
+  it("frees 10,000 entries", () => {
+    const before = live();
+    const m = objMap();
+    const handler = plain();
+    const raws: usize[] = [];
+    const proxies: usize[] = [];
+    for (let i = 0; i < 10_000; i++) {
+      const raw = plain();
+      raws.push(raw);
+      proxies.push(proxyOf(m, raw, retain(handler)));
+    }
+    expect(weakMapLen(m)).toBe(10_000);
+    for (let i = 0; i < 10_000; i++) {
+      release(i % 2 === 0 ? raws[i] : proxies[i]);
+      release(i % 2 === 0 ? proxies[i] : raws[i]);
+    }
+    expect(weakMapLen(m)).toBe(0);
+    release(handler);
+    expect(finish([m])).toBe(true);
+    expect(live()).toBe(before);
+  });
+
+  it("keeps a pair whose value graph is past the limit", () => {
+    // The documented gap: an insert that cannot see the value's whole graph records no cycle,
+    // so the pair leaks (and is never freed early) until the entry is deleted.
+    const m = objMap();
+    const raw = plain();
+    let tail = retain(raw);
+    for (let i: usize = 0; i < LIMIT; i++) {
+      tail = newObj(tail, 0, 0);
+    }
+    const p = newObj(tail, 0, 0);
+    set(m, raw, retain(p));
+    const before = live();
+    release(raw);
+    release(p);
+    expect(live()).toBe(before); // kept: a leak, not a use-after-free
+    expect(finish([m])).toBe(true);
+  });
+
+  it("finds a path added after the insert at the next trial", () => {
+    // The proxy gains a second reference to its key after the insert. The release of the proxy
+    // runs a trial (the key is still held outside), which records the key's new level.
+    expect(
+      inEveryOrder(2, (m) => {
+        const raw = plain();
+        const p = proxyOf(m, raw, 0);
+        setField(p, 2, retain(raw));
+        return [raw, p];
+      }),
+    ).toBe(true);
+  });
+
+  it("delays the free of a path added after the last trial", () => {
+    // The gap: references to the key that a value gains after the last examination or trial
+    // through it raise the key's count above what the table knows, so dropping the outside
+    // reference runs no trial and the pair is kept (a leak, never a use-after-free). It is
+    // freed once the extra reference goes (that release runs the trial), or with the entry or
+    // the map.
+    const m = objMap();
+    const raw = plain();
+    release(proxyOf(m, raw, 0));
+    release(retain(raw)); // the key's first decrement: the entry is examined
+    const p = get(m, raw);
+    release(p); // the entry keeps it
+    expect(isMarked(p)).toBe(true); // on the path back to the key
+    setField(p, 2, retain(raw));
+    const before = live();
+    release(raw);
+    expect(live()).toBe(before); // kept while the extra path exists
+    setField(p, 2, 0);
+    expect(live()).toBe(before - 2);
+    expect(finish([m])).toBe(true);
+  });
+
+  it("finds a path added before the key's first decrement", () => {
+    // The entry is examined on its key's first decrement, so a path the value gains before
+    // then counts as one it had at the insert.
+    const m = objMap();
+    const raw = plain();
+    release(proxyOf(m, raw, 0));
+    const p = get(m, raw);
+    release(p);
+    expect(isMarked(p)).toBe(false); // not examined yet
+    setField(p, 2, retain(raw));
+    const before = live();
+    release(raw);
+    expect(live()).toBe(before - 2); // both paths were counted
+    expect(weakMapLen(m)).toBe(0);
+    expect(finish([m])).toBe(true);
+  });
+
+  it("finds a path that the key's first decrement removed and that came back", () => {
+    // The value refers to its key, loses the reference (the key's first decrement: the
+    // examination finds no path) and gets it back: the next decrement looks again.
+    const m = objMap();
+    const raw = plain();
+    const p = newObj(retain(raw), 0, 0);
+    set(m, raw, p);
+    setField(p, 0, 0);
+    expect(isMarked(p)).toBe(false); // nothing on a path back to the key
+    setField(p, 0, retain(raw));
+    const before = live();
+    release(raw);
+    expect(live()).toBe(before - 2);
+    expect(weakMapLen(m)).toBe(0);
+    expect(finish([m])).toBe(true);
+  });
+
+  it("traces an entry with no path back to its key at most twice", () => {
+    // A value over another object: the key's first decrement finds no path, its next looks once
+    // more, and later decrements trace nothing (a key passed around while its entry lives).
+    const m = objMap();
+    const raw = plain();
+    set(m, raw, newObj(plain(), 0, 0));
+    const before = traced();
+    release(retain(raw));
+    const once = traced();
+    expect(once > before).toBe(true);
+    release(retain(raw));
+    const twice = traced();
+    expect(twice - once).toBe(once - before);
+    for (let i = 0; i < 10; i++) {
+      release(retain(raw));
+    }
+    expect(traced()).toBe(twice);
+    release(raw);
+    expect(weakMapLen(m)).toBe(0);
+    expect(finish([m])).toBe(true);
+  });
+
+  it("traces a value past the limit once", () => {
+    // Past the limit nothing is recorded, and the entry counts as examined: the key's later
+    // decrements trace nothing.
+    const m = objMap();
+    const raw = plain();
+    let tail = retain(raw);
+    for (let i: usize = 0; i < LIMIT; i++) {
+      tail = newObj(tail, 0, 0);
+    }
+    set(m, raw, newObj(tail, 0, 0));
+    release(retain(raw));
+    const once = traced();
+    for (let i = 0; i < 10; i++) {
+      release(retain(raw));
+    }
+    expect(traced()).toBe(once);
+    const before = live();
+    release(raw);
+    expect(live()).toBe(before); // kept, as past the limit at the insert
+    expect(finish([m])).toBe(true);
+  });
+
+  it("keeps a pair whose path came back after the second look", () => {
+    // The documented limit: the value loses its path (the key's first decrement), the key is
+    // decremented once more (the second look finds nothing), and the path comes back. No
+    // examination sees it, so the pair is kept until the entry is deleted.
+    const m = objMap();
+    const raw = plain();
+    const p = newObj(retain(raw), 0, 0);
+    set(m, raw, p);
+    setField(p, 0, 0);
+    release(retain(raw));
+    setField(p, 0, retain(raw));
+    const before = live();
+    release(raw);
+    expect(live()).toBe(before); // kept: a leak, not a use-after-free
+    expect(weakMapLen(m)).toBe(1);
+    expect(finish([m])).toBe(true);
+  });
+
+  it("never traces an entry whose key goes by its only release", () => {
+    // A value that refers to other objects only (a handler over them): the key's last release
+    // frees it and deletes the entry without tracing the value.
+    const m = objMap();
+    const raw = plain();
+    const other = plain();
+    const before = traced();
+    set(m, raw, newObj(other, 0, 0));
+    const objects = live();
+    release(raw);
+    expect(live()).toBe(objects - 3); // the key, the value and what it held
+    expect(weakMapLen(m)).toBe(0);
+    expect(traced()).toBe(before); // nothing was traced
+    expect(finish([m])).toBe(true);
+  });
+});

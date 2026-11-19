@@ -35,11 +35,13 @@
 name: ci
 
 on:
-  # A pull request's checks run once it is approved: the maintainer's approval adds the label
-  # `ci:approved`, which starts them; later pushes run them again while the label stays. Before
-  # that, `ci` fails with "waiting for approval", so auto-merge can't enqueue an unchecked change.
+  # A pull request's checks run only when the maintainer starts them: approving it adds the label
+  # `ci:approved`, which starts them. A push starts nothing (owner, 2026-11-18: runners go to the
+  # merge queue). After a re-review of new commits, the maintainer removes and re-adds the label.
+  # Until a run passes on the current head, the required `ci` check is missing, so auto-merge
+  # can't enqueue an unchecked change.
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
+    types: [labeled]
   merge_group:
   push:
     branches: [main]
@@ -611,7 +613,9 @@ jobs:
   # c_sources.rs and c_export.rs, which VELT_ZIG_TESTS turns on and makes fail without VELT_ZIG; the other jobs'
   # tests leave them out, crates/xtask/src/c_headers.rs's TESTS). It runs only when the
   # change touches what it checks (crates/xtask/src/c_headers.rs), in pull requests and in
-  # the queue: anything else doesn't download zig. The nightly runs it whatever changed.
+  # the queue: anything else doesn't download zig. The nightly runs it whatever changed, and so
+  # does a run planned with `--full`, which knows no changes: a dispatched run (a merge train)
+  # and a pull request labelled `ci:full`.
   c-headers:
     needs: [pr-plan, queue-plan]
     if: always() && (needs.pr-plan.outputs.c_headers == 'true' || needs.queue-plan.outputs.c_headers == 'true')

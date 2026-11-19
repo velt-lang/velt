@@ -69,9 +69,9 @@ x86_64 Linux verified (Ubuntu 24.04, all goldens in debug mode); macOS and Windo
 `crates/velt_rt/tests/link_check.rs` (runs under `cargo test -p velt_rt`) compiles tiny C objects
 that only define `velt_main`, links them with exactly the command lines above, runs the executables
 and checks stdout/stderr/exit codes (normal return, `velt_rt_panic` → 101, `velt_rt_exit`). It also
-links an `async main` (C state machines using `velt_rt_block_on`, `velt_rt_sleep`, `velt_rt_spawn`),
-proving the tokio runtime links with the same list, and checks that output reaches a pipe while
-the program idles in an `await`.
+starts the runtime's host (`velt_rt_set_scheduler(2)`, as each worker of the executor in Velt
+does), proving the tokio runtime links with the same list. crates/veltc/tests/stdout_tasks.rs
+checks that a program's output reaches a pipe while it idles in an `await`.
 
 ## Allocator
 The staticlib embeds mimalloc as Rust's global allocator (feature `mimalloc`, on by default; it

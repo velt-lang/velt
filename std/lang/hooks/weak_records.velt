@@ -1,0 +1,392 @@
+// velt/lang/hooks (internal): the weak core's header and its records of weakly held objects
+// (weak.velt; docs/internals/design/weak-refs.md "Representation").
+//
+// One header for the process (`state`), made on first use: the lock word, the records, the map
+// and `WeakRef` handle tables (weak_maps.velt, weak_refs.velt) and the trial graph
+// (weak_graph.velt). Everything behind it is changed only with the lock held.
+//
+// A record is kept in an open-addressing table keyed by the object's address, in place, so a
+// record's address holds only until the next record is added (the table may grow). It holds the
+// object, its trace glue, `hint` and `observed` (weak_trial.velt), and three lists: the maps that
+// have an entry keyed by it, the entries `(map, key)` whose value graph refers to it, and its
+// `WeakRef`s. Each list keeps its first item in the record and the rest in a vector, so a record
+// of an object in one map with one `WeakRef` allocates nothing of its own.
+
+import { inline, noInline } from "velt/lang/intrinsics";
+import {
+  RC_COUNT,
+  RC_WEAK,
+  W,
+  alloc,
+  copy,
+  free,
+  ld,
+  ld32,
+  ld64,
+  rcWord,
+  slotOf,
+  st,
+  st32,
+  st64,
+  vecAt,
+  vecFree,
+  vecLen,
+  vecPop,
+  vecPush,
+  vecRemove,
+  vecRemovePair,
+} from "./weak_mem";
+
+/** The header's address (0 until the first weak operation). */
+const STATE = new Atomic<u64>(0);
+
+export const H_LOCK: usize = 0;
+export const H_RECS: usize = 8;
+export const H_RCAP: usize = 16;
+/** Slots in use, removed ones included (they are reused or dropped when the table grows). */
+export const H_RUSED: usize = 24;
+/** Records in use. */
+export const H_RLIVE: usize = 32;
+export const H_MAPS: usize = 40;
+export const H_MCAP: usize = 48;
+export const H_MNEXT: usize = 56;
+export const H_MFREE: usize = 64;
+export const H_REFS: usize = 72;
+export const H_FCAP: usize = 80;
+export const H_FNEXT: usize = 88;
+export const H_FFREE: usize = 96;
+export const H_GRAPH: usize = 104;
+/**
+ * The values to release once the lock is given back (weak.velt `take`): the first's release glue
+ * and word, then the others as pairs in a vector. Filled and emptied under the lock.
+ */
+export const H_REL_FN: usize = 112;
+export const H_REL_VALUE: usize = 120;
+export const H_REL_MORE: usize = 128;
+const HEADER: usize = 136;
+
+/** The process's header, made on first use. */
+export function state(): usize {
+  const h = STATE.load("acquire") as usize;
+  if (h !== 0) {
+    return h;
+  }
+  return makeState();
+}
+
+@noInline
+function makeState(): usize {
+  const n = alloc(HEADER);
+  st(n + H_RECS, alloc(64 * RECORD));
+  st(n + H_RCAP, 64);
+  const was = STATE.compareExchange(0, n as u64, "acqrel", "acquire") as usize;
+  if (was === 0) {
+    return n;
+  }
+  free(ld(n + H_RECS));
+  free(n);
+  return was;
+}
+
+/** A record: its object (0 empty, 1 removed), then the object's trace glue. */
+export const R_OBJ: usize = 0;
+export const R_TRACE: usize = 8;
+/** `hint` (32 bits), then `observed` (32 bits). */
+export const R_HINT: usize = 16;
+export const R_OBSERVED: usize = 20;
+/** The maps with an entry keyed by the object: the first, then a vector of the others. */
+export const R_KEYED: usize = 24;
+export const R_KEYED_MORE: usize = 32;
+/** The entries `(map, key)` whose value graph refers to the object: the first, then pairs. */
+export const R_MEMBER_MAP: usize = 40;
+export const R_MEMBER_KEY: usize = 48;
+export const R_MEMBER_MORE: usize = 56;
+/** The object's `WeakRef` slots: the first, then a vector of the others. */
+export const R_REF: usize = 64;
+export const R_REF_MORE: usize = 72;
+/** Entries keyed by the object not examined yet (weak.velt `examine`), 32 bits. */
+export const R_UNEXAMINED: usize = 80;
+/**
+ * The release path's threshold (32 bits), at least `max(hint, observed)`, and the largest `u32`
+ * while entries keyed by the object are unexamined: a decrement that leaves the count above it
+ * needs nothing more, which `weakRelease` decides with one comparison. A higher hint or
+ * `observed` raises it; a lower one leaves it, and `weakRelease` lowers it on its slow path.
+ */
+export const R_GATE: usize = 84;
+export const RECORD: usize = 88;
+
+const EMPTY: usize = 0;
+const REMOVED: usize = 1;
+
+/** The record of `obj`, or 0. */
+export function find(h: usize, obj: usize): usize {
+  if (obj <= REMOVED) {
+    return 0;
+  }
+  const cap = ld(h + H_RCAP);
+  const recs = ld(h + H_RECS);
+  let i = slotOf(obj, cap);
+  while (true) {
+    const rec = recs + i * RECORD;
+    const o = ld(rec + R_OBJ);
+    if (o === obj) {
+      return rec;
+    }
+    if (o === EMPTY) {
+      return 0;
+    }
+    i = (i + 1) & (cap - 1);
+  }
+  return 0;
+}
+
+/**
+ * The record of `obj` (live, counted), made (and the object marked) when it has none; `trace`
+ * becomes its trace glue if it has none. Other records' addresses do not hold after this.
+ */
+@inline
+export function node(h: usize, obj: usize, trace: usize): usize {
+  let rec = probe(h, obj);
+  if ((rec & 1) !== 0) {
+    rec = claim(h, rec & ~(1 as usize), obj);
+    st64(rcWord(obj), ld64(rcWord(obj)) | RC_WEAK);
+  }
+  if (ld(rec + R_TRACE) === 0) {
+    st(rec + R_TRACE, trace);
+  }
+  return rec;
+}
+
+/**
+ * The record of `obj` (an object's address), or, with bit 0 set, the slot a record of it would
+ * take: the first removed slot the probe passed, else the empty slot that ended it. One probe for
+ * a lookup that may add ([`claim`]).
+ */
+function probe(h: usize, obj: usize): usize {
+  const cap = ld(h + H_RCAP);
+  const recs = ld(h + H_RECS);
+  let i = slotOf(obj, cap);
+  let free: usize = 0;
+  while (true) {
+    const rec = recs + i * RECORD;
+    const o = ld(rec + R_OBJ);
+    if (o === obj) {
+      return rec;
+    }
+    if (o === EMPTY) {
+      return (free !== 0 ? free : rec) | 1;
+    }
+    if (o === REMOVED && free === 0) {
+      free = rec;
+    }
+    i = (i + 1) & (cap - 1);
+  }
+  return 0;
+}
+
+/**
+ * A new record of `obj` at `slot`, the slot [`probe`] gave (its tag cleared). Where taking an
+ * empty slot would fill the table past its load, the table grows and the record goes where a new
+ * probe finds.
+ */
+function claim(h: usize, slot: usize, obj: usize): usize {
+  let rec = slot;
+  if (ld(rec + R_OBJ) === EMPTY) {
+    if ((ld(h + H_RUSED) + 1) * 10 >= ld(h + H_RCAP) * 7) {
+      rec = grown(h, obj);
+    }
+    st(h + H_RUSED, ld(h + H_RUSED) + 1);
+  }
+  st(h + H_RLIVE, ld(h + H_RLIVE) + 1);
+  clear(rec);
+  st(rec + R_OBJ, obj);
+  return rec;
+}
+
+/** The table grown, and the empty slot a record of `obj` takes in it (a grown table has no removed one). */
+@noInline
+function grown(h: usize, obj: usize): usize {
+  grow(h);
+  return probe(h, obj) & ~(1 as usize);
+}
+
+function clear(rec: usize): void {
+  for (let f: usize = 0; f < RECORD; f += W) {
+    st(rec + f, 0);
+  }
+}
+
+/** The live records moved to a new table: of twice the size, or the same when half are removed. */
+function grow(h: usize): void {
+  const cap = ld(h + H_RCAP);
+  const old = ld(h + H_RECS);
+  const live = ld(h + H_RLIVE);
+  const ncap = (live + 1) * 10 >= cap * 7 / 2 ? cap * 2 : cap;
+  const recs = alloc(ncap * RECORD);
+  for (let i: usize = 0; i < cap; i++) {
+    const rec = old + i * RECORD;
+    const o = ld(rec + R_OBJ);
+    if (o !== EMPTY && o !== REMOVED) {
+      let j = slotOf(o, ncap);
+      while (ld(recs + j * RECORD + R_OBJ) !== EMPTY) {
+        j = (j + 1) & (ncap - 1);
+      }
+      copy(recs + j * RECORD, rec, RECORD);
+    }
+  }
+  free(old);
+  st(h + H_RECS, recs);
+  st(h + H_RCAP, ncap);
+  st(h + H_RUSED, live);
+}
+
+/** Removes the record `rec` (its lists empty). */
+export function remove(h: usize, rec: usize): void {
+  vecFree(rec + R_KEYED_MORE);
+  vecFree(rec + R_MEMBER_MORE);
+  vecFree(rec + R_REF_MORE);
+  st(rec + R_OBJ, REMOVED);
+  st(h + H_RLIVE, ld(h + H_RLIVE) - 1);
+}
+
+/** Drops `obj`'s record once nothing refers to it weakly, clearing its mark. */
+@inline
+export function settle(h: usize, obj: usize): void {
+  const rec = find(h, obj);
+  if (rec !== 0 && isEmpty(rec)) {
+    remove(h, rec);
+    st64(rcWord(obj), ld64(rcWord(obj)) & RC_COUNT);
+  }
+}
+
+function isEmpty(rec: usize): bool {
+  return ld(rec + R_KEYED) === 0 && ld(rec + R_MEMBER_MAP) === 0 && ld(rec + R_REF) === 0;
+}
+
+export function hint(rec: usize): u32 {
+  return ld32(rec + R_HINT);
+}
+
+export function setHint(rec: usize, v: u32): void {
+  st32(rec + R_HINT, v);
+  raise(rec, v);
+}
+
+export function observed(rec: usize): u32 {
+  return ld32(rec + R_OBSERVED);
+}
+
+export function setObserved(rec: usize, v: u32): void {
+  st32(rec + R_OBSERVED, v);
+  raise(rec, v);
+}
+
+function raise(rec: usize, v: u32): void {
+  if (v > ld32(rec + R_GATE)) {
+    st32(rec + R_GATE, v);
+  }
+}
+
+export function unexamined(rec: usize): usize {
+  return ld32(rec + R_UNEXAMINED) as usize;
+}
+
+export function setUnexamined(rec: usize, n: usize): void {
+  st32(rec + R_UNEXAMINED, n as u32);
+  if (n !== 0) {
+    st32(rec + R_GATE, 0xffff_ffff);
+  } else {
+    const a = ld32(rec + R_HINT);
+    const b = ld32(rec + R_OBSERVED);
+    st32(rec + R_GATE, a > b ? a : b);
+  }
+}
+
+/** `R_GATE`. */
+export function gate(rec: usize): u64 {
+  return ld32(rec + R_GATE) as u64;
+}
+
+/** Lowers `R_GATE` to `level` (`max(hint, observed)`) unless an entry keyed by it is unexamined. */
+export function setGate(rec: usize, level: u64): void {
+  if (ld32(rec + R_UNEXAMINED) === 0) {
+    st32(rec + R_GATE, level as u32);
+  }
+}
+
+// A list of one-word items (`R_KEYED`, `R_REF`): its first item in the record, the rest after.
+
+/** The items of the list at `first` (`more` = `first` + 8). */
+export function listLen(rec: usize, first: usize): usize {
+  return ld(rec + first) === 0 ? 0 : 1 + vecLen(rec + first + W);
+}
+
+/** Item `i` of the list at `first`. */
+export function listAt(rec: usize, first: usize, i: usize): usize {
+  return i === 0 ? ld(rec + first) : vecAt(rec + first + W, i - 1);
+}
+
+export function listPush(rec: usize, first: usize, x: usize): void {
+  if (ld(rec + first) === 0) {
+    st(rec + first, x);
+  } else {
+    vecPush(rec + first + W, x);
+  }
+}
+
+/** Removes one `x` from the list at `first`. */
+export function listRemove(rec: usize, first: usize, x: usize): void {
+  if (ld(rec + first) === x) {
+    st(rec + first, vecLen(rec + first + W) === 0 ? 0 : vecPop(rec + first + W));
+    if (vecLen(rec + first + W) === 0) {
+      vecFree(rec + first + W);
+    }
+  } else {
+    vecRemove(rec + first + W, x);
+  }
+}
+
+// The list of entries `(map, key)` (`R_MEMBER_*`).
+
+export function membersLen(rec: usize): usize {
+  return ld(rec + R_MEMBER_MAP) === 0 ? 0 : 1 + vecLen(rec + R_MEMBER_MORE) / 2;
+}
+
+/** The map of entry `i`. */
+export function memberMap(rec: usize, i: usize): usize {
+  return i === 0 ? ld(rec + R_MEMBER_MAP) : vecAt(rec + R_MEMBER_MORE, (i - 1) * 2);
+}
+
+/** The key of entry `i`. */
+export function memberKey(rec: usize, i: usize): usize {
+  return i === 0 ? ld(rec + R_MEMBER_KEY) : vecAt(rec + R_MEMBER_MORE, (i - 1) * 2 + 1);
+}
+
+export function memberPush(rec: usize, map: usize, key: usize): void {
+  if (ld(rec + R_MEMBER_MAP) === 0) {
+    st(rec + R_MEMBER_MAP, map);
+    st(rec + R_MEMBER_KEY, key);
+  } else {
+    vecPush(rec + R_MEMBER_MORE, map);
+    vecPush(rec + R_MEMBER_MORE, key);
+  }
+}
+
+/** Removes one entry `(map, key)` from the list. */
+export function memberRemove(rec: usize, map: usize, key: usize): void {
+  if (ld(rec + R_MEMBER_MAP) === map && ld(rec + R_MEMBER_KEY) === key) {
+    const more = rec + R_MEMBER_MORE;
+    if (vecLen(more) === 0) {
+      st(rec + R_MEMBER_MAP, 0);
+      st(rec + R_MEMBER_KEY, 0);
+    } else {
+      st(rec + R_MEMBER_KEY, vecPop(more));
+      st(rec + R_MEMBER_MAP, vecPop(more));
+      if (vecLen(more) === 0) {
+        vecFree(more);
+      }
+    }
+  } else {
+    vecRemovePair(rec + R_MEMBER_MORE, map, key);
+  }
+}

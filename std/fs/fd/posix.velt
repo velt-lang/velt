@@ -23,6 +23,10 @@ declare c("c") function read(fd: i32, buf: u8[], nbyte: usize): isize;
 declare c("c") function write(fd: i32, buf: readonly u8[], nbyte: usize): isize;
 declare c("c") function pread(fd: i32, buf: u8[], nbyte: usize, offset: i64): isize;
 declare c("c") function pwrite(fd: i32, buf: readonly u8[], nbyte: usize, offset: i64): isize;
+declare c("c") function read$at(fd: i32, buf: Ptr<void>, nbyte: usize): isize;
+declare c("c") function pread$at(fd: i32, buf: Ptr<void>, nbyte: usize, offset: i64): isize;
+declare c("c") function write$at(fd: i32, buf: Ptr<void>, nbyte: usize): isize;
+declare c("c") function pwrite$at(fd: i32, buf: Ptr<void>, nbyte: usize, offset: i64): isize;
 declare c("c", { errno: true }) function fsync(fd: i32): i32;
 declare c("c", { errno: true }) function fcntl(fd: i32, cmd: i32, ...args: CVarArgs): i32;
 declare c("c", { errno: true }) function ftruncate(fd: i32, length: i64): i32;
@@ -192,14 +196,14 @@ export function fstatAt(
 }
 
 /**
- * `mmap` of the first `len` bytes of `fd`, read-only and shared with the file (`PROT_READ`,
- * `MAP_SHARED`: 1 and 1 on macOS and Linux): the mapping's address, or 0 with the error for
- * `lastError()`.
+ * `mmap` of the `len` bytes of `fd` from byte `offset` (a multiple of the page size),
+ * read-only and shared with the file (`PROT_READ`, `MAP_SHARED`: 1 and 1 on macOS and Linux):
+ * the mapping's address, or 0 with the error for `lastError()`.
  */
-export function mapRead(fd: i32, len: usize): usize {
+export function mapRead(fd: i32, len: usize, offset: i64): usize {
   // SAFETY: a new mapping at an address the system chooses changes no memory this program
   // uses; the arguments are integers.
-  const p = unsafe { mmap(null, len, 1, 1, fd, 0) };
+  const p = unsafe { mmap(null, len, 1, 1, fd, offset) };
   const address = p === null ? 0 : Ptr.addressOf(p);
   // `MAP_FAILED` is `(void *) -1`.
   return address + 1 == 0 ? 0 : address;
@@ -207,12 +211,53 @@ export function mapRead(fd: i32, len: usize): usize {
 
 /**
  * `madvise(address, len, advice)` on part of a mapping `mapRead` returned: 0, or -1. The
- * advice is `MADV_NORMAL` 0, `MADV_RANDOM` 1, `MADV_SEQUENTIAL` 2 or `MADV_WILLNEED` 3, the
- * same numbers on macOS and Linux.
+ * advice is `MADV_NORMAL` 0, `MADV_RANDOM` 1, `MADV_SEQUENTIAL` 2, `MADV_WILLNEED` 3 or
+ * `MADV_DONTNEED` 4, the same numbers on macOS and Linux.
  */
 export function adviseMap(address: usize, len: usize, advice: i32): i32 {
   // SAFETY: `address..address + len` is inside a live mapping (the caller's, which
-  // `MappedFile` checks), and these four advices change how pages are read ahead, never
-  // their contents.
+  // `MappedFile` checks) that is read-only and shared with its file: the first four advices
+  // change how pages are read ahead, and `MADV_DONTNEED` lets go of pages that the next read
+  // takes from the file again, so none changes what is read.
   return unsafe { madvise(Ptr.at<void>(address), len, advice) };
+}
+
+/**
+ * `read` (`at < 0`) or `pread` at `at` of up to `len` bytes into the memory at `address`: the
+ * number read, or -1 with the error for `lastError()`. Unsafe: `address` must be `len` writable
+ * bytes that nothing else uses during the call (an array's own buffer, velt/fs's `readSync`).
+ */
+export unsafe function readAddress(fd: i32, address: usize, len: usize, at: i64): isize {
+  let r: isize;
+  if (at < 0) {
+    // SAFETY: the caller's statement about `address` and `len`; C keeps no pointer.
+    r = unsafe { read$at(fd, Ptr.at<void>(address), len) };
+  } else {
+    // SAFETY: as for `read` above.
+    r = unsafe { pread$at(fd, Ptr.at<void>(address), len, at) };
+  }
+  if (r < 0) {
+    keepOsError();
+  }
+  return r;
+}
+
+/**
+ * `write` (`at < 0`) or `pwrite` at `at` of the `len` bytes at `address`: the number written,
+ * or -1 with the error for `lastError()`. Unsafe: `address` must be `len` readable bytes that
+ * nothing changes during the call.
+ */
+export unsafe function writeAddress(fd: i32, address: usize, len: usize, at: i64): isize {
+  let r: isize;
+  if (at < 0) {
+    // SAFETY: the caller's statement about `address` and `len`; C keeps no pointer.
+    r = unsafe { write$at(fd, Ptr.at<void>(address), len) };
+  } else {
+    // SAFETY: as for `write` above.
+    r = unsafe { pwrite$at(fd, Ptr.at<void>(address), len, at) };
+  }
+  if (r < 0) {
+    keepOsError();
+  }
+  return r;
 }

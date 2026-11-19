@@ -1,26 +1,37 @@
 //! Prebuilt hook modules (#1728, #2196): an on-demand hook module whose `prebuilt` entries take
-//! and return only numbers and strings is compiled once, with everything it reaches, into one
-//! object of the build cache (`veltc` `driver/prebuilt`). Where a build finds that object, sema
-//! checks a `hookCall` of such an entry as a call of the declared function [`symbol`]
-//! (`velt_sema` `lazy_std/hook_stubs.rs`), as it checked the `velt_rt_*` extern the hook
-//! replaced: the module is not loaded, checked, lowered or optimized, and the link adds the
-//! object. Where it doesn't, the build loads the module as for any other hook.
+//! and return only numbers, `bool`s and strings is compiled once, with everything it reaches,
+//! into one object of the build cache (`veltc` `driver/prebuilt`). Where a build finds that
+//! object, sema checks a `hookCall` of such an entry as a call of the declared function
+//! [`symbol`] (`velt_sema` `lazy_std/hook_stubs.rs`), as it checked the `velt_rt_*` extern the
+//! hook replaced, and a `lowered` entry its constructs demand is declared the same way, which
+//! lowering's builder then calls (`velt_vir` `hook_calls.rs`): the module is not loaded,
+//! checked, lowered or optimized, and the link adds the object. Where it doesn't, the build
+//! loads the module as for any other hook.
 //!
-//! Only numbers and strings cross, so nothing a program decides (which types are counted, how a
-//! `u8[]` is laid out, which parameters are `noalias`) reaches the object's code: its key names
-//! the std sources it was compiled from, the compiler and the target, never a program.
+//! Only numbers, `bool`s and strings cross, so nothing a program decides (which types are
+//! counted, how a `u8[]` is laid out, which parameters are `noalias`) reaches the object's code:
+//! its key names the std sources it was compiled from, the compiler and the target, never a
+//! program.
 //!
 //! How each value crosses, the convention of the runtime's string externs (rt_abi.md "Strings"):
 //! - a number type (`i8` … `u64`, `isize`, `usize`, `f32`, `f64`): by value, as that integer or
 //!   float type;
+//! - a `bool`: by value, as both backends pass it, a zero-extended byte (as a `u8`);
 //! - a `&string` parameter: the address of the caller's string value (24 bytes), borrowed for
 //!   the call: the callee neither keeps nor releases it;
 //! - a `string` result: through a trailing out-pointer to 24 bytes the caller provides, which
 //!   the callee fills with a string the caller then owns (and releases);
 //! - a `void` result: none.
 //!
-//! Anything else (`bool`, a string by value or moved, arrays, classes, type parameters, `async`,
+//! Anything else (a string by value or moved, arrays, classes, type parameters, `async`,
 //! `throws`) is refused when the table is compiled: [`scalar`].
+//!
+//! **State.** The object keeps no state a program shares: a copy in the object would split it in
+//! two. A module may keep state of its own there (module `ThreadLocal`s and static atomics) only
+//! in its [`private`] modules: std modules that nothing outside them imports, so that a program
+//! that loads none of them has the object's copy alone. Sema calls the object only for a program
+//! that loads none of them (`velt_sema` `lazy_std/hook_stubs.rs` `declared`); a program that
+//! does (the core's own white-box tests) loads the module as without the object.
 
 use super::{Hook, HOOKS};
 use crate::hook_sig::{Mode, Sig, T};
@@ -39,14 +50,40 @@ pub fn of_symbol(symbol: &str) -> Option<usize> {
     HOOKS.iter().position(|h| h.prebuilt && h.name == name)
 }
 
+/// Per prebuilt module (its table entry): the std modules whose state its object keeps as its own
+/// (module docs, "State"), the module itself among them. Each is imported only by the others of
+/// its list and by tests (`veltc`'s `prebuilt_private_modules` test).
+const PRIVATE: &[(&str, &[&str])] = &[(
+    "lang_hooks_weak",
+    &[
+        "std/lang/hooks/weak",
+        "std/lang/hooks/weak_graph",
+        "std/lang/hooks/weak_maps",
+        "std/lang/hooks/weak_mem",
+        "std/lang/hooks/weak_os_posix",
+        "std/lang/hooks/weak_os_win32",
+        "std/lang/hooks/weak_records",
+        "std/lang/hooks/weak_refs",
+        "std/lang/hooks/weak_trial",
+    ],
+)];
+
+/// The private modules of prebuilt module `module_entry` (module docs, "State"): none for a module
+/// without state of its own.
+pub fn private(module_entry: &str) -> &'static [&'static str] {
+    (PRIVATE.iter())
+        .find(|(m, _)| *m == module_entry)
+        .map_or(&[], |(_, list)| list)
+}
+
 /// The prebuilt hooks of the module of table entry `module_entry`, with their indices.
 pub fn of_module(module_entry: &str) -> impl Iterator<Item = (usize, &'static Hook)> + '_ {
     (HOOKS.iter().enumerate()).filter(move |(_, h)| h.prebuilt && h.module_entry == module_entry)
 }
 
 /// Can a hook of signature `sig` be prebuilt: a function, neither generic, `async` nor
-/// throwing, whose parameters are numbers (by value) and `&string`s, and whose result is a
-/// number, a `string` or `void` (module docs)?
+/// throwing, whose parameters are numbers and `bool`s (by value) and `&string`s, and whose
+/// result is a number, a `bool`, a `string` or `void` (module docs)?
 pub const fn scalar(sig: &Sig) -> bool {
     let Sig::Fn(f) = sig else {
         return false;
@@ -70,11 +107,12 @@ pub const fn scalar(sig: &Sig) -> bool {
     number(&f.ret) || matches!(f.ret, T::Str | T::Void)
 }
 
-/// Is `t` a number type?
+/// Is `t` a number type or `bool`, which cross by value?
 const fn number(t: &T) -> bool {
     matches!(
         t,
-        T::I8
+        T::Bool
+            | T::I8
             | T::I16
             | T::I32
             | T::I64
@@ -128,6 +166,7 @@ mod tests {
         )));
         assert!(scalar(&sig(&[], T::Void)));
         assert!(scalar(&sig(&[value(T::U8)], T::I32)));
+        assert!(scalar(&sig(&[value(T::Bool), value(T::U32)], T::Bool)));
     }
 
     /// Anything a program's facts could change the layout or ownership of is refused: the
@@ -136,8 +175,6 @@ mod tests {
     fn anything_else_is_refused() {
         const BYTES: T = T::Array(&T::U8);
         let refused = [
-            sig(&[value(T::Bool)], T::Str),
-            sig(&[value(T::F64)], T::Bool),
             sig(&[value(T::Str)], T::Str),
             sig(
                 &[Param {
@@ -207,5 +244,14 @@ mod tests {
             );
         }
         assert_eq!(of_symbol("velt_hook_f64_to_string"), None);
+    }
+
+    /// A module's private list names the module itself, and only modules of prebuilt hooks.
+    #[test]
+    fn private_modules_name_their_module() {
+        for (entry, list) in PRIVATE {
+            let (_, h) = of_module(entry).next().expect("a prebuilt module");
+            assert!(list.contains(&h.module().as_str()), "{entry}");
+        }
     }
 }

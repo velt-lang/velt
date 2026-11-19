@@ -13,6 +13,9 @@
 
 use velt_sema::hir::{self, Intrinsic, TyId, TyKind};
 
+use velt_common::std_hooks::Construct;
+
+use crate::lower::hook_calls as hooks;
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
 use crate::lower::{cfunc, cint, ice, unit, Cx, FnLower, Glue, Work};
@@ -79,8 +82,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
             (I::PromiseAll, [ps]) => self.promise_all(ps, ty),
             (I::PromiseRace, [ps]) => self.promise_race(ps, ty, false),
             (I::PromiseAny, [ps]) => self.promise_race(ps, ty, true),
-            (I::PerfNow, []) => self.rt_value(Rt::PerfNow, vec![], ty),
-            (I::DateNow, []) => self.rt_value(Rt::DateNow, vec![], ty),
+            // std's clocks (std/lang/hooks/clock.velt): scalars, nothing to own.
+            (I::PerfNow, []) => hooks::perf_now(self, Construct::Clock).emit(self).op(),
+            (I::DateNow, []) => hooks::date_now(self, Construct::Clock).emit(self).op(),
             (I::PromiseWiden, [p]) => self.promise_widen(p, ty, false),
             (I::PromiseSame, [q, p]) => self.promise_same(q, p, ty, false),
             _ => self.sync_intrinsic(i, args, ty),

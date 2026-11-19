@@ -40,13 +40,10 @@ import {
 } from "velt/net/tls/client_hello";
 import { ClientOffer, parseClientHello } from "velt/net/tls/client_hello_parse";
 import { expandLabel, finishedMac, handshakeSecret, masterSecret } from "velt/net/tls/key_schedule";
-import {
-  AES_128_GCM_SHA256,
-  AES_256_GCM_SHA384,
-  CHACHA20_POLY1305_SHA256,
-  hashLength,
-} from "velt/net/tls/record_cipher";
+import { AES_256_GCM_SHA384, hashLength, RecordCipher } from "velt/net/tls/record_cipher";
 import { HRR_RANDOM } from "velt/net/tls/server_hello";
+import { chooseSuite, serverHello13 } from "velt/net/tls/server_hello13";
+import { ServerHandshake12 } from "velt/net/tls/server_handshake12";
 import { ServerKey } from "velt/net/tls/server_key";
 import { u8x16 } from "velt/simd";
 
@@ -71,6 +68,13 @@ export const S_SEND_RETRY = 1;
 export const S_SEND_FLIGHT = 2;
 /** The client's Finished is checked: read with `clientApplication`. */
 export const S_DONE = 3;
+/** TLS 1.2: send `hello` (ServerHello to ServerHelloDone) in plaintext, keep reading. */
+export const S_SEND_PLAIN = 4;
+/**
+ * TLS 1.2: the client's Finished is checked: send a ChangeCipherSpec, then `flight` under
+ * `writeCipher`.
+ */
+export const S_DONE12 = 5;
 
 /** The server's side of one handshake. */
 export class ServerHandshake {
@@ -103,6 +107,13 @@ export class ServerHandshake {
   clientHandshake: u8[] | null = null;
   serverApplication: u8[] | null = null;
   clientApplication: u8[] | null = null;
+  /** The rest of the handshake when the client has only TLS 1.2, else null. */
+  tls12: ServerHandshake12 | null = null;
+  /** TLS 1.2: the write keys, after `S_DONE12`. */
+  writeCipher: RecordCipher | null = null;
+  /** TLS 1.2: the server random and the ECDHE private key to use instead of new ones (tests). */
+  fixedRandom: u8[] | null = null;
+  fixedKey: u8[] | null = null;
 
   /** A handshake that presents `key` and chooses among `protocols` with ALPN (none: no ALPN). */
   constructor(key: ServerKey, protocols: string[]) {
@@ -120,6 +131,15 @@ export class ServerHandshake {
     return this.state >= WAIT_FINISHED;
   }
 
+  /**
+   * The client's ChangeCipherSpec: in TLS 1.2 the read keys from the next record on, in TLS 1.3
+   * null (middlebox compatibility's, which changes nothing).
+   */
+  ccs(): RecordCipher | null {
+    const t = this.tls12;
+    return t == null ? null : t.ccs();
+  }
+
   private add(m: u8[]) {
     const at = this.transcript.length;
     const n = m.length;
@@ -131,6 +151,16 @@ export class ServerHandshake {
 
   /** Handles the client's handshake message `m` (with its 4-byte header): what to do next. */
   onMessage(m: u8[]): i32 {
+    const t = this.tls12;
+    if (t != null) {
+      if (!t.onMessage(m)) {
+        return S_KEEP_READING;
+      }
+      this.flight = t.finished;
+      this.writeCipher = t.writeCipher;
+      this.state = DONE;
+      return S_DONE12;
+    }
     const type = m[0];
     if ((this.state == WAIT_HELLO || this.state == WAIT_RETRY_HELLO) && type == CLIENT_HELLO) {
       return this.clientHello(m, parseClientHello(m.slice(4)));
@@ -149,7 +179,6 @@ export class ServerHandshake {
     if (!retried) {
       this.compat = offer.sessionId.length > 0;
       this.serverName = offer.serverName;
-      this.suite = chooseSuite(offer.suites, u8x16.hasAes());
       if (!offer.schemes.includes(ECDSA_P256_SHA256)) {
         throw new TlsFailure(
           HANDSHAKE_FAILURE,
@@ -157,6 +186,26 @@ export class ServerHandshake {
         );
       }
       this.alpn = this.chooseAlpn(offer.alpn);
+      if (!offer.tls13) {
+        // A TLS 1.2 client (parseClientHello refuses older ones).
+        const t = new ServerHandshake12(
+          this.key,
+          m,
+          offer,
+          this.alpn,
+          u8x16.hasAes(),
+          this.fixedRandom,
+          this.fixedKey,
+        );
+        this.tls12 = t;
+        this.suite = t.suite;
+        this.hello = t.hello;
+        this.state = WAIT_FINISHED;
+        return S_SEND_PLAIN;
+      }
+      this.suite = chooseSuite(offer.suites, u8x16.hasAes());
+    } else if (!offer.tls13) {
+      throw new TlsFailure(ILLEGAL_PARAMETER, "the second ClientHello drops TLS 1.3");
     } else if (offer.cookie) {
       throw new TlsFailure(ILLEGAL_PARAMETER, "a cookie the HelloRetryRequest did not send");
     } else if (!offer.suites.includes(this.suite)) {
@@ -197,7 +246,7 @@ export class ServerHandshake {
     } catch (e) {
       throw new TlsFailure(ILLEGAL_PARAMETER, "the client's key share is not a valid point");
     }
-    const hello = serverHello(randomBytes(32), offer.sessionId, this.suite, group, ours);
+    const hello = serverHello13(randomBytes(32), offer.sessionId, this.suite, group, ours);
     this.add(hello);
     this.hello = hello;
     const hs = handshakeSecret(secret, hashLength(this.suite));
@@ -368,55 +417,4 @@ export class ServerHandshake {
       `the client offers no ALPN protocol of the server's (${this.protocols.join(", ")})`,
     );
   }
-}
-
-/**
- * The suite the server chooses from `offered`, by the server's order rather than the client's (as
- * Go's crypto/tls does): with AES instructions (`hasAes`), AES-128-GCM, AES-256-GCM, then
- * ChaCha20-Poly1305; without them ChaCha20-Poly1305 first. Clients such as rustls and OpenSSL list
- * AES-256-GCM first, which would put every handshake on SHA-384; AES-128-GCM is as strong a
- * choice for them, and a client that offers only AES-256-GCM still gets it.
- */
-export function chooseSuite(offered: usize[], hasAes: bool): usize {
-  const order =
-    hasAes
-      ? [AES_128_GCM_SHA256, AES_256_GCM_SHA384, CHACHA20_POLY1305_SHA256]
-      : [CHACHA20_POLY1305_SHA256, AES_128_GCM_SHA256, AES_256_GCM_SHA384];
-  for (let i: usize = 0; i < order.length; i++) {
-    if (offered.includes(order[i])) {
-      return order[i];
-    }
-  }
-  throw new TlsFailure(
-    HANDSHAKE_FAILURE,
-    "no cipher suite in common (the server has TLS_AES_128_GCM_SHA256, TLS_AES_256_GCM_SHA384 and TLS_CHACHA20_POLY1305_SHA256)",
-  );
-}
-
-// The ServerHello message for `suite` with the key share `share` of `group`.
-function serverHello(random: u8[], sessionId: u8[], suite: usize, group: usize, share: u8[]): u8[] {
-  const w = new ByteWriter();
-  w.u8(SERVER_HELLO);
-  const b = w.begin(3);
-  w.u16(0x0303);
-  w.put(random);
-  const sid = w.begin(1);
-  w.put(sessionId);
-  w.end(sid, 1);
-  w.u16(suite);
-  w.u8(0);
-  const exts = w.begin(2);
-  w.u16(EXT_SUPPORTED_VERSIONS);
-  w.u16(2);
-  w.u16(0x0304);
-  w.u16(EXT_KEY_SHARE);
-  const ks = w.begin(2);
-  w.u16(group);
-  const k = w.begin(2);
-  w.put(share);
-  w.end(k, 2);
-  w.end(ks, 2);
-  w.end(exts, 2);
-  w.end(b, 3);
-  return w.bytes;
 }

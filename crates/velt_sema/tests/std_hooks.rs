@@ -30,6 +30,7 @@ const LOADS_ALL: &str = "import \"velt/lang/this_fn\";\nimport \"velt/lang/recor
     import \"velt/ffi/ptr\";\nimport \"velt/ffi/str_bytes\";\nimport \"velt/ffi/c_string\";\n\
     import \"velt/ffi/export\";\n\
     import \"velt/lang/hooks/locale_compare\";\nimport \"velt/lang/hooks/sched\";\n\
+    import \"velt/lang/hooks/clock\";\n\
     import \"velt/lang/hooks/sched_blocking\";\n\
     import \"velt/lang/hooks/sched_cells\";\n\
     import \"velt/process/child/child_reactor\";\nimport \"velt/net/dns/lookup_sched\";\n\
@@ -396,8 +397,8 @@ fn every_hook_resolves_with_its_signature() {
 
 /// Lazy std checks the lowered hooks of the values a program has: lowering calls them
 /// (`velt_common` `hook_sig.rs`). This program holds an `any`, arrays and functions, and has no
-/// class object, no reference to a host value, no float printed and no `catchUnwind`, which the
-/// unchecked hooks wait for (a printed float for both of its writers).
+/// class object, no reference to a host value, no float printed, no `catchUnwind` and no weak
+/// collection, which the unchecked hooks wait for (a printed float for both of its writers).
 #[test]
 fn lazy_std_checks_the_lowered_hooks_of_the_values_a_program_has() {
     let p = ok_src(LOADS_ALL);
@@ -417,9 +418,47 @@ fn lazy_std_checks_the_lowered_hooks_of_the_values_a_program_has() {
             "whole_number_write",
             "panic_raise",
             "class_object",
-            "host_ref_handle"
+            "host_ref_handle",
+            "weak_release",
+            "weak_map_new",
+            "weak_map_set",
+            "weak_map_set_traced",
+            "weak_map_get",
+            "weak_map_has",
+            "weak_map_delete",
+            "weak_map_drop",
+            "weak_ref_new",
+            "weak_ref_new_with",
+            "weak_ref_word",
+            "weak_ref_deref",
+            "weak_ref_drop",
         ]
     );
+}
+
+/// A weak collection's intrinsic (`Construct::Weak`) has lazy std check std's weak core: lowering
+/// calls its hooks for the collection, and for the release of the types it makes weak-capable.
+#[test]
+fn a_weak_collection_has_lazy_std_check_the_weak_core() {
+    let p = ok_src(
+        "class K { n: number = 1; }
+         function main() {
+           const m = new WeakMap<K, number>();
+           const k = new K();
+           m.set(k, 2);
+           console.log(m.get(k) ?? 0, new WeakRef(k).deref() == null);
+         }",
+    );
+    let unchecked: Vec<&str> = (HOOKS.iter())
+        .filter(|h| h.name.starts_with("weak_") && h.lowered)
+        .filter(|h| {
+            let q = h.qualified();
+            let i = (p.defs.iter()).position(|d| matches!(d, Def::Fn(f) if f.name == q));
+            i.is_none_or(|i| p.unchecked.contains(&DefId(i as u32)))
+        })
+        .map(|h| h.name)
+        .collect();
+    assert!(unchecked.is_empty(), "{unchecked:?}");
 }
 
 /// A hook no code reaches is compared by its body too: lazy std leaves `processWrite` unchecked,

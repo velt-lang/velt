@@ -64,27 +64,30 @@ pub(super) fn interference(f: &Function, pts: &[Set], spilled: &Bits, s: &Susp) 
     let written_in = written_in(f, s, &u);
     let mut interf = vec![Bits::new(n); n];
     for (b, us) in units.iter().enumerate() {
-        let mut after = vec![Bits::new(n); us.len()];
+        // What is live after each unit, the last first (one set per unit, kept), with `live`
+        // stepped through the units in place: a set allocated per unit here and in the loop
+        // below was the larger part of lowering's allocations (bit sets of async functions).
+        let mut after: Vec<Bits> = Vec::with_capacity(us.len());
         let mut live = live_out[b].clone();
-        for (i, u) in us.iter().enumerate().rev() {
-            after[i] = live.clone();
-            live = u.live_before(&live);
+        for u in us.iter().rev() {
+            after.push(live.clone());
+            live.minus(&u.kills);
+            live.union(&u.uses);
         }
+        after.reverse();
         let mut w = written_in[b].clone();
         // The locals occupying their storage at the previous unit of the block: every pair of
         // them is recorded already, so a unit records only the pairs with a local new there.
         // (Recording all pairs at every unit cost units × occupied × spilled.)
         let mut prev = Bits::new(n);
-        for (u, after) in us.iter().zip(after) {
-            let mut occ = u.live_before(&after);
-            occ.union(&after);
+        for (u, mut occ) in us.iter().zip(after) {
+            // `live_before(after) ∪ after` is `(after − kills) ∪ uses ∪ after`: `after ∪ uses`.
+            occ.union(&u.uses);
             w.union(&u.writes);
             w.union(&u.addrs);
             occ.intersect(&w);
             occ.union(&u.writes);
-            let mut new = occ.clone();
-            new.minus(&prev);
-            for x in new.iter() {
+            for x in occ.iter().filter(|&x| !prev.get(x)) {
                 #[cfg(test)]
                 ROW_UNIONS.with(|r| r.set(r.get() + 1));
                 interf[x].union(&occ);
@@ -109,6 +112,8 @@ struct Unit {
 
 impl Unit {
     /// `uses ∪ (live_after − kills)`: operands are read before the destination is written.
+    /// `interference` steps its sets in place; the reference it is tested against uses this.
+    #[cfg(test)]
     fn live_before(&self, after: &Bits) -> Bits {
         let mut l = after.clone();
         l.minus(&self.kills);

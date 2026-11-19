@@ -68,7 +68,7 @@ pub fn ext_x86_features(ext: velt_vir::simd::Ext) -> u32 {
         Ext::ClmulX86 => bit("PCLMULQDQ") | bit("SSSE3") | bit("SSE4.1"),
         // AES is not in the start-up check's list (its table is Rust in velt_rt, #2241): a
         // build never guarantees it, only a gated function does; FMA's check is std's too.
-        Ext::ShaArm | Ext::ClmulArm | Ext::AesX86 | Ext::AesArm | Ext::FmaX86 => 0,
+        Ext::ShaArm | Ext::ClmulArm | Ext::AesX86 | Ext::AesArm | Ext::FmaX86 | Ext::Bf16Arm => 0,
     }
 }
 

@@ -1,5 +1,5 @@
-//! Process facilities: `process.argv` (and `argv()` / `args()`), `process.env`, `process.cwd()`/`chdir`, `performance.now()`
-//! and `Date.now()`. (`process.exit` is `velt_rt_exit` in panic.rs.)
+//! Process facilities: `process.argv` (and `argv()` / `args()`) and the time origin of the
+//! runtime's timers. (`process.exit` is `velt_rt_exit` in panic.rs.)
 //!
 //! Arguments and environment values are converted to UTF-8 from the OS representation (UTF-16 wide
 //! APIs on Windows via `std::env::args_os`/`var_os`); unpaired surrogates / invalid bytes become
@@ -7,7 +7,7 @@
 
 use crate::str_array::VeltStrArray;
 use std::sync::OnceLock;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 
 static ORIGIN: OnceLock<Instant> = OnceLock::new();
 /// `process.argv` when set by an embedder (the `velt dev` JIT host runs inside `velt`, whose own
@@ -99,7 +99,7 @@ fn without_deleted_suffix(exe: std::path::PathBuf) -> std::path::PathBuf {
     }
 }
 
-/// Fix the `performance.now()` time origin (process start). Idempotent.
+/// Fix the time origin of the runtime's timers (process start). Idempotent.
 pub fn init_clock() {
     ORIGIN.get_or_init(Instant::now);
 }
@@ -117,24 +117,10 @@ pub unsafe extern "C" fn velt_rt_process_node_argv(out: *mut VeltStrArray) {
     out.write(VeltStrArray::from_strings(node_argv()));
 }
 
-/// The moment `performance.now()` counts from (process start).
+/// The moment the runtime's timers count from (process start; std's `performance.now()` keeps
+/// its own, std/lang/hooks/clock.velt).
 pub(crate) fn clock_origin() -> Instant {
     *ORIGIN.get_or_init(Instant::now)
-}
-
-/// `performance.now()`: monotonic milliseconds (fractional) since process start.
-#[no_mangle]
-pub extern "C" fn velt_rt_perf_now() -> f64 {
-    ORIGIN.get_or_init(Instant::now).elapsed().as_secs_f64() * 1000.0
-}
-
-/// `Date.now()`: whole milliseconds since the Unix epoch.
-#[no_mangle]
-pub extern "C" fn velt_rt_date_now() -> i64 {
-    match SystemTime::now().duration_since(UNIX_EPOCH) {
-        Ok(d) => d.as_millis() as i64,
-        Err(e) => -(e.duration().as_millis() as i64),
-    }
 }
 
 #[cfg(test)]
@@ -149,11 +135,6 @@ mod tests {
         let mut a = unsafe { a.assume_init() };
         assert!(a.len >= 1);
         unsafe { crate::str_array::velt_rt_str_array_drop(&mut a) };
-
-        let t0 = velt_rt_perf_now();
-        std::thread::sleep(std::time::Duration::from_millis(5));
-        assert!(velt_rt_perf_now() - t0 >= 4.0);
-        assert!(velt_rt_date_now() > 1_600_000_000_000);
     }
 
     #[test]

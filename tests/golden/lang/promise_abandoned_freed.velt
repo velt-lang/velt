@@ -1,0 +1,60 @@
+// check: no leaks
+// A promise nobody can settle any more and nobody holds is freed, with what its function holds
+// (#3126): `new Promise` whose `resolve` and `reject` were dropped, a dropped
+// `Promise.withResolvers`, the loser of a race, and one whose settler went with a cleared timer.
+// Each used to stay parked until the program ended, about 6 blocks a promise.
+
+class Held {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+  [Symbol.dispose]() {
+    console.log("freed " + this.name);
+  }
+}
+
+async function work(i: number): Promise<number> {
+  await sleep(0);
+  return i;
+}
+
+// Holds `h` across an await of a promise that never settles.
+async function waits(h: Held, never: Promise<number>): Promise<number> {
+  const v = await never;
+  return v + h.name.length;
+}
+
+async function main() {
+  let t = 0;
+  for (let i = 0; i < 50; i++) {
+    const dropped = new Promise<number>((resolve) => {});
+    const w = Promise.withResolvers<number>();
+    const never = new Promise<number>((resolve) => {});
+    t += await Promise.race([work(i), never]);
+    const late = Promise.withResolvers<number>();
+    const timer = setTimeout(() => late.resolve(-1), 10000);
+    t += await Promise.race([Promise.resolve(i), late.promise]);
+    clearTimeout(timer);
+  }
+  console.log(t);
+
+  // What a function suspended for ever holds goes with it.
+  {
+    const p = waits(new Held("first"), new Promise<number>((resolve) => {}));
+    await sleep(1);
+    console.log("dropping");
+  }
+  console.log("dropped");
+
+  // A promise that can still be settled runs on after its handle is dropped.
+  const late = Promise.withResolvers<number>();
+  void (async () => {
+    const h = new Held("second");
+    console.log("settled " + (await late.promise) + " " + h.name);
+  })();
+  await sleep(1);
+  late.resolve(7);
+  await sleep(1);
+  console.log("done");
+}

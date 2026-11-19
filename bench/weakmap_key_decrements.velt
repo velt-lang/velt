@@ -1,0 +1,52 @@
+// WeakMap whose keys are retained and released many times while their entries live, the shape
+// of a reactive target passed around while its cache entry lives (#3119 step 3). Each value is a
+// handler over another object, so no entry is a cycle; each key decrement goes through the weak
+// core's cold release path, and the first ones examine the value's graph for a path back to the
+// key. Keeps the cost of a key with many decrements visible next to weakmap_handlers.velt.
+class Raw {
+  n: i64;
+
+  constructor(n: i64) {
+    this.n = n;
+  }
+}
+
+class Handler {
+  read: () => i64;
+
+  constructor(read: () => i64) {
+    this.read = read;
+  }
+}
+
+class Holder {
+  held: Raw | null = null;
+}
+
+function track(cache: WeakMap<Raw, Handler>, raw: Raw): void {
+  const other = new Raw(raw.n + 1);
+  cache.set(raw, new Handler(() => other.n));
+}
+
+function main() {
+  const cache = new WeakMap<Raw, Handler>();
+  const keys: Raw[] = [];
+  for (let i: i64 = 0; i < 1000; i++) {
+    const k = new Raw(i);
+    track(cache, k);
+    keys.push(k);
+  }
+  const holder = new Holder();
+  let sum: i64 = 0;
+  for (let round = 0; round < 1000; round++) {
+    for (const k of keys) {
+      holder.held = k;
+      sum += holder.held!.n;
+      holder.held = null;
+    }
+  }
+  for (const k of keys) {
+    sum += cache.get(k)!.read();
+  }
+  console.log(sum);
+}

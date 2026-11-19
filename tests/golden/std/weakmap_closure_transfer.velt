@@ -1,0 +1,32 @@
+// check: no leaks
+// A function value whose environment a weak map entry holds on a path back to its key, sent
+// to another task: the sender gives up its reference through the environment's release,
+// which a weakly held environment needs (#3119 step 3).
+class Raw {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+class Handler {
+  read: () => number;
+  constructor(read: () => number) {
+    this.read = read;
+  }
+}
+
+async function call(f: () => number): Promise<number> {
+  return f();
+}
+
+async function main() {
+  const cache = new WeakMap<Raw, Handler>();
+  const raw = new Raw(9);
+  const h = new Handler(() => raw.n);
+  cache.set(raw, h);
+  const f = cache.get(raw)!.read;
+  console.log("on another task:", await spawn(call(f)));
+  console.log("here:", f(), raw.n);
+  console.log("map still in use:", cache.has(new Raw(0)));
+}

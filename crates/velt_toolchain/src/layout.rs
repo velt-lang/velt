@@ -285,7 +285,7 @@ impl Root {
                          it open), so it was left as it is; stop it and try again ({e})"
                     )
                 })?;
-                std::fs::remove_dir_all(&aside).map_err(|e| {
+                crate::read_only::remove_tree(&aside).map_err(|e| {
                     format!(
                         "velt {v} is removed, but {} is left behind: {e}",
                         aside.display()

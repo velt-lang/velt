@@ -1,0 +1,34 @@
+// check: no leaks
+// The closure on the path back to the key is replaced while the entry lives: its environment,
+// weakly held as a member of the entry, loses its last reference and is freed then, through the
+// three-way release (#3119 step 3). The key is freed later, with nothing left on its path.
+class Raw {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+class Handler {
+  read: () => number;
+  constructor(read: () => number) {
+    this.read = read;
+  }
+}
+
+function track(cache: WeakMap<Raw, Handler>, n: number): WeakRef<Raw> {
+  const raw = new Raw(n);
+  const handler = new Handler(() => raw.n);
+  cache.set(raw, handler);
+  console.log("reads", cache.get(raw)!.read());
+  handler.read = () => 0;
+  console.log("reads", cache.get(raw)!.read());
+  return new WeakRef(raw);
+}
+
+function main() {
+  const cache = new WeakMap<Raw, Handler>();
+  const r = track(cache, 8);
+  console.log("key freed:", r.deref() == null);
+  console.log("map still in use:", cache.has(new Raw(0)));
+}

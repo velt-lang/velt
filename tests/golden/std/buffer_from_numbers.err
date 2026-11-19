@@ -1,0 +1,2 @@
+buffer_from_numbers.velt:4:25: error: mismatched types
+  = note: a `number[]` is not a byte array (`u8[]`): `Uint8Array.from(xs)` converts its numbers to bytes as JavaScript does (256 is 0, -1 is 255), or declare the array `u8[]`

@@ -66,6 +66,19 @@ pub enum Intrinsic {
     /// `dst`'s element, which owns nothing (both ranges bounds-checked; one memcpy). The bulk
     /// load of `velt/half` (`f16FromBytes`, std/half/bytes.velt). Additive.
     ArrayCopyBytes,
+    /// std only, unsafe: `arrayDataAddress<T>(xs (modified)) -> usize`, the address of `xs`'s
+    /// buffer (0 for an array without one), whose elements own nothing (a number type or
+    /// `bool`; sema checks it, and lowering each instance of a type parameter). Good only
+    /// until `xs` is grown or dropped. With `ArrayByteLength`, how a generic function hands a
+    /// number array's own memory to a C function (velt/fs's `readSync`). Additive.
+    ArrayDataAddress,
+    /// std only, unsafe: `arrayReadAddress<T>(xs) -> usize`, `ArrayDataAddress` for memory
+    /// that is only read: it does not count as a change of `xs` (an array an `RwLock` holds,
+    /// in a `read` callback: velt/fs's `writeSync`). Additive.
+    ArrayReadAddress,
+    /// std only: `arrayByteLength<T>(xs) -> usize`, `xs.length * sizeof(T)` for an array of
+    /// numbers (checked as `ArrayDataAddress`). Additive.
+    ArrayByteLength,
     /// std only: `(xs (modified), len: usize)` set the length to `len` (growing the capacity
     /// when it is smaller) without dropping or initializing any element: slots past the old
     /// length must be written (`ArrayMove`) before they are read, and slots that are not owned
@@ -88,8 +101,7 @@ pub enum Intrinsic {
     /// permutation: every element stays owned once, so it moves elements of any type, where a
     /// loop of moves would count or check each one. Additive.
     ArrayRotateRight,
-    /// std only: as `ArrayRotateRight`, one slot down: the element at `lo` moves to `hi`.
-    /// Additive.
+    /// std only: as `ArrayRotateRight`, one slot down: the element at `lo` moves to `hi`. Additive.
     ArrayRotateLeft,
     /// std only (`xs.swapIn`, std/prelude/array_nested.velt): `(xs: T[][] (modified), a: usize,
     /// i: usize, b: usize, j: usize)`, exchanges `xs[a][i]` and `xs[b][j]` (all four
@@ -394,33 +406,23 @@ pub enum Intrinsic {
     /// Changed (#3094), for all five `AddressAtomic*`: renamed from `PtrAtomic*`; the first
     /// operand is a `usize` address, not a `Ptr<T>`. Not additive.
     AddressAtomicLoad,
-    /// std only: `(address: usize, v: T, order: u8)`: as `AtomicStore` at `address`, `T` being
-    /// `v`'s type. Changed (#3094): see `AddressAtomicLoad`.
+    /// std only: `(address: usize, v: T, order: u8)`: as `AtomicStore` at `address`.
     AddressAtomicStore,
     /// std only: `(address: usize, v: T, op: u8, order: u8) -> T`: as `AtomicRmw` at `address`
     /// (the declaration's `(address, op, v, order)` reordered by sema, `op` a literal as
     /// `AtomicRmw` numbers it). Changed (#3094): see `AddressAtomicLoad`.
     AddressAtomicRmw,
-    /// std only: `(address: usize, expected: T, v: T, order: u8, failure: u8) -> T`: as
-    /// `AtomicCas` at `address`. Changed (#3094): see `AddressAtomicLoad`.
+    /// std only: `(address, expected: T, v: T, order: u8, failure: u8) -> T`: `AtomicCas` there.
     AddressAtomicCas,
-    /// std only: as `AddressAtomicCas`, `-> bool` (may fail spuriously), `T` being `expected`'s
-    /// type. Changed (#3094): see `AddressAtomicLoad`.
+    /// std only: as `AddressAtomicCas`, `-> bool` (may fail spuriously).
     AddressAtomicCasWeak,
-    /// std only (velt/ffi's `Ptr.at`, `Ptr.orNull`): `ptrFromAddress<T>(address: usize) ->
-    /// Ptr<T>`, the address as the pointer word, unchecked (#3094). Additive.
+    /// std only (`Ptr.at`, `Ptr.orNull`, #3094): `ptrFromAddress<T>(a: usize) -> Ptr<T>`. Additive.
     PtrFromAddress,
-    /// std only (velt/ffi's `Ptr.addressOf`): `ptrToAddress<T>(p: Ptr<T> | null) -> usize`, the
-    /// pointer word as an address, 0 for `null` (#3094). Additive.
+    /// std only (`Ptr.addressOf`): `ptrToAddress<T>(p: Ptr<T> | null) -> usize`. Additive.
     PtrToAddress,
-    /// std only (velt/ffi's `Ptr.read`): `ptrRead<T>(p: Ptr<T>, index: usize) -> T`, `T` a
-    /// number type, `bool`, a C struct or a C pointer (sema checks it, through type parameters
-    /// too: `json::PtrUse::Memory`): the `T` at element `index` of the array at `p`, its
-    /// non-null pointers (a C struct's, nested ones included) checked, the program stopping on
-    /// NULL (#3094). On wasm32 a `T` whose layout isn't C's there is a lowering error. Additive.
+    /// std only (`Ptr.read`, #3094): `ptrRead<T>(p, i: usize) -> T`, NULL-checked. Additive.
     PtrRead,
-    /// std only (velt/ffi's `Ptr.write`): `ptrWrite<T>(p: Ptr<T>, index: usize, v: T)`, `T` as
-    /// for `PtrRead`: `v` written at element `index` of the array at `p` (#3094). Additive.
+    /// std only (`Ptr.write`): `ptrWrite<T>(p: Ptr<T>, i: usize, v: T)`. Additive.
     PtrWrite,
     /// std only: `atomicAddress<T>(a: borrow Atomic<T>) -> usize`: the address of `a`'s word.
     /// Sema allows only an `Atomic` of a 32- or 64-bit integer that cannot move: a static atomic
@@ -456,6 +458,14 @@ pub enum Intrinsic {
     /// std only: `addressCall(f: usize, a: usize) -> usize`: the call of the C function at
     /// address `f` with `a`, both pointer-sized (a waker table's `clone`). Additive.
     AddressCall,
+    /// std only: `addressCallWord(f: usize, a: u64)`: the call of the C function at address `f`,
+    /// which takes one 64-bit word and returns nothing (a weak map value's retain and release
+    /// glue, rt_abi.md "Weak references"). Additive.
+    AddressCallWord,
+    /// std only: `addressCall3(f: usize, a: usize, b: usize, c: usize)`: the call of the C
+    /// function at address `f`, which takes three pointer-sized values and returns nothing (trace
+    /// glue's `(obj, visit, ctx)`). Additive.
+    AddressCall3,
     /// std only: `fnAddress(f) -> usize`: the address of module-level function `f` (a `FnRef`
     /// with no type arguments; sema checks it is not async or throwing and passes only numbers
     /// and `bool`), callable from C with the C calling convention (#2649). Additive.
@@ -615,6 +625,12 @@ pub enum Intrinsic {
     /// std only: `weakRefDeref<T>(r: u32): T | null` — the target (counted), or
     /// null once it was freed.
     WeakRefDeref,
+    /// std only: `weakMapDrop(m: u32)` — weak map `m`'s drop: every value is released. Lowered
+    /// to std's weak core (`Construct::Weak`), which a program without weak collections
+    /// doesn't load.
+    WeakMapDrop,
+    /// std only: `weakRefDrop(r: u32)` — a `WeakRef` slot's drop.
+    WeakRefDrop,
 
     // Record views (#379; std/prelude/record.velt, velt_vir lower/record_view.rs): a record an
     // `any` is converted to with `any` values is a view of the object the `any` holds. Each is

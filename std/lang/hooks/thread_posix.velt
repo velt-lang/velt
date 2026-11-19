@@ -63,7 +63,11 @@ export function startDetached(start: usize, arg: usize): bool {
 }
 
 function startThread(start: usize, arg: usize, detach: bool): bool {
-  const a = m.zeroed(ATTR + 16);
+  // From the C library, outside the block counts: the stall monitor starts a spare worker's
+  // thread while the program runs on, and the spare may finish the last task, and the program
+  // take its counts (`VELT_RC_STATS`), before the monitor's thread is back from `pthread_create`
+  // to free this. A counted block then showed as one left unfreed (#3174's merge queue run).
+  const a = m.lastingZeroed(ATTR + 16);
   const attr = m.ptrTo<pthread_attr_t>(a);
   const t = m.ptrTo<void>(a + ATTR);
   // No thread starts without its stack size: tasks need the 8 MiB (a secondary thread's default
@@ -86,6 +90,6 @@ function startThread(start: usize, arg: usize, detach: bool): bool {
       pthread_attr_destroy(attr);
     }
   }
-  m.release(a, ATTR + 16);
+  m.lastingRelease(a);
   return rc === 0;
 }

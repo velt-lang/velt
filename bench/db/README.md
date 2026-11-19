@@ -1,7 +1,7 @@
 # Database clients — Velt vs Node and Rust
 
 Inserts and queries per second through Velt's `sqlite`, `redis` and `postgres` packages
-(`packages/`, path dependencies of `velt/package.velt`; std's `velt/sqlite` … until 2026-10),
+(`packages/`, path dependencies of `velt/package.velt`),
 against the usual Node drivers (`better-sqlite3`, `ioredis`, `pg`) and Rust crates (`rusqlite`,
 `redis`, `tokio-postgres` + `deadpool-postgres`). Run everything with `bench/db/run.sh` (see
 `--help`); results are in `RESULTS.md`.
@@ -38,7 +38,7 @@ uses its own table (`bench_db_<lang>_<unique>`, dropped at the end) or key prefi
 - `--quick` runs 1/20 of the sizes (a correctness pass; the numbers mean little).
 - Velt is built with `velt build --release` on the LLVM and the Cranelift backend; Rust in
   release with LTO. Rust's async programs run twice: on tokio's multi-thread runtime (the `Rust`
-  row and the × Rust reference, the same runtime shape as Velt') and on the current-thread
+  row and the × Rust reference, the same runtime shape as Velt's) and on the current-thread
   runtime (`Rust current-thread`, one thread like Node's event loop).
 - Rows are decoded into a typed object in every language: `class Row { id; name; score }` (a
   class instance in Velt and Node, a struct in Rust). Checksums are `id + name.length +
@@ -70,7 +70,8 @@ Redis: 20,000 distinct keys `<prefix><j>` holding `value-<j>`; one multiplexed c
 
 Postgres: table `(id INTEGER PRIMARY KEY, name TEXT NOT NULL, score DOUBLE PRECISION NOT NULL)`.
 Sequential workloads use one connection; statements are prepared (named statements in `pg`,
-`prepare` / `prepare_cached` in tokio-postgres, std/postgres' per-connection statement cache).
+`prepare` / `prepare_cached` in tokio-postgres, the postgres package's per-connection
+statement cache).
 
 | workload | what | ops |
 |---|---|---:|
@@ -83,7 +84,8 @@ Sequential workloads use one connection; statements are prepared (named statemen
 ## Deviations
 
 - **Node rows** are wrapped into `new Row(...)` from the driver's plain object (better-sqlite3 and
-  pg return plain objects); Velt decodes straight into the class (via JSON), Rust into a struct.
+  pg return plain objects); Velt decodes straight into the class (velt/db's `readRows`), Rust
+  into a struct.
 - **SQLite transactions** use explicit `BEGIN`/`COMMIT` everywhere (Velt `db.begin()` +
   `tx.commit()`, `db.exec("BEGIN")` in Node, `execute_batch` in Rust) rather than each driver's
   closure helper, so the SQL sent is identical.
@@ -93,12 +95,13 @@ Sequential workloads use one connection; statements are prepared (named statemen
   deadpool-postgres (`pool.get()` + `prepare_cached` per query). Both pools are filled with 8
   open connections before timing. Each connection runs one query at a time in both.
 - **Redis** in Rust uses the `redis` crate's `MultiplexedConnection` (cloned into each task);
-  ioredis and std/redis multiplex one connection per client by design. The Rust SET checks for
-  an OK reply as `Option<String>`, ioredis compares with `"OK"`, Velt' `set()` returns a bool.
-- **Velt Postgres insert** binds an object to `VALUES (:id, :name, :score)`: std/postgres takes
-  an array only when its values share one type, and std rewrites `:name` to `$n` once per
-  cached statement, so the server sees the same `$1, $2, $3` statement as Node and Rust. The
-  Velt pool is `createPool({ url, max: 8 })` with `pool.queryOne` (a free connection per
-  query), warmed by holding 8 `pool.connect()` clients before timing.
+  ioredis and the redis package multiplex one connection per client by design. The Rust SET
+  checks for an OK reply as `Option<String>`, ioredis compares with `"OK"`, Velt's `set()`
+  returns a bool.
+- **Velt Postgres insert** binds an object to `VALUES (:id, :name, :score)`: the postgres
+  package takes an array only when its values share one type, and it rewrites `:name` to `$n`
+  once per cached statement, so the server sees the same `$1, $2, $3` statement as Node and
+  Rust. The Velt pool is `createPool({ url, max: 8 })` with `pool.queryOne` (a free connection
+  per query), warmed by holding 8 `pool.connect()` clients before timing.
 - **Velt transactions** in Postgres use `c.begin()` / `tx.commit()` (tokio-postgres:
   `client.transaction()`; pg: `BEGIN` / `COMMIT` queries).

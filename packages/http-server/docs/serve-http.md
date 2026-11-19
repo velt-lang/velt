@@ -49,10 +49,15 @@ async function main() {
 
 ## `serveHttp(opts, handler)`
 
-`serve<E>(opts: HttpServeOptions, handler: (req: HttpRequest, res: HttpResponse) => Promise<void, E>
-throws E): Promise<HttpServer>`. `HttpServeOptions { port: number; host?; maxHeadSize?; maxHeaders?;
-maxBodySize?; idleTimeout?; tls?; headersTimeout?; requestTimeout?; http2?; maxConcurrentStreams? }`
-(the last two: [HTTP/2](#http2)): the default host is 127.0.0.1 and port 0 picks a free port.
+```text
+serveHttp<E>(opts: HttpServeOptions,
+             handler: (req: HttpRequest, res: HttpResponse) => Promise<void, E> throws E)
+  : Promise<HttpServer>
+HttpServeOptions { port: number; host?; maxHeadSize?; maxHeaders?; maxBodySize?; idleTimeout?;
+                   tls?; headersTimeout?; requestTimeout?; http2?; maxConcurrentStreams? }
+```
+
+`http2` and `maxConcurrentStreams` are described under [HTTP/2](#http2). The default host is 127.0.0.1 and port 0 picks a free port.
 `idleTimeout` (5 s) is how long a connection waits for its next request or more of one;
 `headersTimeout` (60 s) the most a head may take from its first byte, and `requestTimeout` (300 s)
 the most a body may take from its head, however steadily they trickle in: past either, the request
@@ -242,7 +247,7 @@ write. What differs from HTTP/1.1, for a handler:
   announces SETTINGS_ENABLE_CONNECT_PROTOCOL), and `upgrade(protocol)` answers it 200 and
   returns a `TcpStream` that carries the protocol over that one stream (one end of a
   `streamPair`, velt/net), within the stream's flow control both ways. `acceptWebSocket` of
-  [velt/net/websocket](websocket.md) does this by itself, so a WebSocket server works over
+  [`http-server/websocket`](websocket.md) does this by itself, so a WebSocket server works over
   HTTP/1.1 and HTTP/2 alike.
 - Bodies have flow control: a request body arrives as fast as the handler reads it (up to
   256 KiB a stream may send ahead), and a response body is sent as fast as the client's
@@ -285,4 +290,4 @@ touches module state once makes its connection take the lock for every request a
 connections then run one at a time (a TSX page reading a module-level array did 110k requests
 a second; built per request, 665k). Compare paths with string literals (`req.pathIs("/json")`),
 build data per request, and keep shared mutable state in a `shared(new Mutex(...))` passed to
-the handler (#1487 makes constants free to read).
+the handler.
