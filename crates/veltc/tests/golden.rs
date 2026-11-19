@@ -665,12 +665,18 @@ fn leaked_blocks(stderr: &str, allowed: u64) -> Option<String> {
     // The program ended itself with `process.exit`: the frames live then keep what they hold,
     // as Node runs no cleanup there, and the report says so in place of a verdict
     // (std/prelude/process.velt `processExit`).
-    if stderr.lines().any(|l| l == EXIT_NOTE) {
-        return None;
-    }
-    let Some(report) = stderr.lines().rev().find(|l| l.starts_with("rc stats:")) else {
+    // It is the line just before the report: the same text printed anywhere else is the
+    // program's own output.
+    let mut last = stderr
+        .lines()
+        .rev()
+        .skip_while(|l| !l.starts_with("rc stats: retain="));
+    let Some(report) = last.next() else {
         return Some("leak check: no `rc stats` report on stderr".into());
     };
+    if last.next() == Some(EXIT_NOTE) {
+        return None;
+    }
     let field = |name: &str| report.split_whitespace().find_map(|w| w.strip_prefix(name));
     let unfreed = |a: &str, f: &str| a.parse::<u64>().ok()?.checked_sub(f.parse().ok()?);
     let blocks = match field("blocks=").and_then(|b| b.split_once('/')) {

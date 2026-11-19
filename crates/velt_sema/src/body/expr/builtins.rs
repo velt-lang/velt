@@ -99,11 +99,34 @@ impl FnCx<'_, '_> {
         self.intrinsic(i, ck.args, ck.ret, span)
     }
 
-    /// Is this code a program's own (not std's), compiled with a prelude that has
-    /// [`PROCESS_EXIT`]?
-    fn exits_through_prelude(&self) -> bool {
-        !self.cx.scopes[self.module].is_std
-            && matches!(self.cx.prelude.get(PROCESS_EXIT), Some(Item::Def(_)))
+    /// The prelude's [`PROCESS_EXIT`] when this code is a program's own (not std's) and the
+    /// prelude has it.
+    fn exit_through_prelude(&self) -> Option<DefId> {
+        match self.cx.prelude.get(PROCESS_EXIT) {
+            Some(Item::Def(d)) if !self.cx.scopes[self.module].is_std => Some(*d),
+            _ => None,
+        }
+    }
+
+    /// `process.exit(args)` as a call of the prelude's `d`. The argument is checked as the
+    /// intrinsic's is, an `i32`: not by the rule for a program's calls of std's functions, which
+    /// would let a `number` in and truncate it.
+    fn prelude_exit(
+        &mut self,
+        d: DefId,
+        args: &[ast::Expr],
+        exp: Option<TyId>,
+        span: Span,
+    ) -> hir::Expr {
+        let mut c = self.fn_callable(d, "`process.exit`".to_string(), span);
+        c.js_numbers = false;
+        let slots = vec![None; c.slot_names.len()];
+        let ck = self.check_call(&c, slots, args, exp, span);
+        let kind = H::Call {
+            callee: hir::Callee::Def(d, ck.type_args),
+            args: ck.args,
+        };
+        self.mk(kind, ck.ret, span)
     }
 
     /// `console.log(...)`, `console.error(...)`, `process.exit(code)`, `process.memoryUsage()`,
@@ -121,11 +144,10 @@ impl FnCx<'_, '_> {
             // A program's own exit goes through the prelude, which tells the leak counters'
             // report that live frames keep what they hold (std/prelude/process.velt
             // `processExit`); std's exits, and a program without that prelude, are the intrinsic.
-            ("process", "exit") if self.exits_through_prelude() => {
-                let what = "process.exit";
-                return Some(self.prelude_call(PROCESS_EXIT, what, &[], args, exp, span));
-            }
-            ("process", "exit") => Some((Intrinsic::Exit, "`process.exit`")),
+            ("process", "exit") => match self.exit_through_prelude() {
+                Some(d) => return Some(self.prelude_exit(d, args, exp, span)),
+                None => Some((Intrinsic::Exit, "`process.exit`")),
+            },
             ("Promise", "all") => Some((Intrinsic::PromiseAll, "`Promise.all`")),
             ("Promise", "race") => Some((Intrinsic::PromiseRace, "`Promise.race`")),
             ("Promise", "allSettled") => {

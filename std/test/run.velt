@@ -39,14 +39,15 @@ export async function runRegistered() {
     if (ok) {
       return;
     }
-    process.exit(1);
+    // A failed run ends itself, as a program's own `process.exit`: its report gets no verdict.
+    processExit(1);
   } else {
     let failed = false;
     for (const f of files) {
       const result = await runTests(f, 0, null);
       failed = failed || result.failed > 0 || result.teardownFailed;
     }
-    process.exit(failed ? 1 : 0);
+    processExit(failed ? 1 : 0);
   }
 }
 
