@@ -34,13 +34,15 @@ declare c("c") function memset$sched(dst: Ptr<u8>, c: i32, n: usize): Ptr<u8>;
  * Address `a`, never 0, as a C pointer argument (the program stops on 0: a pointer that may be
  * `NULL` is `ptrOrNull`'s).
  */
-@inline("always")export function ptr(a: usize): Ptr<u8> {
+@inline("always")
+export function ptr(a: usize): Ptr<u8> {
   // SAFETY: only passed to a C function, whose call site states what is at `a`.
   return unsafe { Ptr.at<u8>(a) };
 }
 
 /** Address `a`, never 0, as a C pointer argument to a `T` (`declare c type`, or a number type). */
-@inline("always")export function ptrTo<T>(a: usize): Ptr<T> {
+@inline("always")
+export function ptrTo<T>(a: usize): Ptr<T> {
   // SAFETY: as `ptr`'s.
   return unsafe { Ptr.at<T>(a) };
 }
