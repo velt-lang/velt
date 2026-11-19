@@ -1,0 +1,19 @@
+2 4 4 8 8 16 16 8 16 16 16 114
+[ -1, 2 ] [ -300, 4 ] [ 65535, 6 ] [ -70000, 8 ] [ 4000000000, 10 ]
+[ -9007199254740993, 12 ] [ 18446744073709551615, 14 ] [ 1.5, -16 ] [ 2.5, 1e+300 ] [ -5, 20 ] [ 6, 22 ]
+4 [ 255, 2, 212, 254 ]
+8 1.5 -16
+8 2 210
+The argument 'buffer' is empty and cannot be written. Received <Buffer >
+The argument 'buffer' is empty and cannot be written. Received Int8Array(0) []
+The argument 'buffer' is empty and cannot be written. Received Int16Array(0) []
+The argument 'buffer' is empty and cannot be written. Received Uint16Array(0) []
+The argument 'buffer' is empty and cannot be written. Received Int32Array(0) []
+The argument 'buffer' is empty and cannot be written. Received Uint32Array(0) []
+The argument 'buffer' is empty and cannot be written. Received BigInt64Array(0) []
+The argument 'buffer' is empty and cannot be written. Received BigUint64Array(0) []
+The argument 'buffer' is empty and cannot be written. Received Float32Array(0) []
+The argument 'buffer' is empty and cannot be written. Received Float64Array(0) []
+The argument 'buffer' is empty and cannot be written. Received Float16Array(0) []
+The argument 'buffer' is empty and cannot be written. Received BFloat16Array(0) []
+The argument 'buffer' is empty and cannot be written. Received Int16Array(0) []

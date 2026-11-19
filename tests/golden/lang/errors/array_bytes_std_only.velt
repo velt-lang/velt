@@ -1,0 +1,16 @@
+// The address of a number array's bytes (`arrayDataAddress`, with which `readSync` and
+// `writeSync` hand an array's own memory to the system) is good only while the array is
+// neither grown nor dropped, so no program can take one to keep: the intrinsic is std's.
+import { arrayDataAddress } from "velt/lang/intrinsics";
+
+let KEPT: usize = 0;
+
+function keep(xs: f32[]) {
+  // SAFETY: none: this is what the import above refuses.
+  KEPT = unsafe { arrayDataAddress(xs) };
+}
+
+function main() {
+  keep([1, 2, 3]);
+  console.log(KEPT);
+}
