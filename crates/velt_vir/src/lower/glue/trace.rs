@@ -170,11 +170,7 @@ impl FnLower<'_, '_> {
                 true => self.trace_proxiable(p, c),
                 false => (p, self.trace_fn(c)),
             };
-            let (visit, cx) = (
-                Operand::Copy(Place::local(tv.0)),
-                Operand::Copy(Place::local(tv.1)),
-            );
-            self.call_entry(visit, vec![cx, p, tf], vec![Ty::Ptr; 3], Ty::Unit);
+            self.call_visit(tv, p, tf);
             self.goto(done);
             self.switch_to(done);
             return;
@@ -238,16 +234,7 @@ impl FnLower<'_, '_> {
             self.branch(is, yes, no);
             self.switch_to(yes);
             let tf = self.trace_fn(c);
-            let (visit, cx) = (
-                Operand::Copy(Place::local(tv.0)),
-                Operand::Copy(Place::local(tv.1)),
-            );
-            self.call_entry(
-                visit,
-                vec![cx, data.clone(), tf],
-                vec![Ty::Ptr; 3],
-                Ty::Unit,
-            );
+            self.call_visit(tv, data.clone(), tf);
             self.goto(done);
             self.switch_to(no);
         }
@@ -324,5 +311,23 @@ impl FnLower<'_, '_> {
             }
             lw.counted_free(q, vt);
         });
+    }
+}
+
+impl FnLower<'_, '_> {
+    /// `visit(ctx, child, child_trace)` of the trace glue's context `tv` (its `visit` and `ctx`
+    /// parameters): std's weak core's callback (std/lang/hooks/weak_graph.velt), a function of
+    /// three 64-bit words on every target, so each pointer is passed widened (on wasm32 an
+    /// indirect call must match the callee's signature).
+    pub(in crate::lower) fn call_visit(
+        &mut self,
+        tv: (vir::Local, vir::Local),
+        child: Operand,
+        child_trace: Operand,
+    ) {
+        let visit = Operand::Copy(Place::local(tv.0));
+        let args = [Operand::Copy(Place::local(tv.1)), child, child_trace]
+            .map(|a| self.cast_to(a, Ty::Ptr, Ty::U64));
+        self.call_entry(visit, args.to_vec(), vec![Ty::U64; 3], Ty::Unit);
     }
 }

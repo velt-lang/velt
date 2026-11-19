@@ -1,5 +1,0 @@
-// Global, conditional (crates/velt_loader/src/globals): the exponential, logarithmic,
-// trigonometric and hyperbolic functions of `Math` and `Math.cbrt` (velt/lang/math/functions),
-// 1,600 lines of ports, for a program that calls one; other programs don't load them.
-// load when std/prelude/math uses: .exp .expm1 .log1p .log2 .log10 .sin .cos .tan .asin .acos .atan .atan2 .sinh .cosh .tanh .asinh .acosh .atanh .cbrt
-import "velt/lang/math/functions";

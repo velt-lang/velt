@@ -14,8 +14,9 @@ fn std_diagnostics(src: &str) -> String {
 }
 
 const IMPORTS: &str =
-    "import { addressArray, arrayByteLength, arrayDataAddress, arrayReadAddress, addressAtomicCas, addressAtomicLoad, addressAtomicRmw,
-  addressAtomicStore, addressCall, addressLoad, addressStore, atomicAddress, fnAddress, futDrop,
+    "import { addressArray, arrayByteLength, arrayDataAddress, arrayReadAddress, addressAtomicCas,
+  addressAtomicLoad, addressAtomicRmw, addressAtomicStore, addressCall, addressCall3,
+  addressCallWord, addressLoad, addressStore, atomicAddress, fnAddress, futDrop,
   futPoll, promiseAt, slotPut, slotTake, stateDrop, statePoll }
   from \"velt/lang/intrinsics\";";
 
@@ -313,6 +314,8 @@ fn the_calls_through_an_address_need_unsafe_code() {
         "statePoll(8, 16, 24)",
         "stateDrop(8, 16)",
         "addressCall(8, 16)",
+        "addressCallWord(8, 16)",
+        "addressCall3(8, 16, 24, 32)",
     ] {
         let e = std_err(&format!("function main() {{ console.log({call}); }}"));
         assert!(e.contains("unsafe"), "{call}: {e}");

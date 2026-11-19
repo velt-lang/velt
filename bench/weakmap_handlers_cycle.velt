@@ -1,0 +1,33 @@
+// As weakmap_handlers.velt, with each handler's closure capturing its key, as sigx's handlers
+// capture their target (#3119 step 3): every entry is an ephemeron cycle through the closure's
+// environment, which the trial deletion frees when the key's last outside reference goes.
+class Raw {
+  n: i64;
+
+  constructor(n: i64) {
+    this.n = n;
+  }
+}
+
+class Handler {
+  read: () => i64;
+
+  constructor(read: () => i64) {
+    this.read = read;
+  }
+}
+
+function track(cache: WeakMap<Raw, Handler>, raw: Raw): i64 {
+  const handler = new Handler(() => raw.n + 1);
+  cache.set(raw, handler);
+  return cache.get(raw)!.read();
+}
+
+function main() {
+  const cache = new WeakMap<Raw, Handler>();
+  let sum: i64 = 0;
+  for (let i: i64 = 0; i < 400000; i++) {
+    sum += track(cache, new Raw(i));
+  }
+  console.log(sum);
+}
