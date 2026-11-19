@@ -12,14 +12,14 @@ declare c("c") function memcmp(a: Ptr<void>, b: Ptr<void>, n: usize): i32;
 export function byCodePoint(a: string, b: string): bool {
   const na = strByteLen(a);
   const nb = strByteLen(b);
-  // SAFETY: each address is that of its string's bytes, `na` and `nb` of them, alive and
-  // unchanged during the call (`a` and `b` are this function's parameters); C reads the first
-  // `min(na, nb)` of each and keeps no pointer.
-  const r =
-    unsafe { memcmp(
-      Ptr.at<void>(strDataAddress(a)),
-      Ptr.at<void>(strDataAddress(b)),
-      na < nb ? na : nb,
-    ) };
+  const n = na < nb ? na : nb;
+  // SAFETY: the address of `a`'s bytes, `na` of them, alive and unchanged while `a`, this
+  // function's parameter, is.
+  const pa = unsafe { Ptr.at<void>(strDataAddress(a)) };
+  // SAFETY: as for `a`, with `nb` bytes.
+  const pb = unsafe { Ptr.at<void>(strDataAddress(b)) };
+  // SAFETY: C reads the first `n` bytes at each address, which both strings have, and keeps no
+  // pointer.
+  const r = unsafe { memcmp(pa, pb, n) };
   return r < 0 || (r == 0 && na < nb);
 }

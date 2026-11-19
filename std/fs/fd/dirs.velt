@@ -98,12 +98,15 @@ function next(dir: Ptr<DIR>, sys: DirSystem): Entry {
     const type = unsafe { addressLoad<u8>(at + sys.typeAt) };
     // SAFETY: `d_name` is NUL-terminated inside the entry, so `strlen` stops there.
     const len = unsafe { strlen(Ptr.at<u8>(nameAt)) };
-    // SAFETY: the name's first byte, and its second when it has two, are inside it.
-    const dots =
-      unsafe { len <= 2 &&
-        addressLoad<u8>(nameAt) == 46 &&
-        (len == 1 || addressLoad<u8>(nameAt + 1) == 46) };
-    if (true) {
+    // SAFETY: the name's first byte, or the NUL of an empty one, is inside the entry.
+    const first = unsafe { addressLoad<u8>(nameAt) };
+    let second: u8 = 0;
+    if (len > 0) {
+      // SAFETY: the name's second byte, or the NUL after its only one, is inside the entry.
+      second = unsafe { addressLoad<u8>(nameAt + 1) };
+    }
+    const dots = first == 46 && (len == 1 || (len == 2 && second == 46));
+    if (!dots) {
       return { nameAt, len, type, error: 0 };
     }
   }

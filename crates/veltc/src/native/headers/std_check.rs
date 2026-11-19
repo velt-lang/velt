@@ -265,7 +265,7 @@ mod tests {
                 panic!("std/{file}, which CHECKED or CHECKED_POSIX lists: {e}")
             });
             assert!(
-                text.contains("declare c(\"c\")"),
+                text.contains("declare c(\"c\""),
                 "std/{file} declares no C functions: take it out of CHECKED"
             );
         }
