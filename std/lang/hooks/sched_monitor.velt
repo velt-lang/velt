@@ -367,7 +367,7 @@ function rescueOf(g: usize, w: usize, now: usize): void {
   m.inc(g + t.E_MOVING);
   let k = q.reverse(m.takeStack(w + t.E_INBOX));
   if (q.tryLock(w)) {
-    let half = q.reverse(tq.takeHalf(w, true));
+    let half = q.reverse(tq.takeHalf(w, true, false));
     m.store32(w + t.E_QLOCK, 0);
     // After the inbox's tasks, oldest first.
     if (k === 0) {

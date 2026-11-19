@@ -272,7 +272,7 @@ export function weakMapSetTraced(map: u32, key: usize, value: u64, keyTrace: usi
  * it. An entry whose key is freed by its only release is never traced, and a value is not marked
  * (its releases run no trial) until its entry is examined.
  */
-@inline
+@inline("always")
 function set(h: usize, map: u32, key: usize, value: u64, keyTrace: usize): void {
   // One probe of the map's entries: the entry `key` has, removed, or where its entry goes. Nothing
   // below changes them (the records only), so the slot holds until it is taken.

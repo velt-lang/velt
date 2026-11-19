@@ -52,13 +52,13 @@ function counting(): bool {
 }
 
 /** The word at `a`: a word of a block's table entry or of a descriptor. */
-@inline
+@inline("always")
 function ld(a: usize): usize {
   // SAFETY: as the doc says (module docs: the lock, or one thread).
   return unsafe { addressLoad<usize>(a) };
 }
 
-@inline
+@inline("always")
 function st(a: usize, v: usize): void {
   // SAFETY: as `ld`'s.
   unsafe {
@@ -178,7 +178,7 @@ export function moduleDrop(): void {
 }
 
 /** The block of the program's descriptor `desc`, to reach slot `slot` (made on first use). */
-@inline
+@inline("always")
 function state(desc: usize, slot: u64): usize {
   if (DESC.load("acquire") as usize === desc && slot < READY.load("acquire")) {
     return BLOCK.load("relaxed") as usize;

@@ -1,0 +1,19 @@
+// velt/compiler: decorators that tell the compiler how to compile a function, for std, packages
+// and programs alike (docs/internals/design/package-machine-code.md).
+//
+//   import { inline, noInline } from "velt/compiler";
+//
+//   export struct Fixed {
+//     readonly raw: i64;
+//     @inline [Symbol.add](o: Fixed): Fixed { return { raw: this.raw + o.raw }; }
+//   }
+//
+// `@inline` offers a function's body to its callers and asks the inliner to prefer it, as Rust's
+// `#[inline]`; `@inline("always")` inlines every call in release builds whatever its size (not on
+// a recursive function); `@noInline` keeps every call a call. None applies to a generator or an
+// async function.
+
+/** How calls of a function are inlined: `@inline` (`"hint"`) or `@inline("always")`. */
+export { inline } from "velt/lang/intrinsics/decorators";
+/** Calls of a function stay calls. */
+export { noInline } from "velt/lang/intrinsics/decorators";

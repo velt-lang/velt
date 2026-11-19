@@ -14,8 +14,6 @@ mod imports {
         pub fn exit(code: i32) -> !;
         /// `performance.now()`.
         pub fn now_ms() -> f64;
-        /// `Date.now()`.
-        pub fn date_ms() -> f64;
     }
 }
 
@@ -66,17 +64,6 @@ pub fn monotonic_ms() -> f64 {
     }
 }
 
-/// Milliseconds since the Unix epoch.
-pub fn epoch_ms() -> i64 {
-    #[cfg(all(target_family = "wasm", target_os = "unknown"))]
-    // SAFETY: a plain import without arguments.
-    return unsafe { imports::date_ms() } as i64;
-    #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as i64)
-}
-
 /// Block the (only) thread for `ms` milliseconds: the executor's wait for its next timer. A JS
 /// host's thread cannot block: the executor returns to the host instead (host_turn.rs).
 #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
@@ -102,6 +89,5 @@ mod tests {
         let a = monotonic_ms();
         sleep_ms(2.0);
         assert!(monotonic_ms() - a >= 2.0);
-        assert!(epoch_ms() > 1_600_000_000_000);
     }
 }

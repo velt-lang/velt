@@ -92,7 +92,7 @@ export function waitFor(handle: u64, kind: u32, arg: u64, deadline: u64): usize 
   const b = io.io();
   if (deadline !== 0) {
     // Its place in the timer list is this worker's.
-    sp.anchor();
+    sp.anchorFixed();
   }
   const f = m.alloc(W_SIZE);
   m.st(f, m.ld(b + io.IO_WAIT_POLL));
@@ -124,7 +124,7 @@ export function waitAlso(handle: u64, kind: u32, arg: u64, deadline: u64, also: 
 }
 
 /** Drops waiter `f`'s other future (`waitAlso`), if it has one. */
-@inline
+@inline("always")
 function dropAlso(f: usize): void {
   const a = m.ld(f + W_ALSO);
   if (a !== 0) {
@@ -253,7 +253,7 @@ function detach(f: usize): bool {
  * `d` more (or fewer) waits linked into a source: the I/O block's count, which only its thread
  * writes. A release: the end's scan that reads the count also sees the tasks queued before.
  */
-@inline
+@inline("always")
 function waiting(d: isize): void {
   const b = io.io();
   m.storeRelease(b + io.IO_WAITING, ((m.ld(b + io.IO_WAITING) as isize) + d) as usize);
@@ -279,7 +279,7 @@ export function now(): u64 {
 }
 
 /** Has waiter `f`'s deadline passed (the timer list said so, or the clock does now)? */
-@inline
+@inline("always")
 function expired(f: usize): bool {
   const d = m.ld(f + W_DEADLINE);
   if (d === 0) {
@@ -313,7 +313,7 @@ function time(f: usize): void {
 }
 
 /** Takes waiter `f` out of the timer list. */
-@inline
+@inline("always")
 function untime(f: usize): void {
   if (m.ld(f + W_TIMED) === 0) {
     return;

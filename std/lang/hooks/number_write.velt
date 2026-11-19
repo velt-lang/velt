@@ -84,7 +84,7 @@ export function wholeNumberWrite(stream: u32, v: i64, end: u8): void {
 // The eight ASCII digits of `x` (below 10^8), leading zeros included, the first in the low byte,
 // every split one multiply over all lanes at once: velt/lang/number/integer's `digits8`, copied
 // so that a printed float loads none of std's integer printing.
-@inline
+@inline("always")
 function digits8(x: u64): u64 {
   const hundreds = ((x % 10000) << 32) | (x / 10000);
   const high = ((hundreds * 10486) >> 20) & 0x0000007f0000007f;

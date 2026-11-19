@@ -150,7 +150,7 @@ function halt(): void {
  * when an exit is due (`handToMain`), worker 0 gives back the root of `main` (with the counters
  * on) and ends the program, and another worker stops. One load otherwise.
  */
-@inline
+@inline("always")
 export function takeExit(e: usize): void {
   if (HANDED.load("seqcst") > 0) {
     takeExitNow(e);

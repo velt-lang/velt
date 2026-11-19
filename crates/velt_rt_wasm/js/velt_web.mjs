@@ -6,7 +6,6 @@
 //   exit(code)               stop the program at once (thrown as VeltExit: `process.exit`, a panic)
 //   done(code)               the program ended with `code`
 //   now_ms()                 performance.now()
-//   date_ms()                Date.now()
 //   host_release(slot)       forget a HostRef's value (HostRefs below)
 //   host_clone(slot)         a second slot for a HostRef's value
 //   set_timer(ms)            call velt_turn() in `ms` milliseconds, replacing the last request
@@ -130,7 +129,6 @@ export async function loadVelt(source, host = {}) {
       },
       done: (code) => rt.end(code),
       now_ms: () => performance.now(),
-      date_ms: () => Date.now(),
       host_release: (slot) => refs.release(slot >>> 0),
       host_clone: (slot) => refs.add(refs.get(slot >>> 0)),
       set_timer(ms) {
@@ -161,6 +159,7 @@ export async function loadVelt(source, host = {}) {
   const provided = {
     "velt:fetch": fetchHost(undefined, contexts),
     "velt:random": randomHost(),
+    "velt:clock": clockHost(),
     ...host.imports,
   };
   Object.assign(imports, hostImports(module, provided, rt));
@@ -502,6 +501,21 @@ export function randomHost() {
   return {
     fill(buf) {
       globalThis.crypto.getRandomValues(buf);
+    },
+  };
+}
+
+/**
+ * The `velt:clock` host module: the clocks of `Date.now()` and `performance.now()`
+ * (std/lang/hooks/clock_js.velt), in milliseconds.
+ */
+export function clockHost() {
+  return {
+    now() {
+      return performance.now();
+    },
+    date() {
+      return Date.now();
     },
   };
 }

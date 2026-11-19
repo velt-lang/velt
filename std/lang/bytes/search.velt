@@ -125,7 +125,7 @@ function indexOfByteLong(d: u8[], byte: u8, start: usize): i64 {
 }
 
 // `indexOfByte`'s loops.
-@inline
+@inline("always")
 function indexOfByteFrom(d: u8[], byte: u8, start: usize): i64 {
   const n = d.length;
   const needle = velt_simd_u8x16_splat(byte);

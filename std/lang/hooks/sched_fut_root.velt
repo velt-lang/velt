@@ -1,0 +1,28 @@
+// velt/lang/hooks (internal): the root of a task of the executor in Velt spawned from a heap
+// future (sched_spawn.velt `spawnFut`, sched_foreign.velt, #2649): the task's root holds the
+// future's address and its result's size before the result's room, and its poll function is
+// `futRootPoll`, which sched_run.velt `run` polls as any task's root.
+
+import { futDrop, futPoll } from "velt/lang/intrinsics";
+import * as m from "./sched_mem";
+
+/**
+ * The root of a task spawned from a heap future (sched.velt `schedSpawnFut`): polls it; once it
+ * is ready, its result (the size 8 bytes before `root`) moves to `root` and it is freed.
+ */
+export function futRootPoll(root: usize, cx: usize): u32 {
+  const f = m.ld(root - 16);
+  // SAFETY: the task owns `f`, a live heap future until it is ready; `cx` is the task's.
+  const ready = unsafe { futPoll(f, cx) };
+  if (ready === 1) {
+    const n = m.ld(root - 8);
+    if (n !== 0) {
+      m.copy(root, f + 16, n);
+    }
+    // SAFETY: done, its result moved out: freed, never polled again.
+    unsafe {
+      futDrop(f);
+    }
+  }
+  return ready;
+}

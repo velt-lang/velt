@@ -79,6 +79,9 @@ const CHECKED: &[&str] = &[
     "ffi/errno_windows.velt",
     "ffi/read.velt",
     "fs/fd/posix.velt",
+    "lang/hooks/clock_darwin.velt",
+    "lang/hooks/clock_linux.velt",
+    "lang/hooks/clock_win32.velt",
     "lang/hooks/os_posix.velt",
     "lang/hooks/pid_posix.velt",
     "lang/hooks/pid_win32.velt",
@@ -240,7 +243,7 @@ mod tests {
     fn only_the_runtime_s_exports_are_skipped() {
         let exports = runtime_exports();
         assert!(exports.contains("velt_rt_timer_new"));
-        assert!(exports.contains("velt_rt_sleep"));
+        assert!(exports.contains("velt_rt_keep_alive_acquire"));
         assert!(!exports.contains("velt_rt_not_exported"));
         assert!(!exports.contains("strlen"));
         // The WebAssembly runtime's lines are not velt_rt's.

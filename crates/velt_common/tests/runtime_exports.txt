@@ -11,7 +11,6 @@ velt_rt velt_rt_array_view_put
 velt_rt velt_rt_array_view_remove
 velt_rt velt_rt_await_ready
 velt_rt velt_rt_await_tick
-velt_rt velt_rt_block_on
 velt_rt velt_rt_bytes_copy
 velt_rt velt_rt_bytes_copy_within
 velt_rt velt_rt_bytes_drop
@@ -41,7 +40,6 @@ velt_rt velt_rt_check_cpu
 velt_rt velt_rt_child_output_sync
 velt_rt velt_rt_clear_throw_loc
 velt_rt velt_rt_current_worker
-velt_rt velt_rt_date_now
 velt_rt velt_rt_db_cursor
 velt_rt velt_rt_db_sink
 velt_rt velt_rt_deep_eq_enter
@@ -205,7 +203,6 @@ velt_rt velt_rt_param_null
 velt_rt velt_rt_param_object
 velt_rt velt_rt_param_str
 velt_rt velt_rt_param_u64
-velt_rt velt_rt_perf_now
 velt_rt velt_rt_pow_i64
 velt_rt velt_rt_process_args
 velt_rt velt_rt_process_node_argv
@@ -257,12 +254,6 @@ velt_rt velt_rt_signal_new
 velt_rt velt_rt_signal_reason
 velt_rt velt_rt_signal_retain
 velt_rt velt_rt_signal_wait
-velt_rt velt_rt_sleep
-velt_rt velt_rt_spawn
-velt_rt velt_rt_spawn_detached
-velt_rt velt_rt_spawn_fut
-velt_rt velt_rt_spawn_target
-velt_rt velt_rt_spawn_transfer
 velt_rt velt_rt_start
 velt_rt velt_rt_statics
 velt_rt velt_rt_stdin_read_all_bytes_sync
@@ -421,7 +412,6 @@ velt_rt_wasm velt_rt_cell_new
 velt_rt_wasm velt_rt_cell_use
 velt_rt_wasm velt_rt_clear_throw_loc
 velt_rt_wasm velt_rt_current_worker
-velt_rt_wasm velt_rt_date_now
 velt_rt_wasm velt_rt_env_all
 velt_rt_wasm velt_rt_env_get
 velt_rt_wasm velt_rt_env_remove
@@ -488,7 +478,6 @@ velt_rt_wasm velt_rt_mutex_lock
 velt_rt_wasm velt_rt_mutex_lock_checked
 velt_rt_wasm velt_rt_mutex_unlock
 velt_rt_wasm velt_rt_panic
-velt_rt_wasm velt_rt_perf_now
 velt_rt_wasm velt_rt_process_args
 velt_rt_wasm velt_rt_process_chdir
 velt_rt_wasm velt_rt_process_cwd

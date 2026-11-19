@@ -4,15 +4,7 @@
 // sleep and no queued microtask polls its root and nothing else; the end of its root and of the
 // task, and its join handle. The worker loop around it is sched_loop.velt.
 
-import {
-  futDrop,
-  futPoll,
-  inline,
-  noInline,
-  stateDrop,
-  statePoll,
-  stdUsed,
-} from "velt/lang/intrinsics";
+import { inline, noInline, stateDrop, statePoll, stdUsed } from "velt/lang/intrinsics";
 import * as bd from "./sched_budget";
 import * as fg from "./sched_foreign";
 import * as jn from "./sched_join";
@@ -29,6 +21,7 @@ import * as nc from "./sched_node_catch";
 import * as order from "./sched_order";
 import * as q from "./sched_queue";
 import * as sl from "./sched_sleep";
+import * as sc from "./sched_sleep_carry";
 import * as t from "./sched_task";
 import * as wk from "./sched_wake";
 
@@ -37,7 +30,7 @@ import * as wk from "./sched_wake";
  * task with no started promise, no due sleep, no queued microtask and a root still running takes
  * the straight path: its flags read once, the root polled, two words checked.
  */
-@inline
+@inline("always")
 export function run(e: usize, k: usize, mode: u32): void {
   if (stdUsed("nodeTimers") && mode !== 0) {
     // A new poll: no look found it busy yet (before the state's store, which publishes it).
@@ -106,7 +99,7 @@ export function run(e: usize, k: usize, mode: u32): void {
  * `turnShared` queues it once anything else is queued first). What it printed was published at
  * its poll's end all the same (`run`).
  */
-@inline
+@inline("always")
 function again(e: usize, mode: u32): bool {
   return mode === t.M_LAZY || (mode !== 0 && q.ownEmpty(e));
 }
@@ -136,8 +129,11 @@ function runOther(e: usize, k: usize, fl: u32): void {
  * microtask or a sleep that resumed the root meanwhile set flag `POLLED`: the root is not polled
  * again then, so a root that yielded there waits for the task's next poll.
  */
-@inline
+@inline("always")
 function runWoken(e: usize, k: usize, fl: u32): void {
+  if ((fl & t.CARRIED) !== 0) {
+    sc.adopt(e, k);
+  }
   t.flags(k, 0, t.POLLED);
   if ((fl & t.LOCALS) !== 0) {
     let n = wn.takeWoken(k);
@@ -244,7 +240,7 @@ function runEnd(e: usize, k: usize, mode: u32): void {
  * read-modify-write on the word a look marks with another (sched_order_pass.velt `busy`): either
  * the look's mark comes first and is seen here, or the look sees the poll ending.
  */
-@inline
+@inline("always")
 function timersAfter(e: usize, k: usize): void {
   if ((m.or32(k + t.T_SKIPPED, t.SK_ENDING) & t.SK_SKIPPED) !== 0 && !t.has(k, t.HOLDS)) {
     order.busyEnded(e, k);
@@ -261,7 +257,7 @@ function requeue(e: usize, k: usize, mode: u32): void {
 }
 
 /** Polls task `k`'s root, unless it is done; through the catch when it catches. */
-@inline
+@inline("always")
 function pollRoot(e: usize, k: usize): void {
   if ((m.ld32(k + t.T_FLAGS) & (t.ROOT_DONE | nc.T_CATCHES)) !== 0) {
     if (!t.has(k, t.ROOT_DONE)) {
@@ -288,7 +284,7 @@ function pollRootCaught(e: usize, k: usize): void {
 }
 
 /** Polls the root of task `k`, not done. */
-@inline
+@inline("always")
 function pollRunning(e: usize, k: usize): void {
   // SAFETY: `k`'s root is the state of its poll function, not finished; `k + T_CX` is its cx.
   const ready = unsafe { statePoll(m.ld(k + t.T_POLL), m.ld(k + t.T_ROOT), k + t.T_CX) };
@@ -438,25 +434,4 @@ function finish(e: usize, k: usize): void {
   }
   m.st(e + t.E_LIVE, m.ld(e + t.E_LIVE) - 1);
   wk.release(k);
-}
-
-/**
- * The root of a task spawned from a heap future (sched.velt `schedSpawnFut`): polls it; once it
- * is ready, its result (the size 8 bytes before `root`) moves to `root` and it is freed.
- */
-export function futRootPoll(root: usize, cx: usize): u32 {
-  const f = m.ld(root - 16);
-  // SAFETY: the task owns `f`, a live heap future until it is ready; `cx` is the task's.
-  const ready = unsafe { futPoll(f, cx) };
-  if (ready === 1) {
-    const n = m.ld(root - 8);
-    if (n !== 0) {
-      m.copy(root, f + 16, n);
-    }
-    // SAFETY: done, its result moved out: freed, never polled again.
-    unsafe {
-      futDrop(f);
-    }
-  }
-  return ready;
 }

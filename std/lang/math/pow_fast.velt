@@ -57,7 +57,7 @@ const ABOVE: f64 = 1.0000000000000002;
  * `pow` of the positive normal double with bits `ix` (k, z as in pow.velt) and `y`, the FMA
  * build's bits with the sign of `signBias`, or NaN where a rounding is not certain.
  */
-@inline
+@inline("always")
 export function powFast(ix: u64, y: f64, signBias: u64): f64 {
   const tmp = ix - OFF;
   const i = (((tmp >> 45) & 127) * 3) as usize;
@@ -118,7 +118,7 @@ export function powFast(ix: u64, y: f64, signBias: u64): f64 {
 
 // ±exp(x + xtail) as the FMA build computes it (the sign from `signBias`), where the FMA build's
 // tail is within `bound` / 1.25 of `xtail`; NaN where a rounding is not certain.
-@inline
+@inline("always")
 function expFast(x: f64, xtail: f64, bound: f64, signBias: u64): f64 {
   const abstop = (x.toBits() >> 52) & 0x7ff;
   if (abstop < 0x3c9 || abstop >= 0x408) {
