@@ -145,6 +145,7 @@ unsafe function sum(p: Ptr<f32>, n: usize): f32 { … }
 | `StrBytes` | `const char *` | a `string`'s UTF-8 bytes, borrowed, no NUL; the binding passes `byteLength(s)` |
 | `CString` | `const char *` | an owned NUL-terminated copy (`new CString(s)`, refusing a NUL inside) |
 | `Out<T>` | `T *` | the `value` C writes through the pointer: a number, `bool`, or `Ptr<U> \| null` for a `U **` |
+| a `declare c struct` | the struct by value | x86-64 Linux and macOS (System V); other targets refuse it until their convention comes |
 | `void` | `void` | as a result |
 
 - **No hidden conversions.** A `string` crosses only as a `StrBytes` parameter (the declaration
@@ -345,6 +346,19 @@ declare c struct CGRect { origin: CGPoint; size: CGSize; }
 - On wasm32 C's pointers, `size_t` and `ssize_t` are 4 bytes and Velt's 8, so `Ptr.read` and
   `Ptr.write` of a type holding one are compile errors naming the target; a struct of other
   fields is C's layout there too.
+- **By value**: a C struct is a parameter or result of a `declare c` function, passed as the
+  target's C calling convention classifies it (`crates/velt_vir/src/c_struct_abi.rs`, one table
+  both backends follow through `vir::ExternFn::c_abi`). On x86-64 System V (Linux, macOS), a
+  struct of 16 bytes or less crosses in registers, each eightbyte in an integer register or, if
+  only floats are in it, a vector one, and takes them all or none: when too few remain it goes on
+  the stack whole. A larger struct goes on the stack (a copy the callee owns, `byval`), and a
+  larger result comes back through a slot the caller passes first (`sret`). A struct result
+  arriving from C has its non-null pointer fields checked as `Ptr.read` does. Other targets, a
+  variadic function's struct and an `@export` function's struct are errors until their layers;
+  `velt build` reports the target's at the declaration. tests/c_struct_by_value.rs is the
+  differential test: generated C functions over 16 struct shapes and the cases where registers
+  run out, called from debug (Cranelift) and release (LLVM) builds, every field compared in both
+  directions.
 - It has no identity, so every comparison compares its content, with the numbers in it compared
   as the operation compares numbers: `===`, `==` and `indexOf` by IEEE, `Object.is` by
   SameValue, `Map` and `Set` keys and `includes` by SameValueZero.
@@ -682,9 +696,9 @@ must not depend on code elsewhere.
 ## Limitations
 
 - `declare c` calls are synchronous.
-- A C struct crosses only behind `Ptr<S>` (read and written with `Ptr.read` and `Ptr.write`):
-  not by value, not as `Out<S>`; struct declarations are not compared with headers. C arrays in
-  structs are not supported.
+- A C struct crosses by value only on x86-64 System V (Linux, macOS), and not as `Out<S>` or
+  `Ref<S>`, in a variadic function, or to an `@export` function. C arrays in structs are not
+  supported.
 - Function pointers cross only as `Ptr<void>`; C cannot call a Velt closure.
 - `declare c const` cannot be a string; a macro of a string literal is an error.
 - `va_list` parameters (`vprintf`) cannot be declared.
@@ -699,12 +713,10 @@ must not depend on code elsewhere.
 
 ## Not yet implemented
 
-- **C structs by value** in `declare c` signatures, `Out<S>` and `Ref<S>`, following the target's
-  convention (SysV x86-64 eightbytes, AAPCS64 homogeneous float aggregates, Win64 by reference
-  over 8 bytes, `sret`). One table-driven classifier, a port of rustc's
-  `rustc_target::abi::call`, serves both backends, and a differential ABI test (generated C
-  functions over many struct shapes, compiled with the system C compiler, called from both
-  backends on every CI target) gates it. C arrays become fields once Velt has fixed-size arrays.
+- **C structs by value on the other targets** (AAPCS64 homogeneous float aggregates and Apple's
+  variant, Win64 by reference over 8 bytes), `Out<S>` and `Ref<S>`, in the same classifier and
+  differential test, which then runs on every CI target. C arrays become fields once Velt has fixed-size
+  arrays.
 - **`NativeHandle<T>`**, after .NET's `SafeHandle`: a native object's pointer with its release,
   which runs exactly once. It counts calls in flight: passing it for a `Ptr<T>` parameter takes
   a reference for the call, `dispose()` marks it closed, the release runs when the last call
