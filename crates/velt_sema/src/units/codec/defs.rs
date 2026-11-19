@@ -99,12 +99,12 @@ enums! {
     DeclaredIntrinsic {
         0 => Invalid,
         1 => Op(a),
-        2 => TargetFeature,
-        3 => AnyToPrimitive,
-        4 => HookCall,
+        2 => AnyToPrimitive,
+        3 => HookCall,
     }
     Inline {
         0 => Always,
         1 => Never,
+        2 => Hint,
     }
 }
