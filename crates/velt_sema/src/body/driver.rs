@@ -588,6 +588,7 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
     fcx.fn_name = f.name.clone();
     fcx.owner = f.owner;
     fcx.body_def = Some(def);
+    fcx.gated_body(def);
     fcx.static_this = fcx.cx.static_this.get(&def).map(|&this| {
         let method = fcx.cx.static_copy_of.get(&def).copied().unwrap_or(def);
         (this, fcx.cx.static_this[&method])
