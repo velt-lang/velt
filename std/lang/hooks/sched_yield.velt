@@ -35,6 +35,7 @@ export function schedYield(cx: usize): void {
  *   clears the `QUEUED` its wake set (sched_node.velt `run`);
  * - with any other waker (a join's child: only children that woke are polled): at once.
  */
+@inline("always")
 export function schedYieldReady(cx: usize): u32 {
   const w = m.ld(cx + 8);
   const vt = m.ld(w);
