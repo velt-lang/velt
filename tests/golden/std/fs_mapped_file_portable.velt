@@ -46,6 +46,12 @@ function main() {
     console.log((e as Error).name, (e as Error).message.replace(path, "<path>"));
   }
   console.log(fs.MappedFile.open(path, { offset: 96 }).length, m.f32s(8, 0).length);
+  // A directory is refused with the same code on every target.
+  try {
+    fs.MappedFile.open(".");
+  } catch (e) {
+    console.log((e as Error).message);
+  }
   try {
     fs.rmSync(path);
   } catch (e) {

@@ -8,4 +8,5 @@ RangeError u32s(0, 1): byte 6 of the file is not a multiple of 4
 RangeError f32s(92, 2) is not a range of 4-byte floats inside the 96 mapped bytes
 RangeError MappedFile.open: offset 90, length 7 is not inside the 96 bytes of <path>
 0 0
+EISDIR: illegal operation on a directory, mmap '.'
 true

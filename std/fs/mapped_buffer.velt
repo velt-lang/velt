@@ -6,10 +6,18 @@
 
 import { osError } from "velt/fs/errors";
 import { readFileBytesSync } from "velt/fs/files";
+import { statSync } from "velt/fs/metadata";
 import { MapOptions, Mapping, outsideFile, partOf } from "velt/fs/mapped_part";
 
 /** Reads the part of the file at `path` that `options` names (`MappedFile.open`). */
 export function mapFile(path: string, options: MapOptions | undefined): Mapping {
+  // What is not a regular file is refused as over a mapping, before the read (which fails for
+  // a directory with an error of its own). A path that cannot be described is left to the
+  // read, whose error is the one a mapping's `open` gives (`ENOENT` for a missing file).
+  const kind = kindOf(path);
+  if (kind != 0) {
+    throw osError(kind, "mmap", path);
+  }
   const whole = readFileBytesSync(path);
   const size = whole.length as number;
   const part = partOf(size, options);
@@ -26,6 +34,16 @@ export function mapFile(path: string, options: MapOptions | undefined): Mapping 
   // The typed methods ask only whether there are bytes (an address of 0 is none): they copy
   // from `bytes` by index (`COPIES`), so no address is kept and none is ever read.
   return { address: 1, from: part.offset as usize, bytes: shared(bytes), owner: 0 };
+}
+
+/** 0 for a regular file or a path `stat` fails for, else the error of mapping it: EISDIR, EINVAL. */
+function kindOf(path: string): i32 {
+  try {
+    const st = statSync(path);
+    return st.isFile() ? 0 : st.isDirectory() ? 21 : 22;
+  } catch (e) {
+    return 0;
+  }
 }
 
 /** Advice has nothing to act on: the bytes are in memory. Always 0. */
