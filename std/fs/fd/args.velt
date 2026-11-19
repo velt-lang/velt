@@ -3,13 +3,18 @@
 
 import { utf8Encode } from "velt/encoding/utf8";
 import { received } from "velt/lang/bytes/text";
+import { inline, noInline } from "velt/lang/intrinsics";
 
 /** `Number.MAX_SAFE_INTEGER`: the largest offset, length or position Node accepts. */
 export const MAX_SAFE: number = 9007199254740991;
 /** The largest 32-bit signed integer: the largest file descriptor and `open` flags. */
 export const MAX_INT32: number = 2147483647;
 
-/** The value of an integer argument as Node checks it (`validateInteger`). */
+/**
+ * The value of an integer argument as Node checks it (`validateInteger`). Inlined: the check is
+ * three comparisons, which fold away for a constant argument; the error is built out of line.
+ */
+@inline("always")
 export function integer(name: string, v: number, min: number, max: number): i64 {
   if (v >= min && v <= max && Math.floor(v) == v) {
     return v as i64;
@@ -17,6 +22,7 @@ export function integer(name: string, v: number, min: number, max: number): i64 
   throw outOfRange(name, v, min, max);
 }
 
+@noInline
 export function outOfRange(name: string, v: number, min: number, max: number): RangeError {
   const must = Math.floor(v) != v ? "an integer" : `>= ${min} && <= ${max}`;
   return new RangeError(
@@ -28,12 +34,18 @@ export function outOfRange(name: string, v: number, min: number, max: number): R
  * A file descriptor as Node checks it (`validateInt32`, which shows what it received as it is:
  * no digit separators, unlike `validateInteger`).
  */
+@inline("always")
 export function descriptor(fd: number): i32 {
   if (fd >= 0 && fd <= MAX_INT32 && Math.floor(fd) == fd) {
     return fd as i32;
   }
+  throw badDescriptor(fd);
+}
+
+@noInline
+function badDescriptor(fd: number): RangeError {
   const must = Math.floor(fd) != fd ? "an integer" : `>= 0 && <= ${MAX_INT32}`;
-  throw new RangeError(`The value of "fd" is out of range. It must be ${must}. Received ${fd}`);
+  return new RangeError(`The value of "fd" is out of range. It must be ${must}. Received ${fd}`);
 }
 
 /** `path` as a C string: its UTF-8 bytes and a 0 (Node's `TypeError` for a 0 inside it). */
@@ -53,6 +65,7 @@ export function cPath(path: string): u8[] {
  * (Node's options default), else an integer in [0, size] for a write (a write may start at the
  * end) or [0, MAX_SAFE] for a read (`offset + length <= size` is checked afterwards).
  */
+@inline("always")
 export function bufferOffset(size: usize, offset: number | null | undefined, read: bool): i64 {
   if (offset == null) {
     return 0;

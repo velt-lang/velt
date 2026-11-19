@@ -44,7 +44,7 @@ export declare decorator function noInline(): FunctionDecorator | MethodDecorato
  * In a debug (Cranelift) build every check is false, so a gated function never runs there.
  */
 export declare decorator function targetFeature(
-  target: "sha-arm" | "sha-x86" | "clmul-x86" | "clmul-arm" | "aes-x86" | "aes-arm" | "fma-x86",
+  target: "sha-arm" | "sha-x86" | "clmul-x86" | "clmul-arm" | "aes-x86" | "aes-arm" | "fma-x86" | "bf16-arm",
 ): FunctionDecorator;
 
 /**

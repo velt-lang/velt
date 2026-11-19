@@ -157,11 +157,11 @@ export function crc32c(words: u64[]): u32 {
 **As built in step 2.** `@targetFeature(target)` is a compile-time decorator in
 std/lang/intrinsics/decorators.velt, re-exported by `velt/compiler` and found by its `std_hooks`
 role (`decorator_target_feature`), on a function of any module. Its parameter is the union of
-today's seven targets (`"sha-arm"`, `"sha-x86"`, `"clmul-x86"`, `"clmul-arm"`, `"aes-x86"`,
-`"aes-arm"`, `"fma-x86"`), so an unknown name is a type error at the use, and its type
+today's eight targets (`"sha-arm"`, `"sha-x86"`, `"clmul-x86"`, `"clmul-arm"`, `"aes-x86"`,
+`"aes-arm"`, `"fma-x86"`, `"bf16-arm"`), so an unknown name is a type error at the use, and its type
 (`FunctionDecorator`) keeps it off methods. A function declared inside another may be gated, with
 its calls checked like any other's. The intrinsic `targetFeature` and its first-statement form are
-gone; std's 31 gated functions carry the decorator. The checks stay velt/simd's methods
+gone; std's 32 gated functions carry the decorator. The checks stay velt/simd's methods
 (`u64x2.hasClmulX86()`, …), which packages can already call, and which sema already found by
 definition.
 
@@ -171,7 +171,7 @@ Two parts of the plan above were already true or move:
   passed or returned, and a closure inside one starts without its target. Step 2 adds tests that
   this holds outside std.
 - **The `isSupported` classes move to step 3.** They name instruction sets (`Sse42`, `Bmi2`,
-  `Crc32`), which only exist once the feature model has them. Naming classes after today's seven
+  `Crc32`), which only exist once the feature model has them. Naming classes after today's eight
   bundled targets would be renamed in step 3. So would the `cpu-check-in-loop` lint (C), which
   checks those classes: it ships with them in step 3.
 
@@ -311,7 +311,7 @@ Once #2402 lands, `a + b` compiles to `adds`/`adc` (arm64) or `add`/`adc` (x86-6
    program's `@inline("always")` function from `velt/compiler` has every call inlined in release
    VIR, the hint and `@noInline` keep the calls; the recursion, both-decorators and async errors
    outside std; a bare `@inline` in std is an error.
-2. **`@targetFeature` for every module, for today's seven targets; std migrated** (built: §2 "As
+2. **`@targetFeature` for every module, for today's eight targets; std migrated** (built: §2 "As
    built in step 2"). The rule for function values (B) was already enforced.
 3. **One CPU-feature model, detection in std (A), `isSupported`, the in-loop lint (C):**
    `CpuFeatures`, the two lists, `cpuid` / `xgetbv` / the OS calls, the start-up static, `--cpu`

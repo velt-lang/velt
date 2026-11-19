@@ -1,0 +1,52 @@
+// check: no leaks
+// A weak map value whose closure reaches the key only through uncounted objects holding
+// function values: handler -> closure -> `Link` -> closure -> `Link` -> closure -> key. Each
+// `Link` has one owner (the closure's environment), so the compiler keeps it uncounted, and the
+// trace glue walks its fields as its owner's. Once the key's last outside reference goes, the
+// chain and the key are freed (Node: the `WeakRef` still reads the object until a collection).
+class Raw {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+class Link {
+  f: () => number;
+  constructor(f: () => number) {
+    this.f = f;
+  }
+}
+
+class Handler {
+  read: () => number;
+  constructor(read: () => number) {
+    this.read = read;
+  }
+}
+
+function track(cache: WeakMap<Raw, Handler>, n: number): WeakRef<Raw> {
+  const raw = new Raw(n);
+  const b = new Link(() => raw.n);
+  const a = new Link(() => b.f() + 1);
+  cache.set(raw, new Handler(() => a.f() + 1));
+  console.log("handler reads", cache.get(raw)!.read());
+  return new WeakRef(raw);
+}
+
+function trackOne(cache: WeakMap<Raw, Handler>, n: number): WeakRef<Raw> {
+  const raw = new Raw(n);
+  const b = new Link(() => raw.n);
+  cache.set(raw, new Handler(() => b.f() * 10));
+  console.log("one link reads", cache.get(raw)!.read());
+  return new WeakRef(raw);
+}
+
+function main() {
+  const cache = new WeakMap<Raw, Handler>();
+  const r = track(cache, 7);
+  console.log("key freed:", r.deref() == null);
+  const r1 = trackOne(cache, 4);
+  console.log("one link, key freed:", r1.deref() == null);
+  console.log("map still in use:", cache.has(new Raw(0)));
+}

@@ -21,7 +21,7 @@ declare function velt_simd_f32x4_dot_add_f16x8(acc: f32x4, a: f16x8, b: f16x8): 
 declare function velt_simd_f32x4_dot_add_bf16x8(acc: f32x4, a: bf16x8, b: bf16x8): f32x4;
 
 /** A RangeError unless the two arrays have one length; the length. */
-function sameLength(na: usize, nb: usize, what: string): usize {
+export function sameLength(na: usize, nb: usize, what: string): usize {
   if (na != nb) {
     panic(`RangeError: ${what}: the arrays have lengths ${na} and ${nb}`);
   }
@@ -29,14 +29,14 @@ function sameLength(na: usize, nb: usize, what: string): usize {
 }
 
 /** A RangeError unless `count` elements from `at` fit in `len` (the `…At` functions' check). */
-function inRange(count: usize, len: usize, at: usize, what: string) {
+export function inRange(count: usize, len: usize, at: usize, what: string) {
   if (at > len || count > len - at) {
     panic(`RangeError: ${what}: ${count} values from index ${at} pass the end (length ${len})`);
   }
 }
 
 /** The sum of the lanes of the four accumulators, in `number`, after the loop. */
-function total(a: f32x4, b: f32x4, c: f32x4, d: f32x4): number {
+export function total(a: f32x4, b: f32x4, c: f32x4, d: f32x4): number {
   let sum: number = 0;
   for (let k: u64 = 0; k < 4; k++) {
     sum += velt_simd_f32x4_lane(a, k) as number;
@@ -73,8 +73,8 @@ export function dotF16At(a: f16[], aAt: usize, b: f16[], bAt: usize, count: usiz
 
 /**
  * The dot product of `a` and `b`, as `dotF16`: accumulated in `f32` lanes by `bf16x8.dotAdd`, the
- * same number on every CPU, with no use of a CPU's bf16 dot product, whose rounding differs (a loop
- * over `bf16x8.dotAddFast` has it). Panics with a RangeError when the lengths differ.
+ * same number on every CPU, with no use of a CPU's bf16 dot product, whose rounding differs
+ * (`dotBf16Fast` has it). Panics with a RangeError when the lengths differ.
  */
 @noInline
 export function dotBf16(a: bf16[], b: bf16[]): number {

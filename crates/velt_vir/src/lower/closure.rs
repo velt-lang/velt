@@ -459,7 +459,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
             }
             lw.counted_free(Operand::Copy(Place::local(env)), Ty::Agg(ea));
         };
-        lw.release(Operand::Copy(Place::local(env)), |lw| match glue {
+        let weak = lw.cx.boxing.weak_envs;
+        lw.release_as(Operand::Copy(Place::local(env)), weak, |lw| match glue {
             Some(glue) => lw.bracket_object(Operand::Copy(Place::local(env)), glue, drop),
             None => drop(lw),
         });
