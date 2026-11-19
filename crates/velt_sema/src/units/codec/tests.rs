@@ -113,3 +113,62 @@ fn ast_references_come_back_as_nodes_of_the_arena() {
     let _: Refs = Codec::dec(&mut r);
     assert!(!r.done());
 }
+
+/// A reference that names a node of another type is a failed decode; the node standing in for
+/// it is kept in the reader's arena, as a decoded node is.
+#[test]
+fn a_damaged_ast_reference_fails_and_its_placeholder_is_the_arena_s() {
+    use velt_syntax::ast::{FnDecl, ItemKind, TypeAlias};
+    let (module, _) = velt_syntax::parse_file(FileId(3), "function f(): number { return 1; }\n");
+    let ItemKind::Function(f) = &module.items[0].kind else {
+        panic!("a function");
+    };
+    let mut w = Writer::new();
+    f.enc(&mut w);
+    let (bytes, files) = w.finish();
+    let arena = Arena::default();
+    // SAFETY: what is decoded is dropped in this function, before `arena`.
+    let mut r = unsafe { Reader::with_arena(&bytes, &files, &arena) };
+    let alias: &TypeAlias = Codec::dec(&mut r);
+    assert!(!r.done(), "a function is not a type alias");
+    assert!(!alias.name.name.is_empty(), "a whole node stands in");
+    assert_eq!(arena.len(), 1, "the node standing in is the arena's");
+    // The same bytes as what they are.
+    let mut r = unsafe { Reader::with_arena(&bytes, &files, &arena) };
+    let _: &FnDecl = Codec::dec(&mut r);
+    assert!(r.done());
+    assert_eq!(arena.len(), 2);
+}
+
+#[derive(Debug, PartialEq)]
+enum Shape {
+    Dot,
+    Line(u32),
+    Rect { w: u32, h: u32 },
+}
+
+enums! {
+    Shape {
+        0 => Dot,
+        1 => Line(a),
+        2 => Rect { w, h },
+    }
+}
+
+/// An enum comes back by its tag; a tag no variant has is a failed decode that ends at the
+/// variant with tag 0 (which `enums!` requires).
+#[test]
+fn an_unknown_tag_is_a_failed_decode() {
+    for v in [Shape::Dot, Shape::Line(7), Shape::Rect { w: 2, h: 300 }] {
+        assert_eq!(round_trip(&v), v);
+    }
+    let mut w = Writer::new();
+    Shape::Line(7).enc(&mut w);
+    let (mut bytes, files) = w.finish();
+    let tag = bytes.len() - 2;
+    assert_eq!(bytes[tag], 1);
+    bytes[tag] = 9;
+    let mut r = Reader::new(&bytes, &files);
+    assert_eq!(Shape::dec(&mut r), Shape::Dot);
+    assert!(!r.done());
+}
