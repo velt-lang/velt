@@ -6,7 +6,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-/// The tests set `$VELT_RT_LIB` / `$VELT_LINKER`; one at a time.
+/// The tests set `$VELT_RT_LIB`, `$VELT_LINKER` and, for some links, the search path (`$PATH`),
+/// which every test reads (`rustc` and `cc` are run from it): one at a time, every one of them.
 static ENV: Mutex<()> = Mutex::new(());
 
 use cranelift_codegen::ir::{types, AbiParam, InstBuilder};
@@ -361,6 +362,8 @@ fn velt_ld_dirs() -> Vec<PathBuf> {
 /// `rust-lld` (what `velt` falls back to in a checkout).
 #[test]
 fn bundled_linker_links_and_runs() {
+    // It sets nothing, but runs `rustc` from the search path, which another test changes.
+    let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
     let setup = Setup::new("bundled");
     let Some(lld) = velt_link::bundled::find_lld() else {
         eprintln!("skipped: no rust-lld");
