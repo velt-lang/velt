@@ -506,6 +506,12 @@ macro_rules! enums {
                 }
             }
             fn dec(r: &mut $crate::units::codec::Reader) -> Self {
+                // An unknown tag decodes as tag 0, which a failed reader reads from then on:
+                // without a tag 0 that would never end.
+                const _: () = assert!(
+                    $crate::units::codec::has_tag_zero(&[$($tag),*]),
+                    "an encoded enum needs a variant with tag 0"
+                );
                 let tag: u8 = $crate::units::codec::Codec::dec(r);
                 match tag {
                     $($tag => $ty::$v
@@ -519,6 +525,18 @@ macro_rules! enums {
             }
         }
     )*};
+}
+
+/// Is 0 among an encoded enum's `tags` (`enums!` checks it when the enum's encoding is built)?
+pub(crate) const fn has_tag_zero(tags: &[u8]) -> bool {
+    let mut i = 0;
+    while i < tags.len() {
+        if tags[i] == 0 {
+            return true;
+        }
+        i += 1;
+    }
+    false
 }
 
 #[allow(unused_imports)]

@@ -102,10 +102,16 @@ impl<T: AstNode> Codec for &T {
     }
 }
 
-/// A placeholder node of type `T` for a damaged value: one leaked per failed decode (in the
-/// reader's arena when it has one).
-fn placeholder<'x, T: AstNode>(_: &Reader) -> &'x T {
-    Box::leak(Box::new(T::placeholder()))
+/// A placeholder node of type `T` for a damaged value (which is dropped whole): kept in the
+/// reader's arena, with the nodes it decoded. A reader without an arena has nowhere to keep
+/// it, and leaks one per failed reference.
+fn placeholder<'x, T: AstNode>(r: &Reader) -> &'x T {
+    match r.frags().and_then(|f| f.arena) {
+        // SAFETY: a node of the reader's arena (`Arena`'s contract, which
+        // `Reader::with_arena`'s caller keeps).
+        Some(arena) => unsafe { &*(*arena).keep(T::placeholder()) },
+        None => Box::leak(Box::new(T::placeholder())),
+    }
 }
 
 thread_local! {
