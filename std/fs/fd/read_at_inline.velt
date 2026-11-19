@@ -6,6 +6,10 @@
 import { ReadChunk, readChunk } from "velt/fs/fd/read_chunk";
 
 /** `readChunk`, on the calling thread. */
-export async function readChunkLater(fd: i32, length: usize, position: i64): Promise<ReadChunk> {
-  return readChunk(fd, length, position);
+export async function readChunkLater<T extends Numeric>(
+  fd: i32,
+  count: usize,
+  position: i64,
+): Promise<ReadChunk<T>> {
+  return readChunk<T>(fd, count, position);
 }

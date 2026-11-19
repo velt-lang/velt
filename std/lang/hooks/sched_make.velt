@@ -15,7 +15,7 @@ export { refuseInRead };
  * for a state of `size` bytes after it, holding `refs` references, scheduled but not queued; the
  * caller sets its join slot's word (`T_JOIN_STATE`) and transfer glue (`T_TRANSFER`).
  */
-@inline
+@inline("always")
 export function task(
   e: usize,
   poll: usize,
@@ -59,7 +59,7 @@ export function task(
 }
 
 /** Where a task's state starts, after a result slot of `rsize` bytes. */
-@inline
+@inline("always")
 function stateAt(rsize: u64): usize {
   return t.T_SLOT + ((rsize as usize + 15) & ~15);
 }
@@ -94,7 +94,7 @@ export function joinTable(w: usize, table: u32): void {
  * The home of a task spawned now from worker `e`: `e`, or the worker the spawn is pinned to
  * (`velt_rt_spawn_target`, taken once); flag `PINNED` for a pinned one.
  */
-@inline
+@inline("always")
 export function home(e: usize, k: usize): void {
   const pin = m.ld(e + t.E_PIN);
   if (pin !== 0) {
@@ -114,7 +114,7 @@ function pinned(e: usize, k: usize, i: usize): void {
  * polls or drops a handle (sched_lock.velt: `kind`, read once for the lock and its `unlockJoin`),
  * no lock.
  */
-@inline
+@inline("always")
 export function lockJoin(k: usize, kind: u32): u32 {
   if ((kind & lk.LK_ON) === 0) {
     return m.ld32(k + t.T_JOIN_STATE);
@@ -133,7 +133,7 @@ function lockJoinShared(k: usize): u32 {
 }
 
 /** Gives the lock of task `k`'s join slot back, its word now `s` (lock bit clear). */
-@inline
+@inline("always")
 export function unlockJoin(k: usize, s: u32, kind: u32): void {
   if ((kind & lk.LK_ON) === 0) {
     m.st32(k + t.T_JOIN_STATE, s & ~t.J_LOCK);
@@ -149,7 +149,7 @@ export function unlockJoin(k: usize, s: u32, kind: u32): void {
  * (sched_task.velt `E_SPLIT`), which counts its own without a lock while others count theirs
  * apart.
  */
-@inline
+@inline("always")
 export function liveUp(g: usize, e: usize): void {
   if (m.ld(g + t.E_SPLIT) !== 0) {
     if (e === g) {
@@ -165,7 +165,7 @@ export function liveUp(g: usize, e: usize): void {
 }
 
 /** One live task fewer (`g`, `e` as `liveUp`'s): the count before. */
-@inline
+@inline("always")
 export function liveDown(g: usize, e: usize): usize {
   if (m.ld(g + t.E_SPLIT) !== 0) {
     if (e === g) {
@@ -184,7 +184,7 @@ export function liveDown(g: usize, e: usize): usize {
 }
 
 /** The live tasks (worker 0's block `g`, read by worker 0). */
-@inline
+@inline("always")
 export function live(g: usize): usize {
   return m.load(g + t.E_LIVE) + m.load(g + t.E_LIVE_X) + m.load(g + t.E_LIVE_F);
 }

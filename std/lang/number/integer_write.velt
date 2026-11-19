@@ -36,7 +36,7 @@ export function digitsWrite(stream: u32, a: u64, neg: bool, end: u8): void {
 
 // Writes `a`, after a minus when `neg`, and `end`, where that is one word: up to 7 bytes, `a`
 // below 10^7, or 10^6 with the minus.
-@inline
+@inline("always")
 function oneWord(stream: u32, a: u64, neg: bool, end: u8): void {
   const w = eightWords(a, neg);
   velt_rt_write_str(

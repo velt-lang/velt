@@ -14,7 +14,6 @@
 // spawned task is no handle).
 
 import { noteStdUse } from "velt/lang/intrinsics";
-import { giveBackAtExit } from "#timer-give-back";
 import { velt_rt_signal_abort, velt_rt_signal_free, velt_rt_signal_retain } from "velt/task/rt";
 
 declare function velt_rt_timer_new(ms: i64): u64;
@@ -34,15 +33,14 @@ export function arm(handle: u64, ms: i64) {
   // The executor in Velt carries Node's timer order only for a program that gets here.
   noteStdUse("nodeTimers");
   const timer = velt_rt_timer_new(ms < 1 ? 1 : ms);
-  // A counted exit gives it back (not waiting for its delay to end).
-  giveBackAtExit(timer);
   const armed = new Armed(timer, velt_rt_signal_retain(handle));
   const task = spawn(fire(armed, ms));
 }
 
 // The timer's place in the order and its own reference to the signal, each given back once: as
 // the timer fires, or when its task is dropped unfinished. A run with the block counters on that
-// ends with the timer pending gives it back first (`#timer-give-back`: its turn completes), so
+// ends with the timer pending gives it back first (std/lang/hooks/sched_order_give.velt: its turn
+// completes), so
 // leak checks stay exact; otherwise the program just ends.
 class Armed {
   timer: u64;

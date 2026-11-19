@@ -14,7 +14,7 @@ export const MAX_INT32: number = 2147483647;
  * The value of an integer argument as Node checks it (`validateInteger`). Inlined: the check is
  * three comparisons, which fold away for a constant argument; the error is built out of line.
  */
-@inline
+@inline("always")
 export function integer(name: string, v: number, min: number, max: number): i64 {
   if (v >= min && v <= max && Math.floor(v) == v) {
     return v as i64;
@@ -34,7 +34,7 @@ export function outOfRange(name: string, v: number, min: number, max: number): R
  * A file descriptor as Node checks it (`validateInt32`, which shows what it received as it is:
  * no digit separators, unlike `validateInteger`).
  */
-@inline
+@inline("always")
 export function descriptor(fd: number): i32 {
   if (fd >= 0 && fd <= MAX_INT32 && Math.floor(fd) == fd) {
     return fd as i32;
@@ -65,7 +65,7 @@ export function cPath(path: string): u8[] {
  * (Node's options default), else an integer in [0, size] for a write (a write may start at the
  * end) or [0, MAX_SAFE] for a read (`offset + length <= size` is checked afterwards).
  */
-@inline
+@inline("always")
 export function bufferOffset(size: usize, offset: number | null | undefined, read: bool): i64 {
   if (offset == null) {
     return 0;

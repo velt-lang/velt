@@ -97,7 +97,7 @@ export class JsonValue {
   }
 
   // Value `node` of tape `t`.
-  @inline
+  @inline("always")
   private static onTape(t: TapeRef, node: u32): JsonValue {
     const v = new JsonValue(0);
     v.#tape = t;

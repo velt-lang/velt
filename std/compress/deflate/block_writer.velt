@@ -378,7 +378,7 @@ export class BlockWriter {
 }
 
 /** The low 32 bits of `bits` at `out[at..]`, little-endian; the store is 16 bytes wide. */
-@inline
+@inline("always")
 function store(out: u8[], at: i64, bits: u64) {
   velt_simd_u8x16_store(velt_simd_u64x2_as_u8x16(velt_simd_u64x2_splat(bits)), out, at as u64);
 }

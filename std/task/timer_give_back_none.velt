@@ -1,5 +1,0 @@
-// velt/task (internal): `#timer-give-back` without the executor in Velt: nothing to mark (the
-// runtime's timers are its own).
-
-/** Timer `timer` is given back at a counted exit: nothing to do here. */
-export function giveBackAtExit(timer: u64): void {}

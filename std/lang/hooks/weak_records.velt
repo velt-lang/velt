@@ -144,7 +144,7 @@ export function find(h: usize, obj: usize): usize {
  * The record of `obj` (live, counted), made (and the object marked) when it has none; `trace`
  * becomes its trace glue if it has none. Other records' addresses do not hold after this.
  */
-@inline
+@inline("always")
 export function node(h: usize, obj: usize, trace: usize): usize {
   let rec = probe(h, obj);
   if ((rec & 1) !== 0) {
@@ -250,7 +250,7 @@ export function remove(h: usize, rec: usize): void {
 }
 
 /** Drops `obj`'s record once nothing refers to it weakly, clearing its mark. */
-@inline
+@inline("always")
 export function settle(h: usize, obj: usize): void {
   const rec = find(h, obj);
   if (rec !== 0 && isEmpty(rec)) {

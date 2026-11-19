@@ -49,7 +49,7 @@ export function natReciprocal(d: u64): u64 {
 }
 
 /** `(u1 : u0) / d` and its remainder, for the normalized `d` with reciprocal `v` and `u1 < d`. */
-@inline
+@inline("always")
 export function natDiv2By1(u1: u64, u0: u64, d: u64, v: u64): [u64, u64] {
   const p0 = v * u1;
   const s = p0 + u0;
@@ -186,7 +186,7 @@ function divNormalized(u: u64[], vo: usize, q: u64[], m: usize, n: usize) {
 
 // Word `i` of the number at `x[at..]` (inside `x`) shifted up by `s` (below 64), without its
 // overflow.
-@inline
+@inline("always")
 function topOf(x: u64[], at: usize, i: usize, s: u64): u64 {
   if (s == 0) {
     return limbOf(x, at + i);
@@ -198,7 +198,7 @@ function topOf(x: u64[], at: usize, i: usize, s: u64): u64 {
 // Algorithm D's steps: `q[0..m + 1] = u / v` (`q` is empty when the quotient is not wanted) and
 // `u[0..n]` the remainder, for `u` the `m + n + 1` limbs of `u` from 0, whose top one is below
 // `v`'s top limb, and `v` its `n` (at least 2) limbs from `vo`, normalized when shifted up by `s`.
-@inline
+@inline("always")
 function divLimbs(u: u64[], vo: usize, q: u64[], m: usize, n: usize, s: u64) {
   // Every word the steps read or write without a check below: `u`'s up to `m + n`, `v`'s, `q`'s.
   limbsInside(u, 0, m + n + 1);

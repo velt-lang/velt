@@ -16,10 +16,13 @@
 export class ArrayView<T> {
   target: any;
   seen: T[];
+  /** The mirror as it was before a call wrote into it by address (`arrayViewKeep`). */
+  kept: T[];
 
   constructor(target: any) {
     this.target = target;
     this.seen = [];
+    this.kept = [];
   }
 }
 
@@ -81,6 +84,38 @@ export function arrayViewFlushFrom<T>(v: ArrayView<T>, from: usize) {
   if ((t.length as number) > (n as number)) {
     t.length = n as number;
   }
+}
+
+/**
+ * Before code outside Velt writes into the mirror by address (a C function given the view as
+ * a buffer, `readSync`): the mirror as it is, kept for [`arrayViewFlushKept`].
+ */
+export function arrayViewKeep<T>(v: ArrayView<T>) {
+  v.kept = v.seen.slice();
+}
+
+/**
+ * After that write: the elements it changed go back to the original, and only those. An
+ * element the write left alone keeps the original's own value, also where the mirror's is that
+ * value rounded to `T` (`0.1` in an `f32` view, `300` in a `u8` view), which a write-back of
+ * every element would store over it.
+ */
+export function arrayViewFlushKept<T>(v: ArrayView<T>) {
+  const t = v.target;
+  const seen = v.seen;
+  const kept = v.kept;
+  const size = t.length as number;
+  for (let i: usize = 0; i < seen.length && i < kept.length; i++) {
+    const now: any = seen[i];
+    const was: any = kept[i];
+    const k = i as number;
+    // Changed as `Object.is` tells it: NaN is the same as NaN, and -0 is not +0 (the bytes of
+    // one read over the other are a change).
+    if (!Object.is(now, was) && k < size) {
+      t[k] = now;
+    }
+  }
+  v.kept = [];
 }
 
 /** The original's length, for `length` of a view: nothing is converted. */
