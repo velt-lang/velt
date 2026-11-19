@@ -1,0 +1,176 @@
+// check: no leaks
+// A weak map value holding a generator whose suspended state holds the key: the trace glue
+// visits what the state holds where the generator is suspended, so the entry, the generator
+// and the key are freed once the key's last outside reference goes (#3119 step 3). Also a
+// generator not started yet (the key is its argument), one with the key in a local set in its
+// body, one holding the key in a second local across a `yield` and one reading the key through a captured
+// variable's cell; a finished generator, a key held outside (kept while held), a generator held
+// as an `Iterator`, an async generator, and a release of the key's last outside reference while
+// the generator runs (its state is not traced then; a later release finds the path). Node
+// prints `false` for a freed key until its next garbage collection (weakref.velt).
+class Raw {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+class Holder {
+  g: Generator<number>;
+  constructor(g: Generator<number>) {
+    this.g = g;
+  }
+}
+
+function* reads(raw: Raw): Generator<number> {
+  while (true) {
+    yield raw.n;
+  }
+}
+
+function* local(n: number): Generator<number> {
+  yield 0;
+  const raw = cache_key(n);
+  while (true) {
+    yield raw.n;
+  }
+}
+
+let made: Raw[] = [];
+function cache_key(n: number): Raw {
+  return made.pop() ?? new Raw(n);
+}
+
+function* across(raw: Raw): Generator<number> {
+  const before = raw.n;
+  yield before;
+  const again = raw;
+  yield again.n + before;
+}
+
+function* celled(raw: Raw): Generator<number> {
+  let cur = raw;
+  const read = () => cur.n;
+  while (true) {
+    yield read();
+  }
+}
+
+function* runs(raw: Raw): Generator<number> {
+  // The key's last outside reference goes while the body runs.
+  made = [];
+  yield raw.n;
+}
+
+function track(cache: WeakMap<Raw, Holder>, raw: Raw, g: Generator<number>, steps: number): WeakRef<Raw> {
+  cache.set(raw, new Holder(g));
+  let sum = 0;
+  for (let i = 0; i < steps; i++) {
+    sum += cache.get(raw)!.g.next().value ?? 0;
+  }
+  console.log("  read", sum);
+  return new WeakRef(raw);
+}
+
+class Iter {
+  it: Iterator<number>;
+  constructor(it: Iterator<number>) {
+    this.it = it;
+  }
+}
+
+async function* areads(raw: Raw): AsyncGenerator<number> {
+  while (true) {
+    yield raw.n;
+  }
+}
+
+class AHolder {
+  g: AsyncGenerator<number>;
+  constructor(g: AsyncGenerator<number>) {
+    this.g = g;
+  }
+}
+
+function suspended(cache: WeakMap<Raw, Holder>, n: number): WeakRef<Raw> {
+  const raw = new Raw(n);
+  const g = reads(raw);
+  return track(cache, raw, g, 2);
+}
+
+function notStarted(cache: WeakMap<Raw, Holder>, n: number): WeakRef<Raw> {
+  const raw = new Raw(n);
+  const g = reads(raw);
+  return track(cache, raw, g, 0);
+}
+
+function inLocal(cache: WeakMap<Raw, Holder>, n: number): WeakRef<Raw> {
+  const raw = new Raw(n);
+  made.push(raw);
+  return track(cache, raw, local(n), 3);
+}
+
+function heldAcross(cache: WeakMap<Raw, Holder>, n: number): WeakRef<Raw> {
+  const raw = new Raw(n);
+  const g = across(raw);
+  return track(cache, raw, g, 2);
+}
+
+function inCell(cache: WeakMap<Raw, Holder>, n: number): WeakRef<Raw> {
+  const raw = new Raw(n);
+  const g = celled(raw);
+  return track(cache, raw, g, 2);
+}
+
+function finished(cache: WeakMap<Raw, Holder>, n: number): WeakRef<Raw> {
+  const raw = new Raw(n);
+  const g = across(raw);
+  return track(cache, raw, g, 5);
+}
+
+function asIterator(iters: WeakMap<Raw, Iter>, n: number): WeakRef<Raw> {
+  const raw = new Raw(n);
+  iters.set(raw, new Iter(reads(raw)));
+  console.log("  read", iters.get(raw)!.it.next().value);
+  return new WeakRef(raw);
+}
+
+async function asyncGen(acache: WeakMap<Raw, AHolder>, n: number): Promise<WeakRef<Raw>> {
+  const raw = new Raw(n);
+  acache.set(raw, new AHolder(areads(raw)));
+  console.log("  read", (await acache.get(raw)!.g.next()).value);
+  return new WeakRef(raw);
+}
+
+function whileRunning(cache: WeakMap<Raw, Holder>, n: number): WeakRef<Raw> {
+  // `made` holds the key's only outside reference, which `runs` drops while it runs: that
+  // release looks for a path and sees a running generator, whose state is not traced (tracing
+  // it would resume a running generator). The `get`'s own reference to the key, released once
+  // `next()` returns, looks again and finds the suspended state's path.
+  made.push(new Raw(n));
+  const g = runs(made[0]);
+  cache.set(made[0], new Holder(g));
+  const w = new WeakRef(made[0]);
+  console.log("  read", cache.get(made[0])!.g.next().value);
+  return w;
+}
+
+async function main() {
+  const cache = new WeakMap<Raw, Holder>();
+  const iters = new WeakMap<Raw, Iter>();
+  const acache = new WeakMap<Raw, AHolder>();
+  console.log("suspended, key freed:", suspended(cache, 1).deref() == null);
+  console.log("not started, key freed:", notStarted(cache, 2).deref() == null);
+  console.log("in a local, key freed:", inLocal(cache, 3).deref() == null);
+  console.log("held across a yield, key freed:", heldAcross(cache, 4).deref() == null);
+  console.log("in a cell, key freed:", inCell(cache, 5).deref() == null);
+  console.log("finished, key freed:", finished(cache, 6).deref() == null);
+  console.log("as an iterator, key freed:", asIterator(iters, 7).deref() == null);
+  console.log("async generator, key freed:", (await asyncGen(acache, 8)).deref() == null);
+  console.log("released while running, key freed:", whileRunning(cache, 9).deref() == null);
+  const kept = new Raw(10);
+  const kg = reads(kept);
+  const w = track(cache, kept, kg, 1);
+  console.log("held, alive:", w.deref() != null, kept.n);
+  console.log("maps in use:", cache.has(new Raw(0)), iters.has(new Raw(0)), acache.has(new Raw(0)));
+}
