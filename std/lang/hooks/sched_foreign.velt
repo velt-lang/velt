@@ -32,12 +32,13 @@ import {
   noInline,
   statePoll,
 } from "velt/lang/intrinsics";
+import * as fr from "./sched_fut_root";
 import * as jn from "./sched_join";
 import * as mk from "./sched_make";
 import * as m from "./sched_mem";
 import * as node from "./sched_node";
+import * as lost from "./sched_node_lost";
 import * as pt from "./program_thread";
-import * as run from "./sched_run";
 import * as sl from "./sched_sleep";
 import * as sp from "./sched_spread";
 import * as t from "./sched_task";
@@ -193,6 +194,12 @@ export function start(f: usize, rdrop: usize, rejecting: bool): void {
     const k = made(g, fnAddress(startJob), n);
     // No other thread sees `k` before it is pushed.
     node.bind(k, n, rdrop, rejecting);
+    // The hand-off's reference, given back after the first run (`startJob`). Until then it stands
+    // for the caller's: the owner on this thread may drop its handle before worker 0 has polled
+    // the node, and a node left with the task's reference and one waker's is not one nobody can
+    // wake (sched_node_lost.velt `unreachable` counts two references as the caller's and the
+    // task's).
+    m.inc(n + node.N_REFS);
     push(g, k);
     return;
   }
@@ -261,6 +268,9 @@ export function mainBegins(e: usize): usize {
 function startJob(n: usize, cx: usize): u32 {
   // The task is the cx's waker (sched_task.velt `T_CX`).
   node.firstRun(m.ld(cx + 8), n);
+  // The hand-off's reference (`start`). A node that is unreachable now is found when its owner
+  // drops the handle, or was already dropped and is found here.
+  lost.handedOff(n);
   return 1;
 }
 
@@ -346,7 +356,7 @@ export function spawn(
 /** `schedSpawnFut` on a thread that isn't a worker: the handle (as `schedSpawnFut`'s). */
 export function spawnFut(f: usize, rsize: u64, rdrop: usize): usize {
   const g = workers.pending();
-  const k = mk.task(g, fnAddress(run.futRootPoll), 0, rsize, rdrop, 16 + ((rsize + 15) & ~15), 2);
+  const k = mk.task(g, fnAddress(fr.futRootPoll), 0, rsize, rdrop, 16 + ((rsize + 15) & ~15), 2);
   const at = m.ld(k + t.T_ROOT);
   m.st(at, f);
   m.st(at + 8, rsize as usize);

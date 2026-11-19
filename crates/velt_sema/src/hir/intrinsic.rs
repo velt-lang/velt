@@ -66,6 +66,19 @@ pub enum Intrinsic {
     /// `dst`'s element, which owns nothing (both ranges bounds-checked; one memcpy). The bulk
     /// load of `velt/half` (`f16FromBytes`, std/half/bytes.velt). Additive.
     ArrayCopyBytes,
+    /// std only, unsafe: `arrayDataAddress<T>(xs (modified)) -> usize`, the address of `xs`'s
+    /// buffer (0 for an array without one), whose elements own nothing (a number type or
+    /// `bool`; sema checks it, and lowering each instance of a type parameter). Good only
+    /// until `xs` is grown or dropped. With `ArrayByteLength`, how a generic function hands a
+    /// number array's own memory to a C function (velt/fs's `readSync`). Additive.
+    ArrayDataAddress,
+    /// std only, unsafe: `arrayReadAddress<T>(xs) -> usize`, `ArrayDataAddress` for memory
+    /// that is only read: it does not count as a change of `xs` (an array an `RwLock` holds,
+    /// in a `read` callback: velt/fs's `writeSync`). Additive.
+    ArrayReadAddress,
+    /// std only: `arrayByteLength<T>(xs) -> usize`, `xs.length * sizeof(T)` for an array of
+    /// numbers (checked as `ArrayDataAddress`). Additive.
+    ArrayByteLength,
     /// std only: `(xs (modified), len: usize)` set the length to `len` (growing the capacity
     /// when it is smaller) without dropping or initializing any element: slots past the old
     /// length must be written (`ArrayMove`) before they are read, and slots that are not owned

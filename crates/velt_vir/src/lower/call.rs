@@ -498,7 +498,7 @@ impl FnLower<'_, '_> {
         // (a frozen or kept argument, one lent to the caller): the value it points to, read
         // when the callee would have read it.
         // Last to first, as one operand may become several.
-        let pointed: Vec<(usize, super::abi::RegParam, Ty)> = (0..args.len())
+        let pointed: Vec<(usize, super::reg_args::RegParam, Ty)> = (0..args.len())
             .filter(|i| !in_reg.contains(i) && starts.get(*i).is_some_and(|&k| k < argv.len()))
             .filter_map(|i| {
                 let (a, mode) = (&args[i], modes[i]);

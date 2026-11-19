@@ -4,9 +4,11 @@
 //!   for each counted object `obj` refers to through its fields, elements and payloads stored
 //!   inline (up to the next counted object), with the child's own trace glue, or null for an
 //!   opaque child (a class with a vtable, whose dynamic class may have more fields, or one that
-//!   refers to nothing). Function values, interface values, uncounted objects and `shared`
-//!   values are not looked into: a reference left out only makes its target look referenced
-//!   from outside, which keeps it alive (a leak at worst, never a free of something live).
+//!   refers to nothing). A function value leads to its closure's environment (trace_env.rs),
+//!   and an uncounted object's fields are walked as its owner's (its owner holds the only
+//!   reference). Interface values and `shared` values are not looked into: a reference left out
+//!   only makes its target look referenced from outside, which keeps it alive (a leak at worst,
+//!   never a free of something live).
 //!   `TraceIn` is the same walk over an inline value at a pointer (a glue function per type, so
 //!   recursive types work).
 //! - **WeakRetain / WeakRelease** `(word)` retain and release a weak map value word: a counted
@@ -117,7 +119,7 @@ impl FnLower<'_, '_> {
                 self.goto(done);
                 self.switch_to(done);
             }
-            TyKind::Adt(..) if self.cx.is_class(ty) => {}
+            TyKind::Adt(..) if self.cx.is_class(ty) => self.trace_uncounted(place, ty, tv),
             // A dynamic value when `object` is weakly held (issue #926): its descriptor says.
             TyKind::Dyn(..) if self.cx.is_dynamic(ty) && self.cx.weak_object() => {
                 self.trace_dyn(place, tv, false);
@@ -150,12 +152,41 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// The uncounted object of class `ty` whose pointer is at `place`: its owner holds the only
+    /// reference, so the counted objects its fields refer to are visited as the owner's, each
+    /// once. One with a vtable is opaque (`Cx::traceable`). The pointer is null in an object
+    /// whose constructor has not stored it yet.
+    fn trace_uncounted(&mut self, place: Place, ty: TyId, tv: (vir::Local, vir::Local)) {
+        if !self.cx.traceable(ty) {
+            return;
+        }
+        let tys = self.cx.adt_field_tys(ty);
+        let obj = self.temp(Ty::Ptr);
+        self.assign(Place::local(obj), Rvalue::Use(Operand::Copy(place)));
+        let done = self.new_block();
+        let nn = self.non_null(Operand::Copy(Place::local(obj)));
+        self.when(nn, done);
+        let o = Place::local(obj);
+        for (i, t) in tys.into_iter().enumerate() {
+            if self.refers(t) {
+                let fp = self.field_place(&o, ty, i as u32);
+                self.trace_part(fp, t, tv);
+            }
+        }
+        self.goto(done);
+        self.switch_to(done);
+    }
+
     fn is_result(&self, ty: TyId) -> bool {
         matches!(self.cx.raw_kind(ty), TyKind::Result(..))
     }
 
     /// One part of type `t` at `place`: visit it when it is a counted object, else walk it.
-    fn trace_part(&mut self, place: Place, t: TyId, tv: (vir::Local, vir::Local)) {
+    pub(super) fn trace_part(&mut self, place: Place, t: TyId, tv: (vir::Local, vir::Local)) {
+        if matches!(self.cx.kind(t), TyKind::FnPtr { .. }) {
+            self.trace_fn_value(&place, t, tv);
+            return;
+        }
         let target = match self.cx.kind(t) {
             _ if self.cx.counted(t) => Some(t),
             TyKind::Option(e, _) if self.cx.ty(t) == Ty::Ptr && self.cx.counted(e) => Some(e),

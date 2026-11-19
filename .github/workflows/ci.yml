@@ -613,7 +613,9 @@ jobs:
   # c_sources.rs and c_export.rs, which VELT_ZIG_TESTS turns on and makes fail without VELT_ZIG; the other jobs'
   # tests leave them out, crates/xtask/src/c_headers.rs's TESTS). It runs only when the
   # change touches what it checks (crates/xtask/src/c_headers.rs), in pull requests and in
-  # the queue: anything else doesn't download zig. The nightly runs it whatever changed.
+  # the queue: anything else doesn't download zig. The nightly runs it whatever changed, and so
+  # does a run planned with `--full`, which knows no changes: a dispatched run (a merge train)
+  # and a pull request labelled `ci:full`.
   c-headers:
     needs: [pr-plan, queue-plan]
     if: always() && (needs.pr-plan.outputs.c_headers == 'true' || needs.queue-plan.outputs.c_headers == 'true')

@@ -2,10 +2,10 @@
 // holds its key strongly) and the bounded trial deletion that frees them (weak.velt;
 // docs/internals/design/weak-refs.md "The ephemeron rule"), with the lock held.
 //
-// When an entry is set, `members` traces its value's graph (up to `LIMIT` objects) and finds
-// every object on a path from the value back to the key, with the references the entry holds to
-// it (the map's reference to the value, and the references inside the value's graph). Their sum
-// per object is its `hint`.
+// When an entry is examined (weak.velt `examine`, on its key's first decrement after the insert),
+// `members` traces its value's graph (up to `LIMIT` objects) and finds every object on a path
+// from the value back to the key, with the references the entry holds to it (the map's reference
+// to the value, and the references inside the value's graph). Their sum per object is its `hint`.
 //
 // When a release leaves an object's count at or below its hint, `trial` runs a trial deletion in
 // the style of Bacon and Rajan's synchronous cycle collection, restricted to one subgraph: the
@@ -56,10 +56,13 @@ import {
 } from "./weak_records";
 import { count, ld, ld64, vpush } from "./weak_mem";
 
+/** What `members` returns for a graph past the limit (a vector is never at address 1). */
+export const PAST_LIMIT: usize = 1;
+
 /**
  * The objects of `value`'s graph on a path back to `key`, as a vector of triples `(object,
- * references from the entry, trace)`, or 0 when the value never refers to the key or its graph
- * is past the limit. `key` and `value` are live; `t` is `value`'s trace glue.
+ * references from the entry, trace)`; 0 when the value never refers to the key, `PAST_LIMIT`
+ * when its graph is past the limit. `key` and `value` are live; `t` is `value`'s trace glue.
  */
 export function members(h: usize, key: usize, value: usize, t: usize): usize {
   const g = graph(h, key);
@@ -72,8 +75,11 @@ export function members(h: usize, key: usize, value: usize, t: usize): usize {
     }
     expand(g, i);
   }
+  if (overflow(g)) {
+    return PAST_LIMIT;
+  }
   const k = indexOf(g, key);
-  if (k === NONE || overflow(g)) {
+  if (k === NONE) {
     return 0;
   }
   root(g, k);

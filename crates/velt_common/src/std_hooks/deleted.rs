@@ -12,6 +12,10 @@ pub const DELETED: &[&str] = &[
     "velt_rt_stdin_read_line_sync",
     "velt_rt_stdin_read_all_sync",
     "velt_rt_stdin_read_all_bytes_sync",
+    // #2196: `Date.now()` and `performance.now()` (the `date_now` and `perf_now` hooks,
+    // std/lang/hooks/clock.velt over `#clock`).
+    "velt_rt_perf_now",
+    "velt_rt_date_now",
     // #3145: the weak core (std/lang/hooks/weak*.velt): lowering's weak hooks, and the drops
     // std's `WeakMap`, `WeakSet` and `WeakRef` call.
     "velt_rt_weak_release",

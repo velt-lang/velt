@@ -37,6 +37,9 @@ const PATHS: &[&str] = &[
     "std/imports.velt",
     // The other files crates/veltc/src/native/headers/std_check.rs checks (`CHECKED`,
     // `CHECKED_POSIX`): a change to one of them runs the check too.
+    "std/lang/hooks/clock_darwin.velt",
+    "std/lang/hooks/clock_linux.velt",
+    "std/lang/hooks/clock_win32.velt",
     "std/lang/hooks/os_posix.velt",
     "std/lang/hooks/sched_cells.velt",
     "std/lang/hooks/sched_end.velt",
@@ -44,7 +47,6 @@ const PATHS: &[&str] = &[
     "std/lang/hooks/sched_id.velt",
     "std/lang/hooks/sched_io_write.velt",
     "std/lang/hooks/sched_mem.velt",
-    "std/lang/hooks/sched_module.velt",
     "std/lang/hooks/sched_node_loc.velt",
     "std/lang/hooks/sched_off.velt",
     "std/lang/hooks/sched_peek.velt",

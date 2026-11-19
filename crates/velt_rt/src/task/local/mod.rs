@@ -41,7 +41,6 @@ pub use module_state::{
     velt_rt_module_with_end,
 };
 pub use order::{velt_rt_timer_again, velt_rt_timer_free, velt_rt_timer_new, velt_rt_timer_turn};
-pub(crate) use timers::TimerLeaf;
 pub use unhandled::{velt_rt_uncaught_now, velt_rt_unhandled_defer};
 
 use std::cell::Cell;
@@ -639,7 +638,6 @@ pub unsafe extern "C-unwind" fn velt_rt_futs_handled(
             node::alias_claimed(f);
         }
         node::mark_handled(f, quiet_drop);
-        crate::task::spawn::mark_join_handled(*futs.add(i), quiet_drop);
     }
 }
 

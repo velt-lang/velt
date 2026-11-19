@@ -160,6 +160,57 @@ async function main() {
     );
 }
 
+/// The module state's blocks are made and dropped in Velt (std/lang/hooks/module_blocks.velt,
+/// #2196 9c): written from every worker, a counted normal exit gives back every block of it (a
+/// module `let`, an array of strings, a SIMD vector), as the runtime's drop at exit did.
+#[test]
+fn module_state_is_freed_at_a_counted_normal_exit() {
+    if !has_threads() {
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let counted = [("VELT_RT_DEBUG_ALLOC", "1"), ("VELT_RC_STATS", "1")];
+    let (code, out) = build_and_run_with(dir.path(), "module_freed", MODULE_FREED, "4", &counted);
+    let blocks = out
+        .split_whitespace()
+        .find_map(|w| w.strip_prefix("blocks="))
+        .and_then(|b| b.split_once('/'));
+    assert!(
+        code == 0
+            && out.starts_with("counter 400, 400 names, lane 145\n")
+            && blocks.is_some_and(|(a, f)| a == f),
+        "exit {code}\n{out}"
+    );
+}
+
+/// The program of [`module_state_is_freed_at_a_counted_normal_exit`].
+const MODULE_FREED: &str = r#"import { u8x16 } from "velt/simd";
+import { workerCount } from "velt/task";
+
+let counter = 0;
+const names: string[] = [];
+let lanes = u8x16.splat(1);
+
+async function bump(w: i64): Promise<void> {
+  for (let i = 0; i < 100; i++) {
+    counter++;
+    names.push(`w${w}-${i}`);
+    lanes = lanes + u8x16.splat(1);
+    await yieldNow();
+  }
+}
+
+async function main() {
+  const tasks: Promise<void>[] = [];
+  for (let w = 0; w < workerCount(); w++) {
+    tasks.push(spawn(bump(w), { worker: w }));
+  }
+  for (const t of tasks) await t;
+  console.log(`counter ${counter}, ${names.length} names, lane ${lanes.lane(0)}`);
+}
+"#;
+
 #[test]
 fn the_program_ends_once_every_worker_is_idle() {
     if !has_threads() {

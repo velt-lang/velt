@@ -1,0 +1,48 @@
+// A program that gives a declared function properties through `any` keeps a server's connections
+// on one worker: the runtime keeps those properties under a lock only worker 0 holds, so a
+// connection served on another worker that reaches them would never answer (#3174's review).
+// Every connection is answered, one after another, as many as there are workers.
+import { HttpRequest, HttpResponse, serveHttp } from "http-server";
+import { connect, spreadsConnections, TcpStream } from "velt/net";
+import { workerCount } from "velt/task";
+
+function decl(): number {
+  return 1;
+}
+
+async function readAll(conn: TcpStream): Promise<string> {
+  let out = "";
+  while (true) {
+    const text = await conn.readString();
+    if (text == "") {
+      return out;
+    }
+    out += text;
+  }
+}
+
+async function main() {
+  const f: any = decl;
+  f.x = 1;
+  console.log(`spreads connections: ${spreadsConnections()}`);
+  const server = await serveHttp({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {
+    const d: any = decl;
+    d.x = d.x + 1;
+    res.send("ok");
+  });
+  let answered = 0;
+  const n = workerCount();
+  for (let i: i64 = 0; i < n; i++) {
+    const c = await connect(`127.0.0.1:${server.port}`);
+    await c.write(`GET /${i} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
+    const text = await readAll(c);
+    c.close();
+    if (text.endsWith("\r\n\r\nok")) {
+      answered++;
+    }
+  }
+  console.log(`every connection answered: ${answered == n}`);
+  const d: any = decl;
+  console.log(`properties written: ${d.x == 1 + n}`);
+  await server.shutdown();
+}
