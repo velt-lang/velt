@@ -178,6 +178,24 @@ export function schedFutId(f: usize): u64 {
 }
 
 /**
+ * The node of the promise holder `f` holds (a forwarded holder through its proxy), or 0 when
+ * that is none of this executor's nodes. For a promise moved to another task and shared there,
+ * it is the node of the task that made the promise, as `node.handled` marks a moved promise
+ * given to `Promise.all`. A combinator's mark (sched.velt `schedHandled`) goes there, where the
+ * report of a rejection looks (#3195).
+ */
+export function nodeOf(f: usize): usize {
+  const fwd = forwardOf(f);
+  if (fwd !== 0) {
+    if (m.ld(fwd) === fnAddress(holderPoll)) {
+      return nodeOf(fwd);
+    }
+    return m.ld(fwd) === fnAddress(nd.nodePoll) ? nd.nodeOf(fwd) : 0;
+  }
+  return m.ld(m.ld(f - 8) + H_NODE);
+}
+
+/**
  * `velt_rt_fut_peek` of holder `f` (what `console.log` prints): its settled result, copied into
  * its slot for the formatter to read, claiming nothing; false while pending or panicked.
  */

@@ -330,10 +330,17 @@ export function peek(f: usize): bool {
 
 /** Promise `f`, if it is a node, drops a result nobody claims with `qdrop` (a combinator's). */
 export function handled(f: usize, qdrop: usize, hdrPoll: usize): void {
-  if (f !== 0 && m.ld(f) === hdrPoll && (m.load32(nodeOf(f) + N_FLAGS) & PANICKED) === 0) {
-    m.st(nodeOf(f) + N_RESULT_DROP, qdrop);
-    setFlags(nodeOf(f), rp.HANDLED);
-    al.claimed(nodeOf(f));
+  if (f !== 0 && m.ld(f) === hdrPoll) {
+    handledNode(nodeOf(f), qdrop);
+  }
+}
+
+/** Node `n` (a promise's, shared or not) drops a result nobody claims with `qdrop` (`handled`). */
+export function handledNode(n: usize, qdrop: usize): void {
+  if ((m.load32(n + N_FLAGS) & PANICKED) === 0) {
+    m.st(n + N_RESULT_DROP, qdrop);
+    setFlags(n, rp.HANDLED);
+    al.claimed(n);
   }
 }
 

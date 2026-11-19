@@ -483,6 +483,7 @@ impl FnLower<'_, '_> {
                 | I::PromiseAll
                 | I::PromiseRace
                 | I::PromiseAny
+                | I::PromisesHandled
                 | I::PerfNow
                 | I::DateNow
                 | I::SharedAdd

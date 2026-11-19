@@ -275,6 +275,11 @@ pub enum Intrinsic {
     /// std only: `firstFulfilled(ps: Promise<T, E>[]): Promise<T, E>` — the first to
     /// fulfill, or the last rejection when all reject (std/prelude/promise.velt `promiseAny`).
     PromiseAny,
+    /// std only: `promisesHandled(ps: Promise<T, E>[])` — the promises of `ps` (borrowed) go to
+    /// a combinator that awaits each itself (std/prelude/promise.velt `promiseAllSettled`): a
+    /// rejection of one is handled from the call on, as `Promise.all` marks its inputs
+    /// (`velt_rt_futs_handled`), never reported as uncaught when the microtasks drain (#3195).
+    PromisesHandled,
     /// Compiler-internal (no source syntax): the location of the call's span as a string,
     /// `"path:line:col"` (the site of a `new Promise`, std/prelude/promise.velt).
     SourceLocation,

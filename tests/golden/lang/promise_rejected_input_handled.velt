@@ -1,0 +1,32 @@
+// A rejection handed to `Promise.allSettled`, `Promise.any` or `Promise.all` (awaited in a `try`,
+// or with a `.catch`) is handled, as in Node, even when it has already rejected while the
+// combinator still waits for an earlier input (#3195): no "Uncaught", exit 0. Expected output is
+// Node's.
+
+async function s(): Promise<string> {
+  await sleep(1);
+  return "s";
+}
+
+async function late(): Promise<string> {
+  await sleep(2);
+  throw new Error("late");
+}
+
+async function main() {
+  const settled = await Promise.allSettled([s(), Promise.reject(new Error("no"))]);
+  console.log("settled", settled.length, settled[0].status, settled[1].status);
+  const any = await Promise.any([Promise.reject<string>(new Error("a")), s()]);
+  console.log("any", any);
+  try {
+    await Promise.all([s(), Promise.reject(new Error("all"))]);
+  } catch (e) {
+    console.log("all caught", e.message);
+  }
+  await Promise.all([late(), s()]).catch((e) => console.log("all .catch", e.message));
+  const both = await Promise.allSettled([late(), Promise.reject(new Error("b"))]);
+  console.log("settled again", both.map((r) => r.status).join(","));
+  console.log("done");
+}
+
+main();

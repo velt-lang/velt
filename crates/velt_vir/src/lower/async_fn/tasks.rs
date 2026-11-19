@@ -79,6 +79,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             (I::PromiseAll, [ps]) => self.promise_all(ps, ty),
             (I::PromiseRace, [ps]) => self.promise_race(ps, ty, false),
             (I::PromiseAny, [ps]) => self.promise_race(ps, ty, true),
+            (I::PromisesHandled, [ps]) => self.promises_handled(ps),
             (I::PerfNow, []) => self.rt_value(Rt::PerfNow, vec![], ty),
             (I::DateNow, []) => self.rt_value(Rt::DateNow, vec![], ty),
             (I::PromiseWiden, [p]) => self.promise_widen(p, ty, false),
@@ -212,6 +213,25 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.free_buffer(&ap, pel);
         let ty = self.sub(ty);
         self.owned_result(Some(d), ty)
+    }
+
+    /// `promisesHandled(ps)` (std's `promiseAllSettled`): marks the promises of the borrowed
+    /// array `ps` handled, as `Promise.all` marks its inputs, leaving `ps` to the caller, who
+    /// awaits each of them itself.
+    fn promises_handled(&mut self, ps: &hir::Expr) -> Operand {
+        let aty = self.sub(ps.ty);
+        let pel = self.elem_ty(aty);
+        let slot = self.cx.promise_slot(pel);
+        if self.cx.array_view(aty) {
+            ice("promisesHandled of an array view: std passes its own array");
+        }
+        let av = self.projection_base(ps, crate::lower::async_fn::BoxHold::No);
+        let arr = self.place_of(av, aty);
+        let arr = self.content(&arr, aty);
+        let futs = Operand::Copy(proj(&arr, Proj::Field(0)));
+        let n = Operand::Copy(proj(&arr, Proj::Field(1)));
+        self.mark_handled(futs, n, pel, slot);
+        unit()
     }
 
     /// The combinator handles the rejections of the `n` promises at `futs` (element type
