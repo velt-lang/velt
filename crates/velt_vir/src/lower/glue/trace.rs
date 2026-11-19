@@ -28,7 +28,7 @@ use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Terminator, Ty};
 impl FnLower<'_, '_> {
     /// Trace glue of the counted type `ty`, or null when its objects are opaque.
     pub(in crate::lower) fn trace_fn(&mut self, ty: TyId) -> Operand {
-        if !self.cx.traceable(ty) || self.cx.weak_refs_of(None, ty).is_empty() {
+        if self.cx.weak_refs_of(None, ty).is_empty() {
             return cint(0, Ty::Ptr);
         }
         cfunc(self.cx.func(Work::Glue(Glue::Trace, ty)))
@@ -45,16 +45,11 @@ impl FnLower<'_, '_> {
         let o = Place::local(obj);
         let tv = (visit, cx);
         match self.cx.kind(ty) {
-            TyKind::Adt(..) if self.cx.is_class(ty) => {
-                let tys = self.cx.adt_field_tys(ty);
-                for (i, t) in tys.into_iter().enumerate() {
-                    if self.refers(t) {
-                        let fp = self.field_place(&o, ty, i as u32);
-                        self.trace_part(fp, t, tv);
-                    }
-                }
-                self.trace_proxy_target(&o, ty, tv);
+            // A class with a vtable: the glue its object's table has (trace_dyn.rs).
+            TyKind::Adt(..) if self.cx.is_class(ty) && !self.cx.traceable(ty) => {
+                self.trace_by_table(Operand::Copy(o), ty, tv);
             }
+            TyKind::Adt(..) if self.cx.is_class(ty) => self.trace_class_fields(&o, ty, tv),
             _ => {
                 let payload = self.cx.payload_ty(ty);
                 let value = proj(&o, Proj::Deref(payload));
@@ -89,6 +84,19 @@ impl FnLower<'_, '_> {
         let value = proj(&Place::local(bx), Proj::Deref(vt));
         self.trace_part(value, ty, (visit, cx));
         self.terminate(Terminator::Return(unit()));
+    }
+
+    /// The fields of the object at `o`, of exactly the class `ty` (its trace glue, or its
+    /// table's `Glue::ObjTrace`).
+    pub(super) fn trace_class_fields(&mut self, o: &Place, ty: TyId, tv: (vir::Local, vir::Local)) {
+        let tys = self.cx.adt_field_tys(ty);
+        for (i, t) in tys.into_iter().enumerate() {
+            if self.refers(t) {
+                let fp = self.field_place(o, ty, i as u32);
+                self.trace_part(fp, t, tv);
+            }
+        }
+        self.trace_proxy_target(o, ty, tv);
     }
 
     /// Does a `t` value stored inline refer to counted objects the trace glue visits?
@@ -130,6 +138,8 @@ impl FnLower<'_, '_> {
             {
                 self.trace_dyn(place, tv, true);
             }
+            // Any other interface value: its table says which class it holds (trace_dyn.rs).
+            TyKind::Dyn(d, _) if !self.cx.is_dynamic(ty) => self.trace_iface(place, d, tv),
             TyKind::Adt(..) | TyKind::Result(..) if self.is_enum(ty) || self.is_result(ty) => {
                 if matches!(self.cx.ty(ty), Ty::Agg(_)) {
                     self.for_each_variant(&place, ty, |lw, _, parts| {
@@ -157,21 +167,23 @@ impl FnLower<'_, '_> {
     /// once. One with a vtable is opaque (`Cx::traceable`). The pointer is null in an object
     /// whose constructor has not stored it yet.
     fn trace_uncounted(&mut self, place: Place, ty: TyId, tv: (vir::Local, vir::Local)) {
-        if !self.cx.traceable(ty) {
-            return;
-        }
-        let tys = self.cx.adt_field_tys(ty);
         let obj = self.temp(Ty::Ptr);
         self.assign(Place::local(obj), Rvalue::Use(Operand::Copy(place)));
         let done = self.new_block();
         let nn = self.non_null(Operand::Copy(Place::local(obj)));
         self.when(nn, done);
         let o = Place::local(obj);
-        for (i, t) in tys.into_iter().enumerate() {
-            if self.refers(t) {
-                let fp = self.field_place(&o, ty, i as u32);
-                self.trace_part(fp, t, tv);
+        if self.cx.traceable(ty) {
+            let tys = self.cx.adt_field_tys(ty);
+            for (i, t) in tys.into_iter().enumerate() {
+                if self.refers(t) {
+                    let fp = self.field_place(&o, ty, i as u32);
+                    self.trace_part(fp, t, tv);
+                }
             }
+        } else {
+            // One with a vtable may be any class of its hierarchy (trace_dyn.rs).
+            self.trace_by_table(Operand::Copy(o), ty, tv);
         }
         self.goto(done);
         self.switch_to(done);
