@@ -208,6 +208,24 @@ impl Interp<'_> {
                 self.write_bytes(a[1] + 8, &(ns % 1_000_000_000).to_le_bytes());
                 return Ok(0);
             }
+            // Windows' clocks (std/lang/hooks/clock_win32.velt), the same emulated time: the
+            // performance counter counts nanoseconds (its frequency is 10^9), and the system
+            // time is 100 ns ticks since 1601, 11,644,473,600 s before the Unix epoch.
+            "QueryPerformanceFrequency" => {
+                self.write_bytes(a[0], &1_000_000_000u64.to_le_bytes());
+                return Ok(1);
+            }
+            "QueryPerformanceCounter" => {
+                let ns = (self.exec.now * 1e6) as u64 + 1;
+                self.write_bytes(a[0], &ns.to_le_bytes());
+                return Ok(1);
+            }
+            "GetSystemTimePreciseAsFileTime" => {
+                let ns = (self.exec.now * 1e6) as u64 + 1 + 1_700_000_000_000_000_000;
+                let ticks = ns / 100 + 116_444_736_000_000_000;
+                self.write_bytes(a[0], &ticks.to_le_bytes());
+                return Ok(0);
+            }
             "velt_rt_free" => {
                 assert_eq!(
                     self.allocs.get(&a[0]).copied(),
