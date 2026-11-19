@@ -521,6 +521,8 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
         &[
             ("alloc", "pass bytes in instead"),
             ("allocUnsafe", "pass bytes in instead"),
+            ("concat", "pass bytes in instead"),
+            ("from", "pass bytes in instead"),
             (
                 "byteLength",
                 "keep byte counting out of shared code (`TextEncoder` is planned, #377 phase 4)",
