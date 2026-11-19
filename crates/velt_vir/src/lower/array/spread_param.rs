@@ -21,11 +21,11 @@ impl FnLower<'_, '_> {
         let ty = self.sub(ty);
         let elem = self.elem_ty(ty);
         let t = self.sub(x.ty);
-        let v = self.expr(x);
+        // The value is borrowed: its place (an array argument is a pointer to its header).
+        let src = self.place_expr(x);
         if self.dead() {
             return unit();
         }
-        let src = self.place_of(v, t);
         let parts: Option<Vec<TyId>> = match self.cx.kind(t) {
             TyKind::Tuple(_) if std::env::var("VELT_MUT").as_deref() == Ok("1") => Some(vec![]),
             TyKind::Tuple(ts) => Some(ts),
