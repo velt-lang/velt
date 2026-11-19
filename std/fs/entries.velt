@@ -5,8 +5,8 @@ import { checkIo } from "velt/native/status";
 import {
   velt_rt_fs_copy_file,
   velt_rt_fs_copy_file_sync,
-  velt_rt_fs_exists,
-  velt_rt_fs_exists_sync,
+  exists as existsAt,
+  existsSync as existsAtSync,
   velt_rt_fs_remove,
   velt_rt_fs_remove_sync,
   velt_rt_fs_rename,
@@ -36,7 +36,7 @@ export async function copyFile(from: string, to: string): Promise<void> {
 
 /** Never throws: any failure to reach `path` reads as `false`. */
 export async function exists(path: string): Promise<bool> {
-  return await velt_rt_fs_exists(path);
+  return await existsAt(path);
 }
 
 /** `remove`, blocking the calling thread. */
@@ -56,5 +56,5 @@ export function copyFileSync(from: string, to: string) {
 
 /** `exists`, blocking the calling thread. */
 export function existsSync(path: string): bool {
-  return velt_rt_fs_exists_sync(path);
+  return existsAtSync(path);
 }

@@ -1,0 +1,7 @@
+sub reads 2
+sub, key freed: true
+deeper reads 21
+deeper, key freed: true
+base reads 1
+base, key freed: true
+map in use: false

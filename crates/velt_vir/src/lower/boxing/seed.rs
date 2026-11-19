@@ -237,6 +237,9 @@ impl Cx<'_> {
             // Not seeded: found again from each lowering's closures, like the weak sets.
             env_traced: _,
             weak_envs: _,
+            built_classes: _,
+            iface_traced: _,
+            gen_types: _,
             dyn_types: _,
             dyn_to_any,
             proxy_roots,

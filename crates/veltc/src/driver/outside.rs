@@ -101,8 +101,68 @@ const RUNTIME_REACH: &[(&str, &str)] = &[
     ("worker", "the environment"),
     ("current", "the environment"),
     ("random", "random numbers"),
-    ("stdin", "standard input"),
     ("native", NATIVE_SUPPORT),
+];
+
+/// C library functions std calls that touch only the program's memory or this thread's error
+/// slot: allocation, the memory and string helpers, and `errno` (macOS's `__error`, glibc's
+/// `__errno_location`, the CRT's `_errno`; Win32's `GetLastError` and `SetLastError`, Winsock's).
+const PURE_C: &[&str] = &[
+    "malloc",
+    "calloc",
+    "realloc",
+    "free",
+    "memcpy",
+    "memmove",
+    "memset",
+    "memchr",
+    "memcmp",
+    "strlen",
+    "__error",
+    "__errno_location",
+    "_errno",
+    "GetLastError",
+    "SetLastError",
+    "WSAGetLastError",
+    "WSASetLastError",
+];
+
+/// The C library's and Win32's calls that only the file system makes: each takes a path (std/fs/fd,
+/// std/fs/whole; #2196 moved them out of the runtime's `velt_rt_fs_*`), named as the runtime's
+/// were. On Windows a spawn makes some of them too (the PATH search through `GetFileAttributesW`,
+/// the NUL device through `CreateFileW`), and does touch the file system there.
+const FILE_SYSTEM_C: &[&str] = &[
+    "open",
+    "stat",
+    "lstat",
+    "unlink",
+    "CreateFileW",
+    "GetFileAttributesW",
+    "GetFullPathNameW",
+];
+
+/// Calls on a descriptor or handle, which files, sockets, pipes, the executor and threads share:
+/// what produced it names what they reach, so they are left out of the reasons when anything
+/// else is there. Alone (a `closeSync` of a number) each is outside as itself.
+const DESCRIPTOR_C: &[&str] = &[
+    "read",
+    "write",
+    "close",
+    "pread",
+    "pwrite",
+    "fstat",
+    "ftruncate",
+    "fsync",
+    "fdatasync",
+    "fcntl",
+    "mmap",
+    "madvise",
+    "CloseHandle",
+    "ReadFile",
+    "WriteFile",
+    "GetFileSizeEx",
+    "GetFileInformationByHandle",
+    "GetFileInformationByHandleEx",
 ];
 
 /// What the runtime's support for native packages (`velt_rt_native_*`) reaches.
@@ -152,9 +212,18 @@ pub(crate) fn reaches(program: &Program) -> String {
 /// What `program` reaches from its entry, not following the functions `skip` accepts: `-` or
 /// the reasons, sorted.
 fn describe(program: &Program, skip: &dyn Fn(&str) -> bool) -> String {
-    let mut reasons: Vec<String> = velt_opt::used_externs(program, skip)
+    let symbols: Vec<&str> = velt_opt::used_externs(program, skip)
         .into_iter()
-        .filter_map(|id| reason(&program.ext(id).symbol))
+        .map(|id| program.ext(id).symbol.as_str())
+        .collect();
+    // A call on a descriptor is covered by what produced the descriptor, when that is there.
+    let others = symbols
+        .iter()
+        .any(|s| !DESCRIPTOR_C.contains(s) && reason(s).is_some());
+    let mut reasons: Vec<String> = symbols
+        .iter()
+        .filter(|s| !(others && DESCRIPTOR_C.contains(s)))
+        .filter_map(|s| reason(s))
         .collect();
     reasons.sort();
     reasons.dedup();
@@ -275,6 +344,12 @@ fn reason(symbol: &str) -> Option<String> {
         return Some("the clock".into());
     }
     let Some(rest) = symbol.strip_prefix("velt_") else {
+        if PURE_C.contains(&symbol) {
+            return None;
+        }
+        if FILE_SYSTEM_C.contains(&symbol) {
+            return Some("the file system".to_string());
+        }
         return Some(format!("a C function `{symbol}`"));
     };
     if let Some(runtime) = rest.strip_prefix("rt_") {
@@ -376,7 +451,7 @@ mod tests {
         let program = Program {
             aggs: vec![],
             funcs: vec![r0, r2, main],
-            externs: vec![ext("clock_gettime"), ext("velt_rt_fs_stat_sync")],
+            externs: vec![ext("clock_gettime"), ext("velt_rt_fs_read_dir_sync")],
             statics: vec![],
             files: vec![],
             debug_types: vec![],
@@ -414,6 +489,52 @@ mod tests {
         }
     }
 
+    /// What a program whose `main` calls the C functions `symbols` reaches.
+    fn reaching(symbols: &[&str]) -> String {
+        let ext = |symbol: &str| ExternFn {
+            symbol: symbol.into(),
+            params: vec![],
+            ret: Ty::Unit,
+            noreturn: false,
+            host: None,
+            c_decl: None,
+            variadic: false,
+        };
+        let calls: Vec<Callee> = (0..symbols.len())
+            .map(|i| Callee::Extern(ExternId(i as u32)))
+            .collect();
+        let program = Program {
+            aggs: vec![],
+            funcs: vec![func("velt_main", Linkage::Export, &calls)],
+            externs: symbols.iter().map(|s| ext(s)).collect(),
+            statics: vec![],
+            files: vec![],
+            debug_types: vec![],
+        };
+        reaches(&program)
+    }
+
+    /// Calls on a descriptor are covered by what produced it: a program that only uses sockets or
+    /// child processes doesn't reach the file system, one that opens a file does, and a lone
+    /// `close` of a number is outside as itself.
+    #[test]
+    fn a_descriptor_is_named_by_what_produced_it() {
+        let network = reaching(&[
+            "socket", "connect", "read", "write", "close", "fcntl", "__error",
+        ]);
+        assert!(!network.contains("the file system"), "{network}");
+        assert!(network.contains("a C function `connect`"), "{network}");
+        let spawn = reaching(&["posix_spawn", "pipe", "read", "close", "waitpid"]);
+        assert!(!spawn.contains("the file system"), "{spawn}");
+        assert!(!spawn.contains("`read`"), "{spawn}");
+        let windows = reaching(&["CreatePipe", "ReadFile", "CloseHandle", "GetLastError"]);
+        assert_eq!(windows, "a C function `CreatePipe`");
+        let file = reaching(&["open", "fstat", "read", "close", "malloc", "__error"]);
+        assert_eq!(file, "the file system");
+        assert_eq!(reaching(&["close", "__error"]), "a C function `close`");
+        assert_eq!(reaching(&["malloc", "memcpy", "free"]), "-");
+    }
+
     #[test]
     fn harness_files_are_found_by_their_registering_function() {
         assert_eq!(harness_file("_V12____velt__r0"), Some(0));
@@ -438,7 +559,7 @@ mod tests {
     #[test]
     fn only_what_is_known_to_be_pure_is_inside() {
         let outside = |s: &str| reason(s).unwrap_or_else(|| panic!("{s} counted as inside"));
-        assert_eq!(outside("velt_rt_fs_read_file_sync"), "the file system");
+        assert_eq!(outside("velt_rt_fs_read_dir_sync"), "the file system");
         assert_eq!(outside("velt_rt_tcp_connect"), "the network");
         assert_eq!(outside("clock_gettime"), "the clock");
         assert_eq!(outside("QueryPerformanceCounter"), "the clock");
@@ -448,7 +569,10 @@ mod tests {
         assert_eq!(outside("velt_rt_worker_count"), "the environment");
         // C functions, native packages (also those named like Velt's own prefixes), and
         // runtime functions not listed as pure.
-        assert_eq!(outside("open"), "a C function `open`");
+        assert_eq!(outside("open"), "the file system");
+        assert_eq!(outside("CreateFileW"), "the file system");
+        assert_eq!(outside("gethostname"), "a C function `gethostname`");
+        assert_eq!(outside("read"), "a C function `read`");
         assert_eq!(outside("velt_sqlite__open"), "native code of `sqlite`");
         assert_eq!(outside("velt_sigx__get"), "native code of `sigx`");
         assert_eq!(outside("velt_simdjson__parse"), "native code of `simdjson`");
@@ -477,6 +601,10 @@ mod tests {
             "velt_rt_uncaught_now",
             "velt_atomic_load_u64",
             "velt_simd_add_f32x4",
+            "malloc",
+            "memcpy",
+            "__error",
+            "GetLastError",
         ] {
             assert_eq!(reason(inside), None, "{inside}");
         }

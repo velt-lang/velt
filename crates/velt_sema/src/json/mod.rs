@@ -32,7 +32,6 @@ use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, TyId, TyKind};
 use crate::inst_sites::{carry_guard, constructed, for_each_init, guards_of};
 use crate::object_copies::Seen;
 use crate::types::children;
-use crate::visit;
 
 pub(crate) mod handles;
 mod identity;
@@ -240,14 +239,14 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
         lookers: &lookers,
     };
     let mut bodies: Vec<(DefId, Uses, News)> = vec![];
-    for (i, d) in cx.defs.iter_mut().enumerate() {
+    for (i, d) in cx.defs.iter().enumerate() {
         let Some(Def::Fn(f)) = d else { continue };
         let mut u = Uses::default();
         let mut news = vec![];
         let mut seen: FxHashSet<TyId> = FxHashSet::default();
         walk.ids.f = DefId(i as u32);
-        let guards = guards_of(walk.ids.tys, &mut f.body.block);
-        visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
+        let guards = guards_of(walk.ids.tys, &f.body.block);
+        crate::visit_ref::exprs(&f.body.block, &mut |e: &Expr| {
             let guard = guards.get(&(e as *const Expr)).copied().unwrap_or(0);
             walk.expr(&mut u, &mut news, &mut seen, e, guard);
         });
@@ -257,7 +256,7 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
     walk.ids.f = crate::copy_flow::GLOBAL;
     let mut inits: FxHashMap<DefId, (Uses, News, FxHashSet<TyId>)> = FxHashMap::default();
     let tys = walk.ids.tys;
-    for_each_init(tys, &mut cx.info, true, &mut |_, d, e| {
+    for_each_init(tys, &cx.info, true, &mut |_, d, e| {
         let (u, news, seen) = inits.entry(d).or_default();
         walk.expr(u, news, seen, e, 0);
     });

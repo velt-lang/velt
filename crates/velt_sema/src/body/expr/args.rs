@@ -466,6 +466,8 @@ impl FnCx<'_, '_> {
                 self.number_slot_from_context(p.ty, slots, context);
             }
             self.class_arg_slots((i, args), c, slots, &given);
+            // `{ handler: (rq: Ctx, n: number) => … }` for `Options<S, R>` (`object_arg_infer`).
+            self.infer_from_object_members(&args[i], p.ty, slots);
             let mut known: Vec<Option<TyId>> =
                 slots.iter().zip(context).map(|(s, c)| s.or(*c)).collect();
             // A parameter of a type parameter that keeps literal keys (`K extends keyof T`)

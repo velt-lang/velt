@@ -295,13 +295,26 @@ pub(super) fn adapter_method(
         let read = g.mk(H::Local(l, mode), q.ty, span);
         args.push(g.adapt_value(read, *from));
     }
+    let src = ThrowSrc::Slot {
+        iface: p.iface,
+        slot,
+        args: fargs,
+        span,
+    };
+    // A promise slot's result converted to a promise of another type (`adapt_promise`): the
+    // call's promise rejects with what the slot's implementations reject with, as a call
+    // through the interface is typed (`slot_result`), and so does the converted one. The
+    // conversion is a `then`, whose own promise is laid out by that error type; typed as the
+    // signature writes it (`Promise<T>`), it would be made for a promise that never rejects.
+    let (mut call_ty, mut want) = (ret_from, ret);
     if !promise_slot(g.cx, p.iface, slot) {
-        g.throw_src(ThrowSrc::Slot {
-            iface: p.iface,
-            slot,
-            args: fargs,
-            span,
-        });
+        g.throw_src(src);
+    } else if ret != ret_from {
+        call_ty = g.slot_result(p.iface, slot, src, ret_from, span);
+        let e = g.cx.ty.promise_error(call_ty);
+        if let (Some(e), Some(b)) = (e, g.cx.ty.promise_payload(ret)) {
+            want = g.cx.ty.promise_rejecting(b, e);
+        }
     }
     let call = g.mk(
         H::Call {
@@ -311,10 +324,12 @@ pub(super) fn adapter_method(
             },
             args,
         },
-        ret_from,
+        call_ty,
         span,
     );
-    let value = g.adapt_value(call, ret);
+    let mut value = g.adapt_value(call, want);
+    // The slot's own result type: its error type is the dispatch group's, not the type's.
+    value.ty = ret;
     let unit = g.cx.ty.unit;
     let stmt = |kind| hir::Stmt { kind, span };
     let result = if ret == unit {

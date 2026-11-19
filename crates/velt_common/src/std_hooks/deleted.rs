@@ -10,6 +10,11 @@ pub const DELETED: &[&str] = &[
     // #3222 step 3: the CPU check and the flags of crates/velt_rt/src/cpu.rs, now std's
     // (std/lang/hooks/cpu.velt, std/lang/cpu).
     "velt_rt_check_cpu",
+    // #2196: standard input (std/process/stdin_buffer.velt over `#stdin-sys`), which only std
+    // called.
+    "velt_rt_stdin_read_line_sync",
+    "velt_rt_stdin_read_all_sync",
+    "velt_rt_stdin_read_all_bytes_sync",
     // #2196: `Date.now()` and `performance.now()` (the `date_now` and `perf_now` hooks,
     // std/lang/hooks/clock.velt over `#clock`).
     "velt_rt_perf_now",

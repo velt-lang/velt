@@ -8,6 +8,7 @@ import {
   closeFd as posixCloseFd,
   fcntlInt as posixFcntlInt,
   fstatAt as posixFstatAt,
+  statAt as posixStatAt,
   fsyncFd as posixFsyncFd,
   adviseMap as posixAdviseMap,
   lastError as posixLastError,
@@ -59,6 +60,17 @@ export function fstatFd(fd: i32): Stat | null {
     return posixFstatAt(fd, 8, true, 72, 40);
   }
   return posixFstatAt(fd, 4, true, 96, 48);
+}
+
+/**
+ * `stat(path)` (`follow`) or `lstat(path)`'s fields, at `fstatFd`'s offsets (on x86-64 the
+ * symbols `stat` and `lstat` are the 32-bit-inode ones too), or `null`.
+ */
+export function statPath(path: readonly u8[], follow: bool): Stat | null {
+  if (arch() == "x64") {
+    return posixStatAt(path, follow, 8, true, 72, 40);
+  }
+  return posixStatAt(path, follow, 4, true, 96, 48);
 }
 
 // The functions both POSIX variants share, from posix.velt (a variant defines what it exports:

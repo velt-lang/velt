@@ -22,9 +22,6 @@ pub(super) struct ReadInfo {
     pub(super) share_dests: Option<FxHashMap<usize, bool>>,
     /// Its variables holding only what it made of literals (`plain_made`).
     pub(super) plain: Option<FxHashSet<LocalId>>,
-    /// Those of them used as a whole inside a loop they were declared outside of: that one use
-    /// in the source runs more than once (`plain_made_once`).
-    pub(super) plain_looped: FxHashSet<LocalId>,
     /// The array literal lowered next gives each element to the caller's container on its own
     /// (caller_stores.rs `Held::Elems`).
     pub(super) elems_to_caller: bool,
@@ -305,10 +302,8 @@ impl FnLower<'_, '_> {
                 closures,
                 uses,
                 reads,
-                looped,
                 ..
             } = p;
-            self.read_info.plain_looped = looped;
             // A closure may change what it captures.
             for n in closures {
                 changed.extend(self.cx.fn_def(n).captures.iter().map(|c| c.outer));
@@ -335,14 +330,6 @@ impl FnLower<'_, '_> {
             .plain
             .as_ref()
             .is_some_and(|p| p.contains(&l))
-    }
-
-    /// Is `l` a `plain_made` variable whose one use as a whole runs at most once for each time
-    /// it is made: not in a loop the variable was declared outside of? A store there puts the
-    /// same object into the caller's container each turn, as JavaScript does, so it cannot be
-    /// handed over as a value made for the one store (hand_result.rs `lent_fresh`).
-    pub(super) fn plain_made_once(&mut self, l: LocalId) -> bool {
-        self.plain_made(l) && !self.read_info.plain_looped.contains(&l)
     }
 
     /// Is `e` an array or object literal of such literals, of explicit copies and of values that
@@ -372,11 +359,6 @@ struct Plain {
     closures: Vec<hir::DefId>,
     uses: rustc_hash::FxHashMap<LocalId, u32>,
     reads: Vec<(LocalId, hir::TyId)>,
-    /// How many loops the walk is inside, and how many each variable's `let` was inside.
-    depth: u32,
-    homes: rustc_hash::FxHashMap<LocalId, u32>,
-    /// The variables used as a whole inside a loop their `let` is outside of.
-    looped: FxHashSet<LocalId>,
 }
 
 impl Plain {
@@ -394,7 +376,6 @@ impl Plain {
                 if self.lets.iter().any(|(v, _)| v == local) {
                     self.changed.insert(*local);
                 }
-                self.homes.insert(*local, self.depth);
                 match init {
                     Some(init) => {
                         self.lets.push((*local, init.clone()));
@@ -415,17 +396,13 @@ impl Plain {
             S::While {
                 cond, body, step, ..
             } => {
-                self.depth += 1;
                 self.expr(cond);
                 self.block(body);
                 step.iter().for_each(|e| self.expr(e));
-                self.depth -= 1;
             }
             S::ForOf { iter, body, .. } => {
                 self.expr(iter);
-                self.depth += 1;
                 self.block(body);
-                self.depth -= 1;
             }
             S::Try {
                 body,
@@ -447,9 +424,6 @@ impl Plain {
             }
             K::Local(l, _) => {
                 *self.uses.entry(*l).or_insert(0) += 1;
-                if self.homes.get(l).is_some_and(|home| self.depth > *home) {
-                    self.looped.insert(*l);
-                }
             }
             K::Assign { place, .. } | K::CompoundAssign { place, .. } => {
                 if let Some(l) = place_root(place) {

@@ -1,7 +1,8 @@
-// check: no leaks
 // A promise that rejects while its owner does not wait for it is reported as uncaught once the
 // microtask queue is drained, as in Node: the process ends there, before `main` goes on after
 // its timer, though `main` still holds the promise (#1328).
+// No leak check: the process ends on an uncaught error while `main` is suspended, and what a
+// suspended frame holds is not given back at such an exit, as Node runs no cleanup there.
 async function fail(): Promise<void> {
   throw new Error("boom");
 }
