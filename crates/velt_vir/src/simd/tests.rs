@@ -380,7 +380,7 @@ fn bfdot_is_an_instruction_of_bf16_arm() {
     );
 }
 
-/// Every CPU target sema knows (the names `targetFeature` takes) is the extension of the same
+/// Every CPU target sema knows (the names `@targetFeature` takes) is the extension of the same
 /// name, which lowering gives a gated function (`lower/abi.rs`), and every extension is one;
 /// `velt_simd_xgetbv` is `(u32) -> u64`.
 #[test]

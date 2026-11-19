@@ -43,7 +43,7 @@ impl Ext {
         Ext::Bf16Arm,
     ];
 
-    /// The name `targetFeature` takes: `sha-arm`, `sha-x86`, `clmul-x86`, `clmul-arm`,
+    /// The name `@targetFeature` takes: `sha-arm`, `sha-x86`, `clmul-x86`, `clmul-arm`,
     /// `aes-x86`, `aes-arm`, `fma-x86`, `bf16-arm`.
     pub fn name(self) -> &'static str {
         match self {
@@ -76,7 +76,7 @@ impl Ext {
         !matches!(self, Ext::AesX86 | Ext::AesArm | Ext::FmaX86 | Ext::Bf16Arm)
     }
 
-    /// The extension `targetFeature(name)` names.
+    /// The extension `@targetFeature(name)` names.
     pub fn named(name: &str) -> Option<Ext> {
         Ext::ALL.into_iter().find(|e| e.name() == name)
     }
