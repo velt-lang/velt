@@ -1,0 +1,40 @@
+// A converted promise nobody handles is still reported when it rejects, and it is the one
+// reported: `lone` is never awaited, while `given` went to a `Promise.all` that had already
+// rejected, which handles it (#3272). Both reject when the gate opens. Node reports `lone` and
+// exits 1.
+async function check(value: unknown, gate: Promise<void> | null): Promise<number> {
+  if (gate !== null) {
+    await gate;
+  }
+  if (typeof value === "number") {
+    return value + 1;
+  }
+  throw new Error("not a number: " + String(value));
+}
+
+function converted(value: unknown, gate: Promise<void> | null): Promise<unknown> {
+  return check(value, gate);
+}
+
+async function main(): Promise<void> {
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const kept = converted("kept", null);
+  try {
+    await kept;
+  } catch (e) {
+    console.log("first:", String(e));
+  }
+  const lone = converted("lone", gate);
+  try {
+    await Promise.all([kept, converted("given", gate)]);
+  } catch (e) {
+    console.log("all:", String(e));
+  }
+  release();
+  await Promise.resolve();
+  console.log("end", typeof lone);
+}
+main();
