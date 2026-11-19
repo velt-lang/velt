@@ -117,6 +117,43 @@ comment. velt/ffi's unsafe functions are the public surface ([c-ffi.md](c-ffi.md
   array. Nothing may write or grow it, so std wraps it in `shared(...)` before it leaves the
   unsafe function that makes it: `shared<T[]>` is read-only for every holder. Its user is
   `MappedFile` (`std/fs/mapped_file.velt`), whose mappings are never unmapped.
+- `arrayDataAddress<T>(xs: Mut<T[]>): usize` and `arrayReadAddress<T>(xs: readonly T[]): usize` (both
+  unsafe), `arrayByteLength<T>(xs: T[]): usize` and `arrayBytesWritten`
+  (std/lang/intrinsics/array.velt) are the
+  address of a number array's buffer and `xs.length * sizeof(T)`. They exist so that a generic
+  function can hand a number array's own memory to a C function, which `declare c` takes as a
+  buffer only for a concrete element type: velt/fs's `readSync<T extends Numeric>` and
+  `writeSync` pass the address to `pread` / `pwrite` (`readAddress`, `writeAddress` of
+  `#fd-system`), so the system fills or reads the array itself, counted in bytes as Node counts
+  a typed array's. The address is good only until the array is grown or dropped: std takes it
+  after every argument is checked and uses it in the read or write that follows, with nothing
+  in between that reaches the array.
+  - `arrayDataAddress` is for memory that will be written: it counts as a change of the array
+    (the owner and write barriers of array/ops.rs), so `readSync` into an array an `RwLock`
+    holds stops in a `read` callback as any other change does. `arrayReadAddress` and
+    `arrayByteLength` only read, as `length` does, so `writeSync` of such an array works there.
+  - Sema holds `T` to a number type or `bool` and lets a type parameter through (as
+    `arrayCopyBytes`); lowering refuses an instance whose elements own something, which the
+    `Numeric` bound of the public functions keeps user code from reaching.
+  - On a view type (array_view.rs: a number array type is one in a program that converts an
+    `any` to it) a plain array gives its own buffer, and a view its mirror's with every element
+    converted, which is what a C function given the array itself gets. Taking the address to
+    write (`arrayDataAddress`) keeps a copy of a view's mirror, and
+    `arrayBytesWritten<T>(xs: Mut<T[]>)`, which `readSync` calls after the read, writes back to
+    the viewed array the elements that differ from that copy: what the read changed, and
+    nothing else, so an element the view's type rounds (`0.1` seen as an `f32`) keeps its own
+    value where the read did not reach it. It is no code for a plain array or in a program
+    without view types. A C function given a view as a buffer that is not `readonly` gets the
+    same keep before the call and write-back after it (c_call.rs).
+  - The bytes are reached by address, not as a second `u8[]` over the same memory (the form
+    `addressArray` gives): such an array would be a counted box in a program that shares byte
+    arrays, an allocation and a free at every call, and an alias that must be kept from
+    escaping. An address is neither.
+- **`Numeric`** (std/prelude/number.velt) is that bound: an interface no type declares, which
+  the compiler takes to be satisfied by the integer and float types (`f16` and `bf16` too) and
+  by nothing else, as `AtomicValue` and `Frozen` are the compiler's (velt_sema `infer.rs`
+  `satisfies`). A type parameter has it only through its own `T extends Numeric`; `bool` is
+  left out (not every byte is a `bool`).
 - `addressAtomicLoad<T>`, `addressAtomicStore<T>`, `addressAtomicRmw<T>`, `addressAtomicCas<T>`
   and `addressAtomicCasWeak<T>` do what `Atomic<T>`'s methods do on the integer `T` at an
   address, with the same `velt_atomic_*` operations (`crates/velt_vir/src/atomic.rs`). The
@@ -149,6 +186,11 @@ comment. velt/ffi's unsafe functions are the public surface ([c-ffi.md](c-ffi.md
   function value in a `read` callback (`Boxing::read_indirect`).
 - `statePoll(poll, state, cx)`, `stateDrop(drop, at)` and `addressCall(f, a)` call a compiled state
   machine's poll and drop functions and a waker table's entries at their addresses.
+- `addressCallWord(f, a: u64)` and `addressCall3(f, a, b, c)` (three `usize`s) call the C
+  function at address `f`, which returns nothing: the weak core's calls of retain, release and
+  trace glue (`std/lang/hooks/weak*.velt`). Each is a call with the callee's own signature, which
+  an indirect call on wasm32 must match (`crates/velt_vir/src/lower/raw_memory.rs`
+  `address_call_void`).
 - `fnAddress(f)` is the address of a module-level function C may call with the C calling
   convention (named directly, not generic, async or throwing, and taking and returning only
   numbers and `bool`, which sema checks). `exportedAddress(f)` is the address of a function

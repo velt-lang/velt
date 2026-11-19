@@ -47,13 +47,15 @@ export const TM_SIZE: usize = 296;
 // A sleep: its deadline (nanoseconds), number, waker, links (the pending list, or its task's due
 // list), state, and the task whose due list holds it.
 const S_DEADLINE: usize = 16;
-const S_SEQ: usize = 24;
+export const S_SEQ: usize = 24;
 const S_WAKER: usize = 32;
-const S_PREV: usize = 40;
-const S_NEXT: usize = 48;
+export const S_PREV: usize = 40;
+export const S_NEXT: usize = 48;
 const S_STATE: usize = 56;
 const S_TASK: usize = 64;
-const S_SIZE: usize = 72;
+/** The task that polled it into its worker's timer block (sched_sleep_carry.velt `carry`). */
+export const S_OWNER: usize = 72;
+const S_SIZE: usize = 80;
 
 // A sleep's states: not polled yet; pending; due (on its task's due list); fired (counted in
 // `TM_UNSEEN` until its leaf sees it); seen.
@@ -100,6 +102,7 @@ export function sleep(e: usize, ms: i64): usize {
   m.st(f + S_NEXT, 0);
   m.st(f + S_STATE, NEW);
   m.st(f + S_TASK, 0);
+  m.st(f + S_OWNER, 0);
   return f;
 }
 
@@ -125,9 +128,12 @@ function sleepPoll(f: usize, cx: usize): u32 {
     }
   }
   if (s === NEW) {
-    // Pending in this worker's timer block: its task stays on this worker.
+    // Pending in this worker's timer block: its task stays on this worker, unless an offer
+    // carries it with its sleeps (sched_sleep_carry.velt).
     sp.anchor();
-    insert(block(t.exec()), f);
+    const e = t.exec();
+    m.st(f + S_OWNER, m.ld(e + t.E_CURRENT));
+    insert(block(e), f);
   }
   return 0;
 }
@@ -172,14 +178,14 @@ function firesItself(f: usize): bool {
 }
 
 /** Does sleep `a` come before a sleep due at `d` numbered `seq`? */
-@inline
+@inline("always")
 function before(a: usize, d: usize, seq: usize): bool {
   const ad = m.ld(a + S_DEADLINE);
   return ad < d || (ad === d && m.ld(a + S_SEQ) < seq);
 }
 
 /** Puts sleep `f` among the pending ones of block `b`, in order (its place found from the end). */
-function insert(b: usize, f: usize): void {
+export function insert(b: usize, f: usize): void {
   const d = m.ld(f + S_DEADLINE);
   const seq = m.ld(f + S_SEQ);
   let at = m.ld(b + TM_LAST);
@@ -203,7 +209,7 @@ function insert(b: usize, f: usize): void {
   m.st(f + S_STATE, PENDING);
 }
 
-function unlinkPending(b: usize, f: usize): void {
+export function unlinkPending(b: usize, f: usize): void {
   const prev = m.ld(f + S_PREV);
   const next = m.ld(f + S_NEXT);
   if (prev === 0) {
@@ -258,13 +264,13 @@ function unlinkDue(k: usize, f: usize): void {
 }
 
 /** The first sleep on task `k`'s due list, or 0. */
-@inline
+@inline("always")
 export function firstDue(k: usize): usize {
   return m.ld(k + t.T_TIMERS);
 }
 
 /** The waker of due sleep `f` (borrowed). */
-@inline
+@inline("always")
 export function waiter(f: usize): usize {
   return m.ld(f + S_WAKER);
 }
@@ -317,20 +323,20 @@ function gone(f: usize): void {
 }
 
 /** Are sleeps of block `b` on due lists, not fired yet? */
-@inline
+@inline("always")
 export function due(b: usize): bool {
   return m.ld(b + TM_DUE) !== 0;
 }
 
 /** The deadline of block `b`'s first pending sleep (0: none). */
-@inline
+@inline("always")
 export function nextDeadline(b: usize): u64 {
   const f = m.ld(b + TM_FIRST);
   return f === 0 ? 0 : m.ld(f + S_DEADLINE) as u64;
 }
 
 /** Are sleeps pending in block `b`? */
-@inline
+@inline("always")
 export function pending(b: usize): bool {
   return m.ld(b + TM_FIRST) !== 0;
 }

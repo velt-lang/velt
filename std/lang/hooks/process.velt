@@ -37,7 +37,7 @@ const LAZY_PANY = new ThreadLocal<usize>(0);
 export const PRINTED: usize = 8;
 
 /** Marks that this thread wrote to standard output: before each write of it. */
-@inline
+@inline("always")
 export function stdoutWritten(): void {
   if (!STDOUT_WRITTEN.get()) {
     firstWrite();
@@ -75,13 +75,13 @@ export function setLazyWorker(a: usize): void {
 }
 
 /** Whether this thread wrote to standard output since a hand-off last published it (kept set). */
-@inline
+@inline("always")
 export function stdoutWrittenSince(): bool {
   return STDOUT_WRITTEN.get();
 }
 
 /** Clears the mark: the hand-off that saw it publishes the output (std/sync/output.velt). */
-@inline
+@inline("always")
 export function clearStdoutWritten(): void {
   STDOUT_WRITTEN.set(false);
 }

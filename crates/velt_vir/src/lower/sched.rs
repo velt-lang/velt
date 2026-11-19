@@ -104,7 +104,7 @@ impl FnLower<'_, '_> {
     }
 
     /// `op` (a pointer or an integer) as a `usize` argument.
-    fn as_usize(&mut self, op: Operand) -> Operand {
+    pub(super) fn as_usize(&mut self, op: Operand) -> Operand {
         self.rvalue_temp(Ty::U64, Rvalue::Cast(op, Ty::U64))
     }
 
@@ -188,6 +188,22 @@ impl FnLower<'_, '_> {
     pub(super) fn sched_yield(&mut self, cx: Operand) {
         let cx = self.as_usize(cx);
         hooks::sched_yield(self, ty::USize::arg(cx)).emit(self);
+    }
+
+    /// The end of `velt_main` with exit code `code` when its synchronous `main` reached no task
+    /// (nothing runs `sched_finish`): where sema loaded the executor (live code may run on it,
+    /// and module state may have gone through its hooks, whose blocks are std's), its hook drops
+    /// the blocks of module state at a normal end with the debug counters on. Nothing for a
+    /// program without module state or without the executor (the runtime's blocks, which the
+    /// runtime drops).
+    pub(super) fn sched_module_exit(&mut self, code: &Operand) {
+        let live = self.std_sched()
+            && self.cx.hir.module_state.is_some()
+            && self.sched_hook_live(velt_common::std_hook!(sched_module_exit));
+        if live {
+            let code = self.rvalue_temp(Ty::I32, Rvalue::Use(code.clone()));
+            hooks::sched_module_exit(self, ty::I32::arg(code)).emit(self);
+        }
     }
 
     /// The end of `velt_main` with exit code `code`: when it is 0, the tasks still alive run to

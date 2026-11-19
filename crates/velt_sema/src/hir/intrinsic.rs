@@ -66,6 +66,23 @@ pub enum Intrinsic {
     /// `dst`'s element, which owns nothing (both ranges bounds-checked; one memcpy). The bulk
     /// load of `velt/half` (`f16FromBytes`, std/half/bytes.velt). Additive.
     ArrayCopyBytes,
+    /// std only, unsafe: `arrayDataAddress<T>(xs (modified)) -> usize`, the address of `xs`'s
+    /// buffer (0 for an array without one), whose elements own nothing (a number type or
+    /// `bool`; sema checks it, and lowering each instance of a type parameter). Good only
+    /// until `xs` is grown or dropped. With `ArrayByteLength`, how a generic function hands a
+    /// number array's own memory to a C function (velt/fs's `readSync`). Additive.
+    ArrayDataAddress,
+    /// std only, unsafe: `arrayReadAddress<T>(xs) -> usize`, `ArrayDataAddress` for memory
+    /// that is only read: it does not count as a change of `xs` (an array an `RwLock` holds,
+    /// in a `read` callback: velt/fs's `writeSync`). Additive.
+    ArrayReadAddress,
+    /// std only: `arrayBytesWritten<T>(xs (modified))`, said after bytes were written at
+    /// `ArrayDataAddress`'s address: a view (velt_vir array_view.rs) writes its mirror back to
+    /// the array it views; nothing for a plain array. Additive.
+    ArrayBytesWritten,
+    /// std only: `arrayByteLength<T>(xs) -> usize`, `xs.length * sizeof(T)` for an array of
+    /// numbers (checked as `ArrayDataAddress`). Additive.
+    ArrayByteLength,
     /// std only: `(xs (modified), len: usize)` set the length to `len` (growing the capacity
     /// when it is smaller) without dropping or initializing any element: slots past the old
     /// length must be written (`ArrayMove`) before they are read, and slots that are not owned
@@ -449,6 +466,14 @@ pub enum Intrinsic {
     /// std only: `addressCall(f: usize, a: usize) -> usize`: the call of the C function at
     /// address `f` with `a`, both pointer-sized (a waker table's `clone`). Additive.
     AddressCall,
+    /// std only: `addressCallWord(f: usize, a: u64)`: the call of the C function at address `f`,
+    /// which takes one 64-bit word and returns nothing (a weak map value's retain and release
+    /// glue, rt_abi.md "Weak references"). Additive.
+    AddressCallWord,
+    /// std only: `addressCall3(f: usize, a: usize, b: usize, c: usize)`: the call of the C
+    /// function at address `f`, which takes three pointer-sized values and returns nothing (trace
+    /// glue's `(obj, visit, ctx)`). Additive.
+    AddressCall3,
     /// std only: `fnAddress(f) -> usize`: the address of module-level function `f` (a `FnRef`
     /// with no type arguments; sema checks it is not async or throwing and passes only numbers
     /// and `bool`), callable from C with the C calling convention (#2649). Additive.
@@ -608,6 +633,12 @@ pub enum Intrinsic {
     /// std only: `weakRefDeref<T>(r: u32): T | null` — the target (counted), or
     /// null once it was freed.
     WeakRefDeref,
+    /// std only: `weakMapDrop(m: u32)` — weak map `m`'s drop: every value is released. Lowered
+    /// to std's weak core (`Construct::Weak`), which a program without weak collections
+    /// doesn't load.
+    WeakMapDrop,
+    /// std only: `weakRefDrop(r: u32)` — a `WeakRef` slot's drop.
+    WeakRefDrop,
 
     // Record views (#379; std/prelude/record.velt, velt_vir lower/record_view.rs): a record an
     // `any` is converted to with `any` values is a view of the object the `any` holds. Each is

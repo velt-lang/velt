@@ -4,15 +4,14 @@
 //! unfinished promises; a lazy promise its owner polled and then detached keeps running after
 //! the owner's continuation (`velt_rt_fut_detach`).
 
-use super::fake::block_on_fut;
+use super::fake::{block_on_fut, block_on_state, sleep};
 use crate::task::compiled::{Compiled, Inline};
 use crate::task::leaf::new_leaf;
 use crate::task::local::{
     velt_rt_fut_box, velt_rt_fut_detach, velt_rt_fut_start, velt_rt_futs_handled,
 };
-use crate::task::runtime::{runtime, velt_rt_block_on};
+use crate::task::runtime::runtime;
 use crate::task::{drop_fut, poll_fut, VeltFut, PENDING, READY};
-use crate::timer::velt_rt_sleep;
 use std::ffi::c_void;
 use std::future::Future;
 use std::pin::pin;
@@ -107,7 +106,7 @@ unsafe extern "C-unwind" fn job_poll(s: *mut u8, cx: *mut c_void) -> u32 {
         st.sleep = if st.ms == GATED {
             gate(st.id)
         } else {
-            velt_rt_sleep(st.ms)
+            sleep(st.ms)
         };
         st.tag = 1;
     }
@@ -227,7 +226,7 @@ fn started_promises_run_now_and_progress_while_the_creator_waits() {
         wait_for(0..3, (1, "end"));
         open(0);
     });
-    unsafe { velt_rt_block_on(main_poll, &mut st as *mut Main as *mut u8) };
+    unsafe { block_on_state(main_poll, &mut st as *mut Main as *mut u8) };
     driver.join().unwrap();
     assert_eq!(st.result, 12);
     let expected = [
@@ -254,7 +253,7 @@ fn a_dropped_started_promise_runs_to_completion() {
     let mut st = [0i64; 2];
     // The job waits for its gate: main returns without waiting for it.
     open_after_a_minute(&[10]);
-    unsafe { velt_rt_block_on(fire_poll, st.as_mut_ptr() as *mut u8) };
+    unsafe { block_on_state(fire_poll, st.as_mut_ptr() as *mut u8) };
     assert_eq!(events(10..11), [(10, "start")]);
     open(10);
     let t = Instant::now();
@@ -263,7 +262,7 @@ fn a_dropped_started_promise_runs_to_completion() {
             t.elapsed() < Duration::from_secs(60),
             "orphan did not finish"
         );
-        block_on_fut::<()>(velt_rt_sleep(2));
+        block_on_fut::<()>(sleep(2));
     }
     // It finished on the orphan task, which disposed of the unclaimed result.
     assert_eq!(events(10..11), [(10, "start"), (10, "end")]);
@@ -290,14 +289,14 @@ unsafe extern "C-unwind" fn lose_poll(s: *mut u8, _: *mut c_void) -> u32 {
 #[test]
 fn a_handled_promise_disposes_of_its_result_quietly() {
     let mut st = [0i64; 2];
-    unsafe { velt_rt_block_on(lose_poll, st.as_mut_ptr() as *mut u8) };
+    unsafe { block_on_state(lose_poll, st.as_mut_ptr() as *mut u8) };
     let t = Instant::now();
     while QUIET_RESULT_DROPS.load(Ordering::SeqCst) == 0 {
         assert!(
             t.elapsed() < Duration::from_secs(60),
             "handled promise did not finish"
         );
-        block_on_fut::<()>(velt_rt_sleep(2));
+        block_on_fut::<()>(sleep(2));
     }
     assert_eq!(events(11..12), [(11, "start"), (11, "end")]);
 }
@@ -325,14 +324,14 @@ unsafe extern "C-unwind" fn detach_poll(s: *mut u8, cx: *mut c_void) -> u32 {
 #[test]
 fn a_detached_promise_keeps_running_after_its_owner() {
     let mut st = [0i64; 2];
-    unsafe { velt_rt_block_on(detach_poll, st.as_mut_ptr() as *mut u8) };
+    unsafe { block_on_state(detach_poll, st.as_mut_ptr() as *mut u8) };
     let t = Instant::now();
     while DETACHED_RESULT_DROPS.load(Ordering::SeqCst) == 0 {
         assert!(
             t.elapsed() < Duration::from_secs(60),
             "detached promise did not finish"
         );
-        block_on_fut::<()>(velt_rt_sleep(2));
+        block_on_fut::<()>(sleep(2));
     }
     // Its timer held the owner's waker: the set re-polled it, and it finished quietly.
     // Its own ids (39, 40): the race test logs jobs 41 to 43 and runs alongside this one.

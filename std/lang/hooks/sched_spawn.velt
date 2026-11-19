@@ -7,16 +7,16 @@
 import { fnAddress, inline, noInline } from "velt/lang/intrinsics";
 import * as pt from "./program_thread";
 import * as fg from "./sched_foreign";
+import * as fr from "./sched_fut_root";
 import * as mk from "./sched_make";
 import * as m from "./sched_mem";
 import * as nc from "./sched_node_catch";
-import * as run from "./sched_run";
 import * as t from "./sched_task";
 import * as wk from "./sched_wake";
 import * as workers from "./sched_workers";
 
 /** The executor, started on first use (sched.velt `exec`). */
-@inline
+@inline("always")
 function exec(): usize {
   return workers.started();
 }
@@ -71,7 +71,7 @@ function spawnFirst(
 }
 
 /** `schedSpawn`'s task, from worker block `e` (`w`: this thread's). */
-@inline
+@inline("always")
 function spawnOn(
   e: usize,
   w: usize,
@@ -111,7 +111,7 @@ export function schedSpawnFut(f: usize, rsize: u64, rdrop: usize): usize {
     e = exec();
     w = t.here();
   }
-  const k = mk.task(e, fnAddress(run.futRootPoll), 0, rsize, rdrop, 16 + ((rsize + 15) & ~15), 2);
+  const k = mk.task(e, fnAddress(fr.futRootPoll), 0, rsize, rdrop, 16 + ((rsize + 15) & ~15), 2);
   const at = m.ld(k + t.T_ROOT);
   m.st(at, f);
   m.st(at + 8, rsize as usize);

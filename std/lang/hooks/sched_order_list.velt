@@ -70,8 +70,7 @@ export const H_AT: usize = 64;
 export const H_RAN: usize = 72;
 export const H_RAN_SET: usize = 80;
 export const H_TASK: usize = 88;
-export const H_GIVE: usize = 96;
-export const H_SIZE: usize = 104;
+export const H_SIZE: usize = 96;
 
 /** A timer's states: not queued (new, cleared, or its turn taken); queued; its turn has come. */
 export const IDLE: usize = 0;
@@ -93,7 +92,7 @@ const O_END: usize = O_WAITER + 16;
 const ORDER = new Atomic<u64>(0);
 
 /** The order's block, 0 before the first Node timer. */
-@inline
+@inline("always")
 export function order(): usize {
   return ORDER.load("acquire") as usize;
 }
@@ -124,7 +123,7 @@ function makeOrder(): usize {
 export const NO_LOCK: u32 = 4;
 
 /** Takes block `b`'s lock (none with one worker): the kind to pass to `unlock`. */
-@inline
+@inline("always")
 export function lock(b: usize): u32 {
   const k = lk.kind();
   if ((k & lk.LK_ON) !== 0) {
@@ -134,7 +133,7 @@ export function lock(b: usize): u32 {
 }
 
 /** Takes block `b`'s lock if it is free: as `lock`, or `NO_LOCK` (nothing to give back). */
-@inline
+@inline("always")
 export function tryLock(b: usize): u32 {
   const k = lk.kind();
   if ((k & lk.LK_ON) !== 0 && m.cas32(b + O_LOCK, 0, 1) !== 0) {
@@ -144,7 +143,7 @@ export function tryLock(b: usize): u32 {
 }
 
 /** Gives block `b`'s lock back (`k`: `lock`'s result). */
-@inline
+@inline("always")
 export function unlock(b: usize, k: u32): void {
   if ((k & lk.LK_ON) !== 0) {
     m.store32(b + O_LOCK, 0);

@@ -728,9 +728,9 @@ name = \"a\"
     #[test]
     fn ci_learns_whether_the_header_check_runs() {
         let mut plan = Plan::everything("test");
-        assert!(github_output_text(&plan).contains("\nc_headers=false\n"));
-        plan.c_headers = true;
         assert!(github_output_text(&plan).contains("\nc_headers=true\n"));
+        plan.c_headers = false;
+        assert!(github_output_text(&plan).contains("\nc_headers=false\n"));
     }
 
     #[test]

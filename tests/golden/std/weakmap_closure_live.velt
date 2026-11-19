@@ -1,0 +1,39 @@
+// check: no leaks
+// A closure capturing the key and another object, while the key is still used: nothing is
+// freed early (#3119 step 3).
+class Raw {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+class Handler {
+  read: () => number;
+  constructor(read: () => number) {
+    this.read = read;
+  }
+}
+
+class Other {
+  v = 1;
+}
+
+function main() {
+  const cache = new WeakMap<Raw, Handler>();
+  const raw = new Raw(5);
+  const other = new Other();
+  const h = new Handler(() => raw.n + other.v);
+  cache.set(raw, h);
+  const r = new WeakRef(raw);
+  const o = new WeakRef(other);
+  console.log(
+    "key alive:",
+    r.deref() != null,
+    "other alive:",
+    o.deref() != null,
+    cache.get(raw)!.read(),
+  );
+  console.log("raw still used:", raw.n);
+  console.log("map still in use:", cache.has(new Raw(0)));
+}

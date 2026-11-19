@@ -124,7 +124,9 @@ impl Cx<'_> {
 impl FnLower<'_, '_> {
     /// Record that closure `def` is made here, its value of type `ty` (before substitution).
     pub(in crate::lower) fn note_closure_env(&mut self, def: DefId, ty: TyId) {
-        if !self.cx.cycle_facts {
+        // Read by the cycle analysis and, in a program with weak references, by the trace
+        // glue of function values (glue/trace_env.rs).
+        if !self.cx.cycle_facts && !self.cx.has_weak() {
             return;
         }
         let t = self.sub(ty);

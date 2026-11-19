@@ -72,12 +72,12 @@ export class TapeRef {
   // holds no count (a call lent a part of `this.tape` would retain the box, atomically, and one
   // lent `this.tape` itself, unless quiet, would retain `this`).
 
-  @inline
+  @inline("always")
   kind(v: u32): u64 {
     return this.tape.words[2 * (v as usize)] & 0xff;
   }
 
-  @inline
+  @inline("always")
   number(v: u32): f64 {
     return f64.fromBits(this.tape.words[2 * (v as usize) + 1]);
   }
@@ -87,7 +87,7 @@ export class TapeRef {
    * function that calls the runtime (not quiet) would retain the box, atomically, for every read,
    * while a direct runtime call needs no such hold.
    */
-  @inline
+  @inline("always")
   text(v: u32): string {
     const w = this.tape.words[2 * (v as usize)];
     const p = this.tape.words[2 * (v as usize) + 1];
@@ -98,13 +98,13 @@ export class TapeRef {
     return velt_rt_str_byte_slice(this.tape.src, p & 0xffffffff, p >> 32);
   }
 
-  @inline
+  @inline("always")
   units(v: u32): i64 {
     return (this.tape.words[2 * (v as usize)] >> 32) as i64;
   }
 
   /** The number of members (`countIn`), read straight out of the box. */
-  @inline
+  @inline("always")
   count(v: u32): i64 {
     const w = this.tape.words[2 * (v as usize)];
     const k = w & 0xff;
@@ -123,7 +123,7 @@ export class TapeRef {
   }
 
   /** Element `i` of array `v`, or the value of member `i` of object `v`; -1 if there is none. */
-  @inline
+  @inline("always")
   child(v: u32, i: i64): i64 {
     const w = this.tape.words[2 * (v as usize)];
     const k = w & 0xff;
@@ -161,7 +161,7 @@ export class TapeRef {
   }
 
   /** Object `v`'s value for `name` (the last, if repeated), or -1 (also when `v` is no object). */
-  @inline
+  @inline("always")
   find(v: u32, name: string): i64 {
     const w = this.tape.words[2 * (v as usize)];
     if ((w & 0xff) != T_OBJECT) {

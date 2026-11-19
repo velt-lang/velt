@@ -165,8 +165,6 @@ impl Interp<'_> {
                 self.spawn_task(f, a[5])
             }
             "velt_rt_spawn_fut" => self.spawn_task(a[0], a[1]),
-            "velt_rt_perf_now" => self.exec.now.to_bits(),
-            "velt_rt_date_now" => 1_700_000_000_000u64 + self.exec.now as u64,
             _ => {
                 return self
                     .rt_sync_shared(sym, a)

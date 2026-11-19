@@ -29,9 +29,13 @@ export {
   stdUsed,
 } from "velt/lang/intrinsics/any";
 export {
+  arrayByteLength,
+  arrayBytesWritten,
   arrayCopyBytes,
+  arrayDataAddress,
   arrayMove,
   arrayPrefetch,
+  arrayReadAddress,
   arrayRemove,
   arrayReserve,
   arrayRotateLeft,
@@ -55,6 +59,8 @@ export {
 export { hash, includesEq, keyEq } from "velt/lang/intrinsics/compare";
 export {
   addressCall,
+  addressCall3,
+  addressCallWord,
   fnAddress,
   futDrop,
   futPoll,
@@ -133,10 +139,12 @@ export {
 } from "velt/lang/intrinsics/types";
 export {
   weakMapDelete,
+  weakMapDrop,
   weakMapGet,
   weakMapHas,
   weakMapSet,
   weakMapValue,
   weakRefDeref,
+  weakRefDrop,
   weakRefNew,
 } from "velt/lang/intrinsics/weak";

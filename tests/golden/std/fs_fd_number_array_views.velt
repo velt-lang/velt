@@ -1,0 +1,57 @@
+// requires: unix
+// `readSync` and `writeSync` in a program that converts an `any` to an array type, which makes
+// that array type one that can hold a view of another array (#1485): a plain array of the type
+// is read into and written from as in any program; a view gives the bytes of its elements as
+// they are when the call is made, and what is read into it goes to the array it views.
+import * as fs from "velt/fs";
+import { tmpdir } from "velt/os";
+
+function main() {
+  const path = `${tmpdir()}/velt-golden-number-array-views-${process.pid}`;
+  fs.writeFileSync(path, "hello world");
+  const fd = fs.openSync(path, "r+");
+
+  // `u8[]` is a view type here: a plain one first.
+  const parsed: any = [65, 66, 67];
+  const bytes = parsed as u8[];
+  const plain: u8[] = Buffer.alloc(5);
+  console.log(fs.readSync(fd, plain, 0, 5, 0), plain.join(","));
+  console.log(fs.writeSync(fd, plain, 1, 2, 9), fs.readFileBytesSync(path).join(","));
+
+  // The view: its three elements are written as three bytes.
+  console.log(fs.writeSync(fd, bytes, 0, 3, 0), fs.readFileBytesSync(path).join(","));
+  // Read into the view: the bytes reach the array it is a view of (#3211).
+  console.log(fs.readSync(fd, bytes, 0, 3, 6), bytes.join(","), parsed);
+  console.log(fs.readSync(fd, bytes, 1, 1, 0), bytes.join(","), parsed);
+
+  // `number[]` as well, eight bytes an element.
+  const more: any = [1.5, -2];
+  const floats = more as number[];
+  const own: number[] = [0, 0];
+  console.log(fs.writeSync(fd, floats, 0, 16, 0), fs.readSync(fd, own, 0, 16, 0), own);
+  console.log(fs.writeSync(fd, [8, 9], 0, 16, 0), fs.readSync(fd, floats, 0, 16, 0), floats, more);
+  const plainFloats: number[] = [3.25, 4];
+  console.log(fs.writeSync(fd, plainFloats, 8, 8, 0), fs.readSync(fd, own, 0, 8, 0), own);
+
+  // Only what a read changes goes back: an element the view's type rounds (0.1 as an f32, 300
+  // or 1.5 as a u8) keeps its own value where the read did not reach it, as after `view[i] = x`.
+  fs.writeSync(fd, "abcdefgh", 0);
+  const rounded: any = [0.1, 0.2];
+  console.log(fs.readSync(fd, rounded as f32[], 4, 4, 0), rounded.join(","));
+  const wide: any = [300, 1.5, -1, 7];
+  console.log(fs.readSync(fd, wide as u8[], 3, 1, 0), wide.join(","));
+  // A read that gives nothing changes nothing.
+  console.log(fs.readSync(fd, wide as u8[], 0, 2, 1000), wide.join(","));
+
+  // The bytes of -0 read over 0, and of 0 over -0, are a change too.
+  const zeros: u8[] = [0, 0, 0, 128, 0, 0, 0, 0];
+  fs.writeSync(fd, zeros, 0, 8, 0);
+  const plus: any = [0, 5];
+  fs.readSync(fd, plus as f32[], 0, 4, 0);
+  const minus: any = [-0, 5];
+  fs.readSync(fd, minus as f32[], 0, 4, 4);
+  console.log(Object.is(plus[0], -0), 1 / plus[0], Object.is(minus[0], 0), 1 / minus[0]);
+
+  fs.closeSync(fd);
+  fs.unlinkSync(path);
+}

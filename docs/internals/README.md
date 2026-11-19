@@ -245,6 +245,8 @@ whether it is implemented, partly implemented, accepted or proposed.
 **Performance and native code**
 
 - [Intrinsics](design/intrinsics.md): SIMD, CPU features and the math operations std builds on.
+- [Packages that compile to hardware](design/package-machine-code.md): inlining decorators,
+  CPU gating, vendor instructions and layout decorators for packages; `@intrinsic` stays std's.
 - [Atomics](design/atomics.md): atomic values, `shared` references, epochs and `ConcurrentMap`.
 - [Generic instances shared by shape](design/shape-sharing.md).
 - [Native code through `declare c` and `unsafe`](design/c-ffi.md): calling C and the platform's

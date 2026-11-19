@@ -41,7 +41,7 @@ const CHUNK: usize = 1024;
 const CHUNKS: usize = 4096;
 
 /** Is `h` a handle of this table? */
-@inline
+@inline("always")
 export function ours(h: u64): bool {
   return (h & TAG) !== 0;
 }
@@ -66,7 +66,7 @@ export function share(): void {
 }
 
 /** Are sources reached from several threads? */
-@inline
+@inline("always")
 export function shared(): bool {
   return SHARED.load("relaxed");
 }
@@ -149,7 +149,7 @@ export function handleOf(s: usize): u64 {
  * loads are unordered: a thread holding a handle came by it after its source was made (through a
  * channel, a task's state, a lock), and an operation that relies on the source takes its lock.
  */
-@inline
+@inline("always")
 export function lookup(h: u64): usize {
   // Callers pass handles of this table (velt/net's `ours` decides which table a handle is
   // for), made by `handleOf`; an untagged handle, or a slot no handle has (0, past the table:
@@ -175,7 +175,7 @@ export function lookup(h: u64): usize {
  * The source of handle `h`, locked for an operation (`leave` gives it back), its registration
  * moved to the reactor of the running task's home worker first; 0 when it is closed.
  */
-@inline
+@inline("always")
 export function enter(h: u64): usize {
   const s = lookup(h);
   if (s === 0 || m.ld32(s + io.S_LOCKED) === 0) {
@@ -213,13 +213,13 @@ export function hold(h: u64): usize {
 }
 
 /** The end of an operation on source `s` (from `enter` or `hold`, not 0). */
-@inline
+@inline("always")
 export function leave(s: usize): void {
   unlock(s);
 }
 
 /** Takes source `s`'s lock when sources are shared (its `S_LOCKED`). */
-@inline
+@inline("always")
 export function lock(s: usize): void {
   if (m.ld32(s + io.S_LOCKED) !== 0 && m.cas32(s + io.S_LOCK, 0, 1) !== 0) {
     m.spinLock(s + io.S_LOCK);
@@ -227,7 +227,7 @@ export function lock(s: usize): void {
 }
 
 /** Gives source `s`'s lock back when sources are shared. */
-@inline
+@inline("always")
 export function unlock(s: usize): void {
   if (m.ld32(s + io.S_LOCKED) !== 0) {
     m.store32(s + io.S_LOCK, 0);
@@ -312,7 +312,7 @@ function moveTo(s: usize, ob: usize, hb: usize): void {
  * source once it serves another socket. Before the close: after it, the handle may be a new
  * socket's already.
  */
-@inline
+@inline("always")
 export function closing(s: usize): void {
   if (r.DEREGISTERS) {
     deregister(s);

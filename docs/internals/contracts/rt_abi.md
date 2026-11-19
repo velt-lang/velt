@@ -262,62 +262,79 @@ the WebAssembly runtime, which has one thread). Implemented in `velt_rt` `cell_o
 | `velt_rt_cell_free` | `(void* cell)` | before the cell's last reference frees it |
 
 ## Weak references
-`velt_rt` exports these functions (`src/weak/`); the compiler lowers `WeakMap`, `WeakSet` and
-`WeakRef` (std/prelude/weak.velt, weak_set.velt, weak_ref.velt; `velt_vir` `lower/weak.rs`,
-`lower/weak_object.rs`) to them. Design: [weak-refs.md](../design/weak-refs.md).
+std's weak core (`std/lang/hooks/weak*.velt`) does this work. Lowering (`velt_vir`
+`lower/weak.rs`, `lower/weak_object.rs`) reaches it through the `weak_*` hooks
+(`crates/velt_common/src/std_hooks/weak_hooks.rs`), and std's `WeakMap`, `WeakSet` and `WeakRef`
+(std/prelude/weak.velt, weak_set.velt, weak_ref.velt) reach their drop hooks through intrinsics.
+The hooks are `prebuilt`: where the build links the core's object, each is a call of its entry
+point `velt_hook_<hook>` (numbers and `bool`s by value), and the program defines the storage of
+the object's thread-local values (`velt_tls_data_<id>`). Design:
+[weak-refs.md](../design/weak-refs.md).
 
 - **Count word.** Bit 63 (`RC_WEAK`) of a counted object's count is set while the object is weakly
   held; the count proper is bits 0..62. Retain is unchanged (`count += 1`).
 - **Release** of a *weak-capable* type (decided program-wide: weak keys, `WeakRef` targets, `weak`
   targets and every type reachable from a weak map's key and value types): `c = count; if (int64_t)c
-  > 1 { count = c - 1 } else if c == 1 { drop; free } else if velt_rt_weak_release(obj) { drop;
-  free }` (`RC_WEAK` is the sign bit, so the shared path keeps one compare). Other types release
-  with the plain sequence.
+  > 1 { count = c - 1 } else if c == 1 { drop; free } else if weakRelease(obj) { drop; free }`
+  (`RC_WEAK` is the sign bit, so the shared path keeps one compare). Other types release with the
+  plain sequence.
 - **Trace glue** per counted type that can be a weak key or value, or be reached from one:
   `void trace(uint8_t* obj, VisitFn visit, void* ctx)` calls `visit(ctx, child, child_trace)` once
-  for each counted reference `obj` owns (`child_trace` may be null: opaque). Map values are
+  for each counted reference `obj` owns (`child_trace` may be null: opaque), each argument a
+  `uint64_t` (a pointer widened: on wasm32 an indirect call must match the callee's signature). Map values are
   retained with `void retain(uint64_t value)` and released with `void release(uint64_t value)`.
+  These are C functions the core calls through their addresses (`addressCall3`,
+  `addressCallWord`); `visit` is a std function (`fnAddress`).
   A trace glue may leave references out (the target then looks referenced from outside and
   stays alive: a leak at worst) but must never report a word that is not a counted reference
   `obj` owns, or report one twice: the trial would count it as internal and could free a live
   object. So the glue of a type whose objects can have more fields than it knows (a class in a
   hierarchy with a vtable, an interface value, a function value's environment) is null, or
-  dispatches on the object's dynamic type; Velt's is null for those.
-- **Map values.** A value word of a map with `value_release` is 0 (`null`, `undefined`) or a
+  dispatches on the object's dynamic type. Velt's is null for classes with a vtable and
+  interface values, and walks an uncounted object's fields as its owner's (the owner holds the
+  only reference). A function value's glue dispatches on its environment's drop entry (header
+  word 0, one function per closure instance): it visits the environment with the trace glue of
+  the closure whose drop entry it is, among those made at the value's function type, and leaves
+  out an environment that matches none (one the runtime made, or one whose drop entry a function
+  property replaced, `fn_props.rs`). An environment's trace visits what its captures own and its
+  captured variables' cells (counted `[count][value]` blocks, traced like a map value's box). In a
+  program with such glue, environments and cells may be weakly held, and their releases take the
+  three-way sequence below.
+- **Map values.** A value word of a map with value release glue is 0 (`null`, `undefined`) or a
   counted object pointer. The compiler stores a value whose type is a counted object (or
   `T | null` of one) as its pointer, a value without drop glue that fits in 8 bytes (numbers,
   `bool`) as its bits with no value glue, and any other value (strings, unions, tuples, function
   values) in a counted box of its own, `[count][value]`, whose glue retains and releases the box
-  (the box is weak-capable) and traces the value in it. The runtime never retains, releases or
+  (the box is weak-capable) and traces the value in it. The core never retains, releases or
   traces a 0 value.
-- **Threads.** Handles (`MapId`, `RefId`) are nonzero `uint32_t`s (generated code keeps 0 for
-  "not created yet"), valid on every thread until dropped: the side table is one per process,
-  behind a lock the runtime takes only in these functions, so a task that resumes on another
-  worker, or a value reached through a `shared` `Mutex`, keeps its entries. The compiler keeps
-  `WeakMap`, `WeakSet` and `WeakRef` values out of transfers (sema rejects them, or the transfer
-  glue panics): a handle is used by one task at a time. Weak-capable types are never atomic. An
-  object with `RC_WEAK` set and no record is an ICE (`velt_rt_weak_release` panics before it
-  changes the count). Trace glue runs with the table locked and must only call `visit`.
+- **Threads.** Handles of maps and `WeakRef`s are nonzero `uint32_t`s (generated code keeps 0
+  for "not created yet"), valid on every thread until dropped: the core's table is one per
+  process, behind a lock taken only in these hooks, so a task that resumes on another worker, or
+  a value reached through a `shared` `Mutex`, keeps its entries. The compiler keeps `WeakMap`,
+  `WeakSet` and `WeakRef` values out of transfers (sema rejects them, or the transfer glue
+  panics): a handle is used by one task at a time. Weak-capable types are never atomic. An object
+  with `RC_WEAK` set and no record is an ICE (`weakRelease` panics before it changes the count).
+  Trace glue runs with the table locked and must only call `visit`.
 - **Compiler rules** for weak-capable types: a uniqueness test compares the whole count word with
   1 (a weakly held object is never unique), and every site that decrements a count directly
   (`c - 1`) uses the release sequence above instead (`velt_vir` asks `Cx::weak_capable` at each:
   `lower/rc.rs`, `lower/drops.rs`, `lower/boxes.rs`, the drop and transfer glue).
 
-| Symbol | Signature | Semantics |
+| Hook | Signature | Semantics |
 |---|---|---|
-| `velt_rt_weakmap_new` | `(TraceFn key_trace, RetainFn value_retain, ReleaseFn value_release, TraceFn value_trace) -> uint32_t` | a new map; null `value_retain` and `value_release` (both or neither) mean values are plain words (`WeakMap<K, number>`, `WeakSet`), a null `value_trace` that values never refer to keys (a `value_trace` needs value glue) |
-| `velt_rt_weakmap_set` | `(uint32_t m, uint8_t* key, uint64_t value)` | takes over the value's reference; the key is not counted; releases a replaced value |
-| `velt_rt_weakmap_get` | `(uint32_t m, uint8_t* key, uint8_t* found) -> uint64_t` | the value, counted (retained with `value_retain`; the caller releases it), or 0; `*found` = 1 if present |
-| `velt_rt_weakmap_has` | `(uint32_t m, uint8_t* key) -> uint8_t` | |
-| `velt_rt_weakmap_delete` | `(uint32_t m, uint8_t* key) -> uint8_t` | 1 if there was an entry; its value is released |
-| `velt_rt_weakmap_drop` | `(uint32_t m)` | releases every value |
-| `velt_rt_weakref_new` | `(uint8_t* obj) -> uint32_t` | does not count `obj`; bit 0 of `obj` may be set (a typed proxy, the object being `obj` with it clear), and `deref` returns the word as given |
-| `velt_rt_weakref_deref` | `(uint32_t r) -> uint8_t*` | the target with count + 1, or null once freed |
-| `velt_rt_weakref_drop` | `(uint32_t r)` | |
-| `velt_rt_weakmap_set_traced` | `(uint32_t m, uint8_t* key, uint64_t value, TraceFn key_trace)` | `velt_rt_weakmap_set` with the key's own trace glue instead of the map's (keys of a map whose key type is `object` differ in type; the map is made with a null `key_trace`) |
-| `velt_rt_weakref_new_with` | `(uint8_t* obj, uint64_t word) -> uint32_t` | `velt_rt_weakref_new`, keeping `word` with the slot (the descriptor of an `object` target) |
-| `velt_rt_weakref_word` | `(uint32_t r) -> uint64_t` | the word given to `velt_rt_weakref_new_with` (0 for `velt_rt_weakref_new`), also after the target was freed |
-| `velt_rt_weak_release` | `(uint8_t* obj) -> uint8_t` | cold release of an object with `RC_WEAK` set, given the caller's reference: 1 = it was the last one (the object has left every map and `WeakRef`; the caller drops and frees it), 0 = the count was decremented (and an ephemeron cycle the object belonged to may have been freed); panics (ICE) when the object has no record |
+| `weakMapNew` | `(key_trace, value_retain, value_release, value_trace: usize) -> u32` | a new map; 0 `value_retain` and `value_release` (both or neither) mean values are plain words (`WeakMap<K, number>`, `WeakSet`), a 0 `value_trace` that values never refer to keys (a `value_trace` needs value glue) |
+| `weakMapSet` | `(m: u32, key: usize, value: u64)` | takes over the value's reference; the key is not counted; releases a replaced value |
+| `weakMapSetTraced` | `(m: u32, key: usize, value: u64, key_trace: usize)` | `weakMapSet` with the key's own trace glue instead of the map's (keys of a map whose key type is `object` differ in type; the map is made with a 0 `key_trace`) |
+| `weakMapGet` | `(m: u32, key: usize) -> u64` | the value, counted (retained with `value_retain`; the caller releases it), or 0 |
+| `weakMapHas` | `(m: u32, key: usize) -> bool` | |
+| `weakMapDelete` | `(m: u32, key: usize) -> bool` | whether there was an entry; its value is released |
+| `weakMapDrop` | `(m: u32)` | releases every value |
+| `weakRefNew` | `(obj: usize) -> u32` | does not count `obj`; bit 0 of `obj` may be set (a typed proxy, the object being `obj` with it clear), and `weakRefDeref` returns the word as given |
+| `weakRefNewWith` | `(obj: usize, word: u64) -> u32` | `weakRefNew`, keeping `word` with the slot (the descriptor of an `object` target) |
+| `weakRefWord` | `(r: u32) -> u64` | the word given to `weakRefNewWith` (0 for `weakRefNew`), also after the target was freed |
+| `weakRefDeref` | `(r: u32) -> usize` | the target with count + 1, or 0 once freed |
+| `weakRefDrop` | `(r: u32)` | |
+| `weakRelease` | `(obj: usize) -> bool` | cold release of an object with `RC_WEAK` set, given the caller's reference: true = it was the last one (the object has left every map and `WeakRef`; the caller drops and frees it), false = the count was decremented (and an ephemeron cycle the object belonged to may have been freed); panics (ICE) when the object has no record |
 
 ## Symbols
 
@@ -528,6 +545,23 @@ otherwise `_dot_add_bf16x8`. The start-up check ("CPU check") does not know FEAT
 AVX512-BF16: code built for a `--cpu` that has them stops with an illegal instruction on a CPU that
 has not. Cranelift always widens and uses `fma`.
 
+**bf16 dot product at run time.** `velt_simd_f32x4_bfdot` `(acc, a, b) -> acc`
+is Arm's `bfdot` itself (`velt_vir::simd::ExtOp::Bfdot`, `llvm.aarch64.neon.bfdot`), an
+instruction of the extension `bf16-arm` (FEAT_BF16, LLVM's `+bf16`): a caller runs it only where
+the CPU has FEAT_BF16, and on another architecture, on wasm and under Cranelift it gives zeros.
+Like AES and FMA the extension has **no runtime flag**: `velt_simd_has_bf16_arm()` is `1` only in
+a function gated on it and `0` everywhere else, and std computes the run-time answer in Velt, once
+(std/simd/bf16_check.velt): behind the carry-less flag of arm64 (`velt_simd_has_clmul_arm`, so it
+is `false` off arm64, under Cranelift and with `VELT_SIMD_DISABLE=clmul`), `getauxval(AT_HWCAP2)`
+bit 14 on Linux and the `hw.optional.arm.FEAT_BF16` sysctl on macOS; `false` on Windows.
+velt/half's `dotBf16Fast` and `dotBf16FastAt` ask once for a dot product and run a function gated
+on `bf16-arm`, whose loops are `velt_simd_f32x4_bfdot`, where the answer is yes, and
+`velt_simd_f32x4_dot_add_fast_bf16x8` otherwise, so a build for any arm64 CPU runs `bfdot` where
+the CPU has it. `bf16x8.dotAddFast`, a step of a caller's loop, asks nothing and is the latter
+alone. In code built for a `--cpu` for which clang defines
+`__ARM_FEATURE_BF16_VECTOR_ARITHMETIC`, `velt_simd_has_bf16_arm()` is `1` everywhere and nothing
+is asked.
+
 `velt_simd_f16x8_<op>` for `add`, `sub`, `mul`, `div`, `mul_add`, `mul_add_fast`, `min`,
 `max`, `neg`, `abs`, `sqrt` and the comparisons `eq`, `ne`, `lt`, `le`, `gt`, `ge` (giving a
 `mask16x8`) take `(v)` for `neg`, `abs` and `sqrt`, `(a, b, c)` giving `a * b + c` for `mul_add` and
@@ -597,8 +631,9 @@ constant; with an FMA level (`x86-64-v3`) `velt_math_fma_f64` is one instruction
 LLVM gives a function that calls one of these operations the extension's own feature (`+sha2`,
 `+sha`, `+pclmul`, `+aes`), which it uses for nothing else; a *gated* function (VIR
 `Function::target`, HIR `Program::cpu_targets`, from std's `targetFeature("sha-arm" | "sha-x86" |
-"clmul-x86" | "clmul-arm" | "aes-x86" | "aes-arm" | "fma-x86")`, every call of which sema keeps
-behind the check) gets the extension's whole set (`+sha,+ssse3,+sse4.1` on x86), and the check of
+"clmul-x86" | "clmul-arm" | "aes-x86" | "aes-arm" | "fma-x86" | "bf16-arm")`, every call of which
+sema keeps behind the check) gets the extension's whole set (`+sha,+ssse3,+sse4.1` on x86), and
+the check of
 its own extension (`velt_simd_has_<ext>`) is the constant `1` there, so the emulation behind it is
 dead code. The ordinary functions it calls that check that extension (the `velt/simd` methods),
 themselves or through their callees, are cloned for it by `velt_opt` with the check `true`, so this
@@ -695,7 +730,8 @@ gets a block of its own, which `rest` (when not null) completes after `init`, as
 
 The call takes the process-wide *module lock* unless the thread holds it: inside a task until
 the end of the poll, and every later poll of that task takes it at its start; outside a task (a
-synchronous `main`) until `velt_rt_block_on` or until `main` returns. A program that never
+synchronous `main`) until `main`'s root starts (std's `schedBlockOn`, `velt_rt_block_on` on
+WebAssembly) or until `main` returns. A program that never
 calls it pays nothing per task (a process-wide flag the first call sets). `velt_rt_mutex_lock`
 keeps the module lock while it blocks; waiting for the module lock while the thread holds a
 `Mutex` stops with an `ICE:` panic (sema rejects module state in a `with` callback). On
@@ -712,7 +748,7 @@ the module lock already, so no thread waits for it while holding a `Mutex`; the 
 never reach module state, so a thread holding the module lock that waits for their `Mutex` only
 waits for them to finish.
 
-Within one call of a compiled function (until the poll ends, or until `velt_rt_block_on` or
+Within one call of a compiled function (until the poll ends, or until `main`'s root starts or
 `main` returns), a successful `velt_rt_module_state(desc, s)` stays valid for every slot `<= s`:
 the same block, still initialized up to `s`, with the lock still held. The compiler reuses it
 instead of calling again (`velt_opt` `module_state`), so a runtime change must keep this.
@@ -856,7 +892,10 @@ body's reader and the piece last read; its async functions fulfill with nothing 
 an error whose `name` is the `IoError` code native `fetch` gives the failure (`AbortError` once
 the call was aborted). `velt:random` (std/lang/random/seed_js.velt): `fill(buf: u8[])`, the seed
 of `Math.random()`'s generator, which the glue fills with `crypto.getRandomValues` (`randomHost` in
-velt_web.mjs); `buf` crosses as a view of the program's memory.
+velt_web.mjs); `buf` crosses as a view of the program's memory. `velt:clock`
+(std/lang/hooks/clock_js.velt): `now(): f64` and `date(): f64`, the host's `performance.now()`
+and `Date.now()` in milliseconds, which `Date.now()` and `performance.now()` read (`clockHost`
+in velt_web.mjs).
 
 ## Views
 

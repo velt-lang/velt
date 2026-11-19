@@ -260,13 +260,13 @@ export function addWithin(u: u64[], uo: usize, vo: usize, n: usize): u64 {
 }
 
 /** Limb `i` of `a` (bounds-checked; nat_rows_raw.velt's relies on `limbsInside`). */
-@inline
+@inline("always")
 export function limbOf(a: u64[], i: usize): u64 {
   return a[i];
 }
 
 /** Writes limb `i` of `a` (bounds-checked). */
-@inline
+@inline("always")
 export function limbSet(a: u64[], i: usize, v: u64) {
   a[i] = v;
 }

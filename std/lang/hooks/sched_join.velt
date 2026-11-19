@@ -153,7 +153,7 @@ export function isJoin(f: usize): bool {
  * of kind `kind` counted): no lock, in line; the joiner is woken behind the tasks queued already,
  * as `joinDone`'s.
  */
-@inline
+@inline("always")
 export function joinDoneLazy(e: usize, k: usize, kind: u32): void {
   const s = m.ld32(k + t.T_JOIN_STATE);
   const joiner = m.ld(k + t.T_JOINER);
@@ -177,7 +177,7 @@ function joinPollLocking(f: usize, cx: usize): u32 {
 }
 
 /** `joinPoll`, the operation of kind `kind` (sched_lock.velt). */
-@inline
+@inline("always")
 function joinPollAs(f: usize, cx: usize, kind: u32): u32 {
   const k = f - t.T_JOIN;
   const s = mk.lockJoin(k, kind);
@@ -300,7 +300,7 @@ function joinDropLocking(f: usize): void {
 }
 
 /** `joinDrop`, the operation of kind `kind` (sched_lock.velt). */
-@inline
+@inline("always")
 function joinDropAs(f: usize, kind: u32): void {
   const k = f - t.T_JOIN;
   const s = mk.lockJoin(k, kind);

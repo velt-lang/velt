@@ -205,8 +205,10 @@ one WebAssembly builds load.
   never calls `catchPanic` has no `catchUnwind` in its live code and so no `velt_eh_try`, no panic
   hook and no cleanup pads (test `only_a_program_that_catches_has_the_catch` in
   `crates/veltc/tests/std_scheduler_catch.rs`).
-- **A panicked node** keeps its exception (the message) in place of its poll, is finished, and is
-  never freed (a leaf inside the leaked state may still wake it); its result drop is cleared.
+- **A panicked node** keeps its exception (the message) in place of its poll and is finished; its
+  result drop is cleared, and its state machine is never polled or dropped again (the pads of its
+  poll dropped what it held). It is freed with its last reference like any other node, its
+  exception with it: a leaf that still holds its waker holds a reference.
   Awaiting it raises the panic again in the awaiter (`raiseAgain`, which prints nothing: the
   message was printed at the panic), so a panic travels through `await`s as through calls until a
   catching poll takes it, or ends the process with 101 where none runs.
@@ -507,8 +509,8 @@ and cost nothing in programs that do not catch.
   `division by zero` panic blocks; Cranelift on Apple arm64 for a call with stack arguments; the
   JIT; Windows; WebAssembly. `velt test` fails the leak check of a test that catches a panic
   unwinding through one of these on a target with pads.
-- **The panicked node itself** (and a panicked task's root) and its exception object are never
-  freed ([#2818](https://github.com/velt-lang/velt/issues/2818)).
+- **A panicked task's root** is never freed
+  ([#2818](https://github.com/velt-lang/velt/issues/2818)).
 - **`catchPanic` guards the first promise started after `body` is called**, so `body` must be the
   async call itself.
 - **A foreign exception that passes a catch leaves the count up.** One that passes

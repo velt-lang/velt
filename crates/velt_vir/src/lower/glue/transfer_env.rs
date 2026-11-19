@@ -279,6 +279,23 @@ impl<'c, 'h> FnLower<'c, 'h> {
 
     /// One reference to the shared env `env` given up: others hold it.
     fn release_count(&mut self, env: Operand) {
+        // An environment that may be weakly held (`Boxing::weak_envs`) is not unique when its
+        // count word isn't 1 but may still hold its last reference, which only its release can
+        // give up: its own drop entry, which takes the three-way sequence (and is the one a
+        // function property put in front of it, velt_rt `fn_props.rs`).
+        if self.cx.boxing.weak_envs {
+            let hdr = self.cx.closure_agg();
+            let ep = self.operand_place(env.clone(), Ty::Ptr);
+            let drop = self.rvalue_temp(
+                Ty::Ptr,
+                Rvalue::Use(Operand::Copy(proj(
+                    &proj(&ep, Proj::Deref(Ty::Agg(hdr))),
+                    Proj::Field(0),
+                ))),
+            );
+            self.call_entry(drop, vec![env], vec![Ty::Ptr], Ty::Unit);
+            return;
+        }
         let c = self.count_place(env);
         let n = self.rvalue_temp(
             Ty::U64,

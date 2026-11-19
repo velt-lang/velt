@@ -56,7 +56,7 @@ export function settle(h: usize, task: usize, me: usize): void {
  * it is shared on this task, its hub settles (the waiting holders are queued) and true; false
  * for any other node, whose awaiter is woken (a hub on another task's, sched_share_away.velt).
  */
-@inline
+@inline("always")
 export function settled(n: usize, task: usize, prev: u32): bool {
   if ((prev & sh.HUB_HERE) === 0) {
     return false;

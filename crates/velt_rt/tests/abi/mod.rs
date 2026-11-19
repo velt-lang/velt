@@ -7,7 +7,6 @@
 mod cells;
 #[path = "../../../../tests/common/command.rs"]
 pub(crate) mod command;
-mod core;
 mod fake;
 mod fs;
 mod handover;
@@ -19,7 +18,6 @@ mod json_value_edit;
 mod local;
 mod losers;
 mod net;
-mod perf;
 mod shared;
 mod strings;
 mod text_perf;

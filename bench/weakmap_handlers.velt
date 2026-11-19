@@ -1,0 +1,36 @@
+// WeakMap whose values hold handler closures, the shape of sigx's reactive caches (#3119
+// step 3): each handler's closure captures an object other than its key, so no entry is a
+// cycle, and each entry goes when its key's last reference does. The key's decrements before
+// its last (`set`'s and `get`'s temporary references) trace the value's graph (the handler, its
+// closure's environment, the captured object) to find whether it refers back to the key.
+// weakmap_handlers_cycle.velt is the same with the key captured.
+class Raw {
+  n: i64;
+
+  constructor(n: i64) {
+    this.n = n;
+  }
+}
+
+class Handler {
+  read: () => i64;
+
+  constructor(read: () => i64) {
+    this.read = read;
+  }
+}
+
+function track(cache: WeakMap<Raw, Handler>, raw: Raw): i64 {
+  const other = new Raw(raw.n + 1);
+  cache.set(raw, new Handler(() => other.n));
+  return cache.get(raw)!.read();
+}
+
+function main() {
+  const cache = new WeakMap<Raw, Handler>();
+  let sum: i64 = 0;
+  for (let i: i64 = 0; i < 400000; i++) {
+    sum += track(cache, new Raw(i));
+  }
+  console.log(sum);
+}

@@ -376,6 +376,9 @@ describe("EncryptedExtensions and the client's Certificate", () => {
     expect(failure(() => traced(1, ["h2"]).onMessage(ee("026833")))).toBe(
       `120 TLS: the server chose ALPN protocol "h3", which was not offered`,
     );
+    // A name that is not UTF-8 is bytes that were not offered either.
+    const bytes = failure(() => traced(1, ["h2"]).onMessage(ee("0268ff")));
+    expect(bytes.startsWith("120 TLS: the server chose ALPN protocol")).toBe(true);
   });
 
   it("refuses an ALPN list of two names", () => {
@@ -426,12 +429,15 @@ describe("a generated ClientHello", () => {
     return hexEncode(clientHello(sent, false, null, X25519, sent.publicKey));
   }
 
-  it("says legacy_version 0x0303, its random and session id, and the three suites", () => {
+  it("says legacy_version 0x0303, its random and session id, and the nine suites", () => {
     const random = hexEncode(bytes32());
     // AES-128-GCM, AES-256-GCM, ChaCha20-Poly1305 where the CPU has the AES instructions, else
-    // ChaCha20-Poly1305 first.
-    const suites = u8x16.hasAes() ? "130113021303" : "130313011302";
-    const start = `0303${random}20${random}0006${suites}` + "0100";
+    // ChaCha20-Poly1305 first; TLS 1.3's three, then TLS 1.2's six (ECDSA before RSA).
+    const suites =
+      u8x16.hasAes()
+        ? "130113021303" + "c02bc02fc02cc030cca9cca8"
+        : "130313011302" + "cca9cca8c02bc02fc02cc030";
+    const start = `0303${random}20${random}0012${suites}` + "0100";
     expect(hello("example.com").slice(8, (8 + start.length) as i64)).toBe(start);
   });
 

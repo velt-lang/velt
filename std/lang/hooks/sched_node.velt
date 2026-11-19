@@ -28,11 +28,16 @@
 // task's await word raised so its `await`s take their microtask step, and from then on its task
 // drives it: a wake puts it among the task's woken nodes, which the task runs before its root
 // (sched.velt `run`). Its owner only sees it finish. A task that starts nothing pays nothing.
+//
+// A started node its owner dropped runs on. One that nothing can wake any more (no leaf holds its
+// waker) never would: it is given up, its state dropped, as JavaScript collects a promise nobody
+// can settle together with the functions waiting for it (sched_node_lost.velt).
 
 import { inline, noInline, stateDrop, statePoll } from "velt/lang/intrinsics";
 import * as bd from "./sched_budget";
 import * as m from "./sched_mem";
 import * as loc from "./sched_node_loc";
+import * as lost from "./sched_node_lost";
 import * as micro from "./sched_micro";
 import * as aw from "./sched_node_await";
 import * as al from "./sched_share_alias";
@@ -56,8 +61,9 @@ export const N_NEXT: usize = 56;
 export const N_CX: usize = 64;
 export const N_TAKEN_NEXT: usize = 80;
 /**
- * The lazy state's drop glue: read only before the start, so a started node lends it and the
- * word after it to sched_node_catch.velt (`N_SETTLE`).
+ * The state's drop glue: read before the start, and when a started node is given up (sched_node_lost.velt).
+ * A started node that catches lends it and the word after it to sched_node_catch.velt
+ * (`N_SETTLE`).
  */
 export const N_DROP: usize = 88;
 export const N_UNHANDLED_NEXT: usize = 104;
@@ -77,9 +83,9 @@ export const RUNNING: u32 = 64;
 /**
  * Its polls catch a Velt panic (std/task/catch_sched.velt): `catchPanic`'s promise, and every
  * promise started while a catching poll runs. A panic makes it PANICKED: finished, its result
- * never written, read or dropped, its state never polled or dropped again, the node never freed
- * (a leaf in the abandoned state may still wake it); the exception, which holds the message, in
- * place of its poll; an owner awaiting it gets the panic raised again (`again`).
+ * never written, read or dropped, its state never polled or dropped again (the cleanup pads of
+ * its poll dropped what it held); the exception, which holds the message, in place of its poll,
+ * freed with the node; an owner awaiting it gets the panic raised again (`again`).
  */
 export const CATCHES: u32 = 128;
 export const PANICKED: u32 = 256;
@@ -147,7 +153,7 @@ export function nodeSettled(f: usize, cx: usize): u32 {
 }
 
 /** `nodePoll` (`claim`: the owner takes the result, or the panic raised again) or `nodeSettled`. */
-@inline
+@inline("always")
 function pollNode(f: usize, cx: usize, claim: bool): u32 {
   const n = nodeOf(f);
   const fl = m.load32(n + N_FLAGS);
@@ -200,6 +206,9 @@ function pollNode(f: usize, cx: usize, claim: bool): u32 {
       adoptedDone(task, n, claim ? FINISHED | DELIVERED : FINISHED);
       return 1;
     }
+    if (m.load(n + N_REFS) === 2) {
+      return lost.ownerOnly(n);
+    }
   }
   return aw.awaitNode(n, cx);
 }
@@ -208,7 +217,7 @@ function pollNode(f: usize, cx: usize, claim: bool): u32 {
  * Adopted node `n` of task `task` finished (flags `fl`): the task no longer drives it. Its owner,
  * which adopted it, runs on the task (`pollNode`), so nothing else touches its awaiter word.
  */
-@inline
+@inline("always")
 export function adoptedDone(task: usize, n: usize, fl: u32): void {
   tr.finish(n, fl);
   m.st(task + t.T_LOCALS, m.ld(task + t.T_LOCALS) - 1);
@@ -248,6 +257,9 @@ export function nodeDrop(f: usize): void {
     return;
   } else if ((fl & FINISHED) === 0) {
     setFlags(n, DETACHED);
+    if (m.load(n + N_REFS) === 2) {
+      return lost.dropPending(n);
+    }
   } else if ((fl & DELIVERED) === 0) {
     rp.dropResult(n);
   }
@@ -297,7 +309,7 @@ export function start(
  * Lazy node `n` becomes a started promise of task `task`, which the caller owns or polls (or has
  * just made, sched_foreign.velt `start`): its result dropped with `rdrop` if nobody claims it.
  */
-@inline
+@inline("always")
 export function bind(task: usize, n: usize, rdrop: usize, rejecting: bool): void {
   m.or32(n + N_FLAGS, STARTED | (rejecting ? REJECTING : 0));
   m.st(n + N_RESULT_DROP, rdrop);
@@ -312,7 +324,7 @@ export function bind(task: usize, n: usize, rdrop: usize, rejecting: bool): void
 }
 
 /** Bound node `n`'s first run, in a poll of its task `task`, the task's await word raised. */
-@inline
+@inline("always")
 export function firstRun(task: usize, n: usize): void {
   m.st32(task + t.T_WORD, m.ld32(task + t.T_WORD) + 1);
   run(task, n, false);
@@ -341,6 +353,8 @@ export function handled(f: usize, qdrop: usize, hdrPoll: usize): void {
  * Polls started node `n` of task `task` once (it is not running). Only a node `taken` off the
  * task's woken stack (sched_node_woken.velt `takeWoken`) leaves QUEUED: one run from elsewhere
  * (a microtask, its start) may still be on the stack, and a wake must not push it there twice.
+ * A poll that leaves it suspended with its owner gone looks whether anything can still wake it
+ * (`parked`).
  */
 export function run(task: usize, n: usize, taken: bool): void {
   if (taken) {
@@ -366,6 +380,9 @@ export function run(task: usize, n: usize, taken: bool): void {
     const r = unsafe { statePoll(m.ld(n + N_POLL), n + N_HEAD + 16, n + N_CX) };
     m.and32(n + N_FLAGS, ~RUNNING);
     if (r !== 1) {
+      if ((m.load32(n + N_FLAGS) & DETACHED) !== 0 && m.load(n + N_REFS) === 2) {
+        lost.parked(task, n);
+      }
       return;
     }
   }

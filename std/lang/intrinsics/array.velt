@@ -79,6 +79,37 @@ export declare function arrayPrefetch<T>(xs: T[], i: usize): void;
 export declare function arrayMove<T>(dst: Mut<T[]>, d: usize, src: T[], s: usize, n: usize): void;
 
 /**
+ * The address of `xs`'s buffer, where its elements' bytes are (in the target's byte order,
+ * little-endian on every target); 0 for an array that has none. `T` is a number type or `bool`
+ * (sema checks it, and lowering each instance of a type parameter). Unsafe: the address is good
+ * only until `xs` is grown or dropped, and what is written there must be values of `T`. With
+ * `arrayByteLength`, for handing a number array's own memory to a C function from generic code
+ * (velt/fs's `readSync` and `writeSync`).
+ */
+@intrinsic
+export declare unsafe function arrayDataAddress<T>(xs: Mut<T[]>): usize;
+
+/**
+ * `arrayDataAddress` for memory that is only read (velt/fs's `writeSync`): it does not count
+ * as a change of `xs`, so an array an `RwLock` holds gives it in a `read` callback. Unsafe: the
+ * address is good only until `xs` is grown or dropped, and nothing may be written there.
+ */
+@intrinsic
+export declare unsafe function arrayReadAddress<T>(xs: readonly T[]): usize;
+
+/**
+ * Says that bytes were written at `arrayDataAddress(xs)`: where `xs` is a view of another array
+ * (an `any` converted to `T[]`) the elements go back to that array, as after any other change
+ * through the view. Nothing for a plain array.
+ */
+@intrinsic
+export declare function arrayBytesWritten<T>(xs: Mut<T[]>): void;
+
+/** `xs.length * sizeof(T)`: how many bytes `xs`'s elements are. `T` as for `arrayDataAddress`. */
+@intrinsic
+export declare function arrayByteLength<T>(xs: T[]): usize;
+
+/**
  * Copies `n * sizeof(T)` bytes of `src`, starting at byte index `s` (not an element index), as
  * the bits of `dst[d..d + n)`: the bytes `src[s..s + n * sizeof(T))`, in the target's byte
  * order, which is little-endian on every target. Both ranges are bounds-checked. `T` is a

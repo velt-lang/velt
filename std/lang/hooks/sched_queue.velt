@@ -33,7 +33,7 @@ const TRICKLE: usize = 61;
 const NEXT_RUNS: usize = 3;
 
 /** Takes worker `e`'s queue lock when queues are shared (`mode`: its `E_MODE`). */
-@inline
+@inline("always")
 export function lock(e: usize, mode: u32): void {
   if ((mode & t.M_SHARED) !== 0) {
     lockSlow(e);
@@ -46,7 +46,7 @@ function lockSlow(e: usize): void {
 }
 
 /** Gives worker `e`'s queue lock back (`mode` as `lock`'s). */
-@inline
+@inline("always")
 export function unlock(e: usize, mode: u32): void {
   if ((mode & t.M_SHARED) !== 0) {
     m.store32(e + t.E_QLOCK, 0);
@@ -59,7 +59,7 @@ export function tryLock(e: usize): bool {
 }
 
 /** Appends task `k` to the second queue (work this worker's tasks made; `mode`: its `E_MODE`). */
-@inline
+@inline("always")
 export function pushRest(e: usize, k: usize, mode: u32): void {
   m.st(k + t.T_NEXT, 0);
   const tail = m.ld(e + t.E_TAIL);
@@ -75,7 +75,7 @@ export function pushRest(e: usize, k: usize, mode: u32): void {
 }
 
 /** Appends task `k` to the input queue. */
-@inline
+@inline("always")
 export function pushIo(e: usize, k: usize): void {
   m.st(k + t.T_NEXT, 0);
   const tail = m.ld(e + t.E_ITAIL);
@@ -107,7 +107,7 @@ export function pushIo(e: usize, k: usize): void {
  * on the input. `E_QSLOW` is set by this thread alone or under the lock, and only this thread
  * clears it.
  */
-@inline
+@inline("always")
 export function pushNext(e: usize, k: usize, mode: u32): void {
   const before = m.loadRelaxed(e + t.E_NEXT);
   if (before !== 0) {
@@ -141,7 +141,7 @@ export function pushNext(e: usize, k: usize, mode: u32): void {
  * The task is looked at only once the swap made it this thread's: a rescue may have taken it
  * from the slot and run it meanwhile.
  */
-@inline
+@inline("always")
 export function popNextOwn(e: usize): usize {
   if (m.loadRelaxed(e + t.E_NEXT) === 0 || m.ld(e + t.E_FAIR_LEFT) !== 0) {
     return 0;
@@ -171,7 +171,7 @@ export function popNextOwn(e: usize): usize {
 }
 
 /** Takes the first task of the second queue (0: none; `mode` as `pushRest`'s). */
-@inline
+@inline("always")
 export function popRest(e: usize, mode: u32): usize {
   const k = m.ld(e + t.E_HEAD);
   if (k !== 0) {
@@ -188,7 +188,7 @@ export function popRest(e: usize, mode: u32): usize {
 }
 
 /** Takes the first task of the input queue (0: none). */
-@inline
+@inline("always")
 export function popIo(e: usize): usize {
   const k = m.ld(e + t.E_IHEAD);
   if (k !== 0) {
@@ -203,7 +203,7 @@ export function popIo(e: usize): usize {
 }
 
 /** The next task to run (the queue locked; `mode`: its `E_MODE`), 0 when there is none. */
-@inline
+@inline("always")
 export function pop(e: usize, mode: u32): usize {
   if (m.ld(e + t.E_QSLOW) !== 0) {
     return popSlow(e, mode);
@@ -213,7 +213,7 @@ export function pop(e: usize, mode: u32): usize {
 }
 
 /** The next task of the two queues: input, but every `TRICKLE`th from the second. */
-@inline
+@inline("always")
 function popPlain(e: usize, mode: u32): usize {
   if (m.ld(e + t.E_IHEAD) === 0 || m.ld(e + t.E_SINCE_REST) >= TRICKLE) {
     const k = popRest(e, mode);
@@ -316,13 +316,13 @@ function countRest(e: usize): usize {
 }
 
 /** Tasks queued on worker `e` (its queue locked; with other threads at the executor). */
-@inline
+@inline("always")
 export function len(e: usize): usize {
   return m.ld(e + t.E_ILEN) + m.ld(e + t.E_RLEN) + (m.ld(e + t.E_NEXT) !== 0 ? 1 : 0);
 }
 
 /** Input waiting on worker `e` (the input queue and the slot). */
-@inline
+@inline("always")
 export function input(e: usize): usize {
   return m.ld(e + t.E_ILEN) + (m.ld(e + t.E_NEXT) !== 0 ? 1 : 0);
 }
@@ -335,7 +335,7 @@ export function input(e: usize): usize {
  * between the reads (sched_take.velt `takeHalf`) and leaves a pinned task there can make it read
  * empty. That task is not lost: the next I/O tick's step takes it (`IO_INTERVAL` polls at most).
  */
-@inline
+@inline("always")
 export function ownEmpty(e: usize): bool {
   return (
     (m.loadRelaxed(e + t.E_HEAD) | m.loadRelaxed(e + t.E_IHEAD) | m.loadRelaxed(e + t.E_NEXT)) === 0
@@ -343,7 +343,7 @@ export function ownEmpty(e: usize): bool {
 }
 
 /** Has worker `e` a task queued (read from any thread: a hint)? */
-@inline
+@inline("always")
 export function any(e: usize): bool {
   return (m.load(e + t.E_HEAD) | m.load(e + t.E_IHEAD) | m.load(e + t.E_NEXT)) !== 0;
 }

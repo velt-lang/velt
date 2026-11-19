@@ -57,7 +57,6 @@ pub unsafe extern "C-unwind" fn velt_rt_fut_detach(
         }
     }
     node::mark_handled(f, quiet_drop);
-    crate::task::spawn::mark_join_handled(f, quiet_drop);
     give_up_inner(f, fresh);
 }
 

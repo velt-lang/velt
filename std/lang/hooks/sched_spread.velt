@@ -15,13 +15,15 @@
 // took comes back), then borrows half of the input waiting on an awake worker with at least
 // `BORROW_MIN` waiting, as tokio's work stealing does: the borrowed tasks keep their home (their
 // sockets stay registered there, their next wake goes there). Pinned tasks and tasks anchored to
-// their worker (sched_task.velt `ANCHORED`) are never offered or borrowed.
+// their worker (sched_task.velt `ANCHORED`) are never borrowed; an offer takes an anchored one
+// only with its sleeps (sched_sleep_carry.velt), never one anchored for good (`FIXED`).
 
 import { inline, noInline } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as mon from "./sched_monitor";
 import * as q from "./sched_queue";
 import * as sl from "./sched_sleep";
+import * as sc from "./sched_sleep_carry";
 import * as tq from "./sched_take";
 import * as t from "./sched_task";
 import * as wk from "./sched_wake";
@@ -49,7 +51,7 @@ const BORROW_MIN: usize = 2;
 const NOBORROW_POLLS: usize = 32;
 
 /** The clock of the spread: nanoseconds since the process started. */
-@inline
+@inline("always")
 export function now(): usize {
   return sl.clock() as usize;
 }
@@ -164,16 +166,20 @@ export function sleepingHelper(e: usize): usize {
   return best;
 }
 
-/** Offers half of worker `e`'s waiting tasks (not pinned or anchored ones) and wakes `helper`. */
+/**
+ * Offers half of worker `e`'s waiting tasks (not pinned ones, nor anchored ones unless they can
+ * carry their sleeps: sched_sleep_carry.velt) and wakes `helper`.
+ */
 function offer(e: usize, mode: u32, helper: usize): void {
   q.lock(e, mode);
-  let k = tq.takeHalf(e, false);
+  let k = tq.takeHalf(e, false, sc.canCarry(e));
   q.unlock(e, mode);
   if (k === 0) {
     return;
   }
   // Pushed oldest first: the helper's `steal` takes them in the order they waited.
   k = q.reverse(k);
+  sc.carry(e, k);
   while (k !== 0) {
     const next = m.ld(k + t.T_NEXT);
     m.pushStack(e + t.E_OFFER, k, t.T_NEXT);
@@ -271,8 +277,8 @@ export function borrow(e: usize): bool {
 
 /**
  * The task being polled on this thread makes per-worker timer state (a sleep, a wait with a
- * deadline): it is anchored to this worker from now on, its home if it ran here off
- * its home (no wake can queue it while it runs, so its home may change now).
+ * deadline): it is anchored to this worker (until an offer carries it with its sleeps), its
+ * home if it ran here off its home (no wake can queue it while it runs, so its home may change now).
  */
 export function anchor(): void {
   const e = t.exec();
@@ -283,6 +289,23 @@ export function anchor(): void {
   if (k === 0 || t.has(k, t.ANCHORED)) {
     return;
   }
+  anchorTo(e, k);
+}
+
+/**
+ * As `anchor`, for good (`FIXED`): a wait whose deadline lives in this worker's I/O block, or an
+ * unref'd timer's look; an offer never carries such a task.
+ */
+export function anchorFixed(): void {
+  const e = t.exec();
+  if (e === 0) {
+    return;
+  }
+  const k = m.ld(e + t.E_CURRENT);
+  if (k === 0 || t.has(k, t.FIXED)) {
+    return;
+  }
+  t.flags(k, t.FIXED, 0);
   anchorTo(e, k);
 }
 

@@ -1,17 +1,14 @@
-//! Result transfers for another task (`velt_rt_fut_transfer`, `velt_rt_spawn_transfer`, #160):
+//! Result transfers for another task (`velt_rt_fut_transfer`, #160):
 //! the glue runs once, on the task that produces the result, before anyone else sees it — at
 //! once for a promise that already finished, as it finishes for a pending one, not again for a
 //! second mark — and glue that starts promises of its own is safe there (they join the producing
 //! task's set and run to completion).
 
-use super::fake::block_on_fut;
+use super::fake::{block_on_fut, block_on_state, sleep};
 use crate::task::local::{
     velt_rt_fut_box, velt_rt_fut_start, velt_rt_fut_transfer, velt_rt_task_id,
 };
-use crate::task::runtime::velt_rt_block_on;
-use crate::task::spawn::velt_rt_spawn_transfer;
 use crate::task::{drop_fut, poll_fut, VeltFut, PENDING, READY};
-use crate::timer::velt_rt_sleep;
 use std::ffi::c_void;
 use std::ptr::null_mut;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -49,7 +46,7 @@ struct Job {
 unsafe extern "C-unwind" fn job_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut Job);
     if st.tag == 0 && st.ms > 0 {
-        st.sleep = velt_rt_sleep(st.ms);
+        st.sleep = sleep(st.ms);
         st.tag = 1;
     }
     if st.tag == 1 {
@@ -140,7 +137,7 @@ fn hand_on(make: Make, marks: u32) -> HandOn {
         task: 0,
         ran_at_mark: 0,
     };
-    unsafe { velt_rt_block_on(hand_on_poll, &mut st as *mut HandOn as *mut u8) };
+    unsafe { block_on_state(hand_on_poll, &mut st as *mut HandOn as *mut u8) };
     st
 }
 
@@ -182,15 +179,15 @@ static GLUE_JOBS_DONE: AtomicUsize = AtomicUsize::new(0);
 
 // async function counted(): void { await sleep(5); GLUE_JOBS_DONE++; }
 unsafe extern "C-unwind" fn counted_poll(s: *mut u8, cx: *mut c_void) -> u32 {
-    let sleep = &mut *(s.add(8) as *mut *mut VeltFut);
-    if sleep.is_null() {
-        *sleep = velt_rt_sleep(5);
+    let timer = &mut *(s.add(8) as *mut *mut VeltFut);
+    if timer.is_null() {
+        *timer = sleep(5);
     }
-    if poll_fut(*sleep, cx) == PENDING {
+    if poll_fut(*timer, cx) == PENDING {
         return PENDING;
     }
-    drop_fut(*sleep);
-    *sleep = null_mut();
+    drop_fut(*timer);
+    *timer = null_mut();
     GLUE_JOBS_DONE.fetch_add(1, Ordering::SeqCst);
     READY
 }
@@ -226,7 +223,7 @@ fn wait_for_glue_jobs(n: usize) {
             t.elapsed() < Duration::from_secs(60),
             "a promise the glue started did not finish"
         );
-        block_on_fut::<()>(velt_rt_sleep(2));
+        block_on_fut::<()>(sleep(2));
     }
 }
 
@@ -253,29 +250,7 @@ fn glue_that_starts_promises_runs_safely_where_results_finish() {
     // As a started promise finishes (inside its task's set).
     let before = GLUE_JOBS_DONE.load(Ordering::SeqCst);
     let mut st = [0i64; 2];
-    unsafe { velt_rt_block_on(glue_starts_poll, st.as_mut_ptr() as *mut u8) };
+    unsafe { block_on_state(glue_starts_poll, st.as_mut_ptr() as *mut u8) };
     assert_eq!(st[0], 501 + TAGGED);
-    // As a spawned task's state finishes (velt_rt_spawn_transfer).
-    let init = Job {
-        result: 0,
-        tag: 0,
-        id: 502,
-        ms: 5,
-        sleep: null_mut(),
-    };
-    let h = unsafe {
-        velt_rt_spawn_transfer(
-            job_poll,
-            job_drop,
-            &init as *const Job as *const u8,
-            size_of::<Job>() as u64,
-            8,
-            8,
-            None,
-            Some(start_job_and_tag),
-        )
-    };
-    assert_eq!(block_on_fut::<i64>(h), 502 + TAGGED);
-    assert_eq!(seen(502).len(), 1);
-    wait_for_glue_jobs(before + 2);
+    wait_for_glue_jobs(before + 1);
 }

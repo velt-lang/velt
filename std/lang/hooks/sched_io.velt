@@ -165,7 +165,7 @@ export const K_DRAINED: u32 = 3;
  * This thread's worker's I/O block, made by the executor at its start; off the workers worker
  * 0's (0 before the executor starts, and on a JS host).
  */
-@inline
+@inline("always")
 export function io(): usize {
   const b = IO_HERE.get();
   if (b !== 0) {
@@ -319,7 +319,7 @@ export function ready(s: usize, bits: u32): void {
  * Puts source `s` (locked) on this worker's due list, once; from a thread with no reactor (the
  * stall monitor), on the due stack of the worker whose reactor has it.
  */
-@inline
+@inline("always")
 export function due(s: usize): void {
   const fl = m.ld32(s + S_FLAGS);
   if ((fl & F_DUE) === 0) {
@@ -337,7 +337,7 @@ export function due(s: usize): void {
 }
 
 /** Has I/O block `b` sources due (on its list, or made due from another thread)? */
-@inline
+@inline("always")
 export function anyDue(b: usize): bool {
   return (m.ld(b + IO_DUE) | m.load(b + IO_RDUE)) !== 0;
 }
@@ -419,7 +419,7 @@ export function free(s: usize): void {
  * Clears readiness `bit` of `s`: an operation found the socket not ready (EAGAIN). A reactor
  * whose events come once per ask (Windows' AFD polls, `r.REARMS`) asks for them again.
  */
-@inline
+@inline("always")
 export function notReady(s: usize, bit: u32): void {
   m.st32(s + S_READY, m.ld32(s + S_READY) & ~bit);
   if (r.REARMS) {
