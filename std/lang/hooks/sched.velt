@@ -3,11 +3,11 @@
 // online cores; `#sched-thread`), each with its own queue, inbox and reactor. A task stays on its
 // home worker (the spawning one, or the one `spawn(p, { worker })` pins it to). A program compiled with `VELT_SCHEDULER=std` runs here instead of on the
 // runtime's executor: its root (`schedBlockOn`), its spawned tasks (`schedSpawn`), `await
-// yieldNow()` (`schedYield`) and a stored one (`schedYieldFut`), boxed and started promises
-// (`schedBox`, `schedStart`, sched_node.velt), the microtask steps of `await` and the prelude's microtasks (`schedAwaitTick`,
-// `schedAwaitReady`, `schedMicrotask`, sched_micro.velt), the process lifetime (keep-alive
-// references, a due `unref()`'d timer's question, the top-level `await` waiting: sched_end.velt),
-// `sleep` (`schedSleep`, sched_sleep.velt) and Node's timer order (`schedTimer*`,
+// yieldNow()` and a stored one (sched_yield.velt), boxed and started promises (`schedBox`,
+// `schedStart`, sched_node.velt), the microtask steps of `await` and the prelude's microtasks
+// (`schedAwaitTick`, `schedAwaitReady`, `schedMicrotask`, sched_micro.velt), the process lifetime
+// (keep-alive references, a due `unref()`'d timer's question, the top-level `await` waiting:
+// sched_end.velt), `sleep` (`schedSleep`, sched_sleep.velt) and Node's timer order (`schedTimer*`,
 // sched_timers.velt); `schedFinish` drives the tasks still alive once `main` is done. The
 // runtime's other leaves (channels, files, sockets) stay Rust: they wake a task through its C
 // waker (rt_abi_async.md §1) from any thread, which queues it and unparks the worker. The
@@ -47,8 +47,10 @@ import * as st from "./sched_stats";
 import * as t from "./sched_task";
 import * as tm from "./sched_timers";
 import * as workers from "./sched_workers";
-// `spawn`'s hooks live in sched_spawn.velt; loaded with this module (std loaded up front too).
+// `spawn`'s and `yieldNow()`'s hooks live in sched_spawn.velt and sched_yield.velt; loaded with this
+// module (std loaded up front too).
 export { schedSpawn, schedSpawnFut } from "./sched_spawn";
+export { schedYield, schedYieldFut } from "./sched_yield";
 import * as mk from "./sched_make";
 import * as wk from "./sched_wake";
 
@@ -217,44 +219,6 @@ export function schedCurrentWorker(): u64 {
     return 0;
   }
   return (m.ld(w + t.E_INDEX) % m.ld(m.ld(w + t.E_MAIN) + t.E_COUNT)) as u64;
-}
-
-/** `await yieldNow()`: the task polled with `cx` runs again after the other ready tasks. */
-export function schedYield(cx: usize): void {
-  const w = m.ld(cx + 8);
-  if (m.ld(w) === t.main() + t.E_VT) {
-    // Running: polled again once this poll returns, at the back of the queue. While it runs,
-    // only a wake changes its state, from RUNNING to NOTIFIED: a store, not a swap.
-    m.store32(w + t.T_STATE, t.NOTIFIED);
-    return;
-  }
-  m.wakeByRef(w);
-}
-
-/**
- * A stored `yieldNow()` (`velt_rt_yield_now_fut`: kept, raced, joined or spawned instead of
- * awaited at once): a heap future whose first poll wakes what polls it as `await yieldNow()` does
- * and is pending, and whose next poll is ready. The word after its header says it yielded.
- */
-export function schedYieldFut(): usize {
-  const f = m.alloc(24);
-  m.st(f, fnAddress(yieldPoll));
-  m.st(f + 8, fnAddress(yieldDrop));
-  m.st(f + 16, 0);
-  return f;
-}
-
-function yieldPoll(f: usize, cx: usize): u32 {
-  if (m.ld(f + 16) !== 0) {
-    return 1;
-  }
-  m.st(f + 16, 1);
-  schedYield(cx);
-  return 0;
-}
-
-function yieldDrop(f: usize): void {
-  m.release(f, 24);
 }
 
 /**

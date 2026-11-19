@@ -376,8 +376,8 @@ impl FnLower<'_, '_> {
                     hooks::sched_pinned(self, ty::I64::arg(w.clone())).emit(self);
                     None
                 }
-                // A stored `yieldNow()` (sched.velt `schedYieldFut`): a leaf ready on its second
-                // poll.
+                // A stored `yieldNow()` (sched_yield.velt `schedYieldFut`): a leaf ready on its
+                // second poll.
                 (Rt::YieldNowFut, []) => Some(hooks::sched_yield_fut(self).emit(self).op()),
                 (Rt::Sleep, [ms]) => Some(
                     hooks::sched_sleep(self, ty::I64::arg(ms.clone()))
