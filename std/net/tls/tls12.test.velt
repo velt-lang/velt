@@ -1,0 +1,163 @@
+// velt/net (tests): TLS 1.2's key schedule and records, run by `velt test std/`. The PRF against
+// the published TLS 1.2 PRF test vectors (IETF TLS list, "TLS 1.2 PRF test vectors"), and the
+// AEAD records (RFC 5288's explicit nonce for AES-GCM, RFC 7905's nonce for ChaCha20-Poly1305,
+// RFC 5246's associated data) against records sealed by Node (scripts/tls12-record-vectors.js).
+import { hexDecode, hexEncode } from "velt/encoding/hex";
+import { prf12, verifyData12 } from "velt/net/tls/key_schedule12";
+import { RecordCipher } from "velt/net/tls/record_cipher";
+import { describe, expect, it } from "velt/test";
+
+const PRF256_SECRET = "9bbe436ba940f017b17652849a71db35";
+const PRF256_SEED = "a0ba9f936cda311827a6f796ffd5198c";
+// 100 bytes.
+const PRF256_OUT =
+  "e3f229ba727be17b8d122620557cd453c2aab21d07c3d495329b52d4e61edb5a6b301791e90d35c9c9a46b4e14ba" +
+  "f9af0fa022f7077def17abfd3797c0564bab4fbc91666e9def9b97fce34f796789baa48082d122ee42c5a72e5a51" +
+  "10fff70187347b66";
+const PRF384_SECRET = "b80b733d6ceefcdc71566ea48e5567df";
+const PRF384_SEED = "cd665cf6a8447dd6ff8b27555edb7465";
+// 148 bytes.
+const PRF384_OUT =
+  "7b0c18e9ced410ed1804f2cfa34a336a1c14dffb4900bb5fd7942107e81c83cde9ca0faa60be9fe34f82b1233c91" +
+  "46a0e534cb400fed2700884f9dc236f80edd8bfa961144c9e8d792eca722a7b32fc3d416d473ebc2c5fd4abfdad0" +
+  "5d9184259b5bf8cd4d90fa0d31e2dec479e4f1a26066f2eea9a69236a3e52655c9e9aee691c8f3a26854308d5eaa" +
+  "3be85e0990703d73e56f";
+
+const HELLO = "68656c6c6f2c20544c5320312e32";
+const ALERT = "0100";
+const HIGH: u64 = 0x0102030405060708;
+
+/** Suite, key, IV, then the records at sequence numbers 0, 1 (data), 2 (an alert) and HIGH (handshake). */
+function vectors(): string[][] {
+  return [
+    [
+      "c02b",
+      "0102030405060708090a0b0c0d0e0f10",
+      "a1a2a3a4",
+      "17030300260000000000000000dac5cf35c07de5f4261580b9b64c2680ce77b9c414ae7b462e316d5739a6",
+      "17030300260000000000000001420f82b30dd17057c55a7c55a89eeb992044a479e46ee5e1aad90599f937",
+      "150303001a00000000000000022edb5bff54396384d54a3ababf5cb2ca9d5f",
+      "16030300260102030405060708615459977595149fecc946c48f8fcfe96395580668a0458c4bf18876aed6",
+    ],
+    [
+      "c02c",
+      "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+      "b1b2b3b4",
+      "1703030026000000000000000099b6d9301263c1c04ad3db785fb9b0849174463a044ecb2fdfa43ce9d413",
+      "1703030026000000000000000181c66a33d4f6b1ffc051e9b4fbbe518e2031cd72d340f304e5b66f4ea64e",
+      "150303001a0000000000000002e9f64e2148ceef59dd7627c7992a02347533",
+      "160303002601020304050607089298abbca0d4ae04a88fceb6f934d7990d4b2a845b17aed612c83bdffdde",
+    ],
+    [
+      "cca9",
+      "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f",
+      "c1c2c3c4c5c6c7c8c9cacbcc",
+      "170303001e44b4e9702f7e6bfe97d453fea51c43d23eae4098e9ddfc5e2fcfbb99ea4b",
+      "170303001e220380f070b03ae6b8fc3ce81e0448526f3a46059eb43ee601d40e8b0d38",
+      "1503030012ecd1c4651eed5e81ccaa12c1bc30e4ea98f8",
+      "160303001e5d68817b364ecdfbbd6d776a20781ca4dcb86f3f8e71894a52708b843363",
+    ],
+  ];
+}
+
+function cipherOf(v: string[]): RecordCipher {
+  return new RecordCipher(parseInt(v[0], 16) as usize, hexDecode(v[1]), hexDecode(v[2]));
+}
+
+// The record `c` seals around the content `hex`, of `type`.
+function sealHex(c: RecordCipher, type: u8, hex: string): string {
+  const content = hexDecode(hex);
+  const buf: u8[] = Buffer.alloc(5 + c.prefix + content.length + 16);
+  for (let i: usize = 0; i < content.length; i++) {
+    buf[5 + c.prefix + i] = content[i];
+  }
+  const n = c.sealRecord(buf, 0, content.length, type);
+  return hexEncode(buf.slice(0, n as i64));
+}
+
+// The content of the record `hex`, opened by `c`.
+function openHex(c: RecordCipher, hex: string): string {
+  const buf = hexDecode(hex);
+  const n = c.open12(buf, 0, buf.length);
+  return hexEncode(buf.slice((5 + c.prefix) as i64, (5 + c.prefix + n) as i64));
+}
+
+describe("the TLS 1.2 PRF", () => {
+  it("matches the published vectors on SHA-256 and SHA-384", () => {
+    const a = prf12(32, hexDecode(PRF256_SECRET), "test label", hexDecode(PRF256_SEED), 100);
+    expect(hexEncode(a)).toBe(PRF256_OUT);
+    const b = prf12(48, hexDecode(PRF384_SECRET), "test label", hexDecode(PRF384_SEED), 148);
+    expect(hexEncode(b)).toBe(PRF384_OUT);
+  });
+
+  it("gives a prefix of the longer output for a shorter length", () => {
+    const a = prf12(32, hexDecode(PRF256_SECRET), "test label", hexDecode(PRF256_SEED), 12);
+    expect(hexEncode(a)).toBe(PRF256_OUT.slice(0, 24));
+  });
+
+  it("makes verify_data 12 bytes, different for each side", () => {
+    const master = hexDecode(PRF384_OUT.slice(0, 96));
+    const client = verifyData12(32, master, true, hexDecode(PRF256_SEED));
+    const server = verifyData12(32, master, false, hexDecode(PRF256_SEED));
+    expect(client.length).toBe(12);
+    expect(hexEncode(client) == hexEncode(server)).toBe(false);
+  });
+});
+
+describe("TLS 1.2 records", () => {
+  for (const v of vectors()) {
+    it(`seal as Node does at sequence numbers 0, 1, 2 and high (suite 0x${v[0]})`, () => {
+      const c = cipherOf(v);
+      expect(sealHex(c, 23, HELLO)).toBe(v[3]);
+      expect(sealHex(c, 23, HELLO)).toBe(v[4]);
+      expect(sealHex(c, 21, ALERT)).toBe(v[5]);
+      const high = cipherOf(v);
+      high.seq = HIGH;
+      expect(sealHex(high, 22, HELLO)).toBe(v[6]);
+    });
+
+    it(`open Node's records in order, with the header's type in the AAD (suite 0x${v[0]})`, () => {
+      const c = cipherOf(v);
+      expect(openHex(c, v[3])).toBe(HELLO);
+      expect(openHex(c, v[4])).toBe(HELLO);
+      expect(openHex(c, v[5])).toBe(ALERT);
+      const high = cipherOf(v);
+      high.seq = HIGH;
+      expect(openHex(high, v[6])).toBe(HELLO);
+      // Out of order, or with another type in the header: bad_record_mac.
+      expect(() => openHex(cipherOf(v), v[4])).toThrow("bad_record_mac");
+      const retyped = "16" + v[3].slice(2);
+      expect(() => openHex(cipherOf(v), retyped)).toThrow("bad_record_mac");
+    });
+
+    it(
+      `refuse a changed byte, a short record and the last sequence number (suite 0x${v[0]})`,
+      () => {
+        const changed = hexDecode(v[3]);
+        changed[changed.length - 20] ^= 1;
+        expect(() => cipherOf(v).open12(changed, 0, changed.length)).toThrow("bad_record_mac");
+        // One byte short of the explicit nonce (AES-GCM, 8 bytes) and the tag.
+        const c = cipherOf(v);
+        const short = hexDecode(v[3]).slice(0, (5 + c.prefix + 15) as i64);
+        expect(() => c.open12(short, 0, short.length)).toThrow("too short");
+        const last = cipherOf(v);
+        last.seq = 0xffffffffffffffff;
+        expect(() => sealHex(last, 23, HELLO)).toThrow("sequence number ran out");
+      },
+    );
+  }
+
+  it("open an AES-GCM record whose explicit nonce is not the sequence number", () => {
+    // A peer may choose any explicit nonce (RFC 5288 §3): this one is 0x1122334455667788 at
+    // sequence number 0.
+    const rec =
+      "1703030026112233445566778862b38a06727182de8ef25a9ed866e4c2e9d60816049537aacea7f82049d0";
+    expect(openHex(cipherOf(vectors()[0]), rec)).toBe(HELLO);
+    // The nonce is read from the record: changed, the tag fails.
+    const changed = hexDecode(rec);
+    changed[5 + 7] ^= 1;
+    expect(() => cipherOf(vectors()[0]).open12(changed, 0, changed.length)).toThrow(
+      "bad_record_mac",
+    );
+  });
+});

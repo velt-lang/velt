@@ -163,13 +163,23 @@ impl<'c, 'h> FnLower<'c, 'h> {
             };
         }
         lw.push_scope(super::ScopeKind::Block);
+        // Around the call, the executor in Velt holds the tasks a C library's thread starts, so
+        // the call's synchronous run comes first (sched.rs `sched_export_call`). Not for its own
+        // exports, which are the executor's.
+        let held = !e.name.starts_with(SCHED_EXPORTS);
+        if held {
+            lw.sched_export_call(true);
+        }
         let v = lw.expr(&call);
         let ret = c_call::c_vir(e.ret, false);
         let v = match ret {
             Ty::Unit => unit(),
             Ty::Ptr => lw.rvalue_temp(Ty::Ptr, Rvalue::Cast(v, Ty::Ptr)),
-            _ => v,
+            _ => lw.rvalue_temp(ret, Rvalue::Use(v)),
         };
+        if held {
+            lw.sched_export_call(false);
+        }
         lw.terminate(Terminator::Return(v));
         lw.scopes.clear();
         let name = e.name.clone();

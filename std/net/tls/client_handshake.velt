@@ -3,13 +3,14 @@
 // checked in order (EncryptedExtensions, CertificateRequest, Certificate, CertificateVerify,
 // Finished) and the client's last flight. It does no I/O: `TlsEngine` feeds it messages and
 // sends what it says. With `verify: false` the certificate and its signature are kept unchecked
-// (#2392 step 3 adds verification); the server's Finished is always checked.
+// (#2392 step 3 adds verification); the server's Finished is always checked. When the server
+// chooses TLS 1.2, `ClientHandshake12` takes the handshake over after the ServerHello.
 
 import { p256Ecdh, p256PrivateKey, p256PublicKey } from "velt/crypto/p256";
 import { x25519 } from "velt/crypto/x25519";
 import { sha256 } from "velt/crypto/sha256";
 import { sha384 } from "velt/crypto/sha512";
-import { utf8Decode } from "velt/encoding/utf8";
+import { utf8DecodeLossy } from "velt/encoding/utf8";
 import { arrayMove, arrayReserve, arraySetLen } from "velt/lang/intrinsics";
 import {
   DECODE_ERROR,
@@ -23,7 +24,8 @@ import { clientHello, EXT_ALPN, HelloInput, SECP256R1, X25519 } from "velt/net/t
 import { ByteReader } from "velt/net/tls/byte_reader";
 import { ByteWriter } from "velt/net/tls/byte_writer";
 import { expandLabel, finishedMac, handshakeSecret, masterSecret } from "velt/net/tls/key_schedule";
-import { AES_256_GCM_SHA384, hashLength } from "velt/net/tls/record_cipher";
+import { ClientHandshake12, DONE12 } from "velt/net/tls/client_handshake12";
+import { AES_256_GCM_SHA384, hashLength, RecordCipher } from "velt/net/tls/record_cipher";
 import { parseServerHello } from "velt/net/tls/server_hello";
 
 // Handshake message types.
@@ -92,6 +94,8 @@ export class ClientHandshake {
   retryHello: u8[];
   /** The client's last flight (Certificate when asked for, Finished), after `FINISHED_DONE`. */
   lastFlight: u8[];
+  /** The rest of the handshake when the server chose TLS 1.2, else null. */
+  tls12: ClientHandshake12 | null;
 
   /** A handshake for `input`, with the X25519 private key `privateKey`. */
   constructor(input: HelloInput, privateKey: u8[]) {
@@ -113,6 +117,7 @@ export class ClientHandshake {
     this.certificateVerify = [];
     this.retryHello = [];
     this.lastFlight = [];
+    this.tls12 = null;
   }
 
   /** The first ClientHello message. */
@@ -144,8 +149,26 @@ export class ClientHandshake {
     return sha256(this.transcript);
   }
 
+  /**
+   * The server's ChangeCipherSpec: in TLS 1.2 the read keys from the next record on, in TLS 1.3
+   * null (middlebox compatibility's, which changes nothing).
+   */
+  ccs(): RecordCipher | null {
+    const t = this.tls12;
+    return t == null ? null : t.ccs();
+  }
+
   /** Handles the server's handshake message `m` (with its 4-byte header): what to do next. */
   onMessage(m: u8[]): i32 {
+    const t = this.tls12;
+    if (t != null) {
+      const step = t.onMessage(m);
+      if (step == DONE12) {
+        this.state = DONE;
+        this.certificates = t.certificates;
+      }
+      return step;
+    }
     const type = m[0];
     const body = m.slice(4);
     if (this.state == WAIT_SERVER_HELLO && type == SERVER_HELLO) {
@@ -221,6 +244,29 @@ export class ClientHandshake {
       this.retryHello = again;
       return SEND_RETRY;
     }
+    if (sh.tls12) {
+      const p = sh.alpn;
+      if (p != null && !this.input.alpn.includes(p)) {
+        throw new TlsFailure(
+          NO_APPLICATION_PROTOCOL,
+          `the server chose ALPN protocol "${p}", which was not offered`,
+        );
+      }
+      this.alpn = p;
+      this.suite = sh.suite;
+      this.add(m);
+      this.tls12 = new ClientHandshake12(
+        this.transcript,
+        sh.suite,
+        this.input.random,
+        sh.random,
+        sh.ems,
+        this.privateKey,
+        this.input.publicKey,
+        this.input.retryKey,
+      );
+      return KEEP_READING;
+    }
     if (this.retried && sh.suite != this.suite) {
       throw new TlsFailure(
         ILLEGAL_PARAMETER,
@@ -263,7 +309,8 @@ export class ClientHandshake {
         const list = e.vector(2);
         const one = list.vector(1);
         list.finish();
-        const p = utf8Decode(one.bytes(one.left()));
+        // Protocol names are bytes (RFC 7301 §3.1): one that is not UTF-8 is not one offered.
+        const p = utf8DecodeLossy(one.bytes(one.left()));
         if (!this.input.alpn.includes(p)) {
           throw new TlsFailure(
             NO_APPLICATION_PROTOCOL,

@@ -85,6 +85,15 @@ export function again(x: usize): void {
   }
 }
 
+/** The exception `x` of a panicked promise whose node is freed: freed with its message. */
+@noInline
+export function freePanic(x: usize): void {
+  // SAFETY: `E_CATCH_AGAIN` takes the exception and, asked so by its second argument, frees it.
+  unsafe {
+    statePoll(m.ld(t.main() + E_CATCH_AGAIN), x, 1);
+  }
+}
+
 /**
  * Node `n`, starting while this worker's `E_CATCHING` is `catching` (not 0), catches: it took
  * `catchPanic`'s arming (the low bit, which it clears; `E_GUARDED` gets it with a reference), or
@@ -149,13 +158,16 @@ export function adoptCaught(e: usize, task: usize, n: usize, cx: usize, claim: b
 
 /**
  * Node `n`'s poll panicked with exception `x`: it is finished with no result (nothing dropped,
- * reported or handed over), never freed, and keeps `x`, the message, for its owner.
+ * reported or handed over), and keeps `x`, the message, for its owner. Its state is never
+ * polled or dropped again: the cleanup pads of its poll dropped what it held (where they exist:
+ * docs/internals/design/unwinding.md "Async state machines"). The node is freed with its last
+ * reference like any other, and `x` with it (sched_node_ext.velt `free`): a leaf still holding
+ * its waker holds a reference.
  */
 function panicked(n: usize, x: usize): void {
   m.st(n + nd.N_RESULT_DROP, 0);
   m.and32(n + nd.N_FLAGS, ~nd.REJECTING);
   m.st(n + nd.N_POLL, x);
-  m.inc(n + nd.N_REFS);
   nd.setFlags(n, nd.PANICKED);
 }
 

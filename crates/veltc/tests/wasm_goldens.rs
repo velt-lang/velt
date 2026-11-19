@@ -1,5 +1,6 @@
 //! The goldens on WebAssembly: every `tests/golden/{m1,m2,m3,m4,lang}/*.velt` with a `.out`
-//! file, except the ones using sockets or threads-only features (see [`UNSUPPORTED`]), built
+//! file, except the ones using sockets or threads-only features (see [`UNSUPPORTED`]) and the
+//! ones marked `// requires: unix` or `// requires: windows` ([`needs_an_os`]), built
 //! with `--target wasm32-wasip1` (debug and `--release`) and run under wasmtime by
 //! `velt run`, must print exactly that output and exit with its `.code` (default 0). The M1, M2
 //! and M3 (async) goldens also run as browser modules (`wasm32-unknown-unknown`) through the JS
@@ -82,6 +83,7 @@ fn programs(root: &Path, dirs: &[&str], skip: &[&str]) -> Vec<PathBuf> {
             p.extension().is_some_and(|e| e == "velt")
                 && p.with_extension("out").exists()
                 && !skip.contains(&stem.as_ref())
+                && !needs_an_os(p)
                 && {
                     // The path in the checkout, as in tests/golden.rs.
                     let rel = p.strip_prefix(root).unwrap_or(p);
@@ -92,6 +94,51 @@ fn programs(root: &Path, dirs: &[&str], skip: &[&str]) -> Vec<PathBuf> {
     }
     files.sort();
     files
+}
+
+/// Whether the golden's first lines say `// requires: unix` or `// requires: windows`, which
+/// tests/golden.rs skips on the other OS: WebAssembly is neither (no unwinding, so no
+/// `catchPanic`; no POSIX or Win32 functions).
+fn needs_an_os(file: &Path) -> bool {
+    let Ok(text) = std::fs::read_to_string(file) else {
+        return false;
+    };
+    text.lines()
+        .take(20)
+        .filter_map(|l| l.trim().strip_prefix("// requires:"))
+        .flat_map(str::split_whitespace)
+        .any(|w| w == "unix" || w == "windows")
+}
+
+#[test]
+fn a_golden_that_needs_an_os_is_skipped() {
+    let dir = std::env::temp_dir().join(format!("velt-wasm-requires-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let cases = [
+        ("unix.velt", "// requires: unix\nconsole.log(1);\n", true),
+        (
+            "windows.velt",
+            "// requires: windows\nconsole.log(1);\n",
+            true,
+        ),
+        (
+            "crlf.velt",
+            "// requires: unix\r\nconsole.log(1);\r\n",
+            true,
+        ),
+        (
+            "symlinks.velt",
+            "// requires: symlinks\nconsole.log(1);\n",
+            false,
+        ),
+        ("plain.velt", "console.log(1);\n", false),
+    ];
+    for (name, text, skipped) in cases {
+        let p = dir.join(name);
+        std::fs::write(&p, text).unwrap();
+        assert_eq!(needs_an_os(&p), skipped, "{name}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Run one golden; `Err` describes the mismatch.
@@ -167,7 +214,8 @@ const SHARDS: usize = 8;
 /// The wasm32-wasip1 goldens: every file with an `.out` in these directories,
 const WASI_DIRS: &[&str] = &["m1", "m2", "m3", "m4", "lang"];
 /// and these of `std/`: the SIMD programs, whose vectors are WebAssembly `v128` values there,
-/// the std code written with them, and `random` (its seed is WASI's, through wasi-libc).
+/// the std code written with them, `random` (its seed is WASI's, through wasi-libc), and two
+/// ephemeron caches, whose trials call between std's weak core and the compiler's glue.
 const WASI_STD: &[&str] = &[
     "bytes_search",
     "half_dot",
@@ -207,6 +255,10 @@ const WASI_STD: &[&str] = &[
     "typed_arrays_basic",
     "typed_arrays_edges",
     "utf8_valid",
+    // The weak core in std calls trace glue, which calls the core's `visit` back: an indirect
+    // call whose signature must match on wasm32 (#3145).
+    "weakmap_ephemeron",
+    "weakmap_nested",
 ];
 
 /// The files of shard `shard`: every `SHARDS`-th one of the sorted list, so each shard gets a

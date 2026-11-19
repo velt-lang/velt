@@ -108,8 +108,8 @@ fn compile(path: &Path) -> Option<String> {
     }
 }
 
-/// `Some(message)` when `vir` calls the weak runtime although its program never names a weak
-/// collection.
+/// `Some(message)` when `vir` calls std's weak core (std/lang/hooks/weak.velt) although its
+/// program never names a weak collection.
 fn weak_without_weak_collections(path: &Path, vir: &velt_vir::vir::Program) -> Option<String> {
     let src = std::fs::read_to_string(path).unwrap_or_default();
     if ["WeakMap", "WeakSet", "WeakRef"]
@@ -119,10 +119,10 @@ fn weak_without_weak_collections(path: &Path, vir: &velt_vir::vir::Program) -> O
         return None;
     }
     let weak: Vec<&str> = vir
-        .externs
+        .funcs
         .iter()
-        .map(|e| e.symbol.as_str())
-        .filter(|s| s.starts_with("velt_rt_weak"))
+        .map(|f| f.symbol.as_str())
+        .filter(|s| s.starts_with("_V3stdP4langP5hooksP4weakN"))
         .collect();
     (!weak.is_empty()).then(|| {
         format!("weak-capable types in a program without weak collections (calls {weak:?})")

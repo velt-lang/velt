@@ -41,7 +41,6 @@ mod inspect_cycles;
 mod inspect_layout;
 pub mod io;
 pub mod json;
-pub mod localtime;
 pub mod math;
 pub mod mem;
 pub mod memory_usage;
@@ -71,7 +70,6 @@ pub mod tls;
 pub mod top_level_await;
 pub mod transfer_map;
 pub mod view;
-pub mod weak;
 
 pub use crate::str::VeltStr;
 

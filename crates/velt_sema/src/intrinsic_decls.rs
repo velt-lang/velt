@@ -123,6 +123,8 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("addressAtomicStore", Op(I::AddressAtomicStore)),
     // future.velt
     ("addressCall", Op(I::AddressCall)),
+    ("addressCall3", Op(I::AddressCall3)),
+    ("addressCallWord", Op(I::AddressCallWord)),
     ("fnAddress", Op(I::FnAddress)),
     ("futDrop", Op(I::FutDrop)),
     ("futPoll", Op(I::FutPoll)),
@@ -179,11 +181,13 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("recordViewSync", Op(I::RecordViewSync)),
     // weak.velt
     ("weakMapDelete", Op(I::WeakMapDelete)),
+    ("weakMapDrop", Op(I::WeakMapDrop)),
     ("weakMapGet", Op(I::WeakMapGet)),
     ("weakMapHas", Op(I::WeakMapHas)),
     ("weakMapSet", Op(I::WeakMapSet)),
     ("weakMapValue", Op(I::WeakMapValue)),
     ("weakRefDeref", Op(I::WeakRefDeref)),
+    ("weakRefDrop", Op(I::WeakRefDrop)),
     ("weakRefNew", Op(I::WeakRefNew)),
 ];
 

@@ -329,8 +329,10 @@ impl FnCx<'_, '_> {
         let H::Index { base, .. } = &e.kind else {
             return;
         };
-        if let Some(shown) = self
-            .readonly_shown(base)
+        // By the array's type (#3061), wherever it comes from, or a variable declared read-only.
+        let by_type = (self.cx.ty.is_readonly_array(base.ty)).then(|| self.cx.display(base.ty));
+        if let Some(shown) = by_type
+            .or_else(|| self.readonly_shown(base))
             .or_else(|| self.readonly_element_shown(base))
         {
             self.cx.error(Diagnostic::error(
@@ -357,16 +359,26 @@ impl FnCx<'_, '_> {
             return;
         }
         let array = matches!(self.cx.ty.kind(recv.ty), TyKind::Array(_));
-        if array && !MUTATING.contains(&name) {
+        // A read-only array by its type (#3061), wherever the value comes from (a field, a call's
+        // result), has the methods of TypeScript's `ReadonlyArray` only: Velt's own array
+        // methods may change it (`swap`, `truncate`). Through a variable declared read-only,
+        // TypeScript's mutating methods are refused.
+        let by_type = array && self.cx.ty.is_readonly_array(recv.ty);
+        let allowed = match by_type {
+            true => READONLY_ARRAY_METHODS.contains(&name),
+            false => !MUTATING.contains(&name),
+        };
+        if array && allowed {
             self.array_method_in_place(recv, name, args);
             return;
         }
         if !array && !COLLECTION_MUTATING.contains(&name) {
             return;
         }
-        let shown = match forced {
-            true => self.readonly_type_shown(recv.ty),
-            false => self
+        let shown = match (by_type, forced) {
+            (true, _) => Some(self.cx.display(recv.ty)),
+            (false, true) => self.readonly_type_shown(recv.ty),
+            (false, false) => self
                 .readonly_shown(recv)
                 .or_else(|| self.readonly_element_shown(recv)),
         };
@@ -517,6 +529,45 @@ const MUTATING: [&str; 9] = [
     "reverse",
     "fill",
     "copyWithin",
+];
+
+/// The methods of TypeScript's `ReadonlyArray<T>` (ES2023), the ones a `readonly T[]` has.
+const READONLY_ARRAY_METHODS: [&str; 34] = [
+    "at",
+    "concat",
+    "entries",
+    "every",
+    "filter",
+    "find",
+    "findIndex",
+    "findLast",
+    "findLastIndex",
+    "flat",
+    "flatMap",
+    "forEach",
+    "includes",
+    "indexOf",
+    "join",
+    "keys",
+    "lastIndexOf",
+    "map",
+    "reduce",
+    "reduceRight",
+    "slice",
+    "some",
+    "toLocaleString",
+    "toReversed",
+    "toSorted",
+    "toSpliced",
+    "toString",
+    "values",
+    "with",
+    "length",
+    "valueOf",
+    // What sema calls for `xs[i]` and `xs.reduce(f)` (std hooks), which only read.
+    velt_common::std_key!(array_get),
+    velt_common::std_key!(array_reduce_first),
+    velt_common::std_key!(array_reduce_right_first),
 ];
 
 /// The methods of `Set<T>` and `Map<K, V>` that `ReadonlySet<T>` and `ReadonlyMap<K, V>` don't

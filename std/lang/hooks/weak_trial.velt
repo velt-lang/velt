@@ -1,0 +1,191 @@
+// velt/lang/hooks (internal): ephemeron cycles (`raw -> proxy` caches, where an entry's value
+// holds its key strongly) and the bounded trial deletion that frees them (weak.velt;
+// docs/internals/design/weak-refs.md "The ephemeron rule"), with the lock held.
+//
+// When an entry is set, `members` traces its value's graph (up to `LIMIT` objects) and finds
+// every object on a path from the value back to the key, with the references the entry holds to
+// it (the map's reference to the value, and the references inside the value's graph). Their sum
+// per object is its `hint`.
+//
+// When a release leaves an object's count at or below its hint, `trial` runs a trial deletion in
+// the style of Bacon and Rajan's synchronous cycle collection, restricted to one subgraph: the
+// objects reachable from the released one through strong references and through map entries (a
+// key leads to its value), plus the keys of the entries the objects belong to, and the references
+// among them. An object referenced more often than that is referenced from outside, so it is
+// live, and so is everything it reaches (an entry's value is reachable from its key: the ephemeron
+// rule). Keys left dead have their entries deleted, and releasing those values frees the cycle
+// through the ordinary release paths. A trial that finds the cycle live records, for each live
+// object on a path back to a key, the references it counted (`observed`), so a later release to
+// that level tries again even when the value graph changed after the insert.
+//
+// Every mistake this can make is a leak, never a use-after-free: the only action is deleting
+// entries of keys found dead, and deleting an entry only gives up the map's own reference.
+
+import {
+  G_LIVE,
+  G_TO_KEY,
+  NONE,
+  add,
+  addInternal,
+  edge,
+  expand,
+  graph,
+  indexOf,
+  internal,
+  len,
+  marked,
+  nextWork,
+  obj,
+  overflow,
+  reach,
+  root,
+  trace,
+} from "./weak_graph";
+import { E_VALUE, M_KEY_TRACE, M_VALUE_TRACE, del, entryOf, mapOf } from "./weak_maps";
+import {
+  R_KEYED,
+  R_TRACE,
+  find,
+  listAt,
+  listLen,
+  memberKey,
+  memberMap,
+  membersLen,
+  node,
+  setObserved,
+} from "./weak_records";
+import { count, ld, ld64, vpush } from "./weak_mem";
+
+/**
+ * The objects of `value`'s graph on a path back to `key`, as a vector of triples `(object,
+ * references from the entry, trace)`, or 0 when the value never refers to the key or its graph
+ * is past the limit. `key` and `value` are live; `t` is `value`'s trace glue.
+ */
+export function members(h: usize, key: usize, value: usize, t: usize): usize {
+  const g = graph(h, key);
+  const v = add(g, value, t);
+  addInternal(g, v); // the map's reference
+  while (true) {
+    const i = nextWork(g);
+    if (i === NONE || overflow(g)) {
+      break;
+    }
+    expand(g, i);
+  }
+  const k = indexOf(g, key);
+  if (k === NONE || overflow(g)) {
+    return 0;
+  }
+  root(g, k);
+  reach(g, true, G_TO_KEY);
+  let out: usize = 0;
+  const n = len(g);
+  for (let i: usize = 0; i < n; i++) {
+    if (marked(g, G_TO_KEY, i)) {
+      out = vpush(out, obj(g, i));
+      out = vpush(out, internal(g, i));
+      out = vpush(out, trace(g, i));
+    }
+  }
+  return out;
+}
+
+/**
+ * A trial deletion from the recorded object `start`: every key it finds dead has its entries
+ * deleted (their values queued, weak_maps.velt `release`), and every live object on a path back
+ * to a key gets the references counted as `observed`. Nothing happens past the limit.
+ */
+export function trial(h: usize, start: usize): void {
+  const g = graph(h, 0);
+  const sr = find(h, start);
+  add(g, start, sr === 0 ? 0 : ld(sr + R_TRACE));
+  while (true) {
+    const i = nextWork(g);
+    if (i === NONE || overflow(g)) {
+      break;
+    }
+    // The objects are live: recorded, or reached through strong references from one.
+    expand(g, i);
+    entryEdges(h, g, i);
+  }
+  if (overflow(g)) {
+    return;
+  }
+  const n = len(g);
+  for (let i: usize = 0; i < n; i++) {
+    if (count(obj(g, i)) > (internal(g, i) as u64)) {
+      root(g, i);
+    }
+  }
+  reach(g, false, G_LIVE);
+  for (let i: usize = 0; i < n; i++) {
+    const rec = find(h, obj(g, i));
+    if (rec !== 0 && listLen(rec, R_KEYED) !== 0) {
+      root(g, i);
+    }
+  }
+  reach(g, true, G_TO_KEY);
+  // The live objects' counts first, as their records may be made now (the graph stays as it is).
+  for (let i: usize = 0; i < n; i++) {
+    if (marked(g, G_LIVE, i) && marked(g, G_TO_KEY, i)) {
+      setObserved(node(h, obj(g, i), trace(g, i)), internal(g, i) as u32);
+    }
+  }
+  for (let i: usize = 0; i < n; i++) {
+    if (!marked(g, G_LIVE, i)) {
+      const o = obj(g, i);
+      // Each deletion takes the map off the key's list (and the last one the record).
+      while (true) {
+        const rec = find(h, o);
+        if (rec === 0 || listLen(rec, R_KEYED) === 0) {
+          break;
+        }
+        del(h, listAt(rec, R_KEYED, 0) as u32, o);
+      }
+    }
+  }
+}
+
+/**
+ * The map references of object `i`: to its entries' traced values (as a key), and from the keys
+ * of the entries it belongs to (whose own edges then count those references as internal).
+ */
+function entryEdges(h: usize, g: usize, i: usize): void {
+  const o = obj(g, i);
+  const rec = find(h, o);
+  if (rec === 0) {
+    return;
+  }
+  const nk = listLen(rec, R_KEYED);
+  for (let j: usize = 0; j < nk; j++) {
+    // Only traced values join the graph: a value left out (untraced, or 0) can only make what
+    // it refers to look referenced from outside, which keeps it alive (safe).
+    const b = mapOf(h, listAt(rec, R_KEYED, j) as u32);
+    const vt = ld(b + M_VALUE_TRACE);
+    if (vt === 0) {
+      continue;
+    }
+    const e = entryOf(b, o);
+    if (e !== 0) {
+      const v = ld64(e + E_VALUE) as usize;
+      if (v !== 0) {
+        const to = add(g, v, vt);
+        if (to !== NONE) {
+          edge(g, i, to);
+        }
+      }
+    }
+  }
+  const nm = membersLen(rec);
+  for (let j: usize = 0; j < nm; j++) {
+    // A key's own trace glue (the keys of a dynamic key type differ, and so do a proxiable key
+    // type's typed proxies, which are `Proxy` objects), else the map's.
+    const k = memberKey(rec, j);
+    const kr = find(h, k);
+    let kt: usize = kr === 0 ? 0 : ld(kr + R_TRACE);
+    if (kt === 0) {
+      kt = ld(mapOf(h, memberMap(rec, j) as u32) + M_KEY_TRACE);
+    }
+    add(g, k, kt);
+  }
+}

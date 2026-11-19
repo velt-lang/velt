@@ -1,26 +1,27 @@
-# Design: doc comments
+# Doc comments
 
-Status: implemented in `velt doc` (issue #513, part of #512) and in the language server (#514).
-User documentation: [Lexical structure](https://veltlang.com/docs/reference/lexical/#comments-and-semicolons),
+Status: partly implemented. Issue: [#513](https://github.com/velt-lang/velt/issues/513).
+User documentation:
+[Lexical structure](https://veltlang.com/docs/reference/lexical/#comments-and-semicolons),
 [`velt doc`](https://veltlang.com/docs/tooling/cli/#velt-doc).
 
-## Problem
+## Summary
 
-Before this change, any block of `//` or `///` lines right above a declaration was its
-documentation. That has three faults:
+Documentation is written in JSDoc blocks (`/** … */`) or `///` lines directly above a
+declaration, with JSDoc's tags (`@param`, `@returns`, `@throws`, …). `velt doc` and the language
+server read them with one parser. Plain `//` and `/* */` comments are never documentation.
 
-- TypeScript developers write JSDoc (`/** … */`), which `velt doc` ignored. TypeScript's editor
-  support, and the TypeScript standard library's declarations, use JSDoc too.
-- Every ordinary comment above an export became documentation, including notes for the reader
-  of the source (`// TODO`, "why this is fast"). There was no way to write a comment that is
-  not documentation.
-- The extractor scanned lines, not tokens: a `//` line inside a template string right above a
-  declaration was read as its documentation.
+## Motivation
 
-There were also no tags, so the editor could not show the documentation of one parameter in
-signature help (#514).
+TypeScript developers write JSDoc, TypeScript's editor support reads it, and the TypeScript
+standard library's declarations use it. Treating every `//` block above a declaration as its
+documentation would leave no way to write a note for the reader of the source (`// TODO`, why a
+loop is fast) that does not end up in the API reference. Tags give the editor the documentation of
+one parameter for signature help.
 
-## Syntax
+## Design
+
+### Syntax
 
 A **doc comment** is one of:
 
@@ -28,10 +29,10 @@ A **doc comment** is one of:
 - a block of `///` lines on consecutive lines (not `////`).
 
 It documents the declaration that follows it when it ends on the line right above the
-declaration, or on the declaration's own line before it. Only whitespace, and plain comments on
-the lines in between, may come between (see below). `export`, `async` and member modifiers
-(`static`, `get`, `readonly`, …) belong to the declaration. A comment that starts after code on
-its line is a trailing comment of that code, not a doc comment.
+declaration, or on the declaration's own line before it. Only whitespace and plain comments on the
+lines in between may separate them (see below). `export`, `async` and member modifiers (`static`,
+`get`, `readonly`, …) belong to the declaration. A comment that starts after code on its line is a
+trailing comment of that code, not a doc comment.
 
 ```ts ignore
 /**
@@ -51,10 +52,10 @@ export function split(text: string, separator: string): string[] { … }
 export const MAX_SEPARATOR: i64 = 1024;
 ```
 
-Plain `//` and `/* */` comments are never documentation. Plain comments on the lines between a
-doc comment and its declaration are skipped, as TypeScript does: lint and compiler directives
-sit there (`// eslint-disable-next-line`, `// @ts-expect-error`, `// prettier-ignore`), and the
-doc comment still documents the declaration.
+Plain comments on the lines between a doc comment and its declaration are skipped, as TypeScript
+skips them: lint and compiler directives sit there (`// eslint-disable-next-line`,
+`// @ts-expect-error`, `// prettier-ignore`), and the doc comment still documents the
+declaration.
 
 ```ts ignore
 /** The default port. */
@@ -64,13 +65,9 @@ export const PORT: i64 = 8080;
 
 A blank line between a comment and the declaration, or between a doc comment and the plain
 comments after it, ends the association: a section comment followed by a blank line documents
-nothing. **This differs from TypeScript**, which attaches a JSDoc comment across blank lines (and
-also reads `/*** … */` as JSDoc). Velt keeps the stricter rule because the module doc depends on
-it: the comment block at the top of a file documents the module exactly when a blank line
-follows it, so with TypeScript's rule a file's leading comment would document the first
-declaration as well. A blank line is also how a source file says that a comment is a section
-heading or a note, not documentation. Ported TypeScript whose JSDoc is separated from its
-declaration by a blank line loses that doc in `velt doc` until the blank line is removed.
+nothing. The module doc depends on this rule: the comment block at the top of a file documents
+the module exactly when a blank line follows it. A blank line is also how a source file says that
+a comment is a section heading or a note, not documentation.
 
 Comments are found by the lexer (`velt_syntax::comment_ranges`), so comment markers inside
 strings, templates, regular expressions and JSX text are never comments.
@@ -84,8 +81,8 @@ kept, so code blocks and nested lists work.
 
 ### Tags
 
-A tag starts a line (after the comment marker) with `@name`, outside a code fence. It runs to
-the next tag. The tags are JSDoc's, and TypeScript's editor reads the same ones:
+A tag starts a line (after the comment marker) with `@name`, outside a code fence, and runs to the
+next tag. The tags are JSDoc's, the ones TypeScript's editor reads:
 
 | Tag | Meaning | Shown as |
 |---|---|---|
@@ -96,64 +93,75 @@ the next tag. The tags are JSDoc's, and TypeScript's editor reads the same ones:
 | `@deprecated [text]` | not to be used in new code | **Deprecated:** text, and the item is marked deprecated |
 | `@see text` | a related item or URL | **See also:** text |
 
-Inline `{@link name}` (also `{@linkcode}`, `{@linkplain}`) is rendered as `` `name` ``,
+Inline `{@link name}` (also `{@linkcode}` and `{@linkplain}`) renders as `` `name` ``,
 `{@link name text}` and `{@link name | text}` as the text, and a URL target as a Markdown link.
-`{@link}` inside inline code or a code block is left alone. Links to items are not resolved yet;
-`velt doc` could link them as it links type names in signatures.
+`{@link}` inside inline code or a code block is left alone.
 
-Any other tag (`@since`, `@remarks`, `@typeParam`, …) is kept in the text as written. It is not
-an error: the doc comment of TypeScript code ported to Velt keeps its information.
+Any other tag (`@since`, `@remarks`, `@typeParam`, …) is kept in the text as written. It is not an
+error, so the doc comments of TypeScript code ported to Velt keep their information.
 
 ### Module docs
 
-Unchanged: the comment block at the very top of a file (after a `#!` line, if any), followed by a
-blank line or the end of the file, documents the module. It may be in any style (`//`, `///`,
-`/* */`, `/** */`), since there is no declaration it could be mistaken for. Tags in it are read
-too. Without the blank line, a `/** */` or `///` block documents the first declaration instead,
-and plain comments document nothing.
+The comment block at the very top of a file (after a `#!` line, if any), followed by a blank line
+or the end of the file, documents the module. It may be in any style (`//`, `///`, `/* */`,
+`/** */`), since there is no declaration it could be mistaken for. Tags in it are read too.
+Without the blank line, a `/** */` or `///` block documents the first declaration instead, and
+plain comments document nothing.
 
-## What the tools show
+### What the tools show
 
-- **`velt doc`** (and `velt doc --std`, the docs website) shows the rendered Markdown under each
-  item: the text, then the sections of the table above, in that order. A deprecated item's name
-  is struck through and labelled "deprecated".
-- **The editor** (`velt_lsp::docs`, [editors](https://veltlang.com/docs/tooling/editors/#features)): hover shows
-  the same Markdown under the signature; completion items show it when resolved (items of
-  modules outside the program, inside `import { … }` and from auto-import, carry it in the
-  list); signature help shows the description, returns and throws, and each parameter's
-  `@param` text; deprecated items get the LSP `Deprecated` tag (struck through in completion
-  lists), and uses of them a `Deprecated` hint. Each file's comment ranges and declaration
-  index are built once per server process (keyed by the file's text), so a hover parses only the
-  one comment it shows.
+- **`velt doc`** (and `velt doc --std`) shows the rendered Markdown under each item: the text,
+  then the sections of the table above, in that order. A deprecated item's name is struck through
+  and labelled "deprecated". `velt doc --format json`, which the docs website renders, keeps the
+  tags apart and resolves each `{@link}` to a name to the documented item it refers to (`null`
+  when nothing documented has that name).
+- **The editor** ([editors](https://veltlang.com/docs/tooling/editors/#features)): hover shows the
+  same Markdown under the signature; completion items show it when resolved (items of modules
+  outside the program, inside `import { … }` and from auto-import carry it in the list); signature
+  help shows the description, returns and throws, and each parameter's `@param` text. Deprecated
+  items get the LSP `Deprecated` tag (struck through in completion lists), and uses of them a
+  `Deprecated` hint.
 
-Both use one parser, `velt_doc::comment`: `doc_before(src, decl_lo)` finds and parses the doc
-comment of the declaration starting at byte `decl_lo`; `doc_before_in` takes the comment ranges
-when a caller looks up many declarations of one file; `parse` reads the text of one comment and
-`module_doc` the module's. `DocComment::render_markdown` produces the Markdown both show.
+## Compilation
 
-## Migration
+Both tools use one parser, `velt_doc::comment` (`crates/velt_doc/src/comment.rs`):
+`doc_before(src, decl_lo)` finds and parses the doc comment of the declaration starting at byte
+`decl_lo`; `doc_before_in` takes the comment ranges when a caller looks up many declarations of
+one file; `parse` reads the text of one comment and `module_doc` the module's.
+`DocComment::render_markdown` produces the Markdown both show.
 
-Plain `//` comments above declarations stop being documentation. std's were converted
-mechanically: every `//` block that `velt doc` used as the documentation of an exported
-declaration, an `extend` block or a public member became a `/** … */` block (one line when it
-fits in 100 columns). Comments at the top of files, section comments separated by a blank line,
-comments on private members and comments inside function bodies were left alone. The std API
-reference built from the converted sources is byte for byte the same as before (the doc texts
-were then corrected where they no longer matched the code). A test
-(`crates/velt_doc/tests/std_docs.rs`) keeps it that way: it fails when a declaration that
-`velt doc` documents has no doc comment while a plain comment ends right above it. `///` blocks
-(`std/package/index.velt`, the `websocket` template) keep working unchanged; the `lib` template uses
-`/** */` with tags.
+The language server (`crates/velt_lsp/src/docs.rs`) indexes each file's declarations once and
+keeps the index and the file's comment ranges per file, and across analyses by the file's text
+(standard library files do not change between edits), so a hover parses only the comment it
+shows.
 
-A package whose documentation is written in `//` loses it in `velt doc` until it is converted.
-The language server will offer a quick fix, "Convert to doc comment", for a plain `//` block
-right above an export (#518). There is no diagnostic: a `//` comment above an export is
-legitimate.
+std keeps its documentation in doc comments: `crates/velt_doc/tests/std_docs.rs` fails when a
+declaration that `velt doc` documents has no doc comment while a plain comment ends right above
+it.
 
-## Not proposed
+## Compatibility
 
-- Type information from tags (`@param {string}`, `@type`, `@template`): Velt's types are in the
-  signature, and a second, unchecked source of types is a source of mismatches.
-- Checking that `@param` names match the parameters. Possible later as a `velt check` lint.
-- Doc tests (running `@example` code). Possible later; examples are shown as `ts` code, so they
-  can be checked like the docs' `ts` blocks.
+TypeScript attaches a JSDoc comment across blank lines and also reads `/*** … */` as JSDoc. Velt
+does not, because with TypeScript's rule a file's leading comment would document both the module
+and the first declaration. Ported TypeScript whose JSDoc is separated from its declaration by a
+blank line loses that doc in `velt doc` until the blank line is removed.
+
+A package whose documentation is written in `//` comments has none in `velt doc` until it is
+converted. There is no diagnostic: a `//` comment above an export is legitimate.
+
+## Alternatives considered
+
+**Type information from tags** (`@param {string}`, `@type`, `@template`). Velt's types are in the
+signature, and a second, unchecked source of types is a source of mismatches.
+
+## Limitations
+
+- `@param` names are not checked against the parameters.
+- `@example` code is not run as a test.
+- The HTML pages of `velt doc` render a `{@link}` to a name as code; only the JSON output resolves
+  it to the item.
+
+## Not yet implemented
+
+- **Quick fix.** The language server offers "Convert to doc comment" for a plain `//` block right
+  above an export ([#518](https://github.com/velt-lang/velt/issues/518)).

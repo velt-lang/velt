@@ -150,7 +150,8 @@ impl FnLower<'_, '_> {
 
     /// Can code other than the reader's own statement give the place `s` reads another
     /// `shared` handle? A variable a closure assigns, a module `let` some function reassigns,
-    /// and anything reached through an object or array (whose other owners may replace it).
+    /// an element of an array, and a field that some code writes after its object is made or
+    /// whose object may itself be replaced (#3113).
     fn handle_replaceable(&mut self, s: &hir::Expr) -> bool {
         use hir::ExprKind as K;
         match &s.kind {
@@ -167,8 +168,32 @@ impl FnLower<'_, '_> {
                     _ => true,
                 }
             }
-            K::Field { .. } | K::Index { .. } => true,
+            // A field keeps its handle when nothing writes it after its object is made
+            // (replaceable.rs `field_written`) and the object itself stays where it is read
+            // from; an element may always be replaced by another owner of its array.
+            K::Field { base, index, .. } => {
+                let bty = self.sub(base.ty);
+                self.cx.field_written(bty, *index) || self.holder_replaceable(base)
+            }
+            K::Index { .. } => true,
             _ => false,
+        }
+    }
+
+    /// Can the object the place `e` names be another one, or gone, while a statement reads a
+    /// field of it? Not a variable the body never assigns and no closure holds by reference
+    /// (it keeps its object for as long as it is in scope), nor a field of such an object that
+    /// nothing writes after construction. Anything else (an element, a call's result, a
+    /// narrowed value, module state) may be.
+    fn holder_replaceable(&mut self, e: &hir::Expr) -> bool {
+        use hir::ExprKind as K;
+        match &e.kind {
+            K::Local(l, _) => self.info[l.0 as usize].in_cell || self.body_changes(*l),
+            K::Field { base, index, .. } => {
+                let bty = self.sub(base.ty);
+                self.cx.field_written(bty, *index) || self.holder_replaceable(base)
+            }
+            _ => true,
         }
     }
 

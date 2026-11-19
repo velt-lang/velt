@@ -25,6 +25,21 @@ fn documented(text: &str) -> BTreeSet<String> {
     out
 }
 
+/// The symbols whose table row says velt_rt no longer defines them: the first cell of a row
+/// marked "WebAssembly only" (velt_rt_wasm keeps its own, #2196).
+fn webassembly_only(text: &str) -> BTreeSet<String> {
+    text.lines()
+        .filter(|l| l.trim_start().starts_with('|') && l.contains("WebAssembly only"))
+        .filter_map(|l| l.trim_start().trim_start_matches('|').split('|').next())
+        .flat_map(documented_cell)
+        .collect()
+}
+
+/// `velt_rt_*` identifiers in one cell.
+fn documented_cell(cell: &str) -> BTreeSet<String> {
+    documented(&format!("|{cell}"))
+}
+
 #[test]
 fn table_covers_the_documented_abi() {
     let docs = [
@@ -32,7 +47,12 @@ fn table_covers_the_documented_abi() {
         include_str!("../../../docs/internals/contracts/rt_abi_async.md"),
     ];
     let table: BTreeSet<&str> = ABI_SYMBOLS.iter().map(|(n, _)| *n).collect();
-    let documented: BTreeSet<String> = docs.iter().flat_map(|d| documented(d)).collect();
+    let wasm_only: BTreeSet<String> = docs.iter().flat_map(|d| webassembly_only(d)).collect();
+    let documented: BTreeSet<String> = docs
+        .iter()
+        .flat_map(|d| documented(d))
+        .filter(|n| n != "velt_rt_wasm" && !wasm_only.contains(n))
+        .collect();
     assert!(documented.len() > 100, "found only {documented:?}");
     let missing: Vec<&String> = documented
         .iter()

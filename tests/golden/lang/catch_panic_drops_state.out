@@ -1,0 +1,42 @@
+leaf
+  freed a.leaf
+  caught true
+nested
+  freed b.leaf
+  freed b.nested
+  caught true
+started
+  freed c.leaf
+  freed c.started
+  caught true
+moved
+  freed d.late
+  freed d.maybe
+  freed d.moved
+  caught true
+moved, one path
+  freed e.late
+  freed e.moved
+  caught true
+looped
+  freed f.turn0
+  freed f.turn1
+  caught true
+generator
+  freed g.generator
+  freed g.caller
+  caught true
+async generator
+  freed h.stream
+  caught true
+joined
+  freed i.leaf
+  freed i.slow
+  freed i.joined
+  caught true
+joined, array
+  freed j.leaf
+  freed j.array
+  caught true
+  freed j.slow
+done
