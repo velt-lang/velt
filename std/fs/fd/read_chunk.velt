@@ -40,8 +40,11 @@ export function readChunk<T extends Numeric>(fd: i32, count: usize, position: i6
     const n = unsafe { readAddress(fd, address, bytes, position) };
     if (n >= 0) {
       // Only the values the read filled whole: the rest of the array was never written.
-      arrayTruncate(values, count == 0 ? 0 : (n as usize) / (bytes / count));
-      return { values, error: 0 };
+      const whole = count == 0 ? 0 : (n as usize) / (bytes / count);
+      arrayTruncate(values, whole);
+      // A read the file's end cut short gives an array of its own size, not one that holds
+      // the room that was asked for as long as it is kept.
+      return { values: whole == count ? values : values.slice(0, whole as i64), error: 0 };
     }
     const e = lastError();
     if (e != EINTR) {
