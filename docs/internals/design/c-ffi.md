@@ -472,6 +472,21 @@ native: {
   A function whose type has a calling convention other than the target's C one (`vectorcall`,
   `preserve_most`, `ms_abi` off Windows) is refused. An enum whose width clang's dump does not
   show cannot cross.
+- **Structs**: each `declare c struct` a library's declarations reach (a pointer's pointee, an
+  `Out<T>`'s `T`, or a reached struct's field) is checked with that library
+  (`crates/veltc/src/native/headers/structs.rs`):
+  - it must be a struct the headers define, under its tag or a typedef (`struct point`,
+    `typedef struct { … } box_t;`), with the same fields in the same order, each by its C name
+    and its type through the table above. A nested struct field and a pointer's pointee match a
+    `declare c struct` when both name the same definition, whichever spelling the header uses;
+  - its size, alignment and every field's offset are clang's own answers: a second run reads a
+    generated file whose enumerators are `sizeof`, `_Alignof` and `__builtin_offsetof` of each
+    struct, so `#pragma pack` and `aligned(…)` are refused, naming the offsets that differ;
+  - a union, a struct only declared, `packed`, bit-fields, C arrays (a field `float m[4]` is an
+    array, not the pointer it is as a parameter) and flexible array members are refused with
+    the header line;
+  - a struct no declaration reaches (one used only through `Ptr.at<S>` or a `Ptr<void>`) is not
+    checked.
 - **A mismatch is a build error** naming the declaration and the header line.
 - **Remembered**: a check that passed is kept in `$VELT_HOME/cache/headers/`, keyed by zig's
   version, the target, the headers' names, the library's `defines` and the declarations, with a
@@ -479,9 +494,9 @@ native: {
   files among them are build-stamp inputs, so a changed header rebuilds the program.
 - **Installs check what was checked.** `velt native headers` checks a package on every target
   with C headers (macOS, Linux gnu and musl, Windows; x86_64 and aarch64) and writes
-  `c-headers.json` at the package root: per target and library, a digest of each declaration, of
-  each of the package's own headers the parse read, and of the library's `defines`, plus the
-  values of its `declare c const`s. `velt publish` runs it for a package with `native.c`; git
+  `c-headers.json` at the package root: per target and library, a digest of each declaration (a
+  struct's fields and layout included), of each of the package's own headers the parse read, and
+  of the library's `defines`, plus the values of its `declare c const`s. `velt publish` runs it for a package with `native.c`; git
   packages commit the file. A fetched package's declarations must be in the record for the
   build's target, and each recorded header it ships must have its digest. Users never run clang.
 - **Every C library a package declares functions of lists `headers` or says `unchecked: true`.**
@@ -675,8 +690,8 @@ must not depend on code elsewhere.
 ## Limitations
 
 - `declare c` calls are synchronous.
-- A C struct crosses only behind `Ptr<S>`: not by value, not as `Out<S>`; struct declarations
-  are not compared with headers. C arrays in structs are not supported.
+- A C struct crosses only behind `Ptr<S>`: not by value, not as `Out<S>`. C arrays in structs
+  are not supported.
 - Function pointers cross only as `Ptr<void>`; C cannot call a Velt closure.
 - `declare c const` cannot be a string; a macro of a string literal is an error.
 - `va_list` parameters (`vprintf`) cannot be declared.
@@ -696,8 +711,7 @@ must not depend on code elsewhere.
   over 8 bytes, `sret`). One table-driven classifier, a port of rustc's
   `rustc_target::abi::call`, serves both backends, and a differential ABI test (generated C
   functions over many struct shapes, compiled with the system C compiler, called from both
-  backends on every CI target) gates it. Structs are compared with headers (names, order, types,
-  size, alignment, offsets per target), and C arrays become fields once Velt has fixed-size
+  backends on every CI target) gates it. C arrays become fields once Velt has fixed-size
   arrays.
 - **`NativeHandle<T>`**, after .NET's `SafeHandle`: a native object's pointer with its release,
   which runs exactly once. It counts calls in flight: passing it for a `Ptr<T>` parameter takes
