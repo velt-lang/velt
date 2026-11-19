@@ -1,0 +1,52 @@
+// velt/fs (internal): what `readSync` needs of an array of a number type for its message about
+// an empty buffer: the name Node shows for the typed array of that element type.
+
+import {
+  addressStore,
+  arrayByteLength,
+  arrayDataAddress,
+  arraySetLen,
+  arrayWithCapacity,
+} from "velt/lang/intrinsics";
+
+/**
+ * What Node's messages show for an empty typed array of `T`'s kind (`Float64Array(0) []`), and
+ * `<Buffer >` for bytes. Generic code cannot name `T`, so one value of it is made from chosen
+ * bytes and read back: all ones is -1 for a signed integer, the type's largest for an unsigned
+ * one and NaN for a float; the 16-bit floats are told apart by what the bits of `f16`'s 1 are.
+ */
+export function emptyBufferText<T extends Numeric>(like: T[]): string {
+  const one: T[] = arrayWithCapacity<T>(1);
+  arraySetLen(one, 1);
+  const size = arrayByteLength(one);
+  // SAFETY: `one` has room for one `T`, whose `size` bytes are at the address until `one` is
+  // dropped at the end of this function; all of them are written before `one[0]` is read.
+  const at = unsafe { arrayDataAddress(one) };
+  for (let i: usize = 0; i < size; i++) {
+    // SAFETY: inside `one`'s `size` bytes.
+    unsafe {
+      addressStore<u8>(at + i, 0xff);
+    }
+  }
+  const ones = `${one[0]}`;
+  if (ones == "NaN") {
+    if (size != 2) {
+      return size == 8 ? "Float64Array(0) []" : "Float32Array(0) []";
+    }
+    // SAFETY: the two bytes of `one`'s element: 0x3c00, which is 1 as an `f16`.
+    unsafe {
+      addressStore<u8>(at, 0);
+      addressStore<u8>(at + 1, 0x3c);
+    }
+    return `${one[0]}` == "1" ? "Float16Array(0) []" : "BFloat16Array(0) []";
+  }
+  if (ones == "-1") {
+    return size == 8
+      ? "BigInt64Array(0) []"
+      : size == 4 ? "Int32Array(0) []" : size == 2 ? "Int16Array(0) []" : "Int8Array(0) []";
+  }
+  if (size == 1) {
+    return "<Buffer >";
+  }
+  return size == 8 ? "BigUint64Array(0) []" : size == 4 ? "Uint32Array(0) []" : "Uint16Array(0) []";
+}

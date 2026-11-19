@@ -1,0 +1,49 @@
+// `T extends Numeric`: a type parameter that takes the number types and nothing else. The
+// integer and float types satisfy it; generic code passes it on, and a class may be bounded
+// by it.
+function count<T extends Numeric>(xs: T[]): number {
+  return xs.length;
+}
+
+function first<T extends Numeric>(xs: T[], or: T): T {
+  return count(xs) > 0 ? xs[0] : or;
+}
+
+class Column<T extends Numeric> {
+  values: T[] = [];
+
+  add(v: T) {
+    this.values.push(v);
+  }
+
+  last(): T {
+    return this.values[this.values.length - 1];
+  }
+}
+
+function main() {
+  const a: i8[] = [-1];
+  const b: u8[] = [2];
+  const c: i16[] = [-3];
+  const d: u16[] = [4];
+  const e: i32[] = [-5];
+  const f: u32[] = [6];
+  const g: i64[] = [-7];
+  const h: u64[] = [8];
+  const i: isize[] = [-9];
+  const j: usize[] = [10];
+  const k: f32[] = [1.5];
+  const l: f64[] = [2.5];
+  const m: number[] = [3.5, 4.5];
+  console.log(count(a), count(b), count(c), count(d), count(e), count(f), count(g));
+  console.log(count(h), count(i), count(j), count(k), count(l), count(m));
+  console.log(first(a, 0), first(h, 0), first(k, 0), first(m, 0), first<i64>([], 42));
+  const halves: f16[] = [];
+  const brains: bf16[] = [];
+  console.log(count(halves), count(brains));
+
+  const col = new Column<u32>();
+  col.add(7);
+  col.add(9);
+  console.log(col.last(), count(col.values));
+}

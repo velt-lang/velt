@@ -1,0 +1,16 @@
+// Clocks: 2M `performance.now()` and 2M `Date.now()` reads, a tight loop (the runtime's `Instant`
+// and `SystemTime`). The Rust port reads `Instant` and `SystemTime` the same number of times.
+function main() {
+  let last = performance.now();
+  let backwards = 0;
+  let sum: i64 = 0;
+  for (let i = 0; i < 2000000; i++) {
+    const t = performance.now();
+    if (t < last) {
+      backwards++;
+    }
+    last = t;
+    sum += (Date.now() % 7) as i64;
+  }
+  console.log(backwards == 0, sum >= 0);
+}

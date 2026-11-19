@@ -4,7 +4,7 @@
 use velt_sema::hir::{self, UseMode};
 use velt_sema::hir::{DefId, PassMode, TyId};
 
-use super::abi::RegRet;
+use super::ret_abi::RegRet;
 use super::FnLower;
 use crate::vir::{self, Local, Operand, Place, Proj, Rvalue, Ty};
 

@@ -13,6 +13,8 @@
 //! blocks (it only fails if some path is unassigned; the culprits are then found one by one,
 //! which only happens for broken VIR).
 
+use smallvec::SmallVec;
+
 use super::dominators::Dominators;
 use super::FnCheck;
 use crate::lower::successors;
@@ -22,17 +24,22 @@ use crate::vir::*;
 struct Summary {
     /// Per block: the locals read before the block assigns them, in program order (a local
     /// read twice appears twice, so each read gets its diagnostic).
-    exposed: Vec<Vec<Local>>,
+    exposed: Vec<SmallVec<[Local; 4]>>,
     /// Per local: the blocks that assign it.
-    assigned_in: Vec<Vec<u32>>,
+    assigned_in: Vec<Blocks>,
 }
+
+/// A few blocks, inline: most locals are assigned and read in one or two, and most blocks have
+/// one or two successors (heap lists here were 8% of a todo_api build's allocations; the
+/// verifier runs every build).
+type Blocks = SmallVec<[u32; 2]>;
 
 impl FnCheck<'_> {
     pub(super) fn check_definite_init(&mut self) {
         let f = self.f;
         let summary = summarize(f);
         let cfg = Cfg::new(f);
-        let mut uses_of: Vec<Vec<u32>> = vec![vec![]; f.locals.len()];
+        let mut uses_of: Vec<Blocks> = vec![Blocks::new(); f.locals.len()];
         for (b, locals) in summary.exposed.iter().enumerate() {
             if cfg.reachable[b] {
                 for l in locals {
@@ -80,7 +87,7 @@ impl FnCheck<'_> {
 
 /// Predecessors, reachability from the entry and dominators.
 struct Cfg {
-    preds: Vec<Vec<u32>>,
+    preds: Vec<Blocks>,
     reachable: Vec<bool>,
     doms: Dominators,
 }
@@ -93,12 +100,12 @@ const FEW_ASSIGNMENTS: usize = 8;
 impl Cfg {
     fn new(f: &Function) -> Cfg {
         let n = f.blocks.len();
-        let succs: Vec<Vec<u32>> = f
+        let succs: Vec<Blocks> = f
             .blocks
             .iter()
             .map(|b| successors(&b.term).iter().map(|s| s.0).collect())
             .collect();
-        let mut preds = vec![vec![]; n];
+        let mut preds = vec![Blocks::new(); n];
         for (b, ss) in succs.iter().enumerate() {
             for &s in ss {
                 preds[s as usize].push(b as u32);
@@ -186,8 +193,8 @@ impl Walk {
 /// reads its operands and then writes its destination.
 fn summarize(f: &Function) -> Summary {
     let mut summary = Summary {
-        exposed: vec![vec![]; f.blocks.len()],
-        assigned_in: vec![vec![]; f.locals.len()],
+        exposed: vec![SmallVec::new(); f.blocks.len()],
+        assigned_in: vec![Blocks::new(); f.locals.len()],
     };
     // `assigned_at[l] == b + 1`: block `b` has assigned `l` already.
     let mut assigned_at = vec![0u32; f.locals.len()];

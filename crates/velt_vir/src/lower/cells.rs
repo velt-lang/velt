@@ -48,7 +48,8 @@ impl FnLower<'_, '_> {
         let vt = self.cx.ty(ty);
         let q = ptr.clone();
         self.cell_check(Rt::CellUse, vec![ptr.clone()]);
-        self.release(ptr.clone(), |lw| {
+        let weak = self.cx.boxing.weak_envs;
+        self.release_as(ptr.clone(), weak, |lw| {
             let p = lw.operand_place(q.clone(), Ty::Ptr);
             let value = super::operand::proj(&p, crate::vir::Proj::Deref(vt));
             lw.drop_glue(value, ty);

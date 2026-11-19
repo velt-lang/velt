@@ -19,6 +19,12 @@ fn copy_tree(from: &Path, to: &Path) {
     }
 }
 
+/// Does the VIR `v` have module state: the functions lowering makes for it (its `init` and its
+/// accesses, `_Gmodule_*`), whichever blocks they reach (#2196 9c)?
+fn module_state(v: &str) -> bool {
+    v.contains("_Gmodule_")
+}
+
 /// The VIR of `src`, compiled as `main.velt`.
 fn vir(src: &str) -> String {
     let dir = test_dir::TestDir::new();
@@ -52,7 +58,7 @@ async function main() {
 #[test]
 fn a_literal_starting_value_needs_no_module_state() {
     let v = vir(&BODY.replace("INIT", "0"));
-    assert!(!v.contains("velt_rt_module_state"), "{v}");
+    assert!(!module_state(&v), "{v}");
     assert!(v.contains("velt_atomic_add_64_rlx"), "{v}");
 }
 
@@ -63,7 +69,7 @@ fn a_computed_starting_value_is_kept_in_the_module_state() {
         BODY.replace("INIT", "start()")
     );
     let v = vir(&src);
-    assert!(v.contains("velt_rt_module_state"), "{v}");
+    assert!(module_state(&v), "{v}");
 }
 
 /// A std module (std is copied with a probe added, used through `$VELT_STD`, as

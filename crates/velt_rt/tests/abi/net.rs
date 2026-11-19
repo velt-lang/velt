@@ -1,12 +1,12 @@
 //! TCP echo: a spawned compiled server task and a compiled client, in-process.
 
-use super::fake::{arg, block_on_fut, fut_result, ok, take_string};
+use super::fake::{
+    arg, block_on_fut, block_on_state, fut_result, join, ok, spawn_state, take_string,
+};
 use crate::bytes::{velt_rt_bytes_drop, VeltBytes};
 use crate::net::tcp::*;
 use crate::result::{code_name, IoResult, VeltErr};
 use crate::str::VeltStr;
-use crate::task::runtime::velt_rt_block_on;
-use crate::task::spawn::velt_rt_spawn;
 use crate::task::{drop_fut, poll_fut, VeltFut, PENDING, READY};
 use std::ffi::c_void;
 use std::ptr::null_mut;
@@ -71,13 +71,6 @@ unsafe extern "C-unwind" fn echo_poll(s: *mut u8, cx: *mut c_void) -> u32 {
             }
             _ => unreachable!(),
         }
-    }
-}
-
-unsafe extern "C-unwind" fn echo_drop(s: *mut u8) {
-    let st = &mut *(s as *mut Echo);
-    if !st.fut.is_null() {
-        drop_fut(st.fut);
     }
 }
 
@@ -150,24 +143,15 @@ fn tcp_echo_in_process() {
     }));
     let port = unsafe { velt_rt_tcp_listener_port(listener) };
     assert!(port > 0);
-    let init = Echo {
+    let mut echo = Box::new(Echo {
         result: 0,
         tag: 0,
         listener,
         stream: StreamHandle::NULL,
         fut: null_mut(),
-    };
-    let server = unsafe {
-        velt_rt_spawn(
-            echo_poll,
-            echo_drop,
-            &init as *const Echo as *const u8,
-            size_of::<Echo>() as u64,
-            8,
-            8,
-            None,
-        )
-    };
+    });
+    // SAFETY: `echo` outlives the task, which is joined below; it runs to completion.
+    let server = unsafe { spawn_state(echo_poll, &mut *echo as *mut Echo as *mut u8) };
     let mut client = Client {
         result: String::new(),
         tag: 0,
@@ -175,9 +159,10 @@ fn tcp_echo_in_process() {
         stream: StreamHandle::NULL,
         fut: null_mut(),
     };
-    unsafe { velt_rt_block_on(client_poll, &mut client as *mut Client as *mut u8) };
+    unsafe { block_on_state(client_poll, &mut client as *mut Client as *mut u8) };
     assert_eq!(client.result, MSG);
-    assert_eq!(block_on_fut::<i64>(server), MSG.len() as i64);
+    join(server);
+    assert_eq!(echo.result, MSG.len() as i64);
     unsafe { velt_rt_tcp_listener_close(listener) };
 
     let addr = format!("127.0.0.1:{port}");

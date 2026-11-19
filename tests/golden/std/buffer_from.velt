@@ -1,0 +1,92 @@
+// `Buffer.from` as Node's: a string's bytes in each of Node's encodings (hex and Base64 decoded
+// leniently, as Node does), copies of byte arrays and of typed arrays' elements, and the error
+// for an unknown encoding. Expected output is Node's (the same program, types removed).
+function show(label: string, s: string, encoding?: string) {
+  try {
+    const b = Buffer.from(s, encoding);
+    // Node's count agrees with the bytes for text that decodes whole (the `*` lines differ).
+    const n = Buffer.byteLength(s, encoding);
+    const mark = n == b.length ? "" : ` * byteLength ${n}`;
+    console.log(`${label}: [${b.join(",")}]${mark}`);
+  } catch (e) {
+    console.log(`${label}: ${e.name}: ${e.message}`);
+  }
+}
+
+const lone = String.fromCharCode(0xd800);
+const loneLow = String.fromCharCode(0xdc00);
+
+show("utf8 default", "héllo €😀");
+show("utf8 empty", "");
+show("utf8 named", "é", "utf8");
+show("utf-8 upper", "é", "UTF-8");
+show("utf8 lone high", `a${lone}b`);
+show("utf8 lone low", `a${loneLow}`, "utf8");
+
+show("hex", "0aFf10", "hex");
+show("hex empty", "", "hex");
+show("hex odd", "abc", "hex");
+show("hex one digit", "a", "hex");
+show("hex invalid mid", "0aFfz1", "hex");
+show("hex invalid first", "zz12", "hex");
+show("hex space", "12 34", "hex");
+show("hex upper name", "ff", "HEX");
+show("hex low byte", "ŁŁ", "hex");
+
+show("base64", "aGVsbG8gd29ybGQ=", "base64");
+show("base64 empty", "", "base64");
+show("base64 no padding", "aGVsbG8gd29ybGQ", "base64");
+show("base64 whitespace", " aGVs bG8g\nd29y\tbGQ= ", "base64");
+show("base64 invalid skipped", "a!b@c#d", "base64");
+show("base64 stops at =", "YQ==YQ", "base64");
+show("base64 = first", "=aGk", "base64");
+show("base64 one char", "a", "base64");
+show("base64 two chars", "ab", "base64");
+show("base64 url alphabet", "-_8", "base64");
+show("base64url", "-_8", "base64url");
+show("base64url std alphabet", "+/8", "base64url");
+show("base64url padded", "aGk=", "BASE64URL");
+show("base64 non-ascii", "QUJDéREVG", "base64");
+show("base64 low byte", "ŁŁŁŁ", "base64");
+
+show("latin1", "aé€😀", "latin1");
+show("binary", "é€", "binary");
+show("ascii", "aé€", "ascii");
+show("latin1 lone", lone, "latin1");
+show("latin1 empty", "", "latin1");
+
+show("ucs2", "aé€😀", "ucs2");
+show("ucs-2", "é", "ucs-2");
+show("utf16le", "é", "utf16le");
+show("utf-16le upper", "é", "UTF-16LE");
+show("ucs2 lone", lone, "ucs2");
+show("ucs2 empty", "", "ucs2");
+
+show("empty name", "é", "");
+show("unknown", "a", "foo");
+show("unknown utf-16", "a", "utf-16");
+show("unknown latin-1", "a", "Latin-1");
+show("unknown empty string", "", "nope");
+
+const bytes: u8[] = [1, 2, 3];
+const copy = Buffer.from(bytes);
+copy[0] = 9;
+console.log(`bytes copy: [${copy.join(",")}] original [${bytes.join(",")}]`);
+console.log(`literal: [${Buffer.from([4, 5, 255]).join(",")}]`);
+console.log(`empty literal: ${Buffer.from([]).length}`);
+
+const u8 = new Uint8Array([1, 2, 3]);
+const fromU8 = Buffer.from(u8);
+u8[0] = 9;
+fromU8[1] = 8;
+console.log(`Uint8Array copy: [${fromU8.join(",")}] original [${u8.join(",")}]`);
+const part = new Uint8Array(new ArrayBuffer(8), 2, 3);
+part[0] = 7;
+console.log(`Uint8Array view: [${Buffer.from(part).join(",")}]`);
+console.log(`Uint16Array: [${Buffer.from(new Uint16Array([1, 256, 300])).join(",")}]`);
+console.log(`Int8Array: [${Buffer.from(new Int8Array([-1, 5])).join(",")}]`);
+console.log(`Float64Array: [${Buffer.from(new Float64Array([1.5, -1, 300, NaN])).join(",")}]`);
+console.log(`Uint8ClampedArray: [${Buffer.from(new Uint8ClampedArray([300, -5])).join(",")}]`);
+const dv = new DataView(new ArrayBuffer(4));
+dv.setUint8(1, 7);
+console.log(`DataView: ${Buffer.from(dv).length}`);

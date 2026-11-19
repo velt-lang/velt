@@ -121,6 +121,14 @@ export function lastingRelease(p: usize): void {
   }
 }
 
+/** Sets the `n` bytes at `p` to 0. */
+export function clear(p: usize, n: usize): void {
+  // SAFETY: `p` holds `n` bytes (the caller's block).
+  unsafe {
+    memset$sched(ptr(p), 0, n);
+  }
+}
+
 /** Copies `n` bytes from `src` to `dst` (which do not overlap). */
 export function copy(dst: usize, src: usize, n: usize): void {
   // SAFETY: both hold `n` bytes; a task's slot or state and the state lowering handed over.

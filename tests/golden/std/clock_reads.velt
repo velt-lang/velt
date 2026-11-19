@@ -1,0 +1,24 @@
+// `performance.now()` and `Date.now()` against Node: the first read in `main` is not negative,
+// reads never go back, a 50 ms `setTimeout` takes at least 49 ms of `performance.now()` (both
+// read monotonic clocks), and `Date.now()` is whole milliseconds that `new Date()` agrees with.
+async function main() {
+  const first = performance.now();
+  console.log(first >= 0);
+  let last = first;
+  let backwards = 0;
+  for (let i = 0; i < 10000; i++) {
+    const t = performance.now();
+    if (t < last) {
+      backwards++;
+    }
+    last = t;
+  }
+  console.log(backwards);
+  const before = performance.now();
+  // timing: the row checks that a timer and performance.now() agree on elapsed time.
+  await new Promise<void>((resolve) => setTimeout(resolve, 50));
+  console.log(performance.now() - before >= 49);
+  const now = Date.now();
+  const date = new Date().getTime();
+  console.log(Number.isInteger(now), date - now >= 0 && date - now < 1000);
+}

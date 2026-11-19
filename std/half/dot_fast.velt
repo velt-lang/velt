@@ -1,0 +1,155 @@
+// velt/half (internal): the dot product of two `bf16[]` by the CPU's own bf16 dot product where
+// it has one (#3129): Arm's `bfdot`, which a build for any arm64 CPU finds when it runs, or what
+// `bf16x8.dotAddFast` is for the build's `--cpu`. The CPU is asked once for a whole dot product,
+// outside the loops, so each loop is the bare instruction: `sumBfdot` is compiled for FEAT_BF16
+// and runs only behind `bf16x8.hasBf16Arm()`.
+//
+// Four accumulators take 32 weights a round, then one takes eight at a time, as in dot.velt.
+
+import { noInline, targetFeature } from "velt/lang/intrinsics";
+import { inRange, sameLength, total } from "velt/half/dot";
+import { bf16x8 } from "velt/simd/bf16x8";
+
+declare function velt_simd_f32x4_splat(x: f32): f32x4;
+declare function velt_simd_bf16x8_load(from: bf16[], at: u64): bf16x8;
+declare function velt_simd_bf16x8_load_partial(from: bf16[], at: u64, count: u64): bf16x8;
+declare function velt_simd_f32x4_dot_add_fast_bf16x8(acc: f32x4, a: bf16x8, b: bf16x8): f32x4;
+// Arm's `bfdot` itself: only in `sumBfdot`.
+declare function velt_simd_f32x4_bfdot(acc: f32x4, a: bf16x8, b: bf16x8): f32x4;
+
+/**
+ * The dot product of `a` and `b` to some rounding, by the CPU's own bf16 dot product where it
+ * has one: Arm's `bfdot` (FEAT_BF16: an Apple M2 and later, Graviton 3, Neoverse N2 and V1) in a
+ * release build for any arm64 CPU, on Linux and macOS, or x86's `vdpbf16ps` where `--cpu` has
+ * AVX512-BF16; elsewhere `bf16x8.dotAdd`'s steps. The number differs between CPUs in its last
+ * bits, and more for subnormal weights, which those instructions take as zero (`Infinity` times
+ * a subnormal is then NaN): use `dotBf16` where it must be the same everywhere. Panics with a
+ * RangeError when the lengths differ.
+ */
+@noInline
+export function dotBf16Fast(a: bf16[], b: bf16[]): number {
+  const n = sameLength(a.length, b.length, "dotBf16Fast");
+  return sumFast(a, 0, b, 0, n);
+}
+
+/**
+ * As `dotBf16Fast`, for `count` weights of `a` from index `aAt` and of `b` from index `bAt`,
+ * without copying them out: row `r` of a flat `rows × dim` array against a query is
+ * `dotBf16FastAt(rows, r * dim, query, 0, dim)`. Panics with a RangeError when a range passes
+ * the end of its array.
+ */
+@noInline
+export function dotBf16FastAt(a: bf16[], aAt: usize, b: bf16[], bAt: usize, count: usize): number {
+  inRange(count, a.length, aAt, "dotBf16FastAt");
+  inRange(count, b.length, bAt, "dotBf16FastAt");
+  return sumFast(a, aAt, b, bAt, count);
+}
+
+/** The sum once the ranges are known to fit, on the path this CPU has. */
+function sumFast(a: bf16[], aAt: usize, b: bf16[], bAt: usize, n: usize): number {
+  if (bf16x8.hasBf16Arm()) {
+    return sumBfdot(a, aAt, b, bAt, n);
+  }
+  return sumBuilt(a, aAt, b, bAt, n);
+}
+
+/** The sum by `bfdot`: only where the CPU has FEAT_BF16. */
+@noInline
+function sumBfdot(a: bf16[], aAt: usize, b: bf16[], bAt: usize, n: usize): number {
+  targetFeature("bf16-arm");
+  let s0 = velt_simd_f32x4_splat(0);
+  let s1 = s0;
+  let s2 = s0;
+  let s3 = s0;
+  let i: usize = 0;
+  while (n - i >= 32) {
+    const x = (aAt + i) as u64;
+    const y = (bAt + i) as u64;
+    s0 = velt_simd_f32x4_bfdot(s0, velt_simd_bf16x8_load(a, x), velt_simd_bf16x8_load(b, y));
+    s1 = velt_simd_f32x4_bfdot(
+      s1,
+      velt_simd_bf16x8_load(a, x + 8),
+      velt_simd_bf16x8_load(b, y + 8),
+    );
+    s2 = velt_simd_f32x4_bfdot(
+      s2,
+      velt_simd_bf16x8_load(a, x + 16),
+      velt_simd_bf16x8_load(b, y + 16),
+    );
+    s3 = velt_simd_f32x4_bfdot(
+      s3,
+      velt_simd_bf16x8_load(a, x + 24),
+      velt_simd_bf16x8_load(b, y + 24),
+    );
+    i += 32;
+  }
+  while (n - i >= 8) {
+    s0 = velt_simd_f32x4_bfdot(
+      s0,
+      velt_simd_bf16x8_load(a, (aAt + i) as u64),
+      velt_simd_bf16x8_load(b, (bAt + i) as u64),
+    );
+    i += 8;
+  }
+  if (i < n) {
+    // The lanes past the end are 0 and add nothing.
+    const left = (n - i) as u64;
+    s0 = velt_simd_f32x4_bfdot(
+      s0,
+      velt_simd_bf16x8_load_partial(a, (aAt + i) as u64, left),
+      velt_simd_bf16x8_load_partial(b, (bAt + i) as u64, left),
+    );
+  }
+  return total(s0, s1, s2, s3);
+}
+
+/** The sum by what `bf16x8.dotAddFast` is in this build: its `--cpu`'s instruction, or `dotAdd`. */
+function sumBuilt(a: bf16[], aAt: usize, b: bf16[], bAt: usize, n: usize): number {
+  let s0 = velt_simd_f32x4_splat(0);
+  let s1 = s0;
+  let s2 = s0;
+  let s3 = s0;
+  let i: usize = 0;
+  while (n - i >= 32) {
+    const x = (aAt + i) as u64;
+    const y = (bAt + i) as u64;
+    s0 = velt_simd_f32x4_dot_add_fast_bf16x8(
+      s0,
+      velt_simd_bf16x8_load(a, x),
+      velt_simd_bf16x8_load(b, y),
+    );
+    s1 = velt_simd_f32x4_dot_add_fast_bf16x8(
+      s1,
+      velt_simd_bf16x8_load(a, x + 8),
+      velt_simd_bf16x8_load(b, y + 8),
+    );
+    s2 = velt_simd_f32x4_dot_add_fast_bf16x8(
+      s2,
+      velt_simd_bf16x8_load(a, x + 16),
+      velt_simd_bf16x8_load(b, y + 16),
+    );
+    s3 = velt_simd_f32x4_dot_add_fast_bf16x8(
+      s3,
+      velt_simd_bf16x8_load(a, x + 24),
+      velt_simd_bf16x8_load(b, y + 24),
+    );
+    i += 32;
+  }
+  while (n - i >= 8) {
+    s0 = velt_simd_f32x4_dot_add_fast_bf16x8(
+      s0,
+      velt_simd_bf16x8_load(a, (aAt + i) as u64),
+      velt_simd_bf16x8_load(b, (bAt + i) as u64),
+    );
+    i += 8;
+  }
+  if (i < n) {
+    const left = (n - i) as u64;
+    s0 = velt_simd_f32x4_dot_add_fast_bf16x8(
+      s0,
+      velt_simd_bf16x8_load_partial(a, (aAt + i) as u64, left),
+      velt_simd_bf16x8_load_partial(b, (bAt + i) as u64, left),
+    );
+  }
+  return total(s0, s1, s2, s3);
+}

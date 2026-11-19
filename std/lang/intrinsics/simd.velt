@@ -17,8 +17,8 @@ export declare function strLoadPartialU8x16(s: string, at: u64, count: u64): u8x
 /**
  * As the first statement of a std function (not a method or closure): the function is compiled
  * for the CPU extension `name` (`"sha-arm"`, `"sha-x86"`, `"clmul-x86"`, `"clmul-arm"`,
- * `"aes-x86"`, `"aes-arm"` or `"fma-x86"`, a string literal), which backends may use anywhere in
- * it. Every call
+ * `"aes-x86"`, `"aes-arm"`, `"fma-x86"` or `"bf16-arm"`, a string literal), which backends may
+ * use anywhere in it. Every call
  * of it must then sit behind velt/simd's check of that extension (`if (u32x4.hasShaX86())`) or in
  * a function gated on the same one. An AES target includes its architecture's carry-less
  * multiplication (`u8x16.hasAesArm()` implies `u64x2.hasClmulArm()`).

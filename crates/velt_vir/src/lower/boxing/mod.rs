@@ -115,6 +115,13 @@ pub(super) struct Boxing {
     /// program, which compiles as before.
     pub(super) weak_object: bool,
     pub(super) dyn_types: FxHashSet<TyId>,
+    /// In a program with weak references: the closures of the program by the key of the
+    /// function type they were made at, whose environments the trace glue looks into
+    /// (glue/trace_env.rs). Empty in every other program.
+    pub(super) env_traced: FxHashMap<CycleKey, Vec<(DefId, Vec<TyId>)>>,
+    /// Environments and captured variables' cells may be weakly held (some are traced): their
+    /// releases take the three-way sequence (rc.rs `release_weak`).
+    pub(super) weak_envs: bool,
     /// Interfaces whose values are converted to `any` / `unknown`: their tables hold the
     /// `any` table of their concrete type (`Cx::vtable`, `make_dyn`).
     pub(super) dyn_to_any: FxHashSet<DefId>,

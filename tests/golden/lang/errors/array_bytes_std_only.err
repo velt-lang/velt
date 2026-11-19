@@ -1,0 +1,2 @@
+array_bytes_std_only.velt:4:34: error: `velt/lang/intrinsics` is internal to the standard library: the compiler's intrinsics are std's own building blocks
+  = note: use the public API std builds on them (an array's `reserve`, `truncate` and `swap`, velt/encoding's `utf8ByteAt`, …)
