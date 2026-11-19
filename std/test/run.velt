@@ -33,7 +33,13 @@ export async function runRegistered() {
     process.exit(result.teardownFailed ? 1 : 0);
   } else if (plan != null) {
     const ok = await runPlan(JSON.parse<Plan>(readFileSync(plan)));
-    process.exit(ok ? 0 : 1);
+    // The runner itself: every test process has ended, so nothing is pending and `main` returns
+    // (exit code 0). The runtime then frees the module state, and with the block counters on its
+    // report is the runner's own, exact: an exit would leave what these frames hold counted.
+    if (ok) {
+      return;
+    }
+    process.exit(1);
   } else {
     let failed = false;
     for (const f of files) {

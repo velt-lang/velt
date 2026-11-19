@@ -655,10 +655,19 @@ fn too_many_strings(stderr: &str, limit: u64) -> Option<String> {
     }
 }
 
+/// The line a program's own `process.exit` writes before the `rc stats` report.
+const EXIT_NOTE: &str = "rc stats: the program called process.exit: no leak verdict";
+
 /// The leak in a `rc stats: ... alloc=A free=F blocks=A/F` report: more than `allowed` blocks
 /// allocated but not freed, a heap string buffer allocated but not freed (strings have no
 /// allowance: nothing keeps one on purpose), or no report.
 fn leaked_blocks(stderr: &str, allowed: u64) -> Option<String> {
+    // The program ended itself with `process.exit`: the frames live then keep what they hold,
+    // as Node runs no cleanup there, and the report says so in place of a verdict
+    // (std/prelude/process.velt `processExit`).
+    if stderr.lines().any(|l| l == EXIT_NOTE) {
+        return None;
+    }
     let Some(report) = stderr.lines().rev().find(|l| l.starts_with("rc stats:")) else {
         return Some("leak check: no `rc stats` report on stderr".into());
     };

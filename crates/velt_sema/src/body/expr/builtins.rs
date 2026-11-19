@@ -10,7 +10,11 @@ use super::args::Callable;
 use super::intrinsics::param;
 use super::method::BuiltinMethod;
 use crate::body::{FnCx, Want};
+use crate::ctx::Item;
 use crate::hir::{self, DefId, ExprKind as H, Intrinsic, PassMode, TyId, TyKind};
+
+/// The prelude's function a program's own `process.exit` calls (std/prelude/process.velt).
+const PROCESS_EXIT: &str = "processExit";
 
 impl FnCx<'_, '_> {
     /// Call of a builtin function name (not shadowed by a local or item).
@@ -95,6 +99,13 @@ impl FnCx<'_, '_> {
         self.intrinsic(i, ck.args, ck.ret, span)
     }
 
+    /// Is this code a program's own (not std's), compiled with a prelude that has
+    /// [`PROCESS_EXIT`]?
+    fn exits_through_prelude(&self) -> bool {
+        !self.cx.scopes[self.module].is_std
+            && matches!(self.cx.prelude.get(PROCESS_EXIT), Some(Item::Def(_)))
+    }
+
     /// `console.log(...)`, `console.error(...)`, `process.exit(code)`, `process.memoryUsage()`,
     /// `Promise.all(ps)` (and `race`, `allSettled`, `any`),
     /// `performance.now()`, `Date.now()`.
@@ -107,6 +118,13 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> Option<hir::Expr> {
         let simple = match (ns.name.as_str(), prop.name.as_str()) {
+            // A program's own exit goes through the prelude, which tells the leak counters'
+            // report that live frames keep what they hold (std/prelude/process.velt
+            // `processExit`); std's exits, and a program without that prelude, are the intrinsic.
+            ("process", "exit") if self.exits_through_prelude() => {
+                let what = "process.exit";
+                return Some(self.prelude_call(PROCESS_EXIT, what, &[], args, exp, span));
+            }
             ("process", "exit") => Some((Intrinsic::Exit, "`process.exit`")),
             ("Promise", "all") => Some((Intrinsic::PromiseAll, "`Promise.all`")),
             ("Promise", "race") => Some((Intrinsic::PromiseRace, "`Promise.race`")),
