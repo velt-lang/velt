@@ -6,7 +6,9 @@
 //! 1. Fully monomorphic and layout-resolved. Target is 64-bit (`Ptr` = 8 bytes, little endian).
 //! 2. **Function signatures are scalar-only**: params/returns are never `Ty::Agg`. Lowering passes
 //!    aggregates by pointer (`Ptr`) and returns them via an explicit out-pointer param.
-//!    `Ty::Unit` params never appear; a `Unit` return means "returns nothing".
+//!    `Ty::Unit` params never appear; a `Unit` return means "returns nothing". The one exception
+//!    is a C extern returning a struct in registers (`ExternFn::c_abi`, `CRet::Words`), whose
+//!    `ret` is an `Agg` of one or two scalar words.
 //! 3. Drops, drop flags, moves, bounds checks, overflow policy, async state machines are all already
 //!    expanded into ordinary statements/calls. Backends do no semantic work.
 //! 4. Block 0 is the entry block (an `Import`, invariant 11, may have none). Locals

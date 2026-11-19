@@ -193,6 +193,15 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   A C struct's field may be a pointer (#3094 pull request 3), its aggregate C's layout on the
   64-bit targets (lowering checks it); `Intrinsic::PtrRead` / `PtrWrite` (additive) are
   velt/ffi's `Ptr.read` and `Ptr.write`, a read checking the element's non-null pointers.
+- C structs by value (#2187 layer 3, docs/internals/design/c-ffi.md "C structs"): `hir::CTy::Struct`
+  (additive) is a `declare c struct` parameter or result, the declaration's type naming which.
+  `vir::ExternFn::c_abi` (additive, `None` for every other extern) is the target's C calling
+  convention's classification (`velt_vir::c_struct_abi`): a struct in registers is already one or
+  two `I64`/`F64` parameters; `CParam::ByVal` is a `Ptr` to a copy passed on the stack (LLVM
+  `byval`, Cranelift `StructArgument`), `CParam::Sret` the first parameter, a `Ptr` to the
+  result's slot (`sret`, `StructReturn`), with `ret` `Unit`; `CRet::Words` makes `ret` an `Agg` of
+  one or two scalar words at 0 and 8, the only `Agg` an extern signature may have (invariant 2
+  otherwise), which the call's destination receives whole. The verifier checks each.
 - Variadic C functions (#2187, docs/internals/design/c-ffi.md "Variadic functions"):
   `hir::CImport::variadic` (additive) marks a `declare c` function ending with `...args:
   CVarArgs`; its `CImport::params` and `ExternFnDef::params` are the fixed parameters, and a
