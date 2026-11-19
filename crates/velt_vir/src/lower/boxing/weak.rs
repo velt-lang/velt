@@ -247,11 +247,16 @@ impl Cx<'_> {
     pub(in crate::lower) fn weak_refs_exact(&mut self, b: Option<&Boxing>, t: TyId) -> Vec<TyId> {
         let mut out = vec![];
         let mut seen = FxHashSet::default();
-        let parts = match self.kind(t) {
+        let mut parts = match self.kind(t) {
             TyKind::Adt(..) if self.is_class(t) => self.adt_field_tys(t),
             TyKind::Array(e) => vec![e],
             _ => self.part_types(t),
         };
+        // A generator object also holds its function's state (async_fn/gen_trace.rs).
+        if self.is_generator_obj(t) {
+            let bx = b.unwrap_or(&self.boxing);
+            parts.extend(bx.gen_types.get(&t).cloned().unwrap_or_default());
+        }
         for p in parts {
             self.refs_inline(b, p, &mut out, &mut seen);
         }
@@ -309,6 +314,7 @@ impl Cx<'_> {
             classes.sort_by_key(|t| t.0);
             next.built_classes = classes;
             next.iface_traced = self.iface_tables();
+            next.gen_types = self.gen_frame_types();
         }
         let mut seeds: Vec<TyId> = self.facts.weak_seeds.iter().copied().collect();
         if next.weak_object {

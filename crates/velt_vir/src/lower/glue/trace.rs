@@ -97,6 +97,9 @@ impl FnLower<'_, '_> {
             }
         }
         self.trace_proxy_target(o, ty, tv);
+        if self.cx.is_generator_obj(ty) {
+            self.trace_gen_state(o, ty, tv);
+        }
     }
 
     /// Does a `t` value stored inline refer to counted objects the trace glue visits?
@@ -194,7 +197,12 @@ impl FnLower<'_, '_> {
     }
 
     /// One part of type `t` at `place`: visit it when it is a counted object, else walk it.
-    pub(super) fn trace_part(&mut self, place: Place, t: TyId, tv: (vir::Local, vir::Local)) {
+    pub(in crate::lower) fn trace_part(
+        &mut self,
+        place: Place,
+        t: TyId,
+        tv: (vir::Local, vir::Local),
+    ) {
         if matches!(self.cx.kind(t), TyKind::FnPtr { .. }) {
             self.trace_fn_value(&place, t, tv);
             return;
