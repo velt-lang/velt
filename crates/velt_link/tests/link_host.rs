@@ -358,6 +358,80 @@ fn velt_ld_dirs() -> Vec<PathBuf> {
     dirs
 }
 
+/// Whether the executable at `exe` has a Rich header: `link.exe` writes one between the DOS stub
+/// and the PE header of everything it links, and lld-link never does.
+#[cfg(windows)]
+fn has_rich_header(exe: &Path) -> bool {
+    let bytes = std::fs::read(exe).unwrap();
+    let pe = u32::from_le_bytes(bytes[0x3c..0x40].try_into().unwrap()) as usize;
+    let stub = &bytes[0x40..pe.min(bytes.len())];
+    stub.windows(4).any(|w| w == b"Rich")
+}
+
+/// Windows with `lld-link.exe` on `PATH`: the system link runs it (the output has no Rich
+/// header, which `link.exe` always writes), in debug and `--release`, and the programs run.
+/// With an `lld-link.exe` that fails, the link is done by `link.exe` (a Rich header). The
+/// search path here holds only the directory of the lld-link under test (LLVM's `bin`, or the
+/// stand-in's); `link.exe` is found
+/// through the registry. Skipped on a machine without lld-link.
+#[cfg(windows)]
+#[test]
+fn lld_link_on_the_path_links_on_windows() {
+    let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let setup = Setup::new("lld-link");
+    let path = std::env::var_os("PATH").unwrap();
+    let lld = std::env::split_paths(&path)
+        .filter(|d| d.is_absolute())
+        .map(|d| d.join("lld-link.exe"))
+        .find(|p| p.is_file());
+    let Some(lld) = lld else {
+        eprintln!("note: no lld-link.exe on PATH; skipping");
+        let _ = std::fs::remove_dir_all(&setup.dir);
+        return;
+    };
+    // The real one, in the directory it is installed in (it may need what is beside it); and
+    // a stand-in that fails, alone in a directory (built here, while `rustc` is still on the
+    // search path).
+    let real = lld.parent().unwrap().to_path_buf();
+    let failing = setup.dir.join("failing");
+    std::fs::create_dir_all(&failing).unwrap();
+    let stub = setup.dir.join("stub.rs");
+    std::fs::write(&stub, "fn main() { std::process::exit(1); }").unwrap();
+    let built = command("rustc")
+        .args(["--crate-name", "stub", "-o"])
+        .arg(failing.join("lld-link.exe"))
+        .arg(&stub)
+        .status()
+        .unwrap();
+    assert!(built.success(), "the failing stand-in did not build");
+
+    let objects = [setup.obj.clone()];
+    std::env::set_var("VELT_LINKER", "system");
+    let mut results = vec![];
+    for (dir, name) in [(&real, "lld"), (&failing, "fallback")] {
+        std::env::set_var("PATH", dir);
+        for release in [false, true] {
+            let exe = setup.dir.join(format!("{name}_{release}.exe"));
+            let linked = velt_link::link(&setup.request(&objects, &exe, release));
+            results.push((name, release, exe, linked));
+        }
+    }
+    std::env::set_var("PATH", &path);
+    std::env::remove_var("VELT_LINKER");
+    for (name, release, exe, linked) in results {
+        linked.unwrap_or_else(|e| panic!("{name} link failed (release={release}):\n{e}"));
+        assert_runs(&exe);
+        // lld-link's output has no Rich header; the fallback's, `link.exe`'s, has one.
+        assert_eq!(
+            has_rich_header(&exe),
+            name == "fallback",
+            "{name} (release={release}): {}",
+            exe.display()
+        );
+    }
+    let _ = std::fs::remove_dir_all(&setup.dir);
+}
+
 /// The bundled linker: a kit for the host built here, linked with the Rust toolchain's
 /// `rust-lld` (what `velt` falls back to in a checkout).
 #[test]
