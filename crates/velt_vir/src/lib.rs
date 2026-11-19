@@ -170,6 +170,7 @@ pub const OBJECT_AGG_SUFFIX: &str = " object";
 pub mod arch;
 pub mod atomic;
 pub mod c_abi;
+pub mod c_struct_abi;
 pub mod eh;
 pub mod fingerprint;
 pub mod heap;
