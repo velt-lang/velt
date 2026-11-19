@@ -100,8 +100,9 @@ impl Cx<'_> {
             .collect()
     }
 
-    /// The concrete types of interface `i`'s implementation tables that hold a counted object
-    /// (a class instance, or a boxed value's box), with the tables' implementation indexes.
+    /// The concrete types of interface `i`'s implementation tables whose data is a counted class
+    /// instance, with the tables' implementation indexes (a boxed value's table is left out:
+    /// glue/trace_dyn.rs).
     pub(in crate::lower) fn iface_counted(
         &mut self,
         b: Option<&Boxing>,
