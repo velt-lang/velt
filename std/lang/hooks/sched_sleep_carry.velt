@@ -51,7 +51,7 @@ export function carry(e: usize, chain: usize): void {
     const prev = m.ld(f + sl.S_PREV);
     const o = owner(f);
     if (o !== 0) {
-      sl.unlinkPending(b, f);
+      sl.carried(b, f);
       m.st(f + sl.S_NEXT, m.ld(o + t.T_TIMERS));
       m.st(o + t.T_TIMERS, f);
     }
@@ -100,6 +100,7 @@ export function adopt(e: usize, k: usize): void {
     if (seq > m.ld(b + sl.TM_SEQ)) {
       m.st(b + sl.TM_SEQ, seq);
     }
+    m.storeRelease(f + sl.S_HOME, e);
     sl.insert(b, f);
     f = next;
   }

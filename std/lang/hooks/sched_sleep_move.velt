@@ -1,0 +1,190 @@
+// velt/lang/hooks (internal): a sleep polled or dropped on another worker than the one whose
+// timer block holds it (#3207). A sleep is a heap future a promise holds, and a promise handed
+// to another task is polled by that task from then on, wherever it runs: on another worker, when
+// the task is fresh, runs in its waker's slot, or was offered. Only a worker touches its timer
+// block and the sleeps in it (sched_sleep.velt), so such a poll or drop writes nothing there:
+// - `ask`: the poll leaves a request on the holding worker's list (`E_SLEEP_ASKS`, a stack any
+//   thread pushes on) with its waker, wakes that worker and stays pending. The worker takes the
+//   sleep off its list (pending, due or fired), makes it a new sleep again (or a seen one, when
+//   it had fired) and wakes the waker: the task's next poll registers it in the block of the
+//   worker it runs on, as a first poll does, anchored there.
+// - `dropAway`: the drop leaves a request too; the holding worker takes the sleep off its list.
+// The rules that keep this safe:
+// - A worker writes a sleep only while it holds it: `S_HOME` is that worker and the state is
+//   pending, due, fired or carried. `S_HOME` and the state are read state first (`release`); a request that finds another worker holding the sleep goes on to that worker.
+// - A sleep an offered task carries (sched_sleep_carry.velt) is on no worker's list: the request
+//   waits on the list of the worker it reached until the task is polled (which is soon: an
+//   offered task is queued) and the sleep is in a block again.
+// - The requests under way for a sleep are counted in it (`S_ASKS`): a drop while any is under
+//   way is a request itself, and the sleep is freed by whoever ends the last one. So a request
+//   never names freed memory, in whatever order two workers serve them.
+// - The lists are taken whole by their worker (no single pop), and served oldest first.
+// - A worker serves its list before its timer look and before it parks (sched_park.velt), and
+//   every I/O tick while it is busy (sched_tick.velt); the push wakes it as a push on its inbox
+//   does, and a worker with requests counts as busy for the program's end (sched_end.velt), so
+//   the program does not end while tasks could still ask; once no task is left, its end waits
+//   for the requests under way (`settle`): every request is served, its waker given back and a
+//   dropped sleep freed before a counted exit takes its counts.
+
+import { noInline } from "velt/lang/intrinsics";
+import * as m from "./sched_mem";
+import * as sl from "./sched_sleep";
+import * as t from "./sched_task";
+import * as wk from "./sched_wake";
+
+// A request: the next one on its list, the sleep, and the waker to wake (0: a drop).
+const R_NEXT: usize = 0;
+const R_SLEEP: usize = 8;
+const R_WAKER: usize = 16;
+const R_SIZE: usize = 24;
+
+/** The requests made and not yet served, on every worker's list together (`settle`). */
+const UNDER_WAY = new Atomic<u64>(0);
+
+/**
+ * A poll of sleep `f`, held by another worker's block, with waker `waker` (borrowed): that worker
+ * is asked to give it up and wake `waker`. Pending.
+ */
+@noInline
+export function ask(f: usize, waker: usize): u32 {
+  post(f, m.wakerClone(waker));
+  return 0;
+}
+
+/** A drop of sleep `f`, held by another worker's block or named by a request under way. */
+@noInline
+export function dropAway(f: usize): void {
+  post(f, 0);
+}
+
+function post(f: usize, waker: usize): void {
+  UNDER_WAY.add(1);
+  m.inc(f + sl.S_ASKS);
+  const r = m.alloc(R_SIZE);
+  m.st(r + R_SLEEP, f);
+  m.st(r + R_WAKER, waker);
+  send(m.load(f + sl.S_HOME), r);
+}
+
+/** Request `r` goes on worker `h`'s list; `h` is woken if it sleeps. */
+function send(h: usize, r: usize): void {
+  m.pushStack(h + t.E_SLEEP_ASKS, r, R_NEXT);
+  wk.unpark(h);
+}
+
+/** Worker `e` serves the requests on its list, oldest first. */
+@noInline
+export function serve(e: usize): void {
+  let r = m.takeStack(e + t.E_SLEEP_ASKS);
+  // The stack is last in first out.
+  let rev: usize = 0;
+  while (r !== 0) {
+    const next = m.ld(r + R_NEXT);
+    m.st(r + R_NEXT, rev);
+    rev = r;
+    r = next;
+  }
+  while (rev !== 0) {
+    const next = m.ld(rev + R_NEXT);
+    one(e, rev);
+    rev = next;
+  }
+}
+
+/** Worker `e` serves request `r`, or passes it on. */
+function one(e: usize, r: usize): void {
+  const f = m.ld(r + R_SLEEP);
+  const waker = m.ld(r + R_WAKER);
+  const found = release(e, f, waker === 0);
+  if (found === 3) {
+    // Another worker holds it by now (its task was offered with it, or polled it there).
+    send(m.load(f + sl.S_HOME), r);
+    return;
+  }
+  if (found === 0) {
+    // Carried by an offered task: looked at again at this worker's next look.
+    m.pushStack(e + t.E_SLEEP_ASKS, r, R_NEXT);
+    return;
+  }
+  if (waker !== 0) {
+    m.wakeOwned(waker);
+  }
+  m.release(r, R_SIZE);
+  // This request named the sleep until here: the last one of a dropped sleep frees it.
+  if (m.dec(f + sl.S_ASKS) === 1 && isGone(f)) {
+    free(f);
+  }
+  UNDER_WAY.sub(1);
+}
+
+/**
+ * The program ends (sched.velt `schedFinish`, on worker 0 `e`, no task left): once every request
+ * under way was served, by this worker for its own list and by the others, which the requests
+ * woke. Each is a few steps; the core is given away meanwhile. A counted exit then finds the
+ * requests, their wakers and the dropped sleeps given back.
+ */
+export function settle(e: usize): void {
+  while (UNDER_WAY.load() !== 0) {
+    if (m.load(e + t.E_SLEEP_ASKS) !== 0) {
+      serve(e);
+    } else {
+      m.yieldCore();
+    }
+  }
+}
+
+/**
+ * On worker `e`, which holds sleep `f` (`S_HOME`): what a hand-over or a drop from another worker
+ * finds (`one`). 0: carried by an offered task, not to be touched yet. 1: off
+ * its list, a new sleep for whoever polls it next (`drop`: its waker dropped, state `GONE`).
+ * 2: it had fired (seen now). 3: another worker holds it by now.
+ */
+function release(e: usize, f: usize, drop: bool): u32 {
+  // The state first, then the worker: a task that polls it as a new sleep on another worker
+  // stores that worker before its state (`sleepPoll`), so a state read as that task's comes
+  // with its worker, and this one leaves the sleep alone.
+  const s = m.load(f + sl.S_STATE);
+  if (m.load(f + sl.S_HOME) !== e) {
+    return 3;
+  }
+  if (s === sl.CARRIED) {
+    return 0;
+  }
+  if (s === sl.PENDING) {
+    sl.unlinkPending(sl.block(e), f);
+  } else if (s === sl.DUE) {
+    sl.unlinkDue(m.ld(f + sl.S_TASK), f);
+  } else if (s === sl.FIRED) {
+    sl.seenOn(e, f);
+  } else if (!drop) {
+    // New again (an earlier hand-over), seen or dropped: not this worker's to write; the
+    // task that asked polls it and finds that.
+    return s === sl.NEW ? 1 : 2;
+  }
+  const w = m.ld(f + sl.S_WAKER);
+  m.st(f + sl.S_WAKER, 0);
+  // Last: from here on the task that asked may poll it, on its own worker.
+  m.storeRelease(f + sl.S_STATE, drop ? sl.GONE : s === sl.FIRED ? sl.SEEN : sl.NEW);
+  if (w !== 0) {
+    if (drop) {
+      m.wakerDrop(w);
+    } else {
+      // The waker it was registered with is woken too: a request may come late, when the task
+      // that asked has already polled the sleep into its own block with another waker (the
+      // request's is then a finished combinator's), and that registration is the one taken off
+      // here. Whoever waits polls again and registers it anew.
+      m.wakeOwned(w);
+    }
+  }
+  return s === sl.FIRED ? 2 : 1;
+}
+
+/** Was sleep `f` dropped while other workers' lists named it (`GONE`)? */
+function isGone(f: usize): bool {
+  return m.load(f + sl.S_STATE) === sl.GONE;
+}
+
+/** Frees sleep `f`, dropped (`GONE`), once nothing on any worker's list names it. */
+function free(f: usize): void {
+  m.release(f, sl.S_SIZE);
+}

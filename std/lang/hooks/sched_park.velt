@@ -14,6 +14,7 @@ import * as ow from "./sched_order_wait";
 import * as q from "./sched_queue";
 import * as rx from "./sched_relax";
 import * as sl from "./sched_sleep";
+import * as mv from "./sched_sleep_move";
 import * as sp from "./sched_spread";
 import * as t from "./sched_task";
 import * as tick from "./sched_tick";
@@ -60,6 +61,10 @@ function parkable(e: usize): bool {
 @noInline
 export function park(e: usize): void {
   const b = m.ld(e + t.E_IO);
+  if (m.load(e + t.E_SLEEP_ASKS) !== 0) {
+    // Before its timer look: a sleep it gives up does not expire here.
+    mv.serve(e);
+  }
   m.st32(e + t.E_DISPATCH, t.D_INPUT);
   if (io.anyDue(b)) {
     w.flushDue(b);
@@ -76,7 +81,7 @@ export function park(e: usize): void {
   }
   m.store32(e + t.E_PARK, 1);
   const mode = m.ld32(e + t.E_MODE);
-  if (m.load(e + t.E_INBOX) !== 0 || q.any(e) || !parkable(e)) {
+  if (m.load(e + t.E_INBOX) !== 0 || m.load(e + t.E_SLEEP_ASKS) !== 0 || q.any(e) || !parkable(e)) {
     wk.awake(e);
     ex.takeExit(e);
     m.st32(e + t.E_DISPATCH, 0);
