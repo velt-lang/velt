@@ -7,6 +7,7 @@
 import * as fs from "velt/fs";
 import { IoError } from "velt/io";
 import { platform } from "velt/os";
+import { cwd } from "velt/process";
 import { describe, expect, it } from "velt/test";
 
 /** The code of the `IoError` `f` throws, or "" when it throws none. */
@@ -62,7 +63,7 @@ describe("velt/fs's directories", () => {
     }
     // A drive's root refuses `CreateDirectoryW` with "access denied": EPERM, which Node's
     // recursive `mkdir` keeps although a directory is there.
-    const root = process.cwd().slice(0, 3);
+    const root = cwd().slice(0, 3);
     expect(codeOf(() => fs.mkdirSync(root, { recursive: true }))).toBe("EPERM");
     const top = `velt-tree-sep-${process.pid}`;
     fs.mkdirSync(top, { recursive: true });

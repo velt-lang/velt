@@ -1,13 +1,18 @@
-// velt/fs (internal): Node's check of a path argument. A path holding a 0 byte is a `TypeError`
-// (Node's `ERR_INVALID_ARG_VALUE`) before any system call, whose message names the argument
+// velt/fs (internal): Node's check of a path argument. A path holding a 0 byte is an error
+// before any system call, as Node's `ERR_INVALID_ARG_VALUE`: an `IoError` whose `code` is that,
+// whose `name` is `TypeError`, and whose message names the argument
 // (`path`, or `oldPath`, `newPath`, `src`, `dest`, `target`) and shows the string as Node's
 // `util.inspect` does: in single quotes (double ones when it holds `'` and no `"`, backticks
 // when it holds both and no backtick), with the quote, `\`, control characters and lone
-// surrogates escaped.
+// surrogates escaped. Node's is a `TypeError`; here it is an `IoError` (as velt/fs/rm.velt's
+// `ERR_FS_EISDIR` is), so that every velt/fs function keeps throwing `IoError` alone and code
+// that reads `e.code` after a call keeps compiling. The one difference: `e instanceof
+// TypeError` is false.
 
+import { IoError } from "velt/io/error";
 import { noInline } from "velt/lang/intrinsics";
 
-/** Throws Node's `TypeError` when `path`, the argument `name`, holds a 0. */
+/** Throws Node's `ERR_INVALID_ARG_VALUE` when `path`, the argument `name`, holds a 0. */
 export function checkPathArg(path: string, name: string = "path") {
   if (path.includes("\0")) {
     throw nulInPath(path, name);
@@ -15,10 +20,13 @@ export function checkPathArg(path: string, name: string = "path") {
 }
 
 @noInline
-function nulInPath(path: string, name: string): TypeError {
-  return new TypeError(
+function nulInPath(path: string, name: string): IoError {
+  const e = new IoError(
+    "ERR_INVALID_ARG_VALUE",
     `The argument '${name}' must be a string, Uint8Array, or URL without null bytes. Received ${inspectText(path)}`,
   );
+  e.name = "TypeError";
+  return e;
 }
 
 const HEX = "0123456789ABCDEF";

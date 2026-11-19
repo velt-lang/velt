@@ -86,10 +86,10 @@ export async function velt_rt_fs_copy_file(from: string, to: string): Promise<Io
 
 // Whole files: Velt code over the C library or Win32 (`#fs-whole`), the async forms on the
 // blocking pool. The path is checked on the calling thread, so the work on the pool only
-// returns: a 0 in it is Node's `TypeError` (velt/fs/path_arg.velt), which velt/fs's public
+// returns: a 0 in it is Node's `ERR_INVALID_ARG_VALUE` (velt/fs/path_arg.velt), which velt/fs's public
 // functions have thrown already; this is the same check for any other caller.
 
-/** `path` as C bytes (its UTF-8 and a 0); Node's `TypeError` if it holds a 0. */
+/** `path` as C bytes (its UTF-8 and a 0); Node's `ERR_INVALID_ARG_VALUE` if it holds a 0. */
 function cOf(path: string, call: string): u8[] {
   checkPathArg(path);
   return bytesOf(path);

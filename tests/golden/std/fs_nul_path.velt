@@ -1,7 +1,9 @@
 // A 0 in a path, as Node takes it: every function of velt/fs that takes a path throws Node's
-// `TypeError` (`ERR_INVALID_ARG_VALUE`) before any system call, naming the argument and showing
-// the path as `util.inspect` does, sync and async alike; `exists` is false without an error. The
-// expected output is Node 24's.
+// `ERR_INVALID_ARG_VALUE` before any system call, its `name` `TypeError`, its message naming the
+// argument and showing the path as `util.inspect` does, sync and async alike; `exists` is false
+// without an error. The expected output is Node 24's. (Velt's is an `IoError`, so `instanceof
+// TypeError` is false, which this file doesn't print.)
+import { IoError } from "velt/io";
 import * as fs from "velt/fs";
 
 function attempt(what: string, f: () => void) {
@@ -9,7 +11,7 @@ function attempt(what: string, f: () => void) {
     f();
     console.log(what, "no error");
   } catch (e) {
-    console.log(what, (e as Error).name, JSON.stringify((e as Error).message));
+    console.log(what, (e as Error).name, (e as IoError).code, JSON.stringify((e as Error).message));
   }
 }
 
@@ -18,7 +20,7 @@ async function attemptAsync(what: string, f: () => Promise<void>) {
     await f();
     console.log(what, "no error");
   } catch (e) {
-    console.log(what, (e as Error).name, JSON.stringify((e as Error).message));
+    console.log(what, (e as Error).name, (e as IoError).code, JSON.stringify((e as Error).message));
   }
 }
 
@@ -86,6 +88,6 @@ async function main() {
     fs.statSync("'\"\0");
   });
   attempt("all quotes", () => {
-    fs.statSync("'\"`\0\u{d800}");
+    fs.statSync("'\"`\0" + String.fromCharCode(0xd800));
   });
 }
