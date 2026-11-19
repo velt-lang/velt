@@ -304,7 +304,7 @@ fn extern_declarations(program: &vir::Program) -> CodegenResult<String> {
         }
         let decl = match Allocator::of(&e.symbol, &e.params, e.ret) {
             Some(kind) => allocator_declaration(e, kind)?,
-            None => plain_declaration(e)?,
+            None => plain_declaration(program, e)?,
         };
         out.push_str(&decl);
     }
@@ -339,9 +339,16 @@ fn function_declaration(program: &vir::Program, index: usize) -> CodegenResult<S
 }
 
 /// `declare` line of an ordinary extern.
-fn plain_declaration(e: &vir::ExternFn) -> CodegenResult<String> {
-    let mut params = signature_params(&e.params)
-        .map_err(|err| format!("codegen: extern `{}`: {err}", e.symbol))?;
+fn plain_declaration(program: &vir::Program, e: &vir::ExternFn) -> CodegenResult<String> {
+    let mut params = match &e.c_abi {
+        // C structs by value (#2187 layer 3): `byval` and `sret` pointers (c_struct.rs).
+        Some(_) => (e.params.iter().enumerate())
+            .map(|(k, &t)| crate::c_struct::param(e, k, t))
+            .collect::<CodegenResult<Vec<_>>>()
+            .map(|ps| ps.join(", ")),
+        None => signature_params(&e.params),
+    }
+    .map_err(|err| format!("codegen: extern `{}`: {err}", e.symbol))?;
     // A variadic C function: LLVM passes the further arguments with the target's variadic
     // convention (on the stack on Apple arm64, `%al` on x86-64, floats in integer registers on
     // Windows).
@@ -358,7 +365,7 @@ fn plain_declaration(e: &vir::ExternFn) -> CodegenResult<String> {
     };
     Ok(format!(
         "declare {} {}({params}) {attrs}{}\n",
-        abi_ret(e.ret)?,
+        crate::c_struct::ret(program, e)?,
         global_name(&e.symbol),
         import_attrs(e)
     ))

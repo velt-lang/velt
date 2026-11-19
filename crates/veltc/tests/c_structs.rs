@@ -238,20 +238,35 @@ function main() {
     }
 }
 
+/// A C struct crosses to C by value where lowering has the target's C calling convention (x86-64
+/// System V, #2187 layer 3; tests/c_struct_by_value.rs calls such functions), and is an error at
+/// the declaration on the other targets until theirs come.
 #[test]
-fn a_c_struct_crosses_to_c_by_value_only_in_a_later_layer() {
+fn a_c_struct_by_value_is_an_error_where_the_target_has_no_convention_yet() {
     let dir = test_dir::TestDir::new();
     project(
         dir.path(),
-        "export declare c struct P { x: f64; y: f64; }\n\ndeclare c(\"c\") function take(p: P): void;\ndeclare c(\"c\") function give(): P;\n\nexport const x = 1;\n",
-        "import { x } from \"geom\";\n\nfunction main() {\n  console.log(x);\n}\n",
+        "export declare c struct P { x: f64; y: f64; }\n\ndeclare c(\"c\") function take(p: P): void;\ndeclare c(\"c\") function give(): P;\n\nexport function run(): f64 {\n  // SAFETY: a test of the build only; never run.\n  unsafe { take(give()); }\n  return 1;\n}\n",
+        "import { run } from \"geom\";\n\nfunction main() {\n  console.log(run());\n}\n",
     );
     let o = velt(dir.path(), &["check"]);
     let out = String::from_utf8_lossy(&o.stderr).to_string() + &String::from_utf8_lossy(&o.stdout);
+    assert!(o.status.success(), "{out}");
+    let o = velt(
+        dir.path(),
+        &[
+            "build",
+            "--target",
+            "aarch64-unknown-linux-gnu",
+            "--emit",
+            "vir",
+        ],
+    );
+    let out = String::from_utf8_lossy(&o.stderr).to_string();
     assert!(!o.status.success(), "{out}");
     for want in [
-        "C function `take` can't take or return C struct `P` by value yet",
-        "C function `give` can't take or return C struct `P` by value yet",
+        "C function `take` takes or returns a C struct by value, which is not supported on aarch64-unknown-linux-gnu yet",
+        "C function `give` takes or returns a C struct by value, which is not supported on aarch64-unknown-linux-gnu yet",
     ] {
         assert!(out.contains(want), "missing `{want}` in:\n{out}");
     }

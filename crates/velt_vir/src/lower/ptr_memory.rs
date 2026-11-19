@@ -30,8 +30,8 @@ impl FnLower<'_, '_> {
         let at = self.element_place(p_op, i, vt);
         let v = Place::local(self.temp(vt));
         self.assign(v.clone(), Rvalue::Use(Operand::Copy(at)));
-        let name = self.cx.element_name(t);
-        self.check_non_null(&v, t, &mut vec![], &name);
+        let whole = format!("the `{}` read", self.cx.element_name(t));
+        self.check_non_null(&v, t, &mut vec![], ("Ptr.read", &whole));
         Operand::Copy(v)
     }
 
@@ -62,8 +62,16 @@ impl FnLower<'_, '_> {
     }
 
     /// Stops the program where a non-null C pointer in `v` (of type `t`, a C struct's fields at
-    /// any depth, whose names so far are `path`) is NULL. `element` names the type read.
-    fn check_non_null(&mut self, v: &Place, t: TyId, path: &mut Vec<String>, element: &str) {
+    /// any depth, whose names so far are `path`) is NULL: C has no non-null pointer type, so
+    /// every value arriving from C is checked. The message starts with `prefix` (what read it)
+    /// and names the field of `whole` (what arrived: "the `Entry` read").
+    pub(super) fn check_non_null(
+        &mut self,
+        v: &Place,
+        t: TyId,
+        path: &mut Vec<String>,
+        (prefix, whole): (&str, &str),
+    ) {
         match self.cx.kind(t) {
             TyKind::Ptr(_) => {
                 let word =
@@ -74,9 +82,9 @@ impl FnLower<'_, '_> {
                 self.branch(null, bad, ok);
                 self.switch_to(bad);
                 let msg = match path.is_empty() {
-                    true => "Ptr.read: the pointer read is NULL, and a `Ptr<T>` is never NULL (read a `Ptr<T> | null`)".to_string(),
+                    true => format!("{prefix}: the pointer read is NULL, and a `Ptr<T>` is never NULL (read a `Ptr<T> | null`)"),
                     false => format!(
-                        "Ptr.read: field `{}` of the `{element}` read is NULL, and a `Ptr<T>` is never NULL (declare the field `Ptr<T> | null`)",
+                        "{prefix}: field `{}` of {whole} is NULL, and a `Ptr<T>` is never NULL (declare the field `Ptr<T> | null`)",
                         path.join(".")
                     ),
                 };
@@ -92,7 +100,7 @@ impl FnLower<'_, '_> {
                     }
                     let vf = self.cx.vir_field(t, i as u32);
                     path.push(self.cx.adt_def(d).fields[i].name.clone());
-                    self.check_non_null(&proj(v, Proj::Field(vf)), f, path, element);
+                    self.check_non_null(&proj(v, Proj::Field(vf)), f, path, (prefix, whole));
                     path.pop();
                 }
             }

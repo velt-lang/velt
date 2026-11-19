@@ -373,6 +373,15 @@ pub(crate) fn declare_all<M: Module>(
             externs.push(None);
             continue;
         }
+        if e.c_abi.is_some() {
+            // C structs by value (#2187 layer 3): abi.rs `c_signature`.
+            let sig = crate::abi::c_signature(call_conv, program, e)?;
+            let id = module
+                .declare_function(&e.symbol, Linkage::Import, &sig)
+                .map_err(|err| format!("codegen: declaring function `{}`: {err}", e.symbol))?;
+            externs.push(Some(id));
+            continue;
+        }
         externs.push(Some(declare_function(
             module,
             call_conv,

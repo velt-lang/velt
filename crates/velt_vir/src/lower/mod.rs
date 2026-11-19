@@ -76,6 +76,7 @@ pub(crate) use passes::{lower_program, lower_program_seeded};
 mod c_call;
 mod c_export;
 pub(crate) mod c_global;
+mod c_struct_call;
 mod call;
 mod callee;
 mod caller_aliases;
