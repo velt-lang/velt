@@ -128,9 +128,26 @@ fn a_sleep_dropped_on_another_worker_leaves_its_block() {
     check(&exe, "4", 10, "dropped on worker 2\n");
 }
 
+/// A sleep pending in worker 1's block awaited by three tasks at once, two on worker 2 and one on
+/// worker 0: each asks worker 1, while another's request may be on its way or just served (the
+/// sleep then new again, in the asker's block, or still in worker 1's). Every task wakes once.
+/// Without the hand-over the sleep expired on worker 1 for a task of another worker (the check's
+/// `ICE:`, every run).
+#[test]
+fn a_sleep_awaited_from_three_tasks_on_other_workers_wakes_them_all() {
+    if !has_threads() {
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let exe = build(dir.path(), "pinned_three", PINNED_THREE);
+    check(&exe, "4", 10, "awaited on workers 2 2 0\n");
+}
+
 /// The shapes that crashed (#3201's review): tasks hand polled sleeps on while busy tasks make
 /// worker 0 offer its queue, so the second poller is fresh on another worker, runs in its waker's
-/// slot, or is offered between its polls. Every sleep fires once, at 4 and 8 workers.
+/// slot, or is offered between its polls; and two tasks await one sleep, each asking for it while
+/// the other's request may be under way. Every sleep fires once, at 4 and 8 workers.
 #[test]
 fn handed_on_sleeps_fire_under_offers() {
     if !has_threads() {
@@ -138,7 +155,11 @@ fn handed_on_sleeps_fire_under_offers() {
     }
     runtime_support::build_native_runtime(manifest());
     let dir = test_dir::TestDir::new();
-    for (name, src) in [("handed_user", HANDED_USER), ("handed_maker", HANDED_MAKER)] {
+    for (name, src) in [
+        ("handed_user", HANDED_USER),
+        ("handed_maker", HANDED_MAKER),
+        ("handed_two", HANDED_TWO),
+    ] {
         let exe = build(dir.path(), name, src);
         check(&exe, "4", 4, "fired 1000\n");
         check(&exe, "8", 4, "fired 1000\n");
@@ -203,6 +224,50 @@ async function main() {
   const w = await spawn(second(h), { worker: 2 });
   // The program ends now, not in ten minutes: the dropped sleep left worker 1's block.
   console.log(`dropped on worker ${w}`);
+}
+"#;
+
+/// The program of [`a_sleep_awaited_from_three_tasks_on_other_workers_wakes_them_all`].
+const PINNED_THREE: &str = r#"import { currentWorker } from "velt/task";
+
+class Holder {
+  p: Promise<void>;
+  constructor(p: Promise<void>) {
+    this.p = p;
+  }
+}
+
+class Trio {
+  a: Holder;
+  b: Holder;
+  c: Holder;
+  constructor(p: Promise<void>) {
+    this.a = new Holder(p);
+    this.b = new Holder(p);
+    this.c = new Holder(p);
+  }
+}
+
+// On worker 1: polls the sleep there (it is pending in worker 1's timer block), then hands it on.
+async function first(): Promise<Trio> {
+  const s = sleep(20);
+  await Promise.race([s, yieldNow()]);
+  return new Trio(s);
+}
+
+// Three tasks, none on worker 1, await the same sleep: each asks the worker that holds it, while
+// another's request for it may be on its way or just served.
+async function waits(h: Holder): Promise<i64> {
+  await h.p;
+  return currentWorker();
+}
+
+async function main() {
+  const trio = await spawn(first(), { worker: 1 });
+  const a = spawn(waits(trio.a), { worker: 2 });
+  const b = spawn(waits(trio.b), { worker: 2 });
+  const c = spawn(waits(trio.c), { worker: 0 });
+  console.log(`awaited on workers ${await a} ${await b} ${await c}`);
 }
 "#;
 
@@ -331,6 +396,86 @@ async function main() {
     const ps: Promise<void>[] = [];
     for (let i = 0; i < 200; i++) {
       ps.push(spawn(maker(gate, i)));
+    }
+    await Promise.all(ps);
+  }
+  gate.stop.store(1);
+  await Promise.all(busyOnes);
+  console.log(`fired ${gate.fired.load()}`);
+}
+"#;
+
+/// [`handed_on_sleeps_fire_under_offers`]: two tasks await one sleep the task that polled it first handed on.
+const HANDED_TWO: &str = r#"class Gate {
+  stop: Atomic<i64> = new Atomic<i64>(0);
+  fired: Atomic<i64> = new Atomic<i64>(0);
+}
+
+class Holder {
+  p: Promise<void>;
+  constructor(p: Promise<void>) {
+    this.p = p;
+  }
+}
+
+class Pair {
+  a: Holder;
+  b: Holder;
+  constructor(p: Promise<void>) {
+    this.a = new Holder(p);
+    this.b = new Holder(p);
+  }
+}
+
+async function busy(gate: shared<Gate>): Promise<void> {
+  while (gate.stop.load() == 0) {
+    let x = 0;
+    for (let i = 0; i < 20000; i++) {
+      x += i % 7;
+    }
+    if (x < 0) {
+      console.log("never");
+    }
+    await yieldNow();
+  }
+}
+
+// Polls the sleep, then hands its promise to two tasks.
+async function maker(i: i64): Promise<Pair> {
+  const s = sleep(5 + (i % 7));
+  await Promise.race([s, yieldNow()]);
+  return new Pair(s);
+}
+
+// Two of these await one sleep: each polls it, offered between its polls, while the other's
+// request for it may be on its way.
+async function user(gate: shared<Gate>, h: Holder, i: i64): Promise<void> {
+  await Promise.race([h.p, yieldNow()]);
+  for (let y = 0; y < 20 + (i % 5); y++) {
+    await yieldNow();
+  }
+  await h.p;
+  gate.fired.add(1);
+}
+
+async function both(gate: shared<Gate>, i: i64): Promise<void> {
+  const pair = await spawn(maker(i));
+  const a = spawn(user(gate, pair.a, i));
+  const b = spawn(user(gate, pair.b, i + 3));
+  await a;
+  await b;
+}
+
+async function main() {
+  const gate = shared(new Gate());
+  const busyOnes: Promise<void>[] = [];
+  for (let i = 0; i < 8; i++) {
+    busyOnes.push(spawn(busy(gate)));
+  }
+  for (let round = 0; round < 5; round++) {
+    const ps: Promise<void>[] = [];
+    for (let i = 0; i < 100; i++) {
+      ps.push(spawn(both(gate, i)));
     }
     await Promise.all(ps);
   }

@@ -110,8 +110,14 @@ function one(e: usize, r: usize): void {
     m.wakeOwned(waker);
   }
   m.release(r, R_SIZE);
-  // This request named the sleep until here: the last one of a dropped sleep frees it.
-  if (m.dec(f + sl.S_ASKS) === 1 && isGone(f)) {
+  // This request named the sleep until here: the last one of a dropped sleep frees it. Whether
+  // it was dropped is read BEFORE the count goes down: once this was the last request, the
+  // task that asked may drop the sleep on its own worker and free it there (it finds no
+  // request under way), so the sleep is not read again. A sleep is marked dropped only by a
+  // drop request being served, which is counted itself and frees at its own end; so one not
+  // marked here is never left for this request to free.
+  const gone = isGone(f);
+  if (m.dec(f + sl.S_ASKS) === 1 && gone) {
     free(f);
   }
   UNDER_WAY.sub(1);

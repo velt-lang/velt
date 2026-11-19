@@ -27,6 +27,7 @@
 import { fnAddress, inline, noInline } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as mv from "./sched_sleep_move";
+import * as rl from "./sched_sleep_rule";
 import * as sp from "./sched_spread";
 import * as t from "./sched_task";
 import * as wk from "./sched_wake";
@@ -114,7 +115,7 @@ export function sleep(e: usize, ms: i64): usize {
   m.st(f + S_STATE, NEW);
   m.st(f + S_TASK, 0);
   m.st(f + S_OWNER, 0);
-  m.st(f + S_HOME, 0);
+  // `S_HOME` is written when a poll registers it, and read only after that.
   m.st(f + S_ASKS, 0);
   return f;
 }
@@ -129,23 +130,24 @@ function sleepPoll(f: usize, cx: usize): u32 {
   const w = m.ld(cx + 8);
   if (s !== NEW) {
     // Polled before. The task that polled it into its block (`S_OWNER`) is anchored there with
-    // it, so its polls are on that worker; another task's (the promise was handed on) may not be.
-    // Which task polls is what the worker is polling: a promise's context and waker name the
-    // task that owns the promise, also when another task awaiting it polls it.
-    const e = t.exec();
-    const k = m.ld(e + t.E_CURRENT);
-    if ((k !== m.ld(f + S_OWNER) || s === CARRIED) && !handedOn(e, f, s, k)) {
+    // it, so its polls are on that worker; another task's (the promise was handed on) may not
+    // be. The context names the task polling: its first word points at that task's `T_WORD`,
+    // in a task's own context, in a promise's (always polled by the task that drives it, which
+    // a transfer changes together with this word: sched_node.velt) and in a combinator's, which
+    // passes its poller's on (sched_all.velt). Any other context, and a carried sleep (it has
+    // no owner until its task adopts it), take the slow way, which asks the worker.
+    if (m.ld(cx) - t.T_WORD !== m.ld(f + S_OWNER) && !here(f, s)) {
       // Held by another worker's block, or carried by an offered task: its worker gives it up,
       // and this task polls it again as a new one.
       return mv.ask(f, w);
     }
     if (s === FIRED) {
-      seenOn(e, f);
+      seenOn(t.exec(), f);
       return 1;
     }
-    if (s === DUE && firesItself(e, f)) {
+    if (s === DUE && firesItself(t.exec(), f)) {
       unlinkDue(m.ld(f + S_TASK), f);
-      m.st(f + S_STATE, SEEN);
+      m.storeRelease(f + S_STATE, SEEN);
       return 1;
     }
   }
@@ -162,7 +164,8 @@ function sleepPoll(f: usize, cx: usize): u32 {
     sp.anchor();
     const e = t.exec();
     m.st(f + S_OWNER, m.ld(e + t.E_CURRENT));
-    m.storeRelease(f + S_HOME, e);
+    // Plain: `insert` stores the state after it, released.
+    m.st(f + S_HOME, e);
     insert(block(e), f);
   }
   return 0;
@@ -183,7 +186,7 @@ function sleepDrop(f: usize): void {
       return;
     }
     if (wk.counting() && m.ld(f + S_HOME) !== e) {
-      held("is dropped");
+      rl.held("is dropped");
     }
     if (s === PENDING) {
       unlinkPending(block(e), f);
@@ -201,28 +204,25 @@ function sleepDrop(f: usize): void {
 }
 
 /**
- * Sleep `f` (state `s`), polled before, is polled on worker `e` by task `k`, not the one that
- * polled it into its block: is it in this worker's block? Then `k` stays with it from now on, as
- * the first did (anchored; an offer carries the sleep along with it, `S_OWNER`). Not when another
- * worker's block holds it or an offered task carries it.
+ * Sleep `f` (state `s`), polled before, is polled through a context that does not name its owner:
+ * is it in this worker's block? Yes when the task this worker is polling is the owner after all
+ * (a context that is not the executor's). Yes too when the sleep is in this worker's block and
+ * another task polls it: that task stays with it from now on, as the first did (anchored; an
+ * offer carries the sleep along with it, `S_OWNER`). No when another worker's block holds it or
+ * an offered task carries it.
  */
 @noInline
-function handedOn(e: usize, f: usize, s: usize, k: usize): bool {
+function here(f: usize, s: usize): bool {
+  const e = t.exec();
+  const k = m.ld(e + t.E_CURRENT);
   if (s === CARRIED || m.load(f + S_HOME) !== e) {
     return false;
   }
-  sp.anchor();
-  m.st(f + S_OWNER, k);
+  if (k !== m.ld(f + S_OWNER)) {
+    sp.anchor();
+    m.st(f + S_OWNER, k);
+  }
   return true;
-}
-
-/**
- * The rule of this file, checked in a counted run (`VELT_RC_STATS`, as the tests run): a sleep is
- * touched only on the worker whose block holds it, and expires for a task of that worker (#3207).
- */
-@noInline
-function held(what: string): never {
-  panic(`ICE: a sleep ${what} on another worker than the one that holds it`);
 }
 
 /** Fired sleep `f` was seen (polled ready, or dropped) on its worker `e`. */
@@ -230,7 +230,7 @@ function held(what: string): never {
 export function seenOn(e: usize, f: usize): void {
   const b = block(e);
   m.st(b + TM_UNSEEN, m.ld(b + TM_UNSEEN) - 1);
-  m.st(f + S_STATE, SEEN);
+  m.storeRelease(f + S_STATE, SEEN);
 }
 
 /**
@@ -255,7 +255,18 @@ function before(a: usize, d: usize, seq: usize): bool {
   return ad < d || (ad === d && m.ld(a + S_SEQ) < seq);
 }
 
-/** Puts sleep `f` among the pending ones of block `b`, in order (its place found from the end). */
+/**
+ * Puts sleep `f` among the pending ones of block `b`, in order (its place found from the end).
+ *
+ * The state is stored last, released: the registration this ends (`S_OWNER`, `S_HOME`, the
+ * links) comes with it to a task on another worker that reads the state (`sleepPoll`,
+ * `sleepDrop`, sched_sleep_move.velt `release`). The holder's later states, `DUE` and `FIRED`,
+ * are plain stores. A worker that reads one only asks the holder for the sleep (it is not
+ * `SEEN`), and the holder reads it on its own thread. Its `S_HOME` is this registration's, seen
+ * with `PENDING`, or stale: an older value names another worker (which asks, and the holder
+ * answers), or its own worker, which stored that itself, before the hand-over whose state it
+ * stored itself too. `SEEN` stays released: a worker that reads it may free the sleep.
+ */
 export function insert(b: usize, f: usize): void {
   const d = m.ld(f + S_DEADLINE);
   const seq = m.ld(f + S_SEQ);
@@ -277,10 +288,15 @@ export function insert(b: usize, f: usize): void {
   } else {
     m.st(next + S_PREV, f);
   }
-  // Released: a worker that gave this sleep up reads the state, then `S_HOME` (`release`).
+  // Released, last (the doc comment above).
   m.storeRelease(f + S_STATE, PENDING);
 }
 
+/**
+ * Takes pending sleep `f` out of block `b`. Its state is left as it was: the caller stores the
+ * state it means (or frees the sleep). No state in between, since a task on another worker may
+ * read it (`sleepPoll`), and a new sleep is one it may register (#3207).
+ */
 export function unlinkPending(b: usize, f: usize): void {
   const prev = m.ld(f + S_PREV);
   const next = m.ld(f + S_NEXT);
@@ -294,7 +310,6 @@ export function unlinkPending(b: usize, f: usize): void {
   } else {
     m.st(next + S_PREV, prev);
   }
-  m.st(f + S_STATE, NEW);
 }
 
 /** Appends sleep `f` to task `k`'s due list (circular: the first entry's `S_PREV` is the last). */
@@ -312,11 +327,13 @@ function pushDue(k: usize, f: usize): void {
     m.st(first + S_PREV, f);
   }
   m.st(f + S_TASK, k);
+  // Plain: see `insert`.
   m.st(f + S_STATE, DUE);
   const b = m.ld(t.exec() + t.E_TIMERS);
   m.st(b + TM_DUE, m.ld(b + TM_DUE) + 1);
 }
 
+/** Takes due sleep `f` off task `k`'s due list; its state is the caller's to store, as `unlinkPending`'s. */
 export function unlinkDue(k: usize, f: usize): void {
   const next = m.ld(f + S_NEXT);
   if (next === f) {
@@ -330,7 +347,6 @@ export function unlinkDue(k: usize, f: usize): void {
     }
   }
   m.st(f + S_TASK, 0);
-  m.st(f + S_STATE, NEW);
   const b = m.ld(t.exec() + t.E_TIMERS);
   m.st(b + TM_DUE, m.ld(b + TM_DUE) - 1);
 }
@@ -353,6 +369,7 @@ export function waiter(f: usize): usize {
  */
 export function fire(k: usize, f: usize): usize {
   unlinkDue(k, f);
+  // Plain: see `insert`.
   m.st(f + S_STATE, FIRED);
   const b = block(t.exec());
   m.st(b + TM_UNSEEN, m.ld(b + TM_UNSEEN) + 1);
@@ -364,7 +381,15 @@ export function fire(k: usize, f: usize): usize {
 /** Sleep `f` leaves its worker's block for an offered task's list (sched_sleep_carry.velt `carry`). */
 export function carried(b: usize, f: usize): void {
   unlinkPending(b, f);
-  m.st(f + S_STATE, CARRIED);
+  // No owner while it is carried: a poll of it goes the slow way (`sleepPoll`).
+  m.st(f + S_OWNER, 0);
+  m.storeRelease(f + S_STATE, CARRIED);
+}
+
+/** The deadline of sleep `f` (nanoseconds on `clock`). */
+@inline
+export function deadline(f: usize): u64 {
+  return m.ld(f + S_DEADLINE) as u64;
 }
 
 /** Are sleeps of block `b` on due lists, not fired yet? */
@@ -391,21 +416,21 @@ export function pending(b: usize): bool {
  * and the tasks are woken (flag `TIMED`); the deadline of the first one left (0: none).
  */
 export function expire(b: usize, now: u64): u64 {
+  if (wk.counting()) {
+    rl.checkExpiring(b, now);
+  }
   let f = m.ld(b + TM_FIRST);
-  const check = wk.counting();
   while (f !== 0 && (m.ld(f + S_DEADLINE) as u64) <= now) {
     unlinkPending(b, f);
     const w = m.ld(f + S_WAKER);
     const k = wk.taskOf(w);
     if (k === 0) {
-      // Polled by a waker that is not a task's: fired by waking it.
-      m.st(f + S_STATE, SEEN);
+      // Polled by a waker that is not a task's: fired by waking it. The waker goes first: a
+      // drop that sees `SEEN` frees the sleep and drops the waker it finds.
       m.st(f + S_WAKER, 0);
+      m.storeRelease(f + S_STATE, SEEN);
       m.wakeOwned(w);
     } else {
-      if (check && m.ld(k + t.T_HOME) !== t.exec()) {
-        held("expires for a task");
-      }
       pushDue(k, f);
       // With `LOCALS`, so a poll checks one flag for both (sched_run.velt `run`).
       t.flags(k, t.TIMED | t.LOCALS, 0);
