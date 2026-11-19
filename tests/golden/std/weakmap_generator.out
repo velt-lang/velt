@@ -1,0 +1,21 @@
+  read 2
+suspended, key freed: true
+  read 0
+not started, key freed: true
+  read 6
+in a local, key freed: true
+  read 12
+held across a yield, key freed: true
+  read 10
+in a cell, key freed: true
+  read 18
+finished, key freed: true
+  read 7
+as an iterator, key freed: true
+  read 8
+async generator, key freed: true
+  read 9
+released while running, key freed: true
+  read 10
+held, alive: true 10
+maps in use: false false false

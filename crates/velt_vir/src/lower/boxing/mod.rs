@@ -125,6 +125,10 @@ pub(super) struct Boxing {
     /// (glue/trace.rs). Both sorted; empty in every other program.
     pub(super) built_classes: Vec<TyId>,
     pub(super) iface_traced: FxHashMap<DefId, Vec<(u32, TyId)>>,
+    /// In a program with weak references: for each generator class type, the types its objects'
+    /// states may hold (every local of the generator functions made at it): what the trace glue
+    /// of its objects visits (async_fn/gen_trace.rs). Empty in every other program.
+    pub(super) gen_types: FxHashMap<TyId, Vec<TyId>>,
     /// Environments and captured variables' cells may be weakly held (some are traced): their
     /// releases take the three-way sequence (rc.rs `release_weak`).
     pub(super) weak_envs: bool,

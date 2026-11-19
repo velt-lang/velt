@@ -256,12 +256,16 @@ captured variables' cells included; an environment that matches none (one the ru
 whose drop entry a function property replaced) is left out. An uncounted object's fields are walked
 as its owner's, since its owner holds the only reference. A class in a hierarchy with a vtable may
 be any class of its hierarchy, with fields its static type lacks, so its glue calls the glue its
-object's class table holds (`SLOT_TRACE`: `Glue::ObjTrace`, the walk of exactly that class's
-fields, `lower/glue/trace_dyn.rs`). An interface value's glue compares its table with those the
-program built for a class (`Boxing::iface_traced`) and visits the object with that class's glue; a
-table that matches none (a boxed value's, such as a struct's) is left out. `shared` values are not
-looked into. So a glue never reads a field the dynamic type does not have. `lower/weak.rs` lowers
-the weak intrinsics and map value words.
+object's class table holds (`SLOT_TRACE`: `Glue::ObjTrace`, the walk of exactly that class's fields,
+`lower/glue/trace_dyn.rs`). An interface value's glue compares its table with those the program
+built for a class (`Boxing::iface_traced`) and visits the object with that class's glue; a table
+that matches none (a boxed value's, such as a struct's) is left out. A generator object's glue
+traces its state through `f$trace` in the object's table (`lower/async_fn/gen_trace.rs`): the poll
+function has a case `TRACE_BIT | k` (`0x2000_0000`) for each `yield` `k` and one for the state
+before the start, which visits what the close path of `k` would drop (the same drop entries and
+flags), with `cx` pointing to the glue's `(visit, ctx)`; `f$trace` skips a running or finished
+generator. `shared` values are not looked into. So a glue never reads a field the dynamic type does
+not have. `lower/weak.rs` lowers the weak intrinsics and map value words.
 
 ### Threads and `shared`
 
@@ -421,9 +425,11 @@ cannot cross threads; Node has one thread per isolate.
   between `a` and `b`: each key is kept alive only by the other map's value. The examination
   records a path from a value back to its own entry's key only, so neither entry has a
   hint and no trial runs; the pair is kept until an entry is deleted or a map dropped.
-- **Opaque trace glue.** A cycle through a generator's suspended state or through an interface
-  value holding a boxed value (a struct implementing the interface) is not seen by a trial; it is
-  kept until its map entry goes.
+- **Opaque trace glue.** A cycle through an interface value holding a boxed value (a struct
+  implementing the interface), an async generator suspended at an `await`, a running generator,
+  or a drop entry the generator's trace does not look into (a value a pattern took parts of, a
+  generator held inline in another's state, an array a `for...of` consumes) is not seen by a
+  trial; it is kept until its map entry goes, or until a later release finds the path.
 - **A weak map held only by its own cycle** (a cache kept in a proxy handler's closure): the
   trial treats every map as live, so entries whose keys are dead are still deleted, but a map
   that is itself garbage is freed only when its holder is.
