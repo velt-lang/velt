@@ -7,7 +7,7 @@ import { adviseMap, closeFd, fstatFd, lastError, mapRead, openPath } from "#fd-s
 import { cPath } from "velt/fs/fd/args";
 import { isMac } from "velt/fs/fd/system";
 import { osError } from "velt/fs/errors";
-import { reportBusErrors } from "velt/fs/mapped_fault";
+import { reportBusErrors } from "#mapped-fault";
 
 /** How a range of a `MappedFile` will be read (`advise`). */
 export type MapAdvice = "normal" | "random" | "sequential" | "willneed" | "dontneed";
@@ -31,8 +31,9 @@ export type MapOptions = { offset?: number; length?: number };
  *
  * Changing the file's bytes while it is mapped changes what the arrays read. Cutting the file
  * short ends the program with a bus-error signal when a cut page is read: a line on standard
- * error says so (on macOS and Linux), but nothing can be caught, and output the program had
- * buffered may be lost: map files nothing else writes.
+ * error says so (on macOS and Linux, unless the program has its own action for that signal), but
+ * nothing can be caught, and output the program had buffered may be lost: map files nothing
+ * else writes.
  */
 export class MappedFile {
   /** The mapped bytes. */
