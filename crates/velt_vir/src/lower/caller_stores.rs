@@ -348,7 +348,7 @@ impl FnLower<'_, '_> {
     /// can be handed to the reader (`hand_ok`)? The call sees the very objects in it (one the
     /// reader still references in a variable is the same object in each store, as in
     /// JavaScript), where `copy_mut_arg` would give it copies of those.
-    fn boxed_literal(&mut self, a: &hir::Expr, ty: TyId) -> bool {
+    pub(super) fn boxed_literal(&mut self, a: &hir::Expr, ty: TyId) -> bool {
         let TyKind::Array(e) = self.cx.kind(ty) else {
             return false;
         };

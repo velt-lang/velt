@@ -19,8 +19,10 @@ impl FnLower<'_, '_> {
     /// Can the result of type `ty` of a call changing the caller's containers, given `args`
     /// passed by `modes`, be handed to the reader (`hand_to_reader`): none to hand, `hand_ok`,
     /// or a boxed array of what is (module docs) when the call is given nothing it could put
-    /// in it uncounted, only the caller's places, what it keeps (owned, `keep_for_caller`) and
-    /// values outside the lock set (`out.splice(i, n)`, not `all.concat(s.items)`)?
+    /// in it uncounted, only the caller's places, what it keeps (owned, `keep_for_caller`; a
+    /// boxed array literal, counted by the counts outside read mode before the call whatever
+    /// is in it, `keep_mut_arg`) and values outside the lock set (`out.splice(i, n)`, not
+    /// `all.concat(s.items)`)?
     pub(super) fn hand_result_ok(
         &mut self,
         ty: TyId,
@@ -37,10 +39,10 @@ impl FnLower<'_, '_> {
             return false;
         }
         self.hand_ok(e)
-            && args
-                .iter()
-                .zip(modes)
-                .all(|(a, m)| *m == PassMode::Owned || self.lent_fresh(a))
+            && args.iter().zip(modes).all(|(a, m)| {
+                let t = self.sub(a.ty);
+                *m == PassMode::Owned || self.boxed_literal(a, t) || self.lent_fresh(a)
+            })
     }
 
     /// Is the argument `a` outside the lock set, the caller's place, or made here of literals,
