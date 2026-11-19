@@ -1,0 +1,11 @@
+script: document is not defined
+style: document is not defined
+noscript: ReferenceError
+counter: ReferenceError
+handler: document is not defined
+bare: document is not defined
+bang: document is not defined
+cast: document is not defined
+local bang: document is not defined
+chained: document is not defined
+closure: document is not defined

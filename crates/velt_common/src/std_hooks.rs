@@ -47,8 +47,11 @@ pub use crate::hook_sig::{FnSig, Mode, Param, Sig, T};
 #[macro_use]
 mod hook;
 pub use hook::Hook;
+#[macro_use]
+mod weak_hooks;
 
-hooks! {
+// The table: these rows, then the weak core's (`weak_hooks.rs`), given to `hooks!` together.
+with_weak_hooks! {
     // array.velt: array constructors.
     /// `new Array<T>(n).fill(v)` (`velt_sema` `array_ctor.rs`).
     array_filled => lang_hooks_array, "arrayFilled", sig(<A>(f64, &A) -> [A]);
@@ -260,6 +263,11 @@ hooks! {
     /// The program's thread, marked by `velt_main` first thing (#3085): the executor's worker 0
     /// starts only there (program_thread.velt).
     program_thread => lang_hooks_program_thread, "programThread", sig(() -> void), lowered;
+    /// The C function of an `@export` begins its call, then ends it (#2196): the tasks a C
+    /// library's thread starts meanwhile wait for its end, so its synchronous run comes first, as
+    /// in JS (sched_foreign.velt).
+    sched_export_enter => lang_hooks_sched, "schedExportEnter", sig(() -> void), lowered;
+    sched_export_exit => lang_hooks_sched, "schedExportExit", sig(() -> void), lowered;
     /// `velt_rt_block_on`'s job: `(poll, state)`.
     sched_block_on => lang_hooks_sched, "schedBlockOn", sig((usize, usize, u64) -> void), lowered;
     /// `velt_rt_spawn`'s: `(poll, drop, state, size, align, result_size, result_drop)`, the handle.

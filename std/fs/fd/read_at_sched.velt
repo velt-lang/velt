@@ -1,0 +1,11 @@
+// velt/fs (internal): the `std-scheduler` variant of `#fs-read-at` (std/imports.velt), which is
+// every native program's: the read runs on the executor's blocking pool
+// (std/lang/hooks/sched_blocking.velt), so no worker waits for the disk.
+
+import { hookCall } from "velt/lang/intrinsics";
+import { ReadChunk, readChunk } from "velt/fs/fd/read_chunk";
+
+/** `readChunk` on the blocking pool. */
+export async function readChunkLater(fd: i32, length: usize, position: i64): Promise<ReadChunk> {
+  return await hookCall<ReadChunk>("sched_blocking_run", () => readChunk(fd, length, position));
+}

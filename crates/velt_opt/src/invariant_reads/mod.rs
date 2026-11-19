@@ -526,7 +526,8 @@ fn computes_only(ext: &ExternFn) -> bool {
             | SimdCall::Xgetbv
             | SimdCall::Prefetch,
         ) => true,
-        Some(SimdCall::Inst(_)) | None => false,
+        // A 256-bit operation writes its result through a pointer.
+        Some(SimdCall::Inst(_) | SimdCall::Wide(..)) | None => false,
     }
 }
 

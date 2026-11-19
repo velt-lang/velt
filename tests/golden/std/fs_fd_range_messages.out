@@ -1,0 +1,14 @@
+The value of "position" is out of range. It must be >= -1 && <= 9007199254740991. Received 9_223_372_036_854_776_000
+The value of "position" is out of range. It must be >= -1 && <= 9007199254740991. Received 9_007_199_254_740_992
+The value of "position" is out of range. It must be >= -1 && <= 9007199254740991. Received -1_099_511_627_776
+The value of "offset" is out of range. It must be >= 0 && <= 9007199254740991. Received 1_152_921_504_606_847_000
+The value of "offset" is out of range. It must be <= 10. Received 1_099_511_627_776
+The value of "length" is out of range. It must be <= 10. Received 8_589_934_592
+The value of "fd" is out of range. It must be >= 0 && <= 2147483647. Received 1099511627776
+The value of "fd" is out of range. It must be an integer. Received 1.5
+The value of "fd" is out of range. It must be >= 0 && <= 2147483647. Received 1099511627776
+The value of "offset" is out of range. It must be <= 10. Received 4_294_967_297
+The value of "offset" is out of range. It must be <= 10. Received 4294967296
+The value of "length" is out of range. It must be <= 10. Received 12345
+The value of "position" is out of range. It must be >= -1 && <= 9007199254740991. Received -2
+The value of "position" is out of range. It must be an integer. Received 4294967297.5

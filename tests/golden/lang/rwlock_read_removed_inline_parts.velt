@@ -1,0 +1,96 @@
+// check: no leaks
+// What a `read` callback takes out of the caller's array is handed to the reader part by part
+// (#3176): an object held inline in the element, a tuple field and a union field are walked
+// too, down to the counted array each holds. Elements are removed and dropped, read, and put
+// back with `unshift` and through `splice`.
+
+type Nested = { w: number; inner: { k: number; tags: string[] } };
+type Paired = { w: number; pair: [number, string[]] };
+type Either = { w: number; u: string[] | number };
+
+// The lock's value holds each element type, so their counted parts are in the lock set.
+class St {
+  nested: Nested[] = [];
+  paired: Paired[] = [];
+  either: Either[] = [];
+}
+
+function nested(rw: RwLock<St>) {
+  const out: Nested[] = [];
+  for (let i = 0; i < 8; i++) {
+    out.push({ w: i, inner: { k: i, tags: ["t" + i] } });
+  }
+  rw.read((s) => {
+    out.pop();
+    const first = out.shift()!;
+    console.log(first.w, first.inner.tags.join("+"), s.nested.length);
+  });
+  for (let i = 0; i < 2; i++) {
+    rw.read((s) => {
+      const last = out.pop()!;
+      out.unshift(last);
+      const xs = out.splice(1, 1);
+      out.push(xs[0]);
+    });
+  }
+  out[0].inner.tags.push("x");
+  console.log(out.map((e) => e.w + ":" + e.inner.tags.join("+")).join(" "));
+}
+
+function paired(rw: RwLock<St>) {
+  const out: Paired[] = [];
+  for (let i = 0; i < 8; i++) {
+    out.push({ w: i, pair: [i, ["p" + i]] });
+  }
+  rw.read((s) => {
+    out.pop();
+    const first = out.shift()!;
+    console.log(first.w, first.pair[1].join("+"), s.paired.length);
+  });
+  for (let i = 0; i < 2; i++) {
+    rw.read((s) => {
+      const last = out.pop()!;
+      out.unshift(last);
+      const xs = out.splice(1, 1);
+      out.push(xs[0]);
+    });
+  }
+  out[0].pair[1].push("x");
+  console.log(out.map((e) => e.w + ":" + e.pair[1].join("+")).join(" "));
+}
+
+function text(u: string[] | number): string {
+  return typeof u === "number" ? "n" + u : u.join("+");
+}
+
+function either(rw: RwLock<St>) {
+  const out: Either[] = [];
+  for (let i = 0; i < 8; i++) {
+    out.push({ w: i, u: i % 3 == 0 ? ["u" + i] : i });
+  }
+  rw.read((s) => {
+    out.pop();
+    out.pop();
+    const first = out.shift()!;
+    console.log(first.w, text(first.u), s.either.length);
+  });
+  for (let i = 0; i < 2; i++) {
+    rw.read((s) => {
+      const last = out.pop()!;
+      out.unshift(last);
+      const xs = out.splice(1, 1);
+      out.push(xs[0]);
+    });
+  }
+  console.log(out.map((e) => e.w + ":" + text(e.u)).join(" "));
+}
+
+function main() {
+  const rw = new RwLock(new St());
+  const keep = new Map<string, string[]>();
+  keep.set("k", ["x"]);
+  nested(rw);
+  paired(rw);
+  either(rw);
+  console.log(keep.size);
+}

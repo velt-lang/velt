@@ -28,6 +28,15 @@ declare c("c", { errno: true }) function fcntl(fd: i32, cmd: i32, ...args: CVarA
 declare c("c", { errno: true }) function ftruncate(fd: i32, length: i64): i32;
 declare c("c", { errno: true }) function fstat(fd: i32, st: Ptr<void>): i32;
 declare c("c", { errno: true }) function unlink(path: readonly u8[]): i32;
+declare c("c", { errno: true }) function mmap(
+  addr: Ptr<void> | null,
+  len: usize,
+  prot: i32,
+  flags: i32,
+  fd: i32,
+  offset: i64,
+): Ptr<void> | null;
+declare c("c", { errno: true }) function madvise(addr: Ptr<void>, len: usize, advice: i32): i32;
 declare c("c") function malloc(size: usize): Ptr<void> | null;
 declare c("c") function free(p: Ptr<void> | null): void;
 
@@ -180,4 +189,31 @@ export function fstatAt(
   }
   ;
   return out;
+}
+
+/**
+ * `mmap` of the `len` bytes of `fd` from byte `offset` (a multiple of the page size),
+ * read-only and shared with the file (`PROT_READ`, `MAP_SHARED`: 1 and 1 on macOS and Linux):
+ * the mapping's address, or 0 with the error for `lastError()`.
+ */
+export function mapRead(fd: i32, len: usize, offset: i64): usize {
+  // SAFETY: a new mapping at an address the system chooses changes no memory this program
+  // uses; the arguments are integers.
+  const p = unsafe { mmap(null, len, 1, 1, fd, offset) };
+  const address = p === null ? 0 : Ptr.addressOf(p);
+  // `MAP_FAILED` is `(void *) -1`.
+  return address + 1 == 0 ? 0 : address;
+}
+
+/**
+ * `madvise(address, len, advice)` on part of a mapping `mapRead` returned: 0, or -1. The
+ * advice is `MADV_NORMAL` 0, `MADV_RANDOM` 1, `MADV_SEQUENTIAL` 2, `MADV_WILLNEED` 3 or
+ * `MADV_DONTNEED` 4, the same numbers on macOS and Linux.
+ */
+export function adviseMap(address: usize, len: usize, advice: i32): i32 {
+  // SAFETY: `address..address + len` is inside a live mapping (the caller's, which
+  // `MappedFile` checks) that is read-only and shared with its file: the first four advices
+  // change how pages are read ahead, and `MADV_DONTNEED` lets go of pages that the next read
+  // takes from the file again, so none changes what is read.
+  return unsafe { madvise(Ptr.at<void>(address), len, advice) };
 }

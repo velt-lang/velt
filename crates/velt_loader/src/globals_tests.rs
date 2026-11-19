@@ -222,6 +222,79 @@ fn a_program_that_names_no_json_loads_no_json_modules() {
     assert!(json_modules(csv).contains(&"std/prelude/json/json".to_string()));
 }
 
+/// The ports behind `Math.exp`, `Math.sin` and the others (std/lang/math, 1,600 lines) load only
+/// for a program that calls one, and group by group (std/prelude/global/math_*.velt, one
+/// conditional global per group): hello world, and a program that only rounds, load of them only
+/// `Math.log`, which shares its name with `console.log` (#3130; with all of them in the prelude
+/// every `velt build` took 13% more instructions), and a program that calls `Math.sin` loads the
+/// trigonometric ports without the other 1,100 lines. `**`'s modules in the same folder (`pow`, `fma`, their tables) are another
+/// matter: a hook's, loaded on their own terms.
+#[test]
+fn a_program_that_calls_no_math_function_loads_no_port() {
+    const PORTS: [&str; 15] = [
+        "exp_functions",
+        "logs_functions",
+        "trig_functions",
+        "inverse_trig_functions",
+        "hyperbolic_functions",
+        "cbrt_functions",
+        "trig",
+        "rem_pio2",
+        "rem_pio2_large",
+        "two_over_pi",
+        "exp",
+        "logs",
+        "inverse_trig",
+        "hyperbolic",
+        "cbrt",
+    ];
+    let math = |main: &str| std_modules(main, &["std/lang/math/"]);
+    // The ports a program loads, and whether it has `Math.log`'s module.
+    let ports = |main: &str| -> (Vec<&str>, bool) {
+        let loaded = math(main);
+        let has = |name: &str| loaded.contains(&format!("std/lang/math/{name}"));
+        (PORTS.into_iter().filter(|p| has(p)).collect(), has("log"))
+    };
+    let log_only = (Vec::<&str>::new(), true);
+    assert_eq!(ports("console.log(\"hello, world\");\n"), log_only);
+    let rounds = "console.log(Math.floor(2.5), Math.max(1, 2), Math.log(8) / Math.LN2);\n";
+    assert_eq!(ports(rounds), log_only);
+    // A comment or a string that names one is not a call.
+    let says = "// sin and cos\nconsole.log(\"Math.exp\");\n";
+    assert_eq!(ports(says), log_only);
+    // A call loads its own group and what that group is built on, and no other group.
+    let trig = vec![
+        "trig_functions",
+        "trig",
+        "rem_pio2",
+        "rem_pio2_large",
+        "two_over_pi",
+    ];
+    let hyperbolic = vec!["hyperbolic_functions", "exp", "logs", "hyperbolic"];
+    for (call, group) in [
+        ("Math.sin(1)", trig.clone()),
+        ("Math.tan(1)", trig),
+        ("Math.exp(1)", vec!["exp_functions", "exp"]),
+        ("Math.expm1(1)", vec!["exp_functions", "exp"]),
+        ("Math.log2(8)", vec!["logs_functions", "logs"]),
+        ("Math.log1p(8)", vec!["logs_functions", "logs"]),
+        (
+            "Math.atan2(1, 2)",
+            vec!["inverse_trig_functions", "inverse_trig"],
+        ),
+        (
+            "Math.asin(1)",
+            vec!["inverse_trig_functions", "inverse_trig"],
+        ),
+        ("Math.sinh(1)", hyperbolic.clone()),
+        ("Math.atanh(0.5)", hyperbolic),
+        ("Math.cbrt(8)", vec!["cbrt_functions", "cbrt"]),
+    ] {
+        let (loaded, _) = ports(&format!("console.log({call});\n"));
+        assert_eq!(loaded, group, "{call}");
+    }
+}
+
 /// The globals whose modules hold module state (`sessionStorage`, `navigator`: a module-level
 /// `let` each) load for a name in code only: a comment that names one loads neither, which would
 /// give the program module state (#3097), and code that uses one still loads it.

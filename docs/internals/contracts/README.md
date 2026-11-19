@@ -1,9 +1,8 @@
 # Contracts
 
-Contracts are the interfaces between crates. They are **maintainer-owned**:
-agents code against them but do not edit them. If you need a change, propose it in an issue or in
-your pull request (see `CONTRIBUTING.md`), work around it locally if possible (e.g. a private
-helper), and explain it in your final report.
+Contracts are the interfaces between crates. Code against them; a change to one is deliberate
+and reviewed. When one must change, propose it in an issue or in your pull request (see
+`CONTRIBUTING.md`), and work around it locally meanwhile where possible (a private helper).
 
 | Contract | File | Producer → Consumer |
 |---|---|---|
@@ -14,8 +13,8 @@ helper), and explain it in your final report.
 | Program loader | `crates/velt_loader/src/lib.rs`: `load_program(sm, root, LoadOptions, diags) -> Result<Loaded, String>` and the resolution rules a tool must share with it (§ Program loader below) | loader → driver, language server, tests and tools that load programs as `velt build` does |
 | HIR | `crates/velt_sema/src/hir/mod.rs`, `hir/intrinsic.rs`, `hir/module_state.rs`, `hir/const_array.rs` (`ExprKind::ConstArray`: an array of number literals of one number type, as the `ArrayLit` of its elements) + `hir_encodings.md` + `check`, `SourceModule` (`is_std`: loaded from the std root; `is_dependency`: loaded from a package the program depends on, a library like std for the analyses that report at the program's call into one, with no privilege; drivers set both, sema never derives them from the path), `effects::may_change_memory` (can evaluating an expression run code that changes memory: a call other than an intrinsic, an intrinsic handed a place to modify or move, an assignment, `new`, `await`; IR lowering holds earlier operands and re-forms element addresses on it) | sema → IR |
 | VIR | `crates/velt_vir/src/vir.rs` + `lower`, `verify`, `fingerprint::{Canon, Mode, Fingerprint, fingerprint, attrs_hold, is_state_layout}` (function fingerprints for `velt dev` and the cached std object; `Canon::reaches_mutable_static`); values are built with `Function::new`, `LocalDecl::new` and `Program::default()` (struct update for the rest), where a new field gets its "no information" default | IR → codegen |
-| Codegen API | `crates/velt_codegen_cl/src/lib.rs` (`emit_object`, `host_triple`) | codegen → driver |
-| Link API | `crates/velt_link/src/lib.rs` (`link`, `find_runtime_lib`) | tooling → driver |
+| Codegen API | `crates/velt_codegen_cl/src/lib.rs` (`emit_object`, `emit_object_cached`, `emit_object_timed`, `emit_entry_object`, `host_triple`), `crates/velt_codegen_llvm/src/lib.rs` (`emit_object`, `emit_objects_timed`, `emit_objects_cached`, `emit_ir`, `required_features`, `host_triple`) | codegen → driver |
+| Link API | `crates/velt_link/src/lib.rs` (`link`, `link_bundled`, `find_runtime_lib`, `find_shared_runtime_lib`, `linker_report`, `linker_identity`), `velt_link::wasm::link` | tooling → driver |
 | Runtime ABI | `docs/internals/contracts/rt_abi.md` + `rt_abi_async.md` | runtime ↔ IR lowering |
 | CLI | `docs/internals/contracts/cli.md` | tooling ↔ golden tests |
 | Manifest, lockfile, registry | `docs/internals/contracts/manifest.md` | vpm ↔ tooling, registries |
@@ -34,7 +33,7 @@ velt build main.velt
       ├─ velt_sema::check              whole program → hir::Program (check_with: library roots)
       ├─ velt_vir::lower_checked (+ verify)           → vir::Program (with source locations)
       │    (`velt dev`: velt_vir::lower_seeded, with LowerOptions::counted_seed: the previous
-      │     version's counted types in, the new version's out; dev-warm-front-end.md step 2a)
+      │     version's counted types in, the new version's out; design/dev-warm-front-end.md)
       ├─ velt_opt::optimize                           → vir::Program (release: all passes)
       ├─ velt_codegen_cl::emit_object                 → main.o / main.obj (debug builds)
       │  or velt_codegen_llvm::emit_objects_timed     → one object per codegen unit (release)
@@ -42,14 +41,14 @@ velt build main.velt
 ```
 Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exit code 1 on errors.
 A `velt_common::Diagnostic` may carry a lint `code` (`Option<Box<str>>`: `perf/number-double`,
-`ts-compat/bool-type`; `None` for the compiler's own) and `fixes: Vec<Fix>` (changed: both
-added, docs/internals/design/lint-profiles.md). A `Fix` is a `title`, `edits: Vec<(Span,
+`ts-compat/bool-type`; `None` for the compiler's own) and `fixes: Vec<Fix>`
+(docs/internals/design/lint-profiles.md). A `Fix` is a `title`, `edits: Vec<(Span,
 String)>` (replacements, possibly in several files, applied together or not at all) and an
 `applicability`: `Safe` (the program behaves the same; `velt check --fix` and editors' "fix all"
 apply it) or `Review` (it may change what the program does; `--fix=review`). `render` does not
 print them; a lint adds its code as the last note (`perf(number-double)`).
 
-## Program loader (crate boundary, #2197)
+## Program loader
 `crates/velt_loader` loads a program: the root file and every module it needs (the prelude, the
 globals loaded on demand with their `// load for:` / `// load when` conditions, std, packages,
 npm sources, `#name` variants), parsed, in the order sema expects. It depends on `velt_common`,
@@ -66,8 +65,15 @@ Its public API is kept small:
   &LoadOptions, diags) -> velt_sema::StdBatch`: goes on from a load with the std modules a check
   demands (canonical paths) and what they import; each must follow `std_index`'s rule. Sema calls
   it through the driver's `velt_sema::LoadFn` (design/lazy-std.md "Loading on demand").
-  `demand_std_on()`: whether the environment lets a check do that.
+  `demand_std_on()`: whether the environment lets a check do that. `executor_module(path)`:
+  whether a std module is one of the executor in Velt's, which a load with std up front still
+  leaves to `load_more`.
+- `reparse(path, file, src, main) -> Option<ast::Module>`: a program's own file parsed again as
+  `load_program` parses it (`velt dev`'s reload of an edit of function bodies alone); `None` when
+  the load would read more from the parse than the module (ambient declarations) or on syntax
+  errors, and the caller loads the program again.
 - `LoadOptions` (all fields default to "none"): `demand_std` (leave what a check demands to
+  `load_more`), `demand_executor` (without `demand_std`, still leave the executor's modules to
   `load_more`), `std_root`, `packages: Option<&dyn
   PackageResolver>` (implemented for `vpm::PackageGraph`), `extra_roots`, `root_source`,
   `overlay` (unsaved editor buffers), `std_root_as_std`, `test_harness`, `target`,
@@ -76,12 +82,13 @@ Its public API is kept small:
 - The resolution rules tools must share with the loader: `std_root()`, `prelude_files`,
   `in_std`, `resolve_spec` → `ModuleRef`, `resolve_module`, `module_path`, and
   `PackageResolver` / `PackageImports`.
-- The std index (#2161 step 1, `std_index`): `std_index::load(std_root, Option<StdAstCache>)
+- The std index (`std_index`): `std_index::load(std_root, Option<StdAstCache>)
   -> StdIndex`, per std package (`std/<module>/`) and module: the hook table's entries it
   defines, its `extend` members as (type, member, static), its exports and imports, and the
   (a1) rule's `violations` (`ModuleIndex::in_place`). Stored per package in the build cache (kind
-  `pkg-interface`, `std_index::KIND`: the first fields of package-cache.md's layer 1; versioned
-  by `std_index::FORMAT`). Nothing in a build calls it yet.
+  `pkg-interface`, `std_index::KIND`: the first fields of a unit's interface,
+  design/build-architecture.md; versioned by `std_index::FORMAT`). No build reads the stored index; `load_more` checks each module it
+  serves against the (a1) rule (`std_index::violations`).
 
 Everything else (resolution, globals, visibility, variants, the std parse cache) is private to
 the crate. The same inputs give the same modules, diagnostics and order for every caller.
@@ -92,15 +99,16 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
 - `vir::Function::locs: Vec<Vec<Option<SrcLoc>>>` — per block, one entry per statement plus a
   last one for the terminator; empty = no information (vir.rs invariant 8, checked by `verify`).
   Helpers: `Function::loc(block, stmt)`, `term_loc(block)`, `first_loc()`.
-- `velt_vir::lower_with(&hir, &LowerOptions { source_map, std_root, native_inits })` fills them (the driver
+- `velt_vir::lower_with(&hir, &LowerOptions { source_map, std_root, .. })` fills them
+  (`LowerOptions` also holds `native_inits`, `cell_checks`, `debug_info`, `target`, `shapes`,
+  `no_cpu_extensions`, `counted_seed`, `jit` and `heap_hooks`; each defaults to off; the driver
   calls `lower_checked`, the same with errors for what lowering cannot represent yet, see
-  hir_encodings.md "Undefined"); `velt_vir::lower` keeps its signature and output (no locations). With a source map,
-  compiler-emitted panics end in ` at <path>:<line>:<col>` (bounds checks, division by zero,
-  `panic()`, and standard-library helpers such as `unwrap()`/`assert*` report their caller; a
-  location in a standard-library file reads `std/<path below the std root>`, the same on every
-  machine, while debug info keeps the path as loaded), and an
-  uncaught error reports the location of its `throw` (`velt_rt_set_throw_loc`/`velt_rt_throw_loc`,
-  rt_abi.md).
+  hir_encodings.md "Undefined"); `velt_vir::lower` keeps its signature and output (no locations).
+  With a source map, compiler-emitted panics end in ` at <path>:<line>:<col>` (bounds checks,
+  division by zero, `panic()`, and standard-library helpers such as `unwrap()`/`assert*` report
+  their caller; a location in a standard-library file reads `std/<path below the std root>`, the
+  same on every machine, while debug info keeps the path as loaded), and an uncaught error reports
+  the location of its `throw` (`velt_rt_set_throw_loc`/`velt_rt_throw_loc`, rt_abi.md).
 - `velt_opt` keeps `locs` aligned with every statement it moves, splits or deletes; inlined code
   keeps the callee's locations.
 - Backends emit debug info exactly when the VIR has locations: the driver keeps them for debug
@@ -127,27 +135,26 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   members (and an interface's bases).
 
 ## Declared intrinsics (additive AST extension)
-- `@intrinsic declare function name<T>(…): R;` (#2203 step 3; before it `declare intrinsic
-  function`, `FnSig::is_intrinsic`, which is gone): an `ItemKind::ExternFn` with the
-  compile-time decorator std declares in `std/lang/intrinsics/decorators.velt`, which sema finds
-  by its hook role (`std_hooks`: `decorator_intrinsic`), never by name; `declare unsafe function`
+- `@intrinsic declare function name<T>(…): R;`
+  ([#2203](https://github.com/velt-lang/velt/issues/2203)): an `ItemKind::ExternFn` with the
+  compile-time decorator std declares in `std/lang/intrinsics/decorators.velt`, which sema finds by
+  its hook role (`std_hooks`: `decorator_intrinsic`), never by name; `declare unsafe function`
   (`FnSig::is_unsafe`) only with it. Only std declares them, in `std/lang/intrinsics/`
   (`std_modules`: `lang_intrinsics`); elsewhere sema reports the declaration. A call is checked
-  against the declaration and is the same HIR `Call { Intrinsic(..) }` as before
-  (hir_encodings.md); the name maps to the `Intrinsic` in `velt_sema::intrinsic_decls`, whose
-  test fails on a declaration without a table entry or an entry without a declaration
-  (docs/internals/design/std-layout.md §10).
+  against the declaration and is a HIR `Call { Intrinsic(..) }` (hir_encodings.md); the name maps to
+  the `Intrinsic` in `velt_sema::intrinsic_decls`, whose test fails on a declaration without a table
+  entry or an entry without a declaration (docs/internals/design/std-layout.md §10).
 
 ## Host functions (additive AST, HIR and VIR extension, #1735)
 - Decorators (`ast.rs`, https://github.com/velt-lang/velt/issues/2203): `Decorator { expr, span }`
   on `FnSig`, `Param`, `Field`, `TypeDecl` and `EnumDecl` (`decorators`, empty without any), and
-  `FnSig::is_decorator` for `declare decorator function name(…): Target;`, where `Target` says
-  where it may be used (`FunctionDecorator`, `MethodDecorator`, `TypeDecorator`, `FieldDecorator`,
-  `ParamDecorator`, a union of them, `Repeatable<…>` around them). Those names mean this only
-  there. A function's decorators are on its implementation's `FnSig`, wherever they are written
-  among its overloads. `Method::is_property` marks the getter and setter of an abstract property
-  (`abstract x: T;`), whose decorators are a field's. `AST_FORMAT` 12. Sema records the uses in `Program::decorators` (hir_encodings.md
-  "Decorators") and `DefKind::Decorator` names the declarations for editors.
+  `FnSig::is_decorator` for `declare decorator function name(…): Target;`, where `Target` says where
+  it may be used (`FunctionDecorator`, `MethodDecorator`, `TypeDecorator`, `FieldDecorator`,
+  `ParamDecorator`, a union of them, `Repeatable<…>` around them). Those names mean this only there.
+  A function's decorators are on its implementation's `FnSig`, wherever they are written among its
+  overloads. `Method::is_property` marks the getter and setter of an abstract property (`abstract x:
+  T;`), whose decorators are a field's. Sema records the uses in `Program::decorators`
+  (hir_encodings.md "Decorators") and `DefKind::Decorator` names the declarations for editors.
 - `FnSig::host: Option<HostModule { module, span }>` (`ast.rs`): `declare host("<module>")
   function name(…): R;`, an `ItemKind::ExternFn` like `declare c("lib") function` (`host` is a
   word only between `declare` and `(`). Any module may declare one
@@ -184,12 +191,10 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   `params` are the fixed ones, and a call passes further scalars of type `I32`, `U32`, `I64`,
   `U64`, `F64` or `Ptr`, C's default argument promotions done (the verifier checks both).
   Backends call it with the target's variadic convention.
-- `declare system function` is gone (#2187 step 2): std's functions of the C library are
-  `declare c("c")` declarations (std/fs/fd/posix.velt), the guards the compiler's table enforced
-  are std's Velt wrappers, and the parser reports `declare system` as an error naming `declare
-  c("c")`. Removed: `ast::FnSig::is_system` (`AST_FORMAT` 16), `hir::ExternFnDef::system`,
-  velt_vir's `system` module (its table) and `lower/system.rs`; added: velt_vir's `c_abi`
-  (`errno`'s accessor per target, `host_triple`, `base_name`). `lastOsError()` is std's
+- The C library: std's functions of the C library are `declare c("c")` declarations
+  (std/fs/fd/posix.velt), guarded by std's Velt wrappers; the compiler keeps no table of them.
+  velt_vir's `c_abi` gives `errno`'s accessor per target (`errno_source`), `host_triple` and
+  `base_name`. `lastOsError()` is std's
   `ThreadLocal` `OS_ERROR` (std/os/rt.velt), which lowering stores `errno` into after a
   `declare c("c", { errno: true })` call (`c_abi::ERRNO_SLOT`; on Windows the C runtime's
   `_errno()`, and `GetLastError()` for another library).
@@ -207,8 +212,8 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
 | ir | `crates/velt_vir` (except `vir.rs` data types — `Display` impl may be improved) |
 | optimizer | `crates/velt_opt` |
 | codegen | `crates/velt_codegen_cl`, `crates/velt_codegen_llvm` |
-| runtime | `crates/velt_rt`, `std/**` |
-| tooling | `crates/veltc`, `crates/velt_loader`, `crates/velt_link`, `crates/vpm` (except `tests/golden.rs`), `crates/velt_doc`, `crates/velt_tscompat`, `crates/velt_registry`, `crates/velt_http`, `crates/velt_lsp`, `crates/velt_fmt`, `crates/xtask` |
+| runtime | `crates/velt_rt`, `crates/velt_text`, `crates/velt_tls`, `std/**` |
+| tooling | `crates/veltc` (except `tests/golden.rs`), `crates/velt_loader`, `crates/velt_link`, `crates/vpm`, `crates/velt_build_cache`, `crates/velt_toolchain`, `crates/velt_launcher`, `crates/velt_doc`, `crates/velt_tscompat`, `crates/velt_lint`, `crates/velt_registry`, `crates/velt_http`, `crates/velt_lsp`, `crates/velt_fmt`, `crates/xtask` |
 | native SDK | `crates/velt_native`, `crates/velt_native_macros` (versioned with the native ABI), `packages/**` |
 | runtime (wasm) | `crates/velt_rt_wasm`, `crates/velt_rt_host` (mirror of velt_rt deps) |
 | runtime packaging | `crates/velt_rt_shared` (the runtime as a shared library for debug builds; mirror of velt_rt deps) |
@@ -276,12 +281,12 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   throwing callee, by a branch on the result's tag; the Ok side of that branch is
   `Unreachable`, so the code after the call is the error path only.
 - `velt_opt` never inlines a cold function (and `cold_calls` makes a function's calls of one a
-  single call); the LLVM backend marks it `cold noinline` (as it does the helpers that never return, such as
-  `_Goob_u64`); Cranelift ignores it.
+  single call); the LLVM backend marks it `cold noinline` (as it does the helpers that never return,
+  such as `_Goob_u64`); Cranelift ignores it.
 
 ## Functions C calls (additive VIR extension)
 - `vir::Function::stops_unwind: bool`: the function lowering builds for an `@export("c_name")`
-  (`hir::Program::c_exports`, #2203 step 5), with `Linkage::Export`, the symbol `c_name` and the C
+  (`hir::Program::c_exports`, #2203), with `Linkage::Export`, the symbol `c_name` and the C
   signature, on every native target. An unwind started below it must not pass it into C: the
   process aborts. LLVM makes its calls `invoke`s whose landing pad calls `abort` (personality
   `rust_eh_personality`; on Windows a `cleanuppad` with `__CxxFrameHandler3`), and gives its
@@ -290,15 +295,14 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   `Function::new` sets `false`.
 
 ## Inlining decorators (additive VIR extension)
-- `vir::Function::inline: vir::Inline` (`Default`, `Always`, `Never`): a std function's or
-  method's decorator `@inline` (`Always`) or `@noInline` (`Never`, #1884), declared in
+- `vir::Function::inline: vir::Inline` (`Default`, `Always`, `Never`): a std function's or method's
+  decorator `@inline` (`Always`) or `@noInline` (`Never`, #1884), declared in
   `std/lang/intrinsics/decorators.velt` and found by their hook roles (`std_hooks`:
-  `decorator_inline`, `decorator_no_inline`) in `hir::Program::decorators` (#2203 step 3; they
-  were the statements `inline()` / `noInline()` before). One field, so "both" cannot be
-  represented. Sema rejects both on one function, either on a `declare function`, a generator or
-  an async function (whose body lowering compiles into a resume function), and `@inline` on a
-  function on a cycle of direct calls. `Function::new` sets `Default`; lowering sets it from the
-  decorators; `velt_opt` keeps it on clones.
+  `decorator_inline`, `decorator_no_inline`) in `hir::Program::decorators` (#2203). One field, so
+  "both" cannot be represented. Sema rejects both on one function, either on a `declare function`, a
+  generator or an async function (whose body lowering compiles into a resume function), and
+  `@inline` on a function on a cycle of direct calls. `Function::new` sets `Default`; lowering sets
+  it from the decorators; `velt_opt` keeps it on clones.
 - `velt_opt`'s inliner inlines an `Always` function at every direct call site, whatever its
   size and the caller's, without charging the program's growth budget (the recursion and
   gated-target rules still apply), and never inlines a `Never` one. A debug build runs only the
@@ -314,9 +318,9 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   type, held by reference, param) and how each source type is laid out, in terms of existing
   aggregates (fields are VIR field indexes; a local's own VIR type gives the encoding of a scalar
   or of an enum without payloads, which may be narrower than its natural one).
-- Filled only by `velt_vir::lower_with` with `LowerOptions::debug_info`, which the driver sets
-  for debug builds made for debugging (`velt build`, `velt dev --exe`; not `velt run` or
-  `velt test`); empty otherwise. Invariant (vir.rs 10): every reference resolves (checked by `verify`).
+- Filled only by `velt_vir::lower_with` with `LowerOptions::debug_info`, which the driver sets for
+  debug builds made for debugging (`velt build`, `velt dev --exe`; not `velt run` or `velt test`);
+  empty otherwise. Invariant (vir.rs 10): every reference resolves (checked by `verify`).
 - `velt_opt`: dead-code elimination keeps described locals; `numrep` moves a description to
   the narrowed local; inlined locals lose theirs. Backends turn them into debugger variables
   or ignore them.
@@ -329,24 +333,24 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
 - Backends declare it under its symbol and never emit its body: LLVM `declare hidden` with its
   param attributes, in every codegen unit that refers to it (no unit defines or copies it);
   Cranelift a `Linkage::Import` function.
-- `velt_opt`: treated as `Export` for anything that rewrites a signature, param attributes or
-  caller assumptions (`numrep` param facts, the inline-once rule, specializations); a pass may
-  clone one only when its body is kept, and the clone is the program's own `Internal` function. `keys::disambiguate` never renames an
-  `Import` symbol.
+- `velt_opt`: treated as `Export` for anything that rewrites a signature, param attributes or caller
+  assumptions (`numrep` param facts, the inline-once rule, specializations); a pass may clone one
+  only when its body is kept, and the clone is the program's own `Internal` function.
+  `keys::disambiguate` never renames an `Import` symbol.
 - A body-less `Import` is opaque to every pass (#1862): it may write through any pointer it is
   given and call back; per-function passes skip it.
-- **A declared entry** (#1728 step 3): code compiled on its own to link into a program (the std
+- **A declared entry** (#1728): code compiled on its own to link into a program (the std
   cache, cli.md "Std cache") declares `velt_main` (`Import`, `() -> I32`) instead of defining
   it; verification accepts that (vir.rs invariant 5). A program still defines it.
 
 ## Named statics (additive VIR extension)
-- `vir::StaticData::symbol` and `::linkage` (vir.rs invariant 13; #2189, design/std-object.md
-  "The std cache"): a static is private to the program's objects (`Internal`, no symbol, as
-  before) unless it is `Export` (defined here, visible to the link's other objects under its
-  symbol) or `Import` (defined by another object under its symbol; its `bytes`, `relocs` and
-  `mutable` are its contents there, for reading only). Symbols are unique among the program's
-  statics, functions and externs, and an `Import` static's relocations name only
-  `Export`/`Import` functions and statics or externs (both checked by `verify`).
+- `vir::StaticData::symbol` and `::linkage` (vir.rs invariant 13; #2189, design/std-object.md "The
+  std cache"): a static is private to the program's objects (`Internal`, no symbol) unless it is
+  `Export` (defined here, visible to the link's other objects under its symbol) or `Import` (defined
+  by another object under its symbol; its `bytes`, `relocs` and `mutable` are its contents there,
+  for reading only). Symbols are unique among the program's statics, functions and externs, and an
+  `Import` static's relocations name only `Export`/`Import` functions and statics or externs (both
+  checked by `verify`).
 - Backends: LLVM emits a named static under its symbol, `hidden` (`Export`) or
   `available_externally hidden` (`Import`), in every unit that refers to it, as units already
   share statics under `.s<n>`; Cranelift declares it as `Hidden` or `Import` data under its
@@ -354,4 +358,4 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
 - `fingerprint` (both modes) prints a named static's symbol and linkage with its contents.
 - Lowering never names a static; only the std cache does (release builds that find objects of
   `@noInline` functions in it or set `VELT_STD_OBJECT=1`, and debug builds that find objects in
-  it), so builds without it are unchanged.
+  it); without it every static is `Internal`.

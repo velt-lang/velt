@@ -1,7 +1,7 @@
 # registry-conformance
 
 What any Velt package registry must answer over `/api/v1`
-([#1740](https://github.com/velt-lang/velt/issues/1740), step 2). The cases send requests and check
+([#1740](https://github.com/velt-lang/velt/issues/1740)). The cases send requests and check
 the answers, and know nothing about how a registry is built, so every host is held to the same
 behaviour.
 
@@ -18,10 +18,13 @@ and `tests/memory.test.velt` runs it against registry-core's `Registry.handle` o
 
 **Not covered:**
 
-- Native libraries, until registry-core has them (#1740 step 1d).
+- Native libraries, which registry-core does not serve.
 - Administrator actions (`velt registry user`, `velt registry owner`), which aren't HTTP.
-- registry-core's stricter publish policy (#2225), which `velt registry serve` doesn't have.
-- Exact refusal wording where the servers differ on purpose (#2222); cases check the status and
-  the words clients rely on.
+- registry-core's stricter publish policy
+  ([#2225](https://github.com/velt-lang/velt/issues/2225)), which `velt registry serve` doesn't
+  have.
+- Exact refusal wording where the servers differ on purpose
+  ([#2222](https://github.com/velt-lang/velt/issues/2222)); cases check the status and the words
+  clients rely on.
 - Paths with `..` or `\`, which a URL-standard client resolves before sending. The servers' own
   tests cover them.

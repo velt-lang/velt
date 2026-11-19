@@ -59,6 +59,8 @@ const PATHS: &[&str] = &[
     "std/process/child/",
     "std/sync/output.velt",
     "std/sync/slot.velt",
+    "std/time/localtime_posix.velt",
+    "std/time/localtime_win32.velt",
     // The runtime's exports, which the check skips (std_check.rs `runtime_exports`).
     "crates/velt_common/tests/runtime_exports.txt",
     "crates/veltc/src/native/headers/std_check.rs",

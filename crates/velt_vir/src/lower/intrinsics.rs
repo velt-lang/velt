@@ -33,11 +33,25 @@ impl FnLower<'_, '_> {
             ) => self.atomic_intrinsic(i, args, ty),
             (I::AtomicAddress, [a]) => self.atomic_address(a, ty),
             (I::AddressStore, [a, v]) => self.address_store(a, v),
+            (I::AddressArray, [a, n]) => {
+                // `{ data: address, len, cap: 0 }`: a buffer the array does not own, as a
+                // constant table's (lower/array).
+                let addr = self.expr(a);
+                let data = self.rvalue_temp(Ty::Ptr, Rvalue::Cast(addr, Ty::Ptr));
+                let (len, lt) = (self.expr(n), self.vty(n.ty));
+                let len = self.cast_to(len, lt, Ty::U64);
+                let ty = self.sub(ty);
+                self.array_value(ty, data, len, super::cint(0, Ty::U64))
+            }
             (I::FutPoll, [f, cx]) => self.fut_intrinsic(f, Some(cx)),
             (I::FutDrop, [f]) => self.fut_intrinsic(f, None),
             (I::StatePoll, [p, s, cx]) => self.state_poll(p, s, cx),
             (I::StateDrop, [d, s]) => self.state_drop(d, s),
             (I::AddressCall, [f, a]) => self.address_call(f, a, ty),
+            (I::AddressCallWord, [f, a]) => self.address_call_void(f, &[(a, Ty::U64)]),
+            (I::AddressCall3, [f, a, b, c]) => {
+                self.address_call_void(f, &[(a, Ty::Ptr), (b, Ty::Ptr), (c, Ty::Ptr)])
+            }
             (I::FnAddress, [f]) => self.fn_address(f, ty),
             (I::SlotSize, []) => self.slot_size(ty),
             (I::SlotPut, [at, v]) => self.slot_put(at, v),
@@ -501,7 +515,9 @@ impl FnLower<'_, '_> {
                 | I::WeakMapDelete
                 | I::WeakMapValue
                 | I::WeakRefNew
-                | I::WeakRefDeref,
+                | I::WeakRefDeref
+                | I::WeakMapDrop
+                | I::WeakRefDrop,
                 _,
             ) => self.weak_intrinsic(i, args, ty),
             (I::ArrayDataPtr, [xs]) => {

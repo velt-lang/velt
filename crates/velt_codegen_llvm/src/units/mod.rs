@@ -27,7 +27,8 @@
 //!   optimizer (devirtualization through vtables);
 //! - small functions of other units that a unit's (not huge) functions call are imported as
 //!   `available_externally` copies (like ThinLTO's function import): LLVM can inline them, and
-//!   emits no code for them.
+//!   emits no code for them; a function marked `@inline` is imported into every unit that calls
+//!   it, whatever the caller's size, as are the `@inline` callees of the bodies imported.
 //!
 //! The rest of cross-unit optimization is lost (inlining of larger callees and interprocedural
 //! analyses of the functions made external). With placement keeping hot call chains together,
@@ -288,19 +289,31 @@ fn assemble(program: &vir::Program, refs: &References, owner: &[usize]) -> Plan 
         // Functions whose bodies this unit contains: its own, then the imported ones.
         let mut bodies: BTreeSet<usize> = unit.defines.iter().copied().collect();
         let mut imports = BTreeSet::new();
-        for &f in unit
-            .defines
-            .iter()
-            .filter(|&&f| weights[f] <= IMPORT_CALLER_WEIGHT)
-        {
+        // A caller's other-unit callee whose body may be copied in (not this unit's, not an
+        // import's, not a root-module body into a library unit).
+        let importable = |f: usize, callee: usize| {
+            owner[callee] != u && !imported[callee] && !(is_own(callee) && !is_own(f))
+        };
+        for &f in &unit.defines {
+            let small_caller = weights[f] <= IMPORT_CALLER_WEIGHT;
             for &callee in &refs[f].calls {
-                let library_imports_own = is_own(callee) && !is_own(f);
-                if owner[callee] != u
-                    && weights[callee] <= IMPORT_WEIGHT
-                    && !imported[callee]
-                    && !library_imports_own
-                {
+                let small = small_caller && weights[callee] <= IMPORT_WEIGHT;
+                if (small || always_inline(program, callee)) && importable(f, callee) {
                     imports.insert(callee);
+                }
+            }
+        }
+        // `@inline` asks for the body at every call, so an `@inline` callee is copied into every
+        // unit that calls it, whatever the caller's weight, with the `@inline` callees of the
+        // bodies copied in (LLVM inlines them there too): a program that grows past one unit
+        // keeps its calls of std's small entry points inlined (`heapAlloc` into a large `main`,
+        // #3097: race_select +4.4% instructions as two units).
+        let mut todo: Vec<usize> = imports.iter().copied().collect();
+        while let Some(f) = todo.pop() {
+            for &callee in &refs[f].calls {
+                if always_inline(program, callee) && importable(f, callee) && imports.insert(callee)
+                {
+                    todo.push(callee);
                 }
             }
         }
@@ -415,6 +428,11 @@ fn own_exported_statics(
         }
     }
     unit.declares = declares.into_iter().collect();
+}
+
+/// Whether function `f` of `program` is marked `@inline` (`vir::Inline::Always`).
+fn always_inline(program: &vir::Program, f: usize) -> bool {
+    program.funcs[f].inline == vir::Inline::Always
 }
 
 /// Size of a function for balancing: statements plus terminators.

@@ -1,0 +1,58 @@
+// velt/lang/math (internal): the hyperbolic functions of `Math` and their inverses, as an
+// extension of the prelude's class over fdlibm's routines (velt/lang/math/hyperbolic). In a module
+// of its own so that a program loads these ports only when it calls one of these functions
+// (std/prelude/global/math_hyperbolic.velt, a conditional global).
+
+import { acosh, asinh, atanh, cosh, sinh, tanh } from "velt/lang/math/hyperbolic";
+
+// Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
+
+extend Math {
+  /**
+   * Returns the hyperbolic sine of a number.
+   * @param x - A numeric expression.
+   */
+  static sinh(x: f64): f64 {
+    return sinh(x);
+  }
+
+  /**
+   * Returns the hyperbolic cosine of a number.
+   * @param x - A numeric expression.
+   */
+  static cosh(x: f64): f64 {
+    return cosh(x);
+  }
+
+  /**
+   * Returns the hyperbolic tangent of a number.
+   * @param x - A numeric expression.
+   */
+  static tanh(x: f64): f64 {
+    return tanh(x);
+  }
+
+  /**
+   * Returns the inverse hyperbolic sine of a number.
+   * @param x - A numeric expression.
+   */
+  static asinh(x: f64): f64 {
+    return asinh(x);
+  }
+
+  /**
+   * Returns the inverse hyperbolic cosine of a number; NaN below 1.
+   * @param x - A numeric expression.
+   */
+  static acosh(x: f64): f64 {
+    return acosh(x);
+  }
+
+  /**
+   * Returns the inverse hyperbolic tangent of a number; NaN outside [-1, 1].
+   * @param x - A numeric expression.
+   */
+  static atanh(x: f64): f64 {
+    return atanh(x);
+  }
+}

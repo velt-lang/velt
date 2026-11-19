@@ -49,6 +49,8 @@ pub const ON_DEMAND_MODULES: &[&str] = &[
     "std/lang/hooks/prebuilt_probe",
     "std/lang/hooks/number_digits",
     "std/lang/hooks/number_parse",
+    // The weak core (#3145), demanded by a weak collection's intrinsic (`Construct::Weak`).
+    "std/lang/hooks/weak",
     // The string searches, which the prelude's methods call by role (`hookCall`, #2198).
     "std/lang/string/search",
 ];

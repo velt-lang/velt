@@ -559,6 +559,8 @@ impl FnCx<'_, '_> {
             })
             .collect();
         self.cx.note_setters(a.impl_index, srcs);
+        // Its method setters, should a method of the interface be written as a property.
+        self.cx.note_method_adapter(a.impl_index, parts.clone());
         // The dispatch groups gain the new methods (`throws/groups.rs`): built again on next use.
         self.cx.groups = None;
         a

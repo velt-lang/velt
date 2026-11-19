@@ -28,6 +28,13 @@ function sameLength(na: usize, nb: usize, what: string): usize {
   return na;
 }
 
+/** A RangeError unless `count` elements from `at` fit in `len` (the `…At` functions' check). */
+function inRange(count: usize, len: usize, at: usize, what: string) {
+  if (at > len || count > len - at) {
+    panic(`RangeError: ${what}: ${count} values from index ${at} pass the end (length ${len})`);
+  }
+}
+
 /** The sum of the lanes of the four accumulators, in `number`, after the loop. */
 function total(a: f32x4, b: f32x4, c: f32x4, d: f32x4): number {
   let sum: number = 0;
@@ -48,54 +55,20 @@ function total(a: f32x4, b: f32x4, c: f32x4, d: f32x4): number {
 @noInline
 export function dotF16(a: f16[], b: f16[]): number {
   const n = sameLength(a.length, b.length, "dotF16");
-  let s0 = velt_simd_f32x4_splat(0);
-  let s1 = s0;
-  let s2 = s0;
-  let s3 = s0;
-  let i: usize = 0;
-  while (n - i >= 32) {
-    const at = i as u64;
-    s0 = velt_simd_f32x4_dot_add_f16x8(
-      s0,
-      velt_simd_f16x8_load(a, at),
-      velt_simd_f16x8_load(b, at),
-    );
-    s1 = velt_simd_f32x4_dot_add_f16x8(
-      s1,
-      velt_simd_f16x8_load(a, at + 8),
-      velt_simd_f16x8_load(b, at + 8),
-    );
-    s2 = velt_simd_f32x4_dot_add_f16x8(
-      s2,
-      velt_simd_f16x8_load(a, at + 16),
-      velt_simd_f16x8_load(b, at + 16),
-    );
-    s3 = velt_simd_f32x4_dot_add_f16x8(
-      s3,
-      velt_simd_f16x8_load(a, at + 24),
-      velt_simd_f16x8_load(b, at + 24),
-    );
-    i += 32;
-  }
-  while (n - i >= 8) {
-    const at = i as u64;
-    s0 = velt_simd_f32x4_dot_add_f16x8(
-      s0,
-      velt_simd_f16x8_load(a, at),
-      velt_simd_f16x8_load(b, at),
-    );
-    i += 8;
-  }
-  if (i < n) {
-    const at = i as u64;
-    const left = (n - i) as u64;
-    s0 = velt_simd_f32x4_dot_add_f16x8(
-      s0,
-      velt_simd_f16x8_load_partial(a, at, left),
-      velt_simd_f16x8_load_partial(b, at, left),
-    );
-  }
-  return total(s0, s1, s2, s3);
+  return sumF16(a, 0, b, 0, n);
+}
+
+/**
+ * The dot product of `count` weights of `a` from index `aAt` and of `b` from index `bAt`: the
+ * number `dotF16` gives for those two ranges, without copying them out. Row `r` of a flat
+ * `rows × dim` array against a query is `dotF16At(rows, r * dim, query, 0, dim)`. Panics with a
+ * RangeError when a range passes the end of its array.
+ */
+@noInline
+export function dotF16At(a: f16[], aAt: usize, b: f16[], bAt: usize, count: usize): number {
+  inRange(count, a.length, aAt, "dotF16At");
+  inRange(count, b.length, bAt, "dotF16At");
+  return sumF16(a, aAt, b, bAt, count);
 }
 
 /**
@@ -106,51 +79,110 @@ export function dotF16(a: f16[], b: f16[]): number {
 @noInline
 export function dotBf16(a: bf16[], b: bf16[]): number {
   const n = sameLength(a.length, b.length, "dotBf16");
+  return sumBf16(a, 0, b, 0, n);
+}
+
+/** As `dotF16At`, for `bf16`: the number `dotBf16` gives for the two ranges. */
+@noInline
+export function dotBf16At(a: bf16[], aAt: usize, b: bf16[], bAt: usize, count: usize): number {
+  inRange(count, a.length, aAt, "dotBf16At");
+  inRange(count, b.length, bAt, "dotBf16At");
+  return sumBf16(a, aAt, b, bAt, count);
+}
+
+/** `dotF16At`'s sum once the ranges are known to fit: `n` weights of `a` from `aAt` and of `b` from `bAt`. */
+function sumF16(a: f16[], aAt: usize, b: f16[], bAt: usize, n: usize): number {
   let s0 = velt_simd_f32x4_splat(0);
   let s1 = s0;
   let s2 = s0;
   let s3 = s0;
   let i: usize = 0;
   while (n - i >= 32) {
-    const at = i as u64;
-    s0 = velt_simd_f32x4_dot_add_bf16x8(
-      s0,
-      velt_simd_bf16x8_load(a, at),
-      velt_simd_bf16x8_load(b, at),
-    );
-    s1 = velt_simd_f32x4_dot_add_bf16x8(
+    const x = (aAt + i) as u64;
+    const y = (bAt + i) as u64;
+    s0 = velt_simd_f32x4_dot_add_f16x8(s0, velt_simd_f16x8_load(a, x), velt_simd_f16x8_load(b, y));
+    s1 = velt_simd_f32x4_dot_add_f16x8(
       s1,
-      velt_simd_bf16x8_load(a, at + 8),
-      velt_simd_bf16x8_load(b, at + 8),
+      velt_simd_f16x8_load(a, x + 8),
+      velt_simd_f16x8_load(b, y + 8),
     );
-    s2 = velt_simd_f32x4_dot_add_bf16x8(
+    s2 = velt_simd_f32x4_dot_add_f16x8(
       s2,
-      velt_simd_bf16x8_load(a, at + 16),
-      velt_simd_bf16x8_load(b, at + 16),
+      velt_simd_f16x8_load(a, x + 16),
+      velt_simd_f16x8_load(b, y + 16),
     );
-    s3 = velt_simd_f32x4_dot_add_bf16x8(
+    s3 = velt_simd_f32x4_dot_add_f16x8(
       s3,
-      velt_simd_bf16x8_load(a, at + 24),
-      velt_simd_bf16x8_load(b, at + 24),
+      velt_simd_f16x8_load(a, x + 24),
+      velt_simd_f16x8_load(b, y + 24),
     );
     i += 32;
   }
   while (n - i >= 8) {
-    const at = i as u64;
-    s0 = velt_simd_f32x4_dot_add_bf16x8(
+    s0 = velt_simd_f32x4_dot_add_f16x8(
       s0,
-      velt_simd_bf16x8_load(a, at),
-      velt_simd_bf16x8_load(b, at),
+      velt_simd_f16x8_load(a, (aAt + i) as u64),
+      velt_simd_f16x8_load(b, (bAt + i) as u64),
     );
     i += 8;
   }
   if (i < n) {
-    const at = i as u64;
+    const left = (n - i) as u64;
+    s0 = velt_simd_f32x4_dot_add_f16x8(
+      s0,
+      velt_simd_f16x8_load_partial(a, (aAt + i) as u64, left),
+      velt_simd_f16x8_load_partial(b, (bAt + i) as u64, left),
+    );
+  }
+  return total(s0, s1, s2, s3);
+}
+
+/** `dotBf16At`'s sum once the ranges are known to fit: `n` weights of `a` from `aAt` and of `b` from `bAt`. */
+function sumBf16(a: bf16[], aAt: usize, b: bf16[], bAt: usize, n: usize): number {
+  let s0 = velt_simd_f32x4_splat(0);
+  let s1 = s0;
+  let s2 = s0;
+  let s3 = s0;
+  let i: usize = 0;
+  while (n - i >= 32) {
+    const x = (aAt + i) as u64;
+    const y = (bAt + i) as u64;
+    s0 = velt_simd_f32x4_dot_add_bf16x8(
+      s0,
+      velt_simd_bf16x8_load(a, x),
+      velt_simd_bf16x8_load(b, y),
+    );
+    s1 = velt_simd_f32x4_dot_add_bf16x8(
+      s1,
+      velt_simd_bf16x8_load(a, x + 8),
+      velt_simd_bf16x8_load(b, y + 8),
+    );
+    s2 = velt_simd_f32x4_dot_add_bf16x8(
+      s2,
+      velt_simd_bf16x8_load(a, x + 16),
+      velt_simd_bf16x8_load(b, y + 16),
+    );
+    s3 = velt_simd_f32x4_dot_add_bf16x8(
+      s3,
+      velt_simd_bf16x8_load(a, x + 24),
+      velt_simd_bf16x8_load(b, y + 24),
+    );
+    i += 32;
+  }
+  while (n - i >= 8) {
+    s0 = velt_simd_f32x4_dot_add_bf16x8(
+      s0,
+      velt_simd_bf16x8_load(a, (aAt + i) as u64),
+      velt_simd_bf16x8_load(b, (bAt + i) as u64),
+    );
+    i += 8;
+  }
+  if (i < n) {
     const left = (n - i) as u64;
     s0 = velt_simd_f32x4_dot_add_bf16x8(
       s0,
-      velt_simd_bf16x8_load_partial(a, at, left),
-      velt_simd_bf16x8_load_partial(b, at, left),
+      velt_simd_bf16x8_load_partial(a, (aAt + i) as u64, left),
+      velt_simd_bf16x8_load_partial(b, (bAt + i) as u64, left),
     );
   }
   return total(s0, s1, s2, s3);
