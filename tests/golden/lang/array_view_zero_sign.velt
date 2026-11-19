@@ -1,0 +1,48 @@
+// A view of another array (an `any` converted to `f32[]` or `number[]`, #1485) tells a changed
+// element as `Object.is` does (#3248): -0 written over 0, or 0 over -0, reaches the array, and
+// the array's zero changed behind the view reaches the view. NaN is NaN: an element that stays
+// NaN is not a change.
+function sign(x: number): string {
+  return Object.is(x, -0) ? "-0" : Object.is(x, 0) ? "+0" : `${x}`;
+}
+
+function main() {
+  // An index write of the other zero.
+  const a: any = [0, -0, 5];
+  const va = a as f32[];
+  va[0] = -0;
+  va[1] = 0;
+  console.log(sign(a[0]), sign(a[1]), sign(va[0]), sign(va[1]));
+
+  // The array's zero changed behind the view.
+  const b: any = [0, -0];
+  const vb = b as f32[];
+  console.log(sign(vb[0]), sign(vb[1]));
+  b[0] = -0;
+  b[1] = 0;
+  console.log(sign(vb[0]), sign(vb[1]));
+
+  // A change of the view's length writes back the elements after it, zeros included.
+  const c: any = [0, 1];
+  const vc = c as f32[];
+  vc[0] = -0;
+  vc.push(-0);
+  console.log(sign(c[0]), c[1], sign(c[2]), c.length);
+
+  // A whole-array change through the view.
+  const d: any = [3, 0, -0, 1];
+  const vd = d as f32[];
+  vd.reverse();
+  console.log(sign(d[0]), sign(d[1]), sign(d[2]), d[3]);
+  vd.fill(-0);
+  console.log(sign(d[0]), sign(d[1]), sign(d[2]), sign(d[3]));
+
+  // NaN stays NaN on both sides, and a number over it, or it over a number, is a change.
+  const e: any = [NaN, 2, NaN];
+  const ve = e as f32[];
+  ve[1] = NaN as f32;
+  ve[2] = 7;
+  console.log(e, ve[0], ve.length);
+  e[0] = 4;
+  console.log(ve[0], ve[1]);
+}
