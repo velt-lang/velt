@@ -306,13 +306,20 @@ else
     staging="$root/toolchains/.$version.$$"
     rm -rf "$staging"
     cp -R "$dist" "$staging"
+    old=
     if [ -d "$dest" ]; then
-        mv "$dest" "$root/toolchains/.$version.old.$$" ||
-            err "cannot replace $dest (in use?)"
-        rm -rf "$root/toolchains/.$version.old.$$"
+        old="$root/toolchains/.$version.old.$$"
+        mv "$dest" "$old" || err "cannot replace $dest (in use?)"
     fi
     mv "$staging" "$dest"
     staging=
+    # The new copy is in place before the old one goes. An installed release's std is
+    # read-only (velt's installer leaves it so): writable again first, and a copy that
+    # still won't go is reported, not fatal.
+    if [ -n "$old" ]; then
+        chmod -R u+w "$old" 2>/dev/null || true
+        rm -rf "$old" 2>/dev/null || say "warning: could not remove $old; delete it by hand"
+    fi
     say "installed $installed into $dest"
 fi
 

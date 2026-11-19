@@ -9,13 +9,14 @@ import {
   velt_rt_catch_take,
 } from "velt/task/rt";
 
-/** The next promise started on this thread catches panics. */
-export function arm(): void {
+/** The next promise started on this thread catches panics. Returns 0 (the runtime keeps its own). */
+export function arm(): u64 {
   velt_rt_catch_arm();
+  return 0;
 }
 
-/** The promise that took the arming, as a handle (0: none did); disarms. */
-export function take(): u64 {
+/** The promise that took the arming, as a handle (0: none did); disarms. `outer`: `arm`'s result. */
+export function take(outer: u64): u64 {
   return velt_rt_catch_take();
 }
 

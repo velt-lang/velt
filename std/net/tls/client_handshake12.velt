@@ -1,0 +1,306 @@
+// velt/net (internal): `ClientHandshake12`, the TLS 1.2 client's handshake after a ServerHello that
+// chose TLS 1.2 (RFC 5246 §7.3, ECDHE as in RFC 8422 §5): the server's Certificate,
+// ServerKeyExchange and ServerHelloDone; the client's ClientKeyExchange, ChangeCipherSpec and
+// Finished; then the server's ChangeCipherSpec and Finished. As for TLS 1.3, `verify: false` keeps
+// the certificate and the ServerKeyExchange's signature unchecked (#2392 step 3 adds
+// verification); the server's Finished is always checked. No resumption and no renegotiation; a
+// CertificateRequest is answered with an empty Certificate (RFC 5246 §7.4.6). It does no I/O.
+
+import { p256Ecdh, p256PrivateKey, p256PublicKey } from "velt/crypto/p256";
+import { sha256 } from "velt/crypto/sha256";
+import { sha384 } from "velt/crypto/sha512";
+import { x25519 } from "velt/crypto/x25519";
+import { arrayMove, arrayReserve, arraySetLen } from "velt/lang/intrinsics";
+import {
+  DECODE_ERROR,
+  DECRYPT_ERROR,
+  ILLEGAL_PARAMETER,
+  TlsFailure,
+  UNEXPECTED_MESSAGE,
+} from "velt/net/tls/alert";
+import { ByteReader } from "velt/net/tls/byte_reader";
+import { ByteWriter } from "velt/net/tls/byte_writer";
+import { SCHEMES, SECP256R1, X25519 } from "velt/net/tls/client_hello";
+import { KeyBlock12, keyBlock12, masterSecret12, verifyData12 } from "velt/net/tls/key_schedule12";
+import { hashLength, RecordCipher } from "velt/net/tls/record_cipher";
+import { groupName } from "velt/net/tls/server_hello";
+import { ecdsaSuite12, ivLength12, keyLength12 } from "velt/net/tls/suites12";
+
+// Handshake message types (RFC 5246 §7.4).
+const CERTIFICATE: u8 = 11;
+const SERVER_KEY_EXCHANGE: u8 = 12;
+const CERTIFICATE_REQUEST: u8 = 13;
+const SERVER_HELLO_DONE: u8 = 14;
+const CLIENT_KEY_EXCHANGE: u8 = 16;
+const FINISHED: u8 = 20;
+
+// Where the handshake is: what must come next from the server.
+const WAIT_CERTIFICATE = 0;
+const WAIT_KEY_EXCHANGE = 1;
+const WAIT_HELLO_DONE = 2;
+const WAIT_CCS = 3;
+const WAIT_FINISHED = 4;
+const DONE = 5;
+
+/**
+ * What the engine must do after a message: send `keyExchange` in plaintext, a ChangeCipherSpec,
+ * then `finished` under `writeCipher`, and keep reading.
+ */
+export const SEND12 = 4;
+/** The server's Finished is checked: the handshake is done. */
+export const DONE12 = 5;
+
+/** The client's side of a TLS 1.2 handshake, from the ServerHello on. */
+export class ClientHandshake12 {
+  private transcript: u8[];
+  private state: i32 = WAIT_CERTIFICATE;
+  private hashLen: usize;
+  private clientRandom: u8[];
+  private serverRandom: u8[];
+  private ems: bool;
+  private x25519Key: u8[];
+  private x25519Public: u8[];
+  private p256Key: u8[] | null;
+  private certificateRequested: bool = false;
+  private serverPoint: u8[] | null = null;
+  private group: usize = 0;
+  private master: u8[] | null = null;
+  private keys: KeyBlock12 | null = null;
+  /** The suite the server chose. */
+  suite: usize;
+  /** The server's certificate chain (DER, leaf first), unchecked. */
+  certificates: u8[][] = [];
+  /**
+   * The ServerKeyExchange's signature scheme, the bytes it signs (the randoms and the ECDH
+   * parameters) and the signature, unchecked.
+   */
+  signatureScheme: usize = 0;
+  signed: u8[] | null = null;
+  signature: u8[] | null = null;
+  /** After `SEND12`: the ClientKeyExchange (after an empty Certificate when asked for). */
+  keyExchange: u8[] | null = null;
+  /** After `SEND12`: the client's Finished, and the write keys it goes under. */
+  finished: u8[] | null = null;
+  writeCipher: RecordCipher | null = null;
+
+  /**
+   * The handshake after the ServerHello: `transcript` holds the ClientHello and the ServerHello.
+   * `x25519Key` and `x25519Public` are the keys of the ClientHello's X25519 share, used again if
+   * the server chooses X25519 (the share was used for nothing else: a server takes one
+   * version); `p256Key` a P-256 key to use instead of a new one (tests), or null.
+   */
+  constructor(
+    transcript: u8[],
+    suite: usize,
+    clientRandom: u8[],
+    serverRandom: u8[],
+    ems: bool,
+    x25519Key: u8[],
+    x25519Public: u8[],
+    p256Key: u8[] | null,
+  ) {
+    this.transcript = transcript;
+    this.suite = suite;
+    this.hashLen = hashLength(suite);
+    this.clientRandom = clientRandom;
+    this.serverRandom = serverRandom;
+    this.ems = ems;
+    this.x25519Key = x25519Key;
+    this.x25519Public = x25519Public;
+    this.p256Key = p256Key;
+  }
+
+  private add(m: u8[]) {
+    const at = this.transcript.length;
+    const n = m.length;
+    // At least doubled, as `push` grows: `arrayReserve` reserves exactly what it is asked for.
+    arrayReserve(this.transcript, n > at ? n : at);
+    arraySetLen(this.transcript, at + n);
+    arrayMove(this.transcript, at, m, 0, n);
+  }
+
+  private hash(): u8[] {
+    return this.hashLen == 48 ? sha384(this.transcript) : sha256(this.transcript);
+  }
+
+  /** Handles the server's handshake message `m` (with its 4-byte header): what to do next. */
+  onMessage(m: u8[]): i32 {
+    const type = m[0];
+    const body = m.slice(4);
+    if (this.state == WAIT_CERTIFICATE && type == CERTIFICATE) {
+      const r = new ByteReader(body, 0, body.length, "Certificate");
+      const list = r.vector(3);
+      r.finish();
+      while (list.left() > 0) {
+        const cert = list.vector(3);
+        this.certificates.push(cert.bytes(cert.left()));
+      }
+      this.add(m);
+      this.state = WAIT_KEY_EXCHANGE;
+      return 0;
+    }
+    if (this.state == WAIT_KEY_EXCHANGE && type == SERVER_KEY_EXCHANGE) {
+      this.serverKeyExchange(body);
+      this.add(m);
+      this.state = WAIT_HELLO_DONE;
+      return 0;
+    }
+    if (
+      this.state == WAIT_HELLO_DONE && type == CERTIFICATE_REQUEST && !this.certificateRequested
+    ) {
+      this.certificateRequested = true;
+      this.add(m);
+      return 0;
+    }
+    if (this.state == WAIT_HELLO_DONE && type == SERVER_HELLO_DONE) {
+      if (body.length != 0) {
+        throw new TlsFailure(DECODE_ERROR, "a ServerHelloDone that is not empty");
+      }
+      this.add(m);
+      return this.clientFlight();
+    }
+    if (this.state == WAIT_FINISHED && type == FINISHED) {
+      const expected = verifyData12(this.hashLen, this.master!, false, this.hash());
+      let diff: u8 = body.length == 12 ? 0 : 1;
+      for (let i: usize = 0; i < 12 && i < body.length; i++) {
+        diff |= expected[i] ^ body[i];
+      }
+      if (diff != 0) {
+        throw new TlsFailure(DECRYPT_ERROR, "the server's Finished does not match the handshake");
+      }
+      this.state = DONE;
+      this.transcript = [];
+      return DONE12;
+    }
+    throw new TlsFailure(
+      UNEXPECTED_MESSAGE,
+      `unexpected handshake message ${type} during the TLS 1.2 handshake`,
+    );
+  }
+
+  /**
+   * The server's ChangeCipherSpec: its read keys from the next record on. Only after the client's
+   * Finished went (`unexpected_message` otherwise).
+   */
+  ccs(): RecordCipher {
+    if (this.state != WAIT_CCS) {
+      throw new TlsFailure(UNEXPECTED_MESSAGE, "a ChangeCipherSpec out of place");
+    }
+    this.state = WAIT_FINISHED;
+    const k = this.keys!;
+    return new RecordCipher(this.suite, k.serverKey, k.serverIv);
+  }
+
+  // ServerECDHParams (named curve, the server's point) and the signature over them (RFC 8422
+  // §5.4, RFC 5246 §7.4.3).
+  private serverKeyExchange(body: u8[]) {
+    const r = new ByteReader(body, 0, body.length, "ServerKeyExchange");
+    if (r.u8() != 3) {
+      throw new TlsFailure(ILLEGAL_PARAMETER, "a ServerKeyExchange without a named curve");
+    }
+    const group = r.u16();
+    const p = r.vector(1);
+    const point = p.bytes(p.left());
+    const paramsEnd = 4 + point.length;
+    const scheme = r.u16();
+    const s = r.vector(2);
+    const signature = s.bytes(s.left());
+    r.finish();
+    if (group == X25519) {
+      if (point.length != 32) {
+        throw new TlsFailure(ILLEGAL_PARAMETER, "an X25519 point that is not 32 bytes");
+      }
+    } else if (group == SECP256R1) {
+      if (point.length != 65 || point[0] != 4) {
+        throw new TlsFailure(ILLEGAL_PARAMETER, "a secp256r1 point that is not uncompressed");
+      }
+    } else {
+      throw new TlsFailure(
+        ILLEGAL_PARAMETER,
+        `the server chose key exchange ${groupName(group)}, which was not offered`,
+      );
+    }
+    // The scheme must be one offered, of the kind of key the suite says the server has: ECDSA
+    // or Ed25519 for ECDHE_ECDSA, RSA for ECDHE_RSA.
+    const ecdsa = scheme == 0x0403 || scheme == 0x0503 || scheme == 0x0807;
+    if (!SCHEMES.includes(scheme) || ecdsa != ecdsaSuite12(this.suite)) {
+      throw new TlsFailure(
+        ILLEGAL_PARAMETER,
+        `a ServerKeyExchange signed with scheme 0x${scheme.toString(16)}, which this suite or client does not take`,
+      );
+    }
+    this.group = group;
+    this.serverPoint = point;
+    this.signatureScheme = scheme;
+    this.signed = this.clientRandom
+      .concat(this.serverRandom)
+      .concat(body.slice(0, paramsEnd as i64));
+    this.signature = signature;
+  }
+
+  // The client's flight after ServerHelloDone, and the keys.
+  private clientFlight(): i32 {
+    const point = this.serverPoint!;
+    let ours: u8[];
+    let shared: u8[];
+    try {
+      if (this.group == X25519) {
+        ours = this.x25519Public;
+        shared = x25519(this.x25519Key, point);
+      } else {
+        const k = this.p256Key ?? p256PrivateKey();
+        ours = p256PublicKey(k);
+        shared = p256Ecdh(k, point);
+      }
+    } catch (e) {
+      throw new TlsFailure(
+        ILLEGAL_PARAMETER,
+        this.group == X25519
+          ? "the server's X25519 point is a small-order point"
+          : "the server's secp256r1 point is not on the curve",
+      );
+    }
+    const w = new ByteWriter();
+    if (this.certificateRequested) {
+      // No client certificate: an empty list.
+      const cert: u8[] = [CERTIFICATE, 0, 0, 3, 0, 0, 0];
+      this.add(cert);
+      w.put(cert);
+    }
+    const cke = new ByteWriter();
+    cke.u8(CLIENT_KEY_EXCHANGE);
+    const b = cke.begin(3);
+    const v = cke.begin(1);
+    cke.put(ours);
+    cke.end(v, 1);
+    cke.end(b, 3);
+    this.add(cke.bytes);
+    w.put(cke.bytes);
+    this.keyExchange = w.bytes;
+    // The extended master secret covers the transcript through the ClientKeyExchange.
+    const master = masterSecret12(
+      this.hashLen,
+      shared,
+      this.ems,
+      this.ems ? this.hash() : this.clientRandom.concat(this.serverRandom),
+    );
+    this.master = master;
+    const keys = keyBlock12(
+      this.hashLen,
+      master,
+      this.clientRandom,
+      this.serverRandom,
+      keyLength12(this.suite),
+      ivLength12(this.suite),
+    );
+    this.keys = keys;
+    const fin: u8[] = [FINISHED, 0, 0, 12].concat(
+      verifyData12(this.hashLen, master, true, this.hash()),
+    );
+    this.add(fin);
+    this.finished = fin;
+    this.writeCipher = new RecordCipher(this.suite, keys.clientKey, keys.clientIv);
+    this.state = WAIT_CCS;
+    return SEND12;
+  }
+}

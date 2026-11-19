@@ -1,0 +1,13 @@
+// velt/time (internal): the local time zone's offset in a WebAssembly build (`#localtime`'s
+// default variant, std/imports.velt): WASI has no time zone and the browser target gets none from
+// its glue, so local time is UTC (`velt/time`'s `localParts()`, `Date`'s local getters).
+
+/** Seconds added to UTC to get local time at `epochMs`: always 0 here. */
+export function localOffsetSeconds(epochMs: i64): i32 {
+  return 0;
+}
+
+/** Windows' test hook (localtime_win32.velt): no named zones here. */
+export function offsetInZone(key: string, unixSecs: i64): i32 | null {
+  return null;
+}

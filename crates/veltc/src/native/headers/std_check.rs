@@ -130,6 +130,8 @@ const CHECKED: &[&str] = &[
     "process/tty_posix.velt",
     "sync/output.velt",
     "sync/slot.velt",
+    "time/localtime_posix.velt",
+    "time/localtime_win32.velt",
 ];
 
 /// The std files [`CHECKED`] would list but that only macOS and Linux builds reach: child

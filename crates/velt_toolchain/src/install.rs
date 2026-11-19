@@ -130,13 +130,13 @@ pub fn install_dir(
         .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
     let name = dest.file_name().unwrap_or_default().to_string_lossy();
     let staging = parent.join(format!(".{name}.{}", unique()));
-    let _ = std::fs::remove_dir_all(&staging);
+    let _ = crate::read_only::remove_tree(&staging);
     let result = unpack(archive, top, &staging, what).and_then(|()| match problem(&staging) {
         Some(why) => Err(format!("the {what} cannot be used: {why}")),
         None => Ok(()),
     });
     if let Err(e) = result {
-        let _ = std::fs::remove_dir_all(&staging);
+        let _ = crate::read_only::remove_tree(&staging);
         return Err(e);
     }
     match existing {
@@ -149,7 +149,7 @@ pub fn install_dir(
             } else {
                 std::fs::rename(&staging, dest)
             };
-            let _ = std::fs::remove_dir_all(&staging);
+            let _ = crate::read_only::remove_tree(&staging);
             match moved {
                 Err(_) if dest.exists() => Ok(()),
                 Err(e) => Err(format!("cannot install into {}: {e}", dest.display())),
@@ -176,7 +176,7 @@ pub fn swap_into_place(staging: &Path, dest: &Path) -> Result<(), String> {
     let had_old = dest.exists();
     if had_old {
         if let Err(e) = std::fs::rename(dest, &old) {
-            let _ = std::fs::remove_dir_all(staging);
+            let _ = crate::read_only::remove_tree(staging);
             return Err(format!("cannot replace {} (in use?): {e}", dest.display()));
         }
     }
@@ -184,11 +184,11 @@ pub fn swap_into_place(staging: &Path, dest: &Path) -> Result<(), String> {
         if had_old {
             let _ = std::fs::rename(&old, dest);
         }
-        let _ = std::fs::remove_dir_all(staging);
+        let _ = crate::read_only::remove_tree(staging);
         return Err(format!("cannot install into {}: {e}", dest.display()));
     }
     if had_old {
-        let _ = std::fs::remove_dir_all(&old);
+        let _ = crate::read_only::remove_tree(&old);
     }
     Ok(())
 }

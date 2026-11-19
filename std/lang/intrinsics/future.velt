@@ -45,6 +45,22 @@ export declare unsafe function stateDrop(drop: usize, at: usize): void;
 export declare unsafe function addressCall(f: usize, a: usize): usize;
 
 /**
+ * Calls the C function `f` at its address with the 64-bit word `a`; it returns nothing (a weak
+ * map value's retain and release glue, rt_abi.md "Weak references"). Unsafe: `f` must take one
+ * 64-bit word and return nothing.
+ */
+@intrinsic
+export declare unsafe function addressCallWord(f: usize, a: u64): void;
+
+/**
+ * Calls the C function `f` at its address with `a`, `b` and `c`, each pointer-sized; it returns
+ * nothing (trace glue's `(obj, visit, ctx)`, rt_abi.md "Weak references"). Unsafe: `f` must take
+ * three pointer-sized values and return nothing.
+ */
+@intrinsic
+export declare unsafe function addressCall3(f: usize, a: usize, b: usize, c: usize): void;
+
+/**
  * The address of the module-level function `f`, which C code may call with the C calling
  * convention: a waker's table entries, a heap future's header (rt_abi_async.md §1). `f` is named
  * directly, is not generic, async or throwing, and takes and returns only numbers and `bool`
