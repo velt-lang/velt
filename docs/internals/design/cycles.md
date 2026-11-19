@@ -173,8 +173,11 @@ shape-shared instance the drop entry comes from the dictionary, per concrete typ
 one the comparison names. Environments and cells on a path back to a weak key get `RC_WEAK`, so
 in a program with such glue their releases take the weak-capable sequence (`Boxing::weak_envs`,
 program-wide, so no shape question depends on it), and the transfer glue gives up a shared
-environment through its drop entry instead of a raw decrement. Weak maps find cycles through
-handler closures with it ([weak-refs.md](weak-refs.md)).
+environment through its drop entry instead of a raw decrement. An uncounted object (a class
+instance with one owner, which the compiler does not count) is walked inline: its fields'
+references are reported as its owner's, since the owner holds the only reference, so a closure
+that reaches a key through an uncounted object holding a function value is traced too. Weak
+maps find cycles through handler closures with it ([weak-refs.md](weak-refs.md)).
 
 ## Alternatives considered
 
@@ -393,10 +396,10 @@ panics. `weak T` is Velt syntax; it parses in `.ts` files, and `--ts-compat` rep
 ### Work items
 
 - complete trace glue for the other types a cycle-capable type reaches, as closures have: a
-  `SLOT_TRACE` vtable slot next to `SLOT_DROP` and `SLOT_TRANSFER` for class hierarchies, the
-  same slot in interface tables, generator states, and uncounted classes traced inline; each glue
-  is tested against the drop glue's releases (the same objects, the same number of times). Weak
-  maps then find cycles through class hierarchies too;
+  `SLOT_TRACE` vtable slot next to `SLOT_DROP` and `SLOT_TRANSFER` for class hierarchies, the same
+  slot in interface tables, and generator states; each glue is tested against the drop glue's
+  releases (the same objects, the same number of times). Weak maps then find cycles through class
+  hierarchies too;
 - the collector in std beside the weak core, with the intrinsic it needs, `cycleDesc<T>()` (the
   address of `T`'s descriptor);
 - lowering of the release sequence, descriptors and collection points for cycle-capable types,

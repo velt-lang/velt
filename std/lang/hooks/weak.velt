@@ -205,9 +205,7 @@ export function weakRelease(obj: usize): bool {
   }
   st64(rcWord(obj), ld64(rcWord(obj)) - 1);
   if (rec.unexamined(r) !== 0) {
-    examine(h, obj);
-    // The examination may have added records, which moves the table.
-    r = rec.find(h, obj);
+    r = examine(h, obj, r);
   }
   if (c - 1 > level(r)) {
     leave(h);
@@ -262,11 +260,12 @@ export function weakMapSetTraced(map: u32, key: usize, value: u64, keyTrace: usi
 }
 
 /**
- * Inserts or replaces an entry. Its value's graph is examined later, on the key's first decrement
+ * Inserts or replaces an entry. Its value's graph is examined later, on the key's decrements
  * (`examine`), not here: an entry whose value refers back to its key holds a reference to the
  * key, so the key's last outside reference goes by a decrement, never by the release that frees
- * it. An entry whose key is freed by its only release is never traced, and a value is not marked
- * (its releases run no trial) until its entry is examined.
+ * it, and each decrement looks until an examination finds the path. An entry whose key is freed
+ * by its only release is never traced, and a value is not marked (its releases run no trial)
+ * until its entry is examined.
  */
 @inline
 function set(h: usize, map: u32, key: usize, value: u64, keyTrace: usize): void {
@@ -289,12 +288,16 @@ function set(h: usize, map: u32, key: usize, value: u64, keyTrace: usize): void 
 }
 
 /**
- * Traces the values of the entries keyed by `k` that were not traced yet (a nonzero value of a
- * map with trace glue: a live counted object the map owns), and records the objects on their paths
- * back to `k` with the references the entry holds to each (their `hint`).
+ * Traces the values of the entries keyed by `k` (record `r`) that are not examined yet (a nonzero
+ * value of a map with trace glue: a live counted object the map owns), and records the objects on
+ * their paths back to `k` with the references the entry holds to each (their `hint`). An entry
+ * whose value has no path back to `k` stays unexamined, so the key's next decrement looks again:
+ * the path may have gone with this decrement and come back later. Returns `k`'s record, which
+ * moves when the examination adds records.
  */
-function examine(h: usize, k: usize): void {
-  let r = rec.find(h, k);
+function examine(h: usize, k: usize, r0: usize): usize {
+  let r = r0;
+  let left: usize = 0;
   let i: usize = 0;
   while (i < rec.listLen(r, rec.R_KEYED)) {
     const map = rec.listAt(r, rec.R_KEYED, i) as u32;
@@ -305,21 +308,24 @@ function examine(h: usize, k: usize): void {
       continue;
     }
     const ms = members(h, k, ld64(e + wm.E_VALUE) as usize, ld(b + wm.M_VALUE_TRACE));
+    const n = vlen(ms);
+    if (n === 0) {
+      left += 1;
+      continue;
+    }
     // `node` adds records, not entries: the entry stays where it is.
     st(e + wm.E_MEMBERS, ms);
     st(e + wm.E_EXAMINED, 1);
-    const n = vlen(ms);
-    if (n !== 0) {
-      for (let j: usize = 0; j < n; j += 3) {
-        const m = rec.node(h, vat(ms, j), vat(ms, j + 2));
-        rec.memberPush(m, map as usize, k);
-        rec.setHint(m, rec.hint(m) + (vat(ms, j + 1) as u32));
-      }
-      // The records may have moved.
-      r = rec.find(h, k);
+    for (let j: usize = 0; j < n; j += 3) {
+      const m = rec.node(h, vat(ms, j), vat(ms, j + 2));
+      rec.memberPush(m, map as usize, k);
+      rec.setHint(m, rec.hint(m) + (vat(ms, j + 1) as u32));
     }
+    // The records may have moved.
+    r = rec.find(h, k);
   }
-  rec.setUnexamined(r, 0);
+  rec.setUnexamined(r, left);
+  return r;
 }
 
 /**

@@ -154,8 +154,16 @@ impl Cx<'_> {
                     }
                 }
             }
-            // An uncounted object is opaque: nothing is traced through it (a leak at worst).
-            TyKind::Adt(..) if self.is_class(t) => {}
+            // An uncounted object: its owner holds the only reference, so what its fields
+            // refer to is the owner's (glue/trace.rs `trace_value`). One with a vtable is opaque,
+            // as a counted one is: its dynamic class may have fields its static type lacks.
+            TyKind::Adt(..) if self.is_class(t) => {
+                if self.traceable(t) {
+                    for f in self.adt_field_tys(t) {
+                        self.refs_inline(b, f, out, seen);
+                    }
+                }
+            }
             TyKind::Adt(..) | TyKind::Tuple(_) | TyKind::Result(..) => {
                 for p in self.part_types(t) {
                     self.refs_inline(b, p, out, seen);
