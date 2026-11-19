@@ -187,20 +187,43 @@ fn nested_casts(levels: u32) -> (Vec<u8>, Vec<velt_common::FileId>) {
         .expect("encoded")
 }
 
-/// HIR nested as deep as the decoder allows decodes on an ordinary thread's stack, and one level
-/// deeper is a failed decode there, not a stack overflow.
+/// An expression as deep as a chain of 1,100 operands (`a + b + ...` nests a level per
+/// operand) decodes on a thread that has sema's stack and says so, as the check of a program
+/// does.
 #[test]
-fn hir_nested_to_the_limit_decodes_on_an_ordinary_thread() {
-    let decodes = |levels: u32| {
-        let (bytes, files) = nested_casts(levels);
-        std::thread::spawn(move || {
-            let mut r = Reader::new(&bytes, &files);
-            let _: crate::hir::Expr = Codec::dec(&mut r);
-            r.done()
+fn hir_as_deep_as_a_long_operator_chain_decodes_on_sema_s_stack() {
+    let (bytes, files) = nested_casts(1100);
+    let done = std::thread::Builder::new()
+        .stack_size(crate::SEMA_STACK_BYTES)
+        .spawn(move || {
+            super::with_decode_stack(crate::SEMA_STACK_BUDGET, || {
+                let mut r = Reader::new(&bytes, &files);
+                let e: crate::hir::Expr = Codec::dec(&mut r);
+                // Dropped here, on the large stack.
+                drop(e);
+                r.done()
+            })
         })
+        .expect("test thread")
         .join()
-        .expect("the decode returns")
-    };
-    assert!(decodes(super::MAX_DEPTH));
-    assert!(!decodes(super::MAX_DEPTH + 1));
+        .expect("the decode returns");
+    assert!(done);
+}
+
+/// HIR nested far deeper than an ordinary thread's stack holds is a failed decode there, not a
+/// stack overflow.
+#[test]
+fn hir_nested_deeper_than_the_stack_holds_is_a_failed_decode() {
+    let (bytes, files) = nested_casts(20_000);
+    let done = std::thread::spawn(move || {
+        let mut r = Reader::new(&bytes, &files);
+        let e: crate::hir::Expr = Codec::dec(&mut r);
+        // What came back is as deep as the decode got: left to the process, not dropped on
+        // this stack.
+        std::mem::forget(e);
+        r.done()
+    })
+    .join()
+    .expect("the decode returns");
+    assert!(!done);
 }
