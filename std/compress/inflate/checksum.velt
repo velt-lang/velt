@@ -45,8 +45,8 @@ export function crc32(crc: u32, bytes: u8[], start: i64, end: i64): u32 {
  * `fold` compiled for PCLMULQDQ: its carry-less multiplications are the bare instruction, with
  * no check of the CPU around each.
  */
+@targetFeature("clmul-x86")
 function foldX86(c: u64, bytes: u8[], start: i64, end: i64): u64 {
-  targetFeature("clmul-x86");
   return fold(c, bytes, start, end);
 }
 

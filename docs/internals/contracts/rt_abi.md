@@ -628,14 +628,14 @@ constant; with an FMA level (`x86-64-v3`) `velt_math_fma_f64` is one instruction
 
 LLVM gives a function that calls one of these operations the extension's own feature (`+sha2`,
 `+sha`, `+pclmul`, `+aes`), which it uses for nothing else; a *gated* function (VIR
-`Function::target`, HIR `Program::cpu_targets`, from std's `targetFeature("sha-arm" | "sha-x86" |
-"clmul-x86" | "clmul-arm" | "aes-x86" | "aes-arm" | "fma-x86" | "bf16-arm")`, every call of which
-sema keeps behind the check) gets the extension's whole set (`+sha,+ssse3,+sse4.1` on x86), and
-the check of
-its own extension (`velt_simd_has_<ext>`) is the constant `1` there, so the emulation behind it is
-dead code. The ordinary functions it calls that check that extension (the `velt/simd` methods),
-themselves or through their callees, are cloned for it by `velt_opt` with the check `true`, so this
-holds whether or not they would be inlined. A gated function is never inlined into an ordinary one
+`Function::target`, HIR `Program::cpu_targets`, from the decorator `@targetFeature("sha-arm" |
+"sha-x86" | "clmul-x86" | "clmul-arm" | "aes-x86" | "aes-arm" | "fma-x86" | "bf16-arm")` in any
+module, every call of which sema keeps behind the check) gets the extension's whole set
+(`+sha,+ssse3,+sse4.1` on x86), and the check of its own extension (`velt_simd_has_<ext>`) is the
+constant `1` there, so the emulation behind it is dead code. The ordinary functions it calls that
+check that extension (the `velt/simd` methods), themselves or through their callees, are cloned for
+it by `velt_opt` with the check `true`, so this holds whether or not they would be inlined. A gated
+function is never inlined into an ordinary one
 or one gated on another target (`velt_opt`, and `noinline` on the call for LLVM); ordinary code may
 be inlined into a gated function.
 

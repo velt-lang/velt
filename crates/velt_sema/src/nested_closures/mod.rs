@@ -35,6 +35,7 @@ use velt_syntax::ast::{self, ExprKind as E, ItemKind as I, StmtKind as S};
 use crate::SourceModule;
 
 mod graph;
+mod reports;
 pub(crate) mod scan;
 
 use graph::{cycle, sccs, topo};
@@ -140,6 +141,8 @@ struct Cand {
     /// an enclosing function or class (module docs)? It becomes a closure constant though it
     /// captures nothing.
     encloses: bool,
+    /// The span of its first decorator: a closure constant takes none.
+    decorated: Option<Span>,
 }
 
 /// The entry of `locals` standing for class `name` declared in an enclosing function (no
@@ -315,6 +318,7 @@ impl Rw {
                 name: f.sig.name.clone(),
                 free,
                 encloses,
+                decorated: f.sig.decorators.first().map(|d| d.span),
             });
         }
         // Those capturing a local, then those using one of those (a closure constant).
@@ -343,6 +347,13 @@ impl Rw {
         let idx: Vec<usize> = (0..cands.len()).filter(|&i| conv[i]).collect();
         if idx.is_empty() {
             return vec![];
+        }
+        // A decorator would be dropped with the declaration (`@targetFeature` would gate nothing,
+        // without a word): refused instead.
+        for &a in &idx {
+            if let Some(span) = cands[a].decorated {
+                self.report_decorated(&cands[a], span);
+            }
         }
         // Uses between them: `edges[a]` holds the candidates `a` uses.
         let uses_of = |a: usize| -> Vec<usize> {
@@ -525,50 +536,6 @@ impl Rw {
             }
         }
         idx.iter().map(|&a| cands[a].name.name.clone()).collect()
-    }
-
-    fn report_recursion(
-        &mut self,
-        cands: &[Cand],
-        a: usize,
-        path: &[usize],
-        (why, fix): &(String, String),
-    ) {
-        let c = &cands[a];
-        let through = match path {
-            [] => String::new(),
-            p => format!(
-                " through {}",
-                p.iter()
-                    .map(|&b| format!("`{}`", cands[b].name.name))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-        };
-        self.diags.push(
-            Diagnostic::error(
-                format!(
-                    "`{}` uses local variables of the enclosing function and calls itself{through}: not supported yet",
-                    c.name.name
-                ),
-                c.name.span,
-            )
-            .with_note(why.clone())
-            .with_note(fix.clone()),
-        );
-    }
-
-    fn report_early_use(&mut self, c: &Cand, var: &str) {
-        self.diags.push(
-            Diagnostic::error(
-                format!(
-                    "`{}` is used before `{var}`, a local it uses, is declared: not supported yet",
-                    c.name.name
-                ),
-                c.name.span,
-            )
-            .with_note("JS allows this when the function runs after `{var}` is set; declare `{var}` before the first use of the function".replace("{var}", var)),
-        );
     }
 
     fn stmt(&mut self, s: &mut ast::Stmt, locals: &FxHashSet<String>) {
