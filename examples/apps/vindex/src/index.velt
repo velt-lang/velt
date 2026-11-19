@@ -11,7 +11,7 @@
 // to every worker; each worker makes its own `Searcher`, which owns the scratch buffers.
 import * as fs from "velt/fs";
 import { MappedFile } from "velt/fs";
-import { dotF32, dotF32Bytes, dotI8Bytes, getF32s, normalize, quantize } from "./kernels";
+import { dotF32, dotI8Bytes, normalize, quantize } from "./kernels";
 import { HEADER, openVectors, readAt, readMeta, rowPos, u32At } from "./store";
 import { fanFor, makeRouter, route } from "./router";
 import type { Router } from "./router";
@@ -36,13 +36,10 @@ export type Index = {
 
 export async function openIndex(dir: string, mapped: bool = true): Promise<Index> {
   const m = readMeta(dir);
-  const d = m.dim as usize;
-  const bytes: u8[] = Buffer.alloc((m.nlist * m.dim * 4) as usize);
-  const cfd = fs.openSync(`${dir}/centroids.f32`, "r");
-  readAt(cfd, bytes, m.nlist * m.dim * 4, 0);
-  fs.closeSync(cfd);
   const centroids: f32[] = new Array<f32>((m.nlist * m.dim) as number).fill(0);
-  getF32s(bytes, 0, (m.nlist as usize) * d, centroids, 0);
+  const cfd = fs.openSync(`${dir}/centroids.f32`, "r");
+  readAt(cfd, centroids, m.nlist * m.dim * 4, 0);
+  fs.closeSync(cfd);
   const listMap = mapped ? MappedFile.open(`${dir}/lists.bin`) : null;
   const rowMap = mapped ? MappedFile.open(`${dir}/vectors.f32`) : null;
   // Lists are read front to back, rows one at a time.
@@ -95,7 +92,7 @@ export class Searcher {
   q: f32[];
   qc: u8[];
   buf: u8[] = Buffer.alloc(1 << 20);
-  row: u8[];
+  row: f32[];
   probes: TopK = new TopK(1);
   near: TopK = new TopK(1);
   /// Records scanned by the last search.
@@ -105,7 +102,7 @@ export class Searcher {
     this.ix = ix;
     this.q = new Array<f32>(ix.dim as number).fill(0);
     this.qc = Buffer.alloc(ix.dim as usize);
-    this.row = Buffer.alloc((ix.dim * 4) as usize);
+    this.row = new Array<f32>(ix.dim as number).fill(0);
   }
 
   /// The `k` rows nearest to the `dim` floats of `queries` at row `at`, best first.
@@ -170,21 +167,20 @@ export class Searcher {
     }
     // Rerank in row order: nearby rows share pages.
     const rows = cands.keys.clone();
-    rows.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    rows.sort((a, b) => a - b);
     if (prefetch) {
       for (const row of rows) {
         ix.rowMap?.advise("willneed", rowPos(ix.dim, row) as number, (ix.dim * 4) as number);
       }
     }
     const best = new TopK(o.k);
-    const all = ix.rows; // a local: see router.velt's `route`
     for (const row of rows) {
       let s: f32;
       if (ix.mapped) {
-        s = dotF32(all, (row as usize) * d, this.q, 0, d);
+        s = dotF32(ix.rows, (row as usize) * d, this.q, 0, d);
       } else {
         readAt(ix.vectors, this.row, ix.dim * 4, rowPos(ix.dim, row));
-        s = dotF32Bytes(this.row, 0, this.q, 0, d);
+        s = dotF32(this.row, 0, this.q, 0, d);
       }
       if (s > best.floor()) {
         best.push(row, s);
