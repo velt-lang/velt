@@ -160,3 +160,47 @@ fn a_checked_program_s_hir_comes_back_as_it_was() {
             .expect("round trip")
     });
 }
+
+/// An expression nested `levels` deep (casts of a literal), encoded. Built, encoded and dropped
+/// on a thread with sema's stack: the tests below measure the decoder alone.
+fn nested_casts(levels: u32) -> (Vec<u8>, Vec<velt_common::FileId>) {
+    use crate::hir::{Expr, ExprKind, Lit};
+    let build = move || {
+        let expr = |kind| Expr {
+            kind,
+            ty: TyId(0),
+            span: velt_common::Span::DUMMY,
+        };
+        let mut e = expr(ExprKind::Lit(Lit::Int(1)));
+        for _ in 0..levels {
+            e = expr(ExprKind::Cast(Box::new(e)));
+        }
+        let mut w = Writer::new();
+        e.enc(&mut w);
+        w.finish()
+    };
+    std::thread::Builder::new()
+        .stack_size(crate::SEMA_STACK_BYTES)
+        .spawn(build)
+        .expect("test thread")
+        .join()
+        .expect("encoded")
+}
+
+/// HIR nested as deep as the decoder allows decodes on an ordinary thread's stack, and one level
+/// deeper is a failed decode there, not a stack overflow.
+#[test]
+fn hir_nested_to_the_limit_decodes_on_an_ordinary_thread() {
+    let decodes = |levels: u32| {
+        let (bytes, files) = nested_casts(levels);
+        std::thread::spawn(move || {
+            let mut r = Reader::new(&bytes, &files);
+            let _: crate::hir::Expr = Codec::dec(&mut r);
+            r.done()
+        })
+        .join()
+        .expect("the decode returns")
+    };
+    assert!(decodes(super::MAX_DEPTH));
+    assert!(!decodes(super::MAX_DEPTH + 1));
+}
