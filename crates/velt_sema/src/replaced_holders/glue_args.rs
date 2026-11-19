@@ -68,6 +68,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::AnyUnboundMethod
         | I::Identity
         | I::ToAny
+        | I::SpreadParam
         | I::AnyReflectInfo
         | I::AnyReflectCount
         | I::AnyReflectName

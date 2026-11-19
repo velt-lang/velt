@@ -160,6 +160,13 @@ pub enum Intrinsic {
     /// last part that has it (an optional field only while present, as JavaScript copies only
     /// the keys an object has).
     SpreadObject,
+    /// `(value: borrow A) -> U[]`: a spread of `value`, of a type parameter `A` bounded by an
+    /// array type, into a call's rest parameter of `U[]` (`f(...args)` with `args: A`,
+    /// #943), `U` a dynamic type (`unknown`, `any`). Lowering expands it per instantiation: a
+    /// tuple `A` is its elements in order, each converted to `U`; an array `A` is its elements
+    /// converted the same way; `[]` is an empty array. An element that cannot be converted
+    /// (it holds a lock) is a diagnostic at the instantiation. Additive.
+    SpreadParam,
     /// `(object: borrow T, key: borrow K) -> T[K]` in a generic body (`source[key]` with
     /// `K extends keyof T`, #350): at every instantiation `K` is one key of the object type `T`
     /// (sema checks it), and lowering reads that field, shared, as `object.<key>` would.

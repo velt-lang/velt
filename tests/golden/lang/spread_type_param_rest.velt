@@ -1,0 +1,42 @@
+// A value of a type parameter bounded by an array type, spread into a call's rest parameter of
+// `unknown` (#943): `g(...args)` with `args: A`. What `A` is is known per instantiation: a
+// tuple gives its elements in order, an array its elements, the empty tuple nothing; it is
+// evaluated once, before the arguments after it. Node prints the same.
+function show(...xs: unknown[]): string {
+  return xs.length + ": " + xs.map((x: unknown): string => typeof x + " " + String(x)).join(", ");
+}
+
+function viaParam<A extends unknown[]>(args: A): string {
+  return show("first", ...args, "last");
+}
+
+let calls = 0;
+function counted(): string {
+  calls++;
+  return "call " + calls;
+}
+
+function ordered<A extends unknown[]>(args: A): string {
+  return show(...args, counted(), ...args);
+}
+
+function before<A extends unknown[]>(args: A, after: () => string): string {
+  return show(...args, after());
+}
+
+function callback<A extends unknown[], R>(f: (...xs: unknown[]) => R): (...args: A) => R {
+  return (...args) => f(...args);
+}
+
+console.log(viaParam<[number, string, boolean]>([1, "two", true]));
+console.log(viaParam<[number, string]>([3, "four"]));
+console.log(viaParam<number[]>([5, 6, 7]));
+console.log(viaParam<[]>([]));
+console.log(ordered<[string]>(["a"]), calls);
+const nums: number[] = [1, 2];
+console.log(before<number[]>(nums, (): string => {
+  nums.push(3);
+  return "pushed";
+}), nums.length);
+const joined = callback<[number, number], string>((...xs: unknown[]): string => show(...xs));
+console.log(joined(8, 9));

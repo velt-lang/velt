@@ -220,6 +220,7 @@ mod spread_args;
 mod spread_array;
 mod spread_cond;
 mod spread_optional;
+mod spread_param;
 pub(crate) mod static_copy;
 mod struct_lit_removed;
 mod structured_clone;

@@ -1,0 +1,39 @@
+// sigx's `serverFn` shape (#379): two overloads whose results take a rest typed by a type
+// parameter, `(...args: A) => Promise<R>` with `A` inferred from a callback, and
+// `[S] extends [void] ? [] : [S]` from an options object's handler, over one implementation
+// that returns `(...args: unknown[]) => Promise<unknown>`. The signature converts that result
+// through a wrapper that spreads its `A` into the implementation's rest (#943) and checks
+// the result when it settles. Node prints the same.
+interface Ctx {
+  id: string;
+}
+
+interface Options<S, R> {
+  name: string;
+  handler(rq: Ctx, input: S): R | Promise<R>;
+}
+
+function serverFn<A extends unknown[], R>(impl: (rq: Ctx, ...args: A) => R): (...args: A) => Promise<R>;
+function serverFn<S = void, R = unknown>(
+  options: Options<S, R>,
+): (...args: [S] extends [void] ? [] : [S]) => Promise<R>;
+function serverFn(
+  arg: ((rq: Ctx, ...args: unknown[]) => unknown) | Options<unknown, unknown>,
+): (...args: unknown[]) => Promise<unknown> {
+  if (typeof arg === "function") {
+    return async (...args: unknown[]): Promise<unknown> => arg({ id: "direct" }, ...args);
+  }
+  return async (...args: unknown[]): Promise<unknown> => await arg.handler({ id: arg.name }, args[0]);
+}
+
+async function main(): Promise<void> {
+  const add = serverFn((rq: Ctx, a: number, b: number): number => a + b);
+  console.log(await add(1, 2));
+  const greet = serverFn((rq: Ctx, who: string): string => rq.id + " " + who);
+  console.log(await greet("ann"));
+  const double = serverFn({ name: "double", handler: (rq: Ctx, n: number): number => n * 2 });
+  console.log(await double(21));
+  const ping = serverFn({ name: "ping", handler: (rq: Ctx): string => rq.id + " pong" });
+  console.log(await ping());
+}
+main();

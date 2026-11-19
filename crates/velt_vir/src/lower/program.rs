@@ -47,6 +47,7 @@ impl<'h> Cx<'h> {
             unavailable: vec![],
             unreduced: vec![],
             rest_closures: Default::default(),
+            spread_errors: vec![],
             c_clashes: vec![],
             c_symbols: Default::default(),
             c_globals: Default::default(),
