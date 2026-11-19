@@ -27,7 +27,7 @@ pub mod spell;
 use velt_common::{FileId, Span};
 
 use crate::ctx::Ctx;
-use crate::defs::{DefInfo, FnSource};
+use crate::defs::DefInfo;
 use crate::hir::{AdtKind, DefId};
 
 /// The name a generated module uses for a type it cannot import: `__qualified<"<module path>",
@@ -275,10 +275,7 @@ impl Ctx<'_> {
     /// The generator spec of a generated function.
     pub(crate) fn generator_of(&self, d: DefId) -> Option<&velt_syntax::ast::GeneratorSpec> {
         match self.info.get(d.0 as usize)? {
-            DefInfo::Fn(f) => match f.source {
-                Some(FnSource::Decl(decl)) => decl.sig.generator.as_ref(),
-                _ => None,
-            },
+            DefInfo::Fn(f) => f.generator.as_ref(),
             _ => None,
         }
     }

@@ -27,6 +27,8 @@ pub(crate) fn check_definitions(cx: &mut Ctx) {
         crate::body::check_bodies(cx);
     });
     cx.freeze_defs();
+    #[cfg(test)]
+    codec::hook::std_unit(cx);
     crate::timings::pass("units: app", || {
         crate::script_tdz::check(cx);
         let from = crate::collect::collect_app(cx, &app);
