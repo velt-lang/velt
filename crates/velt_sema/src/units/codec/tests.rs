@@ -172,3 +172,76 @@ fn an_unknown_tag_is_a_failed_decode() {
     assert_eq!(Shape::dec(&mut r), Shape::Dot);
     assert!(!r.done());
 }
+
+/// A value that nests: a list of itself.
+#[derive(Debug, PartialEq, Default)]
+struct Nest(Vec<Nest>);
+
+tuples! {
+    Nest(a)
+}
+
+/// How many `Nest`s `n` is made of.
+fn nests(n: &Nest) -> usize {
+    1 + n.0.iter().map(nests).sum::<usize>()
+}
+
+/// Nested lists that each state as many elements as there are bytes left, of which only the
+/// first exists: what is decoded stays in proportion to the input (no list is filled with
+/// stand-ins once the value is known to be damaged), and so does what is reserved for it.
+#[test]
+fn stated_lengths_of_a_damaged_value_are_not_filled_in() {
+    const LEN: usize = 4000;
+    const LEVELS: usize = 500;
+    let mut bytes = vec![];
+    for _ in 0..LEVELS {
+        // The bytes left after this length, as a two-byte varint.
+        let n = LEN - bytes.len() - 2;
+        bytes.push((n & 0x7f) as u8 | 0x80);
+        bytes.push((n >> 7) as u8);
+    }
+    bytes.resize(LEN, 0);
+    let mut r = Reader::bare(&bytes, &[]);
+    let v = Nest::dec(&mut r);
+    assert!(!r.done());
+    assert!(nests(&v) <= LEN, "{} values from {LEN} bytes", nests(&v));
+    // The allowance for capacity is in proportion to the input, and is not exceeded.
+    let mut r = Reader::bare(&bytes, &[]);
+    let allowed = LEN * RESERVE_PER_BYTE + 4096;
+    let mut reserved = 0;
+    for _ in 0..LEVELS {
+        reserved += r.capacity::<[u64; 64]>(LEN) * 512;
+    }
+    assert!(
+        reserved <= allowed,
+        "{reserved} bytes reserved, {allowed} allowed"
+    );
+    assert_eq!(
+        r.capacity::<u8>(1),
+        1,
+        "what is left of the allowance is given"
+    );
+}
+
+/// A value nested deeper than [`MAX_DEPTH`] is a failed decode that stops at the limit, on an
+/// ordinary thread's stack; one at the limit decodes.
+#[test]
+fn a_value_nested_past_the_limit_stops_there() {
+    let limit = MAX_DEPTH as usize;
+    let decode = move |levels: usize| {
+        // One element per level; the innermost list is empty.
+        let mut bytes = vec![1u8; levels - 1];
+        bytes.push(0);
+        std::thread::spawn(move || {
+            let mut r = Reader::bare(&bytes, &[]);
+            let v = Nest::dec(&mut r);
+            (r.done(), nests(&v))
+        })
+        .join()
+        .expect("the decode returns")
+    };
+    assert_eq!(decode(limit), (true, limit));
+    let (done, n) = decode(limit + 40);
+    assert!(!done);
+    assert!(n <= limit + 1, "{n} levels decoded past a limit of {limit}");
+}

@@ -35,9 +35,14 @@ use std::rc::Rc;
 use rustc_hash::FxHashMap;
 use velt_common::FileId;
 
-/// How deeply decoded values may nest: far more than a checked program's (an expression nests
-/// as its source does, and the parser stops at 256 levels), so only a damaged value reaches it.
-const MAX_DEPTH: u32 = 1 << 14;
+/// How deeply decoded values may nest (boxes and containers): more than a checked program's
+/// (an expression nests as its source does, and the parser stops at 256 levels), and few enough
+/// that a damaged value reaching it has not used up an ordinary thread's stack.
+const MAX_DEPTH: u32 = 1 << 10;
+
+/// How many bytes of capacity a reader's containers may reserve before their elements are
+/// read, per byte of input (and a little for a short input): past it they grow as they fill.
+const RESERVE_PER_BYTE: usize = 16;
 
 pub(crate) struct Writer {
     out: Vec<u8>,
@@ -129,6 +134,8 @@ pub(crate) struct Reader<'a> {
     /// The session's id of each file of the unit's table.
     files: &'a [FileId],
     depth: u32,
+    /// The bytes of capacity containers may still reserve up front ([`Reader::capacity`]).
+    reserve_left: usize,
     /// The value is damaged: everything read from here on is zeros.
     failed: bool,
     /// The AST fragments the values refer to, decoded into their arena on first use
@@ -240,10 +247,25 @@ impl<'a> Reader<'a> {
             pos: 0,
             files,
             depth: 0,
+            reserve_left: bytes.len().saturating_mul(RESERVE_PER_BYTE) + 4096,
             failed: false,
             frags: None,
             src: None,
         }
+    }
+
+    /// The capacity a container of `n` elements of `T` reserves before reading them: `n`
+    /// while the reader's allowance lasts, then 0 (it grows as it fills). A length is only
+    /// known to be at most the bytes left, and nested containers each state one, so
+    /// reserving every stated length would take memory growing with the square of a damaged
+    /// input; the allowance keeps it in proportion to the input.
+    pub(crate) fn capacity<T>(&mut self, n: usize) -> usize {
+        let bytes = n.saturating_mul(std::mem::size_of::<T>().max(1));
+        if bytes > self.reserve_left {
+            return 0;
+        }
+        self.reserve_left -= bytes;
+        n
     }
 
     /// A reader of what [`Writer::finish`] wrote: its values may not borrow AST nodes.
