@@ -1,11 +1,17 @@
-//! EXPERIMENT (#2943 M2): a vector whose slots may be empty until first read ([`Slots::set`]
-//! through a shared reference), for `DefTable`'s entries decoded on demand. Unlike a
-//! `Vec<OnceCell<T>>` it is covariant in `T` (a `DefTable<DefInfo<'m>>` is one for a shorter
-//! `'m`, as a `Vec` is): the slots are behind a raw pointer, not an `UnsafeCell`.
+//! A vector whose slots may be empty until first read ([`Slots::set`] through a shared
+//! reference), for `DefTable`'s entries decoded on demand. Unlike a `Vec<OnceCell<T>>` it is
+//! covariant in `T` (a `DefTable<DefInfo<'m>>` is one for a shorter `'m`, as a `Vec` is): the
+//! slots are behind a raw pointer, not an `UnsafeCell`.
 //!
 //! Sound because a slot is written once, while empty, and no reference to an empty slot is
 //! ever made; a filled slot is only read through `&self` and written through `&mut self`. Not
 //! `Send` or `Sync` (the raw pointer), like the checker's context that holds it.
+//!
+//! Covariance is why filling a slot is `unsafe`: through a `Slots<DefInfo<'short>>` that is
+//! really a `Slots<DefInfo<'long>>`, a safe `set` could store a value that borrows for `'short`
+//! where the owner reads it for `'long`. [`Slots::set`]'s caller promises the value is valid for
+//! the type the slots were made with; the one caller is a table's own decoder, whose values
+//! borrow the unit's arena, which outlives the table.
 
 use std::cell::Cell;
 use std::marker::PhantomData;
@@ -16,9 +22,12 @@ pub(crate) struct Slots<T> {
     ptr: NonNull<MaybeUninit<T>>,
     len: usize,
     cap: usize,
-    /// How many leading slots are filled for sure: `len` when every slot is (no flags), else 0.
-    /// A read of a table built in memory is then one comparison, as a `Vec`'s bounds check is.
-    quick: usize,
+    /// How many leading slots are filled for sure: `len` when every slot is (no flags, or every
+    /// flag set), else 0. A read of a table built in memory, or of one decoded whole, is then
+    /// one comparison, as a `Vec`'s bounds check is.
+    quick: Cell<usize>,
+    /// How many slots are filled (with flags: when it reaches `len`, `quick` does too).
+    filled: Cell<usize>,
     /// Frees the slots: a field of a type without `T`, so that, as with a `Vec`, a `T` that
     /// borrows (`DefInfo<'m>`) need not outlive the table (a `Drop` for `Slots<T>` would need
     /// `may_dangle`, which stable Rust doesn't have). Declared before `ready`, which it reads:
@@ -81,7 +90,11 @@ impl<T> Slots<T> {
             ptr,
             len,
             cap,
-            quick: if ready.is_empty() { len } else { 0 },
+            quick: Cell::new(if ready.iter().all(Cell::get) { len } else { 0 }),
+            filled: Cell::new(match ready.is_empty() {
+                true => len,
+                false => ready.iter().filter(|r| r.get()).count(),
+            }),
             ready,
             free,
             _owns: PhantomData,
@@ -121,7 +134,7 @@ impl<T> Slots<T> {
     /// Slot `i`, when it is filled (panics past the end).
     #[inline]
     pub(crate) fn get(&self, i: usize) -> Option<&T> {
-        if i < self.quick {
+        if i < self.quick.get() {
             // SAFETY: in bounds (`quick <= len`), and the slots below `quick` are filled.
             return Some(unsafe { (*self.ptr.as_ptr().add(i)).assume_init_ref() });
         }
@@ -137,7 +150,12 @@ impl<T> Slots<T> {
     }
 
     /// Fill empty slot `i` (a filled one is left as it is).
-    pub(crate) fn set(&self, i: usize, x: T) {
+    ///
+    /// # Safety
+    ///
+    /// `x` is valid for the type these slots were made with, which may outlive the `T` this call
+    /// sees (the slots are covariant: module docs). A table's own decoder makes such values.
+    pub(crate) unsafe fn set(&self, i: usize, x: T) {
         assert!(i < self.len, "ICE: definition {i} past the table's end");
         if self.filled(i) {
             return;
@@ -146,6 +164,10 @@ impl<T> Slots<T> {
         // allocation's own (not derived from a shared reference).
         unsafe { self.ptr.as_ptr().add(i).write(MaybeUninit::new(x)) };
         self.ready[i].set(true);
+        self.filled.set(self.filled.get() + 1);
+        if self.filled.get() == self.len {
+            self.quick.set(self.len);
+        }
     }
 
     /// Slot `i` to write, when it is filled.
@@ -165,9 +187,12 @@ impl<T> Slots<T> {
         self.ptr = NonNull::new(v.as_mut_ptr()).unwrap_or(NonNull::dangling());
         (self.len, self.cap) = (v.len(), v.capacity());
         // The new slot is filled: with flags, it gets one; without, every slot still is.
-        match self.ready.is_empty() {
-            true => self.quick = self.len,
-            false => self.ready.push(Cell::new(true)),
+        if !self.ready.is_empty() {
+            self.ready.push(Cell::new(true));
+        }
+        self.filled.set(self.filled.get() + 1);
+        if self.filled.get() == self.len {
+            self.quick.set(self.len);
         }
         self.sync();
     }
@@ -231,8 +256,10 @@ mod tests {
     fn slots_fill_once_and_drop_only_what_was_filled() {
         let s: Slots<String> = Slots::empty(3);
         assert!(s.get(1).is_none());
-        s.set(1, "b".into());
-        s.set(1, "ignored".into());
+        // SAFETY: an owned `String` is valid for the slots' type.
+        unsafe { s.set(1, "b".into()) };
+        // SAFETY: an owned `String` is valid for the slots' type.
+        unsafe { s.set(1, "ignored".into()) };
         assert_eq!(s.get(1).map(String::as_str), Some("b"));
         let mut t = s.clone();
         t.push("d".into());
@@ -240,8 +267,10 @@ mod tests {
         assert_eq!(t.get(3).map(String::as_str), Some("d"));
         *t.get_mut(1).unwrap() = "B".into();
         assert_eq!(s.get(1).map(String::as_str), Some("b"));
-        t.set(0, "a".into());
-        t.set(2, "c".into());
+        // SAFETY: an owned `String` is valid for the slots' type.
+        unsafe { t.set(0, "a".into()) };
+        // SAFETY: an owned `String` is valid for the slots' type.
+        unsafe { t.set(2, "c".into()) };
         assert_eq!(t.into_vec(), ["a", "B", "c", "d"]);
     }
 
@@ -249,7 +278,8 @@ mod tests {
     fn slots_made_filled_keep_no_flags() {
         let mut s: Slots<String> = ["a", "b"].into_iter().map(String::from).collect();
         assert!(s.full());
-        s.set(0, "ignored".into());
+        // SAFETY: an owned `String` is valid for the slots' type.
+        unsafe { s.set(0, "ignored".into()) };
         s.push("c".into());
         assert!(s.full(), "a pushed slot is filled");
         *s.get_mut(1).unwrap() = "B".into();
