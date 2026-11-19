@@ -1,0 +1,10 @@
+// `process.exit` takes an `i32`: a `number` is not converted without saying how, in a program's
+// own code as in std's (Node throws for a code that is no integer).
+function code(): number {
+  return 2.7;
+}
+
+function main() {
+  const c: number = code();
+  process.exit(c);
+}
