@@ -169,6 +169,11 @@ export function schedFinish(code: i32): void {
   wk.settleWakes();
   // Streams dropped unclosed stay open to the end, as the runtime's: their buffers go now.
   tb.releaseBuffers();
+  if (wk.counting()) {
+    // The block counters see what module state holds as freed (velt_rt entry.rs `finish` then
+    // drops the function properties and statics); otherwise it is kept to the end, as in Node.
+    mod.dropAtExit();
+  }
   st.report();
 }
 
@@ -421,6 +426,18 @@ export function schedModuleBlock(desc: usize): usize {
 /** `velt_rt_module_ready`: the block's slots below `n` are initialized. */
 export function schedModuleReady(state: usize, n: u64): void {
   mod.ready(state, n);
+}
+
+/**
+ * The end of a program whose synchronous `main` reached no task, with exit code `code`: no
+ * `schedFinish` runs (the executor never started), so at a normal end with the debug counters on
+ * the blocks of module state go here, as the runtime's drop at exit did; else they are kept to
+ * the end, as in Node.
+ */
+export function schedModuleExit(code: i32): void {
+  if (code === 0 && ex.counting()) {
+    mod.dropAtExit();
+  }
 }
 
 /** `velt_rt_latch_new`: a closed latch. */

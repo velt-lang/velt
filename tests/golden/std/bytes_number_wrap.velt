@@ -1,0 +1,49 @@
+// A number given to a byte array's `fill` becomes the byte ECMAScript's ToUint8 makes of it, as in
+// a `Uint8Array`: the integer part modulo 2^8 (256 is 0, -1 is 255, 300.7 is 44), and 0 for `NaN`
+// and the infinities. `indexOf`, `lastIndexOf` and `includes` compare strictly, as a `Uint8Array`'s
+// do: a number that isn't a byte finds nothing (Node's `Buffer` would search it `& 255`). Literals
+// out of 0..255 are numbers too (#3182). Expected output is Node's, with `Uint8Array`s.
+
+function main() {
+  const vals: number[] = [
+    256,
+    -1,
+    300.7,
+    -129,
+    1e10,
+    NaN,
+    Infinity,
+    -Infinity,
+    0.5,
+    -0.5,
+    255.9,
+    2 ** 32 + 7,
+    -(2 ** 31) - 1,
+  ];
+  for (const v of vals) {
+    const b = Buffer.alloc(2);
+    b.fill(v);
+    const hay: u8[] = [0, 1, 7, 44, 127, 255];
+    console.log(
+      v,
+      "fill",
+      b[0],
+      "indexOf",
+      hay.indexOf(v),
+      "lastIndexOf",
+      hay.lastIndexOf(v),
+      "includes",
+      hay.includes(v),
+    );
+  }
+  const b = Buffer.alloc(3);
+  b.fill(256);
+  console.log(b.join(","));
+  b.fill(-1, 1);
+  console.log(b.join(","), b.indexOf(-1), b.includes(511), b.lastIndexOf(0));
+  const x: u8 = 7;
+  b.fill(x);
+  console.log(b.join(","), b.indexOf(x));
+}
+
+main();

@@ -13,7 +13,7 @@ pub(super) struct Dominators {
 
 impl Dominators {
     /// Dominators of the graph with successor lists `succs` and entry block 0.
-    pub fn new(succs: &[Vec<u32>], preds: &[Vec<u32>]) -> Dominators {
+    pub fn new<S: AsRef<[u32]>>(succs: &[S], preds: &[S]) -> Dominators {
         let order = reverse_postorder(succs);
         let n = succs.len();
         let mut rank = vec![u32::MAX; n];
@@ -27,7 +27,7 @@ impl Dominators {
             changed = false;
             for &b in order.iter().skip(1) {
                 let mut new: Option<u32> = None;
-                for &p in &preds[b as usize] {
+                for &p in preds[b as usize].as_ref() {
                     if idom[p as usize].is_none() {
                         continue;
                     }
@@ -68,7 +68,7 @@ fn intersect(idom: &[Option<u32>], rank: &[u32], mut a: u32, mut b: u32) -> u32 
 }
 
 /// Reachable blocks in reverse postorder of a depth-first search from block 0.
-fn reverse_postorder(succs: &[Vec<u32>]) -> Vec<u32> {
+fn reverse_postorder<S: AsRef<[u32]>>(succs: &[S]) -> Vec<u32> {
     let mut seen = vec![false; succs.len()];
     let mut post = Vec::with_capacity(succs.len());
     // (block, index of the next successor to visit)
@@ -76,7 +76,7 @@ fn reverse_postorder(succs: &[Vec<u32>]) -> Vec<u32> {
     seen[0] = true;
     while let Some(top) = stack.last_mut() {
         let (b, i) = *top;
-        match succs[b as usize].get(i) {
+        match succs[b as usize].as_ref().get(i) {
             Some(&s) => {
                 top.1 += 1;
                 if !std::mem::replace(&mut seen[s as usize], true) {
@@ -97,7 +97,7 @@ fn reverse_postorder(succs: &[Vec<u32>]) -> Vec<u32> {
 /// interval that contains nothing.
 fn intervals(idom: &[Option<u32>]) -> Vec<(u32, u32)> {
     let n = idom.len();
-    let mut children = vec![vec![]; n];
+    let mut children: Vec<smallvec::SmallVec<[u32; 2]>> = vec![smallvec::SmallVec::new(); n];
     for (b, d) in idom.iter().enumerate().skip(1) {
         if let Some(d) = d {
             children[*d as usize].push(b as u32);

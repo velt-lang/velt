@@ -457,6 +457,7 @@ const SCHED_HOOKS: &[&str] = &[
     velt_common::std_hook!(sched_module_state),
     velt_common::std_hook!(sched_module_block),
     velt_common::std_hook!(sched_module_ready),
+    velt_common::std_hook!(sched_module_exit),
     velt_common::std_hook!(sched_task_id),
 ];
 

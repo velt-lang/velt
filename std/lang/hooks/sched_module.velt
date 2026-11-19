@@ -6,55 +6,23 @@
 // over to the tasks. So a task's code between two `await`s runs alone with respect to every other
 // task that uses module state, as in Node, on whichever worker it runs.
 //
-// The blocks themselves stay the runtime's: worker 0 asks it (`velt_rt_module_state`, which
-// allocates and initializes a block on first use and keeps the runtime's own lock on worker 0's
-// thread for good, as with one worker), and each block's address and how many of its slots are
-// initialized are kept here (`velt_rt_module_ready` routes here too), by descriptor: normally one;
-// code `velt dev` swaps in with a state of its own brings another (velt_rt module_state.rs
-// `BLOCKS`), while code still running from before keeps the old one. Other workers never call
-// the runtime's entries, which would wait for that lock for ever; a slot read before its
-// initializer ran is reported here as the runtime does.
-//
-// The block of code swapped in with a state of its own is made by the runtime when worker 0
-// reaches it first; another worker reaching it first makes it here (`make`), as the runtime does,
-// without telling the runtime (which then never drops it at exit).
+// The blocks are module_blocks.velt's, reached with the lock held (or before any worker runs):
+// made by the thread that reaches one first, and dropped at a normal end with the debug counters
+// on (`dropAtExit`), as the runtime's were (#2196 9c).
 //
 // Gap: a program giving a declared function properties through `any` takes the runtime's lock
-// around a `Mutex` (`velt_rt_module_with`), which waits for ever off worker 0.
+// around a `Mutex` (`velt_rt_module_with`), and the runtime's function properties take it too
+// (velt_rt fn_props.rs), which would wait for ever off worker 0: such a program's tasks stay on
+// worker 0 (sched_spread.velt `stay`), until those move here too.
 
-import { Ptr } from "velt/ffi";
-import { addressLoad, atomicAddress, noInline } from "velt/lang/intrinsics";
-import { addressCall } from "velt/lang/intrinsics/future";
+import { atomicAddress, noInline } from "velt/lang/intrinsics";
 import * as r from "#reactor";
+import * as mb from "./module_blocks";
 import * as m from "./sched_mem";
 import * as t from "./sched_task";
 
-declare c("c") function velt_rt_module_state$rt(desc: Ptr<u8>, slot: u64): Ptr<u8>;
-declare c("c") function velt_rt_module_block$rt(desc: Ptr<u8>): Ptr<u8>;
-declare c("c") function velt_rt_module_ready$rt(state: Ptr<u8>, n: u64): void;
-declare function velt_rt_write_str(stream: u32, s: string);
-
 /** The lock: 0 free, 1 held, 2 held with threads waiting. */
 const LOCK = new Atomic<u32>(0);
-/**
- * The block last reached: its descriptor, its address, and the slots initialized (0 until worker
- * 0 asked). Changed with the lock held, or before any worker runs.
- */
-const DESC = new Atomic<u64>(0);
-const BLOCK = new Atomic<u64>(0);
-const READY = new Atomic<u64>(0);
-
-/**
- * Every block reached (`velt dev` brings one per state layout): `TABLE` holds `COUNT` entries of
- * `ENTRY` bytes (descriptor, block, slots initialized), room for `CAP`; from the C library, as
- * this code runs below module state. Only touched with the lock held, or before any worker runs.
- */
-const TABLE = new Atomic<u64>(0);
-const COUNT = new Atomic<u64>(0);
-const CAP = new Atomic<u64>(0);
-const ENTRY: usize = 24;
-/** A descriptor no program has (`DESC` while a block is initialized before it has an entry). */
-const NO_DESC: u64 = 0xffff_ffff_ffff_ffff;
 
 /** How this thread holds the lock: not, for its task's poll, outside a task. */
 const NOT_HELD: u32 = 0;
@@ -64,223 +32,50 @@ const HELD = new ThreadLocal<u32>(0);
 
 /** `velt_rt_module_state`: the block, to reach slot `slot` of the program's descriptor `desc`. */
 export function state(desc: usize, slot: u64): usize {
-  const e = t.here();
-  if (e === 0) {
-    // No worker runs yet (the program's start): the runtime's, on this thread alone.
-    return remember(desc, m.addr(unsafeState(desc, slot)));
-  }
   if (HELD.get() === NOT_HELD) {
-    take(e);
+    take(t.here());
   }
-  if (DESC.load("acquire") as usize === desc && slot < READY.load("acquire")) {
-    return BLOCK.load("relaxed") as usize;
-  }
-  return slow(e, desc, slot);
+  return mb.state(desc, slot);
 }
 
 /** `velt_rt_module_block`: the block without the slot check (the root file's `main`). */
 export function block(desc: usize): usize {
-  const e = t.here();
-  if (e !== 0 && HELD.get() === NOT_HELD) {
-    take(e);
+  if (HELD.get() === NOT_HELD) {
+    take(t.here());
   }
-  if (DESC.load("acquire") as usize === desc) {
-    return BLOCK.load("relaxed") as usize;
-  }
-  const at = entryOf(desc);
-  if (at !== 0) {
-    return use(at);
-  }
-  // SAFETY: `desc` is the program's module descriptor (the compiler's static).
-  return remember(desc, m.addr(unsafe { velt_rt_module_block$rt(m.ptr(desc)) }));
+  return mb.block(desc);
 }
 
 /** `velt_rt_module_ready`: the slots of `state` below `n` are initialized. */
 export function ready(state: usize, n: u64): void {
-  const at = entryOfBlock(state);
-  if (at !== 0) {
-    m.st(at + 16, n as usize);
-    DESC.store(m.ld(at) as u64, "relaxed");
-  } else {
-    // A block the runtime is initializing before `remember` has its entry: no descriptor is
-    // paired with it in the fast paths until then.
-    DESC.store(NO_DESC, "relaxed");
-  }
-  BLOCK.store(state as u64, "relaxed");
-  READY.store(n, "release");
-  // SAFETY: `state` is the block being initialized, as the runtime's entry wants it.
-  unsafe {
-    velt_rt_module_ready$rt(m.ptr(state), n);
-  }
-}
-
-function unsafeState(desc: usize, slot: u64): Ptr<u8> {
-  // SAFETY: `desc` is the program's module descriptor (the compiler's static).
-  return unsafe { velt_rt_module_state$rt(m.ptr(desc), slot) };
-}
-
-/** Keeps `p` as `desc`'s block, the one reached now: the address. */
-function remember(desc: usize, p: usize): usize {
-  let at = entryOf(desc);
-  if (at === 0) {
-    // The runtime initialized the block before it answered, through `ready`, which kept its
-    // count as the block reached then.
-    const done = BLOCK.load("relaxed") as usize === p ? READY.load("relaxed") as usize : 0;
-    at = addEntry(desc, p, done);
-  }
-  if (m.ld(at + 8) !== p) {
-    // A block the runtime made again for `desc` (never so far): its slots start over.
-    m.st(at + 8, p);
-    m.st(at + 16, 0);
-  }
-  return use(at);
-}
-
-/** Makes entry `at` the block reached now (`DESC`, `BLOCK`, `READY`): its address. */
-function use(at: usize): usize {
-  const p = m.ld(at + 8);
-  BLOCK.store(p as u64, "relaxed");
-  READY.store(m.ld(at + 16) as u64, "relaxed");
-  DESC.store(m.ld(at) as u64, "release");
-  return p;
-}
-
-/** The entry of descriptor `desc`, or 0. */
-function entryOf(desc: usize): usize {
-  const table = TABLE.load("relaxed") as usize;
-  const n = COUNT.load("relaxed") as usize;
-  for (let i: usize = 0; i < n; i++) {
-    if (m.ld(table + i * ENTRY) === desc) {
-      return table + i * ENTRY;
-    }
-  }
-  return 0;
-}
-
-/** The entry of block `p`, or 0. */
-function entryOfBlock(p: usize): usize {
-  const table = TABLE.load("relaxed") as usize;
-  const n = COUNT.load("relaxed") as usize;
-  for (let i: usize = 0; i < n; i++) {
-    if (m.ld(table + i * ENTRY + 8) === p) {
-      return table + i * ENTRY;
-    }
-  }
-  return 0;
-}
-
-/** A new entry for `desc`'s block `p`, its slots below `done` initialized: its address. */
-function addEntry(desc: usize, p: usize, done: usize): usize {
-  let table = TABLE.load("relaxed") as usize;
-  const n = COUNT.load("relaxed") as usize;
-  const cap = CAP.load("relaxed") as usize;
-  if (n === cap) {
-    // Room for twice as many; the old table goes, as nothing holds an entry across the lock.
-    const more = cap === 0 ? 4 : cap * 2;
-    const bigger = m.lastingZeroed(more * ENTRY);
-    if (n !== 0) {
-      m.copy(bigger, table, n * ENTRY);
-      m.lastingRelease(table);
-    }
-    table = bigger;
-    TABLE.store(table as u64, "relaxed");
-    CAP.store(more as u64, "relaxed");
-  }
-  const at = table + n * ENTRY;
-  m.st(at, desc);
-  m.st(at + 8, p);
-  m.st(at + 16, done);
-  COUNT.store((n + 1) as u64, "relaxed");
-  return at;
+  mb.ready(state, n);
 }
 
 /**
- * Not cached yet, or slot `slot` not initialized: worker 0 asks the runtime; another worker makes
- * a block nobody made yet (`make`) and reports a slot not initialized.
+ * The program ends normally with the debug counters on (sched.velt `schedFinish`): the blocks go
+ * (module_blocks.velt `dropAll`). The lock stays held: a task still running waits instead of
+ * reaching freed state.
  */
-@noInline
-function slow(e: usize, desc: usize, slot: u64): usize {
-  const at = entryOf(desc);
-  if (at !== 0 && slot < (m.ld(at + 16) as u64)) {
-    return use(at);
+export function dropAtExit(): void {
+  if (HELD.get() === NOT_HELD) {
+    lock();
+    HELD.set(OUTSIDE);
   }
-  if (e === m.ld(e + t.E_MAIN) || DESC.load("acquire") === 0) {
-    return remember(desc, m.addr(unsafeState(desc, slot)));
-  }
-  if (at === 0) {
-    return make(desc, slot);
-  }
-  notReady(desc, slot);
+  mb.dropAll();
 }
-
-/** The module descriptor's fields (velt_rt `ModuleDesc`): size, alignment, `init`, `rest`. */
-const DESC_SIZE: usize = 0;
-const DESC_ALIGN: usize = 8;
-const DESC_INIT: usize = 16;
-const DESC_REST: usize = 40;
 
 /**
- * The block of `desc`, which no thread made yet, made off worker 0 (code `velt dev` swapped in
- * with a state of its own, reached first from another worker), as the runtime makes it: zeroed,
- * its entry added before the initializers run (they read the slots written before them, and each
- * calls `ready`), then `init` and, since this block is never the first, `rest` (the root file's
- * slots, whose `main` doesn't run again). Then slot `slot` is read as any other.
+ * Takes the lock for worker `e`'s task being polled (touched from now on), or outside a task: on
+ * a worker between polls, or on a thread no worker runs on (`e` 0: the program's start, whose
+ * initializers may start the executor, until it hands over; a C library's thread, which waits
+ * for the tasks as the runtime's lock made it).
  */
-function make(desc: usize, slot: u64): usize {
-  const size = m.ld(desc + DESC_SIZE);
-  if (m.ld(desc + DESC_ALIGN) > 16) {
-    // Not from `lastingZeroed` (16): no module state is aligned to more so far.
-    notReady(desc, slot);
-  }
-  const p = m.lastingZeroed(size === 0 ? 1 : size);
-  use(addEntry(desc, p, 0));
-  // SAFETY: the descriptor's `init` and `rest` take the block they initialize; `p` is a zeroed
-  // block of its size and alignment.
-  unsafe {
-    addressCall(m.ld(desc + DESC_INIT), p);
-    const rest = m.ld(desc + DESC_REST);
-    if (rest !== 0) {
-      addressCall(rest, p);
-    }
-  }
-  const at = entryOf(desc);
-  if (at === 0 || slot >= (m.ld(at + 16) as u64)) {
-    notReady(desc, slot);
-  }
-  return use(at);
-}
-
-/** A slot read before its initializer ran: the runtime's uncaught `ReferenceError`. */
-function notReady(desc: usize, slot: u64): never {
-  // The descriptor's slot names (NUL-terminated, in slot order) are at offset 32.
-  let at = m.ld(desc + 32);
-  let name = "";
-  if (at !== 0) {
-    for (let i: u64 = 0; i < slot; i++) {
-      while (byte(at) !== 0) {
-        at++;
-      }
-      at++;
-    }
-    // Names are identifiers: ASCII, or code points written as `?` here.
-    while (byte(at) !== 0) {
-      const b = byte(at);
-      name += b < 128 ? String.fromCharCode(b as number) : "?";
-      at++;
-    }
-  }
-  velt_rt_write_str(2, `Uncaught ReferenceError: Cannot access '${name}' before initialization\n`);
-  process.exit(1);
-}
-
-function byte(a: usize): u8 {
-  // SAFETY: inside the descriptor's names, a static string.
-  return unsafe { addressLoad<u8>(a) };
-}
-
-/** Takes the lock for worker `e`'s task being polled (touched from now on), or outside a task. */
 function take(e: usize): void {
   lock();
+  if (e === 0) {
+    HELD.set(OUTSIDE);
+    return;
+  }
   const k = m.ld(e + t.E_CURRENT);
   if (k !== 0) {
     t.flags(k, t.TOUCHED, 0);

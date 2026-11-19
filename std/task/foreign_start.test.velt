@@ -1,0 +1,85 @@
+// velt/task (tests): a promise started on a thread that is no worker (a C library's thread:
+// std/lang/hooks/sched_foreign.velt `start`). It becomes a promise of a new task of worker 0,
+// which polls it for the first time later; its owner on the other thread may be gone by then.
+// It is not abandoned: the task will run it (#3175).
+import { describe, expect, it } from "velt/test";
+import { Ptr, export as cExport } from "velt/ffi";
+import {
+  addressAtomicLoad,
+  addressAtomicStore,
+  exportedAddress,
+  rawAlloc,
+  rawFree,
+} from "velt/lang/intrinsics";
+import * as th from "#sched-thread";
+import * as m from "velt/lang/hooks/sched_mem";
+
+// Sets the word at `at` after a timer: the promise suspends on a leaf that holds its waker.
+async function later(at: usize, value: u64): Promise<void> {
+  // timing: the timer is the leaf whose waker keeps the promise alive; its length means nothing.
+  await sleep(5);
+  // SAFETY: `at` is a live word the test owns until it has read both.
+  unsafe {
+    addressAtomicStore<u64>(at, value, "seqcst");
+  }
+}
+
+// Sets its word at once after a yield: it suspends holding only a microtask's place.
+async function soon(at: usize, value: u64): Promise<void> {
+  await yieldNow();
+  // SAFETY: as `later`.
+  unsafe {
+    addressAtomicStore<u64>(at, value, "seqcst");
+  }
+}
+
+// Waits on a promise nobody settles: dropped unpolled, it is given up after its first run.
+async function stuck(): Promise<void> {
+  await new Promise<void>((resolve) => {});
+}
+
+// The thread's function reaches no module state (an `@export` can't): the words are its argument.
+// It keeps each promise in a variable without awaiting it, and returns: both handles are dropped
+// here, usually before worker 0 has polled either.
+@cExport("std_test_foreign_start")
+function foreignThread(arg: Ptr<u8> | null): Ptr<u8> | null {
+  const at = m.addr(arg);
+  const a = later(at, 7);
+  const b = soon(at + 8, 9);
+  const c = stuck();
+  return null;
+}
+
+describe("a promise started on a thread that is no worker", () => {
+  it("runs to its end though its owner dropped it before its first poll", async () => {
+    if (!th.SUPPORTED) {
+      return;
+    }
+    for (let round = 0; round < 20; round++) {
+      const at = rawAlloc(16);
+      // SAFETY: two words the test just allocated.
+      unsafe {
+        addressAtomicStore<u64>(at, 0, "seqcst");
+        addressAtomicStore<u64>(at + 8, 0, "seqcst");
+      }
+      // SAFETY: `foreignThread` has the C signature of a thread's start routine.
+      expect(th.startDetached(unsafe { exportedAddress(foreignThread) }, at)).toBe(true);
+      let first: u64 = 0;
+      let second: u64 = 0;
+      // timing: a bound on a wait for another thread's work, not a delay the test relies on.
+      for (let i = 0; i < 400 && (first === 0 || second === 0); i++) {
+        await sleep(5);
+        // SAFETY: the words are live until freed below.
+        first = unsafe { addressAtomicLoad<u64>(at, "seqcst") };
+        // SAFETY: the words are live until freed below.
+        second = unsafe { addressAtomicLoad<u64>(at + 8, "seqcst") };
+      }
+      expect(first).toBe(7);
+      expect(second).toBe(9);
+      // SAFETY: both promises have written; nothing uses the words any more.
+      unsafe {
+        rawFree(at, 16);
+      }
+    }
+  });
+});

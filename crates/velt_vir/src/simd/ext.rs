@@ -1,6 +1,7 @@
 //! The CPU extensions beyond the 128-bit baseline that some SIMD operations use (#1330): the SHA
 //! instructions, carry-less multiplication and the AES rounds (#2401), and the instructions of
-//! each; and x86's FMA, which std's `pow` is compiled for where the CPU has it (#1676).
+//! each; x86's FMA, which std's `pow` is compiled for where the CPU has it (#1676); and Arm's bf16
+//! dot product, which `bf16x8.dotAddFast` is where the CPU has it (#3129).
 
 /// A CPU extension beyond the 128-bit baseline that some operations use (#1330).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -24,11 +25,14 @@ pub enum Ext {
     /// but `MathOp::FmaF64` is one `vfmadd` in a function gated on it (std's `pow`). Every arm64
     /// CPU has FMA, so it needs no extension there.
     FmaX86,
+    /// Arm's bf16 instructions (FEAT_BF16, LLVM's `bf16`): `bfdot`, which `bf16x8.dotAddFast`
+    /// is where the CPU has it (#3129).
+    Bf16Arm,
 }
 
 impl Ext {
     /// Every extension.
-    pub const ALL: [Ext; 7] = [
+    pub const ALL: [Ext; 8] = [
         Ext::ShaArm,
         Ext::ShaX86,
         Ext::ClmulX86,
@@ -36,10 +40,11 @@ impl Ext {
         Ext::AesX86,
         Ext::AesArm,
         Ext::FmaX86,
+        Ext::Bf16Arm,
     ];
 
     /// The name `targetFeature` takes: `sha-arm`, `sha-x86`, `clmul-x86`, `clmul-arm`,
-    /// `aes-x86`, `aes-arm`, `fma-x86`.
+    /// `aes-x86`, `aes-arm`, `fma-x86`, `bf16-arm`.
     pub fn name(self) -> &'static str {
         match self {
             Ext::ShaArm => "sha-arm",
@@ -49,6 +54,7 @@ impl Ext {
             Ext::AesX86 => "aes-x86",
             Ext::AesArm => "aes-arm",
             Ext::FmaX86 => "fma-x86",
+            Ext::Bf16Arm => "bf16-arm",
         }
     }
 
@@ -62,12 +68,12 @@ impl Ext {
             )
     }
 
-    /// Whether the runtime keeps a flag byte for it ([`Ext::flag_symbol`]). The AES extensions
-    /// and FMA have none (no new runtime code, #2241): their check is true only where the build
-    /// guarantees them, and std computes the run-time answer in Velt (std/simd/aes.velt,
-    /// std/lang/math/fma_check.velt).
+    /// Whether the runtime keeps a flag byte for it ([`Ext::flag_symbol`]). The AES extensions,
+    /// FMA and bf16 have none (no new runtime code, #2241): their check is true only where the
+    /// build guarantees them, and std computes the run-time answer in Velt (std/simd/aes.velt,
+    /// std/lang/math/fma_check.velt, std/simd/bf16_check.velt).
     pub fn has_flag(self) -> bool {
-        !matches!(self, Ext::AesX86 | Ext::AesArm | Ext::FmaX86)
+        !matches!(self, Ext::AesX86 | Ext::AesArm | Ext::FmaX86 | Ext::Bf16Arm)
     }
 
     /// The extension `targetFeature(name)` names.
@@ -84,7 +90,7 @@ impl Ext {
             Ext::ShaX86 => "velt_cpu_sha_x86",
             Ext::ClmulX86 => "velt_cpu_clmul_x86",
             Ext::ClmulArm => "velt_cpu_clmul_arm",
-            Ext::AesX86 | Ext::AesArm | Ext::FmaX86 => "",
+            Ext::AesX86 | Ext::AesArm | Ext::FmaX86 | Ext::Bf16Arm => "",
         }
     }
 
@@ -97,7 +103,7 @@ impl Ext {
     /// Whether its instructions exist on an architecture (`aarch64`, `x86_64`, …).
     pub fn on_arch(self, arch: &str) -> bool {
         match self {
-            Ext::ShaArm | Ext::ClmulArm | Ext::AesArm => arch == "aarch64",
+            Ext::ShaArm | Ext::ClmulArm | Ext::AesArm | Ext::Bf16Arm => arch == "aarch64",
             Ext::ShaX86 | Ext::ClmulX86 | Ext::AesX86 | Ext::FmaX86 => arch == "x86_64",
         }
     }
@@ -113,6 +119,7 @@ impl Ext {
             Ext::ClmulArm | Ext::AesArm => "+aes",
             Ext::AesX86 => "+aes",
             Ext::FmaX86 => "+fma",
+            Ext::Bf16Arm => "+bf16",
         }
     }
 
@@ -126,6 +133,7 @@ impl Ext {
             Ext::ClmulArm | Ext::AesArm => "+aes",
             Ext::AesX86 => "+aes,+pclmul,+ssse3,+sse4.1",
             Ext::FmaX86 => "+fma,+avx,+ssse3,+sse4.1",
+            Ext::Bf16Arm => "+bf16",
         }
     }
 }
@@ -201,11 +209,14 @@ pub enum ExtOp {
     Aesmc,
     /// ARM `AESIMC (a)`: InvMixColumns.
     AesimcArm,
+    /// ARM `BFDOT (acc: f32x4, a: bf16x8, b: bf16x8) -> f32x4`: lane `k` of `acc` plus the
+    /// products of lanes `2k` and `2k + 1` of `a` and `b`, as the instruction rounds them.
+    Bfdot,
 }
 
 impl ExtOp {
     /// Every operation (with each immediate of `Sha1Rnds4`).
-    pub const ALL: [ExtOp; 38] = [
+    pub const ALL: [ExtOp; 39] = [
         ExtOp::Sha1C,
         ExtOp::Sha1P,
         ExtOp::Sha1M,
@@ -244,6 +255,7 @@ impl ExtOp {
         ExtOp::Aesd,
         ExtOp::Aesmc,
         ExtOp::AesimcArm,
+        ExtOp::Bfdot,
     ];
 
     /// The extension it belongs to.
@@ -268,6 +280,7 @@ impl ExtOp {
             | ExtOp::AesimcX86
             | ExtOp::Aeskeygenassist => Ext::AesX86,
             ExtOp::Aese | ExtOp::Aesd | ExtOp::Aesmc | ExtOp::AesimcArm => Ext::AesArm,
+            ExtOp::Bfdot => Ext::Bf16Arm,
             _ => Ext::ShaX86,
         }
     }
@@ -315,17 +328,19 @@ impl ExtOp {
             ExtOp::Aesd => "aesd",
             ExtOp::Aesmc => "aesmc",
             ExtOp::AesimcArm => "aesimc_arm",
+            ExtOp::Bfdot => "bfdot",
             ExtOp::Sha1Rnds4(_) | ExtOp::Pclmulqdq(_) | ExtOp::Pmull(_) => {
                 panic!("ICE: {self:?} is not an instruction")
             }
         }
     }
 
-    /// The vector type whose symbols it is among: `u32x4` (SHA), `u64x2` (carry-less) or
-    /// `u8x16` (AES).
+    /// The vector type whose symbols it is among: `u32x4` (SHA), `u64x2` (carry-less), `u8x16`
+    /// (AES) or `f32x4` (`bfdot`, by its result).
     pub fn type_name(self) -> &'static str {
         match self {
             ExtOp::Pclmulqdq(_) | ExtOp::Pmull(_) => "u64x2",
+            ExtOp::Bfdot => "f32x4",
             _ if matches!(self.ext(), Ext::AesX86 | Ext::AesArm) => "u8x16",
             _ => "u32x4",
         }
@@ -340,7 +355,8 @@ impl ExtOp {
             | ExtOp::Sha256H
             | ExtOp::Sha256H2
             | ExtOp::Sha256Su1
-            | ExtOp::Sha256Rnds2 => 3,
+            | ExtOp::Sha256Rnds2
+            | ExtOp::Bfdot => 3,
             _ => 2,
         }
     }

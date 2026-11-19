@@ -24,6 +24,14 @@ const SIZE: usize = 32;
 /** Test objects made and not yet freed, on every thread. */
 const LIVE = new Atomic<i64>(0);
 
+/** Calls of `traceObj`, on every thread. */
+const TRACED = new Atomic<u64>(0);
+
+/** Calls of `traceObj` so far. */
+export function traced(): u64 {
+  return TRACED.load();
+}
+
 export function live(): i64 {
   return LIVE.load();
 }
@@ -99,6 +107,7 @@ function destroy(o: usize): void {
 
 /** An object's trace glue. */
 export function traceObj(obj: usize, visit: usize, ctx: usize): void {
+  TRACED.add(1);
   for (let i: usize = 0; i < 3; i++) {
     const f = field(obj, i);
     if (f !== 0) {

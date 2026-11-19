@@ -382,7 +382,7 @@ impl SimdCall {
             return Ext::named(&ext.replace('_', "-")).map(SimdCall::Has);
         }
         let (ty, op) = rest.split_once('_')?;
-        if matches!(ty, "u32x4" | "u64x2" | "u8x16") {
+        if matches!(ty, "u32x4" | "u64x2" | "u8x16" | "f32x4") {
             let inst = ExtOp::ALL
                 .into_iter()
                 .find(|o| o.name() == op && o.type_name() == ty);

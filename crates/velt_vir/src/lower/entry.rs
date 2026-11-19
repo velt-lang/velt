@@ -77,7 +77,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 None => cint(0, Ty::I32),
             }
         } else {
-            lw.call_main(def, None)
+            let code = lw.call_main(def, None);
+            // No task, so no `sched_finish`: module state that went through the executor's
+            // hooks is dropped at a counted normal end here.
+            lw.sched_module_exit(&code);
+            code
         };
         lw.terminate(Terminator::Return(code));
         lw.scopes.clear();

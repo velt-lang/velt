@@ -1,0 +1,101 @@
+// check: no leaks
+// In a nested `read`, a copy given to a call that changes none of its other arguments is
+// stored in none of them, so it stays the reader's (#2002): whatever made the receiver (a
+// closure, a function of the program, a variable of the caller's), and for a function or a
+// method of the program that only reads. A method that stores its argument keeps it.
+
+class Item {
+  v: number[] = [1];
+  constructor(n: number) {
+    this.v = [n];
+  }
+}
+
+class Box {
+  items: number[][][] = [[[1]], [[2], [3]]];
+  objs: Item[] = [new Item(1), new Item(2), new Item(3)];
+}
+
+class Bag {
+  kept: Item[][] = [];
+  inner: Bag | null = null;
+  add(xs: Item[]): number {
+    this.kept.push(xs);
+    return this.kept.length;
+  }
+  addDeep(xs: Item[]): number {
+    this.inner!.kept.push(xs);
+    return this.inner!.kept[0].length;
+  }
+  count(xs: Item[]): number {
+    return this.kept.length + xs.length;
+  }
+}
+
+function big(q: Item): boolean {
+  return q.v[0] > 1;
+}
+
+function pick(a: Item[], b: Item[]): Item[] {
+  return a.length > 100 ? a : b;
+}
+
+function both(a: Item[], b: Item[]): Item[][] {
+  return [a, b];
+}
+
+function bag(): Bag {
+  const g = new Bag();
+  g.inner = new Bag();
+  return g;
+}
+
+function main() {
+  const a = new RwLock(new Box());
+  const b = new RwLock(new Box());
+  const keep: Item[] = [new Item(9)];
+  const mine = bag();
+  let n = 0;
+  for (let i = 0; i < 3; i++) {
+    a.read((x) => {
+      b.read((y) => {
+        const f = y.objs.filter((q) => q.v[0] > 1).concat(x.objs.slice());
+        const m = y.objs.map((q) => new Item(q.v[0] * 10)).concat(x.objs.slice());
+        const s = y.objs.toSorted((p, q) => q.v[0] - p.v[0]).concat(x.objs.slice());
+        const fm = y.items.filter((r) => r.length > 1).concat(x.items.slice());
+        const blk = y.objs
+          .filter((q) => {
+            const lim = y.objs.length - 1;
+            if (q.v[0] > lim) {
+              return true;
+            }
+            return false;
+          })
+          .concat(x.objs.slice());
+        const pf = y.objs.filter((q) => big(q)).concat(x.objs.slice());
+        const named = y.objs.filter(big).concat(x.objs.slice());
+        const cap = y.objs.filter((q) => q.v[0] > i).concat(x.objs.slice());
+        const out = y.objs.map((q) => keep[0]).concat(x.objs.slice());
+        const cx = y.objs.filter((q) => q.v[0] < x.objs.length).concat(x.objs.slice());
+        n += f.length + m.length + s.length + fm.length + blk.length;
+        n += pf.length + named.length + cap.length + out.length + cx.length;
+        // Functions and methods of the program.
+        const p = pick(y.objs.slice(), x.objs.slice());
+        const bb = both(y.objs.filter((q) => q.v[0] > 0), x.objs.slice());
+        n += p.length + p[0].v[0] + bb[1][2].v[0];
+        n += bag().count(x.objs.slice()) + mine.count(x.objs.slice());
+        n += bag().add(x.objs.slice()) + bag().addDeep(x.objs.slice());
+        const local = bag();
+        n += local.add(x.objs.slice()) + local.count(x.objs.slice()) + local.kept[0][1].v[0];
+        if (i === 0) {
+          console.log(JSON.stringify(f), JSON.stringify(m));
+          console.log(JSON.stringify(s), JSON.stringify(fm), JSON.stringify(blk));
+          console.log(pf.length, named.length, cap.length, out[0].v[0], cx.length);
+          console.log(JSON.stringify(p), JSON.stringify(bb));
+        }
+      });
+    });
+  }
+  console.log(n, keep[0].v[0], mine.kept.length);
+  console.log(a.read((x) => JSON.stringify(x.objs)), b.read((y) => JSON.stringify(y.items)));
+}

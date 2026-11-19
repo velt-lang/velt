@@ -375,6 +375,10 @@ with_weak_hooks! {
     sched_module_state => lang_hooks_sched, "schedModuleState", sig((usize, u64) -> usize), lowered;
     sched_module_block => lang_hooks_sched, "schedModuleBlock", sig((usize) -> usize), lowered;
     sched_module_ready => lang_hooks_sched, "schedModuleReady", sig((usize, u64) -> void), lowered;
+    /// The end of `velt_main` with exit code `(code)` in a program whose synchronous `main`
+    /// reaches no task (no `sched_finish`): the blocks go at a normal end with the debug counters
+    /// on, as the runtime's did.
+    sched_module_exit => lang_hooks_sched, "schedModuleExit", sig((i32) -> void), lowered;
 
     // syntax.velt: what the parser writes some syntax as (velt_syntax `ast_names.rs`).
     /// `value satisfies T`.
