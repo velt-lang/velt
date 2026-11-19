@@ -164,7 +164,7 @@ impl Codec for Span {
         w.byte(1);
         w.file(self.file);
         w.uint(u64::from(self.lo));
-        w.uint(u64::from(self.hi.saturating_sub(self.lo)));
+        w.uint(u64::from(self.hi.wrapping_sub(self.lo)));
     }
     fn dec(r: &mut Reader) -> Self {
         match r.byte() {
@@ -173,7 +173,7 @@ impl Codec for Span {
                 let file = r.file();
                 let lo = r.u32();
                 let len = r.u32();
-                Span::new(file, lo, lo.saturating_add(len))
+                Span::new(file, lo, lo.wrapping_add(len))
             }
             _ => {
                 r.fail();

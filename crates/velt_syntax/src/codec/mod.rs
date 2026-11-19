@@ -45,6 +45,7 @@ pub fn encode_module(module: &ast::Module, file: FileId) -> Vec<u8> {
     let mut w = Writer {
         out: Vec::with_capacity(4096),
         file,
+        foreign: None,
     };
     w.out.extend_from_slice(FORMAT);
     module.enc(&mut w);
@@ -60,6 +61,7 @@ pub fn decode_module(bytes: &[u8], file: FileId) -> Option<ast::Module> {
             bytes: rest,
             pos: 0,
             file,
+            foreign: None,
             depth: 0,
             failed: false,
         };
@@ -70,25 +72,39 @@ pub fn decode_module(bytes: &[u8], file: FileId) -> Option<ast::Module> {
 
 /// One AST node encoded on its own, with its spans in file `file`: a declaration a checked unit
 /// keeps (#2943 M2), without the rest of its module. Starts with [`FORMAT`] like a module.
-pub fn encode_fragment<T: Fragment>(node: &T, file: FileId) -> Vec<u8> {
+///
+/// A span of the node in another file than `file` is stored as the number `foreign` gives that
+/// file (the caller's table of files: a file's id is only this session's).
+pub fn encode_fragment<T: Fragment>(
+    node: &T,
+    file: FileId,
+    foreign: &mut dyn FnMut(FileId) -> u32,
+) -> Vec<u8> {
     let mut w = Writer {
         out: Vec::with_capacity(256),
         file,
+        foreign: Some(foreign),
     };
     w.out.extend_from_slice(FORMAT);
     node.enc_fragment(&mut w);
     w.out
 }
 
-/// The node [`encode_fragment`] encoded, with its spans in file `file`; `None` when `bytes` is
-/// not a whole encoding of this [`FORMAT`].
-pub fn decode_fragment<T: Fragment + Send>(bytes: &[u8], file: FileId) -> Option<T> {
+/// The node [`encode_fragment`] encoded, with its spans in file `file` and those of another
+/// file in the file `foreign` has at the number stored for it; `None` when `bytes` is not a
+/// whole encoding of this [`FORMAT`] or names a file `foreign` lacks.
+pub fn decode_fragment<T: Fragment + Send>(
+    bytes: &[u8],
+    file: FileId,
+    foreign: &[FileId],
+) -> Option<T> {
     let rest = bytes.strip_prefix(FORMAT.as_slice())?;
     crate::on_parser_thread(|| {
         let mut r = Reader {
             bytes: rest,
             pos: 0,
             file,
+            foreign: Some(foreign),
             depth: 0,
             failed: false,
         };
@@ -136,13 +152,15 @@ fragments!(
 );
 
 #[doc(hidden)]
-pub struct Writer {
+pub struct Writer<'f> {
     out: Vec<u8>,
     /// The file the module was parsed from: its spans are stored without it.
     file: FileId,
+    /// The number a span's other file is stored as ([`encode_fragment`]); `None`: its id.
+    foreign: Option<&'f mut dyn FnMut(FileId) -> u32>,
 }
 
-impl Writer {
+impl Writer<'_> {
     fn byte(&mut self, b: u8) {
         self.out.push(b);
     }
@@ -161,6 +179,9 @@ pub struct Reader<'a> {
     bytes: &'a [u8],
     pos: usize,
     file: FileId,
+    /// The file each number of a span's other file stands for ([`decode_fragment`]); `None`:
+    /// the number is its id.
+    foreign: Option<&'a [FileId]>,
     depth: u32,
     /// The value is damaged: everything read from here on is zeros.
     failed: bool,
@@ -440,7 +461,11 @@ impl Codec for Span {
         w.uint((u64::from(self.lo) << 2) | tag);
         w.uint(u64::from(self.hi.wrapping_sub(self.lo)));
         if tag == SPAN_FOREIGN {
-            w.uint(u64::from(self.file.0));
+            let n = match &mut w.foreign {
+                Some(number) => number(self.file),
+                None => self.file.0,
+            };
+            w.uint(u64::from(n));
         }
     }
     #[inline(always)]
@@ -456,7 +481,17 @@ impl Codec for Span {
         let lo = (first >> 2) as u32;
         let hi = lo.wrapping_add(r.u32());
         let file = if tag == SPAN_FOREIGN {
-            FileId(r.u32())
+            let n = r.u32();
+            match r.foreign {
+                None => FileId(n),
+                Some(files) => match files.get(n as usize) {
+                    Some(&f) => f,
+                    None => {
+                        r.fail();
+                        r.file
+                    }
+                },
+            }
         } else {
             r.file
         };
