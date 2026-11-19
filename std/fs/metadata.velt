@@ -18,19 +18,18 @@ import { checkPathArg } from "velt/fs/path_arg";
 
 /** Metadata of `path`, following symlinks. */
 export async function stat(path: string): Promise<Stats> {
-  checkPathArg(path);
   return await statPath(path, true);
 }
 
 /** Metadata of `path` itself: a symlink is described, not followed. */
 export async function lstat(path: string): Promise<Stats> {
-  checkPathArg(path);
   return await statPath(path, false);
 }
 
 /** The target of the symlink `path`, as stored in the link (`EINVAL` if it is not a link). */
 export async function readlink(path: string): Promise<string> {
-  checkPathArg(path);
+  // Node's `fs.promises.readlink` names its argument `oldPath` (its `readlinkSync`, `path`).
+  checkPathArg(path, "oldPath");
   return unwrapIo(await velt_rt_fs_readlink(path));
 }
 
@@ -57,13 +56,11 @@ export async function symlink(target: string, path: string): Promise<void> {
 
 /** `stat`, blocking the calling thread. */
 export function statSync(path: string): Stats {
-  checkPathArg(path);
   return statPathSync(path, true);
 }
 
 /** `lstat`, blocking the calling thread. */
 export function lstatSync(path: string): Stats {
-  checkPathArg(path);
   return statPathSync(path, false);
 }
 

@@ -19,9 +19,19 @@ export function checkPathArg(path: string, name: string = "path") {
   }
 }
 
+/**
+ * Node's `ERR_INVALID_ARG_VALUE`: an `IoError` that prints as Node's does,
+ * `TypeError [ERR_INVALID_ARG_VALUE]: <message>`.
+ */
+class ArgError extends IoError {
+  toString(): string {
+    return `${this.name} [${this.code}]: ${this.message}`;
+  }
+}
+
 @noInline
 function nulInPath(path: string, name: string): IoError {
-  const e = new IoError(
+  const e = new ArgError(
     "ERR_INVALID_ARG_VALUE",
     `The argument '${name}' must be a string, Uint8Array, or URL without null bytes. Received ${inspectText(path)}`,
   );

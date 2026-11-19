@@ -86,11 +86,11 @@ export async function velt_rt_fs_copy_file(from: string, to: string): Promise<Io
 
 // Whole files: Velt code over the C library or Win32 (`#fs-whole`), the async forms on the
 // blocking pool. The path is checked on the calling thread, so the work on the pool only
-// returns: a 0 in it is Node's `ERR_INVALID_ARG_VALUE` (velt/fs/path_arg.velt), which velt/fs's public
-// functions have thrown already; this is the same check for any other caller.
+// returns: a 0 in it is Node's `ERR_INVALID_ARG_VALUE` (velt/fs/path_arg.velt), thrown here and
+// nowhere before for these functions (std/fs/rt.velt checks the same for WebAssembly builds).
 
 /** `path` as C bytes (its UTF-8 and a 0); Node's `ERR_INVALID_ARG_VALUE` if it holds a 0. */
-function cOf(path: string, call: string): u8[] {
+function cOf(path: string): u8[] {
   checkPathArg(path);
   return bytesOf(path);
 }
@@ -101,40 +101,40 @@ function bytesOf(path: string): u8[] {
 }
 
 export function readTextSync(path: string): string {
-  return take(wholeText(cOf(path, "open"), path));
+  return take(wholeText(cOf(path), path));
 }
 
 export async function readText(path: string): Promise<string> {
-  const c = cOf(path, "open");
+  const c = cOf(path);
   return take(await hookCall<Done<string>>("sched_blocking_run", () => wholeText(c, path)));
 }
 
 export function readBytesSync(path: string): u8[] {
-  return take(wholeBytes(cOf(path, "open"), path));
+  return take(wholeBytes(cOf(path), path));
 }
 
 export async function readBytes(path: string): Promise<u8[]> {
-  const c = cOf(path, "open");
+  const c = cOf(path);
   return take(await hookCall<Done<u8[]>>("sched_blocking_run", () => wholeBytes(c, path)));
 }
 
 /** Writes `data` (truncating, or `append`ing), creating the file if missing. */
 export function writeSync(path: string, data: string, append: bool) {
-  take(writeText(cOf(path, "open"), path, data, append));
+  take(writeText(cOf(path), path, data, append));
 }
 
 export async function write(path: string, data: string, append: bool): Promise<void> {
-  const c = cOf(path, "open");
+  const c = cOf(path);
   take(await hookCall<Done<bool>>("sched_blocking_run", () => writeText(c, path, data, append)));
 }
 
 /** `stat` (`follow`) or `lstat`. */
 export function statSync(path: string, follow: bool): Stats {
-  return take(statOf(cOf(path, follow ? "stat" : "lstat"), path, follow));
+  return take(statOf(cOf(path), path, follow));
 }
 
 export async function stat(path: string, follow: bool): Promise<Stats> {
-  const c = cOf(path, follow ? "stat" : "lstat");
+  const c = cOf(path);
   return take(await hookCall<Done<Stats>>("sched_blocking_run", () => statOf(c, path, follow)));
 }
 
@@ -142,41 +142,41 @@ export async function stat(path: string, follow: bool): Promise<Stats> {
 
 /** The names in the directory `path`, sorted. */
 export function readDirSync(path: string): string[] {
-  return take(list(cOf(path, "scandir"), path));
+  return take(list(cOf(path), path));
 }
 
 export async function readDir(path: string): Promise<string[]> {
-  const c = cOf(path, "scandir");
+  const c = cOf(path);
   return take(await hookCall<Done<string[]>>("sched_blocking_run", () => list(c, path)));
 }
 
 /** The entries of the directory `path` with their types, sorted by name. */
 export function readDirEntriesSync(path: string): Dirent[] {
-  return take(listTyped(cOf(path, "scandir"), path));
+  return take(listTyped(cOf(path), path));
 }
 
 export async function readDirEntries(path: string): Promise<Dirent[]> {
-  const c = cOf(path, "scandir");
+  const c = cOf(path);
   return take(await hookCall<Done<Dirent[]>>("sched_blocking_run", () => listTyped(c, path)));
 }
 
 /** Makes the directory `path`, with `recursive` its missing parents too. */
 export function mkdirSync(path: string, recursive: bool) {
-  take(make(cOf(path, "mkdir"), path, recursive));
+  take(make(cOf(path), path, recursive));
 }
 
 export async function mkdir(path: string, recursive: bool): Promise<void> {
-  const c = cOf(path, "mkdir");
+  const c = cOf(path);
   take(await hookCall<Done<bool>>("sched_blocking_run", () => make(c, path, recursive)));
 }
 
 /** Removes a file, a link or an empty directory, with `recursive` a directory and its contents. */
 export function removeSync(path: string, recursive: bool) {
-  take(removeAt(cOf(path, "lstat"), path, recursive));
+  take(removeAt(cOf(path), path, recursive));
 }
 
 export async function remove(path: string, recursive: bool): Promise<void> {
-  const c = cOf(path, "lstat");
+  const c = cOf(path);
   take(await hookCall<Done<bool>>("sched_blocking_run", () => removeAt(c, path, recursive)));
 }
 

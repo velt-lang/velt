@@ -10,7 +10,6 @@ import {
   readDirEntriesSync as entriesAtSync,
   readDirSync as namesAtSync,
 } from "#fs-rt";
-import { checkPathArg } from "velt/fs/path_arg";
 
 /** The options of `mkdir`. */
 export type MkdirOptions = {
@@ -20,7 +19,6 @@ export type MkdirOptions = {
 
 /** Entry names (not paths), sorted. */
 export async function readDir(path: string): Promise<string[]> {
-  checkPathArg(path);
   return await namesAt(path);
 }
 
@@ -29,30 +27,25 @@ export async function readDir(path: string): Promise<string[]> {
  * Faster than `readDir` plus a `stat` per entry, since the listing carries the types.
  */
 export async function readDirEntries(path: string): Promise<Dirent[]> {
-  checkPathArg(path);
   return await entriesAt(path);
 }
 
 /** Creates the directory `path` (and with `recursive` its missing parents). */
 export async function mkdir(path: string, opts: MkdirOptions = {}): Promise<void> {
-  checkPathArg(path);
   await makeAt(path, opts.recursive ?? false);
 }
 
 /** `readDir`, blocking the calling thread. */
 export function readDirSync(path: string): string[] {
-  checkPathArg(path);
   return namesAtSync(path);
 }
 
 /** `readDirEntries`, blocking the calling thread. */
 export function readDirEntriesSync(path: string): Dirent[] {
-  checkPathArg(path);
   return entriesAtSync(path);
 }
 
 /** `mkdir`, blocking the calling thread. */
 export function mkdirSync(path: string, opts: MkdirOptions = {}) {
-  checkPathArg(path);
   makeAtSync(path, opts.recursive ?? false);
 }

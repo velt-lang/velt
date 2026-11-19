@@ -15,7 +15,7 @@ import { osError } from "velt/fs/errors";
 import { isDots, kindOf, nameOf } from "velt/fs/tree/find_data";
 import { byCodePoint } from "velt/fs/tree/order";
 import { Done } from "velt/fs/whole/done";
-import { winPath } from "velt/fs/whole/win_path";
+import { asFile, winPath } from "velt/fs/whole/win_path";
 import { pdqsort } from "velt/lang/sort/pdq";
 import { ioError } from "velt/native/error";
 import { IoStatus } from "velt/native/status";
@@ -292,35 +292,13 @@ export function make(c: readonly u8[], path: string, recursive: bool): Done<bool
 }
 
 /**
- * `path` without the separators it ends with when it names something that is no directory
- * (`file\`, `file/`), which Windows reads as the file, and Node's `rm` removes; else `path`
- * as it is (a root keeps its separator).
- */
-function withoutTrailing(path: string): string {
-  let end = path.length as i64;
-  while (end > 1 && isSep(path.charCodeAt(end - 1)) && path.charCodeAt(end - 2) !== 58) {
-    end--;
-  }
-  if (end === (path.length as i64)) {
-    return path;
-  }
-  const w = winPath(path);
-  if (w === null) {
-    return path;
-  }
-  // SAFETY: `w` is NUL-terminated.
-  const a = unsafe { GetFileAttributesW(w) };
-  const file = a !== INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY) === 0;
-  return file ? path.slice(0, end) : path;
-}
-
-/**
  * Removes what is at `path`: a file, a link (never what it points to) or an empty directory,
  * with `recursive` a directory and everything in it. The runtime's function, for now (see the
  * top of this file).
  */
 export function removeAt(c: readonly u8[], path: string, recursive: bool): Done<bool> {
-  const s = velt_rt_fs_remove_sync(withoutTrailing(path), recursive);
+  // A file named with separators after it is removed as the file, as Node's `rm` does.
+  const s = velt_rt_fs_remove_sync(asFile(path), recursive);
   if (s.code != 0) {
     return { value: null, error: ioError(s.code, s.message) };
   }

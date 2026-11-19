@@ -19,6 +19,7 @@ symlinkSync path TypeError ERR_INVALID_ARG_VALUE "The argument 'path' must be a 
 readlinkSync TypeError ERR_INVALID_ARG_VALUE "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received 'a\\x00b.txt'"
 realpathSync TypeError ERR_INVALID_ARG_VALUE "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received 'a\\x00b.txt'"
 openSync TypeError ERR_INVALID_ARG_VALUE "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received 'a\\x00b.txt'"
+openSync bad flags TypeError ERR_INVALID_ARG_VALUE "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received 'a\\x00b.txt'"
 unlinkSync TypeError ERR_INVALID_ARG_VALUE "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received 'a\\x00b.txt'"
 existsSync false false
 readFile TypeError ERR_INVALID_ARG_VALUE "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received 'a\\x00b.txt'"
@@ -28,6 +29,9 @@ readDir TypeError ERR_INVALID_ARG_VALUE "The argument 'path' must be a string, U
 mkdir TypeError ERR_INVALID_ARG_VALUE "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received 'a\\x00b.txt'"
 rm TypeError ERR_INVALID_ARG_VALUE "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received 'a\\x00b.txt'"
 rename TypeError ERR_INVALID_ARG_VALUE "The argument 'oldPath' must be a string, Uint8Array, or URL without null bytes. Received 'a\\x00b.txt'"
+readlink TypeError ERR_INVALID_ARG_VALUE "The argument 'oldPath' must be a string, Uint8Array, or URL without null bytes. Received 'a\\x00b.txt'"
 quotes TypeError ERR_INVALID_ARG_VALUE "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received \"it's\\x00\\t\\x7F\\\\\""
 both quotes TypeError ERR_INVALID_ARG_VALUE "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received `'\"\\x00`"
+TypeError [ERR_INVALID_ARG_VALUE]: The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received 'a\x00b.txt'
+instanceof IoError true
 all quotes TypeError ERR_INVALID_ARG_VALUE "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '\\'\"`\\x00\\ud800'"

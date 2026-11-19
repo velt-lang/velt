@@ -22,7 +22,6 @@ export type RemoveOptions = {
 
 /** Removes a file, symlink or empty directory (with `recursive`, a directory and its contents). */
 export async function remove(path: string, opts: RemoveOptions = {}): Promise<void> {
-  checkPathArg(path);
   await removeAt(path, opts.recursive ?? false);
 }
 
@@ -50,7 +49,6 @@ export async function exists(path: string): Promise<bool> {
 
 /** `remove`, blocking the calling thread. */
 export function removeSync(path: string, opts: RemoveOptions = {}) {
-  checkPathArg(path);
   removeAtSync(path, opts.recursive ?? false);
 }
 

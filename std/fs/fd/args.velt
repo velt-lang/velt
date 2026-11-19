@@ -49,7 +49,7 @@ function badDescriptor(fd: number): RangeError {
   return new RangeError(`The value of "fd" is out of range. It must be ${must}. Received ${fd}`);
 }
 
-/** `path` as a C string: its UTF-8 bytes and a 0 (Node's `TypeError` for a 0 inside it). */
+/** `path` as a C string: its UTF-8 bytes and a 0 (Node's `ERR_INVALID_ARG_VALUE` for a 0 inside it). */
 export function cPath(path: string): u8[] {
   checkPathArg(path);
   const c = utf8Encode(path);

@@ -65,6 +65,10 @@ async function main() {
   attempt("openSync", () => {
     fs.openSync(p, "r");
   });
+  // The path is checked before the flags, as Node checks it.
+  attempt("openSync bad flags", () => {
+    fs.openSync(p, "zz");
+  });
   attempt("unlinkSync", () => fs.unlinkSync(p));
   console.log("existsSync", fs.existsSync(p), await fs.exists(p));
   await attemptAsync("readFile", async () => {
@@ -80,6 +84,10 @@ async function main() {
   await attemptAsync("mkdir", async () => await fs.mkdir(p));
   await attemptAsync("rm", async () => await fs.rm(p));
   await attemptAsync("rename", async () => await fs.rename(p, "c"));
+  // Node's `fs.promises.readlink` names its argument `oldPath`.
+  await attemptAsync("readlink", async () => {
+    await fs.readlink(p);
+  });
   // The path as `util.inspect` shows it: escapes, and the quote it picks.
   attempt("quotes", () => {
     fs.statSync("it's\0\t\u{7f}\\");
@@ -87,6 +95,13 @@ async function main() {
   attempt("both quotes", () => {
     fs.statSync("'\"\0");
   });
+  // How it prints, and that it is an `IoError` (Velt's; Node's is a `TypeError`).
+  try {
+    fs.statSync(p);
+  } catch (e) {
+    console.log(String(e));
+    console.log("instanceof IoError", e instanceof IoError);
+  }
   attempt("all quotes", () => {
     fs.statSync("'\"`\0" + String.fromCharCode(0xd800));
   });
