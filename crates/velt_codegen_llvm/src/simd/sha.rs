@@ -36,8 +36,21 @@ pub(super) fn on_arch(arch: Arch, of: CpuArch) -> String {
 
 /// The CPU's feature word: one `i64` per program, defined by every object that reads or sets it
 /// (`linkonce_odr`, so the linker keeps one), written by std's start-up hook before any other
-/// Velt code runs (rt_abi.md "CPU check").
-const WORD: &str = "@velt_cpu_word = linkonce_odr hidden global i64 0, align 8";
+/// Velt code runs (rt_abi.md "CPU check"). In a COFF object it is in a comdat of its own
+/// ([`word_definition`]): a `linkonce_odr` global without one is a weak external there whose
+/// default is named after a symbol of its object, and link.exe refuses two objects' defaults
+/// (LNK1227).
+pub(crate) const WORD: &str = "@velt_cpu_word = linkonce_odr hidden global i64 0, align 8";
+
+/// [`WORD`] as an object for a target with COFF objects (`coff`) defines it.
+pub(crate) fn word_definition(coff: bool) -> String {
+    match coff {
+        true => "$velt_cpu_word = comdat any\n\
+                 @velt_cpu_word = linkonce_odr hidden global i64 0, comdat, align 8"
+            .to_string(),
+        false => WORD.to_string(),
+    }
+}
 
 /// `velt_simd_cpu_word()`: the word, which never changes after the start-up hook's store: read as
 /// invariant, so LLVM hoists it out of loops. 0 where no feature of this architecture exists

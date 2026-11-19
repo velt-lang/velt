@@ -1,13 +1,14 @@
 // velt/lang/cpu (internal): the CPU's feature word (#3222 step 3,
 // docs/internals/design/package-machine-code.md §2). `cpuStart` (std/lang/hooks/cpu.velt) computes
-// it before any other Velt code runs and stores it once in the runtime's `velt_cpu_word` (a std
-// static would be an `Atomic`, which brings velt/sync's reclaimer into every program); every check
-// after reads it as invariant (`velt_simd_cpu_word`), so the read leaves loops. Its
+// it before any other Velt code runs and stores it once (`velt_simd_cpu_word_set`; the compiler
+// keeps it, under LLVM in one `velt_cpu_word` per program, as a std static would be an `Atomic`,
+// which brings velt/sync's reclaimer into every program); every check after reads it as invariant
+// (`velt_simd_cpu_word`), so the read leaves loops. Its
 // bits are velt_common's `cpu_features` raw bits: x86's in the order of the start-up check's list
 // (rt_abi.md "CPU check"), arm64's from bit 32. 0 under Cranelift and on WebAssembly, where no gated
 // code runs.
 
-// The runtime's `velt_cpu_word`, read as invariant (0 under Cranelift and on wasm).
+// The word, read as invariant (0 under Cranelift and on wasm).
 declare function velt_simd_cpu_word(): u64;
 
 /** The CPU's feature word, with what `VELT_CPU_DISABLE` and `VELT_SIMD_DISABLE` name cleared. */

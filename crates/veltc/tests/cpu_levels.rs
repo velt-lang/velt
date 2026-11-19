@@ -41,7 +41,7 @@ fn required(dir: &Path, args: &[&str], env: &[(&str, &str)]) -> u64 {
 /// [`required`] of printed VIR: the block of `startWith` that is only the constant and a `goto`.
 fn required_in(vir: &str) -> u64 {
     let from = vir
-        .find("N9startWith(u64, bool) -> unit {")
+        .find("N9startWith(u64, bool) -> unit")
         .expect("std's start-up check");
     let body: Vec<&str> = vir[from..].lines().take_while(|l| *l != "}").collect();
     assert!(!body.iter().any(|l| l.contains("velt_simd_cpu_required")));

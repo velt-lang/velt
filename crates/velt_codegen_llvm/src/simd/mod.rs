@@ -17,6 +17,7 @@ mod masks;
 mod partial;
 mod reshape;
 mod sha;
+pub(crate) use sha::{word_definition, WORD};
 mod wide;
 mod x86_sums;
 

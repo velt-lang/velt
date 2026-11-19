@@ -209,6 +209,11 @@ pub(crate) fn emit_unit_capped(
         if declared_name(decl).is_some_and(|n| externs.contains(n) || declared(n)) {
             continue;
         }
+        if decl == crate::simd::WORD {
+            let coff = target.os == crate::target::Os::Windows;
+            let _ = writeln!(out, "{}", crate::simd::word_definition(coff));
+            continue;
+        }
         let _ = writeln!(out, "{}", with_target_features(decl, helper_features));
     }
     out.push_str(&bodies);

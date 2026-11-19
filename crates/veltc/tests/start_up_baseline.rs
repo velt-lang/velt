@@ -2,10 +2,12 @@
 //! CPU has, so it must use no instruction beyond the architecture's baseline, whatever `--cpu`
 //! says: on a CPU without the build's features it must print its message, not die of an illegal
 //! instruction in its own code (#3293 review). `velt_vir::start_up` marks the check and what it
-//! reaches, and both backends compile those functions for the baseline. This disassembles them in
-//! objects for x86-64-v4 and v3, on any host with `objdump` (no CPU or emulator needed), and finds
-//! no VEX or EVEX encoding, no wide or mask register, and nothing from SSE3 up or BMI.
+//! reaches (`--emit vir` marks them `baseline`), and both backends compile those functions for the
+//! baseline. This disassembles them in objects for x86-64-v4 and v3, on any host with `objdump` or
+//! `llvm-objdump` (no CPU or emulator needed), and finds no VEX or EVEX encoding, no wide or mask
+//! register, and nothing from SSE3 up or BMI. Without either, it checks the LLVM IR's attributes.
 
+use std::collections::HashSet;
 use std::path::Path;
 use std::process::Command;
 
@@ -15,9 +17,23 @@ mod test_dir;
 const VELT: &str = env!("CARGO_BIN_EXE_velt");
 const PROGRAM: &str = "function main() {\n  console.log(\"started\");\n}\n";
 
-/// The functions of the start-up check, by their symbols (std/lang/hooks/cpu.velt, std/lang/cpu).
-fn is_start_up(symbol: &str) -> bool {
-    symbol.starts_with("_V3stdP4langP3cpu") || symbol.starts_with("_V3stdP4langP5hooksP3cpu")
+/// The functions `--emit vir` marks `baseline` (`vir::Function::baseline`), by symbol.
+fn baseline_symbols(vir: &str) -> HashSet<String> {
+    (vir.lines())
+        .filter(|l| l.starts_with("fn#"))
+        .filter(|l| {
+            l.split(" -> ")
+                .nth(1)
+                .is_some_and(|r| r.split_whitespace().any(|w| w == "baseline"))
+        })
+        .filter_map(|l| {
+            l.split_whitespace()
+                .nth(2)?
+                .split('(')
+                .next()
+                .map(str::to_string)
+        })
+        .collect()
 }
 
 /// Whether `instruction` (objdump's AT&T text, mnemonic first) needs more than x86-64's baseline.
@@ -82,9 +98,9 @@ fn above_baseline(instruction: &str) -> bool {
         })
 }
 
-/// The start-up functions in `object` and their instructions above the baseline, by objdump; `None`
-/// where no objdump runs here.
-fn disassembled(object: &Path) -> Option<(usize, Vec<String>)> {
+/// How many of `start_up`'s functions `object` has, and their instructions above the baseline, by
+/// objdump; `None` where no objdump runs here.
+fn disassembled(object: &Path, start_up: &HashSet<String>) -> Option<(usize, Vec<String>)> {
     let out = ["objdump", "llvm-objdump"].iter().find_map(|tool| {
         let o = Command::new(tool)
             .args(["-d", "--no-show-raw-insn"])
@@ -98,7 +114,7 @@ fn disassembled(object: &Path) -> Option<(usize, Vec<String>)> {
     let (mut functions, mut bad, mut current) = (0, vec![], None::<String>);
     for line in out.lines() {
         if let Some(name) = line.strip_suffix(">:").and_then(|l| l.split_once(" <")) {
-            current = is_start_up(name.1).then(|| name.1.to_string());
+            current = start_up.contains(name.1).then(|| name.1.to_string());
             functions += usize::from(current.is_some());
             continue;
         }
@@ -125,17 +141,19 @@ fn the_start_up_check_uses_only_the_baseline_cpu() {
         builds.push(("release v4", vec!["--release", "--cpu", "x86-64-v4"]));
         builds.push(("release v2", vec!["--release"]));
     }
-    for (i, (what, flags)) in builds.iter().enumerate() {
-        let object = root.join(format!("start{i}.o"));
+    let build = |emit: &str, out: Option<&Path>, flags: &[&str]| {
         let mut args = vec![
             "build",
             "--target",
             "x86_64-unknown-linux-gnu",
             "--emit",
-            "obj",
+            emit,
         ];
         args.extend(flags);
-        args.extend(["-o", object.to_str().unwrap(), "main.velt"]);
+        if let Some(out) = out {
+            args.extend(["-o", out.to_str().unwrap()]);
+        }
+        args.push("main.velt");
         let o = no_window::command(VELT)
             .args(&args)
             .current_dir(root)
@@ -144,19 +162,37 @@ fn the_start_up_check_uses_only_the_baseline_cpu() {
             .unwrap();
         assert!(
             o.status.success(),
-            "{what}: {}",
+            "{args:?}: {}",
             String::from_utf8_lossy(&o.stderr)
         );
-        let Some((functions, bad)) = disassembled(&object) else {
-            eprintln!("no objdump here: the start-up check's instructions go unchecked");
-            return;
-        };
-        assert!(functions > 0, "{what}: no start-up function in the object");
-        assert!(
-            bad.is_empty(),
-            "{what}: above the baseline:\n{}",
-            bad.join("\n")
-        );
+        String::from_utf8_lossy(&o.stdout).into_owned()
+    };
+    for (i, (what, flags)) in builds.iter().enumerate() {
+        let start_up = baseline_symbols(&build("vir", None, flags));
+        assert!(start_up.len() > 3, "{what}: marked {start_up:?}");
+        let object = root.join(format!("start{i}.o"));
+        build("obj", Some(&object), flags);
+        match disassembled(&object, &start_up) {
+            Some((functions, bad)) => {
+                assert!(functions > 0, "{what}: no start-up function in the object");
+                assert!(
+                    bad.is_empty(),
+                    "{what}: above the baseline:\n{}",
+                    bad.join("\n")
+                );
+            }
+            // No disassembler here: what LLVM is told instead (Cranelift's code goes unchecked).
+            None if velt_codegen_llvm::available() => {
+                let ir = build("llvm", None, flags);
+                for line in ir.lines().filter(|l| l.starts_with("define ")) {
+                    let symbol = line.split("@\"").nth(1).and_then(|r| r.split('"').next());
+                    if symbol.is_some_and(|s| start_up.contains(s)) {
+                        assert!(line.contains("\"target-cpu\"=\"x86-64\""), "{what}: {line}");
+                    }
+                }
+            }
+            None => eprintln!("{what}: no objdump and no LLVM: the start-up code goes unchecked"),
+        }
     }
 }
 
@@ -184,4 +220,43 @@ fn the_baseline_test_knows_the_instructions_above_it() {
     ] {
         assert!(!above_baseline(baseline), "{baseline}");
     }
+}
+
+/// A release program in several codegen units, each with CPU checks that read the feature word,
+/// links and runs: every object defines the word (`linkonce_odr`), in a comdat of its own on
+/// Windows, where link.exe refused two objects' weak definitions (LNK1227, #3293 review). Any OS
+/// runs it; the Windows CI job is where it guards that.
+#[test]
+fn a_release_program_in_several_units_has_one_feature_word() {
+    if !velt_codegen_llvm::available() {
+        return;
+    }
+    let dir = test_dir::TestDir::new();
+    let root = dir.path();
+    let mut src = String::from(
+        "import { Avx2, Bmi2, Popcnt, Sse42 } from \"velt/arch/x86\";\n\
+         import { Crc32, Dp } from \"velt/arch/arm\";\n",
+    );
+    let checks = ["Avx2", "Bmi2", "Popcnt", "Sse42", "Crc32", "Dp"];
+    for (i, check) in checks.iter().enumerate() {
+        src.push_str(&format!(
+            "function f{i}(n: i64): i64 {{\n  return {check}.isSupported() ? n + {i} : n;\n}}\n"
+        ));
+    }
+    src.push_str("function main() {\n  let n: i64 = 0;\n");
+    for i in 0..checks.len() {
+        src.push_str(&format!("  n = f{i}(n);\n"));
+    }
+    src.push_str("  console.log(n >= 0);\n}\n");
+    std::fs::write(root.join("main.velt"), src).unwrap();
+    let o = no_window::command(VELT)
+        .args(["run", "--release", "main.velt"])
+        .current_dir(root)
+        .env("VELT_CODEGEN_UNITS", "4")
+        .env_remove("VELT_CPU")
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(o.status.success(), "{err}");
+    assert_eq!(String::from_utf8_lossy(&o.stdout), "true\n", "{err}");
 }

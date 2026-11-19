@@ -10,10 +10,11 @@ use cranelift_module::{FuncId, Linkage, Module};
 use crate::CodegenResult;
 
 /// `cpuid` with EAX = the first argument and ECX = the second, as EAX, EBX, ECX, EDX in the lanes
-/// of the vector returned in XMM0. RBX, which both calling conventions preserve, is saved around
-/// it.
+/// of the vector returned in XMM0. RBX, which both calling conventions preserve, is kept in R11,
+/// which neither does: the stack stays as the call left it, so the function is a leaf that needs
+/// no unwind information (on Windows, a stack walk inside it reads the frame right).
 fn cpuid_code(windows: bool) -> Vec<u8> {
-    let mut c = vec![0x53]; // push rbx
+    let mut c = vec![0x49, 0x89, 0xdb]; // mov r11, rbx
     c.extend(match windows {
         true => [0x89, 0xc8, 0x89, 0xd1],  // mov eax, ecx; mov ecx, edx
         false => [0x89, 0xf8, 0x89, 0xf1], // mov eax, edi; mov ecx, esi
@@ -27,7 +28,7 @@ fn cpuid_code(windows: bool) -> Vec<u8> {
         0x66, 0x0f, 0x6e, 0xd2, // movd xmm2, edx
         0x66, 0x0f, 0x62, 0xca, // punpckldq xmm1, xmm2
         0x66, 0x0f, 0x6c, 0xc1, // punpcklqdq xmm0, xmm1
-        0x5b, // pop rbx
+        0x4c, 0x89, 0xdb, // mov rbx, r11
         0xc3, // ret
     ]);
     c

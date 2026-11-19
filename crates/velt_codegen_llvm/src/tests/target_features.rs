@@ -123,3 +123,34 @@ fn start_up_code_and_its_helpers_are_for_the_baseline_cpu() {
     let arm = ir(&p, "aarch64-unknown-linux-gnu");
     assert!(!arm.contains("\"target-cpu\""), "{arm}");
 }
+
+/// The CPU's feature word (`velt_simd_cpu_word`): every object that reads it defines it
+/// `linkonce_odr`, in a comdat of its own on COFF. Without one, link.exe refused two objects of a
+/// release program each defining it (LNK1227, "conflicting weak extern definition", #3293 review).
+#[test]
+fn the_feature_word_is_one_per_program_on_every_object_format() {
+    let mut pb = ProgramBuilder::new();
+    let word = pb.ext("velt_simd_cpu_word", &[], U64, false);
+    let mut fb = FuncBuilder::export("velt_main", &[], I32);
+    let (r, w) = (fb.local(U64), fb.local(I32));
+    let b = fb.block();
+    let b = fb.call(b, Callee::Extern(word), vec![], Some(r));
+    fb.assign(b, w, Rvalue::Cast(copy_local(r), I32));
+    fb.ret(b, copy_local(w));
+    pb.add(fb.finish());
+    let p = pb.finish();
+    let windows = ir(&p, "x86_64-pc-windows-msvc");
+    assert!(windows.contains("$velt_cpu_word = comdat any"), "{windows}");
+    assert!(
+        windows.contains("@velt_cpu_word = linkonce_odr hidden global i64 0, comdat, align 8"),
+        "{windows}"
+    );
+    for elf_or_macho in ["x86_64-unknown-linux-gnu", "aarch64-apple-darwin"] {
+        let text = ir(&p, elf_or_macho);
+        assert!(!text.contains("comdat"), "{text}");
+        assert!(
+            text.contains("@velt_cpu_word = linkonce_odr hidden global i64 0, align 8"),
+            "{text}"
+        );
+    }
+}

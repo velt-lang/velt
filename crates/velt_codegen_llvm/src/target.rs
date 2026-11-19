@@ -258,7 +258,6 @@ impl Target {
         }
     }
 
-    /// Whether the target has NEON (`simd.rs` counts mask lanes with its widening sum).
     /// The function attributes of code compiled for the baseline CPU whatever `--cpu` says
     /// (`vir::Function::baseline`, std's start-up check of the CPU, and the helpers it inlines):
     /// on x86-64 clang's `x86-64` with its own features only; on arm64 the target's default CPU,
@@ -279,6 +278,7 @@ impl Target {
         }
     }
 
+    /// Whether the target has NEON (`simd.rs` counts mask lanes with its widening sum).
     pub fn has_neon(&self) -> bool {
         self.triple.starts_with("aarch64") || self.triple.starts_with("arm64")
     }
