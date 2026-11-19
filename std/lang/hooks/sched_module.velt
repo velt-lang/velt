@@ -11,8 +11,10 @@
 // on (`dropAtExit`), as the runtime's were (#2196 9c). They are reached by role (`hookCall`),
 // never imported: module_blocks.velt is compiled once into an object of the build cache, which
 // keeps its state (velt_common `std_hooks/prebuilt.rs` "State"), and a program that calls the
-// object must not load a second copy. One call per lookup, as the runtime's entry was; velt_opt's
-// `module_state` pass (#1571) makes a function call ask once.
+// object must not load a second copy. What the last call answered is kept here (`DESC`, `BLOCK`,
+// `READY`), so an access of the block last reached is a few loads and no call, as it was when
+// the blocks' own fast path was inlined here; a call is made for another block, or for a slot
+// beyond the ones known to be initialized.
 //
 // Gap: a program giving a declared function properties through `any` takes the runtime's lock
 // around a `Mutex` (`velt_rt_module_with`), and the runtime's function properties take it too
@@ -33,12 +35,49 @@ const IN_POLL: u32 = 1;
 const OUTSIDE: u32 = 2;
 const HELD = new ThreadLocal<u32>(0);
 
+/**
+ * The block last looked up, kept here so that an access is a few loads and no call: its
+ * descriptor, its address, and how many of its slots are known to be initialized. The blocks
+ * themselves and their table are module_blocks.velt's, behind a call (`hookCall`); this is what
+ * that call last answered. Read and changed with the lock held, as the blocks are.
+ */
+const DESC = new Atomic<u64>(0);
+const BLOCK = new Atomic<u64>(0);
+const READY = new Atomic<u64>(0);
+
 /** `velt_rt_module_state`: the block, to reach slot `slot` of the program's descriptor `desc`. */
 export function state(desc: usize, slot: u64): usize {
   if (HELD.get() === NOT_HELD) {
     take(t.here());
   }
-  return hookCall("module_state", desc, slot);
+  if (DESC.load("acquire") as usize === desc && slot < READY.load("acquire")) {
+    return BLOCK.load("relaxed") as usize;
+  }
+  return lookUp(desc, slot);
+}
+
+/**
+ * Asks module_blocks.velt for the block of `desc` to reach slot `slot` (it makes the block on
+ * first use, and a slot not initialized is its `ReferenceError`), and keeps the answer. The
+ * slots are initialized in order (`ready`), so `slot` reached means every slot up to it may be.
+ */
+@noInline
+function lookUp(desc: usize, slot: u64): usize {
+  const p: usize = hookCall("module_state", desc, slot);
+  const same = DESC.load("relaxed") as usize === desc && BLOCK.load("relaxed") as usize === p;
+  if (!same || READY.load("relaxed") <= slot) {
+    keep(desc, p, slot + 1);
+  }
+  return p;
+}
+
+/** Keeps block `p` of `desc`, its slots below `n` initialized, as the block last looked up. */
+function keep(desc: usize, p: usize, n: u64): void {
+  // The descriptor last: a reader that finds it finds its block and count.
+  DESC.store(0, "relaxed");
+  BLOCK.store(p as u64, "relaxed");
+  READY.store(n, "relaxed");
+  DESC.store(desc as u64, "release");
 }
 
 /** `velt_rt_module_block`: the block without the slot check (the root file's `main`). */
@@ -46,12 +85,21 @@ export function block(desc: usize): usize {
   if (HELD.get() === NOT_HELD) {
     take(t.here());
   }
-  return hookCall("module_block", desc);
+  if (DESC.load("acquire") as usize === desc) {
+    return BLOCK.load("relaxed") as usize;
+  }
+  const p: usize = hookCall("module_block", desc);
+  // Which of its slots are initialized is not known from this: none, until one is reached.
+  keep(desc, p, 0);
+  return p;
 }
 
 /** `velt_rt_module_ready`: the slots of `state` below `n` are initialized. */
 export function ready(state: usize, n: u64): void {
   hookCall("module_ready", state, n);
+  if (BLOCK.load("relaxed") as usize === state && DESC.load("relaxed") !== 0) {
+    READY.store(n, "relaxed");
+  }
 }
 
 /**
@@ -64,6 +112,10 @@ export function dropAtExit(): void {
     lock();
     HELD.set(OUTSIDE);
   }
+  // Nothing is the block last looked up any more.
+  DESC.store(0, "relaxed");
+  READY.store(0, "relaxed");
+  BLOCK.store(0, "relaxed");
   hookCall("module_drop");
 }
 
