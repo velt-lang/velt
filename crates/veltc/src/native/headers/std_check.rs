@@ -83,6 +83,7 @@ const CHECKED: &[&str] = &[
     "fs/fd/dirs.velt",
     "fs/fd/linux.velt",
     "fs/fd/posix.velt",
+    "fs/tree/order.velt",
     "fs/tree/win32.velt",
     "fs/whole/read_all.velt",
     "fs/whole/win32.velt",
