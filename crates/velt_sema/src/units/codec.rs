@@ -40,6 +40,9 @@ mod lazy_tests;
 mod tables;
 #[cfg(test)]
 mod tests;
+mod unit;
+#[cfg(test)]
+mod unit_tests;
 mod values;
 
 use std::rc::Rc;
@@ -715,6 +718,8 @@ pub(crate) use {enums, is_fielded, no_more, structs, tuples};
 
 #[allow(unused_imports)] // Until the unit is saved (#2943 M2).
 pub(crate) use ast_refs::{Arena, AstNode};
+#[allow(unused_imports)] // Until the unit is saved (#2943 M2).
+pub(crate) use unit::{decode_unit, encode_unit, encode_unit_sized, unit_module_paths, FORMAT};
 
 impl Reader<'_> {
     /// Mark the value damaged (the macros' unknown tag).
