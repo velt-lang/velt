@@ -3,7 +3,8 @@
 # VELT_RESCUE=1, the checking allocator and counts on), until a run shows worker 0 not lazy again
 # (locks-on=1). Keeps every run's output; prints the failing one. No trace unless -Trace > 0.
 #   pwsh notes-3202/spare.ps1 -Velt <target>/debug/velt.exe [-Runs 60] [-Trace 0]
-param([string]$Velt, [int]$Runs = 60, [int]$Trace = 0)
+#   -Pipe: stdout and stderr are pipes read while it runs, as in the test (default: files).
+param([string]$Velt, [int]$Runs = 60, [int]$Trace = 0, [switch]$Pipe)
 $dir = Join-Path $env:TEMP "spare3202"
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 $src = Join-Path $dir "sleeper_on_spare.velt"
@@ -20,7 +21,21 @@ $tally = @{}
 for ($i = 1; $i -le $Runs; $i++) {
   $out = Join-Path $dir "run$i.out"
   $err = Join-Path $dir "run$i.err"
-  & $exe > $out 2> $err
+  if ($Pipe) {
+    # As the test runs it: both streams are pipes, read while it runs.
+    $psi = New-Object System.Diagnostics.ProcessStartInfo $exe
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $p = [System.Diagnostics.Process]::Start($psi)
+    $so = $p.StandardOutput.ReadToEndAsync()
+    $se = $p.StandardError.ReadToEndAsync()
+    $p.WaitForExit()
+    Set-Content -Path $out -Value $so.Result
+    Set-Content -Path $err -Value $se.Result
+  } else {
+    & $exe > $out 2> $err
+  }
   $stats = (Select-String -Path $err -Pattern "rescue stats:" | Select-Object -Last 1).Line
   $lines = (Get-Content $out) -join " | "
   $key = "$stats :: $lines"
