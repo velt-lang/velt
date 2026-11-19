@@ -137,11 +137,14 @@ comment. velt/ffi's unsafe functions are the public surface ([c-ffi.md](c-ffi.md
     `Numeric` bound of the public functions keeps user code from reaching.
   - On a view type (array_view.rs: a number array type is one in a program that converts an
     `any` to it) a plain array gives its own buffer, and a view its mirror's with every element
-    converted, which is what a C function given the array itself gets. After bytes were
-    written there, `arrayBytesWritten<T>(xs: Mut<T[]>)` writes a view's mirror back to the
-    array it views (`readSync` calls it after the read; nothing for a plain array, and no code
-    in a program without view types). A C function given a view as a buffer that is not
-    `readonly` gets the same write-back after the call (c_call.rs).
+    converted, which is what a C function given the array itself gets. Taking the address to
+    write (`arrayDataAddress`) keeps a copy of a view's mirror, and
+    `arrayBytesWritten<T>(xs: Mut<T[]>)`, which `readSync` calls after the read, writes back to
+    the viewed array the elements that differ from that copy: what the read changed, and
+    nothing else, so an element the view's type rounds (`0.1` seen as an `f32`) keeps its own
+    value where the read did not reach it. It is no code for a plain array or in a program
+    without view types. A C function given a view as a buffer that is not `readonly` gets the
+    same keep before the call and write-back after it (c_call.rs).
   - The bytes are reached by address, not as a second `u8[]` over the same memory (the form
     `addressArray` gives): such an array would be a counted box in a program that shares byte
     arrays, an allocation and a free at every call, and an alias that must be kept from

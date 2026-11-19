@@ -72,6 +72,9 @@ pub(super) enum ViewFlush {
     From(Operand),
     /// The elements at these indices (`u64` operands) (`arrayViewFlushAt`).
     Slots(Vec<Operand>),
+    /// The elements a write by address changed since [`FnLower::view_keep`]
+    /// (`arrayViewFlushKept`).
+    Kept,
 }
 
 impl Cx<'_> {
@@ -340,6 +343,25 @@ impl FnLower<'_, '_> {
         proj(&at, Proj::Deref(payload))
     }
 
+    /// Before code outside Velt writes by address into the array of the view type `t` whose box
+    /// pointer is `bx` (its mirror, synced): a view keeps the mirror as it is, so
+    /// [`ViewFlush::Kept`] writes back only what that write changed.
+    pub(super) fn view_keep(&mut self, bx: Operand, t: TyId) {
+        if self.dead() {
+            return;
+        }
+        let e = self.elem_ty(t);
+        let payload = self.cx.payload_ty(t);
+        let pp = self.operand_place(bx, Ty::Ptr);
+        let (is, v) = self.array_view_of_hdr(&proj(&pp, Proj::Deref(payload)));
+        let (yes, join) = (self.new_block(), self.new_block());
+        self.branch(is, yes, join);
+        self.switch_to(yes);
+        _ = hooks::array_view_keep(self, [e], ty::ArrayView::arg(v)).emit(self);
+        self.goto(join);
+        self.switch_to(join);
+    }
+
     /// After a change through the array of the view type `t` whose box pointer is `bx`: a
     /// view writes its mirror back to the original, as much of it as `what` says changed.
     pub(super) fn view_flush(&mut self, bx: Operand, t: TyId, what: ViewFlush) {
@@ -356,6 +378,7 @@ impl FnLower<'_, '_> {
         let view = || ty::ArrayView::arg(v.clone());
         match what {
             ViewFlush::All => _ = hooks::array_view_flush(self, [e], view()).emit(self),
+            ViewFlush::Kept => _ = hooks::array_view_flush_kept(self, [e], view()).emit(self),
             ViewFlush::From(i) => {
                 let i = ty::USize::arg(i);
                 _ = hooks::array_view_flush_from(self, [e], view(), i).emit(self);

@@ -541,6 +541,10 @@ hooks! {
     array_view_sync => lang_hooks_array_view, "arrayViewSync", sig(<A>(&mut ArrayView(A)) -> void), lowered;
     /// The mirror written back to the original after a change through the view.
     array_view_flush => lang_hooks_array_view, "arrayViewFlush", sig(<A>(&ArrayView(A)) -> void), lowered;
+    /// The mirror kept as it is before a write into it by address (a C buffer, `readSync`).
+    array_view_keep => lang_hooks_array_view, "arrayViewKeep", sig(<A>(&mut ArrayView(A)) -> void), lowered;
+    /// After that write: the elements it changed written back to the original.
+    array_view_flush_kept => lang_hooks_array_view, "arrayViewFlushKept", sig(<A>(&mut ArrayView(A)) -> void), lowered;
     /// `array_view_flush` of the mirror's elements from an index on (after a `push`).
     array_view_flush_from => lang_hooks_array_view, "arrayViewFlushFrom", sig(<A>(&ArrayView(A), usize) -> void), lowered;
     /// `length` of a view: the original's, nothing converted.

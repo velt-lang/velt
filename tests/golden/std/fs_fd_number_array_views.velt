@@ -33,6 +33,16 @@ function main() {
   const plainFloats: number[] = [3.25, 4];
   console.log(fs.writeSync(fd, plainFloats, 8, 8, 0), fs.readSync(fd, own, 0, 8, 0), own);
 
+  // Only what a read changes goes back: an element the view's type rounds (0.1 as an f32, 300
+  // or 1.5 as a u8) keeps its own value where the read did not reach it, as after `view[i] = x`.
+  fs.writeSync(fd, "abcdefgh", 0);
+  const rounded: any = [0.1, 0.2];
+  console.log(fs.readSync(fd, rounded as f32[], 4, 4, 0), rounded.join(","));
+  const wide: any = [300, 1.5, -1, 7];
+  console.log(fs.readSync(fd, wide as u8[], 3, 1, 0), wide.join(","));
+  // A read that gives nothing changes nothing.
+  console.log(fs.readSync(fd, wide as u8[], 0, 2, 1000), wide.join(","));
+
   fs.closeSync(fd);
   fs.unlinkSync(path);
 }

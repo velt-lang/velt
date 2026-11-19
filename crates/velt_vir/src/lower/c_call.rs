@@ -212,7 +212,17 @@ impl FnLower<'_, '_> {
             cargs.push(match v {
                 CArg::Ready(o) => o,
                 CArg::Buffer(arg) => {
+                    let view = match &arg {
+                        Arg::Value(p, t) | Arg::Sub { place: p, t, .. } => {
+                            (written.iter().any(|(w, _)| w == p)).then(|| (p.clone(), *t))
+                        }
+                        _ => None,
+                    };
                     let p = self.buffer(Some(arg)).0;
+                    if let Some((place, t)) = view {
+                        // Its mirror is synced now: kept as it is, to tell what C changes.
+                        self.view_keep(Operand::Copy(place), t);
+                    }
                     self.never_null(p)
                 }
                 CArg::Str(s) => {
@@ -304,7 +314,7 @@ impl FnLower<'_, '_> {
             self.capture_errno(&c.library);
         }
         for (place, t) in written {
-            self.view_flush(Operand::Copy(place), t, ViewFlush::All);
+            self.view_flush(Operand::Copy(place), t, ViewFlush::Kept);
         }
         let Some(d) = dest else {
             return unit();

@@ -29,6 +29,19 @@ function main() {
   // SAFETY: both hold 4 bytes.
   console.log(unsafe { memcmp(view, same, 4) }, parsed);
 
+  // Only the bytes C changed go back: elements a `u8` rounds keep their own values.
+  const wide: any = [300, 1.5, -1, 7];
+  // SAFETY: the one byte of the subarray.
+  unsafe {
+    memset((wide as u8[]).subarray(3, 4), 97, 1);
+  }
+  console.log(wide);
+  // SAFETY: 2 bytes into a view of 4.
+  unsafe {
+    memset(wide as u8[], 9, 2);
+  }
+  console.log(wide);
+
   const plain: u8[] = [0, 0, 0];
   // SAFETY: 3 bytes into an array of 3.
   unsafe {
