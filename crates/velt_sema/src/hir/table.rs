@@ -39,6 +39,15 @@ impl TyTable {
         id
     }
 
+    /// A second type of kind `kind`, distinct from the one `intern` gives (which stays the one
+    /// the kind names): a twin that sema checks differently and replaces with the interned type
+    /// before lowering (a read-only array, `Types::readonly_array`). Lowering never sees one.
+    pub fn twin(&mut self, kind: TyKind) -> TyId {
+        let id = TyId(self.kinds.len() as u32);
+        self.kinds.push(kind);
+        id
+    }
+
     /// The type a `WrapSome` / `UnwrapSome` / `PatKind::Some` of option type `t` holds: `T` of
     /// `T | null` and `T | undefined`, `T | null` of `T | null | undefined` (whose own nothing
     /// is `undefined`; hir_encodings.md "Undefined"). `None` if `t` is not an option.

@@ -1,0 +1,35 @@
+// An async function that gives one of its arguments away on one path only keeps a drop flag
+// for it, set when its body starts. Dropping a call of it that never started drops the
+// arguments without that flag, and in a program that catches panics the pads of those drops
+// must not read it either (#3180: the compiler stopped with "may be used before it is
+// assigned").
+import { catchPanic } from "velt/task";
+
+class Held {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+  [Symbol.dispose]() {
+    console.log("freed " + this.name);
+  }
+}
+
+async function pick(first: Held, second: Held, keep: boolean, out: Held[]): Promise<number> {
+  if (keep) {
+    out.push(second);
+    return first.name.length;
+  }
+  return first.name.length + second.name.length;
+}
+
+async function main() {
+  const out: Held[] = [];
+  console.log(await catchPanic(() => pick(new Held("a"), new Held("b"), true, out)));
+  console.log(await catchPanic(() => pick(new Held("c"), new Held("d"), false, out)));
+  // Put in an array and taken out again without being awaited.
+  const held: Promise<number>[] = [];
+  held.push(pick(new Held("e"), new Held("f"), true, out));
+  held.pop();
+  console.log(out.map((h) => h.name).join(","));
+}

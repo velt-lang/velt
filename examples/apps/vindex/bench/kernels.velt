@@ -1,0 +1,58 @@
+// The two kernels a search spends its time in, alone: one query against ROWS rows that stay in
+// cache, in ns per row. kernels.c is the same work in C, for what the CPU can do.
+//
+//   velt build --release bench/kernels.velt -o target/kernels && target/kernels
+import { dotF32, dotI8Bytes } from "../src/kernels";
+import { Rng } from "../src/rng";
+
+const ROWS: usize = 8192;
+const DIM: usize = 128;
+const PASSES = 200;
+
+function main() {
+  const rng = new Rng(1);
+  const rows: f32[] = [];
+  const codes: u8[] = Buffer.alloc(ROWS * DIM);
+  for (let i: usize = 0; i < ROWS * DIM; i++) {
+    const x = rng.signed();
+    rows.push(x);
+    codes[i] = ((Math.round((x * 127) as number) as i32) as i8) as u8;
+  }
+  const q: f32[] = [];
+  const qc: u8[] = Buffer.alloc(DIM);
+  for (let i: usize = 0; i < DIM; i++) {
+    const x = rng.signed();
+    q.push(x);
+    qc[i] = ((Math.round((x * 127) as number) as i32) as i8) as u8;
+  }
+  let best = Infinity;
+  let sum: f64 = 0;
+  for (let round = 0; round < 5; round++) {
+    const t = performance.now();
+    sum = 0;
+    for (let p = 0; p < PASSES; p++) {
+      for (let r: usize = 0; r < ROWS; r++) {
+        sum += dotF32(rows, r * DIM, q, 0, DIM) as f64;
+      }
+    }
+    best = Math.min(best, performance.now() - t);
+  }
+  console.log(
+    `f32 ${((best * 1e6) / (PASSES * (ROWS as number))).toFixed(2)} ns/row (${sum.toFixed(1)})`,
+  );
+  best = Infinity;
+  let isum: i64 = 0;
+  for (let round = 0; round < 5; round++) {
+    const t = performance.now();
+    isum = 0;
+    for (let p = 0; p < PASSES; p++) {
+      for (let r: usize = 0; r < ROWS; r++) {
+        isum += dotI8Bytes(codes, r * DIM, qc, DIM) as i64;
+      }
+    }
+    best = Math.min(best, performance.now() - t);
+  }
+  console.log(`int8 ${((best * 1e6) / (PASSES * (ROWS as number))).toFixed(2)} ns/row (${isum})`);
+}
+
+main();

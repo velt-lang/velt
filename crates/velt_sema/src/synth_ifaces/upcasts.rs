@@ -446,6 +446,11 @@ impl Ctx<'_> {
                 methods.push(self.upcast_setter(&imp, b, k, &iface_args));
             }
         }
+        let (msetters, msrcs) = self.upcast_method_setters(index, b, &iface_args);
+        methods.extend(msetters);
+        let new = self.impls.len() as u32;
+        self.note_method_sources(new, msrcs);
+        self.note_placeholders(new, b);
         self.impls.push(ImplDef {
             ty: imp.ty,
             generics: imp.generics,

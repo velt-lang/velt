@@ -3,10 +3,11 @@
 // `hostname()` on Windows starts Winsock once per process and leaves it started, as libuv does
 // for Node (std/os/winsock_win32.velt): starting and cleaning it up on every call cost about
 // 27 ms a call. Checked by counts, not by time. The reactor may start Winsock too, so the test
-// counts velt/os' own starts, and checks that a cleanup succeeds (Winsock was left started).
+// counts velt/os' own starts, and checks that a cleanup succeeds (Winsock was left started),
+// starting it again after, so a later `hostname()` in the same run still works.
 import { hostname, platform } from "velt/os";
 import { describe, expect, it } from "velt/test";
-import { cleanupWinsock, winsockStarts } from "#os-winsock";
+import { checkLeftStarted, winsockStarts } from "#os-winsock";
 
 describe("velt/os's Winsock on Windows", () => {
   it("hostname() starts it once and leaves it started", () => {
@@ -17,6 +18,7 @@ describe("velt/os's Winsock on Windows", () => {
     hostname();
     hostname();
     expect(winsockStarts()).toBe(1);
-    expect(cleanupWinsock()).toBe(0);
+    expect(checkLeftStarted()).toBe(true);
+    expect(hostname().length > 0).toBe(true);
   });
 });

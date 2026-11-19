@@ -125,6 +125,44 @@ fn huge_callers_import_nothing() {
     assert_eq!(main.declares, [0, 2]);
 }
 
+/// An `@inline` function is imported into every unit that calls it, a huge caller's too: the
+/// marker asks for its body at every call (#3097: `heapAlloc` in a large `main`).
+#[test]
+fn huge_callers_import_inline_functions() {
+    let mut p = program();
+    p.funcs[0].inline = Inline::Always;
+    let func = &mut p.funcs[3];
+    let x = Local(func.locals.len() as u32);
+    func.locals.push(LocalDecl::new(I64, None));
+    for i in 0..5_000 {
+        func.blocks[0]
+            .stmts
+            .push(Stmt::Assign(Place::local(x), Rvalue::Use(int(i, I64))));
+    }
+    let plan = plan_placed(&p, &SPLIT);
+    let main = &plan.units[2];
+    assert_eq!(
+        (main.imports.as_slice(), main.declares.as_slice()),
+        (&[0][..], &[2][..])
+    );
+}
+
+/// An `@inline` callee is imported however large it is, with the `@inline` callees of the bodies
+/// imported: c's unit takes `b` (62, past the import limit) and the `a` it calls.
+#[test]
+fn inline_functions_are_imported_with_their_inline_callees() {
+    let mut p = program();
+    p.funcs[0].inline = Inline::Always;
+    p.funcs[1].inline = Inline::Always;
+    let plan = plan_placed(&p, &[0, 1, 2, 2]);
+    // `a` in unit 0, `b` in 1, `c` and main in 2: c calls `b`, whose body calls `a`.
+    let c = &plan.units[2];
+    assert_eq!(c.imports, [0, 1]);
+    // Without the markers, `b` is too large to import and `a` only main's.
+    let plain = plan_placed(&program(), &[0, 1, 2, 2]);
+    assert_eq!(plain.units[2].imports, [0]);
+}
+
 /// An imported function (vir.rs invariant 11) is defined by no unit, never copied in for
 /// inlining, and declared `hidden` by every unit that refers to it; so is it in one module.
 #[test]

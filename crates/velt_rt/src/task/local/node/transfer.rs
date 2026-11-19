@@ -21,7 +21,7 @@
 use std::sync::atomic::Ordering;
 
 use super::{head, is_lazy, is_started, state, DONE, OWNER_DONE};
-use crate::task::all::ResultDropFn;
+use crate::task::ResultDropFn;
 use crate::task::VeltFut;
 
 /// Apply node `f`'s result transfer, if it has one (on the task that finished it).

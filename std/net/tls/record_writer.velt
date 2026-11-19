@@ -24,7 +24,10 @@ import { arrayMove } from "velt/lang/intrinsics/array";
 
 // Records sealed per transport write, and the room each takes.
 const BATCH: usize = 4;
-const RECORD: usize = 5 + 16384 + 1 + 16;
+// (The larger of TLS 1.3's inner content type and TLS 1.2 AES-GCM's explicit nonce, 1 and 8.)
+const RECORD: usize = 5 + 8 + 16384 + 16;
+// What a protected record adds to its content, at most.
+const OVERHEAD: usize = HEADER + 8 + TAG;
 // Records one write key seals before a KeyUpdate: AES-GCM is good for about 2^24.5 full-size
 // records (RFC 8446 §5.5), which leaves room for the alerts and KeyUpdates sent besides them.
 // Both suites follow this one rule; the peer's records are for the peer to count.
@@ -38,10 +41,12 @@ export class RecordWriter {
   /** The write keys (null before the handshake keys). */
   cipher: RecordCipher | null;
   /** The application secret the write keys came from, and their suite. */
-  secret: u8[];
+  secret: u8[] | null;
   suite: usize;
-  /** Records one write key seals before a KeyUpdate. */
+  /** Records one write key seals before a KeyUpdate (in TLS 1.2, before the connection ends). */
   writeLimit: u64;
+  /** TLS 1.2 was negotiated: no KeyUpdate. */
+  tls12: bool;
   private buf: u8[];
   // How much of its input the last `seal` took.
   private sealedPlain: usize;
@@ -59,9 +64,10 @@ export class RecordWriter {
     this.t = t;
     this.direct = t.tryStream();
     this.cipher = null;
-    this.secret = [];
+    this.secret = null;
     this.suite = 0;
     this.writeLimit = KEY_RECORDS;
+    this.tls12 = false;
     this.buf = Buffer.alloc(BATCH * RECORD);
     this.sealedPlain = 0;
     this.turns = new Turns();
@@ -113,9 +119,8 @@ export class RecordWriter {
     let n: usize = 0;
     for (let r: usize = 0; r < BATCH && off < to && writer.seq < limit; r++) {
       const len = to - off < MAX_PLAIN ? to - off : MAX_PLAIN;
-      arrayMove(buf, n + HEADER, bytes, off, len);
-      buf[n + HEADER + len] = APPLICATION_DATA;
-      n += writer.seal(buf, n, len + 1);
+      arrayMove(buf, n + HEADER + writer.prefix, bytes, off, len);
+      n += writer.sealRecord(buf, n, len, APPLICATION_DATA);
       off += len;
     }
     this.sealedPlain = off - from;
@@ -138,7 +143,7 @@ export class RecordWriter {
       let left: i64 = 0;
       while (off < to) {
         if (writer.seq >= limit || this.updateOwed) {
-          t.writeBytesLater(this.protect(HANDSHAKE, [KEY_UPDATE, 0, 0, 1, 0]), 0);
+          t.writeBytesLater(this.limitRecord(), 0);
           writer = this.nextWriter();
         }
         const n = this.seal(writer, bytes, off, to);
@@ -171,7 +176,7 @@ export class RecordWriter {
       let off = from;
       while (off < to) {
         if (writer.seq >= limit || this.updateOwed) {
-          out = out.concat(this.protect(HANDSHAKE, [KEY_UPDATE, 0, 0, 1, 0]));
+          out = out.concat(this.limitRecord());
           writer = this.nextWriter();
         }
         const n = this.seal(writer, bytes, off, to);
@@ -242,13 +247,31 @@ export class RecordWriter {
    * which it returns. Only during a write's turn.
    */
   async updateWriteKey(): Promise<RecordCipher> {
-    await this.sendProtected(HANDSHAKE, [KEY_UPDATE, 0, 0, 1, 0]);
+    const record = this.limitRecord();
+    await this.t.writeBytes(record, 0);
     return this.nextWriter();
   }
 
+  // What goes out when the write key reaches its limit: a KeyUpdate, or in TLS 1.2, which has
+  // none, close_notify (as rustls does).
+  private limitRecord(): u8[] {
+    if (this.tls12) {
+      return this.protect(ALERT, [1, CLOSE_NOTIFY]);
+    }
+    return this.protect(HANDSHAKE, [KEY_UPDATE, 0, 0, 1, 0]);
+  }
+
+  // The next write keys; in TLS 1.2 the connection ends instead, after `limitRecord`.
   private nextWriter(): RecordCipher {
-    this.secret = nextSecret(this.secret);
-    const next = new RecordCipher(this.suite, this.secret);
+    if (this.tls12) {
+      this.shutDown = true;
+      throw new IoError(
+        "EPROTO",
+        "TLS: the write key's record limit was reached, and TLS 1.2 has no KeyUpdate: the connection is closed",
+      );
+    }
+    this.secret = nextSecret(this.secret!);
+    const next = new RecordCipher(this.suite, this.secret!);
     this.cipher = next;
     this.updateOwed = false;
     return next;
@@ -270,17 +293,25 @@ export class RecordWriter {
    * ClientHello, `minor` 1, else 0x0303).
    */
   async sendPlain(type: u8, content: u8[], minor: u8): Promise<void> {
-    const out: u8[] = [
-      type,
-      3,
-      minor,
-      ((content.length >> 8) & 0xff) as u8,
-      (content.length & 0xff) as u8,
-    ];
-    for (let i: usize = 0; i < content.length; i++) {
-      out.push(content[i]);
+    await this.t.writeBytes(plain(type, content, minor), 0);
+  }
+
+  /**
+   * Queues for the task's next wait, without waiting (over a transport that can): `content` in a
+   * plaintext record (`plaintext`), else protected records after a ChangeCipherSpec when `ccs`.
+   */
+  queue(type: u8, content: u8[], plaintext: bool, ccs: bool = false) {
+    const t = this.tryTransport();
+    t.writeBytesLater(plaintext ? plain(type, content, 3) : this.protect(type, content, ccs), 0);
+  }
+
+  /** Queues close_notify (once) for the task's next wait, without waiting. */
+  shutdownNow() {
+    if (this.shutDown || this.cipher == null || this.failure != null) {
+      return;
     }
-    await this.t.writeBytes(out, 0);
+    this.shutDown = true;
+    this.queue(ALERT, [1, CLOSE_NOTIFY], false);
   }
 
   /** Sends a ChangeCipherSpec record. */
@@ -302,7 +333,7 @@ export class RecordWriter {
       throw new IoError("ENOTCONN", "ICE: TLS: no write keys");
     }
     const records = content.length / MAX_PLAIN + 1;
-    const buf = Buffer.alloc(content.length + records * (HEADER + 1 + TAG) + 6);
+    const buf = Buffer.alloc(content.length + records * OVERHEAD + 6);
     let n: usize = 0;
     if (ccs) {
       buf[0] = CHANGE_CIPHER_SPEC;
@@ -316,9 +347,8 @@ export class RecordWriter {
     let off: usize = 0;
     while (off < content.length || n == start) {
       const len = content.length - off < MAX_PLAIN ? content.length - off : MAX_PLAIN;
-      arrayMove(buf, n + HEADER, content, off, len);
-      buf[n + HEADER + len] = type;
-      n += writer.seal(buf, n, len + 1);
+      arrayMove(buf, n + HEADER + writer.prefix, content, off, len);
+      n += writer.sealRecord(buf, n, len, type);
       off += len;
     }
     return buf.slice(0, n as i64);
@@ -350,8 +380,8 @@ export class RecordWriter {
   }
 
   /**
-   * `failed` for a caller that can't wait: the alert is queued whole behind what the socket holds,
-   * to go at the task's next wait.
+   * `failed` for a caller that can't wait: the alert is written now as far as the socket takes it
+   * (the transport closes next), and the rest queued whole behind it.
    */
   failedNow(e: unknown): IoError {
     const err = e instanceof IoError ? e : new IoError("EPROTO", `TLS: ${e}`);
@@ -362,7 +392,10 @@ export class RecordWriter {
         t != null && e instanceof TlsFailure && e.sendAlert && !this.shutDown && !this.turns.busy
       ) {
         try {
-          t.writeBytesLater(this.protect(ALERT, [2, e.alert]), 0);
+          const alert =
+            this.cipher != null ? this.protect(ALERT, [2, e.alert]) : plain(ALERT, [2, e.alert], 3);
+          const sent = t.tryWrite(alert, 0);
+          t.writeBytesLater(alert, sent as number);
         } catch (ignored) {
           // The peer may be gone already; the failure is what matters.
         }
@@ -371,4 +404,27 @@ export class RecordWriter {
     }
     return err;
   }
+}
+
+// Plaintext records of `type` with `content` (16 KiB each, a TLS 1.2 server's flight may be more),
+// record version 3.`minor`.
+function plain(type: u8, content: u8[], minor: u8): u8[] {
+  const out: u8[] = [];
+  let off: usize = 0;
+  while (off < content.length || off == 0) {
+    const len = content.length - off < MAX_PLAIN ? content.length - off : MAX_PLAIN;
+    out.push(type);
+    out.push(3);
+    out.push(minor);
+    out.push(((len >> 8) & 0xff) as u8);
+    out.push((len & 0xff) as u8);
+    for (let i: usize = 0; i < len; i++) {
+      out.push(content[off + i]);
+    }
+    off += len;
+    if (len == 0) {
+      break;
+    }
+  }
+  return out;
 }

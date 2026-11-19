@@ -1,7 +1,11 @@
 // velt/net (internal): parsing the ServerHello (RFC 8446 §4.1.3), which is a HelloRetryRequest
-// (§4.1.4) when its random is the special value: version, suite, key share, cookie.
+// (§4.1.4) when its random is the special value: version, suite, key share, cookie. A TLS 1.2
+// ServerHello (no supported_versions) is checked for the downgrade sentinel, which a server
+// with TLS 1.3 puts in its random, and gives the random, extended_master_secret and ALPN.
 
+import { utf8DecodeLossy } from "velt/encoding/utf8";
 import {
+  HANDSHAKE_FAILURE,
   ILLEGAL_PARAMETER,
   MISSING_EXTENSION,
   PROTOCOL_VERSION,
@@ -9,17 +13,21 @@ import {
   UNEXPECTED_MESSAGE,
 } from "velt/net/tls/alert";
 import {
+  EXT_ALPN,
   EXT_COOKIE,
+  EXT_EXTENDED_MASTER_SECRET,
   EXT_KEY_SHARE,
+  EXT_RENEGOTIATION_INFO,
   EXT_SUPPORTED_VERSIONS,
   SECP256R1,
   X25519,
 } from "velt/net/tls/client_hello";
 import { ByteReader } from "velt/net/tls/byte_reader";
 import { knownSuite } from "velt/net/tls/record_cipher";
+import { DOWNGRADE_TLS12, tls12Suite } from "velt/net/tls/suites12";
 
-// SHA-256("HelloRetryRequest"): a ServerHello with this random is a HelloRetryRequest.
-const HRR_RANDOM: u8[] = [
+/** SHA-256("HelloRetryRequest"): a ServerHello with this random is a HelloRetryRequest. */
+export const HRR_RANDOM: u8[] = [
   0xcf,
   0x21,
   0xad,
@@ -66,6 +74,14 @@ export struct ServerHello {
   group: usize;
   /** A HelloRetryRequest's cookie, or null. */
   cookie: u8[] | null;
+  /** Whether the server chose TLS 1.2 (RFC 5246 §7.4.1.3): what follows is only for it. */
+  tls12: bool;
+  /** The server's random. */
+  random: u8[];
+  /** Whether the server agreed to the extended master secret (RFC 7627). */
+  ems: bool;
+  /** The protocol the server chose with ALPN, or null (TLS 1.3 sends it encrypted instead). */
+  alpn: string | null;
 }
 
 /**
@@ -99,16 +115,7 @@ export function parseServerHello(
   for (let i: usize = 0; same && i < sid.length; i++) {
     same = sid[i] == sessionId[i];
   }
-  if (!same) {
-    throw new TlsFailure(ILLEGAL_PARAMETER, "the ServerHello does not echo the session id");
-  }
   const suite = r.u16();
-  if (!suites.includes(suite) || !knownSuite(suite)) {
-    throw new TlsFailure(
-      ILLEGAL_PARAMETER,
-      `the server chose a cipher suite not offered (0x${suite.toString(16)})`,
-    );
-  }
   if (r.u8() != 0) {
     throw new TlsFailure(ILLEGAL_PARAMETER, "the server chose a compression method");
   }
@@ -116,12 +123,19 @@ export function parseServerHello(
   let keyShare: u8[] = [];
   let group: usize = 0;
   let cookie: u8[] | null = null;
+  let ems = false;
+  let alpn: string | null = null;
   // TLS 1.2 servers may omit the extensions altogether.
   if (r.left() > 0) {
     const exts = r.vector(2);
+    const seen: usize[] = [];
     while (exts.left() > 0) {
       const type = exts.u16();
       const e = exts.vector(2);
+      if (seen.includes(type)) {
+        throw new TlsFailure(ILLEGAL_PARAMETER, `the extension ${type} twice in the ServerHello`);
+      }
+      seen.push(type);
       if (type == EXT_SUPPORTED_VERSIONS) {
         version = e.u16();
       } else if (type == EXT_KEY_SHARE) {
@@ -133,17 +147,80 @@ export function parseServerHello(
       } else if (type == EXT_COOKIE && retry) {
         const c = e.vector(2);
         cookie = c.bytes(c.left());
+      } else if (type == EXT_EXTENDED_MASTER_SECRET) {
+        ems = true;
+      } else if (type == EXT_RENEGOTIATION_INFO) {
+        // An initial handshake's is empty (RFC 5746 §3.4).
+        const c = e.vector(1);
+        if (c.left() != 0) {
+          throw new TlsFailure(HANDSHAKE_FAILURE, "a renegotiation_info that is not empty");
+        }
+      } else if (type == EXT_ALPN) {
+        const list = e.vector(2);
+        const one = list.vector(1);
+        list.finish();
+        // Protocol names are bytes (RFC 7301 §3.1): one that is not UTF-8 is not one offered.
+        alpn = utf8DecodeLossy(one.bytes(one.left()));
       } else {
-        e.bytes(e.left());
+        e.skip(e.left());
       }
       e.finish();
     }
   }
   r.finish();
+  if (version == 0) {
+    // No supported_versions: the server chose TLS 1.2 by legacy_version (RFC 8446 §4.1.3).
+    let offered12 = false;
+    for (const s of suites) {
+      offered12 = offered12 || tls12Suite(s);
+    }
+    if (!offered12) {
+      throw new TlsFailure(PROTOCOL_VERSION, "the server chose TLS 1.2, which was not offered");
+    }
+    if (retried) {
+      throw new TlsFailure(ILLEGAL_PARAMETER, "a TLS 1.2 ServerHello after a HelloRetryRequest");
+    }
+    if (sameBytes(random, 24, DOWNGRADE_TLS12)) {
+      throw new TlsFailure(
+        ILLEGAL_PARAMETER,
+        "the server has TLS 1.3 but chose TLS 1.2: a downgrade (RFC 8446 §4.1.3)",
+      );
+    }
+    if (same && sid.length > 0) {
+      // Echoing the session id resumes a session, and this client never offered one.
+      throw new TlsFailure(ILLEGAL_PARAMETER, "a TLS 1.2 ServerHello that resumes a session");
+    }
+    if (!suites.includes(suite) || !tls12Suite(suite)) {
+      throw new TlsFailure(
+        ILLEGAL_PARAMETER,
+        `the server chose a TLS 1.2 cipher suite not offered (0x${suite.toString(16)})`,
+      );
+    }
+    return {
+      retry: false,
+      suite: suite,
+      keyShare: [],
+      group: 0,
+      cookie: null,
+      tls12: true,
+      random: random,
+      ems: ems,
+      alpn: alpn,
+    };
+  }
+  if (!same) {
+    throw new TlsFailure(ILLEGAL_PARAMETER, "the ServerHello does not echo the session id");
+  }
+  if (!suites.includes(suite) || !knownSuite(suite)) {
+    throw new TlsFailure(
+      ILLEGAL_PARAMETER,
+      `the server chose a cipher suite not offered (0x${suite.toString(16)})`,
+    );
+  }
   if (version != 0x0304) {
     throw new TlsFailure(
       PROTOCOL_VERSION,
-      "the server does not speak TLS 1.3 (TLS 1.2 is not supported yet)",
+      `the server chose version 0x${hex4(version)} in supported_versions`,
     );
   }
   if (!retry) {
@@ -168,16 +245,36 @@ export function parseServerHello(
       `the HelloRetryRequest asks for key exchange group 0x${group.toString(16)}, which was not offered`,
     );
   }
-  return { retry: retry, suite: suite, keyShare: keyShare, group: group, cookie: cookie };
+  return {
+    retry: retry,
+    suite: suite,
+    keyShare: keyShare,
+    group: group,
+    cookie: cookie,
+    tls12: false,
+    random: random,
+    ems: false,
+    alpn: null,
+  };
 }
 
-// TLS 1.3 fixes the legacy_version at 0x0303 (§4.1.3): below it the server chose an older
-// version, which is not supported (protocol_version); above it the field is wrong.
+// Whether `a[at..]` starts with `b`.
+function sameBytes(a: u8[], at: usize, b: u8[]): bool {
+  for (let i: usize = 0; i < b.length; i++) {
+    if (a[at + i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// TLS 1.3 and 1.2 both have legacy_version 0x0303 (§4.1.3): below it the server chose a version
+// older than TLS 1.2, which is not supported (protocol_version); above it the field is wrong.
 function checkLegacyVersion(v: usize) {
   if (v < 0x0303) {
     throw new TlsFailure(
       PROTOCOL_VERSION,
-      `the server does not speak TLS 1.3 (it chose version 0x${hex4(v)})`,
+      `the server chose version 0x${hex4(v)}, older than TLS 1.2`,
     );
   }
   if (v != 0x0303) {

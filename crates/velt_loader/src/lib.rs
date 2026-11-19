@@ -58,7 +58,6 @@ mod import_meta;
 mod jsx;
 mod locate;
 mod more;
-mod moved;
 mod old_extension;
 mod paths;
 mod pick;

@@ -6,7 +6,7 @@ A Velt library: text helpers (`slugify`, `truncate`, `WordCounter`).
 velt test                # run tests/*.test.velt
 velt doc                 # HTML API docs from the /** */ comments -> target/doc/index.html
 velt fmt
-velt publish             # to the registry ($VELT_REGISTRY, default ~/.velt/registry)
+velt publish             # to the registry named by $VELT_REGISTRY or package.velt's `registry`
 ```
 
 Using it from another package:

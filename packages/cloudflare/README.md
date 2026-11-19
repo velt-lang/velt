@@ -116,9 +116,9 @@ Ids are `idFromName(name)`, `idFromString(hex)` (the id's `toString()`) and `new
 `idFromString` throws `IoError` for a string that is not an id of the namespace. A stub sends
 std `Request`s to the object's `fetch` handler and gives a `Response` (bodies whole; a response
 of a status below 200, such as a WebSocket upgrade, is an `IoError` "ENOTSUP"). Durable Objects
-written in Velt are not supported yet.
+written in Velt are not supported.
 
-## Not yet
+## Not supported
 
 R2's ranged `get`, multipart uploads and `get` with `onlyIf`; streamed request bodies for `put`;
 KV's `getWithMetadata` and metadata; D1's `raw()` and sessions; WebSockets to Durable Objects.

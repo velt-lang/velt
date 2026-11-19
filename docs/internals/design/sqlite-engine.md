@@ -1,162 +1,135 @@
-# Design: a SQLite engine in Velt, fastest in class and multithreaded
+# A SQLite engine in Velt
 
-Status: proposed; step 1 (reading the file format) is in progress.
-Tracking: #1726, with one sub-issue per step and per language feature.
+Status: partly implemented. Issue: [#1726](https://github.com/velt-lang/velt/issues/1726).
 
-## Where we are
+## Summary
 
-The `sqlite` package (`packages/sqlite`, [docs](../../../packages/sqlite/README.md); until
-2026-10 std's `velt/sqlite`) wraps C SQLite through `declare c` (`packages/sqlite/src/sqlite3.velt`). The engine below is `sqlite/engine` in the same package (`src/engine/`). Rows decode into typed values through `readRowsByColumn`, which
-calls `sqlite3_column_*` once per value across the FFI. That is fast, but it can't get faster:
-every statement runs SQLite's bytecode interpreter (VDBE) behind an opaque call that LLVM can't
-inline, and one connection runs on one thread.
+`sqlite/engine`, in the `sqlite` package (`packages/sqlite/src/engine/`, user documentation in
+[packages/sqlite/docs/engine.md](../../../packages/sqlite/docs/engine.md)), is a SQLite engine
+written in Velt. It reads SQLite 3 database files and answers SELECT statements the way C SQLite
+does, with the statement API of the package's driver. The design extends it to write the same
+files, to share one page cache between readers on many threads, and to split one query across
+cores, so that the `sqlite` package needs no C library.
 
-The goal: replace the C library with an engine written in Velt that reads and writes the same
-files (a database written by either can be opened by the other, with `sqlite3` alongside),
-answers queries the way SQLite does, and is faster than C SQLite, better-sqlite3, bun:sqlite
-and rusqlite on `bench/db` and `bench/sqlite`. No Rust: no native library, nothing new in
-`velt_rt`. Where Velt can't express something, or can't express it fast enough, that is a
-language or compiler feature to add, which then helps every program
-([velt-in-velt](json-engine.md#rule-the-engine-is-written-in-velt)).
+The engine contains no Rust and adds nothing to `velt_rt`. Where Velt cannot express something,
+or cannot express it fast enough, the fix is a language or compiler feature, which then helps
+every program; the same rule governs the JSON engine
+([json-engine.md](json-engine.md#rule-the-engine-is-written-in-velt)).
 
-## Where the speed comes from
+## Motivation
 
-| Idea | Why C SQLite can't | Step |
+The package's driver (`packages/sqlite/src/sqlite3.velt`, `statement.velt`) calls C SQLite,
+compiled with the package from the amalgamation in `packages/sqlite/native/`, through
+`declare c("sqlite3")` ([c-ffi.md](c-ffi.md)). Rows decode into typed values through `velt/db`'s
+`readRows`, one `sqlite3_column_*` call per value. That cost has a floor: every statement runs
+SQLite's bytecode interpreter (VDBE) behind calls LLVM cannot inline, and a connection is used
+by one thread at a time.
+
+An engine in Velt is compiled together with the program that uses it, so the code that reads a
+row, compares a key or evaluates an expression is inlined and specialized like the program's own
+code.
+
+## Design
+
+### Compatibility
+
+- **File format.** SQLite 3's exactly: the header, table and index b-tree pages, the record
+  format and overflow chains, and, once the engine writes, the freelist, pointer maps
+  (auto-vacuum), the rollback journal and the WAL with its `-shm` index. The engine takes no
+  locks yet; once it writes, its locks are POSIX advisory locks at SQLite's byte offsets, so C
+  SQLite processes and Velt processes can share a database.
+- **SQL.** SQLite's dialect, with its type affinity, NULL handling, collations, integer overflow
+  to REAL, the text form of REAL values, and its core, date and aggregate functions. SQL the
+  engine cannot run fails at `prepare` with an error naming what is unsupported; the engine
+  never answers differently from SQLite.
+- **Errors.** The engine throws the driver's `SqliteError` with SQLite's codes and messages
+  (`no such column: x`, `misuse of aggregate: count()`), so one `catch` handles both.
+- **Row order.** Rows a query does not order come in the order SQLite's plan gives them where
+  the engine picks the same plan. Where SQLite's cost model picks another plan, they can come in
+  another order, and DISTINCT or GROUP BY can then show another row of a group for its bare
+  columns.
+
+Compatibility is checked by the package's tests (`packages/sqlite/tests/engine_*.test.velt`)
+over databases C SQLite writes, and by a differential fuzzer (`bench/sqlite/fuzz.velt`) that runs
+random schemas, data and SELECTs through the engine and through the `sqlite3` shell and requires
+identical rows.
+
+### Where the speed comes from
+
+| Idea | Why C SQLite cannot | Built |
 |---|---|---|
-| Rows decode straight from page bytes into `T`'s fields, by code generated for `T` | `sqlite3_column_*` is a call per value, through a `Mem` cell | 3 |
-| Plans run as compiled Velt code (closures composed at `prepare`), not a bytecode loop | VDBE dispatches every opcode | 3 |
-| SQL that is a constant is planned when the program is compiled | `sqlite3_prepare` parses at run time | 7 |
-| Readers on many threads share one page cache of immutable pages, without locks | one connection = one thread; the page cache is per connection | 5 |
-| One query runs on several cores: scans, aggregates and sorts split by b-tree subtree | single-threaded by design | 6 |
-| Pages are read with `pread` into the cache, or mapped (`mmap`) when the file allows | the same (mmap off by default) | 2 |
+| Plans run as closures composed at `prepare`, not a bytecode loop | VDBE dispatches every opcode | yes |
+| Rows decode straight from page bytes into `T`'s fields, by code generated for `T` | `sqlite3_column_*` is a call per value, through a `Mem` cell | no |
+| Readers on many threads share one page cache of immutable pages, without locks | the page cache is per connection | no |
+| One query runs on several cores: scans, aggregates and sorts split by b-tree subtree | single-threaded by design | no |
+| SQL that is a constant is planned when the program is compiled | `sqlite3_prepare` parses at run time | no |
 
-## Compatibility
+### API
 
-- The file format is SQLite 3's, exactly: header, b-tree pages, record format, freelist,
-  pointer maps (auto-vacuum), the rollback journal and the WAL with its `-shm` index. Locks are
-  POSIX advisory locks at SQLite's byte offsets (`PENDING_BYTE`…), so C SQLite processes and
-  Velt processes can use one database at the same time.
-- SQL is SQLite's dialect, with its type affinity, NULL handling, collations, and its
-  core, date and aggregate functions. What is not supported yet fails to prepare with an error
-  naming it; it never answers differently.
-- Checked by differential tests against the `sqlite3` CLI: databases written by Velt pass
-  `PRAGMA integrity_check` in `sqlite3`; queries over generated schemas and data give the same
-  rows (a fuzzer like `bench/json/fuzz`); the SQL Logic Test corpus as it becomes reachable.
+`openDatabase(path)` reads a database file into memory; `new Database(bytes)` takes its bytes.
+`Database.prepare(sql)` parses and plans one SELECT and caches the plan by its text (the 200 used
+last). A `Statement` has the driver's `all<T>()`, `get<T>()`, `allWith<T>(params)` and
+`getWith<T>(params)`, plus `columns()`, `values()` (every value as a `Val`) and `plan()`, which
+describes each FROM item in the words of SQLite's `EXPLAIN QUERY PLAN`.
 
-## Language features this needs
+## Compilation
 
-Found so far; each gets its own issue and lands in the compiler, not in the engine:
+The engine is ordinary Velt code in the package; the compiler has no knowledge of it.
 
-1. **OS calls from Velt code, std and packages alike** (step 2): positioned reads and writes,
-   `fsync`, `ftruncate`, `fcntl` locks, `mmap`, on POSIX and Windows. Today std reaches the OS
-   only through `velt_rt_*` functions written in Rust, and a package only through its own
-   native library. Decided: any module, including a package's, may `declare` the system's C
-   library functions (libc, kernel32), with buffer parameters as `u8[]` ranges lowered to
-   pointer + length. Velt moves off Rust onto Velt: what std can do, a package can do, so the
-   engine can ship as the `sqlite` package without a native library.
-2. **A string from a byte range** (step 1, #1677 step 3): `text(i)` copies the bytes into a
-   new `u8[]` and then into a string (two copies, the second in `velt_rt`). It should be one
-   copy and a UTF-8 check written in Velt.
-3. **Byte views**: a page as a borrowed `u8[]` range of the cache, without a copy and without
-   the bounds check per byte that `data[at + i]` costs now.
-4. **Atomics and locks** (in progress elsewhere): the shared page cache and WAL index.
+| Part | Modules (`packages/sqlite/src/engine/`) |
+|---|---|
+| File and records | `db_file.velt` (the header, pages as offsets into the file's bytes), `format.velt`, `varint.velt`, `record*.velt`, `serial_sizes.velt` |
+| B-trees | `cursor.velt`, `btree_*.velt`: table and index cursors (first, next, seek by rowid and by key), overflow chains |
+| Schema | `schema/`: `sqlite_schema` read into tables, indexes and views |
+| SQL | `sql/`: lexer, parser and AST of SQLite's statements |
+| Planning | `exec/plan/`: rowid and index lookups and ranges, covering indexes, `OR` as `IN`, ORDER BY through an index or a sort |
+| Execution | `exec/`: expressions compiled into closures with SQLite's affinity, collation and NULL rules (`expr_compiler.velt`), nested-loop joins (`exec/loop/`), aggregates, window functions, subqueries, CTEs (recursive included) and compound selects |
 
-## Feature 1 in detail: system calls from Velt (#1716)
+Rows fill `T` by column name through `velt/db`'s `readRows`, from the engine's values with no
+text in between.
 
-Today a `declare function` outside std must name an export of its package's native library
-(`crates/veltc/src/native/mod.rs`, `check_declares`), and std declares only `velt_rt_*`. The
-proposal keeps Velt memory-safe without a runtime in between:
+## Language features it relies on
 
-```ts ignore
-// Any module, std or package.
-declare system function pread(fd: i32, buf: mut u8[], offset: i64): isize;  // libc
-declare system function pwrite(fd: i32, buf: u8[], offset: i64): isize;
-declare system function fsync(fd: i32): i32;
-declare system function fcntl(fd: i32, cmd: i32, lock: mut Flock): i32;   // a #[repr(C)] struct
-```
+The engine as built is ordinary Velt: it reads the file with `velt/fs`'s `readFileBytesSync` and
+uses no OS calls or atomics of its own. The parts not yet implemented rely on:
 
-- **`declare system function`** binds a symbol of the platform's C library (libc, libSystem,
-  kernel32/ntdll on Windows, WASI on wasm32). The compiler keeps a table of the symbols it
-  allows per target, with their C signatures, and checks every declaration against it, as it
-  checks native packages' exports today: a wrong signature is a compile error, not a crash.
-- **Buffers** are `u8[]` (read) or `mut u8[]` (written) parameters, or a range of one
-  (`buf.subarray(at, n)` as a borrowed view, feature 3). One Velt parameter lowers to the C
-  pointer and length pair that follows it in the table's signature (`void *buf, size_t
-  count`), so the length always comes from the array: no call can read or write past it. A
-  written buffer's bytes past what the call reports stay as they were.
-- **Structs** passed by pointer (`struct flock`, `struct stat`) are Velt `struct`s whose layout
-  the table states per target; the compiler checks field order, types and size.
-- **Results** are scalars; `errno` (`GetLastError`) is read by `lastOsError()` right after the
-  call, which the compiler keeps adjacent (no allocation or other call in between).
-- **What stays out**: raw pointers, callbacks into Velt, and functions that keep a buffer after
-  they return (`aio_read`). `mmap` is not a declaration: it is a std type, `MappedFile`, whose
-  pages are byte views (feature 3) that live as long as the mapping.
-- A package's use of system functions is listed by `velt check` and in `velt.lock.json`, so a
-  user sees which packages touch the OS directly.
+- **OS calls from any module.** std and packages alike call the platform's C library through
+  `declare c("c")` and `unsafe` ([c-ffi.md](c-ffi.md)), with arrays and their `subarray` views
+  as buffers. std builds positioned reads (`std/fs/fd/`) and `MappedFile` (`mmap`,
+  `std/fs/mapped_file.velt`) on them; the pager is to use the same mechanism, so the engine
+  ships in a package without a native library.
+- **Atomics** ([atomics.md](atomics.md)) for the shared page cache and the WAL index.
 
-This replaces the Rust in `std/fs` (`velt_rt_fs_*`) over time; std's file API is rewritten on
-it, starting with positioned I/O for the pager.
+## Limitations
 
-**Built** (#1716, https://veltlang.com/docs/reference/system-functions/), with these decisions:
+- The engine is read-only. The parser reads DDL, DML and PRAGMA statements too, but `prepare`
+  runs one SELECT only and refuses any other statement with `only SELECT statements are
+  supported yet` (`SQLITE_ERROR`).
+- The whole database file is held in memory as one `u8[]`; files larger than memory cannot be
+  opened.
+- A database in WAL mode reads correctly only as checkpointed: the `-wal` file is not read.
+- `text(i)` copies a column's bytes into a new `u8[]` and then into a string: two copies.
 
-- The written/read distinction is spelled with TypeScript's own `readonly` array type instead of
-  a new `mut` modifier: `buf: u8[]` is a buffer the C function writes, `buf: readonly u8[]` one
-  it only reads (the default of a TypeScript array is mutable; `readonly T[]` already parses,
-  and only `declare system function` gives it a meaning beyond `T[]`). The table says which each
-  function's buffer is, and a declaration must agree.
-- The table is Rust data in velt_vir (`system/posix.rs`, `system/windows.rs`): per target, each
-  function's link symbol, its C parameters (integer, buffer, C string, struct, `NULL`), where
-  its variadic arguments start, argument guards, and each C struct's layout by field name. A
-  Velt struct names the fields it uses (any order, any subset); lowering copies through a
-  temporary of the target's layout, so one Velt struct fits `struct flock` on macOS and Linux.
-- A buffer parameter takes an array or a view (#1718): a typed array, a `DataView`, a
-  `subarray` of one, or `xs.subarray(begin, end)` of a `u8[]`, borrowed for the call. The
-  interim `buf: u8[], start: usize, end: usize` form is gone.
-- `fcntl`'s forms are overloads in the table, chosen by the declaration's types; `fcntl$lock`
-  names a second form in one module (the `$suffix` is ignored). Each form checks its commands.
-- Paths are `readonly u8[]` with exactly one 0, as the last byte (checked at the call), not `string`: no allocation or
-  conversion is hidden in a call.
-- A target without a function accepts its declaration; calling it there is a compile error
-  (`velt/fs`'s fd API on Windows and WebAssembly for now).
-- `lastOsError()` adjacency is a compiler guarantee, not a convention: lowering captures `errno`
-  (`*__error()` / `*__errno_location()`) into one hidden `i32` local per function, zero-filled in
-  the entry block, right after every system call; `lastOsError()` reads that local when a call
-  preceded it (`crates/velt_vir/src/lower/system.rs`). So a freed temporary or a `console.log`
-  between the failing call and the read cannot clobber the value. It costs one `__error` load per
-  call. Windows reads `GetLastError()` at the `lastOsError()` call as before.
-- **Deferred**: rejecting a `readonly u8[]` passed to a written buffer parameter at compile time
-  (TypeScript's TS2345). Velt models `readonly T[]` as `T[]` and checks writes through the
-  variable, not assignability, so this is a general limitation of the read-only model, not
-  specific to system functions, and it is not memory-unsafe (the array is valid memory). To be
-  done with read-only assignability across the language.
-- **Deferred** (#1773): listing a package's system functions in `velt check` and
-  `velt.lock.json`. It spans the package manifest, the lock file and the registry metadata, none
-  of it memory safety; the compile-time table (`velt_vir`'s per-target list) already bounds what
-  a declaration can bind. To be built with the registry work.
+## Not yet implemented
 
-## Steps
-
-1. **Reading the file format** (`src/engine/format`, `src/engine/btree`): header, table and
-   index b-tree cursors (first, next, seek by rowid), records, overflow chains, `sqlite_schema`.
-   The whole file in one `u8[]`. Tested against files `sqlite3` writes.
-2. **The pager and the OS layer**: page cache over `pread`, locks, change counter; files larger
-   than memory.
-3. **SQL**: tokenizer, parser, name resolution against the schema, a planner (rowid and index
-   lookups and ranges, nested-loop joins, ORDER BY through an index or a sort, LIMIT), and
-   execution as compiled closures. Expressions with SQLite's affinity and comparison rules,
-   core functions, aggregates, subqueries. Typed row decoding replaces `readRowsByColumn`
-   for the Velt engine.
-4. **Writing**: INSERT, UPDATE, DELETE, b-tree balancing, the freelist, the rollback journal,
-   transactions, DDL. Then the package's driver switches to the Velt engine and its native
-   library is deleted.
-5. **WAL and concurrent readers**: the WAL file and `-shm` index, snapshots per reader, a
-   page cache shared between threads.
-6. **Parallel queries**: split a scan by subtrees of the root, run the parts as tasks, merge
-   aggregates and sorted runs.
-7. **Constant SQL compiled with the program**.
-
-## Decided
-
-- The engine may live in std or in a package: OS calls are a language feature for every
-  module (feature 1), not a std privilege. It moved to the `sqlite` package with the driver
-  (2026-10); the package needs no native code once the engine writes.
+1. **The pager and the OS layer.** A page cache over positioned reads, or a mapping when the
+   file allows; locks and the change counter. `DbFile.page(n)` is the single point every reader
+   goes through, so the cache replaces the in-memory file there.
+2. **Writing.** INSERT, UPDATE, DELETE, b-tree balancing, the freelist, the rollback journal,
+   transactions and DDL. When the engine writes, the driver runs on it and the package drops its
+   C library.
+3. **WAL and concurrent readers.** The WAL file and its `-shm` index, a snapshot per reader, and
+   a page cache of immutable pages shared between threads.
+4. **Parallel queries.** A scan split by subtrees of the root, the parts run as tasks, and
+   aggregates and sorted runs merged.
+5. **Constant SQL compiled with the program.** A `prepare` whose SQL is a constant is parsed and
+   planned at compile time.
+6. **Typed row decoding.** Code generated per `T` reads a row's fields straight from page bytes,
+   replacing the decoding through `Val`s.
+7. **A string from a byte range** ([#1717](https://github.com/velt-lang/velt/issues/1717)): one
+   copy and a UTF-8 check written in Velt, instead of a copy into a `u8[]` followed by the
+   runtime's conversion.
+8. **Byte views** ([#1718](https://github.com/velt-lang/velt/issues/1718)): a page as a borrowed
+   range of the cache, bounds-checked once per range rather than once per byte.
+9. **SQL Logic Test.** The SQL Logic Test corpus joins the differential tests as the engine's
+   coverage reaches it.

@@ -1,0 +1,39 @@
+// velt/time (tests): white-box tests of `#localtime`, run by `velt test std/`.
+//
+// On Windows the system-zone path is checked whatever the machine's own zone is (CI's runners use
+// UTC): two installed zones by their registry keys, in July and January, and outside
+// `SYSTEMTIME`'s range, where the zone's standard offset applies. Everywhere, the process' own
+// offset is less than a day at a few instants.
+import { platform } from "velt/os";
+import { describe, expect, it } from "velt/test";
+import { localOffsetSeconds, offsetInZone } from "#localtime";
+
+/** 2024-07-03T09:46:40Z and 2024-01-11T19:06:40Z. */
+const JULY: i64 = 1720000000;
+const JANUARY: i64 = 1705000000;
+
+/** 1500-01-01 and the year 39996, outside what a `SYSTEMTIME` holds. */
+const BEFORE_1601: i64 = -14831769600;
+const AFTER_30827: i64 = 1200000000000;
+
+describe("#localtime", () => {
+  it("follows an installed zone's daylight saving time on Windows", () => {
+    if (platform() !== "win32") {
+      return;
+    }
+    expect(offsetInZone("W. Europe Standard Time", JULY)).toBe(7200);
+    expect(offsetInZone("W. Europe Standard Time", JANUARY)).toBe(3600);
+    expect(offsetInZone("Eastern Standard Time", JULY)).toBe(-14400);
+    expect(offsetInZone("Eastern Standard Time", JANUARY)).toBe(-18000);
+    expect(offsetInZone("W. Europe Standard Time", BEFORE_1601)).toBe(3600);
+    expect(offsetInZone("W. Europe Standard Time", AFTER_30827)).toBe(3600);
+    expect(offsetInZone("No Such Zone", JULY)).toBe(null);
+  });
+
+  it("gives the process' offset within a day", () => {
+    for (const secs of [0, 1700000000, JULY, -3153600000]) {
+      const offset = localOffsetSeconds(secs * 1000);
+      expect(offset > -86400 && offset < 86400).toBe(true);
+    }
+  });
+});
