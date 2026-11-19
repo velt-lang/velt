@@ -51,11 +51,5 @@ pub(crate) fn hidden(cx: &Ctx, unloaded: &[String]) -> FxHashSet<usize> {
         outside.extend(imports_of(m).filter(|t| candidates.contains(t)));
     }
     hidden.extend(candidates.into_iter().filter(|m| !outside.contains(m)));
-    if std::env::var_os("VELT_TMP_G").is_some() {
-        // TEMP-DEBUG (#2943 this_fn in the harness's release runs)
-        let names: Vec<&str> = (hidden.iter()).map(|&m| cx.modules[m].path.as_str()).collect();
-        let tf = unloaded.iter().any(|g| g.ends_with("/this_fn"));
-        eprintln!("TMP-G unloaded={} this_fn_unloaded={tf} hidden={names:?}", unloaded.len());
-    }
     hidden
 }

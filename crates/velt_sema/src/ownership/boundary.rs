@@ -126,8 +126,27 @@ pub(crate) fn check_boundaries(cx: &mut Ctx) {
 /// `Intrinsic::SlotPut`), and a function that passes its parameter on to one of those
 /// (`enqueue(ch, x)` calling `ch.send(x)`) hands it over too. A parameter the body assigns (`c = new Conn(…)`) may send another value, so it
 /// is left out (`LocalDef::mutable` would also cover a parameter whose contents change).
+///
+/// A finished unit's senders come from its summary (`units::Summaries::senders`, which std's
+/// stage keeps): its bodies are not among `fns`, and the program's functions pass on to them.
 fn channel_senders(cx: &mut Ctx, fns: &[DefId]) -> FxHashMap<DefId, Vec<usize>> {
-    let mut out: FxHashMap<DefId, Vec<usize>> = FxHashMap::default();
+    let out = match cx.units_stage {
+        crate::units::Stage::App => cx.unit_sums.senders.clone().unwrap_or_default(),
+        _ => FxHashMap::default(),
+    };
+    let out = senders_from(cx, fns, out);
+    if cx.units_stage == crate::units::Stage::Std {
+        cx.unit_sums.senders = Some(out.clone());
+    }
+    out
+}
+
+/// [`channel_senders`] of `fns`, on top of the senders known (`out`).
+fn senders_from(
+    cx: &mut Ctx,
+    fns: &[DefId],
+    mut out: FxHashMap<DefId, Vec<usize>>,
+) -> FxHashMap<DefId, Vec<usize>> {
     // (function, callee, argument index, parameter index): the parameter is passed on as is.
     let mut passes: Vec<(DefId, DefId, usize, usize)> = vec![];
     for &d in fns {

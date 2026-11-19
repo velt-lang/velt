@@ -13,10 +13,12 @@ use super::exports::{bound_name, imports_of, local_of};
 use super::ItemDefs;
 use crate::ctx::{Ctx, Item};
 
-/// Declare the constant of each `export default x;` whose `x` is an imported `let`.
-pub(super) fn declare(cx: &mut Ctx, items: &mut ItemDefs) {
+/// Declare the constant of each `export default x;` whose `x` is an imported `let`, in the
+/// modules `ms` (those being declared: the whole program, or the modules added to std's unit).
+pub(super) fn declare(cx: &mut Ctx, items: &mut ItemDefs, ms: &[usize]) {
     let modules = cx.modules.clone();
-    for (m, module) in modules.iter().enumerate() {
+    for &m in ms {
+        let module = &modules[m];
         if module.is_std {
             continue;
         }

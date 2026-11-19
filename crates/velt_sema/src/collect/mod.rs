@@ -176,6 +176,7 @@ fn collect_added_in(cx: &mut Ctx, ms: &[usize], unit: Option<bool>) -> Added {
     let app = unit == Some(false);
     if app {
         cx.bodies_ok = false;
+        cx.synth_ifaces_wait();
     }
     declare::declare_added(cx, ms, &mut items);
     // A utility type in a field type asks for fields while shapes are being resolved.

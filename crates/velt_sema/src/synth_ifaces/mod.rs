@@ -445,6 +445,14 @@ impl Ctx<'_> {
         self.synth_ifaces.flattened
     }
 
+    /// A unit collected after a finished one (`crate::units`: the app's, after std's) declares
+    /// interfaces that are not flattened yet: an interface made of one of them from here on
+    /// waits for [`Ctx::fill_synth_ifaces`], as in a whole program's collection, instead of
+    /// being filled at once without that interface's members.
+    pub(crate) fn synth_ifaces_wait(&mut self) {
+        self.synth_ifaces.flattened = false;
+    }
+
     /// Interfaces are flattened: fill the interfaces made before.
     pub(crate) fn fill_synth_ifaces(&mut self) {
         self.synth_ifaces.flattened = true;

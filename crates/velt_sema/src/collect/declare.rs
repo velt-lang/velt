@@ -34,7 +34,7 @@ pub(super) fn declare_all(cx: &mut Ctx, items: &mut ItemDefs) {
         }
     }
     super::nested::declare_nested(cx, items, &ms);
-    super::default_snapshots::declare(cx, items);
+    super::default_snapshots::declare(cx, items, &ms);
     for m in 0..cx.modules.len() {
         super::imports::resolve_imports(cx, m);
         super::imports::bind_jsx_runtime(cx, m);
@@ -55,7 +55,6 @@ pub(super) fn declare_std(cx: &mut Ctx, items: &mut ItemDefs) {
         }
     }
     super::nested::declare_nested(cx, items, &ms);
-    super::default_snapshots::declare(cx, items);
     for &m in &ms {
         super::imports::resolve_imports(cx, m);
         super::imports::bind_jsx_runtime(cx, m);
@@ -73,6 +72,7 @@ pub(super) fn declare_added(cx: &mut Ctx, ms: &[usize], items: &mut ItemDefs) {
         }
     }
     super::nested::declare_nested(cx, items, ms);
+    super::default_snapshots::declare(cx, items, ms);
     for &m in ms {
         super::imports::resolve_imports(cx, m);
         super::imports::bind_jsx_runtime(cx, m);

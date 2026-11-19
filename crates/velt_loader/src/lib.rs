@@ -265,9 +265,9 @@ pub fn load_program(
     loader.check_variants();
     loader.check_ambients();
     loader.declare_global_types();
-    let modules = std::mem::take(&mut loader.modules);
     // The globals still waiting are those nothing in the program asked for (each one loaded is
-    // taken out of the list: `load_globals`, `load_conditional_globals`).
+    // taken out of the list: `load_globals`, `load_conditional_globals`). Asked before the
+    // modules are taken out of the loader: `unasked_globals` reads the program's own modules.
     let unloaded_globals = match (&loader.opts.std_root, injected) {
         (Some(std), false) => {
             let std = Origin::Std(std.clone());
@@ -280,6 +280,7 @@ pub fn load_program(
         (Some(std), true) => loader.unasked_globals(&std.clone()),
         (None, _) => vec![],
     };
+    let modules = std::mem::take(&mut loader.modules);
     Ok(Loaded {
         modules,
         root: root_index,

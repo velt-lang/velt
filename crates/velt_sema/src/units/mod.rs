@@ -267,6 +267,9 @@ pub(crate) struct Summaries {
     /// the frozen unit.
     pub(crate) fn_throws:
         Option<rustc_hash::FxHashMap<crate::hir::DefId, Option<crate::hir::TyId>>>,
+    /// A finished unit's functions that hand a parameter to a channel, with those parameters
+    /// (`ownership::boundary`: `Channel.send`, `HandOff.give`, and what passes one on).
+    pub(crate) senders: Option<rustc_hash::FxHashMap<crate::hir::DefId, Vec<usize>>>,
 }
 
 /// std's part of two per-module facts ([`Order::std_facts`]).
@@ -466,6 +469,7 @@ crate::units::codec::structs! {
         literals, fed, modules, subclasses, calls, inst_sites, outside_named,
         outside_tys, lets, types, lib_base, dispatch_fns, value_scan,
         virtuals, implicit, host_fns, dyn_member_fns, reach_roots, methods_by_owner, fn_throws,
+        senders,
     }
 }
 
@@ -506,6 +510,7 @@ fn summary_sizes(s: &Summaries) {
         reach_roots,
         methods_by_owner,
         fn_throws,
+        senders,
     } = s;
     let mut sizes: Vec<(&str, usize)> = vec![];
     macro_rules! size { ($($f:ident),*) => {$(
@@ -546,7 +551,8 @@ fn summary_sizes(s: &Summaries) {
         dyn_member_fns,
         reach_roots,
         methods_by_owner,
-        fn_throws
+        fn_throws,
+        senders
     );
     sizes.sort_by_key(|s| std::cmp::Reverse(s.1));
     for (f, n) in sizes {
