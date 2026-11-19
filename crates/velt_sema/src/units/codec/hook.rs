@@ -35,8 +35,15 @@ pub(crate) fn with<T>(hook: Hook, f: impl FnOnce() -> T) -> T {
 
 /// Show std's frozen unit `cx` to the hook installed, if any.
 pub(crate) fn std_unit(cx: &Ctx<'_>) {
-    let mut hook = HOOK.lock().unwrap_or_else(|p| p.into_inner());
-    if let Some(inspect) = hook.as_mut().and_then(|h| h.inspect.as_mut()) {
-        inspect(cx);
+    // The callback runs without the lock held (it may check a program itself), and goes back
+    // into the hook it came from if that one is still installed.
+    let lock = || HOOK.lock().unwrap_or_else(|p| p.into_inner());
+    let taken = lock().as_mut().and_then(|h| h.inspect.take());
+    let Some(mut inspect) = taken else {
+        return;
+    };
+    inspect(cx);
+    if let Some(h) = lock().as_mut() {
+        h.inspect.get_or_insert(inspect);
     }
 }
