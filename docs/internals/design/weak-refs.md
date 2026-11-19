@@ -263,9 +263,10 @@ that matches none (a boxed value's, such as a struct's) is left out. A generator
 traces its state through `f$trace` in the object's table (`lower/async_fn/gen_trace.rs`): the poll
 function has a case `TRACE_BIT | k` (`0x2000_0000`) for each `yield` `k` and one for the state
 before the start, which visits what the close path of `k` would drop (the same drop entries and
-flags), with `cx` pointing to the glue's `(visit, ctx)`; `f$trace` skips a running or finished
-generator. `shared` values are not looked into. So a glue never reads a field the dynamic type does
-not have. `lower/weak.rs` lowers the weak intrinsics and map value words.
+flags), with `cx` pointing to the glue's `(visit, ctx)`; `f$trace` skips a running, finished or
+closing generator (one whose tag has `DROP_BIT` or `CLOSE_BIT`). `shared` values are not looked
+into. So a glue never reads a field the dynamic type does not have. `lower/weak.rs` lowers the weak
+intrinsics and map value words.
 
 ### Threads and `shared`
 
