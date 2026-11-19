@@ -95,7 +95,7 @@ export declare unsafe function arrayDataAddress<T>(xs: Mut<T[]>): usize;
  * address is good only until `xs` is grown or dropped, and nothing may be written there.
  */
 @intrinsic
-export declare unsafe function arrayReadAddress<T>(xs: T[]): usize;
+export declare unsafe function arrayReadAddress<T>(xs: readonly T[]): usize;
 
 /** `xs.length * sizeof(T)`: how many bytes `xs`'s elements are. `T` as for `arrayDataAddress`. */
 @intrinsic
