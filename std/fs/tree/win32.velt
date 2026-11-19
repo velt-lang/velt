@@ -12,10 +12,10 @@
 import { Ptr } from "velt/ffi/ptr";
 import { Dirent } from "velt/fs/dirent";
 import { osError } from "velt/fs/errors";
+import { isDots, kindOf, nameOf } from "velt/fs/tree/find_data";
 import { byCodePoint } from "velt/fs/tree/order";
 import { Done } from "velt/fs/whole/done";
 import { winPath } from "velt/fs/whole/win_path";
-import { addressLoad } from "velt/lang/intrinsics";
 import { pdqsort } from "velt/lang/sort/pdq";
 import { ioError } from "velt/native/error";
 import { IoStatus } from "velt/native/status";
@@ -55,13 +55,8 @@ const LARGE_FETCH: u32 = 2;
 /** `WIN32_FIND_DATAW` is 592 bytes: as 296 `u16`s, the attributes are units 0-1, the reparse
  * tag (`dwReserved0`) units 18-19, and the name starts at unit 22 (260 units, NUL-terminated). */
 const FIND_DATA_BYTES: usize = 592;
-const NAME_AT: usize = 22;
-const NAME_END: usize = 282;
 const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
-const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
 const INVALID_FILE_ATTRIBUTES: u32 = 0xffffffff;
-const IO_REPARSE_TAG_SYMLINK: u32 = 0xa000000c;
-const IO_REPARSE_TAG_MOUNT_POINT: u32 = 0xa0000003;
 const ERROR_FILE_NOT_FOUND: u32 = 2;
 const ERROR_PATH_NOT_FOUND: u32 = 3;
 const ERROR_NO_MORE_FILES: u32 = 18;
@@ -75,88 +70,15 @@ const ERROR_DIRECTORY: u32 = 267;
 const ENOENT: i32 = 2;
 const ENOMEM: i32 = 12;
 const ENOTDIR: i32 = 20;
+const EPERM: i32 = 1;
+const EACCES: i32 = 13;
+const ENOSPC: i32 = 28;
 const EINVAL: i32 = 22;
-
-/** `Dirent`'s kinds (std/fs/dirent.velt). */
-const FILE: u8 = 1;
-const DIR: u8 = 2;
-const LINK: u8 = 3;
 
 /** The last Win32 error. */
 function lastWin32(): u32 {
   // SAFETY: GetLastError has no precondition.
   return unsafe { GetLastError() };
-}
-
-/**
- * The `u16` at unit `i` of the find data at `at`. Unsafe: `at` must be the address of a block of
- * FIND_DATA_BYTES bytes (the one `read` allocates) and `i` a unit inside it.
- */
-unsafe function unit(at: usize, i: usize): u32 {
-  return addressLoad<u16>(at + 2 * i) as u32;
-}
-
-/** Whether the name of the find data at `at` is `.` or `..`. Unsafe: as `unit`. */
-unsafe function isDots(at: usize): bool {
-  if (unit(at, NAME_AT) !== 46) {
-    return false;
-  }
-  const second = unit(at, NAME_AT + 1);
-  return second === 0 || (second === 46 && unit(at, NAME_AT + 2) === 0);
-}
-
-/**
- * The name of the find data at `at` as text (a lone surrogate reads as U+FFFD). Unsafe: as
- * `unit`.
- */
-unsafe function nameOf(at: usize): string {
-  const bytes: u8[] = [];
-  let i = NAME_AT;
-  while (i < NAME_END) {
-    const u = unit(at, i);
-    if (u === 0) {
-      break;
-    }
-    i++;
-    if (u < 0x80) {
-      bytes.push(u as u8);
-    } else if (u < 0x800) {
-      bytes.push((0xc0 | (u >> 6)) as u8);
-      bytes.push((0x80 | (u & 0x3f)) as u8);
-    } else if (u >= 0xd800 && u < 0xe000) {
-      const low: u32 = i < NAME_END ? unit(at, i) : 0;
-      if (u < 0xdc00 && low >= 0xdc00 && low < 0xe000) {
-        i++;
-        const cp = 0x10000 + ((u - 0xd800) << 10) + (low - 0xdc00);
-        bytes.push((0xf0 | (cp >> 18)) as u8);
-        bytes.push((0x80 | ((cp >> 12) & 0x3f)) as u8);
-        bytes.push((0x80 | ((cp >> 6) & 0x3f)) as u8);
-        bytes.push((0x80 | (cp & 0x3f)) as u8);
-      } else {
-        // A lone surrogate: U+FFFD.
-        bytes.push(0xef);
-        bytes.push(0xbf);
-        bytes.push(0xbd);
-      }
-    } else {
-      bytes.push((0xe0 | (u >> 12)) as u8);
-      bytes.push((0x80 | ((u >> 6) & 0x3f)) as u8);
-      bytes.push((0x80 | (u & 0x3f)) as u8);
-    }
-  }
-  return bytes.utf8Slice();
-}
-
-/** The kind of the entry the find data at `at` describes. Unsafe: as `unit`. */
-unsafe function kindOf(at: usize): u8 {
-  const attributes = unit(at, 0) | (unit(at, 1) << 16);
-  if ((attributes & FILE_ATTRIBUTE_REPARSE_POINT) !== 0) {
-    const tag = unit(at, 18) | (unit(at, 19) << 16);
-    if (tag === IO_REPARSE_TAG_SYMLINK || tag === IO_REPARSE_TAG_MOUNT_POINT) {
-      return LINK;
-    }
-  }
-  return (attributes & FILE_ATTRIBUTE_DIRECTORY) !== 0 ? DIR : FILE;
 }
 
 /**
@@ -326,7 +248,12 @@ function makeAll(path: string): u32 {
     return 0;
   }
   if (first !== ERROR_PATH_NOT_FOUND && first !== ERROR_FILE_NOT_FOUND) {
-    return isDir(path) ? 0 : first;
+    // As Node's recursive `mkdir`: an error whose name is EACCES, ENOSPC, ENOTDIR or EPERM
+    // stands even when a directory is there (`C:\`, which refuses with "access
+    // denied"); another one means the directory is made, if one is there now.
+    const e = errnoOfWin32(first);
+    const stands = e === EACCES || e === ENOSPC || e === ENOTDIR || e === EPERM;
+    return stands || !isDir(path) ? first : 0;
   }
   const parent = parentOf(path);
   if (parent === null) {
@@ -365,12 +292,35 @@ export function make(c: readonly u8[], path: string, recursive: bool): Done<bool
 }
 
 /**
+ * `path` without the separators it ends with when it names something that is no directory
+ * (`file\`, `file/`), which Windows reads as the file, and Node's `rm` removes; else `path`
+ * as it is (a root keeps its separator).
+ */
+function withoutTrailing(path: string): string {
+  let end = path.length as i64;
+  while (end > 1 && isSep(path.charCodeAt(end - 1)) && path.charCodeAt(end - 2) !== 58) {
+    end--;
+  }
+  if (end === (path.length as i64)) {
+    return path;
+  }
+  const w = winPath(path);
+  if (w === null) {
+    return path;
+  }
+  // SAFETY: `w` is NUL-terminated.
+  const a = unsafe { GetFileAttributesW(w) };
+  const file = a !== INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY) === 0;
+  return file ? path.slice(0, end) : path;
+}
+
+/**
  * Removes what is at `path`: a file, a link (never what it points to) or an empty directory,
  * with `recursive` a directory and everything in it. The runtime's function, for now (see the
  * top of this file).
  */
 export function removeAt(c: readonly u8[], path: string, recursive: bool): Done<bool> {
-  const s = velt_rt_fs_remove_sync(path, recursive);
+  const s = velt_rt_fs_remove_sync(withoutTrailing(path), recursive);
   if (s.code != 0) {
     return { value: null, error: ioError(s.code, s.message) };
   }

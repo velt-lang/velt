@@ -19,7 +19,7 @@ import { Dirent } from "velt/fs/dirent";
 import { Stats } from "velt/fs/stats";
 import { hookCall } from "velt/lang/intrinsics";
 import * as rt from "./rt";
-import { osError } from "velt/fs/errors";
+import { checkPathArg } from "velt/fs/path_arg";
 import {
   cBytes,
   existsAt,
@@ -86,14 +86,12 @@ export async function velt_rt_fs_copy_file(from: string, to: string): Promise<Io
 
 // Whole files: Velt code over the C library or Win32 (`#fs-whole`), the async forms on the
 // blocking pool. The path is checked on the calling thread, so the work on the pool only
-// returns: a 0 in it is the `IoError` the runtime gave (`EINVAL: invalid argument, open 'a'`),
-// which keeps these functions' `throws IoError`.
+// returns: a 0 in it is Node's `TypeError` (velt/fs/path_arg.velt), which velt/fs's public
+// functions have thrown already; this is the same check for any other caller.
 
-/** `path` as C bytes (its UTF-8 and a 0); throws `EINVAL` for `call` if it holds a 0. */
+/** `path` as C bytes (its UTF-8 and a 0); Node's `TypeError` if it holds a 0. */
 function cOf(path: string, call: string): u8[] {
-  if (path.includes("\0")) {
-    throw osError(22, call, path);
-  }
+  checkPathArg(path);
   return bytesOf(path);
 }
 

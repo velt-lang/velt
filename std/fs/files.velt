@@ -2,43 +2,52 @@
 // their `*Sync` twins).
 
 import { readBytes, readBytesSync, readText, readTextSync, write, writeSync } from "#fs-rt";
+import { checkPathArg } from "velt/fs/path_arg";
 
 /** Reads a UTF-8 text file (an invalid sequence becomes U+FFFD, as Node decodes it). */
 export async function readFile(path: string): Promise<string> {
+  checkPathArg(path);
   return await readText(path);
 }
 
 /** Reads a file's bytes. */
 export async function readFileBytes(path: string): Promise<u8[]> {
+  checkPathArg(path);
   return await readBytes(path);
 }
 
 /** Creates or truncates the file. */
 export async function writeFile(path: string, data: string): Promise<void> {
+  checkPathArg(path);
   await write(path, data, false);
 }
 
 /** Appends, creating the file if needed. */
 export async function appendFile(path: string, data: string): Promise<void> {
+  checkPathArg(path);
   await write(path, data, true);
 }
 
 /** `readFile`, blocking the calling thread. */
 export function readFileSync(path: string): string {
+  checkPathArg(path);
   return readTextSync(path);
 }
 
 /** `readFileBytes`, blocking the calling thread. */
 export function readFileBytesSync(path: string): u8[] {
+  checkPathArg(path);
   return readBytesSync(path);
 }
 
 /** `writeFile`, blocking the calling thread. */
 export function writeFileSync(path: string, data: string) {
+  checkPathArg(path);
   writeSync(path, data, false);
 }
 
 /** `appendFile`, blocking the calling thread. */
 export function appendFileSync(path: string, data: string) {
+  checkPathArg(path);
   writeSync(path, data, true);
 }

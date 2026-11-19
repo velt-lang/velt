@@ -1,0 +1,91 @@
+// A 0 in a path, as Node takes it: every function of velt/fs that takes a path throws Node's
+// `TypeError` (`ERR_INVALID_ARG_VALUE`) before any system call, naming the argument and showing
+// the path as `util.inspect` does, sync and async alike; `exists` is false without an error. The
+// expected output is Node 24's.
+import * as fs from "velt/fs";
+
+function attempt(what: string, f: () => void) {
+  try {
+    f();
+    console.log(what, "no error");
+  } catch (e) {
+    console.log(what, (e as Error).name, JSON.stringify((e as Error).message));
+  }
+}
+
+async function attemptAsync(what: string, f: () => Promise<void>) {
+  try {
+    await f();
+    console.log(what, "no error");
+  } catch (e) {
+    console.log(what, (e as Error).name, JSON.stringify((e as Error).message));
+  }
+}
+
+async function main() {
+  const p = "a\0b.txt";
+  attempt("readFileSync", () => {
+    fs.readFileSync(p);
+  });
+  attempt("readFileBytesSync", () => {
+    fs.readFileBytesSync(p);
+  });
+  attempt("writeFileSync", () => fs.writeFileSync(p, "x"));
+  attempt("appendFileSync", () => fs.appendFileSync(p, "x"));
+  attempt("statSync", () => {
+    fs.statSync(p);
+  });
+  attempt("lstatSync", () => {
+    fs.lstatSync(p);
+  });
+  attempt("readDirSync", () => {
+    fs.readDirSync(p);
+  });
+  attempt("readDirEntriesSync", () => {
+    fs.readDirEntriesSync(p);
+  });
+  attempt("mkdirSync", () => fs.mkdirSync(p));
+  attempt("mkdirSync recursive", () => fs.mkdirSync(p, { recursive: true }));
+  attempt("rmSync", () => fs.rmSync(p));
+  attempt("rmSync force", () => fs.rmSync(p, { force: true }));
+  attempt("renameSync from", () => fs.renameSync(p, "c"));
+  attempt("renameSync to", () => fs.renameSync("c", p));
+  attempt("copyFileSync from", () => fs.copyFileSync(p, "c"));
+  attempt("copyFileSync to", () => fs.copyFileSync("c", p));
+  attempt("symlinkSync target", () => fs.symlinkSync(p, "c"));
+  attempt("symlinkSync path", () => fs.symlinkSync("c", p));
+  attempt("readlinkSync", () => {
+    fs.readlinkSync(p);
+  });
+  attempt("realpathSync", () => {
+    fs.realpathSync(p);
+  });
+  attempt("openSync", () => {
+    fs.openSync(p, "r");
+  });
+  attempt("unlinkSync", () => fs.unlinkSync(p));
+  console.log("existsSync", fs.existsSync(p), await fs.exists(p));
+  await attemptAsync("readFile", async () => {
+    await fs.readFile(p);
+  });
+  await attemptAsync("writeFile", async () => await fs.writeFile(p, "x"));
+  await attemptAsync("stat", async () => {
+    await fs.stat(p);
+  });
+  await attemptAsync("readDir", async () => {
+    await fs.readDir(p);
+  });
+  await attemptAsync("mkdir", async () => await fs.mkdir(p));
+  await attemptAsync("rm", async () => await fs.rm(p));
+  await attemptAsync("rename", async () => await fs.rename(p, "c"));
+  // The path as `util.inspect` shows it: escapes, and the quote it picks.
+  attempt("quotes", () => {
+    fs.statSync("it's\0\t\u{7f}\\");
+  });
+  attempt("both quotes", () => {
+    fs.statSync("'\"\0");
+  });
+  attempt("all quotes", () => {
+    fs.statSync("'\"`\0\u{d800}");
+  });
+}

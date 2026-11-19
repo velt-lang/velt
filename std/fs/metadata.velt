@@ -14,19 +14,23 @@ import {
   velt_rt_fs_symlink,
   velt_rt_fs_symlink_sync,
 } from "#fs-rt";
+import { checkPathArg } from "velt/fs/path_arg";
 
 /** Metadata of `path`, following symlinks. */
 export async function stat(path: string): Promise<Stats> {
+  checkPathArg(path);
   return await statPath(path, true);
 }
 
 /** Metadata of `path` itself: a symlink is described, not followed. */
 export async function lstat(path: string): Promise<Stats> {
+  checkPathArg(path);
   return await statPath(path, false);
 }
 
 /** The target of the symlink `path`, as stored in the link (`EINVAL` if it is not a link). */
 export async function readlink(path: string): Promise<string> {
+  checkPathArg(path);
   return unwrapIo(await velt_rt_fs_readlink(path));
 }
 
@@ -36,6 +40,7 @@ export async function readlink(path: string): Promise<string> {
  * `ENOENT` if it doesn't exist.
  */
 export async function realpath(path: string): Promise<string> {
+  checkPathArg(path);
   return unwrapIo(await velt_rt_fs_realpath(path));
 }
 
@@ -45,30 +50,38 @@ export async function realpath(path: string): Promise<string> {
  * one needs Developer Mode or administrator rights (`EACCES` otherwise).
  */
 export async function symlink(target: string, path: string): Promise<void> {
+  checkPathArg(target, "target");
+  checkPathArg(path);
   checkIo(await velt_rt_fs_symlink(target, path));
 }
 
 /** `stat`, blocking the calling thread. */
 export function statSync(path: string): Stats {
+  checkPathArg(path);
   return statPathSync(path, true);
 }
 
 /** `lstat`, blocking the calling thread. */
 export function lstatSync(path: string): Stats {
+  checkPathArg(path);
   return statPathSync(path, false);
 }
 
 /** `readlink`, blocking the calling thread. */
 export function readlinkSync(path: string): string {
+  checkPathArg(path);
   return unwrapIo(velt_rt_fs_readlink_sync(path));
 }
 
 /** `realpath`, blocking the calling thread. */
 export function realpathSync(path: string): string {
+  checkPathArg(path);
   return unwrapIo(velt_rt_fs_realpath_sync(path));
 }
 
 /** `symlink`, blocking the calling thread. */
 export function symlinkSync(target: string, path: string) {
+  checkPathArg(target, "target");
+  checkPathArg(path);
   checkIo(velt_rt_fs_symlink_sync(target, path));
 }
