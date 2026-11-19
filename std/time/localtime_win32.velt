@@ -11,25 +11,34 @@ import { addressLoad, addressStore } from "velt/lang/intrinsics";
 import { processEnv } from "velt/lang/hooks/process";
 import { fixedOffset } from "./tz_fixed";
 
-/** Win32's `DYNAMIC_TIME_ZONE_INFORMATION` (432 bytes), `SYSTEMTIME` (16) and `FILETIME` (8). */
+/**
+ * Win32's `DYNAMIC_TIME_ZONE_INFORMATION` (432 bytes), `SYSTEMTIME` (16) and `FILETIME` (8). Each
+ * has two names here, as its header has: a parameter the function reads is written
+ * `const SYSTEMTIME *`, by the typedef's name, and one it fills is `LPSYSTEMTIME`, a pointer
+ * typedef whose pointee is the struct by its tag (`_SYSTEMTIME`). The header check
+ * (`velt native headers --std`) takes each parameter by the name its header gives it.
+ */
 declare c type DYNAMIC_TIME_ZONE_INFORMATION;
+declare c type _TIME_DYNAMIC_ZONE_INFORMATION;
 declare c type SYSTEMTIME;
+declare c type _SYSTEMTIME;
 declare c type FILETIME;
+declare c type _FILETIME;
 
 declare c("c") function GetDynamicTimeZoneInformation(
-  info: Ptr<DYNAMIC_TIME_ZONE_INFORMATION>,
+  info: Ptr<_TIME_DYNAMIC_ZONE_INFORMATION>,
 ): u32;
 declare c("c") function SystemTimeToTzSpecificLocalTimeEx(
   zone: Ptr<DYNAMIC_TIME_ZONE_INFORMATION>,
   utc: Ptr<SYSTEMTIME>,
-  local: Ptr<SYSTEMTIME>,
+  local: Ptr<_SYSTEMTIME>,
 ): i32;
 declare c("c") function EnumDynamicTimeZoneInformation(
   index: u32,
-  info: Ptr<DYNAMIC_TIME_ZONE_INFORMATION>,
+  info: Ptr<_TIME_DYNAMIC_ZONE_INFORMATION>,
 ): u32;
-declare c("c") function FileTimeToSystemTime(time: Ptr<FILETIME>, system: Ptr<SYSTEMTIME>): i32;
-declare c("c") function SystemTimeToFileTime(system: Ptr<SYSTEMTIME>, time: Ptr<FILETIME>): i32;
+declare c("c") function FileTimeToSystemTime(time: Ptr<FILETIME>, system: Ptr<_SYSTEMTIME>): i32;
+declare c("c") function SystemTimeToFileTime(system: Ptr<SYSTEMTIME>, time: Ptr<_FILETIME>): i32;
 declare c("c") function calloc$time(n: usize, size: usize): Ptr<u8> | null;
 declare c("c") function free$time(p: Ptr<u8> | null): void;
 
@@ -78,7 +87,7 @@ function readZone(): u8 {
   }
   const at = Ptr.addressOf(block);
   // SAFETY: `at` holds a zeroed DYNAMIC_TIME_ZONE_INFORMATION, which the call fills.
-  const id = unsafe { GetDynamicTimeZoneInformation(Ptr.at<DYNAMIC_TIME_ZONE_INFORMATION>(at)) };
+  const id = unsafe { GetDynamicTimeZoneInformation(Ptr.at<_TIME_DYNAMIC_ZONE_INFORMATION>(at)) };
   if (id === TIME_ZONE_ID_INVALID) {
     // SAFETY: the block calloc gave above, which nothing else has seen.
     unsafe {
@@ -141,22 +150,29 @@ function offsetIn(zone: usize, unixSecs: i64): i32 {
   unsafe {
     addressStore<i64>(p, utcTicks);
   }
-  // SAFETY: this thread's buffer holds a FILETIME at 0 and 40 and a SYSTEMTIME at 8 and 24.
+  // This thread's buffer holds a FILETIME at 0 and 40 and a SYSTEMTIME at 8 and 24. Each call
+  // gets a struct it reads by its typedef's name and one it fills by its tag, so the UTC and the
+  // local SYSTEMTIME are each pointed at under both.
+  // SAFETY: the UTC FILETIME, at the buffer's start.
   const utcTime = unsafe { Ptr.at<FILETIME>(p) };
-  // SAFETY: as above.
+  // SAFETY: the UTC SYSTEMTIME, at 8, for the call that fills it.
+  const utcOut = unsafe { Ptr.at<_SYSTEMTIME>(p + 8) };
+  // SAFETY: the same struct, for the call that reads it.
   const utc = unsafe { Ptr.at<SYSTEMTIME>(p + 8) };
-  // SAFETY: as above.
+  // SAFETY: the local SYSTEMTIME, at 24, for the call that fills it.
+  const localOut = unsafe { Ptr.at<_SYSTEMTIME>(p + 24) };
+  // SAFETY: the same struct, for the call that reads it.
   const local = unsafe { Ptr.at<SYSTEMTIME>(p + 24) };
-  // SAFETY: as above.
-  const localTime = unsafe { Ptr.at<FILETIME>(p + 40) };
-  // SAFETY: as above.
+  // SAFETY: the local FILETIME, at 40.
+  const localTime = unsafe { Ptr.at<_FILETIME>(p + 40) };
+  // SAFETY: the zone's DYNAMIC_TIME_ZONE_INFORMATION, which the call reads.
   const info = unsafe { Ptr.at<DYNAMIC_TIME_ZONE_INFORMATION>(zone) };
   // SAFETY: each pointer is its own struct in the buffer (or the zone's), as above; only this
   // call uses the buffer.
-  let ok = unsafe { FileTimeToSystemTime(utcTime, utc) } !== 0;
+  let ok = unsafe { FileTimeToSystemTime(utcTime, utcOut) } !== 0;
   if (ok) {
     // SAFETY: as above.
-    ok = unsafe { SystemTimeToTzSpecificLocalTimeEx(info, utc, local) } !== 0;
+    ok = unsafe { SystemTimeToTzSpecificLocalTimeEx(info, utc, localOut) } !== 0;
   }
   if (ok) {
     // SAFETY: as above.
@@ -203,7 +219,7 @@ export function offsetInZone(key: string, unixSecs: i64): i32 | null {
   let index: u32 = 0;
   while (!found) {
     // SAFETY: `at` is a DYNAMIC_TIME_ZONE_INFORMATION's room, which each call overwrites.
-    const info = unsafe { Ptr.at<DYNAMIC_TIME_ZONE_INFORMATION>(at) };
+    const info = unsafe { Ptr.at<_TIME_DYNAMIC_ZONE_INFORMATION>(at) };
     // SAFETY: as above; a non-zero result (ERROR_NO_MORE_ITEMS) ends the enumeration.
     if (unsafe { EnumDynamicTimeZoneInformation(index, info) } !== 0) {
       break;
