@@ -263,25 +263,30 @@ impl FnLower<'_, '_> {
                     c_vir(CTy::Int(IntTy::USize), wasm),
                     c_vir(CTy::Int(IntTy::ISize), wasm),
                 ];
+                // A declaration passing C structs by value (c_struct_call.rs) fixed the symbol's
+                // calling convention beyond its VIR types: no plain declaration shares it.
+                let by_value = (self.cx.extern_map.get(link))
+                    .is_some_and(|id| self.cx.externs[id.0 as usize].c_abi.is_some());
                 let other = self.cx.c_symbols.get(link);
-                let compatible = same_vir
-                    || match other {
-                        Some(o) => o.sig.same(&sig),
-                        // The compiler's own use: a word for a pointer it passes.
-                        None => {
-                            v == c.variadic
-                                && ps.len() == fixed
-                                && (ps
-                                    .iter()
-                                    .zip(&c.params)
-                                    .zip(&ctys)
-                                    .chain([((&r, &c.ret), &cret)]))
-                                .all(|((&have, &t), &want)| {
-                                    have == want
-                                        || (class(t) == CClass::Word && words.contains(&have))
-                                })
-                        }
-                    };
+                let compatible = !by_value
+                    && (same_vir
+                        || match other {
+                            Some(o) => o.sig.same(&sig),
+                            // The compiler's own use: a word for a pointer it passes.
+                            None => {
+                                v == c.variadic
+                                    && ps.len() == fixed
+                                    && (ps
+                                        .iter()
+                                        .zip(&c.params)
+                                        .zip(&ctys)
+                                        .chain([((&r, &c.ret), &cret)]))
+                                    .all(|((&have, &t), &want)| {
+                                        have == want
+                                            || (class(t) == CClass::Word && words.contains(&have))
+                                    })
+                            }
+                        });
                 if !compatible {
                     self.c_clash(def, (link, &shown, &sig), x.span);
                     return match cret {

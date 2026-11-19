@@ -86,6 +86,16 @@ impl FnLower<'_, '_> {
                     let Ty::Agg(sagg) = vt else {
                         ice("a C struct that isn't an aggregate")
                     };
+                    // Zeroed first: a struct smaller than its words (or with tail padding)
+                    // leaves bytes of them unwritten, which would cross as undefined bits.
+                    let zeros = (words.iter())
+                        .map(|&w| match w {
+                            Ty::F64 => Operand::Const(vir::Const::Float(0.0), Ty::F64),
+                            t => Operand::Const(vir::Const::Int(0), t),
+                        })
+                        .collect();
+                    let wagg = self.words_agg(words);
+                    self.assign(Place::local(slot), Rvalue::Aggregate(wagg, zeros));
                     let view = Place {
                         local: slot,
                         proj: vec![Proj::Cast(sagg)],

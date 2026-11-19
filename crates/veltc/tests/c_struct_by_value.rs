@@ -6,9 +6,10 @@
 //! field by field, in debug (Cranelift) and release (LLVM) builds. Further functions take structs
 //! after the registers run out (a struct takes all its registers or goes on the stack whole), and
 //! return one in memory with arguments around it. These tests need `VELT_ZIG` as
-//! tests/c_sources.rs's do, and run on x86-64 Linux, whose System V convention lowering has.
+//! tests/c_sources.rs's do, and run on x86-64 Linux and macOS, whose System V convention
+//! lowering has.
 
-#![cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#![cfg(all(any(target_os = "linux", target_os = "macos"), target_arch = "x86_64"))]
 
 use std::fmt::Write;
 use std::path::{Path, PathBuf};
