@@ -1,0 +1,137 @@
+// velt/net (internal): the TLS 1.2 cipher suites, ECDHE with an AEAD only (#2392: no CBC, no RSA
+// key exchange, no static DH): their numbers, hashes, key and IV sizes, and the orders the client
+// offers and the server chooses them in; and what a handshake message after the handshake gets.
+
+import { NO_RENEGOTIATION, TlsFailure, UNEXPECTED_MESSAGE } from "velt/net/tls/alert";
+
+/** TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 (RFC 5289). */
+export const ECDHE_ECDSA_AES_128_GCM_SHA256: usize = 0xc02b;
+/** TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 (RFC 5289). */
+export const ECDHE_ECDSA_AES_256_GCM_SHA384: usize = 0xc02c;
+/** TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 (RFC 5289). */
+export const ECDHE_RSA_AES_128_GCM_SHA256: usize = 0xc02f;
+/** TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384 (RFC 5289). */
+export const ECDHE_RSA_AES_256_GCM_SHA384: usize = 0xc030;
+/** TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256 (RFC 7905). */
+export const ECDHE_RSA_CHACHA20_POLY1305_SHA256: usize = 0xcca8;
+/** TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256 (RFC 7905). */
+export const ECDHE_ECDSA_CHACHA20_POLY1305_SHA256: usize = 0xcca9;
+
+/** TLS_EMPTY_RENEGOTIATION_INFO_SCSV (RFC 5746 §3.3). */
+export const RENEGOTIATION_SCSV: usize = 0x00ff;
+/** TLS_FALLBACK_SCSV (RFC 7507). */
+export const FALLBACK_SCSV: usize = 0x5600;
+
+/** The last 8 bytes of a TLS 1.2 ServerHello's random from a server that has TLS 1.3 (RFC 8446 §4.1.3). */
+export const DOWNGRADE_TLS12: u8[] = [0x44, 0x4f, 0x57, 0x4e, 0x47, 0x52, 0x44, 0x01];
+
+/**
+ * Checks the handshake message `m` that came after a TLS 1.2 handshake, on a server (`server`)
+ * or a client: a server's HelloRequest is ignored (RFC 5246 §7.4.1.1 lets a client that won't
+ * renegotiate do so), a client's ClientHello, a renegotiation, is refused with no_renegotiation,
+ * and anything else is unexpected_message. The no_renegotiation alert is fatal and closes the
+ * connection, where RFC 5246 §7.2.2 has it a warning and rustls keeps the connection: refusing
+ * and closing is safe, and a client that asks to renegotiate fails its renegotiation either way.
+ */
+export function afterHandshake12(m: u8[], server: bool) {
+  if (!server && m[0] == 0 && m.length == 4) {
+    return;
+  }
+  if (server && m[0] == 1) {
+    throw new TlsFailure(NO_RENEGOTIATION, "the client asked to renegotiate, which is refused");
+  }
+  throw new TlsFailure(
+    UNEXPECTED_MESSAGE,
+    `unexpected handshake message ${m[0]} after the handshake`,
+  );
+}
+
+/** Whether `suite` is one of the six TLS 1.2 suites. */
+export function tls12Suite(suite: usize): bool {
+  return ecdsaSuite12(suite) || rsaSuite12(suite);
+}
+
+/** Whether `suite` is a TLS 1.2 suite whose server signs with ECDSA (or EdDSA, RFC 8422 §5.4). */
+export function ecdsaSuite12(suite: usize): bool {
+  return (
+    suite == ECDHE_ECDSA_AES_128_GCM_SHA256 ||
+    suite == ECDHE_ECDSA_AES_256_GCM_SHA384 ||
+    suite == ECDHE_ECDSA_CHACHA20_POLY1305_SHA256
+  );
+}
+
+/** Whether `suite` is a TLS 1.2 suite whose server signs with RSA. */
+export function rsaSuite12(suite: usize): bool {
+  return (
+    suite == ECDHE_RSA_AES_128_GCM_SHA256 ||
+    suite == ECDHE_RSA_AES_256_GCM_SHA384 ||
+    suite == ECDHE_RSA_CHACHA20_POLY1305_SHA256
+  );
+}
+
+/** Whether `suite` is a TLS 1.2 ChaCha20-Poly1305 suite. */
+export function chachaSuite12(suite: usize): bool {
+  return suite == ECDHE_RSA_CHACHA20_POLY1305_SHA256 ||
+    suite == ECDHE_ECDSA_CHACHA20_POLY1305_SHA256;
+}
+
+/** The bytes of a TLS 1.2 suite's write key: 16 for AES-128-GCM, 32 for the others. */
+export function keyLength12(suite: usize): usize {
+  return suite == ECDHE_ECDSA_AES_128_GCM_SHA256 || suite == ECDHE_RSA_AES_128_GCM_SHA256 ? 16 : 32;
+}
+
+/** The bytes of a TLS 1.2 suite's fixed IV: 4 for AES-GCM (RFC 5288), 12 for ChaCha20 (RFC 7905). */
+export function ivLength12(suite: usize): usize {
+  return chachaSuite12(suite) ? 12 : 4;
+}
+
+/**
+ * The TLS 1.2 suites a client offers, after its TLS 1.3 ones and in the same order of speed:
+ * with AES instructions (`hasAes`) AES-128-GCM, AES-256-GCM, then ChaCha20-Poly1305, else
+ * ChaCha20-Poly1305 first; ECDSA before RSA for each.
+ */
+export function clientSuites12(hasAes: bool): usize[] {
+  return hasAes
+    ? [
+      ECDHE_ECDSA_AES_128_GCM_SHA256,
+      ECDHE_RSA_AES_128_GCM_SHA256,
+      ECDHE_ECDSA_AES_256_GCM_SHA384,
+      ECDHE_RSA_AES_256_GCM_SHA384,
+      ECDHE_ECDSA_CHACHA20_POLY1305_SHA256,
+      ECDHE_RSA_CHACHA20_POLY1305_SHA256,
+    ]
+    : [
+      ECDHE_ECDSA_CHACHA20_POLY1305_SHA256,
+      ECDHE_RSA_CHACHA20_POLY1305_SHA256,
+      ECDHE_ECDSA_AES_128_GCM_SHA256,
+      ECDHE_RSA_AES_128_GCM_SHA256,
+      ECDHE_ECDSA_AES_256_GCM_SHA384,
+      ECDHE_RSA_AES_256_GCM_SHA384,
+    ];
+}
+
+/**
+ * The ECDSA suite a server with a P-256 key chooses from `offered`, by its own order as for TLS
+ * 1.3: AES-128-GCM, AES-256-GCM, then ChaCha20-Poly1305 with AES instructions (`hasAes`),
+ * ChaCha20-Poly1305 first without; 0 when the client offers none of them.
+ */
+export function chooseSuite12(offered: usize[], hasAes: bool): usize {
+  const order =
+    hasAes
+      ? [
+        ECDHE_ECDSA_AES_128_GCM_SHA256,
+        ECDHE_ECDSA_AES_256_GCM_SHA384,
+        ECDHE_ECDSA_CHACHA20_POLY1305_SHA256,
+      ]
+      : [
+        ECDHE_ECDSA_CHACHA20_POLY1305_SHA256,
+        ECDHE_ECDSA_AES_128_GCM_SHA256,
+        ECDHE_ECDSA_AES_256_GCM_SHA384,
+      ];
+  for (let i: usize = 0; i < order.length; i++) {
+    if (offered.includes(order[i])) {
+      return order[i];
+    }
+  }
+  return 0;
+}

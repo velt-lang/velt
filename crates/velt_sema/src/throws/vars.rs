@@ -250,7 +250,8 @@ impl Ctx<'_> {
         } else {
             let k = self.ty.kind(t).clone();
             let k = crate::types::map_children(&k, &mut |x| self.plain_type(x));
-            self.ty.intern(k)
+            let out = self.ty.intern(k);
+            self.ty.keep_readonly(t, out)
         };
         self.fn_sites.var_sets.plain.insert(t, p);
         self.fn_sites.var_sets.note_first(p, t);
@@ -704,7 +705,8 @@ impl Ctx<'_> {
         } else {
             let k = self.ty.kind(t).clone();
             let k = crate::types::map_children(&k, &mut |x| self.solved_type(x));
-            self.ty.intern(k)
+            let out = self.ty.intern(k);
+            self.ty.keep_readonly(t, out)
         };
         self.fn_sites.solved.insert(t, s);
         self.fn_sites.var_sets.note_first(s, t);

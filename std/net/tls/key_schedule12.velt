@@ -1,0 +1,90 @@
+// velt/net (internal): the TLS 1.2 key schedule (RFC 5246 §5, §6.3 and §7.4.9; RFC 7627): the
+// PRF on HMAC with the suite's hash (SHA-256, or SHA-384 for the *_SHA384 suites), the master
+// secret (the extended one when both sides offer it), the key block, and the Finished messages'
+// verify_data.
+
+import { hmacSha256, hmacSha384 } from "velt/crypto/hmac";
+import { utf8Encode } from "velt/encoding/utf8";
+
+/** HMAC with SHA-384 when `hashLen` is 48, else SHA-256. */
+function hmac(hashLen: usize, key: u8[], data: u8[]): u8[] {
+  return hashLen == 48 ? hmacSha384(key, data) : hmacSha256(key, data);
+}
+
+/**
+ * The PRF of RFC 5246 §5, P_hash(secret, label + seed) cut to `n` bytes, where the hash is
+ * SHA-384 when `hashLen` is 48, else SHA-256.
+ */
+export function prf12(hashLen: usize, secret: u8[], label: string, seed: u8[], n: usize): u8[] {
+  const labelSeed = utf8Encode(label).concat(seed);
+  const out: u8[] = [];
+  // A(1) = HMAC(secret, label + seed), A(i) = HMAC(secret, A(i - 1)); each block is
+  // HMAC(secret, A(i) + label + seed).
+  let a = labelSeed;
+  while (out.length < n) {
+    a = hmac(hashLen, secret, a);
+    const block = hmac(hashLen, secret, a.concat(labelSeed));
+    for (let i: usize = 0; i < block.length && out.length < n; i++) {
+      out.push(block[i]);
+    }
+  }
+  return out;
+}
+
+/**
+ * The master secret (48 bytes) from the key exchange's shared secret `preMaster`. With `ems`,
+ * the extended master secret of RFC 7627 §4, where `context` is the hash of the handshake
+ * messages through the ClientKeyExchange; without, RFC 5246 §8.1's, where `context` is the client
+ * random followed by the server random.
+ */
+export function masterSecret12(hashLen: usize, preMaster: u8[], ems: bool, context: u8[]): u8[] {
+  return prf12(hashLen, preMaster, ems ? "extended master secret" : "master secret", context, 48);
+}
+
+/** One connection's keys (RFC 5246 §6.3); AEAD suites have no MAC keys. */
+export struct KeyBlock12 {
+  clientKey: u8[];
+  serverKey: u8[];
+  /** The fixed parts of the nonces: 4 bytes for AES-GCM (RFC 5288), 12 for ChaCha20 (RFC 7905). */
+  clientIv: u8[];
+  serverIv: u8[];
+}
+
+/** The key block of `master`: write keys of `keyLen` bytes and IVs of `ivLen` for both sides. */
+export function keyBlock12(
+  hashLen: usize,
+  master: u8[],
+  clientRandom: u8[],
+  serverRandom: u8[],
+  keyLen: usize,
+  ivLen: usize,
+): KeyBlock12 {
+  const b = prf12(
+    hashLen,
+    master,
+    "key expansion",
+    serverRandom.concat(clientRandom),
+    2 * keyLen + 2 * ivLen,
+  );
+  const k = keyLen as i64;
+  const v = ivLen as i64;
+  return {
+    clientKey: b.slice(0, k),
+    serverKey: b.slice(k, 2 * k),
+    clientIv: b.slice(2 * k, 2 * k + v),
+    serverIv: b.slice(2 * k + v, 2 * k + 2 * v),
+  };
+}
+
+/**
+ * A Finished message's verify_data (RFC 5246 §7.4.9), 12 bytes: the client's (`client`) or the
+ * server's, over `transcriptHash`, the hash of the handshake messages before it.
+ */
+export function verifyData12(
+  hashLen: usize,
+  master: u8[],
+  client: bool,
+  transcriptHash: u8[],
+): u8[] {
+  return prf12(hashLen, master, client ? "client finished" : "server finished", transcriptHash, 12);
+}

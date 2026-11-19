@@ -15,7 +15,7 @@ Needs a nightly toolchain and `cargo install cargo-fuzz`; on Windows use WSL or 
 
 ```sh
 cd fuzz
-./seed.sh                                    # seed corpora from every .velt file in the repo + seeds/
+./seed.sh                                    # seed corpora from the goldens, examples, std + seeds/
 cargo +nightly fuzz run parse -- -max_total_time=600
 cargo +nightly fuzz run compile -s none      # no sanitizer: ~20x faster for this target
 cargo +nightly test --lib                    # the properties on known inputs

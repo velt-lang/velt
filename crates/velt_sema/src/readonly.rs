@@ -33,7 +33,9 @@ pub(crate) fn erase(
     if cx.fn_sites.vars.is_empty() {
         cx.name_unions_as_written(&[]);
     }
+    // A read-only array is a twin of `T[]` of the same kind, which `erase_ty` interns as `T[]`.
     if cx.readonly_twins.is_empty()
+        && !cx.ty.has_readonly_arrays()
         && cx.brands.is_empty()
         && cx.fn_sites.vars.is_empty()
         && !cx.any_unknown_views
@@ -41,6 +43,16 @@ pub(crate) fn erase(
         return unique_names(named);
     }
     let mut twins = cx.readonly_twins.clone();
+    // An object type holding read-only arrays is its twin with mutable ones (`Ctx::array_twins`),
+    // also as the twin of a `readonly` field's (`{ readonly xs: readonly T[] }`).
+    for (t, _) in twins.values_mut() {
+        if let Some(&a) = cx.array_twins.get(t) {
+            *t = a;
+        }
+    }
+    for (&d, &a) in &cx.array_twins {
+        twins.entry(d).or_insert((a, None));
+    }
     // An anonymous object type holding error-set variables is the one of its solved shape.
     // A readonly one is that def's plain twin, not its own (whose fields hold the variables).
     for (d, twin) in cx.solved_anon_twins() {

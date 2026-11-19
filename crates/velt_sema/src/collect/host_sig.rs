@@ -273,8 +273,8 @@ pub(crate) fn same_imports(cx: &mut Ctx) {
         let key = (h.module.clone(), f.name.clone());
         match seen.get(&key) {
             Some(first) if *first != sig => {
-                let same_types = first.0 == sig.0 && first.1 == sig.1;
-                errors.push((key, f.span, same_types));
+                let types = (first.0.clone(), first.1, sig.0.clone(), sig.1);
+                errors.push((key, f.span, types));
             }
             Some(_) => {}
             None => {
@@ -282,7 +282,11 @@ pub(crate) fn same_imports(cx: &mut Ctx) {
             }
         }
     }
-    for ((module, name), span, same_types) in errors {
+    for ((module, name), span, (a, ar, b, br)) in errors {
+        // The types but for `readonly` (a read-only array is a type of its own, #3061).
+        let mut plain =
+            |ts: &[TyId]| -> Vec<TyId> { ts.iter().map(|t| cx.ty.mutable_twin(*t)).collect() };
+        let same_types = plain(&a) == plain(&b) && plain(&[ar]) == plain(&[br]);
         let mut d = Diagnostic::error(
             format!("host function `{name}` of `{module}` is declared twice with different types"),
             span,

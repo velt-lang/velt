@@ -125,6 +125,11 @@ impl Ctx<'_> {
         if a == b {
             return true;
         }
+        // A read-only array and a mutable one are not one type (#3061): a mutable container of
+        // one would let a write reach the read-only array.
+        if self.ty.is_readonly_array(a) != self.ty.is_readonly_array(b) {
+            return false;
+        }
         let top = |t: TyId| matches!(self.dynamic(t), Some(Dynamic::Any) | Some(Dynamic::Unknown));
         if top(a) && top(b) {
             return true;

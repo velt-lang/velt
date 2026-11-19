@@ -1,0 +1,30 @@
+// check: no leaks
+// A nested `read` that lends a part of the outer lock's value to a method of a temporary it
+// made itself (#2002): the copy stays this reader's own, which drops it after the call. Sent
+// to the code outside every read, as a store into one of its containers is, nothing dropped
+// it. With a container of that code among the arguments, it does go there.
+class Box {
+  items: number[][][] = [[[1]], [[2], [3]]];
+}
+
+function main() {
+  const a = new RwLock(new Box());
+  const b = new RwLock(new Box());
+  const out: number[][] = [];
+  for (let i = 0; i < 3; i++) {
+    a.read((x) => {
+      b.read((y) => {
+        // A slice of this lock's value, a literal of its parts, and a literal of numbers.
+        const t = y.items[0].slice().concat(x.items[1].slice());
+        console.log(t.length, y.items[1].slice().concat(x.items[0].slice()).length);
+        console.log([y.items[0][0]].concat(x.items[1].slice()).length);
+        console.log([[i]].concat(x.items[1].slice()).length);
+        // The outer lock's value on both sides.
+        console.log(x.items[0].slice().concat(x.items[1].slice()).length);
+        // The caller's container among the arguments: a store into it.
+        out.push(...structuredClone(x.items[1].slice()));
+      });
+    });
+  }
+  console.log(out.length, out);
+}

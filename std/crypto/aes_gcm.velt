@@ -9,9 +9,9 @@ import { u8x16, u64x2 } from "velt/simd";
 import { Aead } from "velt/crypto/aead";
 import { checkOpenRange, checkSealRange, tagMatches, withRoom } from "velt/crypto/aead_tag";
 import { aesCtrInPlace, aesExpandKey } from "velt/crypto/aes_ctr";
-import { gcmOpenArm, gcmSealArm } from "velt/crypto/aes_gcm_arm";
+import { gcmHashKeyArm, gcmOpenArm, gcmSealArm } from "velt/crypto/aes_gcm_arm";
 import { aesRoundKeys, hashPowers } from "velt/crypto/aes_gcm_hw";
-import { gcmOpenX86, gcmSealX86 } from "velt/crypto/aes_gcm_x86";
+import { gcmHashKeyX86, gcmOpenX86, gcmSealX86 } from "velt/crypto/aes_gcm_x86";
 import { CryptoError } from "velt/crypto/errors";
 import { Ghash } from "velt/crypto/ghash";
 import { arrayTruncate } from "velt/lang/intrinsics";
@@ -44,6 +44,25 @@ export class AesGcm implements Aead {
     if (key.length != 16 && key.length != 32) {
       throw new CryptoError(`AES-GCM key must be 16 or 32 bytes, got ${key.length}`);
     }
+    this.block = Buffer.alloc(16);
+    if (u8x16.hasAes()) {
+      // H = E(K, 0^128) on the instructions: the bitsliced key schedule is never made.
+      this.keys = aesRoundKeys(key);
+      let h: u8[] = [];
+      if (u8x16.hasAesArm()) {
+        h = gcmHashKeyArm(this.keys);
+      } else if (u8x16.hasAesX86()) {
+        h = gcmHashKeyX86(this.keys);
+      }
+      this.hp = hashPowers(h);
+      this.skey = [];
+      this.q = [];
+      this.ks = [];
+      this.ghash = null;
+      return;
+    }
+    this.keys = [];
+    this.hp = [];
     this.skey = aesExpandKey(key);
     this.q = [0, 0, 0, 0, 0, 0, 0, 0];
     this.ks = Buffer.alloc(64);
@@ -51,17 +70,6 @@ export class AesGcm implements Aead {
     const h = Buffer.alloc(16);
     aesCtrInPlace(this.skey, this.q, this.ks, Buffer.alloc(12), 0, h, 0, 16);
     this.ghash = new Ghash(h);
-    this.block = Buffer.alloc(16);
-    this.keys = [];
-    this.hp = [];
-    if (u8x16.hasAes()) {
-      this.keys = aesRoundKeys(key);
-      this.hp = hashPowers(h);
-      this.skey = [];
-      this.q = [];
-      this.ks = [];
-      this.ghash = null;
-    }
   }
 
   /** `plaintext` encrypted under `nonce` (12 bytes), followed by the 16-byte tag over `aad` and it. */

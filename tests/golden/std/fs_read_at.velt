@@ -1,0 +1,56 @@
+// requires: unix
+// `readAt`: a positioned read the task awaits. Ranges read together give the file's bytes, the
+// end of the file gives fewer or none, and bad arguments and a closed descriptor are errors.
+import * as fs from "velt/fs";
+import { tmpdir } from "velt/os";
+
+async function main() {
+  const path = `${tmpdir()}/velt-golden-read-at-${process.pid}`;
+  const data: u8[] = Buffer.alloc(10000);
+  for (let i = 0; i < data.length; i++) {
+    data[i] = (i % 251) as u8;
+  }
+  const w = fs.openSync(path, "w");
+  fs.writeSync(w, data, 0, 10000, 0);
+  fs.closeSync(w);
+
+  const fd = fs.openSync(path, "r");
+  const one = await fs.readAt(fd, 16, 251);
+  console.log(one.length, one[0], one[15]);
+
+  const offsets = [0, 4096, 8192, 9990, 10000, 20000];
+  const parts = await Promise.all(offsets.map((at) => fs.readAt(fd, 4096, at)));
+  console.log(parts.map((p) => p.length));
+  let same = true;
+  for (let k = 0; k < parts.length; k++) {
+    for (let i = 0; i < parts[k].length; i++) {
+      same = same && parts[k][i] == data[offsets[k] + i];
+    }
+  }
+  console.log(same, (await fs.readAt(fd, 0, 5)).length);
+  // The file's own position is not moved: a plain read still starts at 0.
+  const head: u8[] = Buffer.alloc(4);
+  console.log(fs.readSync(fd, head), head);
+
+  for (const bad of [-1, 1.5, 2147483648]) {
+    try {
+      await fs.readAt(fd, bad, 0);
+    } catch (e) {
+      console.log(e.name, e.message);
+    }
+  }
+  for (const bad of [-1, 0.5]) {
+    try {
+      await fs.readAt(fd, 1, bad);
+    } catch (e) {
+      console.log(e.name, e.message);
+    }
+  }
+  fs.closeSync(fd);
+  try {
+    await fs.readAt(fd, 8, 0);
+  } catch (e) {
+    console.log(e.message);
+  }
+  fs.unlinkSync(path);
+}
