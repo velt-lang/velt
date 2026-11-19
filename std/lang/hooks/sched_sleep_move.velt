@@ -41,6 +41,11 @@ const R_SIZE: usize = 24;
 /** The requests made and not yet served, on every worker's list together (`settle`). */
 const UNDER_WAY = new Atomic<u64>(0);
 
+/** The requests under way (#3273 diagnostic: sched_debug.velt). */
+export function underWay(): u64 {
+  return UNDER_WAY.load();
+}
+
 /**
  * A poll of sleep `f`, held by another worker's block, with waker `waker` (borrowed): that worker
  * is asked to give it up and wake `waker`. Pending.

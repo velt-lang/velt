@@ -14,6 +14,8 @@ import * as th from "#sched-thread";
 import { processEnv } from "./process";
 import * as io from "./sched_io";
 import * as m from "./sched_mem";
+import * as slp from "./sched_sleep";
+import * as mv from "./sched_sleep_move";
 import * as t from "./sched_task";
 
 /** The monitor's rescues of a stalled worker that moved tasks, spares started, reactor turns. */
@@ -83,7 +85,15 @@ function line(g: usize, at: usize): void {
     const cur = m.load(w + t.E_CURRENT);
     const state = cur === 0 ? 9 : m.load32(cur + t.T_STATE);
     s = `${s} | w${i} park=${m.load32(w + t.E_PARK)} cur=${cur === 0 ? 0 : 1}/${state} inbox=${m.load(w + t.E_INBOX) === 0 ? 0 : 1} offer=${m.load(w + t.E_OFFER) === 0 ? 0 : 1} io=${m.load(w + t.E_IHEAD) === 0 ? 0 : 1} rest=${m.load(w + t.E_HEAD) === 0 ? 0 : 1} next=${m.load(w + t.E_NEXT) === 0 ? 0 : 1} queued=${m.load(w + t.E_QUEUED)} qlock=${m.load32(w + t.E_QLOCK)} rlock=${m.load32(b + io.IO_RLOCK)} unparks=${m.load(w + t.E_UNPARKS)} polls=${m.load(w + t.E_POLLS)} progress=${m.load(w + t.E_PROGRESS)} retired=${m.load32(w + t.E_RETIRED)} live=${m.load(b + io.IO_LIVE)} waits=${m.load(b + io.IO_WAITING)} due=${(m.load(b + io.IO_DUE) | m.load(b + io.IO_RDUE)) === 0 ? 0 : 1}`;
+    // #3273 diagnostic: the worker's sleeps and the requests on its list.
+    const tb = m.load(w + t.E_TIMERS);
+    const now = slp.clock();
+    const first = tb === 0 ? 0 : m.load(tb + slp.TM_FIRST);
+    const left = first === 0 ? -1 : ((slp.deadline(first) as i64) - (now as i64)) / 1000000;
+    const inCur = cur === 0 ? 0 : m.load(cur + t.T_TIMERS);
+    s = `${s} asks=${m.load(w + t.E_SLEEP_ASKS) === 0 ? 0 : 1} tm=${tb === 0 ? 0 : 1} firstIn=${left}ms tmDue=${tb === 0 ? 0 : m.load(tb + slp.TM_DUE)} unseen=${tb === 0 ? 0 : m.load(tb + slp.TM_UNSEEN)} curFlags=${cur === 0 ? 0 : m.load32(cur + t.T_FLAGS)} curTimers=${inCur === 0 ? 0 : 1}`;
   }
+  s = `${s} | underWay=${mv.underWay()}`;
   s = `${s}\n`;
   const len = s.length as usize;
   const buf = m.alloc(len + 4);
