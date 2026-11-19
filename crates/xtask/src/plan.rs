@@ -90,7 +90,9 @@ pub struct Plan {
     /// merge queue sets from the change's plan and the checks after merging always set.
     pub wasm: bool,
     /// `declare c` checked against C headers on every target through the pinned zig: the
-    /// `c-headers` job in ci.yml (crates/xtask/src/c_headers.rs). `--full` knows no changes, so it doesn't run it.
+    /// `c-headers` job in ci.yml (crates/xtask/src/c_headers.rs). `--full` knows no changes, so
+    /// it runs it: a gate that skipped it let a change whose own `c-headers` job was red reach
+    /// `main` (#3120's Windows declarations, landed by a merge train's `--full` run).
     pub c_headers: bool,
 }
 
@@ -122,7 +124,7 @@ impl Plan {
             fmt_corpus: Sweep::Default,
             debug_vars_all: false,
             wasm: true,
-            c_headers: false,
+            c_headers: true,
         }
     }
 
