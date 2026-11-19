@@ -11,8 +11,9 @@
 //! returns. `cx` then points to the trace glue's `(visit, ctx)`.
 //!
 //! - `f$trace(state, visit, ctx)` ([`Work::GenTrace`], `TABLE_TRACE` in the instance's table)
-//!   skips a generator that is running or finished, sets the bit, calls the poll function and
-//!   puts the tag back.
+//!   skips a generator that is running, finished or closing (`GEN_RUNNING`, `DONE`, or a tag
+//!   with `DROP_BIT` or `CLOSE_BIT`), sets the bit, calls the poll function and puts the tag
+//!   back.
 //! - The generator class's trace glue calls it through the object's table (glue/trace.rs).
 //! - An async generator suspended at an `await` has no case: its state is left out, as are
 //!   drop entries the trace does not look into (a value a pattern took parts of, a generator
