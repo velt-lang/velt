@@ -504,9 +504,15 @@ impl<'h> Cx<'h> {
     ) -> ExternId {
         if !variadic {
             let id = self.extern_sym(symbol, params, ret, false);
-            if c_abi.is_some() {
-                self.externs[id.0 as usize].c_abi = c_abi;
+            let had = &self.externs[id.0 as usize].c_abi;
+            // c_call.rs refused a declaration whose convention differs (a clash), so a symbol's
+            // calls agree on it.
+            if had.is_some() && *had != c_abi {
+                ice(format_args!(
+                    "C extern `{symbol}` interned with two calling conventions"
+                ));
             }
+            self.externs[id.0 as usize].c_abi = c_abi;
             return id;
         }
         if let Some(&id) = self.extern_map.get(symbol) {
