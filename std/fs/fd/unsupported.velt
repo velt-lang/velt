@@ -52,7 +52,7 @@ export function statPath(path: readonly u8[], follow: bool): Stat | null {
   return null;
 }
 
-export function mapRead(fd: i32, len: usize): usize {
+export function mapRead(fd: i32, len: usize, offset: i64): usize {
   return 0;
 }
 

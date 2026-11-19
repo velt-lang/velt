@@ -358,12 +358,17 @@ fn install_archive(
         Existing::Keep,
         |dir| {
             let exe = velt_exe(dir);
-            (!exe.is_file()).then(|| {
-                format!(
+            if !exe.is_file() {
+                return Some(format!(
                     "it has no {}",
                     exe.strip_prefix(dir).unwrap_or(&exe).display()
-                )
-            })
+                ));
+            }
+            // A release never changes: its std is left read-only, so a check may take std's
+            // files from the snapshot beside its compiled unit (`crate::read_only`). Not
+            // managing it only costs that: such a std is checked file by file.
+            let _ = crate::read_only::set_std(dir, true);
+            None
         },
     )?;
     Ok(dest)

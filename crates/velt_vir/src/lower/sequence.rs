@@ -422,6 +422,12 @@ impl FnLower<'_, '_> {
         if !later.any() || self.dead() {
             return op;
         }
+        // An element borrowed where it is while its array has one owner (stabilize.rs
+        // `unique_array_elem`): its pointer is set once every argument is evaluated, where it is
+        // shared if the array has another owner by then, and the later arguments run no code.
+        if self.pending_borrow(p) {
+            return op;
+        }
         let t = self.vty(ty);
         if t == Ty::Unit {
             return op;

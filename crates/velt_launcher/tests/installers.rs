@@ -664,9 +664,13 @@ fn install_sh_installs_a_dist_directory_as_a_version() {
     };
     let a = dist("0.1.1");
     install(&a);
+    // As velt's own installer leaves it: the installed std read-only. Installing over it must
+    // still replace it whole, and leave no old copy.
+    velt_toolchain::read_only::set_tree(&root.join("toolchains/0.1.1/std"), true).unwrap();
     std::fs::write(a.join("std/REBUILT"), b"").unwrap();
     install(&a);
     assert!(root.join("toolchains/0.1.1/std/REBUILT").is_file());
+    assert_no_old_copies(&root);
     install(&dist("0.2.0"));
     assert_eq!(
         std::fs::read_to_string(root.join("default")).unwrap(),
@@ -676,6 +680,53 @@ fn install_sh_installs_a_dist_directory_as_a_version() {
     assert!(version.starts_with("velt 0.1.1 "), "{version}");
     let list = velt(&root, tmp.path(), &["toolchain", "list"]);
     assert!(list.contains("0.2.0") && list.contains("0.1.1"), "{list}");
+}
+
+/// No `.<version>.old.<pid>` copy is left under `root`'s toolchains.
+#[cfg(unix)]
+fn assert_no_old_copies(root: &Path) {
+    let left: Vec<String> = std::fs::read_dir(root.join("toolchains"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.contains(".old."))
+        .collect();
+    assert!(left.is_empty(), "old copies left behind: {left:?}");
+}
+
+/// `get-velt.sh --force` over an installed version whose std is read-only (as velt's own
+/// installer leaves it) replaces it whole: the new copy is moved in before the old one goes,
+/// and the old one is made writable to remove.
+#[cfg(unix)]
+#[test]
+fn get_velt_sh_reinstalls_over_a_read_only_std() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let archive_path = tmp.path().join("a.tar.gz");
+    std::fs::write(&archive_path, archive("0.1.1", true)).unwrap();
+    let args = |force: bool| {
+        let mut v = vec!["--no-modify-path", "--unverified", "--archive"];
+        v.push(archive_path.to_str().unwrap());
+        if force {
+            v.push("--force");
+        }
+        v.into_iter().map(String::from).collect::<Vec<_>>()
+    };
+    let run = |force: bool| {
+        let a = args(force);
+        let refs: Vec<&str> = a.iter().map(String::as_str).collect();
+        get_velt(&home, &refs, &[])
+    };
+    ok(run(false));
+    let root = home.join(".velt");
+    let std_dir = root.join("toolchains/0.1.1/std");
+    velt_toolchain::read_only::set_tree(&std_dir, true).unwrap();
+    let out = ok(run(true));
+    assert!(out.contains("installed"), "{out}");
+    assert!(root.join("toolchains/0.1.1/bin/velt").is_file());
+    assert!(std_dir.join("VERSION").is_file());
+    assert_no_old_copies(&root);
 }
 
 /// The launcher in `<root>/bin` is replaced unless it is a newer velt's: a pre-release is older
