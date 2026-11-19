@@ -310,4 +310,93 @@ mod tests {
         );
         assert_eq!((read.0, read.1, read.3), (2, 5, 3));
     }
+
+    /// Control flow, patterns, closures, classes, async code and `try`, besides what std's
+    /// prelude has.
+    const SRC: &str = r#"
+interface Shape { area(): number }
+class Circle implements Shape {
+    constructor(public r: number) {}
+    area(): number { return 3 * this.r * this.r; }
+}
+type Kind = "a" | "b" | number;
+function kindOf(k: Kind): string {
+    switch (k) {
+        case "a": return "first";
+        case "b": return "second";
+        default: return `n${k}`;
+    }
+}
+function largest<T>(xs: T[], gt: (a: T, b: T) => boolean): T | undefined {
+    let best: T | undefined = undefined;
+    for (const x of xs) {
+        if (best === undefined || gt(x, best)) best = x;
+    }
+    return best;
+}
+async function later(n: number): Promise<number> {
+    try {
+        if (n < 0) throw new RangeError("negative");
+        return (await Promise.resolve(n)) + 1;
+    } catch (e) {
+        return e instanceof RangeError ? -1 : -2;
+    } finally {
+        console.log("done");
+    }
+}
+async function main() {
+    const shapes: Shape[] = [new Circle(1), new Circle(2)];
+    const [first, ...rest] = shapes.map((s) => s.area());
+    const { x, y = 2 } = { x: 1 } as { x: number; y?: number };
+    let i = 0;
+    while (i < 3) { i++; if (i == 2) continue; }
+    do { i--; } while (i > 0);
+    const m = new Map<string, number>([["k", first + rest.length + x + y]]);
+    for (const [k, v] of m) console.log(k, v, kindOf("a"), largest([1, 2], (a, b) => a > b));
+    console.log(await later(1), i > 0 ? "pos" : "zero");
+}
+"#;
+
+    /// Over every body and initializer of a checked program, std's prelude included: both
+    /// traversals visit the same number of statements, expressions, patterns and locals.
+    #[test]
+    fn both_traversals_visit_the_same_nodes_of_a_checked_program() {
+        let p = crate::script_locals::sema_tests::programs::ok_src(SRC);
+        assert!(p.defs.len() > 1000, "std's prelude is included");
+        let check = move || {
+            let (mut bodies, mut nodes) = (0, 0);
+            for def in p.defs {
+                let mut read = Count::default();
+                let mut write = Count::default();
+                match def {
+                    crate::hir::Def::Fn(mut f) => {
+                        block(&f.body.block, &mut read);
+                        crate::visit::block(&mut f.body.block, &mut write);
+                    }
+                    crate::hir::Def::Global(mut g) => {
+                        expr(&g.init, &mut read);
+                        crate::visit::expr(&mut g.init, &mut write);
+                    }
+                    _ => continue,
+                }
+                assert_eq!(
+                    (read.0, read.1, read.2, read.3),
+                    (write.0, write.1, write.2, write.3)
+                );
+                bodies += 1;
+                nodes += read.0 + read.1 + read.2;
+            }
+            assert!(
+                bodies > 500 && nodes > 20_000,
+                "{bodies} bodies, {nodes} nodes"
+            );
+        };
+        // The traversals recurse as deep as the program's expressions nest.
+        std::thread::Builder::new()
+            .stack_size(crate::SEMA_STACK_BYTES)
+            .spawn(check)
+            .expect("test thread")
+            .join()
+            .expect("the traversals agree");
+    }
 }

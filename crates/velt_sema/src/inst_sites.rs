@@ -568,7 +568,7 @@ pub(crate) fn resolve_param_calls(
 }
 
 /// Guard bits (a bit per type parameter whose primitive guard encloses a call or a
-/// requirement: `visit::primitive_guards`, issue #1251) of a requirement of `g` with bits
+/// requirement: `visit_ref::primitive_guards`, issue #1251) of a requirement of `g` with bits
 /// `need`, carried to a call `g<targs>` with bits `site` in the caller: `None` when a guarded
 /// parameter of `g` is given an object type, so the branch the requirement comes from is not
 /// instantiated there; else `site` and the caller's parameter each guarded one is given as is
@@ -589,7 +589,7 @@ pub(crate) fn carry_guard(cx: &Ctx, need: u64, targs: &[TyId], site: u64) -> Opt
     Some(out)
 }
 
-/// The guard bits of each expression of `b` (`visit::primitive_guards`), keyed by address.
+/// The guard bits of each expression of `b` (`visit_ref::primitive_guards`), keyed by address.
 pub(crate) fn guards_of(
     ty: &crate::types::Types,
     b: &crate::hir::Block,
