@@ -28,5 +28,5 @@ Errors are `{"error":{"code","message"}}`: 400 (`invalid`, `bad_json`), 404 (`no
 | `src/model.velt` | `Item`, request bodies, `ApiError` and its subclasses, validation |
 | `src/store.velt` | `ItemStore`: the items in memory |
 | `src/api.velt` | `route(store, method, path, body)` → `{ status, body }` |
-| `src/server.velt` | `startServer(port)`: std/http + `shared<Mutex<ItemStore>>` |
+| `src/server.velt` | `startServer(port)`: the `http-server` package + `shared<Mutex<ItemStore>>` |
 | `tests/*.test.velt` | `velt test`: validation, and HTTP requests against port 0 |

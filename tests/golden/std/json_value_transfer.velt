@@ -3,7 +3,9 @@
 // the one sent, whatever its tape holds (an object whose members are reordered or repeated, strings
 // with escapes, a wide object with its hash index made before or after the send, a child of a
 // larger document), the sender's copy stays usable, and an edit on either side never shows on the
-// other. A value the sender keeps is shared when it is sent; one it gives up is moved.
+// other, also when both sides read and edit values of one document at the same time on two
+// workers. A value the sender keeps is shared: its frozen tape is not copied, only the value and
+// its task's handle on the tape, and both sides read the same tape; one it gives up is moved.
 import { channel, Channel } from "velt/sync";
 import { currentWorker, workerCount } from "velt/task";
 
@@ -34,6 +36,25 @@ async function edit(ch: Channel<JsonValue>, back: Channel<JsonValue>): Promise<v
   back.close();
 }
 
+// Once `go` says so: reads `v` all over (a lookup of every key of the wide object `wide` is),
+// then edits its own copy of it, many times, while the other side does the same with its own.
+async function readThenEdit(v: JsonValue, tag: string, go: Channel<bool>): Promise<string> {
+  await go.receive();
+  let sum = 0;
+  for (let round = 0; round < 200; round++) {
+    for (let i = 0; i < 20; i++) {
+      sum += v.get(`k${i}`)!.asNumber()!;
+    }
+  }
+  const mine = v.clone();
+  for (let i = 0; i < 200; i++) {
+    mine.set(`${tag}${i % 3}`, JsonValue.of(i));
+    mine.delete(`k${i % 20}`);
+    sum += v.get("k19")!.asNumber()!;
+  }
+  return `${tag}: ${sum} ${mine.stringify()} | ${v.get("k0")!.stringify()}`;
+}
+
 function wide(): string {
   const parts: string[] = [];
   for (let i = 0; i < 20; i++) {
@@ -58,7 +79,7 @@ async function main(): Promise<void> {
   const ch = channel<JsonValue>(8);
   const reader = spawn(describe(ch), { worker: other });
   for (const v of values) {
-    // Kept here (in `values`): the value crosses as a copy, read on the other side meanwhile.
+    // Kept here (in `values`): the value crosses sharing its tape, read on the other side meanwhile.
     await ch.send(v);
   }
   // Given up: moved.
@@ -92,6 +113,18 @@ async function main(): Promise<void> {
   console.log("edited here:", ordered.stringify());
   console.log("child there:", editedChild.stringify());
   console.log("child here:", child.stringify(), doc.stringify());
+
+  // Two workers read and edit values of one document at the same time; each sees only its own
+  // edits, and the document read here afterwards is unchanged.
+  const both = JSON.parseValue(wide());
+  const go = channel<bool>(2);
+  const a = spawn(readThenEdit(both, "there", go), { worker: other });
+  const b = spawn(readThenEdit(both, "here", go), { worker: here });
+  await go.send(true);
+  await go.send(true);
+  console.log(await a);
+  console.log(await b);
+  console.log("unchanged:", both.stringify() == wide(), both.get("k19")!.stringify());
 
   // One worker (a single-core machine) has no other thread to cross to.
   console.log("read on another worker:", workerCount() == 1 || first != here);
