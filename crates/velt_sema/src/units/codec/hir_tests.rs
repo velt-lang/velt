@@ -227,3 +227,25 @@ fn hir_nested_deeper_than_the_stack_holds_is_a_failed_decode() {
     .expect("the decode returns");
     assert!(!done);
 }
+
+/// The HIR enums that have no variant without fields at tag 0 (listed `@fielded`) end from
+/// zeros: none holds itself in a box there, so damaged input ends in each.
+#[test]
+fn hir_enums_end_on_damaged_input() {
+    use crate::hir::*;
+    macro_rules! ends {
+        ($($t:ty),* $(,)?) => {$(
+            assert!(super::ends_from_zeros::<$t>(), stringify!($t));
+        )*};
+    }
+    ends!(Def, CTy, HostTy, CValue, StmtKind, ExprKind, Callee, Lit, TyKind, LitValue, TyOp);
+    ends!(
+        FnWrapped,
+        FreshClosure,
+        DecoratorTarget,
+        Expr,
+        Stmt,
+        Pat,
+        Block
+    );
+}
