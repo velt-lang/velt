@@ -8,7 +8,7 @@ import { inline } from "velt/lang/intrinsics";
 declare function velt_math_fma_f64(a: f64, b: f64, c: f64): f64;
 
 /** `a * b + c` rounded once (C's `fma`, IEEE 754's fusedMultiplyAdd). */
-@inline
+@inline("always")
 export function fma(a: f64, b: f64, c: f64): f64 {
   return velt_math_fma_f64(a, b, c);
 }
@@ -17,7 +17,7 @@ export function fma(a: f64, b: f64, c: f64): f64 {
 const SPLIT: f64 = 134217729.0;
 
 /** The upper 26 bits of `a` (Veltkamp's split); `a - splitHi(a)` is the rest, exactly. */
-@inline
+@inline("always")
 export function splitHi(a: f64): f64 {
   const c = a * SPLIT;
   return c - (c - a);
@@ -27,7 +27,7 @@ export function splitHi(a: f64): f64 {
  * `a * b - p` exactly, where `p` is `a * b` rounded (Dekker's product error; exact unless it falls
  * below the normal range).
  */
-@inline
+@inline("always")
 export function productError(a: f64, b: f64, p: f64): f64 {
   const ah = splitHi(a);
   const al = a - ah;
@@ -43,7 +43,7 @@ export function productError(a: f64, b: f64, p: f64): f64 {
  * `s` plus `t + e` rounded to odd. Correct while nothing overflows and no error term falls below
  * the normal range, the sign of a zero result aside (+0 for -0 * x + -0).
  */
-@inline
+@inline("always")
 export function fmaSoft(a: f64, b: f64, c: f64): f64 {
   const p = a * b;
   const e = productError(a, b, p);
@@ -56,7 +56,7 @@ export function fmaSoft(a: f64, b: f64, c: f64): f64 {
  * `a + b` rounded to odd: rounded to nearest, then, if that was inexact and its last bit is even,
  * moved one unit toward the exact sum (`fmaSoft`).
  */
-@inline
+@inline("always")
 export function addOdd(a: f64, b: f64): f64 {
   const v = a + b;
   const vb = v - a;

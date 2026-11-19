@@ -51,7 +51,7 @@ export const BORROW_MIN: usize = 2;
 const NOBORROW_POLLS: usize = 32;
 
 /** The clock of the spread: nanoseconds since the process started. */
-@inline
+@inline("always")
 export function now(): usize {
   return sl.clock() as usize;
 }
@@ -193,7 +193,7 @@ function offer(e: usize, mode: u32, helper: usize): void {
  * was anything. The tasks' home becomes `e`. Inlined into the idle loop (sched_loop.velt `idle`),
  * as `borrow` is, as LLVM did on its own before the offers carried sleeps (#3097).
  */
-@inline
+@inline("always")
 export function steal(e: usize): bool {
   const g = t.main();
   const n = m.load(g + t.E_STARTED);
@@ -245,7 +245,7 @@ export function lend(w: usize): usize {
  * slice. The tasks keep their home: borrowing moves nothing for good. Sleeping workers lend
  * nothing, so light load stays on one worker. Whether it borrowed anything.
  */
-@inline
+@inline("always")
 export function borrow(e: usize): bool {
   const g = t.main();
   const n = m.load(g + t.E_STARTED);

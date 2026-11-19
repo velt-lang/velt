@@ -31,21 +31,21 @@ declare c("c") function memcpy$sched(dst: Ptr<u8>, src: Ptr<u8>, n: usize): Ptr<
 declare c("c") function memset$sched(dst: Ptr<u8>, c: i32, n: usize): Ptr<u8>;
 
 /** Address `a` as a C pointer argument; 0 passes `NULL`. */
-@inline
+@inline("always")
 export function ptr(a: usize): Ptr<u8> {
   // SAFETY: only passed to a C function, whose call site states what is at `a`.
   return unsafe { Ptr.at<u8>(a) };
 }
 
 /** Address `a` as a C pointer argument to a `T` (`declare c type`, or a number type). */
-@inline
+@inline("always")
 export function ptrTo<T>(a: usize): Ptr<T> {
   // SAFETY: as `ptr`'s.
   return unsafe { Ptr.at<T>(a) };
 }
 
 /** The address a C function returned; 0 for `NULL`. */
-@inline
+@inline("always")
 export function addr(p: Ptr<u8> | null): usize {
   if (p === null) {
     return 0;
@@ -54,13 +54,13 @@ export function addr(p: Ptr<u8> | null): usize {
 }
 
 /** `n` (> 0) bytes, aligned to 8 (every value's alignment); `release(p, n)` gives them back. */
-@inline
+@inline("always")
 export function alloc(n: usize): usize {
   return rawAlloc(n);
 }
 
 /** `n` (> 0) bytes set to 0, aligned to 8; `release(p, n)` gives them back. */
-@inline
+@inline("always")
 export function zeroed(n: usize): usize {
   const p = rawAlloc(n);
   // SAFETY: `p` holds `n` bytes.
@@ -134,7 +134,7 @@ export function clear(p: usize, n: usize): void {
  * its initial state with it (sched_node.velt `boxed`), a constant size at the call, so the copy
  * is a few moves there; a program split into codegen units keeps it so only when marked (#3097).
  */
-@inline
+@inline("always")
 export function copy(dst: usize, src: usize, n: usize): void {
   // SAFETY: both hold `n` bytes; a task's slot or state and the state lowering handed over.
   unsafe {
@@ -143,13 +143,13 @@ export function copy(dst: usize, src: usize, n: usize): void {
 }
 
 /** The word at `a`, which only the worker writes. */
-@inline
+@inline("always")
 export function ld(a: usize): usize {
   // SAFETY: an executor or task field (module docs).
   return unsafe { addressLoad<usize>(a) };
 }
 
-@inline
+@inline("always")
 export function st(a: usize, v: usize): void {
   // SAFETY: as `ld`.
   unsafe {
@@ -157,13 +157,13 @@ export function st(a: usize, v: usize): void {
   }
 }
 
-@inline
+@inline("always")
 export function ld32(a: usize): u32 {
   // SAFETY: as `ld`.
   return unsafe { addressLoad<u32>(a) };
 }
 
-@inline
+@inline("always")
 export function st32(a: usize, v: u32): void {
   // SAFETY: as `ld`.
   unsafe {
@@ -172,13 +172,13 @@ export function st32(a: usize, v: u32): void {
 }
 
 /** The word at `a`, read atomically: other threads change it. */
-@inline
+@inline("always")
 export function load(a: usize): usize {
   // SAFETY: an aligned word every thread changes atomically.
   return unsafe { addressAtomicLoad<usize>(a, "seqcst") };
 }
 
-@inline
+@inline("always")
 export function load32(a: usize): u32 {
   // SAFETY: as `load`.
   return unsafe { addressAtomicLoad<u32>(a, "seqcst") };
@@ -188,13 +188,13 @@ export function load32(a: usize): u32 {
  * The word at `a`, read atomically but unordered: what it guards was ordered before by how the
  * reader came by the address (a handle passed through a channel, a lock taken after).
  */
-@inline
+@inline("always")
 export function loadRelaxed(a: usize): usize {
   // SAFETY: as `load`.
   return unsafe { addressAtomicLoad<usize>(a, "relaxed") };
 }
 
-@inline
+@inline("always")
 export function load32Relaxed(a: usize): u32 {
   // SAFETY: as `load`.
   return unsafe { addressAtomicLoad<u32>(a, "relaxed") };
@@ -204,7 +204,7 @@ export function load32Relaxed(a: usize): u32 {
  * Stores `v` at `a` after everything this thread wrote before (a release): a thread that reads
  * `v` with `load` sees those writes too.
  */
-@inline
+@inline("always")
 export function storeRelease(a: usize, v: usize): void {
   // SAFETY: as `load`.
   unsafe {
@@ -212,7 +212,7 @@ export function storeRelease(a: usize, v: usize): void {
   }
 }
 
-@inline
+@inline("always")
 export function store32(a: usize, v: u32): void {
   // SAFETY: as `load`.
   unsafe {
@@ -221,14 +221,14 @@ export function store32(a: usize, v: u32): void {
 }
 
 /** Makes the `u32` at `a` `v` if it is `expected`; the value it had. */
-@inline
+@inline("always")
 export function cas32(a: usize, expected: u32, v: u32): u32 {
   // SAFETY: as `load`.
   return unsafe { addressAtomicCas<u32>(a, expected, v, "seqcst", "seqcst") };
 }
 
 /** Makes the word at `a` `v` if it is `expected`; the value it had. */
-@inline
+@inline("always")
 export function cas(a: usize, expected: usize, v: usize): usize {
   // SAFETY: as `load`.
   return unsafe { addressAtomicCas<usize>(a, expected, v, "seqcst", "seqcst") };
@@ -269,42 +269,42 @@ export function yieldCore(): void {
 }
 
 /** Adds 1 to the count at `a`, ordered with every other ordered operation; the count before. */
-@inline
+@inline("always")
 export function incOrdered(a: usize): usize {
   // SAFETY: as `load`.
   return unsafe { addressAtomicRmw<usize>(a, "add", 1, "seqcst") };
 }
 
 /** Adds 1 to the count at `a`; the count before. */
-@inline
+@inline("always")
 export function inc(a: usize): usize {
   // SAFETY: as `load`.
   return unsafe { addressAtomicRmw<usize>(a, "add", 1, "relaxed") };
 }
 
 /** Takes 1 from the count at `a`; the count before. */
-@inline
+@inline("always")
 export function dec(a: usize): usize {
   // SAFETY: as `load`.
   return unsafe { addressAtomicRmw<usize>(a, "sub", 1, "acqrel") };
 }
 
 /** Sets the bits `v` in the `u32` at `a`; the word before. */
-@inline
+@inline("always")
 export function or32(a: usize, v: u32): u32 {
   // SAFETY: as `load`.
   return unsafe { addressAtomicRmw<u32>(a, "or", v, "seqcst") };
 }
 
 /** Clears the bits not in `v` in the `u32` at `a`; the word before. */
-@inline
+@inline("always")
 export function and32(a: usize, v: u32): u32 {
   // SAFETY: as `load`.
   return unsafe { addressAtomicRmw<u32>(a, "and", v, "seqcst") };
 }
 
 /** Makes the word at `a` `v`; the word before. */
-@inline
+@inline("always")
 export function swap(a: usize, v: usize): usize {
   // SAFETY: as `load`.
   return unsafe { addressAtomicRmw<usize>(a, "exchange", v, "seqcst") };
@@ -325,7 +325,7 @@ export function pushStack(head: usize, t: usize, next: usize): void {
 }
 
 /** Takes the whole stack whose head is at `head`: its top. */
-@inline
+@inline("always")
 export function takeStack(head: usize): usize {
   // SAFETY: as `load`.
   return unsafe { addressAtomicRmw<usize>(head, "exchange", 0, "seqcst") };

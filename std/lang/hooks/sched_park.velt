@@ -155,7 +155,7 @@ export function park(e: usize): void {
  * code: these and sched_run.velt are the executor's only ways into it, each behind
  * `stdUsed("nodeTimers")`, with the sleeps alone on the other path.
  */
-@inline
+@inline("always")
 export function timersAny(e: usize): bool {
   if (stdUsed("nodeTimers")) {
     return order.any(e);
@@ -187,7 +187,7 @@ function timersNext(e: usize): i64 {
 }
 
 /** Worker `e` found tasks instead of parking: another worker waits for Node's timers. */
-@inline
+@inline("always")
 export function tookWork(e: usize): void {
   if (stdUsed("nodeTimers")) {
     ow.handOff(e);
@@ -198,7 +198,7 @@ export function tookWork(e: usize): void {
  * Worker `e` woke from its park: due timers fire. The worker that waited for Node's timers passes
  * that on when it has tasks to run (`order.woke`): another may wait while it runs them.
  */
-@inline
+@inline("always")
 function woke(e: usize): void {
   if (stdUsed("nodeTimers")) {
     if (order.woke(e) && (m.load(e + t.E_INBOX) !== 0 || q.any(e))) {
@@ -213,7 +213,7 @@ function woke(e: usize): void {
  * Worker `e` leaves its park: a spare asked to retire, or retired, runs nothing from here until
  * the monitor wants it back (sched_relax.velt). Read after its park word went down, ordered.
  */
-@inline
+@inline("always")
 function retiring(e: usize): void {
   if ((m.load32(e + t.E_RETIRED) & t.R_AWAY) !== 0) {
     rx.retiredLook(e);

@@ -76,7 +76,7 @@ export class Fe25519 {
   }
 
   /** `d = a * b` mod p (`d` may be `a` or `b`); products past limb 4 wrap around times 19. */
-  @inline
+  @inline("always")
   mul(d: usize, a: usize, b: usize) {
     const r = this.r;
     const oa = 5 * a;
@@ -129,7 +129,7 @@ export class Fe25519 {
   }
 
   /** `d = a^2` mod p: the 15 distinct products of `mul`'s 25. */
-  @inline
+  @inline("always")
   square(d: usize, a: usize) {
     const r = this.r;
     const oa = 5 * a;

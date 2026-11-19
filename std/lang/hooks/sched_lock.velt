@@ -46,13 +46,13 @@ export function setMode(mode: u32): void {
  * Is the mode `LK_NONE` for good: set so by the executor, with one thread at it (it never changes
  * then)? An object made now may keep the answer (a latch: sched_latch.velt `L_PLAIN`).
  */
-@inline
+@inline("always")
 export function noneForGood(): bool {
   return NONE_SET.load("relaxed") !== 0;
 }
 
 /** The mode (`LK_NONE` tells a caller it may take a path without locks or counts). */
-@inline
+@inline("always")
 export function mode(): u32 {
   return MODE.load("relaxed");
 }
@@ -62,7 +62,7 @@ export function mode(): u32 {
  * counted: `done` ends it), or `LK_ON` (take the lock). Read once per operation, passed to the
  * unlock.
  */
-@inline
+@inline("always")
 export function kind(): u32 {
   const mode = MODE.load("relaxed");
   // Bit tests, here and in the callers: one instruction each.
@@ -79,7 +79,7 @@ export function kind(): u32 {
 }
 
 /** An operation of kind `k` ends (its lock, if any, given back already). */
-@inline
+@inline("always")
 export function done(k: u32): void {
   if ((k & LK_LAZY) !== 0) {
     LAZY_OPS.store(LAZY_OPS.load("relaxed") - 1, "seqcst");
@@ -113,7 +113,7 @@ export function locksOn(): void {
 }
 
 /** Takes the lock word at `a` (an operation of kind `LK_ON`). */
-@inline
+@inline("always")
 export function take(a: usize): void {
   if (m.cas32(a, 0, 1) !== 0) {
     m.spinLock(a);

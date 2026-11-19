@@ -46,7 +46,7 @@ export function latchNew(): u64 {
 }
 
 /** Takes latch `a`'s lock for an operation of kind `k` (sched_lock.velt `kind`). */
-@inline
+@inline("always")
 function lock(a: usize, k: u32): void {
   if ((k & lk.LK_ON) !== 0) {
     lk.take(a + L_LOCK);
@@ -54,7 +54,7 @@ function lock(a: usize, k: u32): void {
 }
 
 /** Gives latch `a`'s lock back (`k`: `lock`'s result). */
-@inline
+@inline("always")
 function unlock(a: usize, k: u32): void {
   if ((k & lk.LK_ON) !== 0) {
     m.store32(a + L_LOCK, 0);
@@ -72,13 +72,13 @@ export function latchFree(l: u64): void {
  * Does latch `a` need no lock or count (`L_PLAIN`: one thread at the executor, `LK_NONE`)? Its own
  * word, read in the line the operation reads anyway (cheaper than the mode's global).
  */
-@inline
+@inline("always")
 function plain(a: usize): bool {
   return m.ld32(a + L_PLAIN) !== 0;
 }
 
 /** `latchFree` of latch `a`, `plain` with one thread at the executor (`LK_NONE`). */
-@inline
+@inline("always")
 function freeRef(a: usize, plain: bool): void {
   if (plain) {
     // One thread at the executor: a plain count.
@@ -124,7 +124,7 @@ export function latchOpen(l: u64): void {
 }
 
 /** `latchOpen` of latch `a`, an operation of kind `lkind` (sched_lock.velt). */
-@inline
+@inline("always")
 function openAs(a: usize, lkind: u32): void {
   lock(a, lkind);
   if (m.ld(a + L_OPEN) !== 0) {
@@ -206,7 +206,7 @@ export function waitPoll(w: usize, cx: usize): u32 {
 }
 
 /** `waitPoll`, an operation of kind `lkind` (sched_lock.velt). */
-@inline
+@inline("always")
 function waitPollAs(w: usize, a: usize, cx: usize, lkind: u32): u32 {
   const waker = m.ld(cx + 8);
   lock(a, lkind);
@@ -249,7 +249,7 @@ export function waitDrop(w: usize): void {
 }
 
 /** `waitDrop`, an operation of kind `lkind` (sched_lock.velt). */
-@inline
+@inline("always")
 function waitDropAs(w: usize, a: usize, lkind: u32): void {
   lock(a, lkind);
   if (m.ld(w + W_NEXT) !== 1) {

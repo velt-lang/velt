@@ -105,7 +105,7 @@ export const FRONT: usize = 32;
  * of this executor is shared here; the runtime's futures (a leaf, a join handle, a race) are
  * shared by the runtime's hub.
  */
-@inline
+@inline("always")
 export function schedShare(p: usize, size: u64, share: usize, rdrop: usize): usize {
   if (p === 0) {
     return 0;

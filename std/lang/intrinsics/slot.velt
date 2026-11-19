@@ -18,7 +18,7 @@ import type { Owned } from "./modes";
 export declare function slotSizeOfFirst(): usize;
 
 /** The bytes a `T` takes in a slot (0 for none). */
-@inline
+@inline("always")
 export function slotSize<T>(): usize {
   return slotSizeOfFirst();
 }

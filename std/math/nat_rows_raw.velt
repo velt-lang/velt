@@ -185,19 +185,19 @@ export function addWithin(u: u64[], uo: usize, vo: usize, n: usize): u64 {
  * Limb `i` of `a`, unchecked here: the caller checked the range it reads first (`limbsInside`).
  * nat_rows_checked.velt's checks it.
  */
-@inline
+@inline("always")
 export function limbOf(a: u64[], i: usize): u64 {
   return ldl(limbsIn(a), i);
 }
 
 /** Writes limb `i` of `a`, unchecked here as `limbOf`'s read. */
-@inline
+@inline("always")
 export function limbSet(a: u64[], i: usize, v: u64) {
   stl(limbsAt(a), i, v);
 }
 
 /** Stops the program unless limbs `[at, at + n)` are inside `a` (an internal error). */
-@inline
+@inline("always")
 export function limbsInside(a: u64[], at: usize, n: usize) {
   limbsCheck(a, at, n);
 }

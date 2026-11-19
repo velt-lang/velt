@@ -89,7 +89,7 @@ function owner(f: usize): usize {
 }
 
 /** Worker `e`, about to poll task `k` (flags `fl`): the sleeps it carries, if any, join its block. */
-@inline
+@inline("always")
 export function adoptCarried(e: usize, k: usize, fl: u32): void {
   if ((fl & t.CARRIED) !== 0) {
     adopt(e, k);

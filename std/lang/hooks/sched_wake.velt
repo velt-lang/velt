@@ -68,7 +68,7 @@ export function countWakes(): void {
 }
 
 /** Are wakes counted? */
-@inline
+@inline("always")
 export function counting(): bool {
   return COUNTING.load("relaxed") !== 0;
 }
@@ -131,7 +131,7 @@ export function release(t: usize): void {
  * running; with one thread at the queues, at the end of the second queue instead); from another worker's thread running a task, in that worker's slot (it runs there
  * next and keeps its home) unless it may not move; else on its home's inbox, waking the home.
  */
-@inline
+@inline("always")
 export function schedule(t: usize): void {
   const w = tk.here();
   if (w !== 0 && m.ld32(w + tk.E_SOLO) !== 0) {
@@ -198,7 +198,7 @@ export function schedule(t: usize): void {
  * Queues task `t`, just spawned on this thread (`w`: its worker block, `tk.here()`): behind the
  * input on its home, or on its home's inbox.
  */
-@inline
+@inline("always")
 export function scheduleNew(w: usize, t: usize): void {
   if (w !== 0 && m.ld32(w + tk.E_SOLO) !== 0) {
     // The only thread at the executor: no lock, its spawns counted (sched_tick.velt `interval`).
@@ -308,7 +308,7 @@ export function toInbox(h: usize, t: usize): void {
  * thread prints from now on (the runtime's `publish_before_handoff`, reached through the opening
  * of a latch that is open already); worker `w` is this thread's.
  */
-@inline
+@inline("always")
 export function publish(w: usize): void {
   // SAFETY: the worker's latch handle, open, never freed.
   unsafe {
@@ -330,7 +330,7 @@ export function publish(w: usize): void {
  * before it queues a task where the monitor may take it during the poll (`pendOn`), so no task the
  * rescue moves prints before what was printed ahead of it on worker 0 (#2977).
  */
-@inline
+@inline("always")
 export function publishPolled(w: usize): void {
   publishPrinted(w);
 }
@@ -344,7 +344,7 @@ export function publishPolled(w: usize): void {
  * runtime's call (#2786). A mark left set by a publish that did not clear it (the runtime's) costs
  * one publish of nothing.
  */
-@inline
+@inline("always")
 export function publishPrinted(w: usize): void {
   if (stdoutWrittenSince()) {
     publishMarked(w);
@@ -403,7 +403,7 @@ export function unpark(w: usize): void {
 }
 
 /** The task a waker header belongs to (a task, or a promise one drives); 0 for another table. */
-@inline
+@inline("always")
 export function taskOf(w: usize): usize {
   const e = tk.main();
   const vt = m.ld(w);

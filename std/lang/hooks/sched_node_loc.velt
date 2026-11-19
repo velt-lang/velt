@@ -40,7 +40,7 @@ export function keep(flags: usize, slot: usize, at: usize): void {
 }
 
 /** The location the node with flags `fl` keeps at `at` becomes this thread's (if it has one). */
-@inline
+@inline("always")
 export function claim(fl: u32, at: usize): void {
   if ((fl & LOC) !== 0) {
     restore(m.ld(at));

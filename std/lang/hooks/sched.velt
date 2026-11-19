@@ -53,7 +53,7 @@ import * as mk from "./sched_make";
 import * as wk from "./sched_wake";
 
 /** The executor, started on first use (by the worker: `main`'s thread). */
-@inline
+@inline("always")
 function exec(): usize {
   return workers.started();
 }
@@ -237,7 +237,7 @@ export function schedYield(cx: usize): void {
  * call's entry point, and a program split into codegen units keeps it inlined into a large `main`
  * only so (#3097).
  */
-@inline
+@inline("always")
 export function schedBox(poll: usize, drop: usize, state: usize, size: u64, align: u64): usize {
   exec();
   return node.boxed(poll, drop, state, size, fnAddress(node.nodePoll), fnAddress(node.nodeDrop));
