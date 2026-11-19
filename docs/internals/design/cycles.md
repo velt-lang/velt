@@ -157,6 +157,28 @@ velt: cycle-capable cycle: <entry>: <a shortest cycle through it, node by node>
 `crates/veltc/tests/cycle_capable.rs` checks the set on the shapes of the motivation table, on
 programs that must have none, and on each edge kind, split and wrapper.
 
+**Trace glue for closures.** The collector and the weak core find cycles the same way: by asking
+each object which counted objects it owns, through trace glue ([rt_abi.md](../contracts/rt_abi.md)
+"Weak references"). A function value's glue visits its environment
+(`crates/velt_vir/src/lower/glue/trace_env.rs`). An environment's trace (`Work::EnvTrace`) walks
+the same captures as its drop (`closure.rs` `build_env_drop`: owned value captures, and captured
+variables' cells, counted blocks traced like a weak map's boxed value). The environment header
+has no trace entry, which would change every environment's layout and the runtime's own
+three-word environments (`fn_props.rs`); the glue dispatches on the drop entry instead, one
+function per closure instance (`Work::EnvDrop`). It compares it with the drop entries of the
+closures made at the value's function type (`Boxing::env_traced`, by key) and visits the
+environment with the matching closure's trace; an environment that matches none (made by the
+runtime, or a drop entry a function property replaced) is left out, a leak at worst. Inside a
+shape-shared instance the drop entry comes from the dictionary, per concrete type, so it is the
+one the comparison names. Environments and cells on a path back to a weak key get `RC_WEAK`, so
+in a program with such glue their releases take the weak-capable sequence (`Boxing::weak_envs`,
+program-wide, so no shape question depends on it), and the transfer glue gives up a shared
+environment through its drop entry instead of a raw decrement. An uncounted object (a class
+instance with one owner, which the compiler does not count) is walked inline: its fields'
+references are reported as its owner's, since the owner holds the only reference, so a closure
+that reaches a key through an uncounted object holding a function value is traced too. Weak
+maps find cycles through handler closures with it ([weak-refs.md](weak-refs.md)).
+
 ## Alternatives considered
 
 **`weak` only, no collector.** Ported TypeScript never writes `weak`, so every program with
@@ -373,13 +395,11 @@ panics. `weak T` is Velt syntax; it parses in `.ts` files, and `--ts-compat` rep
 
 ### Work items
 
-- complete trace glue for every type a cycle-capable type reaches: closure environments (walking
-  the captures `build_env_drop` in `crates/velt_vir/src/lower/closure.rs` drops, through a trace
-  entry in the environment header in programs with cycle-capable types), a `SLOT_TRACE` vtable
-  slot next to `SLOT_DROP` and `SLOT_TRANSFER` for class hierarchies, the same slot in interface
-  tables, and uncounted classes traced inline; each glue is tested against the drop glue's
-  releases (the same objects, the same number of times). Weak maps then find cycles through
-  handler closures and class hierarchies too;
+- complete trace glue for the other types a cycle-capable type reaches, as closures have: a
+  `SLOT_TRACE` vtable slot next to `SLOT_DROP` and `SLOT_TRANSFER` for class hierarchies, the same
+  slot in interface tables, and generator states; each glue is tested against the drop glue's
+  releases (the same objects, the same number of times). Weak maps then find cycles through class
+  hierarchies too;
 - the collector in std beside the weak core, with the intrinsic it needs, `cycleDesc<T>()` (the
   address of `T`'s descriptor);
 - lowering of the release sequence, descriptors and collection points for cycle-capable types,

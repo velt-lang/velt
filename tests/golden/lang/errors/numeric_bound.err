@@ -1,0 +1,23 @@
+numeric_bound.velt:18:11: error: `Numeric` cannot be extended or implemented
+  = note: the compiler decides which types are numbers: the integer and float types
+
+numeric_bound.velt:14:7: error: `Numeric` cannot be extended or implemented
+  = note: the compiler decides which types are numbers: the integer and float types
+
+numeric_bound.velt:7:10: error: the type `T` does not implement `Numeric`
+  = note: required by `T extends Numeric` of function `count`
+
+numeric_bound.velt:28:15: error: the type `string` does not implement `Numeric`
+  = note: required by `T extends Numeric` of function `count`
+
+numeric_bound.velt:28:29: error: the type `boolean` does not implement `Numeric`
+  = note: required by `T extends Numeric` of function `count`
+
+numeric_bound.velt:28:43: error: the type `Meters` does not implement `Numeric`
+  = note: required by `T extends Numeric` of function `count`
+
+numeric_bound.velt:28:59: error: the type `f32[]` does not implement `Numeric`
+  = note: required by `T extends Numeric` of function `count`
+
+numeric_bound.velt:28:74: error: the type `i64 | null` does not implement `Numeric`
+  = note: required by `T extends Numeric` of function `count`

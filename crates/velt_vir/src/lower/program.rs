@@ -38,6 +38,7 @@ impl<'h> Cx<'h> {
             native_inits: vec![],
             view_fn: None,
             std_fns: std::cell::OnceCell::new(),
+            prelude_defs: std::cell::OnceCell::new(),
             uses_placement: false,
             cell_checks: false,
             heap_hooks: false,
@@ -634,6 +635,7 @@ pub(super) fn work_target(work: &mut Work) -> Option<(&mut DefId, &mut Vec<TyId>
         | Work::EnvDrop(d, a)
         | Work::EnvDropFrame(d, a)
         | Work::EnvClone(d, a)
+        | Work::EnvTrace(d, a)
         | Work::EnvTransfer(d, a)
         | Work::Tracked(d, a, _)
         | Work::Frozen(d, a, _, _, _)
@@ -657,6 +659,7 @@ pub(super) fn work_def(work: &Work) -> Option<DefId> {
         | Work::EnvDrop(d, _)
         | Work::EnvDropFrame(d, _)
         | Work::EnvClone(d, _)
+        | Work::EnvTrace(d, _)
         | Work::EnvTransfer(d, _)
         | Work::Tracked(d, _, _)
         | Work::Frozen(d, _, _, _, _)

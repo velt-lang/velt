@@ -104,7 +104,16 @@ export const R_MEMBER_MORE: usize = 56;
 /** The object's `WeakRef` slots: the first, then a vector of the others. */
 export const R_REF: usize = 64;
 export const R_REF_MORE: usize = 72;
-export const RECORD: usize = 80;
+/** Entries keyed by the object not examined yet (weak.velt `examine`), 32 bits. */
+export const R_UNEXAMINED: usize = 80;
+/**
+ * The release path's threshold (32 bits), at least `max(hint, observed)`, and the largest `u32`
+ * while entries keyed by the object are unexamined: a decrement that leaves the count above it
+ * needs nothing more, which `weakRelease` decides with one comparison. A higher hint or
+ * `observed` raises it; a lower one leaves it, and `weakRelease` lowers it on its slow path.
+ */
+export const R_GATE: usize = 84;
+export const RECORD: usize = 88;
 
 const EMPTY: usize = 0;
 const REMOVED: usize = 1;
@@ -260,6 +269,7 @@ export function hint(rec: usize): u32 {
 
 export function setHint(rec: usize, v: u32): void {
   st32(rec + R_HINT, v);
+  raise(rec, v);
 }
 
 export function observed(rec: usize): u32 {
@@ -268,6 +278,40 @@ export function observed(rec: usize): u32 {
 
 export function setObserved(rec: usize, v: u32): void {
   st32(rec + R_OBSERVED, v);
+  raise(rec, v);
+}
+
+function raise(rec: usize, v: u32): void {
+  if (v > ld32(rec + R_GATE)) {
+    st32(rec + R_GATE, v);
+  }
+}
+
+export function unexamined(rec: usize): usize {
+  return ld32(rec + R_UNEXAMINED) as usize;
+}
+
+export function setUnexamined(rec: usize, n: usize): void {
+  st32(rec + R_UNEXAMINED, n as u32);
+  if (n !== 0) {
+    st32(rec + R_GATE, 0xffff_ffff);
+  } else {
+    const a = ld32(rec + R_HINT);
+    const b = ld32(rec + R_OBSERVED);
+    st32(rec + R_GATE, a > b ? a : b);
+  }
+}
+
+/** `R_GATE`. */
+export function gate(rec: usize): u64 {
+  return ld32(rec + R_GATE) as u64;
+}
+
+/** Lowers `R_GATE` to `level` (`max(hint, observed)`) unless an entry keyed by it is unexamined. */
+export function setGate(rec: usize, level: u64): void {
+  if (ld32(rec + R_UNEXAMINED) === 0) {
+    st32(rec + R_GATE, level as u32);
+  }
 }
 
 // A list of one-word items (`R_KEYED`, `R_REF`): its first item in the record, the rest after.

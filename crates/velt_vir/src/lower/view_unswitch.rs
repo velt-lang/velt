@@ -227,7 +227,7 @@ impl FnLower<'_, '_> {
         }
         let succ = |b: BlockId| match &self.blocks[b.0 as usize].1 {
             Some(t) => super::cfg::successors(t),
-            None => vec![],
+            None => super::cfg::Successors::new(),
         };
         // Reached from the header.
         let mut fwd = FxHashSet::default();
@@ -275,7 +275,7 @@ impl FnLower<'_, '_> {
     fn loop_rpo(&self, h: BlockId, inside: &FxHashSet<BlockId>) -> Vec<BlockId> {
         let succ = |b: BlockId| match &self.blocks[b.0 as usize].1 {
             Some(t) => super::cfg::successors(t),
-            None => vec![],
+            None => super::cfg::Successors::new(),
         };
         let mut post = Vec::with_capacity(inside.len());
         let mut seen = FxHashSet::default();

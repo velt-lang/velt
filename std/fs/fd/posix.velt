@@ -23,6 +23,10 @@ declare c("c") function read(fd: i32, buf: u8[], nbyte: usize): isize;
 declare c("c") function write(fd: i32, buf: readonly u8[], nbyte: usize): isize;
 declare c("c") function pread(fd: i32, buf: u8[], nbyte: usize, offset: i64): isize;
 declare c("c") function pwrite(fd: i32, buf: readonly u8[], nbyte: usize, offset: i64): isize;
+declare c("c") function read$at(fd: i32, buf: Ptr<void>, nbyte: usize): isize;
+declare c("c") function pread$at(fd: i32, buf: Ptr<void>, nbyte: usize, offset: i64): isize;
+declare c("c") function write$at(fd: i32, buf: Ptr<void>, nbyte: usize): isize;
+declare c("c") function pwrite$at(fd: i32, buf: Ptr<void>, nbyte: usize, offset: i64): isize;
 declare c("c", { errno: true }) function fsync(fd: i32): i32;
 declare c("c", { errno: true }) function fcntl(fd: i32, cmd: i32, ...args: CVarArgs): i32;
 declare c("c", { errno: true }) function ftruncate(fd: i32, length: i64): i32;
@@ -216,4 +220,44 @@ export function adviseMap(address: usize, len: usize, advice: i32): i32 {
   // change how pages are read ahead, and `MADV_DONTNEED` lets go of pages that the next read
   // takes from the file again, so none changes what is read.
   return unsafe { madvise(Ptr.at<void>(address), len, advice) };
+}
+
+/**
+ * `read` (`at < 0`) or `pread` at `at` of up to `len` bytes into the memory at `address`: the
+ * number read, or -1 with the error for `lastError()`. Unsafe: `address` must be `len` writable
+ * bytes that nothing else uses during the call (an array's own buffer, velt/fs's `readSync`).
+ */
+export unsafe function readAddress(fd: i32, address: usize, len: usize, at: i64): isize {
+  let r: isize;
+  if (at < 0) {
+    // SAFETY: the caller's statement about `address` and `len`; C keeps no pointer.
+    r = unsafe { read$at(fd, Ptr.at<void>(address), len) };
+  } else {
+    // SAFETY: as for `read` above.
+    r = unsafe { pread$at(fd, Ptr.at<void>(address), len, at) };
+  }
+  if (r < 0) {
+    keepOsError();
+  }
+  return r;
+}
+
+/**
+ * `write` (`at < 0`) or `pwrite` at `at` of the `len` bytes at `address`: the number written,
+ * or -1 with the error for `lastError()`. Unsafe: `address` must be `len` readable bytes that
+ * nothing changes during the call.
+ */
+export unsafe function writeAddress(fd: i32, address: usize, len: usize, at: i64): isize {
+  let r: isize;
+  if (at < 0) {
+    // SAFETY: the caller's statement about `address` and `len`; C keeps no pointer.
+    r = unsafe { write$at(fd, Ptr.at<void>(address), len) };
+  } else {
+    // SAFETY: as for `write` above.
+    r = unsafe { pwrite$at(fd, Ptr.at<void>(address), len, at) };
+  }
+  if (r < 0) {
+    keepOsError();
+  }
+  return r;
 }

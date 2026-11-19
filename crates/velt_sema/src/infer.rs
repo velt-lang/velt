@@ -614,6 +614,16 @@ impl Ctx<'_> {
                 TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Error
             ) || self.atomic_ref(ty);
         }
+        // The prelude's `Numeric` is the compiler's too: the number types, whose values are
+        // their bytes (a type parameter only through its own bound, below).
+        if Some(b.iface) == self.prelude_iface("Numeric")
+            && !matches!(self.ty.kind(ty), TyKind::Param(_))
+        {
+            return matches!(
+                self.ty.kind(ty),
+                TyKind::Int(_) | TyKind::Float(_) | TyKind::Error
+            );
+        }
         // The prelude's `Frozen`: a type `frozen_readable_in` takes (type parameters through their
         // own `Frozen` bounds).
         if Some(b.iface) == self.prelude_iface("Frozen")
@@ -623,11 +633,12 @@ impl Ctx<'_> {
         }
         if let TyKind::Param(n) = self.ty.kind(ty) {
             let declared = bounds.get(*n as usize).cloned().unwrap_or_default();
-            // Only a direct `T extends AtomicValue` (or `Frozen`): nothing else can stand for the
-            // compiler's.
+            // Only a direct `T extends AtomicValue` (or `Frozen`, or `Numeric`): nothing else can
+            // stand for the compiler's.
             let known = [
                 self.prelude_iface("AtomicValue"),
                 self.prelude_iface("Frozen"),
+                self.prelude_iface("Numeric"),
             ];
             if known.contains(&Some(b.iface)) {
                 return declared.contains(b);

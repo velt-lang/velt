@@ -36,7 +36,7 @@
 //!
 //! A program without such a conversion has no view types and compiles as before.
 
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use velt_sema::hir::{self, DefId, TyId, TyKind};
 
 use super::any_set_site::ARRAY_ID;
@@ -168,12 +168,21 @@ impl Cx<'_> {
 
     /// The prelude definition `name` (std/lang/hooks).
     pub(super) fn prelude_def(&self, name: &str) -> Option<DefId> {
-        let found = self.hir.defs.iter().position(|d| match d {
-            hir::Def::Fn(f) => f.name == name,
-            hir::Def::Adt(a) => a.name == name,
-            _ => false,
+        let hir = self.hir;
+        let by_name = self.prelude_defs.get_or_init(|| {
+            let mut by_name: FxHashMap<&str, DefId> = FxHashMap::default();
+            for (i, d) in hir.defs.iter().enumerate() {
+                let name = match d {
+                    hir::Def::Fn(f) => f.name.as_str(),
+                    hir::Def::Adt(a) => a.name.as_str(),
+                    _ => continue,
+                };
+                // The first of a name, as a scan finds it.
+                by_name.entry(name).or_insert(DefId(i as u32));
+            }
+            by_name
         });
-        found.map(|i| DefId(i as u32))
+        by_name.get(name).copied()
     }
 }
 

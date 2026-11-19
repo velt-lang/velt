@@ -1,0 +1,29 @@
+// `T extends Numeric` refuses what is not a number type, and no type can declare itself one.
+function count<T extends Numeric>(xs: T[]): number {
+  return xs.length;
+}
+
+function unbounded<T>(xs: T[]): number {
+  return count(xs);
+}
+
+class Meters {
+  n: f64 = 0;
+}
+
+class Fake implements Numeric {
+  n: f64 = 0;
+}
+
+interface Wider extends Numeric {
+  n: f64;
+}
+
+function main() {
+  const words: string[] = ["a"];
+  const flags: bool[] = [true];
+  const lengths: Meters[] = [];
+  const nested: f32[][] = [];
+  const maybe: (i64 | null)[] = [];
+  console.log(count(words), count(flags), count(lengths), count(nested), count(maybe));
+}

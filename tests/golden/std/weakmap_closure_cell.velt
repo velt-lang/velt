@@ -1,0 +1,35 @@
+// check: no leaks
+// The cycle through a captured variable's cell (a counted block of its own): the handler reads
+// `cur`, and `track` assigns the key to it after the closure captured it, so the closure and
+// the frame share the cell and the key is reachable from the value only through it. Freed like
+// a plain capture (#3119 step 3).
+class Raw {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+class Handler {
+  read: () => number;
+  constructor(read: () => number) {
+    this.read = read;
+  }
+}
+
+function track(cache: WeakMap<Raw, Handler>, n: number): WeakRef<Raw> {
+  const raw = new Raw(n);
+  let cur = new Raw(-1);
+  const handler = new Handler(() => cur.n);
+  cur = raw;
+  cache.set(raw, handler);
+  console.log("handler reads", cache.get(raw)!.read());
+  return new WeakRef(raw);
+}
+
+function main() {
+  const cache = new WeakMap<Raw, Handler>();
+  const r = track(cache, 3);
+  console.log("key freed:", r.deref() == null);
+  console.log("map still in use:", cache.has(new Raw(0)));
+}
