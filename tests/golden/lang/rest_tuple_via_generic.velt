@@ -1,0 +1,29 @@
+// A function value whose rest parameter is typed by a type parameter, passed on as a generic
+// `T` and cast inside that function (#379). The instance is the callback's own function,
+// `(rq: Ctx, a: number, b: number) => number`: cast to what it is, the call runs as in Node
+// (`3`). Cast to a type with fewer parameters, the missing arguments arrive as `undefined` and
+// are checked: a TypeError, where Node prints `NaN` (a documented difference).
+interface Ctx {
+  id: string;
+}
+
+function callWithBoth<T>(x: T): unknown {
+  const g = x as unknown as (rq: Ctx, a: number, b: number) => unknown;
+  return g({ id: "x" }, 1, 2);
+}
+
+function callWithNone<T>(x: T): unknown {
+  const g = x as unknown as (rq: Ctx) => unknown;
+  return g({ id: "x" });
+}
+
+function both<A extends unknown[], R>(f: (rq: Ctx, ...args: A) => R): unknown {
+  return callWithBoth(f);
+}
+
+function none<A extends unknown[], R>(f: (rq: Ctx, ...args: A) => R): unknown {
+  return callWithNone(f);
+}
+
+console.log(both((rq: Ctx, a: number, b: number): number => a + b));
+console.log(none((rq: Ctx, a: number, b: number): number => a + b));
