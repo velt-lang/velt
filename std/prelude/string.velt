@@ -42,7 +42,7 @@ declare function velt_rt_str_from_char_code(code: i64): string;
  * read once (rt_abi.md "Strings"): an inline string is ASCII when byte 23's `0x40` bit is clear
  * (its length in the low five bits), any other when the two halves of `w1` (units, bytes) agree.
  */
-@inline
+@inline("always")
 function asciiLen(s: string): u64 {
   const w2 = strWord2(s);
   if ((w2 as i64) < 0) {
@@ -62,7 +62,7 @@ function asciiLen(s: string): u64 {
  * every program slices (+13 to +21 % on `velt check` of hello), until std objects make it free
  * (#1728).
  */
-@inline
+@inline("always")
 function sliceOf(s: string, start: i64, end: i64): string {
   const n = asciiLen(s);
   if (start >= 0 && (start as u64) < n && end == start + 1) {

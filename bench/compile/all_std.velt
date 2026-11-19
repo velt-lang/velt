@@ -18,6 +18,7 @@ import { join } from "velt/path";
 import { argv } from "velt/process";
 import * as std_cli from "velt/cli";
 import * as std_collections from "velt/collections";
+import * as std_compiler from "velt/compiler";
 import * as std_compress from "velt/compress";
 import * as std_crypto from "velt/crypto";
 import * as std_db from "velt/db";

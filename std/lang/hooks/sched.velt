@@ -53,7 +53,7 @@ import * as mk from "./sched_make";
 import * as wk from "./sched_wake";
 
 /** The executor, started on first use (by the worker: `main`'s thread). */
-@inline
+@inline("always")
 function exec(): usize {
   return workers.started();
 }

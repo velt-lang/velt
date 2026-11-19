@@ -35,7 +35,7 @@ function clamp(i: i64, len: usize): usize {
  * an ASCII string (a literal's length and byte are constants there), else one call: a one-byte
  * needle's never names the general body, so a program whose needles are one byte doesn't compile
  * the longer needles' search. */
-@inline
+@inline("always")
 export function indexOf(s: string, needle: string, from: i64): i64 {
   const n = strByteLen(s);
   if (strByteLen(needle) == 1) {
@@ -109,7 +109,7 @@ function indexOfWide(s: string, needle: string, from: i64): i64 {
  * one-byte needle from the start, a byte search in any string (no position to translate). A
  * search from the start, the usual case, never reaches the position translation: with a constant
  * `position` of 0 the code that needs it is not compiled into the program at all. */
-@inline
+@inline("always")
 export function includes(s: string, needle: string, position: i64): bool {
   if (strByteLen(needle) == 1) {
     if (position > 0) {
@@ -151,7 +151,7 @@ function includesBody(s: string, needle: string): bool {
 /** `s.lastIndexOf(needle, from)`: the last match starting at or before `from` (clamped; JS's
  * omitted `from` is the largest `i64`), or -1. Compiled into the caller is only the one-byte
  * needle in an ASCII string; the rest is one call. */
-@inline
+@inline("always")
 export function lastIndexOf(s: string, needle: string, from: i64): i64 {
   const n = strByteLen(s);
   if (strByteLen(needle) == 1) {
@@ -230,7 +230,7 @@ function lastIndexOfWide(s: string, needle: string, from: i64): i64 {
 
 /** `s.startsWith(prefix)`. A prefix ending with a lone high surrogate also matches the first
  * half of a pair (`"😀".startsWith("\uD83D")`). */
-@inline
+@inline("always")
 export function startsWith(s: string, prefix: string): bool {
   const n = strByteLen(s);
   const m = strByteLen(prefix);
@@ -257,7 +257,7 @@ function startsWithHigh(s: string, prefix: string, n: usize, m: usize): bool {
 
 /** `s.endsWith(suffix)`. A suffix starting with a lone low surrogate also matches the second
  * half of a pair (`"😀".endsWith("\uDE00")`). */
-@inline
+@inline("always")
 export function endsWith(s: string, suffix: string): bool {
   const n = strByteLen(s);
   const m = strByteLen(suffix);

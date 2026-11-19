@@ -81,7 +81,7 @@ export struct Tape {
 }
 
 /** A container's member count (an object's keys as written, repeats included), else 0. */
-@inline
+@inline("always")
 export function wordRawCount(words: u64[], v: u32): u32 {
   const w = words[2 * (v as usize)];
   const k = w & 0xff;
@@ -102,7 +102,7 @@ export function countIn(words: u64[], kids: u32[], v: u32): i64 {
  * Member `i` of container `v` (an object's: the key's position, its value at `key + 1`), from the
  * tape's `words` and `kids`; -1 past the end.
  */
-@inline
+@inline("always")
 export function memberIn(words: u64[], kids: u32[], v: u32, i: i64): i64 {
   const w = words[2 * (v as usize)];
   const k = w & 0xff;
@@ -174,7 +174,7 @@ function rangeIs(s: string, p: u64, name: string): bool {
 }
 
 /** A string value's (or key's) text. */
-@inline
+@inline("always")
 export function tapeText(t: shared<Tape>, v: u32): string {
   return wordText(t.src, t.decoded, t.words[2 * (v as usize)], t.words[2 * (v as usize) + 1]);
 }
@@ -189,7 +189,7 @@ export function wordText(src: string, decoded: string[], w: u64, p: u64): string
 }
 
 /** Key `i` of object `v` (`i` below its `wordRawCount`), as written. */
-@inline
+@inline("always")
 export function tapeKey(t: shared<Tape>, v: u32, i: usize): u32 {
   return t.kids[(t.words[2 * (v as usize) + 1] as usize) + i];
 }

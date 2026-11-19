@@ -1,0 +1,53 @@
+// velt/compiler's inlining decorators on a program's own code (#3222 step 1,
+// docs/internals/design/package-machine-code.md §1): the hint `@inline` on an operator method of
+// a struct and on a recursive function (the hint allows recursion), `@inline("always")` on a
+// helper, `@noInline` on a method. The decorators change how calls compile, never what they
+// compute: the output is the same in every build. (Not TypeScript: decorators on functions are
+// Velt's compile-time decorators, so there is no Node run to compare with.)
+
+import { inline, noInline } from "velt/compiler";
+
+struct Fixed {
+  readonly raw: i64;
+
+  @inline
+  [Symbol.add](o: Fixed): Fixed {
+    return { raw: this.raw + o.raw };
+  }
+
+  @inline("always")
+  [Symbol.mul](o: Fixed): Fixed {
+    return { raw: (this.raw * o.raw) >> 16 };
+  }
+}
+
+@inline("always")
+function fixed(n: i64): Fixed {
+  return { raw: n << 16 };
+}
+
+@inline
+function fib(n: i64): i64 {
+  return n < 2 ? n : fib(n - 1) + fib(n - 2);
+}
+
+class Counter {
+  count: i64 = 0;
+
+  @noInline
+  bump(by: i64): i64 {
+    this.count += by;
+    return this.count;
+  }
+}
+
+function main() {
+  const a = fixed(3) + fixed(4) * fixed(5);
+  console.log(a.raw >> 16);
+  console.log(fib(20));
+  const c = new Counter();
+  for (let i: i64 = 1; i <= 10; i++) {
+    c.bump(i);
+  }
+  console.log(c.count);
+}

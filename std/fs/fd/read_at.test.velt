@@ -1,0 +1,44 @@
+// velt/fs (tests): `readAt`'s result is as large as what was read, not as what was asked for.
+import { closeSync, openSync, readAt, readFileSync, unlinkSync, writeFileSync } from "velt/fs";
+import { platform, tmpdir } from "velt/os";
+import { describe, expect, it } from "velt/test";
+
+// The address space of this process in pages (/proc/self/statm): an array's buffer of several
+// megabytes is a mapping of its own, so it shows here whether or not it was ever written.
+function addressSpace(): number {
+  return Number(readFileSync("/proc/self/statm").split(" ")[0]);
+}
+
+describe("readAt", () => {
+  it("keeps no more than it read when the file ends first", async () => {
+    if (platform() != "linux") {
+      return;
+    }
+    const path = `${tmpdir()}/velt-read-at-short-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+    writeFileSync(path, "0123456789");
+    const fd = openSync(path, "r");
+    const asked = 8 * 1024 * 1024;
+    const bytes: u8[][] = [];
+    const words: u16[][] = [];
+    // The same reads asking for little first: what the threads that run them cost is there
+    // before the measurement.
+    for (let i = 0; i < 50; i++) {
+      bytes.push(await readAt(fd, 64, 0));
+      words.push(await readAt<u16>(fd, 64, 1));
+    }
+    const before = addressSpace();
+    for (let i = 0; i < 50; i++) {
+      bytes.push(await readAt(fd, asked, 0));
+      words.push(await readAt<u16>(fd, asked, 1));
+    }
+    const grown = (addressSpace() - before) * 4096;
+    closeSync(fd);
+    unlinkSync(path);
+    expect(bytes[99].length).toBe(10);
+    expect(words[99].length).toBe(4);
+    // A hundred results of a few bytes each. Keeping each request's room would be a hundred
+    // times `asked`; half of that leaves room for what the other tests of this run map and
+    // allocate meanwhile (they share the process).
+    expect(grown < 50 * asked).toBe(true);
+  });
+});

@@ -76,6 +76,10 @@ pub enum Intrinsic {
     /// that is only read: it does not count as a change of `xs` (an array an `RwLock` holds,
     /// in a `read` callback: velt/fs's `writeSync`). Additive.
     ArrayReadAddress,
+    /// std only: `arrayBytesWritten<T>(xs (modified))`, said after bytes were written at
+    /// `ArrayDataAddress`'s address: a view (velt_vir array_view.rs) writes its mirror back to
+    /// the array it views; nothing for a plain array. Additive.
+    ArrayBytesWritten,
     /// std only: `arrayByteLength<T>(xs) -> usize`, `xs.length * sizeof(T)` for an array of
     /// numbers (checked as `ArrayDataAddress`). Additive.
     ArrayByteLength,
@@ -401,29 +405,25 @@ pub enum Intrinsic {
     /// std only (as are the other four `AddressAtomic*`): `addressAtomicLoad<T>(address: usize,
     /// order: u8) -> T`, `T` an integer type: as `AtomicLoad` on the integer at `address`, `T`
     /// being the call's type. Sema turns the declaration's string literal orderings into the
-    /// `Atomic*` intrinsics' integer literals.
-    ///
-    /// Changed (#3094), for all five `AddressAtomic*`: renamed from `PtrAtomic*`; the first
-    /// operand is a `usize` address, not a `Ptr<T>`. Not additive.
+    /// `Atomic*` intrinsics' integer literals. Changed (#3094), for all five `AddressAtomic*`:
+    /// renamed from `PtrAtomic*`; the first operand is a `usize` address, not a `Ptr<T>`. Not
+    /// additive.
     AddressAtomicLoad,
-    /// std only: `(address: usize, v: T, order: u8)`: as `AtomicStore` at `address`.
+    /// std only: `(address: usize, v: T, order: u8)`: `AtomicStore` at `address` (`T`: `v`'s).
     AddressAtomicStore,
-    /// std only: `(address: usize, v: T, op: u8, order: u8) -> T`: as `AtomicRmw` at `address`
-    /// (the declaration's `(address, op, v, order)` reordered by sema, `op` a literal as
-    /// `AtomicRmw` numbers it). Changed (#3094): see `AddressAtomicLoad`.
+    /// std only: `(address: usize, v: T, op: u8, order: u8) -> T`: `AtomicRmw` at `address` (the
+    /// declaration's `(address, op, v, order)` reordered by sema, `op` numbered as `AtomicRmw`'s).
     AddressAtomicRmw,
-    /// std only: `(address, expected: T, v: T, order: u8, failure: u8) -> T`: `AtomicCas` there.
+    /// std only: `(address: usize, expected: T, v: T, order: u8, failure: u8) -> T`: `AtomicCas`.
     AddressAtomicCas,
-    /// std only: as `AddressAtomicCas`, `-> bool` (may fail spuriously).
+    /// std only: as `AddressAtomicCas`, `-> bool` (may fail spuriously; `T`: `expected`'s).
     AddressAtomicCasWeak,
     /// std only (`Ptr.at`, `Ptr.orNull`, #3094): `ptrFromAddress<T>(a: usize) -> Ptr<T>`. Additive.
     PtrFromAddress,
     /// std only (`Ptr.addressOf`): `ptrToAddress<T>(p: Ptr<T> | null) -> usize`. Additive.
     PtrToAddress,
-    /// std only (`Ptr.read`, #3094): `ptrRead<T>(p, i: usize) -> T`, NULL-checked. Additive.
-    PtrRead,
-    /// std only (`Ptr.write`): `ptrWrite<T>(p: Ptr<T>, i: usize, v: T)`. Additive.
-    PtrWrite,
+    PtrRead, // std only (`Ptr.read`, #3094, additive): `ptrRead<T>(p, i) -> T`, NULL-checked.
+    PtrWrite, // std only (`Ptr.write`, #3094, additive): `ptrWrite<T>(p, i, v: T)`.
     /// std only: `atomicAddress<T>(a: borrow Atomic<T>) -> usize`: the address of `a`'s word.
     /// Sema allows only an `Atomic` of a 32- or 64-bit integer that cannot move: a static atomic
     /// (`Global(d)`), or a field (of a field…) of the value of `SharedRead`. Additive.
