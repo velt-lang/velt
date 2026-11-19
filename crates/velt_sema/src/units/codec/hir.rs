@@ -54,7 +54,7 @@ structs! {
 }
 
 enums! {
-    Def {
+    @fielded Def {
         0 => Fn(a),
         1 => ExternFn(a),
         2 => Adt(a),
@@ -84,7 +84,7 @@ enums! {
         1 => Copy,
         2 => ProxyOnly,
     }
-    CTy {
+    @fielded CTy {
         0 => Int(a),
         1 => F32,
         2 => F64,
@@ -98,7 +98,7 @@ enums! {
         10 => OutPtr,
         11 => Void,
     }
-    HostTy {
+    @fielded HostTy {
         0 => Int(a),
         1 => F64,
         2 => Bool,
@@ -107,13 +107,13 @@ enums! {
         5 => Ref { nullable },
         6 => Void,
     }
-    CValue {
+    @fielded CValue {
         0 => Int(a),
         1 => Float(a),
         2 => Bool(a),
         3 => Address(a),
     }
-    StmtKind {
+    @fielded StmtKind {
         0 => Let { local, init },
         1 => LetPat { pat, init },
         2 => Expr(a),
@@ -126,7 +126,7 @@ enums! {
         9 => Continue(a),
         10 => Block(a),
     }
-    ExprKind {
+    @fielded ExprKind {
         0 => Lit(a),
         1 => Local(a, b),
         2 => Unary { op, expr },
@@ -159,7 +159,7 @@ enums! {
         29 => ToDyn { expr, impl_index },
         30 => Throw(a),
     }
-    Callee {
+    @fielded Callee {
         0 => Def(a, b),
         1 => Indirect(a),
         2 => Virtual { slot },
@@ -180,7 +180,7 @@ enums! {
         9 => Some(a),
         10 => InstanceOf(a),
     }
-    Lit {
+    @fielded Lit {
         0 => Int(a),
         1 => Float(a),
         2 => Str(a),
@@ -218,7 +218,7 @@ enums! {
         1 => Or,
     }
     // Types.
-    TyKind {
+    @fielded TyKind {
         0 => Int(a),
         1 => Float(a),
         2 => Bool,
@@ -243,7 +243,7 @@ enums! {
         21 => Simd(a),
         22 => Op(a, b),
     }
-    LitValue {
+    @fielded LitValue {
         0 => Str(a),
         1 => Int(a, b),
         2 => Float(a, b),
@@ -290,7 +290,7 @@ enums! {
         14 => Mask32x4,
         15 => Mask64x2,
     }
-    TyOp {
+    @fielded TyOp {
         0 => Alias(a),
         1 => Intersect,
         2 => Spread,
@@ -316,16 +316,16 @@ enums! {
         4 => Unsafe,
         5 => UnsafeSetter,
     }
-    FnWrapped {
+    @fielded FnWrapped {
         0 => Local(a),
         1 => Fn(a, b),
     }
-    FreshClosure {
+    @fielded FreshClosure {
         0 => New(a),
         1 => Several(a),
         2 => Converts { from, to },
     }
-    DecoratorTarget {
+    @fielded DecoratorTarget {
         0 => Def(a),
         1 => Field(a, b),
         2 => Param(a, b),
