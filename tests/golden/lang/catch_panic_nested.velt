@@ -1,0 +1,70 @@
+// check: no leaks
+// requires: unix
+// (The panicking case leaks on Windows, which has no cleanup pads: #2979.)
+// A `catchPanic` called in the first run of another `catchPanic`'s body took the outer one's
+// guarded promise away (#3221): the outer one no longer caught, so a later panic in its body
+// ended the process, and its promise kept a reference for good, one block a call.
+import { catchPanic, PanicError } from "velt/task";
+
+async function good(): Promise<number> {
+  await yieldNow();
+  return 1;
+}
+
+// Catches inside, then panics itself.
+async function outerBody(): Promise<number> {
+  const r = await catchPanic(() => good());
+  await yieldNow();
+  panic("outer " + r);
+  return r;
+}
+
+// Catches inside and returns.
+async function plain(): Promise<number> {
+  return (await catchPanic(() => good())) + 1;
+}
+
+// Three deep, the innermost panics.
+async function deep(level: number): Promise<number> {
+  if (level === 0) {
+    await yieldNow();
+    panic("innermost");
+  }
+  try {
+    return await catchPanic(() => deep(level - 1));
+  } catch (e) {
+    return level;
+  }
+}
+
+// Not an async function: it panics before there is a promise to guard.
+function syncPanic(): Promise<number> {
+  panic("sync");
+}
+
+// The inner `catchPanic` unwinds between arming and taking its promise, in the first run of the
+// outer one's body.
+async function firstRunInner(): Promise<number> {
+  return await catchPanic(() => syncPanic());
+}
+
+async function main() {
+  try {
+    await catchPanic(() => outerBody());
+    console.log("no panic");
+  } catch (e) {
+    console.log("caught", e instanceof PanicError);
+  }
+  let n = 0;
+  for (let i = 0; i < 50; i++) {
+    n += await catchPanic(() => plain());
+  }
+  console.log("nested without a panic", n);
+  console.log("three deep", await catchPanic(() => deep(3)));
+  try {
+    await catchPanic(() => firstRunInner());
+    console.log("no panic");
+  } catch (e) {
+    console.log("caught the inner body's own panic", e instanceof PanicError);
+  }
+}
