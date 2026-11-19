@@ -1905,7 +1905,7 @@ value is the C function's address as a `usize`.
   a dispatch over the program's classes (`String(x)`, `x + ""`, `x.constructor`,
   `Object.prototype.toString` of an `any`). They differ in every program, so a cache of checked
   or compiled library code leaves them to each program.
-- `Program::cpu_targets`: the gated functions (`targetFeature`) and the CPU extension
+- `Program::cpu_targets`: the gated functions (`@targetFeature`, any module) and the CPU extension
   (`CpuTarget`, `hir/numeric.rs`) each is compiled for; lowering gives the VIR function that
   target.
 - `Program::generated`: the instances of generated functions (`declare generated(…) function`,

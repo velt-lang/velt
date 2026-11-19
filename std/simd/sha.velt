@@ -14,7 +14,7 @@
 //
 // The instructions are as fast as the checks around them allow: in a loop of them the flag is
 // read once, before the loop, and tested in every iteration. In a function gated on the
-// extension (`targetFeature`, std only, as std/crypto/index.velt's) the check is true and the
+// extension (`@targetFeature`, as std/crypto/index.velt's) the check is true and the
 // methods are the bare instructions.
 
 import {

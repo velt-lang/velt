@@ -1,42 +1,20 @@
-//! Gated functions (#1330): a std function whose first statement is
-//! `targetFeature("sha-x86")` (the intrinsic of std/lang/intrinsics/simd.velt) is compiled for that
-//! CPU extension (backends may use it
-//! anywhere in the function), so it must only run where the CPU has it. Sema checks every call:
-//! it sits in the `then` branch of `if (u32x4.hasShaX86())` (velt/simd's method, resolved by
-//! definition), or in a function gated on the same target. `f.call(this, …)` and
-//! `f.apply(this, [...])` are direct calls of `f` and checked as such. A gated function cannot
-//! be used as a value, and a closure written inside one starts without its target
-//! (`Frame::target`).
+//! Gated functions (#1330): a function decorated `@targetFeature("sha-x86")` (std/lang/intrinsics/
+//! decorators.velt, re-exported by velt/compiler; any module, docs/internals/design/
+//! package-machine-code.md §2) is compiled for that CPU extension (backends may use it anywhere
+//! in the function), so it must only run where the CPU has it. Sema checks every call: it sits in
+//! the `then` branch of `if (u32x4.hasShaX86())` (velt/simd's method, resolved by definition), or
+//! in a function gated on the same target. `f.call(this, …)` and `f.apply(this, [...])` are direct
+//! calls of `f` and checked as such. A gated function cannot be used as a value, and a closure
+//! written inside one starts without its target (`Frame::target`). The decorator's type keeps it
+//! off methods (and closures take no decorators); a function declared inside another may be
+//! gated, its calls checked like any other's.
 
-use velt_common::{Diagnostic, Span};
-use velt_syntax::ast;
+use velt_common::{std_hook, Diagnostic, Span};
 
 use super::FnCx;
 use crate::ctx::Item;
-use crate::defs::FnSource;
-use crate::hir::{self, CpuTarget, DefId};
-use crate::intrinsic_decls::DeclaredIntrinsic;
-
-/// The callee's name and the target name of a statement `name("…")`, where `name` may be the
-/// intrinsic `targetFeature` (`FnCx::fn_target` resolves it).
-fn target_call(stmt: &ast::Stmt) -> Option<(&str, &str)> {
-    let ast::StmtKind::Expr(e) = &stmt.kind else {
-        return None;
-    };
-    let ast::ExprKind::Call { callee, args, .. } = &e.kind else {
-        return None;
-    };
-    let ast::ExprKind::Ident(id) = &callee.kind else {
-        return None;
-    };
-    match args.as_slice() {
-        [arg] => match &arg.kind {
-            ast::ExprKind::Lit(ast::Lit::Str(s)) => Some((id.name.as_str(), s.as_str())),
-            _ => None,
-        },
-        _ => None,
-    }
-}
+use crate::defs::FnKind;
+use crate::hir::{self, ConstTree, CpuTarget, DecoratorTarget, DefId};
 
 impl FnCx<'_, '_> {
     /// The CPU extension the condition `c` checks: a call of velt/simd's `u32x4.hasShaArm()`,
@@ -58,60 +36,31 @@ impl FnCx<'_, '_> {
         CpuTarget::ALL.into_iter().find(|t| f.name == t.check())
     }
 
-    /// The target function `d` is gated on: its first statement names it (std functions only),
-    /// calling what its module binds to the intrinsic `targetFeature`.
+    /// The target function `d` is gated on: the argument of its `@targetFeature` (found by its
+    /// role, never by the name it is imported under). Read at every call, so a function without
+    /// decorators costs one map lookup.
     pub(crate) fn fn_target(&self, d: DefId) -> Option<CpuTarget> {
-        let f = self.cx.fn_info(d);
-        if !self.cx.scopes[f.module].is_std {
+        let uses = self.cx.decorator_uses.get(&DecoratorTarget::Def(d))?;
+        let Some(Item::Def(role)) = self.cx.std_def(std_hook!(decorator_target_feature)) else {
+            return None;
+        };
+        let u = uses.iter().find(|u| u.def == role)?;
+        if self.cx.fn_info(d).kind != FnKind::Free {
             return None;
         }
-        let Some(FnSource::Decl(decl)) = &f.source else {
-            return None;
-        };
-        let (callee, target) = target_call(decl.body.stmts.first()?)?;
-        let Some(&Item::Def(t)) = self.cx.scopes[f.module].items.get(callee) else {
-            return None;
-        };
-        let is_target = self
-            .cx
-            .try_fn(t)
-            .is_some_and(|t| t.intrinsic == Some(DeclaredIntrinsic::TargetFeature));
-        is_target.then(|| CpuTarget::named(target)).flatten()
+        match u.args.first() {
+            Some(ConstTree::Str(t)) => CpuTarget::named(t),
+            _ => None,
+        }
     }
 
-    /// The statement `targetFeature("sha-x86")`: allowed only as the first statement of a
-    /// function declared in std (not a method or closure). Records the function as gated.
-    pub(super) fn target_stmt(&mut self, args: &[ast::Expr], span: Span) -> hir::Expr {
-        let named = match args {
-            [arg] => match &arg.kind {
-                ast::ExprKind::Lit(ast::Lit::Str(s)) => CpuTarget::named(s),
-                _ => None,
-            },
-            _ => None,
-        };
-        let Some(target) = named else {
-            let names: Vec<&str> = CpuTarget::ALL.iter().map(|t| t.name()).collect();
-            let message = format!(
-                "`targetFeature` takes the target as a string literal: one of {}",
-                names.join(", ")
-            );
-            self.cx.err(message, span);
-            return self.unit_expr(span);
-        };
-        let gated = self
-            .body_def
-            .filter(|&d| self.outer.is_empty() && self.cx.fn_info(d).this.is_none())
-            .filter(|&d| self.fn_target(d) == Some(target));
-        let Some(d) = gated else {
-            self.cx.err(
-                "`targetFeature` must be the first statement of a function (not a method or closure)",
-                span,
-            );
-            return self.unit_expr(span);
-        };
-        self.cx.cpu_targets.insert(d, target);
-        self.f.target = Some(target);
-        self.unit_expr(span)
+    /// The body of function `d` is being checked: a gated one records its target
+    /// (`hir::Program::cpu_targets`) and may call that target's gated functions.
+    pub(super) fn gated_body(&mut self, d: DefId) {
+        if let Some(target) = self.fn_target(d) {
+            self.cx.cpu_targets.insert(d, target);
+            self.f.target = Some(target);
+        }
     }
 
     /// A call of function `d` (named `name`): a gated one must be behind its target's check.

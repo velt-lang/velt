@@ -1,5 +1,5 @@
 // velt/lang/math (internal): whether the CPU has x86's fused multiply-add (FMA3), the check of
-// `targetFeature("fma-x86")` (#1676). std's `pow` (std/lang/math/pow.velt) runs a copy compiled
+// `@targetFeature("fma-x86")` (#1676). std's `pow` (std/lang/math/pow.velt) runs a copy compiled
 // for it where it is true: each of its `fma`s is then one `vfmadd`, where the default x86-64 build
 // (x86-64-v2, no FMA) calls C's `fma`. arm64 always has FMA and needs no check.
 //
