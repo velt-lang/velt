@@ -187,3 +187,12 @@ fn std_s_definition_records_come_back_as_they_were() {
         found.infos, found.aliases, found.bytes, found.nodes, found.decode_ms
     );
 }
+
+/// The record enums listed `@fielded` end from zeros, so damaged input ends in each.
+#[test]
+fn record_enums_end_on_damaged_input() {
+    use crate::defs::{DefInfo, FnSource, ThrowSrc};
+    assert!(super::ends_from_zeros::<DefInfo>());
+    assert!(super::ends_from_zeros::<FnSource>());
+    assert!(super::ends_from_zeros::<ThrowSrc>());
+}
