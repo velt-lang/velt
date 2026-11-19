@@ -11,7 +11,7 @@
 //! A module constant initialized with `Symbol(...)` or `Symbol.for("k")` is a record the compiler
 //! emits (`Intrinsic::SymbolStatic`): module constants are evaluated at each use, and every use
 //! must be the same symbol, as in JavaScript (and reading it costs no call). The registry's
-//! records (`Symbol.for`) are listed in a table the runtime's registry consults
+//! records (`Symbol.for`) are listed in a table std's registry starts with
 //! (`Intrinsic::SymbolRegistry`), so `Symbol.for(k)` at run time finds the same record.
 
 use rustc_hash::FxHashMap;
