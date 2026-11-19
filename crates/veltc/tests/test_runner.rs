@@ -411,6 +411,44 @@ fn a_leak_check_without_block_counts_fails_the_file() {
     );
 }
 
+/// Counting blocks, a run whose tests pass ends with the runner's own report balanced: the
+/// runner returns from its `main` instead of calling `process.exit`, which left what its frames
+/// held counted (20 blocks and a string after every run, hiding a leak of that size, #3275).
+#[cfg(unix)]
+#[test]
+fn the_runners_own_block_counts_balance_when_the_tests_pass() {
+    runtime_support::build_native_runtime(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    write(dir, "t/a.test.velt", "export function test_a() {}\n");
+    write(dir, "t/b.test.velt", "export function test_b() {}\n");
+    let mut command = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
+    let o = command
+        .args(["test", "--no-cache", "t"])
+        .current_dir(dir)
+        .env("VELT_HOME", dir.join("home"))
+        .env("VELT_REGISTRY", dir.join("home").join("registry"))
+        .env("VELT_RC_STATS", "1")
+        .output()
+        .unwrap();
+    let (stdout, stderr) = (
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr),
+    );
+    assert_eq!(o.status.code(), Some(0), "{stdout}{stderr}");
+    let report = (stderr.lines().rev())
+        .find(|l| l.starts_with("rc stats: retain="))
+        .unwrap_or_else(|| panic!("no report of the runner's own: {stderr}"));
+    let field = |name: &str| {
+        (report.split_whitespace())
+            .find_map(|w| w.strip_prefix(name))
+            .unwrap_or_else(|| panic!("no `{name}` in {report}"))
+    };
+    let (allocated, freed) = field("blocks=").split_once('/').unwrap();
+    assert_eq!(allocated, freed, "{report}");
+    assert_eq!(field("alloc="), field("free="), "{report}");
+}
+
 /// Counting blocks, the runner's wait for a test file's process to end starts after its tests:
 /// a file whose tests take longer than the wait passes (its process was ended mid-test, and the
 /// file failed as `still running … after its tests`, when the wait counted from the start), and
