@@ -154,7 +154,7 @@ function runWoken(e: usize, k: usize, fl: u32): void {
   if ((fl & t.TIMED) !== 0) {
     fi.fireDue(e, k);
   }
-  if ((fl & t.YIELDS) !== 0) {
+  if (stdUsed("yields") && (fl & t.YIELDS) !== 0) {
     fi.fireYields(e, k);
   }
   if (!t.has(k, t.POLLED)) {
@@ -178,9 +178,9 @@ function runEnd(e: usize, k: usize, mode: u32): void {
       order.released(e, k);
     }
   }
-  if (t.has(k, t.ROOT_DONE) && m.ld(k + t.T_LOCALS) === 0 && m.ld(k + t.T_YIELDS) === 0) {
+  if (t.has(k, t.ROOT_DONE) && m.ld(k + t.T_LOCALS) === 0 && yl.waiting(k) === 0) {
     finish(e, k);
-  } else if ((m.load(k + t.T_WOKEN) | m.ld(k + t.T_YIELDS)) !== 0) {
+  } else if ((m.load(k + t.T_WOKEN) | yl.waiting(k)) !== 0) {
     // Promises woken and yields made during this poll run in its next one (sched_fire.velt).
     m.store32(k + t.T_STATE, t.SCHEDULED);
     requeue(e, k, mode);

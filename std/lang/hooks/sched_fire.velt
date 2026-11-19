@@ -36,38 +36,90 @@ export function fireDue(e: usize, k: usize): void {
       t.flags(k, t.TIMED, 0);
       return;
     }
-    woken = resume(e, k, sl.fire(k, f), own, woken);
+    woken = resume(e, k, sl.fire(k, f), false, own, woken);
   }
 }
 
 /**
  * Fires the yields task `k` made before this poll, one at a time in the order they were made:
  * each resumes what waits for it, and the turn's reactions run before the next (`between`).
- * Yields made meanwhile wait for the next poll, as Node's immediates set in its check phase.
+ * Yields made meanwhile wait for the next poll, as Node's immediates set in its check phase. Its
+ * sleeps due by now fire first, as Node's timers phase comes before its check phase: one that
+ * came due while the task ran is on no due list yet (the worker moves due sleeps there when it
+ * looks: sched_sleep.velt `expire`).
  */
 export function fireYields(e: usize, k: usize): void {
+  if (dueNow(e, k)) {
+    fireDue(e, k);
+  }
   let woken = t.has(k, t.ROOT_YIELDED);
   let y = yl.take(k);
   while (y !== 0) {
     const nx = yl.next(y);
-    const w = yl.fire(y);
+    let w = yl.fire(y);
+    const lent = w === yl.ROOT;
+    if (lent) {
+      w = k;
+    }
+    if (w === k && nx === 0 && !t.has(k, t.POLLED)) {
+      // The last turn, the root's: the poll polls the root next all the same (sched_run.velt
+      // `runWoken`), then runs its microtasks.
+      if (!lent) {
+        wk.release(k);
+      }
+      return;
+    }
     if (w !== 0) {
-      woken = resume(e, k, w, w !== k && node.ownNode(k, w), woken);
+      woken = resume(e, k, w, lent, w !== k && node.ownNode(k, w), woken);
     }
     y = nx;
   }
 }
 
 /**
- * Resumes waiter `w` (a waker's clone it takes over) of a turn of task `k`: its root, its own
- * started promise (`own`), or anything else, woken. Then `between`. Whether the root woke (from
- * `woken` on).
+ * Task `k`'s sleeps pending on worker `e`'s timer block (which only `e` touches) whose deadline
+ * passed join its due list, in timer order, and nobody is woken: they fire in this poll. Whether
+ * any did.
  */
-function resume(e: usize, k: usize, w: usize, own: bool, woken: bool): bool {
+function dueNow(e: usize, k: usize): bool {
+  const b = m.ld(e + t.E_TIMERS);
+  if (b === 0 || !sl.pending(b)) {
+    return false;
+  }
+  const now = sl.clock();
+  let any = false;
+  let f = m.ld(b + sl.TM_FIRST);
+  while (f !== 0 && (m.ld(f + sl.S_DEADLINE) as u64) <= now) {
+    const nx = m.ld(f + sl.S_NEXT);
+    if (wk.taskOf(m.ld(f + sl.S_WAKER)) === k) {
+      sl.unlinkPending(b, f);
+      sl.pushDue(k, f);
+      any = true;
+    }
+    f = nx;
+  }
+  return any;
+}
+
+/**
+ * Resumes waiter `w` (a waker's clone it takes over, or `k` with no reference: `lent`) of a turn
+ * of task `k`: its root, its own started promise (`own`), or anything else, woken. Then
+ * `between`. Whether the root woke (from `woken` on).
+ */
+function resume(e: usize, k: usize, w: usize, lent: bool, own: bool, woken: bool): bool {
   if (w === k) {
     // The turn's reference first (the executor's keeps `k`): an uncaught error in the poll ends
     // the program, which gives back the references the executor holds (sched_exit.velt).
-    wk.release(k);
+    if (!lent) {
+      wk.release(k);
+    }
+    if (t.has(k, t.ROOT_YIELDED)) {
+      // It yielded in this poll (in a sleep's turn, behind yields still on the list, whose turn
+      // this is): polled again now, it would stay suspended and spend the wake. Its next poll
+      // resumes it (a store: while it runs, only a wake changes its state).
+      m.store32(k + t.T_STATE, t.NOTIFIED);
+      return true;
+    }
     run.pollRootAgain(e, k);
     return between(e, k, m.load32(k + t.T_STATE) === t.NOTIFIED);
   }

@@ -16,7 +16,7 @@
 // The queue: its entries' buffer (16 bytes each: waker, ticket), their capacity, the index of the
 // first one, how many there are.
 
-import { fnAddress } from "velt/lang/intrinsics";
+import { fnAddress, noInline } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as t from "./sched_task";
 import * as wk from "./sched_wake";
@@ -49,22 +49,9 @@ const CREDIT: u64 = 1 << 63;
 export function enqueue(task: usize, w: usize, credit: bool): u64 {
   const q = queue(task);
   let cap = m.ld(q + Q_CAP);
-  let len = m.ld(q + Q_LEN);
+  const len = m.ld(q + Q_LEN);
   if (len === cap) {
-    // Unwrap into a buffer twice the size.
-    const old = m.ld(q + Q_BUF);
-    const head = m.ld(q + Q_HEAD);
-    const buf = m.alloc(32 * cap);
-    for (let i: usize = 0; i < len; i++) {
-      const from = old + 16 * ((head + i) % cap);
-      m.st(buf + 16 * i, m.ld(from));
-      m.st(buf + 16 * i + 8, m.ld(from + 8));
-    }
-    m.release(old, 16 * cap);
-    m.st(q + Q_BUF, buf);
-    m.st(q + Q_HEAD, 0);
-    cap = cap * 2;
-    m.st(q + Q_CAP, cap);
+    cap = grow(q, cap, len);
   }
   const e = t.exec();
   const ticket = m.ld(e + t.E_TICKET) + 1;
@@ -75,6 +62,27 @@ export function enqueue(task: usize, w: usize, credit: bool): u64 {
   m.st(q + Q_LEN, len + 1);
   m.st32(task + t.T_WORD, m.ld32(task + t.T_WORD) + 1);
   return ticket as u64;
+}
+
+/**
+ * Queue `q`, full (`len` entries of `cap`), unwrapped into a buffer twice the size: the new
+ * capacity. Out of line, so the rest of `enqueue` is small enough to inline where it is called.
+ */
+@noInline
+function grow(q: usize, cap: usize, len: usize): usize {
+  const old = m.ld(q + Q_BUF);
+  const head = m.ld(q + Q_HEAD);
+  const buf = m.alloc(32 * cap);
+  for (let i: usize = 0; i < len; i++) {
+    const from = old + 16 * ((head + i) % cap);
+    m.st(buf + 16 * i, m.ld(from));
+    m.st(buf + 16 * i + 8, m.ld(from + 8));
+  }
+  m.release(old, 16 * cap);
+  m.st(q + Q_BUF, buf);
+  m.st(q + Q_HEAD, 0);
+  m.st(q + Q_CAP, cap * 2);
+  return cap * 2;
 }
 
 /**
