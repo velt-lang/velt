@@ -18,6 +18,8 @@
 //! generates code writes into the generator std's stage and the other rounds use, as rounds of
 //! one check already share the driver's. That is where a leak between rounds would come from.
 
+pub(crate) mod codec;
+
 use crate::ctx::Ctx;
 
 /// Which part of a check by units a context checks.

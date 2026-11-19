@@ -24,7 +24,9 @@ use rustc_hash::FxHashMap;
 /// operator symbols.
 pub use ast_names::{is_well_known_symbol, JS_WELL_KNOWN_SYMBOLS, OPERATOR_SYMBOLS};
 /// A parsed module in a compact binary form, for caches of parsed modules (`codec`).
-pub use codec::{decode_module, encode_module, FORMAT as AST_FORMAT};
+pub use codec::{
+    decode_fragment, decode_module, encode_fragment, encode_module, Fragment, FORMAT as AST_FORMAT,
+};
 pub use js_number::js_number;
 /// The names code reads without declaring them, scope-aware (sema checks the root file's early
 /// uses with these).
