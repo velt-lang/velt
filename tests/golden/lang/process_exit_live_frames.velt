@@ -1,0 +1,40 @@
+// check: no leaks
+// A program that ends itself with `process.exit` while functions are on the stack and a task
+// is suspended: those frames keep what they hold, as Node runs no cleanup there (no `finally`,
+// no dispose), so the leak counters' report gets no verdict for such a run (#3275). The exit
+// code is the program's.
+
+class Held {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+  [Symbol.dispose]() {
+    console.log("disposed", this.name);
+  }
+}
+
+async function waits(h: Held): Promise<number> {
+  // timing: never fires before the exit; the task is suspended on it when the program ends.
+  await sleep(60000);
+  return h.name.length;
+}
+
+function deep(rows: number[][], h: Held) {
+  try {
+    if (rows.length === 2) {
+      console.log("exiting with", rows[1][0], h.name);
+      process.exit(3);
+    }
+  } finally {
+    console.log("finally");
+  }
+}
+
+async function main() {
+  const t = spawn(waits(new Held("task")));
+  await yieldNow();
+  using h = new Held("stack");
+  deep([[1], [2]], h);
+  console.log("unreachable", await t);
+}
