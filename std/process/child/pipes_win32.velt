@@ -30,7 +30,8 @@ import { Ptr } from "velt/ffi/ptr";
 import { arrayTruncate, slotPut, slotSize, slotTake } from "velt/lang/intrinsics";
 import * as bl from "velt/lang/hooks/sched_blocking";
 import * as m from "velt/lang/hooks/sched_mem";
-import { addressOf, incompleteTail } from "velt/net/fd_io";
+import { addressOf } from "velt/net/fd_io";
+import { incompleteTail } from "velt/net/fd_utf8";
 import { failed, ok, osError, value } from "velt/net/fd_socket";
 import { HandOff, parkAfterWake } from "velt/sync/hand_off";
 

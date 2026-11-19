@@ -213,3 +213,26 @@ fn enum_values_keep_their_payload() {
     assert!(!run(&aggs, &mut p.funcs[0]));
     assert_eq!(run_main(&p, &[42]), 42);
 }
+
+#[test]
+fn a_wide_vector_stays_whole() {
+    // { v128, v128 } is a 256-bit vector (`f32x8`): its operations take it by address, and LLVM
+    // keeps a whole one in one register. The same uses of a pair of integers are split.
+    for (ty, splits) in [(Ty::V128, false), (Ty::I64, true)] {
+        let mut pb = ProgramBuilder::new();
+        let (size, align) = if ty == Ty::V128 { (32, 16) } else { (16, 8) };
+        let pair = pb.agg("pair", size, align, &[(ty, 0), (ty, size / 2)]);
+        let mut fb = FuncBuilder::export("main", &[], Ty::I64);
+        let (a, b) = (fb.local(Ty::Agg(pair)), fb.local(Ty::Agg(pair)));
+        let blk = fb.block();
+        let zero = zero(ty);
+        fb.assign(blk, a, Rvalue::Aggregate(pair, vec![zero.clone(), zero]));
+        fb.assign(blk, b, Rvalue::Use(copy_local(a)));
+        fb.ret(blk, int(0, Ty::I64));
+        pb.add(fb.finish());
+        let mut p = pb.finish();
+        let aggs = p.aggs.clone();
+        assert_eq!(run(&aggs, &mut p.funcs[0]), splits, "{p}");
+        assert_valid(&p);
+    }
+}

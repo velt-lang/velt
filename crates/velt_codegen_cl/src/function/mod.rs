@@ -31,6 +31,7 @@ mod rounding;
 mod simd;
 mod simd_half;
 mod simd_partial;
+mod simd_wide;
 mod slots;
 #[cfg(test)]
 mod slots_tests;

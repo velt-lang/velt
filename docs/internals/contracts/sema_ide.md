@@ -1,7 +1,8 @@
 # Sema IDE query API (`velt_sema::ide`)
 
-Producer: semantics agent (`crates/velt_sema/src/ide/`). Consumer: `crates/velt_lsp` (and any other
-editor tooling). Public items below are the contract; everything else in the module is internal.
+Producer: `crates/velt_sema/src/ide/`. Consumers: `crates/velt_lsp`, the `velt check` lint rules and
+`--ts-compat` (`crates/velt_lint`, `crates/velt_tscompat`). Public items below are the contract;
+everything else in the module is internal.
 
 ## Entry point
 ```rust
@@ -34,6 +35,7 @@ spans cover the offset, the shortest wins.
 | `namespace_members(file, ns) -> Vec<(String, DefRef)>` | The exports of namespace import `ns` of the file (`import * as ns from "…"`), re-exports included, sorted by name; empty if `ns` is not one. `def_at` on `x` in `ns.x` (expressions and types) is the export's definition. |
 | `members_of(def: &DefRef) -> Vec<(String, DefRef, String)>` | Same listing for a definition: instance members of a local's / parameter's / constant's / field's type (fields of generic types excepted), static members of a type. Object types (`{ x: i64 }`) list their fields. |
 | `jsx_intrinsics(file) -> &[(String, DefRef, String)]` | The intrinsic tags of the file's JSX runtime (the fields of `JSX.IntrinsicElements`, docs/internals/contracts/jsx.md): `(tag, field definition, attribute type)`, sorted by tag. Empty when the file has no JSX runtime (it contains no JSX, or the runtime is invalid). `members_of` on a tag's definition lists its attributes; `def_at` on a tag or attribute name in an element is the same field. |
+| `jsx_component_attributes(file) -> &[(String, DefRef, String)]` | The attributes every component element of the file accepts besides its props: the fields of its JSX runtime's `JSX.IntrinsicAttributes` other than `key`, as `(name, field definition, type)`, sorted by name. Empty when the runtime declares none. |
 | `throws_of(def: &DefRef) -> Option<&str>` | What a function, method, constructor or closure-valued variable throws (declared or inferred), spelled like `detail` (`NotFound \| Forbidden`); `None` when it throws nothing or `def` is not callable. |
 | `mutation_of(def: &DefRef) -> Option<&Mutation>` | What a function, method or constructor modifies, as ownership inference decided: `Mutation { this: bool, params: Vec<String> }` (`this`: a method that modifies its receiver, never a constructor; `params`: parameters whose contents it modifies, in declaration order; `any()`: either). `None` for anything else, closures included (callbacks take their arguments by a fixed convention). |
 | `references(def: &DefRef) -> Vec<Span>` | Every span naming `def` (its declaration included) in all modules, sorted, deduplicated. Uses through an import alias are included (their text is the alias). |
@@ -94,21 +96,21 @@ pub enum DefKind { Function, ExternFunction, Decorator, Method, StaticMethod, Ge
     StaticField, Constant, Struct, Class, Interface, Enum, Variant, TypeAlias, Local, Parameter }
 impl DefKind { pub fn is_type(self) -> bool } // struct, class, interface, enum, type alias
 ```
-`detail` formats: `function f<T>(a: T, b?: i64): R` (`?` = has a default; a function or method that can
-throw ends with ` throws E`, its declared or inferred error type), `(method) User.greet(): string`,
-`(static) Math.sqrt(x: f64): f64`, `(getter) Map.size: usize`, `constructor User(name: string)`
-(`private constructor …` / `protected constructor …` when it is),
-`(field) Point.x: i64`, `(static) Math.PI: f64`, `const LIMIT: i64`, `class User`, `struct Point<T>`,
-`interface Named`, `enum Color { Red, Green = 5 }`, `Color.Green = 5`, `type Id`, `let x: i64` / `const x: i64`,
+`detail` formats: `function f<T>(a: T, b?: i64): R` (`?` = has a default; a function or method that
+can throw ends with ` throws E`, its declared or inferred error type), `(method) User.greet():
+string`, `(static) Math.sqrt(x: f64): f64`, `(getter) Map.size: usize`, `constructor User(name:
+string)` (`private constructor …` / `protected constructor …` when it is), `(field) Point.x: i64`,
+`(static) Math.PI: f64`, `const LIMIT: i64`, `class User`, `struct Point<T>`, `interface Named`,
+`enum Color { Red, Green = 5 }`, `Color.Green = 5`, `type Id`, `let x: i64` / `const x: i64`,
 `(parameter) p: string`. Two `DefRef`s for the same definition may differ in `detail` (inherited
 members spelled with different type arguments): compare with `same_def`.
 
 A field of an intersection's object type (`A & { b: T }`) is declared where the first operand
 that has it writes it: its `DefRef.span` is that field's name.
 
-## Known limits (POC)
+## Known limits
 - Locals of a closure are scoped like any block; `this` is a local named `this` whose declaring
   span is the method name.
-- Members of values whose type is a generic parameter (`x: T extends Shape`) are not listed yet.
+- Members of values whose type is a generic parameter (`x: T extends Shape`) are not listed.
 - Builtin methods implemented by intrinsics (`push`, `pop`, `clone`, `length`) have no `DefRef`
   and are not listed.

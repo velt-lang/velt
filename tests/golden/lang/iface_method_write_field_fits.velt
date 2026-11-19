@@ -1,0 +1,26 @@
+// check: no leaks
+// A method without a `throws` clause written through an interface value, stored in a field
+// whose function type allows what the assigned function throws (#379): the error reaches the
+// caller's `catch` through the object's own type and through the interface.
+interface Ctx {
+  update(): void;
+}
+
+class Failure extends Error {}
+
+type Holder = { update: () => void throws Failure };
+const o: Holder = { update: () => {} };
+const c: Ctx = o;
+c.update = () => {
+  throw new Failure("fits");
+};
+try {
+  o.update();
+} catch (e) {
+  console.log("held caught", e instanceof Failure, (e as Error).message);
+}
+try {
+  c.update();
+} catch (e) {
+  console.log("caught", e instanceof Failure);
+}

@@ -87,7 +87,6 @@ const CHECKED: &[&str] = &[
     "lang/hooks/sched_cells.velt",
     "lang/hooks/sched_end.velt",
     "lang/hooks/sched_exit.velt",
-    "lang/hooks/sched_id.velt",
     "lang/hooks/sched_io_write.velt",
     "lang/hooks/sched_mem.velt",
     "lang/hooks/sched_module.velt",
@@ -122,6 +121,8 @@ const CHECKED: &[&str] = &[
     "process/tty_posix.velt",
     "sync/output.velt",
     "sync/slot.velt",
+    "time/localtime_posix.velt",
+    "time/localtime_win32.velt",
 ];
 
 /// The std files [`CHECKED`] would list but that only macOS and Linux builds reach: child

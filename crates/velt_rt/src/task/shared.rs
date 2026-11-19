@@ -42,7 +42,7 @@ use parking_lot::Mutex;
 
 use crate::panic::ThrowLoc;
 
-use super::all::ResultDropFn;
+use super::ResultDropFn;
 use super::{raw_cx, with_context, VeltFut, FUT_RESULT_OFFSET, PENDING, READY};
 
 /// Compiled share glue of a result slot: writes another reference to `*src` into `dst`.
@@ -78,8 +78,6 @@ struct HubState {
     done: bool,
     /// The hub's waker is registered with a started original (`node`).
     armed: bool,
-    /// When it settled, in the order promises settle ([`SETTLES`]; 0 while pending).
-    seq: u64,
     /// The settled result (16-byte aligned words), once `done`.
     result: Vec<u128>,
     /// Where its error was thrown, for every holder that takes it (panic.rs).
@@ -97,22 +95,6 @@ struct HubState {
 
 /// The hubs of the shared original futures, by address.
 static HUBS: Mutex<Option<HashMap<usize, Arc<Hub>>>> = Mutex::new(None);
-
-/// Counts the settles of shared promises: a race over holders takes the first that settled.
-static SETTLES: AtomicU64 = AtomicU64::new(1);
-
-/// When holder `f` settled (the order of [`SETTLES`]), if it did; `None` for any other future
-/// or a holder handed to another task (`Promise.race` over holders, race.rs).
-///
-/// # Safety
-/// `f` must be a live heap future.
-pub(crate) unsafe fn settled_at(f: *mut VeltFut) -> Option<u64> {
-    if !is_shared(f) || forwarded(f).is_some() {
-        return None;
-    }
-    let st = hub(f).st.lock().seq;
-    (st != 0).then_some(st)
-}
 
 /// Bytes in front of a handle's header: its hub, then whether it is a view (identity.rs).
 const FRONT: usize = 16;
@@ -221,7 +203,6 @@ pub unsafe extern "C-unwind" fn velt_rt_fut_share(
                 holders: 1,
                 done: false,
                 armed: false,
-                seq: 0,
                 result: Vec::new(),
                 loc: ThrowLoc::NONE,
                 waiters: Vec::new(),
@@ -560,7 +541,6 @@ unsafe fn poll_holder(h: &Arc<Hub>, f: *mut VeltFut, cx: *mut c_void) -> u32 {
                         let mut st = h.st.lock();
                         st.panic = Some(msg.clone());
                         st.done = true;
-                        st.seq = SETTLES.fetch_add(1, Ordering::Relaxed);
                         let wake: Vec<Waker> = std::mem::take(&mut st.waiters)
                             .into_iter()
                             .filter(|(x, ..)| *x != me)
@@ -661,7 +641,6 @@ unsafe fn keep_result(h: &Hub, st: &mut HubState) {
             super::local::deliver_unadopted(h.orig);
             st.panic = Some(msg);
             st.done = true;
-            st.seq = SETTLES.fetch_add(1, Ordering::Relaxed);
             return;
         }
     }
@@ -675,7 +654,6 @@ unsafe fn keep_result(h: &Hub, st: &mut HubState) {
     std::ptr::copy_nonoverlapping(slot(h.orig), result.as_mut_ptr() as *mut u8, h.size);
     st.result = result;
     st.done = true;
-    st.seq = SETTLES.fetch_add(1, Ordering::Relaxed);
 }
 
 /// The hub's waker, registered with a started original future ([`poll_holder`]): it fires as

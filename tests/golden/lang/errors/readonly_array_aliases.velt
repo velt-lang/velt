@@ -1,0 +1,67 @@
+// Routes by which a read-only array (or a frozen object) would be written without a cast, all
+// refused (#3061): a frozen object as a mutable object type in a program that has read-only
+// arrays, an object copy whose nested field holds one where a mutable array is expected, an
+// interface value at a mutable array, and a class whose type argument sits in a function's
+// parameter. tsc refuses the last three (TS4104, TS2322); it lets the first through, which
+// Node then stops at run time.
+const ro: readonly number[] = [1];
+
+interface Desc {
+  kind: string;
+  anon: boolean;
+}
+const d: Desc = Object.freeze({ kind: "fn", anon: true });
+d.anon = false;
+
+const src = { inner: { xs: ro }, extra: 1 };
+const dst: { inner: { xs: number[] } } = src;
+dst.inner.xs.push(3);
+
+interface Holder<T> {
+  get(): T;
+}
+class Fixed implements Holder<readonly number[]> {
+  get(): readonly number[] {
+    return ro;
+  }
+}
+const h: Holder<readonly number[]> = new Fixed();
+const m: Holder<number[]> = h;
+m.get().push(3);
+
+class Box<T> {
+  cb: (x: T) => void = (x: T): void => {
+    console.log(typeof x);
+  };
+}
+const b1 = new Box<number[]>();
+b1.cb = (x: number[]): void => {
+  x.push(1);
+};
+const b2: Box<readonly number[]> = b1;
+b2.cb(ro);
+
+// An interface whose argument sits in a function field's parameter (tsc: TS2322).
+interface Sink<T> {
+  cb: (x: T) => void;
+}
+const s: Sink<number[]> = {
+  cb: (x: number[]): void => {
+    x.push(9);
+  },
+};
+const s2: Sink<readonly number[]> = s;
+s2.cb(ro);
+
+// A recursive object type at a read-only array as one at a mutable array, and a `Map` of
+// functions taking a mutable array as one of functions taking a read-only one (tsc: TS2322).
+interface Node2<T> {
+  v: T;
+  next: Node2<T> | null;
+}
+const n1: Node2<readonly number[]> = { v: ro, next: null };
+const n2: Node2<number[]> = n1;
+n2.v.push(4);
+const pushes = new Map<string, (x: number[]) => void>([["p", (x: number[]): void => { x.push(5); }]]);
+const views: Map<string, (x: readonly number[]) => void> = pushes;
+views.get("p")!(ro);

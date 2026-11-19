@@ -1,0 +1,7 @@
+old
+method c 1
+method c2 2
+rewired c2
+replacing, tag c2 2
+replaced
+done

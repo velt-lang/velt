@@ -14,7 +14,7 @@
 //!   `Target::wide_pointer_slots`): identical layouts, identical behavior.
 //! - **own**: `platform` (host services per target), `host` (what host functions and `HostRef`
 //!   need of the JS glue), `host_promise` and `host_turn` (async host functions, and the turns a
-//!   JS host drives), `entry`, `io`, `localtime` (UTC),
+//!   JS host drives), `entry`, `io`,
 //!   `memory_usage`, `panic`, `process`, `shared`, `net` and the current-thread executor in
 //!   `task` (no tokio, no threads). Every
 //!   function has exactly the signature `std/*.velt` declares (WebAssembly links only exact
@@ -59,7 +59,6 @@ mod inspect_cycles;
 mod inspect_layout;
 pub mod io;
 pub mod json;
-pub mod localtime;
 #[path = "../../velt_rt/src/math.rs"]
 pub mod math;
 #[path = "../../velt_rt/src/mem.rs"]
