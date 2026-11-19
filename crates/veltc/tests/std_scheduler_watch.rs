@@ -202,7 +202,7 @@ async function main() {
 /// `src` built, then run at each of `threads` with the debug runtime's block counters: it prints
 /// `want` on stdout, reports exactly one uncaught error starting with `report` and exits with 1;
 /// with `balanced`, it frees every block (otherwise what `main`'s suspended frame holds at the
-/// exit stays counted, #3004).
+/// exit stays counted: an exit on an uncaught error gives back no suspended frame's holdings).
 fn reports_once(name: &str, src: &str, want: &str, report: &str, threads: &[&str], balanced: bool) {
     if !cfg!(unix) {
         return;
