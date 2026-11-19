@@ -1,0 +1,11 @@
+direct reads 1
+direct, key freed: true
+deeper reads 3
+deeper, key freed: true
+generic reads 2
+generic, key freed: true
+base, key freed: true
+in a field reads 5
+in a field, key freed: true
+held, reads 6 alive: true
+maps in use: false false

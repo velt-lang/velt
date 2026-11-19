@@ -83,8 +83,8 @@ impl Cx<'_> {
         // The value may be held as an interface value (a table of a cycle-capable interface was
         // built for its type) or as a dynamic value (an `any` table was).
         let mut ifaces: Vec<DefId> = (self.facts.iface_impls.iter())
-            .filter(|&&(d, i)| i == t && c.ifaces.contains(&d))
-            .map(|&(d, _)| d)
+            .filter(|&&(d, _, i)| i == t && c.ifaces.contains(&d))
+            .map(|&(d, _, _)| d)
             .collect();
         ifaces.sort_by_key(|d| d.0);
         out.extend(ifaces.into_iter().map(|d| self.iface_entry_name(d)));
