@@ -34,6 +34,17 @@ export function unwoundFramesDrop(): bool {
 /** The unwinder's header in front of Velt's payload (`velt_vir::eh::HEADER_SIZE`). */
 const HEADER: usize = 32;
 
+/**
+ * The exceptions raised and not freed yet. They come from C's `malloc`, which the block counters
+ * do not see: std's tests read this to check that each is freed (`livePanics`).
+ */
+const LIVE = new Atomic<u64>(0);
+
+/** How many exceptions are raised and not freed yet. */
+export function livePanics(): usize {
+  return LIVE.load() as usize;
+}
+
 /** Raise Velt's exception with message `msg`; returns only if no frame claimed it. */
 export function raise(msg: string): void {
   const n = byteLength(msg);
@@ -44,6 +55,7 @@ export function raise(msg: string): void {
     if (e === null) {
       return;
     }
+    LIVE.add(1);
     memset(e, 0, HEADER);
     memcpy(e, "VELTPANC", 8);
     const text = Ptr.at<u8>(Ptr.addressOf(e) + HEADER);
@@ -51,6 +63,7 @@ export function raise(msg: string): void {
     memset(Ptr.at<u8>(Ptr.addressOf(e) + HEADER + n), 0, 1);
     _Unwind_RaiseException(Ptr.at<void>(Ptr.addressOf(e)));
     free(e);
+    LIVE.sub(1);
   }
 }
 
@@ -70,9 +83,21 @@ export unsafe function panicText(e: usize): string {
 export unsafe function takePanic(e: usize): string {
   // SAFETY: the caller's statement: `raise` wrote the NUL-terminated message after the header.
   const msg = unsafe { readCString(Ptr.at<u8>(e + HEADER)) };
-  // SAFETY: `raise` allocated it with malloc, and the caller takes it once.
+  // SAFETY: the caller's statement.
+  unsafe {
+    freePanic(e);
+  }
+  return msg;
+}
+
+/**
+ * Frees the exception object at `e` (from `catchUnwind`) without reading its message. Unsafe:
+ * `e` must be a Velt exception that `catchUnwind` returned, freed once.
+ */
+export unsafe function freePanic(e: usize): void {
+  // SAFETY: `raise` allocated it with malloc, and the caller frees it once.
   unsafe {
     free(Ptr.at<u8>(e));
   }
-  return msg;
+  LIVE.sub(1);
 }

@@ -32,11 +32,11 @@ export class PanicError extends Error {
 export async function catchPanic<T, E>(
   body: () => Promise<T, E>,
 ): Promise<T> throws E | PanicError {
-  arm();
+  const outer = arm();
   // Storing the promise starts it, which takes the arming (the runtime's task/local/catch.rs, or
   // the executor in Velt's std/task/catch_sched.velt).
   const p = body();
-  const h = take();
+  const h = take(outer);
   if (h == 0) {
     return await p;
   }

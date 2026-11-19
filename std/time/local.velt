@@ -1,0 +1,30 @@
+// velt/time (internal): local time for `Date` (std/prelude/date.velt): the offset at an instant,
+// and the instant of a local date-time, over the OS time zone (`#localtime`).
+
+import { localOffsetSeconds } from "#localtime";
+import { MS_PER_DAY } from "./civil";
+
+/** Seconds added to UTC to get local time at epoch time `t` (milliseconds). */
+export function localOffset(t: i64): i64 {
+  return localOffsetSeconds(t) as i64;
+}
+
+/**
+ * The epoch time of a local date-time `local` (its fields read as if they were UTC), as
+ * ECMA-262's UTC(t): the offsets a day before and after bracket any one change near `local`. A
+ * candidate counts when the offset at it is the one it was made with; of two (an overlap, the
+ * clock set back), the earlier; of none (a gap, the clock set forward), the one with the offset
+ * from before the change.
+ */
+export function localToUtc(local: i64): i64 {
+  const before = localOffset(local - MS_PER_DAY) * 1000;
+  const after = localOffset(local + MS_PER_DAY) * 1000;
+  const withBefore = local - before;
+  const withAfter = local - after;
+  const beforeHolds = localOffset(withBefore) * 1000 === before;
+  const afterHolds = localOffset(withAfter) * 1000 === after;
+  if (beforeHolds && afterHolds) {
+    return withBefore < withAfter ? withBefore : withAfter;
+  }
+  return afterHolds ? withAfter : withBefore;
+}

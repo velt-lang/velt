@@ -97,6 +97,7 @@ table! {
     lang_hooks_async_iter => "lang/hooks/async_iter",
     lang_hooks_class_object => "lang/hooks/class_object",
     lang_hooks_error => "lang/hooks/error",
+    lang_hooks_clock => "lang/hooks/clock",
     lang_hooks_heap => "lang/hooks/heap",
     lang_hooks_iter => "lang/hooks/iter",
     lang_hooks_json => "lang/hooks/json",
@@ -129,6 +130,7 @@ table! {
     lang_hooks_syntax => "lang/hooks/syntax",
     lang_hooks_tuple_elements => "lang/hooks/tuple_elements",
     lang_hooks_unwind => "lang/hooks/unwind",
+    lang_hooks_weak => "lang/hooks/weak",
     lang_import_meta => "lang/import_meta",
     /// The compiler's intrinsics, declared (`@intrinsic declare function`; std-layout.md §10).
     lang_intrinsics => "lang/intrinsics",
@@ -154,6 +156,7 @@ table! {
     lang_typed_array => "lang/typed_array",
     lang_typed_array_apply_list => "lang/typed_array/apply_list",
     lang_typed_array_buffer_view => "lang/typed_array/buffer_view",
+    lang_bytes_view_bytes => "lang/bytes/view_bytes",
     lang_typed_array_core => "lang/typed_array/core",
     lang_typed_array_native_inspect => "lang/typed_array/native_inspect",
 
@@ -192,6 +195,7 @@ table! {
     process_stdout => "process/stdout",
     simd => "simd",
     simd_aes => "simd/aes",
+    simd_bf16x8 => "simd/bf16x8",
     simd_clmul => "simd/clmul",
     simd_sha => "simd/sha",
     sync_channel => "sync/channel",

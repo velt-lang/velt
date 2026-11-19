@@ -91,10 +91,11 @@ async function main() {
     );
 }
 
-/// A program with module state runs its tasks on one worker (one lock, #2748), so its listener
-/// says one worker (std/net/tcp_sched.velt `listenerWorkers`), as the default executor's does.
+/// A program with module state spreads its connections over every worker too (#2726 (c)): its
+/// listener says every worker (std/net/tcp_sched.velt `listenerWorkers`), as the default
+/// executor's does, and its handlers that touch module state take the module lock for each poll.
 #[test]
-fn a_listener_of_a_program_with_module_state_says_one_worker() {
+fn a_listener_of_a_program_with_module_state_says_every_worker() {
     if !has_threads() {
         return;
     }
@@ -111,7 +112,7 @@ async function main() {
   l.close();
 }
 "#,
-        "workers 1 1\n",
+        "workers 4 1\n",
     );
 }
 

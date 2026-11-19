@@ -1,0 +1,276 @@
+// velt/lang/hooks (tests): the weak core (weak.velt) across threads, values whose release reaches
+// other maps, its internal errors, and a soak through a window of live reactive objects; on
+// hand-built objects (weak_test_objects.velt), run by `velt test std/`. A spawned task runs on any
+// of the executor's workers, so a release in one may run on another thread than the one that
+// made the object weakly held.
+import { describe, expect, it } from "velt/test";
+import { fnAddress } from "velt/lang/intrinsics";
+import { canCatchPanics, catchVeltPanic } from "velt/task/unwind";
+import {
+  weakMapDrop,
+  weakMapHas,
+  weakMapLen,
+  weakMapNew,
+  weakMapSet,
+  weakRefDeref,
+  weakRefDrop,
+  weakRefNew,
+  weakRelease,
+  weakTracked,
+} from "velt/lang/hooks/weak";
+import { RC_COUNT, RC_WEAK, ld64, st64 } from "velt/lang/hooks/weak_mem";
+import {
+  count,
+  finish,
+  isMarked,
+  live,
+  newObj,
+  objMap,
+  plain,
+  proxyOf,
+  release,
+  retain,
+  set,
+  setField,
+  traceObj,
+} from "velt/lang/hooks/weak_test_objects";
+
+/** A value's retain glue that does nothing, and one whose release drops the map it names. */
+function retainNothing(v: u64): void {}
+
+function dropMapValue(v: u64): void {
+  weakMapDrop(v as u32);
+}
+
+/** Many maps of a task's own, used while other tasks use theirs: whether each round held. */
+async function ownMaps(): Promise<bool> {
+  for (let round = 0; round < 200; round++) {
+    const m = objMap();
+    const raws: usize[] = [];
+    const proxies: usize[] = [];
+    for (let i = 0; i < 8; i++) {
+      raws.push(plain());
+      proxies.push(proxyOf(m, raws[i], 0));
+    }
+    for (let i = 0; i < 8; i++) {
+      const again = proxyOf(m, raws[i], 0);
+      if (again !== proxies[i]) {
+        return false;
+      }
+      release(again);
+    }
+    if (weakMapLen(m) !== 8) {
+      return false;
+    }
+    for (let i = 0; i < 8; i++) {
+      release(raws[i]);
+      release(proxies[i]);
+    }
+    if (weakMapLen(m) !== 0) {
+      return false;
+    }
+    weakMapDrop(m);
+  }
+  return true;
+}
+
+/** `make`'s reactive object: its references, and how many objects it made. */
+class Reactive {
+  refs: usize[];
+  objects: i64;
+
+  constructor(refs: usize[], objects: i64) {
+    this.refs = refs;
+    this.objects = objects;
+  }
+}
+
+/** A reactive object as sigx makes one: a raw object, its handler capturing it, its proxy; a
+ * proxied child every third time. Its references come in an order that turns with `i`. */
+function make(cache: u32, i: i64): Reactive {
+  const raw = plain();
+  const handler = newObj(retain(raw), 0, 0);
+  const refs = [raw, proxyOf(cache, raw, handler)];
+  let objects: i64 = 3;
+  if (i % 3 === 0) {
+    const child = plain();
+    setField(raw, 1, retain(child));
+    const childHandler = newObj(retain(child), 0, 0);
+    refs.push(proxyOf(cache, child, childHandler));
+    refs.push(child);
+    objects = 6;
+  }
+  const turned: usize[] = [];
+  const n = refs.length as i64;
+  for (let j: i64 = 0; j < n; j++) {
+    turned.push(refs[((j + (i % n)) % n) as number]);
+  }
+  return new Reactive(turned, objects);
+}
+
+describe("the weak core across threads", () => {
+  it("frees a weakly held object released on another thread", async () => {
+    const before = live();
+    const m = objMap();
+    const raw = plain();
+    set(m, raw, plain());
+    const r = weakRefNew(raw);
+    retain(raw);
+    await spawn(async () => release(raw));
+    expect(count(raw)).toBe(1);
+    expect(weakMapLen(m)).toBe(1); // the entry is kept while raw lives
+    await spawn(async () => release(raw));
+    expect(live()).toBe(before); // raw and its value are freed on the other thread
+    expect(weakMapLen(m)).toBe(0);
+    expect(weakRefDeref(r)).toBe(0);
+    weakRefDrop(r);
+    expect(finish([m])).toBe(true);
+  });
+
+  it("frees an ephemeron cycle from another thread", async () => {
+    for (const rawFirst of [true, false]) {
+      const before = live();
+      const m = objMap();
+      const raw = plain();
+      const p = proxyOf(m, raw, 0);
+      await spawn(async () => {
+        release(rawFirst ? raw : p);
+        release(rawFirst ? p : raw);
+      });
+      expect(live()).toBe(before);
+      expect(weakMapLen(m)).toBe(0);
+      expect(finish([m])).toBe(true);
+    }
+  });
+
+  it("serves tasks using their own maps at once", async () => {
+    const before = live();
+    const tasks: Promise<bool>[] = [];
+    for (let i = 0; i < 8; i++) {
+      tasks.push(spawn(ownMaps()));
+    }
+    for (const t of tasks) {
+      expect(await t).toBe(true);
+    }
+    expect(live()).toBe(before);
+    expect(weakTracked()).toBe(0);
+  });
+});
+
+describe("values whose release reaches the weak core", () => {
+  it("frees keys of other maps that a released value held", () => {
+    const m1 = objMap();
+    const m2 = objMap();
+    const m3 = objMap();
+    const a = plain();
+    const b = plain();
+    const c = plain();
+    set(m3, c, plain());
+    set(m2, b, newObj(c, 0, 0));
+    set(m1, a, newObj(b, 0, 0));
+    release(a);
+    expect(weakMapLen(m1) + weakMapLen(m2) + weakMapLen(m3)).toBe(0);
+    expect(finish([m1, m2, m3])).toBe(true);
+  });
+
+  it("drops another map from a released value", () => {
+    const outer = weakMapNew(
+      fnAddress(traceObj),
+      fnAddress(retainNothing),
+      fnAddress(dropMapValue),
+      0,
+    );
+    const inner = objMap();
+    const a = plain();
+    let b = plain();
+    release(proxyOf(inner, b, 0));
+    weakMapSet(outer, a, inner as u64);
+    release(b);
+    expect(weakMapLen(inner)).toBe(0); // the cycle is freed with b's last outside release
+    b = plain();
+    release(proxyOf(inner, b, 0));
+    release(a); // drops `inner`: the proxy and b's entry with it
+    expect(isMarked(b)).toBe(false);
+    release(b);
+    expect(finish([outer])).toBe(true);
+  });
+});
+
+describe("internal errors", () => {
+  it("reports an object marked without a record, before its count changes", () => {
+    if (!canCatchPanics()) {
+      return;
+    }
+    const obj = plain();
+    st64(obj - 8, ld64(obj - 8) | RC_WEAK); // as corruption would
+    for (const n of [1, 2]) {
+      if (n === 2) {
+        retain(obj);
+      }
+      const msg = catchVeltPanic(() => {
+        weakRelease(obj);
+      });
+      expect(msg ?? "").toContain("ICE: a weakly held object was released with no record");
+      expect(count(obj)).toBe(n as u64); // the count is untouched
+    }
+    st64(obj - 8, ld64(obj - 8) & RC_COUNT);
+    release(obj);
+    release(obj);
+    expect(weakTracked()).toBe(0);
+  });
+
+  it("reports a tagged proxy word used as a key, and stays usable", () => {
+    if (!canCatchPanics()) {
+      return;
+    }
+    const m = objMap();
+    const k = plain();
+    const msg = catchVeltPanic(() => {
+      weakMapHas(m, k | 1);
+    });
+    expect(msg ?? "").toContain("ICE: a tagged proxy word");
+    set(m, k, plain());
+    release(k);
+    expect(finish([m])).toBe(true);
+  });
+});
+
+describe("soak", () => {
+  it("passes 20,000 reactive objects through a window of 64", () => {
+    const cache = objMap();
+    const base = live();
+    const alive: Reactive[] = [];
+    let expected: i64 = 0;
+    let maxLive: i64 = 0;
+    let maxTracked: usize = 0;
+    for (let i: i64 = 0; i < 20_000; i++) {
+      const r = make(cache, i);
+      expected += r.objects;
+      alive.push(r);
+      if (alive.length > 64) {
+        const old = alive.shift()!;
+        expected -= old.objects;
+        for (const x of old.refs) {
+          release(x);
+        }
+      }
+      expect(live() - base).toBe(expected);
+      maxLive = expected > maxLive ? expected : maxLive;
+      const t = weakTracked();
+      maxTracked = t > maxTracked ? t : maxTracked;
+    }
+    expect((maxTracked as i64) <= maxLive).toBe(true); // the side table does not grow
+    let entries: usize = 0;
+    for (const r of alive) {
+      entries += (r.refs.length / 2) as usize;
+    }
+    expect(weakMapLen(cache)).toBe(entries);
+    for (const r of alive) {
+      for (const x of r.refs) {
+        release(x);
+      }
+    }
+    expect(weakMapLen(cache)).toBe(0);
+    expect(finish([cache])).toBe(true);
+  });
+});

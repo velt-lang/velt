@@ -45,7 +45,10 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("proxyArrayHole", Op(I::ProxyArrayHole)),
     ("stdUsed", Op(I::StdUsed)),
     // array.velt
+    ("arrayByteLength", Op(I::ArrayByteLength)),
     ("arrayCopyBytes", Op(I::ArrayCopyBytes)),
+    ("arrayDataAddress", Op(I::ArrayDataAddress)),
+    ("arrayReadAddress", Op(I::ArrayReadAddress)),
     ("arrayMove", Op(I::ArrayMove)),
     ("arrayPrefetch", Op(I::ArrayPrefetch)),
     ("arrayRemove", Op(I::ArrayRemove)),
@@ -127,6 +130,8 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("ptrWrite", Op(I::PtrWrite)),
     // future.velt
     ("addressCall", Op(I::AddressCall)),
+    ("addressCall3", Op(I::AddressCall3)),
+    ("addressCallWord", Op(I::AddressCallWord)),
     ("fnAddress", Op(I::FnAddress)),
     ("futDrop", Op(I::FutDrop)),
     ("futPoll", Op(I::FutPoll)),
@@ -183,11 +188,13 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("recordViewSync", Op(I::RecordViewSync)),
     // weak.velt
     ("weakMapDelete", Op(I::WeakMapDelete)),
+    ("weakMapDrop", Op(I::WeakMapDrop)),
     ("weakMapGet", Op(I::WeakMapGet)),
     ("weakMapHas", Op(I::WeakMapHas)),
     ("weakMapSet", Op(I::WeakMapSet)),
     ("weakMapValue", Op(I::WeakMapValue)),
     ("weakRefDeref", Op(I::WeakRefDeref)),
+    ("weakRefDrop", Op(I::WeakRefDrop)),
     ("weakRefNew", Op(I::WeakRefNew)),
 ];
 

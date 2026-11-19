@@ -33,12 +33,17 @@ impl Ctx<'_> {
     }
 
     /// Reports `iface` named in an `extends` or `implements` at `span` if it is the prelude's
-    /// `AtomicValue` or `Frozen`, whose types only the compiler decides; whether it was.
+    /// `AtomicValue`, `Frozen` or `Numeric`, whose types only the compiler decides; whether it was.
     pub(crate) fn refuse_known_iface(&mut self, iface: DefId, span: velt_common::Span) -> bool {
         let note = if Some(iface) == self.prelude_iface("AtomicValue") {
             ("AtomicValue", "the compiler decides which types an `Atomic` holds: numbers, `bool`, `string` and `shared` values")
         } else if Some(iface) == self.prelude_iface("Frozen") {
             ("Frozen", "the compiler decides whose `shared` values are read in place: those nothing could change")
+        } else if Some(iface) == self.prelude_iface("Numeric") {
+            (
+                "Numeric",
+                "the compiler decides which types are numbers: the integer and float types",
+            )
         } else {
             return false;
         };

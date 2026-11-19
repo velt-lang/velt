@@ -22,7 +22,7 @@
 //! then the `Mutex`.
 //!
 //! Code outside a task (a synchronous `main`) keeps the lock from its first access until it
-//! hands over to the tasks (`velt_rt_block_on`, or `main` returned): tasks wait until then, as
+//! hands over to the tasks (`main`'s root starts, or `main` returned): tasks wait until then, as
 //! in Node, where nothing else runs before the synchronous code is done.
 
 use std::alloc::{alloc_zeroed, dealloc, Layout};

@@ -43,8 +43,9 @@ across all connections.
 - With env `TLS_CERT` and `TLS_KEY` both set (paths to a PEM certificate chain and a PEM private
   key) a server serves the same routes over HTTPS/WSS on the same port, and nothing over plain
   HTTP; otherwise plain HTTP/WS as above. Everything else in the contract is unchanged.
-- Each server uses its platform's normal TLS stack: Velt std/http (rustls; `serve` gets the PEM
-  contents, read with `velt/fs`), Go `http.ListenAndServeTLS` (crypto/tls), Node
+- Each server uses its platform's normal TLS stack: Velt http-server's `serve` with the `tls`
+  option (the TLS implementation in Velt, `velt/net`; `serve` gets the PEM contents, read with
+  `velt/fs`), Go `http.ListenAndServeTLS` (crypto/tls), Node
   `https.createServer` with the same `upgrade` handling, Bun `Bun.serve({ tls })`
   (BoringSSL). Default protocol versions and cipher suites; HTTP/2 may be offered with ALPN,
   but WebSocket clients ask for HTTP/1.1.
@@ -62,7 +63,7 @@ Clients are `u<i>` with valid tokens, spread round-robin over `rooms` rooms.
 |---|---|
 | `join` | connect `conns` clients as fast as possible (64 handshakes at a time): handshakes/s, time until every welcome arrived |
 | `steady` | `conns` clients in `rooms` rooms send `say` messages at `rate` per second in total (spread evenly); every client measures latency from the sender's timestamp (inside `text`) to its own receipt; report deliveries/s, p50/p99/max latency, errors |
-| `ramp` | `steady` with the rate doubling every 5 s until p99 > 100 ms or deliveries fall below 95 % of expected: the highest sustained rate |
-| `idle` | `conns` connected clients, one ping per client every 30 s: memory and CPU at rest |
+| `ramp` | (`vm/bench_chat.py`, on top of `steady`) 10 s `steady` runs from 1 000 messages/s, the rate doubling per run until p99 > 100 ms, the server crashes or deliveries fall below 95 % of expected: the highest sustained rate |
+| `idle` | `conns` clients connect and stay silent for `secs` seconds: memory and CPU at rest |
 
 The driver records server CPU time, context switches and RSS (`/proc` on Linux, `ps` on macOS).

@@ -1,5 +1,5 @@
 //! Velt runtime: process entry, allocation, strings, printing, panics, and the tokio-based async
-//! runtime with timers, fs, TCP and HTTP, plus the string-method, string-builder and JSON support
+//! host for fs, TCP and HTTP, plus the string-method, string-builder and JSON support
 //! used by generated code. Exposes a C ABI documented in docs/internals/contracts/rt_abi.md
 //! (sync core) and docs/internals/contracts/rt_abi_async.md (async, std/fs, std/net, std/http, process).
 
@@ -41,7 +41,6 @@ mod inspect_cycles;
 mod inspect_layout;
 pub mod io;
 pub mod json;
-pub mod localtime;
 pub mod math;
 pub mod mem;
 pub mod memory_usage;
@@ -66,12 +65,10 @@ pub mod str_ops;
 pub mod strbuf;
 pub mod symbol;
 pub mod task;
-pub mod timer;
 pub mod tls;
 pub mod top_level_await;
 pub mod transfer_map;
 pub mod view;
-pub mod weak;
 
 pub use crate::str::VeltStr;
 

@@ -1,233 +1,223 @@
-# Design: native code through `declare c` and `unsafe`
+# Native code through `declare c` and `unsafe`
 
-Status: **accepted** (design review on #2187, round 2, 2026-11-03), revision 6: rebuilt around
-the owner's decisions of 2026-11-03 (`unsafe` blocks and functions; declarations checked against
-C headers; one way to call native code, Rust included; `declare system` folded in;
-`NativeHandle`; `Completion<R>`; Velt's reactor in `velt.h` for Rust crates). Area 12 of #1866; also what GUI bindings, llama.cpp, BLAS and
-the database drivers need.
+Status: partly implemented. Issue: [#2187](https://github.com/velt-lang/velt/issues/2187).
 
-**One way to call native code.** `declare c` inside `unsafe` is the only mechanism, whatever
-language the library is written in: the platform's C library, bundled C, C++ or Zig sources, a
-Rust crate, or a system library. The parts:
+## Summary
+
+`declare c` is the one way Velt calls native code, whatever language the library is written in:
+the platform's C library, C sources bundled with a package, or a system library. The parts:
 
 1. **`declare c("lib")` declarations**, checked against the library's C headers per target. The
-   manifest names each library's source per target. libc is the library `c`; `declare system`
-   goes.
+   manifest maps each logical library name to a library per target; `"c"` is the platform's C
+   library.
 2. **`unsafe { … }` blocks and `unsafe function`s** mark every call into native code and every
-   raw operation, each with a `// SAFETY:` comment. Only packages the root lists in
-   `allowNative` (and std) may contain them, and raw pointers never reach user code.
-3. **`NativeHandle<T>`**: a native object's pointer with its release, counting calls in flight,
-   so release can't run under a call (.NET's `SafeHandle`).
-4. **`PinnedBuffer<T>`**: memory lent to native code past one call, with leases the ownership
-   checker treats like borrows.
-5. **`NativeCallback<F>`**: Velt functions handed to C, which run through the executor.
-6. **Async**: `declare c async` runs a blocking call on the library's pool; `Completion<R>` lets
-   native code complete a promise later from any thread, without holding one.
-7. **Per-platform backends** as conditional imports: Accelerate, OpenBLAS or MKL behind one
-   package.
+   raw operation, each with a `// SAFETY:` comment saying why it is sound.
+3. **A trust boundary**: only std and the packages with native code that the program lists in
+   `allowNative` may contain unsafe code or import the raw types, so user code works with a
+   binding's safe API and an audit reads exactly the marked places.
+4. **`@export("c_name")`**: the other direction, a Velt function C calls by name or address.
 
-## Problem
+The shape follows C#'s: `unsafe` blocks allowed per project, `[LibraryImport]` declarations,
+per-platform library resolution and `SetLastError`. Velt is stricter where it can be: there is
+no run-time marshalling layer, declarations are checked against headers, and the consuming
+program opts in to each package's native code explicitly.
 
-Velt reaches native code today in two ways, neither general:
+How a package ships a Rust crate with a Velt-specific ABI is a separate mechanism, described in
+[native-packages.md](native-packages.md).
 
-- **A package's Rust crate** (`native` in `package.velt`, native_abi.md), with a Velt-specific
-  ABI: `VeltStr`/`VeltArray`/`IoResult` out-pointers, handle tables, `velt_p__` exports and
-  their signature records, a function table into the runtime. The glue is code on the hot path
-  that the compiler can't see: `packages/sqlite` ships rows and parameters through cursors,
-  sinks, an `Arc`, a `Mutex` and (in places) JSON, and `bench/db/RESULTS.md` measured
-  0.29–0.91× of rusqlite, which makes the same C calls without the layers. Every author needs
-  cargo, and what crosses is what the ABI knows: no callbacks, no pointers C keeps, no structs
-  by value.
-- **`declare system function`** (#1716) binds libc through a signature table inside the
-  compiler: safe, but closed to every other library.
+## Motivation
 
-A third-party C library has no table in the compiler: the declaration itself is the statement
+A C library has no table of signatures in the compiler: the declaration itself is the statement
 of the C signature, and a wrong one corrupts memory. So the design has three parts: **what
-crosses** (types and lowering), **checking the declaration against the library's headers**, and
-**marking and confining the code that relies on it** (`unsafe`, `allowNative`).
+crosses** (types and their lowering), **checking the declaration against the library's
+headers**, and **marking and confining the code that relies on it** (`unsafe`, `allowNative`).
 
-## Example: SQLite
+`packages/sqlite` is the worked example: it calls SQLite's C API directly, each call one direct C
+call with no glue layer, no handle table and no lock in between, and passes strings without
+copying them:
 
-```ts planned
-import { CFunction, CString, NativeHandle, Out, Ptr, StrBytes, byteLength, readUtf8 } from "velt/ffi";
+```ts
+// packages/sqlite/src/sqlite3.velt (excerpt)
+import { CString, Out, Ptr, StrBytes } from "velt/ffi";
 
-declare c type sqlite3;
-declare c type sqlite3_stmt;
-type Destructor = (p: Ptr<void>) => void;
+export declare c type sqlite3;
+export declare c type sqlite3_stmt;
 
-declare c("sqlite3") function sqlite3_prepare_v3(db: Ptr<sqlite3>, sql: StrBytes, nByte: i32,
-  flags: u32, stmt: Out<Ptr<sqlite3_stmt> | null>, tail: null): i32;
-declare c("sqlite3") function sqlite3_bind_text(stmt: Ptr<sqlite3_stmt>, i: i32,
-  text: StrBytes, n: i32, destructor: CFunction<Destructor> | null): i32;
-declare c("sqlite3") function sqlite3_step(stmt: Ptr<sqlite3_stmt>): i32;
-declare c("sqlite3") function sqlite3_column_text(stmt: Ptr<sqlite3_stmt>, col: i32): Ptr<u8> | null;
-declare c("sqlite3") function sqlite3_column_bytes(stmt: Ptr<sqlite3_stmt>, col: i32): i32;
-declare c("sqlite3") function sqlite3_finalize(stmt: Ptr<sqlite3_stmt>): i32;
-declare c const SQLITE_TRANSIENT: CFunction<Destructor>;   // the value comes from sqlite3.h
-
-export class Statement {
-  #stmt: NativeHandle<sqlite3_stmt>;
-
-  // ...made from sqlite3_prepare_v3's Out:
-  //   new NativeHandle(stmt, p => unsafe { sqlite3_finalize(p) })
-
-  bindText(i: i32, s: string): void {
-    // SAFETY: SQLITE_TRANSIENT makes SQLite copy the text before the call returns.
-    check(unsafe { sqlite3_bind_text(this.#stmt, i, s, byteLength(s) as i32, SQLITE_TRANSIENT) });
-  }
-
-  text(col: i32): string {
-    // SAFETY: the column's text is valid until the next step, reset or finalize of the
-    // statement, and is copied before this method returns.
-    unsafe {
-      const p = sqlite3_column_text(this.#stmt, col);
-      return p === null ? "" : readUtf8(p, sqlite3_column_bytes(this.#stmt, col) as usize);
-    }
-  }
-}
+export declare c("sqlite3") function sqlite3_open_v2(
+  name: CString,
+  db: Out<Ptr<sqlite3> | null>,
+  flags: i32,
+  vfs: null,
+): i32;
+export declare c("sqlite3") function sqlite3_bind_text(
+  s: Ptr<sqlite3_stmt>,
+  i: i32,
+  v: StrBytes,
+  n: i32,
+  destructor: Ptr<void>,
+): i32;
+export declare c const SQLITE_OK: i32;
+export declare c const SQLITE_TRANSIENT: Ptr<void>;   // the value comes from sqlite3.h
 ```
 
-Each call is one direct C call: no export of a Rust crate, no handle table, no lock, and the
-string goes without a copy. The `unsafe` blocks are the package's whole trusted base, each with
-its reason; the exported class is the safe API.
+```ts
+// packages/sqlite/src/connection.velt (excerpt)
+const out = new Out<Ptr<sqlite3> | null>(null);
+// SAFETY: the name is NUL-terminated, and `out` is written before the call returns.
+const rc = unsafe { sqlite3_open_v2(name, out, flags, null) };
+const db = out.value;
+```
 
-## Declarations
+The `unsafe` blocks are the package's whole trusted base, each with its reason; the exported
+classes are the safe API.
+
+## Design
+
+### Declarations
 
 `declare c("<library>") function name(params): R;` is a declaration kind of its own in the AST,
-HIR and VIR (like `declare host("m")`, `@intrinsic declare` and `declare generated("m")`). The
-keyword is `c` because it names the ABI, which every language here speaks.
+HIR and VIR. The keyword is `c` because it names the ABI, which every language here speaks.
 
-- `<library>` is a **logical name** that the manifest maps to a library per target (below);
-  `"c"` is the platform's C library. The compiler never names a platform or a library.
+- `<library>` is a **logical name** that the package's manifest maps to a library per target
+  ("Where libraries come from"); `"c"` is the platform's C library. The compiler never names a
+  platform or a library.
 - The link symbol is `name`; a `$suffix` is ignored, so one module can declare one symbol with
-  several signatures (`objc_msgSend$rect`, `objc_msgSend$void`).
+  several signatures (`memcpy$sched`).
 - **`declare c type sqlite3;`** declares a type that exists only behind pointers: `Ptr<sqlite3>`
-  and `Ptr<sqlite3_stmt>` are different types, and a misspelled name is an error with a
-  did-you-mean. `Ptr<u8>`, `Ptr<f32>` point at scalars; `Ptr<void>` is `void *`.
-- **`declare c struct S { … }`**: a C struct (below).
-- **`declare c const NAME: T;`**: a constant whose value comes from the headers per target (a
-  macro or an enumerator, evaluated by clang), never written by the binding: a wrong flag is as
-  unsafe as a wrong signature (`SQLITE_STATIC` for `SQLITE_TRANSIENT` is a use-after-free).
+  and `Ptr<sqlite3_stmt>` are different types. A `declare c type` cannot be made with `new`.
+- **`declare c struct S { … }`**: a C struct ("C structs").
+- **`declare c const NAME: T;`**: a constant whose value comes from the headers per target
+  ("Constants from headers"), never written by the binding: a wrong flag is as unsafe as a
+  wrong signature (`SQLITE_STATIC` for `SQLITE_TRANSIENT` is a use-after-free).
 - **`declare c("<library>") let name: T;`** (or `const`, read-only): a variable the C library
-  defines (`environ`, a library's `extern int verbosity;`), read and written in place from
-  `unsafe` code ("C variables" below).
-- `declare c("m") async function` returns a `Promise`: a blocking call on the library's pool, or
-  a non-blocking one when it has a `Completion<R>` parameter (see "Async").
-- Variadic functions are declared with their fixed parameters and `...args: CVarArgs` (scalars
-  and `Ptr`s, C's default promotions, the target's variadic convention: Apple arm64 passes them
-  on the stack, unlike AAPCS64; "Variadic functions" below).
+  defines ("C variables").
+- Variadic functions end with `...args: CVarArgs` ("Variadic functions").
 - A declaration is allowed on every target; a reachable call where the manifest maps no library
   for the target is an error naming the target and the caller, so portable code chooses per
   platform with conditional imports.
 
 Declaring is safe; calling needs `unsafe`.
 
-## `unsafe` blocks and functions
+### `unsafe` blocks and functions
 
-The trusted code is marked where a reviewer finds it, as in Rust and C#. A `.velt` file is Velt,
-which already has much that tsc doesn't accept (`declare c`, `f16`, operator methods, `spawn`,
-`shared`): the goal is the best language that looks like TypeScript, with no workarounds.
+```ts
+// SAFETY: `p` comes from sqlite3_prepare_v3 and is finalized once.
+const release = (p: Ptr<sqlite3_stmt>) => unsafe { sqlite3_finalize(p) };
 
-```ts planned
-// SAFETY: `p` comes from sqlite3_prepare_v3 and the handle runs this once.
-const release = (p: Ptr<sqlite3_stmt>) => unsafe { sqlite3_finalize(p) };   // an unsafe expression
-
-// SAFETY: callers pass a buffer of at least `n` floats.
+/**
+ * Unsafe: `p` points at `n` readable floats.
+ */
 unsafe function sum(p: Ptr<f32>, n: usize): f32 { … }
 ```
 
 - **Syntax.** `unsafe { … }` is a block statement, read like `try { … }`. In expression position
-  `unsafe { expr }` holds one expression and evaluates to it (`const rc = unsafe {
-  sqlite3_step(s) };`, `p => unsafe { sqlite3_finalize(p) }`). `unsafe` is a modifier on
+  `unsafe { expr }` holds one expression and evaluates to it. `unsafe` is a modifier on
   functions and methods, read like `async` (`unsafe function`, `unsafe async function`,
-  `static unsafe m()`), and an `unsafe` function's body is an unsafe block. Unsafe contexts are
-  lexical: the functions that are expressions of an unsafe block (arrows, generator function
-  expressions, object-literal methods) are unsafe code; nested function declarations and class
-  members (in a class expression too) are not, nor are an unsafe function's default parameters.
-  Interface members can't be `unsafe`.
-  It is a contextual keyword: `unsafe` stays usable as an identifier where neither `{` nor a
-  function follows it on the same line.
-- **Unsafe functions are not values.** A function type can't say it is unsafe, so an unsafe
-  function used as a value (not called) is an error; a safe arrow calling it in an `unsafe`
-  expression is the value. `unsafe` on arrow functions waits for unsafe function types, which
-  nothing needs yet.
-- **What requires `unsafe`** (an error elsewhere, naming the operation, with `unsafe { … }` as
-  the fix): calling a `declare c` function; the raw `velt/ffi` operations (`Ptr` reads and writes
-  at an offset, `readUtf8`/`readCString`/`readBytes` from a `Ptr`, reading a `CFunction` from C
-  memory and calling it, `NativeCallback`'s `.fn`/`.context`, `PinnedBuffer`'s `lend()` and
-  `lendOwned()`, `NativeHandle`'s `use()`); calling an `unsafe function`.
-- **What stays safe**: making a `CString`, `Out`, `PinnedBuffer` (and its `.view`), a
-  `NativeCallback` or a `NativeHandle`'s `dispose()`; passing a `string` as `StrBytes`;
-  everything type-checked.
-- **`// SAFETY:` comments.** Each unsafe block and unsafe function needs one, directly before
-  it, stating why it is sound. Missing, it is a lint error in packages and std (Clippy's
-  `undocumented_unsafe_blocks`). This is what makes the audit possible.
-- **Where.** `unsafe` is allowed only in packages with `native.c` that the root lists in
-  `allowNative`, and in std (the root of trust). Elsewhere it is an error (`unsafe code needs a
-  native package`), so user programs never contain it.
-- **Listing.** `velt check` lists each package's unsafe blocks and functions (file and line)
-  next to its `allowNative` entry, so an audit reads exactly those places.
-- **Tooling**: `--ts-compat` reports `unsafe` as Velt-only; the editor highlights it; `velt fmt`
-  formats it. It is a language addition: an entry in the reference and a docs-sync issue.
+  `static unsafe m()`), and an unsafe function's body is unsafe code. `unsafe` is a contextual
+  keyword: it stays usable as an identifier where neither `{` nor a function follows it on the
+  same line. Interface members cannot be `unsafe`.
+- **Unsafe contexts are lexical.** Functions written as expressions inside an unsafe block
+  (arrows, function expressions, object-literal methods) are unsafe code; nested function
+  declarations and class members are not, nor are an unsafe function's default parameters.
+- **Unsafe functions are not values.** A function type cannot say it is unsafe, so an unsafe
+  function used as a value (not called) is an error; a safe arrow that calls it in an `unsafe`
+  expression is the value.
+- **What requires `unsafe`**: calling a `declare c` function, reading or writing a C variable,
+  and calling an unsafe function, which includes velt/ffi's raw operations (`Ptr.at`,
+  `readBytes`, `readUtf8`, `readCString`, `errno`, `setErrno`) and std's `addressLoad`
+  intrinsic.
+- **What stays safe**: making a `CString` or an `Out`, passing a `string` as `StrBytes`,
+  reading a `declare c const`, and everything type-checked.
+- **`// SAFETY:` comments.** In packages, each unsafe block and expression needs a comment
+  containing `SAFETY:` in the comment lines directly above it, and each unsafe function such a
+  comment or an `Unsafe:` paragraph in its doc comment saying what callers must guarantee. A
+  missing one is an error (`crates/veltc/src/native/trust.rs`). std follows the same rule,
+  enforced by a test rather than at every build.
 
-## What crosses
+### What crosses
 
 | Velt | C | Notes |
 |---|---|---|
-| `bool`, `i8`…`i64`, `u8`…`u64`, `isize`, `usize`, `f32`, `f64` | `_Bool`, `int8_t`…, `ssize_t`, `size_t`, `float`, `double` | by value; `bool` is C's `_Bool` only (one byte, 0 or 1), never an `int` flag. C's `long` and `unsigned long` are 64 bits on Linux and macOS but 32 on Windows (LLP64): a declaration using them is right on one or the other until the header check (or a `c_long` type) |
-| `Ptr<T>`, `Ptr<T> \| null` | `T *` | an address; `null` is `NULL` (same word) |
-| `NativeHandle<T>` (argument for a `Ptr<T>` parameter) | `T *` | holds an in-flight reference for the call (below) |
+| `bool`, `i8`…`i64`, `u8`…`u64`, `isize`, `usize`, `f32`, `f64` | `_Bool`, `int8_t`…, `ssize_t`, `size_t`, `float`, `double` | by value; `bool` is C's `_Bool` only, never an `int` flag |
+| `Ptr<T>`, `Ptr<T> \| null` | `T *` | an address; `null` is `NULL` |
 | `null` (as a parameter type) | any pointer | always `NULL` |
-| `readonly u8[]`, `u8[]`, typed arrays, views (#1718) | `const T *` / `T *` | the first element's address (element `begin`'s for `xs.subarray(begin, end)`), borrowed for the call; the binding passes the length |
+| `readonly T[]`, `T[]` (`T` a number type), views of bytes | `const T *` / `T *` | the first element's address, borrowed for the call; the binding passes the length |
 | `StrBytes` | `const char *` | a `string`'s UTF-8 bytes, borrowed, no NUL; the binding passes `byteLength(s)` |
-| `CString` | `const char *` | an owned NUL-terminated copy (`new CString(s)`, one allocation, reusable) |
-| `CStr` (callback parameters only) | `const char *` | copied into a `string` by the trampoline |
-| `Out<T>` | `T *` | the `value` C writes: a number, `bool`, or `Ptr<U> \| null` for a `U **` (#3094) |
-| a `declare c struct` | by value, or `S *` as `Out<S>` / `Ref<S>` | the target's C layout and calling convention |
-| `CFunction<F>` | function pointer | a `NativeCallback`'s `.fn`, or one read from C memory |
-| `CallbackContext` | `void *` | a `NativeCallback`'s `.context` |
-| `Lease<T>` | `T *` | a `PinnedBuffer`'s lease |
-| `Completion<R>` | `VeltCompletion *` | completes the async call's promise (below) |
-| `void` | `void` | |
+| `CString` | `const char *` | an owned NUL-terminated copy (`new CString(s)`, refusing a NUL inside) |
+| `Out<T>` | `T *` | the `value` C writes through the pointer: a number, `bool`, or `Ptr<U> \| null` for a `U **` |
+| `void` | `void` | as a result |
 
-- **No hidden conversions**: a `string` crosses only as a `StrBytes` parameter (the declaration
-  says so) or through a `CString` the binding made; no call allocates on the common path.
-- **Strings to C without a copy.** Velt strings are stored as UTF-8 (canonical WTF-8, rt_abi.md
-  "Strings"), so a `StrBytes` argument is the string's own bytes. A string whose header says it
-  may hold a lone surrogate is copied first with U+FFFD for each (the rule of every other
-  output); U+FFFD is 3 bytes like the surrogate, so `byteLength(s)` stays exact. Well-formed
-  strings never copy. This is what `sqlite3_bind_text` takes and what rusqlite passes from a
-  `&str`.
-- **Empty arrays** cross as a non-null address aligned for the element type; only `null` is
-  `NULL`.
-- **Strings from C** are read explicitly (and unsafely): `readUtf8(p, len)`, `readCString(p)`,
-  `readBytes(p, len, into)` copy; invalid UTF-8 becomes U+FFFD. C keeps ownership of `p`.
+- **No hidden conversions.** A `string` crosses only as a `StrBytes` parameter (the declaration
+  says so) or through a `CString` the binding made. A `string` passed to any other parameter is
+  an error that names `StrBytes`.
+- **Strings to C without a copy.** Velt strings are stored as UTF-8 (canonical WTF-8,
+  [rt_abi.md](../contracts/rt_abi.md) "Strings"), so a `StrBytes` argument is the string's own
+  bytes. A string whose header says it may hold a lone surrogate is copied first with U+FFFD for
+  each; U+FFFD is 3 bytes like the surrogate, so `byteLength(s)` stays exact. Well-formed strings
+  never copy.
+- **Arrays** are read at the call, after every argument is evaluated, and borrowed for its
+  duration: the array cannot grow, shrink or move while C holds the address, and C may not keep
+  it. A `T[]` parameter not written `readonly` is a mutable borrow, refused for a read-only
+  array. An empty array crosses as a non-null address aligned for the element type; only `null`
+  is `NULL`.
+- **Pointer results.** A `Ptr<T>` result (not `| null`) that is NULL stops the program, naming
+  the C function, since C has no non-null pointer type a header could state.
+- **Strings from C** are read explicitly, in unsafe code: `readUtf8(p, len)`, `readCString(p)`
+  and `readBytes(p, len)` copy; invalid UTF-8 becomes U+FFFD. C keeps ownership of `p`.
+- `Ptr<T>` points at a `declare c type`, a number, `bool`, `void`, a C struct or another
+  pointer; a pointee that is a type parameter is checked where it is instantiated. It is a type
+  of its own (`hir::TyKind::Ptr`, declared in `std/ffi/ptr.velt`), one machine word, and
+  `Ptr<T> | null` is the same word with 0 as `null`, so nothing converts at a C call. Nothing
+  puts 0 in a `Ptr<T>`: `Ptr.at(0)` stops the program (`Ptr.orNull` gives `null` for 0), and on
+  wasm32 so does an address past 32 bits.
+- **`Out<T>`** takes a number, `bool` or `Ptr<U> | null` only: C may write NULL into a non-null
+  pointer, and writing a class reference, a `symbol` or a `shared<T>` would forge one.
+- **A pointer in the language** is Copy, prints as `Ptr(0x7ffd5e8c1a30)`, compares and hashes by
+  address, narrows and is truthy, and crosses workers as it is. Text of it (`${p}`, also as an
+  element, `${[p]}`), `typeof`, ordering, arithmetic, JSON, a pointer to another C type, and
+  conversion to or from `any`, `unknown`, `object` or an interface are compile errors, through
+  a type parameter too; `Ptr.addressOf(p)` gives the address. A class or array holding one
+  still converts to `any`, as one holding a SIMD vector does.
 
 ### Errors: `errno` and `GetLastError`
 
 A declaration asks for the error, as .NET's `SetLastError` does per P/Invoke:
 
-```ts planned
+```ts
 declare c("c", { errno: true }) function open(path: CString, flags: i32): i32;
 ```
 
-Lowering captures `errno` (`*__error()` / `*__errno_location()`) into the thread's error slot right
-after a call of such a function, and `GetLastError()` the same way on Windows; no runtime code
-between the call and the check can overwrite it. `lastOsError()` reads the slot, so its adjacency is
-a compiler guarantee, and it is meaningful only after a call that asked: any other leaves the slot
-alone. An async call that asks captures the error on its thread and carries it back with the result.
+Right after a call of such a function, lowering stores the C library's `errno` into the thread's
+error slot, std's `ThreadLocal<i32>` `OS_ERROR` (`std/os/rt.velt`): `*__error()` on Apple
+platforms, `*__errno_location()` with glibc and musl, `*_errno()` from the Universal CRT for the
+library `c` on Windows, and `GetLastError()` for any other library on Windows. No runtime code
+runs between the call and the store. `lastOsError()` reads the slot; it is meaningful only after
+a call that asked, since any other call leaves the slot alone. The accessor per target is
+`crates/velt_vir/src/c_abi.rs`, the one fact about the C library that lowering keeps.
 
-Off by default, because what a call pays shows: many libraries report failures through results and
-never need it, and capture is a call and a store per C call. SQLite's range select of a hundred rows
-costs 9% more with it, 1.04× the Rust crate it replaces against 0.94× without. A check of whether the
-whole program reads `lastOsError()` was rejected: what a `declare c` call does must not depend on
-code elsewhere.
+Capture is off by default because its cost is a call and a store per C call, and many libraries
+report failures through results and never need it (SQLite's range select of a hundred rows costs
+9% more with it). Whether a call captures depends only on its declaration, never on whether
+the program reads `lastOsError()` elsewhere.
+
+Wrappers that need `errno` only on failure declare the function without `errno: true` and read
+it themselves when the call returned -1 (std's `keepOsError`, `std/os/rt.velt`), so successful
+calls pay nothing.
+
+### Setting `errno`
+
+Code that must restore the live `errno` (a signal handler returns with the `errno` it found)
+reads and writes the C library's own through velt/ffi's unsafe `errno()` and `setErrno(value)`.
+They are std code over `declare c`: each C library gives the address of the calling thread's
+`errno` through a function of its own (`__error()`, `__errno_location()`, `_errno()`), chosen by
+the conditional import `#errno-location` (`std/imports.velt`). Where there is none
+(WebAssembly, JS hosts) `errno()` is 0 and `setErrno` does nothing. `errno` itself is a
+thread-local variable, which a C variable declaration cannot name.
 
 ### C variables
 
-A C library's variable (`extern char **environ;`, a library's `extern int sqlite3_temp_directory`)
-is declared like a function of the library, with `let` (the program may assign it) or `const`
-(only read):
+A C library's variable is declared like a function of the library, with `let` (the program may
+assign it) or `const` (only read):
 
 ```ts
 declare c("c") let environ: Ptr<Ptr<u8> | null>;
@@ -235,60 +225,29 @@ declare c("tiny") let verbosity: i32;
 declare c("tiny") const version_number: u32;
 ```
 
-- **Syntax**: `declare c("<library>") let|const name: T;`, a module-level declaration; the
-  library is named as for a function (it decides what links), the name is the link symbol, and
-  there is no initializer (C defines it) and no options. `declare c const NAME` stays the
-  header's *compile-time* value (a macro, an enumerator); `declare c("lib") const` is a variable
-  in the library's memory, read at run time. The parenthesized library is the difference, as
-  between `declare c const` and `declare c("lib") function`.
-- **Types**: what a `declare c const` can be: an integer, `f32`, `f64`, `bool`, `Ptr<T>` or
-  `Ptr<T> | null`. Structs and arrays by value wait for C structs' later layers.
-- **Use**: reading it is a load from C memory at each use (never narrowed, never folded), and
-  `x = v` or `x op= v` stores there; both need an unsafe context, as a C call does: C or another
-  thread may change it at any time, and nothing checks what a pointer in it points to. A `const`
-  one can't be assigned, and nothing is assigned through it (no fields). A `Ptr<T>` one that
-  holds NULL stops the program at the read, as a `Ptr<T>` result does. An imported C variable is
-  assigned where it is imported too (it is C's, not a module binding).
-- **Where**: only where a C function may be declared (std, and packages that say they have native
-  code and that the program allows); std names only `c`. A target that can't call the library
-  (WebAssembly) can't reach it: a reachable use is an error once lowering is done.
-- **Lowering**: one `Import` static per symbol, with no contents (`vir::StaticData::c_global`,
-  additive): LLVM declares `external global` (default visibility, reached through the GOT where
-  the target needs it), Cranelift a writable data import. **Windows**: every C library is a DLL
-  (packages link theirs, the CRT is the dynamic one), and a DLL's variable is reached through the
-  import library's `__imp_<name>` pointer, so lowering takes that symbol and loads the address
-  from it; no backend needs `dllimport`. `velt dev` finds the variable among the loaded
-  libraries, or says it is missing, as for a function: the driver lowers for the JIT
-  (`LowerOptions::jit`), which names the variable itself on every target, since only a linker
-  makes `__imp_<name>` and the host resolves `<name>` to the variable's address.
-- **Header check**: the headers must declare a variable of that name with external linkage, of
-  the C type the declaration's type maps to (the "What crosses" table, as a function's result is
-  compared); a `let` of a `const` C variable is an error, and so is a `static` one (no link
-  symbol) or a thread-local one (`_Thread_local`, `__thread`: each thread has its own, which a
-  symbol doesn't name; `errno` is one, reached through its function below). `c-headers.json`
-  records a variable's digest with what marks it as one (and whether it is `let`).
-
-Rejected: `declare c("lib") var` (Velt has no `var`); an address-only form
-(`declare c("lib") symbol environ: Ptr<…>` giving `&environ`), which every use would read
-through `addressLoad` by hand; making `declare c const` with a library mean a run-time read,
-which would make one word decide between a compile-time and a run-time value.
-
-### Setting `errno`
-
-`lastOsError()` reads what a `{ errno: true }` call left. Code that must restore the live
-`errno` (a signal handler returns with the `errno` it found, or the interrupted code sees the
-handler's) reads and writes the C library's own: velt/ffi's `unsafe` `errno()` and
-`setErrno(value)`. They are std code over `declare c`, no compiler work: each C library gives
-the address of the calling thread's `errno` through a function of its own (`__error()` on Apple
-platforms, `__errno_location()` with glibc and musl, `_errno()` in the Universal CRT), chosen by
-the conditional import `#errno-location` (std/imports.velt); elsewhere (WebAssembly, JS hosts)
-there is none, `errno()` is 0 and `setErrno` does nothing. `errno` itself is a thread-local
-variable, which a C variable declaration can't name (above).
+- **Syntax**: a module-level declaration with no initializer (C defines it) and no options. The
+  parenthesized library is the difference between `declare c const NAME` (the header's
+  compile-time value) and `declare c("lib") const name` (a variable in the library's memory,
+  read at run time).
+- **Types**: an integer, `f32`, `f64`, `bool`, `Ptr<T>` or `Ptr<T> | null`.
+- **Use**: a read is a load from C memory at each use (never narrowed, never folded), and
+  `x = v` or `x op= v` stores there; both need unsafe code, since C or another thread may change
+  it at any time. A `const` one cannot be assigned. A `Ptr<T>` one that holds NULL stops the
+  program at the read.
+- **Lowering**: one `Import` static per symbol, with no contents (`vir::StaticData::c_global`).
+  LLVM declares an `external global`; Cranelift a writable data import. On Windows every C
+  library is a DLL, and a DLL's variable is reached through the import library's
+  `__imp_<name>` pointer, so lowering takes that symbol and loads the address from it; no backend
+  needs `dllimport`. For `velt dev` the driver lowers with `LowerOptions::jit`, which names the
+  variable itself, since only a linker makes `__imp_<name>`.
+- **Header check**: the headers must declare a variable of that name with external linkage and
+  the matching C type. A `let` of a `const` C variable is an error, and so is a `static` one (no
+  link symbol) or a thread-local one (each thread has its own, which a symbol does not name).
 
 ### Variadic functions
 
-C's `...` (`fcntl`, `open`, `ioctl`, `syscall`, `printf`) is the declaration's last parameter,
-`...args: CVarArgs`, a type of velt/ffi that means only this:
+C's `...` (`fcntl`, `open`, `ioctl`, `printf`) is the declaration's last parameter,
+`...args: CVarArgs`:
 
 ```ts
 import { CVarArgs } from "velt/ffi";
@@ -300,263 +259,123 @@ unsafe { fcntl(fd, F_SETFL, flags | O_NONBLOCK) };
 ```
 
 - **What a call passes.** The fixed parameters are checked as any C call's. Each further argument
-  is passed as what it is: an integer, `f32`, `f64`, `bool`, `Ptr<T>`, `Ptr<T> | null` or `null`
-  (`NULL`). Anything else is an error naming its type (a `string`, an array, a struct; a spread
-  `...xs`: C's `...` has no array). A number literal there has no type of its own, so it is an
-  error with the fix (`0 as i32`, `1.5 as f64`): C reads the bits as the format or the command
-  says, and a guessed `f64` where C reads an `int` is a wrong value, not a conversion.
-- **C's default argument promotions** happen in lowering, as a C compiler does them: an integer
-  narrower than `int` (`i8`, `u8`, `i16`, `u16`) and `bool` pass as an `int` (sign- or
-  zero-extended by its own type), an `f32` as a `double`; `isize`/`usize` stay `ssize_t`/`size_t`
-  (32 bits on wasm32). VIR gets them promoted: a variadic `vir::ExternFn` has its fixed
-  parameters, and a call's further arguments are `I32`, `U32`, `I64`, `U64`, `F64` or `Ptr`.
-- **Each backend calls it with the target's variadic convention.** LLVM declares the function
-  `(…, ...)` and calls it with its type, so it places the arguments itself (on the stack on Apple
-  arm64, `%al` on SysV x86-64, a `double` in an integer register on Windows). Cranelift has no
-  variadic calls, so each call is an ordinary one whose signature puts the arguments there
-  (rustc_codegen_cranelift does the same): on AAPCS64 (Linux arm64) and SysV x86-64 they go where
-  named ones would; on Apple arm64 zeros fill the 8 integer registers (and the 8 float ones when a
-  `double` follows) and each variadic argument is 64 bits, so they land in their stack slots in
-  order; on Windows a variadic `double` passes its bits as an integer (on arm64 every float of
-  the call does). **SysV x86-64 also wants `%al` to bound the vector registers used, which
-  Cranelift can't set**: a callee reads it only to decide whether to save them, so integers and
-  pointers are right whatever it holds, but a `double` isn't. A debug build (Cranelift) on x86-64
-  Linux or macOS refuses a call with a float variadic argument, naming the declaration and
-  `--release` (LLVM) as the way; LLVM builds and every other target pass it. `velt dev` is
-  Cranelift too.
-- **`declare system`'s variadic forms** (`fcntl`, `open` in the compiler's table) are variadic
-  externs the same way, so a program that calls std's file functions and declares `fcntl`
-  itself links one symbol with one signature; the zeros lowering used to add before them on
-  Apple arm64 are now the Cranelift backend's, and LLVM calls them as variadic.
-- **Header check.** A declaration with `...args: CVarArgs` matches a variadic prototype and one
-  without it a fixed one, each way an error with the fix (`C function \`fcntl\` is variadic in
-  fcntl.h:…`, note: declare its `...` last); the fixed parameters compare as any function's.
-  `c-headers.json` records a variadic declaration's digest with its `...`, and nothing changes
-  for the others, so records already published still match.
-- **Cost.** None at run time beyond the call: the promotions are the casts a C compiler makes.
-  At compile time a declaration's last parameter is compared with one alias.
-
-Rejected: `CVarArg` values made by a constructor (`new CVarArg.int(1)`), Swift's
-`CVarArg`/`withVaList` route: an allocation per argument for what is a register move, and
-nothing it checks that the argument's own type doesn't already say. `va_list` parameters
-(`vprintf`) aren't declared yet: a `va_list` is target-specific storage C code fills, a C struct
-of layer 3.
+  is an integer, `f32`, `f64`, `bool`, `Ptr<T>`, `Ptr<T> | null` or `null`. Anything else is an
+  error naming its type (a `string`, an array, a struct, a spread). A number literal has no type
+  of its own there, so it is an error with the fix (`0 as i32`, `1.5 as f64`): C reads the bits
+  as the format or the command says, and a guessed `f64` where C reads an `int` is a wrong value.
+- **C's default argument promotions** happen in lowering (`crates/velt_vir/src/lower/c_call.rs`):
+  an integer narrower than `int` and `bool` pass as an `int`, extended by their own signedness,
+  and an `f32` as a `double`.
+- **Each backend uses the target's variadic convention.** LLVM declares the function `(…, ...)`
+  and places the arguments itself. Cranelift has no variadic calls, so each call is an ordinary
+  one whose signature puts the arguments where the convention wants them
+  (`crates/velt_codegen_cl/src/function/variadic.rs`), as rustc_codegen_cranelift does: on Apple
+  arm64 zeros fill the argument registers so each variadic argument lands in its stack slot; on
+  Windows a variadic `double` passes its bits as an integer. SysV x86-64 also wants `%al` to
+  bound the vector registers used, which Cranelift cannot set, so a debug build (and `velt dev`)
+  on x86-64 Linux or macOS refuses a call with a float variadic argument, naming `--release` as
+  the way.
+- **Header check.** A declaration with `CVarArgs` matches a variadic prototype and one without it
+  a fixed one; each mismatch is an error with the fix.
 
 ### One C function, several declarations
 
-One C function is often declared more than once in a program: velt/ffi's `readCString` declares
-`memcpy(dst: u8[], src: Ptr<u8>, n: usize): Ptr<u8>` and the scheduler's ring buffer
-`memcpy$sched(dst: usize, src: usize, n: usize): usize`. They link one symbol, so they must pass
-the same C signature; they don't have to name the same Velt types.
+One C function is often declared more than once in a program (velt/ffi declares
+`memcpy(dst: u8[], src: Ptr<u8>, n: usize): Ptr<u8>`, the unwinder
+`memcpy(dst: Ptr<u8>, src: StrBytes, n: usize): Ptr<u8>`, the scheduler
+`memcpy$sched(dst: Ptr<u8>, src: Ptr<u8>, n: usize): Ptr<u8>`). They link one symbol, so they
+must pass the same C signature, but they need not name the same Velt types.
 
-- **Same C signature** is decided on the C type each Velt type crosses as (the "What crosses"
-  table), by class, the same on every target:
-  - **a machine word**: every pointer form (`Ptr<T>`, `Ptr<T> | null`, `null`, `StrBytes`,
-    `CString`, arrays and views, `Out<T>`) and `isize`/`usize`. A pointer and
-    `size_t`/`ssize_t` are one register class and width on every target Velt compiles for
-    (64 bits natively, 32 on wasm32), so C reads one where the other was passed;
-  - each other integer by width **and** signedness (`i8` and `u8` differ: a caller extends
-    them, by sign or by zero, and C reads the extended register; `i32`/`u32` and `i64`/`u64`
-    are kept apart too, as the header check does);
-  - `bool` (`_Bool`), `f32`, `f64`, and `void` for a result.
-  Two declarations are the same C signature when they have as many fixed parameters, both or
-  neither end with `...args: CVarArgs`, and each parameter and the result is of one class.
-- **What lowering does**: the symbol's first call fixes the extern's VIR signature; a call
-  through another declaration of the same C signature casts each argument whose VIR type
-  differs (a `usize` to a `Ptr`, a `Ptr` to a `u64`: the same bits) and the result back, so the
-  extern has one signature and no backend sees two. A program that never mixes them compiles
-  exactly as before.
-- **A real mismatch is still an error**, once per declaration that differs, at that
-  declaration and naming the other one with where it is: `C function \`abs\` has two
-  signatures: \`abs$u8(u8): i32\` here, and \`abs$i8(i8): i32\` at src/lib.velt:1:1`, with a note
-  naming the first position that differs (`parameter 1 is \`u8\` here and \`i8\` there`) and
-  the rule.
-- **Not a check against headers**: declaring a pointer `usize` still fails the header check
-  where there is one (`usize` matches `size_t`). This rule is about two declarations agreeing
-  with each other, which the linker can't see; the header check is what says either is right.
-
-Rejected: requiring the same Velt types (today's rule): std and packages can't be loaded
-together when they spell one C function differently, though each is right. Merging by VIR type
-alone: `usize` is `u64` natively but `u32` on wasm32, so a program would compile for one target
-and not another.
+- **Same C signature** is decided by class, the same on every target: every pointer form and
+  `isize`/`usize` are one class (a machine word); each other integer is its own class by width
+  and signedness; `bool`, `f32`, `f64` and `void` are classes of their own. Two declarations
+  agree when they have as many fixed parameters, both or neither are variadic, and each position
+  is of one class.
+- **Lowering**: the symbol's first call fixes the extern's VIR signature, and a call through
+  another declaration of the same C signature casts each argument and the result whose VIR type
+  differs, so no backend sees two signatures.
+- **A real mismatch is an error** at each declaration that differs, naming the other one and the
+  first position that differs.
+- This rule is about two declarations agreeing with each other, which the linker cannot see; the
+  header check is what says either is right.
 
 ### A position in an array
 
-C often wants the address of an element, not of the array: `recv(fd, buf + filled, room)`,
-`memcpy(ring + tail, data + start, n)`, `cblas_daxpy(n, a, x + i, 1, y + i, 1)`. A number array
-argument crosses as the address of its first element, borrowed for the call; the address of
-element `begin` is that array's `subarray(begin, end)`:
+C often wants the address of an element: `recv(fd, buf + filled, room)`. In a `declare c` call,
+`xs.subarray(begin, end)` of a number array passed for a `T[]` or `readonly T[]` parameter
+passes the address of element `begin`, clamped as JavaScript's `subarray` clamps, with no object
+made and nothing copied. Lending follows the whole array's rule.
 
 ```ts
 declare c("c") function recv(fd: i32, buf: u8[], n: usize, flags: i32): isize;
-declare c("cblas") function cblas_daxpy(n: i32, a: f64, x: readonly f64[], incx: i32, y: f64[], incy: i32): void;
 
 // SAFETY: `data` has `end` bytes; recv writes at most `end - filled` of them.
 const got = unsafe { recv(fd, data.subarray(filled, end), (end - filled) as usize, 0) };
-// SAFETY: both arrays have `i + n` elements.
-unsafe { cblas_daxpy(n, 2.0, xs.subarray(i, i + n), 1, ys.subarray(i, i + n), 1) };
 ```
 
-- **What it is.** In a `declare c` call, `xs.subarray(begin, end)` of a `T[]` (`T` a number type)
-  for a parameter `T[]` or `readonly T[]` passes the address of element `begin`, clamped as JS's
-  `subarray` clamps (negative from the end, past the end the end), read at the call like the
-  whole array's. No object is made and nothing is copied. A `u8[]` parameter had it already (with
-  views of bytes, #1718); now every number array has it, with the element size scaling the
-  offset. Outside a C call an array has no `subarray` (a typed array has its own).
-- **Lending.** Exactly the array's own rule: borrowed for the call, so the array can't grow,
-  shrink or move while C holds the address, and C may not keep it (a `u8[]` parameter not written
-  `readonly` is a mutable borrow, refused for a read-only array). The binding passes the length,
-  as for the whole array; `end` bounds nothing C sees and is there for the reader and to match
-  JS.
-- **Why not an address.** `addressOf(xs, i): Ptr<T>` (unsafe) would hand Velt code a raw address
-  into an array that a later `push` may move; the reactor's stand-in did exactly that, keeping
-  `memset(data, 0, 0)`'s result across calls and an `await`. A pointer that outlives the call
-  is a `PinnedBuffer`'s lease (step 6), whose lifetime the ownership checker sees. The stand-in
-  existed because one C symbol had one signature: with "One C function, several declarations"
-  the reactor declares `recv$bytes(fd: i32, buf: u8[], …)` next to `recv$io(fd: i32, buf: usize,
-  …)` and passes `data.subarray(start, end)` at each call.
+An unsafe `addressOf(xs, i): Ptr<T>` is deliberately absent: it would hand Velt code a raw
+address into an array that a later `push` may move.
 
 ### C structs
 
-```ts planned
+```ts
 declare c struct CGPoint { x: f64; y: f64; }
+declare c struct CGSize { width: f64; height: f64; }
 declare c struct CGRect { origin: CGPoint; size: CGSize; }
-declare c("objc") function objc_msgSend$frame(obj: Ptr<NSView>, sel: Ptr<SEL>): CGRect;
 ```
 
-Fields in C order with C-crossable types (scalars, `Ptr`, other C structs; fixed arrays as tuples
-until `T[N]`, #1866 area 4); in Velt a plain value struct, never counted. A pointer field is C's
-`T *`, `Ptr<T> | null` with `NULL` as `null`; a non-null `Ptr<T>` field is checked wherever C
-hands the struct to Velt ("As built" 12). `Ptr.read(p, i)` and `Ptr.write(p, i, s)` read and
-write element `i` of an array of structs (or numbers, or pointers) in C memory. Passing and returning
-by value follows the target's convention (SysV x86-64 INTEGER/SSE eightbytes, AAPCS64
-homogeneous float aggregates, Win64 by reference over 8 bytes, `sret`, Apple arm64 variadics).
-**One table-driven classifier**, a port of rustc's `rustc_target::abi::call`, serves both
-backends, and a **differential ABI test** (abi-cafe style: generated C functions over many
-struct shapes, compiled with the system C compiler, called from both backends, every field
-compared, every CI target) is step 4's entry criterion.
+- A C struct has fields only: no methods, constructor, type parameters, defaults, optional,
+  private or static fields, `implements`, and at least one field. Fields are integers, `f32`,
+  `f64`, `bool`, C pointers and other C structs; a struct cannot hold itself by value, but a
+  pointer to it can be a field (`next: Ptr<Node> | null`). A Velt enum and a `declare c type` by
+  value are refused with what to declare instead.
+- **A pointer field** is C's `T *`: `Ptr<T>` or `Ptr<T> | null` (`| undefined` too), one word with
+  `NULL` as `null`. `Ptr<T> | null | undefined` is a Velt option and is refused.
+- In Velt it is a value: Copy, built from a literal of its type, with read-only fields (a
+  changed copy is `{ ...v, x: … }`). Lowering never counts or boxes it, so it stays inline, in
+  declaration order at natural alignment, which is C's layout for these fields on 64-bit
+  targets. Lowering checks each struct's layout against C's rules for its fields' types, and
+  that it is never boxed; either failing is an `ICE:` (`crates/velt_vir/src/lower/layout.rs`).
+- **`Ptr.read(p, index)` and `Ptr.write(p, index, value)`** (unsafe) read and write element
+  `index` of an array at `p`: a number, `bool`, C struct or C pointer, one load or store at
+  `p + index * size`. `void` and a `declare c type` have no size and are compile errors, through
+  a type parameter too. The caller promises that `p` is aligned for the element and that
+  `index + 1` elements are there; a misaligned `p` is undefined behaviour, which nothing checks.
+- **NULL on arrival.** C has no non-null pointer type, so `Ptr.read` checks every non-null
+  `Ptr<T>` in what it reads (a struct's fields at any depth) and stops the program on NULL,
+  naming the field (``field `name.text` of the `Entry` read is NULL``). Bindings for structs C
+  fills declare the fields C may leave NULL as `Ptr<T> | null`. Every later path by which a
+  struct arrives from C takes the same check.
+- **wasm32**: Velt's `usize`, `isize` and pointers take 8 bytes in memory on every target and C's
+  4 on wasm32, so `Ptr.read` and `Ptr.write` of an element holding one is a compile error there,
+  at the user's call. An element of fixed-width numbers has the same layout and is allowed.
+- It has no identity, so every comparison compares its content, with the numbers in it compared
+  as the operation compares numbers: `===`, `==` and `indexOf` by IEEE, `Object.is` by
+  SameValue, `Map` and `Set` keys and `includes` by SameValueZero.
+- `Ptr<S>` is a C pointer to it. A C struct is not raw API: a package's users can import it.
 
-## Checking declarations against C headers
+### Constants from headers
 
-Wherever headers exist, every declaration is checked against them, so a wrong `int` for
-`size_t` or a wrong struct is a build error, not memory corruption.
+`declare c const NAME: T;` declares a constant whose value the headers give per target. `T` is an
+integer, `f32`, `f64`, `bool`, `Ptr<U>` or `Ptr<U> | null`.
 
-```ts planned
-native: { c: {
-  sqlite3: { sources: ["native/sqlite3.c"], headers: ["native/sqlite3.h"] },
-  cblas: { system: { darwin: "framework:Accelerate", linux: "openblas" },
-           headers: { darwin: ["Accelerate/Accelerate.h"], linux: ["cblas.h"] } },
-} }
-```
+- It has no library in its syntax: the package's libraries that list `headers` are read in turn,
+  and two that give different values are an error.
+- clang evaluates what C can: an object-like macro, an enumerator, a `static const`. A
+  function-like macro or a name the headers lack is "not defined"; a variable or a string "has no
+  value a program can use".
+- For integers the value decides: any integer type that holds it fits (a flag `#define`d as
+  `int` can be a `u32`). A float type takes its C type's, `bool` `_Bool`, a `Ptr` a pointer
+  (NULL only if `| null`).
+- A function pointer constant is declared `Ptr<void>` (`SQLITE_TRANSIENT`), and a function
+  pointer parameter likewise.
+- Reading one needs no `unsafe`: the value is what the headers say. On a target without C
+  headers (WebAssembly) a reachable read is an error.
 
-- **When**: `velt native build` (every publish), CI, and a package author's local build parse
-  the headers with the pinned `zig cc -Xclang -ast-dump=json`, **once per target**, since types
-  differ by target (`long` is 32 bits on Win64). System headers come from zig's libc headers or
-  a pinned SDK.
-- **Functions** must exist in the headers. Parameters and results compare by the C type each
-  Velt type maps to, after typedefs resolve:
+### Exported functions: `@export("c_name")`
 
-  | Velt | Matches |
-  |---|---|
-  | `i8`…`u64`, `f32`, `f64` | the C type of that width and signedness; a C enum by its underlying type |
-  | `bool` | `_Bool` / `bool` only |
-  | `isize`, `usize` | `ssize_t`, `ptrdiff_t`, `intptr_t` / `size_t`, `uintptr_t`, which require them (never `i64`/`u64`), so a declaration right on one target is right on all |
-  | `Ptr<T>`, `Out<T>`, `Lease<T>` | `T *`, `T` the C type of that name |
-  | read-only arrays, `StrBytes`, `CString`, read-only leases | `const T *` (a non-const `T *` is accepted: many APIs omit `const`) |
-  | written arrays, `Out<T>`, mutable leases | non-const `T *` only |
-  | `CFunction<F>` | a function pointer matching `F`, compared recursively |
-  | `CallbackContext`, `Ptr<void>`, `null` | `void *` (`null`: any pointer) |
-
-  Variadics match exactly.
-- **Structs**: names, order, types, size, alignment and offsets per target. **Constants**: their
-  values, recorded per target.
-- **A mismatch is a build error** naming the declaration and the header line:
-  `\`sqlite3_bind_text\` parameter 4 is \`int\` in sqlite3.h:4581; \`n: i64\` declares
-  \`int64_t\`: use \`i32\``.
-- **Rust crates** are checked against a header the build generates from the crate's
-  `extern "C"` exports (cbindgen-style, or from the SDK's derive); Zig against `zig build`'s
-  emitted header. libc is checked against each CI target's libc headers in Velt's CI (std's
-  declarations), replacing the compiler's table.
-- **Installs check what was checked**: `c-headers.json`, at the package root, records per target
-  and library a digest of each checked declaration and of each of the package's own headers the
-  check read, and the compiler compares them with what it compiles and the headers it has. Users
-  never run clang. (A package with only C libraries has no bundle, so the record
-  is not in a bundle's `native.json`.)
-- **No headers** (a binary-only SDK): `unchecked: true` on the library's entry, shown in
-  `allowNative`'s error and `velt check`.
-
-What stays trusted is what no header expresses, and it lives in the `unsafe` blocks with their
-stated reasons: lease lifetimes, what a returned pointer points to and how long it lives, raw
-reads.
-
-## Native objects: `NativeHandle<T>`
-
-A class that holds a bare `Ptr` and frees it in `[Symbol.dispose]()` lets `dispose()` run while
-an async call on that pointer is still on a pool thread: a use-after-free in the binding, the
-hazard leases settle for buffers. `NativeHandle<T>` (velt/ffi, after .NET's `SafeHandle`) holds
-the pointer and its release:
-
-- `new NativeHandle(ptr, release)` takes ownership; `release` runs **exactly once**.
-- **It counts calls in flight** (an atomic count). Passing a handle where a `declare c` parameter
-  takes `Ptr<T>` takes a reference for the call: a synchronous call holds it for its duration,
-  an async call **moves it into the call** and the pool thread (or the completion) releases it
-  when C is done, whatever happens to the awaiting task, as for leases. `handle.use(p => …)`
-  (unsafe) lends the raw pointer to a synchronous closure under a reference, for raw reads.
-- `dispose()` marks the handle closed; the release runs when the last in-flight call ends.
-- Using a closed handle throws `HandleClosed`, a catchable error, never a use-after-free.
-
-The bindings of steps 3 and 6 (SQLite, llama.cpp) hold their handles in it, not in bare `Ptr`
-fields.
-
-## Callbacks: `NativeCallback<F>`
-
-```ts planned
-type LogFn = (level: i32, text: CStr, ctx: CallbackContext) => void;
-declare c("llama") function llama_log_set(cb: CFunction<LogFn> | null, ctx: CallbackContext | null): void;
-
-export function onLog(handler: (level: i32, text: string) => void): Disposable {
-  const cb = new NativeCallback<LogFn>((level, text) => handler(level, text),
-    { queue: { capacity: 256, whenFull: "drop" } });
-  // SAFETY: llama keeps the pointers until llama_log_set is called again; `cb` outlives that
-  // because the returned disposable unregisters it first.
-  unsafe { llama_log_set(cb.fn, cb.context); }
-  return cb;
-}
-```
-
-`new NativeCallback<F>(closure, options?)` owns a closure and gives `.fn`, a trampoline the
-compiler emits for `F`, and `.context`, the user data C passes back; `F` names that parameter
-with the type `CallbackContext`, and the closure sees the others. A call after dispose stops the
-program with a message (the context is a key with a generation). APIs without user data
-(`atexit`, signal handlers) use `NativeCallback.static(f)` with a module-level function.
-
-- **Captures follow `spawn`'s transfer rules** (moved in, or `shared`), so a callback can never
-  reach what the caller lent to the C call it runs inside. Rules keyed to a call's parameters
-  can't be complete: `gtk_main` takes no function but runs every registered handler. Results
-  are collected through a `Channel` (a handle copies share), a read-only table goes in as
-  `shared`, and hot paths step and read directly instead of collecting through callbacks.
-- **Through the executor, keyed by task.** A call into C records "task T is inside a C call on
-  this thread" (two stores); the trampoline reads it (one load). **At once** when T is the
-  callback's owner: a nested turn of the parked task (`qsort`, `sqlite3_exec`, a GTK signal
-  under `gtk_main`), and the result goes back to C. **Queued** otherwise (C's own threads, or
-  after the call returned): the arguments go into the callback's ring and the owner runs the
-  closure when next polled, wherever it runs. Only an `F` returning `void` may be queued (else
-  the program stops with a message); arguments are scalars, `Ptr`s and copied `CStr`s. A live
-  callback holds a keep-alive reference.
-- **Bounded rings.** Each callback gets a fixed ring at construction; the trampoline uses
-  atomics only (no allocation, no lock: real-time audio threads can call it). Options:
-  `capacity` (default 1024), `bytes` for copied strings (64 KiB), `whenFull`: `"drop"` (default,
-  counted in `cb.dropped`, with a one-time stderr warning on the first drop), `"overwrite"` or
-  `"latest"`. Completions are async calls or `Completion<R>`, never droppable messages.
-- A result-returning callback called on its owner's thread with no C call active stops the
-  program, until the main-thread loop (step 9) may relax it.
-- Errors and panics never unwind into C: an error escaping a callback is a panic, which aborts
-  in a trampoline. Hot reload goes through a slot per trampoline, so stored pointers stay valid.
-
-## Exported functions: `@export("c_name")`
-
-The other direction: a top-level Velt function C calls by name, or through its address
-(#2203 step 5; the Velt scheduler's worker threads start on one, #2649).
+A top-level Velt function that C calls by name or through its address (the Velt scheduler's
+worker threads start on one):
 
 ```ts
 import * as ffi from "velt/ffi";
@@ -566,65 +385,39 @@ function onRow(n: i32, row: Ptr<u8> | null): i32 { … }
 ```
 
 - **The decorator** is velt/ffi's (`std/ffi/export.velt`), found by its hook role
-  (`decorator_export`), never by name. `export` is a keyword, and a name only at a decorator's head
-  after `@`, as a `declare decorator function`'s name, and in an import or re-export specifier
-  (`import { export as cExport } from "velt/ffi"`; `import { export }` is an error, as a binding
-  can't be named `export`). So a module writes `@ffi.export(…)` through a namespace import or
-  `@cExport(…)`. velt/ffi rather than the prelude: `declare c` users import from there, and the
-  prelude is loaded by every program.
-- **Who may use it**: it is raw native API, as `Ptr` is ("The trust boundary"): only std and the
-  packages with native code the program allows (`allowNative`) import it. An export defines a C
-  symbol, so any other package could replace a C library function no list covers (an exported
-  `getaddrinfo` takes over the program's name lookups, a `clock_gettime` its clock).
-- **What may be exported**: a top-level function with a body, neither generic, async, a
-  generator, a method nor nested in another function. Its parameters and result are what a
-  `declare c` function passes by value: integers, `f32`, `f64`, `bool`, `Ptr<T>`,
-  `Ptr<T> | null`, and `void` as the result. It throws nothing (after inference): C has no
-  exceptions, so the function catches its errors and returns a result C reads.
-- **No module state**: C may call it on a thread Velt didn't start (a library's worker, a thread
-  C starts on it). Such a thread has no task to give the module lock back at the end of a step,
-  so the lock its first use of module state takes would never be released and every other use
-  would wait for ever. So module state (module-level `let`s and kept constants) is not reachable
-  from an export, directly or through what it calls: the walk that refuses it in a `with`
-  callback (module_state.rs), an error at the decorator naming the path.
-- **The name** is a C identifier, at most 255 bytes, given to one function of the program; not
-  `velt_…` (the runtime's) or `rust_…` (the Rust runtime's: `rust_eh_personality`), not
-  reserved by C (`__…`, `_` and a capital), not `main`, a C keyword
-  or one of the C library's common functions and objects (an executable's `free` would replace
-  the C library's for every caller, the runtime's included), and no `declare c` function of the
-  program has it. Each is an error at the decorator.
-- **It compiles to** a function with the unmangled symbol and the target's C calling convention
-  (Velt functions use it already for scalars). A pointer is the same word on both sides (#3094),
-  so nothing converts; a `Ptr<T>` parameter C passes NULL for stops the program, as it would
-  read as `null`. It calls the Velt function, which stays an ordinary function for Velt
-  callers. Built whether or not Velt code reaches it, in both backends; a std function with
-  `@export` is live for lazy std. Its `i8`, `i16` and `bool` parameters carry no `signext` /
-  `zeroext` in LLVM: AAPCS64 outside Darwin leaves their upper bits unspecified, and clang's
-  callers there don't extend them, so the export extends them itself (its result keeps the
-  attribute). Cranelift's functions extend them already.
-- **Panics**: one that reaches it ends the process; nothing unwinds into C (owner decision (b) on
-  #2649, until #2008). A Velt panic ends the process anyway unless a `catchPanic` poll is up the
-  thread's stack, which only a C function called from Velt can put between them. For that case
-  the function is `vir::Function::stops_unwind`:
-  - **LLVM** (release builds, every target): each call in it is an `invoke` whose landing pad
-    calls `abort`, as clang does for `noexcept` and Rust for `extern "C"`: `landingpad … cleanup`
-    with `rust_eh_personality` on Linux and macOS, `cleanuppad` with `__C_specific_handler` on
-    Windows (below). The unwinder's first phase finds the
-    `catchPanic`; the second one runs the landing pad, which aborts (SIGABRT, exit 134 on Unix).
-    Leaving the function without unwind information was not enough: LLVM writes CFI for it with
-    `-g`, and a call in tail position became a jump, which leaves no frame to stop at. An
-    `invoke` is never a tail call.
-  - **Cranelift** (debug builds) on Linux and macOS: no unwind information, so the unwinder finds
-    no way past it and the runtime aborts ("failed to initiate panic, error 5").
-  - **Cranelift on Windows** keeps its unwind information, whose absence would make the unwinder
-    take it for a leaf and misread the stack. On x64 its `.xdata` names a language handler
-    (`velt_eh_stop`, velt_codegen_cl `eh_seh.rs`) that ends the process with 101 when the search
-    phase of a Velt panic (`RaiseException`, docs/internals/design/unwinding.md "Windows") reaches
-    the frame, as the search ending there does on Linux and macOS. On arm64 nothing is caught.
-  - **LLVM on Windows**: the abort pad is a `cleanuppad` under `__C_specific_handler` (a
-    termination handler, run for every exception that unwinds the frame); under
-    `__CxxFrameHandler3` it was skipped for an exception that is not C++, so a Velt panic passed.
-- **Async code in it** (#2196): on a thread that isn't one of the executor's workers (a C
+  (`decorator_export`), not by name. `export` is a keyword, so a module writes `@ffi.export(…)`
+  through a namespace import or renames it (`import { export as cExport } from "velt/ffi"`).
+- **Who may use it**: it is raw native API. An export defines a C symbol, so it could replace a C
+  library function for the whole program (an exported `getaddrinfo` takes over name lookups), so
+  only std and allowed native packages may import it.
+- **What may be exported**: a top-level function with a body that is not generic, async, a
+  generator, a method or nested. Its parameters and result are what a `declare c` function
+  passes by value: integers, `f32`, `f64`, `bool`, `Ptr<T>`, `Ptr<T> | null`, and `void` as the
+  result. It throws nothing: C has no exceptions.
+- **No module state**: C may call it on a thread Velt did not start, which has no task to give
+  the module lock back at the end of a step. So module state (module-level `let`s and kept
+  constants) is not reachable from an export, directly or through what it calls; the decorator
+  reports the path.
+- **The name** is a C identifier of at most 255 bytes, given to one function of the program; it
+  cannot start with `velt_` (the runtime's) or `rust_`, be reserved by C (`__…`, `_` and a
+  capital), be `main`, a C keyword or one of the C library's common functions and objects, or
+  collide with a `declare c` function of the program.
+- **It compiles to** a function with the unmangled symbol and the target's C calling convention,
+  which calls the Velt function, which stays an ordinary function for Velt callers. A pointer is
+  the same word on both sides, so nothing converts; a `Ptr<T>` parameter C passes NULL for stops
+  the program, naming the export, as it would read as `null`. It is built whether or not Velt code reaches it. In LLVM its `i8`, `i16` and
+  `bool` parameters carry no `signext`/`zeroext`, since AAPCS64 outside Darwin leaves their upper
+  bits unspecified; the export extends them itself.
+- **Panics never unwind into C**: one that reaches the export ends the process. The function is
+  `vir::Function::stops_unwind`. In LLVM every call in it is an `invoke` whose landing pad
+  aborts, as clang does for `noexcept` and Rust for `extern "C"` (`landingpad … cleanup` with
+  `rust_eh_personality` on Linux and macOS, a `cleanuppad` under `__C_specific_handler` on
+  Windows); an `invoke` is never a tail call, so the frame always exists to stop at. Cranelift on
+  Linux and macOS emits no unwind information for it, so the unwinder cannot pass it; Cranelift
+  on Windows x64 names a language handler (`velt_eh_stop`, `crates/velt_codegen_cl/src/eh_seh.rs`)
+  that ends the process when a Velt panic's search phase reaches the frame
+  ([unwinding.md](unwinding.md)).
+- **Async code in it**: on a thread that isn't one of the executor's workers (a C
   library's), the promises it starts, its timers and sleeps run on the executor's worker 0, handed
   over through its inbox (std/lang/hooks/sched_foreign.velt). The C function marks the call's start
   and end (`schedExportEnter`, `schedExportExit`), and such a thread's tasks wait for the
@@ -632,873 +425,323 @@ function onRow(n: i32, row: Ptr<u8> | null): i32 { … }
   JS callback's comes before its microtasks, so a rejection it handles later in that run is not
   reported meanwhile. A `spawn` there runs beside the call at once. Work handed over after `main`
   and the tasks left ended (a thread that outlives them) never runs: the process is exiting.
-- **Its address**: `exportedAddress(f)` (std/lang/intrinsics, std only, unsafe) is the C
-  function's address as a `usize`, for a C API taking a function pointer (`pthread_create`,
-  `qsort`); its argument must name an `@export` function. A package gets the address from C
-  (a C source taking `&tiny_on_row`) until `CFunction<F>` (step 5).
+- **Its address**: `exportedAddress(f)` (std only, unsafe) is the C function's address as a
+  `usize`, for C APIs that take a function pointer (`pthread_create`, `qsort`); its
+  argument must name an `@export` function.
 - **Linking**: a package's C `sources` call an export by name. Release builds link the static
-  archive, whose reference the linker resolves; debug builds link the shared library, which finds
-  the symbol in the executable when it loads (macOS: the library is linked with
-  `-undefined dynamic_lookup`; ELF linkers export a symbol a linked shared library references).
-  Windows links the DLL in both modes, which can't call into the executable: by name works there
-  only with a static library (later). Release links strip an export nothing references
-  (`-dead_strip`, `--gc-sections`).
-- **WebAssembly**: an error at the decorator's use (no C callers to link with; a module export
-  has the host's own ABI, a separate feature).
-- **Not yet**: C structs by value (with `declare c`'s, layer 3); calling an export by name under
-  `velt dev` (the JIT names each function per version; its address works).
+  archive; debug builds link the shared library, which finds the symbol in the executable when
+  it loads (macOS links the library with `-undefined dynamic_lookup`). Release links strip an
+  export nothing references.
+- **WebAssembly**: using the decorator is an error there.
 
-## Buffers C keeps: `PinnedBuffer<T>` and leases
+### Checking declarations against C headers
 
-```ts planned
-declare c("llama") async function llama_decode_into(
-  ctx: Ptr<llama_context>, batch: Ptr<llama_batch>, logits: Lease<f32>): i32;
+Every declaration of a library that has headers is checked against them, so a wrong `int` for
+`size_t` is a build error, not memory corruption.
 
-const logits = new PinnedBuffer<f32>(vocab);
-// SAFETY: llama writes `logits` only during this call; the lease is released when it returns.
-await unsafe { llama_decode_into(this.#ctx, batch, logits.lend()) };
-const top = argmax(logits.view);
-```
-
-A pinned buffer is a block outside the counted heap with its own atomic count; it never moves or
-grows. Elements are numeric or C structs. Velt reads and writes it through `.view`; native code
-gets it only through a lease:
-
-| Lease | Checked | Enforced by |
-|---|---|---|
-| for a synchronous call (`lend()`, `lendReadonly()`) | compile time | the ownership checker: a mutable or shared borrow of the buffer |
-| moved into an async call | run time, only after a cancellation | the lease's count keeps the memory; `.view` stops the program while the block is lent; `await buf.returned()` waits |
-| owned (`lendOwned(buf)`), e.g. in a field | compile time | the buffer moves into the lease; `end()` gives it back |
-
-An async lease is released by the pool thread (or the completion) when C is done, whatever
-happened to the task; a test cancels during a long call and checks under the debug allocator
-that the buffer outlives it. Ending a synchronous or owned lease no earlier than C's last use is
-the statement its `unsafe` block's `SAFETY` comment makes.
-
-## Async
-
-Two forms, both `declare c async`, both cancellation-safe by one rule: **what C keeps is moved
-into the call** (`CString`, leases, handles' references, the completion), and released when C
-is done, whatever happens to the awaiting task. Arguments are scalars, `Ptr`s and moved values;
-no borrowed array or `StrBytes` (`StrBytes is borrowed for a synchronous call; an async call
-takes a CString`).
-
-**Blocking calls on the library's pool** (`llama_decode`, hundreds of milliseconds). Each library
-has its own pool, not the runtime's blocking pool, so file I/O never starves: `threads` in the
-package's manifest (default the core count), overridden by the root (`nativeThreads: { llama: 8
-}`) and at run time (`VELT_NATIVE_THREADS_LLAMA`). Calls past the limit wait in order; no thread
-is spawned past it; a cancelled waiting call leaves the queue and releases what it holds.
-
-**Non-blocking calls with `Completion<R>`** (network drivers):
-
-```ts planned
-declare c("pg") async function pg_query(conn: Ptr<pg_conn>, sql: CString, done: Completion<PgRows>): void;
-// Velt sees it as: (conn, sql) => Promise<PgRows>
-```
-
-The C function takes the completion and returns at once; native code completes it later, from
-any thread, through the small public `velt.h`:
-
-```c
-void velt_complete(VeltCompletion *done, const void *result);  // R, size and layout from the declaration
-void velt_fail(VeltCompletion *done, const char *code, const uint8_t *msg, size_t len);  // IoError
-bool velt_cancelled(const VeltCompletion *done);               // the awaiting task went away
-void *velt_alloc(size_t size, size_t align);                   // for owned results (u8[], string)
-```
-
-`R` is a C-crossable value, or an owned `u8[]`/`string` whose buffer native code made with
-`velt_alloc` (adopted without a copy; a `string` is UTF-8-checked). Each completion is completed
-or failed exactly once (twice is a fatal error, never a use of freed memory); a cancelled task's
-late completion is dropped, freeing an owned result; `velt_cancelled` lets native code stop
-early. It is today's `VeltFut`/`Completer` made a public C API.
-
-## Write effects (#854, #2180)
-
-A `declare c` function's write-effect summary comes from its declaration: scalars, read-only
-arrays, `StrBytes`, `CString`, read-only leases and handles write nothing (a handle's object is
-native memory); written arrays, `Out`, `Ref` and mutable leases write their argument. Callbacks
-add nothing (their captures are their own), so a C call is never an unknown callee.
-
-## The trust boundary
-
-- **`allowNative`.** Installing or building with a package that has native code is an error
-  until the root's `package.velt` lists it (`allowNative: ["sqlite", "llama"]`), recorded in
-  `velt.lock.json`. The error names the dependency chain and prints the exact line to add. It is
-  an error from the start (owner: no outside users yet); the PR that adds it updates the
-  templates, examples and playground so `main` stays green.
-  An entry binds to a source (#2367): a bare name allows the registry and local paths, a
-  `{ name, git }` entry that repository at any commit, a `{ name, url }` entry archives under an
-  https prefix. A git repository or an archive names its package whatever it likes, so a bare
-  `"sqlite"` never allows a `sqlite` from git; the check runs after resolution, on the source
-  that won (the root's own dependency entry wins over transitive ones). Contract:
-  [manifest.md](../contracts/manifest.md) "One source per package".
-- **`unsafe`** only in `allowNative` packages and std (above).
-- **Raw types and unsafe functions stay among native packages.** `Ptr`, `CFunction`,
-  `CallbackContext`, `Lease`, `declare c type`s and `unsafe function`s can be imported only by
-  `allowNative` packages: a binding may build on a lower-level binding, and user code never sees
-  them. Exported classes hold them privately (`#stmt: NativeHandle<sqlite3_stmt>`).
-- **`velt check`** lists, per package: its libraries (and `unchecked` ones), and its unsafe blocks
-  and functions by file and line (#1773).
-
-## Where libraries come from
-
-Every library is a logical name in `native.c`, with one source per target:
-
-```ts planned
+```ts
 native: {
   c: {
-    sqlite3: { sources: ["native/sqlite3.c"], headers: ["native/sqlite3.h"],
-               defines: { SQLITE_THREADSAFE: "1" } },
-    pgwire: { crate: "native/" },                                  // Rust, built with cargo
-    cblas: { system: { darwin: "framework:Accelerate", linux: "openblas", win32: "mkl_rt" } },
+    c: { headers: ["<string.h>"] },
+    sqlite3: { sources: ["native/sqlite3.c"], headers: ["native/sqlite3.h"] },
   },
-  targets: [ /* as today */ ],
+  targets: ["x86_64-unknown-linux-gnu", "aarch64-apple-darwin"],
 }
 ```
 
-- **`sources`** (C, C++, Zig; C for now, "As built"): built by `velt native build` with the
-  pinned `zig cc`/`zig c++`,
-  which cross-compiles every target from one machine, reproducibly (fixed flags, paths and
-  timestamps), so the registry or any CI can rebuild a bundle and check its checksum. Apple
-  frameworks are the exception: linking them needs the macOS SDK, which can't be redistributed,
-  so their macOS bundles are built on a macOS host or with an SDK the publisher supplies
-  (`--macos-sdk <path>`).
-- **`crate`** (Rust): built with cargo per target; exports `#[no_mangle] pub extern "C"`
-  functions, declared with `declare c` like any library.
-- **`system`**: the platform's library (`-lsqlite3`), a framework, or an import library, keyed by
-  the build conditions packages already use for conditional imports.
-- All of them get the same prebuilt bundles per target, checksums, cache, header check,
-  `allowNative` and listing. Users never need a C compiler or cargo. Release builds link
-  statically, debug builds the shared library, the dev JIT `dlopen`s it.
+- **The parser** is clang from the pinned zig (`crates/velt_toolchain/src/zig.rs`, version
+  0.17.1, downloaded with its checksum into `$VELT_HOME/cache/zig/` on first use, or `$VELT_ZIG`).
+  `zig cc -###` gives the clang command for the target, which runs with `-ast-dump=json`
+  **once per target**, since types differ by target (`long` is 32 bits on Windows). `<name.h>`
+  means a header of zig's set, the C library's for each target; a library's own headers ship
+  with the package (`native/sqlite3.h`). Windows targets read zig's MinGW headers, which have
+  MSVC's type sizes.
+- **Functions** must exist in the headers with as many parameters, variadic exactly when the
+  declaration is, and each parameter and the result must match after typedefs resolve:
+
+  | Velt | Matches |
+  |---|---|
+  | `i8`…`u64`, `f32`, `f64` | the C type of that width and signedness; a C enum by its underlying type |
+  | `bool` | `_Bool` / `bool` only |
+  | `isize`, `usize` | `ssize_t`, `ptrdiff_t`, `intptr_t` / `size_t`, `uintptr_t`, which require them, so a declaration right on one target is right on all |
+  | `Ptr<T>`, `Out<T>` | `T *`, `T` the C type of that name (`Out<Ptr<T> \| null>` is `T **`) |
+  | read-only arrays, `StrBytes`, `CString` | `const T *` (a non-const `T *` is accepted: many APIs omit `const`) |
+  | written arrays, `Out<T>` | non-const `T *` only |
+  | `Ptr<void>`, `null` | `void *` or a function pointer (`null`: any pointer) |
+
+  A function whose type has a calling convention other than the target's C one (`vectorcall`,
+  `preserve_most`, `ms_abi` off Windows) is refused. An enum whose width clang's dump does not
+  show cannot cross.
+- **Structs**: each `declare c struct` a library's declarations reach (a pointer's pointee, an
+  `Out<T>`'s `T`, or a reached struct's field) is checked with that library
+  (`crates/veltc/src/native/headers/structs.rs`):
+  - it must be a struct the headers define, under its tag or a typedef (`struct point`,
+    `typedef struct { … } box_t;`), with the same fields in the same order, each by its C name
+    and its type through the table above. A nested struct field and a pointer's pointee match a
+    `declare c struct` when both name the same definition, whichever spelling the header uses;
+  - its size, alignment and every field's offset are clang's own answers: a second run reads a
+    generated file whose enumerators are `sizeof`, `_Alignof` and `__builtin_offsetof` of each
+    struct, so `#pragma pack` and `aligned(…)` are refused, naming the offsets that differ;
+  - a union, a struct only declared, `packed`, bit-fields, C arrays (a field `float m[4]` is an
+    array, not the pointer it is as a parameter) and flexible array members are refused with
+    the header line;
+  - a struct no declaration reaches (one used only through `Ptr.at<S>` or a `Ptr<void>`) is not
+    checked.
+- **A mismatch is a build error** naming the declaration and the header line.
+- **Remembered**: a check that passed is kept in `$VELT_HOME/cache/headers/`, keyed by zig's
+  version, the target, the headers' names, the library's `defines` and the declarations, with a
+  digest of every file the parse read, so clang runs again only when one changes. The package's
+  files among them are build-stamp inputs, so a changed header rebuilds the program.
+- **Installs check what was checked.** `velt native headers` checks a package on every target
+  with C headers (macOS, Linux gnu and musl, Windows; x86_64 and aarch64) and writes
+  `c-headers.json` at the package root: per target and library, a digest of each declaration (a
+  struct's fields and layout included), of each of the package's own headers the parse read, and
+  of the library's `defines`, plus the values of its `declare c const`s. `velt publish` runs it for a package with `native.c`; git
+  packages commit the file. A fetched package's declarations must be in the record for the
+  build's target, and each recorded header it ships must have its digest. Users never run clang.
+- **Every C library a package declares functions of lists `headers` or says `unchecked: true`.**
+  `velt check` and the `allowNative` error show which libraries are unchecked.
+- **std** has no manifest, so `velt native headers --std` checks the std files listed in
+  `crates/veltc/src/native/headers/std_check.rs` against the C library headers listed there, on
+  every target; CI's `c-headers` job runs it (`crates/xtask/src/c_headers.rs`). The list only
+  grows.
+
+The record is not a signature: it catches mistakes, not a hostile package, which is what
+`allowNative` is for. What stays trusted is what no header expresses (what a returned pointer
+points to and how long it lives, raw reads), and it lives in the `unsafe` blocks with their
+stated reasons.
+
+### The trust boundary
+
+- **`allowNative`.** Installing or building with a package that has native code (C libraries in
+  `native.c`, or a Rust crate) is an error until the root's `package.velt` lists it. An entry
+  binds to a source: a bare name allows the registry and local paths, `{ name, git }` that
+  repository at any commit, `{ name, url }` archives under an https prefix
+  ([manifest.md](../contracts/manifest.md)). The check runs after resolution, on the source that
+  won. The root's `allowNative` is recorded in `velt.lock.json`, so a change of trust shows in
+  the lockfile's diff.
+- **A package declaring C functions has `native.c`** (`c: {}` when it calls only the C library);
+  without it, its first declaration is an error. So its manifest says it has native code.
+- **`unsafe` code** is allowed only in std and in allowed packages with native code (the program's
+  own files too, when its own `package.velt` declares native code). veltc checks the loaded
+  modules' ASTs (`crates/veltc/src/native/trust.rs`); sema has already required an unsafe context
+  for each unsafe call, so confining the contexts confines the calls. A file under
+  `node_modules`, or under a directory with its own `package.json` or `package.velt`, has no
+  package's trust.
+- **The raw API stays among native packages.** `Ptr`, the `export` decorator,
+  `declare c type`s and unsafe functions can be imported only there: by name, re-exported, or as
+  a namespace member. A safe function of an allowed package can still return a `Ptr`; the code
+  receiving it cannot read through it without `unsafe`.
+- **What the AST check cannot see stays out of reach another way.** Dynamic dispatch (`any`,
+  `Proxy`, `Reflect`) does not reach unsafe methods; the methods the language calls implicitly
+  (symbol-keyed ones, `toString`, `valueOf`, `toJSON`, `then`) cannot be unsafe; generated
+  source cannot contain `unsafe` code.
+- **`velt check`** ends, when it passes, with each allowed package with native code: its C
+  libraries (the system library each links on the target, or the sources it builds, and whether
+  its headers were checked), whether it has a Rust crate, and each piece of its unsafe code by
+  file and line. `--json` has the same under `native`.
+
+### Where libraries come from
+
+Every library is a logical name in `native.c`, with one source per target:
+
+- **`system`**: maps build conditions (`native`, `darwin`, `linux`, `win32`, `default`) to a
+  library name or, under `darwin`, `framework:Name`; the first condition the build has applies.
+  The name is checked to be at most 64 bytes and never a linker flag or a file. Every build links
+  the libraries the program's declarations name (`-lname`, `-framework Name`, `name.lib`), and
+  `velt dev` opens them (`dlopen` with `RTLD_GLOBAL`, `LoadLibraryA`). The bundled linker's kits
+  have only the platform's own libraries, so another system library links with the system
+  linker.
+- **`sources`**: `.c` files under `native/` with optional `defines`, built by `velt native build`
+  with the pinned `zig cc` for any target from any machine (macOS 11 on arm64 and 10.12 on
+  x86_64, glibc 2.17). The build is reproducible: `-O2 -g0 -fPIC -ffunction-sections`, run in the
+  package root with relative paths and `SOURCE_DATE_EPOCH=0`, so two builds in other directories
+  give the same bytes. A source may read only `native/` and zig's own headers; anything else is
+  refused, since the package would not ship it. A bundle is reused while a hash of its inputs
+  (zig's version, flags, target, package, sources, defines and every file under `native/`) is
+  unchanged. Libraries are built when a program links or loads them
+  (`crates/veltc/src/native/c_sources.rs`), never at install. `velt publish` builds every
+  `targets` entry, and installs fetch and verify the bundles like a Rust crate's, so users never
+  run zig. Building from source instead needs `VELT_NATIVE_FROM_SOURCE=1`.
+- **Linking**: debug builds link the shared library (with an rpath), release builds the static
+  archive, and musl programs always the static one. Windows links the DLL in both modes: zig's
+  Windows objects are MinGW's, and a DLL brings its own C runtime behind its import library.
+  `velt dev` loads the shared library with `RTLD_GLOBAL`; a change under `native/` restarts the
+  host.
 - **`c`, the C library**, is predefined: libc, libSystem, or the UCRT on Windows; WASI's libc on
-  `wasm32-wasip1` where system functions exist today. Since Visual Studio 2015 the UCRT defines
-  `printf`, `snprintf`, `sprintf`, `fprintf`, `vsnprintf` and the rest of the stdio family inline
-  in `<stdio.h>`, and `ucrt.lib` exports none of them: a declaration only names the symbol, so a
-  program that declares a function from `c` and targets `*-windows-msvc` also links
-  `legacy_stdio_definitions.lib`, their out-of-line copies: such a declaration puts the marker
-  `platform:c` among the program's C libraries (`native::c_decls::links`, kept by the build's
-  stamp), which the link turns into that library with MSVC and into nothing elsewhere. Only
-  then, not for every Windows link: a static library adds only what a program calls, so it
-  costs nothing unused, but it is one more file for `link.exe` to read in every build of every
-  program. It is no DLL, so `velt dev` loads nothing for the marker, and its JIT finds these
-  functions in no module on Windows yet; the bundled linker's kit has no such library either, so
-  they link with the system linker only.
+  `wasm32-wasip1`, the only library there ([wasi-libc.md](wasi-libc.md)). Since Visual Studio
+  2015 the UCRT defines `printf`, `snprintf` and the rest of the stdio family inline in
+  `<stdio.h>`, and `ucrt.lib` exports none of them, so a program that declares a function from
+  `c` and targets `*-windows-msvc` also links `legacy_stdio_definitions.lib`
+  (`crates/veltc/src/native/c_decls.rs`). A static library adds only what a program calls, so
+  this costs nothing when unused.
 
-### Fetched archives (#2367)
+`packages/sqlite` builds SQLite's amalgamation from `native/` with the options rusqlite's
+`bundled` build uses as `defines`, and declares its `SQLITE_*` constants with `declare c const`.
 
-Packages may come from a release archive at a URL, pinned by its sha256 (#2367 step 2:
-`{ url, sha256, strip?, path? }` in `dependencies`; contracts/manifest.md "Archive
-dependencies"), and `native.c` sources will (step 3). One extractor, `vpm::extract`, unpacks
-every such archive (`.tar.gz` or `.zip`, chosen by the first bytes). It reads the whole tree and checks it before writing anything:
+### std's system calls
 
-- **Paths:** it refuses absolute paths, `..`, a backslash, NUL and other control characters, and
-  what Windows can't hold or reads differently (`:`, `CON`/`NUL`/`COM1`…, a trailing dot or
-  space, an 8.3 short name such as `PROGRA~1`). It also refuses paths deeper than 128 directories,
-  two paths that differ only by case or Unicode normalisation (NFC, case-folded), an entry written
-  twice, a path that is both a file and a directory, and anything under a link.
-- **Links:** symbolic links are followed through the archive's other links, as the OS would
-  (finding a link by any case or normalisation of its name, as macOS and Windows do), and refused
-  when they leave the tree. A hard link becomes a copy of an earlier file.
-- **Entry types and formats:** it refuses devices, FIFOs, sparse files, and encrypted, zip64 or
-  multi-disk zips. It also refuses a zip whose local header disagrees with its central directory,
-  whose entries share data, or that has bytes no entry accounts for. All of this is checked for
-  every entry before anything is decompressed.
-- **Limits:** unpacked size, entry count and the compression ratio are enforced while
-  decompressing. The bytes of all paths, and the bytes looked at while following links, are
-  capped too.
-- **Writing:** it writes into a staging directory beside the destination, then renames that into
-  place. Every directory and file is created new, never through what is already on disk, so a
-  name the filesystem folds in a way the clash key doesn't know is an error, not an escape. Modes and timestamps are ignored. On Windows, links are written as files holding their
-  target, as git's `core.symlinks=false` does, so `git::tree_checksum` gives one archive one
-  checksum on every OS.
+std reaches the operating system through `declare c("c")` like any package: the file-descriptor
+API (`std/fs/fd/`, chosen per target by the `#fd-system` conditional import), sockets and the
+reactors, process and OS queries. The guards a system call needs live in Velt beside each unsafe
+call, with their `SAFETY` comments: a path ends with its only 0 byte (`checkPath`), a buffer
+range is clamped to the array and C gets the clamped length, `fcntl` takes only commands whose
+argument is an `int` (`fcntlInt`). Each guard panics, since a failing one is a bug in std, never
+bad input (`std/fs/fd/guards.velt`). Targets without the POSIX file API (Windows, WebAssembly)
+get `std/fs/fd/unsupported.velt`, whose functions fail with `ENOSYS`.
 
-The `extract` fuzz target (`fuzz/extract/`) covers the extractor.
+### Per-platform backends
 
-### Rust is a source language, not an ABI
-
-`velt_native` (the Rust SDK) shrinks to a convenience crate: `#[repr(C)]` types matching Velt's C
-types (`StrBytes`, slices, `Completion`), a derive that writes the C signatures and the header the
-check reads, and safe wrappers of `velt.h` (`velt_complete`). The Velt-specific native ABI
-(`VeltStr`/`VeltArray`/`IoResult` out-pointers, handle tables, the `velt_p__` prefix and
-signature records, the runtime function table) is retired; native_abi.md is replaced by this
-design's contract.
-
-### `declare system` becomes `declare c("c")`
-
-libc is a library like any other: std's system functions become `declare c("c")` declarations,
-checked against each CI target's libc headers instead of the compiler's table, which goes
-(`velt_vir/src/system/`). The guards the table enforced (`fcntl`'s commands, `CreateFileW` without
-`FILE_FLAG_OVERLAPPED`, paths with exactly one trailing 0, a buffer's length taken from the
-array) move into std's Velt wrappers around the `unsafe` calls, where their `SAFETY` comments
-state them; `velt/fs`'s public API is unchanged. std may use `unsafe` without `allowNative`.
-
-## Per-platform backends
-
-- **Same C API, different library**: one logical library mapped per target (CBLAS on
+- **Same C API, different library**: one logical library mapped per target in `system` (CBLAS on
   Accelerate, OpenBLAS or MKL), one set of declarations.
 - **Different APIs**: conditional imports. Each variant declares its own library's functions and
-  exports the same names and signatures (the variant check verifies it):
-  `"#backend": { darwin: "./src/backend/accelerate.velt", linux: "./src/backend/openblas.velt",
-  win32: "./src/backend/mkl.velt" }`. Only the chosen variant's libraries link.
-- Choosing between libraries on one platform needs a user-set condition (Node's `--conditions`),
-  a separate change to the build CLI and lock file.
+  exports the same names and signatures:
+  `"#backend": { darwin: "./src/backend/accelerate.velt", linux: "./src/backend/openblas.velt" }`.
+  Only the chosen variant's libraries link.
 
-## C++
+### C++
 
-C++ libraries are reached through their C API (llama.cpp, ONNX Runtime, LLVM-C, wgpu-native all
-have one), with the C++ standard library linked per target. A C++-only library gets a small
-`extern "C"` wrapper in the package's sources that catches every exception; one escaping into
-Velt is undefined behavior. Direct C++ interop (mangled names, classes, templates) is a non-goal.
+C++ libraries are reached through their C API (llama.cpp, ONNX Runtime, LLVM-C and wgpu-native
+all have one). A C++-only library gets a small `extern "C"` wrapper that catches every
+exception; one escaping into Velt is undefined behavior. Direct C++ interop (mangled names,
+classes, templates) is a non-goal.
 
-## Prior art: .NET
+## Compilation
 
-C# arrived at nearly the same shape: `unsafe` blocks and methods allowed per project
-(`AllowUnsafeBlocks`), `[LibraryImport]` declarations, per-platform library resolution,
-`Memory<T>.Pin()` for buffers past a call, `SetLastError`, unmanaged function pointers and
-`SafeHandle`, which this design takes as `NativeHandle`. Where .NET is weaker, this design is
-stricter: no run-time marshalling layer, borrows checked at compile time instead of `fixed`
-scopes trusted by convention, and the consumer's explicit `allowNative`.
+- **Syntax** (`crates/velt_syntax/src/parser/c_decls.rs`): `declare c` forms, `unsafe` blocks,
+  expressions and modifiers.
+- **Sema** (`crates/velt_sema`): C signatures (`collect/c_sig.rs`), C structs
+  (`collect/c_struct.rs`), unsafe contexts (`body/unsafe_code.rs`), variadic arguments
+  (`body/expr/c_varargs.rs`), the `@export` rules (`decorators/export.rs`).
+- **Driver** (`crates/veltc/src/native/`): the trust boundary (`trust.rs`, `unsafe_sites.rs`),
+  the header check and constants (`headers/`), libraries per target (`c_decls.rs`), C sources
+  (`c_sources.rs`). The driver sets each `declare c const`'s value in HIR (`GlobalDef::c_const`)
+  after sema.
+- **VIR** (`crates/velt_vir`): a C call is a direct call of a `vir::ExternFn`; lowering
+  (`lower/c_call.rs`, `lower/extern_args.rs`, `lower/system_views.rs`) takes addresses of
+  borrowed arrays and strings, makes `Out` slots, casts between declarations of one C signature,
+  promotes variadic arguments and stores `errno`.
+- **Codegen**: a direct call with the target's C convention in both backends.
+- **Link** (`crates/velt_link`): the libraries' archives or shared libraries and the system
+  libraries.
 
-## How it compiles
+## Runtime cost
 
-- **syntax/sema**: `unsafe` blocks, functions and their checks; the `SAFETY` lint; the crossing
-  types; the trust boundary; `NativeCallback` captures under the transfer rules; effect
-  summaries; leases as borrows (synchronous) or moves (async).
-- **VIR**: a `CCall` to a `CFn` (symbol, C signature, library); lowering takes addresses of
-  borrowed arrays and strings, makes `Out`/struct temporaries, takes handle references, records
-  the task, captures `errno`, and emits trampolines; `declare c async` lowers to a pool call or a
-  completion.
-- **codegen**: a direct call with the target's C convention in both backends, aggregates by the
-  shared classifier.
-- **link**: the libraries' archives or shared libraries and the system libraries.
-- **WebAssembly**: no libraries but `c` under WASI in the first steps.
-
-## Cost
-
-A `declare c` call costs a C-to-C call plus two thread-local stores (the task record), and one
-that asks for `errno` a call and a store more. `StrBytes`, borrowed arrays and synchronous leases cost nothing at run time; a
-handle argument one atomic increment and decrement; `Out<T>` a stack slot. A queued callback a
-few atomics and a copy into its ring.
-
-Gates: `packages/sqlite` on `declare c` reaches rusqlite on every `bench/db` SQLite workload and
-beats better-sqlite3 (per workload, instructions and wall clock, arm64 and x86-64); Postgres and
-Redis within ±3% of today or faster after their move (and the Velt drivers of the follow-up
-track matching or beating them); std's file I/O unchanged after the libc
-fold; every other benchmark within 3%.
+- A `declare c` call is a direct C call. `StrBytes`, borrowed arrays and `subarray` arguments
+  cost nothing beyond passing an address; an `Out<T>` is a slot the call writes. A pointer is
+  one word in a register, with no conversion.
+- `errno: true` adds a call to the C library's `errno` accessor and a store after each call.
+- A `declare c const` is a constant compiled in; a C variable is a load or store per use.
+- At compile time, the header check runs clang once per library and target when its inputs
+  change (about 0.2 s per library), and is remembered otherwise; installs compare digests only.
 
 ## Diagnostics
 
-- `calling \`sqlite3_step\` is unsafe: wrap it in \`unsafe { … }\` with a \`// SAFETY:\` comment`.
-- `this unsafe block has no \`// SAFETY:\` comment saying why it is sound`.
-- `unsafe code needs a native package: \`unsafe\` is allowed only in packages with \`native.c\``.
-- `package \`llama\` (through \`chat-kit\` → \`llama\`) has native code; add it to \`allowNative\`
-  in package.velt: allowNative: ["llama"]`.
-- `\`Ptr<sqlite3>\` can't be imported here: raw pointers stay among native packages`.
-- `\`sqlite3_bind_text\` parameter 4 is \`int\` in sqlite3.h:4581; \`n: i64\` declares
-  \`int64_t\`: use \`i32\``.
-- `\`sqlite3_bindtext\` is not declared in sqlite3.h; did you mean \`sqlite3_bind_text\`?`
-- `\`string\` cannot be passed to C here: declare the parameter \`StrBytes\` or pass a
-  \`CString\``; `\`StrBytes\` is borrowed for a synchronous call; an async call takes a
-  \`CString\``.
-- `this native callback captures \`rows\`, which its creator still uses; move it in or make it
-  \`shared\``.
-- `\`logits\` is lent to native code until \`lease\` ends (line 12); it can't be read here`.
-- `the statement handle was closed` (`HandleClosed`, at run time).
-- `\`sqlite3_open_v2\` has no library on \`wasm32-wasip1\``, naming the caller.
+Representative messages (notes after the first line):
 
-## Steps
+```text
+error: calling unsafe function `sqlite3_step` needs an `unsafe` block or function
+  note: wrap the call in `unsafe { … }`, with a `// SAFETY:` comment before it saying why the
+        call is sound
+error: using C variable `environ` needs an `unsafe` block or function
+error: `unsafe` code needs a native package
+  note: only std and packages with native code that the program allows (`allowNative`) may
+        use it
+error: `unsafe` code needs a `// SAFETY:` comment directly before it
+error: `Ptr` of `velt/ffi` is raw native API
+error: package `llama` (through `chat-kit` → `llama`) has native code, which runs with no
+       safety net
+       allow it in package.velt, if you trust it: allowNative: ["llama"]
+error: `string` cannot be passed to C: declare parameter `v` of `f` as `StrBytes` (velt/ffi)
+       to pass its bytes, borrowed
+error: C function `sqlite3_bindtext` is not declared in its library's headers (…)
+error: parameter 4 of C function `sqlite3_bind_text` is `int` in sqlite3.h:…, not the
+       declaration's `i64`
+error: C function `abs` has two signatures: …
+error: `sqlite3` has no library on wasm32-wasip1: only the C library `c` (wasi-libc) is
+       linked there
+```
 
-1. **The language**: `unsafe` blocks and functions, the `SAFETY` lint, the trust boundary and
-   `allowNative` (templates, examples and playground updated); `declare c`, `declare c type`,
-   `declare c const`; scalars, `Ptr`, `null`, arrays and views, `StrBytes`, `CString`, `Out`, raw
-   reads; `errno` capture; system libraries; the header check with the digest and `unchecked`;
-   effect summaries; `velt check`'s listing; LLVM, Cranelift and the dev JIT; the reference entry
-   and its docs-sync issue.
-2. **libc**: std's `declare system` uses become `declare c("c")` with the guards in Velt, checked
-   against each CI target's headers; the compiler's table goes. Gate: file I/O unchanged. Phase
-   3 of #2196 (the OS boundary and the allocator through `declare c`) builds on steps 1 and 2.
-3. **Bundled sources and SQLite**: `sources` built and cross-built reproducibly with `zig cc`,
-   checked against their headers; `NativeHandle`; `packages/sqlite` moves onto `declare c` and is
-   gated against rusqlite and better-sqlite3; its Rust crate is deleted.
-4. **C structs**, entered by the differential ABI test passing in both backends on every target.
-5. **`NativeCallback`**: task-keyed delivery, bounded rings, transfer-checked captures (the
-   `Channel` idiom documented), `CFunction`.
-6. **Async**: library pools, `PinnedBuffer` and leases, `Completion<R>` and `velt.h`; a llama.cpp
-   package as the worked example (tokens/s against `llama-cli`, thread counts reported).
-7. **Rust through `declare c`**: `crate` libraries with generated headers and the slimmed
-   `velt_native`; Velt's reactor in `velt.h` with the SDK's `AsyncRead`/`AsyncWrite` and spawner;
-   `packages/postgres` moves to `declare c` and the reactor API (gate: ±3% of today or faster on
-   its `bench/db` rows; `packages/redis` needs neither, it is plain Velt now), with one worked example of an off-the-shelf
-   trait-based crate; then the Velt-specific native ABI, native_abi.md and their tests are
-   removed.
-8. **Per-platform backends**: a BLAS package on Accelerate, OpenBLAS and MKL, benchmarked on
-   `sgemm` against each library called from C.
-9. **The main thread**: a task pinned to the process's main thread, driven by a platform loop in
-   turns as #1737 drives the WebAssembly executor; for GUI bindings. Designed with the GUI work.
-10. **Bindings from headers**: a source generator (`declare generated`) in a package that reads
-    clang's JSON AST and writes declarations that pass the check by construction.
+## Alternatives considered
 
-## Rust crates on Velt's scheduler (step 7)
+**A signature table in the compiler** for the C library. Safe, but closed to every other
+library, and the guards it enforced are clearer as Velt code beside each unsafe call.
 
-Today's Rust driver (`packages/postgres`, as `packages/redis` was) runs on Velt's scheduler through the
-native ABI's async I/O part (`velt_native::net::TcpStream`, `velt_native::rt::spawn`: the
-program's own sockets, timers and tasks, polled inline by the awaiting task). With that ABI
-retired, `velt.h` keeps them there (owner, 2026-11-03: option (a); no option may regress
-performance):
+**A run-time marshalling layer** (P/Invoke's default). Conversions on every call, invisible in
+the source. Here a `string` crosses only as `StrBytes` or a `CString` the binding made, so no
+call allocates on the common path.
 
-- **Velt's reactor as public C.** `velt.h` exposes registering a socket with the current
-  worker's I/O driver (readiness, read and write), wakers, spawning onto the program's scheduler,
-  and timers: the async I/O part of today's Rust-only ABI made public C, the same move as
-  `Completion`.
-- **The Rust SDK** (`velt_native`) wraps it and implements the standard async traits on top:
-  `tokio::io::AsyncRead`/`AsyncWrite` and `futures::io` for Velt sockets, plus a spawner. Crates
-  generic over those traits rather than tied to tokio's runtime then run on Velt's scheduler with
-  no thread hops: `tokio-postgres` through `connect_raw(stream)`, hyper on any `AsyncRead +
-  AsyncWrite`, most protocol crates that take a stream. Wrapping a Rust crate stays the quick way,
-  and stays fast.
-- **Crates hard-wired to `tokio::spawn`/`tokio::net`** fall back to their own runtime and
-  `Completion` (option (b), a fallback only). The guide documents the cost (two thread hops per
-  call) and how to avoid it: the crate's trait-based or `connect_raw`-style API, or a small
-  adapter.
-- **Cancellation**: a socket or task registered through the API belongs to the awaiting task's
-  scope and is closed or cancelled with it, by the rule of `Completion` and leases; late events
-  after cancellation are dropped, never delivered to freed state.
-- **Gate before the old ABI is removed**: the Rust `packages/postgres`, ported to `declare c` and
-  the public reactor API, runs within ±3% of today on the `bench/db` Postgres rows; plus one worked example of an off-the-shelf trait-based crate wrapped
-  this way.
+**`CVarArg` values made by a constructor** (Swift's `withVaList` route). An allocation per
+argument for what is a register move, and nothing checked that the argument's own type does not
+already say.
 
-## Follow-up track: first-party drivers in Velt
+**Requiring identical Velt types for two declarations of one C function.** std and packages could
+not be loaded together when they spell one C function differently though each is right. Merging
+by VIR type alone fails too: `usize` is `u64` natively but `u32` on wasm32.
 
-Separate from this design's steps and not a step-7 blocker (owner, 2026-11-03: option (c)):
-Postgres and Redis clients written in plain Velt on `velt/net`, as Node's `pg` and `ioredis` are
-plain JavaScript: protocol clients, not database rewrites. They run in the task with no FFI and
-no thread hops, and prove that `velt/net` and Velt's async carry real database protocols.
+**`declare c("lib") var`, or an address-only form for C variables.** Velt has no `var`, and an
+address-only form would make every use read through `addressLoad` by hand. Giving
+`declare c const` a run-time meaning when a library is named would let one word decide between a
+compile-time and a run-time value.
 
-- Redis's RESP first (small), then Postgres: startup, SCRAM, the extended query protocol, type
-  codecs, TLS, COPY.
-- **Gate**: match or beat the Rust drivers on the same `bench/db` rows. When a Velt driver
-  passes, the Rust one is retired.
-- **As built, Redis:** `packages/redis` passed and its crate is gone. A command queues its bytes and
-  its place in the line for replies under a short lock, and its own task sends them, so it takes no
-  hop through another task; one reader task per connection completes the line. Best of 13 interleaved
-  rounds, Linux, one compiler, Velt over Rust: `set_seq` 1.006, `get_seq` 1.003, `pipeline_set`
-  1.027, `pipeline_get` 1.034, `concurrent_get` 1.069. What the driver needed to get there: wait
-  before reading (a read per reply found nothing), no driver task, one-shot channels reused rather
-  than made per command. Channel operations are what cost most in `velt_rt`; Postgres will meet the
-  same.
+**Capturing `errno` when the program reads `lastOsError()` anywhere.** What a `declare c` call does
+must not depend on code elsewhere.
 
-SQLite goes the other way (owner, 2026-11-04): it is a C library, so `packages/sqlite` calls the
-real engine through `declare c` and its Rust crate is gone; the engine written in Velt moves out
-later. `declare c`'s own numbers, per operation in instructions against the crate it replaced
-(rusqlite in brackets): insert in a transaction 0.53× (1.05×), point select 0.68× (1.13×), range
-select 0.94× (0.99×), autocommit insert 0.76× (1.02×).
+## Limitations
 
-## As built
+- `declare c` calls are synchronous.
+- A C struct crosses only behind `Ptr<S>`: not by value, not as `Out<S>`. C arrays in structs
+  are not supported.
+- Function pointers cross only as `Ptr<void>`; C cannot call a Velt closure.
+- `declare c const` cannot be a string; a macro of a string literal is an error.
+- `va_list` parameters (`vprintf`) cannot be declared.
+- `sources` are C only. Frameworks cannot be built from `sources`, and header lists are not
+  per build condition, since zig has no macOS SDK.
+- On Windows, an export cannot be called by name from a package's C sources (the DLL cannot call
+  into the executable), and `velt dev` cannot find the out-of-line stdio functions. Under
+  `velt dev`, an export cannot be called by name (its address works).
+- Registry packages without C `sources` do not ship their headers, so installs trust that the
+  author ran the check on the headers they published.
+- On WebAssembly only the library `c` exists.
 
-Step 1 lands in layers, each its own pull request:
+## Not yet implemented
 
-1. `unsafe` blocks, expressions and functions (#2201).
-2. `declare c("lib") function` with scalars (integers, `f32`, `f64`, `bool`, `void`): a direct
-   call in both backends and the dev JIT (which finds the C library's functions with `dlsym`),
-   `errno` captured after it on Unix for a declaration that asks (on Windows, `lastOsError()` after a C call reads
-   `GetLastError()`, which the C library doesn't set, so it does not report the call's error
-   until step 2 captures the CRT's `errno`), calls
-   only in unsafe code. Until the trust boundary layer, a C declaration is allowed in std and in
-   any file with a package (not a lone file), the only library is `"c"`, the platform's C
-   library, and a call on WebAssembly is an error. One symbol has one C signature: a second
-   declaration (another `$suffix`, another package) may name other Velt types for the same C
-   types, and one of another C signature is an error (layer 9).
-   Under `velt dev` a C function no loaded library has is an error naming its declaration.
-   Step 1 is complete only with layers 5 (the trust boundary) and 6 (the header check): until layer
-   6, declarations are unchecked.
-3. `Ptr<T>` (a std struct over the address; `Ptr.at` is unsafe), `Ptr<T> | null`, `null`,
-   `declare c type`, arrays of numbers and views of bytes as buffers (read at the call, after
-   every argument), `StrBytes` (a well-formed string's own bytes; a std hook makes the U+FFFD
-   copy otherwise) and `byteLength`. Lowering converts pointers through std hooks
-   (std/ffi/ptr.velt), which LLVM inlines. A `declare c type` can't be made with `new`; an empty
-   array reaches C as a dangling non-null address; a `Ptr<T>` result (not `| null`) that is NULL
-   stops the program, naming the C function, since C has no non-null pointer type a header
-   could state.
-4. `CString` (a class over its NUL-terminated bytes, refusing a NUL inside), `Out<T>` for
-   numbers and `OutPtr<T>` for pointers (C writes the field whose address it gets: a
-   `Ptr<T> | null` field isn't a C pointer, so pointers have their own class), and the raw reads
-   `readBytes`, `readUtf8` and `readCString` (unsafe functions in Velt, over the std-only
-   intrinsic `addressLoad`; `readCString` calls `strlen` through `declare c("c")`). `Ptr<T>` and
-   `OutPtr<T>` point at a C type, a number, `bool`, `void` or another pointer. `CString.bytesOf`
-   lends its bytes read-only, zero-copy (Rust's `as_bytes`); #2228 closes the `readonly` gaps
-   that let a write through them.
-5. The trust boundary, in two parts.
-   - 5a: `allowNative` and `native.c`'s `system` libraries.
-     - A package declaring C functions has `native.c`, `c: {}` when it calls only the C library;
-       without it, its first declaration is an error. So its manifest says it has native code.
-     - Installing a package with native code (a Rust crate or `native.c`) that the root doesn't
-       list is an error naming the dependency chain and the line to add. The compiler checks
-       the same at each package's first C declaration.
-     - A library other than `c` is one of the package's `native.c` entries. Its `system` object
-       maps build conditions (`native`, `darwin`, `linux`, `win32`, `default`) to a library name
-       or, under `darwin` only, `framework:Name`, checked to be a name of at most 64 bytes and
-       never a linker flag or a library's file. The first condition the build has applies. A
-       target with none is an error at the declaration.
-     - Every build links the libraries the program's declarations name (`-lname`, `-framework
-       Name`, `name.lib`), and `velt dev` opens them (`dlopen` with `RTLD_GLOBAL`,
-       `LoadLibraryA`).
-     - The bundled linker's kits have only the platform's own libraries, so another system
-       library links with the system linker (`VELT_LINKER=system`).
-     - `sources` entries came with step 3 (layer 7); `crate` entries come with step 7.
-   - 5b: the code that needs trust stays in allowed packages and std.
-     - `unsafe` blocks, expressions, functions and methods are errors outside std and the
-       packages with native code that the program allows (a program's own files included, unless
-       the program's own package.velt declares native code; and code hidden in a default value).
-       veltc checks the loaded modules' ASTs (`native/trust.rs`); sema already requires an unsafe
-       context for each unsafe call.
-     - An npm package isn't part of the package around it: a file under a `node_modules`, or
-       under a directory below the package's root with its own `package.json` or package.velt,
-       has no package's trust (`PackageGraph::package_of`).
-     - What the AST check can't see stays out of reach another way. Dynamic dispatch (`any`,
-       `Proxy`, `Reflect`) doesn't reach unsafe methods and accessors: their names give a
-       `TypeError`. The methods the language calls implicitly (symbol-keyed ones, `toString`,
-       `toLocaleString`, `valueOf`, `toJSON`, `then`) can't be unsafe. A generator's output
-       can't contain `unsafe` code. A pointer has no dynamic form at all (#3094): it doesn't
-       convert to or from `any`; `CString`'s bytes are a private field of a std class, which is no member
-       through `any`.
-     - The raw API, `Ptr`, `declare c type`s and unsafe functions, can be imported
-       there only: by name, re-exported (through any number of modules), or as a namespace
-       import's member (`ffi.Ptr`). A safe function of an allowed package can still return a
-       `Ptr`; the code receiving it can't read or write through it without `unsafe`.
-     - The `SAFETY` lint: in those packages each unsafe block and expression has a comment with
-       `SAFETY:` in the comment lines directly above its line, and each unsafe function such a
-       comment or an `Unsafe:` paragraph in its doc comment (what callers must guarantee). It is
-       an error. std follows it too, checked by a test rather than at each build.
-     - `addressLoad` is `@intrinsic declare unsafe function`: its callers are unsafe code.
-     - The language server doesn't run these checks yet (builds and `velt check` do).
-   - 5c: what the program trusts, in view.
-     - `velt check` ends, when it passes, with each package with native code that the program
-       allows: its C libraries (with the system library each links on the target), whether it
-       has a Rust crate, and each piece of its unsafe code by file and line. `--json` has the
-       same under `native`. Nothing is listed for a program without such packages.
-     - `velt.lock.json` records the root's `allowNative` (sorted), so a change of trust shows in
-       the lockfile's diff and `--locked` refuses a lock that doesn't have it. A workspace's
-       lock has none, as its install has no root.
-     - Not yet: header-checked or `unchecked` libraries (layer 6) in the listing.
-6. The header check and `declare c const`, in parts.
-   - 6a-1: what the check needs.
-     - `native.c.<library>.headers`: the package's own headers (`native/sqlite3.h`) or C
-       library headers (`<string.h>`), one list for every target. `native.c.c` lists the
-       platform's C library's. `unchecked: true` says a library has none; `allowNative`'s
-       error and `velt check` show it, and `velt check` shows each library as checked against
-       headers, unchecked, or without headers.
-     - zig 0.17.1, pinned with each host's SHA-256 (`velt_toolchain::zig`), downloads into
-       `$VELT_HOME/cache/zig/` on first use (about 55 MB, 100 MB on Windows, 10 s), or `$VELT_ZIG` names one (CI,
-       offline machines).
-     - CI: the `c-headers` job checks every target from one Linux machine, only when a change
-       touches what it checks (`crates/xtask/src/c_headers.rs`); the nightly runs it whatever
-       changed. `VELT_ZIG_TESTS=1`, set only there, turns those tests on, and makes them fail
-       without `VELT_ZIG` instead of skipping; the other test runs leave them out. The jobs
-       whose tests build a package's C `sources` (packages/sqlite and what uses it) get the
-       cached zig as `VELT_ZIG` too, selected by the plan (`crates/xtask/src/zig.rs`).
-   - 6a-2: declarations checked against headers in the packages a build has locally (the
-     root, path dependencies, workspace members); registry and git packages come with 6b's
-     digest.
-     - zig's `zig cc -###` gives the clang command for the target; that command with
-       `-ast-dump=json` in place of the object parses the headers (`zig cc -fsyntax-only` still
-       renames an object it never made).
-     - Each declaration must name a function the headers declare, with as many parameters,
-       variadic exactly when it ends with `...args: CVarArgs` (layer 9), and each parameter and the result must match per the table above (typedefs
-       resolved, `long` per the target's data model, clang's predefined `__size_t`). Windows
-       targets read zig's MinGW headers, which have MSVC's type sizes. An enum is as wide as
-       its fixed type or its widest constant; a packed enum, one with `mode(...)`, and one whose
-       definition clang's dump doesn't show (only declared, or defined in a prototype) can't
-       cross. A function whose type has a calling convention other than the target's C one
-       (`vectorcall`, `pcs(...)`, `preserve_most`, `ms_abi` off Windows, `sysv_abi` on it) is
-       refused; `cdecl`, 32-bit x86's conventions (which 64-bit targets ignore) and `noreturn`
-       aren't conventions here.
-     - `<name.h>` means a header of zig's set: the C library's for each target. Other libraries'
-       headers (`<sqlite3.h>`) aren't in it, and nothing reads the machine's own: a package ships
-       its copy (`native/sqlite3.h`).
-     - A check that passed is remembered in `$VELT_HOME/cache/headers/`: keyed by zig's version,
-       the target, the package's root, the headers' names and the declarations, it holds a
-       digest of every file the parse read (clang's dependency list), so what a listed header
-       includes counts. clang runs again when one changes (about 0.2 s per library). The
-       package's files among them are build-stamp inputs, so a changed header rebuilds (and so
-       checks) a program whose sources didn't change.
-     - Not yet: headers per build condition (frameworks: zig has no macOS SDK), function
-       pointers (other than as `Ptr<void>`, 6c-1). Structs came with "As built" 13.
-   - 6b: what installs check.
-     - A C library a package declares functions of lists its `headers` or says
-       `unchecked: true`; `c`, the platform's C library, too (`c: { c: { headers:
-       ["<string.h>"] } }`). One doing neither is an error where it is declared.
-     - `velt native headers` checks the package on every target with C headers (macOS, Linux
-       gnu and musl, Windows; x86_64 and aarch64) and writes `c-headers.json`: per zig target
-       and library, a SHA-256 of each declaration (its name and the Velt types its parameters
-       and result pass) and of each of the package's own headers the parse read, with what they
-       include. Nothing is written when a check fails, or when there is nothing to record.
-       `velt publish` runs it for a package with `native.c`; git packages commit the file. It is
-       part of the package's contents.
-     - A fetched package (registry, git) is compared with its record for the build's target. A
-       missing record or target is an error. Each declaration the program compiles must be in
-       the set: a program loads some of a package's modules, so the set can hold more. Its
-       `unchecked` libraries aren't compared.
-     - Each recorded header the package has must have its digest (line endings aside, which a
-       checkout may change). A git dependency has the commit's whole tree, so a recorded or
-       listed header it lacks is an error too.
-     - A registry archive ships `native/` only for a package that builds C `sources`; there a
-       recorded or listed header under `native/` it lacks is an error too.
-     - **Limits.** Other registry archives don't ship `native/`, so there the headers can't be
-       compared: a registry package is trusted to have run the check on the headers it
-       published. And the record isn't a signature: an author can write any digest, so it catches
-       mistakes, not a hostile package, which is what `allowNative` is for.
-     - `velt check` says "headers checked" only for a library that passed here on this target,
-       by the check or by its record; on a target without C headers (WebAssembly), or with
-       nothing of the library declared, it says "headers listed".
-   - 6c-1: `declare c const NAME: T;`, a constant whose value comes from the headers per target.
-     - `T` is an integer, `f32`, `f64`, `bool`, `Ptr<U>` or `Ptr<U> | null`. It has no library of
-       its own in the syntax: its package's libraries that list `headers` are read in turn, and
-       one that has other value than another is an error. A package has to be allowed to declare
-       one as for a C function. A library that says `unchecked: true` has no headers to read, so
-       no constants; nor has std, without a manifest (step 2).
-     - clang evaluates what C can: an object-like macro, an enumerator, a `static const`.
-       `__typeof__(NAME)` in a generated file says it exists and its C type, an enumerator
-       initialized from `(intmax_t)(NAME)` holds its value in the AST dump, and a float comes
-       from the LLVM IR of a constant initialized from it. A function-like macro or a name
-       headers don't have is "not defined", a variable or a string "has no value a program can
-       use".
-     - The value decides for integers (a flag `#define`d as `int` can be a `u32`), any that fits;
-       a float type takes its C type's (`f32` a `float`, `f64` a `float` or `double`), `bool`
-       `_Bool`, a `Ptr` a pointer of its C type (NULL only if `| null`). Reading one needs no
-       `unsafe`: the value is what the headers say, and a `Ptr` can't be read through without it.
-     - **Until `CFunction<F>` (step 5), `Ptr<void>` matches a function pointer**, in `declare c`
-       function parameters too, or `sqlite3_bind_text` and `SQLITE_TRANSIENT` couldn't be
-       declared against `sqlite3.h` (`declare c const SQLITE_TRANSIENT: Ptr<void>;`).
-     - Values go by the target: `velt native headers` records each in `c-headers.json`, per
-       target in `constants` beside `checked`'s digests: the type declared, the C type and the
-       value, which a fetched build compiles in, and a digest of each of the package's own
-       headers clang read. A fetched package's come from there: a declaration that differs, a
-       value its type can't hold (checked as the author's was, with the recorded C type), or a
-       missing target is an error, and its headers are compared as a library's are. What clang
-       said is remembered like a check, with the files it read, and holds while they do; the
-       package's own files among them are build-stamp inputs, so a changed header changes the
-       program with no source changed.
-     - HIR: `GlobalDef::c_const` holds the value, set by the driver after sema; lowering reads it
-       instead of the initializer, in tables too. On a target without C headers (WebAssembly) a
-       reachable read is an error, as a C function's call is.
-     - Not yet: strings. A macro of a string literal is an error.
-
-7. Step 3's first part, C `sources`.
-   - `native.c.<library>.sources` (`.c` files under `native/`) with optional `defines`: one source
-     per library, so not with `system`; C++ and Zig sources, a system library a source needs beyond
-     what every program links, and a crate beside `sources` come later. A package with `sources`
-     ships all of `native/`, says `targets` beside `c`, and has a scoped name no more than a crate
-     does.
-   - `velt native build [--target]` compiles with the pinned `zig cc`, for any target from any
-     machine (macOS 11 on arm64 and 10.12 on x86_64, glibc 2.17, so a library neither raises what a
-     program needs nor depends on the builder; glibc 2.17 is an assumption, as nothing states the
-     runtime's floor) into a bundle: `-O2 -g0 -fPIC`, `-ffunction-sections`,
-     no sanitizer, run in the package's root with relative paths and `SOURCE_DATE_EPOCH=0`. Two
-     builds, in other directories, give the same bytes; a test compares them per target. On
-     Windows clang records zig's random temporary path in each object whatever `-g0` says, so
-     what is reproducible there is what ships: the DLL, linked with `-s`, and its import library.
-   - The bundle is reused while a hash of what it's built from is the same (`<out>.key` beside
-     it): zig's version, the flags, target, package name and version, each library's sources and
-     definitions, and every file under `native/` (a change to an included file rebuilds), never
-     their times. A source may read only `native/` and zig's own headers: clang's dependency list
-     says what it read, and anything else (`-I.`'s package root, `../`) is refused, since the key
-     wouldn't cover it and the package doesn't ship it. zig runs without `CPATH` and
-     `C_INCLUDE_PATH`. An unchanged build runs no zig. A library is built when a program links or
-     loads it (`native::c_sources`), not at install: `velt check`, `velt native headers` and the
-     editor never compile C. Every `sources` library of a package is built, and a package's
-     libraries its program doesn't call aren't linked.
-   - Linked as the design says: debug the shared library (by `-l`, with an rpath), release the
-     static one (`static/lib….a`, as an archive so unreferenced objects stay out), and a musl
-     program always the static one. **Windows links the DLL in both modes**, as a Rust crate does:
-     zig's objects for Windows are MinGW's (the headers `headers` reads too), and a DLL has its own
-     C runtime behind its import library; a static library for MSVC's linker needs more. `velt dev`
-     loads the shared library with `RTLD_GLOBAL`, so `dlsym` finds its functions; a change under
-     `native/` restarts the host, as for a crate.
-   - `velt publish` builds every `targets` entry (`--native-artifacts` still wins) and refuses a
-     missing one or none; the bundle goes through the registry's paths, checksums and lock
-     entries like a crate's. Those who install it fetch and verify it and never run zig. A
-     registry package with no bundle for the target, and a git package (which has none), build
-     here with the pinned zig only with `VELT_NATIVE_FROM_SOURCE=1`: compiling C runs no code of
-     the package's, but it downloads zig and trusts a build no checksum pins, so it is asked for
-     as for a crate. `--macos-sdk` waits for sources that link frameworks.
-   - `velt check` lists the sources (`tiny (built from native/tiny.c; headers checked)`, `sources`
-     in `--json`); `allowNative` asks for such a package as for any with native code; the header
-     check, and the clang runs that read a `declare c const`'s value, read a library's own
-     `headers` with its `defines` (which key the remembered values too), and `c-headers.json` records a
-     digest of them per library (none for a library without), so a fetched package whose
-     `defines` changed after its author's check is refused.
-   - Not yet: the registry or CI rebuilding a bundle and comparing checksums (what reproducibility
-     is for). Sources fetched from `git` or a `url` with a pinned
-     hash are #2367's: its `fetch` is a key beside these fields, and only changes where `sources`
-     are read from.
-   - `packages/sqlite` builds SQLite's amalgamation (`native/sqlite3.c`, 3.53.2 as released) with
-     rusqlite's `bundled` options as `defines`; `SQLITE_THREADSAFE=1` with each connection opened
-     `SQLITE_OPEN_NOMUTEX`, since the driver's gate keeps one thread in a connection. Its
-     `SQLITE_*` constants and `SQLITE_TRANSIENT` are `declare c const`s.
-8. C structs, in layers (plan on #2187). Layer 1, the language:
-   - `declare c struct S { x: f64; y: f64; }` is a struct (`TypeDecl::c_struct`) of fields only:
-     no methods, constructor, type parameters, defaults, optional, private or static fields,
-     `implements`, and at least one field. Fields are integers, `f32`, `f64`, `bool` and other C
-     structs; a struct can't hold itself by value. A Velt enum (an `i64`, where C's is usually
-     an `int`) and a `declare c type` by value are refused with what to declare instead.
-   - In Velt it is a value: Copy, built from a literal of its type, with read-only fields (a
-     changed copy is `{ ...v, x: … }`). HIR marks it (`AdtDef::c_struct`), and lowering never
-     counts or boxes it: an `object`, `any` or interface conversion records no identity for it
-     (`note_identity`, `note_identity_borrow`, `note_dyn_identity`). So it stays inline, in
-     declaration order at natural alignment, which is C's layout for these fields on the 64-bit
-     targets (on wasm32 `isize` and `usize` are 8 bytes in Velt and 4 in C).
-   - It has no identity, so every comparison compares its content (same.rs), with the numbers
-     in it compared as the operation compares numbers: `===`, `==`, `indexOf` and generic code
-     by IEEE (`NaN` unequal, `-0` equal to `0`), `Object.is` by SameValue, `Map` and `Set` keys
-     and `includes` by SameValueZero. An `any` holding one does the same: descriptor slot
-     `AnySame` takes the mode (any_eq.rs).
-   - `Ptr<S>` is a C pointer, like `Ptr` to a `declare c type`. A C struct isn't raw API: a
-     package's users can import it.
-   - Not yet:
-     - C arrays: a tuple type's storage isn't fixed (boxing/tuples.rs counts one the program
-       writes in place and copies, anywhere), so they wait for `T[N]`.
-     - Pointer fields: `Ptr<T> | null` was an option of the address in Velt, larger than C's
-       pointer. They came with `Ptr<T>` as a type kind ("As built" 11 and 12).
-     - Structs by value in `declare c` signatures, `Out<S>` and `Ref<S>` (the shared
-       classifier, both backends); the header check of structs; the differential ABI test.
-9. What the scheduler's reactor in Velt (#2649) needed of `declare c`, each its own commit:
-   - Variadic functions ("Variadic functions" above): `...args: CVarArgs` (std/ffi/c_var_args.velt,
-     an alias of `never[]` sema knows by its declaration, as `StrBytes`); `hir::CImport::variadic`
-     and `vir::ExternFn::variadic` (additive); sema checks the further arguments
-     (`body/expr/c_varargs.rs`), lowering promotes them (`lower/c_call.rs`), LLVM declares and
-     calls `(…, ...)`, Cranelift places them per target (`function/variadic.rs`), and the
-     header check matches variadic prototypes. `declare system`'s variadic forms became variadic
-     externs too.
-   - One C function, several declarations ("One C function, several declarations" above): the
-     symbol's first call fixes the extern's VIR signature, and a call through another declaration
-     of the same C signature (`CSig`, by `CClass` per position, `lower/c_call.rs`) casts its
-     arguments and result to it; another C signature is an error naming both declarations and
-     what differs.
-   - A position in an array ("A position in an array" above): sema's `system_view_arg` takes
-     `xs.subarray(begin, end)` for a C parameter of any number array type, not only `u8[]`, and
-     lowering scales `begin` by the element's size (`subarray_bytes`). The memset stand-in for
-     an array's address goes: a declaration taking the array (with the address-taking one beside
-     it, now that both agree) and `subarray` at each call.
-
-9. `@export("c_name")` (#2203 step 5): "Exported functions" above, with
-   `exportedAddress`. Tested: veltc's c_export.rs (C sources calling exports by name, a thread
-   started with `pthread_create` on one, a panic ending the process, and aborting under a
-   `catchPanic`), std/ffi/export.test.velt (`qsort` and `bsearch` through `exportedAddress`, both
-   backends), velt_sema's lang_export.rs and the golden `lang/errors/export_decorator`.
-
-10. Step 2, libc (#2187): std's `declare system` uses are `declare c("c")`, and the compiler's
-    table (`velt_vir/src/system/`, `lower/system.rs`, veltc's `native/system.rs`) is gone.
-    - **std**: the `#fd-system` conditional import (std/imports.velt) picks
-      `std/fs/fd/darwin.velt` or `linux.velt`, which export safe functions over the
-      declarations in `posix.velt` (`open`, `close`, `read`, `write`, `pread`, `pwrite`,
-      `fsync`, `fcntl`, `ftruncate`, `fstat`, `unlink`, `malloc`, `free`; `fdatasync` in
-      linux.velt, which macOS's headers lack), all `{ errno: true }` but `malloc`, `free` and
-      the four that move bytes (`read`, `write`, `pread`, `pwrite`): their wrappers
-      (`readInto`, `writeFrom`) read `errno` only when the call returned -1, right after it
-      (std/os/rt.velt `keepOsError`), instead of a store after every call.
-      Elsewhere (Windows, WebAssembly) `unsupported.velt` exports the same functions failing
-      with ENOSYS, so `openSync` there throws `ENOSYS: function not implemented, open` where it
-      used to be a compile error naming the system function (std has no Windows file-descriptor
-      functions to fold in: the table's kernel32 entries were only ever called by goldens).
-      `velt/fs`'s public API is unchanged.
-    - **The guards** are Velt beside each `unsafe` call, with `SAFETY` comments: a path ends
-      with its only 0 byte (`checkPath`, before `open` and `unlink`); a buffer range is clamped
-      to the array and C gets the clamped length (as the table took both from the array; the
-      callers have already checked the range with Node's errors, so the clamp changes nothing
-      for them and folds into the `subarray`);
-      `fcntl` takes only the commands whose argument is an `int` (`fcntlInt`, macOS's and
-      Linux's sets); `struct stat` is a 144-byte `malloc` that `fstat` fills and std reads at
-      the target's offsets (x86-64 macOS's plain `fstat` is the 32-bit-inode one: its layout,
-      not `fstat$INODE64`'s; offsets checked with zig against each target's headers).
-      `CreateFileW` without `FILE_FLAG_OVERLAPPED` has no caller in std: when std's Windows
-      file functions come, their wrapper refuses the flag. Variadic padding is #2695's.
-      Each guard (std/fs/fd/guards.velt) panics, a bug in std, never input; guards.test.velt
-      breaks each, and read_into.test.velt checks the clamp and the error of a failed call.
-    - **`errno`**: `lastOsError()` is std's `ThreadLocal<i32>` `OS_ERROR` (std/os/rt.velt), and
-      lowering stores into its storage after a `{ errno: true }` call (`c_abi::ERRNO_SLOT`, the
-      name lower/thread_local.rs gives that constant): `*__error()` on macOS,
-      `*__errno_location()` on Linux, and now on Windows the C runtime's `*_errno()` for library
-      `c` (`GetLastError()` for any other library), so `lastOsError()` after a Windows C call is
-      its `errno` (c_functions.rs's Windows test changed with it). The accessor per target is
-      velt_vir's `c_abi`, the one fact of the C library lowering keeps.
-    - **Header check**: std has no package.velt, so `velt native headers --std` checks std's
-      declarations in the files `native::headers::std_check::CHECKED` lists (the rest differ
-      from their headers in ways #3022 lists, and join that list file by file; it only grows)
-      on every target with the headers `native::headers::std_check::std_headers` lists
-      (`<errno.h>`, `<fcntl.h>`, `<stdlib.h>`, `<string.h>`, `<sys/stat.h>`, `<unistd.h>`,
-      `<unwind.h>`; Windows only `<errno.h>`, `<stdlib.h>` and `<string.h>`), each target
-      loading its own `#fd-system`, `#errno-location` and `#unwind-raise` variants (std's
-      `_Unwind_RaiseException` takes a `Ptr<void>` for the header's `struct _Unwind_Exception *`). CI's `c-headers`
-      job runs it (tests/c_headers.rs, which also breaks `pread`'s declaration); builds take
-      std's declarations as checked, as before.
-    - **Cost** (Linux arm64 VM under cachegrind, base origin/main 22de57f68, both compilers
-      debug builds, programs LLVM `--release`): `bench/fs/pread/pread.velt`, the fd API, runs
-      14.94 M instructions against 19.94 M (−25%): no `errno` store after each successful
-      `pread` (the system function table stored it after every call too) and no range check
-      beside the clamp. The first version of this step had 20.73 M (+3.9%) from a panicking
-      range check and the store; `readSync` then needed `@inline`, which it no longer does
-      (its IR 1.40 MB against base 1.31 MB, +7%; the first version 1.54 MB). Building it
-      (`velt build --release`, the build cache off): 1.474 G instructions against 1.377 G
-      (+7%), nearly all velt_opt on a larger `main`: `openSync` now inlines at its two calls
-      (base kept it out of line), which lets the descriptor fold into `readSync`'s checks
-      (`@noInline` on it costs 9% of the run's instructions). On x86-64 (no instruction
-      counter here: static code, the same build for `x86_64-unknown-linux-gnu`) each `pread`
-      call's own path is 15 instructions against base's 14 plus the `__errno_location` call
-      and the store. `bench/` VIR identical for all 217 other programs, debug and `--release`
-      (first version; the change since touches only std/fs/fd, std/os/rt and the unwinder's
-      declaration).
-    - **`declare system`** is an ordinary parse error (`system` is a name; Velt keeps no
-      errors for removed forms); `ast::FnSig::is_system` (`AST_FORMAT` 16) and
-      `hir::ExternFnDef::system` are removed, and velt_fmt, velt_doc, velt_lsp and tscompat
-      lose their `system` forms. The goldens of the table (`lang/system_function*`) are gone
-      with it: `declare c` has its own tests (c_functions.rs and the rest), and a lone file
-      can't declare C functions.
-11. `Ptr<T>` as a type kind, one word with 0 as `null` (#3094, its pull requests 1 and 2; layer 2
-    of C structs). Layers 3 and 4 above describe what it replaced.
-    - **Atomics at an address** (pull request 1): std's executor, channels and string crumbs
-      made a `Ptr` only to call the `ptrAtomic*` intrinsics; they are `addressAtomic*` over a
-      `usize` now (intrinsics.md "Memory at an address").
-    - **The type**: `hir::TyKind::Ptr(T)`. std/ffi/ptr.velt declares `Ptr`, a `type_kind` entry
-      of `velt_common::std_hooks` (`ffi_ptr_type`): every type written with that declaration's
-      name is the kind (velt_sema `ffi_ptr.rs`), its statics are Velt functions over the
-      intrinsics `ptrFromAddress` and `ptrToAddress`, and it is never a built-in type name, so a
-      user type `Ptr` stays the user's. Lowering gives it `Ty::Ptr` with the null niche
-      (`lower/type_kinds.rs`), so `Ptr<T> | null` is C's pointer word, 0 for `null`; the shape
-      key has a bit of its own (it answers every other question as `symbol` does).
-    - **No 0 in a non-null `Ptr<T>`**: `Ptr.at(0)` stops the program (`Ptr.orNull` is the one
-      for an address that may be 0); so does a NULL C result, C variable or exported function's
-      parameter declared `Ptr<T>`, and a `declare c const` of that type whose header value is
-      NULL is a compile error. std's C declarations that are passed NULL take `Ptr<T> | null`.
-      On wasm32 a pointer has 32 bits and an address (`usize`) 64: `ptrFromAddress` stops the
-      program for an address past 32 bits (`stop_if_past_32_bits`), which would otherwise be
-      cut to another address, or to 0 behind a `Ptr<T>`.
-    - **The pointee**: a number, `bool`, `void`, a `declare c type`, a `declare c struct` or
-      another pointer (`null` or `undefined`, not both). A pointee that is a type parameter is
-      checked where it is instantiated (`json::PtrUse::Pointee`, at the call, as the other
-      type-parameter rules are), from a generic function's signature as well as its body; one
-      an alias's type arguments supply is checked where the alias is written
-      (`Ctx::alias_pointees`).
-    - **Gone**: the struct and its private field, the four lowering hooks (`ptrOf`,
-      `ptrOrNull`, `ptrAddress`, `ptrAddressOrZero`) and `OutPtr<T>` with `hir::CTy::OutPtr`:
-      `Out<Ptr<T> | null>` is a `T **`. `Out<T>` takes a number, `bool` or `Ptr<T> | null`
-      only: C may write NULL into a non-null pointer, and writing a class reference, a `symbol`
-      or a `shared<T>` would forge one.
-    - **The language's other operations**, decided rather than inherited from the struct: a
-      pointer prints as `Ptr(0x7ffd5e8c1a30)` (std's `ptrPush`), compares and hashes by address,
-      narrows and is truthy, is copied (never moved), `structuredClone` copies it, and it crosses
-      workers as a Copy value; text (`${p}`, `String(p)`, `"" + p`, also of an array, tuple,
-      option or union holding one: `${[p]}`, `[p].join()`), `typeof`, ordering and arithmetic,
-      a pointer to another C type, `any`, `unknown`, `object` and interfaces (to and from them;
-      from them also as a view's element or value, `a as Ptr<T>[]`, `a as Record<string,
-      Ptr<T>>`, which read each through `any`: `Ctx::ptr_in_view`), and JSON are compile
-      errors, through a type parameter too (`json::Need::NoPtr`). A class
-      or an array that holds one still converts to `any`, as one holding a SIMD vector does:
-      its elements and fields through `any` are a `TypeError` (#924). A pointer holds no Velt
-      value: walks over what a value contains (printing, cloning, locks, liveness) stop at it
-      (`types::contents`), while walks over what a type mentions see its pointee.
-    - **Header check**: the shapes read `TyKind::Ptr`, and `Out<Ptr<T> | null>` compares
-      against `T **`; packages/sqlite's record is regenerated (with `tests/` moved aside: #3105).
-    - **Tests**: goldens `lang/c_pointers` (`wide.velt` also on wasm32-wasip1:
-      `wasm_goldens.rs`) and `lang/errors/c_pointer_rules`, velt_vir `tests/c_pointers.rs` (one
-      word in a signature, a field and a C call; fails without the niche; no pointer attributes
-      on a pointer parameter), std/ffi/ffi.test.velt.
-12. Pointer fields in C structs, `Ptr.read` and `Ptr.write` (#3094, its pull request 3; layer 2 of
-    C structs).
-    - **Fields**: a C struct's field may be `Ptr<T>` or `Ptr<T> | null` (`Ptr<T> | undefined`
-      too, the same word), the struct itself included (`next: Ptr<Node> | null`), C's `T *`
-      (velt_sema `collect/c_struct.rs`). `Ptr<T> | null | undefined` is a Velt option, refused.
-    - **The layout guarantee**: lowering checks every C struct's aggregate against C's rules
-      for its fields' C types on the 64-bit targets, offset by offset (layout.rs
-      `check_c_struct_layout`), and that it is never boxed (types.rs); either is an `ICE:`.
-    - **`Ptr.read<T>(p, index)` and `Ptr.write<T>(p, index, value)`** (std/ffi/ptr.velt, over
-      the std-only intrinsics `ptrRead` and `ptrWrite`, `hir::Intrinsic::PtrRead` /
-      `PtrWrite`, additive): element `index` of an array of `T` at `p`, `T` a number, `bool`,
-      a C struct or a C pointer, one load or store of its VIR type at `p + index * size`
-      (velt_vir `lower/ptr_memory.rs`). `void` and a `declare c type` have no size: a compile
-      error, through a type parameter too (`json::PtrUse::Memory`, at the instantiation).
-      The safety contract: `p` is aligned for `T` (C's alignment of the element) and `index + 1`
-      `T`s are readable (writable) there. The load or store is a place of the element's VIR
-      type, which the backends access at its natural alignment (LLVM emits `align N`), so a
-      misaligned `p` is undefined behaviour, not a slow access; nothing checks it.
-    - **Arrival check**: C has no non-null pointer, so a read compares every non-null
-      `Ptr<U>` in the element (a C struct's fields at any depth) with 0, and the program stops
-      on NULL, naming the field (`field `name.text` of the `Entry` read is NULL`). A struct
-      without one has no check. The later arrival paths take the same check: by-value results
-      and `Out<S>` (layer 3), struct pointers passed to callbacks (step 5),
-      `PinnedBuffer<S>.view` (step 6).
-    - **wasm32**: Velt's `usize`, `isize` and pointers take 8 bytes in memory on every target
-      and C's 4 on wasm32, so `Ptr.read` and `Ptr.write` of an element holding one is a
-      compile error there, at the user's call, naming the target. An element of fixed-width
-      numbers has the same layout and is allowed.
-    - **Tests**: goldens `lang/c_pointers/struct_fields` and `null_field`,
-      `lang/errors/c_pointer_memory`; velt_vir `tests/c_struct_layouts.rs` (size, alignment
-      and every offset of `{ptr}`, `{i8, ptr}`, `{ptr, i32}`, `{f32, ptr, f32}` and a nested
-      struct; the stride and the check; the wasm32 errors); velt_sema `lang_c_structs.rs`;
-      veltc `tests/c_struct_pointers.rs`, a round trip through a package's C `sources` (C fills
-      a chain of structs, Velt reads and follows it, Velt writes structs C checks field by
-      field), which fails with the null niche taken out (the layout check stops the build).
-    - **Not yet**: `Ptr.cast`. The header check of structs is "As built" 13.
-13. The header check of C structs (#2187 layer 4, #3094's pull request 4; veltc
-    `native/headers/structs.rs`).
-    - **Which**: each `declare c struct` a library's declarations reach (a pointer's pointee,
-      an `Out<T>`'s `T`, or a reached struct's field) is checked with that library, against its
-      headers, on each target with C headers. A struct no declaration reaches isn't checked.
-    - **Lookup**: the headers' struct of that name, by its tag (`struct point`) or a typedef
-      (`typedef struct { … } box_t;`, `typedef struct point point_t;`), from clang's
-      `RecordDecl`s (`ctype::CRecord`); a definition wins over a declaration.
-    - **Fields**: the same number, in order, each by its C name and its type through the table
-      functions use (`compare::compare`); a nested struct by name (`Shape::Struct`), a function
-      pointer as `Ptr<void>` until `CFunction`.
-    - **Refused**, with the header line: a union, a struct only declared, `packed`, bit-fields,
-      C arrays (a field `float m[4]` is a C array, no longer read as the pointer it is as a
-      parameter, until `T[N]`) and flexible array members.
-    - **Layout**: clang's own answers, not Velt's assumption. A second run of clang reads a
-      generated file whose enumerators are `sizeof`, `_Alignof` and `__builtin_offsetof` of each
-      struct that passed the field check (`structs::check_layouts`, as `declare c const`s' values
-      are read), compared with Velt's layout of the fields in order at natural alignment; so
-      `#pragma pack` and `aligned(…)` are refused, naming each offset and size that differs.
-    - **Records**: a struct is a declaration of the check (`Decl::structure`): its fields and
-      layout are part of the remembered result's key and of `c-headers.json`'s digests, so a
-      fetched package's structs are compared with its record as its functions are. The records
-      of packages without structs don't change.
-    - **Tests**: veltc `tests/c_struct_headers.rs` (structs by tag and by typedef on Linux,
-      macOS and Windows headers; each refusal; `#pragma pack` and `aligned(16)`), the round trip
-      of `tests/c_struct_pointers.rs` (now checked against its header), and unit tests of the
-      records' parsing (`ctype_tests.rs`), the probe and the digest.
-
-## Decisions
-
-- `declare c("lib")` (it names the ABI); one way to call native code, Rust included; `declare
-  system` folds into `declare c("c")` (owner).
-- `unsafe` blocks and functions with `SAFETY` comments, only in `allowNative` packages and std
-  (owner); `unsafe` functions and raw types importable only by `allowNative` packages.
-- Declarations checked against headers from step 1; `unchecked: true` without headers (owner).
-- `NativeHandle` after .NET's `SafeHandle` (owner).
-- `Completion<R>` and a public `velt.h` for non-blocking async (owner).
-- Rust drivers' I/O: Velt's reactor in `velt.h` with the SDK's async traits (step 7), own runtime
-  only as a documented fallback; first-party drivers in Velt as a separate track (owner).
-- `allowNative` is an install error from the start, no warning release (owner).
-- Re-entrancy: callback captures follow the transfer rules; async leases, handle references and
-  completions move into the call (review).
-- `@export` lives in velt/ffi, not the prelude; `export` is a contextual name at a decorator's head
-  (#2203 step 5, decided while the owner was away, open to revisit).
-- User-set build conditions: a separate change. A result-returning callback with no active C
-  call stops the program until step 9.
-- C's `...` is `...args: CVarArgs`; a number literal passed to it says its C type; Cranelift on
-  SysV x86-64 refuses a float variadic argument (no way to set `%al`) rather than pass it wrong
-  (layer 9, made while the owner was away, for review).
-- Two declarations of one C function agree when their C types are of one class per position
-  (pointers, `usize` and `isize` one machine word), not when their Velt types are the same
-  (layer 9, as above).
-- A position in an array is `xs.subarray(begin, end)` at the call, for every number array; no
-  `addressOf(xs, i)`: an address that outlives the call is a lease (layer 9, as above).
-- C variables are `declare c("lib") let|const name: T;`, used in unsafe code, lowered to an
-  `Import` static without contents and `__imp_<name>` on Windows; thread-local and `static` ones
-  are refused by the header check; `errno` is set through velt/ffi's `setErrno`, std code over
-  each C library's errno function (#2187 follow-up, made while the owner was away, for review).
-- Step 2 (made while the owner was away, for review): `declare system` is gone (an ordinary
-  parse error since Velt keeps no errors for removed forms); std's fd API on Windows
-  and WebAssembly throws ENOSYS instead of failing to compile; std's C declarations are
-  header-checked by `velt native headers --std` with a header list in veltc (std has no
-  manifest), not at each build; `lastOsError()` reads a std `ThreadLocal` the compiler stores
-  `errno` into, and Windows captures the C runtime's `errno` for library `c`.
+- **C structs by value** in `declare c` signatures, `Out<S>` and `Ref<S>`, following the target's
+  convention (SysV x86-64 eightbytes, AAPCS64 homogeneous float aggregates, Win64 by reference
+  over 8 bytes, `sret`). One table-driven classifier, a port of rustc's
+  `rustc_target::abi::call`, serves both backends, and a differential ABI test (generated C
+  functions over many struct shapes, compiled with the system C compiler, called from both
+  backends on every CI target) gates it. C arrays become fields once Velt has fixed-size
+  arrays.
+- **`NativeHandle<T>`**, after .NET's `SafeHandle`: a native object's pointer with its release,
+  which runs exactly once. It counts calls in flight: passing it for a `Ptr<T>` parameter takes
+  a reference for the call, `dispose()` marks it closed, the release runs when the last call
+  ends, and using a closed handle throws `HandleClosed`, never a use-after-free.
+- **`NativeCallback<F>` and `CFunction<F>`**: a Velt closure handed to C as a trampoline and a
+  `CallbackContext`. Captures follow `spawn`'s transfer rules. A callback runs at once when its
+  owning task is inside a C call on that thread (`qsort`, `sqlite3_exec`) and is queued into a
+  fixed, lock-free ring otherwise (C's own threads), run when the owner is next polled; only
+  `void` callbacks may be queued. `CFunction<F>` replaces `Ptr<void>` for function pointers and
+  is compared with headers recursively. Errors never unwind into C.
+- **`PinnedBuffer<T>` and leases**: memory outside the counted heap that never moves, lent to
+  native code past one call. A lease for a synchronous call is a borrow the ownership checker
+  sees; one moved into an async call keeps the memory until C is done, whatever happens to the
+  task.
+- **`declare c async`**, cancellation-safe by one rule: what C keeps is moved into the call and
+  released when C is done. A blocking call runs on the library's own thread pool (sized in the
+  manifest, overridable by the root and at run time). A non-blocking call takes a
+  `Completion<R>` that native code completes once from any thread through a small public C
+  header, `velt.h` (`velt_complete`, `velt_fail`, `velt_cancelled`, `velt_alloc`).
+- **Rust crates through `declare c`**: a `crate` library kind, built with cargo, exporting
+  `extern "C"` functions checked against a header generated from the crate; `velt.h` exposing
+  Velt's reactor (socket readiness, wakers, spawning, timers) so crates generic over the standard
+  async I/O traits run on Velt's scheduler without thread hops. The Rust-specific native ABI of
+  [native-packages.md](native-packages.md) is then retired.
+- **C++ and Zig sources**, a system library a source needs, and macOS frameworks built from
+  sources with a publisher-supplied SDK (`--macos-sdk`).
+- **Fetched sources**: `sources` read from a git repository or a URL pinned by hash.
+- **Rebuild verification**: the registry or CI rebuilding a bundle from `sources` and comparing
+  checksums, which the reproducible build makes possible.
+- **A main-thread task** driven by the platform's loop, for GUI bindings.
+- **Bindings from headers**: a source generator that reads clang's AST and writes declarations
+  that pass the check by construction.

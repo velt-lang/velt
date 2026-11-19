@@ -12,8 +12,10 @@ fn count_words(_n: usize) {
 }
 
 /// A fixed-size bit set over local indexes (or over the indexes of some numbering of them).
+/// Up to 128 bits are inline: the async spill analysis makes several per block, and most
+/// functions have that few locals (heap sets were 13% of a todo_api build's allocations).
 #[derive(PartialEq)]
-pub(in crate::lower) struct Bits(Vec<u64>);
+pub(in crate::lower) struct Bits(smallvec::SmallVec<[u64; 2]>);
 
 impl Clone for Bits {
     fn clone(&self) -> Self {
@@ -25,7 +27,7 @@ impl Clone for Bits {
 impl Bits {
     pub(in crate::lower) fn new(n: usize) -> Self {
         count_words(n.div_ceil(64));
-        Bits(vec![0; n.div_ceil(64)])
+        Bits(smallvec::smallvec![0; n.div_ceil(64)])
     }
     pub(in crate::lower) fn get(&self, i: usize) -> bool {
         self.0[i / 64] >> (i % 64) & 1 == 1

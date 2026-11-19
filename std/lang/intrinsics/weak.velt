@@ -39,3 +39,11 @@ export declare function weakRefNew<T>(target: T): u32;
 /** The target of weak reference `ref` (counted), or null once it was freed. */
 @intrinsic
 export declare function weakRefDeref<T>(ref: u32): T | null;
+
+/** Drops weak map `map` (not 0): every value is released. */
+@intrinsic
+export declare function weakMapDrop(map: u32): void;
+
+/** Drops weak reference `ref` (not 0). */
+@intrinsic
+export declare function weakRefDrop(ref: u32): void;

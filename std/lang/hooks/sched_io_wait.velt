@@ -92,7 +92,7 @@ export function waitFor(handle: u64, kind: u32, arg: u64, deadline: u64): usize 
   const b = io.io();
   if (deadline !== 0) {
     // Its place in the timer list is this worker's.
-    sp.anchor();
+    sp.anchorFixed();
   }
   const f = m.alloc(W_SIZE);
   m.st(f, m.ld(b + io.IO_WAIT_POLL));

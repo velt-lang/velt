@@ -14,8 +14,9 @@ fn std_diagnostics(src: &str) -> String {
 }
 
 const IMPORTS: &str =
-    "import { addressArray, addressAtomicCas, addressAtomicLoad, addressAtomicRmw,
-  addressAtomicStore, addressCall, addressLoad, addressStore, atomicAddress, fnAddress, futDrop,
+    "import { addressArray, arrayByteLength, arrayDataAddress, arrayReadAddress, addressAtomicCas,
+  addressAtomicLoad, addressAtomicRmw, addressAtomicStore, addressCall, addressCall3,
+  addressCallWord, addressLoad, addressStore, atomicAddress, fnAddress, futDrop,
   futPoll, promiseAt, slotPut, slotTake, stateDrop, statePoll }
   from \"velt/lang/intrinsics\";";
 
@@ -132,6 +133,64 @@ fn an_array_at_an_address_holds_numbers_and_needs_unsafe() {
     );
     // Not in unsafe code.
     let e = std_err("function main() { console.log(addressArray<u8>(8, 1).length); }");
+    assert!(e.contains("unsafe"), "{e}");
+}
+
+#[test]
+fn the_address_of_an_array_s_bytes_is_of_numbers_and_needs_unsafe() {
+    std_ok(
+        "function size<T>(xs: T[]): usize {
+           // SAFETY: the address is not read through.
+           const at = unsafe { arrayDataAddress(xs) };
+           return at == 0 ? 0 : arrayByteLength(xs);
+         }
+         function main() {
+           const xs: f32[] = [1, 2];
+           // SAFETY: the address is not read through.
+           const at: usize = unsafe { arrayDataAddress(xs) };
+           console.log(at != 0, arrayByteLength(xs), size(xs));
+         }",
+    );
+    let e = std_err(
+        "function main() { const xs: string[] = []; unsafe { console.log(arrayDataAddress(xs)); } }",
+    );
+    assert!(
+        e.contains("`arrayDataAddress` gives the address of the bytes of an array of numbers"),
+        "{e}"
+    );
+    assert!(
+        e.contains("its element type must be a number type or `bool`, found string"),
+        "{e}"
+    );
+    let e =
+        std_err("function main() { const xs: string[] = []; console.log(arrayByteLength(xs)); }");
+    assert!(
+        e.contains("`arrayByteLength` gives the byte length of an array of numbers"),
+        "{e}"
+    );
+    // The address is unsafe to take; the length is not.
+    let e = std_err("function main() { const xs: u32[] = []; console.log(arrayDataAddress(xs)); }");
+    assert!(e.contains("unsafe"), "{e}");
+    std_ok("function main() { const xs: u32[] = [1]; console.log(arrayByteLength(xs)); }");
+    // The address for reading takes an array its holder may not change.
+    std_ok(
+        "function at<T>(xs: readonly T[]): usize {
+           // SAFETY: the address is not read through.
+           return unsafe { arrayReadAddress(xs) };
+         }
+         function main() {
+           const xs: readonly f64[] = [1, 2];
+           console.log(at(xs) != 0);
+         }",
+    );
+    let e = std_err(
+        "function main() { const xs: string[] = []; unsafe { console.log(arrayReadAddress(xs)); } }",
+    );
+    assert!(
+        e.contains("`arrayReadAddress` gives the address of the bytes of an array of numbers"),
+        "{e}"
+    );
+    let e = std_err("function main() { const xs: u32[] = []; console.log(arrayReadAddress(xs)); }");
     assert!(e.contains("unsafe"), "{e}");
 }
 
@@ -255,6 +314,8 @@ fn the_calls_through_an_address_need_unsafe_code() {
         "statePoll(8, 16, 24)",
         "stateDrop(8, 16)",
         "addressCall(8, 16)",
+        "addressCallWord(8, 16)",
+        "addressCall3(8, 16, 24, 32)",
     ] {
         let e = std_err(&format!("function main() {{ console.log({call}); }}"));
         assert!(e.contains("unsafe"), "{call}: {e}");

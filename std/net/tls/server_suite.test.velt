@@ -6,7 +6,7 @@ import {
   AES_256_GCM_SHA384,
   CHACHA20_POLY1305_SHA256,
 } from "velt/net/tls/record_cipher";
-import { chooseSuite } from "velt/net/tls/server_handshake";
+import { chooseSuite } from "velt/net/tls/server_hello13";
 import { describe, expect, it } from "velt/test";
 
 // What rustls, OpenSSL and h2load clients offer, in their order.

@@ -413,3 +413,131 @@ fn half_dot_products_on_this_cpu_print_the_golden() {
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     assert_eq!(String::from_utf8_lossy(&o.stdout), want);
 }
+
+/// velt/half's `dotBf16Fast` in a release build for any arm64 CPU asks at run time whether the
+/// CPU has FEAT_BF16 and runs `bfdot` where it has (#3129): the kernel's capability word on
+/// Linux, a sysctl on macOS. It asks once for a dot product: the instruction is in a function
+/// compiled for it, with no check in it. An x86-64 build has neither the instruction nor the
+/// question, and `bf16x8.dotAddFast`, the step of a loop, asks nothing anywhere.
+#[test]
+fn dot_bf16_fast_asks_for_bfdot_once_at_run_time_on_arm64() {
+    let dir = test_dir::TestDir::new();
+    let root = dir.path();
+    let dot = "import { dotBf16Fast } from \"velt/half\";\n\nfunction main() {\n  \
+               const a: bf16[] = [1, 2, 3, 4, 5, 6, 7, 8];\n  \
+               console.log(dotBf16Fast(a, a));\n}\n";
+    let step = "import { bf16x8, f32x4 } from \"velt/simd\";\n\nfunction main() {\n  \
+                const a: bf16[] = [1, 2, 3, 4, 5, 6, 7, 8];\n  \
+                const r = bf16x8.load(a).dotAddFast(bf16x8.load(a), f32x4.splat(0));\n  \
+                console.log(r.lane(0));\n}\n";
+    std::fs::write(root.join("main.velt"), dot).unwrap();
+    std::fs::write(root.join("step.velt"), step).unwrap();
+    let ir_of = |file: &str, target: &str, cpu: &[&str]| {
+        let args = ["build", "--release", "--target", target, "--emit", "llvm"];
+        let o = velt(root, &[&args[..], cpu, &[file]].concat(), &[]);
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        String::from_utf8(o.stdout).unwrap()
+    };
+    let ir = |target: &str| ir_of("main.velt", target, &[]);
+    const BFDOT: &str = "call <16 x i8> @velt.simd.f32x4_bfdot(";
+    const OTHER: &str = "call <16 x i8> @velt.simd.f32x4_dot_add_fast_bf16x8(";
+    const BUILT_FOR: &str = "@velt.simd.has_bf16_arm()";
+    // The body of the function whose definition line contains `name`.
+    fn body<'a>(ir: &'a str, name: &str) -> &'a str {
+        let at = ir
+            .lines()
+            .find(|l| l.starts_with("define") && l.contains(name))
+            .unwrap_or_else(|| panic!("no {name} in\n{ir}"));
+        let from = ir.find(at).unwrap();
+        &ir[from..from + ir[from..].find("\n}\n").unwrap()]
+    }
+    let linux = ir("aarch64-unknown-linux-gnu");
+    assert!(
+        linux.contains(OTHER) && linux.contains(BUILT_FOR),
+        "{linux}"
+    );
+    assert!(linux.contains("call i64 @\"getauxval\"(i64 26)"), "{linux}");
+    // The instruction's loop is compiled for the extension and has no check in it; no other
+    // function has the instruction.
+    let kernel = body(&linux, "sumBfdot");
+    assert!(kernel.lines().next().unwrap().contains("+bf16"), "{kernel}");
+    assert_eq!(kernel.matches(BFDOT).count(), 6, "{kernel}");
+    assert!(
+        !kernel.contains(BUILT_FOR) && !kernel.contains("getauxval"),
+        "{kernel}"
+    );
+    assert_eq!(linux.matches(BFDOT).count(), 6, "{linux}");
+    if velt_codegen_llvm::available() {
+        // Built for a CPU that has it, the check is true without asking: no call of it is left.
+        let n2 = ir_of(
+            "main.velt",
+            "aarch64-unknown-linux-gnu",
+            &["--cpu", "neoverse-n2"],
+        );
+        assert!(n2.contains(BFDOT) && !n2.contains(BUILT_FOR), "{n2}");
+        // And for one that has not (an M1's core), it is asked as in the default build.
+        let a76 = ir_of(
+            "main.velt",
+            "aarch64-unknown-linux-gnu",
+            &["--cpu", "cortex-a76"],
+        );
+        assert!(a76.contains(BUILT_FOR), "{a76}");
+    }
+    let mac = ir("aarch64-apple-darwin");
+    assert!(mac.contains(BFDOT) && mac.contains(OTHER), "{mac}");
+    assert!(mac.contains("@\"sysctlbyname\"("), "{mac}");
+    let x86 = ir("x86_64-unknown-linux-gnu");
+    assert!(x86.contains(OTHER), "{x86}");
+    assert!(
+        !x86.contains(BFDOT) && !x86.contains("llvm.aarch64"),
+        "{x86}"
+    );
+    assert!(!x86.contains("getauxval"), "{x86}");
+    // The step asks nothing: a loop over it has no check to carry.
+    for target in ["aarch64-unknown-linux-gnu", "aarch64-apple-darwin"] {
+        let step = ir_of("step.velt", target, &[]);
+        assert!(step.contains(OTHER), "{step}");
+        assert!(!step.contains(BFDOT) && !step.contains(BUILT_FOR), "{step}");
+        assert!(
+            !step.contains("getauxval") && !step.contains("sysctlbyname"),
+            "{step}"
+        );
+    }
+}
+
+/// `dotBf16Fast` and `dotBf16FastAt` print their golden in a release build for the default CPU
+/// on both of their paths: as the CPU answers (`bfdot` on an arm64 CPU with FEAT_BF16), and with
+/// the question turned off (`VELT_SIMD_DISABLE=clmul`), where it widens the lanes.
+#[test]
+fn dot_bf16_fast_on_both_paths_prints_the_golden() {
+    if !velt_codegen_llvm::available() {
+        return;
+    }
+    let dir = test_dir::TestDir::new();
+    let root = dir.path();
+    let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/golden/std");
+    let source = golden.join("simd_bf16_dot_fast.velt");
+    let exe = root.join(if cfg!(windows) { "app.exe" } else { "app" });
+    let args = [
+        "build",
+        "--release",
+        "--backend",
+        "llvm",
+        source.to_str().unwrap(),
+        "-o",
+        exe.to_str().unwrap(),
+    ];
+    let o = velt(root, &args, &[]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let want = std::fs::read_to_string(golden.join("simd_bf16_dot_fast.out")).unwrap();
+    for disable in [None, Some("clmul")] {
+        let mut cmd = no_window::command(exe.to_str().unwrap());
+        cmd.env_remove("VELT_SIMD_DISABLE");
+        if let Some(name) = disable {
+            cmd.env("VELT_SIMD_DISABLE", name);
+        }
+        let o = cmd.output().unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        assert_eq!(String::from_utf8_lossy(&o.stdout), want, "{disable:?}");
+    }
+}

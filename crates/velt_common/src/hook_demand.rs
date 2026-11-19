@@ -62,11 +62,18 @@ pub enum Construct {
     /// `**` on floats (`a ** b`, `a **= b`, `Math.pow`): std's `pow` (std/lang/hooks/pow.velt),
     /// which only a program that has one loads (#1676).
     PowFloat,
+    /// A read of a clock (`Date.now()`, `performance.now()`): its hooks, and
+    /// `velt_main` stamps `performance.now()`'s time origin first thing.
+    Clock,
+    /// A weak collection's operation (`WeakMap`, `WeakSet` and `WeakRef`'s intrinsics, #3145):
+    /// lowering calls std's weak core (std/lang/hooks/weak.velt) for it, and for the release of
+    /// the types it makes weak-capable.
+    Weak,
 }
 
 impl Construct {
     /// Every construct, in bit order ([`ConstructSet`]).
-    pub const ALL: [Construct; 7] = [
+    pub const ALL: [Construct; 9] = [
         Construct::TextInt,
         Construct::TextUint,
         Construct::Format,
@@ -74,6 +81,8 @@ impl Construct {
         Construct::Dynamic,
         Construct::CatchUnwind,
         Construct::PowFloat,
+        Construct::Clock,
+        Construct::Weak,
     ];
 
     /// The construct as the ICE names it.
@@ -86,17 +95,19 @@ impl Construct {
             Construct::Dynamic => "Dynamic (the glue of a value held as any)",
             Construct::CatchUnwind => "CatchUnwind (a call of catchUnwind)",
             Construct::PowFloat => "PowFloat (`**` on floats)",
+            Construct::Clock => "Clock (a read of Date.now or performance.now)",
+            Construct::Weak => "Weak (a weak collection's intrinsic)",
         }
     }
 
     /// Its bit in a [`ConstructSet`].
-    pub const fn bit(self) -> u8 {
+    pub const fn bit(self) -> ConstructSet {
         1 << self as u8
     }
 }
 
 /// A set of [`Construct`]s, one bit each ([`Construct::bit`]).
-pub type ConstructSet = u8;
+pub type ConstructSet = u16;
 
 /// The words of a [`HookSet`]: one bit per entry of [`crate::std_hooks::HOOKS`].
 const WORDS: usize = crate::std_hooks::HOOKS.len().div_ceil(64);
@@ -149,6 +160,20 @@ mod tests {
         assert_eq!(HOOKS[hook_index::int_text].name, "int_text");
         assert_eq!(HOOKS[hook_index::uint_push].name, "uint_push");
         assert_eq!(HOOKS[hook_index::array_filled].name, "array_filled");
+    }
+
+    /// A set has a bit for every construct: one more construct than a `ConstructSet` has bits
+    /// would share or lose a bit.
+    #[test]
+    fn every_construct_has_a_bit_of_its_own() {
+        let mut all: ConstructSet = 0;
+        for c in Construct::ALL {
+            assert_ne!(c.bit(), 0, "{} has no bit", c.name());
+            assert_eq!(all & c.bit(), 0, "{} shares its bit", c.name());
+            all |= c.bit();
+        }
+        assert_eq!(all.count_ones() as usize, Construct::ALL.len());
+        assert!(Construct::ALL.len() <= ConstructSet::BITS as usize);
     }
 
     #[test]
