@@ -73,7 +73,7 @@ pub enum Construct {
 
 impl Construct {
     /// Every construct, in bit order ([`ConstructSet`]).
-    pub const ALL: [Construct; 8] = [
+    pub const ALL: [Construct; 9] = [
         Construct::TextInt,
         Construct::TextUint,
         Construct::Format,
@@ -101,13 +101,13 @@ impl Construct {
     }
 
     /// Its bit in a [`ConstructSet`].
-    pub const fn bit(self) -> u8 {
+    pub const fn bit(self) -> ConstructSet {
         1 << self as u8
     }
 }
 
 /// A set of [`Construct`]s, one bit each ([`Construct::bit`]).
-pub type ConstructSet = u8;
+pub type ConstructSet = u16;
 
 /// The words of a [`HookSet`]: one bit per entry of [`crate::std_hooks::HOOKS`].
 const WORDS: usize = crate::std_hooks::HOOKS.len().div_ceil(64);
@@ -160,6 +160,20 @@ mod tests {
         assert_eq!(HOOKS[hook_index::int_text].name, "int_text");
         assert_eq!(HOOKS[hook_index::uint_push].name, "uint_push");
         assert_eq!(HOOKS[hook_index::array_filled].name, "array_filled");
+    }
+
+    /// A set has a bit for every construct: one more construct than a `ConstructSet` has bits
+    /// would share or lose a bit.
+    #[test]
+    fn every_construct_has_a_bit_of_its_own() {
+        let mut all: ConstructSet = 0;
+        for c in Construct::ALL {
+            assert_ne!(c.bit(), 0, "{} has no bit", c.name());
+            assert_eq!(all & c.bit(), 0, "{} shares its bit", c.name());
+            all |= c.bit();
+        }
+        assert_eq!(all.count_ones() as usize, Construct::ALL.len());
+        assert!(Construct::ALL.len() <= ConstructSet::BITS as usize);
     }
 
     #[test]

@@ -197,6 +197,34 @@ fn each_construct_is_found_where_live_code_has_it() {
     }
 }
 
+/// One program with every construct user code can have (all but `CatchUnwind`, std's own) keeps
+/// each of them: the newest, `Clock` and `Weak`, beside the first.
+#[test]
+fn a_program_with_every_construct_keeps_them_all() {
+    let src = "class K { x = 1; }\n\
+               function main() { const k = new K(); const m = new WeakMap<K, number>(); \
+               m.set(k, 1); const t = Date.now(); const q = performance.now(); const p = 2.5 ** q; const n: i64 = 7; \
+               const u: u32 = 7; const xs = [\"a\"]; const a: any = \"s\"; \
+               console.log(`n=${n}`, String(u), xs[n - 7], m.has(k), p, t, a == \"t\"); }";
+    let (present, _) = live(src);
+    for c in [
+        TextInt,
+        TextUint,
+        Format,
+        IndexCheck,
+        Dynamic,
+        Construct::PowFloat,
+        Construct::Clock,
+        Construct::Weak,
+    ] {
+        assert!(
+            present & c.bit() != 0,
+            "no {}, found {present:#b}",
+            c.name()
+        );
+    }
+}
+
 #[test]
 fn a_program_with_no_integer_has_no_construct() {
     let (present, _) = live("function main() { console.log(\"hi\"); }");
