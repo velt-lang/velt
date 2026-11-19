@@ -1,0 +1,33 @@
+// Whole files (std/fs/whole/): a 1 MiB text file read 300 times as text and 300 times as bytes,
+// 20,000 `stat`s and `exists` of it, and 3,000 small files written and appended to. The Rust
+// port makes the same calls through std::fs, as the runtime did.
+import {
+  appendFileSync,
+  existsSync,
+  readFileBytesSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "velt/fs";
+import { tmpdir } from "velt/os";
+
+function main() {
+  const path = `${tmpdir()}/velt_bench_fs_whole.txt`;
+  const small = `${tmpdir()}/velt_bench_fs_whole_small.txt`;
+  writeFileSync(path, "0123456789abcdéf".repeat(61681));
+  let total = 0;
+  for (let i = 0; i < 300; i++) {
+    total += readFileSync(path).length;
+    total += readFileBytesSync(path).length;
+  }
+  for (let i = 0; i < 20000; i++) {
+    total += statSync(path).size as number;
+    total += existsSync(path) ? 1 : 0;
+  }
+  for (let i = 0; i < 3000; i++) {
+    writeFileSync(small, "one line of text\n");
+    appendFileSync(small, "and another\n");
+  }
+  total += readFileSync(small).length;
+  console.log(total);
+}

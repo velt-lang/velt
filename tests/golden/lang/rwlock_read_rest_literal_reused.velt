@@ -1,0 +1,52 @@
+// check: no leaks
+// A copy a `read` callback keeps in a variable and gives to more than one call on each turn
+// (`out.unshift(c)`, then `out.splice(1, 1, c)`) is one array in the caller's container, and
+// what `splice` removes goes to the reader: from the second `read` on that is an array an
+// earlier `read` stored, which leaked on every `read` (review of #3244). The program keeps
+// the array's type in a `Map`, so each rest parameter's array is an object of its own.
+
+class Box {
+  items: number[][] = [[1, 2], [3]];
+}
+
+function twice(a: RwLock<Box>) {
+  const out: number[][][] = [[[1]], [[2]]];
+  let n = 0;
+  for (let r = 0; r < 4; r++) {
+    a.read((x) => {
+      const c = structuredClone(x.items.slice());
+      for (let i = 0; i < 2; i++) {
+        out.unshift(c);
+        n += out.splice(1, 1, c).length;
+      }
+    });
+  }
+  out[0][0].push(99);
+  console.log(n, out.length, JSON.stringify(out), out[0] === out[1]);
+}
+
+// Stored by a loop of `splice` and again after it, twice in one call.
+function after(a: RwLock<Box>) {
+  const out: number[][][] = [[[1]], [[2]], [[3]]];
+  let n = 0;
+  for (let r = 0; r < 3; r++) {
+    a.read((x) => {
+      const c = structuredClone(x.items.slice());
+      for (let i = 0; i < 3; i++) {
+        n += out.splice(0, 1, c)[0].length;
+      }
+      out.unshift(c, c);
+    });
+  }
+  out[0][0].push(98);
+  console.log(n, out.length, JSON.stringify(out), out[1] === out[2], out[2] === out[3]);
+}
+
+function main() {
+  const a = new RwLock(new Box());
+  const groups = new Map<string, number[][][]>();
+  groups.set("z", [[[0]]]);
+  twice(a);
+  after(a);
+  console.log(a.read((x) => JSON.stringify(x.items)), groups.size);
+}

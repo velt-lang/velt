@@ -1,0 +1,61 @@
+// Type arguments inferred from an object literal's member arrow, nested: each level's arrow
+// holds the next call. An arrow is tried once for its type and then checked, and the trial's
+// answer is remembered, so the cost doesn't double per level (it took 123 s at 14 levels
+// before; #379). Node prints the same.
+interface Box<T> {
+  take(x: T): T;
+}
+
+function pick<T>(b: Box<T>, v: T): T {
+  return b.take(v);
+}
+
+console.log(pick(
+  { take: (x1: number): number => pick(
+    { take: (x2: number): number => pick(
+      { take: (x3: number): number => pick(
+        { take: (x4: number): number => pick(
+          { take: (x5: number): number => pick(
+            { take: (x6: number): number => pick(
+              { take: (x7: number): number => pick(
+                { take: (x8: number): number => pick(
+                  { take: (x9: number): number => pick(
+                    { take: (x10: number): number => pick(
+                      { take: (x11: number): number => pick(
+                        { take: (x12: number): number => pick(
+                          { take: (x13: number): number => pick(
+                            { take: (x14: number): number => pick(
+                              { take: (x15: number): number => pick(
+                                { take: (x16: number): number => x16 + 1 },
+                                x15,
+                              ) },
+                              x14,
+                            ) },
+                            x13,
+                          ) },
+                          x12,
+                        ) },
+                        x11,
+                      ) },
+                      x10,
+                    ) },
+                    x9,
+                  ) },
+                  x8,
+                ) },
+                x7,
+              ) },
+              x6,
+            ) },
+            x5,
+          ) },
+          x4,
+        ) },
+        x3,
+      ) },
+      x2,
+    ) },
+    x1,
+  ) },
+  1,
+));

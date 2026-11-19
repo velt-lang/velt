@@ -39,7 +39,36 @@ async function caught(run: () => Promise<number>): Promise<bool> {
   }
 }
 
+// Joins a task whose root panics: the join raises the panic again here.
+async function joined(i: number): Promise<number> {
+  return await spawn(boom(i));
+}
+
+// Spawns a task whose root panics and never joins it.
+async function dropped(i: number): Promise<number> {
+  spawn(boom(i));
+  await yieldNow();
+  await yieldNow();
+  return i;
+}
+
 describe("catchPanic", () => {
+  it("frees a task whose root panicked, and its exception, with its last reference", async () => {
+    if (!canCatchPanics() || !unwoundFramesDrop()) {
+      return;
+    }
+    const before = livePanics();
+    let panics = 0;
+    for (let i = 0; i < 20; i++) {
+      if (await caught(() => joined(i))) {
+        panics++;
+      }
+      expect(await catchPanic(() => dropped(i))).toBe(i);
+    }
+    expect(panics).toBe(20);
+    expect(livePanics()).toBe(before);
+  });
+
   it("frees the exception of each panicked promise with the promise", async () => {
     // Where unwound frames drop nothing (no cleanup pads: Windows, #2979), a panicked function
     // still holds the promises it started, and they hold their exceptions.

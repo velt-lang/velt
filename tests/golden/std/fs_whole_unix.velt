@@ -1,0 +1,55 @@
+// requires: unix
+// What needs macOS or Linux: a path through a file fails with ENOTDIR, as Node's does there
+// (Windows reports such a path as ENOENT, as libuv names ERROR_PATH_NOT_FOUND), and a file with
+// invalid UTF-8, written with the fd API (`openSync`, which Windows doesn't have in std yet), reads
+// as text with U+FFFD for each bad sequence, as Node decodes it.
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileBytesSync,
+  readFileSync,
+  removeSync,
+  statSync,
+  writeFileSync,
+  writeSync,
+} from "velt/fs";
+import { IoError } from "velt/io";
+
+function attempt(what: string, f: () => void) {
+  try {
+    f();
+    console.log(what, "no error");
+  } catch (e) {
+    console.log(what, (e as IoError).code, (e as Error).message);
+  }
+}
+
+function main() {
+  const dir = "velt_fs_whole_unix_tmp";
+  if (existsSync(dir)) {
+    removeSync(dir, { recursive: true });
+  }
+  mkdirSync(dir, { recursive: true });
+  const a = `${dir}/a.txt`;
+  writeFileSync(a, "a");
+  attempt("read under a file", () => {
+    readFileSync(`${a}/x`);
+  });
+  attempt("write under a file", () => {
+    writeFileSync(`${a}/x`, "x");
+  });
+  attempt("stat under a file", () => {
+    statSync(`${a}/x`);
+  });
+
+  const fd = openSync(`${dir}/bad.txt`, "w");
+  writeSync(fd, new Uint8Array([0x61, 0xff, 0x62, 0xe2, 0x82]));
+  closeSync(fd);
+  console.log(
+    JSON.stringify(readFileSync(`${dir}/bad.txt`)),
+    readFileBytesSync(`${dir}/bad.txt`).length,
+  );
+  removeSync(dir, { recursive: true });
+}

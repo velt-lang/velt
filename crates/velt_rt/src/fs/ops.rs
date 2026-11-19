@@ -2,12 +2,12 @@
 //! tokio's blocking pool) and the `*_sync` ABI (run on the calling thread).
 
 use crate::bytes::VeltBytes;
-use crate::result::{fs_error, invalid_utf8, op_error, IoResult};
+use crate::result::{fs_error, IoResult};
 use crate::str::VeltStr;
 use crate::str_array::VeltStrArray;
 use std::ffi::OsString;
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
@@ -67,12 +67,15 @@ pub unsafe fn data_arg(s: *const VeltStr) -> Vec<u8> {
     (*s).to_string_lossy().into_bytes()
 }
 
-fn unit(r: io::Result<()>) -> IoResult<()> {
+pub(crate) fn unit(r: io::Result<()>) -> IoResult<()> {
     IoResult::from_io(r, |()| ())
 }
 
 /// Node's error message for a failed `syscall` on `path` (`ENOENT: …, open 'x'`).
-fn at<'a>(syscall: &'static str, path: &'a Path) -> impl FnOnce(io::Error) -> io::Error + 'a {
+pub(crate) fn at<'a>(
+    syscall: &'static str,
+    path: &'a Path,
+) -> impl FnOnce(io::Error) -> io::Error + 'a {
     move |e| fs_error(e, syscall, path, None)
 }
 
@@ -86,51 +89,6 @@ pub fn open(path: &Path, opts: &fs::OpenOptions) -> io::Result<fs::File> {
             e
         }
     })
-}
-
-/// The whole file, with Node's messages: `open 'x'` for a failed open, `read` (no path) for a
-/// failed read; a directory fails the read (`EISDIR: …, read`) on every system.
-fn read_all(path: &Path) -> io::Result<Vec<u8>> {
-    let mut f = open(path, fs::OpenOptions::new().read(true)).map_err(|e| {
-        if e.kind() == io::ErrorKind::IsADirectory {
-            op_error(e, "read")
-        } else {
-            fs_error(e, "open", path, None)
-        }
-    })?;
-    let mut data = vec![];
-    f.read_to_end(&mut data).map_err(|e| op_error(e, "read"))?;
-    Ok(data)
-}
-
-/// `readFile(path)` as UTF-8 text.
-pub fn read_text(path: PathBuf) -> IoResult<VeltStr> {
-    let r = read_all(&path).and_then(|b| match String::from_utf8(b) {
-        Ok(s) => Ok(s.into_bytes()),
-        Err(_) => Err(invalid_utf8("file")),
-    });
-    IoResult::from_io(r, VeltStr::from_vec)
-}
-
-/// `readFile(path)` as bytes.
-pub fn read_bytes(path: PathBuf) -> IoResult<VeltBytes> {
-    IoResult::from_io(read_all(&path), VeltBytes::from_vec)
-}
-
-/// `writeFile` (truncate) / `appendFile` (create if missing), with Node's messages: `open 'x'`
-/// for a failed open (a directory too), `write` (no path) for a failed write.
-pub fn write(path: PathBuf, data: Vec<u8>, append: bool) -> IoResult<()> {
-    let mut opts = fs::OpenOptions::new();
-    opts.create(true);
-    if append {
-        opts.append(true);
-    } else {
-        opts.write(true).truncate(true);
-    }
-    let r = open(&path, &opts)
-        .map_err(at("open", &path))
-        .and_then(|mut f| f.write_all(&data).map_err(|e| op_error(e, "write")));
-    unit(r)
 }
 
 /// An entry name as text: no copy when it is UTF-8 (one U+FFFD per invalid sequence otherwise).
@@ -230,19 +188,6 @@ fn plain_path(p: PathBuf) -> PathBuf {
         }
         _ => p,
     }
-}
-
-/// `stat(path)` (follows symlinks).
-pub fn stat(path: PathBuf) -> IoResult<VeltStat> {
-    IoResult::from_io(fs::metadata(&path).map_err(at("stat", &path)), stats_of)
-}
-
-/// `lstat(path)`: a symlink's own metadata, not its target's.
-pub fn lstat(path: PathBuf) -> IoResult<VeltStat> {
-    IoResult::from_io(
-        fs::symlink_metadata(&path).map_err(at("lstat", &path)),
-        stats_of,
-    )
 }
 
 /// `readlink(path)`: a symlink's target, as stored in the link. Something other than a link is
@@ -349,11 +294,6 @@ pub fn rename(from: PathBuf, to: PathBuf) -> IoResult<()> {
 pub fn copy(from: PathBuf, to: PathBuf) -> IoResult<()> {
     let r = fs::copy(&from, &to).map(|_| ());
     unit(r.map_err(|e| fs_error(e, "copyfile", &from, Some(&to))))
-}
-
-/// `exists(path)`: 1 if anything (file, directory, valid symlink) is there.
-pub fn exists(path: PathBuf) -> u8 {
-    path.try_exists().unwrap_or(false) as u8
 }
 
 #[cfg(test)]

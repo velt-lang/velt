@@ -1,45 +1,18 @@
 // velt/process (internal): the runtime functions velt/process calls (rt_abi_async.md §8) and the
 // layouts they return.
 
-import { IoResult, unwrapIo } from "velt/native/result";
+import { StdinRead, readAll, readLine } from "./stdin_buffer";
 
 export declare function velt_rt_process_args(): string[];
 
 export declare function velt_rt_stdout_write_bytes(bytes: u8[]);
 
-/** The runtime's `LineRead`: a line, and whether input had ended instead. */
-export struct LineRead {
-  line: IoResult<string>;
-  eof: bool;
+/** Standard input's next line, read on this thread (the async twin of std's `readLine`). */
+export async function stdinReadLine(): Promise<StdinRead> {
+  return readLine();
 }
 
-/** The sync read (the runtime has no async one: a native build reads on the executor's
- * blocking pool, std/process/rt_sched.velt). */
-export async function velt_rt_stdin_read_line(): Promise<LineRead> {
-  return velt_rt_stdin_read_line_sync();
-}
-
-export declare function velt_rt_stdin_read_line_sync(): LineRead;
-
-/** The sync read (the runtime has no async one: a native build reads on the executor's
- * blocking pool, std/process/rt_sched.velt). */
-export async function velt_rt_stdin_read_all(): Promise<IoResult<string>> {
-  return velt_rt_stdin_read_all_sync();
-}
-
-export declare function velt_rt_stdin_read_all_sync(): IoResult<string>;
-
-/** The sync read (the runtime has no async one: a native build reads on the executor's
- * blocking pool, std/process/rt_sched.velt). */
-export async function velt_rt_stdin_read_all_bytes(): Promise<IoResult<u8[]>> {
-  return velt_rt_stdin_read_all_bytes_sync();
-}
-
-export declare function velt_rt_stdin_read_all_bytes_sync(): IoResult<u8[]>;
-
-export function lineOf(r: LineRead): string | null {
-  if (r.eof) {
-    return null;
-  }
-  return unwrapIo(r.line);
+/** Standard input's rest, read on this thread (`asText`: as text, else as bytes). */
+export async function stdinReadAll(asText: bool): Promise<StdinRead> {
+  return readAll(asText);
 }

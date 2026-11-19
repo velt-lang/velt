@@ -32,7 +32,6 @@ use velt_common::{Diagnostic, Span};
 use crate::ctx::Ctx;
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, Nothing, TyId, TyKind};
 use crate::types::children;
-use crate::visit;
 
 /// Which nothings options of a type parameter have: `NULL` and/or `UNDEFINED`.
 type Mask = u8;
@@ -75,7 +74,7 @@ pub(crate) fn check_instantiations(cx: &mut Ctx) {
     let mut seen_tys: FxHashSet<TyId> = FxHashSet::default();
     for i in 0..cx.defs.len() {
         let d = DefId(i as u32);
-        let (own, body) = match cx.defs.get_mut(i) {
+        let (own, body) = match cx.defs.get(i) {
             Some(Some(Def::Fn(f))) => fn_facts(f, &mut uses, &mut ty_uses, &mut seen_tys),
             _ => match cx.adt(d) {
                 Some(a) if !a.generics.names.is_empty() => {
@@ -267,7 +266,7 @@ fn is_plain_sort(cx: &Ctx, d: DefId) -> bool {
 /// closure). Also records `f`'s instantiations in `uses` and its expression types in `ty_uses`.
 #[allow(clippy::type_complexity)]
 fn fn_facts(
-    f: &mut crate::hir::FnDef,
+    f: &crate::hir::FnDef,
     uses: &mut Vec<(DefId, Vec<TyId>, Span)>,
     ty_uses: &mut Vec<(TyId, Span)>,
     seen_tys: &mut FxHashSet<TyId>,
@@ -276,7 +275,7 @@ fn fn_facts(
     own.push(f.ret);
     own.extend(f.body.locals.iter().map(|l| l.ty));
     let mut body: Vec<(DefId, Vec<TyId>, bool)> = vec![];
-    visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
+    crate::visit_ref::exprs(&f.body.block, &mut |e: &Expr| {
         own.push(e.ty);
         match &e.kind {
             E::Call {
