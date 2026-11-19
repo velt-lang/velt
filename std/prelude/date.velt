@@ -14,9 +14,8 @@ import { DateParts, partsOf, epochMsOf, monthShort, weekdayShort } from "velt/ti
 import { pad, offsetString, isoString, httpString } from "velt/time/format";
 import { parseIso, parseHttp } from "velt/time/parse";
 import { INSPECT } from "velt/lang/hooks/keys";
+import { dateNow } from "velt/lang/hooks/clock";
 import { localOffset, localToUtc } from "velt/time/local";
-
-declare function velt_rt_date_now(): i64;
 
 // The largest distance from the epoch a JS date can be (100,000,000 days).
 const MAX_TIME: f64 = 8640000000000000.0;
@@ -48,7 +47,7 @@ export class Date implements Comparable<Date> {
       const y = typeof value === "number" ? value : 0.0 / 0.0;
       this.t = fromFields(false, [fullYear(y), month, day, hours, minutes, seconds, ms]);
     } else if (value == null) {
-      this.t = velt_rt_date_now() as f64;
+      this.t = dateNow() as f64;
     } else if (typeof value === "number") {
       this.t = timeClip(value);
     } else if (typeof value === "string") {
@@ -60,7 +59,7 @@ export class Date implements Comparable<Date> {
 
   /** Milliseconds since the epoch, now. */
   static now(): i64 {
-    return velt_rt_date_now();
+    return dateNow();
   }
 
   /**

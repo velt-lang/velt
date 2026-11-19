@@ -244,6 +244,18 @@ with_weak_hooks! {
     /// set (std/sync/output.velt, #2771).
     stdout_written => lang_hooks_process, "stdoutWritten", sig(() -> void), lowered;
 
+    // clock.velt: `Date.now()` and `performance.now()` over the OS's clocks (`#clock`), called
+    // in a program that reads one; the prelude's `Date` imports the module, so it is always loaded.
+    /// `performance.now()`: milliseconds since the time origin.
+    perf_now => lang_hooks_clock, "perfNow", sig(() -> f64), lowered,
+        replaces("velt_rt_perf_now"), bench("clock_now"), constructs(Clock);
+    /// `Date.now()` (and `new Date()`'s time): milliseconds since the Unix epoch.
+    date_now => lang_hooks_clock, "dateNow", sig(() -> i64), lowered,
+        replaces("velt_rt_date_now"), bench("clock_now"), constructs(Clock);
+    /// `performance.now()`'s time origin, stamped by `velt_main` first thing (velt_vir
+    /// `entry.rs`).
+    clock_start => lang_hooks_clock, "clockStart", sig(() -> void), lowered, constructs(Clock);
+
     // unwind.velt: the panic path in std (docs/internals/design/unwinding.md), in a program that
     // calls `catchUnwind`; its module is loaded on demand.
     /// Every panic (`velt_rt_panic`'s job when a catch is active): `(message)`. It raises Velt's

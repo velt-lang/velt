@@ -41,7 +41,6 @@ velt_rt velt_rt_check_cpu
 velt_rt velt_rt_child_output_sync
 velt_rt velt_rt_clear_throw_loc
 velt_rt velt_rt_current_worker
-velt_rt velt_rt_date_now
 velt_rt velt_rt_db_cursor
 velt_rt velt_rt_db_sink
 velt_rt velt_rt_deep_eq_enter
@@ -208,7 +207,6 @@ velt_rt velt_rt_param_null
 velt_rt velt_rt_param_object
 velt_rt velt_rt_param_str
 velt_rt velt_rt_param_u64
-velt_rt velt_rt_perf_now
 velt_rt velt_rt_pow_i64
 velt_rt velt_rt_process_args
 velt_rt velt_rt_process_node_argv
@@ -424,7 +422,6 @@ velt_rt_wasm velt_rt_cell_new
 velt_rt_wasm velt_rt_cell_use
 velt_rt_wasm velt_rt_clear_throw_loc
 velt_rt_wasm velt_rt_current_worker
-velt_rt_wasm velt_rt_date_now
 velt_rt_wasm velt_rt_env_all
 velt_rt_wasm velt_rt_env_get
 velt_rt_wasm velt_rt_env_remove
@@ -491,7 +488,6 @@ velt_rt_wasm velt_rt_mutex_lock
 velt_rt_wasm velt_rt_mutex_lock_checked
 velt_rt_wasm velt_rt_mutex_unlock
 velt_rt_wasm velt_rt_panic
-velt_rt_wasm velt_rt_perf_now
 velt_rt_wasm velt_rt_process_args
 velt_rt_wasm velt_rt_process_chdir
 velt_rt_wasm velt_rt_process_cwd
