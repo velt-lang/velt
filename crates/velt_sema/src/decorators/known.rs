@@ -7,22 +7,29 @@
 //! - `@intrinsic` on a `declare function` makes it a compiler intrinsic ([`intrinsics`], during
 //!   collection: a signature's passing modes depend on it). `declare unsafe function` is allowed
 //!   only with it; on a function with a body it is an error ([`function_hints`]).
-//! - `@inline` / `@noInline` on a std function or method set its `FnInfo::inline_marker`
+//! - `@inline` / `@noInline` on a function or method of any module (std, a package or the
+//!   program; docs/internals/design/package-machine-code.md §1) set its `FnInfo::inline_marker`
 //!   ([`function_hints`]), which lowering carries to `vir::Function::inline` (lowering finds the
 //!   uses in `Program::decorators` by the same roles) and `body::inline_markers` checks.
+//!   `@inline` takes how: `"hint"` (the default) or `"always"`; std writes `"always"`.
 
 use velt_common::{std_hook, Diagnostic, Span};
 use velt_syntax::ast;
 
 use crate::ctx::{Ctx, Item};
 use crate::defs::{DefInfo, FnKind};
-use crate::hir::{DecoratorTarget, DefId};
+use crate::hir::{ConstTree, Decorator, DecoratorTarget, DefId};
 
 /// What `@inline` and `@noInline` ask of a function's calls.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Inline {
-    /// `@inline`: every call is inlined (`vir::Inline::Always`).
+    /// `@inline("always")`: every call is inlined (`vir::Inline::Always`).
     Always,
+    /// `@inline`, which is `@inline("hint")`: the body should be offered to callers and the
+    /// inliner should prefer it. Every function's body is available to its callers while a
+    /// program is compiled as one unit, so lowering gives it `vir::Inline::Default` until units
+    /// (#2943) carry bodies across.
+    Hint,
     /// `@noInline`: calls stay calls (`vir::Inline::Never`).
     Never,
 }
@@ -53,12 +60,21 @@ impl Roles {
         }
     }
 
-    fn of(&self, d: DefId) -> Option<Inline> {
-        match Some(d) {
-            x if x == self.inline => Some(Inline::Always),
+    fn of(&self, u: &Decorator) -> Option<Inline> {
+        match Some(u.def) {
+            x if x == self.inline => Some(inline_how(u)),
             x if x == self.no_inline => Some(Inline::Never),
             _ => None,
         }
+    }
+}
+
+/// What a use `u` of `@inline` asks: its one argument, `"hint"` (the default, filled in) or
+/// `"always"`.
+fn inline_how(u: &Decorator) -> Inline {
+    match u.args.first() {
+        Some(ConstTree::Str(s)) if s == "always" => Inline::Always,
+        _ => Inline::Hint,
     }
 }
 
@@ -118,7 +134,7 @@ fn written_def(cx: &Ctx, m: usize, dec: &ast::Decorator) -> Option<DefId> {
 /// Checks the known decorators among the decorators recorded for function `d` (signature `sig`,
 /// `is_abstract`: an abstract method's): `@intrinsic` is for a `declare function` (which
 /// [`intrinsics`] has made one already), and `@inline` / `@noInline` is recorded on it: one of
-/// them, on a std function or method with a body that is neither async nor a generator (lowering
+/// them, on a function or method with a body that is neither async nor a generator (lowering
 /// compiles those into a resume function the hint would not reach).
 pub(super) fn function_hints(
     cx: &mut Ctx,
@@ -135,7 +151,7 @@ pub(super) fn function_hints(
         .find(|u| roles.intrinsic.is_some_and(|i| u.def == i) && kind != FnKind::Extern)
         .map(|u| u.span);
     let hints: Vec<(Inline, Span)> = (uses.iter())
-        .filter_map(|u| Some((roles.of(u.def)?, u.span)))
+        .filter_map(|u| Some((roles.of(u)?, u.span)))
         .collect();
     if let Some(span) = misplaced {
         cx.err("`@intrinsic` applies to a `declare function`", span);
@@ -151,17 +167,16 @@ pub(super) fn function_hints(
         return;
     }
     let name = match hint {
-        Inline::Always => "inline",
+        Inline::Always | Inline::Hint => "inline",
         Inline::Never => "noInline",
     };
     let (module, is_async) = (cx.fn_info(d).module, cx.fn_info(d).is_async);
-    if !cx.scopes[module].is_std {
+    if hint == Inline::Hint && cx.scopes[module].is_std {
+        // std's `@inline` meant "always" before the hint existed; one written without its
+        // argument (a pull request from before) would lose its forcing without a word.
         cx.error(
-            Diagnostic::error(
-                format!("`@{name}` is not allowed: only the standard library marks how its functions are inlined"),
-                span,
-            )
-            .with_note("the optimizer decides what a program's own calls inline"),
+            Diagnostic::error("std's `@inline` says how: `@inline(\"always\")`", span)
+                .with_note("in std, a bare `@inline` is reserved: it meant `\"always\"` until packages got the hint (docs/internals/design/package-machine-code.md §1)"),
         );
         return;
     }

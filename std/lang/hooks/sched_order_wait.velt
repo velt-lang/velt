@@ -63,7 +63,7 @@ export function parksNext(e: usize, k: usize): bool {
  * here if no worker has it), so that a due time wakes one worker, not every idle one. The others
  * wait for their own reasons alone; a time that comes sooner wakes the waiter (`nudge`).
  */
-@inline
+@inline("always")
 export function wait(e: usize, timeout: i64): i64 {
   // The only worker bounded its wait by the order's time already (sched_order.velt `next`).
   if ((lk.mode() & lk.LK_ON) === 0) {
@@ -97,7 +97,7 @@ function waitFor(e: usize, timeout: i64): i64 {
  * stole tasks or found some at its park): when no worker waits for the order's time, one sleeping
  * worker wakes to wait for it.
  */
-@inline
+@inline("always")
 export function handOff(e: usize): void {
   if ((lk.mode() & lk.LK_ON) !== 0) {
     handOffOn(e);

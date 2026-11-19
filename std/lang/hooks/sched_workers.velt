@@ -32,7 +32,7 @@ declare c("c") function velt_rt_latch_open$rt(l: u64): void;
 const MAX_WORKERS: usize = 4096;
 
 /** The executor, started on first use (by the worker: `main`'s thread). */
-@inline
+@inline("always")
 export function started(): usize {
   const e = t.exec();
   if (e !== 0) {

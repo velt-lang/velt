@@ -1,0 +1,69 @@
+// Promises converted by an interface adapter (#379: `validate(): Promise<Res<S>>` read through
+// `Options<unknown>`) given to `Promise.all`: when one rejects, `Promise.all` rejects, and the
+// other, rejecting after it, is handled too, not reported as an uncaught error. Node prints
+// the same and exits 0.
+interface Ctx {
+  id: string;
+}
+
+type Res<O> = { value: O };
+
+interface Schema<O> {
+  validate(value: unknown): Promise<Res<O>>;
+}
+
+interface Options<S> {
+  input: Schema<S>;
+  handler(rq: Ctx, input: S): string;
+}
+
+function run<S>(options: Options<S>, first: unknown, second: unknown): Promise<string>;
+async function run(options: Options<unknown>, first: unknown, second: unknown): Promise<string> {
+  const rq = { id: "rq" };
+  const a = options.input.validate(first);
+  const b = options.input.validate(second);
+  try {
+    const both = await Promise.all([a, b]);
+    return options.handler(rq, both[0].value) + " " + options.handler(rq, both[1].value);
+  } catch (e) {
+    return "caught " + String(e);
+  }
+}
+
+// A converted promise that already rejected and was caught, then given to `Promise.all` beside
+// a fresh one: `Promise.all` rejects at once, and the fresh one, rejecting after, is handled.
+function again<S>(options: Options<S>, raw: unknown): Promise<string>;
+async function again(options: Options<unknown>, raw: unknown): Promise<string> {
+  const kept = options.input.validate(raw);
+  let out = "";
+  try {
+    await kept;
+  } catch (e) {
+    out += "first " + String(e);
+  }
+  try {
+    await Promise.all([kept, options.input.validate("later")]);
+  } catch (e) {
+    out += " / all " + String(e);
+  }
+  return out;
+}
+
+const count: Schema<number> = {
+  async validate(value: unknown): Promise<Res<number>> {
+    if (typeof value === "number") {
+      return { value: value + 1 };
+    }
+    throw new Error("not a number: " + String(value));
+  },
+};
+
+async function main(): Promise<void> {
+  console.log(await run({ input: count, handler: (rq: Ctx, n: number): string => rq.id + n }, 1, 2));
+  console.log(await run({ input: count, handler: (rq: Ctx, n: number): string => rq.id + n }, "x", "y"));
+  console.log(await run({ input: count, handler: (rq: Ctx, n: number): string => rq.id + n }, 1, "z"));
+  console.log(await run({ input: count, handler: (rq: Ctx, n: number): string => rq.id + n }, "w", 2));
+  console.log(await again({ input: count, handler: (rq: Ctx, n: number): string => rq.id + n }, "k"));
+  console.log("end");
+}
+main();

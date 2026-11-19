@@ -184,7 +184,7 @@ function concatLength(v: number): usize {
  * Node's `Buffer`): ECMAScript's ToUint8, the integer part modulo 2^8, so 256 is 0, -1 is 255 and
  * 300.7 is 44; `NaN` and the infinities are 0.
  */
-@inline
+@inline("always")
 function toUint8(x: number): u8 {
   if (x >= 0 && x < 256) {
     // The common case, a byte already: `as u8` truncates the fraction.
@@ -211,7 +211,7 @@ function toUint8Wrapped(x: number): u8 {
  * strictly, as a `Uint8Array`'s does, so any other number finds nothing (Node's `Buffer` would
  * take it `& 255`; Velt's byte arrays follow `Uint8Array` where the two differ).
  */
-@inline
+@inline("always")
 function isByte(x: number): bool {
   return x >= 0 && x <= 255 && x == Math.trunc(x);
 }

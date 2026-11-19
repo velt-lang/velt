@@ -433,7 +433,7 @@ export const J_FOREIGN: u32 = 64;
  * This thread's worker block; off the workers (a thread of the runtime's, a C library's),
  * worker 0's (started by sched.velt before anything here runs; 0 before).
  */
-@inline
+@inline("always")
 export function exec(): usize {
   const w = WORKER.get();
   if (w !== 0) {
@@ -445,7 +445,7 @@ export function exec(): usize {
 }
 
 /** Worker 0's block, which holds what is process-wide (acquire, as `exec`'s). */
-@inline
+@inline("always")
 export function main(): usize {
   return EXEC.load("acquire") as usize;
 }
@@ -470,13 +470,13 @@ export function installWorker(w: usize): void {
 }
 
 /** Is this thread a worker? */
-@inline
+@inline("always")
 export function onWorker(): bool {
   return WORKER.get() !== 0;
 }
 
 /** This thread's worker block, 0 off the workers. */
-@inline
+@inline("always")
 export function here(): usize {
   return WORKER.get() as usize;
 }
@@ -488,25 +488,25 @@ export function worker(i: usize): usize {
 }
 
 /** Adds `d` to the word at `a`, which only one thread changes. */
-@inline
+@inline("always")
 export function bump(a: usize, d: usize): void {
   m.st(a, m.ld(a) + d);
 }
 
 /** Changes the flags of task `t`: `set` on, `clear` off (the thread polling it only). */
-@inline
+@inline("always")
 export function flags(t: usize, set: u32, clear: u32): void {
   m.st32(t + T_FLAGS, (m.ld32(t + T_FLAGS) | set) & ~clear);
 }
 
 /** Has task `t` flag `f`? */
-@inline
+@inline("always")
 export function has(t: usize, f: u32): bool {
   return (m.ld32(t + T_FLAGS) & f) !== 0;
 }
 
 /** May task `k` move to another worker, or run on one other than its home (not pinned or anchored)? */
-@inline
+@inline("always")
 export function movable(k: usize): bool {
   return (m.ld32(k + T_FLAGS) & (PINNED | ANCHORED)) === 0;
 }
@@ -520,7 +520,7 @@ export function carryable(k: usize): bool {
 }
 
 /** Is task `k` fresh: spawned and never polled? */
-@inline
+@inline("always")
 export function fresh(k: usize): bool {
   return (m.ld32(k + T_FLAGS) & (STARTED | ROOT)) === 0;
 }
@@ -533,7 +533,7 @@ export function fresh(k: usize): bool {
  * its reference back and may end the program. Read by worker 0's loop (sched.velt
  * `schedBlockOn`) and again by its park after the park word went up (sched_park.velt).
  */
-@inline
+@inline("always")
 export function rootLeft(k: usize, shared: bool): bool {
   const fl = shared ? m.load32(k + T_FLAGS) : m.ld32(k + T_FLAGS);
   if ((fl & ROOT_DONE) === 0) {

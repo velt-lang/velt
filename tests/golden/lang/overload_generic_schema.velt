@@ -1,0 +1,60 @@
+// An overload taking generic options that hold a schema, whose implementation takes them at
+// `unknown` (sigx's `serverFn` with `input?: StandardSchemaV1<S>`, #379). The schema's
+// `validate` gives a result or a promise of one (`Res<O> | Promise<Res<O>>`, `Res` itself a
+// union of object types): read through `Options<unknown>`, the promise is a promise of the
+// converted result. Node prints the same.
+interface Ctx {
+  id: string;
+}
+
+type Res<O> = { value: O; issues?: undefined } | { issues: ReadonlyArray<{ message: string }> };
+
+interface Schema<O> {
+  validate(value: unknown): Res<O> | Promise<Res<O>>;
+}
+
+interface Options<S> {
+  input?: Schema<S>;
+  handler(rq: Ctx, input: S): string;
+}
+
+function run<S = void>(options: Options<S>, raw: unknown): Promise<string>;
+async function run(options: Options<unknown>, raw: unknown): Promise<string> {
+  const rq = { id: "rq" };
+  const schema = options.input;
+  if (schema === undefined) {
+    return options.handler(rq, raw);
+  }
+  const res = await schema.validate(raw);
+  if (res.issues !== undefined) {
+    return "refused: " + res.issues[0].message;
+  }
+  return options.handler(rq, res.value);
+}
+
+const count: Schema<number> = {
+  validate(value: unknown): Res<number> | Promise<Res<number>> {
+    if (typeof value === "number") {
+      return { value, issues: undefined };
+    }
+    return { issues: [{ message: "not a number" }] };
+  },
+};
+
+const text: Schema<string> = {
+  async validate(value: unknown): Promise<Res<string>> {
+    if (typeof value === "string") {
+      return { value, issues: undefined };
+    }
+    return { issues: [{ message: "not a string" }] };
+  },
+};
+
+async function main(): Promise<void> {
+  console.log(await run({ input: count, handler: (rq: Ctx, n: number): string => rq.id + " " + (n + 1) }, 41));
+  console.log(await run({ input: count, handler: (rq: Ctx, n: number): string => rq.id + " " + n }, "x"));
+  console.log(await run({ input: text, handler: (rq: Ctx, s: string): string => rq.id + " " + s.length }, "abc"));
+  console.log(await run({ input: text, handler: (rq: Ctx, s: string): string => rq.id + " " + s }, 7));
+  console.log(await run({ handler: (rq: Ctx, s: string): string => rq.id + " " + s }, "plain"));
+}
+main();

@@ -4,7 +4,7 @@ import { EINTR } from "velt/fs/fd/system";
 import { lastError, readAddress, readInto } from "#fd-system";
 import { bufferOffset, checkRead, descriptor, readLength, readPosition } from "velt/fs/fd/args";
 import { osError } from "velt/fs/errors";
-import { arrayByteLength, arrayDataAddress } from "velt/lang/intrinsics";
+import { arrayByteLength, arrayBytesWritten, arrayDataAddress } from "velt/lang/intrinsics";
 import { emptyBufferText } from "velt/fs/fd/number_bytes";
 import { ArrayBufferView, BufferView } from "velt/lang/typed_array/buffer_view";
 import { VIEW_EMPTY_TEXT, VIEW_SIZE } from "velt/lang/hooks/keys";
@@ -59,7 +59,10 @@ export function readSync<T extends Numeric = u8>(
   // bytes, the system writes only those, and any bytes are values of a number type.
   const address = unsafe { arrayDataAddress(buffer) } + (off as usize);
   // SAFETY: as above.
-  return unsafe { readMemory(f, address, len as usize, at) };
+  const n = unsafe { readMemory(f, address, len as usize, at) };
+  // A view of another array (an `any` converted to `T[]`) gives what was read back to it.
+  arrayBytesWritten(buffer);
+  return n;
 }
 
 // `read` / `pread` into the bytes `start..end` of `bytes`, retried after a signal.

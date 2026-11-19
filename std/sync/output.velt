@@ -29,7 +29,7 @@ declare c("c") function velt_rt_latch_open$rt(latch: u64): void;
  * Makes what this thread printed visible: before a change another task may see at once. A thread
  * that wrote nothing since pays one load and a branch.
  */
-@inline
+@inline("always")
 export function publishOutput(): void {
   if (stdoutWrittenSince()) {
     publishMarked();

@@ -6,6 +6,13 @@ import { hookCall } from "velt/lang/intrinsics";
 import { ReadChunk, readChunk } from "velt/fs/fd/read_chunk";
 
 /** `readChunk` on the blocking pool. */
-export async function readChunkLater(fd: i32, length: usize, position: i64): Promise<ReadChunk> {
-  return await hookCall<ReadChunk>("sched_blocking_run", () => readChunk(fd, length, position));
+export async function readChunkLater<T extends Numeric>(
+  fd: i32,
+  count: usize,
+  position: i64,
+): Promise<ReadChunk<T>> {
+  return await hookCall<ReadChunk<T>>(
+    "sched_blocking_run",
+    () => readChunk<T>(fd, count, position),
+  );
 }

@@ -27,7 +27,7 @@ import * as wk from "./sched_wake";
  * makes progress and every few polls looks at the spread; what its poll printed is published at
  * the poll's end (sched_wake.velt `publishPolled`).
  */
-@inline
+@inline("always")
 export function turn(e: usize): void {
   const mode = m.ld32(e + t.E_MODE);
   if (mode !== 0) {
@@ -42,7 +42,7 @@ export function turn(e: usize): void {
  * this directly): no lock, no one to tell, no count of the second queue; tasks woken from other
  * threads (the runtime's) are taken when the queue runs out and at each look at the reactor.
  */
-@inline
+@inline("always")
 export function turnSolo(e: usize): void {
   let k = q.pop(e, 0);
   if (k === 0) {
@@ -62,7 +62,7 @@ export function turnSolo(e: usize): void {
  * ordered): when the monitor saw that poll running after it made the queue shared, the look sees
  * the shared mode, and the worker takes it on (`adopt`).
  */
-@inline
+@inline("always")
 export function alone(e: usize): bool {
   if (m.load32(e + t.E_MODE) === 0) {
     const any = m.ld(e + t.E_PANY);
@@ -108,7 +108,7 @@ function joinAll(e: usize): void {
  * at the end of its second queue, ahead of the others it woke (`E_PREST`, joined next); in the
  * input queue when tasks woke as input (`E_PIO`: none does during a poll, but the stack allows it).
  */
-@inline
+@inline("always")
 function joinWoken(e: usize): void {
   const k = m.ld(e + t.E_PWAKE);
   m.st(e + t.E_PWAKE, 0);
@@ -186,7 +186,7 @@ function adopt(e: usize): void {
  * monitor may take tasks from its queues while the poll runs; what happens after the look (the
  * I/O, a park) runs with no poll the monitor could see.
  */
-@inline
+@inline("always")
 export function turnLazy(e: usize): bool {
   let k = m.ld(e + t.E_AGAIN);
   if (k !== 0) {
@@ -285,7 +285,7 @@ function turnShared(e: usize, mode: u32): void {
  * done (its loop looks at that between steps). Each poll counts as `after`'s; no watch: neither
  * task is fresh.
  */
-@inline
+@inline("always")
 function runLocal(e: usize, mode: u32, first: usize): void {
   const g = t.main();
   // Worker 0's loop (sched.velt `schedBlockOn`) ends once the root of `main` is done, here or on
@@ -327,7 +327,7 @@ function runLocal(e: usize, mode: u32, first: usize): void {
  * or after this one when the poll queued bytes with `writeLater` (sched_io.velt `due` set it to 1).
  * Whether it reached 0 (the I/O ran).
  */
-@inline
+@inline("always")
 function ioCountdown(e: usize, mode: u32): bool {
   const n = m.ld(e + t.E_TICK) - 1;
   m.st(e + t.E_TICK, n);
@@ -366,7 +366,7 @@ function after(e: usize, mode: u32, watched: bool): void {
 }
 
 /** A poll of worker `e` counted (`E_POLLS`); every `HELP` polls, the spread. */
-@inline
+@inline("always")
 function counted(e: usize, mode: u32): void {
   m.st(e + t.E_POLLS, m.ld(e + t.E_POLLS) + 1);
   if ((mode & t.M_SPREAD) !== 0) {
