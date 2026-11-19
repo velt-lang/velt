@@ -401,8 +401,7 @@ pub enum Intrinsic {
     /// `lower/array`): dropping it frees nothing, a copy is an ordinary array. Unchecked, never
     /// written or grown: std hands it out only as `shared<T[]>` (`MappedFile`). Additive.
     AddressArray,
-    /// std only: `addressArrayOwned<T>(address, length, owner)`: that array with an owner, a
-    /// block whose first word is a C function called with it when the array drops. Additive.
+    /// std only: `addressArray` with an owner block, whose first word is called at the drop.
     AddressArrayOwned,
     /// std only (as are the other four `AddressAtomic*`): `addressAtomicLoad<T>(address: usize,
     /// order: u8) -> T`, `T` an integer type: as `AtomicLoad` on the integer at `address`, `T`
