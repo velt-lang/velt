@@ -28,6 +28,8 @@ export const TYPED_ARRAY_PUT = Symbol("typedArrayPut");
 export const VIEW_SIZE = Symbol("viewSize");
 /** Buffer views: how an empty one prints. */
 export const VIEW_EMPTY_TEXT = Symbol("viewEmptyText");
+/** Buffer views: the bytes `Buffer.from` makes of one. */
+export const VIEW_BYTES = Symbol("viewBytes");
 
 /** `JsonValue`: a runtime handle of its own to the value (`console.log` prints its tree). */
 export const JSON_RUNTIME_HANDLE = Symbol("jsonRuntimeHandle");

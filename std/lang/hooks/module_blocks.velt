@@ -1,0 +1,272 @@
+// velt/lang/hooks (internal): the blocks of module state (module-level `let`s and stored constants,
+// rt_abi.md "Module state"), as the runtime made them (velt_rt task/local/module_state.rs, #2196
+// 9c): one block per descriptor, made by the thread that reaches it first (`newBlock`): zeroed,
+// with the descriptor's size and alignment, its entry recorded before the initializers run (they
+// read the slots written before them and report each slot done, `ready`), then `init`, and
+// `rest` too for a block that is not the program's first (code `velt dev` swaps in with a state
+// of its own: the root file's slots, whose `main` does not run again). Normally one block;
+// `velt dev` brings one per state layout, while code still running from before keeps the old one.
+// A slot read before its initializer ran is the runtime's uncaught `ReferenceError`.
+//
+// The caller holds the module lock, or no other thread can reach module state yet: the executor
+// in Velt's lock (sched_module.velt) on its workers, or a program without the executor (one
+// thread). At a normal end with the debug counters on, the blocks go (`dropAll`).
+
+import { addressLoad, inline, noInline } from "velt/lang/intrinsics";
+import { addressCall } from "velt/lang/intrinsics/future";
+import * as m from "./sched_mem";
+
+declare function velt_rt_write_str(stream: u32, s: string);
+
+/**
+ * The block last reached: its descriptor, its address, and the slots initialized. Changed with
+ * the lock held, or before any worker runs.
+ */
+const DESC = new Atomic<u64>(0);
+const BLOCK = new Atomic<u64>(0);
+const READY = new Atomic<u64>(0);
+
+/**
+ * Every block reached: `TABLE` holds `COUNT` entries of `ENTRY` bytes (descriptor, block, slots
+ * initialized), room for `CAP`; from the C library, as this code runs below module state.
+ */
+const TABLE = new Atomic<u64>(0);
+const COUNT = new Atomic<u64>(0);
+const CAP = new Atomic<u64>(0);
+const ENTRY: usize = 24;
+
+/** The module descriptor's fields (rt_abi.md `ModuleDesc`): size, alignment, `init`, `drop`, `rest`. */
+const DESC_SIZE: usize = 0;
+const DESC_ALIGN: usize = 8;
+const DESC_INIT: usize = 16;
+const DESC_DROP: usize = 24;
+/** Each slot's name, NUL-terminated, in slot order. */
+const DESC_NAMES: usize = 32;
+const DESC_REST: usize = 40;
+
+/** A block's `ready` count once its last slot is initialized (lowering reports it). */
+const ALL_READY: usize = 0xffff_ffff_ffff_ffff;
+
+/** The block of the program's descriptor `desc`, to reach slot `slot` (made on first use). */
+@inline
+export function state(desc: usize, slot: u64): usize {
+  if (DESC.load("acquire") as usize === desc && slot < READY.load("acquire")) {
+    return BLOCK.load("relaxed") as usize;
+  }
+  return slow(desc, slot);
+}
+
+/** The block of `desc` without the slot check (the root file's `main`), made on first use. */
+export function block(desc: usize): usize {
+  if (DESC.load("acquire") as usize === desc) {
+    return BLOCK.load("relaxed") as usize;
+  }
+  const at = entryOf(desc);
+  if (at !== 0) {
+    return use(at);
+  }
+  return newBlock(desc);
+}
+
+/** The slots of block `state` below `n` are initialized. */
+export function ready(state: usize, n: u64): void {
+  const at = entryOfBlock(state);
+  if (at === 0) {
+    // Every block has its entry before its initializers run (`newBlock`).
+    return;
+  }
+  m.st(at + 16, n as usize);
+  BLOCK.store(state as u64, "relaxed");
+  READY.store(n, "relaxed");
+  DESC.store(m.ld(at) as u64, "release");
+}
+
+/**
+ * The program ends normally with the debug counters on: every block whose slots are all
+ * initialized is dropped and freed, in the order they were made, as the runtime did, so the
+ * counters see what module state held as freed. The caller holds the lock and keeps it.
+ */
+export function dropAll(): void {
+  const table = TABLE.load("relaxed") as usize;
+  const n = COUNT.load("relaxed") as usize;
+  // Taken out first, as the runtime took its list: drop glue that reaches module state again
+  // makes a block of its own in a table of its own, and never meets one being dropped.
+  TABLE.store(0, "relaxed");
+  COUNT.store(0, "relaxed");
+  CAP.store(0, "relaxed");
+  DESC.store(0, "relaxed");
+  READY.store(0, "relaxed");
+  for (let i: usize = 0; i < n; i++) {
+    const at = table + i * ENTRY;
+    // A program that stops before its root file's statements reached each declaration leaves
+    // slots that hold nothing to drop.
+    if (m.ld(at + 16) !== ALL_READY) {
+      continue;
+    }
+    const desc = m.ld(at);
+    const p = m.ld(at + 8);
+    // SAFETY: the descriptor's `drop` drops the block it initialized, once.
+    unsafe {
+      addressCall(m.ld(desc + DESC_DROP), p);
+    }
+    freeBlock(p);
+  }
+  if (table !== 0) {
+    m.lastingRelease(table);
+  }
+}
+
+/** Makes entry `at` the block reached now (`DESC`, `BLOCK`, `READY`): its address. */
+function use(at: usize): usize {
+  const p = m.ld(at + 8);
+  BLOCK.store(p as u64, "relaxed");
+  READY.store(m.ld(at + 16) as u64, "relaxed");
+  DESC.store(m.ld(at) as u64, "release");
+  return p;
+}
+
+/** The entry of descriptor `desc`, or 0. */
+function entryOf(desc: usize): usize {
+  const table = TABLE.load("relaxed") as usize;
+  const n = COUNT.load("relaxed") as usize;
+  for (let i: usize = 0; i < n; i++) {
+    if (m.ld(table + i * ENTRY) === desc) {
+      return table + i * ENTRY;
+    }
+  }
+  return 0;
+}
+
+/** The entry of block `p`, or 0. */
+function entryOfBlock(p: usize): usize {
+  const table = TABLE.load("relaxed") as usize;
+  const n = COUNT.load("relaxed") as usize;
+  for (let i: usize = 0; i < n; i++) {
+    if (m.ld(table + i * ENTRY + 8) === p) {
+      return table + i * ENTRY;
+    }
+  }
+  return 0;
+}
+
+/** A new entry for `desc`'s block `p`, its slots below `done` initialized: its address. */
+function addEntry(desc: usize, p: usize, done: usize): usize {
+  let table = TABLE.load("relaxed") as usize;
+  const n = COUNT.load("relaxed") as usize;
+  const cap = CAP.load("relaxed") as usize;
+  if (n === cap) {
+    // Room for twice as many; the old table goes, as nothing holds an entry across the lock.
+    const more = cap === 0 ? 4 : cap * 2;
+    const bigger = m.lastingZeroed(more * ENTRY);
+    if (n !== 0) {
+      m.copy(bigger, table, n * ENTRY);
+      m.lastingRelease(table);
+    }
+    table = bigger;
+    TABLE.store(table as u64, "relaxed");
+    CAP.store(more as u64, "relaxed");
+  }
+  const at = table + n * ENTRY;
+  m.st(at, desc);
+  m.st(at + 8, p);
+  m.st(at + 16, done);
+  COUNT.store((n + 1) as u64, "relaxed");
+  return at;
+}
+
+/**
+ * Not cached yet, or slot `slot` not initialized: the block of `desc`, made if no thread made it
+ * yet (`newBlock`); a slot not initialized is the runtime's `ReferenceError`.
+ */
+@noInline
+function slow(desc: usize, slot: u64): usize {
+  let at = entryOf(desc);
+  if (at === 0) {
+    newBlock(desc);
+    at = entryOf(desc);
+  }
+  if (at === 0 || slot >= (m.ld(at + 16) as u64)) {
+    notReady(desc, slot);
+  }
+  return use(at);
+}
+
+/** The bytes of `desc`'s block (at least 1, as the runtime's layout). */
+function bytesOf(desc: usize): usize {
+  const size = m.ld(desc + DESC_SIZE);
+  return size === 0 ? 1 : size;
+}
+
+/** The alignment of `desc`'s block (at least 1). */
+function alignOf(desc: usize): usize {
+  const align = m.ld(desc + DESC_ALIGN);
+  return align === 0 ? 1 : align;
+}
+
+/**
+ * A zeroed block of `desc`'s size, from the C library, as the runtime took its blocks from its
+ * own allocator: outside the leak counters' blocks, which count what the program's values hold
+ * (a block a program leaves without dropping, as one stopped by an uncaught error in an
+ * initializer, is no leak of its values). Aligned to 16: every descriptor's alignment is at most
+ * 8 (a value's alignment in memory, a SIMD vector's too, rt_abi.md "SIMD"), as a task's state's
+ * is (sched_spawn.velt).
+ */
+function allocBlock(desc: usize): usize {
+  if (alignOf(desc) > 8) {
+    panic("ICE: a module state block aligned to more than 8 bytes");
+  }
+  return m.lastingZeroed(bytesOf(desc));
+}
+
+/** Gives back block `p`, which `allocBlock` made and nothing uses any more. */
+function freeBlock(p: usize): void {
+  m.lastingRelease(p);
+}
+
+/**
+ * The block of `desc`, which no thread made yet, made as the runtime made it (module docs): zeroed,
+ * with the descriptor's size and alignment, its entry added before the initializers run, then
+ * `init`, and `rest` too when it is not the program's first block. Its address.
+ */
+function newBlock(desc: usize): usize {
+  const p = allocBlock(desc);
+  const first = COUNT.load("relaxed") === 0;
+  use(addEntry(desc, p, 0));
+  // SAFETY: the descriptor's `init` and `rest` take the block they initialize; `p` is a zeroed
+  // block of its size and alignment.
+  unsafe {
+    addressCall(m.ld(desc + DESC_INIT), p);
+    const rest = m.ld(desc + DESC_REST);
+    if (rest !== 0 && !first) {
+      addressCall(rest, p);
+    }
+  }
+  return p;
+}
+
+/** A slot read before its initializer ran: the runtime's uncaught `ReferenceError`. */
+function notReady(desc: usize, slot: u64): never {
+  let at = m.ld(desc + DESC_NAMES);
+  let name = "";
+  if (at !== 0) {
+    for (let i: u64 = 0; i < slot; i++) {
+      while (byte(at) !== 0) {
+        at++;
+      }
+      at++;
+    }
+    // Names are identifiers: ASCII, or code points written as `?` here.
+    while (byte(at) !== 0) {
+      const b = byte(at);
+      name += b < 128 ? String.fromCharCode(b as number) : "?";
+      at++;
+    }
+  }
+  velt_rt_write_str(2, `Uncaught ReferenceError: Cannot access '${name}' before initialization\n`);
+  process.exit(1);
+}
+
+function byte(a: usize): u8 {
+  // SAFETY: inside the descriptor's names, a static string.
+  return unsafe { addressLoad<u8>(a) };
+}

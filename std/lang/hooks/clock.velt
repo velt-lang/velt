@@ -1,0 +1,34 @@
+// velt/lang/hooks (internal): `Date.now()` and `performance.now()`, which lowering calls as
+// `dateNow` and `perfNow` (velt_common std_hooks.rs), over the OS's clocks (`#clock`,
+// std/imports.velt). `performance.now()` counts from the time origin: `velt_main` stamps it first
+// thing in a program that reads either clock (`clockStart`), as Node's counts from the start of
+// the process; an entry that doesn't (a test runner) stamps it on the first read. No executor
+// module is imported here.
+
+import { monotonicNs, realtimeNs } from "#clock";
+
+/** `performance.now()`'s origin on the monotonic clock, in nanoseconds; 0 until stamped. */
+const ORIGIN = new Atomic<u64>(0);
+
+/** Stamps the time origin, once: `velt_main`'s first step in a program that reads a clock. */
+export function clockStart(): void {
+  ORIGIN.compareExchange(0, monotonicNs(), "relaxed", "relaxed");
+}
+
+/** `performance.now()`: milliseconds since the time origin, with their fraction. */
+export function perfNow(): f64 {
+  let origin = ORIGIN.load("relaxed");
+  if (origin === 0) {
+    clockStart();
+    origin = ORIGIN.load("relaxed");
+  }
+  // A clock that couldn't be read (0) reads as the origin, never as a wrapped difference.
+  const now = monotonicNs();
+  return now > origin ? ((now - origin) as f64) / 1000000.0 : 0.0;
+}
+
+/** `Date.now()`: whole milliseconds since the Unix epoch, rounded down (before it too). */
+export function dateNow(): i64 {
+  const ns = realtimeNs();
+  return ns / 1000000 - (ns % 1000000 < 0 ? 1 : 0);
+}

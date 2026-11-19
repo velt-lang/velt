@@ -100,8 +100,6 @@ const RUNTIME_REACH: &[(&str, &str)] = &[
     ("memory", "the environment"),
     ("worker", "the environment"),
     ("current", "the environment"),
-    ("date", "the clock"),
-    ("perf", "the clock"),
     ("random", "random numbers"),
     ("stdin", "standard input"),
     ("native", NATIVE_SUPPORT),
@@ -305,8 +303,20 @@ fn is_test_runner(symbol: &str) -> bool {
     symbol.contains("V3stdP4testP3runN13runRegistered")
 }
 
-/// mimalloc's functions std's allocator hooks call.
-const MIMALLOC: [&str; 5] = [
+/// The C functions std reads the clocks through (`Date.now()`, `performance.now()`:
+/// std/lang/hooks/clock_*.velt), each OS's.
+const CLOCKS: [&str; 5] = [
+    "clock_gettime",
+    "QueryPerformanceCounter",
+    "QueryPerformanceFrequency",
+    "GetSystemTimePreciseAsFileTime",
+    "__wasi_clock_time_get",
+];
+
+/// mimalloc's functions std's allocator hooks call, and the C library's `calloc`, which std's
+/// per-thread buffers come from (the clocks'): memory, not the outside world.
+const MIMALLOC: [&str; 6] = [
+    "calloc",
     "mi_malloc",
     "mi_malloc_aligned",
     "mi_realloc",
@@ -322,6 +332,9 @@ fn reason(symbol: &str) -> Option<String> {
     // runtime's (`velt_rt_alloc`).
     if MIMALLOC.contains(&symbol) {
         return None;
+    }
+    if CLOCKS.contains(&symbol) {
+        return Some("the clock".into());
     }
     let Some(rest) = symbol.strip_prefix("velt_") else {
         if PURE_C.contains(&symbol) {
@@ -430,7 +443,7 @@ mod tests {
         let program = Program {
             aggs: vec![],
             funcs: vec![r0, r2, main],
-            externs: vec![ext("velt_rt_date_now"), ext("velt_rt_fs_read_dir_sync")],
+            externs: vec![ext("clock_gettime"), ext("velt_rt_fs_read_dir_sync")],
             statics: vec![],
             files: vec![],
             debug_types: vec![],
@@ -515,8 +528,8 @@ mod tests {
         let outside = |s: &str| reason(s).unwrap_or_else(|| panic!("{s} counted as inside"));
         assert_eq!(outside("velt_rt_fs_read_dir_sync"), "the file system");
         assert_eq!(outside("velt_rt_tcp_connect"), "the network");
-        assert_eq!(outside("velt_rt_perf_now"), "the clock");
-        assert_eq!(outside("velt_rt_date_now"), "the clock");
+        assert_eq!(outside("clock_gettime"), "the clock");
+        assert_eq!(outside("QueryPerformanceCounter"), "the clock");
         assert_eq!(outside("velt_rt_random_u64"), "random numbers");
         assert_eq!(outside("velt_rt_memory_rss"), "the environment");
         assert_eq!(outside("velt_rt_isatty"), "the environment");

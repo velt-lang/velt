@@ -103,7 +103,12 @@ fn the_header_check_runs_only_when_a_change_touches_what_it_checks() {
     ] {
         assert!(!plan(&[path]).c_headers, "{path}");
     }
-    assert!(!Plan::everything("--full").c_headers);
+    // `--full` (a merge train, the nightly) knows no changes, so it checks the headers too, and
+    // so does a change git can't tell.
+    assert!(Plan::everything("--full").c_headers);
+    assert!(Plan::unknown_changes("no base").c_headers);
+    // A change that selects everything runs it only when it touches the check.
+    assert!(!plan(&["Cargo.lock"]).c_headers);
     // A change that selects everything still runs it when it touches the check too, whichever
     // file comes first.
     assert!(plan(&["Cargo.lock", "std/ffi/out.velt"]).c_headers);

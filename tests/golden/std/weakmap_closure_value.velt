@@ -1,0 +1,33 @@
+// check: no leaks
+// A weak map value holding a closure that captures the key, as sigx's handlers capture their
+// target: an ephemeron cycle through a closure's environment (#989, #3119 step 3). Once the
+// key's last outside reference goes, the entry, the handler, its environment and the key are
+// freed, and the `WeakRef` reads null (Node: still the object, until a garbage collection).
+class Raw {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+class Handler {
+  read: () => number;
+  constructor(read: () => number) {
+    this.read = read;
+  }
+}
+
+function track(cache: WeakMap<Raw, Handler>, n: number): WeakRef<Raw> {
+  const raw = new Raw(n);
+  const handler = new Handler(() => raw.n);
+  cache.set(raw, handler);
+  console.log("handler reads", cache.get(raw)!.read());
+  return new WeakRef(raw);
+}
+
+function main() {
+  const cache = new WeakMap<Raw, Handler>();
+  const r = track(cache, 7);
+  console.log("key freed:", r.deref() == null);
+  console.log("map still in use:", cache.has(new Raw(0)));
+}

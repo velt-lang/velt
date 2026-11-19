@@ -4,6 +4,8 @@
 // `f32x4` accumulator. The `velt_simd_*` functions below have no runtime implementation, the
 // compiler emits them inline (rt_abi.md "SIMD").
 
+import { detectedBf16Arm } from "velt/simd/bf16_check";
+
 export type bf16x8 = bf16x8;
 
 declare function velt_simd_bf16x8_fits(xs: bf16[], at: u64): bool;
@@ -21,6 +23,8 @@ declare function velt_simd_bf16x8_widen_high(v: bf16x8): f32x4;
 declare function velt_simd_f32x4_narrow_bf16x8(lo: f32x4, hi: f32x4): bf16x8;
 declare function velt_simd_f32x4_dot_add_bf16x8(acc: f32x4, a: bf16x8, b: bf16x8): f32x4;
 declare function velt_simd_f32x4_dot_add_fast_bf16x8(acc: f32x4, a: bf16x8, b: bf16x8): f32x4;
+// True only in a function gated on `bf16-arm`; false elsewhere, where std asks the CPU.
+declare function velt_simd_has_bf16_arm(): bool;
 
 extend bf16x8 {
   /** A vector with every lane `x`. */
@@ -155,10 +159,24 @@ extend bf16x8 {
    * x86's `vdpbf16ps` (AVX512-BF16); elsewhere it is `dotAdd`. The sum of the lanes is the dot
    * product to some rounding, but lanes differ between CPUs: those instructions add lanes
    * `2k` and `2k + 1` into lane `k`, and `dotAdd` adds `k` and `k + 4`; they round the two
-   * products together, and they may flush subnormal operands and results to zero. So add up
-   * the lanes, and use `dotAdd` where the bits must be the same everywhere.
+   * products together, and they flush subnormal operands and results to zero, so a subnormal
+   * times 2^100 is 0 there and `Infinity` times a subnormal is NaN, where `dotAdd` gives the
+   * product and `Infinity`. So add up the lanes, and use `dotAdd` where the bits must be the
+   * same everywhere. No check of the CPU is in it, so that it costs a loop nothing: velt/half's
+   * `dotBf16Fast` asks once for a whole dot product, and is `bfdot` in a build for any arm64
+   * CPU.
    */
   dotAddFast(b: bf16x8, acc: f32x4): f32x4 {
     return velt_simd_f32x4_dot_add_fast_bf16x8(acc, this, b);
+  }
+
+  /**
+   * Whether the CPU has Arm's bf16 instructions (FEAT_BF16), so that velt/half's `dotBf16Fast`
+   * is `bfdot`: asked of the operating system when the program runs, on Linux and macOS, and
+   * true without asking in a release build whose `--cpu` has them. False off arm64, on Windows,
+   * in debug builds, and with `VELT_SIMD_DISABLE=clmul` where it is asked.
+   */
+  static hasBf16Arm(): bool {
+    return velt_simd_has_bf16_arm() || detectedBf16Arm();
   }
 }

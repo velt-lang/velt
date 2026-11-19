@@ -1,8 +1,9 @@
 // WeakMap whose values hold handler closures, the shape of sigx's reactive caches (#3119
 // step 3): each handler's closure captures an object other than its key, so no entry is a
-// cycle, and each entry goes when its key's last reference does. The insert traces the new
-// value's graph (the handler, its closure's environment, the captured object) to find whether
-// it refers back to the key. weakmap_handlers_cycle.velt is the same with the key captured.
+// cycle, and each entry goes when its key's last reference does. The key's decrements before
+// its last (`set`'s and `get`'s temporary references) trace the value's graph (the handler, its
+// closure's environment, the captured object) to find whether it refers back to the key.
+// weakmap_handlers_cycle.velt is the same with the key captured.
 class Raw {
   n: i64;
 

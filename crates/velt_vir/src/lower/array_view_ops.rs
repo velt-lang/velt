@@ -37,6 +37,13 @@ impl FnLower<'_, '_> {
         let len = |arr: &Place| Rvalue::Use(Operand::Copy(proj(arr, Proj::Field(1))));
         match (i, rest) {
             (I::ArrayLen, []) => self.view_len(bxp, aty),
+            // The bytes of a view are its mirror's, every element converted: what a C
+            // function given the array itself gets (c_call.rs). A plain array of the view type
+            // gives its own.
+            (I::ArrayDataAddress | I::ArrayReadAddress | I::ArrayByteLength, []) => {
+                let arr = self.content_with(bxp, aty, ViewSync::All);
+                self.array_op(i, rest, &arr, aty, ty)
+            }
             // Only a hint: a view's elements are not where a plain array's are.
             (I::ArrayPrefetch, [n]) => {
                 self.expr(n);

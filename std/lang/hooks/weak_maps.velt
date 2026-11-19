@@ -35,7 +35,9 @@ import {
   memberRemove,
   remove,
   setHint,
+  setUnexamined,
   settle,
+  unexamined,
 } from "./weak_records";
 import {
   W,
@@ -73,7 +75,16 @@ const MAP: usize = 64;
 export const E_KEY: usize = 0;
 export const E_VALUE: usize = 8;
 export const E_MEMBERS: usize = 16;
-const ENTRY: usize = 24;
+/**
+ * Whether the value's graph was traced for paths back to the key (weak.velt `examine`): one of
+ * `UNEXAMINED`, `LOOKED` (traced once, no path: one more look at the key's next decrement) and
+ * `EXAMINED` (done, or nothing to trace).
+ */
+export const E_EXAMINED: usize = 24;
+export const UNEXAMINED: usize = 0;
+export const EXAMINED: usize = 1;
+export const LOOKED: usize = 2;
+const ENTRY: usize = 32;
 
 const EMPTY: usize = 0;
 const REMOVED: usize = 1;
@@ -189,6 +200,7 @@ export function entryClaim(b: usize, slot: usize, key: usize): usize {
   st(slot + E_KEY, key);
   st64(slot + E_VALUE, 0);
   st(slot + E_MEMBERS, 0);
+  st(slot + E_EXAMINED, 1);
   return slot;
 }
 
@@ -211,6 +223,7 @@ export function entryAdd(b: usize, key: usize): usize {
       st(e + E_KEY, key);
       st64(e + E_VALUE, 0);
       st(e + E_MEMBERS, 0);
+      st(e + E_EXAMINED, 1);
       return e;
     }
     i = (i + 1) & (cap - 1);
@@ -272,12 +285,16 @@ export function del(h: usize, id: u32, key: usize): bool {
 export function delEntry(h: usize, id: u32, b: usize, e: usize, key: usize): void {
   const value = ld64(e + E_VALUE);
   const members = ld(e + E_MEMBERS);
+  const examined = ld(e + E_EXAMINED) === EXAMINED;
   st(e + E_KEY, REMOVED);
   st(e + E_MEMBERS, 0);
   st(b + M_LIVE, ld(b + M_LIVE) - 1);
   const rec = find(h, key);
   if (rec !== 0) {
     listRemove(rec, R_KEYED, id as usize);
+    if (!examined) {
+      setUnexamined(rec, unexamined(rec) - 1);
+    }
   }
   unlink(h, id, key, members);
   settle(h, key);

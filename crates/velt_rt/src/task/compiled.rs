@@ -1,16 +1,13 @@
-//! `Compiled<S>`: a Rust `Future` driving a compiled state machine `(poll, drop, state)`.
+//! `Compiled<S>`: a Rust `Future` driving a compiled state machine `(poll, drop, state)` as a task
+//! root inside the task's local set (local/).
 //!
-//! The state is stored inline in the future (`Inline<N>` size classes, align 16) so that a spawned
-//! task is exactly one allocation — tokio's task cell — or, for states larger than the biggest
-//! class, in a separate heap block (`Heap`). `Borrowed` points at a state owned by the caller
-//! (`block_on`). The state is copied into place before the first poll; compiled states contain no
-//! self-references until they have been polled, so that copy is sound. After the first poll the
-//! future is pinned and the state never moves again.
+//! The state is stored inline in the future (`Inline<N>`, align 16), or `Borrowed` points at a
+//! state owned by the caller. The state is copied into place before the first poll; compiled
+//! states contain no self-references until they have been polled, so that copy is sound. After the
+//! first poll the future is pinned and the state never moves again.
 
 use super::local::Locals;
-use super::ResultDropFn;
 use super::{raw_cx, DropFn, PollFn, SendPtr, READY};
-use std::alloc::Layout;
 use std::future::Future;
 use std::marker::PhantomPinned;
 use std::mem::MaybeUninit;
@@ -46,42 +43,7 @@ impl<const N: usize> OwnedStore for Inline<N> {
     }
 }
 
-/// Separately allocated storage for states larger than the inline classes (or over-aligned).
-pub struct Heap {
-    ptr: SendPtr<u8>,
-    layout: Layout,
-}
-
-impl StateStore for Heap {
-    fn ptr(&mut self) -> *mut u8 {
-        self.ptr.0
-    }
-}
-
-impl OwnedStore for Heap {
-    fn new(size: usize, align: usize) -> Self {
-        let layout = Layout::from_size_align(size.max(1), align.max(1))
-            .unwrap_or_else(|_| crate::panic::fatal("invalid async state layout"));
-        // SAFETY: non-zero size.
-        let p = unsafe { std::alloc::alloc(layout) };
-        if p.is_null() {
-            std::alloc::handle_alloc_error(layout);
-        }
-        Heap {
-            ptr: SendPtr(p),
-            layout,
-        }
-    }
-}
-
-impl Drop for Heap {
-    fn drop(&mut self) {
-        // SAFETY: allocated in `new` with this layout.
-        unsafe { std::alloc::dealloc(self.ptr.0, self.layout) }
-    }
-}
-
-/// A state owned by someone else that outlives the future (the `block_on` caller's frame).
+/// A state owned by someone else that outlives the future.
 pub struct Borrowed(pub(crate) SendPtr<u8>);
 
 impl StateStore for Borrowed {
@@ -97,9 +59,6 @@ pub struct Compiled<S: StateStore> {
     drop: DropFn,
     live: bool,
     state: S,
-    /// Transfers the result in place for the task that joins this one (compiled transfer glue,
-    /// `velt_rt_spawn_transfer`), run as the state finishes, inside the task's local set.
-    transfer: Option<ResultDropFn>,
     /// Dropped after the state (a cancelled root first releases the promises it owns).
     locals: Locals,
     _pinned: PhantomPinned,
@@ -113,22 +72,9 @@ impl<S: StateStore> Compiled<S> {
             drop,
             live: true,
             state,
-            transfer: None,
             locals: Locals::default(),
             _pinned: PhantomPinned,
         }
-    }
-
-    /// Run `transfer` on the result as the state finishes (see the field).
-    pub fn with_transfer(mut self, transfer: Option<ResultDropFn>) -> Self {
-        self.transfer = transfer;
-        self
-    }
-
-    /// Address of the state (the result is at offset 0 once `poll` returned `Ready`).
-    pub fn state_ptr(self: Pin<&mut Self>) -> *mut u8 {
-        // SAFETY: we only hand out the address; nothing is moved.
-        unsafe { self.get_unchecked_mut().state.ptr() }
     }
 }
 
@@ -172,22 +118,13 @@ impl<S: StateStore> Future for Compiled<S> {
         if !this.live {
             return Poll::Ready(());
         }
-        let (poll, state, transfer) = (this.poll, this.state.ptr(), this.transfer);
+        let (poll, state) = (this.poll, this.state.ptr());
         // The location this task's result carries is of a throw in this poll (panic.rs).
         crate::panic::ThrowLoc::clear();
         let r = this.locals.poll_root(cx, |cx| {
             // SAFETY: the compiled poll function upholds the ABI for its own state.
             match unsafe { poll(state, raw_cx(cx).ptr()) } {
-                READY => {
-                    if let Some(t) = transfer {
-                        // SAFETY: the finished state's result is at offset 0. The glue runs
-                        // here, inside this task's set, while promises the task started (which
-                        // may still reference the result's objects) are on this thread; a
-                        // promise it starts joins the set (see `velt_rt_fut_transfer`).
-                        unsafe { t(state) }
-                    }
-                    Poll::Ready(())
-                }
+                READY => Poll::Ready(()),
                 _ => Poll::Pending,
             }
         });
@@ -205,74 +142,6 @@ impl<S: StateStore> Drop for Compiled<S> {
             let (drop, state) = (self.drop, self.state.ptr());
             // SAFETY: cancelled before completion: the state owns live locals.
             self.locals.drop_with(|| unsafe { drop(state) });
-        }
-    }
-}
-
-/// Run `$body` with the type alias `$S` bound to the storage class fitting `(size, align)`.
-macro_rules! with_state_store {
-    ($size:expr, $align:expr, |$S:ident| $body:expr) => {{
-        let (size, align): (usize, usize) = ($size, $align);
-        if align > 16 || size > 1024 {
-            type $S = $crate::task::compiled::Heap;
-            $body
-        } else if size <= 64 {
-            type $S = $crate::task::compiled::Inline<64>;
-            $body
-        } else if size <= 256 {
-            type $S = $crate::task::compiled::Inline<256>;
-            $body
-        } else if size <= 448 {
-            // A task per connection is often past 256 bytes (a session that receives, sends
-            // and closes), and need not take the 1024 its neighbours do. 448, not 512: with the
-            // task's header the cell then fills an allocator bin instead of spilling into the
-            // next (measured per idle WebSocket connection: 0.27 KB less than with 512).
-            type $S = $crate::task::compiled::Inline<448>;
-            $body
-        } else if size <= 576 {
-            // The next allocator bin up (640 with the header): a WebSocket session's task with
-            // a few more locals (488 bytes for `bench/websocket`'s echo handler) takes 640 bytes
-            // instead of the 1024 class's 1088.
-            type $S = $crate::task::compiled::Inline<576>;
-            $body
-        } else {
-            type $S = $crate::task::compiled::Inline<1024>;
-            $body
-        }
-    }};
-}
-pub(crate) use with_state_store;
-
-#[cfg(test)]
-mod tests {
-    /// The storage class a state of `size` bytes gets: the inline size, or 0 for the heap.
-    fn class(size: usize) -> usize {
-        with_state_store!(size, 8, |S| {
-            if std::any::type_name::<S>().ends_with("Heap") {
-                0
-            } else {
-                std::mem::size_of::<S>()
-            }
-        })
-    }
-
-    #[test]
-    fn states_take_the_smallest_class_that_holds_them() {
-        for (size, want) in [
-            (1, 64),
-            (64, 64),
-            (65, 256),
-            (256, 256),
-            (257, 448),
-            (448, 448),
-            (449, 576),
-            (488, 576),
-            (576, 576),
-            (577, 1024),
-            (1024, 1024),
-            (1025, 0),
-        ] {
-            assert_eq!(class(size), want, "a state of {size} bytes");
         }
     }
 }

@@ -1,0 +1,47 @@
+// requires: unix
+// `writeSync` only reads its array: one an `RwLock` holds is written to a file from a `read`
+// callback. `readSync` changes its array, so it fills one in a `write` callback, and in a
+// `read` callback it is the change of a held value that read mode stops.
+import * as fs from "velt/fs";
+import { tmpdir } from "velt/os";
+
+class Store {
+  bytes: u8[] = [104, 105];
+  floats: f32[] = [1.5, -2];
+}
+
+function put<T extends Numeric>(fd: number, xs: T[], length: number, position: number): number {
+  try {
+    return fs.writeSync(fd, xs, 0, length, position);
+  } catch (e) {
+    return -1;
+  }
+}
+
+function take<T extends Numeric>(fd: number, xs: T[], length: number, position: number): number {
+  try {
+    return fs.readSync(fd, xs, 0, length, position);
+  } catch (e) {
+    return -1;
+  }
+}
+
+function main() {
+  const path = `${tmpdir()}/velt-golden-number-array-rwlock-${process.pid}`;
+  fs.writeFileSync(path, "zzzzzzzzzz");
+  const fd = fs.openSync(path, "r+");
+  const rw = shared(new RwLock<Store>(new Store()));
+
+  console.log(rw.read((s) => put(fd, s.bytes, 2, 0)));
+  console.log(rw.read((s) => put(fd, s.floats, 8, 2)));
+  console.log(fs.readFileBytesSync(path).join(","));
+
+  rw.write((s) => {
+    console.log(take(fd, s.bytes, 2, 8), s.bytes.join(","));
+    console.log(take(fd, s.floats, 4, 6), s.floats[0], s.floats[1]);
+  });
+  console.log(rw.read((s) => s.bytes.join(",")));
+
+  fs.closeSync(fd);
+  fs.unlinkSync(path);
+}

@@ -1,5 +1,5 @@
 //! `std/fs` roundtrips in a temp directory: the `*_sync` variants (what a native build runs on the
-//! executor's blocking pool), and the file streams' leaves awaited through `velt_rt_block_on`.
+//! executor's blocking pool), and the file streams' leaves awaited in a task.
 
 use super::fake::{arg, block_on_fut, err, ok, take_string};
 use crate::bytes::{velt_rt_bytes_drop, VeltBytes};

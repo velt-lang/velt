@@ -4,8 +4,8 @@
 //! (`VELT_RT_DEBUG_ALLOC=1`), which aborts on a free of a block it did not hand out, a double
 //! free or a use after free.
 
+use super::fake::block_on_state;
 use crate::task::local::{velt_rt_fut_box, velt_rt_fut_start};
-use crate::task::runtime::velt_rt_block_on;
 use crate::task::shared::velt_rt_fut_share;
 use crate::task::{
     drop_fut, poll_fut, velt_rt_yield_now_fut, VeltFut, FUT_RESULT_OFFSET, PENDING, READY,
@@ -150,7 +150,7 @@ fn await_both() {
         r: null_mut(),
         a: 0,
     };
-    unsafe { velt_rt_block_on(await_both_poll, &mut st as *mut AwaitBoth as *mut u8) };
+    unsafe { block_on_state(await_both_poll, &mut st as *mut AwaitBoth as *mut u8) };
     assert_eq!(st.result, 77);
 }
 
@@ -186,7 +186,7 @@ fn drop_unsettled() {
         y: null_mut(),
     };
     unsafe {
-        velt_rt_block_on(
+        block_on_state(
             drop_unsettled_poll,
             &mut st as *mut DropUnsettled as *mut u8,
         )

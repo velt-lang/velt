@@ -1,0 +1,99 @@
+// requires: unix
+// `readSync` and `writeSync` with an array of every number type: each is written from its own
+// memory and read back into another, a `u8[]` and a typed array behave as before, and the
+// message about an empty buffer names Node's typed array for the element type.
+import * as fs from "velt/fs";
+import { tmpdir } from "velt/os";
+
+function empty(read: () => number) {
+  try {
+    read();
+  } catch (e) {
+    console.log(e.message);
+  }
+}
+
+function main() {
+  const path = `${tmpdir()}/velt-golden-number-array-types-${process.pid}`;
+  const fd = fs.openSync(path, "w+");
+
+  const a: i8[] = [-1, 2];
+  const b: i16[] = [-300, 4];
+  const c: u16[] = [65535, 6];
+  const d: i32[] = [-70000, 8];
+  const e: u32[] = [4000000000, 10];
+  const f: i64[] = [-9007199254740993, 12];
+  const g: u64[] = [18446744073709551615, 14];
+  const h: f32[] = [1.5, -16];
+  const i: f64[] = [2.5, 1e300];
+  const j: isize[] = [-5, 20];
+  const k: usize[] = [6, 22];
+  let at = 0;
+  const sizes: number[] = [];
+  sizes.push(fs.writeSync(fd, a, 0, null, at));
+  sizes.push(fs.writeSync(fd, b, 0, null, (at += 2)));
+  sizes.push(fs.writeSync(fd, c, 0, null, (at += 4)));
+  sizes.push(fs.writeSync(fd, d, 0, null, (at += 4)));
+  sizes.push(fs.writeSync(fd, e, 0, null, (at += 8)));
+  sizes.push(fs.writeSync(fd, f, 0, null, (at += 8)));
+  sizes.push(fs.writeSync(fd, g, 0, null, (at += 16)));
+  sizes.push(fs.writeSync(fd, h, 0, null, (at += 16)));
+  sizes.push(fs.writeSync(fd, i, 0, null, (at += 8)));
+  sizes.push(fs.writeSync(fd, j, 0, null, (at += 16)));
+  sizes.push(fs.writeSync(fd, k, 0, null, (at += 16)));
+  console.log(sizes.join(" "), fs.fstatSync(fd).size);
+
+  const a2: i8[] = [0, 0];
+  const b2: i16[] = [0, 0];
+  const c2: u16[] = [0, 0];
+  const d2: i32[] = [0, 0];
+  const e2: u32[] = [0, 0];
+  const f2: i64[] = [0, 0];
+  const g2: u64[] = [0, 0];
+  const h2: f32[] = [0, 0];
+  const i2: f64[] = [0, 0];
+  const j2: isize[] = [0, 0];
+  const k2: usize[] = [0, 0];
+  at = 0;
+  fs.readSync(fd, a2, 0, 2, at);
+  fs.readSync(fd, b2, 0, 4, (at += 2));
+  fs.readSync(fd, c2, 0, 4, (at += 4));
+  fs.readSync(fd, d2, 0, 8, (at += 4));
+  fs.readSync(fd, e2, 0, 8, (at += 8));
+  fs.readSync(fd, f2, 0, 16, (at += 8));
+  fs.readSync(fd, g2, 0, 16, (at += 16));
+  fs.readSync(fd, h2, 0, 8, (at += 16));
+  fs.readSync(fd, i2, 0, 16, (at += 8));
+  fs.readSync(fd, j2, 0, 16, (at += 16));
+  fs.readSync(fd, k2, 0, 16, (at += 16));
+  console.log(a2, b2, c2, d2, e2);
+  console.log(f2, g2, h2, i2, j2, k2);
+
+  // Bytes and typed arrays, as before.
+  const bytes: u8[] = Buffer.alloc(4);
+  console.log(fs.readSync(fd, bytes, 0, 4, 0), bytes);
+  const view = new Float32Array(2);
+  console.log(fs.readSync(fd, view, 0, 8, 58), view[0], view[1]);
+  console.log(
+    fs.writeSync(fd, view, 0, 8, 200),
+    fs.writeSync(fd, bytes, 0, 2, 208),
+    fs.fstatSync(fd).size,
+  );
+
+  // An empty buffer of each kind, in Node's words.
+  empty(() => fs.readSync(fd, [] as u8[], 0, 1, 0));
+  empty(() => fs.readSync(fd, [] as i8[], 0, 1, 0));
+  empty(() => fs.readSync(fd, [] as i16[], 0, 1, 0));
+  empty(() => fs.readSync(fd, [] as u16[], 0, 1, 0));
+  empty(() => fs.readSync(fd, [] as i32[], 0, 1, 0));
+  empty(() => fs.readSync(fd, [] as u32[], 0, 1, 0));
+  empty(() => fs.readSync(fd, [] as i64[], 0, 1, 0));
+  empty(() => fs.readSync(fd, [] as u64[], 0, 1, 0));
+  empty(() => fs.readSync(fd, [] as f32[], 0, 1, 0));
+  empty(() => fs.readSync(fd, [] as f64[], 0, 1, 0));
+  empty(() => fs.readSync(fd, [] as f16[], 0, 1, 0));
+  empty(() => fs.readSync(fd, [] as bf16[], 0, 1, 0));
+  empty(() => fs.readSync(fd, new Int16Array(0), 0, 1, 0));
+  fs.closeSync(fd);
+  fs.unlinkSync(path);
+}

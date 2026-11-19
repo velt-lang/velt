@@ -37,6 +37,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
         lw.register_statics();
         // Before any C code (natives' setup, initializers) can start a thread that calls back.
         lw.mark_program_thread();
+        // `performance.now()`'s time origin, in a program that reads a clock: as near the start
+        // of the process as Velt code gets (std/lang/hooks/clock.velt).
+        let clock = velt_common::std_hooks::hook_index::clock_start;
+        if lw.cx.hir.hooks_demanded.contains(clock) {
+            hooks::clock_start(&mut lw, velt_common::std_hooks::Construct::Clock).emit(&mut lw);
+        }
         if lw.cx.uses_placement {
             // Before anything starts the runtime (#211).
             lw.call_rt(Rt::SetScheduler, vec![cint(1, Ty::U32)], None);
@@ -77,7 +83,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 None => cint(0, Ty::I32),
             }
         } else {
-            lw.call_main(def, None)
+            let code = lw.call_main(def, None);
+            // No task, so no `sched_finish`: module state that went through the executor's
+            // hooks is dropped at a counted normal end here.
+            lw.sched_module_exit(&code);
+            code
         };
         lw.terminate(Terminator::Return(code));
         lw.scopes.clear();
