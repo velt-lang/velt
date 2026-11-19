@@ -831,7 +831,7 @@ crate::units::codec::enums! {
         0 => Leaf(f0),
         1 => Def(f0, f1, f2),
         2 => Dyn(f0, f1, f2),
-        3 => Array(f0),
+        3 => Array(f0, f1),
         4 => Option(f0, f1),
     }
 }

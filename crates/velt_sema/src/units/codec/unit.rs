@@ -20,7 +20,7 @@ use crate::types::Types;
 use crate::SourceModule;
 
 /// The version of the encoding: the first bytes of every encoded unit.
-pub(crate) const FORMAT: &[u8; 8] = b"vunit\x00\x00\x03";
+pub(crate) const FORMAT: &[u8; 8] = b"vunit\x00\x00\x04";
 
 /// The fields of `Ctx` a unit saves (`save`), in order, then those it does not (`skip`: as
 /// `Ctx::over` makes them). Generates the field walk of the encoder and decoder.
@@ -59,6 +59,7 @@ unit_fields! {
         fn_shapes, ty, defs, info, def_spans, unit_sums, scopes, prelude, prelude_type_keys,
         aliases, extensions, impls, iface_writes, part_ifaces, synth_ifaces, generic_fns,
         generic_called, union_views, any, ext_impls, ext_by_iface, anon, readonly_twins,
+        array_twins,
         any_unknown_views, objects, brands, brand_keys, generic_brands, unique_symbols,
         record_views, field_only, field_only_of, primitive_guards, writes_undefined,
         nothing_slots, shaped, laid_out, counted_objects, changes_held, lock_free_callbacks,
@@ -96,7 +97,7 @@ unit_fields! {
         in_shared, crossing_callbacks, matching_context, checking, ret_checks, rec, overridden,
         moved_consts, borrow_pass_errors, fresh_checks, param_field_writes,
         param_proxy_targets, deferred_ts_returns, rechecks, closure_defs, literal_types,
-        literal_found, late_consts, group_defs,
+        literal_found, late_consts, group_defs, readonly_widening,
         // What the source rewrites found, installed again by every check (`rewrite_facts`).
         promoted_consts, asserted_rmw, global_props, generic_arrow_fns, generic_arrow_all,
         unsafe_arrow_fns, alias_blocked, kept_nested, closure_groups, group_names,
@@ -313,7 +314,13 @@ impl Codec for Types {
             f64,
             bigint_named,
             inferred_fns,
+            // The inverse of `readonly_elems`: built again when decoding.
+            readonly_arrays: _,
+            readonly_elems,
         } = self;
+        // Before the table: a read-only array is a twin of `T[]` (`TyTable::twin`), which
+        // interning its kind again would not give back.
+        readonly_elems.enc(w);
         w.uint(table.len() as u64);
         for i in 0..table.len() as u32 {
             table.kind(TyId(i)).enc(w);
@@ -326,6 +333,8 @@ impl Codec for Types {
     }
 
     fn dec(r: &mut Reader) -> Self {
+        let readonly_elems: rustc_hash::FxHashMap<TyId, TyId> = Codec::dec(r);
+        let readonly_arrays = readonly_elems.iter().map(|(&a, &e)| (e, a)).collect();
         let n = r.len();
         let mut table = TyTable::new();
         for i in 0..n as u32 {
@@ -333,7 +342,11 @@ impl Codec for Types {
             if r.failed {
                 break;
             }
-            if table.intern(k) != TyId(i) {
+            let id = match readonly_elems.contains_key(&TyId(i)) {
+                true => table.twin(k),
+                false => table.intern(k),
+            };
+            if id != TyId(i) {
                 r.fail();
                 break;
             }
@@ -357,6 +370,8 @@ impl Codec for Types {
             f64,
             bigint_named: Codec::dec(r),
             inferred_fns: Codec::dec(r),
+            readonly_arrays,
+            readonly_elems,
         }
     }
 }

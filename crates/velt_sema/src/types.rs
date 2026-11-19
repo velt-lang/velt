@@ -24,9 +24,9 @@ pub(crate) struct Types {
     /// The read-only array of each element type (`readonly T[]`, `ReadonlyArray<T>`): a twin of
     /// `T[]` of the same kind ([`TyTable::twin`]), which sema refuses to write through or to
     /// convert to `T[]`, and which is `T[]` for lowering (#3061).
-    readonly_arrays: rustc_hash::FxHashMap<TyId, TyId>,
+    pub(crate) readonly_arrays: rustc_hash::FxHashMap<TyId, TyId>,
     /// Each read-only array's element type.
-    readonly_elems: rustc_hash::FxHashMap<TyId, TyId>,
+    pub(crate) readonly_elems: rustc_hash::FxHashMap<TyId, TyId>,
 }
 
 /// The note on an error about a `never` in a program that names `bigint`, whose `never` is
