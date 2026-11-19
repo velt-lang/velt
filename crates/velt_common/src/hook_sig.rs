@@ -57,6 +57,10 @@ pub enum Sig {
     /// A process static (#2779): a module constant `new Atomic<u64>(0)` whose word the runtime
     /// reads and writes, given its address at start (`velt_rt_statics`).
     ProcessStatic,
+    /// A std declaration whose name, used as a type, is one of the compiler's own type kinds
+    /// (`Ptr<T>` is `hir::TyKind::Ptr`, #3094): the declaration gives the name, its documentation
+    /// and its statics, never a type of its own.
+    TypeKind,
 }
 
 /// A function hook's signature.
@@ -222,6 +226,7 @@ impl fmt::Display for Sig {
             Sig::Class => return f.write_str("class"),
             Sig::Decorator => return f.write_str("decorator"),
             Sig::ProcessStatic => return f.write_str("process_static"),
+            Sig::TypeKind => return f.write_str("type_kind"),
         };
         if s.is_async {
             f.write_str("async ")?;
@@ -258,6 +263,9 @@ macro_rules! hook_sig {
     };
     (process_static) => {
         $crate::hook_sig::Sig::ProcessStatic
+    };
+    (type_kind) => {
+        $crate::hook_sig::Sig::TypeKind
     };
     (sig(< $($g:ident),* > ( $($p:tt)* ) -> $r:tt $(($($ra:tt)*))? $(throws $e:tt $(($($ea:tt)*))?)?)) => {
         $crate::hook_sig::Sig::Fn($crate::hook_sig::FnSig {

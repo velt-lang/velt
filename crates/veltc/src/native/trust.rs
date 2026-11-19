@@ -4,7 +4,7 @@
 //!   and in packages with native code that the program allows (`allowNative`, or the root's own
 //!   package.velt declaring native code). Elsewhere it is an error, so an audit reads only those
 //!   packages.
-//! - The raw API, `Ptr`, `OutPtr`, the `export` decorator (`@export("c_name")` defines a C
+//! - The raw API, `Ptr`, the `export` decorator (`@export("c_name")` defines a C
 //!   symbol), `declare c type`s and unsafe functions, is imported only there too: by name,
 //!   through a namespace (`ffi.Ptr`, `@ffi.export(…)`) or re-exported by a package. User code
 //!   works with a binding's safe API.
@@ -27,8 +27,7 @@ use super::unsafe_sites::{self, SiteKind};
 /// std's raw types, by defining module (canonical path) and name. Unsafe functions and `declare
 /// c type`s are raw by their declaration.
 fn raw_std_type(module: &str, name: &str) -> bool {
-    (module == std_module!(ffi_ptr) && name == "Ptr")
-        || (module == std_module!(ffi_out_ptr) && name == "OutPtr")
+    module == std_module!(ffi_ptr) && name == "Ptr"
 }
 
 /// std's raw decorators: `@export("c_name")` (velt/ffi) defines a C symbol, which could replace

@@ -108,7 +108,8 @@ impl Ctx<'_> {
             },
             (TyKind::Array(p), TyKind::Array(a))
             | (TyKind::Option(p, _), TyKind::Option(a, _))
-            | (TyKind::Shared(p), TyKind::Shared(a)) => self.match_ty(p, a, slots),
+            | (TyKind::Shared(p), TyKind::Shared(a))
+            | (TyKind::Ptr(p), TyKind::Ptr(a)) => self.match_ty(p, a, slots),
             (TyKind::Promise(p, pe), TyKind::Promise(a, ae)) => {
                 let x = self.match_ty(p, a, slots);
                 self.match_error(pe, ae, slots) && x

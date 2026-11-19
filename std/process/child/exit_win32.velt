@@ -10,7 +10,7 @@
 // keeps the process alive, as in Node.
 
 import { Ptr, export as cExport } from "velt/ffi";
-import { OutPtr } from "velt/ffi/out_ptr";
+import { Out } from "velt/ffi/out";
 import { exportedAddress, slotPut, slotSize, slotTake } from "velt/lang/intrinsics";
 import * as end from "velt/lang/hooks/sched_end";
 import * as m from "velt/lang/hooks/sched_mem";
@@ -19,7 +19,7 @@ import * as wk from "velt/lang/hooks/sched_wake";
 import { HandOff, parkAfterWake } from "velt/sync/hand_off";
 
 declare c("c") function RegisterWaitForSingleObject(
-  wait: OutPtr<void>,
+  wait: Out<Ptr<void> | null>,
   object: Ptr<void>,
   callback: Ptr<void>,
   context: Ptr<void>,
@@ -46,7 +46,7 @@ export async function signaled(h: usize): Promise<bool> {
     });
   }
   end.keepAcquire(t.main());
-  const w = new OutPtr<void>();
+  const w = new Out<Ptr<void> | null>(null);
   let registered: i32 = 0;
   // SAFETY: `h` is a handle the caller keeps open until this returns; `exited` has the C
   // signature of a `WAITORTIMERCALLBACK` (a pointer and a `BOOLEAN`, no result).
