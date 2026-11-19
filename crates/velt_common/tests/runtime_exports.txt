@@ -168,7 +168,6 @@ velt_rt velt_rt_lk_leave_to
 velt_rt velt_rt_lk_mode
 velt_rt velt_rt_lk_share_made
 velt_rt velt_rt_lk_write
-velt_rt velt_rt_local_offset_minutes
 velt_rt velt_rt_math_add_int32
 velt_rt velt_rt_math_bits_f64
 velt_rt velt_rt_math_ceil
@@ -479,7 +478,6 @@ velt_rt_wasm velt_rt_lk_leave_to
 velt_rt_wasm velt_rt_lk_mode
 velt_rt_wasm velt_rt_lk_share_made
 velt_rt_wasm velt_rt_lk_write
-velt_rt_wasm velt_rt_local_offset_minutes
 velt_rt_wasm velt_rt_memory_heap
 velt_rt_wasm velt_rt_memory_rss
 velt_rt_wasm velt_rt_microtask

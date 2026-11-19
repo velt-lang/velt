@@ -1,0 +1,61 @@
+// velt/time (internal): `TZ` on Windows, where the C library doesn't read it: the values that name
+// UTC or a fixed offset, which need no time-zone database (std/time/localtime_win32.velt). Node
+// (ICU) also understands region names (`Europe/Berlin`); for those, and anything else, Velt keeps
+// the system zone.
+
+/** Whether `name` (after an optional `Etc/`) is one of UTC's names. */
+function isUtcName(name: string): bool {
+  return (
+    name === "UTC" ||
+    name === "UCT" ||
+    name === "GMT" ||
+    name === "UTC0" ||
+    name === "GMT0" ||
+    name === "GMT+0" ||
+    name === "GMT-0" ||
+    name === "Zulu" ||
+    name === "Universal" ||
+    name === "Greenwich"
+  );
+}
+
+/**
+ * The fixed offset, in seconds east of UTC, that `tz` names: UTC under its usual names (`UTC`,
+ * `Etc/UTC`, `GMT`, `UTC0`, …) or `Etc/GMT±N`, whose sign is inverted by convention (`Etc/GMT-2`
+ * is UTC+2); null for anything else.
+ */
+export function fixedOffset(tz: string): i32 | null {
+  // POSIX allows a leading `:` (its "implementation-defined" form).
+  const zone = tz.startsWith(":") ? tz.slice(1) : tz;
+  const name = zone.startsWith("Etc/") ? zone.slice(4) : zone;
+  if (isUtcName(name)) {
+    return 0;
+  }
+  if (!zone.startsWith("Etc/GMT")) {
+    return null;
+  }
+  const hours = zone.slice(7);
+  let sign: i32 = 0;
+  if (hours.startsWith("+")) {
+    sign = -1;
+  } else if (hours.startsWith("-")) {
+    sign = 1;
+  } else {
+    return null;
+  }
+  const digits = hours.slice(1);
+  // tzdata spells the hours without a leading zero: `Etc/GMT+05` is no zone.
+  if (digits.length < 1 || digits.length > 2 || (digits.length === 2 && digits.startsWith("0"))) {
+    return null;
+  }
+  let n: i32 = 0;
+  for (let i: i64 = 0; i < (digits.length as i64); i++) {
+    const c = digits.charCodeAt(i) as i32;
+    if (c < 48 || c > 57) {
+      return null;
+    }
+    n = n * 10 + (c - 48);
+  }
+  const inRange = sign < 0 ? n <= 12 : n <= 14;
+  return inRange ? sign * n * 3600 : null;
+}

@@ -29,6 +29,10 @@ pub const DELETED: &[&str] = &[
     "velt_rt_os_cpu_count",
     "velt_rt_os_tmpdir",
     "velt_rt_os_hostname",
+    // #2196: the local time zone's offset (`#localtime`: std/time/localtime_posix.velt over
+    // `localtime_r`, localtime_win32.velt over Win32's time-zone functions, UTC on WebAssembly),
+    // which only std called.
+    "velt_rt_local_offset_minutes",
     // #2197: integers as text (std/lang/hooks/number_text, velt/lang/number/integer).
     "velt_rt_str_from_i64",
     "velt_rt_str_from_u64",
