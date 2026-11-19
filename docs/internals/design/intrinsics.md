@@ -142,10 +142,10 @@ comment. velt/ffi's unsafe functions are the public surface ([c-ffi.md](c-ffi.md
     array it views (`readSync` calls it after the read; nothing for a plain array, and no code
     in a program without view types). A C function given a view as a buffer that is not
     `readonly` gets the same write-back after the call (c_call.rs).
-  An earlier form gave the bytes as a second, non-owning `u8[]` (as `addressArray` does). It
-  cost an allocation and a free at every call, since a `u8[]` value is a counted box in
-  programs that share one, and it left an aliasing array to keep from escaping; an address
-  has neither problem.
+  - The bytes are reached by address, not as a second `u8[]` over the same memory (the form
+    `addressArray` gives): such an array would be a counted box in a program that shares byte
+    arrays, an allocation and a free at every call, and an alias that must be kept from
+    escaping. An address is neither.
 - **`Numeric`** (std/prelude/number.velt) is that bound: an interface no type declares, which
   the compiler takes to be satisfied by the integer and float types (`f16` and `bf16` too) and
   by nothing else, as `AtomicValue` and `Frozen` are the compiler's (velt_sema `infer.rs`
