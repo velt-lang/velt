@@ -32,7 +32,6 @@ use crate::dispatch::{instantiate, Dispatch, Rounds};
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, TyId, TyKind};
 use crate::inst_sites::carry_guard;
 use crate::types::collect_params;
-use crate::visit::{self, VisitMut};
 
 /// What a type found in a body does: crosses threads, or is converted to the interface or
 /// base class (a source of what values of that type may hold).
@@ -59,8 +58,8 @@ struct Found<'a, 'm> {
     super_receivers: FxHashSet<Span>,
 }
 
-impl VisitMut for Found<'_, '_> {
-    fn expr(&mut self, e: &mut Expr) {
+impl crate::visit_ref::Visit for Found<'_, '_> {
+    fn expr(&mut self, e: &Expr) {
         match &e.kind {
             E::Call {
                 callee: Callee::Intrinsic(Intrinsic::MutexWith | Intrinsic::LockRead),
@@ -206,8 +205,7 @@ pub(crate) fn check(cx: &mut Ctx, recorded: crate::ownership::WeakCrossings) {
         own.entry(d).or_default().push((t, Need::Cross(what, at)));
     }
     let (mut lock_fns, mut task_fns, mut async_fns) = (vec![], vec![], vec![]);
-    let mut defs = std::mem::take(&mut cx.defs);
-    for (i, d) in defs.iter_mut().enumerate() {
+    for (i, d) in cx.defs.iter().enumerate() {
         let Some(Def::Fn(f)) = d else { continue };
         let def = DefId(i as u32);
         let std = cx.try_fn(def).is_some_and(|fi| cx.scopes[fi.module].is_std);
@@ -221,7 +219,7 @@ pub(crate) fn check(cx: &mut Ctx, recorded: crate::ownership::WeakCrossings) {
             async_fns: vec![],
             super_receivers: FxHashSet::default(),
         };
-        visit::block(&mut f.body.block, &mut found);
+        crate::visit_ref::block(&f.body.block, &mut found);
         lock_fns.extend(std::mem::take(&mut found.lock_fns));
         task_fns.extend(std::mem::take(&mut found.task_fns));
         async_fns.extend(std::mem::take(&mut found.async_fns));
@@ -229,7 +227,6 @@ pub(crate) fn check(cx: &mut Ctx, recorded: crate::ownership::WeakCrossings) {
             own.entry(def).or_default().extend(found.needs);
         }
     }
-    cx.defs = defs;
     for n in lock_fns {
         for (t, name, at) in captures(cx, n) {
             let what = GenCopy::LockCapture(name);
