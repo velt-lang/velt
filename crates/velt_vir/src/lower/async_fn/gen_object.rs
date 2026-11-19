@@ -112,7 +112,12 @@ impl Cx<'_> {
             let throw = self.func(Work::GenThrow(def, targs.to_vec()));
             relocs.push((super::gen_send::TABLE_THROW as u32, Const::Func(throw)));
         }
-        let bytes = vec![0; relocs.len() * 8];
+        if self.gen_traced() {
+            let trace = self.func(Work::GenTrace(def, targs.to_vec()));
+            relocs.push((super::TABLE_TRACE as u32, Const::Func(trace)));
+        }
+        let len = relocs.iter().map(|r| r.0 as usize + 8).max().unwrap_or(0);
+        let bytes = vec![0; len];
         self.statics.push(StaticData {
             bytes,
             align: 8,
