@@ -56,6 +56,44 @@ pub(crate) fn std_roots(cx: &Ctx) -> Vec<DefId> {
     roots
 }
 
+/// What the walk finds in one definition ([`Walk::def`]): the definitions and types it names,
+/// the interfaces it calls through, whether it is a class or struct (whose subclasses and
+/// implementations follow), and whether it catches an unwind.
+#[derive(Clone, Default)]
+pub(crate) struct Edges {
+    defs: Vec<DefId>,
+    types: Vec<TyId>,
+    ifaces: Vec<DefId>,
+    adt: bool,
+    catches: bool,
+}
+
+/// [`Edges`] of every definition of the unit being finished, for a later build's walk
+/// ([`program_set`]): what a definition names depends on the unit alone, and reading it from
+/// a unit on disk decodes its body.
+pub(crate) fn unit_edges(cx: &Ctx) -> crate::ctx::DefTable<Edges> {
+    let all: Vec<Edges> = (0..cx.info.len())
+        .map(|i| {
+            let d = DefId(i as u32);
+            let mut walk = Walk::default();
+            walk.def(cx, d);
+            let mut defs = std::mem::take(&mut walk.todo);
+            defs.sort_unstable();
+            defs.dedup();
+            let mut ifaces: Vec<DefId> = walk.ifaces.iter().copied().collect();
+            ifaces.sort_unstable();
+            Edges {
+                defs,
+                types: std::mem::take(&mut walk.types),
+                adt: walk.adts.contains(&d),
+                ifaces,
+                catches: walk.catches,
+            }
+        })
+        .collect();
+    all.into()
+}
+
 /// The definitions a build from std's unit on disk is made of ([`self`]).
 pub(crate) fn program_set(cx: &mut Ctx, entry: Option<DefId>) -> FxHashSet<DefId> {
     let base = cx.unit_sums.lib_base.min(cx.unit_base as usize);
@@ -73,21 +111,29 @@ pub(crate) fn program_set(cx: &mut Ctx, entry: Option<DefId>) -> FxHashSet<DefId
         None => todo.extend(std_roots(cx)),
     }
     let mut walk = Walk {
-        live: FxHashSet::default(),
         todo,
-        types: vec![],
-        seen_types: FxHashSet::default(),
-        ifaces: FxHashSet::default(),
-        adts: FxHashSet::default(),
-        catches: false,
+        ..Walk::default()
     };
     let below = cx.subclass_map().clone();
+    // A finished unit's definitions are followed by what the unit recorded of them
+    // ([`unit_edges`]), but for the functions this stage checked again with its classes
+    // (`units::check_dispatch_again`), whose bodies are this program's.
+    let edges = cx.unit_sums.reach_edges.take();
+    let again: FxHashSet<DefId> = cx.unit_sums.dispatch_fns.iter().copied().collect();
+    let recorded = |d: DefId| {
+        let e = edges.as_ref()?;
+        ((d.0 as usize) < e.len().min(cx.unit_base as usize) && !again.contains(&d))
+            .then(|| &e[d.0 as usize])
+    };
     loop {
         while let Some(d) = walk.todo.pop() {
             if (d.0 as usize) >= cx.info.len() || !walk.live.insert(d) {
                 continue;
             }
-            walk.def(cx, d);
+            match recorded(d) {
+                Some(e) => walk.follow(d, e),
+                None => walk.def(cx, d),
+            }
         }
         while let Some(t) = walk.types.pop() {
             walk.ty(cx, t);
@@ -122,6 +168,7 @@ pub(crate) fn program_set(cx: &mut Ctx, entry: Option<DefId>) -> FxHashSet<DefId
             break;
         }
     }
+    cx.unit_sums.reach_edges = edges;
     if walk.catches {
         crate::body::lazy_std::note_catch_unwind(cx);
     }
@@ -155,6 +202,7 @@ pub(crate) fn program_set(cx: &mut Ctx, entry: Option<DefId>) -> FxHashSet<DefId
     walk.live
 }
 
+#[derive(Default)]
 struct Walk {
     live: FxHashSet<DefId>,
     todo: Vec<DefId>,
@@ -171,6 +219,19 @@ impl Walk {
         if self.seen_types.insert(t) {
             self.types.push(t);
         }
+    }
+
+    /// [`Walk::def`] of a finished unit's definition, from what the unit recorded of it.
+    fn follow(&mut self, d: DefId, e: &Edges) {
+        self.todo.extend(e.defs.iter().copied());
+        for &t in &e.types {
+            self.push_ty(t);
+        }
+        self.ifaces.extend(e.ifaces.iter().copied());
+        if e.adt {
+            self.adts.insert(d);
+        }
+        self.catches |= e.catches;
     }
 
     fn def(&mut self, cx: &Ctx, d: DefId) {
@@ -282,5 +343,12 @@ impl Walk {
         for c in crate::types::children(&kind) {
             self.push_ty(c);
         }
+    }
+}
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    Edges {
+        defs, types, ifaces, adt, catches,
     }
 }

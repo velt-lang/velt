@@ -20,7 +20,7 @@ use crate::types::Types;
 use crate::SourceModule;
 
 /// The version of the encoding: the first bytes of every encoded unit.
-pub(crate) const FORMAT: &[u8; 8] = b"vunit\x00\x00\x04";
+pub(crate) const FORMAT: &[u8; 8] = b"vunit\x00\x00\x05";
 
 /// The fields of `Ctx` a unit saves (`save`), in order, then those it does not (`skip`: as
 /// `Ctx::over` makes them). Generates the field walk of the encoder and decoder.

@@ -254,6 +254,9 @@ pub(crate) struct Summaries {
     /// A finished unit's roots of a build's program set (`reach::std_roots`): the std
     /// functions lowering looks up by name and every hook.
     pub(crate) reach_roots: Option<Vec<crate::hir::DefId>>,
+    /// What the walk for a build's program set finds in each definition of a finished unit
+    /// (`reach::unit_edges`): a later build follows these instead of reading the definition.
+    pub(crate) reach_edges: Option<crate::ctx::DefTable<reach::Edges>>,
     /// A finished unit's methods and constructors by owner, with how many definitions it had
     /// (`lazy_std::live::methods`): a later unit's stage adds its own instead of reading every
     /// definition, which decodes all of a unit from disk.
@@ -410,6 +413,7 @@ pub(crate) fn finish_unit(cx: &mut Ctx) {
     dyn_fns.sort_unstable();
     cx.unit_sums.dyn_member_fns = dyn_fns;
     cx.unit_sums.reach_roots = Some(reach::std_roots(cx));
+    cx.unit_sums.reach_edges = Some(reach::unit_edges(cx));
     cx.unit_sums.methods_by_owner = Some(crate::body::lazy_std::unit_methods(cx));
     crate::ownership::keep_unit_scans(cx);
 }
@@ -469,7 +473,7 @@ crate::units::codec::structs! {
         literals, fed, modules, subclasses, calls, inst_sites, outside_named,
         outside_tys, lets, types, lib_base, dispatch_fns, value_scan,
         virtuals, implicit, host_fns, dyn_member_fns, reach_roots, methods_by_owner, fn_throws,
-        senders,
+        senders, reach_edges,
     }
 }
 
@@ -511,6 +515,7 @@ fn summary_sizes(s: &Summaries) {
         methods_by_owner,
         fn_throws,
         senders,
+        reach_edges,
     } = s;
     let mut sizes: Vec<(&str, usize)> = vec![];
     macro_rules! size { ($($f:ident),*) => {$(
@@ -552,7 +557,8 @@ fn summary_sizes(s: &Summaries) {
         reach_roots,
         methods_by_owner,
         fn_throws,
-        senders
+        senders,
+        reach_edges
     );
     sizes.sort_by_key(|s| std::cmp::Reverse(s.1));
     for (f, n) in sizes {
