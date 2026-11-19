@@ -1,17 +1,14 @@
 // velt/fs (internal): listing and creating directories (`readDir`, `readDirEntries`, `mkdir` and
 // their `*Sync` twins).
 
-import { unwrapIo } from "velt/native/result";
-import { checkIo } from "velt/native/status";
 import { Dirent } from "velt/fs/dirent";
 import {
-  dirents,
-  velt_rt_fs_mkdir,
-  velt_rt_fs_mkdir_sync,
-  velt_rt_fs_read_dir,
-  velt_rt_fs_read_dir_sync,
-  velt_rt_fs_read_dir_typed,
-  velt_rt_fs_read_dir_typed_sync,
+  mkdir as makeAt,
+  mkdirSync as makeAtSync,
+  readDir as namesAt,
+  readDirEntries as entriesAt,
+  readDirEntriesSync as entriesAtSync,
+  readDirSync as namesAtSync,
 } from "#fs-rt";
 
 /** The options of `mkdir`. */
@@ -22,7 +19,7 @@ export type MkdirOptions = {
 
 /** Entry names (not paths), sorted. */
 export async function readDir(path: string): Promise<string[]> {
-  return unwrapIo(await velt_rt_fs_read_dir(path));
+  return await namesAt(path);
 }
 
 /**
@@ -30,25 +27,25 @@ export async function readDir(path: string): Promise<string[]> {
  * Faster than `readDir` plus a `stat` per entry, since the listing carries the types.
  */
 export async function readDirEntries(path: string): Promise<Dirent[]> {
-  return dirents(unwrapIo(await velt_rt_fs_read_dir_typed(path)));
+  return await entriesAt(path);
 }
 
 /** Creates the directory `path` (and with `recursive` its missing parents). */
 export async function mkdir(path: string, opts: MkdirOptions = {}): Promise<void> {
-  checkIo(await velt_rt_fs_mkdir(path, opts.recursive ?? false));
+  await makeAt(path, opts.recursive ?? false);
 }
 
 /** `readDir`, blocking the calling thread. */
 export function readDirSync(path: string): string[] {
-  return unwrapIo(velt_rt_fs_read_dir_sync(path));
+  return namesAtSync(path);
 }
 
 /** `readDirEntries`, blocking the calling thread. */
 export function readDirEntriesSync(path: string): Dirent[] {
-  return dirents(unwrapIo(velt_rt_fs_read_dir_typed_sync(path)));
+  return entriesAtSync(path);
 }
 
 /** `mkdir`, blocking the calling thread. */
 export function mkdirSync(path: string, opts: MkdirOptions = {}) {
-  checkIo(velt_rt_fs_mkdir_sync(path, opts.recursive ?? false));
+  makeAtSync(path, opts.recursive ?? false);
 }
