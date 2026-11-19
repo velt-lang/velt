@@ -26,6 +26,7 @@
 #![allow(dead_code)] // Until the unit is saved (#2943 M2).
 
 pub(crate) mod ast_refs;
+mod def_table;
 mod defs;
 #[cfg(test)]
 mod defs_tests;
