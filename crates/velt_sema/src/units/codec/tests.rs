@@ -78,6 +78,13 @@ fn damaged_values_fail_to_decode() {
     let mut r = Reader::new(&huge, &files);
     let _: Vec<u32> = Codec::dec(&mut r);
     assert!(!r.done());
+    // A `u16` past its range.
+    let mut w = Writer::new();
+    (u32::from(u16::MAX) + 1).enc(&mut w);
+    let (past, files) = w.finish();
+    let mut r = Reader::new(&past, &files);
+    let _: u16 = Codec::dec(&mut r);
+    assert!(!r.done(), "a u16 past its range");
 }
 
 /// A reference to an AST node is stored once however often it is written, without a function's
@@ -290,6 +297,8 @@ fn every_value_encoding_round_trips_at_its_edges() {
         false,
         0u8,
         255u8,
+        0u16,
+        u16::MAX,
         0u32,
         u32::MAX,
         0u64,

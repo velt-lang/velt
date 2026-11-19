@@ -1,5 +1,7 @@
 //! Whole-program checking context shared by all passes: definitions, module scopes, types.
 
+mod codec;
+
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::{Diagnostic, Diagnostics, Span};

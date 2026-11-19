@@ -371,3 +371,13 @@ fn short_path(path: &str) -> String {
 fn same_field(a: &FieldInfo, b: &FieldInfo) -> bool {
     a.declared == b.declared && a.optional == b.optional && a.readonly == b.readonly
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    Layouts {
+        families, redirect, conflicts, sealed, parsed,
+    }
+    Family {
+        added, from, used,
+    }
+}

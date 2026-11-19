@@ -139,3 +139,19 @@ impl Why {
 pub(super) fn heap_reaches(cx: &crate::ctx::Ctx, w: &Why, c: crate::hir::DefId) -> bool {
     !w.library || cx.try_fn(c).is_some_and(|i| cx.scopes[i.module].is_library)
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    Why {
+        span, boundary, library, in_library, via, depth, in_value, made_dyn,
+    }
+}
+crate::units::codec::enums! {
+    Boundary {
+        0 => Spawn,
+        1 => Shared,
+        2 => Mutex,
+        3 => Channel,
+        4 => Settle,
+    }
+}

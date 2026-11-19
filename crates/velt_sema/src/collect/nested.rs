@@ -471,3 +471,10 @@ fn reject_nested_statics(cx: &mut Ctx, item: &ast::Item) {
         );
     }
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    NestedItem {
+        module, lo, hi, name, item,
+    }
+}
