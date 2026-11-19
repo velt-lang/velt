@@ -117,6 +117,13 @@ pub(crate) fn fn_placeholder<'m>(
     kind: FnKind,
     source: Option<FnSource<'m>>,
 ) -> FnInfo<'m> {
+    let sig = source.map(crate::body::defaults::fn_sig_ast);
+    let rest = sig.is_some_and(|s| s.params.last().is_some_and(|p| p.rest));
+    let sig_unsafe = sig.is_some_and(|s| s.is_unsafe);
+    let generator = match source {
+        Some(FnSource::Decl(decl)) => decl.sig.generator.clone(),
+        _ => None,
+    };
     FnInfo {
         name,
         name_span,
@@ -145,6 +152,9 @@ pub(crate) fn fn_placeholder<'m>(
         c: None,
         intrinsic: None,
         unsafe_intrinsic: false,
+        rest,
+        sig_unsafe,
+        generator,
         extern_sig: None,
         is_generator: false,
         is_async_gen: false,
