@@ -102,6 +102,29 @@ export function keepRelease(e: usize): void {
   m.dec(e + t.E_KEEP);
 }
 
+/**
+ * A job of the blocking pool queued (sched_blocking.velt): a keep-alive reference, and counted
+ * until it is done, which `main`'s end waits for (`blockingJobs`).
+ */
+export function blockingQueued(e: usize): void {
+  m.inc(e + t.E_BLOCKING);
+  keepAcquire(e);
+}
+
+/**
+ * The job `blockingQueued` counted is done, with everything it held dropped: its waiter may have
+ * resumed at its give, so what the pool's thread dropped after that is gone only now.
+ */
+export function blockingDone(e: usize): void {
+  keepRelease(e);
+  m.dec(e + t.E_BLOCKING);
+}
+
+/** Has worker 0 (`e`) jobs of the blocking pool queued or running? */
+export function blockingJobs(e: usize): bool {
+  return m.load(e + t.E_BLOCKING) !== 0;
+}
+
 /** The top-level `await` at `site` (`path:line:col`) suspends: kept in the executor's slot. */
 export function tlaAt(e: usize, site: string): void {
   if (m.ld(e + t.E_TLA_SET) !== 0) {
