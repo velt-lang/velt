@@ -43,6 +43,23 @@ impl FnLower<'_, '_> {
                 let ty = self.sub(ty);
                 self.array_value(ty, data, len, super::cint(0, Ty::U64))
             }
+            (I::AddressArrayOwned, [a, n, o]) => {
+                // `{ data: address, len, cap: owner | OWNER }`: a buffer the array does not own,
+                // whose owner's function is called when the array is dropped (lower/array).
+                let addr = self.expr(a);
+                let data = self.rvalue_temp(Ty::Ptr, Rvalue::Cast(addr, Ty::Ptr));
+                let (len, lt) = (self.expr(n), self.vty(n.ty));
+                let len = self.cast_to(len, lt, Ty::U64);
+                let (owner, ot) = (self.expr(o), self.vty(o.ty));
+                let owner = self.cast_to(owner, ot, Ty::U64);
+                let tag = super::cint(super::array::OWNER as i128, Ty::U64);
+                let cap = self.rvalue_temp(
+                    Ty::U64,
+                    Rvalue::Binary(crate::vir::BinOp::BitOr, owner, tag),
+                );
+                let ty = self.sub(ty);
+                self.array_value(ty, data, len, cap)
+            }
             (I::FutPoll, [f, cx]) => self.fut_intrinsic(f, Some(cx)),
             (I::FutDrop, [f]) => self.fut_intrinsic(f, None),
             (I::StatePoll, [p, s, cx]) => self.state_poll(p, s, cx),

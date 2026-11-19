@@ -403,6 +403,13 @@ pub enum Intrinsic {
     /// for `T`, and the array must never be written or grown: std hands it out only as
     /// `shared<T[]>` (`MappedFile`, std/fs/mapped_file.velt). Additive.
     AddressArray,
+    /// std only: `addressArrayOwned<T>(address: usize, length: usize, owner: usize) -> T[]`: as
+    /// `AddressArray`, with an owner that is told when the array is dropped. `owner` is the
+    /// address of a block whose first word is a C function taking the block; dropping the array
+    /// calls it, once (velt_vir `lower/array`, `cap` holds the owner with its top bit set). A
+    /// copy of the array is an ordinary array and has no owner. The caller keeps the block and
+    /// the memory until then. Additive.
+    AddressArrayOwned,
     /// std only (as are the other four `AddressAtomic*`): `addressAtomicLoad<T>(address: usize,
     /// order: u8) -> T`, `T` an integer type: as `AtomicLoad` on the integer at `address`, `T`
     /// being the call's type. Sema turns the declaration's string literal orderings into the

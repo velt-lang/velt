@@ -194,6 +194,19 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// `owner->drop(owner)`: the call of the function in the first word of the block `owner`,
+    /// the owner of an array's buffer (`addressArrayOwned`, lower/array), when that array is
+    /// dropped. The word is where a heap future's header has its first entry.
+    pub(in crate::lower) fn owner_drop_call(&mut self, owner: Operand) {
+        let drop = self.fut_entry(&owner, 0);
+        let callee = Callee::Ptr {
+            target: drop,
+            params: vec![Ty::Ptr],
+            ret: Ty::Unit,
+        };
+        self.header_call(callee, vec![owner], None);
+    }
+
     /// Entry `i` (0 poll, 1 drop) of the header of heap future `f`.
     fn fut_entry(&mut self, f: &Operand, i: u32) -> Operand {
         let header = self.cx.fut_header();

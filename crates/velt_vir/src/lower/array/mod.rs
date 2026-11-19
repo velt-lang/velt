@@ -11,7 +11,9 @@
 //! it is passed, transferred to other tasks and dropped ([`FnLower::free_buffer`] frees nothing
 //! when `cap == 0`, and a copy sizes from `len` and owns its buffer). What keeps that one sound
 //! is not here: std hands it out only inside a `shared<T[]>`, which sema refuses to write or
-//! grow. Indexing is bounds-checked
+//! grow. Such an array can have an owner (`addressArrayOwned`): `cap` is then the address of
+//! the owner's block with the top bit set ([`OWNER`]), and `free_buffer` calls the function in
+//! the block's first word with the block instead of freeing. Indexing is bounds-checked
 //! (the `Oob` helper panics with `index out of bounds: the len is L but the index is I`).
 //! A buffer holds at most [`crate::MAX_ARRAY_LEN`] bytes, so an array at most that many
 //! elements (fewer of larger ones, [`max_elems`]) and a byte size never wraps. It is checked where
@@ -24,6 +26,10 @@
 
 mod builtins;
 mod ops;
+
+/// The top bit of `cap`: the buffer is not the array's, and the rest of `cap` is the address of
+/// its owner's block (`addressArrayOwned`). A capacity is never that large ([`crate::MAX_ARRAY_LEN`]).
+pub(super) const OWNER: u64 = 1 << 63;
 
 /// A cache line, in bytes, on most CPUs: elements whose size is a multiple of it are whole lines.
 const LINE: u32 = 64;
@@ -246,8 +252,25 @@ impl FnLower<'_, '_> {
             Ty::Bool,
             Rvalue::Binary(BinOp::Ne, cap.clone(), cint(0, Ty::U64)),
         );
-        let (free_bb, join) = (self.new_block(), self.new_block());
-        self.branch(has, free_bb, join);
+        let (owned_bb, free_bb, join) = (self.new_block(), self.new_block(), self.new_block());
+        self.branch(has, owned_bb, join);
+        self.switch_to(owned_bb);
+        // A buffer with an owner (`addressArrayOwned`): `cap` is the owner's block with the top
+        // bit set, and the block's first word is the function to call with it.
+        let tagged = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Ge, cap.clone(), cint(OWNER as i128, Ty::U64)),
+        );
+        let release_bb = self.new_block();
+        self.branch(tagged, release_bb, free_bb);
+        self.switch_to(release_bb);
+        let block = self.rvalue_temp(
+            Ty::U64,
+            Rvalue::Binary(BinOp::BitXor, cap.clone(), cint(OWNER as i128, Ty::U64)),
+        );
+        let block = self.rvalue_temp(Ty::Ptr, Rvalue::Cast(block, Ty::Ptr));
+        self.owner_drop_call(block);
+        self.goto(join);
         self.switch_to(free_bb);
         let size = self.rvalue_temp(
             Ty::U64,
