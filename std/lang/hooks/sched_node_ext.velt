@@ -27,7 +27,7 @@ export const X_HUB: usize = 24;
 const X_BYTES: usize = 32;
 
 /** Node `n`'s side block, or 0 when it has none. */
-@inline
+@inline("always")
 export function get(n: usize): usize {
   return (m.load32(n + nd.N_FLAGS) & EXT) !== 0 ? m.ld(n + N_EXT) : 0;
 }
@@ -48,7 +48,7 @@ export function make(n: usize): usize {
  * Node `n` is freed: so is its side block, and an alias's keep of its hub; a panicked node's
  * exception goes with it (sched_node_catch.velt). One test for both: neither is common.
  */
-@inline
+@inline("always")
 export function free(n: usize): void {
   const fl = m.load32(n + nd.N_FLAGS);
   if ((fl & (EXT | nd.PANICKED)) !== 0) {

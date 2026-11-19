@@ -26,7 +26,7 @@ declare function velt_simd_u8x16_aesenc(state: u8x16, rk: u8x16): u8x16;
 declare function velt_simd_u8x16_aesenclast(state: u8x16, rk: u8x16): u8x16;
 
 // E(K, block) with the round keys `k`.
-@inline
+@inline("always")
 function encryptBlock(k: Rounds, block: u8x16): u8x16 {
   let s = velt_simd_u8x16_aesenc(block.xor(k.k0), k.k1);
   s = velt_simd_u8x16_aesenc(velt_simd_u8x16_aesenc(velt_simd_u8x16_aesenc(s, k.k2), k.k3), k.k4);

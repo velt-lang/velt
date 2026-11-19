@@ -36,7 +36,7 @@ export function dropPending(n: usize): void {
  * owner polls it, and its leaves wake the owner. The owner's waker is not kept in it then: an
  * owner that nothing else can wake is `unreachable`. Pending, always.
  */
-@inline
+@inline("always")
 export function ownerOnly(n: usize): u32 {
   const w = aw.takePlain(n);
   if (w !== 0) {
@@ -55,7 +55,7 @@ export function ownerOnly(n: usize): u32 {
  * does. Not a catching node (its drop glue's word is lent, `N_DROP`). A shared node is not
  * detached while a holder has it (sched_share_drop.velt `free` drops it as its owner would).
  */
-@inline
+@inline("always")
 function unreachable(n: usize, refs: usize): bool {
   const fl = m.load32(n + nd.N_FLAGS);
   const idle = nd.STARTED | nd.DETACHED;

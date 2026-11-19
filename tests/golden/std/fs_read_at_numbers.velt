@@ -1,0 +1,56 @@
+// requires: unix
+// `readAt<T>`: a positioned read the task awaits, into an array of a number type's own memory
+// (#3205). `length` and `position` are bytes; the result holds the whole values read: fewer at
+// the end of the file, and a value the file ends inside is left out.
+import * as fs from "velt/fs";
+import { tmpdir } from "velt/os";
+
+async function main() {
+  const path = `${tmpdir()}/velt-golden-read-at-numbers-${process.pid}`;
+  const floats: f32[] = [];
+  for (let i = 0; i < 1000; i++) {
+    floats.push((i as f32) * 0.5);
+  }
+  const w = fs.openSync(path, "w");
+  // 4000 bytes of floats, then 3 more bytes: the file ends inside a value.
+  fs.writeSync(w, floats, 0, 4000, 0);
+  const tail: u8[] = [1, 2, 3];
+  fs.writeSync(w, tail, 0, 3, 4000);
+  fs.closeSync(w);
+
+  const fd = fs.openSync(path, "r");
+  const row = await fs.readAt<f32>(fd, 16, 400);
+  console.log(row.length, row);
+
+  // Rows read together, each into its own array.
+  const starts = [0, 1000, 3996, 4000, 4003, 9000];
+  const rows = await Promise.all(starts.map((at) => fs.readAt<f32>(fd, 8, at)));
+  console.log(rows.map((r) => r.length), rows[0], rows[1], rows[2]);
+
+  // The same bytes as other number types.
+  const words = await fs.readAt<u32>(fd, 8, 4);
+  const wide = await fs.readAt<f64>(fd, 8, 4);
+  const small = await fs.readAt<i8>(fd, 3, 4000);
+  const halves = await fs.readAt<u16>(fd, 4, 4000);
+  console.log(words, wide.length, small, halves);
+  // A plain call still gives bytes, and the result can be changed and grown like any array.
+  const bytes = await fs.readAt(fd, 4, 4000);
+  bytes.push(9);
+  row.push(-1);
+  console.log(bytes, row.length, (await fs.readAt<f64>(fd, 0, 0)).length);
+
+  for (const bad of [6, 3, 1.5, -4]) {
+    try {
+      await fs.readAt<f32>(fd, bad, 0);
+    } catch (e) {
+      console.log(e.name, e.message);
+    }
+  }
+  fs.closeSync(fd);
+  try {
+    await fs.readAt<f32>(fd, 8, 0);
+  } catch (e) {
+    console.log(e.name, e.message);
+  }
+  fs.unlinkSync(path);
+}
