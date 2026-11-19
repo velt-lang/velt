@@ -1,0 +1,13 @@
+// `dotF16At` and `dotBf16At` check each range against its own array: a count that passes the end
+// of the second array stops with a RangeError, however long the first is.
+
+import { dotBf16At, dotF16At } from "velt/half";
+
+function main() {
+  const a: f16[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+  const b: f16[] = [1, 2, 3];
+  const c: bf16[] = [1, 2, 3, 4];
+  console.log(dotF16At(a, 7, b, 0, 3));
+  console.log(dotBf16At(c, 1, c, 1, 3));
+  console.log(dotF16At(a, 0, b, 1, 3));
+}

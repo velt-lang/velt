@@ -85,8 +85,8 @@ Verdict: CHANGES NEEDED
 
 That line is what the maintainer loop reads to know where a pull request stands, so write it in
 this plain form, with nothing else on the line, and only in reviews; it judges the head the review
-was posted on. Older reviews wrote it in bold (`**Verdict: APPROVE**`); the status command below
-still reads those. A pull request without the author's self-check comment (CONTRIBUTING.md "Before
+was posted on (the status command below also reads it in bold, `**Verdict: APPROVE**`). A pull
+request without the author's self-check comment (CONTRIBUTING.md "Before
 opening a pull request") gets it as a required change.
 
 1. **Hygiene**: commits authored by the repository's configured author, no `Co-authored-by` or
@@ -113,38 +113,43 @@ required item of the earlier review, not the whole pull request again. When ever
 addressed and the new commits raise nothing new, approve and queue in the same step:
 
 ```
-gh pr review <n> --comment --body-file review.md   # ends in "Verdict: APPROVE"
 gh pr merge <n> --auto
+gh pr review <n> --comment --body-file review.md   # ends in "Verdict: APPROVE"
+gh pr edit <n> --add-label ci:approved             # starts the pull request's checks
 ```
 
 The rule stays that nothing is queued before an approving review; queueing with it removes the
-wait between approval and the queue. A new finding in the new commits is a required change like
+wait between approval and the queue. A pull request's checks start only with the label
+`ci:approved`; a push starts nothing, so the runners go to the merge queue and approved
+changes. After re-reviewing new commits, remove and re-add the label to run the checks on the
+new head (until a run passes there, the required `ci` check is missing and auto-merge waits). A new finding in the new commits is a required change like
 any other (`Verdict: CHANGES NEEDED`); an older nit that the first review missed is a follow-up,
 not a reason for another round.
 
 ## Merging
 
-- `main` only changes through pull requests. Required checks: `hygiene` (the title, description
-  and commits: `cargo xtask pr-lint`, `.github/workflows/hygiene.yml`) and `ci` (on the pull
-  request, the checks its changes need: `cargo xtask check`, rules in
-  `crates/xtask/src/plan.rs`; the label `ci:full` selects everything). The **merge queue** runs the whole gate against the pull request
+- `main` only changes through pull requests. Required checks: `hygiene` (the title, description and
+  commits: `cargo xtask pr-lint`, `.github/workflows/hygiene.yml`) and `ci` (on the pull request,
+  the checks its changes need: `cargo xtask check`, rules in `crates/xtask/src/plan.rs`; the label
+  `ci:full` selects everything). The **merge queue** runs the whole gate against the pull request
   merged with the latest `main`, then squash-merges: per OS a lint-and-test job and the goldens
   (built once, then checked in parallel shards: `.github/workflows/queue-goldens.yml`), Linux
-  always, Windows when the change touches OS-specific code, and macOS only when it touches code
-  that really can differ there (`crates/xtask/src/os.rs`, below).
-  For a change to WebAssembly code the same build also packs the WebAssembly goldens, which then
-  run in shards of their own (`WASM_SHARDS` in `os.rs`: 4 on Windows, 2 on Linux and macOS)
-  instead of in the lint-and-test job, where on Windows they took about 45 minutes. Enable it with `gh pr merge <n>
-  --auto` in the same step as the approving review, never before it.
+  always, Windows when the change touches OS-specific code, and macOS only when it touches code that
+  really can differ there (`crates/xtask/src/os.rs`, below). For a change to WebAssembly code the
+  same build also packs the WebAssembly goldens, which then run in shards of their own
+  (`WASM_SHARDS` in `os.rs`: 4 on Windows, 2 on Linux and macOS) instead of in the lint-and-test
+  job, where on Windows they would take about 45 minutes. Enable it with `gh pr merge <n> --auto` in
+  the same step as the approving review, never before it.
 - The description becomes the commit message. `hygiene` fails on generated footers, trailers,
-  session links, machine paths and review-process wording, so there is no footer to strip by hand
-  any more; editing the description re-runs it. It does not judge whether the text still
-  describes the head: that stays part of the review.
+  session links, machine paths and review-process wording; editing the description re-runs it. It
+  does not judge whether the text still describes the head: that stays part of the review.
 - Queue a stack bottom-up. When the bottom pull request merges, the next one is retargeted to
   `main` and runs its checks again.
 - A nightly workflow runs the whole gate with PostgreSQL and Redis (and the parser's robustness
   test cutting every golden at every character, `VELT_ROBUSTNESS=full`, and the WebAssembly
-  goldens, which pull requests and the queue run only for WebAssembly changes), the Cranelift memory
+  goldens, which pull requests and the queue run only for WebAssembly changes), the differential
+  tests against Node (`tests/difftest`), `declare c` checked against C headers (`c-headers`,
+  through the pinned zig), the Cranelift memory
   stress run (`bench/compile/stress.sh`, `stress.ps1`: long_main_16000 under 2 GB) on Linux and
   Windows, the WebAssembly goldens on Windows and macOS (built once per OS, then run in shards,
   as in the queue), and the `tsc` oracle for
@@ -169,7 +174,7 @@ not a reason for another round.
   files no issue for either guard.
   An intended slowdown is accepted with `gh workflow run nightly -f only=bench -f
   bench_baseline=accept`. Run one part alone with `gh workflow run nightly -f only=stress` (or
-  `gate`, `oracle`, `workerd`, `bench`, `yardstick`, `wasm`).
+  `gate`, `oracle`, `workerd`, `bench`, `yardstick`, `wasm`, `flake`, `cache`, `headers`).
 - macOS has its own rule (`macos_reason`, `MACOS_PATHS` in `crates/xtask/src/os.rs`), for the queue
   and for the pull request's `lint (macos-latest)`: the runtime, linking and the toolchain, code
   generation, the parts of the standard library that talk to the OS, and the few other files with
@@ -185,37 +190,40 @@ not a reason for another round.
   WebAssembly goldens, which the nightly's `wasm-goldens` runs there), and opens or updates the
   issue "main fails on <OS>" when that fails or doesn't finish in the job's 180 minutes, with the
   commits since the last run that passed; fix it first. A tag runs the same gate before the release
-  publishes (`release.yml`). A push to `main` (the `main` jobs in `ci.yml`) refreshes the build cache: on Linux every time, on
-  Windows and macOS with the gate when the change touches the toolchain or the dependencies
-  (`main-plan`: `cargo xtask affected --base HEAD^1`, the queue's own plan, since the queue tested
-  the commit on its parent; rules in `crates/xtask/src/os.rs`). A commit no passing merge queue run
-  tested (a direct push or an admin merge) runs every OS. Pull request and merge queue runs restore
-  the cache but never save their own.
+  publishes (`release.yml`). A push to `main` (the `main` jobs in `ci.yml`) refreshes the build
+  cache: on Linux every time, on Windows and macOS with the gate when the change touches the
+  toolchain or the dependencies (`main-plan`: `cargo xtask affected --base HEAD^1`, the queue's own
+  plan, since the queue tested the commit on its parent; rules in `crates/xtask/src/os.rs`). A
+  commit no passing merge queue run tested (a direct push or an admin merge) runs every OS. Pull
+  request and merge queue runs restore the cache but never save their own.
 - Clang's objects (`velt-clang-objects-<os>-<arch>-<run id>`, Linux) are a cache of their own. The
-  golden shards and the `check` job restore the newest entry; a day-old entry made shards about
+  golden shards and the `check` job restore the newest entry; a day-old entry makes shards about
   twice as slow as a fresh one, and a `check` job 190-360 s slower. The nightly gate saves one from
   an empty cache, which drops what no program uses any more. A queue entry saves no cache: its
   shards and `check` job upload what they added as artifacts (`clang-objects.sh`, kept a day), and
-  the push to `main` from that entry adds them to the newest entry and saves it (the
-  `clang-objects` job). That job takes only files named as objects, and only adds them. So what
-  ran in a queue entry reaches a cache `main` restores, and the one check is that the queue run
-  passed on the commit that landed: a key's content can't be verified without compiling it. The
-  cache is Linux-only, so this doesn't reach releases, and the next nightly save, from an empty
-  cache, drops it. So a queue entry restores what the last merge compiled, and no job compiles
-  anything to refresh the cache; a push whose `main` run was replaced by a later one (only the
-  latest waiting push runs) is the exception, and the next one catches up. A build of every golden
-  on `main` would give the same cache without artifacts, but costs up to 14 minutes per push.
-  Only the two newest entries on `main` stay (`clang-objects` and `cache-prune` delete the rest), at about
-  115 MiB each, about 1% of the 10 GB limit. GitHub evicts what was used least recently once the
-  total passes that limit, and on 2026-11-07 that reached entries last used four hours earlier, so
-  a key that every job restores stays and one that sits idle doesn't.
+  the push to `main` from that entry adds them to the newest entry and saves it (the `clang-objects`
+  job). That job takes only files named as objects, and only adds them. So what ran in a queue entry
+  reaches a cache `main` restores, and the one check is that the queue run passed on the commit that
+  landed: a key's content can't be verified without compiling it. The cache is Linux-only, so this
+  doesn't reach releases, and the next nightly save, from an empty cache, drops it. So a queue entry
+  restores what the last merge compiled, and no job compiles anything to refresh the cache; a push
+  whose `main` run was replaced by a later one (only the latest waiting push runs) is the exception,
+  and the next one catches up. A build of every golden on `main` would give the same cache without
+  artifacts, but costs up to 14 minutes per push. Only the two newest entries on `main` stay
+  (`clang-objects` and `cache-prune` delete the rest), at about 115 MiB each, about 1% of the 10 GB
+  limit. GitHub evicts what was used least recently once the total passes that limit, which can
+  reach entries idle for only a few hours, so a key that every job restores stays and one that sits
+  idle doesn't.
 - The VIR identity (`veltc::eager_std_identity`, every golden built twice) runs whole in a pull
-  request's `test` job when the change can break it, and in the nightly gate. The queue runs all of
-  it only when the code loading std on demand changed (`VIR_IDENTITY_CODE` in
-  `crates/xtask/src/plan.rs`), one golden in 8 for the rest of what can reach it, and nothing
-  otherwise (`Plan::vir_identity_queue`, `VELT_VIR_IDENTITY`). What it can still miss there is a
-  difference that only appears against what landed after the pull request's last run, on a golden
-  outside the sample: the nightly finds that one.
+  request's `golden` job when the change can break it, and in the nightly gate; it is part of the
+  gate's `golden` part, beside the goldens, because the golden jobs and shards finish long before
+  the test jobs (after the unit tests it would make the `check` jobs 20 to 41 minutes longer). In
+  the queue each golden shard compares its share. The queue runs all of it only when the code
+  loading std on demand changed (`VIR_IDENTITY_CODE` in `crates/xtask/src/plan.rs`), one golden in 8
+  for the rest of what can reach it, and nothing otherwise (`Plan::vir_identity_queue`,
+  `VELT_VIR_IDENTITY`). What it can still miss there is a difference that only appears against what
+  landed after the pull request's last run, on a golden outside the sample: the nightly finds that
+  one.
 - A check the selection missed shows up in the merge queue; tighten the rule in
   `crates/xtask/src/plan.rs` (with a test in `plan_tests.rs`) rather than adding `ci:full`
   habitually.
@@ -224,16 +232,16 @@ not a reason for another round.
 
 - **Toolchain**: Rust is pinned in `rust-toolchain.toml`. Upgrade it in its own pull request
   (new versions bring new lints; clippy runs with `-D warnings`).
-- **Flaky tests are bugs**: fix the cause instead of re-running. No wall-clock limits: a cost
-  test counts the work (polls, buffer growths, bytes sent) or measures CPU time (a process's in
-  `tests/common/process_work.rs`, compared between interleaved sizes; a thread's or a child
-  process's against a generous bound), and a speed check belongs in `bench/`. Tests and goldens
-  order events by awaits, channels or observed state, not by sleeps; a wait loop's deadline is a
-  hang guard (a minute), not an assertion. Pull requests repeat their changed test files under
+- **Flaky tests are bugs**: fix the cause instead of re-running. No wall-clock limits: a cost test
+  counts the work (polls, buffer growths, bytes sent) or measures CPU time (a process's in
+  `crates/velt_sema/tests/common/process_work.rs`, compared between interleaved sizes; a thread's or
+  a child process's against a generous bound), and a speed check belongs in `bench/`. Tests and
+  goldens order events by awaits, channels or observed state, not by sleeps; a wait loop's deadline
+  is a hang guard (a minute), not an assertion. Pull requests repeat their changed test files under
   load (`cargo xtask repeat`, on Linux and Windows) and lint tests for fixed waits (`// timing:
-  <reason>` marks a test of time; CONTRIBUTING.md "Testing"); the nightly `flake` job repeats
-  the async goldens, the reload goldens and the packages' tests on Windows and macOS. Tests that build executables must not reuse a path a
-  crashed process may still lock.
+  <reason>` marks a test of time; CONTRIBUTING.md "Testing"); the nightly `flake` job repeats the
+  async goldens, the reload goldens and the packages' tests on Windows and macOS. Tests that build
+  executables must not reuse a path a crashed process may still lock.
 - **A red nightly** gets an answer the same day, so red doesn't become the normal state:
   - The bench guard holds its baseline until a run passes, so every later run fails again and
     the commit range in the issue grows. Measure before deciding: count the regressed
@@ -307,8 +315,8 @@ running and nothing is open.
 
 ### Watching for events
 
-A loop every 30 minutes still leaves a reply waiting up to half an hour, and a missed author reply
-once left a pull request waiting eleven hours. `.claude/scripts/pr-watch.sh` prints a line when
+A loop every 30 minutes still leaves a reply waiting up to half an hour.
+`.claude/scripts/pr-watch.sh` prints a line when
 something happens: `NEW PR`, `PUSH`, `READY` (out of draft), `COMMENT`, `MERGED`, `QUEUE FAIL`.
 Run it as a Monitor in Claude Code (it ends after 29 minutes; start it again each time) and act on
 each line:
@@ -354,8 +362,8 @@ one failure can cancel and fail the runs behind it. For each `QUEUE FAIL`:
    that is a failure, not a spurious drop. The `requeue` workflow comments on the pull request
    with the failed job, its step and the first failure lines of its log; a run with no failed
    step and no time limit was cancelled by the queue because an entry ahead of it dropped.
-   Never queue a pull request again unchanged after a failed step: it fails again (#3059 did,
-   2026-11-16) and restarts every entry behind it. Only a flaky test (below, with its issue) or
+   Never queue a pull request again unchanged after a failed step: it fails again and restarts
+   every entry behind it. Only a flaky test (below, with its issue) or
    GitHub's infrastructure (the `requeue` workflow) justifies queueing the same commit again.
 2. Read its log (`gh run view <run> --job <job> --log`) and decide which pull request caused it:
    - **This pull request** (a test, the file-size rule, a conflict with what merged meanwhile):

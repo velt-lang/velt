@@ -1,0 +1,23 @@
+never_member_write.velt:10:11: error: mismatched types
+  = note: expected never, found f64
+
+never_member_write.velt:28:15: error: mismatched types
+  = note: expected never, found f64
+
+never_member_write.velt:34:15: error: mismatched types
+  = note: expected never, found f64
+
+never_member_write.velt:40:11: error: mismatched types
+  = note: expected never, found f64
+
+never_member_write.velt:48:20: error: mismatched types
+  = note: expected never, found string
+
+never_member_write.velt:54:22: error: mismatched types
+  = note: expected never, found string
+
+never_member_write.velt:60:20: error: mismatched types
+  = note: expected never, found string
+
+never_member_write.velt:17:11: error: mismatched types
+  = note: expected never, found f64

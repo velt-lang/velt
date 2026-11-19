@@ -1,0 +1,9 @@
+f16 counts 0 to 100: mismatches 0 last 0.3114851787686348
+bf16 counts 0 to 100: mismatches 0 last 0.00011724443174898624
+i8 counts 0 to 100: mismatches 0 last 32222
+whole true true true
+empty 0 0 0
+to the end true true true
+row 0 10.75 -3
+row 1 25.75 -3
+row 2 40.75 -3

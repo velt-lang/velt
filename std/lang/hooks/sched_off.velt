@@ -1,48 +1,9 @@
-// velt/lang/hooks (internal): code polled off every worker of the executor in Velt (sched.velt,
-// #2649): code the runtime's executor runs on its own threads (a C library's callback, a
-// runtime leaf's thread), so its `sleep`, its Node timers and the promises it boxes and starts
-// are the runtime's, driven by the runtime's task as the code is (a timer's callback runs as
-// such a started promise). Pinned spawns are the executor's own tasks on their worker (#2649
-// step 3) and never come here. The runtime's timer handles have bit 0 clear; the executor's set
-// it. The runtime's entries are reached through their `declare c` (lowering routes only the
-// runtime's own declarations to the executor).
+// velt/lang/hooks (internal): the runtime's promise layer, still reached for the futures that
+// aren't the executor in Velt's (sched.velt, #2649): sharing, converting and handing over a
+// runtime leaf, and its identity (#2196, to move to Velt). Code off the workers no longer comes
+// here (sched_foreign.velt). The runtime's entries are reached through their `declare c`
+// (lowering routes only the runtime's own declarations to the executor).
 
-import { Ptr } from "velt/ffi";
-import * as m from "./sched_mem";
-
-declare c("c") function velt_rt_sleep$rt(ms: i64): Ptr<u8>;
-declare c("c") function velt_rt_timer_new$rt(ms: i64): u64;
-declare c("c") function velt_rt_timer_turn$rt(h: u64, gate: u64): Ptr<u8>;
-declare c("c") function velt_rt_timer_again$rt(h: u64, ms: i64): void;
-declare c("c") function velt_rt_timer_clear$rt(h: u64): void;
-declare c("c") function velt_rt_timer_free$rt(h: u64): void;
-declare c("c") function velt_rt_fut_box$rt(
-  poll: usize,
-  drop: usize,
-  state: usize,
-  size: u64,
-  align: u64,
-): Ptr<u8>;
-declare c("c") function velt_rt_fut_start$rt(f: usize, rdrop: usize): void;
-declare c("c") function velt_rt_fut_start_rejecting$rt(f: usize, rdrop: usize): void;
-declare c("c") function velt_rt_fut_detach$rt(f: usize, qdrop: usize): void;
-declare c("c") function velt_rt_futs_handled$rt(futs: usize, n: u64, qdrop: usize): void;
-declare c("c") function velt_rt_all_with_drop$rt(
-  futs: usize,
-  n: u64,
-  size: u64,
-  results: usize,
-  rdrop: usize,
-): usize;
-declare c("c") function velt_rt_race$rt(futs: usize, n: u64, size: u64): usize;
-declare c("c") function velt_rt_race_ok$rt(futs: usize, n: u64, size: u64, rdrop: usize): usize;
-declare c("c") function velt_rt_all_or_reject$rt(
-  futs: usize,
-  n: u64,
-  size: u64,
-  results: usize,
-  rdrop: usize,
-): usize;
 declare c("c") function velt_rt_fut_transfer$rt(f: usize, glue: usize): void;
 declare c("c") function velt_rt_fut_id$rt(f: usize): u64;
 declare c("c") function velt_rt_fut_alias$rt(w: usize, inner: usize, quiet: usize): void;
@@ -52,111 +13,6 @@ declare c("c") function velt_rt_fut_share$rt(
   share: usize,
   rdrop: usize,
 ): usize;
-
-/** The runtime's `sleep` of `ms` milliseconds: a heap future. */
-export function sleep(ms: i64): usize {
-  // SAFETY: the runtime's entry takes a number and returns a new heap future.
-  return m.addr(unsafe { velt_rt_sleep$rt(ms) });
-}
-
-/** A timer of the runtime's Node order, due in `ms` milliseconds: its handle (bit 0 clear). */
-export function timerNew(ms: i64): u64 {
-  // SAFETY: the runtime's entry takes a number.
-  return unsafe { velt_rt_timer_new$rt(ms) };
-}
-
-/** The turn of the runtime's timer `h`: a heap future. */
-export function timerTurn(h: u64, gate: u64): usize {
-  // SAFETY: `h` is a live handle of the runtime's (bit 0 clear).
-  return m.addr(unsafe { velt_rt_timer_turn$rt(h, gate) });
-}
-
-/** The runtime's interval timer `h` queued again, `ms` after its last turn. */
-export function timerAgain(h: u64, ms: i64): void {
-  // SAFETY: as `timerTurn`.
-  unsafe {
-    velt_rt_timer_again$rt(h, ms);
-  }
-}
-
-/** The runtime's timer `h` leaves its order. */
-export function timerClear(h: u64): void {
-  // SAFETY: as `timerTurn`.
-  unsafe {
-    velt_rt_timer_clear$rt(h);
-  }
-}
-
-/** The runtime's timer `h` leaves its order, and its handle is freed. */
-export function timerFree(h: u64): void {
-  // SAFETY: as `timerTurn`; not used afterwards.
-  unsafe {
-    velt_rt_timer_free$rt(h);
-  }
-}
-
-/** The runtime's lazy box of the `size`-byte initial state at `state`. */
-export function box(poll: usize, drop: usize, state: usize, size: u64, align: u64): usize {
-  // SAFETY: the arguments are the compiler's box of a state, as the runtime's entry takes them.
-  return m.addr(unsafe { velt_rt_fut_box$rt(poll, drop, state, size, align) });
-}
-
-/** Promise `f` starts now, driven by the runtime's task (its entry starts only its own boxes). */
-export function start(f: usize, rdrop: usize, rejecting: bool): void {
-  // SAFETY: `f` is a heap future.
-  unsafe {
-    if (rejecting) {
-      velt_rt_fut_start_rejecting$rt(f, rdrop);
-    } else {
-      velt_rt_fut_start$rt(f, rdrop);
-    }
-  }
-}
-
-/** The owner gives up the runtime's promise or leaf `f`: a box of its keeps running. */
-export function detach(f: usize, qdrop: usize): void {
-  // SAFETY: the caller owns `f`, a heap future, and gives it up.
-  unsafe {
-    velt_rt_fut_detach$rt(f, qdrop);
-  }
-}
-
-/** The runtime's `Promise.all` join over the `n` futures at `futs` (sched_all.velt `schedAll`). */
-export function all(
-  futs: usize,
-  n: u64,
-  size: u64,
-  results: usize,
-  rdrop: usize,
-  reject: bool,
-): usize {
-  // SAFETY: `futs` holds `n` heap futures, `results` `n` slots of `size` bytes.
-  unsafe {
-    if (reject) {
-      return velt_rt_all_or_reject$rt(futs, n, size, results, rdrop);
-    }
-    return velt_rt_all_with_drop$rt(futs, n, size, results, rdrop);
-  }
-}
-
-/** The runtime's race over the `n` futures at `futs` (sched_race.velt `schedRace`). */
-export function race(futs: usize, n: u64, size: u64, rdrop: usize, firstOk: bool): usize {
-  // SAFETY: `futs` holds `n` heap futures.
-  unsafe {
-    if (firstOk) {
-      return velt_rt_race_ok$rt(futs, n, size, rdrop);
-    }
-    return velt_rt_race$rt(futs, n, size);
-  }
-}
-
-/** The runtime's boxes among the `n` promises at `futs` go to a combinator (the others are left). */
-export function handled(futs: usize, n: u64, qdrop: usize): void {
-  // SAFETY: `futs` holds `n` heap futures.
-  unsafe {
-    velt_rt_futs_handled$rt(futs, n, qdrop);
-  }
-}
 
 /** `velt_rt_fut_transfer`, the runtime's: a holder of a shared promise or a runtime future. */
 export function transfer(f: usize, glue: usize): void {

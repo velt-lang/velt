@@ -7,8 +7,8 @@
 //! self-references until they have been polled, so that copy is sound. After the first poll the
 //! future is pinned and the state never moves again.
 
-use super::all::ResultDropFn;
 use super::local::Locals;
+use super::ResultDropFn;
 use super::{raw_cx, DropFn, PollFn, SendPtr, READY};
 use std::alloc::Layout;
 use std::future::Future;

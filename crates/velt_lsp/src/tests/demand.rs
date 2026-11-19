@@ -178,6 +178,25 @@ const PROGRAMS: &[(&str, &[&str])] = &[
         "function main() {\n  const a: any = 2.5;\n  console.log(a.toFixed(30), Number(\"1.000000000000000000000001\"));\n}\n",
         &["std/lang/hooks/number_digits", "std/lang/hooks/number_parse"],
     ),
+    // Methods written through interface values (#379): what they throw is inferred over the
+    // whole program, and the writes some implementations can't store are refused, the same way.
+    (
+        "class F extends Error {}\ninterface C { update(): void; }\nconst c: C = { update: () => {} };\nc.update = () => { throw new F(\"x\"); };\ntry { c.update(); } catch (e) {}\n",
+        &[],
+    ),
+    (
+        "class F extends Error {}\nclass G extends Error {}\ninterface C { update(): void throws F; }\nconst c: C = { update: () => {} };\nc.update = () => { throw new G(\"x\"); };\n",
+        &[],
+    ),
+    (
+        "interface C { update(): void; }\nclass R implements C { update(): void {} }\nconst c: C = new R();\nc.update = () => {};\n",
+        &[],
+    ),
+    // A std interface's method, written by user code: std's classes implement it with methods.
+    (
+        "const it: Iterator<number> = { next: () => ({ value: 1, done: true }) };\nit.next = () => ({ value: 2, done: true });\n",
+        &[],
+    ),
 ];
 
 /// The number printers' and the long-decimal parser's modules: loaded where a program reaches

@@ -1,0 +1,51 @@
+// velt/net (tests): the TLS 1.3 server's choice of cipher suite, by its own order whatever the
+// client's: AES-128-GCM first with AES instructions, ChaCha20-Poly1305 first without. Run by
+// `velt test std/`.
+import {
+  AES_128_GCM_SHA256,
+  AES_256_GCM_SHA384,
+  CHACHA20_POLY1305_SHA256,
+} from "velt/net/tls/record_cipher";
+import { chooseSuite } from "velt/net/tls/server_handshake";
+import { describe, expect, it } from "velt/test";
+
+// What rustls, OpenSSL and h2load clients offer, in their order.
+const AES256_FIRST: usize[] = [AES_256_GCM_SHA384, CHACHA20_POLY1305_SHA256, AES_128_GCM_SHA256];
+
+describe("the server's suite with AES instructions", () => {
+  it("takes AES-128-GCM over a client's AES-256-GCM and ChaCha20-Poly1305", () => {
+    expect(chooseSuite(AES256_FIRST, true)).toBe(AES_128_GCM_SHA256);
+    expect(chooseSuite([CHACHA20_POLY1305_SHA256, AES_128_GCM_SHA256], true)).toBe(
+      AES_128_GCM_SHA256,
+    );
+  });
+
+  it("takes AES-256-GCM before ChaCha20-Poly1305, and what a client offers alone", () => {
+    expect(chooseSuite([CHACHA20_POLY1305_SHA256, AES_256_GCM_SHA384], true)).toBe(
+      AES_256_GCM_SHA384,
+    );
+    expect(chooseSuite([AES_256_GCM_SHA384], true)).toBe(AES_256_GCM_SHA384);
+    expect(chooseSuite([0x1304, CHACHA20_POLY1305_SHA256], true)).toBe(CHACHA20_POLY1305_SHA256);
+  });
+});
+
+describe("the server's suite without AES instructions", () => {
+  it("takes ChaCha20-Poly1305 over the AES suites a client lists first", () => {
+    expect(chooseSuite(AES256_FIRST, false)).toBe(CHACHA20_POLY1305_SHA256);
+    expect(chooseSuite([AES_128_GCM_SHA256, CHACHA20_POLY1305_SHA256], false)).toBe(
+      CHACHA20_POLY1305_SHA256,
+    );
+  });
+
+  it("takes AES-128-GCM before AES-256-GCM when there's no ChaCha20-Poly1305", () => {
+    expect(chooseSuite([AES_256_GCM_SHA384, AES_128_GCM_SHA256], false)).toBe(AES_128_GCM_SHA256);
+    expect(chooseSuite([AES_256_GCM_SHA384], false)).toBe(AES_256_GCM_SHA384);
+  });
+});
+
+describe("no suite in common", () => {
+  it("is a handshake_failure either way", () => {
+    expect(() => chooseSuite([0x1304, 0x1305], true)).toThrow("TLS: no cipher suite in common");
+    expect(() => chooseSuite([], false)).toThrow("TLS: no cipher suite in common");
+  });
+});

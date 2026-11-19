@@ -1,0 +1,29 @@
+// velt/process (internal): the environment's variables in a WebAssembly build (`#env-sys`' default
+// variant, std/imports.velt): the WebAssembly runtime's, which reads WASI's environment (empty in
+// the browser). The working directory is `#cwd-sys`' (std/process/cwd_wasm.velt).
+
+declare function velt_rt_env_get(name: string, out: string): bool;
+declare function velt_rt_env_set(name: string, value: string);
+declare function velt_rt_env_remove(name: string);
+declare function velt_rt_env_all(): string[];
+
+export function getEnv(name: string): string | undefined {
+  let out = "";
+  if (velt_rt_env_get(name, out)) {
+    return out;
+  }
+  return undefined;
+}
+
+export function setEnv(name: string, value: string) {
+  velt_rt_env_set(name, value);
+}
+
+export function removeEnv(name: string) {
+  velt_rt_env_remove(name);
+}
+
+/** Every variable as `[name, value, …]`. */
+export function envPairs(): string[] {
+  return velt_rt_env_all();
+}

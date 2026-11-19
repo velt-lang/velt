@@ -1,14 +1,13 @@
 //! Result transfers for another task (`velt_rt_fut_transfer`, `velt_rt_spawn_transfer`, #160):
 //! the glue runs once, on the task that produces the result, before anyone else sees it — at
-//! once for a promise that already finished, as it finishes for a pending one, through a race
-//! to its children, not again for a second mark — and glue that starts promises of its own is
-//! safe there (they join the producing task's set and run to completion).
+//! once for a promise that already finished, as it finishes for a pending one, not again for a
+//! second mark — and glue that starts promises of its own is safe there (they join the producing
+//! task's set and run to completion).
 
 use super::fake::block_on_fut;
 use crate::task::local::{
     velt_rt_fut_box, velt_rt_fut_start, velt_rt_fut_transfer, velt_rt_task_id,
 };
-use crate::task::race::velt_rt_race;
 use crate::task::runtime::velt_rt_block_on;
 use crate::task::spawn::velt_rt_spawn_transfer;
 use crate::task::{drop_fut, poll_fut, VeltFut, PENDING, READY};
@@ -95,8 +94,6 @@ fn started_job(id: i64, ms: i64) -> *mut VeltFut {
 enum Make {
     /// A started `job(id, ms)`.
     Started(i64, i64),
-    /// `Promise.race([job(id, ms), job(id + 1, 10 * ms)])` of started jobs.
-    Race(i64, i64),
 }
 
 // async function main() { const p = make(); mark p `marks` times (it goes to another task);
@@ -117,19 +114,11 @@ unsafe extern "C-unwind" fn hand_on_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut HandOn);
     if st.tag == 0 {
         st.task = velt_rt_task_id();
-        st.fut = match st.make {
-            Make::Started(id, ms) => started_job(id, ms),
-            Make::Race(id, ms) => {
-                let kids = [started_job(id, ms), started_job(id + 1, 10 * ms)];
-                velt_rt_race(kids.as_ptr(), 2, 8)
-            }
-        };
+        let Make::Started(id, ms) = st.make;
+        st.fut = started_job(id, ms);
         for _ in 0..st.marks {
             velt_rt_fut_transfer(st.fut, Some(tag));
         }
-        let id = match st.make {
-            Make::Started(id, _) | Make::Race(id, _) => id,
-        };
         st.ran_at_mark = seen(id).len();
         st.tag = 1;
     }
@@ -176,17 +165,6 @@ fn a_pending_promise_is_transferred_as_it_finishes() {
     assert_eq!(st.result, 201 + TAGGED);
     // On the task that drove it (the one that started it), once.
     assert_eq!(seen(201), [(201, st.task)]);
-}
-
-#[test]
-fn a_race_passes_the_mark_to_its_children() {
-    let st = hand_on(Make::Race(301, 5), 1);
-    assert_eq!(
-        st.result,
-        301 + TAGGED,
-        "the winner's result was transferred"
-    );
-    assert_eq!(seen(301), [(301, st.task)]);
 }
 
 #[test]

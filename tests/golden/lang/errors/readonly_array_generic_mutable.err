@@ -1,0 +1,1 @@
+readonly_array_generic_mutable.velt:7:21: error: the type `readonly f64[]` is 'readonly' and cannot be assigned to the mutable type `f64[]` (TypeScript's TS4104)

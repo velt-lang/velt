@@ -350,6 +350,7 @@ fn programs_with_promises_are_the_same_with_and_without_error_set_variables() {
         files.retain(|p| in_sample(&name_of(p)));
         eprintln!("the sample: {} programs", files.len());
     }
+    let shards = super::keep_shard(&mut files);
     let next = AtomicUsize::new(0);
     let built = AtomicUsize::new(0);
     let found = Mutex::new(vec![]);
@@ -382,7 +383,7 @@ fn programs_with_promises_are_the_same_with_and_without_error_set_variables() {
     });
     let built = built.into_inner();
     assert!(
-        filtered || built > if sample { 80 } else { 700 },
+        filtered || built > if sample { 80 } else { 700 } / shards,
         "only {built} of {} programs built",
         files.len()
     );

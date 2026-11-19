@@ -1,17 +1,20 @@
 # TechEmpower-style web benchmarks
 
 The six [TechEmpower Framework Benchmarks](https://github.com/TechEmpower/FrameworkBenchmarks/wiki/Project-Information-Framework-Tests-Overview)
-test types, served by Velt (`std/http` + the `postgres` package, a path dependency of
-`package.velt`) and by the usual baselines, against
-Postgres 17 with the TFB `hello_world` schema. `bench/http/techempower` is the DB-less
-predecessor (plaintext, JSON and an in-memory fortunes page).
+test types, served by Velt (the `http-server` and `postgres` packages, path dependencies of
+`package.velt`) and by the usual baselines, against Postgres 17 with the TFB `hello_world`
+schema. `bench/http/techempower` is the database-free variant (plaintext, JSON and an in-memory
+fortunes page).
 
 ```
 db/init.sql, db/db.sh   Postgres 17 in Docker (container velt-web-pg) with World + Fortune
-velt/server.velt        std/http + the postgres package (createPool); the routes are in velt/app.ts
+velt/server.velt        http-server's `serve` (fetch-style Request / Response) + the postgres
+                       package (createPool); the routes are in velt/app.ts
 velt-tsx/server.velt    the same routes, the fortunes page in TSX (velt/jsx, precompiled)
-velt-native/server.velt every route on velt/net/http, the HTTP/1.1 server written in Velt on std/net (not hyper);
-                       the database side shared with velt/ through velt/worlds.ts
+velt-native/server.velt every route on http-server's lower-level `serveHttp` (HttpRequest /
+                       HttpResponse, read and written in the connection's buffer); the
+                       database side shared with velt/ through velt/worlds.ts (not in
+                       run.sh's default SERVERS)
 node/server.mjs         node:http + pg (Pool); CLUSTER=1: node:cluster, one worker per core
 bun/server.ts           Bun.serve + Bun.SQL (Bun's built-in Postgres client)
 go/main.go              net/http + pgx/v5 (pgxpool)
@@ -21,6 +24,7 @@ linux.sh                the same in a Linux container (servers + wrk) next to a 
 summarize.py            one Markdown row per test from a results .jsonl (best level, × Rust)
 measure.py              route verification, peak-RSS sampling, wrk output parsing
 pipeline.lua            wrk script for HTTP/1.1 pipelining (TFB's plaintext test)
+instructions.sh         CPU instructions per request of one server, counted by callgrind (Linux)
 results/                raw results (OUT.jsonl + OUT.md per run)
 ```
 
@@ -37,12 +41,11 @@ bench/web/linux.sh --platform linux/arm64          # everything in Docker, no lo
 bench/web/summarize.py bench/web/results/<run>.jsonl
 ```
 
-The TechEmpower table in #1533 came from `linux.sh`'s setup (the bench image and a Postgres
-container with `db/db.sh`'s settings) on Apple silicon: `DURATION=10 WARMUP=3 bench/web/run.sh`
-once per server (`SERVERS=velt-native`, `SERVERS="velt rust go bun node"`), each cell the best
-level. Comparisons between two builds of one server were interleaved rounds of the same `wrk`
-runs, A then B, three times. `run.sh` warns when the database does not run with
-`synchronous_commit=off`, which makes `/updates` wait for the disk.
+Compare two builds of one server with interleaved rounds of the same `wrk` runs (A then B,
+three times); single runs on a shared machine swing by more than the differences of interest.
+`run.sh` warns when the database does not run with `synchronous_commit=off`, which makes
+`/updates` wait for the disk. For a single number that does not depend on load,
+`bench/web/instructions.sh SERVER_BIN [ROUTE...]` counts instructions per request.
 
 **Use a release `velt`** (`cargo build --release -p veltc -p velt_rt`, then
 `VELT=target/release/velt`): `velt` links the runtime library that sits next to it, so a debug
@@ -62,20 +65,20 @@ number of database connections of the process (default **2 × cores** everywhere
 splits it between its workers, at least 2 each).
 
 **Many cores (Linux):** `SERVER_CPUS` pins each server to a CPU list and `CLIENT_CPUS` pins wrk
-(`taskset -c`), so the two never share a core; `SERVERS=velt-per-core` runs the Velt server under
-`VELT_SCHEDULER=per-core`. The pinned Azure run is in [RESULTS.md](RESULTS.md).
+(`taskset -c`), so the two never share a core. The pinned Azure run is in
+[RESULTS.md](RESULTS.md).
 
 ## What run.sh does
 
 1. Builds each server (Velt `velt build --release`, which uses LLVM when clang is found; Go
    `go build`; Rust `cargo build --release`; Node `npm ci` once).
-2. Resets the database (`VACUUM FULL` of `world`, `CHECKPOINT`; needs `psql`) so every
+2. Resets the database (`VACUUM (FULL, ANALYZE)` of `world`, `CHECKPOINT`; needs `psql`) so every
    server starts from the same state: the previous server's updates leave dead rows behind.
    Then starts one server at a time and **verifies** it (`measure.py verify`): plaintext and JSON
    bodies; `Server`, `Date` and exact `Content-Type` headers on every route; `/db` and
    `/queries` row shape and range; `queries` handling (missing, empty, `foo`, `0` → 1 row,
    `501` → 500 rows); the `/fortunes` HTML byte for byte against the expected page (so it is
-   identical across implementations); and that `/updates?queries=20` really persisted the
+   identical across implementations, except that `'` may be `&#39;` or react-dom's `&#x27;`); and that `/updates?queries=20` really persisted the
    returned numbers (through `psql` on `DATABASE_URL`, or `docker exec` into the container).
    A failed check is reported and makes the run exit 1, but the server is measured anyway.
 3. Loads each test with `wrk --latency` after a warm-up run at the same level:
@@ -102,23 +105,23 @@ All implementations follow the same shape, so the comparison is about the stack:
 - `/db` and `/queries` read one row per query with a prepared
   `SELECT id, randomnumber FROM world WHERE id = $1`. The N queries of a request run
   concurrently: pipelined on one pooled connection where the client can (Velt: from N = 5 a
-  `pool.batchQueryOne` batch with one `Sync`, like pgx's; below, a dedicated `pool.connect()`
-  client with the queries joined by `Promise.all`; Go: a `pgx.Batch`; Rust:
+  `pool.batchQueryOne` batch with one `Sync`, like pgx's; N = 2 to 4 on a dedicated
+  `pool.connect()` client with the queries joined by `Promise.all`; Go: a `pgx.Batch`; Rust:
   `try_join_all` on one deadpool client), or spread over the pool (`pg` has no pipelining, so
   Node's `Promise.all` uses up to N connections; Bun.SQL distributes and pipelines by itself).
 - `/updates` reads N rows as above, gives each a new random number, and writes them with **one**
   statement (TFB allows batched updates):
   `UPDATE world SET randomnumber = u.r FROM (SELECT unnest($1::int[]) AS id, unnest($2::int[]) AS r) AS u WHERE world.id = u.id`,
   with the arrays sorted by id so concurrent requests lock rows in the same order. Velt and Bun
-  bind the arrays as `{1,2,3}` text (std/postgres has no array parameters); the others bind
-  native arrays. A request may draw the same id twice; the response then holds both numbers
+  bind the arrays as `{1,2,3}` text, which the server parses; the others bind native arrays.
+  A request may draw the same id twice; the response then holds both numbers
   while the table keeps one (the persistence check only looks at ids that appear once).
 - `/fortunes` queries all rows, adds the request-time fortune, sorts by message (code-point
   order), and renders the table with the same five entities everywhere (`&amp; &lt; &gt; &quot;
   &#39;`; Go writes the page with a `strings.Replacer` because `html/template` writes `&#34;`).
 - `/json` serializes a fresh object per request; `/plaintext` returns a constant string.
-- Headers: every response carries `Server` (set by the handler) and `Date` (added by hyper,
-  node:http, Bun and net/http), and an exact `Content-Type`.
+- Headers: every response carries `Server` (set by the handler) and `Date` (added by
+  http-server, hyper, node:http, Bun and net/http), and an exact `Content-Type`.
 
 ## Deviations from the TFB rules
 
@@ -128,10 +131,7 @@ All implementations follow the same shape, so the comparison is about the stack:
   `synchronous_commit=off` (TFB-like; TFB's exact config differs in details).
 - wrk runs with `min(cores, 8)` threads rather than TFB's fixed setup, and without TFB's
   "primer" and 60 s runs (15 s here).
-- Velt draws random ids from `std/random` (a per-thread wyrand, added for this benchmark; the
-  others use their fast PRNGs). An earlier version used one OS read per request and ran the DB
-  work in a spawned task, working around a runtime bug (a handler whose client hung up was
-  cancelled, and a pooled client it held never went back to the pool); the runtime now
-  finishes such handlers, like Node.
+- Velt draws random ids with `randomInt` from `velt/random` (a per-thread wyrand seeded from
+  the OS); the others use their fast PRNGs.
 - Bun runs as one process. `REUSE_PORT=1` sets `reusePort`, so several `bun server.ts` processes
   can share the port on Linux; run.sh does not start that mode.

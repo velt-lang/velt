@@ -426,11 +426,12 @@ describe("a generated ClientHello", () => {
     return hexEncode(clientHello(sent, false, null, X25519, sent.publicKey));
   }
 
-  it("says legacy_version 0x0303, its random and session id, and both suites", () => {
+  it("says legacy_version 0x0303, its random and session id, and the three suites", () => {
     const random = hexEncode(bytes32());
-    // AES-128-GCM first where the CPU has the AES instructions, else ChaCha20-Poly1305.
-    const suites = u8x16.hasAes() ? "13011303" : "13031301";
-    const start = `0303${random}20${random}0004${suites}` + "0100";
+    // AES-128-GCM, AES-256-GCM, ChaCha20-Poly1305 where the CPU has the AES instructions, else
+    // ChaCha20-Poly1305 first.
+    const suites = u8x16.hasAes() ? "130113021303" : "130313011302";
+    const start = `0303${random}20${random}0006${suites}` + "0100";
     expect(hello("example.com").slice(8, (8 + start.length) as i64)).toBe(start);
   });
 

@@ -107,14 +107,10 @@ fn exported_item(
             cx.poisoned.insert((file, bound_name(n).name.clone()));
             return None;
         }
-        let mut d = Diagnostic::error(
+        cx.error(Diagnostic::error(
             format!("module `{}` has no member `{}`", imp.from, n.name.name),
             n.name.span,
-        );
-        if let Some(note) = removed_export(&imp.from, &n.name.name) {
-            d = d.with_note(note);
-        }
-        cx.error(d);
+        ));
         return None;
     }
     cx.error(
@@ -187,17 +183,6 @@ fn no_default(cx: &Ctx, t: usize, imp: &ast::Import, local: &ast::Ident) -> Diag
             "import one by name, `import {{ {} }} from \"{from}\"`, or the whole module, `import * as {name} from \"{from}\"`",
             names[0]
         ))
-}
-
-/// What replaced an export the standard library removed.
-fn removed_export(from: &str, name: &str) -> Option<&'static str> {
-    match (from, name) {
-        ("velt/process", "env") => Some(
-            "`env` was removed: read a variable with `process.env.NAME` or `process.env[name]` \
-             (`string | null`, no import)",
-        ),
-        _ => None,
-    }
 }
 
 fn import_name(cx: &mut Ctx, m: usize, t: usize, imp: &ast::Import, n: &ast::ImportName) {

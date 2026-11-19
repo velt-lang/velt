@@ -1,0 +1,129 @@
+// velt/crypto (internal): SHA-512 and SHA-384 (FIPS 180-4 §6.4, §6.5), one-shot: 80 rounds over
+// `u64` words on 128-byte blocks (`sha512_block.velt`); SHA-384 is SHA-512 with other initial
+// values, cut to 48 bytes. `Sha512` hashes a message given in pieces.
+
+import { utf8Encode } from "velt/encoding/utf8";
+import { hexEncode } from "velt/encoding/hex";
+import {
+  BLOCK512,
+  finalBlocks512,
+  keyBlock512,
+  scheduleRing,
+  sha512Block,
+  stateBytes,
+} from "velt/crypto/sha512_block";
+import { H384, H512 } from "velt/crypto/sha512_tables";
+
+/** SHA-512 digest (64 bytes) of `data`. */
+export function sha512(data: u8[]): u8[] {
+  return sha512Of(H512, 64, [], 0, false, data);
+}
+
+/** SHA-384 digest (48 bytes) of `data`. */
+export function sha384(data: u8[]): u8[] {
+  return sha512Of(H384, 48, [], 0, false, data);
+}
+
+/** Lowercase hex SHA-512 of the UTF-8 bytes of `s`. */
+export function sha512Hex(s: string): string {
+  return hexEncode(sha512(utf8Encode(s)));
+}
+
+/** Lowercase hex SHA-384 of the UTF-8 bytes of `s`. */
+export function sha384Hex(s: string): string {
+  return hexEncode(sha384(utf8Encode(s)));
+}
+
+/**
+ * The first `n` bytes of the hash of `data` from the initial value `iv` (SHA-512's or
+ * SHA-384's), after a first block when `keyed`: `key` (at most a block) zero-padded and XORed
+ * with `pad`, as HMAC's K ^ ipad / K ^ opad, so nothing is joined.
+ */
+export function sha512Of(iv: u64[], n: usize, key: u8[], pad: u8, keyed: bool, data: u8[]): u8[] {
+  const h = iv.slice();
+  const w = scheduleRing();
+  let before: usize = 0;
+  if (keyed) {
+    sha512Block(h, w, keyBlock512(key, pad), 0);
+    before = BLOCK512;
+  }
+  const full = data.length - data.length % BLOCK512;
+  for (let off: usize = 0; off < full; off += BLOCK512) {
+    sha512Block(h, w, data, off);
+  }
+  const tail = finalBlocks512(data, full, data.length - full, (before + data.length) as u64);
+  for (let off: usize = 0; off < tail.length; off += BLOCK512) {
+    sha512Block(h, w, tail, off);
+  }
+  return stateBytes(h, n);
+}
+
+/**
+ * SHA-512 or SHA-384 of a message given in pieces: `update` with each piece in order, `digest`
+ * for the hash of everything so far. The hasher keeps going after a `digest`.
+ */
+export class Sha512 {
+  private h: u64[];
+  private w: u64[];
+  // The bytes of an unfinished block, `used` of them.
+  private buf: u8[];
+  private used: usize;
+  private total: u64;
+  private n: usize;
+
+  /** A SHA-512 hasher (64-byte digests). */
+  constructor() {
+    this.h = H512.slice();
+    this.w = scheduleRing();
+    this.buf = Buffer.alloc(BLOCK512);
+    this.used = 0;
+    this.total = 0;
+    this.n = 64;
+  }
+
+  /** A SHA-384 hasher (48-byte digests). */
+  static sha384(): Sha512 {
+    const s = new Sha512();
+    s.h = H384.slice();
+    s.n = 48;
+    return s;
+  }
+
+  /** Hashes `data` after everything given before. */
+  update(data: u8[]) {
+    const len = data.length;
+    let at: usize = 0;
+    this.total += len as u64;
+    if (this.used > 0) {
+      while (this.used < BLOCK512 && at < len) {
+        this.buf[this.used] = data[at];
+        this.used++;
+        at++;
+      }
+      if (this.used < BLOCK512) {
+        return;
+      }
+      sha512Block(this.h, this.w, this.buf, 0);
+      this.used = 0;
+    }
+    while (len - at >= BLOCK512) {
+      sha512Block(this.h, this.w, data, at);
+      at += BLOCK512;
+    }
+    while (at < len) {
+      this.buf[this.used] = data[at];
+      this.used++;
+      at++;
+    }
+  }
+
+  /** The digest of everything given so far (64 bytes, or 48 for SHA-384). */
+  digest(): u8[] {
+    const h = this.h.slice();
+    const tail = finalBlocks512(this.buf, 0, this.used, this.total);
+    for (let off: usize = 0; off < tail.length; off += BLOCK512) {
+      sha512Block(h, this.w, tail, off);
+    }
+    return stateBytes(h, this.n);
+  }
+}

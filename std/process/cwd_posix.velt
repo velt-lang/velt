@@ -1,0 +1,74 @@
+// velt/process (internal): the working directory on macOS and Linux (`#cwd-sys`' native variant,
+// std/imports.velt), through the C library's `getcwd` and `chdir`. Apart from the environment's
+// variables (`#env-sys`), which the executor reads: their module stays free of the errors these
+// throw.
+
+import { utf8Encode } from "velt/encoding/utf8";
+import { Ptr } from "velt/ffi/ptr";
+import { readCString } from "velt/ffi/read";
+import { strBytesOf } from "velt/ffi/str_bytes";
+import { osError } from "velt/fs/errors";
+import { IoError } from "velt/io/error";
+import { arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
+import { keepOsError, lastOsError } from "velt/os/rt";
+
+declare c("c") function getcwd(buf: u8[], size: usize): Ptr<u8> | null;
+declare c("c") function chdir(path: readonly u8[]): i32;
+
+/** ERANGE: the buffer is shorter than the path. */
+const ERANGE: i32 = 34;
+
+/** The current working directory; throws `IoError` (Node's `uv_cwd` error) when it's gone. */
+export function cwd(): string {
+  let room: usize = 4096;
+  while (true) {
+    // Not zeroed: only the C library writes it, and only what it wrote (up to its NUL) is read.
+    const buf = arrayWithCapacity<u8>(room);
+    arraySetLen(buf, room);
+    // SAFETY: `buf` holds `room` bytes, the size passed.
+    const r = unsafe { getcwd(buf, room) };
+    if (r !== null) {
+      // SAFETY: getcwd wrote a NUL-terminated path into `buf`, which `r` points at.
+      return unsafe { readCString(r) };
+    }
+    keepOsError();
+    const e = lastOsError();
+    // A longer path than the buffer: try twice the room.
+    if (e !== ERANGE || room > 1048576) {
+      throw osError(e, "uv_cwd");
+    }
+    room *= 2;
+  }
+}
+
+/**
+ * Changes the working directory of the whole process to `path`; throws `IoError` with Node's
+ * message (`ENOENT: no such file or directory, chdir '<from>' -> '<path>'`).
+ */
+export function changeDir(path: string) {
+  if (path.includes("\0")) {
+    const from = cwdOrEmpty();
+    throw new IoError("ENOENT", `ENOENT: no such file or directory, chdir '${from}' -> '${path}'`);
+  }
+  const bytes = utf8Encode(strBytesOf(path));
+  bytes.push(0);
+  // SAFETY: a NUL-terminated path.
+  if (unsafe { chdir(bytes) } === 0) {
+    return;
+  }
+  keepOsError();
+  const e = osError(lastOsError(), "chdir");
+  throw new IoError(e.code, `${e.message} '${cwdOrEmpty()}' -> '${path}'`);
+}
+
+/**
+ * The working directory for `chdir`'s message, or "" when it can't be read (deleted): Node, too,
+ * reports the `chdir` error then, not `uv_cwd`'s.
+ */
+function cwdOrEmpty(): string {
+  try {
+    return cwd();
+  } catch (e) {
+    return "";
+  }
+}

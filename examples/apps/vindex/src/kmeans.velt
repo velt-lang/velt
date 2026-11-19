@@ -1,0 +1,94 @@
+// Spherical k-means: unit centroids, assignment by largest dot product. The assignment step,
+// which is nearly all of the time, runs on every worker over a `shared` sample.
+import { workerCount } from "velt/task";
+import { dotF32, normalize } from "./kernels";
+import { Rng } from "./rng";
+import { ranges } from "./store";
+
+/// The row of `centroids` (k rows of `dim`) nearest to the `dim` floats of `xs` at `at`.
+export function nearest(centroids: f32[], k: i64, xs: f32[], at: usize, dim: usize): i64 {
+  let best: i64 = 0;
+  let bestScore: f32 = -Infinity as f32;
+  for (let c: i64 = 0; c < k; c++) {
+    const s = dotF32(centroids, (c as usize) * dim, xs, at, dim);
+    if (s > bestScore) {
+      bestScore = s;
+      best = c;
+    }
+  }
+  return best;
+}
+
+type Partial = { sums: f32[]; counts: i64[] };
+
+async function assignPart(
+  sample: shared<f32[]>,
+  centroids: shared<f32[]>,
+  k: i64,
+  dim: i64,
+  start: i64,
+  end: i64,
+): Promise<Partial> {
+  const d = dim as usize;
+  const sums: f32[] = new Array<f32>((k * dim) as number).fill(0);
+  const counts: i64[] = new Array<i64>(k as number).fill(0);
+  for (let r = start; r < end; r++) {
+    const at = (r as usize) * d;
+    const c = nearest(centroids, k, sample, at, d);
+    counts[c] += 1;
+    const to = (c as usize) * d;
+    for (let i: usize = 0; i < d; i++) {
+      sums[to + i] += sample[at + i];
+    }
+  }
+  return { sums, counts };
+}
+
+/// `k` unit centroids of the `m` rows of `sample`, after `iters` rounds.
+export async function kmeans(
+  sample: shared<f32[]>,
+  m: i64,
+  dim: i64,
+  k: i64,
+  iters: i64,
+  seed: u64,
+): Promise<f32[]> {
+  const d = dim as usize;
+  const rng = new Rng(seed);
+  let centroids: f32[] = new Array<f32>((k * dim) as number).fill(0);
+  for (let c: i64 = 0; c < k; c++) {
+    const from = (rng.below(m) as usize) * d;
+    for (let i: usize = 0; i < d; i++) {
+      centroids[(c as usize) * d + i] = sample[from + i];
+    }
+  }
+  for (let it: i64 = 0; it < iters; it++) {
+    const cs = shared(centroids);
+    const tasks: Promise<Partial>[] = [];
+    for (const r of ranges(m, workerCount())) {
+      tasks.push(spawn(assignPart(sample, cs, k, dim, r[0], r[1])));
+    }
+    const next: f32[] = new Array<f32>((k * dim) as number).fill(0);
+    const counts: i64[] = new Array<i64>(k as number).fill(0);
+    for (const p of await Promise.all(tasks)) {
+      for (let i = 0; i < next.length; i++) {
+        next[i] += p.sums[i];
+      }
+      for (let c = 0; c < counts.length; c++) {
+        counts[c] += p.counts[c];
+      }
+    }
+    for (let c: i64 = 0; c < k; c++) {
+      if (counts[c] == 0) {
+        // An empty cluster restarts at a random sample row.
+        const from = (rng.below(m) as usize) * d;
+        for (let i: usize = 0; i < d; i++) {
+          next[(c as usize) * d + i] = sample[from + i];
+        }
+      }
+      normalize(next, (c as usize) * d, d);
+    }
+    centroids = next;
+  }
+  return centroids;
+}

@@ -138,6 +138,7 @@ function lockSlow(a: usize): void {
   while (true) {
     // SAFETY: as `lock`; a read first, so waiters don't take the line from the holder.
     const free = unsafe { addressAtomicLoad<u32>(a, "relaxed") } === 0;
+    // SAFETY: as `lock`: the lock word, taken by a compare-and-swap once it reads free.
     if (free && unsafe { addressAtomicCas<u32>(a, 0, 1, "acquire", "relaxed") } === 0) {
       return;
     }

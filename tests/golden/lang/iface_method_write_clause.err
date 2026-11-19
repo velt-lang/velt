@@ -1,0 +1,1 @@
+13:3: error: this function throws `Other`, but the function type it is used as allows only `Failure`

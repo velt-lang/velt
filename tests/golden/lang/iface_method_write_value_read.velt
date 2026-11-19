@@ -1,0 +1,29 @@
+// A method of an interface read as a value where the program also assigns to that method
+// through an interface value (#379): JavaScript's read takes the function stored when it is
+// read, while a method value calls through the method when it is called, so a later write would
+// change what it calls (and swapping two methods would call itself forever). Refused, also when
+// the read comes before the write in the source.
+interface Ctx { update(): void; }
+const a: Ctx = { update: () => console.log("a") };
+const b: Ctx = { update: () => console.log("b") };
+
+const t = a.update;
+a.update = () => console.log("a2");
+t();
+
+const u = a.update;
+a.update = b.update;
+b.update = u;
+a.update();
+b.update();
+
+// One object held as two unrelated interfaces: a write through one replaces what the other's
+// slot calls too, so a read through the other is refused as well.
+interface P { update(): void; }
+interface Q { update(): void; }
+const lit = { update: () => console.log("lit") };
+const p: P = lit;
+const q: Q = lit;
+const r = q.update;
+p.update = () => console.log("p2");
+r();

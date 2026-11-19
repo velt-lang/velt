@@ -1,0 +1,42 @@
+// check: no leaks
+// A parsed JsonValue's strings that had escapes, written back as JSON.stringify writes them (#3098),
+// straight into the writer's buffer: control characters, quotes, backslashes, `\/`, `\u00e9` (written
+// as é), surrogate pairs and lone surrogates, as values and as keys, next to and over the buffer's
+// size, and many in a row. Each line is Node's.
+function show(label: string, text: string) {
+  const v = JSON.parseValue(text);
+  const s = v.stringify();
+  console.log(label, s.length, s);
+  console.log(label, "again", JSON.parseValue(s).stringify() == s);
+}
+
+function main() {
+  show("ctl", `["a\\nb", "\\t\\r\\b\\f", "\\u0000\\u001f\\u007f", "q\\"q", "b\\\\b", "s\\/s"]`);
+  show("uni", `["\\u00e9", "caf\\u00e9 \\u4e2d", "\\ud83d\\ude00", "x\\ud800y", "\\udfff", "\\ud800\\ud800", "é\\n中"]`);
+  show("keys", `{"a\\nb": 1, "\\u00e9": 2, "\\ud800": 3, "plain": "v\\tw", "0": "i", "\\u0031": "esc index"}`);
+  // Strings near and over the write buffer (2048 + 64 bytes), escaped and not.
+  const parts: string[] = [];
+  for (const n of [300, 340, 345, 350, 360, 2000, 3000]) {
+    let s = "";
+    for (let i = 0; i < n; i++) {
+      s += i % 7 == 0 ? "\\n" : i % 11 == 0 ? "\\u00e9" : i % 13 == 0 ? "\\ud800" : "x";
+    }
+    parts.push(`"${s}"`);
+  }
+  show("long", "[" + parts.join(",") + "]");
+  // Many escaped strings in a row, so the buffer fills between them.
+  const many: string[] = [];
+  for (let i = 0; i < 400; i++) {
+    many.push(i % 3 == 0 ? `"k\\u00e9${i}\\n"` : i % 3 == 1 ? `"p${i}"` : `"\\"${i}\\\\"`);
+  }
+  const m = JSON.parseValue("[" + many.join(",") + "]").stringify();
+  console.log("many", m.length, m.slice(0, 120), m.slice(m.length - 60));
+  const o: string[] = [];
+  for (let i = 0; i < 40; i++) {
+    o.push(`"k\\u00e9${i}\\t": "v\\n${i}"`);
+  }
+  const wide = JSON.parseValue("{" + o.join(",") + "}");
+  console.log("wide", wide.stringify().length, wide.get("ké7\t")!.asString(), wide.get("ké39\t")!.asString());
+  console.log("keys", JSON.stringify(wide.keys().slice(0, 3)));
+}
+main();
