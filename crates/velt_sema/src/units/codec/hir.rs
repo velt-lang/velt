@@ -307,6 +307,7 @@ enums! {
         4 => AesX86,
         5 => AesArm,
         6 => FmaX86,
+        7 => Bf16Arm,
     }
     DynMemberKind {
         0 => Method,
@@ -546,5 +547,11 @@ enums! {
         204 => AddressCall3,
         205 => WeakMapDrop,
         206 => WeakRefDrop,
+        207 => ArrayDataAddress,
+        208 => ArrayReadAddress,
+        209 => ArrayBytesWritten,
+        210 => ArrayByteLength,
+        211 => SymbolAddress,
+        212 => SymbolAt,
     }
 }
