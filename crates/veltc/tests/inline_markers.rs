@@ -489,11 +489,12 @@ export function probe(a: i64): i64 {
   return fact(a) + (even(a) ? 1 : 0);
 }
 "#;
-    check_fails(probe, &["`@inline` on a recursive function"]);
+    check_fails(probe, &["`@inline(\"always\")` on a recursive function"]);
     let dir = test_dir::TestDir::new();
     let err = String::from_utf8_lossy(&velt(&dir, probe, &["check"]).stderr).into_owned();
     assert_eq!(
-        err.matches("`@inline` on a recursive function").count(),
+        err.matches("`@inline(\"always\")` on a recursive function")
+            .count(),
         2,
         "{err}"
     );
@@ -772,7 +773,8 @@ function main() {
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(!out.status.success(), "{err}");
     for m in [
-        "3:1: error: `@inline` on a recursive function",
+        "3:1: error: `@inline(\"always\")` on a recursive function",
+        "write the hint `@inline` instead (it allows recursion)",
         "14:1: error: a function is `@inline` or `@noInline`, not both",
         "19:1: error: `@inline` doesn't apply to an async function or a generator",
     ] {
