@@ -110,7 +110,10 @@ impl<T> DefTable<T> {
             .lazy
             .as_ref()
             .expect("ICE: a definition table entry left empty");
-        self.items.set(i, lazy.get(i));
+        // SAFETY: the table's own decoder: its values borrow the unit's arena, which outlives
+        // the table (`Reader::over_unit`'s contract), so they are valid for the type the table
+        // was made with.
+        unsafe { self.items.set(i, lazy.get(i)) };
         decoded::count();
         self.items.get(i).expect("ICE: decoded entry")
     }

@@ -50,7 +50,7 @@ fn kept_node<'x, T: AstNode>(node: &T, a: &'x Arena) -> &'x T {
 }
 
 /// `info` as a unit keeps it: its AST without functions' bodies.
-fn kept<'x>(info: &DefInfo<'x>, a: &'x Arena) -> DefInfo<'x> {
+pub(super) fn kept<'x>(info: &DefInfo<'x>, a: &'x Arena) -> DefInfo<'x> {
     let mut info = info.clone();
     match &mut info {
         DefInfo::Fn(f) => {
@@ -73,7 +73,7 @@ fn kept<'x>(info: &DefInfo<'x>, a: &'x Arena) -> DefInfo<'x> {
 }
 
 /// `info` printed, its maps sorted (a decoded map holds the same entries in another order).
-fn shown(mut info: DefInfo) -> String {
+pub(super) fn shown(mut info: DefInfo) -> String {
     fn sorted<V: std::fmt::Debug>(m: &mut rustc_hash::FxHashMap<String, V>) -> String {
         let mut v: Vec<String> = m.drain().map(|e| format!("{e:?}")).collect();
         v.sort();

@@ -39,8 +39,9 @@ impl<T: Codec> Codec for DefTable<T> {
                 let mut last = start;
                 for _ in 0..n {
                     let end = start.saturating_add(r.len_unchecked());
-                    // Each entry ends after the one before it, inside the entries' bytes.
-                    if end < last {
+                    // Each entry ends after the one before it (no value encodes to no bytes),
+                    // inside the entries' bytes.
+                    if end <= last {
                         r.fail_damaged();
                     }
                     last = end;
@@ -68,13 +69,16 @@ impl<T: Codec> Codec for DefTable<T> {
     }
 }
 
-/// Entry `range` of a table of a unit decoded on demand (`src`'s bytes).
+/// Entry `range` of a table of a unit decoded on demand (`src`'s bytes). One that does not
+/// decode (damaged bytes the unit's checks missed, or an encoder and decoder that disagree) is the
+/// decoder's stand-in, and marks the unit damaged ([`Src::damaged`]): the check goes on and is
+/// thrown away, never a panic.
 fn dec_entry<T: Codec>(src: &Src, range: std::ops::Range<usize>) -> T {
     let mut r = src.reader(range);
     let x = T::dec(&mut r);
-    // The unit was checked whole when it was read (the store's checksum); an entry that does not
-    // decode now means the encoding and this decoder disagree.
-    assert!(r.done(), "ICE: an entry of a unit's table does not decode");
+    if !r.done() {
+        src.mark_damaged();
+    }
     x
 }
 
