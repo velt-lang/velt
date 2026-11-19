@@ -1,8 +1,8 @@
-# JSX provider contract (Mac round 12)
+# JSX provider contract
 
 How the compiler lowers TSX and what a **provider** (`std/jsx`, sigx, any SSR renderer) must
-export. Design and rationale: [docs/internals/design/tsx.md](../design/tsx.md). Nothing here is specific to
-one framework; providers live in their own packages.
+export. Design and rationale: [docs/internals/design/tsx.md](../design/tsx.md). Nothing here is
+specific to one framework; providers live in their own packages.
 
 ## Choosing the provider
 The import source of a file is, in order:
@@ -10,24 +10,25 @@ The import source of a file is, in order:
    before the first token). Velt also reads it from a line comment (`// @jsxImportSource
    <source>`), but `tsc` reads it only from a block comment, so a file shared with a TypeScript
    client uses the block form (`velt check --ts-compat` reports the line form);
-2. `jsx: { importSource: "<source>" }` in the package's `package.velt` (manifest.md);
+2. `jsx: { importSource: "<source>" }` in the package's `package.velt`
+   ([manifest.md](manifest.md) "JSX import source");
 3. `std/jsx`.
 
-What the runtime exports chooses how its JSX compiles ("Automatic runtimes" below, and
-[#2314](https://github.com/velt-lang/velt/issues/2314)); everything else here is the provider
-contract, which a runtime with `jsxComponent` has.
+What the runtime exports chooses how its JSX compiles ("Automatic runtimes" below); everything
+else here is the provider contract, which a runtime with `jsxComponent` has.
 
 A module that contains JSX implicitly imports `<source>/jsx-runtime` (a package path like
 `sigx/jsx-runtime` or `std/jsx/jsx-runtime`). Its exports are visible in types as the namespace
 `JSX` (`JSX.Element`, `JSX.IntrinsicElements`, …) in that module, exactly as if the file had
 `import * as JSX from "<source>/jsx-runtime"`; the factory functions are called by generated
 code only. A file that never uses JSX does not load the runtime. A relative pragma source
-(`./ui`) is relative to the file; a relative `importSource` in package.velt to the package root. A
-name `JSX` the module declares or imports itself wins over the implicit namespace.
+(`./ui`) is relative to the file; a relative `importSource` in package.velt to the package root.
+A name `JSX` the module declares or imports itself wins over the implicit namespace.
 
 JSX is allowed in `.velt` and `.tsx` modules; in a `.ts` module it is a loader error ("JSX is not
-allowed in a `.ts` file", at the first element, with a note to rename the file to `.tsx`), as in
-TypeScript. The provider is chosen the same way for every kind of file.
+allowed in a `.ts` file", at the first element, with a note to rename the file to `.tsx`;
+`crates/velt_loader/src/jsx.rs`), as in TypeScript. The provider is chosen the same way for every
+kind of file.
 
 ## Why this differs from TypeScript's `react-jsx` runtime
 TS calls one `jsx(type, props, key)` for both tags and components and lets the runtime iterate
@@ -43,16 +44,15 @@ compile-time shapes), so the compiler does the part TS leaves to the runtime:
   distinction TS uses for key warnings carries no information here.
 
 ## Automatic runtimes (TypeScript's `react-jsx`)
-A runtime is chosen one way (`jsxImportSource`), and what it exports decides how its JSX compiles;
-[#2314](https://github.com/velt-lang/velt/issues/2314) is where that is going, with more lowerings
-for other shapes and without the provider contract. Today one function
-(`crates/velt_sema/src/body/expr/jsx/provider.rs`, `lowering_of`) decides between two: a runtime
+A runtime is chosen one way (`jsxImportSource`), and what it exports decides how its JSX compiles.
+One function (`crates/velt_sema/src/body/expr/jsx/provider.rs`, `lowering_of`) decides between
+two lowerings ([#2314](https://github.com/velt-lang/velt/issues/2314) discusses others): a runtime
 that exports `jsxComponent` has the provider contract below, and one that exports `jsx` or `jsxs`
 needing at most `type`, `props` and `key` is TypeScript's automatic runtime, as React's, Vue's,
 Preact's, Hono's and sigx's are: `tsc` with `"jsx": "react-jsx"` compiles against it unchanged, and
 so does Velt. Anything else such a runtime exports changes nothing: `jsxDEV` is for
-`react-jsxdev`, and `jsxTemplate`, `jsxAttr` and `jsxEscape` are a later lowering of #2314. Every
-element is one call, as `tsc` emits it:
+`react-jsxdev`, and Deno's `jsxTemplate`, `jsxAttr` and `jsxEscape` are not read. Every element
+is one call, as `tsc` emits it (`crates/velt_sema/src/body/expr/jsx/automatic.rs`):
 
 ```ts ignore
 <box a={x}>c</box>     // jsx("box", { a: x, children: c }, key)
@@ -68,22 +68,23 @@ element is one call, as `tsc` emits it:
   further optional ones, which get `undefined`. A rest parameter gets what follows: `jsx(type,
   props, ...rest)` has the key as `rest[0]`, or an empty `rest`. `Fragment` is a value
   (`Symbol.for("sigx.Fragment")`) or a function, a generic one at `unknown`. A factory must have a
-  function type: `tsc` does not check these calls and takes `export const jsx: any`, but the compiler
-  calls the factory with what each element gives, so that is refused, with a message.
+  function type: `tsc` does not check these calls and takes `export const jsx: any`, but the
+  compiler calls the factory with what each element gives, so that is refused, with a message.
 - **The `props` parameter** is a `Record<string, V>`, an index signature (`{ children?: JSXChildren;
-  [key: string]: any }`, also with `| null`), `any`, `object`, `unknown` or a type parameter. A named
-  object type without an index signature is refused, with a message: the props hold whatever the
-  element was given, spread fields included, and a Velt object has a fixed shape, so such a call
+  [key: string]: any }`, also with `| null`), `any`, `object`, `unknown` or a type parameter. A
+  named object type without an index signature is refused, with a message: the props hold whatever
+  the element was given, spread fields included, and a Velt object has a fixed shape, so such a call
   could not hold them.
-- **Types.** `JSX.Element`, `JSX.ElementType`, `JSX.IntrinsicElements`, `JSX.IntrinsicAttributes` and
-  `JSX.ElementChildrenAttribute`, as `tsc` finds them: a `namespace JSX` the runtime exports is the
-  only one read. Without one, a `declare global { namespace JSX { … } }` of any module of the
+- **Types.** `JSX.Element`, `JSX.ElementType`, `JSX.IntrinsicElements`, `JSX.IntrinsicAttributes`
+  and `JSX.ElementChildrenAttribute`, as `tsc` finds them: a `namespace JSX` the runtime exports is
+  the only one read. Without one, a `declare global { namespace JSX { … } }` of any module of the
   program; declarations of `IntrinsicElements` and `IntrinsicAttributes` in several modules all
-  count, for the JSX itself (two renderers, or a user's own tags). A type path written in a program, `JSX.IntrinsicElements`,
-  names one declaration: its module's, else the first. The runtime's flat exports (`Element`, …) are
-  read too, after its namespace, for Velt's own runtimes. A module that declares or imports a
-  namespace `N` itself does not see a global `N` (TS2694). Without `JSX.Element`, an element has the
-  factory's result type. `JSX.IntrinsicElements` is needed at the first intrinsic element (TS7026).
+  count, for the JSX itself (two renderers, or a user's own tags). A type path written in a program,
+  `JSX.IntrinsicElements`, names one declaration: its module's, else the first. The runtime's flat
+  exports (`Element`, …) are read too, after its namespace, for Velt's own runtimes. A module that
+  declares or imports a namespace `N` itself does not see a global `N` (TS2694). Without
+  `JSX.Element`, an element has the factory's result type. `JSX.IntrinsicElements` is needed at the
+  first intrinsic element (TS7026).
 - **Checking** is `tsc`'s: intrinsic attributes against `JSX.IntrinsicElements[tag]` (an index
   signature gives every tag), component attributes against the component's props and
   `JSX.IntrinsicAttributes` (missing and unknown props, contextual types of arrow functions, generic
@@ -95,19 +96,19 @@ element is one call, as `tsc` emits it:
   arguments inferred from the props must meet the constraints. Props of type `any` or of a union are
   not checked field by field; a `Record`'s values are checked against its value type. A tag of type
   `any`, `string` or a union with `string` takes any props, and a tag of one string literal type is
-  that intrinsic element. Tags with `-` or `:` are declared like others (TS2339); of attributes, only
-  an undeclared one with `-` is unchecked. As in `tsc`, a later attribute replacing a spread field
-  is the one checked, and an attribute a later spread field always replaces is TS2783; `children`
-  both as an attribute and in the body is TS2710 when `ElementChildrenAttribute` is declared. A
-  spread child must be an array (TS2609), or an `any`, converted as `x as any[]` is.
-- **Props object.** A new object per element, built in one function
-  (`automatic_props`, `element_props`): the attributes and spread sources in source order, then
-  `children` (the key is always `children`, as `tsc` emits it; one child is the child itself, several
-  or a spread child an array, none leaves the key out). A later name replaces an earlier one in its
-  place. A spread source's fields are all copied, also ones the target does not declare and a `key`;
-  an optional one only when present (as elsewhere, an optional field holding `undefined` counts as
-  absent). A `Record` and an `any` are copied at run time. Values are evaluated in source order, and
-  stored as written: a value that may be nothing keeps its `undefined` or `null`.
+  that intrinsic element. Tags with `-` or `:` are declared like others (TS2339); of attributes,
+  only an undeclared one with `-` is unchecked. As in `tsc`, a later attribute replacing a spread
+  field is the one checked, and an attribute a later spread field always replaces is TS2783;
+  `children` both as an attribute and in the body is TS2710 when `ElementChildrenAttribute` is
+  declared. A spread child must be an array (TS2609), or an `any`, converted as `x as any[]` is.
+- **Props object.** A new object per element, built in one function (`automatic_props.rs`,
+  `element_props`): the attributes and spread sources in source order, then `children` (the key is
+  always `children`, as `tsc` emits it; one child is the child itself, several or a spread child an
+  array, none leaves the key out). A later name replaces an earlier one in its place. A spread
+  source's fields are all copied, also ones the target does not declare and a `key`; an optional one
+  only when present (as elsewhere, an optional field holding `undefined` counts as absent). A
+  `Record` and an `any` are copied at run time. Values are evaluated in source order, and stored as
+  written: a value that may be nothing keeps its `undefined` or `null`.
 - **`key`** is not in the props: it is the third argument, as written, `undefined` without one, and
   checked against the `key` field of `JSX.IntrinsicAttributes` where one is declared. A number going
   to a `key` parameter that takes only a string is its decimal string, because the parameter's type
@@ -121,22 +122,22 @@ element is one call, as `tsc` emits it:
 - **The component** is passed as itself (no adapter), so its properties stay (sigx tells components
   by `__setup`), and a runtime that keeps it in an `any` may call it. A generic one is passed at
   the type arguments inferred from its props.
-- Not supported yet: a class component (#943).
+- A class component is not supported ([#943](https://github.com/velt-lang/velt/issues/943)).
 
 The goldens `lang/jsx_automatic_runtime` (sigx's shape), `lang/jsx_react_shape`,
-`lang/jsx_vue_shape`, `lang/jsx_hono_shape` (with Preact's and Hono's exports), `lang/jsx_only_jsxs`,
-`lang/jsx_props_object`, `lang/jsx_generic_factory`, `lang/jsx_typed_factory`, `lang/jsx_sigx_signatures` and `lang/jsx_tag_any` print what Node prints for the same program
+`lang/jsx_vue_shape`, `lang/jsx_hono_shape` (with Preact's and Hono's exports),
+`lang/jsx_only_jsxs`, `lang/jsx_props_object`, `lang/jsx_generic_factory`, `lang/jsx_typed_factory`,
+`lang/jsx_sigx_signatures` and `lang/jsx_tag_any` print what Node prints for the same program
 through esbuild's automatic transform; `lang/errors/jsx_automatic_*` check the messages.
 
 ## Compatibility rule
-A component written in the TS/Velt common subset (docs/internals/design/tsx.md, "Sharing components with
-the client") must type-check and **behave identically** under `tsc` with the provider's TS
-runtime and under `velt` with its Velt runtime: same props object, same children shape (one
-child → the child, several → an array, none → field absent/`null`), same `key` handling, same
-evaluation order (props first; the component runs when the provider calls it), the same output
-for booleans and `null` (nothing, or the provider's placeholder: "Children" below). Anything the
-compiler cannot match is a compile error, never a silent difference. Known gaps are listed at
-the end.
+A component written in the TS/Velt common subset ([tsx.md](../design/tsx.md), "Sharing components
+with the client") must type-check and **behave identically** under `tsc` with the provider's TS
+runtime and under `velt` with its Velt runtime: same props object, same children shape (one child →
+the child, several → an array, none → field absent/`null`), same `key` handling, same evaluation
+order (props first; the component runs when the provider calls it), the same output for booleans and
+`null` (nothing, or the provider's placeholder: "Children" below). Anything the compiler cannot
+match is a compile error, never a silent difference. Known gaps are listed at the end.
 
 ## Required exports of `<source>/jsx-runtime`
 Types (any declaration kind that `import * as JSX` can name). `number` in the unions below is
@@ -182,10 +183,12 @@ function jsxAsyncComponent<P, E>(component: (props: P) => Promise<Element, E>, p
   with `provide`/`inject`).
 - A component that `throw`s: its error type must be accepted by the provider's signature;
   `std/jsx` reports errors from rendering.
-- **Until semantics stage 2** (shared object references) a component passed as a value takes
-  its props by copy: the compiler passes an adapter `(p: P) => Card(p)` where `Card` moves out
-  of its props or is `async`. Props holding a pending async element can't be copied yet (known
-  gap, documented in the report); stage 2 removes the adapter and the copy.
+- A component named by its function is passed as an adapter closure `(props) => Card(props)`
+  (`Card()` when it takes no props), because a function value borrows its argument while a
+  component may take ownership of its props or be `async`. Where `Card` takes ownership, the
+  adapter passes another reference to the props: their objects and elements, a pending async
+  element included, are shared, not copied. Any other function value is passed as it is
+  (`crates/velt_sema/src/body/expr/jsx/component_call.rs`).
 - `jsxAsyncComponent` is only needed by providers that support async components; without it,
   an async component is an error ("the JSX provider '<source>' does not support async
   components").
@@ -234,8 +237,8 @@ function jsxAsyncComponent<P, E>(component: (props: P) => Promise<Element, E>, p
   as in React), or a placeholder of its own, e.g. the empty comment `<!---->` that a hydrating
   client aligns its children on (sigx). A provider renders them the same way in both lowerings
   (its `jsxEscape` returns the placeholder) and in its TS runtime.
-- **Async:** a component whose return type is `Promise<…>` uses `jsxAsyncComponent`. A
-  provider that calls it at creation stores the promise (hybrid promises start it immediately, so siblings load
+- **Async:** a component whose return type is `Promise<…>` uses `jsxAsyncComponent`. A provider that
+  calls it at creation stores the promise (hybrid promises start it immediately, so siblings load
   concurrently) and awaits it while rendering.
 
 ## SSR precompile (optional exports)
@@ -250,12 +253,12 @@ function jsxTemplate(strings: string[], slots: Element[]): Element; // strings.l
 the compiler turns every maximal subtree of intrinsic elements into one `jsxTemplate` call (the
 shape of Deno's precompile transform, with text folded into the strings):
 - static tags, attributes and text are escaped at compile time (rules below);
-- a dynamic child whose type is assignable to `Text` and every dynamic attribute are folded into
-  the surrounding string with a template literal: `` `<td>${jsxEscape(f.message)}</td>` ``
-  (template literals build in place, rt_abi_async.md §12.1, so a row costs what a hand-written
-  template costs). A child whose type is `number` (`i64` or `f64`) is written `${n}` without
-  `jsxEscape`: a provider renders numbers like JavaScript's `String(n)` in both lowerings.
-  A child whose type is `string`, and static text with a `'` (below), goes to
+- a dynamic child whose type is assignable to `Text` and every dynamic attribute are folded into the
+  surrounding string with a template literal: `` `<td>${jsxEscape(f.message)}</td>` `` (template
+  literals build in place, [rt_abi_async.md](rt_abi_async.md) §12.1, so a row costs what a
+  hand-written template costs). A child whose type is `number` (`i64` or `f64`) is written `${n}`
+  without `jsxEscape`: a provider renders numbers like JavaScript's `String(n)` in both lowerings. A
+  child whose type is `string`, and static text with a `'` (below), goes to
 
   ```ts
   function jsxEscapeString(value: string): string;                   // optional: escaped string
@@ -283,7 +286,7 @@ shape of Deno's precompile transform, with text folded into the strings):
   arrow whose body is one intrinsic element, with no declared return type, spread or `key`) whose
   row is a subtree without slots is written into the surrounding string as
   `` ${jsxList(xs.map((x) => `<tr>…</tr>`))} ``: the rows are strings, not elements. `std/jsx`
-  joins them; a provider may add its own list markup. Any other list is a slot as before. The
+  joins them; a provider may add its own list markup. Any other list is a slot. The
   source does not change, and nor does its type: the arrow is the compiler's.
 - Output is HTML: void elements (`area base br col embed hr img input link meta source track
   wbr`, or the provider's `jsxVoidElements` when it exports them) have no closing tag; any
@@ -407,7 +410,7 @@ function jsxComponentAttributes<P>(component: (props: P) => Element, props: P,
   replaces an earlier one in its place, as in an object, whether it is written or comes from a
   spread source. An optional field that a spread source does not have keeps the earlier value,
   and without one is not passed, as the props object has no such key (the arrays may then be
-  empty). An element without any calls `jsxComponent` as before.
+  empty). An element without any calls `jsxComponent`.
 - **Required.** A provider whose `IntrinsicAttributes` declares fields besides `key` must export
   `jsxComponentAttributes` with these six parameters. `key`, `name`, `names` and `values` must
   take `string | null`, `string`, `string[]` and `AttrValue[]`. `IntrinsicAttributes` must be
@@ -430,8 +433,8 @@ The golden `lang/jsx_intrinsic_attributes` renders them through a provider in bo
 
 ## Escaping (all providers that render HTML)
 - Text and attribute values: `&` `<` `>` `"` → `&amp;` `&lt;` `&gt;` `&quot;`, and `'` as the
-  provider writes it: `&#x27;` in `std/jsx` (as react-dom), `&#39;` in sigx and `std/html`
-  `escapeHtml`.
+  provider writes it: `&#x27;` in `std/jsx` (as react-dom), `&#39;` in sigx and in `velt/text`'s
+  `escapeHtml` (`std/text/html.velt`).
 - `true` attributes render as the bare name, `false`/`null` attributes are omitted. An attribute
   whose value is `undefined` (`title={props.title}` with `title?: string`) is omitted as well.
 - The precompile lowering escapes static text and attribute values at compile time with the four
@@ -442,12 +445,13 @@ The golden `lang/jsx_intrinsic_attributes` renders them through a provider in bo
 - Raw HTML only through an explicit provider API (`std/jsx` `raw(html)`), never by default.
 
 ## `std/jsx` specifics
-`std/jsx` (default) implements the generic and precompile functions, has no event-handler
-attributes in `IntrinsicElements` (so `onClick` is a compile error with a note to use a client
-provider), and offers `renderToString(el)`, `renderToStringSync(el)` (an element without async
-components), `renderToStream(el)` (a `BodyStream` for a `Response` body, sent in chunks at async
-component boundaries) and `raw(html)`.
-`std/jsx/generic/jsx-runtime` is the same provider without the precompile exports.
+`std/jsx` (default) implements the generic and precompile functions, has no event-handler attributes
+in `IntrinsicElements` (so `onClick` is a compile error: "the JSX provider '<source>' declares no
+event handlers: …"), and offers `renderToString(el)`, `renderToStringSync(el)` (an element without
+async components), `renderToStream(el)` (a `BodyStream` for a `Response` body, sent in chunks at
+async component boundaries) and `raw(html)`. Its runtime is `std/jsx/jsx-runtime`;
+`std/jsx/generic/jsx-runtime` is the same provider without the precompile exports (it keeps
+`jsxVoidElements`).
 
 ## Extending `IntrinsicElements`
 A provider usually starts from std's HTML types rather than copying them: `velt/jsx`
@@ -472,12 +476,12 @@ export type IntrinsicElements = Html & {
 };
 ```
 
-A provider whose attributes include handlers adds the handler type to `AttrValue` (every
-attribute's type must convert to it) and decides what its `jsx` does with them; a server
-renderer drops them. TypeScript's other route, merging declarations of a global
-`JSX.IntrinsicElements` interface, does not exist: the provider module's export is the one
-definition. `tests/golden/lang/_jsx_events/jsx-runtime.velt` is a complete provider (used by
-`lang/jsx_extend_intrinsic`).
+A provider whose attributes include handlers adds the handler type to `AttrValue` (every attribute's
+type must convert to it) and decides what its `jsx` does with them; a server renderer drops them. A
+provider-contract runtime's `IntrinsicElements` is its own export, the one definition: a global
+`JSX.IntrinsicElements` declared elsewhere does not extend it (only an automatic runtime without a
+`JSX` namespace reads global declarations, above). `tests/golden/lang/_jsx_events/jsx-runtime.velt`
+is a complete provider (used by `lang/jsx_extend_intrinsic`).
 
 ## Known compatibility gaps (each is a compile error, never a behavior difference)
 - Class components, `ref`, and TS's `JSX.LibraryManagedAttributes` are not supported.

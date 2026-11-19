@@ -36,10 +36,14 @@ import {
 import { RecordWriter } from "velt/net/tls/record_writer";
 import {
   S_DONE,
+  S_DONE12,
   S_SEND_FLIGHT,
+  S_SEND_PLAIN,
   S_SEND_RETRY,
   ServerHandshake,
 } from "velt/net/tls/server_handshake";
+import { DONE12, SEND12 } from "velt/net/tls/client_handshake12";
+import { afterHandshake12 } from "velt/net/tls/suites12";
 
 /** What `tryFill` found: nothing has arrived yet. */
 export const NOTHING_YET: u8 = 0;
@@ -62,6 +66,8 @@ export class TlsEngine {
   alpn: string | null;
   /** The server's certificate chain (DER, leaf first), unchecked with `verify: false`; null on a server. */
   certificates: u8[][] | null;
+  /** Whether the handshake chose TLS 1.2. */
+  tls12: bool;
 
   /** A connection over `t`, before its handshake. */
   constructor(t: ByteStream) {
@@ -72,6 +78,7 @@ export class TlsEngine {
     this.readSecret = null;
     this.alpn = null;
     this.certificates = null;
+    this.tls12 = false;
   }
 
   /**
@@ -85,8 +92,19 @@ export class TlsEngine {
     try {
       await this.out.sendPlain(HANDSHAKE, h.hello(), 1);
       while (!h.done()) {
-        const step = h.onMessage(await this.handshakeMessage(false));
-        if (step == SEND_RETRY) {
+        const step = h.onMessage(await this.handshakeMessage(h));
+        if (step == SEND12) {
+          // TLS 1.2: the ClientKeyExchange, a ChangeCipherSpec, and the Finished under the new
+          // write keys.
+          const t = h.tls12!;
+          await this.out.sendPlain(HANDSHAKE, t.keyExchange!, 3);
+          this.out.cipher = t.writeCipher;
+          await this.out.sendProtected(HANDSHAKE, t.finished!, true);
+        } else if (step == DONE12) {
+          this.hs.checkEmpty();
+          this.tls12 = true;
+          this.out.tls12 = true;
+        } else if (step == SEND_RETRY) {
           if (compat) {
             await this.out.sendCcs();
             ccsSent = true;
@@ -141,6 +159,12 @@ export class TlsEngine {
             this.addHandshake();
           } else if (step == (CHANGE_CIPHER_SPEC as u16)) {
             checkCcs(r);
+            const keys = h.ccs();
+            if (keys != null) {
+              // TLS 1.2: the client's write keys from the next record on.
+              this.hs.checkEmpty();
+              r.cipher = keys;
+            }
           } else {
             throw new TlsFailure(
               UNEXPECTED_MESSAGE,
@@ -150,7 +174,21 @@ export class TlsEngine {
           continue;
         }
         const action = h.onMessage(this.hs.take());
-        if (action == S_SEND_RETRY) {
+        if (action == S_SEND_PLAIN) {
+          // TLS 1.2: ServerHello to ServerHelloDone.
+          this.hs.checkEmpty();
+          out.queue(HANDSHAKE, h.hello!, true);
+        } else if (action == S_DONE12) {
+          // TLS 1.2: a ChangeCipherSpec and the Finished under the new write keys.
+          this.hs.checkEmpty();
+          this.suite = h.suite;
+          out.cipher = h.writeCipher;
+          out.tls12 = true;
+          out.queue(HANDSHAKE, h.flight!, false, true);
+          r.handshaking = false;
+          this.alpn = h.alpn;
+          this.tls12 = true;
+        } else if (action == S_SEND_RETRY) {
           this.hs.checkEmpty();
           out.queue(HANDSHAKE, h.retry!, true);
           if (h.compat) {
@@ -295,15 +333,21 @@ export class TlsEngine {
     this.out.close();
   }
 
-  // The next whole handshake message (with its header) during the handshake.
-  private async handshakeMessage(after: bool): Promise<u8[]> {
+  // The next whole handshake message (with its header) during the client's handshake `h`.
+  private async handshakeMessage(h: ClientHandshake): Promise<u8[]> {
     while (!this.hs.hasMessage()) {
       const r = this.r;
-      const type = await r.next(after);
+      const type = await r.next(false);
       if (type == HANDSHAKE) {
         this.addHandshake();
       } else if (type == CHANGE_CIPHER_SPEC) {
         checkCcs(r);
+        const keys = h.ccs();
+        if (keys != null) {
+          // TLS 1.2: the server's write keys from the next record on.
+          this.hs.checkEmpty();
+          r.cipher = keys;
+        }
       } else {
         throw new TlsFailure(
           UNEXPECTED_MESSAGE,
@@ -325,6 +369,10 @@ export class TlsEngine {
   }
 
   private async postHandshake(m: u8[]): Promise<void> {
+    if (this.tls12) {
+      afterHandshake12(m, this.r.peer == "client");
+      return;
+    }
     const type = m[0];
     if (type == NEW_SESSION_TICKET) {
       return;
@@ -348,6 +396,10 @@ export class TlsEngine {
 
   // `postHandshake` for a reader that can't wait: the KeyUpdate it owes goes before the next write.
   private noteHandshake(m: u8[]) {
+    if (this.tls12) {
+      afterHandshake12(m, this.r.peer == "client");
+      return;
+    }
     const type = m[0];
     if (type == NEW_SESSION_TICKET) {
       return;

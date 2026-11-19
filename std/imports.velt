@@ -235,4 +235,12 @@ export const imports: Imports = {
     native: "./process/tty_posix.velt",
     default: "./process/tty_wasm.velt",
   },
+  // The local time zone's offset (`Date`'s local getters, `velt/time`'s `localParts()`): the C
+  // library's `localtime_r` on macOS and Linux, Win32's time-zone functions on Windows, UTC on
+  // WebAssembly.
+  "#localtime": {
+    win32: "./time/localtime_win32.velt",
+    native: "./time/localtime_posix.velt",
+    default: "./time/localtime_none.velt",
+  },
 };

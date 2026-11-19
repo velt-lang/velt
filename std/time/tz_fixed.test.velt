@@ -1,0 +1,50 @@
+// velt/time (tests): white-box tests, run by `velt test std/`.
+//
+// `TZ`'s fixed offsets as Windows reads them (std/time/tz_fixed.velt), tested on every OS.
+import { describe, expect, it } from "velt/test";
+import { fixedOffset } from "velt/time/tz_fixed";
+
+describe("velt/time's fixed TZ offsets", () => {
+  it("UTC has many names", () => {
+    const names = [
+      "GMT+0",
+      "GMT-0",
+      "UTC",
+      "Etc/UTC",
+      "GMT",
+      "Etc/GMT",
+      "UTC0",
+      ":UTC",
+      "Etc/GMT+0",
+      "Etc/GMT-0",
+    ];
+    for (const name of names) {
+      expect(fixedOffset(name)).toBe(0);
+    }
+  });
+
+  it("Etc/GMT±N inverts its sign", () => {
+    expect(fixedOffset("Etc/GMT-2")).toBe(2 * 3600);
+    expect(fixedOffset("Etc/GMT+5")).toBe(-5 * 3600);
+    expect(fixedOffset("Etc/GMT-14")).toBe(14 * 3600);
+    expect(fixedOffset("Etc/GMT+12")).toBe(-12 * 3600);
+  });
+
+  it("anything else is no fixed offset", () => {
+    const others = [
+      "",
+      "Europe/Berlin",
+      "Etc/GMT+13",
+      "Etc/GMT-15",
+      "Etc/GMT+",
+      "Etc/GMT+1a",
+      "Etc/GMT+05",
+      "Etc/GMT-00",
+      "CET-1CEST",
+      "UTC+2",
+    ];
+    for (const tz of others) {
+      expect(fixedOffset(tz)).toBe(null);
+    }
+  });
+});
