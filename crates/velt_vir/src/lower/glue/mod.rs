@@ -54,6 +54,7 @@ mod many;
 mod slot_uses;
 mod thunk;
 mod trace;
+mod trace_env;
 mod transfer;
 mod transfer_env;
 mod transfer_settle;

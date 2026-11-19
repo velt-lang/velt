@@ -1,0 +1,39 @@
+// check: no leaks
+// As weakmap_closure_replaced, through a captured variable's cell: the replaced closure's
+// environment is freed (the function still reads the variable, so it lives in a cell both
+// share), and then the function's own, last reference to the cell, weakly held on the path
+// back to the key, which its three-way release frees (#3119 step 3).
+class Raw {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+class Handler {
+  read: () => number;
+  constructor(read: () => number) {
+    this.read = read;
+  }
+}
+
+function track(cache: WeakMap<Raw, Handler>, n: number): WeakRef<Raw> {
+  const raw = new Raw(n);
+  let cur: Raw | null = raw;
+  const handler = new Handler((): number => {
+    const v = cur == null ? -1 : cur.n;
+    cur = null;
+    return v;
+  });
+  cache.set(raw, handler);
+  handler.read = () => 0;
+  console.log("reads", cache.get(raw)!.read(), "cur", cur == null ? -1 : cur.n);
+  return new WeakRef(raw);
+}
+
+function main() {
+  const cache = new WeakMap<Raw, Handler>();
+  const r = track(cache, 2);
+  console.log("key freed:", r.deref() == null);
+  console.log("map still in use:", cache.has(new Raw(0)));
+}

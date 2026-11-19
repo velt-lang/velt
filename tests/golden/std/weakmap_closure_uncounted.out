@@ -1,0 +1,5 @@
+handler reads 9
+key freed: true
+one link reads 40
+one link, key freed: true
+map still in use: false

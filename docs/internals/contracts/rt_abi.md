@@ -290,7 +290,16 @@ the object's thread-local values (`velt_tls_data_<id>`). Design:
   `obj` owns, or report one twice: the trial would count it as internal and could free a live
   object. So the glue of a type whose objects can have more fields than it knows (a class in a
   hierarchy with a vtable, an interface value, a function value's environment) is null, or
-  dispatches on the object's dynamic type; Velt's is null for those.
+  dispatches on the object's dynamic type. Velt's is null for classes with a vtable and
+  interface values, and walks an uncounted object's fields as its owner's (the owner holds the
+  only reference). A function value's glue dispatches on its environment's drop entry (header
+  word 0, one function per closure instance): it visits the environment with the trace glue of
+  the closure whose drop entry it is, among those made at the value's function type, and leaves
+  out an environment that matches none (one the runtime made, or one whose drop entry a function
+  property replaced, `fn_props.rs`). An environment's trace visits what its captures own and its
+  captured variables' cells (counted `[count][value]` blocks, traced like a map value's box). In a
+  program with such glue, environments and cells may be weakly held, and their releases take the
+  three-way sequence below.
 - **Map values.** A value word of a map with value release glue is 0 (`null`, `undefined`) or a
   counted object pointer. The compiler stores a value whose type is a counted object (or
   `T | null` of one) as its pointer, a value without drop glue that fits in 8 bytes (numbers,

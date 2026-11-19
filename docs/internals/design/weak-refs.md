@@ -89,8 +89,8 @@ weakly held (a primitive, or a tuple or function value the conversion boxed) thr
 ### Weak maps and `WeakRef`
 
 - `set(k, v)` records `k` in the side table (setting its flag), stores `v` (the map owns one
-  reference), and runs the insert-time ephemeron analysis below when the map's values can refer
-  to objects.
+  reference), and marks the entry for the ephemeron examination below when the map's values can
+  refer to objects.
 - `get`, `has` and `delete` are hash probes. `get` returns the value counted (retained with the
   map's value glue; the caller releases it), like `deref()`: a later release of a weakly held
   object may run a trial that deletes the entry and frees its value, so a borrowed result would
@@ -112,11 +112,30 @@ refers to either. With counts alone, the key's count never reaches zero while th
 and the map keeps the proxy alive: every reactive object would leak. Velt keeps a back-reference
 count per object and runs a bounded cycle check on release.
 
-**At insert,** `set(k, v)` traces `v`'s graph through the compiler's trace glue (each counted
+**On the key's first decrement after an insert,** the entry is examined (`examine`, called from
+`weakRelease`): the core traces `v`'s graph through the compiler's trace glue (each counted
 type's strong references; up to 256 objects, `LIMIT` in `std/lang/hooks/weak_graph.velt`) and
 finds every object on a path from `v` back to `k`. For each, the entry records how many
 references to it the entry holds: the map's reference to `v`, and the references from inside
-`v`'s graph. Their sum over all entries is the object's `hint`, and the objects get the flag.
+`v`'s graph. Their sum over all entries is the object's `hint`, and the objects get the flag. An
+entry whose value has no path back to `k` gets one more look, at the key's next decrement: the
+decrement that triggered the examination may be the one that removed a path, which comes back
+before the next. After that, or when the graph is past the limit, the entry counts as examined,
+so a key's decrements trace each of its entries at most twice. A record counts its entries not
+examined yet (`R_UNEXAMINED`) and keeps a threshold (`R_GATE`: at least `max(hint, observed)`,
+the largest value while an entry is unexamined), so a decrement that leaves the count above it
+goes on after one comparison.
+
+Waiting for a decrement loses no cycle whose path is there at the key's first decrement or comes
+back before its next: an entry whose value refers back to its key holds a reference to the key, so
+the key's last outside reference goes by a decrement, never by the release that frees it. It saves
+the trace of an entry whose key goes by its only release, and the trials that releases of a value
+not examined yet would run (the value is not marked until then), and it sees a path the value gains
+between the insert and that decrement. It costs a second lookup of the entry at the decrement:
+against an examination at insert, `bench/weakmap_handlers.velt` (handlers over other objects) runs
+5.4% more instructions, `bench/weakmap_handlers_cycle.velt` 37.5% fewer, and
+`bench/weakmap_key_decrements.velt` (keys decremented a thousand times each while their entries
+live) 2.9% fewer.
 
 **On a release** that leaves a recorded object's count at or below `max(hint, observed)`, every
 remaining reference may come from the cycle, so the cold path runs a **trial deletion** (Bacon
@@ -169,8 +188,11 @@ reaches it, and the trial uses the record's trace for such keys.
   `RC_WEAK | 0` behind for a weakly held object. For weak-capable types each such site emits the
   release sequence instead: `crates/velt_vir/src/lower/rc.rs`, `lower/glue/drop_chain.rs`
   (`take`, which decrements when the count is not 1) and `lower/glue/transfer.rs` (releasing the
-  sender's reference after a deep copy). `lower/glue/transfer_env.rs` decrements closure
-  environments, which are never weak-capable: function values are opaque to the trace glue.
+  sender's reference after a deep copy). Closure environments and captured variables' cells may
+  be weakly held in a program with weak references, since the trace glue looks into function
+  values: their releases then take the release sequence (`Boxing::weak_envs`), and
+  `lower/glue/transfer_env.rs` gives up a shared environment through its own drop entry instead
+  of decrementing it.
 - **Weak handles belong to one task.** A `WeakMap`, `WeakSet` or `WeakRef` (a class instance with
   a plain count) stays with the task that made it (see "Threads and `shared`"). The task itself
   may run on several threads in turn, which the process-wide table allows. A weakly held object
@@ -179,13 +201,13 @@ reaches it, and the trial uses the record's trace for such keys.
   that `weakRelease` reports before it touches the count word.
 - **Weak-capable types are never atomic.** The flag lives in a plain count word, which only the
   task using the object changes; the table's lock protects the table, not the objects.
-- **Lock discipline.** No generated code that could reach the table runs while it is locked:
-  value retains and releases run after the lock is released, and trace glue, which runs under
-  the lock during a trial, only reads fields and records them. A re-entry would deadlock, so the
-  core reports it as an `ICE:` instead. Cascades and the trials they defer (`CASCADE`,
-  `PENDING`, thread-local values of `std/lang/hooks/weak.velt`) are per thread: a cascade is synchronous drop
-  glue, which never awaits, so it starts and ends on one thread; two threads may run cascades at
-  once over objects of different tasks.
+- **Lock discipline.** No generated code that could reach the table runs while it is locked: value
+  retains and releases run after the lock is released, and trace glue, which runs under the lock
+  during a trial, only reads fields and records them. A re-entry would deadlock, so the core reports
+  it as an `ICE:` instead. Cascades and the trials they defer (`CASCADE`, `PENDING`, thread-local
+  values of `std/lang/hooks/weak.velt`) are per thread: a cascade is synchronous drop glue, which
+  never awaits, so it starts and ends on one thread; two threads may run cascades at once over
+  objects of different tasks.
 
 ### Weak-capable types and release
 
@@ -226,10 +248,16 @@ pointer through the same word (so `WeakMap<object, object>` caches are ephemeron
 `deref()` rebuilds the `object`. Other programs are unchanged.
 
 **Trace glue** (`lower/glue/trace.rs`) visits the counted objects an object refers to through its
-fields, elements and payloads stored inline. Uncounted objects, function and interface values and
-`shared` values are not looked into, and classes in a hierarchy with a vtable are opaque (null
-glue), so a glue never reads a field the dynamic type does not have. `lower/weak.rs` lowers the
-weak intrinsics and map value words.
+fields, elements and payloads stored inline. A function value is visited through its environment
+(`lower/glue/trace_env.rs`): the value's glue compares the environment's drop entry with those of
+the closures made at the value's function type (`Boxing::env_traced`) and visits the environment
+with the matching closure's trace (`Work::EnvTrace`), which walks the same captures as its drop,
+captured variables' cells included; an environment that matches none (one the runtime made, or one
+whose drop entry a function property replaced) is left out. An uncounted object's fields are walked
+as its owner's, since its owner holds the only reference. Interface values and `shared` values are
+not looked into, and classes in a hierarchy with a vtable are opaque (null glue), so a glue never
+reads a field the dynamic type does not have. `lower/weak.rs` lowers the weak intrinsics and map
+value words.
 
 ### Threads and `shared`
 
@@ -348,9 +376,9 @@ order:
 - a `get` result held across the release of its key's last outside reference.
 
 `weak_threads.test.velt` releases weakly held objects and an ephemeron cycle in spawned tasks (on
-any of the executor's workers), runs eight tasks with maps of their own at once, releases values that release
-other maps' keys or drop other maps (nothing re-enters the lock), and checks that an object
-marked without a record is an `ICE:` reported before the count changes. The goldens
+any of the executor's workers), runs eight tasks with maps of their own at once, releases values
+that release other maps' keys or drop other maps (nothing re-enters the lock), and checks that an
+object marked without a record is an `ICE:` reported before the count changes. The goldens
 `weakmap_async` and `weakmap_nested` do the same from Velt programs; `weakmap_mutex`,
 `weakmap_mutex_call`, `weakmap_mutex_value`, `weakref_mutex`, `weakref_mutex_closure` and
 `weakref_mutex_result` check that a weak collection cannot cross a `with` lock.
@@ -370,9 +398,14 @@ cannot cross threads; Node has one thread per isolate.
 
 ## Limitations
 
-- **A value graph past 256 objects** at insert or during a trial: nothing is recorded or freed;
-  the pair leaks until the entry is deleted or the map dropped (test
+- **A value graph past 256 objects** at its examination or during a trial: nothing is recorded
+  or freed; the pair leaks until the entry is deleted or the map dropped (test
   "keeps a pair whose value graph is past the limit"). The bound keeps every release cheap.
+- **A path that comes back after the second look.** A value that loses its path back to the key
+  before the key's first decrement, and gets it back only after the key's next one, is not seen
+  by either examination; the pair is kept until the entry is deleted or the map dropped (test
+  "keeps a pair whose path came back after the second look"). The bound keeps a key that is
+  passed around while its entry lives from tracing its value at every decrement.
 - **References to the key added after the last trial through it**, when the final outside
   release lands on an object whose count is still above what the table knows: no trial runs and
   the pair is kept until a release that reaches the known level, or the entry goes (test
@@ -381,12 +414,11 @@ cannot cross threads; Node has one thread per isolate.
   and the proxy still hold each other. That is an ordinary strong cycle, which
   [cycles.md](cycles.md) covers; the core does not collect cycles no weak map takes part in.
 - **Ephemeron cycles across maps.** `m1.set(a, b); m2.set(b, a)` with no other references
-  between `a` and `b`: each key is kept alive only by the other map's value. The insert-time
-  analysis records a path from a value back to its own entry's key only, so neither entry has a
+  between `a` and `b`: each key is kept alive only by the other map's value. The examination
+  records a path from a value back to its own entry's key only, so neither entry has a
   hint and no trial runs; the pair is kept until an entry is deleted or a map dropped.
-- **Opaque trace glue.** A cycle through a function value's environment (a handler closure
-  capturing the key) or through a class in a hierarchy with a vtable is not seen by a trial; it is
-  kept until its map entry goes.
+- **Opaque trace glue.** A cycle through a class in a hierarchy with a vtable or an interface
+  value is not seen by a trial; it is kept until its map entry goes.
 - **A weak map held only by its own cycle** (a cache kept in a proxy handler's closure): the
   trial treats every map as live, so entries whose keys are dead are still deleted, but a map
   that is itself garbage is freed only when its holder is.
