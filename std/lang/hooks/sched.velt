@@ -428,6 +428,18 @@ export function schedModuleReady(state: usize, n: u64): void {
   mod.ready(state, n);
 }
 
+/**
+ * The end of a program whose synchronous `main` reached no task, with exit code `code`: no
+ * `schedFinish` runs (the executor never started), so at a normal end with the debug counters on
+ * the blocks of module state go here, as the runtime's drop at exit did; else they are kept to
+ * the end, as in Node.
+ */
+export function schedModuleExit(code: i32): void {
+  if (code === 0 && ex.counting()) {
+    mod.dropAtExit();
+  }
+}
+
 /** `velt_rt_latch_new`: a closed latch. */
 export function schedLatchNew(): u64 {
   return latch.latchNew();
