@@ -1,0 +1,110 @@
+// velt/lang/hooks (internal): started promises nothing can wake any more (sched_node.velt).
+//
+// A started node its owner dropped runs on. One that is suspended with only its task's reference
+// left never would: every waker clone is a reference, so no leaf holds its waker. JavaScript
+// collects a promise nobody can settle together with the functions waiting for it; here such a
+// node is given up, its state dropped. A node gets there in two places: its owner drops it while
+// it is suspended (`dropPending`), or a poll leaves it suspended with its owner gone (`parked`).
+
+import { inline, noInline, stateDrop } from "velt/lang/intrinsics";
+import * as m from "./sched_mem";
+import * as nd from "./sched_node";
+import * as aw from "./sched_node_await";
+import * as t from "./sched_task";
+
+/**
+ * The end of sched_node.velt `nodeDrop` for started node `n` that has not finished, its owner on
+ * its task's thread: when the owner's was the last reference besides its task's, nothing can
+ * wake it any more. A call of its own, so the drop of a finished promise, the common one, keeps
+ * nothing across it.
+ */
+@noInline
+export function dropPending(n: usize): void {
+  const w = aw.takePlain(n);
+  if (w !== 0) {
+    m.wakerDrop(w);
+  }
+  nd.release(n);
+  if (unreachable(n, 1)) {
+    giveUp(m.ld(n + nd.N_TASK), n);
+  }
+}
+
+/**
+ * An adoption poll left started node `n` suspended (sched_node.velt `pollNode`), its owner's and
+ * its task's its only references: no leaf holds its own waker, so it runs again only when its
+ * owner polls it, and its leaves wake the owner. The owner's waker is not kept in it then: an
+ * owner that nothing else can wake is `unreachable`. Pending, always.
+ */
+@inline
+export function ownerOnly(n: usize): u32 {
+  const w = aw.takePlain(n);
+  if (w !== 0) {
+    m.wakerDrop(w);
+  }
+  return 0;
+}
+
+/**
+ * Can started node `n` never run again, once all but `refs` of its references are given back?
+ * Its owner dropped it, it is not running, not among its task's woken nodes and not finished,
+ * and besides the caller's its task holds the only reference: no leaf holds its waker (each
+ * clone is a reference), so nothing can wake it. A promise nobody settles ends up here
+ * (std/lang/promise/settle.velt: `new Promise` whose `resolve` and `reject` were dropped,
+ * waiting on a race over nothing), as the loser of a race against a timer that was cleared
+ * does. Not a catching node (its drop glue's word is lent, `N_DROP`). A shared node is not
+ * detached while a holder has it (sched_share_drop.velt `free` drops it as its owner would).
+ */
+@inline
+function unreachable(n: usize, refs: usize): bool {
+  const fl = m.load32(n + nd.N_FLAGS);
+  const idle = nd.STARTED | nd.DETACHED;
+  const busy = nd.FINISHED | nd.RUNNING | nd.QUEUED | nd.CATCHES | nd.PANICKED | nd.ADOPTED;
+  return (fl & (idle | busy)) === idle && m.load(n + nd.N_REFS) === refs;
+}
+
+/**
+ * A run of node `n` of task `task` left it suspended with its owner gone (sched_node.velt
+ * `run`): given up when nothing can wake it. The run's caller still holds the reference it ran
+ * it with (the woken stack's, a sleep's, a microtask's: sched_run.velt), which frees the node
+ * when it goes.
+ */
+@noInline
+export function parked(task: usize, n: usize): void {
+  if (unreachable(n, 2)) {
+    giveUp(task, n);
+  }
+}
+
+/**
+ * The first run of node `n`, started on a thread that is no worker of its task's, is over
+ * (sched_foreign.velt `startJob`): the hand-off's reference goes. Its owner may have dropped it
+ * meanwhile, on its own thread (sched_node.velt `nodeDrop`, the side that only marks it and gives
+ * its reference back): with DETACHED set and the hand-off's and the task's the only references,
+ * the owner's is gone and no waker exists, so none can be made any more.
+ */
+export function handedOff(n: usize): void {
+  const lostNow = unreachable(n, 2);
+  nd.release(n);
+  if (lostNow) {
+    giveUp(m.ld(n + nd.N_TASK), n);
+  }
+}
+
+/**
+ * Gives up node `n` of task `task`, which is `unreachable`: its state is dropped (what its
+ * frame holds goes, as when JavaScript collects a function suspended for ever), and the task's
+ * reference with it; the last reference frees the node. It has no result. On the task's thread
+ * only.
+ */
+@noInline
+function giveUp(task: usize, n: usize): void {
+  nd.setFlags(n, nd.FINISHED);
+  // SAFETY: the state's own drop glue (a non-catching node keeps it, `N_DROP`) on a state that
+  // is suspended, not being polled, and never polled again.
+  unsafe {
+    stateDrop(m.ld(n + nd.N_DROP), n + nd.N_HEAD + 16);
+  }
+  m.st(task + t.T_LOCALS, m.ld(task + t.T_LOCALS) - 1);
+  nd.release(n);
+}
