@@ -28,6 +28,11 @@ const SLOT_CLASS_ID: i128 = -9;
 pub(in crate::lower) const SLOT_VALUE_EQ: i128 = -8;
 pub(in crate::lower) const SLOT_VALUE_HASH: i128 = -7;
 
+/// A class's own trace glue (`Glue::ObjTrace`), in its class table only, which never holds
+/// `SLOT_VALUE_EQ` (glue/trace_dyn.rs): in a program with weak references, for a class that
+/// refers to something the trace glue visits; 0 otherwise.
+pub(in crate::lower) const SLOT_TRACE: i128 = -8;
+
 /// Memo key of a vtable: the class itself, or `Program::impls[i]` for a concrete type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(in crate::lower) enum VtableKey {
@@ -89,7 +94,7 @@ impl Cx<'_> {
             VtableKey::Impl(index, ty) => {
                 self.note_vtable_type(ty);
                 if !self.is_any_impl(index) {
-                    self.note_iface_impl(self.hir.impls[index as usize].iface, ty);
+                    self.note_iface_impl(self.hir.impls[index as usize].iface, index, ty);
                 }
                 let mut entries = self.impl_entries(index, ty);
                 if let Some(js) = self.hir.upcast_impls.get(&index).cloned() {
@@ -231,6 +236,9 @@ impl Cx<'_> {
             entries.push((SLOT_FORMAT, self.func(Work::Glue(Glue::ObjFormat, cls))));
         }
         entries.push((SLOT_TRANSFER, self.func(Work::Glue(Glue::ObjTransfer, cls))));
+        if self.has_weak() && !self.weak_refs_exact(None, cls).is_empty() {
+            entries.push((SLOT_TRACE, self.func(Work::Glue(Glue::ObjTrace, cls))));
+        }
         let name = self.type_name(cls);
         let mut entries: Vec<(i128, Const)> = entries
             .into_iter()
