@@ -65,6 +65,10 @@ pub enum Construct {
     /// A read of a clock (`Date.now()`, `performance.now()`): its hooks, and
     /// `velt_main` stamps `performance.now()`'s time origin first thing.
     Clock,
+    /// A weak collection's operation (`WeakMap`, `WeakSet` and `WeakRef`'s intrinsics, #3145):
+    /// lowering calls std's weak core (std/lang/hooks/weak.velt) for it, and for the release of
+    /// the types it makes weak-capable.
+    Weak,
 }
 
 impl Construct {
@@ -78,6 +82,7 @@ impl Construct {
         Construct::CatchUnwind,
         Construct::PowFloat,
         Construct::Clock,
+        Construct::Weak,
     ];
 
     /// The construct as the ICE names it.
@@ -91,6 +96,7 @@ impl Construct {
             Construct::CatchUnwind => "CatchUnwind (a call of catchUnwind)",
             Construct::PowFloat => "PowFloat (`**` on floats)",
             Construct::Clock => "Clock (a read of Date.now or performance.now)",
+            Construct::Weak => "Weak (a weak collection's intrinsic)",
         }
     }
 

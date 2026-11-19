@@ -1,0 +1,55 @@
+// check: no leaks
+// requires: unix
+// (What the panicked functions held is dropped by cleanup pads, which exist on Linux and macOS;
+// on Windows it still leaks: #2979.)
+// A promise that panicked is freed with its last reference, and its exception with it (#2818):
+// the executor kept every panicked promise for good, 3 blocks a caught panic in a handler that
+// panics on each request.
+import { catchPanic, PanicError } from "velt/task";
+
+async function boom(i: number): Promise<number> {
+  await yieldNow();
+  panic("boom " + i);
+  return 1;
+}
+
+// Starts the promise, does other work, then awaits it: the panic is raised again here.
+async function body(i: number): Promise<number> {
+  const p = boom(i);
+  for (let k = 0; k < 5; k++) {
+    await yieldNow();
+  }
+  return await p;
+}
+
+// Nobody awaits the promise that panicked.
+async function unawaited(i: number): Promise<number> {
+  const p = boom(i);
+  for (let k = 0; k < 3; k++) {
+    await yieldNow();
+  }
+  return i;
+}
+
+async function main() {
+  let caught = 0;
+  for (let i = 0; i < 40; i++) {
+    try {
+      await catchPanic(() => body(i));
+    } catch (e) {
+      if (e instanceof PanicError && e.message.startsWith("boom " + i)) {
+        caught++;
+      }
+    }
+  }
+  console.log("caught", caught);
+  let passed = 0;
+  for (let i = 0; i < 10; i++) {
+    try {
+      passed += await catchPanic(() => unawaited(i));
+    } catch (e) {
+      console.log("unexpected", e instanceof PanicError);
+    }
+  }
+  console.log("passed", passed);
+}

@@ -18,6 +18,9 @@ export const DECODE_ERROR: u8 = 50;
 export const DECRYPT_ERROR: u8 = 51;
 export const PROTOCOL_VERSION: u8 = 70;
 export const INTERNAL_ERROR: u8 = 80;
+export const INAPPROPRIATE_FALLBACK: u8 = 86;
+/** TLS 1.2's refusal of a renegotiation (RFC 5246 §7.2.2). */
+export const NO_RENEGOTIATION: u8 = 100;
 export const MISSING_EXTENSION: u8 = 109;
 export const NO_APPLICATION_PROTOCOL: u8 = 120;
 
@@ -59,6 +62,7 @@ export function alertName(d: u8): string {
     [80, "internal_error"],
     [86, "inappropriate_fallback"],
     [90, "user_canceled"],
+    [100, "no_renegotiation"],
     [109, "missing_extension"],
     [110, "unsupported_extension"],
     [112, "unrecognized_name"],

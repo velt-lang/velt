@@ -19,6 +19,18 @@ export function unwoundFramesDrop(): bool {
 /** Never called (no catch counts here); raises nothing. */
 export function raise(msg: string): void {}
 
+/** How many exceptions are raised and not freed yet: none is ever raised here. */
+export function livePanics(): usize {
+  return 0;
+}
+
+/**
+ * Never called with an exception (`catchUnwind` returns 0 here).
+ *
+ * Unsafe: the same contract as the Itanium one.
+ */
+export unsafe function freePanic(e: usize): void {}
+
 /**
  * Never called with an exception (`catchUnwind` returns 0 here).
  *

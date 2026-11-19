@@ -1,0 +1,46 @@
+// velt/lang/math (internal): the inverse trigonometric functions of `Math`, `asin`, `acos`, `atan`
+// and `atan2`, as an extension of the prelude's class over fdlibm's routines
+// (velt/lang/math/inverse_trig). In a module of its own so that a program loads these ports only
+// when it calls one of these functions (std/prelude/global/math_inverse_trig.velt, a conditional
+// global).
+
+import { acos, asin, atan, atan2 } from "velt/lang/math/inverse_trig";
+
+// Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
+
+extend Math {
+  /**
+   * Returns the arcsine of a number, in radians from -PI/2 to PI/2; NaN outside [-1, 1].
+   * @param x - A numeric expression.
+   */
+  static asin(x: f64): f64 {
+    return asin(x);
+  }
+
+  /**
+   * Returns the arc cosine (or inverse cosine) of a number, in radians from 0 to PI; NaN outside
+   * [-1, 1].
+   * @param x - A numeric expression.
+   */
+  static acos(x: f64): f64 {
+    return acos(x);
+  }
+
+  /**
+   * Returns the arctangent of a number, in radians from -PI/2 to PI/2.
+   * @param x - A numeric expression for which the arctangent is needed.
+   */
+  static atan(x: f64): f64 {
+    return atan(x);
+  }
+
+  /**
+   * Returns the angle (in radians) between the X axis and the line going through both the origin
+   * and the given point, from -PI to PI.
+   * @param y - A numeric expression representing the cartesian y-coordinate.
+   * @param x - A numeric expression representing the cartesian x-coordinate.
+   */
+  static atan2(y: f64, x: f64): f64 {
+    return atan2(y, x);
+  }
+}

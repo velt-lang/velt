@@ -100,7 +100,6 @@ const RUNTIME_REACH: &[(&str, &str)] = &[
     ("memory", "the environment"),
     ("worker", "the environment"),
     ("current", "the environment"),
-    ("local", "the clock"),
     ("random", "random numbers"),
     ("stdin", "standard input"),
     ("native", NATIVE_SUPPORT),
@@ -409,7 +408,6 @@ mod tests {
         assert_eq!(outside("velt_rt_tcp_connect"), "the network");
         assert_eq!(outside("clock_gettime"), "the clock");
         assert_eq!(outside("QueryPerformanceCounter"), "the clock");
-        assert_eq!(outside("velt_rt_local_offset_minutes"), "the clock");
         assert_eq!(outside("velt_rt_random_u64"), "random numbers");
         assert_eq!(outside("velt_rt_memory_rss"), "the environment");
         assert_eq!(outside("velt_rt_isatty"), "the environment");

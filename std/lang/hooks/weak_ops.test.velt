@@ -1,0 +1,285 @@
+// velt/lang/hooks (tests): `WeakMap`, `WeakSet` and `WeakRef` operations of the weak core
+// (weak.velt), entries vanishing with their keys, and map values that are null or untraced, on
+// hand-built objects (weak_test_objects.velt), run by `velt test std/`.
+import { describe, expect, it } from "velt/test";
+import { fnAddress } from "velt/lang/intrinsics";
+import {
+  weakMapDelete,
+  weakMapHas,
+  weakMapLen,
+  weakMapNew,
+  weakMapSet,
+  weakMapSetTraced,
+  weakRefDeref,
+  weakRefDrop,
+  weakRefNew,
+  weakRefNewWith,
+  weakRefWord,
+  weakTracked,
+} from "velt/lang/hooks/weak";
+import {
+  count,
+  field,
+  finish,
+  get,
+  has,
+  isMarked,
+  live,
+  newObj,
+  objMap,
+  plain,
+  proxyOf,
+  release,
+  releaseValue,
+  retain,
+  retainValue,
+  set,
+  traceObj,
+  untracedMap,
+} from "velt/lang/hooks/weak_test_objects";
+
+describe("weak map operations", () => {
+  it("sets, gets, has and deletes", () => {
+    const before = live();
+    const m = objMap();
+    const k = plain();
+    const v = plain();
+    expect(has(m, k)).toBe(false);
+    set(m, k, retain(v));
+    expect(get(m, k)).toBe(v);
+    expect(count(v)).toBe(3); // get returns a counted reference
+    release(v);
+    expect(weakMapHas(m, k)).toBe(true);
+    expect(count(k)).toBe(1); // a weak key is not counted
+    expect(count(v)).toBe(2); // the map holds its value
+    expect(isMarked(k) && !isMarked(v)).toBe(true);
+    expect(weakMapDelete(m, k)).toBe(true);
+    expect(weakMapDelete(m, k)).toBe(false);
+    expect(weakMapHas(m, k)).toBe(false);
+    expect(count(v)).toBe(1);
+    expect(isMarked(k)).toBe(false); // a key in no map loses its mark
+    release(k);
+    release(v);
+    expect(finish([m])).toBe(true);
+    expect(live()).toBe(before);
+  });
+
+  it("drops an entry with its key", () => {
+    const m = objMap();
+    const k = plain();
+    set(m, k, plain());
+    const k2 = retain(k);
+    release(k);
+    expect(weakMapLen(m)).toBe(1); // still referenced
+    const before = live();
+    release(k2);
+    expect(weakMapLen(m)).toBe(0);
+    expect(live()).toBe(before - 2); // the key and its value are freed
+    expect(finish([m])).toBe(true);
+  });
+
+  it("replaces a value and releases the old one", () => {
+    const m = objMap();
+    const k = plain();
+    const before = live();
+    set(m, k, plain());
+    set(m, k, plain());
+    expect(live()).toBe(before + 1);
+    expect(weakMapLen(m)).toBe(1);
+    release(k);
+    expect(finish([m])).toBe(true);
+  });
+
+  it("releases the values and unmarks the keys of a dropped map", () => {
+    const before = live();
+    const m = objMap();
+    const keys: usize[] = [];
+    for (let i = 0; i < 10; i++) {
+      keys.push(plain());
+    }
+    for (const k of keys) {
+      set(m, k, plain());
+    }
+    expect(finish([m])).toBe(true);
+    for (const k of keys) {
+      expect(isMarked(k)).toBe(false);
+      release(k);
+    }
+    expect(live()).toBe(before);
+  });
+
+  it("takes a key out of both maps that hold it", () => {
+    const before = live();
+    const a = objMap();
+    const b = objMap();
+    const k = plain();
+    set(a, k, plain());
+    set(b, k, plain());
+    release(k);
+    expect(weakMapLen(a) + weakMapLen(b)).toBe(0);
+    expect(finish([a, b])).toBe(true);
+    expect(live()).toBe(before);
+  });
+
+  it("keeps plain words, as a WeakMap<object, number> and a WeakSet do", () => {
+    const numbers = weakMapNew(fnAddress(traceObj), 0, 0, 0);
+    const members = weakMapNew(fnAddress(traceObj), 0, 0, 0);
+    const k = plain();
+    weakMapSet(numbers, k, 42);
+    weakMapSet(members, k, 0);
+    expect(get(numbers, k)).toBe(42);
+    expect(weakMapHas(members, k)).toBe(true);
+    expect(weakMapDelete(members, k)).toBe(true); // delete finds a plain entry
+    expect(weakMapDelete(members, k)).toBe(false);
+    weakMapSet(members, k, 0);
+    release(k);
+    expect(weakMapLen(numbers) + weakMapLen(members)).toBe(0);
+    expect(finish([numbers, members])).toBe(true);
+  });
+
+  it("reuses the handle of a dropped map", () => {
+    const a = objMap();
+    expect(finish([a])).toBe(true);
+    const b = objMap();
+    expect(b).toBe(a);
+    expect(finish([b])).toBe(true);
+  });
+
+  it("frees a cycle whose key brought its own trace glue", () => {
+    // A map whose key type is dynamic (`WeakMap<object, object>`) has no key trace of its own:
+    // each key brings its glue to `set`, and the trial uses it.
+    for (const rawFirst of [true, false]) {
+      const before = live();
+      const m = weakMapNew(0, fnAddress(retainValue), fnAddress(releaseValue), fnAddress(traceObj));
+      const raw = plain();
+      const p = newObj(retain(raw), 0, 0);
+      weakMapSetTraced(m, raw, retain(p) as u64, fnAddress(traceObj));
+      release(rawFirst ? raw : p);
+      release(rawFirst ? p : raw);
+      expect(weakMapLen(m)).toBe(0);
+      expect(finish([m])).toBe(true);
+      expect(live()).toBe(before);
+    }
+  });
+});
+
+describe("WeakRef", () => {
+  it("derefs its target and is cleared when the target goes", () => {
+    const o = plain();
+    const r = weakRefNew(o);
+    expect(count(o)).toBe(1); // a WeakRef does not count its target
+    const d = weakRefDeref(r);
+    expect(d).toBe(o);
+    expect(count(o)).toBe(2); // deref returns a counted reference
+    release(d);
+    release(o);
+    expect(weakRefDeref(r)).toBe(0);
+    weakRefDrop(r);
+    const o2 = plain();
+    const r2 = weakRefNew(o2);
+    weakRefDrop(r2);
+    expect(isMarked(o2)).toBe(false); // the last WeakRef dropped unmarks its target
+    release(o2);
+    expect(weakTracked()).toBe(0);
+  });
+
+  it("gives a typed proxy's tagged word back as given", () => {
+    const o = plain();
+    const tagged = o | 1;
+    const r = weakRefNew(tagged);
+    expect(isMarked(o)).toBe(true); // the object is recorded, not the tagged word
+    expect(weakRefDeref(r)).toBe(tagged);
+    expect(count(o)).toBe(2);
+    release(o);
+    release(o);
+    expect(weakRefDeref(r)).toBe(0);
+    weakRefDrop(r);
+    expect(weakTracked()).toBe(0);
+  });
+
+  it("keeps its word, also after the target goes, and its slot is reused", () => {
+    const o = plain();
+    const r = weakRefNewWith(o, 0xdead_beef);
+    const bare = weakRefNew(o);
+    expect(weakRefWord(r)).toBe(0xdead_beef);
+    expect(weakRefWord(bare)).toBe(0);
+    release(o);
+    expect(weakRefDeref(r)).toBe(0);
+    expect(weakRefWord(r)).toBe(0xdead_beef);
+    weakRefDrop(r);
+    weakRefDrop(bare);
+    const o2 = plain();
+    const a = weakRefNewWith(o2, 7);
+    const b = weakRefNew(o2);
+    expect((a === r && b === bare) || (a === bare && b === r)).toBe(true);
+    expect(weakRefWord(a)).toBe(7);
+    expect(weakRefWord(b)).toBe(0);
+    expect(weakRefDeref(a)).toBe(o2);
+    release(o2);
+    weakRefDrop(a);
+    weakRefDrop(b);
+    release(o2);
+    expect(weakTracked()).toBe(0);
+  });
+});
+
+describe("map values", () => {
+  it("does not trace a null value of a traced map", () => {
+    const m = objMap();
+    const k = plain();
+    set(m, k, 0);
+    expect(has(m, k)).toBe(true);
+    expect(get(m, k)).toBe(0);
+    expect(weakMapDelete(m, k)).toBe(true);
+    set(m, k, 0);
+    release(k);
+    expect(weakMapLen(m)).toBe(0);
+    expect(finish([m])).toBe(true);
+  });
+
+  it("frees a cycle next to null and untraced values of its key", () => {
+    // A trial through `raw` meets its entries in the other maps: a null value (traced map and
+    // untraced map) and an object value of an untraced map. None joins the trial's graph, and
+    // the cycle is still freed in either order.
+    for (const rawFirst of [true, false]) {
+      const before = live();
+      const cache = objMap();
+      const traced = objMap();
+      const untraced = untracedMap();
+      const raw = plain();
+      const p = proxyOf(cache, raw, 0);
+      set(traced, raw, 0);
+      set(untraced, raw, 0);
+      const other = plain();
+      set(untraced, other, plain());
+      const side = untracedMap();
+      set(side, raw, plain());
+      release(rawFirst ? raw : p);
+      release(rawFirst ? p : raw);
+      expect(weakMapLen(cache) + weakMapLen(traced)).toBe(0);
+      expect(weakMapLen(untraced)).toBe(1); // only `other`'s entry is left
+      expect(weakMapLen(side)).toBe(0);
+      release(other);
+      expect(finish([cache, traced, untraced, side])).toBe(true);
+      expect(live()).toBe(before);
+    }
+  });
+
+  it("keeps a value that get returned through an unrelated release", () => {
+    // `const p = cache.get(raw); raw = null; use(p)`: releasing `raw` runs a trial, which must
+    // see the reference `get` returned and keep the proxy.
+    const m = objMap();
+    const raw = plain();
+    release(proxyOf(m, raw, 0));
+    const p = get(m, raw);
+    const before = live();
+    release(raw);
+    expect(live()).toBe(before); // the proxy and its target are alive
+    expect(field(p, 0)).toBe(raw);
+    expect(weakMapLen(m)).toBe(1);
+    release(p);
+    expect(live()).toBe(before - 2);
+    expect(weakMapLen(m)).toBe(0);
+    expect(finish([m])).toBe(true);
+  });
+});

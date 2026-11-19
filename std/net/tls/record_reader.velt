@@ -1,4 +1,5 @@
-// velt/net (internal): `RecordReader`, the reading half of the TLS record layer (RFC 8446 §5):
+// velt/net (internal): `RecordReader`, the reading half of the TLS record layer (RFC 8446 §5,
+// and TLS 1.2's, RFC 5246 §6.2):
 // records read with `readInto` into one reused buffer, framed, decrypted in place, alerts
 // handled, and application data handed out from where it was decrypted. Framing and opening a
 // record allocate nothing; each transport read allocates its view of the buffer (3 blocks, all
@@ -226,6 +227,20 @@ export class RecordReader {
       // write keys: unprotected, while this side reads with the handshake keys (rustls takes it).
       this.cstart = at + HEADER;
       this.cend = at + HEADER + len;
+      return type;
+    }
+    if (cipher.tls12) {
+      // TLS 1.2: the content type is the header's, and every type is protected after the
+      // ChangeCipherSpec.
+      if (type != APPLICATION_DATA && type != HANDSHAKE && type != ALERT) {
+        throw new TlsFailure(UNEXPECTED_MESSAGE, `a record of type ${type}`);
+      }
+      const m = cipher.open12(this.buf, at, at + HEADER + len);
+      if (m > MAX_PLAIN) {
+        throw new TlsFailure(RECORD_OVERFLOW, `a plaintext of ${m} bytes`);
+      }
+      this.cstart = at + HEADER + cipher.prefix;
+      this.cend = this.cstart + m;
       return type;
     }
     if (type != APPLICATION_DATA) {

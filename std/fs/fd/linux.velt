@@ -80,9 +80,9 @@ export function truncateFd(fd: i32, length: i64): i32 {
   return posixTruncateFd(fd, length);
 }
 
-/** Maps the first `len` bytes of `fd` read-only: the address, or 0. */
-export function mapRead(fd: i32, len: usize): usize {
-  return posixMapRead(fd, len);
+/** Maps the `len` bytes of `fd` from byte `offset` read-only: the address, or 0. */
+export function mapRead(fd: i32, len: usize, offset: i64): usize {
+  return posixMapRead(fd, len, offset);
 }
 
 /** `madvise` on part of a mapping of `mapRead`: 0, or -1. */

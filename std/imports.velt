@@ -62,6 +62,13 @@ export const imports: Imports = {
     wasi: "./lang/hooks/clock_wasi.velt",
     js: "./lang/hooks/clock_js.velt",
   },
+  // The C library calls of the weak core (std/lang/hooks/weak_mem.velt), apart from the
+  // executor's so a program without tasks loads none of it: memory, and `sched_yield` or on
+  // Windows `SwitchToThread` while its lock is contended.
+  "#weak-os": {
+    win32: "./lang/hooks/weak_os_win32.velt",
+    default: "./lang/hooks/weak_os_posix.velt",
+  },
   // The layout of `sigaction` for the executor in Velt's signals (std/lang/hooks/
   // sched_signal.velt): per OS; elsewhere none.
   "#sched-signal": {
@@ -245,5 +252,13 @@ export const imports: Imports = {
     win32: "./process/tty_win32.velt",
     native: "./process/tty_posix.velt",
     default: "./process/tty_wasm.velt",
+  },
+  // The local time zone's offset (`Date`'s local getters, `velt/time`'s `localParts()`): the C
+  // library's `localtime_r` on macOS and Linux, Win32's time-zone functions on Windows, UTC on
+  // WebAssembly.
+  "#localtime": {
+    win32: "./time/localtime_win32.velt",
+    native: "./time/localtime_posix.velt",
+    default: "./time/localtime_none.velt",
   },
 };

@@ -1,0 +1,42 @@
+// check: no leaks
+// In a nested `read`, a copy lent to a method of a temporary the reader made stays the
+// reader's (#2002, #3170), also when that temporary binds a variable of its own: a non-null
+// assertion, `??`, a spread literal, `Array.from` and what a `Map` of the lock's value gives.
+
+class Item {
+  v: number[] = [1];
+}
+
+class Box {
+  items: number[][][] = [[[1]], [[2], [3]]];
+  objs: Item[] = [new Item()];
+  m: Map<string, Item[]> = new Map<string, Item[]>();
+}
+
+function main() {
+  const a = new RwLock(new Box());
+  const b = new RwLock(new Box());
+  b.write((y) => {
+    y.m.set("k", [new Item(), new Item()]);
+  });
+  let n = 0;
+  for (let i = 0; i < 3; i++) {
+    a.read((x) => {
+      b.read((y) => {
+        const u = Array.from(y.items[1]).concat(x.items[1].slice());
+        const w = y.items.at(1)!.concat(x.items[1].slice());
+        const v = [...y.items[0]].concat(x.items[0].slice());
+        const k = (y.items.at(5) ?? []).concat(x.items[1].slice());
+        const g = y.m.get("k")!.concat(x.objs.slice());
+        const h = (y.m.get("none") ?? y.objs).concat(x.objs.slice());
+        n += u.length + w.length + v.length + k.length + g.length + h.length;
+        if (i === 0) {
+          console.log(JSON.stringify(u), JSON.stringify(w), JSON.stringify(v));
+          console.log(JSON.stringify(k), g.length, h.length, g[0].v[0]);
+        }
+      });
+    });
+  }
+  console.log(n);
+  console.log(a.read((x) => JSON.stringify(x.items)), b.read((y) => y.m.get("k")!.length));
+}

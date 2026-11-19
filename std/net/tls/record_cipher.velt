@@ -1,6 +1,8 @@
 // velt/net (internal): `RecordCipher`, one direction's record protection (RFC 8446 §5.2-5.3):
 // the AEAD keyed from a traffic secret, the per-record nonce (the IV XOR the sequence number),
 // sealing and opening records in place in the stream's buffers. Nothing is allocated per record.
+// TLS 1.2's AEAD records too: AES-GCM with an explicit nonce (RFC 5288), ChaCha20-Poly1305 with
+// TLS 1.3's nonce (RFC 7905), both with RFC 5246's associated data.
 
 import { Aead } from "velt/crypto/aead";
 import { AesGcm } from "velt/crypto/aes_gcm";
@@ -28,7 +30,8 @@ export function knownSuite(suite: usize): bool {
  * for SHA-256.
  */
 export function hashLength(suite: usize): usize {
-  return suite == AES_256_GCM_SHA384 ? 48 : 32;
+  // TLS 1.2's ECDHE_{ECDSA,RSA}_WITH_AES_256_GCM_SHA384 too (suites12.velt).
+  return suite == AES_256_GCM_SHA384 || suite == 0xc02c || suite == 0xc030 ? 48 : 32;
 }
 
 /** Bytes of a record header. */
@@ -59,14 +62,42 @@ export class RecordCipher {
   private aad: u8[];
   /** The next record's sequence number. */
   seq: u64;
+  /**
+   * TLS 1.2 records (RFC 5246 §6.2.3.3): the content type in the header, no inner content type,
+   * and the sequence number, type, version and length as the associated data.
+   */
+  tls12: bool;
+  /** Bytes between a record's header and its content: 8 for TLS 1.2 AES-GCM's explicit nonce, else 0. */
+  prefix: usize;
 
-  /** The protection of `suite` for the traffic `secret`, sequence number 0. */
-  constructor(suite: usize, secret: u8[]) {
-    this.aead = aeadOf(suite, secret);
-    this.iv = expandLabel(secret, "iv", [], 12);
+  /**
+   * The protection of `suite` for the traffic `secret`, sequence number 0. For TLS 1.2
+   * (`fixedIv` not null), `secret` is the write key from the key block and `fixedIv` its IV: 4
+   * bytes of salt for AES-GCM (RFC 5288), 12 for ChaCha20-Poly1305 (RFC 7905).
+   */
+  constructor(suite: usize, secret: u8[], fixedIv: u8[] | null = null) {
     this.nonce = Buffer.alloc(12);
-    this.aad = Buffer.alloc(HEADER);
     this.seq = 0;
+    if (fixedIv == null) {
+      this.aead = aeadOf(suite, secret);
+      this.iv = expandLabel(secret, "iv", [], 12);
+      this.aad = Buffer.alloc(HEADER);
+      this.tls12 = false;
+      this.prefix = 0;
+    } else {
+      this.aead = fixedIv.length == 12 ? new ChaCha20Poly1305(secret) : new AesGcm(secret);
+      // AES-GCM's nonce is the salt and then the explicit nonce, which this side makes the
+      // sequence number: the IV with zeros after the salt gives it with the same XOR as TLS 1.3's
+      // and ChaCha20's nonces.
+      const iv = Buffer.alloc(12);
+      for (let i: usize = 0; i < fixedIv.length; i++) {
+        iv[i] = fixedIv[i];
+      }
+      this.iv = iv;
+      this.aad = Buffer.alloc(13);
+      this.tls12 = true;
+      this.prefix = fixedIv.length == 12 ? 0 : 8;
+    }
   }
 
   // The nonce of the next record: the IV with the sequence number XORed into its last 8 bytes.
@@ -117,5 +148,71 @@ export class RecordCipher {
       throw new TlsFailure(BAD_RECORD_MAC, "a record failed authentication (bad_record_mac)");
     }
     return end - at - HEADER - TAG;
+  }
+
+  /**
+   * Seals a record of content type `type` whose `n` bytes of content are at
+   * `buf[at + 5 + prefix..]`: the header goes in front and the tag after; for TLS 1.3 the content
+   * type after the content first, for TLS 1.2 AES-GCM the explicit nonce before it. The record's
+   * length.
+   */
+  sealRecord(buf: u8[], at: usize, n: usize, type: u8): usize {
+    if (!this.tls12) {
+      buf[at + HEADER + n] = type;
+      return this.seal(buf, at, n + 1);
+    }
+    const len = this.prefix + n + TAG;
+    this.aad12(type, n);
+    buf[at] = type;
+    buf[at + 1] = 3;
+    buf[at + 2] = 3;
+    buf[at + 3] = ((len >> 8) & 0xff) as u8;
+    buf[at + 4] = (len & 0xff) as u8;
+    this.next();
+    // The explicit nonce is the sequence number, the nonce's last 8 bytes (the IV is zero there).
+    for (let i: usize = 0; i < this.prefix; i++) {
+      buf[at + HEADER + i] = this.nonce[4 + i];
+    }
+    const start = at + HEADER + this.prefix;
+    this.aead.sealInPlace(this.nonce, this.aad, buf, start, start + n);
+    return HEADER + len;
+  }
+
+  /**
+   * Opens the TLS 1.2 record whose header is `buf[at..at + 5]` and body `buf[at + 5..end]` in
+   * place: the content's length (it starts at `at + 5 + prefix`). Throws `bad_record_mac` for a
+   * record too short for its explicit nonce and tag, or whose tag does not match.
+   */
+  open12(buf: u8[], at: usize, end: usize): usize {
+    const body = end - at - HEADER;
+    if (body < this.prefix + TAG) {
+      throw new TlsFailure(BAD_RECORD_MAC, "a record too short for its tag (bad_record_mac)");
+    }
+    const n = body - this.prefix - TAG;
+    this.aad12(buf[at], n);
+    this.next();
+    // AES-GCM: the sender's explicit nonce after the salt.
+    for (let i: usize = 0; i < this.prefix; i++) {
+      this.nonce[4 + i] = buf[at + HEADER + i];
+    }
+    if (!this.aead.openInPlace(this.nonce, this.aad, buf, at + HEADER + this.prefix, end)) {
+      throw new TlsFailure(BAD_RECORD_MAC, "a record failed authentication (bad_record_mac)");
+    }
+    return n;
+  }
+
+  // TLS 1.2's associated data for the next record, of `type` with `n` bytes of content: the
+  // sequence number, the type, the version 3.3 and the length.
+  private aad12(type: u8, n: usize) {
+    let s = this.seq;
+    for (let i: usize = 0; i < 8; i++) {
+      this.aad[7 - i] = (s & 0xff) as u8;
+      s = s >> 8;
+    }
+    this.aad[8] = type;
+    this.aad[9] = 3;
+    this.aad[10] = 3;
+    this.aad[11] = ((n >> 8) & 0xff) as u8;
+    this.aad[12] = (n & 0xff) as u8;
   }
 }

@@ -6,6 +6,7 @@
 //! readers of an `RwLock` share: their count operations go through `velt_rt_lk_*`, which leave
 //! the shared ones alone in a `read` callback (the `_of` variants, given the object's type).
 
+use super::hook_calls::{self as hooks, ty, Construct, HookTy};
 use super::operand::proj;
 use super::rt::Rt;
 use super::{cfunc, cint, ice, FnLower, Glue, LkMode, Work};
@@ -358,7 +359,7 @@ impl FnLower<'_, '_> {
     /// [`release`](Self::release) of an object of a type that is weak-capable when `weak`
     /// (boxing/weak.rs): its count word may carry `RC_WEAK`, the sign bit, so the shared path
     /// tests `c as i64 > 1`, `c == 1` is the unique path, and anything else (weakly held) calls
-    /// `velt_rt_weak_release`, which removes the object from every weak map and `WeakRef` when
+    /// std's `weakRelease` (std/lang/hooks/weak.velt), which removes the object from every weak map and `WeakRef` when
     /// this was its last reference (then `last` runs, as on the unique path).
     pub(super) fn release_as(&mut self, p: Operand, weak: bool, last: impl FnOnce(&mut Self)) {
         if weak {
@@ -401,7 +402,10 @@ impl FnLower<'_, '_> {
         let (last_bb, cold) = (self.new_block(), self.new_block());
         self.branch(one, last_bb, cold);
         self.switch_to(cold);
-        let gone = self.rt_u8(Rt::WeakRelease, vec![p]);
+        let obj = ty::USize::arg(self.as_usize(p));
+        let gone = hooks::weak_release(self, Construct::Weak, obj)
+            .emit(self)
+            .op();
         self.branch(gone, last_bb, join);
         self.switch_to(last_bb);
         last(self);

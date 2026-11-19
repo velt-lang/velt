@@ -167,7 +167,6 @@ velt_rt velt_rt_lk_leave_to
 velt_rt velt_rt_lk_mode
 velt_rt velt_rt_lk_share_made
 velt_rt velt_rt_lk_write
-velt_rt velt_rt_local_offset_minutes
 velt_rt velt_rt_math_add_int32
 velt_rt velt_rt_math_bits_f64
 velt_rt velt_rt_math_ceil
@@ -381,19 +380,6 @@ velt_rt velt_rt_view_put
 velt_rt velt_rt_view_remove
 velt_rt velt_rt_visit_enter
 velt_rt velt_rt_visit_leave
-velt_rt velt_rt_weak_release
-velt_rt velt_rt_weakmap_delete
-velt_rt velt_rt_weakmap_drop
-velt_rt velt_rt_weakmap_get
-velt_rt velt_rt_weakmap_has
-velt_rt velt_rt_weakmap_new
-velt_rt velt_rt_weakmap_set
-velt_rt velt_rt_weakmap_set_traced
-velt_rt velt_rt_weakref_deref
-velt_rt velt_rt_weakref_drop
-velt_rt velt_rt_weakref_new
-velt_rt velt_rt_weakref_new_with
-velt_rt velt_rt_weakref_word
 velt_rt velt_rt_worker_count
 velt_rt velt_rt_write_bool
 velt_rt velt_rt_write_byte
@@ -489,7 +475,6 @@ velt_rt_wasm velt_rt_lk_leave_to
 velt_rt_wasm velt_rt_lk_mode
 velt_rt_wasm velt_rt_lk_share_made
 velt_rt_wasm velt_rt_lk_write
-velt_rt_wasm velt_rt_local_offset_minutes
 velt_rt_wasm velt_rt_memory_heap
 velt_rt_wasm velt_rt_memory_rss
 velt_rt_wasm velt_rt_microtask
