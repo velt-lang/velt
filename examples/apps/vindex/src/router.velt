@@ -63,26 +63,20 @@ export function fanFor(r: Router, nprobe: i64): i64 {
 /// floats of `q` at `qAt`; `near` is scratch for the groups.
 export function route(r: Router, q: f32[], qAt: usize, fan: i64, near: TopK, out: TopK) {
   const d = r.dim as usize;
-  // Locals, not `r.centres` at each call: reading a `shared` field takes a counted reference
-  // (an atomic add and subtract on a word every thread shares).
-  const centres = r.centres;
-  const grouped = r.grouped;
-  const starts = r.starts;
-  const lists = r.lists;
   near.reset(fan);
   for (let g: i64 = 0; g < r.groups; g++) {
-    const s = dotF32(centres, (g as usize) * d, q, qAt, d);
+    const s = dotF32(r.centres, (g as usize) * d, q, qAt, d);
     if (s > near.floor()) {
       near.push(g, s);
     }
   }
   for (let i = 0; i < near.keys.length; i++) {
     const g = near.keys[i];
-    const end = starts[g + 1];
-    for (let at = starts[g]; at < end; at++) {
-      const s = dotF32(grouped, (at as usize) * d, q, qAt, d);
+    const end = r.starts[g + 1];
+    for (let at = r.starts[g]; at < end; at++) {
+      const s = dotF32(r.grouped, (at as usize) * d, q, qAt, d);
       if (s > out.floor()) {
-        out.push(lists[at], s);
+        out.push(r.lists[at], s);
       }
     }
   }
