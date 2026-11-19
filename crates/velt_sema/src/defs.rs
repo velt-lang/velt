@@ -302,6 +302,21 @@ pub(crate) struct FnInfo<'m> {
     pub assigns_capture: bool,
 }
 
+impl<'m> FnInfo<'m> {
+    /// Give the function its source, and with it what callers read of its declaration
+    /// (`rest`, `sig_unsafe`, `generator`): the one place those are filled.
+    pub(crate) fn set_source(&mut self, source: Option<FnSource<'m>>) {
+        let sig = source.map(crate::body::defaults::fn_sig_ast);
+        self.rest = sig.is_some_and(|s| s.params.last().is_some_and(|p| p.rest));
+        self.sig_unsafe = sig.is_some_and(|s| s.is_unsafe);
+        self.generator = match source {
+            Some(FnSource::Decl(decl)) => decl.sig.generator.clone(),
+            _ => None,
+        };
+        self.source = source;
+    }
+}
+
 impl FnInfo<'_> {
     /// For a host or C function, per parameter whether the callee leaves it as it is: its other
     /// buffers (`u8[]`) and out-parameters are written, so their arguments are mutable borrows,
