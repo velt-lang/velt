@@ -9,7 +9,8 @@
 //!     the registry / vswhere and returns the `LIB`/`PATH` environment for the MSVC + Windows
 //!     SDK libraries, so no "Developer Command Prompt" is needed.
 //!   - Linux / macOS: the system C compiler driver (`cc`) is used as the linker; on Linux with
-//!     `-fuse-ld=mold`/`lld` when those are installed ([`fast_ld`]).
+//!     `-fuse-ld=mold`/`lld` when those are installed, lld under a versioned name
+//!     (`ld.lld-18`) too ([`fast_ld`]).
 //! - Debug builds may link the runtime as a shared library instead ([`shared`]): the
 //!   `runtime_lib` of a [`LinkRequest`] then names it (see [`find_shared_runtime_lib`]).
 //!
@@ -167,11 +168,12 @@ fn link_with_system(req: &LinkRequest, os: TargetOs) -> Result<(), String> {
         TargetOs::Linux | TargetOs::MacOs => {
             let args = unix_args(req, os);
             let fast = fast_ld::applies(os, linker_override().is_some())
-                .then(fast_ld::fuse_ld_flag)
+                .then(fast_ld::fast)
                 .flatten();
-            if let Some(flag) = fast {
+            // Kept to the end of the link: it may hold a directory the link reads.
+            if let Some(fast) = &fast {
                 let mut cmd = unix_linker();
-                cmd.arg(flag).args(&args);
+                cmd.args(&fast.args).args(&args);
                 if run_linker(cmd).is_ok() {
                     return Ok(());
                 }

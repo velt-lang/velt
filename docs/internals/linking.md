@@ -26,8 +26,12 @@ link stamp includes the choice, so switching relinks.
 
 The system linker on Linux is `cc`, with `-fuse-ld=mold` or `-fuse-ld=lld` when `mold` or
 `ld.lld` is on `PATH` (`fast_ld.rs`): GNU ld takes several times as long, for static links and
-for debug links against the shared runtime alike. A link that fails with the flag is retried
-without it; a `$VELT_LINKER` program is run as given.
+for debug links against the shared runtime alike. lld under a versioned name alone (`ld.lld-18`
+without `ld.lld`: Debian's and Ubuntu's `lld-18` package, GitHub's Ubuntu runners) is used too:
+`cc -fuse-ld=lld` looks for the name `ld.lld`, so the link gets a directory of its own that holds
+that name as a symbolic link to the newest versioned one, passed as `-B<directory>` and removed
+after the link. A link that fails with the flag is retried without it; a `$VELT_LINKER` program
+is run as given.
 
 The bundled lld also links WebAssembly (`-flavor wasm`), ahead of `rust-lld` and `wasm-ld`.
 

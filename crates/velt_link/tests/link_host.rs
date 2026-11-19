@@ -274,6 +274,89 @@ fn link_and_run_on_host() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The first program named `name` on the search path `path`.
+#[cfg(target_os = "linux")]
+fn on_path(path: &std::ffi::OsStr, name: &str) -> Option<PathBuf> {
+    std::env::split_paths(path)
+        .map(|d| d.join(name))
+        .find(|p| p.is_file())
+}
+
+/// Linux with lld under a versioned name alone on `PATH` (`ld.lld-18` and no `ld.lld`, as
+/// Debian's and Ubuntu's `lld-18` package and GitHub's Ubuntu runners have it): the system link
+/// runs that lld, where it ran GNU ld (several times slower on the static runtime). The search
+/// path here holds `cc` and a versioned lld that notes it ran; skipped where the machine has no
+/// lld at all.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_versioned_lld_alone_links_on_linux() {
+    use std::os::unix::fs::PermissionsExt;
+    let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let setup = Setup::new("versioned-lld");
+    let path = std::env::var_os("PATH").unwrap();
+    let lld = on_path(&path, "ld.lld").or_else(|| {
+        (11..=40)
+            .rev()
+            .find_map(|v| on_path(&path, &format!("ld.lld-{v}")))
+    });
+    let (Some(lld), Some(cc)) = (lld, on_path(&path, "cc")) else {
+        eprintln!("note: no lld or no cc on PATH; skipping");
+        let _ = std::fs::remove_dir_all(&setup.dir);
+        return;
+    };
+    // The only directory on the search path: `cc`, and lld as `ld.lld-18`, which notes that it
+    // ran and runs the real one.
+    let bin = setup.dir.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::os::unix::fs::symlink(&cc, bin.join("cc")).unwrap();
+    let ran = setup.dir.join("lld-ran");
+    let versioned = bin.join("ld.lld-18");
+    let script = format!(
+        "#!/bin/sh\n: > '{}'\nexec '{}' \"$@\"\n",
+        ran.display(),
+        lld.display()
+    );
+    std::fs::write(&versioned, script).unwrap();
+    std::fs::set_permissions(&versioned, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let objects = [setup.obj.clone()];
+    let temp_before = velt_ld_dirs();
+    std::env::set_var("VELT_LINKER", "system");
+    std::env::set_var("PATH", &bin);
+    let mut results = vec![];
+    for release in [false, true] {
+        let exe = setup.dir.join(format!("versioned_{release}"));
+        let _ = std::fs::remove_file(&ran);
+        let linked = velt_link::link(&setup.request(&objects, &exe, release));
+        results.push((release, exe, linked, ran.is_file()));
+    }
+    std::env::set_var("PATH", &path);
+    std::env::remove_var("VELT_LINKER");
+    for (release, exe, linked, lld_ran) in results {
+        linked.unwrap_or_else(|e| panic!("link failed (release={release}):\n{e}"));
+        assert!(lld_ran, "the versioned lld did not run (release={release})");
+        assert_runs(&exe);
+    }
+    // The directory each link made for the name `ld.lld` is gone.
+    assert_eq!(velt_ld_dirs(), temp_before);
+    let _ = std::fs::remove_dir_all(&setup.dir);
+}
+
+/// The directories this process's links made in the temporary directory and left there.
+#[cfg(target_os = "linux")]
+fn velt_ld_dirs() -> Vec<PathBuf> {
+    let mine = format!("velt-ld-{}-", std::process::id());
+    let mut dirs: Vec<PathBuf> = std::fs::read_dir(std::env::temp_dir())
+        .unwrap()
+        .filter_map(|e| Some(e.ok()?.path()))
+        .filter(|p| {
+            p.file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with(&mine))
+        })
+        .collect();
+    dirs.sort();
+    dirs
+}
+
 /// The bundled linker: a kit for the host built here, linked with the Rust toolchain's
 /// `rust-lld` (what `velt` falls back to in a checkout).
 #[test]
