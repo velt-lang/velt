@@ -1,6 +1,5 @@
-// velt/fs (internal): the `#mapped-source` variant of the targets with `mmap` (macOS, Linux),
-// and of Windows, where `#fd-system` fails every call with `ENOSYS` (std/imports.velt): a
-// `MappedFile` is a mapping of the file, and its arrays are that memory.
+// velt/fs (internal): the `#mapped-source` variant of the targets with `mmap` (macOS, Linux;
+// std/imports.velt): a `MappedFile` is a mapping of the file, and its arrays are that memory.
 
 import { addressArray } from "velt/lang/intrinsics";
 import { adviseMap, closeFd, fstatFd, lastError, mapRead, openPath } from "#fd-system";

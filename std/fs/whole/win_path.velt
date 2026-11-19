@@ -1,0 +1,55 @@
+// velt/fs (internal): a path as Win32's wide-path functions take it. A path of 248 units or
+// more is made absolute and given the `\\?\` prefix, as Rust's std does, so that it is not cut
+// at MAX_PATH.
+
+import { OutPtr } from "velt/ffi/out_ptr";
+import { wideOf } from "velt/ffi/wide";
+import { arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
+
+declare c("c") function GetFullPathNameW(
+  name: readonly u16[],
+  room: u32,
+  out: u16[],
+  file: OutPtr<u16>,
+): u32;
+
+/** `path` as a NUL-terminated wide path, `\\?\`-prefixed when long; null for a 0 inside it. */
+export function winPath(path: string): u16[] | null {
+  const w = wideOf(path);
+  if (w === null || w.length < 249 || path.startsWith("\\\\?\\") || path.startsWith("\\\\.\\")) {
+    return w;
+  }
+  let room: u32 = 512;
+  while (true) {
+    const full = arrayWithCapacity<u16>(room as usize);
+    arraySetLen(full, room as usize);
+    // SAFETY: `w` is NUL-terminated and `full` holds `room` units, the count passed.
+    const got = unsafe { GetFullPathNameW(w, room, full, new OutPtr<u16>()) };
+    if (got === 0) {
+      return w;
+    }
+    if (got < room) {
+      arraySetLen(full, got as usize);
+      // Already `\\?\` or `\\.\` (a long `//?/x` normalises to it): as it is, with its NUL.
+      const verbatim = got > 3 && full[0] === 92 && full[1] === 92 && full[3] === 92;
+      if (verbatim && (full[2] === 63 || full[2] === 46)) {
+        full.push(0);
+        return full;
+      }
+      // `\\server\share\x` is `\\?\UNC\server\share\x`; `C:\x` is `\\?\C:\x`.
+      const unc = got > 2 && full[0] === 92 && full[1] === 92;
+      const prefix = unc ? "\\\\?\\UNC" : "\\\\?\\";
+      const out = wideOf(prefix);
+      if (out === null) {
+        return w;
+      }
+      out.pop();
+      for (let i: usize = unc ? 1 : 0; i < (got as usize); i++) {
+        out.push(full[i]);
+      }
+      out.push(0);
+      return out;
+    }
+    room = got;
+  }
+}
