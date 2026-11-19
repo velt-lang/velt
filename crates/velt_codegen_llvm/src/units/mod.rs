@@ -85,11 +85,17 @@ pub(crate) struct Plan {
     pub shared: Shared,
 }
 
-/// Statements (VIR, after `velt_opt`) per unit when the count is chosen from the program's size:
-/// a program below twice this is one unit. Small programs build fast in one unit and lose the
-/// most to a split (cross-unit calls in their hot loops); every benchmark program stays one unit
-/// (the largest, `bench/sort.velt`, has about 4 000 statements).
+/// Statements (VIR, after `velt_opt`) per unit when the count is chosen from the program's size.
 const MIN_UNIT_WEIGHT: usize = 16_000;
+/// A program below this many statements is one unit. Small programs build fast in one unit and
+/// lose the most to a split: cross-unit calls in their hot loops, and the entry file's code alone
+/// in a unit ([`plan_apart`]), where its callees are other modules' symbols (the awaits of
+/// bench/async/await_chain.velt cost one more instruction each on x86-64, 3.6 %). Since the
+/// executor is std code, every program with a task carries about 31 000 statements of it, so
+/// the bound is twice that: std's growth does not move a small program across it. (It was
+/// 32 000; five bench/async rows crossed it as std grew, #3097.) A split saves no build time
+/// worth having below it.
+const ONE_UNIT_BELOW: usize = 4 * MIN_UNIT_WEIGHT;
 /// At most this many units when the count is chosen from the size, up to `MAX_UNIT_WEIGHT`
 /// statements per unit. Programs split into 4 run as fast as in one unit (within ±3 %,
 /// bench/RESULTS.md); in 8, binary-trees and fib ran 5 % slower (the same machine code, placed
@@ -98,13 +104,14 @@ const MAX_UNITS: usize = 4;
 /// Larger programs get units of at most this many statements (about 600,000 IR lines; clang takes
 /// minutes on one), so that one clang process does not take the whole build: sigx's small-page,
 /// 22 million IR lines in 4 units, spent 907 of its 1,091 seconds of code generation in one.
-/// Every benchmark program is far below (`MIN_UNIT_WEIGHT`).
+/// Every benchmark program is far below.
 const MAX_UNIT_WEIGHT: usize = 200_000;
 /// ...at most this many of them.
 const MAX_LARGE_UNITS: usize = 16;
 
 /// Number of units for `program`: `requested` (at least 1, at most one per function), else one
-/// per `MIN_UNIT_WEIGHT` statements, at most `MAX_UNITS`, one below twice that; a program too
+/// below `ONE_UNIT_BELOW` statements, from there one per `MIN_UNIT_WEIGHT`, at most `MAX_UNITS`
+/// (which a program at the bound has: there is no count in between); a program too
 /// large for `MAX_UNITS` units of `MAX_UNIT_WEIGHT` gets units of that weight, at most
 /// `MAX_LARGE_UNITS`. The count depends on the program only, never on the machine, so the objects
 /// are the same everywhere.
@@ -115,7 +122,7 @@ pub(crate) fn unit_count(program: &vir::Program, requested: Option<usize>) -> us
 
 /// [`unit_count`] of a program of `total` statements.
 pub(crate) fn count_for(total: usize) -> usize {
-    if total < 2 * MIN_UNIT_WEIGHT {
+    if total < ONE_UNIT_BELOW {
         1
     } else if total <= MAX_UNITS * MAX_UNIT_WEIGHT {
         (total / MIN_UNIT_WEIGHT).min(MAX_UNITS)

@@ -1,0 +1,34 @@
+// velt/process (internal): reading standard input on macOS and Linux (`#stdin-sys`' native
+// variant): `read` on fd 0, again after `EINTR`.
+
+import { IoError } from "velt/io/error";
+import { Ptr } from "velt/ffi/ptr";
+import { osError } from "velt/fs/errors";
+import { keepOsError, lastOsError } from "velt/os/rt";
+
+declare c("c") function read$stdin(fd: i32, buf: Ptr<u8>, n: usize): isize;
+
+/** `EINTR`, the same on macOS and Linux. */
+const EINTR: i32 = 4;
+
+/** What one read gave: its byte count (0 at the end of input), or the error it failed with. */
+export struct Chunk {
+  count: usize;
+  error: IoError | null;
+}
+
+/** Reads up to `n` bytes of standard input to `p`. */
+export function readChunk(p: usize, n: usize): Chunk {
+  while (true) {
+    // SAFETY: `p` has room for `n` bytes (the caller's buffer).
+    const got = unsafe { read$stdin(0, Ptr.at<u8>(p), n) };
+    if (got >= 0) {
+      return { count: got as usize, error: null };
+    }
+    keepOsError();
+    const e = lastOsError();
+    if (e !== EINTR) {
+      return { count: 0, error: osError(e, "read") };
+    }
+  }
+}

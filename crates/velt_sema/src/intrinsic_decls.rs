@@ -16,9 +16,6 @@ use crate::hir::Intrinsic;
 pub(crate) enum DeclaredIntrinsic {
     /// An [`Intrinsic`] call, its arguments checked against the declaration.
     Op(Intrinsic),
-    /// `targetFeature("sha-arm")`: the statement that gates a std function on a CPU extension
-    /// (`body::gated`).
-    TargetFeature,
     /// `anyToPrimitive(value, hint, at)` in the hook `anyPrimitive`: the per-class
     /// dispatch sema writes out (`body::expr::any_prim`).
     AnyToPrimitive,
@@ -30,7 +27,7 @@ pub(crate) enum DeclaredIntrinsic {
     Invalid,
 }
 
-use DeclaredIntrinsic::{AnyToPrimitive, HookCall, Op, TargetFeature};
+use DeclaredIntrinsic::{AnyToPrimitive, HookCall, Op};
 use Intrinsic as I;
 
 /// Every declared intrinsic: its name in `std/lang/intrinsics` and what a call of it is.
@@ -114,7 +111,6 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     // simd.velt
     ("strLoadPartialU8x16", Op(I::StrLoadPartialU8x16)),
     ("strLoadU8x16", Op(I::StrLoadU8x16)),
-    ("targetFeature", TargetFeature),
     // address.velt
     ("addressArray", Op(I::AddressArray)),
     ("addressLoad", Op(I::AddressLoad)),

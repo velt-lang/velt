@@ -55,8 +55,8 @@ function sumFast(a: bf16[], aAt: usize, b: bf16[], bAt: usize, n: usize): number
 
 /** The sum by `bfdot`: only where the CPU has FEAT_BF16. */
 @noInline
+@targetFeature("bf16-arm")
 function sumBfdot(a: bf16[], aAt: usize, b: bf16[], bAt: usize, n: usize): number {
-  targetFeature("bf16-arm");
   let s0 = velt_simd_f32x4_splat(0);
   let s1 = s0;
   let s2 = s0;

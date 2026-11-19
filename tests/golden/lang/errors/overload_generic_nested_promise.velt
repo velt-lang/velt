@@ -1,0 +1,20 @@
+// Generic options whose method gives a promise of a promise, taken at `unknown` by the
+// implementation (#379): the adapter converts the value a promise settles with, not a promise
+// inside it, so the conversion is refused where the overload is checked. tsc accepts it.
+type Res<O> = { value: O };
+
+interface Schema<O> {
+  validate(value: unknown): Promise<Promise<Res<O>>>;
+}
+
+interface Options<S> {
+  input: Schema<S>;
+  handler(input: S): string;
+}
+
+function run<S>(options: Options<S>, raw: unknown): Promise<string>;
+async function run(options: Options<unknown>, raw: unknown): Promise<string> {
+  return "done";
+}
+
+console.log(typeof run);

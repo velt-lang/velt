@@ -153,6 +153,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Work::Init(t, e) => Self::build_init(cx, *t, *e),
             Work::GenNew(def, targs) => Self::build_gen_new(cx, *def, targs),
             Work::GenFree(def, targs) => Self::build_gen_free(cx, *def, targs),
+            Work::GenTrace(def, targs) => Self::build_gen_trace(cx, *def, targs),
             Work::ModuleInit(from, to) => Self::build_module_init(cx, *from, *to),
             Work::StaticsDrop => Self::build_statics_drop(cx),
             Work::ModuleAccess(a) => Self::build_module_access(cx, *a),
@@ -286,7 +287,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         func.param_attrs = attrs;
         func.cold = cold;
         func.inline = inline;
-        // The extension of the same name (`targetFeature`'s; a test of velt_vir checks each).
+        // The extension of the same name (`@targetFeature`'s; a test of velt_vir checks each).
         let target = hir_prog.cpu_targets.get(&def);
         func.target = target.map(|t| crate::simd::Ext::named(t.name()).expect("ICE: a CPU target"));
         func

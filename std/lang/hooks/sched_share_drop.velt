@@ -79,6 +79,11 @@ export function free(h: usize): void {
   if (cap !== 0) {
     m.release(m.ld(h + sh.H_WAITERS), 24 * cap);
   }
+  if ((m.load32(h + sh.H_FLAGS) & sh.CLAIMED) !== 0) {
+    // Someone claimed the promise (took its result, or a combinator handles it): a node still
+    // running finishes for nobody, and a rejection it then holds is not one to report.
+    nd.handled(f, m.ld(h + sh.H_RDROP), fnAddress(nd.nodePoll));
+  }
   sh.unwatch(h);
   nd.nodeDrop(f);
 }

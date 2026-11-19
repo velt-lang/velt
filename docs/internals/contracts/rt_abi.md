@@ -285,21 +285,24 @@ the object's thread-local values (`velt_tls_data_<id>`). Design:
   retained with `void retain(uint64_t value)` and released with `void release(uint64_t value)`.
   These are C functions the core calls through their addresses (`addressCall3`,
   `addressCallWord`); `visit` is a std function (`fnAddress`).
-  A trace glue may leave references out (the target then looks referenced from outside and
-  stays alive: a leak at worst) but must never report a word that is not a counted reference
-  `obj` owns, or report one twice: the trial would count it as internal and could free a live
-  object. So the glue of a type whose objects can have more fields than it knows (a class in a
-  hierarchy with a vtable, an interface value, a function value's environment) is null, or
-  dispatches on the object's dynamic type. Velt's is null for classes with a vtable and
-  interface values, and walks an uncounted object's fields as its owner's (the owner holds the
-  only reference). A function value's glue dispatches on its environment's drop entry (header
-  word 0, one function per closure instance): it visits the environment with the trace glue of
-  the closure whose drop entry it is, among those made at the value's function type, and leaves
-  out an environment that matches none (one the runtime made, or one whose drop entry a function
-  property replaced, `fn_props.rs`). An environment's trace visits what its captures own and its
-  captured variables' cells (counted `[count][value]` blocks, traced like a map value's box). In a
-  program with such glue, environments and cells may be weakly held, and their releases take the
-  three-way sequence below.
+  A trace glue may leave references out (the target then looks referenced from outside and stays
+  alive: a leak at worst) but must never report a word that is not a counted reference `obj` owns,
+  or report one twice: the trial would count it as internal and could free a live object. So the
+  glue of a type whose objects can have more fields than it knows (a class in a hierarchy with a
+  vtable, an interface value, a function value's environment) is null, or dispatches on the object's
+  dynamic type. Velt's walks an uncounted object's fields as its owner's (the owner holds the only
+  reference). A class with a vtable's glue calls the glue in its object's class table (slot −8,
+  which no class table uses otherwise: the walk of exactly that class's fields, or null when it
+  refers to nothing). An interface value's glue compares its table with the tables built for classes
+  implementing the interface and visits the data pointer with the matching class's glue; a boxed
+  value's table matches none and is left out. A function value's glue dispatches on its
+  environment's drop entry (header word 0, one function per closure instance): it visits the
+  environment with the trace glue of the closure whose drop entry it is, among those made at the
+  value's function type, and leaves out an environment that matches none (one the runtime made, or
+  one whose drop entry a function property replaced, `fn_props.rs`). An environment's trace visits
+  what its captures own and its captured variables' cells (counted `[count][value]` blocks, traced
+  like a map value's box). In a program with such glue, environments and cells may be weakly held,
+  and their releases take the three-way sequence below.
 - **Map values.** A value word of a map with value release glue is 0 (`null`, `undefined`) or a
   counted object pointer. The compiler stores a value whose type is a counted object (or
   `T | null` of one) as its pointer, a value without drop glue that fits in 8 bytes (numbers,
@@ -625,14 +628,14 @@ constant; with an FMA level (`x86-64-v3`) `velt_math_fma_f64` is one instruction
 
 LLVM gives a function that calls one of these operations the extension's own feature (`+sha2`,
 `+sha`, `+pclmul`, `+aes`), which it uses for nothing else; a *gated* function (VIR
-`Function::target`, HIR `Program::cpu_targets`, from std's `targetFeature("sha-arm" | "sha-x86" |
-"clmul-x86" | "clmul-arm" | "aes-x86" | "aes-arm" | "fma-x86" | "bf16-arm")`, every call of which
-sema keeps behind the check) gets the extension's whole set (`+sha,+ssse3,+sse4.1` on x86), and
-the check of
-its own extension (`velt_simd_has_<ext>`) is the constant `1` there, so the emulation behind it is
-dead code. The ordinary functions it calls that check that extension (the `velt/simd` methods),
-themselves or through their callees, are cloned for it by `velt_opt` with the check `true`, so this
-holds whether or not they would be inlined. A gated function is never inlined into an ordinary one
+`Function::target`, HIR `Program::cpu_targets`, from the decorator `@targetFeature("sha-arm" |
+"sha-x86" | "clmul-x86" | "clmul-arm" | "aes-x86" | "aes-arm" | "fma-x86" | "bf16-arm")` in any
+module, every call of which sema keeps behind the check) gets the extension's whole set
+(`+sha,+ssse3,+sse4.1` on x86), and the check of its own extension (`velt_simd_has_<ext>`) is the
+constant `1` there, so the emulation behind it is dead code. The ordinary functions it calls that
+check that extension (the `velt/simd` methods), themselves or through their callees, are cloned for
+it by `velt_opt` with the check `true`, so this holds whether or not they would be inlined. A gated
+function is never inlined into an ordinary one
 or one gated on another target (`velt_opt`, and `noinline` on the call for LLVM); ordinary code may
 be inlined into a gated function.
 
@@ -1139,5 +1142,4 @@ Declared in std (Velt signatures; `u8[]`/`string` are passed as in rt_abi_async.
   `velt_rt_math_f64_bits(x: f64): u64` and `velt_rt_math_bits_f64(b: u64): f64` (IEEE 754 bit
   casts, `x.toBits()` / `f64.fromBits(b)`; both backends emit them inline).
 - Binary stdio: `velt_rt_stdout_write_bytes(bytes: u8[])` (synchronous, ordered with
-  `console.log`) and `velt_rt_stdin_read_all_bytes_sync(): IoResult<u8[]>` (hands over the
-  runtime's buffer; `readAllBytes()` runs it on the executor's blocking pool).
+  `console.log`). Standard input is std code (rt_abi_async.md §14.4).

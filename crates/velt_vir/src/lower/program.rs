@@ -647,7 +647,8 @@ pub(super) fn work_target(work: &mut Work) -> Option<(&mut DefId, &mut Vec<TyId>
         | Work::ValuePoll(d, a)
         | Work::ValueDrop(d, a)
         | Work::GenNew(d, a)
-        | Work::GenFree(d, a) => Some((d, a)),
+        | Work::GenFree(d, a)
+        | Work::GenTrace(d, a) => Some((d, a)),
         _ => None,
     }
 }
@@ -671,7 +672,8 @@ pub(super) fn work_def(work: &Work) -> Option<DefId> {
         | Work::ValuePoll(d, _)
         | Work::ValueDrop(d, _)
         | Work::GenNew(d, _)
-        | Work::GenFree(d, _) => Some(*d),
+        | Work::GenFree(d, _)
+        | Work::GenTrace(d, _) => Some(*d),
         _ => None,
     }
 }
