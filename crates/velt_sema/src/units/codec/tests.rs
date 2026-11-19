@@ -186,11 +186,16 @@ fn nests(n: &Nest) -> usize {
     1 + n.0.iter().map(nests).sum::<usize>()
 }
 
+/// The bytes of capacity the lists of `n` hold.
+fn capacity(n: &Nest) -> usize {
+    n.0.capacity() * std::mem::size_of::<Nest>() + n.0.iter().map(capacity).sum::<usize>()
+}
+
 /// Nested lists that each state as many elements as there are bytes left, of which only the
 /// first exists: what is decoded stays in proportion to the input (no list is filled with
-/// stand-ins once the value is known to be damaged), and so does what is reserved for it.
+/// stand-ins once the value is known to be damaged), and so does the capacity its lists hold.
 #[test]
-fn stated_lengths_of_a_damaged_value_are_not_filled_in() {
+fn stated_lengths_of_a_damaged_value_are_not_filled_in_or_reserved() {
     const LEN: usize = 4000;
     const LEVELS: usize = 500;
     let mut bytes = vec![];
@@ -204,44 +209,62 @@ fn stated_lengths_of_a_damaged_value_are_not_filled_in() {
     let mut r = Reader::bare(&bytes, &[]);
     let v = Nest::dec(&mut r);
     assert!(!r.done());
-    assert!(nests(&v) <= LEN, "{} values from {LEN} bytes", nests(&v));
-    // The allowance for capacity is in proportion to the input, and is not exceeded.
-    let mut r = Reader::bare(&bytes, &[]);
-    let allowed = LEN * RESERVE_PER_BYTE + 4096;
-    let mut reserved = 0;
-    for _ in 0..LEVELS {
-        reserved += r.capacity::<[u64; 64]>(LEN) * 512;
-    }
+    let made = nests(&v);
+    assert!(made <= LEN, "{made} values from {LEN} bytes");
+    // What the lists reserved before their elements were read is within the reader's allowance;
+    // the rest of their capacity is what the elements they hold made them grow to.
+    let allowed = LEN * RESERVE_PER_BYTE + 4096 + 4 * made * std::mem::size_of::<Nest>();
+    let held = capacity(&v);
     assert!(
-        reserved <= allowed,
-        "{reserved} bytes reserved, {allowed} allowed"
-    );
-    assert_eq!(
-        r.capacity::<u8>(1),
-        1,
-        "what is left of the allowance is given"
+        held <= allowed,
+        "{held} bytes of capacity, {allowed} allowed"
     );
 }
 
-/// A value nested deeper than [`MAX_DEPTH`] is a failed decode that stops at the limit, on an
-/// ordinary thread's stack; one at the limit decodes.
+/// A list nested `levels` deep (one element per level, the innermost empty), decoded on the
+/// current thread: whether it decoded, and how many levels came back. Taken apart level by
+/// level, so that only the decoder's own use of the stack is tested.
+fn decode_nested(levels: usize) -> (bool, usize) {
+    let mut bytes = vec![1u8; levels - 1];
+    bytes.push(0);
+    let mut r = Reader::bare(&bytes, &[]);
+    let mut v = Nest::dec(&mut r);
+    let mut depth = 1;
+    while let Some(inner) = v.0.pop() {
+        v = inner;
+        depth += 1;
+    }
+    (r.done(), depth)
+}
+
+/// On an ordinary thread, a value nested deeper than its stack holds is a failed decode, not a
+/// stack overflow; one nested a few thousand levels decodes there.
 #[test]
-fn a_value_nested_past_the_limit_stops_there() {
-    let limit = MAX_DEPTH as usize;
-    let decode = move |levels: usize| {
-        // One element per level; the innermost list is empty.
-        let mut bytes = vec![1u8; levels - 1];
-        bytes.push(0);
-        std::thread::spawn(move || {
-            let mut r = Reader::bare(&bytes, &[]);
-            let v = Nest::dec(&mut r);
-            (r.done(), nests(&v))
-        })
-        .join()
-        .expect("the decode returns")
+fn a_value_nested_deeper_than_the_stack_holds_is_a_failed_decode() {
+    let on_a_thread = |levels: usize| {
+        std::thread::spawn(move || decode_nested(levels))
+            .join()
+            .expect("the decode returns")
     };
-    assert_eq!(decode(limit), (true, limit));
-    let (done, n) = decode(limit + 40);
+    assert_eq!(on_a_thread(2000), (true, 2000));
+    let (done, depth) = on_a_thread(1_000_000);
     assert!(!done);
-    assert!(n <= limit + 1, "{n} levels decoded past a limit of {limit}");
+    assert!(depth <= MAX_DEPTH as usize + 1, "{depth} levels came back");
+}
+
+/// A thread that says how much stack its decoders have ([`with_decode_stack`]) decodes a value
+/// nested to [`MAX_DEPTH`]; one level deeper is a failed decode.
+#[test]
+fn a_thread_with_a_large_stack_decodes_to_the_nesting_limit() {
+    let limit = MAX_DEPTH as usize;
+    let on_sema_s_stack = move |levels: usize| {
+        std::thread::Builder::new()
+            .stack_size(crate::SEMA_STACK_BYTES)
+            .spawn(move || with_decode_stack(crate::SEMA_STACK_BUDGET, || decode_nested(levels)))
+            .expect("test thread")
+            .join()
+            .expect("the decode returns")
+    };
+    assert_eq!(on_sema_s_stack(limit), (true, limit));
+    assert_eq!(on_sema_s_stack(limit + 1), (false, limit + 1));
 }
