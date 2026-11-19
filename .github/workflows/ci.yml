@@ -610,7 +610,7 @@ jobs:
 
   # `declare c` against C headers, C constants and C `sources` through the pinned zig, for every
   # target from this one Linux job (crates/veltc/tests/c_headers.rs, c_constants.rs,
-  # c_sources.rs, c_export.rs and c_struct_pointers.rs, which VELT_ZIG_TESTS turns on and
+  # c_sources.rs, c_export.rs and the C struct ones, which VELT_ZIG_TESTS turns on and
   # makes fail without VELT_ZIG; the other jobs' tests leave them out,
   # crates/xtask/src/c_headers.rs's TESTS). It runs only when the
   # change touches what it checks (crates/xtask/src/c_headers.rs), in pull requests and in
@@ -636,7 +636,7 @@ jobs:
       - name: declarations against headers, C constants and sources, every target
         env:
           VELT_ZIG_TESTS: "1"
-        run: cargo test --workspace --test c_headers --test c_constants --test c_sources --test c_export --test c_struct_pointers -- --nocapture
+        run: cargo test --workspace --test c_headers --test c_constants --test c_sources --test c_export --test c_struct_pointers --test c_struct_headers --test c_struct_by_value -- --nocapture
 
   ci:
     # Not for a run started by another label: its result would replace the real run's.
