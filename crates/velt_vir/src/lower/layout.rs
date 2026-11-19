@@ -28,6 +28,8 @@ use crate::vir::{AggId, AggLayout, Ty};
 
 #[derive(Default)]
 pub(super) struct Layouts {
+    /// The aggregates of the words a C struct crosses in (c_struct_call.rs), by their types.
+    pub(super) c_words: FxHashMap<Vec<Ty>, AggId>,
     value: FxHashMap<TyId, AggId>,
     views: FxHashMap<TyId, Vec<AggId>>,
     objs: FxHashMap<TyId, AggId>,

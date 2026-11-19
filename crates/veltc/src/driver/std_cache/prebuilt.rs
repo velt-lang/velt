@@ -487,6 +487,7 @@ fn define_tls(program: &mut vir::Program, tls: &[String]) {
             host: None,
             c_decl: None,
             variadic: false,
+            c_abi: None,
         });
     }
 }
@@ -632,6 +633,7 @@ mod tests {
                 host: None,
                 c_decl: None,
                 variadic: false,
+                c_abi: None,
             }],
             ..vir::Program::default()
         };

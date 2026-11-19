@@ -423,6 +423,7 @@ mod tests {
             host: None,
             c_decl: None,
             variadic: false,
+            c_abi: None,
         };
         let r0 = func(
             "_V12____velt__r0",
@@ -465,6 +466,7 @@ mod tests {
             host: None,
             c_decl: None,
             variadic: false,
+            c_abi: None,
         };
         let calls: Vec<Callee> = (0..symbols.len())
             .map(|i| Callee::Extern(ExternId(i as u32)))

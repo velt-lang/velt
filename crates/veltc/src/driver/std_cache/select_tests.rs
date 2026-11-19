@@ -269,6 +269,7 @@ fn code_reaching_a_thread_local_stays_where_it_has_no_data_to_share() {
         host: None,
         c_decl: None,
         variadic: false,
+        c_abi: None,
     });
     let helpers = [false; 3];
     let rule = |thread_data| Rule::Debug {
@@ -582,6 +583,7 @@ fn has_check(p: &mut Program) -> vir::ExternId {
         host: None,
         c_decl: None,
         variadic: false,
+        c_abi: None,
     });
     vir::ExternId(p.externs.len() as u32 - 1)
 }

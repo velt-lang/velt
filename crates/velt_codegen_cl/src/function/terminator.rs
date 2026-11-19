@@ -125,6 +125,30 @@ impl Translator<'_, '_> {
         if params != types {
             bail!("call argument types {types:?} do not match parameters {params:?}");
         }
+        // A C function returning a struct in registers (#2187 layer 3): one result per word,
+        // into the destination's fields.
+        if let Callee::Extern(id) = callee {
+            let words = (self.program.externs.get(id.0 as usize)).is_some_and(|e| {
+                e.c_abi
+                    .as_ref()
+                    .is_some_and(|c| c.ret == velt_vir::vir::CRet::Words)
+            });
+            if words {
+                let inst = self.emit_call(callee, &values)?;
+                let results = self.builder.inst_results(inst).to_vec();
+                if let Some(dest) = dest {
+                    for (i, r) in results.into_iter().enumerate() {
+                        let mut field = dest.clone();
+                        field.proj.push(velt_vir::vir::Proj::Field(i as u32));
+                        let loc = self.place(&field)?;
+                        self.write(loc, Val::Scalar(r))?;
+                    }
+                }
+                let next = self.block(next)?;
+                self.builder.ins().jump(next, &[]);
+                return Ok(());
+            }
+        }
         let result = match self
             .inline_simd(callee, args, &values, &params, ret)
             .or_else(|| self.inline_atomic(callee, &values, &params, ret))
