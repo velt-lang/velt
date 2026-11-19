@@ -118,20 +118,24 @@ type's strong references; up to 256 objects, `LIMIT` in `std/lang/hooks/weak_gra
 finds every object on a path from `v` back to `k`. For each, the entry records how many
 references to it the entry holds: the map's reference to `v`, and the references from inside
 `v`'s graph. Their sum over all entries is the object's `hint`, and the objects get the flag. An
-entry whose value has no path back to `k` stays unexamined, so the key's next decrement looks
-again: the decrement that triggered the examination may be the one that removed a path, and the
-path may come back. A record counts its entries not examined yet (`R_UNEXAMINED`), so a
-decrement of a key without any goes on at once.
+entry whose value has no path back to `k` gets one more look, at the key's next decrement: the
+decrement that triggered the examination may be the one that removed a path, which comes back
+before the next. After that, or when the graph is past the limit, the entry counts as examined,
+so a key's decrements trace each of its entries at most twice. A record counts its entries not
+examined yet (`R_UNEXAMINED`) and keeps a threshold (`R_GATE`: at least `max(hint, observed)`,
+the largest value while an entry is unexamined), so a decrement that leaves the count above it
+goes on after one comparison.
 
-Waiting for a decrement loses no cycle: an entry whose value refers back to its key holds a
-reference to the key, so the key's last outside reference goes by a decrement, never by the
-release that frees it, and every decrement until an examination finds the path looks for it. It
-saves the trace of an entry whose key goes by its only release, and the trials that releases of
-a value not examined yet would run (the value is not marked until then), and it sees a path the
-value gains between the insert and that decrement. It costs a second lookup of the entry at the
-decrement, and a trace at each decrement of a key whose values do not refer to it: against an
-examination at insert, `bench/weakmap_handlers.velt` (handlers over other objects) runs 5.6%
-more instructions and `bench/weakmap_handlers_cycle.velt` 38.0% fewer.
+Waiting for a decrement loses no cycle whose path is there at the key's first decrement or comes
+back before its next: an entry whose value refers back to its key holds a reference to the key, so
+the key's last outside reference goes by a decrement, never by the release that frees it. It saves
+the trace of an entry whose key goes by its only release, and the trials that releases of a value
+not examined yet would run (the value is not marked until then), and it sees a path the value gains
+between the insert and that decrement. It costs a second lookup of the entry at the decrement:
+against an examination at insert, `bench/weakmap_handlers.velt` (handlers over other objects) runs
+5.4% more instructions, `bench/weakmap_handlers_cycle.velt` 37.5% fewer, and
+`bench/weakmap_key_decrements.velt` (keys decremented a thousand times each while their entries
+live) 2.9% fewer.
 
 **On a release** that leaves a recorded object's count at or below `max(hint, observed)`, every
 remaining reference may come from the cycle, so the cold path runs a **trial deletion** (Bacon
@@ -397,6 +401,11 @@ cannot cross threads; Node has one thread per isolate.
 - **A value graph past 256 objects** at its examination or during a trial: nothing is recorded
   or freed; the pair leaks until the entry is deleted or the map dropped (test
   "keeps a pair whose value graph is past the limit"). The bound keeps every release cheap.
+- **A path that comes back after the second look.** A value that loses its path back to the key
+  before the key's first decrement, and gets it back only after the key's next one, is not seen
+  by either examination; the pair is kept until the entry is deleted or the map dropped (test
+  "keeps a pair whose path came back after the second look"). The bound keeps a key that is
+  passed around while its entry lives from tracing its value at every decrement.
 - **References to the key added after the last trial through it**, when the final outside
   release lands on an object whose count is still above what the table knows: no trial runs and
   the pair is kept until a release that reaches the known level, or the entry goes (test

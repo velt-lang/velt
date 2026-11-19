@@ -75,8 +75,15 @@ const MAP: usize = 64;
 export const E_KEY: usize = 0;
 export const E_VALUE: usize = 8;
 export const E_MEMBERS: usize = 16;
-/** 1 once the value's graph was traced for paths back to the key (or there is none to trace). */
+/**
+ * Whether the value's graph was traced for paths back to the key (weak.velt `examine`): one of
+ * `UNEXAMINED`, `LOOKED` (traced once, no path: one more look at the key's next decrement) and
+ * `EXAMINED` (done, or nothing to trace).
+ */
 export const E_EXAMINED: usize = 24;
+export const UNEXAMINED: usize = 0;
+export const EXAMINED: usize = 1;
+export const LOOKED: usize = 2;
 const ENTRY: usize = 32;
 
 const EMPTY: usize = 0;
@@ -278,7 +285,7 @@ export function del(h: usize, id: u32, key: usize): bool {
 export function delEntry(h: usize, id: u32, b: usize, e: usize, key: usize): void {
   const value = ld64(e + E_VALUE);
   const members = ld(e + E_MEMBERS);
-  const examined = ld(e + E_EXAMINED) !== 0;
+  const examined = ld(e + E_EXAMINED) === EXAMINED;
   st(e + E_KEY, REMOVED);
   st(e + E_MEMBERS, 0);
   st(b + M_LIVE, ld(b + M_LIVE) - 1);

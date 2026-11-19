@@ -290,6 +290,68 @@ describe("the ephemeron rule", () => {
     expect(finish([m])).toBe(true);
   });
 
+  it("traces an entry with no path back to its key at most twice", () => {
+    // A value over another object: the key's first decrement finds no path, its next looks once
+    // more, and later decrements trace nothing (a key passed around while its entry lives).
+    const m = objMap();
+    const raw = plain();
+    set(m, raw, newObj(plain(), 0, 0));
+    const before = traced();
+    release(retain(raw));
+    const once = traced();
+    expect(once > before).toBe(true);
+    release(retain(raw));
+    const twice = traced();
+    expect(twice - once).toBe(once - before);
+    for (let i = 0; i < 10; i++) {
+      release(retain(raw));
+    }
+    expect(traced()).toBe(twice);
+    release(raw);
+    expect(weakMapLen(m)).toBe(0);
+    expect(finish([m])).toBe(true);
+  });
+
+  it("traces a value past the limit once", () => {
+    // Past the limit nothing is recorded, and the entry counts as examined: the key's later
+    // decrements trace nothing.
+    const m = objMap();
+    const raw = plain();
+    let tail = retain(raw);
+    for (let i: usize = 0; i < LIMIT; i++) {
+      tail = newObj(tail, 0, 0);
+    }
+    set(m, raw, newObj(tail, 0, 0));
+    release(retain(raw));
+    const once = traced();
+    for (let i = 0; i < 10; i++) {
+      release(retain(raw));
+    }
+    expect(traced()).toBe(once);
+    const before = live();
+    release(raw);
+    expect(live()).toBe(before); // kept, as past the limit at the insert
+    expect(finish([m])).toBe(true);
+  });
+
+  it("keeps a pair whose path came back after the second look", () => {
+    // The documented limit: the value loses its path (the key's first decrement), the key is
+    // decremented once more (the second look finds nothing), and the path comes back. No
+    // examination sees it, so the pair is kept until the entry is deleted.
+    const m = objMap();
+    const raw = plain();
+    const p = newObj(retain(raw), 0, 0);
+    set(m, raw, p);
+    setField(p, 0, 0);
+    release(retain(raw));
+    setField(p, 0, retain(raw));
+    const before = live();
+    release(raw);
+    expect(live()).toBe(before); // kept: a leak, not a use-after-free
+    expect(weakMapLen(m)).toBe(1);
+    expect(finish([m])).toBe(true);
+  });
+
   it("never traces an entry whose key goes by its only release", () => {
     // A value that refers to other objects only (a handler over them): the key's last release
     // frees it and deletes the entry without tracing the value.

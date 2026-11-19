@@ -32,7 +32,7 @@ import { mapOf } from "./weak_maps";
 import * as wm from "./weak_maps";
 import * as wr from "./weak_refs";
 import * as rec from "./weak_records";
-import { members, trial } from "./weak_trial";
+import { members, PAST_LIMIT, trial } from "./weak_trial";
 import {
   count,
   free,
@@ -204,10 +204,16 @@ export function weakRelease(obj: usize): bool {
     return true;
   }
   st64(rcWord(obj), ld64(rcWord(obj)) - 1);
+  if (c - 1 > rec.gate(r)) {
+    leave(h);
+    return false;
+  }
   if (rec.unexamined(r) !== 0) {
     r = examine(h, obj, r);
   }
-  if (c - 1 > level(r)) {
+  const lv = level(r);
+  if (c - 1 > lv) {
+    rec.setGate(r, lv);
     leave(h);
     return false;
   }
@@ -263,9 +269,8 @@ export function weakMapSetTraced(map: u32, key: usize, value: u64, keyTrace: usi
  * Inserts or replaces an entry. Its value's graph is examined later, on the key's decrements
  * (`examine`), not here: an entry whose value refers back to its key holds a reference to the
  * key, so the key's last outside reference goes by a decrement, never by the release that frees
- * it, and each decrement looks until an examination finds the path. An entry whose key is freed
- * by its only release is never traced, and a value is not marked (its releases run no trial)
- * until its entry is examined.
+ * it. An entry whose key is freed by its only release is never traced, and a value is not marked
+ * (its releases run no trial) until its entry is examined.
  */
 @inline
 function set(h: usize, map: u32, key: usize, value: u64, keyTrace: usize): void {
@@ -284,16 +289,18 @@ function set(h: usize, map: u32, key: usize, value: u64, keyTrace: usize): void 
   }
   const e = wm.entryClaim(b, at & ~(1 as usize), key);
   st64(e + wm.E_VALUE, value);
-  st(e + wm.E_EXAMINED, traced ? 0 : 1);
+  st(e + wm.E_EXAMINED, traced ? wm.UNEXAMINED : wm.EXAMINED);
 }
 
 /**
  * Traces the values of the entries keyed by `k` (record `r`) that are not examined yet (a nonzero
  * value of a map with trace glue: a live counted object the map owns), and records the objects on
  * their paths back to `k` with the references the entry holds to each (their `hint`). An entry
- * whose value has no path back to `k` stays unexamined, so the key's next decrement looks again:
- * the path may have gone with this decrement and come back later. Returns `k`'s record, which
- * moves when the examination adds records.
+ * whose value has no path back to `k` gets one more look, at the key's next decrement: the
+ * decrement that triggered this examination may be the one that removed a path, which comes back
+ * before the next. After that, or past the limit, the entry counts as examined, so a key's
+ * decrements trace each entry at most twice. Returns `k`'s record, which moves when the
+ * examination adds records.
  */
 function examine(h: usize, k: usize, r0: usize): usize {
   let r = r0;
@@ -304,18 +311,26 @@ function examine(h: usize, k: usize, r0: usize): usize {
     i += 1;
     const b = mapOf(h, map);
     const e = wm.entryOf(b, k);
-    if (e === 0 || ld(e + wm.E_EXAMINED) !== 0) {
+    if (e === 0) {
+      continue;
+    }
+    const state = ld(e + wm.E_EXAMINED);
+    if (state === wm.EXAMINED) {
       continue;
     }
     const ms = members(h, k, ld64(e + wm.E_VALUE) as usize, ld(b + wm.M_VALUE_TRACE));
-    const n = vlen(ms);
-    if (n === 0) {
+    if (ms === 0 && state === wm.UNEXAMINED) {
+      st(e + wm.E_EXAMINED, wm.LOOKED);
       left += 1;
+      continue;
+    }
+    st(e + wm.E_EXAMINED, wm.EXAMINED);
+    if (ms === 0 || ms === PAST_LIMIT) {
       continue;
     }
     // `node` adds records, not entries: the entry stays where it is.
     st(e + wm.E_MEMBERS, ms);
-    st(e + wm.E_EXAMINED, 1);
+    const n = vlen(ms);
     for (let j: usize = 0; j < n; j += 3) {
       const m = rec.node(h, vat(ms, j), vat(ms, j + 2));
       rec.memberPush(m, map as usize, k);
