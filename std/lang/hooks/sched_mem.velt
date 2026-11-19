@@ -46,7 +46,7 @@ declare c("c") function memset$sched(dst: Ptr<u8>, c: i32, n: usize): Ptr<u8>;
 }
 
 /** Address `a` as a C pointer argument to a `T` that may be `NULL`: 0 passes `NULL`. */
-@inline
+@inline("always")
 export function ptrOrNull<T>(a: usize): Ptr<T> | null {
   // SAFETY: as `ptr`'s.
   return unsafe { Ptr.orNull<T>(a) };
