@@ -21,9 +21,11 @@ const PROGRAMS: &[(&str, &str)] = &[
         "<none>",
         "function add(a: number, b: number) { return a + b; }\nfunction main() { console.log(add.call(null, 1, 2)); }\n",
     ),
+    // Held as a `Function`: `f.call(thisArg, …)` passes `this` only when std loaded the global
+    // (a value held as `any` is called through `any` either way).
     (
         "this_fn",
-        "function main() {\n  const f: any = function (this: any, k: number) { return this.n + k; };\n  console.log(f.call({ n: 1 }, 2));\n}\n",
+        "function main() {\n  const f: Function = function (this: any, k: number) { return this.n + k; };\n  console.log(f.call({ n: 1 }, 2));\n}\n",
     ),
     (
         "host_async",
