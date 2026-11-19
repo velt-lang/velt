@@ -8,7 +8,7 @@ use rustc_hash::FxHashSet;
 
 use super::values::Resolver;
 use crate::ctx::Ctx;
-use crate::defs::{BodyState, FnKind};
+use crate::defs::FnKind;
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, LocalId};
 use crate::visit;
 
@@ -32,12 +32,7 @@ pub(super) struct Found {
 
 /// Every callback of the program's `with` calls.
 pub(super) fn find(cx: &mut Ctx, res: &mut Resolver) -> Found {
-    let fns: Vec<DefId> = cx
-        .fn_defs
-        .iter()
-        .copied()
-        .filter(|d| cx.fn_info(*d).state == BodyState::Done)
-        .collect();
+    let fns: Vec<DefId> = cx.unit_fns();
     let mut found = Found::default();
     for &d in &fns {
         let calls = calls_in(cx, d, |c, _| {
