@@ -35,10 +35,43 @@ use std::rc::Rc;
 use rustc_hash::FxHashMap;
 use velt_common::FileId;
 
-/// How deeply decoded values may nest (boxes and containers): more than a checked program's
-/// (an expression nests as its source does, and the parser stops at 256 levels), and few enough
-/// that a damaged value reaching it has not used up an ordinary thread's stack.
-const MAX_DEPTH: u32 = 1 << 10;
+/// How deeply decoded values may nest (boxes and containers), whatever stack there is: far more
+/// than a checked program's. A chain of a thousand operands (`a + b + ...`) nests a thousand
+/// levels, so the stack is what stops a decode first ([`with_decode_stack`]).
+const MAX_DEPTH: u32 = 1 << 14;
+
+/// The stack a decode may use when its thread has not said how much there is
+/// ([`with_decode_stack`]): what is left of an ordinary thread's.
+const DECODE_STACK: usize = 1 << 20;
+
+thread_local! {
+    /// The address this thread's decoders stop at ([`with_decode_stack`]; 0: not said).
+    static STACK_FLOOR: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Runs `f` with `bytes` of stack, from here down, for the decoders this thread starts in it:
+/// a value nested deeper than that holds is a failed decode, not a stack overflow. The check
+/// of a program says so for its thread (sema's stack is large); without, a reader allows
+/// itself [`DECODE_STACK`] from where it is made.
+pub(crate) fn with_decode_stack<T>(bytes: usize, f: impl FnOnce() -> T) -> T {
+    struct Restore(usize);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            STACK_FLOOR.set(self.0);
+        }
+    }
+    let floor = crate::stack_address().saturating_sub(bytes);
+    let _restore = Restore(STACK_FLOOR.replace(floor));
+    f()
+}
+
+/// Where a reader made here stops ([`with_decode_stack`]).
+fn stack_floor() -> usize {
+    match STACK_FLOOR.get() {
+        0 => crate::stack_address().saturating_sub(DECODE_STACK),
+        floor => floor,
+    }
+}
 
 /// How many bytes of capacity a reader's containers may reserve before their elements are
 /// read, per byte of input (and a little for a short input): past it they grow as they fill.
@@ -134,6 +167,8 @@ pub(crate) struct Reader<'a> {
     /// The session's id of each file of the unit's table.
     files: &'a [FileId],
     depth: u32,
+    /// The stack address nesting may not pass ([`with_decode_stack`]).
+    stack_floor: usize,
     /// The bytes of capacity containers may still reserve up front ([`Reader::capacity`]).
     reserve_left: usize,
     /// The value is damaged: everything read from here on is zeros.
@@ -247,6 +282,7 @@ impl<'a> Reader<'a> {
             pos: 0,
             files,
             depth: 0,
+            stack_floor: stack_floor(),
             reserve_left: bytes.len().saturating_mul(RESERVE_PER_BYTE) + 4096,
             failed: false,
             frags: None,
@@ -457,7 +493,7 @@ impl<'a> Reader<'a> {
     #[inline(always)]
     fn enter(&mut self) {
         self.depth += 1;
-        if self.depth > MAX_DEPTH {
+        if self.depth > MAX_DEPTH || crate::stack_address() < self.stack_floor {
             self.fail();
         }
     }
