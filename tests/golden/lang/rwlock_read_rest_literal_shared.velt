@@ -1,0 +1,81 @@
+// check: no leaks
+// A copy a `read` callback keeps in a variable and gives to a rest parameter on each turn of a
+// loop (`out.unshift(c)`, `out.splice(i, 1, c)`) is one array in the caller's container each
+// time, as in JavaScript, also when the program keeps the array's type in a `Map` (the rest
+// parameter's array is then an object of its own). What `splice` removes goes to the reader,
+// also the array a turn before stored.
+
+class Box {
+  items: number[][] = [[1, 2], [3]];
+}
+
+function fresh(): number[][][] {
+  return [[[1]], [[2]], [[3]], [[4]]];
+}
+
+function show(what: string, out: number[][][]) {
+  out[0][0].push(99);
+  console.log(what, out.length, JSON.stringify(out), out[0] === out[1]);
+}
+
+function main() {
+  const a = new RwLock(new Box());
+  const groups = new Map<string, number[][][]>();
+  groups.set("z", [[[0]]]);
+
+  const u = fresh();
+  a.read((x) => {
+    const c = structuredClone(x.items.slice());
+    for (let i = 0; i < 2; i++) {
+      u.unshift(c);
+    }
+  });
+  show("unshift", u);
+
+  const s = fresh();
+  a.read((x) => {
+    const c = structuredClone(x.items.slice());
+    for (let i = 0; i < 2; i++) {
+      s.splice(i, 0, c);
+    }
+  });
+  show("insert", s);
+
+  // The second turn removes the array the first one stored, and stores it again.
+  const r = fresh();
+  let removed = 0;
+  a.read((x) => {
+    const c = structuredClone(x.items.slice());
+    for (let i = 0; i < 3; i++) {
+      const gone = r.splice(0, 1, c);
+      removed += gone[0].length;
+    }
+  });
+  r[0][0].push(98);
+  console.log("replace", r.length, JSON.stringify(r));
+  console.log(removed);
+
+  // A literal, and two variables in one call.
+  const l = fresh();
+  a.read((x) => {
+    const c = [[5, x.items.length]];
+    const d = structuredClone(x.items.slice());
+    for (let i = 0; i < 2; i++) {
+      console.log("gone", JSON.stringify(l.splice(i, 1, c, d)));
+    }
+  });
+  show("literal", l);
+  console.log(l[1] === l[3], l[0] === l[2], l.length);
+
+  // Made anew on each turn: each store's own.
+  const e = fresh();
+  a.read((x) => {
+    for (let i = 0; i < 2; i++) {
+      const c = structuredClone(x.items.slice());
+      e.unshift(c);
+    }
+  });
+  show("each", e);
+
+  console.log(a.read((x) => JSON.stringify(x.items)), groups.size);
+}

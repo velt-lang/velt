@@ -59,14 +59,14 @@ pub(super) fn box_element_writes(
 /// binding) that a closure created in their function assigns, itself or through a closure
 /// created in it: `(function, variable, closure, the closure's capture of it)`.
 fn element_writes(cx: &mut Ctx) -> Vec<(DefId, LocalId, DefId, LocalId)> {
-    use crate::visit::VisitMut;
+    use crate::visit_ref::Visit;
     struct ByRef<'a> {
         kinds: &'a [LocalKind],
         found: FxHashSet<LocalId>,
         closures: Vec<DefId>,
     }
-    impl VisitMut for ByRef<'_> {
-        fn pat(&mut self, p: &mut Pat) {
+    impl Visit for ByRef<'_> {
+        fn pat(&mut self, p: &Pat) {
             if let PatKind::Binding(l, UseMode::Borrow | UseMode::BorrowMut) = p.kind {
                 let kind = self.kinds.get(l.0 as usize);
                 if matches!(kind, Some(LocalKind::Elem | LocalKind::Bind)) {
@@ -74,7 +74,7 @@ fn element_writes(cx: &mut Ctx) -> Vec<(DefId, LocalId, DefId, LocalId)> {
                 }
             }
         }
-        fn expr(&mut self, e: &mut crate::hir::Expr) {
+        fn expr(&mut self, e: &crate::hir::Expr) {
             if let crate::hir::ExprKind::Closure(c) = e.kind {
                 self.closures.push(c);
             }
@@ -86,7 +86,7 @@ fn element_writes(cx: &mut Ctx) -> Vec<(DefId, LocalId, DefId, LocalId)> {
         let p = DefId(i as u32);
         let Some(info) = cx.try_fn(p) else { continue };
         let kinds = info.local_kinds.clone();
-        let Some(Def::Fn(mut f)) = cx.defs[i].take() else {
+        let Some(Def::Fn(f)) = &cx.defs[i] else {
             continue;
         };
         let mut v = ByRef {
@@ -94,8 +94,7 @@ fn element_writes(cx: &mut Ctx) -> Vec<(DefId, LocalId, DefId, LocalId)> {
             found: FxHashSet::default(),
             closures: vec![],
         };
-        crate::visit::block(&mut f.body.block, &mut v);
-        cx.defs[i] = Some(Def::Fn(f));
+        crate::visit_ref::block(&f.body.block, &mut v);
         if v.found.is_empty() {
             continue;
         }

@@ -34,55 +34,23 @@ fn sync<T>(f: impl FnOnce(*mut IoResult<T>)) -> IoResult<T> {
     unsafe { out.assume_init() }
 }
 
+/// `mkdir` makes the missing parents when `recursive`; `rm` refuses a directory with something
+/// in it unless `recursive`, which removes the whole tree. (Reading, writing and `stat` are std
+/// code now, std/fs/whole/; the goldens cover them.)
 #[test]
-fn text_bytes_and_errors() {
-    let dir = temp_dir("fs_text");
-    let (d, a, c) = (
-        path(&dir, "x/y"),
-        path(&dir, "x/y/a.txt"),
-        path(&dir, "x/c.bin"),
-    );
+fn make_and_remove_trees() {
+    let dir = temp_dir("fs_tree");
+    let (d, a, x) = (path(&dir, "x/y"), path(&dir, "x/y/a.txt"), path(&dir, "x"));
     unsafe {
         ok(sync(|o| velt_rt_fs_mkdir_sync(&arg(&d), 1, o)));
-        ok(sync(|o| {
-            velt_rt_fs_write_file_sync(&arg(&a), &arg("héllo"), o)
-        }));
-        ok(sync(|o| {
-            velt_rt_fs_append_file_sync(&arg(&a), &arg(" wörld"), o)
-        }));
-        assert_eq!(
-            take_string(ok(sync(|o| velt_rt_fs_read_file_sync(&arg(&a), o)))),
-            "héllo wörld"
-        );
-        let st = ok(sync(|o| velt_rt_fs_stat_sync(&arg(&a), o)));
-        assert_eq!((st.size, st.is_file, st.is_dir), (13, 1, 0));
-        assert!(st.mtime_ms > 1.6e12);
-        let st = ok(sync(|o| velt_rt_fs_stat_sync(&arg(&d), o)));
-        assert_eq!((st.is_file, st.is_dir), (0, 1));
-
-        // Bytes that are not UTF-8, which no string can hold: written from outside.
-        let raw = [0u8, 0xff, 7];
-        std::fs::write(&c, raw).unwrap();
-        let mut got = ok(sync(|o| velt_rt_fs_read_file_bytes_sync(&arg(&c), o)));
-        assert_eq!(got.as_bytes(), raw);
-        velt_rt_bytes_drop(&mut got);
-        let msg = err(
-            sync(|o| velt_rt_fs_read_file_sync(&arg(&c), o)),
-            code::INVALID_DATA,
-        );
-        assert!(msg.contains("UTF-8"));
-
-        let x = path(&dir, "x");
+        assert!(std::path::Path::new(&d).is_dir());
+        std::fs::write(&a, "héllo").unwrap();
         err(
             sync(|o| velt_rt_fs_remove_sync(&arg(&x), 0, o)),
             code::DIRECTORY_NOT_EMPTY,
         );
         ok(sync(|o| velt_rt_fs_remove_sync(&arg(&x), 1, o)));
-        assert_eq!(velt_rt_fs_exists_sync(&arg(&c)), 0);
-        err(
-            sync(|o| velt_rt_fs_read_file_sync(&arg(&a), o)),
-            code::NOT_FOUND,
-        );
+        assert!(!std::path::Path::new(&x).exists());
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -101,21 +69,9 @@ fn sync_roundtrip() {
             sync(|o| velt_rt_fs_mkdir_sync(&arg(&d), 0, o)),
             code::ALREADY_EXISTS,
         );
-        ok(sync(|o| {
-            velt_rt_fs_write_file_sync(&arg(&a), &arg("one"), o)
-        }));
-        ok(sync(|o| {
-            velt_rt_fs_append_file_sync(&arg(&a), &arg("+two"), o)
-        }));
-        assert_eq!(
-            take_string(ok(sync(|o| velt_rt_fs_read_file_sync(&arg(&a), o)))),
-            "one+two"
-        );
-        let mut bytes = ok(sync(|o| velt_rt_fs_read_file_bytes_sync(&arg(&a), o)));
-        assert_eq!(bytes.as_bytes(), b"one+two");
-        velt_rt_bytes_drop(&mut bytes);
-        assert_eq!(ok(sync(|o| velt_rt_fs_stat_sync(&arg(&a), o))).size, 7);
+        std::fs::write(&a, "one+two").unwrap();
         ok(sync(|o| velt_rt_fs_copy_file_sync(&arg(&a), &arg(&b), o)));
+        assert_eq!(std::fs::read_to_string(&b).unwrap(), "one+two");
         ok(sync(|o| {
             velt_rt_fs_rename_sync(&arg(&b), &arg(&path(&dir, "n/c.txt")), o)
         }));
@@ -123,10 +79,12 @@ fn sync_roundtrip() {
             names(ok(sync(|o| velt_rt_fs_read_dir_sync(&arg(&d), o)))),
             ["a.txt", "c.txt"]
         );
-        assert_eq!(velt_rt_fs_exists_sync(&arg(&a)), 1);
         ok(sync(|o| velt_rt_fs_remove_sync(&arg(&a), 0, o)));
-        assert_eq!(velt_rt_fs_exists_sync(&arg(&a)), 0);
-        err(sync(|o| velt_rt_fs_stat_sync(&arg(&a), o)), code::NOT_FOUND);
+        assert!(!std::path::Path::new(&a).exists());
+        err(
+            sync(|o| velt_rt_fs_remove_sync(&arg(&a), 0, o)),
+            code::NOT_FOUND,
+        );
         ok(sync(|o| velt_rt_fs_remove_sync(&arg(&d), 1, o)));
     }
     let _ = std::fs::remove_dir_all(&dir);
@@ -174,10 +132,10 @@ fn symlinks() {
             return;
         }
         ok(made);
-        let l = ok(sync(|o| velt_rt_fs_lstat_sync(&arg(&link), o)));
-        assert_eq!((l.is_symlink, l.is_file, l.is_dir), (1, 0, 0));
-        let s = ok(sync(|o| velt_rt_fs_stat_sync(&arg(&link), o)));
-        assert_eq!((s.is_symlink, s.is_file, s.size), (0, 1, 5));
+        assert!(std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
         let target = ok(sync(|o| velt_rt_fs_readlink_sync(&arg(&link), o)));
         assert_eq!(take_string(target), "f.txt");
         err(
@@ -203,7 +161,6 @@ fn symlinks() {
         assert_eq!(got.kinds.as_bytes(), [kind::FILE, kind::SYMLINK]);
         velt_rt_bytes_drop(&mut got.kinds);
         velt_rt_str_array_drop(&mut got.names);
-        ok(sync(|o| velt_rt_fs_lstat_sync(&arg(&f), o)));
     }
     let _ = std::fs::remove_dir_all(&dir);
 }

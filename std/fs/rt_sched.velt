@@ -2,11 +2,13 @@
 // in Velt (`VELT_SCHEDULER=std`, #2649 step 4): the `std-scheduler` variant of `#fs-rt`
 // (std/imports.velt), with the names and signatures of the runtime's (std/fs/rt.velt).
 //
-// A whole-file operation (read, write, append, list, stat, link, make, remove, rename, copy,
-// exists) runs the runtime's synchronous twin on the executor's blocking pool (std/lang/hooks/
-// sched_blocking.velt), which has threads on every OS a native build targets (the runtime has no
-// asynchronous leaves for these any more; WebAssembly builds use std/fs/rt.velt and
-// velt_rt_wasm's). File streams (`openRead`, `openWrite` and their
+// Reading, writing and appending whole files, `stat`, `lstat` and `exists` are Velt code
+// (`#fs-whole`: the C library on macOS and Linux, Win32 on Windows), their async forms on the
+// executor's blocking pool (std/lang/hooks/sched_blocking.velt), which has threads on every OS a
+// native build targets. The other whole-file operations (list, link, make, remove, rename, copy)
+// run the runtime's synchronous twin on that pool (the runtime has no asynchronous leaves for
+// them any more; WebAssembly builds use std/fs/rt.velt and velt_rt_wasm's). File streams
+// (`openRead`, `openWrite` and their
 // readers and writers) keep the runtime's leaves: they have no synchronous twin to run on the
 // pool (a gap until streams are Velt code over file descriptors, std/fs/fd).
 
@@ -16,6 +18,16 @@ import { Dirent } from "velt/fs/dirent";
 import { Stats } from "velt/fs/stats";
 import { hookCall } from "velt/lang/intrinsics";
 import * as rt from "./rt";
+import { osError } from "velt/fs/errors";
+import {
+  cBytes,
+  existsAt,
+  readBytes as wholeBytes,
+  readText as wholeText,
+  statOf,
+  writeText,
+} from "#fs-whole";
+import { Done, take } from "velt/fs/whole/done";
 
 // The runtime's `VeltDirents`, as std/fs/rt.velt declares it (its structs stay that file's own):
 // sorted names and, at the same index, each one's kind (0 other, 1 file, 2 directory, 3 symlink).
@@ -36,17 +48,12 @@ export function dirents(list: DirentList): Dirent[] {
 }
 
 export {
-  velt_rt_fs_append_file_sync,
   velt_rt_fs_copy_file_sync,
-  velt_rt_fs_exists_sync,
-  velt_rt_fs_lstat_sync,
   velt_rt_fs_mkdir_sync,
   velt_rt_fs_open_read,
   velt_rt_fs_open_read_range,
   velt_rt_fs_open_write,
   velt_rt_fs_read_dir_sync,
-  velt_rt_fs_read_file_bytes_sync,
-  velt_rt_fs_read_file_sync,
   velt_rt_fs_reader_close,
   velt_rt_fs_reader_opened_stats,
   velt_rt_fs_reader_read,
@@ -56,43 +63,13 @@ export {
   velt_rt_fs_realpath_sync,
   velt_rt_fs_remove_sync,
   velt_rt_fs_rename_sync,
-  velt_rt_fs_stat_sync,
   velt_rt_fs_symlink_sync,
-  velt_rt_fs_write_file_sync,
   velt_rt_fs_writer_close,
   velt_rt_fs_writer_flush,
   velt_rt_fs_writer_write,
   velt_rt_fs_writer_free,
   velt_rt_fs_writer_write_bytes,
 } from "./rt";
-
-export async function velt_rt_fs_read_file(path: string): Promise<IoResult<string>> {
-  return await hookCall<IoResult<string>>(
-    "sched_blocking_run",
-    () => rt.velt_rt_fs_read_file_sync(path),
-  );
-}
-
-export async function velt_rt_fs_read_file_bytes(path: string): Promise<IoResult<u8[]>> {
-  return await hookCall<IoResult<u8[]>>(
-    "sched_blocking_run",
-    () => rt.velt_rt_fs_read_file_bytes_sync(path),
-  );
-}
-
-export async function velt_rt_fs_write_file(path: string, data: string): Promise<IoStatus> {
-  return await hookCall<IoStatus>(
-    "sched_blocking_run",
-    () => rt.velt_rt_fs_write_file_sync(path, data),
-  );
-}
-
-export async function velt_rt_fs_append_file(path: string, data: string): Promise<IoStatus> {
-  return await hookCall<IoStatus>(
-    "sched_blocking_run",
-    () => rt.velt_rt_fs_append_file_sync(path, data),
-  );
-}
 
 export async function velt_rt_fs_read_dir(path: string): Promise<IoResult<string[]>> {
   return await hookCall<IoResult<string[]>>(
@@ -105,17 +82,6 @@ export async function velt_rt_fs_read_dir_typed(path: string): Promise<IoResult<
   return await hookCall<IoResult<DirentList>>(
     "sched_blocking_run",
     () => velt_rt_fs_read_dir_typed_sync(path),
-  );
-}
-
-export async function velt_rt_fs_stat(path: string): Promise<IoResult<Stats>> {
-  return await hookCall<IoResult<Stats>>("sched_blocking_run", () => rt.velt_rt_fs_stat_sync(path));
-}
-
-export async function velt_rt_fs_lstat(path: string): Promise<IoResult<Stats>> {
-  return await hookCall<IoResult<Stats>>(
-    "sched_blocking_run",
-    () => rt.velt_rt_fs_lstat_sync(path),
   );
 }
 
@@ -165,6 +131,71 @@ export async function velt_rt_fs_copy_file(from: string, to: string): Promise<Io
   );
 }
 
-export async function velt_rt_fs_exists(path: string): Promise<bool> {
-  return await hookCall<bool>("sched_blocking_run", () => rt.velt_rt_fs_exists_sync(path));
+// Whole files: Velt code over the C library or Win32 (`#fs-whole`), the async forms on the
+// blocking pool. The path is checked on the calling thread, so the work on the pool only
+// returns: a 0 in it is the `IoError` the runtime gave (`EINVAL: invalid argument, open 'a'`),
+// which keeps these functions' `throws IoError`.
+
+/** `path` as C bytes (its UTF-8 and a 0); throws `EINVAL` for `call` if it holds a 0. */
+function cOf(path: string, call: string): u8[] {
+  if (path.includes("\0")) {
+    throw osError(22, call, path);
+  }
+  return bytesOf(path);
+}
+
+/** `path` as `#fs-whole` takes it (the caller has checked it holds no 0). */
+function bytesOf(path: string): u8[] {
+  return cBytes(path);
+}
+
+export function readTextSync(path: string): string {
+  return take(wholeText(cOf(path, "open"), path));
+}
+
+export async function readText(path: string): Promise<string> {
+  const c = cOf(path, "open");
+  return take(await hookCall<Done<string>>("sched_blocking_run", () => wholeText(c, path)));
+}
+
+export function readBytesSync(path: string): u8[] {
+  return take(wholeBytes(cOf(path, "open"), path));
+}
+
+export async function readBytes(path: string): Promise<u8[]> {
+  const c = cOf(path, "open");
+  return take(await hookCall<Done<u8[]>>("sched_blocking_run", () => wholeBytes(c, path)));
+}
+
+/** Writes `data` (truncating, or `append`ing), creating the file if missing. */
+export function writeSync(path: string, data: string, append: bool) {
+  take(writeText(cOf(path, "open"), path, data, append));
+}
+
+export async function write(path: string, data: string, append: bool): Promise<void> {
+  const c = cOf(path, "open");
+  take(await hookCall<Done<bool>>("sched_blocking_run", () => writeText(c, path, data, append)));
+}
+
+/** `stat` (`follow`) or `lstat`. */
+export function statSync(path: string, follow: bool): Stats {
+  return take(statOf(cOf(path, follow ? "stat" : "lstat"), path, follow));
+}
+
+export async function stat(path: string, follow: bool): Promise<Stats> {
+  const c = cOf(path, follow ? "stat" : "lstat");
+  return take(await hookCall<Done<Stats>>("sched_blocking_run", () => statOf(c, path, follow)));
+}
+
+/** Whether anything is at `path` (Node's `existsSync`: false, not an error, for a 0 in it). */
+export function existsSync(path: string): bool {
+  return !path.includes("\0") && existsAt(bytesOf(path), path);
+}
+
+export async function exists(path: string): Promise<bool> {
+  if (path.includes("\0")) {
+    return false;
+  }
+  const c = bytesOf(path);
+  return await hookCall<bool>("sched_blocking_run", () => existsAt(c, path));
 }

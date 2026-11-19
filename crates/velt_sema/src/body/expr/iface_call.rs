@@ -203,7 +203,19 @@ impl FnCx<'_, '_> {
     /// is known to throw (checked after inference, like an async call). Other slots throw, even
     /// when the instantiated result is a promise (`get(): T` with `T = Promise<i64>`).
     fn slot_call_throws(&mut self, s: &IfaceSlot, src: ThrowSrc, ret: TyId, span: Span) -> TyId {
-        let (iface, slot) = (s.iface, s.slot);
+        self.slot_result(s.iface, s.slot, src, ret, span)
+    }
+
+    /// [`Self::slot_call_throws`] for slot `slot` of `iface` (an adapter's call of the wrapped
+    /// value's slot, `iface_adapt_slots`).
+    pub(super) fn slot_result(
+        &mut self,
+        iface: DefId,
+        slot: u32,
+        src: ThrowSrc,
+        ret: TyId,
+        span: Span,
+    ) -> TyId {
         let groups = self.cx.throw_groups();
         let promise = groups
             .slot_group(iface, slot)

@@ -35,7 +35,6 @@ use crate::dispatch::Dispatch;
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, TyId, TyKind};
 use crate::inst_sites::ParamCall;
 use crate::types::collect_params;
-use crate::visit;
 
 /// Type parameter `.1` of function `.0`.
 type Node = (DefId, u32);
@@ -117,14 +116,14 @@ fn collect(cx: &mut Ctx) -> Sites {
         TyKind::Param(p) => Some(*p),
         _ => None,
     };
-    for (i, d) in cx.defs.iter_mut().enumerate() {
+    for (i, d) in cx.defs.iter().enumerate() {
         let Some(Def::Fn(f)) = d else { continue };
         if f.generics == 0 {
             continue;
         }
         let mut sites = vec![];
-        let guards = visit::primitive_guards(&mut f.body.block, &param_of);
-        visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
+        let guards = crate::visit_ref::primitive_guards(&f.body.block, &param_of);
+        crate::visit_ref::exprs(&f.body.block, &mut |e: &Expr| {
             let guard = guards.get(&(e as *const Expr)).copied().unwrap_or(0);
             let site = match &e.kind {
                 E::Call {

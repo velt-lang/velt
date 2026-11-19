@@ -1,0 +1,17 @@
+"héllo wörld\n" 14
+made by append
+"" 0
+1048624 true
+14 true false false true
+false true true
+true true false false
+read missing ENOENT ENOENT: no such file or directory, open 'velt_fs_whole_files_tmp/none.txt'
+bytes missing ENOENT ENOENT: no such file or directory, open 'velt_fs_whole_files_tmp/none.txt'
+write into missing ENOENT ENOENT: no such file or directory, open 'velt_fs_whole_files_tmp/no/such.txt'
+append into missing ENOENT ENOENT: no such file or directory, open 'velt_fs_whole_files_tmp/no/such.txt'
+stat missing ENOENT ENOENT: no such file or directory, stat 'velt_fs_whole_files_tmp/none.txt'
+lstat missing ENOENT ENOENT: no such file or directory, lstat 'velt_fs_whole_files_tmp/none.txt'
+async too 9
+9 true
+true false
+async read missing ENOENT ENOENT: no such file or directory, open 'velt_fs_whole_files_tmp/none.txt'

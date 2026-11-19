@@ -296,12 +296,12 @@ fn assigned_locals(
     // A closure is created once, inside its enclosing function: no cycle (the empty entry
     // guards against a malformed one).
     memo.insert(d, FxHashSet::default());
-    let Some(Def::Fn(mut f)) = cx.defs[d.0 as usize].take() else {
+    let Some(Some(Def::Fn(f))) = cx.defs.get(d.0 as usize) else {
         return FxHashSet::default();
     };
     let mut assigned = FxHashSet::default();
     let mut closures = vec![];
-    crate::visit::exprs_mut(&mut f.body.block, &mut |e: &mut crate::hir::Expr| {
+    crate::visit::exprs(&f.body.block, &mut |e: &crate::hir::Expr| {
         use crate::hir::ExprKind as E;
         match &e.kind {
             E::Assign { place, .. } | E::CompoundAssign { place, .. } => {
@@ -313,7 +313,6 @@ fn assigned_locals(
             _ => {}
         }
     });
-    cx.defs[d.0 as usize] = Some(Def::Fn(f));
     direct.insert(d, assigned.clone());
     for c in closures {
         let inner = assigned_locals(cx, c, memo, direct);
@@ -339,10 +338,10 @@ fn assigned_locals(
 /// step, both spanning the whole loop (`crate::body::loops`); a block written as such ends
 /// with its closing brace, so it never spans the same code as the `while` it holds.
 fn per_iteration(cx: &mut Ctx) -> FxHashSet<(DefId, LocalId)> {
-    use crate::visit::VisitMut;
+    use crate::visit_ref::Visit;
     struct ForHeads(Vec<LocalId>);
-    impl VisitMut for ForHeads {
-        fn stmt(&mut self, s: &mut Stmt) {
+    impl Visit for ForHeads {
+        fn stmt(&mut self, s: &Stmt) {
             let StmtKind::Block(b) = &s.kind else {
                 return;
             };
@@ -360,13 +359,12 @@ fn per_iteration(cx: &mut Ctx) -> FxHashSet<(DefId, LocalId)> {
         }
     }
     let mut out = FxHashSet::default();
-    for i in 0..cx.defs.len() {
-        let Some(Def::Fn(mut f)) = cx.defs[i].take() else {
+    for (i, def) in cx.defs.iter().enumerate() {
+        let Some(Def::Fn(f)) = def else {
             continue;
         };
         let mut heads = ForHeads(vec![]);
-        crate::visit::block(&mut f.body.block, &mut heads);
-        cx.defs[i] = Some(Def::Fn(f));
+        crate::visit_ref::block(&f.body.block, &mut heads);
         out.extend(heads.0.into_iter().map(|l| (DefId(i as u32), l)));
     }
     out
@@ -379,16 +377,15 @@ fn per_iteration(cx: &mut Ctx) -> FxHashSet<(DefId, LocalId)> {
 pub(crate) fn async_captured(cx: &mut Ctx) -> FxHashSet<(DefId, LocalId)> {
     let mut out = FxHashSet::default();
     for i in 0..cx.defs.len() {
-        let Some(Def::Fn(mut f)) = cx.defs[i].take() else {
+        let Some(Def::Fn(f)) = &cx.defs[i] else {
             continue;
         };
         let mut closures = vec![];
-        crate::visit::exprs_mut(&mut f.body.block, &mut |e: &mut crate::hir::Expr| {
+        crate::visit::exprs(&f.body.block, &mut |e: &crate::hir::Expr| {
             if let crate::hir::ExprKind::Closure(c) = e.kind {
                 closures.push(c);
             }
         });
-        cx.defs[i] = Some(Def::Fn(f));
         for c in closures {
             if let Some(Def::Fn(cf)) = &cx.defs[c.0 as usize] {
                 if cf.is_async && !cf.is_generator && !cf.shares_captures {

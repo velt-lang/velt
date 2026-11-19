@@ -1,0 +1,246 @@
+// velt/process (internal): reading standard input on Windows (`#stdin-sys`' win32 variant), as
+// Rust's `Stdin` does: a console is read as UTF-16 (`ReadConsoleW`, woken by Ctrl-Z, which is
+// dropped at the end of a read, so Ctrl-Z alone is the end of input) and handed on as UTF-8, a high
+// surrogate at the end of one read kept for the next; a
+// pipe or a file is read as bytes (`ReadFile`), a closed pipe the end of input. No standard input
+// handle reads as empty input. The callers hold standard input's lock (stdin_buffer.velt), which
+// also guards the surrogate kept here.
+
+import { IoError } from "velt/io/error";
+import { Ptr } from "velt/ffi/ptr";
+import { osError } from "velt/fs/errors";
+import { addressLoad, addressStore } from "velt/lang/intrinsics";
+
+/**
+ * C's `CONSOLE_READCONSOLE_CONTROL`, which `ReadConsoleW` reads, and `OVERLAPPED`, which is never
+ * passed.
+ */
+declare c type _CONSOLE_READCONSOLE_CONTROL;
+declare c type _OVERLAPPED;
+
+declare c("c") function GetStdHandle(which: u32): Ptr<void> | null;
+declare c("c") function GetConsoleMode$stdin(handle: Ptr<void>, mode: Ptr<u32>): i32;
+declare c("c") function ReadConsoleW(
+  handle: Ptr<void>,
+  units: Ptr<u16>,
+  count: u32,
+  read: Ptr<u32>,
+  control: Ptr<_CONSOLE_READCONSOLE_CONTROL> | null,
+): i32;
+declare c("c") function ReadFile(
+  handle: Ptr<void>,
+  buf: Ptr<u8>,
+  count: u32,
+  read: Ptr<u32>,
+  overlapped: Ptr<_OVERLAPPED> | null,
+): i32;
+declare c("c") function WideCharToMultiByte(
+  codePage: u32,
+  flags: u32,
+  units: Ptr<u16>,
+  count: i32,
+  out: Ptr<u8>,
+  size: i32,
+  defaultChar: Ptr<u8> | null,
+  usedDefault: Ptr<i32> | null,
+): i32;
+declare c("c") function GetLastError$stdin(): u32;
+declare c("c") function SetLastError$stdin(code: u32): void;
+declare c("c") function calloc$stdin(n: usize, size: usize): Ptr<u8> | null;
+declare c("c") function free$stdin(p: Ptr<u8> | null): void;
+
+/** `STD_INPUT_HANDLE` ((DWORD)-10), `INVALID_HANDLE_VALUE`, `CP_UTF8`. */
+const STD_INPUT_HANDLE: u32 = 0xfffffff6;
+const INVALID_HANDLE: usize = 0xffffffffffffffff;
+const CP_UTF8: u32 = 65001;
+
+/** `ERROR_BROKEN_PIPE`, `ERROR_HANDLE_EOF`, `ERROR_NO_DATA`: the writer is gone. */
+const BROKEN_PIPE: u32 = 109;
+const HANDLE_EOF: u32 = 38;
+const NO_DATA: u32 = 232;
+
+/** `EIO`: what any other failure is reported as. */
+const EIO: i32 = 5;
+
+/** A high surrogate a console read ended with, waiting for its low half (0: none). */
+const PENDING = new Atomic<u32>(0);
+
+/** What one read gave: its byte count (0 at the end of input), or the error it failed with. */
+export struct Chunk {
+  count: usize;
+  error: IoError | null;
+}
+
+function failed(): Chunk {
+  return { count: 0, error: osError(EIO, "read") };
+}
+
+/** Reads up to `n` bytes (n >= 16) of standard input to `p`. */
+export function readChunk(p: usize, n: usize): Chunk {
+  // SAFETY: no precondition.
+  const std = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
+  // The handle's address: what the functions below keep, and pass as the HANDLE it is.
+  const h: usize = std === null ? 0 : Ptr.addressOf(std);
+  if (h === 0 || h === INVALID_HANDLE) {
+    return { count: 0, error: null };
+  }
+  // SAFETY: calloc has no precondition; its result is checked.
+  const word = unsafe { calloc$stdin(1, 8) };
+  if (word === null) {
+    return failed();
+  }
+  const w = Ptr.addressOf(word);
+  // SAFETY: `h` is standard input's handle, and `w` holds a DWORD the call writes.
+  const console = unsafe { GetConsoleMode$stdin(Ptr.at<void>(h), Ptr.at<u32>(w)) } !== 0;
+  let out = console ? readConsole(h, p, n, w) : readPipe(h, p, n, w);
+  // A console read that gave only a high surrogate (kept for its low half) isn't the end of
+  // input: read on.
+  while (console && out.count === 0 && out.error === null && PENDING.load("relaxed") !== 0) {
+    out = readConsole(h, p, n, w);
+  }
+  // SAFETY: the block calloc gave above, not used after.
+  unsafe {
+    free$stdin(word);
+  }
+  return out;
+}
+
+/**
+ * `ReadConsoleW` of up to `count` units into `into`, the count it read at `w`, with the
+ * CONSOLE_READCONSOLE_CONTROL at `control`. Unsafe: all three addresses point at that much memory.
+ */
+unsafe function consoleRead(h: usize, into: usize, count: u32, w: usize, control: usize): i32 {
+  // The error code cleared first, as Rust's reader does: ReadConsoleW leaves it alone on a read
+  // that succeeds, so a stale ERROR_OPERATION_ABORTED would look like a Ctrl-C.
+  // SAFETY: SetLastError has no precondition.
+  unsafe {
+    SetLastError$stdin(0);
+  }
+  // SAFETY: the caller's statement about the three addresses.
+  const ctl = unsafe { Ptr.at<_CONSOLE_READCONSOLE_CONTROL>(control) };
+  // SAFETY: `h` is standard input's handle (the caller's statement).
+  const console = unsafe { Ptr.at<void>(h) };
+  // SAFETY: the caller's statement about the three addresses.
+  return unsafe { ReadConsoleW(console, Ptr.at<u16>(into), count, Ptr.at<u32>(w), ctl) };
+}
+
+/** The units count `ReadConsoleW` wrote at `w`. */
+function wrote(w: usize): usize {
+  // SAFETY: `w` is the DWORD the caller passes for the count (calloc'd by readChunk).
+  return unsafe { addressLoad<u32>(w) } as usize;
+}
+
+/** Whether the last call failed with ERROR_OPERATION_ABORTED (a read cut short by Ctrl-C). */
+function aborted(): bool {
+  // SAFETY: GetLastError has no precondition.
+  return unsafe { GetLastError$stdin() } === 995;
+}
+
+/**
+ * `count` UTF-16 units at `from` as UTF-8 at `to` (room for `size` bytes): the bytes written, 0 on
+ * a failure. Unsafe: both point at that much memory.
+ */
+unsafe function utf8Of(from: Ptr<u16>, count: i32, to: Ptr<u8>, size: i32): i32 {
+  // SAFETY: the caller's statement about both buffers; no default character, no flag out.
+  return unsafe { WideCharToMultiByte(CP_UTF8, 0, from, count, to, size, null, null) };
+}
+
+/** `ReadFile` of a pipe or a file into `p`; `w` is a DWORD of scratch. */
+function readPipe(h: usize, p: usize, n: usize, w: usize): Chunk {
+  const count = n > 0x7fffffff ? 0x7fffffff : n;
+  // SAFETY: `h` is standard input's handle.
+  const file = unsafe { Ptr.at<void>(h) };
+  // SAFETY: `p` has room for `count` bytes, `w` for the DWORD the call writes.
+  const ok = unsafe { ReadFile(file, Ptr.at<u8>(p), count as u32, Ptr.at<u32>(w), null) } !== 0;
+  if (!ok) {
+    // SAFETY: no precondition.
+    const e = unsafe { GetLastError$stdin() };
+    return e === BROKEN_PIPE || e === HANDLE_EOF || e === NO_DATA
+      ? { count: 0, error: null }
+      : failed();
+  }
+  // SAFETY: the DWORD the call wrote.
+  return { count: unsafe { addressLoad<u32>(w) } as usize, error: null };
+}
+
+/**
+ * `ReadConsoleW` into UTF-16 units, converted to UTF-8 at `p`: at most `n / 3` units, so the
+ * UTF-8 fits (a unit becomes at most 3 bytes), with a kept high surrogate first.
+ */
+function readConsole(h: usize, p: usize, n: usize, w: usize): Chunk {
+  const room = n / 3 > 4096 ? 4096 : n / 3;
+  // The units, then (at a 4-byte boundary) the call's CONSOLE_READCONSOLE_CONTROL: 16 bytes.
+  const at = ((2 * (room + 1) + 3) / 4) * 4;
+  // SAFETY: calloc has no precondition; its result is checked.
+  const block = unsafe { calloc$stdin(at + 16, 1) };
+  if (block === null) {
+    return failed();
+  }
+  const units = Ptr.addressOf(block);
+  const control = units + at;
+  // SAFETY: inside the block: nLength, then (nInitialChars left 0) dwCtrlWakeupMask, Ctrl-Z's bit.
+  unsafe {
+    addressStore<u32>(control, 16);
+    addressStore<u32>(control + 8, 1 << 0x1a);
+  }
+  const pending = PENDING.load("relaxed");
+  const first: usize = pending === 0 ? 0 : 1;
+  if (pending !== 0) {
+    // SAFETY: inside the block.
+    unsafe {
+      addressStore<u16>(units, pending as u16);
+    }
+    PENDING.store(0, "relaxed");
+  }
+  let out: Chunk = { count: 0, error: null };
+  const into = units + 2 * first;
+  const count = (room - first) as u32;
+  // SAFETY: room for `room` units after the kept one, `w` for the DWORD the call writes, the
+  // control struct above.
+  let status = unsafe { consoleRead(h, into, count, w, control) };
+  // Ctrl-C ends a read with no units and ERROR_OPERATION_ABORTED: read again, as Rust does,
+  // rather than take it for the end of input.
+  while (status !== 0 && wrote(w) === 0 && aborted()) {
+    // SAFETY: as above.
+    status = unsafe { consoleRead(h, into, count, w, control) };
+  }
+  const ok = status !== 0;
+  if (!ok) {
+    out = failed();
+  } else {
+    const got = wrote(w);
+    // No units at all is the end of input: a kept half has no other half coming.
+    let total = got === 0 ? 0 : got + first;
+    // The Ctrl-Z that woke the read is dropped, as Rust's console reader does: alone, it leaves
+    // nothing, the end of input.
+    // SAFETY: inside the block (`total` > 0).
+    const woke = total > 0 && unsafe { addressLoad<u16>(units + 2 * (total - 1)) } === 0x1a;
+    if (woke) {
+      total -= 1;
+      // A kept half and Ctrl-Z alone: the end of input too, the half's pair never coming.
+      if (total === first) {
+        total = 0;
+      }
+    }
+    // A high surrogate last waits for its pair in the next read, unless Ctrl-Z ended this one
+    // (then it reads as U+FFFD).
+    if (total > 0 && !woke) {
+      // SAFETY: inside the block.
+      const last = unsafe { addressLoad<u16>(units + 2 * (total - 1)) };
+      if (last >= 0xd800 && last <= 0xdbff) {
+        PENDING.store(last as u32, "relaxed");
+        total -= 1;
+      }
+    }
+    if (total > 0) {
+      // SAFETY: `total` units at `units`, room for `n` bytes at `p`.
+      const bytes = unsafe { utf8Of(Ptr.at<u16>(units), total as i32, Ptr.at<u8>(p), n as i32) };
+      out = bytes > 0 ? { count: bytes as usize, error: null } : failed();
+    }
+  }
+  // SAFETY: the block calloc gave above, not used after.
+  unsafe {
+    free$stdin(block);
+  }
+  return out;
+}
