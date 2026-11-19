@@ -305,19 +305,11 @@ pub enum Intrinsic {
     /// key; such a record is listed in [`Intrinsic::SymbolRegistry`]'s table). With `described`
     /// false the symbol has no description (`desc` is `""`).
     SymbolStatic,
-    /// Compiler-internal (std: `symbolRegistry()`): `() -> symbol`, the address of
-    /// the program's read-only table of the registry's records (the `SymbolStatic` records with
-    /// ids from 2^40): their addresses, one per 8-byte slot, ending with a null slot. It is typed
-    /// `symbol` only to be read as an address (`SymbolAddress`): std's registry
-    /// (std/lang/symbol/registry.velt) starts with these records (rt_abi.md "Symbols").
+    /// Compiler-internal (std: `symbolRegistry()`): `() -> symbol`, the address of the program's
+    /// null-ended table of registry records (`SymbolStatic`, ids from 2^40) std's registry reads.
     SymbolRegistry,
-    /// Compiler-internal, unsafe (std: `symbolAddress(s)`): `(symbol) -> usize`, the address of
-    /// `s`'s record (a symbol is that address), for std's `Symbol.for` registry
-    /// (std/lang/symbol/registry.velt) to read the record's words.
+    /// Compiler-internal, unsafe (std: `symbolAddress(s)`, and `symbolAt(address)` back): `usize`.
     SymbolAddress,
-    /// Compiler-internal, unsafe (std: `symbolAt(address)`): `(usize) -> symbol`, the symbol
-    /// whose record is at `address`: one the program made (`SymbolStatic`, a registry record
-    /// std made), which lives as long as the program.
     SymbolAt,
     /// Compiler-internal (no source syntax): `ToString` of a template literal part whose type
     /// mentions a type parameter (`${x}` with `x: T`). It is `ToString`, except that where the
