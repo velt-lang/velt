@@ -78,9 +78,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
             }
         } else {
             let code = lw.call_main(def, None);
-            // No task, so no `sched_finish`: module state that went through the executor's
-            // hooks is dropped at a counted normal end here.
-            lw.sched_module_exit(&code);
+            if lw.cx.hir.module_state.is_some() && lw.module_exit_live() {
+                // The blocks go at a normal end with the debug counters on (module_blocks.velt),
+                // as `sched_finish` drops them in a program that reaches tasks.
+                let c = lw.rvalue_temp(Ty::I32, Rvalue::Use(code.clone()));
+                hooks::module_exit(&mut lw, ty::I32::arg(c)).emit(&mut lw);
+            }
             code
         };
         lw.terminate(Terminator::Return(code));

@@ -704,10 +704,27 @@ struct ModuleDesc {
   const char *names;   /* each slot's name, NUL-terminated, in slot order */
   void (*rest)(void *state); /* the root file's slots, or NULL */
 };
+/* velt_rt_wasm only (#2196 9c): */
 void *velt_rt_module_state(const struct ModuleDesc *desc, uint64_t slot);
 void *velt_rt_module_block(const struct ModuleDesc *desc);
 void velt_rt_module_ready(void *state, uint64_t n);
 ```
+
+On native targets the three are std's hooks instead (#2196 9c; no runtime entry): the executor
+in Velt's `schedModuleState`, `schedModuleBlock` and `schedModuleReady` (sched_module.velt, which
+takes the lock below) for a program that runs on it, and module_blocks.velt's `moduleState`,
+`moduleBlock` and `moduleReady` for one that doesn't (no tasks, so no lock); they take the
+descriptor and the block as `usize`. Lowering calls `moduleExit(code)` after a synchronous
+`main` returns, which drops the blocks as below. Everything this section says of the entries
+holds for the hooks.
+
+module_blocks.velt's hooks are `prebuilt` (velt_common `std_hooks/prebuilt.rs`): where the build
+links the module's object, each is a call of its entry point (`velt_hook_module_state`,
+`_block`, `_ready`, `_exit`, and `_drop` for the executor's counted end), as the runtime's entry
+was, and the program loads none of the module. The blocks and their table are that module's own
+state: the executor's lock reaches them by role (`hookCall`), never by import, so a program has
+one copy, the object's or the loaded module's. velt_opt's pass (#1571) knows the entry point
+`velt_hook_module_state` as it knows the hooks.
 
 `velt_rt_module_state` returns the process's module state block, for an access to slot `slot`:
 allocated zeroed with `size`/`align` and filled by `init` on the first call (the block is current

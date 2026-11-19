@@ -80,6 +80,35 @@ impl FnLower<'_, '_> {
         (self.cx.prelude_def(name)).is_some_and(|d| !self.cx.hir.unchecked.contains(&d))
     }
 
+    /// Does module state go to module_blocks.velt's hooks: a native program that sema found with
+    /// module state (velt_sema `lazy_std` `module_hooks`, #2196 9c) and without the executor (which
+    /// has its own, `module_sched`)? Else the runtime's entries (a wasm target's).
+    pub(super) fn module_hooks(&self) -> bool {
+        self.std_sched()
+            && !self.cx.module_sched()
+            && self.module_hook_live(velt_common::std_hook!(module_state))
+    }
+
+    /// Can lowering call module_blocks.velt's hook `name`: sema declared the hooks in the
+    /// module's object (prebuilt, the module not loaded; all of them or none), or checked it?
+    fn module_hook_live(&self, name: &str) -> bool {
+        let declared = *self.cx.module_hooks_declared.get_or_init(|| {
+            let index = velt_common::std_hooks::hook_index::module_state;
+            let hook = &velt_common::std_hooks::HOOKS[index];
+            self.cx.hook_declared(hook).is_some()
+        });
+        declared || self.sched_hook_live(name)
+    }
+
+    /// Does a synchronous `main` that starts no tasks end with module_blocks.velt's `moduleExit`
+    /// (the blocks go at a counted normal end)? Whenever sema loaded it (a native program with
+    /// module state): its blocks are module_blocks.velt's whether they were reached through its
+    /// own hooks or the executor's (sched_module.velt), and without tasks no `schedFinish` drops
+    /// them.
+    pub(super) fn module_exit_live(&self) -> bool {
+        self.std_sched() && self.module_hook_live(velt_common::std_hook!(module_exit))
+    }
+
     /// The exit with 1 after an uncaught error's report: under the executor in Velt its hook
     /// (`sched_exit`: the executor gives back the blocks it holds for the leak counters first),
     /// else `velt_rt_exit`. A program sema found running nothing on the executor has no executor
@@ -188,22 +217,6 @@ impl FnLower<'_, '_> {
     pub(super) fn sched_yield(&mut self, cx: Operand) {
         let cx = self.as_usize(cx);
         hooks::sched_yield(self, ty::USize::arg(cx)).emit(self);
-    }
-
-    /// The end of `velt_main` with exit code `code` when its synchronous `main` reached no task
-    /// (nothing runs `sched_finish`): where sema loaded the executor (live code may run on it,
-    /// and module state may have gone through its hooks, whose blocks are std's), its hook drops
-    /// the blocks of module state at a normal end with the debug counters on. Nothing for a
-    /// program without module state or without the executor (the runtime's blocks, which the
-    /// runtime drops).
-    pub(super) fn sched_module_exit(&mut self, code: &Operand) {
-        let live = self.std_sched()
-            && self.cx.hir.module_state.is_some()
-            && self.sched_hook_live(velt_common::std_hook!(sched_module_exit));
-        if live {
-            let code = self.rvalue_temp(Ty::I32, Rvalue::Use(code.clone()));
-            hooks::sched_module_exit(self, ty::I32::arg(code)).emit(self);
-        }
     }
 
     /// The end of `velt_main` with exit code `code`: when it is 0, the tasks still alive run to

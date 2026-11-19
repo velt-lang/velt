@@ -8,16 +8,19 @@
 //
 // The blocks are module_blocks.velt's, reached with the lock held (or before any worker runs):
 // made by the thread that reaches one first, and dropped at a normal end with the debug counters
-// on (`dropAtExit`), as the runtime's were (#2196 9c).
+// on (`dropAtExit`), as the runtime's were (#2196 9c). They are reached by role (`hookCall`),
+// never imported: module_blocks.velt is compiled once into an object of the build cache, which
+// keeps its state (velt_common `std_hooks/prebuilt.rs` "State"), and a program that calls the
+// object must not load a second copy. One call per lookup, as the runtime's entry was; velt_opt's
+// `module_state` pass (#1571) makes a function call ask once.
 //
 // Gap: a program giving a declared function properties through `any` takes the runtime's lock
 // around a `Mutex` (`velt_rt_module_with`), and the runtime's function properties take it too
 // (velt_rt fn_props.rs), which would wait for ever off worker 0: such a program's tasks stay on
 // worker 0 (sched_spread.velt `stay`), until those move here too.
 
-import { atomicAddress, noInline } from "velt/lang/intrinsics";
+import { atomicAddress, hookCall, noInline } from "velt/lang/intrinsics";
 import * as r from "#reactor";
-import * as mb from "./module_blocks";
 import * as m from "./sched_mem";
 import * as t from "./sched_task";
 
@@ -35,7 +38,7 @@ export function state(desc: usize, slot: u64): usize {
   if (HELD.get() === NOT_HELD) {
     take(t.here());
   }
-  return mb.state(desc, slot);
+  return hookCall("module_state", desc, slot);
 }
 
 /** `velt_rt_module_block`: the block without the slot check (the root file's `main`). */
@@ -43,17 +46,17 @@ export function block(desc: usize): usize {
   if (HELD.get() === NOT_HELD) {
     take(t.here());
   }
-  return mb.block(desc);
+  return hookCall("module_block", desc);
 }
 
 /** `velt_rt_module_ready`: the slots of `state` below `n` are initialized. */
 export function ready(state: usize, n: u64): void {
-  mb.ready(state, n);
+  hookCall("module_ready", state, n);
 }
 
 /**
  * The program ends normally with the debug counters on (sched.velt `schedFinish`): the blocks go
- * (module_blocks.velt `dropAll`). The lock stays held: a task still running waits instead of
+ * (module_blocks.velt `moduleDrop`). The lock stays held: a task still running waits instead of
  * reaching freed state.
  */
 export function dropAtExit(): void {
@@ -61,7 +64,7 @@ export function dropAtExit(): void {
     lock();
     HELD.set(OUTSIDE);
   }
-  mb.dropAll();
+  hookCall("module_drop");
 }
 
 /**
