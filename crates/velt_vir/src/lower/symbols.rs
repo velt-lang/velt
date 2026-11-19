@@ -2,7 +2,7 @@
 //! `const KEY = Symbol("k")` and `const R = Symbol.for("r")`, the well-known symbols) are
 //! read-only records (rt_abi.md "Symbols"), one per id, so every evaluation of the constant is
 //! the same symbol, without a call. `Intrinsic::SymbolRegistry`: the table of the registry's
-//! records among them (`Symbol.for`), which `velt_rt_symbol_for` consults, so the runtime's
+//! records among them (`Symbol.for`), which std's registry (std/lang/symbol/registry.velt) starts with, so the
 //! registry gives the same records for their keys.
 
 use velt_sema::hir::{self, ExprKind, Lit};
