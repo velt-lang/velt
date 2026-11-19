@@ -540,6 +540,23 @@ otherwise `_dot_add_bf16x8`. The start-up check ("CPU check") does not know FEAT
 AVX512-BF16: code built for a `--cpu` that has them stops with an illegal instruction on a CPU that
 has not. Cranelift always widens and uses `fma`.
 
+**bf16 dot product at run time.** `velt_simd_f32x4_bfdot` `(acc, a, b) -> acc`
+is Arm's `bfdot` itself (`velt_vir::simd::ExtOp::Bfdot`, `llvm.aarch64.neon.bfdot`), an
+instruction of the extension `bf16-arm` (FEAT_BF16, LLVM's `+bf16`): a caller runs it only where
+the CPU has FEAT_BF16, and on another architecture, on wasm and under Cranelift it gives zeros.
+Like AES and FMA the extension has **no runtime flag**: `velt_simd_has_bf16_arm()` is `1` only in
+a function gated on it and `0` everywhere else, and std computes the run-time answer in Velt, once
+(std/simd/bf16_check.velt): behind the carry-less flag of arm64 (`velt_simd_has_clmul_arm`, so it
+is `false` off arm64, under Cranelift and with `VELT_SIMD_DISABLE=clmul`), `getauxval(AT_HWCAP2)`
+bit 14 on Linux and the `hw.optional.arm.FEAT_BF16` sysctl on macOS; `false` on Windows.
+velt/half's `dotBf16Fast` and `dotBf16FastAt` ask once for a dot product and run a function gated
+on `bf16-arm`, whose loops are `velt_simd_f32x4_bfdot`, where the answer is yes, and
+`velt_simd_f32x4_dot_add_fast_bf16x8` otherwise, so a build for any arm64 CPU runs `bfdot` where
+the CPU has it. `bf16x8.dotAddFast`, a step of a caller's loop, asks nothing and is the latter
+alone. In code built for a `--cpu` for which clang defines
+`__ARM_FEATURE_BF16_VECTOR_ARITHMETIC`, `velt_simd_has_bf16_arm()` is `1` everywhere and nothing
+is asked.
+
 `velt_simd_f16x8_<op>` for `add`, `sub`, `mul`, `div`, `mul_add`, `mul_add_fast`, `min`,
 `max`, `neg`, `abs`, `sqrt` and the comparisons `eq`, `ne`, `lt`, `le`, `gt`, `ge` (giving a
 `mask16x8`) take `(v)` for `neg`, `abs` and `sqrt`, `(a, b, c)` giving `a * b + c` for `mul_add` and
@@ -609,8 +626,9 @@ constant; with an FMA level (`x86-64-v3`) `velt_math_fma_f64` is one instruction
 LLVM gives a function that calls one of these operations the extension's own feature (`+sha2`,
 `+sha`, `+pclmul`, `+aes`), which it uses for nothing else; a *gated* function (VIR
 `Function::target`, HIR `Program::cpu_targets`, from std's `targetFeature("sha-arm" | "sha-x86" |
-"clmul-x86" | "clmul-arm" | "aes-x86" | "aes-arm" | "fma-x86")`, every call of which sema keeps
-behind the check) gets the extension's whole set (`+sha,+ssse3,+sse4.1` on x86), and the check of
+"clmul-x86" | "clmul-arm" | "aes-x86" | "aes-arm" | "fma-x86" | "bf16-arm")`, every call of which
+sema keeps behind the check) gets the extension's whole set (`+sha,+ssse3,+sse4.1` on x86), and
+the check of
 its own extension (`velt_simd_has_<ext>`) is the constant `1` there, so the emulation behind it is
 dead code. The ordinary functions it calls that check that extension (the `velt/simd` methods),
 themselves or through their callees, are cloned for it by `velt_opt` with the check `true`, so this
