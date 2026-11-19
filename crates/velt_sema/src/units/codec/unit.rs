@@ -19,16 +19,24 @@ use crate::hir::{TyId, TyTable};
 use crate::types::Types;
 use crate::SourceModule;
 
-/// The version of the encoding: the first bytes of every encoded unit.
-pub(crate) const FORMAT: &[u8; 8] = b"vunit\x00\x00\x04";
+/// The version of the encoding: the first bytes of every encoded unit, before the checksum of
+/// the rest ([`checksum`]).
+pub(crate) const FORMAT: &[u8; 8] = b"vunit\x00\x00\x05";
 
-/// The fields of `Ctx` a unit saves (`save`), in order, then those it does not (`skip`: as
-/// `Ctx::over` makes them). Generates the field walk of the encoder and decoder.
+/// The fields of `Ctx` a unit saves (`save`), in order, then those it does not: `skip` (the
+/// caller's, memos, what every check installs again) and `empty` (state of one pass, or the
+/// app's alone: at a unit's end as `Ctx::over` makes it, which a test checks,
+/// [`empty_fields_differing`]). Generates the field walk of the encoder and decoder.
 macro_rules! unit_fields {
-    (save: [$($p:ident),* $(,)?], special: [$($sp:ident),* $(,)?], skip: [$($s:ident),* $(,)?] $(,)?) => {
+    (
+        save: [$($p:ident),* $(,)?],
+        special: [$($sp:ident),* $(,)?],
+        skip: [$($s:ident),* $(,)?],
+        empty: [$($e:ident),* $(,)?] $(,)?
+    ) => {
         /// Encode the saved fields of `cx`, with the bytes each took.
         fn enc_fields(cx: &Ctx, w: &mut Writer, sizes: &mut Vec<(&'static str, usize)>) {
-            let Ctx { $($p,)* $($sp,)* $($s: _,)* } = cx;
+            let Ctx { $($p,)* $($sp,)* $($s: _,)* $($e: _,)* } = cx;
             $(
                 let at = w.out.len();
                 Codec::enc($p, w);
@@ -46,6 +54,20 @@ macro_rules! unit_fields {
                 cx.$p = Codec::dec(r);
             )*
             $(special::dec(stringify!($sp), &mut cx.$sp, r);)*
+        }
+
+        /// The `empty` fields of a finished unit `cx` that are not as in `fresh` (a context
+        /// `Ctx::over` made): name, then each one's shape ([`Fresh`]).
+        #[cfg(test)]
+        pub(super) fn empty_fields_differing(cx: &Ctx, fresh: &Ctx) -> Vec<(&'static str, String, String)> {
+            let mut out = vec![];
+            $(
+                let (a, b) = (Fresh::shape(&cx.$e), Fresh::shape(&fresh.$e));
+                if a != b {
+                    out.push((stringify!($e), a, b));
+                }
+            )*
+            out
         }
     };
 }
@@ -75,7 +97,7 @@ unit_fields! {
     skip: [
         // The caller's (`decode_unit`), or set again by every check that uses the unit.
         modules, root, gen, units, import_targets, loads,
-        loads_added,
+        loads_added, unit_base, units_stage,
         stack_base, stack_budget, held_borrows, ide, body_records, source_facts, std_missed,
         kept_demand,
         // Memos, built again on demand.
@@ -83,24 +105,82 @@ unit_fields! {
         canon_memo, canon_errors, canon_keys, primitive_statics, classes_below, groups,
         shared_memo, pure_fns, subclasses, native_libraries,
         decorator_scopes, export_memo,
-        // State within one pass or one body's check, empty or spent when a unit is finished.
-        bad_key_sites, closure_constraints, adapter_uses, in_blanket, impl_scope,
-        narrowed_fields, shapes_done, query_locals, bodies_ok, checking_unused_aliases, shaping,
-        assigned_objects, replaced_unions, module_slots, global_cycles, fn_value_depth,
-        thread_local_uses, typing_globals, display_params, dropped_closures, frozen_elems,
-        loop_roots, literal_hosts, literal_display, throw_checks, collected_defs,
-        iface_generators, copy_diags, copy_uses, unwraps, reported_captures, reported_mutations,
-        in_shared, crossing_callbacks, matching_context, checking, ret_checks, rec, overridden,
-        moved_consts, borrow_pass_errors, fresh_checks, param_field_writes,
-        param_proxy_targets, deferred_ts_returns, rechecks, closure_defs, literal_types,
-        literal_found, late_consts, group_defs, readonly_widening,
         // What the source rewrites found, installed again by every check.
         promoted_consts, asserted_rmw, global_props, generic_arrow_fns, generic_arrow_all,
         unsafe_arrow_fns, alias_blocked, kept_nested, closure_groups, group_names,
         has_overloads, gen_throw, overloaded_methods, ns_private, global_namespaces, recovered,
+        // Set again by the app's collection (`collect::collect_app`).
+        shapes_done, bodies_ok, collected_defs,
+        // std's own: read or taken only by std's bodies' check and std's passes after the
+        // bodies, never by a later unit's (whose passes look at their unit's functions,
+        // `Ctx::unit_fns`). A unit is saved once std is a check of its own, after those passes.
+        thread_local_uses, throw_checks, loop_roots, closure_defs, rec,
+    ],
+    empty: [
+        // State within one pass or one body's check, empty when a unit is finished.
+        bad_key_sites, closure_constraints, adapter_uses, in_blanket, impl_scope,
+        narrowed_fields, query_locals, checking_unused_aliases, shaping,
+        assigned_objects, replaced_unions, module_slots, global_cycles, fn_value_depth,
+        typing_globals, display_params, dropped_closures, frozen_elems,
+        literal_hosts, literal_display,
+        iface_generators, copy_diags, copy_uses, unwraps, reported_captures, reported_mutations,
+        in_shared, crossing_callbacks, matching_context, checking, ret_checks, overridden,
+        moved_consts, borrow_pass_errors, fresh_checks, param_field_writes,
+        param_proxy_targets, deferred_ts_returns, rechecks, literal_types,
+        literal_found, late_consts, group_defs, readonly_widening,
         // The app's alone: empty in std's unit.
         jsx_providers, jsx_refusals, poisoned, added_defs,
     ],
+}
+
+/// A field's shape, to tell it from a fresh context's ([`empty_fields_differing`]): how many
+/// entries a collection holds, a flag's or a counter's value.
+#[cfg(test)]
+pub(crate) trait Fresh {
+    fn shape(&self) -> String;
+}
+
+#[cfg(test)]
+mod fresh {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use rustc_hash::{FxHashMap, FxHashSet};
+
+    use super::Fresh;
+
+    macro_rules! by_len {
+        ($($t:ident<$($g:ident),*>),*) => {$(
+            impl<$($g),*> Fresh for $t<$($g),*> {
+                fn shape(&self) -> String {
+                    format!("{} entries", self.len())
+                }
+            }
+        )*};
+    }
+    by_len!(Vec<T>, BTreeMap<K, V>, BTreeSet<K>, FxHashMap<K, V>, FxHashSet<K>);
+
+    macro_rules! by_value {
+        ($($t:ty),*) => {$(
+            impl Fresh for $t {
+                fn shape(&self) -> String {
+                    format!("{self}")
+                }
+            }
+        )*};
+    }
+    by_value!(bool, u32, usize);
+
+    impl<T> Fresh for Option<T> {
+        fn shape(&self) -> String {
+            format!("some: {}", self.is_some())
+        }
+    }
+
+    impl<T: Fresh> Fresh for std::cell::RefCell<T> {
+        fn shape(&self) -> String {
+            self.borrow().shape()
+        }
+    }
 }
 
 /// The fields saved in part.
@@ -223,9 +303,23 @@ pub(crate) fn encode_unit_sized(cx: &Ctx) -> (Vec<u8>, Vec<(&'static str, usize)
     for m in &cx.modules {
         m.path.enc(&mut head);
     }
+    let mut rest = head.out.split_off(FORMAT.len());
+    rest.extend_from_slice(&body);
     let mut out = head.out;
-    out.extend_from_slice(&body);
+    out.extend_from_slice(&checksum(&rest).to_le_bytes());
+    out.extend_from_slice(&rest);
     (out, sizes)
+}
+
+/// The checksum of a unit's bytes after its [`FORMAT`] and the checksum itself: a damaged unit
+/// (a cut file, a flipped bit) is refused before anything of it is decoded, and so is a cache
+/// miss. Not a defence against a unit made to collide: the store is the user's own.
+fn checksum(bytes: &[u8]) -> u64 {
+    use std::hash::Hasher;
+    let mut h = rustc_hash::FxHasher::default();
+    h.write(bytes);
+    h.write_usize(bytes.len());
+    h.finish()
 }
 
 /// The unit [`encode_unit`] encoded, over `modules` (the unit's modules, in the order it had
@@ -233,8 +327,10 @@ pub(crate) fn encode_unit_sized(cx: &Ctx) -> (Vec<u8>, Vec<(&'static str, usize)
 /// not a whole encoding of this [`FORMAT`] or not of as many modules. The fields a unit does not
 /// save are as [`Ctx::over`] makes them, and the definitions are frozen.
 ///
-/// Runs on a thread with sema's stack (decoding nests as deep as the unit's expressions; the
-/// fragments are decoded right there, `velt_syntax::with_stack_of`).
+/// Runs on a thread with sema's stack (`SEMA_STACK_BYTES`): decoding nests as deep as the
+/// unit's expressions, the fragments are decoded right there (`velt_syntax::with_stack_of`),
+/// and the unit's decode stack is sema's (`with_decode_stack`). A unit whose checksum does not
+/// match is `None`.
 ///
 /// # Safety
 ///
@@ -244,7 +340,11 @@ pub(crate) unsafe fn decode_unit<'m>(
     arena: &Arena,
     modules: Vec<&'m SourceModule>,
 ) -> Option<Ctx<'m>> {
-    let rest = bytes.strip_prefix(FORMAT.as_slice())?;
+    let sealed = bytes.strip_prefix(FORMAT.as_slice())?;
+    let (sum, rest) = sealed.split_at_checked(8)?;
+    if u64::from_le_bytes(sum.try_into().ok()?) != checksum(rest) {
+        return None;
+    }
     let mut head = Reader::bare(rest, &[]);
     let n = head.len();
     let nfiles = head.len();
@@ -263,19 +363,23 @@ pub(crate) unsafe fn decode_unit<'m>(
     if head.failed {
         return None;
     }
-    let body_at = FORMAT.len() + head.pos;
+    let body_at = FORMAT.len() + 8 + head.pos;
     let files = std::rc::Rc::new(files);
     let mut cx = Ctx::over(modules, 0);
+    // On sema's stack, as the caller's thread is: the unit's readers, and with them every entry
+    // of its tables decoded later, stop at that stack's depth (`Src` keeps it).
     let done = velt_syntax::with_stack_of(crate::SEMA_STACK_BYTES, || {
-        // SAFETY: the caller keeps `arena` alive longer than `cx` (above).
-        let mut r = unsafe { Reader::over_unit(bytes, body_at, &files, arena) };
-        for i in 0..n {
-            if r.uint() != i as u64 {
-                return false;
+        super::with_decode_stack(crate::SEMA_STACK_BUDGET, || {
+            // SAFETY: the caller keeps `arena` alive longer than `cx` (above).
+            let mut r = unsafe { Reader::over_unit(bytes, body_at, &files, arena) };
+            for i in 0..n {
+                if r.uint() != i as u64 {
+                    return false;
+                }
             }
-        }
-        dec_fields(&mut cx, &mut r);
-        r.done()
+            dec_fields(&mut cx, &mut r);
+            r.done()
+        })
     });
     if !done {
         return None;
@@ -395,7 +499,7 @@ impl Codec for Box<str> {
 /// The paths of the modules of the unit [`encode_unit`] encoded, in its order (`None` when
 /// `bytes` is not of this [`FORMAT`]): [`decode_unit`] takes its modules in this order.
 pub(crate) fn unit_module_paths(bytes: &[u8]) -> Option<Vec<String>> {
-    let rest = bytes.strip_prefix(FORMAT.as_slice())?;
+    let rest = bytes.strip_prefix(FORMAT.as_slice())?.get(8..)?;
     let mut head = Reader::bare(rest, &[]);
     let n = head.len();
     let nfiles = head.len();

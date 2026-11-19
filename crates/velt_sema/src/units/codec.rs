@@ -40,7 +40,7 @@ mod lazy_tests;
 mod tables;
 #[cfg(test)]
 mod tests;
-mod unit;
+pub(crate) mod unit;
 #[cfg(test)]
 mod unit_tests;
 mod values;
