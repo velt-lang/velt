@@ -354,9 +354,14 @@ export const SK_ENDING: u32 = 2;
 export const T_TRANSFER: usize = 168;
 /** The task's id for `velt_rt_task_id` (0 until first asked for; sched_id.velt). */
 export const T_ID: usize = 176;
+/**
+ * The task's yields waiting for their turn, in the order they came (sched_yield.velt): the last
+ * one of a circular list (0: none).
+ */
+export const T_YIELDS: usize = 184;
 /** The join handle (a heap future: its header, then its result slot at `T_SLOT`). */
-export const T_JOIN: usize = 184;
-export const T_SLOT: usize = 200;
+export const T_JOIN: usize = 192;
+export const T_SLOT: usize = 208;
 
 /** A task's states. */
 export const IDLE: u32 = 0;
@@ -374,6 +379,8 @@ export const DONE: u32 = 4;
  * root was polled as a microtask's job or by a due sleep (sched_run.velt `runWoken` reads it).
  */
 export const ROOT: u32 = 4;
+/** Yields of it wait for their turn (`T_YIELDS`): its next poll fires them (sched_yield.velt). */
+export const YIELDS: u32 = 1;
 /**
  * Its root (or a child state polled with the root's cx: an inline `Promise.all`'s) yielded in this
  * poll (sched_yield.velt): what yielded resumes only in a later poll, though this one may poll the

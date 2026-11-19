@@ -1,0 +1,110 @@
+// velt/lang/hooks (internal): a task's turns that come one at a time in its poll under the
+// executor in Velt (sched_run.velt `runWoken`): its due sleeps, in timer order (sched_sleep.velt),
+// then its yields, in the order they were made (sched_yield.velt). Each resumes what waits for it,
+// then, before the next, the task's microtasks run, the promises they woke and its root if it
+// woke, as Node runs the microtasks between two timers' callbacks and between two immediates
+// (#3241).
+
+import * as m from "./sched_mem";
+import * as node from "./sched_node";
+import * as wn from "./sched_node_woken";
+import * as run from "./sched_run";
+import * as sl from "./sched_sleep";
+import * as t from "./sched_task";
+import * as wk from "./sched_wake";
+import * as yl from "./sched_yield";
+
+/**
+ * Fires task `k`'s due sleeps one at a time, in timer order: each resumes its waiter at once, and
+ * the turn's reactions run before the next (`between`). A waiter that polls several sleeps
+ * (`Promise.all`) finds only those fired so far ready. A waiter woken meanwhile (it yielded) is
+ * not resumed again in this poll: that sleep and the ones after it fire in the next.
+ */
+export function fireDue(e: usize, k: usize): void {
+  t.flags(k, 0, t.TIMED);
+  // The root woke while it was polled here (or yielded earlier in this poll): it is not polled
+  // again in this poll, which would take its wake.
+  let woken = t.has(k, t.ROOT_YIELDED);
+  while (true) {
+    const f = sl.firstDue(k);
+    if (f === 0) {
+      return;
+    }
+    const w0 = sl.waiter(f);
+    const own = w0 !== k && node.ownNode(k, w0);
+    if (w0 === k ? woken : own && node.queued(w0)) {
+      t.flags(k, t.TIMED, 0);
+      return;
+    }
+    woken = resume(e, k, sl.fire(k, f), own, woken);
+  }
+}
+
+/**
+ * Fires the yields task `k` made before this poll, one at a time in the order they were made:
+ * each resumes what waits for it, and the turn's reactions run before the next (`between`).
+ * Yields made meanwhile wait for the next poll, as Node's immediates set in its check phase.
+ */
+export function fireYields(e: usize, k: usize): void {
+  let woken = t.has(k, t.ROOT_YIELDED);
+  let y = yl.take(k);
+  while (y !== 0) {
+    const nx = yl.next(y);
+    const w = yl.fire(y);
+    if (w !== 0) {
+      woken = resume(e, k, w, w !== k && node.ownNode(k, w), woken);
+    }
+    y = nx;
+  }
+}
+
+/**
+ * Resumes waiter `w` (a waker's clone it takes over) of a turn of task `k`: its root, its own
+ * started promise (`own`), or anything else, woken. Then `between`. Whether the root woke (from
+ * `woken` on).
+ */
+function resume(e: usize, k: usize, w: usize, own: bool, woken: bool): bool {
+  if (w === k) {
+    // The turn's reference first (the executor's keeps `k`): an uncaught error in the poll ends
+    // the program, which gives back the references the executor holds (sched_exit.velt).
+    wk.release(k);
+    run.pollRootAgain(e, k);
+    return between(e, k, m.load32(k + t.T_STATE) === t.NOTIFIED);
+  }
+  if (own) {
+    node.run(k, w, false);
+    node.release(w);
+  } else {
+    m.wakeOwned(w);
+  }
+  return between(e, k, woken);
+}
+
+/**
+ * After a turn's waiter ran: the task's microtasks, then the started promises they woke (once:
+ * those woken again wait for the next poll), then the root if it woke, unless it woke while it
+ * was polled in this poll (`woken`), or it yielded in this poll (a microtask's entry may have
+ * resumed it meanwhile): polled again, it would stay suspended and take its own wake. Whether the
+ * root woke (from `woken` on).
+ */
+function between(e: usize, k: usize, woken: bool): bool {
+  run.drain(e, k);
+  let n = wn.takeWoken(k);
+  while (n !== 0) {
+    const nx = wn.nextWoken(n);
+    node.run(k, n, true);
+    node.release(n);
+    run.drain(e, k);
+    n = nx;
+  }
+  if (t.has(k, t.ROOT_YIELDED)) {
+    return true;
+  }
+  if (!woken && !t.has(k, t.ROOT_DONE) && m.load32(k + t.T_STATE) === t.NOTIFIED) {
+    m.store32(k + t.T_STATE, t.RUNNING);
+    run.pollRootAgain(e, k);
+    run.drain(e, k);
+    return m.load32(k + t.T_STATE) === t.NOTIFIED;
+  }
+  return woken;
+}

@@ -1,0 +1,20 @@
+// The root of `main` resumes during a started promise's turn (the promise settles, a microtask
+// resumes the root) and yields there (#3241): its wake must survive the rest of that turn, so the
+// code after the yield runs. The expected output is Node's for this program with `yieldNow` a
+// promise `setImmediate` resolves (and `main()` called at the end).
+
+async function later(): Promise<i64> {
+  await yieldNow();
+  return 1;
+}
+
+async function main() {
+  const started = later();
+  console.log(await started);
+  await yieldNow();
+  console.log("after the yield");
+  const again = later();
+  console.log(await again);
+  await yieldNow();
+  console.log("done");
+}
