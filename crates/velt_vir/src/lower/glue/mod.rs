@@ -450,7 +450,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     /// Call a function pointer obtained from a dispatcher.
-    pub(super) fn call_entry(
+    pub(in crate::lower) fn call_entry(
         &mut self,
         f: Operand,
         args: Vec<Operand>,
@@ -476,14 +476,14 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     /// Branch: continue in a fresh block when `cond` holds, else jump to `skip`.
-    pub(super) fn when(&mut self, cond: Operand, skip: vir::BlockId) {
+    pub(in crate::lower) fn when(&mut self, cond: Operand, skip: vir::BlockId) {
         let then = self.new_block();
         self.branch(cond, then, skip);
         self.switch_to(then);
     }
 
     /// `ptr != null` as a Bool operand.
-    pub(super) fn non_null(&mut self, p: Operand) -> Operand {
+    pub(in crate::lower) fn non_null(&mut self, p: Operand) -> Operand {
         self.rvalue_temp(
             Ty::Bool,
             vir::Rvalue::Binary(vir::BinOp::Ne, p, super::cint(0, Ty::Ptr)),
