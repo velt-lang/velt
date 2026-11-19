@@ -1,11 +1,14 @@
+import { currentWorker } from "velt/task";
+
 const MOVED = new Atomic<i64>(0);
 
 // Moved to a spare by the rescue of `main`'s spin, it sleeps there: the spare is asked to retire
-// while that sleep is pending.
+// while that sleep is pending. (Diagnostic copy: prints the workers it ran on.)
 async function sleeper(r: i64): Promise<void> {
   MOVED.store(r + 1);
+  const before = currentWorker();
   await sleep(300);
-  console.log(`slept ${r}`);
+  console.log(`slept ${r} (on ${before} then ${currentWorker()})`);
 }
 
 async function main() {
@@ -14,6 +17,6 @@ async function main() {
     // Only a rescue runs the task while this poll spins.
     while (MOVED.load() <= r) {}
     await t;
-    console.log(`round ${r}`);
+    console.log(`round ${r} (main on ${currentWorker()})`);
   }
 }
