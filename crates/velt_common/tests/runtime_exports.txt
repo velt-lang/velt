@@ -11,7 +11,6 @@ velt_rt velt_rt_array_view_put
 velt_rt velt_rt_array_view_remove
 velt_rt velt_rt_await_ready
 velt_rt velt_rt_await_tick
-velt_rt velt_rt_block_on
 velt_rt velt_rt_bytes_copy
 velt_rt velt_rt_bytes_copy_within
 velt_rt velt_rt_bytes_drop
@@ -258,12 +257,6 @@ velt_rt velt_rt_signal_new
 velt_rt velt_rt_signal_reason
 velt_rt velt_rt_signal_retain
 velt_rt velt_rt_signal_wait
-velt_rt velt_rt_sleep
-velt_rt velt_rt_spawn
-velt_rt velt_rt_spawn_detached
-velt_rt velt_rt_spawn_fut
-velt_rt velt_rt_spawn_target
-velt_rt velt_rt_spawn_transfer
 velt_rt velt_rt_start
 velt_rt velt_rt_statics
 velt_rt velt_rt_stdin_read_all_bytes_sync

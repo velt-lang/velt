@@ -1,11 +1,11 @@
 //! Async executor ABI (docs/internals/contracts/rt_abi_async.md): the awaitable protocol shared by compiled
-//! state machines and runtime leaf futures, plus spawning, joining and `block_on` on tokio.
+//! state machines and runtime leaf futures. Programs spawn, join and run `main` on the executor in
+//! Velt (std/lang/hooks/sched.velt); the runtime keeps only its own tasks (runtime/).
 //!
 //! * A compiled `async function` is a state machine: `poll(state, cx) -> u32` (0 = Pending,
 //!   1 = Ready, result at offset 0 of the state) and `drop(state)`. Awaiting a compiled child whose
 //!   state is embedded in the parent's state is a direct call; no runtime involvement.
-//! * Everything the runtime produces (timers, fs/net/http operations, join handles, boxed compiled
-//!   futures) is a heap `VeltFut`: a 16-byte header `{ poll, drop }` followed by the result slot at
+//! * Everything the runtime produces (fs/net/http operations, boxed compiled futures) is a heap `VeltFut`: a 16-byte header `{ poll, drop }` followed by the result slot at
 //!   offset 16. Awaiting one is `poll_fut(f, cx)` then reading the slot, then
 //!   `drop_fut(f)`.
 //! * `cx` is a [`VeltCx`]: the task's await word (local/micro.rs) and its waker, a pointer to a
@@ -22,7 +22,6 @@ pub mod local;
 pub(crate) mod quiet;
 pub mod runtime;
 pub mod shared;
-pub mod spawn;
 pub mod waker;
 
 use std::ffi::c_void;
