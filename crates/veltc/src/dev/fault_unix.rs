@@ -1,4 +1,4 @@
-//! Unix: a JIT host that gets a `SIGSEGV` says where, on stderr, before it dies: what it
+//! Unix: a JIT host that gets a `SIGSEGV` or a `SIGBUS` says where, on stderr, before it dies: what it
 //! touched, the faulting instruction, the thread, and what the reload thread was doing, which
 //! tells a fault in the compiler from one in the swapped program (#3194). A crash is otherwise
 //! only a signal number.
@@ -7,8 +7,10 @@
 //! report, or none), so the fault happens again and ends the process as it would have: the
 //! supervisor still sees the signal.
 //!
-//! Only `SIGSEGV`: `SIGBUS` is left to the program (std reports a truncated mapped file there,
-//! and installs only where nothing else handles it).
+//! Both signals: macOS delivers a write to a protected page (read-only code, a guard page) as
+//! `SIGBUS`, and only an unmapped address as `SIGSEGV`. Rust's start-up handles both in the host
+//! already, so the program's own `SIGBUS` report (std's, of a truncated mapped file, installed
+//! only where nothing handles the signal) is not installed in a host with or without this.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -39,7 +41,12 @@ static STEP: AtomicUsize = AtomicUsize::new(0);
 /// Where the `velt` executable is loaded: an instruction address minus this is an offset a
 /// symbolizer takes. 0 when unknown.
 static IMAGE: AtomicUsize = AtomicUsize::new(0);
-static mut PREVIOUS: std::mem::MaybeUninit<libc::sigaction> = std::mem::MaybeUninit::zeroed();
+/// The handlers replaced, per signal of [`SIGNALS`].
+static mut PREVIOUS: [std::mem::MaybeUninit<libc::sigaction>; 2] = [
+    std::mem::MaybeUninit::zeroed(),
+    std::mem::MaybeUninit::zeroed(),
+];
+const SIGNALS: [libc::c_int; 2] = [libc::SIGSEGV, libc::SIGBUS];
 
 /// A reload request arrived.
 pub fn reload_started() {
@@ -71,8 +78,10 @@ pub fn install() {
         // overflow is reported too.
         sa.sa_flags = libc::SA_SIGINFO | libc::SA_ONSTACK;
         libc::sigemptyset(&mut sa.sa_mask);
-        let previous = std::ptr::addr_of_mut!(PREVIOUS).cast::<libc::sigaction>();
-        libc::sigaction(libc::SIGSEGV, &sa, previous);
+        for (k, sig) in SIGNALS.into_iter().enumerate() {
+            let previous = std::ptr::addr_of_mut!(PREVIOUS[k]).cast::<libc::sigaction>();
+            libc::sigaction(sig, &sa, previous);
+        }
     }
 }
 
@@ -120,7 +129,8 @@ extern "C" fn on_fault(sig: libc::c_int, info: *mut libc::siginfo_t, context: *m
             line.text("\n");
             line.write();
         }
-        let previous = std::ptr::addr_of!(PREVIOUS).cast::<libc::sigaction>();
+        let k = usize::from(sig != libc::SIGSEGV);
+        let previous = std::ptr::addr_of!(PREVIOUS[k]).cast::<libc::sigaction>();
         libc::sigaction(sig, previous, std::ptr::null_mut());
         // A fault happens again when the handler returns; a sent signal does not.
         if code <= 0 {

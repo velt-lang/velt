@@ -449,11 +449,15 @@ fn fault_during_reload_says_where() {
     ok(dev.wait_stderr(Mark::default(), "velt dev: started"));
     let mark = dev.mark();
     save(&dir.path().join("main.velt"), main.replace("v1", "v2"));
-    let crashed = "velt dev: the running program crashed during the reload (signal 11)";
-    ok(dev.wait_stderr(mark, crashed));
+    // A write to a page that allows none: a protection fault, which macOS delivers as SIGBUS.
+    let signal = if cfg!(target_os = "macos") { 10 } else { 11 };
+    let crashed =
+        format!("velt dev: the running program crashed during the reload (signal {signal})");
+    ok(dev.wait_stderr(mark, &crashed));
     let lines = dev.stderr_since(mark);
+    let report = format!("velt dev: signal {signal} touching 0x");
     let reports: Vec<_> = (lines.iter())
-        .filter(|l| l.starts_with("velt dev: signal 11 touching 0x") && l.contains(" at 0x"))
+        .filter(|l| l.starts_with(&report) && l.contains(" at 0x"))
         .collect();
     assert_eq!(reports.len(), 1, "{lines:?}");
     let tail = "on thread `velt-dev-reload`; reload 1: generating and swapping code";
