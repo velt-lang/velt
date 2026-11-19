@@ -41,6 +41,7 @@ impl<'h> Cx<'h> {
     }
 
     pub(super) fn intern(&mut self, k: TyKind) -> TyId {
+        let k = self.tuple_rest_fixed(k);
         // `TyTable::intern` makes an option of an option one option; a `U | null` of a `U`
         // that allows `undefined` would lose one nothing (issue #930): report it.
         if let TyKind::Option(e, n) = &k {
