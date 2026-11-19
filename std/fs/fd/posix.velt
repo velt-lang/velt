@@ -196,14 +196,14 @@ export function fstatAt(
 }
 
 /**
- * `mmap` of the first `len` bytes of `fd`, read-only and shared with the file (`PROT_READ`,
- * `MAP_SHARED`: 1 and 1 on macOS and Linux): the mapping's address, or 0 with the error for
- * `lastError()`.
+ * `mmap` of the `len` bytes of `fd` from byte `offset` (a multiple of the page size),
+ * read-only and shared with the file (`PROT_READ`, `MAP_SHARED`: 1 and 1 on macOS and Linux):
+ * the mapping's address, or 0 with the error for `lastError()`.
  */
-export function mapRead(fd: i32, len: usize): usize {
+export function mapRead(fd: i32, len: usize, offset: i64): usize {
   // SAFETY: a new mapping at an address the system chooses changes no memory this program
   // uses; the arguments are integers.
-  const p = unsafe { mmap(null, len, 1, 1, fd, 0) };
+  const p = unsafe { mmap(null, len, 1, 1, fd, offset) };
   const address = p === null ? 0 : Ptr.addressOf(p);
   // `MAP_FAILED` is `(void *) -1`.
   return address + 1 == 0 ? 0 : address;
@@ -211,13 +211,14 @@ export function mapRead(fd: i32, len: usize): usize {
 
 /**
  * `madvise(address, len, advice)` on part of a mapping `mapRead` returned: 0, or -1. The
- * advice is `MADV_NORMAL` 0, `MADV_RANDOM` 1, `MADV_SEQUENTIAL` 2 or `MADV_WILLNEED` 3, the
- * same numbers on macOS and Linux.
+ * advice is `MADV_NORMAL` 0, `MADV_RANDOM` 1, `MADV_SEQUENTIAL` 2, `MADV_WILLNEED` 3 or
+ * `MADV_DONTNEED` 4, the same numbers on macOS and Linux.
  */
 export function adviseMap(address: usize, len: usize, advice: i32): i32 {
   // SAFETY: `address..address + len` is inside a live mapping (the caller's, which
-  // `MappedFile` checks), and these four advices change how pages are read ahead, never
-  // their contents.
+  // `MappedFile` checks) that is read-only and shared with its file: the first four advices
+  // change how pages are read ahead, and `MADV_DONTNEED` lets go of pages that the next read
+  // takes from the file again, so none changes what is read.
   return unsafe { madvise(Ptr.at<void>(address), len, advice) };
 }
 

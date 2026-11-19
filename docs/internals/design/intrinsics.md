@@ -186,6 +186,11 @@ comment. velt/ffi's unsafe functions are the public surface ([c-ffi.md](c-ffi.md
   function value in a `read` callback (`Boxing::read_indirect`).
 - `statePoll(poll, state, cx)`, `stateDrop(drop, at)` and `addressCall(f, a)` call a compiled state
   machine's poll and drop functions and a waker table's entries at their addresses.
+- `addressCallWord(f, a: u64)` and `addressCall3(f, a, b, c)` (three `usize`s) call the C
+  function at address `f`, which returns nothing: the weak core's calls of retain, release and
+  trace glue (`std/lang/hooks/weak*.velt`). Each is a call with the callee's own signature, which
+  an indirect call on wasm32 must match (`crates/velt_vir/src/lower/raw_memory.rs`
+  `address_call_void`).
 - `fnAddress(f)` is the address of a module-level function C may call with the C calling
   convention (named directly, not generic, async or throwing, and taking and returning only
   numbers and `bool`, which sema checks). `exportedAddress(f)` is the address of a function

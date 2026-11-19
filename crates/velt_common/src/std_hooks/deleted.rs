@@ -7,6 +7,21 @@
 /// replaced extern is defined by `velt_rt` unless it is listed here, and that one listed here is
 /// defined nowhere and named by no compiler source, runtime or std file.
 pub const DELETED: &[&str] = &[
+    // #3145: the weak core (std/lang/hooks/weak*.velt): lowering's weak hooks, and the drops
+    // std's `WeakMap`, `WeakSet` and `WeakRef` call.
+    "velt_rt_weak_release",
+    "velt_rt_weakmap_new",
+    "velt_rt_weakmap_set",
+    "velt_rt_weakmap_set_traced",
+    "velt_rt_weakmap_get",
+    "velt_rt_weakmap_has",
+    "velt_rt_weakmap_delete",
+    "velt_rt_weakmap_drop",
+    "velt_rt_weakref_new",
+    "velt_rt_weakref_new_with",
+    "velt_rt_weakref_word",
+    "velt_rt_weakref_deref",
+    "velt_rt_weakref_drop",
     // #2196: velt/os's facts (std/os/sys_*.velt over the C library and Win32, the build's
     // `x64`/`arm64` condition for the architecture), which only std called.
     "velt_rt_os_platform",

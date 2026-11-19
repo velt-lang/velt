@@ -17,6 +17,7 @@ pub mod install;
 pub mod layout;
 pub mod members;
 pub mod pin;
+pub mod read_only;
 pub mod release;
 pub mod requirement;
 pub mod signature;

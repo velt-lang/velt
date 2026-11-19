@@ -49,6 +49,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         // Calls through a function's address; a slot's put and transfer transfer their value
         // (a store, of a value already transferred, runs no code), a take hands one out.
         I::StatePoll | I::StateDrop | I::AddressCall | I::CatchUnwindAt => true,
+        I::AddressCallWord | I::AddressCall3 => true,
         I::SlotPut | I::SlotTake => true,
         I::SlotTransfer => true,
         I::FnAddress | I::SlotSize | I::SlotStore | I::PromiseAt | I::RawAlloc => false,
@@ -203,7 +204,9 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::WeakMapValue
         | I::WeakRefNew
         | I::InspectNested
-        | I::WeakRefDeref => false,
+        | I::WeakRefDeref
+        | I::WeakMapDrop
+        | I::WeakRefDrop => false,
         // Record views: a view's source read or written through `any`, no formatting.
         I::RecordViewSync
         | I::RecordViewIs

@@ -48,6 +48,10 @@ impl FnLower<'_, '_> {
             (I::StatePoll, [p, s, cx]) => self.state_poll(p, s, cx),
             (I::StateDrop, [d, s]) => self.state_drop(d, s),
             (I::AddressCall, [f, a]) => self.address_call(f, a, ty),
+            (I::AddressCallWord, [f, a]) => self.address_call_void(f, &[(a, Ty::U64)]),
+            (I::AddressCall3, [f, a, b, c]) => {
+                self.address_call_void(f, &[(a, Ty::Ptr), (b, Ty::Ptr), (c, Ty::Ptr)])
+            }
             (I::FnAddress, [f]) => self.fn_address(f, ty),
             (I::SlotSize, []) => self.slot_size(ty),
             (I::SlotPut, [at, v]) => self.slot_put(at, v),
@@ -515,7 +519,9 @@ impl FnLower<'_, '_> {
                 | I::WeakMapDelete
                 | I::WeakMapValue
                 | I::WeakRefNew
-                | I::WeakRefDeref,
+                | I::WeakRefDeref
+                | I::WeakMapDrop
+                | I::WeakRefDrop,
                 _,
             ) => self.weak_intrinsic(i, args, ty),
             (I::ArrayDataPtr, [xs]) => {

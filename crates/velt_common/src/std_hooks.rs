@@ -47,8 +47,11 @@ pub use crate::hook_sig::{FnSig, Mode, Param, Sig, T};
 #[macro_use]
 mod hook;
 pub use hook::Hook;
+#[macro_use]
+mod weak_hooks;
 
-hooks! {
+// The table: these rows, then the weak core's (`weak_hooks.rs`), given to `hooks!` together.
+with_weak_hooks! {
     // array.velt: array constructors.
     /// `new Array<T>(n).fill(v)` (`velt_sema` `array_ctor.rs`).
     array_filled => lang_hooks_array, "arrayFilled", sig(<A>(f64, &A) -> [A]);
