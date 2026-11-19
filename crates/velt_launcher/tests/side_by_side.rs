@@ -253,7 +253,8 @@ fn yanked_releases_are_skipped_unless_named() {
         br#"{"format": 1, "releases": [{"version": "0.1.1"}]}"#.to_vec(),
     );
     let fresh = m.package("fresh", Some("=0.1.0"));
-    std::fs::remove_dir_all(m.toolchain("0.1.0")).unwrap();
+    // An installed toolchain's std is read-only: removed as the toolchain's own removal does.
+    velt_toolchain::read_only::remove_tree(&m.toolchain("0.1.0")).unwrap();
     // An exact pin doesn't need the index; a range does.
     m.ok(&fresh, &["build"]);
     let err = m.fail(&m.work, &["toolchain", "install", "0.1"], &[]);

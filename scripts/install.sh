@@ -31,12 +31,20 @@ staging="$root/toolchains/.$version.$$"
 trap 'if [ -n "$staging" ]; then rm -rf "$staging"; fi' EXIT INT TERM
 rm -rf "$staging"
 cp -R "$dist" "$staging"
+old=
 if [ -d "$dest" ]; then
-    mv "$dest" "$root/toolchains/.$version.old.$$"
-    rm -rf "$root/toolchains/.$version.old.$$"
+    old="$root/toolchains/.$version.old.$$"
+    mv "$dest" "$old"
 fi
 mv "$staging" "$dest"
 staging=
+# The new copy is in place before the old one goes. An installed release's std is read-only
+# (velt's installer leaves it so): writable again first, and a copy that still won't go is
+# reported, not fatal.
+if [ -n "$old" ]; then
+    chmod -R u+w "$old" 2>/dev/null || true
+    rm -rf "$old" 2>/dev/null || printf 'warning: could not remove %s; delete it by hand\n' "$old" >&2
+fi
 cp "$dist/bin/velt-launcher" "$root/bin/.velt.$$"
 chmod +x "$root/bin/.velt.$$"
 mv -f "$root/bin/.velt.$$" "$root/bin/velt"
