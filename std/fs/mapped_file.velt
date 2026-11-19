@@ -2,10 +2,10 @@
 // page from the disk when it is first touched and may drop it again when memory is short, so
 // a program works on files larger than memory without reading or copying them.
 
-import { addressArray } from "velt/lang/intrinsics";
+import { addressArrayOwned } from "velt/lang/intrinsics";
 import { adviseMapping, COPIES, mapFile } from "#mapped-source";
 import { osError } from "velt/fs/errors";
-import { copyOf, MapOptions } from "velt/fs/mapped_part";
+import { copyOf, heldAgain, MapOptions, Mapping } from "velt/fs/mapped_part";
 
 /** How a range of a `MappedFile` will be read (`advise`). */
 export type MapAdvice = "normal" | "random" | "sequential" | "willneed" | "dontneed";
@@ -18,14 +18,14 @@ export type MapAdvice = "normal" | "random" | "sequential" | "willneed" | "dontn
  * an array of that number type. Nothing is read when the
  * file is opened; a page comes from the disk when it is first touched.
  *
- * The mapping stays for the rest of the program (it costs address space, not memory), so the
- * arrays stay valid however long they are kept. Every `open` makes a mapping of its own that
- * lasts until the program exits: open a file once and keep the `MappedFile`. A program that
- * opens one per request runs out of mappings (`ENOMEM` after about 65,000 on Linux's default
- * limit).
+ * The arrays keep the mapping: it is given back to the system when the `MappedFile` is closed
+ * (`close()`, `using`, or dropped) and every array it handed out is gone, never earlier, so an
+ * array stays valid however long it is kept. A mapping costs address space, not memory, and a
+ * system allows a limited number at a time (about 65,000 on Linux by default, then `ENOMEM`):
+ * a program that opens many files closes them and lets their arrays go.
  *
- * On Windows a mapped file cannot be removed, renamed or cut short by anyone, for the rest of
- * the program, and `advise` does nothing (it is a hint).
+ * On Windows a mapped file cannot be removed, renamed over or cut short by anyone until its
+ * mapping is given back, and `advise` does nothing (it is a hint).
  *
  * WebAssembly has no mapping: there `open` reads the whole file into memory, also when a part
  * is asked for, and keeps the part; `bytes` is that memory, each typed method gives a copy of
@@ -37,17 +37,56 @@ export type MapAdvice = "normal" | "random" | "sequential" | "willneed" | "dontn
  * and output it had buffered may be lost: map files nothing else writes.
  */
 export class MappedFile {
-  /** The mapped bytes. */
-  readonly bytes: shared<u8[]>;
+  // The mapped bytes, until `close`.
+  private held: shared<u8[]> | null;
   // Where `bytes` starts in memory and in the file. A mapping starts at a page of the file,
   // the multiple of 64 KiB before `from` (`lead()` bytes before `bytes`).
   private readonly address: usize;
   private readonly from: usize;
+  // The mapping's owner block, which every array over it holds (mapped_part.velt); 0 for none.
+  private readonly owner: usize;
+  private readonly size: number;
 
-  private constructor(address: usize, from: usize, bytes: shared<u8[]>) {
-    this.address = address;
-    this.from = from;
-    this.bytes = bytes;
+  private constructor(m: Mapping) {
+    this.address = m.address;
+    this.from = m.from;
+    this.owner = m.owner;
+    this.size = m.bytes.length as number;
+    this.held = m.bytes;
+  }
+
+  /** The mapped bytes. An `Error` once the `MappedFile` is closed. */
+  get bytes(): shared<u8[]> {
+    return this.open("bytes");
+  }
+
+  // The mapped bytes for the member `what`, which needs the file open.
+  private open(what: string): shared<u8[]> {
+    const held = this.held;
+    if (held === null) {
+      throw new Error(`${what}: the MappedFile is closed`);
+    }
+    return held;
+  }
+
+  /** Whether `close` was called. */
+  get closed(): bool {
+    return this.held === null;
+  }
+
+  /**
+   * Gives up the file: `bytes`, the typed methods and `advise` throw from now on. The arrays
+   * already handed out stay valid, and the mapping is given back to the system when the last
+   * of them is gone (at once, if none is kept). Closing again does nothing. A `MappedFile`
+   * that is dropped without `close` is closed; `using m = MappedFile.open(path)` closes it at
+   * the end of its block.
+   */
+  close() {
+    this.held = null;
+  }
+
+  [Symbol.dispose]() {
+    this.close();
   }
 
   // How many bytes of the mapping lie before `bytes`.
@@ -70,13 +109,12 @@ export class MappedFile {
    * maps as no bytes, without an error: read those with `readFileSync`.
    */
   static open(path: string, options?: MapOptions): MappedFile {
-    const m = mapFile(path, options);
-    return new MappedFile(m.address, m.from, m.bytes);
+    return new MappedFile(mapFile(path, options));
   }
 
   /** The number of mapped bytes: the file's size when it was mapped, or the part's. */
   get length(): number {
-    return this.bytes.length as number;
+    return this.size;
   }
 
   // The address of the `count` values of `width` bytes from byte `byteOffset` (0 for no
@@ -90,7 +128,8 @@ export class MappedFile {
     count: number,
     width: number,
   ): usize {
-    const size = this.bytes.length as number;
+    this.open(what);
+    const size = this.size;
     if (
       !Number.isInteger(byteOffset) ||
       !Number.isInteger(count) ||
@@ -121,12 +160,13 @@ export class MappedFile {
       return shared([]);
     }
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `i8`
-    // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
+    // (the mapping is page-aligned); the array holds the mapping's owner, so the mapping stays
+    // while it does, and it leaves as `shared`.
     // Where there is no mapping (`COPIES`) no address is read: the values are copied.
     const xs: i8[] =
       COPIES
         ? copyOf<i8>(this.bytes, byteOffset as usize, count as usize)
-        : unsafe { addressArray<i8>(at, count as usize) };
+        : unsafe { addressArrayOwned<i8>(at, count as usize, heldAgain(this.owner)) };
     return shared(xs);
   }
 
@@ -141,12 +181,13 @@ export class MappedFile {
       return shared([]);
     }
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `u16`
-    // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
+    // (the mapping is page-aligned); the array holds the mapping's owner, so the mapping stays
+    // while it does, and it leaves as `shared`.
     // Where there is no mapping (`COPIES`) no address is read: the values are copied.
     const xs: u16[] =
       COPIES
         ? copyOf<u16>(this.bytes, byteOffset as usize, count as usize)
-        : unsafe { addressArray<u16>(at, count as usize) };
+        : unsafe { addressArrayOwned<u16>(at, count as usize, heldAgain(this.owner)) };
     return shared(xs);
   }
 
@@ -161,12 +202,13 @@ export class MappedFile {
       return shared([]);
     }
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `i16`
-    // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
+    // (the mapping is page-aligned); the array holds the mapping's owner, so the mapping stays
+    // while it does, and it leaves as `shared`.
     // Where there is no mapping (`COPIES`) no address is read: the values are copied.
     const xs: i16[] =
       COPIES
         ? copyOf<i16>(this.bytes, byteOffset as usize, count as usize)
-        : unsafe { addressArray<i16>(at, count as usize) };
+        : unsafe { addressArrayOwned<i16>(at, count as usize, heldAgain(this.owner)) };
     return shared(xs);
   }
 
@@ -181,12 +223,13 @@ export class MappedFile {
       return shared([]);
     }
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `u32`
-    // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
+    // (the mapping is page-aligned); the array holds the mapping's owner, so the mapping stays
+    // while it does, and it leaves as `shared`.
     // Where there is no mapping (`COPIES`) no address is read: the values are copied.
     const xs: u32[] =
       COPIES
         ? copyOf<u32>(this.bytes, byteOffset as usize, count as usize)
-        : unsafe { addressArray<u32>(at, count as usize) };
+        : unsafe { addressArrayOwned<u32>(at, count as usize, heldAgain(this.owner)) };
     return shared(xs);
   }
 
@@ -201,12 +244,13 @@ export class MappedFile {
       return shared([]);
     }
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `i32`
-    // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
+    // (the mapping is page-aligned); the array holds the mapping's owner, so the mapping stays
+    // while it does, and it leaves as `shared`.
     // Where there is no mapping (`COPIES`) no address is read: the values are copied.
     const xs: i32[] =
       COPIES
         ? copyOf<i32>(this.bytes, byteOffset as usize, count as usize)
-        : unsafe { addressArray<i32>(at, count as usize) };
+        : unsafe { addressArrayOwned<i32>(at, count as usize, heldAgain(this.owner)) };
     return shared(xs);
   }
 
@@ -221,12 +265,13 @@ export class MappedFile {
       return shared([]);
     }
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `u64`
-    // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
+    // (the mapping is page-aligned); the array holds the mapping's owner, so the mapping stays
+    // while it does, and it leaves as `shared`.
     // Where there is no mapping (`COPIES`) no address is read: the values are copied.
     const xs: u64[] =
       COPIES
         ? copyOf<u64>(this.bytes, byteOffset as usize, count as usize)
-        : unsafe { addressArray<u64>(at, count as usize) };
+        : unsafe { addressArrayOwned<u64>(at, count as usize, heldAgain(this.owner)) };
     return shared(xs);
   }
 
@@ -241,12 +286,13 @@ export class MappedFile {
       return shared([]);
     }
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `i64`
-    // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
+    // (the mapping is page-aligned); the array holds the mapping's owner, so the mapping stays
+    // while it does, and it leaves as `shared`.
     // Where there is no mapping (`COPIES`) no address is read: the values are copied.
     const xs: i64[] =
       COPIES
         ? copyOf<i64>(this.bytes, byteOffset as usize, count as usize)
-        : unsafe { addressArray<i64>(at, count as usize) };
+        : unsafe { addressArrayOwned<i64>(at, count as usize, heldAgain(this.owner)) };
     return shared(xs);
   }
 
@@ -261,12 +307,13 @@ export class MappedFile {
       return shared([]);
     }
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `f16`
-    // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
+    // (the mapping is page-aligned); the array holds the mapping's owner, so the mapping stays
+    // while it does, and it leaves as `shared`.
     // Where there is no mapping (`COPIES`) no address is read: the values are copied.
     const xs: f16[] =
       COPIES
         ? copyOf<f16>(this.bytes, byteOffset as usize, count as usize)
-        : unsafe { addressArray<f16>(at, count as usize) };
+        : unsafe { addressArrayOwned<f16>(at, count as usize, heldAgain(this.owner)) };
     return shared(xs);
   }
 
@@ -281,12 +328,13 @@ export class MappedFile {
       return shared([]);
     }
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `bf16`
-    // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
+    // (the mapping is page-aligned); the array holds the mapping's owner, so the mapping stays
+    // while it does, and it leaves as `shared`.
     // Where there is no mapping (`COPIES`) no address is read: the values are copied.
     const xs: bf16[] =
       COPIES
         ? copyOf<bf16>(this.bytes, byteOffset as usize, count as usize)
-        : unsafe { addressArray<bf16>(at, count as usize) };
+        : unsafe { addressArrayOwned<bf16>(at, count as usize, heldAgain(this.owner)) };
     return shared(xs);
   }
 
@@ -301,12 +349,13 @@ export class MappedFile {
       return shared([]);
     }
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `f32`
-    // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
+    // (the mapping is page-aligned); the array holds the mapping's owner, so the mapping stays
+    // while it does, and it leaves as `shared`.
     // Where there is no mapping (`COPIES`) no address is read: the values are copied.
     const xs: f32[] =
       COPIES
         ? copyOf<f32>(this.bytes, byteOffset as usize, count as usize)
-        : unsafe { addressArray<f32>(at, count as usize) };
+        : unsafe { addressArrayOwned<f32>(at, count as usize, heldAgain(this.owner)) };
     return shared(xs);
   }
 
@@ -321,12 +370,13 @@ export class MappedFile {
       return shared([]);
     }
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `f64`
-    // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
+    // (the mapping is page-aligned); the array holds the mapping's owner, so the mapping stays
+    // while it does, and it leaves as `shared`.
     // Where there is no mapping (`COPIES`) no address is read: the values are copied.
     const xs: f64[] =
       COPIES
         ? copyOf<f64>(this.bytes, byteOffset as usize, count as usize)
-        : unsafe { addressArray<f64>(at, count as usize) };
+        : unsafe { addressArrayOwned<f64>(at, count as usize, heldAgain(this.owner)) };
     return shared(xs);
   }
 
@@ -340,7 +390,8 @@ export class MappedFile {
    * the range is not inside the mapped bytes; an `IoError` if the system refuses the advice.
    */
   advise(advice: MapAdvice, byteOffset: number = 0, length?: number) {
-    const size = this.bytes.length as number;
+    this.open("advise");
+    const size = this.size;
     const len = length === undefined ? size - byteOffset : length;
     if (
       !Number.isInteger(byteOffset) ||
