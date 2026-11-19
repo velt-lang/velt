@@ -1,6 +1,7 @@
 // velt/fs (internal): `readAt`, a positioned read the calling task awaits.
 
 import { readChunkLater } from "#fs-read-at";
+import { valueSize } from "velt/fs/fd/read_chunk";
 import { descriptor, integer, MAX_INT32, MAX_SAFE } from "velt/fs/fd/args";
 import { osError } from "velt/fs/errors";
 
@@ -11,23 +12,38 @@ import { osError } from "velt/fs/errors";
  *
  *     const parts = await Promise.all(offsets.map((at) => readAt(fd, 4096, at)));
  *
+ * With a type argument the result is an array of that number type, read into its own memory
+ * with no copy: `await readAt<f32>(fd, 512, at)` is the 128 floats there. `length` and
+ * `position` stay in bytes, and `length` is a multiple of the type's size; a value the file
+ * ends inside is left out.
+ *
  * The reads run on the executor's blocking pool, each on a thread of its own.
  *
  * The file's own position is neither used nor moved. `RangeError` for a `length` or `position`
  * that is not a whole number in range, `IoError` when the read fails. Where `readSync` reads
- * into a buffer of the caller's, this returns bytes of its own: a buffer cannot be filled by
+ * into a buffer of the caller's, this returns an array of its own: a buffer cannot be filled by
  * another thread while its owner may use it.
  */
-export async function readAt(fd: number, length: number, position: number): Promise<u8[]> {
+export async function readAt<T extends Numeric = u8>(
+  fd: number,
+  length: number,
+  position: number,
+): Promise<T[]> {
   const f = descriptor(fd);
   const len = integer("length", length, 0, MAX_INT32) as usize;
   const at = integer("position", position, 0, MAX_SAFE);
+  const size = valueSize<T>();
+  if (len % size != 0) {
+    throw new RangeError(
+      `The value of "length" is out of range. It must be a multiple of ${size}. Received ${length}`,
+    );
+  }
   if (len == 0) {
     return [];
   }
-  const got = await readChunkLater(f, len, at);
+  const got = await readChunkLater<T>(f, len / size, at);
   if (got.error != 0) {
     throw osError(got.error, "read");
   }
-  return got.bytes;
+  return got.values;
 }

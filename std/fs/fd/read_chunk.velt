@@ -1,26 +1,52 @@
-// velt/fs (internal): one positioned read into bytes of its own, as a value another thread can
-// hand back: what `readAt` runs off the calling task's thread (`#fs-read-at`).
+// velt/fs (internal): one positioned read into an array of its own, as a value another thread
+// can hand back: what `readAt` runs off the calling task's thread (`#fs-read-at`).
 
 import { EINTR } from "velt/fs/fd/system";
-import { lastError, readInto } from "#fd-system";
-
-/** The bytes one read gave (fewer than asked for at the end of the file), or its `errno`. */
-export type ReadChunk = { bytes: u8[]; error: i32 };
+import { lastError, readAddress } from "#fd-system";
+import {
+  arrayByteLength,
+  arrayDataAddress,
+  arraySetLen,
+  arrayTruncate,
+  arrayWithCapacity,
+} from "velt/lang/intrinsics";
 
 /**
- * Reads up to `length` bytes of `fd` at `position` (`pread`, retried after a signal), blocking
- * the calling thread.
+ * The values one read gave (fewer than asked for at the end of the file; the bytes of a value
+ * the file ends inside are left out), or its `errno`.
  */
-export function readChunk(fd: i32, length: usize, position: i64): ReadChunk {
-  const bytes: u8[] = Buffer.alloc(length);
+export type ReadChunk<T> = { values: T[]; error: i32 };
+
+/** How many bytes one `T` is. */
+export function valueSize<T extends Numeric>(): usize {
+  const one: T[] = arrayWithCapacity<T>(1);
+  arraySetLen(one, 1);
+  return arrayByteLength(one);
+}
+
+/**
+ * Reads up to `count` values of `T` from `fd` at byte `position` (`pread`, retried after a
+ * signal) into an array of its own, blocking the calling thread.
+ */
+export function readChunk<T extends Numeric>(fd: i32, count: usize, position: i64): ReadChunk<T> {
+  const values: T[] = arrayWithCapacity<T>(count);
+  arraySetLen(values, count);
+  const bytes = arrayByteLength(values);
+  // SAFETY: `values` has room for `count` values, `bytes` bytes at its address, and stays
+  // where it is until the read returns; any bytes are values of a number type.
+  const address = unsafe { arrayDataAddress(values) };
   while (true) {
-    const n = readInto(fd, bytes, 0, length, position);
+    // SAFETY: as above.
+    const n = unsafe { readAddress(fd, address, bytes, position) };
     if (n >= 0) {
-      return { bytes: (n as usize) == length ? bytes : bytes.slice(0, n as i64), error: 0 };
+      // Only the values the read filled whole: the rest of the array was never written.
+      arrayTruncate(values, count == 0 ? 0 : ((n as usize) * count) / bytes);
+      return { values, error: 0 };
     }
     const e = lastError();
     if (e != EINTR) {
-      return { bytes: [], error: e };
+      arrayTruncate(values, 0);
+      return { values, error: e };
     }
   }
 }

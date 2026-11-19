@@ -1,0 +1,9 @@
+4 [ 50, 50.5, 51, 51.5 ]
+[ 2, 2, 1, 0, 0, 0 ] [ 0, 0.5 ] [ 125, 125.5 ] [ 499.5 ]
+[ 1056964608, 1065353216 ] 1 [ 1, 2, 3 ] [ 513 ]
+[ 1, 2, 3, 9 ] 5 0
+RangeError The value of "length" is out of range. It must be a multiple of 4. Received 6
+RangeError The value of "length" is out of range. It must be a multiple of 4. Received 3
+RangeError The value of "length" is out of range. It must be an integer. Received 1.5
+RangeError The value of "length" is out of range. It must be >= 0 && <= 2147483647. Received -4
+Error EBADF: bad file descriptor, read
