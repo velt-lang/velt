@@ -292,8 +292,12 @@ impl<T: Codec> Codec for Vec<T> {
     fn dec(r: &mut Reader) -> Self {
         r.enter();
         let n = r.len();
-        let mut out = Vec::with_capacity(n);
+        let mut out = Vec::with_capacity(r.capacity::<T>(n));
         for _ in 0..n {
+            // A damaged value is dropped whole: no more of its elements are made.
+            if r.failed() {
+                break;
+            }
             out.push(T::dec(r));
         }
         r.leave();
@@ -369,8 +373,12 @@ impl<K: Codec + std::hash::Hash + Eq, V: Codec> Codec for FxHashMap<K, V> {
     fn dec(r: &mut Reader) -> Self {
         r.enter();
         let n = r.len();
-        let mut out = FxHashMap::with_capacity_and_hasher(n, Default::default());
+        let cap = r.capacity::<(K, V)>(n);
+        let mut out = FxHashMap::with_capacity_and_hasher(cap, Default::default());
         for _ in 0..n {
+            if r.failed() {
+                break;
+            }
             let k = K::dec(r);
             out.insert(k, V::dec(r));
         }
@@ -390,8 +398,12 @@ impl<K: Codec + std::hash::Hash + Eq> Codec for FxHashSet<K> {
     fn dec(r: &mut Reader) -> Self {
         r.enter();
         let n = r.len();
-        let mut out = FxHashSet::with_capacity_and_hasher(n, Default::default());
+        let cap = r.capacity::<K>(n);
+        let mut out = FxHashSet::with_capacity_and_hasher(cap, Default::default());
         for _ in 0..n {
+            if r.failed() {
+                break;
+            }
             out.insert(K::dec(r));
         }
         r.leave();
@@ -412,6 +424,9 @@ impl<K: Codec + Ord, V: Codec> Codec for std::collections::BTreeMap<K, V> {
         let n = r.len();
         let mut out = std::collections::BTreeMap::new();
         for _ in 0..n {
+            if r.failed() {
+                break;
+            }
             let k = K::dec(r);
             out.insert(k, V::dec(r));
         }
@@ -432,6 +447,9 @@ impl<K: Codec + Ord> Codec for std::collections::BTreeSet<K> {
         let n = r.len();
         let mut out = std::collections::BTreeSet::new();
         for _ in 0..n {
+            if r.failed() {
+                break;
+            }
             out.insert(K::dec(r));
         }
         r.leave();
