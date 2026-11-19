@@ -252,6 +252,9 @@ pub(crate) struct Binding {
     /// Top-level non-generic aliases by their type (module, name, without its nothing): how
     /// generated code names a type it cannot write out ([`spell`]).
     pub alias_homes: rustc_hash::FxHashMap<crate::hir::TyId, (usize, String, bool)>,
+    /// The generated modules collected in this context, by path: a check by units' app rounds
+    /// start from std's unit, whose generated modules are collected already (`crate::units`).
+    pub collected: rustc_hash::FxHashSet<String>,
 }
 
 /// A request for the body of one instance of a generated function.
