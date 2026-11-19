@@ -209,7 +209,9 @@ impl Template {
     pub(crate) fn of(command: &[String], input: &str) -> Option<Template> {
         let (program, args) = command.split_first()?;
         let program = PathBuf::from(program);
-        if !program.is_absolute() || program.file_name() != Some(OsStr::new("ld")) {
+        // `has_root`, not `is_absolute`: the same on macOS, and the unit tests parse macOS
+        // commands on every host (on Windows `/usr/bin/ld` has a root but no drive).
+        if !program.has_root() || program.file_name() != Some(OsStr::new("ld")) {
             return None;
         }
         let o = args.iter().position(|a| a == OUTPUT)?;
