@@ -73,6 +73,9 @@ export function park(e: usize): void {
     if (timersAny(e)) {
       tookWork(e);
     }
+    // As every way out of a park: a spare asked to retire while it spun was woken by that ask
+    // (sched_relax.velt `ask`), which never wakes it again, so it answers now.
+    retiring(e);
     return;
   }
   let timeout: i64 = -1;
