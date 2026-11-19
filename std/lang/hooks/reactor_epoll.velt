@@ -87,7 +87,12 @@ declare c("c") function __errno_location(): Ptr<i32>;
 // `fcntl` is variadic: its `int` argument goes as C's `...` (`CVarArgs`), where each architecture
 // reads it.
 declare c("c") function fcntl$io(fd: i32, cmd: i32, ...args: CVarArgs): i32;
-declare c("c") function accept4(fd: i32, addr: Ptr<sockaddr>, len: Ptr<u32>, flags: i32): i32;
+declare c("c") function accept4(
+  fd: i32,
+  addr: Ptr<sockaddr> | null,
+  len: Ptr<u32> | null,
+  flags: i32,
+): i32;
 
 /** The calling thread's `errno`. */
 export function errno(): i32 {
@@ -243,10 +248,15 @@ export function wake(r: usize): void {
   }
 }
 
-/** Accepts a connection of listener `fd`, non-blocking and close-on-exec: its fd, or -1. */
+/**
+ * Accepts a connection of listener `fd`, non-blocking and close-on-exec: its fd, or -1. `addr`
+ * and `len` are 0 (`NULL`) when the peer's address isn't wanted.
+ */
 export function accept(fd: i32, addr: usize, len: usize): i32 {
-  // SAFETY: `addr` holds the `socklen_t` at `len` bytes.
-  return unsafe { accept4(fd, m.ptrTo<sockaddr>(addr), m.ptrTo<u32>(len), SOCKET_FLAGS) };
+  const a = m.ptrOrNull<sockaddr>(addr);
+  const l = m.ptrOrNull<u32>(len);
+  // SAFETY: `addr` holds the `socklen_t` at `len` bytes, or both are NULL.
+  return unsafe { accept4(fd, a, l, SOCKET_FLAGS) };
 }
 
 /** `fcntl`'s command that sets a descriptor's status flags, and the flag of non-blocking I/O. */

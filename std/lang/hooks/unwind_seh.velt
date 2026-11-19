@@ -12,7 +12,7 @@
 // an uncaught panic does elsewhere, and hands any other exception to the filter it replaced.
 
 import { Ptr, StrBytes, byteLength, readCString } from "velt/ffi";
-import { ptrAddress, ptrOf } from "velt/ffi/ptr";
+
 import { addressLoad, addressStore } from "velt/lang/intrinsics/address";
 import { addressCall, fnAddress } from "velt/lang/intrinsics/future";
 
@@ -155,12 +155,12 @@ export function raise(msg: string): void {
     LIVE.add(1);
     memset(e, 0, HEADER);
     memcpy(e, "VELTPANC", 8);
-    const at = ptrAddress(e);
+    const at = Ptr.addressOf(e);
     addressStore<usize>(at + 8, at);
-    const text = ptrOf<u8>(at + HEADER);
+    const text = Ptr.at<u8>(at + HEADER);
     memcpy(text, msg, n);
-    memset(ptrOf<u8>(at + HEADER + n), 0, 1);
-    RaiseException(CODE, NONCONTINUABLE, 1, ptrOf<u8>(at + 8));
+    memset(Ptr.at<u8>(at + HEADER + n), 0, 1);
+    RaiseException(CODE, NONCONTINUABLE, 1, Ptr.at<u8>(at + 8));
     free(e);
     LIVE.sub(1);
   }
@@ -172,7 +172,7 @@ export function raise(msg: string): void {
  */
 export unsafe function panicText(e: usize): string {
   // SAFETY: the caller's statement: `raise` wrote the NUL-terminated message after the header.
-  return unsafe { readCString(ptrOf<u8>(e + HEADER)) };
+  return unsafe { readCString(Ptr.at<u8>(e + HEADER)) };
 }
 
 /**
@@ -181,7 +181,7 @@ export unsafe function panicText(e: usize): string {
  */
 export unsafe function takePanic(e: usize): string {
   // SAFETY: the caller's statement: `raise` wrote the NUL-terminated message after the header.
-  const msg = unsafe { readCString(ptrOf<u8>(e + HEADER)) };
+  const msg = unsafe { readCString(Ptr.at<u8>(e + HEADER)) };
   // SAFETY: the caller's statement.
   unsafe {
     freePanic(e);
@@ -196,7 +196,7 @@ export unsafe function takePanic(e: usize): string {
 export unsafe function freePanic(e: usize): void {
   // SAFETY: `raise` allocated it with malloc, and the caller frees it once.
   unsafe {
-    free(ptrOf<u8>(e));
+    free(Ptr.at<u8>(e));
   }
   LIVE.sub(1);
 }
