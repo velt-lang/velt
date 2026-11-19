@@ -78,7 +78,7 @@ impl<T: AstNode> Codec for &T {
         // The fragment itself goes to the table ([`super::Frags`]).
         let file = self.file();
         let index = w.file_index(file);
-        let bytes = velt_syntax::encode_fragment(&*self.kept(), file);
+        let bytes = velt_syntax::encode_fragment(&*self.kept(), file, &mut |f| w.file_index(f));
         let body = &bytes[velt_syntax::AST_FORMAT.len()..];
         w.frag_starts.push(w.frags.len() as u32);
         super::push_uint(&mut w.frags, u64::from(index));
@@ -295,7 +295,7 @@ impl Codec for ast::TypeExpr {
     fn enc(&self, w: &mut Writer) {
         let file = AstNode::file(self);
         w.file(file);
-        let bytes = velt_syntax::encode_fragment(self, file);
+        let bytes = velt_syntax::encode_fragment(self, file, &mut |f| w.file_index(f));
         let body = &bytes[velt_syntax::AST_FORMAT.len()..];
         w.uint(body.len() as u64);
         w.out.extend_from_slice(body);
@@ -309,7 +309,7 @@ impl Codec for ast::TypeExpr {
         bytes.extend_from_slice(velt_syntax::AST_FORMAT);
         bytes.extend_from_slice(r.take(n));
         let node = (!r.failed)
-            .then(|| velt_syntax::decode_fragment(&bytes, file))
+            .then(|| velt_syntax::decode_fragment(&bytes, file, r.files))
             .flatten();
         node.unwrap_or_else(|| {
             r.fail();

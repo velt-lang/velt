@@ -77,6 +77,19 @@ fn stack_floor() -> usize {
 /// read, per byte of input (and a little for a short input): past it they grow as they fill.
 const RESERVE_PER_BYTE: usize = 16;
 
+/// The first bytes of every encoding ([`Writer::finish`]): what it is, and the version of this
+/// encoding (raised with every change to how a value is written). After them comes the format of
+/// the AST fragments inside (`velt_syntax::AST_FORMAT`). A reader fails on any other header:
+/// bytes written by another version of either encoding are not read as this one's.
+const MAGIC: &[u8; 7] = b"velt-u\x01";
+
+/// [`MAGIC`] and the AST format, as an encoding starts.
+fn header() -> Vec<u8> {
+    let mut h = MAGIC.to_vec();
+    h.extend_from_slice(velt_syntax::AST_FORMAT);
+    h
+}
+
 pub(crate) struct Writer {
     out: Vec<u8>,
     /// The unit's file table: each file's index, in the order first met.
@@ -112,7 +125,8 @@ impl Writer {
     /// The bytes written, after the table of AST fragments they refer to ([`Frags`]), and the
     /// file table their spans index (the files in index order).
     pub(crate) fn finish(self) -> (Vec<u8>, Vec<FileId>) {
-        let mut out = Vec::with_capacity(8 + 4 * self.frag_starts.len());
+        let mut out = header();
+        out.reserve(8 + 4 * self.frag_starts.len());
         push_uint(&mut out, self.frag_starts.len() as u64);
         for &s in &self.frag_starts {
             push_uint(&mut out, u64::from(s));
@@ -206,6 +220,7 @@ impl Frags {
     ) -> Option<(Frags, usize)> {
         let mut r = Reader::bare(&bytes[..], &[]);
         r.pos = pos;
+        r.header();
         let n = r.len();
         let starts: Vec<u32> = (0..n).map(|_| r.u32()).collect();
         let size = r.len();
@@ -247,7 +262,7 @@ impl Frags {
         // On sema's thread, whose stack is sema's (`SEMA_STACK_BYTES`): the fragment decodes
         // right here, not on a parser thread of its own.
         let node = velt_syntax::with_stack_of(crate::SEMA_STACK_BYTES, || {
-            velt_syntax::decode_fragment::<T>(&bytes, file)
+            velt_syntax::decode_fragment::<T>(&bytes, file, &self.files)
         })?;
         // SAFETY: the arena outlives everything decoded with it (`Arena`'s contract).
         let p = unsafe { (*arena).keep(node) };
@@ -265,12 +280,21 @@ pub(crate) struct Src {
 }
 
 impl Src {
-    /// A reader of `bytes[range]` (an entry of a table), with the encoding's files and fragments.
+    /// A reader of `bytes[range]` (an entry of a table), with the encoding's files and
+    /// fragments; a failed one when the range is not inside the bytes (a damaged offset).
     pub(crate) fn reader(&self, range: std::ops::Range<usize>) -> Reader<'_> {
-        Reader {
+        let (bytes, inside) = match self.bytes.get(range) {
+            Some(b) => (b, true),
+            None => (&self.bytes[..0], false),
+        };
+        let mut r = Reader {
             frags: Some(self.frags.clone()),
-            ..Reader::bare(&self.bytes[range], &self.files)
+            ..Reader::bare(bytes, &self.files)
+        };
+        if !inside {
+            r.fail();
         }
+        r
     }
 }
 
@@ -307,6 +331,7 @@ impl<'a> Reader<'a> {
     /// A reader of what [`Writer::finish`] wrote: its values may not borrow AST nodes.
     pub(crate) fn new(bytes: &'a [u8], files: &'a [FileId]) -> Reader<'a> {
         let mut r = Reader::bare(bytes, files);
+        r.header();
         let n = r.len();
         (0..n).for_each(|_| {
             r.uint();
@@ -382,6 +407,14 @@ impl<'a> Reader<'a> {
     /// Where the reader is.
     pub(crate) fn pos(&self) -> usize {
         self.pos
+    }
+
+    /// Reads the header [`Writer::finish`] writes; any other bytes fail the reader.
+    fn header(&mut self) {
+        let want = header();
+        if self.take(want.len()) != want.as_slice() {
+            self.fail();
+        }
     }
 
     /// Whether it failed.
@@ -545,12 +578,16 @@ macro_rules! tuples {
     )*};
 }
 
-/// `Codec` for enums: `Name { tag => Unit, tag => Tuple(a, b), tag => Fields { x, y } }`. Tag 0
-/// is a variant whose fields decode from zeros without recursing (a damaged value reads on as
-/// zeros).
+/// `Codec` for enums: `Name { tag => Unit, tag => Tuple(a, b), tag => Fields { x, y } }`.
+///
+/// A damaged value reads on as zeros, so every enum in it decodes as its tag 0 from then on:
+/// tag 0 is a variant without fields, where that ends (the macro refuses a list that has
+/// another). An enum with no such variant is listed `@fielded Name { .. }`: its tag-0 variant's
+/// fields must then end from zeros themselves, which is so unless one holds the enum again in a
+/// box (lists, maps and options are empty from zeros). [`ends_from_zeros`] checks one in a test.
 #[allow(unused_macros)]
 macro_rules! enums {
-    ($($ty:ident $(<$lt:lifetime>)? {
+    ($($(@$fielded:ident)? $ty:ident $(<$lt:lifetime>)? {
         $($tag:literal => $v:ident $(( $($t:ident),* ))? $({ $($f:ident),* })?),* $(,)?
     })*) => {$(
         impl $crate::units::codec::Codec for $ty $(<$lt>)? {
@@ -565,10 +602,18 @@ macro_rules! enums {
             }
             fn dec(r: &mut $crate::units::codec::Reader) -> Self {
                 // An unknown tag decodes as tag 0, which a failed reader reads from then on:
-                // without a tag 0 that would never end.
+                // that must end.
                 const _: () = assert!(
-                    $crate::units::codec::has_tag_zero(&[$($tag),*]),
-                    "an encoded enum needs a variant with tag 0"
+                    $crate::units::codec::tag_zero_ends(
+                        &[$((
+                            $tag,
+                            0usize
+                                $(+ 1 $(+ $crate::units::codec::no_more!($t))*)?
+                                $(+ 1 $(+ $crate::units::codec::no_more!($f))*)?,
+                        )),*],
+                        false $(|| $crate::units::codec::is_fielded!($fielded))?,
+                    ),
+                    "an encoded enum needs a variant without fields at tag 0 (or `@fielded`)"
                 );
                 let tag: u8 = $crate::units::codec::Codec::dec(r);
                 match tag {
@@ -585,20 +630,56 @@ macro_rules! enums {
     )*};
 }
 
-/// Is 0 among an encoded enum's `tags` (`enums!` checks it when the enum's encoding is built)?
-pub(crate) const fn has_tag_zero(tags: &[u8]) -> bool {
+/// Does an encoded enum end from zeros (`enums!` checks it when the enum's encoding is built):
+/// is there a tag 0 among `variants` (each tag with whether the variant has fields), and has it
+/// no fields, unless the enum is listed `@fielded`?
+pub(crate) const fn tag_zero_ends(variants: &[(u8, usize)], fielded: bool) -> bool {
     let mut i = 0;
-    while i < tags.len() {
-        if tags[i] == 0 {
-            return true;
+    while i < variants.len() {
+        if variants[i].0 == 0 {
+            return fielded || variants[i].1 == 0;
         }
         i += 1;
     }
     false
 }
 
+/// Nothing to add for one more field (`enums!` counts whether a variant has any).
+#[allow(unused_macros)]
+macro_rules! no_more {
+    ($field:ident) => {
+        0usize
+    };
+}
+
+/// The `@fielded` mark of `enums!`, and no other word.
+#[allow(unused_macros)]
+macro_rules! is_fielded {
+    (fielded) => {
+        true
+    };
+}
+
+/// Does a `T` decode from a failed reader, which reads zeros, without nesting on and on: the
+/// property `enums!` cannot see for an enum listed `@fielded`. Run on a thread of its own, with
+/// a small stack: a type that does not end aborts the test there.
+#[cfg(test)]
+pub(crate) fn ends_from_zeros<T: Codec>() -> bool {
+    let decode = || {
+        let mut r = Reader::bare(&[], &[]);
+        r.fail();
+        let v = T::dec(&mut r);
+        // Taken apart by the process, not on this stack.
+        std::mem::forget(v);
+    };
+    std::thread::Builder::new()
+        .stack_size(1 << 20)
+        .spawn(decode)
+        .is_ok_and(|t| t.join().is_ok())
+}
+
 #[allow(unused_imports)]
-pub(crate) use {enums, structs, tuples};
+pub(crate) use {enums, is_fielded, no_more, structs, tuples};
 
 #[allow(unused_imports)] // Until the unit is saved (#2943 M2).
 pub(crate) use ast_refs::{Arena, AstNode};
