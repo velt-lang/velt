@@ -169,6 +169,11 @@ export function schedFinish(code: i32): void {
   wk.settleWakes();
   // Streams dropped unclosed stay open to the end, as the runtime's: their buffers go now.
   tb.releaseBuffers();
+  if (wk.counting()) {
+    // The block counters see what module state holds as freed (velt_rt entry.rs `finish` then
+    // drops the function properties and statics); otherwise it is kept to the end, as in Node.
+    mod.dropAtExit();
+  }
   st.report();
 }
 
