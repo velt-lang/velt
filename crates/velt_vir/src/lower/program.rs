@@ -506,9 +506,14 @@ impl<'h> Cx<'h> {
         params: Vec<Ty>,
         ret: Ty,
         variadic: bool,
+        c_abi: Option<crate::vir::CAbi>,
     ) -> ExternId {
         if !variadic {
-            return self.extern_sym(symbol, params, ret, false);
+            let id = self.extern_sym(symbol, params, ret, false);
+            if c_abi.is_some() {
+                self.externs[id.0 as usize].c_abi = c_abi;
+            }
+            return id;
         }
         if let Some(&id) = self.extern_map.get(symbol) {
             let e = &self.externs[id.0 as usize];
@@ -561,6 +566,7 @@ impl<'h> Cx<'h> {
             host: None,
             c_decl: None,
             variadic: false,
+            c_abi: None,
         });
         self.extern_map.insert(symbol.to_string(), id);
         id

@@ -111,8 +111,7 @@ fn c_import(
         let shown = cx.display(ret);
         let span = sig.ret.as_ref().map_or(sig.name.span, |t| t.span);
         if cx.is_c_struct_ty(ret) {
-            struct_by_value(cx, name, &shown, span);
-            return CTy::Void;
+            return CTy::Struct;
         }
         cx.error(
             Diagnostic::error(
@@ -192,8 +191,7 @@ fn param(cx: &mut Ctx, module: usize, name: &str, p: &ast::Param, ty: TyId) -> C
     }
     let shown = cx.display(ty);
     if cx.is_c_struct_ty(ty) {
-        struct_by_value(cx, name, &shown, p.ty.span);
-        return CTy::Void;
+        return CTy::Struct;
     }
     let d = Diagnostic::error(
         format!(
@@ -208,18 +206,6 @@ fn param(cx: &mut Ctx, module: usize, name: &str, p: &ast::Param, ty: TyId) -> C
     };
     cx.error(d);
     CTy::Void
-}
-
-/// The error for C struct `shown` passed to or returned from C function `name` by value, which
-/// waits for the target's C calling convention in both backends (#2187, layer 3 of C structs).
-fn struct_by_value(cx: &mut Ctx, name: &str, shown: &str, at: velt_common::Span) {
-    cx.error(
-        Diagnostic::error(
-            format!("C function `{name}` can't take or return C struct `{shown}` by value yet"),
-            at,
-        )
-        .with_note("passing C structs by value, in each target's C calling convention, comes in a later layer of #2187; a `Ptr<S>` crosses now"),
-    );
 }
 
 impl Ctx<'_> {

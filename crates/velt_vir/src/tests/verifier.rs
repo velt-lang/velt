@@ -243,6 +243,7 @@ fn verify_rejects_misused_atomic_externs() {
         host: None,
         c_decl: None,
         variadic: false,
+        c_abi: None,
     };
     let mut p = base_program();
     p.externs.push(atomic("velt_atomic_load_08_acq", false));
@@ -320,6 +321,7 @@ fn with_extern(symbol: &str, params: Vec<Ty>, ret: Ty) -> vir::Program {
         host: None,
         c_decl: None,
         variadic: false,
+        c_abi: None,
     });
     p
 }
@@ -350,6 +352,7 @@ fn with_sqrt(x: Operand, declare: bool) -> vir::Program {
             host: None,
             c_decl: None,
             variadic: false,
+            c_abi: None,
         });
     }
     let f = &mut p.funcs[0];
@@ -407,6 +410,7 @@ fn verify_rejects_a_direct_call_of_a_math_operation() {
         host: None,
         c_decl: None,
         variadic: false,
+        c_abi: None,
     });
     let t = p.funcs.len() - 1;
     p.funcs[t].blocks = vec![call(&p), block(vec![], ret_x())];
@@ -440,6 +444,7 @@ fn variadic_calls_pass_promoted_further_arguments() {
             host: None,
             c_decl: None,
             variadic,
+            c_abi: None,
         });
         let f = p.funcs.last_mut().expect("test fn");
         f.locals.push(LocalDecl::new(Ty::I32, None));
@@ -490,6 +495,7 @@ fn verify_rejects_a_velt_arch_instruction_outside_its_gate() {
             host: None,
             c_decl: None,
             variadic: false,
+            c_abi: None,
         });
         let f = p.funcs.last_mut().expect("test fn");
         f.target = target;
