@@ -9,7 +9,9 @@
 //!     the registry / vswhere and returns the `LIB`/`PATH` environment for the MSVC + Windows
 //!     SDK libraries, so no "Developer Command Prompt" is needed. With `lld-link.exe` on `PATH`
 //!     the link runs that, in the same environment ([`fast_ld`]).
-//!   - Linux / macOS: the system C compiler driver (`cc`) is used as the linker; on Linux with
+//!   - Linux / macOS: the system C compiler driver (`cc`) is used as the linker, on macOS only
+//!     to say once what `ld` command it runs, which later links run themselves ([`macos_ld`]);
+//!     on Linux with
 //!     `-fuse-ld=mold`/`lld` when those are installed, lld under a versioned name
 //!     (`ld.lld-18`) too ([`fast_ld`]).
 //! - Debug builds may link the runtime as a shared library instead ([`shared`]): the
@@ -34,6 +36,7 @@ mod fast_ld;
 mod host;
 pub mod kit;
 mod lld;
+mod macos_ld;
 mod native;
 mod runtime_profile;
 mod shared;
@@ -189,6 +192,16 @@ fn link_with_system(req: &LinkRequest, os: TargetOs) -> Result<(), String> {
                 cmd.args(&fast.args).args(&args);
                 if run_linker(cmd).is_ok() {
                     return Ok(());
+                }
+            }
+            // macOS: `ld` itself, with the arguments the driver would give it, where those are
+            // known (`macos_ld`); through the driver otherwise, and when that link fails.
+            if macos_ld::applies(os, linker_override().is_some()) {
+                if let Some(macos_ld::Direct { command, kept }) = macos_ld::direct(&args) {
+                    if run_linker(command).is_ok() {
+                        return Ok(());
+                    }
+                    kept.forget();
                 }
             }
             let mut cmd = unix_linker();
