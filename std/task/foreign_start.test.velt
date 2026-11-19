@@ -71,6 +71,7 @@ describe("a promise started on a thread that is no worker", () => {
         await sleep(5);
         // SAFETY: the words are live until freed below.
         first = unsafe { addressAtomicLoad<u64>(at, "seqcst") };
+        // SAFETY: the words are live until freed below.
         second = unsafe { addressAtomicLoad<u64>(at + 8, "seqcst") };
       }
       expect(first).toBe(7);
