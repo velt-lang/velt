@@ -7,7 +7,7 @@
  * On a function or method of std, a package or the program (velt/compiler re-exports it;
  * docs/internals/design/package-machine-code.md §1): how its calls are inlined.
  *
- * - `@inline("always")` (`"hint"`, the default): its body is offered to callers and the inliner should
+ * - `@inline` (`"hint"`, the default): its body is offered to callers and the inliner should
  *   prefer it, as Rust's `#[inline]`. While a program is compiled as one unit every body is
  *   offered already, so the hint changes nothing yet; it starts to matter once packages are
  *   compiled once (#2943).
@@ -15,7 +15,7 @@
  *   builds keep their calls; `vir::Function::inline` carries it to the optimizer and the
  *   backend). For a small entry point whose callers are hot, which the inliner's size limits would
  *   otherwise leave a call. Not on a recursive function, directly or through others: sema reports
- *   it. std writes this form; a bare `@inline("always")` in std is an error.
+ *   it. std writes this form; a bare `@inline` in std is an error.
  *
  * Neither form is allowed on a generator or an async function: sema reports them.
  */

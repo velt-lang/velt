@@ -5,15 +5,15 @@
 //
 //   export struct Fixed {
 //     readonly raw: i64;
-//     @inline("always") [Symbol.add](o: Fixed): Fixed { return { raw: this.raw + o.raw }; }
+//     @inline [Symbol.add](o: Fixed): Fixed { return { raw: this.raw + o.raw }; }
 //   }
 //
-// `@inline("always")` offers a function's body to its callers and asks the inliner to prefer it, as Rust's
+// `@inline` offers a function's body to its callers and asks the inliner to prefer it, as Rust's
 // `#[inline]`; `@inline("always")` inlines every call in release builds whatever its size (not on
 // a recursive function); `@noInline` keeps every call a call. None applies to a generator or an
 // async function.
 
-/** How calls of a function are inlined: `@inline("always")` (`"hint"`) or `@inline("always")`. */
+/** How calls of a function are inlined: `@inline` (`"hint"`) or `@inline("always")`. */
 export { inline } from "velt/lang/intrinsics/decorators";
 /** Calls of a function stay calls. */
 export { noInline } from "velt/lang/intrinsics/decorators";
