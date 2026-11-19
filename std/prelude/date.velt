@@ -14,9 +14,9 @@ import { DateParts, partsOf, epochMsOf, monthShort, weekdayShort } from "velt/ti
 import { pad, offsetString, isoString, httpString } from "velt/time/format";
 import { parseIso, parseHttp } from "velt/time/parse";
 import { INSPECT } from "velt/lang/hooks/keys";
+import { localOffset, localToUtc } from "velt/time/local";
 
 declare function velt_rt_date_now(): i64;
-declare function velt_rt_local_offset_minutes(epochMs: i64): i32;
 
 // The largest distance from the epoch a JS date can be (100,000,000 days).
 const MAX_TIME: f64 = 8640000000000000.0;
@@ -205,7 +205,9 @@ export class Date implements Comparable<Date> {
     if (this.t != this.t) {
       return this.t;
     }
-    return -(localOffset(this.t as i64) as f64);
+    // Whole minutes truncated toward zero, as V8 (a local mean time's -321.17 is -321), negated
+    // as an integer: UTC is 0, not -0 (Node's `getTimezoneOffset()`).
+    return (-(localOffset(this.t as i64) / 60)) as f64;
   }
 
   /**
@@ -464,7 +466,14 @@ export class Date implements Comparable<Date> {
   // Calendar fields, local or UTC.
   private parts(utc: bool): DateParts {
     const t = this.t as i64;
-    return partsOf(t, utc ? 0 : localOffset(t));
+    if (utc) {
+      return partsOf(t, 0);
+    }
+    // The fields with the whole offset, seconds included (a local mean time has them), and the
+    // zone's minutes as `offsetMinutes` (`toTimeString()`'s `GMT+0521`), as V8.
+    const offset = localOffset(t);
+    const minutes = offset / 60;
+    return partsOf(t + (offset - minutes * 60) * 1000, minutes);
   }
 
   // Field `k` of `[year, month 0-11, day, hours, minutes, seconds, ms, weekday]`, or NaN.
@@ -531,19 +540,6 @@ function fromFields(utc: bool, fields: f64[]): f64 {
 function fullYear(y: f64): f64 {
   const whole = Math.trunc(y);
   return whole >= 0.0 && whole <= 99.0 ? whole + 1900.0 : y;
-}
-
-// Minutes added to UTC to get local time at epoch time `t`.
-function localOffset(t: i64): i64 {
-  return velt_rt_local_offset_minutes(t) as i64;
-}
-
-// The epoch time of a local date-time `local` (its fields read as if they were UTC). Around a DST
-// change the offset is taken at the result, as JS does.
-function localToUtc(local: i64): i64 {
-  const first = local - localOffset(local) * 60000;
-  const second = local - localOffset(first) * 60000;
-  return second;
 }
 
 // Is `s` a date-time without an offset (`2024-01-15T10:30`), which JS reads as local time?
