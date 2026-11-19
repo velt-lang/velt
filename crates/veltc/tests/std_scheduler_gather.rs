@@ -1,8 +1,11 @@
 //! Gather-back (#3097, std/lang/hooks/sched_gather.velt): tasks a burst spread over the workers
-//! come back to worker 0 once the load is gone. Actors that worker 0's saturated queue offered to
-//! idle workers during a burst then answer low-rate calls from `main`, each call waking their
-//! worker from its reactor: by the last round every actor answers on worker 0. Across the runs
-//! some actor did spread (else the test shows nothing), and the blocks balance.
+//! come back to worker 0 once the load is gone. Actors anchored to their worker (each slept once),
+//! which worker 0's saturated queue offered to idle workers during a burst, then answer low-rate
+//! calls from a caller pinned to worker 0, each call reaching them through their worker's inbox
+//! and waking it: by the last round every actor answers on worker 0. (An actor that may move
+//! runs in its caller's slot and never passes the inbox: with those, and a caller the burst may
+//! move too, the last round only showed where the caller was.) Across the runs some actor did
+//! spread (else the test shows nothing), and the blocks balance.
 
 use std::path::Path;
 use std::process::Stdio;
@@ -37,8 +40,11 @@ async function busy(gate: shared<Gate>): Promise<void> {
 }
 
 // Answers each call with the worker it runs on, after a little work (a burst's call queues it
-// among the busy tasks for a while).
+// among the busy tasks for a while). It slept once, so it is anchored to its worker: a call from
+// another worker reaches it through its worker's inbox (a task that may move runs in its
+// caller's slot instead, and never meets the gather-back).
 async function actor(calls: Channel<i64>, answers: Channel<i64>): Promise<void> {
+  await sleep(1);
   while (true) {
     const v = await calls.receive();
     if (v === null) {
@@ -59,7 +65,9 @@ async function actor(calls: Channel<i64>, answers: Channel<i64>): Promise<void> 
 
 const ACTORS = 16;
 
-async function main() {
+// The caller, pinned to worker 0: the burst can't move it, so an actor away from worker 0 is
+// away from its caller.
+async function caller(): Promise<void> {
   const calls: Channel<i64>[] = [];
   const answers: Channel<i64>[] = [];
   const actors: Promise<void>[] = [];
@@ -74,15 +82,17 @@ async function main() {
   for (let i = 0; i < 8; i++) {
     busyOnes.push(spawn(busy(gate)));
   }
-  let spread = false;
-  // Every actor called at once, then the answers: all of them queue with the busy tasks.
-  for (let r = 0; r < 40; r++) {
+  let spread = 0;
+  // Every actor called at once, then the answers: all of them queue with the busy tasks. Until
+  // a round finds actors away (40 rounds at least: an offer takes a window or two).
+  for (let r = 0; r < 400 && (r < 40 || spread == 0); r++) {
+    spread = 0;
     for (let a = 0; a < ACTORS; a++) {
       await calls[a].send(r);
     }
     for (let a = 0; a < ACTORS; a++) {
       if ((await answers[a].receive()) != 0) {
-        spread = true;
+        spread++;
       }
     }
   }
@@ -104,8 +114,12 @@ async function main() {
     calls[a].close();
   }
   await Promise.all(actors);
-  console.log(`spread ${spread}`);
+  console.log(`spread ${spread > 0}`);
   console.log(`away at the end ${away}`);
+}
+
+async function main() {
+  await spawn(caller(), { worker: 0 });
 }
 "#;
 

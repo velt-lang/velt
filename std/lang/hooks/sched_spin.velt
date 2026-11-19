@@ -1,18 +1,23 @@
 // velt/lang/hooks (internal): a worker of the executor in Velt with nothing to run spins a little
 // before it sleeps in its reactor (sched_park.velt `park`, #3097). A task woken from another
 // worker reaches it through its inbox (sched_wake.velt `toInbox`); while the worker spins, its park
-// word stays down, so the waker only pushes, with no system call, and the worker takes the task
-// without a kernel wake-up and a context switch: the cost of a call to a task on another worker
-// at low load, where the reply comes back within microseconds.
-// - The budget (`E_SPIN`, nanoseconds) adapts: it doubles, up to `MAX`, when a spin found work,
-//   and halves when one did not, down to off; a park that ended soon after it began (an unpark
-//   within `2 * MAX`) turns it back on at `MIN`. An idle worker spins a few tens of microseconds
-//   once, then sleeps as before.
+// word says so (`PARK_SPIN`, not asleep), so the waker pushes and takes the word down, with no
+// system call, and the worker takes the task without a kernel wake-up and a context switch: the
+// cost of a call to a task on another worker at low load, where the reply comes back within
+// microseconds.
+// - The spin watches its park word: any wake ends it (sched_wake.velt `unpark`), one that
+//   brings no task too (the last task's end, an exit, an offer), and the worker's loop looks
+//   again, as after a park. Every push on an inbox is followed by that wake; the inbox itself is
+//   looked at with the clock, every few looks.
+// - The budget (`E_SPIN`, nanoseconds) adapts: it doubles, up to `MAX`, when a spin was ended by
+//   a wake, and halves when one was not, down to off; a park another worker ended soon after it
+//   began (an unpark within `2 * MAX`; not its own timer or socket) turns it back on at `MIN`.
+//   An idle worker spins a few tens of microseconds once, then sleeps as before.
 // - Only with several workers (`E_MODE` not 0 or lazy), and only while another worker is awake
-//   and running (not spinning too, `E_SPINNING`): with every other one asleep or waiting itself,
-//   nothing pushes to the inbox soon (its own timers and sockets wake it in the reactor), and the
-//   spin would only burn the budget. A pause between looks (`atomicSpinHint`) leaves the core's
-//   other hardware thread its turn.
+//   and running (its park word down: not asleep, not spinning too): with every other one asleep
+//   or waiting itself, nothing wakes it soon (its own timers and sockets wake it in the
+//   reactor), and the spin would only burn the budget. A pause between looks (`atomicSpinHint`)
+//   leaves the core's other hardware thread its turn.
 
 import { atomicSpinHint } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
@@ -25,7 +30,11 @@ const MIN: usize = 2000;
 /** Spinning is off until a short park turns it back on (0 is "not set yet": `START`). */
 const OFF: usize = 1;
 
-/** Worker `e`, out of work, spins up to its budget for a task pushed on its inbox: whether one came. */
+/**
+ * Worker `e`, out of work, spins up to its budget for a wake from another worker: whether one
+ * came (a task on its inbox, or anything else its loop looks at again). Its park word is down
+ * when this returns.
+ */
 export function spin(e: usize): bool {
   let budget = m.ld(e + t.E_SPIN);
   if (budget === OFF) {
@@ -35,15 +44,17 @@ export function spin(e: usize): bool {
     budget = START;
   }
   if (!othersAwake(e)) {
-    // Nobody to push to the inbox soon (its own timers and sockets wake it in the reactor).
+    // Nobody to wake it soon (its own timers and sockets wake it in the reactor).
     return false;
   }
   const start = sl.clock() as usize;
-  m.storeRelease(e + t.E_SPINNING, 1);
-  let found = false;
+  m.store32(e + t.E_PARK, t.PARK_SPIN);
+  // A task pushed before the word went up was followed by a wake that found it down.
+  let found = m.load(e + t.E_INBOX) !== 0;
   let i: u32 = 0;
-  while (true) {
-    if (m.load(e + t.E_INBOX) !== 0) {
+  while (!found) {
+    if (m.load32(e + t.E_PARK) !== t.PARK_SPIN) {
+      // Woken: the waker took the word down.
       found = true;
       break;
     }
@@ -53,11 +64,18 @@ export function spin(e: usize): bool {
     i++;
     // The clock every 8 looks: a look is a load and a pause (about 140 cycles on recent x86
     // cores), a clock read tens of nanoseconds.
-    if ((i & 7) === 0 && (sl.clock() as usize) - start >= budget) {
-      break;
+    if ((i & 7) === 0) {
+      if (m.load(e + t.E_INBOX) !== 0) {
+        found = true;
+      } else if ((sl.clock() as usize) - start >= budget) {
+        break;
+      }
     }
   }
-  m.storeRelease(e + t.E_SPINNING, 0);
+  // Down again; a wake that took it down first counts as one that came.
+  if (m.cas32(e + t.E_PARK, t.PARK_SPIN, 0) !== t.PARK_SPIN) {
+    found = true;
+  }
   if (found) {
     m.st(e + t.E_SPIN, budget * 2 > MAX ? MAX : budget * 2);
     return true;
@@ -67,14 +85,14 @@ export function spin(e: usize): bool {
 }
 
 /**
- * Is a worker other than `e` awake, one that may wake a task onto `e`: its park word down and not
- * itself spinning (two idle workers would otherwise keep each other spinning)?
+ * Is a worker other than `e` awake and running, one that may wake `e`: its park word down (two
+ * idle workers would otherwise keep each other spinning)?
  */
 function othersAwake(e: usize): bool {
   const n = m.load(t.main() + t.E_STARTED);
   for (let i: usize = 0; i < n; i++) {
     const w = t.worker(i);
-    if (w !== e && m.load32(w + t.E_PARK) !== 1 && m.load(w + t.E_SPINNING) === 0) {
+    if (w !== e && m.load32(w + t.E_PARK) === 0) {
       return true;
     }
   }
@@ -86,7 +104,10 @@ export function off(e: usize): bool {
   return m.ld(e + t.E_SPIN) === OFF;
 }
 
-/** Worker `e`, its spinning off, woke from a park that began at `at` (`sl.clock`): a short one turns it back on. */
+/**
+ * Worker `e`, its spinning off, was woken by another worker from a park that began at `at`
+ * (`sl.clock`): a short park turns it back on (a task came soon; a timer of its own does not).
+ */
 export function woke(e: usize, at: usize): void {
   if ((sl.clock() as usize) - at < 2 * MAX) {
     m.st(e + t.E_SPIN, MIN);

@@ -96,7 +96,6 @@ function windowEnd(e: usize, nowNs: usize, polls: usize): bool {
   const queued = perPoll * waiting;
   m.st(e + t.E_W_START, nowNs);
   m.st(e + t.E_W_POLLS, polls);
-  m.st(e + t.E_W_UNPARKS, m.load(e + t.E_UNPARKS));
   m.st(e + t.E_W_INPUT, 0);
   m.st(e + t.E_W_ALL, 0);
   m.st(e + t.E_W_NOTED, 0);
@@ -191,8 +190,10 @@ function offer(e: usize, mode: u32, helper: usize): void {
 
 /**
  * Worker `e`, out of work, takes over what a worker offers (its own offer first): whether there
- * was anything. The tasks' home becomes `e`.
+ * was anything. The tasks' home becomes `e`. Inlined into the idle loop (sched_loop.velt `idle`),
+ * as `borrow` is, as LLVM did on its own before the offers carried sleeps (#3097).
  */
+@inline
 export function steal(e: usize): bool {
   const g = t.main();
   const n = m.load(g + t.E_STARTED);
@@ -244,6 +245,7 @@ export function lend(w: usize): usize {
  * slice. The tasks keep their home: borrowing moves nothing for good. Sleeping workers lend
  * nothing, so light load stays on one worker. Whether it borrowed anything.
  */
+@inline
 export function borrow(e: usize): bool {
   const g = t.main();
   const n = m.load(g + t.E_STARTED);
