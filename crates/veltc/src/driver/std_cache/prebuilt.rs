@@ -238,8 +238,8 @@ impl Finder {
         let cache = self.cache?;
         let key = self.lookup_key(module_entry);
         let object_key = object_key(&key, &s.files);
-        let bytes = std::fs::read(&s.object).ok()?;
-        super::compile::store_kind(cache, KIND, &object_key, &bytes)?;
+        // The bytes `shipped::find` checked against the manifest's hash.
+        super::compile::store_kind(cache, KIND, &object_key, &s.bytes)?;
         let manifest = Manifest {
             object: object_key.hex(),
             entries: s.entries.clone(),

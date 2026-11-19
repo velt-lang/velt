@@ -3,6 +3,13 @@
 
 use super::*;
 
+/// The file `rel` (`/`-separated) below `root`, built a component at a time as `find` builds it
+/// (on Windows `root.join("a/b")` would mix separators, and the paths would not compare equal).
+fn under(root: &Path, rel: &str) -> PathBuf {
+    rel.split('/')
+        .fold(root.to_path_buf(), |p, part| p.join(part))
+}
+
 /// A std root in a new directory with the files `files` (path below it, contents).
 fn std_with(test: &str, files: &[(&str, &str)]) -> (tempfile::TempDir, PathBuf) {
     let tmp = tempfile::Builder::new()
@@ -11,7 +18,7 @@ fn std_with(test: &str, files: &[(&str, &str)]) -> (tempfile::TempDir, PathBuf) 
         .unwrap();
     let std_root = tmp.path().join("prefix").join("std");
     for (rel, src) in files {
-        let path = std_root.join(rel);
+        let path = under(&std_root, rel);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, src).unwrap();
     }
@@ -22,7 +29,7 @@ fn std_with(test: &str, files: &[(&str, &str)]) -> (tempfile::TempDir, PathBuf) 
 fn built(std_root: &Path, files: &[&str]) -> Built {
     let files = (files.iter())
         .map(|rel| {
-            let path = std_root.join(rel);
+            let path = under(std_root, rel);
             let src = std::fs::read_to_string(&path).unwrap();
             super::super::prebuilt::file_entry(&path, &src)
         })
@@ -69,13 +76,79 @@ fn a_manifest_reads_back_and_names_nothing_of_the_machine() {
         assert!(text.contains(&format!("file {hash}\t{rel}\n")), "{text}");
     }
     assert_eq!(std::fs::read(dir.join("m.o")).unwrap(), b"an object");
+    assert!(text.ends_with("\nend\n"), "{text}");
     // Another form is no manifest.
     assert_eq!(
-        Manifest::parse(&text.replacen("module 1", "module 0", 1)),
+        Manifest::parse(&text.replacen("module 2", "module 1", 1)),
         None
     );
     assert_eq!(Manifest::parse(&format!("{text}what\n")), None);
     assert_eq!(Manifest::parse(""), None);
+}
+
+/// A manifest is read whole or not at all: cut short anywhere (a copy or an unpack that
+/// stopped), at a line's end too, it lacks the end marker; and one that lists no std file would
+/// vouch for its object against nothing.
+#[test]
+fn a_manifest_cut_short_or_listing_no_file_is_not_read() {
+    let (tmp, std_root) = std_with("cut", &FILES);
+    let dir = tmp.path().join("prefix/lib/hooks/t");
+    write(
+        &dir,
+        "m",
+        &built(&std_root, &RELS),
+        &std_root,
+        "velt 1",
+        "t",
+    )
+    .unwrap();
+    let path = dir.join("m.manifest");
+    let whole = std::fs::read_to_string(&path).unwrap();
+    let found = || find(&dir, "m", &std_root, "velt 1", "t").is_some();
+    assert!(found());
+    let lines: Vec<&str> = whole.lines().collect();
+    for keep in 1..lines.len() {
+        let cut = lines[..keep].join("\n") + "\n";
+        std::fs::write(&path, &cut).unwrap();
+        assert!(!found(), "{keep} lines: {cut}");
+    }
+    std::fs::write(&path, &whole[..whole.len() - 2]).unwrap();
+    assert!(!found());
+    let no_files: Vec<&str> = (lines.iter().copied())
+        .filter(|l| !l.starts_with("file "))
+        .collect();
+    std::fs::write(&path, no_files.join("\n") + "\n").unwrap();
+    assert!(!found());
+    std::fs::write(&path, &whole).unwrap();
+    assert!(found());
+}
+
+/// The object is the one the manifest names by its hash: cut short, emptied or replaced, it is
+/// neither linked nor stored in the cache.
+#[test]
+fn a_damaged_object_is_not_taken() {
+    let (tmp, std_root) = std_with("damaged", &FILES);
+    let dir = tmp.path().join("prefix/lib/hooks/t");
+    write(
+        &dir,
+        "m",
+        &built(&std_root, &RELS),
+        &std_root,
+        "velt 1",
+        "t",
+    )
+    .unwrap();
+    let object = dir.join("m.o");
+    let found = || find(&dir, "m", &std_root, "velt 1", "t");
+    assert_eq!(found().map(|s| s.bytes), Some(b"an object".to_vec()));
+    for damaged in [&b"an obj"[..], b"", b"garbage!!"] {
+        std::fs::write(&object, damaged).unwrap();
+        assert!(found().is_none(), "{damaged:?}");
+    }
+    std::fs::remove_file(&object).unwrap();
+    assert!(found().is_none());
+    std::fs::write(&object, b"an object").unwrap();
+    assert!(found().is_some());
 }
 
 /// A file the object's world loaded from outside the std root cannot be shipped.
@@ -106,7 +179,7 @@ fn an_object_of_this_toolchain_and_these_sources_is_found() {
     // The same sources in another place (an install is a copy): found, with that place's entries.
     let copy = tmp.path().join("copy");
     for (rel, src) in FILES {
-        let path = copy.join(rel);
+        let path = under(&copy, rel);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, src).unwrap();
     }
@@ -141,7 +214,7 @@ fn anything_else_is_not_found() {
     assert!(found("velt 1", "t"));
     assert!(!found("velt 2", "t"));
     assert!(!found("velt 1", "u"));
-    let source = std_root.join(RELS[1]);
+    let source = under(&std_root, RELS[1]);
     std::fs::write(&source, "export const TEN = 11;\n").unwrap();
     assert!(!found("velt 1", "t"));
     std::fs::write(&source, FILES[1].1).unwrap();

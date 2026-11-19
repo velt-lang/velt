@@ -828,14 +828,16 @@ velt --version | -V | version          # velt <ver> (<git hash> <host triple>)
   entry>.o` and `<module entry>.manifest`, `<dir>` being a toolchain's `lib/hooks`. The build
   cache is neither read nor written. It needs clang, as `velt cache warm`'s objects do. A module
   whose object cannot be made → `error: some prebuilt hook modules did not compile: …`, exit 1;
-  otherwise `velt: wrote <n> prebuilt hook modules to <dir>/<triple>` on stderr. The manifest:
-  `velt shipped hook module 1`, `compiler <version line>`, `target <triple>`, then `entry` and
-  `tls` lines as a cached manifest has them and one `file <content hash>\t<path below the std
-  root, /-separated>` per std file the object's world loaded. An installed `velt` (`<prefix>/bin/
-  velt` with `<prefix>/std`) that finds no object of a module in the build cache, or runs with
-  the cache off, takes `<prefix>/lib/hooks/<target>`'s when the manifest's version line is its
-  own, the target is the build's and every listed file hashes as the manifest says; with the
-  cache on it stores that object under its own key. The statistics then say `velt: prebuilt
+  otherwise `velt: wrote <n> prebuilt hook modules to <dir>/<triple>` on stderr. The test module
+  of prebuilt hooks (`lang_hooks_prebuilt_probe`) is not written. The manifest: `velt shipped hook
+  module 2`, `compiler <version line>`, `target <triple>`, `object <content hash of the .o>`,
+  then `entry` and `tls` lines as a cached manifest has them, one `file <content hash>\t<path
+  below the std root, /-separated>` per std file the object's world loaded (at least one), and
+  `end`. An installed `velt` (`<prefix>/bin/velt` with `<prefix>/std`) that finds no object of a
+  module in the build cache, or runs with the cache off, takes `<prefix>/lib/hooks/<target>`'s
+  when the manifest is whole (it ends with `end`), its version line is this `velt`'s, the target
+  is the build's, the object hashes as recorded and every listed file hashes as recorded; with
+  the cache on it stores that object under its own key. The statistics then say `velt: prebuilt
   hooks: <module>: object found (shipped)`.
 - `completions <shell>`: prints a completion script for bash, zsh, fish or PowerShell
   (`pwsh` accepted) covering commands, options, `--template`/`--editor`/`--backend`/`--emit`

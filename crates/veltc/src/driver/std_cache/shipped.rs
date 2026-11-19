@@ -36,13 +36,17 @@ use velt_common::std_hooks::HOOKS;
 use super::prebuilt_object::Built;
 
 /// The first line of a shipped manifest; one of another form finds nothing.
-const HEADER: &str = "velt shipped hook module 1";
+const HEADER: &str = "velt shipped hook module 2";
+/// Its last line: a manifest cut short (a copy or an unpack that stopped) lacks it.
+const END: &str = "end";
 
-/// A shipped object that may be linked: the object, and what its manifest says, with its std
-/// files as build-stamp `file` entries of the files as they are now.
+/// A shipped object that may be linked: the object, its bytes (as the manifest's hash says they
+/// are), and what its manifest says, with its std files as build-stamp `file` entries of the
+/// files as they are now.
 #[derive(Debug)]
 pub(super) struct Shipped {
     pub object: PathBuf,
+    pub bytes: Vec<u8>,
     pub entries: Vec<String>,
     pub tls: Vec<String>,
     pub files: Vec<String>,
@@ -53,6 +57,8 @@ pub(super) struct Shipped {
 struct Manifest {
     compiler: String,
     target: String,
+    /// The object's content hash: a damaged object (cut short, emptied, replaced) is no match.
+    object: String,
     entries: Vec<String>,
     tls: Vec<String>,
     /// Per std file: its content hash and its path below the std root, `/`-separated.
@@ -61,12 +67,15 @@ struct Manifest {
 
 impl Manifest {
     fn parse(text: &str) -> Option<Manifest> {
+        // Whole: the end marker is its last line.
+        let text = text.strip_suffix(&format!("\n{END}\n"))?;
         let mut lines = text.lines();
         if lines.next()? != HEADER {
             return None;
         }
         let compiler = lines.next()?.strip_prefix("compiler ")?.to_string();
         let target = lines.next()?.strip_prefix("target ")?.to_string();
+        let object = lines.next()?.strip_prefix("object ")?.to_string();
         let (mut entries, mut tls, mut files) = (vec![], vec![], vec![]);
         for line in lines {
             if let Some(e) = line.strip_prefix("entry ") {
@@ -79,9 +88,15 @@ impl Manifest {
                 files.push((hash.to_string(), path.to_string()));
             }
         }
+        // Every object's world loads std files: a manifest that lists none would vouch for the
+        // object against nothing.
+        if files.is_empty() {
+            return None;
+        }
         Some(Manifest {
             compiler,
             target,
+            object,
             entries,
             tls,
             files,
@@ -90,8 +105,8 @@ impl Manifest {
 
     fn render(&self) -> String {
         let mut s = format!(
-            "{HEADER}\ncompiler {}\ntarget {}\n",
-            self.compiler, self.target
+            "{HEADER}\ncompiler {}\ntarget {}\nobject {}\n",
+            self.compiler, self.target, self.object
         );
         for e in &self.entries {
             s.push_str(&format!("entry {e}\n"));
@@ -102,6 +117,8 @@ impl Manifest {
         for (hash, path) in &self.files {
             s.push_str(&format!("file {hash}\t{path}\n"));
         }
+        s.push_str(END);
+        s.push('\n');
         s
     }
 }
@@ -136,7 +153,12 @@ pub(super) fn find(
     let object = dir.join(format!("{module_entry}.o"));
     let text = std::fs::read_to_string(dir.join(format!("{module_entry}.manifest"))).ok()?;
     let manifest = Manifest::parse(&text)?;
-    if manifest.compiler != compiler || manifest.target != target || !object.is_file() {
+    if manifest.compiler != compiler || manifest.target != target {
+        return None;
+    }
+    // The object as it was written: anything else is not linked, nor stored in the cache.
+    let bytes = std::fs::read(&object).ok()?;
+    if vpm::probe::content_hash(&bytes) != manifest.object {
         return None;
     }
     let mut files = Vec::with_capacity(manifest.files.len());
@@ -150,6 +172,7 @@ pub(super) fn find(
     }
     Some(Shipped {
         object,
+        bytes,
         entries: manifest.entries,
         tls: manifest.tls,
         files,
@@ -186,6 +209,7 @@ pub(super) fn write(
     let manifest = Manifest {
         compiler: compiler.to_string(),
         target: target.to_string(),
+        object: vpm::probe::content_hash(&built.object),
         entries: built.entries.clone(),
         tls: built.tls.clone(),
         files,
@@ -220,8 +244,10 @@ fn relative(entry: &str, std_root: &Path) -> Result<(String, String), String> {
 /// why it failed if it did. The build cache is neither read nor written.
 pub(crate) fn ship(hooks: &Path, target: &str) -> Vec<(String, Result<(), String>)> {
     let dir = &hooks.join(target);
+    // Not the test module of prebuilt hooks (std/lang/hooks/prebuilt_probe.velt: no std code
+    // calls it, so no program would link its object).
     let mut modules: Vec<&'static str> = (HOOKS.iter())
-        .filter(|h| h.prebuilt)
+        .filter(|h| h.prebuilt && h.module_entry != "lang_hooks_prebuilt_probe")
         .map(|h| h.module_entry)
         .collect();
     modules.sort_unstable();
