@@ -191,6 +191,9 @@ export function probe(): i64 {
 
 #[test]
 fn the_decorator_names_a_known_target_and_a_function() {
+    // An unknown target and a method are type errors; the statement form std used before the
+    // decorator is an error too, never a silently ungated function (an older std change rebased
+    // onto the decorator).
     let probe = r#"
 @targetFeature("sha-mips")
 function unknown(): i64 {
@@ -204,27 +207,47 @@ class Box {
   }
 }
 
-function outer(): i64 {
-  @targetFeature("sha-arm")
-  function inner(): i64 {
-    return 1;
-  }
-  return inner();
+function old(): i64 {
+  targetFeature("sha-arm");
+  return 1;
 }
 
 export function probe(): i64 {
-  return unknown() + new Box().get() + outer();
+  return unknown() + new Box().get() + old();
 }
 "#;
-    // A function declared inside another may be gated: its calls are checked like any other's.
     check_fails(
         probe,
         MAIN_PROBE,
         &[
             "3:16: error: this argument of the decorator doesn't fit its parameter's type",
             "9:3: error: the decorator `targetFeature` cannot be applied to a method",
-            "20:10: error: `inner` runs only where the CPU has `sha-arm`, so it must be called behind that check",
+            "16:3: error: `targetFeature` is a decorator: it can only be used as `@targetFeature`",
         ],
+    );
+}
+
+#[test]
+fn the_decorator_refuses_what_nothing_would_check() {
+    // A function C calls: nothing checks the CPU before C calls it (a std probe, since a program
+    // needs native code for `@export`).
+    let probe = r#"
+import { export as cExport } from "velt/ffi";
+
+@cExport("zz_gated_probe")
+@targetFeature("sha-arm")
+function forC(): i64 {
+  return 1;
+}
+
+export function probe(): i64 {
+  return forC();
+}
+"#;
+    check_fails(
+        probe,
+        MAIN_PROBE,
+        &["6:1: error: `@targetFeature` can't gate a function C calls (`@export`)"],
     );
 }
 
@@ -787,4 +810,72 @@ function main() {
     ] {
         assert!(err.contains(m), "missing `{m}` in:\n{err}");
     }
+}
+
+#[test]
+fn a_program_can_gate_only_what_its_target_reaches() {
+    // `main` runs unchecked; a nested, async or generator function is compiled into a closure or
+    // a resume function the target would not reach; an overload signature calls the
+    // implementation unchecked. Each is refused, with the decorator on the implementation or on
+    // a signature.
+    let main = r#"import { targetFeature } from "velt/compiler";
+
+@targetFeature("clmul-x86")
+async function later(): Promise<i64> {
+  return 1;
+}
+
+@targetFeature("clmul-x86")
+function* gen(): Generator<i64> {
+  yield 1;
+}
+
+function outer(): i64 {
+  @targetFeature("clmul-x86")
+  function inner(): i64 {
+    return 1;
+  }
+  return inner();
+}
+
+function twice(a: i64): i64;
+function twice(a: f64): f64;
+@targetFeature("clmul-x86")
+function twice(a: i64 | f64): i64 | f64 {
+  return a;
+}
+
+@targetFeature("clmul-x86")
+function once(a: i64): i64;
+function once(a: f64): f64;
+function once(a: i64 | f64): i64 | f64 {
+  return a;
+}
+
+@targetFeature("clmul-x86")
+async function main() {
+  console.log(outer() + twice(1) + once(2) + (await later()));
+  for (const v of gen()) {
+    console.log(v);
+  }
+}
+"#;
+    let dir = test_dir::TestDir::new();
+    let out = velt(&dir, "", main, &["check"]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{err}");
+    for m in [
+        "3:1: error: `@targetFeature` can't gate an async function or a generator",
+        "8:1: error: `@targetFeature` can't gate an async function or a generator",
+        "14:3: error: `@targetFeature` can't gate a function declared inside another",
+        "23:1: error: `@targetFeature` can't gate an overloaded function",
+        "28:1: error: `@targetFeature` can't gate an overloaded function",
+        "35:1: error: `@targetFeature` can't gate the program's entry, `main`",
+    ] {
+        assert!(err.contains(m), "missing `{m}` in:\n{err}");
+    }
+    assert!(
+        !err.contains("not compatible with its implementation"),
+        "an overload's refusal is the decorator's own error:\n{err}"
+    );
 }

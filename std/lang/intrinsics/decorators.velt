@@ -39,8 +39,10 @@ export declare decorator function noInline(): FunctionDecorator | MethodDecorato
  * the CPU extension `target`, which backends may use anywhere in it. Every call of it must then
  * sit behind velt/simd's check of that extension (`if (u32x4.hasShaX86()) { … }`) or in a
  * function gated on the same one, and it can't be used as a value (stored, passed or returned).
- * A closure written inside it starts without the target. An AES target includes its
- * architecture's carry-less multiplication (`u8x16.hasAesArm()` implies `u64x2.hasClmulArm()`).
+ * A closure written inside it starts without the target. It can't gate the program's `main` or a
+ * function C calls (`@export`), which nothing checks before they run, nor a nested, async,
+ * generator or overloaded function, whose body the target wouldn't reach. An AES target includes
+ * its architecture's carry-less multiplication (`u8x16.hasAesArm()` implies `u64x2.hasClmulArm()`).
  * In a debug (Cranelift) build every check is false, so a gated function never runs there.
  */
 export declare decorator function targetFeature(

@@ -286,7 +286,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         func.param_attrs = attrs;
         func.cold = cold;
         func.inline = inline;
-        // The extension of the same name (`targetFeature`'s; a test of velt_vir checks each).
+        // The extension of the same name (`@targetFeature`'s; a test of velt_vir checks each).
         let target = hir_prog.cpu_targets.get(&def);
         func.target = target.map(|t| crate::simd::Ext::named(t.name()).expect("ICE: a CPU target"));
         func

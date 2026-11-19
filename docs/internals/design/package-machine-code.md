@@ -159,8 +159,19 @@ std/lang/intrinsics/decorators.velt, re-exported by `velt/compiler` and found by
 role (`decorator_target_feature`), on a function of any module. Its parameter is the union of
 today's eight targets (`"sha-arm"`, `"sha-x86"`, `"clmul-x86"`, `"clmul-arm"`, `"aes-x86"`,
 `"aes-arm"`, `"fma-x86"`, `"bf16-arm"`), so an unknown name is a type error at the use, and its type
-(`FunctionDecorator`) keeps it off methods. A function declared inside another may be gated, with
-its calls checked like any other's. The intrinsic `targetFeature` and its first-statement form are
+(`FunctionDecorator`) keeps it off methods. It is refused, with an error, where nothing would
+check the CPU first or the target wouldn't reach the body (review of #3263):
+
+- the program's `main` and a function C calls (`@export`): the runtime and C call them without a
+  check;
+- a nested function, compiled as a closure, and an async function or a generator, compiled into a
+  function that resumes it: lowering gives the target to the declaration's function only
+  (`velt_vir` `lower/abi.rs`), as `@inline` already reasons;
+- an overloaded function, with the decorator on the implementation or on a signature: each
+  signature's body calls the implementation without the check.
+
+Carrying the target to closures and resume functions is possible later; until then a gated
+function is a plain top-level one, which those can call behind the check. The intrinsic `targetFeature` and its first-statement form are
 gone; std's 32 gated functions carry the decorator. The checks stay velt/simd's methods
 (`u64x2.hasClmulX86()`, …), which packages can already call, and which sema already found by
 definition.
