@@ -49,7 +49,7 @@ impl FnLower<'_, '_> {
     /// and used for nothing else (`plain_made`)?
     fn lent_fresh(&mut self, a: &hir::Expr) -> bool {
         let t = self.sub(a.ty);
-        if !self.cx.reaches_lock_set(t) || self.captured_root(a) || self.plain_made_once_value(a) {
+        if !self.cx.reaches_lock_set(t) || self.captured_root(a) || self.plain_made_value(a) {
             return true;
         }
         match &a.kind {

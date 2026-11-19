@@ -69,12 +69,6 @@ impl FnLower<'_, '_> {
         self.plain_local(e).is_some_and(|l| self.plain_made(l))
     }
 
-    /// `plain_made_value` for a store that hands the value over as one made for it alone
-    /// (`plain_made_once`).
-    pub(super) fn plain_made_once_value(&mut self, e: &hir::Expr) -> bool {
-        self.plain_local(e).is_some_and(|l| self.plain_made_once(l))
-    }
-
     /// The variable `e` names, through a share.
     fn plain_local(&self, e: &hir::Expr) -> Option<LocalId> {
         let mut x = e;
@@ -313,7 +307,10 @@ impl FnLower<'_, '_> {
     pub(super) fn keep_mut_arg(&mut self, a: &hir::Expr) -> Operand {
         let ty = self.sub(a.ty);
         let vt = self.cx.ty(ty);
-        if self.lock_ref(ty).is_none() && !self.hand_ok(ty) {
+        // A boxed array literal (a rest parameter's) is the reader's alone: kept, and after the
+        // call handed back element by element and dropped (hand_result.rs `hand_boxed`).
+        let literal = self.boxed_literal(a, ty);
+        if self.lock_ref(ty).is_none() && !self.hand_ok(ty) && !literal {
             return self.copy_mut_arg(a, ty, vt);
         }
         let p = match a.kind {
@@ -334,7 +331,7 @@ impl FnLower<'_, '_> {
                 let p = Place::local(self.copy_to_temp(v, vt));
                 // The call's own value: the reader drops it after handing it back (`Agg`; a
                 // counted object is the reader's to borrow from then on).
-                if matches!(vt, Ty::Agg(_)) {
+                if matches!(vt, Ty::Agg(_)) || literal {
                     self.kept_drops.push((p.clone(), ty, self.mode));
                 }
                 p
@@ -345,6 +342,21 @@ impl FnLower<'_, '_> {
             Ty::Agg(_) => self.addr(p),
             _ => Operand::Copy(p),
         }
+    }
+
+    /// Is `a` an array literal of type `ty`, a boxed array outside the lock set whose elements
+    /// can be handed to the reader (`hand_ok`)? The call sees the very objects in it (one the
+    /// reader still references in a variable is the same object in each store, as in
+    /// JavaScript), where `copy_mut_arg` would give it copies of those.
+    fn boxed_literal(&mut self, a: &hir::Expr, ty: TyId) -> bool {
+        let TyKind::Array(e) = self.cx.kind(ty) else {
+            return false;
+        };
+        matches!(a.kind, K::ArrayLit(_) | K::ConstArray(_))
+            && self.cx.boxed(ty)
+            && self.cx.ty(ty) == Ty::Ptr
+            && !self.cx.lock_counted(ty)
+            && self.hand_ok(e)
     }
 
     /// Is the array at `p` (of type `ty`, a lock-set object) the reader's own, referenced once

@@ -1,3 +1,4 @@
+// check: no leaks
 // A copy or a literal a `read` callback keeps in a variable and stores into the caller's array
 // on each turn of a loop is one array, stored more than once, as in JavaScript (#3171): it is
 // not a value made for one store.
