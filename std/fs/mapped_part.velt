@@ -1,0 +1,43 @@
+// velt/fs (internal): what `MappedFile.open` is asked for and what its `#mapped-source` variant
+// gives back, for both variants.
+
+/** Which part of a file `MappedFile.open` maps: `length` bytes from byte `offset`. */
+export type MapOptions = { offset?: number; length?: number };
+
+/**
+ * A file's bytes in memory: `bytes`, which start at `address` (0 for no bytes) and at byte
+ * `from` of the file.
+ */
+export type Mapping = { address: usize; from: usize; bytes: shared<u8[]> };
+
+/** The part of a file of `size` bytes that `options` asks for. */
+export type Part = { offset: number; length: number };
+
+/** The part `options` names of the `size` bytes of `path`; `null` when it is not inside them. */
+export function partOf(size: number, options: MapOptions | undefined): Part | null {
+  const offset = options?.offset ?? 0;
+  const length = options?.length ?? size - offset;
+  if (
+    !Number.isInteger(offset) ||
+    !Number.isInteger(length) ||
+    offset < 0 ||
+    length < 0 ||
+    offset + length > size
+  ) {
+    return null;
+  }
+  return { offset, length };
+}
+
+/** The error of a part that is not inside the file. */
+export function outsideFile(
+  path: string,
+  size: number,
+  options: MapOptions | undefined,
+): RangeError {
+  const offset = options?.offset ?? 0;
+  const length = options?.length ?? size - offset;
+  return new RangeError(
+    `MappedFile.open: offset ${offset}, length ${length} is not inside the ${size} bytes of ${path}`,
+  );
+}

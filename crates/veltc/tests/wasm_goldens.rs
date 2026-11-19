@@ -218,11 +218,13 @@ const SHARDS: usize = 8;
 const WASI_DIRS: &[&str] = &["m1", "m2", "m3", "m4", "lang"];
 /// and these of `std/`: the SIMD programs, whose vectors are WebAssembly `v128` values there,
 /// the std code written with them, `random` (its seed is WASI's, through wasi-libc),
-/// `clock_reads` (the clocks are WASI's too), and two ephemeron caches, whose trials call between
+/// `clock_reads` (the clocks are WASI's too), `fs_mapped_file_portable` (a `MappedFile` is memory
+/// of its own there), and two ephemeron caches, whose trials call between
 /// std's weak core and the compiler's glue.
 const WASI_STD: &[&str] = &[
     "bytes_search",
     "clock_reads",
+    "fs_mapped_file_portable",
     "half_dot",
     "half_dot_bf16_lengths",
     "half_dot_bf16_lengths_short",
