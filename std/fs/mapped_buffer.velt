@@ -1,0 +1,47 @@
+// velt/fs (internal): the `#mapped-source` variant of WebAssembly, which has no `mmap`
+// (std/imports.velt): a `MappedFile` reads the file into memory of its own when it is opened
+// and offers the same arrays, so a program that uses one runs there too. It costs the memory
+// of the part that was asked for, and a typed method's array is a copy of its range.
+
+import { arrayCopyBytes, arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
+import { osError } from "velt/fs/errors";
+import { readFileBytesSync } from "velt/fs/files";
+import { MapOptions, Mapping, outsideFile, partOf } from "velt/fs/mapped_part";
+
+/** Reads the part of the file at `path` that `options` names (`MappedFile.open`). */
+export function mapFile(path: string, options: MapOptions | undefined): Mapping {
+  const whole = readFileBytesSync(path);
+  const size = whole.length as number;
+  const part = partOf(size, options);
+  if (part == null) {
+    throw outsideFile(path, size, options);
+  }
+  if (part.length == 0) {
+    return { address: 0, from: 0, bytes: shared([]) };
+  }
+  const bytes =
+    part.length == size
+      ? whole
+      : whole.slice(part.offset as i64, (part.offset + part.length) as i64);
+  // The typed methods ask only whether there are bytes (an address of 0 is none): they copy
+  // from `bytes` by index (`settled`), so no address is kept.
+  return { address: 1, from: part.offset as usize, bytes: shared(bytes) };
+}
+
+/** Advice has nothing to act on: the bytes are in memory. Always 0. */
+export function adviseMapping(address: usize, len: usize, advice: i32): i32 {
+  return 0;
+}
+
+/**
+ * The array a typed method hands out: a copy of the `view.length` values from byte `at` of
+ * `bytes`, which it owns. `view` (an array over an address) is never read: its address is not
+ * one.
+ */
+export function settled<T extends Numeric>(view: T[], bytes: shared<u8[]>, at: usize): T[] {
+  const count = view.length as usize;
+  const out: T[] = arrayWithCapacity<T>(count);
+  arraySetLen(out, count);
+  arrayCopyBytes(out, 0, bytes, at, count);
+  return out;
+}

@@ -1,0 +1,56 @@
+// `MappedFile` gives the same bytes and typed arrays on every target: over a mapping where the
+// system has `mmap`, from memory of its own on WebAssembly, which has none (#3162). The file is
+// text, which every target can write.
+import * as fs from "velt/fs";
+
+function main() {
+  const path = `velt-golden-mapped-portable-${process.pid}.tmp`;
+  let text = "";
+  for (let i = 0; i < 96; i++) {
+    text += String.fromCharCode(32 + i);
+  }
+  fs.writeFileSync(path, text);
+
+  const m = fs.MappedFile.open(path);
+  console.log(m.length, m.bytes[0], m.bytes[95], m.bytes.subarray(4, 8));
+  console.log(m.u16s(2, 3), m.i32s(8, 2), m.u64s(16, 1));
+  console.log(m.f32s(32, 2), m.f64s(40, 1));
+  // A typed array outlives the `MappedFile` it came from.
+  const kept = keep(path);
+  console.log(kept.length, kept[0], kept[5]);
+  m.advise("sequential");
+  m.advise("dontneed", 0, 96);
+  console.log(m.bytes[10], m.i8s(90, 6));
+
+  // A part of the file: views are checked against their place in the file.
+  const part = fs.MappedFile.open(path, { offset: 6, length: 40 });
+  console.log(part.length, part.bytes[0], part.u16s(2, 2), part.u32s(2, 1));
+  try {
+    part.u32s(0, 1);
+  } catch (e) {
+    console.log((e as Error).name, (e as Error).message);
+  }
+  try {
+    m.f32s(92, 2);
+  } catch (e) {
+    console.log((e as Error).name, (e as Error).message);
+  }
+  try {
+    fs.MappedFile.open(path, { offset: 90, length: 7 });
+  } catch (e) {
+    console.log((e as Error).name, (e as Error).message.replace(path, "<path>"));
+  }
+  console.log(fs.MappedFile.open(path, { offset: 96 }).length, m.f32s(8, 0).length);
+  fs.rmSync(path);
+  try {
+    fs.MappedFile.open(path);
+  } catch (e) {
+    console.log((e as Error).message.includes("ENOENT"));
+  }
+}
+
+function keep(path: string): shared<u32[]> {
+  return fs.MappedFile.open(path).u32s(0, 6);
+}
+
+main();
