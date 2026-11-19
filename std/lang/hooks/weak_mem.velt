@@ -29,14 +29,14 @@ export const RC_WEAK: u64 = 0x8000_0000_0000_0000;
 export const RC_COUNT: u64 = 0x7fff_ffff_ffff_ffff;
 
 /** The address-sized field at `a`. */
-@inline
+@inline("always")
 export function ld(a: usize): usize {
   // SAFETY: the core reads only fields of its own blocks and the count words of live objects.
   return unsafe { addressLoad<u64>(a) } as usize;
 }
 
 /** Stores `v` in the address-sized field at `a`. */
-@inline
+@inline("always")
 export function st(a: usize, v: usize): void {
   // SAFETY: as `ld`; the core writes only fields of its own blocks under the lock.
   unsafe {
@@ -45,14 +45,14 @@ export function st(a: usize, v: usize): void {
 }
 
 /** The 64-bit field at `a`. */
-@inline
+@inline("always")
 export function ld64(a: usize): u64 {
   // SAFETY: as `ld`.
   return unsafe { addressLoad<u64>(a) };
 }
 
 /** Stores `v` in the 64-bit field at `a`. */
-@inline
+@inline("always")
 export function st64(a: usize, v: u64): void {
   // SAFETY: as `st`.
   unsafe {
@@ -61,14 +61,14 @@ export function st64(a: usize, v: u64): void {
 }
 
 /** The 32-bit field at `a`. */
-@inline
+@inline("always")
 export function ld32(a: usize): u32 {
   // SAFETY: as `ld`.
   return unsafe { addressLoad<u32>(a) };
 }
 
 /** Stores `v` in the 32-bit field at `a`. */
-@inline
+@inline("always")
 export function st32(a: usize, v: u32): void {
   // SAFETY: as `st`.
   unsafe {
@@ -77,13 +77,13 @@ export function st32(a: usize, v: u32): void {
 }
 
 /** The count word of the counted object `obj` (its value address). */
-@inline
+@inline("always")
 export function rcWord(obj: usize): usize {
   return obj - 8;
 }
 
 /** The count of the live counted object `obj`, without its flag. */
-@inline
+@inline("always")
 export function count(obj: usize): u64 {
   return ld64(rcWord(obj)) & RC_COUNT;
 }
@@ -113,7 +113,7 @@ export function copy(dst: usize, src: usize, n: usize): void {
 }
 
 /** The slot of `x` in a table of `cap` (a power of two) slots: Fibonacci hashing. */
-@inline
+@inline("always")
 export function slotOf(x: usize, cap: usize): usize {
   const h = (((x as u64) >> 3) * 0x9e37_79b9_7f4a_7c15) >> 32;
   return (h as usize) & (cap - 1);
@@ -124,7 +124,7 @@ export function slotOf(x: usize, cap: usize): usize {
 // then gives its core away until it is free; no operation waits on anything with it held.
 
 /** Takes the lock at `a`. */
-@inline
+@inline("always")
 export function lock(a: usize): void {
   // SAFETY: `a` is the lock word of the core's header, changed only atomically.
   if (unsafe { addressAtomicCas<u32>(a, 0, 1, "acquire", "relaxed") } !== 0) {
@@ -152,7 +152,7 @@ function lockSlow(a: usize): void {
 }
 
 /** Gives back the lock at `a`. */
-@inline
+@inline("always")
 export function unlock(a: usize): void {
   // SAFETY: as `lock`.
   unsafe {
@@ -167,14 +167,14 @@ const V_CAP: usize = 8;
 const V_ITEMS: usize = 16;
 
 /** The items in the vector held at `field`. */
-@inline
+@inline("always")
 export function vecLen(field: usize): usize {
   const v = ld(field);
   return v === 0 ? 0 : ld(v + V_LEN);
 }
 
 /** Item `i` of the vector held at `field` (`i` < its length). */
-@inline
+@inline("always")
 export function vecAt(field: usize, i: usize): usize {
   return ld(ld(field) + V_ITEMS + i * W);
 }
@@ -285,19 +285,19 @@ function vgrowPush(v: usize, x: usize): usize {
 }
 
 /** The items of the vector `v` (0: none). */
-@inline
+@inline("always")
 export function vlen(v: usize): usize {
   return v === 0 ? 0 : ld(v + V_LEN);
 }
 
 /** Item `i` of the vector `v`. */
-@inline
+@inline("always")
 export function vat(v: usize, i: usize): usize {
   return ld(v + V_ITEMS + i * W);
 }
 
 /** Sets item `i` of the vector `v`. */
-@inline
+@inline("always")
 export function vset(v: usize, i: usize, x: usize): void {
   st(v + V_ITEMS + i * W, x);
 }
@@ -310,7 +310,7 @@ export function vswapRemove(v: usize, i: usize): void {
 }
 
 /** Makes `n` (at most its length) the length of the vector `v`. */
-@inline
+@inline("always")
 export function vtruncate(v: usize, n: usize): void {
   st(v + V_LEN, n);
 }

@@ -4,6 +4,7 @@
 //! the new code through the trampolines (an HTTP server's next request runs the new handler);
 //! a future in flight finishes on the code of the version that started it.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use velt_codegen_cl::{DevSession, Reload};
@@ -15,8 +16,9 @@ use crate::cli::BuildArgs;
 use crate::commands::{failure_code, report};
 use crate::driver::{self, BuildOptions, Session};
 
-/// For tests: a host with this set crashes (aborts) when asked to reload, as one whose swap
-/// faults would.
+/// For tests: a host with this set crashes when asked to reload, as one whose swap faults
+/// would: `segv` by a write to an inaccessible page once the build is done, anything else by an
+/// abort at once.
 pub const CRASH_ON_RELOAD_ENV: &str = "VELT_DEV_CRASH_ON_RELOAD";
 
 /// Answer reload requests on `channel` on a background thread for the life of the program;
@@ -33,13 +35,16 @@ pub fn serve_reloads(
         details: args.timings,
     };
     let natives = Fingerprint::of(opts.packages.as_ref());
-    let crash = std::env::var_os(CRASH_ON_RELOAD_ENV).is_some();
+    let crash = std::env::var(CRASH_ON_RELOAD_ENV).ok();
     let spawned = std::thread::Builder::new()
         .name("velt-dev-reload".into())
         .spawn(move || {
             while wait_reload(&channel).is_ok() {
-                if crash {
-                    std::process::abort();
+                step(Step::Started);
+                match crash.as_deref() {
+                    Some("segv") => FAULT_IN_SWAP.store(true, Ordering::Relaxed),
+                    Some(_) => std::process::abort(),
+                    None => {}
                 }
                 let reply = if Fingerprint::of(opts.packages.as_ref()) != natives {
                     // Native libraries are never swapped (or unloaded): start over.
@@ -50,6 +55,7 @@ pub fn serve_reloads(
                 } else {
                     reload(&mut session, &opts, flags, &mut carried)
                 };
+                step(Step::Done);
                 if reply_reload(&channel, &reply).is_err() {
                     break;
                 }
@@ -58,6 +64,32 @@ pub fn serve_reloads(
     if let Err(e) = spawned {
         // Without the thread the supervisor's reload request fails and it restarts instead.
         crate::style::error(&format!("velt dev: cannot start the reload thread: {e}"));
+    }
+}
+
+/// Set by [`CRASH_ON_RELOAD_ENV`]`=segv`: the swap step faults.
+static FAULT_IN_SWAP: AtomicBool = AtomicBool::new(false);
+
+/// Where a reload is, for the crash report of a host that faults (`fault_unix`).
+#[derive(Clone, Copy)]
+enum Step {
+    Started,
+    Loading,
+    Swapping,
+    Done,
+}
+
+#[cfg_attr(not(unix), allow(unused_variables))]
+fn step(step: Step) {
+    #[cfg(unix)]
+    {
+        use super::fault_unix as fault;
+        match step {
+            Step::Started => fault::reload_started(),
+            Step::Loading => fault::at(fault::Step::Loading),
+            Step::Swapping => fault::at(fault::Step::Swapping),
+            Step::Done => fault::at(fault::Step::Done),
+        }
     }
 }
 
@@ -246,6 +278,7 @@ fn reload_with(
     let mut files: Vec<_> = sess.sm.files().map(|(_, f)| f.path.clone()).collect();
     files.extend(source_files(opts.packages.as_ref()));
     let program = program.and_then(|p| {
+        step(Step::Loading);
         load(&sess).map_err(crate::driver::BuildError::Failed)?;
         Ok(p)
     });
@@ -262,6 +295,13 @@ fn reload_with(
     if let Some(reason) = changed {
         report(&sess, verbose);
         return Reloaded::Restart { reason, files };
+    }
+    step(Step::Swapping);
+    if FAULT_IN_SWAP.load(Ordering::Relaxed) {
+        #[cfg(unix)]
+        super::fault_unix::fault();
+        #[cfg(not(unix))]
+        std::process::abort();
     }
     let start = Instant::now();
     let mut steps = vec![];

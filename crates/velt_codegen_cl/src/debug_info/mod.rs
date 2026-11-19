@@ -310,17 +310,21 @@ pub(crate) fn build_unit(
                     Reverse(end_key(&v.debug)),
                 )
             });
+            let scopes = nested_scopes(vars.iter().map(|v| &v.debug));
             let mut open: Vec<(&vir::LocalDebug, UnitEntryId)> = vec![];
             let code = ScopeCode::new(f);
             let mut budget = scope_range_budget(f);
-            for v in vars {
-                while open.last().is_some_and(|(o, _)| !holds(o, &v.debug)) {
+            for (v, scope) in vars.into_iter().zip(&scopes) {
+                while open.last().is_some_and(|(o, _)| !holds(o, scope)) {
                     open.pop();
                 }
                 let parent = open.last().map_or(sub_id, |(_, e)| *e);
-                let ranges = scope_ranges(&code, &v.debug).filter(|r| r.len() <= budget);
+                let ranges = scope_ranges(&code, scope).filter(|r| r.len() <= budget);
                 let parent = match ranges {
                     None => parent,
+                    // No code is in its scope (its block was left out of the code: a branch of
+                    // a condition known when compiling): nowhere to show it.
+                    Some(ranges) if ranges.is_empty() => continue,
                     Some(ranges) => {
                         budget -= ranges.len();
                         let ranges = ranges
@@ -339,14 +343,50 @@ pub(crate) fn build_unit(
                         block
                     }
                 };
-                if !v.debug.param {
-                    open.push((&v.debug, parent));
+                if !scope.param {
+                    open.push((scope, parent));
                 }
                 add_variable(&mut dwarf, &mut types, parent, v, file_of(v.debug.decl));
             }
         }
     }
     dwarf
+}
+
+/// The scopes of `vars` (sorted by declaration, a scope that ends later first) as source scopes
+/// are, nested or apart: a variable declared inside another's scope ends with it at the latest.
+/// Lowering gives each variable the end of its own block, but one whose end it does not know
+/// (`None`: to the function's end) or gives too late would reach past the block around it, and
+/// its lexical block would overlap that block's siblings, which debuggers and `dwarfdump
+/// --verify` refuse. Such an end is cut to the enclosing scope's.
+fn nested_scopes<'a>(vars: impl Iterator<Item = &'a vir::LocalDebug>) -> Vec<vir::LocalDebug> {
+    let mut scopes: Vec<vir::LocalDebug> = vec![];
+    // The scopes around the variable at hand, outermost first (indices into `scopes`).
+    let mut open: Vec<usize> = vec![];
+    for v in vars {
+        let mut v = v.clone();
+        while open.last().is_some_and(|&o| !declared_in(&scopes[o], &v)) {
+            open.pop();
+        }
+        if let Some(outer) = open.last().and_then(|&o| scopes[o].end) {
+            if v.end.is_none_or(|end| at(end) > at(outer)) {
+                v.end = Some(outer);
+            }
+        }
+        if !v.param {
+            open.push(scopes.len());
+        }
+        scopes.push(v);
+    }
+    scopes
+}
+
+/// Whether `inner` is declared in `outer`'s scope: in its file, from its declaration's line on
+/// and before its end.
+fn declared_in(outer: &vir::LocalDebug, inner: &vir::LocalDebug) -> bool {
+    outer.decl.file == inner.decl.file
+        && outer.decl.line <= inner.decl.line
+        && outer.end.is_none_or(|end| at(inner.decl) < at(end))
 }
 
 /// The located code of a function, prepared for [`scope_ranges`].
@@ -535,6 +575,100 @@ fn file_and_directory(path: &str, cwd: &str) -> (String, String) {
         Some((dir, name)) if absolute => (name.to_string(), dir.to_string()),
         _ if absolute => (path, String::new()),
         _ => (path, cwd.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod scope_tests {
+    use super::{declared_in, nested_scopes};
+    use velt_vir::vir::{DebugTyId, LocalDebug, SrcLoc};
+
+    fn var(line: u32, end: Option<(u32, u32)>) -> LocalDebug {
+        LocalDebug {
+            decl: SrcLoc {
+                file: 1,
+                line,
+                col: 11,
+            },
+            end: end.map(|(line, col)| SrcLoc { file: 1, line, col }),
+            ty: DebugTyId(0),
+            by_ref: false,
+            param: false,
+        }
+    }
+
+    fn ends(vars: &[LocalDebug]) -> Vec<Option<(u32, u32)>> {
+        (nested_scopes(vars.iter()).iter())
+            .map(|v| v.end.map(|e| (e.line, e.col)))
+            .collect()
+    }
+
+    /// A variable without an end of its own (its block was left out of the code, so lowering
+    /// never met it), declared inside a block that ends, ends with that block: left to the
+    /// function's end it would overlap what follows the block (#3184's `mayPark`: `gave`,
+    /// declared in `root`'s block).
+    #[test]
+    fn a_variable_ends_with_the_scope_it_is_declared_in() {
+        let (root, gave) = (var(250, Some((283, 4))), var(262, None));
+        assert_eq!(ends(&[root, gave]), [Some((283, 4)), Some((283, 4))]);
+        // An end past the enclosing one is cut too; one before it is kept.
+        let (outer, late, inner) = (
+            var(10, Some((20, 4))),
+            var(12, Some((30, 2))),
+            var(13, Some((15, 6))),
+        );
+        assert_eq!(
+            ends(&[outer, late, inner]),
+            [Some((20, 4)), Some((20, 4)), Some((15, 6))]
+        );
+    }
+
+    /// What is declared after a scope's end is not in it: its own end stays, the function's end
+    /// too.
+    #[test]
+    fn a_variable_declared_after_a_scope_is_apart_from_it() {
+        let (first, after, body) = (
+            var(10, Some((20, 4))),
+            var(22, Some((40, 2))),
+            var(45, None),
+        );
+        assert_eq!(
+            ends(&[first.clone(), after.clone(), body]),
+            [Some((20, 4)), Some((40, 2)), None]
+        );
+        assert!(!declared_in(&first, &after));
+        // In the function's own block: whatever follows is inside it.
+        let (whole, inside) = (var(3, None), var(8, Some((9, 2))));
+        assert_eq!(ends(&[whole, inside]), [None, Some((9, 2))]);
+    }
+
+    /// Every two scopes are nested or apart, whatever ends lowering gave.
+    #[test]
+    fn scopes_never_cross() {
+        let ends_given = [None, Some((14, 2)), Some((30, 2)), Some((18, 6)), None];
+        let mut vars = vec![];
+        for (i, a) in ends_given.iter().enumerate() {
+            for (j, b) in ends_given.iter().enumerate() {
+                vars.push(var(10 + (i * 5 + j) as u32, *a));
+                vars.push(var(10 + (i * 5 + j) as u32, *b));
+            }
+        }
+        // As `build_unit` sorts them: by declaration, a later end first.
+        vars.sort_by_key(|v| {
+            (
+                v.decl.line,
+                std::cmp::Reverse((v.end.is_none(), v.end.map_or((0, 0), |e| (e.line, e.col)))),
+            )
+        });
+        let scopes = nested_scopes(vars.iter());
+        let end = |v: &LocalDebug| v.end.map_or((u32::MAX, 0), |e| (e.line, e.col));
+        for (i, a) in scopes.iter().enumerate() {
+            for b in &scopes[i + 1..] {
+                let apart = (b.decl.line, b.decl.col) >= end(a);
+                let nested = end(b) <= end(a);
+                assert!(apart || nested, "{a:?} and {b:?} cross");
+            }
+        }
     }
 }
 

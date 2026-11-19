@@ -16,6 +16,8 @@ mod child;
 mod edits;
 #[cfg(all(windows, target_arch = "x86_64"))]
 mod fault;
+#[cfg(unix)]
+mod fault_unix;
 mod host;
 mod interrupt;
 #[cfg(windows)]

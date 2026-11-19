@@ -258,7 +258,7 @@ pub struct Function {
     /// (rt_abi_async.md §1): param 0 is its frame, which the caller hands over exclusively for
     /// the duration of the call. Set by lowering; `velt_opt` keeps it on clones.
     pub is_poll: bool,
-    /// A gated function (`targetFeature`, rt_abi.md "SIMD"): it runs only where the CPU has
+    /// A gated function (`@targetFeature`, rt_abi.md "SIMD"): it runs only where the CPU has
     /// this extension (sema checks every call), so backends compile it with the extension's
     /// whole feature set and its SHA operations as the bare instructions. `None` for every
     /// other function. Inlining keeps a gated body out of callers with another target.
@@ -284,13 +284,14 @@ pub struct Function {
     pub stops_unwind: bool,
 }
 
-/// A function's inlining, as std's decorators set it (`vir::Function::inline`).
+/// A function's inlining, as the decorators `@inline` and `@noInline` set it
+/// (`vir::Function::inline`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Inline {
     /// Neither decorator: the optimizer's and the backend's own heuristics decide.
     #[default]
     Default,
-    /// `@inline`: every call is inlined wherever `velt_opt`'s inliner runs, whatever the
+    /// `@inline("always")`: every call is inlined wherever `velt_opt`'s inliner runs, whatever the
     /// callee's size (LLVM `alwaysinline`). Sema rejects it on a recursive function.
     Always,
     /// `@noInline` (#1884): every call stays a call (LLVM `noinline`, without `cold`).

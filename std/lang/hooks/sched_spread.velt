@@ -51,7 +51,7 @@ const BORROW_MIN: usize = 2;
 const NOBORROW_POLLS: usize = 32;
 
 /** The clock of the spread: nanoseconds since the process started. */
-@inline
+@inline("always")
 export function now(): usize {
   return sl.clock() as usize;
 }

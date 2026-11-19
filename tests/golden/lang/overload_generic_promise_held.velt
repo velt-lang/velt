@@ -1,0 +1,56 @@
+// A promise converted by an interface adapter (#379: `validate(): Promise<Res<S>>` read
+// through `Options<unknown>`) is a promise of its own that waits on the method's. Kept in a
+// variable and awaited later, awaited twice, and one that rejects: the converted promise holds
+// the method's promise until it settles. Node prints the same.
+interface Ctx {
+  id: string;
+}
+
+type Res<O> = { value: O };
+
+interface Schema<O> {
+  validate(value: unknown): Promise<Res<O>>;
+}
+
+interface Options<S> {
+  input: Schema<S>;
+  handler(rq: Ctx, input: S): string;
+}
+
+function run<S>(options: Options<S>, raw: unknown): Promise<string>;
+async function run(options: Options<unknown>, raw: unknown): Promise<string> {
+  const rq = { id: "rq" };
+  // Kept, and awaited after other work.
+  const kept = options.input.validate(raw);
+  const other = await Promise.resolve("first");
+  try {
+    const res = await kept;
+    // Awaited again: the same settled value.
+    const again = await kept;
+    return other + " " + options.handler(rq, res.value) + " " + options.handler(rq, again.value);
+  } catch (e) {
+    return other + " caught " + String(e);
+  }
+}
+
+const count: Schema<number> = {
+  async validate(value: unknown): Promise<Res<number>> {
+    if (typeof value === "number") {
+      return { value: value + 1 };
+    }
+    throw new Error("not a number");
+  },
+};
+
+const words: Schema<string[]> = {
+  async validate(value: unknown): Promise<Res<string[]>> {
+    return { value: [String(value), "b"] };
+  },
+};
+
+async function main(): Promise<void> {
+  console.log(await run({ input: count, handler: (rq: Ctx, n: number): string => rq.id + n }, 41));
+  console.log(await run({ input: count, handler: (rq: Ctx, n: number): string => rq.id + n }, "x"));
+  console.log(await run({ input: words, handler: (rq: Ctx, ws: string[]): string => ws.join("+") }, "a"));
+}
+main();

@@ -134,24 +134,23 @@ fn the_leak_check_runs_what_an_ordinary_run_kept() {
     assert!(!out.contains("pure.test.velt (cached)"), "{out}");
 }
 
-/// A C function is outside the program: what it reads isn't covered by the program's bytes.
-/// std's `closeSync` calls the C library's `close`.
-#[cfg(unix)]
+/// The file system is outside the program: what it reads isn't covered by the program's bytes.
+/// std's `existsSync` calls the C library's `stat` (or Win32's `CreateFileW`), which only the
+/// file system makes, so the test file's line names it, every run.
 #[test]
-fn a_test_calling_a_c_function_runs_every_time() {
+fn a_test_reaching_the_file_system_runs_every_time() {
     let p = package();
     p.write(
         "tests/sys.test.velt",
-        "import { expect } from \"velt/test\";\nimport { closeSync } from \"velt/fs\";\n\nexport function test_pid() {\n  let threw = false;\n  try {\n    closeSync(1000000);\n  } catch (e) {\n    threw = true;\n  }\n  expect(threw).toBe(true);\n}\n",
+        "import { expect } from \"velt/test\";\nimport { existsSync } from \"velt/fs\";\n\nexport function test_exists() {\n  expect(existsSync(\"no-such-file.txt\")).toBe(false);\n}\n",
     );
     for _ in 0..2 {
         let running = p.running(&[]);
-        // Also `__error` on macOS, where errno is read through it.
         let sys = running
             .iter()
             .find(|l| l.starts_with("tests/sys.test.velt"));
         assert!(
-            sys.is_some_and(|l| l.contains("not cacheable") && l.contains("a C function `close`")),
+            sys.is_some_and(|l| l.contains("not cacheable") && l.contains("the file system")),
             "{running:?}"
         );
     }

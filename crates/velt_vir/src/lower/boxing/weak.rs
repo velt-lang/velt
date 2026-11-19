@@ -11,7 +11,7 @@
 
 use rustc_hash::FxHashSet;
 
-use velt_sema::hir::{TyId, TyKind};
+use velt_sema::hir::{DefId, TyId, TyKind};
 
 use super::Boxing;
 use crate::lower::Cx;
@@ -74,13 +74,50 @@ impl Cx<'_> {
         }
     }
 
-    /// Does the trace glue look into objects of the counted type `t` (not a class with a
-    /// vtable, whose dynamic class may have fields its static type lacks)?
+    /// Does the trace glue of the counted type `t` walk its fields itself (not a class with a
+    /// vtable, whose dynamic class may have fields its static type lacks: its glue dispatches
+    /// through the class table, glue/trace_dyn.rs)?
     pub(in crate::lower) fn traceable(&mut self, t: TyId) -> bool {
         match self.kind(t) {
             TyKind::Adt(d, _) if self.is_class(t) => !self.has_header(d),
             _ => true,
         }
+    }
+
+    /// The classes an object of class `t` (with a vtable) may be: `t` and its subclasses whose
+    /// tables the program builds (`b`: the counted types; `None`: this pass's).
+    pub(in crate::lower) fn hierarchy_classes(&mut self, b: Option<&Boxing>, t: TyId) -> Vec<TyId> {
+        let TyKind::Adt(d, _) = self.kind(t) else {
+            return vec![];
+        };
+        let built = b.unwrap_or(&self.boxing).built_classes.clone();
+        (built.into_iter())
+            .filter(|&c| {
+                c == t
+                    || matches!(self.kind(c), TyKind::Adt(cd, _)
+                        if self.is_class(c) && self.strict_subclass(cd, d))
+            })
+            .collect()
+    }
+
+    /// The concrete types of interface `i`'s implementation tables whose data is a counted class
+    /// instance, with the tables' implementation indexes (a boxed value's table is left out:
+    /// glue/trace_dyn.rs).
+    pub(in crate::lower) fn iface_counted(
+        &mut self,
+        b: Option<&Boxing>,
+        i: DefId,
+    ) -> Vec<(u32, TyId)> {
+        let all = (b.unwrap_or(&self.boxing).iface_traced.get(&i).cloned()).unwrap_or_default();
+        (all.into_iter())
+            .filter(|&(_, t)| {
+                let counted = match b {
+                    Some(b) => self.counted_in(b, t),
+                    None => self.counted(t),
+                };
+                counted && self.is_class(t)
+            })
+            .collect()
     }
 
     /// The counted types an inline value of `t` refers to directly, as the trace glue visits
@@ -125,7 +162,9 @@ impl Cx<'_> {
             // the trace glue asks its descriptor (weak_object.rs). So may an interface value
             // whose tables keep `any` tables.
             TyKind::Dyn(d, _)
-                if self.is_dynamic(t) || b.unwrap_or(&self.boxing).dyn_to_any.contains(&d) =>
+                if self.is_dynamic(t)
+                    || (b.unwrap_or(&self.boxing).weak_object
+                        && b.unwrap_or(&self.boxing).dyn_to_any.contains(&d)) =>
             {
                 let bx = b.unwrap_or(&self.boxing);
                 if bx.weak_object {
@@ -154,12 +193,25 @@ impl Cx<'_> {
                     }
                 }
             }
+            // An interface value: the object its data points to, one of the class instances its
+            // implementation tables were built for (glue/trace_dyn.rs).
+            TyKind::Dyn(i, _) if !self.is_dynamic(t) => {
+                for (_, c) in self.iface_counted(b, i) {
+                    if !out.contains(&c) {
+                        out.push(c);
+                    }
+                }
+            }
             // An uncounted object: its owner holds the only reference, so what its fields
-            // refer to is the owner's (glue/trace.rs `trace_value`). One with a vtable is opaque,
-            // as a counted one is: its dynamic class may have fields its static type lacks.
+            // refer to is the owner's (glue/trace.rs `trace_value`). One with a vtable may be any
+            // built class of its hierarchy, whose table has its trace glue.
             TyKind::Adt(..) if self.is_class(t) => {
-                if self.traceable(t) {
-                    for f in self.adt_field_tys(t) {
+                let classes = match self.traceable(t) {
+                    true => vec![t],
+                    false => self.hierarchy_classes(b, t),
+                };
+                for c in classes {
+                    for f in self.adt_field_tys(c) {
                         self.refs_inline(b, f, out, seen);
                     }
                 }
@@ -176,16 +228,36 @@ impl Cx<'_> {
     /// The counted types an object of the counted type `t` refers to directly (what its trace
     /// glue visits); none for an opaque one.
     pub(in crate::lower) fn weak_refs_of(&mut self, b: Option<&Boxing>, t: TyId) -> Vec<TyId> {
+        // A class with a vtable: what any built class of its hierarchy refers to.
         if !self.traceable(t) {
-            return vec![];
+            let mut out = vec![];
+            for c in self.hierarchy_classes(b, t) {
+                for r in self.weak_refs_exact(b, c) {
+                    if !out.contains(&r) {
+                        out.push(r);
+                    }
+                }
+            }
+            return out;
         }
+        self.weak_refs_exact(b, t)
+    }
+
+    /// The counted types an object of exactly the counted type `t` refers to directly: what its
+    /// own trace glue visits (`Glue::ObjTrace` for a class with a vtable).
+    pub(in crate::lower) fn weak_refs_exact(&mut self, b: Option<&Boxing>, t: TyId) -> Vec<TyId> {
         let mut out = vec![];
         let mut seen = FxHashSet::default();
-        let parts = match self.kind(t) {
+        let mut parts = match self.kind(t) {
             TyKind::Adt(..) if self.is_class(t) => self.adt_field_tys(t),
             TyKind::Array(e) => vec![e],
             _ => self.part_types(t),
         };
+        // A generator object also holds its function's state (async_fn/gen_trace.rs).
+        if self.is_generator_obj(t) {
+            let bx = b.unwrap_or(&self.boxing);
+            parts.extend(bx.gen_types.get(&t).cloned().unwrap_or_default());
+        }
         for p in parts {
             self.refs_inline(b, p, &mut out, &mut seen);
         }
@@ -237,6 +309,13 @@ impl Cx<'_> {
         if !self.facts.weak_seeds.is_empty() || next.weak_object {
             next.env_traced = self.closures_by_key();
             next.weak_envs = !next.env_traced.is_empty();
+            let mut classes: Vec<TyId> = (self.facts.vtable_types.iter().copied())
+                .filter(|&t| self.is_class(t))
+                .collect();
+            classes.sort_by_key(|t| t.0);
+            next.built_classes = classes;
+            next.iface_traced = self.iface_tables();
+            next.gen_types = self.gen_frame_types();
         }
         let mut seeds: Vec<TyId> = self.facts.weak_seeds.iter().copied().collect();
         if next.weak_object {
@@ -266,5 +345,19 @@ impl Cx<'_> {
             }
             work.extend(self.weak_refs_of(Some(&snapshot), t));
         }
+    }
+
+    /// Each interface's implementation tables built in this pass, `(index, concrete type)`,
+    /// sorted (so the fixed point compares equal across passes).
+    fn iface_tables(&self) -> rustc_hash::FxHashMap<DefId, Vec<(u32, TyId)>> {
+        let mut out: rustc_hash::FxHashMap<DefId, Vec<(u32, TyId)>> = Default::default();
+        for &(i, index, t) in self.facts.iface_impls.iter() {
+            out.entry(i).or_default().push((index, t));
+        }
+        for v in out.values_mut() {
+            v.sort_by_key(|&(index, t)| (index, t.0));
+            v.dedup();
+        }
+        out
     }
 }

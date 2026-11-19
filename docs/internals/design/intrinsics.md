@@ -118,7 +118,8 @@ comment. velt/ffi's unsafe functions are the public surface ([c-ffi.md](c-ffi.md
   unsafe function that makes it: `shared<T[]>` is read-only for every holder. Its user is
   `MappedFile` (`std/fs/mapped_file.velt`), whose mappings are never unmapped.
 - `arrayDataAddress<T>(xs: Mut<T[]>): usize` and `arrayReadAddress<T>(xs: readonly T[]): usize` (both
-  unsafe) and `arrayByteLength<T>(xs: T[]): usize` (std/lang/intrinsics/array.velt) are the
+  unsafe), `arrayByteLength<T>(xs: T[]): usize` and `arrayBytesWritten`
+  (std/lang/intrinsics/array.velt) are the
   address of a number array's buffer and `xs.length * sizeof(T)`. They exist so that a generic
   function can hand a number array's own memory to a C function, which `declare c` takes as a
   buffer only for a concrete element type: velt/fs's `readSync<T extends Numeric>` and
@@ -136,9 +137,14 @@ comment. velt/ffi's unsafe functions are the public surface ([c-ffi.md](c-ffi.md
     `Numeric` bound of the public functions keeps user code from reaching.
   - On a view type (array_view.rs: a number array type is one in a program that converts an
     `any` to it) a plain array gives its own buffer, and a view its mirror's with every element
-    converted, which is what a C function given the array itself gets. Bytes read into a view's
-    mirror stay in the mirror: they are not written back to the array it views
-    ([#3211](https://github.com/velt-lang/velt/issues/3211)).
+    converted, which is what a C function given the array itself gets. Taking the address to
+    write (`arrayDataAddress`) keeps a copy of a view's mirror, and
+    `arrayBytesWritten<T>(xs: Mut<T[]>)`, which `readSync` calls after the read, writes back to
+    the viewed array the elements that differ from that copy: what the read changed, and
+    nothing else, so an element the view's type rounds (`0.1` seen as an `f32`) keeps its own
+    value where the read did not reach it. It is no code for a plain array or in a program
+    without view types. A C function given a view as a buffer that is not `readonly` gets the
+    same keep before the call and write-back after it (c_call.rs).
   - The bytes are reached by address, not as a second `u8[]` over the same memory (the form
     `addressArray` gives): such an array would be a counted box in a program that shares byte
     arrays, an allocation and a free at every call, and an alias that must be kept from

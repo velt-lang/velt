@@ -560,6 +560,10 @@ with_weak_hooks! {
     array_view_sync => lang_hooks_array_view, "arrayViewSync", sig(<A>(&mut ArrayView(A)) -> void), lowered;
     /// The mirror written back to the original after a change through the view.
     array_view_flush => lang_hooks_array_view, "arrayViewFlush", sig(<A>(&ArrayView(A)) -> void), lowered;
+    /// The mirror kept as it is before a write into it by address (a C buffer, `readSync`).
+    array_view_keep => lang_hooks_array_view, "arrayViewKeep", sig(<A>(&mut ArrayView(A)) -> void), lowered;
+    /// After that write: the elements it changed written back to the original.
+    array_view_flush_kept => lang_hooks_array_view, "arrayViewFlushKept", sig(<A>(&mut ArrayView(A)) -> void), lowered;
     /// `array_view_flush` of the mirror's elements from an index on (after a `push`).
     array_view_flush_from => lang_hooks_array_view, "arrayViewFlushFrom", sig(<A>(&ArrayView(A), usize) -> void), lowered;
     /// `length` of a view: the original's, nothing converted.
@@ -753,14 +757,19 @@ with_weak_hooks! {
 
     // lang/intrinsics/decorators.velt: the compile-time decorators the compiler acts on (#2203),
     // found by these roles, never by the name a use is written with.
-    /// `@inline` on a std function or method: every call is inlined in release builds
-    /// (`vir::Inline::Always`; `velt_sema` `decorators/known.rs`, `velt_vir` lowering).
+    /// `@inline` on a function or method (any module; velt/compiler re-exports it):
+    /// `@inline("always")` inlines every call in release builds (`vir::Inline::Always`), the
+    /// default `"hint"` is `vir::Inline::Default` while a program is one unit (`velt_sema`
+    /// `decorators/known.rs`, `velt_vir` lowering).
     decorator_inline => lang_intrinsics_decorators, "inline", decorator;
     /// `@noInline`: calls stay calls (`vir::Inline::Never`).
     decorator_no_inline => lang_intrinsics_decorators, "noInline", decorator;
     /// `@intrinsic declare function`: the declaration of a compiler intrinsic
     /// (`velt_sema` `intrinsic_decls.rs`).
     decorator_intrinsic => lang_intrinsics_decorators, "intrinsic", decorator;
+    /// `@targetFeature("sha-arm")` on a function (any module; velt/compiler re-exports it): the
+    /// CPU extension it is compiled for (`velt_sema` `body/gated.rs`, `hir::Program::cpu_targets`).
+    decorator_target_feature => lang_intrinsics_decorators, "targetFeature", decorator;
     // ffi/export.velt: `@export("c_name")`, a function C calls (#2203 step 5; `velt_sema`
     // `decorators/export.rs`, `velt_vir` lowering's `c_export.rs`).
     /// `@export("c_name")` on a top-level function: an unmangled symbol of that name with the C

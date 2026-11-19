@@ -375,7 +375,7 @@ fn std_declarations_match_velt_rt() {
 #[test]
 fn only_the_wasm_bindings_may_declare_what_velt_rt_lacks() {
     let wasm = rust_definitions(&runtime_sources("velt_rt_wasm"));
-    let name = "velt_rt_fs_read_file";
+    let name = "velt_rt_fs_read_file_bytes";
     assert!(wasm.contains_key(name), "velt_rt_wasm defines {name}");
     let bindings = repo().join(WASM_ONLY_BINDINGS[0]);
     let other = repo().join("std/process/rt.velt");
@@ -494,7 +494,7 @@ fn velt_rt_wasm_defines_what_mirrored_directories_export() {
 fn the_parsers_see_the_whole_abi() {
     let decls = velt_declarations();
     assert!(decls.len() > 150, "found only {} declarations", decls.len());
-    let (params, ret) = &decls["velt_rt_fs_read_file"].0;
+    let (params, ret) = &decls["velt_rt_fs_read_file_bytes"].0;
     assert_eq!(
         (params.as_slice(), ret.as_str()),
         (&["ptr".to_string()][..], "ptr")

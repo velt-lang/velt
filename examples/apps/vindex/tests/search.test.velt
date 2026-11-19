@@ -38,7 +38,7 @@ export async function test_probing_every_list_and_reranking_every_row_is_exact()
     }
     closeIndex(ix);
   }
-  fs.removeSync(dir, { recursive: true });
+  fs.rmSync(dir, { recursive: true });
 }
 
 export async function test_mapped_and_positioned_reads_agree_and_find_most_neighbours() {
@@ -71,7 +71,7 @@ export async function test_mapped_and_positioned_reads_agree_and_find_most_neigh
   assert(found >= 80, `recall ${found}/100`);
   closeIndex(mapped);
   closeIndex(read);
-  fs.removeSync(dir, { recursive: true });
+  fs.rmSync(dir, { recursive: true });
 }
 
 export async function test_every_row_is_in_exactly_one_list() {
@@ -94,7 +94,7 @@ export async function test_every_row_is_in_exactly_one_list() {
     seen[id] = true;
   }
   closeIndex(ix);
-  fs.removeSync(dir, { recursive: true });
+  fs.rmSync(dir, { recursive: true });
 }
 
 // Where the tests above do not run, the index says why: its files cannot be opened.

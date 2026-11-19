@@ -9,9 +9,9 @@
 // loop has no array accesses inside (an output array argument cannot alias an input one, #2403,
 // so operations name registers by number and `mul(a, a, b)` works in place).
 //
-// `mul` and `square` are inlined everywhere (`@inline`): left to the inliner's growth budget, the
-// fixed-base multiplication's calls (x25519_base.velt) took it from the ladder's in a program with
-// both, and the ladder ran 78% longer.
+// `mul` and `square` are inlined everywhere (`@inline("always")`): left to the inliner's growth
+// budget, the fixed-base multiplication's calls (x25519_base.velt) took it from the ladder's in a
+// program with both, and the ladder ran 78% longer.
 //
 // Bounds: `mul` and `square` take limbs below 2^54 (a reduced element, the sum of two, or a
 // difference from `sub`) and return limbs below 2^52; the 128-bit sums stay below 2^115, so a
@@ -76,7 +76,7 @@ export class Fe25519 {
   }
 
   /** `d = a * b` mod p (`d` may be `a` or `b`); products past limb 4 wrap around times 19. */
-  @inline
+  @inline("always")
   mul(d: usize, a: usize, b: usize) {
     const r = this.r;
     const oa = 5 * a;
@@ -129,7 +129,7 @@ export class Fe25519 {
   }
 
   /** `d = a^2` mod p: the 15 distinct products of `mul`'s 25. */
-  @inline
+  @inline("always")
   square(d: usize, a: usize) {
     const r = this.r;
     const oa = 5 * a;

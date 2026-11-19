@@ -5,26 +5,24 @@ import { unwrapIo } from "velt/native/result";
 import { checkIo } from "velt/native/status";
 import { Stats } from "velt/fs/stats";
 import {
-  velt_rt_fs_lstat,
-  velt_rt_fs_lstat_sync,
   velt_rt_fs_readlink,
   velt_rt_fs_readlink_sync,
   velt_rt_fs_realpath,
   velt_rt_fs_realpath_sync,
-  velt_rt_fs_stat,
-  velt_rt_fs_stat_sync,
+  stat as statPath,
+  statSync as statPathSync,
   velt_rt_fs_symlink,
   velt_rt_fs_symlink_sync,
 } from "#fs-rt";
 
 /** Metadata of `path`, following symlinks. */
 export async function stat(path: string): Promise<Stats> {
-  return unwrapIo(await velt_rt_fs_stat(path));
+  return await statPath(path, true);
 }
 
 /** Metadata of `path` itself: a symlink is described, not followed. */
 export async function lstat(path: string): Promise<Stats> {
-  return unwrapIo(await velt_rt_fs_lstat(path));
+  return await statPath(path, false);
 }
 
 /** The target of the symlink `path`, as stored in the link (`EINVAL` if it is not a link). */
@@ -52,12 +50,12 @@ export async function symlink(target: string, path: string): Promise<void> {
 
 /** `stat`, blocking the calling thread. */
 export function statSync(path: string): Stats {
-  return unwrapIo(velt_rt_fs_stat_sync(path));
+  return statPathSync(path, true);
 }
 
 /** `lstat`, blocking the calling thread. */
 export function lstatSync(path: string): Stats {
-  return unwrapIo(velt_rt_fs_lstat_sync(path));
+  return statPathSync(path, false);
 }
 
 /** `readlink`, blocking the calling thread. */

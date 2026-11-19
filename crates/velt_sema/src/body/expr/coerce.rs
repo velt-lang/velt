@@ -436,6 +436,12 @@ impl FnCx<'_, '_> {
         {
             return self.adapt_array(h, exp);
         }
+        if self.adapting
+            && matches!(self.cx.ty.kind(h.ty), TyKind::Promise(..))
+            && matches!(self.cx.ty.kind(exp), TyKind::Promise(..))
+        {
+            return self.adapt_promise(h, exp);
+        }
         if self.drops_void_params(h.ty, exp) {
             // `(value: void) => void` where `() => void` is expected (a `Promise<void>`'s
             // `resolve` stored in a `() => void`): TypeScript lets a trailing `void`

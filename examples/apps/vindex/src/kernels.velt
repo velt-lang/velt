@@ -1,50 +1,7 @@
-// The distance kernels. Everything on disk is bytes, and Velt has no way to look at a `u8[]` as
-// an `f32[]` or `i8[]` without copying it, so the kernels load 16 bytes and reinterpret the
-// lanes (`u8x16.load(...).asF32x4()`): an unaligned load, no copy.
+// The distance kernels. Rows are read from the files straight into `f32[]` (store.velt's
+// `readAt`, or a `MappedFile` view), so the float kernel works on arrays. The int8 codes stay
+// bytes: a record is a row id and its codes back to back, and a list is scanned as it lies.
 import { f32x4, i32x4, i8x16, u8x16 } from "velt/simd";
-
-/// Dot product of the `dim` little-endian f32 at byte `at` of `bytes` with the
-/// `dim` floats of `q` from `qAt`.
-export function dotF32Bytes(bytes: u8[], at: usize, q: f32[], qAt: usize, dim: usize): f32 {
-  let s0 = f32x4.splat(0);
-  let s1 = f32x4.splat(0);
-  let s2 = f32x4.splat(0);
-  let s3 = f32x4.splat(0);
-  let i: usize = 0;
-  while (i + 16 <= dim && u8x16.fits(bytes, at + 4 * i + 48) && f32x4.fits(q, qAt + i + 12)) {
-    const p = at + 4 * i;
-    s0 = u8x16
-      .load(bytes, p)
-      .asF32x4()
-      .mulAddFast(f32x4.load(q, qAt + i), s0);
-    s1 = u8x16
-      .load(bytes, p + 16)
-      .asF32x4()
-      .mulAddFast(f32x4.load(q, qAt + i + 4), s1);
-    s2 = u8x16
-      .load(bytes, p + 32)
-      .asF32x4()
-      .mulAddFast(f32x4.load(q, qAt + i + 8), s2);
-    s3 = u8x16
-      .load(bytes, p + 48)
-      .asF32x4()
-      .mulAddFast(f32x4.load(q, qAt + i + 12), s3);
-    i += 16;
-  }
-  while (i + 4 <= dim) {
-    s0 = u8x16
-      .load(bytes, at + 4 * i)
-      .asF32x4()
-      .mulAddFast(f32x4.load(q, qAt + i), s0);
-    i += 4;
-  }
-  let s = s0.add(s1).add(s2.add(s3)).sum();
-  while (i < dim) {
-    s += f32At(bytes, at + 4 * i) * q[qAt + i];
-    i++;
-  }
-  return s;
-}
 
 /// Dot product of two `f32[]` rows: `dim` floats of `a` from `aAt` and of `b` from `bAt`.
 export function dotF32(a: f32[], aAt: usize, b: f32[], bAt: usize, dim: usize): f32 {
@@ -93,53 +50,6 @@ export function dotI8Bytes(bytes: u8[], at: usize, q: u8[], dim: usize): i32 {
     i++;
   }
   return s;
-}
-
-/// The little-endian f32 at byte `at`.
-export function f32At(bytes: u8[], at: usize): f32 {
-  const b =
-    (bytes[at] as u32) |
-    ((bytes[at + 1] as u32) << 8) |
-    ((bytes[at + 2] as u32) << 16) |
-    ((bytes[at + 3] as u32) << 24);
-  return f32.fromBits(b);
-}
-
-/// Copies `count` floats of `xs` from `from` to byte `at` of `bytes` (little-endian).
-export function putF32s(xs: f32[], from: usize, count: usize, bytes: u8[], at: usize) {
-  let i: usize = 0;
-  while (i + 4 <= count && f32x4.fits(xs, from + i) && u8x16.fits(bytes, at + 4 * i)) {
-    f32x4
-      .load(xs, from + i)
-      .asU8x16()
-      .store(bytes, at + 4 * i);
-    i += 4;
-  }
-  while (i < count) {
-    const b = xs[from + i].toBits();
-    const p = at + 4 * i;
-    bytes[p] = (b & 0xff) as u8;
-    bytes[p + 1] = ((b >> 8) & 0xff) as u8;
-    bytes[p + 2] = ((b >> 16) & 0xff) as u8;
-    bytes[p + 3] = ((b >> 24) & 0xff) as u8;
-    i++;
-  }
-}
-
-/// Copies `count` floats from byte `at` of `bytes` into `xs` from `to`.
-export function getF32s(bytes: u8[], at: usize, count: usize, xs: f32[], to: usize) {
-  let i: usize = 0;
-  while (i + 4 <= count && u8x16.fits(bytes, at + 4 * i) && f32x4.fits(xs, to + i)) {
-    u8x16
-      .load(bytes, at + 4 * i)
-      .asF32x4()
-      .store(xs, to + i);
-    i += 4;
-  }
-  while (i < count) {
-    xs[to + i] = f32At(bytes, at + 4 * i);
-    i++;
-  }
 }
 
 /// Scales `xs[from..from+dim]` to unit length in place (a zero vector stays zero).
