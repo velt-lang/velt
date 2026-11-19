@@ -103,6 +103,7 @@ pub(crate) const MACOS_PATHS: &[&str] = &[
     "crates/velt_fmt/src/print/thread_cpu.rs",
     "crates/velt_sema/tests/common/process_work.rs",
     "crates/veltc/src/commands/doctor/",
+    "crates/veltc/src/dev/fault_unix.rs",
     "crates/veltc/src/dev/supervisor.rs",
     "crates/veltc/src/generate/process.rs",
     "crates/veltc/tests/debugger.rs",
