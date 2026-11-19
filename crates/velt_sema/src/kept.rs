@@ -522,11 +522,8 @@ impl KeptCheck {
                 .collect();
             let from = check_again(&mut cx, &ids, |cx, def| {
                 if let Some(&(_, decl)) = decls.iter().find(|(d, _)| *d == def) {
-                    let f = cx.fn_info_mut(def);
-                    f.source = Some(crate::defs::FnSource::Decl(decl));
-                    f.rest = decl.sig.params.last().is_some_and(|p| p.rest);
-                    f.sig_unsafe = decl.sig.is_unsafe;
-                    f.generator = decl.sig.generator.clone();
+                    cx.fn_info_mut(def)
+                        .set_source(Some(crate::defs::FnSource::Decl(decl)));
                 }
                 Ok(())
             })?;
