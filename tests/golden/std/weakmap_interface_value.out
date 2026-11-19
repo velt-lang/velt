@@ -1,0 +1,10 @@
+direct reads 1
+direct, key freed: true
+subclass reads 20
+subclass, key freed: true
+in an array reads 3
+in an array, key freed: true
+struct reads 105
+struct, key kept: true
+held, reads 4 alive: true
+maps in use: false false
