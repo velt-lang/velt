@@ -15,8 +15,3 @@ pub fn has_budget_remaining() -> bool {
 pub fn unconstrained<F: Future>(f: F) -> impl Future<Output = F::Output> {
     tokio::task::unconstrained(f)
 }
-
-/// Yields to the scheduler: the task runs again after the other ready tasks had a turn.
-pub async fn yield_now() {
-    tokio::task::yield_now().await
-}
