@@ -7,7 +7,8 @@
 //! - Otherwise the system linker:
 //!   - Windows (MSVC): `link.exe` is located with `cc::windows_registry::find_tool`, which reads
 //!     the registry / vswhere and returns the `LIB`/`PATH` environment for the MSVC + Windows
-//!     SDK libraries, so no "Developer Command Prompt" is needed.
+//!     SDK libraries, so no "Developer Command Prompt" is needed. With `lld-link.exe` on `PATH`
+//!     the link runs that, in the same environment ([`fast_ld`]).
 //!   - Linux / macOS: the system C compiler driver (`cc`) is used as the linker; on Linux with
 //!     `-fuse-ld=mold`/`lld` when those are installed, lld under a versioned name
 //!     (`ld.lld-18`) too ([`fast_ld`]).
@@ -159,7 +160,19 @@ fn link_with_system(req: &LinkRequest, os: TargetOs) -> Result<(), String> {
     match os {
         TargetOs::Windows => {
             let cmd = msvc_linker(req.target)?;
-            run_coff_linker(cmd, msvc_args(req)?, req.output)?;
+            let args = msvc_args(req)?;
+            // lld-link when it is installed, with what `link.exe` was found with; `link.exe`
+            // when there is none or its link fails (`fast_ld`).
+            let fast = fast_ld::applies_on_windows(os, linker_override().is_some())
+                .then(|| fast_ld::lld_link(&cmd))
+                .flatten();
+            let linked = match fast {
+                Some(lld) => run_coff_linker(lld, args.clone(), req.output).is_ok(),
+                None => false,
+            };
+            if !linked {
+                run_coff_linker(cmd, args, req.output)?;
+            }
             if shared {
                 shared::place_dll(req.runtime_lib, req.output)?;
             }

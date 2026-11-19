@@ -1,9 +1,11 @@
-//! A faster linker on Linux: `cc -fuse-ld=mold` or `-fuse-ld=lld` when `mold` / `ld.lld` is on
-//! `PATH`, for static links and for debug links against the shared runtime alike. The default
-//! GNU ld takes seconds to link the static runtime (lld about a seventh of that), and against
-//! the shared runtime it still costs twice what lld does (108M instructions against 49M for
-//! hello). Not used with `$VELT_LINKER`, and a link that fails with it is retried with the
-//! default linker, so an old `cc` that rejects the flag costs one failed attempt only.
+//! A faster linker where the system has one.
+//!
+//! On Linux: `cc -fuse-ld=mold` or `-fuse-ld=lld` when `mold` / `ld.lld` is on `PATH`, for
+//! static links and for debug links against the shared runtime alike. The default GNU ld takes
+//! seconds to link the static runtime (lld about a seventh of that), and against the shared
+//! runtime it still costs twice what lld does (108M instructions against 49M for hello). Not
+//! used with `$VELT_LINKER`, and a link that fails with it is retried with the default linker,
+//! so an old `cc` that rejects the flag costs one failed attempt only.
 //!
 //! A system may have lld under a versioned name only: Debian's and Ubuntu's `lld-18` package
 //! installs `ld.lld-18` and no `ld.lld` (the `lld` package adds that), and so do GitHub's Ubuntu
@@ -12,9 +14,17 @@
 //! `cc -B<directory>` ([`Fast`]). The directory is made for one link, with a name no other
 //! user can predict, and removed after it: a program in a shared temporary directory under a
 //! fixed name could be put there by anyone.
+//!
+//! On Windows: `lld-link.exe` when it is on `PATH` (LLVM's installer puts it there, and GitHub's
+//! Windows runners have it), run with `link.exe`'s arguments, which it takes, and in the
+//! environment `link.exe` was found with (`LIB` for the MSVC and Windows SDK libraries). It
+//! links a `--release` program against the static debug runtime in about half of `link.exe`'s
+//! time (hello: 411 ms against 803). The same rules: not with `$VELT_LINKER`, and a link that
+//! fails with it is done again by `link.exe`.
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 /// The faster linker found on a search path.
 #[derive(Debug, PartialEq, Eq)]
@@ -126,6 +136,33 @@ fn named_lld(program: &Path, temp: &Path) -> Option<PathBuf> {
 #[cfg(not(unix))]
 fn named_lld(_program: &Path, _temp: &Path) -> Option<PathBuf> {
     None
+}
+
+/// Whether a link for `os` tries lld-link: on Windows, unless `$VELT_LINKER` names the linker
+/// program (`overridden`).
+pub(crate) fn applies_on_windows(os: crate::TargetOs, overridden: bool) -> bool {
+    os == crate::TargetOs::Windows && !overridden
+}
+
+/// `lld-link.exe` from `PATH`, to run in place of `link` (the `link.exe` command found for the
+/// target) with the same arguments: in `link`'s environment, where the libraries are found.
+pub(crate) fn lld_link(link: &Command) -> Option<Command> {
+    lld_link_on(&std::env::var_os("PATH")?, link)
+}
+
+/// [`lld_link`] for the search path `path`.
+fn lld_link_on(path: &OsStr, link: &Command) -> Option<Command> {
+    let program = std::env::split_paths(path)
+        .map(|d| d.join("lld-link.exe"))
+        .find(|p| p.is_file())?;
+    let mut cmd = Command::new(program);
+    for (name, value) in link.get_envs() {
+        match value {
+            Some(v) => cmd.env(name, v),
+            None => cmd.env_remove(name),
+        };
+    }
+    Some(cmd)
 }
 
 /// Whether a link for `os` tries the faster linker: on Linux, unless `$VELT_LINKER` names the
@@ -263,6 +300,47 @@ mod tests {
         let temp = root("missing").join("not").join("there");
         let found = Found::VersionedLld(PathBuf::from("/usr/bin/ld.lld-18"));
         assert!(fast_for(found, &temp).is_none());
+    }
+
+    /// lld-link is taken from the search path, wherever on it, and runs in `link.exe`'s
+    /// environment: the variables set for it are set, the ones removed are removed. Without one
+    /// on the path there is none.
+    #[test]
+    fn lld_link_from_the_path_runs_in_link_exe_s_environment() {
+        let root = root("lld-link");
+        let other = dir_with(&root, "other", &["link.exe"]);
+        let llvm = dir_with(&root, "llvm", &["lld-link.exe"]);
+        let mut link = Command::new("link.exe");
+        link.env("LIB", "C:\\msvc\\lib;C:\\sdk\\lib")
+            .env("PATH", "C:\\msvc\\bin")
+            .env_remove("VSLANG");
+        let lld = lld_link_on(&path(&[&other, &llvm]), &link).expect("lld-link");
+        assert_eq!(Path::new(lld.get_program()), llvm.join("lld-link.exe"));
+        let envs: Vec<(String, Option<String>)> = (lld.get_envs())
+            .map(|(k, v)| {
+                let v = v.map(|v| v.to_string_lossy().into_owned());
+                (k.to_string_lossy().into_owned(), v)
+            })
+            .collect();
+        let has = |name: &str, value: Option<&str>| {
+            (envs.iter()).any(|(k, v)| k.eq_ignore_ascii_case(name) && v.as_deref() == value)
+        };
+        assert!(has("LIB", Some("C:\\msvc\\lib;C:\\sdk\\lib")), "{envs:?}");
+        assert!(has("PATH", Some("C:\\msvc\\bin")), "{envs:?}");
+        assert!(has("VSLANG", None), "{envs:?}");
+        assert!(lld_link_on(&path(&[&other]), &link).is_none());
+        // A directory of that name is no program.
+        std::fs::create_dir_all(root.join("dir").join("lld-link.exe")).unwrap();
+        assert!(lld_link_on(&path(&[&root.join("dir")]), &link).is_none());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn lld_link_applies_on_windows_unless_the_linker_is_overridden() {
+        assert!(applies_on_windows(TargetOs::Windows, false));
+        assert!(!applies_on_windows(TargetOs::Windows, true));
+        assert!(!applies_on_windows(TargetOs::Linux, false));
+        assert!(!applies_on_windows(TargetOs::MacOs, false));
     }
 
     /// Debug links against the shared runtime use the faster linker too (they used GNU ld).
