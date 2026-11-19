@@ -30,85 +30,57 @@ const S_IFDIR: u32 = 0o040000;
 const S_IFLNK: u32 = 0o120000;
 const S_IFREG: u32 = 0o100000;
 
+/** `d_type` of a file, a directory and a link, and one for anything else (a FIFO's). */
+const DT_REG: u8 = 8;
+const DT_DIR: u8 = 4;
+const DT_LNK: u8 = 10;
+const DT_OTHER: u8 = 1;
+
 /** `Dirent`'s kinds (std/fs/dirent.velt). */
 const OTHER: u8 = 0;
 const FILE: u8 = 1;
 const DIR: u8 = 2;
 const LINK: u8 = 3;
 
-/** Whether `name` (UTF-8) holds a character past U+FFFF, where UTF-16 order is not code points'. */
-function wide(name: readonly u8[]): bool {
-  for (const b of name) {
-    if (b >= 0xf0) {
-      return true;
-    }
-  }
-  return false;
-}
-
 /** The names in the directory at `c`, sorted. */
 export function list(c: readonly u8[], path: string): Done<string[]> {
-  const names: u8[][] = [];
+  const names: string[] = [];
   const types: u8[] = [];
-  const e = listDir(c, names, types);
+  const e = listDir(c, names, types, null);
   if (e != 0) {
     return { value: null, error: osError(e, "scandir", path) };
   }
-  const out: string[] = [];
-  let anyWide = false;
-  for (const name of names) {
-    anyWide = anyWide || wide(name);
-    out.push(name.utf8Slice());
-  }
-  if (anyWide) {
-    pdqsort(out, (a, b) => byCodePoint(a, b));
-  } else {
-    // No character past U+FFFF: UTF-16 order is code point order.
-    out.sort();
-  }
-  return { value: out, error: null };
+  pdqsort(names, (a, b) => byCodePoint(a, b));
+  return { value: names, error: null };
 }
 
-/** The kind of the entry `name` of the directory at `c`, from `lstat` (its `d_type` said nothing). */
-function kindByStat(c: readonly u8[], name: readonly u8[]): u8 {
-  const child: u8[] = c.slice(0, (c.length - 1) as i64);
-  child.push(47);
-  for (const b of name) {
-    child.push(b);
-  }
-  child.push(0);
+/** The `d_type` of what is at `child`, from `lstat` (its entry's `d_type` said nothing). */
+function typeByStat(child: readonly u8[]): u8 {
   const st = statPath(child, false);
   if (st === null) {
-    return OTHER;
+    return DT_OTHER;
   }
   const kind = st.st_mode & S_IFMT;
-  return kind == S_IFREG ? FILE : kind == S_IFDIR ? DIR : kind == S_IFLNK ? LINK : OTHER;
+  return kind == S_IFREG ? DT_REG : kind == S_IFDIR ? DT_DIR : kind == S_IFLNK ? DT_LNK : DT_OTHER;
 }
 
 /** The entries of the directory at `c` with their types, sorted by name. */
 export function listTyped(c: readonly u8[], path: string): Done<Dirent[]> {
-  const names: u8[][] = [];
+  const names: string[] = [];
   const types: u8[] = [];
-  const e = listDir(c, names, types);
+  const e = listDir(c, names, types, (child) => typeByStat(child));
   if (e != 0) {
     return { value: null, error: osError(e, "scandir", path) };
   }
   const out: Dirent[] = [];
-  let anyWide = false;
   for (let i: usize = 0; i < names.length; i++) {
-    const name = names[i];
-    anyWide = anyWide || wide(name);
-    // `d_type`: DT_REG 8, DT_DIR 4, DT_LNK 10, DT_UNKNOWN 0.
     const t = types[i];
-    const kind =
-      t == 8 ? FILE : t == 4 ? DIR : t == 10 ? LINK : t == 0 ? kindByStat(c, name) : OTHER;
-    out.push({ name: name.utf8Slice(), kind });
+    out.push({
+      name: names[i],
+      kind: t == DT_REG ? FILE : t == DT_DIR ? DIR : t == DT_LNK ? LINK : OTHER,
+    });
   }
-  if (anyWide) {
-    pdqsort(out, (a, b) => byCodePoint(a.name, b.name));
-  } else {
-    pdqsort(out, (a, b) => a.name < b.name);
-  }
+  pdqsort(out, (a, b) => byCodePoint(a.name, b.name));
   return { value: out, error: null };
 }
 

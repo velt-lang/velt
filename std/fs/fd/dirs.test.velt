@@ -33,11 +33,11 @@ function fresh(name: string): string {
 
 /** The `d_type` the listing of `dir` gives the entry `name`, or -1. */
 function typeOf(dir: string, name: string): i64 {
-  const names: u8[][] = [];
+  const names: string[] = [];
   const types: u8[] = [];
-  expect(listDir(c(dir), names, types)).toBe(0);
+  expect(listDir(c(dir), names, types, null)).toBe(0);
   for (let i: usize = 0; i < names.length; i++) {
-    if (names[i].utf8Slice() == name) {
+    if (names[i] == name) {
       return types[i] as i64;
     }
   }
@@ -66,11 +66,11 @@ describe("velt/fs's directories through the C library", () => {
   it("lists nothing for a path that is not a directory", () => {
     const dir = fresh("errors");
     fs.writeFileSync(`${dir}/file`, "x");
-    const names: u8[][] = [];
+    const names: string[] = [];
     const types: u8[] = [];
     // ENOENT 2 and ENOTDIR 20 on macOS and Linux; ENOSYS (38) where the variant has none.
-    expect(listDir(c(`${dir}/missing`), names, types)).toBe(POSIX ? 2 : 38);
-    expect(listDir(c(`${dir}/file`), names, types)).toBe(POSIX ? 20 : 38);
+    expect(listDir(c(`${dir}/missing`), names, types, null)).toBe(POSIX ? 2 : 38);
+    expect(listDir(c(`${dir}/file`), names, types, null)).toBe(POSIX ? 20 : 38);
     expect(names.length).toBe(0);
     fs.removeSync(dir, { recursive: true });
   });
@@ -90,11 +90,18 @@ describe("velt/fs's directories through the C library", () => {
     const fd = openPath(path, 0x41, 0o644);
     expect(fd >= 0).toBe(true);
     closeFd(fd);
-    const names: u8[][] = [];
+    const names: string[] = [];
     const types: u8[] = [];
-    expect(listDir(c(`${dir}/t`), names, types)).toBe(0);
+    // With no type from the listing, the entry's own bytes name it to `unknown`.
+    const asked: string[] = [];
+    const unknown = (child: readonly u8[]): u8 => {
+      asked.push(child.join(","));
+      return 8;
+    };
+    expect(listDir(c(`${dir}/t`), names, types, unknown)).toBe(0);
     expect(names.length).toBe(1);
-    expect(names[0].join(",")).toBe("255,97");
+    expect(names[0]).toBe("\u{fffd}a");
+    expect(asked.length == 0 || asked[0].endsWith(",47,255,97,0")).toBe(true);
     // Text has U+FFFD for the bad byte; the tree is removed by the name's own bytes.
     expect(fs.readDirSync(`${dir}/t`).join(",")).toBe("\u{fffd}a");
     fs.removeSync(`${dir}/t`, { recursive: true });

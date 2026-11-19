@@ -1,24 +1,25 @@
-// velt/fs (internal): the order of a directory listing's names: by code point, the order of
-// their UTF-8 bytes. `<` on strings compares UTF-16 code units, which differs for a character
-// past U+FFFF (a surrogate pair, 0xD800-0xDFFF) against one in U+E000-U+FFFF.
+// velt/fs (internal): the order of a directory listing's names: by code point, which is the
+// order of their UTF-8 bytes, so one `memcmp` of the bytes a string stores. `<` on strings
+// compares UTF-16 code units, which differs for a character past U+FFFF against one in
+// U+E000-U+FFFF, and costs a call of the runtime per comparison.
 
-/** A UTF-16 code unit moved so that the units order as their characters' code points do. */
-function rank(u: i64): i64 {
-  if (u >= 0xe000) {
-    return u - 0x800;
-  }
-  return u >= 0xd800 ? u + 0x2000 : u;
-}
+import { Ptr } from "velt/ffi/ptr";
+import { strByteLen, strDataAddress } from "velt/lang/intrinsics";
+
+declare c("c") function memcmp(a: Ptr<void>, b: Ptr<void>, n: usize): i32;
 
 /** Whether `a` sorts before `b` by code point. */
 export function byCodePoint(a: string, b: string): bool {
-  const n = a.length < b.length ? a.length : b.length;
-  for (let i: i64 = 0; i < (n as i64); i++) {
-    const x = a.charCodeAt(i) as i64;
-    const y = b.charCodeAt(i) as i64;
-    if (x != y) {
-      return rank(x) < rank(y);
-    }
-  }
-  return a.length < b.length;
+  const na = strByteLen(a);
+  const nb = strByteLen(b);
+  // SAFETY: each address is that of its string's bytes, `na` and `nb` of them, alive and
+  // unchanged during the call (`a` and `b` are this function's parameters); C reads the first
+  // `min(na, nb)` of each and keeps no pointer.
+  const r =
+    unsafe { memcmp(
+      Ptr.at<void>(strDataAddress(a)),
+      Ptr.at<void>(strDataAddress(b)),
+      na < nb ? na : nb,
+    ) };
+  return r < 0 || (r == 0 && na < nb);
 }

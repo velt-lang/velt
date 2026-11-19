@@ -99,11 +99,10 @@ unsafe function isDots(at: usize): bool {
 }
 
 /**
- * The name of the find data at `at` as text (a lone surrogate reads as U+FFFD); sets `wide[0]`
- * for a name with a character past U+FFFF, where UTF-16 order is not code points'. Unsafe: as
+ * The name of the find data at `at` as text (a lone surrogate reads as U+FFFD). Unsafe: as
  * `unit`.
  */
-unsafe function nameOf(at: usize, wide: bool[]): string {
+unsafe function nameOf(at: usize): string {
   const bytes: u8[] = [];
   let i = NAME_AT;
   while (i < NAME_END) {
@@ -126,7 +125,6 @@ unsafe function nameOf(at: usize, wide: bool[]): string {
         bytes.push((0x80 | ((cp >> 12) & 0x3f)) as u8);
         bytes.push((0x80 | ((cp >> 6) & 0x3f)) as u8);
         bytes.push((0x80 | (cp & 0x3f)) as u8);
-        wide[0] = true;
       } else {
         // A lone surrogate: U+FFFD.
         bytes.push(0xef);
@@ -158,7 +156,7 @@ unsafe function kindOf(at: usize): u8 {
  * The entries of the directory `path`, in the system's order, pushed to `names` and `kinds`: 0,
  * or the errno (Linux's number) of what failed.
  */
-function read(path: string, names: string[], kinds: u8[], wide: bool[]): i32 {
+function read(path: string, names: string[], kinds: u8[]): i32 {
   if (path.length === 0) {
     // `\*` would list the root: the empty path names nothing, as on the other systems.
     return ENOENT;
@@ -201,7 +199,7 @@ function read(path: string, names: string[], kinds: u8[], wide: bool[]): i32 {
     // units these read are inside it.
     unsafe {
       if (!isDots(at)) {
-        names.push(nameOf(at, wide));
+        names.push(nameOf(at));
         kinds.push(kindOf(at));
       }
     }
@@ -227,17 +225,11 @@ function read(path: string, names: string[], kinds: u8[], wide: bool[]): i32 {
 export function list(c: readonly u8[], path: string): Done<string[]> {
   const names: string[] = [];
   const kinds: u8[] = [];
-  const wide: bool[] = [false];
-  const e = read(path, names, kinds, wide);
+  const e = read(path, names, kinds);
   if (e !== 0) {
     return { value: null, error: osError(e, "scandir", path) };
   }
-  if (wide[0]) {
-    pdqsort(names, (a, b) => byCodePoint(a, b));
-  } else {
-    // No character past U+FFFF: UTF-16 order is code point order.
-    names.sort();
-  }
+  pdqsort(names, (a, b) => byCodePoint(a, b));
   return { value: names, error: null };
 }
 
@@ -245,8 +237,7 @@ export function list(c: readonly u8[], path: string): Done<string[]> {
 export function listTyped(c: readonly u8[], path: string): Done<Dirent[]> {
   const names: string[] = [];
   const kinds: u8[] = [];
-  const wide: bool[] = [false];
-  const e = read(path, names, kinds, wide);
+  const e = read(path, names, kinds);
   if (e !== 0) {
     return { value: null, error: osError(e, "scandir", path) };
   }
@@ -254,11 +245,7 @@ export function listTyped(c: readonly u8[], path: string): Done<Dirent[]> {
   for (let i: usize = 0; i < names.length; i++) {
     out.push({ name: names[i], kind: kinds[i] });
   }
-  if (wide[0]) {
-    pdqsort(out, (a, b) => byCodePoint(a.name, b.name));
-  } else {
-    pdqsort(out, (a, b) => a.name < b.name);
-  }
+  pdqsort(out, (a, b) => byCodePoint(a.name, b.name));
   return { value: out, error: null };
 }
 

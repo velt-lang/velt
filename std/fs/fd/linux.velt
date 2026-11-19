@@ -127,9 +127,17 @@ function dirSystem(): DirSystem {
   };
 }
 
-/** The entries of the directory at `path` into `names` and `types` (`d_type`): 0, or the errno. */
-export function listDir(path: readonly u8[], names: u8[][], types: u8[]): i32 {
-  return posixListPath(path, dirSystem(), names, types);
+/**
+ * The entries of the directory at `path` into `names` and `types` (`d_type`, from `unknown` for
+ * an entry that has none): 0, or the errno.
+ */
+export function listDir(
+  path: readonly u8[],
+  names: string[],
+  types: u8[],
+  unknown: ((child: readonly u8[]) => u8) | null,
+): i32 {
+  return posixListPath(path, dirSystem(), names, types, unknown);
 }
 
 /** `mkdir(path, mode)`: 0, or -1. */
