@@ -4,7 +4,6 @@
 #
 # <path from the repository root> #<issue> [os=macos,linux,windows]
 
-tests/golden/lang/promises_unhandled_timing.velt                   #3004
 tests/golden/lang/promise_race_running_call.velt                   #3079
 tests/golden/lang/rwlock_read_tasks_stop.velt                      #2917 os=macos,windows
 tests/golden/std/abort_signal_identity.velt                        #3011

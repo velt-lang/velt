@@ -323,7 +323,7 @@ const NO_ROOM_AT: u64 = ~(0 as u64);
  * One that had escapes is written from its decoded text, escaped again as `JSON.stringify` does
  * (`é` in the source is `é` in the output), with no flush and no string made.
  */
-@inline
+@inline("always")
 function putString(
   buf: u8[],
   o: usize,

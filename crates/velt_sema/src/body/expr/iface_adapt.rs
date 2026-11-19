@@ -355,16 +355,14 @@ pub(super) fn value_ok(cx: &mut Ctx, from: TyId, to: TyId, param: bool, m: &mut 
             ok
         }
         (TyKind::Dyn(i, xs), TyKind::Dyn(j, ys)) if i == j => adaptable(cx, i, &xs, &ys, m),
+        // A result that is a promise of a type that converts (`adapt_promise`).
+        (TyKind::Promise(a, x), TyKind::Promise(b, y)) if !param => {
+            x == y && super::iface_adapt_promise::settled_ok(cx, a, b, m)
+        }
         // A result that is an object type, or a union of them, whose fields convert
         // (`IteratorResult<[any, any]>` as `IteratorResult<any>`): a copy (`object_copy`).
         _ if !param && cx.union_members(from).is_some() => {
-            let (Some(xs), Some(ys)) = (cx.union_members(from), cx.union_members(to)) else {
-                return false;
-            };
-            xs.len() == ys.len()
-                && xs.iter().zip(&ys).all(|(a, b)| {
-                    a == b || value_ok(cx, *a, *b, false, m) || fields_ok(cx, *a, *b, m)
-                })
+            super::iface_adapt_promise::union_result_ok(cx, from, to, m)
         }
         _ if !param && fields_ok(cx, from, to, m) => true,
         // An array of interface values read through the adapter (a field `kids: Tree<T>[]`): a

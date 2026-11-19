@@ -80,7 +80,7 @@ export function jsPow(x: f64, y: f64): f64 {
  * glibc's `pow` (the FMA build's bits) where the target has no FMA instruction: `powFast`, and
  * where it can't be sure of a rounding, the copy with each `fma` emulated.
  */
-@inline
+@inline("always")
 export function libmPowNoFma(x: f64, y: f64): f64 {
   // NaN: a NaN result, or a rounding `powFast` can't be sure of.
   const fast = libmPow(x, y, FAST);
@@ -110,7 +110,7 @@ export function libmPowEmulated(x: f64, y: f64): f64 {
 }
 
 // `fma(a, b, c)`, emulated in the `EMULATED` copy.
-@inline
+@inline("always")
 function step(mode: i64, a: f64, b: f64, c: f64): f64 {
   return mode == EMULATED ? fmaSoft(a, b, c) : fma(a, b, c);
 }
@@ -138,7 +138,7 @@ function zeroInfNan(i: u64): bool {
 }
 
 // glibc's `pow` (the FMA build), with its special cases; in the `FAST` copy, `powFast` after them.
-@inline
+@inline("always")
 function libmPow(x: f64, y: f64, mode: i64): f64 {
   let signBias: u64 = 0;
   let ix = x.toBits();
@@ -232,7 +232,7 @@ function libmPow(x: f64, y: f64, mode: i64): f64 {
 }
 
 // ±exp(x + xtail) (the sign from `signBias`), |xtail| tiny next to |x|.
-@inline
+@inline("always")
 function expTail(x: f64, xtail: f64, signBias: u64, mode: i64): f64 {
   const abstop = (x.toBits() >> 52) & 0x7ff;
   let edge = false;

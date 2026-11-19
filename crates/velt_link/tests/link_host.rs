@@ -6,7 +6,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-/// The tests set `$VELT_RT_LIB` / `$VELT_LINKER`; one at a time.
+/// The tests set `$VELT_RT_LIB`, `$VELT_LINKER` and, for some links, the search path (`$PATH`),
+/// which every test reads (`rustc` and `cc` are run from it): one at a time, every one of them.
 static ENV: Mutex<()> = Mutex::new(());
 
 use cranelift_codegen::ir::{types, AbiParam, InstBuilder};
@@ -274,10 +275,169 @@ fn link_and_run_on_host() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The first program named `name` on the search path `path`.
+#[cfg(target_os = "linux")]
+fn on_path(path: &std::ffi::OsStr, name: &str) -> Option<PathBuf> {
+    std::env::split_paths(path)
+        .map(|d| d.join(name))
+        .find(|p| p.is_file())
+}
+
+/// Linux with lld under a versioned name alone on `PATH` (`ld.lld-18` and no `ld.lld`, as
+/// Debian's and Ubuntu's `lld-18` package and GitHub's Ubuntu runners have it): the system link
+/// runs that lld, where it ran GNU ld (several times slower on the static runtime). The search
+/// path here holds `cc` and a versioned lld that notes it ran; skipped where the machine has no
+/// lld at all.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_versioned_lld_alone_links_on_linux() {
+    use std::os::unix::fs::PermissionsExt;
+    let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let setup = Setup::new("versioned-lld");
+    let path = std::env::var_os("PATH").unwrap();
+    let lld = on_path(&path, "ld.lld").or_else(|| {
+        (11..=40)
+            .rev()
+            .find_map(|v| on_path(&path, &format!("ld.lld-{v}")))
+    });
+    let (Some(lld), Some(cc)) = (lld, on_path(&path, "cc")) else {
+        eprintln!("note: no lld or no cc on PATH; skipping");
+        let _ = std::fs::remove_dir_all(&setup.dir);
+        return;
+    };
+    // The only directory on the search path: `cc`, and lld as `ld.lld-18`, which notes that it
+    // ran and runs the real one.
+    let bin = setup.dir.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::os::unix::fs::symlink(&cc, bin.join("cc")).unwrap();
+    let ran = setup.dir.join("lld-ran");
+    let versioned = bin.join("ld.lld-18");
+    let script = format!(
+        "#!/bin/sh\n: > '{}'\nexec '{}' \"$@\"\n",
+        ran.display(),
+        lld.display()
+    );
+    std::fs::write(&versioned, script).unwrap();
+    std::fs::set_permissions(&versioned, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let objects = [setup.obj.clone()];
+    let temp_before = velt_ld_dirs();
+    std::env::set_var("VELT_LINKER", "system");
+    std::env::set_var("PATH", &bin);
+    let mut results = vec![];
+    for release in [false, true] {
+        let exe = setup.dir.join(format!("versioned_{release}"));
+        let _ = std::fs::remove_file(&ran);
+        let linked = velt_link::link(&setup.request(&objects, &exe, release));
+        results.push((release, exe, linked, ran.is_file()));
+    }
+    std::env::set_var("PATH", &path);
+    std::env::remove_var("VELT_LINKER");
+    for (release, exe, linked, lld_ran) in results {
+        linked.unwrap_or_else(|e| panic!("link failed (release={release}):\n{e}"));
+        assert!(lld_ran, "the versioned lld did not run (release={release})");
+        assert_runs(&exe);
+    }
+    // The directory each link made for the name `ld.lld` is gone.
+    assert_eq!(velt_ld_dirs(), temp_before);
+    let _ = std::fs::remove_dir_all(&setup.dir);
+}
+
+/// The directories this process's links made in the temporary directory and left there.
+#[cfg(target_os = "linux")]
+fn velt_ld_dirs() -> Vec<PathBuf> {
+    let mine = format!("velt-ld-{}-", std::process::id());
+    let mut dirs: Vec<PathBuf> = std::fs::read_dir(std::env::temp_dir())
+        .unwrap()
+        .filter_map(|e| Some(e.ok()?.path()))
+        .filter(|p| {
+            p.file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with(&mine))
+        })
+        .collect();
+    dirs.sort();
+    dirs
+}
+
+/// Whether the executable at `exe` has a Rich header: `link.exe` writes one between the DOS stub
+/// and the PE header of everything it links, and lld-link never does.
+#[cfg(windows)]
+fn has_rich_header(exe: &Path) -> bool {
+    let bytes = std::fs::read(exe).unwrap();
+    let pe = u32::from_le_bytes(bytes[0x3c..0x40].try_into().unwrap()) as usize;
+    let stub = &bytes[0x40..pe.min(bytes.len())];
+    stub.windows(4).any(|w| w == b"Rich")
+}
+
+/// Windows with `lld-link.exe` on `PATH`: the system link runs it (the output has no Rich
+/// header, which `link.exe` always writes), in debug and `--release`, and the programs run.
+/// With an `lld-link.exe` that fails, the link is done by `link.exe` (a Rich header). The
+/// search path here holds only the directory of the lld-link under test (LLVM's `bin`, or the
+/// stand-in's); `link.exe` is found
+/// through the registry. Skipped on a machine without lld-link.
+#[cfg(windows)]
+#[test]
+fn lld_link_on_the_path_links_on_windows() {
+    let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let setup = Setup::new("lld-link");
+    let path = std::env::var_os("PATH").unwrap();
+    let lld = std::env::split_paths(&path)
+        .filter(|d| d.is_absolute())
+        .map(|d| d.join("lld-link.exe"))
+        .find(|p| p.is_file());
+    let Some(lld) = lld else {
+        eprintln!("note: no lld-link.exe on PATH; skipping");
+        let _ = std::fs::remove_dir_all(&setup.dir);
+        return;
+    };
+    // The real one, in the directory it is installed in (it may need what is beside it); and
+    // a stand-in that fails, alone in a directory (built here, while `rustc` is still on the
+    // search path).
+    let real = lld.parent().unwrap().to_path_buf();
+    let failing = setup.dir.join("failing");
+    std::fs::create_dir_all(&failing).unwrap();
+    let stub = setup.dir.join("stub.rs");
+    std::fs::write(&stub, "fn main() { std::process::exit(1); }").unwrap();
+    let built = command("rustc")
+        .args(["--crate-name", "stub", "-o"])
+        .arg(failing.join("lld-link.exe"))
+        .arg(&stub)
+        .status()
+        .unwrap();
+    assert!(built.success(), "the failing stand-in did not build");
+
+    let objects = [setup.obj.clone()];
+    std::env::set_var("VELT_LINKER", "system");
+    let mut results = vec![];
+    for (dir, name) in [(&real, "lld"), (&failing, "fallback")] {
+        std::env::set_var("PATH", dir);
+        for release in [false, true] {
+            let exe = setup.dir.join(format!("{name}_{release}.exe"));
+            let linked = velt_link::link(&setup.request(&objects, &exe, release));
+            results.push((name, release, exe, linked));
+        }
+    }
+    std::env::set_var("PATH", &path);
+    std::env::remove_var("VELT_LINKER");
+    for (name, release, exe, linked) in results {
+        linked.unwrap_or_else(|e| panic!("{name} link failed (release={release}):\n{e}"));
+        assert_runs(&exe);
+        // lld-link's output has no Rich header; the fallback's, `link.exe`'s, has one.
+        assert_eq!(
+            has_rich_header(&exe),
+            name == "fallback",
+            "{name} (release={release}): {}",
+            exe.display()
+        );
+    }
+    let _ = std::fs::remove_dir_all(&setup.dir);
+}
+
 /// The bundled linker: a kit for the host built here, linked with the Rust toolchain's
 /// `rust-lld` (what `velt` falls back to in a checkout).
 #[test]
 fn bundled_linker_links_and_runs() {
+    // It sets nothing, but runs `rustc` from the search path, which another test changes.
+    let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
     let setup = Setup::new("bundled");
     let Some(lld) = velt_link::bundled::find_lld() else {
         eprintln!("skipped: no rust-lld");

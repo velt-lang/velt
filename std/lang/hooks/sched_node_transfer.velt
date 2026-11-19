@@ -76,7 +76,7 @@ export function transfer(f: usize, glue: usize, hdrPoll: usize): bool {
 }
 
 /** Node `n`'s state finished: `finished`, then its flags `fl` (FINISHED, maybe DELIVERED) show. */
-@inline
+@inline("always")
 export function finish(n: usize, fl: u32): void {
   finished(n);
   nd.setFlags(n, fl);
@@ -97,7 +97,7 @@ export function finish(n: usize, fl: u32): void {
  * polls a lazy one, so it is never written while the node finishes on another thread. Later
  * hand-overs keep it, as the runtime keeps a node's first transfer, and so it runs once.
  */
-@inline
+@inline("always")
 export function finished(n: usize): void {
   if ((m.load32(n + nd.N_FLAGS) & (HANDED_OVER | nd.PANICKED | nd.DETACHED)) === HANDED_OVER) {
     transferResult(n);

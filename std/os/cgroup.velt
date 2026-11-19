@@ -11,12 +11,14 @@
 // (every CPU), Velt says 1. Node 24's libuv also dropped the cap for a v2 quota under one CPU;
 // Node 26's gives 1, as Velt does.
 
-import { velt_rt_fs_read_file_sync } from "#fs-rt";
+import { utf8Encode } from "velt/encoding/utf8";
+import { readText } from "#fs-whole";
 
-/** The text of `path`, or null when it can't be read (it doesn't exist, most often). */
+/** The text of `path` (a /sys or /proc path, no 0 in it), or null when it can't be read. */
 function readOrNull(path: string): string | null {
-  const r = velt_rt_fs_read_file_sync(path);
-  return r.code === 0 ? r.value : null;
+  const c = utf8Encode(path);
+  c.push(0);
+  return readText(c, path).value;
 }
 
 /** The text of `path`, or "" when it can't be read. */

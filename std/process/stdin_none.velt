@@ -1,0 +1,15 @@
+// velt/process (internal): standard input under a JS host (`#stdin-sys`' default variant): there is
+// none, so it reads as empty input.
+
+import { IoError } from "velt/io/error";
+
+/** What one read gave: its byte count (0 at the end of input), or the error it failed with. */
+export struct Chunk {
+  count: usize;
+  error: IoError | null;
+}
+
+/** The end of input, at once. */
+export function readChunk(p: usize, n: usize): Chunk {
+  return { count: 0, error: null };
+}

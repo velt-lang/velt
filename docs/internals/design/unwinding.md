@@ -221,7 +221,10 @@ one WebAssembly builds load.
   (task flag `CATCHES`); a panic makes the task done with no result (`J_PANICKED`; nothing
   transferred, copied or dropped), and its join handle's poll becomes `joinPanicked`, which
   raises the panic again in the joiner. A panicked task nobody joins ends there and the process
-  goes on, so an HTTP handler that spawns work keeps serving. Tasks that do not catch pay nothing:
+  goes on, so an HTTP handler that spawns work keeps serving. The task keeps its exception in
+  place of its root's poll and is freed with its last reference like any other, the exception
+  with it (sched_wake.velt `release`); a promise it started that still waits holds a reference
+  and is run when its leaf wakes the task. Tasks that do not catch pay nothing:
   the task's poll tests `CATCHES` in a mask it tests already. A join polled again through the
   header from before the panic is woken once to poll through the new one; a second such poll ends
   the process with 101, since that `@export` frame cannot unwind to a catch.
@@ -509,8 +512,6 @@ and cost nothing in programs that do not catch.
   `division by zero` panic blocks; Cranelift on Apple arm64 for a call with stack arguments; the
   JIT; Windows; WebAssembly. `velt test` fails the leak check of a test that catches a panic
   unwinding through one of these on a target with pads.
-- **A panicked task's root** is never freed
-  ([#2818](https://github.com/velt-lang/velt/issues/2818)).
 - **`catchPanic` guards the first promise started after `body` is called**, so `body` must be the
   async call itself.
 - **A foreign exception that passes a catch leaves the count up.** One that passes

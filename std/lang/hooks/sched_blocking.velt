@@ -75,7 +75,7 @@ const N_NEXT: usize = 0;
 const N_JOB: usize = 16;
 
 /** Can this OS run the pool? (Without threads, callers use the runtime's blocking leaves.) */
-@inline
+@inline("always")
 export function supported(): bool {
   return th.SUPPORTED;
 }
@@ -115,14 +115,14 @@ function pool(): usize {
   return b;
 }
 
-@inline
+@inline("always")
 function lock(p: usize): void {
   if (m.cas32(p + P_LOCK, 0, 1) !== 0) {
     m.spinLock(p + P_LOCK);
   }
 }
 
-@inline
+@inline("always")
 function unlock(p: usize): void {
   m.store32(p + P_LOCK, 0);
 }

@@ -77,13 +77,13 @@ export const WOKEN: u32 = 2;
 /** A wait's state: done. */
 export const DONE: u32 = 3;
 
-@inline
+@inline("always")
 export function ld(a: usize): usize {
   // SAFETY: a word of a block or wait this module allocated.
   return unsafe { addressLoad<usize>(a) };
 }
 
-@inline
+@inline("always")
 export function st(a: usize, v: usize): void {
   // SAFETY: as `ld`.
   unsafe {
@@ -91,20 +91,20 @@ export function st(a: usize, v: usize): void {
   }
 }
 
-@inline
+@inline("always")
 function ld32(a: usize): u32 {
   // SAFETY: as `ld`.
   return unsafe { addressLoad<u32>(a) };
 }
 
 /** A word other threads read without the lock. */
-@inline
+@inline("always")
 function load(a: usize): usize {
   // SAFETY: as `ld`; written with `publish`.
   return unsafe { addressAtomicLoad<usize>(a, "relaxed") };
 }
 
-@inline
+@inline("always")
 function publish(a: usize, v: usize): void {
   // SAFETY: as `ld`.
   unsafe {
@@ -112,13 +112,13 @@ function publish(a: usize, v: usize): void {
   }
 }
 
-@inline
+@inline("always")
 export function load32(a: usize): u32 {
   // SAFETY: as `ld`.
   return unsafe { addressAtomicLoad<u32>(a, "acquire") };
 }
 
-@inline
+@inline("always")
 export function store32(a: usize, v: u32): void {
   // SAFETY: as `ld`.
   unsafe {
@@ -162,7 +162,7 @@ export function release(b: usize): void {
 }
 
 /** Takes the lock of block `b`. */
-@inline
+@inline("always")
 export function lock(b: usize): void {
   // SAFETY: the lock word, changed atomically.
   if (unsafe { addressAtomicCas<u32>(b + B_LOCK, 0, 1, "acquire", "relaxed") } !== 0) {
@@ -185,50 +185,50 @@ function lockSlow(b: usize): void {
 }
 
 /** Lets go of the lock of block `b`. */
-@inline
+@inline("always")
 export function unlock(b: usize): void {
   store32(b + B_LOCK, 0);
 }
 
 /** Whether block `b` is closed (read without the lock: a closed block stays closed). */
-@inline
+@inline("always")
 export function isClosed(b: usize): bool {
   return load32(b + B_CLOSED) !== 0;
 }
 
 /** The number of items queued in block `b`. */
-@inline
+@inline("always")
 export function count(b: usize): usize {
   return load(b + B_LEN);
 }
 
 /** Whether block `b` is closed, under the lock (a plain load: the lock orders it). */
-@inline
+@inline("always")
 export function closedLocked(b: usize): bool {
   return ld32(b + B_CLOSED) !== 0;
 }
 
 /** The number of items queued in block `b`, under the lock (a plain load: the lock orders it). */
-@inline
+@inline("always")
 export function queued(b: usize): usize {
   return ld(b + B_LEN);
 }
 
 /** Whether block `b` takes one more item. Under the lock. */
-@inline
+@inline("always")
 export function hasRoom(b: usize): bool {
   const cap = ld(b + B_CAP);
   return cap === 0 || ld(b + B_LEN) < cap;
 }
 
 /** Whether block `b` is bounded (a pop makes room a send may wait for). */
-@inline
+@inline("always")
 export function bounded(b: usize): bool {
   return ld(b + B_CAP) !== 0;
 }
 
 /** Where a new item goes at the back of block `b`'s ring (grown if full). Under the lock. */
-@inline
+@inline("always")
 export function pushAt(b: usize): usize {
   if (ld(b + B_LEN) === ld(b + B_SLOTS)) {
     grow(b);
@@ -245,7 +245,7 @@ export function pushAt(b: usize): usize {
 }
 
 /** Where block `b`'s oldest item is; it leaves the ring. Under the lock, with an item queued. */
-@inline
+@inline("always")
 export function popAt(b: usize): usize {
   const head = ld(b + B_HEAD);
   let next = head + 1;
@@ -296,7 +296,7 @@ function copy(dst: usize, src: usize, n: usize): void {
 // ---- The lines. ----
 
 /** The first waiter of `kind`'s line in block `b`, taken out (woken): its waker, or 0. Locked. */
-@inline
+@inline("always")
 export function wakeFirst(b: usize, kind: usize): usize {
   const line = b + B_LINES + kind * 16;
   const c = ld(line);

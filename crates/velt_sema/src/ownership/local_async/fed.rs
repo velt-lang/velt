@@ -28,11 +28,11 @@ pub(super) fn fed_fields(cx: &mut Ctx, keyed: FxHashSet<Field>) -> Option<FxHash
     for i in 0..cx.defs.len() {
         // Asked before the definition is taken out of `cx.defs`.
         let library = super::changes::in_library(cx, DefId(i as u32));
-        let Some(def) = cx.defs[i].take() else {
+        let Some(def) = &cx.defs[i] else {
             continue;
         };
         let mut stores = vec![];
-        match &def {
+        match def {
             Def::Fn(f) => walk::block(&f.body.block, &mut Stores(&mut stores)),
             Def::Global(g) => walk::expr(&g.init, &mut Stores(&mut stores)),
             Def::Adt(a) => {
@@ -50,7 +50,6 @@ pub(super) fn fed_fields(cx: &mut Ctx, keyed: FxHashSet<Field>) -> Option<FxHash
             }
             _ => {}
         }
-        cx.defs[i] = Some(def);
         for s in stores {
             let (field, value) = match s {
                 Store::Field((d, k), value) => match declaring(cx, d, k) {

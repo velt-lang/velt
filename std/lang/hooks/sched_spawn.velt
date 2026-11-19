@@ -16,7 +16,7 @@ import * as wk from "./sched_wake";
 import * as workers from "./sched_workers";
 
 /** The executor, started on first use (sched.velt `exec`). */
-@inline
+@inline("always")
 function exec(): usize {
   return workers.started();
 }
@@ -71,7 +71,7 @@ function spawnFirst(
 }
 
 /** `schedSpawn`'s task, from worker block `e` (`w`: this thread's). */
-@inline
+@inline("always")
 function spawnOn(
   e: usize,
   w: usize,

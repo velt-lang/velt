@@ -34,7 +34,7 @@ export function append(s: usize, p: usize, n: usize): void {
 }
 
 /** Where `n` more bytes go in source `s`'s buffer (made room for); `commit` counts them. */
-@inline
+@inline("always")
 export function room(s: usize, n: usize): usize {
   const len = m.ld(s + io.S_LEN);
   if (m.ld(s + io.S_OFF) + len + n > m.ld(s + io.S_CAP)) {
@@ -44,7 +44,7 @@ export function room(s: usize, n: usize): usize {
 }
 
 /** Counts `n` bytes written at `room` as buffered and queued. */
-@inline
+@inline("always")
 export function commit(s: usize, n: usize): void {
   m.st(s + io.S_LEN, m.ld(s + io.S_LEN) + n);
   m.st(s + io.S_QUEUED, m.ld(s + io.S_QUEUED) + n);
@@ -169,7 +169,7 @@ export function flush(s: usize): void {
 }
 
 /** Source `s` has nothing more to send: a big buffer given back, a pending shutdown or close. */
-@inline
+@inline("always")
 function settled(s: usize): void {
   if (m.ld(s + io.S_CAP) > KEEP) {
     m.release(m.ld(s + io.S_BUF), m.ld(s + io.S_CAP));

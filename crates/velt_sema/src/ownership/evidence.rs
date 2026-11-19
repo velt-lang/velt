@@ -603,19 +603,18 @@ fn closure_reassigns(cx: &mut Ctx, def: crate::hir::DefId, l: LocalId, depth: u3
     if depth > 16 {
         return true;
     }
-    let Some(Def::Fn(mut f)) = cx.defs[def.0 as usize].take() else {
+    let Some(Some(Def::Fn(f))) = cx.defs.get(def.0 as usize) else {
         return false;
     };
     let mut found = false;
     let mut nested = vec![];
-    visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| match &e.kind {
+    visit::exprs(&f.body.block, &mut |e: &Expr| match &e.kind {
         E::Assign { place, .. } | E::CompoundAssign { place, .. } => {
             found |= matches!(place.kind, E::Local(x, _) if x == l);
         }
         E::Closure(d) => nested.push(*d),
         _ => {}
     });
-    cx.defs[def.0 as usize] = Some(Def::Fn(f));
     found
         || nested.into_iter().any(|d| {
             let inner: Vec<LocalId> = match &cx.defs[d.0 as usize] {

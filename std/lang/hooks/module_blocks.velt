@@ -48,7 +48,7 @@ const DESC_REST: usize = 40;
 const ALL_READY: usize = 0xffff_ffff_ffff_ffff;
 
 /** The block of the program's descriptor `desc`, to reach slot `slot` (made on first use). */
-@inline
+@inline("always")
 export function state(desc: usize, slot: u64): usize {
   if (DESC.load("acquire") as usize === desc && slot < READY.load("acquire")) {
     return BLOCK.load("relaxed") as usize;

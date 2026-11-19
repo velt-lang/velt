@@ -15,21 +15,21 @@ declare c("c") function memset$limbs(dst: u64[], c: i32, n: usize): Ptr<u8>;
 declare c("c") function memset$limbsRead(dst: readonly u64[], c: i32, n: usize): Ptr<u8>;
 
 /** The address of limb 0 of `a`, which the caller writes through it; valid until `a` is resized. */
-@inline
+@inline("always")
 export function limbsAt(a: u64[]): usize {
   // SAFETY: a write of no bytes; `a` is borrowed for the call.
   return Ptr.addressOf(unsafe { memset$limbs(a, 0, 0) });
 }
 
 /** The address of limb 0 of `a`, which the caller only reads through it. */
-@inline
+@inline("always")
 export function limbsIn(a: u64[]): usize {
   // SAFETY: as `limbsAt`'s.
   return Ptr.addressOf(unsafe { memset$limbsRead(a, 0, 0) });
 }
 
 /** Stops the program when limbs `[at, at + n)` are not all inside `a`: an internal error. */
-@inline
+@inline("always")
 export function limbsCheck(a: u64[], at: usize, n: usize) {
   if (at + n > a.length) {
     rangeFault();
@@ -41,14 +41,14 @@ function rangeFault() {
 }
 
 /** The limb at `p + 8 i`. */
-@inline
+@inline("always")
 export function ldl(p: usize, i: usize): u64 {
   // SAFETY: the caller checked that limb `i` is inside the array `p` came from (`limbsCheck`).
   return unsafe { addressLoad<u64>(p + 8 * i) };
 }
 
 /** Writes the limb at `p + 8 i`. */
-@inline
+@inline("always")
 export function stl(p: usize, i: usize, v: u64) {
   // SAFETY: as `ldl`'s.
   unsafe {
@@ -57,7 +57,7 @@ export function stl(p: usize, i: usize, v: u64) {
 }
 
 // One limb of `addMulRowAt`: `r[i] += a[i] * k + c`; the carry out.
-@inline
+@inline("always")
 function addMulStep(r: usize, a: usize, i: usize, k: u64, c: u64): u64 {
   const x = ldl(a, i);
   let hi = Math.umulh(x, k);
@@ -70,7 +70,7 @@ function addMulStep(r: usize, a: usize, i: usize, k: u64, c: u64): u64 {
 }
 
 // One limb of `subMulRowAt`: `r[i] -= a[i] * k + c`; the borrow out.
-@inline
+@inline("always")
 function subMulStep(r: usize, a: usize, i: usize, k: u64, c: u64): u64 {
   const x = ldl(a, i);
   let hi = Math.umulh(x, k);

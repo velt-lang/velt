@@ -1,0 +1,5 @@
+rq 42
+refused: not a number
+rq 3
+refused: not a string
+rq plain

@@ -1,0 +1,234 @@
+// velt/process (internal): standard input's read-ahead buffer, which `readLineSync`, `readAllSync`,
+// `readAllBytesSync` and their async twins (the same reads on the executor's blocking pool,
+// std/process/rt_sched.velt) share, so they see one stream. A line already in the buffer costs one
+// `memchr` and one copy into its string; a refill reads 64 KiB through `#stdin-sys` (`read` on fd 0,
+// or the Windows console's or pipe's own read), after flushing standard output, as Node does
+// before it waits for input. Text is UTF-8, an invalid sequence as U+FFFD.
+//
+// The state is C memory, one block for the process, whose address an `Atomic` holds: the lock
+// word, then the buffer's address and capacity, where unread bytes start and end, and whether the
+// OS reported the end of input. The lock is the runtime's thread lock (`velt_rt_mutex_lock`), held
+// across the OS read, so a second reader parks rather than spins (#2196 leaves it to switch to a
+// lock of std's).
+
+import { IoError } from "velt/io/error";
+import { Ptr } from "velt/ffi/ptr";
+import { readBytes } from "velt/ffi/read";
+import { addressArray, addressLoad, addressStore } from "velt/lang/intrinsics";
+import { readChunk } from "#stdin-sys";
+
+// C declarations, so that the `Ptr` is passed as the pointer it is: a Velt-ABI declaration passes
+// it as the address of a copy, which the runtime would lock instead (and an integer address is
+// 64 bits where a wasm32 pointer is 32).
+declare c("c") function velt_rt_mutex_lock(lock: Ptr<u64>): void;
+declare c("c") function velt_rt_mutex_unlock(lock: Ptr<u64>): void;
+declare function velt_rt_flush(): void;
+declare c("c") function calloc$stdin(n: usize, size: usize): Ptr<u8> | null;
+declare c("c") function realloc$stdin(p: Ptr<u8> | null, size: usize): Ptr<u8> | null;
+declare c("c") function memchr$stdin(s: Ptr<u8>, c: i32, n: usize): Ptr<u8> | null;
+declare c("c") function memmove$stdin(dst: Ptr<u8>, src: Ptr<u8>, n: usize): Ptr<u8>;
+declare c("c") function free$stdin(p: Ptr<u8> | null): void;
+
+/** Bytes read per refill. */
+const CHUNK: usize = 65536;
+
+/** The state block's fields, by offset. */
+const LOCK: usize = 0;
+const BUF: usize = 8;
+const CAP: usize = 16;
+const START: usize = 24;
+const END: usize = 32;
+const EOF: usize = 40;
+const STATE_BYTES: usize = 48;
+
+/** The state block's address (0 until its first use). */
+const STATE = new Atomic<u64>(0);
+
+/** What a read gives: the text or bytes, `eof` at the end of input, or the error it ended on. */
+export struct StdinRead {
+  text: string;
+  bytes: u8[];
+  eof: bool;
+  error: IoError | null;
+}
+
+function word(s: usize, at: usize): usize {
+  // SAFETY: `s` is the state block, which lives as long as the process.
+  return unsafe { addressLoad<u64>(s + at) } as usize;
+}
+
+function setWord(s: usize, at: usize, v: usize): void {
+  // SAFETY: as `word`.
+  unsafe {
+    addressStore<u64>(s + at, v as u64);
+  }
+}
+
+/** The state block, made on first use (a thread that loses the race uses the winner's). */
+function state(): usize {
+  const s = STATE.load("acquire") as usize;
+  if (s !== 0) {
+    return s;
+  }
+  // SAFETY: calloc has no precondition; its result is checked. A zero lock word is unlocked.
+  const block = unsafe { calloc$stdin(1, STATE_BYTES) };
+  if (block === null) {
+    panic("velt/process: no memory for standard input's buffer");
+  }
+  const mine = Ptr.addressOf(block);
+  const won = STATE.compareExchange(0, mine as u64, "acqrel", "acquire");
+  // A block that lost the race is never freed: 48 bytes, once, at most per thread racing.
+  return won === 0 ? mine : (won as usize);
+}
+
+function lock(s: usize): void {
+  // SAFETY: the lock word is the block's first 8 bytes, zeroed when made.
+  unsafe {
+    velt_rt_mutex_lock(Ptr.at<u64>(s + LOCK));
+  }
+}
+
+function unlock(s: usize): void {
+  // SAFETY: as `lock`, held by this thread.
+  unsafe {
+    velt_rt_mutex_unlock(Ptr.at<u64>(s + LOCK));
+  }
+}
+
+/**
+ * Reads the next chunk from the OS after the unread bytes (moved to the front first, the buffer
+ * grown when it has no room for a chunk): null, or the error the read failed with.
+ */
+function fill(s: usize): IoError | null {
+  let buf = word(s, BUF);
+  const start = word(s, START);
+  const end = word(s, END);
+  if (start > 0 && end > start) {
+    // SAFETY: both ranges are inside the buffer; memmove allows them to overlap.
+    unsafe {
+      memmove$stdin(Ptr.at<u8>(buf), Ptr.at<u8>(buf + start), end - start);
+    }
+  }
+  const unread = end - start;
+  setWord(s, START, 0);
+  setWord(s, END, unread);
+  const had = word(s, CAP);
+  if (had - unread < CHUNK) {
+    // Doubled, so reading everything copies each byte a bounded number of times.
+    const cap = had * 2 > unread + CHUNK ? had * 2 : unread + CHUNK;
+    // SAFETY: the buffer is realloc's own (or null before the first fill); its result is checked.
+    const grown = unsafe { realloc$stdin(buf === 0 ? null : Ptr.at<u8>(buf), cap) };
+    if (grown === null) {
+      panic("velt/process: no memory for standard input's buffer");
+    }
+    buf = Ptr.addressOf(grown);
+    setWord(s, BUF, buf);
+    setWord(s, CAP, cap);
+  }
+  // A prompt written before the read is on the screen while the program waits.
+  velt_rt_flush();
+  const got = readChunk(buf + unread, CHUNK);
+  if (got.error !== null) {
+    return got.error;
+  }
+  if (got.count === 0) {
+    setWord(s, EOF, 1);
+  }
+  setWord(s, END, unread + got.count);
+  return null;
+}
+
+/** The first "\n" in the `n` (> 0) unread bytes at `p`, or null. */
+function newline(p: usize, n: usize): Ptr<u8> | null {
+  // SAFETY: `p .. p + n` are unread bytes of the buffer, which the caller's lock keeps in place.
+  return unsafe { memchr$stdin(Ptr.at<u8>(p), 10, n) };
+}
+
+/**
+ * The text of the `n` bytes at `p`, an invalid sequence as U+FFFD: converted from a view of the
+ * buffer, so a line costs one copy. Unsafe: `p .. p + n` are unread bytes, which the caller's
+ * lock keeps in place and unchanged until it returns.
+ */
+unsafe function textAt(p: usize, n: usize): string {
+  if (n === 0) {
+    return "";
+  }
+  // SAFETY: the caller's statement; the view is only read, and dropped before this returns.
+  const view: u8[] = unsafe { addressArray<u8>(p, n) };
+  return view.utf8Slice();
+}
+
+/** The next line without its "\n" / "\r\n" (`eof` at the end of input, with an empty text). */
+export function readLine(): StdinRead {
+  const s = state();
+  lock(s);
+  let text = "";
+  let eof = false;
+  let error: IoError | null = null;
+  while (true) {
+    const buf = word(s, BUF);
+    const start = word(s, START);
+    const end = word(s, END);
+    const nl = end > start ? newline(buf + start, end - start) : null;
+    if (nl !== null || (word(s, EOF) !== 0 && end > start)) {
+      const stop = nl === null ? end : Ptr.addressOf(nl) - buf;
+      let len = stop - start;
+      // SAFETY: inside the unread bytes.
+      if (len > 0 && unsafe { addressLoad<u8>(buf + start + len - 1) } === 13) {
+        len -= 1;
+      }
+      // SAFETY: `len` unread bytes at `buf + start`, which nothing changes while the lock is held.
+      text = unsafe { textAt(buf + start, len) };
+      setWord(s, START, nl === null ? end : stop + 1);
+      break;
+    }
+    if (word(s, EOF) !== 0) {
+      eof = true;
+      break;
+    }
+    error = fill(s);
+    if (error !== null) {
+      break;
+    }
+  }
+  unlock(s);
+  return { text: text, bytes: [], eof: eof, error: error };
+}
+
+/** Everything not read yet, through the end of input, as bytes (`asText`: as text). */
+export function readAll(asText: bool): StdinRead {
+  const s = state();
+  lock(s);
+  let error: IoError | null = null;
+  while (word(s, EOF) === 0 && error === null) {
+    error = fill(s);
+  }
+  let text = "";
+  let bytes: u8[] = [];
+  if (error === null) {
+    const buf = word(s, BUF);
+    const start = word(s, START);
+    const end = word(s, END);
+    if (end > start && asText) {
+      // SAFETY: the unread bytes, which nothing changes while the lock is held.
+      text = unsafe { textAt(buf + start, end - start) };
+    } else if (end > start) {
+      // SAFETY: as above.
+      bytes = unsafe { readBytes(Ptr.at<u8>(buf + start), end - start) };
+    }
+    // Nothing is left to read, so the buffer (as large as the input) is freed, not kept beside
+    // the copy handed out; a later read starts a new one.
+    if (buf !== 0) {
+      // SAFETY: the buffer realloc gave, which nothing points into once the fields are reset.
+      unsafe {
+        free$stdin(Ptr.at<u8>(buf));
+      }
+    }
+    setWord(s, BUF, 0);
+    setWord(s, CAP, 0);
+    setWord(s, START, 0);
+    setWord(s, END, 0);
+  }
+  unlock(s);
+  return { text: text, bytes: bytes, eof: false, error: error };
+}
