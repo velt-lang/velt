@@ -6,13 +6,17 @@
 import { Ptr } from "velt/ffi/ptr";
 import { addressLoad } from "velt/lang/intrinsics";
 
-/** Win32's `LARGE_INTEGER` and `FILETIME` (both 8 bytes). */
+/**
+ * Win32's `LARGE_INTEGER` and `FILETIME` (both 8 bytes). `GetSystemTimePreciseAsFileTime` takes
+ * `LPFILETIME`, a pointer to the struct by its tag (`_FILETIME`), which is the name the header
+ * check (`velt native headers --std`) takes it by.
+ */
 declare c type LARGE_INTEGER;
-declare c type FILETIME;
+declare c type _FILETIME;
 
 declare c("c") function QueryPerformanceCounter$clock(count: Ptr<LARGE_INTEGER>): i32;
 declare c("c") function QueryPerformanceFrequency$clock(freq: Ptr<LARGE_INTEGER>): i32;
-declare c("c") function GetSystemTimePreciseAsFileTime(time: Ptr<FILETIME>): void;
+declare c("c") function GetSystemTimePreciseAsFileTime(time: Ptr<_FILETIME>): void;
 declare c("c") function calloc$clock(n: usize, size: usize): Ptr<u8> | null;
 
 /** 100 ns ticks from 1601-01-01 (the `FILETIME` epoch) to 1970-01-01. */
@@ -77,7 +81,7 @@ export function realtimeNs(): i64 {
   }
   // SAFETY: this thread's buffer holds a FILETIME, which only this call uses.
   unsafe {
-    GetSystemTimePreciseAsFileTime(Ptr.at<FILETIME>(p));
+    GetSystemTimePreciseAsFileTime(Ptr.at<_FILETIME>(p));
   }
   // SAFETY: inside the buffer, which the call filled (the ticks, little-endian).
   const ticks = unsafe { addressLoad<i64>(p) };
