@@ -43,6 +43,15 @@ function main() {
   // A read that gives nothing changes nothing.
   console.log(fs.readSync(fd, wide as u8[], 0, 2, 1000), wide.join(","));
 
+  // The bytes of -0 read over 0, and of 0 over -0, are a change too.
+  const zeros: u8[] = [0, 0, 0, 128, 0, 0, 0, 0];
+  fs.writeSync(fd, zeros, 0, 8, 0);
+  const plus: any = [0, 5];
+  fs.readSync(fd, plus as f32[], 0, 4, 0);
+  const minus: any = [-0, 5];
+  fs.readSync(fd, minus as f32[], 0, 4, 4);
+  console.log(Object.is(plus[0], -0), 1 / plus[0], Object.is(minus[0], 0), 1 / minus[0]);
+
   fs.closeSync(fd);
   fs.unlinkSync(path);
 }

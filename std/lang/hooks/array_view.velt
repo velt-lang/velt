@@ -109,8 +109,9 @@ export function arrayViewFlushKept<T>(v: ArrayView<T>) {
     const now: any = seen[i];
     const was: any = kept[i];
     const k = i as number;
-    // Changed, where NaN is the same as NaN.
-    if (now !== was && (now === now || was === was) && k < size) {
+    // Changed as `Object.is` tells it: NaN is the same as NaN, and -0 is not +0 (the bytes of
+    // one read over the other are a change).
+    if (!Object.is(now, was) && k < size) {
       t[k] = now;
     }
   }
