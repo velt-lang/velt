@@ -289,8 +289,9 @@ impl FnLower<'_, '_> {
     pub(super) fn same_body(&mut self, pa: crate::vir::Local, pb: crate::vir::Local, ty: TyId) {
         // A type `same_values` compares in line (a number, a string, an object by identity):
         // only a shared instance asks for its glue, for a placeholder that stands for it
-        // (shape/), and the glue is that comparison.
-        if self.cx.same_in_line(ty) {
+        // (shape/), and the glue is that comparison. Not the body of a `struct`'s own glue
+        // (`bits_eq_body`), which that comparison calls.
+        if !self.bits_mode && self.cx.same_in_line(ty) {
             let (a, b) = (self.deref_param(pa, ty), self.deref_param(pb, ty));
             let e = self.same_values(&a, &b, ty);
             self.terminate(crate::vir::Terminator::Return(e));

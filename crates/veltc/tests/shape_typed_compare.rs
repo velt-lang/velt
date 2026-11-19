@@ -73,7 +73,9 @@ fn a_typed_comparison_in_a_shared_instance_is_each_types_own() {
     let std = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
     copy_dir(&std, &dir.path().join("std"));
     let hook = dir.path().join("std/lang/hooks/array_view.velt");
-    let text = std::fs::read_to_string(&hook).unwrap().replace("\r\n", "\n");
+    let text = std::fs::read_to_string(&hook)
+        .unwrap()
+        .replace("\r\n", "\n");
     assert_eq!(text.matches(BEFORE).count(), 1, "arrayViewSyncAt changed");
     std::fs::write(&hook, text.replace(BEFORE, AFTER)).unwrap();
     std::fs::write(dir.path().join("main.velt"), VIEWS).unwrap();
