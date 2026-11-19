@@ -32,13 +32,13 @@ import {
   noInline,
   statePoll,
 } from "velt/lang/intrinsics";
+import * as fr from "./sched_fut_root";
 import * as jn from "./sched_join";
 import * as mk from "./sched_make";
 import * as m from "./sched_mem";
 import * as node from "./sched_node";
 import * as lost from "./sched_node_lost";
 import * as pt from "./program_thread";
-import * as run from "./sched_run";
 import * as sl from "./sched_sleep";
 import * as sp from "./sched_spread";
 import * as t from "./sched_task";
@@ -356,7 +356,7 @@ export function spawn(
 /** `schedSpawnFut` on a thread that isn't a worker: the handle (as `schedSpawnFut`'s). */
 export function spawnFut(f: usize, rsize: u64, rdrop: usize): usize {
   const g = workers.pending();
-  const k = mk.task(g, fnAddress(run.futRootPoll), 0, rsize, rdrop, 16 + ((rsize + 15) & ~15), 2);
+  const k = mk.task(g, fnAddress(fr.futRootPoll), 0, rsize, rdrop, 16 + ((rsize + 15) & ~15), 2);
   const at = m.ld(k + t.T_ROOT);
   m.st(at, f);
   m.st(at + 8, rsize as usize);

@@ -42,8 +42,13 @@ impl FnLower<'_, '_> {
         // runs after the array's address is taken: borrow the array as a call borrows its
         // receiver, so that address stays valid.
         // What only reads the array: its length, and the size and address of its bytes for a
-        // system call that reads them (`writeSync`).
-        let reads = matches!(i, I::ArrayLen | I::ArrayByteLength | I::ArrayReadAddress);
+        // system call that reads them (`writeSync`). `ArrayBytesWritten` changes nothing more
+        // either: the write it speaks of was let through where its address was taken
+        // (`ArrayDataAddress`), and for a plain array it is no code at all.
+        let reads = matches!(
+            i,
+            I::ArrayLen | I::ArrayByteLength | I::ArrayReadAddress | I::ArrayBytesWritten
+        );
         if !reads && !self.cx.lock_counted(aty) {
             // Held inline in an object (caller_stores.rs).
             self.owner_barrier(&args[0]);
@@ -192,6 +197,8 @@ impl FnLower<'_, '_> {
         let elem = self.elem_ty(aty);
         match (i, rest) {
             (I::ArrayLen, []) => self.rvalue_temp(Ty::U64, Rvalue::Use(Self::arr_field(&arr, 1))),
+            // A plain array's bytes are its elements: nothing to write back.
+            (I::ArrayBytesWritten, []) => unit(),
             (I::ArrayDataAddress | I::ArrayReadAddress, []) => {
                 if self.cx.needs_drop(elem) {
                     ice("arrayDataAddress of an array whose elements own something");

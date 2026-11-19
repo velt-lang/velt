@@ -1,6 +1,6 @@
-//! Process state (rt_abi_async.md §8): arguments, environment, working directory and clocks.
-//! Same behavior as velt_rt's `process` module; the clocks go through [`crate::platform`] so
-//! they also work in the browser, where `std`'s clocks are unavailable.
+//! Process state (rt_abi_async.md §8): arguments, environment and working directory. Same
+//! behavior as velt_rt's `process` module, through [`crate::platform`] so it also works in the
+//! browser.
 
 use crate::platform;
 use crate::result::{IoResult, VeltErr};
@@ -90,18 +90,6 @@ pub unsafe extern "C" fn velt_rt_process_chdir(path: *const VeltStr, out: *mut V
     out.write(e);
 }
 
-/// `performance.now()`: monotonic milliseconds since the first clock use.
-#[no_mangle]
-pub extern "C" fn velt_rt_perf_now() -> f64 {
-    platform::monotonic_ms()
-}
-
-/// `Date.now()`: whole milliseconds since the Unix epoch.
-#[no_mangle]
-pub extern "C" fn velt_rt_date_now() -> i64 {
-    platform::epoch_ms()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -143,7 +131,5 @@ mod tests {
             velt_rt_env_remove(&name);
             assert_eq!(velt_rt_env_get(&name, &mut out), 0);
         }
-        assert!(velt_rt_perf_now() >= 0.0);
-        assert!(velt_rt_date_now() > 1_600_000_000_000);
     }
 }

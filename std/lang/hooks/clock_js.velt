@@ -1,0 +1,16 @@
+// velt/lang/hooks (internal): the clocks of `#clock` under a JS host (the browser, workers): the
+// host's `performance.now()` and `Date.now()`, from the glue's `velt:clock` module (velt_web.mjs
+// `clockHost`), in milliseconds there.
+
+declare host("velt:clock") function now(): f64;
+declare host("velt:clock") function date(): f64;
+
+/** The monotonic clock in nanoseconds. */
+export function monotonicNs(): u64 {
+  return (now() * 1000000.0) as u64;
+}
+
+/** The wall clock in nanoseconds since the Unix epoch. */
+export function realtimeNs(): i64 {
+  return (date() as i64) * 1000000;
+}

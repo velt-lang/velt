@@ -25,7 +25,7 @@
 // poll of the task has ended, its microtasks too (sched_run.velt `runEnd`), as Node runs the
 // microtasks after each callback. A timer is never run inside the poll that created it: the loop
 // moves only between polls. A task with Node timers may move to another worker (its sleeps anchor
-// it: sched_sleep.velt).
+// it, and an offer carries them along: sched_sleep_carry.velt).
 //
 // Known differences from the runtime's order:
 // - A step fires only the sleeps of the worker that steps: a sleep of another worker due before
@@ -195,12 +195,21 @@ function leave(h: usize): usize {
 function leaveLocked(h: usize): usize {
   const b = l.order();
   const k = l.lock(b);
+  const w = leaveHeld(b, h);
+  l.unlock(b, k);
+  return w;
+}
+
+/**
+ * `leave` by a caller that holds the order's lock (order `b`): the waker of timer `h`'s turn
+ * (taken), or 0. For a walk that takes many timers out under one lock (sched_order_give.velt).
+ */
+export function leaveHeld(b: usize, h: usize): usize {
   withdraw(b, h);
   const w = m.ld(h + l.H_WAKER);
   if (w !== 0) {
     m.st(h + l.H_WAKER, 0);
   }
-  l.unlock(b, k);
   return w;
 }
 

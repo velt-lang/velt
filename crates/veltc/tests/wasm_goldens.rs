@@ -217,10 +217,12 @@ const SHARDS: usize = 8;
 /// The wasm32-wasip1 goldens: every file with an `.out` in these directories,
 const WASI_DIRS: &[&str] = &["m1", "m2", "m3", "m4", "lang"];
 /// and these of `std/`: the SIMD programs, whose vectors are WebAssembly `v128` values there,
-/// the std code written with them, `random` (its seed is WASI's, through wasi-libc), and two
-/// ephemeron caches, whose trials call between std's weak core and the compiler's glue.
+/// the std code written with them, `random` (its seed is WASI's, through wasi-libc),
+/// `clock_reads` (the clocks are WASI's too), and two ephemeron caches, whose trials call between
+/// std's weak core and the compiler's glue.
 const WASI_STD: &[&str] = &[
     "bytes_search",
+    "clock_reads",
     "half_dot",
     "half_dot_bf16_lengths",
     "half_dot_bf16_lengths_short",

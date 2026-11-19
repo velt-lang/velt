@@ -46,6 +46,7 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("arrayCopyBytes", Op(I::ArrayCopyBytes)),
     ("arrayDataAddress", Op(I::ArrayDataAddress)),
     ("arrayReadAddress", Op(I::ArrayReadAddress)),
+    ("arrayBytesWritten", Op(I::ArrayBytesWritten)),
     ("arrayMove", Op(I::ArrayMove)),
     ("arrayPrefetch", Op(I::ArrayPrefetch)),
     ("arrayRemove", Op(I::ArrayRemove)),

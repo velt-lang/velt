@@ -3,13 +3,13 @@
 //! finishes its losers as it goes instead of piling them up; one that yielded waits for the
 //! task's next poll.
 
+use super::fake::block_on_state;
 use crate::task::latch::{
     velt_rt_latch_free, velt_rt_latch_new, velt_rt_latch_open, velt_rt_latch_wait,
 };
 use crate::task::local::{
     velt_rt_await_ready, velt_rt_await_tick, velt_rt_fut_box, velt_rt_fut_detach,
 };
-use crate::task::runtime::velt_rt_block_on;
 use crate::task::{drop_fut, poll_fut, velt_rt_yield_now, VeltFut, PENDING, READY};
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -102,7 +102,7 @@ unsafe extern "C-unwind" fn loop_poll(s: *mut u8, cx: *mut c_void) -> u32 {
 #[test]
 fn ready_losers_finish_in_the_round_that_gave_them_up() {
     let mut st = [0u64; 3];
-    unsafe { velt_rt_block_on(loop_poll, st.as_mut_ptr() as *mut u8) };
+    unsafe { block_on_state(loop_poll, st.as_mut_ptr() as *mut u8) };
     assert_eq!(FINISHED.load(Ordering::SeqCst), ROUNDS);
     // Counted, not timed: each round's loser ran before the next round started.
     assert_eq!(
@@ -139,7 +139,7 @@ unsafe extern "C-unwind" fn yielded_poll(s: *mut u8, cx: *mut c_void) -> u32 {
 #[test]
 fn after_a_yield_losers_wait_for_the_next_poll() {
     let mut st = [0i64; 2];
-    unsafe { velt_rt_block_on(yielded_poll, st.as_mut_ptr() as *mut u8) };
+    unsafe { block_on_state(yielded_poll, st.as_mut_ptr() as *mut u8) };
     assert_eq!(FINISHED_BEFORE_OWNER_WENT_ON.load(Ordering::SeqCst), 0);
     assert_eq!(YIELDED_FINISHED.load(Ordering::SeqCst), 1);
 }

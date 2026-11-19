@@ -725,7 +725,8 @@ gets a block of its own, which `rest` (when not null) completes after `init`, as
 
 The call takes the process-wide *module lock* unless the thread holds it: inside a task until
 the end of the poll, and every later poll of that task takes it at its start; outside a task (a
-synchronous `main`) until `velt_rt_block_on` or until `main` returns. A program that never
+synchronous `main`) until `main`'s root starts (std's `schedBlockOn`, `velt_rt_block_on` on
+WebAssembly) or until `main` returns. A program that never
 calls it pays nothing per task (a process-wide flag the first call sets). `velt_rt_mutex_lock`
 keeps the module lock while it blocks; waiting for the module lock while the thread holds a
 `Mutex` stops with an `ICE:` panic (sema rejects module state in a `with` callback). On
@@ -742,7 +743,7 @@ the module lock already, so no thread waits for it while holding a `Mutex`; the 
 never reach module state, so a thread holding the module lock that waits for their `Mutex` only
 waits for them to finish.
 
-Within one call of a compiled function (until the poll ends, or until `velt_rt_block_on` or
+Within one call of a compiled function (until the poll ends, or until `main`'s root starts or
 `main` returns), a successful `velt_rt_module_state(desc, s)` stays valid for every slot `<= s`:
 the same block, still initialized up to `s`, with the lock still held. The compiler reuses it
 instead of calling again (`velt_opt` `module_state`), so a runtime change must keep this.
@@ -886,7 +887,10 @@ body's reader and the piece last read; its async functions fulfill with nothing 
 an error whose `name` is the `IoError` code native `fetch` gives the failure (`AbortError` once
 the call was aborted). `velt:random` (std/lang/random/seed_js.velt): `fill(buf: u8[])`, the seed
 of `Math.random()`'s generator, which the glue fills with `crypto.getRandomValues` (`randomHost` in
-velt_web.mjs); `buf` crosses as a view of the program's memory.
+velt_web.mjs); `buf` crosses as a view of the program's memory. `velt:clock`
+(std/lang/hooks/clock_js.velt): `now(): f64` and `date(): f64`, the host's `performance.now()`
+and `Date.now()` in milliseconds, which `Date.now()` and `performance.now()` read (`clockHost`
+in velt_web.mjs).
 
 ## Views
 
