@@ -125,10 +125,16 @@ export function wake(t: usize): void {
 export function release(t: usize): void {
   if (m.dec(t + tk.T_REFS) === 1) {
     if ((m.ld32(t + tk.T_FLAGS) & nc.T_PANICKED) !== 0) {
-      nc.freePanic(m.ld(t + tk.T_POLL));
+      freePanicked(t);
     }
     m.release(t, m.ld(t + tk.T_BYTES));
   }
+}
+
+/** The exception of task `t`, whose root panicked: out of line, so `release` stays small. */
+@noInline
+function freePanicked(t: usize): void {
+  nc.freePanic(m.ld(t + tk.T_POLL));
 }
 
 /**

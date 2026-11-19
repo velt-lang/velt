@@ -3,7 +3,9 @@
 // A spawned task whose root panics under `catchPanic` is freed with its last reference, as any
 // task (#2818): the executor kept each one for good, a block for every panic of a handler that
 // spawns its work. Also one nobody joins, and one that panics while a promise it started still
-// waits for a timer, which wakes the task after its root is gone.
+// waits: `main` lets those promises go on only after it caught every panic, so each wakes its
+// task after the task's root is gone.
+import { Channel, channel } from "velt/sync";
 import { catchPanic, PanicError } from "velt/task";
 
 async function boom(i: number): Promise<number> {
@@ -12,14 +14,14 @@ async function boom(i: number): Promise<number> {
   return 1;
 }
 
-async function slow(i: number): Promise<void> {
-  // timing: the timer is the leaf that wakes the task after its root panicked.
-  await sleep(5);
-  console.log("woke", i);
+// Waits for `main`'s go, then says it woke.
+async function slow(i: i64, gate: Channel<i64>, woke: Channel<i64>): Promise<void> {
+  const go = await gate.receive();
+  woke.trySend(i + (go ?? 0));
 }
 
-async function leaves(i: number): Promise<number> {
-  void slow(i);
+async function leaves(i: i64, gate: Channel<i64>, woke: Channel<i64>): Promise<number> {
+  void slow(i, gate, woke);
   await yieldNow();
   panic("left " + i);
   return 1;
@@ -29,8 +31,8 @@ async function joined(i: number): Promise<number> {
   return await spawn(boom(i));
 }
 
-async function joinedLeaves(i: number): Promise<number> {
-  return await spawn(leaves(i));
+async function joinedLeaves(i: i64, gate: Channel<i64>, woke: Channel<i64>): Promise<number> {
+  return await spawn(leaves(i, gate, woke));
 }
 
 async function dropped(i: number): Promise<number> {
@@ -57,17 +59,25 @@ async function main() {
     passed += await catchPanic(() => dropped(i));
   }
   console.log("passed", passed);
+  const gate = channel<i64>(8);
+  const woke = channel<i64>(8);
   let left = 0;
-  for (let i = 0; i < 5; i++) {
+  for (let i: i64 = 0; i < 5; i++) {
     try {
-      await catchPanic(() => joinedLeaves(i));
+      await catchPanic(() => joinedLeaves(i, gate, woke));
     } catch (e) {
       if (e instanceof PanicError && e.message.startsWith("left " + i)) {
         left++;
       }
     }
   }
-  // timing: longer than every `slow` timer above.
-  await sleep(40);
-  console.log("left", left);
+  // Every root is gone: now the promises they left go on, each waking its task.
+  for (let i = 0; i < 5; i++) {
+    gate.trySend(100);
+  }
+  let sum: i64 = 0;
+  for (let i = 0; i < 5; i++) {
+    sum += (await woke.receive()) ?? 0;
+  }
+  console.log("left", left, "woke", sum);
 }
