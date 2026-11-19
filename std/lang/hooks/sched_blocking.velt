@@ -138,8 +138,11 @@ function submit(job: () => void): void {
     slotPut<() => void>(n + N_JOB, job);
   }
   // Held until the job is done: the process doesn't end while it can still finish, nor after
-  // `main` while it still drops what it held (sched.velt `schedFinish`).
-  end.blockingQueued(t.main());
+  // `main` while it still drops what it held: counted in worker 0's `E_BLOCKING` until then
+  // (sched.velt `schedFinish`).
+  const g = t.main();
+  m.inc(g + t.E_BLOCKING);
+  end.keepAcquire(g);
   lock(p);
   const tail = m.ld(p + P_TAIL);
   if (tail === 0) {
@@ -262,6 +265,9 @@ function blockingMain(arg: Ptr<u8> | null): Ptr<u8> | null {
 function jobDone(p: usize): void {
   m.inc(p + P_DONE);
   const g = t.main();
-  end.blockingDone(g);
+  // The count first: after `main`, worker 0 never finds the reference gone while the job is still
+  // counted, which it would turn on until the count fell.
+  m.dec(g + t.E_BLOCKING);
+  end.keepRelease(g);
   wk.unpark(g);
 }
