@@ -12,7 +12,7 @@ import * as run from "./sched_run";
 import * as sl from "./sched_sleep";
 import * as t from "./sched_task";
 import * as wk from "./sched_wake";
-import * as yl from "./sched_yield";
+import * as ls from "./sched_yield_list";
 
 /**
  * Fires task `k`'s due sleeps one at a time, in timer order: each resumes its waiter at once, and
@@ -53,11 +53,11 @@ export function fireYields(e: usize, k: usize): void {
     fireDue(e, k);
   }
   let woken = t.has(k, t.ROOT_YIELDED);
-  let y = yl.take(k);
+  let y = ls.take(k);
   while (y !== 0) {
-    const nx = yl.next(y);
-    let w = yl.fire(y);
-    const lent = w === yl.ROOT;
+    const nx = ls.next(y);
+    let w = ls.fire(y);
+    const lent = w === ls.ROOT;
     if (lent) {
       w = k;
     }
@@ -141,7 +141,8 @@ function resume(e: usize, k: usize, w: usize, lent: bool, own: bool, woken: bool
  */
 function between(e: usize, k: usize, woken: bool): bool {
   run.drain(e, k);
-  let n = wn.takeWoken(k);
+  // Mostly none: a load, not the exchange.
+  let n = m.load(k + t.T_WOKEN) === 0 ? 0 : wn.takeWoken(k);
   while (n !== 0) {
     const nx = wn.nextWoken(n);
     node.run(k, n, true);

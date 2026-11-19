@@ -51,6 +51,9 @@ export function task(
   m.st(k + t.T_BYTES, bytes);
   m.st(k + t.T_TIMERS, 0);
   m.st(k + t.T_YIELDS, 0);
+  // `T_YGEN` and `T_YSEQ`, then `T_YROOT` (and the word's other half).
+  m.st(k + t.T_YGEN, 0);
+  m.st(k + t.T_YROOT, 0);
   m.st(k + t.T_HOME, e);
   // No handle yet, and not a C thread's (`J_FOREIGN`, which a task's end reads): spawns set it.
   m.st(k + t.T_JOIN_STATE, 0);

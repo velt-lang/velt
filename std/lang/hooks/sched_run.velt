@@ -26,6 +26,7 @@ import * as sc from "./sched_sleep_carry";
 import * as t from "./sched_task";
 import * as wk from "./sched_wake";
 import * as yl from "./sched_yield";
+import * as ls from "./sched_yield_list";
 
 /**
  * Polls task `k` once: its woken started promises, its due sleeps, its root, its microtasks. A
@@ -178,9 +179,9 @@ function runEnd(e: usize, k: usize, mode: u32): void {
       order.released(e, k);
     }
   }
-  if (t.has(k, t.ROOT_DONE) && m.ld(k + t.T_LOCALS) === 0 && yl.waiting(k) === 0) {
+  if (t.has(k, t.ROOT_DONE) && m.ld(k + t.T_LOCALS) === 0 && ls.waiting(k) === 0) {
     finish(e, k);
-  } else if ((m.load(k + t.T_WOKEN) | yl.waiting(k)) !== 0) {
+  } else if ((m.load(k + t.T_WOKEN) | ls.waiting(k)) !== 0) {
     // Promises woken and yields made during this poll run in its next one (sched_fire.velt).
     m.store32(k + t.T_STATE, t.SCHEDULED);
     requeue(e, k, mode);
