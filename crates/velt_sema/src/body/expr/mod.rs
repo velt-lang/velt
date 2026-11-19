@@ -115,6 +115,7 @@ mod hoist;
 mod hook_call;
 pub(crate) mod iface_adapt;
 pub(crate) mod iface_adapt_dynamic;
+mod iface_adapt_fns;
 pub(crate) mod iface_adapt_slots;
 mod iface_call;
 pub(crate) mod iface_field;

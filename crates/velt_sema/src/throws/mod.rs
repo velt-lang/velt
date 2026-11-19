@@ -25,6 +25,7 @@ mod hints;
 mod infer;
 mod inits;
 mod method_sites;
+mod portable;
 mod promise_sites;
 mod promise_vars;
 mod recheck;

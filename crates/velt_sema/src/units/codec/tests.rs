@@ -2,6 +2,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use velt_common::{FileId, Span};
 
 use super::*;
+use crate::hir::{DefId, TyId};
 
 fn round_trip<T: Codec + PartialEq + std::fmt::Debug>(v: &T) -> T {
     let mut w = Writer::new();

@@ -36,7 +36,7 @@ use velt_common::std_hooks::{hook_index, Construct, ConstructSet, HookSet, HOOKS
 
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
-use crate::hir::{self, Callee, DefId, ExprKind as E, Intrinsic as I, TyId, TyKind};
+use crate::hir::{self, DefId, TyId, TyKind};
 
 /// The live set of one check.
 #[derive(Clone, Default)]
@@ -192,164 +192,6 @@ pub(crate) fn demanded(cx: &Ctx) -> HookSet {
         }
         false => HookSet::demanded_by(demanded_for(cx.lazy.live.present)),
     }
-}
-
-/// EXPERIMENT (#2943 M3): the definitions of a build from std's unit on disk, by lazy std's live
-/// walk from its own roots ([`seed`]: the program's code, the module slots, the helpers lowering
-/// looks up by name) and the hooks its constructs demand; all of std is checked already, so
-/// nothing is checked here. [`demanded`] then gives those hooks only.
-pub(crate) fn walk_units_program(cx: &mut Ctx, entry: Option<DefId>) -> FxHashSet<DefId> {
-    cx.lazy.live = Live {
-        units: true,
-        ..Live::default()
-    };
-    if let Some(e) = entry {
-        mark(cx, e);
-    }
-    for d in cx.module_slots.clone() {
-        mark(cx, d);
-    }
-    let base = cx.unit_sums.lib_base.min(cx.unit_base as usize);
-    let base = match crate::units::libraries() {
-        true => base,
-        false => cx.unit_base as usize,
-    };
-    // Lazy std loads part of std ([`units_loaded_modules`]) and seeds the by-name functions of
-    // what it loaded; a module live code reaches into is loaded then too (`Ctx::demand_std`).
-    let mut loaded = units_loaded_modules(cx);
-    cx.lazy.live.units_loaded = loaded.clone();
-    seed_units(cx, base, &loaded);
-    super::units_restart(cx);
-    // Lazy std's loop: the walk, the hooks the constructs demand, and those that wait for what
-    // the program does (the executor's, the record and number-text hooks, C's exports).
-    loop {
-        super::reach(cx);
-        let mut new = vec![false; loaded.len()];
-        let mut any = false;
-        let live: Vec<DefId> = cx.lazy.live.live.iter().copied().collect();
-        for d in live {
-            let module = match &cx.info[d.0 as usize] {
-                DefInfo::Fn(f) => f.module,
-                DefInfo::Global(g) => g.module,
-                DefInfo::Adt(a) => a.module,
-                _ => continue,
-            };
-            if module < loaded.len() && !loaded[module] {
-                (loaded[module], new[module], any) = (true, true, true);
-            }
-        }
-        if !any {
-            break;
-        }
-        units_loaded_more(cx, &loaded, &new);
-        seed_units_named(cx, base, &new);
-    }
-    let proxy =
-        (loaded.iter().enumerate()).any(|(m, &l)| l && is_proxy_module(&cx.modules[m].path));
-    cx.units_live_proxy = Some(proxy);
-    // The program's definitions are also the classes, structs and interfaces live code has
-    // values of: the passes that build the program (readonly erasure writing the solved error
-    // sets into field types, the layouts) read their definitions.
-    let mut live = cx.lazy.live.live.clone();
-    live.extend(cx.lazy.live.adts.iter().copied());
-    live.extend(cx.lazy.live.ifaces.iter().copied());
-    if std::env::var_os("VELT_UNITS_REACH_STATS").is_some() {
-        eprintln!(
-            "velt-units: live walk: {} defs of {}",
-            live.len(),
-            cx.info.len()
-        );
-    }
-    live
-}
-
-/// A module whose loading gives a program proxies: `Proxy`'s own (`std/lang/proxy/…`) and the
-/// hooks that import it (`std/lang/hooks/proxy`).
-fn is_proxy_module(path: &str) -> bool {
-    path == "std/lang/hooks/proxy"
-        || path == "std/lang/proxy"
-        || path.starts_with("std/lang/proxy/")
-}
-
-/// EXPERIMENT (#2943): whether lazy std would have loaded `Proxy` for this program: this
-/// round's units live walk loaded one of its modules ([`walk_units_program`]); walked now when
-/// no pass of the round walked.
-pub(crate) fn units_loads_proxy(cx: &mut Ctx) -> bool {
-    if cx.units_live_proxy.is_none() {
-        units_live_set(cx);
-    }
-    cx.units_live_proxy == Some(true)
-}
-
-/// EXPERIMENT (#2943): what lazy std would have checked of std's unit for this program
-/// ([`walk_units_program`]), for the analyses whose answer depends on the std code a program
-/// has (lazy std's: the code it checked), leaving the check's state as it was.
-pub(crate) fn units_live_set(cx: &mut Ctx) -> FxHashSet<DefId> {
-    // The passes that ask (generated code's demand, local async, `any`'s members) ask after the
-    // bodies are checked: the walk's answer changes only with definitions added since
-    // (`Ctx::units_live_memo`). Each walk decoded and walked all of the program's std again.
-    let sizes = (cx.defs.len(), cx.info.len());
-    if let Some((defs, info, set)) = &cx.units_live_memo {
-        if (*defs, *info) == sizes {
-            return (**set).clone();
-        }
-    }
-    let set = walk_units_live_set(cx);
-    cx.units_live_memo = Some((sizes.0, sizes.1, std::rc::Rc::new(set.clone())));
-    set
-}
-
-/// [`units_live_set`]'s walk.
-fn walk_units_live_set(cx: &mut Ctx) -> FxHashSet<DefId> {
-    let saved = cx.lazy.clone();
-    let mut set = walk_units_program(cx, None);
-    // A hook waiting for what the program does (a record hook, a fallback) that nothing
-    // needed: lazy std leaves it unchecked, so its code is not the program's.
-    let needed = |cx: &Ctx, d: &DefId| {
-        cx.lazy.record_hooks
-            && super::RECORD_HOOKS
-                .iter()
-                .any(|h| cx.prelude_fn(h) == Some(*d))
-    };
-    let waiting: Vec<DefId> = (cx.lazy.live.waiting.iter())
-        .filter(|d| !needed(cx, d))
-        .copied()
-        .collect();
-    for d in waiting {
-        set.remove(&d);
-    }
-    // A live `catchUnwind` demands std's panic path ([`demanded`]): kept, as the reach walk
-    // keeps it (`note_catch_unwind`). Without it, a build from std's unit left the panic hooks
-    // out and a `catchPanic` caught nothing.
-    let catches = cx.lazy.live.present & Construct::CatchUnwind.bit();
-    cx.lazy = saved;
-    cx.lazy.live.present |= catches;
-    set
-}
-
-/// EXPERIMENT (#2943): the modules lazy std loads before the check demands more: the program's,
-/// the std modules a program module imports directly, and the prelude's (`std/prelude/…`).
-pub(crate) fn units_loaded_modules(cx: &Ctx) -> Vec<bool> {
-    let mut loaded = vec![false; cx.modules.len()];
-    for m in 0..cx.modules.len() {
-        let module = &cx.modules[m];
-        if module.is_std && m != cx.root {
-            loaded[m] |= module.path.starts_with("std/prelude/");
-            continue;
-        }
-        loaded[m] = true;
-        for &t in cx
-            .import_targets
-            .get(m)
-            .into_iter()
-            .flat_map(|t| t.values())
-        {
-            if t < loaded.len() {
-                loaded[t] = true;
-            }
-        }
-    }
-    loaded
 }
 
 /// EXPERIMENT (#2943 M3): a build by units reaches a `catchUnwind` (`units::reach`): std's panic
@@ -641,189 +483,6 @@ pub(super) fn mark(cx: &mut Ctx, d: DefId) -> bool {
     new
 }
 
-/// Walk the checked code of live definition `d` into `w`; false if it is not checked yet.
-fn walk_def(cx: &mut Ctx, d: DefId, w: &mut Walk) -> bool {
-    // Only a check that made stubs changes the code it walks ([`rebind_stubs`]); otherwise the
-    // walk reads it, and a frozen unit's definitions are never written.
-    if cx.lazy.stubs.any() && !rebind_stubs(cx, d, w) {
-        return false;
-    }
-    let i = d.0 as usize;
-    let ty = &cx.ty;
-    if let DefInfo::Fn(f) = &cx.info[i] {
-        w.async_host |= f.host.is_some() && f.is_async;
-    }
-    let visit = |e: &hir::Expr, w: &mut Walk| walk_expr(ty, e, w);
-    match (&cx.defs[i], &cx.info[i]) {
-        (Some(hir::Def::Fn(f)), info) => {
-            if let DefInfo::Fn(fi) = info {
-                for e in fi.params.iter().filter_map(|p| p.default.as_ref()) {
-                    crate::visit_ref::exprs_in(e, &mut |e| visit(e, w));
-                }
-                // Thrown and not caught, it is reported as `console.log` prints it: lowering
-                // builds that from the signature, whatever the body throws. (`hir::FnDef::throws`
-                // is filled in later, by `finalize::build_defs`.)
-                w.formats
-                    .extend(fi.declared_throws.as_ref().and_then(|d| d.ty));
-            }
-            for t in f.body.locals.iter().map(|l| l.ty).chain([f.ret]) {
-                note_ty(ty, t, w);
-            }
-            if f.is_generator {
-                w.generators[f.is_async as usize] = true;
-            }
-            w.tasks |= f.is_async;
-            crate::visit_ref::exprs(&f.body.block, &mut |e| visit(e, w));
-            true
-        }
-        (None, DefInfo::Fn(_)) => false,
-        (_, DefInfo::Global(g)) => {
-            if g.state != crate::defs::BodyState::Done {
-                return false;
-            }
-            note_ty(ty, g.ty, w);
-            if let Some(e) = &g.init {
-                crate::visit_ref::exprs_in(e, &mut |e| visit(e, w));
-            }
-            true
-        }
-        (Some(hir::Def::ExternFn(x)), _) => {
-            // The runtime's declaration, not the executor's own `declare c` of the symbol.
-            let sched = velt_common::std_hooks::SCHED_EXTERNS.contains(&x.symbol.as_str());
-            w.tasks |= sched && x.c.is_none();
-            true
-        }
-        _ => true,
-    }
-}
-
-/// In a check that made stubs, the calls of bound stubs in live definition `d`'s code (its
-/// parameters' defaults, body, initializer) and its throw sources name the hooks' definitions;
-/// a call of an unbound one is noted in `w.stub_calls`. False, as [`walk_def`] answers, for a
-/// global not yet checked, whose walk drops what the batch noted so far, as it always has.
-fn rebind_stubs(cx: &mut Ctx, d: DefId, w: &mut Walk) -> bool {
-    let i = d.0 as usize;
-    let stubs = &cx.lazy.stubs;
-    if let DefInfo::Fn(f) = &mut cx.info[i] {
-        stubs.rebind_throws(&mut f.throw_srcs);
-    }
-    let mut stub_calls = std::mem::take(&mut w.stub_calls);
-    let mut note = |e: &mut hir::Expr| stubs.note(d, e, &mut stub_calls);
-    match (&mut cx.defs[i], &mut cx.info[i]) {
-        (Some(hir::Def::Fn(f)), info) => {
-            if let DefInfo::Fn(fi) = info {
-                for e in fi.params.iter_mut().filter_map(|p| p.default.as_mut()) {
-                    crate::visit::exprs_in(e, &mut note);
-                }
-            }
-            crate::visit::exprs_mut(&mut f.body.block, &mut note);
-        }
-        (_, DefInfo::Global(g)) => {
-            if g.state != crate::defs::BodyState::Done {
-                return false;
-            }
-            if let Some(e) = &mut g.init {
-                crate::visit::exprs_in(e, &mut note);
-            }
-        }
-        _ => {}
-    }
-    w.stub_calls = stub_calls;
-    true
-}
-
-/// Record type `t` of live code: a scalar by its kind only (it opens implementations and has
-/// no parts), anything else to [`live_types`].
-#[inline]
-fn note_ty(ty: &crate::types::Types, t: TyId, w: &mut Walk) {
-    match ty.kind(t) {
-        k @ (TyKind::Int(_)
-        | TyKind::Float(_)
-        | TyKind::Bool
-        | TyKind::Str
-        | TyKind::Symbol
-        | TyKind::Simd(_)
-        | TyKind::Literal(_)) => w.kinds |= kind_bit(k),
-        TyKind::Unit | TyKind::Never | TyKind::Error => {}
-        _ => {
-            if w.last_type != Some(t) {
-                w.last_type = Some(t);
-                w.types.push(t);
-            }
-        }
-    }
-}
-
-fn walk_expr(ty: &crate::types::Types, e: &hir::Expr, w: &mut Walk) {
-    note_ty(ty, e.ty, w);
-    match &e.kind {
-        E::Call {
-            callee: Callee::Def(d, targs),
-            ..
-        }
-        | E::FnRef(d, targs) => {
-            w.refs.push(*d);
-            w.types.extend(targs);
-        }
-        E::Global(d) | E::Closure(d) => w.refs.push(*d),
-        E::AdtLit { type_args, .. } | E::Variant { type_args, .. } | E::New { type_args, .. } => {
-            w.types.extend(type_args)
-        }
-        E::ToDyn { expr, .. } => {
-            w.formats.push(expr.ty);
-            w.into_any.push((expr.ty, e.ty));
-        }
-        E::Throw(v) => w.formats.push(v.ty),
-        E::Call {
-            callee: Callee::Intrinsic(I::ToString | I::TemplateToString),
-            args,
-        } => w.texts.extend(args.iter().map(|a| a.ty)),
-        E::Call {
-            callee: Callee::Intrinsic(I::Print | I::PrintErr),
-            args,
-        } => {
-            // A float is written by `numberWrite`, which waits for this (`number_text.rs`); a
-            // type parameter's instance may be one.
-            let float =
-                |k: &TyKind| matches!(k, TyKind::Float(_) | TyKind::Param(_) | TyKind::Op(..));
-            w.prints_float |= (args.iter()).any(|a| float(ty.kind(a.ty)));
-            w.formats.extend(args.iter().map(|a| a.ty));
-        }
-        E::Call {
-            callee: Callee::Intrinsic(I::Inspect | I::InspectNested | I::ErrorText),
-            args,
-        } => w.formats.extend(args.iter().map(|a| a.ty)),
-        E::Call {
-            callee: Callee::Intrinsic(I::AnyTo | I::AnyToExact),
-            ..
-        } => w.conversions.push(e.ty),
-        E::Call {
-            callee: Callee::Intrinsic(I::CatchUnwind | I::CatchUnwindAt),
-            ..
-        } => w.constructs |= Construct::CatchUnwind.bit(),
-        E::Call {
-            callee: Callee::Dyn {
-                method_type_args, ..
-            },
-            ..
-        } => w.types.extend(method_type_args),
-        E::Call {
-            callee:
-                Callee::ParamMethod {
-                    iface,
-                    method_type_args,
-                    iface_args,
-                    ..
-                },
-            ..
-        } => {
-            w.ifaces.push(*iface);
-            w.types.extend(method_type_args.iter().chain(iface_args));
-        }
-        kind => w.constructs |= constructs::pow_bit(ty, kind),
-    }
-}
-
 /// Record the types `todo` and their parts as live: their constructs, and the methods of each
 /// class or struct among them (with its base classes, subclasses and fields' types), and of the
 /// implementations for them.
@@ -907,24 +566,6 @@ pub(super) fn loaded_for(cx: &Ctx, m: DefId, owner: Option<DefId>) -> bool {
         _ => None,
     });
     owner_module == Some(module) || loaded.get(module).copied().unwrap_or(true)
-}
-
-/// EXPERIMENT (#2943): [`walk_units_program`] loaded the `new` modules: the methods there of the
-/// live classes and structs are live now, and the implementations there are considered again.
-fn units_loaded_more(cx: &mut Ctx, loaded: &[bool], new: &[bool]) {
-    cx.lazy.live.units_loaded = loaded.to_vec();
-    cx.lazy.live.opened = None;
-    let adts: Vec<DefId> = cx.lazy.live.adts.iter().copied().collect();
-    let mut found = vec![];
-    for d in adts {
-        let ms = methods(cx).get(&d).cloned().unwrap_or_default();
-        found.extend(ms.into_iter().filter(|&m| {
-            fn_module(cx, m).is_some_and(|module| new.get(module).copied().unwrap_or(false))
-        }));
-    }
-    for m in found {
-        mark(cx, m);
-    }
 }
 
 /// The methods and constructors of every class and struct, by owner.
@@ -1055,7 +696,13 @@ mod roots;
 pub(super) use constructs::def_name;
 use constructs::{demanded_for, evaluate, format_bit, hook_class};
 pub(crate) use constructs::{too_late, Assumed};
-use roots::{seed, seed_units, seed_units_named};
+use roots::seed;
+#[path = "live_units.rs"]
+mod units_walk;
+#[path = "live_walk.rs"]
+mod walk;
+pub(crate) use units_walk::{units_live_set, units_loads_proxy, walk_units_program};
+use walk::{walk_def, walk_expr};
 
 #[cfg(test)]
 #[path = "live_tests.rs"]
