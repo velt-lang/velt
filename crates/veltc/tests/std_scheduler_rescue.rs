@@ -198,9 +198,7 @@ fn a_spawn_storm_crosses_the_hand_over_of_a_lazy_worker() {
         for i in 0..RUNS {
             let r = run(&exe, threads);
             let what = format!("storm, VELT_THREADS={threads}, run {i}");
-            // About one run in 50 leaves 2 blocks unfreed, at one worker and at two, with main's
-            // std before this change too: allowed until #2887 is found.
-            check(&r, &what, want, 2);
+            check(&r, &what, want, 0);
             if threads == "1" {
                 // At least once: after the spares retire, worker 0 is lazy again, and on a loaded
                 // machine a later poll of `main` may be rescued too, turning them on again (#2967).
