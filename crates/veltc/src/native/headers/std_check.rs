@@ -79,6 +79,8 @@ const CHECKED: &[&str] = &[
     "ffi/errno_windows.velt",
     "ffi/read.velt",
     "fs/fd/posix.velt",
+    "fs/whole/read_all.velt",
+    "fs/whole/win32.velt",
     "lang/hooks/clock_darwin.velt",
     "lang/hooks/clock_linux.velt",
     "lang/hooks/clock_win32.velt",

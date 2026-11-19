@@ -1,0 +1,8 @@
+true
+long path 9 9 true
+async too true
+false true
+read a directory EISDIR EISDIR: illegal operation on a directory, read
+read a directory/ EISDIR EISDIR: illegal operation on a directory, read
+bytes of a directory EISDIR EISDIR: illegal operation on a directory, read
+async read a directory EISDIR EISDIR: illegal operation on a directory, read

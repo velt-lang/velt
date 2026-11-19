@@ -597,16 +597,22 @@ same arguments without `out` and returning a `VeltFut*` of the same result. Only
 defines the twins (WebAssembly builds, std/fs/rt.velt), so they are not in this table, whose
 names the JIT host exports (crates/velt_rt_host/tests/abi_symbols.rs).
 
+Reading, writing and appending whole files, `stat`, `lstat` and `exists` are std code in a
+native build (`#fs-whole`: std/fs/whole/posix.velt over the C library's descriptors,
+`#fd-system`; whole/win32.velt over `CreateFileW`, `ReadFile`, `WriteFile` and
+`GetFileInformationByHandle`), with Node's messages, and text decoded with an invalid sequence
+as U+FFFD, as Node decodes it. velt_rt has no functions for them, so the table has none.
+velt_rt_wasm has, for WebAssembly builds, with their async twins:
+`velt_rt_fs_read_file_bytes_sync(path, out)` (`IoResult<VeltBytes>`),
+`velt_rt_fs_write_file_sync(path, data, out)` and `velt_rt_fs_append_file_sync(path, data, out)`
+(`IoResult<()>`; append creates the file), `velt_rt_fs_stat_sync(path, out)` and
+`velt_rt_fs_lstat_sync(path, out)` (`IoResult<VeltStat>`) and `velt_rt_fs_exists_sync(path) ->
+u8`. Text is read as bytes and decoded in std: neither runtime reads a file as text.
+
 | Sync (`..., out)`, returns nothing) | Result type |
 |---|---|
-| `velt_rt_fs_read_file_sync(path, out)` | `IoResult<VeltStr>` (`EILSEQ` if not UTF-8) |
-| `velt_rt_fs_read_file_bytes_sync(path, out)` | `IoResult<VeltBytes>` |
-| `velt_rt_fs_write_file_sync(path, data, out)` | `IoResult<()>` (= `VeltErr`) |
-| `velt_rt_fs_append_file_sync(path, data, out)` | `IoResult<()>`; creates the file |
 | `velt_rt_fs_read_dir_sync(path, out)` | `IoResult<VeltStrArray>` names, sorted |
 | `velt_rt_fs_read_dir_typed_sync(path, out)` | `IoResult<VeltDirents>` |
-| `velt_rt_fs_stat_sync(path, out)` | `IoResult<VeltStat>` (follows symlinks) |
-| `velt_rt_fs_lstat_sync(path, out)` | `IoResult<VeltStat>` (a symlink itself) |
 | `velt_rt_fs_readlink_sync(path, out)` | `IoResult<VeltStr>`; `EINVAL` if not a symlink |
 | `velt_rt_fs_realpath_sync(path, out)` | `IoResult<VeltStr>`: the absolute path with every symlink, `.` and `..` resolved; `ENOENT` if it (or a link's target) doesn't exist; Windows: without the `\\?\` prefix unless the path needs it (`C:\dir\f`, `\\server\share\f`). WebAssembly: as WASI reports it |
 | `velt_rt_fs_symlink_sync(target, path, out)` | `IoResult<()>`; Windows: a directory link if `target` is a directory, a relative target stored with `\` separators (as Node) |
@@ -614,7 +620,6 @@ names the JIT host exports (crates/velt_rt_host/tests/abi_symbols.rs).
 | `velt_rt_fs_remove_sync(path, recursive, out)` | `IoResult<()>`; file, symlink (the link only, a Windows directory link too), empty dir, or tree if recursive |
 | `velt_rt_fs_rename_sync(from, to, out)` | `IoResult<()>` |
 | `velt_rt_fs_copy_file_sync(from, to, out)` | `IoResult<()>` |
-| `velt_rt_fs_exists_sync(path) -> u8` | `u8` (never fails) |
 
 All `path`/`from`/`to`/`data` parameters are `const VeltStr*`. Error messages are Node's: `<CODE>:
 <description>, <syscall> '<path>'` (plus ` -> '<to>'` for `rename`/`copyfile`/`symlink`), e.g.
