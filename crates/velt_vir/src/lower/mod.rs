@@ -112,6 +112,7 @@ mod slot;
 mod state;
 use state::{DropEntry, LInfo, LState, Scope, ScopeKind};
 mod extern_args;
+mod fn_rest_tuple;
 mod fn_shapes;
 mod fresh_fns;
 mod frozen;
