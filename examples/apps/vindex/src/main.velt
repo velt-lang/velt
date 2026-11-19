@@ -102,7 +102,7 @@ async function bench(dir: string, argv: string[]) {
       const ms = (performance.now() - t) / (nq as number);
       if (ms < single) {
         single = ms;
-        one.micros.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+        one.micros.sort((a, b) => a - b);
         p99 = (one.micros[Math.floor((one.micros.length - 1) * 0.99)] as number) / 1000;
       }
       rec = recall(one.rows, truth, k, nq);
@@ -156,7 +156,7 @@ async function main(): Promise<i32> {
       fan: int(argv, "fan", 8),
     });
     console.log(
-      `built ${r.meta.nlist} lists over ${r.meta.n} vectors: train ${r.trainMs.toFixed(0)} ms, assign ${r.assignMs.toFixed(0)} ms, write ${r.writeMs.toFixed(0)} ms; lists.bin ${mib(r.meta.n * (r.meta.dim + 4))}, scale ${(r.meta.scale as number).toFixed(1)}`,
+      `built ${r.meta.nlist} lists over ${r.meta.n} vectors: train ${r.trainMs.toFixed(0)} ms, assign ${r.assignMs.toFixed(0)} ms, write ${r.writeMs.toFixed(0)} ms; lists.bin ${mib(r.meta.n * (r.meta.dim + 4))}, scale ${r.meta.scale.toFixed(1)}`,
     );
   } else if (cmd == "truth") {
     const truth = await groundTruth(dir, int(argv, "k", 10));
