@@ -7,7 +7,8 @@
 //!   aggregate per variant `{ tag: u32, payload... }` reached with `Proj::Cast`. The tag is the
 //!   variant index. `Result<T, E>` works the same with a `u8` tag (views: Ok, Err; a `void`
 //!   payload has no field).
-//! - `T | null` without a niche: `{ some: bool, value: T }`.
+//! - `T | null` without a niche: `{ some: bool, value: T }` (with one, a class, `shared<T>`,
+//!   `symbol` or a C pointer `Ptr<T>`, it is the word itself, 0 for none: type_kinds.rs).
 //! - Class objects: `[vtable: ptr]` + all fields (base-class fields first, so a subclass object
 //!   starts with its base's layout and upcasts are free). The vtable pointer exists when the
 //!   class hierarchy has more than one class or any virtual slot; it points to a dispatcher

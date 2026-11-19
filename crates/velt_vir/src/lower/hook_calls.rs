@@ -542,6 +542,7 @@ macro_rules! builders {
     (@emit yes $f:ident $c:ident $name:ident [class]) => {};
     (@emit yes $f:ident $c:ident $name:ident [decorator]) => {};
     (@emit yes $f:ident $c:ident $name:ident [process_static]) => {};
+    (@emit yes $f:ident $c:ident $name:ident [type_kind]) => {};
     // An async hook's call is built as any other's: its result is what the promise resolves to.
     (@emit yes $f:ident $c:ident $name:ident [sig(async $($sig:tt)*)]) => {
         builders!(@emit yes $f $c $name [sig($($sig)*)]);

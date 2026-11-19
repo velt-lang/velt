@@ -133,7 +133,7 @@ impl FnCx<'_, '_> {
                 }
                 _ => args,
             },
-            k => crate::types::children(&k),
+            k => crate::types::contents(&k),
         };
         parts
             .into_iter()
