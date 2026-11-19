@@ -30,6 +30,8 @@ pub const DEBUG_INFO_ENV: &str = "VELT_DEV_DEBUG_INFO";
 pub fn host_command(args: &DevArgs) -> ExitCode {
     #[cfg(all(windows, target_arch = "x86_64"))]
     super::fault::install();
+    #[cfg(unix)]
+    super::fault_unix::install();
     let opts = match build_options(&args.build) {
         Ok(opts) => opts,
         Err(msg) => {
