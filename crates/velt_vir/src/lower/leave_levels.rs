@@ -213,7 +213,11 @@ impl FnLower<'_, '_> {
             }
             let mut found = FxHashMap::default();
             let value = self.lock_value();
-            for Store { keys, roots, temps } in stores.found {
+            for store in stores.found {
+                let reads = self.only_reads(&store);
+                let Store {
+                    keys, roots, temps, ..
+                } = store;
                 // The places that could hold what the reader made.
                 let roots: Vec<LocalId> = roots
                     .into_iter()
@@ -237,7 +241,9 @@ impl FnLower<'_, '_> {
                 // lock's value and of literals (`y.items[0].slice().concat(x.items[0].slice())`):
                 // the copy is lent to a method of such a temporary, which this reader drops as
                 // its own too (no callback out). With a place, the place decides.
-                if roots.is_empty() && self.readers_own(&temps, value) {
+                // Or the call changes none of them: then it stores the copy nowhere, whatever
+                // they are (`y.objs.filter((q) => big(q)).concat(x.objs.slice())`).
+                if roots.is_empty() && (reads || self.readers_own(&temps, value)) {
                     for k in keys {
                         found.insert(k, 0);
                     }
@@ -257,6 +263,28 @@ impl FnLower<'_, '_> {
             .as_ref()
             .and_then(|m| m.get(&key).copied());
         levels.unwrap_or(OUTSIDE)
+    }
+
+    /// Does the call of `store` only read each of its arguments that is no transfer: a function
+    /// called by name whose parameter for it is a borrow its body does not change (hir_encodings.md
+    /// "Mutation inference")? A copy given to such a call is stored in none of them.
+    fn only_reads(&self, store: &Store) -> bool {
+        let Some((def, n)) = store.callee else {
+            return false;
+        };
+        let hir::Def::Fn(f) = self.cx.hir.def(def) else {
+            return false;
+        };
+        // After the captures, which lead the parameters.
+        let Some(first) = f.params.len().checked_sub(n) else {
+            return false;
+        };
+        !f.is_async
+            && !f.is_generator
+            && store.others.iter().all(|&i| {
+                let p = &f.params[first + i];
+                p.mode == hir::PassMode::Borrow && !f.body.locals[p.local.0 as usize].mutable
+            })
     }
 
     /// Could the arguments `temps` of a call (those that are no places and hold no transfer)
@@ -375,11 +403,15 @@ struct Stores {
 }
 
 /// One store: its transfers, the roots of the places it may put the value in, and its other
-/// arguments (`temps`), which are values the callback computes.
+/// arguments (`temps`), which are values the callback computes. For a call of a function by
+/// name: `callee`, with the number of arguments, and `others`, the arguments that hold no
+/// transfer.
 struct Store {
     keys: Vec<usize>,
     roots: Vec<Root>,
     temps: Vec<Temp>,
+    callee: Option<(DefId, usize)>,
+    others: Vec<usize>,
 }
 
 /// An argument of a storing call that is no place and holds no transfer: its type, the
@@ -542,6 +574,8 @@ impl Stores {
                         keys,
                         roots: root.into_iter().collect(),
                         temps: vec![],
+                        callee: None,
+                        others: vec![],
                     });
                 }
             }
@@ -550,9 +584,16 @@ impl Stores {
                 callee: hir::Callee::Intrinsic(Intrinsic::Transfer),
                 ..
             } => {}
-            K::Call { args, .. } => {
+            K::Call { callee, args } => {
                 let keys = transfers_in(args);
                 if !keys.is_empty() {
+                    let callee = match callee {
+                        hir::Callee::Def(d, _) => Some((*d, args.len())),
+                        _ => None,
+                    };
+                    let others = (0..args.len())
+                        .filter(|&i| transfers_in(std::slice::from_ref(&args[i])).is_empty())
+                        .collect();
                     let roots = args
                         .iter()
                         .filter_map(|a| Some((place_root(a)?, a.ty)))
@@ -563,7 +604,13 @@ impl Stores {
                         .filter(|a| transfers_in(std::slice::from_ref(*a)).is_empty())
                         .map(Temp::of)
                         .collect();
-                    self.found.push(Store { keys, roots, temps });
+                    self.found.push(Store {
+                        keys,
+                        roots,
+                        temps,
+                        callee,
+                        others,
+                    });
                 }
             }
             _ => {}

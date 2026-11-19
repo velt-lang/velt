@@ -55,6 +55,9 @@ const UNSUPPORTED: &[&str] = &[
     "promise_identity_defer_twice",
     "promise_identity_rejection",
     "promise_widen_compare",
+    // The executor in Velt gives up a promise nobody can settle and nobody holds; wasm's is
+    // still the runtime's, which keeps it parked (#3247).
+    "promise_abandoned_freed",
     // Nests 2,000 generators, which a native debug build holds in its 8 MiB stack (#2048); the
     // WebAssembly stacks overflow.
     "deep_generator_frames",

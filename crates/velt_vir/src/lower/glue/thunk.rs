@@ -21,7 +21,7 @@ enum Incoming {
     /// The target takes ownership: pass a share.
     Owned,
     /// The target takes the `struct` in a register (abi.rs `reg_param`).
-    Reg(crate::lower::abi::RegParam),
+    Reg(crate::lower::reg_args::RegParam),
 }
 
 impl Cx<'_> {

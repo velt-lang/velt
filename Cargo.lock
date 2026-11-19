@@ -1877,6 +1877,7 @@ name = "velt_vir"
 version = "0.6.0"
 dependencies = [
  "rustc-hash",
+ "smallvec",
  "velt_codegen_cl",
  "velt_common",
  "velt_link",

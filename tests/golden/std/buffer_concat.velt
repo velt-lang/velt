@@ -1,0 +1,45 @@
+// `Buffer.concat(list, totalLength?)` as Node's: the bytes one after another in a new array, cut off
+// or padded with zeros to `totalLength`, which must be an integer from 0 to 2^53 - 1 (#3182).
+// Expected output is Node's.
+function attempt(label: string, f: () => string) {
+  try {
+    console.log(label, f());
+  } catch (e) {
+    console.log(label, e.name, e.message);
+  }
+}
+
+const a: u8[] = [1, 2, 3];
+const b: u8[] = [4, 5];
+const empty = Buffer.alloc(0);
+attempt("two", () => Buffer.concat([a, b]).join(","));
+attempt("none", () => `${Buffer.concat([]).length}`);
+attempt("none, total 3", () => `[${Buffer.concat([], 3).join(",")}]`);
+attempt("none, total -1", () => `[${Buffer.concat([], -1).join(",")}]`);
+attempt("with empty", () => Buffer.concat([empty, a, empty]).join(","));
+attempt("total shorter", () => Buffer.concat([a, b], 4).join(","));
+attempt("total longer", () => Buffer.concat([a, b], 8).join(","));
+attempt("total zero", () => `${Buffer.concat([a, b], 0).length}`);
+attempt("total fraction", () => Buffer.concat([a, b], 2.7).join(","));
+attempt("total negative", () => Buffer.concat([a, b], -1).join(","));
+attempt("total NaN", () => Buffer.concat([a, b], NaN).join(","));
+attempt("copy, not shared", () => {
+  const c = Buffer.concat([a]);
+  c[0] = 99;
+  return `${a[0]} ${c[0]}`;
+});
+
+// The padding is written, not left to fresh memory: a junk buffer of the same size is filled and
+// dropped before each padded concat, so reused memory would show through.
+let nonzero = 0;
+for (let round = 0; round < 64; round++) {
+  const junk = Buffer.allocUnsafe(64);
+  junk.fill(255);
+  const padded = Buffer.concat([a], 64);
+  for (let i = 3; i < 64; i++) {
+    if (padded[i] != 0) {
+      nonzero += 1;
+    }
+  }
+}
+console.log("nonzero padding", nonzero);

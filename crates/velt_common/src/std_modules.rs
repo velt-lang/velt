@@ -155,6 +155,7 @@ table! {
     lang_typed_array => "lang/typed_array",
     lang_typed_array_apply_list => "lang/typed_array/apply_list",
     lang_typed_array_buffer_view => "lang/typed_array/buffer_view",
+    lang_bytes_view_bytes => "lang/bytes/view_bytes",
     lang_typed_array_core => "lang/typed_array/core",
     lang_typed_array_native_inspect => "lang/typed_array/native_inspect",
 
@@ -194,6 +195,7 @@ table! {
     process_stdout => "process/stdout",
     simd => "simd",
     simd_aes => "simd/aes",
+    simd_bf16x8 => "simd/bf16x8",
     simd_clmul => "simd/clmul",
     simd_sha => "simd/sha",
     sync_channel => "sync/channel",
