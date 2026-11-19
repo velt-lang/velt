@@ -40,7 +40,7 @@ export function readChunk<T extends Numeric>(fd: i32, count: usize, position: i6
     const n = unsafe { readAddress(fd, address, bytes, position) };
     if (n >= 0) {
       // Only the values the read filled whole: the rest of the array was never written.
-      arrayTruncate(values, count == 0 ? 0 : ((n as usize) * count) / bytes);
+      arrayTruncate(values, count == 0 ? 0 : (n as usize) / (bytes / count));
       return { values, error: 0 };
     }
     const e = lastError();

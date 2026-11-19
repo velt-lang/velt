@@ -32,14 +32,14 @@ export async function readAt<T extends Numeric = u8>(
   const f = descriptor(fd);
   const len = integer("length", length, 0, MAX_INT32) as usize;
   const at = integer("position", position, 0, MAX_SAFE);
+  if (len == 0) {
+    return [];
+  }
   const size = valueSize<T>();
   if (len % size != 0) {
     throw new RangeError(
       `The value of "length" is out of range. It must be a multiple of ${size}. Received ${length}`,
     );
-  }
-  if (len == 0) {
-    return [];
   }
   const got = await readChunkLater<T>(f, len / size, at);
   if (got.error != 0) {
