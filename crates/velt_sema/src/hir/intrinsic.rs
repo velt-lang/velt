@@ -441,6 +441,14 @@ pub enum Intrinsic {
     /// std only: `addressCall(f: usize, a: usize) -> usize`: the call of the C function at
     /// address `f` with `a`, both pointer-sized (a waker table's `clone`). Additive.
     AddressCall,
+    /// std only: `addressCallWord(f: usize, a: u64)`: the call of the C function at address `f`,
+    /// which takes one 64-bit word and returns nothing (a weak map value's retain and release
+    /// glue, rt_abi.md "Weak references"). Additive.
+    AddressCallWord,
+    /// std only: `addressCall3(f: usize, a: usize, b: usize, c: usize)`: the call of the C
+    /// function at address `f`, which takes three pointer-sized values and returns nothing (trace
+    /// glue's `(obj, visit, ctx)`). Additive.
+    AddressCall3,
     /// std only: `fnAddress(f) -> usize`: the address of module-level function `f` (a `FnRef`
     /// with no type arguments; sema checks it is not async or throwing and passes only numbers
     /// and `bool`), callable from C with the C calling convention (#2649). Additive.
@@ -600,6 +608,12 @@ pub enum Intrinsic {
     /// std only: `weakRefDeref<T>(r: u32): T | null` — the target (counted), or
     /// null once it was freed.
     WeakRefDeref,
+    /// std only: `weakMapDrop(m: u32)` — weak map `m`'s drop: every value is released. Lowered
+    /// to std's weak core (`Construct::Weak`), which a program without weak collections
+    /// doesn't load.
+    WeakMapDrop,
+    /// std only: `weakRefDrop(r: u32)` — a `WeakRef` slot's drop.
+    WeakRefDrop,
 
     // Record views (#379; std/prelude/record.velt, velt_vir lower/record_view.rs): a record an
     // `any` is converted to with `any` values is a view of the object the `any` holds. Each is
