@@ -1,0 +1,56 @@
+utf8 default: [104,195,169,108,108,111,32,226,130,172,240,159,152,128]
+utf8 empty: []
+utf8 named: [195,169]
+utf-8 upper: [195,169]
+utf8 lone high: [97,239,191,189,98]
+utf8 lone low: [97,239,191,189]
+hex: [10,255,16]
+hex empty: []
+hex odd: [171]
+hex one digit: []
+hex invalid mid: [10,255] * byteLength 3
+hex invalid first: [] * byteLength 2
+hex space: [18] * byteLength 2
+hex upper name: [255]
+hex low byte: [170]
+base64: [104,101,108,108,111,32,119,111,114,108,100]
+base64 empty: []
+base64 no padding: [104,101,108,108,111,32,119,111,114,108,100]
+base64 whitespace: [104,101,108,108,111,32,119,111,114,108,100] * byteLength 15
+base64 invalid skipped: [105,183,29] * byteLength 5
+base64 stops at =: [97] * byteLength 4
+base64 = first: [] * byteLength 3
+base64 one char: []
+base64 two chars: [105]
+base64 url alphabet: [251,255]
+base64url: [251,255]
+base64url std alphabet: [251,255]
+base64url padded: [104,105]
+base64 non-ascii: [65,66,67,68,69,70]
+base64 low byte: [0,0,0]
+latin1: [97,233,172,61,0]
+binary: [233,172]
+ascii: [97,233,172]
+latin1 lone: [0]
+latin1 empty: []
+ucs2: [97,0,233,0,172,32,61,216,0,222]
+ucs-2: [233,0]
+utf16le: [233,0]
+utf-16le upper: [233,0]
+ucs2 lone: [0,216]
+ucs2 empty: []
+empty name: [195,169]
+unknown: TypeError: Unknown encoding: foo
+unknown utf-16: TypeError: Unknown encoding: utf-16
+unknown latin-1: TypeError: Unknown encoding: Latin-1
+unknown empty string: TypeError: Unknown encoding: nope
+bytes copy: [9,2,3] original [1,2,3]
+literal: [4,5,255]
+empty literal: 0
+Uint8Array copy: [1,8,3] original [9,2,3]
+Uint8Array view: [7,0,0]
+Uint16Array: [1,0,44]
+Int8Array: [255,5]
+Float64Array: [1,255,44,0]
+Uint8ClampedArray: [255,0]
+DataView: 0

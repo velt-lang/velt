@@ -1,17 +1,21 @@
 // Prelude: Node `Buffer`-style bulk operations on byte arrays (`u8[]`): searches and XOR masking
 // sixteen bytes at a time with SIMD vectors (velt/lang/bytes/search, in Velt so that they are
 // compiled into their caller), filling and concatenating likewise (velt/lang/bytes/copy), text
-// in bytes (velt/lang/bytes/text); long copies by memmove in the runtime.
+// in bytes (velt/lang/bytes/text, and Node's other encodings: velt/lang/bytes/encodings); long
+// copies by memmove in the runtime.
 //
 // A byte array is a plain `u8[]` (Velt has no separate `Uint8Array` type), so every array
 // method works on it too; the methods here replace the generic ones of the same name for `u8[]`.
 // `Buffer.alloc(n)` makes a zeroed array in one allocation (calloc: large arrays cost no
 // memset). Positions follow JS: negative ones count from the end.
 
-import { strByteLen } from "velt/lang/intrinsics";
+import { inline, noInline, strByteLen } from "velt/lang/intrinsics";
 import { indexOfByte, lastIndexOfByte, xorMaskRange } from "velt/lang/bytes/search";
-import { byteLengthIn, received, textEquals } from "velt/lang/bytes/text";
+import { received, textEquals } from "velt/lang/bytes/text";
+import { byteLengthIn, textBytes, utf8Bytes } from "velt/lang/bytes/encodings";
 import { fillBytes, setBytes, writeUtf8 } from "velt/lang/bytes/copy";
+import { ViewBytes } from "velt/lang/bytes/view_bytes";
+import { VIEW_BYTES } from "velt/lang/hooks/keys";
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
@@ -105,32 +109,141 @@ export class Buffer {
     }
     return byteLengthIn(s, encoding);
   }
+
+  /**
+   * A new byte array, as Node's `Buffer.from`: the bytes of a string in `encoding` (below), a
+   * copy of a byte array, or a typed array's elements, each converted to a byte (`ToUint8`: a
+   * `Uint16Array`'s 256 is 0; a `Uint8Array`'s bytes as they are); never shared with `data`.
+   * A `DataView` gives no bytes, as in Node (which reads its missing `length`).
+   *
+   * A string's encoding is UTF-8 by default (a lone surrogate as U+FFFD's three bytes);
+   * `utf16le` / `ucs2` writes two bytes per UTF-16 code unit, the low one first; `latin1` /
+   * `binary` / `ascii` each code unit's low byte; `hex` decodes pairs of digits up to the first
+   * pair that isn't (an odd last digit is dropped); `base64` / `base64url` decode either
+   * alphabet, skipping whitespace and any other character, padding optional, up to the first
+   * `=`. Names ignore case; an unknown one throws a `TypeError` (`Unknown encoding: …`).
+   *
+   * An array literal is a byte array here (`Buffer.from([1, 2, 3])`); a `number[]` is converted
+   * by `Uint8Array.from(xs)`.
+   */
+  static from(data: string | u8[] | ViewBytes, encoding?: string): u8[] {
+    if (typeof data == "string") {
+      return encoding == null ? utf8Bytes(data) : textBytes(data, encoding);
+    }
+    if (data instanceof ViewBytes) {
+      return data[VIEW_BYTES]();
+    }
+    return velt_rt_bytes_slice(data, 0, data.length as i64);
+  }
+
+  /**
+   * The bytes of `list`, one after another, in a new array, as Node's `Buffer.concat(list,
+   * totalLength)`: with `totalLength`, the result has that many bytes, the list's cut off past
+   * it or zeros after them; `totalLength` must be an integer from 0 to 2^53 - 1, else a
+   * `RangeError` (`ERR_OUT_OF_RANGE`). The arrays are copied, not shared.
+   */
+  static concat(list: u8[][], totalLength?: number): u8[] {
+    if (list.length == 0) {
+      // As Node: an empty list gives an empty array before `totalLength` is looked at.
+      return velt_rt_bytes_zeroed(0);
+    }
+    let n: usize = 0;
+    if (totalLength === undefined) {
+      for (const b of list) {
+        n += b.length;
+      }
+    } else {
+      n = concatLength(totalLength);
+    }
+    const out = velt_rt_bytes_uninit(n as u64);
+    let at: usize = 0;
+    for (const b of list) {
+      if (at >= n) {
+        break;
+      }
+      at += velt_rt_bytes_copy(out, b, at as i64, 0, (n - at) as i64) as usize;
+    }
+    fillBytes(out, 0, at, n);
+    return out;
+  }
+}
+
+/** `Buffer.concat`'s `totalLength`, checked as Node checks it (an integer in 0..2^53). */
+function concatLength(v: number): usize {
+  if (!Number.isInteger(v)) {
+    copyOutOfRange("length", "an integer", v);
+  }
+  if (v < 0 || v > 9007199254740991) {
+    copyOutOfRange("length", ">= 0 && <= 9007199254740991", v);
+  }
+  return v as usize;
+}
+
+/**
+ * The byte a number written into a byte array stands for (`fill`), as in a `Uint8Array` (and
+ * Node's `Buffer`): ECMAScript's ToUint8, the integer part modulo 2^8, so 256 is 0, -1 is 255 and
+ * 300.7 is 44; `NaN` and the infinities are 0.
+ */
+@inline("always")
+function toUint8(x: number): u8 {
+  if (x >= 0 && x < 256) {
+    // The common case, a byte already: `as u8` truncates the fraction.
+    return x as u8;
+  }
+  return toUint8Wrapped(x);
+}
+
+/** `toUint8` out of 0..256: wrapped, out of line. */
+@noInline
+function toUint8Wrapped(x: number): u8 {
+  if (!Number.isFinite(x)) {
+    return 0;
+  }
+  let m = Math.trunc(x) % 256;
+  if (m < 0) {
+    m += 256;
+  }
+  return m as u8;
+}
+
+/**
+ * Is `x` a value a byte array can hold (an integer in 0..=255, -0 included)? A search compares
+ * strictly, as a `Uint8Array`'s does, so any other number finds nothing (Node's `Buffer` would
+ * take it `& 255`; Velt's byte arrays follow `Uint8Array` where the two differ).
+ */
+@inline("always")
+function isByte(x: number): bool {
+  return x >= 0 && x <= 255 && x == Math.trunc(x);
 }
 
 extend Array<u8> {
-  /** Position of the first `byte` at or after `from`, or -1. */
-  indexOf(byte: u8, from: i64 = 0): i64 {
-    return indexOfByte(this, byte, relative(from, this.length));
+  /** Position of the first element equal to `byte` at or after `from`, or -1. */
+  indexOf(byte: number, from: i64 = 0): i64 {
+    if (!isByte(byte)) {
+      return -1;
+    }
+    return indexOfByte(this, byte as u8, relative(from, this.length));
   }
 
-  /** Position of the last `byte` at or before `from`, or -1. */
-  lastIndexOf(byte: u8, from: i64 = 9223372036854775807): i64 {
+  /** Position of the last element equal to `byte` at or before `from`, or -1. */
+  lastIndexOf(byte: number, from: i64 = 9223372036854775807): i64 {
     const n = this.length;
     // A position before the start finds nothing; one past the end is the last byte.
-    if (from < 0 && (n as i64) + from < 0) {
+    if (!isByte(byte) || (from < 0 && (n as i64) + from < 0)) {
       return -1;
     }
     const at = relative(from, n);
-    return lastIndexOfByte(this, byte, at < n ? at + 1 : n);
+    return lastIndexOfByte(this, byte as u8, at < n ? at + 1 : n);
   }
 
   /**
    * Determines whether an array includes a certain byte, returning true or false as appropriate.
-   * @param byte - The byte to search for.
+   * @param byte - The value to search for (compared strictly: a number that isn't a byte is never
+   *   found).
    * @param from - The position to start the search at (negative: from the end).
    */
-  includes(byte: u8, from: i64 = 0): bool {
-    return indexOfByte(this, byte, relative(from, this.length)) >= 0;
+  includes(byte: number, from: i64 = 0): bool {
+    return isByte(byte) && indexOfByte(this, byte as u8, relative(from, this.length)) >= 0;
   }
 
   /**
@@ -263,9 +376,9 @@ extend Array<u8> {
     return (to > from ? to - from : 0) == len && (len == 0 || textEquals(this, from, s, len, true));
   }
 
-  /** Sets the bytes in [start, end) to `byte`. */
-  fill(byte: u8, start: i64 = 0, end: i64 = 9223372036854775807) {
+  /** Sets the bytes in [start, end) to `byte`, a number converted as a `Uint8Array` converts it (`toUint8`). */
+  fill(byte: number, start: i64 = 0, end: i64 = 9223372036854775807) {
     const n = this.length;
-    fillBytes(this, byte, relative(start, n), relative(end, n));
+    fillBytes(this, toUint8(byte), relative(start, n), relative(end, n));
   }
 }
