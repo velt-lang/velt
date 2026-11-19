@@ -110,12 +110,10 @@ export function sleep(e: usize, ms: i64): usize {
   m.st(b + TM_SEQ, seq);
   m.st(f + S_SEQ, seq);
   m.st(f + S_WAKER, 0);
-  m.st(f + S_PREV, 0);
-  m.st(f + S_NEXT, 0);
   m.st(f + S_STATE, NEW);
-  m.st(f + S_TASK, 0);
   m.st(f + S_OWNER, 0);
-  // `S_HOME` is written when a poll registers it, and read only after that.
+  // The links, `S_HOME` and `S_TASK` are written when a state that reads them begins: the links
+  // and `S_HOME` with `PENDING` (`insert`), `S_TASK` with `DUE` (`pushDue`).
   m.st(f + S_ASKS, 0);
   return f;
 }
@@ -346,7 +344,6 @@ export function unlinkDue(k: usize, f: usize): void {
       m.st(k + t.T_TIMERS, next);
     }
   }
-  m.st(f + S_TASK, 0);
   const b = m.ld(t.exec() + t.E_TIMERS);
   m.st(b + TM_DUE, m.ld(b + TM_DUE) - 1);
 }
