@@ -16,7 +16,8 @@ export type MapAdvice = "normal" | "random" | "sequential" | "willneed" | "dontn
  * read like any byte array (indexing, `subarray`, the SIMD loads) and can be handed to every
  * task without a copy; `f32s`, `i8s`, `u32s` and the other typed methods give a range of it as
  * an array of that number type. Nothing is read when the
- * file is opened; a page comes from the disk when it is first touched.
+ * file is opened; a page comes from the disk when it is first touched (WebAssembly differs:
+ * below).
  *
  * The mapping stays for the rest of the program (it costs address space, not memory), so the
  * arrays stay valid however long they are kept. Every `open` makes a mapping of its own that
@@ -100,8 +101,9 @@ export class MappedFile {
         `${what}(${byteOffset}, ${count}) is not a range of ${width}-byte ${noun} inside the ${size} mapped bytes`,
       );
     }
-    const at = (this.from as number) + byteOffset;
-    if (at % width != 0) {
+    // Whole numbers from here on: the place in the file, and whether it is aligned.
+    const at = this.from + (byteOffset as usize);
+    if (at % (width as usize) != 0) {
       throw new RangeError(
         `${what}(${byteOffset}, ${count}): byte ${at} of the file is not a multiple of ${width}`,
       );
@@ -110,7 +112,7 @@ export class MappedFile {
   }
 
   /**
-   * The `count` `i8` from byte `byteOffset`, as an array over the mapping (no copy).
+   * The `count` `i8` from byte `byteOffset`, as an array over the mapping (no copy; a copy on WebAssembly).
    * `RangeError` when the range is not inside the file.
    */
   i8s(byteOffset: number, count: number): shared<i8[]> {
@@ -130,7 +132,7 @@ export class MappedFile {
 
   /**
    * The `count` little-endian `u16` from byte `byteOffset`, as an array over the mapping (no
-   * copy). `RangeError` when the range is not inside the mapped bytes, or its first
+   * copy; a copy on WebAssembly). `RangeError` when the range is not inside the mapped bytes, or its first
    * byte is not at a multiple of 2 in the file (`byteOffset` plus the part's `offset`).
    */
   u16s(byteOffset: number, count: number): shared<u16[]> {
@@ -150,7 +152,7 @@ export class MappedFile {
 
   /**
    * The `count` little-endian `i16` from byte `byteOffset`, as an array over the mapping (no
-   * copy). `RangeError` when the range is not inside the mapped bytes, or its first
+   * copy; a copy on WebAssembly). `RangeError` when the range is not inside the mapped bytes, or its first
    * byte is not at a multiple of 2 in the file (`byteOffset` plus the part's `offset`).
    */
   i16s(byteOffset: number, count: number): shared<i16[]> {
@@ -170,7 +172,7 @@ export class MappedFile {
 
   /**
    * The `count` little-endian `u32` from byte `byteOffset`, as an array over the mapping (no
-   * copy). `RangeError` when the range is not inside the mapped bytes, or its first
+   * copy; a copy on WebAssembly). `RangeError` when the range is not inside the mapped bytes, or its first
    * byte is not at a multiple of 4 in the file (`byteOffset` plus the part's `offset`).
    */
   u32s(byteOffset: number, count: number): shared<u32[]> {
@@ -190,7 +192,7 @@ export class MappedFile {
 
   /**
    * The `count` little-endian `i32` from byte `byteOffset`, as an array over the mapping (no
-   * copy). `RangeError` when the range is not inside the mapped bytes, or its first
+   * copy; a copy on WebAssembly). `RangeError` when the range is not inside the mapped bytes, or its first
    * byte is not at a multiple of 4 in the file (`byteOffset` plus the part's `offset`).
    */
   i32s(byteOffset: number, count: number): shared<i32[]> {
@@ -210,7 +212,7 @@ export class MappedFile {
 
   /**
    * The `count` little-endian `u64` from byte `byteOffset`, as an array over the mapping (no
-   * copy). `RangeError` when the range is not inside the mapped bytes, or its first
+   * copy; a copy on WebAssembly). `RangeError` when the range is not inside the mapped bytes, or its first
    * byte is not at a multiple of 8 in the file (`byteOffset` plus the part's `offset`).
    */
   u64s(byteOffset: number, count: number): shared<u64[]> {
@@ -230,7 +232,7 @@ export class MappedFile {
 
   /**
    * The `count` little-endian `i64` from byte `byteOffset`, as an array over the mapping (no
-   * copy). `RangeError` when the range is not inside the mapped bytes, or its first
+   * copy; a copy on WebAssembly). `RangeError` when the range is not inside the mapped bytes, or its first
    * byte is not at a multiple of 8 in the file (`byteOffset` plus the part's `offset`).
    */
   i64s(byteOffset: number, count: number): shared<i64[]> {
@@ -250,7 +252,7 @@ export class MappedFile {
 
   /**
    * The `count` little-endian `f16` from byte `byteOffset`, as an array over the mapping (no
-   * copy). `RangeError` when the range is not inside the mapped bytes, or its first
+   * copy; a copy on WebAssembly). `RangeError` when the range is not inside the mapped bytes, or its first
    * byte is not at a multiple of 2 in the file (`byteOffset` plus the part's `offset`).
    */
   f16s(byteOffset: number, count: number): shared<f16[]> {
@@ -270,7 +272,7 @@ export class MappedFile {
 
   /**
    * The `count` little-endian `bf16` from byte `byteOffset`, as an array over the mapping (no
-   * copy). `RangeError` when the range is not inside the mapped bytes, or its first
+   * copy; a copy on WebAssembly). `RangeError` when the range is not inside the mapped bytes, or its first
    * byte is not at a multiple of 2 in the file (`byteOffset` plus the part's `offset`).
    */
   bf16s(byteOffset: number, count: number): shared<bf16[]> {
@@ -290,7 +292,7 @@ export class MappedFile {
 
   /**
    * The `count` little-endian `f32` from byte `byteOffset`, as an array over the mapping (no
-   * copy). `RangeError` when the range is not inside the mapped bytes, or its first
+   * copy; a copy on WebAssembly). `RangeError` when the range is not inside the mapped bytes, or its first
    * byte is not at a multiple of 4 in the file (`byteOffset` plus the part's `offset`).
    */
   f32s(byteOffset: number, count: number): shared<f32[]> {
@@ -310,7 +312,7 @@ export class MappedFile {
 
   /**
    * The `count` little-endian `f64` from byte `byteOffset`, as an array over the mapping (no
-   * copy). `RangeError` when the range is not inside the mapped bytes, or its first
+   * copy; a copy on WebAssembly). `RangeError` when the range is not inside the mapped bytes, or its first
    * byte is not at a multiple of 8 in the file (`byteOffset` plus the part's `offset`).
    */
   f64s(byteOffset: number, count: number): shared<f64[]> {
@@ -351,7 +353,8 @@ export class MappedFile {
         `advise: ${byteOffset}..${byteOffset + len} is not inside the ${size} mapped bytes`,
       );
     }
-    if (len == 0) {
+    if (len == 0 || COPIES) {
+      // Nothing to advise, or no mapping to give the advice for.
       return;
     }
     // `madvise` takes whole pages from a page's start: round the start down to a multiple of
