@@ -154,3 +154,113 @@ fn unit_round_trip(src: &str) {
         shown.join(", ")
     );
 }
+
+/// What the checks of std's frozen unit below found.
+struct Checked {
+    /// Positions where a byte of the encoded unit was changed, and how many of those still
+    /// decoded.
+    flipped: usize,
+    decoded_damaged: usize,
+    /// How deep the expression put in the unit came back (3,000 casts).
+    deep_levels: usize,
+    /// The fields the unit does not save that are not as a fresh context has them.
+    empty_differing: Vec<String>,
+}
+
+fn checks(cx: &Ctx) -> Checked {
+    // Damaged bytes: every position in steps, past the format.
+    let (bytes, _) = encode_unit_sized(cx);
+    let step = (bytes.len() / 300).max(1);
+    let (mut flipped, mut decoded_damaged) = (0, 0);
+    for at in (super::unit::FORMAT.len()..bytes.len()).step_by(step) {
+        let mut damaged = bytes.clone();
+        damaged[at] ^= 0x5a;
+        let damaged = std::rc::Rc::new(damaged);
+        let arena = Arena::default();
+        // SAFETY: the decoded context, if any, is dropped here, before `arena`.
+        let out = unsafe { decode_unit(&damaged, &arena, cx.modules.clone()) };
+        flipped += 1;
+        decoded_damaged += usize::from(out.is_some());
+    }
+    // An expression deeper than 1 MiB of decode stack holds, in the unit's definitions.
+    let mut deep = cx.clone();
+    deep.thaw_defs();
+    let mut init = crate::hir::Expr {
+        kind: crate::hir::ExprKind::Lit(crate::hir::Lit::Int(1)),
+        ty: TyId(0),
+        span: velt_common::Span::DUMMY,
+    };
+    for _ in 0..3000 {
+        init = crate::hir::Expr {
+            kind: crate::hir::ExprKind::Cast(Box::new(init)),
+            ty: TyId(0),
+            span: velt_common::Span::DUMMY,
+        };
+    }
+    deep.defs
+        .push(Some(crate::hir::Def::Global(crate::hir::GlobalDef {
+            name: "deep".into(),
+            ty: TyId(0),
+            init,
+            span: velt_common::Span::DUMMY,
+            is_slot: false,
+            c_const: None,
+            c_global: None,
+        })));
+    let last = deep.defs.len() - 1;
+    let (bytes, _) = encode_unit_sized(&deep);
+    drop(deep);
+    let bytes = std::rc::Rc::new(bytes);
+    let arena = Arena::default();
+    // SAFETY: the decoded context is dropped here, before `arena`.
+    let back =
+        unsafe { decode_unit(&bytes, &arena, cx.modules.clone()) }.expect("the unit decodes");
+    let mut deep_levels = 0;
+    if let Some(crate::hir::Def::Global(g)) = &back.defs[last] {
+        let mut e = &g.init;
+        while let crate::hir::ExprKind::Cast(inner) = &e.kind {
+            deep_levels += 1;
+            e = inner;
+        }
+    }
+    drop(back);
+    // The fields a unit leaves out as empty are empty at its end.
+    let fresh = Ctx::over(cx.modules.clone(), 0);
+    let empty_differing = (super::unit::empty_fields_differing(cx, &fresh).into_iter())
+        .map(|(f, a, b)| format!("{f}: {a} at the unit's end, {b} fresh"))
+        .collect();
+    Checked {
+        flipped,
+        decoded_damaged,
+        deep_levels,
+        empty_differing,
+    }
+}
+
+/// std's unit: a damaged copy is refused whole (its checksum), an expression 3,000 levels
+/// deep in it decodes through `decode_unit` (sema's decode stack), and every field the unit
+/// leaves out as empty is as a fresh context has it.
+#[test]
+fn std_s_unit_is_refused_damaged_decodes_deep_and_leaves_out_only_empty_state() {
+    let (inspect, found) = inspect_once(checks);
+    let (program, diags) = check_by_units(
+        super::hir_tests::SRC,
+        Hook {
+            inspect: Some(inspect),
+        },
+    );
+    assert!(program.is_some(), "the program checks: {diags:?}");
+    let c = found
+        .lock()
+        .unwrap()
+        .take()
+        .expect("std's unit was shown to the hook");
+    assert!(c.flipped >= 250, "{} positions", c.flipped);
+    assert_eq!(c.decoded_damaged, 0, "of {} damaged copies", c.flipped);
+    assert_eq!(c.deep_levels, 3000);
+    assert!(
+        c.empty_differing.is_empty(),
+        "{}",
+        c.empty_differing.join("\n")
+    );
+}
