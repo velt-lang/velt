@@ -33,6 +33,11 @@ that name as a symbolic link to the newest versioned one, passed as `-B<director
 after the link. A link that fails with the flag is retried without it; a `$VELT_LINKER` program
 is run as given.
 
+The system linker on Windows is `link.exe`, or `lld-link.exe` when that is on `PATH` (LLVM's
+installer puts it there): it takes `link.exe`'s arguments, runs in the environment `link.exe` was
+found with, and links the static runtime in about half the time. A link that fails with it is
+done again by `link.exe`.
+
 The bundled lld also links WebAssembly (`-flavor wasm`), ahead of `rust-lld` and `wasm-ld`.
 
 ## lld
