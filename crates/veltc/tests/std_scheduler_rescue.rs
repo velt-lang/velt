@@ -176,7 +176,8 @@ fn check(r: &Run, what: &str, want: &str, unfreed: u64) {
     let (made, freed): (u64, u64) = (blocks.0.parse().unwrap(), blocks.1.parse().unwrap());
     assert!(
         made >= freed && made - freed <= unfreed,
-        "{what}: blocks left unfreed ({stats})"
+        "{what}: blocks left unfreed ({stats}), stderr: {}",
+        r.err
     );
 }
 
