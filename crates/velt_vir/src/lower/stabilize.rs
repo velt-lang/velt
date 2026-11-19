@@ -336,6 +336,11 @@ impl FnLower<'_, '_> {
         Some(Operand::Copy(proj(&Place::local(ptr), Proj::Deref(vt))))
     }
 
+    /// Is `p` read through the pointer of an element borrow that is still pending?
+    pub(super) fn pending_borrow(&self, p: &Place) -> bool {
+        self.pending_borrows.iter().any(|b| b.ptr == p.local)
+    }
+
     /// Start lowering the arguments of a call: the pending borrows of an enclosing call's
     /// arguments are set aside.
     pub(super) fn start_borrows(&mut self) -> Vec<PendingBorrow> {
