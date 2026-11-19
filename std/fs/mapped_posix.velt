@@ -63,9 +63,7 @@ export function adviseMapping(address: usize, len: usize, advice: i32): i32 {
 }
 
 /**
- * The array a typed method hands out for `view`, the values over the mapping from byte `at`
- * of `bytes`: the view itself, since the mapping is never unmapped.
+ * Whether a typed method's array is a copy of its range (`copyOf`): the arrays are over the mapping,
+ * which is never unmapped.
  */
-export function settled<T extends Numeric>(view: T[], bytes: shared<u8[]>, at: usize): T[] {
-  return view;
-}
+export const COPIES: bool = false;

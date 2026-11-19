@@ -3,9 +3,9 @@
 // a program works on files larger than memory without reading or copying them.
 
 import { addressArray } from "velt/lang/intrinsics";
-import { adviseMapping, mapFile, settled } from "#mapped-source";
+import { adviseMapping, COPIES, mapFile } from "#mapped-source";
 import { osError } from "velt/fs/errors";
-import { MapOptions } from "velt/fs/mapped_part";
+import { copyOf, MapOptions } from "velt/fs/mapped_part";
 
 /** How a range of a `MappedFile` will be read (`advise`). */
 export type MapAdvice = "normal" | "random" | "sequential" | "willneed" | "dontneed";
@@ -27,10 +27,10 @@ export type MapAdvice = "normal" | "random" | "sequential" | "willneed" | "dontn
  * On Windows a mapped file cannot be removed, renamed or cut short by anyone, for the rest of
  * the program, and `advise` does nothing (it is a hint).
  *
- * WebAssembly has no mapping: there `open` reads the file (or the part) into memory, `bytes`
- * is that memory, each typed method gives a copy of its range, and `advise` does nothing. The
- * same program runs; it costs the memory of what it opens, and later changes to the file are
- * not seen.
+ * WebAssembly has no mapping: there `open` reads the whole file into memory, also when a part
+ * is asked for, and keeps the part; `bytes` is that memory, each typed method gives a copy of
+ * its range, and `advise` does nothing. The same program runs; opening costs the time and
+ * memory of the whole file, and later changes to the file are not seen.
  *
  * Changing the file's bytes while it is mapped changes what the arrays read. Cutting the file
  * short ends the program with a bus-error signal when a cut page is read, without a message,
@@ -122,8 +122,12 @@ export class MappedFile {
     }
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `i8`
     // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
-    const xs: i8[] = unsafe { addressArray<i8>(at, count as usize) };
-    return shared(settled(xs, this.bytes, byteOffset as usize));
+    // Where there is no mapping (`COPIES`) no address is read: the values are copied.
+    const xs: i8[] =
+      COPIES
+        ? copyOf<i8>(this.bytes, byteOffset as usize, count as usize)
+        : unsafe { addressArray<i8>(at, count as usize) };
+    return shared(xs);
   }
 
   /**
@@ -138,8 +142,12 @@ export class MappedFile {
     }
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `u16`
     // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
-    const xs: u16[] = unsafe { addressArray<u16>(at, count as usize) };
-    return shared(settled(xs, this.bytes, byteOffset as usize));
+    // Where there is no mapping (`COPIES`) no address is read: the values are copied.
+    const xs: u16[] =
+      COPIES
+        ? copyOf<u16>(this.bytes, byteOffset as usize, count as usize)
+        : unsafe { addressArray<u16>(at, count as usize) };
+    return shared(xs);
   }
 
   /**
@@ -154,8 +162,12 @@ export class MappedFile {
     }
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `i16`
     // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
-    const xs: i16[] = unsafe { addressArray<i16>(at, count as usize) };
-    return shared(settled(xs, this.bytes, byteOffset as usize));
+    // Where there is no mapping (`COPIES`) no address is read: the values are copied.
+    const xs: i16[] =
+      COPIES
+        ? copyOf<i16>(this.bytes, byteOffset as usize, count as usize)
+        : unsafe { addressArray<i16>(at, count as usize) };
+    return shared(xs);
   }
 
   /**
@@ -170,8 +182,12 @@ export class MappedFile {
     }
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `u32`
     // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
-    const xs: u32[] = unsafe { addressArray<u32>(at, count as usize) };
-    return shared(settled(xs, this.bytes, byteOffset as usize));
+    // Where there is no mapping (`COPIES`) no address is read: the values are copied.
+    const xs: u32[] =
+      COPIES
+        ? copyOf<u32>(this.bytes, byteOffset as usize, count as usize)
+        : unsafe { addressArray<u32>(at, count as usize) };
+    return shared(xs);
   }
 
   /**
@@ -186,8 +202,12 @@ export class MappedFile {
     }
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `i32`
     // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
-    const xs: i32[] = unsafe { addressArray<i32>(at, count as usize) };
-    return shared(settled(xs, this.bytes, byteOffset as usize));
+    // Where there is no mapping (`COPIES`) no address is read: the values are copied.
+    const xs: i32[] =
+      COPIES
+        ? copyOf<i32>(this.bytes, byteOffset as usize, count as usize)
+        : unsafe { addressArray<i32>(at, count as usize) };
+    return shared(xs);
   }
 
   /**
@@ -202,8 +222,12 @@ export class MappedFile {
     }
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `u64`
     // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
-    const xs: u64[] = unsafe { addressArray<u64>(at, count as usize) };
-    return shared(settled(xs, this.bytes, byteOffset as usize));
+    // Where there is no mapping (`COPIES`) no address is read: the values are copied.
+    const xs: u64[] =
+      COPIES
+        ? copyOf<u64>(this.bytes, byteOffset as usize, count as usize)
+        : unsafe { addressArray<u64>(at, count as usize) };
+    return shared(xs);
   }
 
   /**
@@ -218,8 +242,12 @@ export class MappedFile {
     }
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `i64`
     // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
-    const xs: i64[] = unsafe { addressArray<i64>(at, count as usize) };
-    return shared(settled(xs, this.bytes, byteOffset as usize));
+    // Where there is no mapping (`COPIES`) no address is read: the values are copied.
+    const xs: i64[] =
+      COPIES
+        ? copyOf<i64>(this.bytes, byteOffset as usize, count as usize)
+        : unsafe { addressArray<i64>(at, count as usize) };
+    return shared(xs);
   }
 
   /**
@@ -234,8 +262,12 @@ export class MappedFile {
     }
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `f16`
     // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
-    const xs: f16[] = unsafe { addressArray<f16>(at, count as usize) };
-    return shared(settled(xs, this.bytes, byteOffset as usize));
+    // Where there is no mapping (`COPIES`) no address is read: the values are copied.
+    const xs: f16[] =
+      COPIES
+        ? copyOf<f16>(this.bytes, byteOffset as usize, count as usize)
+        : unsafe { addressArray<f16>(at, count as usize) };
+    return shared(xs);
   }
 
   /**
@@ -250,8 +282,12 @@ export class MappedFile {
     }
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `bf16`
     // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
-    const xs: bf16[] = unsafe { addressArray<bf16>(at, count as usize) };
-    return shared(settled(xs, this.bytes, byteOffset as usize));
+    // Where there is no mapping (`COPIES`) no address is read: the values are copied.
+    const xs: bf16[] =
+      COPIES
+        ? copyOf<bf16>(this.bytes, byteOffset as usize, count as usize)
+        : unsafe { addressArray<bf16>(at, count as usize) };
+    return shared(xs);
   }
 
   /**
@@ -266,8 +302,12 @@ export class MappedFile {
     }
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `f32`
     // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
-    const xs: f32[] = unsafe { addressArray<f32>(at, count as usize) };
-    return shared(settled(xs, this.bytes, byteOffset as usize));
+    // Where there is no mapping (`COPIES`) no address is read: the values are copied.
+    const xs: f32[] =
+      COPIES
+        ? copyOf<f32>(this.bytes, byteOffset as usize, count as usize)
+        : unsafe { addressArray<f32>(at, count as usize) };
+    return shared(xs);
   }
 
   /**
@@ -282,8 +322,12 @@ export class MappedFile {
     }
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `f64`
     // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
-    const xs: f64[] = unsafe { addressArray<f64>(at, count as usize) };
-    return shared(settled(xs, this.bytes, byteOffset as usize));
+    // Where there is no mapping (`COPIES`) no address is read: the values are copied.
+    const xs: f64[] =
+      COPIES
+        ? copyOf<f64>(this.bytes, byteOffset as usize, count as usize)
+        : unsafe { addressArray<f64>(at, count as usize) };
+    return shared(xs);
   }
 
   /**

@@ -1,6 +1,8 @@
 // velt/fs (internal): what `MappedFile.open` is asked for and what its `#mapped-source` variant
 // gives back, for both variants.
 
+import { arrayCopyBytes, arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
+
 /** Which part of a file `MappedFile.open` maps: `length` bytes from byte `offset`. */
 export type MapOptions = { offset?: number; length?: number };
 
@@ -40,4 +42,15 @@ export function outsideFile(
   return new RangeError(
     `MappedFile.open: offset ${offset}, length ${length} is not inside the ${size} bytes of ${path}`,
   );
+}
+
+/**
+ * A copy of the `count` values of `T` from byte `at` of `bytes`, which the array owns: what a
+ * typed method gives where there is no mapping to give an array over.
+ */
+export function copyOf<T extends Numeric>(bytes: shared<u8[]>, at: usize, count: usize): T[] {
+  const out: T[] = arrayWithCapacity<T>(count);
+  arraySetLen(out, count);
+  arrayCopyBytes(out, 0, bytes, at, count);
+  return out;
 }
