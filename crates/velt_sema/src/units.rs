@@ -11,6 +11,8 @@
 //! round loop. With all of std checked, the driver loads every std file (`velt check`'s
 //! `with_all_std`) and nothing is checked lazily (`body::lazy_std`).
 
+pub(crate) mod codec;
+
 use crate::ctx::Ctx;
 
 /// [`crate::check_definitions`] by units: std collected and checked, frozen, then the app.
