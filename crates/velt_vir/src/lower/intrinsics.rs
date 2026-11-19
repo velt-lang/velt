@@ -43,6 +43,8 @@ impl FnLower<'_, '_> {
                 let ty = self.sub(ty);
                 self.array_value(ty, data, len, super::cint(0, Ty::U64))
             }
+            (I::PtrRead, [p, i]) => self.ptr_read(p, i, ty),
+            (I::PtrWrite, [p, i, v]) => self.ptr_write(p, i, v),
             (I::FutPoll, [f, cx]) => self.fut_intrinsic(f, Some(cx)),
             (I::FutDrop, [f]) => self.fut_intrinsic(f, None),
             (I::StatePoll, [p, s, cx]) => self.state_poll(p, s, cx),

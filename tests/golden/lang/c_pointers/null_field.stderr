@@ -1,0 +1,1 @@
+Ptr.read: field `name.text` of the `Entry` read is NULL, and a `Ptr<T>` is never NULL (declare the field `Ptr<T> | null`)

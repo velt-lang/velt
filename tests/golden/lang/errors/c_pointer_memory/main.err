@@ -1,0 +1,12 @@
+_clib/src/lib.velt:35:15: error: calling unsafe `Ptr.read` needs an `unsafe` block or function
+  = note: wrap the call in `unsafe { … }`, with a `// SAFETY:` comment before it saying why the call is sound
+_clib/src/lib.velt:28:5: error: `Ptr.read` and `Ptr.write` can't move a `void`
+  = note: a type parameter read or written through a pointer is instantiated here: it must be a number type, `bool`, a C struct or a C pointer (`Ptr<T>`, `Ptr<T> | null`, `Ptr<T> | undefined`); `void` and a `declare c type` have no size
+_clib/src/lib.velt:29:17: error: `Ptr.read` and `Ptr.write` can't move a `FILE`
+  = note: a type parameter read or written through a pointer is instantiated here: it must be a number type, `bool`, a C struct or a C pointer (`Ptr<T>`, `Ptr<T> | null`, `Ptr<T> | undefined`); `void` and a `declare c type` have no size
+_clib/src/lib.velt:30:5: error: `Ptr.read` and `Ptr.write` can't move a `FILE`
+  = note: a type parameter read or written through a pointer is instantiated here: it must be a number type, `bool`, a C struct or a C pointer (`Ptr<T>`, `Ptr<T> | null`, `Ptr<T> | undefined`); `void` and a `declare c type` have no size
+_clib/src/lib.velt:33:15: error: `Ptr.read` and `Ptr.write` can't move a `FILE`
+  = note: a type parameter read or written through a pointer is instantiated here: it must be a number type, `bool`, a C struct or a C pointer (`Ptr<T>`, `Ptr<T> | null`, `Ptr<T> | undefined`); `void` and a `declare c type` have no size
+_clib/src/lib.velt:34:3: error: `Ptr.read` and `Ptr.write` can't move a `FILE`
+  = note: a type parameter read or written through a pointer is instantiated here: it must be a number type, `bool`, a C struct or a C pointer (`Ptr<T>`, `Ptr<T> | null`, `Ptr<T> | undefined`); `void` and a `declare c type` have no size

@@ -1,0 +1,77 @@
+// C structs with pointer fields (#3094): `Ptr<T>` and `Ptr<T> | null` fields are C's pointer
+// word, `NULL` as `null`. `Ptr.write` stores structs, numbers and pointers into C memory and
+// `Ptr.read` reads them back, element by element, with the layout C gives them; the struct is a
+// value as any C struct is (printed, compared, copied, spread). No address here is read through
+// except the block `calloc` returns, so the output is the same everywhere.
+import { Ptr } from "velt/ffi";
+
+declare c type FILE;
+
+declare c struct Chain {
+  next: Ptr<Chain> | null;
+  label: Ptr<u8>;
+}
+
+/** Padding before and after the pointer, and a nested struct holding one. */
+declare c struct Mixed {
+  tag: u8;
+  file: Ptr<FILE> | null;
+  count: i32;
+  inner: Chain;
+  scale: f32;
+}
+
+declare c("c") function calloc(n: usize, size: usize): Ptr<void> | null;
+declare c("c") function free(p: Ptr<void> | null): void;
+
+function at<T>(a: usize): Ptr<T> {
+  // SAFETY: never read through; the address is a fixed number.
+  return unsafe { Ptr.at<T>(a) };
+}
+
+function main() {
+  const label = at<u8>(0x1000);
+  const c: Chain = { next: null, label };
+  const d: Chain = { ...c, next: at<Chain>(0x2000) };
+  console.log(c, d);
+  console.log(c === d, c === { next: null, label }, d.next === at<Chain>(0x2000));
+
+  // SAFETY: a block of 4 `Mixed`s (48 bytes each), zeroed, freed below.
+  const block = unsafe { calloc(4, 48) };
+  if (block === null) {
+    return;
+  }
+  // SAFETY: the block holds `Mixed`s from here on.
+  const ms = unsafe { Ptr.at<Mixed>(Ptr.addressOf(block)) };
+  const m: Mixed = { tag: 7, file: null, count: -3, inner: d, scale: 0.5 };
+  // SAFETY: elements 0 and 2 of the 4.
+  unsafe {
+    Ptr.write(ms, 0, m);
+    Ptr.write(ms, 2, { ...m, tag: 9, file: at<FILE>(0x3000), inner: c });
+  }
+  ;
+  // SAFETY: as above; both were written.
+  const [m0, m2] = unsafe { [Ptr.read(ms, 0), Ptr.read(ms, 2)] };
+  console.log(m0);
+  console.log(m2.tag, m2.file, m2.count, m2.inner.next, m2.inner.label, m2.scale);
+  console.log(m0 === m, m2 === m);
+
+  // The same bytes as words: C's offsets (8 is `file`, 24 `inner.next`, 32 `inner.label`; a
+  // `Mixed` is 48 bytes, 6 words).
+  // SAFETY: the block is 8-byte aligned, and its words are read as numbers or pointers.
+  const words = unsafe { Ptr.at<u64>(Ptr.addressOf(block)) };
+  // SAFETY: as above.
+  const ptrs = unsafe { Ptr.at<Ptr<u8> | null>(Ptr.addressOf(block)) };
+  // SAFETY: inside the 192 bytes.
+  unsafe {
+    console.log(Ptr.read(words, 0) & 0xff, Ptr.read(words, 1), Ptr.read(words, 2) & 0xffffffff);
+    console.log(Ptr.read(ptrs, 3), Ptr.read(ptrs, 4), Ptr.read(ptrs, 13), Ptr.read(ptrs, 15));
+    Ptr.write(words, 7, 0x4000);
+    Ptr.write(ptrs, 10, label);
+    console.log(Ptr.read(ms, 1));
+  }
+  ;
+  // SAFETY: from `calloc`.
+  unsafe { free(block); }
+  ;
+}

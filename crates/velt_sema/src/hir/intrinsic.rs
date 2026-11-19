@@ -105,8 +105,7 @@ pub enum Intrinsic {
     /// permutation: every element stays owned once, so it moves elements of any type, where a
     /// loop of moves would count or check each one. Additive.
     ArrayRotateRight,
-    /// std only: as `ArrayRotateRight`, one slot down: the element at `lo` moves to `hi`.
-    /// Additive.
+    /// std only: as `ArrayRotateRight`, one slot down: the element at `lo` moves to `hi`. Additive.
     ArrayRotateLeft,
     /// std only (`xs.swapIn`, std/prelude/array_nested.velt): `(xs: T[][] (modified), a: usize,
     /// i: usize, b: usize, j: usize)`, exchanges `xs[a][i]` and `xs[b][j]` (all four
@@ -423,6 +422,8 @@ pub enum Intrinsic {
     PtrFromAddress,
     /// std only (`Ptr.addressOf`): `ptrToAddress<T>(p: Ptr<T> | null) -> usize`. Additive.
     PtrToAddress,
+    PtrRead, // std only (`Ptr.read`, #3094, additive): `ptrRead<T>(p, i) -> T`, NULL-checked.
+    PtrWrite, // std only (`Ptr.write`, #3094, additive): `ptrWrite<T>(p, i, v: T)`.
     /// std only: `atomicAddress<T>(a: borrow Atomic<T>) -> usize`: the address of `a`'s word.
     /// Sema allows only an `Atomic` of a 32- or 64-bit integer that cannot move: a static atomic
     /// (`Global(d)`), or a field (of a field…) of the value of `SharedRead`. Additive.

@@ -9,6 +9,9 @@
 //!   payload has no field).
 //! - `T | null` without a niche: `{ some: bool, value: T }` (with one, a class, `shared<T>`,
 //!   `symbol` or a C pointer `Ptr<T>`, it is the word itself, 0 for none: type_kinds.rs).
+//! - C structs (`declare c struct`): fields in order at natural alignment is C's layout for
+//!   their fields (numbers, `bool`, pointers, C structs) on the 64-bit targets, checked for each
+//!   one against C's rules (`check_c_struct_layout`); never boxed (types.rs).
 //! - Class objects: `[vtable: ptr]` + all fields (base-class fields first, so a subclass object
 //!   starts with its base's layout and upcasts are free). The vtable pointer exists when the
 //!   class hierarchy has more than one class or any virtual slot; it points to a dispatcher
@@ -174,7 +177,11 @@ impl Cx<'_> {
                 // Fields, then presence flags (`Cx::presence_slot`).
                 let tys = self.part_types(t);
                 let tys = self.stored_tys(tys);
-                self.new_agg(name, &tys)
+                let a = self.new_agg(name, &tys);
+                if self.c_struct(t) {
+                    self.check_c_struct_layout(t, a);
+                }
+                a
             }
             TyKind::Tuple(es) => {
                 let tys = self.stored_tys(es);
@@ -189,6 +196,47 @@ impl Cx<'_> {
         self.lay.in_progress.remove(&t);
         self.lay.value.insert(t, a);
         a
+    }
+
+    /// Checks that the aggregate `a` of C struct `t` is C's layout of its fields on the 64-bit
+    /// targets (`Ptr.read`, `Ptr.write` and C calls hand its memory to C as it is): each field
+    /// at the offset C gives it, and C's size and alignment. An `ICE:` otherwise.
+    fn check_c_struct_layout(&mut self, t: TyId, a: AggId) {
+        let (offsets, size, align) = self.c_layout(t);
+        let l = &self.aggs[a.0 as usize];
+        let got: Vec<u32> = l.fields.iter().map(|&(_, o)| o).collect();
+        if got != offsets || l.size != size || l.align != align {
+            ice(format_args!(
+                "C struct `{}` laid out as {:?} (size {}, align {}), and C's layout is {offsets:?} (size {size}, align {align})",
+                l.name, got, l.size, l.align
+            ));
+        }
+    }
+
+    /// C's layout of C struct `t` on the 64-bit targets, from its fields' C types alone: the
+    /// fields' offsets, the size and the alignment.
+    fn c_layout(&mut self, t: TyId) -> (Vec<u32>, u32, u32) {
+        let (mut off, mut align, mut offsets) = (0u32, 1u32, vec![]);
+        for f in self.adt_field_tys(t) {
+            let (s, a) = match self.kind(f) {
+                TyKind::Int(i) => (i.bits() / 8, i.bits() / 8),
+                TyKind::Float(hir::FloatTy::F32) => (4, 4),
+                TyKind::Float(hir::FloatTy::F64) => (8, 8),
+                TyKind::Bool => (1, 1),
+                // `Ptr<T>`, and `Ptr<T> | null` (the same word): C's `T *`.
+                TyKind::Ptr(_) | TyKind::Option(..) => (8, 8),
+                _ if self.c_struct(f) => {
+                    let (_, s, a) = self.c_layout(f);
+                    (s, a)
+                }
+                k => ice(format_args!("C struct field of type {k:?}")),
+            };
+            off = off.next_multiple_of(a);
+            offsets.push(off);
+            off += s;
+            align = align.max(a);
+        }
+        (offsets, off.max(1).next_multiple_of(align), align)
     }
 
     /// VIR types of the fields that occupy memory (`void` fields have none).

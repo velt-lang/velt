@@ -2,7 +2,9 @@
 //! structs"): fields in C's order, each of a type C has, and nothing else. In Velt a C struct is
 //! a value: Copy (`copy_types.rs`), its fields read-only, built from a literal of its type,
 //! never counted or boxed (`hir::AdtDef::c_struct`), and compared by content. What every struct
-//! can't have (`extends`, a constructor) is reported as for them.
+//! can't have (`extends`, a constructor) is reported as for them. A pointer field (`Ptr<T>`,
+//! `Ptr<T> | null`) is C's pointer word, `NULL` as `null` (#3094); a non-null one is checked
+//! wherever C hands the struct to Velt (`Ptr.read`).
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -13,7 +15,8 @@ use crate::hir::{DefId, FloatTy, Nothing, TyId, TyKind};
 
 /// What a C struct's field may be, for the errors.
 const FIELD_TYPES: &str = "a C struct's fields are integers (`i8` … `u64`, `isize`, `usize`), \
-                           `f32`, `f64`, `bool` and other C structs";
+                           `f32`, `f64`, `bool`, C pointers (`Ptr<T>`, `Ptr<T> | null`) and \
+                           other C structs";
 
 impl Ctx<'_> {
     /// Is `d` a `declare c struct`?
@@ -94,16 +97,6 @@ fn check(cx: &mut Ctx, d: DefId, decl: &ast::TypeDecl) {
         let shown = cx.display(ty);
         let note = match field_ty(cx, ty) {
             Field::Ok => continue,
-            Field::Pointer => {
-                cx.error(
-                    Diagnostic::error(
-                        format!("field `{field}` of C struct `{name}` is a pointer (`{shown}`), which a C struct can't hold yet"),
-                        at,
-                    )
-                    .with_note("a pointer field is stored as C's address, `NULL` as `null`, from a later layer of #2187; until then a C struct holds numbers, `bool` and other C structs"),
-                );
-                continue;
-            }
             Field::Array => {
                 cx.error(
                     Diagnostic::error(
@@ -115,7 +108,7 @@ fn check(cx: &mut Ctx, d: DefId, decl: &ast::TypeDecl) {
                 continue;
             }
             Field::Enum => "a Velt enum is an `i64`, and a C enum is usually an `int`: declare the field as the C enum's integer type (`i32`), which the header check holds to the enum's width",
-            Field::CType => "a `declare c type` exists only behind a pointer: a `Ptr<T>` field comes in a later layer of #2187",
+            Field::CType => "a `declare c type` exists only behind a pointer: declare the field as `Ptr<T>`, or `Ptr<T> | null` where C may leave it `NULL`",
             Field::No => FIELD_TYPES,
         };
         cx.error(
@@ -133,11 +126,9 @@ fn check(cx: &mut Ctx, d: DefId, decl: &ast::TypeDecl) {
 /// Whether a C struct's field can be a `ty`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Field {
+    /// A number, `bool`, another C struct, or a C pointer (`Ptr<T>`, `Ptr<T> | null`: the one
+    /// word, `NULL` as `null`, #3094).
     Ok,
-    /// A C pointer (`Ptr<T>`, `Ptr<T> | null`): C's, but not yet held. `Ptr<T> | null` is a
-    /// Velt option of the address, larger than C's pointer, so pointer fields wait for their
-    /// own storage (the address, `NULL` as `null`).
-    Pointer,
     /// A tuple of one C type, C's array: not yet held. Lowering may count a tuple type the
     /// program writes in place and copies (boxing/tuples.rs), which would make the field a
     /// pointer, so C arrays wait for fixed-size arrays.
@@ -153,7 +144,7 @@ fn field_ty(cx: &Ctx, ty: TyId) -> Field {
     match cx.ty.kind(ty) {
         TyKind::Int(_) | TyKind::Float(FloatTy::F32 | FloatTy::F64) | TyKind::Bool => Field::Ok,
         TyKind::Option(inner, n) if *n != Nothing::Both && super::c_sig::is_c_ptr(cx, *inner) => {
-            Field::Pointer
+            Field::Ok
         }
         TyKind::Tuple(es) => match es.first() {
             Some(&e) if es.iter().all(|&x| x == e) && field_ty(cx, e) != Field::No => Field::Array,
@@ -166,7 +157,7 @@ fn field_ty(cx: &Ctx, ty: TyId) -> Field {
             Field::CType
         }
         _ if cx.is_c_struct_ty(ty) => Field::Ok,
-        _ if super::c_sig::is_c_ptr(cx, ty) => Field::Pointer,
+        _ if super::c_sig::is_c_ptr(cx, ty) => Field::Ok,
         _ => Field::No,
     }
 }

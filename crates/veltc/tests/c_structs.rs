@@ -1,7 +1,7 @@
 //! C structs (`declare c struct`, docs/internals/design/c-ffi.md "C structs", #2187): values
 //! with C's layout that a package's code and its users build, copy and read, in debug
-//! (Cranelift) and release (LLVM) builds; pointers to them cross to C. Passing one to C by value,
-//! and pointer fields, come with later layers.
+//! (Cranelift) and release (LLVM) builds; pointers to them cross to C. Passing one to C by value
+//! comes with a later layer; pointer fields are tested in tests/c_struct_pointers.rs.
 
 use std::path::Path;
 use std::process::Output;

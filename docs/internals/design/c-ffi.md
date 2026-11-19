@@ -326,12 +326,29 @@ declare c struct CGRect { origin: CGPoint; size: CGSize; }
 
 - A C struct has fields only: no methods, constructor, type parameters, defaults, optional,
   private or static fields, `implements`, and at least one field. Fields are integers, `f32`,
-  `f64`, `bool` and other C structs; a struct cannot hold itself by value. A Velt enum and a
-  `declare c type` by value are refused with what to declare instead.
+  `f64`, `bool`, C pointers and other C structs; a struct cannot hold itself by value, but a
+  pointer to it can be a field (`next: Ptr<Node> | null`). A Velt enum and a `declare c type` by
+  value are refused with what to declare instead.
+- **A pointer field** is C's `T *`: `Ptr<T>` or `Ptr<T> | null` (`| undefined` too), one word with
+  `NULL` as `null`. `Ptr<T> | null | undefined` is a Velt option and is refused.
 - In Velt it is a value: Copy, built from a literal of its type, with read-only fields (a
   changed copy is `{ ...v, x: … }`). Lowering never counts or boxes it, so it stays inline, in
   declaration order at natural alignment, which is C's layout for these fields on 64-bit
-  targets.
+  targets. Lowering checks each struct's layout against C's rules for its fields' types, and
+  that it is never boxed; either failing is an `ICE:` (`crates/velt_vir/src/lower/layout.rs`).
+- **`Ptr.read(p, index)` and `Ptr.write(p, index, value)`** (unsafe) read and write element
+  `index` of an array at `p`: a number, `bool`, C struct or C pointer, one load or store at
+  `p + index * size`. `void` and a `declare c type` have no size and are compile errors, through
+  a type parameter too. The caller promises that `p` is aligned for the element and that
+  `index + 1` elements are there; a misaligned `p` is undefined behaviour, which nothing checks.
+- **NULL on arrival.** C has no non-null pointer type, so `Ptr.read` checks every non-null
+  `Ptr<T>` in what it reads (a struct's fields at any depth) and stops the program on NULL,
+  naming the field (``field `name.text` of the `Entry` read is NULL``). Bindings for structs C
+  fills declare the fields C may leave NULL as `Ptr<T> | null`. Every later path by which a
+  struct arrives from C takes the same check.
+- **wasm32**: Velt's `usize`, `isize` and pointers take 8 bytes in memory on every target and C's
+  4 on wasm32, so `Ptr.read` and `Ptr.write` of an element holding one is a compile error there,
+  at the user's call. An element of fixed-width numbers has the same layout and is allowed.
 - It has no identity, so every comparison compares its content, with the numbers in it compared
   as the operation compares numbers: `===`, `==` and `indexOf` by IEEE, `Object.is` by
   SameValue, `Map` and `Set` keys and `includes` by SameValueZero.
@@ -659,7 +676,7 @@ must not depend on code elsewhere.
 
 - `declare c` calls are synchronous.
 - A C struct crosses only behind `Ptr<S>`: not by value, not as `Out<S>`; struct declarations
-  are not compared with headers. C arrays and pointer fields in structs are not supported.
+  are not compared with headers. C arrays in structs are not supported.
 - Function pointers cross only as `Ptr<void>`; C cannot call a Velt closure.
 - `declare c const` cannot be a string; a macro of a string literal is an error.
 - `va_list` parameters (`vprintf`) cannot be declared.

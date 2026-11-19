@@ -110,6 +110,13 @@ comment. velt/ffi's unsafe functions are the public surface ([c-ffi.md](c-ffi.md
   address: one VIR assignment from or to `*(T*)address`, so every backend emits a plain load or
   store. Sema holds `T` to a number type or `bool` and refuses a type parameter, since an
   instance with a class would move an owned reference as raw bytes.
+- `ptrRead<T>(p: Ptr<T>, index)` and `ptrWrite<T>(p, index, value)` are velt/ffi's `Ptr.read` and
+  `Ptr.write`: element `index` of an array of `T` at a C pointer, one load or store of the
+  element's VIR type at `p + index * size` (velt_vir `lower/ptr_memory.rs`). `T` is a number,
+  `bool`, a C struct or a C pointer; a type parameter passes sema and is checked where it is
+  instantiated (`json::PtrUse::Memory`). A read checks the element's non-null pointers (a C
+  struct's, nested ones included) and stops the program on NULL. The caller promises that `p` is
+  aligned for `T`: the access assumes it.
 - `addressArray<T>(address, length): T[]` is an array over memory it does not own: the header
   `{ data: address, len: length, cap: 0 }`, the form a constant table's read-only data has, so
   dropping it frees nothing and a copy of it is an ordinary array. `T` is a number type or `bool`.

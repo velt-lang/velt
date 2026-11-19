@@ -66,6 +66,9 @@ pub(crate) enum PtrUse {
     FromDyn,
     /// The pointee of a `Ptr<T>`: what it is instantiated with must be a type C points at.
     Pointee,
+    /// Read or written through a pointer (`ptrRead<T>`, `ptrWrite<T>`: velt/ffi's `Ptr.read`,
+    /// `Ptr.write`): what it is instantiated with must have a size and C's layout.
+    Memory,
 }
 
 /// What a body constructs: the type, its arguments, the span and the guard bits, resolved by
@@ -386,6 +389,7 @@ impl Walk<'_> {
 fn no_ptr(cx: &mut Ctx, t: TyId, span: Span, how: PtrUse) -> bool {
     let what = match how {
         PtrUse::Pointee => return cx.check_instance_pointee(t, span),
+        PtrUse::Memory => return cx.check_instance_memory(t, span),
         PtrUse::ToDyn if cx.ptr_in_dynamic(t) => "converted to `any`",
         PtrUse::FromDyn if cx.ptr_in_view(t) => "converted from `any`",
         PtrUse::ToText if cx.ptr_or_element(t) => "converted to text",

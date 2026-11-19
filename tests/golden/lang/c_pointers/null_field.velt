@@ -1,0 +1,31 @@
+// `Ptr.read` of a C struct whose non-null pointer field C left NULL stops the program, naming the
+// field, nested structs' fields included: C has no non-null pointer type, and the word would
+// otherwise read as `null` (#3094). A field declared `Ptr<T> | null` reads as `null`.
+import { Ptr } from "velt/ffi";
+
+declare c struct Name {
+  text: Ptr<u8>;
+  len: usize;
+}
+
+declare c struct Entry {
+  next: Ptr<Entry> | null;
+  name: Name;
+}
+
+declare c("c") function calloc(n: usize, size: usize): Ptr<Entry> | null;
+
+function main() {
+  // SAFETY: one zeroed `Entry` (24 bytes), never freed: the program stops reading it.
+  const e = unsafe { calloc(1, 24) };
+  if (e === null) {
+    return;
+  }
+  // SAFETY: `e` points at a zeroed `Entry`, and `next` is the first word.
+  const words = unsafe { Ptr.at<Ptr<Entry> | null>(Ptr.addressOf(e)) };
+  // SAFETY: as above.
+  console.log(unsafe { Ptr.read(words, 0) });
+  // SAFETY: as above.
+  const read = unsafe { Ptr.read(e, 0) };
+  console.log("not reached", read.name.len);
+}

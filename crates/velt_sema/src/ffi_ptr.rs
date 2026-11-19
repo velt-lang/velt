@@ -224,6 +224,46 @@ impl Ctx<'_> {
     }
 }
 
+/// What `ptrRead<T>` and `ptrWrite<T>` (velt/ffi's `Ptr.read`, `Ptr.write`) move.
+pub(crate) const MEMORY_ELEMENTS: &str =
+    "a number type, `bool`, a C struct or a C pointer (`Ptr<T>`, `Ptr<T> | null`, `Ptr<T> | undefined`)";
+
+impl Ctx<'_> {
+    /// Can `ptrRead<T>` / `ptrWrite<T>` (velt/ffi's `Ptr.read`, `Ptr.write`) move a `t`: a number
+    /// type, `bool`, a C struct or a C pointer (`Ptr<U>`, `Ptr<U> | null`)? `void` and a
+    /// `declare c type` have no size (#3094).
+    pub(crate) fn memory_element(&self, t: TyId) -> bool {
+        match self.ty.kind(t) {
+            TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool => true,
+            TyKind::Ptr(_) => true,
+            TyKind::Option(inner, n) => {
+                *n != crate::hir::Nothing::Both && matches!(self.ty.kind(*inner), TyKind::Ptr(_))
+            }
+            _ => self.is_c_struct_ty(t),
+        }
+    }
+
+    /// Reports `Ptr.read<T>` / `Ptr.write<T>` instantiated with a `T` they can't move (generic
+    /// code's `ptrRead<T>`, `ptrWrite<T>`: `json::PtrUse::Memory`). True if it reported.
+    pub(crate) fn check_instance_memory(&mut self, t: TyId, span: velt_common::Span) -> bool {
+        if self.memory_element(t) || matches!(self.ty.kind(t), TyKind::Error) {
+            return false;
+        }
+        let shown = self.display(t);
+        self.error(
+            Diagnostic::error(
+                format!("`Ptr.read` and `Ptr.write` can't move a `{shown}`"),
+                span,
+            )
+            .with_note(format!(
+                "a type parameter read or written through a pointer is instantiated here: it must be {}; `void` and a `declare c type` have no size",
+                MEMORY_ELEMENTS
+            )),
+        );
+        true
+    }
+}
+
 impl FnCx<'_, '_> {
     /// Reports a C pointer converted to text (a template literal part, an operand of `+` with a
     /// string, `String(p)`, `xs.join()`), also as an element (`${[p]}`): a pointer has none

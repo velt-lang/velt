@@ -148,29 +148,41 @@ fn enums_and_c_types_by_value_say_what_to_declare() {
         "{e}"
     );
     assert!(e.contains("field `h` of C struct `X` has type `H`"), "{e}");
-    assert!(e.contains("a `Ptr<T>` field comes in a later layer"), "{e}");
+    assert!(e.contains("declare the field as `Ptr<T>`"), "{e}");
 }
 
-/// `Ptr<T> | null` is an option of the address in Velt, larger than C's pointer: pointer fields
-/// wait for their own storage.
+/// A C pointer is a field C has (#3094): `Ptr<T>` and `Ptr<T> | null`, the same word, to the
+/// struct itself too; a tuple of them is still a C array.
 #[test]
-fn pointer_fields_wait_for_their_layer() {
+fn pointer_fields_are_c_pointers() {
     let e = std_diagnostics(
         "import { Ptr } from \"velt/ffi\";
-         declare c struct Node { value: i32; next: Ptr<Node> | null; first: Ptr<u8>; ps: [Ptr<u8>, Ptr<u8>]; }
+         declare c type FILE;
+         declare c struct Node { value: i32; next: Ptr<Node> | null; first: Ptr<u8>; f: Ptr<FILE> | undefined; ps: [Ptr<u8>, Ptr<u8>]; }
          function main() {}",
     );
-    for field in ["`next`", "`first`"] {
+    for field in ["`next`", "`first`", "`f`", "`value`"] {
         assert!(
-            e.contains(&format!("field {field} of C struct `Node` is a pointer")),
-            "missing {field}:\n{e}"
+            !e.contains(&format!("field {field} of C struct `Node`")),
+            "{field} refused:\n{e}"
         );
     }
     assert!(
         e.contains("field `ps` of C struct `Node` is a C array"),
         "{e}"
     );
-    assert!(e.contains("stored as C's address"), "{e}");
+    // `null` and `undefined` together is a Velt option, no C pointer.
+    let e = std_diagnostics(
+        "import { Ptr } from \"velt/ffi\";
+         declare c struct N { p: Ptr<u8> | null | undefined; }
+         function main() {}",
+    );
+    assert!(
+        e.contains(
+            "field `p` of C struct `N` has type `Ptr<u8> | null | undefined`, which C doesn't have"
+        ),
+        "{e}"
+    );
 }
 
 /// `src` checked as std code (which may use velt/ffi's raw API); the rendered diagnostics.
@@ -190,10 +202,7 @@ fn a_c_struct_is_never_empty_or_recursive() {
     let e = err_src("declare c struct Rec { r: Rec; } function main() {}");
     assert!(e.contains("recursive type `Rec` has infinite size"), "{e}");
     assert!(e.contains("a C struct can't hold itself"), "{e}");
-    assert!(
-        !e.contains("Ptr<Rec>"),
-        "pointer fields aren't there yet: {e}"
-    );
+    assert!(e.contains("(`Ptr<Rec> | null`)"), "{e}");
 }
 
 #[test]
