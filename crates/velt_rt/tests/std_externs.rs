@@ -327,7 +327,7 @@ const WASM_ONLY_BINDINGS: &[&str] = &[
 /// The externs std declares that only the executor in Velt serves on native targets (velt_common
 /// `std_hooks::SCHED_EXTERNS`: lowering calls its hook in their place) and velt_rt no longer
 /// defines; velt_rt_wasm still does (#2196 9d).
-const EXECUTOR_ONLY: &[&str] = &["velt_rt_task_id"];
+const EXECUTOR_ONLY: &[&str] = &["velt_rt_task_id", "velt_rt_uncaught_now"];
 
 /// Whether `name`, declared in `paths` and not defined by velt_rt, is a WebAssembly-only leaf:
 /// declared in one file of `WASM_ONLY_BINDINGS` and nowhere else, and defined by velt_rt_wasm (whose check

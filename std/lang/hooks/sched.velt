@@ -431,7 +431,7 @@ export function schedTimerFree(h: u64): void {
 
 /**
  * `velt_rt_uncaught_now`: the next rejection nobody handles is an error a timer or microtask
- * callback threw, reported at once (sched_node.velt), not after the task's microtasks.
+ * callback threw, reported at once (sched_node_report.velt), not after the task's microtasks.
  */
 export function schedUncaughtNow(): void {
   ex.uncaughtNow(exec());

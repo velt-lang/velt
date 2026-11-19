@@ -364,9 +364,7 @@ velt_rt velt_rt_timer_new
 velt_rt velt_rt_timer_turn
 velt_rt velt_rt_timer_unref_due
 velt_rt velt_rt_tla_at
-velt_rt velt_rt_uncaught_now
 velt_rt velt_rt_uncaught_report
-velt_rt velt_rt_unhandled_defer
 velt_rt velt_rt_view_get
 velt_rt velt_rt_view_put
 velt_rt velt_rt_view_remove
