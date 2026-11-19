@@ -222,41 +222,98 @@ fn the_baseline_test_knows_the_instructions_above_it() {
     }
 }
 
-/// A release program in several codegen units, each with CPU checks that read the feature word,
-/// links and runs: every object defines the word (`linkonce_odr`), in a comdat of its own on
-/// Windows, where link.exe refused two objects' weak definitions (LNK1227, #3293 review). Any OS
-/// runs it; the Windows CI job is where it guards that.
-#[test]
-fn a_release_program_in_several_units_has_one_feature_word() {
-    if !velt_codegen_llvm::available() {
-        return;
-    }
-    let dir = test_dir::TestDir::new();
-    let root = dir.path();
-    let mut src = String::from(
-        "import { Avx2, Bmi2, Popcnt, Sse42 } from \"velt/arch/x86\";\n\
-         import { Crc32, Dp } from \"velt/arch/arm\";\n",
+/// A release program in four codegen units, `@noInline` functions too large to share one, each with
+/// a CPU check that reads the feature word (the start-up check stores it in another).
+fn several_units_program() -> String {
+    let checks = ["Avx2", "Bmi2", "Popcnt", "Sse42", "Fma", "Lzcnt"];
+    let mut src = format!(
+        "import {{ noInline }} from \"velt/compiler\";\nimport {{ {} }} from \"velt/arch/x86\";\n",
+        checks.join(", ")
     );
-    let checks = ["Avx2", "Bmi2", "Popcnt", "Sse42", "Crc32", "Dp"];
     for (i, check) in checks.iter().enumerate() {
         src.push_str(&format!(
-            "function f{i}(n: i64): i64 {{\n  return {check}.isSupported() ? n + {i} : n;\n}}\n"
+            "@noInline\nfunction f{i}(n: i64): i64 {{\n  let x = n;\n"
         ));
+        for k in 0..300 {
+            src.push_str(&format!("  x = (x * {} + {}) % 1000003;\n", k + 3, k + i));
+        }
+        src.push_str(&format!("  return {check}.isSupported() ? x : n;\n}}\n"));
     }
     src.push_str("function main() {\n  let n: i64 = 0;\n");
     for i in 0..checks.len() {
         src.push_str(&format!("  n = f{i}(n);\n"));
     }
     src.push_str("  console.log(n >= 0);\n}\n");
-    std::fs::write(root.join("main.velt"), src).unwrap();
-    let o = no_window::command(VELT)
-        .args(["run", "--release", "main.velt"])
-        .current_dir(root)
-        .env("VELT_CODEGEN_UNITS", "4")
-        .env_remove("VELT_CPU")
+    src
+}
+
+/// The objects in `dir` (`.o`, `.obj`) that name the feature word.
+fn objects_with_the_word(dir: &Path) -> Vec<std::path::PathBuf> {
+    (std::fs::read_dir(dir).unwrap().flatten())
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "o" || e == "obj"))
+        .filter(|p| {
+            let bytes = std::fs::read(p).unwrap_or_default();
+            bytes.windows(13).any(|w| w == b"velt_cpu_word")
+        })
+        .collect()
+}
+
+/// The feature word in several objects of one program links: every object that reads or sets it
+/// defines it (`linkonce_odr`), in a comdat of its own on COFF, where link.exe refused two objects'
+/// weak definitions (LNK1227, #3293 review). The program runs here with the word in two objects
+/// or more; on Windows that is the link. Where `lld-link` is installed, the same program's
+/// Windows objects are linked too, which reports the definitions' conflict as a duplicate symbol
+/// (it did with the comdat left out).
+#[test]
+fn a_release_program_in_several_units_has_one_feature_word() {
+    if !velt_codegen_llvm::available() || !cfg!(target_arch = "x86_64") {
+        return;
+    }
+    let dir = test_dir::TestDir::new();
+    let root = dir.path();
+    std::fs::write(root.join("main.velt"), several_units_program()).unwrap();
+    let build = |out: &Path, target: &[&str]| {
+        let mut args = vec!["build", "--release"];
+        args.extend(target);
+        args.extend(["main.velt", "-o", out.to_str().unwrap()]);
+        no_window::command(VELT)
+            .args(&args)
+            .current_dir(root)
+            .env("VELT_CODEGEN_UNITS", "4")
+            .env_remove("VELT_CPU")
+            .output()
+            .unwrap()
+    };
+    let native = root.join("native");
+    std::fs::create_dir_all(&native).unwrap();
+    let exe = native.join(format!("app{}", std::env::consts::EXE_SUFFIX));
+    let o = build(&exe, &[]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let ran = no_window::command(exe.to_str().unwrap()).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&ran.stdout), "true\n");
+    let objects = objects_with_the_word(&native);
+    assert!(objects.len() >= 2, "the word in only {objects:?}");
+    // The Windows objects, linked by lld-link (the build's own link may fail here for want of
+    // the target's runtime: the objects are written first).
+    let lld = Command::new("lld-link").arg("--version").output();
+    if cfg!(windows) || !lld.is_ok_and(|o| o.status.success()) {
+        return;
+    }
+    let windows = root.join("windows");
+    std::fs::create_dir_all(&windows).unwrap();
+    build(
+        &windows.join("app.exe"),
+        &["--target", "x86_64-pc-windows-msvc"],
+    );
+    let objects = objects_with_the_word(&windows);
+    assert!(objects.len() >= 2, "the word in only {objects:?}");
+    let o = Command::new("lld-link")
+        .args(["/dll", "/noentry", "/force:unresolved"])
+        .arg(format!("/out:{}", windows.join("check.dll").display()))
+        .args(&objects)
         .output()
         .unwrap();
     let err = String::from_utf8_lossy(&o.stderr);
-    assert!(o.status.success(), "{err}");
-    assert_eq!(String::from_utf8_lossy(&o.stdout), "true\n", "{err}");
+    assert!(!err.contains("velt_cpu_word"), "{err}");
 }
