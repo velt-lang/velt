@@ -22,7 +22,7 @@ use velt_common::{Diagnostic, Span};
 use super::candidates::{Candidates, Crossing, Offender};
 use super::values::Resolver;
 use crate::ctx::Ctx;
-use crate::defs::{BodyState, FnKind};
+use crate::defs::FnKind;
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, TyId, TyKind};
 use crate::visit;
 
@@ -189,12 +189,7 @@ fn describe(cb: &Expr) -> String {
 
 /// The direct calls of `f`: the calling function, the call's span and its type arguments.
 fn calls_of(cx: &mut Ctx, f: DefId) -> Vec<(DefId, velt_common::Span, Vec<TyId>)> {
-    let fns: Vec<DefId> = cx
-        .fn_defs
-        .iter()
-        .copied()
-        .filter(|d| cx.fn_info(*d).state == BodyState::Done)
-        .collect();
+    let fns: Vec<DefId> = cx.unit_fns();
     let mut out = vec![];
     for caller in fns {
         let Some(Def::Fn(mut body)) = cx.defs[caller.0 as usize].take() else {

@@ -19,7 +19,7 @@ pub(super) fn kept_captures(
     captures: &FxHashMap<DefId, Vec<Capture>>,
 ) -> FxHashMap<DefId, FxHashSet<LocalId>> {
     let mut children: FxHashMap<DefId, Vec<DefId>> = FxHashMap::default();
-    for (c, p) in crate::ownership::enclosing_fns(cx) {
+    for (c, p) in crate::ownership::enclosing_fns_from(cx, cx.unit_base as usize) {
         children.entry(p).or_default().push(c);
     }
     let mut memo = FxHashMap::default();
