@@ -1,18 +1,15 @@
 # Roadmap
 
-Velt is pre-1.0. These are the milestones ahead, roughly in order; each is tracked as a GitHub
-milestone with its issues. Breaking changes are expected until 1.0: old syntax is removed, not
-deprecated, and the compiler explains how to update code.
+Velt is pre-1.0. These are the milestones ahead, roughly in order; each is tracked in GitHub
+issues. Breaking changes are expected until 1.0: old syntax is removed, not deprecated, and the
+compiler explains how to update code.
 
 | Milestone | What it brings |
 |---|---|
-| **Semantics stage 2** | Objects, arrays, maps and closures are shared references, exactly like JavaScript: no more "use of moved value", `.clone()` is an explicit deep copy, escaping closures may modify captures, and objects compare by identity; uniquely owned values keep their code and every benchmark stays within 3% (done). Remaining: the `struct` keyword goes away. ([design](docs/internals/design/semantics-stage2.md)) |
-| **TSX and server-side rendering** | JSX syntax with TypeScript's `jsxImportSource` model, a precompiling SSR mode, the `velt/jsx` provider, streaming async components. ([design](docs/internals/design/tsx.md)) |
-| **JSON round** | Recursive type aliases; `unknown` for dynamic JSON ([design](docs/internals/design/unknown.md)). |
-| **Packages and a modular std** | A public package registry; the database drivers (`sqlite`, `postgres`, `redis`) move to versioned packages; module-scoped `extend` and retroactive `implements`. |
-| **Platform** | Unwind information for JIT code on macOS and Linux, hot swap verified on every platform, Windows arm64, a released toolchain with installers. |
-| **Performance** | Compile-time scaling of lowering and the optimizer, closure environments, `noalias` from the exclusivity rule, a batched PostgreSQL query API. |
-| **Tooling** | Debugger support for JIT code, a warm front end in `velt dev`, `new Promise(...)`, the logical assignment operators. |
+| **Packages** | A public package registry; module-scoped `extend` blocks, visible only to the modules that import them. |
+| **Platform** | Windows on arm64: a native toolchain, unwind information for JIT code, hot swap and CI. |
+| **Performance** | Separate compilation, so std and packages are checked and compiled once and a build compiles only the app; smaller closure environments. |
+| **Tooling** | A warm front end in `velt dev`, which keeps the checked program between edits. |
 | **Semantics stage 3** | Reference cycles freed as in Node: a collector confined to the types that can form cycles, `weak` references, and a lint. ([design](docs/internals/design/cycles.md)) |
 
 Proposals for language changes start as issues; see

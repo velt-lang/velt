@@ -3,7 +3,7 @@
 Each rule of `velt check --perf` (docs/internals/design/lint-profiles.md, "Rules") comes with a
 pair of programs here: the TypeScript form the rule finds (`*_ts.velt`) and the Velt form its fix
 writes (`*_velt.velt`), same output. Instructions retired, release builds with the release
-runtime, Linux x86-64 (2026-11-03):
+runtime, Linux x86-64, 2026-11-03, commit e6cbade0e:
 
 | Rule | TypeScript form | Velt form |
 |---|---:|---:|

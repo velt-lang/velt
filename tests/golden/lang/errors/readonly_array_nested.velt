@@ -1,0 +1,33 @@
+// A read-only array stays read-only inside other types and against Velt's own array methods
+// (#3061): a nullable, an array of them and a function's parameter don't take it as mutable
+// (tsc: TS4104, TS2322); a type parameter bound by a mutable array and a conditional type don't
+// match it (TS2345); Velt's methods that change an array, `sort` of `any` values, and an
+// assignment to `length` (TS2540) are refused. tsc refuses each line.
+function nullable(x: readonly number[] | null): number[] | null {
+  return x;
+}
+
+const rows: (readonly number[])[] = [[1]];
+const grid: number[][] = rows;
+
+const take: (xs: readonly number[]) => void = (xs: number[]): void => {
+  xs.push(1);
+};
+
+function bound<T extends number[]>(x: T): T {
+  return x;
+}
+const ro: readonly number[] = [1, 2];
+bound(ro);
+
+type IsMutable<X> = X extends number[] ? 1 : 0;
+const yes: IsMutable<readonly number[]> = 1;
+
+ro.swap(0, 1);
+ro.truncate(0);
+const dyn: readonly any[] = [2, 1];
+dyn.sort((a: any, b: any): any => a - b);
+ro.length = 0;
+
+const shown: string = rows;
+console.log(typeof nullable, grid.length, typeof take, yes, shown);

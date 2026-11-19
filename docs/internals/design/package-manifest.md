@@ -1,26 +1,30 @@
-# Design: a package manifest written in Velt
+# A package manifest written in Velt
 
-Status: implemented (issue #128), including the revised editor support in
-[Editors: the manifest document kind](#editors-the-manifest-document-kind). The maintainer's review answered
-the open questions; the answers are in [Decisions](#decisions). The contract is
-[manifest.md](../contracts/manifest.md), which replaced `velt_toml.md`.
+Status: implemented. Issue: [#128](https://github.com/velt-lang/velt/issues/128).
 
-## Problem
+## Summary
 
-The package manifest is `velt.toml`, Cargo-style. TypeScript developers know JSON manifests
-(`package.json`, `tsconfig.json`), not TOML, and neither format gets help from the language
-server: a misspelled key or an invalid `[paths]` pattern only fails when `velt` runs, as a plain
-string error without a location. Velt already has a parser, a type checker and a language
-server, so it could check the manifest the same way it checks code.
+A package's manifest is `package.velt` at the package root: one exported object literal, typed
+`Package`, with flat camelCase fields like `package.json`. It is written in the language the
+package is written in, gets comments, and gets editor diagnostics, completion and hover from the
+Velt language server, including live data from the package registry.
 
-The manifest must still be read the way JSON is read: `vpm`, the registry server, the language
-server and third-party tools load it without compiling or running anything, and a package
-install never runs package code.
+The manifest is still read the way JSON is read. `velt`, the registry server, the language server
+and other tools read it without compiling or running anything: a reader accepts only a data-only
+subset of Velt syntax, so installing a package never runs package code. The contract, with every
+field, is [manifest.md](../contracts/manifest.md).
 
-## Proposal
+## Motivation
 
-**File.** `package.velt` at the package root replaces `velt.toml`. Its fields are flat and
-camelCase, like `package.json`:
+TypeScript developers know JSON manifests (`package.json`, `tsconfig.json`). A TOML manifest
+(Cargo-style) is unfamiliar to them and gets no help from the language server: a misspelled key
+or an invalid `paths` pattern only fails when a command runs. Velt already has a parser and a
+language server, so the manifest can be checked with the same tools and the same diagnostics as
+code, at the place where the mistake is.
+
+## Design
+
+### The file
 
 ```ts ignore
 import type { Package } from "velt/package";
@@ -38,320 +42,199 @@ export const pkg: Package = {
   },
   paths: { "@app/*": "src/*", "@config": "src/config" },
   jsx: { importSource: "velt/jsx" },
-  native: { targets: ["x86_64-unknown-linux-gnu", "aarch64-apple-darwin"] },
 };
 ```
 
-Every field keeps the meaning and validation of the `velt.toml` field it replaces
-([manifest.md](../contracts/manifest.md)). `[package]`'s `name`, `version` and `entry` move to
-the top level, and the `[dependencies]`, `[paths]`, `[jsx]` and `[native]` tables become
-`dependencies`, `paths`, `jsx` and `native`. Package names follow the
-manifest contract (lowercase words joined by single `-` or `_`, since #314); scoped names such as
-`@velt/sqlite` are a separate issue.
+The binding is always `export const pkg`, so docs and tools can say "`pkg` in `package.velt`"
+and there is one way to write a manifest. The `: Package` annotation is required.
 
-**Types.** `velt/package` (`std/package/manifest.velt` and `workspace.velt`) contains only types:
+### The types
 
-```ts ignore
-export type Package = {
-  name: string;
-  version: string;
-  entry?: string;
-  registry?: string;
-  dependencies?: Record<string, Dependency>;
-  paths?: Record<string, string>;
-  jsx?: Jsx;
-  native?: Native;
-};
+`velt/package` (`std/package/manifest.velt` and `std/package/workspace.velt`, re-exported by
+`std/package/index.velt`) contains only types: `Package` and the types of its fields
+(`Dependency`, `DependencySource`, `Jsx`, `Native`, `CLibrary`, `Import`, `Host`, `AllowNative`,
+`Lint`, `Build`), plus `Workspace` for a workspace manifest ([workspaces.md](workspaces.md)).
+Every field has a doc comment. The types document the manifest (`velt doc`) and make the import
+resolve; they are not what checks a manifest, in the editor or anywhere else. Adding an optional
+field does not break existing manifests.
 
-export type Dependency = string | DependencySource;
+### The data-only subset
 
-export type DependencySource = { version?: string; path?: string };
-
-export type Jsx = { importSource?: string };
-
-export type Native = {
-  path?: string;          // default "native"
-  targets?: string[];     // triples from vpm::manifest::NATIVE_TARGETS
-  wasm?: bool;            // must be false for now
-};
-```
-
-- **Role.** The types document the manifest (`velt doc`) and make the import resolve. They are
-  not what checks a manifest in an editor: see
-  [Editors](#editors-the-manifest-document-kind).
-- **Doc comments.** Each field has one.
-- **`native`.** It mirrors the `[native]` table that native packages (#98) add.
-- **Future fields.** `devDependencies` and `workspace` are added when those features exist.
-  Adding an optional field doesn't break existing manifests.
-- **Prerequisite: `Record<K, V>` (#17).** The language doesn't have it yet. An object literal
-  can't stand in for a `Map` (`Map` is built with `new Map()`), so `Map<string, …>` is no
-  alternative. Only `std/package/index.velt` and the sync test below need `Record`; the reader doesn't,
-  and can land first.
-
-**The data-only subset.** The reader checks the syntax tree and accepts only this:
+The reader checks the syntax tree and accepts only this:
 
 - **Imports.** At most one `import type { … } from "velt/package"`. Any other import, and any
   value import, is an error.
-- **The declaration.** Exactly one `export const pkg: Package = <value>;`. The binding is always
-  named `pkg`, so docs and tools can say "`pkg` in `package.velt`". The `: Package` annotation is
-  required, so editors always check the file. No other statements are allowed: no functions, no
-  other declarations, no `let`.
-- **Values.** `<value>` and everything inside it is one of:
-  - a string literal (`"…"` or `'…'`);
-  - a number literal;
-  - `true` or `false`;
-  - an array literal;
-  - an object literal whose keys are identifiers or string literals.
+- **The declaration.** Exactly one `export const pkg: Package = <value>;` and no other
+  statements: no functions, no other declarations, no `let`.
+- **Values.** `<value>` and everything inside it is a string literal (`"…"` or `'…'`), a number
+  literal, `true` or `false`, an array literal, or an object literal whose keys are identifiers
+  or string literals.
 - **Rejected.** Everything else is an error at its own location: template literals, `null`,
-  spreads, computed and shorthand keys, methods, identifiers, calls, `new`, operators, `as`, and
-  a key written twice.
+  names, calls, `new`, operators, `as`, parentheses, regular expressions, spreads, computed and
+  shorthand keys, methods, and a key written twice.
 - **Allowed extras.** Comments and trailing commas.
 
 Reading a manifest therefore never resolves a name, evaluates an expression or touches the
 environment.
 
-**Reading.** The reader lives in `vpm::manifest` and is the only definition of a valid
-manifest:
+### Untrusted input
 
-1. `velt_syntax::parse_file` parses the file. It needs no standard library root and no
-   compiler, so the registry server and `vpm` can call it.
-2. The subset check turns the syntax tree into a small value tree (string, number, bool, array,
-   object), each value with its span.
-3. A decoder maps the value tree onto the existing `Manifest` structs. Unknown keys are errors
-   everywhere, not only in `[jsx]` and `[native]` as today.
-4. The field checks (name, version, `entry`, registry, dependencies, `paths::check_alias`, the
-   `native` checks) run on the result and carry spans.
-
-Errors are `velt_common::Diagnostics` with a file and a span, printed like compiler errors
-(`package.velt:3:12: error: …`), instead of the old string messages without a location.
-
-The reader rejects everything the `Package` type rejects, so the command line, `vpm` and the
-registry never need the type checker. A test keeps the reader and the type in sync: a manifest
-that uses every field must type-check against `std/package/index.velt` and must pass the reader.
-
-**Untrusted input.** The registry server reads manifests from uploaded archives, so the reader
-assumes hostile input:
+The registry server reads manifests from uploaded archives, so the reader assumes hostile input:
 
 - **Size.** A manifest larger than 64 KiB is refused before it is parsed.
-- **Nesting.** The parser's existing depth limit (`MAX_DEPTH`) applies. `parse_file` already
-  runs the parser on its own thread, with a stack sized for that depth.
+- **Nesting.** The parser's depth limit applies; `velt_syntax::parse_file` runs the parser on a
+  thread with a stack sized for that depth.
 - **Count.** A manifest with more than 10,000 values (array elements, object properties and
   scalars) is refused.
 
 Each limit is an error with a location, never a crash.
 
-**Editors.** See [Editors: the manifest document kind](#editors-the-manifest-document-kind).
+### Editors
 
-**Editing (`velt add`).** Today `velt add` edits `velt.toml` with `toml_edit`, which keeps
-comments. The new version works like this:
+Type-checking `package.velt` as a program would not give useful editor support:
 
-1. Splice text at syntax-tree spans: replace the value of an existing dependency key, or insert
-   `name: "req"` before the closing `}` of `dependencies`, adding a `,` after the last property
-   when it has none (and a `dependencies` property when there is none).
-2. Format the file with `velt_fmt`, which keeps comments.
-3. Read the result again to validate it.
+- **False errors.** Sema allows only constant expressions in a module-level `const`, because a
+  module constant has no storage and its initializer is evaluated at every use. Records and
+  arrays allocate, so any manifest with `dependencies` or `paths` would get "module-level
+  constants must be constant expressions". The rule is right for programs and meaningless for a
+  file that is never compiled.
+- **No key completion.** The language server completes members after `x.` and names in scope,
+  not object keys from an expected type.
+- **No live data.** Version completion and "a newer version exists" need the registry, which no
+  type can provide.
 
-As today, the original text is restored if the install fails.
+So the language server treats `package.velt` as a document kind of its own
+(`crates/velt_lsp/src/manifest.rs`):
 
-**JSON for other tools.** `velt manifest --json` prints the validated manifest as JSON (the
-`Package` shape), for tools that can't link `velt_syntax`.
-
-**What stays.**
-
-- The generated files are not manifests: `velt.lock`, the registry's index and a native bundle's
-  metadata are generated, nobody edits them, and they are protocol. They first stayed TOML;
-  #188 made them JSON (`velt.lock.json`, `index.json`, `native.json`), like the registry's own
-  data files and HTTP API.
-- Build or dev scripts, if they are ever added, are separate explicit files and never run on
-  install.
-
-## Editors: the manifest document kind
-
-The first version of this design said that type-checking `package.velt` against `Package` would
-give editors completion, hover and errors "for free". Building `std/package/index.velt` showed that it
-does not:
-
-- **False errors.** Sema allows only constant expressions in a module-level `const` (literals,
-  struct literals of constants): a module constant has no storage, and its initializer is
-  re-evaluated at every use (`velt_vir` `lower/expr.rs`, `global()`), which is only free for
-  values that need no allocation. Records and arrays do, so any manifest with `dependencies`,
-  `paths` or `native.targets` gets "module-level constants must be constant expressions".
-  The rule is right for programs (it is also what keeps module state immutable for data-race
-  freedom and hot reload) and meaningless for a file that is never compiled.
-- **No useful completion.** The language server completes members after `x.` and names in
-  scope; it does not complete object keys from an expected type, so typing inside the manifest
-  object offers `console` and keywords, not `dependencies`.
-- **No live data.** Version completion and "a newer version exists" need the registry, which a
-  type cannot give in any format (a JSON Schema could not either).
-
-So the language server treats `package.velt` as a **document kind of its own**:
-
-1. **Routing.** A document named `package.velt` is not analyzed as a program: no loading, no
-   sema, so no program-only rules apply. `velt` never compiles it either.
+1. **Routing.** A document named `package.velt` is not analyzed as a program: no loading and no
+   sema. `velt` never compiles it either. It is left out of workspace symbols.
 2. **Diagnostics** come from `vpm::manifest::read`, the function every `velt` command uses: the
-   editor shows exactly what `velt build` would, at the same places. There is one definition of
-   a valid manifest and nothing to keep in sync with it.
+   editor shows exactly what `velt build` would, at the same places.
 3. **Position.** The reader's value tree carries spans, so the cursor maps to a path: a key at
    the top level, the value of `dependencies.sqlite`, an element of `native.targets`.
-4. **Schema.** `vpm` gets one table of the manifest's fields (key, kind, doc text, allowed
-   values); the reader's lists of known keys become that table. Completion offers the keys valid
-   at the cursor that are not written yet, and fixed values (`native.targets` triples,
-   `true`/`false`); hover shows a field's doc. A test checks that `std/package/` declares the
-   same fields.
-5. **Live registry data**, through `vpm` and the package's registry (`registry`,
-   `VELT_REGISTRY`, or the public registry https://registry.veltpm.com), fetched off the request thread and cached per session:
-   - completion of versions at `sqlite: "|"`: `^<newest>`, then every version that is not
-     yanked, newest first (`"` triggers it);
-   - hover on a dependency: the latest version, whether the requirement matches it, the locked
-     version, whether the package runs native code;
-   - diagnostics: no published version matches, the package is not in the registry, and a hint
-     when a newer version is out of range, with quick fixes;
+4. **Schema.** `vpm::manifest::schema` is one table of the manifest's fields (key, kind, doc
+   text, allowed values). Completion offers the keys valid at the cursor that are not written
+   yet and fixed values; hover shows a field's doc. A test checks that `std/package/` declares
+   the same fields.
+5. **Live registry data**, from the package's registry, fetched in the background by
+   `crates/velt_lsp/src/registry.rs` and cached per session:
+   - completion of versions inside a dependency's requirement, newest first, skipping yanked
+     versions;
    - completion of package names at a new key in `dependencies`, through the registry's search
-     (`vpm::search`: `GET <url>/api/v1/search?q=…` remotely, the directory locally), writing
-     the whole entry (`sqlite: "^0.3.1"`).
+     (`vpm::search`), writing the whole entry (`sqlite: "^0.3.1"`);
+   - hover on a dependency: the latest version, whether the requirement matches it, the locked
+     version, whether the package has native code;
+   - diagnostics when no published version matches or the package is not in the registry, and a
+     hint with a quick fix when a newer version is out of range.
 
-   Offline or unreachable registries make these features quiet, never errors. Requirements are
-   checked against the versions that are not yanked plus the one `velt.lock.json` pins, like
-   resolution does. The pure parts
-   (where the cursor is, what the data means) are `vpm::manifest::ide::registry`; the language
-   server's `registry` module fetches and caches, and re-checks an open manifest while fetches
-   run.
+   An offline or unreachable registry makes these features quiet, never errors. Requirements are
+   checked against the versions that are not yanked plus the one `velt.lock.json` pins, as
+   resolution does. The pure parts (where the cursor is, what the data means) are
+   `vpm::manifest::ide` and `vpm::manifest::ide::registry`.
 
-Plain `.velt` features (go-to-definition of `Package`, formatting) keep working: formatting
-already goes through `velt fmt`, and the type import still resolves.
+Formatting goes through `velt fmt`, and go-to-definition of `Package` works because the type
+import resolves.
 
-## Comparison
+### Editing
 
-| | `velt.toml` (today) | `velt.json` + JSON schema | `package.velt` |
-|---|---|---|---|
-| TypeScript familiarity | low: TOML tables | high: like `package.json` | high: a TypeScript object literal |
-| Comments | yes | no (or JSONC, which many tools reject) | yes |
-| Typing and editor support | none today; needs a TOML extension and a schema | completion and validation through a published schema and the editor's JSON support | completion, hover and the CLI's own errors from the Velt language server's manifest support, plus live registry data (versions, newer releases) |
-| Errors from `velt` | strings without a location | JSON parser and schema errors with a location | Velt diagnostics with a location and snippet |
-| Safety | data only | data only | data only, enforced by the subset check; nothing runs |
-| Third-party tools | TOML parsers everywhere | JSON parsers everywhere | `velt manifest --json`, or link `velt_syntax` |
-| Parse speed | fast | fast | fast: one lexer and parser pass over a small file, no type checking |
-| Comment-preserving edits | `toml_edit` | none (JSON has no comments to lose) | splice plus `velt_fmt` |
-| Migration cost | none | the same as `package.velt` | every manifest, template, example, golden test and document that shows one, the CLI help, the Rust tests that write manifest text, and `vpm`'s TOML manifest code |
+`velt add` edits the manifest without losing comments (`crates/vpm/src/edit.rs`):
 
-The real cost of `package.velt` is tools written in other languages: every language reads TOML
-and JSON, but only Velt's parser reads a `.velt` file. `velt manifest --json` closes that gap.
-Every other row is as good as or better than the alternatives, and the issue asks for this:
-the manifest written in the same language as the code.
+1. It splices text at syntax-tree spans: it replaces the value of an existing dependency key, or
+   inserts `name: "req"` before the closing `}` of `dependencies`, adding a `,` after the last
+   property when it has none (and a `dependencies` property when there is none).
+2. It formats the file with `velt_fmt`, which keeps comments.
+3. It reads the result again to validate it.
 
-## Compiler and tool changes
+The original text is restored if the install fails.
 
-- `std/package/index.velt`: the `Package` types, plus a row in `std/README.md` (once #17 has landed).
-- `vpm`:
-  - `MANIFEST_FILE` becomes `package.velt`.
-  - The reader replaces `toml::from_str` and `Manifest::to_toml`.
-  - `find_package_root` looks for `package.velt`.
-  - `scaffold::manifest_text` writes `package.velt` text.
-  - `edit.rs` splices instead of using `toml_edit`, which is dropped. `toml` stays for the lock
-    file, the index and `native.toml` (until #188 made those JSON; now only the `velt.toml`
-    migration converter uses it).
-  - The archive whitelist (`archive.rs`) and the content hash (`contents.rs`) cover
-    `package.velt`.
-- `velt_registry`: unchanged apart from going through the new reader. It rejects an archive
-  that contains a `velt.toml`.
-- `veltc`:
-  - `velt init`, `velt new` and the templates follow `scaffold::manifest_text`.
-  - The help text changes, as does the "`[jsx] importSource` in velt.toml" label.
-  - New: `velt manifest --json`.
-  - `velt dev` and `velt test` watch `package.velt`.
-  - `velt fmt` also formats `package.velt`.
-- Language server:
-  - Rebuild the cached package graph when `package.velt` is saved; today it is built once per
-    session.
-  - Leave `package.velt` out of workspace symbols.
+### JSON for other tools
+
+`velt manifest --json` prints the validated manifest as JSON in the `Package` shape, with
+defaults filled in, for tools that cannot link `velt_syntax`.
+
+Generated files are not manifests: `velt.lock.json`, the registry's `index.json` and a native
+bundle's `native.json` are protocol that nobody edits, so they are JSON.
+
+## Compilation
+
+`vpm::manifest` (`crates/vpm/src/manifest/`) is the only definition of a valid manifest:
+
+1. `velt_syntax::parse_file` parses the file. It needs no standard library and no compiler, so
+   the registry server and `vpm` can call it.
+2. The subset check (`read.rs`) turns the syntax tree into a small value tree (string, number,
+   bool, array, object), each value with its span.
+3. A decoder maps the value tree onto the `Manifest` structs (`mod.rs`). Unknown keys are errors
+   everywhere.
+4. The field checks (name, version, `entry`, registry, dependencies, `paths`, `imports`,
+   `native`, `allowNative`, …) run on the result and carry spans.
+
+Errors are `velt_common::Diagnostic`s with a file and a span, printed like compiler errors
+(`package.velt:3:12: error: …`). The workspace manifest, `velt.workspace.velt`, goes through the
+same reader with its own binding and type (`read/workspace.rs`).
 
 ## Diagnostics
 
 Each error points at the text that caused it:
 
-- `the manifest is data only: calls are not allowed`. Identifiers, operators, template literals,
-  spreads and computed keys get the same message with their own name.
-- `` `null` is not allowed; leave the key out ``. TypeScript users will write `registry: null`.
-- `` `package.velt` may only import types from `velt/package` ``.
+- `the manifest is data only: calls are not allowed`; names, operators, template literals,
+  `new`, `as`, parentheses, regular expressions, spreads and methods get the same message with
+  their own wording, and a shorthand property suggests `` write `name: …` ``.
+- `` `null` is not allowed; leave the key out ``.
+- `` `package.velt` may only import types from `velt/package` `` and
+  `` `package.velt` may have at most one import ``.
 - `` the manifest must be one `export const pkg: Package = { … }` ``.
-- `` unknown key `dependecies` in the manifest ``, with a "did you mean" when a key is close.
-- `` duplicate key `sqlite` ``.
-- `the manifest is larger than 64 KiB`, and `the manifest has more than 10000 values`.
-- The existing checks, now with a location: an invalid name, a version that isn't semver, a bad
-  `paths` pattern, an unknown native target, and so on.
+- `` unknown key `dependecies` in the manifest ``, with a `did you mean` note when a key is
+  close.
+- `` duplicate key `sqlite` `` and `` the manifest is missing `version` ``.
+- `the manifest is larger than 64 KiB` and `the manifest has more than 10000 values`.
+- The field checks: an invalid name, a version that is not semver, a bad `paths` pattern, an
+  unknown native target, and so on.
 
-## Migration
+### Migration from `velt.toml`
 
-There is no backward compatibility. If a directory has a `velt.toml` and no `package.velt`, every
-command that looks for a package stops with:
+`velt.toml` is not read. A directory that has one and no `package.velt` is still found as a
+package root, and every command that reads it stops with
+`` `velt.toml` is no longer read; the manifest is `package.velt` `` and a help note that prints
+the converted `package.velt` (`vpm::manifest::legacy`). There is no `velt migrate` command. A
+published package or archive that contains a `velt.toml` cannot be installed or served; the
+error says its author must publish a new version.
 
-``error: `velt.toml` is no longer read; the manifest is `package.velt` ``
+## Compatibility
 
-The fix-it prints the equivalent `package.velt`, converted from the old file. There is no
-`velt migrate` command: the converter is temporary, and a command would outlive it.
+`package.velt` is valid TypeScript: a type import and an annotated object literal. A
+`package.json` is never a Velt package's manifest (it is read only for npm packages compiled from
+their TypeScript sources); the field names follow `package.json` where a field means the same
+thing (`name`, `version`, `dependencies`, `imports`).
 
-Everything in the repository moves in the same change:
+## Alternatives considered
 
-- the templates and the code behind `velt init`/`velt new`;
-- the example apps and the golden tests that carry a manifest;
-- the documents that show a manifest;
-- the CLI help;
-- the Rust tests that write manifest text.
+**`velt.toml`.** TOML is data only and has comments, but TypeScript developers do not know its
+tables, and its editor support needs a separate extension and schema. Errors from a TOML parser
+know nothing about Velt's field rules.
 
-The contract `contracts/velt_toml.md` becomes `contracts/manifest.md`. https://veltlang.com/docs/tooling/manifest/
-is rewritten, with the `jsx` and `native` sections the current page lacks.
+**`velt.json` with a JSON Schema.** Editors' JSON support gives static completion and validation
+from a published schema, and every language has a JSON parser. But live registry data still
+needs custom language-server code, JSON has no comments (JSONC is rejected by many tools), and
+the manifest would not be written in the package's own language. `velt manifest --json` covers
+tools in other languages.
 
-Implementation order:
+**Executable manifests**, with computed values, environment access or imports of other code. A
+manifest the registry and installer read must be as safe as JSON.
 
-1. **The reader in `vpm`**, with unit tests. These include hostile-input tests: deep nesting, a
-   file over the size limit, and too many keys (#135).
-2. **The switch, `velt add` and the migration**, in one pull request: once `vpm` reads only
-   `package.velt`, every `velt.toml` in the repository and `velt add`'s TOML editing break, so
-   steps 2 to 4 of the original plan cannot land separately. It moves `vpm`, `veltc`, the
-   registry and the file watchers over, adds the migration error and `velt manifest --json`,
-   makes `velt add` splice, and migrates the templates, examples, golden tests and docs.
-3. **Editors, part 1:** `std/package/index.velt`, the field schema in `vpm`, and the language server's
-   manifest document kind: the reader's diagnostics, key and value completion, hover; plus the
-   package-graph refresh when `package.velt` is saved, and no `pkg` in workspace symbols.
-4. **Editors, parts 2 and 3: live registry data:** version and package-name completion,
-   dependency hover, requirement diagnostics and the update fix (the search endpoint came with
-   the registry's own work, #173).
+**`export default`** for the manifest. The manifest is found by its binding name; one named
+binding is the one way to write it.
 
-## Not proposed
+**`satisfies Package`** instead of an annotation. Velt has no `satisfies`, and the annotation
+does the same job here.
 
-- **Executable manifests**, with computed values, environment access or imports of other code.
-  The manifest stays as safe as JSON.
-- **`export default`** for the manifest. Velt accepts default exports (#1916), but the manifest
-  is found by its name: one binding, `export const pkg`, is the one way to write it.
-- **`satisfies Package`** instead of an annotation. Velt has no `satisfies`, and the annotation
-  does the same job here.
-- **Keeping `velt.toml` as an alternative.** Two formats would double the tool code and the
-  docs.
-- **A `velt migrate` command.** The fix-it prints the new file instead.
-- **Exempting `package.velt` from sema's constant rule** so the type check passes. It would hide
-  the false error but still give no key completion and no live data.
-- **A JSON manifest (`velt.json` + JSON Schema)**, reconsidered when editor support was revised.
-  It gets static completion from editors' JSON support, but live registry data needs the same
-  custom language-server code, and it loses comments and the Velt-native goal.
-- **`definePackage({ … })`**, as in Vite's `defineConfig`. A call is not a constant expression
-  either, the manifest is the named `pkg` (not a default export), and it adds no completion over
-  the annotation.
+**Exempting `package.velt` from sema's constant rule** so a type check passes. It would hide the
+false error but still give no key completion and no live data.
 
-## Decisions
+**`definePackage({ … })`**, as in Vite's `defineConfig`. A call is not data, and it adds no
+completion over the annotation.
 
-From the maintainer review on issue #128:
+## Limitations
 
-1. **The binding name is fixed:** `export const pkg`. There is one way to write it.
-2. **The migration fix-it only prints the new file.** There is no `velt migrate` command.
-3. **`velt manifest --json` exists**, added in step 2. It answers the third-party tools row of
-   the comparison.
-4. **`velt.lock`, `index.toml` and `native.toml` stay TOML.** (Later revised by #188: they are
-   JSON.)
-5. **Scoped package names (`@scope/name`) are a separate issue.**
-6. **`Record<K, V>` (#17) is a prerequisite** for `std/package/index.velt` and the sync test, not for
-   the reader.
-7. **The registry's limits:** at most 64 KiB, the parser's `MAX_DEPTH`, and at most 10,000
-   values.
-8. **Editor support is the manifest document kind** (revised after #153): the language server
-   reads `package.velt` with `vpm` (diagnostics, schema completion and hover, live registry data)
-   instead of type-checking it. The format stays `package.velt`.
+- Only Velt's parser reads a `.velt` file; tools in other languages use
+  `velt manifest --json`.
+- Build or dev scripts are not part of the manifest, and nothing in a manifest runs on install.

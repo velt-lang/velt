@@ -226,13 +226,6 @@ impl FnLower<'_, '_> {
             }
         }
         self.place_sections();
-        // A poll function's pad links, renumbered as `into_parts` renumbers (cleanup.rs).
-        let mut remap = vec![None; self.live.len()];
-        let live = self.live.iter().enumerate().filter(|(_, l)| **l);
-        for (n, (i, _)) in live.enumerate() {
-            remap[i] = Some(BlockId(n as u32));
-        }
-        self.take_pad_links(|b| remap[b.0 as usize]);
         let (locals, blocks, locs) = self.into_parts(&symbol);
         Function {
             locals,

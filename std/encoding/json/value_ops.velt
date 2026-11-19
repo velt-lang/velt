@@ -6,6 +6,7 @@ import { Reader } from "velt/encoding/json/reader";
 import { parseTape, parseWith } from "velt/encoding/json/tape_parse";
 import { Tape } from "velt/encoding/json/tape";
 import { TapeError } from "velt/encoding/json/tape_error";
+import { TapeRef } from "velt/encoding/json/tape_ref";
 import { JSON } from "velt/prelude/json/json";
 import { JsonValue } from "velt/prelude/json/json_value";
 import { JsonReplacer } from "velt/prelude/json/layout";
@@ -28,7 +29,7 @@ export function jsonValueFromReader(r: Reader): JsonValue | null {
       r.valueFailed();
       return null;
     }
-    return JsonValue.onTape(t as Tape, 0);
+    return JsonValue.onTape(new TapeRef(shared(t as Tape)), 0);
   }
   if (r.rowsValue) {
     return new JsonValue(r.lastHandle());
@@ -104,7 +105,7 @@ export function jsonValueFrom<T>(x: T): JsonValue {
   if (r instanceof TapeError) {
     panic(`JsonValue.from: ${r.message}`);
   }
-  return JsonValue.onTape(r as Tape, 0);
+  return JsonValue.onTape(new TapeRef(shared(r as Tape)), 0);
 }
 
 /** `value.revive(reviver)` (see `JsonValue.revive`). */
