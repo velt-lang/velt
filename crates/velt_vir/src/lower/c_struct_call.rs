@@ -81,26 +81,7 @@ impl FnLower<'_, '_> {
                 }
                 Pass::Words(words) => {
                     let st = structs[k].unwrap_or_else(|| ice("words of a scalar argument"));
-                    let vt = self.cx.ty(st);
-                    let slot = self.words_slot(words);
-                    let Ty::Agg(sagg) = vt else {
-                        ice("a C struct that isn't an aggregate")
-                    };
-                    // Zeroed first: a struct smaller than its words (or with tail padding)
-                    // leaves bytes of them unwritten, which would cross as undefined bits.
-                    let zeros = (words.iter())
-                        .map(|&w| match w {
-                            Ty::F64 => Operand::Const(vir::Const::Float(0.0), Ty::F64),
-                            t => Operand::Const(vir::Const::Int(0), t),
-                        })
-                        .collect();
-                    let wagg = self.words_agg(words);
-                    self.assign(Place::local(slot), Rvalue::Aggregate(wagg, zeros));
-                    let view = Place {
-                        local: slot,
-                        proj: vec![Proj::Cast(sagg)],
-                    };
-                    self.assign(view, Rvalue::Use(arg));
+                    let slot = self.padded_copy(words, arg, st);
                     for (i, &w) in words.iter().enumerate() {
                         vparams.push(w);
                         cparams.push(CParam::Value);
@@ -111,10 +92,12 @@ impl FnLower<'_, '_> {
                     }
                 }
                 &Pass::ByVal { size, align } => {
+                    // A copy padded to whole eightbytes: Cranelift copies a stack argument in
+                    // eightbytes (`StructArgument` of the size rounded up, abi.rs), as clang's
+                    // argument slots are; the callee reads only the struct's bytes.
                     let st = structs[k].unwrap_or_else(|| ice("a scalar argument by value"));
-                    let vt = self.cx.ty(st);
-                    let copy = self.temp(vt);
-                    self.assign(Place::local(copy), Rvalue::Use(arg));
+                    let words = vec![Ty::I64; size.div_ceil(8) as usize];
+                    let copy = self.padded_copy(&words, arg, st);
                     vparams.push(Ty::Ptr);
                     cparams.push(CParam::ByVal { size, align });
                     vargs.push(self.addr(Place::local(copy)));
@@ -214,6 +197,30 @@ impl FnLower<'_, '_> {
             );
         }
         false
+    }
+
+    /// A slot of `words` (zeroed first) holding `arg`, a value of C struct `st`: a struct smaller
+    /// than its words, or with tail padding, leaves bytes of them unwritten, which would cross as
+    /// undefined bits.
+    fn padded_copy(&mut self, words: &[Ty], arg: Operand, st: TyId) -> vir::Local {
+        let Ty::Agg(sagg) = self.cx.ty(st) else {
+            ice("a C struct that isn't an aggregate")
+        };
+        let slot = self.words_slot(words);
+        let zeros = (words.iter())
+            .map(|&w| match w {
+                Ty::F64 => Operand::Const(vir::Const::Float(0.0), Ty::F64),
+                t => Operand::Const(vir::Const::Int(0), t),
+            })
+            .collect();
+        let wagg = self.words_agg(words);
+        self.assign(Place::local(slot), Rvalue::Aggregate(wagg, zeros));
+        let view = Place {
+            local: slot,
+            proj: vec![Proj::Cast(sagg)],
+        };
+        self.assign(view, Rvalue::Use(arg));
+        slot
     }
 
     /// C struct `t` flattened for the classification: every scalar field at its offset.

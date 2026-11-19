@@ -81,9 +81,12 @@ pub(crate) fn c_signature(
     for (&p, cp) in e.params.iter().zip(&c.params) {
         sig.params.push(match *cp {
             vir::CParam::Value => abi_param(p)?,
-            vir::CParam::ByVal { size, .. } => {
-                AbiParam::special(types::I64, ir::ArgumentPurpose::StructArgument(size))
-            }
+            // Cranelift's x64 ABI copies a stack argument in eightbytes: the size rounded up,
+            // from the copy lowering pads to whole eightbytes (c_struct_call.rs).
+            vir::CParam::ByVal { size, .. } => AbiParam::special(
+                types::I64,
+                ir::ArgumentPurpose::StructArgument(size.next_multiple_of(8)),
+            ),
             vir::CParam::Sret { .. } => {
                 AbiParam::special(types::I64, ir::ArgumentPurpose::StructReturn)
             }

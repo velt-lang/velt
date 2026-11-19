@@ -11,7 +11,15 @@
 /// crates/xtask/src/zig.rs). With `VELT_ZIG_TESTS` set they fail without zig rather than skip
 /// (crates/veltc/tests/zig_env). The job's `cargo test` in `.github/workflows/ci.yml` and
 /// `nightly.yml` names the same files.
-pub const TESTS: &[&str] = &["c_headers", "c_constants", "c_sources", "c_export"];
+pub const TESTS: &[&str] = &[
+    "c_headers",
+    "c_constants",
+    "c_sources",
+    "c_export",
+    "c_struct_pointers",
+    "c_struct_headers",
+    "c_struct_by_value",
+];
 
 const PATHS: &[&str] = &[
     "crates/veltc/src/native/",
@@ -77,6 +85,18 @@ const PATHS: &[&str] = &[
     "crates/velt_codegen_cl/src/win_symbols.rs",
     "crates/velt_opt/src/interp/mod.rs",
     "crates/veltc/src/driver/std_cache/statics.rs",
+    // C structs (#2187, #3094): pointer fields and `Ptr.read` (tests/c_struct_pointers.rs), the
+    // header check of structs (tests/c_struct_headers.rs, under crates/veltc/src/native/) and
+    // structs by value, whose differential test is the classifier's entry criterion
+    // (tests/c_struct_by_value.rs).
+    "crates/velt_vir/src/c_struct_abi.rs",
+    "crates/velt_vir/src/lower/c_struct_call.rs",
+    "crates/velt_vir/src/lower/c_call.rs",
+    "crates/velt_vir/src/lower/ptr_memory.rs",
+    "crates/velt_codegen_llvm/src/c_struct.rs",
+    "crates/velt_codegen_llvm/src/function/terminator.rs",
+    "crates/velt_codegen_cl/src/abi.rs",
+    "crates/velt_codegen_cl/src/function/terminator.rs",
 ];
 
 /// Whether the check depends on `path`.
@@ -140,7 +160,8 @@ mod tests {
             without_zig_tests("all() - binary_id(veltc::golden)"),
             "(all() - binary_id(veltc::golden)) - (binary_id(veltc::c_headers) \
              | binary_id(veltc::c_constants) | binary_id(veltc::c_sources) \
-             | binary_id(veltc::c_export))"
+             | binary_id(veltc::c_export) | binary_id(veltc::c_struct_pointers) \
+             | binary_id(veltc::c_struct_headers) | binary_id(veltc::c_struct_by_value))"
         );
     }
 }

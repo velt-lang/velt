@@ -82,22 +82,26 @@ const PTR: Field = f(
 /// The shapes: each struct's fields, in order. Nested structs are `Inner`, defined first.
 fn shapes() -> Vec<Vec<&'static Field>> {
     vec![
-        vec![&F64, &F64],             // SSE, SSE
-        vec![&I64, &F64],             // INTEGER, SSE
-        vec![&F64, &I64],             // SSE, INTEGER
-        vec![&F32, &F32],             // one SSE eightbyte
-        vec![&F32, &F32, &F32],       // SSE, SSE (12 bytes)
-        vec![&F32, &F32, &F32, &F32], // SSE, SSE
-        vec![&U8, &I32],              // one INTEGER eightbyte
-        vec![&I8, &I16, &I32, &I64],  // INTEGER, INTEGER, padding inside
-        vec![&I64, &I64, &I64],       // MEMORY (24 bytes)
-        vec![&BOOL, &F32],            // INTEGER: a bool shares it
-        vec![&F64, &F64, &F64],       // MEMORY of floats
-        vec![&U8],                    // one byte
-        vec![&I32, &F32],             // INTEGER: an integer shares it
-        vec![&I16, &U16, &I16],       // six bytes
-        vec![&PTR, &U64],             // a pointer: INTEGER
-        vec![&U32, &F64, &U8],        // INTEGER, SSE, INTEGER: 24 bytes, MEMORY
+        vec![&F64, &F64],                   // SSE, SSE
+        vec![&I64, &F64],                   // INTEGER, SSE
+        vec![&F64, &I64],                   // SSE, INTEGER
+        vec![&F32, &F32],                   // one SSE eightbyte
+        vec![&F32, &F32, &F32],             // SSE, SSE (12 bytes)
+        vec![&F32, &F32, &F32, &F32],       // SSE, SSE
+        vec![&U8, &I32],                    // one INTEGER eightbyte
+        vec![&I8, &I16, &I32, &I64],        // INTEGER, INTEGER, padding inside
+        vec![&I64, &I64, &I64],             // MEMORY (24 bytes)
+        vec![&BOOL, &F32],                  // INTEGER: a bool shares it
+        vec![&F64, &F64, &F64],             // MEMORY of floats
+        vec![&U8],                          // one byte
+        vec![&I32, &F32],                   // INTEGER: an integer shares it
+        vec![&I16, &U16, &I16],             // six bytes
+        vec![&PTR, &U64],                   // a pointer: INTEGER
+        vec![&U32, &F64, &U8],              // INTEGER, SSE, INTEGER: 24 bytes, MEMORY
+        vec![&I32, &I32, &I32, &I32, &I32], // MEMORY of 20 bytes: no whole eightbytes
+        vec![&U8; 17],                      // MEMORY of 17 bytes
+        vec![&F32],                         // four bytes, SSE
+        vec![&I32],                         // four bytes, INTEGER
     ]
 }
 
@@ -132,10 +136,19 @@ fn c_source(shapes: &[Vec<&Field>]) -> (String, String) {
     // register, so S7 after four integers goes on the stack.
     h.push_str("int64_t late_int(int64_t a, int64_t b, int64_t c, int64_t d, int64_t e, S7 s, int64_t f);\n");
     h.push_str("int64_t late_sse(double a, double b, double c, double d, double e, double f, double g, S0 s, double h);\n");
+    // Structs whose size is no whole number of eightbytes on the stack: a 4-byte one after the
+    // vector and after the integer registers run out, and a 12-byte one (two SSE) with one
+    // vector register left.
+    h.push_str("int64_t late_small_sse(double a, double b, double c, double d, double e, double f, double g, double h, S18 s);\n");
+    h.push_str("int64_t late_small_int(int64_t a, int64_t b, int64_t c, int64_t d, int64_t e, int64_t f, S19 s);\n");
+    h.push_str("int64_t late_f3(double a, double b, double c, double d, double e, double f, double g, S4 s);\n");
     h.push_str("S8 big_after(int64_t a, int64_t b, int64_t c, int64_t d, S7 s);\n");
     h.push_str("typedef struct NP { void *p; int64_t n; } NP;\nNP null_ptr(void);\n");
     c.push_str("int64_t late_int(int64_t a, int64_t b, int64_t c, int64_t d, int64_t e, S7 s, int64_t f) {\n  if (a + b + c + d + e + f != 21) return -100;\n  return chk7(s, 3);\n}\n");
     c.push_str("int64_t late_sse(double a, double b, double c, double d, double e, double f, double g, S0 s, double h) {\n  if (a + b + c + d + e + f + g + h != 36.0) return -100;\n  return chk0(s, 4);\n}\n");
+    c.push_str("int64_t late_small_sse(double a, double b, double c, double d, double e, double f, double g, double h, S18 s) {\n  if (a + b + c + d + e + f + g + h != 36.0) return -100;\n  return chk18(s, 6);\n}\n");
+    c.push_str("int64_t late_small_int(int64_t a, int64_t b, int64_t c, int64_t d, int64_t e, int64_t f, S19 s) {\n  if (a + b + c + d + e + f != 21) return -100;\n  return chk19(s, 7);\n}\n");
+    c.push_str("int64_t late_f3(double a, double b, double c, double d, double e, double f, double g, S4 s) {\n  if (a + b + c + d + e + f + g != 28.0) return -100;\n  return chk4(s, 8);\n}\n");
     c.push_str("NP null_ptr(void) {\n  NP r = { 0, 7 };\n  return r;\n}\n");
     c.push_str("S8 big_after(int64_t a, int64_t b, int64_t c, int64_t d, S7 s) {\n  S8 r = mk8(a + b + c + d);\n  if (chk7(s, 5) != 1) r.f0 = -1;\n  return r;\n}\n");
     (h, c)
@@ -163,6 +176,9 @@ fn velt_lib(shapes: &[Vec<&Field>]) -> String {
     }
     v.push_str("declare c(\"abi\") function late_int(a: i64, b: i64, c: i64, d: i64, e: i64, s: S7, f: i64): i64;\n");
     v.push_str("declare c(\"abi\") function late_sse(a: f64, b: f64, c: f64, d: f64, e: f64, f: f64, g: f64, s: S0, h: f64): i64;\n");
+    v.push_str("declare c(\"abi\") function late_small_sse(a: f64, b: f64, c: f64, d: f64, e: f64, f: f64, g: f64, h: f64, s: S18): i64;\n");
+    v.push_str("declare c(\"abi\") function late_small_int(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, s: S19): i64;\n");
+    v.push_str("declare c(\"abi\") function late_f3(a: f64, b: f64, c: f64, d: f64, e: f64, f: f64, g: f64, s: S4): i64;\n");
     v.push_str(
         "declare c(\"abi\") function big_after(a: i64, b: i64, c: i64, d: i64, s: S7): S8;\n\n",
     );
@@ -172,7 +188,7 @@ fn velt_lib(shapes: &[Vec<&Field>]) -> String {
     for i in 0..shapes.len() {
         let _ = writeln!(v, "  out.push(shape{i}(1));\n  out.push(shape{i}(-2));");
     }
-    v.push_str("  // SAFETY: as above.\n  unsafe {\n    out.push(`late_int ${late_int(1, 2, 3, 4, 5, make7(3), 6)}`);\n    out.push(`late_sse ${late_sse(1, 2, 3, 4, 5, 6, 7, make0(4), 8)}`);\n    out.push(`big_after ${big_after(1, 2, 3, 4, make7(5)) === make8(10)}`);\n  }\n  ;\n  return out;\n}\n");
+    v.push_str("  // SAFETY: as above.\n  unsafe {\n    out.push(`late_int ${late_int(1, 2, 3, 4, 5, make7(3), 6)}`);\n    out.push(`late_sse ${late_sse(1, 2, 3, 4, 5, 6, 7, make0(4), 8)}`);\n    out.push(`big_after ${big_after(1, 2, 3, 4, make7(5)) === make8(10)}`);\n    out.push(`late_small_sse ${late_small_sse(1, 2, 3, 4, 5, 6, 7, 8, make18(6))}`);\n    out.push(`late_small_int ${late_small_int(1, 2, 3, 4, 5, 6, make19(7))}`);\n    out.push(`late_f3 ${late_f3(1, 2, 3, 4, 5, 6, 7, make4(8))}`);\n  }\n  ;\n  return out;\n}\n");
     v
 }
 
@@ -230,7 +246,9 @@ fn expected() -> String {
             let _ = writeln!(out, "S{i}: sent 1, received true, echoed true");
         }
     }
-    out.push_str("late_int 1\nlate_sse 1\nbig_after true\n");
+    out.push_str(
+        "late_int 1\nlate_sse 1\nbig_after true\nlate_small_sse 1\nlate_small_int 1\nlate_f3 1\n",
+    );
     out
 }
 
