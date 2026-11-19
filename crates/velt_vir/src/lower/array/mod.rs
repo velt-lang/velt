@@ -248,22 +248,25 @@ impl FnLower<'_, '_> {
     pub(super) fn free_buffer(&mut self, arr: &Place, elem: TyId) {
         let (stride, align) = self.stride(elem);
         let cap = Self::arr_field(arr, 2);
-        let has = self.rvalue_temp(
+        // One test on the usual path: a capacity read as a signed number is positive for a
+        // buffer of the array's own, 0 for none, and negative for one with an owner
+        // (`addressArrayOwned`: the owner's block with the top bit set, [`OWNER`]).
+        let signed = self.rvalue_temp(Ty::I64, Rvalue::Cast(cap.clone(), Ty::I64));
+        let own = self.rvalue_temp(
             Ty::Bool,
-            Rvalue::Binary(BinOp::Ne, cap.clone(), cint(0, Ty::U64)),
+            Rvalue::Binary(BinOp::Gt, signed.clone(), cint(0, Ty::I64)),
         );
-        let (owned_bb, free_bb, join) = (self.new_block(), self.new_block(), self.new_block());
-        self.branch(has, owned_bb, join);
-        self.switch_to(owned_bb);
-        // A buffer with an owner (`addressArrayOwned`): `cap` is the owner's block with the top
-        // bit set, and the block's first word is the function to call with it.
-        let tagged = self.rvalue_temp(
+        let (other_bb, free_bb, join) = (self.new_block(), self.new_block(), self.new_block());
+        self.branch(own, free_bb, other_bb);
+        self.switch_to(other_bb);
+        let owned = self.rvalue_temp(
             Ty::Bool,
-            Rvalue::Binary(BinOp::Ge, cap.clone(), cint(OWNER as i128, Ty::U64)),
+            Rvalue::Binary(BinOp::Lt, signed, cint(0, Ty::I64)),
         );
         let release_bb = self.new_block();
-        self.branch(tagged, release_bb, free_bb);
+        self.branch(owned, release_bb, join);
         self.switch_to(release_bb);
+        // The block's first word is the function to call with it.
         let block = self.rvalue_temp(
             Ty::U64,
             Rvalue::Binary(BinOp::BitXor, cap.clone(), cint(OWNER as i128, Ty::U64)),
