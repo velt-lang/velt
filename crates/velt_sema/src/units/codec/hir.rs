@@ -341,7 +341,8 @@ enums! {
         7 => Object(a),
         8 => EnumMember(a, b),
     }
-    // Calls the compiler implements, in declaration order.
+    // Calls the compiler implements. A tag stays with its intrinsic for good: a new one takes
+    // the next free number, wherever it is declared.
     Intrinsic {
         0 => Print,
         1 => PrintErr,
