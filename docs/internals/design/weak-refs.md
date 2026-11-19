@@ -254,10 +254,14 @@ the closures made at the value's function type (`Boxing::env_traced`) and visits
 with the matching closure's trace (`Work::EnvTrace`), which walks the same captures as its drop,
 captured variables' cells included; an environment that matches none (one the runtime made, or one
 whose drop entry a function property replaced) is left out. An uncounted object's fields are walked
-as its owner's, since its owner holds the only reference. Interface values and `shared` values are
-not looked into, and classes in a hierarchy with a vtable are opaque (null glue), so a glue never
-reads a field the dynamic type does not have. `lower/weak.rs` lowers the weak intrinsics and map
-value words.
+as its owner's, since its owner holds the only reference. A class in a hierarchy with a vtable may
+be any class of its hierarchy, with fields its static type lacks, so its glue calls the glue its
+object's class table holds (`SLOT_TRACE`: `Glue::ObjTrace`, the walk of exactly that class's
+fields, `lower/glue/trace_dyn.rs`). An interface value's glue compares its table with those the
+program built for a class (`Boxing::iface_traced`) and visits the object with that class's glue; a
+table that matches none (a boxed value's, such as a struct's) is left out. `shared` values are not
+looked into. So a glue never reads a field the dynamic type does not have. `lower/weak.rs` lowers
+the weak intrinsics and map value words.
 
 ### Threads and `shared`
 
@@ -417,8 +421,9 @@ cannot cross threads; Node has one thread per isolate.
   between `a` and `b`: each key is kept alive only by the other map's value. The examination
   records a path from a value back to its own entry's key only, so neither entry has a
   hint and no trial runs; the pair is kept until an entry is deleted or a map dropped.
-- **Opaque trace glue.** A cycle through a class in a hierarchy with a vtable or an interface
-  value is not seen by a trial; it is kept until its map entry goes.
+- **Opaque trace glue.** A cycle through a generator's suspended state or through an interface
+  value holding a boxed value (a struct implementing the interface) is not seen by a trial; it is
+  kept until its map entry goes.
 - **A weak map held only by its own cycle** (a cache kept in a proxy handler's closure): the
   trial treats every map as live, so entries whose keys are dead are still deleted, but a map
   that is itself garbage is freed only when its holder is.

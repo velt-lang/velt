@@ -1,0 +1,75 @@
+// check: no leaks
+// A weak map value whose closure captures an object of a class with a vtable that has one
+// owner, so the compiler does not count it, and whose subclass holds the key: the trace glue
+// walks the uncounted object's fields as its owner's through its class table (#3119 step 3).
+// Once the key's last outside reference goes, the entry and the key are freed; an object of the
+// base class itself, holding nothing, is the control. Node prints `false` for a freed key until
+// its next garbage collection (weakref.velt).
+class Raw {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+class Base {
+  f(): number {
+    return 0;
+  }
+}
+
+class Sub extends Base {
+  raw: Raw;
+  constructor(raw: Raw) {
+    super();
+    this.raw = raw;
+  }
+  override f(): number {
+    return this.raw.n;
+  }
+}
+
+class Deeper extends Sub {
+  override f(): number {
+    return this.raw.n * 10;
+  }
+}
+
+class Handler {
+  read: () => number;
+  constructor(read: () => number) {
+    this.read = read;
+  }
+}
+
+function sub(cache: WeakMap<Raw, Handler>, n: number): WeakRef<Raw> {
+  const raw = new Raw(n);
+  const b: Base = new Sub(raw);
+  cache.set(raw, new Handler(() => b.f() + 1));
+  console.log("sub reads", cache.get(raw)!.read());
+  return new WeakRef(raw);
+}
+
+function deeper(cache: WeakMap<Raw, Handler>, n: number): WeakRef<Raw> {
+  const raw = new Raw(n);
+  const b: Base = new Deeper(raw);
+  cache.set(raw, new Handler(() => b.f() + 1));
+  console.log("deeper reads", cache.get(raw)!.read());
+  return new WeakRef(raw);
+}
+
+function base(cache: WeakMap<Raw, Handler>, n: number): WeakRef<Raw> {
+  const raw = new Raw(n);
+  const b = new Base();
+  cache.set(raw, new Handler(() => b.f() + 1));
+  console.log("base reads", cache.get(raw)!.read());
+  return new WeakRef(raw);
+}
+
+function main() {
+  const cache = new WeakMap<Raw, Handler>();
+  console.log("sub, key freed:", sub(cache, 1).deref() == null);
+  console.log("deeper, key freed:", deeper(cache, 2).deref() == null);
+  console.log("base, key freed:", base(cache, 3).deref() == null);
+  console.log("map in use:", cache.has(new Raw(0)));
+}

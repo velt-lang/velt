@@ -176,8 +176,19 @@ program-wide, so no shape question depends on it), and the transfer glue gives u
 environment through its drop entry instead of a raw decrement. An uncounted object (a class
 instance with one owner, which the compiler does not count) is walked inline: its fields'
 references are reported as its owner's, since the owner holds the only reference, so a closure
-that reaches a key through an uncounted object holding a function value is traced too. Weak
-maps find cycles through handler closures with it ([weak-refs.md](weak-refs.md)).
+that reaches a key through an uncounted object holding a function value is traced too.
+
+**Trace glue for class hierarchies and interface values**
+(`crates/velt_vir/src/lower/glue/trace_dyn.rs`). An object of a class with a vtable may be any class
+of its hierarchy, so the walk follows the fields of every built class of it
+(`Boxing::built_classes`), and its glue calls the glue its class table holds in `SLOT_TRACE` (slot
+−8, the walk of exactly that class's fields, `Glue::ObjTrace`). Every hidden slot of a table is
+taken and the runtime reads some at fixed offsets, so the trace entry uses the one slot class tables
+leave empty (interface tables of value structs keep their `BitsEq` there). An interface table has no
+free slot, so an interface value's glue compares its table with those built for classes implementing
+the interface (`Boxing::iface_traced`, from the tables lowering builds) and visits the object with
+that class's glue, as a function value's glue compares drop entries. Weak maps find cycles through
+handler closures, class hierarchies and interface values with it ([weak-refs.md](weak-refs.md)).
 
 ## Alternatives considered
 
@@ -395,11 +406,8 @@ panics. `weak T` is Velt syntax; it parses in `.ts` files, and `--ts-compat` rep
 
 ### Work items
 
-- complete trace glue for the other types a cycle-capable type reaches, as closures have: a
-  `SLOT_TRACE` vtable slot next to `SLOT_DROP` and `SLOT_TRANSFER` for class hierarchies, the same
-  slot in interface tables, and generator states; each glue is tested against the drop glue's
-  releases (the same objects, the same number of times). Weak maps then find cycles through class
-  hierarchies too;
+- trace glue for generator states: the locals live at the generator's suspension, as its close
+  path drops them, so weak maps find cycles through a generator held in a value too;
 - the collector in std beside the weak core, with the intrinsic it needs, `cycleDesc<T>()` (the
   address of `T`'s descriptor);
 - lowering of the release sequence, descriptors and collection points for cycle-capable types,
