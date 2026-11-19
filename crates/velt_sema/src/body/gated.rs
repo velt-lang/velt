@@ -144,11 +144,36 @@ impl FnCx<'_, '_> {
         if let Some(target) = self.fn_target(d) {
             self.cx.cpu_targets.insert(d, target);
             self.f.target = Some(target);
+            // Features of both architectures: no CPU has them all, so the function never runs
+            // (each call needs every check), which is a mistake rather than a dispatch.
+            let mut arches = target.iter().map(|t| t.arch());
+            let first = arches.next();
+            if arches.any(|a| Some(a) != first) {
+                let span = self.target_use(d).map_or_else(Span::default, |u| u.span);
+                self.cx.error(
+                    Diagnostic::error(
+                        "`@targetFeature` names features of both x86-64 and arm64".to_string(),
+                        span,
+                    )
+                    .with_note("no CPU has them all, so the function could never run: gate one function per architecture, each behind its own checks"),
+                );
+            }
             return;
         }
-        let Some(span) = self.target_use(d).map(|u| u.span) else {
+        let Some(u) = self.target_use(d) else {
             return;
         };
+        let span = u.span;
+        // `@targetFeature()`: the rest parameter allows no name, and no feature gates nothing.
+        if matches!(u.args.first(), Some(ConstTree::Array(items)) if items.is_empty())
+            && self.ungateable(d).is_none()
+        {
+            self.cx.error(
+                Diagnostic::error("`@targetFeature` names no feature".to_string(), span)
+                    .with_note("name the features the function is compiled for: `@targetFeature(\"avx2-x86\")`"),
+            );
+            return;
+        }
         if let Some((what, note)) = self.ungateable(d) {
             self.cx.error(
                 Diagnostic::error(format!("`@targetFeature` can't gate {what}"), span)

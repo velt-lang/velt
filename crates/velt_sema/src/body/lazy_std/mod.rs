@@ -64,6 +64,8 @@ const BY_NAME: &[&str] = &[
     velt_common::std_module!(sync_epoch),
     velt_common::std_module!(lang_this_fn),
     velt_common::std_module!(host),
+    // The start-up check of the CPU (`std_hooks` `cpu_start`), which every program calls first.
+    velt_common::std_module!(lang_hooks_cpu),
 ];
 
 /// The prelude's modules (path prefixes): lowering looks up some of their free functions by name

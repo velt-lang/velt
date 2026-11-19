@@ -183,10 +183,8 @@ impl Interp<'_> {
             // The CPU's features (std/lang/hooks/cpu.velt): the interpreter runs no gated code, as
             // Cranelift doesn't, so it is on no architecture whose checks run.
             "velt_simd_on_x86" | "velt_simd_on_arm" | "velt_simd_cpu_word" => return Ok(0),
-            "velt_simd_cpu_required" => return Ok(0),
-            "velt_rt_cpu_word_set" => {}
-            // std's detection (std/lang/cpu/detect_x86.velt): a CPU with nothing past x86-64.
-            "velt_rt_cpuid" | "velt_rt_xgetbv" => return Ok(0),
+            "velt_simd_cpu_required" | "velt_simd_xgetbv" => return Ok(0),
+            "velt_simd_cpu_word_set" => {}
             // The variables the check reads (`VELT_CPU_DISABLE`, `VELT_SIMD_DISABLE`): unset.
             "getenv" => return Ok(0),
             "velt_rt_uncaught_report" => {}

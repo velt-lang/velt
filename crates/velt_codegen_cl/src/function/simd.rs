@@ -95,8 +95,15 @@ impl Translator<'_, '_> {
             SimdCall::CpuWord | SimdCall::CpuRequired => {
                 Inlined::Value(self.builder.ins().iconst(types::I64, 0))
             }
+            SimdCall::CpuWordSet => Inlined::Unit,
             SimdCall::Inst(ExtOp::Sha1H) => {
                 Inlined::Value(self.builder.ins().iconst(types::I32, 0))
+            }
+            // On x86-64 a call of the function the module defines (cpuid.rs), elsewhere zeros.
+            SimdCall::Cpuid | SimdCall::Xgetbv
+                if matches!(self.decls.externs.get(id.0 as usize), Some(Some(_))) =>
+            {
+                return None
             }
             SimdCall::Inst(_) | SimdCall::Cpuid => Inlined::Value(self.zero_vector()),
             SimdCall::Xgetbv => Inlined::Value(self.builder.ins().iconst(types::I64, 0)),

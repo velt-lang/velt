@@ -338,12 +338,22 @@ generated from the table and checked against it.
   (std/lang/cpu: CPUID and XGETBV on x86-64, `getauxval`, `sysctlbyname` or
   `IsProcessorFeaturePresent` on arm64, `VELT_CPU_DISABLE` and `VELT_SIMD_DISABLE`, the message).
   The driver fills in what the build needs (`velt_simd_cpu_required()`, `--cpu`).
-  `velt_rt/src/cpu.rs` is deleted. Two things stay in the runtime, as data and primitives rather
-  than detection: the word itself (`velt_cpu_word`, which a std static would hold as an `Atomic`,
-  bringing velt/sync's reclaimer into every program), and `velt_rt_cpuid` / `velt_rt_xgetbv`,
-  because Cranelift, which builds debug programs for `--cpu`'s features too, has no instruction
-  for either. So the check runs in debug builds as well. The start-up hook's reads of the
-  operating system are not counted as input (`driver/outside.rs`): a test's result stays cached.
+  `velt_rt/src/cpu.rs` is deleted and no runtime code replaces it (#2196): the word is the
+  compiler's (`velt_simd_cpu_word_set` / `velt_simd_cpu_word`; under LLVM one `linkonce_odr`
+  global per program), CPUID and XGETBV are the existing intrinsics, and Cranelift, which has no
+  instruction for either and builds debug programs for `--cpu`'s features too, gets a function of
+  fixed SSE2 code for each (velt_codegen_cl `cpuid.rs`), so the check runs in debug builds as
+  well. The start-up hook's reads of the operating system are not counted as input
+  (`driver/outside.rs`): a test's result stays cached.
+- **The check runs on the CPU it checks.** It and everything it reaches are compiled for the
+  architecture's baseline CPU whatever `--cpu` says (`vir::Function::baseline`, marked by
+  `velt_vir::start_up` after lowering and again after `velt_opt`): LLVM states the baseline as
+  `target-cpu` on them and on their module's helpers, Cranelift compiles them with a baseline
+  ISA, and the std cache never serves them. Otherwise an x86-64-v4 build on a CPU without AVX-512
+  died of an illegal instruction in the check's own code (review of #3293);
+  crates/veltc/tests/start_up_baseline.rs disassembles them.
+- **`@targetFeature` names one to all of an architecture's features**: `@targetFeature()` and a
+  list mixing x86-64 and arm64 features are errors.
 - **`--cpu` folding** reaches every feature: `Fma.isSupported()` or `Aes.isSupported()` is the
   constant `true` in a build for a CPU that has it, as SHA and PCLMULQDQ already were.
 

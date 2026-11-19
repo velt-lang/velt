@@ -529,8 +529,9 @@ fn computes_only(ext: &ExternFn) -> bool {
             | SimdCall::Xgetbv
             | SimdCall::Prefetch,
         ) => true,
-        // A 256-bit operation writes its result through a pointer.
-        Some(SimdCall::Inst(_) | SimdCall::Wide(..)) | None => false,
+        // A 256-bit operation writes its result through a pointer; the start-up hook's store of
+        // the CPU's feature word is a store.
+        Some(SimdCall::Inst(_) | SimdCall::Wide(..) | SimdCall::CpuWordSet) | None => false,
     }
 }
 

@@ -9,8 +9,8 @@ import { cpuDisabledBits, envList, missingMessage, simdDisabledBits } from "./ch
 declare function velt_simd_cpu_required(): u64;
 declare function velt_rt_exit(code: i32): never;
 declare function velt_rt_write_str(stream: u32, s: string): void;
-// Stores the feature word in the runtime's `velt_cpu_word` (std/lang/cpu/word.velt).
-declare function velt_rt_cpu_word_set(word: u64): void;
+// Stores the feature word every run-time check reads (std/lang/cpu/word.velt).
+declare function velt_simd_cpu_word_set(word: u64): void;
 
 /** The check on a CPU whose feature word bits are `found`: arm64's where `arm`, else x86-64's. */
 export function startWith(found: u64, arm: bool): void {
@@ -28,5 +28,5 @@ export function startWith(found: u64, arm: bool): void {
   if (simdOff !== null) {
     have &= ~simdDisabledBits(simdOff);
   }
-  velt_rt_cpu_word_set(have);
+  velt_simd_cpu_word_set(have);
 }

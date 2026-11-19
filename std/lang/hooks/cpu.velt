@@ -10,7 +10,7 @@ import { noInline } from "velt/lang/intrinsics";
 import { checkCpu } from "#cpu-start";
 
 /**
- * `velt_main`'s first step: computes the CPU's feature word into the runtime's `velt_cpu_word`,
+ * `velt_main`'s first step: computes the CPU's feature word every run-time check reads,
  * without what `VELT_CPU_DISABLE` and `VELT_SIMD_DISABLE` name, and exits with a message where the
  * CPU lacks what the program was built for. Out of line, and nothing here reads the word back:
  * every invariant read of it (`cpuWord`) comes after this store.

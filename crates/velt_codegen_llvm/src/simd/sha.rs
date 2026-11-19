@@ -34,17 +34,30 @@ pub(super) fn on_arch(arch: Arch, of: CpuArch) -> String {
     if cpu_arch(arch) == Some(of) { "1" } else { "0" }.to_string()
 }
 
-/// `velt_simd_cpu_word()`: the runtime's `velt_cpu_word`, which std's start-up hook stores before
-/// any other Velt code runs and which never changes after: read as invariant, so LLVM hoists it
-/// out of loops as it did the runtime's flag bytes. 0 where no feature of this architecture
-/// exists (wasm).
+/// The CPU's feature word: one `i64` per program, defined by every object that reads or sets it
+/// (`linkonce_odr`, so the linker keeps one), written by std's start-up hook before any other
+/// Velt code runs (rt_abi.md "CPU check").
+const WORD: &str = "@velt_cpu_word = linkonce_odr hidden global i64 0, align 8";
+
+/// `velt_simd_cpu_word()`: the word, which never changes after the start-up hook's store: read as
+/// invariant, so LLVM hoists it out of loops. 0 where no feature of this architecture exists
+/// (wasm).
 pub(super) fn cpu_word(b: &mut Body, arch: Arch) -> String {
     if cpu_arch(arch).is_none() {
         return "0".to_string();
     }
-    b.declarations
-        .push("@velt_cpu_word = external global i64".to_string());
+    b.declarations.push(WORD.to_string());
     b.inst("load i64, ptr @velt_cpu_word, align 8, !invariant.load !{}".to_string())
+}
+
+/// `velt_simd_cpu_word_set(%a0)`: the start-up hook's one store of the word; nothing on wasm.
+pub(super) fn cpu_word_set(b: &mut Body, arch: Arch) {
+    if cpu_arch(arch).is_none() {
+        return;
+    }
+    b.declarations.push(WORD.to_string());
+    b.lines
+        .push_str("  store i64 %a0, ptr @velt_cpu_word, align 8\n");
 }
 
 /// The operation `op` on the helper's arguments (`%a0`, …), as the `<16 x i8>` (or the `i32` of

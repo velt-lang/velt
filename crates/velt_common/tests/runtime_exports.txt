@@ -1,6 +1,5 @@
 velt_rt VELT_RT_DEBUG_BUILD
 velt_rt main
-velt_rt velt_cpu_word
 velt_rt velt_rt_alloc
 velt_rt velt_rt_array_view_cold
 velt_rt velt_rt_array_view_get
@@ -35,8 +34,6 @@ velt_rt velt_rt_cell_new
 velt_rt velt_rt_cell_use
 velt_rt velt_rt_child_output_sync
 velt_rt velt_rt_clear_throw_loc
-velt_rt velt_rt_cpu_word_set
-velt_rt velt_rt_cpuid
 velt_rt velt_rt_current_worker
 velt_rt velt_rt_db_cursor
 velt_rt velt_rt_db_sink
@@ -387,7 +384,6 @@ velt_rt velt_rt_xfer_record
 velt_rt velt_rt_xfer_resume
 velt_rt velt_rt_xfer_share_begin
 velt_rt velt_rt_xfer_suspend
-velt_rt velt_rt_xgetbv
 velt_rt velt_rt_yield_now
 velt_rt velt_rt_yield_now_fut
 velt_rt_wasm __main_void

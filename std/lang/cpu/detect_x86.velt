@@ -3,10 +3,12 @@
 // CPUID and XGETBV as Intel's manual says to read them. A feature whose registers the operating
 // system must save (AVX and up, AVX-512) counts only where XCR0 says it does.
 
-// CPUID's register `reg` (0 to 3: EAX, EBX, ECX, EDX) and XGETBV, from the runtime: Cranelift,
-// which builds debug programs for `--cpu`'s features too, has no instruction for either.
-declare function velt_rt_cpuid(leaf: u32, subleaf: u32, reg: u32): u32;
-declare function velt_rt_xgetbv(xcr: u32): u64;
+// x86's CPUID (EAX, EBX, ECX, EDX in lanes 0 to 3) and XGETBV; under Cranelift, which has no
+// instruction for either, functions of fixed code the module defines (velt_codegen_cl cpuid.rs).
+declare function velt_simd_cpuid(leaf: u32, subleaf: u32): u32x4;
+declare function velt_simd_xgetbv(xcr: u32): u64;
+// A lane without the index check.
+declare function velt_simd_u32x4_lane(v: u32x4, index: u64): u32;
 
 // Bit `n` of `word`.
 function bit(word: u32, n: u32): bool {
@@ -55,17 +57,17 @@ export function x86Bits(ecx1: u32, ebx7: u32, ecx7: u32, ecxExt: u32, xcr0: u64)
 
 /** This CPU's feature word x86 bits (called on x86-64 only: `#cpu-start`'s `x64` variant). */
 export function detectX86(): u64 {
-  const max = velt_rt_cpuid(0, 0, 0);
-  const ecx1 = velt_rt_cpuid(1, 0, 2);
+  const max = velt_simd_u32x4_lane(velt_simd_cpuid(0, 0), 0);
+  const ecx1 = velt_simd_u32x4_lane(velt_simd_cpuid(1, 0), 2);
   let ebx7: u32 = 0;
   let ecx7: u32 = 0;
   if (max >= 7) {
-    ebx7 = velt_rt_cpuid(7, 0, 1);
-    ecx7 = velt_rt_cpuid(7, 0, 2);
+    ebx7 = velt_simd_u32x4_lane(velt_simd_cpuid(7, 0), 1);
+    ecx7 = velt_simd_u32x4_lane(velt_simd_cpuid(7, 0), 2);
   }
-  const maxExt = velt_rt_cpuid(0x80000000, 0, 0);
-  const ecxExt = maxExt >= 0x80000001 ? velt_rt_cpuid(0x80000001, 0, 2) : 0;
+  const maxExt = velt_simd_u32x4_lane(velt_simd_cpuid(0x80000000, 0), 0);
+  const ecxExt = maxExt >= 0x80000001 ? velt_simd_u32x4_lane(velt_simd_cpuid(0x80000001, 0), 2) : 0;
   // XGETBV exists only where OSXSAVE is set.
-  const xcr0 = bit(ecx1, 27) ? velt_rt_xgetbv(0) : 0;
+  const xcr0 = bit(ecx1, 27) ? velt_simd_xgetbv(0) : 0;
   return x86Bits(ecx1, ebx7, ecx7, ecxExt, xcr0);
 }

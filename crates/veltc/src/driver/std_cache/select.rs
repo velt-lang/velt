@@ -187,8 +187,8 @@ fn reason(program: &vir::Program, names: &Names, rule: Rule, i: usize) -> Option
     if f.symbol.contains("$dup") {
         return Some("$dup");
     }
-    if reads_cpu_required(program, f) {
-        return Some("the build's CPU");
+    if f.baseline {
+        return Some("the start-up check");
     }
     let set = inlinable(program, i, rule.depth());
     if matches!(
@@ -225,22 +225,6 @@ fn reason(program: &vir::Program, names: &Names, rule: Rule, i: usize) -> Option
         }
     }
     None
-}
-
-/// Whether `f` reads the build's CPU requirement (`velt_simd_cpu_required`, std's start-up check):
-/// the driver fills it in per program (`driver/cpu_check.rs`), so a cached object compiled
-/// without it would be wrong.
-fn reads_cpu_required(program: &vir::Program, f: &vir::Function) -> bool {
-    (f.blocks.iter()).any(|b| match &b.term {
-        Terminator::Call {
-            callee: Callee::Extern(e),
-            ..
-        } => matches!(
-            velt_vir::simd::SimdCall::of_symbol(&program.ext(*e).symbol),
-            Some(velt_vir::simd::SimdCall::CpuRequired)
-        ),
-        _ => false,
-    })
 }
 
 /// Per function of `program`, whether `velt_opt`'s `gated_clones` may clone it for a function

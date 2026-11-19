@@ -3,6 +3,7 @@
 import { describe, expect, it } from "velt/test";
 import { x86Bits } from "velt/lang/cpu/detect_x86";
 import { linuxArmBits } from "velt/lang/cpu/arm_linux_bits";
+import { win32ArmBits } from "velt/lang/cpu/arm_win32_bits";
 import { cpuDisabledBits, listOf, missingMessage, simdDisabledBits } from "velt/lang/cpu/check";
 
 const OSXSAVE: u32 = 1 << 27;
@@ -43,6 +44,101 @@ describe("x86 detection", () => {
   });
 });
 
+// Every x86 feature: the CPUID register its bit is in (0 leaf 1 ECX, 1 leaf 7 EBX, 2 leaf 7 ECX,
+// 3 leaf 0x80000001 ECX), that bit, its word bit, and the register state the OS must save for it
+// (0 none, 1 AVX's, 2 AVX-512's).
+const REGS: u32[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 3];
+const BITS: u32[] = [
+  0,
+  1,
+  9,
+  12,
+  13,
+  19,
+  20,
+  22,
+  23,
+  25,
+  28,
+  29,
+  3,
+  5,
+  8,
+  16,
+  17,
+  28,
+  29,
+  30,
+  31,
+  1,
+  12,
+  5,
+];
+const WORD: u64[] = [
+  0,
+  22,
+  1,
+  10,
+  5,
+  2,
+  3,
+  12,
+  4,
+  23,
+  6,
+  13,
+  8,
+  7,
+  9,
+  14,
+  17,
+  16,
+  21,
+  15,
+  18,
+  19,
+  20,
+  11,
+];
+const STATE: u32[] = [0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 0, 2, 2, 2, 0, 2, 2, 2, 2, 0];
+const FULL: u64 = 0xe6;
+
+// `x86Bits` of feature `i`'s bit alone, with OSXSAVE where `osxsave` and XCR0 `xcr0`.
+function alone(i: i64, osxsave: bool, xcr0: u64): u64 {
+  const v: u32 = 1 << BITS[i];
+  const ecx1 = (REGS[i] == 0 ? v : 0) | (osxsave ? OSXSAVE : 0);
+  return x86Bits(ecx1, REGS[i] == 1 ? v : 0, REGS[i] == 2 ? v : 0, REGS[i] == 3 ? v : 0, xcr0);
+}
+
+describe("x86 detection, bit by bit", () => {
+  it("gives each feature's word bit for its CPUID bit alone, and nothing else", () => {
+    expect(BITS.length).toBe(24);
+    for (let i = 0; i < 24; i++) {
+      expect(alone(i, true, FULL)).toBe((1 as u64) << WORD[i]);
+    }
+  });
+
+  it("counts an AVX feature only where the OS saves the AVX state", () => {
+    for (let i = 0; i < 24; i++) {
+      if (STATE[i] != 0) {
+        expect(alone(i, false, FULL)).toBe(0);
+        expect(alone(i, true, FULL & ~(2 as u64))).toBe(0);
+        expect(alone(i, true, FULL & ~(4 as u64))).toBe(0);
+      }
+    }
+  });
+
+  it("counts an AVX-512 feature only where the OS saves all three of its states", () => {
+    for (let i = 0; i < 24; i++) {
+      if (STATE[i] == 2) {
+        for (const xcr0 of [0x26, 0x46, 0x86, 0x66, 0xa6, 0xc6, 6]) {
+          expect(alone(i, true, xcr0 as u64)).toBe(0);
+        }
+      }
+    }
+  });
+});
+
 describe("arm64 detection on Linux", () => {
   it("maps the capability words to the word's bits from 32", () => {
     const one: u64 = 1;
@@ -57,6 +153,24 @@ describe("arm64 detection on Linux", () => {
     expect(linuxArmBits(0, one << 13)).toBe(one << 38);
     expect(linuxArmBits(0, one << 14)).toBe(one << 39);
     expect(linuxArmBits(one << 3, 0)).toBe(one << 40);
+  });
+});
+
+describe("arm64 detection on Windows", () => {
+  it("maps each answer to the word's bits from 32", () => {
+    const one: u64 = 1;
+    const f = false;
+    const t = true;
+    expect(win32ArmBits(t, f, f, f, f, f, f, f)).toBe(one << 32);
+    expect(win32ArmBits(f, t, f, f, f, f, f, f)).toBe((one << 33) | (one << 34) | (one << 40));
+    expect(win32ArmBits(f, f, t, f, f, f, f, f)).toBe(one << 35);
+    expect(win32ArmBits(f, f, f, t, f, f, f, f)).toBe(0);
+    expect(win32ArmBits(f, f, f, f, t, f, f, f)).toBe(0);
+    expect(win32ArmBits(f, f, f, t, t, f, f, f)).toBe(one << 36);
+    expect(win32ArmBits(f, f, f, f, f, t, f, f)).toBe(one << 38);
+    expect(win32ArmBits(f, f, f, f, f, f, t, f)).toBe(one << 37);
+    expect(win32ArmBits(f, f, f, f, f, f, f, t)).toBe(one << 39);
+    expect(win32ArmBits(f, f, f, f, f, f, f, f)).toBe(0);
   });
 });
 

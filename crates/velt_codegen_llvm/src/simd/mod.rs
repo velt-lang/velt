@@ -116,6 +116,10 @@ pub(crate) fn helper(
         SimdCall::Has(_) => Some(sha::has()),
         SimdCall::OnArch(of) => Some(sha::on_arch(arch, of)),
         SimdCall::CpuWord => Some(sha::cpu_word(&mut body, arch)),
+        SimdCall::CpuWordSet => {
+            sha::cpu_word_set(&mut body, arch);
+            None
+        }
         // The driver fills it in for a build (`driver/cpu_check.rs`); the JIT runs on the CPU it
         // compiles for, which needs nothing.
         SimdCall::CpuRequired => Some("0".to_string()),

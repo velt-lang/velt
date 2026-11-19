@@ -194,13 +194,22 @@ pub(crate) fn emit_unit_capped(
         .flat_map(|e| [global_name(&e.symbol), format!("@{}", e.symbol)])
         .collect();
     let stated = target.has_neon() && bodies.contains("\"target-features\"");
+    // A module with start-up code (`vir::Function::baseline`): helpers stating no features get
+    // the baseline's, a subset of every function's, so they inline into the start-up code too.
+    let in_unit = |i: &usize| program.funcs.get(*i).is_some_and(|f| f.baseline);
+    let has_baseline = unit.defines.iter().chain(&unit.imports).any(in_unit);
+    let helper_features = match target.baseline_attributes().filter(|_| has_baseline) {
+        Some(base) => Some(base),
+        None if stated => Some(" \"target-features\"=\"+neon\""),
+        None => None,
+    };
     for decl in &intrinsics.0 {
         // Or one the catch's definitions declare (`__C_specific_handler`, crate::eh).
         let declared = |n: &str| eh_definitions.lines().any(|l| declared_name(l) == Some(n));
         if declared_name(decl).is_some_and(|n| externs.contains(n) || declared(n)) {
             continue;
         }
-        let _ = writeln!(out, "{}", with_target_features(decl, stated));
+        let _ = writeln!(out, "{}", with_target_features(decl, helper_features));
     }
     out.push_str(&bodies);
     let _ = writeln!(
@@ -261,21 +270,28 @@ fn unit_defines_main(program: &vir::Program, unit: &Unit) -> bool {
     unit.defines.contains(&main) || program.funcs.is_empty()
 }
 
-/// `decl` (an intrinsic's declaration or a helper's definition) with NEON as its explicit target
-/// features where it states none, when `stated`: on arm64, in a module whose functions state
-/// features. A function of a program that uses a CPU extension has explicit features
-/// (`function::extension_features`), and LLVM 23 does not inline an `alwaysinline` helper without
-/// the attribute into a function with it ("conflicting target features"; LLVM 21 did), which left
-/// every SIMD operation of such a program a call. NEON is the arm64 baseline, so it is a subset
-/// of every function's features.
-fn with_target_features(decl: &str, stated: bool) -> std::borrow::Cow<'_, str> {
+/// `decl` (an intrinsic's declaration or a helper's definition) with `features`, explicit target
+/// attributes, where it states none. Two cases, each a subset of every function's features so the
+/// `alwaysinline` helper inlines into any of them:
+/// - on arm64, NEON, in a module whose functions state features. A function of a program that
+///   uses a CPU extension has explicit features (`function::extension_features`), and LLVM 23 does
+///   not inline an `alwaysinline` helper without the attribute into a function with it
+///   ("conflicting target features"; LLVM 21 did), which left every SIMD operation of such a
+///   program a call. NEON is the arm64 baseline;
+/// - in a module with start-up code (`vir::Function::baseline`), the baseline CPU's
+///   (`Target::baseline_attributes`): a helper with the build CPU's features would not inline
+///   into the start-up code, and its own code would use those features before the check.
+fn with_target_features<'a>(decl: &'a str, features: Option<&str>) -> std::borrow::Cow<'a, str> {
     const PLAIN: &str = " alwaysinline nounwind {";
-    if !stated || !decl.starts_with("define ") || decl.contains("\"target-features\"") {
+    let Some(features) = features else {
+        return decl.into();
+    };
+    if !decl.starts_with("define ") || decl.contains("\"target-features\"") {
         return decl.into();
     }
     match decl.find(PLAIN) {
         Some(at) => format!(
-            "{} alwaysinline nounwind \"target-features\"=\"+neon\" {{{}",
+            "{} alwaysinline nounwind{features} {{{}",
             &decl[..at],
             &decl[at + PLAIN.len()..]
         )

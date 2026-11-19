@@ -33,7 +33,7 @@ impl CpuArch {
 }
 
 macro_rules! features {
-    ($($(#[doc = $doc:literal])* $v:ident = $name:literal, $arch:ident, $bit:literal, [$($imp:ident),*], $op:literal, $gated:literal, $class:literal;)*) => {
+    ($($(#[doc = $doc:literal])* $v:ident = $name:literal, $arch:ident, $bit:literal, [$($imp:ident),*], $op:literal, $gated:literal, $class:literal, $check:literal;)*) => {
         /// A CPU feature (see the module's documentation).
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
         pub enum CpuFeature {
@@ -81,78 +81,84 @@ macro_rules! features {
             pub fn arch_class(self) -> &'static str {
                 match self { $(CpuFeature::$v => $class,)* }
             }
+
+            /// Its name in the start-up check's message and in `VELT_CPU_DISABLE`
+            /// (std/lang/cpu/check.velt, rt_abi.md "CPU check"): `SSE4.2`, `DOTPROD`.
+            pub fn check_name(self) -> &'static str {
+                match self { $(CpuFeature::$v => $check,)* }
+            }
         }
     };
 }
 
 features! {
     /// The ARMv8 SHA-1 and SHA-256 instructions (FEAT_SHA256, LLVM's `sha2`).
-    ShaArm = "sha-arm", Aarch64, 33, [], "+sha2", "+sha2", "Sha256";
+    ShaArm = "sha-arm", Aarch64, 33, [], "+sha2", "+sha2", "Sha256", "SHA2";
     /// The x86 SHA extensions (SHA-NI), with the SSE4.1 every such CPU has.
-    ShaX86 = "sha-x86", X86_64, 21, [Sse41X86], "+sha", "+sha,+ssse3,+sse4.1", "Sha";
+    ShaX86 = "sha-x86", X86_64, 21, [Sse41X86], "+sha", "+sha,+ssse3,+sse4.1", "Sha", "SHA";
     /// The x86 carry-less multiplication (PCLMULQDQ), with the SSE4.1 every such CPU has.
-    ClmulX86 = "clmul-x86", X86_64, 22, [Sse41X86], "+pclmul", "+pclmul,+ssse3,+sse4.1", "Pclmulqdq";
+    ClmulX86 = "clmul-x86", X86_64, 22, [Sse41X86], "+pclmul", "+pclmul,+ssse3,+sse4.1", "Pclmulqdq", "PCLMULQDQ";
     /// The ARMv8 64-bit polynomial multiplication (FEAT_PMULL, LLVM's `aes`).
-    ClmulArm = "clmul-arm", Aarch64, 34, [], "+aes", "+aes", "Pmull";
+    ClmulArm = "clmul-arm", Aarch64, 34, [], "+aes", "+aes", "Pmull", "PMULL";
     /// The x86 AES round instructions (AES-NI), with the PCLMULQDQ every such CPU has: what
     /// AES-GCM needs.
-    AesX86 = "aes-x86", X86_64, 23, [ClmulX86], "+aes", "+aes,+pclmul,+ssse3,+sse4.1", "Aes";
+    AesX86 = "aes-x86", X86_64, 23, [ClmulX86], "+aes", "+aes,+pclmul,+ssse3,+sse4.1", "Aes", "AES";
     /// The ARMv8 AES instructions with PMULL (FEAT_AES, FEAT_PMULL; LLVM's `aes`).
-    AesArm = "aes-arm", Aarch64, 40, [ClmulArm], "+aes", "+aes", "Aes";
+    AesArm = "aes-arm", Aarch64, 40, [ClmulArm], "+aes", "+aes", "Aes", "AES";
     /// x86's fused multiply-add (FMA3), with the AVX it needs.
-    FmaX86 = "fma-x86", X86_64, 10, [AvxX86], "+fma", "+fma,+avx,+ssse3,+sse4.1", "Fma";
+    FmaX86 = "fma-x86", X86_64, 10, [AvxX86], "+fma", "+fma,+avx,+ssse3,+sse4.1", "Fma", "FMA";
     /// Arm's bf16 instructions (FEAT_BF16): `bfdot`.
-    Bf16Arm = "bf16-arm", Aarch64, 39, [], "+bf16", "+bf16", "Bf16";
+    Bf16Arm = "bf16-arm", Aarch64, 39, [], "+bf16", "+bf16", "Bf16", "BF16";
     /// SSE3.
-    Sse3X86 = "sse3-x86", X86_64, 0, [], "+sse3", "+sse3", "Sse3";
+    Sse3X86 = "sse3-x86", X86_64, 0, [], "+sse3", "+sse3", "Sse3", "SSE3";
     /// SSSE3.
-    Ssse3X86 = "ssse3-x86", X86_64, 1, [Sse3X86], "+ssse3", "+ssse3", "Ssse3";
+    Ssse3X86 = "ssse3-x86", X86_64, 1, [Sse3X86], "+ssse3", "+ssse3", "Ssse3", "SSSE3";
     /// SSE4.1.
-    Sse41X86 = "sse4.1-x86", X86_64, 2, [Ssse3X86], "+sse4.1", "+sse4.1", "Sse41";
+    Sse41X86 = "sse4.1-x86", X86_64, 2, [Ssse3X86], "+sse4.1", "+sse4.1", "Sse41", "SSE4.1";
     /// SSE4.2 (with CRC32 and the string instructions).
-    Sse42X86 = "sse4.2-x86", X86_64, 3, [Sse41X86], "+sse4.2", "+sse4.2", "Sse42";
+    Sse42X86 = "sse4.2-x86", X86_64, 3, [Sse41X86], "+sse4.2", "+sse4.2", "Sse42", "SSE4.2";
     /// POPCNT.
-    PopcntX86 = "popcnt-x86", X86_64, 4, [], "+popcnt", "+popcnt", "Popcnt";
+    PopcntX86 = "popcnt-x86", X86_64, 4, [], "+popcnt", "+popcnt", "Popcnt", "POPCNT";
     /// CMPXCHG16B.
-    Cmpxchg16bX86 = "cmpxchg16b-x86", X86_64, 5, [], "+cx16", "+cx16", "Cmpxchg16b";
+    Cmpxchg16bX86 = "cmpxchg16b-x86", X86_64, 5, [], "+cx16", "+cx16", "Cmpxchg16b", "CMPXCHG16B";
     /// AVX, with its register state saved by the operating system.
-    AvxX86 = "avx-x86", X86_64, 6, [Sse42X86], "+avx", "+avx", "Avx";
+    AvxX86 = "avx-x86", X86_64, 6, [Sse42X86], "+avx", "+avx", "Avx", "AVX";
     /// AVX2.
-    Avx2X86 = "avx2-x86", X86_64, 7, [AvxX86], "+avx2", "+avx2", "Avx2";
+    Avx2X86 = "avx2-x86", X86_64, 7, [AvxX86], "+avx2", "+avx2", "Avx2", "AVX2";
     /// BMI1.
-    Bmi1X86 = "bmi1-x86", X86_64, 8, [], "+bmi", "+bmi", "Bmi1";
+    Bmi1X86 = "bmi1-x86", X86_64, 8, [], "+bmi", "+bmi", "Bmi1", "BMI1";
     /// BMI2 (PDEP, PEXT, MULX, …).
-    Bmi2X86 = "bmi2-x86", X86_64, 9, [], "+bmi2", "+bmi2", "Bmi2";
+    Bmi2X86 = "bmi2-x86", X86_64, 9, [], "+bmi2", "+bmi2", "Bmi2", "BMI2";
     /// LZCNT.
-    LzcntX86 = "lzcnt-x86", X86_64, 11, [], "+lzcnt", "+lzcnt", "Lzcnt";
+    LzcntX86 = "lzcnt-x86", X86_64, 11, [], "+lzcnt", "+lzcnt", "Lzcnt", "LZCNT";
     /// MOVBE.
-    MovbeX86 = "movbe-x86", X86_64, 12, [], "+movbe", "+movbe", "Movbe";
+    MovbeX86 = "movbe-x86", X86_64, 12, [], "+movbe", "+movbe", "Movbe", "MOVBE";
     /// F16C (half-precision conversions).
-    F16cX86 = "f16c-x86", X86_64, 13, [AvxX86], "+f16c", "+f16c", "F16c";
+    F16cX86 = "f16c-x86", X86_64, 13, [AvxX86], "+f16c", "+f16c", "F16c", "F16C";
     /// AVX-512 Foundation, with its register state saved by the operating system.
-    Avx512fX86 = "avx512f-x86", X86_64, 14, [Avx2X86, FmaX86, F16cX86], "+avx512f", "+avx512f", "Avx512F";
+    Avx512fX86 = "avx512f-x86", X86_64, 14, [Avx2X86, FmaX86, F16cX86], "+avx512f", "+avx512f", "Avx512F", "AVX512F";
     /// AVX-512 byte and word instructions.
-    Avx512bwX86 = "avx512bw-x86", X86_64, 15, [Avx512fX86], "+avx512bw", "+avx512bw", "Avx512BW";
+    Avx512bwX86 = "avx512bw-x86", X86_64, 15, [Avx512fX86], "+avx512bw", "+avx512bw", "Avx512BW", "AVX512BW";
     /// AVX-512 conflict detection.
-    Avx512cdX86 = "avx512cd-x86", X86_64, 16, [Avx512fX86], "+avx512cd", "+avx512cd", "Avx512CD";
+    Avx512cdX86 = "avx512cd-x86", X86_64, 16, [Avx512fX86], "+avx512cd", "+avx512cd", "Avx512CD", "AVX512CD";
     /// AVX-512 doubleword and quadword instructions.
-    Avx512dqX86 = "avx512dq-x86", X86_64, 17, [Avx512fX86], "+avx512dq", "+avx512dq", "Avx512DQ";
+    Avx512dqX86 = "avx512dq-x86", X86_64, 17, [Avx512fX86], "+avx512dq", "+avx512dq", "Avx512DQ", "AVX512DQ";
     /// AVX-512 vector length extensions (the 128- and 256-bit forms).
-    Avx512vlX86 = "avx512vl-x86", X86_64, 18, [Avx512fX86], "+avx512vl", "+avx512vl", "Avx512VL";
+    Avx512vlX86 = "avx512vl-x86", X86_64, 18, [Avx512fX86], "+avx512vl", "+avx512vl", "Avx512VL", "AVX512VL";
     /// AVX-512 vector byte manipulation.
-    Avx512vbmiX86 = "avx512vbmi-x86", X86_64, 19, [Avx512bwX86], "+avx512vbmi", "+avx512vbmi", "Avx512Vbmi";
+    Avx512vbmiX86 = "avx512vbmi-x86", X86_64, 19, [Avx512bwX86], "+avx512vbmi", "+avx512vbmi", "Avx512Vbmi", "AVX512VBMI";
     /// AVX-512 bit algorithms.
-    Avx512bitalgX86 = "avx512bitalg-x86", X86_64, 20, [Avx512bwX86], "+avx512bitalg", "+avx512bitalg", "Avx512Bitalg";
+    Avx512bitalgX86 = "avx512bitalg-x86", X86_64, 20, [Avx512bwX86], "+avx512bitalg", "+avx512bitalg", "Avx512Bitalg", "AVX512BITALG";
     /// The Armv8.2 dot products (FEAT_DotProd).
-    DotprodArm = "dotprod-arm", Aarch64, 32, [], "+dotprod", "+dotprod", "Dp";
+    DotprodArm = "dotprod-arm", Aarch64, 32, [], "+dotprod", "+dotprod", "Dp", "DOTPROD";
     /// The CRC32 instructions (FEAT_CRC32).
-    CrcArm = "crc-arm", Aarch64, 35, [], "+crc", "+crc", "Crc32";
+    CrcArm = "crc-arm", Aarch64, 35, [], "+crc", "+crc", "Crc32", "CRC32";
     /// The SHA-3 and SHA-512 instructions (FEAT_SHA3, FEAT_SHA512).
-    Sha3Arm = "sha3-arm", Aarch64, 36, [ShaArm], "+sha3", "+sha3", "Sha3";
+    Sha3Arm = "sha3-arm", Aarch64, 36, [ShaArm], "+sha3", "+sha3", "Sha3", "SHA3";
     /// Half-precision arithmetic (FEAT_FP16).
-    Fp16Arm = "fp16-arm", Aarch64, 37, [], "+fullfp16", "+fullfp16", "Fp16";
+    Fp16Arm = "fp16-arm", Aarch64, 37, [], "+fullfp16", "+fullfp16", "Fp16", "FP16";
     /// The int8 matrix multiplications (FEAT_I8MM).
-    I8mmArm = "i8mm-arm", Aarch64, 38, [], "+i8mm", "+i8mm", "I8mm";
+    I8mmArm = "i8mm-arm", Aarch64, 38, [], "+i8mm", "+i8mm", "I8mm", "I8MM";
 }
 
 impl CpuFeature {
@@ -412,6 +418,168 @@ mod tests {
             seen += 1;
         }
         assert_eq!(text.matches("export const ").count(), seen);
+    }
+
+    /// A std file's text, by its path under std/.
+    fn std_file(path: &str) -> String {
+        let full = format!("{}/../../std/{path}", env!("CARGO_MANIFEST_DIR"));
+        std::fs::read_to_string(&full).unwrap_or_else(|e| panic!("{full}: {e}"))
+    }
+
+    /// The features of `arch` by their feature word bits.
+    fn by_bit(arch: CpuArch) -> Vec<CpuFeature> {
+        let mut all: Vec<CpuFeature> = CpuFeature::ALL
+            .iter()
+            .copied()
+            .filter(|f| f.arch() == arch)
+            .collect();
+        all.sort_by_key(|f| f.raw_bit());
+        all
+    }
+
+    #[test]
+    fn the_decorator_names_the_table() {
+        // `@targetFeature`'s parameter is a union of string literals: a name the table lacks
+        // would pass the type check and gate nothing (`fn_target` reads names by the table).
+        let text = std_file("lang/intrinsics/decorators.velt");
+        let from = text.find("function targetFeature(").expect("the decorator");
+        let decl = &text[from..from + text[from..].find("): FunctionDecorator").expect("its end")];
+        let mut named: Vec<&str> = decl.split('"').skip(1).step_by(2).collect();
+        let count = named.len();
+        named.sort_unstable();
+        named.dedup();
+        assert_eq!(named.len(), count, "a name twice");
+        let mut table: Vec<&str> = CpuFeature::ALL.iter().map(|f| f.name()).collect();
+        table.sort_unstable();
+        assert_eq!(named, table);
+    }
+
+    #[test]
+    fn the_start_up_check_names_the_table() {
+        // check.velt's `nameOf` names arm64's bits, then x86's, in word order: the message and
+        // `VELT_CPU_DISABLE` use these names.
+        let text = std_file("lang/cpu/check.velt");
+        let from = text.find("function nameOf").expect("nameOf");
+        let body = &text[from..from + text[from..].find("\n}\n").expect("its end")];
+        let named: Vec<&str> = (body.split("return \"").skip(1))
+            .map(|r| &r[..r.find('"').expect("a name's end")])
+            .collect();
+        let table: Vec<&str> = (by_bit(CpuArch::Aarch64).into_iter())
+            .chain(by_bit(CpuArch::X86_64))
+            .map(|f| f.check_name())
+            .collect();
+        assert_eq!(named, table);
+    }
+
+    #[test]
+    fn the_arch_classes_are_the_table() {
+        // Each velt/arch class checks its own row: its mask, its compile-time answer and its
+        // architecture's guard. Sema trusts a check by its definition, so a class with another
+        // row's mask would be a wrong answer nothing else notices.
+        for arch in [CpuArch::X86_64, CpuArch::Aarch64] {
+            let (dir, guard) = match arch {
+                CpuArch::X86_64 => ("x86", "velt_simd_on_x86()"),
+                CpuArch::Aarch64 => ("arm", "velt_simd_on_arm()"),
+            };
+            let index = std_file(&format!("arch/{dir}/index.velt"));
+            let features: Vec<CpuFeature> = CpuFeature::ALL
+                .iter()
+                .copied()
+                .filter(|f| f.arch() == arch)
+                .collect();
+            for f in &features {
+                let (class, file) = (f.arch_class(), f.arch_class().to_lowercase());
+                let text = std_file(&format!("arch/{dir}/{file}.velt"));
+                let mask = f.name().replace(['-', '.'], "_").to_uppercase();
+                let has = format!("velt_simd_has_{}()", f.symbol_suffix());
+                let call = format!("return {has} || ({guard} && cpuHas({mask}));");
+                for want in [
+                    format!("export class {class} {{"),
+                    format!("import {{ {mask} }} from \"velt/lang/cpu/masks\";"),
+                    format!("@targetFeature(\"{}\")", f.name()),
+                    call,
+                ] {
+                    assert!(
+                        text.contains(&want),
+                        "arch/{dir}/{file}.velt lacks `{want}`"
+                    );
+                }
+                let export = format!("export {{ {class} }} from \"velt/arch/{dir}/{file}\";");
+                assert!(
+                    index.contains(&export),
+                    "arch/{dir}/index.velt lacks `{export}`"
+                );
+                assert!(index.contains(&format!("`{}`", f.name())), "{}", f.name());
+            }
+            assert_eq!(index.matches("export {").count(), features.len(), "{dir}");
+        }
+    }
+
+    #[test]
+    fn the_arm64_detectors_set_the_table_bits() {
+        // Each operating system's answer goes to its feature's word bit: macOS's sysctls,
+        // Linux's capability bits and Windows' processor features (their own numbers are the
+        // vendors'; what is checked here is that each lands on the right bit).
+        use CpuFeature::*;
+        let flags = |text: &str| -> Vec<(String, u32)> {
+            (text.split("flag(").skip(1))
+                .filter_map(|f| {
+                    let args = &f[..f.find(");").or_else(|| f.find(") |"))?];
+                    let (what, bit) = args.rsplit_once(", ")?;
+                    Some((what.to_string(), bit.trim_end_matches(')').parse().ok()?))
+                })
+                .collect()
+        };
+        let darwin = [
+            ("arm.FEAT_DotProd", DotprodArm),
+            ("arm.FEAT_SHA256", ShaArm),
+            ("arm.FEAT_PMULL", ClmulArm),
+            ("armv8_crc32", CrcArm),
+            ("arm.FEAT_SHA3", Sha3Arm),
+            ("arm.FEAT_FP16", Fp16Arm),
+            ("arm.FEAT_I8MM", I8mmArm),
+            ("arm.FEAT_BF16", Bf16Arm),
+            ("arm.FEAT_AES", AesArm),
+        ];
+        let linux = [
+            ("hw, 20)", DotprodArm),
+            ("hw, 6)", ShaArm),
+            ("hw, 4)", ClmulArm),
+            ("hw, 7)", CrcArm),
+            ("hw, 17)", Sha3Arm),
+            ("hw, 9)", Fp16Arm),
+            ("hw2, 13)", I8mmArm),
+            ("hw2, 14)", Bf16Arm),
+            ("hw, 3)", AesArm),
+        ];
+        let windows = [
+            ("dp", DotprodArm),
+            ("crc", CrcArm),
+            ("sha3 && sha512", Sha3Arm),
+            ("fp16", Fp16Arm),
+            ("i8mm", I8mmArm),
+            ("bf16", Bf16Arm),
+        ];
+        for (file, table) in [
+            ("lang/cpu/arm_darwin.velt", &darwin[..]),
+            ("lang/cpu/arm_linux_bits.velt", &linux[..]),
+            ("lang/cpu/arm_win32_bits.velt", &windows[..]),
+        ] {
+            let set = flags(&std_file(file));
+            for (key, f) in table {
+                let found = set.iter().find(|(what, _)| what.contains(key));
+                let (_, bit) = found.unwrap_or_else(|| panic!("{file}: nothing for `{key}`"));
+                assert_eq!(*bit, f.raw_bit(), "{file}: `{key}`");
+            }
+        }
+        // Windows' crypto feature is three of them.
+        let set = flags(&std_file("lang/cpu/arm_win32_bits.velt"));
+        let crypto: Vec<u32> = (set.iter())
+            .filter(|(what, _)| what == "crypto")
+            .map(|(_, b)| *b)
+            .collect();
+        let want = [ShaArm, ClmulArm, AesArm].map(|f| f.raw_bit());
+        assert_eq!(crypto, want);
     }
 
     #[test]

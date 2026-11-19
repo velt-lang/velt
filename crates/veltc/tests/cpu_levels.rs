@@ -454,7 +454,8 @@ fn dot_bf16_fast_asks_for_bfdot_once_at_run_time_on_arm64() {
     const BFDOT: &str = "call <16 x i8> @velt.simd.f32x4_bfdot(";
     const OTHER: &str = "call <16 x i8> @velt.simd.f32x4_dot_add_fast_bf16x8(";
     const BUILT_FOR: &str = "@velt.simd.has_bf16_arm()";
-    const WORD: &str = "@velt_cpu_word";
+    // A read of the feature word (every program for these architectures stores it at start-up).
+    const WORD: &str = "load i64, ptr @velt_cpu_word";
     // The body of the function whose definition line contains `name`.
     fn body<'a>(ir: &'a str, name: &str) -> &'a str {
         let at = ir

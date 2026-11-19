@@ -441,6 +441,14 @@ mod tests {
             .collect();
         let ours: Vec<&str> = X86_FEATURES.iter().map(|(n, _)| *n).collect();
         assert_eq!(named[named.len() - ours.len()..], ours[..]);
+        // And the one feature table's names, in word order (velt_common `cpu_features`).
+        let mut x86: Vec<velt_common::cpu_features::CpuFeature> =
+            (velt_common::cpu_features::CpuFeature::ALL.iter().copied())
+                .filter(|f| f.arch() == velt_common::cpu_features::CpuArch::X86_64)
+                .collect();
+        x86.sort_by_key(|f| f.raw_bit());
+        let table: Vec<&str> = x86.iter().map(|f| f.check_name()).collect();
+        assert_eq!(ours, table);
         assert_eq!(named[0], ARM_FEATURES[0].0);
         let masks = format!("i == 1 ? {X86_V2:#x} : i == 2 ? {X86_V3:#x} : {X86_V4:#x};");
         assert!(check.contains(&masks), "{masks}");

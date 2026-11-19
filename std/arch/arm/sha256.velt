@@ -10,7 +10,11 @@ declare function velt_simd_has_sha_arm(): bool;
 // in debug (Cranelift) builds.
 declare function velt_simd_on_arm(): bool;
 
-/** The ARMv8 SHA-1 and SHA-256 instructions (FEAT_SHA256, LLVM's `sha2`). The check of `@targetFeature("sha-arm")`. */
+/**
+ * The ARMv8 SHA-1 and SHA-256 instructions (FEAT_SHA256, LLVM's `sha2`). The check of
+ * `@targetFeature("sha-arm")`. It guards std's SHA-1 kernels too: the architecture requires
+ * FEAT_SHA1 wherever FEAT_SHA256 is, though Linux reports the two in separate capability bits.
+ */
 export class Sha256 {
   /**
    * Whether this CPU has it: true at compile time where the build guarantees it (`--cpu`, or in

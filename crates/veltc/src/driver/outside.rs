@@ -338,6 +338,7 @@ mod tests {
             param_attrs: vec![],
             is_poll: false,
             target: velt_vir::simd::ExtSet::NONE,
+            baseline: false,
             cold: false,
             inline: velt_vir::vir::Inline::Default,
             stops_unwind: false,
