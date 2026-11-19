@@ -9,6 +9,7 @@
 import { closeFd, listDir, openPath, removeTree } from "#fd-system";
 import { utf8Encode } from "velt/encoding/utf8";
 import * as fs from "velt/fs";
+import { linuxOpenDir } from "velt/fs/fd/system";
 import { platform, tmpdir } from "velt/os";
 import { describe, expect, it } from "velt/test";
 
@@ -61,6 +62,17 @@ describe("velt/fs's directories through the C library", () => {
     expect(typeOf(dir, ".")).toBe(-1);
     expect(typeOf(dir, "..")).toBe(-1);
     fs.removeSync(dir, { recursive: true });
+  });
+
+  it("has Linux's open flags for the architectures it knows, and none for another", () => {
+    // O_NOFOLLOW is 0x20000 on x86-64 and 0x8000 on arm64: each set has its own, and an
+    // architecture without a set gets 0, with which no tree is removed.
+    expect(linuxOpenDir("x64")).toBe(0xb0000);
+    expect(linuxOpenDir("arm64")).toBe(0x8c000);
+    expect(linuxOpenDir("x64") & 0x20000).toBe(0x20000);
+    expect(linuxOpenDir("arm64") & 0x8000).toBe(0x8000);
+    expect(linuxOpenDir("riscv64")).toBe(0);
+    expect(linuxOpenDir("")).toBe(0);
   });
 
   it("lists nothing for a path that is not a directory", () => {

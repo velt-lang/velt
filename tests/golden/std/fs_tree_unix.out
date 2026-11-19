@@ -8,7 +8,6 @@ keep.txt sub
 list a dangling link ENOENT ENOENT: no such file or directory, scandir 'velt_fs_tree_unix_tmp/tree/dangling'
 list a link to a file ENOTDIR ENOTDIR: not a directory, scandir 'velt_fs_tree_unix_tmp/tree/to-file'
 mkdir under a file ENOTDIR ENOTDIR: not a directory, mkdir 'velt_fs_tree_unix_tmp/tree/f.txt/x'
-mkdir recursive under a file ENOTDIR ENOTDIR: not a directory, mkdir 'velt_fs_tree_unix_tmp/tree/f.txt/x/y'
 mkdir recursive through a link no error
 mkdir recursive on a link to a directory no error
 list under a file ENOTDIR ENOTDIR: not a directory, scandir 'velt_fs_tree_unix_tmp/tree/f.txt/x'

@@ -65,10 +65,17 @@ const IO_REPARSE_TAG_MOUNT_POINT: u32 = 0xa0000003;
 const ERROR_FILE_NOT_FOUND: u32 = 2;
 const ERROR_PATH_NOT_FOUND: u32 = 3;
 const ERROR_NO_MORE_FILES: u32 = 18;
+const ERROR_FILE_EXISTS: u32 = 80;
+const ERROR_INVALID_NAME: u32 = 123;
+const ERROR_ALREADY_EXISTS: u32 = 183;
+/** Not a Win32 error: what `makeAll` gives for a parent that is there and is no directory. */
+const PARENT_NOT_A_DIRECTORY: u32 = 0xffffffff;
 const ERROR_DIRECTORY: u32 = 267;
 /** Linux's numbers, which `osError` reads on Windows. */
 const ENOENT: i32 = 2;
+const ENOMEM: i32 = 12;
 const ENOTDIR: i32 = 20;
+const EINVAL: i32 = 22;
 
 /** `Dirent`'s kinds (std/fs/dirent.velt). */
 const FILE: u8 = 1;
@@ -170,7 +177,7 @@ function read(path: string, names: string[], kinds: u8[]): i32 {
   // SAFETY: malloc's result is checked before use and freed once, on every way out below.
   const block = unsafe { malloc(FIND_DATA_BYTES) };
   if (block === null) {
-    panic("readdir: out of memory");
+    return ENOMEM;
   }
   const at = Ptr.addressOf(block);
   // SAFETY: `w` is NUL-terminated, and `block` holds the 592 bytes of the WIN32_FIND_DATAW the
@@ -326,6 +333,11 @@ function makeAll(path: string): u32 {
     return first;
   }
   const above = makeAll(parent);
+  if (above === ERROR_ALREADY_EXISTS || above === ERROR_FILE_EXISTS) {
+    // The parent is there and is no directory (`makeAll` takes a directory that is):
+    // ENOTDIR, as Node's and as on the other systems, where the system says so itself.
+    return PARENT_NOT_A_DIRECTORY;
+  }
   if (above !== 0) {
     return above;
   }
@@ -335,9 +347,19 @@ function makeAll(path: string): u32 {
 
 /** Makes the directory `path`, with `recursive` its missing parents too. */
 export function make(c: readonly u8[], path: string, recursive: bool): Done<bool> {
+  if (path.length === 0) {
+    // Nothing to make (`makeAll` takes the empty path for a relative name's parent).
+    return { value: null, error: osError(ENOENT, "mkdir", path) };
+  }
   const code = recursive ? makeAll(path) : makeOne(path);
   if (code !== 0) {
-    return { value: null, error: osError(errnoOfWin32(code), "mkdir", path) };
+    // A name Windows refuses (`a?b`) is EINVAL for `mkdir`, as libuv names it there; a
+    // listing of one stays ENOENT.
+    const e =
+      code === PARENT_NOT_A_DIRECTORY
+        ? ENOTDIR
+        : code === ERROR_INVALID_NAME || code === ERROR_DIRECTORY ? EINVAL : errnoOfWin32(code);
+    return { value: null, error: osError(e, "mkdir", path) };
   }
   return { value: true, error: null };
 }

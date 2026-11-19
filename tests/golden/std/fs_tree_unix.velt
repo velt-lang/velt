@@ -55,10 +55,6 @@ async function main() {
   attempt("list a link to a file", () => fs.readDirSync(`${tree}/to-file`));
   attempt("mkdir under a file", () => fs.mkdirSync(`${tree}/f.txt/x`));
   attempt(
-    "mkdir recursive under a file",
-    () => fs.mkdirSync(`${tree}/f.txt/x/y`, { recursive: true }),
-  );
-  attempt(
     "mkdir recursive through a link",
     () => fs.mkdirSync(`${tree}/to-dir/made/here`, { recursive: true }),
   );

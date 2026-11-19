@@ -153,7 +153,8 @@ function makeAll(c: readonly u8[]): i32 {
 
 /** Makes the directory at `c`, with `recursive` its missing parents too. */
 export function make(c: readonly u8[], path: string, recursive: bool): Done<bool> {
-  const e = recursive ? makeAll(c) : makeOne(c);
+  // The empty path names nothing to make (`makeAll` takes it for a relative name's parent).
+  const e = c.length <= 1 ? ENOENT : recursive ? makeAll(c) : makeOne(c);
   if (e != 0) {
     return { value: null, error: osError(e, "mkdir", path) };
   }

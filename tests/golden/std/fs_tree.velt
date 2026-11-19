@@ -66,6 +66,12 @@ async function main() {
   attempt("mkdir without its parent", () => fs.mkdirSync(`${dir}/no/parent`));
   attempt("mkdir over a file", () => fs.mkdirSync(`${dir}/a.txt`));
   attempt("mkdir recursive over a file", () => fs.mkdirSync(`${dir}/a.txt`, { recursive: true }));
+  attempt(
+    "mkdir recursive under a file",
+    () => fs.mkdirSync(`${dir}/a.txt/x/y`, { recursive: true }),
+  );
+  attempt("mkdir of nothing", () => fs.mkdirSync(""));
+  attempt("mkdir recursive of nothing", () => fs.mkdirSync("", { recursive: true }));
   attempt("remove a full directory", () => fs.removeSync(`${dir}/a`));
   attempt("remove missing", () => fs.removeSync(`${dir}/missing`));
   attempt("remove missing, recursive", () => fs.removeSync(`${dir}/missing`, { recursive: true }));

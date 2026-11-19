@@ -3,7 +3,7 @@
 // on it per architecture).
 
 import { arch } from "velt/os/machine";
-import { Stat } from "velt/fs/fd/system";
+import { linuxOpenDir, Stat } from "velt/fs/fd/system";
 import {
   closeFd as posixCloseFd,
   fstatAt as posixFstatAt,
@@ -113,14 +113,14 @@ export function adviseMap(address: usize, len: usize, advice: i32): i32 {
 
 /**
  * Linux's `struct dirent` on a 64-bit target (glibc and musl agree): `d_type` at 18, `d_name` at
- * 19. `O_CLOEXEC` is 0x80000; `O_DIRECTORY` and `O_NOFOLLOW` are 0x10000 and 0x20000 on x86-64,
- * 0x4000 and 0x8000 on arm64. `AT_FDCWD` -100, `AT_REMOVEDIR` 0x200; `ELOOP` 40.
+ * 19. The `open` flags are the architecture's (`linuxOpenDir`). `AT_FDCWD` -100,
+ * `AT_REMOVEDIR` 0x200; `ELOOP` 40.
  */
 function dirSystem(): DirSystem {
   return {
     typeAt: 18,
     nameAt: 19,
-    openDir: arch() == "x64" ? 0xb0000 : 0x8c000,
+    openDir: linuxOpenDir(arch()),
     cwd: -100,
     removeDir: 0x200,
     loop: 40,
@@ -155,5 +155,9 @@ export function removeDir(path: readonly u8[]): i32 {
 /** Removes the directory at `path` and everything in it, following no link: 0, or the errno. */
 export function removeTree(path: readonly u8[]): i32 {
   const sys = dirSystem();
+  if (sys.openDir == 0) {
+    // No flags for this architecture: nothing is opened, so nothing is removed (ENOSYS).
+    return 38;
+  }
   return posixRemoveTree(sys.cwd, path, sys, true);
 }
