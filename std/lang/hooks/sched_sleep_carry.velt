@@ -100,9 +100,9 @@ export function adopt(e: usize, k: usize): void {
     if (seq > m.ld(b + sl.TM_SEQ)) {
       m.st(b + sl.TM_SEQ, seq);
     }
-    m.st(f + sl.S_OWNER, k);
-    // Plain: `insert` stores the state after it, released.
-    m.st(f + sl.S_HOME, e);
+    m.storeRelaxed(f + sl.S_OWNER, k);
+    // Unordered: `insert` stores the state after it, released.
+    m.storeRelaxed(f + sl.S_HOME, e);
     sl.insert(b, f);
     f = next;
   }

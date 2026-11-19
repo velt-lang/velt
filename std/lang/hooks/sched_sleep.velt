@@ -134,7 +134,7 @@ function sleepPoll(f: usize, cx: usize): u32 {
     // a transfer changes together with this word: sched_node.velt) and in a combinator's, which
     // passes its poller's on (sched_all.velt). Any other context, and a carried sleep (it has
     // no owner until its task adopts it), take the slow way, which asks the worker.
-    if (m.ld(cx) - t.T_WORD !== m.ld(f + S_OWNER) && !here(f, s)) {
+    if (m.ld(cx) - t.T_WORD !== m.loadRelaxed(f + S_OWNER) && !here(f, s)) {
       // Held by another worker's block, or carried by an offered task: its worker gives it up,
       // and this task polls it again as a new one.
       return mv.ask(f, w);
@@ -161,9 +161,9 @@ function sleepPoll(f: usize, cx: usize): u32 {
     // carries it with its sleeps (sched_sleep_carry.velt).
     sp.anchor();
     const e = t.exec();
-    m.st(f + S_OWNER, m.ld(e + t.E_CURRENT));
-    // Plain: `insert` stores the state after it, released.
-    m.st(f + S_HOME, e);
+    m.storeRelaxed(f + S_OWNER, m.ld(e + t.E_CURRENT));
+    // Unordered: `insert` stores the state after it, released.
+    m.storeRelaxed(f + S_HOME, e);
     insert(block(e), f);
   }
   return 0;
@@ -216,9 +216,9 @@ function here(f: usize, s: usize): bool {
   if (s === CARRIED || m.load(f + S_HOME) !== e) {
     return false;
   }
-  if (k !== m.ld(f + S_OWNER)) {
+  if (k !== m.loadRelaxed(f + S_OWNER)) {
     sp.anchor();
-    m.st(f + S_OWNER, k);
+    m.storeRelaxed(f + S_OWNER, k);
   }
   return true;
 }
@@ -257,13 +257,17 @@ function before(a: usize, d: usize, seq: usize): bool {
  * Puts sleep `f` among the pending ones of block `b`, in order (its place found from the end).
  *
  * The state is stored last, released: the registration this ends (`S_OWNER`, `S_HOME`, the
- * links) comes with it to a task on another worker that reads the state (`sleepPoll`,
- * `sleepDrop`, sched_sleep_move.velt `release`). The holder's later states, `DUE` and `FIRED`,
- * are plain stores. A worker that reads one only asks the holder for the sleep (it is not
- * `SEEN`), and the holder reads it on its own thread. Its `S_HOME` is this registration's, seen
- * with `PENDING`, or stale: an older value names another worker (which asks, and the holder
- * answers), or its own worker, which stored that itself, before the hand-over whose state it
- * stored itself too. `SEEN` stays released: a worker that reads it may free the sleep.
+ * links) comes with it to a worker that reads the state with an acquiring load (`sleepPoll`,
+ * `here`, `sleepDrop`, sched_sleep_move.velt `release`). The holder's later states, `DUE` and
+ * `FIRED`, are stored unordered (relaxed), and a reader that loads one of them sees this
+ * registration all the same: they are stored by the thread that released `PENDING`, to the same
+ * word, after it, and both targets keep one thread's stores to one word in that order (x86-64
+ * is TSO; arm64 orders a store after an earlier store to the same location from the same thread
+ * and is other-multi-copy atomic), while no compiler moves a store above a release store to the
+ * same word. The language's release sequences would not carry it (they continue only through
+ * read-modify-writes); this is the reason it holds. So a reader that finds its own worker in
+ * `S_HOME` while the state is `DUE` or `FIRED` reads this registration's home, never an older
+ * one. `SEEN` stays released: a worker that reads it may free the sleep.
  */
 export function insert(b: usize, f: usize): void {
   const d = m.ld(f + S_DEADLINE);
@@ -325,8 +329,8 @@ function pushDue(k: usize, f: usize): void {
     m.st(first + S_PREV, f);
   }
   m.st(f + S_TASK, k);
-  // Plain: see `insert`.
-  m.st(f + S_STATE, DUE);
+  // Unordered: see `insert`.
+  m.storeRelaxed(f + S_STATE, DUE);
   const b = m.ld(t.exec() + t.E_TIMERS);
   m.st(b + TM_DUE, m.ld(b + TM_DUE) + 1);
 }
@@ -366,8 +370,8 @@ export function waiter(f: usize): usize {
  */
 export function fire(k: usize, f: usize): usize {
   unlinkDue(k, f);
-  // Plain: see `insert`.
-  m.st(f + S_STATE, FIRED);
+  // Unordered: see `insert`.
+  m.storeRelaxed(f + S_STATE, FIRED);
   const b = block(t.exec());
   m.st(b + TM_UNSEEN, m.ld(b + TM_UNSEEN) + 1);
   const w = m.ld(f + S_WAKER);
@@ -379,7 +383,7 @@ export function fire(k: usize, f: usize): usize {
 export function carried(b: usize, f: usize): void {
   unlinkPending(b, f);
   // No owner while it is carried: a poll of it goes the slow way (`sleepPoll`).
-  m.st(f + S_OWNER, 0);
+  m.storeRelaxed(f + S_OWNER, 0);
   m.storeRelease(f + S_STATE, CARRIED);
 }
 

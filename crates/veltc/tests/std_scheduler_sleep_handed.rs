@@ -147,7 +147,9 @@ fn a_sleep_awaited_from_three_tasks_on_other_workers_wakes_them_all() {
 /// The shapes that crashed (#3201's review): tasks hand polled sleeps on while busy tasks make
 /// worker 0 offer its queue, so the second poller is fresh on another worker, runs in its waker's
 /// slot, or is offered between its polls; and two tasks await one sleep, each asking for it while
-/// the other's request may be under way. Every sleep fires once, at 4 and 8 workers.
+/// the other's request may be under way; and the same load with no hand-over at all, whose
+/// offered tasks stayed in an offer no busy worker took (sched_spread.velt `reclaim`). Every
+/// sleep fires once, at 4 and 8 workers.
 #[test]
 fn handed_on_sleeps_fire_under_offers() {
     if !has_threads() {
@@ -159,11 +161,27 @@ fn handed_on_sleeps_fire_under_offers() {
         ("handed_user", HANDED_USER),
         ("handed_maker", HANDED_MAKER),
         ("handed_two", HANDED_TWO),
+        ("unhanded", UNHANDED),
     ] {
         let exe = build(dir.path(), name, src);
         check(&exe, "4", 4, "fired 1000\n");
         check(&exe, "8", 4, "fired 1000\n");
     }
+}
+
+/// A handed sleep polled once more on the new task's worker (registered there, or still asked
+/// for) and then dropped: the drop may be served on another worker than the request before it,
+/// and whichever ends last frees the sleep, once (blocks balanced), at 4 and 8 workers.
+#[test]
+fn a_handed_sleep_dropped_after_its_request_is_freed_once() {
+    if !has_threads() {
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let exe = build(dir.path(), "handed_drop", HANDED_DROP);
+    check(&exe, "4", 4, "done 1000\n");
+    check(&exe, "8", 4, "done 1000\n");
 }
 
 /// The program of [`a_sleep_awaited_on_another_worker_moves_to_it`].
@@ -482,5 +500,147 @@ async function main() {
   gate.stop.store(1);
   await Promise.all(busyOnes);
   console.log(`fired ${gate.fired.load()}`);
+}
+"#;
+
+/// [`handed_on_sleeps_fire_under_offers`]: `HANDED_USER`'s load with each sleep awaited by the task that polled it.
+const UNHANDED: &str = r#"class Gate {
+  stop: Atomic<i64> = new Atomic<i64>(0);
+  fired: Atomic<i64> = new Atomic<i64>(0);
+}
+
+class Holder {
+  p: Promise<void>;
+  constructor(p: Promise<void>) {
+    this.p = p;
+  }
+}
+
+async function busy(gate: shared<Gate>): Promise<void> {
+  while (gate.stop.load() == 0) {
+    let x = 0;
+    for (let i = 0; i < 20000; i++) {
+      x += i % 7;
+    }
+    if (x < 0) {
+      console.log("never");
+    }
+    await yieldNow();
+  }
+}
+
+async function maker(gate: shared<Gate>, i: i64): Promise<Holder> {
+  const s = sleep(5 + (i % 7));
+
+  await Promise.race([s, yieldNow()]);
+  return new Holder(s);
+}
+
+// Anchored by a pending sleep, queued again and again: what offers carry.
+async function anchored(i: i64): Promise<void> {
+  const long = sleep(30 + (i % 5));
+  const short = sleep(1);
+  await Promise.race([long, short]);
+  for (let y = 0; y < 40; y++) {
+    await yieldNow();
+  }
+}
+
+async function user(gate: shared<Gate>, i: i64): Promise<void> {
+  const h = await maker(gate, i);
+  await Promise.race([h.p, yieldNow()]);
+  for (let y = 0; y < 30 + (i % 7); y++) {
+    await yieldNow();
+  }
+  await h.p;
+  gate.fired.add(1);
+}
+
+async function main() {
+  const gate = shared(new Gate());
+  const busyOnes: Promise<void>[] = [];
+  for (let i = 0; i < 8; i++) {
+    busyOnes.push(spawn(busy(gate)));
+  }
+  for (let round = 0; round < 5; round++) {
+    const ps: Promise<void>[] = [];
+    for (let i = 0; i < 200; i++) {
+      ps.push(spawn(user(gate, i)));
+      ps.push(spawn(anchored(i)));
+    }
+    await Promise.all(ps);
+  }
+  gate.stop.store(1);
+  await Promise.all(busyOnes);
+  console.log(`fired ${gate.fired.load()}`);
+}
+"#;
+
+/// The program of [`a_handed_sleep_dropped_after_its_request_is_freed_once`].
+const HANDED_DROP: &str = r#"class Gate {
+  stop: Atomic<i64> = new Atomic<i64>(0);
+  done: Atomic<i64> = new Atomic<i64>(0);
+}
+
+class Holder {
+  p: Promise<void>;
+  constructor(p: Promise<void>) {
+    this.p = p;
+  }
+}
+
+async function busy(gate: shared<Gate>): Promise<void> {
+  while (gate.stop.load() == 0) {
+    let x = 0;
+    for (let i = 0; i < 20000; i++) {
+      x += i % 7;
+    }
+    if (x < 0) {
+      console.log("never");
+    }
+    await yieldNow();
+  }
+}
+
+// Polls a long sleep on its worker, then hands it on.
+async function maker(i: i64): Promise<Holder> {
+  const s = sleep(1000 + i);
+  await Promise.race([s, yieldNow()]);
+  return new Holder(s);
+}
+
+// Polls the handed sleep (a request to its worker), yields, polls it again (by then possibly
+// registered in this worker's block, or still asked for) and ends, dropping it: the drop may be
+// served on another worker than the request was.
+async function user(gate: shared<Gate>, h: Holder, i: i64): Promise<void> {
+  await Promise.race([h.p, yieldNow()]);
+  for (let y = 0; y < i % 3; y++) {
+    await yieldNow();
+  }
+  await Promise.race([h.p, yieldNow()]);
+  gate.done.add(1);
+}
+
+async function pair(gate: shared<Gate>, i: i64): Promise<void> {
+  const h = await spawn(maker(i));
+  await spawn(user(gate, h, i));
+}
+
+async function main() {
+  const gate = shared(new Gate());
+  const busyOnes: Promise<void>[] = [];
+  for (let i = 0; i < 8; i++) {
+    busyOnes.push(spawn(busy(gate)));
+  }
+  for (let round = 0; round < 5; round++) {
+    const ps: Promise<void>[] = [];
+    for (let i = 0; i < 200; i++) {
+      ps.push(spawn(pair(gate, i)));
+    }
+    await Promise.all(ps);
+  }
+  gate.stop.store(1);
+  await Promise.all(busyOnes);
+  console.log(`done ${gate.done.load()}`);
 }
 "#;

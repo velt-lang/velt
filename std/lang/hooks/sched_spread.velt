@@ -189,6 +189,22 @@ function offer(e: usize, mode: u32, helper: usize): void {
 }
 
 /**
+ * Worker `e` finds its own offer still there at an I/O tick (sched_tick.velt). Only a worker out
+ * of work takes an offer (`steal`): the helper woken for it may have found work of its own first,
+ * and while every worker stays busy nothing takes it, its tasks never polled. A sleeping worker
+ * is woken for it again; with none asleep, `e` takes it back.
+ */
+@noInline
+export function reclaim(e: usize): void {
+  const h = sleepingHelper(e);
+  if (h !== 0) {
+    wk.unpark(h);
+    return;
+  }
+  steal(e);
+}
+
+/**
  * Worker `e`, out of work, takes over what a worker offers (its own offer first): whether there
  * was anything. The tasks' home becomes `e`.
  */

@@ -42,6 +42,12 @@ const R_SIZE: usize = 24;
 const UNDER_WAY = new Atomic<u64>(0);
 
 /**
+ * The mark in a sleep's `S_ASKS` (above its count of requests under way) that a drop request was
+ * served: the sleep is dropped, and the request that leaves the word at this alone frees it.
+ */
+const GONE: usize = 0x4000000000000000;
+
+/**
  * A poll of sleep `f`, held by another worker's block, with waker `waker` (borrowed): that worker
  * is asked to give it up and wake `waker`. Pending.
  */
@@ -110,14 +116,13 @@ function one(e: usize, r: usize): void {
     m.wakeOwned(waker);
   }
   m.release(r, R_SIZE);
-  // This request named the sleep until here: the last one of a dropped sleep frees it. Whether
-  // it was dropped is read BEFORE the count goes down: once this was the last request, the
-  // task that asked may drop the sleep on its own worker and free it there (it finds no
-  // request under way), so the sleep is not read again. A sleep is marked dropped only by a
-  // drop request being served, which is counted itself and frees at its own end; so one not
-  // marked here is never left for this request to free.
-  const gone = isGone(f);
-  if (m.dec(f + sl.S_ASKS) === 1 && gone) {
+  // This request named the sleep until here. Its end, and for a drop the mark that the sleep was
+  // dropped, are one step on `S_ASKS`: whichever request leaves the word at the mark alone (none
+  // under way, dropped) frees it, whichever worker served which, and the sleep is not read
+  // after (once no request is under way, the task that asked may drop it on its own worker).
+  const left =
+    waker === 0 ? m.addOrdered(f + sl.S_ASKS, GONE - 1) + (GONE - 1) : m.dec(f + sl.S_ASKS) - 1;
+  if (left === GONE) {
     free(f);
   }
   UNDER_WAY.sub(1);
@@ -185,12 +190,7 @@ function release(e: usize, f: usize, drop: bool): u32 {
   return s === sl.FIRED ? 2 : 1;
 }
 
-/** Was sleep `f` dropped while other workers' lists named it (`GONE`)? */
-function isGone(f: usize): bool {
-  return m.load(f + sl.S_STATE) === sl.GONE;
-}
-
-/** Frees sleep `f`, dropped (`GONE`), once nothing on any worker's list names it. */
+/** Frees sleep `f`, dropped, once nothing on any worker's list names it. */
 function free(f: usize): void {
   m.release(f, sl.S_SIZE);
 }

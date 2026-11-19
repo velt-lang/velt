@@ -76,6 +76,10 @@ function ioTick(e: usize, b: usize): void {
   if (m.load(e + t.E_SLEEP_ASKS) !== 0) {
     mv.serve(e);
   }
+  if (m.load(e + t.E_OFFER) !== 0) {
+    // Untaken while this worker is busy (sched_spread.velt `reclaim`).
+    sp.reclaim(e);
+  }
   if (m.load(e + t.E_INBOX) !== 0) {
     const mode = m.ld32(e + t.E_MODE);
     q.lock(e, mode);
