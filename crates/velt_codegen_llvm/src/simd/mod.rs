@@ -113,7 +113,12 @@ pub(crate) fn helper(
             None
         }
         SimdCall::Mask(bits, op) => mask(&mut body, bits, op, arch == Arch::Neon),
-        SimdCall::Has(ext) => Some(sha::has(&mut body, arch, ext)),
+        SimdCall::Has(_) => Some(sha::has()),
+        SimdCall::OnArch(of) => Some(sha::on_arch(arch, of)),
+        SimdCall::CpuWord => Some(sha::cpu_word(&mut body, arch)),
+        // The driver fills it in for a build (`driver/cpu_check.rs`); the JIT runs on the CPU it
+        // compiles for, which needs nothing.
+        SimdCall::CpuRequired => Some("0".to_string()),
         SimdCall::Inst(op) => Some(sha::op(&mut body, arch, op)),
         SimdCall::Cpuid => Some(aes::cpuid(&mut body, arch)),
         SimdCall::Xgetbv => Some(aes::xgetbv(&mut body, arch)),

@@ -187,6 +187,9 @@ fn reason(program: &vir::Program, names: &Names, rule: Rule, i: usize) -> Option
     if f.symbol.contains("$dup") {
         return Some("$dup");
     }
+    if reads_cpu_required(program, f) {
+        return Some("the build's CPU");
+    }
     let set = inlinable(program, i, rule.depth());
     if matches!(
         rule,
@@ -216,7 +219,7 @@ fn reason(program: &vir::Program, names: &Names, rule: Rule, i: usize) -> Option
     }
     if let Rule::NoInline { simd } = rule {
         let checks = |j: usize| simd.get(j) == Some(&true);
-        let gated = set.iter().any(|&j| program.funcs[j].target.is_some());
+        let gated = set.iter().any(|&j| !program.funcs[j].target.is_empty());
         if checks(i) || (gated && declared(program, &set).into_iter().any(checks)) {
             return Some("SIMD dispatch");
         }
@@ -224,12 +227,28 @@ fn reason(program: &vir::Program, names: &Names, rule: Rule, i: usize) -> Option
     None
 }
 
+/// Whether `f` reads the build's CPU requirement (`velt_simd_cpu_required`, std's start-up check):
+/// the driver fills it in per program (`driver/cpu_check.rs`), so a cached object compiled
+/// without it would be wrong.
+fn reads_cpu_required(program: &vir::Program, f: &vir::Function) -> bool {
+    (f.blocks.iter()).any(|b| match &b.term {
+        Terminator::Call {
+            callee: Callee::Extern(e),
+            ..
+        } => matches!(
+            velt_vir::simd::SimdCall::of_symbol(&program.ext(*e).symbol),
+            Some(velt_vir::simd::SimdCall::CpuRequired)
+        ),
+        _ => false,
+    })
+}
+
 /// Per function of `program`, whether `velt_opt`'s `gated_clones` may clone it for a function
 /// gated on a CPU extension: an ordinary function (no target of its own, not a poll function)
 /// that checks a CPU extension (`velt_simd_has_<ext>`), itself or through functions it
 /// references.
 pub(super) fn simd_checking(program: &vir::Program) -> Vec<bool> {
-    let ordinary = |f: &vir::Function| f.target.is_none() && !f.is_poll;
+    let ordinary = |f: &vir::Function| f.target.is_empty() && !f.is_poll;
     let checks_itself = |f: &vir::Function| {
         (f.blocks.iter()).any(|b| match &b.term {
             Terminator::Call {

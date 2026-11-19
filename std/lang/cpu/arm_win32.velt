@@ -1,0 +1,34 @@
+// velt/lang/cpu (internal): the arm64 features of this CPU on Windows (`#cpu-arm`'s win32 variant,
+// std/imports.velt), as the feature word's arm64 bits: what `IsProcessorFeaturePresent` reports.
+// Windows names no feature for FP16, I8MM or BF16 that this reads, so those stay clear. Called on
+// arm64 only.
+
+declare c("c") function IsProcessorFeaturePresent(feature: u32): i32;
+
+/** `PF_ARM_V8_CRYPTO_INSTRUCTIONS_AVAILABLE`: AES, PMULL, SHA-1 and SHA-256. */
+const PF_CRYPTO: u32 = 30;
+/** `PF_ARM_V8_CRC32_INSTRUCTIONS_AVAILABLE`. */
+const PF_CRC32: u32 = 31;
+/** `PF_ARM_V82_DP_INSTRUCTIONS_AVAILABLE`: the dot products. */
+const PF_DP: u32 = 43;
+
+// Whether Windows reports `feature`.
+function present(feature: u32): bool {
+  // SAFETY: takes a number and reads nothing of the caller's.
+  return unsafe { IsProcessorFeaturePresent(feature) } != 0;
+}
+
+/** This CPU's feature word arm64 bits. */
+export function detectArm(): u64 {
+  let word: u64 = 0;
+  if (present(PF_DP)) {
+    word |= (1 as u64) << 32;
+  }
+  if (present(PF_CRYPTO)) {
+    word |= ((1 as u64) << 33) | ((1 as u64) << 34) | ((1 as u64) << 40);
+  }
+  if (present(PF_CRC32)) {
+    word |= (1 as u64) << 35;
+  }
+  return word;
+}

@@ -1,0 +1,71 @@
+// velt/lang/cpu (internal): the x86-64 features of this CPU, as the feature word's x86 bits (the
+// order of the start-up check's list, rt_abi.md "CPU check": SSE3 is bit 0, AES bit 23), from
+// CPUID and XGETBV as Intel's manual says to read them. A feature whose registers the operating
+// system must save (AVX and up, AVX-512) counts only where XCR0 says it does.
+
+// CPUID's register `reg` (0 to 3: EAX, EBX, ECX, EDX) and XGETBV, from the runtime: Cranelift,
+// which builds debug programs for `--cpu`'s features too, has no instruction for either.
+declare function velt_rt_cpuid(leaf: u32, subleaf: u32, reg: u32): u32;
+declare function velt_rt_xgetbv(xcr: u32): u64;
+
+// Bit `n` of `word`.
+function bit(word: u32, n: u32): bool {
+  return ((word >> n) & 1) != 0;
+}
+
+// The word bit `b` where `on`.
+function flag(on: bool, b: u64): u64 {
+  return on ? (1 as u64) << b : 0;
+}
+
+/**
+ * The feature word's x86 bits of a CPU whose CPUID leaf 1 gives `ecx1` in ECX, leaf 7 (sub-leaf
+ * 0) `ebx7` and `ecx7`, leaf 0x80000001 `ecxExt` in ECX, and whose XCR0 is `xcr0` (0 where
+ * CPUID's OSXSAVE is clear).
+ */
+export function x86Bits(ecx1: u32, ebx7: u32, ecx7: u32, ecxExt: u32, xcr0: u64): u64 {
+  // The SSE and AVX state (XCR0 bits 1 and 2), then the opmask and ZMM state (bits 5 to 7).
+  const avx = bit(ecx1, 27) && (xcr0 & 6) == 6;
+  const avx512 = avx && (xcr0 & 0xe0) == 0xe0;
+  return flag(bit(ecx1, 0), 0) |
+    flag(bit(ecx1, 9), 1) |
+    flag(bit(ecx1, 19), 2) |
+    flag(bit(ecx1, 20), 3) |
+    flag(bit(ecx1, 23), 4) |
+    flag(bit(ecx1, 13), 5) |
+    flag(avx && bit(ecx1, 28), 6) |
+    flag(avx && bit(ebx7, 5), 7) |
+    flag(bit(ebx7, 3), 8) |
+    flag(bit(ebx7, 8), 9) |
+    flag(avx && bit(ecx1, 12), 10) |
+    flag(bit(ecxExt, 5), 11) |
+    flag(bit(ecx1, 22), 12) |
+    flag(avx && bit(ecx1, 29), 13) |
+    flag(avx512 && bit(ebx7, 16), 14) |
+    flag(avx512 && bit(ebx7, 30), 15) |
+    flag(avx512 && bit(ebx7, 28), 16) |
+    flag(avx512 && bit(ebx7, 17), 17) |
+    flag(avx512 && bit(ebx7, 31), 18) |
+    flag(avx512 && bit(ecx7, 1), 19) |
+    flag(avx512 && bit(ecx7, 12), 20) |
+    flag(bit(ebx7, 29), 21) |
+    flag(bit(ecx1, 1), 22) |
+    flag(bit(ecx1, 25), 23);
+}
+
+/** This CPU's feature word x86 bits (called on x86-64 only: `#cpu-start`'s `x64` variant). */
+export function detectX86(): u64 {
+  const max = velt_rt_cpuid(0, 0, 0);
+  const ecx1 = velt_rt_cpuid(1, 0, 2);
+  let ebx7: u32 = 0;
+  let ecx7: u32 = 0;
+  if (max >= 7) {
+    ebx7 = velt_rt_cpuid(7, 0, 1);
+    ecx7 = velt_rt_cpuid(7, 0, 2);
+  }
+  const maxExt = velt_rt_cpuid(0x80000000, 0, 0);
+  const ecxExt = maxExt >= 0x80000001 ? velt_rt_cpuid(0x80000001, 0, 2) : 0;
+  // XGETBV exists only where OSXSAVE is set.
+  const xcr0 = bit(ecx1, 27) ? velt_rt_xgetbv(0) : 0;
+  return x86Bits(ecx1, ebx7, ecx7, ecxExt, xcr0);
+}

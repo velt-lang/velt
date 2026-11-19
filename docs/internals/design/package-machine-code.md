@@ -2,8 +2,8 @@
 
 Status: **accepted direction** (#3222, maintainer review 2026-11-18), revision 2: the review's
 answers to the open questions and its changes A–E are written in below. Step 1 is built with this
-note (#3230), step 2 with #3263 (§2 "As built in step 2"); steps 3–6 follow, one pull request
-each.
+note (#3230), step 2 with #3263 (§2 "As built in step 2"), step 3 after it (§2 "As built in step
+3"); steps 4–6 follow, one pull request each.
 
 Related: #1981 (intrinsics, intrinsics.md), #2203 (compile-time decorators), #1055 (SIMD),
 #1866 (numeric workloads), #2402 (wide multiply, add-with-carry), #3094 (`Ptr<T>`), #2943 /
@@ -315,6 +315,38 @@ Once #2402 lands, `a + b` compiles to `adds`/`adc` (arm64) or `add`/`adc` (x86-6
 - **New primitive types from packages** (`i128`, `f8`): compiler decisions; packages build them as
   §6 does.
 
+**As built in step 3.** The model is velt_common's `cpu_features`: one table of 33 features (the
+24 of the start-up check's x86 list, SSE3 to AES, and nine of arm64: DOTPROD, SHA2, PMULL, CRC32,
+SHA3, FP16, I8MM, BF16, AES), each with its bit in the feature word, the features it implies
+(`sha-x86` implies SSE4.1 and down), its LLVM features and its velt/arch class. `CpuFeature` and
+the set `CpuFeatures` are `hir::CpuTarget` / `CpuTargets` and `velt_vir::simd::Ext` / `ExtSet`
+(`vir::Function::target` is a set). `@targetFeature(...targets)` takes several of the 33 names
+(`"avx2-x86"`, `"crc-arm"`; today's eight keep theirs), and a gated call needs every feature of
+its target covered by the caller's set and the checks around it. std/lang/cpu/masks.velt is
+generated from the table and checked against it.
+
+- **The checks.** `velt/arch/x86` and `velt/arch/arm` have a class per feature (`Sse42`, `Avx2`,
+  `Crc32`, `Pmull`, …) with a static `isSupported()`: a **method**, not the review's property,
+  because Velt has no static getters yet; making it a getter later changes only the classes.
+  `isSupported()` is `velt_simd_has_<feature>()` (true at compile time where `--cpu` or the
+  caller's set covers the feature) or `velt_simd_on_<arch>()` and the start-up word's bits (false
+  on the other architecture, on wasm and under Cranelift, so gated code is never lowered there).
+  velt/simd's ten old methods (`u64x2.hasClmulX86()`, …) call the new checks and say so; the
+  `perf/cpu-check-in-loop` lint finds both by definition.
+- **Detection in std.** `cpuStart` (std/lang/hooks/cpu.velt, a `std_hooks` role that replaces
+  `velt_rt_check_cpu`) runs first in `velt_main` and does the start-up check in Velt
+  (std/lang/cpu: CPUID and XGETBV on x86-64, `getauxval`, `sysctlbyname` or
+  `IsProcessorFeaturePresent` on arm64, `VELT_CPU_DISABLE` and `VELT_SIMD_DISABLE`, the message).
+  The driver fills in what the build needs (`velt_simd_cpu_required()`, `--cpu`).
+  `velt_rt/src/cpu.rs` is deleted. Two things stay in the runtime, as data and primitives rather
+  than detection: the word itself (`velt_cpu_word`, which a std static would hold as an `Atomic`,
+  bringing velt/sync's reclaimer into every program), and `velt_rt_cpuid` / `velt_rt_xgetbv`,
+  because Cranelift, which builds debug programs for `--cpu`'s features too, has no instruction
+  for either. So the check runs in debug builds as well. The start-up hook's reads of the
+  operating system are not counted as input (`driver/outside.rs`): a test's result stays cached.
+- **`--cpu` folding** reaches every feature: `Fma.isSupported()` or `Aes.isSupported()` is the
+  constant `true` in a build for a CPU that has it, as SHA and PCLMULQDQ already were.
+
 ## Steps
 
 1. **This note; `@inline` (hint) / `@inline("always")` / `@noInline` for every module; std on
@@ -324,7 +356,8 @@ Once #2402 lands, `a + b` compiles to `adds`/`adc` (arm64) or `add`/`adc` (x86-6
    outside std; a bare `@inline` in std is an error.
 2. **`@targetFeature` for every module, for today's eight targets; std migrated** (built: §2 "As
    built in step 2"). The rule for function values (B) was already enforced.
-3. **One CPU-feature model, detection in std (A), `isSupported`, the in-loop lint (C):**
+3. **One CPU-feature model, detection in std (A), `isSupported`, the in-loop lint (C)** (built:
+   §2 "As built in step 3"):
    `CpuFeatures`, the two lists, `cpuid` / `xgetbv` / the OS calls, the start-up static, `--cpu`
    folding; `velt_rt/src/cpu.rs` deleted. The instruction-set classes and their `isSupported`, the
    `cpu-check-in-loop` lint, and velt/simd's old checks deprecated (moved here from step 2).

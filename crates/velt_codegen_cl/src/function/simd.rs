@@ -87,7 +87,14 @@ impl Translator<'_, '_> {
             // Cranelift has none of these instructions: the CPU "lacks" them here, so every
             // check is false and the operations sit behind it as dead code (std/simd/sha.velt
             // runs the emulation). They give a zero value, never computed at run time.
-            SimdCall::Has(_) => Inlined::Value(self.builder.ins().iconst(types::I8, 0)),
+            SimdCall::Has(_) | SimdCall::OnArch(_) => {
+                Inlined::Value(self.builder.ins().iconst(types::I8, 0))
+            }
+            // No gated code runs here, so std's feature word reads as "nothing" and the
+            // requirement (filled in by the driver for a build, `driver/cpu_check.rs`) as none.
+            SimdCall::CpuWord | SimdCall::CpuRequired => {
+                Inlined::Value(self.builder.ins().iconst(types::I64, 0))
+            }
             SimdCall::Inst(ExtOp::Sha1H) => {
                 Inlined::Value(self.builder.ins().iconst(types::I32, 0))
             }

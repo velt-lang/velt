@@ -522,6 +522,9 @@ fn computes_only(ext: &ExternFn) -> bool {
         Some(
             SimdCall::Mask(..)
             | SimdCall::Has(_)
+            | SimdCall::OnArch(_)
+            | SimdCall::CpuWord
+            | SimdCall::CpuRequired
             | SimdCall::Cpuid
             | SimdCall::Xgetbv
             | SimdCall::Prefetch,

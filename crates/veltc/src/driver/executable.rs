@@ -77,6 +77,12 @@ pub(super) fn build_on_current_thread(
         Some(reaches) => reaches,
         None => outside::reaches(&program),
     };
+    let backend = Backend::of_build(opts);
+    let required = backend
+        .required_features(&target, opts.cpu.as_deref())
+        .map_err(BuildError::Failed)?;
+    // Before `--emit vir`, which then shows the build's requirement.
+    cpu_check::fill(&mut program, required, &target);
     if opts.emit == Emit::Vir {
         return Ok(Artifact::Vir(program.to_string()));
     }
@@ -85,11 +91,6 @@ pub(super) fn build_on_current_thread(
         optimize: opts.release,
         cpu: opts.cpu.clone(),
     };
-    let backend = Backend::of_build(opts);
-    let required = backend
-        .required_features(&target, opts.cpu.as_deref())
-        .map_err(BuildError::Failed)?;
-    cpu_check::insert(&mut program, required);
     if opts.emit == Emit::Llvm {
         return velt_codegen_llvm::emit_ir_for(&program, &cg)
             .map(Artifact::Llvm)

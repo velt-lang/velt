@@ -240,8 +240,9 @@ fn extension_features(
     arch: crate::simd::Arch,
     program_features: Option<&str>,
 ) -> Option<String> {
-    if let Some(ext) = function.target {
-        return crate::simd::has_ext(arch, ext).then(|| ext.gated_features().to_string());
+    let set = function.target;
+    if let Some(first) = set.iter().next() {
+        return crate::simd::has_ext(arch, first).then(|| set.gated_features());
     }
     program_features.map(str::to_string)
 }

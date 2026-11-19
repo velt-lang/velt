@@ -197,6 +197,8 @@ pub(crate) struct Lazy {
     record_hooks: bool,
     /// Have [`SCHED_HOOKS`] been reached?
     sched_hooks: bool,
+    /// [`cpu_hook`] has demanded std/lang/hooks/cpu.
+    cpu_hook: bool,
     /// The program's code converts a value that may hold a float to text: the float hooks are
     /// reached (`velt_common::std_hooks::ON_DEMAND_FLOAT`).
     float_text: bool,
@@ -240,6 +242,7 @@ impl Lazy {
             record_conversion: false,
             record_hooks: false,
             sched_hooks: false,
+            cpu_hook: false,
             float_text: false,
             float_write: false,
             dyn_held: FxHashSet::default(),
@@ -399,6 +402,7 @@ pub(crate) fn reach(cx: &mut Ctx) {
         // A std function C calls (`@export`) is live though no checked code refers to it.
         found.extend(cx.c_exports.iter().map(|e| e.def));
         sched_hooks(cx, &mut found);
+        cpu_hook(cx, &mut found);
         let mut checked = false;
         for d in found {
             checked |= live::mark(cx, d);
@@ -494,6 +498,18 @@ fn sched_hooks(cx: &mut Ctx, found: &mut Vec<DefId>) {
         cx.demand_std(velt_common::std_module!(lang_hooks_sched_cells));
         found.extend(SCHED_CELL_HOOKS.iter().filter_map(|h| cx.prelude_fn(h)));
     }
+}
+
+/// Adds std's `cpuStart` (std/lang/hooks/cpu.velt) to `found` the first time: `velt_main` calls
+/// it first thing in every program, so every run-time CPU check has the CPU's feature word and the
+/// build's CPU requirement is checked (#3222 step 3).
+fn cpu_hook(cx: &mut Ctx, found: &mut Vec<DefId>) {
+    if cx.lazy.cpu_hook || cx.lazy.live.finishing {
+        return;
+    }
+    cx.lazy.cpu_hook = true;
+    cx.demand_std(velt_common::std_module!(lang_hooks_cpu));
+    found.extend(cx.prelude_fn(velt_common::std_hook!(cpu_start)));
 }
 
 /// Check the definition `d` if it is deferred and unchecked: whether it did.

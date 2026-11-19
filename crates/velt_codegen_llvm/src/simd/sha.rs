@@ -1,39 +1,50 @@
-//! The CPU-extension operations (`SimdCall::Inst`, `SimdCall::Has`, #1330): the ARMv8 and x86 SHA
+//! The CPU-feature operations (`SimdCall::Inst`, `SimdCall::Has`, #1330): the ARMv8 and x86 SHA
 //! instructions and carry-less multiplications (x86 PCLMULQDQ, ARM PMULL) as LLVM intrinsics on
-//! the architecture that has them, and the runtime's flag that says whether this CPU does. On
-//! any other architecture the flag is `false` and an operation, dead behind it, gives zeros.
+//! the architecture that has them; the build's own answer to a feature check, the architecture
+//! guard and std's feature word (#3222 step 3). On any other architecture every check is `false`
+//! and an operation, dead behind it, gives zeros.
 
-use velt_vir::simd::{Ext, ExtOp};
+use velt_vir::simd::{CpuArch, Ext, ExtOp};
 
 use super::{Arch, Body};
 
-/// Whether `ext`'s instructions exist on `arch`.
-pub(crate) fn has_ext(arch: Arch, ext: Ext) -> bool {
-    matches!(
-        (arch, ext),
-        (
-            Arch::Neon,
-            Ext::ShaArm | Ext::ClmulArm | Ext::AesArm | Ext::Bf16Arm
-        ) | (
-            Arch::Sse2,
-            Ext::ShaX86 | Ext::ClmulX86 | Ext::AesX86 | Ext::FmaX86
-        )
-    )
+/// The feature architecture `arch` is.
+fn cpu_arch(arch: Arch) -> Option<CpuArch> {
+    match arch {
+        Arch::Neon => Some(CpuArch::Aarch64),
+        Arch::Sse2 => Some(CpuArch::X86_64),
+        _ => None,
+    }
 }
 
-/// `velt_simd_has_<ext>()`: the runtime's flag byte (0 or 1), read as invariant: it is set
-/// before any Velt code runs and never changes, so LLVM hoists the read out of loops. An
-/// extension without a flag (AES, `Ext::has_flag`) is 0 here: its check is 1 only where the
-/// function is gated on it (`own_extension_check`), and std computes the run-time answer.
-pub(super) fn has(b: &mut Body, arch: Arch, ext: Ext) -> String {
-    if !has_ext(arch, ext) || !ext.has_flag() {
+/// Whether `ext`'s instructions exist on `arch`.
+pub(crate) fn has_ext(arch: Arch, ext: Ext) -> bool {
+    cpu_arch(arch) == Some(ext.arch())
+}
+
+/// `velt_simd_has_<feature>()` where the build doesn't guarantee the feature: 0. Where it does (a
+/// gated set that covers it, or `--cpu`), the call site makes it 1 first (`own_extension_check`);
+/// the run-time answer is std's, from its feature word ([`cpu_word`]).
+pub(super) fn has() -> String {
+    "0".to_string()
+}
+
+/// `velt_simd_on_x86()` / `velt_simd_on_arm()`: whether this code is for that architecture.
+pub(super) fn on_arch(arch: Arch, of: CpuArch) -> String {
+    if cpu_arch(arch) == Some(of) { "1" } else { "0" }.to_string()
+}
+
+/// `velt_simd_cpu_word()`: the runtime's `velt_cpu_word`, which std's start-up hook stores before
+/// any other Velt code runs and which never changes after: read as invariant, so LLVM hoists it
+/// out of loops as it did the runtime's flag bytes. 0 where no feature of this architecture
+/// exists (wasm).
+pub(super) fn cpu_word(b: &mut Body, arch: Arch) -> String {
+    if cpu_arch(arch).is_none() {
         return "0".to_string();
     }
-    let flag = ext.flag_symbol();
-    b.declarations.push(format!("@{flag} = external global i8"));
-    b.inst(format!(
-        "load i8, ptr @{flag}, align 1, !invariant.load !{{}}"
-    ))
+    b.declarations
+        .push("@velt_cpu_word = external global i64".to_string());
+    b.inst("load i64, ptr @velt_cpu_word, align 8, !invariant.load !{}".to_string())
 }
 
 /// The operation `op` on the helper's arguments (`%a0`, …), as the `<16 x i8>` (or the `i32` of
@@ -88,9 +99,9 @@ pub(super) fn op(b: &mut Body, arch: Arch, op: ExtOp) -> String {
         _ => {
             let vectors = op.vector_operands();
             let values: Vec<String> = (0..vectors).map(|i| b.arg(i, V)).collect();
-            let prefix = match op.ext() {
-                Ext::ShaArm | Ext::ClmulArm | Ext::AesArm | Ext::Bf16Arm => "aarch64.crypto",
-                Ext::ShaX86 | Ext::ClmulX86 | Ext::AesX86 | Ext::FmaX86 => "x86",
+            let prefix = match op.ext().arch() {
+                CpuArch::Aarch64 => "aarch64.crypto",
+                CpuArch::X86_64 => "x86",
             };
             (
                 format!("{prefix}.{}", op.name()),

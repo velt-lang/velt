@@ -3,6 +3,7 @@
 use super::*;
 use crate::testkit::builder::*;
 use crate::testkit::validate::assert_valid;
+use velt_vir::simd::Ext;
 use velt_vir::vir::{BinOp, ExternId, Function};
 
 /// The program: `has(ext)`, a big `emulation`, `method(x) = has ? x + 1 : emulation(x)`,
@@ -24,7 +25,7 @@ fn probe(checked: Ext) -> Probe {
 fn probe_gated(checked: Ext, gate: Ext) -> Probe {
     let mut pb = ProgramBuilder::new();
     let has = pb.ext(
-        &format!("velt_simd_has_{}", checked.name().replace('-', "_")),
+        &format!("velt_simd_has_{}", checked.symbol_suffix()),
         &[],
         Ty::Bool,
         false,
@@ -46,7 +47,7 @@ fn probe_gated(checked: Ext, gate: Ext) -> Probe {
     ));
     let main = pb.add(calling("main", &[method, gated], Linkage::Export));
     let mut p = pb.finish();
-    p.funcs[gated.0 as usize].target = Some(gate);
+    p.funcs[gated.0 as usize].target = ExtSet::of(gate);
     assert_valid(&p);
     Probe {
         p,
@@ -121,7 +122,7 @@ fn a_gated_function_calls_clones_without_the_check() {
     assert_eq!(calls[1], method_arm, "one clone per callee");
     assert!(method_arm != method && wrapper_arm != wrapper);
     let clone = &p.funcs[method_arm.0 as usize];
-    assert_eq!(clone.target, Some(Ext::ShaArm));
+    assert_eq!(clone.target, ExtSet::of(Ext::ShaArm));
     assert_eq!(clone.linkage, Linkage::Internal);
     assert_eq!(clone.symbol, "method$sha_arm");
     assert_eq!(extern_calls(clone), 0, "no check");
@@ -155,7 +156,7 @@ fn the_pipeline_leaves_the_bare_operation_in_the_gated_function() {
     let gated = p
         .funcs
         .iter()
-        .find(|f| f.target == Some(Ext::ShaArm))
+        .find(|f| f.target == ExtSet::of(Ext::ShaArm))
         .expect("the gated function");
     assert!(callees(gated).is_empty(), "{:?}", callees(gated));
     assert_eq!(extern_calls(gated), 0);
@@ -175,7 +176,7 @@ fn an_aes_target_takes_the_carry_less_check_as_true() {
             .collect();
         assert!(!clones.is_empty());
         for clone in clones {
-            assert_eq!(clone.target, Some(gate));
+            assert_eq!(clone.target, ExtSet::of(gate));
             assert_eq!(extern_calls(clone), 0, "{}", clone.symbol);
         }
     }

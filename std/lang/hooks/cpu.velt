@@ -1,0 +1,21 @@
+// velt/lang/hooks (internal): the CPU's features, read first thing (#3222 step 3,
+// docs/internals/design/package-machine-code.md §2). `velt_main` calls `cpuStart` right after
+// handing the runtime its statics and before any other Velt code: it computes the feature word
+// (std/lang/cpu/word.velt) that every run-time CPU check reads, and checks that the CPU has what
+// the program was built for (`--cpu`, rt_abi.md "CPU check"), so an older CPU gets a message
+// instead of an illegal instruction. It runs in every build for x86-64 and arm64, Cranelift's too
+// (whose code uses `--cpu`'s features as well); on WebAssembly it does nothing.
+
+import { noInline } from "velt/lang/intrinsics";
+import { checkCpu } from "#cpu-start";
+
+/**
+ * `velt_main`'s first step: computes the CPU's feature word into the runtime's `velt_cpu_word`,
+ * without what `VELT_CPU_DISABLE` and `VELT_SIMD_DISABLE` name, and exits with a message where the
+ * CPU lacks what the program was built for. Out of line, and nothing here reads the word back:
+ * every invariant read of it (`cpuWord`) comes after this store.
+ */
+@noInline
+export function cpuStart(): void {
+  checkCpu();
+}
