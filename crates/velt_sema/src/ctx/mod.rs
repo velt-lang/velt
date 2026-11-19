@@ -106,6 +106,8 @@ pub(crate) struct Ctx<'m> {
     pub def_spans: DefTable<Span>,
     /// The check is by units (`CheckOptions::units`, `crate::units`).
     pub units: bool,
+    /// Which part of a check by units this context checks (`crate::units`).
+    pub units_stage: crate::units::Stage,
     /// Where the unit being checked starts (`crate::units`): the passes after the bodies take
     /// their functions from here ([`Ctx::unit_fns`]). 0 in a whole-program check.
     pub unit_base: u32,
@@ -582,6 +584,7 @@ impl<'m> Ctx<'m> {
             def_spans: DefTable::default(),
             units: false,
             unit_base: 0,
+            units_stage: crate::units::Stage::Both,
             scopes: modules
                 .iter()
                 .map(|m| ModuleScope {
