@@ -14,6 +14,7 @@ velt init  [--template <t>] [--name <name>] [--force]
 velt init  --editor vscode [--dir <d>] # only .vscode/launch.json + extensions.json, kept if present
 velt clean [--cache]
 velt cache warm [--background]
+velt cache hooks --out <dir> [--target <triple>]   # packaging: a toolchain's lib/hooks
 velt completions bash|zsh|fish|powershell
 velt help  [<command>]                 # = velt <command> --help
 velt add   <pkg>[@<req>] [--path <dir>]
@@ -821,6 +822,21 @@ velt --version | -V | version          # velt <ver> (<git hash> <host triple>)
   a note, exit 0; no warm-up directory → error. The launcher runs `velt cache warm --background`
   after installing a toolchain, as do `scripts/install.*` and `scripts/get-velt.*` (ignoring
   failures).
+- `cache hooks --out <dir> [--target <triple>]` (additive, #3262; for packaging a release, not in
+  `velt help`): compiles the object of every prebuilt hook module from the std this `velt` finds,
+  for `<triple>` (default: the host) and its default CPU, and writes `<dir>/<triple>/<module
+  entry>.o` and `<module entry>.manifest`, `<dir>` being a toolchain's `lib/hooks`. The build
+  cache is neither read nor written. It needs clang, as `velt cache warm`'s objects do. A module
+  whose object cannot be made → `error: some prebuilt hook modules did not compile: …`, exit 1;
+  otherwise `velt: wrote <n> prebuilt hook modules to <dir>/<triple>` on stderr. The manifest:
+  `velt shipped hook module 1`, `compiler <version line>`, `target <triple>`, then `entry` and
+  `tls` lines as a cached manifest has them and one `file <content hash>\t<path below the std
+  root, /-separated>` per std file the object's world loaded. An installed `velt` (`<prefix>/bin/
+  velt` with `<prefix>/std`) that finds no object of a module in the build cache, or runs with
+  the cache off, takes `<prefix>/lib/hooks/<target>`'s when the manifest's version line is its
+  own, the target is the build's and every listed file hashes as the manifest says; with the
+  cache on it stores that object under its own key. The statistics then say `velt: prebuilt
+  hooks: <module>: object found (shipped)`.
 - `completions <shell>`: prints a completion script for bash, zsh, fish or PowerShell
   (`pwsh` accepted) covering commands, options, `--template`/`--editor`/`--backend`/`--emit`
   values, the actions of `registry` and `owner`, and files. The scripts are generated from the

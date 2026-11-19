@@ -7,7 +7,10 @@
 //! adds the object ([`place`]). Where it isn't, the build loads and compiles the module as it
 //! would without this, so no output depends on the cache; with `VELT_STD_OBJECT_FILL` (`velt
 //! cache warm`) or `VELT_PREBUILT_HOOKS=fill` it then compiles the object and stores it
-//! ([`Finder::fill`]). `VELT_PREBUILT_HOOKS=0` turns prebuilt objects off.
+//! ([`Finder::fill`]). `VELT_PREBUILT_HOOKS=0` turns prebuilt objects off. An installed toolchain
+//! also carries the objects (`shipped`): where the cache has none, or is off, the build takes the
+//! toolchain's, after checking it against the std sources as they are, and stores it in the cache
+//! under its own key for the builds that follow.
 //!
 //! **Key.** Nothing about a program enters it: only numbers and strings cross, and the object is
 //! compiled in a world of its own (a root that calls the hooks and nothing else). A lookup key
@@ -65,6 +68,8 @@ pub(crate) struct Found {
     pub files: Vec<String>,
     /// The externs of its thread-local values (`tls` lines), which the program defines.
     pub tls: Vec<String>,
+    /// It is the toolchain's (`shipped`), found there by this build.
+    pub shipped: bool,
     /// The temporary directory holding the pinned object, removed when the last copy goes.
     pub _pinned: Option<Arc<Pinned>>,
 }
@@ -82,9 +87,12 @@ impl Drop for Pinned {
 
 /// What a build looks up, and what it found.
 pub(crate) struct Finder {
-    cache: &'static velt_build_cache::Cache,
+    /// The build cache, `None` when it is off (the toolchain's objects are looked at still).
+    cache: Option<&'static velt_build_cache::Cache>,
     /// Where the manifests are: `<cache>/warm/hooks`.
     manifests: PathBuf,
+    /// Where the toolchain's objects for this build are (`shipped::dir_of`), if it has any.
+    shipped: Option<PathBuf>,
     /// The lookup key's parts every module shares.
     base: KeyHasher,
     std_root: PathBuf,
@@ -120,9 +128,19 @@ impl Finder {
             false if super::serve::default_cpu_runs(opts, &target) => None,
             false => return None,
         };
-        let cache = crate::build_cache::cache()?;
-        let manifests = crate::build_cache::root()?.join("warm").join("hooks");
         let std_root = velt_loader::std_root()?;
+        let cache = crate::build_cache::cache();
+        let manifests = (crate::build_cache::root())
+            .map(|root| root.join("warm").join("hooks"))
+            .unwrap_or_default();
+        // The toolchain's objects are for the target's default CPU.
+        let shipped = match (&cpu, std::env::current_exe()) {
+            (None, Ok(exe)) => super::shipped::dir_of(&exe, &std_root, &target),
+            _ => None,
+        };
+        if cache.is_none() && shipped.is_none() {
+            return None;
+        }
         let mut base = KeyHasher::new();
         base.part(MANIFEST_HEADER.as_bytes())
             .part(&crate::build_cache::compiler_identity().0)
@@ -133,6 +151,7 @@ impl Finder {
         Some(Finder {
             cache,
             manifests,
+            shipped,
             base,
             std_root,
             target,
@@ -152,10 +171,10 @@ impl Finder {
         let found = seen.entry(h.module_entry).or_insert_with(|| {
             let found = self.find(h.module_entry);
             if super::stats() {
-                let what = if found.is_some() {
-                    "object found"
-                } else {
-                    "no object"
+                let what = match &found {
+                    Some(f) if f.shipped => "object found (shipped)",
+                    Some(_) => "object found",
+                    None => "no object",
                 };
                 eprintln!("velt: prebuilt hooks: {}: {what}", h.module());
             }
@@ -175,9 +194,65 @@ impl Finder {
         self.manifests.join(key.hex())
     }
 
+    /// The object of module `module_entry`: the cache's ([`Finder::cached`]), else the
+    /// toolchain's ([`Finder::shipped`]).
+    fn find(&self, module_entry: &str) -> Option<Found> {
+        self.cached(module_entry)
+            .or_else(|| self.shipped(module_entry))
+    }
+
+    /// The toolchain's object of module `module_entry`, when it is this compiler's and compiled
+    /// from the std files as they are now (`shipped::find`). With the cache on it is stored
+    /// there under this install's key, and what the build links is the cache's, as for any
+    /// object; with the cache off, the toolchain's file itself (nothing collects it, so it is
+    /// not pinned).
+    fn shipped(&self, module_entry: &str) -> Option<Found> {
+        let dir = self.shipped.as_ref()?;
+        let compiler = crate::commands::version::version_line();
+        let s = super::shipped::find(dir, module_entry, &self.std_root, &compiler, &self.target)?;
+        if !s.tls.is_empty() && !velt_codegen_cl::has_thread_local_data(&self.target) {
+            return None;
+        }
+        if self.adopt(module_entry, &s).is_some() {
+            if let Some(found) = self.cached(module_entry) {
+                return Some(Found {
+                    shipped: true,
+                    ..found
+                });
+            }
+        }
+        Some(Found {
+            object: s.object,
+            entries: s.entries,
+            files: s.files,
+            tls: s.tls,
+            shipped: true,
+            _pinned: None,
+        })
+    }
+
+    /// Store the toolchain's object `s` of module `module_entry` in the cache, with a manifest
+    /// under this install's lookup key, as a fill stores one it compiled. `None` with the cache
+    /// off, or when it cannot be stored.
+    fn adopt(&self, module_entry: &str, s: &super::shipped::Shipped) -> Option<()> {
+        let cache = self.cache?;
+        let key = self.lookup_key(module_entry);
+        let object_key = object_key(&key, &s.files);
+        let bytes = std::fs::read(&s.object).ok()?;
+        super::compile::store_kind(cache, KIND, &object_key, &bytes)?;
+        let manifest = Manifest {
+            object: object_key.hex(),
+            entries: s.entries.clone(),
+            files: s.files.clone(),
+            tls: s.tls.clone(),
+        };
+        write_atomically(&self.manifest_path(&key), &manifest.render()).ok()
+    }
+
     /// The object of module `module_entry` when the cache holds one for the std files as they
     /// are now, pinned where the build links.
-    fn find(&self, module_entry: &str) -> Option<Found> {
+    fn cached(&self, module_entry: &str) -> Option<Found> {
+        let cache = self.cache?;
         let key = self.lookup_key(module_entry);
         let text = std::fs::read_to_string(self.manifest_path(&key)).ok()?;
         let mut manifest = Manifest::parse(&text)?;
@@ -200,7 +275,7 @@ impl Finder {
         if !manifest.tls.is_empty() && !velt_codegen_cl::has_thread_local_data(&self.target) {
             return None;
         }
-        let cached = self.cache.path_of(KIND, &object_key)?;
+        let cached = cache.path_of(KIND, &object_key)?;
         let (object, pinned) = match self.linking {
             true => pin(&cached).map(|(dir, object)| (object, Some(Arc::new(dir))))?,
             false => (cached, None),
@@ -210,6 +285,7 @@ impl Finder {
             entries: manifest.entries,
             files: manifest.files,
             tls: manifest.tls,
+            shipped: false,
             _pinned: pinned,
         })
     }
@@ -252,11 +328,12 @@ impl Finder {
     }
 
     fn fill_one(&self, module_entry: &str) -> Result<(), String> {
+        let cache = self.cache.ok_or("the build cache is off")?;
         let cpu = self.cpu.as_deref();
         let built = super::prebuilt_object::build(module_entry, &self.std_root, &self.target, cpu)?;
         let key = self.lookup_key(module_entry);
         let object_key = object_key(&key, &built.files);
-        let stored = super::compile::store_kind(self.cache, KIND, &object_key, &built.object);
+        let stored = super::compile::store_kind(cache, KIND, &object_key, &built.object);
         if stored.is_none() {
             return Err("its object could not be stored".into());
         }
@@ -582,8 +659,9 @@ mod tests {
     fn finder(dir: &Path) -> Finder {
         let cache = velt_build_cache::Cache::new(&dir.join("cache"), u64::MAX);
         Finder {
-            cache: Box::leak(Box::new(cache)),
+            cache: Some(Box::leak(Box::new(cache))),
             manifests: dir.join("cache/warm/hooks"),
+            shipped: None,
             base: KeyHasher::new(),
             std_root: dir.join("std"),
             target: String::new(),
@@ -611,7 +689,7 @@ mod tests {
         let object_key = object_key(&key, &[]);
         let built = tmp.path().join("built.o");
         std::fs::write(&built, b"object bytes").unwrap();
-        assert!(finder.cache.put_file(KIND, &object_key, &built));
+        assert!(finder.cache.unwrap().put_file(KIND, &object_key, &built));
         let manifest = Manifest {
             object: object_key.hex(),
             entries: vec![line],
@@ -621,8 +699,8 @@ mod tests {
         write_atomically(&finder.manifest_path(&key), &manifest.render()).unwrap();
 
         assert!(finder.linked(hook));
-        finder.cache.clear().unwrap();
-        assert_eq!(finder.cache.path_of(KIND, &object_key), None);
+        finder.cache.unwrap().clear().unwrap();
+        assert_eq!(finder.cache.unwrap().path_of(KIND, &object_key), None);
         let program = vir::Program {
             externs: vec![vir::ExternFn {
                 symbol,

@@ -7,6 +7,7 @@
 #   lib/velt/lld.exe  lib/targets/<triple>/ (link kit)
 #   lib/wasm32-unknown-unknown/libvelt_rt_wasm.a (the runtime WebAssembly programs and Workers link)
 # and the target pack dist/velt-<version>-target-<triple>.tar.gz (`velt target add`).
+#   lib/hooks/<host>/*.{o,manifest} (the prebuilt hook modules' objects)
 #   std/** (without its *.test.velt files)  share/velt/lldb/velt_lldb.py  share/velt/warm/*.velt  README.md  LICENSE-MIT  LICENSE-APACHE  NOTICE
 #
 # With the bundled linker, velt.exe, velt-launcher.exe and velt_rt_shared.dll are linked with it
@@ -125,6 +126,18 @@ if (Test-Path $StdDir -PathType Container) {
     # std's white-box tests (`velt test std/`, docs/internals/design/std-layout.md §9) are not
     # part of the toolchain.
     Get-ChildItem -Path (Join-Path $Out "std") -Recurse -File -Filter "*.test.velt" | Remove-Item -Force
+    # The prebuilt hook modules' objects (docs/internals/design/std-object.md "Prebuilt hook
+    # modules"): compiled by the velt just built from the std just placed, into
+    # lib\hooks\<target>, so that a first build links them without `velt cache warm`. It needs
+    # clang, as that does, and a module that does not compile fails the packaging.
+    $SavedStd = $env:VELT_STD; $SavedCache = $env:VELT_BUILD_CACHE
+    Remove-Item Env:VELT_STD -ErrorAction SilentlyContinue
+    $env:VELT_BUILD_CACHE = "off"
+    & (Join-Path $Out "bin\velt.exe") cache hooks --out (Join-Path $Out "lib\hooks")
+    $HooksExit = $LASTEXITCODE
+    if ($null -ne $SavedStd) { $env:VELT_STD = $SavedStd }
+    if ($null -ne $SavedCache) { $env:VELT_BUILD_CACHE = $SavedCache } else { Remove-Item Env:VELT_BUILD_CACHE -ErrorAction SilentlyContinue }
+    if ($HooksExit -ne 0) { throw "velt cache hooks failed (exit $HooksExit)" }
 } else {
     Write-Warning "no std sources at $StdDir; shipping an empty std/ (pass -StdDir)"
 }
