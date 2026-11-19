@@ -84,8 +84,8 @@ pub enum SimdTy {
     Mask64x2,
 }
 
-/// A CPU extension a gated function is compiled for (#1330): its first statement is
-/// `targetFeature("sha-arm")` (std only), and every call of it sits behind the check of
+/// A CPU extension a gated function is compiled for (#1330): it is decorated
+/// `@targetFeature("sha-arm")` (any module), and every call of it sits behind the check of
 /// that extension (`u32x4.hasShaArm()`, `u64x2.hasClmulX86()`), so backends may use the
 /// extension anywhere in it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -121,7 +121,7 @@ impl CpuTarget {
         CpuTarget::Bf16Arm,
     ];
 
-    /// The name `targetFeature` takes.
+    /// The name `@targetFeature` takes.
     pub fn name(self) -> &'static str {
         match self {
             CpuTarget::ShaArm => "sha-arm",
