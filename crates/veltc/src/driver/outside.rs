@@ -101,7 +101,6 @@ const RUNTIME_REACH: &[(&str, &str)] = &[
     ("worker", "the environment"),
     ("current", "the environment"),
     ("random", "random numbers"),
-    ("stdin", "standard input"),
     ("native", NATIVE_SUPPORT),
 ];
 

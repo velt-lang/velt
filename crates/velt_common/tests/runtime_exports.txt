@@ -259,9 +259,6 @@ velt_rt velt_rt_signal_retain
 velt_rt velt_rt_signal_wait
 velt_rt velt_rt_start
 velt_rt velt_rt_statics
-velt_rt velt_rt_stdin_read_all_bytes_sync
-velt_rt velt_rt_stdin_read_all_sync
-velt_rt velt_rt_stdin_read_line_sync
 velt_rt velt_rt_stdout_write_bytes
 velt_rt velt_rt_str_append
 velt_rt velt_rt_str_array_drop
