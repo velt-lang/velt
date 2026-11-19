@@ -126,7 +126,7 @@ export {
   recordViewSet,
   recordViewSync,
 } from "velt/lang/intrinsics/record_view";
-export { symbolRegistry, symbolStatic } from "velt/lang/intrinsics/symbol";
+export { symbolAddress, symbolAt, symbolRegistry, symbolStatic } from "velt/lang/intrinsics/symbol";
 export { firstFulfilled, moduleStateUsed, spawnHandled } from "velt/lang/intrinsics/task";
 export { threadLocalGet, threadLocalSet } from "velt/lang/intrinsics/thread_local";
 export {
