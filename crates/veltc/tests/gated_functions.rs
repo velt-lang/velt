@@ -838,6 +838,26 @@ function outer(): i64 {
   return inner();
 }
 
+function capturing(k: i64): i64 {
+  @targetFeature("clmul-x86")
+  function inner(): i64 {
+    return k;
+  }
+  return inner();
+}
+
+class Box {
+  v: i64 = 1;
+  get(): i64 {
+    const v = this.v;
+    @targetFeature("clmul-x86")
+    function inner(): i64 {
+      return v;
+    }
+    return inner();
+  }
+}
+
 function twice(a: i64): i64;
 function twice(a: f64): f64;
 @targetFeature("clmul-x86")
@@ -854,7 +874,7 @@ function once(a: i64 | f64): i64 | f64 {
 
 @targetFeature("clmul-x86")
 async function main() {
-  console.log(outer() + twice(1) + once(2) + (await later()));
+  console.log(outer() + capturing(1) + new Box().get() + twice(1) + once(2) + (await later()));
   for (const v of gen()) {
     console.log(v);
   }
@@ -868,9 +888,11 @@ async function main() {
         "3:1: error: `@targetFeature` can't gate an async function or a generator",
         "8:1: error: `@targetFeature` can't gate an async function or a generator",
         "14:3: error: `@targetFeature` can't gate a function declared inside another",
-        "23:1: error: `@targetFeature` can't gate an overloaded function",
-        "28:1: error: `@targetFeature` can't gate an overloaded function",
-        "35:1: error: `@targetFeature` can't gate the program's entry, `main`",
+        "22:3: error: `inner` uses its enclosing function's locals, so it takes no decorators",
+        "33:5: error: `inner` uses its enclosing function's locals, so it takes no decorators",
+        "43:1: error: `@targetFeature` can't gate an overloaded function",
+        "48:1: error: `@targetFeature` can't gate an overloaded function",
+        "55:1: error: `@targetFeature` can't gate the program's entry, `main`",
     ] {
         assert!(err.contains(m), "missing `{m}` in:\n{err}");
     }

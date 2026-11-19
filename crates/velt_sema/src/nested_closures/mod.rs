@@ -140,6 +140,8 @@ struct Cand {
     /// an enclosing function or class (module docs)? It becomes a closure constant though it
     /// captures nothing.
     encloses: bool,
+    /// The span of its first decorator: a closure constant takes none.
+    decorated: Option<Span>,
 }
 
 /// The entry of `locals` standing for class `name` declared in an enclosing function (no
@@ -315,6 +317,7 @@ impl Rw {
                 name: f.sig.name.clone(),
                 free,
                 encloses,
+                decorated: f.sig.decorators.first().map(|d| d.span),
             });
         }
         // Those capturing a local, then those using one of those (a closure constant).
@@ -343,6 +346,13 @@ impl Rw {
         let idx: Vec<usize> = (0..cands.len()).filter(|&i| conv[i]).collect();
         if idx.is_empty() {
             return vec![];
+        }
+        // A decorator would be dropped with the declaration (`@targetFeature` would gate nothing,
+        // without a word): refused instead.
+        for &a in &idx {
+            if let Some(span) = cands[a].decorated {
+                self.report_decorated(&cands[a], span);
+            }
         }
         // Uses between them: `edges[a]` holds the candidates `a` uses.
         let uses_of = |a: usize| -> Vec<usize> {
@@ -555,6 +565,20 @@ impl Rw {
             )
             .with_note(why.clone())
             .with_note(fix.clone()),
+        );
+    }
+
+    fn report_decorated(&mut self, c: &Cand, span: Span) {
+        self.diags.push(
+            Diagnostic::error(
+                format!(
+                    "`{}` uses its enclosing function's locals, so it takes no decorators",
+                    c.name.name
+                ),
+                span,
+            )
+            .with_note("a function declared inside another that uses its locals is compiled as a closure, which a decorator would not reach")
+            .with_note("declare it at the top level of its module, passing what it uses as parameters, or leave the decorator out"),
         );
     }
 
