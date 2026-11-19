@@ -90,9 +90,11 @@ pub struct Plan {
     /// merge queue sets from the change's plan and the checks after merging always set.
     pub wasm: bool,
     /// `declare c` checked against C headers on every target through the pinned zig: the
-    /// `c-headers` job in ci.yml (crates/xtask/src/c_headers.rs). `--full` knows no changes, so
-    /// it runs it: a gate that skipped it let a change whose own `c-headers` job was red reach
-    /// `main` (#3120's Windows declarations, landed by a merge train's `--full` run).
+    /// `c-headers` job in ci.yml (crates/xtask/src/c_headers.rs). `--full` (a dispatched run such
+    /// as a merge train's, a pull request labelled `ci:full`) knows no changes, so it runs it: a
+    /// gate that skipped it let a change whose own `c-headers` job was red reach `main` (#3120's
+    /// Windows declarations, landed by a merge train's `--full` run). A local run turns the zig
+    /// tests on only with `VELT_ZIG_TESTS=1`, whatever this says.
     pub c_headers: bool,
 }
 
