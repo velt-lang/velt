@@ -75,5 +75,14 @@ export declare async function velt_rt_tcp_connect_tls(
  * fewer requests than on one; one until #2726 replaces the module lock.
  */
 export function listenerWorkers(l: u64): u64 {
-  return moduleStateUsed() ? 1 : velt_rt_worker_count();
+  return connectionsSpread() ? velt_rt_worker_count() : 1;
+}
+
+/**
+ * May a server spread its connections over the workers (velt/net `spreadsConnections`)? Not in a
+ * program with module state under the runtime's executor (`listenerWorkers`); the executor in
+ * Velt, every native build's, spreads them in one too (std/net/tcp_sched.velt).
+ */
+export function connectionsSpread(): bool {
+  return !moduleStateUsed();
 }
