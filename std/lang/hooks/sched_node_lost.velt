@@ -31,6 +31,21 @@ export function dropPending(n: usize): void {
 }
 
 /**
+ * An adoption poll left started node `n` suspended (sched_node.velt `pollNode`), its owner's and
+ * its task's its only references: no leaf holds its own waker, so it runs again only when its
+ * owner polls it, and its leaves wake the owner. The owner's waker is not kept in it then: an
+ * owner that nothing else can wake is `unreachable`. Pending, always.
+ */
+@inline
+export function ownerOnly(n: usize): u32 {
+  const w = aw.takePlain(n);
+  if (w !== 0) {
+    m.wakerDrop(w);
+  }
+  return 0;
+}
+
+/**
  * Can started node `n` never run again, once all but `refs` of its references are given back?
  * Its owner dropped it, it is not running, not among its task's woken nodes and not finished,
  * and besides the caller's its task holds the only reference: no leaf holds its waker (each

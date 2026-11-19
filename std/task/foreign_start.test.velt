@@ -16,6 +16,7 @@ import * as m from "velt/lang/hooks/sched_mem";
 
 // Sets the word at `at` after a timer: the promise suspends on a leaf that holds its waker.
 async function later(at: usize, value: u64): Promise<void> {
+  // timing: the timer is the leaf whose waker keeps the promise alive; its length means nothing.
   await sleep(5);
   // SAFETY: `at` is a live word the test owns until it has read both.
   unsafe {
