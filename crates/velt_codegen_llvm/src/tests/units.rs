@@ -217,10 +217,11 @@ fn unit_count_from_size_unless_requested() {
     // Never more units than functions.
     assert_eq!(unit_count(&p, Some(64)), 4);
     assert_eq!(plan(&p, 64).units.len(), 4);
-    // One unit per 16 000 statements, from 32 000 on, at most 4; a request overrides it.
+    // One unit below 64 000 statements, 4 from there on (one per 16 000, at most 4); a request
+    // overrides it.
     assert_eq!(unit_count(&sized(31), None), 1);
-    assert_eq!(unit_count(&sized(32), None), 2);
-    assert_eq!(unit_count(&sized(48), None), 3);
+    assert_eq!(unit_count(&sized(63), None), 1);
+    assert_eq!(unit_count(&sized(64), None), 4);
     assert_eq!(unit_count(&sized(200), None), 4);
     assert_eq!(unit_count(&sized(200), Some(1)), 1);
     assert_eq!(unit_count(&sized(200), Some(12)), 12);
@@ -230,7 +231,7 @@ fn unit_count_from_size_unless_requested() {
 /// the count is as for any program.
 #[test]
 fn large_programs_get_bounded_units() {
-    assert_eq!(count_for(31_999), 1);
+    assert_eq!(count_for(63_999), 1);
     assert_eq!(count_for(64_000), 4);
     assert_eq!(count_for(800_000), 4);
     assert_eq!(count_for(800_001), 5);
