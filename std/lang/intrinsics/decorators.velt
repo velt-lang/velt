@@ -34,6 +34,22 @@ export declare decorator function inline(
 export declare decorator function noInline(): FunctionDecorator | MethodDecorator;
 
 /**
+ * On a function (not a method) of std, a package or the program (velt/compiler
+ * re-exports it; docs/internals/design/package-machine-code.md §2): the function is compiled for
+ * the CPU extension `target`, which backends may use anywhere in it. Every call of it must then
+ * sit behind velt/simd's check of that extension (`if (u32x4.hasShaX86()) { … }`) or in a
+ * function gated on the same one, and it can't be used as a value (stored, passed or returned).
+ * A closure written inside it starts without the target. It can't gate the program's `main` or a
+ * function C calls (`@export`), which nothing checks before they run, nor a nested, async,
+ * generator or overloaded function, whose body the target wouldn't reach. An AES target includes
+ * its architecture's carry-less multiplication (`u8x16.hasAesArm()` implies `u64x2.hasClmulArm()`).
+ * In a debug (Cranelift) build every check is false, so a gated function never runs there.
+ */
+export declare decorator function targetFeature(
+  target: "sha-arm" | "sha-x86" | "clmul-x86" | "clmul-arm" | "aes-x86" | "aes-arm" | "fma-x86" | "bf16-arm",
+): FunctionDecorator;
+
+/**
  * On a `declare function` of std/lang/intrinsics: an operation the compiler emits itself, which
  * no Velt code can express (std-layout.md §10). The declaration is the signature calls are checked
  * against (modes.velt says how arguments are passed); velt_sema's table (`intrinsic_decls.rs`)

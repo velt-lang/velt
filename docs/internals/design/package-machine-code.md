@@ -2,7 +2,8 @@
 
 Status: **accepted direction** (#3222, maintainer review 2026-11-18), revision 2: the review's
 answers to the open questions and its changes A–E are written in below. Step 1 is built with this
-note; steps 2–6 follow, one pull request each.
+note (#3230), step 2 with #3263 (§2 "As built in step 2"); steps 3–6 follow, one pull request
+each.
 
 Related: #1981 (intrinsics, intrinsics.md), #2203 (compile-time decorators), #1055 (SIMD),
 #1866 (numeric workloads), #2402 (wide multiply, add-with-carry), #3094 (`Ptr<T>`), #2943 /
@@ -153,6 +154,38 @@ export function crc32c(words: u64[]): u32 {
   decorator and `isSupported`. **The old checks stay for one release** as `@deprecated` wrappers
   (review, question 4): `u32x4.hasShaX86()` is in the public docs.
 
+**As built in step 2.** `@targetFeature(target)` is a compile-time decorator in
+std/lang/intrinsics/decorators.velt, re-exported by `velt/compiler` and found by its `std_hooks`
+role (`decorator_target_feature`), on a function of any module. Its parameter is the union of
+today's eight targets (`"sha-arm"`, `"sha-x86"`, `"clmul-x86"`, `"clmul-arm"`, `"aes-x86"`,
+`"aes-arm"`, `"fma-x86"`, `"bf16-arm"`), so an unknown name is a type error at the use, and its type
+(`FunctionDecorator`) keeps it off methods. It is refused, with an error, where nothing would
+check the CPU first or the target wouldn't reach the body (review of #3263):
+
+- the program's `main` and a function C calls (`@export`): the runtime and C call them without a
+  check;
+- a nested function, compiled as a closure, and an async function or a generator, compiled into a
+  function that resumes it: lowering gives the target to the declaration's function only
+  (`velt_vir` `lower/abi.rs`), as `@inline` already reasons;
+- an overloaded function, with the decorator on the implementation or on a signature: each
+  signature's body calls the implementation without the check.
+
+Carrying the target to closures and resume functions is possible later; until then a gated
+function is a plain top-level one, which those can call behind the check. The intrinsic `targetFeature` and its first-statement form are
+gone; std's 32 gated functions carry the decorator. The checks stay velt/simd's methods
+(`u64x2.hasClmulX86()`, …), which packages can already call, and which sema already found by
+definition.
+
+Two parts of the plan above were already true or move:
+
+- **B was already enforced** (`body/gated.rs` `gated_value`): a gated function can't be stored,
+  passed or returned, and a closure inside one starts without its target. Step 2 adds tests that
+  this holds outside std.
+- **The `isSupported` classes move to step 3.** They name instruction sets (`Sse42`, `Bmi2`,
+  `Crc32`), which only exist once the feature model has them. Naming classes after today's eight
+  bundled targets would be renamed in step 3. So would the `cpu-check-in-loop` lint (C), which
+  checks those classes: it ships with them in step 3.
+
 **One CPU-feature model** (step 3, = #1981 step 5). `hir::CpuTarget` becomes `CpuFeatures`, a bit
 set over two lists: x86 (SSE4.2 … AVX-512, SHA, PCLMULQDQ, AES, BMI1/2, POPCNT, LZCNT, F16C, FMA,
 VNNI) and aarch64 (neon, aes, pmull, sha2, sha3, crc, dotprod, fp16, i8mm, bf16).
@@ -289,10 +322,12 @@ Once #2402 lands, `a + b` compiles to `adds`/`adc` (arm64) or `add`/`adc` (x86-6
    program's `@inline("always")` function from `velt/compiler` has every call inlined in release
    VIR, the hint and `@noInline` keep the calls; the recursion, both-decorators and async errors
    outside std; a bare `@inline` in std is an error.
-2. **`@targetFeature`, `isSupported`, the rule for function values (B), the in-loop lint (C)**,
-   for today's seven targets, open to packages; std migrated; old checks deprecated.
-3. **One CPU-feature model, detection in std (A):** `CpuFeatures`, the two lists, `cpuid` /
-   `xgetbv` / the OS calls, the start-up static, `--cpu` folding; `velt_rt/src/cpu.rs` deleted.
+2. **`@targetFeature` for every module, for today's eight targets; std migrated** (built: §2 "As
+   built in step 2"). The rule for function values (B) was already enforced.
+3. **One CPU-feature model, detection in std (A), `isSupported`, the in-loop lint (C):**
+   `CpuFeatures`, the two lists, `cpuid` / `xgetbv` / the OS calls, the start-up static, `--cpu`
+   folding; `velt_rt/src/cpu.rs` deleted. The instruction-set classes and their `isSupported`, the
+   `cpu-check-in-loop` lint, and velt/simd's old checks deprecated (moved here from step 2).
 4. **`velt/arch/x86` and `velt/arch/arm`, 128-bit:** the spec, `xtask gen-arch`, `Intrinsic::Arch`,
    LLVM lowering, the verifier rule, the first batch, the reverse index, `velt test`'s release run
    and `VELT_CPU_DISABLE` (D).
