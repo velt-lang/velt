@@ -112,9 +112,11 @@ export function park(e: usize): void {
   }
   const timed = spins && sn.off(e);
   const at = timed ? (sl.clock() as usize) : 0;
+  const unparks = timed ? m.load(e + t.E_UNPARKS) : 0;
   io.park(b, timeout, e + t.E_PARK, e + t.E_UNPARKS);
   m.store32(e + t.E_PARK, 0);
-  if (timed) {
+  if (timed && m.load(e + t.E_UNPARKS) !== unparks) {
+    // Another worker woke it (its own timers and sockets don't turn the spin back on).
     sn.woke(e, at);
   }
   ex.takeExit(e);

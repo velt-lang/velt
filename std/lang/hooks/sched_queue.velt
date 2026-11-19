@@ -364,8 +364,13 @@ export function takeInbox(e: usize): void {
     rev = k;
     k = next;
   }
+  if (rev === 0) {
+    return;
+  }
+  // The run of takes that each found the worker with nothing else queued (sched_gather.velt).
+  m.st(e + t.E_IDLE_RUN, ownEmpty(e) ? m.ld(e + t.E_IDLE_RUN) + 1 : 0);
   const g = m.ld(e + t.E_MAIN);
-  if (rev !== 0 && e !== g && gb.gathers(e, g)) {
+  if (e !== g && gb.gathers(e, g)) {
     gather(e, g, rev);
     return;
   }

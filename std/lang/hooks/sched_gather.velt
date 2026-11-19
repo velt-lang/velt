@@ -1,13 +1,18 @@
 // velt/lang/hooks (internal): tasks a burst spread over the workers come back to worker 0 once
 // the load is gone (#3097). Offers move tasks off a worker whose queue waits too long
-// (sched_spread.velt); nothing else brings them back, and a task left alone on an idle worker
-// pays a kernel wake-up for every call from another worker (an actor's shard at low load). So an
-// idle worker hands the tasks woken onto it to worker 0, when it takes its inbox:
-// - Idle: not worker 0, tasks spread (`M_SPREAD`), and in the spread's window so far (at least
-//   `MIN_POLLS` polls) at least `WOKEN_PCT` percent of its polls began with a kernel wake-up (its
-//   `E_UNPARKS` count against its polls): its tasks reach it one at a time while it sleeps, the
-//   cost this saves. A busy worker, or one whose spin catches its tasks (sched_spin.velt), is
-//   seldom woken from its reactor, so a burst's spread stays (the hysteresis against offers).
+// (sched_spread.velt); nothing else brings them back. A task that may move runs in its waker's
+// slot when another worker wakes it (sched_wake.velt `schedule`), but an anchored one (it made a
+// sleep) goes to its home's inbox: left alone on an idle worker, it pays a kernel wake-up for
+// every call from another worker (an actor's shard at low load). So an idle worker hands the
+// tasks woken onto it to worker 0, when it takes its inbox:
+// - Idle: not worker 0, tasks spread (`M_SPREAD`), and its last `MIN_TAKES` takes of its inbox
+//   that found tasks each found nothing else queued on it (`E_IDLE_RUN`, sched_queue.velt
+//   `takeInbox`): its tasks reach it one at a time while it has nothing else to do, which costs
+//   a kernel wake-up or a spin nearly every time. What counts is the queue, not whether the
+//   worker had parked: a caller's next call may land before the worker gets to its park (the
+//   more so when the OS takes its thread off the core meanwhile), and is still a call to a
+//   worker with nothing to run. A busy worker takes its inbox with tasks queued, which ends the
+//   run, so a burst's spread stays (the hysteresis against offers).
 // - Worker 0 not loaded: fewer than `sp.BORROW_MIN` tasks queued (`E_QUEUED`, as borrowers read).
 // - A task that may move goes as it is; an anchored one only when it can carry its sleeps
 //   (sched_sleep_carry.velt); a pinned one, or one anchored for good, stays.
@@ -19,20 +24,14 @@ import * as sp from "./sched_spread";
 import * as t from "./sched_task";
 import * as wk from "./sched_wake";
 
-const MIN_POLLS: usize = 16;
-const WOKEN_PCT: usize = 50;
+const MIN_TAKES: usize = 16;
 
 /** Does worker `e` hand the tasks of its inbox to worker 0 (`g`)? */
 export function gathers(e: usize, g: usize): bool {
   if ((m.ld32(e + t.E_MODE) & t.M_SPREAD) === 0) {
     return false;
   }
-  const polls = m.ld(e + t.E_POLLS) - m.ld(e + t.E_W_POLLS);
-  if (polls < MIN_POLLS) {
-    return false;
-  }
-  const woken = m.load(e + t.E_UNPARKS) - m.ld(e + t.E_W_UNPARKS);
-  if (woken * 100 < polls * WOKEN_PCT) {
+  if (m.ld(e + t.E_IDLE_RUN) < MIN_TAKES) {
     return false;
   }
   // Not to a lazy worker 0 (a spare's tasks are the ones a rescue took off it), nor to one in a
