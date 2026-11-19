@@ -152,7 +152,10 @@ pub(crate) fn lld_link(link: &Command) -> Option<Command> {
 
 /// [`lld_link`] for the search path `path`.
 fn lld_link_on(path: &OsStr, link: &Command) -> Option<Command> {
+    // From a directory given in full: an empty or relative entry (`.`) means the directory
+    // the build runs in, a project's, and an `lld-link.exe` there is not the system's linker.
     let program = std::env::split_paths(path)
+        .filter(|d| d.is_absolute())
         .map(|d| d.join("lld-link.exe"))
         .find(|p| p.is_file())?;
     let mut cmd = Command::new(program);
@@ -332,6 +335,12 @@ mod tests {
         // A directory of that name is no program.
         std::fs::create_dir_all(root.join("dir").join("lld-link.exe")).unwrap();
         assert!(lld_link_on(&path(&[&root.join("dir")]), &link).is_none());
+        // Nor is one in the directory the build runs in (an empty or relative entry).
+        let relative = llvm.strip_prefix(std::env::temp_dir()).unwrap_or(&llvm);
+        for entry in [Path::new(""), Path::new("."), relative] {
+            assert!(lld_link_on(&path(&[entry]), &link).is_none(), "{entry:?}");
+        }
+        assert!(lld_link_on(&path(&[Path::new("."), &llvm]), &link).is_some());
         let _ = std::fs::remove_dir_all(&root);
     }
 
