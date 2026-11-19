@@ -1,0 +1,4 @@
+overload_generic_nested_promise.velt:15:10: error: this overload signature is not compatible with its implementation signature
+  = note: mismatched types
+  = note: expected Options<unknown>, found Options<S>
+  = note: `Options<S>` does not declare `implements Options<unknown>`
