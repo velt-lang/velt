@@ -13,7 +13,6 @@
 //!   pointer. Runtime leaves get a Rust `Context` for it with [`with_context`].
 
 pub mod abort;
-pub mod all;
 pub mod compiled;
 pub mod coop;
 pub mod identity;
@@ -21,7 +20,6 @@ pub mod latch;
 pub mod leaf;
 pub mod local;
 pub(crate) mod quiet;
-pub mod race;
 pub mod runtime;
 pub mod shared;
 pub mod spawn;
@@ -46,6 +44,8 @@ pub type PollFn = unsafe extern "C-unwind" fn(state: *mut u8, cx: *mut c_void) -
 /// Compiled state-machine drop function: drops the live locals of the current suspension point.
 /// Never drops the result slot (it is moved out by whoever observes `READY`).
 pub type DropFn = unsafe extern "C-unwind" fn(state: *mut u8);
+/// Drops one result value in place: `void result_drop(void* slot)`.
+pub type ResultDropFn = unsafe extern "C-unwind" fn(slot: *mut u8);
 
 /// Header of every heap future owned by generated code. The result slot follows at offset 16.
 #[repr(C)]
