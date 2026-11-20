@@ -1,0 +1,239 @@
+// RSA signature verification (velt/crypto `rsaPkcs1Verify`, `rsaPssVerify`): every case of four
+// Project Wycheproof files (2048, 3072 and 4096 bits; SHA-256, SHA-384 and SHA-512), and keys
+// and signatures made by OpenSSL 3.0.13 for the rules the files do not reach (ring's limits on
+// the key, a signature's range and length, the exponent's shapes, the PSS salt and MGF1 hash).
+import { rsaPkcs1Verify, rsaPssVerify, sha256, sha384, sha512 } from "velt/crypto";
+import { hexDecode, utf8Encode } from "velt/encoding";
+import { describe, expect, it } from "velt/test";
+import * as v from "./rsa_vectors";
+import { RSA_PKCS1_2048_SHA256_CASES } from "./wycheproof_rsa_pkcs1_2048_sha256";
+import { RSA_PKCS1_3072_SHA384_CASES } from "./wycheproof_rsa_pkcs1_3072_sha384";
+import { RSA_PSS_2048_SHA256_CASES } from "./wycheproof_rsa_pss_2048_sha256";
+import { RSA_PSS_4096_SHA512_CASES } from "./wycheproof_rsa_pss_4096_sha512";
+
+function bytes(s: string): u8[] {
+  return s == "-" ? [] : hexDecode(s);
+}
+
+function hash(len: usize, data: u8[]): u8[] {
+  if (len == 32) {
+    return sha256(data);
+  }
+  return len == 48 ? sha384(data) : sha512(data);
+}
+
+// Runs a file's cases with the hash of `hLen` bytes: [valid, invalid] counts. An "acceptable"
+// PKCS#1 case is a DigestInfo without its NULL, which ring refuses, and so does this.
+function run(cases: string[], hLen: usize, pss: bool): number[] {
+  let key: u8[] = [];
+  let valid = 0;
+  let invalid = 0;
+  for (const line of cases) {
+    const f = line.split(" ");
+    if (f[0] == "K") {
+      key = hexDecode(f[1]);
+      continue;
+    }
+    const digest = hash(hLen, bytes(f[2]));
+    const sig = bytes(f[3]);
+    const ok = pss ? rsaPssVerify(key, digest, sig) : rsaPkcs1Verify(key, digest, sig);
+    if (f[1] == "v") {
+      expect(`${f[0]} ${ok}`).toBe(`${f[0]} true`);
+      valid++;
+    } else {
+      expect(`${f[0]} ${ok}`).toBe(`${f[0]} false`);
+      invalid++;
+    }
+  }
+  return [valid, invalid];
+}
+
+const MESSAGE = utf8Encode("hello velt");
+
+describe("rsaPkcs1Verify", () => {
+  it("matches every Wycheproof rsa_signature_2048_sha256 case", () => {
+    expect(run(RSA_PKCS1_2048_SHA256_CASES, 32, false)).toEqual([9, 250]);
+  });
+
+  it("matches every Wycheproof rsa_signature_3072_sha384 case", () => {
+    expect(run(RSA_PKCS1_3072_SHA384_CASES, 48, false)).toEqual([7, 252]);
+  });
+
+  it("verifies OpenSSL's signatures with each hash, and refuses another message or hash", () => {
+    const key = hexDecode(v.KEY_2048);
+    expect(rsaPkcs1Verify(key, sha256(MESSAGE), hexDecode(v.PKCS1_2048_SHA256))).toBe(true);
+    expect(rsaPkcs1Verify(key, sha384(MESSAGE), hexDecode(v.PKCS1_2048_SHA384))).toBe(true);
+    expect(rsaPkcs1Verify(key, sha512(MESSAGE), hexDecode(v.PKCS1_2048_SHA512))).toBe(true);
+    const other = utf8Encode("Hello velt");
+    expect(rsaPkcs1Verify(key, sha256(other), hexDecode(v.PKCS1_2048_SHA256))).toBe(false);
+    expect(rsaPkcs1Verify(key, sha384(MESSAGE), hexDecode(v.PKCS1_2048_SHA256))).toBe(false);
+    expect(rsaPkcs1Verify(key, sha256(MESSAGE), hexDecode(v.PKCS1_2048_SHA512))).toBe(false);
+  });
+
+  it("refuses a digest that is not 32, 48 or 64 bytes", () => {
+    const key = hexDecode(v.KEY_2048);
+    const sig = hexDecode(v.PKCS1_2048_SHA256);
+    expect(rsaPkcs1Verify(key, sha256(MESSAGE).slice(0, 31), sig)).toBe(false);
+    expect(rsaPkcs1Verify(key, [], sig)).toBe(false);
+    expect(rsaPkcs1Verify(key, Buffer.alloc(20), sig)).toBe(false);
+  });
+
+  it("refuses a PSS signature, and rsaPssVerify a PKCS#1 one", () => {
+    const key = hexDecode(v.KEY_2048);
+    expect(rsaPkcs1Verify(key, sha256(MESSAGE), hexDecode(v.PSS_2048_SHA256))).toBe(false);
+    expect(rsaPssVerify(key, sha256(MESSAGE), hexDecode(v.PKCS1_2048_SHA256))).toBe(false);
+  });
+
+  it(
+    "takes the exponents 3 and 37 and one of 33 bits, and moduli that do not fill their top byte or limb",
+    () => {
+      const d = sha256(MESSAGE);
+      expect(rsaPkcs1Verify(hexDecode(v.KEY_2048E3), d, hexDecode(v.PKCS1_2048E3))).toBe(true);
+      expect(rsaPkcs1Verify(hexDecode(v.KEY_2048E37), d, hexDecode(v.PKCS1_2048E37))).toBe(true);
+      expect(rsaPkcs1Verify(hexDecode(v.KEY_2056E33), d, hexDecode(v.PKCS1_2056E33))).toBe(true);
+      expect(rsaPkcs1Verify(hexDecode(v.KEY_2049), d, hexDecode(v.PKCS1_2049))).toBe(true);
+      // Each with one bit of the signature changed.
+      const sig = hexDecode(v.PKCS1_2048E3);
+      sig[100] ^= 4;
+      expect(rsaPkcs1Verify(hexDecode(v.KEY_2048E3), d, sig)).toBe(false);
+      const sig33 = hexDecode(v.PKCS1_2056E33);
+      sig33[256] ^= 1;
+      expect(rsaPkcs1Verify(hexDecode(v.KEY_2056E33), d, sig33)).toBe(false);
+      const sig37 = hexDecode(v.PKCS1_2048E37);
+      sig37[0] ^= 1;
+      expect(rsaPkcs1Verify(hexDecode(v.KEY_2048E37), d, sig37)).toBe(false);
+    },
+  );
+
+  it("refuses an exponent of 34 bits, 1, or an even one, though the signature is right", () => {
+    const d = sha256(MESSAGE);
+    expect(rsaPkcs1Verify(hexDecode(v.KEY_2048E34), d, hexDecode(v.PKCS1_2048E34))).toBe(false);
+    // With the exponent 1 a signature is the encoded message itself.
+    const forged = hexDecode(v.PKCS1_ENCODED_MESSAGE);
+    expect(rsaPkcs1Verify(hexDecode(v.KEY_EXPONENT_1), d, forged)).toBe(false);
+    expect(rsaPkcs1Verify(hexDecode(v.KEY_EVEN_EXPONENT), d, forged)).toBe(false);
+  });
+
+  it("refuses a block type other than 1", () => {
+    const key = hexDecode(v.KEY_2048);
+    const d = sha256(MESSAGE);
+    expect(rsaPkcs1Verify(key, d, hexDecode(v.PKCS1_BLOCK_TYPE_2))).toBe(false);
+    expect(rsaPkcs1Verify(key, d, hexDecode(v.PKCS1_BLOCK_TYPE_0))).toBe(false);
+  });
+
+  it("takes a modulus of 8192 bits, and refuses one of 8200, though the signature is right", () => {
+    const d = sha256(MESSAGE);
+    const sig = hexDecode(v.PKCS1_8192);
+    expect(rsaPkcs1Verify(hexDecode(v.KEY_8192), d, sig)).toBe(true);
+    sig[1023] ^= 1;
+    expect(rsaPkcs1Verify(hexDecode(v.KEY_8192), d, sig)).toBe(false);
+    expect(rsaPkcs1Verify(hexDecode(v.KEY_8200), d, hexDecode(v.PKCS1_8200))).toBe(false);
+  });
+
+  it("refuses a modulus below 2048 bits, though the signature is right", () => {
+    const d = sha256(MESSAGE);
+    expect(rsaPkcs1Verify(hexDecode(v.KEY_1024), d, hexDecode(v.PKCS1_1024))).toBe(false);
+    expect(rsaPkcs1Verify(hexDecode(v.KEY_2047), d, hexDecode(v.PKCS1_2047))).toBe(false);
+    expect(rsaPssVerify(hexDecode(v.KEY_2047), d, hexDecode(v.PSS_2047))).toBe(false);
+  });
+
+  it("refuses a signature at or past the modulus, also one that is a valid one plus it", () => {
+    const key = hexDecode(v.KEY_2048);
+    const d = sha256(utf8Encode(v.WRAP_MESSAGE));
+    expect(rsaPkcs1Verify(key, d, hexDecode(v.WRAP_SIG))).toBe(true);
+    expect(rsaPkcs1Verify(key, d, hexDecode(v.WRAP_SIG_PLUS_N))).toBe(false);
+    expect(rsaPkcs1Verify(key, d, hexDecode(v.N_2048))).toBe(false);
+  });
+
+  it("refuses a signature that is not as long as the modulus", () => {
+    const key = hexDecode(v.KEY_2048);
+    const d = sha256(utf8Encode(v.WRAP_MESSAGE));
+    const sig = hexDecode(v.WRAP_SIG);
+    const longer: u8[] = [0];
+    for (const b of sig) {
+      longer.push(b);
+    }
+    expect(rsaPkcs1Verify(key, d, longer)).toBe(false);
+    expect(rsaPkcs1Verify(key, d, sig.slice(0, 255))).toBe(false);
+    expect(rsaPkcs1Verify(key, d, [])).toBe(false);
+    // A signature that starts with a zero byte, with and without it: the same number.
+    const z = sha256(utf8Encode(v.ZERO_MESSAGE));
+    const zero = hexDecode(v.ZERO_SIG);
+    expect(zero[0]).toBe(0);
+    expect(rsaPkcs1Verify(key, z, zero)).toBe(true);
+    expect(rsaPkcs1Verify(key, z, zero.slice(1))).toBe(false);
+  });
+
+  it("refuses a key that is not a strict RSAPublicKey within ring's limits", () => {
+    const d = sha256(MESSAGE);
+    const sig = hexDecode(v.PKCS1_2048_SHA256);
+    const keys: string[] = [
+      v.KEY_EVEN_MODULUS,
+      v.KEY_EVEN_EXPONENT,
+      v.KEY_EXPONENT_1,
+      v.KEY_EXPONENT_ZERO_PADDED,
+      v.KEY_MODULUS_ZERO_PADDED,
+      v.KEY_MODULUS_NEGATIVE,
+      v.KEY_TRAILING,
+      v.KEY_TRAILING_INSIDE,
+      v.KEY_LONG_LENGTH,
+    ];
+    for (const k of keys) {
+      expect(`${k.slice(0, 24)} ${rsaPkcs1Verify(hexDecode(k), d, sig)}`).toBe(
+        `${k.slice(0, 24)} false`,
+      );
+      expect(rsaPssVerify(hexDecode(k), d, hexDecode(v.PSS_2048_SHA256))).toBe(false);
+    }
+    // Every prefix of a good key, and nothing at all.
+    const key = hexDecode(v.KEY_2048);
+    for (let n = 0; n < key.length; n += 7) {
+      expect(rsaPkcs1Verify(key.slice(0, n), d, sig)).toBe(false);
+    }
+  });
+});
+
+describe("rsaPssVerify", () => {
+  it("matches every Wycheproof rsa_pss_2048_sha256_mgf1_32 case", () => {
+    expect(run(RSA_PSS_2048_SHA256_CASES, 32, true)).toEqual([63, 45]);
+  });
+
+  it("matches every Wycheproof rsa_pss_4096_sha512_mgf1_64 case", () => {
+    expect(run(RSA_PSS_4096_SHA512_CASES, 64, true)).toEqual([132, 47]);
+  });
+
+  it("verifies OpenSSL's signatures with each hash, and refuses another message or hash", () => {
+    const key = hexDecode(v.KEY_2048);
+    expect(rsaPssVerify(key, sha256(MESSAGE), hexDecode(v.PSS_2048_SHA256))).toBe(true);
+    expect(rsaPssVerify(key, sha384(MESSAGE), hexDecode(v.PSS_2048_SHA384))).toBe(true);
+    expect(rsaPssVerify(key, sha512(MESSAGE), hexDecode(v.PSS_2048_SHA512))).toBe(true);
+    const other = utf8Encode("Hello velt");
+    expect(rsaPssVerify(key, sha256(other), hexDecode(v.PSS_2048_SHA256))).toBe(false);
+    expect(rsaPssVerify(key, sha384(MESSAGE), hexDecode(v.PSS_2048_SHA256))).toBe(false);
+    expect(rsaPssVerify(key, Buffer.alloc(20), hexDecode(v.PSS_2048_SHA256))).toBe(false);
+  });
+
+  it("refuses a salt that is not as long as the hash, and MGF1 over another hash", () => {
+    const key = hexDecode(v.KEY_2048);
+    expect(rsaPssVerify(key, sha256(MESSAGE), hexDecode(v.PSS_2048_SALT_0))).toBe(false);
+    expect(rsaPssVerify(key, sha256(MESSAGE), hexDecode(v.PSS_2048_SALT_20))).toBe(false);
+    expect(rsaPssVerify(key, sha256(MESSAGE), hexDecode(v.PSS_2048_MGF1_SHA1))).toBe(false);
+  });
+
+  it("reads an encoded message a byte shorter than a modulus of 8 n + 1 bits", () => {
+    const key = hexDecode(v.KEY_2049);
+    expect(rsaPssVerify(key, sha256(MESSAGE), hexDecode(v.PSS_2049_SHA256))).toBe(true);
+    expect(rsaPssVerify(key, sha384(MESSAGE), hexDecode(v.PSS_2049_SHA384))).toBe(true);
+    expect(rsaPssVerify(key, sha512(MESSAGE), hexDecode(v.PSS_2049_SHA512))).toBe(true);
+    expect(rsaPssVerify(key, sha256(MESSAGE), hexDecode(v.PSS_2049_SHA384))).toBe(false);
+    // The byte in front of it must be zero: the same encoded message after a 1 is refused.
+    const d = sha256(utf8Encode(v.PSS_2049_MESSAGE));
+    expect(rsaPssVerify(key, d, hexDecode(v.PSS_2049_GOOD))).toBe(true);
+    expect(rsaPssVerify(key, d, hexDecode(v.PSS_2049_FIRST_BYTE_1))).toBe(false);
+  });
+
+  it("takes an exponent of 33 bits", () => {
+    const key = hexDecode(v.KEY_2056E33);
+    expect(rsaPssVerify(key, sha256(MESSAGE), hexDecode(v.PSS_2056E33))).toBe(true);
+    expect(rsaPssVerify(key, sha384(MESSAGE), hexDecode(v.PSS_2056E33))).toBe(false);
+  });
+});

@@ -1,0 +1,190 @@
+// White-box tests of `Mont` (velt/crypto/mont): products against Python's integers for moduli of
+// one to nine limbs, with the operands and moduli that carry out of a product's sums (a modulus
+// near a power of 2^64 and operands just under it), and what `load` and `bytes` do at the edges.
+import { hexDecode, hexEncode } from "velt/encoding/hex";
+import { describe, expect, it } from "velt/test";
+import { Mont } from "velt/crypto/mont";
+
+// The modulus n, a, b and a * b mod n, big-endian, each as long as n.
+function products(): string[][] {
+  return [
+    [
+      "fffffffffffffffffffffffffffffffd",
+      "fffffffffffffffffffffffffffffffc",
+      "fffffffffffffffffffffffffffffffc",
+      "00000000000000000000000000000001",
+    ],
+    ["ffffffffffffffff", "fffffffffffffffe", "fffffffffffffffe", "0000000000000001"],
+    [
+      "ffffffffffffffffffffffffffffffff",
+      "fffffffffffffffffffffffffffffffe",
+      "fffffffffffffffffffffffffffffffd",
+      "00000000000000000000000000000002",
+    ],
+    [
+      "80000000000000000000000000000001",
+      "80000000000000000000000000000000",
+      "7ffffffffffffffffffffffffffffffb",
+      "00000000000000000000000000000006",
+    ],
+    [
+      "ffffffffffffffffffffffffffffffffffffffffffffffff",
+      "fffffffffffffffffffffffffffffffffffffffffffffffe",
+      "fffffffffffffffffffffffffffffffffffffffffffffffe",
+      "000000000000000000000000000000000000000000000001",
+    ],
+    [
+      "0200000000000000000000000000000001",
+      "0200000000000000000000000000000000",
+      "01ffffffffffffffffffffffffffffffff",
+      "0000000000000000000000000000000002",
+    ],
+    ["01ffff", "01fffe", "012345", "00dcba"],
+    ["f2a74de452e6b439", "6513270e269e0d37", "0c5c7fd0a6a3a450", "c07b0c2ffb84c9dc"],
+    ["f2a74de452e6b439", "0000000000000000", "d23f0824128b2f33", "0000000000000000"],
+    ["f2a74de452e6b439", "0000000000000001", "f2a74de452e6b438", "f2a74de452e6b438"],
+    [
+      "095d9dc9f81818e811892f902b",
+      "0381e74ef5e8e25d940ed90475",
+      "066f03675a1600a35a099950d8",
+      "08e4c780cc23721178c341d1dd",
+    ],
+    [
+      "095d9dc9f81818e811892f902b",
+      "00000000000000000000000000",
+      "081738f7d93d9c172411e20b8f",
+      "00000000000000000000000000",
+    ],
+    [
+      "095d9dc9f81818e811892f902b",
+      "00000000000000000000000001",
+      "095d9dc9f81818e811892f902a",
+      "095d9dc9f81818e811892f902a",
+    ],
+    [
+      "90c192cfd3ac94af0f21ddb66cad4a27",
+      "0fd630f1f29d0da9953f48f1a09f76b5",
+      "0cb1e29c658cda1495e60af593bd04cf",
+      "7a84b96b634dbb955f23ead5af92d682",
+    ],
+    [
+      "90c192cfd3ac94af0f21ddb66cad4a27",
+      "00000000000000000000000000000000",
+      "8e81973e0becd7b03898d190f9ebdacc",
+      "00000000000000000000000000000000",
+    ],
+    [
+      "90c192cfd3ac94af0f21ddb66cad4a27",
+      "00000000000000000000000000000001",
+      "90c192cfd3ac94af0f21ddb66cad4a26",
+      "90c192cfd3ac94af0f21ddb66cad4a26",
+    ],
+    [
+      "9e8a6a63ec24ede6a46b4cb2424a23d5962217beaddbc496cb",
+      "1a2e44158bae97ba94d0eda82f8f6d05584ef8aa3892276658",
+      "8c18f135d25f557203301850c5a38fd547923a736994e3bf91",
+      "2191193d02ff5ed2dbf5a52a52ce066586532e174d70ebf5ff",
+    ],
+    [
+      "9e8a6a63ec24ede6a46b4cb2424a23d5962217beaddbc496cb",
+      "00000000000000000000000000000000000000000000000000",
+      "7f34b9b5df9e7769b10f4205b4907a70c31012f037b64ce422",
+      "00000000000000000000000000000000000000000000000000",
+    ],
+    [
+      "9e8a6a63ec24ede6a46b4cb2424a23d5962217beaddbc496cb",
+      "00000000000000000000000000000000000000000000000001",
+      "9e8a6a63ec24ede6a46b4cb2424a23d5962217beaddbc496ca",
+      "9e8a6a63ec24ede6a46b4cb2424a23d5962217beaddbc496ca",
+    ],
+    [
+      "ec66a78795e761d17731af10506bf2efc6f877186d76b07e881ed162ae2eb155",
+      "c7a2ea20b2f14c942e05319acb5c74273f98e2774cbd87ad5c90a9587403e430",
+      "57ee05cde00902c77ebff206867347214cdd2055930d6eaf14f4733f3e7d1bfb",
+      "54ecbd562a1586928f0a610d195a72a2c71a5af1b7a742dbb410cd22c93a4fd1",
+    ],
+    [
+      "ec66a78795e761d17731af10506bf2efc6f877186d76b07e881ed162ae2eb155",
+      "0000000000000000000000000000000000000000000000000000000000000000",
+      "830e07bc1e398f1012bd4acefaecbd389be4bcfc49b64a0872e6cc3ababced20",
+      "0000000000000000000000000000000000000000000000000000000000000000",
+    ],
+    [
+      "ec66a78795e761d17731af10506bf2efc6f877186d76b07e881ed162ae2eb155",
+      "0000000000000000000000000000000000000000000000000000000000000001",
+      "ec66a78795e761d17731af10506bf2efc6f877186d76b07e881ed162ae2eb154",
+      "ec66a78795e761d17731af10506bf2efc6f877186d76b07e881ed162ae2eb154",
+    ],
+    [
+      "01c0ca02135e92b1d3f28ede0d7ac3baea9e13deef86ab1031d0f646e1f40a097c976bf46c697d2caf82eeeacbe226e875555790f82ec1d3fcff2a3af4d46b0a18e9",
+      "0164795e8229451abd81f1d69ed617f5e837d70820fe119a72d174c9df6acc011cdd9474031b7f26144b98289fcd59a54a7bb1fee08f571242425051c1ccd17f9aca",
+      "0156e315128862c33a4fb774eb5248db40af72158370d269a9a5ae658f33fe3b890b93f448b3a5aa3c814f426dcbb394fb36bb2d420f0f88080b10a3d6b2aa05e11a",
+      "01b6e4fea7aacf7d23a63f486ae86037b088d807ab097bd68448bcf2497eeabff0466ce12c6c6682e3345643fdd5f82a62660fed40ba477fa1164115d9e38ef9eb3f",
+    ],
+    [
+      "01c0ca02135e92b1d3f28ede0d7ac3baea9e13deef86ab1031d0f646e1f40a097c976bf46c697d2caf82eeeacbe226e875555790f82ec1d3fcff2a3af4d46b0a18e9",
+      "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "00cb3f63af83bd0561e6211c70cf49952399c4aaeac137dc76fb0f17a3007e62aa0a1df9fd789c6539382b0537e65affb2297631a992f0ce583505c6af0758d5563d",
+      "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    ],
+    [
+      "01c0ca02135e92b1d3f28ede0d7ac3baea9e13deef86ab1031d0f646e1f40a097c976bf46c697d2caf82eeeacbe226e875555790f82ec1d3fcff2a3af4d46b0a18e9",
+      "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001",
+      "01c0ca02135e92b1d3f28ede0d7ac3baea9e13deef86ab1031d0f646e1f40a097c976bf46c697d2caf82eeeacbe226e875555790f82ec1d3fcff2a3af4d46b0a18e8",
+      "01c0ca02135e92b1d3f28ede0d7ac3baea9e13deef86ab1031d0f646e1f40a097c976bf46c697d2caf82eeeacbe226e875555790f82ec1d3fcff2a3af4d46b0a18e8",
+    ],
+  ];
+}
+
+describe("Mont", () => {
+  it("multiplies as Python does", () => {
+    for (const c of products()) {
+      const n = hexDecode(c[0]);
+      const m = new Mont(n, 0, n.length, 3);
+      const a = hexDecode(c[1]);
+      const b = hexDecode(c[2]);
+      expect(m.load(0, a, 0, a.length)).toBe(true);
+      expect(m.load(1, b, 0, b.length)).toBe(true);
+      // a R * b / R, then the same with both in the domain and one product by 1 to leave it.
+      m.enter(2, 0);
+      m.mul(2, 2, 1);
+      expect(`${c[0]} ${hexEncode(m.bytes(2, n.length))}`).toBe(`${c[0]} ${c[3]}`);
+      m.enter(0, 0);
+      m.enter(1, 1);
+      m.copy(2, 1);
+      m.mul(0, 0, 2);
+      const one = Buffer.alloc(1);
+      one[0] = 1;
+      m.load(1, one, 0, 1);
+      m.mul(0, 0, 1);
+      expect(`${c[0]} ${hexEncode(m.bytes(0, n.length))}`).toBe(`${c[0]} ${c[3]}`);
+    }
+  });
+
+  it("counts the modulus's limbs and bits", () => {
+    const m = new Mont(hexDecode("01ffff"), 1, 2, 1);
+    expect(m.k).toBe(1);
+    expect(m.bits).toBe(16);
+    const wide = new Mont(hexDecode("0100000000000000000000000000000001"), 0, 17, 1);
+    expect(wide.k).toBe(3);
+    expect(wide.bits).toBe(129);
+  });
+
+  it("says whether a loaded number is below the modulus", () => {
+    const n = hexDecode("fffffffffffffffffffffffffffffffd");
+    const m = new Mont(n, 0, 16, 1);
+    expect(m.load(0, hexDecode("fffffffffffffffffffffffffffffffc"), 0, 16)).toBe(true);
+    expect(m.load(0, n, 0, 16)).toBe(false);
+    expect(m.load(0, hexDecode("fffffffffffffffffffffffffffffffe"), 0, 16)).toBe(false);
+    expect(m.load(0, hexDecode("fffffffffffffffeffffffffffffffff"), 0, 16)).toBe(true);
+    expect(m.load(0, [], 0, 0)).toBe(true);
+    expect(hexEncode(m.bytes(0, 16))).toBe("00000000000000000000000000000000");
+  });
+
+  it("writes a number in as many bytes as asked, the low ones", () => {
+    const m = new Mont(hexDecode("fffffffffffffffffffffffffffffffd"), 0, 16, 1);
+    m.load(0, hexDecode("0102030405060708090a"), 0, 10);
+    expect(hexEncode(m.bytes(0, 16))).toBe("0000000000000102030405060708090a");
+    expect(hexEncode(m.bytes(0, 3))).toBe("08090a");
+  });
+});
