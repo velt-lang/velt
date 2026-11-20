@@ -74,7 +74,7 @@ macro_rules! unit_fields {
 
 unit_fields! {
     save: [
-        fn_shapes, ty, defs, info, def_spans, scopes, prelude, prelude_type_keys,
+        fn_shapes, ty, defs, info, def_spans, scopes, prelude, prelude_type_keys, json_needs,
         aliases, extensions, impls, iface_writes, part_ifaces, synth_ifaces, generic_fns,
         generic_called, union_views, any, ext_impls, ext_by_iface, anon, readonly_twins,
         array_twins,
