@@ -34,6 +34,14 @@ pub fn may_change_memory(e: &hir::Expr) -> bool {
             callee: hir::Callee::Intrinsic(i),
             args,
         } => runs_user_code(*i) || args.iter().any(|a| may_change_memory(a) || writes_place(a)),
+        // A `match` only reads its scrutinee to pick an arm (a literal union read as a `string`
+        // is one, with a literal per arm, #3334); what its parts do is what it does.
+        H::Match { scrutinee, arms } => {
+            may_change_memory(scrutinee)
+                || arms.iter().any(|a| {
+                    a.guard.as_ref().is_some_and(may_change_memory) || may_change_memory(&a.body)
+                })
+        }
         _ => true,
     }
 }
@@ -186,6 +194,46 @@ mod tests {
                 vec![local(UseMode::Borrow)]
             )));
         }
+    }
+
+    /// `match (x) { A => <body>, _ => "b" }`.
+    fn match_of(body: Expr) -> Expr {
+        use crate::hir::{Arm, Pat, PatKind};
+        let pat = |kind| Pat {
+            kind,
+            ty: TyId(0),
+            span: Span::default(),
+        };
+        let arm = |kind, body| Arm {
+            pat: pat(kind),
+            guard: None,
+            body,
+        };
+        mk(H::Match {
+            scrutinee: Box::new(local(UseMode::Borrow)),
+            arms: vec![
+                arm(
+                    PatKind::Variant {
+                        def: DefId(1),
+                        variant: 0,
+                        args: vec![],
+                    },
+                    body,
+                ),
+                arm(PatKind::Wildcard, mk(H::Lit(Lit::Int(1)))),
+            ],
+        })
+    }
+
+    #[test]
+    fn a_match_changes_what_its_parts_change() {
+        // A literal union read as a `string` (#3334): a literal per arm.
+        assert!(!may_change_memory(&match_of(mk(H::Lit(Lit::Int(0))))));
+        let call = mk(H::Call {
+            callee: Callee::Def(DefId(2), vec![]),
+            args: vec![],
+        });
+        assert!(may_change_memory(&match_of(call)));
     }
 
     #[test]
