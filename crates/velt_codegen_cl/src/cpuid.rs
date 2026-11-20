@@ -85,6 +85,8 @@ pub(crate) const LINKAGE: Linkage = Linkage::Local;
 
 #[cfg(test)]
 mod tests {
+    // The tests below run on x86-64 only.
+    #[cfg_attr(not(target_arch = "x86_64"), allow(unused_imports))]
     use super::*;
 
     /// The code runs on the CPU this machine has: with each calling convention's argument
