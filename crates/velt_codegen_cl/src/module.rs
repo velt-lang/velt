@@ -123,6 +123,14 @@ pub(crate) fn build_module_cached<M: Module>(
     validate_aggregates(program)?;
     let (mut decls, defs) = declare_all(module, program, naming)?;
     let target = Target::of(isa, module);
+    // The code that runs before std's start-up check of the CPU (`vir::Function::baseline`):
+    // translated and compiled for the baseline CPU, whatever `--cpu` says.
+    let base_isa = baseline_isa(isa, program, naming)?;
+    let base_target = base_isa.as_deref().map(|i| Target::of(i, module));
+    let target_of = |func: &vir::Function| match (func.baseline, &base_target) {
+        (true, Some(base)) => base,
+        _ => &target,
+    };
     let declared = start.elapsed();
 
     // Workers translate and compile against `target`, a copy of the declarations, while this
@@ -141,7 +149,15 @@ pub(crate) fn build_module_cached<M: Module>(
         .collect();
     let compile = |builder_ctx: &mut FunctionBuilderContext, i: usize| {
         let (id, func) = defined[i];
-        compile_function(&target, program, &decls, id, func, builder_ctx, cache)
+        compile_function(
+            target_of(func),
+            program,
+            &decls,
+            id,
+            func,
+            builder_ctx,
+            cache,
+        )
     };
     let mut own_builder_ctx = FunctionBuilderContext::new();
     let define = |i: usize, outcome: CodegenResult<Outcome>| -> CodegenResult<()> {
@@ -157,6 +173,9 @@ pub(crate) fn build_module_cached<M: Module>(
                 let id = module
                     .declare_function(lib.name(), Linkage::Import, &sig)
                     .map_err(|e| format!("codegen: declaring `{}`: {e}", lib.name()))?;
+                if let Some(base) = &base_target {
+                    base.add_lib(lib, id, sig.clone());
+                }
                 target.add_lib(lib, id, sig);
             }
             outcome = compile(&mut own_builder_ctx, i)?;
@@ -207,6 +226,29 @@ pub(crate) fn build_module_cached<M: Module>(
             ("define", defining),
         ],
     })
+}
+
+/// The ISA of the start-up code (`vir::Function::baseline`): `isa`'s target and settings for the
+/// baseline CPU of its architecture. `None` when the program has none, for WebAssembly, and for a
+/// `velt dev` version, which runs on the machine that compiles it.
+fn baseline_isa(
+    isa: &dyn TargetIsa,
+    program: &vir::Program,
+    naming: &Naming,
+) -> CodegenResult<Option<cranelift_codegen::isa::OwnedTargetIsa>> {
+    use target_lexicon::Architecture;
+    let arch = isa.triple().architecture;
+    let native_arch = matches!(arch, Architecture::X86_64 | Architecture::Aarch64(_));
+    if matches!(naming, Naming::Dev(..))
+        || !native_arch
+        || !program.funcs.iter().any(|f| f.baseline)
+    {
+        return Ok(None);
+    }
+    let optimize = isa.flags().opt_level() != cranelift_codegen::settings::OptLevel::None;
+    let jit = !isa.flags().is_pic();
+    let triple = isa.triple().to_string();
+    crate::isa::make_isa(&triple, Some("baseline"), optimize, jit).map(Some)
 }
 
 /// A function translated and compiled by a worker, ready to define.
@@ -289,7 +331,30 @@ pub(crate) fn declare_all<M: Module>(
     let (mut eh, mut eh_try, mut eh_unwind) = (None, None, vec![]);
     let mut eh_catches = None;
     let mut unwind_resume = None;
+    // `velt_simd_cpuid` and `velt_simd_xgetbv` on x86-64: functions this module defines (cpuid.rs).
+    let mut asks: [Option<FuncId>; 2] = [None, None];
     for e in &program.externs {
+        let asked = velt_vir::simd::SimdCall::of_symbol(&e.symbol)
+            .and_then(|call| crate::cpuid::kind(module, &call).map(|k| (k, call)));
+        if let Some((is_cpuid, call)) = asked {
+            let (params, ret) = call.signature();
+            if e.params != params || e.ret != ret {
+                bail!("ICE: `{}` declared with another signature", e.symbol);
+            }
+            let slot = &mut asks[usize::from(is_cpuid)];
+            let id = match *slot {
+                Some(id) => id,
+                None => {
+                    let link = crate::cpuid::LINKAGE;
+                    let id = declare_function(module, call_conv, &e.symbol, &params, ret, link)?;
+                    crate::cpuid::define(module, call_conv, id, is_cpuid)?;
+                    *slot = Some(id);
+                    id
+                }
+            };
+            externs.push(Some(id));
+            continue;
+        }
         // Catching a Velt panic: a function this module defines (eh.rs).
         if velt_vir::eh::is_try(&e.symbol) {
             let id = match eh_try {

@@ -327,7 +327,7 @@ pub(crate) struct Ctx<'m> {
     /// ownership pass track `FnInfo::modified_params`.
     pub frozen_reads: bool,
     /// Gated functions found so far (`body::gated`), for `hir::Program::cpu_targets`.
-    pub cpu_targets: FxHashMap<DefId, crate::hir::CpuTarget>,
+    pub cpu_targets: FxHashMap<DefId, crate::hir::CpuTargets>,
     /// Dispatch groups for error types (`crate::throws`), built on first use.
     pub groups: Option<crate::throws::Groups>,
     /// Bodies that may hold object literals implementing interfaces (`body::literal_hosts`).

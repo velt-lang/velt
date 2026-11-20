@@ -180,6 +180,13 @@ impl Interp<'_> {
                 return Err(101);
             }
             "velt_rt_exit" => return Err(a[0] as u32 as i32),
+            // The CPU's features (std/lang/hooks/cpu.velt): the interpreter runs no gated code, as
+            // Cranelift doesn't, so it is on no architecture whose checks run.
+            "velt_simd_on_x86" | "velt_simd_on_arm" | "velt_simd_cpu_word" => return Ok(0),
+            "velt_simd_cpu_required" | "velt_simd_xgetbv" => return Ok(0),
+            "velt_simd_cpu_word_set" => {}
+            // The variables the check reads (`VELT_CPU_DISABLE`, `VELT_SIMD_DISABLE`): unset.
+            "getenv" => return Ok(0),
             "velt_rt_uncaught_report" => {}
             "velt_rt_set_throw_loc" => self.throw_loc = a[0],
             "velt_rt_throw_loc" => return Ok(self.throw_loc),
