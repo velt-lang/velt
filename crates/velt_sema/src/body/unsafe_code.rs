@@ -143,8 +143,5 @@ impl FnCx<'_, '_> {
 /// declare unsafe function`)?
 pub(crate) fn unsafe_fn(cx: &Ctx, d: DefId) -> bool {
     let f = cx.fn_info(d);
-    f.c.is_some()
-        || f.unsafe_intrinsic
-        || f.source
-            .is_some_and(|src| crate::body::defaults::fn_sig_ast(src).is_unsafe)
+    f.c.is_some() || f.unsafe_intrinsic || f.sig_unsafe
 }
