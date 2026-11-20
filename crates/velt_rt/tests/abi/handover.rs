@@ -8,7 +8,6 @@
 //! checkpoint first, then the other task claiming the result.
 
 use super::fake::block_on_state;
-use crate::task::local::velt_rt_unhandled_defer;
 use crate::task::local::{velt_rt_fut_box, velt_rt_fut_start_rejecting, velt_rt_fut_transfer};
 use crate::task::{drop_fut, poll_fut, VeltFut, READY};
 use std::ffi::c_void;
@@ -34,12 +33,11 @@ unsafe extern "C-unwind" fn make_drop(_: *mut u8) {}
 /// Reports of unhandled rejections, by the value rejected with (each test its own values).
 static REPORTS: [AtomicUsize; 2] = [AtomicUsize::new(0), AtomicUsize::new(0)];
 
-/// The unclaimed-result glue compiled code passes to `velt_rt_fut_start_rejecting`: a deferred
-/// rejection waits for the checkpoint, any other one is reported (counted here instead of
-/// printed with an exit).
+/// The unclaimed-result glue compiled code passes to `velt_rt_fut_start_rejecting`: a rejection
+/// is reported (counted here instead of printed with an exit).
 unsafe extern "C-unwind" fn report(slot: *mut u8) {
     let r = &*(slot as *const Rejected);
-    if r.tag == 0 || velt_rt_unhandled_defer() != 0 {
+    if r.tag == 0 {
         return;
     }
     REPORTS[(r.value / 10 - 1) as usize].fetch_add(1, Ordering::SeqCst);
