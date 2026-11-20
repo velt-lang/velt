@@ -385,7 +385,60 @@ fn check_timed(
     // A check by units with std as a check of its own (`units::stage2`): the stage the next
     // round checks, and std's frozen unit the app's rounds start from.
     let stage = std::cell::Cell::new(units::Stage::Both);
+    // std's modules first, which std's unit is checked over alone, then the app's.
+    let order = (opts.units && units::stage2()).then(|| units::Order::of(modules, root));
     let std_snap: std::cell::RefCell<Option<ctx::Ctx>> = Default::default();
+    // What every context of this check holds of the program, which a unit does not save
+    // (`units::codec::unit`'s `skip`): the rewrites' facts, the generator, the loads. Installed in
+    // every fresh context.
+    let install = on_cx(|cx| {
+        if opts.eager_std {
+            cx.lazy.on = false;
+        }
+        cx.units = opts.units;
+        cx.lazy.native_executor = opts.native_executor;
+        cx.loads = loads;
+        generating::install(cx, gen, generator.as_ref());
+        cx.stack_budget = stack_budget;
+        // A check that keeps itself records its bodies, for the kept check to check them again.
+        cx.body_records = kept::wanted(input).then(Default::default);
+        cx.source_facts = facts.clone();
+        cx.ns_private = ns_private.clone();
+        cx.global_namespaces = global_ns.clone();
+        cx.gen_throw = gen_throw;
+        cx.alias_blocked = alias_blocked.clone();
+        if let Some(l) = &lifted {
+            cx.generic_arrow_fns = l.local_fns.clone();
+            cx.generic_arrow_all = l.all_fns.clone();
+            cx.unsafe_arrow_fns = l.unsafe_fns.clone();
+        }
+        if let Some(o) = &overloaded {
+            cx.has_overloads = true;
+            cx.overloaded_methods = o.methods.clone();
+        }
+        cx.objects.null_proto_records = null_proto;
+        cx.objects.record_accessors = record_accessors;
+        cx.objects.ctor_reads = ctor_reads;
+        cx.objects.brands = brands.clone();
+        cx.global_props = global_props.clone();
+        cx.recovered = (recovered.iter())
+            .map(|&(m, src)| (m, collect::exports::words(src)))
+            .collect();
+        cx.promoted_consts = chunks.promoted.clone();
+        cx.asserted_rmw = asserted.rmw.clone();
+        if let Some(c) = &closures {
+            cx.kept_nested = c.kept.clone();
+            cx.set_closure_groups(&c.groups);
+        }
+    });
+    // The rewrites' diagnostics: the program's, so not std's unit's (a unit kept for later
+    // checks serves other programs); the app's copy of it takes them.
+    let rewrite_diags = on_cx(|cx| {
+        cx.diags.extend(merge_diags.iter().cloned());
+        if let Some(c) = &closures {
+            cx.diags.extend(c.diags.iter().cloned());
+        }
+    });
     let new_cx = |round: &'static str,
                   held_borrows: bool,
                   seeds: &throws::FnTypeSeeds,
@@ -397,61 +450,49 @@ fn check_timed(
             _ => None,
         };
         let fresh = from_std.is_none();
-        let mut cx = from_std.unwrap_or_else(|| ctx::Ctx::new(modules, root));
+        let mut cx = match (from_std, &order) {
+            (Some(cx), _) => cx,
+            (None, Some(o)) if stage.get() == units::Stage::Std => {
+                ctx::Ctx::over(o.std_modules(modules), 0)
+            }
+            (None, _) => ctx::Ctx::new(modules, root),
+        };
         cx.units_stage = stage.get();
         if !fresh {
             cx.union_views.assumed = views.clone();
             cx.fn_sites.reseed(seeds.clone(), last);
             cx.held_borrows = held_borrows;
+            // The app's modules after std's unit, with what the rewrites found of them.
+            if let Some(o) = &order {
+                o.add_app(&mut cx, modules);
+                let base = o.app_base(&cx);
+                cx.global_props = global_props.clone();
+                cx.objects.brands = brands.clone();
+                cx.ns_private = ns_private.clone();
+                cx.global_namespaces = global_ns.clone();
+                cx.recovered = (recovered.iter())
+                    .map(|&(m, src)| (m, collect::exports::words(src)))
+                    .collect();
+                units::remap_module_facts(&mut cx, &|m| o.in_app(m, base));
+                rewrite_diags(&mut cx);
+            }
         }
         if fresh {
             cx.units_stage = stage.get();
-            if opts.eager_std {
-                cx.lazy.on = false;
-            }
-            cx.units = opts.units;
-            cx.lazy.native_executor = opts.native_executor;
+            install(&mut cx);
             body::lazy_std::assume(&mut cx, &assumed.borrow());
-            cx.loads = loads;
-            generating::install(&mut cx, gen, generator.as_ref());
             cx.union_views.assumed = views.clone();
             cx.fn_sites = throws::FnSites::new(seeds.clone(), last);
-            cx.stack_budget = stack_budget;
-            // A check that keeps itself records its bodies, for the kept check to check them again.
-            cx.body_records = kept::wanted(input).then(Default::default);
-            cx.source_facts = facts.clone();
             cx.held_borrows = held_borrows;
-            cx.ns_private = ns_private.clone();
-            cx.global_namespaces = global_ns.clone();
-            cx.gen_throw = gen_throw;
-            cx.alias_blocked = alias_blocked.clone();
-            if let Some(l) = &lifted {
-                cx.generic_arrow_fns = l.local_fns.clone();
-                cx.generic_arrow_all = l.all_fns.clone();
-                cx.unsafe_arrow_fns = l.unsafe_fns.clone();
-            }
-            if let Some(o) = &overloaded {
-                cx.has_overloads = true;
-                cx.overloaded_methods = o.methods.clone();
-            }
-            cx.objects.null_proto_records = null_proto;
-            cx.objects.record_accessors = record_accessors;
-            cx.objects.ctor_reads = ctor_reads;
-            cx.objects.brands = brands.clone();
-            cx.global_props = global_props.clone();
-            cx.recovered = (recovered.iter())
-                .map(|&(m, src)| (m, collect::exports::words(src)))
-                .collect();
-            cx.diags.extend(merge_diags.iter().cloned());
-            cx.promoted_consts = chunks.promoted.clone();
-            cx.asserted_rmw = asserted.rmw.clone();
-            if let Some(c) = &closures {
-                cx.diags.extend(c.diags.iter().cloned());
-                cx.kept_nested = c.kept.clone();
-                cx.set_closure_groups(&c.groups);
+            if stage.get() != units::Stage::Std {
+                rewrite_diags(&mut cx);
             }
         }
-        let entry = timings::pass(round, || analyze(&mut cx, root, root_mod, opts));
+        if let (true, Some(o), units::Stage::Std) = (fresh, &order, stage.get()) {
+            units::remap_module_facts(&mut cx, &|m| o.in_std(m));
+        }
+        let cx_root = cx.root;
+        let entry = timings::pass(round, || analyze(&mut cx, cx_root, root_mod, opts));
         global_this::drop_site_errors(&mut cx);
         if let Some(o) = &overloaded {
             overloads::report_misfits(&mut cx.diags, &o.sig_spans);
@@ -465,20 +506,19 @@ fn check_timed(
     // moves into `main`, which is checked again anyway (`script_locals`).
     let given = merge_diags.len() + closures.as_ref().map_or(0, |c| c.diags.len());
     let doubt = |cx: &ctx::Ctx| {
-        let moves = script_locals::moves_more(cx, &modules[root].ast);
+        let moves = script_locals::moves_more(cx, &cx.modules[cx.root].ast);
         cx.diags.len() > given && !moves && !throws::first_check_only()
     };
     // The check checked again, kept while that one runs: when that one reports an error this
     // one did not, this one's diagnostics stay the program's (`throws::adds_errors`).
     if opts.units && units::stage2() {
         stage.set(units::Stage::Std);
-        let mut std_cx =
-            match rounds::run(&new_cx, &|_: &ctx::Ctx| false, &assumed, false, root, None) {
-                Ok((cx, _, _)) => cx,
-                Err(stopped) => return *stopped,
-            };
-        std_cx.freeze_defs();
-        std_cx.unit_base = std_cx.defs.len() as u32;
+        let run = rounds::run(&new_cx, &|_: &ctx::Ctx| false, &assumed, false, None);
+        let mut std_cx = match run {
+            Ok((cx, _, _)) => cx,
+            Err(stopped) => return *stopped,
+        };
+        units::finish_std(&mut std_cx);
         *std_snap.borrow_mut() = Some(std_cx);
         stage.set(units::Stage::App);
     }
@@ -487,7 +527,6 @@ fn check_timed(
         &doubt,
         &assumed,
         !recovered.is_empty(),
-        root,
         generator.as_ref(),
     ) {
         Ok(done) => done,
@@ -495,7 +534,9 @@ fn check_timed(
     };
     // A kept check (`kept`) of a check in which no generator ran.
     let none_generated = generator.as_ref().is_none_or(|g| g.kept().next().is_none());
-    let kept = (kept::wanted(input) && none_generated).then(|| kept::detach(cx.clone()));
+    // Not with std as a unit of its own: a kept check reloads over the load's module order.
+    let kept = (kept::wanted(input) && none_generated && order.is_none())
+        .then(|| kept::detach(cx.clone()));
     let checked = (modules.as_ptr(), modules.len());
     let (program, diags) = program::build_checked(cx, entry, generated);
     if let Some(kept) = kept {
@@ -553,3 +594,9 @@ pub(crate) const VIEW_ROUNDS: usize = 4;
 pub(crate) use analysis::{
     analyze, analyze_after_phase, analyze_bodies, demanded, error_count, retry_sharing,
 };
+
+/// `f`, a function of one check's contexts (their modules' lifetime fixed: a closure's own
+/// parameter would get a lifetime of its own).
+fn on_cx<'m, F: Fn(&mut ctx::Ctx<'m>)>(f: F) -> F {
+    f
+}

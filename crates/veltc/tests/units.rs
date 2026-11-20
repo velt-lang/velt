@@ -189,6 +189,42 @@ fn check_golden(path: &str, units: bool) -> std::process::Output {
     cmd.output().unwrap()
 }
 
+/// `velt check` of the golden `path` from its own directory, with `VELT_UNITS=2` (std a unit of
+/// its own) or not at all (`two` false: a whole-program check).
+fn check_golden_two(path: &str, two: bool) -> std::process::Output {
+    let file = golden(path);
+    let mut cmd = no_window::command(env!("CARGO_BIN_EXE_velt"));
+    cmd.arg("check")
+        .arg(file.file_name().unwrap())
+        .current_dir(file.parent().unwrap())
+        .env_remove("VELT_UNITS_FREEZE");
+    match two {
+        true => cmd.env("VELT_UNITS", "2"),
+        false => cmd.env_remove("VELT_UNITS"),
+    };
+    cmd.output().unwrap()
+}
+
+/// std's unit ends clean (`units::finish_std`): the app's rounds start from no memo built over
+/// std alone, so a package's recursive functions get no error a whole-program check does not
+/// give; and the app's collection defers a type query that needs a body, as a whole program's
+/// does. Both check with `VELT_UNITS=2` as by a whole-program check.
+#[test]
+fn std_s_unit_ends_clean_and_the_app_is_collected_as_a_whole_program_is() {
+    for path in [
+        "lang/errors/http_server/http_handler_direct_null.velt",
+        "lang/errors/typeof_generic_params_mismatch.velt",
+        "lang/type_queries.velt",
+        "lang/type_queries_keys.velt",
+        "lang/module_augment_scopes.velt",
+    ] {
+        let whole = check_golden_two(path, false);
+        let two = check_golden_two(path, true);
+        assert_eq!(whole.status.code(), two.status.code(), "{path}");
+        assert_eq!(error_lines(&whole), error_lines(&two), "{path}");
+    }
+}
+
 /// The error lines of a check's output.
 fn error_lines(o: &std::process::Output) -> Vec<String> {
     (String::from_utf8_lossy(&o.stderr).lines())
