@@ -12,18 +12,17 @@ use crate::visit;
 /// The definitions of every type whose field is the target of an assignment in some body.
 pub(crate) fn assigned_objects(cx: &mut Ctx) -> FxHashSet<DefId> {
     let mut out = FxHashSet::default();
-    for i in 0..cx.defs.len() {
-        let Some(Def::Fn(mut f)) = cx.defs[i].take() else {
+    for def in cx.defs.iter() {
+        let Some(Def::Fn(f)) = def else {
             continue;
         };
-        visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
+        visit::exprs(&f.body.block, &mut |e: &Expr| {
             if let E::Assign { place, .. } | E::CompoundAssign { place, .. } = &e.kind {
                 if let Some(d) = written_object(cx, place) {
                     out.insert(d);
                 }
             }
         });
-        cx.defs[i] = Some(Def::Fn(f));
     }
     // `x[k] = v` in a generic body, at each instantiation (`Intrinsic::KeyWrite`).
     out.extend(cx.type_level.inline.written.iter().copied());

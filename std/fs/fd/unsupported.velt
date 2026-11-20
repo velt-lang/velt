@@ -52,6 +52,27 @@ export function statPath(path: readonly u8[], follow: bool): Stat | null {
   return null;
 }
 
+export function listDir(
+  path: readonly u8[],
+  names: string[],
+  types: u8[],
+  unknown: ((child: readonly u8[]) => u8) | null,
+): i32 {
+  return ENOSYS;
+}
+
+export function makeDir(path: readonly u8[], mode: u32): i32 {
+  return -1;
+}
+
+export function removeDir(path: readonly u8[]): i32 {
+  return -1;
+}
+
+export function removeTree(path: readonly u8[]): i32 {
+  return ENOSYS;
+}
+
 export function mapRead(fd: i32, len: usize, offset: i64): usize {
   return 0;
 }

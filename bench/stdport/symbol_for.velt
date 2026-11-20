@@ -1,0 +1,29 @@
+// `Symbol.for`: 2M lookups of 64 keys already in the registry (the usual call: a library asking
+// for its well-known key), then 20k keys seen for the first time, and `Symbol.keyFor` of each
+// registered symbol 1M times. The Rust port keeps a `Mutex<HashMap<Vec<u8>, usize>>`, as the
+// runtime's registry did.
+function main() {
+  const keys: string[] = [];
+  for (let i = 0; i < 64; i++) {
+    keys.push(`app.key.${i}`);
+  }
+  let total: i64 = 0;
+  const first = Symbol.for(keys[0]);
+  for (let round = 0; round < 2000000; round++) {
+    const s = Symbol.for(keys[round % 64]);
+    if (s === first) {
+      total++;
+    }
+  }
+  for (let i = 0; i < 20000; i++) {
+    const s = Symbol.for(`fresh.${i}`);
+    total += Symbol.keyFor(s)!.length as i64;
+  }
+  for (let round = 0; round < 1000000; round++) {
+    const k = Symbol.keyFor(Symbol.for(keys[round % 64]));
+    total += k!.length as i64;
+  }
+  console.log(total);
+}
+
+main();
