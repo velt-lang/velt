@@ -97,7 +97,15 @@ export function find(prog: Program, m: Search, s: string, from: usize, sticky: b
 
 /** The backtracker from each place at or after `from` where a match may start (only `from`
  * when `fixed`), until it finds one: what it returned last. */
-function scan(prog: Program, m: Search, s: string, len: usize, from: usize, fixed: bool, memory: bool): i64 {
+function scan(
+  prog: Program,
+  m: Search,
+  s: string,
+  len: usize,
+  from: usize,
+  fixed: bool,
+  memory: bool,
+): i64 {
   let pos = from;
   while (true) {
     if (!fixed) {

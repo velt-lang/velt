@@ -49,8 +49,34 @@ function fd(source: string, flags: string, s: string, from: usize = 0): i64[] {
 
 describe("Pike machine", () => {
   it("agrees with the backtracker", () => {
-    const subjects = ["abbbc", "xab", "caab", "aab", "a foo b", "a\nb", "ab", "b", "\u{1F600}", "xéy", ""];
-    const patterns = ["b+", "a|ab", "(a+)(b*)", "a*?b", "\\bfoo\\b", "(?:(a)|b)*", "(a*)*", "(a*)+", ".", "é.", "x*", "(a|ab)(c|bcd)?", "[^a]+$"];
+    const subjects = [
+      "abbbc",
+      "xab",
+      "caab",
+      "aab",
+      "a foo b",
+      "a\nb",
+      "ab",
+      "b",
+      "\u{1F600}",
+      "xéy",
+      "",
+    ];
+    const patterns = [
+      "b+",
+      "a|ab",
+      "(a+)(b*)",
+      "a*?b",
+      "\\bfoo\\b",
+      "(?:(a)|b)*",
+      "(a*)*",
+      "(a*)+",
+      ".",
+      "é.",
+      "x*",
+      "(a|ab)(c|bcd)?",
+      "[^a]+$",
+    ];
     for (const p of patterns) {
       for (const s of subjects) {
         expect(pk(p, "", s)).toEqual(bt(p, "", s));

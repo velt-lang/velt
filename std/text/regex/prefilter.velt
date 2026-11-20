@@ -84,7 +84,16 @@ function hit(prog: Program, m: Search, s: string, p: usize, len: usize, mode: u3
  * first hit at or after `from`, or, when the steps found none, `-2 - i` for the byte `i` they
  * stopped at. */
 @inline("always")
-function wide(prog: Program, m: Search, s: string, from: usize, len: usize, size: usize, count: usize, mode: u32): i64 {
+function wide(
+  prog: Program,
+  m: Search,
+  s: string,
+  from: usize,
+  len: usize,
+  size: usize,
+  count: usize,
+  mode: u32,
+): i64 {
   const g = prog.grams;
   const o0 = prog.gramAt[0];
   const o1 = size > 1 ? prog.gramAt[1] : 0;
@@ -169,23 +178,31 @@ function wideScan(prog: Program, m: Search, s: string, from: usize, len: usize, 
   const size = prog.gramSize;
   const count = prog.grams.length / size;
   if (size == 1) {
-    return count == 1 ? wide(prog, m, s, from, len, 1, 1, mode)
-      : count == 2 ? wide(prog, m, s, from, len, 1, 2, mode)
-      : wide(prog, m, s, from, len, 1, 4, mode);
+    return count == 1
+      ? wide(prog, m, s, from, len, 1, 1, mode)
+      : count == 2
+        ? wide(prog, m, s, from, len, 1, 2, mode)
+        : wide(prog, m, s, from, len, 1, 4, mode);
   }
   if (size == 2) {
-    return count == 1 ? wide(prog, m, s, from, len, 2, 1, mode)
-      : count == 2 ? wide(prog, m, s, from, len, 2, 2, mode)
-      : wide(prog, m, s, from, len, 2, 4, mode);
+    return count == 1
+      ? wide(prog, m, s, from, len, 2, 1, mode)
+      : count == 2
+        ? wide(prog, m, s, from, len, 2, 2, mode)
+        : wide(prog, m, s, from, len, 2, 4, mode);
   }
   if (size == 3) {
-    return count == 1 ? wide(prog, m, s, from, len, 3, 1, mode)
-      : count == 2 ? wide(prog, m, s, from, len, 3, 2, mode)
-      : wide(prog, m, s, from, len, 3, 4, mode);
+    return count == 1
+      ? wide(prog, m, s, from, len, 3, 1, mode)
+      : count == 2
+        ? wide(prog, m, s, from, len, 3, 2, mode)
+        : wide(prog, m, s, from, len, 3, 4, mode);
   }
-  return count == 1 ? wide(prog, m, s, from, len, 4, 1, mode)
-    : count == 2 ? wide(prog, m, s, from, len, 4, 2, mode)
-    : wide(prog, m, s, from, len, 4, 4, mode);
+  return count == 1
+    ? wide(prog, m, s, from, len, 4, 1, mode)
+    : count == 2
+      ? wide(prog, m, s, from, len, 4, 2, mode)
+      : wide(prog, m, s, from, len, 4, 4, mode);
 }
 
 /** Is one of the grams of `prog` at byte `i` of `s`? */
@@ -272,7 +289,8 @@ export function literalAll(prog: Program, m: Search, s: string, len: usize): voi
 /** The end of the match `found`, a result of `literalFind` that is not -1. */
 @inline("always")
 export function literalEnd(prog: Program, found: i64): usize {
-  return ((found & POSITION) as usize) + strByteLen(prog.literals[(found >> LITERAL_SHIFT) as usize]);
+  return ((found & POSITION) as usize) +
+    strByteLen(prog.literals[(found >> LITERAL_SHIFT) as usize]);
 }
 
 /** The start of the match `found`, a result of `literalFind` that is not -1. */

@@ -50,7 +50,15 @@ export function pikeReset(prog: Program, m: Search): void {
 
 /** Adds to list `list` the threads that instruction `pc0` leads to at byte `pos` without
  * reading a character, in the program's order of preference, with the slots of `m.work`. */
-function add(prog: Program, m: Search, s: string, len: usize, list: usize, pc0: usize, pos: usize): void {
+function add(
+  prog: Program,
+  m: Search,
+  s: string,
+  len: usize,
+  list: usize,
+  pc0: usize,
+  pos: usize,
+): void {
   const base = strDataAddress(s);
   const code = prog.code;
   const n = prog.length + (prog.marks as usize);
@@ -135,7 +143,14 @@ function add(prog: Program, m: Search, s: string, len: usize, list: usize, pc0: 
 
 /** Is there a match of `prog` in `s` that starts at or after byte `start` (at `start` when
  * `anchored`)? The leftmost one's slots, as the program prefers it, are then in `m.slots`. */
-export function pike(prog: Program, m: Search, s: string, len: usize, start: usize, anchored: bool): bool {
+export function pike(
+  prog: Program,
+  m: Search,
+  s: string,
+  len: usize,
+  start: usize,
+  anchored: bool,
+): bool {
   const base = strDataAddress(s);
   const code = prog.code;
   const n = prog.length + (prog.marks as usize);

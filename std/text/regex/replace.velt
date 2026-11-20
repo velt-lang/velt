@@ -31,7 +31,15 @@ function group(s: string, slots: i64[], at: usize, g: usize): string {
 /** `$n` or `$nn` at the digit at byte `at` of `replacement`, for the match of `groups` groups
  * whose slots start at `slots[base]`: appends the group's text to `out` and returns how many
  * digits name it, two when that group exists; 0 when no group does (the `$` is then text). */
-function numbered(s: string, slots: i64[], base: usize, groups: usize, replacement: string, at: usize, out: string[]): usize {
+function numbered(
+  s: string,
+  slots: i64[],
+  base: usize,
+  groups: usize,
+  replacement: string,
+  at: usize,
+  out: string[],
+): usize {
   const d1 = (strByteAt(replacement, at as u64) - 0x30) as usize;
   let two: usize = 0;
   if (at + 1 < strByteLen(replacement)) {
@@ -52,7 +60,13 @@ function numbered(s: string, slots: i64[], base: usize, groups: usize, replaceme
 /** `replacement` for the match of `s` whose slots start at `slots[base]`, with `$$ $& $\` $'
  * $n $nn $<name>` expanded as JavaScript's `GetSubstitution` does; `names` are the names of
  * groups 1.. (`""`: none). */
-export function substitution(s: string, slots: i64[], base: usize, names: string[], replacement: string): string {
+export function substitution(
+  s: string,
+  slots: i64[],
+  base: usize,
+  names: string[],
+  replacement: string,
+): string {
   const n = strByteLen(replacement);
   const parts: string[] = [];
   let from: usize = 0;
@@ -109,7 +123,13 @@ const UNCOUNTED: u64 = 0xffffffffffffffff;
 /** `s` with the first match of `prog` (every match when `all`) replaced by `replacement`,
  * expanded as `substitution` does. The result is built in one buffer, the text between two
  * matches copied into it from the subject's own bytes. */
-export function replaceMatches(prog: Program, names: string[], s: string, replacement: string, all: bool): string {
+export function replaceMatches(
+  prog: Program,
+  names: string[],
+  s: string,
+  replacement: string,
+  all: bool,
+): string {
   const plain = !replacement.includes("$");
   const stride = plain ? 2 : 2 * (prog.groups as usize) + 2;
   const m = new Search(prog, stride);
@@ -201,8 +221,11 @@ export function escapePattern(s: string): string {
   const n = strByteLen(s);
   for (let i: usize = 0; i < n; i++) {
     const c = strByteAt(s, i as u64);
-    const meta = (c >= 0x23 && c <= 0x2e && c != 0x25 && c != 0x27 && c != 0x2c) || c == 0x3f ||
-      (c >= 0x5b && c <= 0x5e) || (c >= 0x7b && c <= 0x7e);
+    const meta =
+      (c >= 0x23 && c <= 0x2e && c != 0x25 && c != 0x27 && c != 0x2c) ||
+      c == 0x3f ||
+      (c >= 0x5b && c <= 0x5e) ||
+      (c >= 0x7b && c <= 0x7e);
     if (meta) {
       out += velt_rt_str_byte_slice(s, from as u64, i as u64);
       out += "\\";

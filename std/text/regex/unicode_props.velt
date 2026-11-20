@@ -85,7 +85,8 @@ export function propertySet(name: string, value: string, hasValue: bool): CharSe
     return set;
   }
   const extensions = name == "Script_Extensions" || name == "scx";
-  const script = extensions || name == "Script" || name == "sc" ? indexOfName(SCRIPT_NAMES, value) : -1;
+  const script =
+    extensions || name == "Script" || name == "sc" ? indexOfName(SCRIPT_NAMES, value) : -1;
   if (script < 0) {
     return null;
   }
