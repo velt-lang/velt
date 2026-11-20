@@ -304,6 +304,9 @@ fn copy_tree(from: &Path, to: &Path) {
 
 /// The editor checks every body of the prelude, and still demands only what `velt check` would
 /// reach: a conversion to a record in a prelude function nothing calls demands no record hooks.
+/// The one module demanded is std's start-up check of the CPU (`std_hooks` `cpu_start`), which
+/// lowering calls in every program's `velt_main` before `main`, so a program reaching nothing
+/// still runs it.
 #[test]
 fn the_editor_demands_nothing_for_code_that_nothing_reaches() {
     let dir = tempfile::tempdir().unwrap();
@@ -322,5 +325,6 @@ fn the_editor_demands_nothing_for_code_that_nothing_reaches() {
         editor(&std, &root, &overlay),
     );
     assert_eq!(cli, ide);
-    assert!(ide.1.is_empty(), "{:?}", ide.1);
+    let demanded: Vec<&str> = ide.1.iter().map(|m| m.as_str()).collect();
+    assert_eq!(demanded, [velt_common::std_module!(lang_hooks_cpu)], "{:?}", ide.1);
 }
