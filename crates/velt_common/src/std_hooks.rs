@@ -271,6 +271,9 @@ with_weak_hooks! {
     heap_realloc => lang_hooks_heap, "heapRealloc", sig((u64, u64, u64, u64) -> u64), lowered;
     /// `velt_rt_free`'s: `(p, size, align)`.
     heap_free => lang_hooks_heap, "heapFree", sig((u64, u64, u64) -> void), lowered;
+    /// cpu.velt, `velt_main`'s step after the statics (`velt_vir` `entry.rs`, #3222 step 3): the
+    /// CPU's feature word (std/lang/cpu/word.velt) and the `--cpu` check (rt_abi.md "CPU check").
+    cpu_start => lang_hooks_cpu, "cpuStart", sig(() -> void), lowered, replaces("velt_rt_check_cpu");
     // sched.velt: the executor in Velt (#2649), with `VELT_SCHEDULER=std` ([`std_scheduler`]).
     /// The program's thread, marked by `velt_main` first thing (#3085): the executor's worker 0
     /// starts only there (program_thread.velt).

@@ -8,11 +8,11 @@
 //!   the list is `cpu_names.rs`): clang gets it as is, Cranelift uses its preset of that name
 //!   where it has one (x86) and the baseline otherwise.
 //!
-//! Code for a CPU above the baseline checks at start-up that the CPU has what it was built for
-//! ([`required_features`] for Cranelift's code, the LLVM backend's own for clang's;
-//! `velt_rt_check_cpu` in rt_abi.md "CPU check"), except FEAT_FHM, FEAT_BF16 and AVX512-BF16,
-//! which the check does not know (rt_abi.md "SIMD"): such code stops with an illegal instruction
-//! on a CPU without them.
+//! LLVM code for a CPU above the baseline checks at start-up that the CPU has what it was built
+//! for (the LLVM backend's `required_features`; std's `cpuStart` in rt_abi.md "CPU check"), except
+//! FEAT_FHM, FEAT_BF16 and AVX512-BF16, which the check does not know (rt_abi.md "SIMD"): such code
+//! stops with an illegal instruction on a CPU without them. Cranelift's code is not checked: it
+//! can't read CPUID ([`required_features`] still says what it uses).
 
 use cranelift_codegen::isa::{self, Builder as IsaBuilder};
 use cranelift_codegen::settings::{self, Configurable};
@@ -25,10 +25,11 @@ use crate::cpu_names;
 /// Windows 11 24H2 and RHEL 9 require).
 pub const DEFAULT_X86_CPU: &str = "x86-64-v2";
 
-/// The x86 features the start-up check knows, by bit of its mask: the name `velt_rt_check_cpu`
-/// reports and the Cranelift ISA flag (`None`: Cranelift does not use the feature). The order is
-/// the runtime's (crates/velt_rt/src/cpu.rs), part of rt_abi.md "CPU check".
-pub const X86_FEATURES: [(&str, Option<&str>); 23] = [
+/// The x86 features the start-up check knows, by bit of its mask: the name std's check reports
+/// and the Cranelift ISA flag (`None`: Cranelift does not use the feature). The order is the
+/// feature word's x86 bits (velt_common `cpu_features`, std/lang/cpu), part of rt_abi.md "CPU
+/// check".
+pub const X86_FEATURES: [(&str, Option<&str>); 24] = [
     ("SSE3", Some("has_sse3")),
     ("SSSE3", Some("has_ssse3")),
     ("SSE4.1", Some("has_sse41")),
@@ -52,29 +53,19 @@ pub const X86_FEATURES: [(&str, Option<&str>); 23] = [
     ("AVX512BITALG", Some("has_avx512bitalg")),
     ("SHA", None),
     ("PCLMULQDQ", None),
+    ("AES", None),
 ];
 
-/// The bits of [`X86_FEATURES`] a CPU extension of the SIMD operations needs (`velt_vir::simd::Ext`,
-/// rt_abi.md "SIMD"): code built for a CPU whose features hold them all may use the extension
-/// without checking for it. 0 for an extension x86 does not have.
+/// The bits of [`X86_FEATURES`] a CPU feature needs (`velt_vir::simd::Ext`, velt_common's
+/// `cpu_features`, whose x86 raw bits are this list's order): code built for a CPU whose features
+/// hold them all may use the feature without checking for it. 0 for an arm64 feature.
 pub fn ext_x86_features(ext: velt_vir::simd::Ext) -> u32 {
-    use velt_vir::simd::Ext;
-    let bit = |name: &str| {
-        let i = X86_FEATURES.iter().position(|(n, _)| *n == name);
-        1 << i.expect("ICE: an x86 feature the list lacks")
-    };
-    match ext {
-        Ext::ShaX86 => bit("SHA") | bit("SSSE3") | bit("SSE4.1"),
-        Ext::ClmulX86 => bit("PCLMULQDQ") | bit("SSSE3") | bit("SSE4.1"),
-        // AES is not in the start-up check's list (its table is Rust in velt_rt, #2241): a
-        // build never guarantees it, only a gated function does; FMA's check is std's too.
-        Ext::ShaArm | Ext::ClmulArm | Ext::AesX86 | Ext::AesArm | Ext::FmaX86 | Ext::Bf16Arm => 0,
-    }
+    ext.x86_mask()
 }
 
 /// The macro clang defines (`clang -dM -E -march=<cpu>`) for each feature of [`X86_FEATURES`], in
 /// its order: how the LLVM backend learns what a named CPU lets clang use.
-pub const X86_FEATURE_MACROS: [&str; 23] = [
+pub const X86_FEATURE_MACROS: [&str; 24] = [
     "__SSE3__",
     "__SSSE3__",
     "__SSE4_1__",
@@ -98,6 +89,7 @@ pub const X86_FEATURE_MACROS: [&str; 23] = [
     "__AVX512BITALG__",
     "__SHA__",
     "__PCLMUL__",
+    "__AES__",
 ];
 
 /// The features of [`X86_FEATURES`] whose macro `defines` (clang's `-dM -E` output) defines.
@@ -345,7 +337,7 @@ fn host_arm_features() -> u32 {
 fn host_x86_features() -> u32 {
     #[cfg(target_arch = "x86_64")]
     {
-        let has: [bool; 23] = [
+        let has: [bool; 24] = [
             std::arch::is_x86_feature_detected!("sse3"),
             std::arch::is_x86_feature_detected!("ssse3"),
             std::arch::is_x86_feature_detected!("sse4.1"),
@@ -369,6 +361,7 @@ fn host_x86_features() -> u32 {
             std::arch::is_x86_feature_detected!("avx512bitalg"),
             std::arch::is_x86_feature_detected!("sha"),
             std::arch::is_x86_feature_detected!("pclmulqdq"),
+            std::arch::is_x86_feature_detected!("aes"),
         ];
         has.iter()
             .enumerate()
@@ -435,22 +428,33 @@ mod tests {
     }
 
     #[test]
-    fn the_runtime_checks_the_same_features() {
-        let rt = include_str!("../../velt_rt/src/cpu.rs");
-        let start = rt
-            .find("const X86_FEATURES")
-            .expect("the runtime's feature list");
-        let list = &rt[start..start + rt[start..].find("];").expect("its end")];
-        let names: Vec<&str> = list.split('"').skip(1).step_by(2).collect();
+    fn std_checks_the_same_features() {
+        // std's start-up check (std/lang/cpu/check.velt) names the bits in this order
+        // (`X86_NAMES`, `ARM_NAMES`) and knows the levels by these masks (`missingMessage`).
+        let check = include_str!("../../../std/lang/cpu/check.velt");
+        let literal = |constant: &str| -> Vec<&str> {
+            let at = check
+                .find(&format!("export const {constant}: string = \""))
+                .expect(constant);
+            let from = &check[at..][check[at..].find('"').expect("its literal") + 1..];
+            from[..from.find('"').expect("its end")]
+                .split(',')
+                .collect()
+        };
         let ours: Vec<&str> = X86_FEATURES.iter().map(|(n, _)| *n).collect();
-        assert_eq!(names, ours);
-        for (level, mask) in [
-            ("x86-64-v2", X86_V2),
-            ("x86-64-v3", X86_V3),
-            ("x86-64-v4", X86_V4),
-        ] {
-            assert!(rt.contains(&format!("(\"{level}\", {mask:#x})")), "{level}");
-        }
+        assert_eq!(literal("X86_NAMES"), ours);
+        // And the one feature table's names, in word order (velt_common `cpu_features`).
+        let mut x86: Vec<velt_common::cpu_features::CpuFeature> =
+            (velt_common::cpu_features::CpuFeature::ALL.iter().copied())
+                .filter(|f| f.arch() == velt_common::cpu_features::CpuArch::X86_64)
+                .collect();
+        x86.sort_by_key(|f| f.raw_bit());
+        let table: Vec<&str> = x86.iter().map(|f| f.check_name()).collect();
+        assert_eq!(ours, table);
+        assert_eq!(literal("ARM_NAMES")[0], ARM_FEATURES[0].0);
+        let masks =
+            format!("need == {X86_V2:#x} ? 2 : need == {X86_V3:#x} ? 3 : need == {X86_V4:#x} ? 4");
+        assert!(check.contains(&masks), "{masks}");
     }
 
     #[test]
@@ -610,13 +614,22 @@ mod tests {
                 .map(|b| X86_FEATURES[b].0)
                 .collect()
         };
+        // A feature needs what it implies (velt_common `cpu_features`): SSE4.1 brings SSSE3 and SSE3.
         assert_eq!(
             names(ext_x86_features(Ext::ShaX86)),
-            ["SSSE3", "SSE4.1", "SHA"]
+            ["SSE3", "SSSE3", "SSE4.1", "SHA"]
         );
         assert_eq!(
             names(ext_x86_features(Ext::ClmulX86)),
-            ["SSSE3", "SSE4.1", "PCLMULQDQ"]
+            ["SSE3", "SSSE3", "SSE4.1", "PCLMULQDQ"]
+        );
+        assert_eq!(
+            names(ext_x86_features(Ext::AesX86)),
+            ["SSE3", "SSSE3", "SSE4.1", "PCLMULQDQ", "AES"]
+        );
+        assert_eq!(
+            names(ext_x86_features(Ext::FmaX86)),
+            ["SSE3", "SSSE3", "SSE4.1", "SSE4.2", "AVX", "FMA"]
         );
         assert_eq!(ext_x86_features(Ext::ShaArm), 0);
         // No psABI level has SHA or PCLMULQDQ: only a CPU name or `native` folds the checks.

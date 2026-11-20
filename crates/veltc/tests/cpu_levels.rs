@@ -1,7 +1,7 @@
 //! `--cpu` (#1613, https://veltlang.com/docs/tooling/platforms/ "CPU"): which setting wins (`--cpu`, `$VELT_CPU`,
-//! the package's `build.cpu`), the start-up check x86_64 code above the baseline makes
-//! (`velt_rt_check_cpu`, seen in the object on any host), and its message on an x86_64 host, where
-//! `$VELT_CPU_DISABLE` takes a feature away.
+//! the package's `build.cpu`), what std's start-up check checks for it (the build's
+//! `velt_simd_cpu_required()`, seen in the printed VIR on any host), and its message on an x86_64
+//! host, where `$VELT_CPU_DISABLE` takes a feature away.
 
 use std::path::Path;
 use std::process::Output;
@@ -21,23 +21,41 @@ fn velt(dir: &Path, args: &[&str], env: &[(&str, &str)]) -> Output {
     cmd.output().unwrap()
 }
 
-/// Whether the x86_64 Linux object `velt build <args>` writes calls the CPU check.
-fn checks_the_cpu(dir: &Path, args: &[&str], env: &[(&str, &str)]) -> bool {
-    let obj = dir.join("out.o");
-    let _ = std::fs::remove_file(&obj);
+/// What std's start-up check (std/lang/cpu/start.velt `startWith`) checks the CPU for in the VIR
+/// `velt build <args>` prints for x86_64 Linux: the feature word bits the driver puts in place of
+/// `velt_simd_cpu_required()` (`driver/cpu_check.rs`), 0 for none.
+fn required(dir: &Path, args: &[&str], env: &[(&str, &str)]) -> u64 {
     let mut all = vec![
         "build",
         "--target",
         "x86_64-unknown-linux-gnu",
         "--emit",
-        "obj",
+        "vir",
     ];
-    all.extend(["-o", obj.to_str().unwrap()]);
     all.extend(args);
     let o = velt(dir, &all, env);
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
-    let bytes = std::fs::read(&obj).unwrap();
-    bytes.windows(17).any(|w| w == b"velt_rt_check_cpu")
+    required_in(&String::from_utf8(o.stdout).unwrap())
+}
+
+/// [`required`] of printed VIR: the block of `startWith` that is only the constant and a `goto`.
+fn required_in(vir: &str) -> u64 {
+    let from = vir
+        .find("N9startWith(u64, bool) -> unit")
+        .expect("std's start-up check");
+    let body: Vec<&str> = vir[from..].lines().take_while(|l| *l != "}").collect();
+    assert!(!body.iter().any(|l| l.contains("velt_simd_cpu_required")));
+    body.windows(3)
+        .find_map(|w| {
+            let value = w[1].trim().split(" = ").nth(1)?.strip_suffix("_u64")?;
+            let block = w[0].trim_start().starts_with("bb") && w[0].ends_with(':');
+            (block && w[2].trim().starts_with("goto")).then(|| value.parse().ok())?
+        })
+        .expect("the requirement")
+}
+
+fn checks_the_cpu(dir: &Path, args: &[&str], env: &[(&str, &str)]) -> bool {
+    required(dir, args, env) != 0
 }
 
 #[test]
@@ -132,8 +150,8 @@ fn cpu_names_are_checked_against_the_target() {
     assert!(err.contains("not the file `main.velt`"), "{err}");
 }
 
-/// `--emit llvm` prints the IR clang compiles for the CPU: with the start-up check, rounding
-/// without SSE4.1 for the baseline, and for a CPU name the features clang gives it.
+/// `--emit llvm` prints the IR clang compiles for the CPU (rounding without SSE4.1 for the
+/// baseline), and a release build checks for a CPU name the features clang gives it.
 #[test]
 fn printed_ir_is_for_the_cpu() {
     let dir = test_dir::TestDir::new();
@@ -154,27 +172,20 @@ fn printed_ir_is_for_the_cpu() {
         String::from_utf8(o.stdout).unwrap()
     };
     let default = ir(&[]);
-    assert!(
-        default.contains("call void @\"velt_rt_check_cpu\"(i32 63)"),
-        "x86-64-v2"
-    );
+    assert_eq!(required(root, &["main.velt"], &[]), 63, "x86-64-v2");
     assert!(default.contains("@llvm.floor.f64"));
     let baseline = ir(&["--cpu", "baseline"]);
-    assert!(!baseline.contains("velt_rt_check_cpu"));
+    assert_eq!(required(root, &["--cpu", "baseline", "main.velt"], &[]), 0);
     assert!(
         !baseline.contains("@llvm.floor.f64"),
         "no roundsd without SSE4.1"
     );
     if velt_codegen_llvm::available() {
         // Cranelift's `alderlake` has no AVX2; clang's has, and the check checks it.
-        let alder = ir(&["--cpu", "alderlake"]);
-        let mask = alder
-            .split("call void @\"velt_rt_check_cpu\"(i32 ")
-            .nth(1)
-            .and_then(|r| r.split(')').next())
-            .and_then(|m| m.parse::<u32>().ok())
-            .expect("the check");
-        const AVX2: u32 = 1 << 7;
+        // The LLVM backend without the optimizer, so the check stays a function of its own.
+        let llvm = ["--backend", "llvm", "--cpu", "alderlake", "main.velt"];
+        let mask = required(root, &llvm, &[]);
+        const AVX2: u64 = 1 << 7;
         assert_ne!(mask & AVX2, 0, "{mask:#x}");
     }
 }
@@ -415,10 +426,11 @@ fn half_dot_products_on_this_cpu_print_the_golden() {
 }
 
 /// velt/half's `dotBf16Fast` in a release build for any arm64 CPU asks at run time whether the
-/// CPU has FEAT_BF16 and runs `bfdot` where it has (#3129): the kernel's capability word on
-/// Linux, a sysctl on macOS. It asks once for a dot product: the instruction is in a function
-/// compiled for it, with no check in it. An x86-64 build has neither the instruction nor the
-/// question, and `bf16x8.dotAddFast`, the step of a loop, asks nothing anywhere.
+/// CPU has FEAT_BF16 and runs `bfdot` where it has (#3129): std's feature word (`velt_cpu_word`),
+/// which the start-up check fills from the kernel's capability word on Linux, a sysctl on macOS.
+/// It asks once for a dot product: the instruction is in a function compiled for it, with no
+/// check in it. An x86-64 build has neither the instruction nor the question, and
+/// `bf16x8.dotAddFast`, the step of a loop, asks nothing anywhere.
 #[test]
 fn dot_bf16_fast_asks_for_bfdot_once_at_run_time_on_arm64() {
     let dir = test_dir::TestDir::new();
@@ -442,6 +454,8 @@ fn dot_bf16_fast_asks_for_bfdot_once_at_run_time_on_arm64() {
     const BFDOT: &str = "call <16 x i8> @velt.simd.f32x4_bfdot(";
     const OTHER: &str = "call <16 x i8> @velt.simd.f32x4_dot_add_fast_bf16x8(";
     const BUILT_FOR: &str = "@velt.simd.has_bf16_arm()";
+    // A read of the feature word (every program for these architectures stores it at start-up).
+    const WORD: &str = "load i64, ptr @velt_cpu_word";
     // The body of the function whose definition line contains `name`.
     fn body<'a>(ir: &'a str, name: &str) -> &'a str {
         let at = ir
@@ -453,7 +467,7 @@ fn dot_bf16_fast_asks_for_bfdot_once_at_run_time_on_arm64() {
     }
     let linux = ir("aarch64-unknown-linux-gnu");
     assert!(
-        linux.contains(OTHER) && linux.contains(BUILT_FOR),
+        linux.contains(OTHER) && linux.contains(BUILT_FOR) && linux.contains(WORD),
         "{linux}"
     );
     assert!(linux.contains("call i64 @\"getauxval\"(i64 26)"), "{linux}");
@@ -463,7 +477,7 @@ fn dot_bf16_fast_asks_for_bfdot_once_at_run_time_on_arm64() {
     assert!(kernel.lines().next().unwrap().contains("+bf16"), "{kernel}");
     assert_eq!(kernel.matches(BFDOT).count(), 6, "{kernel}");
     assert!(
-        !kernel.contains(BUILT_FOR) && !kernel.contains("getauxval"),
+        !kernel.contains(BUILT_FOR) && !kernel.contains(WORD),
         "{kernel}"
     );
     assert_eq!(linux.matches(BFDOT).count(), 6, "{linux}");
@@ -492,16 +506,13 @@ fn dot_bf16_fast_asks_for_bfdot_once_at_run_time_on_arm64() {
         !x86.contains(BFDOT) && !x86.contains("llvm.aarch64"),
         "{x86}"
     );
-    assert!(!x86.contains("getauxval"), "{x86}");
+    assert!(!x86.contains("getauxval") && !x86.contains(WORD), "{x86}");
     // The step asks nothing: a loop over it has no check to carry.
     for target in ["aarch64-unknown-linux-gnu", "aarch64-apple-darwin"] {
         let step = ir_of("step.velt", target, &[]);
         assert!(step.contains(OTHER), "{step}");
         assert!(!step.contains(BFDOT) && !step.contains(BUILT_FOR), "{step}");
-        assert!(
-            !step.contains("getauxval") && !step.contains("sysctlbyname"),
-            "{step}"
-        );
+        assert!(!step.contains(WORD), "{step}");
     }
 }
 
