@@ -15,7 +15,6 @@ import {
   MISMATCH,
   NONE,
   Reader,
-  ROWS,
   STEP_END,
   STEP_ERROR,
   STEP_MORE,
@@ -23,7 +22,6 @@ import {
 } from "velt/encoding/json/reader";
 import { utf8Substring } from "velt/encoding";
 
-declare function velt_rt_json_reader_next_key(r: u64, out: string): u8;
 
 /** Whether bytes `start` to `end` of the source are `s`'s. */
 export function readerRangeIs(r: Reader, start: usize, end: usize, s: string): bool {
@@ -179,18 +177,6 @@ export function readerScalar(r: Reader, c: i32): bool {
     return r.number();
   }
   return r.unexpected();
-}
-
-export function readerRowsNextKey(r: Reader): u8 {
-  if (r.rows == 0 || r.failed != ROWS) {
-    return STEP_ERROR;
-  }
-  let key = "";
-  const step = velt_rt_json_reader_next_key(r.rows, key);
-  r.keyLen = strByteLen(key);
-  r.keyEscaped = true;
-  r.keyDecoded = key;
-  return step;
 }
 
 export function readerEndsMap(r: Reader): Map<usize, usize> {

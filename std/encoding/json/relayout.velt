@@ -1,0 +1,257 @@
+// velt/encoding/json (internal): `JSON.stringify(value, replacer, space)` with an array replacer
+// or an indent: the compact text the generated glue writes for `value`, laid out again as JS
+// writes it. JS's output with a property list and a gap differs from the compact one only
+// outside strings (objects keep just the listed keys, in the list's order; the gap adds line
+// breaks and indentation, and `": "` after keys), so walking the compact text gives exactly JS's
+// bytes.
+
+import { Scanner } from "velt/encoding/json/scan";
+import { utf8Substring } from "velt/encoding";
+import { StringBuilder } from "velt/text/string_builder";
+import { strByteAt, strByteLen } from "velt/lang/intrinsics";
+
+/**
+ * The keys of a replacer array from its compact JSON text (`["a","b"]`), decoded, without
+ * duplicates (as JS builds its property list); null if the text is not an array of strings.
+ */
+export function propertyList(text: string): string[] | null {
+  const sc = new Scanner(text);
+  const keys: string[] = [];
+  if (sc.peekNonWs() != 91) {
+    return null;
+  }
+  sc.pos++;
+  if (sc.peekNonWs() == 93) {
+    return keys;
+  }
+  while (true) {
+    if (sc.peekNonWs() != 34 || !sc.string(true)) {
+      return null;
+    }
+    const k = sc.text();
+    if (!keys.includes(k)) {
+      keys.push(k);
+    }
+    const b = sc.peekNonWs();
+    if (b == 93) {
+      return keys;
+    }
+    if (b != 44) {
+      return null;
+    }
+    sc.pos++;
+  }
+}
+
+/**
+ * `text` (compact JSON, as `JSON.stringify` writes it) laid out again: only the members of
+ * objects whose keys are in `keys` (in that order; null keeps every member in place), and, when
+ * `pretty`, with line breaks, `indent` (JS's gap, which may be empty) per level and `": "` after
+ * keys (not `pretty`: no whitespace).
+ */
+export function relayout(text: string, keys: string[] | null, pretty: bool, indent: string): string {
+  const l = new Layout(text, keys, pretty, indent);
+  const out = new StringBuilder(strByteLen(text) + strByteLen(text) / 2);
+  l.value(out, 0);
+  return out.take();
+}
+
+// An object member: its key as written (with the quotes, bytes `start` to `end`) and decoded
+// (only when filtering), and its value laid out.
+class Member {
+  key: string;
+  start: usize;
+  end: usize;
+  value: string;
+
+  constructor(key: string, start: usize, end: usize, value: string) {
+    this.key = key;
+    this.start = start;
+    this.end = end;
+    this.value = value;
+  }
+}
+
+class Layout {
+  src: string;
+  len: usize;
+  pos: usize = 0;
+  keys: string[] | null;
+  pretty: bool;
+  indent: string;
+
+  constructor(src: string, keys: string[] | null, pretty: bool, indent: string) {
+    this.src = src;
+    this.len = strByteLen(src);
+    this.keys = keys;
+    this.pretty = pretty;
+    this.indent = indent;
+  }
+
+  // The byte at `pos` (0 past the end: the text is the glue's, well-formed).
+  cur(): u8 {
+    return this.pos < this.len ? strByteAt(this.src, this.pos as u64) : 0;
+  }
+
+  // A line break and the indentation of `depth` (nothing unless `pretty`).
+  newline(out: StringBuilder, depth: i64): void {
+    if (!this.pretty) {
+      return;
+    }
+    out.append("\n");
+    for (let i: i64 = 0; i < depth; i++) {
+      out.append(this.indent);
+    }
+  }
+
+  // Past the string token at `pos` (its opening quote).
+  skipString(): void {
+    this.pos++;
+    while (this.pos < this.len) {
+      const b = strByteAt(this.src, this.pos as u64);
+      this.pos++;
+      if (b == 92) {
+        this.pos++;
+      } else if (b == 34) {
+        return;
+      }
+    }
+  }
+
+  value(out: StringBuilder, depth: i64): void {
+    const b = this.cur();
+    if (b == 123) {
+      this.object(out, depth);
+      return;
+    }
+    if (b == 91) {
+      this.array(out, depth);
+      return;
+    }
+    const start = this.pos;
+    if (b == 34) {
+      this.skipString();
+    } else {
+      // A number or a literal: up to the next structural byte.
+      while (this.pos < this.len) {
+        const c = strByteAt(this.src, this.pos as u64);
+        if (c == 44 || c == 93 || c == 125 || c == 58) {
+          break;
+        }
+        this.pos++;
+      }
+    }
+    out.append(utf8Substring(this.src, start, this.pos));
+  }
+
+  array(out: StringBuilder, depth: i64): void {
+    this.pos++;
+    if (this.cur() == 93) {
+      this.pos++;
+      out.append("[]");
+      return;
+    }
+    out.append("[");
+    while (true) {
+      this.newline(out, depth + 1);
+      this.value(out, depth + 1);
+      if (this.cur() != 44) {
+        break;
+      }
+      this.pos++;
+      out.append(",");
+    }
+    this.pos++;
+    this.newline(out, depth);
+    out.append("]");
+  }
+
+  object(out: StringBuilder, depth: i64): void {
+    const keys = this.keys;
+    if (keys == null) {
+      this.objectInPlace(out, depth);
+      return;
+    }
+    const members = this.members(depth);
+    let first = true;
+    for (const k of keys) {
+      for (const m of members) {
+        if (m.key == k) {
+          out.append(first ? "{" : ",");
+          first = false;
+          this.member(out, m.start, m.end, m.value, depth);
+          break;
+        }
+      }
+    }
+    if (first) {
+      out.append("{}");
+      return;
+    }
+    this.newline(out, depth);
+    out.append("}");
+  }
+
+  // `"key":` and the value, after the line break of `depth + 1`.
+  member(out: StringBuilder, start: usize, end: usize, value: string, depth: i64): void {
+    this.newline(out, depth + 1);
+    out.append(utf8Substring(this.src, start, end));
+    out.append(this.pretty ? ": " : ":");
+    out.append(value);
+  }
+
+  // An object with every member kept, written as it is read.
+  objectInPlace(out: StringBuilder, depth: i64): void {
+    this.pos++;
+    if (this.cur() == 125) {
+      this.pos++;
+      out.append("{}");
+      return;
+    }
+    out.append("{");
+    while (true) {
+      this.newline(out, depth + 1);
+      const start = this.pos;
+      this.skipString();
+      out.append(utf8Substring(this.src, start, this.pos));
+      this.pos++;
+      out.append(this.pretty ? ": " : ":");
+      this.value(out, depth + 1);
+      if (this.cur() != 44) {
+        break;
+      }
+      this.pos++;
+      out.append(",");
+    }
+    this.pos++;
+    this.newline(out, depth);
+    out.append("}");
+  }
+
+  // The members of the object at `pos` (its `{` there), each value laid out at `depth + 1`.
+  members(depth: i64): Member[] {
+    this.pos++;
+    const members: Member[] = [];
+    if (this.cur() == 125) {
+      this.pos++;
+      return members;
+    }
+    while (true) {
+      const start = this.pos;
+      this.skipString();
+      const end = this.pos;
+      const sc = new Scanner(this.src);
+      sc.pos = start;
+      const key = sc.string(true) ? sc.text() : "";
+      this.pos++;
+      const value = new StringBuilder();
+      this.value(value, depth + 1);
+      members.push(new Member(key, start, end, value.take()));
+      const b = this.cur();
+      this.pos++;
+      if (b != 44) {
+        return members;
+      }
+    }
+  }
+}

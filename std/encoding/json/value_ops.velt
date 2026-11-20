@@ -12,10 +12,12 @@ import { JsonValue } from "velt/prelude/json/json_value";
 import { JsonReplacer } from "velt/prelude/json/layout";
 import { readerValueLimit } from "velt/encoding/json/reader_ops";
 
-declare function velt_rt_json_value_new_null(): u64;
-declare function velt_rt_json_value_new_bool(b: bool): u64;
-declare function velt_rt_json_value_new_number(n: f64): u64;
-declare function velt_rt_json_value_new_string(s: string): u64;
+import {
+  JsonTree,
+  TREE_BOOL,
+  TREE_NULL,
+  TREE_NUMBER,
+} from "velt/encoding/json/tree";
 
 /**
  * Reads one value with `r` (`JsonValue[JSON_FROM_READER]`: the decoders velt/encoding/json
@@ -30,9 +32,6 @@ export function jsonValueFromReader(r: Reader): JsonValue | null {
       return null;
     }
     return JsonValue.onTape(new TapeRef(shared(t as Tape)), 0);
-  }
-  if (r.rowsValue) {
-    return new JsonValue(r.lastHandle());
   }
   return null;
 }
@@ -88,15 +87,15 @@ export function jsonValueEquals(a: JsonValue, b: JsonValue, deep: bool): bool {
 /** `JsonValue.of(x)`: a string, number, boolean or null as a value. */
 export function jsonValueOf(x: string | f64 | bool | null): JsonValue {
   if (x == null) {
-    return new JsonValue(velt_rt_json_value_new_null());
+    return JsonValue.owning(new JsonTree(TREE_NULL));
   }
   if (typeof x === "string") {
-    return new JsonValue(velt_rt_json_value_new_string(x));
+    return JsonValue.owning(JsonTree.string(x));
   }
   if (typeof x === "number") {
-    return new JsonValue(velt_rt_json_value_new_number(x));
+    return JsonValue.owning(JsonTree.scalar(TREE_NUMBER, x));
   }
-  return new JsonValue(velt_rt_json_value_new_bool(x));
+  return JsonValue.owning(JsonTree.scalar(TREE_BOOL, x ? 1 : 0));
 }
 
 /** `JsonValue.from(x)`: the JSON form of any value `JSON.stringify` accepts. */

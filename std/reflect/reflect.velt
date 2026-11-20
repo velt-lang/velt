@@ -9,12 +9,19 @@ import {
   anyReflectValue,
   identity as valueIdentity,
   isTypedProxy,
+  addressLoad,
+  addressStore,
+  rawAlloc,
+  rawFree,
   toAny,
 } from "velt/lang/intrinsics";
 import { RuntimeType } from "velt/reflect/runtime_type";
 
-declare function velt_rt_visit_enter(id: u64): u8;
-declare function velt_rt_visit_leave();
+/**
+ * This thread's visits (`beginVisit`): 0, or a block of words `[capacity, length, identity…]`,
+ * outermost first. A visit never suspends, so the visits of a thread form one stack.
+ */
+const VISITS = new ThreadLocal<u64>(0);
 
 /** What `v` holds at run time. */
 export function typeOf(v: any): RuntimeType {
@@ -96,10 +103,59 @@ export function isProxy<T>(v: T): bool {
  * `endVisit`.
  */
 export function beginVisit(id: u64): bool {
-  return velt_rt_visit_enter(id) != 0;
+  let p = VISITS.get() as usize;
+  let cap: usize = 0;
+  let len: usize = 0;
+  if (p != 0) {
+    cap = visitWord(p);
+    len = visitWord(p + 8);
+    for (let i: usize = 0; i < len; i++) {
+      if (visitWord(p + 16 + i * 8) as u64 == id) {
+        return false;
+      }
+    }
+  }
+  if (len == cap) {
+    const next = cap == 0 ? 8 : cap * 2;
+    const q = rawAlloc((next + 2) * 8);
+    setVisitWord(q, next);
+    for (let i: usize = 0; i < len; i++) {
+      setVisitWord(q + 16 + i * 8, visitWord(p + 16 + i * 8));
+    }
+    if (p != 0) {
+      // SAFETY: `p` came from `rawAlloc` here with room for `cap` identities; nothing uses it after.
+      unsafe {
+        rawFree(p, (cap + 2) * 8);
+      }
+    }
+    p = q;
+    VISITS.set(p as u64);
+  }
+  setVisitWord(p + 16 + len * 8, id as usize);
+  setVisitWord(p + 8, len + 1);
+  return true;
 }
 
 /** Ends the innermost visit `beginVisit` started. */
 export function endVisit(): void {
-  velt_rt_visit_leave();
+  const p = VISITS.get() as usize;
+  if (p != 0) {
+    const len = visitWord(p + 8);
+    if (len > 0) {
+      setVisitWord(p + 8, len - 1);
+    }
+  }
+}
+
+// The word at `a`, in this thread's block of visits.
+function visitWord(a: usize): usize {
+  // SAFETY: `a` is a word of the block `rawAlloc` gave `beginVisit`, not freed yet.
+  return unsafe { addressLoad<usize>(a) };
+}
+
+function setVisitWord(a: usize, v: usize): void {
+  // SAFETY: as `visitWord`.
+  unsafe {
+    addressStore<usize>(a, v);
+  }
 }

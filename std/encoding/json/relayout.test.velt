@@ -1,0 +1,48 @@
+// velt/encoding/json (tests): white-box tests, run by `velt test std/`.
+//
+// White-box tests of `relayout` and `propertyList`: the compact text of `JSON.stringify` laid out
+// as Node's `JSON.stringify(value, keys, space)` writes it.
+import { describe, expect, it } from "velt/test";
+import { propertyList, relayout } from "velt/encoding/json/relayout";
+
+function lay(text: string, keys: string[] | null, indent: string): string {
+  return relayout(text, keys, indent.length > 0, indent);
+}
+
+describe("relayout", () => {
+  it("indents like JS", () => {
+    expect(lay("[]", null, "  ")).toBe("[]");
+    expect(lay("{}", null, "  ")).toBe("{}");
+    expect(lay("[1,[],{}]", null, " ")).toBe("[\n 1,\n [],\n {}\n]");
+    expect(lay(`{"a":[1,2],"b":{"c":"x,{"}}`, null, "\t")).toBe(
+      "{\n\t\"a\": [\n\t\t1,\n\t\t2\n\t],\n\t\"b\": {\n\t\t\"c\": \"x,{\"\n\t}\n}",
+    );
+    expect(lay(`"s"`, null, "  ")).toBe(`"s"`);
+    expect(lay(`{"q\\"}":"\\\\",":":-1.5e-7}`, null, " ")).toBe(
+      "{\n \"q\\\"}\": \"\\\\\",\n \":\": -1.5e-7\n}",
+    );
+  });
+
+  it("keeps line breaks with an empty gap", () => {
+    // `JSON.stringify(x, null, 0.5)` in V8: line breaks, no indentation.
+    expect(relayout(`[1,{"a":[]}]`, null, true, "")).toBe("[\n1,\n{\n\"a\": []\n}\n]");
+  });
+
+  it("keeps the listed keys in the list's order", () => {
+    const t = `{"a":1,"b":{"a":2,"c":3},"c":[{"b":4,"a":5}]}`;
+    expect(lay(t, ["c", "a"], "")).toBe(`{"c":[{"a":5}],"a":1}`);
+    expect(lay(t, [], "")).toBe("{}");
+    expect(lay(`{"é":1}`, ["é"], "")).toBe(`{"é":1}`);
+    expect(lay(`{"\\u0041":1,"b":[true,null]}`, ["A", "b"], "  ")).toBe(
+      "{\n  \"\\u0041\": 1,\n  \"b\": [\n    true,\n    null\n  ]\n}",
+    );
+  });
+});
+
+describe("propertyList", () => {
+  it("decodes and drops repeats", () => {
+    expect(propertyList(`["a","b","a"]`)!.join(",")).toBe("a,b");
+    expect(propertyList("[]")!.length).toBe(0);
+    expect(propertyList("[1]") == null).toBe(true);
+  });
+});
