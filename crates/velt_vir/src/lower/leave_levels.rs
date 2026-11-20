@@ -103,9 +103,21 @@ impl FnLower<'_, '_> {
         let parent = |d: Option<DefId>| d.and_then(|d| self.cx.closure_parents.get(&d).copied());
         self.own_captures
             && matches!(
-                parent(parent(self.cx.cur_def).and_then(|p| p.0)),
+                parent(parent(self.read_callback_def()).and_then(|p| p.0)),
                 Some((_, true))
             )
+    }
+
+    /// The `read` callback this `Work::ReadOwn` code runs as: the function being built, or the
+    /// callback around a closure only called there (closure.rs `closure_value`: such a closure
+    /// is the one `Work::ReadOwn` function that is no `read` callback itself, so this does not
+    /// depend on which instance of the callback made its value last).
+    fn read_callback_def(&self) -> Option<DefId> {
+        let mut def = self.cx.cur_def?;
+        while let Some(&(Some(p), false)) = self.cx.closure_parents.get(&def) {
+            def = p;
+        }
+        Some(def)
     }
 
     /// Is `root`, a variable this `Work::ReadOwn` callback captured, one of the code outside
@@ -113,13 +125,25 @@ impl FnLower<'_, '_> {
     /// code declaring it, which calls the outermost (`own_nested`)? A variable of a callback
     /// around this one is that reader's, counted by read mode's rules.
     pub(super) fn caller_capture(&mut self, root: LocalId) -> bool {
-        if !self.own_nested() {
-            return true;
-        }
         let Some(mut def) = self.cx.cur_def else {
             return false;
         };
         let mut var = root;
+        // A closure only called in its callback (`read_callback_def`): the variable is the
+        // caller's when the callback captured it too, not when it is the callback's own.
+        while let Some(&(Some(p), false)) = self.cx.closure_parents.get(&def) {
+            let f = self.cx.fn_def(def);
+            let Some(c) = f.captures.iter().find(|c| c.inner == var) else {
+                return false;
+            };
+            (var, def) = (c.outer, p);
+            if !self.cx.fn_def(def).captures.iter().any(|c| c.inner == var) {
+                return false;
+            }
+        }
+        if !self.own_nested() {
+            return true;
+        }
         loop {
             // The code calling the outermost callback, outside read mode for counting: its
             // variables are the caller's, declared there or captured by it (a closure
