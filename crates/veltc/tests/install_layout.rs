@@ -89,6 +89,154 @@ fn velt(prefix: &Path, cwd: &Path, home: &Path, args: &[&str]) -> Output {
         .unwrap()
 }
 
+/// [`velt`] with the variables `env` set too.
+fn velt_with(
+    prefix: &Path,
+    cwd: &Path,
+    home: &Path,
+    args: &[&str],
+    env: &[(&str, &str)],
+) -> Output {
+    let mut cmd = crate::no_window::command(prefix.join("bin").join(EXE));
+    cmd.args(args)
+        .current_dir(cwd)
+        .env("VELT_HOME", home)
+        .env_remove("VELT_STD")
+        .env_remove("VELT_SHARE")
+        .env_remove("VELT_RT_LIB")
+        .env_remove("VELT_RT_LINK")
+        .env_remove("VELT_BUILD_CACHE")
+        .env_remove("VELT_PREBUILT_HOOKS")
+        .env_remove("VELT_STD_OBJECT_FILL")
+        .env("VELT_REGISTRY", home.join("registry"))
+        .env("VELT_STD_OBJECT_STATS", "1")
+        .env("VELT_BUILD_STAMP", "off")
+        .env_remove("VELT_LAUNCHER")
+        .env_remove("VELT_TOOLCHAIN_SELECTED");
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    cmd.output().unwrap()
+}
+
+/// Whether debug builds on this machine link prebuilt objects: not on arm64 Linux, whose debug
+/// link need not have the helpers the objects' atomics call (prebuilt.rs `debug_link_takes`).
+fn debug_takes_objects() -> bool {
+    !velt_codegen_llvm::calls_outline_atomics(&velt_codegen_cl::host_triple())
+}
+/// What a build's statistics say of the module of `toPrecision` (std/lang/hooks/number_digits):
+/// `off` where they say nothing of it (prebuilt objects off: nothing is looked up).
+fn digits_object(o: &Output) -> &'static str {
+    let err = String::from_utf8_lossy(&o.stderr);
+    if err.contains("lang/hooks/number_digits: object found (shipped)") {
+        "shipped"
+    } else if err.contains("lang/hooks/number_digits: object found") {
+        "cached"
+    } else if err.contains("lang/hooks/number_digits: no object") {
+        "none"
+    } else {
+        "off"
+    }
+}
+
+/// A toolchain carries the prebuilt hook modules' objects (`lib/hooks/<target>`, written by
+/// `velt cache hooks`, #3262): a program that calls a prebuilt hook links the toolchain's object
+/// with the build cache off, and with it on takes the toolchain's once and the cache's after.
+/// An object is not taken for std sources that were edited, nor from another compiler's
+/// toolchain; the program then compiles the module itself, with the same output.
+#[test]
+fn an_installed_toolchain_s_hook_objects_are_linked() {
+    let tmp = test_dir::TestDir::new();
+    let Some(prefix) = install(tmp.path()) else {
+        return;
+    };
+    let work = tmp.path().join("work");
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(&work).unwrap();
+    let lib_hooks = prefix.join("lib").join("hooks");
+    let out = lib_hooks.to_string_lossy().into_owned();
+    let made = velt_with(
+        &prefix,
+        &work,
+        &home,
+        &["cache", "hooks", "--out", &out],
+        &[],
+    );
+    let said = String::from_utf8_lossy(&made.stderr).into_owned();
+    if !made.status.success() && said.contains("clang") {
+        eprintln!("skipping: the objects need clang to compile\n{said}");
+        return;
+    }
+    assert!(made.status.success(), "{said}");
+    // One directory, the host's, which `velt` named.
+    let targets: Vec<PathBuf> = (std::fs::read_dir(&lib_hooks).unwrap())
+        .map(|e| e.unwrap().path())
+        .collect();
+    assert_eq!(targets.len(), 1, "{targets:?}");
+    let hooks = targets[0].clone();
+    assert!(hooks.join("lang_hooks_number_digits.o").is_file(), "{said}");
+    assert!(hooks.join("lang_hooks_number_digits.manifest").is_file());
+
+    std::fs::write(
+        work.join("a.velt"),
+        "function main() {\n  console.log((1234.5678).toPrecision(6));\n}\n",
+    )
+    .unwrap();
+    let off = [("VELT_BUILD_CACHE", "off")];
+    let expected = "1234.57\n";
+    // A debug build, as on a machine without clang; a release build (the same objects, for the
+    // target's default CPU) where debug builds take none.
+    let args: &[&str] = match debug_takes_objects() {
+        true => &["run", "a.velt"],
+        false => &["run", "--release", "a.velt"],
+    };
+    let run = |env: &[(&str, &str)]| {
+        let o = velt_with(&prefix, &work, &home, args, env);
+        let err = String::from_utf8_lossy(&o.stderr).into_owned();
+        assert!(o.status.success(), "{err}");
+        assert_eq!(String::from_utf8_lossy(&o.stdout), expected, "{err}");
+        (digits_object(&o), err)
+    };
+
+    // The build cache off: the toolchain's object, every time.
+    for _ in 0..2 {
+        let (from, err) = run(&off);
+        assert_eq!(from, "shipped", "{err}");
+        assert!(err.contains("prebuilt hooks: 1 objects linked"), "{err}");
+    }
+    // The cache on (the default, under the home directory): the toolchain's once, then the
+    // cache's own copy.
+    let (from, err) = run(&[]);
+    assert_eq!(from, "shipped", "{err}");
+    let (from, err) = run(&[]);
+    assert_eq!(from, "cached", "{err}");
+    // Prebuilt objects off: the module is compiled into the program.
+    let (from, err) = run(&[("VELT_BUILD_CACHE", "off"), ("VELT_PREBUILT_HOOKS", "0")]);
+    assert_eq!(from, "off", "{err}");
+    assert!(!err.contains("objects linked"), "{err}");
+
+    // Another compiler's toolchain (its version line differs): not taken.
+    let manifest = hooks.join("lang_hooks_number_digits.manifest");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    let other = text.replacen("compiler ", "compiler another ", 1);
+    assert_ne!(other, text);
+    std::fs::write(&manifest, &other).unwrap();
+    let (from, err) = run(&off);
+    assert_eq!(from, "none", "{err}");
+    std::fs::write(&manifest, &text).unwrap();
+    let (from, err) = run(&off);
+    assert_eq!(from, "shipped", "{err}");
+
+    // A std source the object was compiled from, edited: not taken, by the cache either.
+    let source = prefix.join("std/lang/hooks/number_digits.velt");
+    let src = std::fs::read_to_string(&source).unwrap();
+    std::fs::write(&source, format!("{src}\n// edited\n")).unwrap();
+    for env in [&off[..], &[]] {
+        let (from, err) = run(env);
+        assert_eq!(from, "none", "{err}");
+    }
+}
+
 #[test]
 fn installed_prefix_runs_doctor_and_programs() {
     let tmp = test_dir::TestDir::new();
