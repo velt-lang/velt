@@ -375,30 +375,56 @@ parameters by pointer, a `string` result through an out pointer):
 
 ## CPU check
 
-`velt_rt_check_cpu(required: u32)`: x86_64 or arm64 code built for more than the baseline CPU
-(`--cpu`, https://veltlang.com/docs/tooling/platforms/ "CPU") calls it first thing in
-`velt_main`, after the runtime's start-up (baseline code) and before any code that may use the
-features (`veltc` `driver/cpu_check.rs`). `required` is a mask of features, by bit: 0 SSE3,
-1 SSSE3, 2 SSE4.1, 3 SSE4.2, 4 POPCNT, 5 CMPXCHG16B, 6 AVX, 7 AVX2, 8 BMI1, 9 BMI2, 10 FMA,
+std's start-up hook `cpuStart` (std/lang/hooks/cpu.velt, velt_common `std_hooks` `cpu_start`),
+which `velt_main` calls right after `velt_rt_statics` and before any other Velt code, does the
+check the runtime's `velt_rt_check_cpu` did until #3222 step 3 (its Rust, `velt_rt` `cpu.rs`, is
+deleted), in every build for x86-64 and arm64, Cranelift's too (`#cpu-start` picks the
+architecture's detection; on wasm it does nothing). The hook and everything it reaches run before
+anything knows what the CPU has, so they are compiled for the architecture's baseline CPU
+whatever `--cpu` says (`vir::Function::baseline`, `velt_vir::start_up`): LLVM gives them, and the
+helpers of their module, clang's `x86-64` (on arm64 the target's default CPU) as `target-cpu`
+with its features only; Cranelift compiles them with a second ISA for that CPU; the std cache
+serves none of them. It computes the CPU's **feature word** (std/lang/cpu, velt_common
+`cpu_features`): bit 0
+SSE3, 1 SSSE3, 2 SSE4.1, 3 SSE4.2, 4 POPCNT, 5 CMPXCHG16B, 6 AVX, 7 AVX2, 8 BMI1, 9 BMI2, 10 FMA,
 11 LZCNT, 12 MOVBE, 13 F16C, 14 AVX512F, 15 AVX512BW, 16 AVX512CD, 17 AVX512DQ, 18 AVX512VL,
-19 AVX512VBMI, 20 AVX512BITALG, 21 SHA, 22 PCLMULQDQ (`velt_codegen_cl::X86_FEATURES`, and the
-same list in `velt_rt` `cpu.rs`; x86-64-v2 is bits 0–5, v3 0–13, v4 0–18). A feature is in the
-list when generated code uses it (FEAT_FHM, FEAT_BF16 and AVX512-BF16 are not: "SIMD"): a
-feature in the mask that the CPU (or a VM) hides stops the program at start-up. On arm64 the
-mask is over `velt_codegen_cl::ARM_FEATURES` instead: bit 0 DOTPROD (`sdot`/`udot`), set by
-`--cpu native` on a CPU with it or `--cpu <name>` naming one (`neoverse-n1`), and then
-`i32x4.dotAdd` is one `sdot` (as on every Apple arm64 target, whose CPUs all have it without a
-check). Code whose features hold an extension's (SHA with SSSE3 and SSE4.1 for `sha-x86`,
-PCLMULQDQ with them for `clmul-x86`) takes its check (`velt_simd_has_<ext>`, "SIMD") as true;
-the LLVM backend folds it.
+19 AVX512VBMI, 20 AVX512BITALG, 21 SHA, 22 PCLMULQDQ, 23 AES (`velt_codegen_cl::X86_FEATURES`; a
+feature whose registers the OS must save counts only where XCR0 says it does), from CPUID and
+XGETBV on x86-64 (`velt_simd_cpuid` and `velt_simd_xgetbv`, "SIMD": inline assembly under
+LLVM; under Cranelift, which has no instruction for either, a function of fixed SSE2 code each
+that the module defines, velt_codegen_cl `cpuid.rs`); on arm64 bit 32 DOTPROD, 33 SHA2, 34 PMULL, 35 CRC32, 36 SHA3 (with SHA512), 37
+FP16, 38 I8MM, 39 BF16, 40 AES, from `getauxval(AT_HWCAP, AT_HWCAP2)` on Linux, `hw.optional`
+sysctls on macOS and `IsProcessorFeaturePresent` on Windows (`PF_ARM_SHA3_INSTRUCTIONS_AVAILABLE`
+to `PF_ARM_V86_BF16_INSTRUCTIONS_AVAILABLE` for SHA3 to BF16, which an older Windows reports as
+absent).
+`VELT_CPU_DISABLE` (comma-separated names of this architecture's list, any case) clears bits, to
+test the check.
 
-When the CPU lacks a feature of the mask, the runtime flushes stdout, prints to stderr
+It then compares the word with `velt_simd_cpu_required() -> u64`, the bits the program was built
+for (`--cpu`, https://veltlang.com/docs/tooling/platforms/ "CPU"; x86-64-v2 is bits 0–5, v3
+0–13, v4 0–18; on arm64 the mask over `velt_codegen_cl::ARM_FEATURES` shifted to bit 32, bit 0
+DOTPROD). The driver fills that call in with a constant right before code generation (`veltc`
+`driver/cpu_check.rs`, `--emit llvm` included; a function that reads it is never served from the
+std cache). A feature is in the mask when generated code uses it (FEAT_FHM, FEAT_BF16 and
+AVX512-BF16 are not: "SIMD"). When the CPU lacks a feature of the mask, it prints to stderr
 ``error: this program was built for <what>; this CPU lacks <missing>; rebuild it with
-`--cpu <lower>` `` and exits with code 1. `<what>` is `<level> (<features>)` when the mask is
-exactly an x86-64 level, else `an x86-64 CPU with <features>` (`an arm64 CPU with DOTPROD`);
-`<lower>` is the highest level the CPU has, or `baseline` (always on arm64).
-`VELT_CPU_DISABLE` (comma-separated feature names, any case) removes features from what the CPU
-has, to test it.
+`--cpu <lower>` `` and exits with code 1 (`velt_rt_exit`). `<what>` is `<level> (<features>)`
+when the mask is exactly an x86-64 level, else `an x86-64 CPU with <features>` (`an arm64 CPU
+with DOTPROD`); `<lower>` is the highest level the CPU has, or `baseline` (always on arm64).
+Finally `VELT_SIMD_DISABLE` (`sha`, `clmul`, `aes`) clears those instructions' bits on both
+architectures, and the word is stored once with `velt_simd_cpu_word_set(word)`, which every
+run-time check reads as invariant (`velt_simd_cpu_word`, "SIMD"). The LLVM backend keeps it in
+`velt_cpu_word`, a `linkonce_odr hidden` `i64` that every object reading or setting it defines,
+so a program has one; no runtime code is involved (a std static would be an `Atomic`, which
+brings velt/sync's reclaimer into every program). The hook's reads of the operating system and of the two variables
+are not input: a program that reaches nothing else still reaches nothing (`veltc`
+`driver/outside.rs`, for `velt test`'s results and source generators).
+
+Under Cranelift (and on wasm) `velt_simd_on_x86()` and `velt_simd_on_arm()` are `false`,
+`velt_simd_cpu_word()` is 0 and `velt_simd_cpu_word_set` does nothing, so every run-time check is
+false: no gated code runs there, though the requirement is checked. Code whose features hold a feature's mask (SHA with SSE4.1 and down
+for `sha-x86`) takes its check (`velt_simd_has_<feature>`, "SIMD") as true; the LLVM backend folds
+it.
 
 ## Math operations
 
@@ -556,11 +582,10 @@ has not. Cranelift always widens and uses `fma`.
 is Arm's `bfdot` itself (`velt_vir::simd::ExtOp::Bfdot`, `llvm.aarch64.neon.bfdot`), an
 instruction of the extension `bf16-arm` (FEAT_BF16, LLVM's `+bf16`): a caller runs it only where
 the CPU has FEAT_BF16, and on another architecture, on wasm and under Cranelift it gives zeros.
-Like AES and FMA the extension has **no runtime flag**: `velt_simd_has_bf16_arm()` is `1` only in
-a function gated on it and `0` everywhere else, and std computes the run-time answer in Velt, once
-(std/simd/bf16_check.velt): behind the carry-less flag of arm64 (`velt_simd_has_clmul_arm`, so it
-is `false` off arm64, under Cranelift and with `VELT_SIMD_DISABLE=clmul`), `getauxval(AT_HWCAP2)`
-bit 14 on Linux and the `hw.optional.arm.FEAT_BF16` sysctl on macOS; `false` on Windows.
+It is checked like any other feature ("Checks"; velt/arch/arm's `Bf16.isSupported()`, which
+`bf16x8.hasBf16Arm()` calls): the feature word's bit 39, from `getauxval(AT_HWCAP2)` bit 14 on
+Linux and the `hw.optional.arm.FEAT_BF16` sysctl on macOS; `false` on Windows, off arm64 and
+under Cranelift.
 velt/half's `dotBf16Fast` and `dotBf16FastAt` ask once for a dot product and run a function gated
 on `bf16-arm`, whose loops are `velt_simd_f32x4_bfdot`, where the answer is yes, and
 `velt_simd_f32x4_dot_add_fast_bf16x8` otherwise, so a build for any arm64 CPU runs `bfdot` where
@@ -590,50 +615,48 @@ aarch64; `sha256rnds2`, `sha256msg1`, `sha256msg2`, `sha1rnds4_<0-3>`, `sha1next
 `sha1msg2` on x86-64), and `velt_simd_u64x2_<op>` for the carry-less multiplications
 (`pclmulqdq_<imm>` on x86-64, `pmull_<imm>` on aarch64, `imm` 0, 1, 16 or 17 choosing the 64-bit
 lanes as PCLMULQDQ's immediate does), `velt_vir::simd::ExtOp`, are the instructions
-themselves: a caller runs one only where `velt_simd_has_sha_arm()` / `velt_simd_has_sha_x86()` /
-`velt_simd_has_clmul_x86()` / `velt_simd_has_clmul_arm()` (`-> bool`) is true. On the
-architecture with the extension that check reads the runtime's flag byte, otherwise (another
-architecture, wasm, Cranelift) it is `false` and the operation, dead behind it, gives zeros.
-The runtime exports the flags, set in `velt_rt_start` (`init`) before any Velt code runs and never
-changed after (so generated code reads them as invariant); `VELT_SIMD_DISABLE=sha` (`clmul`)
-leaves the SHA (carry-less) ones 0. Code built for a CPU whose features include the extension's
-("CPU check") reads no flag: LLVM takes the check as true there, so `VELT_SIMD_DISABLE` changes
-nothing in it:
+themselves: a caller runs one only where its check is true (velt/arch's `Sha256.isSupported()`,
+`Sha.isSupported()`, `Pclmulqdq.isSupported()`, `Pmull.isSupported()`). On another architecture,
+wasm and Cranelift the check is `false` and the operation, dead behind it, gives zeros.
 
-```c
-uint8_t velt_cpu_sha_arm;    /* 1: aarch64 with the ARMv8 SHA-1/SHA-256 instructions */
-uint8_t velt_cpu_sha_x86;    /* 1: x86-64 with SHA, SSSE3 and SSE4.1 */
-uint8_t velt_cpu_clmul_x86;  /* 1: x86-64 with PCLMULQDQ, SSSE3 and SSE4.1 */
-uint8_t velt_cpu_clmul_arm;  /* 1: aarch64 with PMULL (64-bit polynomial multiply) */
-```
+**Checks.** A feature's check is `velt_simd_has_<feature>() || (velt_simd_on_<arch>() &&
+(word & mask) == mask)`, one static method per feature in velt/arch/x86 and velt/arch/arm, with
+`mask` its bit and those of the features it implies (std/lang/cpu/masks.velt):
+
+- `velt_simd_has_<feature>() -> bool` (`<feature>` the `@targetFeature` name with `-` and `.` as
+  `_`: `velt_simd_has_sse4_2_x86`) is `true` only where the build guarantees the feature: in a
+  function gated on a set that covers it (and `velt_opt`'s clones for it), or in code built for a
+  CPU whose features hold its mask (`--cpu`, "CPU check"). It is `false` everywhere else; the
+  runtime keeps no flags.
+- `velt_simd_on_x86() -> bool` / `velt_simd_on_arm() -> bool` are `true` in LLVM code of that
+  architecture and `false` on the other one, on wasm and under Cranelift (lowering knows the
+  `false` ones, so a run-time check folds away there).
+- `velt_simd_cpu_word() -> u64` loads the word (`velt_cpu_word` under LLVM, written once by
+  `cpuStart` with `velt_simd_cpu_word_set(word)` before any other Velt code and never after, "CPU
+  check") as invariant, so the load leaves loops. 0 under Cranelift and on wasm, where the set
+  does nothing.
 
 **AES.** `velt_simd_u8x16_<op>` for the AES round instructions (`aesenc`,
 `aesenclast`, `aesdec`, `aesdeclast`, `aesimc`, `aeskeygenassist` (immediate 0) on x86-64;
 `aese`, `aesd`, `aesmc`, `aesimc_arm` on aarch64), `(state, key) -> state` or `(a) -> a` on the
-bytes. Their extensions `aes-x86` (AES-NI with PCLMULQDQ, SSSE3 and SSE4.1) and `aes-arm`
-(FEAT_AES with FEAT_PMULL) have **no runtime flag**: `velt_simd_has_aes_x86()` /
-`velt_simd_has_aes_arm()` is `1` only in a function gated on the extension (and `velt_opt`'s
-clones for it) and `0` everywhere else. std/simd/aes.velt computes the run-time answer in Velt,
-once: the carry-less flag of the architecture, plus CPUID leaf 1 ECX bit 25 on x86-64 (FEAT_PMULL
-implies FEAT_AES on aarch64), and not with `VELT_SIMD_DISABLE=aes`. `velt_simd_cpuid(leaf,
+bytes. Their features `aes-x86` (AES-NI with PCLMULQDQ, SSSE3 and SSE4.1) and `aes-arm`
+(FEAT_AES with FEAT_PMULL) are checked like any other ("Checks"). `velt_simd_cpuid(leaf,
 subleaf) -> u32x4` is x86's `CPUID` (EAX, EBX, ECX, EDX in lanes 0 to 3), emitted
 inline (no runtime function) and pure; it gives zeros on another architecture, on wasm and under
 Cranelift. A function gated on `aes-x86` (`aes-arm`) has the carry-less extension of its
 architecture too (`Ext::covers`): its `velt_simd_has_clmul_x86` (`_arm`) is `1` as well, and in
-any gated function the checks of the other architecture's extensions are `0`. `--cpu` never makes
-the AES checks constant: the CPU check's lists (below) do not have AES.
+any gated function the checks of the other architecture's features are `0`. `--cpu` makes the
+x86 check constant where the CPU it names has AES (bit 23).
 
 **FMA.** The extension `fma-x86` (FMA3 with AVX) has no instructions of its
 own: a function gated on it compiles `velt_math_fma_f64` (Math operations) to one `vfmadd`,
-where the default x86-64 level calls C's `fma`. Like AES it has **no runtime flag**:
-`velt_simd_has_fma_x86()` is `1` only in a function gated on it, and std computes the run-time
-answer once (`hasFmaX86()` of std/lang/math/fma_check.velt, the check sema keeps calls of a
-function gated on `fma-x86` behind): the carry-less flag, then CPUID leaf 1 ECX bits 12 (FMA), 27
-(OSXSAVE) and 28 (AVX), then XCR0's bits 1 and 2 (the OS saves the SSE and AVX state); not with
-`VELT_SIMD_DISABLE=clmul`. `velt_simd_xgetbv(xcr: u32) -> u64` is x86's `XGETBV`
+where the default x86-64 level calls C's `fma`. It is checked like any other feature
+("Checks"; velt/arch/x86's `Fma.isSupported()`, which std's `hasFmaX86()` calls): FMA with AVX,
+whose bits the feature word sets only where XCR0 says the OS saves the AVX state.
+`velt_simd_xgetbv(xcr: u32) -> u64` is x86's `XGETBV`
 (EDX:EAX), emitted inline (no runtime function) and pure, valid only where CPUID says OSXSAVE;
-it gives 0 on another architecture, on wasm and under Cranelift. `--cpu` does not make the check
-constant; with an FMA level (`x86-64-v3`) `velt_math_fma_f64` is one instruction everywhere.
+it gives 0 on another architecture, on wasm and under Cranelift. With an FMA level (`x86-64-v3`)
+the check is constant and `velt_math_fma_f64` is one instruction everywhere.
 
 LLVM gives a function that calls one of these operations the extension's own feature (`+sha2`,
 `+sha`, `+pclmul`, `+aes`), which it uses for nothing else; a *gated* function (VIR
