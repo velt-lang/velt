@@ -23,7 +23,7 @@
 // Off the workers (a C library's thread, no task current), a yield wakes at once, as before.
 // Only a program that yields compiles the list's turns (`stdUsed("yields")`).
 
-import { fnAddress, inline, noteStdUse } from "velt/lang/intrinsics";
+import { fnAddress, inline, noInline, noteStdUse } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as node from "./sched_node";
 import * as ls from "./sched_yield_list";
@@ -36,15 +36,25 @@ function current(): usize {
   return e === 0 ? 0 : m.ld(e + t.E_CURRENT);
 }
 
-/** `await yieldNow()`: what polls with `cx` runs again at its turn, after the other ready tasks. */
+/**
+ * `await yieldNow()`: what polls with `cx` runs again at its turn, after the other ready tasks.
+ * The root's yield, the common one, inlines where it is awaited; the rest is out of line.
+ */
+@inline("always")
 export function schedYield(cx: usize): void {
   noteStdUse("yields");
   const w = m.ld(cx + 8);
-  const vt = m.ld(w);
-  if (vt === t.main() + t.E_VT) {
+  if (m.ld(w) === t.main() + t.E_VT) {
     rootYield(w, 0);
-    return;
+  } else {
+    otherYield(w);
   }
+}
+
+/** `await yieldNow()` with waker `w`, not a task's root's (`schedYield`). */
+@noInline
+function otherYield(w: usize): void {
+  const vt = m.ld(w);
   const k = current();
   if (k === 0) {
     m.wakeByRef(w);
@@ -69,8 +79,14 @@ function rootYield(k: usize, y: usize): void {
     // No yield block: no list, no yield made, so nothing to order it against (a second yield
     // in this poll stores the same).
     m.store32(k + t.T_STATE, t.YIELDED);
-    return;
+  } else {
+    rootYieldInOrder(k, y, b);
   }
+}
+
+/** `rootYield` for a task with a yield block `b`: the root's turn keeps its place in the order. */
+@noInline
+function rootYieldInOrder(k: usize, y: usize, b: usize): void {
   if (m.load32(k + t.T_STATE) === t.YIELDED) {
     return;
   }
