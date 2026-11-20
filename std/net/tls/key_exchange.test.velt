@@ -1,0 +1,371 @@
+// velt/net (tests): the key exchange groups (key_exchange.velt) and secp384r1 through whole
+// handshakes between the client and the server in Velt, message by message: TLS 1.3 after a
+// HelloRetryRequest for the group, and TLS 1.2 with the group in the ServerKeyExchange. Both
+// sides' Finished cover the shared secret, so a handshake that ends agreed on it. Run by
+// `velt test std/`.
+import { x25519PublicKey } from "velt/crypto/x25519";
+import { hexDecode, hexEncode } from "velt/encoding/hex";
+import { TlsFailure } from "velt/net/tls/alert";
+import {
+  ClientHandshake,
+  FINISHED_DONE,
+  HANDSHAKE_KEYS,
+  SEND_RETRY,
+} from "velt/net/tls/client_handshake";
+import { ClientHandshake12, DONE12, SEND12 } from "velt/net/tls/client_handshake12";
+import {
+  clientHello,
+  HelloInput,
+  preferredSuites,
+  SECP256R1,
+  SECP384R1,
+  X25519,
+} from "velt/net/tls/client_hello";
+import { parseClientHello } from "velt/net/tls/client_hello_parse";
+import {
+  exchangeKey,
+  exchangePublic,
+  exchangeSecret,
+  groupSupported,
+  pointFormOk,
+} from "velt/net/tls/key_exchange";
+import {
+  S_DONE,
+  S_SEND_FLIGHT,
+  S_SEND_RETRY,
+  ServerHandshake,
+} from "velt/net/tls/server_handshake";
+import { ServerHandshake12 } from "velt/net/tls/server_handshake12";
+import { serverKey } from "velt/net/tls/server_key";
+import { describe, expect, it } from "velt/test";
+
+// A test certificate for localhost and its P-256 key.
+const CERT =
+  "-----BEGIN CERTIFICATE-----\n" +
+  "MIIBfDCCASOgAwIBAgIUbOEJE3w+3rEECtAfNMflvpgZqtwwCgYIKoZIzj0EAwIw\n" +
+  "FDESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTI2MTExNzEzNDUzOVoXDTM2MTExNDEz\n" +
+  "NDUzOVowFDESMBAGA1UEAwwJbG9jYWxob3N0MFkwEwYHKoZIzj0CAQYIKoZIzj0D\n" +
+  "AQcDQgAEIEQvsXzDK6ertX/VsGOHz5teD+18gYSVkXp/MwpFaXc89vpHbTg8b5LU\n" +
+  "UFKwAzJYmOHzKe0ItdgAsScNEIHxLqNTMFEwHQYDVR0OBBYEFNmx12M5cDbYdBCa\n" +
+  "XIyZhkZXnJykMB8GA1UdIwQYMBaAFNmx12M5cDbYdBCaXIyZhkZXnJykMA8GA1Ud\n" +
+  "EwEB/wQFMAMBAf8wCgYIKoZIzj0EAwIDRwAwRAIgLh3dAJx3PanRqo85r4iXkJkz\n" +
+  "N2xRv2tmTgYzj23AoDsCIFRPbr65ZYyKivCDzUGE2EJSEm4wtM5HLW58qfHzJsx3\n" +
+  "-----END CERTIFICATE-----\n";
+const KEY =
+  "-----BEGIN PRIVATE KEY-----\n" +
+  "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg4egJFXy8gX5QTFeV\n" +
+  "8hVAJmZZVtUCI1LXBsyujucjawShRANCAAQgRC+xfMMrp6u1f9WwY4fPm14P7XyB\n" +
+  "hJWRen8zCkVpdzz2+kdtODxvktRQUrADMliY4fMp7Qi12ACxJw0QgfEu\n" +
+  "-----END PRIVATE KEY-----\n";
+
+// 32 bytes.
+const CLIENT_PRIVATE = "49af42ba7f7994852d713ef2784bcbcaa7911de26adc5642cb634540e7ea5005";
+
+// supported_groups as the client sends it, and with secp384r1 as the only group a server knows.
+const GROUPS = "000a00080006001d00170018";
+const GROUPS_P384 = "000a0008000600186a6a7a7a";
+// The X25519 key share's header, and the same under a group no server knows.
+const SHARE = "003300260024001d0020";
+const SHARE_UNKNOWN = "0033002600246a6a0020";
+
+function bytes32(): u8[] {
+  const out: u8[] = [];
+  for (let i: usize = 0; i < 32; i++) {
+    out.push(i as u8);
+  }
+  return out;
+}
+
+// A client's input whose first ClientHello is the generated one with `changes` (pairs of hex
+// text: from, to) made to it.
+function input(changes: string[][]): HelloInput {
+  const i: HelloInput = {
+    random: bytes32(),
+    sessionId: bytes32(),
+    publicKey: x25519PublicKey(hexDecode(CLIENT_PRIVATE)),
+    serverName: "localhost",
+    alpn: [],
+    fixed: null,
+    fixedRetry: null,
+    suites: preferredSuites(),
+    retryKey: null,
+  };
+  let hello = hexEncode(clientHello(i, false, null, X25519, i.publicKey));
+  for (const c of changes) {
+    expect(hello.includes(c[0])).toBe(true);
+    hello = hello.replace(c[0], c[1]);
+  }
+  return { ...i, fixed: hexDecode(hello) };
+}
+
+// The handshake messages in `flight`.
+function messages(flight: u8[]): u8[][] {
+  const out: u8[][] = [];
+  let at: usize = 0;
+  while (at < flight.length) {
+    const n =
+      ((flight[at + 1] as usize) << 16) |
+      ((flight[at + 2] as usize) << 8) |
+      (flight[at + 3] as usize);
+    out.push(flight.slice(at as i64, (at + 4 + n) as i64));
+    at += 4 + n;
+  }
+  return out;
+}
+
+// The alert and message of what `f` throws, "" if nothing.
+function failure(f: () => void throws Error): string {
+  try {
+    f();
+    return "";
+  } catch (e) {
+    return e instanceof TlsFailure ? `${e.alert} ${e.message}` : `${e}`;
+  }
+}
+
+describe("the key exchange groups", () => {
+  it("are X25519, secp256r1 and secp384r1", () => {
+    expect([X25519, SECP256R1, SECP384R1].map((g) => groupSupported(g))).toEqual([
+      true,
+      true,
+      true,
+    ]);
+    const others: usize[] = [0, 0x0019, 0x001e, 0x0100];
+    expect(others.map((g) => groupSupported(g))).toEqual([false, false, false, false]);
+  });
+
+  it("agree on a secret, with public values of each group's form", () => {
+    const lengths: usize[][] = [
+      [X25519, 32, 32],
+      [SECP256R1, 65, 32],
+      [SECP384R1, 97, 48],
+    ];
+    for (const l of lengths) {
+      const g = l[0];
+      const a = exchangeKey(g);
+      const b = exchangeKey(g);
+      const pa = exchangePublic(g, a);
+      const pb = exchangePublic(g, b);
+      expect([g, pa.length]).toEqual([g, l[1]]);
+      expect(pointFormOk(g, pa)).toBe(true);
+      const s = exchangeSecret(g, a, pb);
+      expect([g, s.length]).toEqual([g, l[2]]);
+      expect(hexEncode(s)).toBe(hexEncode(exchangeSecret(g, b, pa)));
+      expect(hexEncode(pa) == hexEncode(pb)).toBe(false);
+      // Another group's form, a byte short, a byte long, and a compressed point.
+      for (const other of lengths) {
+        expect(pointFormOk(other[0], pa)).toBe(other[0] == g);
+      }
+      expect(pointFormOk(g, pa.slice(0, (pa.length - 1) as i64))).toBe(false);
+      expect(pointFormOk(g, pa.concat([0]))).toBe(false);
+      if (g != X25519) {
+        const compressed = pa.slice();
+        compressed[0] = 2;
+        expect(pointFormOk(g, compressed)).toBe(false);
+      }
+    }
+  });
+
+  it("refuse a point off the curve, and X25519's zero", () => {
+    for (const g of [SECP256R1, SECP384R1]) {
+      const k = exchangeKey(g);
+      const p = exchangePublic(g, exchangeKey(g));
+      p[p.length - 1] ^= 1;
+      expect(pointFormOk(g, p)).toBe(true);
+      expect(() => exchangeSecret(g, k, p)).toThrow("not an uncompressed point on the curve");
+    }
+    const zero: u8[] = [];
+    for (let i = 0; i < 32; i++) {
+      zero.push(0);
+    }
+    expect(() => exchangeSecret(X25519, exchangeKey(X25519), zero)).toThrow();
+  });
+});
+
+describe("TLS 1.3 over secp384r1", () => {
+  // The client's first ClientHello has secp384r1 as the only group the server knows and no key
+  // share the server can use, so the server asks for a secp384r1 share.
+  function retried(): [ClientHandshake, ServerHandshake] {
+    const c = new ClientHandshake(
+      input([
+        [GROUPS, GROUPS_P384],
+        [SHARE, SHARE_UNKNOWN],
+      ]),
+      hexDecode(CLIENT_PRIVATE),
+    );
+    const s = new ServerHandshake(serverKey(CERT, KEY)!, []);
+    expect(s.onMessage(c.hello())).toBe(S_SEND_RETRY);
+    return [c, s];
+  }
+
+  it("answers the HelloRetryRequest with a P-384 share, and both sides finish", () => {
+    const [c, s] = retried();
+    const hrr = hexEncode(s.retry!);
+    // key_share in a HelloRetryRequest: the group alone.
+    expect(hrr.includes("003300020018")).toBe(true);
+    expect(c.onMessage(s.retry!)).toBe(SEND_RETRY);
+    const second = hexEncode(c.retryHello);
+    // One share: secp384r1, an uncompressed point of 97 bytes. The groups are the generated
+    // list again.
+    const at = second.indexOf("0033006700650018006104");
+    expect(at > 0).toBe(true);
+    expect(second.includes(SHARE.slice(0, 4) + "0026")).toBe(false);
+    expect(second.includes(GROUPS)).toBe(true);
+    expect(s.onMessage(c.retryHello)).toBe(S_SEND_FLIGHT);
+    const hello = hexEncode(s.hello!);
+    expect(hello.includes("003300650018006104")).toBe(true);
+    expect(c.onMessage(s.hello!)).toBe(HANDSHAKE_KEYS);
+    expect(hexEncode(c.clientHandshake)).toBe(hexEncode(s.clientHandshake!));
+    expect(hexEncode(c.serverHandshake)).toBe(hexEncode(s.serverHandshake!));
+    let step = 0;
+    for (const m of messages(s.flight!)) {
+      step = c.onMessage(m);
+    }
+    expect(step).toBe(FINISHED_DONE);
+    expect(c.done()).toBe(true);
+    expect(s.onMessage(c.lastFlight)).toBe(S_DONE);
+    expect(s.done()).toBe(true);
+    expect(hexEncode(c.clientApplication)).toBe(hexEncode(s.clientApplication!));
+    expect(hexEncode(c.serverApplication)).toBe(hexEncode(s.serverApplication!));
+  });
+
+  it("refuses a server share that is not on the curve, or not secp384r1's form", () => {
+    const [c, s] = retried();
+    c.onMessage(s.retry!);
+    s.onMessage(c.retryHello);
+    const hello = s.hello!;
+    const off = hello.slice();
+    off[off.length - 1] ^= 1;
+    expect(failure(() => c.onMessage(off))).toBe(
+      "47 TLS: the server's secp384r1 share is not a point on the curve",
+    );
+    // A P-256 share's length under the group's name.
+    const [c2, s2] = retried();
+    c2.onMessage(s2.retry!);
+    const text = hexEncode(hello);
+    const at = text.indexOf("003300650018006104");
+    const short = text.slice(0, at) + "003300450018004104" + text.slice(at + 18, at + 18 + 128);
+    const m = hexDecode(short);
+    const n = m.length - 4;
+    m[2] = (n >> 8) as u8;
+    m[3] = (n & 0xff) as u8;
+    const el = n - 2 - 32 - 1 - 32 - 2 - 1 - 2;
+    m[4 + 2 + 32 + 1 + 32 + 2 + 1] = (el >> 8) as u8;
+    m[4 + 2 + 32 + 1 + 32 + 2 + 2] = (el & 0xff) as u8;
+    expect(failure(() => c2.onMessage(m))).toBe(
+      "47 TLS: the server's key share is not for secp384r1",
+    );
+  });
+
+  it("the server refuses a client share that is not on the curve", () => {
+    const [c, s] = retried();
+    c.onMessage(s.retry!);
+    const second = c.retryHello.slice();
+    const at = hexEncode(second).indexOf("0033006700650018006104") / 2;
+    second[at + 11 + 96 - 1] ^= 1;
+    expect(failure(() => s.onMessage(second))).toBe(
+      "47 TLS: the client's key share is not a valid point",
+    );
+    // A compressed point of the same length is refused as the share is read.
+    const [c2, s2] = retried();
+    c2.onMessage(s2.retry!);
+    const compressed = c2.retryHello.slice();
+    compressed[at + 10] = 2;
+    expect(failure(() => s2.onMessage(compressed))).toBe(
+      "47 TLS: a secp384r1 key share that is not an uncompressed point",
+    );
+  });
+
+  it("the server takes a secp384r1 share after X25519's and secp256r1's", () => {
+    // The generated hello: an X25519 share, which the server uses whatever the groups' order.
+    const c = new ClientHandshake(input([]), hexDecode(CLIENT_PRIVATE));
+    const s = new ServerHandshake(serverKey(CERT, KEY)!, []);
+    expect(s.onMessage(c.hello())).toBe(S_SEND_FLIGHT);
+    expect(hexEncode(s.hello!).includes("00330024001d0020")).toBe(true);
+  });
+});
+
+describe("TLS 1.2 over secp384r1", () => {
+  // The handshake between a client whose ClientHello lists `groups` and the server, from the
+  // ClientHello on; `spoil` changes the server's flight before the client reads it.
+  function run(groups: string, spoil: (flight: u8[]) => u8[]): string {
+    const i = input([[GROUPS, groups]]);
+    const hello = i.fixed!;
+    const offer = parseClientHello(hello.slice(4));
+    const s = new ServerHandshake12(serverKey(CERT, KEY)!, hello, offer, null, true);
+    const flight = messages(spoil(s.hello));
+    const sh = flight[0];
+    const transcript = hello.concat(sh);
+    const c = new ClientHandshake12(
+      transcript,
+      s.suite,
+      i.random,
+      sh.slice(6, 38),
+      offer.ems,
+      hexDecode(CLIENT_PRIVATE),
+      i.publicKey,
+      null,
+    );
+    let step = 0;
+    for (let k: usize = 1; k < flight.length; k++) {
+      step = c.onMessage(flight[k]);
+    }
+    expect(step).toBe(SEND12);
+    const ske = hexEncode(flight[2]);
+    expect(s.onMessage(c.keyExchange!)).toBe(false);
+    s.ccs();
+    expect(s.onMessage(c.finished!)).toBe(true);
+    c.ccs();
+    expect(c.onMessage(s.finished!)).toBe(DONE12);
+    // The curve and the point's length in the ServerKeyExchange, and the length of the client's
+    // point.
+    return `${ske.slice(8, 16)} ${c.keyExchange!.length - 5}`;
+  }
+
+  it("runs ECDHE on P-384 when it is the client's only group the server has", () => {
+    expect(run("000a0008000600186a6a7a7a", (f) => f)).toBe("03001861 97");
+  });
+
+  it("prefers X25519, then secp256r1", () => {
+    expect(run("000a000800060018001d0017", (f) => f)).toBe("03001d20 32");
+    expect(run("000a000800060018 00176a6a".replace(" ", ""), (f) => f)).toBe("03001741 65");
+  });
+
+  it("the client refuses a P-384 point off the curve, and the server one from the client", () => {
+    const spoiled = failure(() => {
+      run("000a0008000600186a6a7a7a", (f) => {
+        const at = hexEncode(f).indexOf("0300186104") / 2;
+        const out = f.slice();
+        out[at + 4 + 96] ^= 1;
+        return out;
+      });
+    });
+    expect(spoiled).toBe("47 TLS: the server's secp384r1 point is not on the curve");
+    // A curve the client did not offer (secp521r1's number over the same point).
+    const other = failure(() => {
+      run("000a0008000600186a6a7a7a", (f) => {
+        const at = hexEncode(f).indexOf("0300186104") / 2;
+        const out = f.slice();
+        out[at + 2] = 0x19;
+        return out;
+      });
+    });
+    expect(other).toBe("47 TLS: the server chose key exchange group 0x0019, which was not offered");
+    // The server, given a ClientKeyExchange point off the curve and one of P-256's length.
+    const i = input([[GROUPS, "000a0008000600186a6a7a7a"]]);
+    const offer = parseClientHello(i.fixed!.slice(4));
+    const s = new ServerHandshake12(serverKey(CERT, KEY)!, i.fixed!, offer, null, true);
+    const point = exchangePublic(SECP384R1, exchangeKey(SECP384R1));
+    point[96] ^= 1;
+    const cke: u8[] = [16, 0, 0, 98, 97];
+    expect(failure(() => s.onMessage(cke.concat(point)))).toBe(
+      "47 TLS: the client's key exchange is not a valid point",
+    );
+    const s2 = new ServerHandshake12(serverKey(CERT, KEY)!, i.fixed!, offer, null, true);
+    const p256 = exchangePublic(SECP256R1, exchangeKey(SECP256R1));
+    const cke2: u8[] = [16, 0, 0, 66, 65];
+    expect(failure(() => s2.onMessage(cke2.concat(p256)))).toBe(
+      "47 TLS: a ClientKeyExchange point of the wrong form",
+    );
+  });
+});
