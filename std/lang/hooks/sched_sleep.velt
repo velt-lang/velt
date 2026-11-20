@@ -115,9 +115,9 @@ export function sleep(e: usize, ms: i64): usize {
   m.st(f + S_SEQ, seq);
   m.st(f + S_WAKER, 0);
   m.st(f + S_STATE, NEW);
-  m.st(f + S_OWNER, 0);
-  // The links, `S_HOME` and `S_TASK` are written when a state that reads them begins: the links
-  // and `S_HOME` with `PENDING` (`insert`), `S_TASK` with `DUE` (`pushDue`).
+  // The links, `S_OWNER`, `S_HOME` and `S_TASK` are written when a state that reads them
+  // begins: the links, `S_OWNER` and `S_HOME` with `PENDING` (`sleepPoll`, `insert`; `adopt`),
+  // `S_TASK` with `DUE` (`pushDue`).
   m.st(f + S_ASKS, 0);
   return f;
 }
@@ -126,7 +126,6 @@ function sleepPoll(f: usize, cx: usize): u32 {
   // Loaded as shared: a worker that gave this sleep up stored its state last
   // (sched_sleep_move.velt `release`).
   const s = m.load(f + S_STATE);
-  const w = m.ld(cx + 8);
   if (s <= SEEN) {
     if (s === SEEN) {
       return 1;
@@ -139,14 +138,21 @@ function sleepPoll(f: usize, cx: usize): u32 {
     // a transfer changes together with this word: sched_node.velt) and in a combinator's, which
     // passes its poller's on (sched_all.velt). Any other context, and a carried sleep (it has
     // no owner until its task adopts it), take the slow way, which asks the worker.
+    if (s === FIRED) {
+      // Seen by this poll, which registers nothing: all it needs is that this worker holds the
+      // sleep (the worker is at hand, for `seenOn`), whichever task polls. The state first, then
+      // the worker, as `here` reads them.
+      const e = t.exec();
+      if (m.load(f + S_HOME) !== e) {
+        return mv.ask(f, m.ld(cx + 8));
+      }
+      seenOn(e, f);
+      return 1;
+    }
     if (m.ld(cx) !== m.loadRelaxed(f + S_OWNER) && !here(f, s)) {
       // Held by another worker's block, or carried by an offered task: its worker gives it up,
       // and this task polls it again as a new one.
-      return mv.ask(f, w);
-    }
-    if (s === FIRED) {
-      seenOn(t.exec(), f);
-      return 1;
+      return mv.ask(f, m.ld(cx + 8));
     }
     if (s === DUE && firesItself(t.exec(), f)) {
       unlinkDue(m.ld(f + S_TASK), f);
@@ -154,6 +160,7 @@ function sleepPoll(f: usize, cx: usize): u32 {
       return 1;
     }
   }
+  const w = m.ld(cx + 8);
   const old = m.ld(f + S_WAKER);
   if (old !== w) {
     m.st(f + S_WAKER, m.wakerClone(w));
@@ -176,28 +183,12 @@ function sleepPoll(f: usize, cx: usize): u32 {
 
 function sleepDrop(f: usize): void {
   const s = m.load(f + S_STATE);
-  if (m.load(f + S_ASKS) !== 0) {
-    // A hand-over under way names it: the worker that one reaches frees it.
-    mv.dropAway(f);
+  const asks = m.load(f + S_ASKS);
+  // The usual drop in one test: on no list (new or seen, the two states below `PENDING`)
+  // and named by no request.
+  if (((s >> 1) | asks) !== 0) {
+    mv.dropHeld(f, s, asks);
     return;
-  }
-  if (s > SEEN) {
-    const e = t.exec();
-    if (s === CARRIED || m.load(f + S_HOME) !== e) {
-      // Its worker takes it off its list and frees it.
-      mv.dropAway(f);
-      return;
-    }
-    if (wk.counting() && m.ld(f + S_HOME) !== e) {
-      rl.held("is dropped");
-    }
-    if (s === PENDING) {
-      unlinkPending(block(e), f);
-    } else if (s === DUE) {
-      unlinkDue(m.ld(f + S_TASK), f);
-    } else {
-      seenOn(e, f);
-    }
   }
   const w = m.ld(f + S_WAKER);
   if (w !== 0) {

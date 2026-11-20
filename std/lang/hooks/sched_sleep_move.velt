@@ -19,8 +19,10 @@
 //   way is a request itself, and the sleep is freed by whoever ends the last one. So a request
 //   never names freed memory, in whatever order two workers serve them.
 // - The lists are taken whole by their worker (no single pop), and served oldest first.
-// - A worker serves its list before its timer look and before it parks (sched_park.velt), and
-//   every I/O tick while it is busy (sched_tick.velt); the push wakes it as a push on its inbox
+// - A worker serves its list before it parks (sched_park.velt: with its park word up, where it
+//   looks at its inbox, so a worker out of work never sleeps on a request), and every I/O tick
+//   while it is busy (sched_tick.velt); a sleep that expired on it meanwhile is given up as it
+//   is by then (seen, due or fired: `release`). The push wakes it as a push on its inbox
 //   does, and a worker with requests counts as busy for the program's end (sched_end.velt), so
 //   the program does not end while tasks could still ask; once no task is left, its end waits
 //   for the requests under way (`settle`): every request is served, its waker given back and a
@@ -29,6 +31,7 @@
 import { noInline } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as sl from "./sched_sleep";
+import * as rl from "./sched_sleep_rule";
 import * as t from "./sched_task";
 import * as wk from "./sched_wake";
 
@@ -61,6 +64,40 @@ export function ask(f: usize, waker: usize): u32 {
 @noInline
 export function dropAway(f: usize): void {
   post(f, 0);
+}
+
+/**
+ * The drop of sleep `f` when it holds a place (state `s` above `SEEN`) or requests name it
+ * (`asks`): what sched_sleep.velt `sleepDrop` keeps out of line.
+ */
+@noInline
+export function dropHeld(f: usize, s: usize, asks: usize): void {
+  if (asks !== 0) {
+    // A hand-over under way names it: the worker that one reaches frees it.
+    dropAway(f);
+    return;
+  }
+  const e = t.exec();
+  if (s === sl.CARRIED || m.load(f + sl.S_HOME) !== e) {
+    // Its worker takes it off its list and frees it.
+    dropAway(f);
+    return;
+  }
+  if (wk.counting() && m.ld(f + sl.S_HOME) !== e) {
+    rl.held("is dropped");
+  }
+  if (s === sl.PENDING) {
+    sl.unlinkPending(sl.block(e), f);
+  } else if (s === sl.DUE) {
+    sl.unlinkDue(m.ld(f + sl.S_TASK), f);
+  } else {
+    sl.seenOn(e, f);
+  }
+  const w = m.ld(f + sl.S_WAKER);
+  if (w !== 0) {
+    m.wakerDrop(w);
+  }
+  m.release(f, sl.S_SIZE);
 }
 
 function post(f: usize, waker: usize): void {

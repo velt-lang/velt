@@ -61,10 +61,6 @@ function parkable(e: usize): bool {
 @noInline
 export function park(e: usize): void {
   const b = m.ld(e + t.E_IO);
-  if (m.load(e + t.E_SLEEP_ASKS) !== 0) {
-    // Before its timer look: a sleep it gives up does not expire here.
-    mv.serve(e);
-  }
   m.st32(e + t.E_DISPATCH, t.D_INPUT);
   if (io.anyDue(b)) {
     w.flushDue(b);
@@ -81,8 +77,16 @@ export function park(e: usize): void {
   }
   m.store32(e + t.E_PARK, 1);
   const mode = m.ld32(e + t.E_MODE);
-  if (m.load(e + t.E_INBOX) !== 0 || m.load(e + t.E_SLEEP_ASKS) !== 0 || q.any(e) || !parkable(e)) {
+  // The inbox and the sleeps asked for (sched_sleep_move.velt) in one test.
+  if ((m.load(e + t.E_INBOX) | m.load(e + t.E_SLEEP_ASKS)) !== 0 || q.any(e) || !parkable(e)) {
     wk.awake(e);
+    if (m.load(e + t.E_SLEEP_ASKS) !== 0) {
+      // Served here, where a worker out of work finds them (a busy one at its I/O tick):
+      // the park's way in, which every sleep's round takes, looks at nothing for them. A
+      // sleep asked for may have expired in the timer look above: it is given up as what
+      // that made of it (seen, when its waker is not a task's; else due or fired: `release`).
+      mv.serve(e);
+    }
     ex.takeExit(e);
     m.st32(e + t.E_DISPATCH, 0);
     if (timers) {
