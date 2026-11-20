@@ -14,7 +14,8 @@ use std::path::Path;
 use std::process::{Child, Stdio};
 
 /// `hold <path> <offset> <length>` takes an exclusive lock, says `locked` (or `refused`) and
-/// stays until it is killed; `try <path> <mode> <offset> <length>` says whether it got the lock.
+/// stays until it is killed; `try <path> <mode> <offset> <length>` says whether it got the lock;
+/// `leave <path> <offset> <length>` starts waiting for the lock and calls `process.exit(7)`.
 const PROGRAM: &str = "
 import * as fs from \"velt/fs\";
 
@@ -24,6 +25,11 @@ if (what == \"hold\") {
   const got = fs.lockSync(fd, { offset: Number(process.argv[4]), length: Number(process.argv[5]) });
   console.log(got ? \"locked\" : \"refused\");
   setInterval(async () => {}, 1000);
+} else if (what == \"leave\") {
+  // Wants the lock (not awaited), then ends the program itself.
+  fs.lock(fd, { offset: Number(process.argv[4]), length: Number(process.argv[5]) });
+  console.log(\"leaving\");
+  process.exit(7);
 } else {
   const mode = process.argv[4] == \"shared\" ? \"shared\" : \"exclusive\";
   const got = fs.lockSync(fd, {
@@ -161,4 +167,29 @@ fn a_c_process_lock_and_a_velt_lock_conflict_at_sqlites_bytes() {
     holder.kill().unwrap();
     holder.wait().unwrap();
     assert!(c_lock(&file, WRITE, PENDING));
+}
+
+/// A lock that is being waited for keeps a program running, as a pending read does, but
+/// `process.exit()` ends it at once: nothing blocks in the wait.
+#[test]
+fn process_exit_ends_a_program_that_waits_for_a_lock() {
+    let dir = test_dir::TestDir::new();
+    let exe = build(dir.path());
+    let file = dir.path().join("data");
+    std::fs::write(&file, b"0123456789abcdef").unwrap();
+    let (mut holder, said) = hold(&exe, &file, 0, 4);
+    assert_eq!(said, "locked");
+
+    let out = std::process::Command::new(&exe)
+        .arg("leave")
+        .arg(&file)
+        .args(["0", "4"])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "leaving");
+    assert_eq!(out.status.code(), Some(7));
+    // The holder still has it: the leaver took nothing with it.
+    assert_eq!(try_lock(&exe, &file, "exclusive", 0, 4), "false");
+    holder.kill().unwrap();
+    holder.wait().unwrap();
 }
