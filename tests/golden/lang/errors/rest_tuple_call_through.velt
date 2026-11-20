@@ -1,0 +1,13 @@
+// A call of a function value whose rest parameter is typed by a type parameter, in a generic
+// body (#379): `A` is known per instance only (`[number, number]` from the callback below), so
+// `f(rq)` checked against `A` here would call that instance's two-parameter function with
+// none. tsc refuses it too (TS2345: `[]` is not an `A`).
+interface Ctx {
+  id: string;
+}
+
+function apply<A extends unknown[], R>(f: (rq: Ctx, ...args: A) => R, fb: R): R {
+  return f({ id: "x" });
+}
+
+console.log(apply((rq: Ctx, a: number, b: number): number => a + b, 0));
