@@ -239,7 +239,7 @@ lives in a counted *cell* (`LocalDef::boxed`), which must never be used by two t
 transfer glue gives a value crossing to another task cells of its own, and sema rejects the
 shapes that would share one. Debug programs built by a debug compiler (as every debug
 golden run is; `LowerOptions::cell_checks`) also report each cell to the debug runtime, which
-records its owning **task** (`velt_rt_task_id`) in a side table keyed by the cell's address. The
+records its owning **task** (its task id) in a side table keyed by the cell's address. The
 owner is a task, not an OS thread: a task (with its local promises) may resume on another worker,
 which is not a race. The first use by a task other than the owner prints ``velt debug-cells:
 captured variable `<name>` was used by two tasks: …`` (both tasks and their threads, and the fix:
