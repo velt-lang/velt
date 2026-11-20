@@ -1,6 +1,6 @@
-// White-box tests of `Mont` (velt/crypto/mont): products against Python's integers for moduli of
-// one to nine limbs, with the operands and moduli that carry out of a product's sums (a modulus
-// near a power of 2^64 and operands just under it), and what `load` and `bytes` do at the edges.
+// velt/crypto (tests): `Mont` (mont.velt): products against Python's integers for moduli of one
+// to nine limbs, with the operands and moduli that carry out of a product's sums (a modulus near
+// a power of 2^64 and operands just under it), and what `load` and `bytes` do at the edges.
 import { hexDecode, hexEncode } from "velt/encoding/hex";
 import { describe, expect, it } from "velt/test";
 import { Mont } from "velt/crypto/mont";
