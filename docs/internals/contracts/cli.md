@@ -838,9 +838,7 @@ velt --version | -V | version          # velt <ver> (<git hash> <host triple>)
   when the manifest is whole (it ends with `end`), its version line is this `velt`'s, the target
   is the build's, the object hashes as recorded and every listed file hashes as recorded; with
   the cache on it stores that object under its own key. The statistics then say `velt: prebuilt
-  hooks: <module>: object found (shipped)`. A debug build (and `velt check`) for arm64 Linux
-  takes no prebuilt object, shipped or cached: the objects' atomics call the outline-atomics
-  helpers (`__aarch64_*`), which its link need not have.
+  hooks: <module>: object found (shipped)`.
 - `completions <shell>`: prints a completion script for bash, zsh, fish or PowerShell
   (`pwsh` accepted) covering commands, options, `--template`/`--editor`/`--backend`/`--emit`
   values, the actions of `registry` and `owner`, and files. The scripts are generated from the

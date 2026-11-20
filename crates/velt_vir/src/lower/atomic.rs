@@ -353,6 +353,9 @@ impl Cx<'_> {
     /// Does a deep copy of a value of `t` copy an `Atomic` (in the value, its arrays or the
     /// objects it holds, not behind a `shared`, a function or an interface value)?
     pub(super) fn holds_atomic(&mut self, t: TyId, seen: &mut FxHashSet<TyId>) -> bool {
+        // A shape question: a placeholder's answer is its representative's (the shape key
+        // holds it, shape/key.rs `bits`).
+        let t = self.ph_rep(t);
         if !seen.insert(t) {
             return false;
         }
