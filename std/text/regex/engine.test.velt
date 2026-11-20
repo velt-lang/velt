@@ -3,10 +3,11 @@ import { describe, expect, it } from "velt/test";
 import { strByteLen } from "velt/lang/intrinsics";
 import { backtrack, backtrackReset, MATCHED } from "velt/text/regex/backtrack";
 import { Compiler } from "velt/text/regex/compiler";
-import { find } from "velt/text/regex/find";
+import { find, findAll } from "velt/text/regex/find";
 import { parsePattern } from "velt/text/regex/parse_pattern";
 import { Parser } from "velt/text/regex/parser";
 import { pike, pikeReset } from "velt/text/regex/pike";
+import { OP_SPAN, Program, SCAN_FIRST, SCAN_GRAMS, SCAN_NONE } from "velt/text/regex/program";
 import { Search } from "velt/text/regex/search";
 
 /** The slots of the first match of `source` in `s` by the backtracker, trying every start. */
@@ -93,6 +94,91 @@ describe("Pike machine", () => {
     expect(fd("[cgt]gggtaaa|tttaccc[acg]", "", dna, 5)).toEqual([18, 26]);
     expect(fd("gct+a", "", dna, 20)).toEqual([48, 52]);
     expect(fd("(x|c)c+a", "", dna)).toEqual([22, 26, 22, 23]);
+  });
+});
+
+/** The program of `source` with `flags`. */
+function program(source: string, flags: string): Program {
+  const p = new Parser(source, flags);
+  const tree = parsePattern(p);
+  const c = new Compiler(p);
+  c.compile(tree);
+  return c.prog;
+}
+
+describe("find", () => {
+  it("gives a costly search to a matcher whose time is bounded", () => {
+    // Three spans that each give back: cubic without a memory.
+    const prog = program("a*a*a*c", "");
+    expect(prog.plain).toBe(true);
+    const sizes: i64[] = [300, 30000];
+    for (const n of sizes) {
+      const m = new Search(prog, 2);
+      expect(find(prog, m, "a".repeat(n), 0, false)).toBe(false);
+      expect(m.fuel < 0).toBe(true);
+      expect(find(prog, m, "a".repeat(n) + "c", 0, false)).toBe(true);
+      expect(m.slots).toEqual([0, n + 1]);
+    }
+    const cheap = new Search(prog, 2);
+    expect(find(prog, cheap, "xxaac", 0, false)).toBe(true);
+    expect(cheap.fuel > 0).toBe(true);
+  });
+
+  it("runs a loop that can match nothing with a memory", () => {
+    expect(program("(a*)*b", "").plain).toBe(false);
+    expect(program("(a?){0,3}b", "").plain).toBe(false);
+    expect(fd("(a*)*b", "", "a".repeat(40) + "c")).toEqual([]);
+    expect(fd("(a|b?)*c", "", "ab".repeat(20000) + "c").slice(0, 2)).toEqual([0, 40001]);
+  });
+
+  it("gives back from a span only when that can help", () => {
+    const tag = program("<[^>]*>", "");
+    expect(tag.code[3 * 2] & 0xff).toBe(OP_SPAN);
+    expect(tag.code[3 * 2 + 2]).toBe(1);
+    const greedy = program("a*ab", "");
+    expect(greedy.code[3 * 1 + 2]).toBe(0);
+    expect(fd("a*ab", "", "xaaab")).toEqual([1, 5]);
+    expect(fd("<[^>]*>", "", "a<b<c>d")).toEqual([1, 6]);
+    expect(fd("\\w+\\b", "", "héllo wörld")).toEqual([0, 1]);
+    expect(fd("[^x]*.x", "u", "a\u{1F600}\u{1F600}x")).toEqual([0, 10]);
+    expect(fd("[^x]*.\\uDE00", "", "a\u{1F600}\u{1F600}x")).toEqual([0, 9]);
+  });
+
+  it("knows what a match starts with", () => {
+    const dna = program("agg[act]taaa|ttta[agt]cct", "");
+    expect(dna.exact).toBe(true);
+    expect(dna.literals.length).toBe(6);
+    expect(dna.gramSize).toBe(4);
+    expect(dna.grams.length).toBe(8);
+    const tag = program("<[^>]*>", "");
+    expect(tag.exact).toBe(false);
+    expect(tag.literals).toEqual(["<"]);
+    expect(program("(cat|dog)s", "").exact).toBe(false);
+    expect(program("(cat|dog)s", "").literals).toEqual(["cats", "dogs"]);
+    expect(program("x*y", "").scan).toBe(SCAN_GRAMS);
+    expect(program("x*", "").scan).toBe(SCAN_NONE);
+    expect(program("\\d+", "").scan).toBe(SCAN_FIRST);
+    expect(program("[\\uD800-\\uDBFF]", "").scan).toBe(SCAN_NONE);
+    expect(program("^a", "").anchored).toBe(true);
+    expect(program("^a", "m").anchored).toBe(false);
+    expect(program("^a|b", "").anchored).toBe(false);
+  });
+
+  it("finds literals at every offset of a step and at the end", () => {
+    const prog = program("needle|pin", "");
+    for (let at: i64 = 0; at < 40; at++) {
+      const s = "x".repeat(at) + "pin" + "y".repeat(at % 7);
+      const m = new Search(prog, 2);
+      expect(find(prog, m, s, 0, false)).toBe(true);
+      expect(m.slots).toEqual([at, at + 3]);
+      const t = "x".repeat(at) + "needle";
+      expect(find(prog, m, t, 0, false)).toBe(true);
+      expect(m.slots).toEqual([at, at + 6]);
+      expect(find(prog, m, "x".repeat(at) + "needl", 0, false)).toBe(false);
+    }
+    const all = new Search(prog, 2);
+    findAll(prog, all, "pinpin needle pineedle" + " ".repeat(30) + "pin");
+    expect(all.found).toEqual([0, 3, 3, 6, 7, 13, 14, 17, 52, 55]);
   });
 });
 

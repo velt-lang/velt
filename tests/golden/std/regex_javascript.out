@@ -1,0 +1,37 @@
+false true true 2
+2d d83d 2d de00 2d 2d d83d de00 2d
+61 3c d83d 3e 3c de00 3e 3c 62 3e 61 3c d83d de00 3e 3c 62 3e
+1 -1 false
+78 7c d83d 7c de00 7c 79 78 7c d83d de00 7c 79
+4 2 1
+[] [a]
+[]b []b [aa]b
+[a] [] [xB|B]
+xx xa xbcxbc
+[ 'a' ] [ 'ab' ] [ 'b', 'b' ] [ '', '', '', '' ]
+false true false true true
+true false false true true
+false true true true false
+3 true false true
+true true false true
+>a >b 5 false
+3 true false true
+Invalid regular expression: /(a/: Unterminated group
+Invalid regular expression: /a)/: Unmatched ')'
+Invalid regular expression: /a**/: Nothing to repeat
+Invalid regular expression: /[b-a]/: Range out of order in character class
+Invalid regular expression: /\/: \ at end of pattern
+Invalid regular expression: /(?<n/: Invalid capture group name
+Invalid regular expression: /(?<n>a)(?<n>b)/: Duplicate capture group name
+Invalid regular expression: /a{2,1}/: numbers out of order in {} quantifier
+Invalid regular expression: /(?x)/: Invalid group
+Invalid regular expression: /x{1}{2}/: Nothing to repeat
+ok | Invalid regular expression: /a{/u: Incomplete quantifier
+ok | Invalid regular expression: /]/u: Lone quantifier brackets
+ok | Invalid regular expression: /\_/u: Invalid escape
+ok | Invalid regular expression: /\x4/u: Invalid escape
+ok | Invalid regular expression: /\p{Nope}/u: Invalid property name
+ok | Invalid regular expression: /[\d-a]/u: Invalid character class
+ok | Invalid regular expression: /\01/u: Invalid decimal escape
+ok | Invalid regular expression: /\c/u: Invalid Unicode escape
+Invalid flags supplied to RegExp constructor 'gg' | Invalid flags supplied to RegExp constructor 'uv' | Invalid flags supplied to RegExp constructor 'q'
