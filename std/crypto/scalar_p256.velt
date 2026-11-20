@@ -2,7 +2,8 @@
 // in the Montgomery domain, with the textbook interleaved reduction (CIOS, the multiplier from
 // -n^-1 mod 2^64, since n has no special form). Carries are `(a < b) as u64` and the final
 // subtraction of n is a masked select, so multiplication is constant time; `invert` runs a
-// fixed 4-bit window over the public exponent n - 2.
+// fixed 4-bit window over the public exponent n - 2, and `invertPublic`, for public values only
+// (verification), follows its input's bits.
 //
 // Registers of four limbs in one array, like `FeP256` (#2403).
 

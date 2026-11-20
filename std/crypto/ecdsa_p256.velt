@@ -1,8 +1,10 @@
 // velt/crypto (internal): ECDSA signature verification on P-256 (SEC 1 §4.1.4, FIPS 186-5):
 // R = (e/s) G + (r/s) Q, and the signature holds when R's x-coordinate is r mod n. Everything
-// here is public (the key, the digest, the signature), so it runs in variable time: both
-// scalars are recoded to width-5 NAF and added in one pass of 256 doublings, from tables of
-// the odd multiples 1..15 of G and of Q. The x-coordinate is compared without an inversion
+// here is public (the key, the digest, the signature), so it runs in variable time: r/s is
+// recoded to width-5 NAF and multiplies Q in one pass of 256 doublings, from a table of Q's odd
+// multiples 1..15; e/s then takes one entry of the fixed-base table for each of its 4-bit
+// digits, with no doubling; and s is inverted by the binary extended Euclidean algorithm
+// (`ScalarP256.invertPublic`). The x-coordinate is compared without an inversion
 // (r Z^2 = X, or (r + n) Z^2 = X when r + n < p). The signature is DER (RFC 3279 §2.2.3's
 // ECDSA-Sig-Value), read strictly: anything but minimal, positive INTEGERs below n is refused.
 
