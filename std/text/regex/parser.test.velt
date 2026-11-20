@@ -200,6 +200,192 @@ describe("Parser", () => {
     }
   });
 
+  it("reports an error of the syntax before what it does not match", () => {
+    // What Node throws ("": nothing) for patterns with lookaround, back references or the
+    // `v` flag's class syntax. Where Node throws nothing, only a lookaround is refused.
+    const cases: string[][] = [
+      ["\\k<a>", "u", "Invalid regular expression: /\\k<a>/u: Invalid named capture referenced"],
+      [
+        "\\k<a>(?<b>x)",
+        "",
+        "Invalid regular expression: /\\k<a>(?<b>x)/: Invalid named capture referenced",
+      ],
+      [
+        "(?<a>.)\\k<b>",
+        "",
+        "Invalid regular expression: /(?<a>.)\\k<b>/: Invalid named capture referenced",
+      ],
+      [
+        "(?<a>x)\\k<a",
+        "",
+        "Invalid regular expression: /(?<a>x)\\k<a/: Invalid capture group name",
+      ],
+      ["(?<a>x)\\k", "", "Invalid regular expression: /(?<a>x)\\k/: Invalid named reference"],
+      ["(?<a>x)\\k<", "", "Invalid regular expression: /(?<a>x)\\k</: Invalid capture group name"],
+      [
+        "(?<a>x)\\k<1>",
+        "",
+        "Invalid regular expression: /(?<a>x)\\k<1>/: Invalid capture group name",
+      ],
+      ["\\k<a", "u", "Invalid regular expression: /\\k<a/u: Invalid capture group name"],
+      ["\\k", "u", "Invalid regular expression: /\\k/u: Invalid named reference"],
+      ["(?!", "", "Invalid regular expression: /(?!/: Unterminated group"],
+      ["(?!+", "", "Invalid regular expression: /(?!+/: Nothing to repeat"],
+      ["(?=a)*", "u", "Invalid regular expression: /(?=a)*/u: Invalid quantifier"],
+      ["(?<=a)*", "", "Invalid regular expression: /(?<=a)*/: Invalid quantifier"],
+      ["(?<=a)*", "u", "Invalid regular expression: /(?<=a)*/u: Invalid quantifier"],
+      ["(?<!a)+", "", "Invalid regular expression: /(?<!a)+/: Invalid quantifier"],
+      ["(?<=a){2}", "", "Invalid regular expression: /(?<=a){2}/: Invalid quantifier"],
+      ["(?=a){2}", "u", "Invalid regular expression: /(?=a){2}/u: Invalid quantifier"],
+      ["(?=a", "", "Invalid regular expression: /(?=a/: Unterminated group"],
+      ["(?<=a", "", "Invalid regular expression: /(?<=a/: Unterminated group"],
+      ["\\1(", "", "Invalid regular expression: /\\1(/: Unterminated group"],
+      ["(a)\\2", "u", "Invalid regular expression: /(a)\\2/u: Invalid escape"],
+      ["(?=a)(", "", "Invalid regular expression: /(?=a)(/: Unterminated group"],
+      [
+        "(?<!a)[z-a]",
+        "",
+        "Invalid regular expression: /(?<!a)[z-a]/: Range out of order in character class",
+      ],
+      ["(a)\\1)", "", "Invalid regular expression: /(a)\\1)/: Unmatched ')'"],
+      ["(?<n>a)\\k<n>**", "", "Invalid regular expression: /(?<n>a)\\k<n>**/: Nothing to repeat"],
+      ["(?=*)", "", "Invalid regular expression: /(?=*)/: Nothing to repeat"],
+      ["[-a]", "v", "Invalid regular expression: /[-a]/v: Invalid character in character class"],
+      ["[a-]", "v", "Invalid regular expression: /[a-]/v: Invalid character in character class"],
+      [
+        "[&&]",
+        "v",
+        "Invalid regular expression: /[&&]/v: Invalid set operation in character class",
+      ],
+      [
+        "[a!!b]",
+        "v",
+        "Invalid regular expression: /[a!!b]/v: Invalid set operation in character class",
+      ],
+      [
+        "[a##]",
+        "v",
+        "Invalid regular expression: /[a##]/v: Invalid set operation in character class",
+      ],
+      [
+        "[a$$]",
+        "v",
+        "Invalid regular expression: /[a$$]/v: Invalid set operation in character class",
+      ],
+      [
+        "[a,,]",
+        "v",
+        "Invalid regular expression: /[a,,]/v: Invalid set operation in character class",
+      ],
+      [
+        "[a^^]",
+        "v",
+        "Invalid regular expression: /[a^^]/v: Invalid set operation in character class",
+      ],
+      [
+        "[a~~b]",
+        "v",
+        "Invalid regular expression: /[a~~b]/v: Invalid set operation in character class",
+      ],
+      ["[a{]", "v", "Invalid regular expression: /[a{]/v: Invalid character in character class"],
+      ["[a|b]", "v", "Invalid regular expression: /[a|b]/v: Invalid character in character class"],
+      ["[a/b]", "v", "Invalid regular expression: /[a/b]/v: Invalid character in character class"],
+      [
+        "[-a]{1,3}",
+        "v",
+        "Invalid regular expression: /[-a]{1,3}/v: Invalid character in character class",
+      ],
+      [
+        "\\P{RGI_Emoji}",
+        "v",
+        "Invalid regular expression: /\\P{RGI_Emoji}/v: Invalid property name",
+      ],
+      [
+        "\\p{RGI_Emoji}",
+        "u",
+        "Invalid regular expression: /\\p{RGI_Emoji}/u: Invalid property name",
+      ],
+      ["[a(]", "v", "Invalid regular expression: /[a(]/v: Invalid character in character class"],
+      ["[a)]", "v", "Invalid regular expression: /[a)]/v: Invalid character in character class"],
+      ["[a}]", "v", "Invalid regular expression: /[a}]/v: Invalid character in character class"],
+      [
+        "[a..b]",
+        "v",
+        "Invalid regular expression: /[a..b]/v: Invalid set operation in character class",
+      ],
+      [
+        "[a``]",
+        "v",
+        "Invalid regular expression: /[a``]/v: Invalid set operation in character class",
+      ],
+      [
+        "[a@@]",
+        "v",
+        "Invalid regular expression: /[a@@]/v: Invalid set operation in character class",
+      ],
+      [
+        "[a==]",
+        "v",
+        "Invalid regular expression: /[a==]/v: Invalid set operation in character class",
+      ],
+      [
+        "[a<<]",
+        "v",
+        "Invalid regular expression: /[a<<]/v: Invalid set operation in character class",
+      ],
+      [
+        "[a::]",
+        "v",
+        "Invalid regular expression: /[a::]/v: Invalid set operation in character class",
+      ],
+      [
+        "[a;;]",
+        "v",
+        "Invalid regular expression: /[a;;]/v: Invalid set operation in character class",
+      ],
+      [
+        "[a??]",
+        "v",
+        "Invalid regular expression: /[a??]/v: Invalid set operation in character class",
+      ],
+      [
+        "[a%%]",
+        "v",
+        "Invalid regular expression: /[a%%]/v: Invalid set operation in character class",
+      ],
+      [
+        "[a**]",
+        "v",
+        "Invalid regular expression: /[a**]/v: Invalid set operation in character class",
+      ],
+      [
+        "[a++]",
+        "v",
+        "Invalid regular expression: /[a++]/v: Invalid set operation in character class",
+      ],
+      ["[a&b]", "v", ""],
+      ["[^^a]", "v", ""],
+      ["[a-z]", "v", ""],
+      ["[a\\-z]", "v", ""],
+      ["[a!b#c]", "v", ""],
+      ["(?=a)*", "", ""],
+      ["(?=a){2}", "", ""],
+      ["(a)\\2", "", ""],
+      ["[\\-a]", "v", ""],
+      ["[a\\&&b]", "v", ""],
+    ];
+    for (const c of cases) {
+      const got = errorOf(c[0], c[1]);
+      if (c[2] != "" || !c[0].startsWith("(?=")) {
+        expect(got).toBe(c[2]);
+      } else {
+        expect(got).toContain("Lookaround assertions are not supported");
+      }
+    }
+    expect(errorOf("\\p{RGI_Emoji}", "v")).toContain("Properties of strings are not supported");
+    expect(errorOf("[\\p{Basic_Emoji}]", "v")).toContain("Properties of strings are not supported");
+  });
+
   it("refuses what the engine does not match", () => {
     expect(errorOf("[[a]]", "v")).toContain(
       "Set operations in character classes are not supported",

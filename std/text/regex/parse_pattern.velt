@@ -20,9 +20,9 @@ import {
   setNode,
   UNBOUNDED,
 } from "velt/text/regex/node";
-import { atomEscape, charNode, parseClass, unicodeEscape } from "velt/text/regex/parse_escape";
+import { atomEscape, charNode, parseClass, refuse } from "velt/text/regex/parse_escape";
+import { groupName } from "velt/text/regex/parse_name";
 import { Parser } from "velt/text/regex/parser";
-import { propertySet } from "velt/text/regex/unicode_props";
 
 /** How deep groups may nest. */
 const MAX_DEPTH: u32 = 250;
@@ -34,6 +34,14 @@ export function parsePattern(p: Parser): Node {
   const tree = disjunction(p);
   if (!p.done()) {
     p.fail("Unmatched ')'");
+  }
+  for (const name of p.references) {
+    if (!p.names.includes(name)) {
+      p.fail("Invalid named capture referenced");
+    }
+  }
+  if (p.refused != "") {
+    p.fail(p.refused);
   }
   return tree;
 }
@@ -72,6 +80,13 @@ function term(p: Parser): Node {
   }
   if (c == 0x28) {
     const inner = group(p);
+    // A lookbehind takes no quantifier, and a lookahead none with the `u` flag.
+    if (p.lookaround == 2 || (p.lookaround == 1 && p.unicode)) {
+      const q = p.peek();
+      if (q == 0x2a || q == 0x2b || q == 0x3f || (q == 0x7b && braces(p))) {
+        p.fail("Invalid quantifier");
+      }
+    }
     return quantified(p, inner);
   }
   if (c == 0x2e) {
@@ -169,13 +184,18 @@ function count(n: u32, digit: i64): u32 {
 function group(p: Parser): Node {
   let name = "";
   let capture = true;
+  let look: u32 = 0;
   if (p.eat(0x3f)) {
     const c = p.peek();
     const after = p.peekAt(1);
-    if (c == 0x3d || c == 0x21 || (c == 0x3c && (after == 0x3d || after == 0x21))) {
-      p.fail("Lookaround assertions are not supported");
-    }
-    if (c == 0x3a) {
+    const behind = c == 0x3c && (after == 0x3d || after == 0x21);
+    if (c == 0x3d || c == 0x21 || behind) {
+      // Read as a group, and refused at the end of the pattern.
+      refuse(p, "Lookaround assertions are not supported");
+      look = behind ? 2 : 1;
+      capture = false;
+      p.at += behind ? 1 : 0;
+    } else if (c == 0x3a) {
       capture = false;
     } else if (c != 0x3c) {
       p.fail("Invalid group");
@@ -203,48 +223,11 @@ function group(p: Parser): Node {
     p.fail("Unterminated group");
   }
   p.depth--;
+  p.lookaround = look;
   if (!capture) {
     return inner;
   }
   const g = new Node(GROUP, index);
   g.kids.push(inner);
   return g;
-}
-
-/** May `c` start a group name (`first`) or continue one? JavaScript's identifier characters. */
-function isNameChar(c: i64, first: bool): bool {
-  if (c < 0x80) {
-    const l = c | 0x20;
-    return (l >= 0x61 && l <= 0x7a) || c == 0x24 || c == 0x5f || (!first && c >= 0x30 && c <= 0x39);
-  }
-  if (!first && (c == 0x200c || c == 0x200d)) {
-    return true;
-  }
-  const set = propertySet(first ? "ID_Start" : "ID_Continue", "", false);
-  return set != null && set.contains(c as u32);
-}
-
-/** The name of a group after its `(?<`, up to and including the `>`. */
-function groupName(p: Parser): string {
-  let name = "";
-  while (true) {
-    let c = p.peek();
-    p.at++;
-    if (c == 0x3e && name != "") {
-      return name;
-    }
-    if (c == 0x5c && p.eat(0x75)) {
-      c = unicodeEscape(p, true);
-    }
-    // The two code units of one character, without the `u` flag.
-    const low = p.peek();
-    if (c >= 0xd800 && c < 0xdc00 && low >= 0xdc00 && low <= 0xdfff) {
-      c = 0x10000 + ((c - 0xd800) << 10) + (low - 0xdc00);
-      p.at++;
-    }
-    if (c < 0 || !isNameChar(c, name == "")) {
-      p.fail("Invalid capture group name");
-    }
-    name += String.fromCodePoint(c as f64);
-  }
 }

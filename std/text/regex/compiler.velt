@@ -35,8 +35,11 @@ import {
   Program,
 } from "velt/text/regex/program";
 
-/** The most instructions a program may have. */
-const MAX_INSTRUCTIONS: usize = 50000;
+/** The most instructions a program may have: a counted quantifier is so many copies of its
+ * body, and a program of this size is about 5 MB, and as much again per search. */
+const MAX_INSTRUCTIONS: usize = 400000;
+/** How many instructions `nothingAfter` looks at before it says "do not know". */
+const MAX_FOLLOW: usize = 64;
 
 /** Builds one program. */
 export class Compiler {
@@ -111,17 +114,17 @@ export class Compiler {
    * `set`? (When it may also be nothing at all, up to the match: that too.) */
   private nothingAfter(from: usize, set: CharSet): bool {
     const code = this.prog.code;
-    const seen: bool[] = [];
-    for (let i: usize = 0; i < code.length; i += 3) {
-      seen.push(false);
-    }
+    const seen: usize[] = [];
     const todo: usize[] = [from];
     while (todo.length > 0) {
       const pc = todo.pop() ?? 0;
-      if (seen[pc]) {
+      if (seen.includes(pc)) {
         continue;
       }
-      seen[pc] = true;
+      if (seen.length >= MAX_FOLLOW) {
+        return false;
+      }
+      seen.push(pc);
       const op = code[3 * pc] & 0xff;
       const a = code[3 * pc + 1];
       if (op == OP_CHAR) {

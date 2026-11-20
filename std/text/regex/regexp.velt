@@ -232,7 +232,7 @@ export class RegExp implements Pattern {
         break;
       }
       if (m.end == m.index) {
-        this.#cursor.at.store((m.end + 1) as number);
+        this.#cursor.at.store(this.past(s, m.end));
       }
       out.push(m);
     }
@@ -314,6 +314,16 @@ export class RegExp implements Pattern {
     return this.matchOf(s, m.slots, 0);
   }
 
+  // Where the search goes on after an empty match at `end`: JavaScript's AdvanceStringIndex,
+  // one code unit on, or past a whole pair for a pattern of code points.
+  private past(s: string, end: number): number {
+    const at = end as i64;
+    const high = s.charCodeAt(at);
+    const low = s.charCodeAt(at + 1);
+    const pair = high >= 0xd800 && high < 0xdc00 && low >= 0xdc00 && low < 0xe000;
+    return end + (pair && !this.#prog.units ? 2 : 1);
+  }
+
   // The matches `replace` replaces, setting `lastIndex` as JS does.
   private replaced(s: string): RegExpMatch[] {
     if (this.global) {
@@ -337,7 +347,7 @@ export class RegExp implements Pattern {
       if (m == null) {
         break;
       }
-      at = (m.end == m.index ? m.end + 1 : m.end) as usize;
+      at = (m.end == m.index ? this.past(s, m.end) : m.end) as usize;
       out.push(m);
     }
     return out;

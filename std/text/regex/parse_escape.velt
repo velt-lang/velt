@@ -3,10 +3,16 @@
 // `u` flag (`\q` is `q`, `\x1` is `x1`, `\8` is `8`, `\101` is octal), and its errors with it.
 
 import { CharSet } from "velt/text/regex/char_set";
-import { escapeSet, finish } from "velt/text/regex/classes";
-import { ASSERT, AT_NOT_WORD, AT_WORD, CHAR, Node, setNode } from "velt/text/regex/node";
+import { escapeSet, finish, maxChar } from "velt/text/regex/classes";
+import { ASSERT, AT_NOT_WORD, AT_WORD, CHAR, EMPTY, Node, setNode } from "velt/text/regex/node";
+import { groupName, hex, unicodeEscape } from "velt/text/regex/parse_name";
 import { Parser } from "velt/text/regex/parser";
 import { propertySet } from "velt/text/regex/unicode_props";
+
+/** The properties of strings, which the `v` flag has and the engine does not match: their
+ * names, `,` around each. */
+const STRING_PROPERTIES: string =
+  ",Basic_Emoji,Emoji_Keycap_Sequence,RGI_Emoji_Modifier_Sequence,RGI_Emoji_Flag_Sequence,RGI_Emoji_Tag_Sequence,RGI_Emoji_ZWJ_Sequence,RGI_Emoji,";
 
 /** What `classAtom` and `charEscape` return for a set, left in the parser's `set`. */
 const A_SET: i64 = -1;
@@ -18,59 +24,6 @@ function isDigit(c: i64): bool {
 function isLetter(c: i64): bool {
   const l = c | 0x20;
   return l >= 0x61 && l <= 0x7a;
-}
-
-/** The value of the hex digit `c`, or -1. */
-function hexValue(c: i64): i64 {
-  if (isDigit(c)) {
-    return c - 0x30;
-  }
-  const l = c | 0x20;
-  return l >= 0x61 && l <= 0x66 ? l - 0x61 + 10 : -1;
-}
-
-/** Reads `n` hex digits when all are there: their value, or -1 with nothing read. */
-function hex(p: Parser, n: usize): i64 {
-  let v: i64 = 0;
-  for (let k: usize = 0; k < n; k++) {
-    const d = hexValue(p.peekAt(k));
-    if (d < 0) {
-      return -1;
-    }
-    v = v * 16 + d;
-  }
-  p.at += n;
-  return v;
-}
-
-/** After `\u`: the code unit of `XXXX`, or when `points` (the `u` flag; always in a group's
- * name) the code point of `{…}` or of an escaped surrogate pair; -1 with nothing read when it
- * is not well-formed. */
-export function unicodeEscape(p: Parser, points: bool): i64 {
-  if (points && p.peek() == 0x7b) {
-    let k: usize = 1;
-    let v: i64 = 0;
-    while (hexValue(p.peekAt(k)) >= 0 && v <= 0x10ffff) {
-      v = v * 16 + hexValue(p.peekAt(k));
-      k++;
-    }
-    if (k == 1 || v > 0x10ffff || p.peekAt(k) != 0x7d) {
-      return -1;
-    }
-    p.at += k + 1;
-    return v;
-  }
-  const v = hex(p, 4);
-  if (points && v >= 0xd800 && v < 0xdc00 && p.peek() == 0x5c && p.peekAt(1) == 0x75) {
-    const start = p.at;
-    p.at += 2;
-    const lo = hex(p, 4);
-    if (lo >= 0xdc00 && lo <= 0xdfff) {
-      return 0x10000 + ((v - 0xd800) << 10) + (lo - 0xdc00);
-    }
-    p.at = start;
-  }
-  return v;
 }
 
 /** Annex B's octal escape, whose first digit is next: at most three digits, at most `\377`. */
@@ -107,12 +60,21 @@ function property(p: Parser, e: i64): void {
       name += String.fromCodePoint(c as f64);
     }
   }
+  if (closed && p.sets && e == 0x70 && !inValue && STRING_PROPERTIES.includes("," + name + ",")) {
+    p.fail("Properties of strings are not supported");
+  }
   const set = closed ? propertySet(name, value, inValue) : null;
   if (set == null) {
     p.fail("Invalid property name");
   }
   p.at += k;
-  finish(p, set, e == 0x50);
+  // `\P{…}` is the complement first, and what matches a member of that whatever the case
+  // second (`/\P{Lu}/iu` matches `A`, as `a` is no upper case letter).
+  set.normalize();
+  if (e == 0x50) {
+    set.negate(maxChar(p));
+  }
+  finish(p, set, false);
   p.set = set;
 }
 
@@ -156,10 +118,24 @@ function charEscape(p: Parser, c: i64, inClass: bool): i64 {
   if (isDigit(c)) {
     return digitEscape(p, c, inClass);
   }
-  if (p.unicode && !isSyntax(c) && !(inClass && c == 0x2d)) {
+  if (p.unicode && !isSyntax(c) && !(inClass && (c == 0x2d || (p.sets && isSetPunctuator(c))))) {
     p.fail("Invalid escape");
   }
   return c;
+}
+
+/** May `\` + `c` stand for `c` in a class with the `v` flag (one of ``& - ! # % , : ; < = > @ ` ~``)? */
+function isSetPunctuator(c: i64): bool {
+  return c == 0x26 ||
+    c == 0x2d ||
+    c == 0x21 ||
+    c == 0x23 ||
+    c == 0x25 ||
+    c == 0x2c ||
+    (c >= 0x3a && c <= 0x3e) ||
+    c == 0x40 ||
+    c == 0x60 ||
+    c == 0x7e;
 }
 
 /** May `\` + `c` stand for `c` with the `u` flag (a syntax character, or `/`)? */
@@ -231,7 +207,13 @@ export function atomEscape(p: Parser): Node {
     return new Node(ASSERT, (c == 0x62 ? AT_WORD : AT_NOT_WORD) + folded);
   }
   if (c == 0x6b && (p.unicode || p.hasNames)) {
-    namedReference(p);
+    // A named back reference: its name is read as a group's is, and looked up at the end.
+    if (!p.eat(0x3c)) {
+      p.fail("Invalid named reference");
+    }
+    const name = groupName(p);
+    p.references.push(name);
+    return refuse(p, "Back references are not supported");
   }
   if (c >= 0x31 && c <= 0x39) {
     let k: usize = 0;
@@ -241,44 +223,65 @@ export function atomEscape(p: Parser): Node {
       k++;
     }
     if (n <= (p.totalGroups as i64)) {
-      p.fail("Back references are not supported");
+      p.at += k;
+      return refuse(p, "Back references are not supported");
     }
   }
   const v = charEscape(p, c, false);
   return v == A_SET ? setNode(p.set) : charNode(p, v);
 }
 
-/** `\k` where it is a named back reference: an error, as none is supported. */
-function namedReference(p: Parser): never {
-  let k: usize = 1;
-  while (p.peek() == 0x3c && p.peekAt(k) >= 0 && p.peekAt(k) != 0x3e) {
-    k++;
+/** Notes that the pattern has something the engine does not match (`why`), and stands for it
+ * with a node that matches nothing: the pattern is read on, and refused at its end. */
+export function refuse(p: Parser, why: string): Node {
+  if (p.refused == "") {
+    p.refused = why;
   }
-  if (p.peek() != 0x3c || k == 1 || p.peekAt(k) != 0x3e) {
-    p.fail("Invalid named reference");
-  }
-  p.fail("Back references are not supported");
+  return new Node(EMPTY);
 }
 
 /** With the `v` flag, a class member that starts with `c`, just read: an error when it is one
- * of the characters that flag reserves in a class, or set syntax, which is not supported
- * (a nested class, `--`, `&&`, `\q{…}`). */
-function setSyntax(p: Parser, c: i64): void {
+ * of the characters that flag reserves in a class, as in JavaScript, or set syntax, which is
+ * not supported (a nested class, `--`, `&&`, `\q{…}`). */
+function setSyntax(p: Parser, c: i64, first: bool): void {
   const next = p.peek();
-  if (c == 0x5b || (c == 0x5c && next == 0x71) || ((c == 0x2d || c == 0x26) && next == c)) {
+  if (first && c == 0x26 && next == c) {
+    p.fail("Invalid set operation in character class");
+  }
+  if (c == 0x5b || (c == 0x5c && next == 0x71) || (c == 0x26 && next == c)) {
     p.fail("Set operations in character classes are not supported");
   }
-  if (c == 0x28 || c == 0x29 || c == 0x7b || c == 0x7d || c == 0x2f || c == 0x7c) {
+  // `!! ## $$ %% ** ++ ,, .. :: ;; << == >> ?? @@ ^^ `` ~~` are reserved.
+  const doubled =
+    (
+      c >= 0x21 &&
+      c <= 0x2e &&
+      c != 0x22 &&
+      c != 0x26 &&
+      c != 0x27 &&
+      c != 0x28 &&
+      c != 0x29 &&
+      c != 0x2d
+    ) ||
+    (c >= 0x3a && c <= 0x40) ||
+    c == 0x5e ||
+    c == 0x60 ||
+    c == 0x7e;
+  if (doubled && next == c) {
+    p.fail("Invalid set operation in character class");
+  }
+  if (c == 0x28 || c == 0x29 || c == 0x7b || c == 0x7d || c == 0x2f || c == 0x7c || c == 0x2d) {
     p.fail("Invalid character in character class");
   }
 }
 
-/** One member of a class, after its `[`: a character, or `A_SET` for a class escape. */
-function classAtom(p: Parser): i64 {
+/** One member of a class, after its `[` (`first`: the first one): a character, or `A_SET` for
+ * a class escape. */
+function classAtom(p: Parser, first: bool): i64 {
   const c = p.peek();
   p.at++;
   if (p.sets) {
-    setSyntax(p, c);
+    setSyntax(p, c, first);
   }
   if (c != 0x5c) {
     return c;
@@ -302,11 +305,13 @@ function classAtom(p: Parser): i64 {
 export function parseClass(p: Parser): Node {
   const negated = p.eat(0x5e);
   const set = new CharSet();
+  let first = true;
   while (!p.eat(0x5d)) {
     if (p.done()) {
       p.fail("Unterminated character class");
     }
-    const a = classAtom(p);
+    const a = classAtom(p, first);
+    first = false;
     if (a == A_SET) {
       set.addSet(p.set);
     }
@@ -320,7 +325,7 @@ export function parseClass(p: Parser): Node {
       continue;
     }
     p.at++;
-    const b = classAtom(p);
+    const b = classAtom(p, false);
     if (a != A_SET && b != A_SET) {
       if (a > b) {
         p.fail("Range out of order in character class");
