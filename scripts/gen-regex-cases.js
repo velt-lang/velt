@@ -8,7 +8,7 @@
 // `subject.matchAll` with the `g` flag as `index-end` followed by `|` and a group's hex (`~`
 // for one that did not take part), `;` between matches, and the pieces of `subject.split` as
 // hex with `,` between them (`~` for a group that did not take part). The patterns are a fixed
-// list and ones drawn from a small grammar by a seeded generator, without lookaround and back
+// list and ones drawn from two small grammars by a seeded generator, without lookaround and back
 // references, which Velt does not support.
 let seed = 0x2f6e2b1;
 function random(n) {
@@ -100,6 +100,37 @@ while (lines.length < 1500) {
   for (let n = 0; n < 2; n++) add(pattern, flags, subject());
 }
 
+// Loops whose body can match nothing, or prefers to: where JavaScript's rule that an iteration
+// matches something decides the match and its groups.
+const LOOP_ATOMS = ["a", "b", "x", "a?", "a*", "a*?", "b??", "a+?", "x*", "[ab]*?", "a{0,2}?", ""];
+const LOOP_QUANTS = ["*", "*?", "+", "+?", "?", "??", "{0,3}", "{1,2}?", "{2,}"];
+function loopBody(depth) {
+  let s = "";
+  for (let n = 1 + random(3); n > 0; n--) {
+    const inner = depth > 0 && random(4) === 0 ? loop(depth - 1) : pick(LOOP_ATOMS);
+    s += inner;
+    if (random(5) === 0) s += "|" + pick(LOOP_ATOMS);
+  }
+  return s;
+}
+function loop(depth) {
+  const body = loopBody(depth);
+  return (random(2) === 0 ? `(${body})` : `(?:${body})`) + pick(LOOP_QUANTS);
+}
+function loopSubject() {
+  let s = "";
+  for (let n = random(9); n > 0; n--) s += pick(["a", "a", "b", "x", "y"]);
+  return s;
+}
+for (const [pattern, s] of [["(a*?)*", "aa"], ["(?:a?b??)*", "abab"], ["(?:a*?|b)*", "aab"], ["(x*?)*y", "xxy"], ["(a*?)*?$", "aa"]]) {
+  add(pattern, "", s);
+}
+const loopsEnd = lines.length + 600;
+while (lines.length < loopsEnd) {
+  const pattern = loop(2) + pick(["", "", "y", "$", "b", loop(1)]);
+  for (let n = 0; n < 2; n++) add(pattern, pick(["", "", "u", "i"]), loopSubject());
+}
+
 // Long subjects, which Velt matches with another matcher than short ones: a short subject
 // repeated, and of its matches only how many there are and a checksum of where (and of the
 // length of each group). A pattern V8 backtracks on for more than a second is left out.
@@ -117,12 +148,12 @@ function digest(re, s) {
 }
 const long = [];
 const REPEAT = 4000;
-while (long.length < 120) {
+while (long.length < 180) {
   named = 0;
-  const pattern = alt(2);
+  const pattern = long.length < 120 ? alt(2) : loop(2) + pick(["", "y", "$"]);
   const flags = ["", "", "i", "m", "s", "u", "iu", "im", "su", "imsu"][random(10)];
-  let s = subject();
-  while (s.length < 4) s += subject();
+  let s = long.length < 120 ? subject() : loopSubject();
+  while (s.length < 4) s += long.length < 120 ? subject() : loopSubject() + "a";
   let re;
   try {
     re = new RegExp(pattern, flags + "g");

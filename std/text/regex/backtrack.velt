@@ -2,10 +2,13 @@
 // order the program prefers them. It runs in one of two ways.
 //
 // With a memory (a short subject): it remembers every state (instruction, position) it has
-// been in, and never tries one twice, so its time is linear in the subject, and an iteration of
-// a loop that matched nothing ends there, as in JavaScript. Only instructions that a jump or a
-// split leads to are remembered (a "join"): every loop passes through one, and the instructions
-// between two are a straight line.
+// been in, and never tries one twice, so its time is linear in the subject. Only instructions
+// that a jump or a split leads to are remembered (a "join"): every loop passes through one, and
+// the instructions between two are a straight line. In a program with a loop whose body can
+// match nothing, a state is remembered once everything after it has been tried, not when it is
+// entered: such a loop comes back to a state it is still in (the same position, an iteration
+// later), and what that state can still do is JavaScript's next choice, not a dead end. The
+// loop itself ends by its marks (`OP_NONEMPTY`).
 //
 // Without one (a `plain` program, any subject): nothing is remembered, which is faster while
 // the pattern does not make it try the same text again and again. It counts its steps against
@@ -42,6 +45,9 @@ const RESTORE: u64 = (1 as u64) << 63;
 /** Set in a pending job that gives back a character of a span: the instruction to go on at
  * and the end of the span so far; the job under it is where the span started. */
 const GIVE_BACK: u64 = (1 as u64) << 62;
+/** A pending job that says a state led to no match: everything it could go on to was tried.
+ * Its low bits are the state's bit in the memory. */
+const FINISHED: u64 = (3 as u64) << 62;
 /** Where a job keeps its instruction or slot. */
 const SHIFT: u64 = 40;
 const LOW: u64 = ((1 as u64) << 40) - 1;
@@ -78,6 +84,7 @@ export function backtrack(
   const origin = m.origin;
   const span = m.span;
   const units = prog.units;
+  const reenter = prog.marks > 0;
   let fuel = memory ? 0x7fffffffffffffff : m.fuel;
   let pc: usize = 0;
   let pos = start;
@@ -90,7 +97,11 @@ export function backtrack(
         if ((visited[bit >> 6] & mask) != 0) {
           break;
         }
-        visited[bit >> 6] |= mask;
+        if (reenter) {
+          stack.push(FINISHED | (bit as u64));
+        } else {
+          visited[bit >> 6] |= mask;
+        }
       }
       fuel--;
       if (fuel < 0) {
@@ -153,9 +164,10 @@ export function backtrack(
             }
             step = (c >> 24) as usize;
           }
-          if (memory) {
+          if (memory && !reenter) {
             // The span from the next position on is a state too: one it has been in led to
-            // no match, whatever the span gave back from there on.
+            // no match, whatever the span gave back from there on. (Not where a loop can come
+            // back to a state it is still in: there only the span's start is a state.)
             const bit = ((w >> 9) as usize) * span + (pos + step - origin);
             const mask = (1 as u64) << ((bit & 63) as u64);
             if ((visited[bit >> 6] & mask) != 0) {
@@ -219,6 +231,11 @@ export function backtrack(
         return FAILED;
       }
       const job = stack.pop() ?? 0;
+      if ((job & FINISHED) == FINISHED) {
+        const bit = (job ^ FINISHED) as usize;
+        visited[bit >> 6] |= (1 as u64) << ((bit & 63) as u64);
+        continue;
+      }
       if ((job & RESTORE) != 0) {
         slots[((job ^ RESTORE) >> SHIFT) as usize] = ((job & LOW) as i64) - 1;
         continue;
