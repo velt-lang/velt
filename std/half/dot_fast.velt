@@ -14,8 +14,6 @@ declare function velt_simd_f32x4_splat(x: f32): f32x4;
 declare function velt_simd_bf16x8_load(from: bf16[], at: u64): bf16x8;
 declare function velt_simd_bf16x8_load_partial(from: bf16[], at: u64, count: u64): bf16x8;
 declare function velt_simd_f32x4_dot_add_fast_bf16x8(acc: f32x4, a: bf16x8, b: bf16x8): f32x4;
-// Arm's `bfdot` itself: only in `sumBfdot`.
-declare function velt_simd_f32x4_bfdot(acc: f32x4, a: bf16x8, b: bf16x8): f32x4;
 
 /**
  * The dot product of `a` and `b` to some rounding, by the CPU's own bf16 dot product where it
@@ -65,40 +63,23 @@ function sumBfdot(a: bf16[], aAt: usize, b: bf16[], bAt: usize, n: usize): numbe
   while (n - i >= 32) {
     const x = (aAt + i) as u64;
     const y = (bAt + i) as u64;
-    s0 = velt_simd_f32x4_bfdot(s0, velt_simd_bf16x8_load(a, x), velt_simd_bf16x8_load(b, y));
-    s1 = velt_simd_f32x4_bfdot(
-      s1,
-      velt_simd_bf16x8_load(a, x + 8),
-      velt_simd_bf16x8_load(b, y + 8),
-    );
-    s2 = velt_simd_f32x4_bfdot(
-      s2,
-      velt_simd_bf16x8_load(a, x + 16),
-      velt_simd_bf16x8_load(b, y + 16),
-    );
-    s3 = velt_simd_f32x4_bfdot(
-      s3,
-      velt_simd_bf16x8_load(a, x + 24),
-      velt_simd_bf16x8_load(b, y + 24),
-    );
+    s0 = velt_simd_bf16x8_load(a, x).dotAddFast(velt_simd_bf16x8_load(b, y), s0);
+    s1 = velt_simd_bf16x8_load(a, x + 8).dotAddFast(velt_simd_bf16x8_load(b, y + 8), s1);
+    s2 = velt_simd_bf16x8_load(a, x + 16).dotAddFast(velt_simd_bf16x8_load(b, y + 16), s2);
+    s3 = velt_simd_bf16x8_load(a, x + 24).dotAddFast(velt_simd_bf16x8_load(b, y + 24), s3);
     i += 32;
   }
   while (n - i >= 8) {
-    s0 = velt_simd_f32x4_bfdot(
-      s0,
-      velt_simd_bf16x8_load(a, (aAt + i) as u64),
-      velt_simd_bf16x8_load(b, (bAt + i) as u64),
-    );
+    const x = (aAt + i) as u64;
+    const y = (bAt + i) as u64;
+    s0 = velt_simd_bf16x8_load(a, x).dotAddFast(velt_simd_bf16x8_load(b, y), s0);
     i += 8;
   }
   if (i < n) {
     // The lanes past the end are 0 and add nothing.
     const left = (n - i) as u64;
-    s0 = velt_simd_f32x4_bfdot(
-      s0,
-      velt_simd_bf16x8_load_partial(a, (aAt + i) as u64, left),
-      velt_simd_bf16x8_load_partial(b, (bAt + i) as u64, left),
-    );
+    const x = velt_simd_bf16x8_load_partial(a, (aAt + i) as u64, left);
+    s0 = x.dotAddFast(velt_simd_bf16x8_load_partial(b, (bAt + i) as u64, left), s0);
   }
   return total(s0, s1, s2, s3);
 }

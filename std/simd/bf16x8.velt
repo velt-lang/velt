@@ -162,9 +162,10 @@ extend bf16x8 {
    * products together, and they flush subnormal operands and results to zero, so a subnormal
    * times 2^100 is 0 there and `Infinity` times a subnormal is NaN, where `dotAdd` gives the
    * product and `Infinity`. So add up the lanes, and use `dotAdd` where the bits must be the
-   * same everywhere. No check of the CPU is in it, so that it costs a loop nothing: velt/half's
-   * `dotBf16Fast` asks once for a whole dot product, and is `bfdot` in a build for any arm64
-   * CPU.
+   * same everywhere. No check of the CPU is in it, so that it costs a loop nothing: it is
+   * `bfdot` in a function compiled for FEAT_BF16, whatever `--cpu` says. velt/half's
+   * `dotBf16Fast` asks once for a whole dot product and runs such a function, so it is `bfdot`
+   * in a build for any arm64 CPU.
    */
   dotAddFast(b: bf16x8, acc: f32x4): f32x4 {
     return velt_simd_f32x4_dot_add_fast_bf16x8(acc, this, b);
