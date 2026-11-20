@@ -200,6 +200,11 @@ pub enum Intrinsic {
     /// reference while the call runs (lowering counts the type, or borrows values of it inside
     /// counted objects)? Only then can a callback change it. The value is not evaluated.
     MayAlias,
+    /// std only (std/lang/intrinsics/ownership.velt): `isUnique<T>(value: borrow T) -> bool`:
+    /// is `value`, an object, box or array, reached by no other reference (its count is 1)? A
+    /// type the program never counts has one owner per value, so always. What copy-on-write
+    /// code asks before changing a node in place (velt/encoding/json's tree).
+    IsUnique,
     /// std only (std/prelude/map.velt): `holdsNull<T>(probe: borrow T) -> bool`, a
     /// constant: is `null` a value of `T` (is `T` an option, `X | null`, once substituted)? Then
     /// a generic `T | null` is `T` itself and its `null` is a `T`. The probe is not evaluated.

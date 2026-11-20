@@ -57,8 +57,11 @@ export class JsonValue {
   #tree: JsonTree | null;
   #tape: TapeRef | null = null;
   #node: u32 = 0;
-  // No other value reaches `#tree`'s node: an edit may change it in place.
-  #unique: bool = false;
+  // No other value reaches `#tree`'s node: an edit may change it in place. An `Atomic` (a place,
+  // changed where it is) so that handing the node out (`clone`, `set`) changes it without
+  // counting as a change of the value, which would forbid `doc.set("k", doc.clone())`. Relaxed:
+  // a value is used on one thread at a time.
+  #unique = new Atomic<bool>(false);
 
   // A `JsonValue` of tree `t` (null for a tape value, which `onTape` fills in). Kept this small
   // so that every `new` of it is inlined (the optimizer can then keep a value that never leaves
@@ -79,7 +82,7 @@ export class JsonValue {
   // A value of its own tree `t`, which no other value reaches.
   private static owning(t: JsonTree): JsonValue {
     const v = new JsonValue(t);
-    v.#unique = true;
+    v.#unique.store(true, "relaxed");
     return v;
   }
 
@@ -145,12 +148,12 @@ export class JsonValue {
       const tree = treeOfTape(t, this.#node);
       this.#tree = tree;
       this.#tape = null;
-      this.#unique = true;
+      this.#unique.store(true, "relaxed");
       return tree;
     }
-    if (!this.#unique) {
+    if (!this.#unique.load("relaxed")) {
       this.#tree = this.#tree!.copy();
-      this.#unique = true;
+      this.#unique.store(true, "relaxed");
     }
     return this.#tree!;
   }
@@ -161,7 +164,7 @@ export class JsonValue {
     if (t != null) {
       return treeOfTape(t, this.#node);
     }
-    this.#unique = false;
+    this.#unique.store(false, "relaxed");
     return this.#tree!;
   }
 
@@ -411,7 +414,7 @@ export class JsonValue {
     if (t != null) {
       return JsonValue.onTape(t, this.#node);
     }
-    this.#unique = false;
+    this.#unique.store(false, "relaxed");
     return new JsonValue(this.#tree);
   }
 }

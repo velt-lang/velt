@@ -23,10 +23,8 @@
 //!   bumped before the memory is released, and a string reaches another thread only through
 //!   synchronization, so that thread sees the bump.
 //! - static: a long non-ASCII static string points at a literal (or into one), whose bytes are
-//!   never freed or changed: loaded code stays loaded, also across hot reloads. The one producer
-//!   of static strings into freeable memory, the JSON reader's borrowed object keys
-//!   (`velt_rt_json_reader_next_key`), copies a key that is long and non-ASCII, and a
-//!   sub-range of a shorter key is shorter still. So static entries never expire, and heap frees
+//!   never freed or changed: loaded code stays loaded, also across hot reloads. No runtime
+//!   function makes a static string into freeable memory. So static entries never expire, and heap frees
 //!   leave them alone: a loop over a long literal, which has no breadcrumbs to fall back on,
 //!   keeps its position while other strings come and go.
 //!

@@ -92,10 +92,16 @@ Objects with more than 16 keys get a hash index on their first lookup.
 instead of copying it.
 
 **Representation.** A `JsonValue` (`std/prelude/json/json_value.velt`) has two forms: a position
-on a tape (what parsing makes; children share the tape, `clone()` is O(1)), or a tree of
-reference-counted runtime nodes (what `JsonValue.object()`, `set` and the other builders make,
-and what a database driver's rows give). An edit turns that one value into a tree first, so it
-never shows through the tape, a clone or a child. This is STJ's split between
+on a tape (what parsing makes; children share the tape, `clone()` is O(1)), or a tree of nodes
+(`std/encoding/json/tree.velt`: what `JsonValue.object()`, `set` and the other builders make).
+Nodes are shared between values (a clone, a parent and a child `get` returned); a value edits its
+node in place only while it knows no other value reaches it (it made the node, and has not
+handed it out since), and copies it first otherwise, the copy sharing the children. An edit turns
+a tape value into a tree first, so it never shows through the tape, a clone or a child. An
+object's members (`tree_object.velt`) keep JavaScript's order (index keys first, apart and
+sorted), are found by key through a hash index past 16 members, and are deleted in O(1)
+amortized by leaving holes, with a Fenwick tree of the live slots for positional access while
+there are holes in the middle (`tree_positions.velt`). This is STJ's split between
 `JsonDocument`/`JsonElement` (read-only, flat) and `JsonNode` (mutable), with one type in front
 of both.
 
@@ -149,13 +155,16 @@ source becomes NEON or SSE2 code. The writer (`writer.velt`) escapes as `JSON.st
 | Per-type decoders and writers | generators in `std/encoding/json/generate/` (`read*.velt`, `write.velt`, `check.velt`), declared in `std/encoding/json/generated.velt` |
 | Scanner, pull reader, writer | `std/encoding/json/scan*.velt`, `reader*.velt`, `writer*.velt` |
 | Tape | `std/encoding/json/tape*.velt` |
+| Tree of an edited `JsonValue`, and what `console.log` prints for one | `std/encoding/json/tree*.velt`, `value_inspect.velt` |
+| Node's syntax-error messages (computed only after a failure) | `std/encoding/json/node_syntax.velt` |
+| `JSON.stringify(value, keys, space)` | `std/encoding/json/relayout.velt` |
+| A database driver's rows that are not read by column | `std/db/rows_json.velt` writes them as the JSON text they stand for, which the generated decoder reads |
 | Numbers | `std/lang/number/`, `std/lang/hooks/number_parse.velt` |
 
-Some JSON code remains in the runtime (`crates/velt_rt/src/json/`, ABI in
-[rt_abi_async.md §12](../contracts/rt_abi_async.md)): the reader of a database driver's rows, the
-tree behind edited `JsonValue`s, Node's exact syntax-error messages (computed only after a
-failure), and the shortest-digits printer for doubles. Each goes when its Velt replacement
-exists.
+What the engine still takes from the runtime: the string builder it writes into, the
+shortest-digits printer for doubles, the `console.log` quoting and line layout of
+[rt_abi_async.md §12.1](../contracts/rt_abi_async.md), and a database driver's cells (the
+`velt_rt_rows_*` functions).
 
 ## Compatibility
 
