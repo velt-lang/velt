@@ -1,6 +1,6 @@
 // A probe for scripts/ct-counts.py: P-384's public key and ECDH agreement for the 48-byte
 // private key in the file named by the first argument. The key is read as bytes and nothing
-// here branches on it; what is printed costs the same for every key.
+// here branches on it.
 import { p384Ecdh, p384PublicKey } from "velt/crypto";
 import { readFileBytesSync } from "velt/fs";
 
@@ -110,13 +110,8 @@ const peer: u8[] = [];
 for (let i: usize = 0; i < 97; i++) {
   peer.push(PEER[i]);
 }
+// Nothing is done with the results that depends on their value: memcheck, with the key marked
+// undefined, would report it (scripts/ct-counts.py --memcheck).
 const pub = p384PublicKey(key);
 const shared = p384Ecdh(key, peer);
-let fold: u8 = 0;
-for (let i: usize = 0; i < pub.length; i++) {
-  fold ^= pub[i];
-}
-for (let i: usize = 0; i < shared.length; i++) {
-  fold ^= shared[i];
-}
-console.log(fold & 1);
+console.log(pub.length + shared.length);
