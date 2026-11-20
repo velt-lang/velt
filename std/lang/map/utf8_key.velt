@@ -37,8 +37,28 @@ function fmix64(x: u64): u64 {
 }
 
 /**
- * The `rest` bytes (0 to 7) at `at` as one little-endian word, zero above them: at most three
- * loads (4, 2 and 1 bytes), none past the end.
+ * The 8 bytes at `at` as a little-endian word. Read a byte at a time, since `at` is any byte's
+ * address and a wider load must be aligned (velt_codegen_llvm assumes it of every address);
+ * LLVM joins the eight loads into one unaligned load where the target has one.
+ *
+ * Unsafe: the bytes `at` to `at + 8` must be readable.
+ */
+@inline("always")
+unsafe function wordAt(at: usize): u64 {
+  // SAFETY: the caller's bytes.
+  return unsafe { (addressLoad<u8>(at) as u64) |
+    ((addressLoad<u8>(at + 1) as u64) << 8) |
+    ((addressLoad<u8>(at + 2) as u64) << 16) |
+    ((addressLoad<u8>(at + 3) as u64) << 24) |
+    ((addressLoad<u8>(at + 4) as u64) << 32) |
+    ((addressLoad<u8>(at + 5) as u64) << 40) |
+    ((addressLoad<u8>(at + 6) as u64) << 48) |
+    ((addressLoad<u8>(at + 7) as u64) << 56) };
+}
+
+/**
+ * The `rest` bytes (0 to 7) at `at` as one little-endian word, zero above them, none read past
+ * the end: 4, 2 and 1 bytes, each read a byte at a time as in `wordAt` (LLVM joins them).
  *
  * Unsafe: the bytes `at` to `at + rest` must be readable.
  */
@@ -49,13 +69,18 @@ unsafe function tailWord(at: usize, rest: usize): u64 {
   let i = at;
   if ((rest & 4) != 0) {
     // SAFETY: the caller's bytes, which `rest` counts.
-    word = unsafe { addressLoad<u32>(i) } as u64;
+    word =
+      unsafe { (addressLoad<u8>(i) as u64) |
+        ((addressLoad<u8>(i + 1) as u64) << 8) |
+        ((addressLoad<u8>(i + 2) as u64) << 16) |
+        ((addressLoad<u8>(i + 3) as u64) << 24) };
     i += 4;
     shift = 32;
   }
   if ((rest & 2) != 0) {
     // SAFETY: as above.
-    word |= (unsafe { addressLoad<u16>(i) } as u64) << shift;
+    const pair = unsafe { (addressLoad<u8>(i) as u64) | ((addressLoad<u8>(i + 1) as u64) << 8) };
+    word |= pair << shift;
     i += 2;
     shift += 16;
   }
@@ -75,7 +100,7 @@ export function utf8KeyHash(b: readonly u8[]): u64 {
   let i: usize = 0;
   while (i + 8 <= n) {
     // SAFETY: bytes `i` to `i + 7` are inside `b`.
-    h = mix(h, unsafe { addressLoad<u64>(at + i) });
+    h = mix(h, unsafe { wordAt(at + i) });
     i += 8;
   }
   if (i < n) {
@@ -97,7 +122,7 @@ export function utf8KeyEquals(s: string, b: readonly u8[]): bool {
   let i: usize = 0;
   while (i + 8 <= n) {
     // SAFETY: bytes `i` to `i + 7` are inside both, which have `n` bytes.
-    if (unsafe { addressLoad<u64>(sa + i) } != unsafe { addressLoad<u64>(ba + i) }) {
+    if (unsafe { wordAt(sa + i) } != unsafe { wordAt(ba + i) }) {
       return false;
     }
     i += 8;
