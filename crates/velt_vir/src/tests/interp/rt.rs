@@ -281,6 +281,11 @@ impl Interp<'_> {
             "velt_rt_math_ctz64" => return Ok(a[0].trailing_zeros() as u64),
             "velt_rt_math_popcount64" => return Ok(a[0].count_ones() as u64),
             "velt_rt_math_umulh" => return Ok(((a[0] as u128 * a[1] as u128) >> 64) as u64),
+            // The start-up CPU check's OS queries (std/lang/cpu): the interpreter has no CPU
+            // to ask, so every feature reads as absent and programs take the baseline path.
+            "sysctlbyname" => return Ok(-1i64 as u64),
+            "getauxval" => return Ok(0),
+            "IsProcessorFeaturePresent" => return Ok(0),
             m if m.starts_with("velt_rt_math_") => {
                 return Ok(math(m, f64::from_bits(a[0])).to_bits())
             }
