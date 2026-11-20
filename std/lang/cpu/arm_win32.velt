@@ -1,0 +1,44 @@
+// velt/lang/cpu (internal): the arm64 features of this CPU on Windows (`#cpu-arm`'s win32 variant,
+// std/imports.velt), as the feature word's arm64 bits: what `IsProcessorFeaturePresent` reports
+// (std/lang/cpu/arm_win32_bits.velt maps it). Called on arm64 only.
+
+import { win32ArmBits } from "./arm_win32_bits";
+
+declare c("c") function IsProcessorFeaturePresent(feature: u32): i32;
+
+/** `PF_ARM_V8_CRYPTO_INSTRUCTIONS_AVAILABLE`: AES, PMULL, SHA-1 and SHA-256. */
+const PF_CRYPTO: u32 = 30;
+/** `PF_ARM_V8_CRC32_INSTRUCTIONS_AVAILABLE`. */
+const PF_CRC32: u32 = 31;
+/** `PF_ARM_V82_DP_INSTRUCTIONS_AVAILABLE`: the dot products. */
+const PF_DP: u32 = 43;
+/** `PF_ARM_SHA3_INSTRUCTIONS_AVAILABLE`. */
+const PF_SHA3: u32 = 64;
+/** `PF_ARM_SHA512_INSTRUCTIONS_AVAILABLE`. */
+const PF_SHA512: u32 = 65;
+/** `PF_ARM_V82_I8MM_INSTRUCTIONS_AVAILABLE`. */
+const PF_I8MM: u32 = 66;
+/** `PF_ARM_V82_FP16_INSTRUCTIONS_AVAILABLE`. */
+const PF_FP16: u32 = 67;
+/** `PF_ARM_V86_BF16_INSTRUCTIONS_AVAILABLE`. */
+const PF_BF16: u32 = 68;
+
+// Whether Windows reports `feature` (an older Windows reports a feature it doesn't know as absent).
+function present(feature: u32): bool {
+  // SAFETY: takes a number and reads nothing of the caller's.
+  return unsafe { IsProcessorFeaturePresent(feature) } != 0;
+}
+
+/** This CPU's feature word arm64 bits. */
+export function detectArm(): u64 {
+  return win32ArmBits(
+    present(PF_DP),
+    present(PF_CRYPTO),
+    present(PF_CRC32),
+    present(PF_SHA3),
+    present(PF_SHA512),
+    present(PF_I8MM),
+    present(PF_FP16),
+    present(PF_BF16),
+  );
+}
