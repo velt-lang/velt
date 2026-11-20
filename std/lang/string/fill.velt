@@ -35,6 +35,8 @@ declare function velt_rt_strbuf_finish(buf: string, out: string);
 declare function velt_rt_strbuf_push_u8s(buf: string, bytes: u8[], len: u64, units: u64);
 declare function velt_rt_str_is_well_formed(s: string): bool;
 declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
+declare function velt_simd_u8x16_as_u64x2(v: u8x16): u64x2;
+declare function velt_simd_u64x2_lane(v: u64x2, index: u64): u64;
 
 /** The byte `b` in each byte of a word. */
 function spread(b: u8): u64 {
@@ -56,6 +58,10 @@ function pushRun(buf: string, b: u8, count: usize) {
 
 /** From this many copies on, `repeat` of text that is not a few ASCII bytes doubles its copies. */
 const DOUBLING: usize = 8;
+/** The longest ASCII result that is stored piece by piece; a longer one is laid out at once. */
+const LAID_OUT: usize = 512;
+/** The longest ASCII string whose copies are stored block by block. */
+const BLOCKS: usize = 64;
 /** Fewer copies than this are appended as strings. */
 const FEW: usize = 4;
 /** The most bytes of an inline string that is not ASCII (rt_abi.md "Strings"). */
@@ -94,9 +100,7 @@ function copied(s: string, n: usize, times: usize, total: usize): string {
   for (let k: usize = 0; k < times; k++) {
     velt_rt_strbuf_push_u8s(buf, view, n as u64, units);
   }
-  let out = "";
-  velt_rt_strbuf_finish(buf, out);
-  return out;
+  return buf;
 }
 
 /**
@@ -131,20 +135,18 @@ function doubled(s: string, n: usize, times: usize, total: usize): string {
   let buf = "";
   velt_rt_strbuf_new(total as u64, buf);
   velt_rt_strbuf_push_u8s(buf, bytes, total as u64, (strLen(s) * times) as u64);
-  let out = "";
-  velt_rt_strbuf_finish(buf, out);
-  return out;
+  return buf;
 }
 
 /**
  * `s.repeat(count)`, for a `count` the caller has checked: not negative, and the result within
- * a string's length. Nothing is built on the way but the result:
- * - ASCII text of at most 24 bytes: as many whole copies as 24 bytes hold are laid out in three
- *   words once. A result of at most 23 bytes is those words, an inline string, with no call;
- *   a longer one takes them again and again, stored inline into a builder of the result's size.
- * - Other text: a result short enough to be inline is joined from inline strings (`joined`);
- *   a few copies are appended to such a builder one by one (`copied`); more are doubled in a
- *   byte array (`doubled`).
+ * a string's length. Nothing is built on the way but the result (and, for a long one, the byte
+ * array it is laid out in), by what is cheapest for the text and the size:
+ * - ASCII of at most 24 bytes: copies laid out in three words (`words`).
+ * - Longer ASCII, up to a few hundred bytes in all: stored block by block (`blocks`).
+ * - Text that is not ASCII, in a result short enough to be inline: joined (`joined`).
+ * - Otherwise two or three copies are appended as strings, a few more from a view of the
+ *   string's bytes (`copied`), and many are laid out in a byte array (`doubled`).
  */
 export function repeat(s: string, count: i64): string {
   const n = strByteLen(s);
@@ -156,47 +158,108 @@ export function repeat(s: string, count: i64): string {
   }
   const times = count as usize;
   const total = n * times;
-  const ascii = strLen(s) == n;
-  if (!ascii || n > 24) {
+  if (strLen(s) == n) {
+    if (n <= 24) {
+      // Two copies of 9 to 11 bytes are an inline string, but more than the words of one copy.
+      if (n > 8 && total <= 23) {
+        return joined(s, times);
+      }
+      return total <= LAID_OUT ? words(s, n, total) : doubled(s, n, times, total);
+    }
+    if (n <= BLOCKS && total <= LAID_OUT) {
+      return blocks(s, n, times, total);
+    }
+  } else {
     if (total <= INLINE_WIDE) {
       return joined(s, times);
     }
-    // Two or three copies, and text with a lone surrogate, are appended as strings: a copy
-    // that ends with a high surrogate joins the next that starts with a low one.
-    if (times < FEW || (!ascii && !velt_rt_str_is_well_formed(s))) {
-      let buf = "";
-      velt_rt_strbuf_new(total as u64, buf);
-      for (let k: usize = 0; k < times; k++) {
-        velt_rt_strbuf_push_str(buf, s);
-      }
-      let out = "";
-      velt_rt_strbuf_finish(buf, out);
-      return out;
+    // Text with a lone surrogate is appended as strings: a copy that ends with a high one
+    // joins the next that starts with a low one.
+    if (!velt_rt_str_is_well_formed(s)) {
+      return appended(s, times, total);
     }
-    return times < DOUBLING ? copied(s, n, times, total) : doubled(s, n, times, total);
   }
-  // The copies the words hold: all of a short result, else as many as fit.
-  const chunk = total <= 24 ? total : (24 / n) * n;
+  if (times < FEW && n > BLOCKS) {
+    return appended(s, times, total);
+  }
+  return times < DOUBLING ? copied(s, n, times, total) : doubled(s, n, times, total);
+}
+
+/** `times` copies of `s` (`total` bytes), each appended as the string it is. */
+function appended(s: string, times: usize, total: usize): string {
+  let buf = "";
+  velt_rt_strbuf_new(total as u64, buf);
+  for (let k: usize = 0; k < times; k++) {
+    velt_rt_strbuf_push_str(buf, s);
+  }
+  return buf;
+}
+
+/** The word whose byte `i` is byte `(i + phase) % n` of the `n` bytes (at most 8) in `w`. */
+function periodic(w: u64, n: usize, phase: usize): u64 {
+  let bits = (n * 8) as u64;
+  const turn = (phase * 8) as u64;
+  // One copy turned by `phase` bytes, then doubled until the word is full.
+  let out = turn == 0 ? w : (w >> turn) | (w << (bits - turn));
+  if (bits < 64) {
+    out = out & ((1 << bits) - 1);
+  }
+  while (bits < 64) {
+    out = out | (out << bits);
+    bits = bits * 2;
+  }
+  return out;
+}
+
+/** `w` with only its low `len` bytes (at most 8) kept. */
+function low(w: u64, len: usize): u64 {
+  return len >= 8 ? w : w & ((1 << ((len * 8) as u64)) - 1);
+}
+
+/**
+ * `total` bytes (more than `n`) of copies of the ASCII `s` (`n` bytes, at most 24), from three
+ * words that hold whole copies: a result of at most 23 bytes is those words, an inline string;
+ * a longer one takes them again and again, stored inline into a builder of its size.
+ */
+function words(s: string, n: usize, total: usize): string {
   let w0: u64 = 0;
   let w1: u64 = 0;
   let w2: u64 = 0;
-  let j: usize = 0;
-  for (let i: usize = 0; i < chunk; i++) {
-    const b = (strByteAt(s, j as u64) as u64) << (((i & 7) * 8) as u64);
-    if (i < 8) {
-      w0 = w0 | b;
-    } else if (i < 16) {
-      w1 = w1 | b;
-    } else {
-      w2 = w2 | b;
-    }
-    j++;
-    if (j == n) {
-      j = 0;
+  let chunk = n;
+  if (n <= 8) {
+    // As many copies as 24 bytes hold: each word starts where the one before it stopped.
+    const w = velt_simd_u64x2_lane(
+      velt_simd_u8x16_as_u64x2(strLoadPartialU8x16(s, 0, n as u64)),
+      0,
+    );
+    chunk = (24 / n) * n;
+    w0 = periodic(w, n, 0);
+    w1 = periodic(w, n, 8 % n);
+    w2 = periodic(w, n, 16 % n);
+  } else {
+    // One copy, as its bytes are.
+    const head = velt_simd_u8x16_as_u64x2(
+      n >= 16 ? strLoadU8x16(s, 0) : strLoadPartialU8x16(s, 0, n as u64),
+    );
+    w0 = velt_simd_u64x2_lane(head, 0);
+    w1 = velt_simd_u64x2_lane(head, 1);
+    if (n > 16) {
+      w2 = velt_simd_u64x2_lane(
+        velt_simd_u8x16_as_u64x2(strLoadPartialU8x16(s, 16, (n - 16) as u64)),
+        0,
+      );
     }
   }
   if (total <= 23) {
-    return strAsciiWords(w0, w1, w2, total);
+    // An inline string's bytes past its length are 0 (`n` is at most 8 here: the words are
+    // full of copies).
+    if (total <= 8) {
+      return strAsciiWords(low(w0, total), 0, 0, total);
+    }
+    if (total <= 16) {
+      return strAsciiWords(w0, low(w1, total - 8), 0, total);
+    }
+    return strAsciiWords(w0, w1, low(w2, total - 16), total);
   }
   let buf = "";
   velt_rt_strbuf_new(total as u64, buf);
@@ -209,9 +272,31 @@ export function repeat(s: string, count: i64): string {
     // What is left starts a copy, as the words do.
     strbufPushAsciiWords(buf, w0, w1, w2, left);
   }
-  let out = "";
-  velt_rt_strbuf_finish(buf, out);
-  return out;
+  return buf;
+}
+
+/**
+ * `times` copies of the ASCII `s` (`n` bytes, more than 24), read sixteen bytes at a time and
+ * stored inline into a builder of the result's size.
+ */
+function blocks(s: string, n: usize, times: usize, total: usize): string {
+  let buf = "";
+  velt_rt_strbuf_new(total as u64, buf);
+  const rest = n & 15;
+  const whole = n - rest;
+  for (let k: usize = 0; k < times; k++) {
+    let i: usize = 0;
+    while (i < whole) {
+      const v = velt_simd_u8x16_as_u64x2(strLoadU8x16(s, i as u64));
+      strbufPushAsciiWords(buf, velt_simd_u64x2_lane(v, 0), velt_simd_u64x2_lane(v, 1), 0, 16);
+      i += 16;
+    }
+    if (rest > 0) {
+      const v = velt_simd_u8x16_as_u64x2(strLoadPartialU8x16(s, whole as u64, rest as u64));
+      strbufPushAsciiWords(buf, velt_simd_u64x2_lane(v, 0), velt_simd_u64x2_lane(v, 1), 0, rest);
+    }
+  }
+  return buf;
 }
 
 /**

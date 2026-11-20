@@ -59,7 +59,7 @@ runtime into Velt (`std/lang/string/`, [#2198](https://github.com/velt-lang/velt
 
 `split`, `trim`, `replace`, `repeat`, `padStart` / `padEnd` and the case mapping of ASCII text in
 Velt against the runtime's Rust, the same compiler and runtime with only the std files swapped
-(Linux x86_64, cachegrind, 2026-11-20): `string_methods` 1,306M instructions against 2,050M
+(Linux x86_64, cachegrind, 2026-11-20): `string_methods` 1,321M instructions against 2,050M
 (0.64), `string_methods_long` 1,918M against 2,829M (0.68), `string_methods_wide` 1,987M against
 2,013M (0.99); `bench/strings_utf16`'s `csv`, which splits every line, 418M against 474M (0.88).
 
