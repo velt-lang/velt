@@ -331,6 +331,12 @@ export const T_ROOT: usize = 48;
 export const T_RESULT_DROP: usize = 56;
 export const T_RESULT_SIZE: usize = 64;
 export const T_JOINER: usize = 72;
+/**
+ * The cx its root is polled with (its await word's address, then the task as the waker). A cx at
+ * its waker's address plus `T_CX` is a task's own, and no other is (sched_yield.velt tests that
+ * instead of the waker's table): a started promise's is at `N_CX`, a join's below its children's
+ * records, the probe's above its waker by less, the runtime's below its header.
+ */
 export const T_CX: usize = 80;
 export const T_WORD: usize = 96;
 export const T_WOKEN: usize = 104;

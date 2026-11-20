@@ -44,17 +44,25 @@ function current(): usize {
 export function schedYield(cx: usize): void {
   noteStdUse("yields");
   const w = m.ld(cx + 8);
-  if (m.ld(w) === t.main() + t.E_VT) {
+  if (cx === w + t.T_CX) {
     rootYield(w, 0);
   } else {
     otherYield(w);
   }
 }
 
-/** `await yieldNow()` with waker `w`, not a task's root's (`schedYield`). */
+/**
+ * `await yieldNow()` with waker `w` and a cx that is not a task's own (`schedYield`;
+ * sched_task.velt `T_CX`): a task's waker in another cx (the runtime's, around a leaf) is still
+ * its root's yield.
+ */
 @noInline
 function otherYield(w: usize): void {
   const vt = m.ld(w);
+  if (vt === t.main() + t.E_VT) {
+    rootYield(w, 0);
+    return;
+  }
   const k = current();
   if (k === 0) {
     m.wakeByRef(w);
@@ -123,6 +131,16 @@ function rootYieldInOrder(k: usize, y: usize, b: usize): void {
 @inline("always")
 export function schedYieldReady(cx: usize): u32 {
   const w = m.ld(cx + 8);
+  if (cx === w + t.T_CX) {
+    // The task's own cx, the common one: no table to load.
+    return m.load32(w + t.T_STATE) === t.YIELDED ? 0 : 1;
+  }
+  return otherReady(w);
+}
+
+/** `schedYieldReady` with waker `w` and a cx that is not a task's own. */
+@noInline
+function otherReady(w: usize): u32 {
   const vt = m.ld(w);
   if (vt === t.main() + t.E_VT) {
     return m.load32(w + t.T_STATE) === t.YIELDED ? 0 : 1;
