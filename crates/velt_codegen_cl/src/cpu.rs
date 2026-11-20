@@ -434,7 +434,7 @@ mod tests {
         let check = include_str!("../../../std/lang/cpu/check.velt");
         let literal = |constant: &str| -> Vec<&str> {
             let at = check
-                .find(&format!("export const {constant}: string = \""))
+                .find(&format!("export const {constant}: string ="))
                 .expect(constant);
             let from = &check[at..][check[at..].find('"').expect("its literal") + 1..];
             from[..from.find('"').expect("its end")]
