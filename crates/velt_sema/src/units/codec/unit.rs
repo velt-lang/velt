@@ -38,7 +38,7 @@ macro_rules! unit_fields {
         empty: [$($e:ident),* $(,)?] $(,)?
     ) => {
         /// Drop the memos of `cx` (a finished unit's): a later unit's stage builds them again
-        /// over its own definitions too, as it does from a unit kept from an earlier check.
+        /// over its own definitions too, as it does from a unit loaded from disk.
         pub(crate) fn clear_memos(cx: &mut Ctx) {
             $(cx.$m = Default::default();)*
         }

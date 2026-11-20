@@ -204,7 +204,8 @@ fn check_golden_two(path: &str, two: bool) -> std::process::Output {
     cmd.arg("check")
         .arg(file.file_name().unwrap())
         .current_dir(file.parent().unwrap())
-        .env_remove("VELT_UNITS_FREEZE");
+        .env_remove("VELT_UNITS_FREEZE")
+        .env_remove("VELT_UNITS_DISK");
     match two {
         true => cmd.env("VELT_UNITS", "2"),
         false => cmd.env_remove("VELT_UNITS"),
@@ -382,4 +383,66 @@ fn an_app_interface_extending_std_ones_writes_nothing_of_std() {
         !stderr.contains("velt-units:"),
         "the program's check wrote std's definitions:\n{stderr}"
     );
+}
+
+/// `velt check` of `src` with std as a unit of its own kept on disk in `disk`.
+fn check_on_disk(disk: &std::path::Path, src: &str) -> std::process::Output {
+    let dir = test_dir::TestDir::new();
+    std::fs::write(dir.path().join("main.velt"), src).unwrap();
+    no_window::command(env!("CARGO_BIN_EXE_velt"))
+        .args(["check", "main.velt"])
+        .current_dir(dir.path())
+        .env("VELT_UNITS", "2")
+        .env("VELT_UNITS_DISK", disk)
+        .env_remove("VELT_UNITS_FREEZE")
+        .output()
+        .unwrap()
+}
+
+/// The units kept in `disk`.
+fn units_in(disk: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out: Vec<_> = (std::fs::read_dir(disk).into_iter().flatten().flatten())
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "unit"))
+        .collect();
+    out.sort();
+    out
+}
+
+/// std's unit kept on disk (`VELT_UNITS_DISK`) by one program's check serves another's: it
+/// is loaded instead of checking std, and the program is refused with the errors of a
+/// whole-program check. A damaged unit is refused (its checksum), std is checked again, and the
+/// unit is saved again.
+#[test]
+fn std_s_unit_on_disk_serves_another_program() {
+    let dir = test_dir::TestDir::new();
+    let disk = dir.path().join("units");
+    let first = check_on_disk(&disk, PROGRAM);
+    let said = String::from_utf8_lossy(&first.stderr).to_string();
+    assert!(first.status.success(), "{said}");
+    assert!(
+        !said.contains("from disk"),
+        "nothing was on disk yet:\n{said}"
+    );
+    let saved = units_in(&disk);
+    assert_eq!(saved.len(), 1, "std's unit was saved: {saved:?}");
+    let bad = "function main() {\n  const n: number = \"text\";\n  console.log(n);\n}\n";
+    let whole = check_in(None, bad);
+    assert!(!whole.status.success());
+    let second = check_on_disk(&disk, bad);
+    let said = String::from_utf8_lossy(&second.stderr).to_string();
+    assert!(said.contains("std's unit loaded from disk"), "{said}");
+    assert_eq!(whole.status.code(), second.status.code());
+    assert_eq!(error_lines(&whole), error_lines(&second));
+    // A byte of the unit changed: refused, std checked again, and the unit saved again.
+    let mut bytes = std::fs::read(&saved[0]).unwrap();
+    let at = bytes.len() / 2;
+    bytes[at] ^= 0x5a;
+    std::fs::write(&saved[0], &bytes).unwrap();
+    let third = check_on_disk(&disk, bad);
+    let said = String::from_utf8_lossy(&third.stderr).to_string();
+    assert!(said.contains("std's unit refused from disk"), "{said}");
+    assert_eq!(error_lines(&whole), error_lines(&third));
+    let again = std::fs::read(&saved[0]).unwrap();
+    assert_ne!(again[at], bytes[at], "the damaged unit was saved again");
 }

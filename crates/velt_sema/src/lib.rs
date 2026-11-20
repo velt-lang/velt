@@ -387,11 +387,15 @@ fn check_timed(
     // round checks, and std's frozen unit the app's rounds start from.
     let stage = std::cell::Cell::new(units::Stage::Both);
     // std's modules first, which std's unit is checked over alone, then the app's.
-    let order = (opts.units && units::stage2()).then(|| units::Order::of(modules, root));
+    let mut order = (opts.units && units::stage2()).then(|| units::Order::of(modules, root));
+    // Where std's unit is kept on disk, when it is (`units::disk`).
+    let disk = (order.as_ref()).and_then(|_| {
+        units::disk::path(opts, [null_proto, record_accessors, ctor_reads, gen_throw])
+    });
     let std_snap: std::cell::RefCell<Option<ctx::Ctx>> = Default::default();
     // What every context of this check holds of the program, which a unit does not save
     // (`units::codec::unit`'s `skip`): the rewrites' facts, the generator, the loads. Installed in
-    // every fresh context.
+    // a fresh context and in std's unit loaded from disk.
     let install = on_cx(|cx| {
         if opts.eager_std {
             cx.lazy.on = false;
@@ -432,14 +436,42 @@ fn check_timed(
             cx.set_closure_groups(&c.groups);
         }
     });
-    // The rewrites' diagnostics: the program's, so not std's unit's (a unit kept for later
-    // checks serves other programs); the app's copy of it takes them.
+    // The rewrites' diagnostics: the program's, so not std's unit's (a unit on disk serves other
+    // programs); the app's copy of it takes them.
     let rewrite_diags = on_cx(|cx| {
         cx.diags.extend(merge_diags.iter().cloned());
         if let Some(c) = &closures {
             cx.diags.extend(c.diags.iter().cloned());
         }
     });
+    // std's unit from disk, with the program's facts installed as in a fresh context. Its AST
+    // lives as long as the process: the program built from the check keeps references to it.
+    let loaded_std = match (&disk, order.take()) {
+        (Some(path), Some(o)) => {
+            let arena: &'static units::codec::Arena = Box::leak(Box::default());
+            // SAFETY: the arena is never freed.
+            match unsafe { units::disk::load(path, arena, &o.std_modules(modules)) } {
+                Some((mut cx, at)) => {
+                    let o = o.reorder_std(&at);
+                    // std's stage first: `install` adds no generated module to std's unit.
+                    cx.units_stage = units::Stage::Std;
+                    install(&mut cx);
+                    units::remap_module_facts(&mut cx, &|m| o.in_std(m));
+                    cx.unit_base = cx.defs.len() as u32;
+                    order = Some(o);
+                    Some(cx)
+                }
+                None => {
+                    order = Some(o);
+                    None
+                }
+            }
+        }
+        (_, o) => {
+            order = o;
+            None
+        }
+    };
     let new_cx = |round: &'static str,
                   held_borrows: bool,
                   seeds: &throws::FnTypeSeeds,
@@ -515,13 +547,22 @@ fn check_timed(
     // The check checked again, kept while that one runs: when that one reports an error this
     // one did not, this one's diagnostics stay the program's (`throws::adds_errors`).
     if opts.units && units::stage2() {
-        stage.set(units::Stage::Std);
-        let run = rounds::run(&new_cx, &|_: &ctx::Ctx| false, &assumed, false, None);
-        let mut std_cx = match run {
-            Ok((cx, _, _)) => cx,
-            Err(stopped) => return *stopped,
+        let std_cx = match loaded_std {
+            Some(cx) => cx,
+            None => {
+                stage.set(units::Stage::Std);
+                let run = rounds::run(&new_cx, &|_: &ctx::Ctx| false, &assumed, false, None);
+                let mut std_cx = match run {
+                    Ok((cx, _, _)) => cx,
+                    Err(stopped) => return *stopped,
+                };
+                units::finish_std(&mut std_cx);
+                if let Some(path) = &disk {
+                    units::disk::save(path, &std_cx);
+                }
+                std_cx
+            }
         };
-        units::finish_std(&mut std_cx);
         *std_snap.borrow_mut() = Some(std_cx);
         stage.set(units::Stage::App);
     }

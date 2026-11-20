@@ -19,6 +19,7 @@
 //! one check already share the driver's. That is where a leak between rounds would come from.
 
 pub(crate) mod codec;
+pub(crate) mod disk;
 
 use crate::ctx::Ctx;
 
@@ -76,7 +77,7 @@ pub(crate) fn check_definitions(cx: &mut Ctx) {
 
 /// End std's stage (`VELT_UNITS=2`): what only std's own bodies and passes read, and the memos
 /// built over std's definitions alone, are dropped (the unit does not save them, `codec::unit`),
-/// so the app's rounds start from what a unit saved for other programs holds; then freeze it.
+/// so the app's rounds start from the unit a load from disk gives (`disk`); then freeze it.
 pub(crate) fn finish_std(cx: &mut Ctx) {
     cx.thread_local_uses.clear();
     cx.throw_checks.clear();
@@ -142,6 +143,13 @@ impl Order {
         if let Some(k) = self.app.iter().position(|&m| m == self.root) {
             cx.root = base + k;
         }
+    }
+
+    /// With std's modules in the order std's unit has them: `at[k]` is where (among this
+    /// order's std modules) the unit's module `k` is (`disk::load`).
+    pub(crate) fn reorder_std(self, at: &[usize]) -> Order {
+        let std = at.iter().map(|&k| self.std[k]).collect();
+        Order { std, ..self }
     }
 
     /// Where the load's module `m` is in std's unit (`None`: an app module).
