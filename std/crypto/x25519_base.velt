@@ -15,6 +15,7 @@
 
 import { Fe25519 } from "velt/crypto/field25519";
 import { X25519_BASE } from "velt/crypto/x25519_base_table";
+import { noInline } from "velt/lang/intrinsics";
 
 // Registers: the accumulator (X : Y : Z : T), the completed point of ref10's `ge_p1p1`
 // ((X : Z), (Y : T)), the selected entry (y + x, y - x, 2 d x y), temporaries, and the
@@ -139,12 +140,22 @@ function pick(f: Fe25519, t: usize, d: i64) {
   }
   // The identity for a zero digit: y + x = y - x = 1 (2 d x y stays 0).
   f.set(A, 1);
-  const none = 0 - ((abs - 1) >> 63);
+  const none = maskOf((abs - 1) >> 63);
   f.select(YPX, A, YPX, none);
   f.select(YMX, A, YMX, none);
   f.swap(YPX, YMX, neg);
   f.sub(A, ZERO, XY2D);
-  f.select(XY2D, A, XY2D, 0 - neg);
+  f.select(XY2D, A, XY2D, maskOf(neg));
+}
+
+// All ones for `bit` 1, 0 for 0. Out of line, as field_p256.velt's `isZero`: inlined, LLVM sees
+// that the mask is one comparison and makes the selects branches on the digit (it did in a
+// program that also signs with Ed25519, whose second caller changed how this file is compiled).
+// scripts/ct-counts.py's ed25519 probe checks the machine code: the instructions executed must
+// not vary with the scalar.
+@noInline
+function maskOf(bit: u64): u64 {
+  return 0 - bit;
 }
 
 // The accumulator += the selected entry (ref10's `ge_madd`, then `ge_p1p1_to_p3`).
