@@ -231,6 +231,7 @@ const WASI_DIRS: &[&str] = &["m1", "m2", "m3", "m4", "lang"];
 const WASI_STD: &[&str] = &[
     "bytes_search",
     "clock_reads",
+    "fs_mapped_file_getters",
     "fs_mapped_file_portable",
     "half_dot",
     "half_dot_bf16_lengths",
