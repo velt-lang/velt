@@ -16,7 +16,7 @@
 // `byte`; on the byte path the low bit is always 0. Every builder call passes the builder first
 // and only locals after it: an argument that is a call would make the compiler copy the builder.
 
-import { strByteAt, strByteLen, strLen } from "velt/lang/intrinsics";
+import { addressArray, strByteAt, strByteLen, strDataAddress, strLen } from "velt/lang/intrinsics";
 import { findByte } from "velt/lang/string/byte_scan";
 import { isHalfNeedle, nextUnit, NO_START } from "velt/lang/string/code_units";
 import { halfFindPos, unitsAfter, unitsText } from "velt/lang/string/half_pos";
@@ -25,25 +25,33 @@ import { findBytes } from "velt/lang/string/needle_scan";
 declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
 declare function velt_rt_strbuf_new(cap: u64, out: string);
 declare function velt_rt_strbuf_push_str(buf: string, s: string);
+declare function velt_rt_strbuf_push_u8s(buf: string, bytes: u8[], len: u64, units: u64);
 declare function velt_rt_strbuf_finish(buf: string, out: string);
 
 /** `$`. */
 const DOLLAR: u8 = 0x24;
+/** The UTF-16 length the builder is to count itself. */
+const UNITS_UNKNOWN: u64 = 0xffffffffffffffff;
 
 /**
- * Appends bytes `a..b` of `t` (whole characters) to the builder `buf`: all of `t` as it is, a
- * range as the runtime's byte slice of it (inline when short, else sharing `t`'s buffer).
+ * Appends bytes `a..b` of `t` (whole characters) to the builder `buf`, copied once, from where
+ * `t` keeps them: all of `t` as the string it is, a range as a view of its bytes that lives for
+ * the call (`t` is alive and unchanged meanwhile, and is never the builder). ASCII text needs no
+ * scan; other text is counted, and a low surrogate that starts it joins a high one before it.
  */
 function pushRange(buf: string, t: string, a: usize, b: usize) {
   if (a >= b) {
     return;
   }
-  if (b - a == strByteLen(t)) {
+  const len = b - a;
+  if (len == strByteLen(t)) {
     velt_rt_strbuf_push_str(buf, t);
     return;
   }
-  const part = velt_rt_str_byte_slice(t, a as u64, b as u64);
-  velt_rt_strbuf_push_str(buf, part);
+  const units: u64 = strLen(t) == strByteLen(t) ? len as u64 : UNITS_UNKNOWN;
+  const at = strDataAddress(t) + a;
+  const view: u8[] = unsafe { addressArray<u8>(at, len) };
+  velt_rt_strbuf_push_u8s(buf, view, len as u64, units);
 }
 
 /** Appends the text of `s` from position `a` to position `b` to the builder `buf`. */
