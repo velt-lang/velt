@@ -68,4 +68,28 @@ Each golden is Node's output for the same program, with `yieldNow` a promise tha
 - **Known at one worker:** `std/timer_spawned_busy_first` fails, as it does on main; it needs a second worker by design.
 
 ## Benchmarks
-BENCH_TABLE
+Instructions retired (cachegrind), bench/async rows, at 1 and 4 threads (`T1 / T4`). Two baselines: #3256 (this PR's base, ff566fe4f) and the 9d stack's merge base on main (3b08c525d, where `yieldNow` is the runtime's; `race_yield.velt` copied in). arm64 is the Linux VM on the Mac (std swapped on #3256's compiler; T4 is the minimum of 4 runs for spawn_many, timer_await, race_select and the pingpong rows, one run otherwise). x86-64 is the Linux builder (std swapped on this PR's compiler; minimum of 2 runs at T1, of 3 at T4).
+
+| row | arm64 vs #3256 | arm64 vs stack base | x86-64 vs #3256 | x86-64 vs stack base |
+|---|---|---|---|---|
+| `spawn_many` | +0.14% / -0.25% | +2.56% / +1.81% | +0.30% / -0.99% | +2.88% / +1.69% |
+| `race_select` | +0.64% / -1.05% | +1.48% / +0.74% | +1.46% / +1.22% | +2.30% / +1.67% |
+| `race_yield` | +10.19% / +9.43% | -13.72% / -13.41% | +13.23% / +11.97% | -12.12% / -11.87% |
+| `race_small` | -4.23% / -4.21% | | -5.02% / -5.00% | -4.77% / -4.75% |
+| `pingpong_colocated` | +0.34% / +0.34% | +0.37% / +0.44% | +0.45% / +0.30% | +0.53% / +0.57% |
+| `pingpong_pinned` | +0.41% / +0.23% | +0.45% / +0.24% | +0.53% / +0.43% | +0.62% / +0.32% |
+| `timers_fire` | -0.05% / -0.13% | +0.05% / +0.05% | -1.25% / -1.23% | -1.26% / -1.24% |
+| `timers_due_reversed` | +0.85% / +0.55% | +0.89% / +0.68% | +0.04% / +0.11% | +0.11% / +0.26% |
+| `timers_due_stored` | +1.01% / +0.66% | +1.05% / +0.80% | +0.13% / +0.19% | +0.21% / +0.33% |
+| `timers_due_join` | +0.29% / -0.70% | +0.47% / -0.46% | +0.51% / -0.54% | +0.59% / -0.36% |
+| `timer_await` | +0.90% / +1.75% | +0.82% / +1.91% | | |
+| `timer_await_top` | +1.31% / +1.57% | | | |
+| `timers_fire_phases` | +0.14% / +0.14% | | | |
+| `timers_due_in_promise` | +0.18% / +0.12% | | | |
+| `promise_identity_loop` | -0.48% / -0.49% | | | |
+| `await_chain`, `all_small_stored`, `fanout_all` | 0.00% | | 0.00% | 0.00% |
+
+- **Every row is within ±3% of the stack's merge base**, on both machines. The tightest is `spawn_many` at T1: +2.88% on x86-64, +2.56% on arm64.
+- **`race_yield` against #3256 is +10% to +13%.** The row is new in this stack and measures the stored `yieldNow()` leaf of #3249/#3256, which resumed a stored yield on its poller's next poll: not Node's order. This PR gives stored yields their own turn in creation order, and gives back half of what the leaf gained. Against the runtime's `yieldNow` on main it is 12% to 14% faster, in Node's order.
+- **`race_small` is 4% to 5% faster:** `enqueue`'s buffer growth is out of line, so the rest inlines into the race's step again.
+- `timers_fire_phases` prints wall-clock times, so its output differs between any two runs.

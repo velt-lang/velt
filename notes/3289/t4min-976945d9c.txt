@@ -1,0 +1,8 @@
+spawn_many t4 min of 4: b=1274627812 p=1271404178 m=1248809721 | b>p -0.25% | m>p +1.81%
+timer_await t4 min of 4: b=142291513 p=144776922 m=142062736 | b>p +1.75% | m>p +1.91%
+race_select t4 min of 4: b=248188081 p=245583116 m=243782100 | b>p -1.05% | m>p +0.74%
+pingpong_colocated t4 min of 4: b=1165885905 p=1169897101 m=1164770396 | b>p +0.34% | m>p +0.44%
+pingpong_pinned t4 min of 4: b=1069024368 p=1071516694 m=1068999415 | b>p +0.23% | m>p +0.24%
+== t4min end
+
+[exited with code 0]
