@@ -1,0 +1,75 @@
+// velt/encoding/json (internal): the tree side of `JsonValue`'s readers
+// (std/prelude/json/json_value.velt), and a tree frozen to a tape.
+
+import { T_ARRAY, Tape } from "velt/encoding/json/tape";
+import { TapeError } from "velt/encoding/json/tape_error";
+import { TapeRef } from "velt/encoding/json/tape_ref";
+import { parseTape } from "velt/encoding/json/tape_parse";
+import { JsonTree, TREE_ARRAY, TREE_OBJECT, TREE_TAPE } from "velt/encoding/json/tree";
+import { treeMember, treeStringify } from "velt/encoding/json/tree_text";
+import { noInline } from "velt/lang/intrinsics";
+
+// The tree side of `JsonValue`'s readers, out of line and given only the node: a parsed value (the
+// tape side) is what loops read, and inlining the tree's lookups there would only grow them. A
+// node left on a tape (`TREE_TAPE`) is read through the tape; its children come as nodes of it.
+@noInline
+export function treeGet(t: JsonTree, key: string): JsonTree | null {
+  if (t.kind == TREE_TAPE) {
+    const o = t.obj!;
+    const tape = o.tape!;
+    const v = tape.find(o.node, key);
+    return v < 0 ? null : treeMember(tape, v as u32);
+  }
+  return t.get(key);
+}
+
+@noInline
+export function treeAt(t: JsonTree, i: i64): JsonTree | null {
+  if (t.kind == TREE_TAPE) {
+    const o = t.obj!;
+    const tape = o.tape!;
+    const v = tape.child(o.node, i);
+    return v < 0 ? null : treeMember(tape, v as u32);
+  }
+  return t.at(i);
+}
+
+@noInline
+export function treeLen(t: JsonTree): i64 {
+  if (t.kind == TREE_TAPE) {
+    const o = t.obj!;
+    return o.tape!.count(o.node);
+  }
+  return t.len();
+}
+
+@noInline
+export function treeKeys(t: JsonTree): string[] {
+  if (t.kind == TREE_TAPE) {
+    const o = t.obj!;
+    const tape = o.tape!;
+    const out: string[] = [];
+    const n = tape.count(o.node);
+    for (let i: i64 = 0; i < n; i++) {
+      out.push(tape.text(tape.member(o.node, i) as u32));
+    }
+    return out;
+  }
+  return t.keys();
+}
+
+// The kind of a node left on a tape (always a container).
+@noInline
+export function treeTapeKind(t: JsonTree): u32 {
+  const o = t.obj!;
+  return o.tape!.kind(o.node) == T_ARRAY ? TREE_ARRAY : TREE_OBJECT;
+}
+
+// A tree as a tape of its text (frozen: it crosses to another task without a copy).
+export function frozenTree(tree: JsonTree): JsonTree {
+  const r = parseTape(treeStringify(tree), 0);
+  if (r instanceof TapeError) {
+    panic(`ICE: a tree's JSON text did not parse: ${r.message}`);
+  }
+  return JsonTree.ofTape(new TapeRef(shared(r as Tape)), 0);
+}
