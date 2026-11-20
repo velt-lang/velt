@@ -18,6 +18,7 @@ import {
   velt_rt_fs_open_read_range,
   velt_rt_fs_open_write,
 } from "velt/fs/rt";
+import { checkPathArg } from "velt/fs/path_arg";
 
 /** The options of `openWrite`. */
 export type OpenWriteOptions = {
@@ -27,6 +28,7 @@ export type OpenWriteOptions = {
 
 /** Opens `path` for chunked reading: the whole file, or the bytes `start` to `end` (included). */
 export async function openRead(path: string, opts: OpenReadOptions = {}): Promise<FileReader> {
+  checkPathArg(path);
   if (opts.start == undefined && opts.end == undefined) {
     return { handle: unwrapIo(await velt_rt_fs_open_read(path)) };
   }
@@ -38,5 +40,6 @@ export async function openRead(path: string, opts: OpenReadOptions = {}): Promis
 
 /** Creates (or truncates, or with `append` extends) `path` for buffered writing. */
 export async function openWrite(path: string, opts: OpenWriteOptions = {}): Promise<FileWriter> {
+  checkPathArg(path);
   return { handle: unwrapIo(await velt_rt_fs_open_write(path, opts.append ?? false)) };
 }

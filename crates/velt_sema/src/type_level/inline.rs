@@ -476,3 +476,13 @@ pub(crate) fn type_text(t: &ast::TypeExpr) -> String {
         _ => "…".into(),
     }
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    Forms {
+        forms, ids, reads, written,
+    }
+    Form {
+        module, params, this_ty, ty, shown, read, write,
+    }
+}

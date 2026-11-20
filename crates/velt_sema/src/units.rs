@@ -18,6 +18,8 @@
 //! generates code writes into the generator std's stage and the other rounds use, as rounds of
 //! one check already share the driver's. That is where a leak between rounds would come from.
 
+pub(crate) mod codec;
+
 use crate::ctx::Ctx;
 
 /// Which part of a check by units a context checks.
@@ -31,7 +33,8 @@ pub(crate) enum Stage {
     App,
 }
 
-/// [`crate::check_definitions`] by units: std collected and checked, frozen, then the app.
+/// `check_definitions` ([`crate::analysis`]) by units: std collected and checked, frozen, then
+/// the app.
 pub(crate) fn check_definitions(cx: &mut Ctx) {
     let app: Vec<usize> = (0..cx.modules.len())
         .filter(|&m| !cx.modules[m].is_std && !cx.is_generated_module(m))
@@ -54,6 +57,8 @@ pub(crate) fn check_definitions(cx: &mut Ctx) {
     }
     if cx.units_stage == Stage::Both {
         cx.freeze_defs();
+        #[cfg(test)]
+        codec::hook::std_unit(cx);
     }
     crate::timings::pass("units: app", || {
         crate::script_tdz::check(cx);

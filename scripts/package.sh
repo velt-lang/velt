@@ -5,6 +5,7 @@
 #   bin/velt  bin/velt-launcher (installed as <root>/bin/velt, #948)
 #   lib/libvelt_rt.a  lib/libvelt_rt_shared.{so,dylib}  lib/NATIVE_LIBS.md
 #   lib/velt/lld  lib/targets/<host>/ (the link kit)
+#   lib/hooks/<host>/*.{o,manifest} (the prebuilt hook modules' objects)
 #   lib/wasm32-unknown-unknown/libvelt_rt_wasm.a (the runtime WebAssembly programs and Workers link)
 # and the target packs dist/velt-<version>-target-<triple>.tar.gz (`velt target add`): this host's
 # runtime and kit, and on Linux <arch>-unknown-linux-musl's.
@@ -102,6 +103,11 @@ if [ -d "$std_dir" ]; then
     # std's white-box tests (`velt test std/`, docs/internals/design/std-layout.md §9) are not
     # part of the toolchain.
     find "$out/std" -name '*.test.velt' -type f -exec rm -f {} +
+    # The prebuilt hook modules' objects (docs/internals/design/std-object.md "Prebuilt hook
+    # modules"): compiled by the velt just built from the std just placed, into
+    # lib/hooks/<target>, so that a first build links them without `velt cache warm`. It needs
+    # clang, as that does, and a module that does not compile fails the packaging.
+    env -u VELT_STD VELT_BUILD_CACHE=off "$out/bin/velt" cache hooks --out "$out/lib/hooks"
 else
     echo "warning: no std sources at $std_dir; shipping an empty std/ (pass --std-dir)" >&2
 fi
