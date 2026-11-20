@@ -1,16 +1,26 @@
 // velt/fs (internal): what `MappedFile.open` is asked for and what its `#mapped-source` variant
 // gives back, for both variants.
 
-import { arrayCopyBytes, arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
+import {
+  addressAtomicRmw,
+  addressLoad,
+  addressStore,
+  arrayCopyBytes,
+  arraySetLen,
+  arrayWithCapacity,
+  rawAlloc,
+  rawFree,
+} from "velt/lang/intrinsics";
 
 /** Which part of a file `MappedFile.open` maps: `length` bytes from byte `offset`. */
 export type MapOptions = { offset?: number; length?: number };
 
 /**
  * A file's bytes in memory: `bytes`, which start at `address` (0 for no bytes) and at byte
- * `from` of the file.
+ * `from` of the file. `owner` is the mapping's owner block (`newOwner`), which every array over
+ * the mapping holds; 0 where there is no mapping to give back.
  */
-export type Mapping = { address: usize; from: usize; bytes: shared<u8[]> };
+export type Mapping = { address: usize; from: usize; bytes: shared<u8[]>; owner: usize };
 
 /** The part of a file of `size` bytes that `options` asks for. */
 export type Part = { offset: number; length: number };
@@ -53,4 +63,49 @@ export function copyOf<T extends Numeric>(bytes: shared<u8[]>, at: usize, count:
   arraySetLen(out, count);
   arrayCopyBytes(out, 0, bytes, at, count);
   return out;
+}
+
+// A mapping's owner: a block every array over the mapping holds (`addressArrayOwned`), so the
+// memory is given back when the last of them is dropped, on whichever thread that is. Its
+// words: the function an array's drop calls (the variant's, which unmaps), how many arrays
+// hold it, and the mapping's address and length.
+
+/** A new owner of the `len` mapped bytes at `base`, held once; `release` is its function. */
+export function newOwner(release: usize, base: usize, len: usize): usize {
+  const owner = rawAlloc(32);
+  // SAFETY: the block has the four words written here.
+  unsafe {
+    addressStore<usize>(owner, release);
+    addressStore<u64>(owner + 8, 1);
+    addressStore<usize>(owner + 16, base);
+    addressStore<usize>(owner + 24, len);
+  }
+  return owner;
+}
+
+/** `owner`, held once more: for the next array made over its mapping. */
+export function heldAgain(owner: usize): usize {
+  // SAFETY: the caller holds `owner` (through an array over the mapping), so the block is there.
+  unsafe {
+    addressAtomicRmw<u64>(owner + 8, "add", 1, "relaxed");
+  }
+  return owner;
+}
+
+/**
+ * Gives up one hold of `owner`. When it was the last, returns the mapping's address and
+ * length for the caller to unmap, and frees the block; otherwise `null`. Unsafe: the caller is
+ * the drop of an array that held `owner`.
+ */
+export unsafe function letGo(owner: usize): Part | null {
+  // SAFETY: the block is there until its last hold is given up, which is at the earliest now.
+  unsafe {
+    if (addressAtomicRmw<u64>(owner + 8, "sub", 1, "acqrel") != 1) {
+      return null;
+    }
+    const base = addressLoad<usize>(owner + 16);
+    const len = addressLoad<usize>(owner + 24);
+    rawFree(owner, 32);
+    return { offset: base as number, length: len as number };
+  }
 }

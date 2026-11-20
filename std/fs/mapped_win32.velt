@@ -2,14 +2,15 @@
 // `MappedFile` is a view of a file mapping (`CreateFileMappingW`, `MapViewOfFile`), and its
 // arrays are that memory, as over `mmap`. A view starts at a multiple of the allocation
 // granularity (64 KiB) in the file, which is where mapped_posix.velt starts its mappings too.
-// The view keeps the mapping and the file, so both handles are closed once it is made. Windows
-// refuses to cut a file short while a view of it exists, so there is no bus error here.
+// The view keeps the mapping and the file, so both handles are closed once it is made, and the
+// view is unmapped with the last array over it (its owner, mapped_part.velt). Windows refuses to
+// cut a file short while a view of it exists, so there is no bus error here.
 
 import { Ptr } from "velt/ffi/ptr";
 import { osError } from "velt/fs/errors";
-import { MapOptions, Mapping, outsideFile, partOf } from "velt/fs/mapped_part";
+import { letGo, MapOptions, Mapping, newOwner, outsideFile, partOf } from "velt/fs/mapped_part";
 import { winPath } from "velt/fs/whole/win_path";
-import { addressArray } from "velt/lang/intrinsics";
+import { addressArrayOwned, fnAddress } from "velt/lang/intrinsics";
 import { errnoOfWin32 } from "velt/os/win_error";
 
 /** C's `SECURITY_ATTRIBUTES`: never passed. */
@@ -42,6 +43,7 @@ declare c("c") function MapViewOfFile(
   offsetLow: u32,
   bytes: usize,
 ): Ptr<void> | null;
+declare c("c") function UnmapViewOfFile(base: Ptr<void>): i32;
 declare c("c") function CloseHandle(handle: Ptr<void>): i32;
 declare c("c") function GetLastError(): u32;
 
@@ -130,7 +132,7 @@ export function mapFile(path: string, options: MapOptions | undefined): Mapping 
   if (part.length == 0) {
     // No bytes: nothing to map (a mapping of an empty file is refused).
     close(file);
-    return { address: 0, from: 0, bytes: shared([]) };
+    return { address: 0, from: 0, bytes: shared([]), owner: 0 };
   }
   // A mapping object of the whole file as it is now, read-only.
   // SAFETY: `file` is open for reading; no security attributes, no name, the file's size.
@@ -158,11 +160,26 @@ export function mapFile(path: string, options: MapOptions | undefined): Mapping 
   if (view === null) {
     throw osError(errnoOfWin32(code), "mmap", path);
   }
-  const address = Ptr.addressOf(view) + (lead as usize);
-  // SAFETY: `address` is `len` readable bytes of a view that is never unmapped, and the
-  // array is only ever read: it leaves this function as a `shared<u8[]>`.
-  const bytes: u8[] = unsafe { addressArray<u8>(address, len) };
-  return { address, from: part.offset as usize, bytes: shared(bytes) };
+  const base = Ptr.addressOf(view);
+  const address = base + (lead as usize);
+  const owner = newOwner(fnAddress(release), base, (lead as usize) + len);
+  // SAFETY: `address` is `len` readable bytes of a view that stays until `owner`'s last array
+  // is dropped, of which this is the first, and the array is only ever read: it leaves this
+  // function as a `shared<u8[]>`.
+  const bytes: u8[] = unsafe { addressArrayOwned<u8>(address, len, owner) };
+  return { address, from: part.offset as usize, bytes: shared(bytes), owner };
+}
+
+/** What the drop of an array over a view calls with its owner: unmaps with the last one. */
+function release(owner: usize): void {
+  // SAFETY: called by the drop of an array that held `owner`; once the last is gone nothing
+  // reads the view, whose base address is what `MapViewOfFile` returned.
+  unsafe {
+    const gone = letGo(owner);
+    if (gone != null) {
+      UnmapViewOfFile(Ptr.at<void>(gone.offset as usize));
+    }
+  }
 }
 
 /** Advice is a hint, and Windows is given none: always 0. */
@@ -172,6 +189,6 @@ export function adviseMapping(address: usize, len: usize, advice: i32): i32 {
 
 /**
  * Whether a typed method's array is a copy of its range (`copyOf`): the arrays are over the
- * view, which is never unmapped.
+ * view, which stays while one of them does.
  */
 export const COPIES: bool = false;
