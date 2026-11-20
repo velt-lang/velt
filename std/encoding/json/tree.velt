@@ -7,9 +7,9 @@
 //
 // A tree stays shallow: a child may be a value on a tape (`TREE_TAPE`), what a parsed value stored
 // in a tree, or a parsed value's children after its first edit, are; and a subtree that would nest
-// deeper than `TREE_MAX_HEIGHT` is stored as a tape first. A tape is frozen and crosses to another
-// task through its atomic count, so a tree sent there is copied at most that deep: the copy
-// recurses once per level.
+// deeper than `TREE_MAX_HEIGHT` is stored as a tape first (tree_freeze.velt: made from its values,
+// linking to the larger tapes below it). A tape is frozen and crosses to another task through its
+// atomic count, so a tree sent there is copied at most that deep: the copy recurses once per level.
 
 import { TreeObject } from "velt/encoding/json/tree_object";
 import { TapeRef } from "velt/encoding/json/tape_ref";
@@ -61,12 +61,13 @@ export class JsonTree {
     return t;
   }
 
-  /** Value `node` of tape `t`, as a child. */
-  static ofTape(t: TapeRef, node: u32): JsonTree {
+  /** Value `node` of tape `t`, as a child (`links`: what its `T_LINK` values stand for). */
+  static ofTape(t: TapeRef, node: u32, links: JsonTree[] | null): JsonTree {
     const n = new JsonTree(TREE_TAPE);
     const o = new TreeObject();
     o.tape = t;
     o.node = node;
+    o.links = links;
     n.obj = o;
     return n;
   }
