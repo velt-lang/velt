@@ -20,10 +20,13 @@ export declare function share<T>(value: T): T;
 export declare function transfer<T>(value: Owned<T>): T;
 
 /**
- * Whether `value`, an object, box or array, is reached by no other reference (its count is 1),
- * so that changing it in place shows nowhere else: what copy-on-write code asks before changing
- * a node it may share (velt/encoding/json's tree). A type the program never counts has one owner
- * per value, so always true; a value of any other kind (a number, a string), false.
+ * Whether `value`, an object, box or array, is reached by no other reference, so that changing it
+ * in place shows nowhere else: what copy-on-write code asks before changing a node it may share
+ * (velt/encoding/json's tree). A counted value's whole count word is compared with 1, so any flag
+ * in it (a lock-set or cycle-collector bit, an immortal count) makes it false even when one
+ * reference holds it: a false only costs a copy. A type the program never counts has one owner per
+ * value, so always true; a lock-set type, and a value of any other kind (`shared<T>`, a string, a
+ * function, a number), false. `o.f!` is read in place (a null is not unique).
  */
 @intrinsic
 export declare function isUnique<T>(value: T): bool;
