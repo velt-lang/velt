@@ -88,7 +88,9 @@ pub(crate) fn run(program: &mut Program) -> bool {
             }
         }
     }
-    let alloc = wrappers.alloc.map(|(e, h)| wrapper_of(program, e, h, ALLOC_WRAPPER));
+    let alloc = wrappers
+        .alloc
+        .map(|(e, h)| wrapper_of(program, e, h, ALLOC_WRAPPER));
     let realloc = (wrappers.realloc).map(|(e, h)| wrapper_of(program, e, h, REALLOC_WRAPPER));
     let mut changed = false;
     for f in callers(program) {
@@ -154,7 +156,12 @@ fn wrapper_of(program: &mut Program, e: ExternId, hook: FuncId, symbol: &str) ->
     }
     let ext = &program.externs[e.0 as usize];
     let params = ext.params.clone();
-    let mut f = Function::new(symbol.to_string(), params.clone(), ext.ret, Linkage::Internal);
+    let mut f = Function::new(
+        symbol.to_string(),
+        params.clone(),
+        ext.ret,
+        Linkage::Internal,
+    );
     f.inline = Inline::Never;
     let result = new_local(&mut f, ext.ret);
     let args = (0..params.len())

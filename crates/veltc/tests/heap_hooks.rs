@@ -329,11 +329,15 @@ fn the_wrappers_carry_the_runtime_allocators_attributes() {
     let ir = emit(&dir, "llvm", &["--release"], &[("VELT_HEAP_HOOKS", "1")]);
     let define = |name: &str| {
         let at = format!("@\"{name}\"(");
-        let line = ir.lines().find(|l| l.starts_with("define") && l.contains(&at));
+        let line = ir
+            .lines()
+            .find(|l| l.starts_with("define") && l.contains(&at));
         line.unwrap_or_else(|| panic!("no definition of {name}:\n{ir}"))
     };
     let group = |n: &str| {
-        let line = ir.lines().find(|l| l.starts_with(&format!("attributes {n} =")));
+        let line = ir
+            .lines()
+            .find(|l| l.starts_with(&format!("attributes {n} =")));
         line.unwrap_or_else(|| panic!("no attribute group {n}"))
     };
     let alloc = define("velt.heap.alloc");

@@ -24,7 +24,8 @@ use velt_vir::vir::{self, Ty};
 use crate::debug::{DebugInfo, FnDebug};
 use crate::inlining::Caps;
 use crate::module::{
-    allocator_group, define_prefix, definition_params, Definition, Intrinsics, FN_ATTRS, STOP_UNWIND_ATTRS,
+    allocator_group, define_prefix, definition_params, Definition, Intrinsics, FN_ATTRS,
+    STOP_UNWIND_ATTRS,
 };
 use crate::statics::StaticNames;
 use crate::target::Target;
