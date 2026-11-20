@@ -176,6 +176,14 @@ export function fromPkcs1(der: u8[]): PrivateKey throws IoError {
     r.done(top.end);
     const n = parts[0];
     const e = parts[1];
+    // As ring, which rustls's server uses: no key with a public exponent below 65537.
+    let exponent: u64 = 0;
+    for (let i: usize = 0; i < e.length && i < 9; i++) {
+      exponent = (exponent << 8) | (e[i] as u64);
+    }
+    if (e.length < 9 && exponent < 65537) {
+      throw invalid("invalid key PEM: an RSA key with a public exponent below 65537");
+    }
     const signer = new RsaSigner(n, e, parts[3], parts[4], parts[5], parts[6], parts[7]);
     return { kind: KEY_RSA, key: [], publicKey: n.concat(e), rsa: signer, modulusLength: n.length };
   } catch (e) {
