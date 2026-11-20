@@ -121,7 +121,9 @@ export function wake(t: usize): void {
 /** Gives back one reference to task `t`: the last frees it. */
 export function release(t: usize): void {
   if (m.dec(t + tk.T_REFS) === 1) {
-    yl.freeBlock(t);
+    if (yl.hasBlock(t)) {
+      yl.freeBlock(t);
+    }
     m.release(t, m.ld(t + tk.T_BYTES));
   }
 }

@@ -10,14 +10,13 @@ import * as node from "./sched_node";
 import * as t from "./sched_task";
 
 // A yield: a heap future's header (0, 0 for an awaited yield's record), the next on its task's
-// list (the list is circular: `T_YIELDS` is the last), the waker to wake at its turn (0: none
-// yet), its state, its task (a stored one's), and its generation and number (`u32`s).
+// list (the list is circular: the block's `B_LAST` is the last), the waker to wake at its turn
+// (0: none yet), its state, its task (a stored one's), and its stamp (`stamp`).
 export const Y_NEXT: usize = 16;
 export const Y_WAKER: usize = 24;
 export const Y_STATE: usize = 32;
 export const Y_TASK: usize = 40;
-export const Y_GEN: usize = 48;
-export const Y_SEQ: usize = 52;
+export const Y_STAMP: usize = 48;
 export const Y_SIZE: usize = 56;
 // A yield's states: made (a stored one, on no list); waiting on the list; its turn came; dropped
 // while waiting (the list frees it at its turn); its turn is taking its waker (`fire`: whoever
@@ -33,14 +32,16 @@ export const FIRING: usize = 4;
  */
 export const ROOT: usize = 1;
 
-// A task's yield block: its list's last yield (0: none), its yield generation (`u32`: one more
-// in each poll after one that made stored yields, flag `FRESH`), its last yield's number (`u32`),
-// and the number of the yield its root waits for with no record (`u32`, flag `ROOT_ALONE`).
+// A task's yield block: its list's last yield (0: none), its last stamp, and the stamp of the
+// yield its root waits for with no record (flag `ROOT_ALONE`). A stamp is a yield's generation
+// (the high 32 bits: one more in each poll after one that made stored yields, flag `FRESH`) and
+// its number: stamps grow in the order yields are made.
 const B_LAST: usize = 0;
-export const B_GEN: usize = 8;
-export const B_SEQ: usize = 12;
+export const B_STAMP: usize = 8;
 export const B_ROOT: usize = 16;
 export const B_SIZE: usize = 24;
+/** One generation in a stamp. */
+export const GEN: usize = 4294967296;
 
 /** Task `k`'s yield block, made now if it has none (on its thread). */
 @inline("always")
@@ -53,29 +54,29 @@ export function block(k: usize): usize {
 function makeBlock(k: usize): usize {
   const b = m.alloc(B_SIZE);
   m.st(b + B_LAST, 0);
-  m.st(b + B_GEN, 0);
+  m.st(b + B_STAMP, 0);
   m.st(b + B_ROOT, 0);
   m.st(k + t.T_YIELDS, b);
   return b;
 }
 
-/** Yield block `b`'s next yield number (on its task's thread). */
+/** Yield block `b`'s next stamp (on its task's thread). */
 @inline("always")
-export function nextSeq(b: usize): u32 {
-  const n = ((m.ld32(b + B_SEQ) as usize + 1) & 0xffffffff) as u32;
-  m.st32(b + B_SEQ, n);
-  return n;
+export function nextStamp(b: usize): usize {
+  const s = m.ld(b + B_STAMP) + 1;
+  m.st(b + B_STAMP, s);
+  return s;
 }
 
 /**
- * An awaited yield's record, numbered `seq`, to wake `w` (a waker's clone, or `ROOT`) at its turn.
+ * An awaited yield's record, stamped `stamp`, to wake `w` (a waker's clone, or `ROOT`) at its turn.
  */
-export function record(w: usize, seq: u32): usize {
+export function record(w: usize, stamp: usize): usize {
   const r = m.alloc(Y_SIZE);
   m.st(r, 0);
   m.st(r + 8, 0);
   m.st(r + Y_WAKER, w);
-  m.st32(r + Y_SEQ, seq);
+  m.st(r + Y_STAMP, stamp);
   return r;
 }
 
@@ -91,23 +92,23 @@ export function join(k: usize, y: usize): void {
   let last = m.ld(b + B_LAST);
   if (last === 0 && t.has(k, t.ROOT_ALONE)) {
     t.flags(k, 0, t.ROOT_ALONE);
-    last = record(ROOT, m.ld32(b + B_ROOT));
+    last = record(ROOT, m.ld(b + B_ROOT));
     m.st(last + Y_STATE, QUEUED);
     m.st(last + Y_NEXT, last);
     m.st(b + B_LAST, last);
   }
-  const seq = m.ld32(y + Y_SEQ);
+  const seq = m.ld(y + Y_STAMP);
   if (last === 0) {
     m.st(y + Y_NEXT, y);
     m.st(b + B_LAST, y);
-  } else if (m.ld32(last + Y_SEQ) < seq) {
+  } else if (m.ld(last + Y_STAMP) < seq) {
     m.st(y + Y_NEXT, m.ld(last + Y_NEXT));
     m.st(last + Y_NEXT, y);
     m.st(b + B_LAST, y);
   } else {
     // Made before the last: after the last one made before it (from the first).
     let p = last;
-    while (m.ld32(m.ld(p + Y_NEXT) + Y_SEQ) < seq) {
+    while (m.ld(m.ld(p + Y_NEXT) + Y_STAMP) < seq) {
       p = m.ld(p + Y_NEXT);
     }
     m.st(y + Y_NEXT, m.ld(p + Y_NEXT));
@@ -134,28 +135,23 @@ export function take(k: usize): usize {
   return first;
 }
 
-/**
- * The last of task `k`'s yields waiting for their turn, 0 for none: always in a program that
- * never yields.
- */
+/** Has task `k` yields waiting for their turn? Never in a program that never yields. */
 @inline("always")
-export function waiting(k: usize): usize {
-  if (!stdUsed("yields")) {
-    return 0;
-  }
-  const b = m.ld(k + t.T_YIELDS);
-  return b === 0 ? 0 : m.ld(b + B_LAST);
+export function waiting(k: usize): bool {
+  // The list is not empty exactly while flag `YIELDS` is set (`join`, `take`).
+  return stdUsed("yields") && t.has(k, t.YIELDS);
+}
+
+/** Has task `k` a yield block, to go with it? Never in a program that never yields. */
+@inline("always")
+export function hasBlock(k: usize): bool {
+  return stdUsed("yields") && m.ld(k + t.T_YIELDS) !== 0;
 }
 
 /** Task `k`'s yield block goes with the task (its list is empty: the task ended). */
-@inline("always")
+@noInline
 export function freeBlock(k: usize): void {
-  if (stdUsed("yields")) {
-    const b = m.ld(k + t.T_YIELDS);
-    if (b !== 0) {
-      m.release(b, B_SIZE);
-    }
-  }
+  m.release(m.ld(k + t.T_YIELDS), B_SIZE);
 }
 
 /** The yield after `y` in a list `take` gave. */

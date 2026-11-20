@@ -53,34 +53,36 @@ export function schedYield(cx: usize): void {
   if (vt === t.main() + t.E_NODE_VT) {
     m.or32(w + node.N_FLAGS, node.YIELDING);
   }
-  ls.join(k, ls.record(m.wakerClone(w), ls.nextSeq(ls.block(k))));
+  ls.join(k, ls.record(m.wakerClone(w), ls.nextStamp(ls.block(k))));
 }
 
 /**
  * The root of task `k` (running) yields: for yield `y` (stored), or an awaited one (0). Its turn
  * comes once in this poll whatever it waits for: a second yield's is the first one's.
  */
+@inline("always")
 function rootYield(k: usize, y: usize): void {
-  if (t.has(k, t.ROOT_YIELDED)) {
+  const fl = m.ld32(k + t.T_FLAGS);
+  if ((fl & t.ROOT_YIELDED) !== 0) {
     return;
   }
   const b = m.ld(k + t.T_YIELDS);
-  if (b === 0 || ls.waiting(k) === 0) {
+  if ((fl & t.YIELDS) === 0) {
     // Polled again once this poll returns, at the back of the queue. While it runs, only a wake
     // changes its state, from RUNNING to NOTIFIED: a store, not a swap.
-    t.flags(k, t.ROOT_YIELDED | t.ROOT_ALONE, 0);
+    m.st32(k + t.T_FLAGS, fl | t.ROOT_YIELDED | t.ROOT_ALONE);
     m.store32(k + t.T_STATE, t.NOTIFIED);
     if (b !== 0) {
-      // Its number, for a record if yields join after it: an awaited yield's is the last one
+      // Its stamp, for a record if yields join after it: an awaited yield's is the last one
       // made (that one, made before it, comes before it; with none made yet, 0: before any).
-      m.st32(b + ls.B_ROOT, y !== 0 ? m.ld32(y + ls.Y_SEQ) : m.ld32(b + ls.B_SEQ));
+      m.st(b + ls.B_ROOT, y !== 0 ? m.ld(y + ls.Y_STAMP) : m.ld(b + ls.B_STAMP));
     }
     return;
   }
-  t.flags(k, t.ROOT_YIELDED, 0);
+  m.st32(k + t.T_FLAGS, fl | t.ROOT_YIELDED);
   // Behind the yields made before it.
   if (y === 0) {
-    ls.join(k, ls.record(ls.ROOT, ls.nextSeq(b)));
+    ls.join(k, ls.record(ls.ROOT, ls.nextStamp(b)));
   } else {
     m.st(y + ls.Y_WAKER, ls.ROOT);
     ls.join(k, y);
@@ -141,10 +143,8 @@ export function schedYieldFut(): usize {
 /** Stored yield `f` is task `k`'s, of its generation now, numbered (on `k`'s thread). */
 @inline("always")
 function made(f: usize, k: usize): void {
-  const b = ls.block(k);
   m.st(f + ls.Y_TASK, k);
-  m.st32(f + ls.Y_GEN, m.ld32(b + ls.B_GEN));
-  m.st32(f + ls.Y_SEQ, ls.nextSeq(b));
+  m.st(f + ls.Y_STAMP, ls.nextStamp(ls.block(k)));
   t.flags(k, t.FRESH, 0);
 }
 
@@ -240,7 +240,7 @@ function pollNew(f: usize, w: usize): u32 {
     }
     made(f, j);
     k = j;
-  } else if (m.ld32(f + ls.Y_GEN) !== m.ld32(m.ld(k + t.T_YIELDS) + ls.B_GEN)) {
+  } else if (m.ld(f + ls.Y_STAMP) / ls.GEN !== m.ld(m.ld(k + t.T_YIELDS) + ls.B_STAMP) / ls.GEN) {
     return 1;
   }
   if (w === k) {
@@ -285,8 +285,9 @@ export function begin(k: usize, fl: u32): void {
   if ((fl & (t.ROOT_YIELDED | t.FRESH)) !== 0) {
     t.flags(k, 0, t.ROOT_YIELDED | t.ROOT_ALONE | t.FRESH);
     if ((fl & t.FRESH) !== 0) {
+      // A new generation: the next stamp is above every one made so far.
       const b = m.ld(k + t.T_YIELDS);
-      m.st32(b + ls.B_GEN, ((m.ld32(b + ls.B_GEN) as usize + 1) & 0xffffffff) as u32);
+      m.st(b + ls.B_STAMP, (m.ld(b + ls.B_STAMP) / ls.GEN + 1) * ls.GEN);
     }
   }
 }
