@@ -26,8 +26,7 @@ const P_R2: u64[] = [
   0x0000000000000000,
 ];
 
-// Little-endian limbs: the curve's b, the base point G, and p - n (r + n < p when r is below
-// it).
+// Little-endian limbs: the curve's b and the base point G.
 const B: u64[] = [
   0x2a85c8edd3ec2aef,
   0xc656398d8a2ed19d,

@@ -13,7 +13,8 @@
 import { Mod384 } from "velt/crypto/mod384";
 import { add, basePoint, decodePoint, double, FIRST, ONE, p384Field, TMP } from "velt/crypto/p384";
 
-// The group order n, the same way, and n - 2 (the inversion's exponent).
+// The group order n in little-endian limbs, with -n^-1 mod 2^64 and 2^768 mod n, and n - 2 (the
+// inversion's exponent).
 const N: u64[] = [
   0xecec196accc52973,
   0x581a0db248b0a77a,
