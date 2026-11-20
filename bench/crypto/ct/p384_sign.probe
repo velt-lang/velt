@@ -1,1 +1,1 @@
-test std/crypto/ecdsa_p384_ct.test.velt signers384
+test std/crypto/ecdsa_p384_ct.test.velt signers384 10

@@ -279,5 +279,13 @@ describe("RsaSigner", () => {
     expect(() => key.signPkcs1(Buffer.alloc(20))).toThrow(digests);
     expect(() => key.signPss(Buffer.alloc(33))).toThrow(digests);
     expect(() => key.signPkcs1([])).toThrow(digests);
+    // A salt that leaves no room in the encoded message (2048 bits, SHA-256: 222 bytes fit).
+    expect(key.signPss(Buffer.alloc(32), Buffer.alloc(222)).length).toBe(256);
+    expect(() => key.signPss(Buffer.alloc(32), Buffer.alloc(223))).toThrow(
+      "the PSS salt is too long for the key",
+    );
+    expect(() => key.signPss(Buffer.alloc(32), Buffer.alloc(5000))).toThrow(
+      "the PSS salt is too long for the key",
+    );
   });
 });

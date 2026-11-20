@@ -9,13 +9,18 @@ and random ones. Constant-time code executes one count; a second count means som
 depends on the secret, in the machine code if not in the source (LLVM turns a mask it can see
 through into a branch).
 
-What this cannot see: a memory address that depends on the secret with no change in the count,
-and a difference that is rarer than the secrets tried.
+What the counts cannot see: a branch whose two sides cost the same, a memory address that
+depends on the secret, and a difference that is rarer than the secrets tried. `--memcheck` sees
+the first two: it runs the probe under valgrind's memcheck with the secret marked undefined
+(scripts/ct-shim.c) and counts the reports of a conditional jump or an address that depends on
+it. A probe must not branch on what it computed; what it does by design (a result check) is the
+number its .probe file allows.
 The memcheck command in std/crypto/field_p256.velt is the check for that.
 
   scripts/ct-counts.py p384            # one probe
   scripts/ct-counts.py                 # all of them
   scripts/ct-counts.py --runs 70 p384
+  scripts/ct-counts.py --memcheck      # branches and addresses that depend on the secret
 
 Needs valgrind and a built `velt` (target/debug/velt, or $VELT). Exit status 1 when a probe has
 more than one count.
@@ -128,18 +133,15 @@ def _prime(rng, bits):
 
 
 def keys2048(rng, runs):
-    """RSA-2048 private keys for the RSA probe: n, e, p, q, dP, dQ, qInv, each as two bytes of
-    length and the number's big-endian bytes. A few are enough: each takes two primes to make."""
+    """RSA-2048 private keys for the RSA probe, as (secret, public): the secret is p, q, dP, dQ
+    and qInv, 128 big-endian bytes each; the public part is n, 256 bytes (e is 65537). A few are
+    enough: each takes two primes to make."""
     keys = []
     for _ in range(min(runs, 8)):
         p, q = _prime(rng, 1024), _prime(rng, 1024)
-        e = 65537
-        d = pow(e, -1, (p - 1) * (q - 1))
-        out = b""
-        for v in (p * q, e, p, q, d % (p - 1), d % (q - 1), pow(q, -1, p)):
-            raw = v.to_bytes((v.bit_length() + 7) // 8, "big")
-            out += len(raw).to_bytes(2, "big") + raw
-        keys.append(out)
+        d = pow(65537, -1, (p - 1) * (q - 1))
+        secret = b"".join(v.to_bytes(128, "big") for v in (p, q, d % (p - 1), d % (q - 1), pow(q, -1, p)))
+        keys.append((secret, (p * q).to_bytes(256, "big")))
     return keys
 
 
@@ -151,20 +153,24 @@ GENERATORS = {"scalars384": scalars384, "seeds32": seeds32, "signers384": signer
 
 
 def probes():
-    """The probes: bench/crypto/ct/<name>.probe, one line `kind source secrets`.
+    """The probes: bench/crypto/ct/<name>.probe, one line `kind source secrets [allowed]`.
 
     `kind` is `program` (a Velt program, built with `velt build`) or `test` (a test file, for
     code a program cannot import: the harness's executable is run), `source` is relative to the
     repository, and `secrets` names a generator above. The probe gets the secret's file as its
-    first argument and in $VELT_CT_SECRET.
+    first argument and in $VELT_CT_SECRET, and what goes with it and is public (an RSA modulus)
+    in the file of that name with `.pub` added. `allowed` is how many memcheck reports the probe
+    makes by design (--memcheck), 0 when left out.
     """
     found = {}
     folder = os.path.join(ROOT, "bench", "crypto", "ct")
     for entry in sorted(os.listdir(folder)):
         if entry.endswith(".probe"):
             with open(os.path.join(folder, entry)) as f:
-                kind, source, secrets = f.read().split()
-            found[entry[:-len(".probe")]] = (source, kind, GENERATORS[secrets])
+                fields = f.read().split()
+            kind, source, secrets = fields[:3]
+            allowed = int(fields[3]) if len(fields) > 3 else 0
+            found[entry[:-len(".probe")]] = (source, kind, GENERATORS[secrets], allowed)
     return found
 
 
@@ -198,12 +204,49 @@ def count(exe, env, secret_file):
     return int(found.group(1).replace(",", ""))
 
 
+def put(secret_file, secret):
+    """Writes a secret, or a (secret, public) pair, where the probe reads it."""
+    public = b""
+    if isinstance(secret, tuple):
+        secret, public = secret
+    with open(secret_file, "wb") as f:
+        f.write(secret)
+    with open(secret_file + ".pub", "wb") as f:
+        f.write(public)
+    return secret
+
+
+def reports(exe, env, secret_file, shim):
+    """How many times memcheck saw a branch or an address depend on the secret.
+
+    The shim (scripts/ct-shim.c) marks what the probe reads from the secret's file as undefined,
+    its value unchanged; memcheck then reports every conditional jump and every memory access
+    that depends on it.
+    """
+    run = subprocess.run(
+        ["valgrind", "--tool=memcheck", "--error-limit=no", "-s", exe, secret_file],
+        capture_output=True, text=True,
+        env={**os.environ, **env, "VELT_CT_SECRET": secret_file, "LD_PRELOAD": shim})
+    if run.returncode != 0:
+        sys.exit(f"the probe failed under memcheck:\n{run.stdout}{run.stderr[-2000:]}")
+    kinds = ("Conditional jump or move depends on uninitialised value",
+             "Use of uninitialised value")
+    total, lines = 0, run.stderr.split("\n")
+    for i, line in enumerate(lines):
+        found = re.search(r"== (\d+) errors in context", line)
+        if found and i + 1 < len(lines) and any(k in lines[i + 1] for k in kinds):
+            total += int(found.group(1))
+    return total
+
+
 def main():
     args = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     known = probes()
     args.add_argument("probes", nargs="*", help=f"which probes (default: all of {sorted(known)})")
     args.add_argument("--runs", type=int, default=40, help="secrets per probe (default 40)")
     args.add_argument("--seed", type=int, default=2392, help="seed of the random secrets")
+    args.add_argument("--memcheck", action="store_true",
+                      help="instead of counting: memcheck with the secret marked undefined")
     opts = args.parse_args()
     if not shutil.which("valgrind"):
         sys.exit("valgrind is needed")
@@ -211,16 +254,30 @@ def main():
     for name in opts.probes or sorted(known):
         if name not in known:
             sys.exit(f"no probe named {name}; there are {sorted(known)}")
-        source, kind, secrets = known[name]
+        source, kind, secrets, allowed = known[name]
         with tempfile.TemporaryDirectory() as out:
             exe, env = build(source, kind, out)
             # One path for every run: its length is part of what the process does.
             secret_file = os.path.join(out, "secret.bin")
+            if opts.memcheck:
+                shim = os.path.join(out, "ct-shim.so")
+                subprocess.run(["cc", "-shared", "-fPIC", "-O1", "-o", shim,
+                                os.path.join(ROOT, "scripts", "ct-shim.c"), "-ldl"], check=True)
+                worst = 0
+                for secret in secrets(random.Random(opts.seed), min(opts.runs, 3))[:3]:
+                    put(secret_file, secret)
+                    worst = max(worst, reports(exe, env, secret_file, shim))
+                if worst > allowed:
+                    failed = True
+                    print(f"{name}: SECRET-DEPENDENT: memcheck reports {worst:,} branches or "
+                          f"addresses that depend on the secret ({allowed} are by design)")
+                else:
+                    print(f"{name}: memcheck reports {worst} (by design: {allowed})")
+                continue
             counts = {}
             target = None
             for secret in secrets(random.Random(opts.seed), opts.runs):
-                with open(secret_file, "wb") as f:
-                    f.write(secret)
+                secret = put(secret_file, secret)
                 # A test harness starts threads, and now and then one of them does more before
                 # the process ends: the same secret then counts some thousands more. So a count
                 # that differs is taken again, and the lowest of a few runs is the secret's.
