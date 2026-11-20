@@ -25,11 +25,14 @@ import * as sc from "./sched_sleep_carry";
 import * as t from "./sched_task";
 import * as lt from "./sched_task_lost";
 import * as wk from "./sched_wake";
+import * as yl from "./sched_yield";
 
 /**
  * Polls task `k` once: its woken started promises, its due sleeps, its root, its microtasks. A
  * task with no started promise, no due sleep, no queued microtask and a root still running takes
- * the straight path: its flags read once, the root polled, two words checked.
+ * the straight path: its flags read once, the root polled, two words checked. A first poll in
+ * shared mode marks the task started on its flags as they are then: `begin` may have changed them
+ * since they were read (#3241).
  */
 @inline("always")
 export function run(e: usize, k: usize, mode: u32): void {
@@ -47,9 +50,10 @@ export function run(e: usize, k: usize, mode: u32): void {
     m.storeRelease(e + t.E_CURRENT, k);
   }
   const fl = m.ld32(k + t.T_FLAGS);
+  yl.begin(k, fl);
   // Fresh tasks matter to other workers only (sched_monitor.velt).
   if (mode !== 0 && mode !== t.M_LAZY && (fl & t.STARTED) === 0) {
-    m.st32(k + t.T_FLAGS, fl | t.STARTED);
+    t.flags(k, t.STARTED, 0);
   }
   // One test on the straight path: the root polled, nothing else (a task whose root catches
   // panics, sched_node_catch.velt `T_CATCHES`, polls it in `runOther`).

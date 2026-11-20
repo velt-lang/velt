@@ -553,5 +553,6 @@ enums! {
         210 => ArrayByteLength,
         211 => SymbolAddress,
         212 => SymbolAt,
+        213 => AddressArrayOwned,
     }
 }

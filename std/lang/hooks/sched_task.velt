@@ -387,6 +387,12 @@ export const DONE: u32 = 4;
  * root was polled as a microtask's job or by a due sleep (sched_run.velt `runWoken` reads it).
  */
 export const ROOT: u32 = 4;
+/**
+ * Its root (or a child state polled with the root's cx: an inline `Promise.all`'s) yielded in this
+ * poll (sched_yield.velt): what yielded resumes only in a later poll, though this one may poll the
+ * root again to run its microtasks. Cleared as the next poll begins (sched_yield.velt `begin`).
+ */
+export const ROOT_YIELDED: u32 = 2;
 export const LOCALS: u32 = 8;
 export const ROOT_DONE: u32 = 16;
 export const TIMED: u32 = 32;
