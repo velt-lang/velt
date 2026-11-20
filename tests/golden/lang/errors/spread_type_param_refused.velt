@@ -1,0 +1,26 @@
+// Spreads of a value of a type parameter that stay refused (#943): only a call's rest parameter
+// of `unknown` or `any` values takes one, built per instantiation. An array literal's length,
+// or fixed parameters' arity, would be known only per instantiation, and a type parameter
+// without an array bound may not be iterable at all. tsc refuses the last two as well (TS2556,
+// TS2488) and accepts the array literal, which Velt does not support yet.
+function show(...xs: unknown[]): number {
+  return xs.length;
+}
+
+function pair(a: unknown, b: unknown): number {
+  return 2;
+}
+
+function literal<A extends unknown[]>(args: A): unknown[] {
+  return [...args];
+}
+
+function fixed<A extends unknown[]>(args: A): number {
+  return pair(...args);
+}
+
+function unbounded<T>(args: T): number {
+  return show(...args);
+}
+
+console.log(literal([1]), fixed([1, 2]), unbounded([1]));

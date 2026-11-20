@@ -1,0 +1,15 @@
+sema, vir: a rest parameter typed by a type parameter is inferred as the tuple of a callback's parameters (#379)
+
+`apply<A extends unknown[], R>(f: (rq: Ctx, ...args: A) => R)` called with
+`(rq: Ctx, a: number, b: number) => …` gives `A = [number, number]`, as TypeScript infers it.
+A function type whose rest parameter is a tuple is those parameters, so the callback is checked as
+`(rq: Ctx, a: number, b: number) => R`. The callback's written parameter types at the rest
+position bind `A` before it is checked (`rest_tuple.rs`). `match_ty` takes `(P…, ...A)` matched
+by `(X…, Y…)` as `A = [Y…]`, and `open_slots` no longer binds `A` to the first of them. An
+optional parameter or a rest after fixed ones (no tuple form yet) is reported as before.
+
+A call through such a function value in a generic body (`f(rq)` for `f: (rq: Ctx, ...args: A) => R`) is refused: its arguments for `A` are known only per instance, so the empty rest it was checked with could be no arguments of a `[number, number]` instance (TypeScript's TS2345; `not supported yet (#943)`).
+
+Lowering makes an instance's function type the same way (`velt_vir` `lower/types.rs`): `(Ctx, ...[f64, f64]) => R` is `(Ctx, f64, f64) => R`. Converting such a function value in a generic body (a cast, `any`, a wider function type, through a generic `T`, `unknown` or an object) used to crash lowering on the tuple; it now converts the callback's own function, and a call with other arguments than it takes is a TypeError. Also inferred: parameters at the rest position without written types (`A = [unknown]`), and a named function value or declared function from its own type.
+
+A closure made with a rest parameter (`(rq, ...args) => …` typed by `(rq: Ctx, ...args: A) => R`) takes a tuple rest's elements as its parameters at that instance, as its normalized function type does, and builds the rest local from them on entry (`lower/rest_tuple_params.rs`); its thunk passes them on (glue/thunk.rs), and an async one's constructor takes them the same way (`async_fn/ctor.rs`). A `void` element is passed as nothing, as a `void` parameter is. Before, its code took the tuple as one parameter while callers passed the elements: a crash, or a wrong value.

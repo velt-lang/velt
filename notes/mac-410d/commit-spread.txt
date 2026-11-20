@@ -1,0 +1,19 @@
+sema, vir: a value of a type parameter spreads into a call's rest of unknown values (#943)
+
+`g(...args)` with `args: A`, `A extends unknown[]` (or a deferred type such as
+`[S] extends [void] ? [] : [S]`), where `g`'s rest takes `unknown` or `any` values, is
+accepted as TypeScript accepts it. sigx's `serverFn` wrapper needs it (#379,
+`server/src/index.ts:220`).
+
+Sema can't name the value's elements: it is a tuple at one instantiation and an array at
+another. The spread is `Intrinsic::SpreadParam` (`body/expr/spread_param.rs`): an array of
+the rest's element type, which lowering builds per instantiation (`lower/array/spread_param.rs`).
+A tuple gives its elements in order and an array its elements, each shared and boxed to the
+rest's element type. Only a call's packed rest takes it. An array literal, fixed parameters
+and a type parameter without an array bound stay refused.
+
+An instantiation whose element holds a lock is an error where the spread is written, as
+printing such a value is (`json/uses.rs`). That error is now reported once per type and site.
+The intrinsic is classified with `ToAny` in the ownership graph, the pure-init list and the
+replaced-holder glue. Its encoding is in hir_encodings.md "Spreads and conversions in generic
+bodies".

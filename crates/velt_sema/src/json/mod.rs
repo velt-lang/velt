@@ -112,6 +112,7 @@ pub(crate) fn check_json_types(cx: &mut Ctx) {
     let mut work = dispatch.work + uses.iter().map(|(_, u)| u.types.len() as u64).sum::<u64>();
     let mut needs: Needs = FxHashMap::default();
     let mut checked: FxHashSet<(TyId, Span, Need)> = FxHashSet::default();
+    let mut lock_sites: FxHashSet<(String, Span)> = FxHashSet::default();
     while let Some(i) = rounds.pop() {
         let (f, u) = &uses[i];
         work += u.size();
@@ -131,8 +132,16 @@ pub(crate) fn check_json_types(cx: &mut Ctx) {
                     cx.object_copies.observe(t, span, how);
                 }
             } else if parse == Need::NoLock {
-                if checked.insert((t, span, parse)) && cx.holds_lock(t) {
-                    let tn = cx.display(t);
+                // Once per type as written and site: one value reaches a site as more than
+                // one type id of the same type (a spread's `A` and its tuple).
+                let tn = cx.display(t);
+                if std::env::var("VELT_MUT").as_deref() == Ok("2") {
+                    eprintln!("NoLock {t:?} {span:?} guard={guard:?} f={f:?} {tn}");
+                }
+                if checked.insert((t, span, parse))
+                    && lock_sites.insert((tn.clone(), span))
+                    && cx.holds_lock(t)
+                {
                     cx.error(
                         Diagnostic::error(
                             format!("`{tn}` is read here without its lock (printed, formatted or converted to `any` through a type parameter)"),

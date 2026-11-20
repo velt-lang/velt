@@ -33,7 +33,7 @@ async function main(): Promise<void> {
   console.log(await greet("ann"));
   const double = serverFn({ name: "double", handler: (rq: Ctx, n: number): number => n * 2 });
   console.log(await double(21));
-  const ping = serverFn({ name: "ping", handler: (rq: Ctx): string => rq.id + " pong" });
+  const ping = serverFn({ name: "ping", handler: (rq: Ctx, input: void): string => rq.id + " pong" });
   console.log(await ping());
 }
 main();

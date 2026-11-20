@@ -1,0 +1,21 @@
+sema: an overload's callback with a rest typed by a type parameter, and its function result, convert with a check (#379)
+
+Two conversions an overload signature's body makes to call its implementation, which TypeScript
+allows and Velt refused (TS2394), now made with checks at run time:
+
+- A signature callback whose rest parameter is typed by one of its type parameters
+  (`impl: (rq: Ctx, ...args: A) => R`), where the implementation takes a callback with a rest of
+  an array (`(rq: Ctx, ...args: unknown[]) => unknown`, alone or a member of a union), is passed
+  as `impl as unknown as <that type>` (`overload_adapter.rs` `rest_param_cast`). The instance's
+  value is the callback's own function, and called through the wider type its arguments are
+  converted to what it takes: a TypeError when one isn't. Only when the parameters before the
+  rest and a `throws` clause are written alike, the callback isn't optional, and the
+  implementation's type names none of its own type parameters.
+- The implementation's result, when it is a function or a callable object of `unknown` values
+  where the signature promises typed ones (`(input: unknown) => Promise<unknown>` as
+  `(input: S) => Promise<R>`), is converted as an interface adapter converts (`adapting`): a
+  wrapper whose results are checked when they come (`signature_result`, `checked_result`).
+  Not for other results (an array or object would be a copy), nor for unions, which keep the
+  member check.
+
+A function member of a nullable or union result (`(() => R) | undefined`) is converted the same way (`checked_narrow`), so a value that fits is no longer a panic arm. An async callback, or one whose result can hold a promise (`number | Promise<number>`), passed where a signature takes a callback with a rest typed by a type parameter is refused at the call (`async_through_cast`): the implementation calls it as a function of `unknown` values, and a promise can't be returned through one yet (#924, #1674); before, it was a TypeError when called.
