@@ -355,25 +355,13 @@ export const T_TRANSFER: usize = 168;
 /** The task's id for `velt_rt_task_id` (0 until first asked for; sched_id.velt). */
 export const T_ID: usize = 176;
 /**
- * The task's yields waiting for their turn, in the order they came (sched_yield.velt): the last
- * one of a circular list (0: none).
+ * The task's yield block (sched_yield_list.velt: its list of yields waiting for their turn, its
+ * yield generation and numbers), made when it first needs one (0: none), freed with the task.
  */
 export const T_YIELDS: usize = 184;
-/**
- * Its yield generation (`u32`): one more in each poll after one that made stored yields (flag
- * `FRESH`), so a stored yield made in an earlier generation had its turn (sched_yield.velt).
- */
-export const T_YGEN: usize = 192;
-/** The number (`u32`) of its last yield made, for the order of its list (sched_yield.velt). */
-export const T_YSEQ: usize = 196;
-/**
- * The number (`u32`) of the yield its root waits for, made in this poll with no record on the
- * list (0: none), whose turn comes before the yields after it that join the list.
- */
-export const T_YROOT: usize = 200;
 /** The join handle (a heap future: its header, then its result slot at `T_SLOT`). */
-export const T_JOIN: usize = 208;
-export const T_SLOT: usize = 224;
+export const T_JOIN: usize = 192;
+export const T_SLOT: usize = 208;
 
 /** A task's states. */
 export const IDLE: u32 = 0;
@@ -393,8 +381,13 @@ export const DONE: u32 = 4;
 export const ROOT: u32 = 4;
 /** Yields of it wait for their turn (`T_YIELDS`): its next poll fires them (sched_yield.velt). */
 export const YIELDS: u32 = 1;
-/** It made stored yields in this poll: its next poll begins a yield generation (`T_YGEN`). */
+/** It made stored yields in this poll: its next poll begins a yield generation (`T_YIELDS`). */
 export const FRESH: u32 = 1048576;
+/**
+ * Its root yielded in this poll with no record, its list empty (sched_yield.velt `rootYield`): a
+ * yield joining the list in this poll gets the root's record first.
+ */
+export const ROOT_ALONE: u32 = 2097152;
 /**
  * Its root (or a child state polled with the root's cx: an inline `Promise.all`'s) yielded in this
  * poll (sched_yield.velt): what yielded resumes only in a later poll, though this one may poll the

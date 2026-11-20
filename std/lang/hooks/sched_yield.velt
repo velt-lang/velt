@@ -4,22 +4,22 @@
 // order they were made, each after the microtasks queued before it, and the microtasks one queues
 // run before the next yield's turn.
 //
-// A task's yields wait for their turn on its yield list (`T_YIELDS`, flag `YIELDS`), in the order
-// they were made (their numbers, `T_YSEQ`), and its next poll fires them one at a time
-// (sched_fire.velt `fireYields`): each wakes what waits for it and runs it, then the task's
+// A task's yields wait for their turn on its yield list (in its yield block, `T_YIELDS`; flag
+// `YIELDS`), in the order they were made (their numbers), and its next poll fires them one at a
+// time (sched_fire.velt `fireYields`): each wakes what waits for it and runs it, then the task's
 // microtasks, the promises they woke and its root if it woke run before the next. On the list:
 // - an awaited yield of a started promise or of a join's child: a record with a clone of its
 //   waker. A started promise that yielded is flagged `YIELDING` until its turn: its owner does not
 //   adopt it meanwhile (sched_node.velt `pollNode`), and its yield does not go on.
 // - a stored `yieldNow()` (a heap future, a leaf its waiter polls) that its task polled in the
 //   poll that made it, for a waiter other than the root.
-// A stored yield joins the list only then. Made in an earlier generation of its task (`T_YGEN`,
-// one more in each poll after one that made stored yields: flag `FRESH`), its turn has passed: it
-// is ready. Polled by another task first, its turn is that task's, from that task's poll then.
+// A stored yield joins the list only then. Made in an earlier generation of its task (one more in
+// each poll after one that made stored yields: flag `FRESH`), its turn has passed: it is ready.
+// Polled by another task first, its turn is that task's, from that task's poll then.
 // The root waits on the list only behind yields already on it. Otherwise its state turns
 // `NOTIFIED` and its next poll resumes it (flag `ROOT_YIELDED` holds it back if this poll polls
-// the root again for its microtasks); its turn's number (`T_YROOT`) gives it a record first if
-// yields made after it join the list in this poll.
+// the root again for its microtasks; flag `ROOT_ALONE` gives it a record first if yields made
+// after it join the list in this poll).
 // Off the workers (a C library's thread, no task current), a yield wakes at once, as before.
 // Only a program that yields compiles the list's turns (`stdUsed("yields")`).
 
@@ -53,7 +53,7 @@ export function schedYield(cx: usize): void {
   if (vt === t.main() + t.E_NODE_VT) {
     m.or32(w + node.N_FLAGS, node.YIELDING);
   }
-  ls.join(k, ls.record(m.wakerClone(w), ls.nextSeq(k)));
+  ls.join(k, ls.record(m.wakerClone(w), ls.nextSeq(ls.block(k))));
 }
 
 /**
@@ -64,18 +64,23 @@ function rootYield(k: usize, y: usize): void {
   if (t.has(k, t.ROOT_YIELDED)) {
     return;
   }
-  t.flags(k, t.ROOT_YIELDED, 0);
-  const seq = y === 0 ? ls.nextSeq(k) : m.ld32(y + ls.Y_SEQ);
-  if (m.ld(k + t.T_YIELDS) === 0) {
+  const b = m.ld(k + t.T_YIELDS);
+  if (b === 0 || ls.waiting(k) === 0) {
     // Polled again once this poll returns, at the back of the queue. While it runs, only a wake
     // changes its state, from RUNNING to NOTIFIED: a store, not a swap.
+    t.flags(k, t.ROOT_YIELDED | t.ROOT_ALONE, 0);
     m.store32(k + t.T_STATE, t.NOTIFIED);
-    m.st32(k + t.T_YROOT, seq);
+    if (b !== 0) {
+      // Its number, for a record if yields join after it: an awaited yield's is the last one
+      // made (that one, made before it, comes before it; with none made yet, 0: before any).
+      m.st32(b + ls.B_ROOT, y !== 0 ? m.ld32(y + ls.Y_SEQ) : m.ld32(b + ls.B_SEQ));
+    }
     return;
   }
+  t.flags(k, t.ROOT_YIELDED, 0);
   // Behind the yields made before it.
   if (y === 0) {
-    ls.join(k, ls.record(ls.ROOT, seq));
+    ls.join(k, ls.record(ls.ROOT, ls.nextSeq(b)));
   } else {
     m.st(y + ls.Y_WAKER, ls.ROOT);
     ls.join(k, y);
@@ -136,9 +141,10 @@ export function schedYieldFut(): usize {
 /** Stored yield `f` is task `k`'s, of its generation now, numbered (on `k`'s thread). */
 @inline("always")
 function made(f: usize, k: usize): void {
+  const b = ls.block(k);
   m.st(f + ls.Y_TASK, k);
-  m.st32(f + ls.Y_GEN, m.ld32(k + t.T_YGEN));
-  m.st32(f + ls.Y_SEQ, ls.nextSeq(k));
+  m.st32(f + ls.Y_GEN, m.ld32(b + ls.B_GEN));
+  m.st32(f + ls.Y_SEQ, ls.nextSeq(b));
   t.flags(k, t.FRESH, 0);
 }
 
@@ -184,6 +190,12 @@ function storedPoll(f: usize, cx: usize): u32 {
 }
 
 function storedDrop(f: usize): void {
+  const s = m.load(f + ls.Y_STATE);
+  if (s === ls.NEW || s === ls.FIRED) {
+    // On no list: nothing else touches it (a turn that fired it took its waker).
+    m.release(f, ls.Y_SIZE);
+    return;
+  }
   if (m.ld(f + ls.Y_TASK) === current()) {
     // In its task's poll (`storedPoll`): plain loads and stores.
     const mine = m.ld(f + ls.Y_WAKER);
@@ -217,7 +229,8 @@ function storedDrop(f: usize): void {
  */
 function pollNew(f: usize, w: usize): u32 {
   let k = m.ld(f + ls.Y_TASK);
-  const j = current();
+  // Its task's root is polled only in its task's poll: no need to ask which task runs here.
+  const j = w === k ? k : current();
   if (j !== k) {
     if (j === 0) {
       // Off the workers: ready at its next poll.
@@ -227,7 +240,7 @@ function pollNew(f: usize, w: usize): u32 {
     }
     made(f, j);
     k = j;
-  } else if (m.ld32(f + ls.Y_GEN) !== m.ld32(k + t.T_YGEN)) {
+  } else if (m.ld32(f + ls.Y_GEN) !== m.ld32(m.ld(k + t.T_YIELDS) + ls.B_GEN)) {
     return 1;
   }
   if (w === k) {
@@ -270,10 +283,10 @@ function yieldDrop(f: usize): void {
 @inline("always")
 export function begin(k: usize, fl: u32): void {
   if ((fl & (t.ROOT_YIELDED | t.FRESH)) !== 0) {
-    t.flags(k, 0, t.ROOT_YIELDED | t.FRESH);
-    m.st32(k + t.T_YROOT, 0);
+    t.flags(k, 0, t.ROOT_YIELDED | t.ROOT_ALONE | t.FRESH);
     if ((fl & t.FRESH) !== 0) {
-      m.st32(k + t.T_YGEN, ((m.ld32(k + t.T_YGEN) as usize + 1) & 0xffffffff) as u32);
+      const b = m.ld(k + t.T_YIELDS);
+      m.st32(b + ls.B_GEN, ((m.ld32(b + ls.B_GEN) as usize + 1) & 0xffffffff) as u32);
     }
   }
 }

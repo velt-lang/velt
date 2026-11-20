@@ -10,6 +10,7 @@ import * as io from "./sched_io";
 import * as m from "./sched_mem";
 import * as q from "./sched_queue";
 import * as tk from "./sched_task";
+import * as yl from "./sched_yield_list";
 
 declare function velt_rt_flush(): void;
 declare c("c") function velt_rt_latch_open$rt(l: u64): void;
@@ -120,6 +121,7 @@ export function wake(t: usize): void {
 /** Gives back one reference to task `t`: the last frees it. */
 export function release(t: usize): void {
   if (m.dec(t + tk.T_REFS) === 1) {
+    yl.freeBlock(t);
     m.release(t, m.ld(t + tk.T_BYTES));
   }
 }

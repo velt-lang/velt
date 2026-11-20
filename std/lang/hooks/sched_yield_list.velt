@@ -1,10 +1,10 @@
 // velt/lang/hooks (internal): a task's yield list under the executor in Velt (sched_yield.velt,
-// #3241): its yields waiting for their turn (`T_YIELDS`, the last of a circular list; flag
-// `YIELDS`), in the order they were made (their numbers, `T_YSEQ`), which its next poll fires one
-// at a time (sched_fire.velt `fireYields`). A yield joins it on the thread polling its task, and
-// only that thread takes and fires it.
+// #3241), in its yield block (`T_YIELDS`, made when the task first needs one): its yields
+// waiting for their turn (the last of a circular list; flag `YIELDS`), in the order they were
+// made (their numbers), which its next poll fires one at a time (sched_fire.velt `fireYields`).
+// A yield joins it on the thread polling its task, and only that thread takes and fires it.
 
-import { inline, stdUsed } from "velt/lang/intrinsics";
+import { inline, noInline, stdUsed } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as node from "./sched_node";
 import * as t from "./sched_task";
@@ -33,11 +33,37 @@ export const FIRING: usize = 4;
  */
 export const ROOT: usize = 1;
 
-/** Task `k`'s next yield number (on its thread). */
+// A task's yield block: its list's last yield (0: none), its yield generation (`u32`: one more
+// in each poll after one that made stored yields, flag `FRESH`), its last yield's number (`u32`),
+// and the number of the yield its root waits for with no record (`u32`, flag `ROOT_ALONE`).
+const B_LAST: usize = 0;
+export const B_GEN: usize = 8;
+export const B_SEQ: usize = 12;
+export const B_ROOT: usize = 16;
+export const B_SIZE: usize = 24;
+
+/** Task `k`'s yield block, made now if it has none (on its thread). */
 @inline("always")
-export function nextSeq(k: usize): u32 {
-  const n = ((m.ld32(k + t.T_YSEQ) as usize + 1) & 0xffffffff) as u32;
-  m.st32(k + t.T_YSEQ, n);
+export function block(k: usize): usize {
+  const b = m.ld(k + t.T_YIELDS);
+  return b !== 0 ? b : makeBlock(k);
+}
+
+@noInline
+function makeBlock(k: usize): usize {
+  const b = m.alloc(B_SIZE);
+  m.st(b + B_LAST, 0);
+  m.st(b + B_GEN, 0);
+  m.st(b + B_ROOT, 0);
+  m.st(k + t.T_YIELDS, b);
+  return b;
+}
+
+/** Yield block `b`'s next yield number (on its task's thread). */
+@inline("always")
+export function nextSeq(b: usize): u32 {
+  const n = ((m.ld32(b + B_SEQ) as usize + 1) & 0xffffffff) as u32;
+  m.st32(b + B_SEQ, n);
   return n;
 }
 
@@ -55,30 +81,29 @@ export function record(w: usize, seq: u32): usize {
 
 /**
  * Yield `y` joins task `k`'s list (on the thread polling `k`) by its number: at the end, unless a
- * yield made after it joined first. The root's turn placed with no record (`T_YROOT`) gets one
- * first, so the yields made after it come after it.
+ * yield made after it joined first. The root's turn placed with no record (`ROOT_ALONE`) gets one
+ * first, so the yields made after it come after it (a yield of the same number, made before the
+ * root's, comes before it).
  */
 export function join(k: usize, y: usize): void {
+  const b = block(k);
   m.st(y + Y_STATE, QUEUED);
-  let last = m.ld(k + t.T_YIELDS);
-  if (last === 0) {
-    const r = m.ld32(k + t.T_YROOT);
-    if (r !== 0) {
-      m.st32(k + t.T_YROOT, 0);
-      last = record(ROOT, r);
-      m.st(last + Y_STATE, QUEUED);
-      m.st(last + Y_NEXT, last);
-      m.st(k + t.T_YIELDS, last);
-    }
+  let last = m.ld(b + B_LAST);
+  if (last === 0 && t.has(k, t.ROOT_ALONE)) {
+    t.flags(k, 0, t.ROOT_ALONE);
+    last = record(ROOT, m.ld32(b + B_ROOT));
+    m.st(last + Y_STATE, QUEUED);
+    m.st(last + Y_NEXT, last);
+    m.st(b + B_LAST, last);
   }
   const seq = m.ld32(y + Y_SEQ);
   if (last === 0) {
     m.st(y + Y_NEXT, y);
-    m.st(k + t.T_YIELDS, y);
+    m.st(b + B_LAST, y);
   } else if (m.ld32(last + Y_SEQ) < seq) {
     m.st(y + Y_NEXT, m.ld(last + Y_NEXT));
     m.st(last + Y_NEXT, y);
-    m.st(k + t.T_YIELDS, y);
+    m.st(b + B_LAST, y);
   } else {
     // Made before the last: after the last one made before it (from the first).
     let p = last;
@@ -98,23 +123,39 @@ export function join(k: usize, y: usize): void {
  */
 export function take(k: usize): usize {
   t.flags(k, 0, t.YIELDS);
-  const last = m.ld(k + t.T_YIELDS);
+  const b = m.ld(k + t.T_YIELDS);
+  const last = b === 0 ? 0 : m.ld(b + B_LAST);
   if (last === 0) {
     return 0;
   }
-  m.st(k + t.T_YIELDS, 0);
+  m.st(b + B_LAST, 0);
   const first = m.ld(last + Y_NEXT);
   m.st(last + Y_NEXT, 0);
   return first;
 }
 
 /**
- * The last of task `k`'s yields waiting for their turn (`T_YIELDS`), 0 for none: always in a
- * program that never yields.
+ * The last of task `k`'s yields waiting for their turn, 0 for none: always in a program that
+ * never yields.
  */
 @inline("always")
 export function waiting(k: usize): usize {
-  return stdUsed("yields") ? m.ld(k + t.T_YIELDS) : 0;
+  if (!stdUsed("yields")) {
+    return 0;
+  }
+  const b = m.ld(k + t.T_YIELDS);
+  return b === 0 ? 0 : m.ld(b + B_LAST);
+}
+
+/** Task `k`'s yield block goes with the task (its list is empty: the task ended). */
+@inline("always")
+export function freeBlock(k: usize): void {
+  if (stdUsed("yields")) {
+    const b = m.ld(k + t.T_YIELDS);
+    if (b !== 0) {
+      m.release(b, B_SIZE);
+    }
+  }
 }
 
 /** The yield after `y` in a list `take` gave. */
