@@ -309,9 +309,7 @@ velt_rt velt_rt_strbuf_push_words
 velt_rt velt_rt_strbuf_spare
 velt_rt velt_rt_symbol_described
 velt_rt velt_rt_symbol_description
-velt_rt velt_rt_symbol_for
 velt_rt velt_rt_symbol_new
-velt_rt velt_rt_symbol_registered
 velt_rt velt_rt_task_gate
 velt_rt velt_rt_task_gate_free
 velt_rt velt_rt_task_gate_wait
