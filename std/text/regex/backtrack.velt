@@ -95,6 +95,7 @@ export function backtrack(
       fuel--;
       if (fuel < 0) {
         arrayTruncate(stack, 0);
+        m.fuel = -1;
         return SPENT;
       }
       const op = w & OP_MASK;
@@ -206,7 +207,7 @@ export function backtrack(
         pc++;
       } else if (op == OP_MATCH) {
         arrayTruncate(stack, 0);
-        m.fuel = fuel;
+        m.fuel = memory ? m.fuel : fuel;
         return MATCHED;
       } else {
         break;
@@ -214,7 +215,7 @@ export function backtrack(
     }
     while (true) {
       if (stack.length == 0) {
-        m.fuel = fuel;
+        m.fuel = memory ? m.fuel : fuel;
         return FAILED;
       }
       const job = stack.pop() ?? 0;

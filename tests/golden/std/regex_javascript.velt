@@ -1,0 +1,125 @@
+// check: no leaks
+// What JavaScript's regular expressions do and a translation to another engine's flavour does
+// not: code units without the `u` flag, captures that do not outlive an iteration, iterations
+// that must match something, case folding, V8's errors. Node prints the same.
+
+function units(s: string): string {
+  const out: string[] = [];
+  for (let i = 0; i < s.length; i++) {
+    out.push(s.charCodeAt(i).toString(16));
+  }
+  return out.join(" ");
+}
+
+function message(pattern: string, flags: string): string {
+  try {
+    new RegExp(pattern, flags);
+    return "ok";
+  } catch (e) {
+    return e.message;
+  }
+}
+
+function codeUnits() {
+  console.log(/^.$/.test("😀"), /^.$/u.test("😀"), /^..$/.test("😀"), "😀".match(/./g)?.length);
+  console.log(units("😀".replace(/(?:)/g, "-")), units("😀".replace(/(?:)/gu, "-")));
+  console.log(units("a😀b".replace(/[^a]/g, "<$&>")), units("a😀b".replace(/[^a]/gu, "<$&>")));
+  console.log("😀😀".search(/\ude00\ud83d/), "😀😀".search(/\ude00\ud83d/u), /😀{2}/.test("😀😀"));
+  console.log(units("x😀y".split(/(?:)/).join("|")), units("x😀y".split(/(?:)/u).join("|")));
+  console.log("😀".replace(/\B/gu, "-").length, "a😀".search(/\B/u), "é😀é".search(/😀/));
+}
+
+function iterations() {
+  console.log("ab".replace(/(?:(a)|b)*/, "[$1]"), "ba".replace(/(?:(a)|b)*/, "[$1]"));
+  console.log(
+    "b".replace(/(a*)*/, "[$1]"),
+    "b".replace(/(a*)+/, "[$1]"),
+    "aab".replace(/(a*)*/, "[$1]"),
+  );
+  console.log(
+    "ab".replace(/(a?){1,2}b/, "[$1]"),
+    "b".replace(/(a?)?b/, "[$1]"),
+    "xBk".replace(/((.?){1,2})k/, "[$1|$2]"),
+  );
+  console.log(
+    "aaaa".replace(/a{2,3}?/g, "x"),
+    "aaaa".replace(/a{2,3}/g, "x"),
+    "abcabc".replace(/(?:a|ab)(?:c|bcd)?/g, "x"),
+  );
+  console.log(
+    "ab".match(/a|ab/g),
+    "ab".match(/ab|a/g),
+    "abab".match(/(?:ab)*?b/g),
+    "xyz".match(/\w*?/g),
+  );
+}
+
+function folding() {
+  console.log(
+    /K/i.test("k"),
+    /K/iu.test("k"),
+    /ſ/i.test("s"),
+    /ſ/iu.test("S"),
+    /[a-z]/iu.test("ſ"),
+  );
+  console.log(
+    /\w/iu.test("ſ"),
+    /\W/iu.test("ſ"),
+    /\w/i.test("ſ"),
+    /\bk/iu.test("Kk"),
+    /σ/i.test("ς"),
+  );
+  console.log(
+    /straße/i.test("STRASSE"),
+    /É/i.test("é"),
+    /[à-þ]/i.test("À"),
+    /ǆ/i.test("ǅ"),
+    /[^k]/iu.test("K"),
+  );
+  console.log(
+    /\p{Lu}+/u.exec("abcDEf")?.index,
+    /\p{Script=Greek}/u.test("α"),
+    /\P{L}/u.test("é"),
+    /[\p{Nd}_]+$/u.test("٣_7"),
+  );
+  console.log(
+    /\p{L}/.test("p{L}"),
+    /\p{scx=Grek}/u.test("͂"),
+    /\p{sc=Grek}/u.test("͂"),
+    /\p{Lu}/iu.test("a"),
+  );
+}
+
+function lines() {
+  console.log("a b".replace(/^/gm, ">"), "a b".replace(/$/gm, "<").length, /a.b/.test("a b"));
+  console.log("a\r\nb".split(/^/m).length, /^b$/m.test("a\rb\n"), /a$/.test("a\n"), /\s/.test("﻿"));
+}
+
+function errors() {
+  for (const p of [
+    "(a",
+    "a)",
+    "a**",
+    "[b-a]",
+    "\\",
+    "(?<n",
+    "(?<n>a)(?<n>b)",
+    "a{2,1}",
+    "(?x)",
+    "x{1}{2}",
+  ]) {
+    console.log(message(p, ""));
+  }
+  for (const p of ["a{", "]", "\\_", "\\x4", "\\p{Nope}", "[\\d-a]", "\\01", "\\c"]) {
+    console.log(message(p, ""), "|", message(p, "u"));
+  }
+  console.log(message("a", "gg"), "|", message("a", "uv"), "|", message("a", "q"));
+}
+
+function main() {
+  codeUnits();
+  iterations();
+  folding();
+  lines();
+  errors();
+}
