@@ -386,7 +386,10 @@ fn check_timed(
     // round checks, and std's frozen unit the app's rounds start from.
     let stage = std::cell::Cell::new(units::Stage::Both);
     // std's modules first, which std's unit is checked over alone, then the app's.
-    let order = (opts.units && units::stage2()).then(|| units::Order::of(modules, root));
+    let order = (opts.units && units::stage2()).then(|| {
+        let generated = gen.map_or(&[][..], |g| &g.input.files[..]);
+        units::Order::of(modules, root, generated)
+    });
     let std_snap: std::cell::RefCell<Option<ctx::Ctx>> = Default::default();
     // What every context of this check holds of the program, which a unit does not save
     // (`units::codec::unit`'s `skip`): the rewrites' facts, the generator, the loads. Installed in

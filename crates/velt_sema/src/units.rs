@@ -99,8 +99,11 @@ pub(crate) fn stage2() -> bool {
 
 /// The modules of a check by units in the order its contexts hold them (`VELT_UNITS=2`): std's
 /// first, which std's unit is checked over alone, then the app's, added to a copy of std's frozen
-/// unit (after any generated module std's check added). A unit over std's modules alone does not
-/// depend on the app's, so a later step can keep it for another program.
+/// unit. A module of generated code is the app's, also one generated for a std module's
+/// declarations (`<generated>/std/…`, which the driver hands in when an earlier build made it):
+/// which ones a check gets, and what is in them, depends on the program and on what was built
+/// before. A unit over std's own modules alone depends on neither, so a later step can keep it
+/// for another program.
 pub(crate) struct Order {
     std: Vec<usize>,
     app: Vec<usize>,
@@ -108,9 +111,15 @@ pub(crate) struct Order {
 }
 
 impl Order {
-    /// The order of `modules` (a load's, the root at `root`).
-    pub(crate) fn of(modules: &[crate::SourceModule], root: usize) -> Order {
-        let (std, app) = (0..modules.len()).partition(|&m| modules[m].is_std);
+    /// The order of `modules` (a load's, the root at `root`); `generated` are the files of
+    /// generated code among them.
+    pub(crate) fn of(
+        modules: &[crate::SourceModule],
+        root: usize,
+        generated: &[velt_common::FileId],
+    ) -> Order {
+        let (std, app) = (0..modules.len())
+            .partition(|&m| modules[m].is_std && !generated.contains(&modules[m].file));
         Order { std, app, root }
     }
 
