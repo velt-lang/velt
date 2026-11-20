@@ -142,7 +142,7 @@ export function replaceMatches(
   }
   const found = m.found;
   if (found.length == 0) {
-    return s;
+    return s.clone();
   }
   let buf = "";
   velt_rt_strbuf_new(len as u64, buf);
@@ -233,7 +233,7 @@ export function escapePattern(s: string): string {
     }
   }
   if (from == 0 && out == "") {
-    return s;
+    return s.clone();
   }
   out += velt_rt_str_byte_slice(s, from as u64, n as u64);
   return out;
