@@ -34,6 +34,27 @@ pub(crate) enum Stage {
     App,
 }
 
+/// What a finished unit's check keeps for a later unit's: each pass's summary of the unit's
+/// bodies, which the later unit's check starts from instead of reading those bodies again.
+#[derive(Clone, Default)]
+pub struct Summaries {
+    /// What each generic function of the unit needs of the types it is given, for `json`'s
+    /// check (converted, printed or read without a lock through a type parameter).
+    pub(crate) json_needs: crate::json::JsonNeeds,
+    /// What each body and initializer of the unit does with module state
+    /// (`module_state::check_locked_access`).
+    pub(crate) state_facts: crate::module_state::StateFacts,
+    /// The modules each module of the unit names in its code (`crate::linked`).
+    pub(crate) module_edges: crate::linked::ModuleEdges,
+}
+
+// The encoding of a finished unit (`codec`): every field, so a new one fails to build.
+codec::structs! {
+    Summaries {
+        json_needs, state_facts, module_edges,
+    }
+}
+
 /// `check_definitions` ([`crate::analysis`]) by units: std collected and checked, frozen, then
 /// the app.
 pub(crate) fn check_definitions(cx: &mut Ctx) {

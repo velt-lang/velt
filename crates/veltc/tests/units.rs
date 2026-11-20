@@ -235,6 +235,133 @@ fn std_s_unit_ends_clean_and_the_app_is_collected_as_a_whole_program_is() {
     }
 }
 
+/// std is held whole in a check by units, but only the std modules the program links have state
+/// when it runs (velt_sema `linked`): a `with` callback that calls a function value is refused
+/// only when some state could be reached, and this program has none of its own, as a
+/// whole-program check finds.
+#[test]
+fn std_state_the_program_does_not_link_is_not_module_state() {
+    let src = r#"
+function main() {
+  const m = shared(new Mutex<number>(0));
+  const add = () => 100;
+  const run = (f: () => number) => {
+    m.with((v) => {
+      v += f();
+    });
+  };
+  run(add);
+  console.log(m.with((v) => v));
+}
+"#;
+    let whole = check_in(None, src);
+    let stderr = String::from_utf8_lossy(&whole.stderr);
+    assert!(whole.status.success(), "{stderr}");
+    for units in ["1", "2"] {
+        let out = check_in(Some(units), src);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "VELT_UNITS={units}:\n{stderr}");
+    }
+    // The same program reading `navigator` links std's module that holds it, through a name in
+    // its code and no import: that module's state is the program's, and the callback is refused.
+    let src = src.replace(
+        "m.with((v) => v))",
+        "m.with((v) => v), navigator.hardwareConcurrency)",
+    );
+    let whole = check_in(None, &src);
+    let errors = error_lines(&whole);
+    assert!(
+        errors.iter().any(|l| l.contains("may use module state")),
+        "{errors:?}"
+    );
+    for units in ["1", "2"] {
+        assert_eq!(
+            errors,
+            error_lines(&check_in(Some(units), &src)),
+            "VELT_UNITS={units}"
+        );
+    }
+}
+
+/// With std checked as a unit of its own (`VELT_UNITS=2`), what std's bodies do with module
+/// state comes from std's unit (`StateFacts`), not from reading std's bodies again: a `with`
+/// callback that reaches the program's state through std's code (a generator's dispose hook,
+/// a sort's comparison) is refused with the path through it, as by a whole-program check.
+#[test]
+fn std_s_unit_keeps_what_its_bodies_do_with_module_state() {
+    for path in [
+        "lang/errors/module_let_mutex_with.velt",
+        "lang/errors/mutex_with_opaque.velt",
+        "lang/errors/rwlock_read_probe_m3.velt",
+    ] {
+        let whole = check_golden_two(path, false);
+        let two = check_golden_two(path, true);
+        assert!(!whole.status.success(), "{path}");
+        assert_eq!(whole.status.code(), two.status.code(), "{path}");
+        assert_eq!(error_lines(&whole), error_lines(&two), "{path}");
+    }
+}
+
+/// A body's edges are kept as written, and its calls through a slot resolved in every check
+/// against the program's classes (velt_sema `module_state_facts`): a `with` callback that
+/// reaches module state through an override, through an interface's implementation or through
+/// a function it calls is refused with that path, by units as by a whole-program check.
+#[test]
+fn a_call_reaches_the_module_state_the_code_it_may_run_uses() {
+    let src = r#"
+let count = 0;
+class A {
+  run(): number {
+    return 1;
+  }
+}
+class B extends A {
+  override run(): number {
+    return count;
+  }
+}
+interface R {
+  go(): number;
+}
+class C implements R {
+  go(): number {
+    return count;
+  }
+}
+function pick(n: number): A {
+  return n > 0 ? new B() : new A();
+}
+function main() {
+  const m = shared(new Mutex<number>(0));
+  const a = pick(1);
+  const r: R = new C();
+  m.with((v) => {
+    v += a.run();
+  });
+  m.with((v) => {
+    v += r.go();
+  });
+  m.with((v) => {
+    v += bump();
+  });
+}
+function bump(): number {
+  return count++;
+}
+"#;
+    let errors = error_lines(&check_in(None, src));
+    for through in ["(through `B.run`)", "(through `C.go`)", "(through `bump`)"] {
+        assert!(errors.iter().any(|l| l.contains(through)), "{errors:?}");
+    }
+    for units in ["1", "2"] {
+        assert_eq!(
+            errors,
+            error_lines(&check_in(Some(units), src)),
+            "VELT_UNITS={units}"
+        );
+    }
+}
+
 /// std's unit has no program, so none of its modules is the root whose names are left
 /// unqualified: the passes that know std's methods by their `std/` names (a `concat` returns a
 /// new array, `ownership::derived`) know them in a check by units too. A `read` callback that
