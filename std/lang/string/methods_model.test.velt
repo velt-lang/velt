@@ -276,6 +276,13 @@ function check(seed: u64[]): string {
   const s = genUnits(seed);
   const n = genNeedle(seed, s);
   const to = genNeedle(seed, s);
+  // Often with one of a replacement's patterns: `$$`, `$&`, `` $` ``, `$'`, or a `$` that is none.
+  if (below(seed, 10) < 4) {
+    to.push(0x24);
+    to.push(pick(seed, [0x24, 0x26, 0x60, 0x27, 0x31]));
+    const alphabet = below(seed, 4);
+    pushChar(seed, alphabet, to);
+  }
   const st = text(s);
   const nt = text(n);
   const tt = text(to);
