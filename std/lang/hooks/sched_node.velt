@@ -202,7 +202,7 @@ function pollNode(f: usize, cx: usize, claim: bool): u32 {
     const r = unsafe { statePoll(m.ld(n + N_POLL), f + 16, cx) };
     m.st(e + t.E_ADOPTING, 0);
     const owned = r !== 1 && m.load(n + N_REFS) === 2;
-    const listing = owned && (fl & lost.LISTED) === 0 ? lost.LISTED : 0;
+    const listing = owned && (fl & lost.LISTED) === 0 && !t.has(task, t.ROOT) ? lost.LISTED : 0;
     const was = m.xor32(n + N_FLAGS, RUNNING | listing);
     if (r === 1) {
       adoptedDone(task, n, claim ? FINISHED | DELIVERED : FINISHED);

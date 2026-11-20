@@ -52,7 +52,8 @@ export function ownerOnly(task: usize, n: usize, was: u32): u32 {
   if (w !== 0) {
     m.wakerDrop(w);
   }
-  if ((was & lt.LISTED) === 0) {
+  // Not for `main`'s root, whose park is never looked at (sched_task_lost.velt `parks`).
+  if ((was & lt.LISTED) === 0 && !t.has(task, t.ROOT)) {
     lt.list(task, n);
   }
   return 0;
@@ -94,7 +95,7 @@ function leftNested(e: usize, task: usize, n: usize, fl: u32): void {
       panic("ICE: a promise left without an awaiter under an adoption can still run");
     }
   }
-  if ((fl & lt.LISTED) === 0) {
+  if ((fl & lt.LISTED) === 0 && !t.has(task, t.ROOT)) {
     nd.setFlags(n, lt.LISTED);
   }
   ownerOnly(task, n, fl);
