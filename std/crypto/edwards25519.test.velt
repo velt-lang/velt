@@ -1,0 +1,97 @@
+// velt/crypto (tests): the Ed25519 curve (edwards25519.velt): which encodings decompress, that
+// a point encodes back to what it came from, and that the table of the base point's odd
+// multiples agrees with additions from the base point.
+import { describe, expect, it } from "velt/test";
+import { hexDecode, hexEncode } from "velt/encoding/hex";
+import {
+  addPoint,
+  copyPoint,
+  decompress,
+  doublePoint,
+  edwardsField,
+  encodePoint,
+  FIRST,
+  loadBaseOdd,
+  negatePoint,
+  premultiply,
+} from "velt/crypto/edwards25519";
+
+// The base point, 2B and 3B (RFC 8032 §5.1 gives B; the others are its multiples).
+const BASE = "5866666666666666666666666666666666666666666666666666666666666666";
+const TWO_B = "c9a3f86aae465f0e56513864510f3997561fa2c9e85ea21dc2292309f3cd6022";
+const THREE_B = "d4b4f5784868c3020403246717ec169ff79e26608ea126a1ab69ee77d1b16712";
+
+const P: usize = FIRST;
+const Q: usize = FIRST + 4;
+const TABLE: usize = FIRST + 8;
+
+describe("edwards25519", () => {
+  it("decompresses a point and encodes it back", () => {
+    const f = edwardsField(8);
+    for (const hex of [BASE, TWO_B, THREE_B]) {
+      expect(decompress(f, P, hexDecode(hex))).toBe(true);
+      expect(hexEncode(encodePoint(f, P))).toBe(hex);
+    }
+    // With the sign bit the other way it is the negative: the same y, the other x.
+    const negative = hexDecode(BASE);
+    negative[31] |= 0x80;
+    expect(decompress(f, P, negative)).toBe(true);
+    expect(hexEncode(encodePoint(f, P))).toBe(hexEncode(negative));
+  });
+
+  it("refuses a y that no x goes with", () => {
+    const f = edwardsField(8);
+    // y = 2: (y^2 - 1) / (d y^2 + 1) is not a square.
+    const y = hexDecode("0200000000000000000000000000000000000000000000000000000000000000");
+    expect(decompress(f, P, y)).toBe(false);
+    y[31] |= 0x80;
+    expect(decompress(f, P, y)).toBe(false);
+  });
+
+  it("doubles, adds and negates as the base point's multiples say", () => {
+    const f = edwardsField(8);
+    decompress(f, P, hexDecode(BASE));
+    copyPoint(f, Q, P);
+    doublePoint(f, Q);
+    expect(hexEncode(encodePoint(f, Q))).toBe(TWO_B);
+    // 2B + B, and B + B by the addition (it is complete).
+    premultiply(f, P);
+    addPoint(f, Q, P, false);
+    expect(hexEncode(encodePoint(f, Q))).toBe(THREE_B);
+    decompress(f, Q, hexDecode(BASE));
+    addPoint(f, Q, P, false);
+    expect(hexEncode(encodePoint(f, Q))).toBe(TWO_B);
+    // 3B - B.
+    decompress(f, Q, hexDecode(THREE_B));
+    negatePoint(f, P, P);
+    addPoint(f, Q, P, false);
+    expect(hexEncode(encodePoint(f, Q))).toBe(TWO_B);
+  });
+
+  it("has the base point's odd multiples in its table", () => {
+    const f = edwardsField(8 + 32 + 4);
+    loadBaseOdd(f, TABLE);
+    // The identity plus each entry, taken as affine, against B, B + 2B, .. (its x and y).
+    decompress(f, Q, hexDecode(BASE));
+    decompress(f, P, hexDecode(TWO_B));
+    premultiply(f, P);
+    for (let i: usize = 0; i < 8; i++) {
+      const expected = hexEncode(encodePoint(f, Q));
+      const acc = FIRST + 40;
+      f.set(acc, 0);
+      f.set(acc + 1, 1);
+      f.set(acc + 2, 1);
+      f.set(acc + 3, 0);
+      addPoint(f, acc, TABLE + 4 * i, true);
+      expect(`${i} ${hexEncode(encodePoint(f, acc))}`).toBe(`${i} ${expected}`);
+      addPoint(f, Q, P, false);
+      // And 2B plus the entry is the next odd multiple: here the entry's 2 d T counts, which it
+      // does not when added to the identity.
+      decompress(f, acc, hexDecode(TWO_B));
+      addPoint(f, acc, TABLE + 4 * i, true);
+      expect(`2B + ${i} ${hexEncode(encodePoint(f, acc))}`).toBe(
+        `2B + ${i} ${hexEncode(encodePoint(f, Q))}`,
+      );
+    }
+  });
+});

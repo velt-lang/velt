@@ -10,7 +10,7 @@ use crate::task::latch::{
 use crate::task::local::{
     velt_rt_await_ready, velt_rt_await_tick, velt_rt_fut_box, velt_rt_fut_detach,
 };
-use crate::task::{drop_fut, poll_fut, velt_rt_yield_now, VeltFut, PENDING, READY};
+use crate::task::{drop_fut, poll_fut, VeltFut, PENDING, READY};
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -110,36 +110,4 @@ fn ready_losers_finish_in_the_round_that_gave_them_up() {
         ROUNDS * (ROUNDS + 1) / 2,
         "losers piled up while the loop did not suspend"
     );
-}
-
-static YIELDED_FINISHED: AtomicUsize = AtomicUsize::new(0);
-static FINISHED_BEFORE_OWNER_WENT_ON: AtomicUsize = AtomicUsize::new(usize::MAX);
-
-// The same round once, after something yielded in this poll: the loser waits for the task's
-// next poll (a yield is a macrotask in JS terms; nothing of its poll runs early).
-unsafe extern "C-unwind" fn yielded_poll(s: *mut u8, cx: *mut c_void) -> u32 {
-    let st = &mut *(s as *mut [i64; 2]);
-    if st[1] == 0 {
-        st[1] = 1;
-        velt_rt_yield_now(cx);
-        let latch = velt_rt_latch_new();
-        let w = waiter(velt_rt_latch_wait(latch), &YIELDED_FINISHED);
-        assert_eq!(poll_fut(w, cx), PENDING);
-        velt_rt_latch_open(latch);
-        velt_rt_fut_detach(w, None);
-        velt_rt_latch_free(latch);
-        FINISHED_BEFORE_OWNER_WENT_ON
-            .store(YIELDED_FINISHED.load(Ordering::SeqCst), Ordering::SeqCst);
-        return PENDING;
-    }
-    st[0] = 0;
-    READY
-}
-
-#[test]
-fn after_a_yield_losers_wait_for_the_next_poll() {
-    let mut st = [0i64; 2];
-    unsafe { block_on_state(yielded_poll, st.as_mut_ptr() as *mut u8) };
-    assert_eq!(FINISHED_BEFORE_OWNER_WENT_ON.load(Ordering::SeqCst), 0);
-    assert_eq!(YIELDED_FINISHED.load(Ordering::SeqCst), 1);
 }

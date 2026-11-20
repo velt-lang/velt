@@ -506,8 +506,7 @@ fn drop_fn_ptr(d: Option<ResultDropFn>) -> *mut () {
     d.map_or(std::ptr::null_mut(), |d| d as *mut ())
 }
 
-/// Dispose of the unclaimed result of `f`; an unhandled rejection may wait for the task's
-/// microtasks (unhandled.rs).
+/// Dispose of the unclaimed result of `f` (unhandled.rs).
 unsafe fn drop_result(f: *mut VeltFut) {
     if panicked::is_panicked(f) {
         // Its slot holds nothing (panicked.rs).
