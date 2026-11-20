@@ -73,7 +73,7 @@ export async function lock(fd: number, options?: LockOptions): Promise<void> {
 function later(ms: number): Promise<void> {
   return new Promise<void>((resolve) => {
     setTimeout(
-      async () => {
+      () => {
         resolve();
       },
       ms as i64,
