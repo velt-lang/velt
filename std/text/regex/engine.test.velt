@@ -16,7 +16,7 @@ function bt(source: string, flags: string, s: string): i64[] {
   const tree = parsePattern(p);
   const c = new Compiler(p);
   c.compile(tree);
-  const m = new Search(c.prog, 2 * (c.prog.groups as usize) + 2);
+  const m = new Search(2 * (c.prog.groups as usize) + 2);
   const len = strByteLen(s);
   backtrackReset(c.prog, m, 0, len);
   for (let i: usize = 0; i <= len; i++) {
@@ -33,7 +33,7 @@ function pk(source: string, flags: string, s: string, from: usize = 0): i64[] {
   const tree = parsePattern(p);
   const c = new Compiler(p);
   c.compile(tree);
-  const m = new Search(c.prog, 2 * (c.prog.groups as usize) + 2);
+  const m = new Search(2 * (c.prog.groups as usize) + 2);
   pikeReset(c.prog, m);
   return pike(c.prog, m, s, strByteLen(s), from, false) ? m.slots : [];
 }
@@ -44,7 +44,7 @@ function fd(source: string, flags: string, s: string, from: usize = 0): i64[] {
   const tree = parsePattern(p);
   const c = new Compiler(p);
   c.compile(tree);
-  const m = new Search(c.prog, 2 * (c.prog.groups as usize) + 2);
+  const m = new Search(2 * (c.prog.groups as usize) + 2);
   return find(c.prog, m, s, from, false) ? m.slots : [];
 }
 
@@ -121,13 +121,13 @@ describe("find", () => {
     expect(prog.plain).toBe(true);
     const sizes: i64[] = [300, 30000];
     for (const n of sizes) {
-      const m = new Search(prog, 2);
+      const m = new Search(2);
       expect(find(prog, m, "a".repeat(n), 0, false)).toBe(false);
       expect(m.fuel < 0).toBe(true);
       expect(find(prog, m, "a".repeat(n) + "c", 0, false)).toBe(true);
       expect(m.slots).toEqual([0, n + 1]);
     }
-    const cheap = new Search(prog, 2);
+    const cheap = new Search(2);
     expect(find(prog, cheap, "xxaac", 0, false)).toBe(true);
     expect(cheap.fuel > 0).toBe(true);
   });
@@ -176,7 +176,7 @@ describe("find", () => {
     const prog = program("needle|pin", "");
     for (let at: i64 = 0; at < 40; at++) {
       const s = "x".repeat(at) + "pin" + "y".repeat(at % 7);
-      const m = new Search(prog, 2);
+      const m = new Search(2);
       expect(find(prog, m, s, 0, false)).toBe(true);
       expect(m.slots).toEqual([at, at + 3]);
       const t = "x".repeat(at) + "needle";
@@ -187,7 +187,7 @@ describe("find", () => {
     // The bytes past the end of the subject are not a literal's NUL.
     expect(fd("\\0", "", "ab")).toEqual([]);
     expect(fd("\\0|\\0\\0x", "", "ab\0")).toEqual([2, 3]);
-    const all = new Search(prog, 2);
+    const all = new Search(2);
     findAll(prog, all, "pinpin needle pineedle" + " ".repeat(30) + "pin");
     expect(all.found).toEqual([0, 3, 3, 6, 7, 13, 14, 17, 52, 55]);
   });
