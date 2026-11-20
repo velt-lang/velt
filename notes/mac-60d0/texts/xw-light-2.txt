@@ -1,0 +1,31 @@
+c_export_async exit 0 test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered
+std_scheduler exit 0 test results_nobody_claims_are_dropped_and_tasks_outlive_main ... ok
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtere
+std_scheduler_all exit 0 test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered
+std_scheduler_bounds exit 0 test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered
+std_scheduler_bridge exit 0 test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtere
+std_scheduler_carry exit 0 test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered
+std_scheduler_catch exit 0 test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtere
+std_scheduler_demand exit 0 test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtere
+std_scheduler_exit_order exit 0 test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered
+std_scheduler_fair exit 0 test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered
+std_scheduler_fetch exit 0 test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered
+std_scheduler_gather exit 0 test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered
+std_scheduler_goldens exit 0 test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtere
+std_scheduler_handed_promises exit 0 test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered
+std_scheduler_handover exit 0 test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtere
+std_scheduler_ids exit 0 test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered
+std_scheduler_join_order exit 0 test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered
+std_scheduler_net exit 0 test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtere
+std_scheduler_net_close exit 0 test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered
+std_scheduler_order exit 0 test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered
+std_scheduler_rescue exit 0 test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtere
+std_scheduler_rt_streams exit 0 test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtere
+std_scheduler_slot exit 0 test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered
+std_scheduler_timers exit 0 test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtere
+std_scheduler_tls exit 0 test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered
+std_scheduler_wake_end exit 0 test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered
+std_scheduler_watch exit 0 test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered
+std_scheduler_windows_link exit 0 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered
+std_scheduler_workers exit 0 test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtere
+std_scheduler_workers_net exit 0 test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtere

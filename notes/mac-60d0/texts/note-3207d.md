@@ -1,0 +1,11 @@
+#3207 after your x86 rows (timers_due_stored +3.66/+3.14, reversed +3.50/+3.03): cause found, sleep-home is now @014778607 (pushed). Please rerun the rows on it.
+
+Cause: in those rows a join adopts stored promises, so every sleep is polled a second time while pending, with another waker. My first version did, on that second poll, a read of the current worker plus the 'second poller is anchored' step (sp.anchor, a call). That is the ~47 instructions per sleep on the due rows.
+
+Now: a poll of a sleep polled before first compares the polling task (wk.taskOf of its waker: a node's N_TASK, kept up to date when a node is adopted) with the task that polled the sleep into its block (S_OWNER). That task is anchored there with the sleep, so its polls are on that worker: no read of the worker, no call. Only another task's poll (a promise really handed on) takes the slow path (out of line): reads the worker; held elsewhere or carried -> the request; held here -> that task is anchored and becomes the owner. This also covers a promise adopted by another task WITHOUT its waker changing (the node's header stays the waker), which the first version's 'waker changed' test missed on the same worker.
+
+Mac, instructions, min of 3, base = timer-unanchor std (T1/T4): timers_due_stored +1.9/+1.5 (was +2.4/+2.1 here, where the worker read is a function call), timers_due_reversed +1.6/+1.5, timers_due_join +2.0/+1.9, timers_due_in_promise +1.5/+2.1, timers +0.9/+2.1. One caution on these numbers: the rows are three codegen units on this base (the 32k bound), and taking single pieces of the change out moved them by up to +-1% in both directions, so part of what remains is placement, not code; they will be one unit once #3252 is in.
+
+Unchanged and re-verified on the new head: pinned probes 8/8 pass with the fix and 8/8 ICE with the routing disabled (poll: 'expires for a task on another worker'; drop: 'is dropped on another worker'); handed4 + handed5 at 4 and 8 workers 80/80 clean and balanced; std-lint + fmt clean.
+
+If the due rows are still over 3% on x86 after this, I'll take callgrind in the Linux VM on timers_due_stored (needs the shared slot / VM) rather than guess further. Still waiting for the shared slot for the new test binary + suites.

@@ -1,0 +1,1 @@
+tests: the rescue tests print the program's stderr when blocks are left (diagnostic, not for merge)

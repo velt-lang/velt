@@ -1,0 +1,7 @@
+std: a spare asked to retire while it spins answers the request (#3097)
+
+The spin before a park ended without the look at a retirement request that every other way out
+of a park makes. The monitor's request wakes a spare once (sched_relax.velt `ask`); when that wake
+ended a spin, the spare parked again with the request unanswered, never retired, and worker 0
+stayed shared (std_scheduler_rescue.rs `a_task_sleeping_on_a_retiring_spare_goes_to_worker_0_with_its_sleep`
+failed about 1 run in 250 on Windows, where spares spin more often).

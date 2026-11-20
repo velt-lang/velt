@@ -1,0 +1,66 @@
+class Gate {
+  stop: Atomic<i64> = new Atomic<i64>(0);
+  done: Atomic<i64> = new Atomic<i64>(0);
+}
+
+class Holder {
+  p: Promise<void>;
+  constructor(p: Promise<void>) {
+    this.p = p;
+  }
+}
+
+async function busy(gate: shared<Gate>): Promise<void> {
+  while (gate.stop.load() == 0) {
+    let x = 0;
+    for (let i = 0; i < 20000; i++) {
+      x += i % 7;
+    }
+    if (x < 0) {
+      console.log("never");
+    }
+    await yieldNow();
+  }
+}
+
+// Polls a long sleep on its worker, then hands it on.
+async function maker(i: i64): Promise<Holder> {
+  const s = sleep(1000 + i);
+  await Promise.race([s, yieldNow()]);
+  return new Holder(s);
+}
+
+// Polls the handed sleep (a request to its worker), yields, polls it again (by then possibly
+// registered in this worker's block, or still asked for) and ends, dropping it: the drop may be
+// served on another worker than the request was.
+async function user(gate: shared<Gate>, h: Holder, i: i64): Promise<void> {
+  await Promise.race([h.p, yieldNow()]);
+  for (let y = 0; y < i % 3; y++) {
+    await yieldNow();
+  }
+  await Promise.race([h.p, yieldNow()]);
+  gate.done.add(1);
+}
+
+async function pair(gate: shared<Gate>, i: i64): Promise<void> {
+  const h = await spawn(maker(i));
+  await spawn(user(gate, h, i));
+}
+
+async function main() {
+  const gate = shared(new Gate());
+  const busyOnes: Promise<void>[] = [];
+  for (let i = 0; i < 8; i++) {
+    busyOnes.push(spawn(busy(gate)));
+  }
+  for (let round = 0; round < 5; round++) {
+    const ps: Promise<void>[] = [];
+    for (let i = 0; i < 200; i++) {
+      ps.push(spawn(pair(gate, i)));
+    }
+    await Promise.all(ps);
+  }
+  gate.stop.store(1);
+  await Promise.all(busyOnes);
+  console.log(`done ${gate.done.load()}`);
+}

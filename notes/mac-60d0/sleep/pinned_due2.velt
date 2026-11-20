@@ -1,0 +1,36 @@
+import { currentWorker } from "velt/task";
+
+class Holder {
+  p: Promise<void>;
+  constructor(p: Promise<void>) {
+    this.p = p;
+  }
+}
+
+// On worker 1: polls the sleep there (it is pending in worker 1's timer block), then hands it on.
+async function first(): Promise<Holder> {
+  const s = sleep(5);
+  await Promise.race([s, yieldNow()]);
+  // Busy past the deadline without yielding: worker 1 expires it only after this task ends.
+  const until = Date.now() + 30;
+  let spins = 0;
+  while (Date.now() < until) {
+    spins++;
+  }
+  if (spins < 0) {
+    console.log("never");
+  }
+  return new Holder(s);
+}
+
+// On worker 2: awaits the sleep worker 1's block holds.
+async function second(h: Holder): Promise<i64> {
+  await h.p;
+  return currentWorker();
+}
+
+async function main() {
+  const h = await spawn(first(), { worker: 1 });
+  const w = await spawn(second(h), { worker: 2 });
+  console.log(`awaited on worker ${w}`);
+}

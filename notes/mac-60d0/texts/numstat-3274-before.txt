@@ -1,0 +1,11 @@
+2	0	crates/veltc/tests/wasm_goldens.rs
+5	0	std/lang/hooks/sched_join.velt
+7	0	std/lang/hooks/sched_mem.velt
+7	3	std/lang/hooks/sched_node.velt
+61	3	std/lang/hooks/sched_node_lost.velt
+21	1	std/lang/hooks/sched_node_transfer.velt
+9	1	std/lang/hooks/sched_run.velt
+27	4	std/lang/hooks/sched_task.velt
+315	0	std/lang/hooks/sched_task_lost.velt
+15	0	tests/golden/lang/task_parked_freed.out
+229	0	tests/golden/lang/task_parked_freed.velt

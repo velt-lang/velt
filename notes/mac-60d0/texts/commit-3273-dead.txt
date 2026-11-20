@@ -1,0 +1,5 @@
+std: a new sleep stores only the words read before it is registered (#3207)
+
+The links and the task word of a sleep are read only in the states that write them first
+(PENDING by insert, DUE by pushDue), so a new sleep no longer zeroes them, and unlinkDue no
+longer clears the task word. Four stores fewer per sleep.

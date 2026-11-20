@@ -1,0 +1,21 @@
+std: a thread's start takes its room outside the block counts (#3236)
+
+`startThread` (std/lang/hooks/thread_posix.velt) took a counted block for the
+`pthread_attr_t` and the `pthread_t` and freed it after `pthread_create`. The
+stall monitor starts a spare worker's thread with it while the program runs
+on: when the monitor's thread lost its core between `pthread_create` and the
+free, the spare finished the last task and the program took its block counts
+with that block still unfreed (`blocks=20/19`, one run in a few thousand on a
+loaded Linux machine; the merge queue hit it in std_scheduler_rescue).
+
+The room now comes from the C library (`lastingZeroed`, `lastingRelease`),
+outside the counts, as the executor's other blocks on threads the counts
+don't wait for.
+
+Test: `starting_a_spare_counts_no_block` runs a program that needs one spare,
+or two with `DEEP=1`, with the same tasks either way, and compares the blocks
+made: equal now, one more with the second spare before. In a Linux VM the
+rescue test's program, run 18 at once, left a block unfreed in 5 of 26,000
+runs before and in 0 of 27,000 after.
+
+Closes #3236

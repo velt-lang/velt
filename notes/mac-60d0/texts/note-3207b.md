@@ -1,0 +1,15 @@
+#3207: shapes confirmed on the Mac (debug velt, std = #3201's tree e5f430999, probes handed4/handed5 from the issue, 10 runs each at 4 and 8 workers, checking allocator), with three instrumented std copies, each an ICE on one break of the rule:
+- exp (the reviewer's: a sleep expires on a worker that is not its task's home): handed4 1/10 at T4, 1/10 at T8.
+- poll (a pending/due sleep polled on another worker than the one whose block holds it; the sleep records its block at insert): handed4 2/10 at T4. So the cross-worker poll is real, not only 'second poller on the same worker is not anchored'.
+- drop (dropped off its block's worker): no ICE in these runs, but 5 of 20 handed4 runs segfaulted before reaching it; handed5 segfaulted 1/10 at T8 under the poll copy. (Plain segfaults = the bug itself, as the issue says.)
+
+Design for (a), refined after reading what a task can and cannot do off the block's worker. The polling task may be anchored where it runs (it has sleeps of its own), pinned, or fixed, so 'send the task home to the sleep's worker' needs it to carry its own sleeps and fails for pinned/fixed tasks. Instead the SLEEP moves to its poller, through its own worker:
+1. A sleep records the worker whose block holds it (one word, written at insert/adopt on that worker).
+2. Poll on another worker E (state not NEW/SEEN, block not E's): E writes nothing in the sleep. It pushes a small request (the sleep, E, a clone of the poller's waker) on the holder W's atomic request stack and unparks W; the poll returns pending.
+3. W, at its timer look (before expiry, and before it parks), serves requests: unlinks the sleep from its block (or its task's due list, or counts a fired one seen), and sends it to E's atomic 'arrived' stack with the waker, unparking E. If it had already fired, it wakes the waker instead.
+4. E, at its timer look, inserts arrived sleeps into its block with the requester's waker (the task is anchored to E then, as a first poll does) and wakes it; its next poll finds the sleep in its own block.
+5. Drop on another worker: the sleep goes on W's request stack marked 'dropped' (a dedicated link word, nothing else written); W unlinks and frees it at its look. The program's end waits for those (W is unparked; the counted exit drains the stacks).
+6. Debug assertion (the rule as an ICE): poll, drop and expiry check the block's worker. Tests: (i) a probe that hands a pending sleep to a fresh task pinned to another worker (deterministic: pinned start), awaited there; (ii) one that drops it there; both ICE on today's std and pass with the fix; plus handed4/handed5 as stress in std_scheduler_carry.
+Cost: one word per sleep, one predicted compare in sleepPoll/sleepDrop on the common path, two stack-head loads in the timer look. I'll measure timers_*, timer_await*, race_select.
+
+I'm implementing this on branch sleep-home (stacked on timer-unanchor, std only) unless you prefer the simpler 'task goes home' with pinned/fixed pollers refused. No slot needed until the test binary build.

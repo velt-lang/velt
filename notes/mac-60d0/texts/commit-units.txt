@@ -1,0 +1,14 @@
+llvm: a program is one codegen unit below 64 000 statements (#3097)
+
+The bound was 32 000 VIR statements, set when the largest benchmark had
+4 000. Since the executor is std code, every program with a task carries
+about 31 000 statements of it, so small async programs sat on the bound and
+each std change moved some across it: split, a program's entry file is a unit
+of its own, and its hot loop lost a few percent (one more instruction per
+await in bench/async/await_chain.velt on x86-64; five bench/async rows moved
+that way in #3097's pull requests).
+
+`ONE_UNIT_BELOW` is 4 x `MIN_UNIT_WEIGHT`, twice the size of std's executor;
+from there on a program gets four units, as before. A program between the
+old bound and the new builds about 0.4 s later in wall time (one clang
+process) and takes less CPU; larger programs are unchanged.

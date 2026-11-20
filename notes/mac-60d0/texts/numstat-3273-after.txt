@@ -1,0 +1,15 @@
+646	0	crates/veltc/tests/std_scheduler_sleep_handed.rs
+2	0	std/lang/hooks/sched.velt
+4	0	std/lang/hooks/sched_end.velt
+2	2	std/lang/hooks/sched_exit.velt
+19	0	std/lang/hooks/sched_mem.velt
+6	1	std/lang/hooks/sched_park.velt
+16	1	std/lang/hooks/sched_relax.velt
+151	76	std/lang/hooks/sched_sleep.velt
+4	1	std/lang/hooks/sched_sleep_carry.velt
+41	0	std/lang/hooks/sched_sleep_forget.velt
+196	0	std/lang/hooks/sched_sleep_move.velt
+33	0	std/lang/hooks/sched_sleep_rule.velt
+16	0	std/lang/hooks/sched_spread.velt
+6	1	std/lang/hooks/sched_task.velt
+8	0	std/lang/hooks/sched_tick.velt

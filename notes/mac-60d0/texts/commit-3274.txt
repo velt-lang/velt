@@ -1,0 +1,16 @@
+std: a spawned task parked for ever is freed with what its root holds (#3274)
+
+A spawned task whose root waits on a promise nobody can settle, and that nothing can wake or
+join any more, stayed parked until the program ended (7 blocks a task). At the end of a poll, a
+task whose references are only the executor's and one per promise it drives, every such promise
+counted owner-only, can never be polled again (sched_task_lost.velt). It gets one last poll that
+drops its root instead (flag CANCEL): what the root holds goes, its dispose hooks run, and the
+task ends as one whose root finished. A task that parks like that with its join handle held is
+woken by the handle's drop (J_PARKED).
+
+A promise that an adoption poll leaves with its owner's and its task's references only is
+counted owner-only (flag LISTED, set by the step that ends the adoption's run), also when an
+adoption is already under way (chains whose links were started before they were awaited); it
+stays owner-only until it finishes or is dropped, so the park reads only the count. With the
+block counters on, the promises are linked as well and the park walks them: one that gained a
+waker is an ICE. Golden lang/task_parked_freed.

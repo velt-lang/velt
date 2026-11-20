@@ -1,0 +1,14 @@
+std: an untaken offer is taken back; a dropped sleep's last request frees it in one step (#3207)
+
+- A worker whose own offer is still there at an I/O tick wakes a sleeping worker for it again,
+  or takes it back when none sleeps (sched_spread.velt reclaim). Only a worker out of work takes
+  an offer, so an offer whose helper found work first stayed while every worker was busy, its
+  tasks never polled (a stall, also with no sleep handed on).
+- S_ASKS holds a mark that a drop request was served: a drop request ends itself and sets the
+  mark in one atomic add, and whichever request leaves the word at the mark alone frees the
+  sleep. Reading the dropped state before the decrement left a sleep unfreed when its drop was
+  served on another worker than the request before it.
+- The words other workers read (DUE, FIRED, S_HOME, S_OWNER) are stored and loaded with relaxed
+  atomics (sched_mem.velt storeRelaxed), and insert's doc comment gives the reason DUE and FIRED
+  need no release: one thread's stores to one word stay in order on both targets.
+- Tests: the offers stress without any hand-over, and a handed sleep dropped after its request.

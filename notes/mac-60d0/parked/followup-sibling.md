@@ -1,0 +1,3 @@
+A sibling case with the same cause (found in #3322's review, probe `p2_handoff`): a handed-on promise that **finishes** and is then freed by the other task, on another worker, also leaves its maker task parked. The maker hands a chain to a task on worker 2 and parks; main settles the chain, and the task on worker 2 awaits it and gets its value. 14 blocks are left at T4/T8, the same as on main.
+
+The cause is the same as above: the node's reference to its task goes away on another thread, and no poll of the task follows. The proposed fix covers it too: the cross-thread release wakes the task once, and the poll after it finds the task dead.

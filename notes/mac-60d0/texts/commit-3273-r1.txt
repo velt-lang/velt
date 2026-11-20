@@ -1,0 +1,17 @@
+std: sleep hand-overs without transient states; fewer stores on the holder's path (#3207)
+
+- unlinkPending and unlinkDue leave the state to their caller: no transient NEW that a task on
+  another worker could read as a new sleep and register in its own block.
+- A served request decides whether the sleep was dropped before its count goes down, and never
+  reads the sleep after: the asker may free it once the count is 0.
+- A retired spare serves and counts its request list before it parks (sched_relax.velt).
+- expire's path for a waker that is not a task's zeroes the waker before it stores SEEN: a drop
+  that sees SEEN frees the sleep and drops the waker it finds.
+- The poll decides that the owner polls from the poll's context (no read of the worker on that
+  path); a carried sleep has no owner until its task adopts it, so its polls take the slow way.
+- Release stores only where a reader on another worker needs one: PENDING (the registration)
+  and SEEN; the holder's own DUE and FIRED and the home word are plain (the argument is in
+  insert's doc comment).
+- The rule check of expire is a pass of its own in counted runs (sched_sleep_rule.velt).
+- Tests: a sleep awaited from three tasks on other workers; two tasks awaiting one handed sleep
+  under offers.

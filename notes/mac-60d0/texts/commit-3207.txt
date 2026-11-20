@@ -1,0 +1,26 @@
+std: a sleep polled or dropped on another worker is handed over by the worker that holds it (#3207)
+
+A sleep lives in the timer block of the worker that first polled it, and only
+that worker touches the block. A promise handed to another task is polled by
+that task from then on, and dropped by whoever holds it last, on that task's
+worker: such a poll wrote the sleep's waker while its worker's expiry read it,
+such a drop unlinked it from a list it was not in, and its expiry put it on
+the due list of a task of another worker (segfaults in about one run in eight
+of the review's probes).
+
+A poll or drop elsewhere now writes nothing in the sleep (sched_sleep_move.velt):
+it leaves a request on the holding worker's list and wakes it. The holder
+takes the sleep off its list, stores its state last (new again, or seen when
+it had fired), and wakes the asking waker and the one the sleep was registered
+with; the task polls it again and registers it in its own worker's block. A
+dropped one is freed by the holder. Requests under way are counted in the
+sleep, so none names freed memory, and the program's end waits for them.
+
+Which task polls is the task the worker is polling, not what the promise's
+waker or context says. Another task's poll on the sleep's own worker anchors
+that task and makes it the sleep's owner for carries.
+
+In a counted run a sleep that expires for a task of another worker, or is
+dropped off its worker, is an `ICE:`.
+
+Closes #3207

@@ -1,0 +1,93 @@
+// Chain shapes for #3274's `nested` (an owner-only promise under an adoption): which of them
+// does the `nested` mutant leave parked? Each prints "freed <name>" when its task is freed.
+
+class Held {
+  name: string;
+  done: (v: number) => void;
+
+  constructor(name: string, done: (v: number) => void) {
+    this.name = name;
+    this.done = done;
+  }
+
+  [Symbol.dispose]() {
+    console.log("freed " + this.name);
+    const done = this.done;
+    done(1);
+  }
+}
+
+async function gone(p: Promise<number>, resolve: (v: number) => void): Promise<void> {
+  const timer = setTimeout(() => resolve(-1), 1000);
+  await p;
+  clearTimeout(timer);
+}
+
+async function dead(): Promise<number> {
+  return await new Promise<number>((resolve) => {});
+}
+
+// Started before it is awaited: the inner promise runs first on its own.
+async function startedFirst(h: Held): Promise<number> {
+  const p = dead();
+  await yieldNow();
+  return (await p) + h.name.length;
+}
+
+async function middle(): Promise<number> {
+  const p = dead();
+  await yieldNow();
+  return (await p) + 1;
+}
+
+// A chain whose middle link was started before it was awaited.
+async function startedMiddle(h: Held): Promise<number> {
+  const p = middle();
+  await yieldNow();
+  return (await p) + h.name.length;
+}
+
+// Awaited inside a combinator.
+async function inAll(h: Held): Promise<number> {
+  const [a] = await Promise.all([dead()]);
+  return a + h.name.length;
+}
+
+async function inner3(): Promise<number> {
+  return (await dead()) + 1;
+}
+
+async function inner2(): Promise<number> {
+  const p = inner3();
+  await yieldNow();
+  return (await p) + 1;
+}
+
+// Three links, the middle one started first.
+async function deep(h: Held): Promise<number> {
+  return (await inner2()) + h.name.length;
+}
+
+async function main() {
+  {
+    const w = Promise.withResolvers<number>();
+    void spawn(startedFirst(new Held("startedFirst", w.resolve)));
+    await gone(w.promise, w.resolve);
+  }
+  {
+    const w = Promise.withResolvers<number>();
+    void spawn(startedMiddle(new Held("startedMiddle", w.resolve)));
+    await gone(w.promise, w.resolve);
+  }
+  {
+    const w = Promise.withResolvers<number>();
+    void spawn(inAll(new Held("inAll", w.resolve)));
+    await gone(w.promise, w.resolve);
+  }
+  {
+    const w = Promise.withResolvers<number>();
+    void spawn(deep(new Held("deep", w.resolve)));
+    await gone(w.promise, w.resolve);
+  }
+  console.log("done");
+}
