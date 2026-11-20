@@ -276,12 +276,55 @@ describe("TLS 1.3 over secp384r1", () => {
     );
   });
 
-  it("the server takes a secp384r1 share after X25519's and secp256r1's", () => {
-    // The generated hello: an X25519 share, which the server uses whatever the groups' order.
-    const c = new ClientHandshake(input([]), hexDecode(CLIENT_PRIVATE));
+  it("the server takes X25519 when an X25519 and a secp384r1 share both come", () => {
+    // The generated hello's key_share extension with a secp384r1 share after its X25519 one,
+    // and the lengths around it (the extension's, the extensions', the message's) 101 longer.
+    const base = input([]).fixed!;
+    const text = hexEncode(base);
+    const at = (text.indexOf(SHARE) / 2) as usize;
+    const share = exchangePublic(SECP384R1, exchangeKey(SECP384R1));
+    const entry: u8[] = [0, 0x18, 0, 0x61];
+    const hello = base
+      .slice(0, (at + 8 + 32 + 2) as i64)
+      .concat(entry)
+      .concat(share)
+      .concat(base.slice((at + 8 + 32 + 2) as i64));
+    const bump = (m: u8[], where: usize, by: usize) => {
+      const v = ((m[where] as usize) << 8) + (m[where + 1] as usize) + by;
+      m[where] = (v >> 8) as u8;
+      m[where + 1] = (v & 0xff) as u8;
+    };
+    bump(hello, 2, 101);
+    bump(hello, at + 2, 101);
+    bump(hello, at + 4, 101);
+    // The extensions' length: after the version, the random, the session id, the suites and
+    // the compression methods.
+    let ext: usize = 4 + 2 + 32;
+    ext += 1 + (hello[ext] as usize);
+    ext += 2 + ((hello[ext] as usize) << 8) + (hello[ext + 1] as usize);
+    ext += 1 + (hello[ext] as usize);
+    bump(hello, ext, 101);
     const s = new ServerHandshake(serverKey(CERT, KEY)!, []);
-    expect(s.onMessage(c.hello())).toBe(S_SEND_FLIGHT);
+    expect(s.onMessage(hello)).toBe(S_SEND_FLIGHT);
     expect(hexEncode(s.hello!).includes("00330024001d0020")).toBe(true);
+    // The same hello with the X25519 share's group unknown: the secp384r1 share is the one.
+    const only = hexDecode(
+      hexEncode(hello).replace("0033008b0089001d0020", "0033008b00896a6a0020"),
+    );
+    const s2 = new ServerHandshake(serverKey(CERT, KEY)!, []);
+    expect(s2.onMessage(only)).toBe(S_SEND_FLIGHT);
+    expect(hexEncode(s2.hello!).includes("003300650018006104")).toBe(true);
+  });
+
+  it("the server refuses a share for another group after its HelloRetryRequest", () => {
+    // Asked for secp384r1, the client answers with a ClientHello that has an X25519 share only.
+    const [c, s] = retried();
+    expect(hexEncode(s.retry!).includes("003300020018")).toBe(true);
+    const other = input([]).fixed!;
+    expect(failure(() => s.onMessage(other))).toBe(
+      "47 TLS: the second ClientHello has no key share for the group asked for",
+    );
+    expect(c.done()).toBe(false);
   });
 });
 
