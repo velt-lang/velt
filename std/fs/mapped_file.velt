@@ -5,6 +5,7 @@
 import { addressArray } from "velt/lang/intrinsics";
 import { adviseMapping, COPIES, mapFile } from "#mapped-source";
 import { osError } from "velt/fs/errors";
+import { MappedBytes } from "velt/fs/mapped_bytes";
 import { copyOf, MapOptions } from "velt/fs/mapped_part";
 
 /** How a range of a `MappedFile` will be read (`advise`). */
@@ -15,7 +16,8 @@ export type MapAdvice = "normal" | "random" | "sequential" | "willneed" | "dontn
  * asked for) as a `shared<u8[]>`: it is
  * read like any byte array (indexing, `subarray`, the SIMD loads) and can be handed to every
  * task without a copy; `f32s`, `i8s`, `u32s` and the other typed methods give a range of it as
- * an array of that number type. Nothing is read when the
+ * an array of that number type, and `DataView`'s getters (`getUint32(byteOffset, littleEndian)`,
+ * …, and `getInt64` / `getUint64`) read one value at any offset without making an array. Nothing is read when the
  * file is opened; a page comes from the disk when it is first touched (WebAssembly differs:
  * below).
  *
@@ -34,18 +36,16 @@ export type MapAdvice = "normal" | "random" | "sequential" | "willneed" | "dontn
  * short ends the program with a bus-error signal when a cut page is read, without a message,
  * and output it had buffered may be lost: map files nothing else writes.
  */
-export class MappedFile {
-  /** The mapped bytes. */
-  readonly bytes: shared<u8[]>;
+export class MappedFile extends MappedBytes {
   // Where `bytes` starts in memory and in the file. A mapping starts at a page of the file,
   // the multiple of 64 KiB before `from` (`lead()` bytes before `bytes`).
   private readonly address: usize;
   private readonly from: usize;
 
   private constructor(address: usize, from: usize, bytes: shared<u8[]>) {
+    super(bytes);
     this.address = address;
     this.from = from;
-    this.bytes = bytes;
   }
 
   // How many bytes of the mapping lie before `bytes`.
