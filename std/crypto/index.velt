@@ -1,6 +1,7 @@
 // velt/crypto: SHA-256, SHA-384, SHA-512 and SHA-1 (FIPS 180-4), HMAC (RFC 2104), HKDF over
 // SHA-256 and SHA-384 (RFC 5869), X25519
-// (RFC 7748), ECDH and ECDSA verification on P-256 (SEC 1), the ChaCha20-Poly1305 (RFC 8439)
+// (RFC 7748), Ed25519 signature verification (RFC 8032), ECDH and ECDSA verification on P-256
+// (SEC 1), the ChaCha20-Poly1305 (RFC 8439)
 // and AES-GCM (NIST SP 800-38D) AEADs, secure random bytes/integers and constant-time
 // comparison.
 //
@@ -35,6 +36,7 @@ export {
   hkdfSha384,
 } from "velt/crypto/hkdf";
 export { hmacSha1, hmacSha256, hmacSha384, hmacSha512 } from "velt/crypto/hmac";
+export { ed25519Verify } from "velt/crypto/ed25519_verify";
 export { p256Verify } from "velt/crypto/ecdsa_p256";
 export { p256Ecdh, p256PrivateKey, p256PublicKey } from "velt/crypto/p256";
 export { randomBytes, randomInt } from "velt/crypto/random";

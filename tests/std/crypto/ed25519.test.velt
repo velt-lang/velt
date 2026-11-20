@@ -1,0 +1,101 @@
+// Ed25519 verification (velt/crypto `ed25519Verify`): every Project Wycheproof ed25519 case,
+// RFC 8032's test vectors, and the cases a signer never makes (keys and R values that are not
+// canonical, S at and past the group order), each with ring's answer.
+import { ed25519Verify } from "velt/crypto";
+import { hexDecode } from "velt/encoding";
+import { describe, expect, it } from "velt/test";
+import * as v from "./ed25519_vectors";
+import { ED25519_CASES } from "./wycheproof_ed25519";
+
+function bytes(s: string): u8[] {
+  return s == "-" ? [] : hexDecode(s);
+}
+
+// A case of ed25519_vectors.velt: its key, message and signature.
+function verify(c: string[]): bool {
+  return ed25519Verify(hexDecode(c[0]), bytes(c[1]), hexDecode(c[2]));
+}
+
+describe("ed25519Verify", () => {
+  it("matches every Wycheproof ed25519 case", () => {
+    // The "acceptable" cases are valid signatures by keys of small or mixed order, which ring
+    // does not refuse.
+    let key: u8[] = [];
+    let valid = 0;
+    let invalid = 0;
+    for (const line of ED25519_CASES) {
+      const f = line.split(" ");
+      if (f[0] == "K") {
+        key = hexDecode(f[1]);
+        continue;
+      }
+      const ok = ed25519Verify(key, bytes(f[2]), bytes(f[3]));
+      if (f[1] == "i") {
+        expect(`${f[0]} ${ok}`).toBe(`${f[0]} false`);
+        invalid++;
+      } else {
+        expect(`${f[0]} ${ok}`).toBe(`${f[0]} true`);
+        valid++;
+      }
+    }
+    expect([valid, invalid]).toEqual([146, 64]);
+  });
+
+  it("verifies RFC 8032's test vectors, and refuses them changed", () => {
+    expect(verify(v.RFC1)).toBe(true);
+    expect(verify(v.RFC2)).toBe(true);
+    expect(verify(v.RFC3)).toBe(true);
+    const key = hexDecode(v.RFC3[0]);
+    const msg = hexDecode(v.RFC3[1]);
+    const sig = hexDecode(v.RFC3[2]);
+    msg[1] ^= 1;
+    expect(ed25519Verify(key, msg, sig)).toBe(false);
+    msg[1] ^= 1;
+    // Every bit of the signature counts, the top one of S too.
+    for (let i: usize = 0; i < 64; i++) {
+      sig[i] ^= 0x80;
+      expect(`${i} ${ed25519Verify(key, msg, sig)}`).toBe(`${i} false`);
+      sig[i] ^= 0x80;
+    }
+    key[0] ^= 1;
+    expect(ed25519Verify(key, msg, sig)).toBe(false);
+    expect(ed25519Verify(hexDecode(v.RFC1[0]), msg, sig)).toBe(false);
+  });
+
+  it("refuses keys and signatures of other lengths", () => {
+    const key = hexDecode(v.RFC1[0]);
+    const sig = hexDecode(v.RFC1[2]);
+    expect(ed25519Verify(key, [], sig)).toBe(true);
+    expect(ed25519Verify(key.slice(0, 31), [], sig)).toBe(false);
+    expect(ed25519Verify([], [], sig)).toBe(false);
+    expect(ed25519Verify(key, [], sig.slice(0, 63))).toBe(false);
+    expect(ed25519Verify(key, [], [])).toBe(false);
+    const longer = sig.slice();
+    longer.push(0);
+    expect(ed25519Verify(key, [], longer)).toBe(false);
+  });
+
+  it("reads a key as ref10 does: a y of p or more, and a sign bit on x = 0", () => {
+    // The key is the identity, so R = [S]B verifies any message.
+    expect(verify(v.IDENTITY_KEY)).toBe(true);
+    expect(verify(v.IDENTITY_KEY_Y_PLUS_P)).toBe(true);
+    expect(verify(v.IDENTITY_KEY_SIGN_SET)).toBe(true);
+    expect(verify(v.ORDER_2_KEY)).toBe(false);
+  });
+
+  it("refuses a key whose y has no x", () => {
+    expect(verify(v.KEY_NOT_A_POINT)).toBe(false);
+  });
+
+  it("refuses an R that is not the canonical encoding of the point", () => {
+    expect(verify(v.R_IDENTITY)).toBe(true);
+    expect(verify(v.R_IDENTITY_Y_PLUS_P)).toBe(false);
+    expect(verify(v.R_IDENTITY_SIGN_SET)).toBe(false);
+  });
+
+  it("refuses an S at or past the group order", () => {
+    expect(verify(v.S_IS_L_MINUS_1)).toBe(true);
+    expect(verify(v.S_IS_L)).toBe(false);
+    expect(verify(v.S_PLUS_L)).toBe(false);
+  });
+});
