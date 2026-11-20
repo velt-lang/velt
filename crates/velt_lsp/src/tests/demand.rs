@@ -19,10 +19,21 @@ fn real_std() -> PathBuf {
 }
 
 fn options<'a>(std: &Path, overlay: &'a HashMap<PathBuf, String>) -> LoadOptions<'a> {
+    options_for(std, overlay, None)
+}
+
+/// [`options`] for the target triple `target` (`None`: this machine's), whose `#name` imports
+/// pick std's variants.
+fn options_for<'a>(
+    std: &Path,
+    overlay: &'a HashMap<PathBuf, String>,
+    target: Option<&str>,
+) -> LoadOptions<'a> {
     LoadOptions {
         std_root: Some(std.to_path_buf()),
         overlay: Some(overlay),
         demand_std: true,
+        target: target.map(str::to_string),
         ..Default::default()
     }
 }
@@ -90,15 +101,32 @@ fn on_demand(paths: impl Iterator<Item = String>) -> BTreeSet<String> {
 
 /// `velt check`'s path: the driver's load, and its check with the load callback.
 fn command_line(std: &Path, root: &Path, overlay: &HashMap<PathBuf, String>) -> Seen {
+    command_line_for(std, root, overlay, None)
+}
+
+/// [`command_line`] for the target triple `target`.
+fn command_line_for(
+    std: &Path,
+    root: &Path,
+    overlay: &HashMap<PathBuf, String>,
+    target: Option<&str>,
+) -> Seen {
     let mut sm = SourceMap::default();
     let mut diags = vec![];
-    let mut l = load_program(&mut sm, root, options(std, overlay), &mut diags).unwrap();
+    let mut l = load_program(&mut sm, root, options_for(std, overlay, target), &mut diags).unwrap();
     let modules = std::mem::take(&mut l.modules);
     let shared = Mutex::new((&mut sm, &mut l.state, &mut diags, vec![]));
     let serve = |d: &[String]| {
         let mut guard = shared.lock().ok()?;
         let (sm, state, diags, served) = &mut *guard;
-        let b = load_more(sm, state, &modules, d, &options(std, overlay), diags);
+        let b = load_more(
+            sm,
+            state,
+            &modules,
+            d,
+            &options_for(std, overlay, target),
+            diags,
+        );
         served.extend(b.modules.iter().map(|m| m.path.clone()));
         Some(b)
     };
@@ -332,4 +360,32 @@ fn the_editor_demands_nothing_for_code_that_nothing_reaches() {
         "{:?}",
         ide.1
     );
+}
+
+/// Every program runs std's start-up check of the CPU, so what it reaches is in every program's
+/// module set: it reaches no printing module on any target (on arm64 macOS a module constant of
+/// a class once brought in the integer printer, `number_text`, for every program).
+#[test]
+fn the_start_up_check_loads_no_printing_module_on_any_target() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("main.velt");
+    let src = "function main() {}\n".to_string();
+    let overlay = HashMap::from([(root.clone(), src)]);
+    for target in [
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+        "x86_64-pc-windows-msvc",
+        "aarch64-pc-windows-msvc",
+    ] {
+        let (errs, modules) = command_line_for(&real_std(), &root, &overlay, Some(target));
+        assert!(errs.is_empty(), "{target}: {errs:?}");
+        let demanded: Vec<&str> = modules.iter().map(|m| m.as_str()).collect();
+        assert_eq!(
+            demanded,
+            [velt_common::std_module!(lang_hooks_cpu)],
+            "{target}: the start-up check demands more than itself"
+        );
+    }
 }

@@ -284,6 +284,9 @@ impl Interp<'_> {
             // The start-up CPU check's OS queries (std/lang/cpu): the interpreter has no CPU
             // to ask, so every feature reads as absent and programs take the baseline path.
             "sysctlbyname" => return Ok(-1i64 as u64),
+            // macOS's detector maps a page for the sysctls' answers: none here (`MAP_FAILED`).
+            "mmap" => return Ok(u64::MAX),
+            "munmap" => return Ok(0),
             "getauxval" => return Ok(0),
             "IsProcessorFeaturePresent" => return Ok(0),
             m if m.starts_with("velt_rt_math_") => {
