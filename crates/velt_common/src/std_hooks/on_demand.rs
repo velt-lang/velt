@@ -53,6 +53,12 @@ pub const ON_DEMAND_MODULES: &[&str] = &[
     "std/lang/hooks/weak",
     // The string searches, which the prelude's methods call by role (`hookCall`, #2198).
     "std/lang/string/search",
+    // The other string methods in Velt, called by role too (#2198).
+    "std/lang/string/trim",
+    "std/lang/string/fill",
+    "std/lang/string/split",
+    "std/lang/string/replace",
+    "std/lang/string/case",
 ];
 
 /// The qualified names of the hooks named in `names` ([`ON_DEMAND_FLOAT`]).
