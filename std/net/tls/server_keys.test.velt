@@ -1,0 +1,313 @@
+// velt/net (tests): a TLS server's keys of each kind (server_key.velt, private_key.velt,
+// server_signer.velt): reading them from PEM in each form, the scheme chosen for a client, and
+// whole handshakes in TLS 1.3 and TLS 1.2 between the client and the server in Velt, whose
+// signature (CertificateVerify, ServerKeyExchange) is checked here against the certificate's key
+// with velt/crypto's verification. Run by `velt test std/`.
+import { p256Verify } from "velt/crypto/ecdsa_p256";
+import { p384Verify } from "velt/crypto/ecdsa_p384";
+import { ed25519Verify } from "velt/crypto/ed25519_verify";
+import { rsaPkcs1Verify, rsaPssVerify } from "velt/crypto/rsa_verify";
+import { sha256 } from "velt/crypto/sha256";
+import { sha384, sha512 } from "velt/crypto/sha512";
+import { x25519PublicKey } from "velt/crypto/x25519";
+import { base64Encode } from "velt/encoding/base64";
+import { hexDecode, hexEncode } from "velt/encoding/hex";
+import { utf8Encode } from "velt/encoding/utf8";
+import { IoError } from "velt/io/error";
+import { ClientHandshake, FINISHED_DONE, HANDSHAKE_KEYS } from "velt/net/tls/client_handshake";
+import { ClientHandshake12, DONE12, SEND12 } from "velt/net/tls/client_handshake12";
+import { clientHello, HelloInput, preferredSuites, X25519 } from "velt/net/tls/client_hello";
+import { parseClientHello } from "velt/net/tls/client_hello_parse";
+import { S_DONE, S_SEND_FLIGHT, ServerHandshake } from "velt/net/tls/server_handshake";
+import { ServerHandshake12 } from "velt/net/tls/server_handshake12";
+import { ServerKey, serverKey } from "velt/net/tls/server_key";
+import { chooseScheme } from "velt/net/tls/server_signer";
+import { chooseSuite12, ecdsaSuite12 } from "velt/net/tls/suites12";
+import { KEY_ED25519, KEY_P256, KEY_P384, KEY_RSA } from "velt/net/tls/x509/algorithms";
+import { Certificate } from "velt/net/tls/x509/certificate";
+import { describe, expect, it } from "velt/test";
+import * as v from "./server_keys_vectors.test";
+
+const CLIENT_PRIVATE = "49af42ba7f7994852d713ef2784bcbcaa7911de26adc5642cb634540e7ea5005";
+
+// (name, certificate, key) for each kind and form of key.
+function pairs(): string[][] {
+  return [
+    ["P-256", v.P256_CERT, v.P256_PKCS8],
+    ["P-384 in PKCS#8", v.P384_CERT, v.P384_PKCS8],
+    ["P-384 in SEC 1", v.P384_CERT, v.P384_SEC1],
+    ["Ed25519", v.ED_CERT, v.ED_PKCS8],
+    ["RSA in PKCS#8", v.RSA_CERT, v.RSA_PKCS8],
+    ["RSA in PKCS#1", v.RSA_CERT, v.RSA_PKCS1],
+  ];
+}
+
+// "ok", "none" (a key no server here takes) or the failure's message.
+function loaded(cert: string, key: string, all: bool = true): string {
+  try {
+    return serverKey(cert, key, all) == null ? "none" : "ok";
+  } catch (e) {
+    return e instanceof IoError ? e.message : `${e}`;
+  }
+}
+
+function input(change: string[] = []): HelloInput {
+  const random: u8[] = [];
+  for (let i: usize = 0; i < 32; i++) {
+    random.push(i as u8);
+  }
+  const i: HelloInput = {
+    random: random,
+    sessionId: random.slice(),
+    publicKey: x25519PublicKey(hexDecode(CLIENT_PRIVATE)),
+    serverName: "localhost",
+    alpn: [],
+    fixed: null,
+    fixedRetry: null,
+    suites: preferredSuites(),
+    retryKey: null,
+  };
+  let hello = hexEncode(clientHello(i, false, null, X25519, i.publicKey));
+  if (change.length == 2) {
+    expect(hello.includes(change[0])).toBe(true);
+    hello = hello.replace(change[0], change[1]);
+  }
+  return { ...i, fixed: hexDecode(hello) };
+}
+
+// The handshake messages in `flight`.
+function messages(flight: u8[]): u8[][] {
+  const out: u8[][] = [];
+  let at: usize = 0;
+  while (at < flight.length) {
+    const n =
+      ((flight[at + 1] as usize) << 16) |
+      ((flight[at + 2] as usize) << 8) |
+      (flight[at + 3] as usize);
+    out.push(flight.slice(at as i64, (at + 4 + n) as i64));
+    at += 4 + n;
+  }
+  return out;
+}
+
+// Whether `signature` with `scheme` is the signature of `message` by the key of the
+// certificate `leaf`.
+function verifies(leaf: u8[], scheme: usize, message: u8[], signature: u8[]): bool {
+  const c = new Certificate(leaf);
+  const key = leaf.slice(c.publicKey.start as i64, c.publicKey.end as i64);
+  if (scheme == 0x0403) {
+    return c.keyAlgorithm == KEY_P256 && p256Verify(key, sha256(message), signature);
+  }
+  if (scheme == 0x0503) {
+    return c.keyAlgorithm == KEY_P384 && p384Verify(key, sha384(message), signature);
+  }
+  if (scheme == 0x0807) {
+    return c.keyAlgorithm == KEY_ED25519 && ed25519Verify(key, message, signature);
+  }
+  if (c.keyAlgorithm != KEY_RSA) {
+    return false;
+  }
+  const low = scheme & 0xff;
+  const high = scheme >> 8;
+  if (high == 8) {
+    const d = low == 4 ? sha256(message) : low == 5 ? sha384(message) : sha512(message);
+    return rsaPssVerify(key, d, signature);
+  }
+  const d = high == 4 ? sha256(message) : high == 5 ? sha384(message) : sha512(message);
+  return low == 1 && rsaPkcs1Verify(key, d, signature);
+}
+
+// A TLS 1.3 handshake with `key` to both Finished: "scheme verified" of its CertificateVerify.
+function tls13(key: ServerKey): string {
+  const c = new ClientHandshake(input(), hexDecode(CLIENT_PRIVATE));
+  const s = new ServerHandshake(key, []);
+  const hello = c.hello();
+  expect(s.onMessage(hello)).toBe(S_SEND_FLIGHT);
+  expect(c.onMessage(s.hello!)).toBe(HANDSHAKE_KEYS);
+  const flight = messages(s.flight!);
+  let step = 0;
+  for (const m of flight) {
+    step = c.onMessage(m);
+  }
+  expect(step).toBe(FINISHED_DONE);
+  expect(s.onMessage(c.lastFlight)).toBe(S_DONE);
+  // EncryptedExtensions, Certificate, CertificateVerify, Finished.
+  const cv = flight[2];
+  expect(cv[0]).toBe(15);
+  const scheme = ((cv[4] as usize) << 8) | (cv[5] as usize);
+  const signature = cv.slice(8);
+  const transcript = hello
+    .concat(s.hello!)
+    .concat(flight[0])
+    .concat(flight[1]);
+  const th = s.suite == 0x1302 ? sha384(transcript) : sha256(transcript);
+  const signed: u8[] = [];
+  for (let i = 0; i < 64; i++) {
+    signed.push(0x20);
+  }
+  const all = signed.concat(utf8Encode("TLS 1.3, server CertificateVerify")).concat([0]).concat(th);
+  return `${scheme.toString(16)} ${verifies(key.chain[0], scheme, all, signature)}`;
+}
+
+// A TLS 1.2 handshake with `key` to both Finished: "scheme verified ecdsa-suite" of its
+// ServerKeyExchange.
+function tls12(key: ServerKey, change: string[] = []): string {
+  const i = input(change);
+  const hello = i.fixed!;
+  const offer = parseClientHello(hello.slice(4));
+  const s = new ServerHandshake12(key, hello, offer, null, true);
+  const flight = messages(s.hello);
+  const sh = flight[0];
+  const c = new ClientHandshake12(
+    hello.concat(sh),
+    s.suite,
+    i.random,
+    sh.slice(6, 38),
+    offer.ems,
+    hexDecode(CLIENT_PRIVATE),
+    i.publicKey,
+    null,
+  );
+  let step = 0;
+  for (let k: usize = 1; k < flight.length; k++) {
+    step = c.onMessage(flight[k]);
+  }
+  expect(step).toBe(SEND12);
+  expect(s.onMessage(c.keyExchange!)).toBe(false);
+  s.ccs();
+  expect(s.onMessage(c.finished!)).toBe(true);
+  c.ccs();
+  expect(c.onMessage(s.finished!)).toBe(DONE12);
+  const ok = verifies(key.chain[0], c.signatureScheme, c.signed!, c.signature!);
+  return `${c.signatureScheme.toString(16)} ${ok} ${ecdsaSuite12(s.suite)}`;
+}
+
+describe("serverKey", () => {
+  it("reads a key of each kind and form, with its certificate", () => {
+    const kinds = [KEY_P256, KEY_P384, KEY_P384, KEY_ED25519, KEY_RSA, KEY_RSA];
+    const all = pairs();
+    for (let i: usize = 0; i < all.length; i++) {
+      const k = serverKey(all[i][1], all[i][2], true)!;
+      expect(`${all[i][0]} ${k.kind ?? -1}`).toBe(`${all[i][0]} ${kinds[i]}`);
+      expect(k.chain.length).toBe(1);
+    }
+  });
+
+  it("gives only a P-256 key unless asked for all", () => {
+    for (const p of pairs()) {
+      expect(`${p[0]} ${loaded(p[1], p[2], false)}`).toBe(
+        `${p[0]} ${p[0] == "P-256" ? "ok" : "none"}`,
+      );
+    }
+  });
+
+  it("refuses a key that is not the certificate's", () => {
+    const differ = "certificate and key do not match: the public keys differ";
+    expect(loaded(v.P256_CERT, v.P384_PKCS8)).toBe(differ);
+    expect(loaded(v.P384_CERT, v.P256_PKCS8)).toBe(differ);
+    expect(loaded(v.P384_CERT, v.ED_PKCS8)).toBe(differ);
+    expect(loaded(v.ED_CERT, v.RSA_PKCS8)).toBe(differ);
+    expect(loaded(v.RSA_CERT, v.ED_PKCS8)).toBe(differ);
+    // Another key of the same kind.
+    expect(loaded(v.RSA2_CERT, v.RSA_PKCS8)).toBe(differ);
+    expect(loaded(v.RSA2_CERT, v.RSA_PKCS1)).toBe(differ);
+  });
+
+  it("has no server for a P-521 key, and refuses malformed keys", () => {
+    expect(loaded(v.P521_CERT, v.P521_PKCS8)).toBe("none");
+    const cut = (pem: string, n: usize): string => {
+      const lines = pem.split("\n");
+      lines.splice(n as i64, 1);
+      return lines.join("\n");
+    };
+    expect(loaded(v.RSA_CERT, cut(v.RSA_PKCS1, 3))).toContain("invalid key PEM");
+    expect(loaded(v.RSA_CERT, cut(v.RSA_PKCS8, 3))).toContain("invalid key PEM");
+    expect(loaded(v.ED_CERT, cut(v.ED_PKCS8, 1))).toContain("invalid key PEM");
+    expect(loaded(v.P384_CERT, cut(v.P384_SEC1, 1))).toContain("invalid key PEM");
+    // An Ed25519 key in PKCS#8 whose seed is 31 bytes.
+    const short: u8[] = [0x30, 0x2d, 2, 1, 0, 0x30, 5, 6, 3, 0x2b, 0x65, 0x70, 4, 0x21, 4, 0x1f];
+    for (let i = 0; i < 31; i++) {
+      short.push(7);
+    }
+    short[1] = (short.length - 2) as u8;
+    const pem = `-----BEGIN PRIVATE KEY-----\n${base64Encode(short)}\n-----END PRIVATE KEY-----\n`;
+    expect(loaded(v.ED_CERT, pem)).toBe("invalid key PEM: the Ed25519 key is not 32 bytes");
+  });
+});
+
+describe("the scheme a server signs with", () => {
+  it("is its key's, the first of its own order that the client offers", () => {
+    const p384 = serverKey(v.P384_CERT, v.P384_PKCS8, true)!;
+    const ed = serverKey(v.ED_CERT, v.ED_PKCS8, true)!;
+    const rsa = serverKey(v.RSA_CERT, v.RSA_PKCS8, true)!;
+    const every: usize[] = [0x0403, 0x0503, 0x0804, 0x0805, 0x0806, 0x0807, 0x0401, 0x0501, 0x0601];
+    expect(chooseScheme(p384, every, true)).toBe(0x0503);
+    expect(chooseScheme(p384, [0x0403, 0x0603, 0x0807], true)).toBe(0);
+    expect(chooseScheme(ed, every, false)).toBe(0x0807);
+    expect(chooseScheme(ed, [0x0403, 0x0503], true)).toBe(0);
+    // RSA: PSS with the longest hash first; PKCS#1 v1.5 only in TLS 1.2.
+    expect(chooseScheme(rsa, every, true)).toBe(0x0806);
+    expect(chooseScheme(rsa, [0x0401, 0x0804, 0x0805], true)).toBe(0x0805);
+    expect(chooseScheme(rsa, [0x0401, 0x0501, 0x0601], true)).toBe(0);
+    expect(chooseScheme(rsa, [0x0401, 0x0501, 0x0601], false)).toBe(0x0601);
+    expect(chooseScheme(rsa, [0x0401, 0x0804], false)).toBe(0x0804);
+    expect(chooseScheme(rsa, [0x0403, 0x0807], false)).toBe(0);
+  });
+});
+
+describe("the TLS 1.2 suite a server chooses", () => {
+  it("is ECDHE_RSA with an RSA key and ECDHE_ECDSA otherwise, in the server's order", () => {
+    const all: usize[] = [0xcca9, 0xcca8, 0xc02c, 0xc030, 0xc02b, 0xc02f];
+    expect(chooseSuite12(all, true, true)).toBe(0xc02f);
+    expect(chooseSuite12(all, false, true)).toBe(0xcca8);
+    expect(chooseSuite12(all, true, false)).toBe(0xc02b);
+    expect(chooseSuite12(all, false, false)).toBe(0xcca9);
+    expect(chooseSuite12([0xcca9, 0xcca8, 0xc02c, 0xc030], true, true)).toBe(0xc030);
+    expect(chooseSuite12([0xcca9, 0xcca8], true, true)).toBe(0xcca8);
+    // Only the other kind's suites: nothing in common.
+    expect(chooseSuite12([0xc02b, 0xc02c, 0xcca9], true, true)).toBe(0);
+    expect(chooseSuite12([0xc02f, 0xc030, 0xcca8], true, false)).toBe(0);
+  });
+});
+
+describe("a handshake with each kind of server key", () => {
+  const expected: string[][] = [
+    ["403 true", "403 true true"],
+    ["503 true", "503 true true"],
+    ["503 true", "503 true true"],
+    ["807 true", "807 true true"],
+    ["806 true", "806 true false"],
+    ["806 true", "806 true false"],
+  ];
+  const all = pairs();
+  for (let i: usize = 0; i < all.length; i++) {
+    it(`finishes in TLS 1.3 and in TLS 1.2 with a signature that verifies (${all[i][0]})`, () => {
+      const key = serverKey(all[i][1], all[i][2], true)!;
+      expect(tls13(key)).toBe(expected[i][0]);
+      expect(tls12(key)).toBe(expected[i][1]);
+    });
+  }
+
+  it("signs with PKCS#1 v1.5 in TLS 1.2 for a client without PSS, with the hash it has", () => {
+    const key = serverKey(v.RSA_CERT, v.RSA_PKCS8, true)!;
+    // The client's schemes: ..., rsa_pss_rsae_sha256/384/512, ed25519, rsa_pkcs1_sha256/384/512.
+    const list = "08040805080608070401050106";
+    const none = "0203020302030807";
+    expect(tls12(key, [list + "01", none + "040105010601"])).toBe("601 true false");
+    expect(tls12(key, [list + "01", none + "040105010203"])).toBe("501 true false");
+    expect(tls12(key, [list + "01", none + "040102030203"])).toBe("401 true false");
+  });
+
+  it("fails when the client has no scheme of the key's", () => {
+    const key = serverKey(v.P384_CERT, v.P384_PKCS8, true)!;
+    const s = new ServerHandshake(key, []);
+    // The client's signature_algorithms with ecdsa_secp384r1_sha384 turned into another scheme.
+    const hello = hexEncode(input().fixed!);
+    const list = hello.indexOf("04030503");
+    expect(list > 0).toBe(true);
+    const changed = hello.slice(0, list) + "04030603" + hello.slice(list + 8);
+    expect(() => s.onMessage(hexDecode(changed))).toThrow(
+      "the client accepts no signature scheme of the certificate's key (ecdsa_secp384r1_sha384)",
+    );
+  });
+});

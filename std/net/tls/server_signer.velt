@@ -1,0 +1,93 @@
+// velt/net (internal): which signature scheme a TLS server signs with (RFC 8446 §4.2.3) and the
+// signature itself, for each kind of key a `ServerKey` holds: ECDSA on P-256 and P-384, Ed25519
+// and RSA. The server's CertificateVerify (TLS 1.3) and ServerKeyExchange (TLS 1.2) use both.
+
+import { ed25519Sign } from "velt/crypto/ed25519_sign";
+import { p256Sign } from "velt/crypto/ecdsa_p256_sign";
+import { p384Sign } from "velt/crypto/ecdsa_p384_sign";
+import { sha256 } from "velt/crypto/sha256";
+import { sha384, sha512 } from "velt/crypto/sha512";
+import { ServerKey } from "velt/net/tls/server_key";
+import { KEY_ED25519, KEY_P256, KEY_P384 } from "velt/net/tls/x509/algorithms";
+
+const ECDSA_P256_SHA256: usize = 0x0403;
+const ECDSA_P384_SHA384: usize = 0x0503;
+const ED25519: usize = 0x0807;
+const RSA_PSS_SHA256: usize = 0x0804;
+const RSA_PSS_SHA384: usize = 0x0805;
+const RSA_PSS_SHA512: usize = 0x0806;
+const RSA_PKCS1_SHA256: usize = 0x0401;
+const RSA_PKCS1_SHA384: usize = 0x0501;
+const RSA_PKCS1_SHA512: usize = 0x0601;
+
+// The schemes `key` can sign with, most preferred first (rustls's order for an RSA key: PSS
+// before PKCS#1 v1.5, the longer hash first). TLS 1.3 has no PKCS#1 v1.5 (§4.2.3).
+function schemesOf(key: ServerKey, tls13: bool): usize[] {
+  const kind = key.kind ?? KEY_P256;
+  if (kind == KEY_P256) {
+    return [ECDSA_P256_SHA256];
+  }
+  if (kind == KEY_P384) {
+    return [ECDSA_P384_SHA384];
+  }
+  if (kind == KEY_ED25519) {
+    return [ED25519];
+  }
+  const pss = [RSA_PSS_SHA512, RSA_PSS_SHA384, RSA_PSS_SHA256];
+  return tls13 ? pss : pss.concat([RSA_PKCS1_SHA512, RSA_PKCS1_SHA384, RSA_PKCS1_SHA256]);
+}
+
+/**
+ * The scheme a server with `key` signs with for a client that offers `offered`: the server's
+ * first that the client has, 0 when there is none.
+ */
+export function chooseScheme(key: ServerKey, offered: usize[], tls13: bool): usize {
+  for (const s of schemesOf(key, tls13)) {
+    if (offered.includes(s)) {
+      return s;
+    }
+  }
+  return 0;
+}
+
+/** The names of the schemes of `key`, for a failure's message. */
+export function schemeNames(key: ServerKey, tls13: bool): string {
+  const kind = key.kind ?? KEY_P256;
+  if (kind == KEY_P256) {
+    return "ecdsa_secp256r1_sha256";
+  }
+  if (kind == KEY_P384) {
+    return "ecdsa_secp384r1_sha384";
+  }
+  if (kind == KEY_ED25519) {
+    return "ed25519";
+  }
+  return tls13 ? "rsa_pss_rsae_sha256, sha384 or sha512" : "RSA with PSS or PKCS#1 v1.5";
+}
+
+/** `key`'s signature of `message` with `scheme`, one `chooseScheme` returned for it. */
+export function signWith(key: ServerKey, scheme: usize, message: u8[]): u8[] {
+  if (scheme == ECDSA_P256_SHA256) {
+    return p256Sign(key.key, sha256(message));
+  }
+  if (scheme == ECDSA_P384_SHA384) {
+    return p384Sign(key.key, sha384(message));
+  }
+  if (scheme == ED25519) {
+    return ed25519Sign(key.key, key.publicKey!, message);
+  }
+  const rsa = key.rsa!;
+  if (scheme == RSA_PSS_SHA256) {
+    return rsa.signPss(sha256(message));
+  }
+  if (scheme == RSA_PSS_SHA384) {
+    return rsa.signPss(sha384(message));
+  }
+  if (scheme == RSA_PSS_SHA512) {
+    return rsa.signPss(sha512(message));
+  }
+  if (scheme == RSA_PKCS1_SHA256) {
+    return rsa.signPkcs1(sha256(message));
+  }
+  return rsa.signPkcs1(scheme == RSA_PKCS1_SHA384 ? sha384(message) : sha512(message));
+}
