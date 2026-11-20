@@ -28,6 +28,13 @@ export const OP_ASSERT: u32 = 6;
 export const OP_CLEAR: u32 = 7;
 /** Nothing matches here (`[]`). */
 export const OP_FAIL: u32 = 8;
+/** An optional iteration of a quantifier, whose mark is `a`, may start here. */
+export const OP_ENTER: u32 = 9;
+/** An iteration of the quantifier whose mark is `a` ends here: not where it started, as an
+ * iteration past the least number must match something (JavaScript's RepeatMatcher). The
+ * matchers ask whether an iteration could start here, not where this one did: when one could,
+ * what follows the quantifier from here has been tried, or will be, without this iteration. */
+export const OP_NONEMPTY: u32 = 10;
 
 /** No way to skip: a match may start anywhere. */
 export const SCAN_NONE: u32 = 0;
@@ -52,6 +59,8 @@ export class Program {
   /** The number of the join instructions before each instruction: what numbers a join's row
    * in the backtracker's table of visited states. */
   joins: u32 = 0;
+  /** How many marks `OP_ENTER` and `OP_NONEMPTY` use. */
+  marks: u32 = 0;
   /** Capture groups, not counting the whole match. */
   groups: u32 = 0;
   /** Characters are UTF-16 code units (no `u` flag): a pair of the subject is two. */

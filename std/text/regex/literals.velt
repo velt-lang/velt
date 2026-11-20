@@ -177,7 +177,8 @@ function firstBytes(n: Node, bits: u64[], units: bool): bool {
     const r = kind == CHAR ? one : (n.set ?? new CharSet()).ranges;
     for (let i: usize = 0; i < r.length; i += 2) {
       if (units && r[i] <= 0xdfff && r[i + 1] >= 0xd800) {
-        return true;
+        bits[0] = bits[1] = bits[2] = bits[3] = 0xffffffffffffffff;
+        return false;
       }
       // The bytes between the last ASCII one and the first lead byte start no character.
       for (let b = leadByte(r[i]); b <= leadByte(r[i + 1]); b++) {
@@ -293,7 +294,7 @@ export function analyze(prog: Program, tree: Node): void {
   if (empty || count == 256) {
     return;
   }
-  if (count == bytes.length && chooseGrams(prog, bytes, 1)) {
+  if (count > 0 && count == bytes.length && chooseGrams(prog, bytes, 1)) {
     return;
   }
   prog.scan = SCAN_FIRST;

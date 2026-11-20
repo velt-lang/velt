@@ -7,9 +7,23 @@
 // long. So the position between the halves of a pair is the offset of the sequence's second
 // byte, and a pattern like `/./` or `/[\uD800-\uDBFF]/` matches half a pair, as in JavaScript,
 // with no copy of the subject. A position is otherwise always the offset of a sequence's start.
+//
+// With the `u` flag the position between the halves of a pair exists too, as in V8, whose
+// search tries every code unit: no character is there, but an assertion or an empty pattern can
+// match (`/\B/u` matches inside `"😀"`).
 
 import { addressLoad, inline } from "velt/lang/intrinsics";
-import { AT_END, AT_LINE_END, AT_LINE_START, AT_START, AT_WORD } from "velt/text/regex/node";
+import {
+  AT_END,
+  AT_LINE_END,
+  AT_LINE_START,
+  AT_START,
+  AT_WORD,
+  AT_WORD_FOLDED,
+} from "velt/text/regex/node";
+
+/** What `charAt` gives where a pattern finds no character. */
+export const NO_CHAR: u32 = 0xffffff;
 
 /** Byte `i` of the text at `base`. */
 @inline("always")
@@ -25,7 +39,11 @@ export function charAt(base: usize, i: usize, units: bool): u32 {
     return b | (1 << 24);
   }
   if (b < 0xc0) {
-    // The low half of a pair: the last ten bits of its code point.
+    // The low half of a pair: the last ten bits of its code point. A pattern that matches code
+    // points finds no character there.
+    if (!units) {
+      return NO_CHAR | (3 << 24);
+    }
     return 0xdc00 | ((byteAt(base, i + 1) & 0x0f) << 6) | (byteAt(base, i + 2) & 0x3f) | (3 << 24);
   }
   if (b < 0xe0) {
@@ -84,7 +102,36 @@ export function holds(kind: u32, base: usize, i: usize, len: usize): bool {
   if (kind == AT_LINE_END) {
     return i == len || beforeLineEnd(base, i, len);
   }
+  if (kind >= AT_WORD_FOLDED) {
+    const before = wordBefore(base, i);
+    const after = i < len && (isWordByte(byteAt(base, i)) || foldedWordAt(base, i, len));
+    return (before != after) == (kind == AT_WORD_FOLDED);
+  }
   const before = i > 0 && isWordByte(byteAt(base, i - 1));
   const after = i < len && isWordByte(byteAt(base, i));
   return (before != after) == (kind == AT_WORD);
+}
+
+/** Is `ſ` (U+017F) or `K` (U+212A) at byte `i`, before `len`? */
+function foldedWordAt(base: usize, i: usize, len: usize): bool {
+  const b = byteAt(base, i);
+  if (b == 0xc5) {
+    return i + 1 < len && byteAt(base, i + 1) == 0xbf;
+  }
+  return b == 0xe2 && i + 2 < len && byteAt(base, i + 1) == 0x84 && byteAt(base, i + 2) == 0xaa;
+}
+
+/** Is a word character, `ſ` or `K` right before byte `i`? */
+function wordBefore(base: usize, i: usize): bool {
+  if (i == 0) {
+    return false;
+  }
+  const b = byteAt(base, i - 1);
+  if (isWordByte(b)) {
+    return true;
+  }
+  if (b == 0xbf) {
+    return i >= 2 && byteAt(base, i - 2) == 0xc5;
+  }
+  return b == 0xaa && i >= 3 && byteAt(base, i - 2) == 0x84 && byteAt(base, i - 3) == 0xe2;
 }

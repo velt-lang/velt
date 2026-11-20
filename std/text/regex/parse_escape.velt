@@ -219,7 +219,8 @@ export function atomEscape(p: Parser): Node {
   }
   p.at++;
   if (c == 0x62 || c == 0x42) {
-    return new Node(ASSERT, c == 0x62 ? AT_WORD : AT_NOT_WORD);
+    const folded: u32 = p.unicode && p.ignoreCase ? 2 : 0;
+    return new Node(ASSERT, (c == 0x62 ? AT_WORD : AT_NOT_WORD) + folded);
   }
   if (c == 0x6b && (p.unicode || p.hasNames)) {
     namedReference(p);

@@ -32,6 +32,10 @@ export const AT_LINE_END: u32 = 3;
 export const AT_WORD: u32 = 4;
 /** `\B`: anywhere else. */
 export const AT_NOT_WORD: u32 = 5;
+/** `\\b` and `\\B` with the `i` and `u` flags, where `ſ` and `K` are word characters too (they
+ * fold to `s` and `k`). */
+export const AT_WORD_FOLDED: u32 = 6;
+export const AT_NOT_WORD_FOLDED: u32 = 7;
 
 /** A `REPEAT` without an upper bound. */
 export const UNBOUNDED: u32 = 0xffffffff;

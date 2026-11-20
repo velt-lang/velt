@@ -19,7 +19,7 @@ function bt(source: string, flags: string, s: string): i64[] {
   const len = strByteLen(s);
   backtrackReset(c.prog, m, 0, len);
   for (let i: usize = 0; i <= len; i++) {
-    if (backtrack(c.prog, m, s, len, 0, i)) {
+    if (backtrack(c.prog, m, s, len, i)) {
       return m.slots;
     }
   }

@@ -2,7 +2,7 @@
 // (program.velt), Thompson's construction: an alternation is a split, a quantifier a loop of
 // splits, a counted one copies of its body.
 
-import { arrayWithCapacity } from "velt/lang/intrinsics";
+import { arrayTruncate, arrayWithCapacity } from "velt/lang/intrinsics";
 import { CharSet } from "velt/text/regex/char_set";
 import { ALT, ASSERT, CAT, CHAR, EMPTY, GROUP, Node, REPEAT, SET, UNBOUNDED } from "velt/text/regex/node";
 import { analyze } from "velt/text/regex/literals";
@@ -13,9 +13,11 @@ import {
   OP_CHAR,
   OP_CLASS,
   OP_CLEAR,
+  OP_ENTER,
   OP_FAIL,
   OP_JUMP,
   OP_MATCH,
+  OP_NONEMPTY,
   OP_SAVE,
   OP_SPLIT,
   Program,
@@ -184,12 +186,23 @@ export class Compiler {
       return;
     }
     const exits: usize[] = [];
+    const empty = canBeEmpty(n.kids[0]);
     for (let i = n.a; i < n.b; i++) {
       const before = this.here();
+      if (empty) {
+        this.emit(OP_ENTER, this.prog.marks, 0);
+      }
       exits.push(this.split(n.greedy));
       this.body(n, i > 0);
-      if (this.here() == before + 1) {
+      if (this.here() as usize == exits[exits.length - 1] + 1) {
+        // A body without instructions: nothing to repeat.
+        arrayTruncate(this.prog.code, 3 * (before as usize));
+        exits.pop();
         break;
+      }
+      if (empty) {
+        this.emit(OP_NONEMPTY, this.prog.marks, 0);
+        this.prog.marks++;
       }
     }
     for (let i: usize = 0; i < exits.length; i++) {
@@ -202,6 +215,26 @@ export class Compiler {
     const next = this.here() + 1;
     return this.emit(OP_SPLIT, greedy ? next : 0, greedy ? 0 : next);
   }
+}
+
+/** May `n` match the empty string? */
+function canBeEmpty(n: Node): bool {
+  const kind = n.kind;
+  if (kind == CHAR || kind == SET) {
+    return false;
+  }
+  if (kind == REPEAT && n.a == 0) {
+    return true;
+  }
+  let any = false;
+  for (let i: usize = 0; i < n.kids.length; i++) {
+    const empty = canBeEmpty(n.kids[i]);
+    if (kind == ALT ? empty : !empty) {
+      return empty;
+    }
+    any = true;
+  }
+  return kind != ALT || !any;
 }
 
 /** The lowest capture group in `n`, or 0. */
