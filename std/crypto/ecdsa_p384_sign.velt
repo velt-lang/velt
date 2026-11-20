@@ -26,8 +26,9 @@ const S_REGS: usize = S_POWERS + 16;
 /**
  * The P-384 ECDSA signature (DER, RFC 3279's ECDSA-Sig-Value) of `digest` (a hash of the
  * message: its leftmost 384 bits are used) by the private key `privateKey` (48 big-endian bytes
- * in [1, n - 1]). The nonce is RFC 6979's with HMAC-SHA384, so the same key and digest give the
- * same signature. Throws `CryptoError` for a bad key.
+ * in [1, n - 1]). The nonce is RFC 6979's with HMAC-SHA384 whatever hash made the digest, so the
+ * same key and digest give the same signature, and only a SHA-384 digest gives the RFC's (and
+ * other libraries' deterministic) signature. Throws `CryptoError` for a bad key.
  */
 export function p384Sign(privateKey: u8[], digest: u8[]): u8[] {
   if (!p384ScalarOk(privateKey)) {
