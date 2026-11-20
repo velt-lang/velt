@@ -85,6 +85,39 @@ impl FnCx<'_, '_> {
         Some((hook, out))
     }
 
+    /// `s.replace(from, f)` or `s.replaceAll(from, f)` with a string pattern and a replacement
+    /// that is a function (an arrow literal, or a variable holding a function): the hook to call
+    /// instead, with `s` first. JavaScript calls the function with the match, its offset in
+    /// UTF-16 code units and the string; a function taking fewer converts as any function value
+    /// does. `None` for any other call (a string replacement, or a regex, which
+    /// `regex_string_call` takes first).
+    pub(super) fn string_replacer_call(
+        &mut self,
+        prop: &ast::Ident,
+        args: &[ast::Expr],
+    ) -> Option<&'static str> {
+        use velt_common::std_hook as h;
+        let hook = match prop.name.as_str() {
+            "replace" => h!(replace_string_calling),
+            "replaceAll" => h!(replace_all_string_calling),
+            _ => return None,
+        };
+        let [_, f] = args else {
+            return None;
+        };
+        let is_fn = match &strip_parens(f).kind {
+            E::Arrow { .. } => true,
+            _ if is_path(f) => self.peek_ty(f).is_some_and(|t| {
+                matches!(
+                    self.cx.ty.kind(t),
+                    TyKind::FnPtr { .. } | TyKind::Closure(_)
+                )
+            }),
+            _ => false,
+        };
+        is_fn.then_some(hook)
+    }
+
     /// Is `e` a `RegExp`: `new RegExp(…)` (a regex literal is one) or a variable or field path
     /// of that type? Other expressions take the string method (and its type errors).
     fn is_regexp_arg(&mut self, e: &ast::Expr) -> bool {

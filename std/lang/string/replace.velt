@@ -1,0 +1,180 @@
+// velt/lang/string (internal): `replace` and `replaceAll` with a string pattern
+// (std/prelude/string.velt), in Velt (#2198).
+//
+// The replacement follows JavaScript's GetSubstitution for a string pattern: `$$` is `$`, `$&`
+// the match, `` $` `` the text before it and `$'` the text after it; any other `$` (`$1`,
+// `$<name>`, a last `$`) is copied as it is, because a string pattern has no captures.
+//
+// The pattern is searched in the string's WTF-8 bytes with the searches of `indexOf`, and the
+// result is built in a string builder from ranges of the string's and the replacement's bytes.
+// The builder joins a high surrogate that ends its text with a low one that starts the next
+// range into their character, so every seam is the text JavaScript has there. A pattern that
+// can match half of a surrogate pair, and `replaceAll("", x)`, which inserts between the halves
+// of every pair, work by code unit (half_pos.velt) when the string is not ASCII.
+//
+// Places in the string are positions, `byte << 1`, plus 1 for the low half of the pair at
+// `byte`; on the byte path the low bit is always 0. Every builder call passes the builder first
+// and only locals after it: an argument that is a call would make the compiler copy the builder.
+
+import { strByteAt, strByteLen, strLen } from "velt/lang/intrinsics";
+import { findByte } from "velt/lang/string/byte_scan";
+import { isHalfNeedle, nextUnit, NO_START } from "velt/lang/string/code_units";
+import { halfFindPos, unitsAfter, unitsText } from "velt/lang/string/half_pos";
+import { findBytes } from "velt/lang/string/needle_scan";
+
+declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
+declare function velt_rt_strbuf_new(cap: u64, out: string);
+declare function velt_rt_strbuf_push_str(buf: string, s: string);
+declare function velt_rt_strbuf_finish(buf: string, out: string);
+
+/** `$`. */
+const DOLLAR: u8 = 0x24;
+
+/**
+ * Appends bytes `a..b` of `t` (whole characters) to the builder `buf`: all of `t` as it is, a
+ * range as the runtime's byte slice of it (inline when short, else sharing `t`'s buffer).
+ */
+function pushRange(buf: string, t: string, a: usize, b: usize) {
+  if (a >= b) {
+    return;
+  }
+  if (b - a == strByteLen(t)) {
+    velt_rt_strbuf_push_str(buf, t);
+    return;
+  }
+  const part = velt_rt_str_byte_slice(t, a as u64, b as u64);
+  velt_rt_strbuf_push_str(buf, part);
+}
+
+/** Appends the text of `s` from position `a` to position `b` to the builder `buf`. */
+function pushUnits(buf: string, s: string, a: u64, b: u64) {
+  if (((a | b) & 1) == 0) {
+    pushRange(buf, s, (a >> 1) as usize, (b >> 1) as usize);
+    return;
+  }
+  const text = unitsText(s, a, b);
+  velt_rt_strbuf_push_str(buf, text);
+}
+
+/**
+ * Appends the replacement `to` for the match of `s` (`n` bytes) from position `p` to position
+ * `e` to the builder `buf`. `first` is where `to`'s first `$` is, or -1 when it has none.
+ */
+function pushSubstitution(
+  buf: string,
+  to: string,
+  first: i64,
+  s: string,
+  n: usize,
+  p: u64,
+  e: u64,
+) {
+  const tn = strByteLen(to);
+  if (first < 0) {
+    pushRange(buf, to, 0, tn);
+    return;
+  }
+  let run: usize = 0;
+  let i = first as usize;
+  while (i + 1 < tn) {
+    if (strByteAt(to, i as u64) != DOLLAR) {
+      i++;
+      continue;
+    }
+    const c = strByteAt(to, (i + 1) as u64);
+    if (c == DOLLAR) {
+      // The text before, with the first `$`.
+      pushRange(buf, to, run, i + 1);
+    } else if (c == 0x26) {
+      pushRange(buf, to, run, i);
+      pushUnits(buf, s, p, e);
+    } else if (c == 0x60) {
+      pushRange(buf, to, run, i);
+      pushUnits(buf, s, 0, p);
+    } else if (c == 0x27) {
+      pushRange(buf, to, run, i);
+      pushUnits(buf, s, e, (n as u64) << 1);
+    } else {
+      i++;
+      continue;
+    }
+    i += 2;
+    run = i;
+  }
+  pushRange(buf, to, run, tn);
+}
+
+/** The first match of `from` (`m` bytes, not empty) in bytes `at..n` of `s`, or -1. */
+function find(s: string, from: string, m: usize, at: usize, n: usize): i64 {
+  if (m == 1) {
+    return findByte(s, strByteAt(from, 0), at, n);
+  }
+  if (m > n - at) {
+    return -1;
+  }
+  return findBytes(s, from, m, at, n);
+}
+
+/** The first match of `from` (`m` bytes) in `s` (`n` bytes) from position `at` on, as a
+ * position, or `NO_START`: by code unit when `units`, else in the bytes. */
+function next(s: string, from: string, n: usize, m: usize, at: u64, units: bool): u64 {
+  if (units) {
+    return halfFindPos(s, from, at);
+  }
+  const k = find(s, from, m, (at >> 1) as usize, n);
+  return k < 0 ? NO_START : (k as u64) << 1;
+}
+
+/** `s.replace(from, to)`, or `s.replaceAll(from, to)` when `all`. */
+function replaced(s: string, from: string, to: string, all: bool): string {
+  const n = strByteLen(s);
+  const m = strByteLen(from);
+  const wide = strLen(s) != n;
+  // By code unit: a pattern that can match half of a pair. The empty pattern matches at every
+  // position, between the halves of a pair too when the string is not ASCII.
+  const units = wide && m != 0 && isHalfNeedle(from, m);
+  const end = (n as u64) << 1;
+  let p: u64 = m == 0 ? 0 : next(s, from, n, m, 0, units);
+  if (p == NO_START) {
+    return velt_rt_str_byte_slice(s, 0, n as u64);
+  }
+  const tn = strByteLen(to);
+  const first = findByte(to, DOLLAR, 0, tn);
+  let buf = "";
+  velt_rt_strbuf_new((n + tn) as u64, buf);
+  let copied: u64 = 0;
+  while (true) {
+    pushUnits(buf, s, copied, p);
+    const e = m == 0 ? p : units ? unitsAfter(s, p, from, m) : p + ((m as u64) << 1);
+    pushSubstitution(buf, to, first, s, n, p, e);
+    copied = e;
+    if (!all) {
+      break;
+    }
+    if (m == 0) {
+      if (p >= end) {
+        break;
+      }
+      p = wide ? nextUnit(s, p) : p + 2;
+    } else {
+      p = next(s, from, n, m, e, units);
+      if (p == NO_START) {
+        break;
+      }
+    }
+  }
+  pushUnits(buf, s, copied, end);
+  let out = "";
+  velt_rt_strbuf_finish(buf, out);
+  return out;
+}
+
+/** `s.replace(from, to)`: the first match only. */
+export function replace(s: string, from: string, to: string): string {
+  return replaced(s, from, to, false);
+}
+
+/** `s.replaceAll(from, to)`: every match that does not overlap an earlier one, left to right. */
+export function replaceAll(s: string, from: string, to: string): string {
+  return replaced(s, from, to, true);
+}
