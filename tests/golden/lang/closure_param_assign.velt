@@ -1,0 +1,60 @@
+// An arrow function may assign its own parameters, as in JavaScript: the parameter is the
+// function's variable, and the caller's argument stays as it was (sigx's `nodeOps.insert`,
+// `if (anchor && anchor.parentNode !== parent) anchor = null;`).
+class Node {
+  name: string;
+  parent: Node | null;
+  constructor(name: string, parent: Node | null = null) {
+    this.name = name;
+    this.parent = parent;
+  }
+}
+
+type Ops = { insert: (child: Node, parent: Node, anchor?: Node | null) => string };
+
+const ops: Ops = {
+  insert: (child, parent, anchor) => {
+    if (anchor && anchor.parent !== parent) {
+      anchor = null;
+    }
+    return `${child.name} into ${parent.name} before ${anchor ? anchor.name : "end"}`;
+  },
+};
+
+const root = new Node("root");
+const other = new Node("other");
+const a = new Node("a", root);
+const b = new Node("b", other);
+console.log(ops.insert(new Node("x"), root, a));
+console.log(ops.insert(new Node("y"), root, b));
+console.log(ops.insert(new Node("z"), root));
+console.log(b.name, b.parent?.name);
+
+// Strings, arrays and numbers; an expression body; a compound assignment and `++`.
+const pad = (s: string, n: number): string => {
+  while (n-- > 0) {
+    s = " " + s;
+  }
+  return s;
+};
+const words = ["a", "b"];
+const grow = (xs: string[]): number => (xs = [...xs, "c"]).length;
+const sum = (total: number, xs: number[]) => {
+  for (const x of xs) {
+    total += x;
+  }
+  return total;
+};
+console.log(JSON.stringify(pad("x", 3)), grow(words), words, sum(1, [2, 3]));
+
+// Assigned in a nested arrow, which sees the function's variable.
+const counter = (start: number) => {
+  const next = () => ++start;
+  next();
+  return next() + start;
+};
+console.log(counter(10));
+[1, 2, 3].forEach((n, i) => {
+  n *= 10;
+  console.log(i, n);
+});

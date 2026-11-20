@@ -131,6 +131,7 @@ mod overload_adapter;
 mod overloads;
 mod ownership;
 mod par;
+mod param_copies;
 mod program;
 mod promise_copies;
 pub mod property_order;
@@ -335,6 +336,8 @@ fn check_timed(
     let (brands, branded) =
         timings::pass("rewrite: defined_props", || defined_props::rewrite(modules));
     let modules = branded.as_deref().unwrap_or(modules);
+    let copied = timings::pass("rewrite: param_copies", || param_copies::rewrite(modules));
+    let modules = copied.as_deref().unwrap_or(modules);
     let closures = timings::pass("rewrite: nested_closures", || {
         nested_closures::rewrite(modules)
     });
