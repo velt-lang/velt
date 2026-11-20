@@ -2,7 +2,9 @@
 // An object literal that moves a part of a narrowed param (`a: b.inner`) moves it after its
 // later fields are evaluated when they cannot assign `b`: a closure they pass to a call reads
 // `b.inner` again, and must see it in place. A closure that assigns another variable (`k++`)
-// writes only that one, so the move is still deferred.
+// writes only that one, so the move is still deferred. A closure that writes `b` (another field,
+// a field of the part, or the part itself) leaves the literal and `b` sharing the object, as in
+// JavaScript.
 
 class Inner {
   v: string;
@@ -33,7 +35,34 @@ function partMut(b: Box | null): void {
   }
 }
 
+// The closure writes another field of `b`: the literal and `b` share the object.
+function partOtherField(b: Box | null): void {
+  if (b) {
+    const r = { a: b.inner, c: run(() => { b.tag = `changed ${b.tag}`; return b.inner.v.length; }) };
+    console.log("other field", r.a.v, r.c, b.tag);
+  }
+}
+
+// The closure writes a field of the part itself, which the literal sees.
+function partInnerField(b: Box | null): void {
+  if (b) {
+    const r = { a: b.inner, c: run(() => { b.inner.v = `inner field replaced ${b.tag}`; return 1; }) };
+    console.log("inner field", r.a.v, r.c);
+  }
+}
+
+// The closure replaces the part: the literal keeps the object it read.
+function partReplace(b: Box | null): void {
+  if (b) {
+    const r = { a: b.inner, c: run(() => { b.inner = new Inner(`replacement ${b.tag}`); return 2; }) };
+    console.log("replace", r.a.v, r.c, b.inner.v);
+  }
+}
+
 for (let i = 0; i < 3; i++) {
   partBorrow({ inner: new Inner(`inner heap string long enough ${i}`), tag: `t${i}` });
   partMut({ inner: new Inner(`inner heap string long enough ${i}`), tag: `t${i}` });
+  partOtherField({ inner: new Inner(`inner heap string long enough ${i}`), tag: `t${i}` });
+  partInnerField({ inner: new Inner(`inner heap string long enough ${i}`), tag: `t${i}` });
+  partReplace({ inner: new Inner(`inner heap string long enough ${i}`), tag: `t${i}` });
 }
