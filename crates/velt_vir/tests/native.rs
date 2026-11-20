@@ -74,6 +74,7 @@ fn build_native(name: &str, p: &hir::Program) -> PathBuf {
         release: false,
         native: &[],
         c_libs: &[],
+        helpers_lib: None,
     })
     .unwrap_or_else(|e| panic!("link: {e}"));
     exe
