@@ -44,6 +44,7 @@ function fmix64(x: u64): u64 {
  * Unsafe: the bytes `at` to `at + 8` must be readable.
  */
 @inline("always")
+// SAFETY: an unsafe function: its doc comment's `Unsafe:` paragraph says what callers guarantee.
 unsafe function wordAt(at: usize): u64 {
   // SAFETY: the caller's bytes.
   return unsafe { (addressLoad<u8>(at) as u64) |
@@ -70,11 +71,10 @@ unsafe function tailWord(at: usize, rest: usize): u64 {
   let i = at;
   if ((rest & 4) != 0) {
     // SAFETY: the caller's bytes, which `rest` counts.
-    word =
-      unsafe { (addressLoad<u8>(i) as u64) |
-        ((addressLoad<u8>(i + 1) as u64) << 8) |
-        ((addressLoad<u8>(i + 2) as u64) << 16) |
-        ((addressLoad<u8>(i + 3) as u64) << 24) };
+    const lo = unsafe { (addressLoad<u8>(i) as u64) | ((addressLoad<u8>(i + 1) as u64) << 8) };
+    // SAFETY: as above.
+    const hi = unsafe { (addressLoad<u8>(i + 2) as u64) | ((addressLoad<u8>(i + 3) as u64) << 8) };
+    word = lo | (hi << 16);
     i += 4;
     shift = 32;
   }
