@@ -1,11 +1,13 @@
-//! The secret-dependent code of std/crypto executes the same instructions whatever the secret:
-//! `scripts/ct-counts.py` builds each probe in release mode and counts its instructions under
-//! valgrind for a set of secrets. A second count is a branch or a loop on the secret in the
-//! machine code, which the source need not show: LLVM turns a mask it can see through into a
-//! branch, and no functional test notices (#2392).
+//! The secret-dependent code of std/crypto is constant time in the machine code:
+//! `scripts/ct-counts.py` builds each probe in release mode and runs it under valgrind, once
+//! counting its instructions for a set of secrets (a second count is a loop or an uneven branch
+//! on the secret) and once under memcheck with the secret marked undefined (which reports every
+//! branch and every address that depends on it, also where both sides cost the same). The source
+//! need not show either: LLVM turns a mask it can see through into a branch, and no functional
+//! test notices (#2392).
 //!
-//! Runs where valgrind and python3 are installed, on x86-64 Linux; elsewhere it says so and
-//! passes.
+//! Runs where valgrind, python3 and a C compiler are installed, on x86-64 Linux; elsewhere it
+//! says so and passes.
 
 use std::path::Path;
 use std::process::Command;
@@ -17,19 +19,11 @@ fn has(tool: &str) -> bool {
         .is_ok_and(|o| o.status.success())
 }
 
-#[test]
-fn secrets_do_not_change_the_instructions_executed() {
-    if !cfg!(all(target_os = "linux", target_arch = "x86_64"))
-        || !has("valgrind")
-        || !has("python3")
-    {
-        eprintln!("note: needs valgrind and python3 on x86-64 Linux; skipping");
-        return;
-    }
+fn run(args: &[&str]) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let out = Command::new("python3")
         .arg(root.join("scripts/ct-counts.py"))
-        .args(["--runs", "20"])
+        .args(args)
         .env("VELT", env!("CARGO_BIN_EXE_velt"))
         .output()
         .expect("scripts/ct-counts.py runs");
@@ -39,4 +33,27 @@ fn secrets_do_not_change_the_instructions_executed() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(out.status.success(), "{text}");
+}
+
+fn can_run() -> bool {
+    let here = cfg!(all(target_os = "linux", target_arch = "x86_64"));
+    if here && has("valgrind") && has("python3") && has("cc") {
+        return true;
+    }
+    eprintln!("note: needs valgrind, python3 and cc on x86-64 Linux; skipping");
+    false
+}
+
+#[test]
+fn secrets_do_not_change_the_instructions_executed() {
+    if can_run() {
+        run(&["--runs", "20"]);
+    }
+}
+
+#[test]
+fn no_branch_or_address_depends_on_a_secret() {
+    if can_run() {
+        run(&["--memcheck"]);
+    }
 }
