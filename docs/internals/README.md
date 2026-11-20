@@ -82,7 +82,11 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
    typed array's buffer and its bytes' length, is made once in front of the outermost such
    loop, each pointer tested for null first: LLVM cannot move such a chain out of an outer loop
    when the inner loop may run no iteration, and then keeps the inner loop's bounds check);
-   `cold_calls` (a function's calls of one callee that never returns, a bounds check's report,
+   `range_versions` (an innermost loop whose range tests, `fits`/`fits_both` of any lane type or
+   `aAt + i + k` compared with a bound it does not change, one test of the counter's bound,
+   the offsets and the lengths in front of it proves true, runs in a copy where they are
+   `true`, followed by a cleanup; where that test fails the original loop runs: Velt's integer
+   arithmetic wraps, so LLVM proves none of them from another); `cold_calls` (a function's calls of one callee that never returns, a bounds check's report,
    become one call, reached from every site; the panic text keeps each site's location, an
    argument, but the merged call instruction carries the first site's debug location, so a
    debugger or a backtrace shows that line for every merged check); `null_exits` (a call of a

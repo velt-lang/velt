@@ -77,8 +77,9 @@ impl FnLower<'_, '_> {
                 self.switch_to(done);
             }
             TyKind::Dyn(..) if !self.cx.is_dynamic(t) => {
+                // The owned value it makes moves into `out`.
                 let o = self.make_dyn_any(v, t, ty);
-                self.assign(out.clone(), Rvalue::Use(o));
+                self.move_into(o, out);
             }
             _ if self.cx.is_union(t) => {
                 let vt = self.cx.ty(t);
