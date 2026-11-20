@@ -832,6 +832,14 @@ within the limit that the target cannot allocate is out of memory (`velt_rt_allo
 smaller block: on wasm32 a byte size past 2^31 - 1 stops the program there, in `velt_rt_realloc`, in
 `velt_rt_bytes_zeroed` and in `velt_rt_bytes_uninit` (which `u8[]`'s `concat` allocates with).
 
+`cap` read as an `i64` says whose the buffer is: positive, a capacity in elements of a buffer the
+array owns; 0, no buffer or memory the array does not own (a constant table, std's `addressArray`);
+negative, memory with an owner, whose block's address is `cap` without bit 63 (std's
+`addressArrayOwned`: dropping the array calls the function in the block's first word with the
+block). An array of the last two kinds is never passed to the runtime by value: the runtime's
+`cap > 0` tests (`velt_rt_bytes_drop`, `VeltBytes::take_vec`, `velt_rt_str_array_drop`) are
+unsigned and would free it.
+
 ## Array methods on a proxy
 
 ```c
