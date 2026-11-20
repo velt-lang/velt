@@ -14,8 +14,10 @@
 //   whose deadline passed move, in order, to their task's due list (a circular list whose first
 //   entry is the task's `T_TIMERS`) and the task is woken with flag `TIMED` (and `LOCALS`). Its
 //   next poll fires them one at a time, in order: each resumes its waiter at once (the root, or a
-//   promise of the task) and the task's microtasks run before the next (sched_run.velt
-//   `fireDue`), as Node's timer phase runs them. A waiter that polls several of them (`Promise.all` over sleeps) sees
+//   promise of the task) and the task's microtasks run before the next (sched_fire.velt
+//   `fireDue`), as Node's timer phase runs them. A poll that fires the task's yields first moves
+//   its sleeps due by then there (`dueNow`), as Node's timers phase comes before its check phase.
+//   A waiter that polls several of them (`Promise.all` over sleeps) sees
 //   only those fired so far ready, so they finish in timer order whoever polls them; and a due
 //   sleep polled while it is first on its task's due list fires itself, once every sleep fired
 //   before it was seen and no microtask is queued or running (the runtime's rule: no earlier
@@ -46,9 +48,9 @@ export const TM_SIZE: usize = 296;
 
 // A sleep: its deadline (nanoseconds), number, waker, links (the pending list, or its task's due
 // list), state, and the task whose due list holds it.
-const S_DEADLINE: usize = 16;
+export const S_DEADLINE: usize = 16;
 export const S_SEQ: usize = 24;
-const S_WAKER: usize = 32;
+export const S_WAKER: usize = 32;
 export const S_PREV: usize = 40;
 export const S_NEXT: usize = 48;
 const S_STATE: usize = 56;
@@ -226,7 +228,7 @@ export function unlinkPending(b: usize, f: usize): void {
 }
 
 /** Appends sleep `f` to task `k`'s due list (circular: the first entry's `S_PREV` is the last). */
-function pushDue(k: usize, f: usize): void {
+export function pushDue(k: usize, f: usize): void {
   const first = m.ld(k + t.T_TIMERS);
   if (first === 0) {
     m.st(f + S_PREV, f);

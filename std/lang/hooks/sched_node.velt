@@ -95,6 +95,13 @@ export const PANICKED: u32 = 256;
  * (`runCaught`) clears it.
  */
 export const ADOPTED: u32 = 512;
+/**
+ * It yielded, and its wake waits for its turn on its task's yield list (sched_yield.velt): until
+ * then its owner does not adopt it, and its yield does not go on. (The bits 1024 to 65536 are
+ * other modules': sched_node_loc, _transfer, _ext, _catch, _report, sched_share_alias,
+ * sched_share.)
+ */
+export const YIELDING: u32 = 131072;
 
 /** `velt_rt_fut_box`: a lazy node of the `size`-byte initial state at `state`. */
 export function boxed(
@@ -183,7 +190,7 @@ function pollNode(f: usize, cx: usize, claim: bool): u32 {
   const task = m.ld(n + N_TASK);
   const e = t.exec();
   if (
-    (fl & (RUNNING | QUEUED)) === 0 &&
+    (fl & (RUNNING | QUEUED | YIELDING)) === 0 &&
     m.ld(e + t.E_ADOPTING) === 0 &&
     wk.taskOf(m.ld(cx + 8)) === task
   ) {
