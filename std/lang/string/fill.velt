@@ -93,6 +93,8 @@ function joined(s: string, times: usize): string {
  * builder of the result's size from a view of `s`'s bytes, its UTF-16 length known.
  */
 function copied(s: string, n: usize, times: usize, total: usize): string {
+  // SAFETY: `s`, a parameter, is alive and unchanged until this function returns, and these are
+  // its `n` bytes; the view is only read, by the appends below, and does not outlive the call.
   const view: u8[] = unsafe { addressArray<u8>(strDataAddress(s), n) };
   const units = strLen(s) as u64;
   let buf = "";
@@ -121,9 +123,14 @@ function doubled(s: string, n: usize, times: usize, total: usize): string {
       at += n;
     }
   } else {
+    // SAFETY: `s`, a parameter, is alive and unchanged until this function returns, and these
+    // are its `n` bytes; the view is only read, by the copy below.
     const view: u8[] = unsafe { addressArray<u8>(strDataAddress(s), n) };
     arrayCopyBytes(bytes, 0, view, 0, n);
-    // The array's own bytes, read while it is written further on: the ranges never overlap.
+    // SAFETY: `bytes` has `total` bytes and more (its length is `total + 16`) and is neither
+    // grown nor dropped while the view is used. The view is read while `bytes` is written
+    // further on: each copy reads `0..more` and writes `have..have + more`, with `more <= have`,
+    // so the ranges never overlap.
     const built: u8[] = unsafe { addressArray<u8>(arrayDataAddress(bytes), total) };
     let have = n;
     while (have < total) {

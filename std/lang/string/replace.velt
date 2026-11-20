@@ -50,6 +50,9 @@ function pushRange(buf: string, t: string, a: usize, b: usize) {
   }
   const units: u64 = strLen(t) == strByteLen(t) ? len as u64 : UNITS_UNKNOWN;
   const at = strDataAddress(t) + a;
+  // SAFETY: `t`, a parameter, is alive and unchanged until this function returns, and `a..b`
+  // is inside its bytes (the caller's range); the view is only read, by the append below, and
+  // `t` is never the builder it is appended to.
   const view: u8[] = unsafe { addressArray<u8>(at, len) };
   velt_rt_strbuf_push_u8s(buf, view, len as u64, units);
 }
