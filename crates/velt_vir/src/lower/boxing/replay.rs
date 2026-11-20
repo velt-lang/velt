@@ -62,6 +62,7 @@ impl Facts {
         take(&mut self.tuple_copies, &mut out.tuple_copies, &one);
         take(&mut self.transfers, &mut out.transfers, &one);
         take(&mut self.fn_compared_keys, &mut out.fn_compared_keys, &key);
+        take(&mut self.glue_compared, &mut out.glue_compared, &one);
         take(&mut self.generic_any_keys, &mut out.generic_any_keys, &key);
         take(&mut self.fn_edges, &mut out.fn_edges, &|p: &(
             FnKey,

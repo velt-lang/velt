@@ -198,6 +198,7 @@ impl Setup {
             release,
             native: &[],
             c_libs: &[],
+            helpers_lib: None,
         }
     }
 }
@@ -240,6 +241,7 @@ fn link_and_run_on_host() {
             release,
             native: &[],
             c_libs: &[],
+            helpers_lib: None,
         })
         .unwrap_or_else(|e| panic!("link failed (release={release}):\n{e}"));
         assert_runs(&exe);
@@ -265,6 +267,7 @@ fn link_and_run_on_host() {
         release: false,
         native: &[],
         c_libs: &[],
+        helpers_lib: None,
     })
     .unwrap_err();
     assert!(

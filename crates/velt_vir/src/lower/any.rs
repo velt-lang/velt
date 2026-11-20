@@ -594,7 +594,7 @@ impl FnLower<'_, '_> {
     }
 
     /// Store the owned temporary `o` into `out`, which takes over its ownership.
-    fn move_into(&mut self, o: Operand, out: &Place) {
+    pub(super) fn move_into(&mut self, o: Operand, out: &Place) {
         if let Operand::Copy(p) = &o {
             self.take_temp(p);
         }

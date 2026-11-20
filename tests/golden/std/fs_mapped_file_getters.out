@@ -1,0 +1,19 @@
+133 133
+1826 0
+195 -61 50089 43459 -15447
+3282641603 3273828803 -1012325693 -1077730647
+5.30572297814325e-18 2.0790903455112083e-17 -0.0001517090332270575 -1.6302244169117814e-107
+14098838332580815490 9431139876186794435 -4347905741128736126 -6015997509044591959
+true true
+true true
+true true
+-1 RangeError: Offset is outside the bounds of the DataView RangeError: Offset is outside the bounds of the DataView
+133 RangeError: Offset is outside the bounds of the DataView RangeError: Offset is outside the bounds of the DataView
+132 RangeError: Offset is outside the bounds of the DataView RangeError: Offset is outside the bounds of the DataView
+130 RangeError: Offset is outside the bounds of the DataView RangeError: Offset is outside the bounds of the DataView
+9007199254740992 RangeError: Offset is outside the bounds of the DataView RangeError: Offset is outside the bounds of the DataView
+Infinity RangeError: Offset is outside the bounds of the DataView RangeError: Offset is outside the bounds of the DataView
+-Infinity RangeError: Offset is outside the bounds of the DataView RangeError: Offset is outside the bounds of the DataView
+RangeError: Offset is outside the bounds of the DataView RangeError: Offset is outside the bounds of the DataView RangeError: Offset is outside the bounds of the DataView
+true true
+RangeError: Offset is outside the bounds of the DataView RangeError: Offset is outside the bounds of the DataView

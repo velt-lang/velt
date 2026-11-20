@@ -71,7 +71,6 @@ velt_rt velt_rt_fs_reader_read_line
 velt_rt velt_rt_fs_reader_read_string
 velt_rt velt_rt_fs_readlink_sync
 velt_rt velt_rt_fs_realpath_sync
-velt_rt velt_rt_fs_remove_sync
 velt_rt velt_rt_fs_rename_sync
 velt_rt velt_rt_fs_symlink_sync
 velt_rt velt_rt_fs_writer_close
@@ -313,7 +312,6 @@ velt_rt velt_rt_symbol_new
 velt_rt velt_rt_task_gate
 velt_rt velt_rt_task_gate_free
 velt_rt velt_rt_task_gate_wait
-velt_rt velt_rt_task_id
 velt_rt velt_rt_tcp_abort
 velt_rt velt_rt_tcp_accept
 velt_rt velt_rt_tcp_alpn
@@ -350,9 +348,7 @@ velt_rt velt_rt_timer_new
 velt_rt velt_rt_timer_turn
 velt_rt velt_rt_timer_unref_due
 velt_rt velt_rt_tla_at
-velt_rt velt_rt_uncaught_now
 velt_rt velt_rt_uncaught_report
-velt_rt velt_rt_unhandled_defer
 velt_rt velt_rt_view_get
 velt_rt velt_rt_view_put
 velt_rt velt_rt_view_remove
@@ -374,8 +370,6 @@ velt_rt velt_rt_xfer_record
 velt_rt velt_rt_xfer_resume
 velt_rt velt_rt_xfer_share_begin
 velt_rt velt_rt_xfer_suspend
-velt_rt velt_rt_yield_now
-velt_rt velt_rt_yield_now_fut
 velt_rt_wasm __main_void
 velt_rt_wasm velt_host_alloc
 velt_rt_wasm velt_host_bytes_new
