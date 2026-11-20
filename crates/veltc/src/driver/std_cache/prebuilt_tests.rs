@@ -152,3 +152,18 @@ fn debug_links_take_objects_except_where_atomics_call_helpers() {
         assert!(debug_link_takes(target), "{target}");
     }
 }
+
+/// The finder of a debug build for arm64 Linux looks nothing up, from any machine; the same build
+/// for x86-64 Linux does (where this machine's std root and settings let a finder be made, as
+/// in this repository's tests).
+#[test]
+fn a_debug_build_for_arm64_linux_has_no_finder() {
+    let debug = |target: &str| BuildOptions {
+        target: Some(target.into()),
+        ..Default::default()
+    };
+    assert!(Finder::for_build(&debug("aarch64-unknown-linux-gnu")).is_none());
+    if Finder::for_build(&debug("x86_64-unknown-linux-gnu")).is_none() {
+        eprintln!("note: no finder for x86-64 Linux either here; the comparison says nothing");
+    }
+}
