@@ -1,0 +1,23 @@
+// A function value whose rest parameter is typed by a type parameter, held in an object
+// literal, and the object cast in the generic body (#379). Cast to the callback's own type, the
+// call runs as in Node (`3`). Cast to a type with fewer parameters, the missing arguments
+// arrive as `undefined` and are checked: a TypeError, where Node prints `NaN` (a documented
+// difference).
+interface Ctx {
+  id: string;
+}
+
+function both<A extends unknown[], R>(f: (rq: Ctx, ...args: A) => R): unknown {
+  const o = { fn: f };
+  const p = o as unknown as { fn: (rq: Ctx, a: number, b: number) => unknown };
+  return p.fn({ id: "x" }, 1, 2);
+}
+
+function none<A extends unknown[], R>(f: (rq: Ctx, ...args: A) => R): unknown {
+  const o = { fn: f };
+  const p = o as unknown as { fn: (rq: Ctx) => unknown };
+  return p.fn({ id: "x" });
+}
+
+console.log(both((rq: Ctx, a: number, b: number): number => a + b));
+console.log(none((rq: Ctx, a: number, b: number): number => a + b));

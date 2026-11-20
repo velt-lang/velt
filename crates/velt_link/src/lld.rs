@@ -88,6 +88,7 @@ fn elf_gnu_args(req: &LinkRequest, kit: &Kit) -> Vec<OsString> {
     args.extend(native::system_lib_args(req.native, GLIBC_LIBS));
     args.extend(native::c_lib_args(req.c_libs, GLIBC_LIBS));
     args.push("--no-as-needed".into());
+    args.extend(shared::helpers_arg(req, TargetOs::Linux));
     args
 }
 
@@ -222,6 +223,7 @@ mod tests {
             release,
             native: &[],
             c_libs: &[],
+            helpers_lib: None,
         }
     }
 
@@ -344,6 +346,39 @@ mod tests {
         );
         assert!(a.contains(&"-lvelt_rt_shared".to_string()), "{a:?}");
         assert!(a.contains(&"-rpath".to_string()), "{a:?}");
+    }
+
+    /// The helpers archive (#3315: arm64 Linux's outline-atomics helpers) comes after every
+    /// object, the shared runtime and the C libraries, so only members defining what is still
+    /// undefined are taken (before libm, a program's `fmod` came from the archive and brought the
+    /// static runtime's `main`); a link of the static runtime, which has the helpers, does not
+    /// name it.
+    #[test]
+    fn elf_helpers_archive_follows_the_shared_runtime() {
+        let objs = [PathBuf::from("main.o"), PathBuf::from("hook.o")];
+        let k = kit(KitKind::LinuxGnu, Arch::Aarch64);
+        let target = "aarch64-unknown-linux-gnu";
+        let with = |runtime: &str, helpers: Option<&Path>| {
+            let mut r = req(target, &objs, Path::new(runtime), false);
+            r.helpers_lib = helpers;
+            strings(&args(&r, &k).unwrap())
+        };
+        let helpers = Path::new("/rt/libvelt_rt.a");
+        let a = with("/rt/libvelt_rt_shared.so", Some(helpers));
+        assert_eq!(a.iter().filter(|x| *x == "/rt/libvelt_rt.a").count(), 1);
+        let at = pos(&a, "/rt/libvelt_rt.a");
+        assert!(pos(&a, "hook.o") < at && pos(&a, "-lvelt_rt_shared") < at);
+        for lib in ["libm.so.6", "libc.so.6", "libgcc_s.so.1"] {
+            assert!(pos(&a, lib) < at, "{lib}: {a:?}");
+        }
+        assert_eq!(at, a.len() - 1, "{a:?}");
+        let none = with("/rt/libvelt_rt_shared.so", None);
+        assert!(
+            !none.iter().any(|x| x.ends_with("libvelt_rt.a")),
+            "{none:?}"
+        );
+        let fixed = with("/rt/libvelt_rt.a", Some(Path::new("/other/helpers.a")));
+        assert!(!fixed.iter().any(|x| x == "/other/helpers.a"), "{fixed:?}");
     }
 
     #[test]

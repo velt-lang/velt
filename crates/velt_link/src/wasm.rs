@@ -290,6 +290,7 @@ mod tests {
             release: true,
             native: &[],
             c_libs: &[],
+            helpers_lib: None,
         };
         let args: Vec<String> = args(&req, WasmFlavor::Browser)
             .unwrap()

@@ -5,9 +5,7 @@
 //! task's set and run to completion).
 
 use super::fake::{block_on_fut, block_on_state, sleep};
-use crate::task::local::{
-    velt_rt_fut_box, velt_rt_fut_start, velt_rt_fut_transfer, velt_rt_task_id,
-};
+use crate::task::local::{task_key, velt_rt_fut_box, velt_rt_fut_start, velt_rt_fut_transfer};
 use crate::task::{drop_fut, poll_fut, VeltFut, PENDING, READY};
 use std::ffi::c_void;
 use std::ptr::null_mut;
@@ -24,7 +22,7 @@ const TAGGED: i64 = 1000;
 /// Fake transfer glue for an `i64` result: records it and adds [`TAGGED`].
 unsafe extern "C-unwind" fn tag(slot: *mut u8) {
     let v = &mut *(slot as *mut i64);
-    SEEN.lock().unwrap().push((*v, velt_rt_task_id()));
+    SEEN.lock().unwrap().push((*v, task_key()));
     *v += TAGGED;
 }
 
@@ -110,7 +108,7 @@ struct HandOn {
 unsafe extern "C-unwind" fn hand_on_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut HandOn);
     if st.tag == 0 {
-        st.task = velt_rt_task_id();
+        st.task = task_key();
         let Make::Started(id, ms) = st.make;
         st.fut = started_job(id, ms);
         for _ in 0..st.marks {

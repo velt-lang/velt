@@ -69,6 +69,13 @@ pub struct LinkRequest<'a> {
     /// The C libraries of packages' `declare c` functions, as linker arguments (`-lsqlite3`,
     /// `-framework Accelerate`, `sqlite3.lib`): linked into every build of the program.
     pub c_libs: &'a [String],
+    /// An archive a link against the shared runtime searches last, for what the objects call
+    /// and neither the shared runtime nor a C library defines: the static runtime, for the
+    /// outline-atomics helpers (`__aarch64_*`) LLVM's code calls on arm64 Linux
+    /// ([`shared::helpers_arg`]). The linker takes only the members that define a symbol still
+    /// undefined there. Never among `objects`, where it would bring the runtime a second time.
+    /// A link of the static runtime ignores it.
+    pub helpers_lib: Option<&'a Path>,
 }
 
 /// Operating-system family a target triple links for.
@@ -609,6 +616,7 @@ mod tests {
             release: false,
             native: &[],
             c_libs: &[],
+            helpers_lib: None,
         })
         .unwrap_err();
         assert!(err.contains("cross-OS linking"), "{err}");

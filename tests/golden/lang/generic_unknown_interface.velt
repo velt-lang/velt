@@ -1,0 +1,35 @@
+// An interface value converted to `unknown` through a type parameter, alone and as a member of
+// a union: the `unknown` owns the one reference the conversion makes (it was released twice,
+// which the checking allocator reports). Node prints the same.
+interface Named {
+  name(): string;
+}
+
+class Dog implements Named {
+  tag: string;
+  constructor(tag: string) {
+    this.tag = tag;
+  }
+  name(): string {
+    return "dog " + this.tag;
+  }
+}
+
+function box<T>(x: T): unknown {
+  return x;
+}
+
+function made(i: number): unknown[] {
+  const d: Named = new Dog("made" + i);
+  const maybe: Named | undefined = d;
+  const either: Named | number = d;
+  return [box<Named>(d), box<Named | undefined>(maybe), box<Named | number>(either)];
+}
+
+const kept: unknown[][] = [];
+for (let i = 0; i < 3; i++) {
+  kept.push(made(i));
+}
+for (const row of kept) {
+  console.log(row.map((x: unknown): string => typeof x + " " + (x as Named).name()).join(", "));
+}
