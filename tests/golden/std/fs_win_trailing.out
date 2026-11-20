@@ -1,0 +1,13 @@
+lstat f6/ true
+stat f6\ true
+readFile f6/ f6
+exists f6/ true false
+rm f1/ ok
+rm f2\ ok
+rm f3// ok
+rm f4/ recursive ok
+remove f5/ ok
+rm missing/ ENOENT
+rm d/ ERR_FS_EISDIR
+d f6
+false
