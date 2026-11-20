@@ -79,6 +79,7 @@ const INVALID_FILE_ATTRIBUTES: u32 = 0xffffffff;
 const ID_BOTH_DIRECTORY_INFO: i32 = 10;
 const ID_BOTH_DIRECTORY_RESTART_INFO: i32 = 11;
 const ERROR_FILE_NOT_FOUND: u32 = 2;
+const ERROR_PATH_NOT_FOUND: u32 = 3;
 const ERROR_ACCESS_DENIED: u32 = 5;
 const ERROR_NO_MORE_FILES: u32 = 18;
 const ERROR_SHARING_VIOLATION: u32 = 32;
@@ -268,9 +269,9 @@ function removeTree(root: Ptr<void>): u32 {
           // SAFETY: the entry's name is `bytes` bytes at `units`, inside `list`.
           const child = unsafe { openEntry(dir, units, bytes, FILE_LIST_DIRECTORY, s, failed) };
           if (child !== null) {
-            // Its listing takes the buffer: this directory is listed again after it.
+            // Its listing takes the buffer (a new handle lists from its start): this
+            // directory is listed again, from its start, once that one is gone.
             open.push(child);
-            restart = true;
             break;
           }
           error = failed[0];
@@ -333,8 +334,9 @@ export function removePath(w: readonly u16[], recursive: bool): Removed {
   const dir = openPath(w, FILE_LIST_DIRECTORY);
   if (dir === null) {
     const code = lastWin32();
-    // Gone meanwhile: removed, by someone else.
-    return { code: code === ERROR_FILE_NOT_FOUND ? 0 : code, call: "rm" };
+    // Gone meanwhile, or a directory above it: removed, by someone else.
+    const gone = code === ERROR_FILE_NOT_FOUND || code === ERROR_PATH_NOT_FOUND;
+    return { code: gone ? 0 : code, call: "rm" };
   }
   if (kindOf(dir) !== DIR) {
     const code = deleteOn(dir);
