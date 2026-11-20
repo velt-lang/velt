@@ -39,6 +39,25 @@ describe("relayout", () => {
   });
 });
 
+describe("relayout of text the glue never writes", () => {
+  it("gives it back unchanged, without reading past its end", () => {
+    for (const t of [
+      `{"a":[1,2`,
+      "[",
+      `{"a`,
+      `"abc`,
+      `{"a":1,`,
+      `[1,{"b":`,
+      `{"a":1}}`,
+      "",
+      "1 2",
+    ]) {
+      expect(lay(t, null, "  ")).toBe(t);
+      expect(lay(t, ["a"], "")).toBe(t);
+    }
+  });
+});
+
 describe("propertyList", () => {
   it("decodes and drops repeats", () => {
     expect(propertyList(`["a","b","a"]`)!.join(",")).toBe("a,b");
