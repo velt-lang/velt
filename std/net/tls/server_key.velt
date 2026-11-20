@@ -114,6 +114,8 @@ export function serverKey(
       key = fromSec1(b.der, 0);
     } else if (b.label == "RSA PRIVATE KEY") {
       key = fromPkcs1(b.der);
+    } else if (b.label == "ENCRYPTED PRIVATE KEY") {
+      throw invalid("invalid key PEM: encrypted private keys are not supported");
     } else {
       continue;
     }
