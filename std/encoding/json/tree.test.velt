@@ -106,6 +106,54 @@ describe("JsonValue edits", () => {
     expect(a.stringify()).toBe(`{"b":{"a":{}}}`);
   });
 
+  it("keep a parsed value's containers on its tape until they are edited", () => {
+    const doc = JSON.parseValue(`{"a":{"b":[1,{"c":2}]},"n":1,"s":"x"}`);
+    doc.set("m", JsonValue.of(3));
+    const a = doc.get("a")!;
+    expect(a.isObject()).toBe(true);
+    expect(a.keys().join(",")).toBe("b");
+    const b = a.get("b")!;
+    expect(b.isArray()).toBe(true);
+    expect(b.len()).toBe(2);
+    expect(b.at(1)!.get("c")!.asNumber()).toBe(2);
+    b.push(JsonValue.of(null));
+    expect(b.stringify()).toBe(`[1,{"c":2},null]`);
+    expect(doc.stringify()).toBe(`{"a":{"b":[1,{"c":2}]},"n":1,"s":"x","m":3}`);
+    const arr = JsonValue.array();
+    arr.push(JSON.parseValue(`[[1],{"k":"v"}]`));
+    arr.push(JSON.parseValue("7"));
+    expect(arr.at(0)!.at(1)!.get("k")!.asString()).toBe("v");
+    expect(arr.at(1)!.asNumber()).toBe(7);
+    expect(arr.stringify()).toBe(`[[[1],{"k":"v"}],7]`);
+  });
+
+  it("store a subtree past the height limit as a tape, unchanged", () => {
+    // 2000 levels: subtrees 512 high are kept on tapes as they go in.
+    let v = JsonValue.array();
+    for (let i = 0; i < 2000; i++) {
+      const outer = JsonValue.object();
+      outer.set("i", JsonValue.of(i));
+      outer.set("c", v);
+      v = outer;
+    }
+    let inner = v;
+    let levels = 0;
+    while (inner.has("c")) {
+      expect(inner.get("i")!.asNumber()).toBe(1999 - levels);
+      inner = inner.get("c")!;
+      levels++;
+    }
+    expect(levels).toBe(2000);
+    expect(inner.isArray()).toBe(true);
+    const deep = v.get("c")!.get("c")!;
+    deep.set("i", JsonValue.of(-1));
+    expect(deep.get("i")!.asNumber()).toBe(-1);
+    expect(v.get("c")!.get("c")!.get("i")!.asNumber()).toBe(1997);
+    const text = v.stringify();
+    expect(JsonValue.parse(text, { maxDepth: 4294967295 }).stringify()).toBe(text);
+    expect(text.slice(0, 13)).toBe(`{"i":1999,"c"`);
+  });
+
   it("write arbitrarily deep trees", () => {
     let v = JsonValue.array();
     for (let i = 0; i < 100000; i++) {
