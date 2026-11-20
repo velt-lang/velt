@@ -1,0 +1,376 @@
+--------------------------------------------------------------------------------
+-- Metadata
+--------------------------------------------------------------------------------
+Invocation:       /usr/bin/cg_annotate --diff --mod-filename=s/[bmnp]-src/X-src/ --auto=yes --context=0 --show-percs=no spawn_many-m.cg spawn_many-p.cg
+Command 1:        /home/andii/ab-3289/prof7/spawn_many-m
+Command 2:        /home/andii/ab-3289/prof7/spawn_many-p
+Events recorded:  Ir
+Events shown:     Ir
+Event sort order: Ir
+Threshold:        0.1%
+Annotation:       on
+
+--------------------------------------------------------------------------------
+-- Summary
+--------------------------------------------------------------------------------
+Ir________ 
+
+17,999,281  PROGRAM TOTALS
+
+--------------------------------------------------------------------------------
+-- File:function summary
+--------------------------------------------------------------------------------
+  Ir________  file:function
+
+< 12,000,000  /home/andii/ab-3289/X-src/std/lang/hooks/sched_yield.velt:_V4work$poll
+
+< -5,000,000  /home/andii/ab-3289/X-src/std/lang/hooks/sched.velt:_V4work$poll
+
+<  4,000,004  /home/andii/ab-3289/X-src/std/lang/hooks/sched_run.velt:_V3stdP4langP5hooksP10sched__runN6runEnd
+
+<  3,967,216  /home/andii/ab-3289/X-src/std/lang/hooks/sched_mem.velt:
+   3,000,000    _V4work$poll
+   1,000,000    std_sched_join_drop_solo
+     262,278    _V3stdP4langP5hooksP11sched__tickN5ioDue_L2_111_7
+    -262,278    _V3stdP4langP5hooksP11sched__tickN5ioDue_L2_108_7
+     -32,786    _V3stdP4langP5hooksP11sched__tickN6ioTick_LA
+
+<  1,000,001  /home/andii/ab-3289/X-src/std/lang/hooks/sched_wake.velt:
+   1,000,000    std_sched_join_drop_solo
+
+<  1,000,000  /home/andii/ab-3289/X-src/std/lang/hooks/sched_micro.velt:_V3stdP4langP5hooksP10sched__runN6runEnd
+
+<  1,000,000  /home/andii/ab-3289/X-src/bench/async/spawn_many.velt:_V4work$poll
+
+<     32,786  /home/andii/ab-3289/X-src/std/lang/hooks/sched_tick.velt:
+     393,422    _V3stdP4langP5hooksP11sched__tickN5ioDue_L2_111_7
+    -393,422    _V3stdP4langP5hooksP11sched__tickN5ioDue_L2_108_7
+      32,786    _V3stdP4langP5hooksP11sched__tickN6ioTick_LA
+
+<          3  /home/andii/ab-3289/X-src/std/lang/hooks/sched_task.velt:
+   3,000,003    _V3stdP4langP5hooksP10sched__runN6runEnd
+  -3,000,000    _V4work$poll
+
+<          0  /home/andii/ab-3289/X-src/std/lang/hooks/sched_queue.velt:
+      32,788    _V3stdP4langP5hooksP11sched__tickN5ioDue_L2_111_7
+     -32,788    _V3stdP4langP5hooksP11sched__tickN5ioDue_L2_108_7
+
+--------------------------------------------------------------------------------
+-- Function:file summary
+--------------------------------------------------------------------------------
+  Ir________  function:file
+
+>  8,000,007  _V3stdP4langP5hooksP10sched__runN6runEnd:
+   4,000,004    /home/andii/ab-3289/X-src/std/lang/hooks/sched_run.velt
+   3,000,003    /home/andii/ab-3289/X-src/std/lang/hooks/sched_task.velt
+   1,000,000    /home/andii/ab-3289/X-src/std/lang/hooks/sched_micro.velt
+
+>  8,000,000  _V4work$poll:
+  12,000,000    /home/andii/ab-3289/X-src/std/lang/hooks/sched_yield.velt
+  -5,000,000    /home/andii/ab-3289/X-src/std/lang/hooks/sched.velt
+  -3,000,000    /home/andii/ab-3289/X-src/std/lang/hooks/sched_task.velt
+   3,000,000    /home/andii/ab-3289/X-src/std/lang/hooks/sched_mem.velt
+   1,000,000    /home/andii/ab-3289/X-src/bench/async/spawn_many.velt
+
+>  2,000,000  std_sched_join_drop_solo:
+   1,000,000    /home/andii/ab-3289/X-src/std/lang/hooks/sched_wake.velt
+   1,000,000    /home/andii/ab-3289/X-src/std/lang/hooks/sched_mem.velt
+
+>    688,488  _V3stdP4langP5hooksP11sched__tickN5ioDue_L2_111_7:
+     393,422    /home/andii/ab-3289/X-src/std/lang/hooks/sched_tick.velt
+     262,278    /home/andii/ab-3289/X-src/std/lang/hooks/sched_mem.velt
+      32,788    /home/andii/ab-3289/X-src/std/lang/hooks/sched_queue.velt
+
+>   -688,488  _V3stdP4langP5hooksP11sched__tickN5ioDue_L2_108_7:
+    -393,422    /home/andii/ab-3289/X-src/std/lang/hooks/sched_tick.velt
+    -262,278    /home/andii/ab-3289/X-src/std/lang/hooks/sched_mem.velt
+     -32,788    /home/andii/ab-3289/X-src/std/lang/hooks/sched_queue.velt
+
+>          0  _V3stdP4langP5hooksP11sched__tickN6ioTick_LA:
+      32,786    /home/andii/ab-3289/X-src/std/lang/hooks/sched_tick.velt
+     -32,786    /home/andii/ab-3289/X-src/std/lang/hooks/sched_mem.velt
+
+--------------------------------------------------------------------------------
+-- Annotated source file: /home/andii/ab-3289/X-src/bench/async/spawn_many.velt
+--------------------------------------------------------------------------------
+Ir________ 
+
+ 2,000,000  <unknown (line 0)>
+
+-- line 2 ----------------------------------------
+         0  async function work(i: i64): Promise<i64> {
+-- line 2 ----------------------------------------
+-- line 3 ----------------------------------------
+-1,000,000    const v = (i * 17 + 3) % 1009;
+-- line 3 ----------------------------------------
+-- line 5 ----------------------------------------
+         0    return v;
+-- line 5 ----------------------------------------
+-- line 8 ----------------------------------------
+         0  async function main() {
+-- line 8 ----------------------------------------
+-- line 10 ----------------------------------------
+         0    for (let i = 0; i < 1000000; i++) {
+-- line 10 ----------------------------------------
+-- line 11 ----------------------------------------
+         0      handles.push(spawn(work(i)));
+-- line 11 ----------------------------------------
+-- line 13 ----------------------------------------
+         0    const rs = await Promise.all(handles);
+-- line 13 ----------------------------------------
+-- line 15 ----------------------------------------
+         0    for (const r of rs) {
+-- line 15 ----------------------------------------
+-- line 16 ----------------------------------------
+         0      total += r;
+-- line 16 ----------------------------------------
+
+--------------------------------------------------------------------------------
+-- Annotated source file: /home/andii/ab-3289/X-src/std/lang/hooks/sched.velt
+--------------------------------------------------------------------------------
+Unannotated because two or more of these original files are not identical:
+- /home/andii/ab-3289/m-src/std/lang/hooks/sched.velt
+- /home/andii/ab-3289/p-src/std/lang/hooks/sched.velt
+
+--------------------------------------------------------------------------------
+-- Annotated source file: /home/andii/ab-3289/X-src/std/lang/hooks/sched_mem.velt
+--------------------------------------------------------------------------------
+Ir_______ 
+
+        0  <unknown (line 0)>
+
+-- line 59 ----------------------------------------
+        0    return rawAlloc(n);
+-- line 59 ----------------------------------------
+-- line 65 ----------------------------------------
+        0    const p = rawAlloc(n);
+-- line 65 ----------------------------------------
+-- line 68 ----------------------------------------
+        0      memset$sched(ptr(p), 0, n);
+-- line 68 ----------------------------------------
+-- line 91 ----------------------------------------
+        0    const p = addr(unsafe { calloc$sched(1, n) });
+-- line 91 ----------------------------------------
+-- line 92 ----------------------------------------
+        0    if (p === 0) {
+-- line 92 ----------------------------------------
+-- line 133 ----------------------------------------
+        0  export function copy(dst: usize, src: usize, n: usize): void {
+-- line 133 ----------------------------------------
+-- line 136 ----------------------------------------
+        0      memcpy$sched(ptr(dst), ptr(src), n);
+-- line 136 ----------------------------------------
+-- line 144 ----------------------------------------
+2,967,215    return unsafe { addressLoad<usize>(a) };
+-- line 144 ----------------------------------------
+-- line 151 ----------------------------------------
+        1      addressStore<usize>(a, v);
+-- line 151 ----------------------------------------
+-- line 158 ----------------------------------------
+        0    return unsafe { addressLoad<u32>(a) };
+-- line 158 ----------------------------------------
+-- line 165 ----------------------------------------
+        0      addressStore<u32>(a, v);
+-- line 165 ----------------------------------------
+-- line 173 ----------------------------------------
+        0    return unsafe { addressAtomicLoad<usize>(a, "seqcst") };
+-- line 173 ----------------------------------------
+-- line 179 ----------------------------------------
+1,000,000    return unsafe { addressAtomicLoad<u32>(a, "seqcst") };
+-- line 179 ----------------------------------------
+-- line 189 ----------------------------------------
+        0    return unsafe { addressAtomicLoad<usize>(a, "relaxed") };
+-- line 189 ----------------------------------------
+-- line 195 ----------------------------------------
+        0    return unsafe { addressAtomicLoad<u32>(a, "relaxed") };
+-- line 195 ----------------------------------------
+-- line 214 ----------------------------------------
+        0      addressAtomicStore<u32>(a, v, "seqcst");
+-- line 214 ----------------------------------------
+-- line 222 ----------------------------------------
+        0    return unsafe { addressAtomicCas<u32>(a, expected, v, "seqcst", "seqcst") };
+-- line 222 ----------------------------------------
+-- line 229 ----------------------------------------
+        0    return unsafe { addressAtomicCas<usize>(a, expected, v, "seqcst", "seqcst") };
+-- line 229 ----------------------------------------
+-- line 270 ----------------------------------------
+        0    return unsafe { addressAtomicRmw<usize>(a, "add", 1, "seqcst") };
+-- line 270 ----------------------------------------
+-- line 277 ----------------------------------------
+        0    return unsafe { addressAtomicRmw<usize>(a, "add", 1, "relaxed") };
+-- line 277 ----------------------------------------
+-- line 284 ----------------------------------------
+        0    return unsafe { addressAtomicRmw<usize>(a, "sub", 1, "acqrel") };
+-- line 284 ----------------------------------------
+-- line 291 ----------------------------------------
+        0    return unsafe { addressAtomicRmw<u32>(a, "or", v, "seqcst") };
+-- line 291 ----------------------------------------
+-- line 305 ----------------------------------------
+        0    return unsafe { addressAtomicRmw<usize>(a, "exchange", v, "seqcst") };
+-- line 305 ----------------------------------------
+-- line 314 ----------------------------------------
+        0      const was = unsafe { addressAtomicCas<usize>(head, h, t, "seqcst", "seqcst") };
+-- line 314 ----------------------------------------
+-- line 315 ----------------------------------------
+        0      if (was === h) {
+-- line 315 ----------------------------------------
+-- line 326 ----------------------------------------
+        0    return unsafe { addressAtomicRmw<usize>(head, "exchange", 0, "seqcst") };
+-- line 326 ----------------------------------------
+-- line 332 ----------------------------------------
+        0    return unsafe { addressCall(ld(ld(w)), w) };
+-- line 332 ----------------------------------------
+-- line 339 ----------------------------------------
+        0      stateDrop(ld(ld(w) + 8), w);
+-- line 339 ----------------------------------------
+-- line 347 ----------------------------------------
+        0      stateDrop(ld(ld(w) + 16), w);
+-- line 347 ----------------------------------------
+-- line 355 ----------------------------------------
+        0      stateDrop(ld(ld(w) + 24), w);
+-- line 355 ----------------------------------------
+
+--------------------------------------------------------------------------------
+-- Annotated source file: /home/andii/ab-3289/X-src/std/lang/hooks/sched_micro.velt
+--------------------------------------------------------------------------------
+Unannotated because two or more of these original files are not identical:
+- /home/andii/ab-3289/m-src/std/lang/hooks/sched_micro.velt
+- /home/andii/ab-3289/p-src/std/lang/hooks/sched_micro.velt
+
+--------------------------------------------------------------------------------
+-- Annotated source file: /home/andii/ab-3289/X-src/std/lang/hooks/sched_queue.velt
+--------------------------------------------------------------------------------
+Ir 
+
+-- line 38 ----------------------------------------
+ 0    if ((mode & t.M_SHARED) !== 0) {
+-- line 38 ----------------------------------------
+-- line 66 ----------------------------------------
+ 0    if (tail === 0) {
+-- line 66 ----------------------------------------
+-- line 72 ----------------------------------------
+ 0    if (mode !== 0) {
+-- line 72 ----------------------------------------
+-- line 177 ----------------------------------------
+ 0    if (k !== 0) {
+-- line 177 ----------------------------------------
+-- line 208 ----------------------------------------
+ 0    if (m.ld(e + t.E_QSLOW) !== 0) {
+-- line 208 ----------------------------------------
+-- line 327 ----------------------------------------
+ 0    return m.ld(e + t.E_ILEN) + (m.ld(e + t.E_NEXT) !== 0 ? 1 : 0);
+-- line 327 ----------------------------------------
+
+--------------------------------------------------------------------------------
+-- Annotated source file: /home/andii/ab-3289/X-src/std/lang/hooks/sched_run.velt
+--------------------------------------------------------------------------------
+Unannotated because two or more of these original files are not identical:
+- /home/andii/ab-3289/m-src/std/lang/hooks/sched_run.velt
+- /home/andii/ab-3289/p-src/std/lang/hooks/sched_run.velt
+
+--------------------------------------------------------------------------------
+-- Annotated source file: /home/andii/ab-3289/X-src/std/lang/hooks/sched_task.velt
+--------------------------------------------------------------------------------
+Unannotated because two or more of these original files are not identical:
+- /home/andii/ab-3289/m-src/std/lang/hooks/sched_task.velt
+- /home/andii/ab-3289/p-src/std/lang/hooks/sched_task.velt
+
+--------------------------------------------------------------------------------
+-- Annotated source file: /home/andii/ab-3289/X-src/std/lang/hooks/sched_tick.velt
+--------------------------------------------------------------------------------
+Ir____ 
+
+     0  <unknown (line 0)>
+
+-- line 28 ----------------------------------------
+     0      m.st(e + t.E_LOOKS, m.ld(e + t.E_LOOKS) + 1);
+-- line 28 ----------------------------------------
+-- line 31 ----------------------------------------
+     0    ioTick(e, m.ld(e + t.E_IO));
+-- line 31 ----------------------------------------
+-- line 46 ----------------------------------------
+     0    if (spawned === 0) {
+-- line 46 ----------------------------------------
+-- line 47 ----------------------------------------
+     0      return m.ld(e + t.E_ILEN) >= BACKLOG ? FANOUT_IO_INTERVAL : IO_INTERVAL;
+-- line 47 ----------------------------------------
+-- line 49 ----------------------------------------
+     0    const n = q.input(e) + spawned >= BACKLOG && looksFor(e) ? FANOUT_IO_INTERVAL : IO_INTERVAL;
+-- line 49 ----------------------------------------
+-- line 50 ----------------------------------------
+     0    m.st(e + t.E_RLEN, spawned > n ? spawned - n : 0);
+-- line 50 ----------------------------------------
+-- line 62 ----------------------------------------
+     0      m.load(m.ld(e + t.E_IO) + io.IO_LIVE) !== 0 || m.ld(e + t.E_UNREF) !== 0 || pk.timersAny(e)
+-- line 62 ----------------------------------------
+-- line 73 ----------------------------------------
+     0  @noInline
+-- line 73 ----------------------------------------
+-- line 75 ----------------------------------------
+     0    if (m.load(e + t.E_INBOX) !== 0) {
+-- line 75 ----------------------------------------
+-- line 82 ----------------------------------------
+     0    if (io.anyDue(b)) {
+-- line 82 ----------------------------------------
+-- line 85 ----------------------------------------
+     0    if (m.ld(e + t.E_UNREF) !== 0) {
+-- line 85 ----------------------------------------
+-- line 88 ----------------------------------------
+32,786    if (pk.timersAny(e)) {
+-- line 88 ----------------------------------------
+-- line 91 ----------------------------------------
+     0    if (m.load(b + io.IO_LIVE) !== 0) {
+-- line 91 ----------------------------------------
+-- line 112 ----------------------------------------
+     0    if (m.loadRelaxed(e + t.E_HEAD) === 0) {
+-- line 112 ----------------------------------------
+-- line 118 ----------------------------------------
+     0    m.st(e + t.E_FAIR_TURNS, m.ld(e + t.E_FAIR_TURNS) + 1);
+-- line 118 ----------------------------------------
+-- line 120 ----------------------------------------
+     0    if (skip !== 0) {
+-- line 120 ----------------------------------------
+-- line 127 ----------------------------------------
+     0    if (m.loadRelaxed(e + t.E_IHEAD) === 0) {
+-- line 127 ----------------------------------------
+
+--------------------------------------------------------------------------------
+-- Annotated source file: /home/andii/ab-3289/X-src/std/lang/hooks/sched_wake.velt
+--------------------------------------------------------------------------------
+Unannotated because two or more of these original files are not identical:
+- /home/andii/ab-3289/m-src/std/lang/hooks/sched_wake.velt
+- /home/andii/ab-3289/p-src/std/lang/hooks/sched_wake.velt
+
+--------------------------------------------------------------------------------
+-- Annotated source file: /home/andii/ab-3289/X-src/std/lang/hooks/sched_yield.velt
+--------------------------------------------------------------------------------
+Ir_______ 
+
+-- line 47 ----------------------------------------
+3,000,000    if (cx === w + t.T_CX) {
+-- line 47 ----------------------------------------
+-- line 86 ----------------------------------------
+1,000,000    if (b === 0) {
+-- line 86 ----------------------------------------
+-- line 89 ----------------------------------------
+2,000,000      m.store32(k + t.T_STATE, t.YIELDED);
+-- line 89 ----------------------------------------
+-- line 134 ----------------------------------------
+3,000,000    if (cx === w + t.T_CX) {
+-- line 134 ----------------------------------------
+-- line 136 ----------------------------------------
+3,000,000      return m.load32(w + t.T_STATE) === t.YIELDED ? 0 : 1;
+-- line 136 ----------------------------------------
+
+--------------------------------------------------------------------------------
+-- Annotation summary
+--------------------------------------------------------------------------------
+Ir________ 
+
+15,000,002    annotated: files known & above threshold & readable, line numbers known
+ 2,000,000    annotated: files known & above threshold & readable, line numbers unknown
+ 1,000,008  unannotated: files known & above threshold & two or more non-identical
+         0  unannotated: files known & above threshold & unreadable 
+      -313  unannotated: files known & below threshold
+      -416  unannotated: files unknown
+

@@ -139,14 +139,11 @@ export function take(k: usize): usize {
   return first;
 }
 
-/**
- * Has a task whose flags are `fl` yields waiting for their turn? Never in a program that never
- * yields.
- */
+/** Has task `k` yields waiting for their turn? Never in a program that never yields. */
 @inline("always")
-export function waitingIn(fl: u32): bool {
+export function waiting(k: usize): bool {
   // The list is not empty exactly while flag `YIELDS` is set (`join`, `take`).
-  return stdUsed("yields") && (fl & t.YIELDS) !== 0;
+  return stdUsed("yields") && t.has(k, t.YIELDS);
 }
 
 /** Has task `k` a yield block, to go with it? Never in a program that never yields. */

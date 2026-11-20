@@ -182,12 +182,15 @@ function runEnd(e: usize, k: usize, mode: u32): void {
       order.released(e, k);
     }
   }
-  const fl = m.ld32(k + t.T_FLAGS);
-  const yields = ls.waitingIn(fl);
-  if ((fl & t.ROOT_DONE) !== 0 && m.ld(k + t.T_LOCALS) === 0 && !yields) {
+  if (ls.waiting(k)) {
+    // Yields made during this poll have their turn in its next one (sched_fire.velt); the task
+    // does not finish before.
+    m.store32(k + t.T_STATE, t.SCHEDULED);
+    requeue(e, k, mode);
+  } else if (t.has(k, t.ROOT_DONE) && m.ld(k + t.T_LOCALS) === 0) {
     finish(e, k);
-  } else if (m.load(k + t.T_WOKEN) !== 0 || yields) {
-    // Promises woken and yields made during this poll run in its next one (sched_fire.velt).
+  } else if (m.load(k + t.T_WOKEN) !== 0) {
+    // Promises woken during this poll run in its next one.
     m.store32(k + t.T_STATE, t.SCHEDULED);
     requeue(e, k, mode);
   } else if (m.cas32(k + t.T_STATE, t.RUNNING, t.IDLE) !== t.RUNNING) {
@@ -386,7 +389,7 @@ function finish(e: usize, k: usize): void {
     if (foreign) {
       return fg.ended(e, g, k);
     }
-    wk.release(k);
+    wk.releaseHere(k);
     if (mk.liveDown(g, e) === 1 && e !== g) {
       // The last live task: worker 0 may wait for that in `schedFinish`.
       wk.unpark(g);
@@ -398,5 +401,5 @@ function finish(e: usize, k: usize): void {
     return fg.ended(e, e, k);
   }
   m.st(e + t.E_LIVE, m.ld(e + t.E_LIVE) - 1);
-  wk.release(k);
+  wk.releaseHere(k);
 }

@@ -11,7 +11,7 @@ This PR changes the executor in Velt (std only).
 ### A yield list per task
 - **The list.** A task's yields wait for their turn on a list, in the order they were made (std/lang/hooks/sched_yield_list.velt). The list lives in a yield block that the task makes when it first needs one and frees when it ends. The task block grows by one word, `T_YIELDS`.
 - **Awaited yields.** An awaited yield of a started promise or of a join's child puts a record with its waker on the list. A started promise that yielded is flagged `YIELDING` until its turn, so its owner doesn't adopt it meanwhile.
-- **The root.** An awaited yield of the task's root needs no record while the list is empty: it keeps the `NOTIFIED` fast path. Flag `ROOT_ALONE` then gives it a record first if yields made after it join the list in the same poll, so the root still resumes first.
+- **The root.** A root that yields turns the task's state to `YIELDED`: the task is queued again, the yield stays suspended if this poll polls the root again for its microtasks, and the next poll's `RUNNING` lets it go on. It needs no record while the list is empty. Flag `ROOT_ALONE` then gives it a record first if yields made after it join the list in the same poll, so the root still resumes first.
 - **Stored yields join late.** A stored `yieldNow()` doesn't go on the list when it's made. It gets a stamp: its task's yield generation and a number that grows in the order yields are made.
   - **Polled in a later generation:** its turn has passed, and it's ready at once. A generation is one more in each poll after one that made stored yields (flag `FRESH`).
   - **Polled in the poll that made it:** it joins the list by its stamp, or takes the root's fast path when the root is what waits for it.
@@ -33,7 +33,9 @@ This PR changes the executor in Velt (std only).
   - A yield polled by its task's root holds no reference to the task.
 - **Cost.**
   - Only a program that yields compiles the list's turns (`stdUsed("yields")`).
-  - `between` reads the woken stack before taking it.
+  - The root's awaited yield is in line where it is awaited: for a task with no yield block, one test and one store. The yield hooks know a task's own `cx` by its address (`cx === waker + T_CX`, sched_task.velt) instead of loading the waker's table; a task's waker in any other `cx` takes the table test, out of line.
+  - The step between two turns is in line: a turn with no reaction is four loads. `drain` is called only when microtasks are queued or rejections wait (sched_micro.velt `pending`); the woken promises and the woken root are out of line.
+  - A poll begins a yield generation off the straight path (`FRESH` is in `run`'s one flag test).
   - `enqueue`'s buffer growth (sched_micro.velt) is out of line, so the rest of it inlines where it's called.
 - **wasm.** wasm32 keeps the runtime's `yieldNow` (#3307), so the new goldens join `UNSUPPORTED` in wasm_goldens.rs, as `yield_now_order` did in #3256.
 
@@ -51,11 +53,16 @@ Each golden is Node's output for the same program, with `yieldNow` a promise tha
   - a stored `Promise.all` over a yield;
   - the root's turn keeps its place when a started promise yields after it in the same turn.
 - **`lang/yield_now_root_after_turn`:** the root resumes during a started promise's turn and yields there.
+- **`lang/sleep_turns_root_between`:** two sleeps due in the same poll; the root woken by the first one's reactions goes on before the second fires.
 - **Break checks, each on a copy of std:**
   - no root record (`ROOT_ALONE`): `yield_now_turn_passed` differs;
   - no `dueNow`: `yield_now_due_sleep` differs;
   - no lazy join: `yield_now_immediates` and `yield_now_turn_passed` differ;
-  - no generation rule: `yield_now_turn_passed` and `yield_now_stored` hang.
+  - no generation rule: `yield_now_turn_passed` and `yield_now_stored` hang;
+  - a root's yield always ready: `yield_now_order` differs;
+  - no `drain` between turns, or no woken promises between turns: `yield_now_immediates` differs;
+  - a woken root left for the next poll: `sleep_turns_root_between` differs.
+  - Without the own-`cx` test the output is the same: the table test behind it gives the same answer.
   - The `FIRING` state guards a window of a few instructions that no program here reaches deterministically, as the review found.
 - **Still passing:** `yield_now_order`, `yield_now_stored` and `yield_now_stored_sync` (#3256), and the yield, sleep, timer, immediate, promise, race, spawn, task, catch_panic and uncaught goldens, at 1 and 4 workers.
 - **Known at one worker:** `std/timer_spawned_busy_first` fails, as it does on main; it needs a second worker by design.

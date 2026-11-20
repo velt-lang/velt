@@ -120,6 +120,12 @@ export function wake(t: usize): void {
 
 /** Gives back one reference to task `t`: the last frees it. */
 export function release(t: usize): void {
+  releaseHere(t);
+}
+
+/** `release`, in line where it is called: a task's end (sched_run.velt `finish`), once per task. */
+@inline("always")
+export function releaseHere(t: usize): void {
   if (m.dec(t + tk.T_REFS) === 1) {
     if (yl.hasBlock(t)) {
       yl.freeBlock(t);

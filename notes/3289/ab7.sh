@@ -4,13 +4,13 @@
 #   b = #3256's std (ff566fe4f)
 #   n = the std of commit $NREV (default 094a4a811)
 #   p = the std of the worktree (uncommitted changes included)
-# and main before the 9d stack (9cb569834, its own compiler, runtime and std) builds m.
+# and the 9d stack's merge base (3b08c525d, its own compiler, runtime and std) builds m.
 # cachegrind instructions at VELT_THREADS=1 and 4; the yield goldens with p at 1 and 4 threads.
 # Usage: ab7.sh [rows...]   (default: every row)
 set -uo pipefail
 REPO=/Users/andii/dev/velt/branches/yield-order-fix
 BASE=ff566fe4f
-MAIN=9cb569834
+MAIN=3b08c525d
 NREV=${NREV:-094a4a811}
 W=$HOME/ab-3289
 mkdir -p "$W/tmp" "$W/cg"
