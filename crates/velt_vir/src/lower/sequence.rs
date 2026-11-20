@@ -227,6 +227,13 @@ fn writes_local(e: &hir::Expr) -> bool {
                 || args.iter().any(writes_local)
         }
         K::If { cond, then, els } => writes_local(cond) || writes_local(then) || writes_local(els),
+        // What an arm binds is the arm's own (a literal union read as a `string`, #3334).
+        K::Match { scrutinee, arms } => {
+            writes_local(scrutinee)
+                || arms
+                    .iter()
+                    .any(|a| a.guard.as_ref().is_some_and(writes_local) || writes_local(&a.body))
+        }
         K::ArrayLit(es) => es.iter().any(writes_local),
         K::ConstArray(c) => c.elem_exprs(e.span.file).any(|x| writes_local(&x)),
         _ => true,
