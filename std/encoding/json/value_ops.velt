@@ -14,11 +14,6 @@ import { readerValueLimit } from "velt/encoding/json/reader_ops";
 
 import { JsonTree, TREE_BOOL, TREE_NULL, TREE_NUMBER } from "velt/encoding/json/tree";
 
-// A database driver's value (the runtime's row reader, which goes with #2563): its JSON text,
-// then the tree released (the null handle is JSON null).
-declare function velt_rt_json_value_stringify(v: u64): string;
-declare function velt_rt_json_value_free(v: u64);
-
 /**
  * Reads one value with `r` (`JsonValue[JSON_FROM_READER]`: the decoders velt/encoding/json
  * generates call it, as the compiler's glue does): null when the reader failed.
@@ -34,7 +29,7 @@ export function jsonValueFromReader(r: Reader): JsonValue | null {
     return JsonValue.onTape(new TapeRef(shared(t as Tape)), 0);
   }
   if (r.rowsValue) {
-    return rowsValue(r.lastHandle());
+    return rowsValue(r.lastRowsText());
   }
   return null;
 }
@@ -101,14 +96,9 @@ export function jsonValueOf(x: string | f64 | bool | null): JsonValue {
   return new JsonValue(JsonTree.scalar(TREE_BOOL, x ? 1 : 0));
 }
 
-// The value of the runtime tree `h` a database driver's row gave (it takes `h`): a tape of its
-// JSON text.
-function rowsValue(h: u64): JsonValue {
-  if (h == 0) {
-    return jsonValueOf(null);
-  }
-  const text = velt_rt_json_value_stringify(h);
-  velt_rt_json_value_free(h);
+// The value a database driver's row gave (the runtime's row reader, which goes with #2563), as
+// its JSON text: a tape of it.
+function rowsValue(text: string): JsonValue {
   const t = parseTape(text, 0);
   if (t instanceof TapeError) {
     panic(`ICE: a database value's JSON text did not parse: ${t.message}`);
