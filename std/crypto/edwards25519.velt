@@ -1,0 +1,351 @@
+// velt/crypto (internal): the twisted Edwards curve of Ed25519, -x^2 + y^2 = 1 + d x^2 y^2 over
+// `Fe25519`, for signature verification: points in extended coordinates (X : Y : Z : T),
+// x = X/Z, y = Y/Z, T = XY/Z, with the complete addition add-2008-hwcd-3 and the doubling
+// dbl-2008-hwcd. Variable time, for public points only: decompression branches on the roots.
+
+import { Fe25519 } from "velt/crypto/field25519";
+
+// Little-endian 64-bit words: the curve's d and a square root of -1.
+const D: u64[] = [0x75eb4dca135978a3, 0x00700a4d4141d8ab, 0x8cc740797779e898, 0x52036cee2b6ffe73];
+const SQRT_M1: u64[] = [
+  0xc4ee1b274a0ea0b0,
+  0x2f431806ad2fe478,
+  0x2b4d00993dfbd7a7,
+  0x2b8324804fc1df0b,
+];
+
+// The odd multiples B, 3B, .., 15B of the base point: x, y and 2 d x y of each, four
+// little-endian words apiece (x of B is the even root of its y = 4/5).
+const BASE_ODD: u64[] = [
+  0xc9562d608f25d51a,
+  0x692cc7609525a7b2,
+  0xc0a4e231fdd6dc5c,
+  0x216936d3cd6e53fe,
+  0x6666666666666658,
+  0x6666666666666666,
+  0x6666666666666666,
+  0x6666666666666666,
+  0xabc91205877aaa68,
+  0x26d9e823ccaac49e,
+  0x5a1b7dcbdd43598c,
+  0x6f117b689f0c65a8,
+  0xac62485fd3f8e25c,
+  0x6343981981624886,
+  0x1ff4ae743edac83a,
+  0x67ae9c4a22928f49,
+  0x02c3684878f5b4d4,
+  0x9f16ec1767240304,
+  0xa126a18e60269ef7,
+  0x1267b1d177ee69ab,
+  0x14ae933f0dd0d889,
+  0x589423221c35da62,
+  0xd170e5458cf2db4c,
+  0x5a2826af12b9b4c6,
+  0x91409cc0322ef233,
+  0x5c2819f93e1be1a5,
+  0xfcef7cf7d12da5de,
+  0x49fda73eade3587b,
+  0x10d21f83d676c8ed,
+  0x31282eca89430b5d,
+  0xe02c6e1489924666,
+  0x5f4825b298feae6f,
+  0xbcbbdbf1812a8285,
+  0x270e0807d0bdd1fc,
+  0xb41b670b1bbda72d,
+  0x43aabe696b3bb69a,
+  0x5855981af50e4107,
+  0x83e809f3bbf1ce95,
+  0xe9e3ee194b1d8107,
+  0x14568685fcf4bd4e,
+  0x12c4c4b59f4062b8,
+  0xf0882b46f7abf23d,
+  0x87ce6468dd36ad41,
+  0x31c563e32b47d52f,
+  0xf1836dc801b8b3a2,
+  0xb3035f47053ea49a,
+  0x529c41ba5877adf3,
+  0x7a9fbb1c6a0f90a7,
+  0xd3e023065185715c,
+  0x86d80e5c2e4e0294,
+  0x1bf336e06f9422b8,
+  0x357cc970c8007165,
+  0xc74e44845522f1c0,
+  0x1f789013236e4430,
+  0xb2befce956f2d2fd,
+  0x7f3d23c2c2dd0df4,
+  0x06b4e8bf9045af1b,
+  0xe2ff83e8a719d22f,
+  0xaaf6fc2993d4cf16,
+  0x73c172021b008b06,
+  0xff2fd2c1207cf3cb,
+  0xd381a5b2c593d552,
+  0xb6cf078dd6712438,
+  0x14e528b1154be417,
+  0x308f2dc36a033713,
+  0x1258591c3c9c58d4,
+  0x5a6f7ce340ff0fce,
+  0x2d9082313f21ab97,
+  0xd82b2cc5fd6089e9,
+  0x031eb4a13282e4a4,
+  0x44311199b51a8622,
+  0x3dc65522b53df948,
+  0x3780e073b7c05fed,
+  0x8843e3e88d22b7b8,
+  0xdb33adf0282d304f,
+  0x107427e0d5f366cc,
+  0x87efe1aeea401f80,
+  0x3740cfb2289a2723,
+  0x78466022d2da89b8,
+  0x12dbb00ded538b74,
+  0x5360a119732ea378,
+  0x2437e6b1df8dd471,
+  0xa2ef37f891a7e533,
+  0x497ba6fdaa097863,
+  0x90617f3e66a18dc1,
+  0xd9631374770189cb,
+  0xdc5ac6f95d20419e,
+  0x4f162deaec2ec435,
+  0x946d4cc4ad2e5cdf,
+  0xace5af18a19a9aa1,
+  0x5162f70164d29331,
+  0x12cbfb2d04ff22f5,
+  0x5d9a762f9bd0b516,
+  0xeb38af4e373fdeee,
+  0x032e5a7d93d64270,
+  0x511d61210ae4d842,
+];
+
+// Registers. A point is four (X, Y, Z, T).
+const T0: usize = 0; // temporaries T0..T0 + 7
+const CURVE_D: usize = 8;
+const CURVE_2D: usize = 9;
+const ROOT: usize = 10; // a square root of -1
+const ZERO: usize = 11;
+const ONE: usize = 12;
+const SCRATCH: usize = 13; // the inversion's five
+/** The first register that is the caller's. */
+export const FIRST: usize = SCRATCH + 5;
+
+/** The field with `extra` registers from `FIRST` on, and the curve's constants set. */
+export function edwardsField(extra: usize): Fe25519 {
+  const f = new Fe25519(FIRST + extra);
+  f.set(ZERO, 0);
+  f.set(ONE, 1);
+  f.decode(CURVE_D, bytes(D, 0));
+  add(f, CURVE_2D, CURVE_D, CURVE_D);
+  f.decode(ROOT, bytes(SQRT_M1, 0));
+  return f;
+}
+
+/**
+ * Points `p`, `p + 4`, .., `p + 28` = B, 3B, .., 15B, the odd multiples of the base point, with
+ * Z = 1 and 2 d T in place of T (what `addPoint` takes on its right).
+ */
+export function loadBaseOdd(f: Fe25519, p: usize) {
+  for (let i: usize = 0; i < 8; i++) {
+    const q = p + 4 * i;
+    f.decode(q, bytes(BASE_ODD, 12 * i));
+    f.decode(q + 1, bytes(BASE_ODD, 12 * i + 4));
+    f.copy(q + 2, ONE);
+    f.decode(q + 3, bytes(BASE_ODD, 12 * i + 8));
+  }
+}
+
+/** Point `d` = -`p`: (-X : Y : Z : -T). `d` may be `p`. */
+export function negatePoint(f: Fe25519, d: usize, p: usize) {
+  sub(f, d, ZERO, p);
+  f.copy(d + 1, p + 1);
+  f.copy(d + 2, p + 2);
+  sub(f, d + 3, ZERO, p + 3);
+}
+
+/** Point `p`'s T times 2 d, for the right side of `addPoint`. */
+export function premultiply(f: Fe25519, p: usize) {
+  mul(f, p + 3, p + 3, CURVE_2D);
+}
+
+/** The encoding of point `p`: y's 32 bytes with x's low bit on top. */
+export function encodePoint(f: Fe25519, p: usize): u8[] {
+  f.invert(T0, p + 2, SCRATCH);
+  mul(f, T0 + 1, p, T0);
+  mul(f, T0 + 2, p + 1, T0);
+  const encoded = f.encode(T0 + 2);
+  encoded[31] |= (f.encode(T0 + 1)[0] & 1) << 7;
+  return encoded;
+}
+
+// Out of line: `Fe25519.mul` and `square` are inlined wherever they are called.
+function mul(f: Fe25519, d: usize, a: usize, b: usize) {
+  f.mul(d, a, b);
+}
+
+function square(f: Fe25519, d: usize, a: usize) {
+  f.square(d, a);
+}
+
+// `d = a + b`, carried, so that the result can be added or subtracted again.
+function add(f: Fe25519, d: usize, a: usize, b: usize) {
+  f.add(d, a, b);
+  f.carry(d);
+}
+
+// `d = a - b`, carried.
+function sub(f: Fe25519, d: usize, a: usize, b: usize) {
+  f.sub(d, a, b);
+  f.carry(d);
+}
+
+// Whether register `a` is zero mod p.
+function isZero(f: Fe25519, a: usize): bool {
+  const b = f.encode(a);
+  for (let i: usize = 0; i < 32; i++) {
+    if (b[i] != 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The four little-endian words `w[at..at + 4]` as 32 bytes.
+function bytes(w: u64[], at: usize): u8[] {
+  const out = Buffer.alloc(32);
+  for (let i: usize = 0; i < 32; i++) {
+    out[i] = ((w[at + (i >> 3)] >> ((8 * (i & 7)) as u64)) & 0xff) as u8;
+  }
+  return out;
+}
+
+// `d = a^(2^252 - 3)` (ref10's chain), with T0 + 5..T0 + 7 as scratch; `d` not `a`.
+function pow22523(f: Fe25519, d: usize, a: usize) {
+  const t0 = T0 + 5;
+  const t1 = T0 + 6;
+  const t2 = T0 + 7;
+  square(f, t0, a);
+  f.squareN(t1, t0, 2);
+  mul(f, t1, a, t1);
+  mul(f, t0, t0, t1);
+  square(f, t0, t0);
+  mul(f, t0, t1, t0); // 2^5 - 1
+  f.squareN(t1, t0, 5);
+  mul(f, t0, t1, t0); // 2^10 - 1
+  f.squareN(t1, t0, 10);
+  mul(f, t1, t1, t0); // 2^20 - 1
+  f.squareN(t2, t1, 20);
+  mul(f, t1, t2, t1); // 2^40 - 1
+  f.squareN(t1, t1, 10);
+  mul(f, t0, t1, t0); // 2^50 - 1
+  f.squareN(t1, t0, 50);
+  mul(f, t1, t1, t0); // 2^100 - 1
+  f.squareN(t2, t1, 100);
+  mul(f, t1, t2, t1); // 2^200 - 1
+  f.squareN(t1, t1, 50);
+  mul(f, t0, t1, t0); // 2^250 - 1
+  f.squareN(t0, t0, 2);
+  mul(f, d, t0, a);
+}
+
+/**
+ * Registers `p..p + 3` = the point whose encoding is `b` (y, with x's low bit on top), as
+ * ref10's `ge_frombytes_vartime`; false when no x fits.
+ */
+export function decompress(f: Fe25519, p: usize, b: u8[]): bool {
+  const u = T0;
+  const v = T0 + 1;
+  const w = T0 + 2;
+  const check = T0 + 3;
+  f.decode(p + 1, b);
+  f.copy(p + 2, ONE);
+  // x^2 = u / v with u = y^2 - 1 and v = d y^2 + 1.
+  square(f, w, p + 1);
+  mul(f, v, w, CURVE_D);
+  sub(f, u, w, ONE);
+  add(f, v, v, ONE);
+  // x = u (u v)^((p - 5) / 8), then v x^2 is u, or -u (x times a root of -1), or neither.
+  mul(f, w, u, v);
+  pow22523(f, p, w);
+  mul(f, p, p, u);
+  square(f, w, p);
+  mul(f, w, w, v);
+  sub(f, check, w, u);
+  if (!isZero(f, check)) {
+    add(f, check, w, u);
+    if (!isZero(f, check)) {
+      return false;
+    }
+    mul(f, p, p, ROOT);
+  }
+  if ((f.encode(p)[0] & 1) != b[31] >> 7) {
+    sub(f, p, ZERO, p);
+  }
+  mul(f, p + 3, p, p + 1);
+  return true;
+}
+
+/** Point `d` = point `p`. */
+export function copyPoint(f: Fe25519, d: usize, p: usize) {
+  for (let i: usize = 0; i < 4; i++) {
+    f.copy(d + i, p + i);
+  }
+}
+
+/**
+ * `p += q` (points at registers `p` and `q`), add-2008-hwcd-3: complete, so the identity and
+ * equal points need no special case. `q` has 2 d T in place of T, and Z = 1 when `affine`. The coordinates come in below 2^52 a limb (products, or
+ * carried), so the sums and differences stay below 2^54, what a product takes, without carries.
+ */
+export function addPoint(f: Fe25519, p: usize, q: usize, affine: bool) {
+  const a = T0;
+  const b = T0 + 1;
+  const c = T0 + 2;
+  const d = T0 + 3;
+  const e = T0 + 4;
+  f.sub(a, p + 1, p);
+  f.sub(e, q + 1, q);
+  mul(f, a, a, e); // A = (Y1 - X1) (Y2 - X2)
+  f.add(b, p + 1, p);
+  f.add(e, q + 1, q);
+  mul(f, b, b, e); // B = (Y1 + X1) (Y2 + X2)
+  mul(f, c, p + 3, q + 3); // C = 2 d T1 T2
+  if (affine) {
+    f.add(d, p + 2, p + 2);
+  } else {
+    mul(f, d, p + 2, q + 2);
+    f.add(d, d, d); // D = 2 Z1 Z2
+  }
+  f.sub(e, b, a); // E = B - A
+  f.add(b, b, a); // H = B + A
+  f.sub(a, d, c); // F = D - C
+  f.add(d, d, c); // G = D + C
+  mul(f, p, e, a);
+  mul(f, p + 1, d, b);
+  mul(f, p + 2, a, d);
+  mul(f, p + 3, e, b);
+}
+
+/**
+ * `p = 2p`, dbl-2008-hwcd for a = -1. What is subtracted is a product or carried (`Fe25519.sub`
+ * takes away at most 2p a limb).
+ */
+export function doublePoint(f: Fe25519, p: usize) {
+  const a = T0;
+  const b = T0 + 1;
+  const c = T0 + 2;
+  const e = T0 + 3;
+  const g = T0 + 4;
+  square(f, a, p); // A = X^2
+  square(f, b, p + 1); // B = Y^2
+  square(f, c, p + 2);
+  add(f, c, c, c); // C = 2 Z^2
+  f.add(e, p, p + 1);
+  square(f, e, e);
+  f.sub(e, e, a);
+  f.sub(e, e, b); // E = (X + Y)^2 - A - B
+  f.sub(g, b, a); // G = B - A
+  f.sub(c, g, c); // F = G - C
+  add(f, a, a, b);
+  f.sub(a, ZERO, a); // H = -A - B
+  mul(f, p, e, c);
+  mul(f, p + 1, g, a);
+  mul(f, p + 2, c, g);
+  mul(f, p + 3, e, a);
+}

@@ -1,0 +1,64 @@
+// velt/lang/string (internal): std code appends to the runtime's string builder, passed as a
+// `string` (`velt_rt_strbuf_*`), run by `velt test std/`. An argument after the builder that the
+// compiler took as writing a local or changing memory (velt_vir `writes_local`, velt_sema
+// `may_change_memory`) made it hand the extern a copy of the builder, and the append was lost: a
+// literal union read as a `string`, a `match`, was one (#3334).
+import { describe, expect, it } from "velt/test";
+
+declare function velt_rt_strbuf_new(cap: u64, out: string);
+declare function velt_rt_strbuf_push_str(buf: string, s: string);
+declare function velt_rt_strbuf_finish(buf: string, out: string);
+
+// `<`, then `what` as a literal union (`"a" | "b"`, inferred), then `>`.
+function wrapped(arm: bool): string {
+  let buf = "";
+  velt_rt_strbuf_new(64, buf);
+  velt_rt_strbuf_push_str(buf, "<");
+  const what = arm ? "a" : "b";
+  velt_rt_strbuf_push_str(buf, what);
+  velt_rt_strbuf_push_str(buf, ">");
+  let out = "";
+  velt_rt_strbuf_finish(buf, out);
+  return out;
+}
+
+// The union picked before the builder exists.
+function picked(arm: bool): string {
+  const what = arm ? "an arm64 CPU" : "an x86-64 CPU";
+  let buf = "";
+  velt_rt_strbuf_new(64, buf);
+  velt_rt_strbuf_push_str(buf, what);
+  let out = "";
+  velt_rt_strbuf_finish(buf, out);
+  return out;
+}
+
+type Level = "v2" | "v3" | "v4";
+
+// A declared literal union, narrowed by a test.
+function level(l: Level): string {
+  let buf = "";
+  velt_rt_strbuf_new(64, buf);
+  if (l != "v2") {
+    velt_rt_strbuf_push_str(buf, l);
+  }
+  let out = "";
+  velt_rt_strbuf_finish(buf, out);
+  return out;
+}
+
+describe("a literal union appended to the string builder", () => {
+  it("reaches the builder", () => {
+    expect(wrapped(true)).toBe("<a>");
+    expect(wrapped(false)).toBe("<b>");
+  });
+  it("reaches it when picked before the builder", () => {
+    expect(picked(true)).toBe("an arm64 CPU");
+    expect(picked(false)).toBe("an x86-64 CPU");
+  });
+  it("reaches it narrowed", () => {
+    expect(level("v2")).toBe("");
+    expect(level("v3")).toBe("v3");
+    expect(level("v4")).toBe("v4");
+  });
+});
