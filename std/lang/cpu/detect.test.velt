@@ -4,7 +4,8 @@ import { describe, expect, it } from "velt/test";
 import { x86Bits } from "velt/lang/cpu/detect_x86";
 import { linuxArmBits } from "velt/lang/cpu/arm_linux_bits";
 import { win32ArmBits } from "velt/lang/cpu/arm_win32_bits";
-import { cpuDisabledBits, listOf, missingMessage, simdDisabledBits } from "velt/lang/cpu/check";
+import { cpuDisabledBits, missingMessage, simdDisabledBits } from "velt/lang/cpu/check";
+import { strDataAddress } from "velt/lang/intrinsics";
 
 const OSXSAVE: u32 = 1 << 27;
 const AVX_STATE: u64 = 6;
@@ -191,15 +192,27 @@ describe("the start-up check", () => {
   });
 
   it("turns off what the variables name", () => {
-    expect(cpuDisabledBits(listOf(" sse4.2 ,avx2"), false)).toBe((1 << 3) | (1 << 7));
-    expect(cpuDisabledBits(listOf("dotprod"), true)).toBe((1 as u64) << 32);
-    expect(cpuDisabledBits(listOf("sse4"), false)).toBe(0);
-    expect(cpuDisabledBits(listOf("AVX512F"), false)).toBe(1 << 14);
-    expect(simdDisabledBits(listOf("clmul"))).toBe(((1 as u64) << 22) | ((1 as u64) << 34));
-    expect(simdDisabledBits(listOf("sha,aes"))).toBe(
+    // Each list as a C string, as `getenv` gives it, held by a local for the test's length.
+    const l1 = " sse4.2 ,avx2\0";
+    const l2 = "dotprod\0";
+    const l3 = "sse4\0";
+    const l4 = "AVX512F\0";
+    const l5 = "clmul\0";
+    const l6 = "sha,aes\0";
+    const l7 = "nothing\0";
+    const l8 = "\0";
+    const l9 = "aes,AES ,popcnt,sha2\0";
+    expect(cpuDisabledBits(strDataAddress(l1), false)).toBe((1 << 3) | (1 << 7));
+    expect(cpuDisabledBits(strDataAddress(l2), true)).toBe((1 as u64) << 32);
+    expect(cpuDisabledBits(strDataAddress(l3), false)).toBe(0);
+    expect(cpuDisabledBits(strDataAddress(l4), false)).toBe(1 << 14);
+    expect(cpuDisabledBits(strDataAddress(l9), false)).toBe((1 << 4) | (1 << 23));
+    expect(cpuDisabledBits(strDataAddress(l9), true)).toBe(((1 as u64) << 33) | ((1 as u64) << 40));
+    expect(simdDisabledBits(strDataAddress(l5))).toBe(((1 as u64) << 22) | ((1 as u64) << 34));
+    expect(simdDisabledBits(strDataAddress(l6))).toBe(
       ((1 as u64) << 21) | ((1 as u64) << 33) | ((1 as u64) << 23) | ((1 as u64) << 40),
     );
-    expect(simdDisabledBits(listOf("nothing"))).toBe(0);
-    expect(simdDisabledBits(listOf(""))).toBe(0);
+    expect(simdDisabledBits(strDataAddress(l7))).toBe(0);
+    expect(simdDisabledBits(strDataAddress(l8))).toBe(0);
   });
 });

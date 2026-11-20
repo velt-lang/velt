@@ -429,18 +429,20 @@ mod tests {
 
     #[test]
     fn std_checks_the_same_features() {
-        // std's start-up check (std/lang/cpu/check.velt) names the bits in this order (`nameOf`:
-        // arm64's names, then x86's) and knows the levels by these masks (`levelMask`).
+        // std's start-up check (std/lang/cpu/check.velt) names the bits in this order
+        // (`X86_NAMES`, `ARM_NAMES`) and knows the levels by these masks (`missingMessage`).
         let check = include_str!("../../../std/lang/cpu/check.velt");
-        let body = &check[check.find("function nameOf").expect("std's nameOf")..];
-        let body = &body[..body.find("\n}\n").expect("its end")];
-        let named: Vec<&str> = body
-            .split("return \"")
-            .skip(1)
-            .map(|r| &r[..r.find('"').expect("a name's end")])
-            .collect();
+        let literal = |constant: &str| -> Vec<&str> {
+            let at = check
+                .find(&format!("export const {constant}: string = \""))
+                .expect(constant);
+            let from = &check[at..][check[at..].find('"').expect("its literal") + 1..];
+            from[..from.find('"').expect("its end")]
+                .split(',')
+                .collect()
+        };
         let ours: Vec<&str> = X86_FEATURES.iter().map(|(n, _)| *n).collect();
-        assert_eq!(named[named.len() - ours.len()..], ours[..]);
+        assert_eq!(literal("X86_NAMES"), ours);
         // And the one feature table's names, in word order (velt_common `cpu_features`).
         let mut x86: Vec<velt_common::cpu_features::CpuFeature> =
             (velt_common::cpu_features::CpuFeature::ALL.iter().copied())
@@ -449,8 +451,9 @@ mod tests {
         x86.sort_by_key(|f| f.raw_bit());
         let table: Vec<&str> = x86.iter().map(|f| f.check_name()).collect();
         assert_eq!(ours, table);
-        assert_eq!(named[0], ARM_FEATURES[0].0);
-        let masks = format!("i == 1 ? {X86_V2:#x} : i == 2 ? {X86_V3:#x} : {X86_V4:#x};");
+        assert_eq!(literal("ARM_NAMES")[0], ARM_FEATURES[0].0);
+        let masks =
+            format!("need == {X86_V2:#x} ? 2 : need == {X86_V3:#x} ? 3 : need == {X86_V4:#x} ? 4");
         assert!(check.contains(&masks), "{masks}");
     }
 

@@ -456,19 +456,26 @@ mod tests {
 
     #[test]
     fn the_start_up_check_names_the_table() {
-        // check.velt's `nameOf` names arm64's bits, then x86's, in word order: the message and
-        // `VELT_CPU_DISABLE` use these names.
+        // check.velt's `X86_NAMES` and `ARM_NAMES` name each architecture's bits in word order:
+        // the message and `VELT_CPU_DISABLE` use these names.
         let text = std_file("lang/cpu/check.velt");
-        let from = text.find("function nameOf").expect("nameOf");
-        let body = &text[from..from + text[from..].find("\n}\n").expect("its end")];
-        let named: Vec<&str> = (body.split("return \"").skip(1))
-            .map(|r| &r[..r.find('"').expect("a name's end")])
-            .collect();
-        let table: Vec<&str> = (by_bit(CpuArch::Aarch64).into_iter())
-            .chain(by_bit(CpuArch::X86_64))
-            .map(|f| f.check_name())
-            .collect();
-        assert_eq!(named, table);
+        let names = |constant: &str| -> Vec<String> {
+            let at = text
+                .find(&format!("export const {constant}: string = \""))
+                .expect(constant);
+            let from = &text[at..][text[at..].find('"').expect("its literal") + 1..];
+            from[..from.find('"').expect("its end")]
+                .split(',')
+                .map(str::to_string)
+                .collect()
+        };
+        for (constant, arch) in [
+            ("X86_NAMES", CpuArch::X86_64),
+            ("ARM_NAMES", CpuArch::Aarch64),
+        ] {
+            let table: Vec<&str> = by_bit(arch).into_iter().map(|f| f.check_name()).collect();
+            assert_eq!(names(constant), table, "{constant}");
+        }
     }
 
     #[test]
