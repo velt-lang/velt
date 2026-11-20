@@ -597,24 +597,40 @@ same arguments without `out` and returning a `VeltFut*` of the same result. Only
 defines the twins (WebAssembly builds, std/fs/rt.velt), so they are not in this table, whose
 names the JIT host exports (crates/velt_rt_host/tests/abi_symbols.rs).
 
+Reading, writing and appending whole files, `stat`, `lstat` and `exists` are std code in a
+native build (`#fs-whole`: std/fs/whole/posix.velt over the C library's descriptors,
+`#fd-system`; whole/win32.velt over `CreateFileW`, `ReadFile`, `WriteFile` and
+`GetFileInformationByHandle`), with Node's messages, and text decoded with an invalid sequence
+as U+FFFD, as Node decodes it. velt_rt has no functions for them, so the table has none.
+velt_rt_wasm has, for WebAssembly builds, with their async twins:
+`velt_rt_fs_read_file_bytes_sync(path, out)` (`IoResult<VeltBytes>`),
+`velt_rt_fs_write_file_sync(path, data, out)` and `velt_rt_fs_append_file_sync(path, data, out)`
+(`IoResult<()>`; append creates the file), `velt_rt_fs_stat_sync(path, out)` and
+`velt_rt_fs_lstat_sync(path, out)` (`IoResult<VeltStat>`) and `velt_rt_fs_exists_sync(path) ->
+u8`. Text is read as bytes and decoded in std: neither runtime reads a file as text.
+
+Listing a directory (plain and with each entry's type) and making one are std code in a native
+build too, and on macOS and Linux so is removing a file, a link or a tree (`#fs-tree`:
+std/fs/tree/posix.velt over the C library's `opendir`, `readdir`, `mkdir`, `rmdir` and, for a
+tree, `openat`, `fdopendir` and `unlinkat`, so that nothing is reached through a link;
+tree/win32.velt over `FindFirstFileExW` and `CreateDirectoryW`), with Node's messages and the
+names sorted by code point. velt_rt has `velt_rt_fs_remove_sync` alone, which std calls on
+Windows (a tree is removed there with every directory opened relative to its parent's handle,
+which std does not do); on macOS and Linux nothing calls it and it reports "unsupported".
+velt_rt_wasm has, for WebAssembly builds, with their async twins:
+`velt_rt_fs_read_dir_sync(path, out)` (`IoResult<VeltStrArray>`, the names sorted),
+`velt_rt_fs_read_dir_typed_sync(path, out)` (`IoResult<VeltDirents>`),
+`velt_rt_fs_mkdir_sync(path, recursive, out)` and `velt_rt_fs_remove_sync(path, recursive, out)`
+(`IoResult<()>`).
+
 | Sync (`..., out)`, returns nothing) | Result type |
 |---|---|
-| `velt_rt_fs_read_file_sync(path, out)` | `IoResult<VeltStr>` (`EILSEQ` if not UTF-8) |
-| `velt_rt_fs_read_file_bytes_sync(path, out)` | `IoResult<VeltBytes>` |
-| `velt_rt_fs_write_file_sync(path, data, out)` | `IoResult<()>` (= `VeltErr`) |
-| `velt_rt_fs_append_file_sync(path, data, out)` | `IoResult<()>`; creates the file |
-| `velt_rt_fs_read_dir_sync(path, out)` | `IoResult<VeltStrArray>` names, sorted |
-| `velt_rt_fs_read_dir_typed_sync(path, out)` | `IoResult<VeltDirents>` |
-| `velt_rt_fs_stat_sync(path, out)` | `IoResult<VeltStat>` (follows symlinks) |
-| `velt_rt_fs_lstat_sync(path, out)` | `IoResult<VeltStat>` (a symlink itself) |
 | `velt_rt_fs_readlink_sync(path, out)` | `IoResult<VeltStr>`; `EINVAL` if not a symlink |
 | `velt_rt_fs_realpath_sync(path, out)` | `IoResult<VeltStr>`: the absolute path with every symlink, `.` and `..` resolved; `ENOENT` if it (or a link's target) doesn't exist; Windows: without the `\\?\` prefix unless the path needs it (`C:\dir\f`, `\\server\share\f`). WebAssembly: as WASI reports it |
 | `velt_rt_fs_symlink_sync(target, path, out)` | `IoResult<()>`; Windows: a directory link if `target` is a directory, a relative target stored with `\` separators (as Node) |
-| `velt_rt_fs_mkdir_sync(path, recursive, out)` | `IoResult<()>` |
-| `velt_rt_fs_remove_sync(path, recursive, out)` | `IoResult<()>`; file, symlink (the link only, a Windows directory link too), empty dir, or tree if recursive |
+| `velt_rt_fs_remove_sync(path, recursive, out)` | Windows only. `IoResult<()>`; file, symlink (the link only, a Windows directory link too), empty dir, or tree if recursive |
 | `velt_rt_fs_rename_sync(from, to, out)` | `IoResult<()>` |
 | `velt_rt_fs_copy_file_sync(from, to, out)` | `IoResult<()>` |
-| `velt_rt_fs_exists_sync(path) -> u8` | `u8` (never fails) |
 
 All `path`/`from`/`to`/`data` parameters are `const VeltStr*`. Error messages are Node's: `<CODE>:
 <description>, <syscall> '<path>'` (plus ` -> '<to>'` for `rename`/`copyfile`/`symlink`), e.g.
@@ -1302,16 +1318,12 @@ pool on Windows). Exit codes: the process's code, or `128 + signal` when killed 
 
 ### 14.4 Standard input (`velt/process`)
 
-`typedef struct { IoResult<VeltStr> line; u8 eof; } LineRead;` (64 bytes): a line without its
-`\n`/`\r\n`; at end of input `eof = 1` and the line is empty. One process-wide buffered stream
-serves both forms; an async read is the sync one on the executor's blocking pool
-(std/process/rt_sched.velt); text is decoded lossily. The runtime has no async stdin
-functions.
-
-| Symbol | Signature |
-|---|---|
-| `velt_rt_stdin_read_line_sync` | `(LineRead* out)` |
-| `velt_rt_stdin_read_all_sync` | `(IoResult<VeltStr>* out)` |
+Standard input is std code: one process-wide read-ahead buffer
+(std/process/stdin_buffer.velt) over `#stdin-sys` (`read` on fd 0 on macOS, Linux and WASI;
+`ReadConsoleW` or `ReadFile` on Windows; none under a JS host), locked with `velt_rt_mutex_lock`;
+an async read is the sync one on the executor's blocking pool (std/process/rt_sched.velt), and
+text is decoded lossily. Neither runtime has stdin functions (the fs readers' `LineRead` is in
+§14.7).
 
 ### 14.5 Machine facts (`velt/os`)
 
@@ -1339,7 +1351,7 @@ every operation runs on the blocking pool. A writer's last release flushes (erro
 | `velt_rt_fs_reader_opened_stats` | `(VeltFileReader r, IoResult<VeltStat>* out)` | synchronous: the file's `VeltStat` when it was opened (an `fstat` in the open's own blocking call, so no I/O here), whatever its path names now; `size` is the whole file's; `EBADF` once closed |
 | `velt_rt_fs_reader_read` | `(VeltFileReader r, u64 max) -> VeltFut*` | `IoResult<VeltBytes>`, empty = EOF, `max` 0 = 64 KiB |
 | `velt_rt_fs_reader_read_string` | `(VeltFileReader r, u64 max) -> VeltFut*` | `IoResult<VeltStr>`, split characters completed on the next call, `""` = EOF |
-| `velt_rt_fs_reader_read_line` | `(VeltFileReader r) -> VeltFut*` | result `LineRead` (§14.4) |
+| `velt_rt_fs_reader_read_line` | `(VeltFileReader r) -> VeltFut*` | result `typedef struct { IoResult<VeltStr> line; u8 eof; } LineRead;` (64 bytes): a line without its `\n`/`\r\n`, decoded lossily; at the end of the file `eof = 1` and the line is empty |
 | `velt_rt_fs_reader_close` | `(VeltFileReader r)` | |
 | `velt_rt_fs_open_write` | `(const VeltStr* path, u8 append) -> VeltFut*` | `IoResult<VeltFileWriter>`; creates; truncates unless `append` |
 | `velt_rt_fs_writer_write` / `_write_bytes` | `(VeltFileWriter w, const VeltStr* data) -> VeltFut*` / `(VeltFileWriter w, const VeltBytes* data) -> VeltFut*` | `IoResult<()>`; data copied |

@@ -315,33 +315,31 @@ fn record_calls(cx: &mut Ctx, recorded: &mut Calls) {
             _ => None,
         }
     }
-    let mut look = |caller: u32, e: &mut crate::hir::Expr| {
+    let mut look = |caller: u32, e: &crate::hir::Expr| {
         if let Some((d, args)) = callee(e) {
             calls.push((caller, d, targs.len()..targs.len() + args.len()));
             targs.extend_from_slice(args);
         }
     };
-    for (i, d) in cx.defs.iter_mut().enumerate() {
+    for (i, d) in cx.defs.iter().enumerate() {
         if let (Some(Def::Fn(f)), false) = (d, done[i]) {
             done[i] = true;
-            crate::visit::exprs_mut(&mut f.body.block, &mut |e| look(i as u32, e));
+            crate::visit_ref::exprs(&f.body.block, &mut |e| look(i as u32, e));
         }
     }
-    for (i, info) in cx.info.iter_mut().enumerate() {
+    for (i, info) in cx.info.iter().enumerate() {
         if let crate::defs::DefInfo::Global(g) = info {
-            if let (Some(init), false) = (g.init.as_mut(), done[i]) {
+            if let (Some(init), false) = (g.init.as_ref(), done[i]) {
                 done[i] = true;
-                crate::visit::exprs_in(init, &mut |e| look(i as u32, e));
+                crate::visit_ref::exprs_in(init, &mut |e| look(i as u32, e));
             }
         }
         if let crate::defs::DefInfo::Adt(a) = info {
             let start = a.own_fields_start;
-            let own = a.fields[start..]
-                .iter_mut()
-                .filter_map(|x| x.default.as_mut());
-            let redefined = a.redefined.iter_mut().filter_map(|r| r.init.as_mut());
+            let own = a.fields[start..].iter().filter_map(|x| x.default.as_ref());
+            let redefined = a.redefined.iter().filter_map(|r| r.init.as_ref());
             for e in own.chain(redefined) {
-                crate::visit::exprs_in(e, &mut |e| fields.extend(callee(e).map(|(d, _)| d)));
+                crate::visit_ref::exprs_in(e, &mut |e| fields.extend(callee(e).map(|(d, _)| d)));
             }
         }
     }

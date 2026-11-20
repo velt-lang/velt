@@ -9,7 +9,7 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::ctx::Ctx;
-use crate::defs::{BodyState, FnKind};
+use crate::defs::FnKind;
 use crate::hir::{
     Block, Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, LocalId, Stmt, StmtKind as S,
 };
@@ -241,9 +241,5 @@ fn call_args(cx: &mut Ctx, d: DefId, i: usize) -> Vec<(DefId, Expr)> {
 }
 
 fn done_fns(cx: &Ctx) -> Vec<DefId> {
-    cx.fn_defs
-        .iter()
-        .copied()
-        .filter(|d| cx.fn_info(*d).state == BodyState::Done)
-        .collect()
+    cx.unit_fns()
 }

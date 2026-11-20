@@ -32,8 +32,8 @@
 //!   std's heap hooks, so its blocks are counted). Tasks
 //!   still running when `main` returns are waited for (up to a minute) while blocks are unfreed;
 //!   the count is taken at a moment when every block was freed, or once no task can run any
-//!   more (blocks held by tasks that wait forever, or by pending `unref()`'d timers, count as
-//!   unfreed).
+//!   more (blocks held by tasks that wait forever count as unfreed; pending `unref()`'d timers
+//!   are given back first, #3032).
 //! - A golden whose first lines contain `// check: unfreed blocks at most N` is checked the same
 //!   way, but may leave up to N blocks unfreed: for programs that keep memory on purpose until
 //!   they exit.
@@ -655,13 +655,28 @@ fn too_many_strings(stderr: &str, limit: u64) -> Option<String> {
     }
 }
 
+/// The line a program's own `process.exit` writes before the `rc stats` report.
+const EXIT_NOTE: &str = "rc stats: the program called process.exit: no leak verdict";
+
 /// The leak in a `rc stats: ... alloc=A free=F blocks=A/F` report: more than `allowed` blocks
 /// allocated but not freed, a heap string buffer allocated but not freed (strings have no
 /// allowance: nothing keeps one on purpose), or no report.
 fn leaked_blocks(stderr: &str, allowed: u64) -> Option<String> {
-    let Some(report) = stderr.lines().rev().find(|l| l.starts_with("rc stats:")) else {
+    // The program ended itself with `process.exit`: the frames live then keep what they hold,
+    // as Node runs no cleanup there, and the report says so in place of a verdict
+    // (std/prelude/process.velt `processExit`).
+    // It is the line just before the report: the same text printed anywhere else is the
+    // program's own output.
+    let mut last = stderr
+        .lines()
+        .rev()
+        .skip_while(|l| !l.starts_with("rc stats: retain="));
+    let Some(report) = last.next() else {
         return Some("leak check: no `rc stats` report on stderr".into());
     };
+    if last.next() == Some(EXIT_NOTE) {
+        return None;
+    }
     let field = |name: &str| report.split_whitespace().find_map(|w| w.strip_prefix(name));
     let unfreed = |a: &str, f: &str| a.parse::<u64>().ok()?.checked_sub(f.parse().ok()?);
     let blocks = match field("blocks=").and_then(|b| b.split_once('/')) {

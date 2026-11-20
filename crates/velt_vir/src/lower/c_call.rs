@@ -8,6 +8,7 @@
 
 use velt_sema::hir::{self, CTy, DefId, IntTy, TyId, TyKind};
 
+use super::array_view::ViewFlush;
 use super::extern_args::Arg;
 use super::{cint, ice, unit, Cx, FnLower};
 use crate::c_abi;
@@ -108,6 +109,7 @@ impl FnLower<'_, '_> {
                     .map(|a| self.vararg_cty(a.ty)),
             )
             .collect();
+        let mut written: Vec<(Place, TyId)> = vec![];
         for (k, ((a, t), later)) in args.iter().zip(&types).zip(laters).enumerate() {
             ctys.push(c_vir(*t, wasm));
             if let CTy::Buf { .. } = t {
@@ -123,6 +125,20 @@ impl FnLower<'_, '_> {
                         Arg::Value(self.operand_place(v, vt), t)
                     }
                 };
+                // C may write into a buffer that is not `readonly`: where that is a view of
+                // another array (array_view.rs), its mirror, which goes back after the call.
+                if let (
+                    CTy::Buf { readonly: false },
+                    Arg::Value(p, at)
+                    | Arg::Sub {
+                        place: p, t: at, ..
+                    },
+                ) = (t, &arg)
+                {
+                    if self.cx.array_view(*at) {
+                        written.push((p.clone(), *at));
+                    }
+                }
                 vals.push(CArg::Buffer(arg));
                 continue;
             }
@@ -196,7 +212,17 @@ impl FnLower<'_, '_> {
             cargs.push(match v {
                 CArg::Ready(o) => o,
                 CArg::Buffer(arg) => {
+                    let view = match &arg {
+                        Arg::Value(p, t) | Arg::Sub { place: p, t, .. } => {
+                            (written.iter().any(|(w, _)| w == p)).then(|| (p.clone(), *t))
+                        }
+                        _ => None,
+                    };
                     let p = self.buffer(Some(arg)).0;
+                    if let Some((place, t)) = view {
+                        // Its mirror is synced now: kept as it is, to tell what C changes.
+                        self.view_keep(Operand::Copy(place), t);
+                    }
                     self.never_null(p)
                 }
                 CArg::Str(s) => {
@@ -286,6 +312,9 @@ impl FnLower<'_, '_> {
         // reads a hundred rows from SQLite, whose failures come back as results.
         if c.errno {
             self.capture_errno(&c.library);
+        }
+        for (place, t) in written {
+            self.view_flush(Operand::Copy(place), t, ViewFlush::Kept);
         }
         let Some(d) = dest else {
             return unit();

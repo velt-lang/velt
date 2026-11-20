@@ -217,3 +217,10 @@ fn make_view(cx: &mut Ctx, t: TyId, module: usize, span: Span) -> Option<DefId> 
     info.throw_srcs = frame.uncaught;
     made.then_some(def)
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    FnViews {
+        made, pending, generic,
+    }
+}

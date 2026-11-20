@@ -1,0 +1,24 @@
+// velt/fs (internal): what a whole-file operation gives back, its value or the `IoError` it
+// failed with. The operations return one instead of throwing so that they can run on the
+// executor's blocking pool, whose work must not throw; `take` throws on the caller's side.
+
+import { IoError } from "velt/io/error";
+
+/** A whole-file operation's value, or the error it failed with (then `value` is null). */
+export struct Done<T> {
+  value: T | null;
+  error: IoError | null;
+}
+
+/** The value of `d`; throws its error if it failed. */
+export function take<T>(d: Done<T>): T {
+  const e = d.error;
+  if (e !== null) {
+    throw e;
+  }
+  const v = d.value;
+  if (v === null) {
+    panic("ICE: velt/fs: a whole-file operation gave neither a value nor an error");
+  }
+  return v;
+}

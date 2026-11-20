@@ -76,6 +76,10 @@ pub enum Intrinsic {
     /// that is only read: it does not count as a change of `xs` (an array an `RwLock` holds,
     /// in a `read` callback: velt/fs's `writeSync`). Additive.
     ArrayReadAddress,
+    /// std only: `arrayBytesWritten<T>(xs (modified))`, said after bytes were written at
+    /// `ArrayDataAddress`'s address: a view (velt_vir array_view.rs) writes its mirror back to
+    /// the array it views; nothing for a plain array. Additive.
+    ArrayBytesWritten,
     /// std only: `arrayByteLength<T>(xs) -> usize`, `xs.length * sizeof(T)` for an array of
     /// numbers (checked as `ArrayDataAddress`). Additive.
     ArrayByteLength,
@@ -301,12 +305,12 @@ pub enum Intrinsic {
     /// key; such a record is listed in [`Intrinsic::SymbolRegistry`]'s table). With `described`
     /// false the symbol has no description (`desc` is `""`).
     SymbolStatic,
-    /// Compiler-internal (std: `symbolRegistry()`): `() -> symbol`, the address of
-    /// the program's read-only table of the registry's records (the `SymbolStatic` records with
-    /// ids from 2^40): their addresses, one per 8-byte slot, ending with a null slot. It is typed
-    /// `symbol` only to be passed on as a pointer, to `velt_rt_symbol_for`, whose registry
-    /// gives these records for their keys (rt_abi.md "Symbols").
+    /// Compiler-internal (std: `symbolRegistry()`): `() -> symbol`, the address of the program's
+    /// null-ended table of registry records (`SymbolStatic`, ids from 2^40) std's registry reads.
     SymbolRegistry,
+    /// Compiler-internal, unsafe (std: `symbolAddress(s)`, and `symbolAt(address)` back): `usize`.
+    SymbolAddress,
+    SymbolAt,
     /// Compiler-internal (no source syntax): `ToString` of a template literal part whose type
     /// mentions a type parameter (`${x}` with `x: T`). It is `ToString`, except that where the
     /// value is a symbol once substituted (`symbol`, or the active member of a union or `T | null`

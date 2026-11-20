@@ -1,0 +1,61 @@
+// velt/fs (internal): reading the rest of an open file into one array, for both `#fs-whole`
+// variants: an array of the size the system gave (`hint`), then, when a small probe finds more (a
+// file that grew, a FIFO or /proc file whose size reads 0), an array twice as large each time, so
+// reading n bytes copies each about twice, as Rust's `read_to_end` does. An exact hint costs one
+// array and one probe read; otherwise the array is cut to what was read, once.
+
+import { Ptr } from "velt/ffi/ptr";
+
+declare c("c") function memcpy$whole(dst: u8[], src: readonly u8[], n: usize): Ptr<u8>;
+
+/** Bytes the probe after the hinted size reads: a full array is usually the whole file. */
+const PROBE: usize = 64;
+
+/** The least an array grows by. */
+const CHUNK: usize = 65536;
+
+/**
+ * The rest of the file, read with `read(bytes, start, end)` (the count read into
+ * `bytes[start..end]`, 0 at the end, -1 for an error, which the caller then reports): the bytes,
+ * or null after an error.
+ */
+export function readAll(
+  hint: usize,
+  read: (bytes: u8[], start: usize, end: usize) => i64,
+): u8[] | null {
+  let buf = Buffer.allocUnsafe(hint);
+  let got: usize = 0;
+  while (true) {
+    if (got == (buf.length as usize)) {
+      const probe = Buffer.allocUnsafe(PROBE);
+      const n = read(probe, 0, PROBE);
+      if (n < 0) {
+        return null;
+      }
+      if (n == 0) {
+        return buf;
+      }
+      const had = buf.length as usize;
+      const want = had * 2 > had + CHUNK ? had * 2 : had + CHUNK;
+      const grown = Buffer.allocUnsafe(want);
+      // SAFETY: `grown` holds `want` (> `got + n`) bytes; `buf` has `got` read bytes and `probe`
+      // `n`, and each view is cut to the count C copies.
+      unsafe {
+        memcpy$whole(grown.subarray(0, got), buf, got);
+        memcpy$whole(grown.subarray(got, got + (n as usize)), probe, n as usize);
+      }
+      buf = grown;
+      got += n as usize;
+      continue;
+    }
+    const n = read(buf, got, buf.length as usize);
+    if (n < 0) {
+      return null;
+    }
+    if (n == 0) {
+      // Less than the array holds (the file shrank, or the array grew past the end).
+      return buf.slice(0, got as i64);
+    }
+    got += n as usize;
+  }
+}

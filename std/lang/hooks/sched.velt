@@ -35,6 +35,7 @@ import * as m from "./sched_mem";
 import * as micro from "./sched_micro";
 import * as mod from "./sched_module";
 import * as node from "./sched_node";
+import * as al from "./sched_share_alias";
 import * as nc from "./sched_node_catch";
 import * as wn from "./sched_node_woken";
 import * as fg from "./sched_foreign";
@@ -148,15 +149,20 @@ export function schedFinish(code: i32): void {
     return;
   }
   mod.handOver();
+  // The blocking pool's jobs count too (sched_blocking.velt): a job's waiter resumes at its give,
+  // so `main` may have returned while the pool's thread still drops the job's closure and what it
+  // captured. A park waits for them (their keep-alive references), and a job's end wakes worker 0.
   if (m.ld32(e + t.E_MODE) === 0 && m.ld(e + t.E_LAZY) === 0) {
     // Tasks spawned by threads that aren't workers count too (`E_LIVE_F`, sched_foreign.velt).
-    while (m.ld(e + t.E_LIVE) !== 0 || m.load(e + t.E_LIVE_F) !== 0) {
+    while (
+      m.ld(e + t.E_LIVE) !== 0 || m.load(e + t.E_LIVE_F) !== 0 || m.load(e + t.E_BLOCKING) !== 0
+    ) {
       loop.turnSolo(e);
     }
   } else {
-    while (mk.live(e) !== 0) {
+    while (mk.live(e) !== 0 || m.load(e + t.E_BLOCKING) !== 0) {
       if (m.ld(e + t.E_LAZY) !== 0 && loop.alone(e)) {
-        while (mk.live(e) !== 0) {
+        while (mk.live(e) !== 0 || m.load(e + t.E_BLOCKING) !== 0) {
           if (!loop.turnLazy(e)) {
             break;
           }
@@ -271,6 +277,12 @@ export function schedStart(f: usize, rdrop: usize, rejecting: bool): void {
  */
 export function schedDetach(f: usize, qdrop: usize): void {
   const isNode = m.ld(f) === fnAddress(node.nodePoll);
+  if (isNode) {
+    // Given up to a handler (a combinator that settled without it): for a converted promise
+    // that is a claim of the promise it stands for (sched_share_alias.velt), whose rejection is
+    // then nobody's to report when this node lets go of it.
+    al.claimed(node.nodeOf(f));
+  }
   if (isNode && t.here() === 0) {
     // Off the workers: on a task of its own (sched_foreign.velt `start`).
     fg.start(f, qdrop, false);

@@ -1,0 +1,11 @@
+// The intrinsics std's `Symbol.for` registry reads and makes symbol records with
+// (`symbolAddress`, `symbolAt`, std/lang/symbol/registry.velt) are std's own: a program can't
+// import them.
+import { symbolAddress, symbolAt } from "velt/lang/intrinsics";
+
+function main() {
+  const a = unsafe { symbolAddress(Symbol.for("x")) };
+  console.log(unsafe { symbolAt(a) } === Symbol.for("x"));
+}
+
+main();

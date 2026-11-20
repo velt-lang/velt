@@ -1,0 +1,56 @@
+// check: no leaks
+// `Symbol.for` and `Symbol.keyFor` (std/lang/symbol/registry.velt): one symbol per key in the
+// whole process, the same for a module constant's key and a run-time one, from tasks on several
+// workers at once; `keyFor` of registered, fresh and well-known symbols. Expected output is
+// Node's.
+import { workerCount } from "velt/task";
+
+const R = Symbol.for("app.r");
+
+function longKey(): symbol {
+  const key = "x".repeat(40) + "!";
+  return Symbol.for(key);
+}
+
+async function grab(key: string): Promise<symbol> {
+  return Symbol.for(key);
+}
+
+async function main() {
+  console.log(Symbol.for("app.r") === R, Symbol.keyFor(R));
+  const a = Symbol.for("k" + "ey");
+  console.log(a === Symbol.for("key"), Symbol.keyFor(a), a.description, String(a));
+  console.log(
+    Symbol.keyFor(Symbol("key")),
+    Symbol.keyFor(Symbol()),
+    Symbol.keyFor(Symbol.iterator),
+  );
+  console.log(
+    Symbol.for("") === Symbol.for(""),
+    JSON.stringify(Symbol.keyFor(Symbol.for("")) ?? "none"),
+  );
+  console.log(Symbol.for("é😀") === Symbol.for("é" + "😀"));
+  // A key made at run time and too long to be inline (a heap string): the registry keeps it, so
+  // the symbol's description stays readable after the caller's copy is gone.
+  const made = longKey();
+  console.log(
+    Symbol.keyFor(made),
+    made.description == Symbol.keyFor(Symbol.for("x".repeat(40) + "!")),
+  );
+
+  // Tasks on several workers ask for the same keys at once: one symbol per key.
+  const keys = ["app.r", "w0", "w1", "w2", "w3"];
+  const tasks: Promise<symbol>[] = [];
+  for (let i: i64 = 0; i < 40; i++) {
+    const w = i % (workerCount() as i64);
+    tasks.push(spawn(grab(keys[(i as usize) % keys.length]), { worker: w }));
+  }
+  const got = await Promise.all(tasks);
+  let same = true;
+  for (let i = 0; i < got.length; i++) {
+    same = same && got[i] === Symbol.for(keys[i % keys.length]);
+  }
+  console.log("tasks", got.length, same, got[0] === R);
+}
+
+main();

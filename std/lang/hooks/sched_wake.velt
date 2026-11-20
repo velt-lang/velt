@@ -8,6 +8,7 @@ import { inline, noInline } from "velt/lang/intrinsics";
 import { clearStdoutWritten, stdoutWrittenSince } from "./process";
 import * as io from "./sched_io";
 import * as m from "./sched_mem";
+import * as nc from "./sched_node_catch";
 import * as q from "./sched_queue";
 import * as tk from "./sched_task";
 
@@ -117,11 +118,23 @@ export function wake(t: usize): void {
   }
 }
 
-/** Gives back one reference to task `t`: the last frees it. */
+/**
+ * Gives back one reference to task `t`: the last frees it, and the exception of a root that
+ * panicked under a catch with it (sched_join.velt `rootPanicked`).
+ */
 export function release(t: usize): void {
   if (m.dec(t + tk.T_REFS) === 1) {
+    if ((m.ld32(t + tk.T_FLAGS) & nc.T_PANICKED) !== 0) {
+      freePanicked(t);
+    }
     m.release(t, m.ld(t + tk.T_BYTES));
   }
+}
+
+/** The exception of task `t`, whose root panicked: out of line, so `release` stays small. */
+@noInline
+function freePanicked(t: usize): void {
+  nc.freePanic(m.ld(t + tk.T_POLL));
 }
 
 /**

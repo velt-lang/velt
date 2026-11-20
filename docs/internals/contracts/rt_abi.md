@@ -285,21 +285,24 @@ the object's thread-local values (`velt_tls_data_<id>`). Design:
   retained with `void retain(uint64_t value)` and released with `void release(uint64_t value)`.
   These are C functions the core calls through their addresses (`addressCall3`,
   `addressCallWord`); `visit` is a std function (`fnAddress`).
-  A trace glue may leave references out (the target then looks referenced from outside and
-  stays alive: a leak at worst) but must never report a word that is not a counted reference
-  `obj` owns, or report one twice: the trial would count it as internal and could free a live
-  object. So the glue of a type whose objects can have more fields than it knows (a class in a
-  hierarchy with a vtable, an interface value, a function value's environment) is null, or
-  dispatches on the object's dynamic type. Velt's is null for classes with a vtable and
-  interface values, and walks an uncounted object's fields as its owner's (the owner holds the
-  only reference). A function value's glue dispatches on its environment's drop entry (header
-  word 0, one function per closure instance): it visits the environment with the trace glue of
-  the closure whose drop entry it is, among those made at the value's function type, and leaves
-  out an environment that matches none (one the runtime made, or one whose drop entry a function
-  property replaced, `fn_props.rs`). An environment's trace visits what its captures own and its
-  captured variables' cells (counted `[count][value]` blocks, traced like a map value's box). In a
-  program with such glue, environments and cells may be weakly held, and their releases take the
-  three-way sequence below.
+  A trace glue may leave references out (the target then looks referenced from outside and stays
+  alive: a leak at worst) but must never report a word that is not a counted reference `obj` owns,
+  or report one twice: the trial would count it as internal and could free a live object. So the
+  glue of a type whose objects can have more fields than it knows (a class in a hierarchy with a
+  vtable, an interface value, a function value's environment) is null, or dispatches on the object's
+  dynamic type. Velt's walks an uncounted object's fields as its owner's (the owner holds the only
+  reference). A class with a vtable's glue calls the glue in its object's class table (slot −8,
+  which no class table uses otherwise: the walk of exactly that class's fields, or null when it
+  refers to nothing). An interface value's glue compares its table with the tables built for classes
+  implementing the interface and visits the data pointer with the matching class's glue; a boxed
+  value's table matches none and is left out. A function value's glue dispatches on its
+  environment's drop entry (header word 0, one function per closure instance): it visits the
+  environment with the trace glue of the closure whose drop entry it is, among those made at the
+  value's function type, and leaves out an environment that matches none (one the runtime made, or
+  one whose drop entry a function property replaced, `fn_props.rs`). An environment's trace visits
+  what its captures own and its captured variables' cells (counted `[count][value]` blocks, traced
+  like a map value's box). In a program with such glue, environments and cells may be weakly held,
+  and their releases take the three-way sequence below.
 - **Map values.** A value word of a map with value release glue is 0 (`null`, `undefined`) or a
   counted object pointer. The compiler stores a value whose type is a counted object (or
   `T | null` of one) as its pointer, a value without drop glue that fits in 8 bytes (numbers,
@@ -346,22 +349,27 @@ struct SymbolRec { desc: VeltStr /* empty without a description */, key: u64 }  
 ```
 
 `key` (without bit 63) is 0 for a record `velt_rt_symbol_new` made, 1 for a record of the registry
-(`Symbol.for`), and 2 and up for another read-only record the compiler emits
+(`Symbol.for`, the compiler's or std's), and 2 and up for another read-only record the compiler emits
 (`Intrinsic::SymbolStatic`; its id + 2, so no two records have the same bytes); bit 63 is set when
 the symbol has a description (`Symbol("")` has one, `Symbol()` has none). The compiler emits the
 registry's records of module constants `const R = Symbol.for("r")` too (`key` 1, one per key, the
 description being the key, in the static string form), and lists them in a read-only table
 (`Intrinsic::SymbolRegistry`): their addresses, one per 8-byte slot, then a null slot. Records are
 never freed; one made at run time is one allocation. On wasm32 each table address takes the
-first half of its 8-byte slot. Functions (declared in `std/lang/symbol/index.velt`; `string`
+first half of its 8-byte slot.
+
+The registry is std's (`std/lang/symbol/registry.velt`): a process-wide map from key to symbol
+behind a lock, which starts with the table's records and makes a record for a key seen first at
+run time (32 bytes from the C library, outside the leak counts; its description words those of
+the key the map keeps). std reads and writes records with `Intrinsic::SymbolAddress` (a
+symbol's record address) and `Intrinsic::SymbolAt` (the symbol at an address), both unsafe and
+std-only, at the offsets above (`RECORD_KEY_AT` = 24, `KEY_REGISTERED`, `DESCRIBED`), which a std
+test pins against the compiler's records. Functions (declared in `std/lang/symbol/index.velt`; `string`
 parameters by pointer, a `string` result through an out pointer):
 - `velt_rt_symbol_new(desc: *const VeltStr, described: u8) -> *const SymbolRec`: `Symbol(desc)`
   (`described` = 0: `Symbol()`, `desc` unread); keeps a reference to `desc`.
-- `velt_rt_symbol_for(key: *const VeltStr, table: *const RegistrySlot) -> *const SymbolRec`: the
-  process-wide registry's record for `key`. On first use of a key it is the record in `table`
-  whose description is `key` (`table` may be null), else a new one; a lookup does not allocate.
-- `velt_rt_symbol_registered(s) -> u8`, `velt_rt_symbol_described(s) -> u8`,
-  `velt_rt_symbol_description(s, out: *mut VeltStr)` (`""` without a description).
+- `velt_rt_symbol_described(s) -> u8`, `velt_rt_symbol_description(s, out: *mut VeltStr)`
+  (`""` without a description).
 - `velt_rt_strbuf_push_symbol(buf: *mut VeltStrBuf, s)`: appends `Symbol(<description>)`
   (`console.log`, `String(s)`).
 
@@ -625,14 +633,14 @@ constant; with an FMA level (`x86-64-v3`) `velt_math_fma_f64` is one instruction
 
 LLVM gives a function that calls one of these operations the extension's own feature (`+sha2`,
 `+sha`, `+pclmul`, `+aes`), which it uses for nothing else; a *gated* function (VIR
-`Function::target`, HIR `Program::cpu_targets`, from std's `targetFeature("sha-arm" | "sha-x86" |
-"clmul-x86" | "clmul-arm" | "aes-x86" | "aes-arm" | "fma-x86" | "bf16-arm")`, every call of which
-sema keeps behind the check) gets the extension's whole set (`+sha,+ssse3,+sse4.1` on x86), and
-the check of
-its own extension (`velt_simd_has_<ext>`) is the constant `1` there, so the emulation behind it is
-dead code. The ordinary functions it calls that check that extension (the `velt/simd` methods),
-themselves or through their callees, are cloned for it by `velt_opt` with the check `true`, so this
-holds whether or not they would be inlined. A gated function is never inlined into an ordinary one
+`Function::target`, HIR `Program::cpu_targets`, from the decorator `@targetFeature("sha-arm" |
+"sha-x86" | "clmul-x86" | "clmul-arm" | "aes-x86" | "aes-arm" | "fma-x86" | "bf16-arm")` in any
+module, every call of which sema keeps behind the check) gets the extension's whole set
+(`+sha,+ssse3,+sse4.1` on x86), and the check of its own extension (`velt_simd_has_<ext>`) is the
+constant `1` there, so the emulation behind it is dead code. The ordinary functions it calls that
+check that extension (the `velt/simd` methods), themselves or through their callees, are cloned for
+it by `velt_opt` with the check `true`, so this holds whether or not they would be inlined. A gated
+function is never inlined into an ordinary one
 or one gated on another target (`velt_opt`, and `noinline` on the call for LLVM); ordinary code may
 be inlined into a gated function.
 
@@ -1122,5 +1130,4 @@ Declared in std (Velt signatures; `u8[]`/`string` are passed as in rt_abi_async.
   `velt_rt_math_f64_bits(x: f64): u64` and `velt_rt_math_bits_f64(b: u64): f64` (IEEE 754 bit
   casts, `x.toBits()` / `f64.fromBits(b)`; both backends emit them inline).
 - Binary stdio: `velt_rt_stdout_write_bytes(bytes: u8[])` (synchronous, ordered with
-  `console.log`) and `velt_rt_stdin_read_all_bytes_sync(): IoResult<u8[]>` (hands over the
-  runtime's buffer; `readAllBytes()` runs it on the executor's blocking pool).
+  `console.log`). Standard input is std code (rt_abi_async.md §14.4).

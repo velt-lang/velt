@@ -110,8 +110,8 @@ export function intWords(v: u64, neg: bool): Words {
 /**
  * The digits of a `v` below 10^8: one group, its leading zeros shifted out, the four-digit split
  * for the smallest numbers (counters, coordinates, indexes). Inlined into every caller
- * (`@inline`): the entry points' common case, whose three-word result would otherwise go through
- * memory. A negative number's text is `eightWords`'.
+ * (`@inline("always")`): the entry points' common case, whose three-word result would otherwise
+ * go through memory. A negative number's text is `eightWords`'.
  */
 @inline("always")
 function shortWords(v: u64): Words {
@@ -126,7 +126,7 @@ function shortWords(v: u64): Words {
 
 /**
  * The digits of a `v` below 10^8, after a `-` when `neg`, by eight at a time alone: their leading
- * zeros shifted out. Inlined (`@inline`): `console.log`'s writer
+ * zeros shifted out. Inlined (`@inline("always")`): `console.log`'s writer
  * (velt/lang/number/integer_write) and negative text use it for every number below 10^8,
  * `shortWords` from 10^4 up.
  */
@@ -149,7 +149,7 @@ export function eightWords(v: u64, neg: bool): Words {
  * digits are at most 20 bytes): with a minus, the last one dropped becomes it. Dropping them
  * shifts `end` to just after the last digit. The first group is below 1845, so at most four digits
  * (`digits4`), in the upper half of its word, and its lower half is never read. Inlined
- * (`@inline`) into `longPositive`, `longNegative` and `console.log`'s writer
+ * (`@inline("always")`) into `longPositive`, `longNegative` and `console.log`'s writer
  * (velt/lang/number/integer_write), each out of line, whose three-word result would otherwise
  * come back through memory.
  */

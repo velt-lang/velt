@@ -90,6 +90,12 @@ impl FnLower<'_, '_> {
             (I::Print, _) => self.print(1, args),
             (I::SymbolStatic, [_, _, _]) => self.symbol_static(args),
             (I::SymbolRegistry, []) => self.symbol_registry(),
+            // A symbol is its record's address: the same word either way.
+            (I::SymbolAddress | I::SymbolAt, [v]) => {
+                let v = self.expr(v);
+                let t = self.vty(ty);
+                self.rvalue_temp(t, Rvalue::Cast(v, t))
+            }
             (I::SpreadObject, parts) => self.spread_object(parts, ty),
             (I::KeyRead, [object, key]) => self.key_read(object, key, ty),
             (I::KeyWrite, [object, key, value]) => self.key_write(object, key, value),
@@ -277,6 +283,7 @@ impl FnLower<'_, '_> {
                 | I::ArrayCopyBytes
                 | I::ArrayDataAddress
                 | I::ArrayReadAddress
+                | I::ArrayBytesWritten
                 | I::ArrayByteLength
                 | I::ArraySetLen
                 | I::ArrayReserve

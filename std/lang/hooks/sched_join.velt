@@ -213,14 +213,15 @@ function joinPollAs(f: usize, cx: usize, kind: u32): u32 {
 /**
  * Task `k`'s root panicked with exception `x` (the message) under a catch (sched_run.velt
  * `pollRootCaught`): done with no result (nothing transferred, copied or dropped: the join word's
- * `J_PANICKED` says so), its state abandoned (the task is never freed: a leaf in it may still wake
- * it), `x` kept for a join, which raises the panic again; with nobody joining it, the panic ends
- * there. The same on a solo worker (`joinPollSolo`'s tasks) as with other threads.
+ * `J_PANICKED` says so), its state abandoned (never polled or dropped again: the pads of its
+ * poll dropped what it held), `x` kept in place of its poll for a join, which raises the panic
+ * again; with nobody joining it, the panic ends there. The task is freed with its last reference
+ * like any other, `x` with it (sched_wake.velt `release`): a leaf that still holds its waker
+ * holds a reference. The same on a solo worker (`joinPollSolo`'s tasks) as with other threads.
  */
 @noInline
 export function rootPanicked(e: usize, k: usize, x: usize): void {
   m.st(k + t.T_POLL, x);
-  m.inc(k + t.T_REFS);
   t.flags(k, t.ROOT_DONE | nc.T_PANICKED, 0);
   if (lk.mode() === lk.LK_ON) {
     // The slot ends at the poll's end, as a finished root's (`polledFlags`).

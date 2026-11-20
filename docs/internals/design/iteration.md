@@ -233,7 +233,9 @@ function* range(n: i64): Generator<i64> {
   (`crates/velt_vir/src/lower/stabilize.rs`).
 - A **generator object** is one heap block `[table: ptr][class fields][state]`: the class's
   first field holds the pointer to the static per-instance table of resume, close and free
-  functions (and the throw function, in a program that calls `throw()`). The state starts
+  functions (and the throw function, in a program that calls `throw()`; and the state's trace
+  glue, `f$trace` at byte 32, in a program with weak references: [weak-refs.md](weak-refs.md)
+  "Trace glue"). The state starts
   after the class's fields (`Cx::gen_state_off`). `Work::GenNew` builds it; the class's drop
   runs `[Symbol.dispose]` (close), then frees the block through the table. `console.log(g)`
   prints `Object [Generator] {}` like Node.

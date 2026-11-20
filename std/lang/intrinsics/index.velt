@@ -30,6 +30,7 @@ export {
 } from "velt/lang/intrinsics/any";
 export {
   arrayByteLength,
+  arrayBytesWritten,
   arrayCopyBytes,
   arrayDataAddress,
   arrayMove,
@@ -87,7 +88,7 @@ export {
   generatorThrow,
   generatorValue,
 } from "velt/lang/intrinsics/generator";
-export { inline, intrinsic, noInline } from "velt/lang/intrinsics/decorators";
+export { inline, intrinsic, noInline, targetFeature } from "velt/lang/intrinsics/decorators";
 export { abs, ceil, floor, round, sqrt, trunc } from "velt/lang/intrinsics/math";
 export { share, transfer } from "velt/lang/intrinsics/ownership";
 export {
@@ -102,7 +103,7 @@ export {
 } from "velt/lang/intrinsics/reflect";
 export { hookCall } from "velt/lang/intrinsics/hook_call";
 export { errorText, inspect, inspectNested, throwLoc } from "velt/lang/intrinsics/report";
-export { strLoadPartialU8x16, strLoadU8x16, targetFeature } from "velt/lang/intrinsics/simd";
+export { strLoadPartialU8x16, strLoadU8x16 } from "velt/lang/intrinsics/simd";
 export {
   strAsciiWords,
   strByteAt,
@@ -125,7 +126,7 @@ export {
   recordViewSet,
   recordViewSync,
 } from "velt/lang/intrinsics/record_view";
-export { symbolRegistry, symbolStatic } from "velt/lang/intrinsics/symbol";
+export { symbolAddress, symbolAt, symbolRegistry, symbolStatic } from "velt/lang/intrinsics/symbol";
 export { firstFulfilled, moduleStateUsed, spawnHandled } from "velt/lang/intrinsics/task";
 export { threadLocalGet, threadLocalSet } from "velt/lang/intrinsics/thread_local";
 export {

@@ -1,0 +1,4 @@
+read under a file ENOTDIR ENOTDIR: not a directory, open 'velt_fs_whole_unix_tmp/a.txt/x'
+write under a file ENOTDIR ENOTDIR: not a directory, open 'velt_fs_whole_unix_tmp/a.txt/x'
+stat under a file ENOTDIR ENOTDIR: not a directory, stat 'velt_fs_whole_unix_tmp/a.txt/x'
+"a�b�" 5

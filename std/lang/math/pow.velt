@@ -95,8 +95,8 @@ const EMULATED: i64 = 2;
 
 // `libmPow` compiled for x86's FMA: each `fma` one `vfmadd` (`libmPow` and `expTail` are inlined
 // into each caller, so each copy is compiled for its caller's target).
+@targetFeature("fma-x86")
 function libmPowFma(x: f64, y: f64): f64 {
-  targetFeature("fma-x86");
   return libmPow(x, y, FUSED);
 }
 

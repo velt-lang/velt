@@ -1,0 +1,8 @@
+first: Error: not a number: kept
+at once: Error: not a number: kept
+suspended: Error: not a number: kept
+in the literal: Error: not a number: kept
+converted first: Error: not a number: kept
+both: Error: not a number: one
+[ 2, 3 ]
+end

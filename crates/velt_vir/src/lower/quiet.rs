@@ -236,6 +236,8 @@ pub(super) fn pure_intrinsic(i: hir::Intrinsic) -> bool {
             | I::StrCharCodeAt
             | I::StrByteAt
             | I::AddressLoad
+            | I::SymbolAddress
+            | I::SymbolAt
             | I::ExportedAddress
             | I::StrAsciiWords
             | I::StrLoadU8x16

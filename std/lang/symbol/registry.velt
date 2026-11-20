@@ -1,0 +1,121 @@
+// velt/lang/symbol (internal): the process's `Symbol.for` registry (#2196), a map from each key
+// to its symbol, the same on every thread.
+//
+// A symbol is the address of a record (rt_abi.md "Symbols"): its description (a string's three
+// words) and a key word. The records of the program's `const R = Symbol.for("r")` constants are
+// made at compile time and listed in the program's registry table (`symbolRegistry()`); the
+// registry starts with them, so `Symbol.for("r")` at run time is the constant's symbol. A key
+// seen first at run time gets a record here, from the C library: it lives as long as the
+// process (no symbol is ever freed), outside the leak counts. Its description words are those of
+// the key the map holds, which the map keeps for the process, so the record needs no reference
+// of its own.
+//
+// The map sits behind a `Mutex` in a static atomic, as velt/net/http's sessions do: not module
+// state, which every task touching it would lock at each poll.
+
+import { recordMemory } from "#symbol-record";
+import {
+  addressLoad,
+  addressStore,
+  strWord0,
+  strWord1,
+  strWord2,
+  symbolAddress,
+  symbolAt,
+  symbolRegistry,
+} from "velt/lang/intrinsics";
+
+declare function velt_rt_symbol_description(s: symbol): string;
+
+/** A symbol record's size: the description's three words, then the key word. */
+export const RECORD_SIZE: usize = 32;
+/** The key word's offset in a record. */
+export const RECORD_KEY_AT: usize = 24;
+/** The key word of a record `Symbol.for` made (velt_rt `KEY_REGISTERED`, velt_vir `symbols.rs`). */
+export const KEY_REGISTERED: u64 = 1;
+/** The key word's bit set when the symbol has a description. */
+export const DESCRIBED: u64 = 1 << 63;
+
+type Registry = Mutex<Map<string, symbol>>;
+
+/** The process's registry, made on first use. */
+const REGISTRY = new Atomic<shared<Registry> | null>(null);
+
+function registry(): shared<Registry> {
+  const found = REGISTRY.load("acquire");
+  if (found != null) {
+    return found;
+  }
+  // Two first calls race: one map wins, the other is dropped.
+  REGISTRY.compareExchange(null, shared(new Mutex<Map<string, symbol>>(compiled())), "acqrel");
+  const made = REGISTRY.load("acquire");
+  if (made == null) {
+    panic("ICE: the symbol registry is set once and never cleared");
+  }
+  return made;
+}
+
+/** The program's compile-time registry records by key (the table `symbolRegistry()` gives). */
+function compiled(): Map<string, symbol> {
+  const m = new Map<string, symbol>();
+  // SAFETY: `symbolRegistry()` is the program's table, a static the compiler emits.
+  const table = unsafe { symbolAddress(symbolRegistry()) };
+  if (table == 0) {
+    return m;
+  }
+  // 8-byte slots ending with a null one; on wasm32 an address takes a slot's first half, which
+  // a `usize` load reads.
+  let at = table;
+  while (true) {
+    // SAFETY: `at` is a slot of the table, which ends with a null one (rt_abi.md "Symbols").
+    const rec = unsafe { addressLoad<usize>(at) };
+    if (rec == 0) {
+      break;
+    }
+    // SAFETY: a table slot holds the address of a record the compiler emitted, read-only data.
+    const s = unsafe { symbolAt(rec) };
+    m.set(velt_rt_symbol_description(s), s);
+    at += 8;
+  }
+  return m;
+}
+
+/** `Symbol.for(key)`: the registry's symbol for `key`, made on first use. */
+export function registeredSymbol(key: string): symbol {
+  return registry().with((m) => {
+    const found = m.get(key);
+    if (found != undefined) {
+      return found;
+    }
+    m.set(key, newRecord(key));
+    const made = m.get(key);
+    if (made == undefined) {
+      panic("ICE: a registry entry was just set");
+    }
+    return made;
+  });
+}
+
+/**
+ * A new registry record with the description `key` (which the map then holds as its key, so
+ * the record's words stay valid for the process).
+ */
+function newRecord(key: string): symbol {
+  const p = recordMemory(RECORD_SIZE);
+  // SAFETY: `p` holds `RECORD_SIZE` bytes nothing else uses, never freed; the words written are
+  // a record's (rt_abi.md "Symbols"), whose description the map's key keeps alive.
+  unsafe {
+    addressStore<u64>(p, strWord0(key));
+    addressStore<u64>(p + 8, strWord1(key));
+    addressStore<u64>(p + 16, strWord2(key));
+    addressStore<u64>(p + RECORD_KEY_AT, KEY_REGISTERED | DESCRIBED);
+    return symbolAt(p);
+  }
+}
+
+/** Was `s` made by `Symbol.for` (a registry record, at run time or compile time)? */
+export function isRegistered(s: symbol): bool {
+  // SAFETY: every symbol is the address of a 32-byte record, its key word at `RECORD_KEY_AT`.
+  const key = unsafe { addressLoad<u64>(symbolAddress(s) + RECORD_KEY_AT) };
+  return (key & ~DESCRIBED) == KEY_REGISTERED;
+}

@@ -53,6 +53,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         I::SlotPut | I::SlotTake => true,
         I::SlotTransfer => true,
         I::FnAddress | I::SlotSize | I::SlotStore | I::PromiseAt | I::RawAlloc => false,
+        I::SymbolAddress | I::SymbolAt => false,
         I::RawFree => false,
         // Run no user code (what they drop is counted as drops; the function values they call
         // as callbacks; generator resumes apart).
@@ -99,6 +100,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::ArrayCopyBytes
         | I::ArrayDataAddress
         | I::ArrayReadAddress
+        | I::ArrayBytesWritten
         | I::ArrayByteLength
         | I::ArraySetLen
         | I::ArrayReserve

@@ -51,6 +51,12 @@ export const imports: Imports = {
   // sched_mem.velt, sched_io_wait.velt): `sched_yield` and `clock_gettime`, or on Windows
   // `SwitchToThread` and the performance counter.
   "#sched-os": { win32: "./lang/hooks/os_win32.velt", default: "./lang/hooks/os_posix.velt" },
+  // The memory of a symbol record `Symbol.for` makes at run time (std/lang/symbol/registry.velt):
+  // the C library's where there is one, the compiled code's allocator in the browser.
+  "#symbol-record": {
+    js: "./lang/symbol/record_mem_js.velt",
+    default: "./lang/symbol/record_mem.velt",
+  },
   // The clocks of `Date.now()` and `performance.now()` (std/lang/hooks/clock.velt): the C
   // library's `clock_gettime` on macOS and Linux, the performance counter and the precise system
   // time on Windows, WASI's `clock_time_get`, a JS host's own. No default: a target without one
@@ -135,12 +141,6 @@ export const imports: Imports = {
   // (WebAssembly) none, `ENOTSUP`.
   "#net-udp": { "std-scheduler": "./net/udp/udp_sched.velt", default: "./net/udp/rt.velt" },
   "#net-dns": { "std-scheduler": "./net/dns/rt_sched.velt", default: "./net/dns/rt.velt" },
-  // An `AbortSignal.timeout`'s timer, which a counted exit gives back (std/task/signal_timeout.velt):
-  // the executor in Velt's order marks it; elsewhere nothing is counted that way.
-  "#timer-give-back": {
-    "std-scheduler": "./task/timer_give_back_sched.velt",
-    default: "./task/timer_give_back_none.velt",
-  },
   // velt/fs's and velt/process's runtime functions: the runtime's (std/fs/rt.velt, std/process/
   // rt.velt), or, compiled with the executor in Velt (`VELT_SCHEDULER=std`), the same names with
   // whole-file operations and standard input read on its blocking pool (std/lang/hooks/
@@ -153,6 +153,15 @@ export const imports: Imports = {
     default: "./fs/fd/read_at_inline.velt",
   },
   "#process-rt": { "std-scheduler": "./process/rt_sched.velt", default: "./process/rt.velt" },
+  // Reading standard input (std/process/stdin_buffer.velt's refills): `read` on fd 0 on macOS,
+  // Linux and WASI (wasi-libc's), the console's or a pipe's own read on Windows, none under a JS
+  // host.
+  "#stdin-sys": {
+    win32: "./process/stdin_win32.velt",
+    native: "./process/stdin_posix.velt",
+    wasi: "./process/stdin_posix.velt",
+    default: "./process/stdin_none.velt",
+  },
   // velt/process/child's runtime functions: the runtime's (std/process/child/rt.velt, which
   // WebAssembly can't run), or, compiled with the executor in Velt, its own (child_sched.velt),
   // which `#child-os` serves: `posix_spawn` with the exit and the pipes on its reactor, or on
@@ -197,6 +206,12 @@ export const imports: Imports = {
     linux: "./fs/fd/linux.velt",
     default: "./fs/fd/unsupported.velt",
   },
+  // Whole files (`readFile`, `writeFile`, `appendFile`, `stat`, `lstat`, `exists`) in a native
+  // build: the C library's file descriptors (`#fd-system`), or Win32's on Windows.
+  "#fs-whole": { win32: "./fs/whole/win32.velt", default: "./fs/whole/posix.velt" },
+  // Directories (`readDir`, `readDirEntries`, `mkdir`, `remove`) in a native build: the C
+  // library's directory functions (`#fd-system`), or Win32's on Windows.
+  "#fs-tree": { win32: "./fs/tree/win32.velt", default: "./fs/tree/posix.velt" },
   // This process's id (`process.pid`): the C library's `getpid` on macOS and Linux, Win32's
   // `GetCurrentProcessId` on Windows, 1 elsewhere. Modules that import nothing: the hook module
   // of the builtin `process`, which every program loads, imports the variant.

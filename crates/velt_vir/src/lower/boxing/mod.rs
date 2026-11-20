@@ -119,6 +119,16 @@ pub(super) struct Boxing {
     /// function type they were made at, whose environments the trace glue looks into
     /// (glue/trace_env.rs). Empty in every other program.
     pub(super) env_traced: FxHashMap<CycleKey, Vec<(DefId, Vec<TyId>)>>,
+    /// In a program with weak references: the classes whose tables the program builds (the
+    /// objects a class value with a vtable may be), and each interface's implementation tables,
+    /// `(index, concrete type)`: what the trace glue of a class or interface value dispatches on
+    /// (glue/trace.rs). Both sorted; empty in every other program.
+    pub(super) built_classes: Vec<TyId>,
+    pub(super) iface_traced: FxHashMap<DefId, Vec<(u32, TyId)>>,
+    /// In a program with weak references: for each generator class type, the types its objects'
+    /// states may hold (every local of the generator functions made at it): what the trace glue
+    /// of its objects visits (async_fn/gen_trace.rs). Empty in every other program.
+    pub(super) gen_types: FxHashMap<TyId, Vec<TyId>>,
     /// Environments and captured variables' cells may be weakly held (some are traced): their
     /// releases take the three-way sequence (rc.rs `release_weak`).
     pub(super) weak_envs: bool,
@@ -352,8 +362,10 @@ pub(super) struct Facts {
     /// Closure environments built, `(key, closure, type arguments)`: the key is the function
     /// type the closure was made at (cycles_keys.rs; `None`: a generic closure's own type).
     pub(super) closure_envs: FxHashSet<(Option<CycleKey>, DefId, Vec<TyId>)>,
-    /// `(interface, concrete type)` of the implementation tables built (cycles.rs).
-    pub(super) iface_impls: FxHashSet<(DefId, TyId)>,
+    /// `(interface, implementation index, concrete type)` of the implementation tables built:
+    /// read by the cycle analysis (cycles.rs) and, in a program with weak references, by the
+    /// trace glue of interface values (glue/trace.rs).
+    pub(super) iface_impls: FxHashSet<(DefId, u32, TyId)>,
     /// Where values of each type are made (`new`, literals, closures), recorded only for
     /// `VELT_DEBUG_COUNTED` (cycles_sites.rs).
     pub(super) alloc_sites: FxHashSet<(TyId, velt_common::Span)>,

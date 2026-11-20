@@ -254,9 +254,17 @@ export function mayPark(e: usize): bool {
       }
     }
     // A counted run gives back the timers that would wait past the end (an `AbortSignal.timeout`
-    // nobody waits for): their turns complete, their tasks end, and the loop looks again.
-    if (stdUsed("nodeTimers") && wk.counting() && give.giveBackMarked()) {
-      return false;
+    // nobody waits for, an `unref()`'d timer: #3032): their turns complete, their tasks end, and
+    // the loop looks again. An `unref()`'d timer that is due and asked whether the process is
+    // ending asks again; each is told that it is.
+    if (stdUsed("nodeTimers") && wk.counting()) {
+      give.end();
+      const gave = give.giveBackQueued();
+      // Another worker's question too: it is told once that worker wakes, and its task must
+      // have ended before the end is taken.
+      if (askAgain(e) !== 0 || gave) {
+        return false;
+      }
     }
     if (root !== 0) {
       // The root is done, its task not (promises it started after the root's end wait for
@@ -277,20 +285,34 @@ export function mayPark(e: usize): bool {
     // Woken during the scan: look again.
     return false;
   }
-  // Something can still happen: the due unref()'d timers run (another worker's ask again once
-  // it wakes: sched_loop.velt `park`).
+  // Something can still happen: the due unref()'d timers run. This worker parks unless one of
+  // its own asked (another worker's asks once it wakes, and wakes this one if need be).
+  return (askAgain(e) & ASKED_HERE) === 0;
+}
+
+/** `askAgain`'s result: one of this worker's timers asks again; one of another worker's does. */
+const ASKED_HERE: u32 = 1;
+const ASKED_THERE: u32 = 2;
+
+/**
+ * The due `unref()`'d timers waiting for a park ask again (another worker's once it wakes:
+ * sched_loop.velt `park`): whose did (`ASKED_HERE`, `ASKED_THERE`; 0: there was none).
+ */
+function askAgain(e: usize): u32 {
+  let asked: u32 = 0;
   const n = m.load(e + t.E_STARTED);
   for (let i: usize = 1; i < n; i++) {
     const w = t.worker(i);
     if (m.load(w + t.E_UNREF) !== 0) {
       wk.unpark(w);
+      asked = asked | ASKED_THERE;
     }
   }
   if (m.ld(e + t.E_UNREF) !== 0) {
     wakeUnref(e);
-    return false;
+    asked = asked | ASKED_HERE;
   }
-  return true;
+  return asked;
 }
 
 /**
@@ -364,7 +386,12 @@ export function unrefDue(): usize {
 function unrefPoll(f: usize, cx: usize): u32 {
   const e = t.exec();
   unlink(e, f);
-  // Never true here: an end the executor sees exits the process (`mayPark`).
+  if (stdUsed("nodeTimers") && give.ending()) {
+    // A counted run at its end (sched_order_give.velt `end`): the process is ending.
+    m.st(f + U_RESULT, 1);
+    return 1;
+  }
+  // Never true otherwise: an end the executor sees exits the process (`mayPark`).
   m.st(f + U_RESULT, 0);
   // Asked for the process, from this worker (its own list keeps the question: its timers'
   // task is anchored here).

@@ -11,7 +11,6 @@ use crate::ctx::Ctx;
 use crate::defs::DefInfo;
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, StmtKind, TyId};
 use crate::inst_sites::guards_of;
-use crate::visit::{self, VisitMut};
 
 /// A copied type and whether the copy is deep (a clone copies arrays and objects too; a share
 /// only copies values in place and adds a reference to counted objects).
@@ -55,14 +54,14 @@ impl Collect<'_> {
     }
 }
 
-impl VisitMut for Collect<'_> {
-    fn stmt(&mut self, s: &mut crate::hir::Stmt) {
+impl crate::visit_ref::Visit for Collect<'_> {
+    fn stmt(&mut self, s: &crate::hir::Stmt) {
         if let StmtKind::ForOf { iter, .. } = &s.kind {
             self.facts.loops.insert(iter.span);
         }
     }
 
-    fn expr(&mut self, e: &mut Expr) {
+    fn expr(&mut self, e: &Expr) {
         match &e.kind {
             E::Call {
                 callee: Callee::Intrinsic(i @ (Intrinsic::Share | Intrinsic::Clone)),
@@ -144,10 +143,10 @@ pub(crate) fn collect(cx: &mut Ctx) -> Vec<(DefId, Facts)> {
         .collect();
     let ctor_fns: FxHashSet<DefId> = ctors.values().copied().collect();
     let mut out = vec![];
-    for (i, d) in cx.defs.iter_mut().enumerate() {
+    for (i, d) in cx.defs.iter().enumerate() {
         let Some(Def::Fn(f)) = d else { continue };
         let mut facts = Facts::default();
-        let guards = guards_of(&cx.ty, &mut f.body.block);
+        let guards = guards_of(&cx.ty, &f.body.block);
         // A capture that shares the enclosing variable copies it, without an intrinsic.
         for c in &f.captures {
             if c.share {
@@ -156,8 +155,8 @@ pub(crate) fn collect(cx: &mut Ctx) -> Vec<(DefId, Facts)> {
                     .push((f.body.locals[c.inner.0 as usize].ty, false));
             }
         }
-        visit::block(
-            &mut f.body.block,
+        crate::visit_ref::block(
+            &f.body.block,
             &mut Collect {
                 facts: &mut facts,
                 ctors: &ctors,
@@ -169,4 +168,11 @@ pub(crate) fn collect(cx: &mut Ctx) -> Vec<(DefId, Facts)> {
         out.push((DefId(i as u32), facts));
     }
     out
+}
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    Facts {
+        copies, calls, guards, closures, dispatch, dyn_calls, loops,
+    }
 }

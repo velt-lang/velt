@@ -1,0 +1,6 @@
+rq2 rq3
+caught Error: not a number: x
+caught Error: not a number: z
+caught Error: not a number: w
+first Error: not a number: k / all Error: not a number: k
+end

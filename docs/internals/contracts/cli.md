@@ -14,6 +14,7 @@ velt init  [--template <t>] [--name <name>] [--force]
 velt init  --editor vscode [--dir <d>] # only .vscode/launch.json + extensions.json, kept if present
 velt clean [--cache]
 velt cache warm [--background]
+velt cache hooks --out <dir> [--target <triple>]   # packaging: a toolchain's lib/hooks
 velt completions bash|zsh|fish|powershell
 velt help  [<command>]                 # = velt <command> --help
 velt add   <pkg>[@<req>] [--path <dir>]
@@ -145,7 +146,7 @@ velt --version | -V | version          # velt <ver> (<git hash> <host triple>)
   object is `<exe>.o` (`.obj`), the others `<exe>.cgu<N>.o` beside it, and all are linked; objects
   of higher-numbered units from an earlier build are removed. With `$VELT_CODEGEN_UNITS` unset,
   the count depends on the program's size only (not on the machine,
-  `velt_codegen_llvm/src/units/mod.rs`): one unit below 32 000 VIR statements, else one per
+  `velt_codegen_llvm/src/units/mod.rs`): one unit below 64 000 VIR statements, else one per
   16 000, at most 4; above 800 000 statements, one per 200 000, at most 16.
   `$VELT_CODEGEN_UNITS` = N overrides it (N units, at most the core count; `1`: no split).
   `--emit obj` always writes one object and removes none.
@@ -821,6 +822,25 @@ velt --version | -V | version          # velt <ver> (<git hash> <host triple>)
   a note, exit 0; no warm-up directory → error. The launcher runs `velt cache warm --background`
   after installing a toolchain, as do `scripts/install.*` and `scripts/get-velt.*` (ignoring
   failures).
+- `cache hooks --out <dir> [--target <triple>]` (additive, #3262; for packaging a release, not in
+  `velt help`): compiles the object of every prebuilt hook module from the std this `velt` finds,
+  for `<triple>` (default: the host) and its default CPU, and writes `<dir>/<triple>/<module
+  entry>.o` and `<module entry>.manifest`, `<dir>` being a toolchain's `lib/hooks`. The build
+  cache is neither read nor written. It needs clang, as `velt cache warm`'s objects do. A module
+  whose object cannot be made → `error: some prebuilt hook modules did not compile: …`, exit 1;
+  otherwise `velt: wrote <n> prebuilt hook modules to <dir>/<triple>` on stderr. The test module
+  of prebuilt hooks (`lang_hooks_prebuilt_probe`) is not written. The manifest: `velt shipped hook
+  module 2`, `compiler <version line>`, `target <triple>`, `object <content hash of the .o>`,
+  then `entry` and `tls` lines as a cached manifest has them, one `file <content hash>\t<path
+  below the std root, /-separated>` per std file the object's world loaded (at least one), and
+  `end`. An installed `velt` (`<prefix>/bin/velt` with `<prefix>/std`) that finds no object of a
+  module in the build cache, or runs with the cache off, takes `<prefix>/lib/hooks/<target>`'s
+  when the manifest is whole (it ends with `end`), its version line is this `velt`'s, the target
+  is the build's, the object hashes as recorded and every listed file hashes as recorded; with
+  the cache on it stores that object under its own key. The statistics then say `velt: prebuilt
+  hooks: <module>: object found (shipped)`. A debug build (and `velt check`) for arm64 Linux
+  takes no prebuilt object, shipped or cached: the objects' atomics call the outline-atomics
+  helpers (`__aarch64_*`), which its link need not have.
 - `completions <shell>`: prints a completion script for bash, zsh, fish or PowerShell
   (`pwsh` accepted) covering commands, options, `--template`/`--editor`/`--backend`/`--emit`
   values, the actions of `registry` and `owner`, and files. The scripts are generated from the

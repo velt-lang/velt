@@ -47,6 +47,7 @@ export class URLSearchParams {
     return null;
   }
 
+  // No std class may override this: veltc's tests/units.rs needs a std method without a slot.
   /** Every value for `name`, in order. */
   getAll(name: string): string[] {
     const out: string[] = [];

@@ -31,11 +31,16 @@ pub(super) fn writer(cx: &Ctx, d: DefId) -> bool {
 /// Put every closure and class `clone()` that changes what it holds in `Ctx::changes_held` (module
 /// docs).
 pub(crate) fn record_changed_captures(cx: &mut Ctx) {
-    if !shares_a_function(cx) {
+    // In a check by units (`crate::units`) a unit's closures get the flag whatever the program
+    // shares (D2: a finished unit's facts can't depend on a later unit), and only the unit's
+    // closures are looked at; a whole-program check looks only when it shares a function.
+    let base = cx.unit_base;
+    let by_units = cx.units_stage != crate::units::Stage::Both;
+    if !by_units && !shares_a_function(cx) {
         return;
     }
-    let closures: Vec<DefId> = (0..cx.defs.len())
-        .map(|i| DefId(i as u32))
+    let closures: Vec<DefId> = (base..cx.defs.len() as u32)
+        .map(DefId)
         .filter(|d| matches!(&cx.defs[d.0 as usize], Some(Def::Fn(f)) if !f.captures.is_empty()))
         .collect();
     let lits = std::rc::Rc::new(super::targets::Literals::scan(cx));
@@ -70,8 +75,8 @@ pub(crate) fn record_changed_captures(cx: &mut Ctx) {
         }
         cx.defs[c.0 as usize] = Some(Def::Fn(f));
     }
-    let clones: Vec<(DefId, TyId)> = (0..cx.defs.len())
-        .map(|i| DefId(i as u32))
+    let clones: Vec<(DefId, TyId)> = (base..cx.defs.len() as u32)
+        .map(DefId)
         .filter_map(|d| match &cx.defs[d.0 as usize] {
             Some(Def::Fn(f)) if f.name.ends_with(".clone") && f.self_ty.is_some() => {
                 f.self_ty.map(|t| (d, t))
@@ -93,11 +98,11 @@ pub(crate) fn record_changed_captures(cx: &mut Ctx) {
 /// Does the program put a value that may hold a function in `shared(...)`, outside a lock?
 fn shares_a_function(cx: &mut Ctx) -> bool {
     let mut tys: Vec<TyId> = vec![];
-    for i in 0..cx.defs.len() {
-        let Some(Def::Fn(mut f)) = cx.defs[i].take() else {
+    for def in cx.defs.iter() {
+        let Some(Def::Fn(f)) = def else {
             continue;
         };
-        visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
+        visit::exprs(&f.body.block, &mut |e: &Expr| {
             if let E::Call {
                 callee: crate::hir::Callee::Intrinsic(crate::hir::Intrinsic::SharedNew),
                 args,
@@ -106,7 +111,6 @@ fn shares_a_function(cx: &mut Ctx) -> bool {
                 tys.extend(args.iter().map(|a| a.ty));
             }
         });
-        cx.defs[i] = Some(Def::Fn(f));
     }
     let mut seen = FxHashSet::default();
     tys.into_iter().any(|t| may_hold_fn(cx, t, &mut seen))

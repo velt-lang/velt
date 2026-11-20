@@ -1,0 +1,60 @@
+// Paths as Node takes them on every system: a relative path of more than 260 characters (which
+// Windows reads only with the `\\?\` prefix std/fs/whole/win32.velt gives it) is written,
+// appended to, read, described and found, sync and async; and a directory read as a file, with
+// a trailing slash too, is `EISDIR … read`.
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFile,
+  readFileBytesSync,
+  readFileSync,
+  removeSync,
+  stat,
+  statSync,
+  writeFile,
+  writeFileSync,
+} from "velt/fs";
+import { IoError } from "velt/io";
+
+function attempt(what: string, f: () => void) {
+  try {
+    f();
+    console.log(what, "no error");
+  } catch (e) {
+    console.log(what, (e as IoError).code, (e as Error).message);
+  }
+}
+
+async function main() {
+  const dir = "velt_fs_whole_paths_tmp";
+  if (existsSync(dir)) {
+    removeSync(dir, { recursive: true });
+  }
+  const deep = `${dir}/${"a".repeat(100)}/${"b".repeat(100)}/${"c".repeat(100)}`;
+  mkdirSync(deep, { recursive: true });
+  const f = `${deep}/file.txt`;
+  console.log(f.length > 260);
+  writeFileSync(f, "long ");
+  appendFileSync(f, "path");
+  console.log(readFileSync(f), readFileBytesSync(f).length, statSync(f).size, existsSync(f));
+  await writeFile(`${deep}/async.txt`, "async too");
+  console.log(await readFile(`${deep}/async.txt`), (await stat(`${deep}/async.txt`)).isFile());
+  console.log(existsSync(`${deep}/none.txt`), statSync(deep).isDirectory());
+
+  attempt("read a directory", () => {
+    readFileSync(dir);
+  });
+  attempt("read a directory/", () => {
+    readFileSync(`${dir}/`);
+  });
+  attempt("bytes of a directory", () => {
+    readFileBytesSync(dir);
+  });
+  try {
+    await readFile(dir);
+  } catch (e) {
+    console.log("async read a directory", (e as IoError).code, (e as Error).message);
+  }
+  removeSync(dir, { recursive: true });
+}

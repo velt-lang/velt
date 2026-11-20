@@ -108,6 +108,54 @@ fn inline_helpers_with_llvm() {
     );
 }
 
+/// A small program with tasks is one codegen unit (velt_codegen_llvm/src/units/mod.rs
+/// `ONE_UNIT_BELOW`): the executor is std code, so such a program is about 31 000 statements of
+/// std and little else. Split, its own code sat alone in a unit and its hot loop lost a few
+/// percent (bench/async/race_select.velt was three units while the bound was 32 000 statements).
+/// If std has grown this program past the bound, raise the bound.
+#[test]
+fn a_small_program_with_tasks_is_one_codegen_unit() {
+    if !velt_codegen_llvm::available() {
+        eprintln!("note: clang not available; skipping the one-unit check");
+        return;
+    }
+    let root = root();
+    runtime_support::build_native_runtime(&root);
+    let work = work_dir::work_dir(&root, "golden-work-llvm-one-unit");
+    std::fs::create_dir_all(&work).expect("work dir");
+    let exe = work.join(format!(
+        "race_select{}",
+        if cfg!(windows) { ".exe" } else { "" }
+    ));
+    // The objects of the units after the first, beside the executable (`<exe>.cgu<N>.o`).
+    let more_units = || -> Vec<String> {
+        std::fs::read_dir(&work)
+            .expect("work dir")
+            .filter_map(|e| e.ok()?.file_name().into_string().ok())
+            .filter(|n| n.starts_with("race_select") && n.contains(".cgu"))
+            .collect()
+    };
+    for name in more_units() {
+        let _ = std::fs::remove_file(work.join(name));
+    }
+    let o = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
+        .args(["build", "--release", "--backend", "llvm"])
+        .arg(root.join("bench/async/race_select.velt"))
+        .arg("-o")
+        .arg(&exe)
+        .current_dir(&work)
+        .env_remove("VELT_CODEGEN_UNITS")
+        .env("VELT_BUILD_CACHE", "off")
+        .output()
+        .expect("run velt");
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let more = more_units();
+    assert!(
+        more.is_empty(),
+        "bench/async/race_select.velt was split: unit objects {more:?} beside the first"
+    );
+}
+
 /// Runs one golden in a release build through LLVM with `units` codegen units; returns the
 /// mismatch report, if any.
 fn run_golden(f: &Path, work: &Path, units: usize) -> Option<String> {

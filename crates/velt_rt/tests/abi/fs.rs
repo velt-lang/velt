@@ -3,10 +3,10 @@
 
 use super::fake::{arg, block_on_fut, err, ok, take_string};
 use crate::bytes::{velt_rt_bytes_drop, VeltBytes};
+#[cfg(windows)]
+use crate::fs::remove::*;
 use crate::fs::sync::*;
-use crate::fs::*;
 use crate::result::{code, IoResult};
-use crate::str_array::{velt_rt_str_array_drop, VeltStrArray};
 use std::mem::MaybeUninit;
 use std::path::PathBuf;
 
@@ -14,14 +14,6 @@ fn temp_dir(name: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!("velt_rt_{name}_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     d
-}
-
-fn names(mut a: VeltStrArray) -> Vec<String> {
-    let v = (0..a.len as usize)
-        .map(|i| String::from_utf8(unsafe { (*a.ptr.add(i)).as_bytes() }.to_vec()).unwrap())
-        .collect();
-    unsafe { velt_rt_str_array_drop(&mut a) };
-    v
 }
 
 fn path(base: &std::path::Path, rel: &str) -> String {
@@ -34,55 +26,30 @@ fn sync<T>(f: impl FnOnce(*mut IoResult<T>)) -> IoResult<T> {
     unsafe { out.assume_init() }
 }
 
+/// `rm` on Windows (the one directory function the runtime keeps there, std/fs/tree/win32.velt)
+/// refuses a directory with something in it unless `recursive`, which removes the whole tree.
+/// (Listing, making and, on macOS and Linux, removing directories are std code now,
+/// std/fs/tree/; the goldens cover them.)
+#[cfg(windows)]
 #[test]
-fn text_bytes_and_errors() {
-    let dir = temp_dir("fs_text");
-    let (d, a, c) = (
-        path(&dir, "x/y"),
-        path(&dir, "x/y/a.txt"),
-        path(&dir, "x/c.bin"),
-    );
+fn remove_trees() {
+    let dir = temp_dir("fs_tree");
+    let (d, a, x) = (path(&dir, "x/y"), path(&dir, "x/y/a.txt"), path(&dir, "x"));
+    std::fs::create_dir_all(&d).unwrap();
+    std::fs::write(&a, "héllo").unwrap();
     unsafe {
-        ok(sync(|o| velt_rt_fs_mkdir_sync(&arg(&d), 1, o)));
-        ok(sync(|o| {
-            velt_rt_fs_write_file_sync(&arg(&a), &arg("héllo"), o)
-        }));
-        ok(sync(|o| {
-            velt_rt_fs_append_file_sync(&arg(&a), &arg(" wörld"), o)
-        }));
-        assert_eq!(
-            take_string(ok(sync(|o| velt_rt_fs_read_file_sync(&arg(&a), o)))),
-            "héllo wörld"
-        );
-        let st = ok(sync(|o| velt_rt_fs_stat_sync(&arg(&a), o)));
-        assert_eq!((st.size, st.is_file, st.is_dir), (13, 1, 0));
-        assert!(st.mtime_ms > 1.6e12);
-        let st = ok(sync(|o| velt_rt_fs_stat_sync(&arg(&d), o)));
-        assert_eq!((st.is_file, st.is_dir), (0, 1));
-
-        // Bytes that are not UTF-8, which no string can hold: written from outside.
-        let raw = [0u8, 0xff, 7];
-        std::fs::write(&c, raw).unwrap();
-        let mut got = ok(sync(|o| velt_rt_fs_read_file_bytes_sync(&arg(&c), o)));
-        assert_eq!(got.as_bytes(), raw);
-        velt_rt_bytes_drop(&mut got);
-        let msg = err(
-            sync(|o| velt_rt_fs_read_file_sync(&arg(&c), o)),
-            code::INVALID_DATA,
-        );
-        assert!(msg.contains("UTF-8"));
-
-        let x = path(&dir, "x");
         err(
             sync(|o| velt_rt_fs_remove_sync(&arg(&x), 0, o)),
             code::DIRECTORY_NOT_EMPTY,
         );
-        ok(sync(|o| velt_rt_fs_remove_sync(&arg(&x), 1, o)));
-        assert_eq!(velt_rt_fs_exists_sync(&arg(&c)), 0);
+        ok(sync(|o| velt_rt_fs_remove_sync(&arg(&a), 0, o)));
+        assert!(!std::path::Path::new(&a).exists());
         err(
-            sync(|o| velt_rt_fs_read_file_sync(&arg(&a), o)),
+            sync(|o| velt_rt_fs_remove_sync(&arg(&a), 0, o)),
             code::NOT_FOUND,
         );
+        ok(sync(|o| velt_rt_fs_remove_sync(&arg(&x), 1, o)));
+        assert!(!std::path::Path::new(&x).exists());
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -95,66 +62,20 @@ fn sync_roundtrip() {
         path(&dir, "n/a.txt"),
         path(&dir, "n/b.txt"),
     );
+    std::fs::create_dir_all(&d).unwrap();
     unsafe {
-        ok(sync(|o| velt_rt_fs_mkdir_sync(&arg(&d), 1, o)));
-        err(
-            sync(|o| velt_rt_fs_mkdir_sync(&arg(&d), 0, o)),
-            code::ALREADY_EXISTS,
-        );
-        ok(sync(|o| {
-            velt_rt_fs_write_file_sync(&arg(&a), &arg("one"), o)
-        }));
-        ok(sync(|o| {
-            velt_rt_fs_append_file_sync(&arg(&a), &arg("+two"), o)
-        }));
-        assert_eq!(
-            take_string(ok(sync(|o| velt_rt_fs_read_file_sync(&arg(&a), o)))),
-            "one+two"
-        );
-        let mut bytes = ok(sync(|o| velt_rt_fs_read_file_bytes_sync(&arg(&a), o)));
-        assert_eq!(bytes.as_bytes(), b"one+two");
-        velt_rt_bytes_drop(&mut bytes);
-        assert_eq!(ok(sync(|o| velt_rt_fs_stat_sync(&arg(&a), o))).size, 7);
+        std::fs::write(&a, "one+two").unwrap();
         ok(sync(|o| velt_rt_fs_copy_file_sync(&arg(&a), &arg(&b), o)));
+        assert_eq!(std::fs::read_to_string(&b).unwrap(), "one+two");
         ok(sync(|o| {
             velt_rt_fs_rename_sync(&arg(&b), &arg(&path(&dir, "n/c.txt")), o)
         }));
-        assert_eq!(
-            names(ok(sync(|o| velt_rt_fs_read_dir_sync(&arg(&d), o)))),
-            ["a.txt", "c.txt"]
-        );
-        assert_eq!(velt_rt_fs_exists_sync(&arg(&a)), 1);
-        ok(sync(|o| velt_rt_fs_remove_sync(&arg(&a), 0, o)));
-        assert_eq!(velt_rt_fs_exists_sync(&arg(&a)), 0);
-        err(sync(|o| velt_rt_fs_stat_sync(&arg(&a), o)), code::NOT_FOUND);
-        ok(sync(|o| velt_rt_fs_remove_sync(&arg(&d), 1, o)));
-    }
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn typed_listing() {
-    let dir = temp_dir("fs_typed");
-    std::fs::create_dir_all(dir.join("sub")).unwrap();
-    std::fs::write(dir.join("b.txt"), "b").unwrap();
-    std::fs::write(dir.join("a.txt"), "a").unwrap();
-    unsafe {
-        let mut got = ok(sync(|o| {
-            velt_rt_fs_read_dir_typed_sync(&arg(&path(&dir, "")), o)
-        }));
-        assert_eq!(got.kinds.as_bytes(), [kind::FILE, kind::FILE, kind::DIR]);
-        velt_rt_bytes_drop(&mut got.kinds);
-        assert_eq!(names(got.names), ["a.txt", "b.txt", "sub"]);
-        let mut got = ok(sync(|o| {
-            velt_rt_fs_read_dir_typed_sync(&arg(&path(&dir, "sub")), o)
-        }));
-        assert_eq!(got.names.len, 0);
-        velt_rt_bytes_drop(&mut got.kinds);
-        velt_rt_str_array_drop(&mut got.names);
-        err(
-            sync(|o| velt_rt_fs_read_dir_typed_sync(&arg(&path(&dir, "nope")), o)),
-            code::NOT_FOUND,
-        );
+        let mut names: Vec<String> = std::fs::read_dir(&d)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(names, ["a.txt", "c.txt"]);
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -174,10 +95,10 @@ fn symlinks() {
             return;
         }
         ok(made);
-        let l = ok(sync(|o| velt_rt_fs_lstat_sync(&arg(&link), o)));
-        assert_eq!((l.is_symlink, l.is_file, l.is_dir), (1, 0, 0));
-        let s = ok(sync(|o| velt_rt_fs_stat_sync(&arg(&link), o)));
-        assert_eq!((s.is_symlink, s.is_file, s.size), (0, 1, 5));
+        assert!(std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
         let target = ok(sync(|o| velt_rt_fs_readlink_sync(&arg(&link), o)));
         assert_eq!(take_string(target), "f.txt");
         err(
@@ -197,13 +118,6 @@ fn symlinks() {
             sync(|o| velt_rt_fs_realpath_sync(&arg(&path(&dir, "none")), o)),
             code::NOT_FOUND,
         );
-        let mut got = ok(sync(|o| {
-            velt_rt_fs_read_dir_typed_sync(&arg(&path(&dir, "")), o)
-        }));
-        assert_eq!(got.kinds.as_bytes(), [kind::FILE, kind::SYMLINK]);
-        velt_rt_bytes_drop(&mut got.kinds);
-        velt_rt_str_array_drop(&mut got.names);
-        ok(sync(|o| velt_rt_fs_lstat_sync(&arg(&f), o)));
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
