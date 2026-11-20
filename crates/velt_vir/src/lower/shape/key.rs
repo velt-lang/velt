@@ -227,6 +227,7 @@ impl Cx<'_> {
             self.holds_mutex(t, 0, false),
             self.array_view(t),
             self.holds_atomic(t, &mut FxHashSet::default()),
+            self.shares_as_counted(t),
         ];
         answers
             .iter()

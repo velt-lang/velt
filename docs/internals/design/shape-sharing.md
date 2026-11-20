@@ -56,7 +56,7 @@ type classes but the answers to a closed list of **shape questions**
 | union | truthiness and narrowing of the value |
 | copied across, transfers | what a hand-over to another task writes |
 | mutex (`holds_mutex`) | `frozen` |
-| atomic (`holds_atomic`) | whether an operand is copied before a later one is evaluated |
+| atomic (`holds_atomic`), shares as counted (`shares_as_counted`) | whether, and how, an operand is copied before a later one is evaluated |
 | array view | the view sync at every access |
 
 and membership in each of the counted-types sets of `Boxing`. A new inline dependency is one more

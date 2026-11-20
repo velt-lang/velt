@@ -11,8 +11,12 @@ mod test_dir;
 
 use std::path::Path;
 
-/// Views of two element types (two shapes), each read twice at one index: the second read
-/// finds the element in the mirror and counts.
+/// Views of several element types (several shapes), each read twice at one index. For the
+/// number views the second read finds the element in the mirror and counts. The views of a
+/// nullable string, a nullable object and a union take another path at run time and print
+/// nothing: they are here because lowering the comparison for their shapes asks other
+/// questions of the placeholder (how a value is shared: `shares_as_counted`), which was the
+/// same ICE.
 const VIEWS: &str = "
 function twice<T>(xs: T[]): T {
   const x = xs[xs.length - 1];
@@ -22,6 +26,19 @@ const floats: any = [0, -0, NaN, 1.5, 0];
 twice(floats as f32[]);
 const ints: any = [1, 2, 1, 1];
 twice(ints as i32[]);
+class P {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+const names: any = [null, \"a\", null, \"a\", \"b\"];
+twice(names as (string | null)[]);
+const p = new P(1);
+const objects: any = [p, null, new P(1), p];
+twice(objects as (P | null)[]);
+const mixed: any = [1, \"1\", 1, \"a\", 2];
+twice(mixed as (number | string)[]);
 console.log(\"done\");
 ";
 
