@@ -33,6 +33,9 @@ macro_rules! with_string_hooks {
             /// `s.trimEnd()`.
             string_trim_end => lang_string_trim, "trimEnd", sig((&string) -> string),
                 replaces("velt_rt_str_trim_end"), bench("string_methods"), prebuilt;
+            /// `s.split(sep, limit)` with a string separator; `limit` after JavaScript's `ToUint32`.
+            string_split => lang_string_split, "split", sig((&string, &string, u32) -> [string]),
+                replaces("velt_rt_str_split"), bench("string_methods");
             /// `s.repeat(count)` of a count the prelude's method has checked.
             string_repeat => lang_string_fill, "repeat", sig((&string, i64) -> string),
                 replaces("velt_rt_str_repeat"), bench("string_methods"), prebuilt;
