@@ -1,0 +1,111 @@
+// velt/lang/string (internal): `toUpperCase` and `toLowerCase` (std/prelude/string.velt) of ASCII
+// text, in Velt (#2198). Text that is not ASCII is the runtime's full Unicode case mapping (`ß`
+// to `SS`, the final sigma) until its tables are Velt code (#1065).
+//
+// A string is ASCII when its UTF-16 length is its byte length (no call). Its bytes are read
+// sixteen at a time: the letters to change are those within 26 of the range's first, and they
+// change by 0x20. Text with no such letter is returned as it is, sharing its buffer, with
+// nothing allocated: most header names, identifiers and keys are already in the case asked
+// for (a string that borrows its bytes is copied, as the runtime's mapping copies it: the result
+// may be kept after the memory it points into is freed). Other text of up to 23 bytes is made in place as an inline string, longer text in a
+// string builder of its size, sixteen bytes per append, stored inline.
+
+import {
+  strAsciiWords,
+  strbufPushAsciiWords,
+  strByteLen,
+  strLen,
+  strLoadPartialU8x16,
+  strLoadU8x16,
+} from "velt/lang/intrinsics";
+
+declare function velt_rt_str_to_upper(s: string): string;
+declare function velt_rt_str_to_lower(s: string): string;
+/** `s` itself, or its copy when it borrows its bytes (a key that points into text being parsed). */
+declare function velt_rt_str_own(s: string): string;
+declare function velt_rt_strbuf_new(cap: u64, out: string);
+declare function velt_rt_strbuf_finish(buf: string, out: string);
+declare function velt_simd_u8x16_splat(x: u8): u8x16;
+declare function velt_simd_u8x16_sub(a: u8x16, b: u8x16): u8x16;
+declare function velt_simd_u8x16_xor(a: u8x16, b: u8x16): u8x16;
+declare function velt_simd_u8x16_lt(a: u8x16, b: u8x16): mask8x16;
+declare function velt_simd_u8x16_select(m: mask8x16, a: u8x16, b: u8x16): u8x16;
+declare function velt_simd_u8x16_as_u64x2(v: u8x16): u64x2;
+declare function velt_simd_u64x2_lane(v: u64x2, index: u64): u64;
+declare function velt_simd_mask8x16_any(m: mask8x16): bool;
+
+/** The lanes of `v` that hold one of the 26 letters from `first` on. */
+function letters(v: u8x16, first: u8): mask8x16 {
+  return velt_simd_u8x16_lt(
+    velt_simd_u8x16_sub(v, velt_simd_u8x16_splat(first)),
+    velt_simd_u8x16_splat(26),
+  );
+}
+
+/** `v` with the letters from `first` on in the other case. */
+function mapped(v: u8x16, first: u8): u8x16 {
+  return velt_simd_u8x16_select(
+    letters(v, first),
+    velt_simd_u8x16_xor(v, velt_simd_u8x16_splat(0x20)),
+    v,
+  );
+}
+
+/** The 16 bytes of `s` (`n` bytes) at `at`, or those up to its end with zeros after them. */
+function block(s: string, at: usize, n: usize): u8x16 {
+  return at + 16 <= n
+    ? strLoadU8x16(s, at as u64)
+    : strLoadPartialU8x16(s, at as u64, (n - at) as u64);
+}
+
+/** Does the ASCII `s` (`n` bytes) hold one of the 26 letters from `first` on? */
+function hasLetter(s: string, n: usize, first: u8): bool {
+  let i: usize = 0;
+  while (i < n) {
+    if (velt_simd_mask8x16_any(letters(block(s, i, n), first))) {
+      return true;
+    }
+    i += 16;
+  }
+  return false;
+}
+
+/** The ASCII `s` with its letters from `first` on in the other case. */
+function withCase(s: string, first: u8): string {
+  const n = strByteLen(s);
+  if (!hasLetter(s, n, first)) {
+    return velt_rt_str_own(s);
+  }
+  if (n <= 23) {
+    const head = velt_simd_u8x16_as_u64x2(mapped(block(s, 0, n), first));
+    let w2: u64 = 0;
+    if (n > 16) {
+      w2 = velt_simd_u64x2_lane(velt_simd_u8x16_as_u64x2(mapped(block(s, 16, n), first)), 0);
+    }
+    return strAsciiWords(velt_simd_u64x2_lane(head, 0), velt_simd_u64x2_lane(head, 1), w2, n);
+  }
+  let buf = "";
+  velt_rt_strbuf_new(n as u64, buf);
+  let i: usize = 0;
+  while (i < n) {
+    const v = velt_simd_u8x16_as_u64x2(mapped(block(s, i, n), first));
+    const w0 = velt_simd_u64x2_lane(v, 0);
+    const w1 = velt_simd_u64x2_lane(v, 1);
+    const len = n - i < 16 ? n - i : 16;
+    strbufPushAsciiWords(buf, w0, w1, 0, len);
+    i += 16;
+  }
+  let out = "";
+  velt_rt_strbuf_finish(buf, out);
+  return out;
+}
+
+/** `s.toUpperCase()`. */
+export function toUpperCase(s: string): string {
+  return strLen(s) == strByteLen(s) ? withCase(s, 0x61) : velt_rt_str_to_upper(s);
+}
+
+/** `s.toLowerCase()`. */
+export function toLowerCase(s: string): string {
+  return strLen(s) == strByteLen(s) ? withCase(s, 0x41) : velt_rt_str_to_lower(s);
+}

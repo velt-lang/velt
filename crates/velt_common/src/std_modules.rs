@@ -149,6 +149,7 @@ table! {
     lang_record => "lang/record",
     lang_sort => "lang/sort",
     lang_sort_stable => "lang/sort/stable",
+    lang_string_case => "lang/string/case",
     lang_string_collate => "lang/string/collate",
     lang_string_fill => "lang/string/fill",
     lang_string_replace => "lang/string/replace",

@@ -61,6 +61,16 @@ function sliceOf(s: string, start: i64, end: i64): string {
   return velt_rt_str_slice(s, start, end);
 }
 
+/**
+ * The one-unit string of the UTF-16 code unit `code & 0xffff`: an ASCII one is its inline
+ * string, with no call; another (a lone surrogate among them) is the runtime's.
+ */
+@inline("always")
+function unitText(code: i64): string {
+  const unit = code & 0xffff;
+  return unit < 0x80 ? strAsciiWords(unit as u64, 0, 0, 1) : velt_rt_str_from_char_code(unit);
+}
+
 // `split` without a limit: the largest `ToUint32`.
 const NO_LIMIT: number = 4294967295;
 
@@ -170,7 +180,7 @@ extend string {
 
   /** Full Unicode case mapping, like JS ("ß".toUpperCase() is "SS"). */
   toUpperCase(): string {
-    return velt_rt_str_to_upper(this);
+    return hookCall("string_to_upper", this);
   }
 
   /**
@@ -178,7 +188,7 @@ extend string {
    * like JS (a final `Σ` becomes `ς`).
    */
   toLowerCase(): string {
-    return velt_rt_str_to_lower(this);
+    return hookCall("string_to_lower", this);
   }
 
   /** First occurrence; `to` expands `$$`, `$&`, `` $` `` and `$'` like JS. */
@@ -301,11 +311,11 @@ export class String {
    */
   static fromCharCode(...codes: f64[]): string {
     if (codes.length == 1) {
-      return velt_rt_str_from_char_code((codes[0] % 65536) as i64);
+      return unitText((codes[0] % 65536) as i64);
     }
     let s = "";
     for (const code of codes) {
-      s += velt_rt_str_from_char_code((code % 65536) as i64);
+      s += unitText((code % 65536) as i64);
     }
     return s;
   }
@@ -323,7 +333,7 @@ export class String {
       }
       const c = cp as i64;
       if (c < 0x10000) {
-        s += velt_rt_str_from_char_code(c);
+        s += unitText(c);
       } else {
         // The pair's halves join into one character.
         s += velt_rt_str_from_char_code(0xd800 + ((c - 0x10000) >> 10));

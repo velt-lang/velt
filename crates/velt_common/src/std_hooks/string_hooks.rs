@@ -52,6 +52,12 @@ macro_rules! with_string_hooks {
             string_replace_all => lang_string_replace, "replaceAll",
                 sig((&string, &string, &string) -> string),
                 replaces("velt_rt_str_replace_all"), bench("string_methods"), prebuilt;
+            /// `s.toUpperCase()`: ASCII text in Velt, other text through the runtime's Unicode mapping.
+            string_to_upper => lang_string_case, "toUpperCase", sig((&string) -> string),
+                bench("string_methods"), prebuilt;
+            /// `s.toLowerCase()`, as `string_to_upper`.
+            string_to_lower => lang_string_case, "toLowerCase", sig((&string) -> string),
+                bench("string_methods"), prebuilt;
             /// `s.repeat(count)` of a count the prelude's method has checked.
             string_repeat => lang_string_fill, "repeat", sig((&string, i64) -> string),
                 replaces("velt_rt_str_repeat"), bench("string_methods"), prebuilt;
