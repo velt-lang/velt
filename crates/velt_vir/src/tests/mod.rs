@@ -25,6 +25,7 @@ mod goldens;
 mod hook_demand;
 mod hybrid;
 mod interp;
+mod is_unique;
 mod keys;
 mod live_superset;
 mod m2_arrays;
