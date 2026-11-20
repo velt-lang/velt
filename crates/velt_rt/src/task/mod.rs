@@ -101,27 +101,3 @@ pub unsafe fn poll_fut(f: *mut VeltFut, cx: *mut c_void) -> u32 {
 pub unsafe fn drop_fut(f: *mut VeltFut) {
     ((*f).drop)(f)
 }
-
-/// `await yieldNow()`: schedule the current task again. Generated code calls this and then returns
-/// `PENDING`; the task is re-polled after other ready tasks had a turn. Allocation-free.
-#[no_mangle]
-pub unsafe extern "C-unwind" fn velt_rt_yield_now(cx: *mut c_void) {
-    with_context(cx, |c| {
-        local::note_yield(c.waker());
-        c.waker().wake_by_ref();
-    });
-}
-
-/// `yieldNow()` as a heap future (for when the promise is stored or passed to `Promise.all`
-/// instead of awaited directly). Result: none.
-#[no_mangle]
-pub extern "C-unwind" fn velt_rt_yield_now_fut() -> *mut VeltFut {
-    leaf::new_inner_leaf(async {
-        std::future::poll_fn(|cx| {
-            local::note_yield(cx.waker());
-            std::task::Poll::Ready(())
-        })
-        .await;
-        coop::yield_now().await
-    })
-}

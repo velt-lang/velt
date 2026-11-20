@@ -209,6 +209,14 @@ export const imports: Imports = {
   // Whole files (`readFile`, `writeFile`, `appendFile`, `stat`, `lstat`, `exists`) in a native
   // build: the C library's file descriptors (`#fd-system`), or Win32's on Windows.
   "#fs-whole": { win32: "./fs/whole/win32.velt", default: "./fs/whole/posix.velt" },
+  // What a `MappedFile` is made of (velt/fs): a mapping of the file where there is `mmap`
+  // (through `#fd-system`, which fails with ENOSYS on Windows), the file read into memory on
+  // WebAssembly.
+  "#mapped-source": {
+    wasi: "./fs/mapped_buffer.velt",
+    js: "./fs/mapped_buffer.velt",
+    default: "./fs/mapped_posix.velt",
+  },
   // Directories (`readDir`, `readDirEntries`, `mkdir`, `remove`) in a native build: the C
   // library's directory functions (`#fd-system`), or Win32's on Windows.
   "#fs-tree": { win32: "./fs/tree/win32.velt", default: "./fs/tree/posix.velt" },

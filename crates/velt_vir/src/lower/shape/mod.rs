@@ -451,6 +451,17 @@ impl Cx<'_> {
             .filter_map(|t| map.get(t).copied())
             .collect();
         self.facts.add_mapped(&facts, &map);
+        // What the body compares through glue at a placeholder type holds, for this
+        // dictionary's types, the function values these keys name (fresh_fns.rs).
+        let mut keys = vec![];
+        for &t in &facts.glue_compared {
+            let t = self.replace_tys(t, &ph);
+            self.fn_keys_in(t, 0, &mut keys);
+        }
+        if !keys.is_empty() {
+            self.note_fn_identity();
+            self.facts.fn_compared_keys.extend(keys);
+        }
         if site != velt_common::Span::DUMMY {
             let outer = std::mem::replace(&mut self.user_site, site);
             for t in shared {

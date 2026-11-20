@@ -171,6 +171,7 @@ pub mod atomic;
 pub mod c_abi;
 pub mod eh;
 pub mod fingerprint;
+pub mod heap;
 mod lower;
 
 /// The argument types of lowering's typed hook builders (`lower/hook_calls.rs`), generated from

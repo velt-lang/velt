@@ -287,9 +287,12 @@ with_weak_hooks! {
     sched_block_on => lang_hooks_sched, "schedBlockOn", sig((usize, usize, u64) -> void), lowered;
     /// `velt_rt_spawn`'s: `(poll, drop, state, size, align, result_size, result_drop)`, the handle.
     sched_spawn => lang_hooks_sched_spawn, "schedSpawn", sig((usize, usize, usize, u64, u64, u64, usize, usize) -> usize), lowered;
-    /// `velt_rt_yield_now`'s: `(cx)`; then the end of `velt_main` with its exit code (0: the
-    /// tasks left run).
-    sched_yield => lang_hooks_sched, "schedYield", sig((usize) -> void), lowered;
+    /// `await yieldNow()`'s: `(cx)`; a stored `yieldNow()`'s heap future (#2196 9d); then the end
+    /// of `velt_main` with its exit code (0: the tasks left run).
+    sched_yield => lang_hooks_sched_yield, "schedYield", sig((usize) -> void), lowered;
+    sched_yield_fut => lang_hooks_sched_yield, "schedYieldFut", sig(() -> usize), lowered;
+    /// `await yieldNow()`'s resume: `(cx)`, 1 to go on, 0 to stay suspended (#3241).
+    sched_yield_ready => lang_hooks_sched_yield, "schedYieldReady", sig((usize) -> u32), lowered;
     sched_finish => lang_hooks_sched, "schedFinish", sig((i32) -> void), lowered;
     /// `velt_rt_fut_box`'s: `(poll, drop, state, size, align)`, the lazy boxed promise.
     sched_box => lang_hooks_sched, "schedBox", sig((usize, usize, usize, u64, u64) -> usize), lowered;
