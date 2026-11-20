@@ -6,6 +6,7 @@ import {
   lock,
   lockSync,
   openSync,
+  readAt,
   unlinkSync,
   unlockSync,
   writeFileSync,
@@ -172,6 +173,59 @@ describe("file locks", () => {
     await waiting;
     expect(state.got).toBe(true);
     expect(lockSync(a)).toBe(false);
+    closeSync(a);
+    closeSync(b);
+    unlinkSync(path);
+  });
+
+  it("a waiting lock takes no thread from reads running at the same time", async () => {
+    if (!POSIX) {
+      return;
+    }
+    const path = file("reads");
+    const a = openSync(path, "r+");
+    const b = openSync(path, "r+");
+    const r = openSync(path, "r");
+    expect(lockSync(a)).toBe(true);
+    const state = { got: false };
+    const waiting = take(b, state);
+    // More positioned reads than a pool has threads, each awaited while the lock is wanted.
+    let read = 0;
+    for (let i = 0; i < 64; i++) {
+      const bytes = await readAt(r, 4, i % 12);
+      read += bytes.length as number;
+    }
+    expect(read).toBe(256);
+    expect(state.got).toBe(false);
+    unlockSync(a);
+    await waiting;
+    expect(state.got).toBe(true);
+    closeSync(a);
+    closeSync(b);
+    closeSync(r);
+    unlinkSync(path);
+  });
+
+  it("the waiter has the lock soon after the holder gives it back", async () => {
+    if (!POSIX) {
+      return;
+    }
+    const path = file("soon");
+    const a = openSync(path, "r+");
+    const b = openSync(path, "r+");
+    expect(lockSync(a)).toBe(true);
+    const state = { got: false };
+    const waiting = take(b, state);
+    for (let i = 0; i < 5; i++) {
+      await Promise.resolve();
+    }
+    unlockSync(a);
+    // timing: the wait asks again after at most 50 ms; the bound is ten times that, for a
+    // loaded machine.
+    const from = Date.now();
+    await waiting;
+    expect(Date.now() - from < 500).toBe(true);
+    expect(state.got).toBe(true);
     closeSync(a);
     closeSync(b);
     unlinkSync(path);
