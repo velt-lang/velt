@@ -26,6 +26,7 @@
 
 import { fnAddress, inline, noInline } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
+import * as nd from "./sched_node";
 import * as mv from "./sched_sleep_move";
 import * as rl from "./sched_sleep_rule";
 import * as sp from "./sched_spread";
@@ -56,8 +57,10 @@ export const S_NEXT: usize = 48;
 export const S_STATE: usize = 56;
 export const S_TASK: usize = 64;
 /**
- * The await word (`T_WORD`) of the task that polled it into its worker's timer block, what that
- * task's contexts point at (`sleepPoll`; sched_sleep_carry.velt `carry`), or 0.
+ * While it is pending: the await word (`T_WORD`) of the task that polled it into its worker's
+ * timer block, what that task's contexts point at, if the waker it was registered with keeps
+ * that task alive (`sleepPoll`); else 0. A word that is not 0 names a live task, never an
+ * address a task made later was given.
  */
 export const S_OWNER: usize = 72;
 /**
@@ -68,6 +71,12 @@ export const S_HOME: usize = 80;
 /** The hand-overs and the drop under way for it, on other workers' lists (sched_sleep_move.velt). */
 export const S_ASKS: usize = 88;
 export const S_SIZE: usize = 96;
+
+/**
+ * The bit in which the place of a task's own context in the task (`T_CX`) differs from the place
+ * of a promise's in its node (`N_CX`): with it set, either offset is `T_CX` (`sleepPoll`).
+ */
+const OWN_BIT: usize = t.T_CX ^ nd.N_CX;
 
 // A sleep's states: not polled yet; seen; pending; due (on its task's due list); fired (counted in
 // `TM_UNSEEN` until its leaf sees it); carried by an offered task (in its `T_TIMERS`,
@@ -115,9 +124,8 @@ export function sleep(e: usize, ms: i64): usize {
   m.st(f + S_SEQ, seq);
   m.st(f + S_WAKER, 0);
   m.st(f + S_STATE, NEW);
-  // The links, `S_OWNER`, `S_HOME` and `S_TASK` are written when a state that reads them
-  // begins: the links, `S_OWNER` and `S_HOME` with `PENDING` (`sleepPoll`, `insert`; `adopt`),
-  // `S_TASK` with `DUE` (`pushDue`).
+  // The links, `S_HOME` and `S_TASK` are written when a state that reads them begins: the links
+  // and `S_HOME` with `PENDING` (`sleepPoll`, `insert`; `adopt`), `S_TASK` with `DUE` (`pushDue`).
   m.st(f + S_ASKS, 0);
   return f;
 }
@@ -131,13 +139,8 @@ function sleepPoll(f: usize, cx: usize): u32 {
       return 1;
     }
   } else {
-    // Polled before. The task that polled it into its block (`S_OWNER`) is anchored there with
-    // it, so its polls are on that worker; another task's (the promise was handed on) may not
-    // be. The context names the task polling: its first word points at that task's `T_WORD`,
-    // in a task's own context, in a promise's (always polled by the task that drives it, which
-    // a transfer changes together with this word: sched_node.velt) and in a combinator's, which
-    // passes its poller's on (sched_all.velt). Any other context, and a carried sleep (it has
-    // no owner until its task adopts it), take the slow way, which asks the worker.
+    // Polled before: is it in this worker's block? The task that polled it there is anchored
+    // there with it; another task's poll (the promise was handed on) may run anywhere.
     if (s === FIRED) {
       // Seen by this poll, which registers nothing: all it needs is that this worker holds the
       // sleep (the worker is at hand, for `seenOn`), whichever task polls. The state first, then
@@ -149,20 +152,43 @@ function sleepPoll(f: usize, cx: usize): u32 {
       seenOn(e, f);
       return 1;
     }
-    if (m.ld(cx) !== m.loadRelaxed(f + S_OWNER) && !here(f, s)) {
-      // Held by another worker's block, or carried by an offered task: its worker gives it up,
-      // and this task polls it again as a new one.
+    if (s === DUE) {
+      // Due for a task (`S_TASK`, the one its waker wakes: `expire`), which that waker keeps
+      // alive until the sleep fires. So a poll whose context names that task (its first word
+      // points at the polling task's `T_WORD`: a task's own context, a promise's, and a
+      // combinator's, which passes its poller's on) is that task's and no other's: an address
+      // compared here is never one a task made later was given (#3207). That task registered
+      // its waker in a poll on the worker that holds the sleep and is anchored there. Any
+      // other poll asks the worker.
+      if (m.ld(cx) !== m.ld(f + S_TASK) + t.T_WORD && !here(f, s)) {
+        return mv.ask(f, m.ld(cx + 8));
+      }
+      if (firesItself(t.exec(), f)) {
+        unlinkDue(m.ld(f + S_TASK), f);
+        m.storeRelease(f + S_STATE, SEEN);
+        return 1;
+      }
+    } else if (m.ld(cx) !== m.loadRelaxed(f + S_OWNER) && !here(f, s)) {
+      // Pending in another worker's block, or carried by an offered task: its worker gives it
+      // up, and this task polls it again as a new one. The shortcut: a poll whose context
+      // names the task the sleep keeps as its owner (`S_OWNER`, a live task: below) is that
+      // task's, which is anchored to the worker that holds the sleep.
       return mv.ask(f, m.ld(cx + 8));
-    }
-    if (s === DUE && firesItself(t.exec(), f)) {
-      unlinkDue(m.ld(f + S_TASK), f);
-      m.storeRelease(f + S_STATE, SEEN);
-      return 1;
     }
   }
   const w = m.ld(cx + 8);
   const old = m.ld(f + S_WAKER);
   if (old !== w) {
+    // The owner word, an address, may only name a task that cannot be freed while the sleep
+    // names it, or a task made later at that address would pass for the owner on whatever
+    // worker it runs (#3207). What keeps the polling task is the sleep's own waker when it
+    // is that task's or a promise's of it, the waker of the context itself then (a context
+    // sits inside the object its waker is: `T_CX`, `N_CX`): a clone of it is a reference. A
+    // combinator's waker keeps no task, and neither does a waker registered later. Stored
+    // before the clone's call, which then needs no context: the task is the one polling.
+    // One compare for both: the two offsets differ in one bit (`OWN_BIT`).
+    const own = s === NEW && ((cx - w) | OWN_BIT) === t.T_CX;
+    m.storeRelaxed(f + S_OWNER, own ? m.ld(cx) : 0);
     m.st(f + S_WAKER, m.wakerClone(w));
     if (old !== 0) {
       m.wakerDrop(old);
@@ -171,9 +197,8 @@ function sleepPoll(f: usize, cx: usize): u32 {
   if (s === NEW) {
     // Pending in this worker's timer block: its task stays on this worker, unless an offer
     // carries it with its sleeps (sched_sleep_carry.velt).
-    sp.anchor();
     const e = t.exec();
-    m.storeRelaxed(f + S_OWNER, m.ld(e + t.E_CURRENT) + t.T_WORD);
+    sp.anchorOn(e);
     // Unordered: `insert` stores the state after it, released.
     m.storeRelaxed(f + S_HOME, e);
     insert(block(e), f);
@@ -198,24 +223,16 @@ function sleepDrop(f: usize): void {
 }
 
 /**
- * Sleep `f` (state `s`), polled before, is polled through a context that does not name its owner:
- * is it in this worker's block? Yes when the task this worker is polling is the owner after all
- * (a context that is not the executor's). Yes too when the sleep is in this worker's block and
- * another task polls it: that task stays with it from now on, as the first did (anchored; an
- * offer carries the sleep along with it, `S_OWNER`). No when another worker's block holds it or
- * an offered task carries it.
+ * Sleep `f` (state `s`), polled before: is it in this worker's block? Then the task polling it
+ * stays with it from now on, as the first that polled it did (anchored). No when another
+ * worker's block holds it or an offered task carries it.
  */
 @noInline
 function here(f: usize, s: usize): bool {
-  const e = t.exec();
-  const k = m.ld(e + t.E_CURRENT);
-  if (s === CARRIED || m.load(f + S_HOME) !== e) {
+  if (s === CARRIED || m.load(f + S_HOME) !== t.exec()) {
     return false;
   }
-  if (k + t.T_WORD !== m.loadRelaxed(f + S_OWNER)) {
-    sp.anchor();
-    m.storeRelaxed(f + S_OWNER, k + t.T_WORD);
-  }
+  sp.anchor();
   return true;
 }
 
@@ -325,8 +342,8 @@ function pushDue(k: usize, f: usize): void {
     m.st(first + S_PREV, f);
   }
   m.st(f + S_TASK, k);
-  // Unordered: see `insert`.
-  m.storeRelaxed(f + S_STATE, DUE);
+  // Released: a poll on another worker that reads `DUE` reads this `S_TASK` (`sleepPoll`).
+  m.storeRelease(f + S_STATE, DUE);
   const b = m.ld(t.exec() + t.E_TIMERS);
   m.st(b + TM_DUE, m.ld(b + TM_DUE) + 1);
 }
@@ -378,8 +395,6 @@ export function fire(k: usize, f: usize): usize {
 /** Sleep `f` leaves its worker's block for an offered task's list (sched_sleep_carry.velt `carry`). */
 export function carried(b: usize, f: usize): void {
   unlinkPending(b, f);
-  // No owner while it is carried: a poll of it goes the slow way (`sleepPoll`).
-  m.storeRelaxed(f + S_OWNER, 0);
   m.storeRelease(f + S_STATE, CARRIED);
 }
 

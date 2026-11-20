@@ -313,6 +313,15 @@ export function anchor(): void {
   anchorTo(e, k);
 }
 
+/** `anchor` on worker `e`, which the caller has at hand (sched_sleep.velt `sleepPoll`). */
+@inline("always")
+export function anchorOn(e: usize): void {
+  const k = m.ld(e + t.E_CURRENT);
+  if (k !== 0 && !t.has(k, t.ANCHORED)) {
+    anchorTo(e, k);
+  }
+}
+
 /**
  * As `anchor`, for good (`FIXED`): a wait whose deadline lives in this worker's I/O block, or an
  * unref'd timer's look; an offer never carries such a task.
