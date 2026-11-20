@@ -15,11 +15,13 @@ import {
 import {
   T_ARRAY,
   T_FALSE,
+  T_LINK,
   T_NULL,
   T_NUMBER,
   T_OBJECT,
   T_STRING,
   T_TRUE,
+  LINKED,
 } from "velt/encoding/json/tape";
 import { TapeRef } from "velt/encoding/json/tape_ref";
 import { copyRun, nextEscape, writeString } from "velt/encoding/json/writer";
@@ -27,6 +29,7 @@ import { OUT_CAP, OUT_ROOM, putLiteral, putNumber } from "velt/encoding/json/tap
 import {
   arraySetLen,
   arrayWithCapacity,
+  inline,
   noInline,
   strByteLen,
   strLoadPartialU8x16,
@@ -50,12 +53,12 @@ declare function velt_rt_strbuf_finish(buf: string, out: string);
  * and inlined into every `set` and `push` it would grow the frames of recursive callers.
  */
 @noInline
-export function treeOfTape(t: TapeRef, node: u32): JsonTree {
+export function treeOfTape(t: TapeRef, node: u32, links: JsonTree[] | null): JsonTree {
   const root = treeNode(t, node);
   if (root.kind == TREE_ARRAY) {
     const n = t.count(node);
     for (let i: i64 = 0; i < n; i++) {
-      const c = treeMember(t, t.child(node, i) as u32);
+      const c = treeMember(t, t.child(node, i) as u32, links);
       root.items!.push(c);
     }
     root.height = 1;
@@ -63,7 +66,7 @@ export function treeOfTape(t: TapeRef, node: u32): JsonTree {
     const n = t.count(node);
     for (let i: i64 = 0; i < n; i++) {
       const k = t.member(node, i) as u32;
-      const c = treeMember(t, k + 1);
+      const c = treeMember(t, k + 1, links);
       root.obj!.insert(t.text(k), c);
     }
     root.height = 1;
@@ -71,10 +74,19 @@ export function treeOfTape(t: TapeRef, node: u32): JsonTree {
   return root;
 }
 
-/** Tape value `v` as a tree's member: a scalar as a node, a container left on the tape. */
-export function treeMember(t: TapeRef, v: u32): JsonTree {
+/**
+ * Tape value `v` as a tree's member: a scalar as a node, a container left on the tape, a link
+ * (`T_LINK`, on a frozen tape) as the node of `links` it stands for.
+ */
+export function treeMember(t: TapeRef, v: u32, links: JsonTree[] | null): JsonTree {
   const k = t.kind(v);
-  return k == T_ARRAY || k == T_OBJECT ? JsonTree.ofTape(t, v) : treeNode(t, v);
+  if (k == T_ARRAY || k == T_OBJECT) {
+    return JsonTree.ofTape(t, v, (t.head(v) & LINKED) != 0 ? links : null);
+  }
+  if (k == T_LINK) {
+    return links![t.payload(v) as usize];
+  }
+  return treeNode(t, v);
 }
 
 // The node of tape value `v` (a container comes empty).
@@ -141,7 +153,7 @@ export function writeTree(out: string, tree: JsonTree): void {
         w.text(out, v.text);
       } else if (v.kind == TREE_TAPE) {
         w.flush(out);
-        writeTapeChild(out, v);
+        pending = writeTapeChild(out, v);
         w.last = 0;
       } else if (v.kind == TREE_NUMBER) {
         w.n = putNumber(w.buf, w.n, v.num);
@@ -222,6 +234,7 @@ class TreeWriter {
 
   // `s` quoted: copied into the buffer when it needs no escape and fits, else written by the
   // writer's escaping code after a flush.
+  @inline("always")
   text(out: string, s: string): void {
     const len = strByteLen(s);
     this.last = 34;
@@ -261,10 +274,15 @@ class TreeWriter {
 }
 
 // A child left on a tape (`TREE_TAPE`), written by the tape's writer (out of line: rare, and the
-// tape's writer is large).
+// tape's writer is large); with a link below it (tree_freeze.velt), its level as nodes instead, for
+// `writeTree` to write, so the links are written as the nodes they stand for.
 @noInline
-function writeTapeChild(out: string, v: JsonTree): void {
+function writeTapeChild(out: string, v: JsonTree): JsonTree | null {
   const o = v.obj!;
+  if (o.links != null) {
+    return treeOfTape(o.tape!, o.node, o.links);
+  }
   const node = o.node;
   o.tape!.write(out, node);
+  return null;
 }
