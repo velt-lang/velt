@@ -2,7 +2,12 @@
 // is `JSON.stringify(value)`; `keys` the replacer array's JSON text, applied when `filter`; `gap`
 // the indent `jsonGapOfString` made of a string `space` (empty: no whitespace).
 
-import { JSON_CALLBACK_DEPTH, jsonCallbackTooDeep } from "velt/encoding/json/value_ops";
+import {
+  JSON_CALLBACK_DEPTH,
+  jsonCallbackTooDeep,
+  pushRevived,
+  setRevived,
+} from "velt/encoding/json/value_ops";
 import { JSON } from "velt/prelude/json/json";
 import { JsonValue } from "velt/prelude/json/json_value";
 import { propertyList, relayout } from "velt/encoding/json/relayout";
@@ -57,7 +62,7 @@ function jsonReplaced(
     const n = r.len();
     for (let i: i64 = 0; i < n; i++) {
       const e = jsonReplaced(String(i), r.at(i)!, replacer, depth + 1);
-      out.push(e ?? JsonValue.of(null));
+      pushRevived(out, e);
     }
     return out;
   }
@@ -65,9 +70,7 @@ function jsonReplaced(
     const out = JsonValue.object();
     for (const k of r.keys()) {
       const e = jsonReplaced(k, r.get(k)!, replacer, depth + 1);
-      if (e != undefined) {
-        out.set(k, e);
-      }
+      setRevived(out, k, e);
     }
     return out;
   }

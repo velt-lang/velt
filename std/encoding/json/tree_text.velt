@@ -46,8 +46,10 @@ declare function velt_rt_strbuf_finish(buf: string, out: string);
 /**
  * A tree of value `node` of tape `t` (what an edit of a parsed value starts from): its own node,
  * with its scalar members as nodes and its containers left on the tape (`TREE_TAPE`), so only
- * what an edit changes is made, and the tree is one level high.
+ * what an edit changes is made, and the tree is one level high. Out of line: an edit makes it once,
+ * and inlined into every `set` and `push` it would grow the frames of recursive callers.
  */
+@noInline
 export function treeOfTape(t: TapeRef, node: u32): JsonTree {
   const root = treeNode(t, node);
   if (root.kind == TREE_ARRAY) {
