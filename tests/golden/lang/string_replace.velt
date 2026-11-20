@@ -1,0 +1,84 @@
+// `replace` and `replaceAll` with a string pattern (std/lang/string/replace.velt, #2198): the
+// `$` patterns of a replacement, the empty pattern, patterns that match half of a surrogate
+// pair, seams where two halves meet, and a function as the replacement, whose offset counts
+// UTF-16 code units (std/lang/hooks/string.velt).
+// The expected output is Node's (this file runs there unchanged, with `main()` called). Lone
+// surrogates come from `String.fromCharCode`.
+
+const HI = String.fromCharCode(0xd83d);
+const LO = String.fromCharCode(0xde00);
+
+/** The UTF-16 code units of `s`, in hex. */
+function hex(s: string): string {
+  let out = "";
+  for (let i = 0; i < s.length; i++) {
+    out += s.charCodeAt(i).toString(16) + ".";
+  }
+  return out;
+}
+
+function one(s: string) {
+  console.log(s.length, hex(s));
+}
+
+function bang(m: string): string {
+  return m + "!";
+}
+
+function main() {
+  one("a b c".replace(" ", "_"));
+  one("a b c".replaceAll(" ", "_"));
+  one("abc".replace("", "-"));
+  one("abc".replaceAll("", "-"));
+  one("".replaceAll("", "-"));
+  one("".replace("x", "-"));
+  one("a😀b".replaceAll("", "-"));
+  one("a😀b".replace("", "-"));
+  one("xaxbx".replaceAll("x", "[$&]"));
+  one("xaxbx".replaceAll("x", "$$"));
+  one("hello world".replace("o w", "<$`|$'>"));
+  one("hello world".replace("o", "$1$<n>$"));
+  one("hello world".replace("o", "$"));
+  one("hello world".replaceAll("o", "$$$"));
+  one("hello world".replaceAll("l", ""));
+  one("aaa".replaceAll("aa", "b"));
+  one("日本語テキスト".replaceAll("本", "$&$&"));
+  one("é😀é".replace("😀", "$`"));
+  one("x😀y".replace(HI, "-"));
+  one("x😀y".replace(LO, "-"));
+  one("x😀y😀".replaceAll(LO, "[$&]"));
+  one("x😀y😀".replaceAll(HI, "<$'>"));
+  one("x😀y😀".replaceAll(HI, "<$`>"));
+  one(("a" + HI + "-" + LO + "b").replace("-", ""));
+  one(("a" + HI + "-" + LO + "b").replaceAll("-", ""));
+  one(("a" + HI).replace("a", LO + "$&"));
+  one("ab".replace("b", HI).replace("a", "a") + LO);
+  one("a-b".replace("-", HI + "$'").replace("b", LO));
+  one(("a" + HI + "x").replace("x", LO));
+  one(
+    "the lazy dog and the lazy cat and more text to make this long enough".replace(
+      "lazy",
+      "sleepy",
+    ),
+  );
+  one(
+    "the lazy dog and the lazy cat and more text to make this long enough".replaceAll(
+      "lazy",
+      "sleepy",
+    ),
+  );
+  console.log("a-b-c".replace("-", (m) => "<" + m + ">"));
+  console.log("a-b-c".replaceAll("-", (m, offset) => `${m}${offset}`));
+  console.log("é😀-日本-x".replaceAll("-", (m, offset, s) => `[${offset}/${s.length}]`));
+  console.log("é😀-日本-x".replace("本", (m, offset) => `${m}@${offset}`));
+  console.log("abc".replaceAll("", (m, offset) => `${offset}`));
+  console.log("a😀".replaceAll("", (m, offset) => `${offset}`).length);
+  console.log("abc".replace("zz", () => "never"));
+  console.log("a$b".replace("$", () => "$&$$"));
+  console.log("x-y".replace("-", bang));
+  const f = (m: string, off: number) => `${m}${off * 2}`;
+  console.log("x-y-z".replaceAll("-", f));
+  console.log(hex("x😀y😀".replaceAll(LO, (m, offset) => `${offset}`)));
+  console.log(hex(("a" + HI + "-" + LO).replace("-", () => "")));
+  console.log("aaaa".replaceAll("aa", (m, offset) => `${offset}`));
+}

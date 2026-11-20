@@ -183,7 +183,7 @@ extend string {
 
   /** First occurrence; `to` expands `$$`, `$&`, `` $` `` and `$'` like JS. */
   replace(from: string, to: string): string {
-    return velt_rt_str_replace(this, from, to);
+    return hookCall("string_replace", this, from, to);
   }
 
   /**
@@ -195,7 +195,7 @@ extend string {
    * this string; `$$`, `$&`, `` $` `` and `$'` are expanded like JS.
    */
   replaceAll(from: string, to: string): string {
-    return velt_rt_str_replace_all(this, from, to);
+    return hookCall("string_replace_all", this, from, to);
   }
 
   /** Panics like JS's RangeError if `n` is negative or the result would be too large. */

@@ -22,6 +22,15 @@ macro_rules! with_string_hooks {
             string_starts_with => lang_string_search, "startsWith", sig((&string, &string) -> bool);
             /// `s.endsWith(suffix)`.
             string_ends_with => lang_string_search, "endsWith", sig((&string, &string) -> bool);
+            /// `s.replace(from, (match, offset, string) => …)` with a string pattern (`velt_sema`
+            /// `regex_args.rs`): a function taking fewer of JavaScript's arguments converts as any
+            /// function value does.
+            replace_string_calling => lang_hooks_string, "replaceCalling",
+                sig(<A>(&mut string, &mut string, &Fn((string, f64, string) -> string throws A)) -> string throws A);
+            /// `s.replaceAll(from, (match, offset, string) => …)` with a string pattern.
+            replace_all_string_calling => lang_hooks_string, "replaceAllCalling",
+                sig(<A>(&mut string, &mut string, &Fn((string, f64, string) -> string throws A)) -> string throws A);
+
             // velt/lang/string/trim and fill: the methods that return part of a string or build one
             // (#2198), called by role as the searches are.
             /// `s.trim()`.
@@ -36,6 +45,13 @@ macro_rules! with_string_hooks {
             /// `s.split(sep, limit)` with a string separator; `limit` after JavaScript's `ToUint32`.
             string_split => lang_string_split, "split", sig((&string, &string, u32) -> [string]),
                 replaces("velt_rt_str_split"), bench("string_methods");
+            /// `s.replace(from, to)` with a string pattern.
+            string_replace => lang_string_replace, "replace", sig((&string, &string, &string) -> string),
+                replaces("velt_rt_str_replace"), bench("string_methods"), prebuilt;
+            /// `s.replaceAll(from, to)` with a string pattern.
+            string_replace_all => lang_string_replace, "replaceAll",
+                sig((&string, &string, &string) -> string),
+                replaces("velt_rt_str_replace_all"), bench("string_methods"), prebuilt;
             /// `s.repeat(count)` of a count the prelude's method has checked.
             string_repeat => lang_string_fill, "repeat", sig((&string, i64) -> string),
                 replaces("velt_rt_str_repeat"), bench("string_methods"), prebuilt;
