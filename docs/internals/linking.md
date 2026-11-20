@@ -142,7 +142,8 @@ glibc 2.31 or newer (the release toolchains' baseline, Debian 11).
   defining a symbol still undefined, the helpers. Before libm, a program's `fmod` came from the
   archive's compiler builtins and brought Rust's std and the static runtime's `main` along;
   among the objects, the program's runtime calls would bring the static runtime in beside the
-  shared one.
+  shared one. A linker also takes archive members for what a shared library leaves undefined;
+  the shared runtime's undefined symbols are all the C libraries', which the kit's stubs define.
 
 ## Linux, musl (`*-unknown-linux-musl`)
 

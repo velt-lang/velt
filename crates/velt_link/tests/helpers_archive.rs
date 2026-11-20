@@ -1,8 +1,11 @@
 //! A link against a shared runtime with a helpers archive (`LinkRequest::helpers_lib`, #3315):
 //! what the program's objects call and the shared runtime does not export comes from the archive
-//! named after it. Real links on the host, with stand-ins compiled here with `rustc`: a shared
-//! library under the shared runtime's name exporting one function, an archive defining the other
-//! function the program calls, and a Cranelift-built object whose `main` calls both.
+//! named after it, and nothing else does. Real links on the host, with stand-ins compiled here
+//! with `rustc`: a shared library under the shared runtime's name exporting one function, an
+//! archive with two members (one defines the other function the program calls, one defines the
+//! shared library's function again, as the static runtime defines what the shared one exports),
+//! and a Cranelift-built object whose `main` calls both functions. The program must call the
+//! shared library's function: an archive named before the shared runtime would serve its own.
 //!
 //! On arm64 Linux the archive is the static runtime and the functions are the outline-atomics
 //! helpers LLVM's code calls (`__aarch64_cas4_acq`, …): `veltc`'s prebuilt-object tests link
@@ -20,7 +23,11 @@ use cranelift_object::{ObjectBuilder, ObjectModule};
 /// The shared runtime's stand-in exports this.
 const SHARED_SRC: &str = "#[no_mangle] pub extern \"C\" fn velt_shared_part() -> i32 { 30 }\n";
 /// The helpers archive's stand-in defines this; the shared library does not.
-const HELPERS_SRC: &str = "#[no_mangle] pub extern \"C\" fn velt_helper_part() -> i32 { 12 }\n";
+const HELPERS_SRC: &str = "extern crate velt_dup;\n\
+     #[no_mangle] pub extern \"C\" fn velt_helper_part() -> i32 { 12 }\n";
+/// Another member of the archive (a crate of its own, so an object of its own) defines the shared
+/// library's function with another result: a link that takes it has taken a runtime member.
+const DUP_SRC: &str = "#[no_mangle] pub extern \"C\" fn velt_shared_part() -> i32 { 99 }\n";
 
 /// Triple for the hand-built object: Cranelift records a Mach-O platform only for `macosx`
 /// triples, and Apple's linker rejects objects without one.
@@ -77,12 +84,15 @@ fn build_object(triple: &str) -> Vec<u8> {
     module.finish().emit().unwrap()
 }
 
+/// Compile `src` as the crate `name` of `crate_type` to `out`; crates in `dir` can be named.
 fn rustc(crate_type: &str, name: &str, src: &str, dir: &Path, out: &Path) {
     let file = dir.join(format!("{name}.rs"));
     std::fs::write(&file, src).unwrap();
     let st = command(std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()))
         .args(["--edition", "2021", "-O", "--crate-type", crate_type])
-        .args(["--crate-name", name, "-o"])
+        .args(["--crate-name", name, "-L"])
+        .arg(dir)
+        .arg("-o")
         .arg(out)
         .arg(&file)
         .status()
@@ -117,7 +127,8 @@ fn check(what: &str, dir: &Path, link: &dyn Fn(&velt_link::LinkRequest) -> Resul
     req.output = &exe;
     let err = link(&req).expect_err("a link without the helpers archive");
     assert!(err.contains("velt_helper_part"), "{what}: {err}");
-    // With it the program links and calls both: the shared library's 30 and the archive's 12.
+    // With it the program links and calls both: the shared library's 30, not the 99 of the
+    // archive's member that defines the same function, and the archive's 12.
     let (exe, mut req) = request("with", Some(helpers.as_path()));
     req.output = &exe;
     link(&req).unwrap_or_else(|e| panic!("{what}: link with the helpers archive failed:\n{e}"));
@@ -141,6 +152,13 @@ fn a_link_against_the_shared_runtime_takes_helpers_from_the_archive() {
     std::fs::create_dir_all(&dir).unwrap();
     let shared = dir.join(velt_link::shared_runtime_lib_name(os));
     rustc("cdylib", "velt_rt_shared", SHARED_SRC, &dir, &shared);
+    rustc(
+        "rlib",
+        "velt_dup",
+        DUP_SRC,
+        &dir,
+        &dir.join("libvelt_dup.rlib"),
+    );
     let helpers = dir.join(velt_link::runtime_lib_name(&triple));
     rustc("staticlib", "velt_rt", HELPERS_SRC, &dir, &helpers);
     std::fs::write(dir.join("main.o"), build_object(&object_triple(&triple))).unwrap();
