@@ -83,6 +83,9 @@ pub(crate) fn finish_std(cx: &mut Ctx) {
     cx.loop_roots.clear();
     cx.closure_defs.clear();
     cx.rec = Default::default();
+    // std's own check sealed the extended layouts (`collect::extended_layouts`): the app's
+    // conversions widen the layouts of its own types, until its check seals them again.
+    cx.objects.layouts.sealed = false;
     codec::unit::clear_memos(cx);
     cx.freeze_defs();
     cx.unit_base = cx.defs.len() as u32;

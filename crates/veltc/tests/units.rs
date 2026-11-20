@@ -207,8 +207,9 @@ fn check_golden_two(path: &str, two: bool) -> std::process::Output {
 
 /// std's unit ends clean (`units::finish_std`): the app's rounds start from no memo built over
 /// std alone, so a package's recursive functions get no error a whole-program check does not
-/// give; and the app's collection defers a type query that needs a body, as a whole program's
-/// does. Both check with `VELT_UNITS=2` as by a whole-program check.
+/// give, and its extended layouts are not sealed yet, so the app's object types share a layout
+/// with their extensions; and the app's collection defers a type query that needs a body, as a
+/// whole program's does. All check with `VELT_UNITS=2` as by a whole-program check.
 #[test]
 fn std_s_unit_ends_clean_and_the_app_is_collected_as_a_whole_program_is() {
     for path in [
@@ -217,6 +218,7 @@ fn std_s_unit_ends_clean_and_the_app_is_collected_as_a_whole_program_is() {
         "lang/type_queries.velt",
         "lang/type_queries_keys.velt",
         "lang/module_augment_scopes.velt",
+        "lang/errors/extended_layouts_keys.velt",
     ] {
         let whole = check_golden_two(path, false);
         let two = check_golden_two(path, true);
