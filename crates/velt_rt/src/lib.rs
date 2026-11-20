@@ -52,7 +52,6 @@ pub mod process;
 pub mod proxy_array;
 pub mod random;
 pub mod read_mode;
-pub mod regex;
 pub mod registry;
 pub mod result;
 pub mod rwlock_write;

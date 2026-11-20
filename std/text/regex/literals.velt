@@ -22,8 +22,9 @@ import { Program, SCAN_FIRST, SCAN_GRAMS } from "velt/text/regex/program";
  * spelled out into them. */
 const MAX_LITERALS: usize = 8;
 const MAX_SET: usize = 4;
-/** The most tuples a scan compares at once. */
+/** The most tuples a scan compares at once, and the most offsets a tuple has bytes at. */
 const MAX_GRAMS: usize = 4;
+const MAX_OFFSETS: usize = 4;
 
 /** Is `c` a surrogate? One is never part of a literal: without the `u` flag it can match half
  * of a pair, which no byte search finds. */
@@ -45,18 +46,15 @@ class Literals {
       return true;
     }
     if (kind == CHAR) {
-      return !isSurrogate(n.a) && this.cross(n.a, n.a);
+      return !isSurrogate(n.a) && this.cross([n.a, n.a]);
     }
     if (kind == SET) {
-      const r = (n.set ?? new CharSet()).ranges;
-      if (r.length != 2 && r.length != 4) {
+      const set = n.set ?? new CharSet();
+      const r = set.ranges;
+      if (r.length == 0 || set.count(MAX_SET + 1) > MAX_SET) {
         return false;
       }
-      const hi = r[r.length - 1];
-      if (r.length == 4 && (r[0] != r[1] || r[2] != hi)) {
-        return false;
-      }
-      return !isSurrogate(r[0]) && !isSurrogate(hi) && this.crossSet(r);
+      return !isSurrogate(r[0]) && !isSurrogate(r[r.length - 1]) && this.cross(r);
     }
     if (kind == CAT) {
       for (let i: usize = 0; i < n.kids.length; i++) {
@@ -83,34 +81,18 @@ class Literals {
     return false;
   }
 
-  /** Every string followed by each character of `lo..=hi`. */
-  private cross(lo: u32, hi: u32): bool {
-    const span = (hi - lo) as usize + 1;
-    if (span > MAX_SET || this.list.length * span > MAX_LITERALS) {
-      return false;
-    }
+  /** Every string followed by each character of the ranges `r` (at most `MAX_SET`). */
+  private cross(r: u32[]): bool {
     const out: string[] = [];
     for (let i: usize = 0; i < this.list.length; i++) {
-      for (let c = lo; c <= hi; c++) {
-        out.push(this.list[i] + String.fromCodePoint(c as f64));
+      for (let k: usize = 0; k < r.length; k += 2) {
+        for (let c = r[k]; c <= r[k + 1]; c++) {
+          out.push(this.list[i] + String.fromCodePoint(c as f64));
+        }
       }
     }
-    this.list = out;
-    return true;
-  }
-
-  /** Every string followed by each character of the one or two ranges `r`. */
-  private crossSet(r: u32[]): bool {
-    if (r.length == 2) {
-      return this.cross(r[0], r[1]);
-    }
-    if (this.list.length * 2 > MAX_LITERALS) {
+    if (out.length > MAX_LITERALS) {
       return false;
-    }
-    const out: string[] = [];
-    for (let i: usize = 0; i < this.list.length; i++) {
-      out.push(this.list[i] + String.fromCodePoint(r[0] as f64));
-      out.push(this.list[i] + String.fromCodePoint(r[2] as f64));
     }
     this.list = out;
     return true;
@@ -213,6 +195,29 @@ function firstBytes(n: Node, bits: u64[], units: bool): bool {
   return true;
 }
 
+/** How common byte `b` is taken to be in a subject, out of 256: lower case letters and the
+ * space most, then upper case letters, digits and the bytes of characters past ASCII. */
+function weight(b: u8): u64 {
+  if ((b >= 0x61 && b <= 0x7a) || b == 0x20) {
+    return 16;
+  }
+  return (b >= 0x41 && b <= 0x5a) || (b >= 0x30 && b <= 0x39) || b >= 0x80 ? 4 : 2;
+}
+
+/** How often the tuples `grams` (`size` bytes each) are taken to be in a subject where no
+ * match is: the less, the fewer places the scan stops at for nothing. */
+function cost(grams: u8[], size: usize): u64 {
+  let sum: u64 = 0;
+  for (let t: usize = 0; t < grams.length; t += size) {
+    let product: u64 = 1;
+    for (let j: usize = 0; j < size; j++) {
+      product *= weight(grams[t + j]);
+    }
+    sum += product;
+  }
+  return sum;
+}
+
 /** How many distinct tuples the bytes of `lits` at `offsets[0..size]` make; they are left in
  * `out`. */
 function tuples(lits: string[], offsets: usize[], size: usize, out: u8[]): usize {
@@ -233,27 +238,35 @@ function tuples(lits: string[], offsets: usize[], size: usize, out: u8[]): usize
 }
 
 /** Chooses the offsets whose bytes tell `lits` (each at least `min` bytes) from other text
- * with the fewest tuples, three offsets if that takes at most `MAX_GRAMS`, else two, else
- * one; false when even one offset takes more. */
+ * best: as many offsets, up to `MAX_OFFSETS`, as take at most `MAX_GRAMS` tuples, and of
+ * those the ones whose tuples are the rarest (`cost`); false when even one offset takes more. Three tuples are stored as four, the first
+ * twice: the scan compares one, two or four. */
 function chooseGrams(prog: Program, lits: string[], min: usize): bool {
   const top = min < 8 ? min : 8;
   const trial: u8[] = [];
-  for (let size = top < 3 ? top : 3; size >= 1; size--) {
+  for (let size = top < MAX_OFFSETS ? top : MAX_OFFSETS; size >= 1; size--) {
     let best = MAX_GRAMS + 1;
+    let least: u64 = 0xffffffffffffffff;
     for (let a: usize = 0; a < top; a++) {
       for (let b = a + 1; b < (size > 1 ? top : a + 2); b++) {
         for (let c = b + 1; c < (size > 2 ? top : b + 2); c++) {
-          const offsets = [a, b, c];
-          const count = tuples(lits, offsets, size, trial);
-          if (count < best) {
-            best = count;
-            prog.grams = trial.slice();
-            prog.gramAt = offsets.slice(0, size as i64);
+          for (let d = c + 1; d < (size > 3 ? top : c + 2); d++) {
+            const offsets = [a, b, c, d];
+            const count = tuples(lits, offsets, size, trial);
+            if (count <= MAX_GRAMS && cost(trial, size) < least) {
+              best = count;
+              least = cost(trial, size);
+              prog.grams = trial.slice();
+              prog.gramAt = offsets.slice(0, size as i64);
+            }
           }
         }
       }
     }
     if (best <= MAX_GRAMS) {
+      for (let j: usize = 0; j < size && best == 3; j++) {
+        prog.grams.push(prog.grams[j]);
+      }
       prog.gramSize = size;
       prog.minBytes = min;
       prog.scan = SCAN_GRAMS;
@@ -261,6 +274,21 @@ function chooseGrams(prog: Program, lits: string[], min: usize): bool {
     }
   }
   return false;
+}
+
+/** Stores the first eight bytes of each literal of an `exact` program as a word, after the
+ * mask of the bytes it has: what the search compares a candidate's first eight bytes with. */
+function literalWords(prog: Program): void {
+  for (let i: usize = 0; i < prog.literals.length; i++) {
+    const lit = prog.literals[i];
+    const n = strByteLen(lit) < 8 ? strByteLen(lit) : 8;
+    let word: u64 = 0;
+    for (let j: usize = 0; j < n; j++) {
+      word |= (strByteAt(lit, j as u64) as u64) << ((8 * j) as u64);
+    }
+    prog.litWord.push(n == 8 ? 0xffffffffffffffff : ((1 as u64) << ((8 * n) as u64)) - 1);
+    prog.litWord.push(word);
+  }
 }
 
 /** Fills in what `prog` knows about the matches of `tree`. */
@@ -275,8 +303,11 @@ export function analyze(prog: Program, tree: Node): void {
   }
   if (min > 0) {
     prog.literals = lits.list;
-    prog.exact = whole && lits.exact;
     if (chooseGrams(prog, lits.list, min)) {
+      prog.exact = whole && lits.exact;
+      if (prog.exact) {
+        literalWords(prog);
+      }
       return;
     }
   }

@@ -4,7 +4,7 @@
 // one thread per instruction, so a step costs at most the program's size.
 
 import { arrayTruncate, strDataAddress } from "velt/lang/intrinsics";
-import { backtrack, backtrackReset } from "velt/text/regex/backtrack";
+import { backtrack, backtrackReset, MATCHED } from "velt/text/regex/backtrack";
 import { charAt, holds } from "velt/text/regex/decode";
 import {
   OP_ASSERT,
@@ -17,6 +17,7 @@ import {
   OP_MATCH,
   OP_NONEMPTY,
   OP_SAVE,
+  OP_SPAN,
   OP_SPLIT,
   Program,
   SCAN_NONE,
@@ -121,7 +122,11 @@ function add(prog: Program, m: Search, s: string, len: usize, list: usize, pc0: 
         for (let k: usize = 0; k < ns; k++) {
           m.caps[row + k] = work[k];
         }
-        break;
+        if (op != OP_SPAN) {
+          break;
+        }
+        // A span's thread reads on; ending the span here comes after it.
+        pc++;
       }
     }
   }
@@ -145,7 +150,7 @@ export function pike(prog: Program, m: Search, s: string, len: usize, start: usi
   while (true) {
     if (!matched && (pos == start || !anchored)) {
       if (m.count[cur] == 0 && !anchored) {
-        const next = candidate(prog, s, pos, len);
+        const next = candidate(prog, m, s, pos, len);
         if (next < 0) {
           break;
         }
@@ -186,19 +191,17 @@ export function pike(prog: Program, m: Search, s: string, len: usize, start: usi
         matched = true;
         break;
       }
-      if (op != OP_CHAR && op != OP_CLASS) {
+      if (op != OP_CHAR && op != OP_CLASS && op != OP_SPAN) {
         continue;
       }
       const a = code[3 * pc + 1];
-      const hit = op == OP_CHAR ? c == a
-        : c < 0x80 ? prog.hasAscii(a, c)
-        : c != 0xffffffff && prog.sets[a].contains(c);
+      const hit = op == OP_CHAR ? c == a : c != 0xffffffff && prog.has(a, c);
       if (hit) {
         const row = (cur * n + pc) * ns;
         for (let k: usize = 0; k < ns; k++) {
           m.work[k] = m.caps[row + k];
         }
-        add(prog, m, s, len, next, pc + 1, pos + step);
+        add(prog, m, s, len, next, op == OP_SPAN ? pc : pc + 1, pos + step);
       }
     }
     cur = next;
@@ -209,7 +212,7 @@ export function pike(prog: Program, m: Search, s: string, len: usize, start: usi
       // Between the halves of a pair no thread reads a character, but the pattern may match
       // nothing there (decode.velt): a match that starts later than every thread's.
       backtrackReset(prog, m, pos + 1, pos + 1);
-      matched = backtrack(prog, m, s, len, pos + 1);
+      matched = backtrack(prog, m, s, len, pos + 1, true) == MATCHED;
       if (matched && ns == 0) {
         return true;
       }

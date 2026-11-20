@@ -19,6 +19,7 @@ import {
   OP_MATCH,
   OP_NONEMPTY,
   OP_SAVE,
+  OP_SPAN,
   OP_SPLIT,
   Program,
 } from "velt/text/regex/program";
@@ -80,6 +81,10 @@ export class Compiler {
       if (op == OP_SPLIT) {
         code[3 * (code[i + 2] as usize)] |= JOIN;
       }
+      if (op == OP_SPAN) {
+        code[i] |= JOIN;
+        code[i + 2] = this.nothingAfter(i / 3 + 1, this.prog.sets[code[i + 1]]) ? 1 : 0;
+      }
     }
     let n: u32 = 0;
     for (let i: usize = 0; i < code.length; i += 3) {
@@ -89,6 +94,50 @@ export class Compiler {
       }
     }
     this.prog.joins = n;
+  }
+
+  /** Can what the program matches from instruction `from` on start with no character of
+   * `set`? (When it may also be nothing at all, up to the match: that too.) */
+  private nothingAfter(from: usize, set: CharSet): bool {
+    const code = this.prog.code;
+    const seen: bool[] = [];
+    for (let i: usize = 0; i < code.length; i += 3) {
+      seen.push(false);
+    }
+    const todo: usize[] = [from];
+    while (todo.length > 0) {
+      const pc = todo.pop() ?? 0;
+      if (seen[pc]) {
+        continue;
+      }
+      seen[pc] = true;
+      const op = code[3 * pc] & 0xff;
+      const a = code[3 * pc + 1];
+      if (op == OP_CHAR) {
+        if (set.contains(a)) {
+          return false;
+        }
+      } else if (op == OP_CLASS || op == OP_SPAN) {
+        const both = set.copy();
+        both.intersect(this.prog.sets[a]);
+        if (both.ranges.length > 0) {
+          return false;
+        }
+        if (op == OP_SPAN) {
+          todo.push(pc + 1);
+        }
+      } else if (op == OP_SPLIT || op == OP_JUMP) {
+        todo.push(a as usize);
+        if (op == OP_SPLIT) {
+          todo.push(code[3 * pc + 2] as usize);
+        }
+      } else if (op == OP_SAVE || op == OP_CLEAR) {
+        todo.push(pc + 1);
+      } else if (op != OP_MATCH) {
+        return false;
+      }
+    }
+    return true;
   }
 
   private node(n: Node): void {
@@ -118,12 +167,17 @@ export class Compiler {
     const r = s.ranges;
     if (r.length == 0) {
       this.emit(OP_FAIL, 0, 0);
-      return;
-    }
-    if (r.length == 2 && r[0] == r[1]) {
+    } else if (r.length == 2 && r[0] == r[1]) {
       this.emit(OP_CHAR, r[0], 0);
-      return;
+    } else {
+      const index = this.setIndex(s);
+      this.emit(OP_CLASS, index, 0);
     }
+  }
+
+  /** Adds `s` to the program's sets; its index. */
+  private setIndex(s: CharSet): u32 {
+    const r = s.ranges;
     const prog = this.prog;
     let lo: u64 = 0;
     let hi: u64 = 0;
@@ -140,7 +194,18 @@ export class Compiler {
     prog.ascii.push(lo);
     prog.ascii.push(hi);
     prog.sets.push(s.copy());
-    this.emit(OP_CLASS, (prog.sets.length - 1) as u32, 0);
+    return (prog.sets.length - 1) as u32;
+  }
+
+  /** The set of the characters `n` matches, when `n` is one character of a set that is not
+   * empty; else null. */
+  private oneOf(n: Node): CharSet | null {
+    if (n.kind == CHAR) {
+      const s = new CharSet();
+      s.add(n.a, n.a);
+      return s;
+    }
+    return n.kind == SET && n.set != null && n.set.ranges.length > 0 ? n.set : null;
   }
 
   private alternation(n: Node): void {
@@ -178,7 +243,14 @@ export class Compiler {
         break;
       }
     }
+    const one = n.greedy && n.b == UNBOUNDED ? this.oneOf(n.kids[0]) : null;
+    if (one != null) {
+      const index = this.setIndex(one);
+      this.emit(OP_SPAN, index, 0);
+      return;
+    }
     if (n.b == UNBOUNDED) {
+      this.prog.plain = this.prog.plain && !canBeEmpty(n.kids[0]);
       const split = this.split(n.greedy);
       this.body(n, true);
       this.emit(OP_JUMP, split as u32, 0);
@@ -190,6 +262,7 @@ export class Compiler {
     for (let i = n.a; i < n.b; i++) {
       const before = this.here();
       if (empty) {
+        this.prog.plain = false;
         this.emit(OP_ENTER, this.prog.marks, 0);
       }
       exits.push(this.split(n.greedy));

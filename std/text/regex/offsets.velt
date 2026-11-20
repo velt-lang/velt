@@ -30,7 +30,7 @@ export function positionOf(s: string, unit: usize, units: bool): usize {
 }
 
 /** Is byte `at` of the `n` of `s` between the halves of a pair? */
-function inPair(s: string, at: usize, n: usize): bool {
+export function inPair(s: string, at: usize, n: usize): bool {
   return at < n && (strByteAt(s, at as u64) & 0xc0) == 0x80;
 }
 

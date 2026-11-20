@@ -61,6 +61,16 @@ export function charAt(base: usize, i: usize, units: bool): u32 {
   return top | (byteAt(base, i + 3) & 0x3f) | (4 << 24);
 }
 
+/** The position before the position at byte `i` (not 0) of the text at `base`. */
+export function before(base: usize, i: usize, units: bool): usize {
+  let p = i - 1;
+  while ((byteAt(base, p) & 0xc0) == 0x80) {
+    p--;
+  }
+  // Past a pair whose halves are characters of their own, the one before is its low half.
+  return units && i - p == 4 ? p + 1 : p;
+}
+
 /** Is the byte `b` an ASCII word character (`\w`)? */
 @inline("always")
 export function isWordByte(b: u32): bool {

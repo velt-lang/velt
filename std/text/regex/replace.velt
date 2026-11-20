@@ -1,32 +1,37 @@
 // velt/text (internal): JavaScript's `replace` and `split` with a regular expression, over the
 // matches of a program (find.velt).
 
-import { arrayTruncate, strByteAt, strByteLen } from "velt/lang/intrinsics";
-import { after, find } from "velt/text/regex/find";
-import { textOf } from "velt/text/regex/offsets";
+import {
+  addressArray,
+  arrayTruncate,
+  strByteAt,
+  strByteLen,
+  strDataAddress,
+  strLen,
+} from "velt/lang/intrinsics";
+import { after, find, findAll } from "velt/text/regex/find";
+import { inPair, textOf } from "velt/text/regex/offsets";
 import { Program } from "velt/text/regex/program";
-import { velt_rt_str_byte_slice } from "velt/text/regex/rt";
+import {
+  velt_rt_str_byte_slice,
+  velt_rt_strbuf_finish,
+  velt_rt_strbuf_new,
+  velt_rt_strbuf_push_u8s,
+  velt_rt_strbuf_push_str,
+} from "velt/text/regex/rt";
 import { Search } from "velt/text/regex/search";
 
-/** Where the search after the match `start..end` of a subject of `len` bytes goes on: at its
- * end, or one character further after an empty match; past `len` when the subject is done. */
-export function following(prog: Program, s: string, len: usize, start: usize, end: usize): usize {
-  if (end > start) {
-    return end;
-  }
-  return end >= len ? len + 1 : after(s, end, prog.units);
+/** The text of capture group `g` of the match whose slots start at `slots[at]`, `""` when it
+ * did not take part. */
+function group(s: string, slots: i64[], at: usize, g: usize): string {
+  const from = slots[at + 2 * g];
+  return from < 0 ? "" : textOf(s, from as usize, slots[at + 2 * g + 1] as usize);
 }
 
-/** The text of capture group `g` of the match in `slots`, `""` when it did not take part. */
-function group(s: string, slots: i64[], g: usize): string {
-  return slots[2 * g] < 0 ? "" : textOf(s, slots[2 * g] as usize, slots[2 * g + 1] as usize);
-}
-
-/** `$n` or `$nn` at the digit at byte `at` of `replacement`: appends the group's text to `out`
- * and returns how many digits name it, two when that group exists; 0 when no group does (the
- * `$` is then text). */
-function numbered(s: string, slots: i64[], replacement: string, at: usize, out: string[]): usize {
-  const groups = slots.length / 2 - 1;
+/** `$n` or `$nn` at the digit at byte `at` of `replacement`, for the match of `groups` groups
+ * whose slots start at `slots[base]`: appends the group's text to `out` and returns how many
+ * digits name it, two when that group exists; 0 when no group does (the `$` is then text). */
+function numbered(s: string, slots: i64[], base: usize, groups: usize, replacement: string, at: usize, out: string[]): usize {
   const d1 = (strByteAt(replacement, at as u64) - 0x30) as usize;
   let two: usize = 0;
   if (at + 1 < strByteLen(replacement)) {
@@ -34,19 +39,20 @@ function numbered(s: string, slots: i64[], replacement: string, at: usize, out: 
     two = c >= 0x30 && c <= 0x39 ? d1 * 10 + ((c - 0x30) as usize) : 0;
   }
   if (two >= 1 && two <= groups) {
-    out.push(group(s, slots, two));
+    out.push(group(s, slots, base, two));
     return 2;
   }
   if (d1 >= 1 && d1 <= groups) {
-    out.push(group(s, slots, d1));
+    out.push(group(s, slots, base, d1));
     return 1;
   }
   return 0;
 }
 
-/** `replacement` for the match of `s` in `slots`, with `$$ $& $\` $' $n $nn $<name>` expanded
- * as JavaScript's `GetSubstitution` does; `names` are the names of groups 1.. (`""`: none). */
-export function substitution(s: string, slots: i64[], names: string[], replacement: string): string {
+/** `replacement` for the match of `s` whose slots start at `slots[base]`, with `$$ $& $\` $'
+ * $n $nn $<name>` expanded as JavaScript's `GetSubstitution` does; `names` are the names of
+ * groups 1.. (`""`: none). */
+export function substitution(s: string, slots: i64[], base: usize, names: string[], replacement: string): string {
   const n = strByteLen(replacement);
   const parts: string[] = [];
   let from: usize = 0;
@@ -64,22 +70,22 @@ export function substitution(s: string, slots: i64[], names: string[], replaceme
       parts.push("$");
       used = 2;
     } else if (c == 0x26) {
-      parts.push(textOf(s, slots[0] as usize, slots[1] as usize));
+      parts.push(textOf(s, slots[base] as usize, slots[base + 1] as usize));
       used = 2;
     } else if (c == 0x60) {
-      parts.push(textOf(s, 0, slots[0] as usize));
+      parts.push(textOf(s, 0, slots[base] as usize));
       used = 2;
     } else if (c == 0x27) {
-      parts.push(textOf(s, slots[1] as usize, strByteLen(s)));
+      parts.push(textOf(s, slots[base + 1] as usize, strByteLen(s)));
       used = 2;
     } else if (c >= 0x30 && c <= 0x39) {
-      const digits = numbered(s, slots, replacement, i + 1, parts);
+      const digits = numbered(s, slots, base, names.length, replacement, i + 1, parts);
       used = digits == 0 ? 0 : digits + 1;
     } else if (c == 0x3c && names.some((name) => name != "")) {
       const close = replacement.indexOf(">", (i + 2) as i64);
       if (close >= 0) {
         const g = names.indexOf(replacement.slice((i + 2) as i64, close)) + 1;
-        parts.push(g > 0 ? group(s, slots, g as usize) : "");
+        parts.push(g > 0 ? group(s, slots, base, g as usize) : "");
         used = close as usize + 1 - i;
       }
     }
@@ -95,32 +101,56 @@ export function substitution(s: string, slots: i64[], names: string[], replaceme
   return parts.join("");
 }
 
+/** The most bytes of a subject appended to a builder where they are. */
+const MAX_PIECE: usize = 1 << 30;
+/** What tells the builder to count a piece's code units itself. */
+const UNCOUNTED: u64 = 0xffffffffffffffff;
+
 /** `s` with the first match of `prog` (every match when `all`) replaced by `replacement`,
- * expanded as `substitution` does. */
+ * expanded as `substitution` does. The result is built in one buffer, the text between two
+ * matches copied into it from the subject's own bytes. */
 export function replaceMatches(prog: Program, names: string[], s: string, replacement: string, all: bool): string {
   const plain = !replacement.includes("$");
-  const m = new Search(prog, plain ? 2 : 2 * (prog.groups as usize) + 2);
+  const stride = plain ? 2 : 2 * (prog.groups as usize) + 2;
+  const m = new Search(prog, stride);
   const len = strByteLen(s);
-  let out = "";
-  let last: usize = 0;
-  let pos: usize = 0;
-  let found = false;
-  while (pos <= len && find(prog, m, s, pos, false)) {
-    const start = m.slots[0] as usize;
-    const end = m.slots[1] as usize;
-    found = true;
-    out += textOf(s, last, start);
-    out += plain ? replacement : substitution(s, m.slots, names, replacement);
-    last = end;
-    if (!all) {
-      break;
-    }
-    pos = following(prog, s, len, start, end);
+  const ascii = strLen(s) == len;
+  if (all) {
+    findAll(prog, m, s);
+  } else if (find(prog, m, s, 0, false)) {
+    m.found = m.slots;
   }
-  if (!found) {
+  const found = m.found;
+  if (found.length == 0) {
     return s;
   }
-  out += textOf(s, last, len);
+  let buf = "";
+  velt_rt_strbuf_new(len as u64, buf);
+  let last: usize = 0;
+  for (let at: usize = 0; at < found.length; at += stride) {
+    const start = found[at] as usize;
+    if (start > last) {
+      const n = (start - last) as u64;
+      if (start - last > MAX_PIECE || inPair(s, last, len) || inPair(s, start, len)) {
+        const piece = textOf(s, last, start);
+        velt_rt_strbuf_push_str(buf, piece);
+      } else {
+        const piece: u8[] = unsafe { addressArray<u8>(strDataAddress(s) + last, start - last) };
+        velt_rt_strbuf_push_u8s(buf, piece, n, ascii ? n : UNCOUNTED);
+      }
+    }
+    if (plain) {
+      velt_rt_strbuf_push_str(buf, replacement);
+    } else {
+      const text = substitution(s, found, at, names, replacement);
+      velt_rt_strbuf_push_str(buf, text);
+    }
+    last = found[at + 1] as usize;
+  }
+  const rest = textOf(s, last, len);
+  velt_rt_strbuf_push_str(buf, rest);
+  let out = "";
+  velt_rt_strbuf_finish(buf, out);
   return out;
 }
 
@@ -151,7 +181,7 @@ export function splitMatches(prog: Program, s: string, limit: usize): string[] {
     }
     parts.push(textOf(s, last, start));
     for (let g: usize = 1; g <= (prog.groups as usize); g++) {
-      parts.push(group(s, m.slots, g));
+      parts.push(group(s, m.slots, 0, g));
     }
     if (limit != 0 && parts.length >= limit) {
       arrayTruncate(parts, limit);

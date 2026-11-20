@@ -158,23 +158,23 @@ fn whole_header_copy(rhs: &str) -> bool {
 
 #[test]
 fn a_runtime_function_gets_an_array_of_a_view_type_in_place() {
-    // #1831: `i64[]` is a view type here, so its arrays are boxed. `RegExp.execAt` passes its
-    // offsets array to `velt_rt_regex_exec`, which writes the header (a new buffer and length):
-    // the extern gets the box's own header, not a copy of it in a temporary (whose writes would
-    // be lost), and the view's mirror is written back after the call.
+    // #1831: `u8[]` is a view type here, so its arrays are boxed. `Buffer.concat` passes its
+    // result array to `velt_rt_bytes_copy`, which writes its bytes: the extern gets the box's
+    // own header, not a copy of it in a temporary (whose writes would be lost), and the view's
+    // mirror is written back after the call.
     let vir = vir_of(
-        "const ns: any = [1];\nconst is = ns as i64[];\nconsole.log(is.length, /a/.exec(\"ba\")?.index);\n",
+        "const ns: any = [1];\nconst bs = ns as u8[];\nconsole.log(bs.length, Buffer.concat([Buffer.from(\"ab\"), Buffer.from(\"c\")]).length);\n",
     );
-    let exec = fn_lines(&vir, "6RegExpM6execAt(");
+    let exec = fn_lines(&vir, "6BufferM6concat(");
     let call = exec
         .iter()
-        .position(|l| l.contains("call extern#") && l.contains("velt_rt_regex_exec("))
-        .unwrap_or_else(|| panic!("no call of `velt_rt_regex_exec`:\n{}", exec.join("\n")));
+        .position(|l| l.contains("call extern#") && l.contains("velt_rt_bytes_copy("))
+        .unwrap_or_else(|| panic!("no call of `velt_rt_bytes_copy`:\n{}", exec.join("\n")));
     let arg = exec[call]
-        .rsplit_once(", ")
-        .and_then(|(_, a)| a.split_once(')'))
+        .split_once("velt_rt_bytes_copy(")
+        .and_then(|(_, a)| a.split_once(','))
         .map(|(a, _)| a.trim())
-        .unwrap_or_else(|| panic!("cannot read the last argument of {}", exec[call]));
+        .unwrap_or_else(|| panic!("cannot read the first argument of {}", exec[call]));
     let def = |local: &str| -> Vec<&str> {
         let lhs = format!("{local} = ");
         (exec.iter())
@@ -185,7 +185,7 @@ fn a_runtime_function_gets_an_array_of_a_view_type_in_place() {
         if let Some(tmp) = rhs.strip_prefix('&') {
             assert!(
                 !def(tmp).into_iter().any(whole_header_copy),
-                "the offsets argument `{arg}` is a copy of the header:\n{}",
+                "the target argument `{arg}` is a copy of the header:\n{}",
                 exec.join("\n")
             );
         }

@@ -43,7 +43,12 @@ export const SCAN_GRAMS: u32 = 1;
 /** By `first`. */
 export const SCAN_FIRST: u32 = 2;
 
-/** Set in the operation of an instruction that a jump or a split leads to. */
+/** As many characters of set `a` as there are (a greedy `[…]*`); `b` is 1 when what follows
+ * can start with none of them, so that giving one back never helps. */
+export const OP_SPAN: u32 = 11;
+
+/** Set in the operation of an instruction that a jump or a split leads to, and of every
+ * `OP_SPAN`: the states the backtracker remembers. */
 export const JOIN: u32 = 0x100;
 /** The operation without its flags. */
 export const OP_MASK: u32 = 0xff;
@@ -61,6 +66,9 @@ export class Program {
   joins: u32 = 0;
   /** How many marks `OP_ENTER` and `OP_NONEMPTY` use. */
   marks: u32 = 0;
+  /** No loop's body can match nothing and nothing is marked: backtracking without a memory
+   * of the states it has been in finds the same match (backtrack.velt). */
+  plain: bool = true;
   /** Capture groups, not counting the whole match. */
   groups: u32 = 0;
   /** Characters are UTF-16 code units (no `u` flag): a pair of the subject is two. */
@@ -72,10 +80,14 @@ export class Program {
    * starts with, or none. */
   literals: string[] = [];
   exact: bool = false;
+  /** Of an `exact` program: per literal, the mask of the first eight bytes it has, then those
+   * bytes as a word (the first byte lowest). */
+  litWord: u64[] = [];
   /** How the search finds where a match may start (prefilter.velt): `SCAN_…`. */
   scan: u32 = 0;
-  /** `SCAN_GRAMS`: every match has one of the byte tuples of `grams` (`gramSize` bytes each)
-   * at the offsets `gramAt` from its start, and is at least `minBytes` long. */
+  /** `SCAN_GRAMS`: every match has one of the byte tuples of `grams` (`gramSize` bytes each;
+   * one, two or four tuples) at the offsets `gramAt` from its start, and is at least `minBytes`
+   * long. */
   grams: u8[] = [];
   gramAt: usize[] = [];
   gramSize: usize = 0;
@@ -86,6 +98,11 @@ export class Program {
   /** Instructions. */
   get length(): usize {
     return this.code.length / 3;
+  }
+
+  /** Is the character `c` in set `set`? */
+  has(set: u32, c: u32): bool {
+    return c < 0x80 ? this.hasAscii(set, c) : this.sets[set].contains(c);
   }
 
   /** Is the ASCII character `c` in set `set`? */
