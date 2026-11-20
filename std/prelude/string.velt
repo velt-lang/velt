@@ -61,6 +61,24 @@ function sliceOf(s: string, start: i64, end: i64): string {
   return velt_rt_str_slice(s, start, end);
 }
 
+// `split` without a limit: the largest `ToUint32`.
+const NO_LIMIT: number = 4294967295;
+
+/** JS's `ToUint32` of `split`'s limit: nothing to do when none was given. */
+@inline("always")
+function splitLimit(limit: number): u32 {
+  return limit == NO_LIMIT ? 0xffffffff : splitLimitOf(limit);
+}
+
+/** `ToUint32(limit)`: NaN and the infinities are 0, another number its integer part modulo 2^32. */
+function splitLimitOf(limit: number): u32 {
+  if (limit != limit || limit == Infinity || limit == -Infinity) {
+    return 0;
+  }
+  const r = Math.trunc(limit) % 4294967296;
+  return (r < 0 ? r + 4294967296 : r) as u32;
+}
+
 // "Omitted" end / from positions, as the runtime expects them.
 const END: i64 = 9223372036854775807;
 // The most bytes a string holds (velt_rt `str/heap.rs` `MAX_CAP`): `repeat` past it is a RangeError.
@@ -127,10 +145,12 @@ extend string {
 
   /**
    * JS semantics: "a,b,".split(",") is ["a", "b", ""]; split("") gives the code units (a
-   * surrogate pair splits into its two halves).
+   * surrogate pair splits into its two halves). With a `limit`, at most that many pieces, the
+   * first ones: `"a,b,c".split(",", 2)` is `["a", "b"]`. The limit is converted as JS's
+   * `ToUint32`: 0 and NaN give `[]`, -1 is no limit.
    */
-  split(sep: string): string[] {
-    return velt_rt_str_split(this, sep);
+  split(sep: string, limit: number = NO_LIMIT): string[] {
+    return hookCall("string_split", this, sep, splitLimit(limit));
   }
 
   /** Strips JS whitespace and line terminators. */
