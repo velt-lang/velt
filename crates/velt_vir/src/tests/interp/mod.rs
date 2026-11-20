@@ -31,6 +31,8 @@ pub(super) struct Outcome {
     pub live_allocs: usize,
     /// Number of heap blocks freed by `velt_rt_str_drop`.
     pub frees: usize,
+    /// Heap blocks allocated, freed or not.
+    pub allocations: usize,
     /// Calls of `velt_rt_drop_state`: the drops bracketed for the depth limit.
     pub drop_states: usize,
 }
@@ -72,6 +74,7 @@ struct Interp<'p> {
     stderr: String,
     steps: u64,
     frees: usize,
+    allocations: usize,
     /// `velt_rt_set_throw_loc`'s slot (address of a static string, 0 = none).
     throw_loc: u64,
     /// Emulated async runtime (async_rt.rs, net.rs).
@@ -112,6 +115,7 @@ fn run_in(mut it: Interp) -> Outcome {
         code,
         live_allocs: if normal { it.allocs.len() } else { 0 },
         frees: it.frees,
+        allocations: it.allocations,
         drop_states: it.drops.calls,
     }
 }
@@ -130,6 +134,7 @@ impl<'p> Interp<'p> {
             stderr: String::new(),
             steps: 0,
             frees: 0,
+            allocations: 0,
             throw_loc: 0,
             exec: async_rt::Exec::default(),
             drops: drops::Drops::default(),
@@ -163,6 +168,7 @@ impl Interp<'_> {
     fn heap_alloc(&mut self, size: u64) -> u64 {
         let a = self.raw_alloc(size.max(1));
         self.allocs.insert(a, size.max(1));
+        self.allocations += 1;
         a
     }
 
