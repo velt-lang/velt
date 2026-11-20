@@ -5,14 +5,16 @@
 //! (`velt_vir::LowerOptions::heap_hooks`: release builds for native targets), so without them
 //! this does nothing.
 //!
-//! An allocation becomes the hook's only when its size is a constant here (objects, closure
-//! environments, counted boxes), where the hook folds to the mimalloc call and its null check.
-//! An array buffer of a run-time length, and array growth (`velt_rt_realloc`), keep the
-//! runtime's calls: with std's hooks inlined there (or the reallocation out of line), LLVM
-//! compiled the loops that fill or push into such a buffer differently (a peeled first
-//! iteration and two more induction variables in the hot path; bench/hashmap.velt +4.7% and
-//! bench/closures.velt +4.1% by instructions), which the runtime's opaque, `allockind` calls
-//! don't cause.
+//! An allocation of a size that is a constant here (objects, closure environments, counted
+//! boxes) calls the hook itself, which folds to the mimalloc call and its null check. An array
+//! buffer of a run-time length and array growth (`velt_rt_realloc`) call a wrapper of the hook
+//! instead ([`ALLOC_WRAPPER`], [`REALLOC_WRAPPER`]): a function with the runtime function's own
+//! signature that calls the hook (inlined into it) and stays out of line. velt_codegen_llvm gives
+//! it the runtime function's allocator attributes (rt_abi.md "Memory"), so the loops that fill
+//! or push into such a buffer see the same opaque `allockind` call as before. With the hook
+//! inlined into them, or a plain call of it, LLVM compiled those loops differently (a peeled
+//! first iteration and two more induction variables in the hot path; bench/hashmap.velt +4.7%
+//! and bench/closures.velt +4.1% by instructions).
 //!
 //! It runs last, once no pass reads the allocator calls any more (`heap_sroa`, `dead_fills`,
 //! `vtable_loads`, … find them by the runtime's symbols), and until then [`dead_funcs`]
@@ -22,15 +24,18 @@
 //! call and the result back to `ptr` in a block of its own after it.
 
 use velt_vir::vir::{
-    BasicBlock, BlockId, Callee, ExternFn, ExternId, FuncId, Function, LocalDecl, Operand, Place,
-    Program, Rvalue, Stmt, Terminator, Ty,
+    BasicBlock, BlockId, Callee, ExternFn, ExternId, FuncId, Function, Inline, Linkage, LocalDecl,
+    Operand, Place, Program, Rvalue, Stmt, Terminator, Ty,
 };
 
 /// The runtime allocator's externs and std's hook for each.
-const HOOKS: [(&str, &str); 2] = [
+const HOOKS: [(&str, &str); 3] = [
     ("velt_rt_alloc", velt_common::std_hook!(heap_alloc)),
+    ("velt_rt_realloc", velt_common::std_hook!(heap_realloc)),
     ("velt_rt_free", velt_common::std_hook!(heap_free)),
 ];
+
+use velt_vir::heap::{ALLOC_WRAPPER, REALLOC_WRAPPER};
 
 /// The allocator externs `program` declares, each with the hook the program has for it.
 pub(crate) fn pairs(program: &Program) -> Vec<(ExternId, FuncId)> {
@@ -58,37 +63,122 @@ pub(crate) fn run(program: &mut Program) -> bool {
     if pairs.is_empty() {
         return false;
     }
-    let mut changed = false;
     let hooks: Vec<FuncId> = pairs.iter().map(|&(_, h)| h).collect();
-    for (i, func) in program.funcs.iter_mut().enumerate() {
-        // A hook's own calls stay (it is what they become).
-        if !hooks.contains(&FuncId(i as u32)) {
-            changed |= run_func(&pairs, &program.externs, func);
+    // A hook's own calls stay (it is what they become).
+    let callers = |p: &Program| {
+        (0..p.funcs.len() as u32)
+            .map(FuncId)
+            .filter(|f| !hooks.contains(f))
+            .collect::<Vec<_>>()
+    };
+    // The wrappers the calls need, made first (they call the hooks, not the externs).
+    let mut wrappers = Wrappers::default();
+    for f in callers(program) {
+        for b in &program.funcs[f.0 as usize].blocks {
+            if let Some((e, hook)) = paired(&pairs, &b.term) {
+                match wrapped(&program.externs[e.0 as usize], &b.term) {
+                    Some(ALLOC_WRAPPER) if wrappers.alloc.is_none() => {
+                        wrappers.alloc = Some((e, hook));
+                    }
+                    Some(REALLOC_WRAPPER) if wrappers.realloc.is_none() => {
+                        wrappers.realloc = Some((e, hook));
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    let alloc = wrappers.alloc.map(|(e, h)| wrapper_of(program, e, h, ALLOC_WRAPPER));
+    let realloc = (wrappers.realloc).map(|(e, h)| wrapper_of(program, e, h, REALLOC_WRAPPER));
+    let mut changed = false;
+    for f in callers(program) {
+        let func = &mut program.funcs[f.0 as usize];
+        for b in 0..func.blocks.len() {
+            let Some((e, hook)) = paired(&pairs, &func.blocks[b].term) else {
+                continue;
+            };
+            let ext = &program.externs[e.0 as usize];
+            let wrapper = match wrapped(ext, &func.blocks[b].term) {
+                Some(ALLOC_WRAPPER) => alloc,
+                Some(_) => realloc,
+                None => None,
+            };
+            match wrapper {
+                Some(w) => {
+                    let Terminator::Call { callee, .. } = &mut func.blocks[b].term else {
+                        unreachable!("ICE: heap_calls rewrites a call")
+                    };
+                    *callee = Callee::Func(w);
+                }
+                None => rewrite(func, b, &ext.params, hook),
+            }
+            changed = true;
         }
     }
     changed
 }
 
-fn run_func(pairs: &[(ExternId, FuncId)], externs: &[ExternFn], func: &mut Function) -> bool {
-    let mut changed = false;
-    for b in 0..func.blocks.len() {
-        let Terminator::Call {
-            callee: Callee::Extern(e),
-            ..
-        } = &func.blocks[b].term
-        else {
-            continue;
-        };
-        let Some(&(e, hook)) = pairs.iter().find(|(x, _)| x == e) else {
-            continue;
-        };
-        if externs[e.0 as usize].symbol == "velt_rt_alloc" && !constant_size(&func.blocks[b].term) {
-            continue;
-        }
-        rewrite(func, b, &externs[e.0 as usize].params, hook);
-        changed = true;
+/// The first call of each wrapper (module docs): its extern and that extern's hook.
+#[derive(Default)]
+struct Wrappers {
+    alloc: Option<(ExternId, FuncId)>,
+    realloc: Option<(ExternId, FuncId)>,
+}
+
+/// The allocator extern `term` calls and its hook, if it calls one that has a hook.
+fn paired(pairs: &[(ExternId, FuncId)], term: &Terminator) -> Option<(ExternId, FuncId)> {
+    let Terminator::Call {
+        callee: Callee::Extern(e),
+        ..
+    } = term
+    else {
+        return None;
+    };
+    pairs.iter().find(|(x, _)| x == e).copied()
+}
+
+/// The wrapper the call `term` of `ext` goes through, if not the hook itself (module docs).
+fn wrapped(ext: &ExternFn, term: &Terminator) -> Option<&'static str> {
+    match ext.symbol.as_str() {
+        "velt_rt_alloc" if !constant_size(term) => Some(ALLOC_WRAPPER),
+        "velt_rt_realloc" => Some(REALLOC_WRAPPER),
+        _ => None,
     }
-    changed
+}
+
+/// Adds the wrapper `symbol` of extern `e`'s `hook` to `program`: `e`'s signature, a body that
+/// calls `hook`, out of line (`Inline::Never`).
+fn wrapper_of(program: &mut Program, e: ExternId, hook: FuncId, symbol: &str) -> FuncId {
+    if let Some(f) = program.funcs.iter().position(|f| f.symbol == symbol) {
+        return FuncId(f as u32);
+    }
+    let ext = &program.externs[e.0 as usize];
+    let params = ext.params.clone();
+    let mut f = Function::new(symbol.to_string(), params.clone(), ext.ret, Linkage::Internal);
+    f.inline = Inline::Never;
+    let result = new_local(&mut f, ext.ret);
+    let args = (0..params.len())
+        .map(|i| Operand::Copy(Place::local(velt_vir::vir::Local(i as u32))))
+        .collect();
+    f.blocks = vec![
+        BasicBlock {
+            stmts: vec![],
+            term: Terminator::Call {
+                callee: Callee::Extern(e),
+                args,
+                dest: Some(Place::local(result)),
+                next: BlockId(1),
+                unwind: None,
+            },
+        },
+        BasicBlock {
+            stmts: vec![],
+            term: Terminator::Return(Operand::Copy(Place::local(result))),
+        },
+    ];
+    rewrite(&mut f, 0, &params, hook);
+    program.funcs.push(f);
+    FuncId(program.funcs.len() as u32 - 1)
 }
 
 /// The call ending block `b` made a call of `hook`, its pointer operands (`params` are the
@@ -189,8 +279,8 @@ mod tests {
         fb.finish()
     }
 
-    /// `main` allocates, grows and frees through the runtime's externs; with `hooks` the program
-    /// has std's hooks too.
+    /// `main(n)` allocates 16 bytes, grows them, frees them and allocates `n` bytes through the
+    /// runtime's externs; with `hooks` the program has std's hooks too (functions 0 to 2).
     fn program(hooks: bool) -> Program {
         let mut pb = ProgramBuilder::new();
         let alloc = pb.ext("velt_rt_alloc", &[Ty::U64, Ty::U64], Ty::Ptr, false);
@@ -214,8 +304,11 @@ mod tests {
                 &[u, u, u],
                 Ty::Unit,
             ));
+            let realloc = velt_common::std_hook!(heap_realloc);
+            pb.add(hook(realloc, &[u, u, u, u], u));
         }
-        let mut fb = FuncBuilder::export("main", &[], Ty::Unit);
+        let mut fb = FuncBuilder::export("main", &[Ty::U64], Ty::Unit);
+        let n = fb.param(0);
         let p = fb.local(Ty::Ptr);
         let b = fb.block();
         let args = vec![int(16, Ty::U64), int(8, Ty::U64)];
@@ -229,6 +322,8 @@ mod tests {
         let b = fb.call(b, Callee::Extern(realloc), args, Some(p));
         let args = vec![copy_local(p), int(64, Ty::U64), int(8, Ty::U64)];
         let b = fb.call(b, Callee::Extern(free), args, None);
+        let args = vec![copy_local(n), int(8, Ty::U64)];
+        let b = fb.call(b, Callee::Extern(alloc), args, Some(p));
         fb.ret(b, Operand::Const(velt_vir::vir::Const::Unit, Ty::Unit));
         pb.add(fb.finish());
         pb.finish()
@@ -244,31 +339,50 @@ mod tests {
             .collect()
     }
 
+    fn func<'p>(p: &'p Program, symbol: &str) -> (FuncId, &'p Function) {
+        let i = p.funcs.iter().position(|f| f.symbol == symbol).unwrap();
+        (FuncId(i as u32), &p.funcs[i])
+    }
+
     #[test]
     fn each_allocator_call_becomes_its_hooks() {
         let mut p = program(true);
         assert!(run(&mut p));
         assert_valid(&p);
-        let main = p.funcs.iter().find(|f| f.symbol == "main").unwrap();
+        let (alloc, alloc_wrapper) = func(&p, ALLOC_WRAPPER);
+        let (realloc, realloc_wrapper) = func(&p, REALLOC_WRAPPER);
+        let (_, main) = func(&p, "main");
+        // The constant size and the free call their hooks; the growth and the run-time size the
+        // wrappers.
         assert_eq!(
             callees(main),
             [
                 Callee::Func(FuncId(0)),
-                Callee::Extern(ExternId(1)),
-                Callee::Func(FuncId(1))
+                Callee::Func(realloc),
+                Callee::Func(FuncId(1)),
+                Callee::Func(alloc),
             ]
         );
-        // The reallocation stays the runtime's. The pointer argument of the free and the
-        // allocation's result, cast.
-        let casts = main.blocks.iter().flat_map(|b| &b.stmts);
-        assert_eq!(
-            casts
+        // The pointer argument of the free and the first allocation's result, cast.
+        let casts = |f: &Function| {
+            (f.blocks.iter().flat_map(|b| &b.stmts))
                 .filter(|s| matches!(s, Stmt::Assign(_, Rvalue::Cast(..))))
-                .count(),
-            2
-        );
+                .count()
+        };
+        assert_eq!(casts(main), 2);
+        // Each wrapper has its runtime function's signature, stays out of line, and calls the
+        // hook with its pointers cast: the result, and the block to grow.
+        for (w, ext, hook, n) in [(alloc_wrapper, 0, 0, 1), (realloc_wrapper, 1, 2, 2)] {
+            let e = &p.externs[ext];
+            assert_eq!((&w.params, w.ret), (&e.params, e.ret), "{}", w.symbol);
+            assert_eq!(w.inline, Inline::Never);
+            assert_eq!(w.linkage, Linkage::Internal);
+            assert_eq!(callees(w), [Callee::Func(FuncId(hook))], "{}", w.symbol);
+            assert_eq!(casts(w), n, "{}", w.symbol);
+        }
         // Nothing left to do.
         assert!(!run(&mut p));
+        assert_eq!(p.funcs.len(), 6);
     }
 
     #[test]
@@ -277,16 +391,17 @@ mod tests {
         assert!(!run(&mut p));
         let main = p.funcs.iter().find(|f| f.symbol == "main").unwrap();
         assert!(callees(main).iter().all(|c| matches!(c, Callee::Extern(_))));
+        assert_eq!(p.funcs.len(), 1, "no wrappers");
     }
 
     #[test]
     fn unused_functions_keep_a_hook_while_its_extern_is_called() {
         let mut p = program(true);
         crate::dead_funcs::run(&mut p);
-        assert_eq!(p.funcs.len(), 3, "the hooks stay for heap_calls");
+        assert_eq!(p.funcs.len(), 4, "the hooks stay for heap_calls");
         run(&mut p);
         crate::dead_funcs::run(&mut p);
-        assert_eq!(p.funcs.len(), 3, "the hooks are called");
+        assert_eq!(p.funcs.len(), 6, "the hooks and the wrappers are called");
         assert_valid(&p);
     }
 }

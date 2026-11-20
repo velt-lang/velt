@@ -231,15 +231,43 @@ fn past_the_limit_or_memory_the_program_stops_with_the_runtimes_messages() {
     );
 }
 
-/// The VIR of `main` built with `args` (and `env` set) calls the runtime's allocator, or std's
-/// hooks in its place.
-fn calls(dir: &test_dir::TestDir, args: &[&str], env: &[(&str, &str)]) -> (bool, bool) {
-    let main = "class Point {\n  constructor(public x: number, public y: number) {}\n}\n\
-                function main() {\n  const ps: Point[] = [];\n  for (let i = 0; i < 3; i++) {\n    \
-                ps.push(new Point(i, i));\n  }\n  console.log(ps.length);\n}\n";
-    std::fs::write(dir.path().join("points.velt"), main).unwrap();
+/// What the VIR of `points.velt` calls: the runtime's allocator, or std's hooks in its place.
+#[derive(Debug, PartialEq)]
+struct Calls {
+    /// `velt_rt_alloc` and `velt_rt_realloc`, each.
+    runtime: (bool, bool),
+    /// std's `heapAlloc`.
+    hooks: bool,
+    /// velt_opt's wrappers of the hooks, for the run-time size and the growth, each.
+    wrappers: (bool, bool),
+}
+
+/// The runtime's allocator throughout.
+const RUNTIME: Calls = Calls {
+    runtime: (true, true),
+    hooks: false,
+    wrappers: (false, false),
+};
+
+/// std's hooks throughout: the constant sizes directly, the rest through the wrappers.
+const HOOKS: Calls = Calls {
+    runtime: (false, false),
+    hooks: true,
+    wrappers: (true, true),
+};
+
+/// A program that allocates a constant size (`Point`), a run-time size (`xs`) and grows an
+/// array (`push`).
+const POINTS: &str = "class Point {\n  constructor(public x: number, public y: number) {}\n}\n\
+    function main() {\n  const ps: Point[] = [];\n  for (let i = 0; i < 3; i++) {\n    \
+    ps.push(new Point(i, i));\n  }\n  const xs = new Array<number>(ps.length + 5).fill(1);\n  \
+    console.log(ps.length, xs.length);\n}\n";
+
+/// `velt build --emit <emit>` of `points.velt` with `args` (and `env` set).
+fn emit(dir: &test_dir::TestDir, emit: &str, args: &[&str], env: &[(&str, &str)]) -> String {
+    std::fs::write(dir.path().join("points.velt"), POINTS).unwrap();
     let mut cmd = no_window::command(env!("CARGO_BIN_EXE_velt"));
-    cmd.args(["build", "--emit", "vir"])
+    cmd.args(["build", "--emit", emit])
         .args(args)
         .arg("points.velt")
         .env("VELT_STD", dir.path().join("std"))
@@ -251,12 +279,18 @@ fn calls(dir: &test_dir::TestDir, args: &[&str], env: &[(&str, &str)]) -> (bool,
     for (k, v) in env {
         cmd.env(k, v);
     }
-    let vir = text("vir", &cmd.output().unwrap());
-    let runtime = vir
-        .lines()
-        .any(|l| l.contains("call") && l.contains("velt_rt_alloc"));
-    let hooks = vir.contains("P4heapN9heapAlloc");
-    (runtime, hooks)
+    text(emit, &cmd.output().unwrap())
+}
+
+/// What the VIR of `points.velt` built with `args` (and `env` set) calls.
+fn calls(dir: &test_dir::TestDir, args: &[&str], env: &[(&str, &str)]) -> Calls {
+    let vir = emit(dir, "vir", args, env);
+    let called = |name: &str| vir.lines().any(|l| l.contains("call") && l.contains(name));
+    Calls {
+        runtime: (called("velt_rt_alloc"), called("velt_rt_realloc")),
+        hooks: vir.contains("P4heapN9heapAlloc"),
+        wrappers: (called("velt.heap.alloc"), called("velt.heap.realloc")),
+    }
 }
 
 #[test]
@@ -264,23 +298,67 @@ fn release_builds_call_the_hooks_and_debug_builds_the_runtime() {
     let dir = test_dir::TestDir::new();
     probe_std(&dir);
     let on = ("VELT_HEAP_HOOKS", "1");
-    assert_eq!(calls(&dir, &["--release"], &[on]), (false, true));
-    assert_eq!(calls(&dir, &[], &[on]), (true, false));
+    assert_eq!(calls(&dir, &["--release"], &[on]), HOOKS);
+    // A debug build, whose runtime counts every block (`VELT_RC_STATS`), and WebAssembly, whose
+    // runtime keeps its allocator, call the runtime's.
+    assert_eq!(calls(&dir, &[], &[on]), RUNTIME);
+    let wasm = ["--release", "--target", "wasm32-wasip1"];
+    assert_eq!(calls(&dir, &wasm, &[on]), RUNTIME);
     // Asked to count or check blocks, a release build keeps the runtime's allocator.
     let counted = ("VELT_RC_STATS", "1");
-    assert_eq!(calls(&dir, &["--release"], &[on, counted]), (true, false));
+    assert_eq!(calls(&dir, &["--release"], &[on, counted]), RUNTIME);
     let checked = ("VELT_RT_DEBUG_ALLOC", "1");
-    assert_eq!(calls(&dir, &["--release"], &[on, checked]), (true, false));
-    assert_eq!(
-        calls(&dir, &["--release"], &[("VELT_HEAP_HOOKS", "0")]),
-        (true, false)
-    );
+    assert_eq!(calls(&dir, &["--release"], &[on, checked]), RUNTIME);
+    let off = ("VELT_HEAP_HOOKS", "0");
+    assert_eq!(calls(&dir, &["--release"], &[off]), RUNTIME);
     // Without the variable, the runtime decides: a debug one (this profile's) keeps its
     // allocator, so the program may still run with its checks and counts.
     let plain = calls(&dir, &["--release"], &[]);
     if cfg!(debug_assertions) {
-        assert_eq!(plain, (true, false));
+        assert_eq!(plain, RUNTIME);
     }
+}
+
+/// The wrappers are the runtime's allocator to LLVM (rt_abi.md "Memory"): their definitions
+/// carry `velt_rt_alloc`'s and `velt_rt_realloc`'s attributes, and stay out of line, so a loop
+/// that grows an array sees the same call as with the runtime's.
+#[test]
+fn the_wrappers_carry_the_runtime_allocators_attributes() {
+    let dir = test_dir::TestDir::new();
+    probe_std(&dir);
+    let ir = emit(&dir, "llvm", &["--release"], &[("VELT_HEAP_HOOKS", "1")]);
+    let define = |name: &str| {
+        let at = format!("@\"{name}\"(");
+        let line = ir.lines().find(|l| l.starts_with("define") && l.contains(&at));
+        line.unwrap_or_else(|| panic!("no definition of {name}:\n{ir}"))
+    };
+    let group = |n: &str| {
+        let line = ir.lines().find(|l| l.starts_with(&format!("attributes {n} =")));
+        line.unwrap_or_else(|| panic!("no attribute group {n}"))
+    };
+    let alloc = define("velt.heap.alloc");
+    assert!(alloc.contains(" noalias noundef ptr "), "{alloc}");
+    assert!(alloc.contains("i64 noundef allocalign"), "{alloc}");
+    let realloc = define("velt.heap.realloc");
+    assert!(realloc.contains(" noalias noundef ptr "), "{realloc}");
+    assert!(realloc.contains("ptr noundef allocptr"), "{realloc}");
+    // Its attributes and its groups'.
+    let attrs = |line: &str| {
+        let groups = (line.split_whitespace())
+            .filter(|w| w.starts_with('#'))
+            .map(|w| group(w).to_string());
+        groups.fold(line.to_string(), |all, g| all + "\n" + &g)
+    };
+    let alloc_groups = attrs(alloc);
+    assert!(alloc_groups.contains("noinline"), "{alloc_groups}");
+    assert!(alloc_groups.contains("allockind(\"alloc,uninitialized,aligned\")"));
+    assert!(alloc_groups.contains("allocsize(0)"));
+    assert!(alloc_groups.contains("\"alloc-family\"=\"velt_rt_alloc\""));
+    let realloc_groups = attrs(realloc);
+    assert!(realloc_groups.contains("noinline"), "{realloc_groups}");
+    assert!(realloc_groups.contains("allockind(\"realloc,aligned\")"));
+    assert!(realloc_groups.contains("allocsize(3)"));
+    assert!(realloc_groups.contains("\"alloc-family\"=\"velt_rt_alloc\""));
 }
 
 const COUNTED: &str = r#"
