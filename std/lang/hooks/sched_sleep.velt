@@ -126,11 +126,12 @@ function sleepPoll(f: usize, cx: usize): u32 {
   // Loaded as shared: a worker that gave this sleep up stored its state last
   // (sched_sleep_move.velt `release`).
   const s = m.load(f + S_STATE);
-  if (s === SEEN) {
-    return 1;
-  }
   const w = m.ld(cx + 8);
-  if (s !== NEW) {
+  if (s <= SEEN) {
+    if (s === SEEN) {
+      return 1;
+    }
+  } else {
     // Polled before. The task that polled it into its block (`S_OWNER`) is anchored there with
     // it, so its polls are on that worker; another task's (the promise was handed on) may not
     // be. The context names the task polling: its first word points at that task's `T_WORD`,
