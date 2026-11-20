@@ -1,39 +1,50 @@
 // ECDSA verification on P-384 (velt/crypto `p384Verify`): every Project Wycheproof
-// ecdsa_secp384r1_sha384 case, signatures made by OpenSSL 3.0.13 with each hash, and the cases
+// ecdsa_secp384r1_sha384 and ecdsa_secp384r1_sha256 case, signatures made by OpenSSL 3.0.13 with each hash, and the cases
 // those do not reach (digests of other lengths, equal points in the sum, R's x past n, keys
 // that are not points).
 import { p384Verify, sha256, sha384, sha512 } from "velt/crypto";
 import { hexDecode, utf8Encode } from "velt/encoding";
 import { describe, expect, it } from "velt/test";
 import * as v from "./ecdsa_p384_vectors";
+import { ECDSA_P384_SHA256_CASES } from "./wycheproof_ecdsa_p384_sha256";
 import { ECDSA_P384_SHA384_CASES } from "./wycheproof_ecdsa_p384_sha384";
 
 function bytes(s: string): u8[] {
   return s == "-" ? [] : hexDecode(s);
 }
 
+// Runs a Wycheproof file's cases with SHA-256 or SHA-384: [valid, invalid] counts.
+function run(cases: string[], sha256Digest: bool): number[] {
+  let key: u8[] = [];
+  let valid = 0;
+  let invalid = 0;
+  for (const line of cases) {
+    const f = line.split(" ");
+    if (f[0] == "K") {
+      key = hexDecode(f[1]);
+      continue;
+    }
+    const message = bytes(f[2]);
+    const digest = sha256Digest ? sha256(message) : sha384(message);
+    const ok = p384Verify(key, digest, bytes(f[3]));
+    if (f[1] == "v") {
+      expect(`${f[0]} ${ok}`).toBe(`${f[0]} true`);
+      valid++;
+    } else if (f[1] == "i") {
+      expect(`${f[0]} ${ok}`).toBe(`${f[0]} false`);
+      invalid++;
+    }
+  }
+  return [valid, invalid];
+}
+
 describe("p384Verify", () => {
   it("matches every Wycheproof ecdsa_secp384r1_sha384 case", () => {
-    let key: u8[] = [];
-    let valid = 0;
-    let invalid = 0;
-    for (const line of ECDSA_P384_SHA384_CASES) {
-      const f = line.split(" ");
-      if (f[0] == "K") {
-        key = hexDecode(f[1]);
-        continue;
-      }
-      const ok = p384Verify(key, sha384(bytes(f[2])), bytes(f[3]));
-      if (f[1] == "v") {
-        expect(`${f[0]} ${ok}`).toBe(`${f[0]} true`);
-        valid++;
-      } else if (f[1] == "i") {
-        expect(`${f[0]} ${ok}`).toBe(`${f[0]} false`);
-        invalid++;
-      }
-    }
-    expect(valid).toBe(194);
-    expect(invalid).toBe(310);
+    expect(run(ECDSA_P384_SHA384_CASES, false)).toEqual([194, 310]);
+  });
+
+  it("matches every Wycheproof ecdsa_secp384r1_sha256 case", () => {
+    expect(run(ECDSA_P384_SHA256_CASES, true)).toEqual([162, 310]);
   });
 
   it("verifies OpenSSL's signatures with SHA-256, SHA-384 and SHA-512 digests", () => {

@@ -1,7 +1,7 @@
-// Generated from Project Wycheproof's ecdsa_secp384r1_sha384_test.json (C2SP/wycheproof,
-// testvectors_v1): "K <key>" starts a group with its uncompressed public key, then one case per
-// string: the case id, its result (v valid, a acceptable, i invalid), the message and the DER
-// signature; "-" is empty.
+// Generated from Project Wycheproof's ecdsa_secp384r1_sha384_test.json (C2SP/wycheproof at
+// 65ca494727a5, testvectors_v1): "K <key>" starts a group with its uncompressed public key, then
+// one case per string: the case id, its result (v valid, a acceptable, i invalid), the message
+// and the DER signature; "-" is empty.
 
 export const ECDSA_P384_SHA384_CASES: string[] = [
   "K 0429bdb76d5fa741bfd70233cb3a66cc7d44beb3b0663d92a8136650478bcefb61ef182e155a54345a5e8e5e88f064e5bc9a525ab7f764dad3dae1468c2b419f3b62b9ba917d5e8c4fb1ec47404a3fc76474b2713081be9db4c00e043ada9fc4a3",
