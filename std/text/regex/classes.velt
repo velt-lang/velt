@@ -11,14 +11,14 @@ export function maxChar(p: Parser): u32 {
 }
 
 /** `\d`. */
-export function digitSet(): CharSet {
+function digitSet(): CharSet {
   const s = new CharSet();
   s.add(0x30, 0x39);
   return s;
 }
 
 /** `\w`. */
-export function wordSet(): CharSet {
+function wordSet(): CharSet {
   const s = new CharSet();
   s.add(0x30, 0x39);
   s.add(0x41, 0x5a);
@@ -28,7 +28,7 @@ export function wordSet(): CharSet {
 }
 
 /** `\s`: JavaScript's white space and line terminators. */
-export function spaceSet(): CharSet {
+function spaceSet(): CharSet {
   const s = new CharSet();
   s.add(0x09, 0x0d);
   s.add(0x20, 0x20);

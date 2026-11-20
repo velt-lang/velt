@@ -22,13 +22,6 @@ export class CharSet {
     }
   }
 
-  /** Adds `ranges[from..to]` of a table of `lo, hi` pairs. */
-  addTable(table: u32[]): void {
-    for (let i: usize = 0; i < table.length; i++) {
-      this.ranges.push(table[i]);
-    }
-  }
-
   /** Sorts the ranges and merges those that overlap or touch. */
   normalize(): void {
     const r = this.ranges;
@@ -131,11 +124,6 @@ export class CharSet {
       n += (this.ranges[i + 1] - this.ranges[i]) as usize + 1;
     }
     return n;
-  }
-
-  /** The highest member of a normalized set that is not empty. */
-  max(): u32 {
-    return this.ranges[this.ranges.length - 1];
   }
 
   /** A copy. */

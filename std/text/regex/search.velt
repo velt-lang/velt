@@ -1,8 +1,6 @@
 // velt/text (internal): `Search`, the working memory of the matchers for one call of a `RegExp`
 // method: made once, used for every match the call finds.
 
-import { Program } from "velt/text/regex/program";
-
 /** What a search over one subject keeps between matches. */
 export class Search {
   /** The capture slots of the last match, as byte offsets: `start, end` per group, -1 for a
@@ -31,8 +29,8 @@ export class Search {
   /** How many threads each list holds. */
   count: usize[] = [0, 0];
 
-  /** A search that keeps `slots` capture slots of `prog`'s (0: none, 2: the match's ends). */
-  constructor(prog: Program, slots: usize) {
+  /** A search that keeps `slots` capture slots (0: none, 2: the match's ends). */
+  constructor(slots: usize) {
     for (let i: usize = 0; i < slots; i++) {
       this.slots.push(-1);
     }

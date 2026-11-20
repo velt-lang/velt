@@ -132,7 +132,7 @@ export function replaceMatches(
 ): string {
   const plain = !replacement.includes("$");
   const stride = plain ? 2 : 2 * (prog.groups as usize) + 2;
-  const m = new Search(prog, stride);
+  const m = new Search(stride);
   const len = strByteLen(s);
   const ascii = strLen(s) == len;
   if (all) {
@@ -178,7 +178,7 @@ export function replaceMatches(
  * by the match's groups (`""` for one that did not take part); at most `limit` strings (0: any
  * number). An empty match where the last piece ended, or at the end, splits nothing. */
 export function splitMatches(prog: Program, s: string, limit: usize): string[] {
-  const m = new Search(prog, 2 * (prog.groups as usize) + 2);
+  const m = new Search(2 * (prog.groups as usize) + 2);
   const len = strByteLen(s);
   const parts: string[] = [];
   if (len == 0) {

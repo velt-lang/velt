@@ -92,7 +92,7 @@ export class RegExp implements Pattern {
     if (start > s.length) {
       return false;
     }
-    const m = new Search(this.#prog, 0);
+    const m = new Search(0);
     return find(this.#prog, m, s, positionOf(s, start, this.#prog.units), this.sticky);
   }
 
@@ -115,7 +115,7 @@ export class RegExp implements Pattern {
   matchAll(s: string): RegExpMatch[] {
     const prog = this.#prog;
     const stride = 2 * (prog.groups as usize) + 2;
-    const m = new Search(prog, stride);
+    const m = new Search(stride);
     findAll(prog, m, s);
     const out: RegExpMatch[] = arrayWithCapacity(m.found.length / stride);
     for (let at: usize = 0; at < m.found.length; at += stride) {
@@ -127,7 +127,7 @@ export class RegExp implements Pattern {
   /** The text of every match (JS `s.match(re)` with the `g` flag); empty if none. */
   matches(s: string): string[] {
     const prog = this.#prog;
-    const m = new Search(prog, 2);
+    const m = new Search(2);
     findAll(prog, m, s);
     const out: string[] = arrayWithCapacity(m.found.length / 2);
     for (let at: usize = 0; at < m.found.length; at += 2) {
@@ -307,7 +307,7 @@ export class RegExp implements Pattern {
     if (from > s.length) {
       return null;
     }
-    const m = new Search(prog, 2 * (prog.groups as usize) + 2);
+    const m = new Search(2 * (prog.groups as usize) + 2);
     if (!find(prog, m, s, positionOf(s, from, prog.units), this.sticky)) {
       return null;
     }
