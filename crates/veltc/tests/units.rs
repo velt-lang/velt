@@ -225,6 +225,32 @@ fn std_s_unit_ends_clean_and_the_app_is_collected_as_a_whole_program_is() {
     }
 }
 
+/// std's unit has no program, so none of its modules is the root whose names are left
+/// unqualified: the passes that know std's methods by their `std/` names (a `concat` returns a
+/// new array, `ownership::derived`) know them in a check by units too. A `read` callback that
+/// changes only the array `concat` made is accepted, as by a whole-program check.
+#[test]
+fn std_s_unit_names_every_std_method_by_its_module() {
+    let src = r#"
+class Box {
+  items: number[][] = [[1, 2], [3]];
+}
+function main() {
+  const a = new RwLock(new Box());
+  a.read((x) => {
+    const c = x.items.concat([[5]]);
+    c.push([8]);
+    console.log(c.length);
+  });
+}
+"#;
+    for units in [None, Some("1"), Some("2")] {
+        let out = check_in(units, src);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "VELT_UNITS={units:?}:\n{stderr}");
+    }
+}
+
 /// The error lines of a check's output.
 fn error_lines(o: &std::process::Output) -> Vec<String> {
     (String::from_utf8_lossy(&o.stderr).lines())
