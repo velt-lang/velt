@@ -12,6 +12,7 @@ use crate::SourceModule;
 mod access;
 mod classes;
 pub(crate) mod def_table;
+mod slots;
 
 pub(crate) use def_table::DefTable;
 

@@ -26,6 +26,7 @@
 #![allow(dead_code)] // Until the unit is saved (#2943 M2).
 
 pub(crate) mod ast_refs;
+mod def_table;
 mod defs;
 #[cfg(test)]
 mod defs_tests;
@@ -34,6 +35,8 @@ mod hir;
 mod hir_tests;
 #[cfg(test)]
 pub(crate) mod hook;
+#[cfg(test)]
+mod lazy_tests;
 #[cfg(test)]
 mod tests;
 mod values;
@@ -285,9 +288,26 @@ pub(crate) struct Src {
     pub(crate) bytes: Rc<Vec<u8>>,
     pub(crate) files: Rc<Vec<FileId>>,
     pub(crate) frags: Rc<Frags>,
+    /// The stack address the unit's readers stop at: the decode stack the unit was opened with
+    /// ([`with_decode_stack`]), so that an entry decoded later, wherever the check reads it,
+    /// has that stack too (a `Src` stays on its thread: it holds `Rc`s).
+    stack_floor: usize,
+    /// An entry decoded on demand did not decode: the unit is damaged ([`Src::damaged`]).
+    damaged: std::cell::Cell<bool>,
 }
 
 impl Src {
+    /// Did an entry decoded on demand fail to decode? Its value is then the decoder's stand-in,
+    /// and the check that read it must be thrown away as one of a damaged unit (a cache miss).
+    pub(crate) fn damaged(&self) -> bool {
+        self.damaged.get()
+    }
+
+    /// Mark the unit damaged ([`Src::damaged`]).
+    pub(crate) fn mark_damaged(&self) {
+        self.damaged.set(true);
+    }
+
     /// A reader of `bytes[range]` (an entry of a table), with the encoding's files and
     /// fragments; a failed one when the range is not inside the bytes (a damaged offset).
     pub(crate) fn reader(&self, range: std::ops::Range<usize>) -> Reader<'_> {
@@ -297,6 +317,7 @@ impl Src {
         };
         let mut r = Reader {
             frags: Some(self.frags.clone()),
+            stack_floor: self.stack_floor,
             ..Reader::bare(bytes, &self.files)
         };
         if !inside {
@@ -399,6 +420,8 @@ impl<'a> Reader<'a> {
                     bytes: bytes.clone(),
                     files: files.clone(),
                     frags: frags.clone(),
+                    stack_floor: r.stack_floor,
+                    damaged: std::cell::Cell::new(false),
                 }));
                 r.frags = Some(frags);
             }
