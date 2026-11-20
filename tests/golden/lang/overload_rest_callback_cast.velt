@@ -1,0 +1,33 @@
+// An overload whose callback's rest parameter is typed by a type parameter (`...args: A`),
+// over an implementation that takes the callback with a rest of `unknown`, or an options object
+// (sigx's `serverFn`, #379): the signature passes the callback as that type. What `A` is is
+// known per call only; the callback is its own function, and called through the wider type its
+// arguments are converted to what it takes. The last call passes a string where the callback
+// takes a number: a TypeError, where Node goes on with the string and prints `12` (a documented
+// difference).
+interface Ctx {
+  id: string;
+}
+
+interface Options {
+  name: string;
+}
+
+function wrap<A extends unknown[], R>(impl: (rq: Ctx, ...args: A) => R): (wire: unknown[]) => unknown;
+function wrap(options: Options): (wire: unknown[]) => unknown;
+function wrap(arg: ((rq: Ctx, ...args: unknown[]) => unknown) | Options): (wire: unknown[]) => unknown {
+  if (typeof arg === "function") {
+    return (wire: unknown[]): unknown => arg({ id: "rq" }, ...wire);
+  }
+  return (wire: unknown[]): unknown => arg.name + " " + wire.length;
+}
+
+const add = wrap((rq: Ctx, a: number, b: number): number => a + b);
+console.log(add([1, 2]));
+const greet = wrap((rq: Ctx, who: string): string => rq.id + " " + who);
+console.log(greet(["ann"]));
+const none = wrap((rq: Ctx): string => "none for " + rq.id);
+console.log(none([]));
+const named = wrap({ name: "options" });
+console.log(named([1, 2, 3]));
+console.log(add(["1", 2]));
