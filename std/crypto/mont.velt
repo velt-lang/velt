@@ -169,6 +169,71 @@ export class Mont {
     this.product(d + 1, a + 1, 0);
   }
 
+  /** `d = a + b` mod n (`a` and `b` below n); `d` may be `a` or `b`. Masked, like a product. */
+  add(d: usize, a: usize, b: usize) {
+    const x = this.r[a + 1];
+    const y = this.r[b + 1];
+    const t = this.t;
+    const k = this.k;
+    let carry: u64 = 0;
+    for (let i: usize = 0; i < k; i++) {
+      const s = x[i] + y[i];
+      const s2 = s + carry;
+      carry = ((s < x[i]) as u64) | ((s2 < s) as u64);
+      t[i] = s2;
+    }
+    t[k] = carry;
+    this.store(d + 1);
+  }
+
+  /** `d = a - b` mod n (`a` and `b` below n); `d` may be `a` or `b`. Masked, like a product. */
+  sub(d: usize, a: usize, b: usize) {
+    const x = this.r[a + 1];
+    const y = this.r[b + 1];
+    const r = this.r[d + 1];
+    const t = this.t;
+    const n = this.n;
+    const k = this.k;
+    let borrow: u64 = 0;
+    for (let i: usize = 0; i < k; i++) {
+      const u = x[i] - y[i];
+      t[i] = u - borrow;
+      borrow = ((x[i] < y[i]) as u64) | ((u < borrow) as u64);
+    }
+    // Negative: add n back.
+    const back = 0 - borrow;
+    let carry: u64 = 0;
+    for (let i: usize = 0; i < k; i++) {
+      const m = n[i] & back;
+      const s = t[i] + m;
+      const s2 = s + carry;
+      carry = ((s < m) as u64) | ((s2 < s) as u64);
+      r[i] = s2;
+    }
+  }
+
+  /**
+   * Register `d` = register `first + index`, one of the `count` registers from `first`, read
+   * by a masked scan of all of them: nothing branches on or is indexed by `index`, which may
+   * be secret. `d` is none of them.
+   */
+  pick(d: usize, first: usize, count: usize, index: u64) {
+    const r = this.r[d + 1];
+    const k = this.k;
+    for (let j: usize = 0; j < k; j++) {
+      r[j] = 0;
+    }
+    for (let i: usize = 0; i < count; i++) {
+      const x = (i as u64) ^ index;
+      // All ones when x is 0 (x is far below 2^63, so x - 1 wraps only for 0).
+      const mask = 0 - ((x - 1) >> 63);
+      const from = this.r[first + i + 1];
+      for (let j: usize = 0; j < k; j++) {
+        r[j] |= from[j] & mask;
+      }
+    }
+  }
+
   /** Register `d` = register `a`. */
   copy(d: usize, a: usize) {
     const from = this.r[a + 1];
