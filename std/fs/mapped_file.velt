@@ -27,6 +27,11 @@ export type MapAdvice = "normal" | "random" | "sequential" | "willneed" | "dontn
  * opens one per request runs out of mappings (`ENOMEM` after about 65,000 on Linux's default
  * limit).
  *
+ * On Windows a mapped file cannot be cut short for the rest of the program (writing it anew
+ * fails with `UNKNOWN`). Removing or renaming it works on NTFS from Windows 10 1809 and may be
+ * refused on older systems or other file systems; the mapping keeps the bytes it had. `advise`
+ * does nothing there (it is a hint).
+ *
  * WebAssembly has no mapping: there `open` reads the whole file into memory, also when a part
  * is asked for, and keeps the part; `bytes` is that memory, each typed method gives a copy of
  * its range, and `advise` does nothing. The same program runs; opening costs the time and
@@ -61,9 +66,8 @@ export class MappedFile extends MappedBytes {
    * as it does for a whole file.
    *
    * An `IoError` when the file cannot be opened or mapped: `EISDIR` for a
-   * directory, `EINVAL` for anything else that is not a regular file (a device, a pipe),
-   * `ENOSYS` on Windows, where files cannot be mapped yet. A pipe blocks in `open` until
-   * it has a writer, as it does for `readFileSync`.
+   * directory, `EINVAL` for anything else that is not a regular file (a device, a pipe).
+   * A pipe blocks in `open` until it has a writer, as it does for `readFileSync`.
    *
    * A file of /proc or /sys is a regular file that reports a size of 0 whatever it holds, so it
    * maps as no bytes, without an error: read those with `readFileSync`.
