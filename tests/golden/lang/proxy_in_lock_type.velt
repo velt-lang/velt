@@ -1,0 +1,30 @@
+// In a program that makes proxies, `"k" in o`, `Object.hasOwn(o, k)` and `Object.keys(o)` of an
+// object type ask a proxy's traps when `o` is one, which converts it to `any` there. An object
+// type holding a lock (an `AbortSignal` here) can't become an `any`, but a proxy holds none of
+// its fields, so these work on it too, plain or a proxy (sigx's `'headers' in options`).
+interface CallOptions {
+  signal?: AbortSignal;
+  headers?: Record<string, string>;
+  fresh?: boolean;
+}
+
+function describe(options?: CallOptions): string {
+  if (options && ("headers" in options || "fresh" in options)) {
+    return "headers" in options ? "headers" : "fresh";
+  }
+  return "none";
+}
+
+console.log(describe({ fresh: true }), describe({ headers: {} }), describe());
+const withSignal: CallOptions = { signal: new AbortController().signal };
+console.log(describe(withSignal), Object.hasOwn(withSignal, "signal"), Object.keys(withSignal));
+
+const target: any = { fresh: true };
+const handler = {
+  has(t: any, k: string | symbol): boolean {
+    console.log("has", String(k));
+    return k === "headers";
+  },
+};
+const proxied = new Proxy(target, handler) as CallOptions;
+console.log(describe(proxied));
