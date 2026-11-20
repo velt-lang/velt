@@ -70,6 +70,18 @@ impl<'c, 'h> FnLower<'c, 'h> {
         lw.finish("_Garray_too_long".into(), vec![], Ty::Unit)
     }
 
+    /// `(block: ptr)`: `block->drop(block)`, the owner of an array's buffer told of the array's
+    /// drop (`addressArrayOwned`). Never inlined, so the callback stays out of every array drop.
+    pub(in crate::lower) fn build_array_owner_drop(cx: &'c mut Cx<'h>) -> Function {
+        let mut lw = FnLower::bare(cx, vec![]);
+        let block = lw.new_local(Ty::Ptr, Some("block".into()));
+        lw.owner_drop_call(Operand::Copy(Place::local(block)));
+        lw.terminate(vir::Terminator::Return(unit()));
+        let mut f = lw.finish("_Garray_owner_drop".into(), vec![Ty::Ptr], Ty::Unit);
+        f.inline = vir::Inline::Never;
+        f
+    }
+
     /// `(len: u64, index, at: ptr)`: `panic("index out of bounds: the len is {len} but the index
     /// is {i}{*at}")` (`*at` is the ` at <location>` suffix, possibly empty).
     pub(in crate::lower) fn build_oob(cx: &'c mut Cx<'h>, signed: bool) -> Function {
