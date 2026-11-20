@@ -13,7 +13,7 @@ declare c type PROCESS_MEMORY_COUNTERS;
 declare c("c") function GetCurrentProcess$memory(): Ptr<void>;
 declare c("c") function K32GetProcessMemoryInfo(
   process: Ptr<void>,
-  counters: Ptr<PROCESS_MEMORY_COUNTERS>,
+  counters: Ptr<PROCESS_MEMORY_COUNTERS> | null,
   cb: u32,
 ): i32;
 declare c("c") function calloc$memory(n: usize, size: usize): Ptr<u8> | null;
@@ -44,7 +44,7 @@ function counter(at: usize): i64 {
     addressStore<u32>(p, SIZE as u32);
     const ok = K32GetProcessMemoryInfo(
       GetCurrentProcess$memory(),
-      Ptr.at<PROCESS_MEMORY_COUNTERS>(p),
+      Ptr.orNull<PROCESS_MEMORY_COUNTERS>(p),
       SIZE as u32,
     );
     if (ok !== 0) {

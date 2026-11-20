@@ -204,6 +204,7 @@ the gate on all of std. Each message says what to do, not only what is wrong:
 | `indexCode` | `index.velt is the module's API, only named re-exports: move … into a file of the module and re-export it` |
 | `exportStar` | `` `export *`: re-export by name, so the module's API is reviewable in its index.velt `` |
 | `defaultExport` | `std modules have named exports only` |
+| `checkedPtr` | ``calls `Ptr.at`, which stops on 0 and so makes every caller up the chain track its call site: std's own addresses take `Ptr.orNull` …`` (outside velt/ffi and tests, #3094) |
 | `header` | ``the first line must start with `// velt/…` (run `velt run scripts/std-lint/main.velt --fix-headers`)`` |
 | `duplicateExport` | `` `Headers` is exported by velt/… too: every public name has one import path `` |
 

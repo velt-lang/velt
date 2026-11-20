@@ -65,7 +65,7 @@ function startThread(start: usize, arg: usize): bool {
       null,
       STACK,
       m.ptr(start),
-      m.ptrOrNull<u8>(arg),
+      m.ptrTo<u8>(arg),
       STACK_SIZE_PARAM_IS_A_RESERVATION,
       null,
     );

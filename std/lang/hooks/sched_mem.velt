@@ -47,13 +47,6 @@ export function ptrTo<T>(a: usize): Ptr<T> | null {
   return unsafe { Ptr.orNull<T>(a) };
 }
 
-/** Address `a` as a C pointer argument to a `T` that may be `NULL`: 0 passes `NULL`. */
-@inline("always")
-export function ptrOrNull<T>(a: usize): Ptr<T> | null {
-  // SAFETY: as `ptr`'s.
-  return unsafe { Ptr.orNull<T>(a) };
-}
-
 /** The address a C function returned; 0 for `NULL`. */
 @inline("always")
 export function addr(p: Ptr<u8> | null): usize {

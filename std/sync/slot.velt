@@ -10,7 +10,7 @@ import { slotPut, slotSize, slotTake } from "velt/lang/intrinsics";
 // Pointers are `Ptr`s, as in a program's own declarations of these symbols: one C symbol has one
 // signature in a program.
 declare c("c") function malloc$slot(n: usize): Ptr<u8> | null;
-declare c("c") function free$slot(p: Ptr<u8>): void;
+declare c("c") function free$slot(p: Ptr<u8> | null): void;
 
 /** Room for one `T`. */
 export class Slot<T> {
@@ -64,7 +64,7 @@ export class Slot<T> {
     }
     // SAFETY: `at` came from malloc and is not used after.
     unsafe {
-      free$slot(Ptr.at<u8>(this.at));
+      free$slot(Ptr.orNull<u8>(this.at));
     }
   }
 }

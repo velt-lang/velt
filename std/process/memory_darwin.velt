@@ -8,7 +8,12 @@
 import { Ptr } from "velt/ffi/ptr";
 import { addressLoad, addressStore } from "velt/lang/intrinsics";
 
-declare c("c") function task_info(task: u32, flavor: u32, info: Ptr<i32>, count: Ptr<u32>): i32;
+declare c("c") function task_info(
+  task: u32,
+  flavor: u32,
+  info: Ptr<i32> | null,
+  count: Ptr<u32> | null,
+): i32;
 
 /** This task's port (`mach_task_self()` reads it). */
 declare c("c") let mach_task_self_: u32;
@@ -46,7 +51,12 @@ function field(at: usize): i64 {
   // `integer_t`s; this task's own port; the block is freed once, after the reads.
   unsafe {
     addressStore<u32>(p, REV1_COUNT);
-    const r = task_info(mach_task_self_, TASK_VM_INFO, Ptr.at<i32>(p + INFO_AT), Ptr.at<u32>(p));
+    const r = task_info(
+      mach_task_self_,
+      TASK_VM_INFO,
+      Ptr.orNull<i32>(p + INFO_AT),
+      Ptr.orNull<u32>(p),
+    );
     if (r === 0 && (addressLoad<u32>(p) as usize) * 4 >= at + 8) {
       value = addressLoad<i64>(p + INFO_AT + at);
     }
