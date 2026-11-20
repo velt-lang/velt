@@ -95,7 +95,7 @@ enums! {
         7 => Buf { readonly },
         8 => CString,
         9 => Out,
-        10 => OutPtr,
+        // 10 was `OutPtr` (#3094): not reused.
         11 => Void,
     }
     @fielded HostTy {
@@ -242,6 +242,7 @@ enums! {
         20 => Symbol,
         21 => Simd(a),
         22 => Op(a, b),
+        23 => Ptr(a),
     }
     @fielded LitValue {
         0 => Str(a),
@@ -553,5 +554,7 @@ enums! {
         210 => ArrayByteLength,
         211 => SymbolAddress,
         212 => SymbolAt,
+        213 => PtrFromAddress,
+        214 => PtrToAddress,
     }
 }
