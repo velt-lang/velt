@@ -34,6 +34,7 @@ mod c_symbols;
 mod cache;
 mod cpu;
 mod cpu_names;
+mod cpuid;
 mod debug_info;
 mod dev;
 mod eh;

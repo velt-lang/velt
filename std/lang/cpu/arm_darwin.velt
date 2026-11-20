@@ -1,0 +1,50 @@
+// velt/lang/cpu (internal): the arm64 features of this CPU on macOS (`#cpu-arm`'s darwin variant,
+// std/imports.velt), as the feature word's arm64 bits: one `hw.optional` sysctl per feature (1
+// where the CPU has it, absent on an older CPU or an Intel Mac). Called on arm64 only.
+
+import { atomicAddress, strDataAddress } from "velt/lang/intrinsics";
+
+// Addresses, not velt/ffi's `Out` boxes or the arrays and `CString` velt/os has (the same C
+// types): the start-up check allocates nothing (an `Out` is a heap box per call), and arrays and
+// `CString` in code every program runs would bring their helpers into every program.
+declare c("c") function sysctlbyname(
+  name: usize,
+  old: usize,
+  oldLen: usize,
+  newValue: usize,
+  newLen: usize,
+): i32;
+
+// Where each sysctl writes its `int` and its length: static words in the program's data, so
+// asking needs no heap. Only the start-up check uses them, before any other thread runs.
+const VALUE = new Atomic<i32>(0);
+const LEN = new Atomic<u64>(0);
+
+// Whether the `int` sysctl `name` (a literal ending in `\0`) is 1.
+function on(name: string): bool {
+  VALUE.store(0, "relaxed");
+  LEN.store(4, "relaxed");
+  // SAFETY: a NUL-terminated name; room for one `int` at VALUE, which LEN (a `size_t`: 64 bits
+  // on arm64) says; no new value.
+  const r =
+    unsafe { sysctlbyname(strDataAddress(name), atomicAddress(VALUE), atomicAddress(LEN), 0, 0) };
+  return r === 0 && LEN.load("relaxed") === 4 && VALUE.load("relaxed") === 1;
+}
+
+// The word bit `b` where `yes`.
+function flag(yes: bool, b: u64): u64 {
+  return yes ? (1 as u64) << b : 0;
+}
+
+/** This CPU's feature word arm64 bits. */
+export function detectArm(): u64 {
+  return flag(on("hw.optional.arm.FEAT_DotProd\0"), 32) |
+    flag(on("hw.optional.arm.FEAT_SHA256\0"), 33) |
+    flag(on("hw.optional.arm.FEAT_PMULL\0"), 34) |
+    flag(on("hw.optional.armv8_crc32\0"), 35) |
+    flag(on("hw.optional.arm.FEAT_SHA3\0") && on("hw.optional.arm.FEAT_SHA512\0"), 36) |
+    flag(on("hw.optional.arm.FEAT_FP16\0"), 37) |
+    flag(on("hw.optional.arm.FEAT_I8MM\0"), 38) |
+    flag(on("hw.optional.arm.FEAT_BF16\0"), 39) |
+    flag(on("hw.optional.arm.FEAT_AES\0"), 40);
+}

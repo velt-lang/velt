@@ -508,19 +508,21 @@ fn sha_check_sample() -> Program {
 fn extension_checks_are_true_on_a_cpu_built_for_with_the_extension() {
     let p = sha_check_sample();
     let target = crate::target::normalize("x86_64-unknown-linux-gnu").unwrap();
-    // The default CPU (x86-64-v2) may lack SHA: the check reads the runtime's flag.
+    // The default CPU (x86-64-v2) may lack SHA: the call stays, to the helper that answers
+    // `false` (the run-time answer is std's, from the feature word, #3222 step 3).
+    const CALL: &str = "call zeroext i8 @velt.simd.has_sha_x86()";
     let checked = crate::checked_ir(&p, &target, false).unwrap();
-    assert!(checked.contains("@velt_cpu_sha_x86"), "{checked}");
+    assert!(checked.contains(CALL), "{checked}");
     // Built for a CPU with SHA (`--cpu`), whose start-up check checks it: the check is true.
     let mut sha = target.clone();
     sha.cpu_features |= velt_codegen_cl::ext_x86_features(velt_vir::simd::Ext::ShaX86);
     let folded = crate::checked_ir(&p, &sha, false).unwrap();
-    assert!(!folded.contains("@velt_cpu_sha_x86"), "{folded}");
+    assert!(!folded.contains(CALL), "{folded}");
     // SHA alone, without the SSSE3 and SSE4.1 the extension also needs, is not enough.
     let mut partial = target.clone();
     partial.cpu_features = 1 << 21;
     let partial = crate::checked_ir(&p, &partial, false).unwrap();
-    assert!(partial.contains("@velt_cpu_sha_x86"), "{partial}");
+    assert!(partial.contains(CALL), "{partial}");
 }
 
 /// `velt_main` returning lane 0 of `i32x4.dotAdd` on zeros.

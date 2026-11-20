@@ -1,0 +1,21 @@
+// velt/lang/cpu (internal): the arm64 features of this CPU on Linux (`#cpu-arm`'s linux variant,
+// std/imports.velt), as the feature word's arm64 bits (from bit 32: DOTPROD, SHA2, PMULL, CRC32,
+// SHA3, FP16, I8MM, BF16, AES): the kernel's hardware capability words (`AT_HWCAP`,
+// `AT_HWCAP2`). Called on arm64 only (`#cpu-start`'s `arm64` variant).
+
+import { linuxArmBits } from "velt/lang/cpu/arm_linux_bits";
+
+declare c("c") function getauxval(kind: u64): u64;
+
+/** `AT_HWCAP` and `AT_HWCAP2`, the auxiliary vector's capability words. */
+const AT_HWCAP: u64 = 16;
+const AT_HWCAP2: u64 = 26;
+
+/** This CPU's feature word arm64 bits. */
+export function detectArm(): u64 {
+  // SAFETY: reads the process's auxiliary vector; an entry that is not there reads as 0.
+  const hw = unsafe { getauxval(AT_HWCAP) };
+  // SAFETY: as above.
+  const hw2 = unsafe { getauxval(AT_HWCAP2) };
+  return linuxArmBits(hw, hw2);
+}

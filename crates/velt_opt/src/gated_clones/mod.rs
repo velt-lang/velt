@@ -1,21 +1,23 @@
 //! Clones of checked callees for gated functions (#1330). A gated function (`Function::target`)
-//! runs only where the CPU has its extension, so in an ordinary function it calls, the check of
-//! that extension (`velt_simd_has_<ext>`) is true. Such a callee (a `velt/simd` method: the
+//! runs only where the CPU has its features, so in an ordinary function it calls, the check of
+//! any feature its set covers (`velt_simd_has_<feature>`) is true, and the guard of its
+//! architecture (`velt_simd_on_x86`, `velt_simd_on_arm`) too. Such a callee (a `velt/simd` method: the
 //! instruction behind the check, the emulation after it) is cloned for the extension with the
 //! check replaced by `true` and folded, so the clone is the bare instruction and inlines as a
 //! trivial callee. Without the clone, the method inlines only while it is small or called once,
 //! and otherwise keeps the check and the emulation inside the gated function.
 //!
-//! An AES target also has its architecture's carry-less multiplication (`Ext::covers`), and in
-//! any gated function the other architecture's checks are false: the clone folds those too.
+//! A set covers the features its members imply (`ExtSet::covers`: an AES target has its
+//! architecture's carry-less multiplication, AVX2 has SSE4.2), and in any gated function the
+//! other architecture's checks and guard are false: the clone folds those too.
 //!
 //! Cloned are ordinary callees that check the extension themselves or through ordinary callees
 //! of their own (which the clone's own calls then reach as clones too). Each callee is cloned
-//! once per extension.
+//! once per gated set.
 
 use rustc_hash::FxHashMap;
 
-use velt_vir::simd::{Ext, SimdCall};
+use velt_vir::simd::{ExtSet, SimdCall};
 use velt_vir::vir::{
     Callee, Const, FuncId, Linkage, Operand, Program, Rvalue, Stmt, Terminator, Ty,
 };
@@ -26,12 +28,18 @@ use crate::{constfold, copyprop, dce, simplify_cfg, srclocs};
 /// Redirect gated functions' calls of checking callees to their clones; returns whether any
 /// call was redirected.
 pub(crate) fn run(program: &mut Program) -> bool {
-    let mut clones: FxHashMap<(FuncId, Ext), FuncId> = FxHashMap::default();
+    let mut clones: FxHashMap<(FuncId, ExtSet), FuncId> = FxHashMap::default();
     let mut made = Vec::new();
-    for ext in Ext::ALL {
+    let mut sets: Vec<ExtSet> = (program.funcs.iter())
+        .map(|f| f.target)
+        .filter(|t| !t.is_empty())
+        .collect();
+    sets.sort();
+    sets.dedup();
+    for ext in sets {
         let checks = checking(program, ext);
         let mut pending: Vec<usize> = (0..program.funcs.len())
-            .filter(|&f| program.funcs[f].target == Some(ext))
+            .filter(|&f| program.funcs[f].target == ext)
             .collect();
         while let Some(fi) = pending.pop() {
             for bi in 0..program.funcs[fi].blocks.len() {
@@ -72,15 +80,16 @@ pub(crate) fn run(program: &mut Program) -> bool {
     true
 }
 
-/// Per function: whether it is ordinary and checks `ext`, itself or through an ordinary callee.
-fn checking(program: &Program, ext: Ext) -> Vec<bool> {
+/// Per function: whether it is ordinary and checks a feature or guard `ext` decides, itself or
+/// through an ordinary callee.
+fn checking(program: &Program, ext: ExtSet) -> Vec<bool> {
     let checks_itself = |f: &velt_vir::vir::Function| {
         f.blocks.iter().any(|b| {
             matches!(&b.term, Terminator::Call { callee: Callee::Extern(id), .. }
                 if is_check(program, *id, ext))
         })
     };
-    let ordinary = |f: &velt_vir::vir::Function| f.target.is_none() && !f.is_poll;
+    let ordinary = |f: &velt_vir::vir::Function| f.target.is_empty() && !f.is_poll;
     let mut checks: Vec<bool> = program
         .funcs
         .iter()
@@ -100,29 +109,40 @@ fn checking(program: &Program, ext: Ext) -> Vec<bool> {
     }
 }
 
-/// What the check extern `id` is in code gated on `ext`: `true` for an extension it has
-/// (`Ext::covers`: the carry-less multiplication of an AES target too), `false` for one of the
-/// other architecture (the code runs only on `ext`'s), `None` for any other extern.
-fn check_value(program: &Program, id: velt_vir::vir::ExternId, ext: Ext) -> Option<bool> {
+/// What the check extern `id` is in code gated on `ext`: `true` for a feature the set covers
+/// (`ExtSet::covers`) and for its architecture's guard, `false` for a feature or the guard of
+/// the other architecture (the code runs only on the set's), `None` for any other extern.
+fn check_value(program: &Program, id: velt_vir::vir::ExternId, ext: ExtSet) -> Option<bool> {
     let e = program.externs.get(id.0 as usize)?;
+    let arch = ext.iter().next()?.arch();
     match SimdCall::of_symbol(&e.symbol)? {
         SimdCall::Has(checked) if ext.covers(checked) => Some(true),
-        SimdCall::Has(checked) if !ext.same_arch(checked) => Some(false),
+        SimdCall::Has(checked) if ext.other_arch(checked) => Some(false),
+        SimdCall::OnArch(a) => Some(a == arch),
         _ => None,
     }
 }
 
-fn is_check(program: &Program, id: velt_vir::vir::ExternId, ext: Ext) -> bool {
-    check_value(program, id, ext).is_some()
+/// Whether the extern `id` makes a clone for `ext` worthwhile: a check `ext` decides, or the other
+/// architecture's guard. Its own architecture's guard alone does not: it is folded only in a clone
+/// made for one of those.
+fn is_check(program: &Program, id: velt_vir::vir::ExternId, ext: ExtSet) -> bool {
+    let own_guard = (program.externs.get(id.0 as usize))
+        .and_then(|e| SimdCall::of_symbol(&e.symbol))
+        .is_some_and(|c| matches!(c, SimdCall::OnArch(_)));
+    match check_value(program, id, ext) {
+        Some(true) if own_guard => false,
+        value => value.is_some(),
+    }
 }
 
 /// A copy of `func` gated on `ext`, with its checks replaced by their values there
 /// ([`check_value`]).
-fn clone_for(program: &mut Program, func: FuncId, ext: Ext) -> FuncId {
+fn clone_for(program: &mut Program, func: FuncId, ext: ExtSet) -> FuncId {
     let mut body = program.funcs[func.0 as usize].clone();
-    body.symbol = format!("{}${}", body.symbol, ext.name().replace('-', "_"));
+    body.symbol = format!("{}${}", body.symbol, ext.symbol_suffix());
     body.linkage = Linkage::Internal;
-    body.target = Some(ext);
+    body.target = ext;
     for bi in 0..body.blocks.len() {
         let Terminator::Call {
             callee: Callee::Extern(id),
