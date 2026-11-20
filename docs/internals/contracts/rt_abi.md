@@ -1062,17 +1062,40 @@ known whole number where the program has `intWrite`, else `wholeNumberWrite`).
 | `velt_rt_realloc` | `(void* p, uint64_t old_size, uint64_t align, uint64_t new_size) -> void*` |
 | `velt_rt_free` | `(void* p, uint64_t size, uint64_t align)` |
 
-In a release build for a native target, an allocation of a constant size and every free call
-mimalloc directly: the optimizer's last step (`velt_opt` `heap_calls`) turns each into a call of
-std's hook for it (std/lang/hooks/heap.velt: `heapAlloc`, `heapFree`), which calls mimalloc through
-`declare c` (`mi_malloc`, `mi_malloc_aligned`, `mi_free`, in the runtime's archive) with the same
-contract: a size of 0 gives `align` back and its free does nothing, an alignment of 8 or less takes
-the plain function, and a request mimalloc refuses stops the program with the same message and exit
-code (through `velt_rt_write_str` and `velt_rt_exit`, not a panic a `catchUnwind` could catch).
-Array buffers of a run-time length and array growth call `velt_rt_alloc` / `velt_rt_realloc`
-(`heap_calls` says why; std's `heapRealloc` is not used); array growth calls `velt_rt_realloc` for
-an empty buffer too (an old size of 0 allocates). The runtime's Rust uses mimalloc too (its global
-allocator), so blocks move both ways. Debug builds, the JIT and WebAssembly keep calling the
+In a release build for a native target, every allocation, growth and free calls mimalloc
+directly: the optimizer's last step (`velt_opt` `heap_calls`) turns each call of the three
+functions into a call of std's hook for it (std/lang/hooks/heap.velt: `heapAlloc`, `heapRealloc`,
+`heapFree`), which calls mimalloc through `declare c` (`mi_malloc`, `mi_malloc_aligned`,
+`mi_realloc`, `mi_realloc_aligned`, `mi_free`, in the runtime's archive) with the same contract: a
+size of 0 gives `align` back and its free does nothing, an alignment of 8 or less takes the plain
+function, and growth past the array length limit or a request mimalloc refuses stops the program
+with the runtime's message and exit code (through `velt_rt_write_str` and `velt_rt_exit`, not a
+panic a `catchVeltPanic` could catch or that could unwind through a `nounwind` call). Array growth
+calls `velt_rt_realloc` for an empty buffer too (an old size of 0 allocates). The runtime's Rust
+uses mimalloc too (its global allocator), so blocks move both ways.
+
+An allocation of a constant size and a free call the hook itself, inlined. An allocation of a
+run-time size (an array buffer) and growth call a wrapper of the hook instead, `velt.heap.alloc`
+and `velt.heap.realloc`: internal functions with `velt_rt_alloc`'s and `velt_rt_realloc`'s
+signatures and contracts, whose bodies are the hook. velt_codegen_llvm gives the wrappers'
+definitions and declarations the attributes it gives the runtime's two declarations, and keeps them
+out of line (`noinline`), so to the loops that fill or grow an array they are the same call (with
+the hook inlined there, LLVM compiled those loops worse: `heap_calls` says how). The attributes,
+which later passes and backends must keep:
+
+| Function | Result | Parameters | Function attributes |
+|---|---|---|---|
+| `velt_rt_alloc`, `velt.heap.alloc` | `noalias noundef` | `align`: `allocalign` | `nounwind allockind("alloc,uninitialized,aligned") allocsize(0) memory(inaccessiblemem: readwrite) "alloc-family"="velt_rt_alloc"` |
+| `velt_rt_realloc`, `velt.heap.realloc` | `noalias noundef` | `p`: `allocptr`; `align`: `allocalign` | `nounwind allockind("realloc,aligned") allocsize(3) memory(argmem: readwrite, inaccessiblemem: readwrite) "alloc-family"="velt_rt_alloc"` |
+| `velt_rt_free` | | `p`: `allocptr` | `nounwind allockind("free") memory(argmem: readwrite, inaccessiblemem: readwrite) "alloc-family"="velt_rt_alloc"` |
+| `mi_malloc`, `mi_malloc_aligned` | `noalias` | | `nounwind memory(inaccessiblemem: readwrite)` |
+| `mi_realloc`, `mi_realloc_aligned`, `mi_free` | | | `nounwind memory(argmem: readwrite, inaccessiblemem: readwrite)` |
+
+Every parameter of these functions is `noundef`. The `mi_*` declarations have no `allockind`: with
+it LLVM deletes an allocation whose block is never read together with the hook's null check after
+it, so a request larger than memory would no longer stop the program
+(tests/golden/lang/array_from_past_memory.velt). A call of the runtime's functions or of a wrapper
+keeps its check inside, where LLVM doesn't see it. Debug builds, the JIT and WebAssembly keep calling the
 runtime's functions, and so does a release build that links a debug runtime (a `velt` built by
 cargo, or `$VELT_RT_LIB` naming one): the variables that make it check and count every block
 (`VELT_RT_DEBUG_ALLOC=1`, `VELT_RC_STATS=1`) are read when the program runs. So does one whose
