@@ -147,6 +147,25 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let mut incoming = vec![];
         let by_ref = lw.cx.by_ref_params.contains(&(def, targs.to_vec()));
         for p in f.params.iter().skip(skip) {
+            // A rest parameter that is a tuple here: its elements, passed on as they come
+            // (`rest_tuple_params.rs`).
+            if let Some(ts) = lw.rest_tuple_of(def, f, p) {
+                for et in ts {
+                    let evt = lw.cx.ty(et);
+                    if evt == Ty::Unit {
+                        continue;
+                    }
+                    let pt = if matches!(evt, Ty::Agg(_)) {
+                        Ty::Ptr
+                    } else {
+                        evt
+                    };
+                    let l = lw.new_local(pt, None);
+                    params.push(pt);
+                    incoming.push((l, evt, et, Incoming::Pass));
+                }
+                continue;
+            }
             let pty = lw.sub(p.ty);
             let vt = lw.cx.ty(pty);
             if vt == Ty::Unit {
