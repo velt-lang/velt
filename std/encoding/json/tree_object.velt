@@ -36,8 +36,11 @@ export class TreeObject {
   head: usize = 0;
   /** Holes at or after `head` (never the last slot). */
   holes: usize = 0;
-  /** The slot of every live key, in a large object or one with array-index members. */
-  index: Map<string, usize> | null = null;
+  /**
+   * The slot of every live key, in a large object or one with array-index members (`u32`: an
+   * object holds fewer than 2^32 members, as on the tape).
+   */
+  index: Map<string, u32> | null = null;
   /** A `TREE_TAPE` node's tape and value on it (tree.velt; such a node has no members here). */
   tape: TapeRef | null = null;
   node: u32 = 0;
@@ -164,7 +167,7 @@ export class TreeObject {
     this.vals.push(v);
     const ix = this.index;
     if (ix != null) {
-      ix.set(key, slot);
+      ix.set(key, slot as u32);
       const p = this.positions;
       if (p != null) {
         p.pushLive();
@@ -287,10 +290,10 @@ export class TreeObject {
 
   // The index of the slots (dense: no holes).
   private makeIndex(): void {
-    const ix = new Map<string, usize>();
+    const ix = new Map<string, u32>();
     for (let s = this.head; s < this.vals.length; s++) {
       if (this.vals[s] != null) {
-        ix.set(this.keys[s], s);
+        ix.set(this.keys[s], s as u32);
       }
     }
     this.index = ix;
