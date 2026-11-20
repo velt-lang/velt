@@ -7,7 +7,8 @@
 // ECDSA-Sig-Value), read strictly: anything but minimal, positive INTEGERs below n is refused.
 
 import { FeP256 } from "velt/crypto/field_p256";
-import { add, decodePoint, double, GX_M, GY_M, ONE_M } from "velt/crypto/p256";
+import { add, decodePoint, double, ONE_M } from "velt/crypto/p256";
+import { P256_BASE } from "velt/crypto/p256_base_table";
 import { ScalarP256 } from "velt/crypto/scalar_p256";
 
 // n in the Montgomery domain of the field (for the r + n check).
@@ -18,8 +19,8 @@ const P_MINUS_N: u64[] = [0x0c46353d039cdaae, 0x4319055358e8617b, 0, 0];
 // Field registers: add/double's temporaries are 0..7.
 const ACC: usize = 8;
 const NEG: usize = 11;
-const GT: usize = 14; // 8 points: G, 3G, .., 15G
-const QT: usize = GT + 24; // 8 points: Q, 3Q, .., 15Q
+const ENTRY: usize = 14; // the fixed-base table's entry being added: x, y
+const QT: usize = ENTRY + 2; // 8 points: Q, 3Q, .., 15Q
 const RX: usize = QT + 24;
 const ZERO: usize = RX + 1;
 const REGS: usize = ZERO + 1;
@@ -57,38 +58,35 @@ export function p256Verify(publicKey: u8[], digest: u8[], signature: u8[]): bool
     return false;
   }
   // u1 = e / s, u2 = r / s.
-  s.invert(S_W, S_S);
+  s.invertPublic(S_W, S_S);
   s.mul(S_E, S_E, S_W);
   s.mul(S_R, S_R, S_W);
-  const u1 = naf(s.limbs(S_E, S_TMP));
+  const u1 = s.limbs(S_E, S_TMP);
   const u2 = naf(s.limbs(S_R, S_TMP));
-  // The tables of odd multiples.
-  f.load(GT, GX_M);
-  f.load(GT + 1, GY_M);
-  f.load(GT + 2, ONE_M);
-  oddMultiples(f, GT);
   oddMultiples(f, QT);
-  // R = u1 G + u2 Q, from the top digit down; the accumulator starts as the identity.
+  // R = u2 Q, from the top digit down; the accumulator starts as the identity.
   f.load(ACC, ONE_M);
   f.load(ACC + 1, ONE_M);
   f.zero(ACC + 2);
   f.zero(ZERO);
-  let top = u1.length > u2.length ? u1.length : u2.length;
+  let top = u2.length;
   let started = false;
   while (top > 0) {
     top -= 1;
     if (started) {
       double(f, ACC, ACC);
     }
-    const d1 = top < u1.length ? u1[top] : 0;
-    const d2 = top < u2.length ? u2[top] : 0;
-    if (d1 != 0) {
-      addDigit(f, GT, d1);
+    if (u2[top] != 0) {
+      addDigit(f, QT, u2[top]);
       started = true;
     }
-    if (d2 != 0) {
-      addDigit(f, QT, d2);
-      started = true;
+  }
+  // R += u1 G: for each 4-bit digit of u1 its multiple of G from the fixed-base table, which
+  // needs no doubling.
+  for (let i: usize = 0; i < 64; i++) {
+    const digit = ((u1[i >> 4] >> ((4 * (i & 15)) as u64)) & 15) as usize;
+    if (digit != 0) {
+      addBaseEntry(f, i, digit);
     }
   }
   if (f.isZero(ACC + 2) != 0) {
@@ -130,6 +128,66 @@ function addDigit(f: FeP256, table: usize, digit: i32) {
   if (add(f, ACC, ACC, q) != 0) {
     double(f, ACC, q);
   }
+}
+
+// ACC += `digit` (1..15) times 16^w G, the affine entry of `P256_BASE` (madd-2007-bl, 7M + 4S
+// where the general addition is 11M + 5S). The data is public, so the cases the formula does not
+// cover are branches: the identity, the same point (doubled) and its inverse (the identity).
+function addBaseEntry(f: FeP256, w: usize, digit: usize) {
+  const at = 8 * (15 * w + digit - 1);
+  for (let k: usize = 0; k < 8; k++) {
+    f.r[4 * ENTRY + k] = P256_BASE[at + k];
+  }
+  if (f.isZero(ACC + 2) != 0) {
+    f.copy(ACC, ENTRY);
+    f.copy(ACC + 1, ENTRY + 1);
+    f.load(ACC + 2, ONE_M);
+    return;
+  }
+  const z1z1: usize = 0;
+  const u2: usize = 1;
+  const s2: usize = 2;
+  const h: usize = 3;
+  const hh: usize = 4;
+  const i: usize = 5;
+  const j: usize = 6;
+  const r: usize = 7;
+  f.square(z1z1, ACC + 2);
+  f.mul(u2, ENTRY, z1z1);
+  f.mul(s2, ENTRY + 1, ACC + 2);
+  f.mul(s2, s2, z1z1);
+  f.sub(h, u2, ACC); // H = U2 - X1
+  f.sub(r, s2, ACC + 1);
+  if (f.isZero(h) != 0) {
+    if (f.isZero(r) != 0) {
+      double(f, ACC, ACC);
+    } else {
+      f.zero(ACC + 2);
+    }
+    return;
+  }
+  f.add(r, r, r); // r = 2 (S2 - Y1)
+  f.square(hh, h);
+  f.add(i, hh, hh);
+  f.add(i, i, i); // I = 4 HH
+  f.mul(j, h, i); // J = H I
+  f.mul(i, ACC, i); // V = X1 I
+  // Z3 = (Z1 + H)^2 - Z1Z1 - HH.
+  f.add(u2, ACC + 2, h);
+  f.square(u2, u2);
+  f.sub(u2, u2, z1z1);
+  f.sub(ACC + 2, u2, hh);
+  // X3 = r^2 - J - 2V.
+  f.square(s2, r);
+  f.sub(s2, s2, j);
+  f.add(hh, i, i);
+  f.sub(ACC, s2, hh);
+  // Y3 = r (V - X3) - 2 Y1 J.
+  f.sub(i, i, ACC);
+  f.mul(i, r, i);
+  f.mul(j, ACC + 1, j);
+  f.add(j, j, j);
+  f.sub(ACC + 1, i, j);
 }
 
 // Fills table[1..8] with 3P, 5P, .., 15P from table[0] = P (ACC is scratch for 2P).
