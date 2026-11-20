@@ -325,6 +325,7 @@ function drain(e: usize, k: usize): void {
       node.run(k, w, false);
       node.release(w);
     } else {
+      micro.forgetLast(k);
       m.wakeOwned(w);
     }
     m.st(e + t.E_JOB, m.ld(e + t.E_JOB) - 1);

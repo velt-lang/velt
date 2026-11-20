@@ -65,7 +65,7 @@ export function childAt(f: usize, i: usize): usize {
 function racePoll(f: usize, cx: usize): u32 {
   const j = m.ld(f - 8);
   if (m.ld(j + al.J_STATE) !== al.RUNNING) {
-    return 1;
+    return al.settledPoll(j, cx);
   }
   const n = m.ld(j + al.J_N);
   if (n === 0) {
@@ -79,7 +79,8 @@ function racePoll(f: usize, cx: usize): u32 {
     for (let i: usize = 0; i < n; i++) {
       const c = al.kid(j, i);
       if (m.ld(c + al.C_FUT) !== 0 && pollKid(j, c)) {
-        return 1;
+        // A step later, as Node's reaction on the winner (sched_all.velt `settleStep`).
+        return al.settleStep(j, cx);
       }
     }
     return 0;

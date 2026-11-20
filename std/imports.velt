@@ -96,6 +96,13 @@ export const imports: Imports = {
     darwin: "./process/child/spawn_open_darwin.velt",
     default: "./process/child/spawn_open_linux.velt",
   },
+  // Whether `Promise.race`'s race settles a microtask after its deciding input, as Node does
+  // (std/lang/promise/settle.velt, for `Promise.any`): the executor in Velt's does
+  // (std/lang/hooks/sched_race.velt), the runtime's (WebAssembly) does not.
+  "#promise-race-step": {
+    "std-scheduler": "./lang/promise/race_step_sched.velt",
+    default: "./lang/promise/race_step_rt.velt",
+  },
   // velt/net's TCP functions: the runtime's (std/net/rt.velt), or, compiled with the executor in
   // Velt (`VELT_SCHEDULER=std`, the `std-scheduler` condition), non-blocking sockets on its
   // reactor (std/net/tcp_sched.velt), which hands the runtime's handles (TLS, `fetch`'s pool) and

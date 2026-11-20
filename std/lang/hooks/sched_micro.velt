@@ -14,7 +14,8 @@
 // step, so `await` goes straight on.
 //
 // The queue: its entries' buffer (16 bytes each: waker, ticket), their capacity, the index of the
-// first one, how many there are.
+// first one, how many there are, and the ticket of the entry popped last while nothing took its
+// place (`enqueueNext`; 0: none; only used while that entry's credit is unused, so in its job).
 
 import { fnAddress } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
@@ -25,12 +26,14 @@ const Q_BUF: usize = 0;
 const Q_CAP: usize = 8;
 const Q_HEAD: usize = 16;
 const Q_LEN: usize = 24;
+const Q_LAST: usize = 32;
+const Q_BYTES: usize = 40;
 
 /** Task `task`'s queue, made on first use. */
 function queue(task: usize): usize {
   let q = m.ld(task + t.T_MICRO);
   if (q === 0) {
-    q = m.zeroed(32);
+    q = m.zeroed(Q_BYTES);
     m.st(q + Q_BUF, m.alloc(16 * 8));
     m.st(q + Q_CAP, 8);
     m.st(task + t.T_MICRO, q);
@@ -41,6 +44,24 @@ function queue(task: usize): usize {
 /** The bit of an entry's ticket that says it is a waiter's step already (`credit`). */
 const CREDIT: u64 = 1 << 63;
 
+/** Queue `q`, full: unwrapped into a buffer twice the size. */
+function grow(q: usize): void {
+  const cap = m.ld(q + Q_CAP);
+  const len = m.ld(q + Q_LEN);
+  const old = m.ld(q + Q_BUF);
+  const head = m.ld(q + Q_HEAD);
+  const buf = m.alloc(32 * cap);
+  for (let i: usize = 0; i < len; i++) {
+    const from = old + 16 * ((head + i) % cap);
+    m.st(buf + 16 * i, m.ld(from));
+    m.st(buf + 16 * i + 8, m.ld(from + 8));
+  }
+  m.release(old, 16 * cap);
+  m.st(q + Q_BUF, buf);
+  m.st(q + Q_HEAD, 0);
+  m.st(q + Q_CAP, cap * 2);
+}
+
 /**
  * Queues waker `w` (a reference the queue takes) on task `task`: its ticket. A `credit` entry is
  * the waiter's step already (a promise settled by `resolve`, which Node queues at once): the
@@ -49,22 +70,10 @@ const CREDIT: u64 = 1 << 63;
 export function enqueue(task: usize, w: usize, credit: bool): u64 {
   const q = queue(task);
   let cap = m.ld(q + Q_CAP);
-  let len = m.ld(q + Q_LEN);
+  const len = m.ld(q + Q_LEN);
   if (len === cap) {
-    // Unwrap into a buffer twice the size.
-    const old = m.ld(q + Q_BUF);
-    const head = m.ld(q + Q_HEAD);
-    const buf = m.alloc(32 * cap);
-    for (let i: usize = 0; i < len; i++) {
-      const from = old + 16 * ((head + i) % cap);
-      m.st(buf + 16 * i, m.ld(from));
-      m.st(buf + 16 * i + 8, m.ld(from + 8));
-    }
-    m.release(old, 16 * cap);
-    m.st(q + Q_BUF, buf);
-    m.st(q + Q_HEAD, 0);
-    cap = cap * 2;
-    m.st(q + Q_CAP, cap);
+    grow(q);
+    cap = m.ld(q + Q_CAP);
   }
   const e = t.exec();
   const ticket = m.ld(e + t.E_TICKET) + 1;
@@ -75,6 +84,63 @@ export function enqueue(task: usize, w: usize, credit: bool): u64 {
   m.st(q + Q_LEN, len + 1);
   m.st32(task + t.T_WORD, m.ld32(task + t.T_WORD) + 1);
   return ticket as u64;
+}
+
+/**
+ * Queues waker `w` (a reference the queue takes) on task `task` in the place of the entry popped
+ * last, first in the queue, with its ticket (smaller than every queued one; its waiter ran
+ * directly and is past it), as a credit entry: for the awaiter of a promise that settled in that
+ * entry without a step of its own (a promise `resolve` settled, run in the entry that stands for
+ * Node's reaction), which Node queued at the settling. Queued at the back when that place was
+ * taken already. Returns the entry's ticket.
+ */
+export function enqueueNext(task: usize, w: usize): u64 {
+  const q = m.ld(task + t.T_MICRO);
+  const last = q === 0 ? 0 : m.ld(q + Q_LAST);
+  if (last === 0) {
+    return enqueue(task, w, true);
+  }
+  m.st(q + Q_LAST, 0);
+  let cap = m.ld(q + Q_CAP);
+  const len = m.ld(q + Q_LEN);
+  if (len === cap) {
+    // Room at the back first (the ring unwrapped into a buffer twice the size).
+    grow(q);
+    cap = m.ld(q + Q_CAP);
+  }
+  const head = (m.ld(q + Q_HEAD) + cap - 1) % cap;
+  const at = m.ld(q + Q_BUF) + 16 * head;
+  m.st(at, w);
+  m.st(at + 8, last | (CREDIT as usize));
+  m.st(q + Q_HEAD, head);
+  m.st(q + Q_LEN, len + 1);
+  m.st32(task + t.T_WORD, m.ld32(task + t.T_WORD) + 1);
+  return last as u64;
+}
+
+/**
+ * Queues the reaction of waker `w` (a reference the queue takes), the awaiter of a promise that
+ * finished on task `task`, as a credit entry (the waiter's step). Finished in a credited entry
+ * without a step of its own (a promise `resolve` settled, which Node settled when `resolve` queued
+ * that entry), the awaiter takes the entry's place (`enqueueNext`).
+ */
+export function enqueueReaction(task: usize, w: usize): void {
+  if (takeCredit(task)) {
+    enqueueNext(task, w);
+  } else {
+    enqueue(task, w, true);
+  }
+}
+
+/**
+ * The entry popped last from task `task`'s queue did not run its waiter directly (it woke it):
+ * the waiter checks the entry's ticket when polled, so its place is not free (`enqueueNext`).
+ */
+export function forgetLast(task: usize): void {
+  const q = m.ld(task + t.T_MICRO);
+  if (q !== 0) {
+    m.st(q + Q_LAST, 0);
+  }
 }
 
 /**
@@ -131,6 +197,7 @@ export function pop(task: usize): usize {
   const at = m.ld(q + Q_BUF) + 16 * head;
   const w = m.ld(at);
   const credit = ((m.ld(at + 8) as u64) & CREDIT) !== 0;
+  m.st(q + Q_LAST, m.ld(at + 8) & ~(CREDIT as usize));
   m.st(q + Q_HEAD, (head + 1) % m.ld(q + Q_CAP));
   m.st(q + Q_LEN, len - 1);
   const word = m.ld32(task + t.T_WORD) - 1;
@@ -155,7 +222,7 @@ export function free(task: usize): void {
   const q = m.ld(task + t.T_MICRO);
   if (q !== 0) {
     m.release(m.ld(q + Q_BUF), 16 * m.ld(q + Q_CAP));
-    m.release(q, 32);
+    m.release(q, Q_BYTES);
   }
 }
 

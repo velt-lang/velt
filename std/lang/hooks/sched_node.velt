@@ -406,7 +406,7 @@ export function run(task: usize, n: usize, taken: bool): void {
       if (wk.taskOf(w) === task) {
         // Its awaiter is the task's root or another promise it drives: its reaction is queued
         // now, as Node queues a promise's reactions when it settles, and that entry is its step.
-        micro.enqueue(task, w, true);
+        micro.enqueueReaction(task, w);
       } else {
         m.wakeOwned(w);
       }
