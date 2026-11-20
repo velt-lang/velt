@@ -210,7 +210,9 @@ export function splitMatches(prog: Program, s: string, limit: usize): string[] {
       return parts;
     }
     last = end;
-    pos = end;
+    // An empty match would be found again from its own place, and not taken: the search goes
+    // on a character further.
+    pos = end > start ? end : after(s, end, prog.units);
   }
   parts.push(textOf(s, last, len));
   return parts;

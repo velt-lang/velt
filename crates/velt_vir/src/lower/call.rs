@@ -312,10 +312,10 @@ impl FnLower<'_, '_> {
     ///
     /// `in_place` (a synchronous extern): an array whose elements need no converting is passed
     /// as its own header (the box's, when its type is boxed), not a copy, so an extern that
-    /// writes it (`velt_rt_bytes_copy`'s destination) changes the array itself (#1831). A view (array_view.rs) passes its mirror,
-    /// written back to the original after the call. It also keeps the inlined SIMD helpers
-    /// from reading a copy (which LLVM would redo after every element store, tbaa.rs in
-    /// velt_codegen_llvm).
+    /// writes it (`velt_rt_bytes_copy`'s destination) changes the array itself (#1831). A view
+    /// (array_view.rs) passes its mirror, written back to the original after the call. It also
+    /// keeps the inlined SIMD helpers from reading a copy (which LLVM would redo after every
+    /// element store, tbaa.rs in velt_codegen_llvm).
     fn foreign_args(
         &mut self,
         params: &[TyId],
