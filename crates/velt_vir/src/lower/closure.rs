@@ -138,6 +138,17 @@ impl<'c, 'h> FnLower<'c, 'h> {
         // in such a callback also those of the callbacks around it (leave_levels.rs). A
         // function instance counting by the counts outside read mode (`Work::Deferred`) is
         // such code for its callbacks too, at a depth of reads not known here (`own_deep`).
+        // A closure only ever called here, in such a callback (not one nested in another, whose
+        // captures' frames differ): it runs as part of that callback, so its code is a
+        // `Work::ReadOwn` too, which knows the caller's containers among what it captured
+        // through the callback (leave_levels.rs `caller_capture`).
+        let inner = !read_callback
+            && in_frame
+            && !borrowed
+            && self.mode == LkMode::Read
+            && self.own_captures
+            && !self.own_nested()
+            && !self.own_deep;
         let deep = read_callback && self.mode == LkMode::Deferred && !self.own_captures;
         let own = read_callback && (self.mode == LkMode::Plain || self.own_captures || deep);
         let mode = match callback {
@@ -171,7 +182,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let frozen = self.frozen_captures(def);
         let code = match frozen {
             _ if generic => cint(0, Ty::Ptr),
-            0 if own => cfunc(self.cx.func_read_own(Work::Fn(def, targs.clone()), deep)),
+            0 if own || inner => cfunc(self.cx.func_read_own(Work::Fn(def, targs.clone()), deep)),
             // Code whose mode is asked: the thread's mode picks the callback's instance.
             0 if read_callback && self.mode == LkMode::Checked => self.read_callback_code(def),
             0 => cfunc(self.cx.func_direct(Work::Fn(def, targs.clone()), mode)),
