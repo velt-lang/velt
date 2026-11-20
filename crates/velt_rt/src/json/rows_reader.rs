@@ -16,9 +16,7 @@ use super::reader::{
     TOKEN_OBJECT_END, TOKEN_OBJECT_START, TOKEN_STRING, TOKEN_TRUE,
 };
 use super::rows_bin::{self as bin, BinCell, BinRows};
-use super::value::Value;
 use crate::str::VeltStr;
-use std::sync::Arc;
 use velt_text::rows_cursor::{Cell, RawCursor};
 
 /// Where the reader is in the document.
@@ -655,9 +653,9 @@ impl RowReader {
         out.push(b'}');
     }
 
-    /// One complete value of any kind as a `json.Value` tree: built from the JSON text the
-    /// value stands for (a decoder asking for a dynamic value is the rare case).
-    pub fn value(&mut self) -> Option<Arc<Value>> {
+    /// One complete value of any kind as the JSON text it stands for (std reads it as a
+    /// `JsonValue`; a decoder asking for a dynamic value is the rare case).
+    pub fn value(&mut self) -> Option<Vec<u8>> {
         if let Some(r) = self.nested.as_deref_mut() {
             let v = r.value();
             self.nested_done();
@@ -713,15 +711,11 @@ impl RowReader {
             }
             _ => false,
         };
-        let value = match ok {
-            true => super::value::parse(&text, usize::MAX).ok(),
-            false => None,
-        };
-        if value.is_none() || self.skip() == 0 {
+        if !ok || self.skip() == 0 {
             self.mismatch();
             return None;
         }
-        value
+        Some(text)
     }
 
     /// Nothing follows the top-level value.

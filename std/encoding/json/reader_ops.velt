@@ -30,7 +30,7 @@ declare function velt_rt_json_error(r: u64, expected: string, path: string): str
 declare function velt_rt_json_reader_end(r: u64): u8;
 declare function velt_rt_json_reader_read_bool(r: u64, out: ReaderBool): u8;
 declare function velt_rt_json_reader_read_i64(r: u64, out: ReaderI64): u8;
-declare function velt_rt_json_reader_read_value(r: u64, out: ReaderHandle): u8;
+declare function velt_rt_json_reader_read_value(r: u64, out: string): u8;
 declare function velt_rt_json_reader_reset(r: u64, mark: u64);
 declare function velt_rt_json_reader_skip_unknown(r: u64): u8;
 declare function velt_rt_json_reader_skip_value(r: u64): u8;
@@ -65,21 +65,16 @@ export function readerMessage(r: Reader, expected: string, path: string): string
  * The start of one complete value of any kind, for a `JsonValue` (`JsonValue[JSON_FROM_READER]`
  * parses it into a tape over this reader's source with `parseWith`): the depth limit to give
  * `parseWith` (0: none), or -1 when no text value is to be parsed: on failure, or for a
- * driver's rows, which set `rowsValue` and leave the runtime tree in `handle`. The tape is not
+ * driver's rows, which set `rowsValue` and leave the value's JSON text in `rowsText`. The tape is not
  * named here, so a program that decodes no `JsonValue` checks none of its code.
  */
 export function readerValueLimit(r: Reader): i64 {
-  // A failed read leaves `handle` 0 and `rowsValue` false: the value before is not the
-  // decoder's to own (its out-parameter must own nothing on failure).
-  r.handle = 0;
   r.rowsValue = false;
   if (!readerValueStart(r, 0, 0)) {
     if (r.rows != 0 && r.failed == ROWS) {
-      let out: ReaderHandle = { v: 0 };
+      let out = "";
       r.rowsValue = velt_rt_json_reader_read_value(r.rows, out) == 1;
-      if (r.rowsValue) {
-        r.handle = out.v;
-      }
+      r.rowsText = out;
     }
     return -1;
   }
@@ -257,8 +252,4 @@ struct ReaderI64 {
 
 struct ReaderBool {
   v: u8;
-}
-
-struct ReaderHandle {
-  v: u64;
 }

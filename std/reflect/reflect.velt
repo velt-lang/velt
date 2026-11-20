@@ -9,12 +9,27 @@ import {
   anyReflectValue,
   identity as valueIdentity,
   isTypedProxy,
+  addressLoad,
+  addressStore,
+  rawAlloc,
+  rawFree,
   toAny,
 } from "velt/lang/intrinsics";
 import { RuntimeType } from "velt/reflect/runtime_type";
 
-declare function velt_rt_visit_enter(id: u64): u8;
-declare function velt_rt_visit_leave();
+/**
+ * This thread's visits (`beginVisit`), outermost first: how many there are, the first
+ * `VISIT_SLOTS` identities in thread-locals, and the deeper ones in a block of words
+ * `[capacity, identity…]` (0 until a visit nests that deep; given back when the visits return to
+ * the thread-locals). A visit never suspends, so the visits of a thread form one stack.
+ */
+const VISIT_DEPTH = new ThreadLocal<u64>(0);
+const VISIT0 = new ThreadLocal<u64>(0);
+const VISIT1 = new ThreadLocal<u64>(0);
+const VISIT2 = new ThreadLocal<u64>(0);
+const VISIT3 = new ThreadLocal<u64>(0);
+const VISIT_DEEP = new ThreadLocal<u64>(0);
+const VISIT_SLOTS: u64 = 4;
 
 /** What `v` holds at run time. */
 export function typeOf(v: any): RuntimeType {
@@ -96,10 +111,95 @@ export function isProxy<T>(v: T): bool {
  * `endVisit`.
  */
 export function beginVisit(id: u64): bool {
-  return velt_rt_visit_enter(id) != 0;
+  const n = VISIT_DEPTH.get();
+  for (let i: u64 = 0; i < n; i++) {
+    if (visitAt(i) == id) {
+      return false;
+    }
+  }
+  if (n == 0) {
+    VISIT0.set(id);
+  } else if (n == 1) {
+    VISIT1.set(id);
+  } else if (n == 2) {
+    VISIT2.set(id);
+  } else if (n == 3) {
+    VISIT3.set(id);
+  } else {
+    pushDeep(n - VISIT_SLOTS, id);
+  }
+  VISIT_DEPTH.set(n + 1);
+  return true;
 }
 
 /** Ends the innermost visit `beginVisit` started. */
 export function endVisit(): void {
-  velt_rt_visit_leave();
+  const n = VISIT_DEPTH.get();
+  if (n == 0) {
+    return;
+  }
+  VISIT_DEPTH.set(n - 1);
+  const p = VISIT_DEEP.get() as usize;
+  if (n - 1 == VISIT_SLOTS && p != 0) {
+    // SAFETY: `p` came from `rawAlloc` in `pushDeep` with room for its capacity; nothing uses it
+    // after.
+    unsafe {
+      rawFree(p, (visitWord(p) + 1) * 8);
+    }
+    VISIT_DEEP.set(0);
+  }
+}
+
+// The identity visited at depth `i` (below `VISIT_DEPTH`).
+function visitAt(i: u64): u64 {
+  if (i == 0) {
+    return VISIT0.get();
+  }
+  if (i == 1) {
+    return VISIT1.get();
+  }
+  if (i == 2) {
+    return VISIT2.get();
+  }
+  if (i == 3) {
+    return VISIT3.get();
+  }
+  const p = VISIT_DEEP.get() as usize;
+  return visitWord(p + 8 + ((i - VISIT_SLOTS) as usize) * 8) as u64;
+}
+
+// Puts `id` at position `k` of the deep block, growing it first when full.
+function pushDeep(k: u64, id: u64): void {
+  let p = VISIT_DEEP.get() as usize;
+  const cap: usize = p == 0 ? 0 : visitWord(p);
+  if ((k as usize) >= cap) {
+    const next = cap == 0 ? 8 : cap * 2;
+    const q = rawAlloc((next + 1) * 8);
+    setVisitWord(q, next);
+    for (let i: usize = 0; i < cap; i++) {
+      setVisitWord(q + 8 + i * 8, visitWord(p + 8 + i * 8));
+    }
+    if (p != 0) {
+      // SAFETY: `p` came from `rawAlloc` here with room for `cap` identities; nothing uses it after.
+      unsafe {
+        rawFree(p, (cap + 1) * 8);
+      }
+    }
+    p = q;
+    VISIT_DEEP.set(p as u64);
+  }
+  setVisitWord(p + 8 + (k as usize) * 8, id as usize);
+}
+
+// The word at `a`, in this thread's block of visits.
+function visitWord(a: usize): usize {
+  // SAFETY: `a` is a word of the block `rawAlloc` gave `beginVisit`, not freed yet.
+  return unsafe { addressLoad<usize>(a) };
+}
+
+function setVisitWord(a: usize, v: usize): void {
+  // SAFETY: as `visitWord`.
+  unsafe {
+    addressStore<usize>(a, v);
+  }
 }

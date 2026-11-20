@@ -163,9 +163,9 @@ source becomes NEON or SSE2 code. The writer (`writer.velt`) escapes as `JSON.st
 
 Some JSON code remains in the runtime (`crates/velt_rt/src/json/`, ABI in
 [rt_abi_async.md §12](../contracts/rt_abi_async.md)): the reader of a database driver's rows
-(with the Rust copy of Node's messages its reader of nested JSON cells gives, and the tree of a
-`JsonValue` it reads, which std turns into a tape), which goes with
-the native-package ABI (#2563), and the shortest-digits printer for doubles.
+(with the Rust copy of Node's messages its reader of nested JSON cells gives; a `JsonValue` it
+reads reaches std as JSON text, which std parses into a tape), which goes with the
+native-package ABI (#2563), and the shortest-digits printer for doubles.
 
 ## Compatibility
 
