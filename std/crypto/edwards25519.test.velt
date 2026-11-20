@@ -71,7 +71,7 @@ describe("edwards25519", () => {
   it("has the base point's odd multiples in its table", () => {
     const f = edwardsField(8 + 32 + 4);
     loadBaseOdd(f, TABLE);
-    // The identity plus each entry, taken as affine, against B, B + 2B, ..
+    // The identity plus each entry, taken as affine, against B, B + 2B, .. (its x and y).
     decompress(f, Q, hexDecode(BASE));
     decompress(f, P, hexDecode(TWO_B));
     premultiply(f, P);
@@ -85,6 +85,13 @@ describe("edwards25519", () => {
       addPoint(f, acc, TABLE + 4 * i, true);
       expect(`${i} ${hexEncode(encodePoint(f, acc))}`).toBe(`${i} ${expected}`);
       addPoint(f, Q, P, false);
+      // And 2B plus the entry is the next odd multiple: here the entry's 2 d T counts, which it
+      // does not when added to the identity.
+      decompress(f, acc, hexDecode(TWO_B));
+      addPoint(f, acc, TABLE + 4 * i, true);
+      expect(`2B + ${i} ${hexEncode(encodePoint(f, acc))}`).toBe(
+        `2B + ${i} ${hexEncode(encodePoint(f, Q))}`,
+      );
     }
   });
 });
