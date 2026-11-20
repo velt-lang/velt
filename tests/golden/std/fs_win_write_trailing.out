@@ -1,0 +1,10 @@
+writeFile f/ ok
+appendFile f\ ok
+f two+three
+writeFile new/ ok
+appendFile newer// ok
+new made made too
+writeFile d/ EISDIR
+appendFile d/ EISDIR
+writeFile missing/x/ ENOENT
+d f new newer

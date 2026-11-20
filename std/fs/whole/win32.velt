@@ -198,7 +198,8 @@ export function readText(c: readonly u8[], path: string): Done<string> {
 
 /** Writes `data` as UTF-8 to the file at `path`, created if missing, truncated or `append`ed to. */
 export function writeText(c: readonly u8[], path: string, data: string, append: bool): Done<bool> {
-  const w = winPath(path);
+  // `f\` writes `f`, made if missing, as Node does; a directory keeps its separator.
+  const w = winPath(asFile(path, true));
   if (w === null) {
     return { value: null, error: osError(errnoOfWin32(ERROR_FILE_NOT_FOUND), "open", path) };
   }
