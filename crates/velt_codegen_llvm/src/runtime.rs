@@ -202,7 +202,11 @@ pub(crate) use velt_vir::math::{effects, Effects};
 /// no program memory except the block they are given (so values loaded before a `push` that
 /// grows an array stay in registers across it), and that an alloc/free pair of the same family
 /// whose block is never used can be deleted. velt_rt's mem.rs upholds this: the functions only
-/// call mimalloc (or the Rust global allocator) and abort on failure.
+/// call mimalloc (or the Rust global allocator) and abort on failure. So do velt_opt's wrappers
+/// of std's hooks (`velt.heap.alloc`, `velt.heap.realloc`: std/lang/hooks/heap.velt), which a
+/// release build calls in their place for an allocation of a run-time size and for growth: their
+/// definitions get the same attributes, and they stay out of line (`noinline`), so a loop that
+/// grows an array sees the same call as with the runtime's functions.
 ///
 /// mimalloc's own functions, which a release build's generated code calls through std's hooks
 /// (std/lang/hooks/heap.velt, #2196), get the same memory effects and a `noalias` result, so
@@ -238,8 +242,12 @@ impl Allocator {
     pub(crate) fn of(symbol: &str, params: &[Ty], ret: Ty) -> Option<Allocator> {
         use Ty::{Ptr, Unit, U64};
         let (kind, want_params, want_ret): (_, &[Ty], _) = match symbol {
-            "velt_rt_alloc" => (Allocator::Alloc, &[U64, U64], Ptr),
-            "velt_rt_realloc" => (Allocator::Realloc, &[Ptr, U64, U64, U64], Ptr),
+            // velt_opt's wrappers of std's hooks are these functions where a release build
+            // allocates through mimalloc (velt_opt's heap_calls), with the same contract.
+            "velt_rt_alloc" | velt_vir::heap::ALLOC_WRAPPER => (Allocator::Alloc, &[U64, U64], Ptr),
+            "velt_rt_realloc" | velt_vir::heap::REALLOC_WRAPPER => {
+                (Allocator::Realloc, &[Ptr, U64, U64, U64], Ptr)
+            }
             "velt_rt_free" => (Allocator::Free, &[Ptr, U64, U64], Unit),
             "mi_malloc" => (Allocator::MiMalloc, &[U64], Ptr),
             "mi_malloc_aligned" => (Allocator::MiMallocAligned, &[U64, U64], Ptr),

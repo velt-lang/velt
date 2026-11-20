@@ -392,14 +392,18 @@ fn chain(aggs: &[AggLayout], kinds: &Kinds, func: &Function, place: &Place) -> b
 }
 
 /// A natural loop: a head and the blocks that reach one of its latches without passing it.
-pub(super) struct Loop {
-    head: usize,
-    body: Vec<bool>,
-    size: usize,
+pub(crate) struct Loop {
+    pub(crate) head: usize,
+    pub(crate) body: Vec<bool>,
+    pub(crate) size: usize,
 }
 
 /// The natural loops of `func`, one per head; `None` when the CFG is irreducible.
-fn natural_loops(func: &Function, preds: &[Vec<usize>], doms: &Dominators) -> Option<Vec<Loop>> {
+pub(crate) fn natural_loops(
+    func: &Function,
+    preds: &[Vec<usize>],
+    doms: &Dominators,
+) -> Option<Vec<Loop>> {
     let n = func.blocks.len();
     let reachable = |b: usize| doms.dominates(b, b);
     let mut latches: Vec<Vec<usize>> = vec![vec![]; n];

@@ -1,0 +1,39 @@
+// `yieldNow()` kept as a promise instead of awaited at once (#2196 9d): stored, raced, joined
+// and spawned. It settles on a later turn, after the microtasks queued before it, as a promise
+// resolved by `setImmediate` does in Node: the expected output is Node's for this program with
+// `yieldNow` defined so and `spawn(p)` as `p`.
+
+async function tick(name: string, n: i64): Promise<void> {
+  for (let i = 0; i < n; i++) {
+    console.log(name, i);
+    await Promise.resolve();
+  }
+}
+
+async function later(v: string): Promise<string> {
+  await tick("l", 3);
+  return v;
+}
+
+async function main() {
+  // A stored yield, awaited later: the microtasks queued meanwhile run first.
+  const y = yieldNow();
+  const t = tick("a", 4);
+  await y;
+  console.log("stored yield done");
+  await t;
+
+  // A yield racing a chain of microtasks: the chain wins, the yield is left behind.
+  const won = await Promise.race([later("chain"), yieldNow().then(() => "yield")]);
+  console.log("race", won);
+
+  // Joined with values: all of them after the yield.
+  const all = await Promise.all([yieldNow().then(() => 1), Promise.resolve(2)]);
+  console.log("all", all.join(","));
+
+  // Spawned: its own task, done after a turn.
+  await spawn(yieldNow());
+  console.log("spawned yield done");
+}
+
+main();

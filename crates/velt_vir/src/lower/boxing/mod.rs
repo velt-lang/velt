@@ -295,6 +295,10 @@ pub(super) struct Facts {
     fn_wrapper: bool,
     /// The types of the function values compared (fresh_fns.rs).
     pub(in crate::lower) fn_compared_keys: FxHashSet<FnKey>,
+    /// The types built from a placeholder that a shared body compares through glue: which
+    /// function values such a type holds is known per dictionary (`Cx::replay` records their
+    /// keys), so this is empty outside a shared body's own facts.
+    pub(in crate::lower) glue_compared: FxHashSet<TyId>,
     /// The generic function types whose values are held as `unknown` (fresh_fns.rs).
     pub(in crate::lower) generic_any_keys: FxHashSet<FnKey>,
     /// The conversions of function values between function types (fresh_fns.rs).
