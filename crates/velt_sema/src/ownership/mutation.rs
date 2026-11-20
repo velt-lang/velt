@@ -208,6 +208,13 @@ impl Dispatch {
         generated.sort();
         groups.extend(generated.into_iter().map(Group::Vtable));
         groups.extend(iface_slots(cx));
+        // Only groups with a member of the unit being checked (`crate::units`): a finished
+        // unit's groups were joined with it.
+        let base = cx.unit_base;
+        groups.retain(|g| {
+            let (Group::Vtable(methods) | Group::Iface { methods, .. }) = g;
+            methods.iter().any(|m| m.0 >= base)
+        });
         let joined = std::cell::RefCell::new(vec![None; groups.len()]);
         Dispatch { groups, joined }
     }
