@@ -124,3 +124,14 @@ impl<'a> Visit<'a> for Finder {
         }
     }
 }
+
+#[cfg(test)]
+impl crate::units::codec::unit::Fresh for LiteralHosts {
+    fn shape(&self) -> String {
+        format!(
+            "{} pending, {} constants",
+            self.pending.len(),
+            self.in_constants
+        )
+    }
+}
