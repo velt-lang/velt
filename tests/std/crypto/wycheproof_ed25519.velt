@@ -1,6 +1,8 @@
-// Generated from Project Wycheproof's ed25519_test.json (C2SP/wycheproof, testvectors_v1):
-// "K <key>" starts a group with its public key (32 bytes), then one case per string: the case
-// id, its result (v valid, i invalid), the message and the signature; "-" is empty.
+// Generated from Project Wycheproof's ed25519_test.json (C2SP/wycheproof at 65ca494727a5,
+// testvectors_v1): "K <key>" starts a group with its public key (32 bytes), then one case per
+// string: the case id, its result (v valid, a acceptable, i invalid), the message and the
+// signature; "-" is empty. The acceptable cases are valid signatures by keys of small or mixed
+// order, which ring accepts.
 
 export const ED25519_CASES: string[] = [
   "K 7d4d0e7f6153a69b6242b522abbee685fda4420f8834b108c3bdae369ef549fa",

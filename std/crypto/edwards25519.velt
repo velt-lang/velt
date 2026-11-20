@@ -129,6 +129,7 @@ export const FIRST: usize = SCRATCH + 5;
 /** The field with `extra` registers from `FIRST` on, and the curve's constants set. */
 export function edwardsField(extra: usize): Fe25519 {
   const f = new Fe25519(FIRST + extra);
+  f.set(ZERO, 0);
   f.set(ONE, 1);
   f.decode(CURVE_D, bytes(D, 0));
   add(f, CURVE_2D, CURVE_D, CURVE_D);

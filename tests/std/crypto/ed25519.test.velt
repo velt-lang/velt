@@ -51,7 +51,7 @@ describe("ed25519Verify", () => {
     msg[1] ^= 1;
     expect(ed25519Verify(key, msg, sig)).toBe(false);
     msg[1] ^= 1;
-    // Every bit of the signature counts, the top one of S too.
+    // Each byte of the signature counts (its top bit is changed), S's last one too.
     for (let i: usize = 0; i < 64; i++) {
       sig[i] ^= 0x80;
       expect(`${i} ${ed25519Verify(key, msg, sig)}`).toBe(`${i} false`);

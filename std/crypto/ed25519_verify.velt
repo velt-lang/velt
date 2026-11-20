@@ -75,8 +75,10 @@ export function ed25519Verify(publicKey: u8[], message: u8[], signature: u8[]): 
   const hDigits = naf(reduce(hasher.digest()));
   // R' = [S]B + [h](-A), from the top digit down; the accumulator starts as the identity
   // (0 : 1 : 1 : 0).
+  f.set(ACC, 0);
   f.set(ACC + 1, 1);
   f.set(ACC + 2, 1);
+  f.set(ACC + 3, 0);
   let top = sDigits.length > hDigits.length ? sDigits.length : hDigits.length;
   let started = false;
   while (top > 0) {
