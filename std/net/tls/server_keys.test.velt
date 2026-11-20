@@ -215,6 +215,10 @@ describe("serverKey", () => {
 
   it("has no server for a P-521 key, and refuses malformed keys", () => {
     expect(loaded(v.P521_CERT, v.P521_PKCS8)).toBe("none");
+    // An RSA key with e = 3, which ring refuses and so the runtime's server does today.
+    expect(loaded(v.RSA3_CERT, v.RSA3_PKCS8)).toBe(
+      "invalid key PEM: an RSA key with a public exponent below 65537",
+    );
     const cut = (pem: string, n: usize): string => {
       const lines = pem.split("\n");
       lines.splice(n as i64, 1);
