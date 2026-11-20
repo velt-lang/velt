@@ -388,7 +388,7 @@ impl Ctx<'_> {
             TyKind::FnPtr { params, ret, .. } => params.iter().any(|p| m(*p)) || m(*ret),
             TyKind::Promise(v, _) => m(*v),
             TyKind::Adt(_, a) | TyKind::Dyn(_, a) | TyKind::Tuple(a) => a.iter().any(|x| m(*x)),
-            TyKind::Array(x) | TyKind::Option(x, _) | TyKind::Shared(x) => m(*x),
+            TyKind::Array(x) | TyKind::Option(x, _) | TyKind::Shared(x) | TyKind::Ptr(x) => m(*x),
             TyKind::Map(a, b) | TyKind::Result(a, b) => m(*a) || m(*b),
             _ => false,
         }

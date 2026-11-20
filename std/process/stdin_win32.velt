@@ -28,7 +28,7 @@ declare c("c") function ReadConsoleW(
   control: Ptr<_CONSOLE_READCONSOLE_CONTROL> | null,
 ): i32;
 declare c("c") function ReadFile(
-  handle: Ptr<void>,
+  handle: Ptr<void> | null,
   buf: Ptr<u8>,
   count: u32,
   read: Ptr<u32>,

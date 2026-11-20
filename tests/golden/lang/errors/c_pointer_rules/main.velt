@@ -1,0 +1,13 @@
+// The rules for C pointers (#3094) are the binding package's errors, reported before the program
+// runs. A pointee the user's own alias chooses for the package's alias is the user's error,
+// reported once, at the user's alias (`RC`), not in the package.
+import { CA, show } from "clib";
+
+type RC = CA<string>;
+
+function main() {
+  const a: RC = [];
+  const b: RC = [];
+  console.log(a, b);
+  show();
+}

@@ -372,7 +372,7 @@ fn reachable(
                 };
                 todo.extend(tys.into_iter().map(|f| cx.subst(f, &args)));
             }
-            k => todo.extend(crate::types::children(&k)),
+            k => todo.extend(crate::types::contents(&k)),
         }
     }
     out
@@ -403,7 +403,7 @@ fn hidden(
             };
             tys.into_iter().map(|f| cx.subst(f, &args)).collect()
         }
-        k => crate::types::children(&k),
+        k => crate::types::contents(&k),
     };
     parts.into_iter().find_map(|p| hidden(cx, p, hiding, seen))
 }

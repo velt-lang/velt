@@ -5,7 +5,7 @@
 import { Ptr } from "velt/ffi/ptr";
 import { addressLoad } from "velt/lang/intrinsics";
 
-declare c("c") function __wasi_clock_time_get(id: u32, precision: u64, time: Ptr<u64>): u16;
+declare c("c") function __wasi_clock_time_get(id: u32, precision: u64, time: Ptr<u64> | null): u16;
 declare c("c") function calloc$clock(n: usize, size: usize): Ptr<u8> | null;
 
 /** WASI's clock ids. */
@@ -28,7 +28,7 @@ function clockNs(id: u32): u64 {
     BUFFER.set(p as u64);
   }
   // SAFETY: this thread's buffer holds the u64 the call writes; only this call uses it.
-  const rc = unsafe { __wasi_clock_time_get(id, 1, Ptr.at<u64>(p)) };
+  const rc = unsafe { __wasi_clock_time_get(id, 1, Ptr.orNull<u64>(p)) };
   // SAFETY: inside the buffer, which the call filled when it returned 0.
   return rc === 0 ? unsafe { addressLoad<u64>(p) } : 0;
 }

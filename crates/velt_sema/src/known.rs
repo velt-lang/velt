@@ -312,7 +312,7 @@ impl Ctx<'_> {
                 };
                 tys.into_iter().map(|f| self.subst(f, &args)).collect()
             }
-            k => crate::types::children(&k),
+            k => crate::types::contents(&k),
         };
         parts
             .into_iter()
@@ -373,7 +373,7 @@ impl Ctx<'_> {
                 };
                 tys.into_iter().map(|f| self.subst(f, &args)).collect()
             }
-            k => crate::types::children(&k),
+            k => crate::types::contents(&k),
         };
         parts
             .into_iter()
@@ -416,7 +416,7 @@ impl Ctx<'_> {
                 };
                 tys.into_iter().map(|f| self.subst(f, &args)).collect()
             }
-            k => crate::types::children(&k),
+            k => crate::types::contents(&k),
         };
         parts.into_iter().any(|p| self.holds_lock_in(p, seen))
     }
@@ -467,7 +467,7 @@ impl Ctx<'_> {
                 };
                 tys.into_iter().map(|f| self.subst(f, &args)).collect()
             }
-            k => crate::types::children(&k),
+            k => crate::types::contents(&k),
         };
         parts.into_iter().any(|p| self.holds_fn_in(p, seen))
     }
@@ -504,7 +504,7 @@ impl Ctx<'_> {
                 };
                 tys.into_iter().map(|f| self.subst(f, &args)).collect()
             }
-            k => crate::types::children(&k),
+            k => crate::types::contents(&k),
         };
         parts.into_iter().any(|p| self.holds_generator_in(p, seen))
     }
@@ -636,7 +636,7 @@ impl Ctx<'_> {
                 };
                 tys.into_iter().map(|f| self.subst(f, &args)).collect()
             }
-            k => crate::types::children(&k),
+            k => crate::types::contents(&k),
         };
         parts.into_iter().any(|p| self.holds_atomic_in(p, seen))
     }
@@ -717,7 +717,7 @@ impl Ctx<'_> {
     /// types of any other type.
     pub(crate) fn parts_of(&mut self, k: TyKind) -> Vec<TyId> {
         let TyKind::Adt(d, args) = k else {
-            return crate::types::children(&k);
+            return crate::types::contents(&k);
         };
         let tys: Vec<TyId> = match &self.info[d.0 as usize] {
             DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),

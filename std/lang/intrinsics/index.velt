@@ -17,6 +17,8 @@ export {
   addressLoad,
   addressStore,
   exportedAddress,
+  ptrFromAddress,
+  ptrToAddress,
 } from "velt/lang/intrinsics/address";
 export {
   anyDelete,
