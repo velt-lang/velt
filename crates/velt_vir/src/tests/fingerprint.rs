@@ -26,7 +26,7 @@ struct Variant {
     /// Whether `velt_rt_panic`, which `f` calls and names in a static, is declared `noreturn`.
     noreturn: bool,
     /// `f`'s gated target.
-    target: Option<crate::simd::Ext>,
+    target: crate::simd::ExtSet,
     /// The import module when `velt_rt_set_throw_loc`, which `f` calls, is a host function.
     host: Option<&'static str>,
 }
@@ -41,7 +41,7 @@ const BASE: Variant = Variant {
     noalias: false,
     far: b"far",
     noreturn: true,
-    target: None,
+    target: crate::simd::ExtSet::NONE,
     host: None,
 };
 
@@ -268,7 +268,7 @@ fn link_mode_counts_what_hot_reload_leaves_out() {
             ..BASE
         },
         Variant {
-            target: Some(crate::simd::Ext::ShaX86),
+            target: crate::simd::ExtSet::of(crate::simd::Ext::ShaX86),
             ..BASE
         },
         // A host function's import: a cached object would carry its manifest line.

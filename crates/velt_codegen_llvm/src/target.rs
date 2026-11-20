@@ -258,6 +258,26 @@ impl Target {
         }
     }
 
+    /// The function attributes of code compiled for the baseline CPU whatever `--cpu` says
+    /// (`vir::Function::baseline`, std's start-up check of the CPU, and the helpers it inlines):
+    /// on x86-64 clang's `x86-64` with its own features only; on arm64 the target's default CPU,
+    /// where `--cpu` names another. `None` where code is for the baseline already (WebAssembly,
+    /// an arm64 build without `--cpu`).
+    pub fn baseline_attributes(&self) -> Option<&'static str> {
+        let named = self.cpu.as_deref().filter(|c| *c != "baseline");
+        if self.is_wasm() {
+            None
+        } else if self.triple.starts_with("x86_64") {
+            Some(" \"target-cpu\"=\"x86-64\" \"target-features\"=\"+cx8,+fxsr,+mmx,+sse,+sse2,+x87\"")
+        } else if named.is_none() {
+            None
+        } else if self.os == Os::Darwin {
+            Some(" \"target-cpu\"=\"apple-m1\" \"target-features\"=\"+neon\"")
+        } else {
+            Some(" \"target-cpu\"=\"generic\" \"target-features\"=\"+neon,+fp-armv8\"")
+        }
+    }
+
     /// Whether the target has NEON (`simd.rs` counts mask lanes with its widening sum).
     pub fn has_neon(&self) -> bool {
         self.triple.starts_with("aarch64") || self.triple.starts_with("arm64")
