@@ -3,7 +3,7 @@
 // more to read a match backwards.
 
 import { Compiler } from "velt/text/regex/compiler";
-import { classify } from "velt/text/regex/dfa";
+import { classify } from "velt/text/regex/classify";
 import { hint } from "velt/text/regex/hints";
 import { parsePattern } from "velt/text/regex/parse_pattern";
 import { Parser } from "velt/text/regex/parser";
