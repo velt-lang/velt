@@ -149,7 +149,7 @@ impl Cx<'_> {
         let f = self.fn_def(def);
         let (mut func, inputs, result) = {
             let mut lw = FnLower::bare(self, targs.to_vec());
-            let inputs = lw.lower_poll_body(f);
+            let inputs = lw.lower_poll_body(def, f);
             let result = lw.result_region();
             let sym = format!("{}$poll", lw.cx.instance_symbol(&f.name, targs));
             (
@@ -185,7 +185,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
 
     /// Params `(state, cx)`, the dispatch switch, then the body. Returns the VIR local of each
     /// input (param/capture) for the state layout.
-    fn lower_poll_body(&mut self, f: &FnDef) -> Vec<Option<Local>> {
+    fn lower_poll_body(&mut self, def: DefId, f: &FnDef) -> Vec<Option<Local>> {
         let state = self.new_local(Ty::Ptr, Some("state".into()));
         let cx = self.new_local(Ty::Ptr, Some("cx".into()));
         let targs = self.targs.clone();
@@ -215,7 +215,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let scan = FlagScan::run_picking(hir, &f.body, Some(&mut pick));
         self.ref_bindings = scan.ref_bindings.iter().copied().collect();
         self.epoch_exempt = f.name.starts_with(super::epoch_sections::EPOCH_MODULE);
-        let inputs = self.declare_async_locals(f);
+        let inputs = self.declare_async_locals(def, f);
         self.declare_drop_flags(f, &scan);
         self.lower_body(f);
         self.emit_dispatch();
@@ -223,14 +223,19 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     /// Params and captures are values stored in the state (owned/copied), or pointers for
-    /// borrowed aggregates; every other local is declared as in a sync function.
-    fn declare_async_locals(&mut self, f: &FnDef) -> Vec<Option<Local>> {
+    /// borrowed aggregates; every other local is declared as in a sync function. A rest tuple
+    /// the constructor builds from its elements (`ctor.rs`) is owned by the state, whatever
+    /// its mode: no caller holds it.
+    fn declare_async_locals(&mut self, def: DefId, f: &FnDef) -> Vec<Option<Local>> {
         let mut info: Vec<Option<LInfo>> = f.body.locals.iter().map(|_| None).collect();
         let modes: FxHashMap<hir::LocalId, PassMode> =
             f.captures.iter().map(|c| (c.inner, c.mode)).collect();
         let mut inputs = vec![];
         for p in &f.params {
-            let mode = modes.get(&p.local).copied().unwrap_or(p.mode);
+            let mode = match self.rest_tuple_of(def, f, p) {
+                Some(_) => PassMode::Owned,
+                None => modes.get(&p.local).copied().unwrap_or(p.mode),
+            };
             let name = f.body.locals[p.local.0 as usize].name.clone();
             let ty = self.sub(p.ty);
             let by_ref = matches!(mode, PassMode::Borrow | PassMode::BorrowMut);

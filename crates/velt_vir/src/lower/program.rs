@@ -46,6 +46,7 @@ impl<'h> Cx<'h> {
             cpu_checks: Default::default(),
             unavailable: vec![],
             unreduced: vec![],
+            rest_closures: Default::default(),
             c_clashes: vec![],
             c_symbols: Default::default(),
             c_globals: Default::default(),
