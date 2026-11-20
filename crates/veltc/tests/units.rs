@@ -35,8 +35,15 @@ fn check(units: bool) -> std::process::Output {
 
 /// `velt check` of `src`, by units as `VELT_UNITS` says (`None`: a whole-program check).
 fn check_in(units: Option<&str>, src: &str) -> std::process::Output {
+    check_files(units, &[("main.velt", src)])
+}
+
+/// `velt check` of `main.velt` among `files` (name, source), by units as `VELT_UNITS` says.
+fn check_files(units: Option<&str>, files: &[(&str, &str)]) -> std::process::Output {
     let dir = test_dir::TestDir::new();
-    std::fs::write(dir.path().join("main.velt"), src).unwrap();
+    for (name, src) in files {
+        std::fs::write(dir.path().join(name), src).unwrap();
+    }
     let mut cmd = no_window::command(env!("CARGO_BIN_EXE_velt"));
     cmd.args(["check", "main.velt"])
         .current_dir(dir.path())
@@ -251,6 +258,49 @@ function main() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(out.status.success(), "VELT_UNITS={units:?}:\n{stderr}");
     }
+}
+
+/// What the source rewrites found per module (a namespace's private members, the modules of a
+/// global namespace, the sites of a `globalThis` property) is by the load's module numbers; the
+/// app's copy of std's unit holds std's modules first, so those facts are put in its order
+/// (`units::remap_module_facts`). Without that a global namespace's members are not found, a
+/// namespace's private member is visible, and two modules asserting different types for one
+/// `globalThis` property are not told so: each checks with `VELT_UNITS=2` as by a whole-program
+/// check.
+#[test]
+fn the_rewrites_facts_are_in_the_app_s_module_order() {
+    for path in [
+        "lang/declare_global_namespace_modules.velt",
+        "lang/errors/namespace_members.velt",
+    ] {
+        let whole = check_golden_two(path, false);
+        let two = check_golden_two(path, true);
+        assert_eq!(whole.status.code(), two.status.code(), "{path}");
+        assert_eq!(error_lines(&whole), error_lines(&two), "{path}");
+    }
+    let lib = r#"
+export type Count = number;
+export function bump(): number {
+  const g = globalThis as { counter?: Count };
+  g.counter = (g.counter ?? 0) + 1;
+  return g.counter;
+}
+"#;
+    let main = r#"
+import { bump } from "./lib";
+type Text = string;
+function main() {
+  const g = globalThis as { counter?: Text };
+  console.log(bump(), g.counter);
+}
+"#;
+    let files = [("main.velt", main), ("lib.velt", lib)];
+    let errors = error_lines(&check_files(None, &files));
+    assert!(
+        errors.iter().any(|l| l.contains("`globalThis.counter` is")),
+        "{errors:?}"
+    );
+    assert_eq!(errors, error_lines(&check_files(Some("2"), &files)));
 }
 
 /// The error lines of a check's output.
