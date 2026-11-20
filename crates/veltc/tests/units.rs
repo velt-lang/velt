@@ -136,16 +136,21 @@ fn std_s_frozen_copy_reports_the_app_writing_std() {
 /// `velt check`'s report of writes to std's definitions (`velt-units:` lines, places with `/`)
 /// for a program overriding a std method that has no slot, checked by units as `VELT_UNITS`
 /// says.
+///
+/// The method must stay slot-less in std: no std class may override `URLSearchParams.getAll`
+/// (std/net/url/search_params.velt). An override in std gives the method its slot there, and the
+/// app's override then crosses nothing (as `Error.toString` did once std's `ArgError` overrode
+/// it).
 fn crossings(units: &str) -> String {
     let dir = test_dir::TestDir::new();
     let src = r#"
-class Loud extends Error {
-  toString(): string {
-    return "LOUD";
+class Loud extends URLSearchParams {
+  getAll(name: string): string[] {
+    return [name, "LOUD"];
   }
 }
 function main() {
-  console.log(String(new Loud("x")));
+  console.log(new Loud("a=1").getAll("a").join(","));
 }
 "#;
     std::fs::write(dir.path().join("main.velt"), src).unwrap();
