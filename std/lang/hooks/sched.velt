@@ -1,12 +1,13 @@
 // velt/lang/hooks (internal): the executor in Velt (#2649 steps 3.1 and 3), its workers: worker 0
 // is the thread that runs `main`, the others are threads it starts (`VELT_THREADS`, else the
 // online cores; `#sched-thread`), each with its own queue, inbox and reactor. A task stays on its
-// home worker (the spawning one, or the one `spawn(p, { worker })` pins it to). A program compiled with `VELT_SCHEDULER=std` runs here instead of on the
-// runtime's executor: its root (`schedBlockOn`), its spawned tasks (`schedSpawn`), `await
-// yieldNow()` (`schedYield`), boxed and started promises (`schedBox`, `schedStart`,
-// sched_node.velt), the microtask steps of `await` and the prelude's microtasks (`schedAwaitTick`,
-// `schedAwaitReady`, `schedMicrotask`, sched_micro.velt), the process lifetime (keep-alive
-// references, a due `unref()`'d timer's question, the top-level `await` waiting: sched_end.velt),
+// home worker (the spawning one, or the one `spawn(p, { worker })` pins it to). A program runs
+// here instead of on the runtime's executor: its root (`schedBlockOn`), its spawned tasks
+// (`schedSpawn`), `await yieldNow()` and a stored one (sched_yield.velt), boxed and
+// started promises (`schedBox`, `schedStart`, sched_node.velt), the microtask steps of `await`
+// and the prelude's microtasks (`schedAwaitTick`, `schedAwaitReady`, `schedMicrotask`,
+// sched_micro.velt), the process lifetime (keep-alive references, a due `unref()`'d timer's
+// question, the top-level `await` waiting: sched_end.velt),
 // `sleep` (`schedSleep`, sched_sleep.velt) and Node's timer order (`schedTimer*`,
 // sched_timers.velt); `schedFinish` drives the tasks still alive once `main` is done. The
 // runtime's other leaves (channels, files, sockets) stay Rust: they wake a task through its C
@@ -48,8 +49,10 @@ import * as st from "./sched_stats";
 import * as t from "./sched_task";
 import * as tm from "./sched_timers";
 import * as workers from "./sched_workers";
-// `spawn`'s hooks live in sched_spawn.velt; loaded with this module (std loaded up front too).
+// `spawn`'s and `yieldNow()`'s hooks live in sched_spawn.velt and sched_yield.velt; loaded with this
+// module (std loaded up front too).
 export { schedSpawn, schedSpawnFut } from "./sched_spawn";
+export { schedYield, schedYieldFut } from "./sched_yield";
 import * as mk from "./sched_make";
 import * as wk from "./sched_wake";
 
@@ -223,18 +226,6 @@ export function schedCurrentWorker(): u64 {
     return 0;
   }
   return (m.ld(w + t.E_INDEX) % m.ld(m.ld(w + t.E_MAIN) + t.E_COUNT)) as u64;
-}
-
-/** `await yieldNow()`: the task polled with `cx` runs again after the other ready tasks. */
-export function schedYield(cx: usize): void {
-  const w = m.ld(cx + 8);
-  if (m.ld(w) === t.main() + t.E_VT) {
-    // Running: polled again once this poll returns, at the back of the queue. While it runs,
-    // only a wake changes its state, from RUNNING to NOTIFIED: a store, not a swap.
-    m.store32(w + t.T_STATE, t.NOTIFIED);
-    return;
-  }
-  m.wakeByRef(w);
 }
 
 /**
@@ -417,7 +408,7 @@ export function schedTimerFree(h: u64): void {
 
 /**
  * `velt_rt_uncaught_now`: the next rejection nobody handles is an error a timer or microtask
- * callback threw, reported at once (sched_node.velt), not after the task's microtasks.
+ * callback threw, reported at once (sched_node_report.velt), not after the task's microtasks.
  */
 export function schedUncaughtNow(): void {
   ex.uncaughtNow(exec());

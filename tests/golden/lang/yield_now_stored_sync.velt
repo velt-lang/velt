@@ -1,0 +1,18 @@
+// A `yieldNow()` and a `sleep()` kept as promises in a program with no async function (#2196
+// 9d): both are leaves of the executor in Velt, which the program loads for them. Node's output,
+// with `yieldNow` a promise `setImmediate` resolves and `sleep` one `setTimeout` resolves.
+
+const y = yieldNow();
+const s = sleep(1);
+
+function later(): Promise<void>[] {
+  return [yieldNow(), sleep(0)];
+}
+
+class Holder {
+  p: Promise<void> = yieldNow();
+}
+
+const ps = later();
+const h = new Holder();
+console.log("sync done", ps.length);

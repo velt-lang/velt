@@ -466,6 +466,25 @@ impl FnCx<'_, '_> {
             },
             _ => None,
         };
+        // `f(rq)` for `f: (rq: Ctx, ...args: A) => R` in a generic body: what `A` is is known
+        // only per instance (`[number, number]` from a callback, #379), so arguments checked
+        // here against `A` (none, an empty array) are no arguments of that instance's function.
+        // TypeScript refuses them too (TS2345); a spread `...args` of an `A` is not supported.
+        if rest
+            && params
+                .last()
+                .is_some_and(|t| matches!(self.cx.ty.kind(*t), TyKind::Param(_)))
+        {
+            self.check_args_loose(args);
+            self.cx.error(
+                Diagnostic::error(
+                    "a call of a function value whose rest parameter is typed by a type parameter (`...args: A`) is not supported yet (#943)",
+                    span,
+                )
+                .with_note("its arguments for `A` are known only once `A` is: pass the function on, or type the rest parameter as an array (`...args: unknown[]`)"),
+            );
+            return self.error_expr(span);
+        }
         let mut ps = vec![];
         for (i, ty) in params.iter().enumerate() {
             // Function values: Copy args by value, others by pointer (the callee may modify

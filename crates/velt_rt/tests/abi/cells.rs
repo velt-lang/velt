@@ -3,13 +3,13 @@
 //! a cell handed over by the transfer glue is claimed by the task that receives it.
 //!
 //! Tasks are played by [`Locals`], which every task root (spawned tasks, `block_on`, HTTP
-//! requests) polls through and which gives `velt_rt_task_id` its id.
+//! requests) polls through and which gives `task_key` its id.
 
 use crate::cell_owner::{
     velt_rt_cell_copy, velt_rt_cell_free, velt_rt_cell_give, velt_rt_cell_new, velt_rt_cell_use,
 };
 use crate::str::VeltStr;
-use crate::task::local::{velt_rt_task_id, Locals};
+use crate::task::local::{task_key, Locals};
 use std::task::{Context, Poll, Waker};
 
 /// A task: `f` runs inside one poll of it.
@@ -55,7 +55,7 @@ fn a_task_keeps_its_cells_when_it_resumes_on_another_thread() {
     t.poll(|| new(c));
     let t = std::thread::spawn(move || {
         t.poll(|| {
-            assert_ne!(velt_rt_task_id(), 0);
+            assert_ne!(task_key(), 0);
             use_(c);
             use_(c);
         });

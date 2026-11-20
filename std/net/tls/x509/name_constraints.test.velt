@@ -1,0 +1,294 @@
+// velt/net (tests): a certificate's names against a server's name (names.velt) and against a
+// CA's nameConstraints (name_constraints.velt), on hand-built certificates: each kind of name
+// against permitted and excluded subtrees of its kind and of others, as webpki decides them.
+import { describe, expect, it } from "velt/test";
+import { utf8Encode } from "velt/encoding/utf8";
+import { hexDecode } from "velt/encoding/hex";
+import { TlsFailure } from "velt/net/tls/alert";
+import { Certificate } from "velt/net/tls/x509/certificate";
+import {
+  checkNameConstraints,
+  CONFORMS,
+  NAME_CONSTRAINT_VIOLATION,
+  TOO_MANY_COMPARISONS,
+} from "velt/net/tls/x509/name_constraints";
+import {
+  BAD_NETWORK_MASK,
+  certificateHasDnsName,
+  certificateHasIpAddress,
+  MALFORMED_CONSTRAINT,
+  MALFORMED_DNS_NAME,
+} from "velt/net/tls/x509/names";
+import { ascii, el, ext, NAME, partsWith } from "./parts.test";
+
+const SAN = "551d11";
+const NC = "551d1e";
+
+function dns(name: string): string {
+  return el("82", ascii(name));
+}
+
+function ip(hex: string): string {
+  return el("87", hex);
+}
+
+// A certificate whose subjectAltName holds `names` (GeneralNames, hex).
+function withNames(names: string): Certificate {
+  return partsWith(ext(SAN, "", el("30", names))).parsed();
+}
+
+// A CA certificate with the nameConstraints `permitted` and `excluded` (each the GeneralNames
+// that are its subtrees' bases, hex; "" for no such subtrees).
+function ca(permitted: string, excluded: string): Certificate {
+  let body = "";
+  if (permitted != "") {
+    body += el("a0", permitted);
+  }
+  if (excluded != "") {
+    body += el("a1", excluded);
+  }
+  return partsWith(ext(NC, "", el("30", body))).parsed();
+}
+
+// One GeneralSubtree per base.
+function subtrees(bases: string[]): string {
+  let out = "";
+  for (const b of bases) {
+    out += el("30", b);
+  }
+  return out;
+}
+
+// The answer for `leaf` under `issuer`'s constraints, with a budget of `budget` comparisons;
+// 99 when the constraints are malformed DER.
+function check(issuer: Certificate, leaf: Certificate, budget: usize = 1000): i32 {
+  try {
+    return checkNameConstraints(issuer.der, issuer.nameConstraints, [leaf], [budget]);
+  } catch (e) {
+    return e instanceof TlsFailure ? 99 : 98;
+  }
+}
+
+describe("a certificate's names", () => {
+  it("match a DNS name by a dNSName only, with a wildcard for one label", () => {
+    const cert = withNames(
+      dns("a.test") + dns("*.b.test") + ip("c0000201") + el("86", ascii("x.test")),
+    );
+    expect(certificateHasDnsName(cert, utf8Encode("a.test"))).toBe(true);
+    expect(certificateHasDnsName(cert, utf8Encode("A.TEST"))).toBe(true);
+    expect(certificateHasDnsName(cert, utf8Encode("a.test."))).toBe(true);
+    expect(certificateHasDnsName(cert, utf8Encode("w.b.test"))).toBe(true);
+    expect(certificateHasDnsName(cert, utf8Encode("b.test"))).toBe(false);
+    expect(certificateHasDnsName(cert, utf8Encode("v.w.b.test"))).toBe(false);
+    // A URI's host and the subject's common name ("ed") are not DNS names.
+    expect(certificateHasDnsName(cert, utf8Encode("x.test"))).toBe(false);
+    expect(certificateHasDnsName(cert, utf8Encode("ed"))).toBe(false);
+    expect(certificateHasDnsName(cert, utf8Encode("192.0.2.1"))).toBe(false);
+    expect(certificateHasDnsName(cert, [])).toBe(false);
+  });
+
+  it("skip a dNSName that is not a DNS name, and go on to the next", () => {
+    const cert = withNames(dns("a..test") + dns("*") + dns("b.test"));
+    expect(certificateHasDnsName(cert, utf8Encode("b.test"))).toBe(true);
+    expect(certificateHasDnsName(cert, utf8Encode("a..test"))).toBe(false);
+  });
+
+  it("match an IP address by an iPAddress only, byte for byte", () => {
+    const v6 = "20010db8000000000000000000000001";
+    const cert = withNames(dns("192.0.2.9") + ip("c0000201") + ip(v6));
+    expect(certificateHasIpAddress(cert, hexDecode("c0000201"))).toBe(true);
+    expect(certificateHasIpAddress(cert, hexDecode(v6))).toBe(true);
+    expect(certificateHasIpAddress(cert, hexDecode("c0000202"))).toBe(false);
+    expect(certificateHasIpAddress(cert, hexDecode("c0000209"))).toBe(false);
+    // An IPv4 address is not its IPv6-mapped form.
+    expect(certificateHasIpAddress(cert, hexDecode("00000000000000000000ffffc0000201"))).toBe(
+      false,
+    );
+    expect(certificateHasIpAddress(cert, hexDecode("c00002"))).toBe(false);
+    // An entry of the other length does not match by its first bytes, either way round.
+    const zeros = withNames(ip("00".repeat(16)));
+    expect(certificateHasIpAddress(zeros, hexDecode("00000000"))).toBe(false);
+    expect(certificateHasIpAddress(zeros, hexDecode("00".repeat(16)))).toBe(true);
+    const short = withNames(ip("00000000"));
+    expect(certificateHasIpAddress(short, hexDecode("00".repeat(16)))).toBe(false);
+    expect(certificateHasIpAddress(short, hexDecode("00000000"))).toBe(true);
+    // A dNSName of four bytes is not an address with those bytes.
+    const four = withNames(dns("a.bc"));
+    expect(certificateHasIpAddress(four, utf8Encode("a.bc"))).toBe(false);
+    expect(certificateHasDnsName(four, utf8Encode("a.bc"))).toBe(true);
+    expect(certificateHasIpAddress(cert, [])).toBe(false);
+  });
+
+  it("match nothing without a subjectAltName", () => {
+    const cert = partsWith(ext("551d13", "", "3000")).parsed();
+    expect(certificateHasDnsName(cert, utf8Encode("ed"))).toBe(false);
+    expect(certificateHasIpAddress(cert, hexDecode("c0000201"))).toBe(false);
+  });
+});
+
+describe("checkNameConstraints", () => {
+  it("permits DNS names at or under a permitted subtree", () => {
+    const issuer = ca(subtrees([dns("example.com")]), "");
+    expect(check(issuer, withNames(dns("example.com")))).toBe(CONFORMS);
+    expect(check(issuer, withNames(dns("www.example.com")))).toBe(CONFORMS);
+    expect(check(issuer, withNames(dns("www.example.org")))).toBe(NAME_CONSTRAINT_VIOLATION);
+    expect(check(issuer, withNames(dns("badexample.com")))).toBe(NAME_CONSTRAINT_VIOLATION);
+    // Every name must be permitted, not one of them.
+    const mixed = withNames(dns("www.example.com") + dns("www.example.org"));
+    expect(check(issuer, mixed)).toBe(NAME_CONSTRAINT_VIOLATION);
+    // One of several subtrees is enough.
+    const two = ca(subtrees([dns("example.org"), dns("example.com")]), "");
+    expect(check(two, mixed)).toBe(CONFORMS);
+  });
+
+  it("refuses DNS names at or under an excluded subtree", () => {
+    const issuer = ca("", subtrees([dns("bad.example.com")]));
+    expect(check(issuer, withNames(dns("good.example.com")))).toBe(CONFORMS);
+    expect(check(issuer, withNames(dns("bad.example.com")))).toBe(NAME_CONSTRAINT_VIOLATION);
+    expect(check(issuer, withNames(dns("x.bad.example.com")))).toBe(NAME_CONSTRAINT_VIOLATION);
+    const both = ca(subtrees([dns("example.com")]), subtrees([dns("bad.example.com")]));
+    expect(check(both, withNames(dns("good.example.com")))).toBe(CONFORMS);
+    expect(check(both, withNames(dns("bad.example.com")))).toBe(NAME_CONSTRAINT_VIOLATION);
+  });
+
+  it(
+    "takes a wildcard as all it can stand for when permitting, and any of it when excluding",
+    () => {
+      const wildcard = withNames(dns("*.example.com"));
+      expect(check(ca(subtrees([dns("example.com")]), ""), wildcard)).toBe(CONFORMS);
+      expect(check(ca(subtrees([dns("www.example.com")]), ""), wildcard)).toBe(
+        NAME_CONSTRAINT_VIOLATION,
+      );
+      expect(check(ca("", subtrees([dns("www.example.com")])), wildcard)).toBe(
+        NAME_CONSTRAINT_VIOLATION,
+      );
+      expect(check(ca("", subtrees([dns("a.b.example.com")])), wildcard)).toBe(CONFORMS);
+    },
+  );
+
+  it("matches IP addresses against an address and a mask", () => {
+    const net = ip("c0000200ffffff00"); // 192.0.2.0/24
+    const permits = ca(subtrees([net]), "");
+    expect(check(permits, withNames(ip("c0000205")))).toBe(CONFORMS);
+    expect(check(permits, withNames(ip("c0000305")))).toBe(NAME_CONSTRAINT_VIOLATION);
+    const excludes = ca("", subtrees([net]));
+    expect(check(excludes, withNames(ip("c0000205")))).toBe(NAME_CONSTRAINT_VIOLATION);
+    expect(check(excludes, withNames(ip("c0000305")))).toBe(CONFORMS);
+    // An IPv6 name is outside any IPv4 subtree.
+    const v6 = withNames(ip("20010db8000000000000000000000001"));
+    expect(check(permits, v6)).toBe(NAME_CONSTRAINT_VIOLATION);
+    expect(check(excludes, v6)).toBe(CONFORMS);
+    expect(check(ca(subtrees([ip("c0000200ffff00ff")]), ""), withNames(ip("c0000205")))).toBe(
+      BAD_NETWORK_MASK,
+    );
+  });
+
+  it("leaves a name alone when no subtree is of its kind", () => {
+    const issuer = ca(subtrees([dns("example.com")]), subtrees([dns("bad.example.com")]));
+    const names =
+      ip("c0000205") + el("81", ascii("a@other.org")) + el("86", ascii("https://o.org/"));
+    expect(check(issuer, withNames(names))).toBe(CONFORMS);
+    expect(check(issuer, partsWith(ext("551d13", "", "3000")).parsed())).toBe(CONFORMS);
+  });
+
+  it("refuses every certificate under a directoryName subtree, permitted or excluded", () => {
+    const leaf = withNames(dns("www.example.com"));
+    expect(check(ca(subtrees([el("a4", NAME)]), ""), leaf)).toBe(NAME_CONSTRAINT_VIOLATION);
+    expect(check(ca("", subtrees([el("a4", NAME)])), leaf)).toBe(NAME_CONSTRAINT_VIOLATION);
+  });
+
+  it("refuses a URI under any URI subtree", () => {
+    const leaf = withNames(el("86", ascii("https://a.test/")));
+    const base = el("86", ascii("a.test"));
+    expect(check(ca(subtrees([base]), ""), leaf)).toBe(NAME_CONSTRAINT_VIOLATION);
+    expect(check(ca("", subtrees([base])), leaf)).toBe(NAME_CONSTRAINT_VIOLATION);
+    expect(check(ca("", subtrees([base])), withNames(dns("a.test")))).toBe(CONFORMS);
+  });
+
+  it("refuses a name of a kind it does not match once a subtree of that kind exists", () => {
+    const mail = withNames(el("81", ascii("a@a.test")));
+    expect(check(ca(subtrees([el("81", ascii("a.test"))]), ""), mail)).toBe(
+      NAME_CONSTRAINT_VIOLATION,
+    );
+    expect(check(ca("", subtrees([el("81", ascii("b.test"))])), mail)).toBe(
+      NAME_CONSTRAINT_VIOLATION,
+    );
+    // Another kind's subtree (a registeredID) does not touch it.
+    expect(check(ca("", subtrees([el("88", "2a03")])), mail)).toBe(CONFORMS);
+  });
+
+  it("reports names and constraints that are not DNS names", () => {
+    const issuer = ca(subtrees([dns("example.com")]), "");
+    expect(check(issuer, withNames(dns("a..example.com")))).toBe(MALFORMED_DNS_NAME);
+    expect(check(ca(subtrees([dns("example..com")]), ""), withNames(dns("a.example.com")))).toBe(
+      MALFORMED_CONSTRAINT,
+    );
+    // A wildcard in a constraint is not a DNS name there.
+    expect(check(ca("", subtrees([dns("*.example.com")])), withNames(dns("a.example.com")))).toBe(
+      MALFORMED_CONSTRAINT,
+    );
+  });
+
+  it("refuses malformed subtrees", () => {
+    const leaf = withNames(dns("www.example.com"));
+    // A minimum of 0 written out, and a maximum.
+    const minimum = el("30", dns("example.com") + el("80", "00"));
+    const maximum = el("30", dns("example.com") + el("81", "01"));
+    expect(check(ca(minimum, ""), leaf)).toBe(99);
+    expect(check(ca("", maximum), leaf)).toBe(99);
+    // A base that is no GeneralName, an empty subtree, and a subtree that is not a SEQUENCE.
+    expect(check(ca(subtrees([el("89", "00")]), ""), leaf)).toBe(99);
+    expect(check(ca(el("30", ""), ""), leaf)).toBe(99);
+    expect(check(ca(dns("example.com"), ""), leaf)).toBe(99);
+  });
+
+  it("refuses anything after the two lists of subtrees", () => {
+    const leaf = withNames(dns("www.example.com"));
+    const permitted = el("a0", subtrees([dns("example.com")]));
+    const excluded = el("a1", subtrees([dns("bad.example.com")]));
+    const constrained = (body: string): Certificate => partsWith(
+      ext(NC, "", el("30", body)),
+    ).parsed();
+    expect(check(constrained(permitted + excluded), leaf)).toBe(CONFORMS);
+    // A list twice, the lists the other way round, another field, and stray bytes.
+    expect(check(constrained(permitted + permitted), leaf)).toBe(99);
+    expect(check(constrained(excluded + excluded), leaf)).toBe(99);
+    expect(check(constrained(excluded + permitted), leaf)).toBe(99);
+    expect(check(constrained(permitted + el("a2", "")), leaf)).toBe(99);
+    expect(check(constrained(permitted + excluded + "0500"), leaf)).toBe(99);
+    expect(check(constrained(el("a2", subtrees([dns("example.com")]))), leaf)).toBe(99);
+    // A primitive [0], and a first element that is neither list.
+    expect(check(constrained(el("80", subtrees([dns("example.com")]))), leaf)).toBe(99);
+    expect(check(constrained("0500"), leaf)).toBe(99);
+    // A name that violates the lists read so far is reported before what follows them.
+    const bad = withNames(dns("bad.example.com"));
+    expect(check(constrained(permitted + excluded + "0500"), bad)).toBe(NAME_CONSTRAINT_VIOLATION);
+    expect(check(constrained(excluded + permitted), bad)).toBe(NAME_CONSTRAINT_VIOLATION);
+  });
+
+  it("stops when the budget of comparisons is used up", () => {
+    const issuer = ca(subtrees([dns("example.org"), dns("example.com")]), "");
+    const leaf = withNames(dns("www.example.com"));
+    // Two for the dNSName and two for the subject as a directoryName.
+    expect(check(issuer, leaf, 4)).toBe(CONFORMS);
+    expect(check(issuer, leaf, 3)).toBe(TOO_MANY_COMPARISONS);
+    expect(check(issuer, leaf, 0)).toBe(TOO_MANY_COMPARISONS);
+    const budget: usize[] = [10];
+    checkNameConstraints(issuer.der, issuer.nameConstraints, [leaf, leaf], budget);
+    expect(budget[0]).toBe(2);
+  });
+
+  it("checks every certificate it is given", () => {
+    const issuer = ca("", subtrees([dns("bad.example.com")]));
+    const good = withNames(dns("good.example.com"));
+    const bad = withNames(dns("bad.example.com"));
+    const budget: usize[] = [100];
+    expect(checkNameConstraints(issuer.der, issuer.nameConstraints, [good, good], budget)).toBe(
+      CONFORMS,
+    );
+    expect(checkNameConstraints(issuer.der, issuer.nameConstraints, [good, bad], budget)).toBe(
+      NAME_CONSTRAINT_VIOLATION,
+    );
+    expect(checkNameConstraints(issuer.der, issuer.nameConstraints, [], budget)).toBe(CONFORMS);
+  });
+});

@@ -82,6 +82,19 @@ fn lld_lib_args(lib: &Path, name: &str) -> Vec<OsString> {
     ]
 }
 
+/// The argument for the helpers archive of a link of `req` (`LinkRequest::helpers_lib`), for a
+/// link against the shared runtime only. It goes last among the link's libraries: the linker has
+/// then seen every symbol the shared runtime and the C libraries define, and takes from the
+/// archive only the members that define one still undefined (the outline-atomics helpers of the
+/// static runtime's compiler builtins). Earlier on the line it would serve what a library after
+/// it defines: before the C libraries, a program's `fmod` came from the archive's compiler
+/// builtins, whose member brought Rust's std and the static runtime's `main` with it; before the
+/// shared runtime, every runtime call would bring a second runtime into the program.
+pub(crate) fn helpers_arg(req: &crate::LinkRequest, os: TargetOs) -> Option<OsString> {
+    let helpers = req.helpers_lib.filter(|_| is_shared(req.runtime_lib, os))?;
+    Some(helpers.into())
+}
+
 /// Windows: copy the DLL `file` beside `output` (unless an up-to-date copy is there).
 pub(crate) fn place_file(file: &Path, output: &Path) -> Result<(), String> {
     let to_dir = match output.parent() {
