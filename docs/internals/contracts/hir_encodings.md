@@ -733,6 +733,16 @@ name in it. A deferred type lowering meets unreduced under such a value is a dia
   the call runs (lowering counts the type or borrows values of it inside counted objects, so
   params of it are never `noalias`). The array callback methods re-check the length after a
   callback only then.
+  `Intrinsic::IsUnique(value)` (std only, std/lang/intrinsics/ownership.velt, additive: units
+  codec tag 213; value borrowed and evaluated): a `bool`, whether `value` is reached by no other
+  reference, so a change in place shows nowhere else (copy-on-write: velt/encoding/json's tree).
+  By kind: a counted object, array or box compares its whole count word with 1, so any flag in
+  it (an immortal count, a lock-set object's `LOCAL`/`STORED`, the cycle collector's
+  `BUFFERED` on a value it may trace) makes it `false`; a reference type the program never counts
+  is `true` (each value has one owner); a lock-set type (readers of an `RwLock` share its counts)
+  is `false` without reading a count; any other kind (`shared<T>`, strings, functions,
+  interface values, plain values) is `false`. A wrong `true` would be a lost write or a race, so
+  every doubtful case answers `false`, which only costs a copy.
   `Intrinsic::Truthy(x)` (compiler-internal, `x` a place of a type parameter's type,
   borrowed): a `bool`, JS truthiness of `x` (`!x`, `if (x)` in generic code), lowered per
   instantiation to the test sema writes for that type (truthiness.rs): numbers falsy at `0`,

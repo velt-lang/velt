@@ -170,6 +170,7 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("fnCapturesNothing", Op(I::FnCapturesNothing)),
     ("holdsNull", Op(I::HoldsNull)),
     ("mayAlias", Op(I::MayAlias)),
+    ("isUnique", Op(I::IsUnique)),
     ("needsDrop", Op(I::NeedsDrop)),
     ("needsTransfer", Op(I::NeedsTransfer)),
     ("nullAs", Op(I::NullAs)),

@@ -105,8 +105,7 @@ pub enum Intrinsic {
     /// permutation: every element stays owned once, so it moves elements of any type, where a
     /// loop of moves would count or check each one. Additive.
     ArrayRotateRight,
-    /// std only: as `ArrayRotateRight`, one slot down: the element at `lo` moves to `hi`.
-    /// Additive.
+    /// std only: as `ArrayRotateRight`, one slot down: the element at `lo` moves to `hi`. Additive.
     ArrayRotateLeft,
     /// std only (`xs.swapIn`, std/prelude/array_nested.velt): `(xs: T[][] (modified), a: usize,
     /// i: usize, b: usize, j: usize)`, exchanges `xs[a][i]` and `xs[b][j]` (all four
@@ -176,8 +175,7 @@ pub enum Intrinsic {
     /// std only (std/prelude/promise.velt): `transfer<T>(value: T) -> T`, the value
     /// made safe for another task (moved where this task held the only reference, deep-copied
     /// where it is still shared; velt_vir transfer.rs), like a `spawn` argument. Also emitted
-    /// by sema around a value a `Mutex.with` callback stores across the lock
-    /// (ownership/locked).
+    /// by sema around a value a `Mutex.with` callback stores across the lock (ownership/locked).
     Transfer,
     /// std only (std/prelude/promise.velt): `needsTransfer<T>(value: borrow T) ->
     /// bool`, a constant: can a `T` reach a counted object, so that `Transfer` has work to do
@@ -195,11 +193,13 @@ pub enum Intrinsic {
     /// spreads a server's connections over the workers only without it (#2744), until #2726
     /// replaces the module lock.
     ModuleStateUsed,
-    /// std only (std/prelude/array.velt): `mayAlias<T>(value: borrow T) -> bool`, a
-    /// constant: can a value of type `T` that a call borrows be reached through another
-    /// reference while the call runs (lowering counts the type, or borrows values of it inside
-    /// counted objects)? Only then can a callback change it. The value is not evaluated.
+    /// std only (std/prelude/array.velt): `mayAlias<T>(value: borrow T) -> bool`, a constant:
+    /// can a value of type `T` that a call borrows be reached through another reference while
+    /// the call runs (lowering counts the type, or borrows values of it inside counted objects)?
+    /// Only then can a callback change it. The value is not evaluated.
     MayAlias,
+    /// std only: `isUnique<T>(value: borrow T) -> bool` (hir_encodings.md "Sharing").
+    IsUnique,
     /// std only (std/prelude/map.velt): `holdsNull<T>(probe: borrow T) -> bool`, a
     /// constant: is `null` a value of `T` (is `T` an option, `X | null`, once substituted)? Then
     /// a generic `T | null` is `T` itself and its `null` is a `T`. The probe is not evaluated.
