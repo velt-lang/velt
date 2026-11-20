@@ -411,7 +411,8 @@ fn prebuilt_off() -> bool {
 /// prebuilt objects. Not where LLVM's code calls the outline-atomics helpers (arm64 Linux): a
 /// debug link need not have them (the shared runtime does not export them, and the bundled
 /// linker has no libgcc archive), so such a build compiles the modules into the program. A
-/// release build links the static runtime, which has them.
+/// release build links the static runtime, which has them. Until debug links get the helpers too
+/// (#3315).
 fn debug_link_takes(target: &str) -> bool {
     !velt_codegen_llvm::calls_outline_atomics(target)
 }
