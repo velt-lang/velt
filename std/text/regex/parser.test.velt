@@ -175,7 +175,38 @@ describe("Parser", () => {
     }
   });
 
+  it("reads group names as identifiers", () => {
+    // What Node says of each.
+    const invalid = "Invalid capture group name";
+    expect(errorOf("(?<\u03c0>x)", "")).toBe("");
+    expect(errorOf("(?<a\u00b7>x)", "")).toBe("");
+    expect(errorOf("(?<a\u200d>x)", "")).toBe("");
+    expect(errorOf("(?<\u{1D49C}>.)", "")).toBe("");
+    expect(errorOf("(?<\u{1D49C}>.)", "u")).toBe("");
+    expect(errorOf("(?<\\u{1d49c}>.)", "")).toBe("");
+    expect(errorOf("(?<\\ud835\\udc9c>.)", "")).toBe("");
+    expect(errorOf("(?<a\u2192>x)", "")).toContain(invalid);
+    expect(errorOf("(?<\u00b7a>x)", "")).toContain(invalid);
+    expect(new RegExp("(?<\u{1D49C}>.)").exec("x")?.named("\u{1D49C}")).toBe("x");
+  });
+
   it("refuses what the engine does not match", () => {
+    expect(errorOf("[[a]]", "v")).toContain(
+      "Set operations in character classes are not supported",
+    );
+    expect(errorOf("[a--b]", "v")).toContain(
+      "Set operations in character classes are not supported",
+    );
+    expect(errorOf("[a&&b]", "v")).toContain(
+      "Set operations in character classes are not supported",
+    );
+    expect(errorOf("[\\q{ab}]", "v")).toContain(
+      "Set operations in character classes are not supported",
+    );
+    expect(errorOf("[(]", "v")).toBe(
+      "Invalid regular expression: /[(]/v: Invalid character in character class",
+    );
+    expect(errorOf("[a-z\\d]\\p{L}", "v")).toBe("");
     const pre = "Invalid regular expression: ";
     expect(errorOf("(?=a)", "")).toBe(pre + "/(?=a)/: Lookaround assertions are not supported");
     expect(errorOf("(?<!a)", "")).toBe(pre + "/(?<!a)/: Lookaround assertions are not supported");
