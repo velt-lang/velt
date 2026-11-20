@@ -196,7 +196,7 @@ mod tests {
         }
     }
 
-    /// `match (x) { A => <body>, _ => "b" }`.
+    /// `match (x) { A => <body>, _ => 1 }`.
     fn match_of(body: Expr) -> Expr {
         use crate::hir::{Arm, Pat, PatKind};
         let pat = |kind| Pat {

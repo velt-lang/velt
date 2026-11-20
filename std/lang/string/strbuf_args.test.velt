@@ -1,7 +1,8 @@
 // velt/lang/string (internal): std code appends to the runtime's string builder, passed as a
 // `string` (`velt_rt_strbuf_*`), run by `velt test std/`. An argument after the builder that the
-// compiler took as changing memory made it hand the extern a copy of the builder, and the append
-// was lost: a literal union read as a `string` was one (#3334).
+// compiler took as writing a local or changing memory (velt_vir `writes_local`, velt_sema
+// `may_change_memory`) made it hand the extern a copy of the builder, and the append was lost: a
+// literal union read as a `string`, a `match`, was one (#3334).
 import { describe, expect, it } from "velt/test";
 
 declare function velt_rt_strbuf_new(cap: u64, out: string);
