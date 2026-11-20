@@ -448,10 +448,12 @@ fn check_timed(
     // lives as long as the process: the program built from the check keeps references to it.
     let loaded_std = match (&disk, order.take()) {
         (Some(path), Some(o)) => {
-            let arena: &'static units::codec::Arena = Box::leak(Box::default());
-            // SAFETY: the arena is never freed.
-            match unsafe { units::disk::load(path, arena, &o.std_modules(modules)) } {
+            let arena = Box::<units::codec::Arena>::default();
+            // SAFETY: the arena of a unit that loads is never freed (below); one that does not
+            // load gives no context, so nothing borrows the arena dropped with this arm.
+            match unsafe { units::disk::load(path, &arena, &o.std_modules(modules)) } {
                 Some((mut cx, at)) => {
+                    Box::leak(arena);
                     let o = o.reorder_std(&at);
                     // std's stage first: `install` adds no generated module to std's unit.
                     cx.units_stage = units::Stage::Std;
