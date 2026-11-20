@@ -57,6 +57,10 @@ function makeBlock(k: usize): usize {
   m.st(b + B_STAMP, 0);
   m.st(b + B_ROOT, 0);
   m.st(k + t.T_YIELDS, b);
+  if (m.load32(k + t.T_STATE) === t.YIELDED) {
+    // Its root yielded in this poll, before any yield was made: its turn comes first (stamp 0).
+    t.flags(k, t.ROOT_ALONE, 0);
+  }
   return b;
 }
 
@@ -90,7 +94,7 @@ export function join(k: usize, y: usize): void {
   const b = block(k);
   m.st(y + Y_STATE, QUEUED);
   let last = m.ld(b + B_LAST);
-  if (last === 0 && t.has(k, t.ROOT_ALONE)) {
+  if (last === 0 && t.has(k, t.ROOT_ALONE) && m.load32(k + t.T_STATE) === t.YIELDED) {
     t.flags(k, 0, t.ROOT_ALONE);
     last = record(ROOT, m.ld(b + B_ROOT));
     m.st(last + Y_STATE, QUEUED);

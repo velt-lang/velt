@@ -16,10 +16,10 @@
 // A stored yield joins the list only then. Made in an earlier generation of its task (one more in
 // each poll after one that made stored yields: flag `FRESH`), its turn has passed: it is ready.
 // Polled by another task first, its turn is that task's, from that task's poll then.
-// The root waits on the list only behind yields already on it. Otherwise its state turns
-// `NOTIFIED` and its next poll resumes it (flag `ROOT_YIELDED` holds it back if this poll polls
-// the root again for its microtasks; flag `ROOT_ALONE` gives it a record first if yields made
-// after it join the list in this poll).
+// A root that yields turns `YIELDED`: queued again, and held back if this poll polls the root
+// again for its microtasks; its next poll's `RUNNING` lets it go on. It waits on the list only
+// behind yields already on it; otherwise it has no record, and flag `ROOT_ALONE` gives it one
+// first if yields made after it join the list in this poll.
 // Off the workers (a C library's thread, no task current), a yield wakes at once, as before.
 // Only a program that yields compiles the list's turns (`stdUsed("yields")`).
 
@@ -62,24 +62,25 @@ export function schedYield(cx: usize): void {
  */
 @inline("always")
 function rootYield(k: usize, y: usize): void {
-  const fl = m.ld32(k + t.T_FLAGS);
-  if ((fl & t.ROOT_YIELDED) !== 0) {
+  if (m.load32(k + t.T_STATE) === t.YIELDED) {
     return;
   }
-  const b = m.ld(k + t.T_YIELDS);
-  if ((fl & t.YIELDS) === 0) {
-    // Polled again once this poll returns, at the back of the queue. While it runs, only a wake
-    // changes its state, from RUNNING to NOTIFIED: a store, not a swap.
-    m.st32(k + t.T_FLAGS, fl | t.ROOT_YIELDED | t.ROOT_ALONE);
-    m.store32(k + t.T_STATE, t.NOTIFIED);
+  // Polled again once this poll returns, at the back of the queue. While it runs, only a wake
+  // changes its state, from RUNNING to NOTIFIED: a store, not a swap.
+  m.store32(k + t.T_STATE, t.YIELDED);
+  if (!t.has(k, t.YIELDS)) {
+    const b = m.ld(k + t.T_YIELDS);
     if (b !== 0) {
       // Its stamp, for a record if yields join after it: an awaited yield's is the last one
       // made (that one, made before it, comes before it; with none made yet, 0: before any).
       m.st(b + ls.B_ROOT, y !== 0 ? m.ld(y + ls.Y_STAMP) : m.ld(b + ls.B_STAMP));
+      t.flags(k, t.ROOT_ALONE, 0);
     }
     return;
   }
-  m.st32(k + t.T_FLAGS, fl | t.ROOT_YIELDED);
+  const b = m.ld(k + t.T_YIELDS);
+  // Its record goes on the list now (a mark left from an earlier poll would add a second).
+  t.flags(k, 0, t.ROOT_ALONE);
   // Behind the yields made before it.
   if (y === 0) {
     ls.join(k, ls.record(ls.ROOT, ls.nextStamp(b)));
@@ -94,7 +95,7 @@ function rootYield(k: usize, y: usize): void {
  * yield again for its microtasks (a microtask's entry resumes the root or runs a started promise
  * directly, and an inline `Promise.all` polls every child it has); a yield goes on only once its
  * wake had its turn:
- * - polled with its task's cx: in a later poll (`ROOT_YIELDED`, cleared as a poll begins; another
+ * - polled with its task's cx: in a later poll (`YIELDED`, which a poll's `RUNNING` ends; another
  *   yield of the root in this poll holds it back as well: one poll late at most, never early);
  * - polled with a started promise's: once its turn on the list came (`YIELDING`), or, off the
  *   workers, once the promise ran from its task's woken stack (`ls.QUEUED`, sched_node.velt `run`);
@@ -105,7 +106,7 @@ export function schedYieldReady(cx: usize): u32 {
   const w = m.ld(cx + 8);
   const vt = m.ld(w);
   if (vt === t.main() + t.E_VT) {
-    return t.has(w, t.ROOT_YIELDED) ? 0 : 1;
+    return m.load32(w + t.T_STATE) === t.YIELDED ? 0 : 1;
   }
   if (
     vt === t.main() + t.E_NODE_VT &&
@@ -277,17 +278,15 @@ function yieldDrop(f: usize): void {
 }
 
 /**
- * A poll of task `k`, whose flags were `fl`, begins: the root's yield of the last one is over, and
- * the stored yields it made had their turn (a new generation).
+ * A poll of task `k`, whose flags were `fl`, begins: the stored yields the last one made had their
+ * turn (a new generation). (A root that yielded goes on as the poll's `RUNNING` ends `YIELDED`.)
  */
 @inline("always")
 export function begin(k: usize, fl: u32): void {
-  if ((fl & (t.ROOT_YIELDED | t.FRESH)) !== 0) {
-    t.flags(k, 0, t.ROOT_YIELDED | t.ROOT_ALONE | t.FRESH);
-    if ((fl & t.FRESH) !== 0) {
-      // A new generation: the next stamp is above every one made so far.
-      const b = m.ld(k + t.T_YIELDS);
-      m.st(b + ls.B_STAMP, (m.ld(b + ls.B_STAMP) / ls.GEN + 1) * ls.GEN);
-    }
+  if ((fl & t.FRESH) !== 0) {
+    t.flags(k, 0, t.FRESH);
+    // A new generation: the next stamp is above every one made so far.
+    const b = m.ld(k + t.T_YIELDS);
+    m.st(b + ls.B_STAMP, (m.ld(b + ls.B_STAMP) / ls.GEN + 1) * ls.GEN);
   }
 }

@@ -24,7 +24,7 @@ export function fireDue(e: usize, k: usize): void {
   t.flags(k, 0, t.TIMED);
   // The root woke while it was polled here (or yielded earlier in this poll): it is not polled
   // again in this poll, which would take its wake.
-  let woken = t.has(k, t.ROOT_YIELDED);
+  let woken = m.load32(k + t.T_STATE) === t.YIELDED;
   while (true) {
     const f = sl.firstDue(k);
     if (f === 0) {
@@ -52,7 +52,7 @@ export function fireYields(e: usize, k: usize): void {
   if (dueNow(e, k)) {
     fireDue(e, k);
   }
-  let woken = t.has(k, t.ROOT_YIELDED);
+  let woken = m.load32(k + t.T_STATE) === t.YIELDED;
   let y = ls.take(k);
   while (y !== 0) {
     const nx = ls.next(y);
@@ -113,11 +113,10 @@ function resume(e: usize, k: usize, w: usize, lent: bool, own: bool, woken: bool
     if (!lent) {
       wk.release(k);
     }
-    if (t.has(k, t.ROOT_YIELDED)) {
+    if (m.load32(k + t.T_STATE) === t.YIELDED) {
       // It yielded in this poll (in a sleep's turn, behind yields still on the list, whose turn
       // this is): polled again now, it would stay suspended and spend the wake. Its next poll
-      // resumes it (a store: while it runs, only a wake changes its state).
-      m.store32(k + t.T_STATE, t.NOTIFIED);
+      // resumes it (`YIELDED` queues the task again).
       return true;
     }
     run.pollRootAgain(e, k);
@@ -150,7 +149,7 @@ function between(e: usize, k: usize, woken: bool): bool {
     run.drain(e, k);
     n = nx;
   }
-  if (t.has(k, t.ROOT_YIELDED)) {
+  if (m.load32(k + t.T_STATE) === t.YIELDED) {
     return true;
   }
   if (!woken && !t.has(k, t.ROOT_DONE) && m.load32(k + t.T_STATE) === t.NOTIFIED) {
