@@ -56,8 +56,8 @@ function iterations() {
 
 function folding() {
   console.log(
-    /K/i.test("k"),
-    /K/iu.test("k"),
+    /\u212a/i.test("k"),
+    /\u212a/iu.test("k"),
     /ſ/i.test("s"),
     /ſ/iu.test("S"),
     /[a-z]/iu.test("ſ"),
@@ -66,7 +66,7 @@ function folding() {
     /\w/iu.test("ſ"),
     /\W/iu.test("ſ"),
     /\w/i.test("ſ"),
-    /\bk/iu.test("Kk"),
+    /\bk/iu.test("\u212ak"),
     /σ/i.test("ς"),
   );
   console.log(
@@ -74,7 +74,7 @@ function folding() {
     /É/i.test("é"),
     /[à-þ]/i.test("À"),
     /ǆ/i.test("ǅ"),
-    /[^k]/iu.test("K"),
+    /[^k]/iu.test("\u212a"),
   );
   console.log(
     /\p{Lu}+/u.exec("abcDEf")?.index,
@@ -91,8 +91,17 @@ function folding() {
 }
 
 function lines() {
-  console.log("a b".replace(/^/gm, ">"), "a b".replace(/$/gm, "<").length, /a.b/.test("a b"));
-  console.log("a\r\nb".split(/^/m).length, /^b$/m.test("a\rb\n"), /a$/.test("a\n"), /\s/.test("﻿"));
+  console.log(
+    units("a\u2028b".replace(/^/gm, ">")),
+    "a\u2029b".replace(/$/gm, "<").length,
+    /a.b/.test("a\u2028b"),
+  );
+  console.log(
+    "a\r\nb".split(/^/m).length,
+    /^b$/m.test("a\rb\n"),
+    /a$/.test("a\n"),
+    /\s/.test("\ufeff"),
+  );
 }
 
 function replacing() {
