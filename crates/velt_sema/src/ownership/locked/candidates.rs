@@ -252,12 +252,7 @@ fn maker(cx: &mut Ctx, res: &mut Resolver, mut d: DefId) -> DefId {
 /// The direct calls of every function of the program, and its uses as a value (`const f =
 /// wrap;` instantiates `wrap` as a call would).
 fn direct_calls(cx: &mut Ctx) -> CallIndex {
-    let fns: Vec<DefId> = cx
-        .fn_defs
-        .iter()
-        .copied()
-        .filter(|d| cx.fn_info(*d).state == BodyState::Done)
-        .collect();
+    let fns: Vec<DefId> = cx.unit_fns();
     let mut out = CallIndex::default();
     for caller in fns {
         let Some(Def::Fn(mut body)) = cx.defs[caller.0 as usize].take() else {

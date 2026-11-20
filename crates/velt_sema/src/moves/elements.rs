@@ -82,7 +82,7 @@ fn element_writes(cx: &mut Ctx) -> Vec<(DefId, LocalId, DefId, LocalId)> {
     }
     let (mut memo, mut direct) = (FxHashMap::default(), FxHashMap::default());
     let mut out = vec![];
-    for i in 0..cx.defs.len() {
+    for i in cx.unit_base as usize..cx.defs.len() {
         let p = DefId(i as u32);
         let Some(info) = cx.try_fn(p) else { continue };
         let kinds = info.local_kinds.clone();

@@ -24,7 +24,6 @@ use rustc_hash::FxHashMap;
 use velt_common::{Diagnostic, Span};
 
 use crate::ctx::Ctx;
-use crate::defs::BodyState;
 use crate::hir::{
     Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, LocalDef, PassMode, TyId, TyKind,
 };
@@ -67,12 +66,7 @@ fn copies_atomic(cx: &mut Ctx, t: TyId) -> bool {
 
 /// Report resources copied into spawned tasks (module docs).
 pub(crate) fn check_boundaries(cx: &mut Ctx) {
-    let fns: Vec<DefId> = cx
-        .fn_defs
-        .iter()
-        .copied()
-        .filter(|d| cx.fn_info(*d).state == BodyState::Done)
-        .collect();
+    let fns: Vec<DefId> = cx.unit_fns();
     let senders = channel_senders(cx, &fns);
     for d in fns {
         let Some(Def::Fn(mut f)) = cx.defs[d.0 as usize].take() else {

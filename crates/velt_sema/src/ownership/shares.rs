@@ -12,7 +12,6 @@
 //! again. What is left are moves out of dead places, which cost nothing.
 
 use crate::ctx::Ctx;
-use crate::defs::BodyState;
 use crate::hir::{Def, DefId, Expr, ExprKind as E, LocalId, PassMode};
 use crate::visit;
 
@@ -20,12 +19,7 @@ use super::soft::is_moved_place;
 
 /// Record the moves of shared values and the closures capturing them as soft moves.
 pub(crate) fn soften_moves(cx: &mut Ctx) {
-    let fns: Vec<DefId> = cx
-        .fn_defs
-        .iter()
-        .copied()
-        .filter(|d| cx.fn_info(*d).state == BodyState::Done)
-        .collect();
+    let fns: Vec<DefId> = cx.unit_fns();
     for d in fns {
         let Some(Def::Fn(mut f)) = cx.defs[d.0 as usize].take() else {
             continue;

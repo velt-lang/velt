@@ -1,0 +1,85 @@
+// requires: unix
+// Directories with symbolic links, which need macOS or Linux (a link needs rights on Windows):
+// a listing's type of each entry is the entry's own (a link is a link, whatever it points to),
+// the same as `lstat` says; removing a link, or a tree with links in it, removes the links and
+// never what they point to; and a path through a file fails with ENOTDIR, as Node's does there.
+// The expected output is Node's (the twin of fs_tree.velt's, with links).
+import * as fs from "velt/fs";
+import { IoError } from "velt/io";
+
+function attempt(what: string, f: () => void) {
+  try {
+    f();
+    console.log(what, "no error");
+  } catch (e) {
+    console.log(what, (e as IoError).code, (e as Error).message);
+  }
+}
+
+function kind(d: fs.Dirent): string {
+  return d.isFile() ? "file" : d.isDirectory() ? "dir" : d.isSymbolicLink() ? "link" : "other";
+}
+
+function statKind(s: fs.Stats): string {
+  return s.isFile() ? "file" : s.isDirectory() ? "dir" : s.isSymbolicLink() ? "link" : "other";
+}
+
+async function main() {
+  const dir = "velt_fs_tree_unix_tmp";
+  if (fs.existsSync(dir)) {
+    fs.removeSync(dir, { recursive: true });
+  }
+  // What the links point to, outside the tree that is removed.
+  fs.mkdirSync(`${dir}/outside/sub`, { recursive: true });
+  fs.writeFileSync(`${dir}/outside/keep.txt`, "keep");
+  fs.writeFileSync(`${dir}/outside/sub/deep.txt`, "deep");
+
+  const tree = `${dir}/tree`;
+  fs.mkdirSync(`${tree}/d/e`, { recursive: true });
+  fs.writeFileSync(`${tree}/f.txt`, "f");
+  fs.symlinkSync("../outside", `${tree}/to-dir`);
+  fs.symlinkSync("../outside/keep.txt", `${tree}/to-file`);
+  fs.symlinkSync("nowhere", `${tree}/dangling`);
+  fs.symlinkSync("../../outside", `${tree}/d/to-dir`);
+  fs.symlinkSync("../../../outside/sub", `${tree}/d/e/to-sub`);
+
+  // Each entry's type from the listing, and from `lstat`: the same.
+  for (const d of fs.readDirEntriesSync(tree)) {
+    console.log(d.name, kind(d), statKind(fs.lstatSync(`${tree}/${d.name}`)));
+  }
+  console.log((await fs.readDirEntries(`${tree}/d`)).map((d) => `${d.name}:${kind(d)}`).join(" "));
+  // A listing through a link to a directory is the directory's.
+  console.log(fs.readDirSync(`${tree}/to-dir`).join(" "));
+
+  attempt("list a dangling link", () => fs.readDirSync(`${tree}/dangling`));
+  attempt("list a link to a file", () => fs.readDirSync(`${tree}/to-file`));
+  attempt("mkdir under a file", () => fs.mkdirSync(`${tree}/f.txt/x`));
+  attempt(
+    "mkdir recursive through a link",
+    () => fs.mkdirSync(`${tree}/to-dir/made/here`, { recursive: true }),
+  );
+  attempt(
+    "mkdir recursive on a link to a directory",
+    () => fs.mkdirSync(`${tree}/to-dir`, { recursive: true }),
+  );
+  attempt("list under a file", () => fs.readDirSync(`${tree}/f.txt/x`));
+  attempt("remove under a file", () => fs.removeSync(`${tree}/f.txt/x`));
+
+  // A link is removed as a link, with `recursive` too.
+  fs.removeSync(`${tree}/to-file`);
+  fs.removeSync(`${tree}/d/to-dir`, { recursive: true });
+  console.log(fs.readDirSync(`${tree}/d`).join(" "), fs.readFileSync(`${dir}/outside/keep.txt`));
+  // The tree goes, links and all; what they pointed to stays.
+  await fs.remove(tree, { recursive: true });
+  console.log(fs.existsSync(tree), fs.readDirSync(dir).join(" "));
+  console.log(
+    fs.readDirSync(`${dir}/outside`).join(" "),
+    fs.readDirSync(`${dir}/outside/sub`).join(" "),
+  );
+  console.log(
+    fs.readDirSync(`${dir}/outside/made`).join(" "),
+    fs.readFileSync(`${dir}/outside/sub/deep.txt`),
+  );
+  fs.removeSync(dir, { recursive: true });
+  console.log(fs.existsSync(dir));
+}

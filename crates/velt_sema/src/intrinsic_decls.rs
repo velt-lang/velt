@@ -155,6 +155,8 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("strbufPushAsciiWord", Op(I::StrbufPushAsciiWord)),
     ("strbufPushAsciiWords", Op(I::StrbufPushAsciiWords)),
     // symbol.velt
+    ("symbolAddress", Op(I::SymbolAddress)),
+    ("symbolAt", Op(I::SymbolAt)),
     ("symbolRegistry", Op(I::SymbolRegistry)),
     ("symbolStatic", Op(I::SymbolStatic)),
     // task.velt
