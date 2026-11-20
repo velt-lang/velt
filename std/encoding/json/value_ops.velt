@@ -3,6 +3,7 @@
 // replacer or reviver (how deep that walk may go).
 
 import { Reader } from "velt/encoding/json/reader";
+import { noInline } from "velt/lang/intrinsics";
 import { parseTape, parseWith } from "velt/encoding/json/tape_parse";
 import { Tape } from "velt/encoding/json/tape";
 import { TapeError } from "velt/encoding/json/tape_error";
@@ -164,7 +165,7 @@ export function jsonRevived(
     const n = value.len();
     for (let i: i64 = 0; i < n; i++) {
       const e = jsonRevived(String(i), value.at(i)!, reviver, depth + 1);
-      out.push(e ?? JsonValue.of(null));
+      pushRevived(out, e);
     }
     return reviver(key, out);
   }
@@ -172,11 +173,27 @@ export function jsonRevived(
     const out = JsonValue.object();
     for (const k of value.keys()) {
       const e = jsonRevived(k, value.get(k)!, reviver, depth + 1);
-      if (e != undefined) {
-        out.set(k, e);
-      }
+      setRevived(out, k, e);
     }
     return reviver(key, out);
   }
   return reviver(key, value);
+}
+
+// The edits of `jsonRevived` and the replacer's walk (layout.velt), out of line: inlined, they
+// grow the frame of every level of those recursive walks, and `JSON_CALLBACK_DEPTH` levels must
+// fit on a thread's stack.
+
+/** Appends `e` to the array `out`, `null` for `undefined` (an element left out). */
+@noInline
+export function pushRevived(out: JsonValue, e: JsonValue | undefined): void {
+  out.push(e ?? JsonValue.of(null));
+}
+
+/** Sets member `k` of the object `out` to `e`, unless `e` is `undefined` (a member left out). */
+@noInline
+export function setRevived(out: JsonValue, k: string, e: JsonValue | undefined): void {
+  if (e != undefined) {
+    out.set(k, e);
+  }
 }
