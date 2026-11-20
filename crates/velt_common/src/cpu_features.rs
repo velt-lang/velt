@@ -461,7 +461,7 @@ mod tests {
         let text = std_file("lang/cpu/check.velt");
         let names = |constant: &str| -> Vec<String> {
             let at = text
-                .find(&format!("export const {constant}: string = \""))
+                .find(&format!("export const {constant}: string ="))
                 .expect(constant);
             let from = &text[at..][text[at..].find('"').expect("its literal") + 1..];
             from[..from.find('"').expect("its end")]
