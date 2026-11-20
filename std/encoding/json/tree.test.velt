@@ -85,6 +85,27 @@ describe("JsonValue edits", () => {
     expect(inner.stringify()).toBe(`{"b":{"c":{"d":1},"e":[1],"f":[],"g":{}},"n":null}`);
   });
 
+  it("never form a cycle", () => {
+    // Each edit changes only a node no other reference reaches (`isUnique`), so the node being
+    // changed is never inside the value stored into it: what would be a cycle is a copy.
+    const a = JsonValue.object();
+    const b = JsonValue.object();
+    b.set("a", a);
+    a.set("b", b);
+    expect(a.stringify()).toBe(`{"b":{"a":{}}}`);
+    expect(b.stringify()).toBe(`{"a":{}}`);
+    const xs = JsonValue.array();
+    const inner = JsonValue.array();
+    inner.push(xs);
+    xs.push(inner);
+    xs.push(xs.clone());
+    expect(xs.stringify()).toBe(`[[[]],[[[]]]]`);
+    const child = a.get("b")!;
+    child.set("back", a);
+    expect(child.stringify()).toBe(`{"a":{},"back":{"b":{"a":{}}}}`);
+    expect(a.stringify()).toBe(`{"b":{"a":{}}}`);
+  });
+
   it("write arbitrarily deep trees", () => {
     let v = JsonValue.array();
     for (let i = 0; i < 100000; i++) {
