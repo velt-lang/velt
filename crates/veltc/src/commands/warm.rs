@@ -98,6 +98,34 @@ pub fn warm_command(background: bool) -> Result<(), String> {
     failures(&failed, &hooks_failed).map_or(Ok(()), Err)
 }
 
+/// `velt cache hooks --out <dir> [--target <triple>]`: write the object and manifest of every
+/// prebuilt hook module into `<out>/<target>`, `out` being a toolchain's `lib/hooks`
+/// (`std_cache::shipped`), compiled for `target` (default: the host) and its default CPU. For
+/// packaging a release: any module whose object cannot be made is an error, so a release never
+/// ships without one unnoticed.
+pub fn hooks_command(out: &Path, target: Option<&str>) -> Result<(), String> {
+    let target = match target {
+        Some(t) => t.to_string(),
+        None => crate::driver::BuildOptions::default().target(),
+    };
+    let made = crate::driver::prebuilt_ship(out, &target);
+    let failed: Vec<String> = (made.iter())
+        .filter_map(|(module, r)| Some(format!("{module}: {}", r.as_ref().err()?)))
+        .collect();
+    if !failed.is_empty() {
+        return Err(format!(
+            "some prebuilt hook modules did not compile: {}",
+            failed.join("; ")
+        ));
+    }
+    eprintln!(
+        "velt: wrote {} prebuilt hook modules to {}",
+        made.len(),
+        out.join(&target).display()
+    );
+    Ok(())
+}
+
 /// What a warm-up that had failures says: the programs that did not compile, then the prebuilt
 /// hook modules; `None` without either.
 fn failures(programs: &[String], hooks: &[String]) -> Option<String> {
