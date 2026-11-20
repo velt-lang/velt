@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Smoke test of an installed toolchain on a machine without a C toolchain (no cc, ld or Xcode):
-# with the bundled linker forced ($VELT_LINKER=bundled), `velt doctor` reports it, and hello and
+# with the bundled linker forced ($VELT_LINKER=bundled), `velt doctor` reports it, a debug build of
+# scripts/smoke-prebuilt.velt links the toolchain's prebuilt hook objects (lib/hooks/), and hello and
 # examples/http_hello.velt build in debug and release mode, run and answer a request; hello also
 # builds for wasm32-unknown-unknown. Extra arguments are more targets to build and run the same
 # way (e.g. x86_64-unknown-linux-musl).
@@ -57,6 +58,19 @@ done
 step "velt doctor"
 "$velt" doctor | tee "$work/doctor"
 grep -q 'linker .*bundled' "$work/doctor" || { echo "velt doctor does not report the bundled linker" >&2; exit 1; }
+# The toolchain's own objects of the prebuilt std hook modules (lib/hooks/<target>/), with the
+# build cache off so nothing else could hold them: a debug build links them, also where no clang
+# could have compiled them.
+step "prebuilt hook modules (shipped objects)"
+VELT_BUILD_CACHE=off VELT_STD_OBJECT_STATS=1 "$velt" build "$repo/scripts/smoke-prebuilt.velt" \
+    -o "$work/prebuilt" 2>"$work/prebuilt.stats" || { cat "$work/prebuilt.stats" >&2; exit 1; }
+for module in number_digits number_parse weak; do
+    grep -q "prebuilt hooks: lang/hooks/$module: object found (shipped)" "$work/prebuilt.stats" ||
+        { cat "$work/prebuilt.stats" >&2; echo "the build did not link the toolchain's object of lang/hooks/$module" >&2; exit 1; }
+done
+out=$("$work/prebuilt")
+[ "$out" = "1234.57 356 7" ] || { echo "smoke-prebuilt printed '$out'" >&2; exit 1; }
+echo "ok: shipped objects linked"
 step "debug build (shared runtime)"
 run_both debug
 step "release build"
