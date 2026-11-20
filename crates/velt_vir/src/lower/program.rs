@@ -46,6 +46,7 @@ impl<'h> Cx<'h> {
             cpu_checks: Default::default(),
             unavailable: vec![],
             unreduced: vec![],
+            rest_closures: Default::default(),
             c_clashes: vec![],
             c_symbols: Default::default(),
             c_globals: Default::default(),
@@ -280,6 +281,7 @@ impl<'h> Cx<'h> {
                 | Work::CExport(_)
                 | Work::ArrayGrow
                 | Work::ArrayTooLong
+                | Work::ArrayOwnerDrop
                 | Work::Oob(_)
         ) || !self.has_lock_set();
         let work = self.generated_instance(work);
@@ -471,6 +473,7 @@ impl<'h> Cx<'h> {
     fn heap_hook_for(&mut self, r: Rt) {
         let name = match r {
             Rt::Alloc => velt_common::std_hook!(heap_alloc),
+            Rt::Realloc => velt_common::std_hook!(heap_realloc),
             Rt::Free => velt_common::std_hook!(heap_free),
             _ => return,
         };
