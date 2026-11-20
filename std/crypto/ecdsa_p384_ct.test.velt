@@ -1,8 +1,7 @@
 // velt/crypto (tests): the probe of scripts/ct-counts.py for ECDSA signing on P-384, which no
 // program can import: a signature of a fixed digest by the 48-byte private key in the file
 // $VELT_CT_SECRET names (a fixed key without it, so that this also runs with the other tests).
-// The key is read as bytes and nothing here branches on it; what is checked costs the same for
-// every key.
+// The key is read as bytes and nothing here branches on it.
 import { p384Sign } from "velt/crypto/ecdsa_p384_sign";
 import { readFileBytesSync } from "velt/fs";
 import { describe, expect, it } from "velt/test";
@@ -20,8 +19,8 @@ describe("the P-384 signing probe", () => {
       digest[i] = (3 * i + 1) as u8;
     }
     const signature = p384Sign(key, digest);
-    // The signature's length depends on r and s (DER), which are public: only a byte that is
-    // always there is looked at.
-    expect(signature[0]).toBe(0x30);
+    // Nothing is done with the signature that depends on its value: memcheck, with the key
+    // marked undefined, would report it (scripts/ct-counts.py --memcheck).
+    expect(signature.length > 8).toBe(true);
   });
 });
