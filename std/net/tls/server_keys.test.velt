@@ -198,6 +198,10 @@ describe("serverKey", () => {
       expect(`${p[0]} ${loaded(p[1], p[2], false)}`).toBe(
         `${p[0]} ${p[0] == "P-256" ? "ok" : "none"}`,
       );
+      // Without the third argument, as `listenTls` calls it: the same.
+      expect(`${p[0]} ${serverKey(p[1], p[2]) == null ? "none" : "ok"}`).toBe(
+        `${p[0]} ${p[0] == "P-256" ? "ok" : "none"}`,
+      );
     }
   });
 
@@ -236,6 +240,12 @@ describe("serverKey", () => {
     short[1] = (short.length - 2) as u8;
     const pem = `-----BEGIN PRIVATE KEY-----\n${base64Encode(short)}\n-----END PRIVATE KEY-----\n`;
     expect(loaded(v.ED_CERT, pem)).toBe("invalid key PEM: the Ed25519 key is not 32 bytes");
+    // An encrypted key says so (the block's content is not read).
+    const locked =
+      "-----BEGIN ENCRYPTED PRIVATE KEY-----\nAAAA\n-----END ENCRYPTED PRIVATE KEY-----\n";
+    expect(loaded(v.RSA_CERT, locked)).toBe(
+      "invalid key PEM: encrypted private keys are not supported",
+    );
   });
 });
 
@@ -300,6 +310,14 @@ describe("a handshake with each kind of server key", () => {
     expect(tls12(key, [list + "01", none + "040105010601"])).toBe("601 true false");
     expect(tls12(key, [list + "01", none + "040105010203"])).toBe("501 true false");
     expect(tls12(key, [list + "01", none + "040102030203"])).toBe("401 true false");
+  });
+
+  it("signs with PSS over SHA-384 and over SHA-256 for a client with only that", () => {
+    const key = serverKey(v.RSA_CERT, v.RSA_PKCS8, true)!;
+    const list = "08040805080608070401050106";
+    const none = "0203020302030807";
+    expect(tls12(key, [list + "01", none + "080502030203"])).toBe("805 true false");
+    expect(tls12(key, [list + "01", none + "080402030203"])).toBe("804 true false");
   });
 
   it("fails when the client has no scheme of the key's", () => {
