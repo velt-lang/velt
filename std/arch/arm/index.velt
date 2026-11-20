@@ -1,0 +1,38 @@
+// velt/arch/arm: one class per arm64 CPU feature, each with `isSupported()`, the check that pairs
+// with `@targetFeature` (velt/compiler; docs/internals/design/package-machine-code.md §2).
+//
+//   import { targetFeature } from "velt/compiler";
+//   import { Sha256 } from "velt/arch/arm";
+//
+//   @targetFeature("sha-arm")
+//   function fast(xs: u64[]): u64 { … }
+//
+//   if (Sha256.isSupported()) {  // once, outside any hot loop
+//     n = fast(xs);
+//   } else {
+//     n = portable(xs);
+//   }
+//
+// A call of a gated function must sit in the `then` branch of an `if` on these checks (or in a
+// function gated on features that cover it). Each check is true at compile time where the build
+// guarantees the feature (`--cpu`, or inside gated code) and otherwise the CPU's answer, read once
+// at start-up; false on another architecture, on WebAssembly and in debug (Cranelift) builds.
+
+/** The ARMv8 AES instructions with PMULL (FEAT_AES, FEAT_PMULL; LLVM's `aes`); `aes-arm`. */
+export { Aes } from "velt/arch/arm/aes";
+/** Arm's bf16 instructions (FEAT_BF16): `bfdot` (`bf16-arm`). */
+export { Bf16 } from "velt/arch/arm/bf16";
+/** The CRC32 instructions (FEAT_CRC32); `crc-arm`. */
+export { Crc32 } from "velt/arch/arm/crc32";
+/** The Armv8.2 dot products (FEAT_DotProd); `dotprod-arm`. */
+export { Dp } from "velt/arch/arm/dp";
+/** Half-precision arithmetic (FEAT_FP16); `fp16-arm`. */
+export { Fp16 } from "velt/arch/arm/fp16";
+/** The int8 matrix multiplications (FEAT_I8MM); `i8mm-arm`. */
+export { I8mm } from "velt/arch/arm/i8mm";
+/** The ARMv8 64-bit polynomial multiplication (FEAT_PMULL, LLVM's `aes`); `clmul-arm`. */
+export { Pmull } from "velt/arch/arm/pmull";
+/** The ARMv8 SHA-1 and SHA-256 instructions (FEAT_SHA256, LLVM's `sha2`); `sha-arm`. */
+export { Sha256 } from "velt/arch/arm/sha256";
+/** The SHA-3 and SHA-512 instructions (FEAT_SHA3, FEAT_SHA512); `sha3-arm`. */
+export { Sha3 } from "velt/arch/arm/sha3";

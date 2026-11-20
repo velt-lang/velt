@@ -1,0 +1,71 @@
+// velt/lang/cpu (internal): the feature word mask of each CPU feature (velt_common
+// `cpu_features`, docs/internals/design/package-machine-code.md §2): its own bit and those of
+// the features it implies. A check of a feature is true where the word holds the whole mask
+// (`cpuHas`). velt_common's test `std_masks_match_the_table` checks these against the table.
+
+/** `sha-arm`. */
+export const SHA_ARM: u64 = 0x200000000;
+/** `sha-x86`. */
+export const SHA_X86: u64 = 0x200007;
+/** `clmul-x86`. */
+export const CLMUL_X86: u64 = 0x400007;
+/** `clmul-arm`. */
+export const CLMUL_ARM: u64 = 0x400000000;
+/** `aes-x86`. */
+export const AES_X86: u64 = 0xc00007;
+/** `aes-arm`. */
+export const AES_ARM: u64 = 0x10400000000;
+/** `fma-x86`. */
+export const FMA_X86: u64 = 0x44f;
+/** `bf16-arm`. */
+export const BF16_ARM: u64 = 0x8000000000;
+/** `sse3-x86`. */
+export const SSE3_X86: u64 = 0x1;
+/** `ssse3-x86`. */
+export const SSSE3_X86: u64 = 0x3;
+/** `sse4.1-x86`. */
+export const SSE4_1_X86: u64 = 0x7;
+/** `sse4.2-x86`. */
+export const SSE4_2_X86: u64 = 0xf;
+/** `popcnt-x86`. */
+export const POPCNT_X86: u64 = 0x10;
+/** `cmpxchg16b-x86`. */
+export const CMPXCHG16B_X86: u64 = 0x20;
+/** `avx-x86`. */
+export const AVX_X86: u64 = 0x4f;
+/** `avx2-x86`. */
+export const AVX2_X86: u64 = 0xcf;
+/** `bmi1-x86`. */
+export const BMI1_X86: u64 = 0x100;
+/** `bmi2-x86`. */
+export const BMI2_X86: u64 = 0x200;
+/** `lzcnt-x86`. */
+export const LZCNT_X86: u64 = 0x800;
+/** `movbe-x86`. */
+export const MOVBE_X86: u64 = 0x1000;
+/** `f16c-x86`. */
+export const F16C_X86: u64 = 0x204f;
+/** `avx512f-x86`. */
+export const AVX512F_X86: u64 = 0x64cf;
+/** `avx512bw-x86`. */
+export const AVX512BW_X86: u64 = 0xe4cf;
+/** `avx512cd-x86`. */
+export const AVX512CD_X86: u64 = 0x164cf;
+/** `avx512dq-x86`. */
+export const AVX512DQ_X86: u64 = 0x264cf;
+/** `avx512vl-x86`. */
+export const AVX512VL_X86: u64 = 0x464cf;
+/** `avx512vbmi-x86`. */
+export const AVX512VBMI_X86: u64 = 0x8e4cf;
+/** `avx512bitalg-x86`. */
+export const AVX512BITALG_X86: u64 = 0x10e4cf;
+/** `dotprod-arm`. */
+export const DOTPROD_ARM: u64 = 0x100000000;
+/** `crc-arm`. */
+export const CRC_ARM: u64 = 0x800000000;
+/** `sha3-arm`. */
+export const SHA3_ARM: u64 = 0x1200000000;
+/** `fp16-arm`. */
+export const FP16_ARM: u64 = 0x2000000000;
+/** `i8mm-arm`. */
+export const I8MM_ARM: u64 = 0x4000000000;

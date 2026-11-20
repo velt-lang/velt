@@ -1,0 +1,44 @@
+// velt/lang/cpu (internal): the arm64 features of this CPU on macOS (`#cpu-arm`'s darwin variant,
+// std/imports.velt), as the feature word's arm64 bits: one `hw.optional` sysctl per feature (1
+// where the CPU has it, absent on an older CPU or an Intel Mac). Called on arm64 only.
+
+import { strDataAddress } from "velt/lang/intrinsics";
+import { Out } from "velt/ffi/out";
+import { Ptr, ptrOf } from "velt/ffi/ptr";
+
+// Pointers, not the arrays and `CString` velt/os has (the same C types): arrays and `CString` in
+// code every program runs would bring their helpers into every program.
+declare c("c") function sysctlbyname(
+  name: Ptr<u8>,
+  old: Out<i32>,
+  oldLen: Out<usize>,
+  newValue: Ptr<void> | null,
+  newLen: usize,
+): i32;
+
+// Whether the `int` sysctl `name` (a literal ending in `\0`) is 1.
+function on(name: string): bool {
+  const value = new Out<i32>(0);
+  const len = new Out<usize>(4);
+  // SAFETY: a NUL-terminated name; room for one `int`, which `len` says; no new value.
+  const r = unsafe { sysctlbyname(ptrOf<u8>(strDataAddress(name)), value, len, null, 0) };
+  return r === 0 && len.value === 4 && value.value === 1;
+}
+
+// The word bit `b` where `yes`.
+function flag(yes: bool, b: u64): u64 {
+  return yes ? (1 as u64) << b : 0;
+}
+
+/** This CPU's feature word arm64 bits. */
+export function detectArm(): u64 {
+  return flag(on("hw.optional.arm.FEAT_DotProd\0"), 32) |
+    flag(on("hw.optional.arm.FEAT_SHA256\0"), 33) |
+    flag(on("hw.optional.arm.FEAT_PMULL\0"), 34) |
+    flag(on("hw.optional.armv8_crc32\0"), 35) |
+    flag(on("hw.optional.arm.FEAT_SHA3\0") && on("hw.optional.arm.FEAT_SHA512\0"), 36) |
+    flag(on("hw.optional.arm.FEAT_FP16\0"), 37) |
+    flag(on("hw.optional.arm.FEAT_I8MM\0"), 38) |
+    flag(on("hw.optional.arm.FEAT_BF16\0"), 39) |
+    flag(on("hw.optional.arm.FEAT_AES\0"), 40);
+}

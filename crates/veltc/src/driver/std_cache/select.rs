@@ -187,6 +187,9 @@ fn reason(program: &vir::Program, names: &Names, rule: Rule, i: usize) -> Option
     if f.symbol.contains("$dup") {
         return Some("$dup");
     }
+    if f.baseline {
+        return Some("the start-up check");
+    }
     let set = inlinable(program, i, rule.depth());
     if matches!(
         rule,
@@ -216,7 +219,7 @@ fn reason(program: &vir::Program, names: &Names, rule: Rule, i: usize) -> Option
     }
     if let Rule::NoInline { simd } = rule {
         let checks = |j: usize| simd.get(j) == Some(&true);
-        let gated = set.iter().any(|&j| program.funcs[j].target.is_some());
+        let gated = set.iter().any(|&j| !program.funcs[j].target.is_empty());
         if checks(i) || (gated && declared(program, &set).into_iter().any(checks)) {
             return Some("SIMD dispatch");
         }
@@ -229,7 +232,7 @@ fn reason(program: &vir::Program, names: &Names, rule: Rule, i: usize) -> Option
 /// that checks a CPU extension (`velt_simd_has_<ext>`), itself or through functions it
 /// references.
 pub(super) fn simd_checking(program: &vir::Program) -> Vec<bool> {
-    let ordinary = |f: &vir::Function| f.target.is_none() && !f.is_poll;
+    let ordinary = |f: &vir::Function| f.target.is_empty() && !f.is_poll;
     let checks_itself = |f: &vir::Function| {
         (f.blocks.iter()).any(|b| match &b.term {
             Terminator::Call {
