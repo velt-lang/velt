@@ -3,10 +3,10 @@
 //! where it would call the runtime's executor: `velt_main`'s root (`velt_rt_block_on`), a spawn
 //! from an initial state (`velt_rt_spawn`, `velt_rt_spawn_transfer`) or of a heap future
 //! (`velt_rt_spawn_fut`), the pin of the next spawn to a worker (`velt_rt_spawn_target`),
-//! `await yieldNow()`
-//! (`velt_rt_yield_now`), boxed and started promises (`velt_rt_fut_box`, `velt_rt_fut_start`,
-//! `_start_rejecting`), what `console.log` peeks at (`velt_rt_fut_peek`), the hand-over of a
-//! promise to another task (`velt_rt_fut_transfer`), the microtask step of `await`
+//! `await yieldNow()` (`velt_rt_yield_now`) and a stored `yieldNow()` (`velt_rt_yield_now_fut`),
+//! boxed and started promises (`velt_rt_fut_box`, `velt_rt_fut_start`, `_start_rejecting`), what
+//! `console.log` peeks at (`velt_rt_fut_peek`), the hand-over of a promise to another task
+//! (`velt_rt_fut_transfer`), the microtask step of `await`
 //! (`velt_rt_await_tick`, `_ready`), the
 //! prelude's microtasks (`velt_rt_microtask`), the process lifetime (keep-alive references,
 //! a due `unref()`'d timer's question, the top-level `await` waiting now: `velt_rt_tla_at`),
@@ -219,6 +219,15 @@ impl FnLower<'_, '_> {
         hooks::sched_yield(self, ty::USize::arg(cx)).emit(self);
     }
 
+    /// `await yieldNow()`'s question when it resumes: 1 (a `u32`) to go on, 0 to stay suspended,
+    /// when the poll it yielded in polls it again (#3241).
+    pub(super) fn sched_yield_ready(&mut self, cx: Operand) -> Operand {
+        let cx = self.as_usize(cx);
+        hooks::sched_yield_ready(self, ty::USize::arg(cx))
+            .emit(self)
+            .op()
+    }
+
     /// The end of `velt_main` with exit code `code`: when it is 0, the tasks still alive run to
     /// completion.
     pub(super) fn sched_finish(&mut self, code: &Operand) {
@@ -283,6 +292,7 @@ impl FnLower<'_, '_> {
                 | Rt::TlaAt
                 | Rt::SpawnTarget
                 | Rt::Sleep
+                | Rt::YieldNowFut
                 | Rt::CellUse
                 | Rt::CellGive
                 | Rt::CellCopy
@@ -389,6 +399,9 @@ impl FnLower<'_, '_> {
                     hooks::sched_pinned(self, ty::I64::arg(w.clone())).emit(self);
                     None
                 }
+                // A stored `yieldNow()` (sched_yield.velt `schedYieldFut`): a leaf ready on its
+                // second poll.
+                (Rt::YieldNowFut, []) => Some(hooks::sched_yield_fut(self).emit(self).op()),
                 (Rt::Sleep, [ms]) => Some(
                     hooks::sched_sleep(self, ty::I64::arg(ms.clone()))
                         .emit(self)
@@ -482,7 +495,8 @@ impl FnLower<'_, '_> {
     }
 
     /// `velt_rt_cell_new`'s job under the executor in Velt (sched_cells.velt): the new cell `ptr`
-    /// of the variable whose name is at `name` (a string's address). False (nothing emitted) for the runtime's executor.
+    /// of the variable whose name is at `name` (a string's address). False (nothing emitted) for
+    /// the runtime's executor.
     pub(super) fn sched_cell_new(&mut self, ptr: Operand, name: Operand) -> bool {
         if !self.std_cells() {
             return false;

@@ -58,6 +58,9 @@ const UNSUPPORTED: &[&str] = &[
     // The executor in Velt gives up a promise nobody can settle and nobody holds; wasm's is
     // still the runtime's, which keeps it parked (#3247).
     "promise_abandoned_freed",
+    // wasm's executor is still the runtime's, whose `yieldNow()` wakes at once instead of taking
+    // its turn after the microtasks queued before it, as the executor in Velt does (#3307).
+    "yield_now_order",
     // Nests 2,000 generators, which a native debug build holds in its 8 MiB stack (#2048); the
     // WebAssembly stacks overflow.
     "deep_generator_frames",

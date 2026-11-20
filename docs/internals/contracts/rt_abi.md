@@ -239,7 +239,7 @@ lives in a counted *cell* (`LocalDef::boxed`), which must never be used by two t
 transfer glue gives a value crossing to another task cells of its own, and sema rejects the
 shapes that would share one. Debug programs built by a debug compiler (as every debug
 golden run is; `LowerOptions::cell_checks`) also report each cell to the debug runtime, which
-records its owning **task** (`velt_rt_task_id`) in a side table keyed by the cell's address. The
+records its owning **task** (its task id) in a side table keyed by the cell's address. The
 owner is a task, not an OS thread: a task (with its local promises) may resume on another worker,
 which is not a race. The first use by a task other than the owner prints ``velt debug-cells:
 captured variable `<name>` was used by two tasks: …`` (both tasks and their threads, and the fix:
@@ -848,6 +848,14 @@ array's byte length is below 2^52 for the same reason (its buffer is a `u8[]`).
 within the limit that the target cannot allocate is out of memory (`velt_rt_alloc` above), never a
 smaller block: on wasm32 a byte size past 2^31 - 1 stops the program there, in `velt_rt_realloc`, in
 `velt_rt_bytes_zeroed` and in `velt_rt_bytes_uninit` (which `u8[]`'s `concat` allocates with).
+
+`cap` read as an `i64` says whose the buffer is: positive, a capacity in elements of a buffer the
+array owns; 0, no buffer or memory the array does not own (a constant table, std's `addressArray`);
+negative, memory with an owner, whose block's address is `cap` without bit 63 (std's
+`addressArrayOwned`: dropping the array calls the function in the block's first word with the
+block). An array of the last two kinds is never passed to the runtime by value: the runtime's
+`cap > 0` tests (`velt_rt_bytes_drop`, `VeltBytes::take_vec`, `velt_rt_str_array_drop`) are
+unsigned and would free it.
 
 ## Array methods on a proxy
 

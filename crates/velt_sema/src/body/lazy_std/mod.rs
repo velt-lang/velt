@@ -427,6 +427,8 @@ const SCHED_HOOKS: &[&str] = &[
     velt_common::std_hook!(sched_block_on),
     velt_common::std_hook!(sched_spawn),
     velt_common::std_hook!(sched_yield),
+    velt_common::std_hook!(sched_yield_fut),
+    velt_common::std_hook!(sched_yield_ready),
     velt_common::std_hook!(sched_finish),
     velt_common::std_hook!(sched_box),
     velt_common::std_hook!(sched_start),
@@ -674,3 +676,22 @@ pub(crate) fn stub_unreached(cx: &mut Ctx) -> FxHashSet<DefId> {
 #[cfg(test)]
 #[path = "lazy_std_tests.rs"]
 mod tests;
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    Lazy {
+        on, check_all, native_executor, modules, subclasses, user_record, generic_any,
+        record_conversion, record_hooks, sched_hooks, float_text, float_write, dyn_held,
+        dyn_generic, cycle_closed, cycle_seen, cycles, live, stubs, printable,
+    }
+    Mode {
+        whole, named,
+    }
+}
+crate::units::codec::enums! {
+    Named {
+        0 => None,
+        1 => Helpers,
+        2 => All,
+    }
+}

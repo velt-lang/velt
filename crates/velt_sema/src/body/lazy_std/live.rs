@@ -31,6 +31,8 @@
 //! type. A construct present demands the integer hooks, all of them
 //! ([`constructs::demanded_for`]), and they are live.
 
+mod codec;
+
 use rustc_hash::{FxHashMap, FxHashSet};
 use velt_common::std_hooks::{hook_index, Construct, ConstructSet, HookSet, HOOKS};
 
@@ -631,6 +633,12 @@ fn walk_expr(ty: &crate::types::Types, e: &hir::Expr, w: &mut Walk) {
                 ),
             ..
         } => w.constructs |= Construct::Weak.bit(),
+        // A yield or a sleep is a leaf of the executor (velt_vir `sched_rt`: `schedYieldFut`,
+        // `schedSleep`), even kept as a promise in code that is not async.
+        E::Call {
+            callee: Callee::Intrinsic(I::YieldNow | I::Sleep),
+            ..
+        } => w.tasks = true,
         E::Call {
             callee: Callee::Dyn {
                 method_type_args, ..

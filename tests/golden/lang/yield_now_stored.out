@@ -1,0 +1,11 @@
+a 0
+a 1
+a 2
+a 3
+stored yield done
+l 0
+l 1
+l 2
+race chain
+all 1,2
+spawned yield done

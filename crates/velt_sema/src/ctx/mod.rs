@@ -1,5 +1,7 @@
 //! Whole-program checking context shared by all passes: definitions, module scopes, types.
 
+mod codec;
+
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::{Diagnostic, Diagnostics, Span};
@@ -12,6 +14,7 @@ use crate::SourceModule;
 mod access;
 mod classes;
 pub(crate) mod def_table;
+mod slots;
 
 pub(crate) use def_table::DefTable;
 
@@ -567,13 +570,26 @@ pub(crate) struct Ctx<'m> {
 
 impl<'m> Ctx<'m> {
     pub fn new(modules: &'m [SourceModule], root: usize) -> Self {
+        Self::over(modules.iter().collect(), root)
+    }
+
+    /// A context over `modules`, in this order (a decoded unit's, `units::codec`).
+    pub(crate) fn over(modules: Vec<&'m SourceModule>, root: usize) -> Self {
+        let import_targets = crate::collect::exports::import_targets(&modules);
+        let scopes = (modules.iter())
+            .map(|m| ModuleScope {
+                is_std: m.is_std,
+                is_library: m.is_std || m.is_dependency,
+                ..Default::default()
+            })
+            .collect();
         Ctx {
-            modules: modules.iter().collect(),
+            modules,
             fn_shapes: Default::default(),
             root,
             gen: Default::default(),
             export_memo: Default::default(),
-            import_targets: crate::collect::exports::import_targets(modules),
+            import_targets,
             loads: None,
             loads_added: 0,
             recursive_union_instances: 0,
@@ -585,14 +601,7 @@ impl<'m> Ctx<'m> {
             units: false,
             unit_base: 0,
             units_stage: crate::units::Stage::Both,
-            scopes: modules
-                .iter()
-                .map(|m| ModuleScope {
-                    is_std: m.is_std,
-                    is_library: m.is_std || m.is_dependency,
-                    ..Default::default()
-                })
-                .collect(),
+            scopes,
             prelude: FxHashMap::default(),
             prelude_type_keys: false,
             aliases: vec![],
