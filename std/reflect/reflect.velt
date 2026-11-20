@@ -144,7 +144,7 @@ export function endVisit(): void {
     // SAFETY: `p` came from `rawAlloc` in `pushDeep` with room for its capacity; nothing uses it
     // after.
     unsafe {
-      rawFree(p, (visitWord(p) + 1) * 8);
+      rawFree(p, ((visitWord(p) + 1) * 8) as usize);
     }
     VISIT_DEEP.set(0);
   }
@@ -165,17 +165,17 @@ function visitAt(i: u64): u64 {
     return VISIT3.get();
   }
   const p = VISIT_DEEP.get() as usize;
-  return visitWord(p + 8 + ((i - VISIT_SLOTS) as usize) * 8) as u64;
+  return visitWord(p + 8 + ((i - VISIT_SLOTS) as usize) * 8);
 }
 
 // Puts `id` at position `k` of the deep block, growing it first when full.
 function pushDeep(k: u64, id: u64): void {
   let p = VISIT_DEEP.get() as usize;
-  const cap: usize = p == 0 ? 0 : visitWord(p);
+  const cap: usize = p == 0 ? 0 : (visitWord(p) as usize);
   if ((k as usize) >= cap) {
     const next = cap == 0 ? 8 : cap * 2;
     const q = rawAlloc((next + 1) * 8);
-    setVisitWord(q, next);
+    setVisitWord(q, next as u64);
     for (let i: usize = 0; i < cap; i++) {
       setVisitWord(q + 8 + i * 8, visitWord(p + 8 + i * 8));
     }
@@ -188,18 +188,19 @@ function pushDeep(k: u64, id: u64): void {
     p = q;
     VISIT_DEEP.set(p as u64);
   }
-  setVisitWord(p + 8 + (k as usize) * 8, id as usize);
+  setVisitWord(p + 8 + (k as usize) * 8, id);
 }
 
-// The word at `a`, in this thread's block of visits.
-function visitWord(a: usize): usize {
-  // SAFETY: `a` is a word of the block `rawAlloc` gave `beginVisit`, not freed yet.
-  return unsafe { addressLoad<usize>(a) };
+// The word at `a`, in this thread's block of visits: 8 bytes, a `u64` on every target (an
+// identity is a `u64`, and a `usize` would be 4 bytes on wasm32).
+function visitWord(a: usize): u64 {
+  // SAFETY: `a` is a word of the block `rawAlloc` gave `pushDeep`, not freed yet.
+  return unsafe { addressLoad<u64>(a) };
 }
 
-function setVisitWord(a: usize, v: usize): void {
+function setVisitWord(a: usize, v: u64): void {
   // SAFETY: as `visitWord`.
   unsafe {
-    addressStore<usize>(a, v);
+    addressStore<u64>(a, v);
   }
 }

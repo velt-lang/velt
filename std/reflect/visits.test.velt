@@ -25,6 +25,19 @@ describe("visits", () => {
     }
   });
 
+  it("keep whole 64-bit identities past the thread-locals", () => {
+    for (let id: u64 = 1; id <= 6; id++) {
+      expect(beginVisit(id)).toBe(true);
+    }
+    // Deep visits whose identities differ only above bit 32 stay apart.
+    expect(beginVisit(0x100000007)).toBe(true);
+    expect(beginVisit(7)).toBe(true);
+    expect(beginVisit(0x100000007)).toBe(false);
+    for (let i = 0; i < 8; i++) {
+      endVisit();
+    }
+  });
+
   it("ends only the innermost visit", () => {
     expect(beginVisit(1)).toBe(true);
     expect(beginVisit(2)).toBe(true);
