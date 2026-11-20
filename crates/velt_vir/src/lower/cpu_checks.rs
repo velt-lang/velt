@@ -1,6 +1,8 @@
-//! CPU checks known while lowering (#2456). Where a build cannot have an extension, its check
-//! `velt_simd_has_<ext>()` is false: on another architecture, and under a code generator without
-//! the instructions (`LowerOptions::no_cpu_extensions`), as the backends answer it. A call of a
+//! CPU checks known while lowering (#2456). Where a build cannot have a feature, its check
+//! `velt_simd_has_<feature>()` is false, and so is the guard of its architecture std's run-time
+//! checks start with (`velt_simd_on_x86()`, `velt_simd_on_arm()`): on another architecture, and
+//! under a code generator without the instructions (`LowerOptions::no_cpu_extensions`), as the
+//! backends answer them. A call of a
 //! function that only combines such checks (`u32x4.hasShaArm()`, `arm()` in std/simd/aes.velt) is
 //! known too. `const_cond` takes these, and lowering is on demand, so a gated function or an
 //! emulation reached only from a branch known false is never built. A function also called from
@@ -100,12 +102,15 @@ impl Cx<'_> {
         self.hir.module_state.is_some() || self.boxing.any_writes
     }
 
-    /// Whether `symbol` is the check of an extension this build cannot have.
+    /// Whether `symbol` is the check of a feature this build cannot have, or the guard of an
+    /// architecture it can't run checks of (`velt_simd_on_x86`, `velt_simd_on_arm`).
     fn extension_absent(&self, symbol: &str) -> bool {
-        let Some(SimdCall::Has(ext)) = SimdCall::of_symbol(symbol) else {
-            return false;
+        let arch = match SimdCall::of_symbol(symbol) {
+            Some(SimdCall::Has(ext)) => ext.arch().name(),
+            Some(SimdCall::OnArch(arch)) => arch.name(),
+            _ => return false,
         };
-        self.cpu_checks.no_extensions || arch_of(&self.target).is_some_and(|a| !ext.on_arch(a))
+        self.cpu_checks.no_extensions || arch_of(&self.target).is_some_and(|a| a != arch)
     }
 }
 

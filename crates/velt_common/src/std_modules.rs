@@ -114,6 +114,7 @@ table! {
     lang_hooks_process => "lang/hooks/process",
     lang_hooks_process_statics => "lang/hooks/process_statics",
     lang_hooks_program_thread => "lang/hooks/program_thread",
+    lang_hooks_cpu => "lang/hooks/cpu",
     lang_hooks_proxy => "lang/hooks/proxy",
     lang_hooks_record => "lang/hooks/record",
     lang_hooks_sched => "lang/hooks/sched",
@@ -168,6 +169,10 @@ table! {
     encoding_json_reader => "encoding/json/reader",
     encoding_json_writer => "encoding/json/writer",
     encoding_json_generated => "encoding/json/generated",
+    /// `velt/arch/x86`, `velt/arch/arm`: a class per CPU feature with its `isSupported()` check
+    /// (docs/internals/design/package-machine-code.md §2), which sema knows by these folders.
+    arch_x86 => "arch/x86",
+    arch_arm => "arch/arm",
     /// `velt/ffi`: what crosses to C functions (`declare c`, docs/internals/design/c-ffi.md).
     ffi => "ffi",
     ffi_ptr => "ffi/ptr",

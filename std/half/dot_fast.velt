@@ -9,6 +9,7 @@
 import { noInline, targetFeature } from "velt/lang/intrinsics";
 import { inRange, sameLength, total } from "velt/half/dot";
 import { bf16x8 } from "velt/simd/bf16x8";
+import { Bf16 } from "velt/arch/arm/bf16";
 
 declare function velt_simd_f32x4_splat(x: f32): f32x4;
 declare function velt_simd_bf16x8_load(from: bf16[], at: u64): bf16x8;
@@ -47,7 +48,7 @@ export function dotBf16FastAt(a: bf16[], aAt: usize, b: bf16[], bAt: usize, coun
 
 /** The sum once the ranges are known to fit, on the path this CPU has. */
 function sumFast(a: bf16[], aAt: usize, b: bf16[], bAt: usize, n: usize): number {
-  if (bf16x8.hasBf16Arm()) {
+  if (Bf16.isSupported()) {
     return sumBfdot(a, aAt, b, bAt, n);
   }
   return sumBuilt(a, aAt, b, bAt, n);
