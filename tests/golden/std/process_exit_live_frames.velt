@@ -1,0 +1,17 @@
+// check: no leaks
+// `exit` of velt/process ends the program as `process.exit` does: the frames live then keep
+// what they hold, and the leak counters' report gets no verdict for such a run (#3275).
+import { exit } from "velt/process";
+
+function deep(rows: string[][]) {
+  if (rows.length === 2) {
+    console.log("exiting with", rows[1][0]);
+    exit(0);
+  }
+}
+
+function main() {
+  const kept = [["a"], ["b" + "c"]];
+  deep(kept);
+  console.log("unreachable", kept.length);
+}
