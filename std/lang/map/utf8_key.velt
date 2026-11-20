@@ -38,7 +38,9 @@ function fmix64(x: u64): u64 {
 
 /**
  * The `rest` bytes (0 to 7) at `at` as one little-endian word, zero above them: at most three
- * loads (4, 2 and 1 bytes), none past the end. Unsafe: the bytes must be readable.
+ * loads (4, 2 and 1 bytes), none past the end.
+ *
+ * Unsafe: the bytes `at` to `at + rest` must be readable.
  */
 @inline("always")
 unsafe function tailWord(at: usize, rest: usize): u64 {
