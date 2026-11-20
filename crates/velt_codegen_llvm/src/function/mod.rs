@@ -24,7 +24,8 @@ use velt_vir::vir::{self, Ty};
 use crate::debug::{DebugInfo, FnDebug};
 use crate::inlining::Caps;
 use crate::module::{
-    define_prefix, definition_params, Definition, Intrinsics, FN_ATTRS, STOP_UNWIND_ATTRS,
+    allocator_group, define_prefix, definition_params, Definition, Intrinsics, FN_ATTRS,
+    STOP_UNWIND_ATTRS,
 };
 use crate::statics::StaticNames;
 use crate::target::Target;
@@ -235,10 +236,11 @@ pub(crate) fn emit_function(
         false => FN_ATTRS,
     };
     Ok(format!(
-        "{} {}({}) {attrs}{}{features}{personality}{define_dbg} {{\n{}}}\n",
+        "{} {}({}) {attrs}{}{}{features}{personality}{define_dbg} {{\n{}}}\n",
         define_prefix(function, how)?,
         global_name(&function.symbol),
         definition_params(function)?,
+        allocator_group(function),
         inline_attrs(
             function,
             caps.too_large(index),
