@@ -17,7 +17,7 @@ import {
 } from "velt/encoding/json/tape";
 import { TapeError } from "velt/encoding/json/tape_error";
 import { TapeRef } from "velt/encoding/json/tape_ref";
-import { inline, isUnique } from "velt/lang/intrinsics";
+import { inline, isUnique, noInline } from "velt/lang/intrinsics";
 import {
   jsonValueEquals,
   jsonValueFrom,
@@ -36,8 +36,10 @@ import {
   TREE_NUMBER,
   TREE_OBJECT,
   TREE_STRING,
+  TREE_MAX_HEIGHT,
+  TREE_TAPE,
 } from "velt/encoding/json/tree";
-import { treeOfTape, treeStringify, writeTree } from "velt/encoding/json/tree_text";
+import { treeMember, treeOfTape, treeStringify, writeTree } from "velt/encoding/json/tree_text";
 import { inspectJsonValue } from "velt/encoding/json/value_inspect";
 
 /**
@@ -74,7 +76,9 @@ export class JsonValue {
     return v;
   }
 
-  // A value of node `t` (a child, which its parent reaches too), or null.
+  // A value of node `t` (a child, which its parent reaches too), or null. A child left on a tape
+  // (`TREE_TAPE`, always a container) is such a value's node too: the tree side's readers below
+  // read through it.
   private static sharing(t: JsonTree | null): JsonValue | null {
     if (t == null) {
       return null;
@@ -99,7 +103,7 @@ export class JsonValue {
 
   /** An empty array, to fill with `push`. */
   static array(): JsonValue {
-    return new JsonValue(new JsonTree(TREE_ARRAY));
+    return new JsonValue(JsonTree.array());
   }
 
   /** A string, number, boolean or `null`. */
@@ -129,9 +133,9 @@ export class JsonValue {
     return JSON.parse<T>(this.stringify(), options);
   }
 
-  // The tree to edit: a tape value's own tree, or the node copied first when another reference
-  // reaches it (a clone, a parent, a child; the copy shares the children), as the runtime's tree
-  // copied a node `Arc::get_mut` refused.
+  // The tree to edit: a tape value's own tree (its containers left on the tape), or the node
+  // copied first when another reference reaches it (a clone, a parent, a child; the copy shares
+  // the children).
   private edited(): JsonTree {
     const t = this.#tape;
     if (t != null) {
@@ -140,19 +144,30 @@ export class JsonValue {
       this.#tape = null;
       return tree;
     }
+    if (this.#tree!.kind == TREE_TAPE) {
+      const tv = this.#tree!;
+      const o = tv.obj!;
+      this.#tree = treeOfTape(o.tape!, o.node);
+      return this.#tree!;
+    }
     if (!isUnique(this.#tree!)) {
       this.#tree = this.#tree!.copy();
     }
     return this.#tree!;
   }
 
-  // The node of this value to store in another value (which then reaches it too).
+  // The node of this value to store in another value (which then reaches it too): a parsed value
+  // stays on its tape, and a tree as high as a tree may be is stored as a tape (tree.velt).
   private shareTree(): JsonTree {
     const t = this.#tape;
     if (t != null) {
-      return treeOfTape(t, this.#node);
+      return treeMember(t, this.#node);
     }
-    return this.#tree!;
+    const tree = this.#tree!;
+    if (tree.height >= TREE_MAX_HEIGHT) {
+      return frozenTree(tree);
+    }
+    return tree;
   }
 
   /** Appends what `console.log` prints for this value to the builder `out` (lowering calls it). */
@@ -187,7 +202,9 @@ export class JsonValue {
     }
     // The value's node first: `value` may be this value.
     const child = value.shareTree();
-    this.edited().obj!.insert(key, child);
+    const e = this.edited();
+    e.holds(child);
+    e.obj!.insert(key, child);
     return true;
   }
 
@@ -205,7 +222,9 @@ export class JsonValue {
       return false;
     }
     const child = value.shareTree();
-    this.edited().items.push(child);
+    const e = this.edited();
+    e.holds(child);
+    e.items!.push(child);
     return true;
   }
 
@@ -215,7 +234,9 @@ export class JsonValue {
       return false;
     }
     const child = value.shareTree();
-    this.edited().items[i as usize] = child;
+    const e = this.edited();
+    e.holds(child);
+    e.items![i as usize] = child;
     return true;
   }
 
@@ -226,7 +247,7 @@ export class JsonValue {
       const v = t.find(this.#node, key);
       return v < 0 ? null : JsonValue.onTape(t, v as u32);
     }
-    return JsonValue.sharing(this.#tree!.get(key));
+    return JsonValue.sharing(treeGet(this.#tree!, key));
   }
 
   /**
@@ -238,7 +259,7 @@ export class JsonValue {
     if (t != null) {
       return t.find(this.#node, key) >= 0;
     }
-    return this.#tree!.get(key) != null;
+    return treeGet(this.#tree!, key) != null;
   }
 
   /** Array element `i` (or the i-th member value of an object), or null if out of range. */
@@ -251,7 +272,7 @@ export class JsonValue {
       const v = t.child(this.#node, i);
       return v < 0 ? null : JsonValue.onTape(t, v as u32);
     }
-    return JsonValue.sharing(this.#tree!.at(i));
+    return JsonValue.sharing(treeAt(this.#tree!, i));
   }
 
   /** Array length, object member count, string length (UTF-16 code units); 0 otherwise. */
@@ -264,7 +285,7 @@ export class JsonValue {
       }
       return k == T_ARRAY || k == T_OBJECT ? t.count(this.#node) : 0;
     }
-    return this.#tree!.len();
+    return treeLen(this.#tree!);
   }
 
   // The kind as trees number them (`TREE_*`).
@@ -286,7 +307,8 @@ export class JsonValue {
       }
       return k == T_ARRAY ? TREE_ARRAY : TREE_OBJECT;
     }
-    return this.#tree!.kind;
+    const k = this.#tree!.kind;
+    return k == TREE_TAPE ? treeTapeKind(this.#tree!) : k;
   }
 
   /** Whether this value is JSON `null`. */
@@ -368,7 +390,7 @@ export class JsonValue {
       }
       return out;
     }
-    return this.#tree!.keys();
+    return treeKeys(this.#tree!);
   }
 
   /**
@@ -403,4 +425,69 @@ export class JsonValue {
     }
     return new JsonValue(this.#tree);
   }
+}
+
+// The tree side of `JsonValue`'s readers, out of line and given only the node: a parsed value (the
+// tape side) is what loops read, and inlining the tree's lookups there would only grow them. A
+// node left on a tape (`TREE_TAPE`) is read through the tape; its children come as nodes of it.
+@noInline
+function treeGet(t: JsonTree, key: string): JsonTree | null {
+  if (t.kind == TREE_TAPE) {
+    const o = t.obj!;
+    const tape = o.tape!;
+    const v = tape.find(o.node, key);
+    return v < 0 ? null : treeMember(tape, v as u32);
+  }
+  return t.get(key);
+}
+
+@noInline
+function treeAt(t: JsonTree, i: i64): JsonTree | null {
+  if (t.kind == TREE_TAPE) {
+    const o = t.obj!;
+    const tape = o.tape!;
+    const v = tape.child(o.node, i);
+    return v < 0 ? null : treeMember(tape, v as u32);
+  }
+  return t.at(i);
+}
+
+@noInline
+function treeLen(t: JsonTree): i64 {
+  if (t.kind == TREE_TAPE) {
+    const o = t.obj!;
+    return o.tape!.count(o.node);
+  }
+  return t.len();
+}
+
+@noInline
+function treeKeys(t: JsonTree): string[] {
+  if (t.kind == TREE_TAPE) {
+    const o = t.obj!;
+    const tape = o.tape!;
+    const out: string[] = [];
+    const n = tape.count(o.node);
+    for (let i: i64 = 0; i < n; i++) {
+      out.push(tape.text(tape.member(o.node, i) as u32));
+    }
+    return out;
+  }
+  return t.keys();
+}
+
+// The kind of a node left on a tape (always a container).
+@noInline
+function treeTapeKind(t: JsonTree): u32 {
+  const o = t.obj!;
+  return o.tape!.kind(o.node) == T_ARRAY ? TREE_ARRAY : TREE_OBJECT;
+}
+
+// A tree as a tape of its text (frozen: it crosses to another task without a copy).
+function frozenTree(tree: JsonTree): JsonTree {
+  const r = parseTape(treeStringify(tree), 0);
+  if (r instanceof TapeError) {
+    panic(`ICE: a tree's JSON text did not parse: ${r.message}`);
+  }
+  return JsonTree.ofTape(new TapeRef(shared(r as Tape)), 0);
 }
