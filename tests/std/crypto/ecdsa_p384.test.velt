@@ -1,0 +1,126 @@
+// ECDSA verification on P-384 (velt/crypto `p384Verify`): every Project Wycheproof
+// ecdsa_secp384r1_sha384 case, signatures made by OpenSSL 3.0.13 with each hash, and the cases
+// those do not reach (digests of other lengths, equal points in the sum, R's x past n, keys
+// that are not points).
+import { p384Verify, sha256, sha384, sha512 } from "velt/crypto";
+import { hexDecode, utf8Encode } from "velt/encoding";
+import { describe, expect, it } from "velt/test";
+import * as v from "./ecdsa_p384_vectors";
+import { ECDSA_P384_SHA384_CASES } from "./wycheproof_ecdsa_p384_sha384";
+
+function bytes(s: string): u8[] {
+  return s == "-" ? [] : hexDecode(s);
+}
+
+describe("p384Verify", () => {
+  it("matches every Wycheproof ecdsa_secp384r1_sha384 case", () => {
+    let key: u8[] = [];
+    let valid = 0;
+    let invalid = 0;
+    for (const line of ECDSA_P384_SHA384_CASES) {
+      const f = line.split(" ");
+      if (f[0] == "K") {
+        key = hexDecode(f[1]);
+        continue;
+      }
+      const ok = p384Verify(key, sha384(bytes(f[2])), bytes(f[3]));
+      if (f[1] == "v") {
+        expect(`${f[0]} ${ok}`).toBe(`${f[0]} true`);
+        valid++;
+      } else if (f[1] == "i") {
+        expect(`${f[0]} ${ok}`).toBe(`${f[0]} false`);
+        invalid++;
+      }
+    }
+    expect(valid).toBe(194);
+    expect(invalid).toBe(310);
+  });
+
+  it("verifies OpenSSL's signatures with SHA-256, SHA-384 and SHA-512 digests", () => {
+    const key = hexDecode(v.OPENSSL_KEY);
+    const msg = utf8Encode("hello velt");
+    expect(p384Verify(key, sha256(msg), hexDecode(v.OPENSSL_SIG_SHA256))).toBe(true);
+    expect(p384Verify(key, sha384(msg), hexDecode(v.OPENSSL_SIG_SHA384))).toBe(true);
+    expect(p384Verify(key, sha512(msg), hexDecode(v.OPENSSL_SIG_SHA512))).toBe(true);
+    // Another message, another hash, another key.
+    expect(p384Verify(key, sha384(utf8Encode("Hello velt")), hexDecode(v.OPENSSL_SIG_SHA384))).toBe(
+      false,
+    );
+    expect(p384Verify(key, sha256(msg), hexDecode(v.OPENSSL_SIG_SHA384))).toBe(false);
+    expect(p384Verify(hexDecode(v.KEY), sha384(msg), hexDecode(v.OPENSSL_SIG_SHA384))).toBe(false);
+  });
+
+  it("reads a longer digest by its leftmost 48 bytes", () => {
+    const key = hexDecode(v.KEY);
+    const sig = hexDecode(v.DIGEST_64_SIG);
+    const digest = hexDecode(v.DIGEST_64);
+    expect(p384Verify(key, digest, sig)).toBe(true);
+    digest[63] ^= 1;
+    expect(p384Verify(key, digest, sig)).toBe(true);
+    digest[47] ^= 1;
+    expect(p384Verify(key, digest, sig)).toBe(false);
+  });
+
+  it("reads a shorter digest as that number", () => {
+    const key = hexDecode(v.KEY);
+    expect(p384Verify(key, hexDecode(v.DIGEST_47), hexDecode(v.DIGEST_47_SIG))).toBe(true);
+    expect(p384Verify(key, [], hexDecode(v.DIGEST_EMPTY_SIG))).toBe(true);
+    expect(p384Verify(key, [0], hexDecode(v.DIGEST_EMPTY_SIG))).toBe(true);
+    expect(p384Verify(key, [1], hexDecode(v.DIGEST_EMPTY_SIG))).toBe(false);
+  });
+
+  it("doubles when an addition meets the same point", () => {
+    // The key is G and e = r: u1 G and u2 Q are the same point.
+    expect(p384Verify(hexDecode(v.G_KEY), hexDecode(v.E_IS_R), hexDecode(v.E_IS_R_SIG))).toBe(true);
+  });
+
+  it("takes r = x - n when R's x is at or past n, and refuses r + 1", () => {
+    const key = hexDecode(v.WRAP_KEY);
+    const digest = hexDecode(v.WRAP_DIGEST);
+    expect(p384Verify(key, digest, hexDecode(v.WRAP_SIG))).toBe(true);
+    expect(p384Verify(key, digest, hexDecode(v.WRAP_SIG_R_PLUS_1))).toBe(false);
+  });
+
+  it("refuses a key that is not an uncompressed point on the curve", () => {
+    const digest = hexDecode(v.DIGEST_47);
+    const sig = hexDecode(v.DIGEST_47_SIG);
+    expect(p384Verify(hexDecode(v.KEY_OFF_CURVE), digest, sig)).toBe(false);
+    expect(p384Verify(hexDecode(v.KEY_X_IS_P), digest, sig)).toBe(false);
+    expect(p384Verify(hexDecode(v.KEY_Y_IS_P), digest, sig)).toBe(false);
+    expect(p384Verify(hexDecode(v.KEY_COMPRESSED), digest, sig)).toBe(false);
+    const key = hexDecode(v.KEY);
+    expect(p384Verify(key.slice(0, 96), digest, sig)).toBe(false);
+    expect(p384Verify([], digest, sig)).toBe(false);
+    key[0] = 6;
+    expect(p384Verify(key, digest, sig)).toBe(false);
+  });
+
+  it("refuses a coordinate at or past p, though it is a point's coordinate plus p", () => {
+    // Signatures made without the private keys, from u1 and u2 (the digest is free here).
+    const digest = hexDecode(v.SMALL_X_DIGEST);
+    const sig = hexDecode(v.SMALL_X_SIG);
+    expect(p384Verify(hexDecode(v.SMALL_X_KEY), digest, sig)).toBe(true);
+    expect(p384Verify(hexDecode(v.SMALL_X_KEY_PLUS_P), digest, sig)).toBe(false);
+    const digestY = hexDecode(v.SMALL_Y_DIGEST);
+    const sigY = hexDecode(v.SMALL_Y_SIG);
+    expect(p384Verify(hexDecode(v.SMALL_Y_KEY), digestY, sigY)).toBe(true);
+    expect(p384Verify(hexDecode(v.SMALL_Y_KEY_PLUS_P), digestY, sigY)).toBe(false);
+  });
+
+  it("refuses a point of another curve, though the formulas accept its signature", () => {
+    // On y^2 = x^3 - 3x + b + 1, where the same formulas add points: with the digest 0 the sum
+    // is a multiple of the key alone, and its x is the signature's r.
+    const zero: u8[] = Buffer.alloc(48);
+    expect(p384Verify(hexDecode(v.OTHER_CURVE_KEY), zero, hexDecode(v.OTHER_CURVE_SIG))).toBe(
+      false,
+    );
+  });
+
+  it("refuses an INTEGER with a needless leading zero", () => {
+    const key = hexDecode(v.PAD_KEY);
+    const digest = hexDecode(v.PAD_DIGEST);
+    expect(p384Verify(key, digest, hexDecode(v.PAD_SIG))).toBe(true);
+    expect(p384Verify(key, digest, hexDecode(v.PAD_SIG_R_ZERO))).toBe(false);
+    expect(p384Verify(key, digest, hexDecode(v.PAD_SIG_S_ZERO))).toBe(false);
+  });
+});
