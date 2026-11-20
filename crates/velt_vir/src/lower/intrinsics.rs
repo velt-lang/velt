@@ -326,6 +326,7 @@ impl FnLower<'_, '_> {
             (I::NeedsDrop, [a]) => {
                 Operand::Const(crate::vir::Const::Bool(self.needs_drop(a.ty)), Ty::Bool)
             }
+            (I::IsUnique, [a]) => self.is_unique(a),
             (I::MayAlias, [a]) => {
                 let t = self.sub(a.ty);
                 Operand::Const(crate::vir::Const::Bool(!self.cx.unique_refs(t)), Ty::Bool)
