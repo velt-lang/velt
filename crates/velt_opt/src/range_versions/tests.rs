@@ -9,6 +9,7 @@ use crate::testkit::validate::assert_valid;
 use velt_vir::simd::Lanes;
 use velt_vir::vir::{AggId, BlockId, Callee, ExternFn, Linkage, Program, Proj, Rvalue, Ty};
 
+mod guards;
 mod shapes;
 
 /// `fits` and `fits_both` from the headers the arguments point to; a header read through a null
@@ -49,6 +50,8 @@ enum Head {
     Lt,
     /// `dim >= i + g`.
     Ge(u64),
+    /// `dim > i + g`.
+    Gt(u64),
 }
 
 /// A loop `for (i = i0; <head>; i += step)` whose body tests, in order, `fits(a, at + i + k)`
@@ -90,6 +93,8 @@ enum Twist {
     HeadImplied,
     /// `Compares`, with `la` one less every iteration.
     ShrinkBound,
+    /// `Compares` with the operands swapped: `la > at + i + k` and `lb >= i + k`.
+    ComparesSwapped,
 }
 
 impl Shape {
@@ -149,7 +154,7 @@ impl Shape {
         // The head.
         let c = fb.local(Ty::Bool);
         let test = match self.head {
-            Head::Le(g) | Head::Ge(g) => {
+            Head::Le(g) | Head::Ge(g) | Head::Gt(g) => {
                 let t = fb.local(Ty::U64);
                 fb.assign(
                     head,
@@ -158,6 +163,7 @@ impl Shape {
                 );
                 match self.head {
                     Head::Le(_) => bin(BinOp::Le, copy_local(t), copy_local(dim)),
+                    Head::Gt(_) => bin(BinOp::Gt, copy_local(dim), copy_local(t)),
                     _ => bin(BinOp::Ge, copy_local(dim), copy_local(t)),
                 }
             }
@@ -212,13 +218,14 @@ impl Shape {
             );
             if matches!(
                 self.twist,
-                Twist::Compares | Twist::HeadImplied | Twist::ShrinkBound
+                Twist::Compares | Twist::HeadImplied | Twist::ShrinkBound | Twist::ComparesSwapped
             ) {
                 let r = fb.local(Ty::Bool);
                 let test = match self.twist {
                     Twist::Compares | Twist::ShrinkBound => {
                         bin(BinOp::Lt, copy_local(y), copy_local(la))
                     }
+                    Twist::ComparesSwapped => bin(BinOp::Gt, copy_local(la), copy_local(y)),
                     _ => bin(BinOp::Lt, copy_local(i), copy_local(dim)),
                 };
                 fb.assign(cur, r, test);
@@ -249,9 +256,16 @@ impl Shape {
                 y,
                 bin(BinOp::Add, copy_local(i), int(k.into(), Ty::U64)),
             );
-            if matches!(self.twist, Twist::Compares | Twist::ShrinkBound) {
+            if matches!(
+                self.twist,
+                Twist::Compares | Twist::ShrinkBound | Twist::ComparesSwapped
+            ) {
                 let r = fb.local(Ty::Bool);
-                fb.assign(cur, r, bin(BinOp::Le, copy_local(y), copy_local(lb)));
+                let test = match self.twist {
+                    Twist::ComparesSwapped => bin(BinOp::Ge, copy_local(lb), copy_local(y)),
+                    _ => bin(BinOp::Le, copy_local(y), copy_local(lb)),
+                };
+                fb.assign(cur, r, test);
                 cur = self.branch(&mut fb, cur, r, &mut number, &result);
                 continue;
             }
@@ -419,7 +433,10 @@ fn copies_and_agrees(shape: &Shape) {
     agree(&p, &q, &edges(n, s));
     let inside = [20 * s + 64, 20 * s + 64, s, 8 * s, 0, 0];
     let (before, after) = agree(&p, &q, &[inside]);
-    if !matches!(shape.twist, Twist::Compares | Twist::ShrinkBound) {
+    if !matches!(
+        shape.twist,
+        Twist::Compares | Twist::ShrinkBound | Twist::ComparesSwapped
+    ) {
         assert!(
             before >= 8 && after == 0,
             "{shape:?}: {before} tests before, {after} after"
@@ -453,6 +470,8 @@ fn every_form_of_the_counter_test_is_read() {
         Head::Lt,
         Head::Ge(16),
         Head::Ge(28),
+        Head::Gt(15),
+        Head::Gt(0),
     ] {
         let shape = Shape {
             head,

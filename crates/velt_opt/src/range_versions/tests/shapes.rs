@@ -110,6 +110,18 @@ fn element_checks_against_a_bound_run_without_them_and_agree_at_every_edge() {
 }
 
 #[test]
+fn comparisons_with_the_bound_first_run_without_them_and_agree_at_every_edge() {
+    // `la > at + i + k` is strict and `lb >= i + k` is not: reading either the other way is an
+    // element past the end.
+    for lanes in [Lanes::F32, Lanes::I8] {
+        copies_and_agrees(&Shape {
+            twist: Twist::ComparesSwapped,
+            ..Shape::new(lanes)
+        });
+    }
+}
+
+#[test]
 fn a_comparison_the_head_implies_is_left_to_llvm() {
     let shape = Shape {
         twist: Twist::HeadImplied,
@@ -130,4 +142,38 @@ fn a_bound_the_loop_changes_keeps_its_comparisons() {
     assert!(changed);
     assert_eq!(compares(&q), 7 + 1 + 4 + 1);
     agree(&p, &q, &edges(4, 16));
+}
+
+#[test]
+fn the_check_in_front_is_exact_for_every_form_of_the_counter_test() {
+    // `f32x4`, a step of 16, `a` read to `at + i + 16` and `b` to `i + 16`. The last `i` a head
+    // admits is `dim - gap`; the copy runs where both arrays reach exactly that far, and the
+    // original one element short of it.
+    let heads = [
+        (Head::Le(16), 16),
+        (Head::Lt, 1),
+        (Head::Ge(16), 16),
+        (Head::Gt(15), 16),
+        (Head::Gt(0), 1),
+    ];
+    for (head, gap) in heads {
+        let shape = Shape {
+            head,
+            ..Shape::new(Lanes::F32)
+        };
+        let p = shape.program();
+        let (q, changed) = versioned(&p);
+        assert!(changed, "{head:?}");
+        let (at, dim) = (5, 64);
+        let last = dim - gap;
+        let (la, lb) = (at + last + 16, last + 16);
+        let (_, tight) = agree(&p, &q, &[[la, lb, at, dim, 0, 0]]);
+        assert_eq!(tight, 0, "{head:?}: the copy runs where both fit exactly");
+        let (_, short_a) = agree(&p, &q, &[[la - 1, lb, at, dim, 0, 0]]);
+        let (_, short_b) = agree(&p, &q, &[[la, lb - 1, at, dim, 0, 0]]);
+        assert!(
+            short_a > 0 && short_b > 0,
+            "{head:?}: one element short runs the original"
+        );
+    }
 }
