@@ -3,7 +3,8 @@
 // libuv's names for Win32's errors (std/os/win_error.velt). A path of 248 units or more is made
 // absolute and given the `\\?\` prefix, as Rust's std does, so that it is not cut at MAX_PATH;
 // errors name the path as it was given, as Node's do. A directory refuses to open as a file with
-// "access denied", which is `EISDIR` here, as everywhere else.
+// "access denied", which is `EISDIR` here, as everywhere else. A file named with separators
+// after it (`dir\file\`) is read, described and found as the file, as Node does (`asFile`).
 
 import { Ptr } from "velt/ffi/ptr";
 import { osError } from "velt/fs/errors";
@@ -12,7 +13,7 @@ import { Done } from "velt/fs/whole/done";
 import { readAll } from "velt/fs/whole/read_all";
 import { utf8Encode } from "velt/encoding/utf8";
 import { addressLoad } from "velt/lang/intrinsics";
-import { winPath } from "velt/fs/whole/win_path";
+import { asFile, winPath } from "velt/fs/whole/win_path";
 import { errnoOfWin32 } from "velt/os/win_error";
 
 /** C's `SECURITY_ATTRIBUTES` and `OVERLAPPED`: never passed. */
@@ -168,7 +169,7 @@ function readRest(h: Ptr<void>): Done<u8[]> {
 
 /** The bytes of the file at `path` (`c`, its C form, is POSIX's). */
 export function readBytes(c: readonly u8[], path: string): Done<u8[]> {
-  const w = winPath(path);
+  const w = winPath(asFile(path));
   if (w === null) {
     return { value: null, error: osError(errnoOfWin32(ERROR_FILE_NOT_FOUND), "open", path) };
   }
@@ -276,7 +277,7 @@ function handleInfo(h: Ptr<void>, info: u32[]): u32 {
 /** `stat` (`follow`) or `lstat` of `path`, from one open of it (a directory too). */
 export function statOf(c: readonly u8[], path: string, follow: bool): Done<Stats> {
   const call = follow ? "stat" : "lstat";
-  const w = winPath(path);
+  const w = winPath(asFile(path));
   if (w === null) {
     return { value: null, error: osError(errnoOfWin32(ERROR_FILE_NOT_FOUND), call, path) };
   }
@@ -320,7 +321,7 @@ export function statOf(c: readonly u8[], path: string, follow: bool): Done<Stats
 
 /** Whether anything is at `path`, following symlinks (a broken one is not there). */
 export function existsAt(c: readonly u8[], path: string): bool {
-  const w = winPath(path);
+  const w = winPath(asFile(path));
   if (w === null) {
     return false;
   }
