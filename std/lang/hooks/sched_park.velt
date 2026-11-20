@@ -89,7 +89,14 @@ export function park(e: usize): void {
     }
   }
   m.store32(e + t.E_PARK, 1);
-  if (m.load(e + t.E_INBOX) !== 0 || q.any(e) || !parkable(e)) {
+  // With the inbox, a request to retire (sched_relax.velt `ask`): the monitor stores it, then
+  // wakes the spare only if its park word is up, and nothing asks twice. A spare that was awake
+  // then, and read `E_RETIRED` on its way out of its last park before the request was stored,
+  // would sleep here with the request unanswered, and worker 0 would never be lazy again. Read
+  // after the word went up (both sequentially consistent), either the monitor sees the word or
+  // the spare sees the request, and the way out below answers it (`retiring`).
+  const asked = (m.load32(e + t.E_RETIRED) & t.R_AWAY) as usize;
+  if ((m.load(e + t.E_INBOX) | asked) !== 0 || q.any(e) || !parkable(e)) {
     wk.awake(e);
     ex.takeExit(e);
     m.st32(e + t.E_DISPATCH, 0);
