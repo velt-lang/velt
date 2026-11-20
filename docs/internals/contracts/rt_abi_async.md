@@ -608,14 +608,14 @@ velt_rt_wasm has, for WebAssembly builds, with their async twins:
 `velt_rt_fs_lstat_sync(path, out)` (`IoResult<VeltStat>`) and `velt_rt_fs_exists_sync(path) ->
 u8`. Text is read as bytes and decoded in std: neither runtime reads a file as text.
 
-Listing a directory (plain and with each entry's type) and making one are std code in a native
-build too, and on macOS and Linux so is removing a file, a link or a tree (`#fs-tree`:
-std/fs/tree/posix.velt over the C library's `opendir`, `readdir`, `mkdir`, `rmdir` and, for a
-tree, `openat`, `fdopendir` and `unlinkat`, so that nothing is reached through a link;
-tree/win32.velt over `FindFirstFileExW` and `CreateDirectoryW`), with Node's messages and the
-names sorted by code point. velt_rt has `velt_rt_fs_remove_sync` alone, which std calls on
-Windows (a tree is removed there with every directory opened relative to its parent's handle,
-which std does not do); on macOS and Linux nothing calls it and it reports "unsupported".
+Listing a directory (plain and with each entry's type), making one and removing a file, a link
+or a tree are std code in a native build too (`#fs-tree`: std/fs/tree/posix.velt over the C
+library's `opendir`, `readdir`, `mkdir`, `rmdir` and, for a tree, `openat`, `fdopendir` and
+`unlinkat`; tree/win32.velt over `FindFirstFileExW` and `CreateDirectoryW`, and
+tree/win_remove.velt, which lists a directory from its handle, opens each entry relative to it
+with ntdll's `NtCreateFile` and deletes it on its handle), with Node's messages and the names
+sorted by code point. On every system a tree is removed without reaching anything through a
+link, also one that takes a directory's place during the removal. velt_rt has none of these.
 velt_rt_wasm has, for WebAssembly builds, with their async twins:
 `velt_rt_fs_read_dir_sync(path, out)` (`IoResult<VeltStrArray>`, the names sorted),
 `velt_rt_fs_read_dir_typed_sync(path, out)` (`IoResult<VeltDirents>`),
@@ -627,7 +627,6 @@ velt_rt_wasm has, for WebAssembly builds, with their async twins:
 | `velt_rt_fs_readlink_sync(path, out)` | `IoResult<VeltStr>`; `EINVAL` if not a symlink |
 | `velt_rt_fs_realpath_sync(path, out)` | `IoResult<VeltStr>`: the absolute path with every symlink, `.` and `..` resolved; `ENOENT` if it (or a link's target) doesn't exist; Windows: without the `\\?\` prefix unless the path needs it (`C:\dir\f`, `\\server\share\f`). WebAssembly: as WASI reports it |
 | `velt_rt_fs_symlink_sync(target, path, out)` | `IoResult<()>`; Windows: a directory link if `target` is a directory, a relative target stored with `\` separators (as Node) |
-| `velt_rt_fs_remove_sync(path, recursive, out)` | Windows only. `IoResult<()>`; file, symlink (the link only, a Windows directory link too), empty dir, or tree if recursive |
 | `velt_rt_fs_rename_sync(from, to, out)` | `IoResult<()>` |
 | `velt_rt_fs_copy_file_sync(from, to, out)` | `IoResult<()>` |
 
