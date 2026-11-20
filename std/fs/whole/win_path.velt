@@ -6,6 +6,7 @@
 // judged by its own length.
 
 import { Out } from "velt/ffi/out";
+import { Ptr } from "velt/ffi/ptr";
 import { wideOf } from "velt/ffi/wide";
 import { arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
 
