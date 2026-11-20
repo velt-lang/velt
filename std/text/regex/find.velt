@@ -54,12 +54,13 @@ export function find(prog: Program, m: Search, s: string, from: usize, sticky: b
       }
       pos = next as usize;
     }
-    if (backtrack(prog, m, s, len, from, pos)) {
+    if (backtrack(prog, m, s, len, pos)) {
       return true;
     }
     if (fixed || pos >= len) {
       return false;
     }
-    pos = after(s, pos, prog.units);
+    // Every code unit is tried, also the low half of a pair (decode.velt).
+    pos = after(s, pos, true);
   }
 }

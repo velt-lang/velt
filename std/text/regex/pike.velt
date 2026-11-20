@@ -4,18 +4,22 @@
 // one thread per instruction, so a step costs at most the program's size.
 
 import { arrayTruncate, strDataAddress } from "velt/lang/intrinsics";
+import { backtrack, backtrackReset } from "velt/text/regex/backtrack";
 import { charAt, holds } from "velt/text/regex/decode";
 import {
   OP_ASSERT,
   OP_CHAR,
   OP_CLASS,
   OP_CLEAR,
+  OP_ENTER,
   OP_JUMP,
   OP_MASK,
   OP_MATCH,
+  OP_NONEMPTY,
   OP_SAVE,
   OP_SPLIT,
   Program,
+  SCAN_NONE,
 } from "velt/text/regex/program";
 import { candidate } from "velt/text/regex/prefilter";
 import { Search } from "velt/text/regex/search";
@@ -27,7 +31,7 @@ const LOW: u64 = ((1 as u64) << 40) - 1;
 
 /** Sizes the lists of `m` for `prog`. */
 export function pikeReset(prog: Program, m: Search): void {
-  const n = prog.length;
+  const n = prog.length + (prog.marks as usize);
   if (m.dense.length == 2 * n) {
     return;
   }
@@ -48,7 +52,7 @@ export function pikeReset(prog: Program, m: Search): void {
 function add(prog: Program, m: Search, s: string, len: usize, list: usize, pc0: usize, pos: usize): void {
   const base = strDataAddress(s);
   const code = prog.code;
-  const n = prog.length;
+  const n = prog.length + (prog.marks as usize);
   const dense = m.dense;
   const sparse = m.sparse;
   const stack = m.stack;
@@ -98,6 +102,20 @@ function add(prog: Program, m: Search, s: string, len: usize, list: usize, pc0: 
           break;
         }
         pc++;
+      } else if (op == OP_ENTER || op == OP_NONEMPTY) {
+        // A mark is a member of the list past the instructions.
+        const mark = prog.length + (a as usize);
+        const where = sparse[list * n + mark] as usize;
+        const set = where < count && dense[list * n + where] as usize == mark;
+        if (op == OP_NONEMPTY && set) {
+          break;
+        }
+        if (op == OP_ENTER && !set) {
+          sparse[list * n + mark] = count as u32;
+          dense[list * n + count] = mark as u32;
+          count++;
+        }
+        pc++;
       } else {
         const row = (list * n + pc) * ns;
         for (let k: usize = 0; k < ns; k++) {
@@ -115,7 +133,7 @@ function add(prog: Program, m: Search, s: string, len: usize, list: usize, pc0: 
 export function pike(prog: Program, m: Search, s: string, len: usize, start: usize, anchored: bool): bool {
   const base = strDataAddress(s);
   const code = prog.code;
-  const n = prog.length;
+  const n = prog.length + (prog.marks as usize);
   const ns = m.slots.length;
   const units = prog.units;
   let cur: usize = 0;
@@ -153,6 +171,9 @@ export function pike(prog: Program, m: Search, s: string, len: usize, start: usi
     m.count[next] = 0;
     for (let i: usize = 0; i < live; i++) {
       const pc = m.dense[cur * n + i] as usize;
+      if (pc >= prog.length) {
+        continue;
+      }
       const op = code[3 * pc] & OP_MASK;
       if (op == OP_MATCH) {
         if (ns == 0) {
@@ -183,6 +204,15 @@ export function pike(prog: Program, m: Search, s: string, len: usize, start: usi
     cur = next;
     if (pos >= len) {
       break;
+    }
+    if (step == 4 && !matched && !anchored && prog.scan == SCAN_NONE) {
+      // Between the halves of a pair no thread reads a character, but the pattern may match
+      // nothing there (decode.velt): a match that starts later than every thread's.
+      backtrackReset(prog, m, pos + 1, pos + 1);
+      matched = backtrack(prog, m, s, len, pos + 1);
+      if (matched && ns == 0) {
+        return true;
+      }
     }
     pos += step;
   }

@@ -1,0 +1,89 @@
+// velt/text: `RegExp` against Node, over the cases of regex_node_cases.velt (matches with their
+// groups, and `split`), which scripts/gen-regex-cases.js generates with Node.
+import { describe, expect, it } from "velt/test";
+import { RegExp } from "velt/text";
+import { CASES, LONG_CASES, REPEAT } from "./regex_node_cases";
+
+/** The string whose UTF-16 code units `hex` lists (`-`: the empty string). */
+function text(hex: string): string {
+  if (hex == "-") {
+    return "";
+  }
+  return String.fromCharCode(...hex.split(".").map((h) => parseInt(h, 16)));
+}
+
+/** The UTF-16 code units of `s` as the cases write them. */
+function hex(s: string): string {
+  if (s == "") {
+    return "-";
+  }
+  const units: string[] = [];
+  for (let i = 0; i < s.length; i++) {
+    units.push(s.charCodeAt(i).toString(16));
+  }
+  return units.join(".");
+}
+
+/** Every match of `re` in `s`, as the cases write them. */
+function matches(re: RegExp, s: string): string {
+  const out: string[] = [];
+  for (const m of re.matchAll(s)) {
+    let line = `${m.index}-${m.end}`;
+    for (const c of m.captures) {
+      line += "|" + (c == null ? "~" : hex(c));
+    }
+    out.push(line);
+  }
+  return out.length == 0 ? "-" : out.join(";");
+}
+
+describe("RegExp against Node", () => {
+  it("finds the same matches and splits the same", () => {
+    let failures = 0;
+    for (const line of CASES.split("\n")) {
+      const f = line.split(" ");
+      const pattern = text(f[0]);
+      const flags = f[1] == "-" ? "" : f[1];
+      const s = text(f[2]);
+      const re = new RegExp(pattern, flags);
+      const found = matches(re, s);
+      // Node leaves a group that did not take part undefined in `split`; Velt's is "".
+      const pieces = re.split(s).map((p) => hex(p)).join(",");
+      const wanted = f[4].replaceAll("~", "-");
+      if (found != f[3] || (pieces == "" ? "-" : pieces) != wanted) {
+        failures++;
+        if (failures <= 20) {
+          console.log(`/${pattern}/${flags} on ${JSON.stringify(s)}: ${found} (Node: ${f[3]}), split ${pieces} (Node: ${wanted})`);
+        }
+      }
+    }
+    expect(failures).toBe(0);
+  });
+
+  it("finds the same matches in long subjects", () => {
+    let failures = 0;
+    for (const line of LONG_CASES.split("\n")) {
+      const f = line.split(" ");
+      const pattern = text(f[0]);
+      const flags = f[1] == "-" ? "" : f[1];
+      const re = new RegExp(pattern, flags);
+      let h = 7;
+      let count = 0;
+      for (const m of re.matchAll(text(f[2]).repeat(REPEAT))) {
+        count++;
+        h = (h * 31 + m.index) % 1000000007;
+        h = (h * 31 + m.value.length) % 1000000007;
+        for (const c of m.captures) {
+          h = (h * 31 + (c == null ? 1 : c.length + 2)) % 1000000007;
+        }
+      }
+      if (`${count} ${h}` != `${f[3]} ${f[4]}`) {
+        failures++;
+        if (failures <= 20) {
+          console.log(`/${pattern}/${flags} on ${JSON.stringify(text(f[2]))} repeated: ${count} ${h} (Node: ${f[3]} ${f[4]})`);
+        }
+      }
+    }
+    expect(failures).toBe(0);
+  });
+});
