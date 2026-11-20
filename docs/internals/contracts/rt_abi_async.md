@@ -568,7 +568,7 @@ their own forms); functions taking one never accept the other.
 
 | Symbol | Signature |
 |---|---|
-| `velt_rt_bytes_drop` | `(VeltBytes* b)` — frees if `cap > 0`, zeroes |
+| `velt_rt_bytes_drop` | `(VeltBytes* b)` — frees if `cap > 0`, zeroes. Never given an array whose `cap` has bit 63 set (an owner, `rt_abi.md` "Array length limit") |
 | `velt_rt_bytes_from_str` | `(const VeltStr* s, VeltBytes* out)` — copy |
 | `velt_rt_bytes_to_str` | `(const VeltBytes* b, IoResult<VeltStr>* out)` — copy, `EILSEQ` if invalid |
 | `velt_rt_bytes_to_str_lossy` | `(const VeltBytes* b, VeltStr* out)` — copy, an invalid sequence as U+FFFD (WHATWG, as `utf8DecodeLossy`) |
@@ -1253,7 +1253,8 @@ string arguments are borrowed `const VeltStr*`, `out` parameters receive owned v
 `u64`s (§3.2). None of them store code pointers (§13.5): callbacks in these modules are compiled
 Velt code, never function pointers kept by the runtime.
 
-`VeltArray<T>` = `{ T* ptr; u64 len; u64 cap; }` (cap in elements), the layout of a Velt `T[]`
+`VeltArray<T>` = `{ T* ptr; u64 len; u64 cap; }` (cap in elements; read as `i64`, 0 and negative
+values are memory the array does not own, `rt_abi.md` "Array length limit"), the layout of a Velt `T[]`
 of a Copy element type, built from a Rust `Vec<T>` (same allocator), like `VeltStrArray`.
 
 ### 14.1 Randomness and local time
