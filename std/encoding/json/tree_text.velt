@@ -97,6 +97,7 @@ function treeNode(t: TapeRef, v: u32): JsonTree {
 }
 
 /** `JSON.stringify` of a tree. */
+@noInline
 export function treeStringify(tree: JsonTree): string {
   let buf = "";
   velt_rt_strbuf_new(64, buf);
@@ -112,6 +113,7 @@ export function treeStringify(tree: JsonTree): string {
  * builder in chunks, as the tape's writer does (tape_write.velt): punctuation, numbers and
  * strings without escapes cost stores, not a call each.
  */
+@noInline
 export function writeTree(out: string, tree: JsonTree): void {
   const w = new TreeWriter();
   // The containers being written, and the next member (an object's: its raw position).
