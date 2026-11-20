@@ -31,7 +31,8 @@ pub(crate) enum Stage {
     App,
 }
 
-/// [`crate::check_definitions`] by units: std collected and checked, frozen, then the app.
+/// `check_definitions` ([`crate::analysis`]) by units: std collected and checked, frozen, then
+/// the app.
 pub(crate) fn check_definitions(cx: &mut Ctx) {
     let app: Vec<usize> = (0..cx.modules.len())
         .filter(|&m| !cx.modules[m].is_std && !cx.is_generated_module(m))
