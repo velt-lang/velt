@@ -245,6 +245,44 @@ only tests the portable path. Step 4 adds:
 - The LLVM native tests compare each table row with clang; they test the instructions, these two
   test the packages.
 
+**As built in step 4.** The table is Rust, not TOML: `crates/velt_vir/src/arch/table.rs`, a row
+per instruction with its class's feature, Velt name, C intrinsic, mnemonic, signature (scalars
+and velt/simd's 128-bit lane types), how LLVM computes it (an intrinsic, or a few lines of IR) and
+a one-sentence doc. xtask has no TOML parser, and velt_common's feature table set the pattern.
+
+- **Generated.** Each row is a static method of its feature's class (`Sse42.crc32U64`), calling
+  its extern `velt_arch_<class>_<method>`; `velt_vir::arch::render` writes the methods and
+  externs at the end of each class file (after `isSupported`, from a marker line) and
+  `docs/internals/arch-c-names.md`, the C-name index. velt_vir's `arch::tests` fails while they
+  are stale; `cargo xtask gen-arch` runs it with `VELT_BLESS=1`, which rewrites them.
+- **Names.** Velt has no nested classes or functions in namespaces, so `Sse42.X64.crc32` is
+  `Sse42.crc32U64`: a method per operand width where the instruction has several (`U8` … `U64`),
+  .NET's names otherwise (`parallelBitDepositU64`, `shuffle`, `dotProductI8`).
+- **Gating.** A static method of a velt/arch class other than `isSupported` is gated on its
+  class's feature, as if it had its `@targetFeature` (velt_sema `body/gated.rs`): a call needs
+  the check (or one whose feature implies it, `Avx2.isSupported()` for SSE4.2) or a gated caller,
+  and the method is compiled for the feature. Taken as a value it is an error, and only std may
+  declare a `velt_arch_*` extern.
+- **Lowering.** The extern is `SimdCall::Arch(ArchOp)`. LLVM computes it in a helper carrying
+  the row's feature (`gated_features`), which inlines into the gated method; unlike SHA, AES and
+  PCLMULQDQ, the features are never added program-wide, since LLVM would then use POPCNT or BMI2
+  anywhere. Cranelift gives a zero (it never runs gated code). The verifier rejects one in a
+  function whose target does not cover the row's feature; velt_opt never inlines a gated function
+  into a caller with another target, so none moves out.
+- **First batch** (50 rows): SSE4.2's CRC32, POPCNT, LZCNT, BMI1 (`andn`, `tzcnt`, `blsi`,
+  `blsr`, `blsmsk`, `bextr`), BMI2 (`bzhi`, `pdep`, `pext`), SSSE3's `pshufb`; arm64's CRC32 and
+  CRC32C, 64-bit PMULL, the dot products (`udot`, `sdot`) and I8MM (`ummla`, `smmla`, `usdot`).
+  Left for later: the baseline instructions of an architecture (`tbl`, `tbx`, `ext`,
+  `movemask`), which need a check of the architecture alone; those with an immediate operand
+  (`palignr`); `prefetch`, which velt/simd has (`arrayPrefetch`). SSE4.2's LLVM features now
+  include `+crc32`, which LLVM's backend keeps apart from SSE4.2.
+- **Tests.** `velt_codegen_llvm` `tests/arch.rs` compiles each row's helper in a function gated on
+  its feature and the row's C intrinsic with clang, for the row's architecture, and finds the row's
+  instruction in both. veltc's `arch_instructions.rs` runs every row of the host's architecture in
+  a release program and compares each answer with a reference written from the manual (and the
+  rows a CPU lacks print `-`, as Rust's detection says). The double `velt test` run is not part of
+  this step yet.
+
 ## 4. 256- and 512-bit register types (G5) — step 5
 
 `velt/arch/x86` adds the opaque register types `Vector256<T>` / `Vector512<T>` (.NET's names,

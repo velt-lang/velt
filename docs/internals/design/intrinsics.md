@@ -40,6 +40,7 @@ the checked, saturating and wrapping arithmetic of the integer types is prelude 
 |---|---|---|---|
 | math | `velt_vir::math` (`MathOp`) | sqrt, floor, ceil, JS round, trunc, abs, integer pow, f64/f32/f16/bf16 bits and conversions, umulh, ToInt32 and the int32 helpers, clz/ctz/popcount, fused multiply-add | velt_rt's `math.rs` for most; `velt_math_*` operations have none |
 | simd | `velt_vir::simd` (`SimdCall`) | lane operations, loads and stores, masks, shuffles, the 256-bit `f32x8` | none: always inline |
+| velt/arch | `velt_vir::arch` (`SimdCall::Arch`) | velt/arch's instructions, one per row of its table (CRC32, BMI, `pshufb`, the dot products, …) | none: LLVM only, in gated code |
 | arch | `velt_vir::simd` (`ExtOp`, `Ext`) | SHA, carry-less multiply, AES rounds | none: behind a CPU check |
 | atomic | `velt_vir::atomic` (`AtomicCall`) | loads, stores, read-modify-writes, CAS, fences | none: always inline |
 | tls | `velt_vir::tls` (`TlsCall`) | thread-local reads and writes | none |
