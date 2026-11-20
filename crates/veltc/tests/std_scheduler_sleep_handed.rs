@@ -184,6 +184,23 @@ fn a_handed_sleep_dropped_after_its_request_is_freed_once() {
     check(&exe, "8", 4, "done 1000\n");
 }
 
+/// A request for a sleep reaches worker 1 while it is busy in one long poll, and the sleep's
+/// deadline passes meanwhile: when the worker runs out of work, its park looks at its timers
+/// first (the sleep expires there) and serves the request after, with its park word up, where it
+/// looks at its inbox. The task that asked finds the sleep seen, every round. A park that did not
+/// serve its requests there would never sleep and never serve (the run's limit ends it).
+#[test]
+fn a_sleep_asked_of_a_busy_worker_past_its_deadline_is_given_up_at_its_park() {
+    if !has_threads() {
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let exe = build(dir.path(), "busy_holder", BUSY_HOLDER);
+    check(&exe, "4", 4, "awaited on worker 2: 40\n");
+    check(&exe, "8", 4, "awaited on worker 2: 40\n");
+}
+
 /// The program of [`a_sleep_awaited_on_another_worker_moves_to_it`].
 const PINNED_POLL: &str = r#"import { currentWorker } from "velt/task";
 
@@ -642,5 +659,55 @@ async function main() {
   gate.stop.store(1);
   await Promise.all(busyOnes);
   console.log(`done ${gate.done.load()}`);
+}
+"#;
+
+/// The program of [`a_sleep_asked_of_a_busy_worker_past_its_deadline_is_given_up_at_its_park`].
+const BUSY_HOLDER: &str = r#"import { currentWorker } from "velt/task";
+
+class Holder {
+  p: Promise<void>;
+  constructor(p: Promise<void>) {
+    this.p = p;
+  }
+}
+
+// On worker 1: polls a sleep there (pending in worker 1's timer block), then hands it on and ends.
+async function first(): Promise<Holder> {
+  const s = sleep(1);
+  await Promise.race([s, yieldNow()]);
+  return new Holder(s);
+}
+
+// On worker 1: keeps the worker in one poll past the sleep's deadline, so the request for the
+// sleep waits on its list meanwhile; then the worker is out of work, and its park looks at its
+// timers (the sleep is due by now) before it serves the request.
+async function blocker(): Promise<i64> {
+  const until = performance.now() + 3.0;
+  let n = 0;
+  while (performance.now() < until) {
+    n++;
+  }
+  return n;
+}
+
+// On worker 2: awaits the sleep worker 1's block holds.
+async function second(h: Holder): Promise<i64> {
+  await h.p;
+  return currentWorker();
+}
+
+async function main() {
+  let on2 = 0;
+  for (let i = 0; i < 40; i++) {
+    const h = await spawn(first(), { worker: 1 });
+    const b = spawn(blocker(), { worker: 1 });
+    const w = spawn(second(h), { worker: 2 });
+    await b;
+    if ((await w) == 2) {
+      on2++;
+    }
+  }
+  console.log(`awaited on worker 2: ${on2}`);
 }
 "#;
