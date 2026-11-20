@@ -51,9 +51,37 @@ fn secrets_do_not_change_the_instructions_executed() {
     }
 }
 
+/// Memcheck needs the C library's symbols (it replaces `memcmp`, `strlen` and their kin), and
+/// where they are stripped it stops before the program starts ("a function redirection which is
+/// mandatory ... cannot be set up"). The shim needs memcheck's header. The instruction count
+/// needs neither.
+fn memcheck_starts() -> bool {
+    let starts = Command::new("valgrind")
+        .args(["--tool=memcheck", "-q", "true"])
+        .output()
+        .is_ok_and(|o| o.status.success());
+    let header = Command::new("cc")
+        .args([
+            "-fsyntax-only",
+            "-include",
+            "valgrind/memcheck.h",
+            "-x",
+            "c",
+            "/dev/null",
+        ])
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !starts || !header {
+        eprintln!(
+            "note: valgrind's memcheck cannot start a program here, or its header is missing; skipping"
+        );
+    }
+    starts && header
+}
+
 #[test]
 fn no_branch_or_address_depends_on_a_secret() {
-    if can_run() {
+    if can_run() && memcheck_starts() {
         run(&["--memcheck"]);
     }
 }
