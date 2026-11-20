@@ -142,11 +142,59 @@ function errors() {
   console.log(message("a", "gg"), "|", message("a", "uv"), "|", message("a", "q"));
 }
 
+function indexes(re: RegExp, s: string, lastIndex: number): string {
+  re.lastIndex = lastIndex;
+  const out: number[] = [];
+  for (const m of s.matchAll(re)) {
+    out.push(m.index);
+  }
+  return out.join(",");
+}
+
+function loops() {
+  // An iteration that can match nothing: what a lazy body leaves to the next one.
+  console.log(
+    "aa".replace(/(a*?)*/, "[$1]"),
+    "abab".replace(/(?:a?b??)*/, "[$&]"),
+    "aab".replace(/(?:a*?|b)*/, "[$&]"),
+    "xxy".replace(/(x*?)*y/, "[$1]"),
+    "aa".replace(/(a*?)*?$/, "[$1]"),
+  );
+  // `matchAll` starts at `lastIndex` and steps over an empty match as the flags say.
+  console.log(
+    indexes(/(?:)/gu, "😀😀", 1),
+    indexes(/(?:)/g, "😀😀", 1),
+    indexes(/a?/gu, "😀😀b", 3),
+    indexes(/(?:)/gy, "😀a", 0),
+    indexes(/a*/gy, "aa😀", 0),
+    indexes(/(?:)/guy, "😀a", 0),
+  );
+  console.log(
+    /\P{Lu}/iu.test("A"),
+    /\P{Lu}/u.test("A"),
+    /[^\P{Lu}]/iu.test("a"),
+    /\p{Lu}/iu.test("a"),
+    /[\P{Ll}]/iu.test("a"),
+  );
+  // Long subjects: the same answers from the matchers that take over there.
+  const as = "a".repeat(5000);
+  console.log(
+    new RegExp("a{50000}").test("a".repeat(50000)),
+    new RegExp("a{50000}").test("a".repeat(49999)),
+    /(a+)+b/.exec(as + "b")?.[1].length,
+    /(a|b)*c/.exec("ab".repeat(2000) + "c")?.[1],
+    /([^,]*,)*x/.exec("aa,".repeat(1000) + "x")?.[1],
+    /.*.*=.*/.exec("x".repeat(3000) + "=y")?.index,
+    ("ab".repeat(2000) + "c").replace(/(?:a|(b))*c/, "[$1]"),
+  );
+}
+
 function main() {
   codeUnits();
   iterations();
   folding();
   lines();
   replacing();
+  loops();
   errors();
 }

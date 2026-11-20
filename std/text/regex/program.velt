@@ -11,7 +11,8 @@ import { CharSet } from "velt/text/regex/char_set";
 
 /** The pattern matched: the search is over. */
 export const OP_MATCH: u32 = 0;
-/** The character `a`. */
+/** The character `a`. (`b`, of this and of `OP_SAVE`: when the next instruction is a jump,
+ * where it goes, plus one.) */
 export const OP_CHAR: u32 = 1;
 /** A character of set `a`. */
 export const OP_CLASS: u32 = 2;
@@ -94,6 +95,21 @@ export class Program {
   minBytes: usize = 0;
   /** `SCAN_FIRST`: the first byte of every match, as four words of bits. */
   first: u64[] = [0, 0, 0, 0];
+
+  /** The program has no assertion and few enough kinds of characters for the automaton
+   * (dfa.velt), whose tables these are: where each class of characters that the program
+   * cannot tell apart starts, in order, and the class of each ASCII character. */
+  automaton: bool = false;
+  classStarts: u32[] = [];
+  asciiClass: u8[] = [];
+  /** The program that reads a match backwards, when `automaton`. */
+  backward: Program | null = null;
+
+  /** Per instruction, which hint a split has, plus one (0: none), and the hints: 128 bytes
+   * each, per ASCII character whether the split's first way can start with it (1), its second
+   * way (2), both (3) or neither (0) (hints.velt). Empty for a large program. */
+  hintAt: u32[] = [];
+  hints: u8[] = [];
 
   /** Instructions. */
   get length(): usize {

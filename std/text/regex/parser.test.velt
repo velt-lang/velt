@@ -28,7 +28,7 @@ describe("Parser", () => {
   });
 
   it("builds the tree", () => {
-    const t = parse("a(b|c)*?[x-z]{2,3}", "");
+    const t = parse("a(bb|c)*?[x-z]{2,3}", "");
     expect(t.kind).toBe(CAT);
     expect(t.kids.length).toBe(3);
     expect(t.kids[1].kind).toBe(REPEAT);

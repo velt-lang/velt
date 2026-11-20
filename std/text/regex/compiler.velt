@@ -45,21 +45,34 @@ const MAX_FOLLOW: usize = 64;
 export class Compiler {
   readonly prog: Program = new Program();
   readonly parser: Parser;
+  /** The program reads a match from its end to its start, and captures nothing: what finds
+   * where a match starts once its end is known (dfa.velt). */
+  readonly reverse: bool;
 
-  constructor(parser: Parser) {
+  constructor(parser: Parser, reverse: bool = false) {
     this.parser = parser;
+    this.reverse = reverse;
   }
 
   /** The program of `tree`: the whole match is capture group 0. */
   compile(tree: Node): void {
+    this.prog.units = !this.parser.unicode;
+    if (this.reverse) {
+      this.node(tree);
+      this.emit(OP_MATCH, 0, 0);
+      this.numberJoins();
+      return;
+    }
     this.emit(OP_SAVE, 0, 0);
     this.node(tree);
     this.emit(OP_SAVE, 1, 0);
     this.emit(OP_MATCH, 0, 0);
     this.prog.groups = this.parser.groups;
-    this.prog.units = !this.parser.unicode;
     this.numberJoins();
-    analyze(this.prog, tree);
+    // What a match starts with is the search's, and a search runs the program forwards.
+    if (!this.reverse) {
+      analyze(this.prog, tree);
+    }
   }
 
   /** Appends an instruction; its index. */
@@ -94,6 +107,13 @@ export class Compiler {
       }
       if (op == OP_SPLIT) {
         code[3 * (code[i + 2] as usize)] |= JOIN;
+      }
+      // A character or a capture says where the program goes on (its operand `b`, plus one):
+      // the next instruction, or where that one jumps when it is a jump, for a matcher that
+      // would rather not stop there (straight.velt).
+      const jumps = i + 3 < code.length && (code[i + 3] & 0xff) == OP_JUMP;
+      if (op == OP_CHAR || op == OP_SAVE) {
+        code[i + 2] = jumps ? code[i + 4] + 1 : (i / 3 + 2) as u32;
       }
       if (op == OP_SPAN) {
         code[i] |= JOIN;
@@ -161,11 +181,14 @@ export class Compiler {
     } else if (kind == SET) {
       this.set(n.set ?? new CharSet());
     } else if (kind == CAT) {
-      for (let i: usize = 0; i < n.kids.length; i++) {
-        this.node(n.kids[i]);
+      const count = n.kids.length;
+      for (let i: usize = 0; i < count; i++) {
+        this.node(n.kids[this.reverse ? count - 1 - i : i]);
       }
     } else if (kind == ALT) {
       this.alternation(n);
+    } else if (kind == GROUP && this.reverse) {
+      this.node(n.kids[0]);
     } else if (kind == GROUP) {
       this.emit(OP_SAVE, 2 * n.a, 0);
       this.node(n.kids[0]);
@@ -240,9 +263,11 @@ export class Compiler {
 
   /** One iteration of the quantifier `n`: its captures cleared when `clear`, then its body. */
   private body(n: Node, clear: bool): void {
-    if (clear) {
+    if (clear && !this.reverse) {
       const lo = firstGroup(n.kids[0]);
-      if (lo != 0) {
+      // A body that is one group with none inside sets that group whenever it matches.
+      const own = n.kids[0].kind == GROUP && lastGroup(n.kids[0]) == n.kids[0].a;
+      if (lo != 0 && !own) {
         this.emit(OP_CLEAR, 2 * lo, 2 * lastGroup(n.kids[0]) + 2);
       }
     }

@@ -3,6 +3,7 @@
 // matches in time linear in the subject, which they do not allow.
 
 import { arrayRemove } from "velt/lang/intrinsics";
+import { CharSet } from "velt/text/regex/char_set";
 import { dotSet } from "velt/text/regex/classes";
 import {
   ALT,
@@ -12,11 +13,13 @@ import {
   AT_LINE_START,
   AT_START,
   CAT,
+  CHAR,
   EMPTY,
   GROUP,
   listNode,
   Node,
   REPEAT,
+  SET,
   setNode,
   UNBOUNDED,
 } from "velt/text/regex/node";
@@ -52,8 +55,24 @@ function disjunction(p: Parser): Node {
     return first;
   }
   const kids: Node[] = [first];
+  let single = true;
   while (p.eat(0x7c)) {
     kids.push(alternative(p));
+  }
+  // Alternatives that are one character each are one class: `a|b|[cd]` is `[a-d]`.
+  const set = new CharSet();
+  for (const kid of kids) {
+    if (kid.kind == CHAR) {
+      set.add(kid.a, kid.a);
+    } else if (kid.kind == SET && kid.set != null) {
+      set.addSet(kid.set);
+    } else {
+      single = false;
+    }
+  }
+  if (single) {
+    set.normalize();
+    return setNode(set);
   }
   return listNode(ALT, kids);
 }
