@@ -60,6 +60,7 @@ pub fn execute(cmd: Command) -> ExitCode {
         Command::Clean { cache: false } => clean::clean_command(),
         Command::Clean { cache: true } => clean::clean_cache_command(),
         Command::CacheWarm { background } => warm::warm_command(background),
+        Command::CacheHooks { out, target } => warm::hooks_command(&out, target.as_deref()),
         Command::Target(action) => target::target_command(&action),
         Command::Toolchain => toolchain_without_launcher(),
         Command::Build(args) => return build::build_command(&args),

@@ -87,6 +87,15 @@ jobs:
           done
           apt-get update -q
           apt-get install -y -q --no-install-recommends build-essential git curl ca-certificates musl-tools
+          # clang for the prebuilt hook modules' objects that the archive carries (`velt cache
+          # hooks`, run by scripts/package.sh): the LLVM backend needs clang 16 or newer, and
+          # Debian 11 has 11. LLVM's own packages for Debian 11 (apt.llvm.org).
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key -o /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+          echo "deb http://apt.llvm.org/bullseye/ llvm-toolchain-bullseye-18 main" > /etc/apt/sources.list.d/llvm-18.list
+          apt-get update -q
+          apt-get install -y -q --no-install-recommends clang-18
+          clang-18 --version
+          echo "VELT_CLANG=/usr/bin/clang-18" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:

@@ -4,6 +4,7 @@
 import { utf8Encode } from "velt/encoding/utf8";
 import { received } from "velt/lang/bytes/text";
 import { inline, noInline } from "velt/lang/intrinsics";
+import { checkPathArg } from "velt/fs/path_arg";
 
 /** `Number.MAX_SAFE_INTEGER`: the largest offset, length or position Node accepts. */
 export const MAX_SAFE: number = 9007199254740991;
@@ -48,13 +49,9 @@ function badDescriptor(fd: number): RangeError {
   return new RangeError(`The value of "fd" is out of range. It must be ${must}. Received ${fd}`);
 }
 
-/** `path` as a C string: its UTF-8 bytes and a 0 (Node's `TypeError` for a 0 inside it). */
+/** `path` as a C string: its UTF-8 bytes and a 0 (Node's `ERR_INVALID_ARG_VALUE` for a 0 inside it). */
 export function cPath(path: string): u8[] {
-  if (path.includes("\0")) {
-    throw new TypeError(
-      `The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '${path}'`,
-    );
-  }
+  checkPathArg(path);
   const c = utf8Encode(path);
   c.push(0);
   return c;

@@ -16,8 +16,19 @@ export declare function symbolStatic(id: i64, description: string, described: bo
 
 /**
  * The address of the program's read-only table of the registry's records (the `symbolStatic`
- * records with ids from 2^40), one per 8-byte slot, ending with a null slot: typed `symbol` only
- * to be passed on to `velt_rt_symbol_for`.
+ * records with ids from 2^40), one per 8-byte slot, ending with a null slot (on wasm32 an
+ * address takes a slot's first half): typed `symbol`, its address read with `symbolAddress`.
  */
 @intrinsic
 export declare function symbolRegistry(): symbol;
+
+/** The address of `s`'s record (a symbol is that address). */
+@intrinsic
+export declare unsafe function symbolAddress(s: symbol): usize;
+
+/**
+ * The symbol whose record is at `address`. Unsafe: a record must be there (rt_abi.md
+ * "Symbols"), one that lives as long as the program.
+ */
+@intrinsic
+export declare unsafe function symbolAt(address: usize): symbol;

@@ -415,12 +415,7 @@ pub(crate) fn check_locked_access(cx: &mut Ctx) {
     }
     locked_props::reset();
     let dispatch = locked_props::Dispatch::new(cx);
-    let fns: Vec<DefId> = cx
-        .fn_defs
-        .iter()
-        .copied()
-        .filter(|d| cx.fn_info(*d).state == crate::defs::BodyState::Done)
-        .collect();
+    let fns: Vec<DefId> = cx.unit_fns();
     let mut withs: Vec<(hir::Expr, velt_common::Span, &'static str)> = vec![];
     let mut callbacks: Vec<DefId> = vec![];
     let mut proxies = locked_props::Proxies::default();

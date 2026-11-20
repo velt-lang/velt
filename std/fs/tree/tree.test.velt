@@ -1,0 +1,81 @@
+// velt/fs (tests): white-box tests, run by `velt test std/`.
+//
+// What the directory goldens can't hold, because it is Windows' alone or depends on where the
+// test runs: a relative path that is short itself and long once it is made absolute (Windows
+// takes it only with the `\\?\` prefix, which std/fs/whole/win_path.velt gives by the absolute
+// path's length), and the name Windows gives a directory name it refuses.
+import * as fs from "velt/fs";
+import { IoError } from "velt/io";
+import { platform } from "velt/os";
+import { cwd } from "velt/process";
+import { describe, expect, it } from "velt/test";
+
+/** The code of the `IoError` `f` throws, or "" when it throws none. */
+function codeOf(f: () => void throws IoError): string {
+  try {
+    f();
+  } catch (e) {
+    return (e as IoError).code;
+  }
+  return "";
+}
+
+describe("velt/fs's directories", () => {
+  it("makes and lists a relative path that is long only as an absolute one", () => {
+    const top = `velt-tree-test-${process.pid}`;
+    if (fs.existsSync(top)) {
+      fs.removeSync(top, { recursive: true });
+    }
+    // 12 lengths from 205 to 249 units: with the working directory's own length before them,
+    // some are past Windows' limits (248 for a directory, 260 for a file) whatever that length is.
+    for (let extra = 0; extra < 48; extra += 4) {
+      const deep = `${top}/${"a".repeat(90)}/${"b".repeat(90 + extra)}`;
+      fs.mkdirSync(deep, { recursive: true });
+      fs.writeFileSync(`${deep}/f`, "x");
+      fs.mkdirSync(`${deep}/d`);
+      expect(fs.readDirSync(deep).join(",")).toBe("d,f");
+      const entries = fs.readDirEntriesSync(deep);
+      expect(entries.length).toBe(2);
+      expect(entries[0].isDirectory()).toBe(true);
+      expect(entries[1].isFile()).toBe(true);
+      fs.removeSync(`${top}/${"a".repeat(90)}`, { recursive: true });
+    }
+    fs.removeSync(top, { recursive: true });
+    expect(fs.existsSync(top)).toBe(false);
+  });
+
+  it("names a directory name Windows refuses as Node does", () => {
+    if (platform() != "win32") {
+      return;
+    }
+    const top = `velt-tree-names-${process.pid}`;
+    fs.mkdirSync(top, { recursive: true });
+    // `?` is no character of a name on Windows: EINVAL for `mkdir` (libuv's name for it there),
+    // ENOENT for a listing.
+    expect(codeOf(() => fs.mkdirSync(`${top}/a?b`))).toBe("EINVAL");
+    expect(codeOf(() => fs.readDirSync(`${top}/a?b`))).toBe("ENOENT");
+    fs.removeSync(top, { recursive: true });
+  });
+
+  it("makes no drive's root and removes a file named with a separator after it, as Node", () => {
+    if (platform() != "win32") {
+      return;
+    }
+    // A drive's root refuses `CreateDirectoryW` with "access denied": EPERM, which Node's
+    // recursive `mkdir` keeps although a directory is there.
+    const root = cwd().slice(0, 3);
+    expect(codeOf(() => fs.mkdirSync(root, { recursive: true }))).toBe("EPERM");
+    const top = `velt-tree-sep-${process.pid}`;
+    fs.mkdirSync(top, { recursive: true });
+    fs.writeFileSync(`${top}/f`, "x");
+    fs.writeFileSync(`${top}/g`, "x");
+    fs.removeSync(`${top}/f/`);
+    fs.rmSync(`${top}\\g\\`);
+    expect(fs.readDirSync(top).length).toBe(0);
+    // A directory keeps its separator: removed as the directory it names.
+    fs.mkdirSync(`${top}/d`);
+    fs.removeSync(`${top}/d/`);
+    expect(fs.existsSync(`${top}/d`)).toBe(false);
+    fs.removeSync(top, { recursive: true });
+  });
+});

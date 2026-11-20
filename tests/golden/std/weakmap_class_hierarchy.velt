@@ -1,0 +1,105 @@
+// check: no leaks
+// A weak map value of a class with a vtable, whose object is a subclass holding the key: the
+// trace glue dispatches through the object's class table to the subclass's own glue (#3119
+// step 3, #989), so the entry and the key are freed once the key's last outside reference
+// goes. Also through a field of another class, two levels of subclasses, a base class built
+// itself, a key held outside (kept while held) and a generic subclass. Node prints `false` for
+// a freed key until its next garbage collection (weakref.velt).
+class Raw {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+class Handler {
+  read(): number {
+    return 0;
+  }
+}
+
+class KeyHandler extends Handler {
+  raw: Raw;
+  constructor(raw: Raw) {
+    super();
+    this.raw = raw;
+  }
+  override read(): number {
+    return this.raw.n;
+  }
+}
+
+class Deeper extends KeyHandler {
+  extra: number = 1;
+  override read(): number {
+    return this.raw.n + this.extra;
+  }
+}
+
+class Boxed<T> extends Handler {
+  item: T;
+  constructor(item: T) {
+    super();
+    this.item = item;
+  }
+  override read(): number {
+    return 2;
+  }
+}
+
+class Holder {
+  h: Handler;
+  constructor(h: Handler) {
+    this.h = h;
+  }
+}
+
+function direct(cache: WeakMap<Raw, Handler>, n: number): WeakRef<Raw> {
+  const raw = new Raw(n);
+  cache.set(raw, new KeyHandler(raw));
+  console.log("direct reads", cache.get(raw)!.read());
+  return new WeakRef(raw);
+}
+
+function deeper(cache: WeakMap<Raw, Handler>, n: number): WeakRef<Raw> {
+  const raw = new Raw(n);
+  cache.set(raw, new Deeper(raw));
+  console.log("deeper reads", cache.get(raw)!.read());
+  return new WeakRef(raw);
+}
+
+function generic(cache: WeakMap<Raw, Handler>, n: number): WeakRef<Raw> {
+  const raw = new Raw(n);
+  cache.set(raw, new Boxed<Raw>(raw));
+  console.log("generic reads", cache.get(raw)!.read());
+  return new WeakRef(raw);
+}
+
+function base(cache: WeakMap<Raw, Handler>, n: number): WeakRef<Raw> {
+  const raw = new Raw(n);
+  cache.set(raw, new Handler());
+  return new WeakRef(raw);
+}
+
+function inField(holders: WeakMap<Raw, Holder>, n: number): WeakRef<Raw> {
+  const raw = new Raw(n);
+  holders.set(raw, new Holder(new KeyHandler(raw)));
+  console.log("in a field reads", holders.get(raw)!.h.read());
+  return new WeakRef(raw);
+}
+
+function main() {
+  const cache = new WeakMap<Raw, Handler>();
+  const holders = new WeakMap<Raw, Holder>();
+  console.log("direct, key freed:", direct(cache, 1).deref() == null);
+  console.log("deeper, key freed:", deeper(cache, 2).deref() == null);
+  console.log("generic, key freed:", generic(cache, 3).deref() == null);
+  console.log("base, key freed:", base(cache, 4).deref() == null);
+  console.log("in a field, key freed:", inField(holders, 5).deref() == null);
+  // Held outside: the entry and the key stay until the outside reference goes.
+  const kept = new Raw(6);
+  cache.set(kept, new KeyHandler(kept));
+  const w = new WeakRef(kept);
+  console.log("held, reads", cache.get(kept)!.read(), "alive:", w.deref() != null);
+  console.log("maps in use:", cache.has(new Raw(0)), holders.has(new Raw(0)));
+}

@@ -38,6 +38,15 @@ installer puts it there): it takes `link.exe`'s arguments, runs in the environme
 found with, and links the static runtime in about half the time. A link that fails with it is
 done again by `link.exe`.
 
+The system linker on macOS is `ld`, run with the arguments the compiler driver (`cc`) would give
+it (`macos_ld.rs`): the driver takes 20 to 35 ms to work out the SDK, the platform version, the
+libraries every program links and where `ld` is, none of which depends on the program. It is
+asked once (`cc -###` prints the `ld` command of a link), and that command without the link's
+own arguments is kept in `~/Library/Caches/velt/ld`, per driver, architecture, deployment target
+and developer directory, with the size and time of the `ld` it names, so another or an updated
+toolchain is asked again. A link with an argument this does not translate, a driver that is not
+clang, and a direct link that fails all go through `cc`, as every link did before.
+
 The bundled lld also links WebAssembly (`-flavor wasm`), ahead of `rust-lld` and `wasm-ld`.
 
 ## lld

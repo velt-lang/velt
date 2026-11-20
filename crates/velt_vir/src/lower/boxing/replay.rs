@@ -99,7 +99,7 @@ impl Facts {
             let key_ph = e.0.as_ref().is_some_and(|k| k.tys().into_iter().any(ph));
             key_ph || e.2.iter().any(|&t| ph(t))
         });
-        take(&mut self.iface_impls, &mut out.iface_impls, &|p| ph(p.1));
+        take(&mut self.iface_impls, &mut out.iface_impls, &|p| ph(p.2));
         take(&mut self.alloc_sites, &mut out.alloc_sites, &|p| ph(p.0));
         take(&mut self.gen_frames, &mut out.gen_frames, &|f| {
             ph(f.0) || f.2.iter().any(|&t| ph(t))
@@ -161,7 +161,7 @@ impl Facts {
             v.extend(key.iter().flat_map(|k| k.tys()));
             v.extend(targs.iter().copied());
         }
-        v.extend(other.iface_impls.iter().map(|p| p.1));
+        v.extend(other.iface_impls.iter().map(|p| p.2));
         v.extend(other.alloc_sites.iter().map(|p| p.0));
         for (g, _, targs) in &other.gen_frames {
             v.push(*g);
@@ -228,7 +228,7 @@ impl Facts {
             self.closure_envs
                 .insert((key, *d, targs.iter().map(m).collect()));
         }
-        (self.iface_impls).extend(other.iface_impls.iter().map(|&(d, t)| (d, m(&t))));
+        (self.iface_impls).extend(other.iface_impls.iter().map(|&(d, i, t)| (d, i, m(&t))));
         (self.alloc_sites).extend(other.alloc_sites.iter().map(|&(t, s)| (m(&t), s)));
         for (g, d, targs) in &other.gen_frames {
             (self.gen_frames).insert((m(g), *d, targs.iter().map(m).collect()));

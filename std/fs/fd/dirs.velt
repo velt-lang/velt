@@ -1,0 +1,259 @@
+// velt/fs (internal): the C library's directory functions on macOS and Linux, declared with
+// `declare c("c")` (checked against each target's headers: `velt native headers --std`), and the
+// safe functions darwin.velt and linux.velt export over them: listing a directory, removing
+// one, and removing a whole tree (`mkdir` is each variant's own: its `mode_t` differs). What differs per target (where `struct dirent` keeps
+// an entry's type and name, the `open` flags, `AT_FDCWD`) comes in as a `DirSystem`.
+//
+// A tree is removed the way Rust's `remove_dir_all` removes one: each directory is opened
+// relative to its parent's descriptor with `O_NOFOLLOW`, and its entries are removed relative to
+// its own, so a directory swapped for a link while the walk runs is unlinked as a link and never
+// entered.
+
+import { CVarArgs } from "velt/ffi/c_var_args";
+import { errno, setErrno } from "velt/ffi/errno";
+import { Ptr } from "velt/ffi/ptr";
+import { readBytes } from "velt/ffi/read";
+import { addressArray, addressLoad } from "velt/lang/intrinsics";
+import { lastOsError } from "velt/os/rt";
+import { checkPath } from "velt/fs/fd/guards";
+import { closeFd } from "velt/fs/fd/posix";
+
+/** C's `DIR`, an open directory, and `struct dirent`, one entry of it. */
+declare c type DIR;
+declare c type dirent;
+
+declare c("c", { errno: true }) function opendir(path: readonly u8[]): Ptr<DIR> | null;
+declare c("c", { errno: true }) function fdopendir(fd: i32): Ptr<DIR> | null;
+declare c("c") function readdir(dir: Ptr<DIR>): Ptr<dirent> | null;
+declare c("c", { errno: true }) function closedir(dir: Ptr<DIR>): i32;
+declare c("c", { errno: true }) function openat(
+  fd: i32,
+  path: readonly u8[],
+  oflag: i32,
+  ...args: CVarArgs,
+): i32;
+declare c("c", { errno: true }) function unlinkat(fd: i32, path: readonly u8[], flag: i32): i32;
+declare c("c", { errno: true }) function rmdir(path: readonly u8[]): i32;
+declare c("c") function strlen(s: Ptr<u8>): usize;
+
+/** What the directory functions need to know of a target. */
+export struct DirSystem {
+  /** The offset of `d_type` in `struct dirent`. */
+  typeAt: usize;
+  /** The offset of `d_name` in `struct dirent`. */
+  nameAt: usize;
+  /** `O_RDONLY | O_NOFOLLOW | O_DIRECTORY | O_CLOEXEC`. */
+  openDir: i32;
+  /** `AT_FDCWD`: a path relative to the working directory. */
+  cwd: i32;
+  /** `AT_REMOVEDIR`: `unlinkat` removes a directory. */
+  removeDir: i32;
+  /** `ELOOP`, which `open` with `O_NOFOLLOW` gives for a link (Linux gives `ENOTDIR`). */
+  loop: i32;
+}
+
+/** `d_type` of a directory, and of an entry whose file system reports no type. */
+const DT_DIR: u8 = 4;
+const DT_UNKNOWN: u8 = 0;
+const ENOENT: i32 = 2;
+const EINTR: i32 = 4;
+const ENOTDIR: i32 = 20;
+
+/** One entry of a directory, where `readdir` left it; `nameAt` is 0 at the end or on an error. */
+struct Entry {
+  /** The address of `d_name`, valid until the next `readdir` of the directory. */
+  nameAt: usize;
+  /** The length of the name, without its NUL. */
+  len: usize;
+  /** `d_type`. */
+  type: u8;
+  /** The `errno` of a failed `readdir`, 0 at the end. */
+  error: i32;
+}
+
+/** The next entry of `dir` that is not `.` or `..`. `dir` is an open `DIR *` of this thread. */
+function next(dir: Ptr<DIR>, sys: DirSystem): Entry {
+  if (sys.typeAt >= 32 || sys.nameAt >= 32) {
+    panic("readdir: a field's offset is past the start of d_name");
+  }
+  while (true) {
+    // `readdir` returns NULL at the end and on an error, and sets `errno` only for the error.
+    // SAFETY: writes this thread's own `errno`.
+    unsafe {
+      setErrno(0);
+    }
+    // SAFETY: `dir` is an open `DIR *` (the callers open it and close it after the last call
+    // here), used by this thread only.
+    const ent = unsafe { readdir(dir) };
+    if (ent === null) {
+      // SAFETY: reads this thread's `errno`, which the call above left.
+      return { nameAt: 0, len: 0, type: 0, error: unsafe { errno() } };
+    }
+    const at = Ptr.addressOf(ent);
+    const nameAt = at + sys.nameAt;
+    // SAFETY: `readdir` returned a `struct dirent` at `at`, which stays as it is until the next
+    // `readdir` of `dir`: `d_type` is one byte at `typeAt` and `d_name` a NUL-terminated string
+    // at `nameAt`, both inside it on this target (the variant's offsets, checked against the
+    // headers and bounded above).
+    const type = unsafe { addressLoad<u8>(at + sys.typeAt) };
+    // SAFETY: `d_name` is NUL-terminated inside the entry, so `strlen` stops there.
+    const len = unsafe { strlen(Ptr.at<u8>(nameAt)) };
+    // SAFETY: the name's first byte, or the NUL of an empty one, is inside the entry.
+    const first = unsafe { addressLoad<u8>(nameAt) };
+    let second: u8 = 0;
+    if (len > 0) {
+      // SAFETY: the name's second byte, or the NUL after its only one, is inside the entry.
+      second = unsafe { addressLoad<u8>(nameAt + 1) };
+    }
+    const dots = first == 46 && (len == 1 || (len == 2 && second == 46));
+    if (!dots) {
+      return { nameAt, len, type, error: 0 };
+    }
+  }
+}
+
+/** A copy of the name of `e` (an entry `next` just returned), and a 0 after it. */
+function nameBytes(e: Entry): u8[] {
+  // SAFETY: `e.nameAt` points at the `e.len` bytes of the entry's name, which stay there until
+  // the next `readdir` of its directory (after this copy).
+  const name = unsafe { readBytes(Ptr.at<u8>(e.nameAt), e.len) };
+  name.push(0);
+  return name;
+}
+
+/**
+ * The entries of the directory at `path`, in the system's order, pushed to `names` (as text, an
+ * invalid sequence as U+FFFD) and `types` (each one's `d_type`): 0, or the `errno` of what
+ * failed. With `unknown`, an entry whose `d_type` is `DT_UNKNOWN` (0: its file system reports no
+ * type) gets the type `unknown` gives for its path, as C bytes.
+ */
+export function listPath(
+  path: readonly u8[],
+  sys: DirSystem,
+  names: string[],
+  types: u8[],
+  unknown: ((child: readonly u8[]) => u8) | null,
+): i32 {
+  checkPath("opendir", path);
+  // SAFETY: `path` ends with its only 0 byte (checked above); C keeps no pointer to it.
+  const dir = unsafe { opendir(path) };
+  if (dir === null) {
+    return lastOsError();
+  }
+  let error: i32 = 0;
+  while (true) {
+    const e = next(dir, sys);
+    if (e.nameAt == 0) {
+      error = e.error;
+      break;
+    }
+    // One copy, from the entry to the string.
+    // SAFETY: the `e.len` bytes of the name are at `e.nameAt` until the next `readdir`, and the
+    // view of them is used for this conversion only and never written.
+    const view: u8[] = unsafe { addressArray<u8>(e.nameAt, e.len) };
+    names.push(view.utf8Slice());
+    let type = e.type;
+    if (type == DT_UNKNOWN && unknown !== null) {
+      const child: u8[] = path.slice(0, (path.length - 1) as i64);
+      child.push(47);
+      for (const b of nameBytes(e)) {
+        child.push(b);
+      }
+      type = unknown(child);
+    }
+    types.push(type);
+  }
+  // SAFETY: `dir` came from `opendir` above and is closed once, after its last use.
+  unsafe {
+    closedir(dir);
+  }
+  return error;
+}
+
+/** `rmdir(path)`: 0, or -1 with the error for `lastOsError()`. */
+export function removeDir(path: readonly u8[]): i32 {
+  checkPath("rmdir", path);
+  // SAFETY: `path` ends with its only 0 byte (checked above); C keeps no pointer to it.
+  return unsafe { rmdir(path) };
+}
+
+/** `openat(parent, name, sys.openDir)`, again after `EINTR`: a descriptor, or -1. */
+function openDir(parent: i32, name: readonly u8[], sys: DirSystem): i32 {
+  while (true) {
+    // SAFETY: `name` ends with its only 0 byte (the caller checked it); C keeps no pointer to
+    // it, and the flags hold no `O_CREAT`, so `open` reads no third argument.
+    const fd = unsafe { openat(parent, name, sys.openDir) };
+    if (fd >= 0 || lastOsError() != EINTR) {
+      return fd;
+    }
+  }
+}
+
+/**
+ * Removes the directory `name` (relative to the directory open as `parent`, or to the working
+ * directory for `sys.cwd`) and everything in it: 0, or the `errno` of what failed. Nothing is
+ * reached through a link: `name` is opened with `O_NOFOLLOW`, and what is in it is opened and
+ * removed relative to that descriptor. Below the `root`, something that is not a directory (a
+ * link put where the listing saw a directory) is unlinked; an entry something else removed
+ * meanwhile is not an error.
+ */
+export function removeTree(parent: i32, name: readonly u8[], sys: DirSystem, root: bool): i32 {
+  checkPath("openat", name);
+  const fd = openDir(parent, name, sys);
+  if (fd < 0) {
+    const e = lastOsError();
+    if (!root && (e == ENOTDIR || e == sys.loop)) {
+      // SAFETY: `name` ends with its only 0 byte (checked above); C keeps no pointer to it.
+      return unsafe { unlinkat(parent, name, 0) } == 0 ? 0 : lastOsError();
+    }
+    return e;
+  }
+  // SAFETY: `fd` is the open directory, which the `DIR *` owns from here: `closedir` closes it.
+  const dir = unsafe { fdopendir(fd) };
+  if (dir === null) {
+    const e = lastOsError();
+    closeFd(fd);
+    return e;
+  }
+  let error: i32 = 0;
+  while (true) {
+    const e = next(dir, sys);
+    if (e.nameAt == 0) {
+      error = e.error;
+      break;
+    }
+    const child = nameBytes(e);
+    let r: i32 = 0;
+    if (e.type == DT_DIR || e.type == DT_UNKNOWN) {
+      // An unknown type is tried as a directory: `unlink` of a directory can succeed for a
+      // privileged process on some systems, and would leave its contents behind.
+      r = removeTree(fd, child, sys, false);
+    } else {
+      // SAFETY: `child` is an entry's name and one 0 byte, read by C during the call only;
+      // `fd` is the open directory.
+      const rc = unsafe { unlinkat(fd, child, 0) };
+      if (rc != 0) {
+        r = lastOsError();
+      }
+    }
+    if (r != 0 && r != ENOENT) {
+      error = r;
+      break;
+    }
+  }
+  // SAFETY: `dir` came from `fdopendir` above and is closed once, after its last use (which
+  // closes `fd` too: no call above uses it later).
+  unsafe {
+    closedir(dir);
+  }
+  if (error != 0) {
+    return error;
+  }
+  // SAFETY: `name` ends with its only 0 byte (checked above); C keeps no pointer to it.
+  const rc = unsafe { unlinkat(parent, name, sys.removeDir) };
+  if (rc != 0) {
+    const e = lastOsError();
+    return e == ENOENT ? 0 : e;
+  }
+  return 0;
+}

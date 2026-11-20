@@ -453,3 +453,13 @@ fn is_view_pat(p: &hir::Pat, d: DefId, variant: u32) -> bool {
         _ => false,
     }
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    UnionViews {
+        by_def, keys, assumed, made, unsupported, safe,
+    }
+    ViewInfo {
+        iface, variant,
+    }
+}

@@ -62,8 +62,10 @@ function belowArmIf(): i64 {
   }
   return 1;
 }
-function armIf(): i64 { targetFeature("sha-arm"); return belowArmIf(); }
-function x86If(): i64 { targetFeature("sha-x86"); return 1; }
+@targetFeature("sha-arm")
+function armIf(): i64 { return belowArmIf(); }
+@targetFeature("sha-x86")
+function x86If(): i64 { return 1; }
 export function shapeIf(): i64 {
   if (u32x4.hasShaArm()) {
     return armIf();
@@ -74,8 +76,10 @@ export function shapeIf(): i64 {
   return 1;
 }
 
-function armElse(): i64 { targetFeature("sha-arm"); return 2; }
-function x86Else(): i64 { targetFeature("sha-x86"); return 2; }
+@targetFeature("sha-arm")
+function armElse(): i64 { return 2; }
+@targetFeature("sha-x86")
+function x86Else(): i64 { return 2; }
 function portableElse(): i64 {
   if (ticks < 0) {
     console.log("portableElse");
@@ -92,8 +96,10 @@ export function shapeElse(): i64 {
   }
 }
 
-function armNested(): i64 { targetFeature("clmul-arm"); return 3; }
-function x86Nested(): i64 { targetFeature("clmul-x86"); return 3; }
+@targetFeature("clmul-arm")
+function armNested(): i64 { return 3; }
+@targetFeature("clmul-x86")
+function x86Nested(): i64 { return 3; }
 export function shapeNested(): i64 {
   if (u64x2.hasClmul()) {
     if (u64x2.hasClmulX86()) {
@@ -106,8 +112,10 @@ export function shapeNested(): i64 {
   return 3;
 }
 
-function armAes(): i64 { targetFeature("aes-arm"); return 4; }
-function x86Aes(): i64 { targetFeature("aes-x86"); return 4; }
+@targetFeature("aes-arm")
+function armAes(): i64 { return 4; }
+@targetFeature("aes-x86")
+function x86Aes(): i64 { return 4; }
 export function shapeAes(): i64 {
   if (u8x16.hasAesArm()) {
     return armAes();
@@ -124,8 +132,10 @@ function sharedBelow(n: i64): i64 {
   }
   return n + 5;
 }
-function armShared(): i64 { targetFeature("sha-arm"); return sharedBelow(0); }
-function x86Shared(): i64 { targetFeature("sha-x86"); return sharedBelow(0); }
+@targetFeature("sha-arm")
+function armShared(): i64 { return sharedBelow(0); }
+@targetFeature("sha-x86")
+function x86Shared(): i64 { return sharedBelow(0); }
 export function shapeShared(): i64 {
   if (u32x4.hasShaArm()) {
     return armShared();

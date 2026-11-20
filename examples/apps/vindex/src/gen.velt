@@ -3,7 +3,7 @@
 // their exact nearest rows by a brute-force scan of the file.
 import * as fs from "velt/fs";
 import { workerCount } from "velt/task";
-import { dotF32Bytes, normalize, putF32s } from "./kernels";
+import { dotF32, normalize } from "./kernels";
 import { Rng } from "./rng";
 import { createVectors, openVectors, ranges, readAt, rowPos, writeAt } from "./store";
 import { TopK } from "./topk";
@@ -31,14 +31,16 @@ async function writeRows(
   const d = dim as usize;
   const rng = new Rng(seed + (start as u64));
   const row: f32[] = new Array<f32>(dim as number).fill(0);
-  const buf: u8[] = Buffer.alloc((CHUNK * dim * 4) as usize);
+  const chunk: f32[] = new Array<f32>((CHUNK * dim) as number).fill(0);
   for (let at = start; at < end; at += CHUNK) {
     const rows = at + CHUNK < end ? CHUNK : end - at;
     for (let r: i64 = 0; r < rows; r++) {
       fillRow(row, centres, clusters, d, noise, rng);
-      putF32s(row, 0, d, buf, (r as usize) * d * 4);
+      for (let i: usize = 0; i < d; i++) {
+        chunk[(r as usize) * d + i] = row[i];
+      }
     }
-    writeAt(fd, buf, rows * dim * 4, rowPos(dim, at));
+    writeAt(fd, chunk, rows * dim * 4, rowPos(dim, at));
   }
   return end - start;
 }
@@ -73,18 +75,9 @@ export async function generate(dir: string, o: GenOptions) {
 /// Every row of a vector file, as one `f32[]` (for the queries, which are few).
 export function loadAll(path: string): f32[] {
   const f = openVectors(path);
-  const bytes: u8[] = Buffer.alloc((f.n * f.dim * 4) as usize);
-  readAt(f.fd, bytes, f.n * f.dim * 4, rowPos(f.dim, 0));
-  fs.closeSync(f.fd);
   const out: f32[] = new Array<f32>((f.n * f.dim) as number).fill(0);
-  for (let i: usize = 0; i < out.length as usize; i++) {
-    out[i] = f32.fromBits(
-      (bytes[4 * i] as u32) |
-        ((bytes[4 * i + 1] as u32) << 8) |
-        ((bytes[4 * i + 2] as u32) << 16) |
-        ((bytes[4 * i + 3] as u32) << 24),
-    );
-  }
+  readAt(f.fd, out, f.n * f.dim * 4, rowPos(f.dim, 0));
+  fs.closeSync(f.fd);
   return out;
 }
 
@@ -102,14 +95,14 @@ async function scanPart(
   for (let q: i64 = 0; q < nq; q++) {
     tops.push(new TopK(k));
   }
-  const buf: u8[] = Buffer.alloc((CHUNK * dim * 4) as usize);
+  const chunk: f32[] = new Array<f32>((CHUNK * dim) as number).fill(0);
   for (let at = start; at < end; at += CHUNK) {
     const rows = at + CHUNK < end ? CHUNK : end - at;
-    readAt(fd, buf, rows * dim * 4, rowPos(dim, at));
+    readAt(fd, chunk, rows * dim * 4, rowPos(dim, at));
     for (let q: i64 = 0; q < nq; q++) {
       const top = tops[q];
       for (let r: i64 = 0; r < rows; r++) {
-        const s = dotF32Bytes(buf, (r as usize) * d * 4, queries, (q as usize) * d, d);
+        const s = dotF32(chunk, (r as usize) * d, queries, (q as usize) * d, d);
         if (s > top.floor()) {
           top.push(at + r, s);
         }

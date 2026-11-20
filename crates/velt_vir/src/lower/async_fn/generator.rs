@@ -152,6 +152,7 @@ impl FnLower<'_, '_> {
         self.terminate(Terminator::Return(cint(yielded, Ty::U32)));
         self.close_block(k);
         self.throw_block(k);
+        self.trace_block(k);
         self.switch_to(resume);
         self.set_tag(GEN_RUNNING);
         self.received(dflt, ty)

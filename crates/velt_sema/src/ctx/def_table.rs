@@ -1,7 +1,7 @@
 //! A table indexed by `DefId` whose first entries can be frozen (#2943 M1, units in sema).
 //!
 //! Units are checked in dependency order, so a finished unit's definitions are a prefix of the
-//! table: `frozen_below` marks it. Reads are as with a `Vec` (the table derefs to a slice); every
+//! table: `frozen_below` marks it. Reads are as with a `Vec` (indexing, `get`, `iter`); every
 //! way to write (`IndexMut`, `get_mut`, `iter_mut`) checks the mark. A write below it
 //! is a later unit changing a finished one, which the build architecture forbids
 //! (docs/internals/design/build-architecture.md "The rule"). What happens then is set by
@@ -11,27 +11,129 @@
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::ops::{Deref, Index, IndexMut};
+use std::ops::{Index, IndexMut};
 use std::panic::Location;
+use std::rc::Rc;
 
-/// A `Vec<T>` indexed by `DefId` number, with a frozen prefix.
-#[derive(Clone, Debug)]
+use super::slots::Slots;
+
+/// A `Vec<T>` indexed by `DefId` number, with a frozen prefix, whose entries may be decoded on
+/// first use from a unit kept on disk ([`Lazy`]).
+#[derive(Clone)]
 pub(crate) struct DefTable<T> {
-    items: Vec<T>,
+    items: Slots<T>,
+    /// Where the entries not decoded yet are (`None`: every entry is there).
+    lazy: Option<Rc<Lazy<T>>>,
     /// Entries below this index belong to finished units: 0 while nothing is frozen.
     frozen_below: u32,
+}
+
+/// EXPERIMENT (#2943 M2): the encoded entries of a table read from a unit, each decoded on its
+/// first use (`units::codec`, `DefTable`'s codec).
+pub(crate) struct Lazy<T> {
+    src: Rc<crate::units::codec::Src>,
+    /// Where the first entry starts in `src`'s bytes, and where each ends.
+    start: usize,
+    ends: Vec<usize>,
+    decode: fn(&crate::units::codec::Src, std::ops::Range<usize>) -> T,
+}
+
+impl<T> Lazy<T> {
+    pub(crate) fn new(
+        src: Rc<crate::units::codec::Src>,
+        start: usize,
+        ends: Vec<usize>,
+        decode: fn(&crate::units::codec::Src, std::ops::Range<usize>) -> T,
+    ) -> Self {
+        Lazy {
+            src,
+            start,
+            ends,
+            decode,
+        }
+    }
+
+    /// Entry `i`, decoded.
+    fn get(&self, i: usize) -> T {
+        let lo = match i {
+            0 => self.start,
+            _ => self.ends[i - 1],
+        };
+        (self.decode)(&self.src, lo..self.ends[i])
+    }
+}
+
+impl<T> std::fmt::Debug for Lazy<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Lazy")
+    }
+}
+
+impl<T> std::fmt::Debug for DefTable<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "DefTable({} entries)", self.len())
+    }
 }
 
 impl<T> Default for DefTable<T> {
     fn default() -> Self {
         DefTable {
-            items: Vec::new(),
+            items: Slots::default(),
+            lazy: None,
             frozen_below: 0,
         }
     }
 }
 
 impl<T> DefTable<T> {
+    /// A table of `n` entries, each decoded by `lazy` when first used.
+    pub(crate) fn lazy(n: usize, lazy: Lazy<T>) -> Self {
+        DefTable {
+            items: Slots::empty(n),
+            lazy: Some(Rc::new(lazy)),
+            frozen_below: 0,
+        }
+    }
+
+    /// Entry `i`, decoded if it wasn't.
+    #[inline]
+    fn at(&self, i: usize) -> &T {
+        match self.items.get(i) {
+            Some(x) => x,
+            None => self.decode(i),
+        }
+    }
+
+    #[cold]
+    fn decode(&self, i: usize) -> &T {
+        let lazy = self
+            .lazy
+            .as_ref()
+            .expect("ICE: a definition table entry left empty");
+        // SAFETY: the table's own decoder: its values borrow the unit's arena, which outlives
+        // the table (`Reader::over_unit`'s contract), so they are valid for the type the table
+        // was made with.
+        unsafe { self.items.set(i, lazy.get(i)) };
+        decoded::count();
+        self.items.get(i).expect("ICE: decoded entry")
+    }
+
+    /// Entry `i` to write, decoded if it wasn't.
+    fn at_mut(&mut self, i: usize) -> &mut T {
+        self.at(i);
+        self.items.get_mut(i).expect("ICE: decoded entry")
+    }
+
+    /// Decode every entry not decoded yet.
+    fn decode_all(&self) {
+        if self.items.full() {
+            return;
+        }
+        for i in 0..self.items.len() {
+            self.at(i);
+        }
+    }
+
     /// Freeze every entry there is now.
     pub(crate) fn freeze(&mut self) {
         self.frozen_below = self.items.len() as u32;
@@ -54,7 +156,7 @@ impl<T> DefTable<T> {
     #[track_caller]
     pub(crate) fn get_mut(&mut self, i: usize) -> Option<&mut T> {
         self.check(i);
-        self.items.get_mut(i)
+        (i < self.items.len()).then(|| self.at_mut(i))
     }
 
     /// Every entry, to write: a whole-table write while a prefix is frozen is counted once.
@@ -63,12 +165,23 @@ impl<T> DefTable<T> {
         if self.frozen_below > 0 {
             violation(Location::caller());
         }
-        self.items.iter_mut()
+        self.decode_all();
+        self.items.all_mut().iter_mut()
+    }
+
+    /// Every entry, uncounted.
+    pub(crate) fn items_all(&self) -> Iter<'_, T> {
+        Iter {
+            table: self,
+            front: 0,
+            back: self.items.len(),
+        }
     }
 
     /// The entries, for `hir::Program`.
     pub(crate) fn into_vec(self) -> Vec<T> {
-        self.items
+        self.decode_all();
+        self.items.into_vec()
     }
 
     #[track_caller]
@@ -79,34 +192,107 @@ impl<T> DefTable<T> {
     }
 }
 
+/// How many entries were decoded on demand.
+pub(crate) mod decoded {
+    use std::cell::Cell;
+    thread_local! {
+        static N: Cell<usize> = const { Cell::new(0) };
+    }
+    pub(crate) fn count() {
+        N.with(|n| n.set(n.get() + 1));
+    }
+    #[cfg(test)]
+    pub(crate) fn get() -> usize {
+        N.with(Cell::get)
+    }
+}
+
 impl<T> From<Vec<T>> for DefTable<T> {
     fn from(items: Vec<T>) -> Self {
         DefTable {
-            items,
+            items: items.into_iter().collect(),
+            lazy: None,
             frozen_below: 0,
         }
     }
 }
 
-impl<T> Deref for DefTable<T> {
-    type Target = [T];
-    fn deref(&self) -> &[T] {
-        &self.items
+impl<T> DefTable<T> {
+    /// Entry `i`, if there is one.
+    #[inline]
+    pub(crate) fn get(&self, i: usize) -> Option<&T> {
+        (i < self.items.len()).then(|| self.at(i))
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.items.len()
+    }
+
+    /// Every entry, to read (each decoded as the iteration reaches it: one skipped, by `nth`
+    /// or `skip`, is not).
+    pub(crate) fn iter(&self) -> Iter<'_, T> {
+        self.items_all()
     }
 }
 
+/// [`DefTable::iter`]'s iterator.
+pub(crate) struct Iter<'a, T> {
+    table: &'a DefTable<T>,
+    front: usize,
+    back: usize,
+}
+
+impl<T> Clone for Iter<'_, T> {
+    fn clone(&self) -> Self {
+        Iter { ..*self }
+    }
+}
+
+impl<'a, T> Iterator for Iter<'a, T> {
+    type Item = &'a T;
+    #[inline]
+    fn next(&mut self) -> Option<&'a T> {
+        if self.front >= self.back {
+            return None;
+        }
+        self.front += 1;
+        Some(self.table.at(self.front - 1))
+    }
+    fn nth(&mut self, n: usize) -> Option<&'a T> {
+        self.front = self.front.saturating_add(n).min(self.back);
+        self.next()
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let n = self.back - self.front;
+        (n, Some(n))
+    }
+}
+
+impl<T> DoubleEndedIterator for Iter<'_, T> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        if self.front >= self.back {
+            return None;
+        }
+        self.back -= 1;
+        Some(self.table.at(self.back))
+    }
+}
+
+impl<T> ExactSizeIterator for Iter<'_, T> {}
+
 impl<'a, T> IntoIterator for &'a DefTable<T> {
     type Item = &'a T;
-    type IntoIter = std::slice::Iter<'a, T>;
+    type IntoIter = Iter<'a, T>;
     fn into_iter(self) -> Self::IntoIter {
-        self.items.iter()
+        self.iter()
     }
 }
 
 impl<T> Index<usize> for DefTable<T> {
     type Output = T;
+    #[inline]
     fn index(&self, i: usize) -> &T {
-        &self.items[i]
+        self.at(i)
     }
 }
 
@@ -114,13 +300,21 @@ impl<T> IndexMut<usize> for DefTable<T> {
     #[track_caller]
     fn index_mut(&mut self, i: usize) -> &mut T {
         self.check(i);
-        &mut self.items[i]
+        self.at_mut(i)
     }
 }
 
 thread_local! {
-    /// Writes below a freeze in this thread's checks, by the caller's location.
-    static VIOLATIONS: RefCell<BTreeMap<String, usize>> = const { RefCell::new(BTreeMap::new()) };
+    /// Writes below a freeze in this thread's checks, by the caller's file and line (made text
+    /// only when [`take_violations`] reports them: a check over a frozen unit counts thousands).
+    static VIOLATIONS: RefCell<BTreeMap<(&'static str, u32), usize>> =
+        const { RefCell::new(BTreeMap::new()) };
+}
+
+/// `VELT_UNITS_FREEZE=panic`: a write below a freeze panics, read once.
+fn freeze_panics() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("VELT_UNITS_FREEZE").is_some_and(|v| v == "panic"))
 }
 
 /// A change to a finished unit that isn't a write to its tables (a slot it would need), counted as
@@ -131,16 +325,20 @@ pub(crate) fn crossing() {
 }
 
 fn violation(at: &'static Location<'static>) {
-    if std::env::var_os("VELT_UNITS_FREEZE").is_some_and(|v| v == "panic") {
+    if freeze_panics() {
         panic!("ICE: a later unit writes a frozen definition at {at}");
     }
-    let key = format!("{}:{}", at.file(), at.line());
+    let key = (at.file(), at.line());
     VIOLATIONS.with(|v| *v.borrow_mut().entry(key).or_default() += 1);
 }
 
-/// The writes below a freeze counted so far in this thread, by location, and clears them.
+/// The writes below a freeze counted so far in this thread, by location (`file:line`), and
+/// clears them.
 pub(crate) fn take_violations() -> BTreeMap<String, usize> {
-    VIOLATIONS.with(|v| std::mem::take(&mut *v.borrow_mut()))
+    let v = VIOLATIONS.with(|v| std::mem::take(&mut *v.borrow_mut()));
+    v.into_iter()
+        .map(|((file, line), n)| (format!("{file}:{line}"), n))
+        .collect()
 }
 
 /// Prints the counted writes below a freeze to stderr (`velt-units:` lines), when there are any.

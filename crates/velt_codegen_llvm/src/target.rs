@@ -117,6 +117,15 @@ pub fn is_wasm(target: &str) -> bool {
     wasm_os(target.trim()).is_some()
 }
 
+/// Whether this backend's code for `target` calls the outline-atomics helpers (`__aarch64_*`,
+/// [`Target::outline_atomics`]), which only some links have: a static runtime's (Rust's
+/// compiler_builtins in it) or libgcc's; the shared runtime does not export them, and the bundled
+/// linker's kit has no libgcc archive. For the driver: objects of this backend go into a debug
+/// link only where this is false. `false` for a target this backend does not know.
+pub fn calls_outline_atomics(target: &str) -> bool {
+    normalize(target).is_ok_and(|t| t.outline_atomics())
+}
+
 impl Target {
     /// String attributes shared by every defined function:
     /// - Apple's arm64/x86_64 ABIs expect frame pointers (clang's darwin default is non-leaf);
@@ -315,6 +324,12 @@ mod tests {
             .unwrap()
             .outline_atomics());
         assert!(is_wasm(" wasm32-wasip1") && !is_wasm("aarch64-apple-darwin"));
+        assert!(calls_outline_atomics("aarch64-unknown-linux-gnu"));
+        assert!(calls_outline_atomics("aarch64-unknown-linux-musl"));
+        assert!(!calls_outline_atomics("aarch64-apple-darwin"));
+        assert!(!calls_outline_atomics("x86_64-unknown-linux-gnu"));
+        assert!(!calls_outline_atomics("x86_64-pc-windows-msvc"));
+        assert!(!calls_outline_atomics("not a target"));
         assert!(!normalize("aarch64-apple-darwin")
             .unwrap()
             .wide_pointer_slots());

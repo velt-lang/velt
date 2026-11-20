@@ -1,9 +1,10 @@
-//! Gated functions (#1330, the intrinsic `targetFeature` of velt/lang/intrinsics, std only):
-//! every call sits behind the check of the function's CPU extension or in a function gated on
-//! the same target; a gated function is never a value; a closure inside one does not inherit its
-//! target. Gating is std-only, so a golden file cannot declare one: std is copied to a temp
-//! directory with a probe module added, and `velt check` / `velt run` use it through `$VELT_STD`
-//! (as std_simd_import.rs does).
+//! Gated functions (#1330; the decorator `@targetFeature` of velt/lang/intrinsics, re-exported by
+//! velt/compiler, docs/internals/design/package-machine-code.md §2): every call sits behind the
+//! check of the function's CPU extension or in a function gated on the same target; a gated
+//! function is never a value; a closure inside one does not inherit its target; methods are not
+//! gated. Most cases gate a std function: std is copied to a temp directory with a
+//! probe module added, and `velt check` / `velt run` use it through `$VELT_STD` (as
+//! std_simd_import.rs does); the last ones gate a program's own function through velt/compiler.
 
 use std::path::{Path, PathBuf};
 use std::process::Output;
@@ -34,7 +35,7 @@ fn velt(dir: &test_dir::TestDir, probe: &str, main: &str, args: &[&str]) -> Outp
     }
     // A module of its own (a folder's index.velt): user code imports only modules.
     std::fs::create_dir_all(std.join("zz_gated")).unwrap();
-    // Each probe gates its functions with the intrinsic, which std imports like any function.
+    // Each probe gates its functions with the decorator, which std imports like any definition.
     let probe = format!("import {{ targetFeature }} from \"velt/lang/intrinsics\";\n{probe}");
     std::fs::write(std.join("zz_gated/index.velt"), probe).unwrap();
     let file = dir.path().join("main.velt");
@@ -54,13 +55,13 @@ fn velt(dir: &test_dir::TestDir, probe: &str, main: &str, args: &[&str]) -> Outp
 const GOOD: &str = r#"
 import { u32x4 } from "velt/simd";
 
+@targetFeature("sha-arm")
 function twice(v: u32x4): u32x4 {
-  targetFeature("sha-arm");
   return v.add(v);
 }
 
+@targetFeature("sha-arm")
 function four(v: u32x4): u32x4 {
-  targetFeature("sha-arm");
   return twice(twice(v));
 }
 
@@ -111,8 +112,8 @@ fn a_call_needs_the_check_of_its_target() {
     let probe = r#"
 import { u32x4 } from "velt/simd";
 
+@targetFeature("sha-x86")
 function gated(): i64 {
-  targetFeature("sha-x86");
   return 1;
 }
 
@@ -138,8 +139,8 @@ fn a_gated_function_is_not_a_value() {
     let probe = r#"
 import { u32x4 } from "velt/simd";
 
+@targetFeature("sha-arm")
 function gated(): i64 {
-  targetFeature("sha-arm");
   return 1;
 }
 
@@ -163,13 +164,13 @@ fn a_closure_does_not_inherit_the_target() {
     let probe = r#"
 import { u32x4 } from "velt/simd";
 
+@targetFeature("sha-arm")
 function inner(): i64 {
-  targetFeature("sha-arm");
   return 1;
 }
 
+@targetFeature("sha-arm")
 function outer(): i64 {
-  targetFeature("sha-arm");
   const f = (): i64 => inner();
   return f();
 }
@@ -189,45 +190,72 @@ export function probe(): i64 {
 }
 
 #[test]
-fn the_statement_is_first_named_and_not_in_a_method() {
+fn the_decorator_names_a_known_target_and_a_function() {
+    // An unknown target and a method are type errors; the statement form std used before the
+    // decorator is an error too, never a silently ungated function (an older std change rebased
+    // onto the decorator).
     let probe = r#"
-function late(): i64 {
-  const x = 1;
-  targetFeature("sha-arm");
-  return x;
-}
-
+@targetFeature("sha-mips")
 function unknown(): i64 {
-  targetFeature("sha-mips");
   return 1;
 }
 
 class Box {
+  @targetFeature("sha-arm")
   get(): i64 {
-    targetFeature("sha-arm");
     return 1;
   }
 }
 
+function old(): i64 {
+  targetFeature("sha-arm");
+  return 1;
+}
+
 export function probe(): i64 {
-  return late() + unknown() + new Box().get();
+  return unknown() + new Box().get() + old();
 }
 "#;
     check_fails(
         probe,
         MAIN_PROBE,
         &[
-            "`targetFeature` must be the first statement of a function (not a method or closure)",
-            "`targetFeature` takes the target as a string literal: one of sha-arm, sha-x86, clmul-x86, clmul-arm, aes-x86, aes-arm, fma-x86",
+            "3:16: error: this argument of the decorator doesn't fit its parameter's type",
+            "9:3: error: the decorator `targetFeature` cannot be applied to a method",
+            "16:3: error: `targetFeature` is a decorator: it can only be used as `@targetFeature`",
         ],
+    );
+}
+
+#[test]
+fn the_decorator_refuses_what_nothing_would_check() {
+    // A function C calls: nothing checks the CPU before C calls it (a std probe, since a program
+    // needs native code for `@export`).
+    let probe = r#"
+import { export as cExport } from "velt/ffi";
+
+@cExport("zz_gated_probe")
+@targetFeature("sha-arm")
+function forC(): i64 {
+  return 1;
+}
+
+export function probe(): i64 {
+  return forC();
+}
+"#;
+    check_fails(
+        probe,
+        MAIN_PROBE,
+        &["6:1: error: `@targetFeature` can't gate a function C calls (`@export`)"],
     );
 }
 
 #[test]
 fn user_code_calls_an_exported_gated_function_only_behind_the_check() {
     let probe = r#"
+@targetFeature("sha-arm")
 export function gated(): i64 {
-  targetFeature("sha-arm");
   return 1;
 }
 "#;
@@ -243,8 +271,8 @@ export function gated(): i64 {
 }
 
 const ONE_GATED: &str = r#"
+@targetFeature("sha-arm")
 export function gated(x: i64): i64 {
-  targetFeature("sha-arm");
   return x + 1;
 }
 "#;
@@ -297,8 +325,8 @@ fn call_and_apply_are_direct_calls() {
 const SHA_PROBE: &str = r#"
 import { u32x4 } from "velt/simd";
 
+@targetFeature("sha-arm")
 export function roundsArm(a: u32x4, n: i64): u32x4 {
-  targetFeature("sha-arm");
   let x = a;
   for (let i = 0; i < n; i++) {
     x = x.sha256h(a, x).sha256h(x, a).sha256h2(a, x).sha256h2(x, a);
@@ -309,8 +337,8 @@ export function roundsArm(a: u32x4, n: i64): u32x4 {
   return x;
 }
 
+@targetFeature("sha-x86")
 export function roundsX86(a: u32x4, n: i64): u32x4 {
-  targetFeature("sha-x86");
   let x = a;
   for (let i = 0; i < n; i++) {
     x = x.sha256rnds2(a, x).sha256rnds2(x, a).sha256msg1(a).sha256msg1(x);
@@ -438,8 +466,8 @@ fn a_gated_function_knows_its_extension_and_stays_out_of_line() {
 const CLMUL_PROBE: &str = r#"
 import { u64x2 } from "velt/simd";
 
+@targetFeature("clmul-x86")
 export function foldX86(a: u64x2, n: i64): u64x2 {
-  targetFeature("clmul-x86");
   let x = a;
   for (let i = 0; i < n; i++) {
     x = x.clmulLow(a).xor(x.clmulHigh(a)).xor(x.clmulLowHigh(a)).xor(x.clmulHighLow(a));
@@ -447,8 +475,8 @@ export function foldX86(a: u64x2, n: i64): u64x2 {
   return x;
 }
 
+@targetFeature("clmul-arm")
 export function foldArm(a: u64x2, n: i64): u64x2 {
-  targetFeature("clmul-arm");
   let x = a;
   for (let i = 0; i < n; i++) {
     x = x.clmulLow(a).xor(x.clmulHigh(a)).xor(x.clmulLowHigh(a)).xor(x.clmulHighLow(a));
@@ -509,8 +537,8 @@ fn clmul_gated_functions_are_the_bare_instruction() {
 const AES_PROBE: &str = r#"
 import { u8x16 } from "velt/simd";
 
+@targetFeature("aes-x86")
 export function roundsX86(a: u8x16, k: u8x16, n: i64): u8x16 {
-  targetFeature("aes-x86");
   let x = a;
   for (let i = 0; i < n; i++) {
     x = x.aesenc(k).aesenclast(k).aesdec(k).aesdeclast(k).aesimc().aeskeygenassist(1);
@@ -519,8 +547,8 @@ export function roundsX86(a: u8x16, k: u8x16, n: i64): u8x16 {
   return x;
 }
 
+@targetFeature("aes-arm")
 export function roundsArm(a: u8x16, k: u8x16, n: i64): u8x16 {
-  targetFeature("aes-arm");
   let x = a;
   for (let i = 0; i < n; i++) {
     x = x.aese(k).aesmc().aesd(k).aesimc();
@@ -602,23 +630,23 @@ fn aes_gated_functions_are_the_bare_instructions() {
 const COVER_GATES: &str = r#"
 import { u8x16, u64x2 } from "velt/simd";
 
+@targetFeature("clmul-x86")
 function clmulX86(): i64 {
-  targetFeature("clmul-x86");
   return 1;
 }
 
+@targetFeature("clmul-arm")
 function clmulArm(): i64 {
-  targetFeature("clmul-arm");
   return 2;
 }
 
+@targetFeature("aes-x86")
 function aesX86(): i64 {
-  targetFeature("aes-x86");
   return 3;
 }
 
+@targetFeature("aes-arm")
 function aesArm(): i64 {
-  targetFeature("aes-arm");
   return 4;
 }
 "#;
@@ -629,13 +657,13 @@ fn the_aes_target_covers_the_carry_less_one() {
     // the instructions has the carry-less multiplication of its architecture.
     let probe = format!(
         r#"{COVER_GATES}
+@targetFeature("aes-x86")
 function fromAesX86(): i64 {{
-  targetFeature("aes-x86");
   return clmulX86();
 }}
 
+@targetFeature("aes-arm")
 function fromAesArm(): i64 {{
-  targetFeature("aes-arm");
   return clmulArm();
 }}
 
@@ -678,9 +706,198 @@ fn the_carry_less_target_does_not_cover_the_aes_one() {
         ("clmulArm", "clmul-arm", "aes-x86"),
     ] {
         let probe = format!(
-            "{COVER_GATES}\nfunction caller(): i64 {{\n  targetFeature(\"{from}\");\n  return {gate}();\n}}\n\nexport function probe(): i64 {{\n  return u8x16.hasAes() && u64x2.hasClmul() ? 1 : 0;\n}}\n"
+            "{COVER_GATES}\n@targetFeature(\"{from}\")\nfunction caller(): i64 {{\n  return {gate}();\n}}\n\nexport function probe(): i64 {{\n  return u8x16.hasAes() && u64x2.hasClmul() ? 1 : 0;\n}}\n"
         );
         let message = format!("`{gate}` runs only where the CPU has `{target}`");
         check_fails(&probe, MAIN_PROBE, &[&message]);
     }
+}
+
+/// A program's own gated function, through velt/compiler: the guarded call compiles and runs
+/// (the gated copy where the CPU has carry-less multiplication in a release build, the portable
+/// path in a debug one, where every check is false), with the same result either way.
+const PROGRAM_GATED: &str = r#"import { targetFeature } from "velt/compiler";
+import { u64x2 } from "velt/simd";
+
+@targetFeature("clmul-x86")
+function mulX86(a: u64x2, b: u64x2): u64x2 {
+  return a.clmulLow(b);
+}
+
+function mulPortable(a: u64x2, b: u64x2): u64x2 {
+  return a.clmulLow(b);
+}
+
+function main() {
+  const a = u64x2.splat(0x1234);
+  const b = u64x2.splat(0x5678);
+  let c = u64x2.splat(0);
+  if (u64x2.hasClmulX86()) {
+    c = mulX86(a, b);
+  } else {
+    c = mulPortable(a, b);
+  }
+  console.log(c.lane(0));
+}
+"#;
+
+#[test]
+fn a_program_gates_its_own_function_through_velt_compiler() {
+    let dir = test_dir::TestDir::new();
+    let mut outs = vec![];
+    for args in [&["run"][..], &["run", "--release"]] {
+        let out = velt(&dir, "", PROGRAM_GATED, args);
+        assert!(
+            out.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        outs.push(String::from_utf8_lossy(&out.stdout).into_owned());
+    }
+    assert_eq!(outs[0], outs[1]);
+    assert!(!outs[0].trim().is_empty());
+    // And the program's function is compiled for its extension, out of line.
+    let args = [
+        "build",
+        "--release",
+        "--emit",
+        "llvm",
+        "--target",
+        "x86_64-unknown-linux-gnu",
+    ];
+    let out = velt(&dir, "", PROGRAM_GATED, &args);
+    let ir = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let functions = llvm_functions(&ir);
+    let gated = (functions.iter())
+        .find(|(f, _)| f.contains("mulX86"))
+        .unwrap_or_else(|| panic!("no mulX86 in:\n{ir}"));
+    assert!(
+        gated.1.contains("\"target-features\""),
+        "mulX86 has its extension's features:\n{}",
+        gated.1
+    );
+}
+
+#[test]
+fn a_programs_gated_function_keeps_the_rules() {
+    // Outside std the same rules hold: a call behind no check and a use as a value are errors.
+    let main = r#"import { targetFeature } from "velt/compiler";
+import { u64x2 } from "velt/simd";
+
+@targetFeature("clmul-x86")
+function mulX86(a: u64x2, b: u64x2): u64x2 {
+  return a.clmulLow(b);
+}
+
+function main() {
+  const a = u64x2.splat(3);
+  console.log(mulX86(a, a).lane(0));
+  const f = mulX86;
+}
+"#;
+    let dir = test_dir::TestDir::new();
+    let out = velt(&dir, "", main, &["check"]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{err}");
+    for m in [
+        "11:15: error: `mulX86` runs only where the CPU has `clmul-x86`, so it must be called behind that check",
+        "12:13: error: `mulX86` is compiled for `clmul-x86` and can only be called directly",
+    ] {
+        assert!(err.contains(m), "missing `{m}` in:\n{err}");
+    }
+}
+
+#[test]
+fn a_program_can_gate_only_what_its_target_reaches() {
+    // `main` runs unchecked; a nested, async or generator function is compiled into a closure or
+    // a resume function the target would not reach; an overload signature calls the
+    // implementation unchecked. Each is refused, with the decorator on the implementation or on
+    // a signature.
+    let main = r#"import { targetFeature } from "velt/compiler";
+
+@targetFeature("clmul-x86")
+async function later(): Promise<i64> {
+  return 1;
+}
+
+@targetFeature("clmul-x86")
+function* gen(): Generator<i64> {
+  yield 1;
+}
+
+function outer(): i64 {
+  @targetFeature("clmul-x86")
+  function inner(): i64 {
+    return 1;
+  }
+  return inner();
+}
+
+function capturing(k: i64): i64 {
+  @targetFeature("clmul-x86")
+  function inner(): i64 {
+    return k;
+  }
+  return inner();
+}
+
+class Box {
+  v: i64 = 1;
+  get(): i64 {
+    const v = this.v;
+    @targetFeature("clmul-x86")
+    function inner(): i64 {
+      return v;
+    }
+    return inner();
+  }
+}
+
+function twice(a: i64): i64;
+function twice(a: f64): f64;
+@targetFeature("clmul-x86")
+function twice(a: i64 | f64): i64 | f64 {
+  return a;
+}
+
+@targetFeature("clmul-x86")
+function once(a: i64): i64;
+function once(a: f64): f64;
+function once(a: i64 | f64): i64 | f64 {
+  return a;
+}
+
+@targetFeature("clmul-x86")
+async function main() {
+  console.log(outer() + capturing(1) + new Box().get() + twice(1) + once(2) + (await later()));
+  for (const v of gen()) {
+    console.log(v);
+  }
+}
+"#;
+    let dir = test_dir::TestDir::new();
+    let out = velt(&dir, "", main, &["check"]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{err}");
+    for m in [
+        "3:1: error: `@targetFeature` can't gate an async function or a generator",
+        "8:1: error: `@targetFeature` can't gate an async function or a generator",
+        "14:3: error: `@targetFeature` can't gate a function declared inside another",
+        "22:3: error: `inner` uses its enclosing function's locals, so it takes no decorators",
+        "33:5: error: `inner` uses its enclosing function's locals, so it takes no decorators",
+        "43:1: error: `@targetFeature` can't gate an overloaded function",
+        "48:1: error: `@targetFeature` can't gate an overloaded function",
+        "55:1: error: `@targetFeature` can't gate the program's entry, `main`",
+    ] {
+        assert!(err.contains(m), "missing `{m}` in:\n{err}");
+    }
+    assert!(
+        !err.contains("not compatible with its implementation"),
+        "an overload's refusal is the decorator's own error:\n{err}"
+    );
 }

@@ -1,0 +1,41 @@
+// requires: windows
+// A file named with separators after it (`dir\f\`, `dir/f//`), as Node takes it on Windows: it is
+// described, read, found and removed as the file; a directory named so is still the directory,
+// and a missing one is still missing. The expected output is Node 24's on Windows (its twin reads
+// `remove` as `rm` without its options' checks: `lstat`, then `unlink`).
+import * as fs from "velt/fs";
+import { IoError } from "velt/io";
+
+function attempt(what: string, f: () => void) {
+  try {
+    f();
+    console.log(what, "ok");
+  } catch (e) {
+    console.log(what, (e as IoError).code);
+  }
+}
+
+function main() {
+  const dir = "velt_fs_win_trailing_tmp";
+  if (fs.existsSync(dir)) {
+    fs.removeSync(dir, { recursive: true });
+  }
+  fs.mkdirSync(`${dir}/d`, { recursive: true });
+  for (const name of ["f1", "f2", "f3", "f4", "f5", "f6"]) {
+    fs.writeFileSync(`${dir}/${name}`, name);
+  }
+  console.log("lstat f6/", fs.lstatSync(`${dir}/f6/`).isFile());
+  console.log("stat f6\\", fs.statSync(`${dir}\\f6\\`).isFile());
+  console.log("readFile f6/", fs.readFileSync(`${dir}/f6/`));
+  console.log("exists f6/", fs.existsSync(`${dir}/f6/`), fs.existsSync(`${dir}/missing/`));
+  attempt("rm f1/", () => fs.rmSync(`${dir}/f1/`));
+  attempt("rm f2\\", () => fs.rmSync(`${dir}\\f2\\`));
+  attempt("rm f3//", () => fs.rmSync(`${dir}/f3//`));
+  attempt("rm f4/ recursive", () => fs.rmSync(`${dir}/f4/`, { recursive: true }));
+  attempt("remove f5/", () => fs.removeSync(`${dir}/f5/`));
+  attempt("rm missing/", () => fs.rmSync(`${dir}/missing/`));
+  attempt("rm d/", () => fs.rmSync(`${dir}/d/`));
+  console.log(fs.readDirSync(dir).join(" "));
+  fs.removeSync(dir, { recursive: true });
+  console.log(fs.existsSync(dir));
+}
