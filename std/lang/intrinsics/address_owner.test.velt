@@ -75,14 +75,24 @@ describe("addressArrayOwned", () => {
     const block = owner();
     const before = TOLD.load();
     let copy: u32[] = [];
+    // A spread and `structuredClone` copy through the clone glue, `slice` builds its array.
+    let spread: u32[] = [];
+    let cloned: u32[] = [];
     {
       const xs = values(block);
       copy = xs.slice();
+      spread = [...xs];
+      cloned = structuredClone(xs);
     }
     expect(TOLD.load()).toBe(before + 1);
     copy.push(99);
+    spread.push(98);
     expect(copy).toEqual([10, 11, 12, 13, 99]);
+    expect(spread).toEqual([10, 11, 12, 13, 98]);
+    expect(cloned).toEqual([10, 11, 12, 13]);
     copy = [];
+    spread = [];
+    cloned = [];
     expect(TOLD.load()).toBe(before + 1);
     // SAFETY: as above.
     unsafe {
