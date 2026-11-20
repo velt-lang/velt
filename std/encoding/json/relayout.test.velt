@@ -33,8 +33,9 @@ describe("relayout", () => {
     expect(lay(t, ["c", "a"], "")).toBe(`{"c":[{"a":5}],"a":1}`);
     expect(lay(t, [], "")).toBe("{}");
     expect(lay(`{"é":1}`, ["é"], "")).toBe(`{"é":1}`);
-    expect(lay(`{"\\u0041":1,"b":[true,null]}`, ["A", "b"], "  ")).toBe(
-      "{\n  \"\\u0041\": 1,\n  \"b\": [\n    true,\n    null\n  ]\n}",
+    // Escaped keys, as the writer quotes them, match the listed key quoted the same way.
+    expect(lay(`{"q\\"":1,"é\\n":2,"b":[true,null],"c":3}`, [`q"`, "b", "é\n"], "  ")).toBe(
+      "{\n  \"q\\\"\": 1,\n  \"b\": [\n    true,\n    null\n  ],\n  \"é\\n\": 2\n}",
     );
   });
 });
