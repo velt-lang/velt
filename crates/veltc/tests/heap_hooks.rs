@@ -23,6 +23,12 @@ mod test_dir;
 const PROBE: &str = r#"
 import { addressLoad, addressStore } from "velt/lang/intrinsics";
 import { heapAlloc, heapFree, heapRealloc } from "velt/lang/hooks/heap";
+import { catchVeltPanic } from "velt/task/unwind";
+
+/** `f` under `catchVeltPanic`: the panic's message, or null. */
+export function caught(f: () => void): string | null {
+  return catchVeltPanic(f);
+}
 
 export function alloc(size: u64, align: u64): u64 {
   return heapAlloc(size, align);
@@ -129,12 +135,15 @@ fn copy_tree(from: &Path, to: &Path) {
 }
 
 /// std with the probe, in `dir`.
+/// The repository's std, or `$VELT_STD` when set (a mutated copy, to see these tests fail), copied
+/// into `dir` with the probe module added.
 fn probe_std(dir: &test_dir::TestDir) {
     let std = dir.path().join("std");
-    copy_tree(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std"),
-        &std,
+    let from = std::env::var_os("VELT_STD").map_or_else(
+        || Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std"),
+        std::path::PathBuf::from,
     );
+    copy_tree(&from, &std);
     std::fs::create_dir_all(std.join("zz_probe")).unwrap();
     std::fs::write(std.join("zz_probe/index.velt"), PROBE).unwrap();
 }
@@ -176,7 +185,7 @@ fn the_hooks_allocate_grow_and_free() {
 /// `main` built for release stops with exit code 101 and `message` on stderr.
 fn stops(dir: &test_dir::TestDir, name: &str, body: &str, message: &str) {
     let main = format!(
-        "import {{ alloc, free, realloc }} from \"velt/zz_probe\";\n\
+        "import {{ alloc, caught, free, realloc }} from \"velt/zz_probe\";\n\
          function main() {{\n  console.log(\"before\");\n  {body}\n  console.log(\"after\");\n}}\n"
     );
     let out = velt(dir, name, &main, &["run", "--release"]);
@@ -184,15 +193,13 @@ fn stops(dir: &test_dir::TestDir, name: &str, body: &str, message: &str) {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(101), "{name}: {stdout}\n{stderr}");
     assert_eq!(stdout, "before\n", "{name}: {stderr}");
-    assert!(stderr.contains(message), "{name}: {stderr}");
-    // Out of memory stops as the runtime's allocator does: the message alone, no location.
-    if message.starts_with("memory allocation") {
-        let line = format!("panic: {message}\n");
-        assert!(
-            stderr.replace("\r\n", "\n").contains(&line),
-            "{name}: {stderr}"
-        );
-    }
+    // Both stop as the runtime's allocator does: the message alone on its line, no location (a
+    // panic would add ` at <file>:<line>:<col>`).
+    let line = format!("panic: {message}\n");
+    assert!(
+        stderr.replace("\r\n", "\n").contains(&line),
+        "{name}: {stderr}"
+    );
 }
 
 #[test]
@@ -206,6 +213,16 @@ fn past_the_limit_or_memory_the_program_stops_with_the_runtimes_messages() {
     stops(&dir, "grow_past_limit", body, limit);
     let body = "realloc(8, 0, 8, 9223372036854775808);";
     stops(&dir, "empty_past_limit", body, limit);
+    // Not a panic: a `catchVeltPanic` running doesn't catch either stop.
+    let body = "caught(() => {\n    realloc(8, 0, 8, 4503599627370496);\n  });";
+    stops(&dir, "caught_past_limit", body, limit);
+    let body = "caught(() => {\n    alloc(4503599627370495, 8);\n  });";
+    stops(
+        &dir,
+        "caught_past_memory",
+        body,
+        "memory allocation of 4503599627370495 bytes failed",
+    );
     // Within the limit, larger than memory, plain and aligned.
     let body = "const p = alloc(16, 8);\n  realloc(p, 16, 8, 4503599627370495);\n  free(p, 16, 8);";
     stops(

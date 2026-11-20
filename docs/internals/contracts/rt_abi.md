@@ -1037,9 +1037,9 @@ functions into a call of std's hook for it (std/lang/hooks/heap.velt: `heapAlloc
 `heapFree`), which calls mimalloc through `declare c` (`mi_malloc`, `mi_malloc_aligned`,
 `mi_realloc`, `mi_realloc_aligned`, `mi_free`, in the runtime's archive) with the same contract: a
 size of 0 gives `align` back and its free does nothing, an alignment of 8 or less takes the plain
-function, growth past the array length limit stops with the limit's `RangeError`, and a request
-mimalloc refuses stops the program with the same message and exit code (through
-`velt_rt_write_str` and `velt_rt_exit`, not a panic a `catchUnwind` could catch). Array growth
+function, and growth past the array length limit or a request mimalloc refuses stops the program
+with the runtime's message and exit code (through `velt_rt_write_str` and `velt_rt_exit`, not a
+panic a `catchVeltPanic` could catch or that could unwind through a `nounwind` call). Array growth
 calls `velt_rt_realloc` for an empty buffer too (an old size of 0 allocates). The runtime's Rust
 uses mimalloc too (its global allocator), so blocks move both ways.
 

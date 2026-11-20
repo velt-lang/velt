@@ -11,10 +11,14 @@
 //! instead ([`ALLOC_WRAPPER`], [`REALLOC_WRAPPER`]): a function with the runtime function's own
 //! signature that calls the hook (inlined into it) and stays out of line. velt_codegen_llvm gives
 //! it the runtime function's allocator attributes (rt_abi.md "Memory"), so the loops that fill
-//! or push into such a buffer see the same opaque `allockind` call as before. With the hook
-//! inlined into them, or a plain call of it, LLVM compiled those loops differently (a peeled
-//! first iteration and two more induction variables in the hot path; bench/hashmap.velt +4.7%
-//! and bench/closures.velt +4.1% by instructions).
+//! or push into such a buffer see the same opaque `allockind` call as before. Both halves
+//! matter (#3316, by instructions):
+//! - **Inlined:** with the hook inlined at each site, LLVM compiled those loops differently (a
+//!   peeled first iteration and two more induction variables in the hot path; bench/hashmap.velt
+//!   +4.7% and bench/closures.velt +4.1%). With the wrapper inlinable, bench/json/parse_value.velt
+//!   rose 4.2% on arm64.
+//! - **Without the attributes:** an out-of-line wrapper without them cost
+//!   bench/permutations.velt 3.8% on arm64 (nothing on x86-64).
 //!
 //! It runs last, once no pass reads the allocator calls any more (`heap_sroa`, `dead_fills`,
 //! `vtable_loads`, … find them by the runtime's symbols), and until then [`dead_funcs`]

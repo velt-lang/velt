@@ -179,10 +179,18 @@ function digit(d: u64): string {
   return d == 8 ? "8" : "9";
 }
 
-/** Stops the program: an array's buffer past the length limit. */
+/**
+ * Stops the program: an array's buffer past the length limit. As the runtime's `velt_rt_realloc`
+ * does (`fatal`), with its message and exit code, and not as a panic: a `catchVeltPanic` running
+ * doesn't catch it, the message names no location, and nothing unwinds through the growth wrapper,
+ * which codegen marks `nounwind` (rt_abi.md "Memory").
+ */
 @noInline
 function arrayTooLong(): never {
-  panic(
-    "RangeError: Invalid array length: an array holds at most 2^52 - 1 elements, and its elements at most 2^52 - 1 bytes",
+  velt_rt_flush();
+  velt_rt_write_str(
+    2,
+    "panic: RangeError: Invalid array length: an array holds at most 2^52 - 1 elements, and its elements at most 2^52 - 1 bytes\n",
   );
+  velt_rt_exit(101);
 }
