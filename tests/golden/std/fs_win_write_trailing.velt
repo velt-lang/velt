@@ -1,7 +1,7 @@
 // requires: windows
 // Writing a path that ends in separators (`dir\f\`, `dir/f//`), as Node does on Windows: the
 // file is written, or made when missing; a directory named so is still the directory, and a
-// missing parent is still missing. The expected output is Node 24's on Windows.
+// missing parent is still missing. The expected output is Node's on Windows (v22.22.0).
 import * as fs from "velt/fs";
 import { IoError } from "velt/io";
 
@@ -29,6 +29,8 @@ function main() {
   console.log("new", fs.readFileSync(`${dir}/new`), fs.readFileSync(`${dir}/newer`));
   attempt("writeFile d/", () => fs.writeFileSync(`${dir}/d/`, "x"));
   attempt("appendFile d/", () => fs.appendFileSync(`${dir}/d/`, "x"));
+  attempt("writeFile d\\", () => fs.writeFileSync(`${dir}\\d\\`, "x"));
+  attempt("appendFile d/\\", () => fs.appendFileSync(`${dir}/d/\\`, "x"));
   attempt("writeFile missing/x/", () => fs.writeFileSync(`${dir}/missing/x/`, "x"));
   console.log(fs.readDirSync(dir).join(" "));
   fs.removeSync(dir, { recursive: true });

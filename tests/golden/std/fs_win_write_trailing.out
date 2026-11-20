@@ -6,5 +6,7 @@ appendFile newer// ok
 new made made too
 writeFile d/ EISDIR
 appendFile d/ EISDIR
+writeFile d\ EISDIR
+appendFile d/\ EISDIR
 writeFile missing/x/ ENOENT
 d f new newer
