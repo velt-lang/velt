@@ -24,17 +24,6 @@ import {
 } from "velt/lang/intrinsics";
 
 declare function velt_rt_str_slice(s: string, start: i64, end: i64): string;
-declare function velt_rt_str_split(s: string, sep: string): string[];
-declare function velt_rt_str_trim(s: string): string;
-declare function velt_rt_str_trim_start(s: string): string;
-declare function velt_rt_str_trim_end(s: string): string;
-declare function velt_rt_str_to_upper(s: string): string;
-declare function velt_rt_str_to_lower(s: string): string;
-declare function velt_rt_str_replace(s: string, from: string, to: string): string;
-declare function velt_rt_str_replace_all(s: string, from: string, to: string): string;
-declare function velt_rt_str_repeat(s: string, n: i64, out: string): bool;
-declare function velt_rt_str_pad_start(s: string, target: i64, fill: string): string;
-declare function velt_rt_str_pad_end(s: string, target: i64, fill: string): string;
 declare function velt_rt_str_from_char_code(code: i64): string;
 
 /**
@@ -143,17 +132,17 @@ extend string {
 
   /** Strips JS whitespace and line terminators. */
   trim(): string {
-    return velt_rt_str_trim(this);
+    return hookCall("string_trim", this);
   }
 
   /** Removes the leading white space and line terminator characters from a string. */
   trimStart(): string {
-    return velt_rt_str_trim_start(this);
+    return hookCall("string_trim_start", this);
   }
 
   /** Removes the trailing white space and line terminator characters from a string. */
   trimEnd(): string {
-    return velt_rt_str_trim_end(this);
+    return hookCall("string_trim_end", this);
   }
 
   /** Full Unicode case mapping, like JS ("ß".toUpperCase() is "SS"). */

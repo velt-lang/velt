@@ -1,0 +1,110 @@
+// `trim`, `trimStart` and `trimEnd` (std/lang/string/trim.velt, #2198): every character of
+// JavaScript's WhiteSpace and LineTerminator at both ends, characters that are not white space
+// (U+0085, U+200B, a lone surrogate), and bytes that only look like the end of one.
+// The expected output is Node's (this file runs there unchanged, with `main()` called). Lone
+// surrogates come from `String.fromCharCode`.
+
+const HI = String.fromCharCode(0xd83d);
+const LO = String.fromCharCode(0xde00);
+
+/** The UTF-16 code units of `s`, in hex. */
+function hex(s: string): string {
+  let out = "";
+  for (let i = 0; i < s.length; i++) {
+    out += s.charCodeAt(i).toString(16) + ".";
+  }
+  return out;
+}
+
+function one(s: string) {
+  console.log(s.length, hex(s));
+}
+
+function main() {
+  const ws = "\t\n\v\f\r                  　﻿";
+  one((ws + "a b" + ws).trim());
+  one((ws + "a b" + ws).trimStart());
+  one((ws + "a b" + ws).trimEnd());
+  one(ws.trim());
+  one("".trim());
+  one("\u0085x\u0085".trim());
+  one("​x​".trim());
+  one((" " + HI + " ").trim());
+  one((" " + LO + " ").trim());
+  one(" ".trimEnd());
+  one("Â ".trimEnd());
+  // Each white space character alone at both ends, and beside the nearest ones that are not.
+  const spaces = [
+    0x9,
+    0xa,
+    0xb,
+    0xc,
+    0xd,
+    0x20,
+    0xa0,
+    0x1680,
+    0x2000,
+    0x2001,
+    0x2002,
+    0x2003,
+    0x2004,
+    0x2005,
+    0x2006,
+    0x2007,
+    0x2008,
+    0x2009,
+    0x200a,
+    0x2028,
+    0x2029,
+    0x202f,
+    0x205f,
+    0x3000,
+    0xfeff,
+  ];
+  for (const c of spaces) {
+    const w = String.fromCharCode(c);
+    const s = w + "é" + w + "x" + w;
+    console.log(
+      c.toString(16),
+      hex(s.trim()),
+      hex(s.trimStart()),
+      hex(s.trimEnd()),
+      w.trim().length,
+    );
+  }
+  const others = [
+    0x8,
+    0xe,
+    0x1f,
+    0x21,
+    0x85,
+    0x9f,
+    0xa1,
+    0x167f,
+    0x1681,
+    0x180e,
+    0x1fff,
+    0x200b,
+    0x2027,
+    0x202a,
+    0x202e,
+    0x2030,
+    0x205e,
+    0x2060,
+    0x2fff,
+    0x3001,
+    0xfefe,
+    0xff00,
+    0xdc00,
+    0xd800,
+  ];
+  for (const c of others) {
+    const w = String.fromCharCode(c);
+    console.log(
+      c.toString(16),
+      (w + "x" + w).trim().length,
+      w.trimStart().length,
+      w.trimEnd().length,
+    );
+  }
+}
