@@ -23,31 +23,37 @@ const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
 /**
  * `path` without the separators it ends with, when what it names without them is there and
  * is no directory (`dir\file\`, `dir/file//`): Windows' own functions refuse such a path,
- * and Node's `stat`, `lstat`, `readFile`, `exists` and `rm` take it as the file. With
- * `orMissing`, also when nothing is there: Node's `writeFile` and `appendFile` create `new`
- * for `new\`. Any other path as it is: a directory keeps its separator, and a root (`C:\`,
- * `\`) is left alone. Costs a `GetFileAttributesW` only for a path that ends with a
- * separator.
+ * and Node's `stat`, `lstat`, `readFile`, `exists` and `rm` take it as the file. Any other
+ * path as it is: a directory keeps its separator, and a root (`C:\`, `\`) is left alone.
+ * Costs a `GetFileAttributesW` only for a path that ends with a separator.
  */
-export function asFile(path: string, orMissing: bool = false): string {
-  let end = path.length as i64;
-  while (end > 1 && isSep(path.charCodeAt(end - 1) as u16) && path.charCodeAt(end - 2) !== 58) {
-    end--;
-  }
-  if (end === (path.length as i64)) {
+export function asFile(path: string): string {
+  const stripped = withoutSeparators(path);
+  if (stripped.length === path.length) {
     return path;
   }
-  const stripped = path.slice(0, end);
   const w = winPath(stripped);
   if (w === null) {
     return path;
   }
   // SAFETY: `w` is NUL-terminated.
   const a = unsafe { GetFileAttributesW(w) };
-  if (a === INVALID_FILE_ATTRIBUTES) {
-    return orMissing ? stripped : path;
+  const file = a !== INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY) === 0;
+  return file ? stripped : path;
+}
+
+/**
+ * `path` without the separators it ends with (`dir\f\`, `dir/f//`, `dir\d\`), whatever it names:
+ * Node's `writeFile` and `appendFile` write the file `f`, make `new` for `new\`, and fail on a
+ * directory `d\` with EISDIR, which is what Windows gives for the path without them. A root
+ * (`C:\`, `\`) keeps its separator.
+ */
+export function withoutSeparators(path: string): string {
+  let end = path.length as i64;
+  while (end > 1 && isSep(path.charCodeAt(end - 1) as u16) && path.charCodeAt(end - 2) !== 58) {
+    end--;
   }
-  return (a & FILE_ATTRIBUTE_DIRECTORY) === 0 ? stripped : path;
+  return end === (path.length as i64) ? path : path.slice(0, end);
 }
 
 /** The length, with its NUL, from which a path needs the `\\?\` prefix. */
