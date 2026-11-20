@@ -64,8 +64,13 @@ export async function lock(fd: number, options?: LockOptions): Promise<void> {
   let pause = 1;
   while (!lockSync(fd, options)) {
     await later(pause);
-    pause = pause * 2 > 50 ? 50 : pause * 2;
+    pause = nextPause(pause);
   }
+}
+
+/** The pause after one of `ms` milliseconds: twice as long, up to 50 ms (std's tests read it). */
+export function nextPause(ms: number): number {
+  return ms * 2 > 50 ? 50 : ms * 2;
 }
 
 // Resolves after `ms` milliseconds. The timer keeps the program running, as a pending read

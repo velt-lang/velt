@@ -13,6 +13,8 @@ import {
 } from "velt/fs";
 import { platform, tmpdir } from "velt/os";
 import { describe, expect, it } from "velt/test";
+import { nextPause } from "velt/fs/fd/lock";
+import * as pool from "velt/lang/hooks/sched_blocking";
 
 const POSIX = platform() == "darwin" || platform() == "linux";
 
@@ -178,35 +180,45 @@ describe("file locks", () => {
     unlinkSync(path);
   });
 
-  it("a waiting lock takes no thread from reads running at the same time", async () => {
+  it("a waiting lock runs nothing on the blocking pool, and reads go on", async () => {
     if (!POSIX) {
       return;
     }
-    const path = file("reads");
+    const path = file("pool");
     const a = openSync(path, "r+");
     const b = openSync(path, "r+");
     const r = openSync(path, "r");
     expect(lockSync(a)).toBe(true);
+    // The pool counts the jobs it finished: a read is one, a wait for a lock must be none.
+    const before = pool.finished();
+    expect((await readAt(r, 4, 0)).length).toBe(4);
+    expect(pool.finished()).toBe(before + 1);
     const state = { got: false };
     const waiting = take(b, state);
-    // More positioned reads than a pool has threads, each awaited while the lock is wanted.
-    let read = 0;
-    for (let i = 0; i < 64; i++) {
-      const bytes = await readAt(r, 4, i % 12);
-      read += bytes.length as number;
-    }
-    expect(read).toBe(256);
+    expect((await readAt(r, 4, 4)).length).toBe(4);
     expect(state.got).toBe(false);
     unlockSync(a);
     await waiting;
     expect(state.got).toBe(true);
+    // The two reads, and nothing for the lock that waited and was taken.
+    expect(pool.finished()).toBe(before + 2);
     closeSync(a);
     closeSync(b);
     closeSync(r);
     unlinkSync(path);
   });
 
-  it("the waiter has the lock soon after the holder gives it back", async () => {
+  it("the pause between two tries doubles from 1 ms and stops at 50 ms", () => {
+    const pauses: number[] = [];
+    let pause = 1;
+    for (let i = 0; i < 9; i++) {
+      pauses.push(pause);
+      pause = nextPause(pause);
+    }
+    expect(pauses).toEqual([1, 2, 4, 8, 16, 32, 50, 50, 50]);
+  });
+
+  it("a waiter that has waited long has the lock soon after the holder gives it back", async () => {
     if (!POSIX) {
       return;
     }
@@ -216,15 +228,20 @@ describe("file locks", () => {
     expect(lockSync(a)).toBe(true);
     const state = { got: false };
     const waiting = take(b, state);
-    for (let i = 0; i < 5; i++) {
-      await Promise.resolve();
-    }
-    unlockSync(a);
-    // timing: the wait asks again after at most 50 ms; the bound is ten times that, for a
-    // loaded machine.
-    const from = Date.now();
+    // timing: the holder keeps the lock for 300 ms, a duration, so that the waiter's pause has
+    // reached its longest (1 + 2 + … + 32 ms, then 50 ms each). After the unlock the waiter
+    // asks again within one such pause; the bound is three of them, for a loaded machine.
+    const unlocked = { at: 0 };
+    setTimeout(
+      () => {
+        unlockSync(a);
+        unlocked.at = Date.now() as number;
+      },
+      300,
+    );
     await waiting;
-    expect(Date.now() - from < 500).toBe(true);
+    expect(unlocked.at > 0).toBe(true);
+    expect((Date.now() as number) - unlocked.at < 150).toBe(true);
     expect(state.got).toBe(true);
     closeSync(a);
     closeSync(b);
