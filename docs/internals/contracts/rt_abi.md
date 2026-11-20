@@ -355,12 +355,15 @@ the symbol has a description (`Symbol("")` has one, `Symbol()` has none). The co
 registry's records of module constants `const R = Symbol.for("r")` too (`key` 1, one per key, the
 description being the key, in the static string form), and lists them in a read-only table
 (`Intrinsic::SymbolRegistry`): their addresses, one per 8-byte slot, then a null slot. Records are
-never freed; one made at run time is one allocation. On wasm32 each table address takes the
+never freed. On wasm32 each table address takes the
 first half of its 8-byte slot.
 
 Symbols are std code (`std/lang/symbol/`); the runtime has none. `Symbol(desc)` at run time
-makes a record in `record.velt` (32 bytes from the C library, outside the leak counts; the
-description moved into its first three words, which keep that reference for good). The registry
+makes a record in `record.velt`, carved from a 4 KiB chunk of `#symbol-record`'s memory (one
+chunk at a time per thread): the C library's `calloc`, outside the leak counts, or in the browser
+the compiled code's allocator, which does not zero it, so `record.velt` writes all four words
+itself. The description moves into the record's first three words, which keep that reference
+for good. The registry
 (`registry.velt`) is a process-wide map from key to symbol behind a lock, which starts with the
 table's records and makes a record for a key seen first at run time (its description words those
 of the key the map keeps). std reads and writes records with `Intrinsic::SymbolAddress` (a

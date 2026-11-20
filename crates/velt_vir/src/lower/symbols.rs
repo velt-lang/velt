@@ -16,7 +16,8 @@ const REGISTERED_IDS: u128 = 1 << 40;
 /// The `key` of a registry record (`Symbol.for`; std/lang/symbol/registry.velt `KEY_REGISTERED`).
 const KEY_REGISTERED: u64 = 1;
 
-/// The bit of `key` set when the symbol has a description (velt_rt's `DESCRIBED`).
+/// The bit of `key` set when the symbol has a description (std/lang/symbol/registry.velt
+/// `DESCRIBED`).
 const DESCRIBED: u64 = 1 << 63;
 
 /// The record's `key` of the compiler's symbol `id`: 2 and up (the runtime uses 0 and 1), so no
