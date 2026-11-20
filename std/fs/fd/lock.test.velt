@@ -1,0 +1,191 @@
+// velt/fs (tests): byte-range locks inside one process. A lock is held by the open file, so two
+// descriptors of one file stand for two holders (the processes are in
+// crates/veltc/tests/fs_locks.rs).
+import {
+  closeSync,
+  lock,
+  lockSync,
+  openSync,
+  unlinkSync,
+  unlockSync,
+  writeFileSync,
+} from "velt/fs";
+import { platform, tmpdir } from "velt/os";
+import { describe, expect, it } from "velt/test";
+
+const POSIX = platform() == "darwin" || platform() == "linux";
+
+function file(name: string): string {
+  const path = `${tmpdir()}/velt-lock-${Date.now()}-${Math.floor(Math.random() * 1e9)}-${name}`;
+  writeFileSync(path, "0123456789abcdef");
+  return path;
+}
+
+describe("file locks", () => {
+  it("an exclusive lock keeps every other lock off its range, and only its range", () => {
+    if (!POSIX) {
+      return;
+    }
+    const path = file("exclusive");
+    const a = openSync(path, "r+");
+    const b = openSync(path, "r+");
+    expect(lockSync(a, { offset: 4, length: 4 })).toBe(true);
+    expect(lockSync(b, { offset: 4, length: 4 })).toBe(false);
+    expect(lockSync(b, { mode: "shared", offset: 7, length: 1 })).toBe(false);
+    expect(lockSync(b, { offset: 0, length: 8 })).toBe(false);
+    // Beside it, on both sides, and past the end of the file.
+    expect(lockSync(b, { offset: 0, length: 4 })).toBe(true);
+    expect(lockSync(b, { offset: 8, length: 4 })).toBe(true);
+    expect(lockSync(b, { offset: 1000000, length: 10 })).toBe(true);
+    closeSync(a);
+    closeSync(b);
+    unlinkSync(path);
+  });
+
+  it("shared locks share a range; an exclusive one waits for all of them", () => {
+    if (!POSIX) {
+      return;
+    }
+    const path = file("shared");
+    const a = openSync(path, "r+");
+    const b = openSync(path, "r+");
+    const c = openSync(path, "r+");
+    expect(lockSync(a, { mode: "shared", length: 8 })).toBe(true);
+    expect(lockSync(b, { mode: "shared", length: 8 })).toBe(true);
+    expect(lockSync(c, { length: 8 })).toBe(false);
+    unlockSync(a, { length: 8 });
+    expect(lockSync(c, { length: 8 })).toBe(false);
+    unlockSync(b, { length: 8 });
+    expect(lockSync(c, { length: 8 })).toBe(true);
+    closeSync(a);
+    closeSync(b);
+    closeSync(c);
+    unlinkSync(path);
+  });
+
+  it("the whole file by default, with what is written past its end", () => {
+    if (!POSIX) {
+      return;
+    }
+    const path = file("whole");
+    const a = openSync(path, "r+");
+    const b = openSync(path, "r+");
+    expect(lockSync(a)).toBe(true);
+    expect(lockSync(b, { offset: 0, length: 1 })).toBe(false);
+    expect(lockSync(b, { offset: 5000000, length: 1 })).toBe(false);
+    unlockSync(a);
+    expect(lockSync(b)).toBe(true);
+    closeSync(a);
+    closeSync(b);
+    unlinkSync(path);
+  });
+
+  it("a holder changes its mode, and gives back a part of its range", () => {
+    if (!POSIX) {
+      return;
+    }
+    const path = file("change");
+    const a = openSync(path, "r+");
+    const b = openSync(path, "r+");
+    expect(lockSync(a, { mode: "shared", length: 8 })).toBe(true);
+    // Shared to exclusive on its own range, then back.
+    expect(lockSync(a, { length: 8 })).toBe(true);
+    expect(lockSync(b, { mode: "shared", length: 8 })).toBe(false);
+    expect(lockSync(a, { mode: "shared", length: 8 })).toBe(true);
+    expect(lockSync(b, { mode: "shared", length: 8 })).toBe(true);
+    unlockSync(b, { length: 8 });
+    // The middle of a range given back: the two ends stay.
+    expect(lockSync(a, { length: 8 })).toBe(true);
+    unlockSync(a, { offset: 2, length: 4 });
+    expect(lockSync(b, { offset: 2, length: 4 })).toBe(true);
+    expect(lockSync(b, { offset: 0, length: 2 })).toBe(false);
+    expect(lockSync(b, { offset: 6, length: 2 })).toBe(false);
+    closeSync(a);
+    closeSync(b);
+    unlinkSync(path);
+  });
+
+  it("closing a descriptor gives back its locks, and no other descriptor's", () => {
+    if (!POSIX) {
+      return;
+    }
+    const path = file("close");
+    const a = openSync(path, "r+");
+    const b = openSync(path, "r+");
+    const other = openSync(path, "r+");
+    expect(lockSync(a)).toBe(true);
+    // Another descriptor of the file opened and closed: `a` still holds its lock.
+    closeSync(other);
+    expect(lockSync(b)).toBe(false);
+    closeSync(a);
+    expect(lockSync(b)).toBe(true);
+    closeSync(b);
+    unlinkSync(path);
+  });
+
+  it("unlocking what is not held does nothing", () => {
+    if (!POSIX) {
+      return;
+    }
+    const path = file("none");
+    const a = openSync(path, "r+");
+    unlockSync(a);
+    unlockSync(a, { offset: 3, length: 2 });
+    expect(lockSync(a)).toBe(true);
+    closeSync(a);
+    unlinkSync(path);
+  });
+
+  it("refuses a closed descriptor and a range that is not whole numbers", () => {
+    if (!POSIX) {
+      return;
+    }
+    const path = file("errors");
+    const a = openSync(path, "r+");
+    closeSync(a);
+    expect(() => lockSync(a)).toThrow("EBADF");
+    expect(() => unlockSync(a)).toThrow("EBADF");
+    const b = openSync(path, "r+");
+    expect(() => lockSync(b, { offset: -1 })).toThrow("out of range");
+    expect(() => lockSync(b, { length: 1.5 })).toThrow("out of range");
+    expect(() => lockSync(-1)).toThrow("out of range");
+    closeSync(b);
+    unlinkSync(path);
+  });
+
+  it("lock waits for the holder, and other tasks run meanwhile", async () => {
+    if (!POSIX) {
+      return;
+    }
+    const path = file("wait");
+    const a = openSync(path, "r+");
+    const b = openSync(path, "r+");
+    expect(lockSync(a)).toBe(true);
+    const state = { got: false };
+    const waiting = take(b, state);
+    // The waiter has asked and been refused; this task goes on running.
+    for (let i = 0; i < 5; i++) {
+      await Promise.resolve();
+    }
+    expect(state.got).toBe(false);
+    unlockSync(a);
+    await waiting;
+    expect(state.got).toBe(true);
+    expect(lockSync(a)).toBe(false);
+    closeSync(a);
+    closeSync(b);
+    unlinkSync(path);
+  });
+
+  it("is ENOSYS where the descriptors are not there yet", () => {
+    if (POSIX) {
+      return;
+    }
+    expect(() => lockSync(3)).toThrow("ENOSYS");
+  });
+});
+
+async function take(fd: number, state: { got: bool }): Promise<void> {
+  await lock(fd);
+  state.got = true;
+}
