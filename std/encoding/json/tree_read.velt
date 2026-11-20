@@ -65,7 +65,9 @@ export function treeTapeKind(t: JsonTree): u32 {
   return o.tape!.kind(o.node) == T_ARRAY ? TREE_ARRAY : TREE_OBJECT;
 }
 
-// A tree as a tape of its text (frozen: it crosses to another task without a copy).
+// A tree as a tape of its text (frozen: it crosses to another task without a copy). Out of line, as
+// `treeOfTape`: rare, and large.
+@noInline
 export function frozenTree(tree: JsonTree): JsonTree {
   const r = parseTape(treeStringify(tree), 0);
   if (r instanceof TapeError) {
