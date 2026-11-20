@@ -176,7 +176,12 @@ export function fcntlLock(
   len: i64,
   at: FlockLayout,
 ): i32 {
-  if (at.size > 32 || at.kind + 2 > at.size || at.start + 8 > at.size || at.len + 8 > at.size) {
+  const inside =
+    at.kind + 2 <= at.size &&
+    at.whence + 2 <= at.size &&
+    at.start + 8 <= at.size &&
+    at.len + 8 <= at.size;
+  if (at.size > 32 || !inside) {
     panic("fcntl: a field's offset is past the end of struct flock");
   }
   // SAFETY: malloc's result is checked before use and freed once below.
