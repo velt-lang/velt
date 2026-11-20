@@ -303,3 +303,10 @@ pub(super) fn generic_param_args(cx: &Ctx, callee: &Callee, args: &[Expr]) -> Ve
         )
         .collect()
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    KeptFns {
+        on, forced, parents, closure_free,
+    }
+}

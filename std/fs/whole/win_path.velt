@@ -16,6 +16,46 @@ declare c("c") function GetFullPathNameW(
   out: u16[],
   file: Out<Ptr<u16> | null>,
 ): u32;
+declare c("c") function GetFileAttributesW(name: readonly u16[]): u32;
+
+const INVALID_FILE_ATTRIBUTES: u32 = 0xffffffff;
+const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+
+/**
+ * `path` without the separators it ends with, when what it names without them is there and
+ * is no directory (`dir\file\`, `dir/file//`): Windows' own functions refuse such a path,
+ * and Node's `stat`, `lstat`, `readFile`, `exists` and `rm` take it as the file. Any other
+ * path as it is: a directory keeps its separator, and a root (`C:\`, `\`) is left alone.
+ * Costs a `GetFileAttributesW` only for a path that ends with a separator.
+ */
+export function asFile(path: string): string {
+  const stripped = withoutSeparators(path);
+  if (stripped.length === path.length) {
+    return path;
+  }
+  const w = winPath(stripped);
+  if (w === null) {
+    return path;
+  }
+  // SAFETY: `w` is NUL-terminated.
+  const a = unsafe { GetFileAttributesW(w) };
+  const file = a !== INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY) === 0;
+  return file ? stripped : path;
+}
+
+/**
+ * `path` without the separators it ends with (`dir\f\`, `dir/f//`, `dir\d\`), whatever it names:
+ * Node's `writeFile` and `appendFile` write the file `f`, make `new` for `new\`, and fail on a
+ * directory `d\` with EISDIR, which is what Windows gives for the path without them. A root
+ * (`C:\`, `\`) keeps its separator.
+ */
+export function withoutSeparators(path: string): string {
+  let end = path.length as i64;
+  while (end > 1 && isSep(path.charCodeAt(end - 1) as u16) && path.charCodeAt(end - 2) !== 58) {
+    end--;
+  }
+  return end === (path.length as i64) ? path : path.slice(0, end);
+}
 
 /** The length, with its NUL, from which a path needs the `\\?\` prefix. */
 const LEGACY_MAX_PATH: usize = 248;

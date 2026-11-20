@@ -65,7 +65,7 @@ pub use clang_search::{
     available, clang_version, describe_clang, find_clang, no_clang_compiles, rejected_clang,
 };
 pub use llc::{find_wasm_tools, set_zig, LlvmTools, ZigSource};
-pub use target::is_wasm;
+pub use target::{calls_outline_atomics, is_wasm};
 /// Options for [`emit_object`]: the same struct as the Cranelift backend's, so the driver can
 /// pass one value to either backend.
 pub use velt_codegen_cl::CodegenOptions;

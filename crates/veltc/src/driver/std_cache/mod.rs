@@ -29,12 +29,14 @@ mod prebuilt;
 mod prebuilt_object;
 mod select;
 mod serve;
+mod shipped;
 pub(super) mod stage;
 mod statics;
 mod turn;
 
 pub(super) use prebuilt::{found as prebuilt_found, link as prebuilt_link};
 pub(crate) use prebuilt::{warm as prebuilt_warm, Finder, Found};
+pub(crate) use shipped::ship as prebuilt_ship;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;

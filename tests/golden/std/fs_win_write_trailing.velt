@@ -1,0 +1,37 @@
+// requires: windows
+// Writing a path that ends in separators (`dir\f\`, `dir/f//`), as Node does on Windows: the
+// file is written, or made when missing; a directory named so is still the directory, and a
+// missing parent is still missing. The expected output is Node's on Windows (v22.22.0).
+import * as fs from "velt/fs";
+import { IoError } from "velt/io";
+
+function attempt(what: string, f: () => void) {
+  try {
+    f();
+    console.log(what, "ok");
+  } catch (e) {
+    console.log(what, (e as IoError).code);
+  }
+}
+
+function main() {
+  const dir = "velt_fs_win_write_trailing_tmp";
+  if (fs.existsSync(dir)) {
+    fs.removeSync(dir, { recursive: true });
+  }
+  fs.mkdirSync(`${dir}/d`, { recursive: true });
+  fs.writeFileSync(`${dir}/f`, "one");
+  attempt("writeFile f/", () => fs.writeFileSync(`${dir}/f/`, "two"));
+  attempt("appendFile f\\", () => fs.appendFileSync(`${dir}\\f\\`, "+three"));
+  console.log("f", fs.readFileSync(`${dir}/f`));
+  attempt("writeFile new/", () => fs.writeFileSync(`${dir}/new/`, "made"));
+  attempt("appendFile newer//", () => fs.appendFileSync(`${dir}/newer//`, "made too"));
+  console.log("new", fs.readFileSync(`${dir}/new`), fs.readFileSync(`${dir}/newer`));
+  attempt("writeFile d/", () => fs.writeFileSync(`${dir}/d/`, "x"));
+  attempt("appendFile d/", () => fs.appendFileSync(`${dir}/d/`, "x"));
+  attempt("writeFile d\\", () => fs.writeFileSync(`${dir}\\d\\`, "x"));
+  attempt("appendFile d/\\", () => fs.appendFileSync(`${dir}/d/\\`, "x"));
+  attempt("writeFile missing/x/", () => fs.writeFileSync(`${dir}/missing/x/`, "x"));
+  console.log(fs.readDirSync(dir).join(" "));
+  fs.removeSync(dir, { recursive: true });
+}

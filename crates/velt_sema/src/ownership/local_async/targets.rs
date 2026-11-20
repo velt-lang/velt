@@ -527,3 +527,19 @@ fn find_values(
     }
     Some(out)
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    Literals {
+        fields, spread, from_any, values, made, to_any, outside, stores_by_key, targets,
+        subclasses, by_shape, index, made_as, held, calls, dispatch, through_values, through_any,
+        store_sites,
+    }
+}
+crate::units::codec::enums! {
+    Read {
+        0 => Typed,
+        1 => Untyped,
+        2 => FromAny,
+    }
+}

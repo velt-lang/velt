@@ -522,7 +522,8 @@ impl KeptCheck {
                 .collect();
             let from = check_again(&mut cx, &ids, |cx, def| {
                 if let Some(&(_, decl)) = decls.iter().find(|(d, _)| *d == def) {
-                    cx.fn_info_mut(def).source = Some(crate::defs::FnSource::Decl(decl));
+                    cx.fn_info_mut(def)
+                        .set_source(Some(crate::defs::FnSource::Decl(decl)));
                 }
                 Ok(())
             })?;

@@ -14,6 +14,8 @@
 //! [`Portable`] type, classes and interfaces (`unknown` is one) by `DefId` and declaration span
 //! (collected before any body is checked, so the same in every check of one program).
 
+mod codec;
+
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::Span;

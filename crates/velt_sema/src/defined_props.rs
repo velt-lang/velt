@@ -576,3 +576,13 @@ fn computed_key(k: &ast::Ident) -> ast::Ident {
         span: k.span,
     }
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    Brands {
+        sites, direct,
+    }
+    Brand {
+        module, key, enumerable, writable, configurable,
+    }
+}

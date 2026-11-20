@@ -31,6 +31,8 @@
 //! type. A construct present demands the integer hooks, all of them
 //! ([`constructs::demanded_for`]), and they are live.
 
+mod codec;
+
 use rustc_hash::{FxHashMap, FxHashSet};
 use velt_common::std_hooks::{hook_index, Construct, ConstructSet, HookSet, HOOKS};
 
