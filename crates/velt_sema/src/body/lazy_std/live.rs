@@ -229,7 +229,7 @@ pub(crate) fn live_defs(cx: &mut Ctx, unchecked: &FxHashSet<DefId>) -> Option<Fx
 
 /// Work out what is live since the last step, checking what enters the set, and demand and check
 /// the hooks its constructs need, and what they reach. Gives the operands of the text conversions
-/// that count for the float hooks ([`note_program_code`]).
+/// that count for the float hooks ([`constructs::note_program_code`]).
 pub(super) fn step(cx: &mut Ctx) -> Vec<TyId> {
     loop {
         walk_set(cx);
@@ -308,7 +308,7 @@ fn walk_set(cx: &mut Ctx) {
             }
             super::hook_stubs::demand_hook_calls(cx, d);
             if program_code(cx, d) {
-                note_program_code(cx, &w, start);
+                constructs::note_program_code(cx, &w, start);
             }
         }
         evaluate(cx, &w);
@@ -342,28 +342,6 @@ fn program_code(cx: &Ctx, d: DefId) -> bool {
         DefInfo::Fn(f) => !cx.modules[f.module].is_std,
         DefInfo::Global(g) => !cx.modules[g.module].is_std,
         _ => false,
-    }
-}
-
-/// What one definition of a non-std module, walked into `w` from `start` on, tells the hooks that
-/// wait for what the program does. std's own code doesn't count here: it puts its records into
-/// `any` values in most programs, and where lowering builds its text conversions and a float hook
-/// stayed unchecked, it calls the runtime. The integer hooks, which have no such fallback, count
-/// the constructs of live code, std's included.
-fn note_program_code(
-    cx: &mut Ctx,
-    w: &Walk,
-    (types, conversions, into_any, first_text): (usize, usize, usize, usize),
-) {
-    cx.lazy.live.texts.extend(&w.texts[first_text..]);
-    constructs::note_program_dyn(cx, &w.into_any[into_any..]);
-    if !cx.lazy.record_hooks {
-        super::record_conversions::note_user_conversions(
-            cx,
-            &w.types[types..],
-            &w.conversions[conversions..],
-            &w.into_any[into_any..],
-        );
     }
 }
 
