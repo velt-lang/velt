@@ -446,7 +446,14 @@ fn report_shared(cx: &mut Ctx, span: Span, name: &str, local: bool, ty: TyId) {
         }
         false => format!(", or pass a copy: `{name}.clone()`"),
     };
-    cx.error(Diagnostic::error(msg, span).with_note(format!(
+    let mut d = Diagnostic::error(msg, span).with_note(format!(
         "use it through the `shared` value from now on (`m.with((v) => …)`){copy}"
-    )));
+    ));
+    if !local {
+        // A field or element can hand its value over without a copy once nothing needs it there.
+        d = d.with_note(format!(
+            "or, where nothing needs it there any more, take it out without a copy: `const v = {name}; {name} = …;` (a new value), then `shared(v)`"
+        ));
+    }
+    cx.error(d);
 }
