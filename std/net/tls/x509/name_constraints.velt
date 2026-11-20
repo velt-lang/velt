@@ -157,6 +157,8 @@ export function checkNameConstraints(
   if (r.peek(constraints.end) == 0xa1) {
     excluded = r.next(0xa1, constraints.end);
   }
+  // Nothing else: a second list, another field or stray bytes are malformed, as in webpki.
+  r.done(constraints.end);
   for (const cert of certs) {
     const san = cert.subjectAltName;
     if (san.tag != 0) {

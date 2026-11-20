@@ -235,6 +235,23 @@ describe("checkNameConstraints", () => {
     expect(check(ca(dns("example.com"), ""), leaf)).toBe(99);
   });
 
+  it("refuses anything after the two lists of subtrees", () => {
+    const leaf = withNames(dns("www.example.com"));
+    const permitted = el("a0", subtrees([dns("example.com")]));
+    const excluded = el("a1", subtrees([dns("bad.example.com")]));
+    const constrained = (body: string): Certificate => partsWith(
+      ext(NC, "", el("30", body)),
+    ).parsed();
+    expect(check(constrained(permitted + excluded), leaf)).toBe(CONFORMS);
+    // A list twice, the lists the other way round, another field, and stray bytes.
+    expect(check(constrained(permitted + permitted), leaf)).toBe(99);
+    expect(check(constrained(excluded + excluded), leaf)).toBe(99);
+    expect(check(constrained(excluded + permitted), leaf)).toBe(99);
+    expect(check(constrained(permitted + el("a2", "")), leaf)).toBe(99);
+    expect(check(constrained(permitted + excluded + "0500"), leaf)).toBe(99);
+    expect(check(constrained(el("a2", subtrees([dns("example.com")]))), leaf)).toBe(99);
+  });
+
   it("stops when the budget of comparisons is used up", () => {
     const issuer = ca(subtrees([dns("example.org"), dns("example.com")]), "");
     const leaf = withNames(dns("www.example.com"));
