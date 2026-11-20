@@ -154,3 +154,37 @@ fn an_optional_field_read_with_bang_is_read_in_place() {
         "`opt` counts the field before reading its count:\n{v}"
     );
 }
+
+#[test]
+fn a_weak_target_is_never_unique() {
+    // A `WeakRef` sets a flag in its target's count word (`RC_WEAK`): the whole word is compared,
+    // so the target is not unique even with one strong reference. The same class without one is.
+    let (out, _) = run("class C { n: i64 = 0; }
+         function main() {
+           const a = new C();
+           const b = new C();
+           const w = new WeakRef(b);
+           console.log(isUnique(a), isUnique(b), w.deref() != undefined);
+         }");
+    assert_eq!(out, "true false true\n");
+}
+
+#[test]
+fn a_borrow_answers_for_the_reference_it_borrows() {
+    // A borrowed parameter and a captured variable reach the object through the one reference
+    // the caller's variable holds: `true` there means a change in place shows in that variable,
+    // as in JavaScript. A second reference makes it `false`.
+    let (out, _) = run("class C { n: i64 = 0; }
+         function param(p: C): bool { return isUnique(p); }
+         function main() {
+           const a = new C();
+           console.log(param(a));
+           const two: C[] = [a];
+           console.log(param(a));
+           two.pop();
+           const c = new C();
+           const f = (): bool => isUnique(c);
+           console.log(f(), c.n);
+         }");
+    assert_eq!(out, "true\nfalse\ntrue 0\n");
+}
