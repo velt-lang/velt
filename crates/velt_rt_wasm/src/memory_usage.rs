@@ -14,13 +14,13 @@ fn linear_memory() -> i64 {
     }
 }
 
-/// See velt_rt's `memory_usage`: the linear memory size.
+/// `process.memoryUsage()` on WebAssembly (std/process/memory_wasm.velt): the linear memory size.
 #[no_mangle]
 pub extern "C" fn velt_rt_memory_rss() -> i64 {
     linear_memory()
 }
 
-/// See velt_rt's `memory_usage`: the linear memory size.
+/// `process.memoryUsage()` on WebAssembly (std/process/memory_wasm.velt): the linear memory size.
 #[no_mangle]
 pub extern "C" fn velt_rt_memory_heap() -> i64 {
     linear_memory()

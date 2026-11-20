@@ -43,7 +43,6 @@ pub mod io;
 pub mod json;
 pub mod math;
 pub mod mem;
-pub mod memory_usage;
 pub mod mutex;
 pub mod native;
 pub mod net;

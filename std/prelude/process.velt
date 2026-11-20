@@ -4,21 +4,22 @@
 // to calls are hooks (std/lang/hooks/process.velt); the rest of Node's `process` is in
 // `velt/process` (https://veltlang.com/docs/std/process/).
 
+import { heapBytes, residentBytes } from "#memory-sys";
 import { processEnv } from "velt/lang/hooks/process";
 
-declare function velt_rt_memory_rss(): i64;
-declare function velt_rt_memory_heap(): i64;
 declare function velt_rt_write_str(stream: u32, s: string);
 
 /**
  * What `process.memoryUsage()` returns, in bytes (Node's field names): `rss` is the resident set
- * size the OS reports, `heapUsed` the memory the allocator has committed for the heap.
+ * size the OS reports, `heapUsed` the memory the process itself holds as the OS counts it (the
+ * resident pages no file backs on Linux, the physical footprint on macOS, the private committed
+ * bytes on Windows; the linear memory's size on WebAssembly).
  */
 export type MemoryUsage = { rss: i64; heapUsed: i64 };
 
 /** `process.memoryUsage()`: the process's memory use in bytes, now. */
 export function processMemoryUsage(): MemoryUsage {
-  return { rss: velt_rt_memory_rss(), heapUsed: velt_rt_memory_heap() };
+  return { rss: residentBytes(), heapUsed: heapBytes() };
 }
 
 /**
