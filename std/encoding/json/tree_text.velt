@@ -1,6 +1,6 @@
 // velt/encoding/json (internal): a tree (tree.velt) from a tape value, and a tree's JSON text.
-// Both walk iteratively, with the open containers on a stack of their own, so a value nested as
-// deeply as the parser allowed never runs out of native stack.
+// The writer walks iteratively, with the open containers on a stack of its own, so a tree nested
+// as deeply as it can be never runs out of native stack.
 
 import {
   JsonTree,
@@ -10,6 +10,7 @@ import {
   TREE_NUMBER,
   TREE_OBJECT,
   TREE_STRING,
+  TREE_TAPE,
 } from "velt/encoding/json/tree";
 import {
   T_ARRAY,
@@ -21,60 +22,57 @@ import {
   T_TRUE,
 } from "velt/encoding/json/tape";
 import { TapeRef } from "velt/encoding/json/tape_ref";
-import { writeString } from "velt/encoding/json/writer";
-import { writeF64 } from "velt/encoding/json/writer_number";
+import { copyRun, nextEscape, writeString } from "velt/encoding/json/writer";
+import { OUT_CAP, OUT_ROOM, putLiteral, putNumber } from "velt/encoding/json/tape_write";
+import {
+  arraySetLen,
+  arrayWithCapacity,
+  noInline,
+  strByteLen,
+  strLoadPartialU8x16,
+} from "velt/lang/intrinsics";
 
-declare function velt_rt_strbuf_push_str(buf: string, s: string);
+declare function velt_rt_strbuf_push_u8s(out: string, bytes: u8[], len: u64, units: u64);
+declare function velt_simd_u8x16_splat(x: u8): u8x16;
+declare function velt_simd_u8x16_eq(a: u8x16, b: u8x16): mask8x16;
+declare function velt_simd_u8x16_lt(a: u8x16, b: u8x16): mask8x16;
+declare function velt_simd_u8x16_ge(a: u8x16, b: u8x16): mask8x16;
+declare function velt_simd_mask8x16_or(a: mask8x16, b: mask8x16): mask8x16;
+declare function velt_simd_mask8x16_bitmask(m: mask8x16): u64;
+declare function velt_simd_u8x16_store(v: u8x16, buf: u8[], at: u64);
 declare function velt_rt_strbuf_new(cap: u64, out: string);
 declare function velt_rt_strbuf_finish(buf: string, out: string);
 
-/** A tree of value `node` of tape `t` (what an edit of a parsed value starts from). */
+/**
+ * A tree of value `node` of tape `t` (what an edit of a parsed value starts from): its own node,
+ * with its scalar members as nodes and its containers left on the tape (`TREE_TAPE`), so only
+ * what an edit changes is made, and the tree is one level high.
+ */
 export function treeOfTape(t: TapeRef, node: u32): JsonTree {
   const root = treeNode(t, node);
-  // The containers being filled: their tape values and trees, and the next member's index.
-  const values: u32[] = [];
-  const trees: JsonTree[] = [];
-  const next: i64[] = [];
-  if (root.kind == TREE_ARRAY || root.kind == TREE_OBJECT) {
-    values.push(node);
-    trees.push(root);
-    next.push(0);
-  }
-  while (values.length > 0) {
-    const top = values.length - 1;
-    const v = values[top];
-    const i = next[top];
-    if (i >= t.count(v)) {
-      values.pop();
-      trees.pop();
-      next.pop();
-      continue;
+  if (root.kind == TREE_ARRAY) {
+    const n = t.count(node);
+    for (let i: i64 = 0; i < n; i++) {
+      const c = treeMember(t, t.child(node, i) as u32);
+      root.items!.push(c);
     }
-    next[top] = i + 1;
-    const parent = trees[top];
-    let child: u32 = 0;
-    if (parent.kind == TREE_ARRAY) {
-      child = t.child(v, i) as u32;
-      const c = treeNode(t, child);
-      parent.items.push(c);
-      openIfContainer(c, child, values, trees, next);
-    } else {
-      const k = t.member(v, i) as u32;
-      child = k + 1;
-      const c = treeNode(t, child);
-      parent.obj!.insert(t.text(k), c);
-      openIfContainer(c, child, values, trees, next);
+    root.height = 1;
+  } else if (root.kind == TREE_OBJECT) {
+    const n = t.count(node);
+    for (let i: i64 = 0; i < n; i++) {
+      const k = t.member(node, i) as u32;
+      const c = treeMember(t, k + 1);
+      root.obj!.insert(t.text(k), c);
     }
+    root.height = 1;
   }
   return root;
 }
 
-function openIfContainer(c: JsonTree, v: u32, values: u32[], trees: JsonTree[], next: i64[]): void {
-  if (c.kind == TREE_ARRAY || c.kind == TREE_OBJECT) {
-    values.push(v);
-    trees.push(c);
-    next.push(0);
-  }
+/** Tape value `v` as a tree's member: a scalar as a node, a container left on the tape. */
+export function treeMember(t: TapeRef, v: u32): JsonTree {
+  const k = t.kind(v);
+  return k == T_ARRAY || k == T_OBJECT ? JsonTree.ofTape(t, v) : treeNode(t, v);
 }
 
 // The node of tape value `v` (a container comes empty).
@@ -93,12 +91,13 @@ function treeNode(t: TapeRef, v: u32): JsonTree {
     return JsonTree.string(t.text(v));
   }
   if (k == T_ARRAY) {
-    return new JsonTree(TREE_ARRAY);
+    return JsonTree.array();
   }
   return JsonTree.object();
 }
 
 /** `JSON.stringify` of a tree. */
+@noInline
 export function treeStringify(tree: JsonTree): string {
   let buf = "";
   velt_rt_strbuf_new(64, buf);
@@ -110,76 +109,160 @@ export function treeStringify(tree: JsonTree): string {
 
 /**
  * Appends a tree as `JSON.stringify` writes it to the builder `out` (members in order, numbers
- * JS-formatted, non-finite ones `null`).
+ * JS-formatted, non-finite ones `null`). The text is gathered in a byte array handed to the
+ * builder in chunks, as the tape's writer does (tape_write.velt): punctuation, numbers and
+ * strings without escapes cost stores, not a call each.
  */
+@noInline
 export function writeTree(out: string, tree: JsonTree): void {
+  const w = new TreeWriter();
   // The containers being written, and the next member (an object's: its raw position).
   const open: JsonTree[] = [];
   const next: usize[] = [];
   let pending: JsonTree | null = tree;
   while (true) {
+    if (w.n > OUT_CAP) {
+      w.flush(out);
+    }
     const v = pending;
     if (v != null) {
       pending = null;
       if (v.kind == TREE_ARRAY) {
-        velt_rt_strbuf_push_str(out, "[");
+        w.byte(91);
         open.push(v);
         next.push(0);
       } else if (v.kind == TREE_OBJECT) {
-        velt_rt_strbuf_push_str(out, "{");
+        w.byte(123);
         open.push(v);
         next.push(v.obj!.nextRaw(0));
+      } else if (v.kind == TREE_STRING) {
+        w.text(out, v.text);
+      } else if (v.kind == TREE_TAPE) {
+        w.flush(out);
+        writeTapeChild(out, v);
+        w.last = 0;
+      } else if (v.kind == TREE_NUMBER) {
+        w.n = putNumber(w.buf, w.n, v.num);
       } else {
-        writeScalar(out, v);
+        w.n = putLiteral(w.buf, w.n, v.kind == TREE_NULL ? T_NULL : v.num != 0 ? T_TRUE : T_FALSE);
       }
+      continue;
     }
     if (open.length == 0) {
+      w.flush(out);
       return;
     }
     const top = open.length - 1;
     const c = open[top];
     const i = next[top];
     if (c.kind == TREE_ARRAY) {
-      if (i >= c.items.length) {
-        velt_rt_strbuf_push_str(out, "]");
+      if (i >= c.items!.length) {
+        w.byte(93);
         open.pop();
         next.pop();
         continue;
       }
       if (i > 0) {
-        velt_rt_strbuf_push_str(out, ",");
+        w.byte(44);
       }
       next[top] = i + 1;
-      pending = c.items[i];
+      pending = c.items![i];
       continue;
     }
     const o = c.obj!;
     if (i >= o.rawEnd()) {
-      velt_rt_strbuf_push_str(out, "}");
+      w.byte(125);
       open.pop();
       next.pop();
       continue;
     }
-    if (i > o.nextRaw(0)) {
-      velt_rt_strbuf_push_str(out, ",");
+    // A member after the first gets its comma (the first live raw position has none).
+    if (w.last != 123) {
+      w.byte(44);
     }
     next[top] = o.nextRaw(i + 1);
-    const key = o.keyRaw(i);
-    writeString(out, key);
-    velt_rt_strbuf_push_str(out, ":");
+    w.text(out, o.keyRaw(i));
+    w.byte(58);
     pending = o.valueRaw(i);
   }
 }
 
-// A null, boolean, number or string.
-function writeScalar(out: string, v: JsonTree): void {
-  if (v.kind == TREE_NULL) {
-    velt_rt_strbuf_push_str(out, "null");
-  } else if (v.kind == TREE_BOOL) {
-    velt_rt_strbuf_push_str(out, v.num != 0 ? "true" : "false");
-  } else if (v.kind == TREE_NUMBER) {
-    writeF64(out, v.num);
-  } else {
-    writeString(out, v.text);
+// `writeTree`'s byte buffer: `n` bytes of `buf` written, `extra` of them beyond their UTF-16
+// units (non-ASCII text copied in), and the last byte written (to tell an object's first member).
+class TreeWriter {
+  buf: u8[];
+  n: usize = 0;
+  extra: u64 = 0;
+  last: u8 = 0;
+
+  constructor() {
+    const buf: u8[] = arrayWithCapacity(OUT_CAP + OUT_ROOM);
+    arraySetLen(buf, OUT_CAP + OUT_ROOM);
+    this.buf = buf;
   }
+
+  byte(b: u8): void {
+    this.buf[this.n] = b;
+    this.n++;
+    this.last = b;
+  }
+
+  // Hands the bytes so far to the builder `out`.
+  flush(out: string): void {
+    if (this.n > 0) {
+      const len = this.n as u64;
+      const units = len - this.extra;
+      velt_rt_strbuf_push_u8s(out, this.buf, len, units);
+      this.n = 0;
+      this.extra = 0;
+    }
+  }
+
+  // `s` quoted: copied into the buffer when it needs no escape and fits, else written by the
+  // writer's escaping code after a flush.
+  text(out: string, s: string): void {
+    const len = strByteLen(s);
+    this.last = 34;
+    if (len <= 16 && this.n + 18 <= OUT_CAP + OUT_ROOM) {
+      // A short string in one vector: copied whole when no byte needs a look (an escape, or
+      // non-ASCII, whose units differ from its bytes), the lanes past its end masked off.
+      const v = strLoadPartialU8x16(s, 0, len as u64);
+      const look = velt_simd_mask8x16_or(
+        velt_simd_mask8x16_or(
+          velt_simd_u8x16_lt(v, velt_simd_u8x16_splat(32)),
+          velt_simd_u8x16_ge(v, velt_simd_u8x16_splat(0x80)),
+        ),
+        velt_simd_mask8x16_or(
+          velt_simd_u8x16_eq(v, velt_simd_u8x16_splat(34)),
+          velt_simd_u8x16_eq(v, velt_simd_u8x16_splat(92)),
+        ),
+      );
+      if ((velt_simd_mask8x16_bitmask(look) & ((1 << (len as u64)) - 1)) == 0) {
+        this.buf[this.n] = 34;
+        velt_simd_u8x16_store(v, this.buf, (this.n + 1) as u64);
+        this.buf[this.n + 1 + len] = 34;
+        this.n += len + 2;
+        return;
+      }
+    }
+    if (this.n + len + 18 <= OUT_CAP + OUT_ROOM && nextEscape(s, 0, len) == len) {
+      this.buf[this.n] = 34;
+      const at = copyRun(this.buf, this.n + 1, s, 0, len, len);
+      this.buf[at] = 34;
+      this.n = at + 1;
+      this.extra += (len as u64) - (s.length as u64);
+      return;
+    }
+    this.flush(out);
+    writeString(out, s);
+  }
+}
+
+// A child left on a tape (`TREE_TAPE`), written by the tape's writer (out of line: rare, and the
+// tape's writer is large).
+@noInline
+function writeTapeChild(out: string, v: JsonTree): void {
+  const o = v.obj!;
+  const node = o.node;
+  o.tape!.write(out, node);
 }

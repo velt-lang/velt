@@ -741,8 +741,11 @@ name in it. A deferred type lowering meets unreduced under such a value is a dia
   `BUFFERED` on a value it may trace) makes it `false`; a reference type the program never counts
   is `true` (each value has one owner); a lock-set type (readers of an `RwLock` share its counts)
   is `false` without reading a count; any other kind (`shared<T>`, strings, functions,
-  interface values, plain values) is `false`. A wrong `true` would be a lost write or a race, so
-  every doubtful case answers `false`, which only costs a copy.
+  interface values, plain values) is `false`. A borrow (a parameter, a captured variable) is the
+  reference it borrows: `true` there means a change in place shows in the lender's variable, as
+  in JavaScript; a function that must leave its caller's value unchanged takes it owned, or
+  copies it. A wrong `true` would be a lost write or a race, so every doubtful case answers
+  `false`, which only costs a copy.
   `Intrinsic::Truthy(x)` (compiler-internal, `x` a place of a type parameter's type,
   borrowed): a `bool`, JS truthiness of `x` (`!x`, `if (x)` in generic code), lowered per
   instantiation to the test sema writes for that type (truthiness.rs): numbers falsy at `0`,

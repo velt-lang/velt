@@ -4,8 +4,15 @@
 // child `get` returned): a `JsonValue` edits its node in place only while it knows no other value
 // reaches it, and copies it first otherwise (the copy shares the children), so an edit never shows
 // through another value.
+//
+// A tree stays shallow: a child may be a value on a tape (`TREE_TAPE`), what a parsed value stored
+// in a tree, or a parsed value's children after its first edit, are; and a subtree that would nest
+// deeper than `TREE_MAX_HEIGHT` is stored as a tape first. A tape is frozen and crosses to another
+// task through its atomic count, so a tree sent there is copied at most that deep: the copy
+// recurses once per level.
 
 import { TreeObject } from "velt/encoding/json/tree_object";
+import { TapeRef } from "velt/encoding/json/tape_ref";
 
 /** Node kinds, as `JsonValue` numbers them. */
 export const TREE_NULL: u32 = 1;
@@ -14,6 +21,14 @@ export const TREE_NUMBER: u32 = 3;
 export const TREE_STRING: u32 = 4;
 export const TREE_ARRAY: u32 = 5;
 export const TREE_OBJECT: u32 = 6;
+/**
+ * A value on a tape (its `obj` holds the tape and the value, so that no other node carries a
+ * field for them): a container, as a child.
+ */
+export const TREE_TAPE: u32 = 7;
+
+/** The deepest a tree nests: a subtree as high as this is stored as a tape before it goes in. */
+export const TREE_MAX_HEIGHT: u32 = 512;
 
 /** One value of a tree. */
 export class JsonTree {
@@ -22,10 +37,12 @@ export class JsonTree {
   num: f64 = 0;
   /** A string's text. */
   text: string = "";
-  /** An array's elements. */
-  items: JsonTree[] = [];
+  /** An array's elements (null for any other kind: a scalar node carries no array to drop). */
+  items: JsonTree[] | null = null;
   /** An object's members. */
   obj: TreeObject | null = null;
+  /** How many levels of nodes this one has below it, at most (0 for a scalar or a tape value). */
+  height: u32 = 0;
 
   constructor(kind: u32) {
     this.kind = kind;
@@ -44,6 +61,29 @@ export class JsonTree {
     return t;
   }
 
+  /** Value `node` of tape `t`, as a child. */
+  static ofTape(t: TapeRef, node: u32): JsonTree {
+    const n = new JsonTree(TREE_TAPE);
+    const o = new TreeObject();
+    o.tape = t;
+    o.node = node;
+    n.obj = o;
+    return n;
+  }
+
+  /** Records that `child` is now a member of this node. */
+  holds(child: JsonTree): void {
+    if (child.height >= this.height) {
+      this.height = child.height + 1;
+    }
+  }
+
+  static array(): JsonTree {
+    const t = new JsonTree(TREE_ARRAY);
+    t.items = [];
+    return t;
+  }
+
   static object(): JsonTree {
     const t = new JsonTree(TREE_OBJECT);
     t.obj = new TreeObject();
@@ -55,8 +95,9 @@ export class JsonTree {
     const t = new JsonTree(this.kind);
     t.num = this.num;
     t.text = this.text;
+    t.height = this.height;
     if (this.kind == TREE_ARRAY) {
-      t.items = this.items.slice();
+      t.items = this.items!.slice();
     }
     const o = this.obj;
     if (o != null) {
@@ -68,7 +109,7 @@ export class JsonTree {
   /** Array length, object member count, string length (UTF-16 code units); 0 otherwise. */
   len(): i64 {
     if (this.kind == TREE_ARRAY) {
-      return this.items.length as i64;
+      return this.items!.length as i64;
     }
     if (this.kind == TREE_STRING) {
       return this.text.length as i64;
@@ -83,7 +124,7 @@ export class JsonTree {
       return null;
     }
     if (this.kind == TREE_ARRAY) {
-      return i < (this.items.length as i64) ? this.items[i as usize] : null;
+      return i < (this.items!.length as i64) ? this.items![i as usize] : null;
     }
     const o = this.obj;
     if (o == null) {

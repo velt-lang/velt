@@ -94,17 +94,23 @@ instead of copying it.
 **Representation.** A `JsonValue` (`std/prelude/json/json_value.velt`) has two forms: a position
 on a tape (what parsing makes, and what a database driver's rows give; children share the tape,
 `clone()` is O(1)), or a tree of nodes (`std/encoding/json/tree.velt`: what `JsonValue.object()`,
-`set` and the other builders make). Values share nodes (a clone, a parent and the child `get`
-returned): an edit changes a node in place only while no other reference reaches it (the
-std-only intrinsic `isUnique`, as Rust's `Arc::get_mut`), and copies it first otherwise, the copy
-sharing the children. An edit turns a tape value into a tree first, so it never shows through the
-tape, a clone or a child. An object's members (`tree_object.velt`) keep JavaScript's order (index
-keys first, apart and sorted), are found by key through a hash index past 16 members, and are
-deleted in O(1) amortized by leaving holes, with a Fenwick tree of the live slots for positional
-access while there are holes in the middle (`tree_positions.velt`). `console.log` prints either
-form through `JsonValue[JSON_INSPECT]` (`value_inspect.velt`). This is STJ's split between
-`JsonDocument`/`JsonElement` (read-only, flat) and `JsonNode` (mutable), with one type in front
-of both.
+`set` and the other builders make).
+- **Copy-on-write.** Values share nodes (a clone, a parent and the child `get` returned): an edit
+  changes a node in place only while no other reference reaches it (the std-only intrinsic
+  `isUnique`, as Rust's `Arc::get_mut`), and copies it first otherwise, the copy sharing the
+  children.
+- **A tree stays shallow.** A child may be a container left on a tape: an edit of a parsed value
+  makes only its own node (its containers stay on the tape until they are edited), and a parsed
+  value stored in a tree stays on its tape. A subtree as high as 512 nodes is stored as a tape of
+  its text before it goes in. A tape is frozen and crosses to another task through its atomic
+  count, so a tree sent there (a deep copy, where the sender keeps a reference) is copied at most
+  512 nodes deep: the copy recurses once per level.
+- **Objects** (`tree_object.velt`) keep JavaScript's order (index keys first, apart and sorted,
+  made only when the first one goes in), are found by key through a hash index past 16 members,
+  and are deleted in O(1) amortized by leaving holes, with a Fenwick tree of the live slots for
+  positional access while there are holes in the middle (`tree_positions.velt`).
+- **Text.** A tree is written into a byte buffer handed to the builder in chunks, as a tape is.
+  `console.log` prints either form through `JsonValue[JSON_INSPECT]` (`value_inspect.velt`).
 
 ### Numbers
 
@@ -202,7 +208,7 @@ program that does compiles one decoder or writer per type it parses or writes, a
 and writer are compiled into it, so debug builds (`velt run`, the JIT) run an unoptimized engine.
 Changes to the engine are measured by instructions retired, base against head, on
 `bench/json/run.sh` (`parse_typed`, `parse_union`, `stringify`, `parse_value`, `navigate`,
-`edit`) and on the corpora of `bench/json/corpora/` (`twitter.json`, `citm_catalog.json`,
+`edit`, `build_write`) and on the corpora of `bench/json/corpora/` (`twitter.json`, `citm_catalog.json`,
 `canada.json`, fetched by `fetch.sh` with pinned SHA-256s; dynamic parse and write against
 serde_json, sonic-rs, simd-json and Node), together with build time and IR size. Results are in
 `bench/RESULTS.md`.

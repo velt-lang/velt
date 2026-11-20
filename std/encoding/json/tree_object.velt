@@ -19,6 +19,7 @@
 
 import { JsonTree } from "velt/encoding/json/tree";
 import { TreePositions } from "velt/encoding/json/tree_positions";
+import { TapeRef } from "velt/encoding/json/tape_ref";
 import { arrayRemove, noInline, strByteAt, strByteLen } from "velt/lang/intrinsics";
 
 /** Objects with more keys than this get a hash index. */
@@ -26,9 +27,8 @@ export const TREE_INDEX_AT: usize = 16;
 
 /** The members of an object. */
 export class TreeObject {
-  /** The array-index members: their indexes, ascending, and values. */
-  ints: u32[] = [];
-  intVals: JsonTree[] = [];
+  /** The array-index members (made by the first one: most objects have none). */
+  intm: IntMembers | null = null;
   /** The other members by slot; a deleted member's slot (only with an index) is a null value. */
   keys: string[] = [];
   vals: (JsonTree | null)[] = [];
@@ -36,21 +36,35 @@ export class TreeObject {
   head: usize = 0;
   /** Holes at or after `head` (never the last slot). */
   holes: usize = 0;
-  /** The slot of every live key, in a large object or one with array-index members. */
-  index: Map<string, usize> | null = null;
+  /**
+   * The slot of every live key, in a large object or one with array-index members (`u32`: an
+   * object holds fewer than 2^32 members, as on the tape).
+   */
+  index: Map<string, u32> | null = null;
+  /** A `TREE_TAPE` node's tape and value on it (tree.velt; such a node has no members here). */
+  tape: TapeRef | null = null;
+  node: u32 = 0;
   /** Which slots are live, while `holes > 0`: made on demand, then kept until a compaction. */
   positions: TreePositions | null = null;
 
+  /** The number of array-index members. */
+  intCount(): usize {
+    const m = this.intm;
+    return m == null ? 0 : m.keys.length;
+  }
+
   /** The number of members. */
   len(): usize {
-    return this.ints.length + this.vals.length - this.head - this.holes;
+    return this.intCount() + this.vals.length - this.head - this.holes;
   }
 
   /** A copy sharing the member values (what an edit of a shared object starts from). */
   copy(): TreeObject {
     const o = new TreeObject();
-    o.ints = this.ints.slice();
-    o.intVals = this.intVals.slice();
+    const m = this.intm;
+    if (m != null) {
+      o.intm = new IntMembers(m.keys.slice(), m.vals.slice());
+    }
     for (let s = this.head; s < this.vals.length; s++) {
       const v = this.vals[s];
       if (v != null) {
@@ -69,7 +83,7 @@ export class TreeObject {
     const n = arrayIndex(key);
     if (n >= 0) {
       const i = this.intPos(n as u32);
-      return i >= 0 ? this.intVals[i as usize] : null;
+      return i >= 0 ? this.intm!.vals[i as usize] : null;
     }
     const s = this.find(key);
     return s < 0 ? null : this.vals[s as usize];
@@ -77,7 +91,7 @@ export class TreeObject {
 
   /** The raw position of the `i`-th member, or -1. */
   rawAt(i: usize): i64 {
-    const ni = this.ints.length;
+    const ni = this.intCount();
     if (i < ni) {
       return i as i64;
     }
@@ -104,7 +118,7 @@ export class TreeObject {
 
   /** The first raw position at or after `raw` that holds a member (`rawEnd()` if none). */
   nextRaw(raw: usize): usize {
-    const ni = this.ints.length;
+    const ni = this.intCount();
     let r = raw;
     if (r < ni) {
       return r;
@@ -121,19 +135,19 @@ export class TreeObject {
 
   /** Past the last raw position. */
   rawEnd(): usize {
-    return this.ints.length + this.vals.length;
+    return this.intCount() + this.vals.length;
   }
 
   /** The key at raw position `raw` (a member's). */
   keyRaw(raw: usize): string {
-    const ni = this.ints.length;
-    return raw < ni ? `${this.ints[raw]}` : this.keys[raw - ni];
+    const ni = this.intCount();
+    return raw < ni ? `${this.intm!.keys[raw]}` : this.keys[raw - ni];
   }
 
   /** The value at raw position `raw` (a member's). */
   valueRaw(raw: usize): JsonTree {
-    const ni = this.ints.length;
-    return raw < ni ? this.intVals[raw] : this.vals[raw - ni]!;
+    const ni = this.intCount();
+    return raw < ni ? this.intm!.vals[raw] : this.vals[raw - ni]!;
   }
 
   /** Sets `key` to `v` (an existing key keeps its position). */
@@ -153,7 +167,7 @@ export class TreeObject {
     this.vals.push(v);
     const ix = this.index;
     if (ix != null) {
-      ix.set(key, slot);
+      ix.set(key, slot as u32);
       const p = this.positions;
       if (p != null) {
         p.pushLive();
@@ -170,15 +184,19 @@ export class TreeObject {
     }
     const at = this.intPos(n);
     if (at >= 0) {
-      this.intVals[at as usize] = v;
+      this.intm!.vals[at as usize] = v;
       return;
     }
     // Where it goes: after every smaller index.
     const i = this.intInsertAt(n);
-    this.ints.push(n);
-    this.intVals.push(v);
-    this.ints.rotateRight(i, this.ints.length);
-    this.intVals.rotateRight(i, this.intVals.length);
+    if (this.intm == null) {
+      this.intm = new IntMembers([], []);
+    }
+    const m = this.intm!;
+    m.keys.push(n);
+    m.vals.push(v);
+    m.keys.rotateRight(i, m.keys.length);
+    m.vals.rotateRight(i, m.vals.length);
   }
 
   /** Removes `key`; false if absent. */
@@ -189,9 +207,10 @@ export class TreeObject {
       if (at < 0) {
         return false;
       }
-      arrayRemove(this.ints, at as usize);
-      arrayRemove(this.intVals, at as usize);
-      if (this.ints.length == 0 && this.vals.length - this.head - this.holes <= TREE_INDEX_AT) {
+      const m = this.intm!;
+      arrayRemove(m.keys, at as usize);
+      arrayRemove(m.vals, at as usize);
+      if (this.intCount() == 0 && this.vals.length - this.head - this.holes <= TREE_INDEX_AT) {
         this.compact();
       }
       return true;
@@ -264,17 +283,17 @@ export class TreeObject {
     this.holes = 0;
     this.positions = null;
     this.index = null;
-    if (this.vals.length > TREE_INDEX_AT || this.ints.length > 0) {
+    if (this.vals.length > TREE_INDEX_AT || this.intCount() > 0) {
       this.makeIndex();
     }
   }
 
   // The index of the slots (dense: no holes).
   private makeIndex(): void {
-    const ix = new Map<string, usize>();
+    const ix = new Map<string, u32>();
     for (let s = this.head; s < this.vals.length; s++) {
       if (this.vals[s] != null) {
-        ix.set(this.keys[s], s);
+        ix.set(this.keys[s], s as u32);
       }
     }
     this.index = ix;
@@ -299,19 +318,19 @@ export class TreeObject {
   // The position of array-index member `n`, or -1.
   private intPos(n: u32): i64 {
     const i = this.intInsertAt(n);
-    return i < this.ints.length && this.ints[i] == n ? (i as i64) : -1;
+    return i < this.intCount() && this.intm!.keys[i] == n ? (i as i64) : -1;
   }
 
   // The first position whose index is at least `n`.
   private intInsertAt(n: u32): usize {
     let lo: usize = 0;
-    let hi = this.ints.length;
-    if (hi > 0 && this.ints[hi - 1] < n) {
+    let hi = this.intCount();
+    if (hi > 0 && this.intm!.keys[hi - 1] < n) {
       return hi;
     }
     while (lo < hi) {
       const mid = lo + (hi - lo) / 2;
-      if (this.ints[mid] < n) {
+      if (this.intm!.keys[mid] < n) {
         lo = mid + 1;
       } else {
         hi = mid;
@@ -351,4 +370,15 @@ function arrayIndexDigits(key: string, len: usize): i64 {
     n = n * 10 + ((b - 48) as i64);
   }
   return n < 4294967295 ? n : -1;
+}
+
+/** An object's array-index members: their indexes, ascending, and values. */
+class IntMembers {
+  keys: u32[];
+  vals: JsonTree[];
+
+  constructor(keys: u32[], vals: JsonTree[]) {
+    this.keys = keys;
+    this.vals = vals;
+  }
 }

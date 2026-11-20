@@ -14,8 +14,8 @@
 // not the tape's: the hash index of a wide object lives in the `TapeRef` (tape_ref.velt), which
 // a task's values share and a crossing to another task copies. A `TapeRef` reached from several
 // cores at once is NOT safe: see tape_ref.velt on frozen constants (#1487) and unlocked module
-// state (#2726). Editing a value (`set`, `push`, …) turns that value into the runtime's tree
-// (prelude `JsonValue`), so it never shows through the tape.
+// state (#2726). Editing a value (`set`, `push`, …) turns that value into a tree of its own
+// (tree.velt), so it never shows through the tape.
 //
 // The readers are functions, not methods of the struct: a struct method is handed its own copy of
 // the struct where it can't be read in place (a method call that isn't inlined, or a result that
