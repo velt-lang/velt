@@ -249,3 +249,13 @@ of its twenty `fma`s would be a call of C's `fma` (a software routine on such a 
 checks. On arm64, and with `--cpu x86-64-v3`, every `fma` is one instruction. On wasm32-wasip1,
 which has no `fma` instruction (wasmtime 50), the program takes 525.9 M instructions
 (precompiled).
+
+## Symbols
+
+`symbol_new`: 400k `Symbol(description)` at run time (some without one), then each one's
+`description` and `toString()` twice. Symbols are Velt code (`std/lang/symbol/record.velt`,
+records carved from per-thread chunks); they were the runtime's `velt_rt_symbol_new`,
+`velt_rt_symbol_described` and `velt_rt_symbol_description`. x86-64 Linux, release, the same
+compiler and runtime with only std swapped, cachegrind, 2026-11-20: 278M instructions before,
+254M after (−8.7%); wall clock, best of 7 interleaved, 28.1 → 24.6 ms. The Rust port (a leaked
+record sharing an `Rc<str>`, `format!` for the text) executes 984M.

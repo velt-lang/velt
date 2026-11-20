@@ -378,11 +378,7 @@ impl FnLower<'_, '_> {
                     let a = lw.addr(vp);
                     lw.push_str(bp, a);
                 }
-                TyKind::Symbol => lw.call_rt(
-                    Rt::StrbufPushSymbol,
-                    vec![bp.clone(), Operand::Copy(vp)],
-                    None,
-                ),
+                TyKind::Symbol => lw.push_symbol(bp, Operand::Copy(vp)),
                 _ => lw.push_scalar_for(bp, Operand::Copy(vp), ty, Construct::Dynamic),
             }
         });

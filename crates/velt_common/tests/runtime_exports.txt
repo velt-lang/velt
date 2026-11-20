@@ -303,13 +303,9 @@ velt_rt velt_rt_strbuf_push_json_f64
 velt_rt velt_rt_strbuf_push_json_str
 velt_rt velt_rt_strbuf_push_json_value
 velt_rt velt_rt_strbuf_push_str
-velt_rt velt_rt_strbuf_push_symbol
 velt_rt velt_rt_strbuf_push_u8s
 velt_rt velt_rt_strbuf_push_words
 velt_rt velt_rt_strbuf_spare
-velt_rt velt_rt_symbol_described
-velt_rt velt_rt_symbol_description
-velt_rt velt_rt_symbol_new
 velt_rt velt_rt_task_gate
 velt_rt velt_rt_task_gate_free
 velt_rt velt_rt_task_gate_wait

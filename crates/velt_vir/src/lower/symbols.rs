@@ -13,7 +13,7 @@ use crate::vir::{self, Const, Operand, StaticData, StaticId, Ty};
 /// The first id of the registry's symbols (velt_sema's `symbols::REGISTERED_IDS`).
 const REGISTERED_IDS: u128 = 1 << 40;
 
-/// The runtime's `key` of a record `Symbol.for` made (velt_rt's `KEY_REGISTERED`).
+/// The `key` of a registry record (`Symbol.for`; std/lang/symbol/registry.velt `KEY_REGISTERED`).
 const KEY_REGISTERED: u64 = 1;
 
 /// The bit of `key` set when the symbol has a description (velt_rt's `DESCRIBED`).
