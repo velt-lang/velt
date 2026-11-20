@@ -3,7 +3,7 @@
 //! environment, copies a shared one, and gives the environment captured variables' cells of
 //! its own. Called with a tagged pointer, it runs the many-threads check instead (many.rs).
 
-use velt_sema::hir::{DefId, PassMode, TyId};
+use velt_sema::hir::{DefId, LocalId, PassMode, TyId};
 
 use super::transfer::NO_TRANSFER;
 use crate::lower::closure::closure_name;
@@ -235,13 +235,23 @@ impl<'c, 'h> FnLower<'c, 'h> {
         lw.goto(unique);
         lw.switch_to(unique);
         let base = proj(&Place::local(out), Proj::Deref(Ty::Agg(ea)));
+        let callers = callers_captures(lw.cx, def);
         for (field, mode, ty) in caps {
-            if mode == PassMode::Owned {
-                lw.transfer_in_place(proj(&base, Proj::Field(field)), ty);
+            if mode != PassMode::Owned {
+                continue;
+            }
+            let slot = proj(&base, Proj::Field(field));
+            match callers.contains(&field) && lw.callers_own(ty) {
+                true => lw.unless_kept(|lw| lw.transfer_in_place(slot, ty)),
+                false => lw.transfer_in_place(slot, ty),
             }
         }
         for (field, ty) in cells {
-            lw.own_cell(proj(&base, Proj::Field(field)), ty);
+            let slot = proj(&base, Proj::Field(field));
+            match callers.contains(&field) {
+                true => lw.unless_kept(|lw| lw.own_cell(slot, ty)),
+                false => lw.own_cell(slot, ty),
+            }
         }
         lw.terminate(Terminator::Return(Operand::Copy(Place::local(out))));
         let sym = format!(
@@ -304,6 +314,42 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.assign(c, Rvalue::Use(n));
     }
 
+    /// Is a captured value of type `ty`, the code outside every read's (`callers_captures`), one
+    /// such code counts as any object, holding its parts counted: an object outside the lock set
+    /// that reaches it? (One of the lock set the reader holds uncounted: the transfer counts it.)
+    fn callers_own(&mut self, ty: TyId) -> bool {
+        self.cx.ty(ty) == Ty::Ptr
+            && self.cx.boxed(ty)
+            && !self.cx.lock_counted(ty)
+            && self.cx.reaches_lock_set(ty)
+    }
+
+    /// `f` (making a captured variable's cell, or a captured object of the code outside every
+    /// read, this env's own: `callers_captures`), except in a transfer that keeps what that code
+    /// holds (velt_rt `velt_rt_xfer_keeps`): a `read` callback storing the closure into that
+    /// code's containers. The closure stays on this thread, beside the variable, so it shares
+    /// the variable's cell and the variable's object as in JavaScript. A copy would change only
+    /// its own value (`later = () => out.pop()`: the caller's `out` kept its elements), and
+    /// keeping the object would count its parts once more, which it holds counted already.
+    fn unless_kept(&mut self, f: impl FnOnce(&mut Self)) {
+        let keeps = self.temp(Ty::U8);
+        self.call_rt(Rt::XferKeeps, vec![], Some(Place::local(keeps)));
+        let kept = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(
+                BinOp::Ne,
+                Operand::Copy(Place::local(keeps)),
+                cint(0, Ty::U8),
+            ),
+        );
+        let (own, done) = (self.new_block(), self.new_block());
+        self.branch(kept, done, own);
+        self.switch_to(own);
+        f(self);
+        self.goto(done);
+        self.switch_to(done);
+    }
+
     /// The cell pointer at `slot` (holding a `ty`), made this env's own: transferred in place
     /// when nothing else references it, else replaced by a new cell with a copy of the value.
     pub(super) fn own_cell(&mut self, slot: Place, ty: TyId) {
@@ -332,4 +378,39 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.goto(done);
         self.switch_to(done);
     }
+}
+
+/// The env fields of closure `def`'s captures that are variables of the code outside every
+/// read: `def` is written in a `read` callback that captured the variable, through each `read`
+/// callback around it, from code outside them (`Cx::closure_parents`). Only such a closure can
+/// be stored into that code's containers by a transfer that keeps what it holds.
+fn callers_captures(cx: &Cx<'_>, def: DefId) -> Vec<u32> {
+    let f = cx.fn_def(def);
+    let header = cx.env_header(def);
+    let mut out = vec![];
+    for (k, c) in f.captures.iter().enumerate() {
+        if from_outside_reads(cx, def, c.outer) {
+            out.push(header + k as u32);
+        }
+    }
+    out
+}
+
+/// Is `var`, a variable of the function `def` is written in, captured by that function, a `read`
+/// callback, through each `read` callback around it from code outside them?
+fn from_outside_reads(cx: &Cx<'_>, def: DefId, mut var: LocalId) -> bool {
+    let Some(&(Some(mut p), false)) = cx.closure_parents.get(&def) else {
+        return false;
+    };
+    let mut through = false;
+    while let Some(&(parent, true)) = cx.closure_parents.get(&p) {
+        let Some(c) = cx.fn_def(p).captures.iter().find(|c| c.inner == var) else {
+            return false;
+        };
+        let Some(pp) = parent else {
+            return false;
+        };
+        (var, p, through) = (c.outer, pp, true);
+    }
+    through
 }

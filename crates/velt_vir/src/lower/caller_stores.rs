@@ -60,8 +60,52 @@ impl FnLower<'_, '_> {
             }
             return v;
         }
+        if held == Held::Caller {
+            self.note_callers_own(value);
+        }
         let v = self.consume(value);
         self.keep_value(v, held, ty)
+    }
+
+    /// Before the store of `e` (`held_by_caller`): each variable in it naming one of the caller's
+    /// objects outside the lock set that reaches it (`out` in `holder.push(out)` or `{ o: out }`)
+    /// is recorded as kept as itself in these reads (velt_rt `velt_rt_lk_kept_again`). The
+    /// transfer then gives the store its reference and leaves the object's parts alone, as the
+    /// caller holds them counted already; it would count them once more otherwise, taking the
+    /// object for one the reader made, whose parts it held uncounted.
+    fn note_callers_own(&mut self, e: &hir::Expr) {
+        if self.dead() {
+            return;
+        }
+        match &e.kind {
+            K::ArrayLit(xs) | K::Tuple(xs) => xs.iter().for_each(|x| self.note_callers_own(x)),
+            K::AdtLit { fields: xs, .. }
+            | K::New { args: xs, .. }
+            | K::Variant { args: xs, .. } => xs.iter().for_each(|x| self.note_callers_own(x)),
+            K::WrapSome(b) | K::Upcast(b) => self.note_callers_own(b),
+            K::Call {
+                callee: hir::Callee::Intrinsic(Intrinsic::Share),
+                args,
+            } if args.len() == 1 => self.note_callers_own(&args[0]),
+            K::Local(l, _) => {
+                let l = *l;
+                let ty = self.sub(e.ty);
+                let own = self.cx.ty(ty) == Ty::Ptr
+                    && self.cx.boxed(ty)
+                    && !self.cx.lock_counted(ty)
+                    && self.cx.reaches_lock_set(ty);
+                if !own || !self.captured_root(e) {
+                    return;
+                }
+                let Some(p) = self.local_target(l) else {
+                    return;
+                };
+                let o = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(p)));
+                let seen = self.temp(Ty::U8);
+                self.call_rt(Rt::LkKeptAgain, vec![o], Some(Place::local(seen)));
+            }
+            _ => {}
+        }
     }
 
     /// Is `e` a variable `plain_made` finds (through a share)?
