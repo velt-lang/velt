@@ -51,9 +51,23 @@ fn secrets_do_not_change_the_instructions_executed() {
     }
 }
 
+/// Memcheck needs the dynamic loader's symbols (it replaces `strlen` and its kin there), and
+/// where the loader is stripped it stops before the program starts ("Cannot continue"). The
+/// instruction count has no such need.
+fn memcheck_starts() -> bool {
+    let ok = Command::new("valgrind")
+        .args(["--tool=memcheck", "-q", "true"])
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !ok {
+        eprintln!("note: valgrind's memcheck cannot start a program here; skipping");
+    }
+    ok
+}
+
 #[test]
 fn no_branch_or_address_depends_on_a_secret() {
-    if can_run() {
+    if can_run() && memcheck_starts() {
         run(&["--memcheck"]);
     }
 }
