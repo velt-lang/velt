@@ -134,36 +134,21 @@ fn an_object_gone_before_the_check_is_a_miss() {
     assert!(finder.found().is_empty());
 }
 
-/// Debug builds take no prebuilt objects where LLVM's code calls the outline-atomics helpers,
-/// which their links may lack (arm64 Linux, #3300: the bundled linker's debug link failed with
-/// undefined `__aarch64_cas4_acq`); elsewhere they do.
+/// A debug build for arm64 Linux looks prebuilt objects up like one for x86-64 Linux (#3315: its
+/// link gets the outline-atomics helpers the objects call, `crate::link`), where this machine's
+/// std root and settings let a finder be made, as in this repository's tests.
 #[test]
-fn debug_links_take_objects_except_where_atomics_call_helpers() {
-    for target in ["aarch64-unknown-linux-gnu", "aarch64-unknown-linux-musl"] {
-        assert!(!debug_link_takes(target), "{target}");
-    }
-    for target in [
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin",
-        "x86_64-unknown-linux-gnu",
-        "x86_64-unknown-linux-musl",
-        "x86_64-pc-windows-msvc",
-    ] {
-        assert!(debug_link_takes(target), "{target}");
-    }
-}
-
-/// The finder of a debug build for arm64 Linux looks nothing up, from any machine; the same build
-/// for x86-64 Linux does (where this machine's std root and settings let a finder be made, as
-/// in this repository's tests).
-#[test]
-fn a_debug_build_for_arm64_linux_has_no_finder() {
-    let debug = |target: &str| BuildOptions {
-        target: Some(target.into()),
-        ..Default::default()
+fn a_debug_build_for_arm64_linux_has_a_finder_where_x86_64_linux_has() {
+    let finder = |target: &str| {
+        Finder::for_build(&BuildOptions {
+            target: Some(target.into()),
+            ..Default::default()
+        })
+        .is_some()
     };
-    assert!(Finder::for_build(&debug("aarch64-unknown-linux-gnu")).is_none());
-    if Finder::for_build(&debug("x86_64-unknown-linux-gnu")).is_none() {
-        eprintln!("note: no finder for x86-64 Linux either here; the comparison says nothing");
+    let x86 = finder("x86_64-unknown-linux-gnu");
+    assert_eq!(finder("aarch64-unknown-linux-gnu"), x86);
+    if !x86 {
+        eprintln!("note: no finder for x86-64 Linux here; the comparison says little");
     }
 }

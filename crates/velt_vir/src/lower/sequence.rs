@@ -255,6 +255,10 @@ fn writes_local(e: &hir::Expr, writes: &dyn Fn(DefId) -> Written) -> bool {
         | K::ArrayLit(args) => args.iter().any(w),
         K::Closure(d) => writes(*d) != Written::Nothing,
         K::If { cond, then, els } => w(cond) || w(then) || w(els),
+        // What an arm binds is the arm's own (a literal union read as a `string`, #3334).
+        K::Match { scrutinee, arms } => {
+            w(scrutinee) || (arms.iter()).any(|a| a.guard.as_ref().is_some_and(w) || w(&a.body))
+        }
         K::ConstArray(c) => c.elem_exprs(e.span.file).any(|x| w(&x)),
         _ => true,
     }
