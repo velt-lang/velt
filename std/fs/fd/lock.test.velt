@@ -189,10 +189,11 @@ describe("file locks", () => {
     const b = openSync(path, "r+");
     const r = openSync(path, "r");
     expect(lockSync(a)).toBe(true);
-    // The pool counts the jobs it finished: a read is one, a wait for a lock must be none.
-    const before = pool.finished();
+    // The pool counts the jobs handed to it, as the submitting task hands them over: a read is
+    // one, a wait for a lock must be none.
+    const before = pool.submitted();
     expect((await readAt(r, 4, 0)).length).toBe(4);
-    expect(pool.finished()).toBe(before + 1);
+    expect(pool.submitted()).toBe(before + 1);
     const state = { got: false };
     const waiting = take(b, state);
     expect((await readAt(r, 4, 4)).length).toBe(4);
@@ -201,7 +202,7 @@ describe("file locks", () => {
     await waiting;
     expect(state.got).toBe(true);
     // The two reads, and nothing for the lock that waited and was taken.
-    expect(pool.finished()).toBe(before + 2);
+    expect(pool.submitted()).toBe(before + 2);
     closeSync(a);
     closeSync(b);
     closeSync(r);
