@@ -54,10 +54,14 @@ Cyrillic, CJK, emoji), each with literal needles and needles that vary. The Rust
 `str`'s methods with JS's positions in UTF-16 units (`rust/src/js_str.rs`). Apple M4, macOS,
 instructions retired (`/usr/bin/time -l`, best of 5), 2026-11-11, commit 4be8d2c93: 2,365M,
 3,398M and 2,109M against Rust's 2,183M, 2,398M and 2,127M (Node 24 on the same programs:
-4,576M, 3,399M and 2,569M, start-up included). These predate the move of `indexOf`,
-`lastIndexOf`, `includes`, `startsWith` and `endsWith` from the runtime into Velt
-(`std/lang/string/search.velt`); [#2198](https://github.com/velt-lang/velt/issues/2198) moves the
-rest.
+4,576M, 3,399M and 2,569M, start-up included). These predate the move of the methods from the
+runtime into Velt (`std/lang/string/`, [#2198](https://github.com/velt-lang/velt/issues/2198)).
+
+`split`, `trim`, `replace`, `repeat`, `padStart` / `padEnd` and the case mapping of ASCII text in
+Velt against the runtime's Rust, the same compiler and runtime with only the std files swapped
+(Linux x86_64, cachegrind, 2026-11-20): `string_methods` 1,382M instructions against 2,050M
+(0.67), `string_methods_long` 2,314M against 2,829M (0.82), `string_methods_wide` 2,015M against
+2,013M (1.00); `bench/strings_utf16`'s `csv`, which splits every line, 418M against 474M (0.88).
 
 ## Integers and random numbers
 
