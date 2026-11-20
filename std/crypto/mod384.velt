@@ -129,7 +129,13 @@ export class Mod384 {
   }
 
   /** `d = a - b` mod m; `d` may be `a` or `b`. */
+  @noInline
   sub(d: usize, a: usize, b: usize) {
+    // Out of line, as `zeroMask`: inlined into the doubling, LLVM (seen with the release
+    // compilers of November 2026) sees that the mask that adds m back is all ones or zero and
+    // makes it a branch on the borrow, which depends on the secret scalar. On its own the function
+    // is compiled with conditional moves. scripts/ct-counts.py checks the machine code: the
+    // instructions executed must not vary with the scalar.
     const r = this.r;
     const oa = 6 * a;
     const ob = 6 * b;
