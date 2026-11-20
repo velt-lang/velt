@@ -1,0 +1,32 @@
+// velt/arch/arm (tests): what holds on any CPU, run by `velt test std/`. A check answers for the feature
+// and everything it implies (velt_common `cpu_features`), so it is never true without the checks
+// of what it implies, whatever the CPU, `--cpu` or `VELT_CPU_DISABLE`; and off arm64 every check
+// is false.
+import { describe, expect, it } from "velt/test";
+import { Aes } from "velt/arch/arm/aes";
+import { Crc32 } from "velt/arch/arm/crc32";
+import { Dp } from "velt/arch/arm/dp";
+import { Pmull } from "velt/arch/arm/pmull";
+import { Sha256 } from "velt/arch/arm/sha256";
+import { Sha3 } from "velt/arch/arm/sha3";
+import { ARCH } from "#os-arch";
+
+// Whether `a` implies `b` here: never `a` without `b`.
+function implies(a: bool, b: bool): bool {
+  return !a || b;
+}
+
+describe("velt/arch/arm checks", () => {
+  it("answer for what a feature implies", () => {
+    expect(implies(Aes.isSupported(), Pmull.isSupported())).toBe(true);
+    expect(implies(Sha3.isSupported(), Sha256.isSupported())).toBe(true);
+  });
+
+  it("are false off arm64", () => {
+    if (ARCH !== "arm64") {
+      const any =
+        Aes.isSupported() || Crc32.isSupported() || Dp.isSupported() || Sha256.isSupported();
+      expect(any).toBe(false);
+    }
+  });
+});
