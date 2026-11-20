@@ -392,9 +392,18 @@ export function awake(e: usize): void {
   m.incOrdered(e + tk.E_UNPARKS);
 }
 
-/** Wakes worker `w` if it sleeps in its reactor (its park word is up). */
+/**
+ * Wakes worker `w` if it sleeps in its reactor (its park word is up); one that spins before its
+ * park (`PARK_SPIN`, sched_spin.velt) only has its word taken down, which ends the spin with no
+ * system call: it looks again at whatever this wake is for (a task on its inbox, the last task's
+ * end, an exit), as a parked worker does.
+ */
 export function unpark(w: usize): void {
-  if (m.load32(w + tk.E_PARK) !== 1) {
+  const p = m.load32(w + tk.E_PARK);
+  if (p !== 1) {
+    if (p === tk.PARK_SPIN) {
+      m.cas32(w + tk.E_PARK, tk.PARK_SPIN, 0);
+    }
     return;
   }
   // Counted before the wake, so a scan that reads the count after it sees the wake.

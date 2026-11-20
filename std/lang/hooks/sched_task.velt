@@ -50,6 +50,12 @@ const WORKER = new ThreadLocal<u64>(0);
 /** The executor's fields. */
 export const E_INBOX: usize = 0;
 export const E_PARK: usize = 8;
+/**
+ * `E_PARK` while the worker spins before its park (sched_spin.velt): not asleep (every reader
+ * asks for 1), and a wake takes the word down instead of waking the reactor (sched_wake.velt
+ * `unpark`).
+ */
+export const PARK_SPIN: u32 = 2;
 export const E_HEAD: usize = 16;
 export const E_TAIL: usize = 24;
 export const E_LIVE: usize = 32;
@@ -301,7 +307,14 @@ export const E_LIVE_F: usize = 984;
  * atomically: the program's end after `main` waits for them (sched.velt `schedFinish`).
  */
 export const E_BLOCKING: usize = 992;
-export const E_SIZE: usize = 1000;
+/** The worker's spin budget before it parks, in nanoseconds (sched_spin.velt). */
+export const E_SPIN: usize = 1000;
+/**
+ * Takes of the inbox in a row that found tasks while the worker had nothing else queued
+ * (sched_queue.velt `takeInbox`, sched_gather.velt).
+ */
+export const E_IDLE_RUN: usize = 1008;
+export const E_SIZE: usize = 1016;
 /** The spawns of a lazy worker 0's poll that go on `E_PREST`, which the monitor may take. */
 export const PEND_STACKED: usize = 64;
 /** `E_LAZY`'s states. */
