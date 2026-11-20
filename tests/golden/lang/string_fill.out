@@ -18,75 +18,125 @@
 3 d83d.de00.de00.
 6 e9.65e5.672c.65e5.672c.65e5.
 1 78.
-1 2 2 aa aa true
-1 3 3 aaa aaa true
-1 5 5 aaa aaa true
-1 24 24 aaa aaa true
-1 25 25 aaa aaa true
-2 2 4 aba abab true
-2 3 6 aba abab true
-2 5 10 aba abab true
-2 24 48 aba abab true
-2 25 50 aba abab true
-3 2 6 abc bcabc true
-3 3 9 abc bcabc true
-3 5 15 abc bcabc true
-3 24 72 abc bcabc true
-3 25 75 abc bcabc true
-4 2 8 abc cdabcd true
-4 3 12 abc cdabcd true
-4 5 20 abc cdabcd true
-4 24 96 abc cdabcd true
-4 25 100 abc cdabcd true
-5 2 10 abc deabcde true
-5 3 15 abc deabcde true
-5 5 25 abc deabcde true
-5 24 120 abc deabcde true
-5 25 125 abc deabcde true
-6 2 12 abc efabcdef true
-6 3 18 abc efabcdef true
-6 5 30 abc efabcdef true
-6 24 144 abc efabcdef true
-6 25 150 abc efabcdef true
-7 2 14 abc fgabcdefg true
-7 3 21 abc fgabcdefg true
-7 5 35 abc fgabcdefg true
-7 24 168 abc fgabcdefg true
-7 25 175 abc fgabcdefg true
-8 2 16 abc ghabcdefgh true
-8 3 24 abc ghabcdefgh true
-8 5 40 abc ghabcdefgh true
-8 24 192 abc ghabcdefgh true
-8 25 200 abc ghabcdefgh true
-11 2 22 abc jkabcdefghijk true
-11 3 33 abc jkabcdefghijk true
-11 5 55 abc jkabcdefghijk true
-11 24 264 abc jkabcdefghijk true
-11 25 275 abc jkabcdefghijk true
-12 2 24 abc klabcdefghijkl true
-12 3 36 abc klabcdefghijkl true
-12 5 60 abc klabcdefghijkl true
-12 24 288 abc klabcdefghijkl true
-12 25 300 abc klabcdefghijkl true
-13 2 26 abc lmabcdefghijklm true
-13 3 39 abc lmabcdefghijklm true
-13 5 65 abc lmabcdefghijklm true
-13 24 312 abc lmabcdefghijklm true
-13 25 325 abc lmabcdefghijklm true
-23 2 46 abc vwabcdefghijklmnopqrstuvw true
-23 3 69 abc vwabcdefghijklmnopqrstuvw true
-23 5 115 abc vwabcdefghijklmnopqrstuvw true
-23 24 552 abc vwabcdefghijklmnopqrstuvw true
-23 25 575 abc vwabcdefghijklmnopqrstuvw true
-24 2 48 abc wxabcdefghijklmnopqrstuvwx true
-24 3 72 abc wxabcdefghijklmnopqrstuvwx true
-24 5 120 abc wxabcdefghijklmnopqrstuvwx true
-24 24 576 abc wxabcdefghijklmnopqrstuvwx true
-24 25 600 abc wxabcdefghijklmnopqrstuvwx true
-25 2 50 abc xyabcdefghijklmnopqrstuvwxy true
-25 3 75 abc xyabcdefghijklmnopqrstuvwxy true
-25 5 125 abc xyabcdefghijklmnopqrstuvwxy true
-25 24 600 abc xyabcdefghijklmnopqrstuvwxy true
-25 25 625 abc xyabcdefghijklmnopqrstuvwxy true
+1 2 2 aa aa true 3
+1 3 3 aaa aaa true 4
+1 5 5 aaa aaa true 6
+1 24 24 aaa aaa true 25
+1 25 25 aaa aaa true 26
+2 2 4 aba abab true 3
+2 3 6 aba abab true 4
+2 5 10 aba abab true 6
+2 24 48 aba abab true 25
+2 25 50 aba abab true 26
+3 2 6 abc bcabc true 3
+3 3 9 abc bcabc true 4
+3 5 15 abc bcabc true 6
+3 24 72 abc bcabc true 25
+3 25 75 abc bcabc true 26
+4 2 8 abc cdabcd true 3
+4 3 12 abc cdabcd true 4
+4 5 20 abc cdabcd true 6
+4 24 96 abc cdabcd true 25
+4 25 100 abc cdabcd true 26
+5 2 10 abc deabcde true 3
+5 3 15 abc deabcde true 4
+5 5 25 abc deabcde true 6
+5 24 120 abc deabcde true 25
+5 25 125 abc deabcde true 26
+6 2 12 abc efabcdef true 3
+6 3 18 abc efabcdef true 4
+6 5 30 abc efabcdef true 6
+6 24 144 abc efabcdef true 25
+6 25 150 abc efabcdef true 26
+7 2 14 abc fgabcdefg true 3
+7 3 21 abc fgabcdefg true 4
+7 5 35 abc fgabcdefg true 6
+7 24 168 abc fgabcdefg true 25
+7 25 175 abc fgabcdefg true 26
+8 2 16 abc ghabcdefgh true 3
+8 3 24 abc ghabcdefgh true 4
+8 5 40 abc ghabcdefgh true 6
+8 24 192 abc ghabcdefgh true 25
+8 25 200 abc ghabcdefgh true 26
+9 2 18 abc hiabcdefghi true 3
+9 3 27 abc hiabcdefghi true 4
+9 5 45 abc hiabcdefghi true 6
+9 24 216 abc hiabcdefghi true 25
+9 25 225 abc hiabcdefghi true 26
+10 2 20 abc ijabcdefghij true 3
+10 3 30 abc ijabcdefghij true 4
+10 5 50 abc ijabcdefghij true 6
+10 24 240 abc ijabcdefghij true 25
+10 25 250 abc ijabcdefghij true 26
+11 2 22 abc jkabcdefghijk true 3
+11 3 33 abc jkabcdefghijk true 4
+11 5 55 abc jkabcdefghijk true 6
+11 24 264 abc jkabcdefghijk true 25
+11 25 275 abc jkabcdefghijk true 26
+12 2 24 abc klabcdefghijkl true 3
+12 3 36 abc klabcdefghijkl true 4
+12 5 60 abc klabcdefghijkl true 6
+12 24 288 abc klabcdefghijkl true 25
+12 25 300 abc klabcdefghijkl true 26
+13 2 26 abc lmabcdefghijklm true 3
+13 3 39 abc lmabcdefghijklm true 4
+13 5 65 abc lmabcdefghijklm true 6
+13 24 312 abc lmabcdefghijklm true 25
+13 25 325 abc lmabcdefghijklm true 26
+16 2 32 abc opabcdefghijklmnop true 3
+16 3 48 abc opabcdefghijklmnop true 4
+16 5 80 abc opabcdefghijklmnop true 6
+16 24 384 abc opabcdefghijklmnop true 25
+16 25 400 abc opabcdefghijklmnop true 26
+17 2 34 abc pqabcdefghijklmnopq true 3
+17 3 51 abc pqabcdefghijklmnopq true 4
+17 5 85 abc pqabcdefghijklmnopq true 6
+17 24 408 abc pqabcdefghijklmnopq true 25
+17 25 425 abc pqabcdefghijklmnopq true 26
+23 2 46 abc vwabcdefghijklmnopqrstuvw true 3
+23 3 69 abc vwabcdefghijklmnopqrstuvw true 4
+23 5 115 abc vwabcdefghijklmnopqrstuvw true 6
+23 24 552 abc vwabcdefghijklmnopqrstuvw true 25
+23 25 575 abc vwabcdefghijklmnopqrstuvw true 26
+24 2 48 abc wxabcdefghijklmnopqrstuvwx true 3
+24 3 72 abc wxabcdefghijklmnopqrstuvwx true 4
+24 5 120 abc wxabcdefghijklmnopqrstuvwx true 6
+24 24 576 abc wxabcdefghijklmnopqrstuvwx true 25
+24 25 600 abc wxabcdefghijklmnopqrstuvwx true 26
+25 2 50 abc xyabcdefghijklmnopqrstuvwxy true 3
+25 3 75 abc xyabcdefghijklmnopqrstuvwxy true 4
+25 5 125 abc xyabcdefghijklmnopqrstuvwxy true 6
+25 24 600 abc xyabcdefghijklmnopqrstuvwxy true 25
+25 25 625 abc xyabcdefghijklmnopqrstuvwxy true 26
+31 2 62 abc DEabcdefghijklmnopqrstuvwxyzABCDE true 3
+31 3 93 abc DEabcdefghijklmnopqrstuvwxyzABCDE true 4
+31 5 155 abc DEabcdefghijklmnopqrstuvwxyzABCDE true 6
+31 24 744 abc DEabcdefghijklmnopqrstuvwxyzABCDE true 25
+31 25 775 abc DEabcdefghijklmnopqrstuvwxyzABCDE true 26
+32 2 64 abc EFabcdefghijklmnopqrstuvwxyzABCDEF true 3
+32 3 96 abc EFabcdefghijklmnopqrstuvwxyzABCDEF true 4
+32 5 160 abc EFabcdefghijklmnopqrstuvwxyzABCDEF true 6
+32 24 768 abc EFabcdefghijklmnopqrstuvwxyzABCDEF true 25
+32 25 800 abc EFabcdefghijklmnopqrstuvwxyzABCDEF true 26
+33 2 66 abc FGabcdefghijklmnopqrstuvwxyzABCDEFG true 3
+33 3 99 abc FGabcdefghijklmnopqrstuvwxyzABCDEFG true 4
+33 5 165 abc FGabcdefghijklmnopqrstuvwxyzABCDEFG true 6
+33 24 792 abc FGabcdefghijklmnopqrstuvwxyzABCDEFG true 25
+33 25 825 abc FGabcdefghijklmnopqrstuvwxyzABCDEFG true 26
+48 2 96 abc UVabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUV true 3
+48 3 144 abc UVabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUV true 4
+48 5 240 abc UVabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUV true 6
+48 24 1152 abc UVabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUV true 25
+48 25 1200 abc UVabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUV true 26
+64 2 128 abc -_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_ true 3
+64 3 192 abc -_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_ true 4
+64 5 320 abc -_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_ true 6
+64 24 1536 abc -_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_ true 25
+64 25 1600 abc -_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_ true 26
+65 2 130 abc _.abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_. true 3
+65 3 195 abc _.abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_. true 4
+65 5 325 abc _.abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_. true 6
+65 24 1560 abc _.abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_. true 25
+65 25 1625 abc _.abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_. true 26
 abab 0 0 0
 1996 40 120
