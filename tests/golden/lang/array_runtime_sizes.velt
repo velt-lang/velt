@@ -1,0 +1,22 @@
+// Array buffers whose size is known only when the program runs (`zero` comes from the clock): an
+// empty one, one grown from empty a push at a time, and a large one grown by one. In a release
+// build these are the allocator's wrappers rather than its inlined hook (rt_abi.md "Memory"): a
+// size of 0, an old size of 0 and a plain growth each take their own path there.
+function main() {
+  const zero = Math.min(Date.now(), 0);
+  const empty = new Array<number>(zero).fill(1);
+  console.log(empty.length, empty);
+  const xs: number[] = [];
+  for (let i = 0; i < 100; i++) {
+    xs.push(i);
+  }
+  console.log(xs.length, xs[0], xs[99]);
+  const big = new Array<number>(zero + 1000).fill(7);
+  big.push(8);
+  console.log(big.length, big[999], big[1000]);
+  const words: string[] = [];
+  for (let i = zero; i < 20; i++) {
+    words.push("w" + i);
+  }
+  console.log(words.length, words[19]);
+}
