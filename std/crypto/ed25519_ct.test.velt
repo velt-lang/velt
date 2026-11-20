@@ -1,7 +1,7 @@
 // velt/crypto (tests): the probe of scripts/ct-counts.py for Ed25519 signing, which no program
 // can import: the public key and a signature for the 32-byte seed in the file $VELT_CT_SECRET
 // names (a fixed seed without it, so that this also runs with the other tests). The seed is
-// read as bytes and nothing here branches on it; what is checked costs the same for every seed.
+// read as bytes and nothing here branches on it.
 import { ed25519PublicKey, ed25519Sign } from "velt/crypto/ed25519_sign";
 import { x25519PublicKey } from "velt/crypto/x25519";
 import { readFileBytesSync } from "velt/fs";
@@ -19,13 +19,8 @@ describe("the Ed25519 probe", () => {
     const signature = ed25519Sign(seed, pub, message);
     // X25519's public key shares the multiplication: in one program with the signer, as here.
     const other = x25519PublicKey(seed);
-    let fold: u8 = 0;
-    for (let i: usize = 0; i < 64; i++) {
-      fold ^= signature[i];
-    }
-    for (let i: usize = 0; i < 32; i++) {
-      fold ^= pub[i] ^ other[i];
-    }
-    expect((fold & 1) < 2).toBe(true);
+    // Nothing is done with the results that depends on their value: memcheck, with the seed
+    // marked undefined, would report it (scripts/ct-counts.py --memcheck).
+    expect(signature.length + pub.length + other.length).toBe(128);
   });
 });
