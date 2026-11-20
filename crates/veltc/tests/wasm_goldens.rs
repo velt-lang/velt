@@ -58,6 +58,8 @@ const UNSUPPORTED: &[&str] = &[
     // The executor in Velt gives up a promise nobody can settle and nobody holds; wasm's is
     // still the runtime's, which keeps it parked (#3247).
     "promise_abandoned_freed",
+    // The same for a spawned task parked on such a promise (#3126).
+    "task_parked_freed",
     // Nests 2,000 generators, which a native debug build holds in its 8 MiB stack (#2048); the
     // WebAssembly stacks overflow.
     "deep_generator_frames",
