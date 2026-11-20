@@ -180,8 +180,8 @@ same programs matched by Rust's `regex` crate, which the engine replaced:
 
 | Program | `regex` crate | std engine |
 |---|---|---|
-| `bench/benchmarks-game/regex-redux` on `fasta 100000` | 194.0 M | 180.9 M |
-| `bench/regex/literal.velt` (compiles three patterns per iteration) | 88.6 G | 10.6 G |
+| `bench/benchmarks-game/regex-redux` on `fasta 100000` | 194.0 M | 182.5 M |
+| `bench/regex/literal.velt` (compiles three patterns per iteration) | 88.6 G | 11.0 G |
 | `bench/regex/units.velt` (code-unit patterns over pairs) | 13.7 G | 0.48 G |
 
 Compiling a pattern is the larger difference: it allocates a few small arrays, where an
