@@ -761,3 +761,14 @@ impl Ctx<'_> {
         }
     }
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    MethodWrites {
+        written, methods, sources, done, reported, placeholders, adapters, sites, field_sites,
+        adapter_unused, refusals, refusals_reported, unlinked, value_reads,
+    }
+    MethodSrc {
+        d, self_ty, index, ty,
+    }
+}

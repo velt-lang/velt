@@ -3,17 +3,17 @@
 // libuv's names for Win32's errors (std/os/win_error.velt). A path of 248 units or more is made
 // absolute and given the `\\?\` prefix, as Rust's std does, so that it is not cut at MAX_PATH;
 // errors name the path as it was given, as Node's do. A directory refuses to open as a file with
-// "access denied", which is `EISDIR` here, as everywhere else.
+// "access denied", which is `EISDIR` here, as everywhere else. A file named with separators
+// after it (`dir\file\`) is read, described and found as the file, as Node does (`asFile`).
 
-import { OutPtr } from "velt/ffi/out_ptr";
 import { Ptr } from "velt/ffi/ptr";
-import { wideOf } from "velt/ffi/wide";
 import { osError } from "velt/fs/errors";
 import { Stats } from "velt/fs/stats";
 import { Done } from "velt/fs/whole/done";
 import { readAll } from "velt/fs/whole/read_all";
 import { utf8Encode } from "velt/encoding/utf8";
-import { addressLoad, arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
+import { addressLoad } from "velt/lang/intrinsics";
+import { asFile, winPath, withoutSeparators } from "velt/fs/whole/win_path";
 import { errnoOfWin32 } from "velt/os/win_error";
 
 /** C's `SECURITY_ATTRIBUTES` and `OVERLAPPED`: never passed. */
@@ -56,12 +56,6 @@ declare c("c") function GetFileInformationByHandleEx(
   size: u32,
 ): i32;
 declare c("c") function GetFileAttributesW(name: readonly u16[]): u32;
-declare c("c") function GetFullPathNameW(
-  name: readonly u16[],
-  room: u32,
-  out: u16[],
-  file: OutPtr<u16>,
-): u32;
 declare c("c") function CloseHandle(handle: Ptr<void>): i32;
 declare c("c") function GetLastError(): u32;
 declare c("c") function malloc(size: usize): Ptr<void> | null;
@@ -109,47 +103,6 @@ const EPOCH_TICKS: i64 = 116444736000000000;
 function lastWin32(): u32 {
   // SAFETY: GetLastError has no precondition.
   return unsafe { GetLastError() };
-}
-
-/** `path` as a NUL-terminated wide path, `\\?\`-prefixed when long; null for a 0 inside it. */
-function winPath(path: string): u16[] | null {
-  const w = wideOf(path);
-  if (w === null || w.length < 249 || path.startsWith("\\\\?\\") || path.startsWith("\\\\.\\")) {
-    return w;
-  }
-  let room: u32 = 512;
-  while (true) {
-    const full = arrayWithCapacity<u16>(room as usize);
-    arraySetLen(full, room as usize);
-    // SAFETY: `w` is NUL-terminated and `full` holds `room` units, the count passed.
-    const got = unsafe { GetFullPathNameW(w, room, full, new OutPtr<u16>()) };
-    if (got === 0) {
-      return w;
-    }
-    if (got < room) {
-      arraySetLen(full, got as usize);
-      // Already `\\?\` or `\\.\` (a long `//?/x` normalises to it): as it is, with its NUL.
-      const verbatim = got > 3 && full[0] === 92 && full[1] === 92 && full[3] === 92;
-      if (verbatim && (full[2] === 63 || full[2] === 46)) {
-        full.push(0);
-        return full;
-      }
-      // `\\server\share\x` is `\\?\UNC\server\share\x`; `C:\x` is `\\?\C:\x`.
-      const unc = got > 2 && full[0] === 92 && full[1] === 92;
-      const prefix = unc ? "\\\\?\\UNC" : "\\\\?\\";
-      const out = wideOf(prefix);
-      if (out === null) {
-        return w;
-      }
-      out.pop();
-      for (let i: usize = unc ? 1 : 0; i < (got as usize); i++) {
-        out.push(full[i]);
-      }
-      out.push(0);
-      return out;
-    }
-    room = got;
-  }
 }
 
 /** Whether `w` names a directory (for "access denied" on opening it). */
@@ -216,7 +169,7 @@ function readRest(h: Ptr<void>): Done<u8[]> {
 
 /** The bytes of the file at `path` (`c`, its C form, is POSIX's). */
 export function readBytes(c: readonly u8[], path: string): Done<u8[]> {
-  const w = winPath(path);
+  const w = winPath(asFile(path));
   if (w === null) {
     return { value: null, error: osError(errnoOfWin32(ERROR_FILE_NOT_FOUND), "open", path) };
   }
@@ -245,7 +198,8 @@ export function readText(c: readonly u8[], path: string): Done<string> {
 
 /** Writes `data` as UTF-8 to the file at `path`, created if missing, truncated or `append`ed to. */
 export function writeText(c: readonly u8[], path: string, data: string, append: bool): Done<bool> {
-  const w = winPath(path);
+  // `f\` writes `f`, made if missing, and `d\` is EISDIR, as in Node.
+  const w = winPath(withoutSeparators(path));
   if (w === null) {
     return { value: null, error: osError(errnoOfWin32(ERROR_FILE_NOT_FOUND), "open", path) };
   }
@@ -324,7 +278,7 @@ function handleInfo(h: Ptr<void>, info: u32[]): u32 {
 /** `stat` (`follow`) or `lstat` of `path`, from one open of it (a directory too). */
 export function statOf(c: readonly u8[], path: string, follow: bool): Done<Stats> {
   const call = follow ? "stat" : "lstat";
-  const w = winPath(path);
+  const w = winPath(asFile(path));
   if (w === null) {
     return { value: null, error: osError(errnoOfWin32(ERROR_FILE_NOT_FOUND), call, path) };
   }
@@ -368,7 +322,7 @@ export function statOf(c: readonly u8[], path: string, follow: bool): Done<Stats
 
 /** Whether anything is at `path`, following symlinks (a broken one is not there). */
 export function existsAt(c: readonly u8[], path: string): bool {
-  const w = winPath(path);
+  const w = winPath(asFile(path));
   if (w === null) {
     return false;
   }

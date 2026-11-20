@@ -7,11 +7,12 @@ import {
   velt_rt_fs_copy_file_sync,
   exists as existsAt,
   existsSync as existsAtSync,
-  velt_rt_fs_remove,
-  velt_rt_fs_remove_sync,
+  remove as removeAt,
+  removeSync as removeAtSync,
   velt_rt_fs_rename,
   velt_rt_fs_rename_sync,
 } from "#fs-rt";
+import { checkPathArg } from "velt/fs/path_arg";
 
 /** The options of `remove`. */
 export type RemoveOptions = {
@@ -21,40 +22,54 @@ export type RemoveOptions = {
 
 /** Removes a file, symlink or empty directory (with `recursive`, a directory and its contents). */
 export async function remove(path: string, opts: RemoveOptions = {}): Promise<void> {
-  checkIo(await velt_rt_fs_remove(path, opts.recursive ?? false));
+  await removeAt(path, opts.recursive ?? false);
 }
 
 /** Renames (moves) `from` to `to`, replacing a file at `to`. */
 export async function rename(from: string, to: string): Promise<void> {
+  checkPathArg(from, "oldPath");
+  checkPathArg(to, "newPath");
   checkIo(await velt_rt_fs_rename(from, to));
 }
 
 /** Copies the file `from` to `to`, replacing a file at `to`. */
 export async function copyFile(from: string, to: string): Promise<void> {
+  checkPathArg(from, "src");
+  checkPathArg(to, "dest");
   checkIo(await velt_rt_fs_copy_file(from, to));
 }
 
 /** Never throws: any failure to reach `path` reads as `false`. */
 export async function exists(path: string): Promise<bool> {
+  if (path.includes("\0")) {
+    return false;
+  }
   return await existsAt(path);
 }
 
 /** `remove`, blocking the calling thread. */
 export function removeSync(path: string, opts: RemoveOptions = {}) {
-  checkIo(velt_rt_fs_remove_sync(path, opts.recursive ?? false));
+  removeAtSync(path, opts.recursive ?? false);
 }
 
 /** `rename`, blocking the calling thread. */
 export function renameSync(from: string, to: string) {
+  checkPathArg(from, "oldPath");
+  checkPathArg(to, "newPath");
   checkIo(velt_rt_fs_rename_sync(from, to));
 }
 
 /** `copyFile`, blocking the calling thread. */
 export function copyFileSync(from: string, to: string) {
+  checkPathArg(from, "src");
+  checkPathArg(to, "dest");
   checkIo(velt_rt_fs_copy_file_sync(from, to));
 }
 
 /** `exists`, blocking the calling thread. */
 export function existsSync(path: string): bool {
+  if (path.includes("\0")) {
+    return false;
+  }
   return existsAtSync(path);
 }

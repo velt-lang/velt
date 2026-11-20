@@ -1,0 +1,306 @@
+// velt/fs (internal): listing, making and removing directories on Windows (`#fs-tree`'s win32
+// variant, std/imports.velt), through Win32's wide-path functions, with Node's messages and
+// libuv's names for Win32's errors (std/os/win_error.velt), and the long paths of
+// std/fs/whole/win_path.velt. A listing is sorted by name, by code point, and carries each
+// entry's type from the find data: a reparse point tagged as a symlink or a mount point (a
+// junction) is a link, whatever it points to.
+//
+// Removing still calls the runtime (`velt_rt_fs_remove_sync`): a tree is removed there with
+// every directory opened relative to its parent's handle, so that a directory swapped for a
+// junction during the walk is never entered, and that walk is not Velt code yet (#2196).
+
+import { Ptr } from "velt/ffi/ptr";
+import { Dirent } from "velt/fs/dirent";
+import { osError } from "velt/fs/errors";
+import { isDots, kindOf, nameOf } from "velt/fs/tree/find_data";
+import { byCodePoint } from "velt/fs/tree/order";
+import { Done } from "velt/fs/whole/done";
+import { asFile, winPath } from "velt/fs/whole/win_path";
+import { pdqsort } from "velt/lang/sort/pdq";
+import { ioError } from "velt/native/error";
+import { IoStatus } from "velt/native/status";
+import { errnoOfWin32 } from "velt/os/win_error";
+
+/** C's `WIN32_FIND_DATAW`, which the find functions fill. */
+declare c type _WIN32_FIND_DATAW;
+/** C's `SECURITY_ATTRIBUTES`: never passed. */
+declare c type _SECURITY_ATTRIBUTES;
+
+declare c("c") function FindFirstFileExW(
+  name: readonly u16[],
+  infoLevel: i32,
+  data: Ptr<void>,
+  searchOp: i32,
+  filter: Ptr<void> | null,
+  flags: u32,
+): Ptr<void> | null;
+declare c("c") function FindNextFileW(handle: Ptr<void>, data: Ptr<_WIN32_FIND_DATAW>): i32;
+declare c("c") function FindClose(handle: Ptr<void>): i32;
+declare c("c") function CreateDirectoryW(
+  name: readonly u16[],
+  security: Ptr<_SECURITY_ATTRIBUTES> | null,
+): i32;
+declare c("c") function GetFileAttributesW(name: readonly u16[]): u32;
+declare c("c") function GetLastError(): u32;
+declare c("c") function malloc(size: usize): Ptr<void> | null;
+declare c("c") function free(p: Ptr<void> | null): void;
+
+declare function velt_rt_fs_remove_sync(path: string, recursive: bool): IoStatus;
+
+const INVALID_HANDLE: usize = 0xffffffffffffffff;
+/** `FindExInfoBasic`: no short names, which nothing here reads. */
+const INFO_BASIC: i32 = 1;
+/** `FIND_FIRST_EX_LARGE_FETCH`: a larger buffer per system call. */
+const LARGE_FETCH: u32 = 2;
+/** `WIN32_FIND_DATAW` is 592 bytes: as 296 `u16`s, the attributes are units 0-1, the reparse
+ * tag (`dwReserved0`) units 18-19, and the name starts at unit 22 (260 units, NUL-terminated). */
+const FIND_DATA_BYTES: usize = 592;
+const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+const INVALID_FILE_ATTRIBUTES: u32 = 0xffffffff;
+const ERROR_FILE_NOT_FOUND: u32 = 2;
+const ERROR_PATH_NOT_FOUND: u32 = 3;
+const ERROR_NO_MORE_FILES: u32 = 18;
+const ERROR_FILE_EXISTS: u32 = 80;
+const ERROR_INVALID_NAME: u32 = 123;
+const ERROR_ALREADY_EXISTS: u32 = 183;
+/** Not a Win32 error: what `makeAll` gives for a parent that is there and is no directory. */
+const PARENT_NOT_A_DIRECTORY: u32 = 0xffffffff;
+const ERROR_DIRECTORY: u32 = 267;
+/** Linux's numbers, which `osError` reads on Windows. */
+const ENOENT: i32 = 2;
+const ENOMEM: i32 = 12;
+const ENOTDIR: i32 = 20;
+const EPERM: i32 = 1;
+const EACCES: i32 = 13;
+const ENOSPC: i32 = 28;
+const EINVAL: i32 = 22;
+
+/** The last Win32 error. */
+function lastWin32(): u32 {
+  // SAFETY: GetLastError has no precondition.
+  return unsafe { GetLastError() };
+}
+
+/**
+ * The entries of the directory `path`, in the system's order, pushed to `names` and `kinds`: 0,
+ * or the errno (Linux's number) of what failed.
+ */
+function read(path: string, names: string[], kinds: u8[]): i32 {
+  if (path.length === 0) {
+    // `\*` would list the root: the empty path names nothing, as on the other systems.
+    return ENOENT;
+  }
+  const last = path.charCodeAt((path.length as i64) - 1);
+  const pattern = last === 92 || last === 47 || last === 58 ? `${path}*` : `${path}\\*`;
+  const w = winPath(pattern);
+  if (w === null) {
+    return ENOENT;
+  }
+  // SAFETY: malloc's result is checked before use and freed once, on every way out below.
+  const block = unsafe { malloc(FIND_DATA_BYTES) };
+  if (block === null) {
+    return ENOMEM;
+  }
+  const at = Ptr.addressOf(block);
+  // SAFETY: `w` is NUL-terminated, and `block` holds the 592 bytes of the WIN32_FIND_DATAW the
+  // call writes; no search filter.
+  const found = unsafe { FindFirstFileExW(w, INFO_BASIC, block, 0, null, LARGE_FETCH) };
+  if (found === null || Ptr.addressOf(found) === INVALID_HANDLE) {
+    // Read right after the call, before `free` can change it.
+    const code = lastWin32();
+    // SAFETY: `block` came from malloc and nothing uses it after this.
+    unsafe {
+      free(block);
+    }
+    if (code === ERROR_FILE_NOT_FOUND) {
+      // The directory is there and nothing matches `*`: an empty one (a drive's root).
+      return 0;
+    }
+    // A file where a directory was expected, which Node names `ENOTDIR`.
+    return code === ERROR_DIRECTORY ? ENOTDIR : errnoOfWin32(code);
+  }
+  const h: Ptr<void> = found;
+  // SAFETY: `at` is the block's address, which holds a WIN32_FIND_DATAW.
+  const data = unsafe { Ptr.at<_WIN32_FIND_DATAW>(at) };
+  let error: i32 = 0;
+  while (true) {
+    // SAFETY: the find call before filled the block at `at`, FIND_DATA_BYTES bytes, and the
+    // units these read are inside it.
+    unsafe {
+      if (!isDots(at)) {
+        names.push(nameOf(at));
+        kinds.push(kindOf(at));
+      }
+    }
+    // SAFETY: `h` is the open search and `data` points at the block, as above.
+    if (unsafe { FindNextFileW(h, data) } === 0) {
+      const code = lastWin32();
+      if (code !== ERROR_NO_MORE_FILES) {
+        error = errnoOfWin32(code);
+      }
+      break;
+    }
+  }
+  // SAFETY: the search this function opened, closed once; `block` came from malloc and nothing
+  // uses it after this.
+  unsafe {
+    FindClose(h);
+    free(block);
+  }
+  return error;
+}
+
+/** The names in the directory `path`, sorted (`c`, its C form, is POSIX's). */
+export function list(c: readonly u8[], path: string): Done<string[]> {
+  const names: string[] = [];
+  const kinds: u8[] = [];
+  const e = read(path, names, kinds);
+  if (e !== 0) {
+    return { value: null, error: osError(e, "scandir", path) };
+  }
+  pdqsort(names, (a, b) => byCodePoint(a, b));
+  return { value: names, error: null };
+}
+
+/** The entries of the directory `path` with their types, sorted by name. */
+export function listTyped(c: readonly u8[], path: string): Done<Dirent[]> {
+  const names: string[] = [];
+  const kinds: u8[] = [];
+  const e = read(path, names, kinds);
+  if (e !== 0) {
+    return { value: null, error: osError(e, "scandir", path) };
+  }
+  const out: Dirent[] = [];
+  for (let i: usize = 0; i < names.length; i++) {
+    out.push({ name: names[i], kind: kinds[i] });
+  }
+  pdqsort(out, (a, b) => byCodePoint(a.name, b.name));
+  return { value: out, error: null };
+}
+
+/** `CreateDirectoryW(path)`: 0, or the Win32 error. */
+function makeOne(path: string): u32 {
+  const w = winPath(path);
+  if (w === null) {
+    return ERROR_FILE_NOT_FOUND;
+  }
+  // SAFETY: `w` is NUL-terminated; no security attributes.
+  if (unsafe { CreateDirectoryW(w, null) } !== 0) {
+    return 0;
+  }
+  return lastWin32();
+}
+
+/** Whether a directory is at `path` (following links). */
+function isDir(path: string): bool {
+  const w = winPath(path);
+  if (w === null) {
+    return false;
+  }
+  // SAFETY: `w` is NUL-terminated.
+  const a = unsafe { GetFileAttributesW(w) };
+  return a !== INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY) !== 0;
+}
+
+/** Whether the code unit `u` separates a path's parts. */
+function isSep(u: i64): bool {
+  return u === 92 || u === 47;
+}
+
+/**
+ * The parent of `path`: `a\b` of `a\b\c` and of `a/b//c/`, `C:\` of `C:\a`, `\` of `\a`, the
+ * empty path of `a`; `null` for a root and the empty path, which have none.
+ */
+function parentOf(path: string): string | null {
+  let end = path.length as i64;
+  while (end > 0 && isSep(path.charCodeAt(end - 1))) {
+    end--;
+  }
+  if (end === 0) {
+    return null;
+  }
+  let start = end;
+  while (start > 0 && !isSep(path.charCodeAt(start - 1))) {
+    start--;
+  }
+  let cut = start;
+  while (cut > 0 && isSep(path.charCodeAt(cut - 1))) {
+    cut--;
+  }
+  // A root keeps its separator: `\`, and `C:\` (`C:` alone is the drive's working directory).
+  if (start > 0 && (cut === 0 || path.charCodeAt(cut - 1) === 58)) {
+    cut++;
+  }
+  return path.slice(0, cut);
+}
+
+/**
+ * Makes the directory `path` and its missing parents: 0, or the Win32 error of what failed. A
+ * directory already there is not an error, whoever made it.
+ */
+function makeAll(path: string): u32 {
+  if (path.length === 0) {
+    // The empty path: the parent of a relative name, which is there.
+    return 0;
+  }
+  const first = makeOne(path);
+  if (first === 0) {
+    return 0;
+  }
+  if (first !== ERROR_PATH_NOT_FOUND && first !== ERROR_FILE_NOT_FOUND) {
+    // As Node's recursive `mkdir`: an error whose name is EACCES, ENOSPC, ENOTDIR or EPERM
+    // stands even when a directory is there (`C:\`, which refuses with "access
+    // denied"); another one means the directory is made, if one is there now.
+    const e = errnoOfWin32(first);
+    const stands = e === EACCES || e === ENOSPC || e === ENOTDIR || e === EPERM;
+    return stands || !isDir(path) ? first : 0;
+  }
+  const parent = parentOf(path);
+  if (parent === null) {
+    return first;
+  }
+  const above = makeAll(parent);
+  if (above === ERROR_ALREADY_EXISTS || above === ERROR_FILE_EXISTS) {
+    // The parent is there and is no directory (`makeAll` takes a directory that is):
+    // ENOTDIR, as Node's and as on the other systems, where the system says so itself.
+    return PARENT_NOT_A_DIRECTORY;
+  }
+  if (above !== 0) {
+    return above;
+  }
+  const again = makeOne(path);
+  return again === 0 || isDir(path) ? 0 : again;
+}
+
+/** Makes the directory `path`, with `recursive` its missing parents too. */
+export function make(c: readonly u8[], path: string, recursive: bool): Done<bool> {
+  if (path.length === 0) {
+    // Nothing to make (`makeAll` takes the empty path for a relative name's parent).
+    return { value: null, error: osError(ENOENT, "mkdir", path) };
+  }
+  const code = recursive ? makeAll(path) : makeOne(path);
+  if (code !== 0) {
+    // A name Windows refuses (`a?b`) is EINVAL for `mkdir`, as libuv names it there; a
+    // listing of one stays ENOENT.
+    const e =
+      code === PARENT_NOT_A_DIRECTORY
+        ? ENOTDIR
+        : code === ERROR_INVALID_NAME || code === ERROR_DIRECTORY ? EINVAL : errnoOfWin32(code);
+    return { value: null, error: osError(e, "mkdir", path) };
+  }
+  return { value: true, error: null };
+}
+
+/**
+ * Removes what is at `path`: a file, a link (never what it points to) or an empty directory,
+ * with `recursive` a directory and everything in it. The runtime's function, for now (see the
+ * top of this file).
+ */
+export function removeAt(c: readonly u8[], path: string, recursive: bool): Done<bool> {
+  // A file named with separators after it is removed as the file, as Node's `rm` does.
+  const s = velt_rt_fs_remove_sync(asFile(path), recursive);
+  if (s.code != 0) {
+    return { value: null, error: ioError(s.code, s.message) };
+  }
+  return { value: true, error: null };
+}

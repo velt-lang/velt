@@ -474,3 +474,10 @@ fn rebind(cx: &mut Ctx, caller: DefId) {
         _ => {}
     }
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    Stubs {
+        by_hook, hooks, first_call, at_check, declared, hook_calls,
+    }
+}

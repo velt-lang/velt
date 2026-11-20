@@ -254,3 +254,66 @@ fn every_std_file_round_trips() {
 fn an_index_with_several_keys_does_not_grow_expressions() {
     assert!(std::mem::size_of::<crate::ast::ExprKind>() <= 256);
 }
+
+/// One declaration encodes on its own and comes back the same, in the decoding file.
+#[test]
+fn a_declaration_round_trips_as_a_fragment() {
+    let src = "type Pair<T = number> = { a: T; b: T[] };\n\
+               function f(x: number, ...rest: string[]): number { return x; }\n";
+    let file = FileId(3);
+    let (module, errors) = crate::parse_file(file, src);
+    assert!(errors.is_empty(), "{errors:?}");
+    for item in &module.items {
+        match &item.kind {
+            ast::ItemKind::TypeAlias(a) => {
+                let bytes = crate::encode_fragment(a, file, &mut |f| f.0);
+                let back: ast::TypeAlias =
+                    crate::decode_fragment(&bytes, file, &[]).expect("decodes");
+                assert_eq!(format!("{back:?}"), format!("{a:?}"));
+                assert!(crate::decode_fragment::<ast::TypeAlias>(
+                    &bytes[..bytes.len() - 1],
+                    file,
+                    &[]
+                )
+                .is_none());
+            }
+            ast::ItemKind::Function(f) => {
+                let bytes = crate::encode_fragment(f, file, &mut |f| f.0);
+                let back: ast::FnDecl = crate::decode_fragment(&bytes, file, &[]).expect("decodes");
+                assert_eq!(format!("{back:?}"), format!("{f:?}"));
+            }
+            _ => {}
+        }
+    }
+}
+
+/// A fragment is refused with bytes after it, as when cut; a span of another file than the
+/// node's is stored as the number the caller gives that file, and decoded as the file the
+/// caller has at that number.
+#[test]
+fn a_fragment_is_whole_and_its_other_files_are_the_caller_s() {
+    let file = FileId(3);
+    let (mut module, errors) = crate::parse_file(file, "type A = { x: number };\n");
+    assert!(errors.is_empty(), "{errors:?}");
+    let ast::ItemKind::TypeAlias(alias) = &mut module.items[0].kind else {
+        panic!("a type alias");
+    };
+    alias.ty.span.file = FileId(9);
+    let mut asked = vec![];
+    let bytes = crate::encode_fragment(&*alias, file, &mut |f| {
+        asked.push(f);
+        1
+    });
+    assert_eq!(asked, [FileId(9)], "only the other file is asked for");
+    let table = [FileId(40), FileId(41)];
+    let back: ast::TypeAlias = crate::decode_fragment(&bytes, FileId(30), &table).expect("decodes");
+    assert_eq!(back.name.span.file, FileId(30));
+    assert_eq!(back.ty.span.file, FileId(41));
+    // A number the table lacks, bytes after the node, a cut node.
+    assert!(crate::decode_fragment::<ast::TypeAlias>(&bytes, FileId(30), &table[..1]).is_none());
+    let mut more = bytes.clone();
+    more.push(0);
+    assert!(crate::decode_fragment::<ast::TypeAlias>(&more, FileId(30), &table).is_none());
+    let cut = &bytes[..bytes.len() - 1];
+    assert!(crate::decode_fragment::<ast::TypeAlias>(cut, FileId(30), &table).is_none());
+}

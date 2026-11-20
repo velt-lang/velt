@@ -9,7 +9,6 @@ use velt_common::{Diagnostic, Span};
 
 use crate::body::LocalKind;
 use crate::ctx::Ctx;
-use crate::defs::BodyState;
 use crate::hir::{
     Callee, Def, DefId, Expr, ExprKind as E, FnDef, Intrinsic, LocalDef, LocalId, PassMode, UseMode,
 };
@@ -18,12 +17,7 @@ use crate::visit;
 use super::soft;
 
 pub(crate) fn validate_moves(cx: &mut Ctx) {
-    let fns: Vec<DefId> = cx
-        .fn_defs
-        .iter()
-        .copied()
-        .filter(|d| cx.fn_info(*d).state == BodyState::Done)
-        .collect();
+    let fns: Vec<DefId> = cx.unit_fns();
     for d in fns {
         let Some(Def::Fn(mut f)) = cx.defs[d.0 as usize].take() else {
             continue;

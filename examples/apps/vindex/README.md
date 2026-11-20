@@ -35,13 +35,13 @@ query ─▶ router: 64 group centres ─▶ centroids of the nearest groups ─
 
 | Source | What |
 |---|---|
-| `src/kernels.velt` | the dot products (`f32` and int8, on arrays and on raw bytes), quantization |
+| `src/kernels.velt` | the dot products (`f32` on arrays, int8 on the records' bytes), quantization |
 | `src/kmeans.velt` | spherical k-means, the assignment step on every worker |
 | `src/router.velt` | two-level centroid search: about `sqrt(nlist)` groups of centroids, so a row or a query scores 64 + 8 × 64 centroids instead of 4,096 |
 | `src/build.velt` | the build, in three streaming passes: train on a sample, assign every row (each worker reads its own range of the file), write (each worker writes its rows into its own part of every list) |
 | `src/index.velt` | search over the mapped files (`MappedFile`), or with positioned reads |
 | `src/gen.velt` | the synthetic data set and the brute-force ground truth |
-| `src/topk.velt`, `src/store.velt`, `src/rng.velt` | bounded heap, file formats and positioned I/O, a seeded generator |
+| `src/topk.velt`, `src/store.velt`, `src/rng.velt` | bounded heap, file formats and positioned I/O straight into number arrays, a seeded generator |
 
 Nothing holds the vectors in memory. The build keeps the centroids, 4 bytes per row for the
 assignment and small per-list write buffers. A search keeps the centroids; everything else is
@@ -55,6 +55,14 @@ disk, Linux 6.18. The data set is 10,000,000 unit vectors of 128 dimensions (4.9
 neighbours. The machine is a shared VM and timings moved by up to 30% between runs: compare
 ratios, not absolute numbers. This is one data set that fits in the page cache; nothing here
 was measured at hundreds of gigabytes (see [Not done](#not-done)).
+
+These numbers are from the first version of the program. Since then its file I/O reads and
+writes number arrays directly ([What Velt was missing](#what-velt-was-missing)); the scan and
+the mapped search are the same code. A run on 200,000 vectors of 64 dimensions before and
+after that change wrote byte-identical files and gave the same recall. There the build's
+assignment pass took 150 ms against 297 ms (best of three, both programs run in turn), and a
+single-threaded search benchmark retired 3% fewer instructions with `pread` and 2% fewer
+mapped. The 10-million run was not repeated.
 
 **Build**
 
@@ -111,26 +119,40 @@ this machine. A hand-written AVX-512 kernel was not measured.
 
 ## What Velt was missing
 
-**Added on this branch**
+The program was written to find this out. Most of what it found has since been added to Velt,
+and the program now uses it.
 
-| What | Why |
-|---|---|
-| `MappedFile` in `velt/fs` ([#1866](https://github.com/velt-lang/velt/issues/1866) area 11; what it leaves out: [#3162](https://github.com/velt-lang/velt/issues/3162)): `MappedFile.open(path)`, `.bytes: shared<u8[]>`, `.f32s(byteOffset, count): shared<f32[]>`, `.advise(...)` | There was no way to map a file. The mapping is an ordinary bounds-checked array: indexing, the SIMD loads and `spawn` all work on it with no copy. Read-only, and never unmapped (see below) |
-| the std-only intrinsic `addressArray<T>(address, length): T[]` | An array over memory it does not own (`cap == 0`, the form constant tables already have): what `MappedFile` is built on. Design note in `docs/internals/design/intrinsics.md` |
+**Added for this program, or because of it**
 
-**Found, not fixed**
+| What | Where it is used here | Change |
+|---|---|---|
+| `MappedFile` in `velt/fs`: `MappedFile.open(path)`, `.bytes: shared<u8[]>`, `.advise(...)`. The mapping is an ordinary bounds-checked array: indexing, the SIMD loads and `spawn` all work on it with no copy | `src/index.velt`: the lists and the rows of a mapped index | [#3163](https://github.com/velt-lang/velt/pull/3163) |
+| Views of a mapping as every number type (`.f32s`, `.i8s`, `.u32s`, …), a mapping of part of a file (`open(path, { offset, length })`), `advise("dontneed")` | `.f32s` for the rows | [#3192](https://github.com/velt-lang/velt/pull/3192), [#3216](https://github.com/velt-lang/velt/pull/3216) |
+| `readSync` and `writeSync` on an array of any number type, read and written in place (`T extends Numeric`) | `src/store.velt`'s `readAt` / `writeAt`: rows go between the file and an `f32[]` with no byte buffer and no copy, and the file header is a `u32[]`. The float kernel that worked on raw bytes, and the helpers that packed floats into bytes, are gone | [#3197](https://github.com/velt-lang/velt/pull/3197) |
+| `readAt(fd, length, position)`, a positioned read a task awaits, also as `readAt<f32>` | not used yet: see [Not done](#not-done) | [#3192](https://github.com/velt-lang/velt/pull/3192), [#3245](https://github.com/velt-lang/velt/pull/3245) |
+| A `shared` value in a field that nothing writes is lent to a call without counting a reference. It cost 12× in the build's assignment pass on 4 threads, and every hot loop had to copy such fields into locals first | `src/router.velt` and the rerank read `r.centres`, `ix.rows` where they use them; the generated code has no count in either | [#3199](https://github.com/velt-lang/velt/pull/3199) |
+| `xs.sort((a, b) => a - b)` on an integer array | the sorts of row ids and latencies | [#3164](https://github.com/velt-lang/velt/pull/3164) |
+| `process.pid`, `fs.rmSync`; `toFixed` on an `f32` | the tests' clean-up, the build's report | [#3164](https://github.com/velt-lang/velt/pull/3164), [#3143](https://github.com/velt-lang/velt/pull/3143) |
+| `TopK` in `velt/collections`, and `replaceTop` on `PriorityQueue` | not used: see below | [#3165](https://github.com/velt-lang/velt/pull/3165) |
+
+**Still missing**
 
 | # | Finding | Cost here | Suggestion | Tracked |
 |---|---|---|---|---|
-| 1 | Passing a `shared` *field* (`dot(r.centres, …)`) takes and drops a counted reference at every call: an atomic add and subtract on a word all threads share | The build's assignment pass took 5.6 s instead of 0.48 s on 4 threads (12×). `bench/shared_field.velt`: 7× on one thread, 37× on four | Borrow the field for the call when its owner is borrowed for the function, as a local is. Until then every hot loop must copy `shared` fields into locals first | [#3113](https://github.com/velt-lang/velt/issues/3113) (point 2) |
-| 2 | `xs.sort((a, b) => a - b)` on an `i64[]` is a type error ("expected i64, found f64"), also with `(a - b) as number` | The most common TypeScript comparator does not compile; `(a < b ? -1 : a > b ? 1 : 0)` does | Accept an integer result from a comparator | [#3157](https://github.com/velt-lang/velt/issues/3157) |
-| 3 | Bytes cannot be read as another number type without a copy: `readSync` fills only a `u8[]`, and there is no view of a `u8[]` as `f32[]`, `i8[]` or `u32[]` | Every kernel exists twice (`dotF32` and `dotF32Bytes`), built on `u8x16.load(…).asF32x4()`; a `u32` id is assembled from four bytes by hand | `readSync`/`writeSync` on any number array; typed views of a `u8[]`; `MappedFile` views for every number type (`f32s` is the only one) | [#3158](https://github.com/velt-lang/velt/issues/3158) |
-| 4 | A mapping cannot be unmapped, written, or grown | An index that is rebuilt or compacted in a long-running server leaks address space; the build writes with `pwrite` | Needs views whose lifetime the compiler tracks (the byte views of `sqlite-engine.md`) | [#3162](https://github.com/velt-lang/velt/issues/3162) |
-| 5 | No way to read many file ranges at once without blocking a thread each (`readSync` is synchronous; the async file API is whole-file or stream) | A cold rerank is 100 reads one after another; `advise("willneed")` is the only way to overlap them | Async positioned reads (io_uring, or the blocking pool) | [#3159](https://github.com/velt-lang/velt/issues/3159) |
-| 6 | `velt/simd` has no byte shuffle (`pshufb`/`tbl`) and no per-lane population count; vectors are 128-bit only | Not measured: the two operations that 4-bit product quantization ("fast scan") and 1-bit codes are built on, which is where the next speed-up is (the scan is limited by bytes read) | `u8x16.swizzle(table, indices)`, `countOnes()` on integer vectors; 256/512-bit types | [#2416](https://github.com/velt-lang/velt/issues/2416) (shuffle), [#1055](https://github.com/velt-lang/velt/issues/1055) (per-lane `popcnt`), [#1981](https://github.com/velt-lang/velt/issues/1981) (wider vectors) |
-| 7 | No parallel loop: every data-parallel pass is "split into ranges, `spawn` each, `Promise.all`, merge" by hand | Written six times in 1,300 lines | `parallelFor(n, (start, end) => …)` or a `map` over ranges in `velt/task` | [#1866](https://github.com/velt-lang/velt/issues/1866) area 6 |
-| 8 | No bounded top-k in `velt/collections` (`PriorityQueue` has no replace-top) | `src/topk.velt`, the second program to write it | A `TopK`, or `replaceTop` on `PriorityQueue` | [#3160](https://github.com/velt-lang/velt/issues/3160) |
-| 9 | Small: no `process.pid`; Node's `fs.rmSync` is `removeSync`; `f32` has no `toFixed`; `expect(...).toThrow(RangeError)` needs a construct signature type | Each cost a compile error | — | [#3161](https://github.com/velt-lang/velt/issues/3161); `toFixed`: [#3143](https://github.com/velt-lang/velt/pull/3143) |
+| 1 | A mapping cannot be unmapped, written, or grown | An index that is rebuilt or compacted in a long-running server leaks address space; the build writes with `pwrite` | Needs views whose lifetime the compiler tracks | [#3162](https://github.com/velt-lang/velt/issues/3162) |
+| 2 | `velt/simd` has no byte shuffle (`pshufb`/`tbl`) and no per-lane population count | Not measured: the two operations that 4-bit product quantization ("fast scan") and 1-bit codes are built on, which is where the next speed-up is (the scan is limited by bytes read) | `u8x16.swizzle(table, indices)`, `countOnes()` on integer vectors | [#2416](https://github.com/velt-lang/velt/issues/2416) (shuffle), [#1055](https://github.com/velt-lang/velt/issues/1055) (per-lane `popcnt`) |
+| 3 | No parallel loop: every data-parallel pass is "split into ranges, `spawn` each, `Promise.all`, merge" by hand | Written six times | `parallelFor(n, (start, end) => …)` or a `map` over ranges in `velt/task` | [#1866](https://github.com/velt-lang/velt/issues/1866) area 6 |
+| 4 | A `shared` field that some code copies into a variable of its own (`const xs = box.rows`) still counts a reference at every other read: the copy is a move out of the field, which counts as a write of it | None here once the local copies were removed; it is easy to bring back | Tell a copy of a handle from a change of the field | [#3113](https://github.com/velt-lang/velt/issues/3113) |
+| 5 | `expect(...).toThrow(RangeError)` needs a construct signature type | The tests match error messages instead | — | — |
+
+**Kept on purpose**
+
+- `src/topk.velt` is still the program's own. std's `TopK` keeps `f64` scores and one `k` for
+  its lifetime; the searcher reuses two heaps across queries with a different `k` each time
+  (`reset(k)`), reads their keys in place, and wants ties broken by row id so that results
+  are the same from run to run. That is a different trade, not a gap.
+- The int8 kernel still reads bytes. A record is a row id followed by its codes, so the codes
+  of a list are not one `i8[]`; the kernel loads 16 bytes at a time from where they lie.
 
 ## Not done
 
@@ -140,10 +162,13 @@ What an engine for hundreds of gigabytes still needs, in the order it would hurt
   billion rows wants on the order of 100,000 lists or more, which needs hierarchical or
   mini-batch k-means (the router already searches centroids in two levels; training does not).
 - **Smaller codes.** 132 bytes a row is 26% of the `f32` data. Product quantization or 1-bit
-  codes would bring the scanned bytes down 4–16× (finding 6).
+  codes would bring the scanned bytes down 4–16× (finding 2).
 - **Row ids** are 32-bit (4.29 billion rows).
 - **Updates.** The index is built once. Inserts, deletes and compaction need a log, a
-  mutable tail and a way to replace mapped files (finding 4).
+  mutable tail and a way to replace mapped files (finding 1).
+- **Overlapping the rerank's reads without mapping.** With `--io pread` the 100 rows of a
+  rerank are read one after another. `readAt<f32>` can start them together; the searcher is
+  synchronous today and was not changed.
 - **A real cold-disk measurement**, on a data set several times larger than memory, on a
   disk whose cache can be controlled.
 - macOS is untested here (the code has no Linux-only calls); Windows has no `MappedFile` yet.
