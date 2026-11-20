@@ -19,6 +19,8 @@ export class Parser {
   readonly source: string;
   readonly flags: string;
   readonly unicode: bool;
+  /** The `v` flag: classes have set syntax. */
+  readonly sets: bool;
   readonly ignoreCase: bool;
   readonly multiline: bool;
   readonly dotAll: bool;
@@ -41,6 +43,7 @@ export class Parser {
     this.source = source;
     this.flags = flags;
     this.unicode = flags.includes("u") || flags.includes("v");
+    this.sets = flags.includes("v");
     this.ignoreCase = flags.includes("i");
     this.multiline = flags.includes("m");
     this.dotAll = flags.includes("s");

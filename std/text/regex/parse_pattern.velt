@@ -22,6 +22,7 @@ import {
 } from "velt/text/regex/node";
 import { atomEscape, charNode, parseClass, unicodeEscape } from "velt/text/regex/parse_escape";
 import { Parser } from "velt/text/regex/parser";
+import { propertySet } from "velt/text/regex/unicode_props";
 
 /** How deep groups may nest. */
 const MAX_DEPTH: u32 = 250;
@@ -210,15 +211,17 @@ function group(p: Parser): Node {
   return g;
 }
 
-/** May `c` start a group name (`first`) or continue one? Identifier characters; every
- * character past ASCII is taken. */
+/** May `c` start a group name (`first`) or continue one? JavaScript's identifier characters. */
 function isNameChar(c: i64, first: bool): bool {
-  const l = c | 0x20;
-  return (l >= 0x61 && l <= 0x7a) ||
-    c == 0x24 ||
-    c == 0x5f ||
-    c >= 0x80 ||
-    (!first && c >= 0x30 && c <= 0x39);
+  if (c < 0x80) {
+    const l = c | 0x20;
+    return (l >= 0x61 && l <= 0x7a) || c == 0x24 || c == 0x5f || (!first && c >= 0x30 && c <= 0x39);
+  }
+  if (!first && (c == 0x200c || c == 0x200d)) {
+    return true;
+  }
+  const set = propertySet(first ? "ID_Start" : "ID_Continue", "", false);
+  return set != null && set.contains(c as u32);
 }
 
 /** The name of a group after its `(?<`, up to and including the `>`. */
@@ -231,7 +234,13 @@ function groupName(p: Parser): string {
       return name;
     }
     if (c == 0x5c && p.eat(0x75)) {
-      c = unicodeEscape(p);
+      c = unicodeEscape(p, true);
+    }
+    // The two code units of one character, without the `u` flag.
+    const low = p.peek();
+    if (c >= 0xd800 && c < 0xdc00 && low >= 0xdc00 && low <= 0xdfff) {
+      c = 0x10000 + ((c - 0xd800) << 10) + (low - 0xdc00);
+      p.at++;
     }
     if (c < 0 || !isNameChar(c, name == "")) {
       p.fail("Invalid capture group name");

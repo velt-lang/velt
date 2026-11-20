@@ -43,10 +43,11 @@ function hex(p: Parser, n: usize): i64 {
   return v;
 }
 
-/** After `\u`: the code unit of `XXXX`, or with the `u` flag the code point of `{…}` or of an
- * escaped surrogate pair; -1 with nothing read when it is not well-formed. */
-export function unicodeEscape(p: Parser): i64 {
-  if (p.unicode && p.peek() == 0x7b) {
+/** After `\u`: the code unit of `XXXX`, or when `points` (the `u` flag; always in a group's
+ * name) the code point of `{…}` or of an escaped surrogate pair; -1 with nothing read when it
+ * is not well-formed. */
+export function unicodeEscape(p: Parser, points: bool): i64 {
+  if (points && p.peek() == 0x7b) {
     let k: usize = 1;
     let v: i64 = 0;
     while (hexValue(p.peekAt(k)) >= 0 && v <= 0x10ffff) {
@@ -60,7 +61,7 @@ export function unicodeEscape(p: Parser): i64 {
     return v;
   }
   const v = hex(p, 4);
-  if (p.unicode && v >= 0xd800 && v < 0xdc00 && p.peek() == 0x5c && p.peekAt(1) == 0x75) {
+  if (points && v >= 0xd800 && v < 0xdc00 && p.peek() == 0x5c && p.peekAt(1) == 0x75) {
     const start = p.at;
     p.at += 2;
     const lo = hex(p, 4);
@@ -146,7 +147,7 @@ function charEscape(p: Parser, c: i64, inClass: bool): i64 {
     return control(p, inClass);
   }
   if (c == 0x78 || c == 0x75) {
-    const v = c == 0x78 ? hex(p, 2) : unicodeEscape(p);
+    const v = c == 0x78 ? hex(p, 2) : unicodeEscape(p, p.unicode);
     if (v < 0 && p.unicode) {
       p.fail(c == 0x78 ? "Invalid escape" : "Invalid Unicode escape");
     }
@@ -259,10 +260,26 @@ function namedReference(p: Parser): never {
   p.fail("Back references are not supported");
 }
 
+/** With the `v` flag, a class member that starts with `c`, just read: an error when it is one
+ * of the characters that flag reserves in a class, or set syntax, which is not supported
+ * (a nested class, `--`, `&&`, `\q{…}`). */
+function setSyntax(p: Parser, c: i64): void {
+  const next = p.peek();
+  if (c == 0x5b || (c == 0x5c && next == 0x71) || ((c == 0x2d || c == 0x26) && next == c)) {
+    p.fail("Set operations in character classes are not supported");
+  }
+  if (c == 0x28 || c == 0x29 || c == 0x7b || c == 0x7d || c == 0x2f || c == 0x7c) {
+    p.fail("Invalid character in character class");
+  }
+}
+
 /** One member of a class, after its `[`: a character, or `A_SET` for a class escape. */
 function classAtom(p: Parser): i64 {
   const c = p.peek();
   p.at++;
+  if (p.sets) {
+    setSyntax(p, c);
+  }
   if (c != 0x5c) {
     return c;
   }
@@ -292,6 +309,9 @@ export function parseClass(p: Parser): Node {
     const a = classAtom(p);
     if (a == A_SET) {
       set.addSet(p.set);
+    }
+    if (p.sets && p.peek() == 0x2d && p.peekAt(1) == 0x2d) {
+      p.fail("Set operations in character classes are not supported");
     }
     if (p.peek() != 0x2d || p.peekAt(1) == 0x5d || p.peekAt(1) < 0) {
       if (a != A_SET) {
