@@ -180,6 +180,13 @@ impl Interp<'_> {
                 return Err(101);
             }
             "velt_rt_exit" => return Err(a[0] as u32 as i32),
+            // The CPU's features (std/lang/hooks/cpu.velt): the interpreter runs no gated code, as
+            // Cranelift doesn't, so it is on no architecture whose checks run.
+            "velt_simd_on_x86" | "velt_simd_on_arm" | "velt_simd_cpu_word" => return Ok(0),
+            "velt_simd_cpu_required" | "velt_simd_xgetbv" => return Ok(0),
+            "velt_simd_cpu_word_set" => {}
+            // The variables the check reads (`VELT_CPU_DISABLE`, `VELT_SIMD_DISABLE`): unset.
+            "getenv" => return Ok(0),
             "velt_rt_uncaught_report" => {}
             "velt_rt_set_throw_loc" => self.throw_loc = a[0],
             "velt_rt_throw_loc" => return Ok(self.throw_loc),
@@ -274,6 +281,11 @@ impl Interp<'_> {
             "velt_rt_math_ctz64" => return Ok(a[0].trailing_zeros() as u64),
             "velt_rt_math_popcount64" => return Ok(a[0].count_ones() as u64),
             "velt_rt_math_umulh" => return Ok(((a[0] as u128 * a[1] as u128) >> 64) as u64),
+            // The start-up CPU check's OS queries (std/lang/cpu): the interpreter has no CPU
+            // to ask, so every feature reads as absent and programs take the baseline path.
+            "sysctlbyname" => return Ok(-1i64 as u64),
+            "getauxval" => return Ok(0),
+            "IsProcessorFeaturePresent" => return Ok(0),
             m if m.starts_with("velt_rt_math_") => {
                 return Ok(math(m, f64::from_bits(a[0])).to_bits())
             }

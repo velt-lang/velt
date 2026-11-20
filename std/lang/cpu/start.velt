@@ -1,0 +1,32 @@
+// velt/lang/cpu (internal): the start-up check itself, once a `#cpu-start` variant has detected
+// the CPU's features (#3222 step 3, rt_abi.md "CPU check"): takes away what `VELT_CPU_DISABLE`
+// names, exits with a message where the CPU lacks what the program was built for (`--cpu`), then
+// stores the feature word, without what `VELT_SIMD_DISABLE` names, for every run-time check.
+
+import { cpuDisabledBits, envList, missingMessage, simdDisabledBits } from "./check";
+
+// The feature word bits the program was built for (the driver fills it in).
+declare function velt_simd_cpu_required(): u64;
+declare function velt_rt_exit(code: i32): never;
+declare function velt_rt_write_str(stream: u32, s: string): void;
+// Stores the feature word every run-time check reads (std/lang/cpu/word.velt).
+declare function velt_simd_cpu_word_set(word: u64): void;
+
+/** The check on a CPU whose feature word bits are `found`: arm64's where `arm`, else x86-64's. */
+export function startWith(found: u64, arm: bool): void {
+  let have = found;
+  const cpuOff = envList("VELT_CPU_DISABLE\0");
+  if (cpuOff !== null) {
+    have &= ~cpuDisabledBits(cpuOff, arm);
+  }
+  const message = missingMessage(velt_simd_cpu_required(), have, arm);
+  if (message.length != 0) {
+    velt_rt_write_str(2, "error: " + message + "\n");
+    velt_rt_exit(1);
+  }
+  const simdOff = envList("VELT_SIMD_DISABLE\0");
+  if (simdOff !== null) {
+    have &= ~simdDisabledBits(simdOff);
+  }
+  velt_simd_cpu_word_set(have);
+}
