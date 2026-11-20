@@ -2,11 +2,11 @@
 // page from the disk when it is first touched and may drop it again when memory is short, so
 // a program works on files larger than memory without reading or copying them.
 
-import { addressArray } from "velt/lang/intrinsics";
+import { addressArrayOwned } from "velt/lang/intrinsics";
 import { adviseMapping, COPIES, mapFile } from "#mapped-source";
 import { osError } from "velt/fs/errors";
 import { MappedBytes } from "velt/fs/mapped_bytes";
-import { copyOf, MapOptions } from "velt/fs/mapped_part";
+import { copyOf, heldAgain, MapOptions, Mapping } from "velt/fs/mapped_part";
 
 /** How a range of a `MappedFile` will be read (`advise`). */
 export type MapAdvice = "normal" | "random" | "sequential" | "willneed" | "dontneed";
@@ -21,13 +21,13 @@ export type MapAdvice = "normal" | "random" | "sequential" | "willneed" | "dontn
  * file is opened; a page comes from the disk when it is first touched (WebAssembly differs:
  * below).
  *
- * The mapping stays for the rest of the program (it costs address space, not memory), so the
- * arrays stay valid however long they are kept. Every `open` makes a mapping of its own that
- * lasts until the program exits: open a file once and keep the `MappedFile`. A program that
- * opens one per request runs out of mappings (`ENOMEM` after about 65,000 on Linux's default
- * limit).
+ * The arrays keep the mapping: it is given back to the system when the `MappedFile` is closed
+ * (`close()`, `using`, or dropped) and every array it handed out is gone, never earlier, so an
+ * array stays valid however long it is kept. A mapping costs address space, not memory, and a
+ * system allows a limited number at a time (about 65,000 on Linux by default, then `ENOMEM`):
+ * a program that opens many files closes them and lets their arrays go.
  *
- * On Windows a mapped file cannot be cut short for the rest of the program (writing it anew
+ * On Windows a mapped file cannot be cut short until its mapping is given back (writing it anew
  * fails with `UNKNOWN`). Removing or renaming it works on NTFS from Windows 10 1809 and may be
  * refused on older systems or other file systems; the mapping keeps the bytes it had. `advise`
  * does nothing there (it is a hint).
@@ -46,11 +46,16 @@ export class MappedFile extends MappedBytes {
   // the multiple of 64 KiB before `from` (`lead()` bytes before `bytes`).
   private readonly address: usize;
   private readonly from: usize;
+  // The mapping's owner block, which every array over it holds (mapped_part.velt); 0 for none.
+  private readonly owner: usize;
+  private readonly size: number;
 
-  private constructor(address: usize, from: usize, bytes: shared<u8[]>) {
-    super(bytes);
-    this.address = address;
-    this.from = from;
+  private constructor(m: Mapping) {
+    super(m.bytes);
+    this.address = m.address;
+    this.from = m.from;
+    this.owner = m.owner;
+    this.size = m.bytes.length as number;
   }
 
   // How many bytes of the mapping lie before `bytes`.
@@ -73,13 +78,12 @@ export class MappedFile extends MappedBytes {
    * maps as no bytes, without an error: read those with `readFileSync`.
    */
   static open(path: string, options?: MapOptions): MappedFile {
-    const m = mapFile(path, options);
-    return new MappedFile(m.address, m.from, m.bytes);
+    return new MappedFile(mapFile(path, options));
   }
 
   /** The number of mapped bytes: the file's size when it was mapped, or the part's. */
   get length(): number {
-    return this.bytes.length as number;
+    return this.size;
   }
 
   // The address of the `count` values of `width` bytes from byte `byteOffset` (0 for no
@@ -93,7 +97,8 @@ export class MappedFile extends MappedBytes {
     count: number,
     width: number,
   ): usize {
-    const size = this.bytes.length as number;
+    this.checkOpen(what);
+    const size = this.size;
     if (
       !Number.isInteger(byteOffset) ||
       !Number.isInteger(count) ||
@@ -129,8 +134,9 @@ export class MappedFile extends MappedBytes {
       return shared(copyOf<i8>(this.bytes, byteOffset as usize, count as usize));
     }
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `i8`
-    // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
-    const xs: i8[] = unsafe { addressArray<i8>(at, count as usize) };
+    // (the mapping is page-aligned); the array holds the mapping's owner, so it stays while the
+    // array does, and the array leaves as `shared`.
+    const xs: i8[] = unsafe { addressArrayOwned<i8>(at, count as usize, heldAgain(this.owner)) };
     return shared(xs);
   }
 
@@ -149,8 +155,9 @@ export class MappedFile extends MappedBytes {
       return shared(copyOf<u16>(this.bytes, byteOffset as usize, count as usize));
     }
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `u16`
-    // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
-    const xs: u16[] = unsafe { addressArray<u16>(at, count as usize) };
+    // (the mapping is page-aligned); the array holds the mapping's owner, so it stays while the
+    // array does, and the array leaves as `shared`.
+    const xs: u16[] = unsafe { addressArrayOwned<u16>(at, count as usize, heldAgain(this.owner)) };
     return shared(xs);
   }
 
@@ -169,8 +176,9 @@ export class MappedFile extends MappedBytes {
       return shared(copyOf<i16>(this.bytes, byteOffset as usize, count as usize));
     }
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `i16`
-    // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
-    const xs: i16[] = unsafe { addressArray<i16>(at, count as usize) };
+    // (the mapping is page-aligned); the array holds the mapping's owner, so it stays while the
+    // array does, and the array leaves as `shared`.
+    const xs: i16[] = unsafe { addressArrayOwned<i16>(at, count as usize, heldAgain(this.owner)) };
     return shared(xs);
   }
 
@@ -189,8 +197,9 @@ export class MappedFile extends MappedBytes {
       return shared(copyOf<u32>(this.bytes, byteOffset as usize, count as usize));
     }
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `u32`
-    // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
-    const xs: u32[] = unsafe { addressArray<u32>(at, count as usize) };
+    // (the mapping is page-aligned); the array holds the mapping's owner, so it stays while the
+    // array does, and the array leaves as `shared`.
+    const xs: u32[] = unsafe { addressArrayOwned<u32>(at, count as usize, heldAgain(this.owner)) };
     return shared(xs);
   }
 
@@ -209,8 +218,9 @@ export class MappedFile extends MappedBytes {
       return shared(copyOf<i32>(this.bytes, byteOffset as usize, count as usize));
     }
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `i32`
-    // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
-    const xs: i32[] = unsafe { addressArray<i32>(at, count as usize) };
+    // (the mapping is page-aligned); the array holds the mapping's owner, so it stays while the
+    // array does, and the array leaves as `shared`.
+    const xs: i32[] = unsafe { addressArrayOwned<i32>(at, count as usize, heldAgain(this.owner)) };
     return shared(xs);
   }
 
@@ -229,8 +239,9 @@ export class MappedFile extends MappedBytes {
       return shared(copyOf<u64>(this.bytes, byteOffset as usize, count as usize));
     }
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `u64`
-    // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
-    const xs: u64[] = unsafe { addressArray<u64>(at, count as usize) };
+    // (the mapping is page-aligned); the array holds the mapping's owner, so it stays while the
+    // array does, and the array leaves as `shared`.
+    const xs: u64[] = unsafe { addressArrayOwned<u64>(at, count as usize, heldAgain(this.owner)) };
     return shared(xs);
   }
 
@@ -249,8 +260,9 @@ export class MappedFile extends MappedBytes {
       return shared(copyOf<i64>(this.bytes, byteOffset as usize, count as usize));
     }
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `i64`
-    // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
-    const xs: i64[] = unsafe { addressArray<i64>(at, count as usize) };
+    // (the mapping is page-aligned); the array holds the mapping's owner, so it stays while the
+    // array does, and the array leaves as `shared`.
+    const xs: i64[] = unsafe { addressArrayOwned<i64>(at, count as usize, heldAgain(this.owner)) };
     return shared(xs);
   }
 
@@ -269,8 +281,9 @@ export class MappedFile extends MappedBytes {
       return shared(copyOf<f16>(this.bytes, byteOffset as usize, count as usize));
     }
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `f16`
-    // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
-    const xs: f16[] = unsafe { addressArray<f16>(at, count as usize) };
+    // (the mapping is page-aligned); the array holds the mapping's owner, so it stays while the
+    // array does, and the array leaves as `shared`.
+    const xs: f16[] = unsafe { addressArrayOwned<f16>(at, count as usize, heldAgain(this.owner)) };
     return shared(xs);
   }
 
@@ -288,9 +301,11 @@ export class MappedFile extends MappedBytes {
       // No mapping: no address is read, the values are copied.
       return shared(copyOf<bf16>(this.bytes, byteOffset as usize, count as usize));
     }
+    const n = count as usize;
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `bf16`
-    // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
-    const xs: bf16[] = unsafe { addressArray<bf16>(at, count as usize) };
+    // (the mapping is page-aligned); the array holds the mapping's owner, so it stays while the
+    // array does, and the array leaves as `shared`.
+    const xs: bf16[] = unsafe { addressArrayOwned<bf16>(at, n, heldAgain(this.owner)) };
     return shared(xs);
   }
 
@@ -309,8 +324,9 @@ export class MappedFile extends MappedBytes {
       return shared(copyOf<f32>(this.bytes, byteOffset as usize, count as usize));
     }
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `f32`
-    // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
-    const xs: f32[] = unsafe { addressArray<f32>(at, count as usize) };
+    // (the mapping is page-aligned); the array holds the mapping's owner, so it stays while the
+    // array does, and the array leaves as `shared`.
+    const xs: f32[] = unsafe { addressArrayOwned<f32>(at, count as usize, heldAgain(this.owner)) };
     return shared(xs);
   }
 
@@ -329,8 +345,9 @@ export class MappedFile extends MappedBytes {
       return shared(copyOf<f64>(this.bytes, byteOffset as usize, count as usize));
     }
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `f64`
-    // (the mapping is page-aligned); it is never unmapped, and the array leaves as `shared`.
-    const xs: f64[] = unsafe { addressArray<f64>(at, count as usize) };
+    // (the mapping is page-aligned); the array holds the mapping's owner, so it stays while the
+    // array does, and the array leaves as `shared`.
+    const xs: f64[] = unsafe { addressArrayOwned<f64>(at, count as usize, heldAgain(this.owner)) };
     return shared(xs);
   }
 
@@ -344,7 +361,8 @@ export class MappedFile extends MappedBytes {
    * the range is not inside the mapped bytes; an `IoError` if the system refuses the advice.
    */
   advise(advice: MapAdvice, byteOffset: number = 0, length?: number) {
-    const size = this.bytes.length as number;
+    this.checkOpen("advise");
+    const size = this.size;
     const len = length === undefined ? size - byteOffset : length;
     if (
       !Number.isInteger(byteOffset) ||

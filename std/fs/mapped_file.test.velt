@@ -303,6 +303,72 @@ describe("MappedFile", () => {
     expect(MappedFile.open("/proc/self/status").length).toBe(0);
   });
 
+  it("close gives the file up; arrays handed out before stay readable", () => {
+    const path = `${tmpdir()}/velt-mapped-${Date.now()}-${Math.floor(Math.random() * 1e9)}-close`;
+    writeFileSync(path, "0123456789abcdef");
+    const m = MappedFile.open(path);
+    const bytes = m.bytes;
+    const words = m.u32s(4, 2);
+    expect(m.closed).toBe(false);
+    expect(m.getUint32(4)).toBe(0x34353637);
+    m.close();
+    m.close();
+    expect(m.closed).toBe(true);
+    expect(m.length).toBe(16);
+    expect(() => m.bytes).toThrow("bytes: the MappedFile is closed");
+    expect(() => m.u16s(0, 1)).toThrow("u16s: the MappedFile is closed");
+    expect(() => m.advise("normal")).toThrow("advise: the MappedFile is closed");
+    expect(() => m.getUint8(0)).toThrow("get: the MappedFile is closed");
+    expect(() => m.getUint32(4, true)).toThrow("get: the MappedFile is closed");
+    expect(bytes[15]).toBe(102);
+    expect(words[1]).toBe(0x62613938);
+  });
+
+  it("gives the mapping back with the last array over it, not before", () => {
+    if (platform() != "linux") {
+      return;
+    }
+    const name = `velt-mapped-${Date.now()}-${Math.floor(Math.random() * 1e9)}-maps`;
+    const path = `${tmpdir()}/${name}`;
+    writeFileSync(path, "0123456789abcdef");
+    const mapped = () => readFileSync("/proc/self/maps").includes(name);
+    expect(mapped()).toBe(false);
+    {
+      using m = MappedFile.open(path);
+      expect(mapped()).toBe(true);
+      expect(m.bytes[0]).toBe(48);
+    }
+    expect(mapped()).toBe(false);
+    let kept: shared<u16[]> | null = null;
+    {
+      const m = MappedFile.open(path);
+      kept = m.u16s(2, 2);
+      m.close();
+    }
+    expect(mapped()).toBe(true);
+    expect(kept![0]).toBe(0x3332);
+    kept = null;
+    expect(mapped()).toBe(false);
+    // Dropped without `close`: closed all the same.
+    openAndDrop(path);
+    expect(mapped()).toBe(false);
+  });
+
+  it("opens a file more often than the system has mappings, when each is closed", () => {
+    if (!POSIX) {
+      return;
+    }
+    const path = `${tmpdir()}/velt-mapped-${Date.now()}-${Math.floor(Math.random() * 1e9)}-many`;
+    writeFileSync(path, "0123456789abcdef");
+    let sum = 0;
+    // Linux allows about 65,530 mappings by default.
+    for (let i = 0; i < 70000; i++) {
+      using m = MappedFile.open(path);
+      sum += m.bytes[i % 16];
+    }
+    expect(sum > 0).toBe(true);
+  });
+
   // The tests above write their files through the fd API, which Windows does not have: these
   // write text, so they run there too.
   it("maps a text file, whole and in part, on every system", () => {
@@ -368,3 +434,8 @@ describe("MappedFile", () => {
     expect(() => MappedFile.open(tmpdir())).toThrow("EISDIR");
   });
 });
+
+function openAndDrop(path: string) {
+  const m = MappedFile.open(path);
+  expect(m.bytes.length).toBe(16);
+}
