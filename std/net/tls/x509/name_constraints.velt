@@ -157,8 +157,7 @@ export function checkNameConstraints(
   if (r.peek(constraints.end) == 0xa1) {
     excluded = r.next(0xa1, constraints.end);
   }
-  // Nothing else: a second list, another field or stray bytes are malformed, as in webpki.
-  r.done(constraints.end);
+  const after = r.pos;
   for (const cert of certs) {
     const san = cert.subjectAltName;
     if (san.tag != 0) {
@@ -186,5 +185,9 @@ export function checkNameConstraints(
       return result;
     }
   }
+  // Nothing else: a second list, another field or stray bytes are malformed. After the names, as
+  // webpki orders it (its `read_all_optional` around the check): a violation is reported first.
+  r.pos = after;
+  r.done(constraints.end);
   return CONFORMS;
 }

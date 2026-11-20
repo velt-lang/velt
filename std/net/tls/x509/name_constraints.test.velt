@@ -105,6 +105,13 @@ describe("a certificate's names", () => {
       false,
     );
     expect(certificateHasIpAddress(cert, hexDecode("c00002"))).toBe(false);
+    // An entry of the other length does not match by its first bytes, either way round.
+    const zeros = withNames(ip("00".repeat(16)));
+    expect(certificateHasIpAddress(zeros, hexDecode("00000000"))).toBe(false);
+    expect(certificateHasIpAddress(zeros, hexDecode("00".repeat(16)))).toBe(true);
+    const short = withNames(ip("00000000"));
+    expect(certificateHasIpAddress(short, hexDecode("00".repeat(16)))).toBe(false);
+    expect(certificateHasIpAddress(short, hexDecode("00000000"))).toBe(true);
     // A dNSName of four bytes is not an address with those bytes.
     const four = withNames(dns("a.bc"));
     expect(certificateHasIpAddress(four, utf8Encode("a.bc"))).toBe(false);
@@ -250,6 +257,13 @@ describe("checkNameConstraints", () => {
     expect(check(constrained(permitted + el("a2", "")), leaf)).toBe(99);
     expect(check(constrained(permitted + excluded + "0500"), leaf)).toBe(99);
     expect(check(constrained(el("a2", subtrees([dns("example.com")]))), leaf)).toBe(99);
+    // A primitive [0], and a first element that is neither list.
+    expect(check(constrained(el("80", subtrees([dns("example.com")]))), leaf)).toBe(99);
+    expect(check(constrained("0500"), leaf)).toBe(99);
+    // A name that violates the lists read so far is reported before what follows them.
+    const bad = withNames(dns("bad.example.com"));
+    expect(check(constrained(permitted + excluded + "0500"), bad)).toBe(NAME_CONSTRAINT_VIOLATION);
+    expect(check(constrained(excluded + permitted), bad)).toBe(NAME_CONSTRAINT_VIOLATION);
   });
 
   it("stops when the budget of comparisons is used up", () => {
