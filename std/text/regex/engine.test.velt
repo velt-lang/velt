@@ -184,6 +184,9 @@ describe("find", () => {
       expect(m.slots).toEqual([at, at + 6]);
       expect(find(prog, m, "x".repeat(at) + "needl", 0, false)).toBe(false);
     }
+    // The bytes past the end of the subject are not a literal's NUL.
+    expect(fd("\\0", "", "ab")).toEqual([]);
+    expect(fd("\\0|\\0\\0x", "", "ab\0")).toEqual([2, 3]);
     const all = new Search(prog, 2);
     findAll(prog, all, "pinpin needle pineedle" + " ".repeat(30) + "pin");
     expect(all.found).toEqual([0, 3, 3, 6, 7, 13, 14, 17, 52, 55]);
