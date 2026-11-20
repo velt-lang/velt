@@ -46,12 +46,15 @@ pub struct Summaries {
     pub(crate) state_facts: crate::module_state::StateFacts,
     /// The modules each module of the unit names in its code (`crate::linked`).
     pub(crate) module_edges: crate::linked::ModuleEdges,
+    /// The unit's functions that hand a parameter to a channel, with those parameters
+    /// (`ownership::boundary`).
+    pub(crate) senders: rustc_hash::FxHashMap<crate::hir::DefId, Vec<usize>>,
 }
 
 // The encoding of a finished unit (`codec`): every field, so a new one fails to build.
 codec::structs! {
     Summaries {
-        json_needs, state_facts, module_edges,
+        json_needs, state_facts, module_edges, senders,
     }
 }
 

@@ -302,6 +302,26 @@ fn std_s_unit_keeps_what_its_bodies_do_with_module_state() {
     }
 }
 
+/// With std checked as a unit of its own, the functions that hand a parameter to a channel
+/// (`Channel.send`, `trySend`) come from std's unit, not from reading std's bodies again
+/// (`ownership::boundary`): a value owning a resource that is sent while the program still
+/// uses it is refused, also through the program's own function that passes it on, as by a
+/// whole-program check.
+#[test]
+fn std_s_unit_keeps_the_functions_that_send_on_a_channel() {
+    let path = "lang/errors/channel_send_copies_resource.velt";
+    let whole = check_golden_two(path, false);
+    let two = check_golden_two(path, true);
+    let errors = error_lines(&whole);
+    assert!(
+        errors
+            .iter()
+            .any(|l| l.contains("is still used after `send`")),
+        "{errors:?}"
+    );
+    assert_eq!(errors, error_lines(&two));
+}
+
 /// A body's edges are kept as written, and its calls through a slot resolved in every check
 /// against the program's classes (velt_sema `module_state_facts`): a `with` callback that
 /// reaches module state through an override, through an interface's implementation or through
