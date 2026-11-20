@@ -244,13 +244,21 @@ export const imports: Imports = {
     arm64: "./lang/math/fma_arm64.velt",
     default: "./lang/math/fma_check_needed.velt",
   },
-  // Whether the CPU has Arm's bf16 instructions (`bf16x8.dotAddFast`'s `bfdot`,
-  // std/simd/bf16_check.velt): the kernel's capability word on Linux, a sysctl on macOS; no
+  // The arm64 features of this CPU (std/lang/cpu, read by `cpuStart` at start-up): the kernel's
+  // capability words on Linux, sysctls on macOS, `IsProcessorFeaturePresent` on Windows; none
   // elsewhere, where std has no way to ask.
-  "#simd-bf16": {
-    darwin: "./simd/bf16_cpu_darwin.velt",
-    linux: "./simd/bf16_cpu_linux.velt",
-    default: "./simd/bf16_cpu_none.velt",
+  // The start-up check of the CPU's features (std/lang/hooks/cpu.velt): CPUID on x86-64, the
+  // operating system's answer on arm64 (`#cpu-arm`), nothing on WebAssembly.
+  "#cpu-start": {
+    x64: "./lang/cpu/start_x64.velt",
+    arm64: "./lang/cpu/start_arm64.velt",
+    wasm: "./lang/cpu/start_none.velt",
+  },
+  "#cpu-arm": {
+    darwin: "./lang/cpu/arm_darwin.velt",
+    linux: "./lang/cpu/arm_linux.velt",
+    win32: "./lang/cpu/arm_win32.velt",
+    default: "./lang/cpu/arm_none.velt",
   },
   // The environment's variables: the C library's on macOS and Linux (each with its own way to
   // `environ`), Win32's on Windows, the WebAssembly runtime's there. Nothing in them throws: the
