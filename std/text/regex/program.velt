@@ -1,0 +1,86 @@
+// velt/text (internal): `Program`, a compiled regular expression: the instructions the matchers
+// run (backtrack.velt for a short subject, pike.velt for a long one), and what the search
+// knows about every match before it runs them (prefilter.velt).
+//
+// An instruction is three words of `code`: its operation and two operands. Every instruction
+// that consumes text consumes one character: a code point with the `u` flag, a UTF-16 code unit
+// without (decode.velt). Control flows to the next instruction unless the operation says
+// otherwise.
+
+import { CharSet } from "velt/text/regex/char_set";
+
+/** The pattern matched: the search is over. */
+export const OP_MATCH: u32 = 0;
+/** The character `a`. */
+export const OP_CHAR: u32 = 1;
+/** A character of set `a`. */
+export const OP_CLASS: u32 = 2;
+/** Continue at `a`; if that does not lead to a match, at `b`. */
+export const OP_SPLIT: u32 = 3;
+/** Continue at `a`. */
+export const OP_JUMP: u32 = 4;
+/** Capture slot `a` is here. */
+export const OP_SAVE: u32 = 5;
+/** The assertion `a` (an `AT_…` of node.velt) holds here. */
+export const OP_ASSERT: u32 = 6;
+/** Capture slots `a..b` are unset: a group's captures do not outlive an iteration of the
+ * quantifier around it. */
+export const OP_CLEAR: u32 = 7;
+/** Nothing matches here (`[]`). */
+export const OP_FAIL: u32 = 8;
+
+/** No way to skip: a match may start anywhere. */
+export const SCAN_NONE: u32 = 0;
+/** By `grams`. */
+export const SCAN_GRAMS: u32 = 1;
+/** By `first`. */
+export const SCAN_FIRST: u32 = 2;
+
+/** Set in the operation of an instruction that a jump or a split leads to. */
+export const JOIN: u32 = 0x100;
+/** The operation without its flags. */
+export const OP_MASK: u32 = 0xff;
+
+/** A compiled pattern. */
+export class Program {
+  /** The instructions: `op, a, b` each. */
+  code: u32[] = [];
+  /** The sets of the `OP_CLASS` instructions. */
+  sets: CharSet[] = [];
+  /** Per set, its members below 128 as two words of bits. */
+  ascii: u64[] = [];
+  /** The number of the join instructions before each instruction: what numbers a join's row
+   * in the backtracker's table of visited states. */
+  joins: u32 = 0;
+  /** Capture groups, not counting the whole match. */
+  groups: u32 = 0;
+  /** Characters are UTF-16 code units (no `u` flag): a pair of the subject is two. */
+  units: bool = false;
+  /** Every match starts at the start of the subject (`^` without the `m` flag). */
+  anchored: bool = false;
+  /** The strings the pattern matches, in the order it prefers them, when `exact`: it matches
+   * nothing else and captures nothing (`cat|dog`, `gr[ae]y`). Else the strings every match
+   * starts with, or none. */
+  literals: string[] = [];
+  exact: bool = false;
+  /** How the search finds where a match may start (prefilter.velt): `SCAN_…`. */
+  scan: u32 = 0;
+  /** `SCAN_GRAMS`: every match has one of the byte tuples of `grams` (`gramSize` bytes each)
+   * at the offsets `gramAt` from its start, and is at least `minBytes` long. */
+  grams: u8[] = [];
+  gramAt: usize[] = [];
+  gramSize: usize = 0;
+  minBytes: usize = 0;
+  /** `SCAN_FIRST`: the first byte of every match, as four words of bits. */
+  first: u64[] = [0, 0, 0, 0];
+
+  /** Instructions. */
+  get length(): usize {
+    return this.code.length / 3;
+  }
+
+  /** Is the ASCII character `c` in set `set`? */
+  hasAscii(set: u32, c: u32): bool {
+    return ((this.ascii[2 * (set as usize) + ((c >> 6) as usize)] >> ((c & 63) as u64)) & 1) != 0;
+  }
+}

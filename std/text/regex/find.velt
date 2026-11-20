@@ -1,0 +1,65 @@
+// velt/text (internal): one search of a subject for a compiled pattern: by its literals alone
+// when they are the pattern, else from each place a match may start (prefilter.velt), with the
+// backtracker on a short subject and the Pike machine on a long one.
+
+import { strByteLen, strDataAddress } from "velt/lang/intrinsics";
+import { backtrack, backtrackReset } from "velt/text/regex/backtrack";
+import { charAt } from "velt/text/regex/decode";
+import { pike, pikeReset } from "velt/text/regex/pike";
+import { candidate, literalFind } from "velt/text/regex/prefilter";
+import { Program } from "velt/text/regex/program";
+import { Search } from "velt/text/regex/search";
+
+/** The most bits of visited states the backtracker is given: past it, the Pike machine. */
+const MAX_VISITED: usize = 1 << 15;
+
+/** The position after `pos` (before `len`) in the text at `base`: one character on. */
+export function after(s: string, pos: usize, units: bool): usize {
+  const base = strDataAddress(s);
+  return pos + ((charAt(base, pos, units) >> 24) as usize);
+}
+
+/** Is there a match of `prog` in `s` that starts at or after position `from` (at `from` when
+ * `sticky`)? The leftmost one's slots are then in `m.slots`, as byte offsets. */
+export function find(prog: Program, m: Search, s: string, from: usize, sticky: bool): bool {
+  const len = strByteLen(s);
+  const slots = m.slots;
+  if (prog.anchored && from > 0) {
+    return false;
+  }
+  if (prog.exact && !sticky) {
+    const ends: usize[] = [0];
+    const at = literalFind(prog, s, from, len, ends);
+    if (at >= 0 && slots.length >= 2) {
+      slots[0] = at;
+      slots[1] = ends[0] as i64;
+    }
+    return at >= 0;
+  }
+  for (let k: usize = 0; k < slots.length; k++) {
+    slots[k] = -1;
+  }
+  const fixed = sticky || prog.anchored;
+  if ((prog.joins as usize) * (len - from + 1) > MAX_VISITED) {
+    pikeReset(prog, m);
+    return pike(prog, m, s, len, from, fixed);
+  }
+  backtrackReset(prog, m, from, len);
+  let pos = from;
+  while (true) {
+    if (!fixed) {
+      const next = candidate(prog, s, pos, len);
+      if (next < 0) {
+        return false;
+      }
+      pos = next as usize;
+    }
+    if (backtrack(prog, m, s, len, from, pos)) {
+      return true;
+    }
+    if (fixed || pos >= len) {
+      return false;
+    }
+    pos = after(s, pos, prog.units);
+  }
+}

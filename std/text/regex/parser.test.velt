@@ -1,0 +1,48 @@
+// velt/text (tests): white-box tests of the pattern parser, run by `velt test std/`.
+import { describe, expect, it } from "velt/test";
+import { ALT, CAT, GROUP, Node, REPEAT, SET } from "velt/text/regex/node";
+import { parsePattern } from "velt/text/regex/parse_pattern";
+import { Parser } from "velt/text/regex/parser";
+
+function parse(source: string, flags: string): Node {
+  return parsePattern(new Parser(source, flags));
+}
+
+function errorOf(source: string, flags: string): string {
+  try {
+    parse(source, flags);
+    return "";
+  } catch (e) {
+    return e.message;
+  }
+}
+
+describe("Parser", () => {
+  it("reads code units without the u flag", () => {
+    const p = new Parser("a\u{1F600}(?<n>x)(y)[(]\\(", "");
+    expect(p.chars.slice(0, 3)).toEqual([0x61, 0xd83d, 0xde00]);
+    expect(p.totalGroups).toBe(2);
+    expect(p.hasNames).toBe(true);
+    expect(new Parser("\u{1F600}", "u").chars).toEqual([0x1f600]);
+  });
+
+  it("builds the tree", () => {
+    const t = parse("a(b|c)*?[x-z]{2,3}", "");
+    expect(t.kind).toBe(CAT);
+    expect(t.kids.length).toBe(3);
+    expect(t.kids[1].kind).toBe(REPEAT);
+    expect(t.kids[1].greedy).toBe(false);
+    expect(t.kids[1].kids[0].kind).toBe(GROUP);
+    expect(t.kids[1].kids[0].kids[0].kind).toBe(ALT);
+    expect(t.kids[2].a).toBe(2);
+    expect(t.kids[2].b).toBe(3);
+    expect(t.kids[2].kids[0].kind).toBe(SET);
+  });
+
+  it("reports V8's errors", () => {
+    expect(errorOf("(a", "")).toBe("Invalid regular expression: /(a/: Unterminated group");
+    expect(errorOf("a)", "g")).toBe("Invalid regular expression: /a)/g: Unmatched ')'");
+    expect(errorOf("a**", "")).toBe("Invalid regular expression: /a**/: Nothing to repeat");
+    expect(errorOf("x{", "")).toBe("");
+  });
+});

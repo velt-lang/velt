@@ -1,0 +1,300 @@
+// velt/text (internal): what a pattern's tree says about every match before any is looked
+// for: the strings it starts with (or is: `exact`), its first byte, and whether it can only
+// start at the start. The compiler stores it in the program; prefilter.velt searches with it.
+
+import { arrayTruncate, strByteAt, strByteLen } from "velt/lang/intrinsics";
+import { CharSet } from "velt/text/regex/char_set";
+import {
+  ALT,
+  ASSERT,
+  AT_START,
+  CAT,
+  CHAR,
+  EMPTY,
+  GROUP,
+  Node,
+  REPEAT,
+  SET,
+} from "velt/text/regex/node";
+import { Program, SCAN_FIRST, SCAN_GRAMS } from "velt/text/regex/program";
+
+/** The most strings a set of literals holds, and the most characters of a class that are
+ * spelled out into them. */
+const MAX_LITERALS: usize = 8;
+const MAX_SET: usize = 4;
+/** The most tuples a scan compares at once. */
+const MAX_GRAMS: usize = 4;
+
+/** Is `c` a surrogate? One is never part of a literal: without the `u` flag it can match half
+ * of a pair, which no byte search finds. */
+function isSurrogate(c: u32): bool {
+  return c >= 0xd800 && c <= 0xdfff;
+}
+
+/** The strings a tree's matches start with, while they are being worked out. */
+class Literals {
+  list: string[] = [""];
+  /** Nothing but the strings matches, and nothing is captured. */
+  exact: bool = true;
+
+  /** Extends every string with what `n` matches; false when it cannot (the strings are then
+   * the starts of the matches so far, and stay that). */
+  visit(n: Node): bool {
+    const kind = n.kind;
+    if (kind == EMPTY) {
+      return true;
+    }
+    if (kind == CHAR) {
+      return !isSurrogate(n.a) && this.cross(n.a, n.a);
+    }
+    if (kind == SET) {
+      const r = (n.set ?? new CharSet()).ranges;
+      if (r.length != 2 && r.length != 4) {
+        return false;
+      }
+      const hi = r[r.length - 1];
+      if (r.length == 4 && (r[0] != r[1] || r[2] != hi)) {
+        return false;
+      }
+      return !isSurrogate(r[0]) && !isSurrogate(hi) && this.crossSet(r);
+    }
+    if (kind == CAT) {
+      for (let i: usize = 0; i < n.kids.length; i++) {
+        if (!this.visit(n.kids[i])) {
+          return false;
+        }
+      }
+      return true;
+    }
+    if (kind == GROUP) {
+      this.exact = false;
+      return this.visit(n.kids[0]);
+    }
+    if (kind == ASSERT) {
+      this.exact = false;
+      return true;
+    }
+    if (kind == ALT) {
+      return this.alternatives(n);
+    }
+    if (kind == REPEAT && n.a > 0) {
+      this.visit(n.kids[0]);
+    }
+    return false;
+  }
+
+  /** Every string followed by each character of `lo..=hi`. */
+  private cross(lo: u32, hi: u32): bool {
+    const span = (hi - lo) as usize + 1;
+    if (span > MAX_SET || this.list.length * span > MAX_LITERALS) {
+      return false;
+    }
+    const out: string[] = [];
+    for (let i: usize = 0; i < this.list.length; i++) {
+      for (let c = lo; c <= hi; c++) {
+        out.push(this.list[i] + String.fromCodePoint(c as f64));
+      }
+    }
+    this.list = out;
+    return true;
+  }
+
+  /** Every string followed by each character of the one or two ranges `r`. */
+  private crossSet(r: u32[]): bool {
+    if (r.length == 2) {
+      return this.cross(r[0], r[1]);
+    }
+    if (this.list.length * 2 > MAX_LITERALS) {
+      return false;
+    }
+    const out: string[] = [];
+    for (let i: usize = 0; i < this.list.length; i++) {
+      out.push(this.list[i] + String.fromCodePoint(r[0] as f64));
+      out.push(this.list[i] + String.fromCodePoint(r[2] as f64));
+    }
+    this.list = out;
+    return true;
+  }
+
+  /** Every string followed by what each alternative of `n` matches, in their order. */
+  private alternatives(n: Node): bool {
+    const out: string[] = [];
+    let whole = true;
+    for (let i: usize = 0; i < n.kids.length; i++) {
+      const branch = new Literals();
+      branch.list = this.list.slice();
+      whole = branch.visit(n.kids[i]) && whole;
+      this.exact = this.exact && branch.exact;
+      for (let k: usize = 0; k < branch.list.length; k++) {
+        out.push(branch.list[k]);
+      }
+    }
+    if (out.length > MAX_LITERALS) {
+      return false;
+    }
+    this.list = out;
+    return whole;
+  }
+}
+
+/** Does every match of `n` start at the start of the subject? */
+function startsAtStart(n: Node): bool {
+  if (n.kind == ASSERT) {
+    return n.a == AT_START;
+  }
+  if (n.kind == GROUP || n.kind == CAT || (n.kind == REPEAT && n.a > 0)) {
+    return n.kids.length > 0 && startsAtStart(n.kids[0]);
+  }
+  if (n.kind == ALT) {
+    for (let i: usize = 0; i < n.kids.length; i++) {
+      if (!startsAtStart(n.kids[i])) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return false;
+}
+
+/** The first byte of the WTF-8 of `c`. */
+function leadByte(c: u32): u32 {
+  if (c < 0x80) {
+    return c;
+  }
+  if (c < 0x800) {
+    return 0xc0 | (c >> 6);
+  }
+  return c < 0x10000 ? 0xe0 | (c >> 12) : 0xf0 | (c >> 18);
+}
+
+/** Sets in `bits` the first bytes of the matches of `n`; true when a match may be empty (what
+ * follows `n` then starts a match too). Without the `u` flag (`units`) a surrogate may be
+ * either half of a pair, whose first bytes are not its own: every byte is set. */
+function firstBytes(n: Node, bits: u64[], units: bool): bool {
+  const kind = n.kind;
+  if (kind == CHAR || kind == SET) {
+    const one: u32[] = [n.a, n.a];
+    const r = kind == CHAR ? one : (n.set ?? new CharSet()).ranges;
+    for (let i: usize = 0; i < r.length; i += 2) {
+      if (units && r[i] <= 0xdfff && r[i + 1] >= 0xd800) {
+        return true;
+      }
+      // The bytes between the last ASCII one and the first lead byte start no character.
+      for (let b = leadByte(r[i]); b <= leadByte(r[i + 1]); b++) {
+        if (b < 0x80 || b >= 0xc2) {
+          bits[(b >> 6) as usize] |= (1 as u64) << ((b & 63) as u64);
+        }
+      }
+    }
+    return false;
+  }
+  if (kind == CAT) {
+    for (let i: usize = 0; i < n.kids.length; i++) {
+      if (!firstBytes(n.kids[i], bits, units)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if (kind == ALT) {
+    let empty = false;
+    for (let i: usize = 0; i < n.kids.length; i++) {
+      empty = firstBytes(n.kids[i], bits, units) || empty;
+    }
+    return empty;
+  }
+  if (kind == GROUP) {
+    return firstBytes(n.kids[0], bits, units);
+  }
+  if (kind == REPEAT) {
+    return firstBytes(n.kids[0], bits, units) || n.a == 0;
+  }
+  return true;
+}
+
+/** How many distinct tuples the bytes of `lits` at `offsets[0..size]` make; they are left in
+ * `out`. */
+function tuples(lits: string[], offsets: usize[], size: usize, out: u8[]): usize {
+  arrayTruncate(out, 0);
+  for (let i: usize = 0; i < lits.length; i++) {
+    let seen = false;
+    for (let t: usize = 0; t < out.length && !seen; t += size) {
+      seen = true;
+      for (let j: usize = 0; j < size; j++) {
+        seen = seen && out[t + j] == strByteAt(lits[i], offsets[j] as u64);
+      }
+    }
+    for (let j: usize = 0; j < size && !seen; j++) {
+      out.push(strByteAt(lits[i], offsets[j] as u64));
+    }
+  }
+  return out.length / size;
+}
+
+/** Chooses the offsets whose bytes tell `lits` (each at least `min` bytes) from other text
+ * with the fewest tuples, three offsets if that takes at most `MAX_GRAMS`, else two, else
+ * one; false when even one offset takes more. */
+function chooseGrams(prog: Program, lits: string[], min: usize): bool {
+  const top = min < 8 ? min : 8;
+  const trial: u8[] = [];
+  for (let size = top < 3 ? top : 3; size >= 1; size--) {
+    let best = MAX_GRAMS + 1;
+    for (let a: usize = 0; a < top; a++) {
+      for (let b = a + 1; b < (size > 1 ? top : a + 2); b++) {
+        for (let c = b + 1; c < (size > 2 ? top : b + 2); c++) {
+          const offsets = [a, b, c];
+          const count = tuples(lits, offsets, size, trial);
+          if (count < best) {
+            best = count;
+            prog.grams = trial.slice();
+            prog.gramAt = offsets.slice(0, size as i64);
+          }
+        }
+      }
+    }
+    if (best <= MAX_GRAMS) {
+      prog.gramSize = size;
+      prog.minBytes = min;
+      prog.scan = SCAN_GRAMS;
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Fills in what `prog` knows about the matches of `tree`. */
+export function analyze(prog: Program, tree: Node): void {
+  prog.anchored = startsAtStart(tree);
+  const lits = new Literals();
+  const whole = lits.visit(tree);
+  let min: usize = 0xffff;
+  for (let i: usize = 0; i < lits.list.length; i++) {
+    const n = strByteLen(lits.list[i]);
+    min = n < min ? n : min;
+  }
+  if (min > 0) {
+    prog.literals = lits.list;
+    prog.exact = whole && lits.exact;
+    if (chooseGrams(prog, lits.list, min)) {
+      return;
+    }
+  }
+  const empty = firstBytes(tree, prog.first, prog.units);
+  let count: usize = 0;
+  const bytes: string[] = [];
+  for (let b: u32 = 0; b < 256 && !empty; b++) {
+    if (((prog.first[(b >> 6) as usize] >> ((b & 63) as u64)) & 1) != 0) {
+      count++;
+      if (b < 0x80) {
+        bytes.push(String.fromCodePoint(b as f64));
+      }
+    }
+  }
+  if (empty || count == 256) {
+    return;
+  }
+  if (count == bytes.length && chooseGrams(prog, bytes, 1)) {
+    return;
+  }
+  prog.scan = SCAN_FIRST;
+}

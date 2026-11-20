@@ -1,0 +1,32 @@
+// velt/text (internal): `Search`, the working memory of the matchers for one call of a `RegExp`
+// method: made once, used for every match the call finds.
+
+import { Program } from "velt/text/regex/program";
+
+/** What a search over one subject keeps between matches. */
+export class Search {
+  /** The capture slots of the last match, as byte offsets: `start, end` per group, -1 for a
+   * group that did not take part. */
+  slots: i64[] = [];
+  /** The backtracker's visited states, a bit per join instruction and position, and where
+   * its positions start. */
+  visited: u64[] = [];
+  /** The backtracker's pending alternatives, and the Pike machine's while it follows splits. */
+  stack: u64[] = [];
+  /** The Pike machine's two thread lists: per list, the instructions in priority order,
+   * where each instruction is in that order, and each thread's capture slots. */
+  dense: u32[] = [];
+  sparse: u32[] = [];
+  caps: i64[] = [];
+  /** The capture slots of the thread whose splits are being followed. */
+  work: i64[] = [];
+  /** How many threads each list holds. */
+  count: usize[] = [0, 0];
+
+  /** A search that keeps `slots` capture slots of `prog`'s (0: none, 2: the match's ends). */
+  constructor(prog: Program, slots: usize) {
+    for (let i: usize = 0; i < slots; i++) {
+      this.slots.push(-1);
+    }
+  }
+}

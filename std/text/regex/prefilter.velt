@@ -1,0 +1,116 @@
+// velt/text (internal): where a match may start, found without running the program: by the
+// bytes every match has at fixed offsets ("grams": sixteen positions a step with SIMD compares),
+// or by its first byte. What to look for is the program's (literals.velt).
+
+import { strByteAt, strByteLen, strLoadU8x16 } from "velt/lang/intrinsics";
+import { sameBytes } from "velt/lang/string/byte_scan";
+import { Program, SCAN_FIRST, SCAN_GRAMS } from "velt/text/regex/program";
+
+declare function velt_simd_u8x16_splat(x: u8): u8x16;
+declare function velt_simd_u8x16_eq(a: u8x16, b: u8x16): mask8x16;
+declare function velt_simd_mask8x16_and(a: mask8x16, b: mask8x16): mask8x16;
+declare function velt_simd_mask8x16_or(a: mask8x16, b: mask8x16): mask8x16;
+declare function velt_simd_mask8x16_bitmask(m: mask8x16): u64;
+
+/** The positions of the 16 from `i` where gram `t` of `prog` is (as far as its bytes at the
+ * program's offsets say). */
+function gramAt(prog: Program, s: string, i: usize, t: usize): mask8x16 {
+  const size = prog.gramSize;
+  const g = prog.grams;
+  const at = prog.gramAt;
+  let m = velt_simd_u8x16_eq(strLoadU8x16(s, (i + at[0]) as u64), velt_simd_u8x16_splat(g[t]));
+  for (let j: usize = 1; j < size; j++) {
+    const v = strLoadU8x16(s, (i + at[j]) as u64);
+    m = velt_simd_mask8x16_and(m, velt_simd_u8x16_eq(v, velt_simd_u8x16_splat(g[t + j])));
+  }
+  return m;
+}
+
+/** Is one of the grams of `prog` at byte `i` of `s`? */
+function gramHere(prog: Program, s: string, i: usize): bool {
+  const size = prog.gramSize;
+  for (let t: usize = 0; t < prog.grams.length; t += size) {
+    let same = true;
+    for (let j: usize = 0; j < size && same; j++) {
+      same = strByteAt(s, (i + prog.gramAt[j]) as u64) == prog.grams[t + j];
+    }
+    if (same) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** The first byte at or after `from` where a match of `prog` in the `len` bytes of `s` may
+ * start by its grams, or -1. */
+function gramScan(prog: Program, s: string, from: usize, len: usize): i64 {
+  if (len < prog.minBytes) {
+    return -1;
+  }
+  const last = len - prog.minBytes;
+  const reach = prog.gramAt[prog.gramSize - 1] + 16;
+  const grams = prog.grams.length;
+  const size = prog.gramSize;
+  let i = from;
+  while (i + reach <= len) {
+    let m = gramAt(prog, s, i, 0);
+    for (let t = size; t < grams; t += size) {
+      m = velt_simd_mask8x16_or(m, gramAt(prog, s, i, t));
+    }
+    const bits = velt_simd_mask8x16_bitmask(m);
+    if (bits != 0) {
+      return (i + (bits.trailingZeros() as usize)) as i64;
+    }
+    i += 16;
+  }
+  while (i <= last) {
+    if (gramHere(prog, s, i)) {
+      return i as i64;
+    }
+    i++;
+  }
+  return -1;
+}
+
+/** The first byte at or after `from` that is a first byte of `prog`'s matches, or -1. */
+function firstScan(prog: Program, s: string, from: usize, len: usize): i64 {
+  const first = prog.first;
+  for (let i = from; i < len; i++) {
+    const b = strByteAt(s, i as u64) as u32;
+    if (((first[(b >> 6) as usize] >> ((b & 63) as u64)) & 1) != 0) {
+      return i as i64;
+    }
+  }
+  return -1;
+}
+
+/** The first byte at or after `from` where a match of `prog` in the `len` bytes of `s` may
+ * start, or -1 when none can. `from` is a position (decode.velt), and so is the result. */
+export function candidate(prog: Program, s: string, from: usize, len: usize): i64 {
+  if (prog.scan == SCAN_GRAMS) {
+    return gramScan(prog, s, from, len);
+  }
+  if (prog.scan == SCAN_FIRST) {
+    return firstScan(prog, s, from, len);
+  }
+  return from as i64;
+}
+
+/** The first match of an `exact` program at or after byte `from` of `s`: its start, and its
+ * end in `ends[0]`; -1 for none. */
+export function literalFind(prog: Program, s: string, from: usize, len: usize, ends: usize[]): i64 {
+  const lits = prog.literals;
+  let at = gramScan(prog, s, from, len);
+  while (at >= 0) {
+    const i = at as usize;
+    for (let k: usize = 0; k < lits.length; k++) {
+      const n = strByteLen(lits[k]);
+      if (i + n <= len && sameBytes(s, i, lits[k], 0, n)) {
+        ends[0] = i + n;
+        return at;
+      }
+    }
+    at = gramScan(prog, s, i + 1, len);
+  }
+  return -1;
+}

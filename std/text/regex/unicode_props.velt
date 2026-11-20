@@ -1,0 +1,14 @@
+// velt/text (internal): the sets of Unicode property escapes (`\p{L}`, `\p{Script=Greek}`).
+
+import { CharSet } from "velt/text/regex/char_set";
+
+/** The characters with property `name` (of value `value` when `hasValue`: `\p{sc=Grek}`), or
+ * null when JavaScript knows no such property. */
+export function propertySet(name: string, value: string, hasValue: bool): CharSet | null {
+  if (name == "Any" && !hasValue && value == "") {
+    const s = new CharSet();
+    s.add(0, 0x10ffff);
+    return s;
+  }
+  return null;
+}

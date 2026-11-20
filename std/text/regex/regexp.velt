@@ -1,9 +1,10 @@
-// velt/text (internal): JavaScript-flavoured regular expressions over the runtime's Rust `regex`
-// engine (rt_abi_async.md §14). Matching is linear-time (no catastrophic backtracking); in exchange
-// lookaround and backreferences are not supported (compiling them throws `RegExpError`).
+// velt/text (internal): JavaScript's regular expressions, compiled and matched by std itself
+// (velt/text/regex: parse_pattern, compiler, backtrack, pike). Matching takes time linear in
+// the subject, whatever the pattern (no catastrophic backtracking); in exchange lookaround and
+// back references are not supported (compiling them throws `RegExpError`).
 //
 // Offsets are UTF-16 code units, like every Velt string position (`slice`, `indexOf`).
-// `\d \w \b` are ASCII-only as in JS; `i m s` flags work as in JS; `g` makes `replace` replace
+// `\d \w \b` are ASCII-only as in JS; `i m s u` flags work as in JS; `g` makes `replace` replace
 // every match and `y` (sticky) makes `test`/`exec` match only at the start position. Called
 // without a start (`exec(s)`), a `g` or `y` regex starts at `lastIndex` and updates it, as in JS;
 // `exec(s, from)` takes the start explicitly and leaves `lastIndex` alone.
@@ -13,30 +14,48 @@
 // file: the compiler calls them when the first argument is a `RegExp` (velt_sema's
 // `regex_args`), and they call this class's methods keyed by velt/text/regex/keys.
 //
-// A `RegExp` owns a runtime handle (released by `[Symbol.dispose]()`); the compiled program is
-// immutable and can be used from any task.
+// A `RegExp`'s program never changes once compiled, and `lastIndex` is an `Atomic` in a shared
+// object of the regex's own, so no method needs a receiver it may change.
 
 import { Pattern } from "velt/text/regex/pattern";
+import { Compiler } from "velt/text/regex/compiler";
 import { RegExpError } from "velt/text/regex/errors";
+import { find } from "velt/text/regex/find";
 import { MATCH, MATCH_ALL, REPLACE_CALLING, SEARCH, SPLIT } from "velt/text/regex/keys";
+import { positionOf, textOf, unitOf } from "velt/text/regex/offsets";
+import { parsePattern } from "velt/text/regex/parse_pattern";
+import { Parser } from "velt/text/regex/parser";
+import { Program } from "velt/text/regex/program";
 import { RegExpMatch } from "velt/text/regex/regexp_match";
-import {
-  velt_rt_regex_escape,
-  velt_rt_regex_exec,
-  velt_rt_regex_exec_all,
-  velt_rt_regex_free,
-  velt_rt_regex_group_count,
-  velt_rt_regex_group_names,
-  velt_rt_regex_last_index,
-  velt_rt_regex_new,
-  velt_rt_regex_replace,
-  velt_rt_regex_set_last_index,
-  velt_rt_regex_split,
-  velt_rt_regex_test,
-} from "velt/text/regex/rt";
+import { escapePattern, following, replaceMatches, splitMatches } from "velt/text/regex/replace";
+import { Search } from "velt/text/regex/search";
 // The string methods that take a regex (compiler hooks).
 import "velt/text/regex/string_methods";
-import { arrayWithCapacity } from "velt/lang/intrinsics";
+import { arrayWithCapacity, strByteLen } from "velt/lang/intrinsics";
+
+/** The program of `pattern` with `flags`, and the names of its groups in `names`. */
+function compile(pattern: string, flags: string, names: string[]): Program {
+  for (let i: i64 = 0; i < (flags.length as i64); i++) {
+    const f = flags[i];
+    if (!"dgimsuvy".includes(f) || flags.indexOf(f) != i || (f == "v" && flags.includes("u"))) {
+      throw new RegExpError(`Invalid flags supplied to RegExp constructor '${flags}'`);
+    }
+  }
+  const parser = new Parser(pattern, flags);
+  const tree = parsePattern(parser);
+  const compiler = new Compiler(parser);
+  compiler.compile(tree);
+  for (const name of parser.names) {
+    names.push(name);
+  }
+  return compiler.prog;
+}
+
+/** A `RegExp`'s `lastIndex`: in an object of its own, which the methods that set it reach
+ * through a receiver they may not change. */
+class Cursor {
+  at: Atomic<f64> = new Atomic<f64>(0);
+}
 
 /** A compiled regular expression: `new RegExp("(\\d+)-(\\d+)", "g")`. */
 export class RegExp implements Pattern {
@@ -48,21 +67,17 @@ export class RegExp implements Pattern {
   readonly global: bool;
   /** `y`: `test`/`exec` only match starting exactly at the start position. */
   readonly sticky: bool;
-  #handle: u64;
-  #names: string[];
+  #prog: Program;
+  #names: string[] = [];
+  #cursor: shared<Cursor> = shared(new Cursor());
 
   /** Throws `RegExpError` for an invalid pattern or flags. */
   constructor(pattern: string, flags: string = "") {
-    const r = velt_rt_regex_new(pattern, flags);
-    if (r.code != 0) {
-      throw new RegExpError(r.message);
-    }
-    this.#handle = r.value;
+    this.#prog = compile(pattern, flags, this.#names);
     this.source = pattern.clone();
     this.flags = flags.clone();
     this.global = flags.includes("g");
     this.sticky = flags.includes("y");
-    this.#names = velt_rt_regex_group_names(this.#handle);
   }
 
   /**
@@ -74,10 +89,11 @@ export class RegExp implements Pattern {
       return this.exec(s) != null;
     }
     const start = from ?? 0;
-    if (this.sticky) {
-      return this.execAt(s, start) != null;
+    if (start > s.length) {
+      return false;
     }
-    return velt_rt_regex_test(this.#handle, s, start as u64);
+    const m = new Search(this.#prog, 0);
+    return find(this.#prog, m, s, positionOf(s, start, this.#prog.units), this.sticky);
   }
 
   /**
@@ -91,29 +107,36 @@ export class RegExp implements Pattern {
     }
     const start = this.lastIndex as usize;
     const m = start > s.length ? null : this.execAt(s, start);
-    velt_rt_regex_set_last_index(this.#handle, m == null ? 0 : m.end);
+    this.#cursor.at.store(m == null ? 0 : m.end);
     return m;
   }
 
   /** Every non-overlapping match, in order (JS `s.matchAll(re)`, whatever the flags). */
   matchAll(s: string): RegExpMatch[] {
-    const offsets = velt_rt_regex_exec_all(this.#handle, s);
-    const stride = 2 * (this.#names.length + 1);
-    const n = offsets.length / stride;
-    const out: RegExpMatch[] = arrayWithCapacity(n);
-    for (let i: usize = 0; i < n; i++) {
-      out.push(this.matchAt(s, offsets, i * stride));
+    const prog = this.#prog;
+    const m = new Search(prog, 2 * (prog.groups as usize) + 2);
+    const len = strByteLen(s);
+    const out: RegExpMatch[] = [];
+    let pos: usize = 0;
+    while (pos <= len && find(prog, m, s, pos, false)) {
+      out.push(this.matchOf(s, m.slots));
+      pos = following(prog, s, len, m.slots[0] as usize, m.slots[1] as usize);
     }
     return out;
   }
 
   /** The text of every match (JS `s.match(re)` with the `g` flag); empty if none. */
   matches(s: string): string[] {
-    const offsets = velt_rt_regex_exec_all(this.#handle, s);
-    const stride = 2 * (this.#names.length + 1);
-    const out: string[] = arrayWithCapacity(offsets.length / stride);
-    for (let i: usize = 0; i < offsets.length; i += stride) {
-      out.push(s.slice(offsets[i], offsets[i + 1]));
+    const prog = this.#prog;
+    const m = new Search(prog, 2);
+    const len = strByteLen(s);
+    const out: string[] = [];
+    let pos: usize = 0;
+    while (pos <= len && find(prog, m, s, pos, false)) {
+      const start = m.slots[0] as usize;
+      const end = m.slots[1] as usize;
+      out.push(textOf(s, start, end));
+      pos = following(prog, s, len, start, end);
     }
     return out;
   }
@@ -126,10 +149,10 @@ export class RegExp implements Pattern {
    */
   replace(s: string, replacement: string): string {
     if (this.global) {
-      velt_rt_regex_set_last_index(this.#handle, 0);
+      this.#cursor.at.store(0);
     }
     if (!this.sticky) {
-      return velt_rt_regex_replace(this.#handle, s, replacement, this.global);
+      return replaceMatches(this.#prog, this.#names, s, replacement, this.global);
     }
     let out = "";
     let last: number = 0;
@@ -144,7 +167,7 @@ export class RegExp implements Pattern {
 
   /** Replaces every match, whatever the flags (JS `replaceAll`). */
   replaceAll(s: string, replacement: string): string {
-    return velt_rt_regex_replace(this.#handle, s, replacement, true);
+    return replaceMatches(this.#prog, this.#names, s, replacement, true);
   }
 
   /**
@@ -193,7 +216,7 @@ export class RegExp implements Pattern {
       }
       return out;
     }
-    velt_rt_regex_set_last_index(this.#handle, 0);
+    this.#cursor.at.store(0);
     const found = this.sticky ? this.stickyTexts(s) : this.matches(s);
     return found.length == 0 ? null : found;
   }
@@ -214,11 +237,11 @@ export class RegExp implements Pattern {
         break;
       }
       if (m.end == m.index) {
-        velt_rt_regex_set_last_index(this.#handle, (m.end + 1) as number);
+        this.#cursor.at.store((m.end + 1) as number);
       }
       out.push(m);
     }
-    velt_rt_regex_set_last_index(this.#handle, saved);
+    this.#cursor.at.store(saved);
     return out;
   }
 
@@ -242,30 +265,30 @@ export class RegExp implements Pattern {
 
   /** JS `s.split(re, limit)`: captured groups are included in the result; `limit` 0 = none. */
   split(s: string, limit: usize = 0): string[] {
-    return velt_rt_regex_split(this.#handle, s, limit as u64);
+    return splitMatches(this.#prog, s, limit);
   }
 
   /**
    * Where `exec(s)` and `test(s)` of a `g` or `y` regex start, set past each match (0 after a
-   * failed one); `s.replace`, `s.match` and `s.matchAll` read and set it as in JS. Kept by the
-   * runtime, so the methods that update it don't need a mutable receiver.
+   * failed one); `s.replace`, `s.match` and `s.matchAll` read and set it as in JS. An `Atomic`,
+   * so the methods that update it don't need a mutable receiver.
    */
   get lastIndex(): number {
-    return velt_rt_regex_last_index(this.#handle);
+    return this.#cursor.at.load();
   }
 
   set lastIndex(value: number) {
-    velt_rt_regex_set_last_index(this.#handle, value);
+    this.#cursor.at.store(value);
   }
 
   /** Number of capture groups (not counting the whole match). */
   get groupCount(): usize {
-    return (velt_rt_regex_group_count(this.#handle) - 1) as usize;
+    return this.#prog.groups as usize;
   }
 
   /** `s` with every regex metacharacter escaped, for building patterns from text. */
   static escape(s: string): string {
-    return velt_rt_regex_escape(s);
+    return escapePattern(s);
   }
 
   /**
@@ -284,29 +307,22 @@ export class RegExp implements Pattern {
     }
   }
 
-  /** Drop hook: releases the compiled program. */
-  [Symbol.dispose]() {
-    if (this.#handle != 0) {
-      velt_rt_regex_free(this.#handle);
-      this.#handle = 0;
-    }
-  }
-
   private execAt(s: string, from: usize): RegExpMatch | null {
-    let offsets: i64[] = [];
-    if (!velt_rt_regex_exec(this.#handle, s, from as u64, offsets)) {
+    const prog = this.#prog;
+    if (from > s.length) {
       return null;
     }
-    if (this.sticky && offsets[0] != from as i64) {
+    const m = new Search(prog, 2 * (prog.groups as usize) + 2);
+    if (!find(prog, m, s, positionOf(s, from, prog.units), this.sticky)) {
       return null;
     }
-    return this.matchAt(s, offsets, 0);
+    return this.matchOf(s, m.slots);
   }
 
   // The matches `replace` replaces, setting `lastIndex` as JS does.
   private replaced(s: string): RegExpMatch[] {
     if (this.global) {
-      velt_rt_regex_set_last_index(this.#handle, 0);
+      this.#cursor.at.store(0);
       return this.sticky ? this.stickyMatches(s) : this.matchAll(s);
     }
     const out: RegExpMatch[] = [];
@@ -340,22 +356,23 @@ export class RegExp implements Pattern {
     return out;
   }
 
-  // Builds the match whose offsets start at `offsets[at]`.
-  private matchAt(s: string, offsets: i64[], at: usize): RegExpMatch {
+  // Builds the match whose slots (byte offsets) are `slots`.
+  private matchOf(s: string, slots: i64[]): RegExpMatch {
     const n = this.#names.length;
     const captures: (string | null)[] = arrayWithCapacity(n);
     for (let g: usize = 1; g <= n; g++) {
-      const start = offsets[at + 2 * g];
-      if (start < 0) {
+      if (slots[2 * g] < 0) {
         captures.push(null);
       } else {
-        captures.push(s.slice(start, offsets[at + 2 * g + 1]));
+        captures.push(textOf(s, slots[2 * g] as usize, slots[2 * g + 1] as usize));
       }
     }
+    const start = slots[0] as usize;
+    const end = slots[1] as usize;
     return new RegExpMatch(
-      offsets[at] as number,
-      offsets[at + 1] as number,
-      s.slice(offsets[at], offsets[at + 1]),
+      unitOf(s, start) as number,
+      unitOf(s, end) as number,
+      textOf(s, start, end),
       captures,
       this.#names.clone(),
     );

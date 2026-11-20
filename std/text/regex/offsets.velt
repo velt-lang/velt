@@ -1,0 +1,44 @@
+// velt/text (internal): a subject's positions as the matchers have them (byte offsets,
+// decode.velt) and as programs have them (UTF-16 code units), each way.
+
+import { strByteAt, strByteLen, strLen } from "velt/lang/intrinsics";
+import { byteToUnit, unitToByte } from "velt/lang/string/positions";
+import { velt_rt_str_byte_slice } from "velt/text/regex/rt";
+
+/** The code unit of the position at byte `at` of `s`: between the halves of a pair, the one
+ * after the pair's first. */
+export function unitOf(s: string, at: usize): usize {
+  const n = strByteLen(s);
+  if (strLen(s) == n) {
+    return at;
+  }
+  if (at < n && (strByteAt(s, at as u64) & 0xc0) == 0x80) {
+    return byteToUnit(s, at - 1) + 1;
+  }
+  return byteToUnit(s, at);
+}
+
+/** The position of code unit `unit` of `s` (at most its length). Inside a pair, that is between
+ * its halves for a pattern that matches code units (`units`), and at its start for one that
+ * matches code points, as in JavaScript. */
+export function positionOf(s: string, unit: usize, units: bool): usize {
+  if (strLen(s) == strByteLen(s)) {
+    return unit;
+  }
+  const pos = unitToByte(s, unit);
+  return (pos >> 1) as usize + (units ? (pos & 1) as usize : 0);
+}
+
+/** Is byte `at` of the `n` of `s` between the halves of a pair? */
+function inPair(s: string, at: usize, n: usize): bool {
+  return at < n && (strByteAt(s, at as u64) & 0xc0) == 0x80;
+}
+
+/** The text of `s` between the positions at bytes `from` and `to`. */
+export function textOf(s: string, from: usize, to: usize): string {
+  const n = strByteLen(s);
+  if (inPair(s, from, n) || inPair(s, to, n)) {
+    return s.slice(unitOf(s, from) as i64, unitOf(s, to) as i64);
+  }
+  return velt_rt_str_byte_slice(s, from as u64, to as u64);
+}

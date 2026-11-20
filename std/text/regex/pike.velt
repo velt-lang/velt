@@ -1,0 +1,190 @@
+// velt/text (internal): the Pike machine, for a long subject: it reads the subject once,
+// keeping every way the program could be matching so far as a thread, in the order the
+// program prefers them. A thread is an instruction and its capture slots; a list holds at most
+// one thread per instruction, so a step costs at most the program's size.
+
+import { arrayTruncate, strDataAddress } from "velt/lang/intrinsics";
+import { charAt, holds } from "velt/text/regex/decode";
+import {
+  OP_ASSERT,
+  OP_CHAR,
+  OP_CLASS,
+  OP_CLEAR,
+  OP_JUMP,
+  OP_MASK,
+  OP_MATCH,
+  OP_SAVE,
+  OP_SPLIT,
+  Program,
+} from "velt/text/regex/program";
+import { candidate } from "velt/text/regex/prefilter";
+import { Search } from "velt/text/regex/search";
+
+/** Set in a job of the stack that restores a capture slot. */
+const RESTORE: u64 = (1 as u64) << 63;
+const SHIFT: u64 = 40;
+const LOW: u64 = ((1 as u64) << 40) - 1;
+
+/** Sizes the lists of `m` for `prog`. */
+export function pikeReset(prog: Program, m: Search): void {
+  const n = prog.length;
+  if (m.dense.length == 2 * n) {
+    return;
+  }
+  for (let i: usize = 0; i < 2 * n; i++) {
+    m.dense.push(0);
+    m.sparse.push(0);
+  }
+  for (let i: usize = 0; i < 2 * n * m.slots.length; i++) {
+    m.caps.push(-1);
+  }
+  for (let i: usize = 0; i < m.slots.length; i++) {
+    m.work.push(-1);
+  }
+}
+
+/** Adds to list `list` the threads that instruction `pc0` leads to at byte `pos` without
+ * reading a character, in the program's order of preference, with the slots of `m.work`. */
+function add(prog: Program, m: Search, s: string, len: usize, list: usize, pc0: usize, pos: usize): void {
+  const base = strDataAddress(s);
+  const code = prog.code;
+  const n = prog.length;
+  const dense = m.dense;
+  const sparse = m.sparse;
+  const stack = m.stack;
+  const work = m.work;
+  const ns = work.length;
+  let count = m.count[list];
+  stack.push(pc0 as u64);
+  while (stack.length > 0) {
+    const job = stack.pop() ?? 0;
+    if ((job & RESTORE) != 0) {
+      work[((job ^ RESTORE) >> SHIFT) as usize] = ((job & LOW) as i64) - 1;
+      continue;
+    }
+    let pc = job as usize;
+    while (true) {
+      const at = sparse[list * n + pc] as usize;
+      if (at < count && dense[list * n + at] as usize == pc) {
+        break;
+      }
+      sparse[list * n + pc] = count as u32;
+      dense[list * n + count] = pc as u32;
+      count++;
+      const op = code[3 * pc] & OP_MASK;
+      const a = code[3 * pc + 1];
+      if (op == OP_JUMP) {
+        pc = a as usize;
+      } else if (op == OP_SPLIT) {
+        stack.push(code[3 * pc + 2] as u64);
+        pc = a as usize;
+      } else if (op == OP_SAVE) {
+        if ((a as usize) < ns) {
+          stack.push(RESTORE | ((a as u64) << SHIFT) | ((work[a] + 1) as u64));
+          work[a] = pos as i64;
+        }
+        pc++;
+      } else if (op == OP_CLEAR) {
+        const end = code[3 * pc + 2] as usize;
+        for (let k = a as usize; k < end && k < ns; k++) {
+          if (work[k] >= 0) {
+            stack.push(RESTORE | ((k as u64) << SHIFT) | ((work[k] + 1) as u64));
+            work[k] = -1;
+          }
+        }
+        pc++;
+      } else if (op == OP_ASSERT) {
+        if (!holds(a, base, pos, len)) {
+          break;
+        }
+        pc++;
+      } else {
+        const row = (list * n + pc) * ns;
+        for (let k: usize = 0; k < ns; k++) {
+          m.caps[row + k] = work[k];
+        }
+        break;
+      }
+    }
+  }
+  m.count[list] = count;
+}
+
+/** Is there a match of `prog` in `s` that starts at or after byte `start` (at `start` when
+ * `anchored`)? The leftmost one's slots, as the program prefers it, are then in `m.slots`. */
+export function pike(prog: Program, m: Search, s: string, len: usize, start: usize, anchored: bool): bool {
+  const base = strDataAddress(s);
+  const code = prog.code;
+  const n = prog.length;
+  const ns = m.slots.length;
+  const units = prog.units;
+  let cur: usize = 0;
+  let pos = start;
+  let matched = false;
+  m.count[0] = 0;
+  m.count[1] = 0;
+  arrayTruncate(m.stack, 0);
+  while (true) {
+    if (!matched && (pos == start || !anchored)) {
+      if (m.count[cur] == 0 && !anchored) {
+        const next = candidate(prog, s, pos, len);
+        if (next < 0) {
+          break;
+        }
+        pos = next as usize;
+      }
+      for (let k: usize = 0; k < ns; k++) {
+        m.work[k] = -1;
+      }
+      add(prog, m, s, len, cur, 0, pos);
+    }
+    const live = m.count[cur];
+    if (live == 0) {
+      break;
+    }
+    let c: u32 = 0xffffffff;
+    let step: usize = 1;
+    if (pos < len) {
+      const packed = charAt(base, pos, units);
+      c = packed & 0xffffff;
+      step = (packed >> 24) as usize;
+    }
+    const next = 1 - cur;
+    m.count[next] = 0;
+    for (let i: usize = 0; i < live; i++) {
+      const pc = m.dense[cur * n + i] as usize;
+      const op = code[3 * pc] & OP_MASK;
+      if (op == OP_MATCH) {
+        if (ns == 0) {
+          return true;
+        }
+        const row = (cur * n + pc) * ns;
+        for (let k: usize = 0; k < ns; k++) {
+          m.slots[k] = m.caps[row + k];
+        }
+        matched = true;
+        break;
+      }
+      if (op != OP_CHAR && op != OP_CLASS) {
+        continue;
+      }
+      const a = code[3 * pc + 1];
+      const hit = op == OP_CHAR ? c == a
+        : c < 0x80 ? prog.hasAscii(a, c)
+        : c != 0xffffffff && prog.sets[a].contains(c);
+      if (hit) {
+        const row = (cur * n + pc) * ns;
+        for (let k: usize = 0; k < ns; k++) {
+          m.work[k] = m.caps[row + k];
+        }
+        add(prog, m, s, len, next, pc + 1, pos + step);
+      }
+    }
+    cur = next;
+    if (pos >= len) {
+      break;
+    }
+    pos += step;
+  }
+  return matched;
+}

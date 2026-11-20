@@ -1,0 +1,147 @@
+// velt/text (internal): the backtracking matcher, for a short subject: it tries the program's
+// alternatives in order, and remembers every state (instruction, position) it has been in, so
+// it never tries one twice: its time is linear in the subject, and an iteration of a loop that
+// matched nothing ends there, as in JavaScript.
+//
+// Only instructions that a jump or a split leads to are remembered (a "join"): every loop
+// passes through one, and the instructions between two are a straight line.
+
+import { arrayTruncate, strDataAddress } from "velt/lang/intrinsics";
+import { byteAt, charAt, holds } from "velt/text/regex/decode";
+import {
+  JOIN,
+  OP_ASSERT,
+  OP_CHAR,
+  OP_CLASS,
+  OP_CLEAR,
+  OP_JUMP,
+  OP_MASK,
+  OP_MATCH,
+  OP_SAVE,
+  OP_SPLIT,
+  Program,
+} from "velt/text/regex/program";
+import { Search } from "velt/text/regex/search";
+
+/** Set in a pending job that restores a capture slot. */
+const RESTORE: u64 = (1 as u64) << 63;
+/** Where a job keeps its instruction or slot. */
+const SHIFT: u64 = 40;
+const LOW: u64 = ((1 as u64) << 40) - 1;
+
+/** Makes `m` ready for matches of `prog` that start at or after byte `origin` of `len`. */
+export function backtrackReset(prog: Program, m: Search, origin: usize, len: usize): void {
+  const words = ((prog.joins as usize) * (len - origin + 1) + 63) / 64;
+  arrayTruncate(m.visited, 0);
+  for (let i: usize = 0; i < words; i++) {
+    m.visited.push(0);
+  }
+}
+
+/** Is there a match of `prog` in `s` that starts at byte `start`? Its slots are then in
+ * `m.slots`. `origin` is what `backtrackReset` was given; states an earlier call from another
+ * start has been in lead to no match, and are not entered again. */
+export function backtrack(prog: Program, m: Search, s: string, len: usize, origin: usize, start: usize): bool {
+  const base = strDataAddress(s);
+  const code = prog.code;
+  const slots = m.slots;
+  const stack = m.stack;
+  const visited = m.visited;
+  const span = len - origin + 1;
+  const units = prog.units;
+  let pc: usize = 0;
+  let pos = start;
+  while (true) {
+    while (true) {
+      const w = code[3 * pc];
+      if ((w & JOIN) != 0) {
+        const bit = ((w >> 9) as usize) * span + (pos - origin);
+        const mask = (1 as u64) << ((bit & 63) as u64);
+        if ((visited[bit >> 6] & mask) != 0) {
+          break;
+        }
+        visited[bit >> 6] |= mask;
+      }
+      const op = w & OP_MASK;
+      const a = code[3 * pc + 1];
+      if (op == OP_CHAR) {
+        if (pos >= len) {
+          break;
+        }
+        if (a < 0x80) {
+          if (byteAt(base, pos) != a) {
+            break;
+          }
+          pos++;
+        } else {
+          const c = charAt(base, pos, units);
+          if ((c & 0xffffff) != a) {
+            break;
+          }
+          pos += (c >> 24) as usize;
+        }
+        pc++;
+      } else if (op == OP_CLASS) {
+        if (pos >= len) {
+          break;
+        }
+        const b = byteAt(base, pos);
+        if (b < 0x80) {
+          if (!prog.hasAscii(a, b)) {
+            break;
+          }
+          pos++;
+        } else {
+          const c = charAt(base, pos, units);
+          if (!prog.sets[a].contains(c & 0xffffff)) {
+            break;
+          }
+          pos += (c >> 24) as usize;
+        }
+        pc++;
+      } else if (op == OP_SPLIT) {
+        stack.push(((code[3 * pc + 2] as u64) << SHIFT) | (pos as u64));
+        pc = a as usize;
+      } else if (op == OP_JUMP) {
+        pc = a as usize;
+      } else if (op == OP_SAVE) {
+        if ((a as usize) < slots.length) {
+          stack.push(RESTORE | ((a as u64) << SHIFT) | ((slots[a] + 1) as u64));
+          slots[a] = pos as i64;
+        }
+        pc++;
+      } else if (op == OP_ASSERT) {
+        if (!holds(a, base, pos, len)) {
+          break;
+        }
+        pc++;
+      } else if (op == OP_CLEAR) {
+        const end = code[3 * pc + 2] as usize;
+        for (let k = a as usize; k < end && k < slots.length; k++) {
+          if (slots[k] >= 0) {
+            stack.push(RESTORE | ((k as u64) << SHIFT) | ((slots[k] + 1) as u64));
+            slots[k] = -1;
+          }
+        }
+        pc++;
+      } else if (op == OP_MATCH) {
+        arrayTruncate(stack, 0);
+        return true;
+      } else {
+        break;
+      }
+    }
+    while (true) {
+      if (stack.length == 0) {
+        return false;
+      }
+      const job = stack.pop() ?? 0;
+      if ((job & RESTORE) == 0) {
+        pc = (job >> SHIFT) as usize;
+        pos = (job & LOW) as usize;
+        break;
+      }
+      slots[((job ^ RESTORE) >> SHIFT) as usize] = ((job & LOW) as i64) - 1;
+    }
+  }
+}
