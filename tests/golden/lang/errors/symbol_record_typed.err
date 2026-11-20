@@ -1,0 +1,1 @@
+symbol_record_typed.velt:6:15: error: a `Record<symbol, { value?: f64 } | undefined>` cast of a value that is not a record of `{ value?: f64 } | undefined` is not supported yet

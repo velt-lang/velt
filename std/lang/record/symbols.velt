@@ -10,6 +10,7 @@ import { recordViewGet, recordViewHas, recordViewIs } from "velt/lang/intrinsics
 import {
   RECORD_ACCESSOR,
   RECORD_DEFINE_ACCESSOR,
+  RECORD_DEFINE_DATA,
   RECORD_DEFINE_GETTER,
   RECORD_DEFINE_SETTER,
   RECORD_DELETE,
@@ -38,10 +39,13 @@ import {
 export type PropertyKey = string | number | symbol;
 
 extend<K, V> Record<K, V> {
-  /** The accessor `key` names (getter, setter, configurable), if one was defined. */
+  /**
+   * The accessor `key` names (getter, setter, configurable, and whether it is a data property
+   * `[RECORD_DEFINE_DATA]` defined), if one was defined.
+   */
   [RECORD_ACCESSOR](
     key: K | symbol,
-  ): [(() => V) | null, ((value: V) => void) | null, bool] | undefined {
+  ): [(() => V) | null, ((value: V) => void) | null, bool, bool] | undefined {
     const t = this.accessors;
     if (t == null) {
       return undefined;
@@ -62,25 +66,54 @@ extend<K, V> Record<K, V> {
     set: (value: V) => void throws F,
     configurable: bool,
   ) {
-    this[RECORD_PUT_ACCESSOR](key, uncaughtGet(get), uncaughtSet(set), configurable);
+    this[RECORD_PUT_ACCESSOR](key, uncaughtGet(get), uncaughtSet(set), configurable, false);
   }
 
   /** `Object.defineProperty(r, key, { get, configurable })` (`[RECORD_DEFINE_ACCESSOR]`). */
   [RECORD_DEFINE_GETTER]<E>(key: K | symbol, get: () => V throws E, configurable: bool) {
-    this[RECORD_PUT_ACCESSOR](key, uncaughtGet(get), null, configurable);
+    this[RECORD_PUT_ACCESSOR](key, uncaughtGet(get), null, configurable, false);
   }
 
   /** `Object.defineProperty(r, key, { set, configurable })` (`[RECORD_DEFINE_ACCESSOR]`). */
   [RECORD_DEFINE_SETTER]<F>(key: K | symbol, set: (value: V) => void throws F, configurable: bool) {
-    this[RECORD_PUT_ACCESSOR](key, null, uncaughtSet(set), configurable);
+    this[RECORD_PUT_ACCESSOR](key, null, uncaughtSet(set), configurable, false);
   }
 
-  /** The accessor `key` names set to `get` and `set` (`[RECORD_DEFINE_ACCESSOR]`). */
+  /**
+   * `Object.defineProperty(r, key, { value, enumerable: false, writable, configurable })`: a
+   * data property that is not enumerable, so `Object.keys`, `JSON.stringify`, spreads and
+   * `console.log` skip it, as in Node. It is held as the accessors are, with a getter giving the
+   * value and, if it is writable, a setter replacing it; a write to one that isn't is Node's
+   * `TypeError`.
+   */
+  [RECORD_DEFINE_DATA](key: K | symbol, value: V, writable: bool, configurable: bool) {
+    let held = value;
+    const get = (): V => held;
+    if (writable) {
+      this[RECORD_PUT_ACCESSOR](
+        key,
+        get,
+        (v: V) => {
+          held = v;
+        },
+        configurable,
+        true,
+      );
+    } else {
+      this[RECORD_PUT_ACCESSOR](key, get, null, configurable, true);
+    }
+  }
+
+  /**
+   * The accessor `key` names set to `get` and `set` (`[RECORD_DEFINE_ACCESSOR]`), or the data
+   * property they read and write (`data`, `[RECORD_DEFINE_DATA]`).
+   */
   [RECORD_PUT_ACCESSOR](
     key: K | symbol,
     get: (() => V) | null,
     set: ((value: V) => void) | null,
     configurable: bool,
+    data: bool,
   ) {
     const old = this[RECORD_ACCESSOR](key);
     if (old != null && !old[2]) {
@@ -89,11 +122,11 @@ extend<K, V> Record<K, V> {
     this[RECORD_DELETE_KEYED](key);
     const t = this.accessors;
     if (t == null) {
-      const made: Map<K | symbol, [(() => V) | null, ((value: V) => void) | null, bool]> = new Map();
-      made.set(key, [get, set, configurable]);
+      const made: Map<K | symbol, [(() => V) | null, ((value: V) => void) | null, bool, bool]> = new Map();
+      made.set(key, [get, set, configurable, data]);
       this.accessors = made;
     } else {
-      t.set(key, [get, set, configurable]);
+      t.set(key, [get, set, configurable, data]);
     }
   }
 
@@ -161,6 +194,11 @@ extend<K, V> Record<K, V> {
       if (a != null) {
         const s = a[1];
         if (s == null) {
+          if (a[3]) {
+            panic(
+              `TypeError: Cannot assign to read only property '${keyText(key)}' of object '#<Object>'`,
+            );
+          }
           panic(
             `TypeError: Cannot set property ${keyText(key)} of #<Object> which has only a getter`,
           );

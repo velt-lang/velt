@@ -15,12 +15,11 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> hir::Expr {
-        // `(v as Record<symbol, unknown>)[KEY]` is `symbol_record_read`'s; nothing else is.
-        if self.symbol_record_elsewhere(ty, span) {
+        let target = self.resolve(ty);
+        if self.typed_symbol_record(expr, ty, target, span) {
             self.expr(expr, None, Want::Borrow);
             return self.error_expr(span);
         }
-        let target = self.resolve(ty);
         let nothing = self.nothing_cast(expr, target, span);
         if let Some(h) = nothing.or_else(|| self.callable_cast(expr, target, span)) {
             return h;

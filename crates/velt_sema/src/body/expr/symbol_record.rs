@@ -1,9 +1,10 @@
 //! `(v as Record<symbol, unknown>)[KEY]` (https://veltlang.com/docs/reference/types/ "Record"): a look at a value's
-//! symbol-keyed member, as sigx's brand checks do (`isCell`). Velt has no record with symbol
-//! keys, so this one form is supported: the read goes through `any`, as `(v as any)[KEY]`
-//! does, and gives the record's value type (`unknown`, or `any`). A key that is not a symbol
-//! (`["a"]`, a `string` or `symbol | string` variable) is TypeScript's TS7053, and any other use
-//! of such a cast (a member read, a write, a value of its own) is an error.
+//! symbol-keyed member, as sigx's brand checks do (`isCell`). When `v` is not a record, the read
+//! goes through `any`, as `(v as any)[KEY]` does, and gives the record's value type (`unknown`,
+//! or `any`). A key that is not a symbol (`["a"]`, a `string` or `symbol | string` variable) is
+//! TypeScript's TS7053. Any other `Record<symbol, V>` is a `Record<string, V>`
+//! (`Ctx::number_key_as_string`), whose symbol keys are a table of their own: so is the cast of
+//! a record, read here or kept, written and given properties (sigx's request bags).
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -23,6 +24,13 @@ impl FnCx<'_, '_> {
     ) -> Option<hir::Expr> {
         let (expr, ty) = symbol_record_cast(object)?;
         let value = symbol_record_value(ty)?;
+        // A record's own symbol table: an ordinary record cast and read.
+        if self
+            .trial_type(expr)
+            .is_some_and(|t| self.record_args(t).is_some())
+        {
+            return None;
+        }
         // The key's type: a symbol, or TypeScript's TS7053. A name, literal or member read is
         // checked on its own first (evaluating it has no effect the read below repeats).
         let simple = matches!(
@@ -93,6 +101,49 @@ impl FnCx<'_, '_> {
         Some(self.coerce(h, v))
     }
 
+    /// `v as Record<symbol, V>` (`target`, resolved) with `V` neither `unknown` nor `any`, of a
+    /// value that is not a record of `V` already: an error, reported here. Such a cast would
+    /// convert each of the record's string-keyed entries to `V`, where Node looks only at its
+    /// symbol keys.
+    pub(super) fn typed_symbol_record(
+        &mut self,
+        expr: &ast::Expr,
+        ty: &ast::TypeExpr,
+        target: hir::TyId,
+        span: Span,
+    ) -> bool {
+        let ast::TypeExprKind::Named { path, args } = &ty.kind else {
+            return false;
+        };
+        let symbol_key = matches!(&args[..], [ast::TypeExpr { kind: ast::TypeExprKind::Named { path: k, args: ka }, .. }, _]
+            if ka.is_empty() && k.len() == 1 && k[0].name == "symbol");
+        if path.len() != 1 || path[0].name != "Record" || !symbol_key {
+            return false;
+        }
+        if symbol_record_value(ty).is_some() {
+            return false;
+        }
+        let Some((_, v)) = self.record_args(target) else {
+            return false;
+        };
+        let from = self.trial_type(expr);
+        if from
+            .and_then(|t| self.record_args(t))
+            .is_some_and(|(_, fv)| fv == v)
+        {
+            return false;
+        }
+        let shown = self.cx.display(v);
+        self.cx.error(
+            Diagnostic::error(
+                format!("a `Record<symbol, {shown}>` cast of a value that is not a record of `{shown}` is not supported yet"),
+                span,
+            )
+            .with_note("Velt would convert each of its string-keyed entries too: cast to `Record<symbol, unknown>` and the member you read (`(r[KEY] as T)`)"),
+        );
+        true
+    }
+
     /// Is `t` a symbol, or a union of symbols (`typeof S | typeof T`)?
     fn is_symbol_key(&mut self, t: hir::TyId) -> bool {
         if matches!(self.cx.ty.kind(t), TyKind::Symbol) {
@@ -128,21 +179,6 @@ impl FnCx<'_, '_> {
         ));
         self.expr(expr, None, Want::Borrow);
         Some(self.error_expr(span))
-    }
-
-    /// `v as Record<symbol, V>` anywhere but in the read above: an error.
-    pub(super) fn symbol_record_elsewhere(&mut self, ty: &ast::TypeExpr, span: Span) -> bool {
-        if symbol_record_value(ty).is_none() {
-            return false;
-        }
-        self.cx.error(
-            Diagnostic::error(
-                "a `Record<symbol, ...>` is only supported to read a symbol-keyed member",
-                span,
-            )
-            .with_note("read the member right away: `(v as Record<symbol, unknown>)[KEY]`, with `KEY` a symbol constant; writing one, or keeping the record, is not supported yet"),
-        );
-        true
     }
 }
 
