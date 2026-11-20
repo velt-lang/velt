@@ -449,8 +449,11 @@ fn report_shared(cx: &mut Ctx, span: Span, name: &str, local: bool, ty: TyId) {
     let mut d = Diagnostic::error(msg, span).with_note(format!(
         "use it through the `shared` value from now on (`m.with((v) => …)`){copy}"
     ));
-    if !local {
-        // A field or element can hand its value over without a copy once nothing needs it there.
+    // `place_text` renders an element as `xs[..]` and anything else unnamed as "the value": only
+    // a name that is code can go in the snippet.
+    let code = !name.contains("[..]") && name != "the value";
+    if !local && code {
+        // A field can hand its value over without a copy once nothing needs it there.
         d = d.with_note(format!(
             "or, where nothing needs it there any more, take it out without a copy: `const v = {name}; {name} = …;` (a new value), then `shared(v)`"
         ));
