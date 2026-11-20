@@ -55,7 +55,7 @@ mutant no-generation sched_yield.velt 's/^  } else if (m.ld(f + ls.Y_STAMP) \/ l
 mutant no-firing sched_yield_list.velt 's/QUEUED, FIRING) !== QUEUED/QUEUED, FIRED) !== QUEUED/' yield_now_stored
 mutant no-reacts sched_fire.velt 's/^  return micro.pending(k) || m.ld(k + t.T_UNHANDLED) !== 0;/  return false;/' yield_now_immediates yield_now_order
 mutant no-woken-between sched_fire.velt 's/^  if (m.load(k + t.T_WOKEN) !== 0) {/  if (false) {/' yield_now_immediates
-mutant no-root-woke sched_fire.velt 's/^    return rootWoke(e, k);/    return woken;/' yield_now_immediates yield_now_due_sleep
+mutant no-root-woke sched_fire.velt 's/^    return rootWoke(e, k);/    return woken;/' sleep_turns_root_between
 # Not a break check: without the own-cx test the table test must give the same order.
 mutant own-cx-never sched_yield.velt 's/^  if (cx === w + t.T_CX) {/  if (false) {/' yield_now_order yield_now_immediates
 # A mutant's program that hung outlives its alarm (the alarm ends `velt run`, not the program):
