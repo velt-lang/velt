@@ -34,16 +34,16 @@ declare c type _PROCESS_INFORMATION;
 declare c type _SECURITY_ATTRIBUTES;
 
 declare c("c") function CreateProcessW(
-  application: Ptr<u16>,
-  commandLine: Ptr<u16>,
+  application: Ptr<u16> | null,
+  commandLine: Ptr<u16> | null,
   processAttributes: Ptr<_SECURITY_ATTRIBUTES> | null,
   threadAttributes: Ptr<_SECURITY_ATTRIBUTES> | null,
   inheritHandles: i32,
   flags: u32,
   environment: Ptr<void> | null,
   currentDirectory: Ptr<u16> | null,
-  startup: Ptr<_STARTUPINFOW>,
-  info: Ptr<_PROCESS_INFORMATION>,
+  startup: Ptr<_STARTUPINFOW> | null,
+  info: Ptr<_PROCESS_INFORMATION> | null,
 ): i32;
 declare c("c") function CreatePipe(
   read: Out<Ptr<void> | null>,
@@ -52,7 +52,7 @@ declare c("c") function CreatePipe(
   size: u32,
 ): i32;
 declare c("c") function CreateFileW(
-  name: Ptr<u16>,
+  name: Ptr<u16> | null,
   access: u32,
   share: u32,
   attributes: Ptr<_SECURITY_ATTRIBUTES> | null,
@@ -62,7 +62,7 @@ declare c("c") function CreateFileW(
 ): Ptr<void> | null;
 declare c("c") function DuplicateHandle(
   sourceProcess: Ptr<void>,
-  source: Ptr<void>,
+  source: Ptr<void> | null,
   targetProcess: Ptr<void>,
   target: Out<Ptr<void> | null>,
   access: u32,

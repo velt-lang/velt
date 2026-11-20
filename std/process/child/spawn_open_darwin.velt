@@ -9,7 +9,7 @@ import * as m from "velt/lang/hooks/sched_mem";
 declare c type posix_spawn_file_actions_t;
 
 declare c("c") function posix_spawn_file_actions_addopen(
-  fa: Ptr<posix_spawn_file_actions_t>,
+  fa: Ptr<posix_spawn_file_actions_t> | null,
   fd: i32,
   path: CString,
   flags: i32,

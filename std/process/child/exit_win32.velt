@@ -20,9 +20,9 @@ import { HandOff, parkAfterWake } from "velt/sync/hand_off";
 
 declare c("c") function RegisterWaitForSingleObject(
   wait: Out<Ptr<void> | null>,
-  object: Ptr<void>,
-  callback: Ptr<void>,
-  context: Ptr<void>,
+  object: Ptr<void> | null,
+  callback: Ptr<void> | null,
+  context: Ptr<void> | null,
   ms: u32,
   flags: u32,
 ): i32;

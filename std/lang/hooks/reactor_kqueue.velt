@@ -99,7 +99,7 @@ declare c("c") function setsockopt$io(
   fd: i32,
   level: i32,
   name: i32,
-  value: Ptr<u8>,
+  value: Ptr<u8> | null,
   len: u32,
 ): i32;
 // The signature the compiler calls it with for `{ errno: true }` (velt_vir c_abi.rs): one C
@@ -262,16 +262,16 @@ export const EXITED: i32 = ESRCH;
  */
 export const SPAWN_FLAGS: i16 = 0x4000;
 
-declare c("c") function pipe$io(fds: Ptr<i32>): i32;
+declare c("c") function pipe$io(fds: Ptr<i32> | null): i32;
 declare c("c") function posix_spawn_file_actions_addinherit_np(
-  fa: Ptr<posix_spawn_file_actions_t>,
+  fa: Ptr<posix_spawn_file_actions_t> | null,
   fd: i32,
 ): i32;
 
 /** A pipe at `fds` (read end, write end), both close-on-exec; 0, or -1 with `errno` set. */
 export function pipeCloexec(fds: usize): i32 {
   // SAFETY: room for two descriptors.
-  if (unsafe { pipe$io(Ptr.at<i32>(fds)) } !== 0) {
+  if (unsafe { pipe$io(Ptr.orNull<i32>(fds)) } !== 0) {
     return -1;
   }
   // SAFETY: F_SETFD takes an `int`, passed as C's `...` argument.
@@ -343,8 +343,13 @@ export function prepare(fd: i32): i32 {
 /** `UL_COMPARE_AND_WAIT | ULF_NO_ERRNO`: wait while the 32-bit word holds the value. */
 const COMPARE_AND_WAIT: u32 = 0x01000001;
 
-declare c("c") function __ulock_wait(op: u32, addr: Ptr<u8>, value: u64, timeoutUs: u32): i32;
-declare c("c") function __ulock_wake(op: u32, addr: Ptr<u8>, wakeValue: u64): i32;
+declare c("c") function __ulock_wait(
+  op: u32,
+  addr: Ptr<u8> | null,
+  value: u64,
+  timeoutUs: u32,
+): i32;
+declare c("c") function __ulock_wake(op: u32, addr: Ptr<u8> | null, wakeValue: u64): i32;
 
 /**
  * Sleeps while the `u32` at `word` is `expected` (a lock's waiters: sched_module.velt); it may
@@ -379,7 +384,12 @@ export function wordWake(word: usize): void {
 // count are `natural_t`s (unsigned), its info `integer_t`s.
 declare c("c") function pthread_self(): Ptr<void>;
 declare c("c") function pthread_mach_thread_np(thread: Ptr<void>): u32;
-declare c("c") function thread_info(thread: u32, flavor: u32, info: Ptr<i32>, count: Ptr<u32>): i32;
+declare c("c") function thread_info(
+  thread: u32,
+  flavor: u32,
+  info: Ptr<i32> | null,
+  count: Ptr<u32> | null,
+): i32;
 
 /** `THREAD_BASIC_INFO` and its count of `int`s (user and system time, then six more). */
 const THREAD_BASIC_INFO: u32 = 3;

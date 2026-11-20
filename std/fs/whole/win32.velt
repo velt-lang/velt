@@ -32,14 +32,14 @@ declare c("c") function CreateFileW(
   template: Ptr<void> | null,
 ): Ptr<void> | null;
 declare c("c") function ReadFile(
-  handle: Ptr<void>,
+  handle: Ptr<void> | null,
   buf: u8[],
   count: u32,
   read: u32[],
   overlapped: Ptr<_OVERLAPPED> | null,
 ): i32;
 declare c("c") function WriteFile(
-  handle: Ptr<void>,
+  handle: Ptr<void> | null,
   buf: readonly u8[],
   count: u32,
   written: u32[],
@@ -62,7 +62,7 @@ declare c("c") function GetFullPathNameW(
   out: u16[],
   file: Out<Ptr<u16> | null>,
 ): u32;
-declare c("c") function CloseHandle(handle: Ptr<void>): i32;
+declare c("c") function CloseHandle(handle: Ptr<void> | null): i32;
 declare c("c") function GetLastError(): u32;
 declare c("c") function malloc(size: usize): Ptr<void> | null;
 declare c("c") function free(p: Ptr<void> | null): void;

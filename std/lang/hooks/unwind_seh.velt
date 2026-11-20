@@ -13,14 +13,19 @@
 
 import { Ptr, StrBytes, byteLength, readCString } from "velt/ffi";
 
-import { addressLoad, addressStore } from "velt/lang/intrinsics/address";
+import { addressLoad, addressStore, ptrFromAddress } from "velt/lang/intrinsics/address";
 import { addressCall, fnAddress } from "velt/lang/intrinsics/future";
 
 declare c("c") function malloc(n: usize): Ptr<u8> | null;
-declare c("c") function free(p: Ptr<u8>): void;
-declare c("c") function memcpy(dst: Ptr<u8>, src: StrBytes, n: usize): Ptr<u8>;
-declare c("c") function memset(p: Ptr<u8>, c: i32, n: usize): Ptr<u8>;
-declare c("c") function RaiseException(code: u32, flags: u32, count: u32, args: Ptr<u8>): void;
+declare c("c") function free(p: Ptr<u8> | null): void;
+declare c("c") function memcpy(dst: Ptr<u8> | null, src: StrBytes, n: usize): Ptr<u8>;
+declare c("c") function memset(p: Ptr<u8> | null, c: i32, n: usize): Ptr<u8>;
+declare c("c") function RaiseException(
+  code: u32,
+  flags: u32,
+  count: u32,
+  args: Ptr<u8> | null,
+): void;
 declare c("c") function abort(): void;
 declare c("c") function SetUnhandledExceptionFilter(filter: usize): usize;
 declare c("c") function SwitchToThread(): i32;
@@ -157,10 +162,10 @@ export function raise(msg: string): void {
     memcpy(e, "VELTPANC", 8);
     const at = Ptr.addressOf(e);
     addressStore<usize>(at + 8, at);
-    const text = Ptr.at<u8>(at + HEADER);
+    const text = Ptr.orNull<u8>(at + HEADER);
     memcpy(text, msg, n);
-    memset(Ptr.at<u8>(at + HEADER + n), 0, 1);
-    RaiseException(CODE, NONCONTINUABLE, 1, Ptr.at<u8>(at + 8));
+    memset(Ptr.orNull<u8>(at + HEADER + n), 0, 1);
+    RaiseException(CODE, NONCONTINUABLE, 1, Ptr.orNull<u8>(at + 8));
     free(e);
     LIVE.sub(1);
   }
@@ -171,8 +176,9 @@ export function raise(msg: string): void {
  * Unsafe: `e` must be a Velt exception that `catchUnwind` returned, not freed.
  */
 export unsafe function panicText(e: usize): string {
-  // SAFETY: the caller's statement: `raise` wrote the NUL-terminated message after the header.
-  return unsafe { readCString(Ptr.at<u8>(e + HEADER)) };
+  // SAFETY: the caller's statement: `raise` wrote the NUL-terminated message after the header,
+  // at `e + HEADER`, never 0 as `e` isn't.
+  return unsafe { readCString(ptrFromAddress<u8>(e + HEADER)) };
 }
 
 /**
@@ -180,8 +186,9 @@ export unsafe function panicText(e: usize): string {
  * must be a Velt exception that `catchUnwind` returned, taken once.
  */
 export unsafe function takePanic(e: usize): string {
-  // SAFETY: the caller's statement: `raise` wrote the NUL-terminated message after the header.
-  const msg = unsafe { readCString(Ptr.at<u8>(e + HEADER)) };
+  // SAFETY: the caller's statement: `raise` wrote the NUL-terminated message after the header,
+  // at `e + HEADER`, never 0 as `e` isn't.
+  const msg = unsafe { readCString(ptrFromAddress<u8>(e + HEADER)) };
   // SAFETY: the caller's statement.
   unsafe {
     freePanic(e);
@@ -196,7 +203,7 @@ export unsafe function takePanic(e: usize): string {
 export unsafe function freePanic(e: usize): void {
   // SAFETY: `raise` allocated it with malloc, and the caller frees it once.
   unsafe {
-    free(Ptr.at<u8>(e));
+    free(Ptr.orNull<u8>(e));
   }
   LIVE.sub(1);
 }

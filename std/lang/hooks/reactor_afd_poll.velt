@@ -96,15 +96,19 @@ declare c("c") function NtDeviceIoControlFile(
   file: usize,
   event: usize,
   apc: Ptr<u8> | null,
-  context: Ptr<u8>,
-  iosb: Ptr<u8>,
+  context: Ptr<u8> | null,
+  iosb: Ptr<u8> | null,
   code: u32,
-  input: Ptr<u8>,
+  input: Ptr<u8> | null,
   inputLen: u32,
-  output: Ptr<u8>,
+  output: Ptr<u8> | null,
   outputLen: u32,
 ): i32;
-declare c("c") function NtCancelIoFileEx(file: usize, request: Ptr<u8>, iosb: Ptr<u8>): i32;
+declare c("c") function NtCancelIoFileEx(
+  file: usize,
+  request: Ptr<u8> | null,
+  iosb: Ptr<u8> | null,
+): i32;
 
 /** Takes reactor `r`'s lock. */
 export function lock(r: usize): void {

@@ -566,14 +566,15 @@ fn pointer_types_and_strings_are_checked() {
 }
 
 /// A `declare c type` exists only behind a `Ptr`: `new` on it is an error, in its package and
-/// in a program importing it; pointers to different C types never convert implicitly; a
-/// read-only array passed for a buffer C writes names the C function.
+/// in a program importing it; pointers to different C types never convert implicitly (a
+/// nullable one where a non-null one is expected is the ordinary mismatch); a read-only array
+/// passed for a buffer C writes names the C function.
 #[test]
 fn c_types_are_only_behind_pointers() {
     let dir = test_dir::TestDir::new();
     project(
         dir.path(),
-        "import { Ptr } from \"velt/ffi\";\n\nexport declare c type FILE;\n\ndeclare c(\"c\") function malloc(n: usize): Ptr<u8> | null;\ndeclare c(\"c\") function fclose(f: Ptr<FILE>): i32;\ndeclare c(\"c\") function memset(dst: u8[], c: i32, n: usize): Ptr<u8>;\n\nconst FIXED: readonly u8[] = [1, 2];\n\nexport function f(): void {\n  const mine = new FILE();\n  // SAFETY: only types are checked here.\n  unsafe {\n    const p = malloc(1);\n    if (p !== null) {\n      fclose(p);\n    }\n    memset(FIXED, 0, 2);\n  }\n}\n",
+        "import { Ptr } from \"velt/ffi\";\n\nexport declare c type FILE;\n\ndeclare c(\"c\") function malloc(n: usize): Ptr<u8> | null;\ndeclare c(\"c\") function fclose(f: Ptr<FILE>): i32;\ndeclare c(\"c\") function memset(dst: u8[], c: i32, n: usize): Ptr<u8>;\n\nconst FIXED: readonly u8[] = [1, 2];\n\nexport function f(): void {\n  const mine = new FILE();\n  // SAFETY: only types are checked here.\n  unsafe {\n    const p = malloc(1);\n    if (p !== null) {\n      fclose(p);\n    }\n    const maybe: Ptr<FILE> | null = null;\n    fclose(maybe);\n    memset(FIXED, 0, 2);\n  }\n}\n",
         "import { f, FILE } from \"cmath\";\n\nfunction main() {\n  const theirs = new FILE();\n  f();\n}\n",
     );
     let out = check(dir.path());
@@ -585,6 +586,9 @@ fn c_types_are_only_behind_pointers() {
     );
     assert!(out.contains("a `Ptr<u8>` is not a `Ptr<FILE>`"), "{out}");
     assert!(out.contains("`Ptr.at<FILE>(Ptr.addressOf(p))`"), "{out}");
+    // `Ptr<FILE> | null` for a `Ptr<FILE>`: the same pointee, so the error is about the `null`.
+    assert!(!out.contains("a `Ptr<FILE>` is not a `Ptr<FILE>`"), "{out}");
+    assert!(out.contains("Ptr<FILE> | null"), "{out}");
     assert!(out.contains("a buffer the C function writes"), "{out}");
 }
 

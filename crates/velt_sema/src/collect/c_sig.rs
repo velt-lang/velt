@@ -364,6 +364,11 @@ pub(crate) fn ptr_conversion(
     let TyKind::Ptr(target) = cx.ty.kind(expected) else {
         return None;
     };
+    // The same pointee: what differs is the `null` (`Ptr<T> | null` for a `Ptr<T>`), which the
+    // ordinary mismatch names.
+    if matches!(cx.ty.kind(from), TyKind::Ptr(p) if p == target) {
+        return None;
+    }
     let (f, e) = (cx.display(from), cx.display(expected));
     let target = cx.display(*target);
     Some(

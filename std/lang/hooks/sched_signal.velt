@@ -35,9 +35,9 @@ const BYTES = new Atomic<u64>(0);
 /** Making the pipe (a spin lock). */
 const MAKING = new Atomic<u32>(0);
 
-declare c("c") function sigaction(sig: i32, act: Ptr<u8>, old: Ptr<u8> | null): i32;
-declare c("c") function read$signal(fd: i32, buf: Ptr<u8>, n: usize): isize;
-declare c("c") function write$signal(fd: i32, buf: Ptr<u8>, n: usize): isize;
+declare c("c") function sigaction(sig: i32, act: Ptr<u8> | null, old: Ptr<u8> | null): i32;
+declare c("c") function read$signal(fd: i32, buf: Ptr<u8> | null, n: usize): isize;
+declare c("c") function write$signal(fd: i32, buf: Ptr<u8> | null, n: usize): isize;
 declare c("c") function close$signal(fd: i32): i32;
 
 /** Can this OS watch signals here? */
