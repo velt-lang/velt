@@ -128,7 +128,7 @@ export function holds(kind: u32, base: usize, i: usize, len: usize): bool {
   return (before != after) == (kind == AT_WORD);
 }
 
-/** Is `ſ` (U+017F) or `K` (U+212A) at byte `i`, before `len`? */
+/** Is `ſ` (U+017F) or the Kelvin sign (U+212A) at byte `i`, before `len`? */
 function foldedWordAt(base: usize, i: usize, len: usize): bool {
   const b = byteAt(base, i);
   if (b == 0xc5) {
@@ -137,7 +137,7 @@ function foldedWordAt(base: usize, i: usize, len: usize): bool {
   return b == 0xe2 && i + 2 < len && byteAt(base, i + 1) == 0x84 && byteAt(base, i + 2) == 0xaa;
 }
 
-/** Is a word character, `ſ` or `K` right before byte `i`? */
+/** Is a word character, `ſ` or the Kelvin sign right before byte `i`? */
 function wordBefore(base: usize, i: usize): bool {
   if (i == 0) {
     return false;

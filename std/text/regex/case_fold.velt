@@ -7,7 +7,8 @@ import { POINT_CASE, UNIT_CASE } from "velt/text/regex/unicode_tables";
 import { readNumber } from "velt/text/regex/unicode_props";
 
 /** Adds to `s` the other case of the ASCII letters in its range `lo..=hi`, and with the `u`
- * flag the two characters past ASCII that fold to one (`K` to `k`, `ſ` to `s`). */
+ * flag the two characters past ASCII that fold to one: the Kelvin sign (U+212A) to `k`, and `ſ`
+ * to `s`. */
 function addAscii(s: CharSet, lo: u32, hi: u32, unicode: bool): void {
   if (lo <= 0x5a && hi >= 0x41) {
     s.add((lo > 0x41 ? lo : 0x41) + 32, (hi < 0x5a ? hi : 0x5a) + 32);
