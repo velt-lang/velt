@@ -254,8 +254,19 @@ fn maybe_undefined(t: ast::TypeExpr) -> ast::TypeExpr {
     }
 }
 
-/// `T["K"] | undefined`: property `key` of the asserted type `t`, which may be unset.
+/// `T["K"] | undefined`: property `key` of the asserted type `t`, which may be unset. For a
+/// symbol key of a `Record<symbol, V>` (`globalThis as Record<symbol, V>`), `V | undefined`.
 fn member_type(key: &str, t: ast::TypeExpr) -> ast::TypeExpr {
+    if keys::is_symbol_key(key) {
+        if let ast::TypeExprKind::Named { path, args } = &t.kind {
+            let symbol = |k: &ast::TypeExpr| matches!(&k.kind, ast::TypeExprKind::Named { path, args } if args.is_empty() && path.len() == 1 && path[0].name == "symbol");
+            if let ([p], [k, v]) = (path.as_slice(), args.as_slice()) {
+                if p.name == "Record" && symbol(k) {
+                    return maybe_undefined(v.clone());
+                }
+            }
+        }
+    }
     let span = t.span;
     let key = ast::TypeExpr {
         kind: ast::TypeExprKind::Literal(ast::SignedLit {
