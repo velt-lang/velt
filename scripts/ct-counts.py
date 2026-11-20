@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Whether a probe executes the same number of instructions whatever its secret.
 
-A probe (bench/crypto/ct/*.velt, or a white-box test file in std for what programs cannot
-import) reads a secret from the file it is given and runs the code under test on it. This builds
+A probe (bench/crypto/ct/<name>.probe names it: a program there, or a white-box test file in
+std for what programs cannot import) reads a secret from the file it is given and runs the code
+under test on it. This builds
 the probe in release mode and runs it under valgrind's cachegrind once per secret: edge values
 and random ones. Constant-time code executes one count; a second count means some branch or loop
 depends on the secret, in the machine code if not in the source (LLVM turns a mask it can see
@@ -39,10 +40,25 @@ def seeds32(rng, runs):
     return edge + [rng.randbytes(32) for _ in range(max(0, runs - len(edge)))]
 
 
-# name: (source relative to the repository, how it is built, the secrets)
-PROBES = {
-    "p384": ("bench/crypto/ct/p384.velt", "program", scalars384),
-}
+GENERATORS = {"scalars384": scalars384, "seeds32": seeds32}
+
+
+def probes():
+    """The probes: bench/crypto/ct/<name>.probe, one line `kind source secrets`.
+
+    `kind` is `program` (a Velt program, built with `velt build`) or `test` (a test file, for
+    code a program cannot import: the harness's executable is run), `source` is relative to the
+    repository, and `secrets` names a generator above. The probe gets the secret's file as its
+    first argument and in $VELT_CT_SECRET.
+    """
+    found = {}
+    folder = os.path.join(ROOT, "bench", "crypto", "ct")
+    for entry in sorted(os.listdir(folder)):
+        if entry.endswith(".probe"):
+            with open(os.path.join(folder, entry)) as f:
+                kind, source, secrets = f.read().split()
+            found[entry[:-len(".probe")]] = (source, kind, GENERATORS[secrets])
+    return found
 
 
 def velt():
@@ -77,17 +93,18 @@ def count(exe, env, secret_file):
 
 def main():
     args = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    args.add_argument("probes", nargs="*", help=f"which probes (default: all of {sorted(PROBES)})")
+    known = probes()
+    args.add_argument("probes", nargs="*", help=f"which probes (default: all of {sorted(known)})")
     args.add_argument("--runs", type=int, default=40, help="secrets per probe (default 40)")
     args.add_argument("--seed", type=int, default=2392, help="seed of the random secrets")
     opts = args.parse_args()
     if not shutil.which("valgrind"):
         sys.exit("valgrind is needed")
     failed = False
-    for name in opts.probes or sorted(PROBES):
-        if name not in PROBES:
-            sys.exit(f"no probe named {name}; there are {sorted(PROBES)}")
-        source, kind, secrets = PROBES[name]
+    for name in opts.probes or sorted(known):
+        if name not in known:
+            sys.exit(f"no probe named {name}; there are {sorted(known)}")
+        source, kind, secrets = known[name]
         with tempfile.TemporaryDirectory() as out:
             exe, env = build(source, kind, out)
             # One path for every run: its length is part of what the process does.
