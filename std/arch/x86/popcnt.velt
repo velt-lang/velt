@@ -22,4 +22,30 @@ export class Popcnt {
   static isSupported(): bool {
     return velt_simd_has_popcnt_x86() || (velt_simd_on_x86() && cpuHas(POPCNT_X86));
   }
+
+  // The instructions, generated from velt_vir's table (crates/velt_vir/src/arch) by
+  // `cargo xtask gen-arch`: edit the table, not these.
+
+  /**
+   * The number of bits set in `value`.
+   *
+   * `_mm_popcnt_u32` (`popcnt`). Runs only where the CPU has it: call it behind
+   * `Popcnt.isSupported()`, or in a function gated on `popcnt-x86`.
+   */
+  static popCountU32(value: u32): u32 {
+    return velt_arch_popcnt_pop_count_u32(value);
+  }
+
+  /**
+   * The number of bits set in `value`.
+   *
+   * `_mm_popcnt_u64` (`popcnt`). Runs only where the CPU has it: call it behind
+   * `Popcnt.isSupported()`, or in a function gated on `popcnt-x86`.
+   */
+  static popCountU64(value: u64): u64 {
+    return velt_arch_popcnt_pop_count_u64(value);
+  }
 }
+
+declare function velt_arch_popcnt_pop_count_u32(value: u32): u32;
+declare function velt_arch_popcnt_pop_count_u64(value: u64): u64;

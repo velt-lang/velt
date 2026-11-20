@@ -106,6 +106,17 @@ impl Translator<'_, '_> {
                 return None
             }
             SimdCall::Inst(_) | SimdCall::Cpuid => Inlined::Value(self.zero_vector()),
+            // velt/arch's instructions are only in gated code, which never runs here.
+            SimdCall::Arch(op) => {
+                let ty = match op.row().ret.ty() {
+                    velt_vir::vir::Ty::V128 => return Some(Inlined::Value(self.zero_vector())),
+                    velt_vir::vir::Ty::U8 => types::I8,
+                    velt_vir::vir::Ty::U16 => types::I16,
+                    velt_vir::vir::Ty::U32 => types::I32,
+                    _ => types::I64,
+                };
+                Inlined::Value(self.builder.ins().iconst(ty, 0))
+            }
             SimdCall::Xgetbv => Inlined::Value(self.builder.ins().iconst(types::I64, 0)),
             // Cranelift has no prefetch: the hint is dropped.
             SimdCall::Prefetch => Inlined::Unit,

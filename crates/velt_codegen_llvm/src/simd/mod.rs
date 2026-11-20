@@ -11,6 +11,7 @@ use masks::mask;
 use reshape::{convert, narrow, widen, zip};
 
 mod aes;
+mod arch;
 mod half;
 mod half_arith;
 mod masks;
@@ -96,7 +97,10 @@ pub(crate) fn helper(
 ) -> Option<(String, Vec<String>, Vec<Ty>, Ty)> {
     let call = SimdCall::of_symbol(symbol)?;
     let (params, ret) = call.signature();
-    let name = format!("@velt.simd.{}", symbol.strip_prefix("velt_simd_")?);
+    let name = match symbol.strip_prefix("velt_arch_") {
+        Some(rest) => format!("@velt.arch.{rest}"),
+        None => format!("@velt.simd.{}", symbol.strip_prefix("velt_simd_")?),
+    };
     let mut body = Body::default();
     let result = match call {
         SimdCall::Vector(lanes, Op::Min | Op::Max) if lanes.is_float() && arch == Arch::Sse2 => {
@@ -125,6 +129,7 @@ pub(crate) fn helper(
         // compiles for, which needs nothing.
         SimdCall::CpuRequired => Some("0".to_string()),
         SimdCall::Inst(op) => Some(sha::op(&mut body, arch, op)),
+        SimdCall::Arch(op) => Some(arch::op(&mut body, arch, op)),
         SimdCall::Cpuid => Some(aes::cpuid(&mut body, arch)),
         SimdCall::Xgetbv => Some(aes::xgetbv(&mut body, arch)),
         SimdCall::Prefetch => {
@@ -151,6 +156,11 @@ pub(crate) fn helper(
         _ if arch == Arch::Wasm => WASM_SIMD,
         SimdCall::Inst(op) if has_ext(arch, op.ext()) => {
             ext_features = format!(" \"target-features\"=\"{}\"", op.ext().op_features());
+            ext_features.as_str()
+        }
+        // The row's feature with what it implies (`pshufb` needs SSSE3's encoding).
+        SimdCall::Arch(op) if has_ext(arch, op.ext()) => {
+            ext_features = format!(" \"target-features\"=\"{}\"", op.ext().gated_features());
             ext_features.as_str()
         }
         _ => "",
