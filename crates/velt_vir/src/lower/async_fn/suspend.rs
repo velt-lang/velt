@@ -14,7 +14,8 @@
 //!
 //! - a direct call of a compiled async function embeds the child state (a VIR local that the
 //!   spill pass moves into this state) — no allocation;
-//! - `yieldNow()` calls `velt_rt_yield_now(cx)` and suspends once;
+//! - `yieldNow()` calls the executor's `schedYield(cx)` (`velt_rt_yield_now` on WebAssembly) and
+//!   suspends once;
 //! - an async generator's resume and close poll its state (generator.rs);
 //! - anything else is a promise value (`VeltFut*`: rt leaf futures, join handles, boxed
 //!   promises), polled through its header (raw_memory.rs `fut_poll_call`), result at `+16`.

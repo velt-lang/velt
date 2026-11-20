@@ -3,9 +3,8 @@
 //! where it would call the runtime's executor: `velt_main`'s root (`velt_rt_block_on`), a spawn
 //! from an initial state (`velt_rt_spawn`, `velt_rt_spawn_transfer`) or of a heap future
 //! (`velt_rt_spawn_fut`), the pin of the next spawn to a worker (`velt_rt_spawn_target`),
-//! `await yieldNow()`
-//! (`velt_rt_yield_now`), boxed and started promises (`velt_rt_fut_box`, `velt_rt_fut_start`,
-//! `_start_rejecting`), what `console.log` peeks at (`velt_rt_fut_peek`), the hand-over of a
+//! `await yieldNow()` (`velt_rt_yield_now`) and a stored `yieldNow()` (`velt_rt_yield_now_fut`),
+//! boxed and started promises (`velt_rt_fut_box`, `velt_rt_fut_start`, `_start_rejecting`), what `console.log` peeks at (`velt_rt_fut_peek`), the hand-over of a
 //! promise to another task (`velt_rt_fut_transfer`), the microtask step of `await`
 //! (`velt_rt_await_tick`, `_ready`), the
 //! prelude's microtasks (`velt_rt_microtask`), the process lifetime (keep-alive references,
@@ -270,6 +269,7 @@ impl FnLower<'_, '_> {
                 | Rt::TlaAt
                 | Rt::SpawnTarget
                 | Rt::Sleep
+                | Rt::YieldNowFut
                 | Rt::CellUse
                 | Rt::CellGive
                 | Rt::CellCopy
@@ -376,6 +376,9 @@ impl FnLower<'_, '_> {
                     hooks::sched_pinned(self, ty::I64::arg(w.clone())).emit(self);
                     None
                 }
+                // A stored `yieldNow()` (sched_yield.velt `schedYieldFut`): a leaf ready on its
+                // second poll.
+                (Rt::YieldNowFut, []) => Some(hooks::sched_yield_fut(self).emit(self).op()),
                 (Rt::Sleep, [ms]) => Some(
                     hooks::sched_sleep(self, ty::I64::arg(ms.clone()))
                         .emit(self)
