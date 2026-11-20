@@ -1,0 +1,187 @@
+// velt/net (internal): a TLS server's private key from DER, in the forms PEM files hold: PKCS#8
+// (RFC 5958, "PRIVATE KEY") for P-256, P-384, Ed25519 (RFC 8410) and RSA, SEC 1 (RFC 5915, "EC
+// PRIVATE KEY") for the two curves, and PKCS#1 (RFC 8017 §A.1.2, "RSA PRIVATE KEY"). What comes
+// out is what the signers take: a scalar, a seed, or an `RsaSigner`.
+
+import { ed25519PublicKey } from "velt/crypto/ed25519_sign";
+import { CryptoError } from "velt/crypto/errors";
+import { p256PublicKey, p256ScalarOk } from "velt/crypto/p256";
+import { p384PublicKey, p384ScalarOk } from "velt/crypto/p384_ecdh";
+import { RsaSigner } from "velt/crypto/rsa_sign";
+import { IoError } from "velt/io/error";
+import { KEY_ED25519, KEY_P256, KEY_P384, KEY_RSA } from "velt/net/tls/x509/algorithms";
+import { BIT_STRING, DerReader, INTEGER, OCTET_STRING, OID, SEQUENCE } from "velt/net/tls/x509/der";
+import {
+  OID_EC_PUBLIC_KEY,
+  OID_ED25519,
+  OID_P256,
+  OID_P384,
+  OID_RSA_ENCRYPTION,
+} from "velt/net/tls/x509/oids";
+import { Tlv } from "velt/net/tls/x509/tlv";
+
+/** A private key and its public half, as a certificate's subjectPublicKey holds it. */
+export struct PrivateKey {
+  /** `KEY_P256`, `KEY_P384`, `KEY_ED25519` or `KEY_RSA` (velt/net/tls/x509/algorithms). */
+  kind: i32;
+  /** The scalar of an EC key (32 or 48 bytes) or the seed of an Ed25519 key; empty for RSA. */
+  key: u8[];
+  /** The uncompressed point, the 32 Ed25519 bytes, or for RSA the modulus then the exponent. */
+  publicKey: u8[];
+  /** The RSA key ready to sign, else null. */
+  rsa: RsaSigner | null;
+  /** RSA: the length of the modulus in `publicKey`. */
+  modulusLength: usize;
+}
+
+function invalid(message: string): IoError {
+  return new IoError("EINVAL", message);
+}
+
+// What every parser here does with a failure: EINVAL as it is, anything else as `what`.
+function failure(e: Error, what: string): IoError {
+  if (e instanceof IoError && e.code == "EINVAL") {
+    return e;
+  }
+  return invalid(`invalid key PEM: ${what}`);
+}
+
+/** The key of a PKCS#8 PrivateKeyInfo; null for an algorithm or curve this server has not. */
+export function fromPkcs8(der: u8[]): PrivateKey | null throws IoError {
+  const r = new DerReader(der);
+  try {
+    const top = r.enter(SEQUENCE, der.length);
+    const version = r.next(INTEGER, top.end);
+    r.smallInt(version);
+    const alg = r.enter(SEQUENCE, top.end);
+    const oid = r.next(OID, alg.end);
+    if (r.equals(oid, OID_EC_PUBLIC_KEY)) {
+      const curve = r.next(OID, alg.end);
+      r.done(alg.end);
+      const kind = curveOf(r, curve);
+      if (kind == 0) {
+        return null;
+      }
+      const inner = r.next(OCTET_STRING, top.end);
+      return fromSec1(der.slice(inner.start as i64, inner.end as i64), kind);
+    }
+    if (r.equals(oid, OID_ED25519)) {
+      r.done(alg.end);
+      // The key is an OCTET STRING inside the OCTET STRING (RFC 8410 §7).
+      const outer = r.enter(OCTET_STRING, top.end);
+      const seed = r.next(OCTET_STRING, outer.end);
+      r.done(outer.end);
+      if (seed.end - seed.start != 32) {
+        throw invalid("invalid key PEM: the Ed25519 key is not 32 bytes");
+      }
+      const key = der.slice(seed.start as i64, seed.end as i64);
+      return {
+        kind: KEY_ED25519,
+        key: key,
+        publicKey: ed25519PublicKey(key),
+        rsa: null,
+        modulusLength: 0,
+      };
+    }
+    if (r.equals(oid, OID_RSA_ENCRYPTION)) {
+      r.pos = alg.end;
+      const inner = r.next(OCTET_STRING, top.end);
+      return fromPkcs1(der.slice(inner.start as i64, inner.end as i64));
+    }
+    return null;
+  } catch (e) {
+    throw failure(e, "a malformed PKCS#8 key");
+  }
+}
+
+// `KEY_P256` or `KEY_P384` for the curve OID `t`, 0 for another.
+function curveOf(r: DerReader, t: Tlv): i32 {
+  if (r.equals(t, OID_P256)) {
+    return KEY_P256;
+  }
+  return r.equals(t, OID_P384) ? KEY_P384 : 0;
+}
+
+/**
+ * The key of a SEC 1 ECPrivateKey. `kind` is the curve PKCS#8 named already (0 for none: the
+ * key's own parameters must name it); null for another curve.
+ */
+export function fromSec1(der: u8[], kind: i32): PrivateKey | null throws IoError {
+  const r = new DerReader(der);
+  try {
+    const top = r.enter(SEQUENCE, der.length);
+    const version = r.next(INTEGER, top.end);
+    if (r.smallInt(version) != 1) {
+      throw invalid("invalid key PEM: the EC private key is not version 1");
+    }
+    const k = r.next(OCTET_STRING, top.end);
+    let curve = kind;
+    if (r.peek(top.end) == 0xa0) {
+      const params = r.enter(0xa0, top.end);
+      const oid = r.next(OID, params.end);
+      r.done(params.end);
+      const named = curveOf(r, oid);
+      if (named == 0 || (kind != 0 && named != kind)) {
+        return null;
+      }
+      curve = named;
+    }
+    if (r.peek(top.end) == 0xa1) {
+      const pub = r.enter(0xa1, top.end);
+      r.next(BIT_STRING, pub.end);
+      r.done(pub.end);
+    }
+    r.done(top.end);
+    if (curve == 0) {
+      throw invalid("invalid key PEM: the EC key does not name its curve");
+    }
+    const key = der.slice(k.start as i64, k.end as i64);
+    if (curve == KEY_P256 ? !p256ScalarOk(key) : !p384ScalarOk(key)) {
+      throw invalid(
+        `invalid key PEM: the ${curve == KEY_P256 ? "P-256" : "P-384"} key is out of range`,
+      );
+    }
+    return {
+      kind: curve,
+      key: key,
+      publicKey: curve == KEY_P256 ? p256PublicKey(key) : p384PublicKey(key),
+      rsa: null,
+      modulusLength: 0,
+    };
+  } catch (e) {
+    throw failure(e, "a malformed EC key");
+  }
+}
+
+/** The key of a PKCS#1 RSAPrivateKey (two primes). */
+export function fromPkcs1(der: u8[]): PrivateKey throws IoError {
+  const r = new DerReader(der);
+  try {
+    const top = r.enter(SEQUENCE, der.length);
+    const version = r.next(INTEGER, top.end);
+    if (r.smallInt(version) != 0) {
+      throw invalid("invalid key PEM: an RSA key with more than two primes");
+    }
+    // n, e, d, p, q, dP, dQ, qInv.
+    const parts: u8[][] = [];
+    for (let i = 0; i < 8; i++) {
+      const t = r.next(INTEGER, top.end);
+      r.integer(t);
+      let start = t.start;
+      if (t.end - start > 1 && der[start] == 0) {
+        start += 1;
+      }
+      parts.push(der.slice(start as i64, t.end as i64));
+    }
+    r.done(top.end);
+    const n = parts[0];
+    const e = parts[1];
+    const signer = new RsaSigner(n, e, parts[3], parts[4], parts[5], parts[6], parts[7]);
+    return { kind: KEY_RSA, key: [], publicKey: n.concat(e), rsa: signer, modulusLength: n.length };
+  } catch (e) {
+    if (e instanceof CryptoError) {
+      throw invalid("invalid key PEM: not an RSA key of 2048 to 8192 bits");
+    }
+    throw failure(e, "a malformed RSA key");
+  }
+}
