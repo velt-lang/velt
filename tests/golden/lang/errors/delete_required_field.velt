@@ -1,0 +1,14 @@
+// `delete` of a required field is TypeScript's TS2790. A class's optional field is an own
+// property from construction, which Velt has no way to remove (TypeScript accepts the
+// `delete`).
+type R = { c: number; d?: number };
+
+class K {
+  v?: number;
+}
+
+const r: R = { c: 1 };
+delete r.c;
+const k = new K();
+delete k.v;
+delete r.d;

@@ -1,0 +1,2 @@
+delete_required_field.velt:11:1: error: the operand of a `delete` operator must be optional (TypeScript's TS2790)
+delete_required_field.velt:13:1: error: cannot `delete` a field of class `K`

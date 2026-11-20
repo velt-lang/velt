@@ -92,6 +92,7 @@ pub(crate) use primitive_statics::primitive_this;
 mod array_view_cast;
 pub(crate) mod await_value;
 mod checked_key;
+mod delete_optional;
 mod error_slots;
 mod error_view;
 mod errors;

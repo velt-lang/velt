@@ -1,0 +1,11 @@
+true {"id":"b1","state":"s"} [ 'id', 'state' ]
+true false {"id":"b1"} [ 'id' ] undefined { id: 'b1' }
+again {"id":"b1","state":"again"}
+true { id: 'b1' }
+[ 1, 2 ] undefined { name: 'c' }
+true true {"a":null,"b":"x","c":1} { a: null, b: 'x', c: 1 }
+false false {"c":1} { c: 1 } undefined undefined
+true false [ 'c' ]
+true false [ 'c' ]
+app
+true undefined undefined

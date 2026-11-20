@@ -1,0 +1,55 @@
+// `delete o.f` of an optional field of an object type or a field-only interface leaves the
+// field absent, as Node does: `"f" in o` is `false`, and `Object.keys`, `JSON.stringify` and
+// `console.log` leave it out (sigx's `delete record.state`, `delete carrier.pending`). `delete`
+// is `true`. A field set again after a `delete` keeps its declared place among the keys (Node
+// moves it to the end), as any optional field set after the object was made does.
+interface BoundaryRecord {
+  id: string;
+  state?: string;
+  props?: Record<string, unknown>;
+}
+
+type Carrier = { pending?: number[]; name: string };
+type Opts = { a?: number | null; b?: string; c: number };
+
+const rec: BoundaryRecord = { id: "b1", state: "s" };
+console.log("state" in rec, JSON.stringify(rec), Object.keys(rec));
+const ok = delete rec.state;
+console.log(ok, "state" in rec, JSON.stringify(rec), Object.keys(rec), rec.state, rec);
+rec.state = "again";
+console.log(rec.state, JSON.stringify(rec));
+delete rec["state"];
+console.log(rec.state === undefined, rec);
+
+// The value it held lives on where it is still used.
+const c: Carrier = { pending: [1, 2], name: "c" };
+const pending = c.pending;
+delete c.pending;
+console.log(pending, c.pending, c);
+
+// `a?: T | null` keeps a present `null` apart from absent; `delete` makes it absent.
+const o: Opts = { a: null, b: "x", c: 1 };
+console.log("a" in o, "b" in o, JSON.stringify(o), o);
+delete o.a;
+delete o.b;
+console.log("a" in o, "b" in o, JSON.stringify(o), o, o.a, o.b);
+
+// Through a parameter, on objects with and without the field.
+function clear(x: Opts): boolean {
+  return delete x.b;
+}
+
+const objs: Opts[] = [{ b: "1", c: 1 }, { c: 2 }];
+for (const x of objs) {
+  console.log(clear(x), "b" in x, Object.keys(x));
+}
+
+// A property of `globalThis` deleted reads `undefined` again.
+const seam = globalThis as { __APP__?: { name: string } };
+seam.__APP__ = { name: "app" };
+console.log(seam.__APP__?.name);
+console.log(
+  delete seam.__APP__,
+  seam.__APP__,
+  (globalThis as { __APP__?: { name: string } }).__APP__,
+);

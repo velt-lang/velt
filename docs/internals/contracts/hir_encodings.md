@@ -1324,7 +1324,8 @@ that was only variables solved empty is no error type (`FnDef::throws` is `None`
   stores a `bool` flag after the aggregate's fields (in field order, one per presence field).
   An absent field holds the option's nothing (`undefined`). An `AdtLit` sets the flag, unless the
   field's value is `Intrinsic::FieldAbsent` (`() -> T | undefined`; outside a literal it is
-  `undefined`); any write to the field sets it; `Intrinsic::FieldPresent` (`(field) -> bool`, the
+  `undefined`); any write to the field sets it, but an `Assign` of `Intrinsic::FieldAbsent` to
+  it, which clears it (`delete o.a`, sema `delete_optional`); `Intrinsic::FieldPresent` (`(field) -> bool`, the
   argument a `Field` place of a presence field) reads it. `console.log` leaves out an absent
   field and prints a present `undefined` or `null`; `JSON.stringify` leaves out an absent field
   and one holding `undefined`, and writes a present `null`; `JSON.parse` sets the flag when the
