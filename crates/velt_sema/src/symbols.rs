@@ -552,3 +552,27 @@ pub(crate) fn has_instance_member(
     (!is_private(name) && fields.iter().any(|f| f.name == name))
         || has_instance_method(methods, name)
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    KeyNames {
+        names, taken, spelled, registered, given,
+    }
+}
+crate::units::codec::enums! {
+    @fielded KnownSymbol {
+        0 => Own(f0, f1),
+        1 => Registered(f0),
+    }
+    @fielded SymbolOwner {
+        0 => Constant(f0),
+        1 => Key(f0),
+    }
+}
+
+/// `SymbolOwner` is listed `@fielded`: it ends from zeros, so damaged input ends in it.
+#[cfg(test)]
+#[test]
+fn symbol_owner_ends_on_damaged_input() {
+    assert!(crate::units::codec::ends_from_zeros::<SymbolOwner>());
+}

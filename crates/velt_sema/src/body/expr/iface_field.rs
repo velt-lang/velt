@@ -270,3 +270,13 @@ impl Ctx<'_> {
         }
     }
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    ArrayReads {
+        reads, adapted, same,
+    }
+    ArrayRead {
+        iface, slot, what, through, in_place,
+    }
+}

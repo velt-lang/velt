@@ -1,5 +1,7 @@
 //! Whole-program checking context shared by all passes: definitions, module scopes, types.
 
+mod codec;
+
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::{Diagnostic, Diagnostics, Span};
@@ -12,6 +14,7 @@ use crate::SourceModule;
 mod access;
 mod classes;
 pub(crate) mod def_table;
+mod slots;
 
 pub(crate) use def_table::DefTable;
 
