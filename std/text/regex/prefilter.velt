@@ -4,10 +4,11 @@
 
 import {
   addressLoad,
+  arrayReadAddress,
   inline,
   strByteAt,
   strByteLen,
-  strDataAddress,
+  strLoadPartialU8x16,
   strLoadU8x16,
 } from "velt/lang/intrinsics";
 import { findByte, sameBytes } from "velt/lang/string/byte_scan";
@@ -19,32 +20,32 @@ declare function velt_simd_u8x16_eq(a: u8x16, b: u8x16): mask8x16;
 declare function velt_simd_mask8x16_and(a: mask8x16, b: mask8x16): mask8x16;
 declare function velt_simd_mask8x16_or(a: mask8x16, b: mask8x16): mask8x16;
 declare function velt_simd_mask8x16_bitmask(m: mask8x16): u64;
+declare function velt_simd_u8x16_as_u64x2(v: u8x16): u64x2;
+declare function velt_simd_u64x2_lane(v: u64x2, index: u64): u64;
 
 /** Where a result of the scans keeps the literal found: above the position. */
 const LITERAL_SHIFT: i64 = 48;
 const POSITION: i64 = 0xffffffffffff;
 
 /** Which literal of the `exact` program `prog` is at byte `p` of the `len` of `s`: the first
- * in the program's order, or -1. */
+ * in the program's order, or -1. The eight bytes there, as one word (zeros past the end), are
+ * compared with each literal's first eight. */
 function literalAt(prog: Program, s: string, p: usize, len: usize): i64 {
   const lits = prog.literals;
-  if (p + 8 > len) {
-    for (let k: usize = 0; k < lits.length; k++) {
-      const n = strByteLen(lits[k]);
-      if (p + n <= len && sameBytes(s, p, lits[k], 0, n)) {
-        return k as i64;
-      }
-    }
-    return -1;
-  }
-  const word = unsafe { addressLoad<u64>(strDataAddress(s) + p) };
-  const words = prog.litWord;
-  for (let k: usize = 0; k < lits.length; k++) {
-    if ((word & words[2 * k]) != words[2 * k + 1]) {
+  const room = len - p;
+  const bytes =
+    room >= 16 ? strLoadU8x16(s, p as u64) : strLoadPartialU8x16(s, p as u64, room as u64);
+  const word = velt_simd_u64x2_lane(velt_simd_u8x16_as_u64x2(bytes), 0);
+  // The masks and words where they are: this runs for every place the grams stop at.
+  const words = unsafe { arrayReadAddress(prog.litWord) };
+  const count = lits.length;
+  for (let k: usize = 0; k < count; k++) {
+    const mask = unsafe { addressLoad<u64>(words + 16 * k) };
+    if ((word & mask) != unsafe { addressLoad<u64>(words + 16 * k + 8) }) {
       continue;
     }
     const n = strByteLen(lits[k]);
-    if (n <= 8 || (p + n <= len && sameBytes(s, p + 8, lits[k], 8, n - 8))) {
+    if (n <= room && (n <= 8 || sameBytes(s, p + 8, lits[k], 8, n - 8))) {
       return k as i64;
     }
   }
@@ -117,10 +118,13 @@ function wide(
   const d2 = velt_simd_u8x16_splat(count > 2 && size > 2 ? g[3 * size + 2] : 0);
   const d3 = velt_simd_u8x16_splat(count > 2 && size > 3 ? g[3 * size + 3] : 0);
   let i = from;
+  // The last byte a step can start at, when there is one.
+  const steps = len >= reach;
+  const stop = steps ? len - reach : 0;
   while (true) {
     // The steps call nothing, so what they read of `s` and of the program stays in registers.
     let bits: u64 = 0;
-    while (i + reach <= len) {
+    while (steps && i <= stop) {
       const v0 = strLoadU8x16(s, (i + o0) as u64);
       let ma = velt_simd_u8x16_eq(v0, a0);
       let mb = velt_simd_u8x16_eq(v0, b0);

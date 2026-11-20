@@ -237,43 +237,53 @@ function tuples(lits: string[], offsets: usize[], size: usize, out: u8[]): usize
   return out.length / size;
 }
 
-/** Chooses the offsets whose bytes tell `lits` (each at least `min` bytes) from other text
- * best: as many offsets, up to `MAX_OFFSETS`, as take at most `MAX_GRAMS` tuples, and of
- * those the ones whose tuples are the rarest (`cost`); false when even one offset takes more. Three tuples are stored as four, the first
- * twice: the scan compares one, two or four. */
+/** Chooses the offsets whose bytes tell `lits` (each at least `min` bytes) from other text:
+ * one offset at a time, each time the one that leaves the tuples rarest (`cost`, as a share of
+ * all tuples of that size) while there are at most `MAX_GRAMS` of them, up to `MAX_OFFSETS`
+ * offsets; false when even one offset takes more tuples. Three tuples are stored as four, the
+ * first twice: the scan compares one, two or four. */
 function chooseGrams(prog: Program, lits: string[], min: usize): bool {
   const top = min < 8 ? min : 8;
+  const chosen: usize[] = [];
   const trial: u8[] = [];
-  for (let size = top < MAX_OFFSETS ? top : MAX_OFFSETS; size >= 1; size--) {
-    let best = MAX_GRAMS + 1;
-    let least: u64 = 0xffffffffffffffff;
-    for (let a: usize = 0; a < top; a++) {
-      for (let b = a + 1; b < (size > 1 ? top : a + 2); b++) {
-        for (let c = b + 1; c < (size > 2 ? top : b + 2); c++) {
-          for (let d = c + 1; d < (size > 3 ? top : c + 2); d++) {
-            const offsets = [a, b, c, d];
-            const count = tuples(lits, offsets, size, trial);
-            if (count <= MAX_GRAMS && cost(trial, size) < least) {
-              best = count;
-              least = cost(trial, size);
-              prog.grams = trial.slice();
-              prog.gramAt = offsets.slice(0, size as i64);
-            }
-          }
-        }
+  let least: f64 = 2;
+  while (chosen.length < MAX_OFFSETS && chosen.length < top) {
+    let best = top;
+    const size = chosen.length + 1;
+    for (let o: usize = 0; o < top; o++) {
+      if (chosen.includes(o)) {
+        continue;
       }
-    }
-    if (best <= MAX_GRAMS) {
-      for (let j: usize = 0; j < size && best == 3; j++) {
-        prog.grams.push(prog.grams[j]);
+      chosen.push(o);
+      const count = tuples(lits, chosen, size, trial);
+      const share = (cost(trial, size) as f64) / Math.pow(256, size as f64);
+      if (count <= MAX_GRAMS && share < least) {
+        least = share;
+        best = o;
+        prog.grams = trial.slice();
       }
-      prog.gramSize = size;
-      prog.minBytes = min;
-      prog.scan = SCAN_GRAMS;
-      return true;
+      chosen.pop();
     }
+    if (best == top) {
+      break;
+    }
+    chosen.push(best);
   }
-  return false;
+  if (chosen.length == 0) {
+    return false;
+  }
+  // The scan reads the offsets in order, and the tuples' bytes with them.
+  const size = chosen.length;
+  chosen.sort((x, y) => (x as i64) - (y as i64));
+  const count = tuples(lits, chosen, size, prog.grams);
+  for (let j: usize = 0; j < size && count == 3; j++) {
+    prog.grams.push(prog.grams[j]);
+  }
+  prog.gramAt = chosen;
+  prog.gramSize = size;
+  prog.minBytes = min;
+  prog.scan = SCAN_GRAMS;
+  return true;
 }
 
 /** Stores the first eight bytes of each literal of an `exact` program as a word, after the
