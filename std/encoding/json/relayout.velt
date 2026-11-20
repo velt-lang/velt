@@ -9,6 +9,10 @@ import { Scanner } from "velt/encoding/json/scan";
 import { utf8Substring } from "velt/encoding";
 import { StringBuilder } from "velt/text/string_builder";
 import { strByteAt, strByteLen } from "velt/lang/intrinsics";
+import { writeString } from "velt/encoding/json/writer";
+
+declare function velt_rt_strbuf_new(cap: u64, out: string);
+declare function velt_rt_strbuf_finish(buf: string, out: string);
 
 /**
  * The keys of a replacer array from its compact JSON text (`["a","b"]`), decoded, without
@@ -66,34 +70,36 @@ export function relayout(
   return out.take();
 }
 
-// An object member: its key as written (with the quotes, bytes `start` to `end`) and decoded
-// (only when filtering), and its value laid out.
-class Member {
-  key: string;
-  start: usize;
-  end: usize;
-  value: string;
-
-  constructor(key: string, start: usize, end: usize, value: string) {
-    this.key = key;
-    this.start = start;
-    this.end = end;
-    this.value = value;
-  }
-}
-
 class Layout {
   src: string;
   len: usize;
   pos: usize = 0;
-  keys: string[] | null;
+  /** Filtering: each listed key as the writer quotes it in the text (`"a"`), compared in place. */
+  filter: bool;
+  quoted: string[] = [];
   pretty: bool;
   indent: string;
+  /**
+   * The listed members found in the objects being laid out, 3 words each (the key's index in
+   * `quoted`, where its value starts, where its quoted key starts), for every open object: an
+   * object's are above the length the stack had when it began.
+   */
+  found: usize[] = [];
 
   constructor(src: string, keys: string[] | null, pretty: bool, indent: string) {
     this.src = src;
     this.len = strByteLen(src);
-    this.keys = keys;
+    this.filter = keys != null;
+    if (keys != null) {
+      for (const k of keys) {
+        let b = "";
+        velt_rt_strbuf_new(0, b);
+        writeString(b, k);
+        let q = "";
+        velt_rt_strbuf_finish(b, q);
+        this.quoted.push(q);
+      }
+    }
     this.pretty = pretty;
     this.indent = indent;
   }
@@ -183,23 +189,53 @@ class Layout {
   }
 
   object(out: StringBuilder, depth: i64): void {
-    const keys = this.keys;
-    if (keys == null) {
+    if (!this.filter) {
       this.objectInPlace(out, depth);
       return;
     }
-    const members = this.members(depth);
+    // Find the listed members, then lay out their values in the list's order, each from where
+    // it starts in the text.
+    const base = this.found.length;
+    this.pos++;
+    if (this.cur() != 125) {
+      while (true) {
+        const keyStart = this.pos;
+        this.skipString();
+        const k = this.listed(keyStart, this.pos);
+        this.pos++;
+        if (k >= 0) {
+          this.found.push(k as usize);
+          this.found.push(this.pos);
+          this.found.push(keyStart);
+        }
+        this.skipValue();
+        if (this.cur() != 44) {
+          break;
+        }
+        this.pos++;
+      }
+    }
+    this.pos++;
+    const end = this.pos;
+    const top = this.found.length;
     let first = true;
-    for (const k of keys) {
-      for (const m of members) {
-        if (m.key == k) {
+    for (let k: usize = 0; k < this.quoted.length; k++) {
+      for (let f = base; f < top; f += 3) {
+        if (this.found[f] == k) {
           out.append(first ? "{" : ",");
           first = false;
-          this.member(out, m.start, m.end, m.value, depth);
+          const keyStart = this.found[f + 2];
+          this.pos = this.found[f + 1];
+          this.newline(out, depth + 1);
+          out.append(this.slice(keyStart, this.pos - 1));
+          out.append(this.pretty ? ": " : ":");
+          this.value(out, depth + 1);
           break;
         }
       }
     }
+    this.found.truncate(base as i64);
+    this.pos = end;
     if (first) {
       out.append("{}");
       return;
@@ -208,12 +244,50 @@ class Layout {
     out.append("}");
   }
 
-  // `"key":` and the value, after the line break of `depth + 1`.
-  member(out: StringBuilder, start: usize, end: usize, value: string, depth: i64): void {
-    this.newline(out, depth + 1);
-    out.append(this.slice(start, end));
-    out.append(this.pretty ? ": " : ":");
-    out.append(value);
+  // The index in `quoted` of the key written at bytes `start` to `end` (with its quotes), or -1.
+  listed(start: usize, end: usize): i64 {
+    const n = end - start;
+    for (let k: usize = 0; k < this.quoted.length; k++) {
+      const q = this.quoted[k];
+      if (strByteLen(q) != n) {
+        continue;
+      }
+      let same = true;
+      for (let i: usize = 0; i < n && same; i++) {
+        same = strByteAt(q, i as u64) == strByteAt(this.src, (start + i) as u64);
+      }
+      if (same) {
+        return k as i64;
+      }
+    }
+    return -1;
+  }
+
+  // Past the value at `pos`, laying out nothing (a member the list leaves out).
+  skipValue(): void {
+    let open = 0;
+    while (this.pos < this.len) {
+      const b = strByteAt(this.src, this.pos as u64);
+      if (b == 34) {
+        this.skipString();
+      } else if (b == 123 || b == 91) {
+        open++;
+        this.pos++;
+      } else if (b == 125 || b == 93) {
+        if (open == 0) {
+          return;
+        }
+        open--;
+        this.pos++;
+      } else if (b == 44 && open == 0) {
+        return;
+      } else {
+        this.pos++;
+      }
+      if (open == 0 && (b == 34 || b == 125 || b == 93)) {
+        return;
+      }
+    }
   }
 
   // An object with every member kept, written as it is read.
@@ -242,32 +316,5 @@ class Layout {
     this.pos++;
     this.newline(out, depth);
     out.append("}");
-  }
-
-  // The members of the object at `pos` (its `{` there), each value laid out at `depth + 1`.
-  members(depth: i64): Member[] {
-    this.pos++;
-    const members: Member[] = [];
-    if (this.cur() == 125) {
-      this.pos++;
-      return members;
-    }
-    while (true) {
-      const start = this.pos;
-      this.skipString();
-      const end = this.pos;
-      const sc = new Scanner(this.src);
-      sc.pos = start;
-      const key = sc.string(true) ? sc.text() : "";
-      this.pos++;
-      const value = new StringBuilder();
-      this.value(value, depth + 1);
-      members.push(new Member(key, start, end, value.take()));
-      const b = this.cur();
-      this.pos++;
-      if (b != 44) {
-        return members;
-      }
-    }
   }
 }
