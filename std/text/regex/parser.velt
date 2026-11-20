@@ -36,6 +36,15 @@ export class Parser {
   /** The bounds of the `{n,m}` that `braces` (parse_pattern.velt) read last. */
   min: u32 = 0;
   max: u32 = 0;
+  /** What the pattern has that the engine does not match, when it has (lookaround, a back
+   * reference): the error it gets once the rest of it has been read, so that an error of its
+   * syntax, which JavaScript reports too, comes first. */
+  refused: string = "";
+  /** The group names `\\k<name>` referred to. */
+  references: string[] = [];
+  /** The group read last was a lookahead (1) or a lookbehind (2), which take no quantifier
+   * where JavaScript gives them none. */
+  lookaround: u32 = 0;
   /** The set an escape or a class member stood for, when it was no single character. */
   set: CharSet = new CharSet();
 
