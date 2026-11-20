@@ -385,7 +385,7 @@ pub(crate) fn std_forwarders(funcs: &[Function], helpers: &mut [bool]) {
                 // Exported too: the std cache's objects may call it (its body stays).
                 && f.linkage != velt_vir::vir::Linkage::Import
                 && !never_returns(f)
-                && f.target.is_none()
+                && f.target.is_empty()
                 && f.inline != Inline::Never
                 && cost(f) <= TRIVIAL_COST
         })
@@ -596,8 +596,8 @@ fn inline_into(
         // runs only where the CPU has it: its body must not move into a function compiled
         // without (or for another) extension. An ordinary body may move into it: there it only
         // runs where the CPU has the extension.
-        let gated_elsewhere = target.target.is_some() && target.target != program.funcs[fi].target;
-        if !splice::arity_matches(args, target) || gated_elsewhere {
+        let elsewhere = !target.target.is_empty() && target.target != program.funcs[fi].target;
+        if !splice::arity_matches(args, target) || elsewhere {
             continue;
         }
         // Only a nested call in a loop asks, and only of a callee the nested limit would refuse.
@@ -781,7 +781,7 @@ fn calls<'a>(
             return None;
         };
         let target = program.funcs.get(callee.0 as usize)?;
-        let gated_elsewhere = target.target.is_some() && target.target != func.target;
+        let gated_elsewhere = !target.target.is_empty() && target.target != func.target;
         (splice::arity_matches(args, target) && !gated_elsewhere).then_some((*callee, bi))
     })
 }
