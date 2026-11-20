@@ -51,18 +51,32 @@ fn secrets_do_not_change_the_instructions_executed() {
     }
 }
 
-/// Memcheck needs the dynamic loader's symbols (it replaces `strlen` and its kin there), and
-/// where the loader is stripped it stops before the program starts ("Cannot continue"). The
-/// instruction count has no such need.
+/// Memcheck needs the C library's symbols (it replaces `memcmp`, `strlen` and their kin), and
+/// where they are stripped it stops before the program starts ("a function redirection which is
+/// mandatory ... cannot be set up"). The shim needs memcheck's header. The instruction count
+/// needs neither.
 fn memcheck_starts() -> bool {
-    let ok = Command::new("valgrind")
+    let starts = Command::new("valgrind")
         .args(["--tool=memcheck", "-q", "true"])
         .output()
         .is_ok_and(|o| o.status.success());
-    if !ok {
-        eprintln!("note: valgrind's memcheck cannot start a program here; skipping");
+    let header = Command::new("cc")
+        .args([
+            "-fsyntax-only",
+            "-include",
+            "valgrind/memcheck.h",
+            "-x",
+            "c",
+            "/dev/null",
+        ])
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !starts || !header {
+        eprintln!(
+            "note: valgrind's memcheck cannot start a program here, or its header is missing; skipping"
+        );
     }
-    ok
+    starts && header
 }
 
 #[test]
