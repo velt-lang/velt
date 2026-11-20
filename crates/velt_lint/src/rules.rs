@@ -34,6 +34,12 @@ pub const PERF_RULES: &[Rule] = &[
         summary: "a class that only holds data: an object type stores the fields inline",
     },
     Rule {
+        code: "perf/cpu-check-in-loop",
+        kind: Kind::Pattern,
+        summary: "a CPU check (`Avx2.isSupported()`) in a loop: check once before it and run a \
+                  gated or a portable function",
+    },
+    Rule {
         code: "perf/dynamic-record",
         kind: Kind::Pattern,
         summary: "a `Record<string, any>` parameter read with constant keys: an object type \
