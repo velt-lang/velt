@@ -229,11 +229,13 @@ describe("MappedFile", () => {
     const resident = (): number => {
       const text = readFileSync("/proc/self/smaps");
       const entry = text.indexOf(name);
-      if (entry < 0) {
-        return 0;
+      const at = entry < 0 ? -1 : text.indexOf("Rss:", entry);
+      const kb = at < 0 ? NaN : parseInt(text.slice(at + 4, text.indexOf("kB", at)).trim());
+      // No entry or no number is a failure of the test, not "nothing resident".
+      if (Number.isNaN(kb)) {
+        throw new Error(`no Rss of ${name} in /proc/self/smaps`);
       }
-      const at = text.indexOf("Rss:", entry);
-      return parseInt(text.slice(at + 4, text.indexOf("kB", at)).trim());
+      return kb;
     };
     const part = MappedFile.open(path, { offset: 70001, length });
     let sum: i64 = 0;
