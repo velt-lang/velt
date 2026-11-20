@@ -124,3 +124,33 @@ fn an_object_of_a_lock_set_type_is_never_unique() {
         "a lock-set object is asked for its count:\n{v}"
     );
 }
+
+#[test]
+fn an_optional_field_read_with_bang_is_read_in_place() {
+    // `isUnique(this.t!)` reads the field's payload in place: a share of it (sema's `!` is a
+    // `match` binding the payload) would count it twice, and a null is not unique.
+    let (out, v) = run("class N { n: i64 = 0; }
+         class H {
+           t: N | null = null;
+           opt(): bool { return isUnique(this.t!); }
+         }
+         function main() {
+           const h = new H();
+           console.log(h.opt());
+           h.t = new N();
+           console.log(h.opt());
+           const keep = h.t!;
+           console.log(h.opt(), keep.n);
+         }");
+    assert_eq!(out, "false\ntrue\nfalse 0\n");
+    let opt = (v.funcs.iter())
+        .find(|f| f.symbol == "_V1HM3opt")
+        .unwrap_or_else(|| panic!("no opt in:\n{v}"));
+    let shares = (opt.blocks.iter())
+        .flat_map(|b| &b.stmts)
+        .any(|s| matches!(s, Stmt::Assign(_, Rvalue::Binary(BinOp::Add, ..))));
+    assert!(
+        !shares,
+        "`opt` counts the field before reading its count:\n{v}"
+    );
+}

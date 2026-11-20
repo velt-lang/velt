@@ -32,25 +32,52 @@ impl FnLower<'_, '_> {
     /// is always safe. A reference type the program never counts has one owner per value, so
     /// true; a lock-set type, whose count readers of an `RwLock` share, false; any other kind of
     /// value (`shared<T>`, strings, functions, interface values, plain values), false.
+    ///
+    /// `x` is read in place, never through a share of it (which would count it twice): a place
+    /// is read as it is, and `o.f!` (sema's `match o.f { Some(b) => b, _ => panic }`) reads the
+    /// option's payload in place, a null being not unique.
     pub(super) fn is_unique(&mut self, x: &velt_sema::hir::Expr) -> Operand {
-        let no = Operand::Const(crate::vir::Const::Bool(false), Ty::Bool);
+        let no = || Operand::Const(crate::vir::Const::Bool(false), Ty::Bool);
         let t = self.sub(x.ty);
-        let v = self.expr(x);
-        if self.dead() || self.cx.share_kind(t) != ShareKind::Object {
-            return no;
+        let kind = self.cx.share_kind(t);
+        let counted = kind == ShareKind::Object && self.cx.counted(t);
+        if kind != ShareKind::Object || self.cx.lock_counted(t) || !counted {
+            // Evaluated for its effects only.
+            let _ = self.expr(x);
+            return match kind == ShareKind::Object && !counted && !self.cx.lock_counted(t) {
+                true => Operand::Const(crate::vir::Const::Bool(true), Ty::Bool),
+                false => no(),
+            };
         }
-        if !self.cx.counted(t) {
-            return Operand::Const(crate::vir::Const::Bool(true), Ty::Bool);
+        let (place, opt) = match asserted_option(x) {
+            Some(o) => (self.place_expr(o), Some(self.sub(o.ty))),
+            None => (self.place_expr(x), None),
+        };
+        if self.dead() {
+            return no();
         }
-        if self.cx.lock_counted(t) {
-            return no;
-        }
-        let p = self.count_ptr(v, t);
+        let out = Place::local(self.temp(Ty::Bool));
+        self.assign(out.clone(), Rvalue::Use(no()));
+        let done = self.new_block();
+        let ptr = match opt {
+            Some(o) => {
+                let some = self.option_is_some(&place, o);
+                let yes = self.new_block();
+                self.branch(some, yes, done);
+                self.switch_to(yes);
+                self.some_payload(&place, o)
+            }
+            None => place,
+        };
+        let p = self.count_ptr(Operand::Copy(ptr), t);
         let c = self.count_place(p);
-        self.rvalue_temp(
-            Ty::Bool,
+        self.assign(
+            out.clone(),
             Rvalue::Binary(BinOp::Eq, Operand::Copy(c), cint(1, Ty::U64)),
-        )
+        );
+        self.goto(done);
+        self.switch_to(done);
+        Operand::Copy(out)
     }
 
     /// The count word of the (non-null) counted object `p`.
@@ -486,5 +513,24 @@ impl FnLower<'_, '_> {
             ],
             None,
         );
+    }
+}
+
+/// The option `o` of `o!` (sema's `match o { Some(b) => b, _ => … }`), else None.
+fn asserted_option(x: &velt_sema::hir::Expr) -> Option<&velt_sema::hir::Expr> {
+    use velt_sema::hir::{ExprKind, PatKind};
+    let ExprKind::Match { scrutinee, arms } = &x.kind else {
+        return None;
+    };
+    let first = arms.first()?;
+    let PatKind::Some(inner) = &first.pat.kind else {
+        return None;
+    };
+    let PatKind::Binding(b, _) = &inner.kind else {
+        return None;
+    };
+    match (&first.guard, &first.body.kind) {
+        (None, ExprKind::Local(l, _)) if l == b && arms.len() == 2 => Some(scrutinee),
+        _ => None,
     }
 }
