@@ -297,11 +297,16 @@ export const E_ALL_VT: usize = 952;
  */
 export const E_LIVE_F: usize = 984;
 /**
+ * Worker 0's count of the blocking pool's jobs queued or running (sched_blocking.velt), counted
+ * atomically: the program's end after `main` waits for them (sched.velt `schedFinish`).
+ */
+export const E_BLOCKING: usize = 992;
+/**
  * What other workers ask of this one's sleeps (a stack any thread pushes on, taken whole by the
  * worker: sched_sleep_move.velt).
  */
-export const E_SLEEP_ASKS: usize = 992;
-export const E_SIZE: usize = 1000;
+export const E_SLEEP_ASKS: usize = 1000;
+export const E_SIZE: usize = 1008;
 /** The spawns of a lazy worker 0's poll that go on `E_PREST`, which the monitor may take. */
 export const PEND_STACKED: usize = 64;
 /** `E_LAZY`'s states. */

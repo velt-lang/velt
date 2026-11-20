@@ -1,0 +1,15 @@
+// Calls a hook of each prebuilt std hook module a toolchain ships (lib/hooks/<target>/):
+// number_digits (toPrecision), number_parse (parseFloat) and weak (WeakMap). scripts/smoke-clean.sh
+// and smoke-clean.ps1 build it with the build cache off and check that the build links the
+// toolchain's objects. Prints `1234.57 356 7`.
+
+class Key {
+  n: number = 0;
+}
+
+function main() {
+  const k = new Key();
+  const w = new WeakMap<Key, number>();
+  w.set(k, 7);
+  console.log((1234.5678).toPrecision(6), parseFloat("356"), w.get(k) ?? -1);
+}

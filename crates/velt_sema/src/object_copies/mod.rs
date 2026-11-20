@@ -38,6 +38,8 @@
 //! A record has no view: `x as Record<K, V>` of an object with fields is a copy too
 //! (`Copy::record`), an error once the program writes to such a record or to a field of `x`'s type.
 
+mod codec;
+
 use std::cell::RefCell;
 
 use rustc_hash::{FxHashMap, FxHashSet};

@@ -374,3 +374,10 @@ impl Ctx<'_> {
         self.note_setters(index, setters);
     }
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    PartIfaces {
+        by_part, list, linked, linked_brands,
+    }
+}

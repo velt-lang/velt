@@ -117,7 +117,7 @@ pub(crate) fn fn_placeholder<'m>(
     kind: FnKind,
     source: Option<FnSource<'m>>,
 ) -> FnInfo<'m> {
-    FnInfo {
+    let mut info = FnInfo {
         name,
         name_span,
         span,
@@ -133,7 +133,7 @@ pub(crate) fn fn_placeholder<'m>(
             kind,
             FnKind::Extern | FnKind::Closure | FnKind::IfaceDefault
         ),
-        source,
+        source: None,
         state: BodyState::Unchecked,
         throw_srcs: vec![],
         declared_throws: None,
@@ -145,6 +145,9 @@ pub(crate) fn fn_placeholder<'m>(
         c: None,
         intrinsic: None,
         unsafe_intrinsic: false,
+        rest: false,
+        sig_unsafe: false,
+        generator: None,
         extern_sig: None,
         is_generator: false,
         is_async_gen: false,
@@ -161,7 +164,9 @@ pub(crate) fn fn_placeholder<'m>(
         soft_params: vec![],
         modified_params: 0,
         modified_captures: 0,
-    }
+    };
+    info.set_source(source);
+    info
 }
 
 pub(super) fn declare_item<'m>(

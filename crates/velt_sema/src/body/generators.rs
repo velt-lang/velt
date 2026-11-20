@@ -517,3 +517,19 @@ pub(crate) enum GenCopy {
     /// The error a spawned task throws, handed back to the awaiting task's thread.
     TaskError,
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::enums! {
+    GenCopy {
+        0 => Clone,
+        1 => Task,
+        2 => Capture(f0),
+        3 => Shared,
+        4 => LockCapture(f0),
+        5 => LockResult,
+        6 => TaskFn(f0),
+        7 => LockFn(f0),
+        8 => TaskResult,
+        9 => TaskError,
+    }
+}

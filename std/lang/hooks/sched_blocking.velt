@@ -18,7 +18,9 @@
 //   exit waits for tokio's blocking threads, and Node, whose thread-pool requests are referenced:
 //   `submit` takes a keep-alive reference, and the job's end gives it back and wakes worker 0,
 //   which looks again whether anything is left to happen (a job whose waiter left wakes nobody
-//   else).
+//   else). After `main` too: the program's end waits for the jobs counted (sched.velt
+//   `schedFinish`), so a job still dropping its closure (its waiter resumed at its give and the
+//   program may have returned meanwhile) is done before the leak counters report.
 // - A result is never delivered at the poll that queued its job, even when a pool thread
 //   finished the job before that poll ended: that poll wakes its task and returns pending, and
 //   the next one delivers it (`parkAfterWake`). A blocking result is an I/O event, which JS
@@ -135,8 +137,12 @@ function submit(job: () => void): void {
   unsafe {
     slotPut<() => void>(n + N_JOB, job);
   }
-  // Held until the job is done: the process doesn't end while it can still finish.
-  end.keepAcquire(t.main());
+  // Held until the job is done: the process doesn't end while it can still finish, nor after
+  // `main` while it still drops what it held: counted in worker 0's `E_BLOCKING` until then
+  // (sched.velt `schedFinish`).
+  const g = t.main();
+  m.inc(g + t.E_BLOCKING);
+  end.keepAcquire(g);
   lock(p);
   const tail = m.ld(p + P_TAIL);
   if (tail === 0) {
@@ -252,13 +258,16 @@ function blockingMain(arg: Ptr<u8> | null): Ptr<u8> | null {
 }
 
 /**
- * After a job (lock not held): counted, and its keep-alive reference given back. The job's
- * waiter (if it is still there) was woken by its give; worker 0 looks again whether the process
- * can end now that this reference is gone.
+ * After a job (lock not held, its closure dropped): counted, and its keep-alive reference and its
+ * count in worker 0's block given back. The job's waiter (if it is still there) was woken by its
+ * give; worker 0 looks again whether the process can end now that this reference is gone.
  */
 function jobDone(p: usize): void {
   m.inc(p + P_DONE);
   const g = t.main();
+  // The count first: after `main`, worker 0 never finds the reference gone while the job is still
+  // counted, which it would turn on until the count fell.
+  m.dec(g + t.E_BLOCKING);
   end.keepRelease(g);
   wk.unpark(g);
 }

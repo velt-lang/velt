@@ -196,3 +196,10 @@ fn same_literal(a: &ast::Expr, b: &ast::Expr) -> bool {
         _ => false,
     }
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    Fill {
+        method, key, positions, trailing,
+    }
+}

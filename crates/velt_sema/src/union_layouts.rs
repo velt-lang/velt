@@ -42,7 +42,7 @@ pub(crate) fn plan(
     ty: &mut Types,
     twins: &FxHashMap<DefId, (DefId, Option<Vec<TyId>>)>,
     cache: &mut FxHashMap<TyId, TyId>,
-    defs: &[Option<Def>],
+    defs: &crate::ctx::DefTable<Option<Def>>,
     solved: &[(TyId, TyId)],
 ) -> Plan {
     let base = std::mem::take(cache);
@@ -181,7 +181,7 @@ fn renumbering(
     ty: &mut Types,
     twins: &FxHashMap<DefId, (DefId, Option<Vec<TyId>>)>,
     cache: &mut FxHashMap<TyId, TyId>,
-    defs: &[Option<Def>],
+    defs: &crate::ctx::DefTable<Option<Def>>,
     unions: &[DefId],
 ) -> Merged {
     let mut merged = Merged::default();

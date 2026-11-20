@@ -398,12 +398,12 @@ pub(crate) fn import_target(cx: &Ctx, m: usize, spec: &str) -> Option<usize> {
 
 /// [`Ctx::import_targets`]: the first module of a path and the first entry of a specifier
 /// count, as a search from the start would find them.
-pub(crate) fn import_targets<'m>(modules: &'m [SourceModule]) -> Vec<FxHashMap<&'m str, usize>> {
+pub(crate) fn import_targets<'m>(modules: &[&'m SourceModule]) -> Vec<FxHashMap<&'m str, usize>> {
     let mut by_path: FxHashMap<&str, usize> = FxHashMap::default();
     for (i, m) in modules.iter().enumerate() {
         by_path.entry(m.path.as_str()).or_insert(i);
     }
-    let targets = |m: &'m SourceModule| {
+    let targets = |m: &&'m SourceModule| {
         let mut t: FxHashMap<&'m str, Option<usize>> = FxHashMap::default();
         for (spec, path) in &m.imports {
             t.entry(spec.as_str())
