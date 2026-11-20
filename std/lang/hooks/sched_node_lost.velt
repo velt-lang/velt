@@ -12,7 +12,9 @@ import { inline, noInline, stateDrop } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as nd from "./sched_node";
 import * as aw from "./sched_node_await";
+import * as lk from "./sched_lock";
 import * as nc from "./sched_node_catch";
+import * as nw from "./sched_node_wake";
 import * as t from "./sched_task";
 import * as lt from "./sched_task_lost";
 import * as wk from "./sched_wake";
@@ -36,6 +38,45 @@ export function dropPending(n: usize): void {
   if (unreachable(n, 1)) {
     giveUp(m.ld(n + nd.N_TASK), n);
   }
+}
+
+/**
+ * The end of sched_node.velt `nodeDrop` for started node `n` whose owner is not on its task's
+ * thread (the promise was handed to another task, which drops it): the owner's reference goes.
+ * Two cases leave the node's task with nothing to poll it again (#3323), and in both the
+ * reference is given to the task instead, on its woken stack, with the task woken:
+ * - `n` is suspended and its task's is the only other reference: nothing can wake it any more,
+ *   but only its task's thread may give it up. The task's poll runs it as a woken node, and that
+ *   run finds it parked with its owner gone (sched_node.velt `run`, `parked`).
+ * - `n` finished and this is its last reference: freeing it here would give its reference to
+ *   its task back on this thread, with no poll after it, and a task that waits for that count
+ *   to park for ever (sched_task_lost.velt `parks`) would never look again. The task's poll
+ *   frees it instead.
+ * The task is kept meanwhile by a reference of its own, given back with a wake
+ * (sched_task_lost.velt `releaseAway`). With one thread at the executor (the owner is a thread
+ * that is no worker) the reference just goes, as before.
+ */
+@noInline
+export function droppedAway(n: usize): void {
+  const task = m.ld(n + nd.N_TASK);
+  const fl = m.load32(n + nd.N_FLAGS);
+  const refs = m.load(n + nd.N_REFS);
+  const lone = (fl & nd.FINISHED) !== 0 ? refs === 1 : refs === 2;
+  if (!lone || task === 0 || lk.mode() !== lk.LK_ON) {
+    nd.release(n);
+    return;
+  }
+  if ((fl & lt.NLINKED) !== 0) {
+    // On its task's list of owner-only promises (a counted run links them through the woken
+    // stack's links, which the hand-over below is about to use). It cannot get here: a promise
+    // is listed by an adoption poll, which is its owner's own await in its task, so its handle
+    // sits in that awaiting frame, and the frame is dropped on the task's thread (its task's
+    // last poll, or the frame's own promise given up there): the own side of `nodeDrop`.
+    panic("ICE: a promise on its task's list of owner-only promises is dropped off its task");
+  }
+  m.inc(task + t.T_REFS);
+  nw.give(n);
+  lt.releaseAway(task);
 }
 
 /**

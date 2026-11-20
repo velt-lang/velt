@@ -257,7 +257,7 @@ export function nodeDrop(f: usize): void {
     if (w !== 0) {
       m.wakerDrop(w);
     }
-    release(n);
+    lost.droppedAway(n);
     return;
   } else if ((fl & FINISHED) === 0) {
     setFlags(n, DETACHED);
