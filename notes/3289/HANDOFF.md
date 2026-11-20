@@ -32,8 +32,9 @@ Goldens: lang/yield_now_immediates, yield_now_due_sleep, yield_now_turn_passed, 
   - e574402ea: a root yield without a yield block is one store; runEnd reads the flags once; between
     reads the state once. Measured std-only in the VM (numbers below); all 7 yield goldens matched.
   - 094a4a811: schedYield @inline("always") with the non-root and ordered-root paths out of line
-    (otherYield, rootYieldInOrder). Mac checks were running at wind-down (job13.sh); result in
-    the crew note. NOT measured in the VM yet.
+    (otherYield, rootYieldInOrder). Mac checks green at wind-down (job13.sh: 7 yield goldens at 1/4
+    threads, goldens, 28 std_scheduler suites, std tests, break checks, precheck). NOT measured in the
+    VM yet (the VM turn was skipped for the wind-down).
 - Perf bar (coordinator, note on #123): BOTH each PR within ±3% of its base AND the stack within ±3% of
   main before the stack (9cb569834). race_yield passes (-14.5%/-13.7% vs main's runtime yieldNow).
   At e574402ea (t1/t4):
