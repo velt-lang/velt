@@ -387,10 +387,13 @@ fn check_timed(
     let stage = std::cell::Cell::new(units::Stage::Both);
     // std's modules first, which std's unit is checked over alone, then the app's.
     let mut order = (opts.units && units::stage2()).then(|| units::Order::of(modules, root));
-    // Where std's unit is kept on disk, when it is (`units::disk`).
-    let disk = (order.as_ref()).and_then(|_| {
-        units::disk::path(opts, [null_proto, record_accessors, ctor_reads, gen_throw])
-    });
+    // Where std's unit is kept on disk, when it is (`units::disk`): not for a program that
+    // changes what std's stage makes of std.
+    let disk = (order.as_ref())
+        .and_then(|_| {
+            units::disk::path(opts, [null_proto, record_accessors, ctor_reads, gen_throw])
+        })
+        .filter(|_| !units::disk::shaped_by_program(input, &brands, &global_ns));
     let std_snap: std::cell::RefCell<Option<ctx::Ctx>> = Default::default();
     // What every context of this check holds of the program, which a unit does not save
     // (`units::codec::unit`'s `skip`): the rewrites' facts, the generator, the loads. Installed in
@@ -447,12 +450,13 @@ fn check_timed(
     // lives as long as the process: the program built from the check keeps references to it.
     let loaded_std = match (&disk, order.take()) {
         (Some(path), Some(o)) => {
-            let arena = Box::<units::codec::Arena>::default();
-            // SAFETY: the arena of a unit that loads is never freed (below); one that does not
-            // load gives no context, so nothing borrows the arena dropped with this arm.
-            match unsafe { units::disk::load(path, &arena, &o.std_modules(modules)) } {
+            // The arena of a unit that loads is never freed: left as the raw pointer it is read
+            // through, so the box is not moved while the context borrows from it.
+            let arena = Box::into_raw(Box::<units::codec::Arena>::default());
+            // SAFETY: `arena` is the box made above, alive for the load and, when the unit
+            // loads, for the rest of the process.
+            match unsafe { units::disk::load(path, &*arena, &o.std_modules(modules)) } {
                 Some((mut cx, at)) => {
-                    Box::leak(arena);
                     let o = o.reorder_std(&at);
                     // std's stage first: `install` adds no generated module to std's unit.
                     cx.units_stage = units::Stage::Std;
@@ -463,6 +467,10 @@ fn check_timed(
                     Some(cx)
                 }
                 None => {
+                    // SAFETY: a unit that does not load gives no context, so nothing borrows
+                    // the arena: the box made above is taken back and dropped, with whatever
+                    // nodes a damaged unit decoded before it was refused.
+                    drop(unsafe { Box::from_raw(arena) });
                     order = Some(o);
                     None
                 }
