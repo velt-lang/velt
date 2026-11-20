@@ -1,13 +1,14 @@
 // velt/lang/hooks (internal): the executor in Velt (#2649 steps 3.1 and 3), its workers: worker 0
 // is the thread that runs `main`, the others are threads it starts (`VELT_THREADS`, else the
 // online cores; `#sched-thread`), each with its own queue, inbox and reactor. A task stays on its
-// home worker (the spawning one, or the one `spawn(p, { worker })` pins it to). A program compiled with `VELT_SCHEDULER=std` runs here instead of on the
-// runtime's executor: its root (`schedBlockOn`), its spawned tasks (`schedSpawn`), `await
-// yieldNow()` and a stored one (sched_yield.velt), boxed and started promises (`schedBox`,
-// `schedStart`, sched_node.velt), the microtask steps of `await` and the prelude's microtasks
-// (`schedAwaitTick`, `schedAwaitReady`, `schedMicrotask`, sched_micro.velt), the process lifetime
-// (keep-alive references, a due `unref()`'d timer's question, the top-level `await` waiting:
-// sched_end.velt), `sleep` (`schedSleep`, sched_sleep.velt) and Node's timer order (`schedTimer*`,
+// home worker (the spawning one, or the one `spawn(p, { worker })` pins it to). A program runs
+// here instead of on the runtime's executor: its root (`schedBlockOn`), its spawned tasks
+// (`schedSpawn`), `await yieldNow()` and a stored one (sched_yield.velt), boxed and
+// started promises (`schedBox`, `schedStart`, sched_node.velt), the microtask steps of `await`
+// and the prelude's microtasks (`schedAwaitTick`, `schedAwaitReady`, `schedMicrotask`,
+// sched_micro.velt), the process lifetime (keep-alive references, a due `unref()`'d timer's
+// question, the top-level `await` waiting: sched_end.velt),
+// `sleep` (`schedSleep`, sched_sleep.velt) and Node's timer order (`schedTimer*`,
 // sched_timers.velt); `schedFinish` drives the tasks still alive once `main` is done. The
 // runtime's other leaves (channels, files, sockets) stay Rust: they wake a task through its C
 // waker (rt_abi_async.md §1) from any thread, which queues it and unparks the worker. The

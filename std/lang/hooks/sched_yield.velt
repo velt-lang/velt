@@ -1,8 +1,11 @@
 // velt/lang/hooks (internal): `yieldNow()` under the executor in Velt (sched.velt): `await
-// yieldNow()` (`schedYield`) and a stored one (`schedYieldFut`).
+// yieldNow()` (`schedYield`, and `schedYieldReady` when it resumes, #3241) and a stored one
+// (`schedYieldFut`). In Node a yield is a macrotask: what yielded resumes after the other ready
+// tasks and after the microtasks its task queued before it.
 
-import { fnAddress } from "velt/lang/intrinsics";
+import { fnAddress, inline } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
+import * as node from "./sched_node";
 import * as t from "./sched_task";
 
 /** `await yieldNow()`: the task polled with `cx` runs again after the other ready tasks. */
@@ -12,9 +15,37 @@ export function schedYield(cx: usize): void {
     // Running: polled again once this poll returns, at the back of the queue. While it runs,
     // only a wake changes its state, from RUNNING to NOTIFIED: a store, not a swap.
     m.store32(w + t.T_STATE, t.NOTIFIED);
+    t.flags(w, t.ROOT_YIELDED, 0);
     return;
   }
+  // A started promise's or a combinator child's: queued, it is not run again in this poll (its
+  // owner adopts no queued promise, a join polls only children that woke).
   m.wakeByRef(w);
+}
+
+/**
+ * `await yieldNow()` resumes (#3241): 1 to go on, 0 to stay suspended. In Node what yielded runs
+ * as a macrotask, after the microtasks queued before it; but the poll that yielded may poll the
+ * yield again for them (a microtask's entry resumes the root or runs a started promise directly,
+ * and an inline `Promise.all` polls every child it has). So a yield goes on only once its wake
+ * had its turn:
+ * - polled with its task's cx: in a later poll (`ROOT_YIELDED`, cleared as a poll begins; another
+ *   yield of the root in this poll holds it back as well: one poll late at most, never early);
+ * - polled with a started promise's: once the promise ran from its task's woken stack, which
+ *   clears the `QUEUED` its wake set (sched_node.velt `run`);
+ * - with any other waker (a join's child: only children that woke are polled): at once.
+ */
+@inline("always")
+export function schedYieldReady(cx: usize): u32 {
+  const w = m.ld(cx + 8);
+  const vt = m.ld(w);
+  if (vt === t.main() + t.E_VT) {
+    return t.has(w, t.ROOT_YIELDED) ? 0 : 1;
+  }
+  if (vt === t.main() + t.E_NODE_VT && (m.load32(w + node.N_FLAGS) & node.QUEUED) !== 0) {
+    return 0;
+  }
+  return 1;
 }
 
 /**
@@ -32,7 +63,7 @@ export function schedYieldFut(): usize {
 
 function yieldPoll(f: usize, cx: usize): u32 {
   if (m.ld(f + 16) !== 0) {
-    return 1;
+    return schedYieldReady(cx);
   }
   m.st(f + 16, 1);
   schedYield(cx);
@@ -41,4 +72,12 @@ function yieldPoll(f: usize, cx: usize): u32 {
 
 function yieldDrop(f: usize): void {
   m.release(f, 24);
+}
+
+/** A poll of task `k`, whose flags were `fl`, begins: the root's yield of the last one is over. */
+@inline("always")
+export function begin(k: usize, fl: u32): void {
+  if ((fl & t.ROOT_YIELDED) !== 0) {
+    t.flags(k, 0, t.ROOT_YIELDED);
+  }
 }
