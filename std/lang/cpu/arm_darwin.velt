@@ -26,9 +26,8 @@ function on(name: string): bool {
   LEN.store(4, "relaxed");
   // SAFETY: a NUL-terminated name; room for one `int` at VALUE, which LEN (a `size_t`: 64 bits
   // on arm64) says; no new value.
-  const r = unsafe {
-    sysctlbyname(strDataAddress(name), atomicAddress(VALUE), atomicAddress(LEN), 0, 0)
-  };
+  const r =
+    unsafe { sysctlbyname(strDataAddress(name), atomicAddress(VALUE), atomicAddress(LEN), 0, 0) };
   return r === 0 && LEN.load("relaxed") === 4 && VALUE.load("relaxed") === 1;
 }
 
