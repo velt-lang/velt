@@ -6,8 +6,8 @@
 #   lib/velt_rt.lib  lib/velt_rt_shared.dll(.lib)  lib/NATIVE_LIBS.md
 #   lib/velt/lld.exe  lib/targets/<triple>/ (link kit)
 #   lib/wasm32-unknown-unknown/libvelt_rt_wasm.a (the runtime WebAssembly programs and Workers link)
-# and the target pack dist/velt-<version>-target-<triple>.tar.gz (`velt target add`).
 #   lib/hooks/<host>/*.{o,manifest} (the prebuilt hook modules' objects)
+# and the target pack dist/velt-<version>-target-<triple>.tar.gz (`velt target add`).
 #   std/** (without its *.test.velt files)  share/velt/lldb/velt_lldb.py  share/velt/warm/*.velt  README.md  LICENSE-MIT  LICENSE-APACHE  NOTICE
 #
 # With the bundled linker, velt.exe, velt-launcher.exe and velt_rt_shared.dll are linked with it
