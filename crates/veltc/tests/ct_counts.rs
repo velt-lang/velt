@@ -19,7 +19,9 @@ fn has(tool: &str) -> bool {
 
 #[test]
 fn secrets_do_not_change_the_instructions_executed() {
-    if !cfg!(all(target_os = "linux", target_arch = "x86_64")) || !has("valgrind") || !has("python3")
+    if !cfg!(all(target_os = "linux", target_arch = "x86_64"))
+        || !has("valgrind")
+        || !has("python3")
     {
         eprintln!("note: needs valgrind and python3 on x86-64 Linux; skipping");
         return;
