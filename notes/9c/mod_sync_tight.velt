@@ -1,0 +1,15 @@
+// The same loop without the executor (#3261 review): 200 `hits++` on a module `let`, 20,000 calls.
+let hits = 0;
+
+function bump(): void {
+  for (let k = 0; k < 200; k++) {
+    hits++;
+  }
+}
+
+function main() {
+  for (let r = 0; r < 20000; r++) {
+    bump();
+  }
+  console.log(hits);
+}

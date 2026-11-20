@@ -1,0 +1,28 @@
+// Module state in a tight loop on the executor (#3261 review): a loop of 200 `hits++` on a
+// module `let`, called 2,500 times on each of 8 tasks, with an await between calls (each call is
+// in a poll that holds the module lock).
+let hits = 0;
+
+function bump(): void {
+  for (let k = 0; k < 200; k++) {
+    hits++;
+  }
+}
+
+async function worker(rounds: number): Promise<void> {
+  for (let r = 0; r < rounds; r++) {
+    bump();
+    await Promise.resolve();
+  }
+}
+
+async function main() {
+  const all: Promise<void>[] = [];
+  for (let t = 0; t < 8; t++) {
+    all.push(spawn(worker(2500)));
+  }
+  for (const p of all) {
+    await p;
+  }
+  console.log(hits);
+}
