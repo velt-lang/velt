@@ -483,6 +483,10 @@ one index (`fits_pair`). It reads both headers whatever the first length is, so 
 be null: where the second can be (an array field read during construction), `fits_pair` tests it
 in front of the call, and a null gives false, since the two tests never read it where the first
 fails.
+`velt_opt` may also decide `fits` and `fits_both` without calling them (`range_versions`): in a
+copy of a loop that writes no header, behind one test in front of it that reads each length as
+the helpers do (the header's second word, after a null test) and proves every index of the loop
+plus the lane count at most that length, with no sum wrapping.
 `load` and `store` take the array (a pointer to its header) and an element index, and do not
 check it: the prelude's methods do. `load_partial` and `store_partial` take a count of elements
 too, below the lane count, and touch only those elements. `load_optimistic` is `load`
