@@ -7,12 +7,14 @@
 // change by 0x20. Text with no such letter is returned as it is, sharing its buffer, with
 // nothing allocated: most header names, identifiers and keys are already in the case asked
 // for (a string that borrows its bytes is copied, as the runtime's mapping copies it: the result
-// may be kept after the memory it points into is freed). Other text of up to 23 bytes is made in place as an inline string, longer text in a
-// string builder of its size, sixteen bytes per append, stored inline.
+// may be kept after the memory it points into is freed). Other text of up to 23 bytes is made in
+// place as an inline string; longer text is mapped into a byte array, which a string builder of
+// its size takes in one append.
 
 import {
+  arraySetLen,
+  arrayWithCapacity,
   strAsciiWords,
-  strbufPushAsciiWords,
   strByteLen,
   strLen,
   strLoadPartialU8x16,
@@ -24,8 +26,10 @@ declare function velt_rt_str_to_lower(s: string): string;
 /** `s` itself, or its copy when it borrows its bytes (a key that points into text being parsed). */
 declare function velt_rt_str_own(s: string): string;
 declare function velt_rt_strbuf_new(cap: u64, out: string);
+declare function velt_rt_strbuf_push_u8s(buf: string, bytes: u8[], len: u64, units: u64);
 declare function velt_rt_strbuf_finish(buf: string, out: string);
 declare function velt_simd_u8x16_splat(x: u8): u8x16;
+declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
 declare function velt_simd_u8x16_sub(a: u8x16, b: u8x16): u8x16;
 declare function velt_simd_u8x16_xor(a: u8x16, b: u8x16): u8x16;
 declare function velt_simd_u8x16_lt(a: u8x16, b: u8x16): mask8x16;
@@ -84,17 +88,19 @@ function withCase(s: string, first: u8): string {
     }
     return strAsciiWords(velt_simd_u64x2_lane(head, 0), velt_simd_u64x2_lane(head, 1), w2, n);
   }
-  let buf = "";
-  velt_rt_strbuf_new(n as u64, buf);
+  // Longer text: mapped sixteen bytes at a time into a byte array (whole blocks, the last one
+  // padded), whose first `n` bytes the builder takes in one append.
+  const room = (n + 15) & ~(15 as usize);
+  const bytes: u8[] = arrayWithCapacity(room);
+  arraySetLen(bytes, room);
   let i: usize = 0;
   while (i < n) {
-    const v = velt_simd_u8x16_as_u64x2(mapped(block(s, i, n), first));
-    const w0 = velt_simd_u64x2_lane(v, 0);
-    const w1 = velt_simd_u64x2_lane(v, 1);
-    const len = n - i < 16 ? n - i : 16;
-    strbufPushAsciiWords(buf, w0, w1, 0, len);
+    velt_simd_u8x16_store(mapped(block(s, i, n), first), bytes, i as u64);
     i += 16;
   }
+  let buf = "";
+  velt_rt_strbuf_new(n as u64, buf);
+  velt_rt_strbuf_push_u8s(buf, bytes, n as u64, n as u64);
   let out = "";
   velt_rt_strbuf_finish(buf, out);
   return out;
