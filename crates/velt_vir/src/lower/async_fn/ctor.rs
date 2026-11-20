@@ -79,8 +79,18 @@ impl<'c, 'h> FnLower<'c, 'h> {
             .collect();
         let mut incoming = vec![];
         let mut regs = vec![];
+        let mut rest_tuple = None;
         for p in &f.params {
             if caps.contains_key(&p.local) {
+                incoming.push(None);
+                continue;
+            }
+            if let Some(ts) = lw.rest_tuple_of(def, f, p) {
+                // Its elements come one parameter each (`rest_tuple_params.rs`); the tuple
+                // they make stands for the one a caller would pass by pointer.
+                let mut attrs = vec![];
+                let r = lw.rest_tuple_params(p, &ts, "rest", &mut params, &mut attrs);
+                rest_tuple = Some((incoming.len(), r, p.mode));
                 incoming.push(None);
                 continue;
             }
@@ -108,6 +118,16 @@ impl<'c, 'h> FnLower<'c, 'h> {
             incoming.push(l.map(|l| (l, vt, ty, p.mode)));
         }
         let out = out.then(|| lw.new_local(Ty::Ptr, Some("ret.out".into())));
+        if let Some((k, r, mode)) = rest_tuple {
+            let ty = r.ty();
+            let vt = lw.cx.ty(ty);
+            incoming[k] = lw.build_rest_tuple(r, false).map(|t| {
+                let at = lw.addr(Place::local(t));
+                let p = lw.temp(Ty::Ptr);
+                lw.assign(Place::local(p), Rvalue::Use(at));
+                (p, vt, ty, mode)
+            });
+        }
         for (vs, reg) in regs {
             let p = lw.reg_incoming(&vs, &reg);
             for inc in incoming.iter_mut().flatten() {

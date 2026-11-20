@@ -1,0 +1,32 @@
+// A closure made with a rest parameter whose type is a tuple at the instantiation (#379): an
+// async one takes the tuple's elements one parameter each, as a plain one does
+// (`rest_tuple_closure`), and so does one with a `void` element, which is passed as nothing.
+// Node prints the same.
+interface Ctx {
+  id: string;
+}
+
+function keep<A extends unknown[], R>(f: (rq: Ctx, ...args: A) => R): (rq: Ctx, ...args: A) => R {
+  return f;
+}
+
+function noArg(): void {}
+
+function count<A extends unknown[]>(): (...args: A) => number {
+  return (...args) => args.length;
+}
+
+async function main(): Promise<void> {
+  const add = keep(async (rq: Ctx, a: number, b: number): Promise<number> => a + b);
+  console.log(await add({ id: "a" }, 2, 5));
+  const greet = keep(async (rq: Ctx, who: string): Promise<string> => rq.id + " " + who);
+  console.log(await greet({ id: "hi" }, "ann"));
+  const none = keep(async (rq: Ctx): Promise<string> => rq.id + "!");
+  console.log(await none({ id: "bare" }));
+  const v = keep((rq: Ctx, v: void, n: number): number => n + 1);
+  console.log(v({ id: "v" }, noArg(), 41));
+  const av = keep(async (rq: Ctx, v: void): Promise<string> => rq.id);
+  console.log(await av({ id: "async void" }, noArg()));
+  console.log(count<[void]>()(noArg()), count<[void, number]>()(noArg(), 3));
+}
+main();

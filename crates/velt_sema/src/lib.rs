@@ -93,6 +93,7 @@ mod iface_overloads;
 mod iface_writes;
 mod index_signatures;
 mod infer;
+mod infer_rest;
 mod inst_sites;
 mod instantiation_cycles;
 pub mod interface;
