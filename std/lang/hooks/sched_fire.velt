@@ -149,10 +149,11 @@ function between(e: usize, k: usize, woken: bool): bool {
     run.drain(e, k);
     n = nx;
   }
-  if (m.load32(k + t.T_STATE) === t.YIELDED) {
+  const s = m.load32(k + t.T_STATE);
+  if (s === t.YIELDED) {
     return true;
   }
-  if (!woken && !t.has(k, t.ROOT_DONE) && m.load32(k + t.T_STATE) === t.NOTIFIED) {
+  if (!woken && !t.has(k, t.ROOT_DONE) && s === t.NOTIFIED) {
     m.store32(k + t.T_STATE, t.RUNNING);
     run.pollRootAgain(e, k);
     run.drain(e, k);

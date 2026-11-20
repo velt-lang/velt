@@ -62,23 +62,26 @@ export function schedYield(cx: usize): void {
  */
 @inline("always")
 function rootYield(k: usize, y: usize): void {
+  // Polled again once this poll returns, at the back of the queue. While it runs, only a wake
+  // changes its state, from RUNNING to NOTIFIED: a store, not a swap.
+  const b = m.ld(k + t.T_YIELDS);
+  if (b === 0) {
+    // No yield block: no list, no yield made, so nothing to order it against (a second yield
+    // in this poll stores the same).
+    m.store32(k + t.T_STATE, t.YIELDED);
+    return;
+  }
   if (m.load32(k + t.T_STATE) === t.YIELDED) {
     return;
   }
-  // Polled again once this poll returns, at the back of the queue. While it runs, only a wake
-  // changes its state, from RUNNING to NOTIFIED: a store, not a swap.
   m.store32(k + t.T_STATE, t.YIELDED);
   if (!t.has(k, t.YIELDS)) {
-    const b = m.ld(k + t.T_YIELDS);
-    if (b !== 0) {
-      // Its stamp, for a record if yields join after it: an awaited yield's is the last one
-      // made (that one, made before it, comes before it; with none made yet, 0: before any).
-      m.st(b + ls.B_ROOT, y !== 0 ? m.ld(y + ls.Y_STAMP) : m.ld(b + ls.B_STAMP));
-      t.flags(k, t.ROOT_ALONE, 0);
-    }
+    // Its stamp, for a record if yields join after it: an awaited yield's is the last one made
+    // (that one, made before it, comes before it).
+    m.st(b + ls.B_ROOT, y !== 0 ? m.ld(y + ls.Y_STAMP) : m.ld(b + ls.B_STAMP));
+    t.flags(k, t.ROOT_ALONE, 0);
     return;
   }
-  const b = m.ld(k + t.T_YIELDS);
   // Its record goes on the list now (a mark left from an earlier poll would add a second).
   t.flags(k, 0, t.ROOT_ALONE);
   // Behind the yields made before it.
