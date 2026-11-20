@@ -25,8 +25,10 @@ export type MapAdvice = "normal" | "random" | "sequential" | "willneed" | "dontn
  * opens one per request runs out of mappings (`ENOMEM` after about 65,000 on Linux's default
  * limit).
  *
- * On Windows a mapped file cannot be removed, renamed over or cut short by anyone, for the
- * rest of the program, and `advise` does nothing (it is a hint).
+ * On Windows a mapped file cannot be cut short for the rest of the program (writing it anew
+ * fails with `UNKNOWN`). Removing or renaming it works on NTFS from Windows 10 1809 and may be
+ * refused on older systems or other file systems; the mapping keeps the bytes it had. `advise`
+ * does nothing there (it is a hint).
  *
  * WebAssembly has no mapping: there `open` reads the whole file into memory, also when a part
  * is asked for, and keeps the part; `bytes` is that memory, each typed method gives a copy of
