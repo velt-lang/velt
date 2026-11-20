@@ -83,7 +83,8 @@ function owner(f: usize): usize {
   if (w !== 0) {
     return t.has(w, t.CARRIED) ? w : 0;
   }
-  const o = m.ld(f + sl.S_OWNER);
+  const word = m.ld(f + sl.S_OWNER);
+  const o = word === 0 ? 0 : word - t.T_WORD;
   return o !== 0 && t.has(o, t.CARRIED) ? o : 0;
 }
 
@@ -100,7 +101,7 @@ export function adopt(e: usize, k: usize): void {
     if (seq > m.ld(b + sl.TM_SEQ)) {
       m.st(b + sl.TM_SEQ, seq);
     }
-    m.storeRelaxed(f + sl.S_OWNER, k);
+    m.storeRelaxed(f + sl.S_OWNER, k + t.T_WORD);
     // Unordered: `insert` stores the state after it, released.
     m.storeRelaxed(f + sl.S_HOME, e);
     sl.insert(b, f);

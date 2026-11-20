@@ -55,7 +55,10 @@ export const S_PREV: usize = 40;
 export const S_NEXT: usize = 48;
 export const S_STATE: usize = 56;
 export const S_TASK: usize = 64;
-/** The task that polled it into its worker's timer block (sched_sleep_carry.velt `carry`). */
+/**
+ * The await word (`T_WORD`) of the task that polled it into its worker's timer block, what that
+ * task's contexts point at (`sleepPoll`; sched_sleep_carry.velt `carry`), or 0.
+ */
 export const S_OWNER: usize = 72;
 /**
  * The worker whose timer block holds it, once it was polled there (read from other threads:
@@ -135,7 +138,7 @@ function sleepPoll(f: usize, cx: usize): u32 {
     // a transfer changes together with this word: sched_node.velt) and in a combinator's, which
     // passes its poller's on (sched_all.velt). Any other context, and a carried sleep (it has
     // no owner until its task adopts it), take the slow way, which asks the worker.
-    if (m.ld(cx) - t.T_WORD !== m.loadRelaxed(f + S_OWNER) && !here(f, s)) {
+    if (m.ld(cx) !== m.loadRelaxed(f + S_OWNER) && !here(f, s)) {
       // Held by another worker's block, or carried by an offered task: its worker gives it up,
       // and this task polls it again as a new one.
       return mv.ask(f, w);
@@ -162,7 +165,7 @@ function sleepPoll(f: usize, cx: usize): u32 {
     // carries it with its sleeps (sched_sleep_carry.velt).
     sp.anchor();
     const e = t.exec();
-    m.storeRelaxed(f + S_OWNER, m.ld(e + t.E_CURRENT));
+    m.storeRelaxed(f + S_OWNER, m.ld(e + t.E_CURRENT) + t.T_WORD);
     // Unordered: `insert` stores the state after it, released.
     m.storeRelaxed(f + S_HOME, e);
     insert(block(e), f);
@@ -217,9 +220,9 @@ function here(f: usize, s: usize): bool {
   if (s === CARRIED || m.load(f + S_HOME) !== e) {
     return false;
   }
-  if (k !== m.loadRelaxed(f + S_OWNER)) {
+  if (k + t.T_WORD !== m.loadRelaxed(f + S_OWNER)) {
     sp.anchor();
-    m.storeRelaxed(f + S_OWNER, k);
+    m.storeRelaxed(f + S_OWNER, k + t.T_WORD);
   }
   return true;
 }
