@@ -203,6 +203,9 @@ export const imports: Imports = {
   // Whole files (`readFile`, `writeFile`, `appendFile`, `stat`, `lstat`, `exists`) in a native
   // build: the C library's file descriptors (`#fd-system`), or Win32's on Windows.
   "#fs-whole": { win32: "./fs/whole/win32.velt", default: "./fs/whole/posix.velt" },
+  // Directories (`readDir`, `readDirEntries`, `mkdir`, `remove`) in a native build: the C
+  // library's directory functions (`#fd-system`), or Win32's on Windows.
+  "#fs-tree": { win32: "./fs/tree/win32.velt", default: "./fs/tree/posix.velt" },
   // This process's id (`process.pid`): the C library's `getpid` on macOS and Linux, Win32's
   // `GetCurrentProcessId` on Windows, 1 elsewhere. Modules that import nothing: the hook module
   // of the builtin `process`, which every program loads, imports the variant.

@@ -1,0 +1,25 @@
+// velt/fs (internal): the order of a directory listing's names: by code point, which is the
+// order of their UTF-8 bytes, so one `memcmp` of the bytes a string stores. `<` on strings
+// compares UTF-16 code units, which differs for a character past U+FFFF against one in
+// U+E000-U+FFFF, and costs a call of the runtime per comparison.
+
+import { Ptr } from "velt/ffi/ptr";
+import { strByteLen, strDataAddress } from "velt/lang/intrinsics";
+
+declare c("c") function memcmp(a: Ptr<void>, b: Ptr<void>, n: usize): i32;
+
+/** Whether `a` sorts before `b` by code point. */
+export function byCodePoint(a: string, b: string): bool {
+  const na = strByteLen(a);
+  const nb = strByteLen(b);
+  const n = na < nb ? na : nb;
+  // SAFETY: the address of `a`'s bytes, `na` of them, alive and unchanged while `a`, this
+  // function's parameter, is.
+  const pa = unsafe { Ptr.at<void>(strDataAddress(a)) };
+  // SAFETY: as for `a`, with `nb` bytes.
+  const pb = unsafe { Ptr.at<void>(strDataAddress(b)) };
+  // SAFETY: C reads the first `n` bytes at each address, which both strings have, and keeps no
+  // pointer.
+  const r = unsafe { memcmp(pa, pb, n) };
+  return r < 0 || (r == 0 && na < nb);
+}
