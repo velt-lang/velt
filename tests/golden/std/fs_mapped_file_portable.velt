@@ -1,12 +1,16 @@
-// requires: unix
-// `MappedFile` gives the same bytes and typed arrays over a mapping, where the system has `mmap`,
-// and from memory of its own on WebAssembly, which has none (#3162): this golden also runs under
-// wasmtime (wasm_goldens.rs names it). Not on Windows, which has no mapping yet. The file is
+// `MappedFile` gives the same bytes and typed arrays on every target: over a mapping where the
+// system has one (`mmap`, Win32's file mappings), from memory of its own on WebAssembly, which
+// has none (#3162): this golden also runs under wasmtime (wasm_goldens.rs names it). The file is
 // text, which every target can write.
 import * as fs from "velt/fs";
+import { platform, tmpdir } from "velt/os";
 
 function main() {
-  const path = `velt-golden-mapped-portable-${process.pid}.tmp`;
+  // Windows keeps a mapped file until the program ends and may refuse to remove it below (older
+  // systems, file systems other than NTFS), so the file goes to the temporary directory there;
+  // WebAssembly sees the current directory only.
+  const dir = platform() == "win32" ? `${tmpdir()}\\` : "";
+  const path = `${dir}velt-golden-mapped-portable-${process.pid}.tmp`;
   let text = "";
   for (let i = 0; i < 96; i++) {
     text += String.fromCharCode(32 + i);
@@ -49,9 +53,13 @@ function main() {
   } catch (e) {
     console.log((e as Error).message);
   }
-  fs.rmSync(path);
   try {
-    fs.MappedFile.open(path);
+    fs.rmSync(path);
+  } catch (e) {
+    // Windows may refuse to remove a file that is mapped.
+  }
+  try {
+    fs.MappedFile.open(`${path}.missing`);
   } catch (e) {
     console.log((e as Error).message.includes("ENOENT"));
   }
