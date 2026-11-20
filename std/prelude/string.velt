@@ -18,6 +18,7 @@ import {
   inline,
   strAsciiWords,
   strByteAt,
+  strByteLen,
   strCharCodeAt,
   strWord1,
   strWord2,
@@ -62,6 +63,8 @@ function sliceOf(s: string, start: i64, end: i64): string {
 
 // "Omitted" end / from positions, as the runtime expects them.
 const END: i64 = 9223372036854775807;
+// The most bytes a string holds (velt_rt `str/heap.rs` `MAX_CAP`): `repeat` past it is a RangeError.
+const MAX_BYTES: i64 = 2147483647;
 
 extend string {
   /** [start, end); negative positions count from the end; clamped; "" if start >= end. */
@@ -177,11 +180,11 @@ extend string {
 
   /** Panics like JS's RangeError if `n` is negative or the result would be too large. */
   repeat(n: i64): string {
-    let out = "";
-    if (!velt_rt_str_repeat(this, n, out)) {
+    const bytes = strByteLen(this) as i64;
+    if (n < 0 || (bytes != 0 && n > MAX_BYTES / bytes)) {
       panic(`RangeError: Invalid count value: ${n}`);
     }
-    return out;
+    return hookCall("string_repeat", this, n);
   }
 
   /**
@@ -189,7 +192,7 @@ extend string {
    * between the halves of a pair if need be, as in JS).
    */
   padStart(target: i64, fill: string = " "): string {
-    return velt_rt_str_pad_start(this, target, fill);
+    return hookCall("string_pad_start", this, target, fill);
   }
 
   /**
@@ -205,7 +208,7 @@ extend string {
    * parameter is " " (U+0020).
    */
   padEnd(target: i64, fill: string = " "): string {
-    return velt_rt_str_pad_end(this, target, fill);
+    return hookCall("string_pad_end", this, target, fill);
   }
 
   /**

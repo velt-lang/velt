@@ -1,0 +1,159 @@
+// velt/lang/string (internal): `repeat`, `padStart` and `padEnd` (std/prelude/string.velt), in
+// Velt (#2198).
+//
+// Lengths count UTF-16 code units, as in JavaScript: `padStart(5, "😀")` of "" is two whole
+// characters and the high half of a third. The text is built in a string builder of the final
+// size. Its appends join a high surrogate that ends the text with a low one that starts the next
+// piece into their character (velt_rt `str/push.rs`), so a seam between two copies, between the
+// fill and the string, or after a cut fill is the same text JavaScript has there.
+//
+// Every builder call passes the builder first and only locals after it: an argument that is a
+// call would make the compiler copy the builder first, and the append would go to the copy.
+
+import { strbufPushAsciiWords, strByteAt, strByteLen, strLen } from "velt/lang/intrinsics";
+import { codePoint4 } from "velt/lang/string/code_units";
+
+declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
+declare function velt_rt_str_from_char_code(code: i64): string;
+declare function velt_rt_strbuf_new(cap: u64, out: string);
+declare function velt_rt_strbuf_push_str(buf: string, s: string);
+declare function velt_rt_strbuf_finish(buf: string, out: string);
+
+/** The byte `b` in each byte of a word. */
+function spread(b: u8): u64 {
+  return (b as u64) * 0x0101010101010101;
+}
+
+/** Appends `count` copies of the ASCII byte `b` to the builder `buf`, 24 at a time, inline. */
+function pushRun(buf: string, b: u8, count: usize) {
+  const w = spread(b);
+  let left = count;
+  while (left >= 24) {
+    strbufPushAsciiWords(buf, w, w, w, 24);
+    left -= 24;
+  }
+  if (left > 0) {
+    strbufPushAsciiWords(buf, w, w, w, left);
+  }
+}
+
+/**
+ * `s.repeat(count)`, for a `count` the caller has checked: not negative, and the result within
+ * a string's length. The copies double: one append of the string, then of everything built so
+ * far, so `count` copies take about `log2(count)` appends.
+ */
+export function repeat(s: string, count: i64): string {
+  const n = strByteLen(s);
+  if (count <= 0 || n == 0) {
+    return "";
+  }
+  if (count == 1) {
+    return velt_rt_str_byte_slice(s, 0, n as u64);
+  }
+  const times = count as usize;
+  let buf = "";
+  velt_rt_strbuf_new((n * times) as u64, buf);
+  if (n == 1 && strByteAt(s, 0) < 0x80) {
+    pushRun(buf, strByteAt(s, 0), times);
+  } else {
+    // `block` is `have` copies; the builder gets a block whenever `times`' bit asks for it.
+    let block = velt_rt_str_byte_slice(s, 0, n as u64);
+    let have: usize = 1;
+    let left = times;
+    while (true) {
+      if ((left & have) != 0) {
+        velt_rt_strbuf_push_str(buf, block);
+        left -= have;
+      }
+      if (left == 0) {
+        break;
+      }
+      block = block + block;
+      have *= 2;
+    }
+  }
+  let out = "";
+  velt_rt_strbuf_finish(buf, out);
+  return out;
+}
+
+/**
+ * The first `units` code units of `fill` (fewer than it has), appended to the builder `buf`: a
+ * range of its bytes, and the high half of a pair as a lone surrogate when the cut falls
+ * between its halves.
+ */
+function pushPrefix(buf: string, fill: string, units: usize) {
+  let i: usize = 0;
+  let u: usize = 0;
+  let half: i64 = -1;
+  while (u < units) {
+    const b = strByteAt(fill, i as u64);
+    if (b < 0xf0) {
+      i += b < 0x80 ? 1 : b < 0xe0 ? 2 : 3;
+      u++;
+    } else if (u + 2 <= units) {
+      i += 4;
+      u += 2;
+    } else {
+      half = (0xd800 + ((codePoint4(fill, i) - 0x10000) >> 10)) as i64;
+      u++;
+    }
+  }
+  const whole = velt_rt_str_byte_slice(fill, 0, i as u64);
+  velt_rt_strbuf_push_str(buf, whole);
+  if (half >= 0) {
+    const high = velt_rt_str_from_char_code(half);
+    velt_rt_strbuf_push_str(buf, high);
+  }
+}
+
+/** Appends `missing` code units of `fill` (not empty) repeated to the builder `buf`. */
+function pushFill(buf: string, fill: string, missing: usize) {
+  const fb = strByteLen(fill);
+  if (fb == 1) {
+    pushRun(buf, strByteAt(fill, 0), missing);
+    return;
+  }
+  const fu = strLen(fill);
+  for (let k: usize = 0; k < missing / fu; k++) {
+    velt_rt_strbuf_push_str(buf, fill);
+  }
+  const rest = missing % fu;
+  if (rest > 0) {
+    pushPrefix(buf, fill, rest);
+  }
+}
+
+/** `padStart` (`atStart`) or `padEnd` of `s` to `target` code units with `fill`. */
+function pad(s: string, target: i64, fill: string, atStart: bool): string {
+  const n = strByteLen(s);
+  const units = strLen(s) as i64;
+  const fb = strByteLen(fill);
+  if (target <= units || fb == 0) {
+    return velt_rt_str_byte_slice(s, 0, n as u64);
+  }
+  const missing = (target - units) as usize;
+  let buf = "";
+  // Room for the string and every copy of the fill, the cut one counted whole.
+  velt_rt_strbuf_new((n + (missing / strLen(fill) + 1) * fb) as u64, buf);
+  if (!atStart) {
+    velt_rt_strbuf_push_str(buf, s);
+  }
+  pushFill(buf, fill, missing);
+  if (atStart) {
+    velt_rt_strbuf_push_str(buf, s);
+  }
+  let out = "";
+  velt_rt_strbuf_finish(buf, out);
+  return out;
+}
+
+/** `s.padStart(target, fill)`. */
+export function padStart(s: string, target: i64, fill: string): string {
+  return pad(s, target, fill, true);
+}
+
+/** `s.padEnd(target, fill)`. */
+export function padEnd(s: string, target: i64, fill: string): string {
+  return pad(s, target, fill, false);
+}

@@ -150,6 +150,8 @@ table! {
     lang_sort => "lang/sort",
     lang_sort_stable => "lang/sort/stable",
     lang_string_collate => "lang/string/collate",
+    lang_string_fill => "lang/string/fill",
+    lang_string_replace => "lang/string/replace",
     lang_string_search => "lang/string/search",
     lang_string_split => "lang/string/split",
     lang_string_trim => "lang/string/trim",

@@ -33,3 +33,15 @@ macro_rules! with_string_hooks {
             /// `s.trimEnd()`.
             string_trim_end => lang_string_trim, "trimEnd", sig((&string) -> string),
                 replaces("velt_rt_str_trim_end"), bench("string_methods"), prebuilt;
+            /// `s.repeat(count)` of a count the prelude's method has checked.
+            string_repeat => lang_string_fill, "repeat", sig((&string, i64) -> string),
+                replaces("velt_rt_str_repeat"), bench("string_methods"), prebuilt;
+            /// `s.padStart(target, fill)`.
+            string_pad_start => lang_string_fill, "padStart", sig((&string, i64, &string) -> string),
+                replaces("velt_rt_str_pad_start"), bench("string_methods"), prebuilt;
+            /// `s.padEnd(target, fill)`.
+            string_pad_end => lang_string_fill, "padEnd", sig((&string, i64, &string) -> string),
+                replaces("velt_rt_str_pad_end"), bench("string_methods"), prebuilt;
+        }
+    };
+}
