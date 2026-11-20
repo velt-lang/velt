@@ -9,7 +9,8 @@ and random ones. Constant-time code executes one count; a second count means som
 depends on the secret, in the machine code if not in the source (LLVM turns a mask it can see
 through into a branch).
 
-What this cannot see: a memory address that depends on the secret with no change in the count.
+What this cannot see: a memory address that depends on the secret with no change in the count,
+and a difference that is rarer than the secrets tried.
 The memcheck command in std/crypto/field_p256.velt is the check for that.
 
   scripts/ct-counts.py p384            # one probe
@@ -39,6 +40,9 @@ def seeds32(rng, runs):
             bytes.fromhex("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")]
     return edge + [rng.randbytes(32) for _ in range(max(0, runs - len(edge)))]
 
+
+# How often a secret whose count differs is run again before the difference counts.
+RETRIES = 5
 
 GENERATORS = {"scalars384": scalars384, "seeds32": seeds32}
 
@@ -110,10 +114,22 @@ def main():
             # One path for every run: its length is part of what the process does.
             secret_file = os.path.join(out, "secret.bin")
             counts = {}
+            target = None
             for secret in secrets(random.Random(opts.seed), opts.runs):
                 with open(secret_file, "wb") as f:
                     f.write(secret)
-                counts.setdefault(count(exe, env, secret_file), []).append(secret)
+                # A test harness starts threads, and now and then one of them does more before
+                # the process ends: the same secret then counts some thousands more. So a count
+                # that differs is taken again, and the lowest of a few runs is the secret's.
+                # Code that depends on the secret differs every time.
+                tries = RETRIES if target is None else 1
+                c = min(count(exe, env, secret_file) for _ in range(tries))
+                for _ in range(RETRIES):
+                    if target is None or c == target:
+                        break
+                    c = min(c, count(exe, env, secret_file))
+                target = c if target is None else target
+                counts.setdefault(c, []).append(secret)
         runs = sum(len(v) for v in counts.values())
         if len(counts) == 1:
             print(f"{name}: {runs} secrets, one count: {next(iter(counts)):,} instructions")
