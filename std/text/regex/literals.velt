@@ -246,7 +246,7 @@ function chooseGrams(prog: Program, lits: string[], min: usize): bool {
   const top = min < 8 ? min : 8;
   const chosen: usize[] = [];
   const trial: u8[] = [];
-  let least: f64 = 2;
+  let least: u64 = 0xffffffffffffffff;
   while (chosen.length < MAX_OFFSETS && chosen.length < top) {
     let best = top;
     const size = chosen.length + 1;
@@ -256,7 +256,8 @@ function chooseGrams(prog: Program, lits: string[], min: usize): bool {
       }
       chosen.push(o);
       const count = tuples(lits, chosen, size, trial);
-      const share = (cost(trial, size) as f64) / Math.pow(256, size as f64);
+      // Out of all tuples of `MAX_OFFSETS` bytes, so that sizes compare.
+      const share = cost(trial, size) << ((8 * (MAX_OFFSETS - size)) as u64);
       if (count <= MAX_GRAMS && share < least) {
         least = share;
         best = o;
