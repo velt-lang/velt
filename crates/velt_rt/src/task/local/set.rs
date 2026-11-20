@@ -113,9 +113,6 @@ pub(crate) struct LocalSet {
     /// `drive_adopted`): bounded, so a long chain of promises each awaiting the one before it
     /// (`p = p.then(f)` in a loop) is never polled recursively from end to start.
     pub(super) adopting: u32,
-    /// Rejected promises nobody handles, reported once the microtask queue is drained
-    /// (unhandled.rs; each holds a reference).
-    pub(super) unhandled: Vec<*mut VeltFut>,
     /// Promises that rejected while nobody awaited them: reported once the microtask queue is
     /// drained unless their owner claimed them by then (unhandled.rs; each holds a reference).
     pub(super) rejections: Vec<*mut VeltFut>,
@@ -123,9 +120,6 @@ pub(crate) struct LocalSet {
     /// (unhandled.rs `watch`): a loop that never reaches a checkpoint keeps only the ones still
     /// open.
     pub(super) compact_at: usize,
-    /// The same for `unhandled`: the converted promises whose promise was handled meanwhile are
-    /// dropped quietly then (task/identity.rs).
-    pub(super) compact_unhandled_at: usize,
     /// The task's gate (none until it first creates a timer; gate.rs).
     pub(super) gate: Option<Arc<super::gate::Gate>>,
 }
@@ -145,10 +139,8 @@ impl LocalSet {
             running: std::ptr::null(),
             micro: super::micro::Queue::new(),
             adopting: 0,
-            unhandled: Vec::new(),
             rejections: Vec::new(),
             compact_at: super::unhandled::COMPACT_MIN,
-            compact_unhandled_at: super::unhandled::COMPACT_MIN,
             gate: None,
         })
     }
@@ -388,8 +380,8 @@ impl Drop for LocalSet {
             // SAFETY: the set is closed: this is the queue's last consumer.
             unsafe { self.shared.release_queued() };
         }
-        for f in self.unhandled.drain(..).chain(self.rejections.drain(..)) {
-            // SAFETY: a deferred rejection holds a reference (unhandled.rs).
+        for f in self.rejections.drain(..) {
+            // SAFETY: a watched rejection holds a reference (unhandled.rs).
             unsafe { node::release(f) };
         }
         for SendPtr(f) in self.pending.drain(..) {

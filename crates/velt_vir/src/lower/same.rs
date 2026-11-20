@@ -18,6 +18,11 @@ use crate::vir::{BinOp, Const, Operand, Place, Proj, Rvalue, Ty};
 impl FnLower<'_, '_> {
     /// `a === b` for the values of concrete type `ty` at two places (Bool operand).
     pub(super) fn same_values(&mut self, a: &Place, b: &Place, ty: TyId) -> Operand {
+        // A placeholder (a shared instance, shape/): each type of the shape compares by its own
+        // rule, so the comparison is that type's glue, reached through the dictionary.
+        if self.cx.is_ph(ty) {
+            return self.same_glue(a, b, ty);
+        }
         // `any` / `unknown` in generic code: `===` of the values they hold (any_eq.rs).
         if self.cx.is_dynamic(ty) {
             return self.any_same_places(a, b, self.any_cmp());
@@ -282,6 +287,16 @@ impl FnLower<'_, '_> {
     /// `Glue::Same` of an option / union / tuple: the equality glue comparing objects inside it
     /// by identity.
     pub(super) fn same_body(&mut self, pa: crate::vir::Local, pb: crate::vir::Local, ty: TyId) {
+        // A type `same_values` compares in line (a number, a string, an object by identity):
+        // only a shared instance asks for its glue, for a placeholder that stands for it
+        // (shape/), and the glue is that comparison. Not the body of a `struct`'s own glue
+        // (`bits_eq_body`), which that comparison calls.
+        if !self.bits_mode && self.cx.same_in_line(ty) {
+            let (a, b) = (self.deref_param(pa, ty), self.deref_param(pb, ty));
+            let e = self.same_values(&a, &b, ty);
+            self.terminate(crate::vir::Terminator::Return(e));
+            return;
+        }
         self.same_mode = true;
         self.eq_body(pa, pb, ty);
     }
@@ -318,6 +333,27 @@ impl FnLower<'_, '_> {
 }
 
 impl super::Cx<'_> {
+    /// Does `same_values` compare two `t`s without calling `t`'s own glue of the mode's kind
+    /// (`Glue::Same`, `SameValue`, `KeySame`)?
+    pub(super) fn same_in_line(&mut self, t: TyId) -> bool {
+        // A C struct is a declared `struct` too, but its own glue compares its fields by the
+        // mode's number rules: asked first, or that glue would call itself.
+        if self.c_struct(t) {
+            return false;
+        }
+        if self.is_dynamic(t) || self.value_struct(t) {
+            return true;
+        }
+        if matches!(self.kind(t), TyKind::Promise(..)) || self.is_object(t) {
+            return true;
+        }
+        match self.kind(t) {
+            TyKind::Option(..) | TyKind::Tuple(_) | TyKind::Result(..) => false,
+            TyKind::Adt(d, _) => self.is_c_like_enum(d),
+            _ => true,
+        }
+    }
+
     /// Is `t` a generic function value: an interface value of an interface whose one method is
     /// sema's `#call` (`velt_sema` `generic_fns`), which only generic closures implement?
     pub(super) fn is_generic_fn_value(&self, t: TyId) -> bool {
