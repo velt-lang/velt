@@ -6,6 +6,21 @@ import { describe, expect, it } from "velt/test";
 import { nodeSyntaxMessage } from "velt/encoding/json/node_syntax";
 
 describe("nodeSyntaxMessage", () => {
+  it("names a lone surrogate token as V8 does, not as U+FFFD", () => {
+    // V8 shows the UTF-16 unit at the error: the high half of an emoji, or a lone surrogate the
+    // text holds (built with `fromCharCode`: a literal can't hold one). Messages read from Node 22.
+    const hi = String.fromCharCode(0xd83d);
+    expect(nodeSyntaxMessage("[😀]")).toBe(`Unexpected token '${hi}', "[😀]" is not valid JSON`);
+    const lone = String.fromCharCode(0xd800);
+    const m = nodeSyntaxMessage(`[${lone}]`)!;
+    expect(m).toBe(`Unexpected token '${lone}', "[${lone}]" is not valid JSON`);
+    expect(m.charCodeAt(18)).toBe(0xd800);
+    const low = String.fromCharCode(0xdc00);
+    expect(nodeSyntaxMessage(`["x", ${low}, 1]`)).toBe(
+      `Unexpected token '${low}', "["x", ${low}, 1]" is not valid JSON`,
+    );
+  });
+
   it("gives no message for valid JSON", () => {
     for (const ok of ["1", " [1, 2e-3, -0.5E+2] ", `{"a":{"b":[]},"c":null}`, `"\\u00e9"`]) {
       expect(nodeSyntaxMessage(ok) == null).toBe(true);
