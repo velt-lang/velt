@@ -1,0 +1,54 @@
+== build base (9cb569834, 0 changed)
+    Finished `release` profile [optimized] target(s) in 4m 09s
+    Finished `release` profile [optimized] target(s) in 22.50s
+== build head (f21ca0517, 0 changed)
+    Finished `release` profile [optimized] target(s) in 4m 08s
+    Finished `release` profile [optimized] target(s) in 23.03s
+== build noattr (ddcec18e7, 1 changed)
+    Finished `release` profile [optimized] target(s) in 4m 09s
+    Finished `release` profile [optimized] target(s) in 22.55s
+== build inline (f21ca0517, 1 changed)
+    Finished `release` profile [optimized] target(s) in 4m 21s
+    Finished `release` profile [optimized] target(s) in 34.09s
+head hashmap wrapper symbols: 0
+base hashmap wrapper symbols: 0
+== rows (instructions; run 1, run 2)
+bench_bytes_sum_inclusive base1=393955229 head1=393955229 noattr1=393955288 inline1=393955288
+bench_classes base1=953057643 head1=953057174 noattr1=953057183 inline1=957057353
+bench_closures base1=1053098226 base2=1053104120 head1=1053116000 head2=1053080843 noattr1=1053119683 noattr2=1053093669 inline1=1052259540 inline2=1052326014
+bench_closures_borrowed base1=351428354 head1=351428354 noattr1=351428353 inline1=351428353
+bench_closures_cell_arg base1=341371655 head1=341371655 noattr1=341371654 inline1=341371654
+bench_closures_cell_counter base1=150424257 head1=150424257 noattr1=150424233 inline1=150424233
+bench_closures_held base1=180426388 head1=180426388 noattr1=180426335 inline1=180426335
+bench_closures_this base1=786249161 head1=786249749 noattr1=786249696 inline1=786249582
+bench_counted_field_any base1=8527465 head1=8527465 noattr1=8527464 inline1=8527464
+bench_counted_field_args base1=786011230 head1=786111215 noattr1=786111233 inline1=786111213
+bench_counted_lexer base1=200646837 head1=200646837 noattr1=200646784 inline1=200646784
+bench_counted_records base1=16690124 head1=16691583 noattr1=16690180 inline1=16666778
+bench_edit_distance base1=580704999 head1=579405024 noattr1=579404971 inline1=578524972
+bench_fib base1=257763592 head1=257763592 noattr1=257763651 inline1=257763651
+bench_floats base1=274950327 head1=274950327 noattr1=274950334 inline1=274950334
+bench_hashmap base1=465567535 base2=465567535 head1=461779211 head2=461779211 noattr1=461779220 noattr2=461779220 inline1=454291590 inline2=454291590
+bench_int32 base1=2900422198 head1=2900422198 noattr1=2900422174 inline1=2900422174
+bench_json_edit base1=120263834 head1=120273548 noattr1=120246562 inline1=120222940
+bench_json_navigate base1=2041659401 head1=2041659476 noattr1=2041658880 inline1=2034558293
+bench_json_parse_typed base1=2453137976 head1=2447537323 noattr1=2447564933 inline1=2430054513
+bench_json_parse_union base1=3554423905 head1=3544895648 noattr1=3544895641 inline1=3544925524
+bench_json_parse_value base1=2985259514 head1=2985288207 noattr1=2985256197 inline1=3110652010
+bench_loops base1=1091485943 head1=1091485943 noattr1=1091485919 inline1=1091485919
+bench_module_let base1=180426917 head1=180426917 noattr1=180426923 inline1=180426923
+bench_nbody base1=1130424479 head1=1130424479 noattr1=1130424455 inline1=1130424455
+bench_nested_read_stores base1=77253530 head1=77253530 noattr1=77253548 inline1=77253548
+bench_option_text base1=578142242 head1=578142242 noattr1=578142316 inline1=578142316
+bench_permutations base1=66689696 head1=66689654 noattr1=69229823 inline1=66689526
+bench_shapes base1=637407549 head1=637407427 noattr1=637408002 inline1=641407196
+bench_sort base1=642224191 head1=642223798 noattr1=642223820 inline1=647223540
+bench_strings base1=721776911 head1=721776689 noattr1=721776698 inline1=723777185
+bench_weakmap base1=1858736132 head1=1857022434 noattr1=1863209419 inline1=1856332899
+bench_weakmap_handlers base1=535737837 head1=531993015 noattr1=531993008 inline1=531993008
+bench_weakmap_handlers_cycle base1=1936750662 head1=1936676623 noattr1=1936510397 inline1=1936205284
+bench_weakmap_key_decrements base1=87783248 head1=87709147 noattr1=87716763 inline1=87825812
+== cleanup
+/dev/vdb1        64G   21G   43G  33% /
+exit 0
+/: 57.9 GiB (62144802816 bytes) trimmed on /dev/vdb1
