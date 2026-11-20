@@ -1,0 +1,381 @@
+// velt/lang/string (internal): `repeat`, `padStart` and `padEnd` (std/prelude/string.velt), in
+// Velt (#2198).
+//
+// Lengths count UTF-16 code units, as in JavaScript: `padStart(5, "😀")` of "" is two whole
+// characters and the high half of a third. The text is built in a string builder of the final
+// size. Its appends join a high surrogate that ends the text with a low one that starts the next
+// piece into their character (velt_rt `str/push.rs`), so a seam between two copies, between the
+// fill and the string, or after a cut fill is the same text JavaScript has there.
+//
+// Every builder call passes the builder first and only locals after it: an argument that is a
+// call would make the compiler copy the builder first, and the append would go to the copy.
+
+import {
+  addressArray,
+  arrayCopyBytes,
+  arrayDataAddress,
+  arraySetLen,
+  arrayWithCapacity,
+  strAsciiWords,
+  strbufPushAsciiWords,
+  strByteAt,
+  strByteLen,
+  strDataAddress,
+  strLen,
+  strLoadPartialU8x16,
+  strLoadU8x16,
+} from "velt/lang/intrinsics";
+import { codePoint4 } from "velt/lang/string/code_units";
+
+declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
+declare function velt_rt_str_from_char_code(code: i64): string;
+declare function velt_rt_strbuf_new(cap: u64, out: string);
+declare function velt_rt_strbuf_push_str(buf: string, s: string);
+declare function velt_rt_strbuf_finish(buf: string, out: string);
+declare function velt_rt_strbuf_push_u8s(buf: string, bytes: u8[], len: u64, units: u64);
+declare function velt_rt_str_is_well_formed(s: string): bool;
+declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
+declare function velt_simd_u8x16_as_u64x2(v: u8x16): u64x2;
+declare function velt_simd_u64x2_lane(v: u64x2, index: u64): u64;
+
+/** The byte `b` in each byte of a word. */
+function spread(b: u8): u64 {
+  return (b as u64) * 0x0101010101010101;
+}
+
+/** Appends `count` copies of the ASCII byte `b` to the builder `buf`, 24 at a time, inline. */
+function pushRun(buf: string, b: u8, count: usize) {
+  const w = spread(b);
+  let left = count;
+  while (left >= 24) {
+    strbufPushAsciiWords(buf, w, w, w, 24);
+    left -= 24;
+  }
+  if (left > 0) {
+    strbufPushAsciiWords(buf, w, w, w, left);
+  }
+}
+
+/** From this many copies on, `repeat` of text that is not a few ASCII bytes doubles its copies. */
+const DOUBLING: usize = 8;
+/** The longest ASCII result that is stored piece by piece; a longer one is laid out at once. */
+const LAID_OUT: usize = 512;
+/** The longest ASCII string whose copies are stored block by block. */
+const BLOCKS: usize = 64;
+/** Fewer copies than this are appended as strings. */
+const FEW: usize = 4;
+/** The most bytes of an inline string that is not ASCII (rt_abi.md "Strings"). */
+const INLINE_WIDE: usize = 22;
+
+/**
+ * `times` copies (two or more) of `s`, a result short enough to be an inline string, as every
+ * string on the way then is: nothing is allocated. What is built doubles, most significant bit
+ * of `times` first, and takes one more copy where `times` has a bit; `+` joins two halves of a
+ * pair that meet.
+ */
+function joined(s: string, times: usize): string {
+  let bit: usize = 1 << (62 - times.leadingZeros());
+  let out = s + s;
+  if ((times & bit) != 0) {
+    out += s;
+  }
+  bit = bit >> 1;
+  while (bit != 0) {
+    const twice = out + out;
+    out = (times & bit) != 0 ? twice + s : twice;
+    bit = bit >> 1;
+  }
+  return out;
+}
+
+/**
+ * `times` copies of `s` (`n` bytes, `total` in all; ASCII or well-formed), each appended to a
+ * builder of the result's size from a view of `s`'s bytes, its UTF-16 length known.
+ */
+function copied(s: string, n: usize, times: usize, total: usize): string {
+  const view: u8[] = unsafe { addressArray<u8>(strDataAddress(s), n) };
+  const units = strLen(s) as u64;
+  let buf = "";
+  velt_rt_strbuf_new(total as u64, buf);
+  for (let k: usize = 0; k < times; k++) {
+    velt_rt_strbuf_push_u8s(buf, view, n as u64, units);
+  }
+  return buf;
+}
+
+/**
+ * `times` copies of `s` (`n` bytes, `total` in all; ASCII or well-formed), laid out in a byte
+ * array which a builder of the result's size takes in one append: a copy of at most 16 bytes is
+ * stored once per copy, a longer one is copied in and doubled in place until the array is full.
+ */
+function doubled(s: string, n: usize, times: usize, total: usize): string {
+  // Room for a whole 16-byte store at the last copy.
+  const bytes: u8[] = arrayWithCapacity(total + 16);
+  arraySetLen(bytes, total + 16);
+  if (n <= 16) {
+    // Each store writes the copy and bytes past it, which the next store writes over.
+    const v = n == 16 ? strLoadU8x16(s, 0) : strLoadPartialU8x16(s, 0, n as u64);
+    let at: usize = 0;
+    while (at < total) {
+      velt_simd_u8x16_store(v, bytes, at as u64);
+      at += n;
+    }
+  } else {
+    const view: u8[] = unsafe { addressArray<u8>(strDataAddress(s), n) };
+    arrayCopyBytes(bytes, 0, view, 0, n);
+    // The array's own bytes, read while it is written further on: the ranges never overlap.
+    const built: u8[] = unsafe { addressArray<u8>(arrayDataAddress(bytes), total) };
+    let have = n;
+    while (have < total) {
+      const more = have <= total - have ? have : total - have;
+      arrayCopyBytes(bytes, have, built, 0, more);
+      have += more;
+    }
+  }
+  let buf = "";
+  velt_rt_strbuf_new(total as u64, buf);
+  velt_rt_strbuf_push_u8s(buf, bytes, total as u64, (strLen(s) * times) as u64);
+  return buf;
+}
+
+/**
+ * `s.repeat(count)`, for a `count` the caller has checked: not negative, and the result within
+ * a string's length. Nothing is built on the way but the result (and, for a long one, the byte
+ * array it is laid out in), by what is cheapest for the text and the size:
+ * - ASCII of at most 24 bytes: copies laid out in three words (`words`).
+ * - Longer ASCII, up to a few hundred bytes in all: stored block by block (`blocks`).
+ * - Text that is not ASCII, in a result short enough to be inline: joined (`joined`).
+ * - Otherwise two or three copies are appended as strings, a few more from a view of the
+ *   string's bytes (`copied`), and many are laid out in a byte array (`doubled`).
+ */
+export function repeat(s: string, count: i64): string {
+  const n = strByteLen(s);
+  if (count <= 0 || n == 0) {
+    return "";
+  }
+  if (count == 1) {
+    return velt_rt_str_byte_slice(s, 0, n as u64);
+  }
+  const times = count as usize;
+  const total = n * times;
+  if (strLen(s) == n) {
+    if (n <= 24) {
+      // Two copies of 9 to 11 bytes are an inline string, but more than the words of one copy.
+      if (n > 8 && total <= 23) {
+        return joined(s, times);
+      }
+      return total <= LAID_OUT ? words(s, n, total) : doubled(s, n, times, total);
+    }
+    if (n <= BLOCKS && total <= LAID_OUT) {
+      return blocks(s, n, times, total);
+    }
+  } else {
+    if (total <= INLINE_WIDE) {
+      return joined(s, times);
+    }
+    // Text with a lone surrogate is appended as strings: a copy that ends with a high one
+    // joins the next that starts with a low one.
+    if (!velt_rt_str_is_well_formed(s)) {
+      return appended(s, times, total);
+    }
+  }
+  if (times < FEW && n > BLOCKS) {
+    return appended(s, times, total);
+  }
+  return times < DOUBLING ? copied(s, n, times, total) : doubled(s, n, times, total);
+}
+
+/** `times` copies of `s` (`total` bytes), each appended as the string it is. */
+function appended(s: string, times: usize, total: usize): string {
+  let buf = "";
+  velt_rt_strbuf_new(total as u64, buf);
+  for (let k: usize = 0; k < times; k++) {
+    velt_rt_strbuf_push_str(buf, s);
+  }
+  return buf;
+}
+
+/** The word whose byte `i` is byte `(i + phase) % n` of the `n` bytes (at most 8) in `w`. */
+function periodic(w: u64, n: usize, phase: usize): u64 {
+  let bits = (n * 8) as u64;
+  const turn = (phase * 8) as u64;
+  // One copy turned by `phase` bytes, then doubled until the word is full.
+  let out = turn == 0 ? w : (w >> turn) | (w << (bits - turn));
+  if (bits < 64) {
+    out = out & ((1 << bits) - 1);
+  }
+  while (bits < 64) {
+    out = out | (out << bits);
+    bits = bits * 2;
+  }
+  return out;
+}
+
+/** `w` with only its low `len` bytes (at most 8) kept. */
+function low(w: u64, len: usize): u64 {
+  return len >= 8 ? w : w & ((1 << ((len * 8) as u64)) - 1);
+}
+
+/**
+ * `total` bytes (more than `n`) of copies of the ASCII `s` (`n` bytes, at most 24), from three
+ * words that hold whole copies: a result of at most 23 bytes is those words, an inline string;
+ * a longer one takes them again and again, stored inline into a builder of its size.
+ */
+function words(s: string, n: usize, total: usize): string {
+  let w0: u64 = 0;
+  let w1: u64 = 0;
+  let w2: u64 = 0;
+  let chunk = n;
+  if (n <= 8) {
+    // As many copies as 24 bytes hold: each word starts where the one before it stopped.
+    const w = velt_simd_u64x2_lane(
+      velt_simd_u8x16_as_u64x2(strLoadPartialU8x16(s, 0, n as u64)),
+      0,
+    );
+    chunk = (24 / n) * n;
+    w0 = periodic(w, n, 0);
+    w1 = periodic(w, n, 8 % n);
+    w2 = periodic(w, n, 16 % n);
+  } else {
+    // One copy, as its bytes are.
+    const head = velt_simd_u8x16_as_u64x2(
+      n >= 16 ? strLoadU8x16(s, 0) : strLoadPartialU8x16(s, 0, n as u64),
+    );
+    w0 = velt_simd_u64x2_lane(head, 0);
+    w1 = velt_simd_u64x2_lane(head, 1);
+    if (n > 16) {
+      w2 = velt_simd_u64x2_lane(
+        velt_simd_u8x16_as_u64x2(strLoadPartialU8x16(s, 16, (n - 16) as u64)),
+        0,
+      );
+    }
+  }
+  if (total <= 23) {
+    // An inline string's bytes past its length are 0 (`n` is at most 8 here: the words are
+    // full of copies).
+    if (total <= 8) {
+      return strAsciiWords(low(w0, total), 0, 0, total);
+    }
+    if (total <= 16) {
+      return strAsciiWords(w0, low(w1, total - 8), 0, total);
+    }
+    return strAsciiWords(w0, w1, low(w2, total - 16), total);
+  }
+  let buf = "";
+  velt_rt_strbuf_new(total as u64, buf);
+  let left = total;
+  while (left >= chunk) {
+    strbufPushAsciiWords(buf, w0, w1, w2, chunk);
+    left -= chunk;
+  }
+  if (left > 0) {
+    // What is left starts a copy, as the words do.
+    strbufPushAsciiWords(buf, w0, w1, w2, left);
+  }
+  return buf;
+}
+
+/**
+ * `times` copies of the ASCII `s` (`n` bytes, more than 24), read sixteen bytes at a time and
+ * stored inline into a builder of the result's size.
+ */
+function blocks(s: string, n: usize, times: usize, total: usize): string {
+  let buf = "";
+  velt_rt_strbuf_new(total as u64, buf);
+  const rest = n & 15;
+  const whole = n - rest;
+  for (let k: usize = 0; k < times; k++) {
+    let i: usize = 0;
+    while (i < whole) {
+      const v = velt_simd_u8x16_as_u64x2(strLoadU8x16(s, i as u64));
+      strbufPushAsciiWords(buf, velt_simd_u64x2_lane(v, 0), velt_simd_u64x2_lane(v, 1), 0, 16);
+      i += 16;
+    }
+    if (rest > 0) {
+      const v = velt_simd_u8x16_as_u64x2(strLoadPartialU8x16(s, whole as u64, rest as u64));
+      strbufPushAsciiWords(buf, velt_simd_u64x2_lane(v, 0), velt_simd_u64x2_lane(v, 1), 0, rest);
+    }
+  }
+  return buf;
+}
+
+/**
+ * The first `units` code units of `fill` (fewer than it has), appended to the builder `buf`: a
+ * range of its bytes, and the high half of a pair as a lone surrogate when the cut falls
+ * between its halves.
+ */
+function pushPrefix(buf: string, fill: string, units: usize) {
+  let i: usize = 0;
+  let u: usize = 0;
+  let half: i64 = -1;
+  while (u < units) {
+    const b = strByteAt(fill, i as u64);
+    if (b < 0xf0) {
+      i += b < 0x80 ? 1 : b < 0xe0 ? 2 : 3;
+      u++;
+    } else if (u + 2 <= units) {
+      i += 4;
+      u += 2;
+    } else {
+      half = (0xd800 + ((codePoint4(fill, i) - 0x10000) >> 10)) as i64;
+      u++;
+    }
+  }
+  const whole = velt_rt_str_byte_slice(fill, 0, i as u64);
+  velt_rt_strbuf_push_str(buf, whole);
+  if (half >= 0) {
+    const high = velt_rt_str_from_char_code(half);
+    velt_rt_strbuf_push_str(buf, high);
+  }
+}
+
+/** Appends `missing` code units of `fill` (not empty) repeated to the builder `buf`. */
+function pushFill(buf: string, fill: string, missing: usize) {
+  const fb = strByteLen(fill);
+  if (fb == 1) {
+    pushRun(buf, strByteAt(fill, 0), missing);
+    return;
+  }
+  const fu = strLen(fill);
+  for (let k: usize = 0; k < missing / fu; k++) {
+    velt_rt_strbuf_push_str(buf, fill);
+  }
+  const rest = missing % fu;
+  if (rest > 0) {
+    pushPrefix(buf, fill, rest);
+  }
+}
+
+/** `padStart` (`atStart`) or `padEnd` of `s` to `target` code units with `fill`. */
+function pad(s: string, target: i64, fill: string, atStart: bool): string {
+  const n = strByteLen(s);
+  const units = strLen(s) as i64;
+  const fb = strByteLen(fill);
+  if (target <= units || fb == 0) {
+    return velt_rt_str_byte_slice(s, 0, n as u64);
+  }
+  const missing = (target - units) as usize;
+  let buf = "";
+  // Room for the string and every copy of the fill, the cut one counted whole.
+  velt_rt_strbuf_new((n + (missing / strLen(fill) + 1) * fb) as u64, buf);
+  if (!atStart) {
+    velt_rt_strbuf_push_str(buf, s);
+  }
+  pushFill(buf, fill, missing);
+  if (atStart) {
+    velt_rt_strbuf_push_str(buf, s);
+  }
+  let out = "";
+  velt_rt_strbuf_finish(buf, out);
+  return out;
+}
+
+/** `s.padStart(target, fill)`. */
+export function padStart(s: string, target: i64, fill: string): string {
+  return pad(s, target, fill, true);
+}
+
+/** `s.padEnd(target, fill)`. */
+export function padEnd(s: string, target: i64, fill: string): string {
+  return pad(s, target, fill, false);
+}
