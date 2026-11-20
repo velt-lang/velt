@@ -87,6 +87,14 @@ describe("Pike machine", () => {
     }
   });
 
+  it("matches nothing between the halves of a pair with the u flag, as V8", () => {
+    expect(pk("\\B", "u", "a\u{1F600}")).toEqual([2, 2]);
+    expect(bt("\\B", "u", "a\u{1F600}")).toEqual([2, 2]);
+    expect(pk("\\B|x", "u", "a\u{1F600}x")).toEqual([2, 2]);
+    expect(pk(".\\B", "u", "a\u{1F600}")).toEqual([1, 5]);
+    expect(pk("(?:)", "u", "\u{1F600}", 1)).toEqual([1, 1]);
+  });
+
   it("finds literals by their grams", () => {
     const dna = "ttgacgggtaaagctagctttacccaaggtaaacct".repeat(3);
     expect(fd("agggtaaa|tttaccct", "", dna)).toEqual([]);
