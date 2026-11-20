@@ -1,0 +1,10 @@
+mac-36ea: #3289 progress (VM, t1/t4; b = #3256's std, main = 9cb569834 before the 9d stack). Pushed 59ceb967d (YIELDED; Mac checks all green); local e574402ea on top, measured std-only:
+- spawn_many: b +1.80/+1.60, main +3.98/+3.84 (was +6.25/+4.64 vs main)
+- race_select: b +1.46/+1.06, main +3.70/+5.23 (t4 jumps between runs; was +4.49/+6.32)
+- timers_due_reversed: b +4.12/+3.46, main +2.56/+3.15
+- timers_due_stored: b +2.80/+2.28, main +1.29/+2.09
+- race_yield: main -14.5/-13.7 (passes)
+- pingpong_colocated: b +0.4/+0.5, main +0.6/+3.5 (#3256 itself is already +3.0% vs main at t4 on that row)
+- all 7 yield goldens match at 1/4 threads.
+Profile vs main, spawn_many: what's left is ~23 instr/task in the awaited root yield and its resume. The two 'is this cx the root's' checks cost 3 each: t.main()'s acquire load + E_VT. The yield store and state load cost a few more, and call setup the rest. race_select: schedShare and node.run/release are no longer inlined where main inlined them (the inliner's budget moved; net ~+6M), plus schedYield itself, not inlined in produce$poll.
+Next ideas: (a) a cheaper 'root waker' test than t.main()+E_VT (the task's vtable at a fixed address); (b) mark schedYield @inline("always") or split its cold paths so it inlines; (c) for timers_due_reversed, the per-sleep between() (a turn's microtasks + woken promises, which Node's order needs) — try skipping the woken-stack load when no node ran. I'll write those next and ask for a slot.

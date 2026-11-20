@@ -1,0 +1,7 @@
+#3289 and the race_yield row's baseline (question for the coordinator/owner):
+
+- bench/async/race_yield.velt is not on main: 9d-1 (#3249) adds it, measuring the stored yieldNow() leaf of 9d-1/#3256. That leaf resumes a stored yield on the poller's next poll, which is not Node's order (#3241 is about exactly that).
+- #3289 gives stored yields Node's order: creation order, each a turn of its own, the microtasks and woken promises between turns. Against #3256's leaf, race_yield is +10.3% (t1) / +9.8% (t4) after three rounds of cuts (from +18.9%). Per round it pays a stamp for each of its two stored yields (generation and number), the root's turn, and a poll that sees the generation moved on. I see no way below about +8% while each stored yield keeps its own place in creation order; a leaf with the wrong order is cheaper by construction.
+- Every row that is on main is within or near ±3% (worst: spawn_many +4.9%/+2.5%, timers_due_reversed +3.6%/+2.9%, pingpong_colocated t4 +3.1%); the cut written now (e6b0ce26b) targets those.
+
+Question: is race_yield's ±3% measured against #3256's leaf, which never landed on main and has the wrong order? Or is its baseline what #3289 lands with, since the row is new in this stack? If it has to be within 3% of the leaf, the design needs to change again: stored yields would lose their own place in creation order, and the #3241 goldens would no longer match Node.
