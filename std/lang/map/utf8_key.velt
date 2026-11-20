@@ -63,6 +63,7 @@ unsafe function wordAt(at: usize): u64 {
  * Unsafe: the bytes `at` to `at + rest` must be readable.
  */
 @inline("always")
+// SAFETY: an unsafe function: its doc comment's `Unsafe:` paragraph says what callers guarantee.
 unsafe function tailWord(at: usize, rest: usize): u64 {
   let word: u64 = 0;
   let shift: u64 = 0;
