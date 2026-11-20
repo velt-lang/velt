@@ -5,7 +5,7 @@
 
 /** A Fenwick tree over slots, 1 for a live slot, 0 for a hole. */
 export class TreePositions {
-  // Node `k` (1-based, at `tree[k - 1]`) sums the slots `(k - lowbit(k), k]`.
+  /** Node `k` (1-based, at `tree[k - 1]`) sums the slots `(k - lowbit(k), k]`. */
   tree: usize[] = [];
 
   /** The tree of `live` (a slot is live when its flag is true). */
