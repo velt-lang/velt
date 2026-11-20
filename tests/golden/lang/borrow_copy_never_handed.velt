@@ -1,3 +1,4 @@
+// check: no leaks
 // A copy of a counted field (`const d = h.arr`) handed to a function that never returns: the
 // callee replaces the field, which drops the array's last reference but for `d`'s own, while
 // it still reads `d`. In release builds the copy borrows only when no call may free while it is
