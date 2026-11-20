@@ -270,3 +270,30 @@ fn descends(cx: &Ctx, d: DefId, base: DefId) -> bool {
     }
     false
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    ValueIndex {
+        list, has, by_arity, exact,
+    }
+    Arity {
+        open, at,
+    }
+    Position {
+        all, by_head, ifaces,
+    }
+}
+crate::units::codec::enums! {
+    @fielded Head {
+        0 => Adt(f0),
+        1 => Dyn(f0),
+        2 => Kind(f0),
+    }
+}
+
+/// `Head` is listed `@fielded`: it ends from zeros, so damaged input ends in it.
+#[cfg(test)]
+#[test]
+fn head_ends_on_damaged_input() {
+    assert!(crate::units::codec::ends_from_zeros::<Head>());
+}

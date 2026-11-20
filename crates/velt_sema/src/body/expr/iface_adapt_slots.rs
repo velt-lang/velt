@@ -519,3 +519,10 @@ pub(super) fn unresolved_slot(
         cx.ty.has_error(f) || cx.ty.has_error(g)
     })
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    AdapterParts {
+        def, self_ty, inner, iface, iname, from, to, generics, module, span,
+    }
+}

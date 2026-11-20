@@ -33,6 +33,19 @@ impl Codec for u8 {
     }
 }
 
+impl Codec for u16 {
+    fn enc(&self, w: &mut Writer) {
+        w.uint(u64::from(*self));
+    }
+    fn dec(r: &mut Reader) -> Self {
+        let v = r.u32();
+        u16::try_from(v).unwrap_or_else(|_| {
+            r.fail_damaged();
+            0
+        })
+    }
+}
+
 impl Codec for u32 {
     fn enc(&self, w: &mut Writer) {
         w.uint(u64::from(*self));
