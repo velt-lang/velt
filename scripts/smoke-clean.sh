@@ -65,7 +65,7 @@ step "prebuilt hook modules (shipped objects)"
 VELT_BUILD_CACHE=off VELT_STD_OBJECT_STATS=1 "$velt" build "$repo/scripts/smoke-prebuilt.velt" \
     -o "$work/prebuilt" 2>"$work/prebuilt.stats" || { cat "$work/prebuilt.stats" >&2; exit 1; }
 for module in number_digits number_parse weak; do
-    grep -q "prebuilt hooks: lang/hooks/$module: object found (shipped)" "$work/prebuilt.stats" ||
+    grep -q "prebuilt hooks: std/lang/hooks/$module: object found (shipped)" "$work/prebuilt.stats" ||
         { cat "$work/prebuilt.stats" >&2; echo "the build did not link the toolchain's object of lang/hooks/$module" >&2; exit 1; }
 done
 out=$("$work/prebuilt")

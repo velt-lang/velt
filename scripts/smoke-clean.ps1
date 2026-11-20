@@ -61,7 +61,7 @@ $ErrorActionPreference = "Stop"
 Remove-Item Env:VELT_BUILD_CACHE, Env:VELT_STD_OBJECT_STATS
 if ($Code -ne 0) { throw "velt build smoke-prebuilt.velt failed ($Code): $Stats" }
 foreach ($Module in @("number_digits", "number_parse", "weak")) {
-    if ($Stats -notmatch "prebuilt hooks: lang/hooks/${Module}: object found \(shipped\)") {
+    if ($Stats -notmatch "prebuilt hooks: std/lang/hooks/${Module}: object found \(shipped\)") {
         throw "the build did not link the toolchain's object of lang/hooks/${Module}: $Stats"
     }
 }
