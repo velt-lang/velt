@@ -424,7 +424,7 @@ impl Reader {
         self.error = None;
     }
 
-    /// One complete value of any kind, built as a `json.Value` tree.
+    /// The text of one complete value of any kind (a driver's `JsonValue` member, parsed by std).
     pub fn value(&mut self) -> Option<Vec<u8>> {
         self.value_start(|_| true)?;
         let start = self.sc.pos;

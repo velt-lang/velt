@@ -112,10 +112,8 @@ export function isProxy<T>(v: T): bool {
  */
 export function beginVisit(id: u64): bool {
   const n = VISIT_DEPTH.get();
-  for (let i: u64 = 0; i < n; i++) {
-    if (visitAt(i) == id) {
-      return false;
-    }
+  if (n > 0 && isVisiting(id, n)) {
+    return false;
   }
   if (n == 0) {
     VISIT0.set(id);
@@ -130,6 +128,43 @@ export function beginVisit(id: u64): bool {
   }
   VISIT_DEPTH.set(n + 1);
   return true;
+}
+
+// Whether `id` is among the `n` (at least one) visits under way: the slots, then the deep block's
+// words in one loop.
+function isVisiting(id: u64, n: u64): bool {
+  if (VISIT0.get() == id) {
+    return true;
+  }
+  if (n == 1) {
+    return false;
+  }
+  if (VISIT1.get() == id) {
+    return true;
+  }
+  if (n == 2) {
+    return false;
+  }
+  if (VISIT2.get() == id) {
+    return true;
+  }
+  if (n == 3) {
+    return false;
+  }
+  if (VISIT3.get() == id) {
+    return true;
+  }
+  if (n == VISIT_SLOTS) {
+    return false;
+  }
+  const p = VISIT_DEEP.get() as usize;
+  const end = p + 8 + ((n - VISIT_SLOTS) as usize) * 8;
+  for (let a = p + 8; a < end; a += 8) {
+    if (visitWord(a) == id) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /** Ends the innermost visit `beginVisit` started. */
@@ -148,24 +183,6 @@ export function endVisit(): void {
     }
     VISIT_DEEP.set(0);
   }
-}
-
-// The identity visited at depth `i` (below `VISIT_DEPTH`).
-function visitAt(i: u64): u64 {
-  if (i == 0) {
-    return VISIT0.get();
-  }
-  if (i == 1) {
-    return VISIT1.get();
-  }
-  if (i == 2) {
-    return VISIT2.get();
-  }
-  if (i == 3) {
-    return VISIT3.get();
-  }
-  const p = VISIT_DEEP.get() as usize;
-  return visitWord(p + 8 + ((i - VISIT_SLOTS) as usize) * 8);
 }
 
 // Puts `id` at position `k` of the deep block, growing it first when full.
