@@ -682,7 +682,7 @@ crate::units::codec::structs! {
     Lazy {
         on, check_all, native_executor, modules, subclasses, user_record, generic_any,
         record_conversion, record_hooks, sched_hooks, float_text, float_write, dyn_held,
-        dyn_generic, cycle_closed, cycle_seen, cycles, live, stubs, printable,
+        dyn_generic, cycle_closed, cycle_seen, cycles, live, stubs, printable, module_hooks,
     }
     Mode {
         whole, named,

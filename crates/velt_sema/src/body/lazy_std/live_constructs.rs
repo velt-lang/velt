@@ -524,6 +524,6 @@ fn may_print_int(cx: &mut Ctx, t: TyId) -> bool {
 // The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
 crate::units::codec::structs! {
     Assumed {
-        constructs, defs, record_conversion, tasks, hooks,
+        constructs, defs, record_conversion, tasks, hooks, module_state,
     }
 }
