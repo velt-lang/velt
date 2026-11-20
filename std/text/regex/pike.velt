@@ -52,7 +52,7 @@ export function pikeReset(prog: Program, m: Search): void {
 
 /** Adds to list `list` the threads that instruction `pc0` leads to at byte `pos` without
  * reading a character, in the program's order of preference, with the slots of `m.work`. */
-function add(
+export function add(
   prog: Program,
   m: Search,
   s: string,

@@ -19,6 +19,10 @@ true true false true
 xé1é<1>y ébüa$<a
 é[11éé$]é 😀<😀|😀>😀 aé$0$1b
 d83d de00 61 d83d d83d de00 [ 'a', ',', 'b', ';' ]
+[a] [abab] [aab] [x] [a]
+0,2,4 1,2,3,4 2,4,5 0,1,2,3 0,2,3,4 0,2,3
+true false false true true
+true false 5000 b aa, 0 [b]
 Invalid regular expression: /(a/: Unterminated group
 Invalid regular expression: /a)/: Unmatched ')'
 Invalid regular expression: /a**/: Nothing to repeat
