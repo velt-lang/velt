@@ -13,7 +13,7 @@ import { Done } from "velt/fs/whole/done";
 import { readAll } from "velt/fs/whole/read_all";
 import { utf8Encode } from "velt/encoding/utf8";
 import { addressLoad } from "velt/lang/intrinsics";
-import { asFile, winPath } from "velt/fs/whole/win_path";
+import { asFile, winPath, withoutSeparators } from "velt/fs/whole/win_path";
 import { errnoOfWin32 } from "velt/os/win_error";
 
 /** C's `SECURITY_ATTRIBUTES` and `OVERLAPPED`: never passed. */
@@ -198,7 +198,8 @@ export function readText(c: readonly u8[], path: string): Done<string> {
 
 /** Writes `data` as UTF-8 to the file at `path`, created if missing, truncated or `append`ed to. */
 export function writeText(c: readonly u8[], path: string, data: string, append: bool): Done<bool> {
-  const w = winPath(path);
+  // `f\` writes `f`, made if missing, and `d\` is EISDIR, as in Node.
+  const w = winPath(withoutSeparators(path));
   if (w === null) {
     return { value: null, error: osError(errnoOfWin32(ERROR_FILE_NOT_FOUND), "open", path) };
   }
