@@ -27,6 +27,8 @@ import { Search } from "velt/text/regex/search";
 
 /** Set in a job of the stack that restores a capture slot. */
 const RESTORE: u64 = (1 as u64) << 63;
+/** Set in a job that says all an instruction leads to is in the list. */
+const FINISHED: u64 = (1 as u64) << 62;
 const SHIFT: u64 = 40;
 const LOW: u64 = ((1 as u64) << 40) - 1;
 
@@ -67,6 +69,7 @@ function add(
   const stack = m.stack;
   const work = m.work;
   const ns = work.length;
+  const reenter = prog.marks > 0;
   let count = m.count[list];
   stack.push(pc0 as u64);
   while (stack.length > 0) {
@@ -75,17 +78,34 @@ function add(
       work[((job ^ RESTORE) >> SHIFT) as usize] = ((job & LOW) as i64) - 1;
       continue;
     }
+    if ((job & FINISHED) != 0) {
+      const done = (job ^ FINISHED) as usize;
+      const at = sparse[list * n + done] as usize;
+      if (at >= count || dense[list * n + at] as usize != done) {
+        sparse[list * n + done] = count as u32;
+        dense[list * n + count] = done as u32;
+        count++;
+      }
+      continue;
+    }
     let pc = job as usize;
     while (true) {
       const at = sparse[list * n + pc] as usize;
       if (at < count && dense[list * n + at] as usize == pc) {
         break;
       }
-      sparse[list * n + pc] = count as u32;
-      dense[list * n + count] = pc as u32;
-      count++;
       const op = code[3 * pc] & OP_MASK;
       const a = code[3 * pc + 1];
+      // An instruction that reads nothing joins the list when all it leads to has: in a program
+      // with a loop whose body can match nothing, the loop comes back to it an iteration later,
+      // and what it still leads to is then the next choice (backtrack.velt).
+      if (reenter && op != OP_CHAR && op != OP_CLASS && op != OP_SPAN && op != OP_MATCH) {
+        stack.push(FINISHED | (pc as u64));
+      } else {
+        sparse[list * n + pc] = count as u32;
+        dense[list * n + count] = pc as u32;
+        count++;
+      }
       if (op == OP_JUMP) {
         pc = a as usize;
       } else if (op == OP_SPLIT) {

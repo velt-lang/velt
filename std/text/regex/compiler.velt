@@ -261,10 +261,22 @@ export class Compiler {
       return;
     }
     if (n.b == UNBOUNDED) {
-      this.prog.plain = this.prog.plain && !canBeEmpty(n.kids[0]);
+      // An iteration that matches nothing is not taken: where the loop's head has been, no
+      // iteration ends (program.velt `OP_NONEMPTY`).
+      const empty = canBeEmpty(n.kids[0]);
+      const head = this.here();
+      const mark = this.prog.marks;
+      if (empty) {
+        this.prog.plain = false;
+        this.prog.marks++;
+        this.emit(OP_ENTER, mark, 0);
+      }
       const split = this.split(n.greedy);
       this.body(n, true);
-      this.emit(OP_JUMP, split as u32, 0);
+      if (empty) {
+        this.emit(OP_NONEMPTY, mark, 0);
+      }
+      this.emit(OP_JUMP, head, 0);
       this.patch(split, n.greedy ? 2 : 1);
       return;
     }
@@ -272,9 +284,12 @@ export class Compiler {
     const empty = canBeEmpty(n.kids[0]);
     for (let i = n.a; i < n.b; i++) {
       const before = this.here();
+      // The marks of the quantifiers inside the body come after this one's.
+      const mark = this.prog.marks;
       if (empty) {
         this.prog.plain = false;
-        this.emit(OP_ENTER, this.prog.marks, 0);
+        this.prog.marks++;
+        this.emit(OP_ENTER, mark, 0);
       }
       exits.push(this.split(n.greedy));
       this.body(n, i > 0);
@@ -285,8 +300,7 @@ export class Compiler {
         break;
       }
       if (empty) {
-        this.emit(OP_NONEMPTY, this.prog.marks, 0);
-        this.prog.marks++;
+        this.emit(OP_NONEMPTY, mark, 0);
       }
     }
     for (let i: usize = 0; i < exits.length; i++) {
