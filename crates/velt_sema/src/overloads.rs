@@ -397,6 +397,12 @@ pub(crate) fn signature_fn(
                 if let Some(arrow) = adapter {
                     return arrow;
                 }
+                let cast = (imp.params.get(i)).and_then(|ip| {
+                    crate::overload_adapter::rest_param_cast(p, ip, &sig, imp, span)
+                });
+                if let Some(cast) = cast {
+                    return cast;
+                }
                 match p.rest {
                     true => expr(ast::ExprKind::Spread(Box::new(read))),
                     false => read,
