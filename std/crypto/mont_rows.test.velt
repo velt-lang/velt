@@ -129,6 +129,17 @@ describe("Mont's limb loops, on addresses and on arrays", () => {
           expect(text(r1)).toBe(text(want));
         }
       }
+      // 2^(64 k) + n - 1: the borrow of the lowest limb runs through every limb above it, each
+      // equal to n's, and leaves all ones.
+      const run = n.slice();
+      run[0] -= 1;
+      run.push(1);
+      const r3 = g.make(k, 0);
+      const r4 = g.make(k, 0);
+      raw.storeBelow(r3, run, n, k);
+      checked.storeBelow(r4, run, n, k);
+      expect(text(r3)).toBe(text(new Limbs().make(k, 1)));
+      expect(text(r4)).toBe(text(r3));
     }
   });
 
