@@ -13,7 +13,7 @@ use velt_syntax::ast;
 
 use crate::body::{FnCx, LocalKind, Want};
 use crate::ctx::Item;
-use crate::hir::{self, ExprKind as H, PatKind as P, TyId, UseMode};
+use crate::hir::{self, ExprKind as H, PatKind as P, TyId, TyKind, UseMode};
 use crate::overloads::{sig_name, sig_of};
 
 /// Why each signature rejected a call (its first error, and where), in order.
@@ -72,9 +72,61 @@ impl FnCx<'_, '_> {
             s.named_call(&sigs[k], type_args, args, exp, span)
         });
         Some(match picked {
-            Ok(k) => self.named_call(&sigs[k], type_args, args, exp, span),
+            Ok(k) => {
+                let h = self.named_call(&sigs[k], type_args, args, exp, span);
+                self.async_through_cast(&h);
+                h
+            }
             Err(misfits) => self.no_overload(&id.name, misfits, args, span),
         })
+    }
+
+    /// Is `t` a promise, or can it hold one (`number | Promise<number>`, `Promise<T> | undefined`)?
+    fn may_hold_promise(&mut self, t: TyId) -> bool {
+        let inner = self.cx.ty.opt_payload(t).unwrap_or(t);
+        let members = self.cx.union_members(inner).unwrap_or_default();
+        [t, inner]
+            .iter()
+            .chain(members.iter())
+            .any(|&m| self.cx.ty.promise_payload(m).is_some())
+    }
+
+    /// A call of signature `h` passing an async callback (one that returns a promise) where the
+    /// signature takes a callback whose rest is typed by a type parameter: the signature passes
+    /// it to the implementation as a function of `unknown` values (`rest_param_cast`), and a
+    /// promise can't be returned through one yet (#924). Refused here, not a `TypeError` when
+    /// the implementation calls it.
+    fn async_through_cast(&mut self, h: &hir::Expr) {
+        let H::Call {
+            callee: hir::Callee::Def(d, _),
+            args,
+        } = &h.kind
+        else {
+            return;
+        };
+        let Some(params) = self.cx.try_fn(*d).map(|f| f.params.clone()) else {
+            return;
+        };
+        for (p, a) in params.iter().zip(args) {
+            let rest_param = matches!(self.cx.ty.kind(p.ty), TyKind::FnPtr { params: ps, rest: true, .. }
+                if ps.last().is_some_and(|&l| matches!(self.cx.ty.kind(l), TyKind::Param(_))));
+            let promised = match self.cx.ty.kind(a.ty) {
+                TyKind::FnPtr { ret, .. } => {
+                    let ret = *ret;
+                    self.may_hold_promise(ret)
+                }
+                _ => false,
+            };
+            if rest_param && promised {
+                self.cx.error(
+                    Diagnostic::error(
+                        "an async callback can't be passed here yet: the overload's implementation calls it as a function of `unknown` values, which can't return a promise yet (#924)",
+                        a.span,
+                    )
+                    .with_note("make the callback return its value, not a promise"),
+                );
+            }
+        }
     }
 
     /// Overloaded function `name` used as a value where a function type is expected: the
@@ -288,8 +340,48 @@ impl FnCx<'_, '_> {
         }
         match self.try_coerce(h, ret) {
             Ok(h) => h,
-            Err(h) => self.checked_narrow(h, ret),
+            Err(h) if self.checked_narrows(h.ty) => self.checked_narrow(h, ret),
+            Err(h) => match self.checked_result(h, ret) {
+                Ok(h) => h,
+                Err(h) => self.checked_narrow(h, ret),
+            },
         }
+    }
+
+    /// Does [`Self::checked_narrow`] apply to a result of type `t` (a union, or nullable)?
+    fn checked_narrows(&self, t: TyId) -> bool {
+        let inner = self.cx.ty.opt_payload(t).unwrap_or(t);
+        self.cx.ty.opt_payload(t).is_some() || self.cx.union_def(inner).is_some()
+    }
+
+    /// The implementation's result `h` as the signature's `ret` where it converts only with a
+    /// check: a function, or an object with one, whose result is an `unknown` (or a promise of
+    /// one) where the signature promises a type (sigx's `serverFn`, #379): converted as an
+    /// interface adapter converts (`adapting`), through a wrapper whose results are checked
+    /// when they come (a TypeError naming the value, a documented difference from Node, where
+    /// TypeScript trusts the implementation). Only reached when the types don't match.
+    /// Is `t` a function or callable object, or does it hold one (an option of one, a member of
+    /// a union)? Where a function result may convert with a check (`checked_result`).
+    fn callable_target(&mut self, t: TyId) -> bool {
+        let inner = self.cx.ty.opt_payload(t).unwrap_or(t);
+        let members = self.cx.union_members(inner).unwrap_or_default();
+        let one = |s: &Self, t: TyId| {
+            matches!(s.cx.ty.kind(t), TyKind::FnPtr { .. }) || s.cx.is_callable_object(t)
+        };
+        one(self, t) || one(self, inner) || members.iter().any(|&m| one(self, m))
+    }
+
+    fn checked_result(&mut self, h: hir::Expr, ret: TyId) -> Result<hir::Expr, hir::Expr> {
+        // Only a function or a callable object: an array, object or interface value converted
+        // by an adapter would be a copy, where TypeScript returns the implementation's own.
+        let callable = self.callable_target(ret);
+        if !callable {
+            return Err(h);
+        }
+        let was = std::mem::replace(&mut self.adapting, true);
+        let r = self.try_coerce(h, ret);
+        self.adapting = was;
+        r
     }
 
     /// `h` (a union, or nullable) as `target`: a `match` on its member, converting each member
@@ -372,7 +464,12 @@ impl FnCx<'_, '_> {
                 pat = self.pat(P::Some(Box::new(pat)), sty, span);
             }
             let read = self.mk(H::Local(b, mode), *m, span);
-            let body = match self.try_coerce(read, target) {
+            // A function member into a function target (`(() => R) | undefined`): converted
+            // with a check, as a plain result is (`checked_result`).
+            let converted = self
+                .try_coerce(read, target)
+                .or_else(|read| self.checked_result(read, target));
+            let body = match converted {
                 Ok(b) => {
                     fits = true;
                     b
