@@ -106,8 +106,11 @@ const RUNTIME_REACH: &[(&str, &str)] = &[
 
 /// C library functions std calls that touch only the program's memory or this thread's error
 /// slot: allocation, the memory and string helpers, and `errno` (macOS's `__error`, glibc's
-/// `__errno_location`, the CRT's `_errno`; Win32's `GetLastError` and `SetLastError`, Winsock's).
+/// `__errno_location`, the CRT's `_errno`; Win32's `GetLastError` and `SetLastError`, Winsock's),
+/// ntdll's translation of a status to a Win32 error, and giving up the thread's turn.
 const PURE_C: &[&str] = &[
+    "RtlNtStatusToDosError",
+    "SwitchToThread",
     "malloc",
     "calloc",
     "realloc",
@@ -174,6 +177,11 @@ const DESCRIPTOR_C: &[&str] = &[
     "FindClose",
     "GetFileInformationByHandle",
     "GetFileInformationByHandleEx",
+    // Deleting on a handle, and opening a name relative to a directory's handle (a tree's
+    // removal, std/fs/tree/win_remove.velt, whose first open is `CreateFileW`; the reactor's
+    // device, std/lang/hooks/reactor_afd.velt).
+    "SetFileInformationByHandle",
+    "NtCreateFile",
 ];
 
 /// What the runtime's support for native packages (`velt_rt_native_*`) reaches.
@@ -508,6 +516,23 @@ mod tests {
         assert_eq!(windows, "a C function `CreatePipe`");
         let file = reaching(&["open", "fstat", "read", "close", "malloc", "__error"]);
         assert_eq!(file, "the file system");
+        // Windows' removal of a tree: its opens relative to a handle and its deletes on one are
+        // named by the `CreateFileW` that opened the root.
+        let tree = reaching(&[
+            "CreateFileW",
+            "NtCreateFile",
+            "GetFileInformationByHandleEx",
+            "SetFileInformationByHandle",
+            "RtlNtStatusToDosError",
+            "SwitchToThread",
+            "CloseHandle",
+            "GetLastError",
+        ]);
+        assert_eq!(tree, "the file system");
+        assert_eq!(
+            reaching(&["NtCreateFile", "CloseHandle"]),
+            "a C function `CloseHandle`, a C function `NtCreateFile`"
+        );
         assert_eq!(reaching(&["close", "__error"]), "a C function `close`");
         assert_eq!(reaching(&["malloc", "memcpy", "free"]), "-");
     }

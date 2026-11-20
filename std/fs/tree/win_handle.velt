@@ -1,0 +1,193 @@
+// velt/fs (internal): what std/fs/tree/win_remove.velt does on one handle: opening what a path
+// names to delete it, as itself (a link is never followed), saying what it is, and deleting it
+// on the handle. A delete has POSIX semantics and takes read-only files where the file system
+// has them (`FileDispositionInfoEx`); elsewhere it is `FileDispositionInfo`, after clearing the
+// read-only attribute if that refuses.
+
+import { Ptr } from "velt/ffi/ptr";
+
+/** C's `SECURITY_ATTRIBUTES`: never passed. */
+declare c type _SECURITY_ATTRIBUTES;
+
+declare c("c") function CreateFileW(
+  name: readonly u16[],
+  access: u32,
+  share: u32,
+  security: Ptr<_SECURITY_ATTRIBUTES> | null,
+  disposition: u32,
+  flags: u32,
+  template: Ptr<void> | null,
+): Ptr<void> | null;
+declare c("c") function GetFileInformationByHandleEx$tree(
+  handle: Ptr<void>,
+  infoClass: i32,
+  info: u64[],
+  size: u32,
+): i32;
+declare c("c") function SetFileInformationByHandle(
+  handle: Ptr<void>,
+  infoClass: i32,
+  info: readonly u64[],
+  size: u32,
+): i32;
+declare c("c") function CloseHandle(handle: Ptr<void>): i32;
+declare c("c") function GetLastError(): u32;
+declare c("c") function SwitchToThread(): i32;
+
+const INVALID_HANDLE: usize = 0xffffffffffffffff;
+const FILE_READ_ATTRIBUTES: u32 = 0x80;
+const FILE_WRITE_ATTRIBUTES: u32 = 0x100;
+const DELETE: u32 = 0x10000;
+const SYNCHRONIZE: u32 = 0x100000;
+/** What every open here asks for: to delete, and to read the attributes that say what it is. */
+export const TO_DELETE: u32 = DELETE | SYNCHRONIZE | FILE_READ_ATTRIBUTES;
+/** The right to write attributes, which clearing "read-only" needs. */
+export const TO_WRITE_ATTRIBUTES: u32 = FILE_WRITE_ATTRIBUTES;
+/** FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE. */
+export const SHARE_ALL: u32 = 7;
+const OPEN_EXISTING: u32 = 3;
+const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x02000000;
+const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x00200000;
+const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+const FILE_ATTRIBUTE_NORMAL: u64 = 0x80;
+const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+/** The bit of a reparse tag that says the entry stands for another one: a symlink, a junction. */
+const NAME_SURROGATE: u32 = 0x20000000;
+/** `FILE_INFO_BY_HANDLE_CLASS`. */
+const BASIC_INFO: i32 = 0;
+const DISPOSITION_INFO: i32 = 4;
+const ATTRIBUTE_TAG_INFO: i32 = 9;
+const DISPOSITION_INFO_EX: i32 = 21;
+/** FILE_DISPOSITION_FLAG_DELETE | _POSIX_SEMANTICS | _IGNORE_READONLY_ATTRIBUTE. */
+const DELETE_POSIX: u64 = 0x1 | 0x2 | 0x10;
+const ERROR_INVALID_FUNCTION: u32 = 1;
+const ERROR_ACCESS_DENIED: u32 = 5;
+const ERROR_NOT_SUPPORTED: u32 = 50;
+const ERROR_INVALID_PARAMETER: u32 = 87;
+const ERROR_DIR_NOT_EMPTY: u32 = 145;
+/** How often a busy file or a directory still emptying is tried, as Rust's `remove_dir_all`. */
+export const TRIES: i32 = 50;
+
+/** What a handle is. */
+export const FILE: i32 = 0;
+export const DIR: i32 = 1;
+/** A directory symlink or a junction. */
+export const DIR_LINK: i32 = 2;
+export const UNKNOWN: i32 = -1;
+
+/** The last Win32 error. */
+export function lastWin32(): u32 {
+  // SAFETY: GetLastError has no precondition.
+  return unsafe { GetLastError() };
+}
+
+/** Closes `h`, a handle this module or win_remove.velt opened, once. */
+export function close(h: Ptr<void>) {
+  // SAFETY: an open handle, closed once (the callers' rule).
+  unsafe {
+    CloseHandle(h);
+  }
+}
+
+/** Lets another thread run, between two tries. */
+export function yieldNow() {
+  // SAFETY: SwitchToThread has no precondition.
+  unsafe {
+    SwitchToThread();
+  }
+}
+
+/** `CreateFileW` of `w` as itself (a link is not followed), a directory too: the handle, or
+ * null (`lastWin32()`). */
+function create(w: readonly u16[], access: u32): Ptr<void> | null {
+  const flags = FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT;
+  // SAFETY: `w` is NUL-terminated; no security attributes and no template.
+  const h = unsafe { CreateFileW(w, access, SHARE_ALL, null, OPEN_EXISTING, flags, null) };
+  if (h === null || Ptr.addressOf(h) === INVALID_HANDLE) {
+    return null;
+  }
+  return h;
+}
+
+/**
+ * `w` opened to delete it, with `more` access too: the handle, or null (`lastWin32()`). The
+ * right to write attributes (to clear "read-only" where a delete needs that) is asked for and
+ * done without when refused.
+ */
+export function openPath(w: readonly u16[], more: u32): Ptr<void> | null {
+  const h = create(w, TO_DELETE | more | FILE_WRITE_ATTRIBUTES);
+  if (h !== null || lastWin32() !== ERROR_ACCESS_DENIED) {
+    return h;
+  }
+  return create(w, TO_DELETE | more);
+}
+
+/** Whether attributes and a reparse tag are a link's: an entry that stands for another one. */
+export function isLink(attributes: u32, tag: u32): bool {
+  return (attributes & FILE_ATTRIBUTE_REPARSE_POINT) !== 0 && (tag & NAME_SURROGATE) !== 0;
+}
+
+/** What `h` is: FILE, DIR or DIR_LINK, or UNKNOWN (`lastWin32()`). */
+export function kindOf(h: Ptr<void>): i32 {
+  // FILE_ATTRIBUTE_TAG_INFO: the attributes, then the reparse tag.
+  const info: u64[] = [0];
+  // SAFETY: `info` holds the 8 bytes the call writes, the size passed.
+  if (unsafe { GetFileInformationByHandleEx$tree(h, ATTRIBUTE_TAG_INFO, info, 8) } === 0) {
+    return UNKNOWN;
+  }
+  const attributes = (info[0] & 0xffffffff) as u32;
+  const tag = (info[0] >> 32) as u32;
+  if ((attributes & FILE_ATTRIBUTE_DIRECTORY) === 0) {
+    return FILE;
+  }
+  return isLink(attributes, tag) ? DIR_LINK : DIR;
+}
+
+/** `SetFileInformationByHandle(h, infoClass, info)`: 0, or the Win32 error. */
+function setInfo(h: Ptr<void>, infoClass: i32, info: readonly u64[], size: u32): u32 {
+  // SAFETY: `h` is open, and `info` holds at least the `size` bytes the call reads.
+  if (unsafe { SetFileInformationByHandle(h, infoClass, info, size) } !== 0) {
+    return 0;
+  }
+  return lastWin32();
+}
+
+/**
+ * Deletes what `h` is open on (its name goes at once where the file system has POSIX deletes,
+ * else when the last handle closes): 0, or the Win32 error.
+ */
+export function deleteOn(h: Ptr<void>): u32 {
+  // FILE_DISPOSITION_INFO_EX: the flags, a DWORD.
+  const posix = setInfo(h, DISPOSITION_INFO_EX, [DELETE_POSIX], 4);
+  const refused =
+    posix === ERROR_NOT_SUPPORTED ||
+    posix === ERROR_INVALID_PARAMETER ||
+    posix === ERROR_INVALID_FUNCTION;
+  if (!refused) {
+    return posix;
+  }
+  // A file system or a Windows without it. FILE_DISPOSITION_INFO: one byte, "delete".
+  const plain = setInfo(h, DISPOSITION_INFO, [1], 1);
+  if (plain !== ERROR_ACCESS_DENIED) {
+    return plain;
+  }
+  // A read-only file, which this delete refuses. FILE_BASIC_INFO: four times (0 keeps each),
+  // then the attributes.
+  if (setInfo(h, BASIC_INFO, [0, 0, 0, 0, FILE_ATTRIBUTE_NORMAL], 40) !== 0) {
+    return plain;
+  }
+  return setInfo(h, DISPOSITION_INFO, [1], 1);
+}
+
+/** `deleteOn(h)` for a directory, tried again while entries deleted in it are still going. */
+export function deleteDirOn(h: Ptr<void>): u32 {
+  let code: u32 = 0;
+  for (let i: i32 = 0; i < TRIES; i++) {
+    code = deleteOn(h);
+    if (code !== ERROR_DIR_NOT_EMPTY) {
+      break;
+    }
+    yieldNow();
+  }
+  return code;
+}

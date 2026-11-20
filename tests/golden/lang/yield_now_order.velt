@@ -1,0 +1,52 @@
+// A `yieldNow()` resumes after the microtasks queued before it (#3241): in Node a yield is a
+// macrotask, so a chain of microtasks running beside it finishes first. The expected output is
+// Node's for this program with `yieldNow` a promise `setImmediate` resolves and `spawn(p)` as
+// `p`.
+
+async function tick(name: string, n: i64): Promise<void> {
+  for (let i = 0; i < n; i++) {
+    console.log(name, i);
+    await Promise.resolve();
+  }
+}
+
+async function y(name: string): Promise<void> {
+  await yieldNow();
+  console.log(name, "yielded");
+}
+
+async function stored(name: string): Promise<void> {
+  const p = yieldNow();
+  await p;
+  console.log(name, "yielded");
+}
+
+async function joined(name: string): Promise<void> {
+  const p = Promise.resolve()
+    .then(() => console.log("then 1"))
+    .then(() => console.log("then 2"))
+    .then(() => console.log("then 3"));
+  await Promise.all([y(name), p]);
+}
+
+async function main() {
+  // An awaited yield beside a chain, joined inline (an array literal).
+  await Promise.all([y("inline"), tick("a", 4)]);
+  // The same joined as an array value.
+  const ps = [y("array"), tick("b", 3)];
+  await Promise.all(ps);
+  // A stored yield, and a yield in a `.then` chain, beside a chain.
+  await Promise.all([stored("stored"), tick("c", 3)]);
+  await Promise.all([yieldNow().then(() => console.log("then yielded")), tick("d", 3)]);
+  // A started promise that yields, awaited after the chain.
+  const s = y("started");
+  await tick("f", 3);
+  await s;
+  // Two yields in one task's chain: each comes after the microtasks queued before it.
+  await Promise.all([y("first"), tick("g", 2), y("second")]);
+  // A spawned task's root (its own cx, not a started promise's) yields beside a `.then` chain.
+  await spawn(joined("task root"));
+  console.log("done");
+}
+
+main();

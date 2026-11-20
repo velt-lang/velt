@@ -34,6 +34,12 @@ pub fn sleep(ms: i64) -> *mut VeltFut {
     crate::task::leaf::new_leaf(async move { tokio::time::sleep_until(at).await })
 }
 
+/// A leaf that is pending once (waking its task) and ready on the next poll, with an empty
+/// result (what a stored `yieldNow()` was before the executor in Velt took it over).
+pub fn yield_once() -> *mut VeltFut {
+    crate::task::leaf::new_inner_leaf(tokio::task::yield_now())
+}
+
 /// Wait for a task [`spawn_state`] started (its panic goes on here).
 pub fn join(h: JoinHandle<()>) {
     match block_on(h) {
