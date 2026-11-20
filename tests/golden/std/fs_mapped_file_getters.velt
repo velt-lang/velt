@@ -1,0 +1,105 @@
+// requires: unix
+// `MappedFile`'s reads of single values are `DataView`'s getters: every getter at every offset
+// and in both byte orders gives what a `DataView` over the file's bytes gives, the errors have
+// `DataView`'s text, and `getInt64` / `getUint64` read 64-bit integers (#3320). The file is
+// text with letters outside ASCII, so bytes of 128 and more (negative as signed) are in it. It
+// also runs under wasmtime (wasm_goldens.rs names it). Not on Windows, which has no mapping.
+import * as fs from "velt/fs";
+
+function main() {
+  const path = `velt-golden-mapped-getters-${process.pid}.tmp`;
+  let text = "";
+  for (let i = 0; i < 40; i++) {
+    text += String.fromCharCode(33 + i) + (i % 3 == 0 ? "é" : i % 3 == 1 ? "ÿ" : "€");
+  }
+  fs.writeFileSync(path, text);
+  const m = fs.MappedFile.open(path);
+  const raw = fs.readFileBytesSync(path);
+  const copy = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) {
+    copy[i] = raw[i];
+  }
+  const view = new DataView(copy.buffer);
+  const n = m.length;
+  console.log(n, view.byteLength);
+
+  // Every getter at every offset, both orders, against the DataView.
+  let same = 0;
+  let differ = 0;
+  const check = (a: number, b: number) => {
+    if (Object.is(a, b)) {
+      same += 1;
+    } else {
+      differ += 1;
+    }
+  };
+  for (let at = 0; at < n; at++) {
+    check(m.getInt8(at), view.getInt8(at));
+    check(m.getUint8(at), view.getUint8(at));
+    for (const little of [false, true]) {
+      if (at + 2 <= n) {
+        check(m.getInt16(at, little), view.getInt16(at, little));
+        check(m.getUint16(at, little), view.getUint16(at, little));
+      }
+      if (at + 4 <= n) {
+        check(m.getInt32(at, little), view.getInt32(at, little));
+        check(m.getUint32(at, little), view.getUint32(at, little));
+        check(m.getFloat32(at, little), view.getFloat32(at, little));
+      }
+      if (at + 8 <= n) {
+        check(m.getFloat64(at, little), view.getFloat64(at, little));
+      }
+    }
+  }
+  console.log(same, differ);
+
+  // The values themselves, at an odd offset. The default order is big-endian, as DataView's.
+  console.log(m.getUint8(1), m.getInt8(1), m.getUint16(1), m.getUint16(1, true), m.getInt16(1));
+  console.log(m.getUint32(1), m.getUint32(1, true), m.getInt32(1), m.getInt32(2, true));
+  console.log(m.getFloat32(3), m.getFloat32(3, true), m.getFloat64(5), m.getFloat64(5, true));
+  // 64-bit integers: the two halves are the 32-bit reads.
+  const big = m.getUint64(1);
+  const small = m.getUint64(1, true);
+  console.log(big, small, m.getInt64(1), m.getInt64(2, true));
+  console.log(
+    big == (((m.getUint32(1) as u64) << 32) | (m.getUint32(5) as u64)),
+    small == (((m.getUint32(5, true) as u64) << 32) | (m.getUint32(1, true) as u64)),
+  );
+
+  // Offsets as DataView reads them (JS's ToIndex): truncated, NaN is 0; outside is a RangeError
+  // with DataView's text, from both.
+  console.log(m.getUint8(1.9) == view.getUint8(1.9), m.getUint8(NaN) == view.getUint8(NaN));
+  console.log(m.getUint16(n - 2) == view.getUint16(n - 2), m.getUint8(-0.5) == view.getUint8(0));
+  const outside = [-1, n, n - 1, n - 3, 9007199254740992, Infinity, -Infinity];
+  for (const at of outside) {
+    console.log(at, error(() => m.getUint32(at)), error(() => view.getUint32(at)));
+  }
+  console.log(
+    error(() => m.getUint8(n)),
+    error(() => m.getUint64(n - 7)),
+    error(() => m.getFloat64(n - 7, true)),
+  );
+
+  // A part reads from its own start; an empty one has nothing to read.
+  const part = fs.MappedFile.open(path, { offset: 3, length: 10 });
+  console.log(
+    part.getUint32(0) == m.getUint32(3),
+    part.getUint16(8, true) == m.getUint16(11, true),
+  );
+  console.log(
+    error(() => part.getUint32(7)),
+    error(() => fs.MappedFile.open(path, { offset: n }).getUint8(0)),
+  );
+  fs.rmSync(path);
+}
+
+function error(read: () => number | u64): string {
+  try {
+    read();
+    return "no error";
+  } catch (e) {
+    return `${(e as Error).name}: ${(e as Error).message}`;
+  }
+}
+
+main();
