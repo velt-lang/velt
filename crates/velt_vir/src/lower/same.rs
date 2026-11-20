@@ -336,11 +336,13 @@ impl super::Cx<'_> {
     /// Does `same_values` compare two `t`s without calling `t`'s own glue of the mode's kind
     /// (`Glue::Same`, `SameValue`, `KeySame`)?
     pub(super) fn same_in_line(&mut self, t: TyId) -> bool {
-        if self.is_dynamic(t) || self.value_struct(t) {
-            return true;
-        }
+        // A C struct is a declared `struct` too, but its own glue compares its fields by the
+        // mode's number rules: asked first, or that glue would call itself.
         if self.c_struct(t) {
             return false;
+        }
+        if self.is_dynamic(t) || self.value_struct(t) {
+            return true;
         }
         if matches!(self.kind(t), TyKind::Promise(..)) || self.is_object(t) {
             return true;
