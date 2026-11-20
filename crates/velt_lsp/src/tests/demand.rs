@@ -326,5 +326,10 @@ fn the_editor_demands_nothing_for_code_that_nothing_reaches() {
     );
     assert_eq!(cli, ide);
     let demanded: Vec<&str> = ide.1.iter().map(|m| m.as_str()).collect();
-    assert_eq!(demanded, [velt_common::std_module!(lang_hooks_cpu)], "{:?}", ide.1);
+    assert_eq!(
+        demanded,
+        [velt_common::std_module!(lang_hooks_cpu)],
+        "{:?}",
+        ide.1
+    );
 }
