@@ -1,0 +1,98 @@
+// velt/text (tests): white-box tests of the matchers, run by `velt test std/`.
+import { describe, expect, it } from "velt/test";
+import { strByteLen } from "velt/lang/intrinsics";
+import { backtrack, backtrackReset } from "velt/text/regex/backtrack";
+import { Compiler } from "velt/text/regex/compiler";
+import { find } from "velt/text/regex/find";
+import { parsePattern } from "velt/text/regex/parse_pattern";
+import { Parser } from "velt/text/regex/parser";
+import { pike, pikeReset } from "velt/text/regex/pike";
+import { Search } from "velt/text/regex/search";
+
+/** The slots of the first match of `source` in `s` by the backtracker, trying every start. */
+function bt(source: string, flags: string, s: string): i64[] {
+  const p = new Parser(source, flags);
+  const tree = parsePattern(p);
+  const c = new Compiler(p);
+  c.compile(tree);
+  const m = new Search(c.prog, 2 * (c.prog.groups as usize) + 2);
+  const len = strByteLen(s);
+  backtrackReset(c.prog, m, 0, len);
+  for (let i: usize = 0; i <= len; i++) {
+    if (backtrack(c.prog, m, s, len, 0, i)) {
+      return m.slots;
+    }
+  }
+  return [];
+}
+
+/** The slots of the first match of `source` in `s` from byte `from` by the Pike machine. */
+function pk(source: string, flags: string, s: string, from: usize = 0): i64[] {
+  const p = new Parser(source, flags);
+  const tree = parsePattern(p);
+  const c = new Compiler(p);
+  c.compile(tree);
+  const m = new Search(c.prog, 2 * (c.prog.groups as usize) + 2);
+  pikeReset(c.prog, m);
+  return pike(c.prog, m, s, strByteLen(s), from, false) ? m.slots : [];
+}
+
+/** As `pk`, by `find`. */
+function fd(source: string, flags: string, s: string, from: usize = 0): i64[] {
+  const p = new Parser(source, flags);
+  const tree = parsePattern(p);
+  const c = new Compiler(p);
+  c.compile(tree);
+  const m = new Search(c.prog, 2 * (c.prog.groups as usize) + 2);
+  return find(c.prog, m, s, from, false) ? m.slots : [];
+}
+
+describe("Pike machine", () => {
+  it("agrees with the backtracker", () => {
+    const subjects = ["abbbc", "xab", "caab", "aab", "a foo b", "a\nb", "ab", "b", "\u{1F600}", "xéy", ""];
+    const patterns = ["b+", "a|ab", "(a+)(b*)", "a*?b", "\\bfoo\\b", "(?:(a)|b)*", "(a*)*", "(a*)+", ".", "é.", "x*", "(a|ab)(c|bcd)?", "[^a]+$"];
+    for (const p of patterns) {
+      for (const s of subjects) {
+        expect(pk(p, "", s)).toEqual(bt(p, "", s));
+        expect(pk(p, "u", s)).toEqual(bt(p, "u", s));
+        expect(fd(p, "", s)).toEqual(bt(p, "", s));
+      }
+    }
+  });
+
+  it("finds literals by their grams", () => {
+    const dna = "ttgacgggtaaagctagctttacccaaggtaaacct".repeat(3);
+    expect(fd("agggtaaa|tttaccct", "", dna)).toEqual([]);
+    expect(fd("[cgt]gggtaaa|tttaccc[acg]", "", dna)).toEqual([4, 12]);
+    expect(fd("[cgt]gggtaaa|tttaccc[acg]", "", dna, 5)).toEqual([18, 26]);
+    expect(fd("gct+a", "", dna, 20)).toEqual([48, 52]);
+    expect(fd("(x|c)c+a", "", dna)).toEqual([22, 26, 22, 23]);
+  });
+});
+
+describe("backtracker", () => {
+  it("matches leftmost, preferring earlier alternatives", () => {
+    expect(bt("b+", "", "abbbc")).toEqual([1, 4]);
+    expect(bt("a|ab", "", "xab")).toEqual([1, 2]);
+    expect(bt("(a+)(b*)", "", "caab")).toEqual([1, 4, 1, 3, 3, 4]);
+    expect(bt("a*?b", "", "aab")).toEqual([0, 3]);
+    expect(bt("x", "", "abc")).toEqual([]);
+    expect(bt("\\bfoo\\b", "", "a foo b")).toEqual([2, 5]);
+    expect(bt("^b", "m", "a\nb")).toEqual([2, 3]);
+  });
+
+  it("clears a group's captures per iteration, and ends an empty iteration", () => {
+    expect(bt("(?:(a)|b)*", "", "ab")).toEqual([0, 2, -1, -1]);
+    expect(bt("(a*)*", "", "b")).toEqual([0, 0, -1, -1]);
+    expect(bt("(a*)+", "", "b")).toEqual([0, 0, 0, 0]);
+    expect(bt("(?:a*)*b", "", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaac")).toEqual([]);
+  });
+
+  it("matches code units without the u flag, code points with it", () => {
+    expect(bt(".", "", "\u{1F600}")).toEqual([0, 1]);
+    expect(bt(".", "u", "\u{1F600}")).toEqual([0, 4]);
+    expect(bt("[\\uDC00-\\uDFFF]", "", "a\u{1F600}")).toEqual([2, 5]);
+    expect(bt("\u{1F600}+", "", "\u{1F600}")).toEqual([0, 4]);
+    expect(bt("é.", "", "xéy")).toEqual([1, 4]);
+  });
+});

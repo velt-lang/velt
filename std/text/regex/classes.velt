@@ -1,0 +1,77 @@
+// velt/text (internal): the sets of a regular expression's built-in classes (`\d`, `\w`, `\s`,
+// `.`), and a set closed over case for the `i` flag.
+
+import { CharSet } from "velt/text/regex/char_set";
+import { closeOverCase } from "velt/text/regex/case_fold";
+import { Parser } from "velt/text/regex/parser";
+
+/** The highest character of a pattern: a code point with the `u` flag, else a code unit. */
+export function maxChar(p: Parser): u32 {
+  return p.unicode ? 0x10ffff : 0xffff;
+}
+
+/** `\d`. */
+export function digitSet(): CharSet {
+  const s = new CharSet();
+  s.add(0x30, 0x39);
+  return s;
+}
+
+/** `\w`. */
+export function wordSet(): CharSet {
+  const s = new CharSet();
+  s.add(0x30, 0x39);
+  s.add(0x41, 0x5a);
+  s.add(0x5f, 0x5f);
+  s.add(0x61, 0x7a);
+  return s;
+}
+
+/** `\s`: JavaScript's white space and line terminators. */
+export function spaceSet(): CharSet {
+  const s = new CharSet();
+  s.add(0x09, 0x0d);
+  s.add(0x20, 0x20);
+  s.add(0xa0, 0xa0);
+  s.add(0x1680, 0x1680);
+  s.add(0x2000, 0x200a);
+  s.add(0x2028, 0x2029);
+  s.add(0x202f, 0x202f);
+  s.add(0x205f, 0x205f);
+  s.add(0x3000, 0x3000);
+  s.add(0xfeff, 0xfeff);
+  return s;
+}
+
+/** `.`: every character with the `s` flag, else every one but the line terminators. */
+export function dotSet(p: Parser): CharSet {
+  const s = new CharSet();
+  if (!p.dotAll) {
+    s.add(0x0a, 0x0a);
+    s.add(0x0d, 0x0d);
+    s.add(0x2028, 0x2029);
+  }
+  s.negate(maxChar(p));
+  return s;
+}
+
+/** The set of the class escape `e` (one of `d D w W s S`), as the pattern's flags make it. */
+export function escapeSet(p: Parser, e: i64): CharSet {
+  const lower = e | 0x20;
+  const s = lower == 0x64 ? digitSet() : lower == 0x77 ? wordSet() : spaceSet();
+  finish(p, s, e != lower);
+  return s;
+}
+
+/** Makes `s` what a class matches: closed over case with the `i` flag, normalized, and
+ * `negated` when the class is. */
+export function finish(p: Parser, s: CharSet, negated: bool): void {
+  s.normalize();
+  if (p.ignoreCase) {
+    closeOverCase(s, p.unicode);
+    s.normalize();
+  }
+  if (negated) {
+    s.negate(maxChar(p));
+  }
+}

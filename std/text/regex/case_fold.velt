@@ -1,0 +1,20 @@
+// velt/text (internal): the characters that match each other under the `i` flag.
+
+import { CharSet } from "velt/text/regex/char_set";
+
+/** Adds to the normalized `s` every character that matches one of its members whatever the
+ * case: JavaScript's `Canonicalize`, simple case folding with the `u` flag (`unicode`) and
+ * `toUpperCase` of one code unit without. */
+export function closeOverCase(s: CharSet, unicode: bool): void {
+  const n = s.ranges.length;
+  for (let i: usize = 0; i < n; i += 2) {
+    const lo = s.ranges[i];
+    const hi = s.ranges[i + 1];
+    if (lo <= 0x5a && hi >= 0x41) {
+      s.add((lo > 0x41 ? lo : 0x41) + 32, (hi < 0x5a ? hi : 0x5a) + 32);
+    }
+    if (lo <= 0x7a && hi >= 0x61) {
+      s.add((lo > 0x61 ? lo : 0x61) - 32, (hi < 0x7a ? hi : 0x7a) - 32);
+    }
+  }
+}

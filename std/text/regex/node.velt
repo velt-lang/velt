@@ -1,0 +1,66 @@
+// velt/text (internal): `Node`, the syntax tree of a regular expression: what the parser
+// (parse_pattern.velt) makes of a pattern and the compiler (compiler.velt) turns into a program.
+
+import { CharSet } from "velt/text/regex/char_set";
+
+/** Matches the empty string. */
+export const EMPTY: u32 = 0;
+/** One character: `a` is its code point (a code unit without the `u` flag). */
+export const CHAR: u32 = 1;
+/** One character of `set`. */
+export const SET: u32 = 2;
+/** `kids` one after the other. */
+export const CAT: u32 = 3;
+/** One of `kids`, the first that leads to a match. */
+export const ALT: u32 = 4;
+/** Capture group `a` around `kids[0]`. */
+export const GROUP: u32 = 5;
+/** `kids[0]` repeated `a` to `b` times (`UNBOUNDED`: any number), as many as possible when `greedy`. */
+export const REPEAT: u32 = 6;
+/** An assertion: `a` is one of the `AT_…` kinds below. */
+export const ASSERT: u32 = 7;
+
+/** `^`: the start of the subject. */
+export const AT_START: u32 = 0;
+/** `$`: the end of the subject. */
+export const AT_END: u32 = 1;
+/** `^` with the `m` flag: the start, or after a line terminator. */
+export const AT_LINE_START: u32 = 2;
+/** `$` with the `m` flag: the end, or before a line terminator. */
+export const AT_LINE_END: u32 = 3;
+/** `\b`: between a word character and another character or an end. */
+export const AT_WORD: u32 = 4;
+/** `\B`: anywhere else. */
+export const AT_NOT_WORD: u32 = 5;
+
+/** A `REPEAT` without an upper bound. */
+export const UNBOUNDED: u32 = 0xffffffff;
+
+/** One node of the tree. */
+export class Node {
+  kind: u32;
+  a: u32;
+  b: u32 = 0;
+  greedy: bool = true;
+  set: CharSet | null = null;
+  kids: Node[] = [];
+
+  constructor(kind: u32, a: u32 = 0) {
+    this.kind = kind;
+    this.a = a;
+  }
+}
+
+/** A `SET` node of `set`. */
+export function setNode(set: CharSet): Node {
+  const n = new Node(SET);
+  n.set = set;
+  return n;
+}
+
+/** A node of `kind` over `kids`. */
+export function listNode(kind: u32, kids: Node[]): Node {
+  const n = new Node(kind);
+  n.kids = kids;
+  return n;
+}

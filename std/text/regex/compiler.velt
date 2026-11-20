@@ -1,0 +1,232 @@
+// velt/text (internal): `Compiler`, from a pattern's tree (node.velt) to its program
+// (program.velt), Thompson's construction: an alternation is a split, a quantifier a loop of
+// splits, a counted one copies of its body.
+
+import { arrayWithCapacity } from "velt/lang/intrinsics";
+import { CharSet } from "velt/text/regex/char_set";
+import { ALT, ASSERT, CAT, CHAR, EMPTY, GROUP, Node, REPEAT, SET, UNBOUNDED } from "velt/text/regex/node";
+import { analyze } from "velt/text/regex/literals";
+import { Parser } from "velt/text/regex/parser";
+import {
+  JOIN,
+  OP_ASSERT,
+  OP_CHAR,
+  OP_CLASS,
+  OP_CLEAR,
+  OP_FAIL,
+  OP_JUMP,
+  OP_MATCH,
+  OP_SAVE,
+  OP_SPLIT,
+  Program,
+} from "velt/text/regex/program";
+
+/** The most instructions a program may have. */
+const MAX_INSTRUCTIONS: usize = 50000;
+
+/** Builds one program. */
+export class Compiler {
+  readonly prog: Program = new Program();
+  readonly parser: Parser;
+
+  constructor(parser: Parser) {
+    this.parser = parser;
+  }
+
+  /** The program of `tree`: the whole match is capture group 0. */
+  compile(tree: Node): void {
+    this.emit(OP_SAVE, 0, 0);
+    this.node(tree);
+    this.emit(OP_SAVE, 1, 0);
+    this.emit(OP_MATCH, 0, 0);
+    this.prog.groups = this.parser.groups;
+    this.prog.units = !this.parser.unicode;
+    this.numberJoins();
+    analyze(this.prog, tree);
+  }
+
+  /** Appends an instruction; its index. */
+  private emit(op: u32, a: u32, b: u32): usize {
+    const code = this.prog.code;
+    if (code.length >= 3 * MAX_INSTRUCTIONS) {
+      this.parser.fail("Regular expression too large");
+    }
+    code.push(op);
+    code.push(a);
+    code.push(b);
+    return code.length / 3 - 1;
+  }
+
+  /** The index of the next instruction. */
+  private here(): u32 {
+    return (this.prog.code.length / 3) as u32;
+  }
+
+  /** Makes operand `which` (1 or 2) of instruction `pc` the next instruction, a join. */
+  private patch(pc: usize, which: usize): void {
+    this.prog.code[3 * pc + which] = this.here();
+  }
+
+  /** Marks the instructions jumps and splits lead to, and numbers them. */
+  private numberJoins(): void {
+    const code = this.prog.code;
+    for (let i: usize = 0; i < code.length; i += 3) {
+      const op = code[i] & 0xff;
+      if (op == OP_SPLIT || op == OP_JUMP) {
+        code[3 * (code[i + 1] as usize)] |= JOIN;
+      }
+      if (op == OP_SPLIT) {
+        code[3 * (code[i + 2] as usize)] |= JOIN;
+      }
+    }
+    let n: u32 = 0;
+    for (let i: usize = 0; i < code.length; i += 3) {
+      if ((code[i] & JOIN) != 0) {
+        code[i] |= n << 9;
+        n++;
+      }
+    }
+    this.prog.joins = n;
+  }
+
+  private node(n: Node): void {
+    const kind = n.kind;
+    if (kind == CHAR) {
+      this.emit(OP_CHAR, n.a, 0);
+    } else if (kind == SET) {
+      this.set(n.set ?? new CharSet());
+    } else if (kind == CAT) {
+      for (let i: usize = 0; i < n.kids.length; i++) {
+        this.node(n.kids[i]);
+      }
+    } else if (kind == ALT) {
+      this.alternation(n);
+    } else if (kind == GROUP) {
+      this.emit(OP_SAVE, 2 * n.a, 0);
+      this.node(n.kids[0]);
+      this.emit(OP_SAVE, 2 * n.a + 1, 0);
+    } else if (kind == REPEAT) {
+      this.repeat(n);
+    } else if (kind == ASSERT) {
+      this.emit(OP_ASSERT, n.a, 0);
+    }
+  }
+
+  private set(s: CharSet): void {
+    const r = s.ranges;
+    if (r.length == 0) {
+      this.emit(OP_FAIL, 0, 0);
+      return;
+    }
+    if (r.length == 2 && r[0] == r[1]) {
+      this.emit(OP_CHAR, r[0], 0);
+      return;
+    }
+    const prog = this.prog;
+    let lo: u64 = 0;
+    let hi: u64 = 0;
+    for (let i: usize = 0; i < r.length && r[i] < 128; i += 2) {
+      const last = r[i + 1] < 127 ? r[i + 1] : 127;
+      for (let c = r[i]; c <= last; c++) {
+        if (c < 64) {
+          lo |= (1 as u64) << (c as u64);
+        } else {
+          hi |= (1 as u64) << ((c - 64) as u64);
+        }
+      }
+    }
+    prog.ascii.push(lo);
+    prog.ascii.push(hi);
+    prog.sets.push(s.copy());
+    this.emit(OP_CLASS, (prog.sets.length - 1) as u32, 0);
+  }
+
+  private alternation(n: Node): void {
+    const ends: usize[] = arrayWithCapacity(n.kids.length);
+    for (let i: usize = 0; i < n.kids.length; i++) {
+      const last = i + 1 == n.kids.length;
+      const split = last ? 0 : this.emit(OP_SPLIT, this.here() + 1, 0);
+      this.node(n.kids[i]);
+      if (!last) {
+        ends.push(this.emit(OP_JUMP, 0, 0));
+        this.patch(split, 2);
+      }
+    }
+    for (let i: usize = 0; i < ends.length; i++) {
+      this.patch(ends[i], 1);
+    }
+  }
+
+  /** One iteration of the quantifier `n`: its captures cleared when `clear`, then its body. */
+  private body(n: Node, clear: bool): void {
+    if (clear) {
+      const lo = firstGroup(n.kids[0]);
+      if (lo != 0) {
+        this.emit(OP_CLEAR, 2 * lo, 2 * lastGroup(n.kids[0]) + 2);
+      }
+    }
+    this.node(n.kids[0]);
+  }
+
+  private repeat(n: Node): void {
+    const start = this.here();
+    for (let i: u32 = 0; i < n.a; i++) {
+      this.body(n, i > 0);
+      if (this.here() == start) {
+        break;
+      }
+    }
+    if (n.b == UNBOUNDED) {
+      const split = this.split(n.greedy);
+      this.body(n, true);
+      this.emit(OP_JUMP, split as u32, 0);
+      this.patch(split, n.greedy ? 2 : 1);
+      return;
+    }
+    const exits: usize[] = [];
+    for (let i = n.a; i < n.b; i++) {
+      const before = this.here();
+      exits.push(this.split(n.greedy));
+      this.body(n, i > 0);
+      if (this.here() == before + 1) {
+        break;
+      }
+    }
+    for (let i: usize = 0; i < exits.length; i++) {
+      this.patch(exits[i], n.greedy ? 2 : 1);
+    }
+  }
+
+  /** A split whose preferred way is the next instruction when `greedy`, else the other. */
+  private split(greedy: bool): usize {
+    const next = this.here() + 1;
+    return this.emit(OP_SPLIT, greedy ? next : 0, greedy ? 0 : next);
+  }
+}
+
+/** The lowest capture group in `n`, or 0. */
+function firstGroup(n: Node): u32 {
+  if (n.kind == GROUP) {
+    return n.a;
+  }
+  for (let i: usize = 0; i < n.kids.length; i++) {
+    const g = firstGroup(n.kids[i]);
+    if (g != 0) {
+      return g;
+    }
+  }
+  return 0;
+}
+
+/** The highest capture group in `n`, or 0. */
+function lastGroup(n: Node): u32 {
+  let i = n.kids.length;
+  while (i > 0) {
+    i--;
+    const g = lastGroup(n.kids[i]);
+    if (g != 0) {
+      return g;
+    }
+  }
+  return n.kind == GROUP ? n.a : 0;
+}
