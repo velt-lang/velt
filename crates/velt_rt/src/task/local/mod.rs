@@ -41,7 +41,6 @@ pub use module_state::{
     velt_rt_module_with_end,
 };
 pub use order::{velt_rt_timer_again, velt_rt_timer_free, velt_rt_timer_new, velt_rt_timer_turn};
-pub use unhandled::{velt_rt_uncaught_now, velt_rt_unhandled_defer};
 
 use std::cell::Cell;
 use std::future::Future;
