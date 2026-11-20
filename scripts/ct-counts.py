@@ -103,10 +103,51 @@ def signers384(rng, runs):
     return kept
 
 
+def _prime(rng, bits):
+    """A random prime of exactly `bits` bits with its two top bits set (Miller-Rabin)."""
+    small = [3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97]
+    while True:
+        p = rng.getrandbits(bits) | (3 << (bits - 2)) | 1
+        if any(p % q == 0 for q in small) or p % 65537 == 1:
+            continue
+        d, twos = p - 1, 0
+        while d % 2 == 0:
+            d, twos = d // 2, twos + 1
+        for _ in range(24):
+            x = pow(rng.randrange(2, p - 1), d, p)
+            if x in (1, p - 1):
+                continue
+            for _ in range(twos - 1):
+                x = x * x % p
+                if x == p - 1:
+                    break
+            else:
+                break
+        else:
+            return p
+
+
+def keys2048(rng, runs):
+    """RSA-2048 private keys for the RSA probe: n, e, p, q, dP, dQ, qInv, each as two bytes of
+    length and the number's big-endian bytes. A few are enough: each takes two primes to make."""
+    keys = []
+    for _ in range(min(runs, 8)):
+        p, q = _prime(rng, 1024), _prime(rng, 1024)
+        e = 65537
+        d = pow(e, -1, (p - 1) * (q - 1))
+        out = b""
+        for v in (p * q, e, p, q, d % (p - 1), d % (q - 1), pow(q, -1, p)):
+            raw = v.to_bytes((v.bit_length() + 7) // 8, "big")
+            out += len(raw).to_bytes(2, "big") + raw
+        keys.append(out)
+    return keys
+
+
 # How often a secret whose count differs is run again before the difference counts.
 RETRIES = 5
 
-GENERATORS = {"scalars384": scalars384, "seeds32": seeds32, "signers384": signers384}
+GENERATORS = {"scalars384": scalars384, "seeds32": seeds32, "signers384": signers384,
+              "keys2048": keys2048}
 
 
 def probes():
@@ -201,7 +242,7 @@ def main():
             print(f"{name}: NOT CONSTANT: {len(counts)} different counts over {runs} secrets, "
                   f"{low:,} to {high:,}")
             for c in sorted(counts)[:4]:
-                print(f"  {c:,}: {counts[c][0].hex()}")
+                print(f"  {c:,}: {counts[c][0].hex()[:96]}")
     sys.exit(1 if failed else 0)
 
 
