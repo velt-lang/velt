@@ -71,7 +71,6 @@ velt_rt velt_rt_fs_reader_read_line
 velt_rt velt_rt_fs_reader_read_string
 velt_rt velt_rt_fs_readlink_sync
 velt_rt velt_rt_fs_realpath_sync
-velt_rt velt_rt_fs_remove_sync
 velt_rt velt_rt_fs_rename_sync
 velt_rt velt_rt_fs_symlink_sync
 velt_rt velt_rt_fs_writer_close
