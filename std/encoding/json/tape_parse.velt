@@ -36,7 +36,7 @@ import {
 import { TapeBuilder } from "velt/encoding/json/tape_builder";
 import { TapeError } from "velt/encoding/json/tape_error";
 
-declare function velt_rt_json_node_syntax(src: string, out: string): bool;
+import { nodeSyntaxMessage } from "velt/encoding/json/node_syntax";
 
 /**
  * Parses `src` (one JSON value, whitespace around it) into a tape, nesting at most `maxDepth`
@@ -144,9 +144,11 @@ export function parseWith(sc: Scanner, maxDepth: u32, whole: boolean): Tape | Ta
     ok = false;
   }
   if (!ok) {
-    let node = "";
-    if (!sc.comments && !sc.trailingCommas && velt_rt_json_node_syntax(sc.src, node)) {
-      return new TapeError(node);
+    if (!sc.comments && !sc.trailingCommas) {
+      const node = nodeSyntaxMessage(sc.src);
+      if (node != null) {
+        return new TapeError(node);
+      }
     }
     if (sc.code == OK) {
       sc.fail(TRAILING);

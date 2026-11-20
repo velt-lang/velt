@@ -165,11 +165,8 @@ pub(super) enum Rt {
     StrbufPushJsonStr,
     StrbufPushInspectStr,
     StrbufPushInspectKey,
-    StrbufPushInspectJson,
     StrbufFinish,
     StrbufDrop,
-    /// `velt_rt_json_value_free(h)`: a `JsonValue` runtime handle the glue made for printing.
-    JsonValueFree,
 }
 
 impl Rt {
@@ -350,14 +347,8 @@ impl Rt {
             Rt::StrbufPushJsonStr => f("velt_rt_strbuf_push_json_str", vec![Ptr, Ptr], Unit),
             Rt::StrbufPushInspectStr => f("velt_rt_strbuf_push_inspect_str", vec![Ptr, Ptr], Unit),
             Rt::StrbufPushInspectKey => f("velt_rt_strbuf_push_inspect_key", vec![Ptr, Ptr], Unit),
-            Rt::StrbufPushInspectJson => f(
-                "velt_rt_strbuf_push_inspect_json",
-                vec![Ptr, Ptr, U8, U32],
-                Unit,
-            ),
             Rt::StrbufFinish => f("velt_rt_strbuf_finish", vec![Ptr, Ptr], Unit),
             Rt::StrbufDrop => f("velt_rt_strbuf_drop", vec![Ptr], Unit),
-            Rt::JsonValueFree => f("velt_rt_json_value_free", vec![U64], Unit),
             other => crate::lower::ice(format_args!("no signature for {other:?}")),
         }
     }

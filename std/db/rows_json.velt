@@ -1,0 +1,143 @@
+// velt/db (internal): a native driver's rows (its cursor, velt/db/native) as the JSON document they
+// stand for, `[{"col":value,...},...]` (or one row's object): what `parseJsonCursor<T>` decodes
+// when `T` is not a row of plain fields read by column (velt/db/generate/columns), such as a
+// union, nested values or a `JsonValue`. The decoder then reads it as `JSON.parse<T>` reads
+// text, with the same results and messages.
+//
+// A cell is written as its value reads back: an integer exactly, a float in its shortest form
+// (an integral one as an integer; NaN and the infinities, which JSON has no text for, as
+// `null`), text quoted (bytes that are not UTF-8 as U+FFFD), a blob as an array of byte values
+// and a nested value as the JSON text the driver gives.
+
+import {
+  RowsF64,
+  RowsI64,
+  RowsU8,
+  velt_rt_rows_begin_named,
+  velt_rt_rows_blob,
+  velt_rt_rows_bool,
+  velt_rt_rows_columns,
+  velt_rt_rows_end,
+  velt_rt_rows_f64,
+  velt_rt_rows_i64,
+  velt_rt_rows_json,
+  velt_rt_rows_kind,
+  velt_rt_rows_name,
+  velt_rt_rows_next,
+  velt_rt_rows_single,
+  velt_rt_rows_str,
+} from "velt/db/rt";
+import { writeString } from "velt/encoding/json/writer";
+import { writeF64 } from "velt/encoding/json/writer_number";
+import { pushI64 } from "velt/lang/number/integer";
+
+declare function velt_rt_strbuf_new(cap: u64, out: string);
+declare function velt_rt_strbuf_push_str(buf: string, s: string);
+declare function velt_rt_strbuf_finish(buf: string, out: string);
+
+// What `velt_rt_rows_kind` answers (std/db's `CellKind`).
+const KIND_NULL: u8 = 0;
+const KIND_BOOL: u8 = 1;
+const KIND_INT: u8 = 2;
+const KIND_FLOAT: u8 = 3;
+const KIND_TEXT: u8 = 4;
+const KIND_BLOB: u8 = 5;
+
+/**
+ * The rows of the row cursor at address `cursor` as JSON text: an array of objects, or, for a
+ * cursor opened for a single row, that row's object; null when there is no such row.
+ */
+export function rowsJsonText(cursor: u64): string | null {
+  const st = velt_rt_rows_begin_named(cursor, "");
+  const single = velt_rt_rows_single(st) != 0;
+  const columns = velt_rt_rows_columns(st);
+  // Each column's key with its colon, written once.
+  const keys: string[] = [];
+  for (let c: u64 = 0; c < columns; c++) {
+    let name = "";
+    velt_rt_rows_name(st, c, name);
+    let k = "";
+    velt_rt_strbuf_new(0, k);
+    writeString(k, name);
+    velt_rt_strbuf_push_str(k, ":");
+    let key = "";
+    velt_rt_strbuf_finish(k, key);
+    keys.push(key);
+  }
+  let buf = "";
+  velt_rt_strbuf_new(256, buf);
+  if (!single) {
+    velt_rt_strbuf_push_str(buf, "[");
+  }
+  let rows = 0;
+  while (velt_rt_rows_next(st) != 0) {
+    if (rows > 0) {
+      velt_rt_strbuf_push_str(buf, ",");
+    }
+    rows++;
+    velt_rt_strbuf_push_str(buf, "{");
+    for (let c: u64 = 0; c < columns; c++) {
+      if (c > 0) {
+        velt_rt_strbuf_push_str(buf, ",");
+      }
+      const key = keys[c as usize];
+      velt_rt_strbuf_push_str(buf, key);
+      writeCell(buf, st, c);
+    }
+    velt_rt_strbuf_push_str(buf, "}");
+    if (single) {
+      break;
+    }
+  }
+  velt_rt_rows_end(st);
+  if (!single) {
+    velt_rt_strbuf_push_str(buf, "]");
+  }
+  let out = "";
+  velt_rt_strbuf_finish(buf, out);
+  if (single && rows == 0) {
+    return null;
+  }
+  return out;
+}
+
+// Column `c` of the current row as JSON, to the builder `buf`.
+function writeCell(buf: string, st: u64, c: u64): void {
+  const kind = velt_rt_rows_kind(st, c);
+  if (kind == KIND_NULL) {
+    velt_rt_strbuf_push_str(buf, "null");
+  } else if (kind == KIND_BOOL) {
+    let b: RowsU8 = { v: 0 };
+    velt_rt_rows_bool(st, c, b);
+    velt_rt_strbuf_push_str(buf, b.v != 0 ? "true" : "false");
+  } else if (kind == KIND_INT) {
+    let i: RowsI64 = { v: 0 };
+    velt_rt_rows_i64(st, c, i);
+    const v = i.v;
+    pushI64(buf, v);
+  } else if (kind == KIND_FLOAT) {
+    let f: RowsF64 = { v: 0 };
+    velt_rt_rows_f64(st, c, f);
+    const v = f.v;
+    writeF64(buf, v);
+  } else if (kind == KIND_TEXT) {
+    let s = "";
+    velt_rt_rows_str(st, c, s);
+    writeString(buf, s);
+  } else if (kind == KIND_BLOB) {
+    const bytes = velt_rt_rows_blob(st, c);
+    velt_rt_strbuf_push_str(buf, "[");
+    for (let i: usize = 0; i < bytes.length; i++) {
+      if (i > 0) {
+        velt_rt_strbuf_push_str(buf, ",");
+      }
+      const b = bytes[i] as i64;
+      pushI64(buf, b);
+    }
+    velt_rt_strbuf_push_str(buf, "]");
+  } else {
+    let j = "";
+    velt_rt_rows_json(st, c, j);
+    velt_rt_strbuf_push_str(buf, j);
+  }
+}
