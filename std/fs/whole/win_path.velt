@@ -23,11 +23,13 @@ const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
 /**
  * `path` without the separators it ends with, when what it names without them is there and
  * is no directory (`dir\file\`, `dir/file//`): Windows' own functions refuse such a path,
- * and Node's `stat`, `lstat`, `readFile`, `exists` and `rm` take it as the file. Any other
- * path as it is: a directory keeps its separator, and a root (`C:\`, `\`) is left alone.
- * Costs a `GetFileAttributesW` only for a path that ends with a separator.
+ * and Node's `stat`, `lstat`, `readFile`, `exists` and `rm` take it as the file. With
+ * `orMissing`, also when nothing is there: Node's `writeFile` and `appendFile` create `new`
+ * for `new\`. Any other path as it is: a directory keeps its separator, and a root (`C:\`,
+ * `\`) is left alone. Costs a `GetFileAttributesW` only for a path that ends with a
+ * separator.
  */
-export function asFile(path: string): string {
+export function asFile(path: string, orMissing: bool = false): string {
   let end = path.length as i64;
   while (end > 1 && isSep(path.charCodeAt(end - 1) as u16) && path.charCodeAt(end - 2) !== 58) {
     end--;
@@ -42,8 +44,10 @@ export function asFile(path: string): string {
   }
   // SAFETY: `w` is NUL-terminated.
   const a = unsafe { GetFileAttributesW(w) };
-  const file = a !== INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY) === 0;
-  return file ? stripped : path;
+  if (a === INVALID_FILE_ATTRIBUTES) {
+    return orMissing ? stripped : path;
+  }
+  return (a & FILE_ATTRIBUTE_DIRECTORY) === 0 ? stripped : path;
 }
 
 /** The length, with its NUL, from which a path needs the `\\?\` prefix. */
