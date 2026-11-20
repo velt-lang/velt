@@ -3,8 +3,9 @@
 // string's three words, `""` without one), then a key word. `Symbol()` at run time makes a
 // record here: it lives as long as the process and holds a reference to its description for
 // good. Records are carved from chunks of `#symbol-record`'s memory (the C library's, outside
-// the leak counts, as the registry's records are), one chunk at a time per thread: a `calloc`
-// per record cost a few hundred instructions each. The compiler's records (well-known symbols, module constants) are
+// the leak counts, as the registry's records are; the compiled code's allocator in the
+// browser), one chunk at a time per thread: a `calloc` per record cost a few hundred
+// instructions each. The compiler's records (well-known symbols, module constants) are
 // read-only data of the same layout.
 
 import { recordMemory } from "#symbol-record";
@@ -28,7 +29,10 @@ const CHUNK: usize = 4096;
 const NEXT = new ThreadLocal<u64>(0);
 const END = new ThreadLocal<u64>(0);
 
-/** A record's memory, zeroed and aligned to 16, never freed. */
+/**
+ * A record's memory, aligned to 8, never freed: not zeroed in the browser, whose
+ * `#symbol-record` memory is the allocator's (record_mem_js.velt).
+ */
 function carve(): usize {
   let at = NEXT.get() as usize;
   if (at === 0 || at + RECORD_SIZE > (END.get() as usize)) {
@@ -43,13 +47,16 @@ function carve(): usize {
 export function newSymbol(description: string, described: bool): symbol {
   const p = carve();
   // SAFETY: `p` holds `RECORD_SIZE` bytes nothing else uses, aligned to 8, never freed: the
-  // description moves into its first three words (`""`, all zero, stays without one), and the
-  // key word follows (rt_abi.md "Symbols").
+  // description moves into its first three words (without one they are set to 0, the empty
+  // string, as the memory may not be zeroed), and the key word follows (rt_abi.md "Symbols").
   unsafe {
     if (described) {
       slotPut<string>(p, description);
       addressStore<u64>(p + RECORD_KEY_AT, KEY_FRESH | DESCRIBED);
     } else {
+      addressStore<u64>(p, 0);
+      addressStore<u64>(p + 8, 0);
+      addressStore<u64>(p + 16, 0);
       addressStore<u64>(p + RECORD_KEY_AT, KEY_FRESH);
     }
     return symbolAt(p);
