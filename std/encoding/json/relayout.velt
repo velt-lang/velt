@@ -47,7 +47,8 @@ export function propertyList(text: string): string[] | null {
  * `text` (compact JSON, as `JSON.stringify` writes it) laid out again: only the members of
  * objects whose keys are in `keys` (in that order; null keeps every member in place), and, when
  * `pretty`, with line breaks, `indent` (JS's gap, which may be empty) per level and `": "` after
- * keys (not `pretty`: no whitespace).
+ * keys (not `pretty`: no whitespace). Text that is not one compact value (never what the glue
+ * writes) comes back as it is.
  */
 export function relayout(
   text: string,
@@ -58,6 +59,10 @@ export function relayout(
   const l = new Layout(text, keys, pretty, indent);
   const out = new StringBuilder(strByteLen(text) + strByteLen(text) / 2);
   l.value(out, 0);
+  // Text that is not one compact value (never what the glue writes) comes back as it is.
+  if (l.pos != l.len) {
+    return text;
+  }
   return out.take();
 }
 
@@ -93,7 +98,7 @@ class Layout {
     this.indent = indent;
   }
 
-  // The byte at `pos` (0 past the end: the text is the glue's, well-formed).
+  // The byte at `pos` (0 past the end).
   cur(): u8 {
     return this.pos < this.len ? strByteAt(this.src, this.pos as u64) : 0;
   }
@@ -146,7 +151,13 @@ class Layout {
         this.pos++;
       }
     }
-    out.append(utf8Substring(this.src, start, this.pos));
+    out.append(this.slice(start, this.pos));
+  }
+
+  // Bytes `start` to `end` of the text, cut at its end (a malformed text may run past it).
+  slice(start: usize, end: usize): string {
+    const e = end < this.len ? end : this.len;
+    return utf8Substring(this.src, start < e ? start : e, e);
   }
 
   array(out: StringBuilder, depth: i64): void {
@@ -200,7 +211,7 @@ class Layout {
   // `"key":` and the value, after the line break of `depth + 1`.
   member(out: StringBuilder, start: usize, end: usize, value: string, depth: i64): void {
     this.newline(out, depth + 1);
-    out.append(utf8Substring(this.src, start, end));
+    out.append(this.slice(start, end));
     out.append(this.pretty ? ": " : ":");
     out.append(value);
   }
@@ -218,7 +229,7 @@ class Layout {
       this.newline(out, depth + 1);
       const start = this.pos;
       this.skipString();
-      out.append(utf8Substring(this.src, start, this.pos));
+      out.append(this.slice(start, this.pos));
       this.pos++;
       out.append(this.pretty ? ": " : ":");
       this.value(out, depth + 1);
