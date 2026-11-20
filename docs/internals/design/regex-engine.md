@@ -70,6 +70,12 @@ is octal, `[\d-z]` holds a `-`) and its errors with it. The error texts are V8's
 group`, `Nothing to repeat`, `Invalid capture group name`, …), in a `RegExpError`, which is a
 `SyntaxError`.
 
+Three things JavaScript has are refused with an error that names them: lookaround (`(?=…)`,
+`(?<!…)`) and back references (`\1`, `\k<name>`), which a matcher whose time is linear cannot
+run, and the set syntax of classes under the `v` flag (a nested class, `--`, `&&`, `\q{…}`). The
+`v` flag is otherwise the `u` flag. A group's name is a JavaScript identifier (`ID_Start`,
+`ID_Continue`).
+
 A class is a `CharSet`: sorted ranges of characters. `\d \w \s` are JavaScript's. `\p{…}` reads
 the generated tables of `unicode_tables.velt` (General_Category, Script, Script_Extensions and
 the binary properties ECMAScript lists). With the `i` flag a set is closed over case when it is
