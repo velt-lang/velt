@@ -348,6 +348,14 @@ function leakedBlocks(stderr: string): number | null {
   if (stderr.includes("rc stats: std caught a panic\n")) {
     return 0;
   }
+  // The test ended the process itself: the frames live then keep what they hold, as Node runs
+  // no cleanup there (std/prelude/process.velt `processExit`).
+  // It is the line just before the report: the same text anywhere else is the test's own output.
+  const note = "rc stats: the program called process.exit: no leak verdict\n";
+  const report = stderr.lastIndexOf("rc stats: retain=");
+  if (report > 0 && stderr.slice(0, report).endsWith(note)) {
+    return 0;
+  }
   const field = stderr.slice(at + 8).split(" ")[0];
   const counts = field.split("/");
   if (counts.length != 2) {
