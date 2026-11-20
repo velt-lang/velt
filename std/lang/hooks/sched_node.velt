@@ -164,7 +164,7 @@ function pollNode(f: usize, cx: usize, claim: bool): u32 {
     // SAFETY: a lazy node's state, polled by its owner with its own cx.
     const r = unsafe { statePoll(m.ld(n + N_POLL), f + 16, cx) };
     if (r === 1) {
-      tr.finish(n, FINISHED);
+      tr.finish(n, 0, FINISHED);
     }
     return r;
   }
@@ -201,14 +201,18 @@ function pollNode(f: usize, cx: usize, claim: bool): u32 {
     // SAFETY: a started node's state, not being polled, polled now by its task's code.
     const r = unsafe { statePoll(m.ld(n + N_POLL), f + 16, cx) };
     m.st(e + t.E_ADOPTING, 0);
-    m.and32(n + N_FLAGS, ~RUNNING);
+    const owned = r !== 1 && m.load(n + N_REFS) === 2;
+    const listing = owned && (fl & lost.LISTED) === 0 ? lost.LISTED : 0;
+    const was = m.xor32(n + N_FLAGS, RUNNING | listing);
     if (r === 1) {
       adoptedDone(task, n, claim ? FINISHED | DELIVERED : FINISHED);
       return 1;
     }
-    if (m.load(n + N_REFS) === 2) {
-      return lost.ownerOnly(n);
+    if (owned) {
+      return lost.ownerOnly(task, n, was);
     }
+  } else if (lost.nested(e, task, n, cx, fl)) {
+    return 0;
   }
   return aw.awaitNode(n, cx);
 }
@@ -219,7 +223,7 @@ function pollNode(f: usize, cx: usize, claim: bool): u32 {
  */
 @inline("always")
 export function adoptedDone(task: usize, n: usize, fl: u32): void {
-  tr.finish(n, fl);
+  tr.finish(n, task, fl);
   m.st(task + t.T_LOCALS, m.ld(task + t.T_LOCALS) - 1);
   const w = aw.takePlain(n);
   if (w !== 0) {
@@ -390,7 +394,7 @@ export function run(task: usize, n: usize, taken: bool): void {
     keepWhereThrown(n);
   }
   // A handed-over node's transfer runs before FINISHED shows (sched_node_transfer.velt).
-  tr.finished(n);
+  tr.finished(n, task);
   // Its owner may drop or await it on another worker meanwhile (sched_node_await.velt): the old
   // flags say whether the drop came first, and the awaiter word is claimed as `finishAwaiter` says.
   const prev = m.or32(n + N_FLAGS, FINISHED);
