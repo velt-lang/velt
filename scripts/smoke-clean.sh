@@ -63,7 +63,7 @@ grep -q 'linker .*bundled' "$work/doctor" || { echo "velt doctor does not report
 # build cache off so nothing else could hold them: a debug build links them, also where no clang
 # could have compiled them. Not on arm64 Linux, where a debug build takes no prebuilt object (its
 # link need not have the outline-atomics helpers their atomics call): there the program has to
-# build and run with the modules compiled in.
+# build and run with the modules compiled in (until #3315).
 step "prebuilt hook modules (shipped objects)"
 VELT_BUILD_CACHE=off VELT_STD_OBJECT_STATS=1 "$velt" build "$repo/scripts/smoke-prebuilt.velt" \
     -o "$work/prebuilt" 2>"$work/prebuilt.stats" || { cat "$work/prebuilt.stats" >&2; exit 1; }
