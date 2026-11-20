@@ -1,8 +1,9 @@
 // velt/crypto (internal): RSA signature verification (RFC 8017): RSASSA-PKCS1-v1_5 (§8.2.2) and
 // RSASSA-PSS (§8.1.2) with SHA-256, SHA-384 or SHA-512, as certificates and TLS use them. The
-// rules are ring's, which rustls applies today: a modulus of 2048 to 8192 bits, an odd public
-// exponent from 3 to 2^33 - 1, a signature exactly as long as the modulus and below it, and for
-// PSS MGF1 with the message's hash and a salt as long as the hash.
+// rules are ring's, which rustls applies today: a modulus of at least 256 bytes (2041 bits) and
+// at most 8192 bits, an odd public exponent from 3 to 2^33 - 1, a signature exactly as long as
+// the modulus and below it, and for PSS MGF1 with the message's hash and a salt as long as the
+// hash.
 //
 // Everything here is public (the key, the digest, the signature), so the exponentiation
 // branches on the exponent's bits; the products themselves (`Mont`) take the same time for any
@@ -126,7 +127,9 @@ function keyParts(key: u8[]): usize[] {
     bits += 1;
     top = top >> 1;
   }
-  if (bits < MIN_BITS || bits > MAX_BITS || (key[n[0] + n[1] - 1] & 1) == 0) {
+  // As ring: the least is counted in whole bytes (256 of them, so 2041 bits pass), the most
+  // in bits.
+  if (8 * n[1] < MIN_BITS || bits > MAX_BITS || (key[n[0] + n[1] - 1] & 1) == 0) {
     return [];
   }
   // The exponent: at most 33 bits, at least 3, odd.
@@ -181,8 +184,8 @@ function encodedMessage(key: u8[], signature: u8[], bits: usize[]): u8[] | null 
 /**
  * Whether `signature` is a valid RSASSA-PKCS1-v1_5 signature by the RSAPublicKey `publicKey`
  * (DER) of the message whose hash is `digest`: 32 bytes for SHA-256, 48 for SHA-384, 64 for
- * SHA-512. False for another length, a malformed key, a modulus outside 2048 to 8192 bits or a
- * malformed signature; never an exception.
+ * SHA-512. False for another length, a malformed key, a modulus shorter than 256 bytes (2041
+ * bits) or longer than 8192 bits, or a malformed signature; never an exception.
  */
 export function rsaPkcs1Verify(publicKey: u8[], digest: u8[], signature: u8[]): bool {
   const hLen = digest.length;

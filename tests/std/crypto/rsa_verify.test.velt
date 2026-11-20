@@ -130,12 +130,22 @@ describe("rsaPkcs1Verify", () => {
     expect(rsaPkcs1Verify(hexDecode(v.KEY_8200), d, hexDecode(v.PKCS1_8200))).toBe(false);
   });
 
-  it("refuses a modulus below 2048 bits, though the signature is right", () => {
-    const d = sha256(MESSAGE);
-    expect(rsaPkcs1Verify(hexDecode(v.KEY_1024), d, hexDecode(v.PKCS1_1024))).toBe(false);
-    expect(rsaPkcs1Verify(hexDecode(v.KEY_2047), d, hexDecode(v.PKCS1_2047))).toBe(false);
-    expect(rsaPssVerify(hexDecode(v.KEY_2047), d, hexDecode(v.PSS_2047))).toBe(false);
-  });
+  it(
+    "takes a modulus of 256 bytes that is short of 2048 bits, as ring, and refuses 255 bytes",
+    () => {
+      const d = sha256(MESSAGE);
+      // ring counts the least length in whole bytes: 2041 to 2047 bits pass, 2040 do not.
+      expect(rsaPkcs1Verify(hexDecode(v.KEY_2047), d, hexDecode(v.PKCS1_2047))).toBe(true);
+      expect(rsaPssVerify(hexDecode(v.KEY_2047), d, hexDecode(v.PSS_2047))).toBe(true);
+      const flipped = hexDecode(v.PKCS1_2047);
+      flipped[255] ^= 1;
+      expect(rsaPkcs1Verify(hexDecode(v.KEY_2047), d, flipped)).toBe(false);
+      // Right signatures, refused for the key's size.
+      expect(rsaPkcs1Verify(hexDecode(v.KEY_2040), d, hexDecode(v.PKCS1_2040))).toBe(false);
+      expect(rsaPssVerify(hexDecode(v.KEY_2040), d, hexDecode(v.PSS_2040))).toBe(false);
+      expect(rsaPkcs1Verify(hexDecode(v.KEY_1024), d, hexDecode(v.PKCS1_1024))).toBe(false);
+    },
+  );
 
   it("refuses a signature at or past the modulus, also one that is a valid one plus it", () => {
     const key = hexDecode(v.KEY_2048);
