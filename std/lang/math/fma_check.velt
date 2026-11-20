@@ -5,14 +5,24 @@
 //
 // It is velt/arch/x86's `Fma.isSupported()`: FMA with AVX and the AVX state saved by the OS, the
 // CPU's answer read once at start-up (std/lang/cpu), or constant where `--cpu` has it. False off
-// x86-64, on WebAssembly and in debug (Cranelift) builds.
+// x86-64, on WebAssembly and in debug (Cranelift) builds. It tests the word itself rather than
+// call `Fma`: a module of a class is loaded with std up front, and the class would then get an
+// `any` tag (and its name's static) in programs that never use `velt/arch`.
 
-import { Fma } from "velt/arch/x86/fma";
+import { cpuHas } from "velt/lang/cpu/word";
+import { FMA_X86 } from "velt/lang/cpu/masks";
+
+// True only where the build guarantees FMA: code built for a CPU that has it (`--cpu`), or gated
+// on `fma-x86` and what such code calls.
+declare function velt_simd_has_fma_x86(): bool;
+// Whether this build runs x86-64's checks: false on another architecture, on WebAssembly and
+// in debug (Cranelift) builds.
+declare function velt_simd_on_x86(): bool;
 
 /**
  * Whether the CPU has x86's FMA3 with the AVX state enabled (false off x86-64 and in debug
  * builds): the check a call of a function gated on `fma-x86` must sit behind.
  */
 export function hasFmaX86(): bool {
-  return Fma.isSupported();
+  return velt_simd_has_fma_x86() || (velt_simd_on_x86() && cpuHas(FMA_X86));
 }
