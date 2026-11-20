@@ -1,35 +1,19 @@
 // velt/crypto (internal): `Mont`, arithmetic mod an odd number n of any width (RSA moduli, 2048
 // to 8192 bits) in 64-bit limbs, little-endian, in the Montgomery domain (x stands for
-// x * R mod n, R = 2^(64 k) for k limbs). A product interleaves the multiplication and the
-// reduction in one pass over the limbs (FIOS): each limb product is a 128-bit value from `*`
-// and `Math.umulh`, carries are `(s < a) as u64`, and the final subtraction of n is masked, so a
-// product's time depends only on the width.
+// x * R mod n, R = 2^(64 k) for k limbs). A product is made whole (2 k limbs) and then reduced,
+// in the loops of `#mont-rows` (natively on `BigInt`'s rows: `r += a * word` is eight
+// instructions a limb with no bounds check); a square computes each product of two different limbs once and
+// doubles it, three multiplications for every four of a product. No loop's length and no branch
+// depends on a value, and the final subtraction of n is masked, so a product's time depends
+// only on the width.
 //
 // Values live in registers (an array of k limbs each), named by number, like `FeP256`'s: a
 // product works in a scratch array and stores its result once, so `mul(a, a, b)` works in place
 // (#2403). Every result is fully reduced (below n).
 
-import { noInline } from "velt/lang/intrinsics";
-
-// `t + a * b + c` as 128 bits (it cannot overflow).
-function mac(t: u64, a: u64, b: u64, c: u64): [u64, u64] {
-  const lo = a * b;
-  const s = lo + t;
-  const s2 = s + c;
-  return [s2, Math.umulh(a, b) + ((s < lo) as u64) + ((s2 < c) as u64)];
-}
+import { maskOf, pickMasked, productWhole, reduceWhole, squareWhole, storeBelow } from "#mont-rows";
 
 /** Registers of numbers mod an odd n. */
-// All ones for `bit` 1, 0 for 0. Out of line, as field_p256.velt's `isZero`: a caller that sees
-// the mask is one comparison lets LLVM make the masked subtraction a branch on it, and whether a
-// product needs its last subtraction depends on the operands (with RSA's private exponent, the
-// leak the timing attacks on Montgomery multiplication use). scripts/ct-counts.py's rsa_sign
-// probe checks the machine code: the instructions executed must not vary with the key.
-@noInline
-function maskOf(bit: u64): u64 {
-  return 0 - bit;
-}
-
 export class Mont {
   /** The number of limbs of n. */
   k: usize;
@@ -40,8 +24,10 @@ export class Mont {
   private ninv: u64;
   // Register 0 holds R^2 mod n; the caller's register d is register d + 1 here.
   private r: u64[][];
-  // A product before its last subtraction: k + 1 limbs.
+  // A sum or a doubling before its last subtraction: k + 1 limbs.
   private t: u64[];
+  // A product before its reduction: 2 k limbs.
+  private w: u64[];
 
   /**
    * `regs` registers, each zero, mod the number whose big-endian bytes are `n[at..at + len]`:
@@ -53,6 +39,7 @@ export class Mont {
     this.n = [];
     this.r = [];
     this.t = [];
+    this.w = [];
     for (let i: usize = 0; i < k; i++) {
       this.n.push(0);
     }
@@ -69,6 +56,9 @@ export class Mont {
     }
     for (let i: usize = 0; i <= k; i++) {
       this.t.push(0);
+    }
+    for (let i: usize = 0; i < 2 * k; i++) {
+      this.w.push(0);
     }
     let top = this.n[k - 1];
     let bits = 64 * (k - 1);
@@ -92,7 +82,7 @@ export class Mont {
       this.double();
     }
     for (let i = 0; i < 6; i++) {
-      this.product(0, 0, 0);
+      this.square(0, 0);
     }
   }
 
@@ -111,69 +101,30 @@ export class Mont {
     this.store(0);
   }
 
-  // Register `d` (counted from 0) = `t` (below 2n), minus n when that is not negative.
+  // Register `d` (counted from 0) = `t` (k + 1 limbs, below 2n) mod n.
   private store(d: usize) {
-    const r = this.r[d];
-    const t = this.t;
-    const n = this.n;
-    const k = this.k;
-    let borrow: u64 = 0;
-    for (let i: usize = 0; i < k; i++) {
-      const a = t[i];
-      const b = n[i];
-      const d = a - b;
-      borrow = ((a < b) as u64) | ((d < borrow) as u64);
-    }
-    // t - n is negative when the subtraction borrows past t's carry limb.
-    const sub = maskOf(1 ^ (borrow & (1 ^ t[k])));
-    borrow = 0;
-    for (let i: usize = 0; i < k; i++) {
-      const a = t[i];
-      const b = n[i] & sub;
-      const x = a - b;
-      r[i] = x - borrow;
-      borrow = ((a < b) as u64) | ((x < borrow) as u64);
-    }
+    storeBelow(this.r[d], this.t, this.n, this.k);
   }
 
-  // Register `d` = the Montgomery product of registers `ia` and `ib` (all counted from 0).
+  // Register `d` = the Montgomery product of register `ia` with itself (all counted from 0).
+  private square(d: usize, ia: usize) {
+    squareWhole(this.w, this.r[ia], this.k);
+    reduceWhole(this.r[d], this.w, this.n, this.k, this.ninv);
+  }
+
+  // Register `d` = the Montgomery product of registers `ia` and `ib`.
   private product(d: usize, ia: usize, ib: usize) {
-    const a = this.r[ia];
-    const b = this.r[ib];
-    const t = this.t;
-    const n = this.n;
-    const k = this.k;
-    const ninv = this.ninv;
-    const n0 = n[0];
-    // Always false: said once so that the loops' bounds checks go.
-    if (t.length != k + 1 || n.length != k || a.length != k || b.length != k) {
-      return;
-    }
-    for (let i: usize = 0; i <= k; i++) {
-      t[i] = 0;
-    }
-    for (let i: usize = 0; i < k; i++) {
-      const ai = a[i];
-      // t = (t + ai b + m n) / 2^64, with m making the low limb zero.
-      let [lo, c1] = mac(t[0], ai, b[0], 0);
-      const m = lo * ninv;
-      let [_, c2] = mac(lo, m, n0, 0);
-      for (let j: usize = 1; j < k; j++) {
-        [lo, c1] = mac(t[j], ai, b[j], c1);
-        [lo, c2] = mac(lo, m, n[j], c2);
-        t[j - 1] = lo;
-      }
-      const s = t[k] + c1;
-      const s2 = s + c2;
-      t[k - 1] = s2;
-      t[k] = ((s < c1) as u64) + ((s2 < c2) as u64);
-    }
-    this.store(d);
+    productWhole(this.w, this.r[ia], this.r[ib], this.k);
+    reduceWhole(this.r[d], this.w, this.n, this.k, this.ninv);
   }
 
   /** `d = a * b / R` mod n (the Montgomery product); `d` may be `a` or `b`. */
   mul(d: usize, a: usize, b: usize) {
-    this.product(d + 1, a + 1, b + 1);
+    if (a == b) {
+      this.square(d + 1, a + 1);
+    } else {
+      this.product(d + 1, a + 1, b + 1);
+    }
   }
 
   /** `d = a * R` mod n: `a` into the Montgomery domain; `d` may be `a`. */
@@ -230,20 +181,7 @@ export class Mont {
    * be secret. `d` is none of them.
    */
   pick(d: usize, first: usize, count: usize, index: u64) {
-    const r = this.r[d + 1];
-    const k = this.k;
-    for (let j: usize = 0; j < k; j++) {
-      r[j] = 0;
-    }
-    for (let i: usize = 0; i < count; i++) {
-      const x = (i as u64) ^ index;
-      // All ones when x is 0 (x is far below 2^63, so x - 1 wraps only for 0).
-      const mask = maskOf((x - 1) >> 63);
-      const from = this.r[first + i + 1];
-      for (let j: usize = 0; j < k; j++) {
-        r[j] |= from[j] & mask;
-      }
-    }
+    pickMasked(this.r, d + 1, first + 1, count, index, this.k);
   }
 
   /** Register `d` = register `a`. */

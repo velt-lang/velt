@@ -1,0 +1,136 @@
+// velt/crypto (internal): the limb loops of `Mont` (std/crypto/mont.velt) on targets with a C
+// library (#mont-rows): each checks its ranges once, then runs on the limbs' addresses with
+// std/math/nat_mem.velt's loops (`r += a * word` is eight instructions a limb, with no bounds
+// check). The same API as mont_rows_checked.velt, the JS hosts' loops. No loop's length and no
+// branch depends on a limb's value: the numbers may be secret (an RSA private key's).
+
+import { noInline } from "velt/lang/intrinsics";
+import {
+  addMulRowAt,
+  addSquaresAt,
+  diffAt,
+  doubleAt,
+  ldl,
+  limbsAt,
+  limbsCheck,
+  limbsIn,
+  stl,
+  zeroLimbsAt,
+} from "velt/math/nat_mem";
+
+/**
+ * All ones for `bit` 1, 0 for 0. Out of line, as field_p256.velt's `isZero`: a caller that sees
+ * the mask is one comparison lets LLVM make the masked operation a branch on it, and whether a
+ * product needs its last subtraction depends on the operands (with RSA's private exponent, the
+ * leak the timing attacks on Montgomery multiplication use). scripts/ct-counts.py's rsa_sign
+ * probe checks the machine code: the instructions executed must not vary with the key.
+ */
+@noInline
+export function maskOf(bit: u64): u64 {
+  return 0 - bit;
+}
+
+/** `w[0..2 k] = a[0..k] * b[0..k]`. */
+export function productWhole(w: u64[], a: u64[], b: u64[], k: usize) {
+  limbsCheck(w, 0, 2 * k);
+  limbsCheck(a, 0, k);
+  limbsCheck(b, 0, k);
+  const wp = limbsAt(w);
+  const ap = limbsIn(a);
+  const bp = limbsIn(b);
+  zeroLimbsAt(wp, 2 * k);
+  for (let i: usize = 0; i < k; i++) {
+    stl(wp, i + k, addMulRowAt(wp + 8 * i, bp, k, ldl(ap, i)));
+  }
+}
+
+/**
+ * `w[0..2 k] = a[0..k]^2`: each product of two different limbs once, doubled, plus each limb's
+ * square; three multiplications for every four of `productWhole`.
+ */
+export function squareWhole(w: u64[], a: u64[], k: usize) {
+  limbsCheck(w, 0, 2 * k);
+  limbsCheck(a, 0, k);
+  const wp = limbsAt(w);
+  const ap = limbsIn(a);
+  zeroLimbsAt(wp, 2 * k);
+  // The products of limbs i < j, at 2^(64 (i + j)).
+  for (let i: usize = 0; i + 1 < k; i++) {
+    stl(wp, i + k, addMulRowAt(wp + 8 * (2 * i + 1), ap + 8 * (i + 1), k - 1 - i, ldl(ap, i)));
+  }
+  doubleAt(wp, 2 * k);
+  addSquaresAt(wp, ap, k);
+}
+
+// `r[0..k]` = the k limbs at `tp` with `top` above them (a number below 2n), minus n when that
+// is not negative: the difference is written, and where it is negative (a borrow past `top`)
+// the number itself is put back through a mask.
+function settle(rp: usize, tp: usize, np: usize, k: usize, top: u64) {
+  const borrow = diffAt(rp, tp, np, k, 0);
+  const keep = maskOf(borrow & (1 ^ top));
+  for (let i: usize = 0; i < k; i++) {
+    const x = ldl(rp, i);
+    stl(rp, i, x ^ ((x ^ ldl(tp, i)) & keep));
+  }
+}
+
+/**
+ * `r[0..k] = w[0..2 k] / 2^(64 k)` mod `n[0..k]`, for `w` below n 2^(64 k) and `ninv` =
+ * -n^-1 mod 2^64 (Montgomery's reduction: k times, the multiple of n that makes the lowest limb
+ * zero). `w` is overwritten.
+ */
+export function reduceWhole(r: u64[], w: u64[], n: u64[], k: usize, ninv: u64) {
+  limbsCheck(r, 0, k);
+  limbsCheck(w, 0, 2 * k);
+  limbsCheck(n, 0, k);
+  const wp = limbsAt(w);
+  const np = limbsIn(n);
+  let top: u64 = 0;
+  for (let i: usize = 0; i < k; i++) {
+    const c = addMulRowAt(wp + 8 * i, np, k, ldl(wp, i) * ninv);
+    const s = ldl(wp, i + k) + c;
+    const s2 = s + top;
+    stl(wp, i + k, s2);
+    top = ((s < c) as u64) + ((s2 < top) as u64);
+  }
+  settle(limbsAt(r), wp + 8 * k, np, k, top);
+}
+
+/** `r[0..k] = t[0..k + 1]` (below 2n) mod `n[0..k]`. */
+export function storeBelow(r: u64[], t: u64[], n: u64[], k: usize) {
+  limbsCheck(r, 0, k);
+  limbsCheck(t, 0, k + 1);
+  limbsCheck(n, 0, k);
+  const tp = limbsIn(t);
+  settle(limbsAt(r), tp, limbsIn(n), k, ldl(tp, k));
+}
+
+/**
+ * `regs[d]` = `regs[first + index]`, one of the `count` arrays from `first`, each of k limbs,
+ * read by a masked scan of all of them: nothing branches on or is indexed by `index`, which may
+ * be secret. `d` is none of them.
+ */
+export function pickMasked(
+  regs: u64[][],
+  d: usize,
+  first: usize,
+  count: usize,
+  index: u64,
+  k: usize,
+) {
+  const r = regs[d];
+  limbsCheck(r, 0, k);
+  const rp = limbsAt(r);
+  zeroLimbsAt(rp, k);
+  for (let i: usize = 0; i < count; i++) {
+    const x = (i as u64) ^ index;
+    // All ones when x is 0 (x is far below 2^63, so x - 1 wraps only for 0).
+    const mask = maskOf((x - 1) >> 63);
+    const from = regs[first + i];
+    limbsCheck(from, 0, k);
+    const fp = limbsIn(from);
+    for (let j: usize = 0; j < k; j++) {
+      stl(rp, j, ldl(rp, j) | (ldl(fp, j) & mask));
+    }
+  }
+}
