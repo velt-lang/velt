@@ -41,32 +41,6 @@ export declare function velt_rt_rows_str(st: u64, col: u64, out: string): u8;
 export declare function velt_rt_rows_kind(st: u64, col: u64): u8;
 /** Column `col` of the current row as a `u8[]` (empty when it holds no blob). */
 export declare function velt_rt_rows_blob(st: u64, col: u64): u8[];
-/** Whether the rows are one row's (a cursor opened for a single row): 1, else 0. */
-export declare function velt_rt_rows_single(st: u64): u8;
-/** The name of column `col` into `out`. */
-export declare function velt_rt_rows_name(st: u64, col: u64, out: string);
-/** Column `col` of the current row as its nested value's JSON text into `out`: 1, or 0 another kind. */
-export declare function velt_rt_rows_json(st: u64, col: u64, out: string): u8;
-/**
- * Column `col` of the current row typed into `out` (passed by pointer): 1 written, 2 NULL, 0
- * another kind.
- */
-export declare function velt_rt_rows_i64(st: u64, col: u64, out: RowsI64): u8;
-export declare function velt_rt_rows_f64(st: u64, col: u64, out: RowsF64): u8;
-export declare function velt_rt_rows_bool(st: u64, col: u64, out: RowsU8): u8;
-
-/** The out-parameters of the typed reads. */
-export struct RowsI64 {
-  v: i64;
-}
-
-export struct RowsF64 {
-  v: f64;
-}
-
-export struct RowsU8 {
-  v: u8;
-}
 declare function velt_rt_rows_fail(expected: string, row: i64, field: string, out: string);
 
 /**

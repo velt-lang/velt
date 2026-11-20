@@ -1,4 +1,4 @@
-// Prelude, loaded on use: `JSON`, `JsonError` and `JsonValue` (`JsonValue`
+// Prelude, loaded on use: `JSON`, `JsonError` and `JsonValue` (rt_abi_async.md §12.3–12.5; `JsonValue`
 // is in json_value.velt, `JsonError` in json_error.velt, the replacer and `space` of
 // `JSON.stringify` in layout.velt). A
 // program loads this module when one of its modules names one of them (the global
@@ -8,16 +8,21 @@
 // generators of velt/encoding/json (a string builder for stringify, a pull-reader decoder for
 // parse); parse failures throw a `SyntaxError` `JsonError` ("expected string at $.name"). The
 // generated code writes a `JsonValue` (at any depth) with its `[JSON_WRITE](b)`, decodes one with
-// `JsonValue[JSON_FROM_READER](r)`, and `console.log` prints one with its
-// `[JSON_INSPECT](b, top, depth)`; the keys are std/lang/hooks/keys.velt's, which no program can
-// name.
+// `JsonValue[JSON_FROM_READER](r)`, and `console.log` prints one from the runtime tree
+// `[JSON_RUNTIME_HANDLE]()` makes for it (freed after); the keys are std/lang/hooks/keys.velt's,
+// which no program can name.
 //
 // `JSON.parseValue` gives a `JsonValue` for data of unknown shape: a position on a tape (one
-// flat array per document, velt/encoding/json/tape), which its children share. A value built or
-// edited here is a tree of nodes (velt/encoding/json/tree); an edit turns a tape value into such a
-// tree first. Values have value semantics: `set`/`delete`/`push`/`setAt` copy a node another value
-// may reach before changing it (copy-on-write), so an edit never shows through a clone, a parent
-// or a child.
+// flat array per document, velt/encoding/json/tape), which its children share. A value built or edited
+// here is a tree of reference-counted runtime nodes behind an opaque `u64` handle
+// (rt_abi_async.md §3.2; 0 is the null handle, which a `JsonValue` holds for JSON null); an edit
+// turns a tape value into such a tree first.
+// Values have value semantics: `set`/`delete`/`push`/`setAt` copy a node another handle shares
+// before changing it (copy-on-write), so an edit never shows through a clone, a parent or a
+// child. Every `JsonValue` owns one reference to its tape or tree (`get`/`at`/`clone` return
+// new ones; children stay valid after their parent is released); a tree's is released by the
+// `[Symbol.dispose]()` drop hook. A value that contains a `JsonValue` has no automatic deep
+// `clone()` (sema rejects it: the generated copy could not take a new reference).
 
 import { jsonFlags, jsonMaxDepth } from "velt/encoding/json/options";
 import { StringBuilder } from "velt/text/string_builder";

@@ -18,12 +18,3 @@ export declare function share<T>(value: T): T;
  */
 @intrinsic
 export declare function transfer<T>(value: Owned<T>): T;
-
-/**
- * Whether `value`, an object, box or array, is reached by no other reference (its count is 1),
- * so that changing it in place shows nowhere else: what copy-on-write code asks before changing
- * a node it may share (velt/encoding/json's tree). A type the program never counts has one owner
- * per value, so always true; a value of any other kind (a number, a string), false.
- */
-@intrinsic
-export declare function isUnique<T>(value: T): bool;

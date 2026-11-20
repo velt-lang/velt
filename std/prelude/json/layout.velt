@@ -5,7 +5,6 @@
 import { JSON_CALLBACK_DEPTH, jsonCallbackTooDeep } from "velt/encoding/json/value_ops";
 import { JSON } from "velt/prelude/json/json";
 import { JsonValue } from "velt/prelude/json/json_value";
-
 import { propertyList, relayout } from "velt/encoding/json/relayout";
 
 // `JSON.stringify(value, replacer, space)` (the compiler calls these): `text` is

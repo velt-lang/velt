@@ -35,7 +35,6 @@ import {
 } from "velt/encoding/json/tape";
 import { TapeBuilder } from "velt/encoding/json/tape_builder";
 import { TapeError } from "velt/encoding/json/tape_error";
-
 import { nodeSyntaxMessage } from "velt/encoding/json/node_syntax";
 
 /**

@@ -49,10 +49,10 @@ keys! {
     // `xs.reduce(f)` without an initial value (`velt_sema` `method_call.rs`).
     array_reduce_first => "ARRAY_REDUCE_FIRST", "arrayReduceFirst";
     array_reduce_right_first => "ARRAY_REDUCE_RIGHT_FIRST", "arrayReduceRightFirst";
-    // JsonValue: what `console.log` prints a value with (`velt_vir` `glue/format.rs`), what
+    // JsonValue: what `console.log` prints a value from (`velt_vir` `glue/format.rs`), what
     // appends one's text (velt/encoding/json/append) and what decoders read one with
     // (velt/encoding/json/generate/read_value).
-    json_inspect => "JSON_INSPECT", "jsonInspect";
+    json_runtime_handle => "JSON_RUNTIME_HANDLE", "jsonRuntimeHandle";
     json_write => "JSON_WRITE", "jsonWrite";
     json_from_reader => "JSON_FROM_READER", "jsonFromReader";
     // Map: what a `for...of` over a map reads (`velt_sema` `for_map.rs`, `velt_vir` `frozen.rs`),

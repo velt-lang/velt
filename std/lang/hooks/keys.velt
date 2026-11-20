@@ -31,8 +31,8 @@ export const VIEW_EMPTY_TEXT = Symbol("viewEmptyText");
 /** Buffer views: the bytes `Buffer.from` makes of one. */
 export const VIEW_BYTES = Symbol("viewBytes");
 
-/** `JsonValue`: appends what `console.log` prints for the value to a string builder. */
-export const JSON_INSPECT = Symbol("jsonInspect");
+/** `JsonValue`: a runtime handle of its own to the value (`console.log` prints its tree). */
+export const JSON_RUNTIME_HANDLE = Symbol("jsonRuntimeHandle");
 /** `JsonValue`: appends the value's JSON text to a string builder. */
 export const JSON_WRITE = Symbol("jsonWrite");
 /** `JsonValue` (static): one value read by a JSON reader, as decoders read a `JsonValue`. */

@@ -132,8 +132,8 @@
 //!
 //! # JSON (`lower/json.rs`)
 //! `JSON.parse<T>` and `JSON.stringify` are Velt code source generators write per type
-//! (velt/encoding/json/generate); lowering only prints a `JsonValue` (through its
-//! `[JSON_INSPECT]` method) and walks a `Record`'s entries in key order.
+//! (velt/encoding/json/generate); lowering only prints a `JsonValue` (from the runtime tree its
+//! `[JSON_RUNTIME_HANDLE]()` makes) and walks a `Record`'s entries in key order.
 
 pub mod vir;
 

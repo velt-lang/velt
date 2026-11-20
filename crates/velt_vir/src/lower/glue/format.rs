@@ -204,9 +204,8 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// A `JsonValue` prints the way node prints the parsed value: its `[JSON_INSPECT]` method
-    /// writes it to the builder (std's velt/encoding/json/value_inspect); `top`: a string value
-    /// prints raw, as a `console.log` argument, and a container is broken across lines.
+    /// A `JsonValue` prints its tree the way node prints the parsed value (never its handle);
+    /// `top`: a string value prints raw, as a `console.log` argument.
     fn format_json_value(
         &mut self,
         buf: &Operand,
@@ -215,12 +214,26 @@ impl FnLower<'_, '_> {
         top: bool,
         depth: &Operand,
     ) {
+        // A runtime handle of its own (a tape value's is a tree made for this), freed after.
         let _ = ty;
         let v = Operand::Copy(place.clone());
-        let top = Operand::Const(vir::Const::Bool(top), Ty::Bool);
-        let _ = self.json_value_call(
-            velt_common::std_key!(json_inspect),
-            vec![v, buf.clone(), top, depth.clone()],
+        let h = self.json_value_call(velt_common::std_key!(json_runtime_handle), vec![v]);
+        let h = self.copy_to_temp(h, Ty::U64);
+        let hp = self.rvalue_temp(
+            Ty::Ptr,
+            Rvalue::Cast(Operand::Copy(Place::local(h)), Ty::Ptr),
+        );
+        let top = cint(top as i128, Ty::U8);
+        let depth = depth.clone();
+        self.call_rt(
+            Rt::StrbufPushInspectJson,
+            vec![buf.clone(), hp, top, depth],
+            None,
+        );
+        self.call_rt(
+            Rt::JsonValueFree,
+            vec![Operand::Copy(Place::local(h))],
+            None,
         );
     }
 
