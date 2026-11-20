@@ -283,9 +283,10 @@ function orderMembers(t: TapeBuilder, v: u32, at: usize, n: usize) {
   for (let i: usize = 0; i < n; i++) {
     const k = t.kids[at + i];
     const s = t.text(k);
-    const j = places.get(s);
-    if (j == undefined) {
-      places.set(s, firsts.length);
+    // One lookup (one hash of the key) for a new key and a repeated one alike.
+    const next = firsts.length;
+    const j = places.getOrInsert(s, () => next);
+    if (j == next) {
       firsts.push(k);
     } else {
       firsts[j] = k;
