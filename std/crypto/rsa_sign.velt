@@ -2,16 +2,27 @@
 // (§8.1.1) with SHA-256, SHA-384 or SHA-512, for a TLS server's CertificateVerify and
 // ServerKeyExchange with an RSA key (#2392 step 4).
 //
-// The private operation uses the Chinese remainder theorem (§5.1.2, 2b) on `Mont`, in constant
-// time and blinded:
-// - every exponentiation with a secret exponent (dP, dQ, and p - 2 and q - 2 for the blinding's
-//   inverse) goes through fixed 4-bit windows, the same squarings and products whatever the
-//   exponent, each window's power picked by a masked scan of the table;
-// - the message is multiplied by r^e for a fresh random r before the private exponentiations
-//   and each half is multiplied by 1/r after its own, so the exponentiations never see a value
-//   an attacker chose;
-// - the result is raised to e again and compared with the message before it is returned
+// The private operation is ring's design: the Chinese remainder theorem (§5.1.2, 2b) on `Mont`,
+// a constant-time exponentiation, and a check of the result.
+// - The exponentiations by dP and dQ go through fixed 4-bit windows, the same squarings and
+//   products whatever the exponent, each window's power picked by a masked scan of the table.
+// - The result is raised to e again and compared with the message before it is returned
 //   (§5.1.2's check against a faulty computation: one wrong half would give the key away).
+// - There is no blinding, as in ring: with the exponentiation constant time it only adds cost.
+//
+// Constant time is a property of the machine code, not of this source: LLVM turns a mask it can
+// see through into a branch (`Mont`'s masks come from a function kept out of line for that).
+// So it is checked on a release build, with the key's secret numbers as the secret:
+//   scripts/ct-counts.py rsa_sign             the instructions executed do not vary with the key
+//   scripts/ct-counts.py --memcheck rsa_sign  memcheck, with p, q, dP, dQ and qInv marked
+//                                             undefined, reports no branch or address that
+//                                             depends on them in the signing path
+// What memcheck does report is by design and counted in bench/crypto/ct/rsa_sign.probe: the
+// shape checks of the constructor, `Mont`'s constructor finding each prime's bit length (the
+// key's size, which is public), and the result check's one branch.
+//
+// The caller decides which public exponents it takes: ring refuses a key with e below 65537,
+// and the code that reads a server's key file refuses it too; this class takes any odd e from 3.
 
 import { CryptoError } from "velt/crypto/errors";
 import { Mont } from "velt/crypto/mont";
@@ -33,10 +44,9 @@ const PRIME_REGS: usize = TABLE + 16;
 const N_A: usize = 0;
 const N_B: usize = 1;
 const N_C: usize = 2;
-const N_R: usize = 3;
-const N_ONE: usize = 4;
-const N_S: usize = 5;
-const N_REGS: usize = 6;
+const N_ONE: usize = 3;
+const N_S: usize = 4;
+const N_REGS: usize = 5;
 
 /** An RSA private key, ready to sign. */
 export class RsaSigner {
@@ -48,11 +58,9 @@ export class RsaSigner {
   private e: u64;
   private pLen: usize;
   private qLen: usize;
-  // dP and dQ as long as their primes, p - 2 and q - 2, q's bytes and qInv.
+  // dP and dQ as long as their primes, q's bytes and qInv.
   private dp: u8[];
   private dq: u8[];
-  private pm2: u8[];
-  private qm2: u8[];
   private qBytes: u8[];
   private qinv: u8[];
 
@@ -99,8 +107,6 @@ export class RsaSigner {
     this.qLen = q.length;
     this.dp = padded(dp, p.length);
     this.dq = padded(dq, q.length);
-    this.pm2 = minusTwo(p);
-    this.qm2 = minusTwo(q);
     this.qBytes = q.slice();
     this.qinv = padded(qinv, p.length);
   }
@@ -138,6 +144,9 @@ export class RsaSigner {
     const s = salt ?? randomBytes(hLen);
     const bits = this.n.bits - 1;
     const emLen = (bits + 7) >> 3;
+    if (s.length + hLen + 2 > emLen) {
+      throw new CryptoError("the PSS salt is too long for the key");
+    }
     // H = Hash(eight zero bytes, the digest, the salt).
     const m = Buffer.alloc(8 + hLen + s.length);
     for (let i: usize = 0; i < hLen; i++) {
@@ -184,22 +193,10 @@ export class RsaSigner {
     if (!n.load(N_C, em, 0, em.length)) {
       throw new CryptoError("the message is not below the RSA modulus");
     }
-    // r: random and odd, so not zero. It need not be below n: `enter` and `reduce` take any
-    // number of the modulus's width.
-    const r = randomBytes(this.size);
-    r[this.size - 1] |= 1;
-    n.load(N_R, r, 0, r.length);
-    n.enter(N_R, N_R);
-    this.publicPower(N_A, N_R);
-    // The blinded message, c r^e, out of the Montgomery domain.
     const one: u8[] = [1];
     n.load(N_ONE, one, 0, 1);
-    n.enter(N_B, N_C);
-    n.mul(N_B, N_B, N_A);
-    n.mul(N_B, N_B, N_ONE);
-    const blinded = n.bytes(N_B, this.size);
-    const sp = half(this.p, blinded, r, this.dp, this.pm2, this.pLen);
-    const sq = half(this.q, blinded, r, this.dq, this.qm2, this.qLen);
+    const sp = half(this.p, em, this.dp, this.pLen);
+    const sq = half(this.q, em, this.dq, this.qLen);
     // h = qInv (sp - sq) mod p.
     const p = this.p;
     p.load(X, sp, 0, sp.length);
@@ -270,30 +267,13 @@ function padded(x: u8[], len: usize): u8[] {
   return out;
 }
 
-// `x - 2` for the odd number `x` (a prime: secret), without a branch on its bytes.
-function minusTwo(x: u8[]): u8[] {
-  const out = x.slice();
-  let borrow: i32 = 2;
-  for (let i = x.length; i > 0; i--) {
-    const d = (x[i - 1] as i32) - borrow;
-    out[i - 1] = (d & 0xff) as u8;
-    borrow = (d >> 8) & 1;
-  }
-  return out;
-}
-
-// One half of the private operation, mod the prime of `m`: `blinded`^`d` / `r`, as `len`
-// bytes. `inverse` is the prime minus two (1/r = r^(prime - 2)).
-function half(m: Mont, blinded: u8[], r: u8[], d: u8[], inverse: u8[], len: usize): u8[] {
-  reduce(m, BASE, blinded);
+// One half of the private operation, mod the prime of `m`: `message`^`d`, as `len` bytes.
+function half(m: Mont, message: u8[], d: u8[], len: usize): u8[] {
+  reduce(m, BASE, message);
   power(m, d);
-  m.copy(X, ACC);
-  reduce(m, BASE, r);
-  power(m, inverse);
-  m.mul(X, X, ACC);
   const one: u8[] = [1];
   m.load(PLAIN, one, 0, 1);
-  m.mul(X, X, PLAIN);
+  m.mul(X, ACC, PLAIN);
   return m.bytes(X, len);
 }
 

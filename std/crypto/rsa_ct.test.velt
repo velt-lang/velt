@@ -1,21 +1,18 @@
 // velt/crypto (tests): the probe of scripts/ct-counts.py for RSA signing, which no program can
 // import: a PKCS#1 v1.5 and a PSS signature by the private key in the file $VELT_CT_SECRET names
-// (n, e, p, q, dP, dQ, qInv, each as two bytes of length and the number; a fixed key without the
-// file, so that this also runs with the other tests). The key is read as bytes and nothing here
+// (p, q, dP, dQ and qInv, 128 bytes each; the modulus in the file of that name with ".pub" added;
+// a fixed key without the file, so that this also runs with the other tests). The key is read as bytes and nothing here
 // branches on it; what is checked costs the same for every key of one size.
 import { RsaSigner } from "velt/crypto/rsa_sign";
 import { hexDecode } from "velt/encoding";
 import { readFileBytesSync } from "velt/fs";
 import { describe, expect, it } from "velt/test";
 
-// The numbers of the key in `file`.
-function numbers(file: u8[]): u8[][] {
+// `count` numbers of 128 bytes each from `file`.
+function numbers(file: u8[], count: usize): u8[][] {
   const out: u8[][] = [];
-  let at: usize = 0;
-  for (let i = 0; i < 7; i++) {
-    const n = ((file[at] as usize) << 8) | (file[at + 1] as usize);
-    out.push(file.slice((at + 2) as i64, (at + 2 + n) as i64));
-    at += 2 + n;
+  for (let i: usize = 0; i < count; i++) {
+    out.push(file.slice((128 * i) as i64, (128 * i + 128) as i64));
   }
   return out;
 }
@@ -63,7 +60,13 @@ function fixed(): u8[][] {
 describe("the RSA signing probe", () => {
   it("signs with the key it is given", () => {
     const path = process.env.VELT_CT_SECRET;
-    const k = path != null ? numbers(readFileBytesSync(path)) : fixed();
+    let k = fixed();
+    if (path != null) {
+      // The secret numbers at fixed places, and the modulus, which is public, from its own file.
+      const s = numbers(readFileBytesSync(path), 5);
+      const e: u8[] = [1, 0, 1];
+      k = [readFileBytesSync(`${path}.pub`), e, s[0], s[1], s[2], s[3], s[4]];
+    }
     const key = new RsaSigner(k[0], k[1], k[2], k[3], k[4], k[5], k[6]);
     const digest = Buffer.alloc(32);
     for (let i: usize = 0; i < 32; i++) {
