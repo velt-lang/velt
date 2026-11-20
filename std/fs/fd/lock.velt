@@ -1,0 +1,82 @@
+// velt/fs (internal): byte-range locks on a file descriptor, for programs that share a file
+// between processes (a database's lock states, a single-instance file). A lock is held by the
+// open file, not by the process: two descriptors of one file exclude each other also inside one
+// process, closing another descriptor of the file drops nothing, and closing this one (or the
+// end of the process, however it ends) gives its locks back. Locks are advisory: only other
+// lockers notice them. Nothing in Node to follow; the design is #3321.
+
+import { lastError, lockRange } from "#fd-system";
+import { descriptor, integer, MAX_SAFE } from "velt/fs/fd/args";
+import { osError } from "velt/fs/errors";
+
+/**
+ * Which bytes of a file to lock and how: `"exclusive"` (the default: no other lock on the
+ * range) or `"shared"` (any number of shared locks, no exclusive one), on the `length` bytes
+ * from byte `offset`. A `length` of 0, the default, is from `offset` to the end of the file
+ * and whatever is written past it; the range need not exist in the file.
+ */
+export type LockOptions = { mode?: "shared" | "exclusive"; offset?: number; length?: number };
+
+// `lockRange` for `options`: 0 done, 1 taken by another holder; an `IoError` otherwise.
+function range(what: string, fd: number, mode: i32, options: LockOptions | undefined): i32 {
+  const f = descriptor(fd);
+  const offset = integer("offset", options?.offset ?? 0, 0, MAX_SAFE);
+  const length = integer("length", options?.length ?? 0, 0, MAX_SAFE);
+  const rc = lockRange(f, mode, offset, length);
+  if (rc < 0) {
+    throw osError(lastError(), what);
+  }
+  return rc;
+}
+
+function modeOf(options: LockOptions | undefined): i32 {
+  return options?.mode == "shared" ? 1 : 2;
+}
+
+/**
+ * Takes the lock `options` names on the file `fd` is open on, without waiting: `true`, or
+ * `false` when another holder has a lock that conflicts. Asking for a range this descriptor
+ * already holds changes its mode (shared to exclusive and back). An `IoError` when the
+ * descriptor is not open (`EBADF`), is not open the way the lock needs (a shared lock needs
+ * it readable, an exclusive one writable), or the file system has no locks; `ENOSYS` on
+ * Windows and WebAssembly.
+ */
+export function lockSync(fd: number, options?: LockOptions): bool {
+  return range("lock", fd, modeOf(options), options) == 0;
+}
+
+/**
+ * Gives back the lock on the range `options` names (its `mode` is not looked at): all of what
+ * this descriptor holds there, which may be a part of a larger lock. Nothing when it holds
+ * none.
+ */
+export function unlockSync(fd: number, options?: LockOptions) {
+  range("unlock", fd, 0, options);
+}
+
+/**
+ * Takes the lock as `lockSync` does, waiting until no other holder conflicts. It asks again
+ * after a pause that grows from 1 ms to 50 ms, on a timer: no thread waits. A lock that is
+ * being waited for keeps the program running, as a pending read does (`process.exit()` ends
+ * it all the same).
+ */
+export async function lock(fd: number, options?: LockOptions): Promise<void> {
+  let pause = 1;
+  while (!lockSync(fd, options)) {
+    await later(pause);
+    pause = pause * 2 > 50 ? 50 : pause * 2;
+  }
+}
+
+// Resolves after `ms` milliseconds. The timer keeps the program running, as a pending read
+// does: a task that waits for a lock is waiting for something that can still happen.
+function later(ms: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    setTimeout(
+      async () => {
+        resolve();
+      },
+      ms as i64,
+    );
+  });
+}
