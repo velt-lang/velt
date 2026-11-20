@@ -81,4 +81,21 @@ function main() {
   console.log(hex("x😀y😀".replaceAll(LO, (m, offset) => `${offset}`)));
   console.log(hex(("a" + HI + "-" + LO).replace("-", () => "")));
   console.log("aaaa".replaceAll("aa", (m, offset) => `${offset}`));
+  // A replacement that is a function by its type, not by how it is written: a call's result,
+  // a conditional of two functions, a method's result.
+  const mk = () => (m: string) => m + "!";
+  console.log("abc".replace("b", mk()));
+  const upper = (m: string) => m.toUpperCase();
+  const twice = (m: string, offset: number) => m + m + offset;
+  for (const pick of [true, false]) {
+    console.log(
+      "a-b-c".replaceAll("-", pick ? upper : twice),
+      "xyz".replace("y", (pick ? upper : twice)),
+    );
+  }
+  console.log("é-日".replace("-", pick2(1)), "é-日".replaceAll("-", pick2(2)));
+}
+
+function pick2(k: number): (m: string, offset: number) => string {
+  return k == 1 ? (m, offset) => `<${offset}>` : (m, offset) => `[${m}${offset * k}]`;
 }
