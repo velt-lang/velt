@@ -50,11 +50,13 @@ export function charAt(base: usize, i: usize, units: bool): u32 {
     return ((b & 0x1f) << 6) | (byteAt(base, i + 1) & 0x3f) | (2 << 24);
   }
   if (b < 0xf0) {
-    return ((b & 0x0f) << 12) | ((byteAt(base, i + 1) & 0x3f) << 6) | (byteAt(base, i + 2) & 0x3f) |
+    return ((b & 0x0f) << 12) |
+      ((byteAt(base, i + 1) & 0x3f) << 6) |
+      (byteAt(base, i + 2) & 0x3f) |
       (3 << 24);
   }
-  const top = ((b & 0x07) << 18) | ((byteAt(base, i + 1) & 0x3f) << 12) |
-    ((byteAt(base, i + 2) & 0x3f) << 6);
+  const top =
+    ((b & 0x07) << 18) | ((byteAt(base, i + 1) & 0x3f) << 12) | ((byteAt(base, i + 2) & 0x3f) << 6);
   if (units) {
     return (0xd800 + ((top - 0x10000) >> 10)) | (1 << 24);
   }
@@ -84,7 +86,9 @@ function afterLineEnd(base: usize, i: usize): bool {
   if (b == 0x0a || b == 0x0d) {
     return true;
   }
-  return (b == 0xa8 || b == 0xa9) && i >= 3 && byteAt(base, i - 2) == 0x80 &&
+  return (b == 0xa8 || b == 0xa9) &&
+    i >= 3 &&
+    byteAt(base, i - 2) == 0x80 &&
     byteAt(base, i - 3) == 0xe2;
 }
 
@@ -94,7 +98,9 @@ function beforeLineEnd(base: usize, i: usize, len: usize): bool {
   if (b == 0x0a || b == 0x0d) {
     return true;
   }
-  return b == 0xe2 && i + 2 < len && byteAt(base, i + 1) == 0x80 &&
+  return b == 0xe2 &&
+    i + 2 < len &&
+    byteAt(base, i + 1) == 0x80 &&
     (byteAt(base, i + 2) | 1) == 0xa9;
 }
 

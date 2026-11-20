@@ -4,7 +4,18 @@
 
 import { arrayTruncate, arrayWithCapacity } from "velt/lang/intrinsics";
 import { CharSet } from "velt/text/regex/char_set";
-import { ALT, ASSERT, CAT, CHAR, EMPTY, GROUP, Node, REPEAT, SET, UNBOUNDED } from "velt/text/regex/node";
+import {
+  ALT,
+  ASSERT,
+  CAT,
+  CHAR,
+  EMPTY,
+  GROUP,
+  Node,
+  REPEAT,
+  SET,
+  UNBOUNDED,
+} from "velt/text/regex/node";
 import { analyze } from "velt/text/regex/literals";
 import { Parser } from "velt/text/regex/parser";
 import {

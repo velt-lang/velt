@@ -214,7 +214,10 @@ function group(p: Parser): Node {
  * character past ASCII is taken. */
 function isNameChar(c: i64, first: bool): bool {
   const l = c | 0x20;
-  return (l >= 0x61 && l <= 0x7a) || c == 0x24 || c == 0x5f || c >= 0x80 ||
+  return (l >= 0x61 && l <= 0x7a) ||
+    c == 0x24 ||
+    c == 0x5f ||
+    c >= 0x80 ||
     (!first && c >= 0x30 && c <= 0x39);
 }
 

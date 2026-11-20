@@ -98,8 +98,7 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
   long to be inline, at least a quarter of the buffer's capacity, and the buffer is below 1 GiB
   (2^30 bytes); otherwise they copy (inline when short). Every other function copies the pieces it
   returns: `split("")` and `velt_rt_str_code_points` (pieces of one character, always inline), a
-  split by a lone surrogate, and the regex functions (the pieces of `match`, `exec` and `split` are
-  new strings, `VeltStr::from_vec`). In every function the whole string is shared as it is (count
+  split by a lone surrogate. In every function the whole string is shared as it is (count
   +1, same value), a piece of a static string borrows it, and a piece that ends between the halves
   of a surrogate pair is a copy (the half is re-encoded). So live slices pin at most four times
   their own size (a short piece of a huge string never keeps it alive), and a parser that consumes
@@ -165,8 +164,8 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
   and pieces a result is assembled from join at their seams (`wtf8::push_joining`, or
   `push_wtf8`). Wherever text leaves the program or needs UTF-8 (stdout and stderr, files,
   sockets, WebSocket frames, HTTP bodies and headers, child-process arguments, environment and
-  stdin, paths, process environment and working directory, database text and parameters, regex
-  patterns, `TextEncoder`-style `u8[]` copies, panic and error messages, native packages) each
+  stdin, paths, process environment and working directory, database text and parameters,
+  `TextEncoder`-style `u8[]` copies, panic and error messages, native packages) each
   lone surrogate becomes **one** U+FFFD (`EF BF BD`, 3 bytes like the surrogate, so the output
   is as long as the string's bytes); well-formed text is written as it is (a heap string's
   buffer becomes an HTTP body without a copy). `JSON.stringify` writes a lone surrogate as a

@@ -163,8 +163,13 @@ function charEscape(p: Parser, c: i64, inClass: bool): i64 {
 
 /** May `\` + `c` stand for `c` with the `u` flag (a syntax character, or `/`)? */
 function isSyntax(c: i64): bool {
-  return c == 0x24 || (c >= 0x28 && c <= 0x2b) || c == 0x2e || c == 0x2f || c == 0x3f ||
-    (c >= 0x5b && c <= 0x5e) || (c >= 0x7b && c <= 0x7d);
+  return c == 0x24 ||
+    (c >= 0x28 && c <= 0x2b) ||
+    c == 0x2e ||
+    c == 0x2f ||
+    c == 0x3f ||
+    (c >= 0x5b && c <= 0x5e) ||
+    (c >= 0x7b && c <= 0x7d);
 }
 
 /** `\c` after its `c`: a control letter (in a class also a digit or `_`, without the `u`
@@ -189,7 +194,9 @@ function digitEscape(p: Parser, c: i64, inClass: bool): i64 {
     return 0;
   }
   if (p.unicode) {
-    p.fail(inClass ? "Invalid class escape" : c == 0x30 ? "Invalid decimal escape" : "Invalid escape");
+    p.fail(
+      inClass ? "Invalid class escape" : c == 0x30 ? "Invalid decimal escape" : "Invalid escape",
+    );
   }
   if (c >= 0x38) {
     return c;

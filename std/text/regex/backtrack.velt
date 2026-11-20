@@ -62,7 +62,14 @@ export function backtrackReset(prog: Program, m: Search, origin: usize, end: usi
 /** Is there a match of `prog` in the `len` bytes of `s` that starts at byte `start`? Its slots
  * are then in `m.slots`. With `memory`, states an earlier call since `backtrackReset` has been
  * in lead to no match, and are not entered again; without, the steps are taken from `m.fuel`. */
-export function backtrack(prog: Program, m: Search, s: string, len: usize, start: usize, memory: bool): i64 {
+export function backtrack(
+  prog: Program,
+  m: Search,
+  s: string,
+  len: usize,
+  start: usize,
+  memory: bool,
+): i64 {
   const base = strDataAddress(s);
   const code = prog.code;
   const slots = m.slots;
