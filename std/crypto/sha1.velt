@@ -3,7 +3,6 @@
 
 import { utf8Encode } from "velt/encoding/utf8";
 import { hexEncode } from "velt/encoding/hex";
-import { u32x4 } from "velt/simd";
 import {
   BLOCK,
   finalBlocks,
@@ -14,6 +13,8 @@ import {
 } from "velt/crypto/blocks";
 import { sha1Arm, sha1X86 } from "velt/crypto/sha1_simd";
 import { H1 } from "velt/crypto/tables";
+import { Sha256 } from "velt/arch/arm/sha256";
+import { Sha } from "velt/arch/x86/sha";
 
 /** SHA-1 digest (20 bytes) of `data`. Not collision resistant; see the module comment. */
 export function sha1(data: u8[]): u8[] {
@@ -22,10 +23,10 @@ export function sha1(data: u8[]): u8[] {
 
 /** SHA-1 of `data`, after a keyed first block (see `sha256Of`). */
 export function sha1Of(key: u8[], pad: u8, keyed: bool, data: u8[]): u8[] {
-  if (u32x4.hasShaArm()) {
+  if (Sha256.isSupported()) {
     return sha1Arm(key, pad, keyed, data);
   }
-  if (u32x4.hasShaX86()) {
+  if (Sha.isSupported()) {
     return sha1X86(key, pad, keyed, data);
   }
   const h = H1.slice();

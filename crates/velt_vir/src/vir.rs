@@ -259,10 +259,15 @@ pub struct Function {
     /// the duration of the call. Set by lowering; `velt_opt` keeps it on clones.
     pub is_poll: bool,
     /// A gated function (`@targetFeature`, rt_abi.md "SIMD"): it runs only where the CPU has
-    /// this extension (sema checks every call), so backends compile it with the extension's
-    /// whole feature set and its SHA operations as the bare instructions. `None` for every
+    /// these features (sema checks every call), so backends compile it with the features and
+    /// everything they imply, and its SHA operations as the bare instructions. Empty for every
     /// other function. Inlining keeps a gated body out of callers with another target.
-    pub target: Option<crate::simd::Ext>,
+    pub target: crate::simd::ExtSet,
+    /// Runs before std's start-up check of the CPU (rt_abi.md "CPU check"): the check and
+    /// everything it reaches (`start_up::mark_baseline`). Backends compile it for the baseline
+    /// CPU of its architecture whatever `--cpu` says, so on a CPU that lacks the build's features
+    /// the check gets to say so instead of dying of an illegal instruction.
+    pub baseline: bool,
     /// No call of it returns normally: its declared result is `never` (it panics, throws, exits
     /// or loops forever), so every call is rare. Optimizers keep its body out of line (inlining
     /// it only grows the hot code around the call) and backends may compile it as cold. Set by
@@ -345,7 +350,8 @@ impl Function {
             locs: Vec::new(),
             param_attrs: Vec::new(),
             is_poll: false,
-            target: None,
+            target: crate::simd::ExtSet::NONE,
+            baseline: false,
             cold: false,
             inline: Inline::Default,
             stops_unwind: false,

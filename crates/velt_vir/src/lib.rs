@@ -209,6 +209,7 @@ pub mod mangle;
 pub mod math;
 pub mod parallel;
 pub mod simd;
+pub mod start_up;
 pub mod tls;
 mod verify;
 
