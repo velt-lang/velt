@@ -117,7 +117,9 @@ function again(e: usize, mode: u32): bool {
  */
 @noInline
 function runOther(e: usize, k: usize, fl: u32): void {
-  yl.begin(k, fl);
+  if (stdUsed("yields")) {
+    yl.begin(k, fl);
+  }
   if ((fl & t.TOUCHED) !== 0) {
     mod.enter();
   }

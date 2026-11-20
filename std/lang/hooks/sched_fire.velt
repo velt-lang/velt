@@ -5,7 +5,9 @@
 // woke, as Node runs the microtasks between two timers' callbacks and between two immediates
 // (#3241).
 
+import { inline, noInline } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
+import * as micro from "./sched_micro";
 import * as node from "./sched_node";
 import * as wn from "./sched_node_woken";
 import * as run from "./sched_run";
@@ -136,12 +138,38 @@ function resume(e: usize, k: usize, w: usize, lent: bool, own: bool, woken: bool
  * those woken again wait for the next poll), then the root if it woke, unless it woke while it
  * was polled in this poll (`woken`), or it yielded in this poll (a microtask's entry may have
  * resumed it meanwhile): polled again, it would stay suspended and take its own wake. Whether the
- * root woke (from `woken` on).
+ * root woke (from `woken` on). In line, a turn with no reaction is four loads; the reactions are
+ * out of line.
  */
+@inline("always")
 function between(e: usize, k: usize, woken: bool): bool {
-  run.drain(e, k);
+  if (reacts(k)) {
+    run.drain(e, k);
+  }
   // Mostly none: a load, not the exchange.
-  let n = m.load(k + t.T_WOKEN) === 0 ? 0 : wn.takeWoken(k);
+  if (m.load(k + t.T_WOKEN) !== 0) {
+    runWoken(e, k);
+  }
+  const s = m.load32(k + t.T_STATE);
+  if (s === t.YIELDED) {
+    return true;
+  }
+  if (!woken && s === t.NOTIFIED && !t.has(k, t.ROOT_DONE)) {
+    return rootWoke(e, k);
+  }
+  return woken;
+}
+
+/** Has task `k` microtasks to run or rejections to report (work for `run.drain`)? */
+@inline("always")
+function reacts(k: usize): bool {
+  return micro.pending(k) || m.ld(k + t.T_UNHANDLED) !== 0;
+}
+
+/** The started promises of task `k` woken during a turn run, each followed by its microtasks. */
+@noInline
+function runWoken(e: usize, k: usize): void {
+  let n = wn.takeWoken(k);
   while (n !== 0) {
     const nx = wn.nextWoken(n);
     node.run(k, n, true);
@@ -149,15 +177,15 @@ function between(e: usize, k: usize, woken: bool): bool {
     run.drain(e, k);
     n = nx;
   }
-  const s = m.load32(k + t.T_STATE);
-  if (s === t.YIELDED) {
-    return true;
-  }
-  if (!woken && !t.has(k, t.ROOT_DONE) && s === t.NOTIFIED) {
-    m.store32(k + t.T_STATE, t.RUNNING);
-    run.pollRootAgain(e, k);
+}
+
+/** Task `k`'s root, woken by a turn's reactions, goes on before the next: whether it woke again. */
+@noInline
+function rootWoke(e: usize, k: usize): bool {
+  m.store32(k + t.T_STATE, t.RUNNING);
+  run.pollRootAgain(e, k);
+  if (reacts(k)) {
     run.drain(e, k);
-    return m.load32(k + t.T_STATE) === t.NOTIFIED;
   }
-  return woken;
+  return m.load32(k + t.T_STATE) === t.NOTIFIED;
 }

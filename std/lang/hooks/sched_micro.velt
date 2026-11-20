@@ -16,7 +16,7 @@
 // The queue: its entries' buffer (16 bytes each: waker, ticket), their capacity, the index of the
 // first one, how many there are.
 
-import { fnAddress, noInline } from "velt/lang/intrinsics";
+import { fnAddress, inline, noInline } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as t from "./sched_task";
 import * as wk from "./sched_wake";
@@ -36,6 +36,13 @@ function queue(task: usize): usize {
     m.st(task + t.T_MICRO, q);
   }
   return q;
+}
+
+/** Has task `task` microtasks queued? */
+@inline("always")
+export function pending(task: usize): bool {
+  const q = m.ld(task + t.T_MICRO);
+  return q !== 0 && m.ld(q + Q_LEN) !== 0;
 }
 
 /** The bit of an entry's ticket that says it is a waiter's step already (`credit`). */
