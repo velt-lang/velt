@@ -1,0 +1,15 @@
+diff --git a/crates/velt_vir/src/lower/async_fn/kept.rs b/crates/velt_vir/src/lower/async_fn/kept.rs
+index 58e59d9a8..ad3cd49c4 100644
+--- a/crates/velt_vir/src/lower/async_fn/kept.rs
++++ b/crates/velt_vir/src/lower/async_fn/kept.rs
+@@ -8,8 +8,8 @@
+ //! `velt_rt_fut_start` only starts compiled heap futures. A `Promise.all` value already is one
+ //! (tasks.rs); the `velt_rt_race` future is boxed in a small compiled wrapper first, whose state
+ //! is `{ result: slot @0, inner: VeltFut* }` (`{ inner }` for a `void` result, #3240): its poll
+-//! polls `inner` and, once it is ready, moves the race's result slot (+16) into its own and frees
+-//! `inner`.
++//! polls `inner` and, once it is ready, moves the race's result slot (+16) into its own (nothing
++//! for a `void` result) and frees `inner`.
+ 
+ use velt_sema::hir::{self, Intrinsic, TyId};
+ 
