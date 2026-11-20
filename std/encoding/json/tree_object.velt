@@ -20,7 +20,7 @@
 import { JsonTree } from "velt/encoding/json/tree";
 import { TreePositions } from "velt/encoding/json/tree_positions";
 import { TapeRef } from "velt/encoding/json/tape_ref";
-import { arrayRemove, noInline, strByteAt, strByteLen } from "velt/lang/intrinsics";
+import { arrayRemove, inline, noInline, strByteAt, strByteLen } from "velt/lang/intrinsics";
 
 /** Objects with more keys than this get a hash index. */
 export const TREE_INDEX_AT: usize = 16;
@@ -44,6 +44,11 @@ export class TreeObject {
   /** A `TREE_TAPE` node's tape and value on it (tree.velt; such a node has no members here). */
   tape: TapeRef | null = null;
   node: u32 = 0;
+  /**
+   * The nodes a `TREE_TAPE` node's `T_LINK` values stand for (tree_freeze.velt), shared by the
+   * nodes of one frozen tape; null when no link is below this node (`LINKED`).
+   */
+  links: JsonTree[] | null = null;
   /** Which slots are live, while `holes > 0`: made on demand, then kept until a compaction. */
   positions: TreePositions | null = null;
 
@@ -116,7 +121,11 @@ export class TreeObject {
     return (ni as i64) + slot;
   }
 
-  /** The first raw position at or after `raw` that holds a member (`rawEnd()` if none). */
+  /**
+   * The first raw position at or after `raw` that holds a member (`rawEnd()` if none). Always
+   * inlined: the writer's loop (tree_text.velt) reads every member through it.
+   */
+  @inline("always")
   nextRaw(raw: usize): usize {
     const ni = this.intCount();
     let r = raw;
@@ -145,6 +154,7 @@ export class TreeObject {
   }
 
   /** The value at raw position `raw` (a member's). */
+  @inline("always")
   valueRaw(raw: usize): JsonTree {
     const ni = this.intCount();
     return raw < ni ? this.intm!.vals[raw] : this.vals[raw - ni]!;

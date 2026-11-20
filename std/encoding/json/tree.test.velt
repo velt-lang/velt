@@ -154,6 +154,44 @@ describe("JsonValue edits", () => {
     expect(text.slice(0, 13)).toBe(`{"i":1999,"c"`);
   });
 
+  it("keep a parsed document below a deep tree, read and written through its links", () => {
+    // The document (repeated, index and escaped keys, and a long array) is larger than twice the
+    // tapes frozen above it, so they link to it; at 1600 levels the top tape links to the one
+    // below, which links to the document. Every read and the text agree with the document's own.
+    const nums: string[] = [];
+    for (let i = 0; i < 30000; i++) {
+      nums.push(`${i}`);
+    }
+    const doc = JSON.parseValue(
+      `{"b":1,"2":[true,null],"a\\n":"x\\"y","b":{"n":-0.5},"0":[],"big":[${nums.join(",")}]}`,
+    );
+    let v = doc;
+    for (let i = 0; i < 1600; i++) {
+      const outer = JsonValue.array();
+      outer.push(v);
+      outer.push(JsonValue.of(i));
+      v = outer;
+    }
+    let inner = v;
+    let levels = 0;
+    while (inner.isArray()) {
+      expect(inner.at(1)!.asNumber()).toBe(1599 - levels);
+      inner = inner.at(0)!;
+      levels++;
+    }
+    expect(levels).toBe(1600);
+    expect(inner.keys().join(",")).toBe("0,2,b,a\n,big");
+    expect(inner.stringify()).toBe(doc.stringify());
+    expect(inner.get("b")!.get("n")!.asNumber()).toBe(-0.5);
+    expect(inner.get("a\n")!.asString()).toBe(`x"y`);
+    expect(inner.get("big")!.at(29999)!.asNumber()).toBe(29999);
+    const text = v.stringify();
+    expect(text.includes(`[${doc.stringify()},0],1]`)).toBe(true);
+    expect(JsonValue.parse(text, { maxDepth: 4294967295 }).stringify()).toBe(text);
+    inner.set("z", JsonValue.of(1));
+    expect(v.stringify()).toBe(text);
+  });
+
   it("write arbitrarily deep trees", () => {
     let v = JsonValue.array();
     for (let i = 0; i < 100000; i++) {

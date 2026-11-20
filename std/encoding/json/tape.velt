@@ -39,6 +39,12 @@ export const T_NUMBER: u64 = 4;
 export const T_STRING: u64 = 5;
 export const T_ARRAY: u64 = 6;
 export const T_OBJECT: u64 = 7;
+/**
+ * Only on a tape frozen from a tree (tree_freeze.velt): a value kept as a node of that tree
+ * (another frozen tape's value, `TREE_TAPE`), its second word its index in the node's `links`.
+ * Every reader of such a tape goes through the tree's readers (tree_read.velt), which resolve it.
+ */
+export const T_LINK: u64 = 8;
 
 /**
  * A string's first word: bit 8 is set when it had escapes, and bits 32 and up hold its UTF-16
@@ -53,6 +59,8 @@ export const ESCAPED: u64 = 0x100;
 export const REPEATED: u64 = 0x200;
 export const ORDERED: u64 = 0x400;
 export const ESCAPED_KEY: u64 = 0x800;
+/** A container's first word: bit 12 is set when a `T_LINK` is below it (tree_freeze.velt). */
+export const LINKED: u64 = 0x1000;
 
 /**
  * A parsed document. Value `v`'s words are `words[2v]` (kind, and a container's member count
