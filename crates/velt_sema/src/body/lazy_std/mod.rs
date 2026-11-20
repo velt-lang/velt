@@ -651,7 +651,7 @@ mod tests;
 crate::units::codec::structs! {
     Lazy {
         on, check_all, native_executor, modules, subclasses, user_record, generic_any,
-        record_conversion, record_hooks, sched_hooks, float_text, float_write, dyn_held,
+        record_conversion, record_hooks, sched_hooks, cpu_hook, float_text, float_write, dyn_held,
         dyn_generic, cycle_closed, cycle_seen, cycles, live, stubs, printable,
     }
     Mode {
