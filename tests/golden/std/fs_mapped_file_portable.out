@@ -1,0 +1,12 @@
+96 32 127 Uint8Array(4) [ 36, 37, 38, 39 ]
+[ 8994, 9508, 10022 ] [ 724183336, 791555372 ] [ 3978425819141910832 ]
+[ 194.2548828125, 50757.265625 ] [ 1.0707780659396515e+74 ]
+6 589439264 926299444
+42 [ 122, 123, 124, 125, 126, 127 ]
+40 38 [ 10536, 11050 ] [ 724183336 ]
+RangeError u32s(0, 1): byte 6 of the file is not a multiple of 4
+RangeError f32s(92, 2) is not a range of 4-byte floats inside the 96 mapped bytes
+RangeError MappedFile.open: offset 90, length 7 is not inside the 96 bytes of <path>
+0 0
+EISDIR: illegal operation on a directory, mmap '.'
+true
