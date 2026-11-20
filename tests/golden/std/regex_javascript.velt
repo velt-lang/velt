@@ -95,6 +95,23 @@ function lines() {
   console.log("a\r\nb".split(/^/m).length, /^b$/m.test("a\rb\n"), /a$/.test("a\n"), /\s/.test("﻿"));
 }
 
+function replacing() {
+  console.log(
+    "x1y".replace(/(?<é>\d)/, "é$<é>é<$<é>>"),
+    "ab".replace(/(?<a>a)(?<b>b)/, "é$<b>ü$<a>$<nope>$<a"),
+  );
+  console.log(
+    "é1é".replace(/(\d)/g, "[$1$&$`$'$$]"),
+    "😀a😀".replace(/a/g, "<$`|$'>"),
+    "aXb".replace(/x/i, "é$0$1"),
+  );
+  console.log(
+    units((String.fromCharCode(0xd83d) + "-" + String.fromCharCode(0xde00)).replace(/-/, "")),
+    units("a😀".replace(/\ud83d/, "$&$&")),
+    "a,b;c".split(/([,;])/, 4),
+  );
+}
+
 function errors() {
   for (const p of [
     "(a",
@@ -121,5 +138,6 @@ function main() {
   iterations();
   folding();
   lines();
+  replacing();
   errors();
 }

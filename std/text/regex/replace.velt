@@ -9,6 +9,7 @@ import {
   strDataAddress,
   strLen,
 } from "velt/lang/intrinsics";
+import { findByte } from "velt/lang/string/byte_scan";
 import { after, find, findAll } from "velt/text/regex/find";
 import { inPair, textOf } from "velt/text/regex/offsets";
 import { Program } from "velt/text/regex/program";
@@ -96,9 +97,10 @@ export function substitution(
       const digits = numbered(s, slots, base, names.length, replacement, i + 1, parts);
       used = digits == 0 ? 0 : digits + 1;
     } else if (c == 0x3c && names.some((name) => name != "")) {
-      const close = replacement.indexOf(">", (i + 2) as i64);
+      const close = findByte(replacement, 0x3e, i + 2, n);
       if (close >= 0) {
-        const g = names.indexOf(replacement.slice((i + 2) as i64, close)) + 1;
+        const name = velt_rt_str_byte_slice(replacement, (i + 2) as u64, close as u64);
+        const g = names.indexOf(name) + 1;
         parts.push(g > 0 ? group(s, slots, base, g as usize) : "");
         used = close as usize + 1 - i;
       }
