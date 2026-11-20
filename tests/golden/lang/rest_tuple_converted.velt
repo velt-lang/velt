@@ -1,0 +1,52 @@
+// A function value whose rest parameter is typed by a type parameter, converted in a generic
+// body (#379): stored under a wider function type (a registry of handlers), held as `any`, cast
+// to a fixed function type, and cast from a class field. The instance is the callback's own
+// function, so each call with the arguments it takes runs as in Node. A call with arguments of
+// other types is checked: the last one passes strings to a callback that takes numbers, a
+// TypeError where Node prints `pq` (a documented difference).
+interface Ctx {
+  id: string;
+}
+
+interface Entry {
+  name: string;
+  fn: (rq: Ctx, ...args: unknown[]) => unknown;
+}
+const entries: Entry[] = [];
+
+function register<A extends unknown[], R>(name: string, f: (rq: Ctx, ...args: A) => R): void {
+  entries.push({ name, fn: f as unknown as (rq: Ctx, ...args: unknown[]) => unknown });
+}
+
+function viaAny<A extends unknown[], R>(f: (rq: Ctx, ...args: A) => R): void {
+  const g: any = f;
+  console.log(g({ id: "x" }, 1));
+}
+
+function viaCast<A extends unknown[], R>(f: (rq: Ctx, ...args: A) => R): R {
+  const g = f as unknown as (rq: Ctx, x: number) => R;
+  return g({ id: "x" }, 2);
+}
+
+class Holder<A extends unknown[]> {
+  f: (rq: Ctx, ...args: A) => number;
+  constructor(f: (rq: Ctx, ...args: A) => number) {
+    this.f = f;
+  }
+  run(): number {
+    const g = this.f as unknown as (rq: Ctx) => number;
+    return g({ id: "xy" });
+  }
+}
+
+function withStrings<A extends unknown[], R>(f: (rq: Ctx, ...args: A) => R): unknown {
+  const g = f as unknown as (rq: Ctx, a: string, b: string) => unknown;
+  return g({ id: "x" }, "p", "q");
+}
+
+register("add", (rq: Ctx, a: number, b: number): number => a + b);
+console.log(entries.length, entries[0].fn({ id: "x" }, 1, 2));
+viaAny((rq: Ctx, a: number): number => a + 1);
+console.log(viaCast((rq: Ctx, n: number): number => n + 1));
+console.log(new Holder((rq: Ctx): number => rq.id.length).run());
+console.log(withStrings((rq: Ctx, a: number, b: number): number => a + b));

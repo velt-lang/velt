@@ -1,0 +1,48 @@
+// Reading page-header fields from a mapped file: 2,000,000 big-endian 32-bit reads at computed
+// offsets of a 64 KiB file, three ways (argument 1):
+//   getters  `m.getUint32(at)`: DataView's getter on the mapping, any offset, no allocation
+//   bytes    four `bytes[i]` reads and shifts, each with its bounds check
+//   arrays   `m.u32s(at, 1)[0]`: a typed array per read (aligned, the machine's byte order)
+// Each prints a checksum; `getters` and `bytes` print the same one. Any other argument reads
+// nothing: what writing and opening the file cost.
+//
+//   velt build --release bench/fs/mapped_header.velt -o /tmp/mh && /tmp/mh getters
+import * as fs from "velt/fs";
+
+function main() {
+  const mode = process.argv[2] ?? "getters";
+  const path = `mapped-header-${process.pid}.tmp`;
+  let text = "";
+  for (let i = 0; i < 65536; i++) {
+    text += String.fromCharCode(48 + (i % 64));
+  }
+  fs.writeFileSync(path, text);
+  const m = fs.MappedFile.open(path);
+  const bytes = m.bytes;
+  let sum = 0;
+  if (mode == "getters") {
+    for (let i = 0; i < 2000000; i++) {
+      const at = (i * 13) % 65532;
+      sum += m.getUint32(at) & 1023;
+    }
+  } else if (mode == "bytes") {
+    for (let i = 0; i < 2000000; i++) {
+      const at = (i * 13) % 65532;
+      const x =
+        ((bytes[at] as u32) << 24) |
+        ((bytes[at + 1] as u32) << 16) |
+        ((bytes[at + 2] as u32) << 8) |
+        (bytes[at + 3] as u32);
+      sum += x & 1023;
+    }
+  } else if (mode == "arrays") {
+    for (let i = 0; i < 2000000; i++) {
+      const at = ((i * 13) % 16383) * 4;
+      sum += m.u32s(at, 1)[0] & 1023;
+    }
+  }
+  console.log(mode, sum);
+  fs.rmSync(path);
+}
+
+main();

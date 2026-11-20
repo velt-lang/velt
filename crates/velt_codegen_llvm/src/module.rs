@@ -332,10 +332,31 @@ fn function_declaration(program: &vir::Program, index: usize) -> CodegenResult<S
     };
     let params = parameters(func, false)?;
     Ok(format!(
-        "declare {linkage} {} {}({params}) {FN_ATTRS}\n",
+        "declare {linkage} {}{} {}({params}) {FN_ATTRS}{}\n",
+        allocator_return_attrs(func),
         abi_ret(func.ret)?,
-        global_name(&func.symbol)
+        global_name(&func.symbol),
+        allocator_group(func)
     ))
+}
+
+/// The allocator a function of the program is: velt_opt's wrappers of std's hooks
+/// (`runtime::Allocator`), whose definitions and declarations carry its attributes.
+fn function_allocator(func: &vir::Function) -> Option<Allocator> {
+    Allocator::of(&func.symbol, &func.params, func.ret)
+}
+
+/// The attributes of the result of `func` when it is an allocator, before its type.
+fn allocator_return_attrs(func: &vir::Function) -> &'static str {
+    function_allocator(func).map_or("", Allocator::return_attrs)
+}
+
+/// The allocator attribute group of `func` (after its others, with a space), if it is one.
+pub(crate) fn allocator_group(func: &vir::Function) -> String {
+    let group = function_allocator(func)
+        .and_then(|kind| ALLOCATOR_ATTRS.iter().find(|(k, _)| *k == kind))
+        .map(|(_, g)| *g);
+    group.map_or(String::new(), |g| format!(" {g}"))
 }
 
 /// `declare` line of an ordinary extern.
@@ -435,12 +456,16 @@ pub(crate) fn definition_params(func: &vir::Function) -> CodegenResult<String> {
 /// them itself, as clang's definitions do there. Its result keeps its attribute.
 fn parameters(func: &vir::Function, named: bool) -> CodegenResult<String> {
     let mut parts = Vec::with_capacity(func.params.len());
+    let allocator = function_allocator(func);
     for (i, &p) in func.params.iter().enumerate() {
         let mut t = match func.stops_unwind {
             true => (llvm_type(p).map(str::to_string))
                 .ok_or_else(|| format!("type {p:?} is not allowed in a signature"))?,
             false => abi_type(p)?,
         };
+        if let Some(kind) = allocator {
+            t.push_str(kind.param_attrs(i));
+        }
         let a = func.param_attr(i);
         if a.noalias {
             t.push_str(" noalias");
@@ -479,7 +504,11 @@ pub(crate) fn define_prefix(func: &vir::Function, how: Definition) -> CodegenRes
             ))
         }
     };
-    Ok(format!("define {linkage} {}", abi_ret(func.ret)?))
+    Ok(format!(
+        "define {linkage} {}{}",
+        allocator_return_attrs(func),
+        abi_ret(func.ret)?
+    ))
 }
 
 /// The function a `declare` line declares (`@memcmp` of `declare i32 @memcmp(ptr, ...)`).

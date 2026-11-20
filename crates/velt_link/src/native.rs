@@ -192,6 +192,7 @@ mod tests {
             release: true,
             native: &native,
             c_libs: &[],
+            helpers_lib: None,
         };
         let a: Vec<String> = unix_args(&req, TargetOs::Linux)
             .iter()
