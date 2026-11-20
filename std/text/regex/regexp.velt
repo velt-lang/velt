@@ -20,18 +20,18 @@
 import { Pattern } from "velt/text/regex/pattern";
 import { Compiler } from "velt/text/regex/compiler";
 import { RegExpError } from "velt/text/regex/errors";
-import { find } from "velt/text/regex/find";
+import { find, findAll } from "velt/text/regex/find";
 import { MATCH, MATCH_ALL, REPLACE_CALLING, SEARCH, SPLIT } from "velt/text/regex/keys";
 import { positionOf, textOf, unitOf } from "velt/text/regex/offsets";
 import { parsePattern } from "velt/text/regex/parse_pattern";
 import { Parser } from "velt/text/regex/parser";
 import { Program } from "velt/text/regex/program";
 import { RegExpMatch } from "velt/text/regex/regexp_match";
-import { escapePattern, following, replaceMatches, splitMatches } from "velt/text/regex/replace";
+import { escapePattern, replaceMatches, splitMatches } from "velt/text/regex/replace";
 import { Search } from "velt/text/regex/search";
 // The string methods that take a regex (compiler hooks).
 import "velt/text/regex/string_methods";
-import { arrayWithCapacity, strByteLen } from "velt/lang/intrinsics";
+import { arrayWithCapacity } from "velt/lang/intrinsics";
 
 /** The program of `pattern` with `flags`, and the names of its groups in `names`. */
 function compile(pattern: string, flags: string, names: string[]): Program {
@@ -114,13 +114,12 @@ export class RegExp implements Pattern {
   /** Every non-overlapping match, in order (JS `s.matchAll(re)`, whatever the flags). */
   matchAll(s: string): RegExpMatch[] {
     const prog = this.#prog;
-    const m = new Search(prog, 2 * (prog.groups as usize) + 2);
-    const len = strByteLen(s);
-    const out: RegExpMatch[] = [];
-    let pos: usize = 0;
-    while (pos <= len && find(prog, m, s, pos, false)) {
-      out.push(this.matchOf(s, m.slots));
-      pos = following(prog, s, len, m.slots[0] as usize, m.slots[1] as usize);
+    const stride = 2 * (prog.groups as usize) + 2;
+    const m = new Search(prog, stride);
+    findAll(prog, m, s);
+    const out: RegExpMatch[] = arrayWithCapacity(m.found.length / stride);
+    for (let at: usize = 0; at < m.found.length; at += stride) {
+      out.push(this.matchOf(s, m.found, at));
     }
     return out;
   }
@@ -129,14 +128,10 @@ export class RegExp implements Pattern {
   matches(s: string): string[] {
     const prog = this.#prog;
     const m = new Search(prog, 2);
-    const len = strByteLen(s);
-    const out: string[] = [];
-    let pos: usize = 0;
-    while (pos <= len && find(prog, m, s, pos, false)) {
-      const start = m.slots[0] as usize;
-      const end = m.slots[1] as usize;
-      out.push(textOf(s, start, end));
-      pos = following(prog, s, len, start, end);
+    findAll(prog, m, s);
+    const out: string[] = arrayWithCapacity(m.found.length / 2);
+    for (let at: usize = 0; at < m.found.length; at += 2) {
+      out.push(textOf(s, m.found[at] as usize, m.found[at + 1] as usize));
     }
     return out;
   }
@@ -316,7 +311,7 @@ export class RegExp implements Pattern {
     if (!find(prog, m, s, positionOf(s, from, prog.units), this.sticky)) {
       return null;
     }
-    return this.matchOf(s, m.slots);
+    return this.matchOf(s, m.slots, 0);
   }
 
   // The matches `replace` replaces, setting `lastIndex` as JS does.
@@ -356,19 +351,19 @@ export class RegExp implements Pattern {
     return out;
   }
 
-  // Builds the match whose slots (byte offsets) are `slots`.
-  private matchOf(s: string, slots: i64[]): RegExpMatch {
+  // Builds the match whose slots (byte offsets) start at `slots[at]`.
+  private matchOf(s: string, slots: i64[], at: usize): RegExpMatch {
     const n = this.#names.length;
     const captures: (string | null)[] = arrayWithCapacity(n);
     for (let g: usize = 1; g <= n; g++) {
-      if (slots[2 * g] < 0) {
+      if (slots[at + 2 * g] < 0) {
         captures.push(null);
       } else {
-        captures.push(textOf(s, slots[2 * g] as usize, slots[2 * g + 1] as usize));
+        captures.push(textOf(s, slots[at + 2 * g] as usize, slots[at + 2 * g + 1] as usize));
       }
     }
-    const start = slots[0] as usize;
-    const end = slots[1] as usize;
+    const start = slots[at] as usize;
+    const end = slots[at + 1] as usize;
     return new RegExpMatch(
       unitOf(s, start) as number,
       unitOf(s, end) as number,

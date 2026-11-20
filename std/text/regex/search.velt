@@ -8,11 +8,17 @@ export class Search {
   /** The capture slots of the last match, as byte offsets: `start, end` per group, -1 for a
    * group that did not take part. */
   slots: i64[] = [];
+  /** The slots of every match `findAll` found, one match after another. */
+  found: i64[] = [];
+  /** Where the scan for literals looks from (prefilter.velt). */
+  floor: usize = 0;
   /** The backtracker's visited states, a bit per join instruction and position; the first
    * position, and how many there are. */
   visited: u64[] = [];
   origin: usize = 0;
   span: usize = 0;
+  /** The steps the backtracker may still take without a memory. */
+  fuel: i64 = 0;
   /** The backtracker's pending alternatives, and the Pike machine's while it follows splits. */
   stack: u64[] = [];
   /** The Pike machine's two thread lists: per list, the instructions in priority order,

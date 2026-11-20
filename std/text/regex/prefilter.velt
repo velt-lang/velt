@@ -2,9 +2,17 @@
 // bytes every match has at fixed offsets ("grams": sixteen positions a step with SIMD compares),
 // or by its first byte. What to look for is the program's (literals.velt).
 
-import { strByteAt, strByteLen, strLoadU8x16 } from "velt/lang/intrinsics";
-import { sameBytes } from "velt/lang/string/byte_scan";
+import {
+  addressLoad,
+  inline,
+  strByteAt,
+  strByteLen,
+  strDataAddress,
+  strLoadU8x16,
+} from "velt/lang/intrinsics";
+import { findByte, sameBytes } from "velt/lang/string/byte_scan";
 import { Program, SCAN_FIRST, SCAN_GRAMS } from "velt/text/regex/program";
+import { Search } from "velt/text/regex/search";
 
 declare function velt_simd_u8x16_splat(x: u8): u8x16;
 declare function velt_simd_u8x16_eq(a: u8x16, b: u8x16): mask8x16;
@@ -12,18 +20,172 @@ declare function velt_simd_mask8x16_and(a: mask8x16, b: mask8x16): mask8x16;
 declare function velt_simd_mask8x16_or(a: mask8x16, b: mask8x16): mask8x16;
 declare function velt_simd_mask8x16_bitmask(m: mask8x16): u64;
 
-/** The positions of the 16 from `i` where gram `t` of `prog` is (as far as its bytes at the
- * program's offsets say). */
-function gramAt(prog: Program, s: string, i: usize, t: usize): mask8x16 {
-  const size = prog.gramSize;
-  const g = prog.grams;
-  const at = prog.gramAt;
-  let m = velt_simd_u8x16_eq(strLoadU8x16(s, (i + at[0]) as u64), velt_simd_u8x16_splat(g[t]));
-  for (let j: usize = 1; j < size; j++) {
-    const v = strLoadU8x16(s, (i + at[j]) as u64);
-    m = velt_simd_mask8x16_and(m, velt_simd_u8x16_eq(v, velt_simd_u8x16_splat(g[t + j])));
+/** Where a result of the scans keeps the literal found: above the position. */
+const LITERAL_SHIFT: i64 = 48;
+const POSITION: i64 = 0xffffffffffff;
+
+/** Which literal of the `exact` program `prog` is at byte `p` of the `len` of `s`: the first
+ * in the program's order, or -1. */
+function literalAt(prog: Program, s: string, p: usize, len: usize): i64 {
+  const lits = prog.literals;
+  if (p + 8 > len) {
+    for (let k: usize = 0; k < lits.length; k++) {
+      const n = strByteLen(lits[k]);
+      if (p + n <= len && sameBytes(s, p, lits[k], 0, n)) {
+        return k as i64;
+      }
+    }
+    return -1;
   }
-  return m;
+  const word = unsafe { addressLoad<u64>(strDataAddress(s) + p) };
+  const words = prog.litWord;
+  for (let k: usize = 0; k < lits.length; k++) {
+    if ((word & words[2 * k]) != words[2 * k + 1]) {
+      continue;
+    }
+    const n = strByteLen(lits[k]);
+    if (n <= 8 || (p + n <= len && sameBytes(s, p + 8, lits[k], 8, n - 8))) {
+      return k as i64;
+    }
+  }
+  return -1;
+}
+
+/** What the scans look for: where a match may start; the first literal of an `exact`
+ * program; or all of its literals, which go to the search's `found`. */
+const ANY: u32 = 0;
+const FIRST: u32 = 1;
+const ALL: u32 = 2;
+
+/** What a scan in mode `mode` makes of a hit at byte `p`: the result to return (`p`, in
+ * `FIRST` mode with the literal there above it), or -1 to go on: nothing is there, or (`ALL`)
+ * the literal there went to `m.found` and its end to `m.floor`, before which nothing more is
+ * looked at. */
+@inline("always")
+function hit(prog: Program, m: Search, s: string, p: usize, len: usize, mode: u32): i64 {
+  if (mode == ANY) {
+    return p as i64;
+  }
+  if (p < m.floor) {
+    return -1;
+  }
+  const k = literalAt(prog, s, p, len);
+  if (k < 0 || mode == FIRST) {
+    return k < 0 ? -1 : (p as i64) | (k << LITERAL_SHIFT);
+  }
+  m.floor = p + strByteLen(prog.literals[k as usize]);
+  m.found.push(p as i64);
+  m.found.push(m.floor as i64);
+  return -1;
+}
+
+/** The grams' scan, sixteen positions a step, for tuples of `size` bytes, `count` of them (1,
+ * 2 or 4): both are constants where this is called, so each call is a loop of its own. The
+ * first hit at or after `from`, or, when the steps found none, `-2 - i` for the byte `i` they
+ * stopped at. */
+@inline("always")
+function wide(prog: Program, m: Search, s: string, from: usize, len: usize, size: usize, count: usize, mode: u32): i64 {
+  const g = prog.grams;
+  const o0 = prog.gramAt[0];
+  const o1 = size > 1 ? prog.gramAt[1] : 0;
+  const o2 = size > 2 ? prog.gramAt[2] : 0;
+  const o3 = size > 3 ? prog.gramAt[3] : 0;
+  const reach = (size > 3 ? o3 : size > 2 ? o2 : size > 1 ? o1 : o0) + 16;
+  const a0 = velt_simd_u8x16_splat(g[0]);
+  const a1 = velt_simd_u8x16_splat(size > 1 ? g[1] : 0);
+  const a2 = velt_simd_u8x16_splat(size > 2 ? g[2] : 0);
+  const a3 = velt_simd_u8x16_splat(size > 3 ? g[3] : 0);
+  const b0 = velt_simd_u8x16_splat(count > 1 ? g[size] : 0);
+  const b1 = velt_simd_u8x16_splat(count > 1 && size > 1 ? g[size + 1] : 0);
+  const b2 = velt_simd_u8x16_splat(count > 1 && size > 2 ? g[size + 2] : 0);
+  const b3 = velt_simd_u8x16_splat(count > 1 && size > 3 ? g[size + 3] : 0);
+  const c0 = velt_simd_u8x16_splat(count > 2 ? g[2 * size] : 0);
+  const c1 = velt_simd_u8x16_splat(count > 2 && size > 1 ? g[2 * size + 1] : 0);
+  const c2 = velt_simd_u8x16_splat(count > 2 && size > 2 ? g[2 * size + 2] : 0);
+  const c3 = velt_simd_u8x16_splat(count > 2 && size > 3 ? g[2 * size + 3] : 0);
+  const d0 = velt_simd_u8x16_splat(count > 2 ? g[3 * size] : 0);
+  const d1 = velt_simd_u8x16_splat(count > 2 && size > 1 ? g[3 * size + 1] : 0);
+  const d2 = velt_simd_u8x16_splat(count > 2 && size > 2 ? g[3 * size + 2] : 0);
+  const d3 = velt_simd_u8x16_splat(count > 2 && size > 3 ? g[3 * size + 3] : 0);
+  let i = from;
+  while (true) {
+    // The steps call nothing, so what they read of `s` and of the program stays in registers.
+    let bits: u64 = 0;
+    while (i + reach <= len) {
+      const v0 = strLoadU8x16(s, (i + o0) as u64);
+      let ma = velt_simd_u8x16_eq(v0, a0);
+      let mb = velt_simd_u8x16_eq(v0, b0);
+      let mc = velt_simd_u8x16_eq(v0, c0);
+      let md = velt_simd_u8x16_eq(v0, d0);
+      if (size > 1) {
+        const v1 = strLoadU8x16(s, (i + o1) as u64);
+        ma = velt_simd_mask8x16_and(ma, velt_simd_u8x16_eq(v1, a1));
+        mb = velt_simd_mask8x16_and(mb, velt_simd_u8x16_eq(v1, b1));
+        mc = velt_simd_mask8x16_and(mc, velt_simd_u8x16_eq(v1, c1));
+        md = velt_simd_mask8x16_and(md, velt_simd_u8x16_eq(v1, d1));
+      }
+      if (size > 2) {
+        const v2 = strLoadU8x16(s, (i + o2) as u64);
+        ma = velt_simd_mask8x16_and(ma, velt_simd_u8x16_eq(v2, a2));
+        mb = velt_simd_mask8x16_and(mb, velt_simd_u8x16_eq(v2, b2));
+        mc = velt_simd_mask8x16_and(mc, velt_simd_u8x16_eq(v2, c2));
+        md = velt_simd_mask8x16_and(md, velt_simd_u8x16_eq(v2, d2));
+      }
+      if (size > 3) {
+        const v3 = strLoadU8x16(s, (i + o3) as u64);
+        ma = velt_simd_mask8x16_and(ma, velt_simd_u8x16_eq(v3, a3));
+        mb = velt_simd_mask8x16_and(mb, velt_simd_u8x16_eq(v3, b3));
+        mc = velt_simd_mask8x16_and(mc, velt_simd_u8x16_eq(v3, c3));
+        md = velt_simd_mask8x16_and(md, velt_simd_u8x16_eq(v3, d3));
+      }
+      if (count > 1) {
+        ma = velt_simd_mask8x16_or(ma, mb);
+      }
+      if (count > 2) {
+        ma = velt_simd_mask8x16_or(ma, velt_simd_mask8x16_or(mc, md));
+      }
+      bits = velt_simd_mask8x16_bitmask(ma);
+      if (bits != 0) {
+        break;
+      }
+      i += 16;
+    }
+    if (bits == 0) {
+      return -2 - (i as i64);
+    }
+    while (bits != 0) {
+      const found = hit(prog, m, s, i + (bits.trailingZeros() as usize), len, mode);
+      if (found >= 0) {
+        return found;
+      }
+      bits &= bits - 1;
+    }
+    i += 16;
+  }
+}
+
+/** `wide` for the program's tuples, as the loop for their size and number. */
+function wideScan(prog: Program, m: Search, s: string, from: usize, len: usize, mode: u32): i64 {
+  const size = prog.gramSize;
+  const count = prog.grams.length / size;
+  if (size == 1) {
+    return count == 1 ? wide(prog, m, s, from, len, 1, 1, mode)
+      : count == 2 ? wide(prog, m, s, from, len, 1, 2, mode)
+      : wide(prog, m, s, from, len, 1, 4, mode);
+  }
+  if (size == 2) {
+    return count == 1 ? wide(prog, m, s, from, len, 2, 1, mode)
+      : count == 2 ? wide(prog, m, s, from, len, 2, 2, mode)
+      : wide(prog, m, s, from, len, 2, 4, mode);
+  }
+  if (size == 3) {
+    return count == 1 ? wide(prog, m, s, from, len, 3, 1, mode)
+      : count == 2 ? wide(prog, m, s, from, len, 3, 2, mode)
+      : wide(prog, m, s, from, len, 3, 4, mode);
+  }
+  return count == 1 ? wide(prog, m, s, from, len, 4, 1, mode)
+    : count == 2 ? wide(prog, m, s, from, len, 4, 2, mode)
+    : wide(prog, m, s, from, len, 4, 4, mode);
 }
 
 /** Is one of the grams of `prog` at byte `i` of `s`? */
@@ -41,33 +203,28 @@ function gramHere(prog: Program, s: string, i: usize): bool {
   return false;
 }
 
-/** The first byte at or after `from` where a match of `prog` in the `len` bytes of `s` may
- * start by its grams, or -1. */
-function gramScan(prog: Program, s: string, from: usize, len: usize): i64 {
+/** The scan by the grams of `prog` of the `len` bytes of `s` from `from` on, in mode `mode`:
+ * the first result of `hit` that is not -1, or -1. */
+function gramScan(prog: Program, m: Search, s: string, from: usize, len: usize, mode: u32): i64 {
   if (len < prog.minBytes) {
     return -1;
   }
-  const last = len - prog.minBytes;
-  const reach = prog.gramAt[prog.gramSize - 1] + 16;
-  const grams = prog.grams.length;
-  const size = prog.gramSize;
-  let i = from;
-  while (i + reach <= len) {
-    let m = gramAt(prog, s, i, 0);
-    for (let t = size; t < grams; t += size) {
-      m = velt_simd_mask8x16_or(m, gramAt(prog, s, i, t));
-    }
-    const bits = velt_simd_mask8x16_bitmask(m);
-    if (bits != 0) {
-      return (i + (bits.trailingZeros() as usize)) as i64;
-    }
-    i += 16;
+  if (mode != ANY) {
+    m.floor = from;
   }
-  while (i <= last) {
-    if (gramHere(prog, s, i)) {
-      return i as i64;
+  const found = wideScan(prog, m, s, from, len, mode);
+  if (found >= 0) {
+    return found;
+  }
+  // The last positions, which sixteen bytes do not fit after.
+  const last = len - prog.minBytes;
+  for (let i = (-2 - found) as usize; i <= last; i++) {
+    if (mode != ANY || gramHere(prog, s, i)) {
+      const here = hit(prog, m, s, i, len, mode);
+      if (here >= 0) {
+        return here;
+      }
     }
-    i++;
   }
   return -1;
 }
@@ -86,9 +243,13 @@ function firstScan(prog: Program, s: string, from: usize, len: usize): i64 {
 
 /** The first byte at or after `from` where a match of `prog` in the `len` bytes of `s` may
  * start, or -1 when none can. `from` is a position (decode.velt), and so is the result. */
-export function candidate(prog: Program, s: string, from: usize, len: usize): i64 {
+export function candidate(prog: Program, m: Search, s: string, from: usize, len: usize): i64 {
   if (prog.scan == SCAN_GRAMS) {
-    return gramScan(prog, s, from, len);
+    // One byte to look for: std's own search for one, which is short when the byte is near.
+    if (prog.grams.length == 1) {
+      return findByte(s, prog.grams[0], from, len);
+    }
+    return gramScan(prog, m, s, from, len, ANY);
   }
   if (prog.scan == SCAN_FIRST) {
     return firstScan(prog, s, from, len);
@@ -96,21 +257,26 @@ export function candidate(prog: Program, s: string, from: usize, len: usize): i6
   return from as i64;
 }
 
-/** The first match of an `exact` program at or after byte `from` of `s`: its start, and its
- * end in `ends[0]`; -1 for none. */
-export function literalFind(prog: Program, s: string, from: usize, len: usize, ends: usize[]): i64 {
-  const lits = prog.literals;
-  let at = gramScan(prog, s, from, len);
-  while (at >= 0) {
-    const i = at as usize;
-    for (let k: usize = 0; k < lits.length; k++) {
-      const n = strByteLen(lits[k]);
-      if (i + n <= len && sameBytes(s, i, lits[k], 0, n)) {
-        ends[0] = i + n;
-        return at;
-      }
-    }
-    at = gramScan(prog, s, i + 1, len);
-  }
-  return -1;
+/** The first match of an `exact` program at or after byte `from` of `s`: its start, or -1 for
+ * none; `literalEnd` gives its end. */
+export function literalFind(prog: Program, m: Search, s: string, from: usize, len: usize): i64 {
+  return gramScan(prog, m, s, from, len, FIRST);
+}
+
+/** Every match of an `exact` program in the `len` bytes of `s`, one after the end of the one
+ * before: their starts and ends are added to `m.found`. */
+export function literalAll(prog: Program, m: Search, s: string, len: usize): void {
+  gramScan(prog, m, s, 0, len, ALL);
+}
+
+/** The end of the match `found`, a result of `literalFind` that is not -1. */
+@inline("always")
+export function literalEnd(prog: Program, found: i64): usize {
+  return ((found & POSITION) as usize) + strByteLen(prog.literals[(found >> LITERAL_SHIFT) as usize]);
+}
+
+/** The start of the match `found`, a result of `literalFind` that is not -1. */
+@inline("always")
+export function literalStart(found: i64): usize {
+  return (found & POSITION) as usize;
 }

@@ -1,7 +1,7 @@
 // velt/text (tests): white-box tests of the matchers, run by `velt test std/`.
 import { describe, expect, it } from "velt/test";
 import { strByteLen } from "velt/lang/intrinsics";
-import { backtrack, backtrackReset } from "velt/text/regex/backtrack";
+import { backtrack, backtrackReset, MATCHED } from "velt/text/regex/backtrack";
 import { Compiler } from "velt/text/regex/compiler";
 import { find } from "velt/text/regex/find";
 import { parsePattern } from "velt/text/regex/parse_pattern";
@@ -19,7 +19,7 @@ function bt(source: string, flags: string, s: string): i64[] {
   const len = strByteLen(s);
   backtrackReset(c.prog, m, 0, len);
   for (let i: usize = 0; i <= len; i++) {
-    if (backtrack(c.prog, m, s, len, i)) {
+    if (backtrack(c.prog, m, s, len, i, true) == MATCHED) {
       return m.slots;
     }
   }

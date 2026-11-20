@@ -2,21 +2,59 @@
 // when they are the pattern, else from each place a match may start (prefilter.velt), with the
 // backtracker on a short subject and the Pike machine on a long one.
 
-import { strByteLen, strDataAddress } from "velt/lang/intrinsics";
-import { backtrack, backtrackReset } from "velt/text/regex/backtrack";
+import { arrayTruncate, strByteLen, strDataAddress } from "velt/lang/intrinsics";
+import { backtrack, backtrackReset, FAILED, MATCHED, SPENT } from "velt/text/regex/backtrack";
 import { charAt } from "velt/text/regex/decode";
 import { pike, pikeReset } from "velt/text/regex/pike";
-import { candidate, literalFind } from "velt/text/regex/prefilter";
+import {
+  candidate,
+  literalAll,
+  literalEnd,
+  literalFind,
+  literalStart,
+} from "velt/text/regex/prefilter";
 import { Program } from "velt/text/regex/program";
 import { Search } from "velt/text/regex/search";
 
 /** The most bits of visited states the backtracker is given: past it, the Pike machine. */
 const MAX_VISITED: usize = 1 << 15;
+/** The steps the backtracker may take without a memory: so many per byte of the subject left,
+ * and so many more. A search that needs more is one the pattern makes costly, and goes to a
+ * matcher whose time is bounded. */
+const FUEL_PER_BYTE: i64 = 32;
+const FUEL: i64 = 256;
 
 /** The position after `pos` (before `len`) in the text at `base`: one character on. */
 export function after(s: string, pos: usize, units: bool): usize {
   const base = strDataAddress(s);
   return pos + ((charAt(base, pos, units) >> 24) as usize);
+}
+
+/** Where the search after the match `start..end` of a subject of `len` bytes goes on: at its
+ * end, or one character further after an empty match; past `len` when the subject is done. */
+export function following(prog: Program, s: string, len: usize, start: usize, end: usize): usize {
+  if (end > start) {
+    return end;
+  }
+  return end >= len ? len + 1 : after(s, end, prog.units);
+}
+
+/** Every match of `prog` in `s`, each searched for after the one before (`following`): their
+ * slots, as many per match as `m.slots` holds, are then in `m.found`. */
+export function findAll(prog: Program, m: Search, s: string): void {
+  const len = strByteLen(s);
+  arrayTruncate(m.found, 0);
+  if (prog.exact && m.slots.length == 2) {
+    literalAll(prog, m, s, len);
+    return;
+  }
+  let pos: usize = 0;
+  while (pos <= len && find(prog, m, s, pos, false)) {
+    for (let k: usize = 0; k < m.slots.length; k++) {
+      m.found.push(m.slots[k]);
+    }
+    pos = following(prog, s, len, m.slots[0] as usize, m.slots[1] as usize);
+  }
 }
 
 /** Is there a match of `prog` in `s` that starts at or after position `from` (at `from` when
@@ -28,37 +66,50 @@ export function find(prog: Program, m: Search, s: string, from: usize, sticky: b
     return false;
   }
   if (prog.exact && !sticky) {
-    const ends: usize[] = [0];
-    const at = literalFind(prog, s, from, len, ends);
-    if (at >= 0 && slots.length >= 2) {
-      slots[0] = at;
-      slots[1] = ends[0] as i64;
+    const found = literalFind(prog, m, s, from, len);
+    if (found >= 0 && slots.length >= 2) {
+      slots[0] = literalStart(found) as i64;
+      slots[1] = literalEnd(prog, found) as i64;
     }
-    return at >= 0;
+    return found >= 0;
   }
   for (let k: usize = 0; k < slots.length; k++) {
     slots[k] = -1;
   }
   const fixed = sticky || prog.anchored;
-  if ((prog.joins as usize) * (len - from + 1) > MAX_VISITED) {
+  if (prog.plain) {
+    m.fuel = FUEL_PER_BYTE * ((len - from) as i64) + FUEL;
+    const found = scan(prog, m, s, len, from, fixed, false);
+    if (found != SPENT) {
+      return found == MATCHED;
+    }
+    for (let k: usize = 0; k < slots.length; k++) {
+      slots[k] = -1;
+    }
+  }
+  if (((prog.joins + prog.marks) as usize) * (len - from + 1) > MAX_VISITED) {
     pikeReset(prog, m);
     return pike(prog, m, s, len, from, fixed);
   }
   backtrackReset(prog, m, from, len);
+  return scan(prog, m, s, len, from, fixed, true) == MATCHED;
+}
+
+/** The backtracker from each place at or after `from` where a match may start (only `from`
+ * when `fixed`), until it finds one: what it returned last. */
+function scan(prog: Program, m: Search, s: string, len: usize, from: usize, fixed: bool, memory: bool): i64 {
   let pos = from;
   while (true) {
     if (!fixed) {
-      const next = candidate(prog, s, pos, len);
+      const next = candidate(prog, m, s, pos, len);
       if (next < 0) {
-        return false;
+        return FAILED;
       }
       pos = next as usize;
     }
-    if (backtrack(prog, m, s, len, pos)) {
-      return true;
-    }
-    if (fixed || pos >= len) {
-      return false;
+    const found = backtrack(prog, m, s, len, pos, memory);
+    if (found != FAILED || fixed || pos >= len) {
+      return found;
     }
     // Every code unit is tried, also the low half of a pair (decode.velt).
     pos = after(s, pos, true);
