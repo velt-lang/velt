@@ -223,11 +223,14 @@ export function escapePattern(s: string): string {
   const n = strByteLen(s);
   for (let i: usize = 0; i < n; i++) {
     const c = strByteAt(s, i as u64);
+    // JavaScript's syntax characters: the ones an escape stands for with the `u` flag too.
     const meta =
-      (c >= 0x23 && c <= 0x2e && c != 0x25 && c != 0x27 && c != 0x2c) ||
+      c == 0x24 ||
+      (c >= 0x28 && c <= 0x2b) ||
+      c == 0x2e ||
       c == 0x3f ||
       (c >= 0x5b && c <= 0x5e) ||
-      (c >= 0x7b && c <= 0x7e);
+      (c >= 0x7b && c <= 0x7d);
     if (meta) {
       out += velt_rt_str_byte_slice(s, from as u64, i as u64);
       out += "\\";

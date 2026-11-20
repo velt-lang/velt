@@ -190,6 +190,16 @@ describe("Parser", () => {
     expect(new RegExp("(?<\u{1D49C}>.)").exec("x")?.named("\u{1D49C}")).toBe("x");
   });
 
+  it("escapes text into a pattern any flags take", () => {
+    const text = "^$\\.*+?()[]{}|/-#&~ a1";
+    expect(RegExp.escape("a-b#c&d~e/f")).toBe("a-b#c&d~e/f");
+    for (const flags of ["", "u", "v", "i"]) {
+      const m = new RegExp(RegExp.escape(text), flags).exec("x" + text);
+      expect(m?.index).toBe(1);
+      expect(m?.value).toBe(text);
+    }
+  });
+
   it("refuses what the engine does not match", () => {
     expect(errorOf("[[a]]", "v")).toContain(
       "Set operations in character classes are not supported",
