@@ -6,6 +6,7 @@
 //! readers of an `RwLock` share: their count operations go through `velt_rt_lk_*`, which leave
 //! the shared ones alone in a `read` callback (the `_of` variants, given the object's type).
 
+use super::boxing::ShareKind;
 use super::hook_calls::{self as hooks, ty, Construct, HookTy};
 use super::operand::proj;
 use super::rt::Rt;
@@ -24,6 +25,34 @@ pub(super) const STORED: i128 = 1 << 61;
 const COUNT_MASK: i128 = LOCAL - 1;
 
 impl FnLower<'_, '_> {
+    /// `isUnique(x)` (hir `Intrinsic::IsUnique`): whether `x`, a class instance, array or boxed
+    /// object, is reached by no other reference. Its whole count word is compared with 1, so an
+    /// object with a flag in it (a lock-set object's `LOCAL` or `STORED`, the cycle collector's
+    /// `BUFFERED`, an immortal count) is never taken as unique: copy-on-write then copies, which
+    /// is always safe. A reference type the program never counts has one owner per value, so
+    /// true; a lock-set type, whose count readers of an `RwLock` share, false; any other kind of
+    /// value (`shared<T>`, strings, functions, interface values, plain values), false.
+    pub(super) fn is_unique(&mut self, x: &velt_sema::hir::Expr) -> Operand {
+        let no = Operand::Const(crate::vir::Const::Bool(false), Ty::Bool);
+        let t = self.sub(x.ty);
+        let v = self.expr(x);
+        if self.dead() || self.cx.share_kind(t) != ShareKind::Object {
+            return no;
+        }
+        if !self.cx.counted(t) {
+            return Operand::Const(crate::vir::Const::Bool(true), Ty::Bool);
+        }
+        if self.cx.lock_counted(t) {
+            return no;
+        }
+        let p = self.count_ptr(v, t);
+        let c = self.count_place(p);
+        self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Eq, Operand::Copy(c), cint(1, Ty::U64)),
+        )
+    }
+
     /// The count word of the (non-null) counted object `p`.
     pub(super) fn count_place(&mut self, p: Operand) -> Place {
         let c = self.rvalue_temp(
