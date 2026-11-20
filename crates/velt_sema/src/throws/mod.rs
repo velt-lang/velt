@@ -300,3 +300,10 @@ impl Ctx<'_> {
         self.groups.as_ref().expect("ICE: groups built")
     }
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    ThrowCheck {
+        srcs, observed, exact, span,
+    }
+}

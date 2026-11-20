@@ -255,3 +255,10 @@ pub(crate) fn finish(cx: &mut Ctx) -> (bool, Vec<String>) {
     let names = std::mem::take(&mut cx.method_facts.call_names);
     (open, names.into_iter().collect())
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    MethodFacts {
+        reads, forwards, named, traps, call_names,
+    }
+}

@@ -205,6 +205,13 @@ pub enum Command {
     Clean { cache: bool },
     /// `velt cache warm [--background]`: compile std into the build cache.
     CacheWarm { background: bool },
+    /// `velt cache hooks --out <dir> [--target <triple>]`: write the prebuilt hook modules'
+    /// objects into `<dir>/<target>`, as a toolchain carries them in `lib/hooks` (for packaging
+    /// a release).
+    CacheHooks {
+        out: PathBuf,
+        target: Option<String>,
+    },
     /// `velt completions <shell>`.
     Completions(Shell),
     /// `velt add <name>[@<req>] [--path <dir>]`.
@@ -408,6 +415,30 @@ fn parse_cache(rest: Vec<OsString>) -> Result<Command, String> {
             }
             Ok(Command::CacheWarm { background })
         }
+        Some((action, rest)) if action == "hooks" => {
+            let (mut out, mut target) = (None, None);
+            let mut rest = rest.iter();
+            while let Some(arg) = rest.next() {
+                let value = |name: &str, v: Option<&String>| {
+                    v.cloned()
+                        .ok_or_else(|| format!("`{name}` needs a value (`velt cache hooks`)"))
+                };
+                match arg.as_str() {
+                    "--out" => out = Some(PathBuf::from(value("--out", rest.next())?)),
+                    "--target" => target = Some(value("--target", rest.next())?),
+                    flag if flag.starts_with('-') => {
+                        return Err(unknown_option("cache hooks", flag))
+                    }
+                    other => {
+                        return Err(format!(
+                            "unexpected argument `{other}` for `velt cache hooks`"
+                        ))
+                    }
+                }
+            }
+            let out = out.ok_or("`velt cache hooks` needs `--out <dir>`")?;
+            Ok(Command::CacheHooks { out, target })
+        }
         Some((other, _)) => Err(format!(
             "unknown action `{other}`: `velt cache warm` (`velt clean --cache` removes the cache)"
         )),
@@ -534,6 +565,29 @@ mod tests {
             .unwrap_err()
             .contains("unknown action"));
         assert!(p(&["cache", "warm", "x"]).is_err());
+        assert_eq!(
+            p(&["cache", "hooks", "--out", "lib/hooks/t", "--target", "t"]).unwrap(),
+            Command::CacheHooks {
+                out: PathBuf::from("lib/hooks/t"),
+                target: Some("t".into())
+            }
+        );
+        assert_eq!(
+            p(&["cache", "hooks", "--out", "d"]).unwrap(),
+            Command::CacheHooks {
+                out: PathBuf::from("d"),
+                target: None
+            }
+        );
+        for bad in [
+            &["cache", "hooks"][..],
+            &["cache", "hooks", "--out"],
+            &["cache", "hooks", "--out", "d", "--target"],
+            &["cache", "hooks", "--out", "d", "x"],
+            &["cache", "hooks", "--out", "d", "--cpu", "native"],
+        ] {
+            assert!(p(bad).is_err(), "{bad:?}");
+        }
         assert!(p(&["doctor", "-x"])
             .unwrap_err()
             .contains("unexpected argument"));

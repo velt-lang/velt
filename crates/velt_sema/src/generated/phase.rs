@@ -75,6 +75,7 @@ pub(crate) fn run(cx: &mut Ctx) {
     }
     let mut pending: Vec<(usize, String)> = match &cx.gen.input {
         Some(gen) => (gen.modules.iter())
+            .filter(|gm| !cx.gen.binding.collected.contains(&gm.path))
             .filter_map(|gm| Some((index(cx, &gm.path)?, gm.path.clone())))
             .collect(),
         None => vec![],
@@ -119,6 +120,7 @@ pub(crate) fn run(cx: &mut Ctx) {
         pending = waiting;
         if !ready.is_empty() {
             let ms: Vec<usize> = ready.iter().map(|(m, _)| *m).collect();
+            (cx.gen.binding.collected).extend(ready.iter().map(|(_, p)| p.clone()));
             let defs = crate::timings::pass("generated::collect", || {
                 crate::collect::collect_generated(cx, &ms)
             });

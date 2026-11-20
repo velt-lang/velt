@@ -1,3 +1,4 @@
+// check: no leaks
 // Dropping a `Server` value keeps it serving (like Node); only `close()` stops it.
 import { serve } from "http-server";
 import { exit } from "velt/process";

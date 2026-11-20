@@ -1,5 +1,7 @@
 //! Whole-program checking context shared by all passes: definitions, module scopes, types.
 
+mod codec;
+
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::{Diagnostic, Diagnostics, Span};
@@ -12,6 +14,7 @@ use crate::SourceModule;
 mod access;
 mod classes;
 pub(crate) mod def_table;
+mod slots;
 
 pub(crate) use def_table::DefTable;
 
@@ -26,6 +29,15 @@ impl Ctx<'_> {
     /// Is `d` a finished unit's definition (`crate::units`), which nothing writes any more?
     pub(crate) fn is_frozen(&self, d: DefId) -> bool {
         self.info.is_frozen(d.0 as usize)
+    }
+
+    /// The checked functions of the unit being checked (from [`Ctx::unit_base`] on): what a
+    /// pass over function bodies after the bodies' check goes through.
+    pub(crate) fn unit_fns(&self) -> Vec<DefId> {
+        (self.fn_defs.iter().copied())
+            .filter(|d| d.0 >= self.unit_base)
+            .filter(|d| self.fn_info(*d).state == crate::defs::BodyState::Done)
+            .collect()
     }
 
     /// Lift the freeze: the passes that still run over every unit at once.
@@ -97,6 +109,11 @@ pub(crate) struct Ctx<'m> {
     pub def_spans: DefTable<Span>,
     /// The check is by units (`CheckOptions::units`, `crate::units`).
     pub units: bool,
+    /// Which part of a check by units this context checks (`crate::units`).
+    pub units_stage: crate::units::Stage,
+    /// Where the unit being checked starts (`crate::units`): the passes after the bodies take
+    /// their functions from here ([`Ctx::unit_fns`]). 0 in a whole-program check.
+    pub unit_base: u32,
     pub scopes: Vec<ModuleScope>,
     /// Exports of `std/prelude/*` modules, visible everywhere.
     pub prelude: FxHashMap<String, Item>,
@@ -553,13 +570,26 @@ pub(crate) struct Ctx<'m> {
 
 impl<'m> Ctx<'m> {
     pub fn new(modules: &'m [SourceModule], root: usize) -> Self {
+        Self::over(modules.iter().collect(), root)
+    }
+
+    /// A context over `modules`, in this order (a decoded unit's, `units::codec`).
+    pub(crate) fn over(modules: Vec<&'m SourceModule>, root: usize) -> Self {
+        let import_targets = crate::collect::exports::import_targets(&modules);
+        let scopes = (modules.iter())
+            .map(|m| ModuleScope {
+                is_std: m.is_std,
+                is_library: m.is_std || m.is_dependency,
+                ..Default::default()
+            })
+            .collect();
         Ctx {
-            modules: modules.iter().collect(),
+            modules,
             fn_shapes: Default::default(),
             root,
             gen: Default::default(),
             export_memo: Default::default(),
-            import_targets: crate::collect::exports::import_targets(modules),
+            import_targets,
             loads: None,
             loads_added: 0,
             recursive_union_instances: 0,
@@ -569,14 +599,9 @@ impl<'m> Ctx<'m> {
             info: DefTable::default(),
             def_spans: DefTable::default(),
             units: false,
-            scopes: modules
-                .iter()
-                .map(|m| ModuleScope {
-                    is_std: m.is_std,
-                    is_library: m.is_std || m.is_dependency,
-                    ..Default::default()
-                })
-                .collect(),
+            unit_base: 0,
+            units_stage: crate::units::Stage::Both,
+            scopes,
             prelude: FxHashMap::default(),
             prelude_type_keys: false,
             aliases: vec![],

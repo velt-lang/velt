@@ -128,7 +128,7 @@ const PURE_C: &[&str] = &[
 ];
 
 /// The C library's and Win32's calls that only the file system makes: each takes a path (std/fs/fd,
-/// std/fs/whole; #2196 moved them out of the runtime's `velt_rt_fs_*`), named as the runtime's
+/// std/fs/whole, std/fs/tree; #2196 moved them out of the runtime's `velt_rt_fs_*`), named as the runtime's
 /// were. On Windows a spawn makes some of them too (the PATH search through `GetFileAttributesW`,
 /// the NUL device through `CreateFileW`), and does touch the file system there.
 const FILE_SYSTEM_C: &[&str] = &[
@@ -136,9 +136,16 @@ const FILE_SYSTEM_C: &[&str] = &[
     "stat",
     "lstat",
     "unlink",
+    "opendir",
+    "mkdir",
+    "rmdir",
+    "openat",
+    "unlinkat",
     "CreateFileW",
     "GetFileAttributesW",
     "GetFullPathNameW",
+    "FindFirstFileExW",
+    "CreateDirectoryW",
 ];
 
 /// Calls on a descriptor or handle, which files, sockets, pipes, the executor and threads share:
@@ -157,10 +164,14 @@ const DESCRIPTOR_C: &[&str] = &[
     "fcntl",
     "mmap",
     "madvise",
+    "fdopendir",
+    "readdir",
+    "closedir",
     "CloseHandle",
     "ReadFile",
     "WriteFile",
-    "GetFileSizeEx",
+    "FindNextFileW",
+    "FindClose",
     "GetFileInformationByHandle",
     "GetFileInformationByHandleEx",
 ];
@@ -451,7 +462,7 @@ mod tests {
         let program = Program {
             aggs: vec![],
             funcs: vec![r0, r2, main],
-            externs: vec![ext("clock_gettime"), ext("velt_rt_fs_read_dir_sync")],
+            externs: vec![ext("clock_gettime"), ext("velt_rt_fs_rename_sync")],
             statics: vec![],
             files: vec![],
             debug_types: vec![],
@@ -559,7 +570,7 @@ mod tests {
     #[test]
     fn only_what_is_known_to_be_pure_is_inside() {
         let outside = |s: &str| reason(s).unwrap_or_else(|| panic!("{s} counted as inside"));
-        assert_eq!(outside("velt_rt_fs_read_dir_sync"), "the file system");
+        assert_eq!(outside("velt_rt_fs_rename_sync"), "the file system");
         assert_eq!(outside("velt_rt_tcp_connect"), "the network");
         assert_eq!(outside("clock_gettime"), "the clock");
         assert_eq!(outside("QueryPerformanceCounter"), "the clock");
@@ -571,6 +582,9 @@ mod tests {
         // runtime functions not listed as pure.
         assert_eq!(outside("open"), "the file system");
         assert_eq!(outside("CreateFileW"), "the file system");
+        assert_eq!(outside("opendir"), "the file system");
+        assert_eq!(outside("unlinkat"), "the file system");
+        assert_eq!(outside("FindFirstFileExW"), "the file system");
         assert_eq!(outside("gethostname"), "a C function `gethostname`");
         assert_eq!(outside("read"), "a C function `read`");
         assert_eq!(outside("velt_sqlite__open"), "native code of `sqlite`");

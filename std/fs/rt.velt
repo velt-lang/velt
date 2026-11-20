@@ -10,36 +10,35 @@ import { IoResult, unwrapIo } from "velt/native/result";
 import { IoStatus, checkIo } from "velt/native/status";
 import { Dirent } from "velt/fs/dirent";
 import { Stats } from "velt/fs/stats";
+import { checkPathArg } from "velt/fs/path_arg";
 
 declare async function velt_rt_fs_read_file_bytes(path: string): Promise<IoResult<u8[]>>;
 declare async function velt_rt_fs_write_file(path: string, data: string): Promise<IoStatus>;
 declare async function velt_rt_fs_append_file(path: string, data: string): Promise<IoStatus>;
-export declare async function velt_rt_fs_read_dir(path: string): Promise<IoResult<string[]>>;
-export declare async function velt_rt_fs_read_dir_typed(
-  path: string,
-): Promise<IoResult<DirentList>>;
+declare async function velt_rt_fs_read_dir(path: string): Promise<IoResult<string[]>>;
+declare async function velt_rt_fs_read_dir_typed(path: string): Promise<IoResult<DirentList>>;
 declare async function velt_rt_fs_stat(path: string): Promise<IoResult<Stats>>;
 declare async function velt_rt_fs_lstat(path: string): Promise<IoResult<Stats>>;
 export declare async function velt_rt_fs_readlink(path: string): Promise<IoResult<string>>;
 export declare async function velt_rt_fs_realpath(path: string): Promise<IoResult<string>>;
 export declare async function velt_rt_fs_symlink(target: string, path: string): Promise<IoStatus>;
-export declare async function velt_rt_fs_mkdir(path: string, recursive: bool): Promise<IoStatus>;
-export declare async function velt_rt_fs_remove(path: string, recursive: bool): Promise<IoStatus>;
+declare async function velt_rt_fs_mkdir(path: string, recursive: bool): Promise<IoStatus>;
+declare async function velt_rt_fs_remove(path: string, recursive: bool): Promise<IoStatus>;
 export declare async function velt_rt_fs_rename(from: string, to: string): Promise<IoStatus>;
 export declare async function velt_rt_fs_copy_file(from: string, to: string): Promise<IoStatus>;
 declare async function velt_rt_fs_exists(path: string): Promise<bool>;
 declare function velt_rt_fs_read_file_bytes_sync(path: string): IoResult<u8[]>;
 declare function velt_rt_fs_write_file_sync(path: string, data: string): IoStatus;
 declare function velt_rt_fs_append_file_sync(path: string, data: string): IoStatus;
-export declare function velt_rt_fs_read_dir_sync(path: string): IoResult<string[]>;
-export declare function velt_rt_fs_read_dir_typed_sync(path: string): IoResult<DirentList>;
+declare function velt_rt_fs_read_dir_sync(path: string): IoResult<string[]>;
+declare function velt_rt_fs_read_dir_typed_sync(path: string): IoResult<DirentList>;
 declare function velt_rt_fs_stat_sync(path: string): IoResult<Stats>;
 declare function velt_rt_fs_lstat_sync(path: string): IoResult<Stats>;
 export declare function velt_rt_fs_readlink_sync(path: string): IoResult<string>;
 export declare function velt_rt_fs_realpath_sync(path: string): IoResult<string>;
 export declare function velt_rt_fs_symlink_sync(target: string, path: string): IoStatus;
-export declare function velt_rt_fs_mkdir_sync(path: string, recursive: bool): IoStatus;
-export declare function velt_rt_fs_remove_sync(path: string, recursive: bool): IoStatus;
+declare function velt_rt_fs_mkdir_sync(path: string, recursive: bool): IoStatus;
+declare function velt_rt_fs_remove_sync(path: string, recursive: bool): IoStatus;
 export declare function velt_rt_fs_rename_sync(from: string, to: string): IoStatus;
 export declare function velt_rt_fs_copy_file_sync(from: string, to: string): IoStatus;
 declare function velt_rt_fs_exists_sync(path: string): bool;
@@ -82,7 +81,7 @@ struct LineRead {
 }
 
 /** The entries of a runtime listing, each with its type. */
-export function dirents(list: DirentList): Dirent[] {
+function dirents(list: DirentList): Dirent[] {
   const out: Dirent[] = [];
   for (let i = 0; i < list.names.length; i++) {
     out.push({ name: list.names[i], kind: list.kinds[i] });
@@ -94,29 +93,35 @@ export function dirents(list: DirentList): Dirent[] {
 // Text is read as bytes and decoded here, an invalid sequence as U+FFFD (as Node decodes).
 
 export function readTextSync(path: string): string {
+  checkPathArg(path);
   return unwrapIo(velt_rt_fs_read_file_bytes_sync(path)).utf8Slice();
 }
 
 export async function readText(path: string): Promise<string> {
+  checkPathArg(path);
   return unwrapIo(await velt_rt_fs_read_file_bytes(path)).utf8Slice();
 }
 
 export function readBytesSync(path: string): u8[] {
+  checkPathArg(path);
   return unwrapIo(velt_rt_fs_read_file_bytes_sync(path));
 }
 
 export async function readBytes(path: string): Promise<u8[]> {
+  checkPathArg(path);
   return unwrapIo(await velt_rt_fs_read_file_bytes(path));
 }
 
 /** Writes `data` (truncating, or `append`ing), creating the file if missing. */
 export function writeSync(path: string, data: string, append: bool) {
+  checkPathArg(path);
   checkIo(
     append ? velt_rt_fs_append_file_sync(path, data) : velt_rt_fs_write_file_sync(path, data),
   );
 }
 
 export async function write(path: string, data: string, append: bool): Promise<void> {
+  checkPathArg(path);
   checkIo(
     append ? await velt_rt_fs_append_file(path, data) : await velt_rt_fs_write_file(path, data),
   );
@@ -124,11 +129,55 @@ export async function write(path: string, data: string, append: bool): Promise<v
 
 /** `stat` (`follow`) or `lstat`. */
 export function statSync(path: string, follow: bool): Stats {
+  checkPathArg(path);
   return unwrapIo(follow ? velt_rt_fs_stat_sync(path) : velt_rt_fs_lstat_sync(path));
 }
 
 export async function stat(path: string, follow: bool): Promise<Stats> {
+  checkPathArg(path);
   return unwrapIo(follow ? await velt_rt_fs_stat(path) : await velt_rt_fs_lstat(path));
+}
+
+// Directories, as std/fs/rt_sched.velt names them for native builds: velt_rt_wasm's functions.
+
+export function readDirSync(path: string): string[] {
+  checkPathArg(path);
+  return unwrapIo(velt_rt_fs_read_dir_sync(path));
+}
+
+export async function readDir(path: string): Promise<string[]> {
+  checkPathArg(path);
+  return unwrapIo(await velt_rt_fs_read_dir(path));
+}
+
+export function readDirEntriesSync(path: string): Dirent[] {
+  checkPathArg(path);
+  return dirents(unwrapIo(velt_rt_fs_read_dir_typed_sync(path)));
+}
+
+export async function readDirEntries(path: string): Promise<Dirent[]> {
+  checkPathArg(path);
+  return dirents(unwrapIo(await velt_rt_fs_read_dir_typed(path)));
+}
+
+export function mkdirSync(path: string, recursive: bool) {
+  checkPathArg(path);
+  checkIo(velt_rt_fs_mkdir_sync(path, recursive));
+}
+
+export async function mkdir(path: string, recursive: bool): Promise<void> {
+  checkPathArg(path);
+  checkIo(await velt_rt_fs_mkdir(path, recursive));
+}
+
+export function removeSync(path: string, recursive: bool) {
+  checkPathArg(path);
+  checkIo(velt_rt_fs_remove_sync(path, recursive));
+}
+
+export async function remove(path: string, recursive: bool): Promise<void> {
+  checkPathArg(path);
+  checkIo(await velt_rt_fs_remove(path, recursive));
 }
 
 export function existsSync(path: string): bool {

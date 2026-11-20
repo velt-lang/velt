@@ -275,17 +275,21 @@ pub(crate) fn assignment_in(cx: &mut Ctx, d: DefId, l: LocalId) -> Option<Span> 
 
 /// Per closure: the function that creates it.
 pub(crate) fn enclosing_fns(cx: &mut Ctx) -> FxHashMap<DefId, DefId> {
+    enclosing_fns_from(cx, 0)
+}
+
+/// [`enclosing_fns`] of the functions from `from` on (a unit's, `crate::units`).
+pub(crate) fn enclosing_fns_from(cx: &mut Ctx, from: usize) -> FxHashMap<DefId, DefId> {
     let mut out = FxHashMap::default();
-    for i in 0..cx.defs.len() {
-        let Some(Def::Fn(mut f)) = cx.defs[i].take() else {
+    for (i, def) in cx.defs.iter().enumerate().skip(from) {
+        let Some(Def::Fn(f)) = def else {
             continue;
         };
-        visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
+        visit::exprs(&f.body.block, &mut |e: &Expr| {
             if let E::Closure(c) = e.kind {
                 out.insert(c, DefId(i as u32));
             }
         });
-        cx.defs[i] = Some(Def::Fn(f));
     }
     out
 }

@@ -17,6 +17,20 @@ export struct Stat {
 /** `EINTR`: a signal interrupted the call, which is then made again. */
 export const EINTR: i32 = 4;
 
+/**
+ * Linux's `O_RDONLY | O_NOFOLLOW | O_DIRECTORY | O_CLOEXEC` for the architecture `arch`
+ * (velt/os's name), with which a tree's directories are opened so that no link is followed:
+ * `O_CLOEXEC` is 0x80000; `O_DIRECTORY` and `O_NOFOLLOW` are 0x10000 and 0x20000 on x86-64,
+ * 0x4000 and 0x8000 on arm64. 0 for an architecture std has no flags for: the numbers differ
+ * between architectures, and a guess could open a link.
+ */
+export function linuxOpenDir(arch: string): i32 {
+  if (arch == "x64") {
+    return 0xb0000;
+  }
+  return arch == "arm64" ? 0x8c000 : 0;
+}
+
 /** Whether the program runs on macOS, whose `open` flags and errno numbers differ from Linux's. */
 export function isMac(): bool {
   return platform() == "darwin";

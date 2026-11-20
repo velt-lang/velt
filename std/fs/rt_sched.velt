@@ -3,9 +3,10 @@
 // (std/imports.velt), with the names and signatures of the runtime's (std/fs/rt.velt).
 //
 // Reading, writing and appending whole files, `stat`, `lstat` and `exists` are Velt code
-// (`#fs-whole`: the C library on macOS and Linux, Win32 on Windows), their async forms on the
+// (`#fs-whole`: the C library on macOS and Linux, Win32 on Windows), and so are listing, making
+// and removing directories (`#fs-tree`), their async forms on the
 // executor's blocking pool (std/lang/hooks/sched_blocking.velt), which has threads on every OS a
-// native build targets. The other whole-file operations (list, link, make, remove, rename, copy)
+// native build targets. The other whole-file operations (link, rename, copy)
 // run the runtime's synchronous twin on that pool (the runtime has no asynchronous leaves for
 // them any more; WebAssembly builds use std/fs/rt.velt and velt_rt_wasm's). File streams
 // (`openRead`, `openWrite` and their
@@ -18,7 +19,7 @@ import { Dirent } from "velt/fs/dirent";
 import { Stats } from "velt/fs/stats";
 import { hookCall } from "velt/lang/intrinsics";
 import * as rt from "./rt";
-import { osError } from "velt/fs/errors";
+import { checkPathArg } from "velt/fs/path_arg";
 import {
   cBytes,
   existsAt,
@@ -28,32 +29,13 @@ import {
   writeText,
 } from "#fs-whole";
 import { Done, take } from "velt/fs/whole/done";
-
-// The runtime's `VeltDirents`, as std/fs/rt.velt declares it (its structs stay that file's own):
-// sorted names and, at the same index, each one's kind (0 other, 1 file, 2 directory, 3 symlink).
-struct DirentList {
-  names: string[];
-  kinds: u8[];
-}
-
-export declare function velt_rt_fs_read_dir_typed_sync(path: string): IoResult<DirentList>;
-
-/** The entries of a runtime listing, each with its type. */
-export function dirents(list: DirentList): Dirent[] {
-  const out: Dirent[] = [];
-  for (let i = 0; i < list.names.length; i++) {
-    out.push({ name: list.names[i], kind: list.kinds[i] });
-  }
-  return out;
-}
+import { list, listTyped, make, removeAt } from "#fs-tree";
 
 export {
   velt_rt_fs_copy_file_sync,
-  velt_rt_fs_mkdir_sync,
   velt_rt_fs_open_read,
   velt_rt_fs_open_read_range,
   velt_rt_fs_open_write,
-  velt_rt_fs_read_dir_sync,
   velt_rt_fs_reader_close,
   velt_rt_fs_reader_opened_stats,
   velt_rt_fs_reader_read,
@@ -61,7 +43,6 @@ export {
   velt_rt_fs_reader_read_string,
   velt_rt_fs_readlink_sync,
   velt_rt_fs_realpath_sync,
-  velt_rt_fs_remove_sync,
   velt_rt_fs_rename_sync,
   velt_rt_fs_symlink_sync,
   velt_rt_fs_writer_close,
@@ -70,20 +51,6 @@ export {
   velt_rt_fs_writer_free,
   velt_rt_fs_writer_write_bytes,
 } from "./rt";
-
-export async function velt_rt_fs_read_dir(path: string): Promise<IoResult<string[]>> {
-  return await hookCall<IoResult<string[]>>(
-    "sched_blocking_run",
-    () => rt.velt_rt_fs_read_dir_sync(path),
-  );
-}
-
-export async function velt_rt_fs_read_dir_typed(path: string): Promise<IoResult<DirentList>> {
-  return await hookCall<IoResult<DirentList>>(
-    "sched_blocking_run",
-    () => velt_rt_fs_read_dir_typed_sync(path),
-  );
-}
 
 export async function velt_rt_fs_readlink(path: string): Promise<IoResult<string>> {
   return await hookCall<IoResult<string>>(
@@ -106,20 +73,6 @@ export async function velt_rt_fs_symlink(target: string, path: string): Promise<
   );
 }
 
-export async function velt_rt_fs_mkdir(path: string, recursive: bool): Promise<IoStatus> {
-  return await hookCall<IoStatus>(
-    "sched_blocking_run",
-    () => rt.velt_rt_fs_mkdir_sync(path, recursive),
-  );
-}
-
-export async function velt_rt_fs_remove(path: string, recursive: bool): Promise<IoStatus> {
-  return await hookCall<IoStatus>(
-    "sched_blocking_run",
-    () => rt.velt_rt_fs_remove_sync(path, recursive),
-  );
-}
-
 export async function velt_rt_fs_rename(from: string, to: string): Promise<IoStatus> {
   return await hookCall<IoStatus>("sched_blocking_run", () => rt.velt_rt_fs_rename_sync(from, to));
 }
@@ -133,14 +86,12 @@ export async function velt_rt_fs_copy_file(from: string, to: string): Promise<Io
 
 // Whole files: Velt code over the C library or Win32 (`#fs-whole`), the async forms on the
 // blocking pool. The path is checked on the calling thread, so the work on the pool only
-// returns: a 0 in it is the `IoError` the runtime gave (`EINVAL: invalid argument, open 'a'`),
-// which keeps these functions' `throws IoError`.
+// returns: a 0 in it is Node's `ERR_INVALID_ARG_VALUE` (velt/fs/path_arg.velt), thrown here and
+// nowhere before for these functions (std/fs/rt.velt checks the same for WebAssembly builds).
 
-/** `path` as C bytes (its UTF-8 and a 0); throws `EINVAL` for `call` if it holds a 0. */
-function cOf(path: string, call: string): u8[] {
-  if (path.includes("\0")) {
-    throw osError(22, call, path);
-  }
+/** `path` as C bytes (its UTF-8 and a 0); Node's `ERR_INVALID_ARG_VALUE` if it holds a 0. */
+function cOf(path: string): u8[] {
+  checkPathArg(path);
   return bytesOf(path);
 }
 
@@ -150,41 +101,83 @@ function bytesOf(path: string): u8[] {
 }
 
 export function readTextSync(path: string): string {
-  return take(wholeText(cOf(path, "open"), path));
+  return take(wholeText(cOf(path), path));
 }
 
 export async function readText(path: string): Promise<string> {
-  const c = cOf(path, "open");
+  const c = cOf(path);
   return take(await hookCall<Done<string>>("sched_blocking_run", () => wholeText(c, path)));
 }
 
 export function readBytesSync(path: string): u8[] {
-  return take(wholeBytes(cOf(path, "open"), path));
+  return take(wholeBytes(cOf(path), path));
 }
 
 export async function readBytes(path: string): Promise<u8[]> {
-  const c = cOf(path, "open");
+  const c = cOf(path);
   return take(await hookCall<Done<u8[]>>("sched_blocking_run", () => wholeBytes(c, path)));
 }
 
 /** Writes `data` (truncating, or `append`ing), creating the file if missing. */
 export function writeSync(path: string, data: string, append: bool) {
-  take(writeText(cOf(path, "open"), path, data, append));
+  take(writeText(cOf(path), path, data, append));
 }
 
 export async function write(path: string, data: string, append: bool): Promise<void> {
-  const c = cOf(path, "open");
+  const c = cOf(path);
   take(await hookCall<Done<bool>>("sched_blocking_run", () => writeText(c, path, data, append)));
 }
 
 /** `stat` (`follow`) or `lstat`. */
 export function statSync(path: string, follow: bool): Stats {
-  return take(statOf(cOf(path, follow ? "stat" : "lstat"), path, follow));
+  return take(statOf(cOf(path), path, follow));
 }
 
 export async function stat(path: string, follow: bool): Promise<Stats> {
-  const c = cOf(path, follow ? "stat" : "lstat");
+  const c = cOf(path);
   return take(await hookCall<Done<Stats>>("sched_blocking_run", () => statOf(c, path, follow)));
+}
+
+// Directories: Velt code over the C library or Win32 (`#fs-tree`), as the whole files above.
+
+/** The names in the directory `path`, sorted. */
+export function readDirSync(path: string): string[] {
+  return take(list(cOf(path), path));
+}
+
+export async function readDir(path: string): Promise<string[]> {
+  const c = cOf(path);
+  return take(await hookCall<Done<string[]>>("sched_blocking_run", () => list(c, path)));
+}
+
+/** The entries of the directory `path` with their types, sorted by name. */
+export function readDirEntriesSync(path: string): Dirent[] {
+  return take(listTyped(cOf(path), path));
+}
+
+export async function readDirEntries(path: string): Promise<Dirent[]> {
+  const c = cOf(path);
+  return take(await hookCall<Done<Dirent[]>>("sched_blocking_run", () => listTyped(c, path)));
+}
+
+/** Makes the directory `path`, with `recursive` its missing parents too. */
+export function mkdirSync(path: string, recursive: bool) {
+  take(make(cOf(path), path, recursive));
+}
+
+export async function mkdir(path: string, recursive: bool): Promise<void> {
+  const c = cOf(path);
+  take(await hookCall<Done<bool>>("sched_blocking_run", () => make(c, path, recursive)));
+}
+
+/** Removes a file, a link or an empty directory, with `recursive` a directory and its contents. */
+export function removeSync(path: string, recursive: bool) {
+  take(removeAt(cOf(path), path, recursive));
+}
+
+export async function remove(path: string, recursive: bool): Promise<void> {
+  const c = cOf(path);
+  take(await hookCall<Done<bool>>("sched_blocking_run", () => removeAt(c, path, recursive)));
 }
 
 /** Whether anything is at `path` (Node's `existsSync`: false, not an error, for a 0 in it). */

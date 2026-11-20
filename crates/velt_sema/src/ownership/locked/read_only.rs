@@ -12,17 +12,11 @@
 use velt_common::Diagnostic;
 
 use crate::ctx::Ctx;
-use crate::defs::BodyState;
 use crate::hir::{Callee, Def, Expr, ExprKind as E, Intrinsic, PassMode};
 use crate::visit;
 
 pub(super) fn check(cx: &mut Ctx) {
-    let fns: Vec<_> = cx
-        .fn_defs
-        .iter()
-        .copied()
-        .filter(|d| cx.fn_info(*d).state == BodyState::Done)
-        .collect();
+    let fns: Vec<_> = cx.unit_fns();
     let mut callbacks: Vec<Expr> = vec![];
     for d in fns {
         let Some(Def::Fn(mut f)) = cx.defs[d.0 as usize].take() else {

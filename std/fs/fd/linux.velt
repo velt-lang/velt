@@ -3,7 +3,7 @@
 // on it per architecture).
 
 import { arch } from "velt/os/machine";
-import { Stat } from "velt/fs/fd/system";
+import { linuxOpenDir, Stat } from "velt/fs/fd/system";
 import {
   closeFd as posixCloseFd,
   fstatAt as posixFstatAt,
@@ -20,8 +20,17 @@ import {
   writeAddress as posixWriteAddress,
   writeFrom as posixWriteFrom,
 } from "velt/fs/fd/posix";
+import { checkPath } from "velt/fs/fd/guards";
+import {
+  DirSystem,
+  listPath as posixListPath,
+  removeDir as posixRemoveDir,
+  removeTree as posixRemoveTree,
+} from "velt/fs/fd/dirs";
 
 declare c("c", { errno: true }) function fdatasync(fd: i32): i32;
+/** `mode_t` is 32 bits on Linux. */
+declare c("c", { errno: true }) function mkdir(path: readonly u8[], mode: u32): i32;
 
 /** Flushes the file's data and metadata to the disk: 0, or -1. */
 export function syncAll(fd: i32): i32 {
@@ -111,4 +120,58 @@ export unsafe function readAddress(fd: i32, address: usize, len: usize, at: i64)
 export unsafe function writeAddress(fd: i32, address: usize, len: usize, at: i64): isize {
   // SAFETY: the caller's statement, handed on.
   return unsafe { posixWriteAddress(fd, address, len, at) };
+}
+
+// Directories (std/fs/fd/dirs.velt), with Linux's `struct dirent`, `open` flags and `AT_`
+// constants.
+
+/**
+ * Linux's `struct dirent` on a 64-bit target (glibc and musl agree): `d_type` at 18, `d_name` at
+ * 19. The `open` flags are the architecture's (`linuxOpenDir`). `AT_FDCWD` -100,
+ * `AT_REMOVEDIR` 0x200; `ELOOP` 40.
+ */
+function dirSystem(): DirSystem {
+  return {
+    typeAt: 18,
+    nameAt: 19,
+    openDir: linuxOpenDir(arch()),
+    cwd: -100,
+    removeDir: 0x200,
+    loop: 40,
+  };
+}
+
+/**
+ * The entries of the directory at `path` into `names` and `types` (`d_type`, from `unknown` for
+ * an entry that has none): 0, or the errno.
+ */
+export function listDir(
+  path: readonly u8[],
+  names: string[],
+  types: u8[],
+  unknown: ((child: readonly u8[]) => u8) | null,
+): i32 {
+  return posixListPath(path, dirSystem(), names, types, unknown);
+}
+
+/** `mkdir(path, mode)`: 0, or -1. */
+export function makeDir(path: readonly u8[], mode: u32): i32 {
+  checkPath("mkdir", path);
+  // SAFETY: `path` ends with its only 0 byte (checked above); C keeps no pointer to it.
+  return unsafe { mkdir(path, mode) };
+}
+
+/** `rmdir(path)`: 0, or -1. */
+export function removeDir(path: readonly u8[]): i32 {
+  return posixRemoveDir(path);
+}
+
+/** Removes the directory at `path` and everything in it, following no link: 0, or the errno. */
+export function removeTree(path: readonly u8[]): i32 {
+  const sys = dirSystem();
+  if (sys.openDir == 0) {
+    // No flags for this architecture: nothing is opened, so nothing is removed (ENOSYS).
+    return 38;
+  }
+  return posixRemoveTree(sys.cwd, path, sys, true);
 }

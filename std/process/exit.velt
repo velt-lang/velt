@@ -2,5 +2,6 @@
 
 /** Flushes stdout/stderr and ends the process with `code` (same as `process.exit`). */
 export function exit(code: i32) {
-  process.exit(code);
+  // As a program's own `process.exit`: the leak counters' report gets no verdict.
+  processExit(code);
 }

@@ -671,3 +671,13 @@ pub(crate) fn closure_in(e: &mut hir::Expr) -> Option<DefId> {
     });
     found
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    GenericFns {
+        by_plain, made, rest_forms, free_of_args, form_tys, names, sites, fresh, wrappers,
+    }
+    Shape {
+        params, ret, throws, rest, rest_form, bounds, constraints, outer,
+    }
+}

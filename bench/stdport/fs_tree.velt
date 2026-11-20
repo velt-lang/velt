@@ -1,0 +1,48 @@
+// Directories (std/fs/tree/): a directory of 1,000 files listed 300 times by name and 300 times
+// with each entry's type, and a small tree (7 directories, 6 files) made and removed 300 times.
+// The Rust port makes the same calls through std::fs, as the runtime did.
+import {
+  existsSync,
+  mkdirSync,
+  readDirEntriesSync,
+  readDirSync,
+  removeSync,
+  writeFileSync,
+} from "velt/fs";
+import { tmpdir } from "velt/os";
+
+function main() {
+  const dir = `${tmpdir()}/velt_bench_fs_tree`;
+  if (existsSync(dir)) {
+    removeSync(dir, { recursive: true });
+  }
+  const many = `${dir}/many`;
+  mkdirSync(many, { recursive: true });
+  for (let i = 0; i < 1000; i++) {
+    writeFileSync(`${many}/file-${(i * 7919) % 1000}.txt`, "");
+  }
+  mkdirSync(`${many}/sub`);
+  let total = 0;
+  for (let i = 0; i < 300; i++) {
+    const names = readDirSync(many);
+    total += names.length + names[i].length;
+    const entries = readDirEntriesSync(many);
+    total += entries[i].isFile() ? 2 : 1;
+    total += entries[entries.length - 1].isDirectory() ? 5 : 3;
+  }
+  const tree = `${dir}/t`;
+  for (let i = 0; i < 300; i++) {
+    mkdirSync(`${tree}/a/b/c/d`, { recursive: true });
+    mkdirSync(`${tree}/a/x/y`, { recursive: true });
+    writeFileSync(`${tree}/f0`, "x");
+    writeFileSync(`${tree}/a/f1`, "x");
+    writeFileSync(`${tree}/a/b/f2`, "x");
+    writeFileSync(`${tree}/a/b/c/f3`, "x");
+    writeFileSync(`${tree}/a/b/c/d/f4`, "x");
+    writeFileSync(`${tree}/a/x/y/f5`, "x");
+    total += readDirSync(`${tree}/a`).length;
+    removeSync(tree, { recursive: true });
+  }
+  removeSync(dir, { recursive: true });
+  console.log(total);
+}

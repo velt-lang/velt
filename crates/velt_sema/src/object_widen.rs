@@ -547,3 +547,13 @@ fn intrinsic(i: Intrinsic, args: Vec<Expr>, ty: TyId, span: Span) -> Expr {
         span,
     }
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    Widen {
+        asks, widened, by, cells, values, done, reported,
+    }
+    Ask {
+        iface, fields, cast, span,
+    }
+}

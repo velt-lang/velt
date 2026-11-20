@@ -31,7 +31,7 @@ mod warm;
 pub use warm::{compile_for_jit_warm, copy_files};
 pub(crate) mod stamp;
 mod std_cache;
-pub(crate) use std_cache::prebuilt_warm;
+pub(crate) use std_cache::{prebuilt_ship, prebuilt_warm};
 mod timings;
 
 use executable::build_on_current_thread;

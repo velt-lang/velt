@@ -196,6 +196,7 @@ pub(crate) const VELT_GLOBALS: &[VeltOnly] = &[
         "processMemoryUsage",
         "keep process information out of code shared with TypeScript",
     ),
+    ("processExit", "use `process.exit(…)`"),
     ("promiseAllSettled", "use `Promise.allSettled(…)`"),
     ("promiseAny", "use `Promise.any(…)`"),
     ("promiseCatch", "use `p.catch(…)`"),
