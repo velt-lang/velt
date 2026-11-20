@@ -24,6 +24,12 @@ import { Done } from "velt/fs/whole/done";
 import { pdqsort } from "velt/lang/sort/pdq";
 
 const ENOENT: i32 = 2;
+/** `mkdir`'s errors that Node's recursive form returns as they are: the same numbers on
+ * macOS and Linux. */
+const EPERM: i32 = 1;
+const EACCES: i32 = 13;
+const ENOTDIR: i32 = 20;
+const ENOSPC: i32 = 28;
 /** `st_mode`'s type bits, and a directory's and a link's. */
 const S_IFMT: u32 = 0o170000;
 const S_IFDIR: u32 = 0o040000;
@@ -137,7 +143,10 @@ function makeAll(c: readonly u8[]): i32 {
     return 0;
   }
   if (first != ENOENT) {
-    return isDir(c) ? 0 : first;
+    // As Node's recursive `mkdir`: these errors stand even when a directory is there (a
+    // drive's root, a directory the process may not write); another one means the
+    // directory is made, if one is there now.
+    return stands(first) || !isDir(c) ? first : 0;
   }
   const parent = parentOf(c);
   if (parent === null) {
@@ -149,6 +158,11 @@ function makeAll(c: readonly u8[]): i32 {
   }
   const again = makeOne(c);
   return again == 0 || isDir(c) ? 0 : again;
+}
+
+/** Whether `e`, which `mkdir` gave, is an error a directory being there doesn't undo. */
+function stands(e: i32): bool {
+  return e == EACCES || e == ENOSPC || e == ENOTDIR || e == EPERM;
 }
 
 /** Makes the directory at `c`, with `recursive` its missing parents too. */

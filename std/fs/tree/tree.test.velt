@@ -7,6 +7,7 @@
 import * as fs from "velt/fs";
 import { IoError } from "velt/io";
 import { platform } from "velt/os";
+import { cwd } from "velt/process";
 import { describe, expect, it } from "velt/test";
 
 /** The code of the `IoError` `f` throws, or "" when it throws none. */
@@ -53,6 +54,28 @@ describe("velt/fs's directories", () => {
     // ENOENT for a listing.
     expect(codeOf(() => fs.mkdirSync(`${top}/a?b`))).toBe("EINVAL");
     expect(codeOf(() => fs.readDirSync(`${top}/a?b`))).toBe("ENOENT");
+    fs.removeSync(top, { recursive: true });
+  });
+
+  it("makes no drive's root and removes a file named with a separator after it, as Node", () => {
+    if (platform() != "win32") {
+      return;
+    }
+    // A drive's root refuses `CreateDirectoryW` with "access denied": EPERM, which Node's
+    // recursive `mkdir` keeps although a directory is there.
+    const root = cwd().slice(0, 3);
+    expect(codeOf(() => fs.mkdirSync(root, { recursive: true }))).toBe("EPERM");
+    const top = `velt-tree-sep-${process.pid}`;
+    fs.mkdirSync(top, { recursive: true });
+    fs.writeFileSync(`${top}/f`, "x");
+    fs.writeFileSync(`${top}/g`, "x");
+    fs.removeSync(`${top}/f/`);
+    fs.rmSync(`${top}\\g\\`);
+    expect(fs.readDirSync(top).length).toBe(0);
+    // A directory keeps its separator: removed as the directory it names.
+    fs.mkdirSync(`${top}/d`);
+    fs.removeSync(`${top}/d/`);
+    expect(fs.existsSync(`${top}/d`)).toBe(false);
     fs.removeSync(top, { recursive: true });
   });
 });
