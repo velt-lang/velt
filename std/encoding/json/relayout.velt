@@ -49,7 +49,12 @@ export function propertyList(text: string): string[] | null {
  * `pretty`, with line breaks, `indent` (JS's gap, which may be empty) per level and `": "` after
  * keys (not `pretty`: no whitespace).
  */
-export function relayout(text: string, keys: string[] | null, pretty: bool, indent: string): string {
+export function relayout(
+  text: string,
+  keys: string[] | null,
+  pretty: bool,
+  indent: string,
+): string {
   const l = new Layout(text, keys, pretty, indent);
   const out = new StringBuilder(strByteLen(text) + strByteLen(text) / 2);
   l.value(out, 0);

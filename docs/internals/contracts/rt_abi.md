@@ -195,7 +195,8 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
   the end is closer). Freeing or growing a buffer that has a table first bumps a global epoch, which
   forgets every remembered position in a heap string (a new string at the same address is never
   taken for the old one). Positions in static strings never expire: a static non-ASCII string of
-  more than 64 units points at a literal, and so must any producer of borrowed views.
+  more than 64 units points at a literal (the JSON reader copies such a key instead of borrowing it,
+  rt_abi_async.md §12.3), and so must any other producer of borrowed views.
 - `VELT_RC_STATS=1` with a **debug** runtime prints one line to stderr at exit,
   `rc stats: retain=<n> release=<n> alloc=<n> free=<n> blocks=<allocated>/<freed> panics caught=<n>`
   (retain = increments, release = decrements of shared buffers, alloc/free = heap string

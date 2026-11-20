@@ -1,0 +1,47 @@
+// velt/encoding/json (internal): the edits of a `JsonValue`'s runtime tree
+// (std/prelude/json/json_value.velt), outside the prelude so user programs don't see them.
+
+declare function velt_rt_json_value_set(slot: JsonHandleSlot, key: string, v: u64): bool;
+declare function velt_rt_json_value_delete(slot: JsonHandleSlot, key: string): bool;
+declare function velt_rt_json_value_push(slot: JsonHandleSlot, v: u64): bool;
+declare function velt_rt_json_value_set_at(slot: JsonHandleSlot, i: u64, v: u64): bool;
+
+/**
+ * The `const VeltJson** out` of `velt_rt_json_parse_value`. The externs take it by pointer
+ * because they write it (a `BorrowMut` param): a struct a function only reads travels by value.
+ */
+export struct JsonHandleSlot {
+  /** The runtime's handle of the tree. */
+  handle: u64;
+}
+
+// The edits of a tree through its slot (the runtime may give the tree a new handle), outside
+// `JsonValue`'s methods: a method naming `JsonHandleSlot` makes every program check them.
+
+/** `velt_rt_json_value_set` on the tree `handle`: the result, and the tree's handle after. */
+export function treeSet(handle: u64, key: string, v: u64): [bool, u64] {
+  let slot: JsonHandleSlot = { handle };
+  const ok = velt_rt_json_value_set(slot, key, v);
+  return [ok, slot.handle];
+}
+
+/** `velt_rt_json_value_delete` on the tree `handle`: the result, and the tree's handle after. */
+export function treeDelete(handle: u64, key: string): [bool, u64] {
+  let slot: JsonHandleSlot = { handle };
+  const ok = velt_rt_json_value_delete(slot, key);
+  return [ok, slot.handle];
+}
+
+/** `velt_rt_json_value_push` on the tree `handle`: the result, and the tree's handle after. */
+export function treePush(handle: u64, v: u64): [bool, u64] {
+  let slot: JsonHandleSlot = { handle };
+  const ok = velt_rt_json_value_push(slot, v);
+  return [ok, slot.handle];
+}
+
+/** `velt_rt_json_value_set_at` on the tree `handle`: the result, and the tree's handle after. */
+export function treeSetAt(handle: u64, i: u64, v: u64): [bool, u64] {
+  let slot: JsonHandleSlot = { handle };
+  const ok = velt_rt_json_value_set_at(slot, i, v);
+  return [ok, slot.handle];
+}

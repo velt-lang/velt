@@ -95,7 +95,6 @@ velt_rt velt_rt_host_release
 velt_rt velt_rt_json_enter
 velt_rt velt_rt_json_error
 velt_rt velt_rt_json_leave
-velt_rt velt_rt_json_node_syntax
 velt_rt velt_rt_json_parse_value
 velt_rt velt_rt_json_parse_value_with
 velt_rt velt_rt_json_reader_array_next
@@ -120,7 +119,6 @@ velt_rt velt_rt_json_reader_reset
 velt_rt velt_rt_json_reader_skip_lookahead
 velt_rt velt_rt_json_reader_skip_unknown
 velt_rt velt_rt_json_reader_skip_value
-velt_rt velt_rt_json_relayout
 velt_rt velt_rt_json_value_as_bool
 velt_rt velt_rt_json_value_as_f64
 velt_rt velt_rt_json_value_as_str

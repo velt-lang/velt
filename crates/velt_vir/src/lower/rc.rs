@@ -24,33 +24,6 @@ pub(super) const STORED: i128 = 1 << 61;
 const COUNT_MASK: i128 = LOCAL - 1;
 
 impl FnLower<'_, '_> {
-    /// `isUnique(x)` (hir `Intrinsic::IsUnique`): whether the object, box or array `x` has a count
-    /// of 1. A value of a type the program does not count has one owner, so true; a lock-set
-    /// object, whose count readers of an `RwLock` share, false (a copy is always safe); a value
-    /// of any other kind, false.
-    pub(super) fn is_unique(&mut self, x: &hir::Expr) -> Operand {
-        let t = self.sub(x.ty);
-        let v = self.expr(x);
-        if self.dead() {
-            return Operand::Const(crate::vir::Const::Bool(false), Ty::Bool);
-        }
-        if self.cx.ty(t) != Ty::Ptr || self.cx.is_dynamic(t) {
-            return Operand::Const(crate::vir::Const::Bool(false), Ty::Bool);
-        }
-        if !self.cx.counted(t) {
-            return Operand::Const(crate::vir::Const::Bool(true), Ty::Bool);
-        }
-        if self.cx.lock_counted(t) {
-            return Operand::Const(crate::vir::Const::Bool(false), Ty::Bool);
-        }
-        let p = self.count_ptr(v, t);
-        let c = self.count_place(p);
-        self.rvalue_temp(
-            Ty::Bool,
-            Rvalue::Binary(BinOp::Eq, Operand::Copy(c), cint(1, Ty::U64)),
-        )
-    }
-
     /// The count word of the (non-null) counted object `p`.
     pub(super) fn count_place(&mut self, p: Operand) -> Place {
         let c = self.rvalue_temp(

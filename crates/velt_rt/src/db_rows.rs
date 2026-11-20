@@ -298,45 +298,8 @@ pub unsafe extern "C" fn velt_rt_rows_fail(
         path.push('.');
         path.push_str(&field);
     }
-    let msg = format!("expected {} at {path}", (*expected).text_lossy());
+    let msg = crate::json::error::mismatch_message(&(*expected).text_lossy(), &path);
     out.write(VeltStr::from_vec(msg.into_bytes()));
-}
-
-/// Whether the rows are one row's (the driver opened the cursor for a single row): 1, else 0.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_rows_single(st: u64) -> u8 {
-    header_end(&state(st).header).is_some_and(|(single, _, _)| single) as u8
-}
-
-/// The name of column `col` (not UTF-8: U+FFFD), for the decoder of rows as a JSON document.
-///
-/// # Safety
-/// As the module says; `out` is writable.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_rows_name(st: u64, col: u64, out: *mut VeltStr) {
-    let header = &state(st).header;
-    let mut at = NAMES;
-    for _ in 0..col {
-        at = name_at(header, at).1;
-    }
-    let (start, end, _) = name_at(header, at);
-    out.write(VeltStr::from_text(&String::from_utf8_lossy(&header[start..end])));
-}
-
-/// Column `col` of the current row as the JSON text of the nested value it holds (a Postgres
-/// array or `jsonb`): 1 written, 0 another kind.
-///
-/// # Safety
-/// As the module says; `out` is writable.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_rows_json(st: u64, col: u64, out: *mut VeltStr) -> u8 {
-    match cell(st, col) {
-        Cell::Json(t) => {
-            out.write(VeltStr::from_text(&String::from_utf8_lossy(t)));
-            OK
-        }
-        _ => MISMATCH,
-    }
 }
 
 #[cfg(test)]

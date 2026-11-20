@@ -885,7 +885,7 @@ st->h = velt_rt_spawn(add1After$poll, add1After$drop, &init, sizeof init, 8, siz
 
 ## 12. Strings & JSON
 
-Implemented in `crates/velt_rt` (`strbuf.rs`, `str_ops/`), tested from Rust against
+Implemented in `crates/velt_rt` (`strbuf.rs`, `str_ops/`, `json/`), tested from Rust against
 node-generated tables in `crates/velt_rt/tests/abi/` and from C in
 `crates/velt_rt/tests/link_check.rs`. Strings are `VeltStr`s in canonical WTF-8 (UTF-8 that may
 hold lone surrogates; forms in rt_abi.md "Strings").
@@ -942,8 +942,9 @@ the buffer's count, for the reason given there.
 
 **Invariant:** a count-1 buffer is appended to or adopted (and so possibly reallocated, and for
 an adoption its text moved within it) only while no borrowed static-form view into it is live.
-No runtime function makes such a view into heap text, and a template literal adopts only a
-call's result that it owns. Appended text may lie in the target's own
+The only such views are the JSON reader's borrowed keys (§12.3), which point into the
+source text; generated decode glue never appends to the text it is reading, and a template
+literal adopts only a call's result that it owns. Appended text may lie in the target's own
 buffer (a share, an uncounted copy or a static-form view of it): it is copied out before the
 buffer grows. An adopted string's head must not lie in its buffer.
 
@@ -964,6 +965,8 @@ buffer grows. An adopted string's head must not lie in its buffer.
 | `velt_rt_strbuf_push_bool` | `(VeltStrBuf* b, u8 v)` | `true`/`false` |
 | `velt_rt_strbuf_push_byte` | `(VeltStrBuf* b, u8 c)` | punctuation in generated glue |
 | `velt_rt_strbuf_push_json_str` | `(VeltStrBuf* b, const VeltStr* s)` | quoted + escaped exactly like `JSON.stringify(s)`: `\"` `\\` `\b \f \n \r \t`, other controls < U+0020 as lowercase 6-char `\u00xx`; everything else verbatim |
+| `velt_rt_strbuf_push_json_value` | `(VeltStrBuf* b, u64 v)` | `JSON.stringify(v)` of a `json.Value` runtime tree (null handle ⇒ `null`); the handle is the value's address as a `u64`, like the handles of §3.2. The compiler does not emit it: generated code calls the prelude's `JsonValue[JSON_WRITE]` (velt/encoding/json `appendJsonValue`), which writes a parsed (tape) value in Velt and calls this for a tree |
+| `velt_rt_strbuf_push_inspect_json` | `(VeltStrBuf* b, const void* v, u8 top, u32 depth)` | what `console.log` prints for a `json.Value` (node `util.inspect` of the parsed value: `{ a: 1, b: [ 2, 'x' ] }`, `[]`, `{}`, strings quoted like `push_inspect_str`, keys like `push_inspect_key`); a string is raw when `top != 0`, and an array or object is then broken across lines like `inspect_layout`; null handle ⇒ `null`. `depth` is node's depth of the value (0 for a `console.log` argument): a non-empty array or object nested deeper than 2 prints as `[Array]` / `[Object]`, and an array shows its first 100 elements, then `... n more items` (node's `depth` and `maxArrayLength`). The handle is passed as a pointer (VIR `ptr`), unlike `push_json_value`'s `u64` |
 | `velt_rt_strbuf_inspect_begin` | `()` | start of a top-level value printed by `console.log`, `${x}` or `String(x)`: the custom inspects' pieces (`inspect_atom`) of the value before are forgotten. Compiled code calls it at every top-level value, next to std's `inspectBegin` (std/lang/hooks/inspect_cycles.velt, which numbers the `<ref *N>` of cycles) where that hook is checked |
 | `velt_rt_strbuf_inspect_atom` | `(const VeltStrBuf* b, u64 start)` | the text from byte `start` to the end of `b` is what a class's `[util.inspect.custom]()` returned: `inspect_layout` keeps it as one piece (node inserts a custom inspect's string as it is). Forgotten at the next `inspect_begin` |
 | `velt_rt_strbuf_len` | `(const VeltStrBuf* b) -> u64` | byte length: where the next value's text starts (for `inspect_layout`) |
@@ -972,15 +975,18 @@ buffer grows. An adopted string's head must not lie in its buffer.
 | `velt_rt_strbuf_spare` | `(VeltStrBuf* b, u64 min, u64* avail) -> u8*` | room for writing `min` or more bytes in place after the text (the builder becomes a unique heap buffer): where they start, and how many there are in `*avail`. Native libraries write their results into Velt's memory this way ([native_abi.md](native_abi.md)) |
 | `velt_rt_strbuf_commit` | `(VeltStrBuf* b, u64 n, u8 ascii)` | the `n` bytes written after the text (`velt_rt_strbuf_spare`) become part of it: UTF-8, ASCII when `ascii` is 1 (not counted then) |
 | `velt_rt_strbuf_drop` | `(VeltStrBuf* b)` | abandon an unfinished builder (exception path); zeroes it |
+| `velt_rt_json_enter` | `(const void* p) -> u8` | starts writing the object at `p`: 1, or 0 if it is already being written (a cycle). Per thread. Exported, but neither std nor lowering calls it: the generated `JSON.stringify` writer (std/encoding/json/generate/write.velt) checks cycles with `velt_rt_visit_enter` and panics with `JSON.stringify: converting circular structure to JSON (an object contains itself)` |
 | `velt_rt_rows_begin_named` / `velt_rt_rows_end` | `(u64 cursor, const VeltStr* names) -> u64` / `(u64 st)` | velt/db's `decodeRows<T>` / `decodeRow<T>` of a row of plain fields read a driver's row cursor (its address) by column, in the code velt/encoding/json's generator of `parseJsonCursor<T>` writes (velt/db/generate/columns.velt): `names` gives the row type's fields, each name with its length in UTF-8 bytes in front (`2:id4:name`); each column is matched to its field once (the map is kept per thread for the next result with the same header and names). The rows state is a `u64` (its address) |
 | `velt_rt_rows_next` / `_columns` / `_field` / `_field_map` | `(st) -> u8` / `(st) -> u64` / `(st, u64 col) -> i64` / `(st) -> u64` | step to the next row (1, or 0 at the end); the column count; the field column `col` fills (-1: none); the fields of the first 16 columns, 4 bits each (column `c` at bit `4c`: the field's index plus one, 0 for none and for an index of 15 or more) |
 | `velt_rt_rows_i64` / `_f64` / `_bool` / `_str` | `(st, u64 col, T* out) -> u8` | column `col` of the current row typed: 1 = written, 2 = NULL, 0 = another kind (an integer accepts an exact float, a float an integer, a string's invalid UTF-8 becomes U+FFFD) |
 | `velt_rt_rows_kind` / `_blob` | `(st, u64 col) -> u8` / `(st, u64 col, VeltBytes* out)` | what column `col` of the current row holds, numbered as std/db's `CellKind` (0 NULL, 1 boolean, 2 integer, 3 float, 4 text, 5 blob, 6 JSON); a blob's bytes (empty for another kind) |
-| `velt_rt_rows_single` / `_name` / `_json` | `(st) -> u8` / `(st, u64 col, VeltStr* out)` / `(st, u64 col, VeltStr* out) -> u8` | for the rows of a row type that is not read by column, which velt/db/rows_json.velt writes as the JSON document they stand for (`[{"col":value,...}]`, or one row's object), decoded as `JSON.parse<T>` decodes text: whether the cursor was opened for a single row (1); column `col`'s name (invalid UTF-8 becomes U+FFFD); the JSON text of the nested value column `col` of the current row holds (1), or 0 for another kind. Such a result begins with `velt_rt_rows_begin_named(cursor, "")` |
 | `velt_rt_rows_exact_i64` | `(f64 v, i64* out) -> u8` | 1 and the integer when `v` is one exactly (an integer field from a float cell of a `RowSource`), else 0 |
 | `velt_rt_rows_fail` | `(const VeltStr* expected, i64 row, const VeltStr* field, VeltStr* out)` | the JSON decoder's message for a row that does not fit: `expected <expected> at $[row].field` (`row` -1: the single row; `field` empty: the row itself) |
 | `velt_rt_param_object` / `velt_rt_param_name` | `(u64 sink)` / `(u64 sink, const VeltStr* name)` | velt/db's `bindParams<P>` (the code velt/db/generate/bind.velt writes for `P`) hands a driver's parameter sink (its address; native_abi.md "Parameter sinks") an object's members: `object` first, then each member's name before its value |
 | `velt_rt_param_i64` / `_u64` / `_f64` / `_bool` / `_null` / `_str` / `_bytes` | `(u64 sink, v)` (`_bool`: `u8`, `_str`: `const VeltStr*`, `_bytes`: `const VeltBytes*`, `_null`: no value) | one value, as its JSON text would bind: a `u64` beyond `i64` and a non-integral `f64` (or one of 1e21 or more) a REAL, an integral `f64` an INTEGER, NaN/±Infinity NULL, a string UTF-8 (lone surrogates U+FFFD), a `u8[]` a BLOB |
+| `velt_rt_json_leave` | `()` | done with the innermost object entered (no caller either) |
+| `velt_rt_visit_enter` | `(u64 id) -> u8` | velt/reflect `beginVisit`: starts visiting the value with identity `id`: 1, or 0 if it is being visited already (it contains itself). The same per-thread stack as `velt_rt_json_enter` |
+| `velt_rt_visit_leave` | `()` | velt/reflect `endVisit`: done with the innermost value visited |
 
 ### 12.2 String methods
 
@@ -1016,14 +1022,70 @@ U+FFFD. "Omitted" JS arguments are passed as the value given in Notes.
 | `velt_rt_str_to_number` | `(const VeltStr* s) -> f64` | exact JS `Number(s)`: trimmed; `""` ⇒ 0; `0x`/`0o`/`0b` (unsigned); `±Infinity`; whole string must be a decimal literal, else NaN |
 | `velt_rt_str_array_drop` | `(VeltStrArray* a)` | already in §4 |
 
-### 12.3 JSON
+### 12.3 JSON pull reader (`JSON.parse<T>`)
 
-The JSON engine is Velt code in std ([json-engine.md](../design/json-engine.md)): the scanner,
-the pull reader the generated decoders drive, the tape of `JSON.parseValue`, the tree of a
-`JsonValue` built or edited in place, the writer, `JSON.stringify`'s replacer and `space`, and
-Node's `SyntaxError` messages (`std/encoding/json/`). It has no runtime functions of its own: it
-writes into the string builder of §12.1 and prints with its `push_inspect_*` functions, and the
-rows of a database driver reach it as text through the `velt_rt_rows_*` functions above.
+The compiler generates one decoder per target type; it drives a reader over the borrowed source.
+Lexing is byte-level; nothing is allocated except the owned strings handed out (and keys/strings
+that contain escapes).
+
+```c
+typedef struct VeltJsonReader VeltJsonReader;   // opaque
+```
+
+`new` and `new_with` return the reader's address; every other function takes it as a `u64`
+(`r` below), the form Velt code holds it in (std/encoding/json/reader.velt), which a pointer
+parameter would not match on wasm32.
+
+| Symbol | Signature | Notes |
+|---|---|---|
+| `velt_rt_json_reader_new` | `(const VeltStr* src) -> VeltJsonReader*` | never null; `src` must stay alive, unchanged **and in place** (an inline string's bytes live in the `VeltStr` itself) until `free` |
+| `velt_rt_json_reader_new_with` | `(const VeltStr* src, u32 flags, u32 max_depth) -> VeltJsonReader*` (with flag 4, `src` is a `const VeltBytes*`) | `JSON.parse` options: flag 1 = `skip_unknown` fails; flag 2 = a JSON `null` for an optional field without `null` is not an absent field (`velt_rt_json_reader_null_absent`); `max_depth` = most arrays/objects open at once, counted from the top-level value (0 = no limit), checked by `expect_*_start`, `skip_value` and `read_value`. Flag 4 (`FLAG_ROWS`; no std code sets it): `src` is a `const VeltBytes*`, a `u8[]` of a driver's binary rows (`velt_text::rows`, native_abi.md "Rows"), which the reader walks instead of text, borrowed like a source string. Every reader call then answers as it would for the JSON the rows stand for; the only failures are a value of another kind and a rejected unknown key. `max_depth` does not apply to such rows (they nest three deep at most). Flag 8 (`FLAG_CURSOR`, set by `velt_rt_json_reader_over_cursor`): `src` is a driver's row cursor (`const RawCursor*`, native_abi.md "Row cursors"), read as binary rows are, which the reader uses but does not free; a decoder that marks a position outside a row (a union of whole results) gets the rows left copied into binary form |
+| `velt_rt_json_reader_over_cursor` | `(u64 cursor, u32 flags, u32 max_depth) -> u64` | `velt_rt_json_reader_new_with` with flag 8 over a driver's row cursor (its address), as a `u64`: what the generated `parseJsonCursor<T>` reads a row type that is not read by column with (velt/encoding/json's `Reader.overRows`) |
+| `velt_rt_json_reader_free` | `(u64 r)` | 0 ok |
+| `velt_rt_json_reader_null_absent` | `(u64 r) -> u8` | 1 when a JSON `null` may stand for an absent optional field whose type has no `null` (`JSON.parse<T>`), 0 when the reader was made with flag 2 (`JSON.parse(text) as T`): the decoder then reads the field's value, which fails |
+| `velt_rt_json_reader_peek` | `(u64 r) -> u32` | next token kind, skipping whitespace: 0 EOF, 1 `null`, 2 `true`, 3 `false`, 4 number, 5 string, 6 `[`, 7 `]`, 8 `{`, 9 `}`, 10 error (bad byte, or the reader already failed). Classifies by first byte only; the `read_*` call validates. |
+| `velt_rt_json_reader_expect_object_start` | `(r) -> u8` | consume `{` |
+| `velt_rt_json_reader_next_key` | `(r, VeltStr* out) -> u8` | **1** = `*out` is the next key and its `:` is consumed (read the value next); **0** = `}` consumed (end of object); **2** = error. Handles the commas. The key **borrows** the source (static form) unless it had escapes or is a non-ASCII key of more than 64 UTF-16 units (copied: threads remember positions in long static strings, `str/recent.rs`, which is sound only for bytes never freed) — compare it, don't keep it (`velt_rt_str_own` makes a copy to keep: `velt_rt_str_clone` keeps the borrow); dropping it is always allowed. |
+| `velt_rt_json_reader_expect_array_start` | `(r) -> u8` | consume `[` |
+| `velt_rt_json_reader_array_next` | `(r) -> u8` | **1** = another element follows (read it next), **0** = `]` consumed, **2** = error |
+| `velt_rt_json_reader_read_string` | `(r, VeltStr* out) -> u8` | owned, decoded (`\u` escapes are code units: an escaped pair is one character, a lone surrogate stays lone and joins a raw half next to it) |
+| `velt_rt_json_reader_read_f64` | `(r, f64* out) -> u8` | correctly rounded like `JSON.parse` (`-0` kept, `1e400` → Infinity) |
+| `velt_rt_json_reader_read_i64` | `(r, i64* out) -> u8` | the number must be an exact integer in i64 range (`3`, `3.0`, `3e2` ok; `2.5`, `1e400`, `9223372036854775808` fail as mismatch). Digit strings are converted exactly (beyond 2^53). |
+| `velt_rt_json_reader_read_bool` | `(r, u8* out) -> u8` | |
+| `velt_rt_json_reader_read_null` | `(r) -> u8` | optional fields: `if (peek(r) == 1) read_null(r); else read the T` |
+| `velt_rt_json_reader_skip_unknown` | `(r) -> u8` | the value of an object key the target type has no field for: `skip_value`, or a failure when the reader rejects unknown keys |
+| `velt_rt_json_reader_skip_value` | `(r) -> u8` | skips (and validates) any value — unknown keys; iterative (no recursion), but nesting past the reader's `max_depth` fails like `expect_*_start` |
+| `velt_rt_json_reader_skip_lookahead` | `(r) -> u8` | `skip_value` for a union decoder looking ahead for its discriminant: also remembers where each array/object it passes ends (by the offset of its opening bracket), and jumps over one already passed. So the lookahead of unions nested in the skipped value does not scan it again: nested unions stay linear in the input size. Memory: one entry per container skipped this way, freed with the reader |
+| `velt_rt_json_reader_read_value` | `(r, VeltJson* out) -> u8` | any one value as a `json.Value` tree (§12.5), an owned handle. Iterative (no recursion); nesting past the reader's `max_depth` fails like `expect_*_start`. Only the rows of a database driver read through it (`std/encoding/json/reader.velt` `readValue`); a typed decoder's `JsonValue` field from text is a tape the Velt reader builds |
+| `velt_rt_json_reader_mark` | `(u64 r) -> u64` | the current position (opaque), for `reset` |
+| `velt_rt_json_reader_reset` | `(r, u64 mark)` | go back to a `mark` of the same reader and clear any error since: union decoders look ahead (for a discriminant key, or a number against literal members) and then decode from the start of the value |
+| `velt_rt_json_reader_end` | `(r) -> u8` | after the top-level value: 1 if only whitespace remains |
+| `velt_rt_json_error` | `(u64 r, const VeltStr* expected, const VeltStr* path, VeltStr* out)` | builds the owned `JsonError.message` (§12.4) |
+
+Except where stated, `u8` results are 1 = ok, 0 = failed (outputs untouched). **The first failure
+is sticky**: every later call fails (`peek` returns 10), so a decoder can bail out on the first 0
+and call `velt_rt_json_error` with what it wanted and where. JSON is strict RFC 8259 (no trailing
+commas, no leading zeros / `+` / `.5` / `NaN`, no raw control characters in strings). Duplicate keys
+are simply reported twice (the decoder's last assignment wins, like `JSON.parse`).
+
+Decoder shape for `struct User { name: string; age: i64; tags: string[]; email?: string; }`:
+```c
+if (!expect_object_start(r)) return fail(r, "object", "$");
+for (;;) {
+    uint8_t k = next_key(r, &key);
+    if (k == 0) break;
+    if (k == 2) return fail(r, "object", "$");
+    if (str_eq(&key, "name"))      { if (!read_string(r, &u->name)) return fail(r, "string", "$.name"); }
+    else if (str_eq(&key, "age"))  { if (!read_i64(r, &u->age)) return fail(r, "i64", "$.age"); }
+    else if (str_eq(&key, "tags")) { expect_array_start … while (array_next(r) == 1) read_string … "$.tags[i]" }
+    else if (str_eq(&key, "email")) { if (peek(r) == 1) read_null(r); else if (!read_string(r, &s)) … }
+    else if (!skip_value(r)) return fail(r, "value", "$.<key>");
+    str_drop(&key);
+}
+/* missing required field: */ fail(r, "field \"age\"", "$");
+/* root decoder only: */ if (!end(r)) return fail(r, "end of input", "$");
+```
+Paths only need to be built on the failure path (e.g. append segments while returning).
 
 ### 12.4 JSON error messages
 
@@ -1033,13 +1095,13 @@ rows of a database driver reach it as text through the `velt_rt_rows_*` function
 | the text is not JSON (anywhere in it, also past the point where the decoder stopped; `JSON.parseValue` too) | Node 22's `JSON.parse` message, e.g. `Expected property name or '}' in JSON at position 1 (line 1 column 2)`, `Unexpected end of JSON input`, `Unexpected token 'x', "[x]" is not valid JSON` (positions, lines and columns in UTF-16 units) |
 | syntax error the reader sees that V8 accepts (none is known) | `invalid JSON at <path>: <detail> (byte <offset>)`; for `parseValue` the path is that of the value being read when the error occurred (`$[1]`, `$.a`) |
 
-The reader's message (std's `readerMessage`) checks the whole text for a Node syntax error first
-(only on this failure path, so it costs nothing on success), then gives the decoder's message.
+`velt_rt_json_error` checks the whole text for a Node syntax error first (only on this failure
+path, so it costs nothing on success), then gives the decoder's message.
 
 With the reader's options: an unknown key (rejected) is `unknown field at <path>` (the decoder
 puts the key in the path), and nesting past `max_depth` is
 `JSON nested deeper than <max_depth> levels at <path> (byte <offset>)` (also from
-`JSON.parseValue`). The prelude passes `max_depth` 128 unless the program sets
+`velt_rt_json_parse_value_with`). The prelude passes `max_depth` 128 unless the program sets
 `maxDepth`.
 
 `<detail>` is one of `unexpected end of input`, `unexpected character 'c'` (control characters as
@@ -1048,11 +1110,46 @@ puts the key in the path), and nesting past `max_depth` is
 `unexpected trailing characters`. `<offset>` is the byte offset in the source's UTF-8 (not a
 string position: it locates the error in the input text as an editor or a byte-level tool sees
 it; for ASCII input the two agree). Path syntax
-(`$`, `$.a.b`, `$.tags[1]`) is the decoder's; the reader inserts it, shortened when it
+(`$`, `$.a.b`, `$.tags[1]`) is the compiler's choice; the runtime inserts it, shortened when it
 has more than 20 segments (each starting at `.` or `[`) to the first and last 10 with `…`
 between (`$[0][0]…[0].name`).
 
-### 12.5 Performance
+### 12.5 `json.Value` (`JSON.parseValue`)
+
+A tree of reference-counted nodes behind opaque handles (`VeltJson`), with value semantics: the
+editors below copy a node that another handle shares before changing it. Every handle the runtime
+returns (`parse_value`, `get`, `at`, `clone`, `reader_read_value`, `new_*`) is its own reference and
+must be released with `velt_rt_json_value_free`; a child handle stays valid after its parent's
+handles are freed. All accessors accept a null handle (what a failed `get`/`at` returns), so
+`v.get("a")?.at(2)` chains need no checks until the end. Parsing, stringify and freeing are
+iterative, so deep nesting cannot overflow the stack (parsing stops at `max_depth` when one is
+given). Objects keep key order (first occurrence; a duplicate key replaces the value, like
+`JSON.parse`); objects with more than 16 keys get a hash index for `get`.
+
+| Symbol | Signature | Notes |
+|---|---|---|
+| `velt_rt_json_parse_value` | `(const VeltStr* src, VeltJson* out, VeltStr* out_err) -> u8` | 1 = ok; 0 = syntax error: `*out` = 0, `*out_err` = owned message (§12.4). No depth limit (`JsonValue.from`) |
+| `velt_rt_json_parse_value_with` | `(const VeltStr* src, u32 max_depth, VeltJson* out, VeltStr* out_err) -> u8` | the same, failing on arrays/objects nested more than `max_depth` deep (0 = no limit) with the `max_depth` message of §12.4: `JSON.parseValue(text, { maxDepth })`, default 128 (set by the prelude) |
+| `velt_rt_json_value_kind` | `(VeltJson v) -> u32` | 0 none (null handle), 1 null, 2 bool, 3 number, 4 string, 5 array, 6 object |
+| `velt_rt_json_value_get` | `(VeltJson v, const VeltStr* key) -> VeltJson` | member, or null (not an object / missing) |
+| `velt_rt_json_value_at` | `(VeltJson v, u64 i) -> VeltJson` | array element, or the i-th member value of an object; null if out of range (including an `i` beyond `usize` on 32-bit targets) |
+| `velt_rt_json_value_key_at` | `(VeltJson v, u64 i, VeltStr* out) -> u8` | i-th object key (owned); 0 if not an object / out of range (as for `at`) |
+| `velt_rt_json_value_len` | `(VeltJson v) -> u64` | array length, object member count, string length (UTF-16 code units); else 0 |
+| `velt_rt_json_value_as_f64` | `(VeltJson v) -> f64` | NaN if not a number |
+| `velt_rt_json_value_as_bool` | `(VeltJson v) -> u8` | 1 only for `true` (use `kind` to tell `false` from non-bools) |
+| `velt_rt_json_value_as_str` | `(VeltJson v, VeltStr* out) -> u8` | owned copy; 0 if not a string |
+| `velt_rt_json_value_stringify` | `(VeltJson v, VeltStr* out)` | `JSON.stringify`: no whitespace, key order kept, numbers JS-formatted; null handle ⇒ `null` |
+| `velt_rt_json_value_clone` | `(VeltJson v) -> VeltJson` | O(1) new reference to the same value (may be the same pointer); the editors copy a node shared this way before changing it, so neither handle sees the other's later edits |
+| `velt_rt_json_value_free` | `(VeltJson v)` | null ok |
+| `velt_rt_json_value_new_null` / `_new_bool(u8)` / `_new_number(f64)` / `_new_string(const VeltStr*)` / `_new_array()` / `_new_object()` | `(…) -> VeltJson` | a new value (the string is copied) |
+| `velt_rt_json_value_set` | `(VeltJson* slot, const VeltStr* key, VeltJson v) -> u8` | object member `key` = `v` (an existing key keeps its position); 0 if `*slot` is not an object. `v` is shared, not consumed (null handle = JSON `null`). `*slot` may be replaced by a copy (copy-on-write); the old handle's reference is released then |
+| `velt_rt_json_value_delete` | `(VeltJson* slot, const VeltStr* key) -> u8` | remove member `key`, keeping the order of the others; 0 if absent or not an object. O(1) amortized: an object with an index leaves a hole (compacted once holes outnumber members). `len` stays O(1), and `at`/`key_at` stay O(1) while the holes are only at the ends; with holes in the middle they cost O(log n) through a Fenwick tree of the live slots, built in O(n) by the first such access after a compaction and updated in O(log n) by each later delete and insert |
+| `velt_rt_json_value_push` | `(VeltJson* slot, VeltJson v) -> u8` | append to an array; 0 if not an array |
+| `velt_rt_json_value_set_at` | `(VeltJson* slot, u64 i, VeltJson v) -> u8` | replace element `i`; 0 if not an array or out of range (as for `at`: never truncated to a smaller index) |
+
+`isNull()` = `kind == 1`, `asNumber()` = `as_f64` after checking `kind == 3`, etc.
+
+### 12.6 Performance
 
 `cargo test -p velt_rt --release --lib text_perf -- --nocapture` prints the builder's time for
 1M `push_str` + 1M `push_byte` into one string, and the throughput of `skip_value`, a

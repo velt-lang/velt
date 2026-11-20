@@ -7,7 +7,7 @@
 // error further on instead, since `JSON.parse` in Node reads the whole text first. The nesting
 // depth is not limited here (V8 has no limit).
 
-import { strByteAt, strByteLen } from "velt/lang/intrinsics";
+import { noInline, strByteAt, strByteLen } from "velt/lang/intrinsics";
 
 const PROP_NAME_OR_RBRACE = "Expected property name or '}' in JSON";
 const COMMA_OR_RBRACK = "Expected ',' or ']' after array element in JSON";
@@ -35,6 +35,7 @@ const END: i64 = -1;
  * Node's `SyntaxError` message for `src`, or null when it is valid JSON (it is not when a
  * decoder failed for another reason: a type mismatch, a depth limit).
  */
+@noInline
 export function nodeSyntaxMessage(src: string): string | null {
   const p = new NodeSyntax(utf16Units(src));
   if (p.document()) {
@@ -234,7 +235,9 @@ class NodeSyntax {
         if (e == END) {
           return this.fail("");
         }
-        if (e == 34 || e == 92 || e == 47 || e == 98 || e == 102 || e == 110 || e == 114 || e == 116) {
+        if (
+          e == 34 || e == 92 || e == 47 || e == 98 || e == 102 || e == 110 || e == 114 || e == 116
+        ) {
           this.i++;
         } else if (e == 117) {
           this.i++;
