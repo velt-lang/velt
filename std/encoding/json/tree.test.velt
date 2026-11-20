@@ -1,0 +1,179 @@
+// velt/encoding/json (tests): white-box tests, run by `velt test std/`.
+//
+// White-box tests of the tree behind a built or edited `JsonValue` (tree.velt, tree_object.velt,
+// tree_positions.velt): edits never show through a clone, a parent or a child; object members
+// keep JavaScript's order; positions stay right while deletes leave holes (checked against a
+// plain list over random edits); the texts match `JSON.stringify` and `console.log` in Node.
+import { describe, expect, it } from "velt/test";
+import { TreeObject, arrayIndex } from "velt/encoding/json/tree_object";
+import { JsonTree, TREE_NUMBER } from "velt/encoding/json/tree";
+import { TreePositions } from "velt/encoding/json/tree_positions";
+
+function num(n: f64): JsonTree {
+  return JsonTree.scalar(TREE_NUMBER, n);
+}
+
+// The members of `o` in order, `key=value`, by position.
+function byPosition(o: TreeObject): string {
+  const parts: string[] = [];
+  for (let i: usize = 0; i < o.len(); i++) {
+    const r = o.rawAt(i);
+    parts.push(`${o.keyRaw(r as usize)}=${o.valueRaw(r as usize).num}`);
+  }
+  return parts.join(",");
+}
+
+describe("JsonValue edits", () => {
+  it("never show through a clone, a parent or a child", () => {
+    const o = JsonValue.object();
+    o.set("a", JsonValue.of(1));
+    const c = o.clone();
+    c.set("a", JsonValue.of(2));
+    o.set("b", JsonValue.of(3));
+    expect(o.stringify()).toBe(`{"a":1,"b":3}`);
+    expect(c.stringify()).toBe(`{"a":2}`);
+
+    const arr = JsonValue.array();
+    arr.push(o);
+    o.delete("a");
+    expect(arr.stringify()).toBe(`[{"a":1,"b":3}]`);
+    const child = arr.at(0)!;
+    child.set("z", JsonValue.of(null));
+    expect(arr.stringify()).toBe(`[{"a":1,"b":3}]`);
+    expect(child.stringify()).toBe(`{"a":1,"b":3,"z":null}`);
+    arr.setAt(0, JsonValue.of("x"));
+    expect(child.stringify()).toBe(`{"a":1,"b":3,"z":null}`);
+    expect(arr.stringify()).toBe(`["x"]`);
+  });
+
+  it("turn a parsed value into a tree without changing the tape", () => {
+    const p = JSON.parseValue(`{"x":[1,2,{"y":"z"}],"2":true,"1":false}`);
+    const x = p.get("x")!;
+    p.set("q", x);
+    x.push(JsonValue.of(4));
+    expect(p.stringify()).toBe(`{"1":false,"2":true,"x":[1,2,{"y":"z"}],"q":[1,2,{"y":"z"}]}`);
+    expect(x.stringify()).toBe(`[1,2,{"y":"z"},4]`);
+    expect(p.get("x")!.stringify()).toBe(`[1,2,{"y":"z"}]`);
+  });
+
+  it("keep JavaScript's key order", () => {
+    const o = JsonValue.object();
+    for (const k of ["b", "10", "a", "2", "01", "4294967295", "4294967294", "0"]) {
+      o.set(k, JsonValue.of(k));
+    }
+    o.set("b", JsonValue.of(0));
+    expect(o.keys().join(",")).toBe("0,2,10,4294967294,b,a,01,4294967295");
+    expect(o.at(4)!.asNumber()).toBe(0);
+    expect(o.delete("2")).toBe(true);
+    expect(o.delete("2")).toBe(false);
+    expect(o.keys().join(",")).toBe("0,10,4294967294,b,a,01,4294967295");
+    expect(o.has("10")).toBe(true);
+    expect(o.get("4294967294")!.asString()).toBe("4294967294");
+  });
+
+  it("print as Node prints them", () => {
+    const o = JsonValue.object();
+    o.set("it's", JsonValue.of("it's"));
+    o.set("$", JsonValue.of(-1.5));
+    const deep = JSON.parseValue(`{"a":{"b":{"c":{"d":1},"e":[1],"f":[],"g":{}}}}`);
+    o.set("d", deep);
+    expect(`${o.stringify()}`).toBe(
+      `{"it's":"it's","$":-1.5,"d":{"a":{"b":{"c":{"d":1},"e":[1],"f":[],"g":{}}}}}`,
+    );
+    const inner = deep.get("a")!;
+    inner.set("n", JsonValue.of(null));
+    expect(inner.stringify()).toBe(`{"b":{"c":{"d":1},"e":[1],"f":[],"g":{}},"n":null}`);
+  });
+
+  it("write arbitrarily deep trees", () => {
+    let v = JsonValue.array();
+    for (let i = 0; i < 100000; i++) {
+      const outer = JsonValue.array();
+      outer.push(v);
+      v = outer;
+    }
+    const s = v.stringify();
+    expect(s.length).toBe(200002);
+    expect(s.slice(0, 3)).toBe("[[[");
+  });
+});
+
+describe("TreeObject", () => {
+  it("names array indexes", () => {
+    expect(arrayIndex("0")).toBe(0);
+    expect(arrayIndex("4294967294")).toBe(4294967294);
+    expect(arrayIndex("4294967295")).toBe(-1);
+    expect(arrayIndex("01")).toBe(-1);
+    expect(arrayIndex("1a")).toBe(-1);
+    expect(arrayIndex("")).toBe(-1);
+    expect(arrayIndex("-1")).toBe(-1);
+  });
+
+  it("deletes from the front and the back in O(1) positions", () => {
+    const o = new TreeObject();
+    for (let i = 0; i < 40; i++) {
+      o.insert(`k${i}`, num(i));
+    }
+    for (let i = 0; i < 10; i++) {
+      o.remove(`k${i}`);
+      o.remove(`k${39 - i}`);
+    }
+    expect(o.holes).toBe(0);
+    expect(byPosition(o)).toBe(
+      "k10=10,k11=11,k12=12,k13=13,k14=14,k15=15,k16=16,k17=17,k18=18,k19=19,k20=20,k21=21,k22=22,k23=23,k24=24,k25=25,k26=26,k27=27,k28=28,k29=29",
+    );
+  });
+
+  it("finds positions through holes as a plain list does", () => {
+    const o = new TreeObject();
+    const model: string[] = [];
+    let seed: u64 = 0x2545f491;
+    for (let step = 0; step < 3000; step++) {
+      seed ^= seed << 13;
+      seed ^= seed >> 7;
+      seed ^= seed << 17;
+      const pick = seed % 7;
+      if (pick < 3 || model.length == 0) {
+        const k = `k${seed % 211}`;
+        o.insert(k, num(step as f64));
+        if (!model.includes(k)) {
+          model.push(k);
+        }
+      } else {
+        const k = model[((seed >> 8) % (model.length as u64)) as usize];
+        expect(o.remove(k)).toBe(true);
+        model.splice(model.indexOf(k), 1);
+      }
+      expect(o.len()).toBe(model.length);
+      if (step % 7 == 0) {
+        for (let i: usize = 0; i < model.length; i++) {
+          const r = o.rawAt(i);
+          expect(o.keyRaw(r as usize)).toBe(model[i]);
+        }
+        expect(o.rawAt(model.length)).toBe(-1);
+      }
+    }
+  });
+});
+
+describe("TreePositions", () => {
+  it("selects the i-th live slot", () => {
+    const live: bool[] = [];
+    for (let i = 0; i < 100; i++) {
+      live.push(i % 7 != 3);
+    }
+    const p = new TreePositions(live);
+    p.clear(11);
+    live[11] = false;
+    p.pushLive();
+    live.push(true);
+    let i: usize = 0;
+    for (let s: usize = 0; s < live.length; s++) {
+      if (live[s]) {
+        expect(p.select(i)).toBe(s as i64);
+        i++;
+      }
+    }
+    expect(p.select(i)).toBe(-1);
+  });
+});

@@ -1,0 +1,109 @@
+// velt/encoding/json (internal): what `console.log` prints for a `JsonValue` (Node's
+// `util.inspect` of the parsed value: `{ a: 1, b: [ 2, 'x' ] }`, within its `depth` and
+// `maxArrayLength` limits), for either form of the value. Lowering calls it through
+// `JsonValue[JSON_INSPECT]` (velt_vir glue/format.rs) with the line's builder. Node's depth limit
+// bounds the walk: containers below it print as `[Array]` / `[Object]`.
+
+import { JsonValue } from "velt/prelude/json/json_value";
+import { inspectMore } from "velt/lang/hooks/inspect";
+
+declare function velt_rt_strbuf_push_str(buf: string, s: string);
+declare function velt_rt_strbuf_push_f64(buf: string, x: f64);
+declare function velt_rt_strbuf_push_inspect_str(buf: string, s: string);
+declare function velt_rt_strbuf_push_inspect_key(buf: string, s: string);
+declare function velt_rt_strbuf_len(buf: string): u64;
+declare function velt_rt_strbuf_inspect_layout(buf: string, start: u64);
+
+/** The array elements Node shows before `... n more items`. */
+const MAX_ARRAY_LENGTH: i64 = 100;
+
+/** Node's inspect depth: containers nested deeper print as `[Array]` / `[Object]`. */
+const DEPTH: u32 = 2;
+
+/**
+ * Appends what `console.log` prints for `v` to the builder `buf`: a string raw at the top level
+ * (`top`), quoted inside containers and when not `top` (a member of another printed value).
+ * `depth` is Node's depth of `v` (0 for a `console.log` argument). A container printed at the
+ * top level is broken across lines like any other value.
+ */
+export function inspectJsonValue(buf: string, v: JsonValue, top: bool, depth: u32): void {
+  if (top) {
+    const s = v.asString();
+    if (s != null) {
+      velt_rt_strbuf_push_str(buf, s);
+      return;
+    }
+  }
+  if (top && (v.isArray() || v.isObject())) {
+    const start = velt_rt_strbuf_len(buf);
+    inspectAt(buf, v, depth);
+    velt_rt_strbuf_inspect_layout(buf, start);
+    return;
+  }
+  inspectAt(buf, v, depth);
+}
+
+// `v` at Node's depth `depth`, on one line.
+function inspectAt(buf: string, v: JsonValue, depth: u32): void {
+  if (v.isNull()) {
+    velt_rt_strbuf_push_str(buf, "null");
+    return;
+  }
+  const b = v.asBool();
+  if (b != null) {
+    velt_rt_strbuf_push_str(buf, b ? "true" : "false");
+    return;
+  }
+  const n = v.asNumber();
+  if (n != null) {
+    if (n != n || n == Infinity || n == -Infinity) {
+      velt_rt_strbuf_push_str(buf, "null");
+    } else {
+      velt_rt_strbuf_push_f64(buf, n);
+    }
+    return;
+  }
+  const s = v.asString();
+  if (s != null) {
+    velt_rt_strbuf_push_inspect_str(buf, s);
+    return;
+  }
+  const array = v.isArray();
+  const len = v.len();
+  if (len == 0) {
+    velt_rt_strbuf_push_str(buf, array ? "[]" : "{}");
+    return;
+  }
+  if (depth > DEPTH) {
+    velt_rt_strbuf_push_str(buf, array ? "[Array]" : "[Object]");
+    return;
+  }
+  if (array) {
+    velt_rt_strbuf_push_str(buf, "[ ");
+    const shown = len < MAX_ARRAY_LENGTH ? len : MAX_ARRAY_LENGTH;
+    for (let i: i64 = 0; i < shown; i++) {
+      if (i > 0) {
+        velt_rt_strbuf_push_str(buf, ", ");
+      }
+      const e = v.at(i)!;
+      inspectAt(buf, e, depth + 1);
+    }
+    if (len > shown) {
+      inspectMore(buf, (len - shown) as u64);
+    }
+    velt_rt_strbuf_push_str(buf, " ]");
+    return;
+  }
+  velt_rt_strbuf_push_str(buf, "{ ");
+  const keys = v.keys();
+  for (let i: usize = 0; i < keys.length; i++) {
+    if (i > 0) {
+      velt_rt_strbuf_push_str(buf, ", ");
+    }
+    velt_rt_strbuf_push_inspect_key(buf, keys[i]);
+    velt_rt_strbuf_push_str(buf, ": ");
+    const m = v.at(i as i64)!;
+    inspectAt(buf, m, depth + 1);
+  }
+  velt_rt_strbuf_push_str(buf, " }");
+}

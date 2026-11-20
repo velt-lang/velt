@@ -12,10 +12,12 @@ import { JsonValue } from "velt/prelude/json/json_value";
 import { JsonReplacer } from "velt/prelude/json/layout";
 import { readerValueLimit } from "velt/encoding/json/reader_ops";
 
-declare function velt_rt_json_value_new_null(): u64;
-declare function velt_rt_json_value_new_bool(b: bool): u64;
-declare function velt_rt_json_value_new_number(n: f64): u64;
-declare function velt_rt_json_value_new_string(s: string): u64;
+import { JsonTree, TREE_BOOL, TREE_NULL, TREE_NUMBER } from "velt/encoding/json/tree";
+
+// A database driver's value (the runtime's row reader, which goes with #2563): its JSON text,
+// then the tree released (the null handle is JSON null).
+declare function velt_rt_json_value_stringify(v: u64): string;
+declare function velt_rt_json_value_free(v: u64);
 
 /**
  * Reads one value with `r` (`JsonValue[JSON_FROM_READER]`: the decoders velt/encoding/json
@@ -32,7 +34,7 @@ export function jsonValueFromReader(r: Reader): JsonValue | null {
     return JsonValue.onTape(new TapeRef(shared(t as Tape)), 0);
   }
   if (r.rowsValue) {
-    return new JsonValue(r.lastHandle());
+    return rowsValue(r.lastHandle());
   }
   return null;
 }
@@ -88,15 +90,30 @@ export function jsonValueEquals(a: JsonValue, b: JsonValue, deep: bool): bool {
 /** `JsonValue.of(x)`: a string, number, boolean or null as a value. */
 export function jsonValueOf(x: string | f64 | bool | null): JsonValue {
   if (x == null) {
-    return new JsonValue(velt_rt_json_value_new_null());
+    return new JsonValue(new JsonTree(TREE_NULL));
   }
   if (typeof x === "string") {
-    return new JsonValue(velt_rt_json_value_new_string(x));
+    return new JsonValue(JsonTree.string(x));
   }
   if (typeof x === "number") {
-    return new JsonValue(velt_rt_json_value_new_number(x));
+    return new JsonValue(JsonTree.scalar(TREE_NUMBER, x));
   }
-  return new JsonValue(velt_rt_json_value_new_bool(x));
+  return new JsonValue(JsonTree.scalar(TREE_BOOL, x ? 1 : 0));
+}
+
+// The value of the runtime tree `h` a database driver's row gave (it takes `h`): a tape of its
+// JSON text.
+function rowsValue(h: u64): JsonValue {
+  if (h == 0) {
+    return jsonValueOf(null);
+  }
+  const text = velt_rt_json_value_stringify(h);
+  velt_rt_json_value_free(h);
+  const t = parseTape(text, 0);
+  if (t instanceof TapeError) {
+    panic(`ICE: a database value's JSON text did not parse: ${t.message}`);
+  }
+  return JsonValue.onTape(new TapeRef(shared(t as Tape)), 0);
 }
 
 /** `JsonValue.from(x)`: the JSON form of any value `JSON.stringify` accepts. */

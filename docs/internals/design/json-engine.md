@@ -92,10 +92,17 @@ Objects with more than 16 keys get a hash index on their first lookup.
 instead of copying it.
 
 **Representation.** A `JsonValue` (`std/prelude/json/json_value.velt`) has two forms: a position
-on a tape (what parsing makes; children share the tape, `clone()` is O(1)), or a tree of
-reference-counted runtime nodes (what `JsonValue.object()`, `set` and the other builders make,
-and what a database driver's rows give). An edit turns that one value into a tree first, so it
-never shows through the tape, a clone or a child. This is STJ's split between
+on a tape (what parsing makes, and what a database driver's rows give; children share the tape,
+`clone()` is O(1)), or a tree of nodes (`std/encoding/json/tree.velt`: what `JsonValue.object()`,
+`set` and the other builders make). Values share nodes (a clone, a parent and the child `get`
+returned): an edit changes a node in place only while no other reference reaches it (the
+std-only intrinsic `isUnique`, as Rust's `Arc::get_mut`), and copies it first otherwise, the copy
+sharing the children. An edit turns a tape value into a tree first, so it never shows through the
+tape, a clone or a child. An object's members (`tree_object.velt`) keep JavaScript's order (index
+keys first, apart and sorted), are found by key through a hash index past 16 members, and are
+deleted in O(1) amortized by leaving holes, with a Fenwick tree of the live slots for positional
+access while there are holes in the middle (`tree_positions.velt`). `console.log` prints either
+form through `JsonValue[JSON_INSPECT]` (`value_inspect.velt`). This is STJ's split between
 `JsonDocument`/`JsonElement` (read-only, flat) and `JsonNode` (mutable), with one type in front
 of both.
 
@@ -151,13 +158,14 @@ source becomes NEON or SSE2 code. The writer (`writer.velt`) escapes as `JSON.st
 | Tape | `std/encoding/json/tape*.velt` |
 | Node's syntax-error messages (computed only after a failure) | `std/encoding/json/node_syntax.velt` |
 | `JSON.stringify(value, keys, space)` | `std/encoding/json/relayout.velt` |
+| Tree of a built or edited `JsonValue`, and what `console.log` prints for one | `std/encoding/json/tree*.velt`, `value_inspect.velt` |
 | Numbers | `std/lang/number/`, `std/lang/hooks/number_parse.velt` |
 
 Some JSON code remains in the runtime (`crates/velt_rt/src/json/`, ABI in
 [rt_abi_async.md §12](../contracts/rt_abi_async.md)): the reader of a database driver's rows
-(with the Rust copy of Node's messages its reader of nested JSON cells gives), which goes with
-the native-package ABI (#2563); the tree behind edited `JsonValue`s; and the shortest-digits
-printer for doubles. Each goes when its Velt replacement exists.
+(with the Rust copy of Node's messages its reader of nested JSON cells gives, and the tree of a
+`JsonValue` it reads, which std turns into a tape), which goes with
+the native-package ABI (#2563), and the shortest-digits printer for doubles.
 
 ## Compatibility
 

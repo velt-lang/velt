@@ -1,0 +1,85 @@
+// velt/encoding/json (internal): which slots of a `TreeObject` (tree_object.velt) are live, for
+// positional access while it has holes in the middle: a Fenwick tree of the live slots, so the
+// `i`-th member is found in O(log n). Built by the first such access after a compaction, then
+// kept up to date by every delete and append in O(log n).
+
+/** A Fenwick tree over slots, 1 for a live slot, 0 for a hole. */
+export class TreePositions {
+  // Node `k` (1-based, at `tree[k - 1]`) sums the slots `(k - lowbit(k), k]`.
+  tree: usize[] = [];
+
+  /** The tree of `live` (a slot is live when its flag is true). */
+  constructor(live: bool[]) {
+    const n = live.length;
+    const tree: usize[] = [];
+    tree.reserve(n);
+    for (let i: usize = 0; i < n; i++) {
+      tree.push(live[i] ? 1 : 0);
+    }
+    for (let k: usize = 1; k <= n; k++) {
+      const parent = k + lowbit(k);
+      if (parent <= n) {
+        tree[parent - 1] = tree[parent - 1] + tree[k - 1];
+      }
+    }
+    this.tree = tree;
+  }
+
+  /** The slot of the `i`-th live slot (from 0), or -1. */
+  select(i: usize): i64 {
+    const n = this.tree.length;
+    if (n == 0) {
+      return -1;
+    }
+    // Descend from the largest power of two: `at` is the last slot (1-based) whose prefix holds
+    // at most `i` members, so the member sought is the next slot.
+    let at: usize = 0;
+    let left = i + 1;
+    let step: usize = 1;
+    while (step * 2 <= n) {
+      step = step * 2;
+    }
+    while (step > 0) {
+      if (at + step <= n && this.tree[at + step - 1] < left) {
+        at += step;
+        left -= this.tree[at - 1];
+      }
+      step = step / 2;
+    }
+    return at < n ? (at as i64) : -1;
+  }
+
+  /** Slot `slot` became a hole. */
+  clear(slot: usize): void {
+    let k = slot + 1;
+    const n = this.tree.length;
+    while (k <= n) {
+      this.tree[k - 1] = this.tree[k - 1] - 1;
+      k += lowbit(k);
+    }
+  }
+
+  /** A live slot was appended. */
+  pushLive(): void {
+    // Node `k` covers `(k - lowbit(k), k]`: the new slot plus the nodes below `k` that tile
+    // `(k - lowbit(k), k - 1]`.
+    const k = this.tree.length + 1;
+    let sum: usize = 1;
+    let j = k - 1;
+    const low = k - lowbit(k);
+    while (j > low) {
+      sum += this.tree[j - 1];
+      j -= lowbit(j);
+    }
+    this.tree.push(sum);
+  }
+
+  /** The slots from `len` on were removed. */
+  truncate(len: usize): void {
+    this.tree.truncate(len as i64);
+  }
+}
+
+function lowbit(k: usize): usize {
+  return k & (~k + 1);
+}
