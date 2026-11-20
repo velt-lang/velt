@@ -1,0 +1,1 @@
+a `number` converts to `i32` only with `as i32`
