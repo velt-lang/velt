@@ -1,7 +1,8 @@
 # Windows counterpart of scripts/smoke-clean.sh: an installed toolchain on a machine without
 # Visual Studio (release.yml runs it in a Windows Server Core container: no Build Tools, no
 # Windows SDK, no Visual C++ runtime) builds and runs hello and examples/http_hello.velt in debug
-# and release mode with the bundled linker, and `velt doctor` reports it; hello also builds for
+# and release mode with the bundled linker, and `velt doctor` reports it; a debug build of
+# scripts\smoke-prebuilt.velt links the toolchain's prebuilt hook objects (lib\hooks\); hello also builds for
 # wasm32-unknown-unknown. Runs under Windows
 # PowerShell 5.1 (what Server Core has).
 #
@@ -44,6 +45,29 @@ Step "velt doctor"
 $Doctor = & $Velt doctor 2>&1 | Out-String
 Write-Host $Doctor
 if ($Doctor -notmatch "linker\s+bundled") { throw "velt doctor does not report the bundled linker" }
+# The toolchain's own objects of the prebuilt std hook modules (lib\hooks\<target>\), with the
+# build cache off so nothing else could hold them: a debug build links them, also where no clang
+# could have compiled them.
+Step "prebuilt hook modules (shipped objects)"
+$Prebuilt = Join-Path $Work "prebuilt.exe"
+$env:VELT_BUILD_CACHE = "off"
+$env:VELT_STD_OBJECT_STATS = "1"
+# Windows PowerShell turns a native command's redirected stderr lines into error records, which
+# "Stop" would throw on: read them as text instead.
+$ErrorActionPreference = "Continue"
+$Stats = & $Velt build (Join-Path $Repo "scripts\smoke-prebuilt.velt") -o $Prebuilt 2>&1 | ForEach-Object { "$_" } | Out-String
+$Code = $LASTEXITCODE
+$ErrorActionPreference = "Stop"
+Remove-Item Env:VELT_BUILD_CACHE, Env:VELT_STD_OBJECT_STATS
+if ($Code -ne 0) { throw "velt build smoke-prebuilt.velt failed ($Code): $Stats" }
+foreach ($Module in @("number_digits", "number_parse", "weak")) {
+    if ($Stats -notmatch "prebuilt hooks: lang/hooks/${Module}: object found \(shipped\)") {
+        throw "the build did not link the toolchain's object of lang/hooks/${Module}: $Stats"
+    }
+}
+$Out = & $Prebuilt
+if ($LASTEXITCODE -ne 0 -or $Out -ne "1234.57 356 7") { throw "smoke-prebuilt printed '$Out' (exit $LASTEXITCODE)" }
+Write-Host "ok: shipped objects linked"
 Step "debug build (shared runtime)"
 RunBoth "debug" @()
 Step "release build"
