@@ -129,7 +129,7 @@ export function probe(): i64 {
         MAIN_PROBE,
         &[
             "`gated` runs only where the CPU has `sha-x86`, so it must be called behind that check",
-            "call it inside `if (u32x4.hasShaX86()) { … }`",
+            "call it inside `if (Sha.isSupported()) { … }` (the check from velt/arch/x86)",
         ],
     );
 }
@@ -780,6 +780,87 @@ fn a_program_gates_its_own_function_through_velt_compiler() {
         gated.1.contains("\"target-features\""),
         "mulX86 has its extension's features:\n{}",
         gated.1
+    );
+}
+
+/// A program gating on several of velt/arch's features (#3222 step 3): a function gated on AVX2
+/// and BMI2 needs both checks, and may call one gated on AVX, which AVX2 implies.
+const PROGRAM_ARCH: &str = r#"import { targetFeature } from "velt/compiler";
+import { Avx2, Bmi2 } from "velt/arch/x86";
+
+@targetFeature("avx-x86")
+function base(x: i64): i64 {
+  return x + 1;
+}
+
+@targetFeature("avx2-x86", "bmi2-x86")
+function both(x: i64): i64 {
+  return base(x) * 2;
+}
+
+function main() {
+  let r: i64 = 42;
+  if (Avx2.isSupported() && Bmi2.isSupported()) {
+    r = both(20);
+  }
+  console.log(r);
+}
+"#;
+
+#[test]
+fn a_program_gates_on_several_features_with_velt_arch() {
+    let dir = test_dir::TestDir::new();
+    for args in [&["run"][..], &["run", "--release"]] {
+        let out = velt(&dir, "", PROGRAM_ARCH, args);
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "{args:?}: {err}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "42\n", "{args:?}");
+    }
+    let args = [
+        "build",
+        "--release",
+        "--emit",
+        "llvm",
+        "--target",
+        "x86_64-unknown-linux-gnu",
+    ];
+    let out = velt(&dir, "", PROGRAM_ARCH, &args);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let ir = String::from_utf8_lossy(&out.stdout);
+    let functions = llvm_functions(&ir);
+    let both = (functions.iter())
+        .find(|(f, _)| f.contains("both"))
+        .unwrap_or_else(|| panic!("no `both` in:\n{ir}"));
+    let define = both.1.lines().next().unwrap_or_default();
+    assert!(
+        define.contains("\"target-features\"=\"+avx2,+bmi2\""),
+        "`both` gets both features:\n{}",
+        both.1
+    );
+    // One check of the two is not enough, and neither is a set that doesn't cover the other's.
+    let one = PROGRAM_ARCH.replace(
+        "Avx2.isSupported() && Bmi2.isSupported()",
+        "Avx2.isSupported()",
+    );
+    let out = velt(&dir, "", &one, &["check"]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{err}");
+    for m in [
+        "`both` runs only where the CPU has `avx2-x86` and `bmi2-x86`, so it must be called behind those checks",
+        "call it inside `if (Avx2.isSupported() && Bmi2.isSupported()) { … }` (the checks from velt/arch/x86)",
+    ] {
+        assert!(err.contains(m), "missing `{m}` in:\n{err}");
+    }
+    let narrower = PROGRAM_ARCH.replace("\"avx2-x86\", \"bmi2-x86\"", "\"bmi2-x86\"");
+    let out = velt(&dir, "", &narrower, &["check"]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("`base` runs only where the CPU has `avx-x86`"),
+        "{err}"
     );
 }
 
