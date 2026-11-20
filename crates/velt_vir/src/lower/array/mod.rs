@@ -272,7 +272,8 @@ impl FnLower<'_, '_> {
             Rvalue::Binary(BinOp::BitXor, cap.clone(), cint(OWNER as i128, Ty::U64)),
         );
         let block = self.rvalue_temp(Ty::Ptr, Rvalue::Cast(block, Ty::Ptr));
-        self.owner_drop_call(block);
+        let f = self.cx.func(Work::ArrayOwnerDrop);
+        self.call(vir::Callee::Func(f), vec![block], None, false);
         self.goto(join);
         self.switch_to(free_bb);
         let size = self.rvalue_temp(

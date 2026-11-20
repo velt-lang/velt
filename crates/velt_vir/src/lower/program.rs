@@ -280,6 +280,7 @@ impl<'h> Cx<'h> {
                 | Work::CExport(_)
                 | Work::ArrayGrow
                 | Work::ArrayTooLong
+                | Work::ArrayOwnerDrop
                 | Work::Oob(_)
         ) || !self.has_lock_set();
         let work = self.generated_instance(work);
