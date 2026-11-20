@@ -1,0 +1,105 @@
+// velt/lang/map (internal): a string key's hash and equality computed from its UTF-8 bytes in an
+// array, for `Map<string, V>`'s `getUtf8`, `hasUtf8` and `setUtf8` (std/prelude/map_utf8.velt),
+// which look a key up without making a string.
+//
+// `utf8KeyHash` is bit for bit the hash string keys are stored under (velt_rt `hash.rs`, which
+// `velt_rt_str_hash` runs, and velt_codegen_llvm `strings.rs`'s inline copy for short strings):
+// 8-byte little-endian words, the last one zero-padded, each mixed in by a multiply, a xor and a
+// rotation, then murmur3's `fmix64`. A change on one side must be made on the others;
+// utf8_key.test.velt compares them.
+
+import {
+  addressLoad,
+  arrayReadAddress,
+  inline,
+  strByteLen,
+  strDataAddress,
+} from "velt/lang/intrinsics";
+
+/** The hash's seed (velt_rt `hash.rs` `SEED`). */
+const SEED: u64 = 0x243f6a8885a308d3;
+/** The hash's multiplier (velt_rt `hash.rs` `K`). */
+const K: u64 = 0x9e3779b97f4a7c15;
+
+/** One word mixed into the hash. */
+function mix(h: u64, word: u64): u64 {
+  return ((h ^ word) * K).rotateLeft(29);
+}
+
+/** murmur3's 64-bit finalizer. */
+function fmix64(x: u64): u64 {
+  let h = x;
+  h ^= h >> 33;
+  h = h * 0xff51afd7ed558ccd;
+  h ^= h >> 33;
+  h = h * 0xc4ceb9fe1a85ec53;
+  return h ^ (h >> 33);
+}
+
+/**
+ * The `rest` bytes (0 to 7) at `at` as one little-endian word, zero above them: at most three
+ * loads (4, 2 and 1 bytes), none past the end. Unsafe: the bytes must be readable.
+ */
+@inline("always")
+unsafe function tailWord(at: usize, rest: usize): u64 {
+  let word: u64 = 0;
+  let shift: u64 = 0;
+  let i = at;
+  if ((rest & 4) != 0) {
+    // SAFETY: the caller's bytes, which `rest` counts.
+    word = unsafe { addressLoad<u32>(i) } as u64;
+    i += 4;
+    shift = 32;
+  }
+  if ((rest & 2) != 0) {
+    // SAFETY: as above.
+    word |= (unsafe { addressLoad<u16>(i) } as u64) << shift;
+    i += 2;
+    shift += 16;
+  }
+  if ((rest & 1) != 0) {
+    // SAFETY: as above.
+    word |= (unsafe { addressLoad<u8>(i) } as u64) << shift;
+  }
+  return word;
+}
+
+/** The hash of the string whose UTF-8 bytes are `b` (what its string key is stored under). */
+export function utf8KeyHash(b: readonly u8[]): u64 {
+  const n = b.length;
+  let h = SEED ^ ((n as u64) * K);
+  // SAFETY: `b` is neither grown nor dropped while its address is read.
+  const at = unsafe { arrayReadAddress(b) };
+  let i: usize = 0;
+  while (i + 8 <= n) {
+    // SAFETY: bytes `i` to `i + 7` are inside `b`.
+    h = mix(h, unsafe { addressLoad<u64>(at + i) });
+    i += 8;
+  }
+  if (i < n) {
+    // SAFETY: the last `n - i` bytes of `b`.
+    h = mix(h, unsafe { tailWord(at + i, n - i) });
+  }
+  return fmix64(h);
+}
+
+/** Whether the string `s` is the text whose UTF-8 bytes are `b` (string keys compare by bytes). */
+export function utf8KeyEquals(s: string, b: readonly u8[]): bool {
+  const n = b.length;
+  if (strByteLen(s) != n) {
+    return false;
+  }
+  const sa = strDataAddress(s);
+  // SAFETY: `b` is neither grown nor dropped while its bytes are read.
+  const ba = unsafe { arrayReadAddress(b) };
+  let i: usize = 0;
+  while (i + 8 <= n) {
+    // SAFETY: bytes `i` to `i + 7` are inside both, which have `n` bytes.
+    if (unsafe { addressLoad<u64>(sa + i) } != unsafe { addressLoad<u64>(ba + i) }) {
+      return false;
+    }
+    i += 8;
+  }
+  // SAFETY: the last `n - i` bytes of both.
+  return i == n || unsafe { tailWord(sa + i, n - i) } == unsafe { tailWord(ba + i, n - i) };
+}
