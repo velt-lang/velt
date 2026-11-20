@@ -5,6 +5,7 @@ import {
   MappedFile,
   openSync,
   readFileSync,
+  rmSync,
   unlinkSync,
   writeFileSync,
   writeSync,
@@ -324,6 +325,11 @@ describe("MappedFile", () => {
       "is not inside the 16 bytes",
     );
     expect(MappedFile.open(path, { offset: 16 }).length).toBe(0);
+    try {
+      rmSync(path);
+    } catch (e) {
+      // Windows refuses to remove a file that is mapped.
+    }
   });
 
   it("reports a missing file and a directory by Node's codes on every system", () => {
