@@ -193,11 +193,18 @@ def build(source, kind, out):
     return harness["executable"], harness.get("env", {})
 
 
+# One runtime thread and no rescue thread, as bench/nightly.sh sets for its cachegrind rows: a
+# test harness's worker threads otherwise add thousands of instructions that differ from run to
+# run on a busy machine, and every count comes out different whatever the secret.
+ONE_THREAD = {"VELT_THREADS": "1", "VELT_RESCUE": "0"}
+
+
 def count(exe, env, secret_file):
     run = subprocess.run(
         ["valgrind", "--tool=cachegrind", "--cache-sim=no", "--cachegrind-out-file=/dev/null",
          exe, secret_file],
-        capture_output=True, text=True, env={**os.environ, **env, "VELT_CT_SECRET": secret_file})
+        capture_output=True, text=True,
+        env={**os.environ, **env, **ONE_THREAD, "VELT_CT_SECRET": secret_file})
     found = re.search(r"I\s+refs:\s+([\d,]+)", run.stderr)
     if run.returncode != 0 or not found:
         sys.exit(f"the probe failed under valgrind:\n{run.stdout}{run.stderr}")
@@ -226,7 +233,8 @@ def reports(exe, env, secret_file, shim):
     run = subprocess.run(
         ["valgrind", "--tool=memcheck", "--error-limit=no", "-s", exe, secret_file],
         capture_output=True, text=True,
-        env={**os.environ, **env, "VELT_CT_SECRET": secret_file, "LD_PRELOAD": shim})
+        env={**os.environ, **env, **ONE_THREAD, "VELT_CT_SECRET": secret_file,
+             "LD_PRELOAD": shim})
     if run.returncode != 0:
         sys.exit(f"the probe failed under memcheck:\n{run.stdout}{run.stderr[-2000:]}")
     kinds = ("Conditional jump or move depends on uninitialised value",
