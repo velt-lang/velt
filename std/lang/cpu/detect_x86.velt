@@ -38,11 +38,13 @@ export function x86Bits(ecx1: u32, ebx7: u32, ecx7: u32, ecxExt: u32, xcr0: u64)
   const table = strDataAddress(bits);
   let word: u64 = 0;
   for (let i: u64 = 0; i < 24; i++) {
-    // SAFETY: within the literal's 72 bytes.
     const off = (3 * i) as usize;
     const at = table + off;
+    // SAFETY: `at` + 0..2 is within the literal's 72 bytes (i < 24).
     const reg = (unsafe { addressLoad<u8>(at) } - 48) as u64;
+    // SAFETY: as above.
     const n = (unsafe { addressLoad<u8>(at + 1) } - 65) as u64;
+    // SAFETY: as above.
     const state = (unsafe { addressLoad<u8>(at + 2) } - 48) as u64;
     // `low` for the first two registers, `high` for the others, without a branch.
     const which = reg >> 1;
