@@ -1,0 +1,39 @@
+// A vector loop without `fits` over rows of a flat store: the release build runs rows that fit in
+// a copy without range tests (velt_opt `range_versions`), and the original loop, which panics at
+// the load that passes the end, for the last row, which is cut short: the same sums and the same
+// RangeError as the debug build.
+
+import { f32x4 } from "velt/simd";
+
+function dot(a: f32[], at: usize, b: f32[], dim: usize): f32 {
+  let s0 = f32x4.splat(0);
+  let s1 = f32x4.splat(0);
+  let i: usize = 0;
+  while (i + 8 <= dim) {
+    s0 = f32x4.load(a, at + i).mulAdd(f32x4.load(b, i), s0);
+    s1 = f32x4.load(a, at + i + 4).mulAdd(f32x4.load(b, i + 4), s1);
+    i += 8;
+  }
+  let s = s0.add(s1).sum();
+  while (i < dim) {
+    s += a[at + i] * b[i];
+    i++;
+  }
+  return s;
+}
+
+function main() {
+  const dim: usize = 19;
+  const a: f32[] = [];
+  const b: f32[] = [];
+  // Three rows and 12 elements of a fourth.
+  for (let k: usize = 0; k < 3 * dim + 12; k++) {
+    a.push(((k * 7) % 13) as f32 - 6);
+  }
+  for (let k: usize = 0; k < dim; k++) {
+    b.push(((k * 5) % 11) as f32 - 5);
+  }
+  for (let row: usize = 0; row < 4; row++) {
+    console.log(`row ${row}: ${dot(a, row * dim, b, dim)}`);
+  }
+}

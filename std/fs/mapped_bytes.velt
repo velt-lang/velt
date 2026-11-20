@@ -1,0 +1,108 @@
+// velt/fs (internal): the bytes of a `MappedFile` and its reads of single values, `DataView`'s
+// getters (std/lang/typed_array/data_view.velt) over the mapping: any offset, either byte
+// order, one range check and one load, and nothing allocated. `MappedFile` extends it with
+// the mapping itself and the typed arrays over it.
+
+import {
+  f32FromBits,
+  f64FromBits,
+  load16,
+  load32,
+  load64,
+  loadBE16,
+  loadBE32,
+  swap64,
+} from "velt/lang/typed_array/buffer";
+import { toIndex } from "velt/lang/typed_array/core";
+
+/** The mapped bytes of a file and `DataView`'s getters over them (see `MappedFile`). */
+export class MappedBytes {
+  /** The mapped bytes. */
+  readonly bytes: shared<u8[]>;
+
+  constructor(bytes: shared<u8[]>) {
+    this.bytes = bytes;
+  }
+
+  // The index in `bytes` of the `size` bytes at `byteOffset`, which is read as `DataView`
+  // reads an offset (JS's `ToIndex`: truncated, NaN is 0); a `RangeError` with `DataView`'s
+  // text when it is negative or the bytes are not all inside the mapped ones.
+  private at(byteOffset: number, size: usize): usize {
+    const i = toIndex(byteOffset);
+    const n = this.bytes.length as usize;
+    if (i < 0 || (i as usize) > n || size > n - (i as usize)) {
+      throw new RangeError("Offset is outside the bounds of the DataView");
+    }
+    return i as usize;
+  }
+
+  /** The signed byte at `byteOffset` (`DataView.getInt8`). */
+  getInt8(byteOffset: number): number {
+    return this.bytes[this.at(byteOffset, 1)] as i8;
+  }
+
+  /** The byte at `byteOffset` (`DataView.getUint8`). */
+  getUint8(byteOffset: number): number {
+    return this.bytes[this.at(byteOffset, 1)];
+  }
+
+  /**
+   * The 16-bit signed integer at `byteOffset` (`DataView.getInt16`): big-endian unless
+   * `littleEndian`, as every getter here, at any offset.
+   */
+  getInt16(byteOffset: number, littleEndian: bool = false): number {
+    return this.uint16(byteOffset, littleEndian) as i16;
+  }
+
+  /** The 16-bit unsigned integer at `byteOffset` (`DataView.getUint16`). */
+  getUint16(byteOffset: number, littleEndian: bool = false): number {
+    return this.uint16(byteOffset, littleEndian);
+  }
+
+  private uint16(byteOffset: number, littleEndian: bool): u16 {
+    const at = this.at(byteOffset, 2);
+    return littleEndian ? load16(this.bytes, at) : loadBE16(this.bytes, at);
+  }
+
+  /** The 32-bit signed integer at `byteOffset` (`DataView.getInt32`). */
+  getInt32(byteOffset: number, littleEndian: bool = false): number {
+    return this.uint32(byteOffset, littleEndian) as i32;
+  }
+
+  /** The 32-bit unsigned integer at `byteOffset` (`DataView.getUint32`). */
+  getUint32(byteOffset: number, littleEndian: bool = false): number {
+    return this.uint32(byteOffset, littleEndian);
+  }
+
+  private uint32(byteOffset: number, littleEndian: bool): u32 {
+    const at = this.at(byteOffset, 4);
+    return littleEndian ? load32(this.bytes, at) : loadBE32(this.bytes, at);
+  }
+
+  /**
+   * The 64-bit signed integer at `byteOffset`, as an `i64`. JS's name for this read,
+   * `getBigInt64`, gives a bigint, and comes with bigint values (#1088).
+   */
+  getInt64(byteOffset: number, littleEndian: bool = false): i64 {
+    return this.getUint64(byteOffset, littleEndian) as i64;
+  }
+
+  /**
+   * The 64-bit unsigned integer at `byteOffset`, as a `u64`. JS's name for this read,
+   * `getBigUint64`, gives a bigint, and comes with bigint values (#1088).
+   */
+  getUint64(byteOffset: number, littleEndian: bool = false): u64 {
+    const x = load64(this.bytes, this.at(byteOffset, 8));
+    return littleEndian ? x : swap64(x);
+  }
+
+  /** The 32-bit float at `byteOffset` (`DataView.getFloat32`). */
+  getFloat32(byteOffset: number, littleEndian: bool = false): number {
+    return f32FromBits(this.uint32(byteOffset, littleEndian));
+  }
+
+  /** The 64-bit float at `byteOffset` (`DataView.getFloat64`). */
+  getFloat64(byteOffset: number, littleEndian: bool = false): number {
+    return f64FromBits(this.getUint64(byteOffset, littleEndian));
+  }
+}

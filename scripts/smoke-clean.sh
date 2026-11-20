@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Smoke test of an installed toolchain on a machine without a C toolchain (no cc, ld or Xcode):
 # with the bundled linker forced ($VELT_LINKER=bundled), `velt doctor` reports it, a debug build of
-# scripts/smoke-prebuilt.velt links the toolchain's prebuilt hook objects (lib/hooks/; on arm64
-# Linux it builds with the modules compiled in), and hello and
+# scripts/smoke-prebuilt.velt links the toolchain's prebuilt hook objects (lib/hooks/), and hello and
 # examples/http_hello.velt build in debug and release mode, run and answer a request; hello also
 # builds for wasm32-unknown-unknown; tests/golden/std/fs_dirents.velt lists a directory with its
 # entries' types, which std reads at offsets of each target's own `struct dirent` (the only run
@@ -63,27 +62,18 @@ step "velt doctor"
 grep -q 'linker .*bundled' "$work/doctor" || { echo "velt doctor does not report the bundled linker" >&2; exit 1; }
 # The toolchain's own objects of the prebuilt std hook modules (lib/hooks/<target>/), with the
 # build cache off so nothing else could hold them: a debug build links them, also where no clang
-# could have compiled them. Not on arm64 Linux, where a debug build takes no prebuilt object (its
-# link need not have the outline-atomics helpers their atomics call): there the program has to
-# build and run with the modules compiled in (until #3315).
+# could have compiled them. On arm64 Linux their atomics call the outline-atomics helpers, which
+# the link takes from the static runtime (#3315).
 step "prebuilt hook modules (shipped objects)"
 VELT_BUILD_CACHE=off VELT_STD_OBJECT_STATS=1 "$velt" build "$repo/scripts/smoke-prebuilt.velt" \
     -o "$work/prebuilt" 2>"$work/prebuilt.stats" || { cat "$work/prebuilt.stats" >&2; exit 1; }
-if [ "$(uname -s)-$(uname -m)" = "Linux-aarch64" ]; then
-    if grep -q "object found" "$work/prebuilt.stats"; then
-        cat "$work/prebuilt.stats" >&2; echo "a debug build on arm64 Linux linked a prebuilt object" >&2; exit 1
-    fi
-    linked="modules compiled in (arm64 Linux debug build)"
-else
-    for module in number_digits number_parse weak; do
-        grep -q "prebuilt hooks: std/lang/hooks/$module: object found (shipped)" "$work/prebuilt.stats" ||
-            { cat "$work/prebuilt.stats" >&2; echo "the build did not link the toolchain's object of lang/hooks/$module" >&2; exit 1; }
-    done
-    linked="shipped objects linked"
-fi
+for module in number_digits number_parse weak; do
+    grep -q "prebuilt hooks: std/lang/hooks/$module: object found (shipped)" "$work/prebuilt.stats" ||
+        { cat "$work/prebuilt.stats" >&2; echo "the build did not link the toolchain's object of lang/hooks/$module" >&2; exit 1; }
+done
 out=$("$work/prebuilt")
 [ "$out" = "1234.57 356 7" ] || { echo "smoke-prebuilt printed '$out'" >&2; exit 1; }
-echo "ok: $linked"
+echo "ok: shipped objects linked"
 # A wrong offset of `d_type` or `d_name` (std/fs/fd/darwin.velt, linux.velt) gives other names
 # or types than the golden's.
 step "directory entries (struct dirent's offsets)"

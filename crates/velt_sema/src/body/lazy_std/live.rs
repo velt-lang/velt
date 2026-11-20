@@ -624,6 +624,12 @@ fn walk_expr(ty: &crate::types::Types, e: &hir::Expr, w: &mut Walk) {
                 ),
             ..
         } => w.constructs |= Construct::Weak.bit(),
+        // A yield or a sleep is a leaf of the executor (velt_vir `sched_rt`: `schedYieldFut`,
+        // `schedSleep`), even kept as a promise in code that is not async.
+        E::Call {
+            callee: Callee::Intrinsic(I::YieldNow | I::Sleep),
+            ..
+        } => w.tasks = true,
         E::Call {
             callee: Callee::Dyn {
                 method_type_args, ..

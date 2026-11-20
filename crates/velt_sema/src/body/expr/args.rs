@@ -482,6 +482,8 @@ impl FnCx<'_, '_> {
                 known[k] = slots[k];
             }
             self.fix_for_context_sensitive(c, &args[i], p.ty, slots, &mut known);
+            // `(rq, a: number) => …` for `(rq, ...args: A) => R`: `A = [number]` (`rest_tuple`).
+            self.rest_tuple_slot(&args[i], p.ty, &mut known);
             let outer = self.cx.type_level.use_site.replace(args[i].span);
             let expected = self.cx.subst_known(p.ty, &known);
             let expected = self.rest_form_target(c, i, expected, &args[i]);
