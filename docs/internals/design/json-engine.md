@@ -101,10 +101,15 @@ on a tape (what parsing makes, and what a database driver's rows give; children 
   children.
 - **A tree stays shallow.** A child may be a container left on a tape: an edit of a parsed value
   makes only its own node (its containers stay on the tape until they are edited), and a parsed
-  value stored in a tree stays on its tape. A subtree as high as 512 nodes is stored as a tape of
-  its text before it goes in. A tape is frozen and crosses to another task through its atomic
-  count, so a tree sent there (a deep copy, where the sender keeps a reference) is copied at most
-  512 nodes deep: the copy recurses once per level.
+  value stored in a tree stays on its tape. A subtree as high as 512 nodes is stored as a tape
+  before it goes in (`tree_freeze.velt`), made from its values, so numbers keep their bits (NaN,
+  the infinities, -0). A tape is frozen and crosses to another task through its atomic count, so
+  a tree sent there (a deep copy, where the sender keeps a reference) is copied at most 512 nodes
+  deep: the copy recurses once per level.
+- **Freezing costs O(n log n).** A child already on a tape is copied onto the new tape only while
+  its tape is smaller than twice the new one; a larger one stays a node the new tape links to
+  (`T_LINK`, resolved by the tree's readers). So a value is copied O(log n) times however deep a
+  tree grows, and a chain of links stays O(log n) long.
 - **Objects** (`tree_object.velt`) keep JavaScript's order (index keys first, apart and sorted,
   made only when the first one goes in), are found by key through a hash index past 16 members,
   and are deleted in O(1) amortized by leaving holes, with a Fenwick tree of the live slots for
