@@ -338,10 +338,22 @@ impl Interp<'_> {
                 let argv: Vec<V> = args.iter().map(|a| self.operand(f, slots, a).0).collect();
                 let r = match callee {
                     Callee::Func(id) => self.call_fn(id.0 as usize, argv)?,
-                    Callee::Extern(id) => {
-                        let raw: Vec<u64> = argv.iter().map(V::s).collect();
-                        V::S(self.rt(&self.p.externs[id.0 as usize].symbol, &raw)?)
-                    }
+                    Callee::Extern(id) => match self.p.externs[id.0 as usize].symbol.as_str() {
+                        // std's detection (std/lang/cpu/detect_x86.velt): a CPU with nothing past
+                        // x86-64, whose answers it reads lane by lane.
+                        "velt_simd_cpuid" => V::A(vec![0; 16]),
+                        "velt_simd_u32x4_lane" => match (&argv[0], argv[1].s()) {
+                            (V::A(b), i) if i < 4 => {
+                                let at = i as usize * 4;
+                                V::S(u32::from_le_bytes(b[at..at + 4].try_into().unwrap()).into())
+                            }
+                            _ => panic!("interp: a lane of no vector"),
+                        },
+                        symbol => {
+                            let raw: Vec<u64> = argv.iter().map(V::s).collect();
+                            V::S(self.rt(symbol, &raw)?)
+                        }
+                    },
                     Callee::Ptr {
                         target,
                         params,

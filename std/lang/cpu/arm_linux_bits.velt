@@ -1,0 +1,29 @@
+// velt/lang/cpu (internal): how Linux's arm64 capability words become the feature word's arm64
+// bits (std/lang/cpu/arm_linux.velt reads them; std/lang/cpu/detect.test.velt tests this).
+
+// Bit `n` of `word`.
+function bit(word: u64, n: u64): bool {
+  return ((word >> n) & 1) != 0;
+}
+
+// The word bit `b` where `on`.
+function flag(on: bool, b: u64): u64 {
+  return on ? (1 as u64) << b : 0;
+}
+
+/**
+ * The feature word's arm64 bits of capability words `hw` and `hw2` (arm64's `asm/hwcap.h`):
+ * ASIMDDP is DOTPROD, SHA2, PMULL, CRC32, SHA3 with SHA512, FPHP with ASIMDHP is FP16, I8MM and
+ * BF16 (in the second word), AES.
+ */
+export function linuxArmBits(hw: u64, hw2: u64): u64 {
+  return flag(bit(hw, 20), 32) |
+    flag(bit(hw, 6), 33) |
+    flag(bit(hw, 4), 34) |
+    flag(bit(hw, 7), 35) |
+    flag(bit(hw, 17) && bit(hw, 21), 36) |
+    flag(bit(hw, 9) && bit(hw, 10), 37) |
+    flag(bit(hw2, 13), 38) |
+    flag(bit(hw2, 14), 39) |
+    flag(bit(hw, 3), 40);
+}
