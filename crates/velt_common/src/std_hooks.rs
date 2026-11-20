@@ -767,6 +767,9 @@ with_weak_hooks! {
     /// `@intrinsic declare function`: the declaration of a compiler intrinsic
     /// (`velt_sema` `intrinsic_decls.rs`).
     decorator_intrinsic => lang_intrinsics_decorators, "intrinsic", decorator;
+    /// `@targetFeature("sha-arm")` on a function (any module; velt/compiler re-exports it): the
+    /// CPU extension it is compiled for (`velt_sema` `body/gated.rs`, `hir::Program::cpu_targets`).
+    decorator_target_feature => lang_intrinsics_decorators, "targetFeature", decorator;
     // ffi/export.velt: `@export("c_name")`, a function C calls (#2203 step 5; `velt_sema`
     // `decorators/export.rs`, `velt_vir` lowering's `c_export.rs`).
     /// `@export("c_name")` on a top-level function: an unmangled symbol of that name with the C

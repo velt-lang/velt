@@ -15,11 +15,24 @@ export type VectorFile = { fd: number; dim: i64; n: i64 };
 
 export type Meta = { dim: i64; n: i64; nlist: i64; scale: f32; offsets: i64[] };
 
-/// Reads exactly `len` bytes at `pos` into `buf` (from its start).
-export function readAt(fd: number, buf: u8[], len: i64, pos: i64) {
+/// Reads exactly `len` bytes at `pos` into the memory of `buf` from its byte `from`: `buf` is
+/// an array of any number type (`f32[]` for rows, `u8[]` for records), filled in place.
+export function readAt<T extends Numeric = u8>(
+  fd: number,
+  buf: T[],
+  len: i64,
+  pos: i64,
+  from: i64 = 0,
+) {
   let got: i64 = 0;
   while (got < len) {
-    const n = fs.readSync(fd, buf, got as number, (len - got) as number, (pos + got) as number);
+    const n = fs.readSync(
+      fd,
+      buf,
+      (from + got) as number,
+      (len - got) as number,
+      (pos + got) as number,
+    );
     if (n == 0) {
       throw new RangeError(`short read: ${got} of ${len} bytes at ${pos}`);
     }
@@ -27,12 +40,24 @@ export function readAt(fd: number, buf: u8[], len: i64, pos: i64) {
   }
 }
 
-/// Writes `len` bytes of `buf` (from its start) at `pos`.
-export function writeAt(fd: number, buf: u8[], len: i64, pos: i64) {
+/// Writes `len` bytes of the memory of `buf`, from its byte `from`, at `pos`.
+export function writeAt<T extends Numeric = u8>(
+  fd: number,
+  buf: T[],
+  len: i64,
+  pos: i64,
+  from: i64 = 0,
+) {
   let put: i64 = 0;
   while (put < len) {
     put +=
-      fs.writeSync(fd, buf, put as number, (len - put) as number, (pos + put) as number) as i64;
+      fs.writeSync(
+        fd,
+        buf,
+        (from + put) as number,
+        (len - put) as number,
+        (pos + put) as number,
+      ) as i64;
   }
 }
 
@@ -57,11 +82,7 @@ export { putU32 };
 /// Creates `path` as a vector file of `n` rows of `dim` floats (rows are written afterwards).
 export function createVectors(path: string, dim: i64, n: i64): VectorFile {
   const fd = fs.openSync(path, "w+");
-  const h: u8[] = Buffer.alloc(HEADER as usize);
-  putU32(h, 0, MAGIC);
-  putU32(h, 4, dim as u32);
-  putU32(h, 8, (n & 0xffffffff) as u32);
-  putU32(h, 12, (n >> 32) as u32);
+  const h: u32[] = [MAGIC, dim as u32, (n & 0xffffffff) as u32, (n >> 32) as u32];
   writeAt(fd, h, HEADER, 0);
   fs.ftruncateSync(fd, (HEADER + n * dim * 4) as number);
   return { fd, dim, n };
@@ -69,13 +90,13 @@ export function createVectors(path: string, dim: i64, n: i64): VectorFile {
 
 export function openVectors(path: string): VectorFile {
   const fd = fs.openSync(path, "r");
-  const h: u8[] = Buffer.alloc(HEADER as usize);
+  const h: u32[] = [0, 0, 0, 0];
   readAt(fd, h, HEADER, 0);
-  if (u32At(h, 0) != MAGIC) {
+  if (h[0] != MAGIC) {
     throw new RangeError(`${path} is not a vector file`);
   }
-  const dim = u32At(h, 4) as i64;
-  const n = (u32At(h, 8) as i64) | ((u32At(h, 12) as i64) << 32);
+  const dim = h[1] as i64;
+  const n = (h[2] as i64) | ((h[3] as i64) << 32);
   return { fd, dim, n };
 }
 

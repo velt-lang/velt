@@ -152,6 +152,7 @@ table! {
     lang_string_collate => "lang/string/collate",
     lang_string_search => "lang/string/search",
     lang_symbol => "lang/symbol",
+    lang_symbol_registry => "lang/symbol/registry",
     lang_this_fn => "lang/this_fn",
     lang_typed_array => "lang/typed_array",
     lang_typed_array_apply_list => "lang/typed_array/apply_list",

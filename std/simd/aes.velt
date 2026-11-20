@@ -12,7 +12,7 @@
 //
 // `u8x16.hasAesX86()` is AES-NI with the PCLMULQDQ, SSSE3 and SSE4.1 every such CPU has, and
 // `u8x16.hasAesArm()` FEAT_AES with FEAT_PMULL: what AES-GCM needs, so a function gated on one
-// (`targetFeature("aes-x86")`, std only) has the carry-less multiplication too, and both are bare
+// (`@targetFeature("aes-x86")`) has the carry-less multiplication too, and both are bare
 // instructions there. The checks are false on another architecture, on WebAssembly, in debug
 // (Cranelift) builds, and with `VELT_SIMD_DISABLE=aes`. `VELT_SIMD_DISABLE=clmul` makes them false
 // too, except on x86-64 in a build whose `--cpu` includes PCLMULQDQ (`--cpu native` on such a CPU),

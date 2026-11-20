@@ -42,9 +42,7 @@ export class TopK {
     for (let i = 0; i < this.keys.length; i++) {
       out.push({ key: this.keys[i], score: this.scores[i] });
     }
-    out.sort(
-      (a, b) => (a.score == b.score ? ((a.key - b.key) as number) : b.score > a.score ? 1 : -1),
-    );
+    out.sort((a, b) => (a.score == b.score ? a.key - b.key : b.score > a.score ? 1 : -1));
     return out;
   }
 

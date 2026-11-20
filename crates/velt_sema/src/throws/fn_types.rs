@@ -219,6 +219,23 @@ impl FnSites {
         }
     }
 
+    /// These sites for another round of a check by units (`crate::units`), which starts from
+    /// std's frozen unit: what std's check recorded (where types are written, std's sites and
+    /// flows) stays; what depends on the round's sets starts as [`Self::new`] starts it.
+    pub fn reseed(&mut self, seeds: FnTypeSeeds, last: bool) {
+        let fresh = FnSites::new(seeds, last);
+        self.use_vars = fresh.use_vars;
+        self.user_vars = fresh.user_vars;
+        self.found = fresh.found;
+        self.seeds = fresh.seeds;
+        self.last = last;
+        self.grew = false;
+        self.sites_grew = false;
+        self.quiet.clear();
+        self.indirect.clear();
+        self.indirect_sites.clear();
+    }
+
     /// The sets to check the program with again, when this check added to them.
     pub fn grown(&self) -> Option<FnTypeSeeds> {
         (self.grew && !self.last).then(|| self.found.clone())

@@ -5,15 +5,14 @@
 // errors name the path as it was given, as Node's do. A directory refuses to open as a file with
 // "access denied", which is `EISDIR` here, as everywhere else.
 
-import { Out } from "velt/ffi/out";
 import { Ptr } from "velt/ffi/ptr";
-import { wideOf } from "velt/ffi/wide";
 import { osError } from "velt/fs/errors";
 import { Stats } from "velt/fs/stats";
 import { Done } from "velt/fs/whole/done";
 import { readAll } from "velt/fs/whole/read_all";
 import { utf8Encode } from "velt/encoding/utf8";
-import { addressLoad, arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
+import { addressLoad } from "velt/lang/intrinsics";
+import { winPath } from "velt/fs/whole/win_path";
 import { errnoOfWin32 } from "velt/os/win_error";
 
 /** C's `SECURITY_ATTRIBUTES` and `OVERLAPPED`: never passed. */
@@ -46,22 +45,16 @@ declare c("c") function WriteFile(
   overlapped: Ptr<_OVERLAPPED> | null,
 ): i32;
 declare c("c") function GetFileInformationByHandle(
-  handle: Ptr<void>,
+  handle: Ptr<void> | null,
   info: Ptr<_BY_HANDLE_FILE_INFORMATION>,
 ): i32;
 declare c("c") function GetFileInformationByHandleEx(
-  handle: Ptr<void>,
+  handle: Ptr<void> | null,
   infoClass: i32,
   info: u32[],
   size: u32,
 ): i32;
 declare c("c") function GetFileAttributesW(name: readonly u16[]): u32;
-declare c("c") function GetFullPathNameW(
-  name: readonly u16[],
-  room: u32,
-  out: u16[],
-  file: Out<Ptr<u16> | null>,
-): u32;
 declare c("c") function CloseHandle(handle: Ptr<void> | null): i32;
 declare c("c") function GetLastError(): u32;
 declare c("c") function malloc(size: usize): Ptr<void> | null;
@@ -109,47 +102,6 @@ const EPOCH_TICKS: i64 = 116444736000000000;
 function lastWin32(): u32 {
   // SAFETY: GetLastError has no precondition.
   return unsafe { GetLastError() };
-}
-
-/** `path` as a NUL-terminated wide path, `\\?\`-prefixed when long; null for a 0 inside it. */
-function winPath(path: string): u16[] | null {
-  const w = wideOf(path);
-  if (w === null || w.length < 249 || path.startsWith("\\\\?\\") || path.startsWith("\\\\.\\")) {
-    return w;
-  }
-  let room: u32 = 512;
-  while (true) {
-    const full = arrayWithCapacity<u16>(room as usize);
-    arraySetLen(full, room as usize);
-    // SAFETY: `w` is NUL-terminated and `full` holds `room` units, the count passed.
-    const got = unsafe { GetFullPathNameW(w, room, full, new Out<Ptr<u16> | null>(null)) };
-    if (got === 0) {
-      return w;
-    }
-    if (got < room) {
-      arraySetLen(full, got as usize);
-      // Already `\\?\` or `\\.\` (a long `//?/x` normalises to it): as it is, with its NUL.
-      const verbatim = got > 3 && full[0] === 92 && full[1] === 92 && full[3] === 92;
-      if (verbatim && (full[2] === 63 || full[2] === 46)) {
-        full.push(0);
-        return full;
-      }
-      // `\\server\share\x` is `\\?\UNC\server\share\x`; `C:\x` is `\\?\C:\x`.
-      const unc = got > 2 && full[0] === 92 && full[1] === 92;
-      const prefix = unc ? "\\\\?\\UNC" : "\\\\?\\";
-      const out = wideOf(prefix);
-      if (out === null) {
-        return w;
-      }
-      out.pop();
-      for (let i: usize = unc ? 1 : 0; i < (got as usize); i++) {
-        out.push(full[i]);
-      }
-      out.push(0);
-      return out;
-    }
-    room = got;
-  }
 }
 
 /** Whether `w` names a directory (for "access denied" on opening it). */
