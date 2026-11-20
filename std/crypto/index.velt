@@ -3,6 +3,8 @@
 // (RFC 7748), ECDH and ECDSA verification on P-256 (SEC 1), RSA signature verification (RFC 8017:
 // PKCS#1 v1.5 and PSS), the ChaCha20-Poly1305 (RFC 8439)
 // (RFC 7748), ECDH and ECDSA verification on P-256 and ECDSA verification on P-384 (SEC 1), the ChaCha20-Poly1305 (RFC 8439)
+// (RFC 7748), Ed25519 signature verification (RFC 8032), ECDH and ECDSA verification on P-256
+// (SEC 1), the ChaCha20-Poly1305 (RFC 8439)
 // and AES-GCM (NIST SP 800-38D) AEADs, secure random bytes/integers and constant-time
 // comparison.
 //
@@ -37,6 +39,7 @@ export {
   hkdfSha384,
 } from "velt/crypto/hkdf";
 export { hmacSha1, hmacSha256, hmacSha384, hmacSha512 } from "velt/crypto/hmac";
+export { ed25519Verify } from "velt/crypto/ed25519_verify";
 export { p256Verify } from "velt/crypto/ecdsa_p256";
 export { p384Verify } from "velt/crypto/ecdsa_p384";
 export { p256Ecdh, p256PrivateKey, p256PublicKey } from "velt/crypto/p256";
