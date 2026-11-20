@@ -1,0 +1,147 @@
+// velt/fs (tests): white-box tests, run by `velt test std/`.
+//
+// The directory functions of the `#fd-system` variant (std/fs/fd/dirs.velt behind darwin.velt
+// and linux.velt): a listing gives each entry's `d_type` as the system wrote it, read at this
+// target's offset in `struct dirent`, and a tree is removed without entering a link. The first
+// is what no test of `readDirEntries` can see: an entry whose type reads as "unknown" gets its
+// type from `lstat` there, so a wrong offset that reads 0 would only make listings slower. The
+// other variant fails every call with ENOSYS.
+import { closeFd, listDir, openPath, removeTree } from "#fd-system";
+import { utf8Encode } from "velt/encoding/utf8";
+import * as fs from "velt/fs";
+import { linuxOpenDir } from "velt/fs/fd/system";
+import { platform, tmpdir } from "velt/os";
+import { describe, expect, it } from "velt/test";
+
+const POSIX = platform() == "darwin" || platform() == "linux";
+
+/** `path` as C bytes: its UTF-8 and a 0. */
+function c(path: string): u8[] {
+  const bytes = utf8Encode(path);
+  bytes.push(0);
+  return bytes;
+}
+
+/** A new empty directory for the test `name`. */
+function fresh(name: string): string {
+  const dir = `${tmpdir()}/velt-fd-dirs-${name}-${process.pid}`;
+  if (fs.existsSync(dir)) {
+    fs.removeSync(dir, { recursive: true });
+  }
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+/** The `d_type` the listing of `dir` gives the entry `name`, or -1. */
+function typeOf(dir: string, name: string): i64 {
+  const names: string[] = [];
+  const types: u8[] = [];
+  expect(listDir(c(dir), names, types, null)).toBe(0);
+  for (let i: usize = 0; i < names.length; i++) {
+    if (names[i] == name) {
+      return types[i] as i64;
+    }
+  }
+  return -1;
+}
+
+describe("velt/fs's directories through the C library", () => {
+  it("reads each entry's type where struct dirent keeps it", () => {
+    if (!POSIX) {
+      return;
+    }
+    const dir = fresh("types");
+    fs.writeFileSync(`${dir}/file`, "x");
+    fs.mkdirSync(`${dir}/dir`);
+    fs.symlinkSync("file", `${dir}/link`);
+    // DT_REG 8, DT_DIR 4, DT_LNK 10: the temporary directory's file system reports them (APFS,
+    // ext4, tmpfs, overlayfs do). 0 here is a wrong offset, or a file system that reports none.
+    expect(typeOf(dir, "file")).toBe(8);
+    expect(typeOf(dir, "dir")).toBe(4);
+    expect(typeOf(dir, "link")).toBe(10);
+    expect(typeOf(dir, ".")).toBe(-1);
+    expect(typeOf(dir, "..")).toBe(-1);
+    fs.removeSync(dir, { recursive: true });
+  });
+
+  it("has Linux's open flags for the architectures it knows, and none for another", () => {
+    // O_NOFOLLOW is 0x20000 on x86-64 and 0x8000 on arm64: each set has its own, and an
+    // architecture without a set gets 0, with which no tree is removed.
+    expect(linuxOpenDir("x64")).toBe(0xb0000);
+    expect(linuxOpenDir("arm64")).toBe(0x8c000);
+    expect(linuxOpenDir("x64") & 0x20000).toBe(0x20000);
+    expect(linuxOpenDir("arm64") & 0x8000).toBe(0x8000);
+    expect(linuxOpenDir("riscv64")).toBe(0);
+    expect(linuxOpenDir("")).toBe(0);
+  });
+
+  it("lists nothing for a path that is not a directory", () => {
+    const dir = fresh("errors");
+    fs.writeFileSync(`${dir}/file`, "x");
+    const names: string[] = [];
+    const types: u8[] = [];
+    // ENOENT 2 and ENOTDIR 20 on macOS and Linux; ENOSYS (38) where the variant has none.
+    expect(listDir(c(`${dir}/missing`), names, types, null)).toBe(POSIX ? 2 : 38);
+    expect(listDir(c(`${dir}/file`), names, types, null)).toBe(POSIX ? 20 : 38);
+    expect(names.length).toBe(0);
+    fs.removeSync(dir, { recursive: true });
+  });
+
+  it("lists and removes a name that is not UTF-8", () => {
+    // Linux only: macOS's file systems refuse such a name.
+    if (platform() != "linux") {
+      return;
+    }
+    const dir = fresh("bytes");
+    fs.mkdirSync(`${dir}/t`);
+    const path = utf8Encode(`${dir}/t/`);
+    path.push(0xff);
+    path.push(97);
+    path.push(0);
+    // O_WRONLY | O_CREAT on Linux.
+    const fd = openPath(path, 0x41, 0o644);
+    expect(fd >= 0).toBe(true);
+    closeFd(fd);
+    const names: string[] = [];
+    const types: u8[] = [];
+    // With no type from the listing, the entry's own bytes name it to `unknown`.
+    const asked: string[] = [];
+    const unknown = (child: readonly u8[]): u8 => {
+      asked.push(child.join(","));
+      return 8;
+    };
+    expect(listDir(c(`${dir}/t`), names, types, unknown)).toBe(0);
+    expect(names.length).toBe(1);
+    expect(names[0]).toBe("\u{fffd}a");
+    expect(asked.length == 0 || asked[0].endsWith(",47,255,97,0")).toBe(true);
+    // Text has U+FFFD for the bad byte; the tree is removed by the name's own bytes.
+    expect(fs.readDirSync(`${dir}/t`).join(",")).toBe("\u{fffd}a");
+    fs.removeSync(`${dir}/t`, { recursive: true });
+    expect(fs.existsSync(`${dir}/t`)).toBe(false);
+    fs.removeSync(dir, { recursive: true });
+  });
+
+  it("removes a tree and leaves what its links point to", () => {
+    if (!POSIX) {
+      return;
+    }
+    const dir = fresh("tree");
+    fs.mkdirSync(`${dir}/outside/sub`, { recursive: true });
+    fs.writeFileSync(`${dir}/outside/sub/keep`, "keep");
+    fs.mkdirSync(`${dir}/tree/a/b`, { recursive: true });
+    fs.writeFileSync(`${dir}/tree/a/b/f`, "f");
+    fs.symlinkSync("../outside", `${dir}/tree/to-dir`);
+    fs.symlinkSync("../../../outside/sub", `${dir}/tree/a/b/to-sub`);
+    expect(removeTree(c(`${dir}/tree`))).toBe(0);
+    expect(fs.existsSync(`${dir}/tree`)).toBe(false);
+    expect(fs.readFileSync(`${dir}/outside/sub/keep`)).toBe("keep");
+    // The root itself is not followed either: a link to a directory is not a tree to remove
+    // (ELOOP on macOS, 62; ENOTDIR on Linux, 20), and a file is ENOTDIR.
+    fs.symlinkSync("outside", `${dir}/root-link`);
+    const e = removeTree(c(`${dir}/root-link`));
+    expect(e == 62 || e == 20).toBe(true);
+    expect(removeTree(c(`${dir}/outside/sub/keep`))).toBe(20);
+    expect(fs.readFileSync(`${dir}/outside/sub/keep`)).toBe("keep");
+    fs.removeSync(dir, { recursive: true });
+  });
+});

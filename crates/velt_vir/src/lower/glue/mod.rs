@@ -24,6 +24,7 @@
 //! | ManyCheck | `(p: ptr)`                         | panic if `*p` holds a function value that cannot be called from several threads, and in the strict walk what a call's copy would break (many.rs) |
 //! | Trace     | `(obj: ptr, visit: ptr, ctx: ptr)` | weak maps: visit the counted objects `obj` refers to (trace.rs) |
 //! | TraceIn   | `(p: ptr, visit: ptr, ctx: ptr)`   | the same for an inline value at `p`      |
+//! | ObjTrace  | `(obj: ptr, visit: ptr, ctx: ptr)` | Trace of exactly a class with a vtable, in its table (trace_dyn.rs) |
 //! | WeakRetain / WeakRelease | `(word: u64)`       | retain / release a weak map value word   |
 //! | WeakBoxTrace | `(box: ptr, visit: ptr, ctx: ptr)` | Trace of a boxed weak map value       |
 //! | ProxyGet / ProxySet | `(proxy: ptr, key: ptr, v: ptr)` | a field of type `ty` through a typed proxy's `get` / `set` trap (proxy_typed.rs) |
@@ -54,6 +55,7 @@ mod many;
 mod slot_uses;
 mod thunk;
 mod trace;
+mod trace_dyn;
 mod trace_env;
 mod transfer;
 mod transfer_env;
@@ -119,6 +121,8 @@ pub(crate) enum Glue {
     ManyCheckStrict,
     Trace,
     TraceIn,
+    /// The trace glue of exactly a class with a vtable, in its table (trace_dyn.rs).
+    ObjTrace,
     WeakRetain,
     WeakRelease,
     WeakBoxTrace,
@@ -211,6 +215,7 @@ impl Glue {
             Glue::ManyCheckStrict => "manycheckstrict",
             Glue::Trace => "trace",
             Glue::TraceIn => "tracein",
+            Glue::ObjTrace => "objtrace",
             Glue::WeakRetain => "weakretain",
             Glue::WeakRelease => "weakrelease",
             Glue::WeakBoxTrace => "weakboxtrace",
@@ -275,7 +280,9 @@ impl Glue {
                 (vec![Ptr, Ptr], Bool)
             }
             Glue::Hash | Glue::BitsHash => (vec![Ptr], U64),
-            Glue::Trace | Glue::TraceIn | Glue::WeakBoxTrace => (vec![Ptr, Ptr, Ptr], Unit),
+            Glue::Trace | Glue::TraceIn | Glue::ObjTrace | Glue::WeakBoxTrace => {
+                (vec![Ptr, Ptr, Ptr], Unit)
+            }
             Glue::WeakRetain | Glue::WeakRelease => (vec![U64], Unit),
             Glue::AnyTruthy => (vec![Ptr], Bool),
             Glue::AnySame => (vec![Ptr, Ptr, U8], Bool),
@@ -343,6 +350,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             }
             Glue::Trace => lw.trace_body(args[0], args[1], args[2], ty),
             Glue::TraceIn => lw.trace_in_body(args[0], args[1], args[2], ty),
+            Glue::ObjTrace => lw.obj_trace_body(args[0], args[1], args[2], ty),
             Glue::WeakBoxTrace => lw.weak_box_trace_body(args[0], args[1], args[2], ty),
             Glue::WeakRetain => lw.weak_retain_body(args[0], ty),
             Glue::WeakRelease => lw.weak_release_body(args[0], ty),
@@ -442,7 +450,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     /// Call a function pointer obtained from a dispatcher.
-    pub(super) fn call_entry(
+    pub(in crate::lower) fn call_entry(
         &mut self,
         f: Operand,
         args: Vec<Operand>,
@@ -468,14 +476,14 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     /// Branch: continue in a fresh block when `cond` holds, else jump to `skip`.
-    pub(super) fn when(&mut self, cond: Operand, skip: vir::BlockId) {
+    pub(in crate::lower) fn when(&mut self, cond: Operand, skip: vir::BlockId) {
         let then = self.new_block();
         self.branch(cond, then, skip);
         self.switch_to(then);
     }
 
     /// `ptr != null` as a Bool operand.
-    pub(super) fn non_null(&mut self, p: Operand) -> Operand {
+    pub(in crate::lower) fn non_null(&mut self, p: Operand) -> Operand {
         self.rvalue_temp(
             Ty::Bool,
             vir::Rvalue::Binary(vir::BinOp::Ne, p, super::cint(0, Ty::Ptr)),

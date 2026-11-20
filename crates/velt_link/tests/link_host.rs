@@ -432,6 +432,187 @@ fn lld_link_on_the_path_links_on_windows() {
     let _ = std::fs::remove_dir_all(&setup.dir);
 }
 
+/// macOS: the system link asks the compiler driver once what `ld` command it runs and then runs
+/// `ld` itself (`macos_ld.rs`). With a `cc` first on the search path that notes each run and
+/// then is the real driver, and a home directory of the test's own (where the answer is kept):
+/// the first link runs the driver once, to ask (`-###`); the next links, debug and `--release`,
+/// run it not at all; and every program runs.
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_links_with_ld_itself_after_asking_the_driver_once() {
+    use std::os::unix::fs::PermissionsExt;
+    let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let setup = Setup::new("macos-ld");
+    let bin = setup.dir.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let runs = setup.dir.join("cc-runs");
+    let shim = bin.join("cc");
+    let script = format!(
+        "#!/bin/sh\necho \"$@\" >> '{}'\nexec /usr/bin/cc \"$@\"\n",
+        runs.display()
+    );
+    std::fs::write(&shim, script).unwrap();
+    std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let home = setup.dir.join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let (old_path, old_home) = (std::env::var_os("PATH").unwrap(), std::env::var_os("HOME"));
+    let mut path = vec![bin.clone()];
+    path.extend(std::env::split_paths(&old_path));
+    std::env::set_var("PATH", std::env::join_paths(path).unwrap());
+    std::env::set_var("HOME", &home);
+    std::env::set_var("VELT_LINKER", "system");
+    let objects = [setup.obj.clone()];
+    let mut results = vec![];
+    for (n, release) in [false, true, false].into_iter().enumerate() {
+        let exe = setup.dir.join(format!("direct_{n}"));
+        let linked = velt_link::link(&setup.request(&objects, &exe, release));
+        let ran = std::fs::read_to_string(&runs).unwrap_or_default();
+        results.push((exe, linked, ran));
+    }
+    std::env::set_var("PATH", &old_path);
+    match old_home {
+        Some(h) => std::env::set_var("HOME", h),
+        None => std::env::remove_var("HOME"),
+    }
+    std::env::remove_var("VELT_LINKER");
+    for (exe, linked, _) in &results {
+        linked
+            .as_ref()
+            .unwrap_or_else(|e| panic!("link failed:\n{e}"));
+        assert_runs(exe);
+    }
+    // One run of the driver in all, the question, before the first link.
+    for (_, _, ran) in &results {
+        let lines: Vec<&str> = ran.lines().collect();
+        assert_eq!(lines.len(), 1, "the driver ran: {lines:?}");
+        assert!(lines[0].starts_with("-### "), "{lines:?}");
+    }
+    let kept = home.join("Library/Caches/velt/ld");
+    assert_eq!(
+        std::fs::read_dir(&kept).unwrap().count(),
+        1,
+        "{}",
+        kept.display()
+    );
+    let _ = std::fs::remove_dir_all(&setup.dir);
+}
+
+/// macOS: a direct link that fails goes through the driver, and what was kept for it is
+/// forgotten. After a first link has asked the driver, the kept answer is made to name an `ld`
+/// that fails (with that program's size and time, as a toolchain whose SDK moved would still
+/// have): the next link succeeds, through `cc`; the kept file is gone; and the link after it
+/// asks the driver again and runs `ld` itself.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_failed_direct_link_on_macos_goes_through_cc_and_is_forgotten() {
+    use std::os::unix::fs::PermissionsExt;
+    let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let setup = Setup::new("macos-ld-fails");
+    let bin = setup.dir.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let runs = setup.dir.join("cc-runs");
+    let script = format!(
+        "#!/bin/sh\necho \"$@\" >> '{}'\nexec /usr/bin/cc \"$@\"\n",
+        runs.display()
+    );
+    std::fs::write(bin.join("cc"), script).unwrap();
+    // A stand-in `ld` that links nothing.
+    let failing = setup.dir.join("failing").join("ld");
+    std::fs::create_dir_all(failing.parent().unwrap()).unwrap();
+    std::fs::write(&failing, "#!/bin/sh\nexit 1\n").unwrap();
+    for program in [bin.join("cc"), failing.clone()] {
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let home = setup.dir.join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let kept = home.join("Library/Caches/velt/ld");
+    let kept_files = || -> Vec<PathBuf> {
+        std::fs::read_dir(&kept)
+            .map(|d| d.map(|e| e.unwrap().path()).collect())
+            .unwrap_or_default()
+    };
+    let (old_path, old_home) = (std::env::var_os("PATH").unwrap(), std::env::var_os("HOME"));
+    let mut path = vec![bin.clone()];
+    path.extend(std::env::split_paths(&old_path));
+    std::env::set_var("PATH", std::env::join_paths(path).unwrap());
+    std::env::set_var("HOME", &home);
+    std::env::set_var("VELT_LINKER", "system");
+    let objects = [setup.obj.clone()];
+    let exe = |n: u32| setup.dir.join(format!("fallback_{n}"));
+    let driver_runs = || -> Vec<String> {
+        let text = std::fs::read_to_string(&runs).unwrap_or_default();
+        text.lines().map(str::to_string).collect()
+    };
+
+    let first = velt_link::link(&setup.request(&objects, &exe(1), false));
+    let after_first = (driver_runs(), kept_files());
+    // The kept answer now names the failing `ld`, with its size and time.
+    let mut rewritten = false;
+    if let [file] = after_first.1.as_slice() {
+        let m = std::fs::metadata(&failing).unwrap();
+        let nanos = (m.modified().unwrap())
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let text = std::fs::read_to_string(file).unwrap();
+        let lines: Vec<String> = (text.lines())
+            .map(|l| {
+                if l.starts_with("ld ") {
+                    format!("ld {} {nanos}", m.len())
+                } else if l.starts_with("program ") {
+                    format!("program {}", failing.display())
+                } else {
+                    l.to_string()
+                }
+            })
+            .collect();
+        std::fs::write(file, lines.join("\n") + "\n").unwrap();
+        rewritten = true;
+    }
+    let second = velt_link::link(&setup.request(&objects, &exe(2), false));
+    let after_second = (driver_runs(), kept_files());
+    let third = velt_link::link(&setup.request(&objects, &exe(3), false));
+    let after_third = (driver_runs(), kept_files());
+
+    std::env::set_var("PATH", &old_path);
+    match old_home {
+        Some(h) => std::env::set_var("HOME", h),
+        None => std::env::remove_var("HOME"),
+    }
+    std::env::remove_var("VELT_LINKER");
+
+    for (n, linked) in [(1, first), (2, second), (3, third)] {
+        linked.unwrap_or_else(|e| panic!("link {n} failed:\n{e}"));
+        assert_runs(&exe(n));
+    }
+    let asks = |runs: &[String]| runs.iter().filter(|l| l.starts_with("-### ")).count();
+    // The first link asked the driver and kept its answer.
+    assert_eq!(
+        (after_first.0.len(), asks(&after_first.0)),
+        (1, 1),
+        "{:?}",
+        after_first.0
+    );
+    assert!(rewritten, "one kept file: {:?}", after_first.1);
+    // The second ran the failing `ld`, then the driver as the linker, and forgot the answer.
+    assert_eq!(
+        (after_second.0.len(), asks(&after_second.0)),
+        (2, 1),
+        "{:?}",
+        after_second.0
+    );
+    assert!(after_second.1.is_empty(), "{:?}", after_second.1);
+    // The third asked again and linked with `ld` itself.
+    assert_eq!(
+        (after_third.0.len(), asks(&after_third.0)),
+        (3, 2),
+        "{:?}",
+        after_third.0
+    );
+    assert_eq!(after_third.1.len(), 1);
+    let _ = std::fs::remove_dir_all(&setup.dir);
+}
+
 /// The bundled linker: a kit for the host built here, linked with the Rust toolchain's
 /// `rust-lld` (what `velt` falls back to in a checkout).
 #[test]
