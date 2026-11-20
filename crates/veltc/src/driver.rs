@@ -25,6 +25,7 @@ mod pipeline;
 mod recover;
 mod std_load;
 mod std_summary;
+mod units_key;
 use std_load::load_options;
 pub(crate) use std_load::StdLoad;
 mod warm;
@@ -423,6 +424,7 @@ fn sema_stage(
         require_main: scope.require_main,
         eager_std: scope.eager_std,
         units: scope.units,
+        std_key: units_key::units_std_key(sess, scope, loaded),
         native_executor: native_executor(opts),
     };
     let packages = opts.packages.as_ref();
