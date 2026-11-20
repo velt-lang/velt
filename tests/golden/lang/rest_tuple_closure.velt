@@ -1,0 +1,32 @@
+// An arrow made in a generic body whose rest parameter takes a type parameter from its context
+// (`(rq, ...args) => …` typed by `(rq: Ctx, ...args: A) => R`, #379). At an instantiation where
+// `A` is a tuple, the arrow's function type has the tuple's elements as fixed parameters, and
+// the arrow's own code takes them the same way and builds `args` from them: numbers, strings
+// and an object, the empty tuple, read by length and by index. Node prints the same.
+interface Ctx {
+  id: string;
+}
+
+function keep<A extends unknown[], R>(f: (rq: Ctx, ...args: A) => R): (rq: Ctx, ...args: A) => number {
+  return (rq, ...args) => args.length;
+}
+
+function firstOf<A extends unknown[]>(): (...args: A) => string {
+  return (...args) => String(args[0]);
+}
+
+function count<A extends unknown[]>(): (...args: A) => number {
+  return (...args) => args.length;
+}
+
+function secondOf<A extends unknown[]>(): (...args: A) => string {
+  return (...args) => String(args[1]);
+}
+
+const g = keep((rq: Ctx, a: number, b: number): number => a + b);
+console.log(g({ id: "x" }, 1, 2));
+console.log(firstOf<[number, number]>()(7, 8));
+console.log(firstOf<[string, boolean]>()("seven", true));
+console.log(count<[string, number, Ctx]>()("a", 2, { id: "c" }));
+console.log(count<[]>()());
+console.log(secondOf<[Ctx, string, number]>()({ id: "c" }, "second", 3));

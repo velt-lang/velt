@@ -5,20 +5,19 @@
 // entry's type from the find data: a reparse point tagged as a symlink or a mount point (a
 // junction) is a link, whatever it points to.
 //
-// Removing still calls the runtime (`velt_rt_fs_remove_sync`): a tree is removed there with
-// every directory opened relative to its parent's handle, so that a directory swapped for a
-// junction during the walk is never entered, and that walk is not Velt code yet (#2196).
+// Removing is std/fs/tree/win_remove.velt's: on handles, a tree with every directory opened
+// relative to its parent's handle, so that a directory swapped for a junction during the walk is
+// never entered.
 
 import { Ptr } from "velt/ffi/ptr";
 import { Dirent } from "velt/fs/dirent";
 import { osError } from "velt/fs/errors";
 import { isDots, kindOf, nameOf } from "velt/fs/tree/find_data";
 import { byCodePoint } from "velt/fs/tree/order";
+import { removePath } from "velt/fs/tree/win_remove";
 import { Done } from "velt/fs/whole/done";
 import { asFile, winPath } from "velt/fs/whole/win_path";
 import { pdqsort } from "velt/lang/sort/pdq";
-import { ioError } from "velt/native/error";
-import { IoStatus } from "velt/native/status";
 import { errnoOfWin32 } from "velt/os/win_error";
 
 /** C's `WIN32_FIND_DATAW`, which the find functions fill. */
@@ -44,8 +43,6 @@ declare c("c") function GetFileAttributesW(name: readonly u16[]): u32;
 declare c("c") function GetLastError(): u32;
 declare c("c") function malloc(size: usize): Ptr<void> | null;
 declare c("c") function free(p: Ptr<void> | null): void;
-
-declare function velt_rt_fs_remove_sync(path: string, recursive: bool): IoStatus;
 
 const INVALID_HANDLE: usize = 0xffffffffffffffff;
 /** `FindExInfoBasic`: no short names, which nothing here reads. */
@@ -293,14 +290,19 @@ export function make(c: readonly u8[], path: string, recursive: bool): Done<bool
 
 /**
  * Removes what is at `path`: a file, a link (never what it points to) or an empty directory,
- * with `recursive` a directory and everything in it. The runtime's function, for now (see the
- * top of this file).
+ * with `recursive` a directory and everything in it. The error names the call that failed:
+ * `lstat` for a path that is not there.
  */
 export function removeAt(c: readonly u8[], path: string, recursive: bool): Done<bool> {
   // A file named with separators after it is removed as the file, as Node's `rm` does.
-  const s = velt_rt_fs_remove_sync(asFile(path), recursive);
-  if (s.code != 0) {
-    return { value: null, error: ioError(s.code, s.message) };
+  const file = asFile(path);
+  const w = winPath(file);
+  if (w === null) {
+    return { value: null, error: osError(ENOENT, "lstat", file) };
+  }
+  const r = removePath(w, recursive);
+  if (r.code !== 0) {
+    return { value: null, error: osError(errnoOfWin32(r.code), r.call, file) };
   }
   return { value: true, error: null };
 }
