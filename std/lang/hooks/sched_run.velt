@@ -135,9 +135,7 @@ function runOther(e: usize, k: usize, fl: u32): void {
  */
 @inline("always")
 function runWoken(e: usize, k: usize, fl: u32): void {
-  if ((fl & t.CARRIED) !== 0) {
-    sc.adopt(e, k);
-  }
+  sc.adoptCarried(e, k, fl);
   t.flags(k, 0, t.POLLED);
   if ((fl & t.LOCALS) !== 0) {
     let n = wn.takeWoken(k);
