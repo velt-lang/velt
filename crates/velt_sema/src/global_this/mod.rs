@@ -7,7 +7,9 @@
 //! property exists before any module runs. Every site then reads or writes that variable:
 //!
 //! - `(globalThis as T).K` and `(globalThis as T)[KEY]`, with `KEY` a string literal or a string
-//!   constant (of the module or imported);
+//!   constant (of the module or imported), or a constant `Symbol.for("k")`, whose property's key
+//!   is `[Symbol.for("k")]` (one symbol for the process; through `Record<symbol, V>` it is a
+//!   `V | undefined`);
 //! - the same through a `const g = globalThis as T;` (the constant stands for `globalThis`);
 //! - `globalThis.K` and `globalThis[KEY]` without an assertion (or asserted `any` or
 //!   `unknown`), when another site asserts `K`'s type;
