@@ -27,6 +27,33 @@ pub(crate) fn path(opts: CheckOptions, found: [bool; 4]) -> Option<PathBuf> {
     Some(PathBuf::from(dir).join(format!("{key:016x}.unit")))
 }
 
+/// Can the program change what std's stage makes of std's modules? Then its check neither loads
+/// std's unit from disk nor keeps the one it makes: the key ([`path`]) is of std's sources, not
+/// of what a program adds to them. A program does when it
+/// - augments a module (`declare module "…" { interface … }`: `interface_merge` adds the
+///   members, and imports of the program's types, to the module's own interface, std's too);
+/// - has overloads, or a class named as one of std's (`overloads::reaches_std`);
+/// - defines a symbol brand or a global namespace (`brands`, `global_namespaces`: facts of the
+///   whole program that std's check reads, a hidden key in a spread, a path no module resolves).
+///
+/// The other source rewrites make a module's code from that module alone, or leave std's
+/// modules as they are. `modules` are the load's, before the rewrites.
+pub(crate) fn shaped_by_program(
+    modules: &[SourceModule],
+    brands: &crate::defined_props::Brands,
+    global_namespaces: &crate::namespaces::GlobalNamespaces,
+) -> bool {
+    use velt_syntax::ast::ItemKind;
+    let augments = |m: &SourceModule| {
+        (m.ast.items.iter()).any(|i| matches!(&i.kind, ItemKind::Augment(a) if a.module.is_some()))
+    };
+    !brands.sites.is_empty()
+        || !brands.direct.is_empty()
+        || !global_namespaces.is_empty()
+        || modules.iter().any(|m| !m.is_std && augments(m))
+        || crate::overloads::reaches_std(modules)
+}
+
 /// std's unit from `path`, over std's `modules` (a load's, in any order), its AST in `arena`,
 /// with where each of its modules is in `modules` (its own order is the one it was saved with);
 /// `None` when there is none or it does not decode.

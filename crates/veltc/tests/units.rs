@@ -387,16 +387,181 @@ fn an_app_interface_extending_std_ones_writes_nothing_of_std() {
 
 /// `velt check` of `src` with std as a unit of its own kept on disk in `disk`.
 fn check_on_disk(disk: &std::path::Path, src: &str) -> std::process::Output {
+    check_on_disk_with(disk, src, &[])
+}
+
+/// [`check_on_disk`] with more of the environment set (`env`: name, value).
+fn check_on_disk_with(
+    disk: &std::path::Path,
+    src: &str,
+    env: &[(&str, &std::path::Path)],
+) -> std::process::Output {
     let dir = test_dir::TestDir::new();
     std::fs::write(dir.path().join("main.velt"), src).unwrap();
-    no_window::command(env!("CARGO_BIN_EXE_velt"))
-        .args(["check", "main.velt"])
+    let mut cmd = no_window::command(env!("CARGO_BIN_EXE_velt"));
+    cmd.args(["check", "main.velt"])
         .current_dir(dir.path())
         .env("VELT_UNITS", "2")
         .env("VELT_UNITS_DISK", disk)
-        .env_remove("VELT_UNITS_FREEZE")
-        .output()
-        .unwrap()
+        .env_remove("VELT_UNITS_FREEZE");
+    for (name, value) in env {
+        cmd.env(name, value);
+    }
+    cmd.output().unwrap()
+}
+
+/// What a check said about std's unit on disk: `Some(true)` loaded, `Some(false)` refused,
+/// `None` when it read none.
+fn from_disk(o: &std::process::Output) -> Option<bool> {
+    let said = String::from_utf8_lossy(&o.stderr);
+    match () {
+        _ if said.contains("std's unit loaded from disk") => Some(true),
+        _ if said.contains("std's unit refused from disk") => Some(false),
+        _ => None,
+    }
+}
+
+/// A program that changes what std's stage makes of std (it augments a std interface) neither
+/// loads std's unit from disk nor keeps the one its check made (`units::disk`): a unit made
+/// with the augmentation would accept the next program's use of the added field, and one made
+/// without it would refuse this program's. Both check as by a whole-program check, in either
+/// order.
+#[test]
+fn a_program_that_changes_std_neither_loads_nor_keeps_std_s_unit() {
+    let plain = r#"
+import type { ParamSink } from "velt/db";
+export function f(s: ParamSink): number {
+  return s.probeExt ?? 0;
+}
+function main() {
+  console.log("x");
+}
+"#;
+    let block =
+        "declare module \"velt/db\" {\n  interface ParamSink {\n    probeExt?: number;\n  }\n}\n";
+    let augmenting = plain.replacen("export function", &format!("{block}export function"), 1);
+    let whole = check_in(None, &augmenting);
+    let said = String::from_utf8_lossy(&whole.stderr).to_string();
+    assert!(whole.status.success(), "{said}");
+    let refused = error_lines(&check_in(None, plain));
+    assert!(
+        refused.iter().any(|l| l.contains("probeExt")),
+        "{refused:?}"
+    );
+
+    let dir = test_dir::TestDir::new();
+    let disk = dir.path().join("units");
+    // The augmenting program first: nothing is kept.
+    let first = check_on_disk(&disk, &augmenting);
+    assert!(first.status.success());
+    assert_eq!(
+        units_in(&disk).len(),
+        0,
+        "a unit made under an augmentation was kept"
+    );
+    // The plain program makes and keeps std's unit, and is refused.
+    let second = check_on_disk(&disk, plain);
+    assert_eq!(refused, error_lines(&second));
+    assert_eq!(units_in(&disk).len(), 1);
+    // The augmenting program does not load it.
+    let third = check_on_disk(&disk, &augmenting);
+    let said = String::from_utf8_lossy(&third.stderr).to_string();
+    assert_eq!(from_disk(&third), None, "{said}");
+    assert!(third.status.success(), "{said}");
+    // The plain program loads it, and is still refused.
+    let fourth = check_on_disk(&disk, plain);
+    assert_eq!(from_disk(&fourth), Some(true));
+    assert_eq!(refused, error_lines(&fourth));
+}
+
+/// A program with an `any`, whose printing makes std's generator write code for std's own
+/// declarations.
+const ANY_PROGRAM: &str = r#"
+const c = new AbortController();
+c.abort("why");
+const reason = c.signal.reason;
+console.log(reason, typeof reason);
+console.log(reason instanceof Error ? "error" : "other");
+"#;
+
+/// std's unit holds std's own modules only: the module generated for std's declarations
+/// (`<generated>/std/encoding/json/generated/1`), which a check is handed once an earlier one
+/// made it, is the program's. So the unit a check makes with a warm build cache serves the
+/// checks after it: they are handed the same module apart, which no unit holds.
+#[test]
+fn std_s_unit_on_disk_does_not_depend_on_the_build_cache() {
+    let dir = test_dir::TestDir::new();
+    let (disk, cache) = (dir.path().join("units"), dir.path().join("cache"));
+    // One program file throughout: what a check generated is offered to the next check of the
+    // same program.
+    let src = test_dir::TestDir::new();
+    std::fs::write(src.path().join("main.velt"), ANY_PROGRAM).unwrap();
+    let check = |disk: Option<&std::path::Path>| {
+        let mut cmd = no_window::command(env!("CARGO_BIN_EXE_velt"));
+        cmd.args(["check", "main.velt"])
+            .current_dir(src.path())
+            .env("VELT_UNITS", "2")
+            .env("VELT_BUILD_CACHE", &cache)
+            .env_remove("VELT_UNITS_FREEZE");
+        match disk {
+            Some(d) => cmd.env("VELT_UNITS_DISK", d),
+            None => cmd.env_remove("VELT_UNITS_DISK"),
+        };
+        cmd.output().unwrap()
+    };
+    // A check without the unit on disk warms the build cache with what it generated.
+    assert!(check(None).status.success());
+    let first = check(Some(&disk));
+    let said = String::from_utf8_lossy(&first.stderr).to_string();
+    assert!(first.status.success(), "{said}");
+    assert_eq!(from_disk(&first), None, "{said}");
+    for run in 2..=3 {
+        let next = check(Some(&disk));
+        let said = String::from_utf8_lossy(&next.stderr).to_string();
+        assert!(next.status.success(), "run {run}:\n{said}");
+        assert_eq!(from_disk(&next), Some(true), "run {run}:\n{said}");
+    }
+    assert_eq!(units_in(&disk).len(), 1);
+}
+
+/// A changed std is another unit: the key std's unit is kept under covers std's sources, so a
+/// check after an edit of one std file reads no unit, checks std again and keeps a second one.
+#[test]
+fn a_changed_std_does_not_load_the_unit_of_the_std_before() {
+    let dir = test_dir::TestDir::new();
+    let (disk, std) = (dir.path().join("units"), dir.path().join("std"));
+    let repo_std = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
+    copy_dir(&repo_std, &std);
+    let env = [("VELT_STD", std.as_path())];
+    let ok = "function main() {\n  console.log(\"hi\");\n}\n";
+    let first = check_on_disk_with(&disk, ok, &env);
+    let said = String::from_utf8_lossy(&first.stderr).to_string();
+    assert!(first.status.success(), "{said}");
+    assert_eq!(from_disk(&check_on_disk_with(&disk, ok, &env)), Some(true));
+    let file = std.join("fs/index.velt");
+    let mut text = std::fs::read_to_string(&file).unwrap();
+    text.push_str("\n// edited\n");
+    std::fs::write(&file, text).unwrap();
+    let after = check_on_disk_with(&disk, ok, &env);
+    let said = String::from_utf8_lossy(&after.stderr).to_string();
+    assert!(after.status.success(), "{said}");
+    assert_eq!(from_disk(&after), None, "{said}");
+    assert_eq!(units_in(&disk).len(), 2);
+}
+
+/// Copy the directory `from` to `to`, with everything in it.
+fn copy_dir(from: &std::path::Path, to: &std::path::Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        match entry.file_type().unwrap().is_dir() {
+            true => copy_dir(&entry.path(), &target),
+            false => {
+                std::fs::copy(entry.path(), &target).unwrap();
+            }
+        }
+    }
 }
 
 /// The units kept in `disk`.
