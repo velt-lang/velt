@@ -10,7 +10,21 @@
 // Every builder call passes the builder first and only locals after it: an argument that is a
 // call would make the compiler copy the builder first, and the append would go to the copy.
 
-import { strbufPushAsciiWords, strByteAt, strByteLen, strLen } from "velt/lang/intrinsics";
+import {
+  addressArray,
+  arrayCopyBytes,
+  arrayDataAddress,
+  arraySetLen,
+  arrayWithCapacity,
+  strAsciiWords,
+  strbufPushAsciiWords,
+  strByteAt,
+  strByteLen,
+  strDataAddress,
+  strLen,
+  strLoadPartialU8x16,
+  strLoadU8x16,
+} from "velt/lang/intrinsics";
 import { codePoint4 } from "velt/lang/string/code_units";
 
 declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
@@ -18,6 +32,9 @@ declare function velt_rt_str_from_char_code(code: i64): string;
 declare function velt_rt_strbuf_new(cap: u64, out: string);
 declare function velt_rt_strbuf_push_str(buf: string, s: string);
 declare function velt_rt_strbuf_finish(buf: string, out: string);
+declare function velt_rt_strbuf_push_u8s(buf: string, bytes: u8[], len: u64, units: u64);
+declare function velt_rt_str_is_well_formed(s: string): bool;
+declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
 
 /** The byte `b` in each byte of a word. */
 function spread(b: u8): u64 {
@@ -37,10 +54,97 @@ function pushRun(buf: string, b: u8, count: usize) {
   }
 }
 
+/** From this many copies on, `repeat` of text that is not a few ASCII bytes doubles its copies. */
+const DOUBLING: usize = 8;
+/** Fewer copies than this are appended as strings. */
+const FEW: usize = 4;
+/** The most bytes of an inline string that is not ASCII (rt_abi.md "Strings"). */
+const INLINE_WIDE: usize = 22;
+
+/**
+ * `times` copies (two or more) of `s`, a result short enough to be an inline string, as every
+ * string on the way then is: nothing is allocated. What is built doubles, most significant bit
+ * of `times` first, and takes one more copy where `times` has a bit; `+` joins two halves of a
+ * pair that meet.
+ */
+function joined(s: string, times: usize): string {
+  let bit: usize = 1 << (62 - times.leadingZeros());
+  let out = s + s;
+  if ((times & bit) != 0) {
+    out += s;
+  }
+  bit = bit >> 1;
+  while (bit != 0) {
+    const twice = out + out;
+    out = (times & bit) != 0 ? twice + s : twice;
+    bit = bit >> 1;
+  }
+  return out;
+}
+
+/**
+ * `times` copies of `s` (`n` bytes, `total` in all; ASCII or well-formed), each appended to a
+ * builder of the result's size from a view of `s`'s bytes, its UTF-16 length known.
+ */
+function copied(s: string, n: usize, times: usize, total: usize): string {
+  const view: u8[] = unsafe { addressArray<u8>(strDataAddress(s), n) };
+  const units = strLen(s) as u64;
+  let buf = "";
+  velt_rt_strbuf_new(total as u64, buf);
+  for (let k: usize = 0; k < times; k++) {
+    velt_rt_strbuf_push_u8s(buf, view, n as u64, units);
+  }
+  let out = "";
+  velt_rt_strbuf_finish(buf, out);
+  return out;
+}
+
+/**
+ * `times` copies of `s` (`n` bytes, `total` in all; ASCII or well-formed), laid out in a byte
+ * array which a builder of the result's size takes in one append: a copy of at most 16 bytes is
+ * stored once per copy, a longer one is copied in and doubled in place until the array is full.
+ */
+function doubled(s: string, n: usize, times: usize, total: usize): string {
+  // Room for a whole 16-byte store at the last copy.
+  const bytes: u8[] = arrayWithCapacity(total + 16);
+  arraySetLen(bytes, total + 16);
+  if (n <= 16) {
+    // Each store writes the copy and bytes past it, which the next store writes over.
+    const v = n == 16 ? strLoadU8x16(s, 0) : strLoadPartialU8x16(s, 0, n as u64);
+    let at: usize = 0;
+    while (at < total) {
+      velt_simd_u8x16_store(v, bytes, at as u64);
+      at += n;
+    }
+  } else {
+    const view: u8[] = unsafe { addressArray<u8>(strDataAddress(s), n) };
+    arrayCopyBytes(bytes, 0, view, 0, n);
+    // The array's own bytes, read while it is written further on: the ranges never overlap.
+    const built: u8[] = unsafe { addressArray<u8>(arrayDataAddress(bytes), total) };
+    let have = n;
+    while (have < total) {
+      const more = have <= total - have ? have : total - have;
+      arrayCopyBytes(bytes, have, built, 0, more);
+      have += more;
+    }
+  }
+  let buf = "";
+  velt_rt_strbuf_new(total as u64, buf);
+  velt_rt_strbuf_push_u8s(buf, bytes, total as u64, (strLen(s) * times) as u64);
+  let out = "";
+  velt_rt_strbuf_finish(buf, out);
+  return out;
+}
+
 /**
  * `s.repeat(count)`, for a `count` the caller has checked: not negative, and the result within
- * a string's length. The copies double: one append of the string, then of everything built so
- * far, so `count` copies take about `log2(count)` appends.
+ * a string's length. Nothing is built on the way but the result:
+ * - ASCII text of at most 24 bytes: as many whole copies as 24 bytes hold are laid out in three
+ *   words once. A result of at most 23 bytes is those words, an inline string, with no call;
+ *   a longer one takes them again and again, stored inline into a builder of the result's size.
+ * - Other text: a result short enough to be inline is joined from inline strings (`joined`);
+ *   a few copies are appended to such a builder one by one (`copied`); more are doubled in a
+ *   byte array (`doubled`).
  */
 export function repeat(s: string, count: i64): string {
   const n = strByteLen(s);
@@ -51,26 +155,59 @@ export function repeat(s: string, count: i64): string {
     return velt_rt_str_byte_slice(s, 0, n as u64);
   }
   const times = count as usize;
-  let buf = "";
-  velt_rt_strbuf_new((n * times) as u64, buf);
-  if (n == 1 && strByteAt(s, 0) < 0x80) {
-    pushRun(buf, strByteAt(s, 0), times);
-  } else {
-    // `block` is `have` copies; the builder gets a block whenever `times`' bit asks for it.
-    let block = velt_rt_str_byte_slice(s, 0, n as u64);
-    let have: usize = 1;
-    let left = times;
-    while (true) {
-      if ((left & have) != 0) {
-        velt_rt_strbuf_push_str(buf, block);
-        left -= have;
-      }
-      if (left == 0) {
-        break;
-      }
-      block = block + block;
-      have *= 2;
+  const total = n * times;
+  const ascii = strLen(s) == n;
+  if (!ascii || n > 24) {
+    if (total <= INLINE_WIDE) {
+      return joined(s, times);
     }
+    // Two or three copies, and text with a lone surrogate, are appended as strings: a copy
+    // that ends with a high surrogate joins the next that starts with a low one.
+    if (times < FEW || (!ascii && !velt_rt_str_is_well_formed(s))) {
+      let buf = "";
+      velt_rt_strbuf_new(total as u64, buf);
+      for (let k: usize = 0; k < times; k++) {
+        velt_rt_strbuf_push_str(buf, s);
+      }
+      let out = "";
+      velt_rt_strbuf_finish(buf, out);
+      return out;
+    }
+    return times < DOUBLING ? copied(s, n, times, total) : doubled(s, n, times, total);
+  }
+  // The copies the words hold: all of a short result, else as many as fit.
+  const chunk = total <= 24 ? total : (24 / n) * n;
+  let w0: u64 = 0;
+  let w1: u64 = 0;
+  let w2: u64 = 0;
+  let j: usize = 0;
+  for (let i: usize = 0; i < chunk; i++) {
+    const b = (strByteAt(s, j as u64) as u64) << (((i & 7) * 8) as u64);
+    if (i < 8) {
+      w0 = w0 | b;
+    } else if (i < 16) {
+      w1 = w1 | b;
+    } else {
+      w2 = w2 | b;
+    }
+    j++;
+    if (j == n) {
+      j = 0;
+    }
+  }
+  if (total <= 23) {
+    return strAsciiWords(w0, w1, w2, total);
+  }
+  let buf = "";
+  velt_rt_strbuf_new(total as u64, buf);
+  let left = total;
+  while (left >= chunk) {
+    strbufPushAsciiWords(buf, w0, w1, w2, chunk);
+    left -= chunk;
+  }
+  if (left > 0) {
+    // What is left starts a copy, as the words do.
+    strbufPushAsciiWords(buf, w0, w1, w2, left);
   }
   let out = "";
   velt_rt_strbuf_finish(buf, out);
