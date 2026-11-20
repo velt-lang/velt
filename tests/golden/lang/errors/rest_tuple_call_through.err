@@ -1,0 +1,2 @@
+rest_tuple_call_through.velt:10:10: error: a call of a function value whose rest parameter is typed by a type parameter (`...args: A`) is not supported yet (#943)
+  = note: its arguments for `A` are known only once `A` is: pass the function on, or type the rest parameter as an array (`...args: unknown[]`)

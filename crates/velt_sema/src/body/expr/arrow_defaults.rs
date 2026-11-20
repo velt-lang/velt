@@ -420,7 +420,10 @@ impl FnCx<'_, '_> {
                 ..
             } => {
                 let TyKind::FnPtr {
-                    params: ptys, ret, ..
+                    params: ptys,
+                    ret,
+                    rest,
+                    ..
                 } = self.cx.ty.kind(core).clone()
                 else {
                     return;
@@ -428,6 +431,14 @@ impl FnCx<'_, '_> {
                 let sensitive = params.iter().any(|p| p.ty.is_none());
                 let mut undeclared = vec![];
                 for (i, t) in ptys.iter().enumerate() {
+                    // A rest parameter typed by a type parameter is the tuple of the arrow's
+                    // parameters there (`rest_tuple`), not the first of them.
+                    let rest_slot = rest
+                        && i + 1 == ptys.len()
+                        && matches!(self.cx.ty.kind(*t), TyKind::Param(_));
+                    if rest_slot && params.len() > i && !params[i].rest {
+                        continue;
+                    }
                     match params.get(i) {
                         // An annotated parameter is a candidate first (`(x: number, y) => …` for
                         // `(x: T, y: T) => …`), as in TypeScript.

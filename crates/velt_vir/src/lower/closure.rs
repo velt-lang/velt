@@ -14,7 +14,7 @@
 //! that compares function values, a closure without captures gets an empty env all the same,
 //! as the identity of that evaluation (`identity_closure`).
 
-use velt_sema::hir::{self, DefId, FnDef, PassMode, TyId};
+use velt_sema::hir::{self, DefId, FnDef, PassMode, TyId, TyKind};
 
 use super::operand::proj;
 use super::rt::Rt;
@@ -118,6 +118,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
     /// `{ code, env }` of closure `def`; `borrowed`: only borrowed by a call (see
     /// [`borrowed_arg`](Self::borrowed_arg)), so value captures may stay in a frame env too.
     fn closure_value(&mut self, def: DefId, ty: TyId, borrowed: bool) -> Operand {
+        // A closure with a rest parameter: at an instance where it is a tuple, the closure's
+        // code takes the tuple's elements, as its normalized function type does (`abi.rs`).
+        if matches!(self.cx.raw_kind(ty), TyKind::FnPtr { rest: true, .. }) {
+            self.cx.rest_closures.insert(def);
+        }
         self.note_closure_made(def);
         self.note_wrapper_made(def);
         self.note_closure_env(def, ty);
