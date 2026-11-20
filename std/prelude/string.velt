@@ -16,6 +16,7 @@ import { parseIntOf } from "velt/lang/number/parse_int";
 import {
   hookCall,
   inline,
+  noInline,
   strAsciiWords,
   strByteAt,
   strByteLen,
@@ -89,9 +90,27 @@ function splitLimitOf(limit: number): u32 {
   return (r < 0 ? r + 4294967296 : r) as u32;
 }
 
+/**
+ * `repeat`'s RangeError for the count `n`. A `number` count converts to the nearest `i64`, so
+ * the infinities arrive as the largest and the smallest one.
+ */
+@noInline
+function repeatError(n: i64): never {
+  if (n == END) {
+    panic("RangeError: Invalid count value: Infinity");
+  }
+  if (n == -END - 1) {
+    panic("RangeError: Invalid count value: -Infinity");
+  }
+  if (n < 0) {
+    panic(`RangeError: Invalid count value: ${n}`);
+  }
+  panic("RangeError: Invalid string length");
+}
+
 // "Omitted" end / from positions, as the runtime expects them.
 const END: i64 = 9223372036854775807;
-// The most bytes a string holds (velt_rt `str/heap.rs` `MAX_CAP`): `repeat` past it is a RangeError.
+// The most bytes a string holds (velt_rt `str/heap.rs` `MAX_CAP`): a longer `repeat` is a RangeError.
 const MAX_BYTES: i64 = 2147483647;
 
 extend string {
@@ -208,11 +227,15 @@ extend string {
     return hookCall("string_replace_all", this, from, to);
   }
 
-  /** Panics like JS's RangeError if `n` is negative or the result would be too large. */
+  /**
+   * `n` copies of this string. A RangeError panic, with JS's messages, for a negative or
+   * infinite count ("Invalid count value") and for a result longer than a string can be
+   * ("Invalid string length").
+   */
   repeat(n: i64): string {
     const bytes = strByteLen(this) as i64;
-    if (n < 0 || (bytes != 0 && n > MAX_BYTES / bytes)) {
-      panic(`RangeError: Invalid count value: ${n}`);
+    if (n < 0 || n == END || (bytes != 0 && n > MAX_BYTES / bytes)) {
+      repeatError(n);
     }
     return hookCall("string_repeat", this, n);
   }
