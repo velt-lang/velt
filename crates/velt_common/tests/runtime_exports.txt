@@ -313,7 +313,6 @@ velt_rt velt_rt_symbol_new
 velt_rt velt_rt_task_gate
 velt_rt velt_rt_task_gate_free
 velt_rt velt_rt_task_gate_wait
-velt_rt velt_rt_task_id
 velt_rt velt_rt_tcp_abort
 velt_rt velt_rt_tcp_accept
 velt_rt velt_rt_tcp_alpn
@@ -374,8 +373,6 @@ velt_rt velt_rt_xfer_record
 velt_rt velt_rt_xfer_resume
 velt_rt velt_rt_xfer_share_begin
 velt_rt velt_rt_xfer_suspend
-velt_rt velt_rt_yield_now
-velt_rt velt_rt_yield_now_fut
 velt_rt_wasm __main_void
 velt_rt_wasm velt_host_alloc
 velt_rt_wasm velt_host_bytes_new
