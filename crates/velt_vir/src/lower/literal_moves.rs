@@ -11,11 +11,14 @@
 //! Such an operand is read in place and shared instead (a reference of its own) when it is a
 //! string: the local keeps its part and drops it as usual. Otherwise it is lowered after the
 //! operands that follow it, the order the move analysis checks, unless one of them may write
-//! the local.
+//! the local (`{ a: b.inner, c: run(() => { b.tag = "x"; ... }) }`): then a reference to an
+//! object is shared too (its type counted), as JavaScript's literal and local refer to one
+//! object, and an inline value is moved where it is.
 
 use rustc_hash::FxHashSet;
 use velt_sema::hir::{self, LocalId, UseMode};
 
+use super::boxing::ShareKind;
 use super::place::part_root;
 use super::sequence::{any_operand, Later};
 use super::{unit, FnLower};
@@ -48,6 +51,7 @@ impl FnLower<'_, '_> {
                     vals.push(unit());
                     continue;
                 }
+                Some(_) if self.shared_object_part(e) => self.consume_shared(e),
                 _ => self.consume(e),
             };
             let v = self.hold_owned(v, e.ty, later);
@@ -112,20 +116,27 @@ impl FnLower<'_, '_> {
         matches!(self.cx.kind(ty), hir::TyKind::Str)
     }
 
-    /// `e` for a `shareable_part`: the moved part read in place, then shared.
+    /// Can the part `e` moves be shared when a later operand may write its local? A reference to
+    /// an object: a share is a reference of its own, which the next pass counts (`note_share`)
+    /// when its type is not counted yet; until then the part is moved where it is.
+    fn shared_object_part(&mut self, e: &hir::Expr) -> bool {
+        let ty = self.sub(e.ty);
+        if self.cx.share_kind(ty) != ShareKind::Object {
+            return false;
+        }
+        self.cx.note_share(ty);
+        self.cx.counted(ty)
+    }
+
+    /// `e` for a `shareable_part` or a `shared_object_part`: the moved part read in place, then
+    /// shared. The share is owned by the caller, as `consume` hands over a value: the literal
+    /// takes it, and `consume_each` registers it for dropping while later operands may throw.
     fn consume_shared(&mut self, e: &hir::Expr) -> Operand {
         let mut borrowed = e.clone();
         set_outer_mode(&mut borrowed, UseMode::Borrow);
         let ty = self.sub(e.ty);
         let v = self.expr(&borrowed);
-        let held = self.share_value(v.clone(), ty);
-        match &held {
-            Operand::Copy(h) if h.proj.is_empty() && held != v => {
-                self.own_temp(h.local, ty);
-                held
-            }
-            _ => self.own_value(held, ty),
-        }
+        self.share_value(v, ty)
     }
 
     /// The local `e` moves a part out of, when the move empties or drops that part in the

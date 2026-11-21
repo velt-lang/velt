@@ -434,6 +434,10 @@ fn simd_only(call: &Option<SimdCall>) -> bool {
             | SimdCall::Mask(..)
             | SimdCall::Inst(_)
             | SimdCall::Has(_)
+            | SimdCall::OnArch(_)
+            | SimdCall::CpuWord
+            | SimdCall::CpuWordSet
+            | SimdCall::CpuRequired
             | SimdCall::Cpuid
             | SimdCall::Xgetbv
             | SimdCall::Prefetch,

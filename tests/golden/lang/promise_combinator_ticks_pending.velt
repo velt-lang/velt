@@ -1,0 +1,71 @@
+// `Promise.all`, `race`, `allSettled` and `any` over inputs that settle after the call (an async
+// call that awaits, a `resolve` or `reject` called later): each settles in the reaction Node
+// queues on the deciding input, so its callback runs two microtasks after the input settles,
+// among the other microtasks, not after all of them (#1362, #3299).
+async function later(x: number): Promise<number> {
+  await null;
+  return x;
+}
+
+async function fails(): Promise<number> {
+  await null;
+  throw new Error("fails");
+}
+
+async function ticks(label: string): Promise<void> {
+  for (let i = 1; i <= 4; i++) {
+    console.log(`${label} ${i}`);
+    await null;
+  }
+}
+
+async function calls(): Promise<void> {
+  const all = Promise.all([later(1)]).then(() => console.log("all"));
+  const race = Promise.race([later(2)]).then(() => console.log("race"));
+  const settled = Promise.allSettled([later(3)]).then(() => console.log("allSettled"));
+  const any = Promise.any([later(4)]).then(() => console.log("any"));
+  const rejected = Promise.race([fails()]).then(
+    () => console.log("race fulfilled"),
+    () => console.log("race rejected"),
+  );
+  const awaited = (async () => {
+    console.log("awaited all", (await Promise.all([later(5), later(6)])).length);
+  })();
+  await ticks("c");
+  await all;
+  await race;
+  await settled;
+  await any;
+  await rejected;
+  await awaited;
+}
+
+function resolved(): { p: Promise<number>; resolve: (v: number) => void } {
+  const r = Promise.withResolvers<number>();
+  return { p: r.promise, resolve: r.resolve };
+}
+
+async function resolvers(): Promise<void> {
+  const a = resolved();
+  const b = resolved();
+  const c = resolved();
+  const d = resolved();
+  const all = Promise.all([a.p]).then(() => console.log("all"));
+  const race = Promise.race([b.p]).then(() => console.log("race"));
+  const settled = Promise.allSettled([c.p]).then(() => console.log("allSettled"));
+  const any = Promise.any([d.p]).then(() => console.log("any"));
+  d.resolve(4);
+  c.resolve(3);
+  b.resolve(2);
+  a.resolve(1);
+  await ticks("r");
+  await all;
+  await race;
+  await settled;
+  await any;
+}
+
+async function main() {
+  await calls();
+  await resolvers();
+}

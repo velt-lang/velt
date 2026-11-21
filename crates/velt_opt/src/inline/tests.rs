@@ -257,9 +257,9 @@ fn gated_callee_stays_a_call_outside_its_target() {
     let gated = pb.add(named("gated", &[arm, plain]));
     pb.add(caller(&[arm], 1));
     let mut p = pb.finish();
-    p.funcs[x86.0 as usize].target = Some(Ext::ShaX86);
-    p.funcs[gated.0 as usize].target = Some(Ext::ShaArm);
-    p.funcs[arm.0 as usize].target = Some(Ext::ShaArm);
+    p.funcs[x86.0 as usize].target = velt_vir::simd::ExtSet::of(Ext::ShaX86);
+    p.funcs[gated.0 as usize].target = velt_vir::simd::ExtSet::of(Ext::ShaArm);
+    p.funcs[arm.0 as usize].target = velt_vir::simd::ExtSet::of(Ext::ShaArm);
     inline(&mut p);
     let [_, _, x86, gated, plain_caller] = &p.funcs[..] else {
         panic!("five functions");
