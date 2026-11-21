@@ -78,10 +78,12 @@ export const S_SIZE: usize = 96;
  */
 const OWN_BIT: usize = t.T_CX ^ nd.N_CX;
 
-// A sleep's states: not polled yet; seen; pending; due (on its task's due list); fired (counted in
-// `TM_UNSEEN` until its leaf sees it); carried by an offered task (in its `T_TIMERS`,
-// sched_sleep_carry.velt); dropped while a hand-over was under way (sched_sleep_move.velt). The
-// two that are on no list come first: those above `SEEN` hold a place somewhere (`sleepDrop`).
+/**
+ * A sleep's states: not polled yet; seen; pending; due (on its task's due list); fired (counted in
+ * `TM_UNSEEN` until its leaf sees it); carried by an offered task (in its `T_TIMERS`,
+ * sched_sleep_carry.velt); dropped while a hand-over was under way (sched_sleep_move.velt). The
+ * two that are on no list come first: those above `SEEN` hold a place somewhere (`sleepDrop`).
+ */
 export const NEW: usize = 0;
 export const SEEN: usize = 1;
 export const PENDING: usize = 2;
