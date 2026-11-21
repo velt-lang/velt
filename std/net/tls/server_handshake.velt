@@ -307,8 +307,7 @@ export class ServerHandshake {
     for (let i = 0; i < 64; i++) {
       signed.push(0x20);
     }
-    // By index: a `for...of` over these arrays leaks them in a release build where `u8[]` is
-    // counted (#2455).
+    // By index: a `for...of` over these arrays leaks them (#2455).
     const context = utf8Encode("TLS 1.3, server CertificateVerify");
     for (let i: usize = 0; i < context.length; i++) {
       signed.push(context[i]);
@@ -363,8 +362,7 @@ export class ServerHandshake {
       );
     }
     this.group = group;
-    // The transcript restarts with message_hash(ClientHello1) (§4.4.1), with the chosen
-    // suite's hash.
+    // The transcript restarts with message_hash(ClientHello1) (§4.4.1), in the suite's hash.
     const first = this.hashOf(m);
     this.transcript = [254, 0, 0, first.length as u8];
     this.th.reset();
