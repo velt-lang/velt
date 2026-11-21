@@ -7,10 +7,11 @@
 //
 // A record is kept in an open-addressing table keyed by the object's address, in place, so a
 // record's address holds only until the next record is added (the table may grow). It holds the
-// object, its trace glue, `hint` and `observed` (weak_trial.velt), and three lists: the maps that
+// object, its trace glue, `hint` and `observed` (weak_trial.velt), three lists: the maps that
 // have an entry keyed by it, the entries `(map, key)` whose value graph refers to it, and its
-// `WeakRef`s. Each list keeps its first item in the record and the rest in a vector, so a record
-// of an object in one map with one `WeakRef` allocates nothing of its own.
+// `WeakRef`s, and the slot of its `weak T` references (weak_slots.velt). Each list keeps its first
+// item in the record and the rest in a vector, so a record of an object in one map with one
+// `WeakRef` allocates nothing of its own.
 
 import { inline, noInline } from "velt/lang/intrinsics";
 import {
@@ -113,7 +114,9 @@ export const R_UNEXAMINED: usize = 80;
  * `observed` raises it; a lower one leaves it, and `weakRelease` lowers it on its slow path.
  */
 export const R_GATE: usize = 84;
-export const RECORD: usize = 88;
+/** The slot of the object's `weak T` references (weak_slots.velt), or 0. */
+export const R_SLOT: usize = 88;
+export const RECORD: usize = 96;
 
 const EMPTY: usize = 0;
 const REMOVED: usize = 1;
@@ -260,7 +263,12 @@ export function settle(h: usize, obj: usize): void {
 }
 
 function isEmpty(rec: usize): bool {
-  return ld(rec + R_KEYED) === 0 && ld(rec + R_MEMBER_MAP) === 0 && ld(rec + R_REF) === 0;
+  return (
+    ld(rec + R_KEYED) === 0 &&
+    ld(rec + R_MEMBER_MAP) === 0 &&
+    ld(rec + R_REF) === 0 &&
+    ld(rec + R_SLOT) === 0
+  );
 }
 
 export function hint(rec: usize): u32 {

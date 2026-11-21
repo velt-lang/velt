@@ -19,6 +19,7 @@
 //! one check already share the driver's. That is where a leak between rounds would come from.
 
 pub(crate) mod codec;
+pub(crate) mod disk;
 
 use crate::ctx::Ctx;
 
@@ -74,8 +75,118 @@ pub(crate) fn check_definitions(cx: &mut Ctx) {
     }
 }
 
+/// End std's stage (`VELT_UNITS=2`): what only std's own bodies and passes read, and the memos
+/// built over std's definitions alone, are dropped (the unit does not save them, `codec::unit`),
+/// so the app's rounds start from the unit a load from disk gives (`disk`); then freeze it.
+pub(crate) fn finish_std(cx: &mut Ctx) {
+    cx.thread_local_uses.clear();
+    cx.throw_checks.clear();
+    cx.loop_roots.clear();
+    cx.closure_defs.clear();
+    cx.rec = Default::default();
+    // std's own check sealed the extended layouts (`collect::extended_layouts`): the app's
+    // conversions widen the layouts of its own types, until its check seals them again.
+    cx.objects.layouts.sealed = false;
+    codec::unit::clear_memos(cx);
+    cx.freeze_defs();
+    cx.unit_base = cx.defs.len() as u32;
+}
+
 /// `VELT_UNITS=2`: std checked as a check of its own (its rounds and passes), then
 /// the app's rounds from a copy of it.
 pub(crate) fn stage2() -> bool {
     std::env::var_os("VELT_UNITS").is_some_and(|v| v == "2")
+}
+
+/// The modules of a check by units in the order its contexts hold them (`VELT_UNITS=2`): std's
+/// first, which std's unit is checked over alone, then the app's, added to a copy of std's frozen
+/// unit. A module of generated code is the app's (`generating::install` adds none to std's
+/// unit), also one generated for a std module's declarations (`<generated>/std/…`, which the
+/// driver hands in when an earlier build made it): which ones a check gets, and what is in them,
+/// depends on the program and on what was built before. A unit over std's own modules alone
+/// depends on neither, so a later step can keep it for another program.
+pub(crate) struct Order {
+    std: Vec<usize>,
+    app: Vec<usize>,
+    root: usize,
+}
+
+impl Order {
+    /// The order of `modules` (a load's, the root at `root`).
+    pub(crate) fn of(modules: &[crate::SourceModule], root: usize) -> Order {
+        let (std, app) = (0..modules.len()).partition(|&m| modules[m].is_std);
+        Order { std, app, root }
+    }
+
+    /// std's modules, which std's unit is checked over.
+    pub(crate) fn std_modules<'m>(
+        &self,
+        modules: &'m [crate::SourceModule],
+    ) -> Vec<&'m crate::SourceModule> {
+        self.std.iter().map(|&m| &modules[m]).collect()
+    }
+
+    /// Add the app's modules to `cx`, a copy of std's unit; the load's root becomes its root.
+    pub(crate) fn add_app<'m>(&self, cx: &mut Ctx<'m>, modules: &'m [crate::SourceModule]) {
+        let base = cx.modules.len();
+        for &m in &self.app {
+            let module = &modules[m];
+            cx.modules.push(module);
+            cx.scopes.push(crate::ctx::ModuleScope {
+                is_std: module.is_std,
+                is_library: module.is_std || module.is_dependency,
+                ..Default::default()
+            });
+            cx.lazy.add_module();
+        }
+        cx.import_targets = crate::collect::exports::import_targets(&cx.modules);
+        if let Some(k) = self.app.iter().position(|&m| m == self.root) {
+            cx.root = base + k;
+        }
+    }
+
+    /// With std's modules in the order std's unit has them: `at[k]` is where (among this
+    /// order's std modules) the unit's module `k` is (`disk::load`).
+    pub(crate) fn reorder_std(self, at: &[usize]) -> Order {
+        let std = at.iter().map(|&k| self.std[k]).collect();
+        Order { std, ..self }
+    }
+
+    /// Where the load's module `m` is in std's unit (`None`: an app module).
+    pub(crate) fn in_std(&self, m: usize) -> Option<usize> {
+        self.std.iter().position(|&s| s == m)
+    }
+
+    /// Where the load's module `m` is once the app's modules were added at `base`.
+    pub(crate) fn in_app(&self, m: usize, base: usize) -> Option<usize> {
+        self.in_std(m)
+            .or_else(|| self.app.iter().position(|&a| a == m).map(|k| base + k))
+    }
+
+    /// Where the app's modules start in `cx` (after std's and the generated ones).
+    pub(crate) fn app_base(&self, cx: &Ctx) -> usize {
+        cx.modules.len() - self.app.len()
+    }
+}
+
+/// Put the facts the source rewrites found per module (by the load's module indices) in `cx`'s
+/// order: the load's module `m` is `at(m)`, and one `at` drops is not in `cx`.
+pub(crate) fn remap_module_facts(cx: &mut Ctx, at: &dyn Fn(usize) -> Option<usize>) {
+    cx.recovered = std::mem::take(&mut cx.recovered)
+        .into_iter()
+        .filter_map(|(m, w)| Some((at(m)?, w)))
+        .collect();
+    let old = std::mem::take(&mut cx.ns_private);
+    let mut ns = vec![Default::default(); cx.modules.len()];
+    for (m, p) in old.into_iter().enumerate() {
+        if let Some(slot) = at(m).and_then(|i| ns.get_mut(i)) {
+            *slot = p;
+        }
+    }
+    cx.ns_private = ns;
+    for ms in cx.global_namespaces.values_mut() {
+        *ms = ms.iter().filter_map(|&m| at(m)).collect();
+    }
+    cx.global_props.remap(at);
+    cx.objects.brands.remap(at);
 }

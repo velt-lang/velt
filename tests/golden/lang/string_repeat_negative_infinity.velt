@@ -1,0 +1,7 @@
+// `repeat` with a count of -Infinity is JavaScript's RangeError, with Node's message
+// (std/prelude/string.velt, #2198).
+
+function main() {
+  console.log("before");
+  console.log("ab".repeat(-Infinity).length);
+}

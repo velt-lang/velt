@@ -1,8 +1,10 @@
 // X25519 (velt/crypto `x25519`, `x25519PublicKey`): RFC 7748 §5.2's vectors (single and
-// iterated) and §6.1's Diffie-Hellman example, plus the all-zero result TLS must reject.
+// iterated) and §6.1's Diffie-Hellman example, every case of Project Wycheproof's
+// x25519_test.json, plus the all-zero result TLS must reject.
 import { randomBytes, x25519, x25519PublicKey } from "velt/crypto";
 import { hexDecode, hexEncode } from "velt/encoding";
 import { describe, expect, it } from "velt/test";
+import { X25519_CASES } from "./wycheproof_x25519";
 
 function x(scalar: string, u: string): string {
   return hexEncode(x25519(hexDecode(scalar), hexDecode(u)));
@@ -171,5 +173,25 @@ describe("x25519", () => {
       "X25519 produced the all-zero shared secret (small-order point)",
     );
     expect(() => x25519PublicKey([1])).toThrow("X25519 needs a 32-byte scalar, got 1");
+  });
+
+  it("matches every Wycheproof x25519 case, and refuses the all-zero secrets", () => {
+    // [valid, acceptable with the secret, acceptable refused for an all-zero secret]
+    const counts: number[] = [0, 0, 0];
+    for (const line of X25519_CASES) {
+      const f = line.split(" ");
+      const want = f[4];
+      if (want == "0000000000000000000000000000000000000000000000000000000000000000") {
+        // Low-order keys: RFC 7748 gives the zero secret, which TLS 1.3 must refuse
+        // (RFC 8446 §7.4.2); a valid case of this shape would be a wrong expectation here.
+        expect(`${f[0]} ${f[1]}`).toBe(`${f[0]} a`);
+        expect(() => x25519(hexDecode(f[2]), hexDecode(f[3]))).toThrow("all-zero");
+        counts[2]++;
+        continue;
+      }
+      expect(`${f[0]} ${x(f[2], f[3])}`).toBe(`${f[0]} ${want}`);
+      counts[f[1] == "v" ? 0 : 1]++;
+    }
+    expect(counts).toEqual([264, 223, 31]);
   });
 });

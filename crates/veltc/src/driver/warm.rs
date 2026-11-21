@@ -73,6 +73,7 @@ fn warm_inner(
             require_main: scope.require_main,
             eager_std: scope.eager_std,
             units: scope.units,
+            std_key: None,
             native_executor: super::native_executor(opts),
         };
         let t = Instant::now();

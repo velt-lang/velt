@@ -1,0 +1,28 @@
+// Two sleeps due in the same poll fire one at a time, and the root woken by the first one's
+// reactions goes on before the second fires, as Node runs a timer's microtasks before the next
+// timer's callback (#3241): through an inline `Promise.all`, then through a `Promise.race`. The
+// task is busy past both deadlines, so both sleeps are due at once. The expected output is Node's
+// for this program with `sleep(ms)` a promise `setTimeout` resolves and a call of `main()` added
+// at the end.
+
+function spin(ms: number): void {
+  const s = Date.now();
+  while (Date.now() - s < ms) {}
+}
+
+async function main() {
+  const s1 = sleep(1).then(() => console.log("sleep 1"));
+  const s2 = sleep(1).then(() => console.log("sleep 2"));
+  spin(10);
+  await Promise.all([s1]);
+  console.log("root after sleep 1");
+  await s2;
+  console.log("root after sleep 2");
+  const t1 = sleep(1).then(() => console.log("sleep 3"));
+  const t2 = sleep(1).then(() => console.log("sleep 4"));
+  spin(10);
+  await Promise.race([t1, t2]);
+  console.log("root after sleep 3");
+  await t2;
+  console.log("done");
+}

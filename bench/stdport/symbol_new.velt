@@ -1,0 +1,18 @@
+// `Symbol(description)` at run time: 400k new symbols (short and long descriptions, some
+// without), then each one's `description` and `toString()` twice. The Rust port leaks a record
+// per symbol and shares its description, as the runtime's `velt_rt_symbol_new` did.
+function main() {
+  const words = ["k", "user:session", "a-longer-description-than-fits-inline"];
+  const made: symbol[] = [];
+  for (let i = 0; i < 400000; i++) {
+    made.push(i % 7 == 0 ? Symbol() : Symbol(words[i % 3]));
+  }
+  let total = 0;
+  for (let round = 0; round < 2; round++) {
+    for (const s of made) {
+      const d = s.description;
+      total += (d == undefined ? 0 : d.length) + s.toString().length;
+    }
+  }
+  console.log(total);
+}

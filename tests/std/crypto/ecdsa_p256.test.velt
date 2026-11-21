@@ -140,6 +140,49 @@ describe("p256Verify", () => {
     expect(p256Verify(hexDecode(G_KEY), hexDecode(E_IS_R), hexDecode(E_IS_R_SIG))).toBe(true);
   });
 
+  it("adds the base point's table entries through the cases the formula leaves out", () => {
+    // The key is G, so u2 Q is a multiple of G that the entries for u1's digits can meet
+    // (the digest is e = u1 s, the signature r and s = r / u2).
+    // u1 = 3, u2 = 3: 3G + 3G is a doubling.
+    expect(
+      p256Verify(
+        hexDecode(G_KEY),
+        hexDecode("b01a172a76a4602c92d3242cb897dde3024c740debb215b4c6b0aae93c2291a9"),
+        hexDecode(
+          "3045022100b01a172a76a4602c92d3242cb897dde3024c740debb215b4c6b0aae93c2291a902203ab35d0e278c200edb9bb6b992dd49f656197c04a3e6073c423ae3a3140b85e3",
+        ),
+      ),
+    ).toBe(true);
+    // u1 = 1 + 2 * 16, u2 = 31: 32G, no longer affine, meets the entry 32G.
+    expect(
+      p256Verify(
+        hexDecode(G_KEY),
+        hexDecode("970eed871d34163837edab09f705b8cbea903083b54134b39dfdbab94f6744ba"),
+        hexDecode(
+          "304502200a0643fb8fcc14def67a6a5eb1bf8e9125b35edc7338d816aa4110a6b90ee785022100c68454c546b400ad20b9a055a2a3151d40e1e62a748ffd90f3bb3a6ac95dc143",
+        ),
+      ),
+    ).toBe(true);
+    // u1 = 3 + 5 * 16, u2 = n - 3: -3G + 3G is the identity, and 80G is added to it.
+    expect(
+      p256Verify(
+        hexDecode(G_KEY),
+        hexDecode("aaf079586221b1abc6cde7e0b174a88a57983dc7f6fda8df13a084bed92203f1"),
+        hexDecode(
+          "3046022100b2e1b7c17ae931195b835a5153081eeb63764a1cdbd0633c49b1dae295ecff13022100c45f6d692c5cefa336d4373a39a7f5b1466a374eb3277d70db292c77751425a0",
+        ),
+      ),
+    ).toBe(true);
+    // u1 = 3, u2 = n - 3: R is the identity, which no r matches.
+    expect(
+      p256Verify(
+        hexDecode(G_KEY),
+        hexDecode("ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632550"),
+        hexDecode("30250201010220555555550000000055555555555555553ef7a8e48d07df81a693439654210c70"),
+      ),
+    ).toBe(false);
+  });
+
   it("refuses an INTEGER with a needless leading zero", () => {
     // r (top bit clear) written as 33 bytes with a leading zero: BER, not DER.
     const ber = "3045022100" + E_IS_R_SIG.slice(8);

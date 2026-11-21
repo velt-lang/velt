@@ -461,6 +461,15 @@ impl FnLower<'_, '_> {
         self.call_rt(Rt::StrbufPushStr, vec![buf.clone(), s], None);
     }
 
+    /// Append `Symbol(<description>)` for the symbol `s`, as `String(s)` and `console.log` write
+    /// it: a symbol is the address of its record, whose first 24 bytes are its description
+    /// (rt_abi.md "Symbols"; `""` without one).
+    pub(super) fn push_symbol(&mut self, buf: &Operand, s: Operand) {
+        self.push_text(buf, "Symbol(");
+        self.push_str(buf, s);
+        self.push_text(buf, ")");
+    }
+
     /// Append the float `v` of type `ty` the way `console.log` prints it (`-0` is `-0`).
     pub(super) fn push_inspect_float(&mut self, buf: &Operand, v: Operand, ty: TyId) {
         let v = self.float_as_f64(v, ty);

@@ -579,6 +579,8 @@ enums! {
         211 => SymbolAddress,
         212 => SymbolAt,
         213 => AddressArrayOwned,
+        214 => StrAt,
+        215 => SpreadParam,
     }
 }
 

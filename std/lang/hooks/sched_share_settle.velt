@@ -12,6 +12,7 @@ import * as nd from "./sched_node";
 import * as sh from "./sched_share";
 import * as al from "./sched_share_alias";
 import * as sd from "./sched_share_drop";
+import * as t from "./sched_task";
 import * as wt from "./sched_share_wait";
 import * as wk from "./sched_wake";
 
@@ -43,12 +44,26 @@ export function settle(h: usize, task: usize, me: usize): void {
     if (m.ld(at) === me) {
       ticket = 0;
     } else if (task !== 0 && wk.taskOf(w) === task) {
-      ticket = micro.enqueue(task, m.wakerClone(w), true);
+      ticket =
+        len === 1 && nextInPlace(task)
+          ? micro.enqueueNext(task, m.wakerClone(w))
+          : micro.enqueue(task, m.wakerClone(w), true);
     } else {
       m.wakeByRef(w);
     }
     m.st(at + 16, ticket as usize);
   }
+}
+
+/**
+ * Does the one holder waiting on a hub that settles on task `task` take the place of the entry
+ * running now (sched_micro.velt `enqueueNext`)? When the node finished in that entry's job without
+ * a step of its own (a promise `resolve` settled), as Node queued the holder's reaction at the
+ * settling. More holders are queued at the back, in their order.
+ */
+function nextInPlace(task: usize): bool {
+  const e = t.here();
+  return e !== 0 && m.ld(e + t.E_CURRENT) === task && micro.takeCredit(task);
 }
 
 /**

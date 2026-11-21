@@ -1,0 +1,75 @@
+// Expected output is Node's (v24): `node --experimental-strip-types` on a copy named .ts.
+// #3348: a store of an `any` into a byte of a Buffer is JavaScript's store, which converts what
+// it is given with ToNumber (ToPrimitive first for an object) and then ToUint8. Every other
+// conversion of an `any` to a number stays a checked type claim (lang/any_store_number_array).
+const log: string[] = [];
+const five: any = {
+  valueOf() {
+    log.push("valueOf");
+    return 5;
+  },
+};
+const texty: any = {
+  toString() {
+    return "41";
+  },
+};
+const values: any[] = [
+  "7", "", " 12 ", "0x1f", "abc", "1e3", "-1", "255.9", "256", "Infinity", true, false, null,
+  undefined, [5], [], [1, 2], five, texty, {}, new Date(86400123), 1.5, -1, 256, NaN,
+];
+const b = Buffer.alloc(values.length);
+for (let i = 0; i < values.length; i++) {
+  b[i] = values[i];
+}
+console.log(b.join(","));
+console.log(log.join(","));
+
+// The object and the index are evaluated before the value, and the value is converted last.
+function at(): number {
+  log.push("index");
+  return 0;
+}
+function given(): any {
+  log.push("value");
+  return five;
+}
+const one = Buffer.alloc(2);
+one[at()] = given();
+console.log(one.join(","), log.join(","));
+
+// `+=` stores what `+` gives: "0" + "7" is "07", which the store converts to 7.
+const sum = Buffer.alloc(2);
+const seven: any = "7";
+sum[0] += seven;
+sum[1] += 1;
+console.log(sum.join(","));
+
+// `||=` stores the value when the element is 0, and converts it as `=` does.
+const orAssigned = Buffer.alloc(2);
+orAssigned[1] = 9;
+orAssigned[0] ||= seven;
+orAssigned[1] ||= seven;
+console.log(orAssigned.join(","));
+
+// `||=` converts whatever gives the value: an element of an `any[]`, a call returning `any`, and
+// each value of a loop over mixed values. The right side is evaluated only when the element is 0.
+const fromList = Buffer.alloc(2);
+const vals: any[] = ["7", true];
+fromList[0] ||= vals[0];
+fromList[1] ||= vals[1];
+let calls = 0;
+function gives(): any {
+  calls++;
+  return " 12 ";
+}
+const fromCall = Buffer.alloc(2);
+fromCall[0] = 3;
+fromCall[0] ||= gives();
+fromCall[1] ||= gives();
+const looped = Buffer.alloc(4);
+const mixed: any[] = ["1", "0x10", null, [5]];
+for (let i = 0; i < mixed.length; i++) {
+  looped[i] ||= mixed[i];
+}
+console.log(fromList.join(","), fromCall.join(","), calls, looped.join(","));

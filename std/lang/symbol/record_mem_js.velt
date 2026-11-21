@@ -1,11 +1,12 @@
-// velt/lang/symbol (internal): the memory of a symbol record the registry makes at run time
-// (registry.velt) in the browser, which has no C library: from the allocator compiled code uses
-// (`#symbol-record`, std/imports.velt; record_mem.velt elsewhere). The wasm runtime never
-// releases the registry, so its records are not freed either.
+// velt/lang/symbol (internal): the memory of the symbol records made at run time, by the registry
+// (registry.velt) and by `Symbol()` (record.velt), in the browser, which has no C library: from
+// the allocator compiled code uses (`#symbol-record`, std/imports.velt; record_mem.velt
+// elsewhere). It is not zeroed: each caller writes every word of the records it makes. The
+// wasm runtime never releases the registry, so its records are not freed either.
 
 import { rawAlloc } from "velt/lang/intrinsics";
 
-/** `n` bytes, aligned to 8, never freed (the registry writes every one of them). */
+/** `n` bytes, aligned to 8, never freed, not zeroed (the caller writes every one it uses). */
 export function recordMemory(n: usize): usize {
   return rawAlloc(n);
 }
