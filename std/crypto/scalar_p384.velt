@@ -1,0 +1,62 @@
+// velt/crypto (internal): arithmetic mod the order n of P-384's group, for ECDSA: `Mod384` with
+// n, and the inversion. Every operation here runs the same steps whatever the values, so a
+// signer's nonce and private key can go through them.
+
+import { Mod384 } from "velt/crypto/mod384";
+
+/** The group order n in little-endian limbs. */
+export const P384_N: u64[] = [
+  0xecec196accc52973,
+  0x581a0db248b0a77a,
+  0xc7634d81f4372ddf,
+  0xffffffffffffffff,
+  0xffffffffffffffff,
+  0xffffffffffffffff,
+];
+// -n^-1 mod 2^64, 2^768 mod n, and n - 2 (the inversion's exponent).
+const N_INV: u64 = 0x6ed46089e88fdc45;
+const N_R2: u64[] = [
+  0x2d319b2419b409a9,
+  0xff3d81e5df1aa419,
+  0xbc3e483afcb82947,
+  0xd40d49174aab1cc5,
+  0x3fb05b7a28266895,
+  0x0c84ee012b39bf21,
+];
+const N_MINUS_2: u64[] = [
+  0xecec196accc52971,
+  0x581a0db248b0a77a,
+  0xc7634d81f4372ddf,
+  0xffffffffffffffff,
+  0xffffffffffffffff,
+  0xffffffffffffffff,
+];
+
+/** `Mod384` for n with `regs` registers. */
+export function p384Scalars(regs: usize): Mod384 {
+  return new Mod384(P384_N, N_INV, N_R2, regs);
+}
+
+/**
+ * `d = 1 / a` mod n as a^(n - 2) (`d` not `a`; both in the Montgomery domain): a fixed 4-bit
+ * window over the exponent, with a's powers in the 16 registers from `powers`. The exponent is
+ * public, so the sequence of products is the same for every `a`: `a` may be secret.
+ */
+export function invertScalar(s: Mod384, d: usize, a: usize, powers: usize) {
+  s.copy(powers + 1, a);
+  for (let j: usize = 2; j < 16; j++) {
+    s.mul(powers + j, powers + j - 1, a);
+  }
+  // The top digit of n - 2 is 15.
+  s.copy(d, powers + 15);
+  for (let i: usize = 1; i < 96; i++) {
+    const at = 380 - 4 * i;
+    const digit = ((N_MINUS_2[at >> 6] >> ((at & 63) as u64)) & 15) as usize;
+    for (let q = 0; q < 4; q++) {
+      s.mul(d, d, d);
+    }
+    if (digit != 0) {
+      s.mul(d, d, powers + digit);
+    }
+  }
+}
