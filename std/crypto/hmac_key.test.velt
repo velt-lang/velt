@@ -1,0 +1,52 @@
+// velt/crypto (tests): `HmacKey` (hmac_key.velt) gives `hmacSha256`'s and `hmacSha384`'s MAC for
+// keys shorter than, as long as and longer than a block, and messages around the block and
+// padding boundaries, with one key used for many messages; RFC 4231's case 1 pins one value.
+import { hexDecode, hexEncode } from "velt/encoding/hex";
+import { describe, expect, it } from "velt/test";
+import { hmacSha256, hmacSha384 } from "velt/crypto/hmac";
+import { HmacKey } from "velt/crypto/hmac_key";
+
+function bytes(n: usize, seed: usize): u8[] {
+  const out: u8[] = [];
+  for (let i: usize = 0; i < n; i++) {
+    out.push(((i * 37 + seed) & 0xff) as u8);
+  }
+  return out;
+}
+
+describe("HmacKey", () => {
+  it("gives RFC 4231's first HMAC-SHA256", () => {
+    const k = new HmacKey(hexDecode("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"), false);
+    expect(hexEncode(k.mac(hexDecode("4869205468657265")))).toBe(
+      "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7",
+    );
+  });
+
+  it("gives hmacSha256's MAC for every key length and message length around the blocks", () => {
+    let count = 0;
+    for (const kl of [0, 1, 32, 63, 64, 65, 200] as usize[]) {
+      const key = bytes(kl, kl);
+      const k = new HmacKey(key, false);
+      for (let n: usize = 0; n <= 140; n++) {
+        const m = bytes(n, n + 3);
+        expect(`${kl} ${n} ${hexEncode(k.mac(m))}`).toBe(
+          `${kl} ${n} ${hexEncode(hmacSha256(key, m))}`,
+        );
+        count++;
+      }
+    }
+    expect(count).toBe(7 * 141);
+  });
+
+  it("gives hmacSha384's MAC for a SHA-384 key", () => {
+    for (const kl of [0, 48, 128, 200] as usize[]) {
+      const key = bytes(kl, kl);
+      const k = new HmacKey(key, true);
+      expect(k.length).toBe(48);
+      for (const n of [0, 1, 111, 112, 300] as usize[]) {
+        const m = bytes(n, n);
+        expect(hexEncode(k.mac(m))).toBe(hexEncode(hmacSha384(key, m)));
+      }
+    }
+  });
+});
