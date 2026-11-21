@@ -124,7 +124,8 @@ export function pickMasked(
   }
   for (let i: usize = 0; i < count; i++) {
     const x = (i as u64) ^ index;
-    const mask = maskOf((x - 1) >> 63);
+    // All ones when x is 0: the top bit of x | -x is set for every other x.
+    const mask = maskOf(((x | (0 - x)) >> 63) ^ 1);
     const from = regs[first + i];
     for (let j: usize = 0; j < k; j++) {
       r[j] |= from[j] & mask;

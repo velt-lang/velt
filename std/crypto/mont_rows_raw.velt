@@ -180,8 +180,8 @@ export function pickMasked(
   zeroLimbsAt(rp, k);
   for (let i: usize = 0; i < count; i++) {
     const x = (i as u64) ^ index;
-    // All ones when x is 0 (x is far below 2^63, so x - 1 wraps only for 0).
-    const mask = maskOf((x - 1) >> 63);
+    // All ones when x is 0: the top bit of x | -x is set for every other x.
+    const mask = maskOf(((x | (0 - x)) >> 63) ^ 1);
     const from = regs[first + i];
     limbsCheck(from, 0, k);
     const fp = limbsIn(from);

@@ -43,7 +43,7 @@ def seeds32(rng, runs):
     """Ed25519 seeds: any 32 bytes."""
     edge = [bytes(32), b"\xff" * 32, b"\x01" + bytes(31), bytes(31) + b"\x80",
             bytes.fromhex("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")]
-    return edge + [rng.randbytes(32) for _ in range(max(0, runs - len(edge)))]
+    return edge + [rng.getrandbits(256).to_bytes(32, "little") for _ in range(max(0, runs - len(edge)))]
 
 
 P384 = 2**384 - 2**128 - 2**96 + 2**32 - 1
@@ -247,6 +247,29 @@ def reports(exe, env, secret_file, shim):
     return total
 
 
+def settle(run, target):
+    """The count of one secret, and the target count: the probe's count for every secret.
+
+    A test harness starts threads, and now and then one of them does more or less before the
+    process ends: the same secret then counts some thousands more, or fewer. So the first
+    secret's target is the most frequent of a few runs (the lowest of equals), and a later
+    secret that differs from it is run again until a run equals it. Code that depends on the
+    secret differs every time; such a secret's count is the most frequent of its runs.
+    """
+    if target is None:
+        seen = [run() for _ in range(RETRIES)]
+        return mode(seen), mode(seen)
+    seen = [run()]
+    while seen[-1] != target and len(seen) <= RETRIES:
+        seen.append(run())
+    return (target if seen[-1] == target else mode(seen)), target
+
+
+def mode(values):
+    """The most frequent of `values`, the lowest of equally frequent ones."""
+    return min(values, key=lambda v: (-values.count(v), v))
+
+
 def main():
     args = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     known = probes()
@@ -286,17 +309,7 @@ def main():
             target = None
             for secret in secrets(random.Random(opts.seed), opts.runs):
                 secret = put(secret_file, secret)
-                # A test harness starts threads, and now and then one of them does more before
-                # the process ends: the same secret then counts some thousands more. So a count
-                # that differs is taken again, and the lowest of a few runs is the secret's.
-                # Code that depends on the secret differs every time.
-                tries = RETRIES if target is None else 1
-                c = min(count(exe, env, secret_file) for _ in range(tries))
-                for _ in range(RETRIES):
-                    if target is None or c == target:
-                        break
-                    c = min(c, count(exe, env, secret_file))
-                target = c if target is None else target
+                c, target = settle(lambda: count(exe, env, secret_file), target)
                 counts.setdefault(c, []).append(secret)
         runs = sum(len(v) for v in counts.values())
         if len(counts) == 1:
