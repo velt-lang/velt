@@ -641,8 +641,6 @@ impl TsPrinter<'_> {
                 format!("{{ {} }}", parts.join("; "))
             }
             TypeExprKind::KeyOf(inner) => format!("keyof {}", self.operand(inner)),
-            // `weak Node | null` reads as `Node | null`.
-            TypeExprKind::Weak(inner) => self.ty(inner),
             // The rest is spelled as in TypeScript already (literal, conditional, mapped and
             // template literal types, `typeof`, `null`, predicates).
             _ => self.p.ty(t),
@@ -690,7 +688,7 @@ impl TsPrinter<'_> {
             {
                 self.operand(&args[0])
             }
-            TypeExprKind::Weak(inner) => self.operand(inner),
+            TypeExprKind::Weak(inner) => self.operand(inner), // `weak T | null` is `T | null`
             _ => s,
         }
     }
