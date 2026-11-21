@@ -66,6 +66,8 @@ function release(owner: usize): void {
   unsafe {
     const gone = letGo(owner);
     if (gone != null) {
+      // A failure has no one to report to (the drop of an array), and a whole mapping of our
+      // own is not refused.
       unmapRead(gone.base, gone.len);
     }
   }

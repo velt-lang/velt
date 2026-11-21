@@ -17,47 +17,11 @@ import { toIndex } from "velt/lang/typed_array/core";
 
 /** The mapped bytes of a file and `DataView`'s getters over them (see `MappedFile`). */
 export class MappedBytes {
-  // The mapped bytes; none once the file is closed, so a getter's range check refuses every
-  // offset then and the read itself tests nothing more (`at` tells the two apart).
-  private held: shared<u8[]>;
-  private shut: bool = false;
+  /** The mapped bytes. */
+  readonly bytes: shared<u8[]>;
 
   constructor(bytes: shared<u8[]>) {
-    this.held = bytes;
-  }
-
-  /** The mapped bytes. An `Error` once the file is closed. */
-  get bytes(): shared<u8[]> {
-    this.checkOpen("bytes");
-    return this.held;
-  }
-
-  /** Whether `close` was called. */
-  get closed(): bool {
-    return this.shut;
-  }
-
-  // An `Error` naming the member `what` when the file is closed.
-  checkOpen(what: string) {
-    if (this.shut) {
-      throw new Error(`${what}: the MappedFile is closed`);
-    }
-  }
-
-  /**
-   * Gives up the file: `bytes`, the typed methods, the getters and `advise` throw from now on.
-   * The arrays already handed out stay valid, and the mapping is given back to the system when
-   * the last of them is gone (at once, if none is kept). Closing again does nothing. A
-   * `MappedFile` that is dropped is closed; `using m = MappedFile.open(path)` closes it at the
-   * end of its block.
-   */
-  close() {
-    this.shut = true;
-    this.held = shared([]);
-  }
-
-  [Symbol.dispose]() {
-    this.close();
+    this.bytes = bytes;
   }
 
   // The index in `bytes` of the `size` bytes at `byteOffset`, which is read as `DataView`
@@ -65,9 +29,8 @@ export class MappedBytes {
   // text when it is negative or the bytes are not all inside the mapped ones.
   private at(byteOffset: number, size: usize): usize {
     const i = toIndex(byteOffset);
-    const n = this.held.length as usize;
+    const n = this.bytes.length as usize;
     if (i < 0 || (i as usize) > n || size > n - (i as usize)) {
-      this.checkOpen("get");
       throw new RangeError("Offset is outside the bounds of the DataView");
     }
     return i as usize;
@@ -75,12 +38,12 @@ export class MappedBytes {
 
   /** The signed byte at `byteOffset` (`DataView.getInt8`). */
   getInt8(byteOffset: number): number {
-    return this.held[this.at(byteOffset, 1)] as i8;
+    return this.bytes[this.at(byteOffset, 1)] as i8;
   }
 
   /** The byte at `byteOffset` (`DataView.getUint8`). */
   getUint8(byteOffset: number): number {
-    return this.held[this.at(byteOffset, 1)];
+    return this.bytes[this.at(byteOffset, 1)];
   }
 
   /**
@@ -98,7 +61,7 @@ export class MappedBytes {
 
   private uint16(byteOffset: number, littleEndian: bool): u16 {
     const at = this.at(byteOffset, 2);
-    return littleEndian ? load16(this.held, at) : loadBE16(this.held, at);
+    return littleEndian ? load16(this.bytes, at) : loadBE16(this.bytes, at);
   }
 
   /** The 32-bit signed integer at `byteOffset` (`DataView.getInt32`). */
@@ -113,7 +76,7 @@ export class MappedBytes {
 
   private uint32(byteOffset: number, littleEndian: bool): u32 {
     const at = this.at(byteOffset, 4);
-    return littleEndian ? load32(this.held, at) : loadBE32(this.held, at);
+    return littleEndian ? load32(this.bytes, at) : loadBE32(this.bytes, at);
   }
 
   /**
@@ -129,7 +92,7 @@ export class MappedBytes {
    * `getBigUint64`, gives a bigint, and comes with bigint values (#1088).
    */
   getUint64(byteOffset: number, littleEndian: bool = false): u64 {
-    const x = load64(this.held, this.at(byteOffset, 8));
+    const x = load64(this.bytes, this.at(byteOffset, 8));
     return littleEndian ? x : swap64(x);
   }
 

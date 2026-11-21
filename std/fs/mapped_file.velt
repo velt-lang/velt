@@ -21,11 +21,12 @@ export type MapAdvice = "normal" | "random" | "sequential" | "willneed" | "dontn
  * file is opened; a page comes from the disk when it is first touched (WebAssembly differs:
  * below).
  *
- * The arrays keep the mapping: it is given back to the system when the `MappedFile` is closed
- * (`close()`, `using`, or dropped) and every array it handed out is gone, never earlier, so an
- * array stays valid however long it is kept. A mapping costs address space, not memory, and a
- * system allows a limited number at a time (about 65,000 on Linux by default, then `ENOMEM`):
- * a program that opens many files closes them and lets their arrays go.
+ * The arrays keep the mapping: it is given back to the system when the `MappedFile` is dropped
+ * (at the end of its block, of a `using` block, or at `m[Symbol.dispose]()`) and every array it
+ * handed out is gone, never earlier, so an array stays valid however long it is kept. A mapping
+ * costs address space, not memory, and a system allows a limited number at a time (Linux's
+ * `vm.max_map_count`: 65,530 on older systems, 1,048,576 on current ones; then `ENOMEM`): a
+ * program that opens many files lets each go before the next.
  *
  * On Windows a mapped file cannot be cut short until its mapping is given back (writing it anew
  * fails with `UNKNOWN`). Removing or renaming it works on NTFS from Windows 10 1809 and may be
@@ -48,15 +49,19 @@ export class MappedFile extends MappedBytes {
   private readonly from: usize;
   // The mapping's owner block, which every array over it holds (mapped_part.velt); 0 for none.
   private readonly owner: usize;
-  private readonly size: number;
 
   private constructor(m: Mapping) {
     super(m.bytes);
     this.address = m.address;
     this.from = m.from;
     this.owner = m.owner;
-    this.size = m.bytes.length as number;
   }
+
+  /**
+   * Drops the `MappedFile` now, as the end of a `using` block does: `m[Symbol.dispose]()`
+   * moves `m`, so it cannot be used afterwards. The arrays it handed out stay valid.
+   */
+  [Symbol.dispose]() {}
 
   // How many bytes of the mapping lie before `bytes`.
   private lead(): usize {
@@ -83,7 +88,7 @@ export class MappedFile extends MappedBytes {
 
   /** The number of mapped bytes: the file's size when it was mapped, or the part's. */
   get length(): number {
-    return this.size;
+    return this.bytes.length as number;
   }
 
   // The address of the `count` values of `width` bytes from byte `byteOffset` (0 for no
@@ -97,8 +102,7 @@ export class MappedFile extends MappedBytes {
     count: number,
     width: number,
   ): usize {
-    this.checkOpen(what);
-    const size = this.size;
+    const size = this.bytes.length as number;
     if (
       !Number.isInteger(byteOffset) ||
       !Number.isInteger(count) ||
@@ -361,8 +365,7 @@ export class MappedFile extends MappedBytes {
    * the range is not inside the mapped bytes; an `IoError` if the system refuses the advice.
    */
   advise(advice: MapAdvice, byteOffset: number = 0, length?: number) {
-    this.checkOpen("advise");
-    const size = this.size;
+    const size = this.bytes.length as number;
     const len = length === undefined ? size - byteOffset : length;
     if (
       !Number.isInteger(byteOffset) ||

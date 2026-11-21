@@ -303,28 +303,19 @@ describe("MappedFile", () => {
     expect(MappedFile.open("/proc/self/status").length).toBe(0);
   });
 
-  it("close gives the file up; arrays handed out before stay readable", () => {
-    const path = `${tmpdir()}/velt-mapped-${Date.now()}-${Math.floor(Math.random() * 1e9)}-close`;
+  it("dispose drops the MappedFile; arrays handed out before stay readable", () => {
+    const path = `${tmpdir()}/velt-mapped-${Date.now()}-${Math.floor(Math.random() * 1e9)}-dispose`;
     writeFileSync(path, "0123456789abcdef");
     const m = MappedFile.open(path);
     const bytes = m.bytes;
     const words = m.u32s(4, 2);
-    expect(m.closed).toBe(false);
     expect(m.getUint32(4)).toBe(0x34353637);
-    m.close();
-    m.close();
-    expect(m.closed).toBe(true);
-    expect(m.length).toBe(16);
-    expect(() => m.bytes).toThrow("bytes: the MappedFile is closed");
-    expect(() => m.u16s(0, 1)).toThrow("u16s: the MappedFile is closed");
-    expect(() => m.advise("normal")).toThrow("advise: the MappedFile is closed");
-    expect(() => m.getUint8(0)).toThrow("get: the MappedFile is closed");
-    expect(() => m.getUint32(4, true)).toThrow("get: the MappedFile is closed");
+    m[Symbol.dispose]();
     expect(bytes[15]).toBe(102);
     expect(words[1]).toBe(0x62613938);
   });
 
-  it("gives the mapping back with the last array over it, not before", () => {
+  it("gives the mapping back with the MappedFile and the last array over it, not before", () => {
     if (platform() != "linux") {
       return;
     }
@@ -339,30 +330,32 @@ describe("MappedFile", () => {
       expect(m.bytes[0]).toBe(48);
     }
     expect(mapped()).toBe(false);
-    let kept: shared<u16[]> | null = null;
-    {
-      const m = MappedFile.open(path);
-      kept = m.u16s(2, 2);
-      m.close();
-    }
+    const m = MappedFile.open(path);
+    let kept: shared<u16[]> | null = m.u16s(2, 2);
+    m[Symbol.dispose]();
     expect(mapped()).toBe(true);
     expect(kept![0]).toBe(0x3332);
     kept = null;
     expect(mapped()).toBe(false);
-    // Dropped without `close`: closed all the same.
+    // Dropped at the end of the function that opened it.
     openAndDrop(path);
     expect(mapped()).toBe(false);
   });
 
-  it("opens a file more often than the system has mappings, when each is closed", () => {
-    if (!POSIX) {
+  it("opens a file more often than the system has mappings, when each is let go", () => {
+    if (platform() != "linux") {
+      return;
+    }
+    // Linux's limit is `vm.max_map_count`: 65,530 on older systems. Current ones allow
+    // 1,048,576, too many to open in a test: the test before this one shows the release there.
+    const limit = Number.parseInt(readFileSync("/proc/sys/vm/max_map_count").trim());
+    if (!(limit <= 300000)) {
       return;
     }
     const path = `${tmpdir()}/velt-mapped-${Date.now()}-${Math.floor(Math.random() * 1e9)}-many`;
     writeFileSync(path, "0123456789abcdef");
     let sum = 0;
-    // Linux allows about 65,530 mappings by default.
-    for (let i = 0; i < 70000; i++) {
+    for (let i = 0; i < limit + 1000; i++) {
       using m = MappedFile.open(path);
       sum += m.bytes[i % 16];
     }
