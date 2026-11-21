@@ -287,3 +287,108 @@ async function main() {
   console.log(`waited ${sum}, marked ${MARKED.load()}`);
 }
 "#;
+
+/// Runs of [`ARG_TO_SPAWNED_CALL`] and [`COPIES_HANDED_OVER`] at each worker count. Both failed every
+/// run before the fix, at one worker too.
+const COPY_RUNS: usize = 3;
+
+/// A promise passed to an async closure that is called and spawned at once
+/// (`spawn((async (held) => await held)(p))`, #3424). The spawn copies the argument for the task
+/// and hands the copy over (its holder forwards to a proxy on this task); the callee then keeps a
+/// copy of its argument, made on this task after the hand-over. That copy shared the proxy here,
+/// a hub of this task, and the spawned task dropped a handle of it: an `ICE:` every run. A copy
+/// of a holder handed over from its task is now handed over too. [`COPIES_HANDED_OVER`] has the
+/// same with a record, with the caller awaiting the promise as well, a named async function, and
+/// one promise passed to two spawned calls.
+#[test]
+fn a_copy_of_a_promise_handed_over_from_its_task_is_handed_over_too() {
+    if !has_threads() {
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let mut bad = Vec::new();
+    for (name, src, want) in [
+        ("arg_to_spawned_call", ARG_TO_SPAWNED_CALL, "done 190\n"),
+        ("copies_handed_over", COPIES_HANDED_OVER, "done 1140\n"),
+    ] {
+        let exe = build_std(dir.path(), name, src);
+        for threads in ["1", "4", "8"] {
+            for i in 0..COPY_RUNS {
+                let (code, out, err) = run(&exe, threads);
+                if code != 0 || out != want || !all_freed(&err) {
+                    bad.push(format!(
+                        "{name}, {threads} workers, run {i}: exit {code}, stdout {out:?}, stderr {err}"
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "{} runs went wrong:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
+}
+
+/// The program of #3424 for [`a_copy_of_a_promise_handed_over_from_its_task_is_handed_over_too`].
+const ARG_TO_SPAWNED_CALL: &str = r#"async function soon(n: number): Promise<number> {
+  for (let i = 0; i < 3; i++) {
+    await yieldNow();
+  }
+  return n;
+}
+
+async function main(): Promise<void> {
+  let sum = 0;
+  for (let r = 0; r < 20; r++) {
+    const p = soon(r);
+    const t = spawn((async (held: Promise<number>): Promise<number> => await held)(p));
+    sum += await t;
+  }
+  console.log(`done ${sum}`);
+}
+main();
+"#;
+
+/// The other shapes of [`a_copy_of_a_promise_handed_over_from_its_task_is_handed_over_too`].
+const COPIES_HANDED_OVER: &str = r#"type R = { p: Promise<number> };
+
+async function soon(n: number): Promise<number> {
+  for (let i = 0; i < 3; i++) {
+    await yieldNow();
+  }
+  return n;
+}
+
+async function named(held: Promise<number>): Promise<number> {
+  return await held;
+}
+
+async function main(): Promise<void> {
+  let sum = 0;
+  for (let r = 0; r < 20; r++) {
+    // A record holding the promise, passed to a spawned call through a closure value.
+    const p = soon(r);
+    const t = spawn((async (held: R): Promise<number> => await held.p)({ p: p }));
+    sum += await t;
+    // The caller awaits the promise too, after handing a copy over.
+    const q = soon(r);
+    const u = spawn((async (held: Promise<number>): Promise<number> => await held)(q));
+    sum += await q;
+    sum += await u;
+    // A named async function: its arguments are transferred, not copied.
+    const s = soon(r);
+    sum += await spawn(named(s));
+    // The same promise to two spawned calls.
+    const w = soon(r);
+    const a = spawn((async (held: Promise<number>): Promise<number> => await held)(w));
+    const b = spawn((async (held: Promise<number>): Promise<number> => await held)(w));
+    sum += await a;
+    sum += await b;
+  }
+  console.log(`done ${sum}`);
+}
+main();
+"#;

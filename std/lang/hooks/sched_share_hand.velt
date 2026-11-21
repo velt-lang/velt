@@ -17,6 +17,7 @@ import * as sh from "./sched_share";
 import * as sd from "./sched_share_drop";
 import * as t from "./sched_task";
 import * as tr from "./sched_node_transfer";
+import * as x from "./sched_node_ext";
 
 /**
  * `velt_rt_fut_transfer` for holder `f` (its header's poll is `holderPoll`), with transfer glue
@@ -51,6 +52,34 @@ export function handOver(f: usize, glue: usize): void {
   }
   // `f`'s own role ends here; the proxy's keeps the promise alive.
   sd.release(h, f);
+}
+
+/**
+ * A copy, made on this task (`task`), of a holder handed over from it, whose proxy `fwd` has not
+ * finished: a holder handed over the same way, a new handle of the hub the proxy awaits, handed
+ * over with the proxy's transfer glue. Sharing the proxy instead would make a hub of this task,
+ * and the copy, which goes where the holder went (a spawned call's argument: the callee keeps a
+ * copy of it, #3424), would take a handle of that hub to the other task. 0 when `fwd` is not
+ * such a proxy (it is another task's: the holder was handed to this one).
+ */
+export function copyHandedOver(fwd: usize, task: usize): usize {
+  if (m.ld(fwd) !== fnAddress(nd.nodePoll)) {
+    return 0;
+  }
+  const n = nd.nodeOf(fwd);
+  const fl = m.load32(n + nd.N_FLAGS);
+  if (
+    m.ld(n + nd.N_TASK) !== task ||
+    m.ld(n + nd.N_POLL) !== fnAddress(proxyPoll) ||
+    (fl & (tr.HANDED_OVER | nd.FINISHED)) !== tr.HANDED_OVER
+  ) {
+    return 0;
+  }
+  // The proxy's role while it waits (`proxyPoll`), a handle of the hub on this task.
+  const role = m.ld(n + nd.N_HEAD + 16);
+  const g = sh.newHandle(m.ld(role - 8));
+  handOver(g, m.ld(x.get(n) + x.X_TRANSFER));
+  return g;
 }
 
 /** Holder `f` (handed over already) forwards to `proxy` from now on. */
