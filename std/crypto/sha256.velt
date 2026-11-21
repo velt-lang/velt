@@ -8,7 +8,7 @@
 
 import { utf8Encode } from "velt/encoding/utf8";
 import { hexEncode } from "velt/encoding/hex";
-import { inline } from "velt/lang/intrinsics";
+import { inline, noInline } from "velt/lang/intrinsics";
 import { u32x4 } from "velt/simd";
 import { BLOCK, finalBlocks, keyBlock, wordsToBytes } from "velt/crypto/blocks";
 import { blocks256Arm, blocks256X86, sha256Arm, sha256X86 } from "velt/crypto/sha256_simd";
@@ -75,6 +75,12 @@ export function sha256Hex(s: string): string {
   return hexEncode(sha256(utf8Encode(s)));
 }
 
+// Out of line: an internal error, never reached.
+@noInline
+function blockFault() {
+  panic("ICE: a SHA-256 block outside its data, or a state not of eight words");
+}
+
 // One round with the roles named by the caller: `d += t1` and `h = t1 + S0(a) + Maj(a, b, c)`;
 // returns [d, h]. Eight calls with the roles moved along make the eight rounds of `sha256Block`'s
 // step, so no variable is copied between rounds.
@@ -122,9 +128,11 @@ function next(w16: u32, w15: u32, w7: u32, w2: u32): u32 {
 }
 
 function sha256Block(h: u32[], data: u8[], off: usize) {
-  // Always false: said once so that the bounds checks go.
+  // Always false (the callers pass whole blocks of their data and an eight-word state): said
+  // once so that the bounds checks below go, and loudly, since a block skipped in silence
+  // would give a wrong digest.
   if (h.length != 8 || off + BLOCK > data.length) {
-    return;
+    blockFault();
   }
   let w0 = word(data, off + 0);
   let w1 = word(data, off + 4);
